@@ -121,7 +121,7 @@ Supabase auth/account foundation:
 - App APIs still use scoped Pint Path sessions, issued after a verified Supabase Auth exchange through `POST /api/business/auth/supabase-session`. The browser receives that app session in an HttpOnly cookie; native apps keep it in platform-protected storage.
 - `/account.html` uses Supabase Auth for email/password plus configured Google and Apple sign-in. Direct Pint Path password signup/login exists only for localhost/development compatibility and returns `410` in production.
 - Supabase OAuth providers must be configured in the Supabase dashboard. Use only minimal scopes: email/profile for Google and name/email for Apple.
-- In Supabase Auth URL configuration, set the Site URL to `https://pintpath.au` and allow the exact app callbacks: `http://localhost:3000/auth/callback`, `https://pintpath.au/auth/callback`, and `pintpath://auth-callback`. The custom-scheme callback is required for native Google/Apple sign-in.
+- In Supabase Auth URL configuration, set the Site URL to `https://pintpath.au` and allow the exact web callbacks `http://localhost:3000/auth/callback` and `https://pintpath.au/auth/callback`. Allow `pintpath://auth-callback` only for an Android release that enables native Google/Apple sign-in. The first-release iOS app is email/password only, declares no custom URL scheme, and uses the HTTPS callback for email confirmation/password recovery.
 - In the Google and Apple provider consoles, allow the Supabase provider callback URL derived from `SUPABASE_URL`. For production with `SUPABASE_URL=https://auth.pintpath.au`, the exact provider callback is `https://auth.pintpath.au/auth/v1/callback`.
 - New or linked users get an app-facing profile row in the local `profiles` table; private provider/auth data should stay in Supabase Auth, not public app tables.
 - Supabase `user_metadata` is not trusted for age confirmation, legal acceptance, roles, venue access, or paid entitlements. Pint Path records those states through its own server-side account/legal/admin/Stripe flows.
@@ -129,6 +129,7 @@ Supabase auth/account foundation:
 - Public browsing stays anonymous. Uploads and verification actions require a logged-in account, and submissions always use the authenticated session user rather than a client-provided user id.
 - Users cannot verify their own uploads. Verifications are recorded in `verifications`, and intentional product actions are recorded in `user_activity_events`.
 - Supabase/Postgres RLS-ready tables and policies live in `supabase/migrations/20260512000000_auth_profiles_activity.sql` for `public.profiles`, `beermap_uploads`, `beermap_verifications`, `user_activity_events`, `age_verifications`, and the private `beermap-source-evidence` Storage bucket. `supabase/migrations/20260516000000_user_price_submissions.sql` added an early direct-Supabase contributor scaffold, but the canonical production contribution path is now the Express `POST /api/business/submissions` flow so uploads consistently attach the authenticated user, private evidence, location eligibility, review workflow, and points ledger. `supabase/migrations/20260530000000_deprecate_direct_supabase_contributor_tables.sql` keeps those older direct tables for history while revoking browser writes. `supabase/migrations/20260523000000_submission_location_points.sql` adds private upload-location proof fields and point-award tracking for contributor submissions. `supabase/migrations/20260524010000_account_privacy_settings.sql` adds per-user optional analytics, venue-insight inclusion, product-research, and email-update preferences with owner-only RLS. `supabase/migrations/20260603000000_harden_private_helper_functions.sql` locks down private security-definer helpers with public execute revokes and narrow search paths.
+- Local database resets, pgTAP coverage, and the isolated CI database gate are documented in [`docs/supabase-database-testing.md`](docs/supabase-database-testing.md). These checks intentionally cover only repository-owned objects; the production `public.venues` schema remains externally managed and must be reconciled separately rather than invented by local tests.
 - `/account.html` now has two states: logged-out users see polished Supabase Google/Apple/email sign-in/create-account forms, while authenticated users see a contributor dashboard with stats, recent submissions, private-evidence copy, and quick beer-price upload entry points. Supabase OAuth and password-reset redirects land on `/auth/callback`, exchange the session, and then return to the account page or requested upload page.
 - Age-gated reward readiness is only a foundation: `age_verifications` stores status, `18+` threshold, provider name/reference, expiry, and booleans. Pint Path must not store raw ID documents, ID images, licence/passport/Medicare numbers, or raw proof-of-ID data.
 - Future rewards should use `canAccessAgeGatedRewards(...)`, which requires verified 18+ status, a latest verified age-check record, and a non-expired verification.
@@ -314,8 +315,9 @@ SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_ANON_KEY=your_supabase_publishable_or_legacy_anon_key
 SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
 # Configure Google/Apple OAuth providers in Supabase dashboard.
-# Redirect URLs: http://localhost:3000/auth/callback, https://pintpath.au/auth/callback,
-# and pintpath://auth-callback for the native apps.
+# Web redirect URLs: http://localhost:3000/auth/callback and
+# https://pintpath.au/auth/callback. pintpath://auth-callback is Android-only
+# when native OAuth is enabled; the first-release iOS app has no custom scheme.
 SUPABASE_OAUTH_PROVIDERS=google,apple
 SUPABASE_MENU_CAPTURE_TABLE=venue_menu_captures
 GOOGLE_MAPS_API_KEY=your_google_maps_api_key
@@ -772,7 +774,7 @@ npm run check
 
 - Confirm `PUBLIC_BASE_URL=https://pintpath.au` in production.
 - Confirm Supabase Auth Site URL is `https://pintpath.au`.
-- Confirm Supabase redirect URLs include `https://pintpath.au/auth/callback`, `pintpath://auth-callback`, and local `http://localhost:3000/auth/callback`.
+- Confirm Supabase redirect URLs include `https://pintpath.au/auth/callback` and local `http://localhost:3000/auth/callback`. Require `pintpath://auth-callback` only for Android native OAuth; the first-release iOS app has no custom URL scheme.
 - Confirm Google OAuth Authorized redirect URIs and Apple Sign in Return URLs include the Supabase provider callback from `SUPABASE_URL`, for example `https://auth.pintpath.au/auth/v1/callback`.
 - Confirm the chosen OAuth provider is enabled in Supabase and its provider console.
 - Confirm rate limiting is available: set `REDIS_URL` for production or explicitly allow the in-memory fallback for a short controlled beta.

@@ -18,28 +18,25 @@ PINT_PATH_API_BASE_URL = http:/$()/127.0.0.1:3000
 ## Current integration
 
 - Email/password signup, login, refresh, password recovery, and logout use Supabase Auth REST endpoints.
-- Google and Apple provider login use an ephemeral authorization code protected by PKCE, then exchange it for Supabase tokens.
+- Social provider login is not compiled into the first App Store release; authentication is email/password only.
 - Supabase access tokens are exchanged at `POST /api/business/auth/supabase-session` for the scoped Pint Path app session.
-- Sensitive session/export/deletion actions require a fresh provider sign-in token; a rejected action is never reported as complete.
-- A suspended paid account receives billing-only recovery without an app session, including personal-versus-managed-venue selection when needed.
+- Sensitive session/export/deletion actions require fresh authentication; a rejected action is never reported as complete.
+- Purchase, checkout, subscription-management, and billing-recovery code is not compiled into the iOS release.
 - App, Supabase refresh, and Supabase access tokens are stored in Keychain as `WhenUnlockedThisDeviceOnly`; a non-Keychain installation marker clears surviving Keychain sessions after reinstall.
 - No service-role key is bundled, and the app never reads private Supabase tables directly.
 
-Provider login also requires `pintpath://auth-callback` in the Supabase redirect allow list and correctly configured Google/Apple provider consoles.
-
 ## Native coverage
 
-- Venue search, MapKit pins, fixed free price preview or entitled full prices, wrong-price reporting, venue saving, and external directions.
-- Reviewed price, photo, and happy-hour submissions with optional one-time location proof.
+- Venue search, neutral MapKit pins, a fixed free price preview or earned contributor unlock, wrong-price reporting, venue saving, and external directions.
+- Reviewed price and photo submissions with optional one-time location proof.
 - Missing venue/beer requests and mission reserve/release.
-- Account dashboard, privacy controls, sessions, JSON export, deletion request/status/cancel, rewards, and counter-staff invitations.
-- Venue profile, beer/stock, happy hours, eligible specials, counter/POS tools, analytics, planner, and monthly report export for assigned roles.
-- A server-authority-gated Admin tab that hands verified admins to the secure web workspace.
-- Claim-required accounts are handed to the secure web claim workflow because business evidence and admin review remain web-managed.
+- Account dashboard, contribution progress, privacy controls, sessions, JSON export, and deletion request/status/cancel.
+- Free assigned-venue profile and beer/stock management.
+- Commerce-safe iOS legal pages and in-app support.
 
 ## Deliberate remaining boundaries
 
-The photo library supports one image per native submission. Direct camera capture, multiple images, PDF evidence, offline upload queues, general plan/checkout changes, and admin moderation remain outside this native release. The narrow suspended-account billing-recovery portal is implemented. Signing, real-device/provider testing, screenshots, reviewer accounts, and App Store metadata/disclosures require release-owner credentials.
+The photo library supports one image per native submission. Direct camera capture, multiple images, PDF evidence, offline upload queues, happy-hour discovery/submission/management, all paid consumer entitlements, paid venue Pro trials/features, alcohol-linked rewards/counter tools, plan/checkout changes, social providers, and admin moderation are not compiled into this native release. Signing, real-device testing, screenshots, reviewer accounts, and App Store metadata/disclosures require release-owner credentials.
 
 ## Validation
 

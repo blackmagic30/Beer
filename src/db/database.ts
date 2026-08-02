@@ -8,7 +8,7 @@ import { env } from "../config/env.js";
 import { BeerCatalogRepository, syncStaticBeerCatalog } from "./beer-catalog.repository.js";
 import { isLikelyBeerName } from "../constants/beers.js";
 
-export const CURRENT_DATABASE_SCHEMA_VERSION = 11;
+export const CURRENT_DATABASE_SCHEMA_VERSION = 13;
 const MIGRATION_BACKUP_RETENTION = 3;
 export const MIGRATION_BACKUP_MAX_AGE_DAYS = 30;
 
@@ -35,10 +35,12 @@ const venueProfilesColumns = [
   { name: "stripe_customer_id", definition: "TEXT" },
   { name: "stripe_subscription_id", definition: "TEXT" },
   { name: "subscription_status", definition: "TEXT" },
+  { name: "subscription_current_period_end", definition: "TEXT" },
   { name: "stripe_paid_membership_tier", definition: "TEXT" },
   { name: "tier_manual_override", definition: "INTEGER NOT NULL DEFAULT 0" },
   { name: "accepts_pint_path_codes", definition: "INTEGER NOT NULL DEFAULT 0" },
   { name: "stripe_event_created_at", definition: "TEXT" },
+  { name: "intro_trial_ever_claimed", definition: "INTEGER NOT NULL DEFAULT 0" },
   { name: "pos_webhook_token_version", definition: "INTEGER NOT NULL DEFAULT 1" },
   { name: "pos_previous_token_version", definition: "INTEGER" },
   { name: "pos_previous_token_valid_until", definition: "TEXT" },
@@ -176,7 +178,7 @@ const venueRequestColumns = [
 ] as const;
 
 const accountPrivacySettingsColumns = [
-  { name: "consent_version", definition: "TEXT NOT NULL DEFAULT '2026-07-20'" },
+  { name: "consent_version", definition: "TEXT NOT NULL DEFAULT '2026-07-28'" },
   { name: "consented_at", definition: "TEXT" },
 ] as const;
 
@@ -215,6 +217,12 @@ const venueBeersColumns = [
   { name: "price_verified_at", definition: "TEXT" },
   { name: "stock_verified_at", definition: "TEXT" },
   { name: "source_ingestion_id", definition: "TEXT" },
+] as const;
+
+const venuePriceRecordColumns = [
+  { name: "source_ingestion_id", definition: "TEXT" },
+  { name: "source_evidence_reference", definition: "TEXT" },
+  { name: "source_evidence_verified_at", definition: "TEXT" },
 ] as const;
 
 const PUBLIC_ACCOUNT_ID_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -1203,6 +1211,7 @@ export function initializeDatabaseSchema(database: BetterSqlite3.Database): void
     ensureColumns(database, "admin_ingestion_queue", adminIngestionQueueColumns);
     redactCompletedAdminIngestionImages(database);
     ensureColumns(database, "venue_beers", venueBeersColumns);
+    ensureColumns(database, "venue_price_records", venuePriceRecordColumns);
     normalizeMissionReservations(database);
     reconcileCounterOnlyAccountRoles(database);
     reconcileLegacyUniqueConstraints(database);

@@ -25,11 +25,6 @@ struct ContributeView: View {
     @State private var sourcePhotoPreview: UIImage?
     @State private var sourcePhotoStatus = "Fill the frame, hold the camera square, and avoid glare. OCR will read the beer rows and pint prices."
     @State private var sourcePhotoPreparationTask: Task<Void, Never>?
-    @State private var happyOffer = ""
-    @State private var happyNotes = ""
-    @State private var happyStart = Calendar.current.date(bySettingHour: 16, minute: 0, second: 0, of: Date()) ?? Date()
-    @State private var happyEnd = Calendar.current.date(bySettingHour: 18, minute: 0, second: 0, of: Date()) ?? Date()
-    @State private var happyDays: Set<String> = ["fri"]
     @State private var requestVenueName = ""
     @State private var requestBeerName = ""
     @State private var requestSuburb = ""
@@ -37,18 +32,15 @@ struct ContributeView: View {
     @State private var requestKind: MissingRequestKind = .venue
     @State private var priceSubmissionId = "ios-\(UUID().uuidString)"
     @State private var photoSubmissionId = "ios-photo-\(UUID().uuidString)"
-    @State private var happyHourSubmissionId = "ios-happy-\(UUID().uuidString)"
     @State private var acceptedMissionId: String?
     @State private var attachLocationProof = false
     @FocusState private var focusedPriceField: PriceField?
 
     private let servingSizes = ["pint", "pot", "schooner", "jug", "bottle", "can", "other"]
-    private let dayCodes = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 
     enum ContributionMode: String, CaseIterable, Identifiable {
         case price = "Price"
         case source = "Scan menu"
-        case happyHour = "Happy hour"
         case request = "Request"
         case missions = "Missions"
 
@@ -58,7 +50,6 @@ struct ContributeView: View {
             switch self {
             case .price: return "plus.circle.fill"
             case .source: return "doc.viewfinder"
-            case .happyHour: return "clock.badge.checkmark.fill"
             case .request: return "paperplane.fill"
             case .missions: return "target"
             }
@@ -83,7 +74,7 @@ struct ContributeView: View {
             VStack(spacing: 16) {
                 if acceptedMissionId != nil {
                     StatusBanner(
-                        message: "Mission reserved. The next update you send from this form will be linked for review.",
+                        message: "Mission reserved for this update.",
                         systemImage: "checkmark.seal.fill"
                     )
                 }
@@ -93,8 +84,6 @@ struct ContributeView: View {
                     priceCard
                 case .source:
                     sourcePhotoCard
-                case .happyHour:
-                    happyHourCard
                 case .request:
                     requestCard
                 case .missions:
@@ -107,6 +96,15 @@ struct ContributeView: View {
         .navigationTitle(selectedMode == .price ? "Add price" : selectedMode.rawValue)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button {
+                    focusedPriceField = nil
+                    model.selectedTab = .explore
+                } label: {
+                    Label("Back", systemImage: "chevron.left")
+                }
+                .accessibilityLabel("Back to map")
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     ForEach(ContributionMode.allCases) { mode in
@@ -184,14 +182,12 @@ struct ContributeView: View {
     }
 
     private var priceCard: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            SectionHeader(
-                eyebrow: nil,
-                title: "Quick price",
-                subtitle: model.isSignedIn ? "Confirm four details. We’ll review the update before it appears." : "Sign in first so your update can be reviewed and credited.",
-                systemImage: nil,
-                assetImage: BeerMapAsset.beerPint
-            )
+        VStack(alignment: .leading, spacing: 12) {
+            if !model.isSignedIn {
+                Label("Sign in from Account to submit a price.", systemImage: "person.crop.circle.badge.exclamationmark")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
 
             priceStep(number: 1, title: "Venue") {
                 venuePicker
@@ -229,13 +225,9 @@ struct ContributeView: View {
                     }
                 }
 
-                if let selectedBeer = selectedTrackedBeer {
-                    Label("Catalogue match: \(selectedBeer.name)", systemImage: "checkmark.circle.fill")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(BeerMapTheme.leaf)
-                } else if !beerName.trimmed.isEmpty {
+                if selectedTrackedBeer == nil && !beerName.trimmed.isEmpty {
                     Toggle(isOn: $confirmedCustomBeerName) {
-                        Text("This is a new beer name — use it exactly as typed")
+                        Text("Use this new beer name")
                             .font(.caption.weight(.semibold))
                     }
                     .tint(BeerMapTheme.primaryAction)
@@ -274,13 +266,13 @@ struct ContributeView: View {
                 servingPicker
             }
 
-            DisclosureGroup("Photo, note, or location proof", isExpanded: $showingAdvancedPriceOptions) {
+            DisclosureGroup("Optional details", isExpanded: $showingAdvancedPriceOptions) {
                 VStack(alignment: .leading, spacing: 12) {
                     sourcePhotoActions(cameraTitle: "Take evidence photo", libraryTitle: "Choose photo")
 
                     sourcePhotoPreviewView
 
-                    if sourcePhotoDataURL != nil || sourcePhotoStatus.hasPrefix("Preparing") {
+                    if sourcePhotoStatus.hasPrefix("Preparing") || sourcePhotoStatus.hasPrefix("Could not") {
                         Text(sourcePhotoStatus)
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -295,7 +287,7 @@ struct ContributeView: View {
             }
             .font(.subheadline.weight(.semibold))
 
-            PrimaryButton(title: "Send price for review", systemImage: "paperplane.fill", isLoading: model.isLoading) {
+            PrimaryButton(title: "Submit price", systemImage: "paperplane.fill", isLoading: model.isLoading) {
                 Task {
                     let location = await requestedLocationProof()
                     if attachLocationProof && location == nil { return }
@@ -317,10 +309,6 @@ struct ContributeView: View {
                 }
             }
             .disabled(priceSubmitDisabled)
-
-            SecondaryButton(title: "Scan a full menu instead", systemImage: "doc.viewfinder") {
-                selectedMode = .source
-            }
         }
         .beerMapCard()
     }
@@ -370,52 +358,6 @@ struct ContributeView: View {
             }
             .disabled(!model.isSignedIn || selectedVenueId.isEmpty || sourcePhotoDataURL == nil)
             StatusBanner(message: "Location proof is optional, requested only when you send, and used only for submission review and points eligibility.")
-        }
-        .beerMapCard()
-    }
-
-    private var happyHourCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            SectionHeader(
-                eyebrow: "Happy hour",
-                title: "Submit a special you saw",
-                subtitle: model.isSignedIn ? "Use this for signs, menu boards, or staff-confirmed recurring offers." : "Sign in first to send happy-hour updates.",
-                systemImage: "clock.badge.checkmark.fill"
-            )
-            venuePicker
-            dayPicker
-            DatePicker("Starts", selection: $happyStart, displayedComponents: .hourAndMinute)
-            DatePicker("Ends", selection: $happyEnd, displayedComponents: .hourAndMinute)
-            TextField("Offer details", text: $happyOffer, axis: .vertical)
-                .lineLimit(3...6)
-                .textFieldStyle(.roundedBorder)
-            TextField("Notes, optional", text: $happyNotes, axis: .vertical)
-                .lineLimit(2...5)
-                .textFieldStyle(.roundedBorder)
-            locationProofToggle
-            PrimaryButton(title: "Send happy-hour update", systemImage: "clock.badge.checkmark.fill", isLoading: model.isLoading) {
-                Task {
-                    let location = await requestedLocationProof()
-                    if attachLocationProof && location == nil { return }
-                    let submitted = await model.submitHappyHourUpdate(
-                        clientSubmissionId: happyHourSubmissionId,
-                        missionId: acceptedMissionId,
-                        venueId: selectedVenueId,
-                        days: Array(happyDays).sorted(),
-                        startTime: contributionTime(happyStart),
-                        endTime: contributionTime(happyEnd),
-                        offerText: happyOffer,
-                        notes: happyNotes,
-                        uploadLocation: location
-                    )
-                    if submitted {
-                        await model.refreshMissions()
-                        clearHappyHourFields()
-                    }
-                }
-            }
-            .disabled(!model.isSignedIn || selectedVenueId.isEmpty || happyDays.isEmpty || happyOffer.trimmed.isEmpty)
-            StatusBanner(message: "If the board has lots of detail, Photo is usually faster and safer.")
         }
         .beerMapCard()
     }
@@ -470,7 +412,7 @@ struct ContributeView: View {
             SectionHeader(
                 eyebrow: "Missions",
                 title: "Venues needing data",
-                subtitle: "Pick one nearby, then use Price, Photo, or Happy hour to send the update.",
+                subtitle: "Pick one nearby, then use Price or Scan menu to send the update.",
                 systemImage: "target"
             )
             if model.missions.isEmpty {
@@ -592,7 +534,7 @@ struct ContributeView: View {
                                 .font(.body.weight(.semibold))
                                 .foregroundStyle(.primary)
                                 .lineLimit(2)
-                            Text(currentVenue?.displayLocation.nilIfBlank ?? "Search all \(model.venues.count) venues")
+                            Text(currentVenue?.displayLocation.nilIfBlank ?? "Choose venue")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -632,7 +574,7 @@ struct ContributeView: View {
         acceptedMissionId = mission.id
         selectedVenueId = venueId
         lastVenueId = venueId
-        selectedMode = mission.reason?.localizedCaseInsensitiveContains("happy") == true ? .happyHour : .price
+        selectedMode = .price
     }
 
     private func syncAcceptedMission() {
@@ -793,29 +735,6 @@ struct ContributeView: View {
                     .accessibilityAddTraits(.isHeader)
             }
             content()
-        }
-    }
-
-    private var dayPicker: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 68), spacing: 8)], spacing: 8) {
-            ForEach(dayCodes, id: \.self) { day in
-                Button {
-                    if happyDays.contains(day) {
-                        happyDays.remove(day)
-                    } else {
-                        happyDays.insert(day)
-                    }
-                } label: {
-                    Text(day.uppercased())
-                        .font(.caption.weight(.bold))
-                        .frame(maxWidth: .infinity)
-                        .frame(minHeight: 44)
-                }
-                .buttonStyle(.plain)
-                .background(happyDays.contains(day) ? BeerMapTheme.amber.opacity(0.28) : BeerMapTheme.softCard, in: RoundedRectangle(cornerRadius: 8))
-                .accessibilityLabel("\(day.uppercased()) \(happyDays.contains(day) ? "selected" : "not selected")")
-                .accessibilityAddTraits(happyDays.contains(day) ? .isSelected : [])
-            }
         }
     }
 
@@ -1021,14 +940,6 @@ struct ContributeView: View {
         clearSourcePhoto()
         notes = ""
         photoSubmissionId = "ios-photo-\(UUID().uuidString)"
-        acceptedMissionId = nil
-    }
-
-    private func clearHappyHourFields() {
-        happyOffer = ""
-        happyNotes = ""
-        happyDays = ["fri"]
-        happyHourSubmissionId = "ios-happy-\(UUID().uuidString)"
         acceptedMissionId = nil
     }
 
@@ -1544,12 +1455,6 @@ private struct CameraPhotoPicker: UIViewControllerRepresentable {
             parent.onCancel()
         }
     }
-}
-
-private func contributionTime(_ date: Date) -> String {
-    let formatter = DateFormatter()
-    formatter.dateFormat = "HH:mm"
-    return formatter.string(from: date)
 }
 
 extension String {

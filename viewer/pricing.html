@@ -93,7 +93,7 @@
             </ul>
           </div>
           <div class="pricingCard__actions">
-            <a class="button button--primary" href="/account.html?checkoutPlan=monthly">Continue monthly</a>
+            <a id="consumerMonthlyAction" class="button button--primary" aria-disabled="true">Paid launch not open</a>
           </div>
         </article>
 
@@ -112,7 +112,7 @@
             </ul>
           </div>
           <div class="pricingCard__actions">
-            <a class="button button--premium" href="/account.html?checkoutPlan=yearly">Continue yearly</a>
+            <a id="consumerYearlyAction" class="button button--premium" aria-disabled="true">Paid launch not open</a>
           </div>
         </article>
       </div>
@@ -155,6 +155,10 @@
             <span class="tierBadge tierBadge--pro">Pro</span>
             <h3>Stand out and understand demand</h3>
             <div class="price">A$149 <span>/month</span></div>
+            <div id="venueProTrialOffer" class="notice">
+              <strong>Commercial enrollment is not open yet.</strong>
+              <span>Verified venues can still use the Free plan. Pro trials stay closed until the production, data, legal, and billing gates pass.</span>
+            </div>
             <div class="tierSignalRow">
               <span class="tierSignal tierSignal--pro">Premium map halo</span>
               <span class="tierSignal tierSignal--pro">Privacy-safe insights</span>
@@ -179,11 +183,11 @@
             </ul>
           </div>
           <div class="venuePricingCard__actions">
-            <a class="button button--premium" href="/venue-portal.html">View Pro tools</a>
+            <a id="venueProTrialAction" class="button button--premium" aria-disabled="true">Commercial launch not open</a>
           </div>
         </article>
       </div>
-      <p class="helperCopy">Subscriptions renew automatically until cancelled. Manage or cancel in the Stripe billing portal; cancellation stops the next renewal and access continues through the paid period. Stripe receipts show applicable tax and payment details. Refund and billing requests are assessed under the Australian Consumer Law through Contact us. Venue insights stay aggregate, and Pro placement never fakes popularity or reviews.</p>
+      <p class="helperCopy">The launch trial is limited to one approved offer per venue. With the default no-card offer, it ends and returns the venue to Free unless the venue deliberately adds a payment method and keeps Pro active. Subscriptions renew automatically until cancelled. A venue starts paid Pro deliberately at A$149/month. Manage or cancel in the Stripe billing portal; cancellation stops the next renewal and access continues through any paid period. Stripe receipts show applicable tax and payment details. Refund and billing requests are assessed under the Australian Consumer Law through Contact us. Venue insights stay aggregate, and Pro placement never fakes popularity or reviews.</p>
     </section>
     <p class="footerCopy">Pint Path is 18+ only. Venue access is assigned after Pint Path verifies the bar contact. Prices may change and availability is not guaranteed.</p>
   </main>
@@ -199,6 +203,69 @@
       const forceUserPricing = params.get("audience") === "users";
       const forceVenuePricing = params.get("audience") === "venues";
       const initiallyShowVenuePricing = !forceUserPricing && (forceVenuePricing || role === "venue_manager" || role === "admin");
+      const businessConfig = MelbBeerBusiness.getBusinessConfig?.() || {};
+      const commercialLaunchEnabled = businessConfig.commercialLaunchEnabled === true;
+      const consumerPaidEnrollmentEnabled = businessConfig.consumerPaidEnrollmentEnabled === true;
+      const venueTrialDays = Number(businessConfig.venueProTrialDays || 0);
+      const venueTrialRequiresPaymentMethod = businessConfig.venueProTrialRequiresPaymentMethod === true;
+      const monthlyAction = document.getElementById("consumerMonthlyAction");
+      const yearlyAction = document.getElementById("consumerYearlyAction");
+      const trialOffer = document.getElementById("venueProTrialOffer");
+      const trialAction = document.getElementById("venueProTrialAction");
+
+      const configureCommercialAction = (action, enabledConfig, enrollmentEnabled = commercialLaunchEnabled) => {
+        if (!action) return;
+        if (enrollmentEnabled) {
+          action.href = enabledConfig.href;
+          action.textContent = enabledConfig.label;
+          action.removeAttribute("aria-disabled");
+          action.removeAttribute("tabindex");
+          action.removeAttribute("title");
+          return;
+        }
+        action.removeAttribute("href");
+        action.setAttribute("aria-disabled", "true");
+        action.setAttribute("tabindex", "-1");
+        action.setAttribute("title", "New paid and introductory-trial enrollment is not open yet.");
+        action.textContent = enabledConfig.closedLabel;
+      };
+
+      configureCommercialAction(monthlyAction, {
+        href: "/account.html?checkoutPlan=monthly",
+        label: "Continue monthly",
+        closedLabel: "Paid launch not open",
+      }, consumerPaidEnrollmentEnabled);
+      configureCommercialAction(yearlyAction, {
+        href: "/account.html?checkoutPlan=yearly",
+        label: "Continue yearly",
+        closedLabel: "Paid launch not open",
+      }, consumerPaidEnrollmentEnabled);
+      if (trialOffer && trialAction) {
+        if (!commercialLaunchEnabled) {
+          trialOffer.innerHTML = "<strong>Commercial enrollment is not open yet.</strong><span>Verified venues can still use the Free plan. Pro trials stay closed until the production, data, legal, and billing gates pass.</span>";
+          configureCommercialAction(trialAction, {
+            href: "/venue-portal.html",
+            label: "Open venue portal",
+            closedLabel: "Commercial launch not open",
+          });
+        } else if (venueTrialDays > 0) {
+          trialOffer.innerHTML = venueTrialRequiresPaymentMethod
+            ? `<strong>Launch offer: ${venueTrialDays} days of full Pro access free.</strong><span>A payment method is required. Unless cancelled before the trial ends, Pro renews at A$149/month.</span>`
+            : `<strong>Launch offer: ${venueTrialDays} days of full Pro access free.</strong><span>No payment method is required. The trial cancels back to Free after ${venueTrialDays} days unless the venue deliberately adds billing and keeps Pro active at A$149/month.</span>`;
+          configureCommercialAction(trialAction, {
+            href: "/venue-portal.html",
+            label: `Start ${venueTrialDays}-day free trial`,
+            closedLabel: "Commercial launch not open",
+          });
+        } else {
+          trialOffer.hidden = true;
+          configureCommercialAction(trialAction, {
+            href: "/venue-portal.html",
+            label: "View Pro tools",
+            closedLabel: "Commercial launch not open",
+          });
+        }
+      }
 
       function showPricingAudience(audience, options = {}) {
         const showVenuePricing = audience === "venues";

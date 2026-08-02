@@ -29,8 +29,8 @@ struct IOSAPIContractCheck {
 
         let venueData = try Data(contentsOf: venueURL)
         let venues = try decoder.decode(APIEnvelope<VenueListResponse>.self, from: venueData)
-        guard venues.data?.venues.first?.highlightedName != nil else {
-            throw ContractError.failed("highlightedName must decode as the production Boolean value")
+        guard venues.data?.venues.first?.name.isEmpty == false else {
+            throw ContractError.failed("the venue list must decode a named public venue")
         }
 
         let missionData = try Data(contentsOf: missionURL)

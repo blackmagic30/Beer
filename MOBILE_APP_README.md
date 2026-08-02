@@ -11,7 +11,7 @@ These are native apps, not WebView, React Native, Expo, or Capacitor wrappers.
 
 ## Architecture and authentication
 
-The Express `/api/business/*` API is the product source of truth. The apps use Supabase Auth REST for email/password and Google/Apple provider authentication, then exchange the Supabase access token for a scoped Pint Path app session at `/api/business/auth/supabase-session`. Provider login uses authorization-code PKCE. Apps do not access private Supabase tables and never contain service-role keys.
+The Express `/api/business/*` API is the product source of truth. Both apps use Supabase Auth REST for email/password, then exchange the Supabase access token for a scoped Pint Path app session at `/api/business/auth/supabase-session`. Android also contains Google/Apple authorization-code PKCE provider login. The first-release iOS target compiles provider login out and declares no custom callback scheme. Apps do not access private Supabase tables and never contain service-role keys.
 
 Session storage is device-protected:
 
@@ -20,14 +20,18 @@ Session storage is device-protected:
 
 ## Current feature coverage
 
-- Public: venue discovery, iOS map/Android external directions, fixed free price preview, wrong-price reports, missing-data requests.
-- Contributors: reviewed price/photo/happy-hour submissions, one-time optional location proof, mission reserve/release, progress and rewards.
-- Accounts: signup/login/OAuth/logout/refresh/recovery, fresh-authenticated session/export/deletion controls, suspended-account billing-only recovery, saved venues, privacy settings, device sessions, account export, deletion status/cancel, staff invitations.
-- Venue managers and counter staff: assigned-venue dashboard, profile, stock/beer prices, happy hours, entitled specials, counter/POS and reward checks, privacy-safe analytics/planner, monthly report export.
-- Admins: a server-authority-gated quick-bar tab that hands off to the secure web admin workspace and disappears immediately when current admin authority is absent.
-- Claims: secure web handoff for evidence upload and admin verification.
+The first-release iOS binary is deliberately limited to:
 
-The native clients cover normal-user, contributor, counter-staff, and venue-manager workflows. Admin navigation is native and authority-gated; moderation remains a web-admin responsibility.
+- public venue discovery, MapKit directions, free price preview, wrong-price reports, and missing-data requests;
+- email/password account access, session/privacy controls, export/deletion, support, saved venues, and reviewed price/photo contribution;
+- assigned venue-Free profile and beer/stock management.
+
+The iOS Release archive excludes Google/Apple social login, custom auth schemes,
+consumer paid entitlement, venue Pro/trial/billing and upgrade links, happy-hour
+discovery/submission, rewards/Pub Golf, counter/POS, and admin tooling.
+
+Android retains the broader provider-login and role surfaces described in its own
+project README, but Android is not part of the current web plus iOS launch.
 
 ## Configuration
 
@@ -37,7 +41,7 @@ Only public configuration belongs in native builds:
 - `SUPABASE_URL`
 - `SUPABASE_ANON_KEY`
 
-Google/Apple sign-in additionally requires `pintpath://auth-callback` in the Supabase redirect allow list and valid provider-console configuration.
+Android Google/Apple sign-in additionally requires `pintpath://auth-callback` in the Supabase redirect allow list and valid provider-console configuration. The first-release iOS app uses no custom URL scheme; email confirmation and password recovery complete through the exact HTTPS web callback, after which the user returns to the app and signs in.
 
 iOS local configuration uses `apps/ios/Config.xcconfig`; Android uses `apps/android/local.properties`. Both local files are ignored.
 
@@ -45,7 +49,7 @@ iOS local configuration uses `apps/ios/Config.xcconfig`; Android uses `apps/andr
 
 - Android intentionally uses an external maps handoff; iOS has an in-app MapKit map.
 - One photo-library image is supported per submission; direct camera capture, multi-image/PDF input, and offline upload queues are not.
-- General checkout/plan changes and admin moderation are web-only; suspended paid users can open the narrowly scoped billing-recovery portal without receiving app access.
+- Checkout, plan changes, billing recovery, counter/admin operations, and moderation are web-only for the first iOS release.
 - Store signing, provider console verification, real-device QA, accessibility QA, screenshots, reviewer accounts, legal metadata, and final privacy/data-safety declarations require release-owner accounts and devices.
 
 ## Verification

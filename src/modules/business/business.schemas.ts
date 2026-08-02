@@ -16,6 +16,17 @@ const nullableTrimmedStringSchema = z.preprocess((value) => {
   return trimmed.length > 0 ? trimmed : null;
 }, z.string().min(1).max(2_000).nullable());
 
+const nullableAustralianPostcodeSchema = z.preprocess((value) => {
+  if (value == null) {
+    return null;
+  }
+  if (typeof value !== "string") {
+    return value;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}, z.string().regex(/^\d{4}$/, "Postcode must be exactly four digits").nullable());
+
 const nullableOfferTextSchema = z.preprocess((value) => {
   if (value == null) {
     return null;
@@ -299,7 +310,7 @@ export const pendingSubmissionVenueSchema = z.object({
   address: nullableTrimmedStringSchema.default(null),
   suburb: nullableTrimmedStringSchema.default(null),
   state: nullableTrimmedStringSchema.default("VIC"),
-  postcode: nullableTrimmedStringSchema.default(null),
+  postcode: nullableAustralianPostcodeSchema.default(null),
   phone: nullableTrimmedStringSchema.default(null),
   website: nullableUrlSchema.default(null),
   latitude: z.preprocess(

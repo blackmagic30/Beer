@@ -69,30 +69,16 @@ private struct MoreView: View {
 
     var body: some View {
         List {
-            if model.hasVenueAccess || model.hasAdminAccess {
+            if model.hasVenueAccess && !model.hasAdminAccess {
                 Section("Workspaces") {
-                    if model.hasVenueAccess {
-                        NavigationLink {
-                            VenuePortalView()
-                        } label: {
-                            moreRow(
-                                title: "Manage venue",
-                                message: "Prices, happy hours, specials, redemptions, and staff",
-                                systemImage: "building.2.fill"
-                            )
-                        }
-                    }
-
-                    if model.hasAdminAccess {
-                        NavigationLink {
-                            AdminQuickAccessView()
-                        } label: {
-                            moreRow(
-                                title: "Admin workspace",
-                                message: "Review data and manage Pint Path",
-                                systemImage: "lock.shield.fill"
-                            )
-                        }
+                    NavigationLink {
+                        VenuePortalView()
+                    } label: {
+                        moreRow(
+                            title: "Manage venue",
+                            message: "Public profile and beer list",
+                            systemImage: "building.2.fill"
+                        )
                     }
                 }
             }
@@ -128,47 +114,5 @@ private struct MoreView: View {
             Image(systemName: systemImage)
                 .foregroundStyle(BeerMapTheme.primaryAction)
         }
-    }
-}
-
-private struct AdminQuickAccessView: View {
-    @Environment(\.openURL) private var openURL
-
-    private var adminSignInURL: URL {
-        var components = URLComponents(
-            url: AppConfig.apiBaseURL.appendingPathComponent("account.html"),
-            resolvingAgainstBaseURL: false
-        )!
-        components.queryItems = [URLQueryItem(name: "returnTo", value: "/admin.html")]
-        return components.url!
-    }
-
-    var body: some View {
-        ScrollView {
-            VStack(spacing: 16) {
-                VStack(alignment: .leading, spacing: 12) {
-                    SectionHeader(
-                        eyebrow: "Admin access",
-                        title: "Open Pint Path admin",
-                        subtitle: "Your current app account has server-verified admin authority. Administration remains in the full secure web workspace.",
-                        systemImage: "lock.shield.fill"
-                    )
-                    StatusBanner(
-                        message: "Only accounts confirmed as admins by the Pint Path server receive this tab.",
-                        systemImage: "checkmark.shield.fill"
-                    )
-                    PrimaryButton(title: "Open admin workspace", systemImage: "safari.fill", isLoading: false) {
-                        openURL(adminSignInURL)
-                    }
-                    Text("Your browser may ask you to sign in again before returning directly to the Admin workspace.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-                .beerMapCard()
-            }
-            .padding()
-        }
-        .beerMapScreen()
-        .navigationTitle("Admin")
     }
 }

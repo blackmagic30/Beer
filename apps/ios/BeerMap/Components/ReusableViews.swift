@@ -354,13 +354,6 @@ struct VenueCard: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                if venue.membershipTier == "pro" {
-                    Text("Pro")
-                        .font(.caption.weight(.black))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(BeerMapTheme.honey.opacity(0.24), in: Capsule())
-                }
             }
             if let address = venue.address, !address.isEmpty {
                 Label(address, systemImage: "mappin.and.ellipse")

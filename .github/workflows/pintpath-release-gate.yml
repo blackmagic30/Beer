@@ -2,6 +2,12 @@ name: Pint Path Release Gate
 
 on:
   workflow_dispatch:
+    inputs:
+      expected_commercial_launch_enabled:
+        description: Exact expected state of the web venue-enrollment launch flag
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -18,6 +24,8 @@ jobs:
     env:
       PINTPATH_SMOKE_BASE_URL: https://pintpath.au
       PINTPATH_EXPECTED_COMMIT_SHA: ${{ github.sha }}
+      PINTPATH_ENFORCE_LAUNCH_FLAGS: "true"
+      PINTPATH_EXPECTED_COMMERCIAL_LAUNCH_ENABLED: ${{ inputs.expected_commercial_launch_enabled }}
 
     steps:
       - name: Checkout
@@ -44,6 +52,11 @@ jobs:
           DATABASE_PATH: ./data/ci-production-release-gate.sqlite
           PINTPATH_TEST_DATABASE_PATH: ./data/ci-production-release-gate.sqlite
         run: npm run test:e2e:pintpath
+
+      - name: Enforce public production health, commit, and launch flags
+        run: |
+          set -o pipefail
+          npm run --silent smoke:production | tee production-public-smoke.json
 
       - name: Enforce production provider readiness
         env:
@@ -96,6 +109,23 @@ jobs:
           set -o pipefail
           npm run --silent smoke:production:auth | tee production-role-smoke.json
 
+      - name: Enforce production public data readiness
+        env:
+          PINTPATH_DATA_BASE_URL: https://pintpath.au
+          PINTPATH_DATA_STRICT: "true"
+          PINTPATH_DATA_MARKETED_SUBURBS: ${{ vars.PINTPATH_DATA_MARKETED_SUBURBS }}
+          PINTPATH_DATA_MIN_MARKETED_VENUE_COVERAGE_PERCENT: "70"
+          PINTPATH_DATA_MIN_CURRENT_PRICES_PER_VENUE: "3"
+          PINTPATH_DATA_MAX_CORE_FRESHNESS_HOURS: "48"
+          PINTPATH_DATA_MAX_VENUE_STATUS_AGE_HOURS: "24"
+          PINTPATH_DATA_MAX_TRUSTED_ROW_AGE_DAYS: "30"
+          PINTPATH_DATA_MIN_HAPPY_HOUR_COVERAGE_PERCENT: "25"
+          PINTPATH_DATA_NO_HAPPY_HOUR_LAUNCH_SCOPE: "true"
+          PINTPATH_DATA_NO_HAPPY_HOUR_SCOPE_REFERENCE: ${{ vars.PINTPATH_DATA_NO_HAPPY_HOUR_SCOPE_REFERENCE }}
+        run: |
+          set -o pipefail
+          npm run --silent readiness:data | tee production-data-readiness.json
+
       - name: Secret scan
         run: npm run security:scan
 
@@ -119,6 +149,8 @@ jobs:
           name: pintpath-production-release-gate
           path: |
             docs/release-evidence.json
+            production-public-smoke.json
+            production-data-readiness.json
             production-role-smoke.json
             release-evidence-summary.json
             provider-readiness-summary.json

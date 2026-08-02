@@ -132,13 +132,15 @@ Required checks:
 
 - `SUPABASE_URL` and `SUPABASE_ANON_KEY` are set for browser OAuth.
 - `SUPABASE_SERVICE_ROLE_KEY` is only server-side.
-- Google/Apple OAuth providers are configured with minimal scopes.
+- Google/Apple OAuth providers are configured with minimal scopes for the web app and any Android release that enables them. The first-release iOS app is email/password only.
 - Leaked password protection is enabled in Supabase Auth.
 - The hosted database is not on deprecated Postgres 14.
-- Supabase Auth redirect URLs include the app callback pages:
+- Supabase Auth redirect URLs include the web callback pages:
   - `http://localhost:3000/auth/callback`
   - `https://pintpath.au/auth/callback`
+- If Android social OAuth is released, its native callback is also allowlisted:
   - `pintpath://auth-callback`
+- The first-release iOS archive has no custom URL scheme. Its email-confirmation and password-recovery links use the exact HTTPS web callback, after which the user returns to the app and signs in.
 - Google and Apple provider consoles include the Supabase provider callback URL derived from `SUPABASE_URL`:
   - `https://auth.pintpath.au/auth/v1/callback` when `SUPABASE_URL=https://auth.pintpath.au`
 - RLS policies from `supabase/migrations/` are applied and tested in staging.

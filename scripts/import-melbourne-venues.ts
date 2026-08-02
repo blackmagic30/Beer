@@ -1,10 +1,17 @@
 import "dotenv/config";
 
+import { createHash } from "node:crypto";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
 import {
+  isAustralianPostcode,
   normalizeVenueKey,
+  normalizeGoogleVenueBusinessStatus,
   shouldImportBarOrPubPlace,
   type GoogleAddressComponent,
   type GooglePlaceCandidate,
+  type GoogleVenueBusinessStatus,
 } from "../src/lib/venue-directory.js";
 import { createServerSupabaseClient } from "../src/lib/supabase-client.js";
 import { assertOperatorMutationAllowed } from "./lib/operator-mutation-guard.js";
@@ -24,6 +31,7 @@ const GOOGLE_FIELD_MASK = [
   "places.primaryType",
   "places.types",
 ].join(",");
+const GOOGLE_PLACE_DETAILS_FIELD_MASK = GOOGLE_FIELD_MASK.replaceAll("places.", "");
 
 const DEFAULT_BOUNDS = {
   minLat: -38.20,
@@ -113,9 +121,12 @@ interface VenueRow {
   google_place_id: string | null;
   name: string;
   address: string | null;
+  business_status: GoogleVenueBusinessStatus | null;
+  last_checked_at: string | null;
+  directory_eligible: boolean | null;
 }
 
-interface VenuePayload {
+export interface VenuePayload {
   google_place_id: string | null;
   name: string;
   address: string;
@@ -126,7 +137,73 @@ interface VenuePayload {
   website: string | null;
   latitude: number | null;
   longitude: number | null;
+  business_status: GoogleVenueBusinessStatus;
+  last_checked_at: string;
+  directory_eligible: true;
   source: string;
+}
+
+export type VenueMappingResult =
+  | { outcome: "venue"; venue: VenuePayload }
+  | { outcome: "skipped"; reason: "not_eligible" }
+  | {
+      outcome: "quarantined";
+      reason: "invalid_postcode" | "missing_or_invalid_business_status";
+      googlePlaceId: string | null;
+      venueName: string | null;
+    };
+
+export function assertVenueDiscoveryComplete(
+  failedCells: readonly string[],
+  failedQueries: readonly string[],
+): void {
+  if (failedCells.length === 0 && failedQueries.length === 0) {
+    return;
+  }
+
+  throw new Error(
+    "Venue discovery was incomplete; refusing to write a partial directory refresh. " +
+    `Failed grid cells: ${failedCells.length}. Failed text-search queries: ${failedQueries.length}.`,
+  );
+}
+
+export function assertVenueStatusRefreshComplete(failedGooglePlaceIds: readonly string[]): void {
+  if (failedGooglePlaceIds.length === 0) {
+    return;
+  }
+
+  throw new Error(
+    "Existing venue status refresh was incomplete; refusing to write a directory with stale business statuses. " +
+    `Failed Google Place detail checks: ${failedGooglePlaceIds.length}.`,
+  );
+}
+
+export function assertSupabaseProjectTarget(
+  supabaseUrl: string,
+  expectedProjectRef: string | undefined,
+): string {
+  const normalizedExpected = expectedProjectRef?.trim().toLowerCase() ?? "";
+  if (!normalizedExpected) {
+    throw new Error(
+      "Missing --expected-project-ref (or PINTPATH_EXPECTED_SUPABASE_PROJECT_REF); refusing an unpinned venue-directory operation.",
+    );
+  }
+
+  let actualProjectRef: string;
+  try {
+    const hostname = new URL(supabaseUrl).hostname.toLowerCase();
+    actualProjectRef = hostname.endsWith(".supabase.co")
+      ? hostname.slice(0, -".supabase.co".length)
+      : "";
+  } catch {
+    actualProjectRef = "";
+  }
+  if (!actualProjectRef || actualProjectRef !== normalizedExpected) {
+    throw new Error(
+      `Supabase project target mismatch. Expected ${normalizedExpected}; SUPABASE_URL resolves to ${actualProjectRef || "an unsupported host"}.`,
+    );
+  }
+  return actualProjectRef;
 }
 
 interface TextSearchPage {
@@ -228,13 +305,27 @@ function parseAddressFallback(address: string): { suburb: string | null; state: 
   };
 }
 
-function mapPlaceToVenue(place: GooglePlaceCandidate): VenuePayload | null {
+export function mapPlaceToVenue(
+  place: GooglePlaceCandidate,
+  checkedAt = new Date().toISOString(),
+): VenueMappingResult {
   if (!shouldImportBarOrPubPlace(place)) {
-    return null;
+    return { outcome: "skipped", reason: "not_eligible" };
   }
 
   const name = place.displayName?.text?.trim()!;
   const address = place.formattedAddress?.trim() ?? "";
+  const googlePlaceId = place.id?.trim() ?? null;
+  const businessStatus = normalizeGoogleVenueBusinessStatus(place.businessStatus);
+
+  if (!businessStatus) {
+    return {
+      outcome: "quarantined",
+      reason: "missing_or_invalid_business_status",
+      googlePlaceId,
+      venueName: name || null,
+    };
+  }
 
   const fallbackAddress = parseAddressFallback(address);
   const suburb =
@@ -243,22 +334,35 @@ function mapPlaceToVenue(place: GooglePlaceCandidate): VenuePayload | null {
   const state =
     getAddressComponent(place, ["administrative_area_level_1"], true) ??
     fallbackAddress.state;
-  const postcode =
-    getAddressComponent(place, ["postal_code"]) ??
-    fallbackAddress.postcode;
+  const structuredPostcode = getAddressComponent(place, ["postal_code"]);
+  if (structuredPostcode !== null && !isAustralianPostcode(structuredPostcode)) {
+    return {
+      outcome: "quarantined",
+      reason: "invalid_postcode",
+      googlePlaceId,
+      venueName: name || null,
+    };
+  }
+  const postcode = structuredPostcode ?? fallbackAddress.postcode;
 
   return {
-    google_place_id: place.id?.trim() ?? null,
-    name,
-    address,
-    suburb,
-    state,
-    postcode,
-    phone: place.internationalPhoneNumber ?? place.nationalPhoneNumber ?? null,
-    website: place.websiteUri ?? null,
-    latitude: place.location?.latitude ?? null,
-    longitude: place.location?.longitude ?? null,
-    source: "google_places_bar_pub",
+    outcome: "venue",
+    venue: {
+      google_place_id: googlePlaceId,
+      name,
+      address,
+      suburb,
+      state,
+      postcode,
+      phone: place.internationalPhoneNumber ?? place.nationalPhoneNumber ?? null,
+      website: place.websiteUri ?? null,
+      latitude: place.location?.latitude ?? null,
+      longitude: place.location?.longitude ?? null,
+      business_status: businessStatus,
+      last_checked_at: checkedAt,
+      directory_eligible: true,
+      source: "google_places_bar_pub",
+    },
   };
 }
 
@@ -342,15 +446,48 @@ async function searchTextPlaces(
   };
 }
 
+async function fetchPlaceDetails(apiKey: string, googlePlaceId: string): Promise<GooglePlaceCandidate> {
+  const response = await fetch(
+    `https://places.googleapis.com/v1/places/${encodeURIComponent(googlePlaceId)}`,
+    {
+      method: "GET",
+      headers: {
+        "X-Goog-Api-Key": apiKey,
+        "X-Goog-FieldMask": GOOGLE_PLACE_DETAILS_FIELD_MASK,
+      },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    },
+  );
+  const payload = await response.json();
+  if (!response.ok) {
+    throw new Error(`Google Place details refresh failed with HTTP ${response.status}.`);
+  }
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new Error("Google Place details refresh returned an invalid payload.");
+  }
+  return payload as GooglePlaceCandidate;
+}
+
 function collectDiscoveredVenue(
   discovered: Map<string, VenuePayload>,
+  quarantined: Map<string, Exclude<VenueMappingResult, { outcome: "venue" | "skipped" }>>,
   place: GooglePlaceCandidate,
+  checkedAt: string,
 ) {
-  const venue = mapPlaceToVenue(place);
+  const mapped = mapPlaceToVenue(place, checkedAt);
 
-  if (!venue) {
+  if (mapped.outcome === "skipped") {
     return;
   }
+  if (mapped.outcome === "quarantined") {
+    const quarantineKey =
+      mapped.googlePlaceId ??
+      `${normalizeVenueKey(mapped.venueName)}|${mapped.reason}`;
+    quarantined.set(quarantineKey, mapped);
+    return;
+  }
+
+  const venue = mapped.venue;
 
   const dedupeKey =
     venue.google_place_id ??
@@ -378,7 +515,7 @@ async function fetchExistingVenues() {
     const to = from + pageSize - 1;
     const { data, error } = await supabase
       .from("venues")
-      .select("id, google_place_id, name, address")
+      .select("id, google_place_id, name, address, business_status, last_checked_at, directory_eligible")
       .range(from, to);
 
     if (error) {
@@ -403,28 +540,63 @@ async function main() {
   }
 
   const googleApiKey = process.env.GOOGLE_PLACES_API_KEY ?? process.env.GOOGLE_MAPS_API_KEY;
-
   if (!googleApiKey) {
     throw new Error("Missing GOOGLE_PLACES_API_KEY or GOOGLE_MAPS_API_KEY");
   }
+  const supabaseUrl = process.env.SUPABASE_URL;
+  if (!supabaseUrl) {
+    throw new Error("Missing SUPABASE_URL");
+  }
+  const targetProjectRef = assertSupabaseProjectTarget(
+    supabaseUrl,
+    getArg("expected-project-ref", process.env.PINTPATH_EXPECTED_SUPABASE_PROJECT_REF),
+  );
+  const { supabase, rows: existingRows } = await fetchExistingVenues();
+  console.log(`Pinned Supabase venue-directory target: ${targetProjectRef}. Existing rows: ${existingRows.length}.`);
 
   const cityBackfill = hasFlag("city-backfill");
   const cityOnly = hasFlag("city-only");
   const innerRingBackfill = hasFlag("inner-ring-backfill");
   const innerRingOnly = hasFlag("inner-ring-only");
-  const maxCells = Number.parseInt(getArg("max-cells", "") ?? "", 10);
+  const statusOnly = hasFlag("status-only");
+  const maxCellsArg = getArg("max-cells");
+  if (
+    statusOnly &&
+    (cityBackfill || cityOnly || innerRingBackfill || innerRingOnly || maxCellsArg !== undefined)
+  ) {
+    throw new Error(
+      "--status-only cannot be combined with discovery, backfill, or --max-cells options.",
+    );
+  }
+  const maxCells = Number.parseInt(maxCellsArg ?? "", 10);
   const centers = buildGridCenters();
-  const cellsToScan = cityOnly || innerRingOnly
+  const cellsToScan = statusOnly || cityOnly || innerRingOnly
     ? []
     : Number.isFinite(maxCells) && maxCells > 0
       ? centers.slice(0, maxCells)
       : centers;
   const discovered = new Map<string, VenuePayload>();
+  const quarantined = new Map<
+    string,
+    Exclude<VenueMappingResult, { outcome: "venue" | "skipped" }>
+  >();
+  const checkedAt = new Date().toISOString();
   const failedCells: string[] = [];
   const failedQueries: string[] = [];
+  const failedExistingPlaceIds: string[] = [];
+  const statusOnlyUpdates = new Map<
+    string,
+    {
+      business_status: GoogleVenueBusinessStatus | null;
+      last_checked_at: string;
+      directory_eligible: false;
+    }
+  >();
   const textBackfillQueries: TextSearchQuery[] = [
-    ...(cityBackfill || cityOnly ? DEFAULT_CITY_BACKFILL_QUERIES : []),
-    ...(innerRingBackfill || innerRingOnly ? DEFAULT_INNER_RING_BACKFILL_QUERIES : []),
+    ...(!statusOnly && (cityBackfill || cityOnly) ? DEFAULT_CITY_BACKFILL_QUERIES : []),
+    ...(!statusOnly && (innerRingBackfill || innerRingOnly)
+      ? DEFAULT_INNER_RING_BACKFILL_QUERIES
+      : []),
   ];
 
   console.log(`Scanning ${cellsToScan.length} Melbourne grid cells for bars and pubs...`);
@@ -443,7 +615,7 @@ async function main() {
     }
 
     for (const place of places) {
-      collectDiscoveredVenue(discovered, place);
+      collectDiscoveredVenue(discovered, quarantined, place, checkedAt);
     }
   }
 
@@ -463,7 +635,7 @@ async function main() {
           const page = await searchTextPlaces(googleApiKey, query, pageToken);
 
           for (const place of page.places) {
-            collectDiscoveredVenue(discovered, place);
+            collectDiscoveredVenue(discovered, quarantined, place, checkedAt);
           }
 
           if (!page.nextPageToken) {
@@ -481,9 +653,66 @@ async function main() {
     }
   }
 
-  console.log(`Discovered ${discovered.size} unique venue candidates.`);
+  assertVenueDiscoveryComplete(failedCells, failedQueries);
 
-  const { supabase, rows: existingRows } = await fetchExistingVenues();
+  console.log(`Refreshing every existing Google Place ID not already observed by the complete discovery pass...`);
+  for (const existing of existingRows) {
+    const googlePlaceId = existing.google_place_id?.trim() ?? "";
+    if (!googlePlaceId) {
+      statusOnlyUpdates.set(existing.id, {
+        business_status: null,
+        last_checked_at: checkedAt,
+        directory_eligible: false,
+      });
+      continue;
+    }
+    if (discovered.has(googlePlaceId)) {
+      continue;
+    }
+
+    try {
+      const place = {
+        ...(await fetchPlaceDetails(googleApiKey, googlePlaceId)),
+        id: googlePlaceId,
+      };
+      const mapped = mapPlaceToVenue(place, checkedAt);
+      if (mapped.outcome === "venue") {
+        discovered.set(googlePlaceId, mapped.venue);
+        continue;
+      }
+
+      statusOnlyUpdates.set(existing.id, {
+        business_status: normalizeGoogleVenueBusinessStatus(place.businessStatus),
+        last_checked_at: checkedAt,
+        directory_eligible: false,
+      });
+      if (mapped.outcome === "quarantined") {
+        quarantined.set(googlePlaceId, mapped);
+      }
+    } catch (error) {
+      failedExistingPlaceIds.push(
+        createHash("sha256").update(googlePlaceId).digest("hex").slice(0, 16),
+      );
+      console.error(
+        `Existing venue detail refresh failed for ${existing.name}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+  assertVenueStatusRefreshComplete(failedExistingPlaceIds);
+
+  console.log(`Discovered or revalidated ${discovered.size} unique eligible venue candidates.`);
+  if (quarantined.size > 0) {
+    const reasonCounts = Array.from(quarantined.values()).reduce<Record<string, number>>((counts, item) => {
+      counts[item.reason] = (counts[item.reason] ?? 0) + 1;
+      return counts;
+    }, {});
+    console.warn(
+      `Quarantined ${quarantined.size} malformed Google venue rows without publishing them: ${JSON.stringify(reasonCounts)}.`,
+    );
+  }
+
   const byGooglePlaceId = new Map(
     existingRows
       .filter((row) => row.google_place_id)
@@ -498,11 +727,37 @@ async function main() {
 
   let inserted = 0;
   let updated = 0;
+  let excluded = 0;
+  const touchedExistingIds = new Set<string>();
+  const writeFailures: string[] = [];
+  const transitions: Array<{
+    venueIdHashSha256: string;
+    fromBusinessStatus: GoogleVenueBusinessStatus | null;
+    toBusinessStatus: GoogleVenueBusinessStatus | null;
+    fromDirectoryEligible: boolean | null;
+    toDirectoryEligible: boolean;
+  }> = [];
+  const recordTransition = (
+    existing: VenueRow,
+    next: { business_status: GoogleVenueBusinessStatus | null; directory_eligible: boolean },
+  ) => {
+    transitions.push({
+      venueIdHashSha256: createHash("sha256").update(existing.id).digest("hex"),
+      fromBusinessStatus: existing.business_status,
+      toBusinessStatus: next.business_status,
+      fromDirectoryEligible: existing.directory_eligible,
+      toDirectoryEligible: next.directory_eligible,
+    });
+  };
 
   for (const venue of discovered.values()) {
     const existing =
       (venue.google_place_id ? byGooglePlaceId.get(venue.google_place_id) : undefined) ??
       byNameAddress.get(`${normalizeVenueKey(venue.name)}|${normalizeVenueKey(venue.address)}`);
+    if (existing) {
+      touchedExistingIds.add(existing.id);
+      recordTransition(existing, venue);
+    }
 
     if (dryRun) {
       console.log(`${existing ? "Would update" : "Would insert"}: ${venue.name}`);
@@ -517,6 +772,7 @@ async function main() {
 
       if (error) {
         console.error(`Update failed for ${venue.name}: ${error.message}`);
+        writeFailures.push(`update:${existing.id}`);
         continue;
       }
 
@@ -528,28 +784,86 @@ async function main() {
 
     if (error) {
       console.error(`Insert failed for ${venue.name}: ${error.message}`);
+      writeFailures.push(`insert:${venue.google_place_id ?? venue.name}`);
       continue;
     }
 
     inserted += 1;
   }
 
+  for (const existing of existingRows) {
+    if (touchedExistingIds.has(existing.id)) {
+      continue;
+    }
+    const update = statusOnlyUpdates.get(existing.id);
+    if (!update) {
+      throw new Error(`Internal importer error: existing venue ${existing.id} has no completed refresh outcome.`);
+    }
+    recordTransition(existing, update);
+    if (dryRun) {
+      console.log(`Would exclude or keep excluded: ${existing.name}`);
+      continue;
+    }
+    const { error } = await supabase
+      .from("venues")
+      .update(update)
+      .eq("id", existing.id);
+    if (error) {
+      console.error(`Fail-closed status update failed for ${existing.name}: ${error.message}`);
+      writeFailures.push(`exclude:${existing.id}`);
+      continue;
+    }
+    excluded += 1;
+  }
+
+  if (writeFailures.length > 0) {
+    throw new Error(
+      `Venue import completed with ${writeFailures.length} failed database write(s); the run is not successful and must be rerun.`,
+    );
+  }
+
+  const transitionSummary = transitions.reduce<Record<string, number>>((counts, item) => {
+    const key = `${item.fromDirectoryEligible === true ? "eligible" : "excluded"}:${item.fromBusinessStatus ?? "UNKNOWN"}` +
+      `->${item.toDirectoryEligible ? "eligible" : "excluded"}:${item.toBusinessStatus ?? "UNKNOWN"}`;
+    counts[key] = (counts[key] ?? 0) + 1;
+    return counts;
+  }, {});
+  const manifest = {
+    schemaVersion: 1,
+    checkedAt,
+    mode: dryRun ? "dry-run" : "write",
+    operation: statusOnly
+      ? "existing-place-status-refresh"
+      : "directory-discovery-and-status-refresh",
+    supabaseProjectRef: targetProjectRef,
+    existingVenueCount: existingRows.length,
+    eligibleVenueCount: discovered.size,
+    quarantinedVenueCount: quarantined.size,
+    failedDiscoveryCellCount: failedCells.length,
+    failedDiscoveryQueryCount: failedQueries.length,
+    failedExistingPlaceDetailCount: failedExistingPlaceIds.length,
+    failedWriteCount: writeFailures.length,
+    transitionSummary,
+    transitions,
+  };
+  const manifestJson = JSON.stringify(manifest);
+  console.log(JSON.stringify({
+    venueDirectoryTransitionManifest: manifest,
+    manifestSha256: createHash("sha256").update(manifestJson).digest("hex"),
+  }));
+
   console.log(
     dryRun
       ? "Dry run complete."
-      : `Venue import complete. Inserted: ${inserted}. Updated: ${updated}.`,
+      : `Venue import complete. Inserted: ${inserted}. Updated: ${updated}. Excluded/rechecked: ${excluded}.`,
   );
 
-  if (failedCells.length > 0) {
-    console.log(`Skipped ${failedCells.length} cells due to Google API errors.`);
-  }
-
-  if (failedQueries.length > 0) {
-    console.log(`Skipped ${failedQueries.length} text-search queries due to Google API errors.`);
-  }
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : error);
-  process.exitCode = 1;
-});
+const entryPath = process.argv[1] ? path.resolve(process.argv[1]) : null;
+if (entryPath && import.meta.url === pathToFileURL(entryPath).href) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : error);
+    process.exitCode = 1;
+  });
+}

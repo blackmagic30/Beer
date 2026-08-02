@@ -693,10 +693,20 @@
         : "";
     }
 
+    function secureClientIdentifier(prefix) {
+      if (typeof window.crypto?.randomUUID === "function") {
+        return `${prefix}-${window.crypto.randomUUID()}`;
+      }
+      if (typeof window.crypto?.getRandomValues !== "function") {
+        throw new Error("This browser cannot generate a secure submission identifier.");
+      }
+      const bytes = new Uint8Array(16);
+      window.crypto.getRandomValues(bytes);
+      return `${prefix}-${Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("")}`;
+    }
+
     function createQueuedSubmissionId() {
-      return window.crypto?.randomUUID
-        ? window.crypto.randomUUID()
-        : `queued-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      return secureClientIdentifier("queued");
     }
 
     function isRetainedQueuedSubmission(item, now = Date.now()) {
@@ -1566,10 +1576,7 @@
     }
 
     function createPendingVenueId() {
-      if (window.crypto?.randomUUID) {
-        return `venue-${window.crypto.randomUUID()}`;
-      }
-      return `venue-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      return secureClientIdentifier("venue");
     }
 
     function collectNewVenue() {

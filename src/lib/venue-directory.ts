@@ -18,6 +18,36 @@ export interface GooglePlaceCandidate {
   types?: string[];
 }
 
+export const GOOGLE_VENUE_BUSINESS_STATUSES = [
+  "OPERATIONAL",
+  "CLOSED_TEMPORARILY",
+  "CLOSED_PERMANENTLY",
+  "FUTURE_OPENING",
+] as const;
+
+export type GoogleVenueBusinessStatus = typeof GOOGLE_VENUE_BUSINESS_STATUSES[number];
+
+const GOOGLE_VENUE_BUSINESS_STATUS_SET = new Set<string>(GOOGLE_VENUE_BUSINESS_STATUSES);
+
+export function normalizeGoogleVenueBusinessStatus(
+  value: string | null | undefined,
+): GoogleVenueBusinessStatus | null {
+  const normalized = value?.trim().toUpperCase() ?? "";
+  return GOOGLE_VENUE_BUSINESS_STATUS_SET.has(normalized)
+    ? normalized as GoogleVenueBusinessStatus
+    : null;
+}
+
+export function isOperationalGoogleVenueBusinessStatus(
+  value: string | null | undefined,
+): boolean {
+  return normalizeGoogleVenueBusinessStatus(value) === "OPERATIONAL";
+}
+
+export function isAustralianPostcode(value: string | null | undefined): value is string {
+  return typeof value === "string" && /^\d{4}$/.test(value);
+}
+
 export interface ReviewVenueRow {
   venueId: string;
   googlePlaceId: string | null;
@@ -206,10 +236,6 @@ export function hasStrongBarOrPubNameSignal(name: string): boolean {
 export function shouldImportBarOrPubPlace(place: GooglePlaceCandidate): boolean {
   const name = place.displayName?.text?.trim() ?? "";
   const address = place.formattedAddress?.trim() ?? "";
-
-  if ((place.businessStatus ?? "OPERATIONAL") === "CLOSED_PERMANENTLY") {
-    return false;
-  }
 
   if (!name || !address) {
     return false;

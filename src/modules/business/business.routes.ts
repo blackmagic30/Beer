@@ -752,10 +752,9 @@ export function createBusinessRouter(businessService: BusinessService): Router {
 
   router.get("/venue-portal/:venueId/reports/:month/export", (req, res) => {
     const account = requireAccount(req, businessService);
+    const params = parseWithSchema(monthlyReportParamsSchema, req.params, "Invalid monthly report export request");
     const query = parseWithSchema(monthlyReportExportQuerySchema, req.query, "Invalid monthly report export query");
-    const venueId = String(req.params.venueId ?? "");
-    const month = String(req.params.month ?? "");
-    const result = businessService.exportVenueMonthlyReport(account, venueId, month, query);
+    const result = businessService.exportVenueMonthlyReport(account, params.venueId, params.month, query);
     res
       .type(result.mimeType)
       .setHeader("Cache-Control", "private, no-store")

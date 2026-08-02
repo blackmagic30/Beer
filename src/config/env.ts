@@ -233,6 +233,8 @@ const envSchema = z.object({
   ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION: booleanFromEnv.default(false),
   DEMO_BILLING_MODE: demoBillingModeFromEnv,
   ALLOW_DEMO_BILLING_IN_PRODUCTION: booleanFromEnv.default(false),
+  COMMERCIAL_LAUNCH_ENABLED: booleanFromEnv.default(false),
+  CONSUMER_PAID_ENROLLMENT_ENABLED: booleanFromEnv.default(false),
   ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION: booleanFromEnv.default(false),
   SOURCE_EVIDENCE_STORAGE_DIR: z.preprocess(sanitizeEnvString, z.string()).default("./data/source-evidence"),
   SOURCE_EVIDENCE_SIGNING_SECRET: optionalStringFromEnv,
@@ -243,11 +245,19 @@ const envSchema = z.object({
   OFFSITE_BACKUP_RETENTION_DAYS: z.coerce.number().int().min(7).max(30).default(30),
   POS_WEBHOOK_SIGNING_SECRET: optionalStringFromEnv,
   FIELD_TEST_MODE: booleanFromEnv.default(false),
+  PINT_POINTS_REWARDS_ENABLED: booleanFromEnv.default(false),
+  ALCOHOL_GAMIFICATION_ENABLED: booleanFromEnv.default(false),
+  ALCOHOL_PROMOTION_APPROVAL_REFERENCE: optionalStringFromEnv,
   STRIPE_SECRET_KEY: optionalStringFromEnv,
   STRIPE_WEBHOOK_SECRET: optionalStringFromEnv,
   STRIPE_PRICE_MONTHLY: optionalStringFromEnv,
   STRIPE_PRICE_YEARLY: optionalStringFromEnv,
   STRIPE_PRO_PRICE_ID: optionalStringFromEnv,
+  VENUE_PRO_TRIAL_DAYS: z.coerce.number().int().refine(
+    (value) => value === 0 || value === 30 || value === 60,
+    "Use 0, 30, or 60 days.",
+  ).default(60),
+  VENUE_PRO_TRIAL_REQUIRE_PAYMENT_METHOD: booleanFromEnv.default(false),
 });
 
 const parsedEnv = envSchema.safeParse(process.env);
@@ -356,6 +366,28 @@ if (parsedEnv.data.REPORT_EMAIL_REPLY_TO && !isSafeConfiguredEmail(parsedEnv.dat
 
 if (parsedEnv.data.REPORT_DELIVERY_SCHEDULE_ENABLED && parsedEnv.data.REPORT_EMAIL_MODE !== "resend") {
   throw new Error("REPORT_DELIVERY_SCHEDULE_ENABLED requires REPORT_EMAIL_MODE=resend.");
+}
+
+if (
+  parsedEnv.data.NODE_ENV === "production" &&
+  (parsedEnv.data.PINT_POINTS_REWARDS_ENABLED || parsedEnv.data.ALCOHOL_GAMIFICATION_ENABLED) &&
+  !parsedEnv.data.ALCOHOL_PROMOTION_APPROVAL_REFERENCE
+) {
+  throw new Error(
+    "Alcohol-linked rewards or gamification require ALCOHOL_PROMOTION_APPROVAL_REFERENCE in production. Keep both feature flags false until written Victorian liquor-promotion and App Store approval is recorded.",
+  );
+}
+
+if (
+  parsedEnv.data.NODE_ENV === "production" &&
+  (
+    parsedEnv.data.VENUE_PRO_TRIAL_DAYS !== 60 ||
+    parsedEnv.data.VENUE_PRO_TRIAL_REQUIRE_PAYMENT_METHOD
+  )
+) {
+  throw new Error(
+    "The public launch requires a non-converting 60-day venue Pro offer: VENUE_PRO_TRIAL_DAYS=60 and VENUE_PRO_TRIAL_REQUIRE_PAYMENT_METHOD=false.",
+  );
 }
 
 if (parsedEnv.data.NODE_ENV === "production") {
@@ -596,6 +628,7 @@ if (parsedEnv.data.RESTORE_REHEARSAL_MODE) {
     ["OPENAI_API_KEY", parsedEnv.data.OPENAI_API_KEY],
     ["GOOGLE_PLACES_API_KEY", parsedEnv.data.GOOGLE_PLACES_API_KEY],
     ["POS_WEBHOOK_SIGNING_SECRET", parsedEnv.data.POS_WEBHOOK_SIGNING_SECRET],
+    ["ALCOHOL_PROMOTION_APPROVAL_REFERENCE", parsedEnv.data.ALCOHOL_PROMOTION_APPROVAL_REFERENCE],
     ["ADMIN_EMAILS", parsedEnv.data.ADMIN_EMAILS],
     ["ADMIN_SHARED_SECRET", process.env.ADMIN_SHARED_SECRET],
     ["NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY", process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY],
@@ -625,6 +658,10 @@ if (parsedEnv.data.RESTORE_REHEARSAL_MODE) {
     ["MENU_DISCOVERY_QUEUE_OCR", booleanFromEnv.safeParse(process.env.MENU_DISCOVERY_QUEUE_OCR).data],
     ["ALLOW_MENU_DISCOVERY_QUEUE", booleanFromEnv.safeParse(process.env.ALLOW_MENU_DISCOVERY_QUEUE).data],
     ["PINTPATH_REPORT_DELIVER", booleanFromEnv.safeParse(process.env.PINTPATH_REPORT_DELIVER).data],
+    ["PINT_POINTS_REWARDS_ENABLED", parsedEnv.data.PINT_POINTS_REWARDS_ENABLED],
+    ["ALCOHOL_GAMIFICATION_ENABLED", parsedEnv.data.ALCOHOL_GAMIFICATION_ENABLED],
+    ["COMMERCIAL_LAUNCH_ENABLED", parsedEnv.data.COMMERCIAL_LAUNCH_ENABLED],
+    ["CONSUMER_PAID_ENROLLMENT_ENABLED", parsedEnv.data.CONSUMER_PAID_ENROLLMENT_ENABLED],
   ].filter(([, enabled]) => enabled === true);
   if (prohibitedEnabledFlags.length > 0) {
     throw new Error(
@@ -634,6 +671,9 @@ if (parsedEnv.data.RESTORE_REHEARSAL_MODE) {
 
   requireStrongSecret("SOURCE_EVIDENCE_SIGNING_SECRET", parsedEnv.data.SOURCE_EVIDENCE_SIGNING_SECRET);
   requireStrongSecret("RESTORE_REHEARSAL_ACCESS_PASSWORD", parsedEnv.data.RESTORE_REHEARSAL_ACCESS_PASSWORD);
+  if (Buffer.byteLength(parsedEnv.data.RESTORE_REHEARSAL_ACCESS_PASSWORD ?? "", "utf8") > 512) {
+    throw new Error("RESTORE_REHEARSAL_ACCESS_PASSWORD must be no more than 512 bytes.");
+  }
   const accessUsername = parsedEnv.data.RESTORE_REHEARSAL_ACCESS_USERNAME?.trim() ?? "";
   if (!/^[A-Za-z0-9._-]{3,64}$/.test(accessUsername)) {
     throw new Error(

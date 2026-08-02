@@ -64,7 +64,10 @@ export function normalizeBeerSearchKey(value: string | null | undefined): string
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "_");
-  return normalized.startsWith("_") ? normalized.slice(1) : normalized.endsWith("_") ? normalized.slice(0, -1) : normalized;
+  const withoutLeadingSeparator = normalized.startsWith("_") ? normalized.slice(1) : normalized;
+  return withoutLeadingSeparator.endsWith("_")
+    ? withoutLeadingSeparator.slice(0, -1)
+    : withoutLeadingSeparator;
 }
 
 export function findTrackedBeerByName(value: string | null | undefined): ViewerTrackedBeerDefinition | null {

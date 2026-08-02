@@ -80,8 +80,12 @@ import {
 import {
   type GoogleAddressComponent,
   type GooglePlaceCandidate,
+  type GoogleVenueBusinessStatus,
   hasStrongBarOrPubNameSignal,
+  isAustralianPostcode,
   isExcludedVenueName,
+  isOperationalGoogleVenueBusinessStatus,
+  normalizeGoogleVenueBusinessStatus,
   shouldImportBarOrPubPlace,
 } from "../../lib/venue-directory.js";
 
@@ -161,6 +165,8 @@ interface VenueRow {
   longitude: number | null;
   phone?: string | null;
   website?: string | null;
+  businessStatus?: GoogleVenueBusinessStatus | null;
+  lastCheckedAt?: string | null;
   instagram?: string | null;
   description?: string | null;
   openingHours?: Record<string, unknown>;
@@ -257,12 +263,29 @@ const AUTO_MISSION_TARGET_BEERS = [
   SUPPORTED_BEERS.stone_and_wood,
 ] as const;
 const STRIPE_WEBHOOK_TOLERANCE_SECONDS = 5 * 60;
+const STRIPE_CHECKOUT_RESERVATION_TTL_MS = 35 * 60 * 1000;
 const COUNTER_STAFF_INVITATION_TTL_MINUTES = 72 * 60;
 const USER_GOOGLE_VENUE_TYPES = ["bar", "pub", "restaurant", "brewery", "night_club"] as const;
 const USER_GOOGLE_VENUE_TYPE_SET = new Set<string>(USER_GOOGLE_VENUE_TYPES);
 const REMOTE_VENUE_SCAN_PAGE_SIZE = 1000;
 const MAX_REMOTE_VENUE_SCAN_ROWS = 5000;
+const MAX_PUBLIC_VENUE_STATUS_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_ACTIVE_SESSIONS_PER_ACCOUNT = 10;
+const REMOTE_VENUE_PUBLIC_COLUMNS = [
+  "id",
+  "name",
+  "address",
+  "suburb",
+  "state",
+  "postcode",
+  "phone",
+  "website",
+  "latitude",
+  "longitude",
+  "business_status",
+  "last_checked_at",
+  "directory_eligible",
+].join(", ");
 
 function missionAcceptanceCutoff(now: string): string {
   return new Date(new Date(now).getTime() - MISSION_ACCEPTANCE_TTL_MS).toISOString();
@@ -279,6 +302,7 @@ interface StripeEvent {
 
 interface StripeCheckoutSession {
   id?: string;
+  url?: string | null;
   status?: string | null;
   payment_status?: string | null;
   customer?: string | { id?: string | null } | null;
@@ -363,9 +387,8 @@ function getGoogleVenueTypes(place: GooglePlaceCandidate): string[] {
 function isAllowedUserGoogleVenue(place: GooglePlaceCandidate): boolean {
   const name = place.displayName?.text?.trim() ?? "";
   const address = place.formattedAddress?.trim() ?? "";
-  const businessStatus = place.businessStatus ?? "OPERATIONAL";
 
-  if (!name || !address || businessStatus === "CLOSED_PERMANENTLY") {
+  if (!name || !address || !isOperationalGoogleVenueBusinessStatus(place.businessStatus)) {
     return false;
   }
 
@@ -503,6 +526,80 @@ export function sanitizePostgrestIlikeTerm(value: string | null | undefined): st
 
 function isPostgresUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+}
+
+function publicRemoteWebsiteOrNull(value: unknown): string | null {
+  const candidate = stringOrNull(value);
+  if (!candidate) return null;
+  try {
+    const parsed = new URL(candidate);
+    return parsed.protocol === "http:" || parsed.protocol === "https:" ? parsed.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+function publicRemoteTimestampOrNull(value: unknown): string | null {
+  const candidate = stringOrNull(value);
+  return candidate && Number.isFinite(Date.parse(candidate)) ? candidate : null;
+}
+
+function normalizePublicRemoteVenueRow(value: unknown): VenueRow | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const row = value as Record<string, unknown>;
+  const id = stringOrNull(row.id);
+  const name = stringOrNull(row.name);
+  if (!id || !name) {
+    return null;
+  }
+
+  const rawBusinessStatus = stringOrNull(row.business_status);
+  const businessStatus = normalizeGoogleVenueBusinessStatus(rawBusinessStatus);
+  const lastCheckedAt = publicRemoteTimestampOrNull(row.last_checked_at);
+  const lastCheckedAtMs = lastCheckedAt ? Date.parse(lastCheckedAt) : Number.NaN;
+  const nowMs = Date.now();
+  if (
+    row.directory_eligible === false ||
+    businessStatus !== "OPERATIONAL" ||
+    (row.last_checked_at !== undefined && (
+      !Number.isFinite(lastCheckedAtMs) ||
+      lastCheckedAtMs > nowMs + 5 * 60_000 ||
+      nowMs - lastCheckedAtMs > MAX_PUBLIC_VENUE_STATUS_AGE_MS
+    ))
+  ) {
+    return null;
+  }
+
+  const rawPostcode = stringOrNull(row.postcode);
+  const postcode = rawPostcode && isAustralianPostcode(rawPostcode)
+    ? rawPostcode
+    : null;
+
+  return {
+    id,
+    name,
+    address: stringOrNull(row.address),
+    suburb: stringOrNull(row.suburb),
+    state: stringOrNull(row.state),
+    postcode,
+    phone: stringOrNull(row.phone),
+    website: publicRemoteWebsiteOrNull(row.website),
+    latitude: numberOrNull(row.latitude),
+    longitude: numberOrNull(row.longitude),
+    businessStatus,
+    lastCheckedAt,
+  };
+}
+
+function normalizePublicRemoteVenueRows(value: unknown): VenueRow[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((row) => normalizePublicRemoteVenueRow(row))
+    .filter((row): row is VenueRow => row !== null);
 }
 
 function safeProviderDisplayName(value: string | null): string | null {
@@ -1327,6 +1424,9 @@ function isSpecialRecord(record: PublicVenuePriceRecord): boolean {
 }
 
 function shouldExposePriceRecord(record: PublicVenuePriceRecord): boolean {
+  if (record.sourceType === "source_ingestion_quarantined") {
+    return false;
+  }
   return isHappyHourRecord(record) || isSpecialRecord(record) || isLikelyBeerName(record.beerName);
 }
 
@@ -1576,6 +1676,14 @@ function stripePriceIds(value: unknown): Set<string> {
 
 function isStripeGrantEligibleStatus(status: unknown): status is "active" | "trialing" {
   return status === "active" || status === "trialing";
+}
+
+function hasManageableStripeSubscription(
+  subscriptionId: string | null | undefined,
+  status: string | null | undefined,
+): boolean {
+  if (!subscriptionId) return false;
+  return status !== "canceled" && status !== "incomplete_expired";
 }
 
 function isStripeCheckoutSettled(object: Record<string, unknown>): boolean {
@@ -2436,10 +2544,14 @@ function monthlyReportToCsv(report: MonthlyBarReport): string {
   return `${rows.map((row) => row.map(csvEscape).join(",")).join("\n")}\n`;
 }
 
-function getMonthlyReportFilename(input: { venueId: string; month: string; format: "json" | "csv" }): string {
-  let safeVenue = input.venueId.replace(/[^a-z0-9-]+/gi, "-").slice(0, 80);
-  if (safeVenue.startsWith("-")) safeVenue = safeVenue.slice(1);
-  if (safeVenue.endsWith("-")) safeVenue = safeVenue.slice(0, -1);
+export function getMonthlyReportFilename(input: { venueId: string; month: string; format: "json" | "csv" }): string {
+  const normalizedVenue = input.venueId.replace(/[^a-z0-9-]+/gi, "-");
+  let start = 0;
+  let end = normalizedVenue.length;
+  while (start < end && normalizedVenue[start] === "-") start += 1;
+  while (end > start && normalizedVenue[end - 1] === "-") end -= 1;
+  let safeVenue = normalizedVenue.slice(start, end).slice(0, 80);
+  while (safeVenue.endsWith("-")) safeVenue = safeVenue.slice(0, -1);
   safeVenue ||= "venue";
   return `pint-path-${safeVenue}-${input.month}-monthly-report.${input.format}`;
 }
@@ -2458,6 +2570,8 @@ export class BusinessService {
       | "CONTRIBUTOR_UNLOCK_POINTS"
       | "CONTRIBUTOR_UNLOCK_DAYS"
       | "DEMO_BILLING_MODE"
+      | "COMMERCIAL_LAUNCH_ENABLED"
+      | "CONSUMER_PAID_ENROLLMENT_ENABLED"
       | "FIELD_TEST_MODE"
       | "SESSION_TTL_DAYS"
       | "ADMIN_SESSION_TTL_DAYS"
@@ -2474,11 +2588,15 @@ export class BusinessService {
       | "SOURCE_EVIDENCE_RETENTION_DAYS"
       | "POS_WEBHOOK_SIGNING_SECRET"
       | "NODE_ENV"
+      | "PINT_POINTS_REWARDS_ENABLED"
+      | "ALCOHOL_GAMIFICATION_ENABLED"
       | "STRIPE_SECRET_KEY"
       | "STRIPE_WEBHOOK_SECRET"
       | "STRIPE_PRICE_MONTHLY"
       | "STRIPE_PRICE_YEARLY"
       | "STRIPE_PRO_PRICE_ID"
+      | "VENUE_PRO_TRIAL_DAYS"
+      | "VENUE_PRO_TRIAL_REQUIRE_PAYMENT_METHOD"
       | "SUPABASE_URL"
       | "SUPABASE_ANON_KEY"
       | "SUPABASE_SERVICE_ROLE_KEY"
@@ -2730,7 +2848,8 @@ export class BusinessService {
     return {
       pricing: PREMIUM_PRICING,
       priceAccessModel: "fixed_preview" as const,
-      freePreviewScope: "Happy hours plus pint prices for Guinness, Carlton Draught, and Stone & Wood Pacific Ale.",
+      freePreviewScope: "Pint prices for Guinness, Carlton Draught, and Stone & Wood Pacific Ale.",
+      happyHourDiscoveryEnabled: false,
       contributorUnlockPoints: this.config.CONTRIBUTOR_UNLOCK_POINTS,
       contributorUnlockDays: this.config.CONTRIBUTOR_UNLOCK_DAYS,
       supabaseUrl: externalAuthDisconnected ? null : this.config.SUPABASE_URL ?? null,
@@ -2739,7 +2858,13 @@ export class BusinessService {
         ? []
         : this.config.SUPABASE_OAUTH_PROVIDERS.split(",").map((provider) => provider.trim()).filter(Boolean),
       demoBillingMode: this.config.DEMO_BILLING_MODE,
+      commercialLaunchEnabled: this.config.COMMERCIAL_LAUNCH_ENABLED,
+      consumerPaidEnrollmentEnabled: this.config.CONSUMER_PAID_ENROLLMENT_ENABLED,
       fieldTestMode: this.config.FIELD_TEST_MODE,
+      pintPointsRewardsEnabled: this.config.PINT_POINTS_REWARDS_ENABLED,
+      alcoholGamificationEnabled: this.config.ALCOHOL_GAMIFICATION_ENABLED,
+      venueProTrialDays: this.config.VENUE_PRO_TRIAL_DAYS,
+      venueProTrialRequiresPaymentMethod: this.config.VENUE_PRO_TRIAL_REQUIRE_PAYMENT_METHOD,
       legalPolicyVersion: CURRENT_LEGAL_POLICY_VERSION,
       trackedBeers: this.getTrackedBeerCatalogForViewer(),
     };
@@ -3281,6 +3406,7 @@ export class BusinessService {
       stripeCustomerId: null,
       stripeSubscriptionId: null,
       subscriptionStatus: null,
+      subscriptionCurrentPeriodEnd: null,
       tierManualOverride: false,
       acceptsPintPathCodes: false,
       stripeEventCreatedAt: null,
@@ -4239,9 +4365,9 @@ export class BusinessService {
         portalPath: `/venue-portal.html?venueId=${encodeURIComponent(assignment.venueId)}&tab=redemption`,
         capabilities: {
           openCounter: true,
-          recordPintPointPurchases: true,
-          redeemFreePintRewards: true,
-          voidOwnRecentPurchases: true,
+          recordPintPointPurchases: this.config.PINT_POINTS_REWARDS_ENABLED,
+          redeemFreePintRewards: this.config.PINT_POINTS_REWARDS_ENABLED,
+          voidOwnRecentPurchases: this.config.PINT_POINTS_REWARDS_ENABLED,
           manageVenue: false,
           viewVenueAnalytics: false,
         },
@@ -4427,7 +4553,7 @@ export class BusinessService {
       canUseVerifiedOnly: hasFullAccess,
       canViewSpecialDiscounts: hasFullAccess,
       canUseDiscountPass: hasFullAccess,
-      freePreviewScope: "Happy hours plus pint prices for Guinness, Carlton Draught, and Stone & Wood Pacific Ale.",
+      freePreviewScope: "Pint prices for Guinness, Carlton Draught, and Stone & Wood Pacific Ale.",
       premiumScope: "Every verified beer price, value rings, premium filters, saved night shortcuts, discount-pass access, and venue special-discount details.",
       premiumToolkit: buildConsumerPremiumToolkit({ account, currentAdmin }),
       premiumUntil: account?.premiumUntil ?? null,
@@ -4695,6 +4821,12 @@ export class BusinessService {
   }
 
   async planPubGolf(account: BusinessAccount, input: PubGolfPlanInput) {
+    if (!this.config.ALCOHOL_GAMIFICATION_ENABLED) {
+      throw new AppError(
+        "Pub Golf is paused pending App Store and Victorian responsible-promotion approval.",
+        503,
+      );
+    }
     if (!isFullAccess(account, this.isAdmin(account))) {
       throw new AppError("Pub Golf beta planning is for premium or contributor accounts.", 403);
     }
@@ -5408,6 +5540,15 @@ export class BusinessService {
     this.repository.expireFreePintRewardCodesForUser({ userId: accountId, now });
   }
 
+  private requirePintPointsRewardsEnabled(): void {
+    if (!this.config.PINT_POINTS_REWARDS_ENABLED) {
+      throw new AppError(
+        "Pint Points and Free Pint Rewards are paused while the launch promotion completes legal and venue approval.",
+        503,
+      );
+    }
+  }
+
   private getPintPointWalletForAccount(account: BusinessAccount, now = nowIso()) {
     this.expirePintPointRewardCodesForAccount(account.id, now);
     const balance = this.repository.getPintPointBalance(account.id);
@@ -5548,6 +5689,7 @@ export class BusinessService {
   }
 
   previewPintPointMember(account: BusinessAccount, venueId: string, input: PintPointMemberPreviewInput) {
+    this.requirePintPointsRewardsEnabled();
     const assignment = this.requireAssignedVenue(account, venueId, "counter");
     const venue = this.getDiscountVenueIdentity(venueId, assignment);
     const profile = this.repository.getBarProfile(venueId);
@@ -5605,6 +5747,7 @@ export class BusinessService {
   }
 
   async createFreePintRewardCode(account: BusinessAccount, input: FreePintRewardCodeInput) {
+    this.requirePintPointsRewardsEnabled();
     this.requireCurrentLegalAcceptance(account);
     if (account.status !== "active") {
       throw new AppError("Suspended accounts cannot create Free Pint Reward codes.", 403);
@@ -5690,6 +5833,7 @@ export class BusinessService {
   }
 
   recordPintPointDrink(account: BusinessAccount, venueId: string, input: PintPointDrinkRecordInput) {
+    this.requirePintPointsRewardsEnabled();
     const assignment = this.requireAssignedVenue(account, venueId, "counter");
     const venue = this.getDiscountVenueIdentity(venueId, assignment);
     const profile = this.repository.getBarProfile(venueId);
@@ -5816,6 +5960,7 @@ export class BusinessService {
     recordId: string,
     input: PintPointDrinkVoidInput,
   ) {
+    this.requirePintPointsRewardsEnabled();
     const assignment = this.requireAssignedVenue(account, venueId, "counter");
     const record = this.repository.getPintPointDrinkRecordById(recordId);
     if (!record || record.venueId !== venueId) {
@@ -5892,6 +6037,7 @@ export class BusinessService {
   }
 
   handleFreePintRewardCode(account: BusinessAccount, venueId: string, input: FreePintRewardDecisionInput) {
+    this.requirePintPointsRewardsEnabled();
     const assignment = this.requireAssignedVenue(account, venueId, "counter");
     const venue = this.getDiscountVenueIdentity(venueId, assignment);
     const profile = this.repository.getBarProfile(venueId);
@@ -6123,7 +6269,9 @@ export class BusinessService {
     const discountStats = this.repository.getDiscountRedemptionStats(account.id);
     const recentDiscountRedemptions = this.repository.listDiscountRedemptionsForUser(account.id, 10);
     const rewardVouchers = this.repository.listAccountRewardVouchers(account.id, 10);
-    const pintPointsWallet = this.getPintPointWalletForAccount(account, dashboardNow);
+    const pintPointsWallet = this.config.PINT_POINTS_REWARDS_ENABLED
+      ? this.getPintPointWalletForAccount(account, dashboardNow)
+      : null;
     const counterStaffAssignmentRows = this.repository
       .listVenueManagerAssignments({ userId: account.id, activeOnly: false, limit: -1 })
       .filter((assignment) => assignment.accessLevel === "counter_staff");
@@ -6269,9 +6417,11 @@ export class BusinessService {
           me: leaderboardRank,
         },
         pubGolf: {
-          enabled: hasFullAccess,
+          enabled: hasFullAccess && this.config.ALCOHOL_GAMIFICATION_ENABLED,
           defaultDrinks: PUB_GOLF_DEFAULT_DRINKS,
-          copy: "Build a nine-stop Pub Golf route from real venue drink data. Beta routing uses Pint Path venue coordinates with walking/transit hints.",
+          copy: this.config.ALCOHOL_GAMIFICATION_ENABLED
+            ? "Build a nine-stop Pub Golf route from real venue drink data. Beta routing uses Pint Path venue coordinates with walking/transit hints."
+            : "Pub Golf is paused pending App Store and Victorian responsible-promotion approval.",
         },
         canIDrive: {
           enabled: hasFullAccess,
@@ -6562,6 +6712,14 @@ export class BusinessService {
         postcode: preferIncomingDetails ? enriched.postcode ?? existing.postcode : existing.postcode ?? enriched.postcode,
         latitude: preferIncomingDetails ? enriched.latitude ?? existing.latitude : existing.latitude ?? enriched.latitude,
         longitude: preferIncomingDetails ? enriched.longitude ?? existing.longitude : existing.longitude ?? enriched.longitude,
+        phone: (preferIncomingDetails ? enriched.phone ?? existing.phone : existing.phone ?? enriched.phone) ?? null,
+        website: (preferIncomingDetails ? enriched.website ?? existing.website : existing.website ?? enriched.website) ?? null,
+        businessStatus: (preferIncomingDetails
+          ? enriched.businessStatus ?? existing.businessStatus
+          : existing.businessStatus ?? enriched.businessStatus) ?? null,
+        lastCheckedAt: (preferIncomingDetails
+          ? enriched.lastCheckedAt ?? existing.lastCheckedAt
+          : existing.lastCheckedAt ?? enriched.lastCheckedAt) ?? null,
         membershipTier: existing.membershipTier === "pro" || enriched.membershipTier === "pro" ? "pro" : "basic",
         highlightedName: Boolean(existing.highlightedName || enriched.highlightedName),
         premiumBadge: existing.premiumBadge ?? enriched.premiumBadge ?? null,
@@ -7746,7 +7904,7 @@ export class BusinessService {
 
     return {
       request,
-      message: "Deletion request saved with a seven-day review window. An admin can execute the documented anonymisation workflow after checking legal retention requirements.",
+      message: "Account deletion is scheduled after a seven-day cancellation window. An authorised operator must execute the documented provider-deletion and anonymisation workflow after that time.",
     };
   }
 
@@ -8550,39 +8708,27 @@ export class BusinessService {
       limit: -1,
       offset: 0,
     });
-    const localDirectory = deduplicateLocalVenues(rawLocalDirectory.venues);
+    let localDirectory = deduplicateLocalVenues(rawLocalDirectory.venues);
     let localPage = localDirectory.slice(normalizedOffset, normalizedOffset + normalizedLimit);
     const allLocalVenues = localSearch
       ? this.repository.listPublicVenueDirectoryPage({ limit: -1, offset: 0 }).venues
       : rawLocalDirectory.venues;
-    const allLocalVenueIds = allLocalVenues.map((venue) => venue.id);
-    const remoteOffset = Math.max(0, normalizedOffset - localDirectory.length);
-    const remoteSlots = Math.max(0, normalizedLimit - localPage.length);
+    let remoteOffset = Math.max(0, normalizedOffset - localDirectory.length);
+    let remoteSlots = Math.max(0, normalizedLimit - localPage.length);
     // Always fetch at least one row so the exact remote count remains available
     // while a page is still fully occupied by local-authoritative venues.
     const remoteFetchLimit = Math.max(1, remoteSlots);
-    const localPageVenueIds = localPage.map((venue) => venue.id);
-    const hydrateLocalPage = (remoteDetailRows: VenueRow[]) => {
-      if (localPage.length === 0 || remoteDetailRows.length === 0) {
-        return;
-      }
-      localPage = this.mergeVenueRows(
-        localPage,
-        remoteDetailRows.map((venue) => ({
-          ...venue,
-          ...this.getPublicVenueTierMetadata(venue.id),
-        })),
-        localPage.length,
-        false,
-      );
-    };
     const safeQuery = normalizedSearch
       ? sanitizePostgrestIlikeTerm((labelStem.split(",")[0] ?? "").trim())
       : "";
+    const operationalStatusCutoff = new Date(Date.now() - MAX_PUBLIC_VENUE_STATUS_AGE_MS).toISOString();
     const createRemoteVenueRequest = () => {
       let request = this.supabase!
         .from("venues")
-        .select("id, name, address, suburb, state, postcode, latitude, longitude", { count: "exact" });
+        .select(REMOTE_VENUE_PUBLIC_COLUMNS, { count: "exact" })
+        .eq("directory_eligible", true)
+        .eq("business_status", "OPERATIONAL")
+        .gte("last_checked_at", operationalStatusCutoff);
       if (safeQuery) {
         request = request.or(`name.ilike.%${safeQuery}%,suburb.ilike.%${safeQuery}%,address.ilike.%${safeQuery}%`);
       }
@@ -8611,7 +8757,7 @@ export class BusinessService {
           code: error.code,
         });
       }
-      remoteRows = ((data ?? []) as VenueRow[]).slice(0, remoteSlots);
+      remoteRows = normalizePublicRemoteVenueRows(data).slice(0, remoteSlots);
       estimatedRemoteTotal = typeof count === "number"
         ? count
         : remoteOffset + remoteRows.length + (remoteRows.length >= remoteFetchLimit ? 1 : 0);
@@ -8639,7 +8785,8 @@ export class BusinessService {
             code: error.code,
           });
         }
-        const rows = (data ?? []) as VenueRow[];
+        const rawRows = Array.isArray(data) ? data : [];
+        const rows = normalizePublicRemoteVenueRows(rawRows);
         if (typeof count === "number") {
           exactRawRemoteTotal = count;
           if (count > MAX_REMOTE_VENUE_SCAN_ROWS) {
@@ -8655,15 +8802,15 @@ export class BusinessService {
         }
         remoteCandidates.push(...rows);
         completedRemoteScan = exactRawRemoteTotal !== null
-          ? scanOffset + rows.length >= exactRawRemoteTotal
-          : rows.length < scanLimit;
+          ? scanOffset + rawRows.length >= exactRawRemoteTotal
+          : rawRows.length < scanLimit;
         if (completedRemoteScan) {
           break;
         }
-        if (!supportsRange || rows.length === 0) {
+        if (!supportsRange || rawRows.length === 0) {
           break;
         }
-        scanOffset += rows.length;
+        scanOffset += rawRows.length;
       }
       if (!completedRemoteScan) {
         throw new ExternalServiceError(
@@ -8676,16 +8823,39 @@ export class BusinessService {
         );
       }
 
-      if (localPageVenueIds.length > 0) {
-        const localPageIdSet = new Set(localPageVenueIds);
-        hydrateLocalPage(remoteCandidates.filter((venue) => localPageIdSet.has(venue.id)));
-      }
+      const remoteCandidateById = new Map(remoteCandidates.map((venue) => [venue.id, venue]));
+      const remoteCandidateByIdentity = new Map(
+        remoteCandidates
+          .map((venue) => [venueIdentityKey(venue), venue] as const)
+          .filter((entry): entry is [string, VenueRow] => entry[0] !== null),
+      );
+      const originalOperationalLocalIdentities = new Set<string>();
+      localDirectory = localDirectory
+        .map((venue) => {
+          const originalIdentity = venueIdentityKey(venue);
+          const matchingRemote = remoteCandidateById.get(venue.id) ??
+            (originalIdentity ? remoteCandidateByIdentity.get(originalIdentity) : undefined);
+          if (!matchingRemote) {
+            return null;
+          }
+          if (originalIdentity) {
+            originalOperationalLocalIdentities.add(originalIdentity);
+          }
+          return this.mergeVenueRows([venue], [matchingRemote], 1, false)[0] ?? null;
+        })
+        .filter((venue): venue is VenueRow => venue !== null);
+      localPage = localDirectory.slice(normalizedOffset, normalizedOffset + normalizedLimit);
+      remoteOffset = Math.max(0, normalizedOffset - localDirectory.length);
+      remoteSlots = Math.max(0, normalizedLimit - localPage.length);
 
-      const seenVenueIds = new Set(allLocalVenueIds);
+      const seenVenueIds = new Set(localDirectory.map((venue) => venue.id));
       const seenVenueIdentities = new Set(
-        allLocalVenues
-          .map((venue) => venueIdentityKey(venue))
-          .filter((identity): identity is string => identity !== null),
+        [
+          ...originalOperationalLocalIdentities,
+          ...localDirectory
+            .map((venue) => venueIdentityKey(venue))
+            .filter((identity): identity is string => identity !== null),
+        ],
       );
       const uniqueRemoteRows: VenueRow[] = [];
       for (const venue of remoteCandidates) {
@@ -8729,12 +8899,23 @@ export class BusinessService {
 
     const localVenue = this.getLocalPublicVenueById(normalizedVenueId);
     if (!this.supabase || this.config.RESTORE_REHEARSAL_MODE) return localVenue;
-    if (!isPostgresUuid(normalizedVenueId)) return localVenue;
+    if (!isPostgresUuid(normalizedVenueId)) {
+      if (!localVenue) return null;
+      const candidates = await this.listVenuesPage(localVenue.name, 1000, 0, null);
+      const localIdentity = venueIdentityKey(localVenue);
+      return candidates.venues.find((venue) =>
+        venue.id === normalizedVenueId ||
+        (localIdentity !== null && venueIdentityKey(venue) === localIdentity)
+      ) ?? null;
+    }
 
     const { data, error } = await this.supabase
       .from("venues")
-      .select("id, name, address, suburb, state, postcode, latitude, longitude")
+      .select(REMOTE_VENUE_PUBLIC_COLUMNS)
       .eq("id", normalizedVenueId)
+      .eq("directory_eligible", true)
+      .eq("business_status", "OPERATIONAL")
+      .gte("last_checked_at", new Date(Date.now() - MAX_PUBLIC_VENUE_STATUS_AGE_MS).toISOString())
       .maybeSingle();
 
     if (error) {
@@ -8747,10 +8928,13 @@ export class BusinessService {
     }
 
     if (!data) {
-      return localVenue;
+      return null;
     }
 
-    const venue = data as VenueRow;
+    const venue = normalizePublicRemoteVenueRow(data);
+    if (!venue) {
+      return null;
+    }
     const now = nowIso();
     this.repository.upsertVenueLocationCache({
       venueId: venue.id,
@@ -8915,6 +9099,12 @@ export class BusinessService {
       getGoogleVenueAddressComponent(place.addressComponents, "neighborhood");
     const state = getGoogleVenueAddressComponent(place.addressComponents, "administrative_area_level_1", "shortText");
     const postcode = getGoogleVenueAddressComponent(place.addressComponents, "postal_code");
+    if (postcode !== null && !isAustralianPostcode(postcode)) {
+      logger.warn("Google Places returned a malformed Australian postcode for a venue submission lookup", {
+        googlePlaceId,
+      });
+      return null;
+    }
     const existingVenue = await this.findExistingUserGoogleVenue(place);
 
     return {
@@ -9787,9 +9977,23 @@ export class BusinessService {
       publicVenueMetadata.set(venueId, metadata);
       return metadata;
     };
+    const submissionEvidencePresence = new Map<string, boolean>();
+    const hasSubmissionEvidence = (submissionId: string) => {
+      const cached = submissionEvidencePresence.get(submissionId);
+      if (cached !== undefined) {
+        return cached;
+      }
+      const present = this.repository.listSubmissionSourceEvidenceIds(submissionId).length > 0;
+      submissionEvidencePresence.set(submissionId, present);
+      return present;
+    };
     const addVenueMetadata = (record: PublicVenuePriceRecord): PublicVenuePriceRecord => ({
       ...record,
       ...getCachedVenueMetadata(record.venueId),
+      hasSourceLinkage: record.hasSourceLinkage || Boolean(record.sourceSubmissionId),
+      hasSourceEvidence: record.sourceSubmissionId
+        ? hasSubmissionEvidence(record.sourceSubmissionId)
+        : Boolean(record.hasSourceEvidence),
     });
     const allCurrentRecords = dedupePublicPriceRecords(records.map(addVenueMetadata))
       .sort((left, right) => {
@@ -10560,9 +10764,11 @@ export class BusinessService {
     const profile = this.getOrBuildBarProfile({ barId: selectedVenueId, name: venueName, suburb });
 
     if (accessLevel === "counter_staff") {
-      const recentActivity = this.repository
-        .listPintPointDrinkRecordsForVenue(selectedVenueId, 12)
-        .map((activity) => this.sanitizeVenuePintPointActivity(account, assignment, activity));
+      const recentActivity = this.config.PINT_POINTS_REWARDS_ENABLED
+        ? this.repository
+            .listPintPointDrinkRecordsForVenue(selectedVenueId, 12)
+            .map((activity) => this.sanitizeVenuePintPointActivity(account, assignment, activity))
+        : [];
       const counterBeers = this.repository
         .listBarBeers(selectedVenueId)
         .filter((beer) => beer.inStock)
@@ -10616,13 +10822,15 @@ export class BusinessService {
         paidVenueIntelligence: null,
         dailySpecialsPlanner: null,
         discounts: null,
-        pintPoints: {
-          today: null,
-          month: null,
-          recentActivity,
-          rewardThreshold: FREE_PINT_REWARD_POINTS,
-          copy: "Counter access records member purchases and rewards only. It cannot edit venue data or view private business analytics.",
-        },
+        pintPoints: this.config.PINT_POINTS_REWARDS_ENABLED
+          ? {
+              today: null,
+              month: null,
+              recentActivity,
+              rewardThreshold: FREE_PINT_REWARD_POINTS,
+              copy: "Counter access records member purchases and rewards only. It cannot edit venue data or view private business analytics.",
+            }
+          : null,
         posIntegration: null,
         monthlyReport: null,
         businessToolkit: null,
@@ -10759,19 +10967,25 @@ export class BusinessService {
       includeRecent: true,
       recentLimit: 10,
     });
-    const pintPointTodayStats = this.repository.getPintPointStatsForVenue({
-      venueId: selectedVenueId,
-      startIso: todayRange.startIso,
-      endIso: todayRange.endIso,
-    });
-    const pintPointMonthStats = this.repository.getPintPointStatsForVenue({
-      venueId: selectedVenueId,
-      startIso: analyticsMonthRange.startsAt,
-      endIso: analyticsMonthRange.endsAt,
-    });
-    const recentPintPointActivity = this.repository
-      .listPintPointDrinkRecordsForVenue(selectedVenueId, 12)
-      .map((activity) => this.sanitizeVenuePintPointActivity(account, assignment, activity));
+    const pintPointTodayStats = this.config.PINT_POINTS_REWARDS_ENABLED
+      ? this.repository.getPintPointStatsForVenue({
+          venueId: selectedVenueId,
+          startIso: todayRange.startIso,
+          endIso: todayRange.endIso,
+        })
+      : null;
+    const pintPointMonthStats = this.config.PINT_POINTS_REWARDS_ENABLED
+      ? this.repository.getPintPointStatsForVenue({
+          venueId: selectedVenueId,
+          startIso: analyticsMonthRange.startsAt,
+          endIso: analyticsMonthRange.endsAt,
+        })
+      : null;
+    const recentPintPointActivity = this.config.PINT_POINTS_REWARDS_ENABLED
+      ? this.repository
+          .listPintPointDrinkRecordsForVenue(selectedVenueId, 12)
+          .map((activity) => this.sanitizeVenuePintPointActivity(account, assignment, activity))
+      : [];
     const staffAssignments = this.repository
       .listVenueManagerAssignments({ venueId: selectedVenueId, activeOnly: false, limit: -1 })
       .filter((item) => item.accessLevel === "counter_staff" && ["active", "pending"].includes(item.status))
@@ -10855,13 +11069,15 @@ export class BusinessService {
       paidVenueIntelligence,
       dailySpecialsPlanner,
       discounts: discountSummary,
-      pintPoints: {
-        today: pintPointTodayStats,
-        month: pintPointMonthStats,
-        recentActivity: recentPintPointActivity,
-        rewardThreshold: FREE_PINT_REWARD_POINTS,
-        copy: "Pint Points count only paid alcoholic beverages. Free Pint Rewards do not earn another point.",
-      },
+      pintPoints: this.config.PINT_POINTS_REWARDS_ENABLED
+        ? {
+            today: pintPointTodayStats,
+            month: pintPointMonthStats,
+            recentActivity: recentPintPointActivity,
+            rewardThreshold: FREE_PINT_REWARD_POINTS,
+            copy: "Pint Points count only paid alcoholic beverages. Free Pint Rewards do not earn another point.",
+          }
+        : null,
       posIntegration,
       staffAssignments,
       staffPagination: {
@@ -12207,6 +12423,26 @@ export class BusinessService {
     return { mission, request };
   }
 
+  private assertCommercialEnrollmentOpen(): void {
+    if (!this.config.COMMERCIAL_LAUNCH_ENABLED) {
+      throw new AppError(
+        "New paid and introductory-trial enrollment is not open yet. Existing subscriptions and billing management remain available.",
+        503,
+        { publicCode: "COMMERCIAL_LAUNCH_DISABLED" },
+      );
+    }
+  }
+
+  private assertConsumerPaidEnrollmentOpen(): void {
+    if (!this.config.CONSUMER_PAID_ENROLLMENT_ENABLED) {
+      throw new AppError(
+        "New consumer paid enrollment is not included in this release. Existing subscriptions and billing management remain available.",
+        503,
+        { publicCode: "CONSUMER_PAID_ENROLLMENT_DISABLED" },
+      );
+    }
+  }
+
   async createCheckout(account: BusinessAccount, input: CheckoutInput) {
     this.requireCurrentLegalAcceptance(account);
     if (this.repository.hasDeletionLock(account.id)) {
@@ -12216,8 +12452,30 @@ export class BusinessService {
       throw new AppError("Please confirm you are 18+ before starting checkout.", 403);
     }
 
-    const priceId = input.plan === "monthly" ? this.config.STRIPE_PRICE_MONTHLY : this.config.STRIPE_PRICE_YEARLY;
-    const subscriptionStatus: SubscriptionStatus = input.plan === "monthly" ? "premium_monthly" : "premium_yearly";
+    this.assertConsumerPaidEnrollmentOpen();
+
+    if (
+      account.stripeCustomerId &&
+      (
+        account.stripePaidSubscriptionStatus === "premium_monthly" ||
+        account.stripePaidSubscriptionStatus === "premium_yearly"
+      )
+    ) {
+      const portal = await this.createStripeBillingPortalSession(
+        account.stripeCustomerId,
+        "/account.html?billing=returned",
+      );
+      return {
+        ...portal,
+        mode: "portal",
+        checkoutUrl: portal.portalUrl,
+        message: "Your Stripe billing profile already exists. Manage, recover, or change it in the billing portal.",
+      };
+    }
+
+    const requestedPriceId = input.plan === "monthly"
+      ? this.config.STRIPE_PRICE_MONTHLY
+      : this.config.STRIPE_PRICE_YEARLY;
 
     this.trackEvent(account, {
       anonymousSessionId: null,
@@ -12236,20 +12494,35 @@ export class BusinessService {
       };
     }
 
-    if (!this.config.STRIPE_SECRET_KEY || !priceId) {
+    if (!this.config.STRIPE_SECRET_KEY || !requestedPriceId) {
       throw new AppError("Stripe checkout is not configured for this plan.", 503);
     }
-    if (account.stripeCustomerId) {
-      const portal = await this.createStripeBillingPortalSession(
-        account.stripeCustomerId,
-        "/account.html?billing=returned",
-      );
+
+    const reservationNow = nowIso();
+    const reservation = this.repository.claimBillingCheckoutReservation({
+      subjectType: "consumer",
+      subjectId: account.id,
+      productKey: `consumer:${input.plan}`,
+      reservationToken: crypto.randomUUID(),
+      expiresAt: new Date(Date.parse(reservationNow) + STRIPE_CHECKOUT_RESERVATION_TTL_MS).toISOString(),
+      now: reservationNow,
+    });
+    if (reservation.checkoutUrl) {
       return {
-        ...portal,
-        mode: "portal",
-        checkoutUrl: portal.portalUrl,
-        message: "Your Stripe billing profile already exists. Manage, recover, or change it in the billing portal.",
+        mode: "stripe",
+        checkoutUrl: reservation.checkoutUrl,
+        message: "Resume the existing Stripe Checkout session. A second subscription session was not created.",
       };
+    }
+    const effectivePlan = reservation.productKey === "consumer:yearly" ? "yearly" : "monthly";
+    const priceId = effectivePlan === "monthly"
+      ? this.config.STRIPE_PRICE_MONTHLY
+      : this.config.STRIPE_PRICE_YEARLY;
+    const subscriptionStatus: SubscriptionStatus = effectivePlan === "monthly"
+      ? "premium_monthly"
+      : "premium_yearly";
+    if (!priceId) {
+      throw new AppError("The reserved Stripe checkout plan is not configured.", 503);
     }
 
     const successUrl = new URL("/account.html?checkout=success", this.config.PUBLIC_BASE_URL);
@@ -12262,7 +12535,7 @@ export class BusinessService {
         Authorization: `Bearer ${this.config.STRIPE_SECRET_KEY}`,
         "Content-Type": "application/x-www-form-urlencoded",
         "Idempotency-Key": crypto.createHash("sha256")
-          .update(`consumer-checkout:${account.id}:${input.plan}:${Math.floor(Date.now() / (30 * 60_000))}`)
+          .update(`consumer-checkout:${reservation.reservationToken}`)
           .digest("hex"),
       },
       body: formEncode({
@@ -12270,6 +12543,7 @@ export class BusinessService {
         success_url: successUrlWithSession,
         cancel_url: cancelUrl,
         "automatic_tax[enabled]": "true",
+        expires_at: String(Math.floor(Date.parse(reservation.expiresAt) / 1000)),
         "line_items[0][price]": priceId,
         "line_items[0][quantity]": "1",
         "metadata[user_id]": account.id,
@@ -12277,11 +12551,17 @@ export class BusinessService {
         "subscription_data[metadata][billing_context]": "consumer",
         "subscription_data[metadata][user_id]": account.id,
         "subscription_data[metadata][subscription_status]": subscriptionStatus,
-        customer_email: account.email,
+        ...(account.stripeCustomerId
+          ? { customer: account.stripeCustomerId }
+          : { customer_email: account.email }),
       }),
     });
 
-    const payload = (await response.json().catch(() => null)) as { url?: string; error?: { message?: string } } | null;
+    const payload = (await response.json().catch(() => null)) as {
+      id?: string;
+      url?: string;
+      error?: { message?: string };
+    } | null;
 
     if (!response.ok || !payload?.url) {
       throw new ExternalServiceError(describeStripeCheckoutFailure(response.status, payload?.error?.message), {
@@ -12290,9 +12570,17 @@ export class BusinessService {
       });
     }
 
+    const finalizedReservation = this.repository.finalizeBillingCheckoutReservation({
+      subjectType: "consumer",
+      subjectId: account.id,
+      reservationToken: reservation.reservationToken,
+      stripeCheckoutSessionId: payload.id ?? null,
+      checkoutUrl: payload.url,
+      now: nowIso(),
+    });
     return {
       mode: "stripe",
-      checkoutUrl: payload.url,
+      checkoutUrl: finalizedReservation.checkoutUrl!,
     };
   }
 
@@ -12595,13 +12883,213 @@ export class BusinessService {
   async createBarTierCheckout(account: BusinessAccount, venueId: string, input: BarTierCheckoutInput) {
     this.requireVerifiedBarAccount(account);
     const assignment = this.requireAssignedVenue(account, venueId);
-    const profile = this.ensureBarProfile({
+    let profile = this.ensureBarProfile({
       barId: venueId,
       name: assignment?.venueName ?? this.repository.getBarProfile(venueId)?.name ?? venueId,
       suburb: assignment?.suburb ?? this.repository.getBarProfile(venueId)?.suburb ?? null,
     });
+
+    this.assertCommercialEnrollmentOpen();
+
+    const billingSubjectVenueId = this.repository.getCanonicalVenueId(venueId);
+    let venueTrialEverClaimed = this.repository.hasVenueIntroTrialEverClaimed(venueId);
+    const priorReservation = this.repository.getBillingCheckoutReservation(
+      "venue",
+      billingSubjectVenueId,
+    );
+    if (
+      !venueTrialEverClaimed &&
+      priorReservation &&
+      /^venue:pro:trial:(30|60)$/.test(priorReservation.productKey) &&
+      Date.parse(priorReservation.expiresAt) <= Date.now()
+    ) {
+      if (!priorReservation.stripeCheckoutSessionId) {
+        throw new AppError(
+          "The previous venue trial checkout could not be reconciled safely. No second trial was created; contact support to resolve the original checkout.",
+          409,
+          { publicCode: "VENUE_TRIAL_RECONCILIATION_REQUIRED" },
+        );
+      }
+      if (!this.config.STRIPE_SECRET_KEY) {
+        throw new AppError("Stripe trial reconciliation is not configured.", 503, {
+          publicCode: "VENUE_TRIAL_RECONCILIATION_UNAVAILABLE",
+        });
+      }
+
+      // Stripe event.created has second-level precision. Anchor the authority
+      // read one full second in the past so any cancellation/update racing the
+      // GET receives a newer cursor and cannot be overwritten by this snapshot.
+      const priorAuthoritySnapshotCursor = new Date(
+        (Math.floor(Date.now() / 1_000) - 1) * 1_000,
+      ).toISOString();
+      const priorResponse = await fetchWithTimeout(
+        `https://api.stripe.com/v1/checkout/sessions/${encodeURIComponent(priorReservation.stripeCheckoutSessionId)}?expand%5B%5D=subscription`,
+        {
+          method: "GET",
+          headers: { Authorization: `Bearer ${this.config.STRIPE_SECRET_KEY}` },
+        },
+      );
+      const priorPayload = (await priorResponse.json().catch(() => null)) as StripeCheckoutSession | null;
+      if (!priorResponse.ok || !priorPayload) {
+        throw new ExternalServiceError(
+          "The previous venue trial checkout could not be confirmed with Stripe. No second trial was created.",
+          { status: priorResponse.status, message: priorPayload?.error?.message },
+        );
+      }
+
+      const priorMetadata = priorPayload.metadata ?? {};
+      const priorVenueId = priorMetadata.venue_id;
+      const priorBillingContext = priorMetadata.billing_context;
+      if (
+        (priorBillingContext !== "venue" && priorBillingContext !== "bar") ||
+        !priorVenueId ||
+        this.repository.getCanonicalVenueId(priorVenueId) !== billingSubjectVenueId
+      ) {
+        this.auditSecurity({
+          actor: account,
+          action: "stripe_venue_trial_reconciliation_mismatch",
+          targetType: "venue",
+          targetId: venueId,
+          metadata: {
+            sessionPrefix: priorReservation.stripeCheckoutSessionId.slice(0, 12),
+            billingContext: priorBillingContext ?? null,
+            venueIdPresent: Boolean(priorVenueId),
+          },
+        });
+        throw new AppError(
+          "The previous venue trial checkout did not match this venue. No second trial was created.",
+          409,
+          { publicCode: "VENUE_TRIAL_RECONCILIATION_MISMATCH" },
+        );
+      }
+
+      if (priorPayload.status === "open") {
+        const checkoutUrl = priorPayload.url ?? priorReservation.checkoutUrl;
+        if (!checkoutUrl) {
+          throw new AppError(
+            "The previous venue trial checkout is still open but has no safe resume URL. No second trial was created.",
+            409,
+            { publicCode: "VENUE_TRIAL_RECONCILIATION_REQUIRED" },
+          );
+        }
+        return {
+          mode: "stripe",
+          checkoutUrl,
+          message: "Resume the existing Stripe Checkout session. A second venue trial was not created.",
+        };
+      }
+
+      if (priorPayload.status === "complete") {
+        const reconciledAt = nowIso();
+        this.repository.markVenueIntroTrialEverClaimed(priorVenueId, reconciledAt);
+        venueTrialEverClaimed = true;
+
+        const priorSubscription = objectFromUnknown(priorPayload.subscription);
+        const priorSubscriptionId = stripeObjectId(priorPayload.subscription);
+        const priorCustomerId =
+          stripeObjectId(priorPayload.customer) ?? stripeObjectId(priorSubscription.customer);
+        const priorSubscriptionStatus = stringOrNull(priorSubscription.status);
+        const rawPriorTier = priorMetadata.venue_membership_tier;
+        const priorTier: BarMembershipTier | null =
+          rawPriorTier === "pro" || rawPriorTier === "plus" ? "pro" : null;
+
+        if (!priorSubscriptionId || !priorSubscriptionStatus || !priorTier) {
+          throw new AppError(
+            "The previous venue trial completed but its Stripe subscription is not yet safe to reconcile. No new checkout was created.",
+            409,
+            { publicCode: "VENUE_TRIAL_RECONCILIATION_REQUIRED" },
+          );
+        }
+
+        const grantEligible = isStripeGrantEligibleStatus(priorSubscriptionStatus);
+        const reconciledTier: BarMembershipTier = grantEligible ? priorTier : "basic";
+        profile = this.repository.updateBarSubscription({
+          barId: priorVenueId,
+          membershipTier: reconciledTier,
+          stripePaidMembershipTier: priorTier,
+          stripeCustomerId: priorCustomerId,
+          stripeSubscriptionId: priorSubscriptionId,
+          subscriptionStatus: priorSubscriptionStatus,
+          subscriptionCurrentPeriodEnd: stripePeriodEndIso(priorSubscription),
+          now: reconciledAt,
+          stripeEventCreatedAt: priorAuthoritySnapshotCursor,
+          ...tierFlags(reconciledTier),
+        });
+        if (
+          profile.stripeEventCreatedAt !== priorAuthoritySnapshotCursor ||
+          profile.stripeSubscriptionId !== priorSubscriptionId ||
+          profile.subscriptionStatus !== priorSubscriptionStatus ||
+          profile.membershipTier !== reconciledTier
+        ) {
+          throw new AppError(
+            "Venue billing changed while the previous trial was being reconciled. Refresh the venue portal; no new checkout was created.",
+            409,
+            { publicCode: "VENUE_TRIAL_RECONCILIATION_CHANGED" },
+          );
+        }
+        this.auditSecurity({
+          actor: account,
+          action: "stripe_venue_trial_reconciled",
+          targetType: "venue",
+          targetId: priorVenueId,
+          metadata: {
+            sessionPrefix: priorReservation.stripeCheckoutSessionId.slice(0, 12),
+            subscriptionStatus: priorSubscriptionStatus,
+          },
+        });
+
+        if (hasManageableStripeSubscription(priorSubscriptionId, priorSubscriptionStatus)) {
+          if (!priorCustomerId) {
+            throw new AppError(
+              "The previous venue trial is active but its Stripe customer is not yet safe to manage. No new checkout was created.",
+              409,
+              { publicCode: "VENUE_TRIAL_RECONCILIATION_REQUIRED" },
+            );
+          }
+          const portal = await this.createStripeBillingPortalSession(
+            priorCustomerId,
+            `/venue-portal.html?venueId=${encodeURIComponent(venueId)}&billing=returned`,
+          );
+          return {
+            ...portal,
+            mode: "portal",
+            checkoutUrl: portal.portalUrl,
+            message: "The existing venue trial was recovered from Stripe. Manage it in the billing portal.",
+          };
+        }
+      } else if (priorPayload.status !== "expired") {
+        throw new AppError(
+          "The previous venue trial has an unknown Stripe state. No second trial was created.",
+          409,
+          { publicCode: "VENUE_TRIAL_RECONCILIATION_REQUIRED" },
+        );
+      }
+    }
+
+    if (
+      profile.stripeCustomerId &&
+      hasManageableStripeSubscription(profile.stripeSubscriptionId, profile.subscriptionStatus)
+    ) {
+      const portal = await this.createStripeBillingPortalSession(
+        profile.stripeCustomerId,
+        `/venue-portal.html?venueId=${encodeURIComponent(venueId)}&billing=returned`,
+      );
+      return {
+        ...portal,
+        mode: "portal",
+        checkoutUrl: portal.portalUrl,
+        message: "This venue already has a Stripe billing profile. Manage or recover it in the billing portal.",
+      };
+    }
+
     const priceId = this.config.STRIPE_PRO_PRICE_ID;
     const flags = tierFlags(input.tier);
+    const introductoryTrialDays =
+      profile.stripeCustomerId ||
+      profile.stripeSubscriptionId ||
+      venueTrialEverClaimed
+        ? 0
+        : this.config.VENUE_PRO_TRIAL_DAYS;
 
     this.trackEvent(account, {
       anonymousSessionId: null,
@@ -12617,6 +13105,7 @@ export class BusinessService {
         barId: venueId,
         membershipTier: input.tier,
         subscriptionStatus: "active_demo",
+        subscriptionCurrentPeriodEnd: null,
         now: nowIso(),
         ...flags,
       });
@@ -12643,18 +13132,29 @@ export class BusinessService {
     if (!this.config.STRIPE_SECRET_KEY || !priceId) {
       throw new AppError("Stripe checkout is not configured for this venue tier.", 503);
     }
-    if (profile.stripeCustomerId) {
-      const portal = await this.createStripeBillingPortalSession(
-        profile.stripeCustomerId,
-        `/venue-portal.html?venueId=${encodeURIComponent(venueId)}&billing=returned`,
-      );
+
+    const reservationNow = nowIso();
+    const reservation = this.repository.claimBillingCheckoutReservation({
+      subjectType: "venue",
+      subjectId: billingSubjectVenueId,
+      productKey: introductoryTrialDays > 0
+        ? `venue:pro:trial:${introductoryTrialDays}`
+        : "venue:pro:paid",
+      reservationToken: crypto.randomUUID(),
+      expiresAt: new Date(Date.parse(reservationNow) + STRIPE_CHECKOUT_RESERVATION_TTL_MS).toISOString(),
+      now: reservationNow,
+    });
+    if (reservation.checkoutUrl) {
       return {
-        ...portal,
-        mode: "portal",
-        checkoutUrl: portal.portalUrl,
-        message: "This venue already has a Stripe billing profile. Manage or recover it in the billing portal.",
+        mode: "stripe",
+        checkoutUrl: reservation.checkoutUrl,
+        message: "Resume the existing Stripe Checkout session. A second venue subscription session was not created.",
       };
     }
+    const reservedTrialMatch = /^venue:pro:trial:(30|60)$/.exec(reservation.productKey);
+    const reservedTrialDays = reservedTrialMatch
+      ? Number.parseInt(reservedTrialMatch[1]!, 10)
+      : 0;
 
     const successUrl = new URL(`/venue-portal?checkout=success&venueId=${encodeURIComponent(venueId)}`, this.config.PUBLIC_BASE_URL).toString();
     const cancelUrl = new URL(`/venue-portal?checkout=cancelled&venueId=${encodeURIComponent(venueId)}`, this.config.PUBLIC_BASE_URL).toString();
@@ -12664,7 +13164,7 @@ export class BusinessService {
         Authorization: `Bearer ${this.config.STRIPE_SECRET_KEY}`,
         "Content-Type": "application/x-www-form-urlencoded",
         "Idempotency-Key": crypto.createHash("sha256")
-          .update(`venue-checkout:${venueId}:${input.tier}:${Math.floor(Date.now() / (30 * 60_000))}`)
+          .update(`venue-checkout:${reservation.reservationToken}`)
           .digest("hex"),
       },
       body: formEncode({
@@ -12672,6 +13172,7 @@ export class BusinessService {
         success_url: successUrl,
         cancel_url: cancelUrl,
         "automatic_tax[enabled]": "true",
+        expires_at: String(Math.floor(Date.parse(reservation.expiresAt) / 1000)),
         billing_address_collection: "required",
         "tax_id_collection[enabled]": "true",
         "line_items[0][price]": priceId,
@@ -12684,23 +13185,52 @@ export class BusinessService {
         "subscription_data[metadata][user_id]": account.id,
         "subscription_data[metadata][venue_id]": venueId,
         "subscription_data[metadata][venue_membership_tier]": input.tier,
-        customer_email: account.email,
+        ...(reservedTrialDays > 0
+          ? {
+              "subscription_data[trial_period_days]": String(reservedTrialDays),
+              payment_method_collection: this.config.VENUE_PRO_TRIAL_REQUIRE_PAYMENT_METHOD
+                ? "always"
+                : "if_required",
+              ...(!this.config.VENUE_PRO_TRIAL_REQUIRE_PAYMENT_METHOD
+                ? {
+                    "subscription_data[trial_settings][end_behavior][missing_payment_method]": "cancel",
+                  }
+                : {}),
+            }
+          : {}),
+        ...(profile.stripeCustomerId
+          ? { customer: profile.stripeCustomerId }
+          : { customer_email: account.email }),
       }),
     });
 
-    const payload = (await response.json().catch(() => null)) as { url?: string; error?: { message?: string } } | null;
+    const payload = (await response.json().catch(() => null)) as {
+      id?: string;
+      url?: string;
+      error?: { message?: string };
+    } | null;
 
-    if (!response.ok || !payload?.url) {
+    if (!response.ok || !payload?.id || !payload.url) {
       throw new ExternalServiceError(describeStripeCheckoutFailure(response.status, payload?.error?.message), {
         status: response.status,
         message: payload?.error?.message,
       });
     }
 
+    const finalizedReservation = this.repository.finalizeBillingCheckoutReservation({
+      subjectType: "venue",
+      subjectId: billingSubjectVenueId,
+      reservationToken: reservation.reservationToken,
+      stripeCheckoutSessionId: payload.id,
+      checkoutUrl: payload.url,
+      now: nowIso(),
+    });
     return {
       mode: "stripe",
-      checkoutUrl: payload.url,
-      message: "Stripe checkout created for this venue tier.",
+      checkoutUrl: finalizedReservation.checkoutUrl!,
+      message: reservedTrialDays > 0
+        ? `${reservedTrialDays}-day venue Pro trial checkout created.`
+        : "Stripe checkout created for this venue tier.",
     };
   }
 
@@ -12708,6 +13238,7 @@ export class BusinessService {
     if (!this.config.DEMO_BILLING_MODE) {
       throw new AppError("Demo billing is not enabled.", 503);
     }
+    this.assertConsumerPaidEnrollmentOpen();
 
     const now = nowIso();
     const status: SubscriptionStatus = plan === "monthly" ? "premium_monthly" : "premium_yearly";
@@ -13004,13 +13535,17 @@ export class BusinessService {
           return;
         }
         const flags = tierFlags(barMembershipTier);
+        const resolvedSubscriptionStatus = isStripeGrantEligibleStatus(authoritativeStatus)
+          ? authoritativeStatus
+          : "active";
         this.repository.updateBarSubscription({
           barId,
           membershipTier: barMembershipTier,
           stripePaidMembershipTier: barMembershipTier,
           stripeCustomerId: customer,
           stripeSubscriptionId: subscriptionId,
-          subscriptionStatus: "active",
+          subscriptionStatus: resolvedSubscriptionStatus,
+          subscriptionCurrentPeriodEnd: stripePeriodEndIso(object.subscription),
           now: nowIso(),
           stripeEventCreatedAt: eventCreatedAt,
           ...flags,
@@ -13027,7 +13562,7 @@ export class BusinessService {
           action: "stripe_subscription_update",
           targetType: "venue",
           targetId: barId,
-          metadata: { eventType: event.type, tier: barMembershipTier, status: "active" },
+          metadata: { eventType: event.type, tier: barMembershipTier, status: resolvedSubscriptionStatus },
         });
         return;
       }
@@ -13125,6 +13660,7 @@ export class BusinessService {
           stripeCustomerId: customer,
           stripeSubscriptionId: subscriptionId,
           subscriptionStatus: shouldDowngrade ? stripeStatus ?? "inactive_or_unknown" : stripeStatus,
+          subscriptionCurrentPeriodEnd: shouldDowngrade ? null : premiumUntil,
           now: nowIso(),
           stripeEventCreatedAt: eventCreatedAt,
           ...flags,

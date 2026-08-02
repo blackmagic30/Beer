@@ -82,6 +82,20 @@ describe("business route hardening", () => {
     expect(source).toContain('router.get("/source-evidence/:id", sourceEvidenceLimiter');
   });
 
+  it("validates bounded venue and month params before monthly report exports", () => {
+    const source = routesSource();
+    const exportRoute = source.slice(
+      source.indexOf('router.get("/venue-portal/:venueId/reports/:month/export"'),
+      source.indexOf('router.get("/venue-portal/:venueId/reports/:month"'),
+    );
+
+    expect(exportRoute).toContain(
+      'parseWithSchema(monthlyReportParamsSchema, req.params, "Invalid monthly report export request")',
+    );
+    expect(exportRoute).not.toContain("String(req.params.venueId");
+    expect(exportRoute).not.toContain("String(req.params.month");
+  });
+
   it("rate limits admin source-ingestion, OCR, review, and lookup routes", () => {
     const source = adminRoutesSource();
 

@@ -2,6 +2,11 @@
 
 Status date: 14 July 2026
 
+> For the current full web plus first iOS launch, follow
+> [`docs/production-launch-runbook.md`](docs/production-launch-runbook.md) in
+> order. This checklist also retains Android requirements; the runbook is
+> controlling where the two differ.
+
 Checkboxes marked complete are repository-backed. Unchecked items require release credentials, live provider configuration, device evidence, or store-console work.
 
 ## Shared product and safety
@@ -13,18 +18,19 @@ Checkboxes marked complete are repository-backed. Unchecked items require releas
 - [x] Native clients contain no service-role or private provider secret.
 - [ ] Product owner approves final icon, subtitle, category, description, keywords/tags, and age rating.
 - [ ] Support URL, marketing URL, privacy-policy URL, terms URL, and deletion instructions are live and store-console verified.
-- [ ] Reviewer account/instructions cover member, contributor, counter-staff, and venue-manager paths without exposing production personal data.
+- [ ] Reviewer account/instructions cover only the roles present in each submitted binary without exposing production personal data. For the first iOS release, that is member, contributor, and assigned venue-Free manager only.
 
 ## Authentication
 
 - [x] Email/password uses Supabase Auth REST and scoped Pint Path session exchange.
-- [x] Provider login uses authorization-code PKCE and validates the native callback destination.
+- [x] Android provider login uses authorization-code PKCE and validates the native callback destination.
+- [x] The first-release iOS target compiles out Google/Apple social login and declares no custom callback scheme.
 - [x] Refresh and logout cover both Supabase and Pint Path sessions.
 - [x] Consent source/version fields match the backend contract.
-- [ ] Add `pintpath://auth-callback` to the production Supabase redirect allow list.
-- [ ] Complete and verify production Google and Apple provider-console settings.
-- [ ] Test success/cancel/error/replay/interruption on signed physical devices.
-- [ ] Confirm whether Apple requires Sign in with Apple based on enabled third-party login choices and final review policy.
+- [ ] Add `pintpath://auth-callback` to the production Supabase redirect allow list only if the Android app with provider login is released.
+- [ ] Complete and verify production Google and Apple provider-console settings for the web app and any Android release that enables provider login.
+- [ ] Test email auth, confirmation/recovery browser return, error, replay, and interruption on signed iOS physical devices; test the provider matrix separately for Android if it is released.
+- [ ] Scan the signed iOS archive and prove there is no Sign in with Apple entitlement, native third-party login, or custom URL scheme.
 
 ## Privacy and security
 
@@ -55,7 +61,8 @@ Checkboxes marked complete are repository-backed. Unchecked items require releas
 - [ ] Set the Apple development team, distribution certificate, provisioning profile, and final App Store record.
 - [ ] Validate final app icon and launch appearance on supported devices.
 - [ ] Create a signed archive, export a signed IPA with private signing/export options, scan it for embedded private secrets/debug configuration, hash it, run Organizer validation, upload to TestFlight, and clear all warnings.
-- [ ] Run the full device/accessibility/provider matrix on minimum-supported iOS 17 and the current iOS release; include uninstall/reinstall and encrypted device-backup/restore or device-transfer session checks.
+- [ ] Run the full device/accessibility/email-authentication matrix on minimum-supported iOS 17 and the current iOS release; include uninstall/reinstall and encrypted device-backup/restore or device-transfer session checks.
+- [ ] Prove the signed iOS archive contains no Pro/trial/billing, external purchase, counter/admin, happy-hour, reward, or social-login surface.
 - [ ] Provide screenshots, review notes, demo account, privacy answers, export-compliance answers, and phased-release owner.
 
 ## Android submission

@@ -112,6 +112,22 @@ CREATE INDEX IF NOT EXISTS idx_accounts_email
 CREATE INDEX IF NOT EXISTS idx_accounts_stripe_customer
   ON accounts (stripe_customer_id);
 
+CREATE TABLE IF NOT EXISTS billing_checkout_reservations (
+  subject_type TEXT NOT NULL CHECK (subject_type IN ('consumer', 'venue')),
+  subject_id TEXT NOT NULL,
+  product_key TEXT NOT NULL,
+  reservation_token TEXT NOT NULL,
+  stripe_checkout_session_id TEXT,
+  checkout_url TEXT,
+  expires_at TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (subject_type, subject_id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_billing_checkout_reservation_token
+  ON billing_checkout_reservations (reservation_token);
+
 CREATE TABLE IF NOT EXISTS profiles (
   id TEXT PRIMARY KEY,
   public_account_id TEXT UNIQUE,
@@ -610,6 +626,9 @@ CREATE TABLE IF NOT EXISTS venue_price_records (
   confidence TEXT NOT NULL DEFAULT 'user_reported_pending',
   source_type TEXT NOT NULL,
   source_submission_id TEXT,
+  source_ingestion_id TEXT,
+  source_evidence_reference TEXT,
+  source_evidence_verified_at TEXT,
   last_verified_at TEXT NOT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
@@ -624,6 +643,14 @@ CREATE INDEX IF NOT EXISTS idx_venue_price_records_feed
 
 CREATE INDEX IF NOT EXISTS idx_venue_price_records_beer
   ON venue_price_records (normalized_beer_id, last_verified_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_venue_price_records_source_ingestion
+  ON venue_price_records (source_ingestion_id)
+  WHERE source_ingestion_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_venue_price_records_source_evidence_reference
+  ON venue_price_records (source_evidence_reference)
+  WHERE source_evidence_reference IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS missions (
   id TEXT PRIMARY KEY,
@@ -763,7 +790,7 @@ CREATE TABLE IF NOT EXISTS account_privacy_settings (
   venue_report_inclusion_enabled INTEGER NOT NULL DEFAULT 0,
   product_research_enabled INTEGER NOT NULL DEFAULT 0,
   email_updates_enabled INTEGER NOT NULL DEFAULT 0,
-  consent_version TEXT NOT NULL DEFAULT '2026-07-20',
+  consent_version TEXT NOT NULL DEFAULT '2026-07-28',
   consented_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -978,10 +1005,12 @@ CREATE TABLE IF NOT EXISTS venue_profiles (
   stripe_customer_id TEXT,
   stripe_subscription_id TEXT,
   subscription_status TEXT,
+  subscription_current_period_end TEXT,
   stripe_paid_membership_tier TEXT,
   tier_manual_override INTEGER NOT NULL DEFAULT 0,
   accepts_pint_path_codes INTEGER NOT NULL DEFAULT 0,
   stripe_event_created_at TEXT,
+  intro_trial_ever_claimed INTEGER NOT NULL DEFAULT 0,
   pos_webhook_token_version INTEGER NOT NULL DEFAULT 1,
   pos_previous_token_version INTEGER,
   pos_previous_token_valid_until TEXT,

@@ -468,6 +468,8 @@ describe("account page shell", () => {
     expect(html).toContain("checkoutReconcileStarted");
     expect(html).toContain("async function resumeCheckoutIfRequested");
     expect(html).toContain("async function reconcileCheckoutReturnIfNeeded");
+    expect(html).toContain("if (!CONSUMER_PAID_ENROLLMENT_ENABLED)");
+    expect(html).toContain("Existing subscriptions can still be managed or cancelled from Account.");
     expect(html).toContain('MelbBeerBusiness.apiFetch("/api/business/billing/checkout"');
     expect(html).toContain('MelbBeerBusiness.apiFetch("/api/business/billing/checkout/reconcile"');
     expect(html).toContain("Confirm you are 18+ on this account before starting checkout.");
@@ -498,7 +500,7 @@ describe("account page shell", () => {
     expect(feedback).toContain('id="feedbackForm"');
     expect(feedback).toContain("Tell us what you need, or ask about joining as a venue.");
     expect(feedback).toContain("venue_partner_interest");
-    expect(feedback).toContain("Account deletion starts as a review request.");
+    expect(feedback).toContain("Schedule deletion from your account.");
     expect(feedback).toContain("Messages enter the private admin support queue with assignment and resolution tracking.");
     expect(feedback).toContain("Do not include passwords, card numbers, private keys, or ID documents");
     expect(feedback).toContain('MelbBeerBusiness.renderNav(isVenueSupport ? "venue-support" : "feedback")');
@@ -826,7 +828,7 @@ describe("account page shell", () => {
     expect(script).not.toContain("privacy_accepted:");
     expect(script).toContain("window.MELB_BEER_BOT_VIEWER_CONFIG?.business?.legalPolicyVersion");
     expect(script).not.toContain("before continuing with social sign-in");
-    expect(script).toContain('|| "2026-07-20"');
+    expect(script).toContain('|| "2026-07-28"');
     expect(script).toContain("options.applyPendingLegalAcceptance ? getPendingLegalAcceptance() : null");
     expect(script).toContain('consentSource: "web_oauth"');
     expect(script).toContain("LEGAL_ACCEPTANCE_MAX_AGE_MS");
@@ -970,7 +972,7 @@ describe("account page shell", () => {
     expect(script).toContain("async function clearLocalSubmissionDeviceData");
     expect(script).toContain("submission?.ownerAccountId === normalizedAccountId");
     expect(accountHtml()).toContain("await MelbBeerBusiness.clearLocalSubmissionDeviceData(deletionAccountId)");
-    expect(accountHtml()).toContain("clears private submission drafts, exact location proof, and queued evidence from this device now");
+    expect(accountHtml()).toContain("Private submission drafts, exact location proof, and queued evidence will be cleared from this device now");
     expect(html).toContain("window.MelbBeerBusiness?.isVenueManagerContext?.()");
     expect(html).toContain("window.MelbBeerBusiness?.canUseVenuePortalContext?.()");
     expect(html).toContain('document.querySelectorAll("[data-auth-required]")');
@@ -1420,6 +1422,8 @@ describe("account page shell", () => {
     expect(html.match(/exchangeCodeForSession\(/g)).toHaveLength(1);
     expect(html).toContain("callbackFlowState = MelbBeerBusiness.peekAuthFlowState()");
     expect(html).toContain('callbackFlowState?.kind !== "oauth"');
+    expect(html).toContain("callbackFlowNonce = callbackFlowState?.nonce || MelbBeerBusiness.createAuthFlowNonce()");
+    expect(html).not.toContain("callbackFlowNonce = isRecoveryResult");
     expect(html).toContain("client.auth.setSession({");
     expect(html).toContain("data.session.refresh_token");
     expect(html).toContain("authFlowNonce: callbackAuthFlowNonce()");
@@ -1443,6 +1447,12 @@ describe("account page shell", () => {
     expect(html).toContain("MelbBeerBusiness.consumeSensitiveAuthReturnPath()");
     expect(html).not.toContain("If this takes more than a moment");
     expect(html).not.toContain("service_role");
+
+    const callbackCleanupIndex = html.lastIndexOf("MelbBeerBusiness.clearSupabaseOAuthFlowStorage();");
+    expect(callbackCleanupIndex).toBeGreaterThan(
+      html.indexOf('throw new Error("No secure sign-in result was returned.'),
+    );
+    expect(callbackCleanupIndex).toBeLessThan(html.indexOf("await finishCallbackLogin(callbackAuthFlowNonce())"));
   });
 
   it("keeps email signup acceptance through immediate, confirmed-email, and cross-device flows", () => {
@@ -1516,8 +1526,8 @@ describe("account page shell", () => {
       nonce: "test-uuid",
       returnTo: "/submit.html",
       kind: "oauth",
-      provider: "google",
     });
+    expect(JSON.parse(harness.localStorage.get("pintPathAuthFlow") || "{}")).not.toHaveProperty("provider");
   });
 
   it("clears consent when Supabase rejects email signup or OAuth before redirect", async () => {
@@ -1710,7 +1720,7 @@ describe("account page shell", () => {
 
     expect(app).toContain("legalPolicyVersion: publicConfig.legalPolicyVersion");
     expect(script).toContain("window.MELB_BEER_BOT_VIEWER_CONFIG?.business?.legalPolicyVersion");
-    expect(script).toContain('|| "2026-07-20"');
+    expect(script).toContain('|| "2026-07-28"');
   });
 
   it("hydrates HttpOnly sessions once and clears revoked provider sessions locally", () => {
@@ -1737,7 +1747,7 @@ describe("account page shell", () => {
     expect(terms).toContain("scrape protected data");
     expect(terms).toContain("Display names/usernames must be unique");
     expect(terms).toContain("We do not tolerate rude or discriminatory names");
-    expect(terms).toContain("Last updated: 20 July 2026");
+    expect(terms).toContain("Last updated: 28 July 2026");
     expect(terms).toContain("Isaac William De Worsop");
     expect(terms).toContain("ABN 80 319 578 329");
     expect(terms).toContain("WOTSO, Level 3, 11–19 Bank Place, Melbourne VIC 3000, Australia");
@@ -1748,7 +1758,7 @@ describe("account page shell", () => {
     expect(terms).not.toContain("Beta legal-review notice");
     expect(terms).not.toContain("before launch");
     expect(privacy).toContain("Privacy Policy");
-    expect(privacy).toContain("Last updated: 20 July 2026");
+    expect(privacy).toContain("Last updated: 28 July 2026");
     expect(privacy).toContain("Plain-English beta summary");
     expect(privacy).toContain("Service providers and integrations");
     expect(privacy).toContain("Venue reports are aggregate-only");
@@ -1767,7 +1777,7 @@ describe("account page shell", () => {
     expect(feedback).toContain("ABN 80 319 578 329");
     expect(feedback).toContain("WOTSO, Level 3, 11–19 Bank Place");
     expect(feedback).toContain('href="mailto:admin@pintpath.au"');
-    expect(account).toContain("Pint Path updated these policies on 20 July 2026");
+    expect(account).toContain("Pint Path updated these policies on 28 July 2026");
     expect(account).not.toContain("Pint Path updated these policies on 12 July 2026");
     expect(script).toContain("Pint Path · ABN 80 319 578 329");
     expect(script).toContain('href="mailto:admin@pintpath.au"');
@@ -1844,7 +1854,7 @@ describe("account page shell", () => {
     expect(html).toContain('id="dataRequestForm"');
     expect(html).toContain('id="downloadAccountDataButton"');
     expect(html).toContain('id="requestAccountDeletionButton"');
-    expect(html).toContain("Deletion is a review request, not an instant switch.");
+    expect(html).toContain("Scheduling deletion starts a seven-day cancellation window.");
     expect(html).toContain("It includes exact upload coordinates while they remain inside the review and appeal retention window");
     expect(html).toContain("private evidence files are listed but not embedded");
     expect(html).not.toContain('id="requestForm"');

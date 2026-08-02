@@ -1,5 +1,9 @@
 # Pint Path Production Checklist
 
+> For the current full web plus iOS launch, follow
+> [`docs/production-launch-runbook.md`](docs/production-launch-runbook.md) in
+> order. The launch runbook is controlling where this older checklist differs.
+
 Use this for a full production release. For smaller private beta releases, also use `FIELD_TEST_CHECKLIST.md` and `DEPLOYMENT_CHECKLIST.md`.
 
 Provider-specific setup lives in [docs/provider-configuration-runbook.md](/Users/zac/Desktop/Beer/docs/provider-configuration-runbook.md).
@@ -33,7 +37,7 @@ Provider-specific setup lives in [docs/provider-configuration-runbook.md](/Users
 
 - `NODE_ENV=production`
 - `PUBLIC_BASE_URL=https://pintpath.au`. The current production validator intentionally rejects preview domains and alternate canonical hosts.
-- Supabase Auth Site URL is `https://pintpath.au`, and redirect URLs include exact `http://localhost:3000/auth/callback`, `https://pintpath.au/auth/callback`, and `pintpath://auth-callback`.
+- Supabase Auth Site URL is `https://pintpath.au`; allow exact web callbacks `http://localhost:3000/auth/callback` and `https://pintpath.au/auth/callback`. Allow `pintpath://auth-callback` only if Android native OAuth is released. The first-release iOS archive declares no custom URL scheme and uses the HTTPS callback for email confirmation/password recovery.
 - `DATABASE_PATH` points to a persistent Railway volume path.
 - Keep `TRUST_PROXY_HOPS=1` on Railway for forwarded scheme/host handling; security identity uses Railway's platform-provided `X-Real-IP`, not a variable-length proxy hop count. Do not use the obsolete `TRUST_PROXY` variable.
 - `ADMIN_EMAILS` is set to the exact admin owner email list before enabling admin access. If the official ABN/admin email is pending, leave it blank and confirm admin routes return `403`.

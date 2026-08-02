@@ -137,18 +137,6 @@
       "evidenceSha256": null,
       "verifiedAt": null,
       "verifiedBy": null
-    },
-    {
-      "id": "android_release",
-      "label": "Android signing, data safety, screenshots, and internal-test build approved",
-      "owner": "Play Console owner, Android release engineer, QA lead, and release owner",
-      "nextAction": "Provide Play Console and protected upload-key access, finish listing/Data Safety/screenshots, upload the signed AAB to the internal track, and approve the physical-device and pre-launch reports.",
-      "required": true,
-      "status": "pending",
-      "evidence": null,
-      "evidenceSha256": null,
-      "verifiedAt": null,
-      "verifiedBy": null
     }
   ]
 }

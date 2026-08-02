@@ -7,7 +7,43 @@ function migration(name: string) {
   return fs.readFileSync(path.resolve(process.cwd(), "supabase/migrations", name), "utf8");
 }
 
+function databaseTest(name: string) {
+  return fs.readFileSync(path.resolve(process.cwd(), "supabase/tests", name), "utf8");
+}
+
 describe("Supabase auth/upload RLS migrations", () => {
+  it("keeps local resets deterministic without an imaginary production seed", () => {
+    const config = fs.readFileSync(path.resolve(process.cwd(), "supabase/config.toml"), "utf8");
+
+    expect(config).toMatch(/\[db\.seed\][\s\S]*?^enabled = false$/m);
+    expect(config).toMatch(/\[db\.seed\][\s\S]*?^sql_paths = \[\]$/m);
+    expect(config).not.toContain("./seed.sql");
+    expect(fs.existsSync(path.resolve(process.cwd(), "supabase/seed.sql"))).toBe(false);
+  });
+
+  it("executes catalog-level pgTAP coverage for schema, privileges, and RLS", () => {
+    const tests = [
+      databaseTest("000_repository_schema.test.sql"),
+      databaseTest("001_data_api_privileges.test.sql"),
+      databaseTest("002_rls_policies.test.sql"),
+    ];
+
+    for (const sql of tests) {
+      expect(sql).toContain("create extension if not exists pgtap");
+      expect(sql).toMatch(/select plan\(\d+\)/);
+      expect(sql).toContain("select * from finish()");
+      expect(sql).toContain("rollback;");
+    }
+
+    expect(tests[0]).toContain("RLS is enabled on every repository-owned public table");
+    expect(tests[0]).toContain("t.tgname = 'on_auth_user_created_beermap_profile'");
+    expect(tests[0]).toContain("no private function is executable by PUBLIC");
+    expect(tests[1]).toContain("anon has no table privileges");
+    expect(tests[1]).toContain("only the intended table-level Data API privileges");
+    expect(tests[2]).toContain("every UPDATE policy has both USING and WITH CHECK");
+    expect(tests.join("\n")).not.toContain("'venues'");
+  });
+
   it("removes broad browser table grants and legacy public reads", () => {
     const sql = migration("20260712013512_harden_browser_table_grants.sql");
 

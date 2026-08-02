@@ -2,27 +2,9 @@ name: Native Apps
 
 on:
   pull_request:
-    paths:
-      - "apps/android/**"
-      - "apps/ios/**"
-      - "src/modules/business/**"
-      - "src/config/legal.ts"
-      - "src/config/business-rules.ts"
-      - "src/db/schema.sql"
-      - "test/native-mobile-remediation.test.ts"
-      - ".github/workflows/native-apps.yml"
   push:
     branches:
       - main
-    paths:
-      - "apps/android/**"
-      - "apps/ios/**"
-      - "src/modules/business/**"
-      - "src/config/legal.ts"
-      - "src/config/business-rules.ts"
-      - "src/db/schema.sql"
-      - "test/native-mobile-remediation.test.ts"
-      - ".github/workflows/native-apps.yml"
   workflow_dispatch:
 
 permissions:
@@ -57,6 +39,32 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
+      - name: Select and verify App Store Xcode toolchain
+        shell: bash
+        run: |
+          xcode_app=""
+          for candidate in /Applications/Xcode_26*.app; do
+            if [ -d "$candidate" ]; then
+              xcode_app="$candidate"
+            fi
+          done
+          if [ -z "$xcode_app" ]; then
+            echo "A GitHub runner image with Xcode 26 is required." >&2
+            exit 1
+          fi
+          sudo xcode-select --switch "$xcode_app/Contents/Developer"
+          xcodebuild -version
+          xcode_version="$(xcodebuild -version | awk 'NR == 1 { print $2 }')"
+          sdk_version="$(xcrun --sdk iphoneos --show-sdk-version)"
+          case "$xcode_version" in
+            26.*) ;;
+            *) echo "Expected Xcode 26.x, found $xcode_version." >&2; exit 1 ;;
+          esac
+          case "$sdk_version" in
+            26.*) ;;
+            *) echo "Expected iPhoneOS SDK 26.x, found $sdk_version." >&2; exit 1 ;;
+          esac
+          echo "Using Xcode $xcode_version with iPhoneOS SDK $sdk_version."
       - name: Validate iOS production API response contracts
         run: |
           xcrun swiftc \

@@ -46,7 +46,7 @@ describe("native mobile remediation guardrails", () => {
     const strings = read("apps/android/app/src/main/res/values/strings.xml");
 
     expect(info).toMatch(/<key>CFBundleDisplayName<\/key>\s*<string>Pint Path<\/string>/);
-    expect(info).toContain("<string>au.pintpath.app.auth</string>");
+    expect(info).not.toContain("<key>CFBundleURLTypes</key>");
     expect(iosProject).toContain("PRODUCT_BUNDLE_IDENTIFIER = au.pintpath.app;");
     expect(iosConfig).toContain("PRODUCT_BUNDLE_IDENTIFIER = au.pintpath.app");
     expect(iosKeychain).toContain('private static let service = "au.pintpath.app.session"');
@@ -74,23 +74,14 @@ describe("native mobile remediation guardrails", () => {
     expect(androidModels).not.toContain("stripePublishableKey");
     expect(supabaseConfig).toContain('"https://pintpath.au/auth/callback"');
     expect(supabaseConfig).toContain('"pintpath://auth-callback"');
-    expect(iosAuth).toContain('callbackURLScheme: "pintpath"');
-    expect(iosAuth).toContain(
-      'URLQueryItem(name: "redirect_to", value: "pintpath://auth-callback")',
-    );
+    expect(iosAuth).not.toContain("ASWebAuthenticationSession");
+    expect(iosAuth).not.toContain("SignInWithAppleButton");
+    expect(iosAuth).not.toContain("supabaseOauthProviders");
     expect(androidApp).toContain(
       '.appendQueryParameter("redirect_to", "pintpath://auth-callback")',
     );
-    expect(iosAuth).toContain('appendingPathComponent("auth/v1/authorize")');
-    expect(iosAuth).toContain("private static func canonicalSupabaseOrigin");
-    expect(iosAuth).toContain("components.user == nil");
-    expect(iosAuth).toContain("components.password == nil");
-    expect(iosAuth).toContain("components.query == nil");
-    expect(iosAuth).toContain("components.fragment == nil");
-    expect(iosAuth).toContain('components.path.isEmpty || components.path == "/"');
-    expect(iosAuth).toContain("Secure provider sign-in returned an incomplete session.");
-    expect(iosAuth).toContain("accessToken: accessToken");
-    expect(iosAuth).toContain("refreshToken: refreshToken");
+    expect(iosAuth).toContain("await model.login(email: email, password: submittedPassword)");
+    expect(iosAuth).toContain("await model.signup(");
   });
 
   it("reports the effective native Supabase configuration in debug settings", () => {
@@ -106,8 +97,9 @@ describe("native mobile remediation guardrails", () => {
     const trackedBeer = sourceSection(iosModels, "struct TrackedBeer", "struct AuthResult");
     expect(trackedBeer).toContain("case key");
     expect(trackedBeer).toMatch(/decodeIfPresent\(String\.self, forKey: \.key\)/);
-    expect(iosModels).toContain("let highlightedName: Bool?");
-    expect(iosModels).not.toContain("let highlightedName: String?");
+    expect(iosModels).not.toContain("highlightedName");
+    expect(iosModels).not.toContain("premiumBadge");
+    expect(iosModels).not.toContain("featuredSpecialEligible");
 
     expect(iosAPI).toContain("APIStatusEnvelope");
     expect(iosAPI).toContain("throw BeerMapAPIError.invalidResponse");
@@ -126,10 +118,9 @@ describe("native mobile remediation guardrails", () => {
 
   it("reuses the logical Pint Path session only when refreshing Supabase credentials", () => {
     const iosSync = sourceSection(iosAPI, "func syncSupabase(", "func requestPasswordReset(");
-    const iosRefresh = sourceSection(iosAPI, "func refreshSupabaseSession(", "func exchangeSupabasePKCE(");
-    const iosLogin = sourceSection(iosAPI, "func login(", "func billingRecoveryPortal(");
+    const iosRefresh = sourceSection(iosAPI, "func refreshSupabaseSession(", "func logoutSupabase(");
+    const iosLogin = sourceSection(iosAPI, "func login(", "func signup(");
     const iosSignup = sourceSection(iosAPI, "func signup(", "func syncSupabase(");
-    const iosOAuth = sourceSection(iosApp, "func completeOAuthSignIn(", "func openBillingRecovery(");
     expect(iosSync).toContain("existingAppToken: String? = nil");
     expect(iosSync).toContain("token: existingAppToken");
     expect(iosRefresh).toContain("existingAppToken: String");
@@ -137,7 +128,7 @@ describe("native mobile remediation guardrails", () => {
     expect(iosApp).toMatch(/refreshSupabaseSession\([\s\S]*existingAppToken: currentToken/);
     expect(iosLogin).not.toContain("existingAppToken:");
     expect(iosSignup).not.toContain("existingAppToken:");
-    expect(iosOAuth).not.toContain("existingAppToken:");
+    expect(iosApp).not.toContain("completeOAuthSignIn");
 
     const androidRefresh = sourceSection(androidAPI, "suspend fun refreshSupabaseSession(", "suspend fun completeOAuthSession(");
     const androidSync = sourceSection(androidAPI, "private suspend fun syncSupabase(", "suspend fun logout(");
@@ -160,8 +151,8 @@ describe("native mobile remediation guardrails", () => {
     expect(iosDiscover).not.toMatch(/free reveals\/day|reveals per day/i);
     expect(iosModels).not.toContain("freePriceRevealsPerDay");
     expect(iosModels).not.toContain("freePriceRevealsRemaining");
-    expect(iosModels).toContain("let priceAccessModel: String?");
-    expect(iosModels).toContain("let freePreviewScope: String?");
+    expect(iosModels).not.toContain("let priceAccessModel: String?");
+    expect(iosModels).not.toContain("let freePreviewScope: String?");
     expect(androidModels).toContain("val priceAccessModel: String?");
     expect(androidModels).toContain("val freePreviewScope: String?");
     const iosPriceResult = sourceSection(iosModels, "struct PriceRecordsResponse", "struct PriceRecord");
@@ -175,9 +166,9 @@ describe("native mobile remediation guardrails", () => {
     }
     expect(iosDiscover).toContain("response.preview?.lockedCount");
     expect(androidApp).toContain("selectedPriceResult?.preview?.lockedCount");
-    expect(iosModels).toContain("let canViewAllPrices: Bool?");
+    expect(iosModels).not.toContain("let canViewAllPrices: Bool?");
     expect(androidModels).toContain("val canViewAllPrices: Boolean");
-    expect(iosModels).toContain("let pricePreviewViews: Int?");
+    expect(iosModels).not.toContain("let pricePreviewViews: Int?");
     expect(androidModels).toContain("val pricePreviewViews: Int");
     expect(iosModels).not.toContain("priceReveals");
     expect(androidModels).not.toContain("priceReveals");
@@ -214,15 +205,16 @@ describe("native mobile remediation guardrails", () => {
     expect(iosDiscover).toContain('ExploreBeerOption(id: "guinness"');
     expect(iosDiscover).toContain('ExploreBeerOption(id: "carlton_draft"');
     expect(iosDiscover).toContain('ExploreBeerOption(id: "stone_and_wood_pacific_ale"');
-    expect(iosDiscover).toContain("model.accountDashboard?.access?.hasFullAccess == true");
+    expect(iosDiscover).toContain("model.hasContributorAccess");
+    expect(iosDiscover).not.toContain("model.accountDashboard?.access?.hasFullAccess == true");
     expect(iosDiscover).toContain("venueBeerKeys: venue.beerKeys");
     expect(iosDiscover).toContain('Image(systemName: "lock.fill")');
-    expect(iosDiscover).toContain('Text("Contributor or paid")');
+    expect(iosDiscover).toContain('Text("Contributor unlock")');
     expect(iosDiscover).toContain("assetImage: BeerMapAsset.beerPint");
     expect(iosModels).toContain("let beerKeys: [String]?");
     expect(iosAPI).toMatch(/func listVenues\([\s\S]*token: String\? = nil/);
     expect(iosAPI).toMatch(/\/api\/business\/venues[\s\S]*token: token/);
-    expect(iosApp).toMatch(/api\.listVenues\(query: search, token: token\)/);
+    expect(iosApp).toMatch(/withContributorAuthenticatedSession[\s\S]*api\.listVenues\(query: search, token: token\)/);
     expect(iosDiscover).toContain('didFitInitialRegion');
     expect(iosDiscover).toContain('mapView.isRotateEnabled = false');
     expect(iosDiscover).toContain('manager.desiredAccuracy = kCLLocationAccuracyHundredMeters');
@@ -251,7 +243,13 @@ describe("native mobile remediation guardrails", () => {
       "@MainActor\nprivate final class VenuePickerLocationProvider",
     );
     const info = read("apps/ios/BeerMap/Info.plist");
-    expect(iosContribute).toContain('title: "Quick price"');
+    expect(iosContribute).toContain("ToolbarItem(placement: .topBarLeading)");
+    expect(iosContribute).toContain("model.selectedTab = .explore");
+    expect(iosContribute).toContain('Label("Back", systemImage: "chevron.left")');
+    expect(iosContribute).toContain('DisclosureGroup("Optional details"');
+    expect(iosContribute).toContain('PrimaryButton(title: "Submit price"');
+    expect(iosContribute).not.toContain('title: "Quick price"');
+    expect(iosContribute).not.toContain('SecondaryButton(title: "Scan a full menu instead"');
     expect(iosContribute).toContain('VenueSelectionSheet(');
     expect(iosContribute).toContain('.searchable(text: $searchText');
     expect(iosContribute).toContain('model.config?.trackedBeers');
@@ -346,14 +344,13 @@ describe("native mobile remediation guardrails", () => {
   });
 
   it("requires legal consent at signup or after a verified policy-version 403, never on routine login", () => {
-    const iosLogin = sourceSection(iosAPI, "func login(", "func billingRecoveryPortal(");
-    const iosOAuth = sourceSection(iosApp, "func completeOAuthSignIn(", "func acceptCurrentPolicies(");
+    const iosLogin = sourceSection(iosAPI, "func login(", "func signup(");
     const androidLogin = sourceSection(androidAPI, "suspend fun login(", "suspend fun billingRecoveryPortal(");
     const androidOAuth = sourceSection(androidAPI, "suspend fun completeOAuthSession(", "suspend fun acceptCurrentPolicies(");
 
     expect(iosLogin).not.toMatch(/ageConfirmed: Bool|termsAccepted: Bool|privacyAccepted: Bool/);
     expect(iosLogin).toContain("ageConfirmed: nil");
-    expect(iosOAuth).toContain("ageConfirmed: nil");
+    expect(iosApp).not.toContain("completeOAuthSignIn");
     expect(androidLogin).not.toMatch(/ageConfirmed: Boolean|termsAccepted: Boolean|privacyAccepted: Boolean/);
     expect(androidLogin).toContain("syncSupabase(accessToken, config, null, null, null)");
     expect(androidOAuth).toContain("syncSupabase(accessToken, config, null, null, null)");
@@ -412,7 +409,7 @@ describe("native mobile remediation guardrails", () => {
 
   it("shows complete operator and legal links in native settings while keeping diagnostics debug-only", () => {
     const androidSettings = sourceSection(androidApp, "private fun SettingsScreen(", "private fun showTimePicker(");
-    const legalDetails = [
+    const sharedLegalDetails = [
       "Isaac William De Worsop, sole trader",
       "ABN 80 319 578 329",
       "WOTSO, Level 3, 11–19 Bank Place, Melbourne VIC 3000, Australia",
@@ -420,14 +417,17 @@ describe("native mobile remediation guardrails", () => {
       "Terms and Conditions",
       "Privacy Policy",
       "Account export and deletion",
-      "terms.html",
-      "privacy.html",
-      "account.html",
     ];
     for (const source of [iosSettings, androidSettings]) {
-      for (const detail of legalDetails) expect(source).toContain(detail);
+      for (const detail of sharedLegalDetails) expect(source).toContain(detail);
       expect(source).toContain("mailto:admin@pintpath.au");
     }
+    expect(iosAPI).toContain('legalURL(path: "terms.html")');
+    expect(iosAPI).toContain('legalURL(path: "privacy.html")');
+    expect(androidSettings).toContain("terms.html");
+    expect(androidSettings).toContain("privacy.html");
+    expect(iosSettings).not.toContain("account.html");
+    expect(androidSettings).toContain("account.html");
 
     const iosDebugStart = iosSettings.indexOf("#if DEBUG");
     const iosDebugEnd = iosSettings.indexOf("#endif", iosDebugStart);
@@ -546,7 +546,7 @@ describe("native mobile remediation guardrails", () => {
     expect(androidApp).toContain("Review signed-in sessions");
   });
 
-  it("offers billing-only recovery for a production-shaped suspended login without granting an app session", () => {
+  it("keeps billing recovery out of iOS while Android handles suspended-account recovery without granting an app session", () => {
     const productionError = {
       ok: false,
       error: {
@@ -575,34 +575,24 @@ describe("native mobile remediation guardrails", () => {
       code: "ACCOUNT_SUSPENDED",
     };
     expect(suspendedWithoutBilling.code === "ACCOUNT_SUSPENDED_BILLING_RECOVERY").toBe(false);
-    for (const client of [iosAPI, androidAPI]) {
-      expect(client).toContain("ACCOUNT_SUSPENDED_BILLING_RECOVERY");
-      expect(client).toContain("/api/business/billing/recovery-portal");
-      expect(client).toContain("billingRecoveryEligible");
-      expect(client).toContain("billing management remains available");
+    for (const source of [iosAPI, iosModels, iosApp, iosAuth]) {
+      expect(source).not.toMatch(/billing.?recovery/i);
+      expect(source).not.toContain("ACCOUNT_SUSPENDED_BILLING_RECOVERY");
+      expect(source).not.toContain("/api/business/billing/recovery-portal");
     }
-    expect(iosModels).toMatch(/struct APIErrorPayload[\s\S]*let code: String\?[\s\S]*let recovery: APIErrorRecovery\?/);
-    expect(iosAPI).toContain("recoveryHasTarget");
+    expect(androidAPI).toContain("ACCOUNT_SUSPENDED_BILLING_RECOVERY");
+    expect(androidAPI).toContain("/api/business/billing/recovery-portal");
+    expect(androidAPI).toContain("billingRecoveryEligible");
+    expect(androidAPI).toContain("billing management remains available");
     expect(androidAPI).toContain("recoveryHasTarget");
-    expect(iosAPI).toContain("legacyBillingRecovery = recoveryCode == nil");
     expect(androidAPI).toContain("legacyBillingRecovery = recoveryCode == null");
-    expect(iosAPI).toMatch(/BillingRecoveryProviderRequest\(accessToken: accessToken, venueId: venueId\)/);
-    expect(iosAPI).toMatch(/BillingRecoveryPasswordRequest\(email: email, password: password, venueId: venueId\)/);
     expect(androidAPI).toMatch(/billingRecoveryPortal\(accessToken: String, venueId: String\?\)[\s\S]*JSONObject\(\)\.put\("accessToken", accessToken\)/);
     expect(androidAPI).toMatch(/billingRecoveryPortal\(email: String, password: String, venueId: String\?\)[\s\S]*\.put\("email", email\)[\s\S]*\.put\("password", password\)/);
-    expect(iosApp).toMatch(/presentBillingRecovery[\s\S]*clearLocalSession\(\)[\s\S]*billingRecoveryAccessToken/);
     expect(androidApp).toMatch(/presentBillingRecovery[\s\S]*clearLocalSession\(\)[\s\S]*billingRecoveryAccessToken/);
-    for (const ui of [iosAuth, androidApp]) {
-      expect(ui).toContain("Manage billing only");
-      expect(ui).toContain("will not create an app session or restore suspended access");
-    }
-    for (const source of [iosAPI, androidAPI]) {
-      expect(source).toContain("BILLING_RECOVERY_VENUE_SELECTION_REQUIRED");
-    }
-    expect(iosModels).toContain("let venues: [BillingRecoveryVenue]?");
+    expect(androidApp).toContain("Manage billing only");
+    expect(androidApp).toContain("will not create an app session or restore suspended access");
+    expect(androidAPI).toContain("BILLING_RECOVERY_VENUE_SELECTION_REQUIRED");
     expect(androidAPI).toContain("billingRecoveryVenues");
-    expect(iosAuth).toContain("Choose a managed venue");
-    expect(iosAuth).toContain("Personal subscription");
     expect(androidApp).toContain("Personal subscription");
     expect(androidApp).toContain("billingRecoveryVenueId");
   });
@@ -684,25 +674,37 @@ describe("native mobile remediation guardrails", () => {
     );
     expect(iosApp).toMatch(/private func withAuthenticatedSession<T:\s*Sendable>/);
     expect(iosApp).toMatch(/private func withOptionalAuthenticatedSession<T:\s*Sendable>/);
-    expect(iosAuth).toMatch(/let callbackURL:\s*URL\s*=\s*try await withCheckedThrowingContinuation/);
-    expect(iosAuth).toMatch(/CheckedContinuation<URL,\s*(?:any\s+)?Error>/);
+    expect(iosApp).toMatch(/private func withContributorAuthenticatedSession<T:\s*Sendable>/);
+    expect(iosAuth).not.toContain("withCheckedThrowingContinuation");
     expect(iosSync).toContain("return try await send(");
     expect(iosAPI).not.toMatch(/pagination\?\.hasMore\s*\?\?\s*response\.\w+\.count\s*==\s*pageSize/);
     expect(iosContribute).toMatch(/^extension String \{\s*var trimmed:/m);
     expect(iosContribute).not.toMatch(/^(?:private|fileprivate) extension String \{\s*var trimmed:/m);
   });
 
-  it("binds native provider login with PKCE instead of a caller-controlled OAuth state", () => {
-    for (const source of [iosAuth, androidApp]) {
-      expect(source).toContain("code_challenge");
-      expect(source).toContain("code_challenge_method");
-      expect(source).not.toContain('URLQueryItem(name: "state"');
-      expect(source).not.toContain('.appendQueryParameter("state"');
-    }
-    expect(iosAPI).toContain("/auth/v1/token?grant_type=pkce");
+  it("keeps iOS email-only while Android provider login uses PKCE", () => {
+    expect(iosAuth).not.toContain("code_challenge");
+    expect(iosAuth).not.toContain("ASWebAuthenticationSession");
+    expect(androidApp).toContain("code_challenge");
+    expect(androidApp).toContain("code_challenge_method");
+    expect(androidApp).not.toContain('.appendQueryParameter("state"');
+    expect(iosAPI).not.toContain("/auth/v1/token?grant_type=pkce");
+    expect(iosAPI).not.toContain("exchangeSupabasePKCE");
+    expect(iosModels).not.toContain("SupabasePKCERequest");
     expect(androidAPI).toContain("/auth/v1/token?grant_type=pkce");
-    expect(iosAuth).toContain('callbackURL.scheme == "pintpath"');
     expect(androidApp).toContain('uri.scheme == "pintpath" && uri.host == "auth-callback"');
+  });
+
+  it("removes native social providers and Sign in with Apple capability from the iOS release", () => {
+    const iosProject = read("apps/ios/BeerMap.xcodeproj/project.pbxproj");
+    expect(iosAuth).not.toContain("SignInWithAppleButton");
+    expect(iosAuth).not.toContain("ASAuthorizationAppleIDCredential");
+    expect(iosAuth).not.toContain("GoogleOAuthCoordinator");
+    expect(iosAuth).not.toContain("supabaseOauthProviders");
+    expect(iosAPI).not.toContain("/auth/v1/token?grant_type=id_token");
+    expect(iosModels).not.toContain('case identityToken = "id_token"');
+    expect(iosProject).not.toContain("CODE_SIGN_ENTITLEMENTS = BeerMap/BeerMap.entitlements;");
+    expect(iosProject).not.toContain("com.apple.SignInWithApple");
   });
 
   it("protects session material and handles uninstall/reinstall safely", () => {
@@ -776,12 +778,14 @@ describe("native mobile remediation guardrails", () => {
     expect(androidModels).not.toContain("else -> value.toString()");
   });
 
-  it("matches current account, deletion, invitation, and privacy response envelopes", () => {
+  it("matches current account, deletion, and privacy response envelopes while keeping counter invitations out of iOS", () => {
     for (const client of [iosAPI, androidAPI]) {
       expect(client).toContain("/api/business/account/privacy-settings");
       expect(client).toContain("/api/business/account/delete-request");
-      expect(client).toContain("/counter-staff-invitations/");
     }
+    expect(iosAPI).not.toContain("/counter-staff-invitations/");
+    expect(iosModels).not.toContain("CounterStaffInvitation");
+    expect(androidAPI).toContain("/counter-staff-invitations/");
     expect(iosModels).toContain("struct PrivacySettingsSaveResult");
     expect(iosModels).toContain("struct AccountDeletionStatusResponse");
     expect(androidModels).toContain("data class AccountDeletionStatus");
@@ -870,9 +874,10 @@ describe("native mobile remediation guardrails", () => {
       portalIsAdmin: boolean;
       assignmentCount: number;
       accessState: string;
+      accessLevel?: string;
     }) => authority.accessState !== "claim_required" && (
       (authority.serverIsAdmin && authority.portalIsAdmin)
-      || (!authority.portalIsAdmin && authority.assignmentCount > 0)
+      || (!authority.portalIsAdmin && authority.accessLevel !== "counter_staff" && authority.assignmentCount > 0)
     );
 
     expect(hasVenueAccess({
@@ -899,10 +904,21 @@ describe("native mobile remediation guardrails", () => {
       assignmentCount: 1,
       accessState: "claim_required",
     })).toBe(false);
+    expect(hasVenueAccess({
+      persistedRole: "user",
+      persistedSubscription: "free",
+      serverIsAdmin: false,
+      portalIsAdmin: false,
+      assignmentCount: 1,
+      accessState: "manager",
+      accessLevel: "counter_staff",
+    })).toBe(false);
 
     expect(iosModels).toMatch(/struct AccessState[\s\S]*let accountRole: String\?[\s\S]*let isAdmin: Bool\?/);
     expect(iosApp).toContain("accountDashboard?.access?.isAdmin == true");
-    expect(iosApp).toContain("venuePortal.isAdmin != true && venuePortal.assignments?.isEmpty == false");
+    expect(iosApp).toMatch(
+      /venuePortal\.isAdmin != true[\s\S]*venuePortal\.accessLevel != "counter_staff"[\s\S]*venuePortal\.assignments\?\.isEmpty == false/,
+    );
     expect(iosApp).toMatch(/private func storeSession[\s\S]*venuePortal = nil[\s\S]*accountDashboard = AccountDashboard/);
     expect(iosApp).not.toContain('account?.role == "admin"');
     expect(iosRoot).toContain("model.hasVenueAccess");
@@ -922,7 +938,7 @@ describe("native mobile remediation guardrails", () => {
     expect(service).toContain("isAdmin: currentAdmin");
   });
 
-  it("shows native Admin quick-bar access only with current server-verified admin authority", () => {
+  it("keeps the iOS admin workspace unreachable while Android retains server-gated access", () => {
     const hasAdminAccess = (signedIn: boolean, serverIsAdmin: boolean) => signedIn && serverIsAdmin;
 
     expect(hasAdminAccess(true, true)).toBe(true);
@@ -930,10 +946,10 @@ describe("native mobile remediation guardrails", () => {
     expect(hasAdminAccess(false, true)).toBe(false);
 
     expect(iosApp).toContain("isSignedIn && accountDashboard?.access?.isAdmin == true");
-    expect(iosRoot).toContain("if model.hasAdminAccess");
-    expect(iosRoot).toContain('title: "Admin workspace"');
-    expect(iosRoot).toContain('systemImage: "lock.shield.fill"');
-    expect(iosRoot).toContain('URLQueryItem(name: "returnTo", value: "/admin.html")');
+    expect(iosRoot).toContain("model.hasVenueAccess && !model.hasAdminAccess");
+    expect(iosRoot).not.toContain('title: "Admin workspace"');
+    expect(iosRoot).not.toContain('value: "/admin.html"');
+    expect(iosRoot).not.toContain("account.html");
     expect(iosRoot).not.toContain('account?.role == "admin"');
 
     expect(androidApp).toContain("get() = signedIn && accountDashboard?.access?.isAdmin == true");

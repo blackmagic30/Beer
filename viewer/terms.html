@@ -33,7 +33,7 @@
       <div class="eyebrow">Terms and Conditions</div>
       <h1>Use Pint Path fairly, accurately, and responsibly.</h1>
       <p class="lead">These terms govern access to Pint Path, including the public map, accounts, submissions, contributor points, paid access, venue tools, and beta features.</p>
-      <p class="muted">Last updated: 20 July 2026. Questions, notices, billing disputes, and legal requests can be sent to <a href="mailto:admin@pintpath.au">admin@pintpath.au</a> or through the tracked Contact us form.</p>
+      <p class="muted">Last updated: 28 July 2026. Questions, notices, billing disputes, and legal requests can be sent to <a href="mailto:admin@pintpath.au">admin@pintpath.au</a> or through the tracked Contact us form.</p>
     </section>
 
     <section class="panel legalStack">
@@ -53,6 +53,7 @@
         <h2>1. Eligibility and responsible use</h2>
         <p class="muted">Pint Path is intended for adults aged 18+ in Victoria, Australia. You must not use Pint Path to encourage unsafe drinking, unlawful alcohol supply, harassment, venue abuse, or activity that breaches venue rules or responsible service of alcohol obligations.</p>
         <p class="muted">Prices, happy hours, stock, opening hours, and availability may change. Check with the venue before ordering. Venues may refuse service.</p>
+        <p class="muted">Alcohol-linked Pint Points, Free Pint Rewards, fixed-round Pub Golf, and the associated drink log are paused for the public launch. They will not be enabled unless Pint Path records the required responsible-promotion, venue-licensee, privacy, health-records, and App Store approvals.</p>
       </article>
 
       <article>
@@ -68,7 +69,7 @@
 
       <article>
         <h2>4. Points, access, and anti-abuse rules</h2>
-        <p class="muted">Contribution points and freemium unlocks are discretionary beta features. Points may be reduced, withheld, reversed, or removed if a submission is stale, unverifiable, duplicated, outside the location proof rules, suspicious, abusive, or rejected.</p>
+        <p class="muted">Contribution points and freemium unlocks are separate from the paused alcohol-linked Pint Points program. Contribution points may be reduced, withheld, reversed, or removed if a submission is stale, unverifiable, duplicated, outside the location proof rules, suspicious, abusive, or rejected.</p>
         <p class="muted">You must not exploit the points system, automate fake submissions, create multiple accounts to bypass limits, tamper with requests, spoof location, scrape private endpoints, manipulate reviews, bypass paywalls, reverse engineer access controls, or interfere with the platform.</p>
       </article>
 
@@ -98,17 +99,20 @@
       <article>
         <h2>9. Paid access and billing</h2>
         <p class="muted">Paid consumer and venue subscriptions are processed by Stripe and renew automatically for the displayed billing period until cancelled. You can open Stripe billing management from Account or the assigned venue portal to update payment details, view available invoices, or cancel. Cancellation stops the next renewal; paid access normally continues until the end of the current paid period.</p>
+        <p class="muted">The venue launch offer gives an eligible approved venue one 60-day trial of full Pro access. Under the default launch offer, no payment method is required and no automatic charge occurs: the trial subscription cancels and the venue returns to Free at the end of the displayed trial period. If a venue deliberately adds a payment method and keeps Pro active, Pro renews at A$149 per month until cancelled. Stripe Checkout and the billing portal show the authoritative trial dates, renewal status, payment method, and cancellation controls.</p>
+        <p class="muted">Trial eligibility is venue-specific, non-transferable, and may be refused for duplicate, fraudulent, or previously used offers. Pint Path will not shorten an active stated trial retrospectively. Material pricing or renewal changes apply prospectively with reasonable notice and do not remove rights that cannot lawfully be excluded.</p>
         <p class="muted">Stripe receipts and invoices show the payment and any applicable tax information. Refunds are not automatic for a change of mind, but we assess billing errors, duplicate charges, service failures, and rights under the Australian Consumer Law. Send a billing-support request through Contact us and include the account ID, transaction date, and issue without including full card details.</p>
+        <p class="muted">Nothing in these terms limits consumer guarantees or protections for eligible small businesses under the Australian Consumer Law, including rules about unfair standard-form contract terms.</p>
       </article>
 
       <article>
         <h2>10. Availability and changes</h2>
-        <p class="muted">Pint Path may change, pause, remove, or limit features during beta. We do not guarantee uninterrupted service, perfect data accuracy, complete venue coverage, or availability of any price or happy hour shown in the app.</p>
+        <p class="muted">Pint Path may improve, pause, or retire beta features for security, legal, safety, provider, or operational reasons. We will not use this clause to avoid delivering a paid core service without a remedy required by law. Where practical, we will give reasonable notice of a material adverse change to a paid plan and offer the cancellation, refund, re-performance, or other remedy required by applicable law. We do not guarantee uninterrupted service, perfect community-data accuracy, complete venue coverage, or availability of any price or happy hour shown in the app.</p>
       </article>
 
       <article>
         <h2>11. Liability and contact</h2>
-        <p class="muted">Use Pint Path at your own discretion. To the maximum extent permitted by law, Pint Path is not responsible for venue decisions, price changes, reliance on stale data, user-submitted errors, or losses caused by misuse of the service. These terms are governed by the laws of Victoria, Australia. If you find incorrect data, unsafe content, security issues, privacy concerns, or a billing problem, email <a href="mailto:admin@pintpath.au">admin@pintpath.au</a> or use the Contact us page.</p>
+        <p class="muted">Use community-supplied venue information with reasonable care and confirm time-sensitive details with the venue. To the extent permitted by law, Pint Path is not responsible for a venue's independent service decision, a price or stock change after verification, or loss caused by unlawful misuse of the service. This limitation does not exclude, restrict, or modify a consumer guarantee, statutory right, or liability that cannot lawfully be excluded. These terms are governed by the laws of Victoria, Australia. If you find incorrect data, unsafe content, security issues, privacy concerns, or a billing problem, email <a href="mailto:admin@pintpath.au">admin@pintpath.au</a> or use the Contact us page.</p>
       </article>
 
       <article>
@@ -120,7 +124,9 @@
   </main>
   <script>
     window.addEventListener("DOMContentLoaded", () => {
-      nav.innerHTML = MelbBeerBusiness.renderNav("");
+      nav.innerHTML = MelbBeerBusiness.isIOSLegalSurface()
+        ? MelbBeerBusiness.renderIOSLegalNav()
+        : MelbBeerBusiness.renderNav("");
     });
   </script>
 </body>

@@ -27,7 +27,7 @@ npm run release:evidence:strict
 
 ## Manual Provider Proof
 
-- Supabase Auth redirects include `https://pintpath.au/auth/callback`, native `pintpath://auth-callback`, and local callback URLs.
+- Supabase Auth redirects include `https://pintpath.au/auth/callback` and local web callback URLs. Include native `pintpath://auth-callback` only for an Android release that enables native OAuth; the first-release iOS archive has no custom URL scheme and uses the HTTPS callback for email confirmation/password recovery.
 - Supabase Google/Apple provider callback URL derived from `SUPABASE_URL` is present in the provider consoles.
 - Supabase leaked-password protection is enabled for public signup.
 - Supabase admin MFA/AAL2 is configured and an admin staging login proves `aal2` before admin actions.

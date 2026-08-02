@@ -185,7 +185,7 @@
           </section>
 
           <section id="venuePanelRedemption" class="tabPanel is-hidden" role="tabpanel" aria-labelledby="venueTabRedemption" tabindex="0" data-panel="redemption" hidden>
-            <article class="panel staffCounterPanel">
+            <article class="panel staffCounterPanel" data-pint-points-feature>
               <div class="sectionHeader">
                 <div>
                   <div class="eyebrow">Staff counter</div>
@@ -251,7 +251,7 @@
               <div id="pendingCounterReceipts" class="pendingCounterReceipts" hidden></div>
             </article>
 
-            <details class="panel redemptionHeroPanel redemptionGuide">
+            <details class="panel redemptionHeroPanel redemptionGuide" data-pint-points-feature>
               <summary>How staff codes work</summary>
               <div class="redemptionFlowGrid" aria-label="Pint Path code workflow">
                 <div class="redemptionFlowStep">
@@ -326,7 +326,7 @@
             </article>
 
             <div>
-              <article class="panel">
+              <article class="panel" data-pint-points-feature>
                 <div class="sectionHeader">
                   <div>
                     <h2>Free Pint Reward</h2>
@@ -551,7 +551,7 @@
               <h2>Pint Path specials are a paid venue feature</h2>
               <p class="muted">Free venue accounts can add beer data and happy-hour data only. Upgrade to Pro to add reviewed Pint Path specials.</p>
               <div class="actionRow">
-                <button class="button button--primary" type="button" data-upgrade-tier="pro">Upgrade to Pro</button>
+                <button class="button button--primary" type="button" data-upgrade-tier="pro" data-commercial-original-label="Upgrade to Pro" disabled aria-disabled="true" title="New paid and introductory-trial enrollment is not open yet.">Commercial launch not open</button>
               </div>
             </article>
             <div id="specialsEditor" class="grid grid--two">
@@ -762,6 +762,8 @@
     const COUNTER_RECEIPT_QUEUE_KEY = "pintPath.counterReceiptQueue.v2";
     const COUNTER_RECEIPT_QUEUE_LIMIT = 20;
     const viewerConfig = window.MELB_BEER_BOT_VIEWER_CONFIG || {};
+    const PINT_POINTS_REWARDS_ENABLED = viewerConfig.business?.pintPointsRewardsEnabled === true;
+    const COMMERCIAL_LAUNCH_ENABLED = viewerConfig.business?.commercialLaunchEnabled === true;
     const TRACKED_BEERS = Array.isArray(viewerConfig.trackedBeers) && viewerConfig.trackedBeers.length
       ? viewerConfig.trackedBeers
           .filter((beer) => beer && typeof beer === "object")
@@ -803,6 +805,44 @@
         "'": "&#039;",
       }[char]));
     }
+
+    function syncCommercialCheckoutControls(root = document) {
+      const controls = [
+        ...(root instanceof Element && root.matches("[data-upgrade-tier]") ? [root] : []),
+        ...root.querySelectorAll("[data-upgrade-tier]"),
+      ];
+      controls.forEach((control) => {
+        if (!(control instanceof HTMLButtonElement)) return;
+        if (COMMERCIAL_LAUNCH_ENABLED) {
+          const originalLabel = control.dataset.commercialOriginalLabel;
+          if (originalLabel && control.textContent !== originalLabel) control.textContent = originalLabel;
+          if (control.disabled) control.disabled = false;
+          control.removeAttribute("aria-disabled");
+          control.removeAttribute("title");
+          return;
+        }
+        if (!control.dataset.commercialOriginalLabel) {
+          control.dataset.commercialOriginalLabel = control.textContent || "Upgrade to Pro";
+        }
+        if (!control.disabled) control.disabled = true;
+        if (control.getAttribute("aria-disabled") !== "true") control.setAttribute("aria-disabled", "true");
+        if (control.title !== "New paid and introductory-trial enrollment is not open yet.") {
+          control.title = "New paid and introductory-trial enrollment is not open yet.";
+        }
+        if (control.textContent !== "Commercial launch not open") {
+          control.textContent = "Commercial launch not open";
+        }
+      });
+    }
+
+    syncCommercialCheckoutControls();
+    new MutationObserver((mutations) => {
+      mutations.forEach((mutation) => {
+        mutation.addedNodes.forEach((node) => {
+          if (node instanceof Element) syncCommercialCheckoutControls(node);
+        });
+      });
+    }).observe(document.body, { childList: true, subtree: true });
 
     function money(value) {
       return value == null ? "No verified price" : new Intl.NumberFormat("en-AU", { style: "currency", currency: "AUD" }).format(value);
@@ -1597,7 +1637,7 @@
       if (requestCodesButton) requestCodesButton.hidden = Boolean(currentPortal?.isAdmin || profile.acceptsPintPathCodes);
       loadedVenueTags = Array.isArray(profile.venueTags)
         ? profile.venueTags.map((tag) => String(tag || "").trim()).filter(Boolean)
-        : [];
+      : [];
       const renderedTags = [...new Set([...tagOptions, ...loadedVenueTags])];
       renderChecklist(venueTags, renderedTags, loadedVenueTags);
       const preview = document.getElementById("publicProfilePreview");
@@ -2858,30 +2898,68 @@
 
     const pendingCounterAuthorizations = new Map();
 
+    function normalizePendingCounterReceiptPayload(payload = {}) {
+      const quantity = Number(payload.quantity);
+      return {
+        itemName: String(payload.itemName || "").slice(0, 120),
+        beverageCategory: String(payload.beverageCategory || "").slice(0, 80),
+        quantity: Number.isFinite(quantity) && quantity > 0 ? quantity : 1,
+        transactionReference: String(payload.transactionReference || "").slice(0, 120),
+        notes: payload.notes == null ? null : String(payload.notes).slice(0, 500),
+      };
+    }
+
+    function pendingCounterReceiptStorageEntry(entry) {
+      const attempts = Number(entry.attempts);
+      return {
+        id: String(entry.id || ""),
+        venueId: String(entry.venueId || ""),
+        venueName: String(entry.venueName || ""),
+        accountId: String(entry.accountId || ""),
+        payload: normalizePendingCounterReceiptPayload(entry.payload),
+        authorizationExpiresAt: String(entry.authorizationExpiresAt || ""),
+        createdAt: String(entry.createdAt || ""),
+        attempts: Number.isFinite(attempts) && attempts > 0 ? Math.floor(attempts) : 0,
+        lastError: entry.lastError == null ? null : String(entry.lastError).slice(0, 180),
+        reconciliationOnly: entry.reconciliationOnly === true,
+      };
+    }
+
     function readPendingCounterReceipts() {
       try {
         window.localStorage.removeItem("pintPath.counterReceiptQueue.v1");
-        const parsed = JSON.parse(window.sessionStorage.getItem(COUNTER_RECEIPT_QUEUE_KEY) || "[]");
+        const storedJson = window.sessionStorage.getItem(COUNTER_RECEIPT_QUEUE_KEY);
+        const parsed = JSON.parse(storedJson || "[]");
         const now = Date.now();
-        let removedExpiredAuthorization = false;
-        const entries = (Array.isArray(parsed) ? parsed : [])
+        const parsedEntries = Array.isArray(parsed) ? parsed : [];
+        const entries = parsedEntries
           .filter((entry) => entry && typeof entry === "object")
+          .map(pendingCounterReceiptStorageEntry)
           .map((entry) => {
             const authorizationExpiresAt = Date.parse(entry.authorizationExpiresAt);
-            if (!Number.isFinite(authorizationExpiresAt) || authorizationExpiresAt > now || !pendingCounterAuthorizations.has(entry.id)) {
+            const hasInMemoryAuthorization = pendingCounterAuthorizations.has(entry.id);
+            if (
+              Number.isFinite(authorizationExpiresAt) &&
+              authorizationExpiresAt > now &&
+              hasInMemoryAuthorization
+            ) {
               return entry;
             }
-            removedExpiredAuthorization = true;
             pendingCounterAuthorizations.delete(entry.id);
             return {
               ...entry,
               reconciliationOnly: true,
-              lastError: entry.lastError || "Member authorization expired. Check the server record before dismissing this receipt.",
+              lastError: entry.lastError || (
+                Number.isFinite(authorizationExpiresAt) && authorizationExpiresAt <= now
+                  ? "Member authorization expired. Check the server record before dismissing this receipt."
+                  : "Member authorization is not retained after reload. Check the server record before dismissing this receipt."
+              ),
             };
           })
           .slice(0, COUNTER_RECEIPT_QUEUE_LIMIT);
-        if (removedExpiredAuthorization || entries.length !== parsed.length) {
-          window.sessionStorage.setItem(COUNTER_RECEIPT_QUEUE_KEY, JSON.stringify(entries));
+        const sanitizedJson = JSON.stringify(entries);
+        if (storedJson !== null && sanitizedJson !== storedJson) {
+          window.sessionStorage.setItem(COUNTER_RECEIPT_QUEUE_KEY, sanitizedJson);
         }
         return entries;
       } catch {
@@ -2893,28 +2971,25 @@
     function writePendingCounterReceipts(entries) {
       try {
         if (entries.length > COUNTER_RECEIPT_QUEUE_LIMIT) return false;
-        const nonSecretEntries = entries.map((entry) => {
-          const { checkoutToken: _checkoutToken, ...nonSecretPayload } = entry.payload || {};
-          return { ...entry, payload: nonSecretPayload };
-        });
-        window.sessionStorage.setItem(COUNTER_RECEIPT_QUEUE_KEY, JSON.stringify(nonSecretEntries));
+        const storageEntries = entries.map(pendingCounterReceiptStorageEntry);
+        window.sessionStorage.setItem(COUNTER_RECEIPT_QUEUE_KEY, JSON.stringify(storageEntries));
         return true;
       } catch {
         return false;
       }
     }
 
-    function queuePendingCounterReceipt(venueId, accountId, payload, authorizationExpiresAt) {
-      const id = `${venueId}:${String(payload.transactionReference || "").toLowerCase()}`;
-      const checkoutToken = String(payload.checkoutToken || "");
-      const { checkoutToken: _checkoutToken, ...nonSecretPayload } = payload;
+    function queuePendingCounterReceipt(venueId, accountId, receiptPayload, checkoutToken, authorizationExpiresAt) {
+      const storagePayload = normalizePendingCounterReceiptPayload(receiptPayload);
+      const id = `${venueId}:${storagePayload.transactionReference.toLowerCase()}`;
+      const inMemoryAuthorization = String(checkoutToken || "");
       const entries = readPendingCounterReceipts();
       const existing = entries.find((entry) => entry.id === id);
       if (existing) {
         const exactRetry = existing.venueId === venueId
           && existing.accountId === accountId
           && existing.authorizationExpiresAt === authorizationExpiresAt
-          && JSON.stringify(existing.payload) === JSON.stringify(nonSecretPayload);
+          && JSON.stringify(existing.payload) === JSON.stringify(storagePayload);
         renderPendingCounterReceipts();
         return exactRetry
           ? { id, saved: true, idempotent: true }
@@ -2928,13 +3003,13 @@
         venueId,
         venueName: currentPortal?.selectedVenue?.venueName || currentPortal?.profile?.name || venueId,
         accountId,
-        payload: nonSecretPayload,
+        payload: storagePayload,
         authorizationExpiresAt,
         createdAt: new Date().toISOString(),
         attempts: 0,
         lastError: null,
       });
-      if (checkoutToken) pendingCounterAuthorizations.set(id, checkoutToken);
+      if (inMemoryAuthorization) pendingCounterAuthorizations.set(id, inMemoryAuthorization);
       const saved = writePendingCounterReceipts(entries);
       renderPendingCounterReceipts();
       return { id, saved };
@@ -3268,6 +3343,7 @@
       const counterOnly = data.accessLevel === "counter_staff";
 
       panel.innerHTML = `
+        ${PINT_POINTS_REWARDS_ENABLED ? `
         <div class="posSetupCard posSetupCard--wide">
           <div class="sectionHeader" style="margin-bottom:10px;">
             <div>
@@ -3292,6 +3368,7 @@
             `).join("") : '<div class="listItem muted">Validated member purchases will appear here for staff reconciliation.</div>'}
           </div>
         </div>
+        ` : ""}
         <div class="posSetupCard" data-manager-ops>
           <div class="sectionHeader" style="margin-bottom:10px;">
             <div>
@@ -4791,6 +4868,11 @@
 
     window.addEventListener("DOMContentLoaded", async () => {
       nav.innerHTML = MelbBeerBusiness.renderNav("venue-portal");
+      if (!PINT_POINTS_REWARDS_ENABLED) {
+        document.querySelectorAll("[data-pint-points-feature]").forEach((element) => {
+          element.hidden = true;
+        });
+      }
       MelbBeerBusiness.installFieldTestChrome();
       renderChecklist(venueTags, tagOptions);
       renderChecklist(happyHourDays, dayOptions);
@@ -4826,7 +4908,9 @@
       const selectedPortalVenueId = urlParams.get("venueId");
       const pendingRedemptionMatchesVenue = !pendingPortalRedemption?.venueId || pendingPortalRedemption.venueId === selectedPortalVenueId;
       const discountCodeFromQr = urlParams.get("discountCode") || (pendingRedemptionMatchesVenue ? pendingPortalRedemption?.discountCode : null);
-      const freePintCodeFromQr = urlParams.get("freePintCode") || (pendingRedemptionMatchesVenue ? pendingPortalRedemption?.freePintCode : null);
+      const freePintCodeFromQr = PINT_POINTS_REWARDS_ENABLED
+        ? urlParams.get("freePintCode") || (pendingRedemptionMatchesVenue ? pendingPortalRedemption?.freePintCode : null)
+        : null;
       const requestedTab = urlParams.get("tab");
       const venueClaimForm = document.getElementById("venueClaimForm");
       if (venueClaimForm instanceof HTMLFormElement) {
@@ -5024,15 +5108,16 @@
           const referenceInput = field(memberPurchaseForm, "transactionReference");
           const transactionReference = String(referenceInput.value || "").trim() || generateCounterReference();
           referenceInput.value = transactionReference;
-          const payload = {
-            checkoutToken: activeMemberCheckoutToken,
+          const checkoutToken = activeMemberCheckoutToken;
+          const receiptPayload = {
             itemName: field(memberPurchaseForm, "itemName").value,
             beverageCategory: field(memberPurchaseForm, "beverageCategory").value,
             quantity: Number(field(memberPurchaseForm, "quantity").value || 1),
             transactionReference,
             notes: null,
           };
-          if (!payload.checkoutToken || transactionReference !== activeMemberPreviewReference) {
+          const payload = { ...receiptPayload, checkoutToken };
+          if (!checkoutToken || transactionReference !== activeMemberPreviewReference) {
             MelbBeerBusiness.setStatus(memberPurchaseStatus, "Check the current member code before recording this purchase.", true);
             return;
           }
@@ -5044,7 +5129,8 @@
           const queuedReceipt = queuePendingCounterReceipt(
             venueId,
             activeMemberPreviewAccountId,
-            payload,
+            receiptPayload,
+            checkoutToken,
             activeMemberCheckoutExpiresAt,
           );
           if (queuedReceipt.conflict) {
@@ -5749,6 +5835,22 @@
 
         const upgradeTier = target.dataset.upgradeTier;
         if (upgradeTier) {
+          if (!COMMERCIAL_LAUNCH_ENABLED) {
+            MelbBeerBusiness.setStatus(
+              portalAccess,
+              "New paid and introductory-trial enrollment is not open yet. Existing venue subscriptions can still be managed or cancelled.",
+              true,
+            );
+            return;
+          }
+          const trialDays = Number(viewerConfig.business?.venueProTrialDays || 0);
+          const trialRequiresPaymentMethod = viewerConfig.business?.venueProTrialRequiresPaymentMethod === true;
+          const trialDisclosure = trialDays > 0
+            ? trialRequiresPaymentMethod
+              ? `Start a ${trialDays}-day full Pro trial? Stripe will collect a payment method. Unless you cancel before the trial ends, Pro renews at A$149/month.`
+              : `Start a ${trialDays}-day full Pro trial? No payment method is required. The trial cancels back to Free unless you deliberately add billing and keep Pro active at A$149/month.`
+            : "Continue to Stripe for Pro at A$149/month? The subscription renews monthly until cancelled.";
+          if (!window.confirm(trialDisclosure)) return;
           try {
             const result = await MelbBeerBusiness.apiFetch(`/api/business/venue-portal/${encodeURIComponent(selectedVenueId())}/billing/checkout`, {
               method: "POST",

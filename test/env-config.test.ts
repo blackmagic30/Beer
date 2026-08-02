@@ -22,11 +22,18 @@ const productionRequiredEnv = {
   REQUIRE_REDIS_RATE_LIMITING: "false",
   DEMO_BILLING_MODE: "",
   ALLOW_DEMO_BILLING_IN_PRODUCTION: "false",
+  COMMERCIAL_LAUNCH_ENABLED: "false",
+  CONSUMER_PAID_ENROLLMENT_ENABLED: "false",
+  PINT_POINTS_REWARDS_ENABLED: "false",
+  ALCOHOL_GAMIFICATION_ENABLED: "false",
+  ALCOHOL_PROMOTION_APPROVAL_REFERENCE: "",
   STRIPE_SECRET_KEY: "test-fixture-not-a-real-stripe-key",
   STRIPE_WEBHOOK_SECRET: "test-fixture-not-a-real-webhook-secret",
   STRIPE_PRICE_MONTHLY: "fixture-monthly-price-id",
   STRIPE_PRICE_YEARLY: "fixture-yearly-price-id",
   STRIPE_PRO_PRICE_ID: "fixture-venue-pro-price-id",
+  VENUE_PRO_TRIAL_DAYS: "60",
+  VENUE_PRO_TRIAL_REQUIRE_PAYMENT_METHOD: "false",
 };
 
 const restoreRehearsalRequiredEnv = {
@@ -68,6 +75,9 @@ const restoreRehearsalRequiredEnv = {
   OFFSITE_BACKUP_SERVICE_ROLE_KEY: "",
   DEMO_BILLING_MODE: "false",
   ALLOW_DEMO_BILLING_IN_PRODUCTION: "false",
+  PINT_POINTS_REWARDS_ENABLED: "false",
+  ALCOHOL_GAMIFICATION_ENABLED: "false",
+  ALCOHOL_PROMOTION_APPROVAL_REFERENCE: "",
   ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION: "false",
   STRIPE_SECRET_KEY: "",
   STRIPE_WEBHOOK_SECRET: "",
@@ -129,6 +139,8 @@ describe("environment safety defaults", () => {
 
     expect(env.NODE_ENV).toBe("production");
     expect(env.DEMO_BILLING_MODE).toBe(false);
+    expect(env.COMMERCIAL_LAUNCH_ENABLED).toBe(false);
+    expect(env.CONSUMER_PAID_ENROLLMENT_ENABLED).toBe(false);
   });
 
   it("keeps real monthly report delivery and scheduling disabled by default", async () => {
@@ -140,6 +152,72 @@ describe("environment safety defaults", () => {
     expect(env.REPORT_DELIVERY_SCHEDULE_ENABLED).toBe(false);
     expect(env.REPORT_DELIVERY_DAY).toBe(2);
     expect(env.REPORT_DELIVERY_HOUR).toBe(9);
+  });
+
+  it("uses a no-card 60-day venue trial and disables alcohol-linked launch features by default", async () => {
+    stubProductionEnv();
+
+    const { env } = await loadEnv();
+
+    expect(env.VENUE_PRO_TRIAL_DAYS).toBe(60);
+    expect(env.VENUE_PRO_TRIAL_REQUIRE_PAYMENT_METHOD).toBe(false);
+    expect(env.PINT_POINTS_REWARDS_ENABLED).toBe(false);
+    expect(env.ALCOHOL_GAMIFICATION_ENABLED).toBe(false);
+  });
+
+  it("requires an explicit commercial launch opt-in before new paid or trial enrollment opens", async () => {
+    stubProductionEnv({ COMMERCIAL_LAUNCH_ENABLED: "true" });
+
+    const { env } = await loadEnv();
+
+    expect(env.COMMERCIAL_LAUNCH_ENABLED).toBe(true);
+    expect(env.CONSUMER_PAID_ENROLLMENT_ENABLED).toBe(false);
+  });
+
+  it("keeps consumer paid enrollment separate from the venue launch switch", async () => {
+    stubProductionEnv({
+      COMMERCIAL_LAUNCH_ENABLED: "true",
+      CONSUMER_PAID_ENROLLMENT_ENABLED: "false",
+    });
+
+    const { env } = await loadEnv();
+
+    expect(env.COMMERCIAL_LAUNCH_ENABLED).toBe(true);
+    expect(env.CONSUMER_PAID_ENROLLMENT_ENABLED).toBe(false);
+  });
+
+  it("accepts only disabled, 30-day, or 60-day venue trial lengths", async () => {
+    stubProductionEnv({ VENUE_PRO_TRIAL_DAYS: "45" });
+
+    await expect(loadEnv()).rejects.toThrow("Use 0, 30, or 60 days");
+  });
+
+  it("fails production closed unless the venue launch offer is 60 days with no payment method", async () => {
+    stubProductionEnv({ VENUE_PRO_TRIAL_DAYS: "30" });
+    await expect(loadEnv()).rejects.toThrow("non-converting 60-day venue Pro offer");
+
+    vi.resetModules();
+    stubProductionEnv({ VENUE_PRO_TRIAL_REQUIRE_PAYMENT_METHOD: "true" });
+    await expect(loadEnv()).rejects.toThrow("non-converting 60-day venue Pro offer");
+  });
+
+  it("blocks alcohol-linked launch features without a recorded approval reference", async () => {
+    stubProductionEnv({
+      PINT_POINTS_REWARDS_ENABLED: "true",
+      ALCOHOL_PROMOTION_APPROVAL_REFERENCE: "",
+    });
+
+    await expect(loadEnv()).rejects.toThrow("ALCOHOL_PROMOTION_APPROVAL_REFERENCE");
+  });
+
+  it("allows an explicitly recorded production approval reference", async () => {
+    stubProductionEnv({
+      ALCOHOL_GAMIFICATION_ENABLED: "true",
+      ALCOHOL_PROMOTION_APPROVAL_REFERENCE: "legal-and-app-review-ticket-2026-07-28",
+    });
+
+    const { env } = await loadEnv();
+    expect(env.ALCOHOL_GAMIFICATION_ENABLED).toBe(true);
   });
 
   it("rejects invalid report timezones before reports or scheduler timers start", async () => {
@@ -469,6 +547,20 @@ describe("environment safety defaults", () => {
     });
     await expect(loadEnv()).rejects.toThrow(
       "prohibits write-enabling flags: PINTPATH_REVOKE_DIRECT_SMOKE_TOKENS",
+    );
+
+    stubRestoreRehearsalEnv({
+      COMMERCIAL_LAUNCH_ENABLED: "true",
+    });
+    await expect(loadEnv()).rejects.toThrow(
+      "prohibits write-enabling flags: COMMERCIAL_LAUNCH_ENABLED",
+    );
+
+    stubRestoreRehearsalEnv({
+      CONSUMER_PAID_ENROLLMENT_ENABLED: "true",
+    });
+    await expect(loadEnv()).rejects.toThrow(
+      "prohibits write-enabling flags: CONSUMER_PAID_ENROLLMENT_ENABLED",
     );
 
     stubRestoreRehearsalEnv({

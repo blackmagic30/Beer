@@ -185,7 +185,7 @@
         <div>
           <div class="eyebrow">Action required</div>
           <h2 id="legalAcceptanceGateTitle">Review the current Terms and Privacy Policy</h2>
-          <p class="muted">Pint Path updated these policies on 20 July 2026. Accept the current versions before using account-only features.</p>
+          <p class="muted">Pint Path updated these policies on 28 July 2026. Accept the current versions before using account-only features.</p>
         </div>
         <div class="legalAcceptanceGate__actions">
           <a class="button" href="/terms.html" target="_blank" rel="noopener">Read Terms</a>
@@ -368,18 +368,18 @@
               <div class="betaFeaturePicker">
                 <span class="betaFeatureHint">Choose another beta tool.</span>
                 <div class="betaFeatureMenu">
-                  <button id="betaFeatureMenuButton" class="button button--premium" type="button" aria-haspopup="true" aria-expanded="false">Pub Golf</button>
+                  <button id="betaFeatureMenuButton" class="button button--premium" type="button" aria-haspopup="true" aria-expanded="false">Leaderboard</button>
                   <div class="betaFeatureDropdown" role="menu" aria-label="Beta tools menu">
-                    <button type="button" role="menuitem" data-beta-feature-target="pub-golf">Pub Golf</button>
+                    <button type="button" role="menuitem" data-beta-feature-target="pub-golf" data-alcohol-gamification-feature>Pub Golf</button>
                     <button type="button" role="menuitem" data-beta-feature-target="leaderboard">Leaderboard</button>
-                    <button type="button" role="menuitem" data-beta-feature-target="pint-points">Pint Point Wallet</button>
-                    <button type="button" role="menuitem" data-beta-feature-target="can-i-drive">Standard drink log</button>
+                    <button type="button" role="menuitem" data-beta-feature-target="pint-points" data-pint-points-feature>Pint Point Wallet</button>
+                    <button type="button" role="menuitem" data-beta-feature-target="can-i-drive" data-pint-points-feature>Standard drink log</button>
                   </div>
                 </div>
               </div>
             </div>
 
-            <section id="betaFeaturePubGolf" class="betaFeaturePanel pubGolfPanel" data-beta-feature-panel="pub-golf">
+            <section id="betaFeaturePubGolf" class="betaFeaturePanel pubGolfPanel" data-beta-feature-panel="pub-golf" data-alcohol-gamification-feature>
               <div class="sectionHeader">
                 <div>
                   <div class="eyebrow">Beta route planner</div>
@@ -437,7 +437,7 @@
               <div id="rewardVoucherList" class="rewardVoucherList"></div>
             </section>
 
-            <section id="betaFeaturePintPoints" class="betaFeaturePanel" data-beta-feature-panel="pint-points" hidden>
+            <section id="betaFeaturePintPoints" class="betaFeaturePanel" data-beta-feature-panel="pint-points" data-pint-points-feature hidden>
               <article class="panel discountPassPanel accountHeroMetric accountHeroMetric--points">
                 <div class="sectionHeader">
                   <div>
@@ -460,7 +460,7 @@
               </article>
             </section>
 
-            <section id="betaFeatureCanIDrive" class="betaFeaturePanel canIDrivePanel" data-beta-feature-panel="can-i-drive" hidden>
+            <section id="betaFeatureCanIDrive" class="betaFeaturePanel canIDrivePanel" data-beta-feature-panel="can-i-drive" data-pint-points-feature hidden>
               <div class="sectionHeader">
                 <div>
                   <div class="eyebrow">Drink tracking beta</div>
@@ -530,11 +530,11 @@
                 <div>
                   <h2>Privacy, support, and appeals</h2>
                   <p class="muted">Create a tracked request for export, deletion, correction, moderation appeals, security reports, or billing help.</p>
-                  <p class="helperCopy">Deletion is a review request, not an instant switch. Pint Path checks account ownership plus billing, moderation, fraud-prevention, security, and legal retention needs before removing or anonymising data where practical.</p>
+                  <p class="helperCopy">Scheduling deletion starts a seven-day cancellation window. After that date, an authorised operator runs the deletion workflow and checks only documented billing, moderation, fraud-prevention, security, and legal retention requirements. Account deletion is not discretionary.</p>
                 </div>
                 <div class="quickPrivacyActions">
                   <button id="downloadAccountDataButton" class="button" type="button">Download my data</button>
-                  <button id="requestAccountDeletionButton" class="button button--danger" type="button">Request deletion review</button>
+                  <button id="requestAccountDeletionButton" class="button button--danger" type="button">Schedule account deletion</button>
                 </div>
               </div>
               <div class="accountSupportFields">
@@ -659,6 +659,13 @@
   </main>
 
   <script>
+    const PINT_POINTS_REWARDS_ENABLED =
+      window.MELB_BEER_BOT_VIEWER_CONFIG?.business?.pintPointsRewardsEnabled === true;
+    const ALCOHOL_GAMIFICATION_ENABLED =
+      window.MELB_BEER_BOT_VIEWER_CONFIG?.business?.alcoholGamificationEnabled === true;
+    const CONSUMER_PAID_ENROLLMENT_ENABLED =
+      window.MELB_BEER_BOT_VIEWER_CONFIG?.business?.consumerPaidEnrollmentEnabled === true;
+
     const state = {
       accountData: null,
       oauthLoginOpening: false,
@@ -671,7 +678,7 @@
       mfaVerifiedAt: 0,
       mfaVerificationMode: null,
       mfaPendingRequest: false,
-      activeBetaFeature: "pub-golf",
+      activeBetaFeature: ALCOHOL_GAMIFICATION_ENABLED ? "pub-golf" : "leaderboard",
       googleMapsLoader: null,
       pubGolfAutocompleteReady: false,
       pubGolfMap: null,
@@ -2171,7 +2178,7 @@
       const rejectedCount = Number(stats.rejectedCount ?? stats.rejected ?? countStatus(["rejected", "disputed", "fraud_flagged"]));
       const trustScore = Number(stats.trustScore ?? account.trustScore ?? 0);
       const savings = formatMoney((result.discounts?.estimatedSavingsCents || 0) / 100);
-      const pintPoints = result.pintPoints || {};
+      const pintPoints = result.pintPoints || null;
       const accountId = result.leaderboard?.accountId || account.publicAccountId || "—";
       const ageCopy = result.ageVerification?.copy || "18+ confirmation is required for protected contribution and reward features.";
       const progressPercent = Math.min(100, Math.round((points / threshold) * 100));
@@ -2185,7 +2192,9 @@
         : `${formatPoints(pointsNeeded)} more approved points unlock the same premium map access as a paid user until month end.`;
       const metrics = [
         { label: "Total saved", value: savings, helper: "Estimated from Pint Path discount redemptions logged by venues.", tone: "premium" },
-        { label: "Pint Points", value: `${pintPoints.available ?? 0}/${pintPoints.threshold ?? 50}`, helper: "Paid alcoholic drinks earn 1 point each. Free pints do not earn points.", tone: "premium" },
+        ...(PINT_POINTS_REWARDS_ENABLED && pintPoints
+          ? [{ label: "Pint Points", value: `${pintPoints.available ?? 0}/${pintPoints.threshold ?? 50}`, helper: "Paid alcoholic drinks earn 1 point each. Free pints do not earn points.", tone: "premium" }]
+          : []),
         { label: "Total uploads", value: totalUploads, helper: "Beer price, venue, happy-hour, and source uploads linked to your account.", tone: "neutral" },
         { label: "Verified", value: verifiedCount, helper: "Approved contributions that can count toward contributor unlocks.", tone: "success" },
         { label: "Pending review", value: pendingCount, helper: "Waiting for reviewer checks before they can affect the public map.", tone: "pending" },
@@ -2323,7 +2332,13 @@
 
     function randomizePubGolfDrinks() {
       const selects = Array.from(document.querySelectorAll("#pubGolfDrinkGrid select"));
-      const shuffled = [...pubGolfDrinkOptions].sort(() => Math.random() - 0.5);
+      const shuffled = [...pubGolfDrinkOptions];
+      for (let index = shuffled.length - 1; index > 0; index -= 1) {
+        const randomWord = new Uint32Array(1);
+        window.crypto.getRandomValues(randomWord);
+        const swapIndex = randomWord[0] % (index + 1);
+        [shuffled[index], shuffled[swapIndex]] = [shuffled[swapIndex], shuffled[index]];
+      }
       selects.forEach((select, index) => {
         select.value = shuffled[index % shuffled.length];
       });
@@ -3102,7 +3117,7 @@
     function renderDeletionStatus(request) {
       const host = $("accountDeletionStatus");
       if (!request) {
-        host.innerHTML = '<div class="emptyState"><strong>No deletion request.</strong><span>You can create a seven-day review request from the privacy actions.</span></div>';
+        host.innerHTML = '<div class="emptyState"><strong>No deletion scheduled.</strong><span>You can schedule deletion with a seven-day cancellation window from the privacy actions.</span></div>';
         return;
       }
       const status = String(request.status || "pending_review");
@@ -3355,22 +3370,24 @@
         account.emailVerifiedAt ? accessBadge("Email verified", "verified") : accessBadge("Email pending", "pending"),
       ].join("");
       $("savingsMetric").textContent = formatMoney((result.discounts?.estimatedSavingsCents || 0) / 100);
-      const pintPoints = result.pintPoints || {};
-      const pintPointThreshold = pintPoints.threshold || 50;
-      $("pintPointBalanceHero").textContent = `${pintPoints.available ?? 0} / ${pintPointThreshold}`;
-      $("pintPointProgressHero").textContent = (pintPoints.pointsUntilReward || 0) > 0
-        ? `${pintPoints.pointsUntilReward} Pint Points until your Free Pint Reward.`
-        : "Free Pint Reward available at affiliated bars.";
-      $("pintPointRewardBadge").textContent = pintPoints.rewardAvailable ? "Ready" : "Locked";
-      const freePintRewardButton = $("freePintRewardButton");
-      if (freePintRewardButton) {
-        freePintRewardButton.disabled = !pintPoints.rewardAvailable;
-        freePintRewardButton.textContent = pintPoints.rewardAvailable ? "Redeem Free Pint" : "50 Pint Points needed";
-      }
-      const freePintRewardResult = $("freePintRewardResult");
-      if (freePintRewardResult) {
-        freePintRewardResult.hidden = true;
-        freePintRewardResult.classList.add("is-hidden");
+      const pintPoints = result.pintPoints || null;
+      if (PINT_POINTS_REWARDS_ENABLED && pintPoints) {
+        const pintPointThreshold = pintPoints.threshold || 50;
+        $("pintPointBalanceHero").textContent = `${pintPoints.available ?? 0} / ${pintPointThreshold}`;
+        $("pintPointProgressHero").textContent = (pintPoints.pointsUntilReward || 0) > 0
+          ? `${pintPoints.pointsUntilReward} Pint Points until your Free Pint Reward.`
+          : "Free Pint Reward available at affiliated bars.";
+        $("pintPointRewardBadge").textContent = pintPoints.rewardAvailable ? "Ready" : "Locked";
+        const freePintRewardButton = $("freePintRewardButton");
+        if (freePintRewardButton) {
+          freePintRewardButton.disabled = !pintPoints.rewardAvailable;
+          freePintRewardButton.textContent = pintPoints.rewardAvailable ? "Redeem Free Pint" : "50 Pint Points needed";
+        }
+        const freePintRewardResult = $("freePintRewardResult");
+        if (freePintRewardResult) {
+          freePintRewardResult.hidden = true;
+          freePintRewardResult.classList.add("is-hidden");
+        }
       }
       const discountPassButton = $("refreshDiscountPassButton");
       if (discountPassButton) {
@@ -3428,6 +3445,16 @@
         return;
       }
       const requestedContext = captureAccountUiContext();
+
+      if (!CONSUMER_PAID_ENROLLMENT_ENABLED) {
+        state.checkoutResumeStarted = true;
+        MelbBeerBusiness.setStatus(
+          $("dashboardStatus"),
+          "New paid subscriptions are not open yet. Existing subscriptions can still be managed or cancelled from Account.",
+          true,
+        );
+        return;
+      }
 
       if (!result?.account?.ageConfirmedAt) {
         MelbBeerBusiness.setStatus(
@@ -3780,6 +3807,16 @@
 
     window.addEventListener("DOMContentLoaded", async () => {
       $("nav").innerHTML = MelbBeerBusiness.renderNav("account");
+      if (!PINT_POINTS_REWARDS_ENABLED) {
+        document.querySelectorAll("[data-pint-points-feature]").forEach((element) => {
+          element.hidden = true;
+        });
+      }
+      if (!ALCOHOL_GAMIFICATION_ENABLED) {
+        document.querySelectorAll("[data-alcohol-gamification-feature]").forEach((element) => {
+          element.hidden = true;
+        });
+      }
       installPasswordToggles();
       await setupOauth();
       window.addEventListener("pageshow", () => resetCancelledOauth());
@@ -3940,7 +3977,7 @@
           if (isAccountUiContextCurrent(requestedContext)) setLoading(button, false);
         }
       });
-      $("freePintRewardButton").addEventListener("click", async () => {
+      if (PINT_POINTS_REWARDS_ENABLED) $("freePintRewardButton").addEventListener("click", async () => {
         const button = $("freePintRewardButton");
         const requestedContext = captureAccountUiContext();
         let createdRewardCode = false;
@@ -3971,8 +4008,9 @@
           }
         }
       });
-      $("randomizePubGolfButton").addEventListener("click", randomizePubGolfDrinks);
-      $("pubGolfForm").addEventListener("submit", async (event) => {
+      if (ALCOHOL_GAMIFICATION_ENABLED) {
+        $("randomizePubGolfButton").addEventListener("click", randomizePubGolfDrinks);
+        $("pubGolfForm").addEventListener("submit", async (event) => {
         event.preventDefault();
         const form = $("pubGolfForm");
         const button = form.querySelector('button[type="submit"]');
@@ -4005,7 +4043,8 @@
         } finally {
           if (isAccountUiContextCurrent(requestedContext)) setLoading(button, false);
         }
-      });
+        });
+      }
       $("canIDriveForm").addEventListener("submit", (event) => {
         event.preventDefault();
         const form = $("canIDriveForm");
@@ -4184,7 +4223,7 @@
         }
       });
       $("requestAccountDeletionButton").addEventListener("click", async () => {
-        const confirmed = window.confirm("Request an admin review to delete your Pint Path account? This clears private submission drafts, exact location proof, and queued evidence from this device now, even if you later cancel the request. It does not instantly delete moderation, billing, security, or legal records.");
+        const confirmed = window.confirm("Schedule your Pint Path account for deletion after a seven-day cancellation window? Private submission drafts, exact location proof, and queued evidence will be cleared from this device now, even if you later cancel. Documented billing, moderation, security, and legal records may follow their published retention periods.");
         if (!confirmed) {
           return;
         }
@@ -4193,7 +4232,7 @@
           const deletionAccountId = MelbBeerBusiness.getAccountScopeId();
           await MelbBeerBusiness.sensitiveApiFetch("/api/business/account/delete-request", {
             method: "POST",
-            body: JSON.stringify({ message: "Self-service deletion review requested from account dashboard." }),
+            body: JSON.stringify({ message: "Self-service account deletion scheduled from the account dashboard." }),
           });
           let localCleanupComplete = true;
           try {
@@ -4205,8 +4244,8 @@
           MelbBeerBusiness.setStatus(
             $("dashboardStatus"),
             localCleanupComplete
-              ? "Deletion review request saved. Private drafts, location proof, and queued evidence for this account were cleared from this device. Admin will verify server retention requirements before actioning it."
-              : "Deletion review request saved, but this browser could not clear all private offline submission data. Open Submit and use Clear queue, then clear the draft and location proof. Admin will still verify server retention requirements.",
+              ? "Account deletion scheduled. Private drafts, location proof, and queued evidence for this account were cleared from this device. The status panel shows when the seven-day cancellation window ends."
+              : "Account deletion scheduled, but this browser could not clear all private offline submission data. Open Submit and use Clear queue, then clear the draft and location proof. The server-side deletion schedule is still active.",
             !localCleanupComplete,
           );
           await loadDeletionStatus();

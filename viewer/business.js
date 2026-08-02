@@ -10,7 +10,7 @@ const SENSITIVE_AUTH_RETURN_MAX_AGE_MS = 20 * 60 * 1000;
 const AUTH_FLOW_MAX_AGE_MS = 20 * 60 * 1000;
 const LEGAL_ACCEPTANCE_KEY = "pintPathLegalAcceptance";
 const LEGAL_POLICY_VERSION = String(
-  window.MELB_BEER_BOT_VIEWER_CONFIG?.business?.legalPolicyVersion || "2026-07-20"
+  window.MELB_BEER_BOT_VIEWER_CONFIG?.business?.legalPolicyVersion || "2026-07-28"
 );
 const OPTIONAL_ANALYTICS_KEY = "pintPathOptionalAnalyticsEnabled";
 const VENUE_REPORTS_KEY = "pintPathVenueReportsEnabled";
@@ -651,7 +651,6 @@ function normalizeAuthFlowState(record) {
     nonce,
     returnTo: getSafeReturnPath(record.returnTo || "/account.html"),
     kind,
-    provider: String(record.provider || "").trim().toLowerCase() || null,
     createdAt,
   };
 }
@@ -665,7 +664,6 @@ function storeAuthFlowState(input = {}) {
     nonce: input.nonce || createAuthFlowNonce(),
     returnTo: input.returnTo || "/account.html",
     kind: input.kind || "oauth",
-    provider: input.provider || null,
     createdAt: Date.now(),
   });
   if (!record) throw new Error("Secure sign-in flow generation failed.");
@@ -1209,7 +1207,6 @@ async function signInWithOAuth(provider, options = {}) {
     nonce: authFlowNonce,
     returnTo,
     kind: "oauth",
-    provider,
   });
 
   try {
@@ -1272,7 +1269,6 @@ async function signUpWithEmail(email, password, ageConfirmed, termsAccepted, pri
     nonce: authFlowNonce,
     returnTo,
     kind: "signup",
-    provider: "email",
   });
   // Consent is held briefly on this browser and sent to Pint Path's server after
   // Supabase proves the identity. Supabase user_metadata is editable and is not
@@ -1333,7 +1329,7 @@ async function resendSignupConfirmation(email) {
   const returnTo = "/account.html";
   const authFlowNonce = createAuthFlowNonce();
   window.localStorage.setItem(AUTH_RETURN_KEY, returnTo);
-  storeAuthFlowState({ nonce: authFlowNonce, returnTo, kind: "signup", provider: "email" });
+  storeAuthFlowState({ nonce: authFlowNonce, returnTo, kind: "signup" });
   const pendingAcceptance = getPendingLegalAcceptance();
   if (pendingAcceptance) {
     setPendingLegalAcceptance({ ...pendingAcceptance, authFlowNonce });
@@ -1368,7 +1364,7 @@ async function requestPasswordReset(email) {
   const returnTo = "/reset-password.html?mode=update";
   const authFlowNonce = createAuthFlowNonce();
   window.localStorage.setItem(AUTH_RETURN_KEY, returnTo);
-  storeAuthFlowState({ nonce: authFlowNonce, returnTo, kind: "password_recovery", provider: "email" });
+  storeAuthFlowState({ nonce: authFlowNonce, returnTo, kind: "password_recovery" });
 
   try {
     const { error } = await client.auth.resetPasswordForEmail(email, {
@@ -1478,6 +1474,26 @@ async function updatePassword(password) {
     message: "Password updated. Every Pint Path session was signed out; sign in again with your new password.",
     reauthenticationRequired: true,
   };
+}
+
+function isIOSLegalSurface() {
+  const path = window.location.pathname.replace(/\/+$/, "") || "/";
+  const isLegalPath = ["/terms", "/terms.html", "/privacy", "/privacy.html"].includes(path);
+  return isLegalPath && new URLSearchParams(window.location.search).get("source") === "ios_app";
+}
+
+function renderIOSLegalNav() {
+  return `
+    <nav class="topNav" aria-label="Pint Path legal information">
+      <span class="brand" aria-label="Pint Path">
+        <img class="brandLogo" src="/assets/pint-path-icon-192.png" alt="" width="36" height="36" aria-hidden="true" />
+        <span class="brandText"><strong>Pint Path</strong></span>
+      </span>
+      <div class="navLinks">
+        <a href="mailto:admin@pintpath.au">Contact support</a>
+      </div>
+    </nav>
+  `;
 }
 
 function renderNav(active = "") {
@@ -1616,6 +1632,7 @@ function navActiveKey(nav) {
 async function hydrateAuthSessionNavigation() {
   const nav = document.getElementById("nav");
   if (!nav) return null;
+  if (isIOSLegalSurface()) return null;
   if (!authSessionHydrationPromise) {
     authSessionHydrationPromise = apiFetch("/api/business/auth/session")
       .then((session) => {
@@ -1762,6 +1779,13 @@ function installLegalFooter() {
   const footer = document.createElement("footer");
   footer.className = "legalFooter";
   footer.dataset.legalFooter = "true";
+  if (isIOSLegalSurface()) {
+    footer.innerHTML = `
+      <span>Pint Path · ABN 80 319 578 329 · <a href="mailto:admin@pintpath.au">admin@pintpath.au</a> · Policy version ${LEGAL_POLICY_VERSION}</span>
+    `;
+    main.appendChild(footer);
+    return;
+  }
   footer.innerHTML = `
     <nav aria-label="Legal, privacy, and help">
       <a href="/terms.html">Terms</a>
@@ -1894,6 +1918,8 @@ window.MelbBeerBusiness = {
   markPasswordRecoverySession,
   validatePasswordRecoverySession,
   updatePassword,
+  isIOSLegalSurface,
+  renderIOSLegalNav,
   renderNav,
   hydrateAuthSessionNavigation,
   installNavigationChrome,
@@ -1911,7 +1937,9 @@ window.addEventListener("DOMContentLoaded", async () => {
   installAccessibilityChrome();
   installNavigationChrome();
   installFieldTestChrome();
-  installCookieConsent();
+  if (!isIOSLegalSurface()) {
+    installCookieConsent();
+  }
   installLegalFooter();
   void hydrateAuthSessionNavigation();
 });

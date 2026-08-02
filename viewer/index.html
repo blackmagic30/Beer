@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Melbourne Beer Map & Happy Hours | Pint Path</title>
-  <meta name="description" content="Find Melbourne beer prices, happy hours, venue specials, and bar details on an adult-only map powered by reviewed community and venue updates." />
+  <title>Melbourne Venue & Beer Price Directory | Pint Path</title>
+  <meta name="description" content="Browse Melbourne venue listings and see reviewed beer prices where current evidence exists. Coverage is labelled and still expanding." />
   <link rel="canonical" href="https://pintpath.au/" />
   <link rel="icon" href="/favicon.ico" sizes="any" />
   <link rel="icon" type="image/png" sizes="48x48" href="/favicon.png" />
@@ -17,13 +17,13 @@
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="Pint Path" />
-  <meta property="og:title" content="Melbourne Beer Map & Happy Hours | Pint Path" />
-  <meta property="og:description" content="Find Melbourne beer prices, happy hours, venue specials, and bar details on an adult-only map." />
+  <meta property="og:title" content="Melbourne Venue & Beer Price Directory | Pint Path" />
+  <meta property="og:description" content="Browse Melbourne venues and reviewed beer data where current coverage exists." />
   <meta property="og:url" content="https://pintpath.au/" />
   <meta property="og:image" content="https://pintpath.au/assets/pint-path-logo.png" />
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="Melbourne Beer Map & Happy Hours | Pint Path" />
-  <meta name="twitter:description" content="Find Melbourne beer prices, happy hours, venue specials, and bar details on an adult-only map." />
+  <meta name="twitter:title" content="Melbourne Venue & Beer Price Directory | Pint Path" />
+  <meta name="twitter:description" content="Browse Melbourne venues and reviewed beer data where current coverage exists." />
   <meta name="twitter:image" content="https://pintpath.au/assets/pint-path-logo.png" />
   <script type="application/ld+json">
     {
@@ -33,7 +33,7 @@
       "url": "https://pintpath.au/",
       "applicationCategory": "LifestyleApplication",
       "operatingSystem": "Web",
-      "description": "An adult-only Melbourne beer map for reviewed beer prices, happy hours, venue specials, and bar details.",
+      "description": "An adult-only Melbourne venue directory with reviewed beer prices where current coverage exists.",
       "image": "https://pintpath.au/assets/pint-path-logo.png",
       "audience": {
         "@type": "Audience",
@@ -3741,7 +3741,7 @@
       <div>
         <div class="topbar__eyebrow">Melbourne beer map <span class="fieldTestBadge">Beta</span></div>
         <h1>Pint Path</h1>
-        <p class="topbar__subtitle">Find verified beer prices and happy hours across Melbourne. Search by beer, venue, or area, then tap a marker for the detail.</p>
+        <p class="topbar__subtitle">Explore Melbourne venue listings. Verified price coverage is limited and expanding; missing and stale data is labelled. Confirm current details with the venue.</p>
       </div>
       <span id="accessPill" class="accessPill">Free preview</span>
     </section>
@@ -3803,13 +3803,13 @@
           <input id="nearMeRadiusSelect" type="range" min="0.5" max="10" step="0.5" value="2" aria-describedby="locationStatus" />
           <span id="nearMeRadiusValue" class="radiusControl__value">2 km</span>
         </label>
-        <span id="locationStatus" class="locationStatus">Location off. Tap once to show approximate distances and nearby happy hours.</span>
+        <span id="locationStatus" class="locationStatus">Location off. Tap once to show approximate distances to nearby venues.</span>
       </div>
 
       <div class="specialsFilterRow" aria-label="Specials filters">
         <div class="filterGroup chipRow__inline">
           <span class="filterGroup__label">Specials</span>
-          <button class="filterChip" type="button" data-filter-chip="happy_hour_active_now" aria-pressed="false">Happy hour active now</button>
+          <button class="filterChip" type="button" data-filter-chip="happy_hour_active_now" aria-pressed="false" hidden>Happy hour active now</button>
           <button class="filterChip" type="button" data-filter-chip="pint_path_specials" aria-pressed="false">Pint Path specials</button>
         </div>
       </div>
@@ -3941,7 +3941,6 @@
               <option value="price_changed">Price changed</option>
               <option value="beer_not_available">Beer no longer available</option>
               <option value="wrong_serving_size">Wrong serving size</option>
-              <option value="happy_hour_changed">Happy-hour details changed</option>
               <option value="other">Something else</option>
             </select>
           </label>
@@ -4000,6 +3999,7 @@
     const GOOGLE_MAPS_DEMO_MAP_ID = "DEMO_MAP_ID";
     const EFFECTIVE_GOOGLE_MAPS_MAP_ID =
       (IS_LOCAL_VIEWER_ORIGIN && (params.get("googleMapsMapId") || params.get("mapId"))) ||
+      GOOGLE_MAPS_MAP_ID ||
       GOOGLE_MAPS_DEMO_MAP_ID;
     const TRACKED_BEERS = Array.isArray(viewerConfig.trackedBeers)
       ? viewerConfig.trackedBeers
@@ -4034,6 +4034,7 @@
       (IS_LOCAL_VIEWER_ORIGIN && (params.get("googleMapsKey") || window.localStorage.getItem("googleMapsKey"))) ||
       DEFAULT_GOOGLE_MAPS_KEY;
     const BUSINESS_CONFIG = viewerConfig.business || {};
+    const HAPPY_HOUR_DISCOVERY_ENABLED = BUSINESS_CONFIG.happyHourDiscoveryEnabled === true;
     const RESTORE_REHEARSAL_MODE = BUSINESS_CONFIG.restoreRehearsalMode === true;
     const LOCATION_PREFERENCE_STORAGE_KEY = "pintPathLocationPreference";
     const LOCAL_SAVED_VENUES_STORAGE_KEY = "pintPathLocalSavedVenues";
@@ -4142,7 +4143,7 @@
       outsideMelbourne: false,
       message: hasSavedLocationPreference()
         ? "Location preference saved. We’ll ask your browser for one-time location when the map loads."
-        : "Location off. Tap once to show approximate distances and nearby happy hours.",
+        : "Location off. Tap once to show approximate distances to nearby venues.",
     };
     let businessAccess = {
       hasFullAccess: false,
@@ -4150,7 +4151,7 @@
       isAdminAccount: false,
       ageConfirmed: false,
       priceAccessModel: "fixed_preview",
-      freePreviewScope: "Happy hours plus the named fixed beer-price preview.",
+      freePreviewScope: "The named fixed beer-price preview.",
       canUseCheapestSort: false,
       canUseBeerSearch: false,
       canUseHappyHourActiveNow: false,
@@ -4738,7 +4739,7 @@
       userLocationState.status = "idle";
       userLocationState.coords = null;
       userLocationState.outsideMelbourne = false;
-      userLocationState.message = "Location off. Tap once to show approximate distances and nearby happy hours.";
+      userLocationState.message = "Location off. Tap once to show approximate distances to nearby venues.";
       setSavedLocationPreference(false);
       syncLocationUi();
 
@@ -4777,7 +4778,7 @@
       }
 
       userLocationState.status = "requesting";
-      userLocationState.message = "Use your location to show nearby venues and happy hours.";
+      userLocationState.message = "Use your location to show nearby venues.";
       syncLocationUi();
       void trackBusinessEvent("location_permission_requested", getLocationEventMetadata({ reason }));
 
@@ -4947,7 +4948,7 @@
           <div class="beerPopup__head">
             <div class="beerPopup__eyebrow">Loading venue</div>
             <div class="beerPopup__title">Opening details…</div>
-            <div class="beerPopup__address">Fetching the latest venue-supplied prices and happy-hour data.</div>
+            <div class="beerPopup__address">Fetching the latest venue-supplied prices.</div>
           </div>
         </div>
       `;
@@ -5364,7 +5365,12 @@
       const sharedBeer = params.get("beer") || "";
       const sharedScope = params.get("scope") || "";
       const sharedRadiusKm = Number(params.get("radiusKm"));
-      const validFilters = new Set(highValueChipEls.map((chipEl) => chipEl.dataset.filterChip).filter(Boolean));
+      const validFilters = new Set(
+        highValueChipEls
+          .filter((chipEl) => !chipEl.hidden)
+          .map((chipEl) => chipEl.dataset.filterChip)
+          .filter(Boolean),
+      );
 
       if (sharedQuery) {
         venueSearchEl.value = sharedQuery;
@@ -5531,6 +5537,9 @@
     }
 
     function getHappyHourRecord(row) {
+      if (!HAPPY_HOUR_DISCOVERY_ENABLED) {
+        return null;
+      }
       const cleaned = getCleanedRecord(row);
       return isObjectRecord(cleaned.happy_hour) ? cleaned.happy_hour : null;
     }
@@ -6021,25 +6030,13 @@
     }
 
     function hasVerifiedBeerData(row) {
-      return getBeerItems(row).some((beer) => [
-        "venue_confirmed",
-        "photo_verified",
-        "community_confirmed",
-      ].includes(beer.confidenceLabel));
+      return getBeerItems(row).some((beer) => window.MelbBeerMapLogic.isCurrentVerifiedBeer(beer));
     }
 
     function isRecentlyVerified(row) {
-      const latest = getBeerItems(row)
-        .map((beer) => beer.lastVerifiedAt)
-        .filter(Boolean)
-        .sort((left, right) => new Date(right).getTime() - new Date(left).getTime())[0] || row.saved_at || row.beer_synced_at;
-
-      if (!latest) {
-        return false;
-      }
-
-      const ageDays = (Date.now() - new Date(latest).getTime()) / (1000 * 60 * 60 * 24);
-      return Number.isFinite(ageDays) && ageDays <= 30;
+      return getBeerItems(row).some((beer) =>
+        window.MelbBeerMapLogic.isFreshVerificationTimestamp(beer.lastVerifiedAt)
+      ) || window.MelbBeerMapLogic.isFreshVerificationTimestamp(row.saved_at || row.beer_synced_at);
     }
 
     function hasActiveHappyHourNow(row) {
@@ -6396,7 +6393,15 @@
     }
 
     function mergeBusinessPriceRecords(row, records = []) {
-      if (!records.length) {
+      const visibleRecords = HAPPY_HOUR_DISCOVERY_ENABLED
+        ? records
+        : records.filter(
+            (record) =>
+              record.isHappyHourPrice !== true &&
+              record.displayKind !== "happy_hour" &&
+              !record.happyHourDetails,
+          );
+      if (!visibleRecords.length) {
         return row;
       }
 
@@ -6405,20 +6410,20 @@
         ...(isObjectRecord(cleaned.beers) ? cleaned.beers : {}),
       };
       const verifiedDates = [];
-      const happyHourRecords = records
+      const happyHourRecords = visibleRecords
         .filter((record) => record.isHappyHourPrice || record.displayKind === "happy_hour" || record.happyHourDetails)
         .sort((left, right) => new Date(right.lastVerifiedAt).getTime() - new Date(left.lastVerifiedAt).getTime());
-      const specialRecords = records
+      const specialRecords = visibleRecords
         .filter((record) => record.displayKind === "special")
         .sort((left, right) => new Date(right.lastVerifiedAt).getTime() - new Date(left.lastVerifiedAt).getTime());
-      const venueMetadataRecord = records.find((record) =>
+      const venueMetadataRecord = visibleRecords.find((record) =>
         record.membershipTier ||
         record.membership_tier ||
         record.acceptsPintPathCodes ||
         record.accepts_pint_path_codes ||
         record.premiumBadge ||
         record.premium_badge
-      ) || records[0];
+      ) || visibleRecords[0];
       const mergedSpecials = Array.isArray(cleaned.specials)
         ? cleaned.specials.filter((special) => special && typeof special === "object")
         : [];
@@ -6435,7 +6440,7 @@
         specialIds.add(source.id);
       });
 
-      records.forEach((record) => {
+      visibleRecords.forEach((record) => {
         if (record.lastVerifiedAt) {
           verifiedDates.push(record.lastVerifiedAt);
         }
@@ -6458,7 +6463,7 @@
           ...cleaned,
           beers: mergedBeers,
           specials: mergedSpecials,
-          business_record_venue_id: records[0]?.venueId || cleaned.business_record_venue_id || null,
+          business_record_venue_id: visibleRecords[0]?.venueId || cleaned.business_record_venue_id || null,
           venue_membership_tier: venueMetadataRecord?.membershipTier || venueMetadataRecord?.membership_tier || cleaned.venue_membership_tier || null,
           venue_premium_badge: venueMetadataRecord?.premiumBadge || venueMetadataRecord?.premium_badge || cleaned.venue_premium_badge || null,
           venue_accepts_pint_path_codes: Boolean(
@@ -6727,7 +6732,9 @@
         venueQuery: searchQuery,
         beerQuery,
         onTapOnly: onTapOnlyEl.checked,
-        filters: Array.from(activeFilterChips),
+        filters: Array.from(activeFilterChips).filter(
+          (filter) => HAPPY_HOUR_DISCOVERY_ENABLED || !String(filter).startsWith("happy_hour_"),
+        ),
       };
     }
 
@@ -7318,8 +7325,8 @@
           items: [
             ["neutral", "Free listing", "Captured venue information and community-verified details."],
             ["pro", "Premium venue", "Paid venue with premium discovery treatment."],
-            ["codes", "Accepts Pint Path codes", "Staff can enter a Pint Path member code for supported rewards."],
-            ["needs", "Needs data", "Beer prices, happy-hour details, or source evidence still need verification."],
+            ["codes", "Accepts Pint Path codes", "Staff can enter a rotating Pint Path member code for eligible venue specials."],
+            ["needs", "Needs data", "Beer prices or source evidence still need verification."],
           ],
           hint: "Search or filter the directory, then open any card for details. Prices may change; check with the venue before ordering.",
         };
@@ -7328,7 +7335,7 @@
       if (viewState.filters.includes("best_options")) {
         return {
           title: "Best options right now",
-          subtitle: "Prioritises active happy hours, verified prices, freshness, and distance when location is on.",
+          subtitle: "Prioritises verified prices, freshness, and distance when location is on.",
           stats: [
             `${filteredRows.length} trusted matches`,
             hasUserLocation() ? `Within ${formatRadiusLabel(userLocationState.radiusKm)}` : "Area or map view",
@@ -7415,7 +7422,7 @@
             `${capturedCount} already captured are hidden`,
           ],
           items: [
-            ["needs", "Needs data", "Muted grey markers still need beer prices, happy-hour details, or source evidence."],
+            ["needs", "Needs data", "Muted grey markers still need beer prices or source evidence."],
             ["selected", "Selected venue", "Gold ring shows the active venue."],
           ],
           hint: "Use Submit data to send a venue update, or let the call and OCR workflows fill these in over time."
@@ -7430,10 +7437,10 @@
           `${missingCount} still need data`,
         ],
         items: [
-          ["neutral", "Populated free venue", "Blue markers have captured beer prices, happy-hour info, or venue-supplied details."],
+          ["neutral", "Populated free venue", "Blue markers have captured beer prices or venue-supplied details."],
           ["pro", "Premium venue", "Purple markers are paid venues with premium discovery treatment."],
-          ["codes", "Accepts Pint Path codes", "Cyan outline means staff can scan or enter a Pint Path user code for Pint Points."],
-          ["needs", "Needs data", "Muted grey question-mark markers still need beer prices or happy-hour details."],
+          ["codes", "Accepts Pint Path codes", "Cyan outline means staff can scan or enter a rotating Pint Path member code for eligible venue specials."],
+          ["needs", "Needs data", "Muted grey question-mark markers still need beer prices."],
           ["selected", "Selected venue", "Gold ring shows the marker currently open in the venue card."],
         ],
             hint: "Switch to a beer search when you want green, yellow, orange, and dark-red price rings."
@@ -7743,7 +7750,7 @@
                   : "Venue list mode";
       venueRailCountEl.textContent = `${visibleRecords.length} visible`;
       venueRailSubtitleEl.textContent = viewState.filters.includes("best_options")
-        ? "Trusted nearby options prioritise active happy hours, verified prices, freshness, and distance."
+        ? "Trusted nearby options prioritise verified prices, freshness, and distance."
         : viewState.filters.includes("happy_hour_near_me")
           ? "Active happy-hour matches are sorted by approximate straight-line distance."
           : viewState.filters.includes("recently_verified_near_me")
@@ -8039,7 +8046,7 @@
       highValueChipEls.forEach((chipEl) => {
         chipEl.addEventListener("click", async () => {
           const filter = chipEl.dataset.filterChip;
-          if (!filter) {
+          if (!filter || chipEl.hidden || (!HAPPY_HOUR_DISCOVERY_ENABLED && filter.startsWith("happy_hour_"))) {
             return;
           }
           if (isAdvancedFilterLocked(filter)) {
@@ -9181,11 +9188,11 @@
                       <div class="beerPopup__summaryValue">${escapeHtml(`${liveBeerItems.length} listed`)}</div>
                       <div class="beerPopup__summarySub">${escapeHtml(`${onTapCount} on tap · ${knownPriceCount} priced`)}</div>
                     </div>
-                    <div class="beerPopup__summaryCard">
+                    ${HAPPY_HOUR_DISCOVERY_ENABLED ? `<div class="beerPopup__summaryCard">
                       <div class="beerPopup__summaryLabel">Happy hour</div>
                       <div class="beerPopup__summaryValue">${escapeHtml(happyHourValue)}</div>
                       <div class="beerPopup__summarySub">${escapeHtml(happyHourSub)}</div>
-                    </div>
+                    </div>` : ""}
                     <div class="beerPopup__summaryCard">
                       <div class="beerPopup__summaryLabel">Specials</div>
                       <div class="beerPopup__summaryValue">${escapeHtml(liveSpecials.some((special) => special.exclusive) ? "Pint Path" : liveSpecials.length ? "Listed" : "None listed")}</div>
@@ -9594,7 +9601,7 @@
         highValueChipEls.forEach((chipEl) => {
           chipEl.addEventListener("click", async () => {
             const filter = chipEl.dataset.filterChip;
-            if (!filter) {
+            if (!filter || chipEl.hidden || (!HAPPY_HOUR_DISCOVERY_ENABLED && filter.startsWith("happy_hour_"))) {
               return;
             }
 

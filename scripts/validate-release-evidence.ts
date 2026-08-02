@@ -33,7 +33,6 @@ const expectedRequiredIds = [
   "accessibility_devices",
   "legal_billing",
   "ios_release",
-  "android_release",
 ] as const;
 const expectedRequiredIdSet = new Set<string>(expectedRequiredIds);
 const allowedStatuses = new Set(["pending", "pass", "fail", "not_applicable"]);

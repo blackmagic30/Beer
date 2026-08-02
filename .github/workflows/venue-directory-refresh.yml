@@ -1,0 +1,115 @@
+name: Venue Directory Status Refresh
+
+on:
+  schedule:
+    - cron: "23 14 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: venue-directory-status-refresh-production
+  cancel-in-progress: false
+
+jobs:
+  refresh-production-directory-status:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment: production
+    env:
+      PINTPATH_EXPECTED_SUPABASE_PROJECT_REF: jxpubqlmqnnqwadmjgyk
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify the exact production Supabase target
+        shell: bash
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        run: |
+          set -euo pipefail
+          actualProjectRef="$(
+            node -e 'const value = new URL(process.env.SUPABASE_URL); process.stdout.write(value.hostname.replace(/\.supabase\.co$/, ""));'
+          )"
+          test "$actualProjectRef" = "$PINTPATH_EXPECTED_SUPABASE_PROJECT_REF"
+
+      - name: Validate a complete status refresh without writes
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          GOOGLE_PLACES_API_KEY: ${{ secrets.GOOGLE_PLACES_API_KEY }}
+        run: >-
+          npm run venues:import --
+          --status-only
+          --dry-run
+          --expected-project-ref="$PINTPATH_EXPECTED_SUPABASE_PROJECT_REF"
+
+      - name: Refresh every existing Place ID
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          GOOGLE_PLACES_API_KEY: ${{ secrets.GOOGLE_PLACES_API_KEY }}
+        run: >-
+          npm run venues:import --
+          --status-only
+          --expected-project-ref="$PINTPATH_EXPECTED_SUPABASE_PROJECT_REF"
+
+      - name: Enforce five-day warning and pre-expiry failure
+        if: always()
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const expectedRef = process.env.PINTPATH_EXPECTED_SUPABASE_PROJECT_REF;
+          const supabaseUrl = new URL(process.env.SUPABASE_URL);
+          const actualRef = supabaseUrl.hostname.replace(/\.supabase\.co$/, "");
+          if (actualRef !== expectedRef) {
+            throw new Error(`Supabase project target mismatch: expected ${expectedRef}, received ${actualRef}.`);
+          }
+
+          const query = new URL("/rest/v1/venues", supabaseUrl);
+          query.searchParams.set("select", "last_checked_at");
+          query.searchParams.set("directory_eligible", "eq.true");
+          query.searchParams.set("order", "last_checked_at.asc");
+          query.searchParams.set("limit", "1");
+          const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+          const response = await fetch(query, {
+            headers: {
+              apikey: serviceRoleKey,
+              Authorization: `Bearer ${serviceRoleKey}`,
+            },
+          });
+          if (!response.ok) {
+            throw new Error(`Directory freshness query failed with HTTP ${response.status}.`);
+          }
+
+          const rows = await response.json();
+          const checkedAt = Array.isArray(rows) ? Date.parse(rows[0]?.last_checked_at ?? "") : Number.NaN;
+          const ageHours = (Date.now() - checkedAt) / 3_600_000;
+          if (!Number.isFinite(ageHours) || ageHours < 0) {
+            throw new Error("No valid eligible-venue status timestamp is available.");
+          }
+          if (ageHours >= 138) {
+            console.error(`::error::Oldest eligible venue status is ${ageHours.toFixed(1)} hours old; the pre-expiry incident threshold is 138 hours.`);
+            process.exit(1);
+          }
+          if (ageHours >= 120) {
+            console.warn(`::warning::Oldest eligible venue status is ${ageHours.toFixed(1)} hours old; investigate before the 138-hour incident threshold.`);
+          }
+          console.log(`Oldest eligible venue status age: ${ageHours.toFixed(1)} hours.`);
+          NODE

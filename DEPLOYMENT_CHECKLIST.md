@@ -1,5 +1,10 @@
 # Pint Path Deployment Checklist
 
+> This older beta checklist is retained for historical detail. For the current
+> full web plus iOS launch, follow
+> [`docs/production-launch-runbook.md`](docs/production-launch-runbook.md) in
+> order. The production launch runbook is controlling where the two differ.
+
 Use this before merging a beta/hardening branch into `main` or deploying a Railway production beta.
 
 Provider-specific setup lives in [docs/provider-configuration-runbook.md](/Users/zac/Desktop/Beer/docs/provider-configuration-runbook.md).
@@ -31,7 +36,7 @@ Provider-specific setup lives in [docs/provider-configuration-runbook.md](/Users
 - Confirm Google Maps browser keys are HTTP-referrer restricted to localhost and the live beta domain.
 - Confirm a JavaScript/vector Google Maps Map ID exists in Google Maps Platform and is set as `GOOGLE_MAPS_MAP_ID`.
 - Confirm the server Google Places/geocoding key is not exposed in `/config.js` and has Places API plus Geocoding API enabled for venue imports and mission area lookup.
-- Confirm Supabase Auth Site URL is `https://pintpath.au`, and redirect URLs include exact `http://localhost:3000/auth/callback`, `https://pintpath.au/auth/callback`, and `pintpath://auth-callback`.
+- Confirm Supabase Auth Site URL is `https://pintpath.au`; allow exact web callbacks `http://localhost:3000/auth/callback` and `https://pintpath.au/auth/callback`. Allow `pintpath://auth-callback` only for an Android release that enables native OAuth. The first-release iOS archive must have no custom URL scheme and uses the HTTPS callback for email confirmation/password recovery.
 - Confirm Supabase Auth leaked-password protection is enabled before public signup.
 - Confirm Supabase Row Level Security policies from `supabase/migrations/20260512000000_auth_profiles_activity.sql` are reviewed before any direct browser writes are enabled.
 

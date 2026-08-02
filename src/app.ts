@@ -51,11 +51,20 @@ const RESTORE_REHEARSAL_ALLOWED_API_READS = new Set([
   "/api/business/venues",
   "/api/business/price-records",
 ]);
+const TIMING_SAFE_COMPARISON_MAX_BYTES = 1024;
 
 function timingSafeStringEqual(left: string, right: string): boolean {
-  const leftDigest = crypto.createHash("sha256").update(left).digest();
-  const rightDigest = crypto.createHash("sha256").update(right).digest();
-  return crypto.timingSafeEqual(leftDigest, rightDigest);
+  const leftBytes = Buffer.from(left, "utf8");
+  const rightBytes = Buffer.from(right, "utf8");
+  const leftPadded = Buffer.alloc(TIMING_SAFE_COMPARISON_MAX_BYTES);
+  const rightPadded = Buffer.alloc(TIMING_SAFE_COMPARISON_MAX_BYTES);
+  leftBytes.copy(leftPadded, 0, 0, TIMING_SAFE_COMPARISON_MAX_BYTES);
+  rightBytes.copy(rightPadded, 0, 0, TIMING_SAFE_COMPARISON_MAX_BYTES);
+  const equalContents = crypto.timingSafeEqual(leftPadded, rightPadded);
+  return leftBytes.length <= TIMING_SAFE_COMPARISON_MAX_BYTES &&
+    rightBytes.length <= TIMING_SAFE_COMPARISON_MAX_BYTES &&
+    leftBytes.length === rightBytes.length &&
+    equalContents;
 }
 
 type RestoreRehearsalAccessConfig = {
@@ -66,13 +75,15 @@ type RestoreRehearsalAccessConfig = {
 
 function getRestoreAccessCookieToken(config: RestoreRehearsalAccessConfig, expiresAtSeconds: number): string {
   const payload = `v1.${expiresAtSeconds}`;
-  const signingKey = crypto.scryptSync(
-    config.RESTORE_REHEARSAL_ACCESS_PASSWORD!,
-    `pint-path:restore-access:${config.RESTORE_REHEARSAL_ACCESS_USERNAME}`,
+  const signingKey = crypto.hkdfSync(
+    "sha256",
+    Buffer.from(config.RESTORE_REHEARSAL_ACCESS_PASSWORD!, "utf8"),
+    Buffer.from(`pint-path:restore-access:${config.RESTORE_REHEARSAL_ACCESS_USERNAME}`, "utf8"),
+    Buffer.from("pint-path:restore-access-cookie:v1", "utf8"),
     32,
   );
   const signature = crypto
-    .createHmac("sha256", signingKey)
+    .createHmac("sha256", Buffer.from(signingKey))
     .update(`pint-path-restore-access:${config.RESTORE_REHEARSAL_ACCESS_USERNAME}:${payload}`)
     .digest("base64url");
   return `${payload}.${signature}`;
@@ -1034,11 +1045,43 @@ export function createApp() {
               nodeEnv: env.NODE_ENV,
               railwayEnvironmentName: process.env.RAILWAY_ENVIRONMENT_NAME,
             }),
+            // A recent successful scheduled backup is the serving-readiness
+            // signal. Privileged write/list/download/delete canaries belong in
+            // provider/release checks, not in a public GET or deploy gate.
+            probeCapabilities: false,
           })
         )),
       ]);
       const restoreRuntimeReady = !env.RESTORE_REHEARSAL_MODE || Boolean(verifiedRestoreRuntime);
       const ready = readiness.ready && rateLimiterRedis.ready && offsiteBackup.status === "ok" && restoreRuntimeReady;
+      if (!ready) {
+        const safeDependencyFields = [
+          "status",
+          "required",
+          "ready",
+          "liveProbe",
+          "error",
+          "foreignKeyViolations",
+          "lastSuccessfulAt",
+          "ageHours",
+        ];
+        const dependencies = {
+          ...readiness.dependencies,
+          rateLimiterRedis,
+          offsiteBackup,
+        };
+        logger.warn("Operational readiness check failed", {
+          dependencies: Object.fromEntries(Object.entries(dependencies).map(([name, value]) => [
+            name,
+            Object.fromEntries(safeDependencyFields.flatMap((field) => (
+              Object.prototype.hasOwnProperty.call(value, field)
+                ? [[field, (value as Record<string, unknown>)[field]]]
+                : []
+            ))),
+          ])),
+          restoreRuntimeReady,
+        });
+      }
       res.status(ready ? 200 : 503).json(
         success({
           service: "pint-path",
@@ -1084,8 +1127,15 @@ export function createApp() {
           contributorUnlockPoints: env.CONTRIBUTOR_UNLOCK_POINTS,
           contributorUnlockDays: env.CONTRIBUTOR_UNLOCK_DAYS,
           demoBillingMode: env.DEMO_BILLING_MODE,
+          commercialLaunchEnabled: publicConfig.commercialLaunchEnabled,
+          consumerPaidEnrollmentEnabled: publicConfig.consumerPaidEnrollmentEnabled,
           fieldTestMode: env.FIELD_TEST_MODE || env.RESTORE_REHEARSAL_MODE,
           restoreRehearsalMode: env.RESTORE_REHEARSAL_MODE,
+          pintPointsRewardsEnabled: publicConfig.pintPointsRewardsEnabled,
+          alcoholGamificationEnabled: publicConfig.alcoholGamificationEnabled,
+          happyHourDiscoveryEnabled: publicConfig.happyHourDiscoveryEnabled,
+          venueProTrialDays: publicConfig.venueProTrialDays,
+          venueProTrialRequiresPaymentMethod: publicConfig.venueProTrialRequiresPaymentMethod,
           legalPolicyVersion: publicConfig.legalPolicyVersion,
           pricing: {
             monthly: PREMIUM_PRICING.monthlyLabel,

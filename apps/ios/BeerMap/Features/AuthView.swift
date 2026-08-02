@@ -1,13 +1,7 @@
-import AuthenticationServices
-import CryptoKit
-import Security
 import SwiftUI
-import UIKit
 
 struct AuthView: View {
     @EnvironmentObject private var model: BeerMapAppModel
-    @Environment(\.openURL) private var openURL
-    @StateObject private var oauth = NativeOAuthCoordinator()
     @State private var mode: AuthMode = .login
     @State private var email = ""
     @State private var password = ""
@@ -16,7 +10,6 @@ struct AuthView: View {
     @State private var ageConfirmed = false
     @State private var termsAccepted = false
     @State private var privacyAccepted = false
-    @State private var billingRecoveryVenueId = ""
 
     enum AuthMode: String, CaseIterable, Identifiable {
         case login = "Sign in"
@@ -33,7 +26,7 @@ struct AuthView: View {
                     ? "Review the current policies"
                     : (mode == .login ? "Welcome back" : "Create your contributor account"),
                 subtitle: model.legalAcceptanceRequired
-                    ? "Your provider identity is verified. Accept the current version before Pint Path creates an app session."
+                    ? "Your email identity is verified. Accept the current version before Pint Path creates an app session."
                     : "Use the same account, access rules, and venue assignments as the website.",
                 systemImage: model.legalAcceptanceRequired
                     ? "checkmark.shield.fill"
@@ -47,9 +40,9 @@ struct AuthView: View {
                         systemImage: "checkmark.shield.fill"
                     )
                     Toggle("I confirm I am 18 or older", isOn: $ageConfirmed)
-                    Link("Read the Terms", destination: AppConfig.apiBaseURL.appending(path: "terms.html"))
+                    Link("Read the Terms", destination: AppConfig.termsURL)
                     Toggle("I accept the current Terms", isOn: $termsAccepted)
-                    Link("Read the Privacy Policy", destination: AppConfig.apiBaseURL.appending(path: "privacy.html"))
+                    Link("Read the Privacy Policy", destination: AppConfig.privacyURL)
                     Toggle("I accept the current Privacy Policy", isOn: $privacyAccepted)
                     PrimaryButton(
                         title: "Accept and continue",
@@ -136,9 +129,9 @@ struct AuthView: View {
                     Toggle("I confirm I am 18 or older", isOn: $ageConfirmed)
 
                     VStack(spacing: 10) {
-                        Link("Read the Terms", destination: AppConfig.apiBaseURL.appending(path: "terms.html"))
+                        Link("Read the Terms", destination: AppConfig.termsURL)
                         Toggle("I accept the current Terms", isOn: $termsAccepted)
-                        Link("Read the Privacy Policy", destination: AppConfig.apiBaseURL.appending(path: "privacy.html"))
+                        Link("Read the Privacy Policy", destination: AppConfig.privacyURL)
                         Toggle("I accept the current Privacy Policy", isOn: $privacyAccepted)
                     }
                     .padding(12)
@@ -192,66 +185,6 @@ struct AuthView: View {
                 ))
             )
 
-            if let guidance = model.billingRecoveryGuidance {
-                let venues = model.billingRecoveryVenues
-                let requiresVenueSelection = !model.billingRecoveryConsumer && venues.count > 1
-                VStack(alignment: .leading, spacing: 10) {
-                    SectionHeader(
-                        eyebrow: "Billing only",
-                        title: "Manage a suspended subscription",
-                        subtitle: guidance,
-                        systemImage: "creditcard.and.123"
-                    )
-                    Text(
-                        model.billingRecoveryUsesProvider
-                            ? "Your verified provider token can open billing. Pint Path will not create an app session or restore suspended access."
-                            : "Re-enter the suspended account email and password above. They are sent only to the billing-recovery endpoint."
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    if model.billingRecoveryConsumer || venues.count > 1 {
-                        Picker("Billing profile", selection: $billingRecoveryVenueId) {
-                            if model.billingRecoveryConsumer {
-                                Text("Personal subscription").tag("")
-                            } else {
-                                Text("Choose a managed venue").tag("")
-                            }
-                            ForEach(venues) { venue in
-                                Text(venue.venueName).tag(venue.venueId)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                    } else if let venue = venues.first {
-                        Label("Venue billing: \(venue.venueName)", systemImage: "building.2.fill")
-                            .font(.subheadline.weight(.semibold))
-                    }
-                    PrimaryButton(
-                        title: "Manage billing only",
-                        systemImage: "arrow.up.right.square.fill",
-                        isLoading: model.isLoading
-                    ) {
-                        Task {
-                            let selectedVenueId = billingRecoveryVenueId.isEmpty
-                                ? (!model.billingRecoveryConsumer ? venues.first?.venueId : nil)
-                                : billingRecoveryVenueId
-                            if let portalURL = await model.openBillingRecovery(
-                                email: email,
-                                password: password,
-                                venueId: selectedVenueId
-                            ) {
-                                password = ""
-                                openURL(portalURL)
-                            }
-                        }
-                    }
-                    .disabled(
-                        (!model.billingRecoveryUsesProvider && (email.isEmpty || password.isEmpty)) ||
-                        (requiresVenueSelection && billingRecoveryVenueId.isEmpty)
-                    )
-                }
-                .beerMapCard()
-            }
-
             Button("Forgot password?") {
                 guard !email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                     model.errorMessage = "Enter your email address first."
@@ -262,48 +195,6 @@ struct AuthView: View {
             .buttonStyle(.plain)
             .font(.subheadline.weight(.semibold))
 
-            if let providers = model.config?.supabaseOauthProviders, !providers.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    Label("Or continue securely", systemImage: "link.badge.plus")
-                        .font(.subheadline.weight(.semibold))
-                    ForEach(providers.filter { ["google", "apple"].contains($0.lowercased()) }, id: \.self) { provider in
-                        Button {
-                            password = ""
-                            confirmPassword = ""
-                            Task {
-                                do {
-                                    guard let config = model.config else {
-                                        throw BeerMapAPIError.configuration("Account configuration is still loading. Try again in a moment.")
-                                    }
-                                    let tokens = try await oauth.signIn(provider: provider.lowercased(), config: config)
-                                    guard let accessToken = tokens.accessToken else { throw BeerMapAPIError.missingData }
-                                    await model.completeOAuthSignIn(
-                                        accessToken: accessToken,
-                                        refreshToken: tokens.refreshToken
-                                    )
-                                } catch {
-                                    let nsError = error as NSError
-                                    let cancelled = nsError.domain == ASWebAuthenticationSessionErrorDomain
-                                        && nsError.code == ASWebAuthenticationSessionError.Code.canceledLogin.rawValue
-                                    if !cancelled {
-                                        model.errorMessage = error.localizedDescription
-                                    }
-                                }
-                            }
-                        } label: {
-                            Label("Continue with \(provider.capitalized)", systemImage: provider.lowercased() == "apple" ? "apple.logo" : "globe")
-                                .font(.headline.weight(.bold))
-                                .frame(maxWidth: .infinity, minHeight: 50)
-                        }
-                        .buttonStyle(.bordered)
-                        .disabled(model.isLoading || oauth.isRunning)
-                    }
-                    Text("The provider signs you in through Supabase, then Pint Path creates the same scoped app session used by email sign-in.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .beerMapCard()
-            }
             }
         }
         .onChange(of: mode) { _, _ in
@@ -313,149 +204,6 @@ struct AuthView: View {
             termsAccepted = false
             privacyAccepted = false
         }
-        .onChange(of: model.billingRecoveryGuidance) { _, guidance in
-            guard guidance != nil else {
-                billingRecoveryVenueId = ""
-                return
-            }
-            billingRecoveryVenueId = !model.billingRecoveryConsumer && model.billingRecoveryVenues.count == 1
-                ? model.billingRecoveryVenues[0].venueId
-                : ""
-        }
-    }
-}
-
-@MainActor
-private final class NativeOAuthCoordinator: NSObject, ObservableObject, ASWebAuthenticationPresentationContextProviding {
-    @Published var isRunning = false
-    private var session: ASWebAuthenticationSession?
-
-    func signIn(provider: String, config: PublicConfig) async throws -> SupabaseAuthTokens {
-        guard !isRunning else { throw BeerMapAPIError.server("An account sign-in is already open.") }
-        guard
-            let baseURL = Self.canonicalSupabaseOrigin(config.supabaseUrl),
-            var components = URLComponents(
-                url: baseURL.appendingPathComponent("auth/v1/authorize"),
-                resolvingAgainstBaseURL: false
-            )
-        else {
-            throw BeerMapAPIError.configuration("Secure provider sign-in is temporarily unavailable.")
-        }
-        let codeVerifier = try Self.pkceVerifier()
-        let challengeDigest = SHA256.hash(data: Data(codeVerifier.utf8))
-        let codeChallenge = Data(challengeDigest).base64URLEncodedString()
-        components.queryItems = [
-            URLQueryItem(name: "provider", value: provider),
-            URLQueryItem(name: "redirect_to", value: "pintpath://auth-callback"),
-            URLQueryItem(name: "code_challenge", value: codeChallenge),
-            URLQueryItem(name: "code_challenge_method", value: "s256")
-        ]
-        guard let url = components.url else { throw BeerMapAPIError.invalidURL("Supabase OAuth") }
-
-        isRunning = true
-        defer {
-            isRunning = false
-            session = nil
-        }
-
-        let callbackURL: URL = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<URL, any Error>) in
-            let session = ASWebAuthenticationSession(url: url, callbackURLScheme: "pintpath") { callbackURL, error in
-                if let error {
-                    continuation.resume(throwing: error)
-                } else if let callbackURL {
-                    continuation.resume(returning: callbackURL)
-                } else {
-                    continuation.resume(throwing: BeerMapAPIError.missingData)
-                }
-            }
-            session.presentationContextProvider = self
-            session.prefersEphemeralWebBrowserSession = false
-            self.session = session
-            if !session.start() {
-                continuation.resume(throwing: BeerMapAPIError.server("Could not open secure provider sign-in."))
-            }
-        }
-
-        guard callbackURL.scheme == "pintpath", callbackURL.host == "auth-callback" else {
-            throw BeerMapAPIError.server("The provider returned an invalid sign-in callback.")
-        }
-
-        var values: [String: String] = [:]
-        if let queryItems = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false)?.queryItems {
-            queryItems.forEach { values[$0.name] = $0.value }
-        }
-        if let fragment = callbackURL.fragment,
-           let fragmentItems = URLComponents(string: "?\(fragment)")?.queryItems {
-            fragmentItems.forEach { values[$0.name] = $0.value }
-        }
-        if let errorDescription = values["error_description"] ?? values["error"] {
-            throw BeerMapAPIError.server(errorDescription.replacingOccurrences(of: "+", with: " "))
-        }
-        guard let authCode = values["code"], !authCode.isEmpty else {
-            throw BeerMapAPIError.server("Secure provider sign-in did not return a one-time authorization code.")
-        }
-        let tokens = try await BeerMapAPI().exchangeSupabasePKCE(
-            authCode: authCode,
-            codeVerifier: codeVerifier,
-            config: config
-        )
-        guard
-            let accessToken = tokens.accessToken?.trimmingCharacters(in: .whitespacesAndNewlines),
-            !accessToken.isEmpty,
-            let refreshToken = tokens.refreshToken?.trimmingCharacters(in: .whitespacesAndNewlines),
-            !refreshToken.isEmpty
-        else {
-            throw BeerMapAPIError.server("Secure provider sign-in returned an incomplete session. Please start again.")
-        }
-        return SupabaseAuthTokens(
-            accessToken: accessToken,
-            refreshToken: refreshToken,
-            expiresIn: tokens.expiresIn
-        )
     }
 
-    private static func canonicalSupabaseOrigin(_ rawValue: String?) -> URL? {
-        guard
-            let rawValue,
-            var components = URLComponents(
-                string: rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            ),
-            ["http", "https"].contains(components.scheme?.lowercased() ?? ""),
-            !(components.host?.isEmpty ?? true),
-            components.user == nil,
-            components.password == nil,
-            components.query == nil,
-            components.fragment == nil,
-            components.path.isEmpty || components.path == "/"
-        else {
-            return nil
-        }
-        components.path = ""
-        return components.url
-    }
-
-    private static func pkceVerifier() throws -> String {
-        var bytes = [UInt8](repeating: 0, count: 32)
-        let status = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
-        guard status == errSecSuccess else {
-            throw BeerMapAPIError.server("Secure provider sign-in could not start. Please try again.")
-        }
-        return Data(bytes).base64URLEncodedString()
-    }
-
-    func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
-        UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .flatMap(\.windows)
-            .first(where: \.isKeyWindow) ?? ASPresentationAnchor()
-    }
-}
-
-private extension Data {
-    func base64URLEncodedString() -> String {
-        base64EncodedString()
-            .replacingOccurrences(of: "+", with: "-")
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
-    }
 }

@@ -16,7 +16,7 @@ struct SettingsView: View {
                         systemImage: "server.rack"
                     )
                     row("API base URL", AppConfig.apiBaseURL.absoluteString)
-                    row("Supabase native OAuth", supabaseConfigurationStatus)
+                    row("Supabase email auth", supabaseConfigurationStatus)
                     row("Field-test mode", model.config?.fieldTestMode == true ? "On" : "Off")
                 }
                 .beerMapCard()
@@ -26,7 +26,7 @@ struct SettingsView: View {
                     SectionHeader(
                         eyebrow: "Support",
                         title: "Need help?",
-                        subtitle: "Use this for privacy, billing, abuse, moderation, or venue account support.",
+                        subtitle: "Use this for privacy, abuse, moderation, or venue account support.",
                         systemImage: "lifepreserver.fill"
                     )
                     TextField("Message", text: $supportMessage, axis: .vertical)
@@ -47,7 +47,7 @@ struct SettingsView: View {
                         systemImage: "checkmark.shield.fill"
                     )
                     Label("Location is opt-in and one-time where used.", systemImage: "location.circle.fill")
-                    Label("Venue reports use aggregate privacy-safe analytics.", systemImage: "chart.bar.xaxis")
+                    Label("Venue updates stay scoped to assigned managers.", systemImage: "building.2.crop.circle")
                     Label("Private source evidence is handled by the backend.", systemImage: "photo.badge.checkmark")
                 }
                 .font(.subheadline)
@@ -64,9 +64,11 @@ struct SettingsView: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                     Link("Email admin@pintpath.au", destination: URL(string: "mailto:admin@pintpath.au")!)
-                    Link("Terms and Conditions", destination: AppConfig.apiBaseURL.appending(path: "terms.html"))
-                    Link("Privacy Policy", destination: AppConfig.apiBaseURL.appending(path: "privacy.html"))
-                    Link("Account export and deletion", destination: AppConfig.apiBaseURL.appending(path: "account.html"))
+                    Link("Terms and Conditions", destination: AppConfig.termsURL)
+                    Link("Privacy Policy", destination: AppConfig.privacyURL)
+                    Text("Account export and deletion are available inside the Account tab after sign-in.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
                     Text("Policy version \(model.config?.legalPolicyVersion ?? "unavailable")")
                         .font(.caption)
                         .foregroundStyle(.secondary)

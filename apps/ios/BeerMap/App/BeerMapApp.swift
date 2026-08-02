@@ -31,24 +31,14 @@ final class BeerMapAppModel: ObservableObject {
     @Published var missions: [Mission] = []
     @Published var selectedVenuePrices: [String: PriceRecordsResponse] = [:]
     @Published var venuePortal: VenuePortalData?
-    @Published var discountPass: RotatingCodeResult?
-    @Published var freePintReward: RotatingCodeResult?
     @Published var accountSessions: [AccountSession] = []
     @Published private(set) var accountSessionsLoaded = false
     @Published var accountDeletionRequest: AccountDeletionStatus?
     @Published var accountExportURL: URL?
-    @Published var venueReportExportURLs: [String: URL] = [:]
-    @Published var counterMemberPreview: CounterMemberPreview?
-    @Published var counterPurchaseResult: CounterPurchaseResult?
-    @Published var counterRewardResult: CounterRewardResult?
     @Published var isLoading = false
     @Published var notice: String?
     @Published var errorMessage: String?
     @Published var reauthenticationContext: String?
-    @Published private(set) var billingRecoveryGuidance: String?
-    @Published private(set) var billingRecoveryUsesProvider = false
-    @Published private(set) var billingRecoveryConsumer = false
-    @Published private(set) var billingRecoveryVenues: [BillingRecoveryVenue] = []
     @Published private(set) var legalAcceptanceRequired = false
     @Published private(set) var legalAcceptanceVersion: String?
     @Published var optionalAnalyticsEnabled = false
@@ -61,18 +51,22 @@ final class BeerMapAppModel: ObservableObject {
     private var activeLoadingOperations = 0
     private var hasStarted = false
     private var accountDashboardNeedsRefresh = false
-    private var billingRecoveryAccessToken: String?
     private var pendingLegalAcceptance: (accessToken: String, refreshToken: String?)?
 
     var isSignedIn: Bool { sessionToken != nil }
     var account: Account? { accountDashboard?.account }
+    var hasContributorAccess: Bool {
+        accountDashboard?.account.subscriptionStatus?.caseInsensitiveCompare("contributor_unlocked") == .orderedSame
+    }
     var hasAdminAccess: Bool {
         isSignedIn && accountDashboard?.access?.isAdmin == true
     }
     var hasVenueAccess: Bool {
         guard let venuePortal, venuePortal.accessState != "claim_required" else { return false }
         let hasCurrentAdminAuthority = accountDashboard?.access?.isAdmin == true && venuePortal.isAdmin == true
-        let hasAssignedVenue = venuePortal.isAdmin != true && venuePortal.assignments?.isEmpty == false
+        let hasAssignedVenue = venuePortal.isAdmin != true
+            && venuePortal.accessLevel != "counter_staff"
+            && venuePortal.assignments?.isEmpty == false
         return hasCurrentAdminAuthority || hasAssignedVenue
     }
 
@@ -133,7 +127,7 @@ final class BeerMapAppModel: ObservableObject {
         defer { setLoading(false) }
         do {
             async let configTask = api.getConfig()
-            async let venueTask = withOptionalAuthenticatedSession { token in
+            async let venueTask = withContributorAuthenticatedSession { token in
                 try await self.api.listVenues(query: search, token: token)
             }
             config = try await configTask
@@ -157,7 +151,6 @@ final class BeerMapAppModel: ObservableObject {
     func login(email: String, password: String) async {
         setLoading(true)
         defer { setLoading(false) }
-        clearBillingRecoveryState()
         clearLegalAcceptanceState()
         do {
             guard let config else { throw BeerMapAPIError.configuration("Account configuration is still loading. Try again in a moment.") }
@@ -173,7 +166,6 @@ final class BeerMapAppModel: ObservableObject {
             await refreshAccount()
             await refreshVenuePortal()
         } catch let apiError as BeerMapAPIError {
-            if presentBillingRecovery(apiError) { return }
             if presentLegalAcceptance(apiError) { return }
             errorMessage = apiError.localizedDescription
         } catch {
@@ -217,42 +209,6 @@ final class BeerMapAppModel: ObservableObject {
         }
     }
 
-    func completeOAuthSignIn(
-        accessToken: String,
-        refreshToken: String?
-    ) async {
-        setLoading(true)
-        defer { setLoading(false) }
-        clearBillingRecoveryState()
-        clearLegalAcceptanceState()
-        do {
-            guard let config else { throw BeerMapAPIError.configuration("Account configuration is still loading. Try again in a moment.") }
-            let result = try await api.syncSupabase(
-                accessToken: accessToken,
-                config: config,
-                ageConfirmed: nil,
-                termsAccepted: nil,
-                privacyAccepted: nil
-            )
-            storeSession(result)
-            KeychainSessionStore.saveSupabaseRefreshToken(refreshToken)
-            KeychainSessionStore.saveSupabaseAccessToken(accessToken)
-            finishSignIn(defaultNotice: "Signed in as \(result.account.email).")
-            await refreshAccount()
-            await refreshVenuePortal()
-        } catch let apiError as BeerMapAPIError {
-            if presentBillingRecovery(apiError, providerAccessToken: accessToken) { return }
-            if presentLegalAcceptance(
-                apiError,
-                providerAccessToken: accessToken,
-                providerRefreshToken: refreshToken
-            ) { return }
-            errorMessage = apiError.localizedDescription
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
     func acceptCurrentPolicies(
         ageConfirmed: Bool,
         termsAccepted: Bool,
@@ -285,12 +241,6 @@ final class BeerMapAppModel: ObservableObject {
             finishSignIn(defaultNotice: "Current Terms and Privacy Policy accepted. Signed in as \(result.account.email).")
             await refreshAccount()
             await refreshVenuePortal()
-        } catch let apiError as BeerMapAPIError {
-            if presentBillingRecovery(
-                apiError,
-                providerAccessToken: pendingLegalAcceptance.accessToken
-            ) { return }
-            errorMessage = apiError.localizedDescription
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -300,53 +250,6 @@ final class BeerMapAppModel: ObservableObject {
         clearLegalAcceptanceState()
         errorMessage = nil
         notice = "Sign-in cancelled. No Pint Path session was created."
-    }
-
-    func openBillingRecovery(email: String, password: String, venueId: String?) async -> URL? {
-        guard billingRecoveryGuidance != nil else { return nil }
-        setLoading(true)
-        defer { setLoading(false) }
-        let providerAccessToken = billingRecoveryAccessToken
-        let selectedVenueId = venueId?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank
-        do {
-            let result: BillingRecoveryResult
-            if let accessToken = providerAccessToken {
-                result = try await api.billingRecoveryPortal(
-                    accessToken: accessToken,
-                    venueId: selectedVenueId
-                )
-            } else {
-                let normalizedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !normalizedEmail.isEmpty, !password.isEmpty else {
-                    throw BeerMapAPIError.configuration(
-                        "Enter the suspended account email and password, then choose Manage billing only."
-                    )
-                }
-                result = try await api.billingRecoveryPortal(
-                    email: normalizedEmail,
-                    password: password,
-                    venueId: selectedVenueId
-                )
-            }
-            guard
-                let url = URL(string: result.portalUrl),
-                url.scheme?.lowercased() == "https",
-                url.host != nil
-            else {
-                throw BeerMapAPIError.server("The billing provider did not return a secure portal link.")
-            }
-            notice = result.message ?? "Billing portal opened without restoring application access."
-            errorMessage = nil
-            clearBillingRecoveryState()
-            return url
-        } catch let apiError as BeerMapAPIError {
-            if presentBillingRecovery(apiError, providerAccessToken: providerAccessToken) { return nil }
-            errorMessage = apiError.localizedDescription
-            return nil
-        } catch {
-            errorMessage = error.localizedDescription
-            return nil
-        }
     }
 
     func requestPasswordReset(email: String) async {
@@ -484,7 +387,7 @@ final class BeerMapAppModel: ObservableObject {
         do {
             _ = try await withAuthenticatedSession { token in
                 try await self.api.requestAccountDeletion(
-                    message: "Self-service deletion review requested from the iOS app.",
+                    message: "Self-service account deletion scheduled from the iOS app.",
                     token: token,
                     reauthenticationToken: try self.currentReauthenticationToken()
                 )
@@ -492,10 +395,10 @@ final class BeerMapAppModel: ObservableObject {
             accountDeletionRequest = try await withAuthenticatedSession { token in
                 try await self.api.accountDeletionStatus(token: token).request
             }
-            notice = "Account deletion review requested. You can cancel while it remains pending."
-            clearReauthenticationContext(ifMatching: "request account deletion")
+            notice = "Account deletion scheduled. You can cancel during the displayed seven-day cancellation window."
+            clearReauthenticationContext(ifMatching: "schedule account deletion")
         } catch {
-            handleSensitiveActionError(error, action: "request account deletion")
+            handleSensitiveActionError(error, action: "schedule account deletion")
         }
     }
 
@@ -575,71 +478,11 @@ final class BeerMapAppModel: ObservableObject {
         }
     }
 
-    func respondToCounterStaffInvitation(_ invitation: CounterStaffInvitation, decision: String) async {
-        guard sessionToken != nil else { return }
-        setLoading(true)
-        defer { setLoading(false) }
-        do {
-            let response = try await withAuthenticatedSession { token in
-                try await self.api.respondToCounterStaffInvitation(
-                    invitation.id,
-                    decision: decision,
-                    token: token
-                )
-            }
-            accountDashboard = try await withAuthenticatedSession { token in
-                try await self.api.account(token: token)
-            }
-            if decision == "accept" {
-                await refreshVenuePortal(venueId: invitation.venueId)
-            }
-            notice = response.message ?? (decision == "accept" ? "Counter access accepted." : "Invitation declined.")
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    func generateDiscountPass() async {
-        guard sessionToken != nil else {
-            errorMessage = "Sign in before generating a Pint Path special code."
-            return
-        }
-        setLoading(true)
-        defer { setLoading(false) }
-        do {
-            discountPass = try await withAuthenticatedSession { token in
-                try await self.api.discountPass(token: token)
-            }
-            notice = "Pint Path special code generated. Show it only when staff are ready."
-            await refreshAccount()
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    func generateFreePintReward() async {
-        guard sessionToken != nil else {
-            errorMessage = "Sign in before creating a Free Pint Reward code."
-            return
-        }
-        setLoading(true)
-        defer { setLoading(false) }
-        do {
-            freePintReward = try await withAuthenticatedSession { token in
-                try await self.api.freePintRewardCode(token: token)
-            }
-            notice = "Free Pint Reward code created. Venue staff still complete age, ID, and RSA checks."
-            await refreshAccount()
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
     func loadPrices(for venue: Venue) async {
         setLoading(true)
         defer { setLoading(false) }
         do {
-            let response = try await withOptionalAuthenticatedSession { token in
+            let response = try await withContributorAuthenticatedSession { token in
                 try await self.api.priceRecords(
                     venueId: venue.id,
                     anonymousSessionId: self.anonymousSessionId,
@@ -686,9 +529,6 @@ final class BeerMapAppModel: ObservableObject {
     func refreshVenuePortal(venueId: String? = nil) async {
         guard sessionToken != nil else { return }
         do {
-            if venueId != nil, venueId != venuePortal?.selectedVenue?.venueId {
-                venueReportExportURLs = [:]
-            }
             venuePortal = try await withAuthenticatedSession { token in
                 try await self.api.venuePortal(venueId: venueId, token: token)
             }
@@ -723,174 +563,6 @@ final class BeerMapAppModel: ObservableObject {
                 try await self.api.saveBeer(beer, venueId: venueId, token: token)
             }
             notice = "Beer row saved."
-            await refreshVenuePortal(venueId: venueId)
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    func saveHappyHour(_ happyHour: BarHappyHour) async {
-        guard sessionToken != nil, let venueId = venuePortal?.selectedVenue?.venueId else { return }
-        setLoading(true)
-        defer { setLoading(false) }
-        do {
-            _ = try await withAuthenticatedSession { token in
-                try await self.api.saveHappyHour(happyHour, venueId: venueId, token: token)
-            }
-            notice = "Happy hour saved."
-            await refreshVenuePortal(venueId: venueId)
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    func saveSpecial(_ special: BarSpecial) async {
-        guard sessionToken != nil, let venueId = venuePortal?.selectedVenue?.venueId else { return }
-        setLoading(true)
-        defer { setLoading(false) }
-        do {
-            _ = try await withAuthenticatedSession { token in
-                try await self.api.saveSpecial(special, venueId: venueId, token: token)
-            }
-            notice = "Pint Path special saved."
-            await refreshVenuePortal(venueId: venueId)
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    func prepareVenueReportExport(month: String, format: String) async {
-        guard
-            sessionToken != nil,
-            let venueId = venuePortal?.selectedVenue?.venueId
-        else {
-            errorMessage = "Choose an assigned venue before exporting a report."
-            return
-        }
-        setLoading(true)
-        defer { setLoading(false) }
-        do {
-            let normalizedFormat = format == "csv" ? "csv" : "json"
-            let data = try await withAuthenticatedSession { token in
-                try await self.api.exportVenueMonthlyReport(
-                    venueId: venueId,
-                    month: month,
-                    format: normalizedFormat,
-                    token: token
-                )
-            }
-            let url = FileManager.default.temporaryDirectory
-                .appendingPathComponent("pint-path-\(month)-monthly-report.\(normalizedFormat)")
-            try data.write(to: url, options: .atomic)
-            venueReportExportURLs[normalizedFormat] = url
-            notice = "Monthly report ready to share or save."
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    @discardableResult
-    func previewCounterMember(code: String, transactionReference: String) async -> Bool {
-        guard sessionToken != nil, let venueId = venuePortal?.selectedVenue?.venueId else { return false }
-        setLoading(true)
-        defer { setLoading(false) }
-        do {
-            counterMemberPreview = try await withAuthenticatedSession { token in
-                try await self.api.previewCounterMember(
-                    venueId: venueId,
-                    code: code.uppercased(),
-                    transactionReference: transactionReference,
-                    token: token
-                )
-            }
-            counterPurchaseResult = nil
-            notice = "Member code checked. Confirm the purchase details before recording."
-            return true
-        } catch {
-            errorMessage = error.localizedDescription
-            return false
-        }
-    }
-
-    @discardableResult
-    func recordCounterPurchase(itemName: String, category: String, quantity: Int, transactionReference: String, notes: String) async -> Bool {
-        guard
-            sessionToken != nil,
-            let venueId = venuePortal?.selectedVenue?.venueId,
-            let preview = counterMemberPreview
-        else {
-            errorMessage = "Check the member code first."
-            return false
-        }
-        setLoading(true)
-        defer { setLoading(false) }
-        do {
-            let request = CounterPurchaseRequest(
-                checkoutToken: preview.checkoutToken,
-                itemName: itemName.nilIfBlank,
-                beverageCategory: category,
-                quantity: quantity,
-                transactionReference: transactionReference,
-                notes: notes.nilIfBlank
-            )
-            counterPurchaseResult = try await withAuthenticatedSession { token in
-                try await self.api.recordCounterPurchase(
-                    venueId: venueId,
-                    request: request,
-                    token: token
-                )
-            }
-            counterMemberPreview = nil
-            notice = counterPurchaseResult?.copy ?? "Purchase recorded."
-            await refreshVenuePortal(venueId: venueId)
-            return true
-        } catch {
-            errorMessage = error.localizedDescription
-            return false
-        }
-    }
-
-    @discardableResult
-    func voidCounterPurchase(reason: String) async -> Bool {
-        guard
-            sessionToken != nil,
-            let venueId = venuePortal?.selectedVenue?.venueId,
-            let recordId = counterPurchaseResult?.record?.id
-        else {
-            errorMessage = "No recent purchase is available to reverse."
-            return false
-        }
-        setLoading(true)
-        defer { setLoading(false) }
-        do {
-            _ = try await withAuthenticatedSession { token in
-                try await self.api.voidCounterPurchase(venueId: venueId, recordId: recordId, reason: reason, token: token)
-            }
-            counterPurchaseResult = nil
-            notice = "Purchase reversed with an audit record."
-            await refreshVenuePortal(venueId: venueId)
-            return true
-        } catch {
-            errorMessage = error.localizedDescription
-            return false
-        }
-    }
-
-    func decideFreePintReward(code: String, action: String, reason: String?) async {
-        guard sessionToken != nil, let venueId = venuePortal?.selectedVenue?.venueId else { return }
-        setLoading(true)
-        defer { setLoading(false) }
-        do {
-            counterRewardResult = try await withAuthenticatedSession { token in
-                try await self.api.decideFreePintReward(
-                    venueId: venueId,
-                    code: code.uppercased(),
-                    action: action,
-                    reason: reason,
-                    token: token
-                )
-            }
-            notice = counterRewardResult?.copy ?? "Reward decision recorded."
             await refreshVenuePortal(venueId: venueId)
         } catch {
             errorMessage = error.localizedDescription
@@ -1021,8 +693,6 @@ final class BeerMapAppModel: ObservableObject {
                         beerName: trimmedBeer,
                         servingSize: normalizedServingSize,
                         price: price,
-                        isHappyHourPrice: false,
-                        happyHourDetails: nil,
                         isOnTap: "unknown"
                     )
                 ]
@@ -1075,73 +745,6 @@ final class BeerMapAppModel: ObservableObject {
             }
             markAccountDashboardDirty()
             notice = result.statusCopy ?? "Source photo sent for review."
-            return true
-        } catch {
-            errorMessage = error.localizedDescription
-            return false
-        }
-    }
-
-    func submitHappyHourUpdate(
-        clientSubmissionId: String,
-        missionId: String? = nil,
-        venueId: String,
-        days: [String],
-        startTime: String,
-        endTime: String,
-        offerText: String,
-        notes: String,
-        uploadLocation: UploadLocationRequest? = nil
-    ) async -> Bool {
-        guard sessionToken != nil else {
-            errorMessage = "Sign in before submitting happy-hour updates."
-            return false
-        }
-        guard let venue = venues.first(where: { $0.id == venueId }) else {
-            errorMessage = "Choose a venue before submitting."
-            return false
-        }
-        let trimmedOffer = offerText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !days.isEmpty, !trimmedOffer.isEmpty else {
-            errorMessage = "Add the days and offer details before submitting."
-            return false
-        }
-
-        setLoading(true)
-        defer { setLoading(false) }
-        do {
-            let detail = "\(days.map { $0.uppercased() }.joined(separator: ", ")) \(startTime)-\(endTime): \(trimmedOffer)"
-            let submission = CreateSubmissionRequest(
-                clientSubmissionId: clientSubmissionId,
-                missionId: missionId,
-                venueId: venue.id,
-                venueName: venue.name,
-                suburb: venue.suburb,
-                newVenue: nil,
-                submissionType: "happy_hour_update",
-                observedAt: isoNow(),
-                sourcePhotoDataUrl: nil,
-                sourcePhotoDataUrls: [],
-                sourceDocumentDataUrl: nil,
-                sourcePhotoUrl: nil,
-                uploadLocation: uploadLocation,
-                notes: notes.nilIfBlank,
-                items: [
-                    SubmissionItemRequest(
-                        beerName: "Happy-hour offer",
-                        servingSize: "other",
-                        price: nil,
-                        isHappyHourPrice: true,
-                        happyHourDetails: detail,
-                        isOnTap: "unknown"
-                    )
-                ]
-            )
-            let result = try await withAuthenticatedSession { token in
-                try await self.api.createSubmission(submission, token: token)
-            }
-            markAccountDashboardDirty()
-            notice = result.statusCopy ?? "Happy-hour update sent for review."
             return true
         } catch {
             errorMessage = error.localizedDescription
@@ -1236,7 +839,6 @@ final class BeerMapAppModel: ObservableObject {
     }
 
     private func storeSession(_ result: AuthResult, resetAuthority: Bool = true) {
-        clearBillingRecoveryState()
         clearLegalAcceptanceState()
         KeychainSessionStore.saveToken(result.token)
         sessionToken = result.token
@@ -1254,10 +856,7 @@ final class BeerMapAppModel: ObservableObject {
             submissions: nil,
             privacySettings: nil,
             access: nil,
-            leaderboard: nil,
-            discounts: nil,
-            pintPoints: nil,
-            counterStaffInvitations: nil
+            leaderboard: nil
         )
         accountDashboardNeedsRefresh = true
     }
@@ -1302,80 +901,35 @@ final class BeerMapAppModel: ObservableObject {
     private func clearLocalSession() {
         KeychainSessionStore.deleteToken()
         sessionToken = nil
-        clearBillingRecoveryState()
         clearLegalAcceptanceState()
         resetOptionalAnalytics()
         accountDashboard = nil
         accountDashboardNeedsRefresh = false
         venuePortal = nil
-        discountPass = nil
-        freePintReward = nil
         accountSessions = []
         accountSessionsLoaded = false
         accountDeletionRequest = nil
         accountExportURL = nil
-        venueReportExportURLs = [:]
-        counterMemberPreview = nil
-        counterPurchaseResult = nil
-        counterRewardResult = nil
         selectedVenuePrices = [:]
         reauthenticationContext = nil
     }
 
     @discardableResult
-    private func presentBillingRecovery(
-        _ error: BeerMapAPIError,
-        providerAccessToken: String? = nil
-    ) -> Bool {
-        guard case .billingRecoveryAvailable(
-            let message,
-            let embeddedAccessToken,
-            let consumer,
-            let venues
-        ) = error else {
-            return false
-        }
-        // A suspended identity may open Stripe, but it must never receive or retain
-        // a Pint Path application session while account access remains suspended.
-        clearLocalSession()
-        billingRecoveryAccessToken = providerAccessToken ?? embeddedAccessToken
-        billingRecoveryUsesProvider = billingRecoveryAccessToken != nil
-        billingRecoveryConsumer = consumer
-        billingRecoveryVenues = venues
-        billingRecoveryGuidance = message
-        errorMessage = message
-        notice = nil
-        return true
-    }
-
-    private func clearBillingRecoveryState() {
-        billingRecoveryAccessToken = nil
-        billingRecoveryGuidance = nil
-        billingRecoveryUsesProvider = false
-        billingRecoveryConsumer = false
-        billingRecoveryVenues = []
-    }
-
-    @discardableResult
-    private func presentLegalAcceptance(
-        _ error: BeerMapAPIError,
-        providerAccessToken: String? = nil,
-        providerRefreshToken: String? = nil
-    ) -> Bool {
+    private func presentLegalAcceptance(_ error: BeerMapAPIError) -> Bool {
         guard case .legalAcceptanceRequired(
             let message,
             let embeddedAccessToken,
             let embeddedRefreshToken
         ) = error,
-        let accessToken = providerAccessToken ?? embeddedAccessToken else {
+        let accessToken = embeddedAccessToken else {
             return false
         }
-        // The provider identity has been verified, but no Pint Path authority is
+        // The identity has been verified, but no Pint Path authority is
         // retained until this exact credential accepts the currently configured policy.
         clearLocalSession()
         pendingLegalAcceptance = (
             accessToken: accessToken,
-            refreshToken: providerRefreshToken ?? embeddedRefreshToken
+            refreshToken: embeddedRefreshToken
         )
         legalAcceptanceRequired = true
         legalAcceptanceVersion = config?.legalPolicyVersion
@@ -1457,6 +1011,17 @@ final class BeerMapAppModel: ObservableObject {
                 throw BeerMapAPIError.configuration("Your session expired. Sign in again to continue.")
             }
             return try await operation(refreshedToken)
+        }
+    }
+
+    private func withContributorAuthenticatedSession<T: Sendable>(
+        _ operation: (String?) async throws -> T
+    ) async throws -> T {
+        guard hasContributorAccess else {
+            return try await operation(nil)
+        }
+        return try await withAuthenticatedSession { token in
+            try await operation(token)
         }
     }
 

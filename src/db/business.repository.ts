@@ -398,6 +398,8 @@ export interface PublicVenuePriceRecord {
   confidence: ConfidenceLabel;
   sourceType: string;
   sourceSubmissionId: string | null;
+  hasSourceLinkage?: boolean;
+  hasSourceEvidence?: boolean;
   lastVerifiedAt: string;
   priceVerifiedAt?: string | null;
   createdAt: string;
@@ -590,6 +592,7 @@ export interface BarProfile {
   stripeCustomerId: string | null;
   stripeSubscriptionId: string | null;
   subscriptionStatus: string | null;
+  subscriptionCurrentPeriodEnd: string | null;
   stripePaidMembershipTier: BarMembershipTier | null;
   tierManualOverride: boolean;
   acceptsPintPathCodes: boolean;
@@ -600,6 +603,18 @@ export interface BarProfile {
   posLastSuccessAt: string | null;
   posLastTerminalId: string | null;
   active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BillingCheckoutReservation {
+  subjectType: "consumer" | "venue";
+  subjectId: string;
+  productKey: string;
+  reservationToken: string;
+  stripeCheckoutSessionId: string | null;
+  checkoutUrl: string | null;
+  expiresAt: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -1242,6 +1257,9 @@ interface PriceRecordRow {
   confidence: ConfidenceLabel;
   source_type: string;
   source_submission_id: string | null;
+  source_ingestion_id: string | null;
+  source_evidence_reference: string | null;
+  source_evidence_verified_at: string | null;
   last_verified_at: string;
   created_at: string;
   updated_at: string;
@@ -1411,6 +1429,7 @@ interface BarProfileRow {
   stripe_customer_id: string | null;
   stripe_subscription_id: string | null;
   subscription_status: string | null;
+  subscription_current_period_end: string | null;
   stripe_paid_membership_tier: StoredBarMembershipTier | null;
   tier_manual_override: number;
   accepts_pint_path_codes: number;
@@ -1421,6 +1440,18 @@ interface BarProfileRow {
   pos_last_success_at: string | null;
   pos_last_terminal_id: string | null;
   active: number;
+  created_at: string;
+  updated_at: string;
+}
+
+interface BillingCheckoutReservationRow {
+  subject_type: "consumer" | "venue";
+  subject_id: string;
+  product_key: string;
+  reservation_token: string;
+  stripe_checkout_session_id: string | null;
+  checkout_url: string | null;
+  expires_at: string;
   created_at: string;
   updated_at: string;
 }
@@ -2011,6 +2042,12 @@ function toPriceRecord(row: PriceRecordRow): PublicVenuePriceRecord {
     confidence: row.confidence,
     sourceType: row.source_type,
     sourceSubmissionId: row.source_submission_id,
+    hasSourceLinkage: Boolean(
+      row.source_submission_id ||
+      row.source_ingestion_id ||
+      row.source_evidence_reference
+    ),
+    hasSourceEvidence: Boolean(row.source_evidence_verified_at),
     lastVerifiedAt: row.last_verified_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -2530,6 +2567,7 @@ function toBarProfile(row: BarProfileRow): BarProfile {
     stripeCustomerId: row.stripe_customer_id,
     stripeSubscriptionId: row.stripe_subscription_id,
     subscriptionStatus: row.subscription_status,
+    subscriptionCurrentPeriodEnd: row.subscription_current_period_end,
     stripePaidMembershipTier: row.stripe_paid_membership_tier
       ? normalizeBarMembershipTier(row.stripe_paid_membership_tier)
       : null,
@@ -2542,6 +2580,22 @@ function toBarProfile(row: BarProfileRow): BarProfile {
     posLastSuccessAt: row.pos_last_success_at,
     posLastTerminalId: row.pos_last_terminal_id,
     active: Boolean(row.active),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toBillingCheckoutReservation(
+  row: BillingCheckoutReservationRow,
+): BillingCheckoutReservation {
+  return {
+    subjectType: row.subject_type,
+    subjectId: row.subject_id,
+    productKey: row.product_key,
+    reservationToken: row.reservation_token,
+    stripeCheckoutSessionId: row.stripe_checkout_session_id,
+    checkoutUrl: row.checkout_url,
+    expiresAt: row.expires_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -7025,7 +7079,9 @@ export class BusinessRepository {
   }
 
   listLatestPriceRecords(limit: number, venueId?: string | null): PublicVenuePriceRecord[] {
-    const where = venueId ? "WHERE venue_id = ?" : "";
+    const where = venueId
+      ? "WHERE venue_id = ? AND source_type != 'source_ingestion_quarantined'"
+      : "WHERE source_type != 'source_ingestion_quarantined'";
     const values = venueId ? [venueId, limit] : [limit];
     const rows = this.database
       .prepare(`SELECT * FROM venue_price_records ${where} ORDER BY last_verified_at DESC LIMIT ?`)
@@ -7035,7 +7091,9 @@ export class BusinessRepository {
 
   getPriceRecordById(id: string): PublicVenuePriceRecord | null {
     const row = this.database
-      .prepare("SELECT * FROM venue_price_records WHERE id = ? LIMIT 1")
+      .prepare(
+        "SELECT * FROM venue_price_records WHERE id = ? AND source_type != 'source_ingestion_quarantined' LIMIT 1",
+      )
       .get(id) as PriceRecordRow | undefined;
     return row ? toPriceRecord(row) : null;
   }
@@ -7043,8 +7101,9 @@ export class BusinessRepository {
   listCurrentPriceRecords(venueIds: string[] = []): PublicVenuePriceRecord[] {
     const normalizedVenueIds = Array.from(new Set(venueIds.map((id) => id.trim()).filter(Boolean)));
     const venueWhere = normalizedVenueIds.length
-      ? `WHERE venue_id IN (${normalizedVenueIds.map(() => "?").join(", ")})`
-      : "";
+      ? `WHERE venue_id IN (${normalizedVenueIds.map(() => "?").join(", ")})
+           AND source_type != 'source_ingestion_quarantined'`
+      : "WHERE source_type != 'source_ingestion_quarantined'";
     const rows = this.database
       .prepare(
         `WITH ranked AS (
@@ -7075,8 +7134,9 @@ export class BusinessRepository {
   }): PublicVenuePriceRecord[] {
     const normalizedVenueIds = Array.from(new Set((input.venueIds ?? []).map((id) => id.trim()).filter(Boolean)));
     const venueWhere = normalizedVenueIds.length
-      ? `WHERE venue_id IN (${normalizedVenueIds.map(() => "?").join(", ")})`
-      : "";
+      ? `WHERE venue_id IN (${normalizedVenueIds.map(() => "?").join(", ")})
+           AND source_type != 'source_ingestion_quarantined'`
+      : "WHERE source_type != 'source_ingestion_quarantined'";
     const cursorWhere = input.before
       ? `WHERE last_verified_at < ? OR (last_verified_at = ? AND id < ?)`
       : "";
@@ -7499,7 +7559,8 @@ export class BusinessRepository {
          FROM source_ids sources
          INNER JOIN venue_price_records record
            ON record.venue_id = sources.source_venue_id
-         WHERE trim(record.beer_name) != ''
+         WHERE record.source_type != 'source_ingestion_quarantined'
+           AND trim(record.beer_name) != ''
          UNION ALL
          SELECT
            sources.requested_venue_id AS venue_id,
@@ -7512,6 +7573,15 @@ export class BusinessRepository {
            ON profile.venue_id = beer.venue_id
          WHERE profile.active = 1
            AND beer.in_stock = 1
+           AND (
+             beer.source_ingestion_id IS NULL
+             OR NOT EXISTS (
+               SELECT 1
+               FROM venue_price_records quarantined
+               WHERE quarantined.source_ingestion_id = beer.source_ingestion_id
+                 AND quarantined.source_type = 'source_ingestion_quarantined'
+             )
+           )
            AND trim(beer.beer_name) != ''
        )
        SELECT venue_id, normalized_beer_id, beer_name
@@ -7560,9 +7630,20 @@ export class BusinessRepository {
       ...(before ? [before.verifiedAt, before.verifiedAt, before.id] : []),
       boundedLimit,
     ];
+    const unquarantinedInventory = `(
+      beer.source_ingestion_id IS NULL
+      OR NOT EXISTS (
+        SELECT 1
+        FROM venue_price_records quarantined
+        WHERE quarantined.source_ingestion_id = beer.source_ingestion_id
+          AND quarantined.source_type = 'source_ingestion_quarantined'
+      )
+    )`;
     const beerWhere = venueId
-      ? "WHERE beer.venue_id = ? AND beer.on_tap = 1 AND beer.in_stock = 1 AND profile.active = 1"
-      : "WHERE beer.on_tap = 1 AND beer.in_stock = 1 AND profile.active = 1";
+      ? `WHERE beer.venue_id = ? AND beer.on_tap = 1 AND beer.in_stock = 1
+           AND profile.active = 1 AND ${unquarantinedInventory}`
+      : `WHERE beer.on_tap = 1 AND beer.in_stock = 1
+           AND profile.active = 1 AND ${unquarantinedInventory}`;
     const happyWhere = venueId
       ? "WHERE happy.venue_id = ? AND happy.active = 1 AND profile.active = 1"
       : "WHERE happy.active = 1 AND profile.active = 1";
@@ -7602,6 +7683,7 @@ export class BusinessRepository {
              SELECT 1
              FROM venue_price_records community
              WHERE community.is_happy_hour_price = 0
+               AND community.source_type != 'source_ingestion_quarantined'
                AND ${canonicalVenue("community")} = ${canonicalVenue("beer")}
                AND COALESCE(NULLIF(community.normalized_beer_id, ''), lower(trim(community.beer_name))) =
                    COALESCE(NULLIF(beer.normalized_beer_id, ''), lower(trim(beer.beer_name)))
@@ -8720,6 +8802,130 @@ export class BusinessRepository {
     return row ? toVenueManagerAssignment(row) : null;
   }
 
+  claimBillingCheckoutReservation(input: {
+    subjectType: "consumer" | "venue";
+    subjectId: string;
+    productKey: string;
+    reservationToken: string;
+    expiresAt: string;
+    now: string;
+  }): BillingCheckoutReservation {
+    return this.database.transaction(() => {
+      const existing = this.database
+        .prepare(
+          `SELECT * FROM billing_checkout_reservations
+           WHERE subject_type = ? AND subject_id = ?`,
+        )
+        .get(input.subjectType, input.subjectId) as BillingCheckoutReservationRow | undefined;
+      if (existing && Date.parse(existing.expires_at) > Date.parse(input.now)) {
+        return toBillingCheckoutReservation(existing);
+      }
+
+      this.database.prepare(
+        `INSERT INTO billing_checkout_reservations (
+           subject_type, subject_id, product_key, reservation_token,
+           stripe_checkout_session_id, checkout_url, expires_at, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, NULL, NULL, ?, ?, ?)
+         ON CONFLICT(subject_type, subject_id) DO UPDATE SET
+           product_key = excluded.product_key,
+           reservation_token = excluded.reservation_token,
+           stripe_checkout_session_id = NULL,
+           checkout_url = NULL,
+           expires_at = excluded.expires_at,
+           created_at = excluded.created_at,
+           updated_at = excluded.updated_at`,
+      ).run(
+        input.subjectType,
+        input.subjectId,
+        input.productKey,
+        input.reservationToken,
+        input.expiresAt,
+        input.now,
+        input.now,
+      );
+      const claimed = this.database
+        .prepare(
+          `SELECT * FROM billing_checkout_reservations
+           WHERE subject_type = ? AND subject_id = ?`,
+        )
+        .get(input.subjectType, input.subjectId) as BillingCheckoutReservationRow;
+      return toBillingCheckoutReservation(claimed);
+    })();
+  }
+
+  getBillingCheckoutReservation(
+    subjectType: "consumer" | "venue",
+    subjectId: string,
+  ): BillingCheckoutReservation | null {
+    const row = this.database
+      .prepare(
+        `SELECT * FROM billing_checkout_reservations
+         WHERE subject_type = ? AND subject_id = ?`,
+      )
+      .get(subjectType, subjectId) as BillingCheckoutReservationRow | undefined;
+    return row ? toBillingCheckoutReservation(row) : null;
+  }
+
+  finalizeBillingCheckoutReservation(input: {
+    subjectType: "consumer" | "venue";
+    subjectId: string;
+    reservationToken: string;
+    stripeCheckoutSessionId: string | null;
+    checkoutUrl: string;
+    now: string;
+  }): BillingCheckoutReservation {
+    const result = this.database.prepare(
+      `UPDATE billing_checkout_reservations
+       SET stripe_checkout_session_id = ?, checkout_url = ?, updated_at = ?
+       WHERE subject_type = ? AND subject_id = ? AND reservation_token = ?`,
+    ).run(
+      input.stripeCheckoutSessionId,
+      input.checkoutUrl,
+      input.now,
+      input.subjectType,
+      input.subjectId,
+      input.reservationToken,
+    );
+    if (result.changes !== 1) {
+      throw new Error("Billing Checkout reservation changed before it could be finalized.");
+    }
+    const row = this.database
+      .prepare(
+        `SELECT * FROM billing_checkout_reservations
+         WHERE subject_type = ? AND subject_id = ?`,
+      )
+      .get(input.subjectType, input.subjectId) as BillingCheckoutReservationRow;
+    return toBillingCheckoutReservation(row);
+  }
+
+  hasVenueIntroTrialEverClaimed(barId: string): boolean {
+    const venueIds = this.listVenueIdentityIds(barId);
+    const placeholders = venueIds.map(() => "?").join(", ");
+    const row = this.database
+      .prepare(
+        `SELECT 1 AS claimed
+         FROM venue_profiles
+         WHERE venue_id IN (${placeholders})
+           AND intro_trial_ever_claimed = 1
+         LIMIT 1`,
+      )
+      .get(...venueIds) as { claimed: number } | undefined;
+    return Boolean(row?.claimed);
+  }
+
+  markVenueIntroTrialEverClaimed(barId: string, now: string): void {
+    const venueIds = this.listVenueIdentityIds(barId);
+    const placeholders = venueIds.map(() => "?").join(", ");
+    this.database
+      .prepare(
+        `UPDATE venue_profiles
+         SET intro_trial_ever_claimed = 1,
+             updated_at = ?
+         WHERE venue_id IN (${placeholders})`,
+      )
+      .run(now, ...venueIds);
+  }
+
   getBarProfile(barId: string): BarProfile | null {
     const row = this.database.prepare("SELECT * FROM venue_profiles WHERE venue_id = ?").get(barId) as
       | BarProfileRow
@@ -8854,6 +9060,7 @@ export class BusinessRepository {
     stripeCustomerId?: string | null | undefined;
     stripeSubscriptionId?: string | null | undefined;
     subscriptionStatus?: string | null | undefined;
+    subscriptionCurrentPeriodEnd: string | null;
     highlightedName: boolean;
     premiumBadge: string | null;
     promoted: boolean;
@@ -8868,7 +9075,12 @@ export class BusinessRepository {
              stripe_paid_membership_tier = COALESCE(?, stripe_paid_membership_tier),
              stripe_customer_id = COALESCE(?, stripe_customer_id),
              stripe_subscription_id = COALESCE(?, stripe_subscription_id),
+             intro_trial_ever_claimed = CASE
+               WHEN ? IS NOT NULL OR ? IS NOT NULL THEN 1
+               ELSE intro_trial_ever_claimed
+             END,
              subscription_status = ?,
+             subscription_current_period_end = ?,
              highlighted_name = ?,
              premium_badge = ?,
              promoted = ?,
@@ -8884,7 +9096,10 @@ export class BusinessRepository {
         input.stripePaidMembershipTier ?? null,
         input.stripeCustomerId ?? null,
         input.stripeSubscriptionId ?? null,
+        input.stripeCustomerId ?? null,
+        input.stripeSubscriptionId ?? null,
         input.subscriptionStatus ?? null,
+        input.subscriptionCurrentPeriodEnd,
         input.highlightedName ? 1 : 0,
         input.premiumBadge,
         input.promoted ? 1 : 0,

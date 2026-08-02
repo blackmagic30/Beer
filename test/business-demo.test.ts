@@ -13,7 +13,7 @@ import { BusinessRepository, type BarPendingChange, type BusinessAccount, type S
 import { CURRENT_LEGAL_POLICY_VERSION } from "../src/config/legal.js";
 import { BeerCatalogRepository } from "../src/db/beer-catalog.repository.js";
 import { AdminIngestionQueueRepository } from "../src/db/admin-ingestion-queue.repository.js";
-import { initializeDatabaseSchema } from "../src/db/database.js";
+import { CURRENT_DATABASE_SCHEMA_VERSION, initializeDatabaseSchema } from "../src/db/database.js";
 import { errorHandler } from "../src/middleware/error-handler.js";
 import { AppError } from "../src/lib/errors.js";
 import { scheduleMissionMaintenance } from "../src/lib/mission-maintenance.js";
@@ -30,7 +30,12 @@ import {
   pintPointDrinkRecordSchema,
 } from "../src/modules/business/business.schemas.js";
 import { createBusinessRouter } from "../src/modules/business/business.routes.js";
-import { BusinessService, canAccessAgeGatedRewards, sanitizePostgrestIlikeTerm } from "../src/modules/business/business.service.js";
+import {
+  BusinessService,
+  canAccessAgeGatedRewards,
+  getMonthlyReportFilename,
+  sanitizePostgrestIlikeTerm,
+} from "../src/modules/business/business.service.js";
 
 const NOW = "2026-05-04T08:00:00.000Z";
 const MONTH_KEY = "2026-05";
@@ -60,6 +65,19 @@ it("accepts and normalizes consent source identifiers from every active client",
     accessToken: "x".repeat(32),
     legalAcceptance: { ...base, source: "web_oauth", accessToken: undefined },
   }).legalAcceptance?.source).toBe("web");
+});
+
+it("bounds monthly report filenames and removes long boundary separator runs", () => {
+  expect(getMonthlyReportFilename({
+    venueId: `${"-".repeat(250)}Carlton Hotel${"-".repeat(250)}`,
+    month: "2026-05",
+    format: "json",
+  })).toBe("pint-path-Carlton-Hotel-2026-05-monthly-report.json");
+  expect(getMonthlyReportFilename({
+    venueId: "---Carlton Hotel---",
+    month: "2026-05",
+    format: "csv",
+  })).toBe("pint-path-Carlton-Hotel-2026-05-monthly-report.csv");
 });
 
 let openDatabases: BetterSqlite3.Database[] = [];
@@ -99,7 +117,11 @@ function createBusinessService(
     CONTRIBUTOR_UNLOCK_POINTS: 15,
     CONTRIBUTOR_UNLOCK_DAYS: 30,
     DEMO_BILLING_MODE: true,
+    COMMERCIAL_LAUNCH_ENABLED: true,
+    CONSUMER_PAID_ENROLLMENT_ENABLED: true,
     FIELD_TEST_MODE: false,
+    PINT_POINTS_REWARDS_ENABLED: true,
+    ALCOHOL_GAMIFICATION_ENABLED: true,
     SESSION_TTL_DAYS: 60,
     ADMIN_SESSION_TTL_DAYS: 7,
     REQUIRE_ADMIN_MFA_IN_PRODUCTION: true,
@@ -119,6 +141,8 @@ function createBusinessService(
     STRIPE_PRICE_MONTHLY: undefined,
     STRIPE_PRICE_YEARLY: undefined,
     STRIPE_PRO_PRICE_ID: undefined,
+    VENUE_PRO_TRIAL_DAYS: 60,
+    VENUE_PRO_TRIAL_REQUIRE_PAYMENT_METHOD: false,
     SUPABASE_URL: undefined,
     SUPABASE_ANON_KEY: undefined,
     SUPABASE_SERVICE_ROLE_KEY: undefined,
@@ -520,6 +544,13 @@ describe("submission payload validation", () => {
 
     expect(parsed.newVenue?.latitude).toBeNull();
     expect(parsed.newVenue?.longitude).toBeNull();
+    expect(createSubmissionSchema.safeParse({
+      ...parsed,
+      newVenue: {
+        ...parsed.newVenue!,
+        postcode: "3OOO",
+      },
+    }).success).toBe(false);
   });
 });
 
@@ -738,7 +769,7 @@ describe("Supabase account and verification foundation", () => {
     expect(drinkColumns).toEqual(expect.arrayContaining(["points_awarded", "idempotency_key"]));
     expect(redemptionIndexes).toContain("idx_discount_redemptions_idempotency");
     expect(drinkIndexes).toContain("idx_pint_point_drink_records_idempotency");
-    expect(database.pragma("user_version", { simple: true })).toBe(11);
+    expect(database.pragma("user_version", { simple: true })).toBe(CURRENT_DATABASE_SCHEMA_VERSION);
     database.prepare(
       `INSERT INTO pint_point_drink_records (
         id, user_id, venue_id, venue_name, recorded_at, created_at
@@ -1988,7 +2019,7 @@ describe("production hardening", () => {
       isAdminAccount: false,
       hasFullAccess: false,
       canViewSpecialDiscounts: false,
-      freePreviewScope: "Happy hours plus pint prices for Guinness, Carlton Draught, and Stone & Wood Pacific Ale.",
+      freePreviewScope: "Pint prices for Guinness, Carlton Draught, and Stone & Wood Pacific Ale.",
       premiumScope: "Every verified beer price, value rings, premium filters, saved night shortcuts, discount-pass access, and venue special-discount details.",
       premiumToolkit: expect.objectContaining({
         enabled: false,
@@ -3157,11 +3188,13 @@ describe("production hardening", () => {
     ]));
 
     const remoteVenues = [
-      { id: "remote-venue-1", name: "Remote Venue One", address: "1 Remote St", suburb: "Melbourne", state: "VIC", postcode: "3000", latitude: -37.81, longitude: 144.96 },
-      { id: "remote-venue-2", name: "Remote Venue Two", address: "2 Remote St", suburb: "Richmond", state: "VIC", postcode: "3121", latitude: -37.82, longitude: 144.99 },
+      { id: "remote-venue-1", name: "Remote Venue One", address: "1 Remote St", suburb: "Melbourne", state: "VIC", postcode: "3000", latitude: -37.81, longitude: 144.96, business_status: "OPERATIONAL" },
+      { id: "remote-venue-2", name: "Remote Venue Two", address: "2 Remote St", suburb: "Richmond", state: "VIC", postcode: "3121", latitude: -37.82, longitude: 144.99, business_status: "OPERATIONAL" },
     ];
     const supabaseVenueBuilder = {
       select: vi.fn(() => supabaseVenueBuilder),
+      eq: vi.fn(() => supabaseVenueBuilder),
+      gte: vi.fn(() => supabaseVenueBuilder),
       not: vi.fn(() => supabaseVenueBuilder),
       in: vi.fn(() => supabaseVenueBuilder),
       limit: vi.fn(() => supabaseVenueBuilder),
@@ -3171,13 +3204,8 @@ describe("production hardening", () => {
       from: vi.fn(() => supabaseVenueBuilder),
     };
 
-    expect(await service.listVenues(undefined, 2)).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        id: venueId,
-        name: "Moonlit Taproom",
-        latitude: -37.798,
-        longitude: 144.979,
-      }),
+    expect(await service.listVenues(undefined, 2)).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: venueId }),
     ]));
 
     const records = repository.listVenueManagerPriceRecords(20, venueId);
@@ -3223,9 +3251,12 @@ describe("production hardening", () => {
       postcode: "3207",
       latitude: -37.8308,
       longitude: 144.9497,
+      business_status: "OPERATIONAL",
     };
     const supabaseVenueBuilder = {
       select: vi.fn(() => supabaseVenueBuilder),
+      eq: vi.fn(() => supabaseVenueBuilder),
+      gte: vi.fn(() => supabaseVenueBuilder),
       not: vi.fn(() => supabaseVenueBuilder),
       in: vi.fn(() => supabaseVenueBuilder),
       limit: vi.fn(() => supabaseVenueBuilder),
@@ -3264,7 +3295,133 @@ describe("production hardening", () => {
     }));
   });
 
-  it("reconciles text-keyed local venue IDs without sending them through Supabase filters", async () => {
+  it("exposes remote contact provenance while filtering closed venues and withholding malformed postcodes", async () => {
+    const { repository } = createRepository();
+    const selectedColumns: string[] = [];
+    const equalityFilters: Array<{ column: string; value: unknown }> = [];
+    const remoteVenues = [
+      {
+        id: "remote-operational",
+        name: "Operational Hotel",
+        address: "1 Open St",
+        suburb: "Melbourne",
+        state: "VIC",
+        postcode: "3000",
+        phone: "03 9000 1000",
+        website: "https://operational.example.com/",
+        latitude: -37.81,
+        longitude: 144.96,
+        directory_eligible: true,
+        business_status: "OPERATIONAL",
+        last_checked_at: NOW,
+      },
+      {
+        id: "remote-temporarily-closed",
+        name: "Temporarily Closed Hotel",
+        address: "2 Closed St",
+        suburb: "Melbourne",
+        state: "VIC",
+        postcode: "3000",
+        phone: "03 9000 2000",
+        website: "https://closed.example.com/",
+        latitude: -37.82,
+        longitude: 144.97,
+        directory_eligible: true,
+        business_status: "CLOSED_TEMPORARILY",
+        last_checked_at: NOW,
+      },
+      {
+        id: "remote-permanently-closed",
+        name: "Permanently Closed Hotel",
+        address: "4 Closed St",
+        suburb: "Melbourne",
+        state: "VIC",
+        postcode: "3000",
+        phone: "03 9000 4000",
+        website: "https://permanently-closed.example.com/",
+        latitude: -37.825,
+        longitude: 144.975,
+        directory_eligible: true,
+        business_status: "CLOSED_PERMANENTLY",
+        last_checked_at: NOW,
+      },
+      {
+        id: "remote-malformed-postcode",
+        name: "Malformed Postcode Hotel",
+        address: "3 Review St",
+        suburb: "Melbourne",
+        state: "VIC",
+        postcode: "3OOO",
+        phone: null,
+        website: "javascript:alert(1)",
+        latitude: -37.83,
+        longitude: 144.98,
+        directory_eligible: true,
+        business_status: "OPERATIONAL",
+        last_checked_at: "not-a-timestamp",
+      },
+      {
+        id: "remote-unknown-status",
+        name: "Unchecked Legacy Venue",
+        address: "8 Unknown St",
+        suburb: "Melbourne",
+        state: "VIC",
+        postcode: "3000",
+        phone: null,
+        website: null,
+        latitude: -37.84,
+        longitude: 144.99,
+        directory_eligible: false,
+        business_status: null,
+        last_checked_at: null,
+      },
+    ];
+    const builder = {
+      select: vi.fn((columns: string) => {
+        selectedColumns.push(columns);
+        return builder;
+      }),
+      eq: vi.fn((column: string, value: unknown) => {
+        equalityFilters.push({ column, value });
+        return builder;
+      }),
+      gte: vi.fn(() => builder),
+      in: vi.fn(() => builder),
+      range: vi.fn(() => builder),
+      limit: vi.fn(() => builder),
+      order: vi.fn((column: string) => column === "name"
+        ? builder
+        : Promise.resolve({ data: remoteVenues, error: null, count: remoteVenues.length })),
+    };
+    const service = createBusinessService(
+      repository,
+      {},
+      undefined,
+      { from: vi.fn(() => builder) } as never,
+    );
+
+    const result = await service.listVenuesPage(undefined, 10);
+
+    expect(selectedColumns[0]).toContain("phone");
+    expect(selectedColumns[0]).toContain("website");
+    expect(selectedColumns[0]).toContain("business_status");
+    expect(selectedColumns[0]).toContain("last_checked_at");
+    expect(selectedColumns[0]).toContain("directory_eligible");
+    expect(equalityFilters).toContainEqual({ column: "directory_eligible", value: true });
+    expect(equalityFilters).toContainEqual({ column: "business_status", value: "OPERATIONAL" });
+    expect(result.venues.map((venue) => venue.id)).toEqual([
+      "remote-operational",
+    ]);
+    expect(result.venues.map((venue) => venue.id)).not.toContain("remote-unknown-status");
+    expect(result.venues[0]).toEqual(expect.objectContaining({
+      phone: "03 9000 1000",
+      website: "https://operational.example.com/",
+      businessStatus: "OPERATIONAL",
+      lastCheckedAt: NOW,
+    }));
+  });
+
+  it("fails closed for text-keyed and UUID local venues absent from the operational Supabase directory", async () => {
     const { repository } = createRepository();
     const textVenueId = "pintpath-release:venue:044";
     const uuidVenueId = "00000000-0000-4000-8000-000000000044";
@@ -3291,18 +3448,21 @@ describe("production hardening", () => {
     upsertProfile(textVenueId, "Release Venue 044");
     upsertProfile(uuidVenueId, "UUID Venue 044");
 
-    const remoteIn = vi.fn();
+    const remoteEq = vi.fn();
     const remoteNot = vi.fn();
     const remoteBuilder = {
       select: vi.fn(() => remoteBuilder),
-      in: vi.fn((column: string, ids: string[]) => {
-        remoteIn(column, ids);
+      eq: vi.fn((column: string, value: unknown) => {
+        remoteEq(column, value);
         return remoteBuilder;
       }),
+      gte: vi.fn(() => remoteBuilder),
+      in: vi.fn(() => remoteBuilder),
       not: vi.fn((column: string, operator: string, value: string) => {
         remoteNot(column, operator, value);
         return remoteBuilder;
       }),
+      or: vi.fn(() => remoteBuilder),
       range: vi.fn(() => remoteBuilder),
       limit: vi.fn(() => remoteBuilder),
       order: vi.fn((column: string) => column === "name"
@@ -3319,19 +3479,14 @@ describe("production hardening", () => {
 
     const result = await service.listVenuesPage(undefined, 10);
 
-    expect(result.venues.map((venue) => venue.id)).toEqual(expect.arrayContaining([
-      textVenueId,
-      uuidVenueId,
-    ]));
-    expect(remoteIn).not.toHaveBeenCalled();
+    expect(result.venues).toEqual([]);
+    expect(remoteEq).toHaveBeenCalledWith("directory_eligible", true);
+    expect(remoteEq).toHaveBeenCalledWith("business_status", "OPERATIONAL");
     expect(remoteNot).not.toHaveBeenCalled();
 
     const supabaseCallsBeforeLocalLookup = from.mock.calls.length;
-    expect(await service.getPublicVenueById(textVenueId)).toEqual(expect.objectContaining({
-      id: textVenueId,
-      name: "Release Venue 044",
-    }));
-    expect(from).toHaveBeenCalledTimes(supabaseCallsBeforeLocalLookup);
+    expect(await service.getPublicVenueById(textVenueId)).toBeNull();
+    expect(from.mock.calls.length).toBeGreaterThan(supabaseCallsBeforeLocalLookup);
   });
 
   it("deduplicates local and remote identities before applying page offsets", async () => {
@@ -3367,6 +3522,7 @@ describe("production hardening", () => {
         postcode: "3000",
         latitude: -37.81,
         longitude: 144.96,
+        business_status: "OPERATIONAL",
       },
       {
         id: "remote-unique",
@@ -3377,10 +3533,13 @@ describe("production hardening", () => {
         postcode: "3000",
         latitude: -37.82,
         longitude: 144.97,
+        business_status: "OPERATIONAL",
       },
     ];
     const builder = {
       select: vi.fn(() => builder),
+      eq: vi.fn(() => builder),
+      gte: vi.fn(() => builder),
       range: vi.fn(() => builder),
       limit: vi.fn(() => builder),
       order: vi.fn((column: string) => column === "name"
@@ -3451,10 +3610,13 @@ describe("production hardening", () => {
       postcode: "3000",
       latitude: -37.8,
       longitude: 144.9,
+      business_status: "OPERATIONAL",
     }));
     let requestedRange = { from: 0, to: 0 };
     const builder = {
       select: vi.fn(() => builder),
+      eq: vi.fn(() => builder),
+      gte: vi.fn(() => builder),
       or: vi.fn(() => builder),
       range: vi.fn((from: number, to: number) => {
         requestedRange = { from, to };
@@ -3544,6 +3706,7 @@ describe("production hardening", () => {
         postcode: "3000",
         latitude: -37.8,
         longitude: 144.9,
+        business_status: "OPERATIONAL",
       })),
       {
         id: "remote-shadow-local-identity",
@@ -3554,6 +3717,7 @@ describe("production hardening", () => {
         postcode: "3000",
         latitude: -37.8,
         longitude: 144.9,
+        business_status: "OPERATIONAL",
       },
       ...["a", "b", "c"].map((suffix, index) => ({
         id: `remote-${suffix}`,
@@ -3564,22 +3728,25 @@ describe("production hardening", () => {
         postcode: "3000",
         latitude: -37.8,
         longitude: 144.9,
+        business_status: "OPERATIONAL",
       })),
     ];
     let requestedRange = { from: 0, to: 0 };
     let remoteSearchActive = false;
     const remoteNot = vi.fn();
-    const remoteIn = vi.fn();
+    const remoteEq = vi.fn();
     const remoteOrderColumns: string[] = [];
     const remoteBuilder = {
       select: vi.fn(() => {
         remoteSearchActive = false;
         return remoteBuilder;
       }),
-      in: vi.fn((column: string, ids: string[]) => {
-        remoteIn(column, ids);
+      eq: vi.fn((column: string, value: unknown) => {
+        remoteEq(column, value);
         return remoteBuilder;
       }),
+      gte: vi.fn(() => remoteBuilder),
+      in: vi.fn(() => remoteBuilder),
       not: vi.fn((column: string, operator: string, value: string) => {
         remoteNot(column, operator, value);
         return remoteBuilder;
@@ -3624,7 +3791,13 @@ describe("production hardening", () => {
     const searchedPage = await service.listVenuesPage("Local Venue 000", 10, 0);
 
     expect(remoteNot).not.toHaveBeenCalled();
-    expect(remoteIn).not.toHaveBeenCalled();
+    expect(remoteEq).toHaveBeenCalledTimes(26);
+    expect(remoteEq.mock.calls.filter(([column, value]) =>
+      column === "business_status" && value === "OPERATIONAL"
+    )).toHaveLength(13);
+    expect(remoteEq.mock.calls.filter(([column, value]) =>
+      column === "directory_eligible" && value === true
+    )).toHaveLength(13);
     expect(from).toHaveBeenCalledTimes(13);
     expect(remoteBuilder.range.mock.calls).toEqual([
       [0, 999],
@@ -3707,6 +3880,8 @@ describe("production hardening", () => {
     });
     const builder = {
       select: vi.fn(() => builder),
+      eq: vi.fn(() => builder),
+      gte: vi.fn(() => builder),
       or: vi.fn(() => builder),
       range: vi.fn(() => builder),
       limit: vi.fn(() => builder),
@@ -4888,6 +5063,109 @@ describe("production hardening", () => {
     expect(() => stripeService.handleDemoSubscription(user, "monthly")).toThrow("Demo billing is not enabled");
   });
 
+  it("fails closed for new consumer and venue enrollment when commercial launch is disabled", async () => {
+    const { database, repository } = createRepository();
+    const service = createBusinessService(repository, {
+      COMMERCIAL_LAUNCH_ENABLED: false,
+      CONSUMER_PAID_ENROLLMENT_ENABLED: false,
+    });
+    const user = repository.updateSubscription({
+      userId: createAccount(repository, "commercial-gate-user").id,
+      subscriptionStatus: "free",
+      stripePaidSubscriptionStatus: null,
+      stripeCustomerId: "cus_commercial_gate_existing",
+      premiumUntil: null,
+      now: NOW,
+    });
+    const admin = createAccount(repository, "commercial-gate-admin", "admin");
+    const manager = createAccount(repository, "commercial-gate-manager");
+
+    service.assignVenueManager(admin, {
+      userId: manager.id,
+      venueId: "commercial-gate-venue",
+      venueName: "Commercial Gate Hotel",
+      suburb: "Carlton",
+    });
+    service.upsertBarProfile(admin, "commercial-gate-venue", {
+      name: "Commercial Gate Hotel",
+      address: null,
+      suburb: "Carlton",
+      area: "Carlton",
+      phone: null,
+      website: null,
+      instagram: null,
+      description: null,
+      openingHours: {},
+      venueTags: [],
+      membershipTier: "basic",
+      acceptsPintPathCodes: false,
+      active: true,
+    });
+    database.prepare(
+      `UPDATE venue_profiles
+       SET stripe_customer_id = ?,
+           stripe_subscription_id = ?,
+           subscription_status = ?
+       WHERE venue_id = ?`,
+    ).run(
+      "cus_commercial_gate_venue_existing",
+      "sub_commercial_gate_venue_cancelled",
+      "canceled",
+      "commercial-gate-venue",
+    );
+
+    expect(service.getPublicConfig().commercialLaunchEnabled).toBe(false);
+    expect(service.getPublicConfig().consumerPaidEnrollmentEnabled).toBe(false);
+    await expect(service.createCheckout(user, { plan: "monthly" })).rejects.toMatchObject({
+      statusCode: 503,
+      details: { publicCode: "CONSUMER_PAID_ENROLLMENT_DISABLED" },
+      message: expect.stringContaining("not included in this release"),
+    });
+    expect(() => service.handleDemoSubscription(user, "monthly"))
+      .toThrow("not included in this release");
+    await expect(service.createBarTierCheckout(
+      repository.getAccountById(manager.id)!,
+      "commercial-gate-venue",
+      { tier: "pro" },
+    )).rejects.toMatchObject({
+      statusCode: 503,
+      details: { publicCode: "COMMERCIAL_LAUNCH_DISABLED" },
+    });
+    expect(repository.getAccountById(user.id)?.stripeCustomerId).toBe("cus_commercial_gate_existing");
+    expect(repository.getBarProfile("commercial-gate-venue")?.membershipTier).toBe("basic");
+    expect(repository.getBarProfile("commercial-gate-venue")?.stripeCustomerId)
+      .toBe("cus_commercial_gate_venue_existing");
+  });
+
+  it("can open the venue offer without opening out-of-scope consumer paid enrollment", async () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository, {
+      COMMERCIAL_LAUNCH_ENABLED: true,
+      CONSUMER_PAID_ENROLLMENT_ENABLED: false,
+    });
+    const user = createAccount(repository, "venue-only-launch-user");
+    const admin = createAccount(repository, "venue-only-launch-admin", "admin");
+    const manager = createAccount(repository, "venue-only-launch-manager");
+    service.assignVenueManager(admin, {
+      userId: manager.id,
+      venueId: "venue-only-launch-venue",
+      venueName: "Venue Only Launch Hotel",
+      suburb: "Carlton",
+    });
+
+    await expect(service.createCheckout(user, { plan: "monthly" })).rejects.toMatchObject({
+      details: { publicCode: "CONSUMER_PAID_ENROLLMENT_DISABLED" },
+    });
+    await expect(service.createBarTierCheckout(
+      repository.getAccountById(manager.id)!,
+      "venue-only-launch-venue",
+      { tier: "pro" },
+    )).resolves.toMatchObject({
+      mode: "demo",
+      profile: { membershipTier: "pro" },
+    });
+  });
+
   it("surfaces actionable Stripe checkout setup failures without exposing secrets", async () => {
     const { repository } = createRepository();
     const user = createAccount(repository, "stripe-setup-user");
@@ -4943,18 +5221,31 @@ describe("production hardening", () => {
     });
 
     try {
-      globalThis.fetch = (async (_url, init) => {
+      const checkoutFetch = vi.fn(async (_url, init) => {
         checkoutRequestBody = String(init?.body ?? "");
-        return new Response(JSON.stringify({ url: "https://checkout.stripe.com/c/pay/cs_test_return" }), {
+        return new Response(JSON.stringify({
+          id: "cs_test_return",
+          url: "https://checkout.stripe.com/c/pay/cs_test_return",
+        }), {
           status: 200,
           headers: { "content-type": "application/json" },
         });
-      }) as typeof fetch;
+      });
+      globalThis.fetch = checkoutFetch as typeof fetch;
 
       await expect(service.createCheckout(user, { plan: "monthly" })).resolves.toMatchObject({ mode: "stripe" });
+      await expect(service.createCheckout(user, { plan: "monthly" })).resolves.toMatchObject({
+        mode: "stripe",
+        checkoutUrl: "https://checkout.stripe.com/c/pay/cs_test_return",
+        message: expect.stringContaining("existing Stripe Checkout session"),
+      });
+      expect(checkoutFetch).toHaveBeenCalledTimes(1);
       const checkoutParams = new URLSearchParams(checkoutRequestBody);
       expect(checkoutParams.get("mode")).toBe("subscription");
       expect(checkoutParams.get("automatic_tax[enabled]")).toBe("true");
+      expect(Number(checkoutParams.get("expires_at"))).toBe(
+        Math.floor((Date.parse(NOW) + 35 * 60 * 1_000) / 1_000),
+      );
       expect(checkoutParams.get("billing_address_collection")).toBeNull();
       expect(checkoutParams.get("tax_id_collection[enabled]")).toBeNull();
       expect(checkoutParams.get("line_items[0][price]")).toBe("price_test_monthly");
@@ -5259,6 +5550,8 @@ describe("production hardening", () => {
     const { repository } = createRepository();
     const service = createBusinessService(repository, {
       DEMO_BILLING_MODE: false,
+      COMMERCIAL_LAUNCH_ENABLED: false,
+      CONSUMER_PAID_ENROLLMENT_ENABLED: false,
       STRIPE_SECRET_KEY: "test-fixture-not-a-real-billing-portal-key",
     });
     const unlinkedAccount = updateSubscription(
@@ -5308,6 +5601,11 @@ describe("production hardening", () => {
       expect(portalEndpoint).toBe("https://api.stripe.com/v1/billing_portal/sessions");
       expect(portalBody.get("customer")).toBe("cus_linked_billing_user");
       expect(portalBody.get("return_url")).toBe("http://127.0.0.1:3000/account.html?billing=returned");
+
+      await expect(service.createCheckout(linkedAccount, { plan: "yearly" })).rejects.toMatchObject({
+        statusCode: 503,
+        details: { publicCode: "CONSUMER_PAID_ENROLLMENT_DISABLED" },
+      });
 
       stripeFetch.mockResolvedValueOnce(new Response(JSON.stringify({
         error: {
@@ -5732,13 +6030,22 @@ describe("production hardening", () => {
     expect(repository.getBarProfile("stripe-recovery-venue")).toEqual(expect.objectContaining({
       membershipTier: "basic",
       stripePaidMembershipTier: "pro",
+      subscriptionCurrentPeriodEnd: null,
     }));
     await deliver({
       id: "evt_recovery_venue_active",
       type: "customer.subscription.updated",
-      data: { object: { id: "sub_recovery_venue", customer: "cus_recovery_venue", status: "active" } },
+      data: { object: {
+        id: "sub_recovery_venue",
+        customer: "cus_recovery_venue",
+        status: "active",
+        current_period_end: 1_786_665_600,
+      } },
     });
-    expect(repository.getBarProfile("stripe-recovery-venue")?.membershipTier).toBe("pro");
+    expect(repository.getBarProfile("stripe-recovery-venue")).toEqual(expect.objectContaining({
+      membershipTier: "pro",
+      subscriptionCurrentPeriodEnd: "2026-08-14T00:00:00.000Z",
+    }));
   });
 
   it("grants only settled checkout and allowlisted subscription states for consumers and venues", async () => {
@@ -6655,6 +6962,49 @@ describe("business demo contribution model", () => {
       "personal_preferences",
       "savings_tracker",
     ]));
+  });
+
+  it("fails closed for Pint Points and Free Pint Rewards when launch approval is not enabled", async () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository, {
+      PINT_POINTS_REWARDS_ENABLED: false,
+      ALCOHOL_GAMIFICATION_ENABLED: false,
+    });
+    const admin = createAccount(repository, "disabled-pint-points-admin", "admin");
+    const manager = createAccount(repository, "disabled-pint-points-manager");
+    const user = createAccount(repository, "disabled-pint-points-user");
+
+    service.assignVenueManager(admin, {
+      userId: manager.id,
+      venueId: "disabled-pint-points-venue",
+      venueName: "Disabled Rewards Hotel",
+      suburb: "Carlton",
+    });
+
+    expect(service.getPublicConfig().pintPointsRewardsEnabled).toBe(false);
+    expect(service.getPublicConfig().alcoholGamificationEnabled).toBe(false);
+    expect(service.getPublicConfig().happyHourDiscoveryEnabled).toBe(false);
+    expect(service.getAccountDashboard(user).pintPoints).toBeNull();
+    expect(service.getVenuePortal(
+      repository.getAccountById(manager.id)!,
+      { venueId: "disabled-pint-points-venue" },
+    ).pintPoints).toBeNull();
+    await expect(service.createFreePintRewardCode(user, {})).rejects.toThrow(
+      "paused while the launch promotion completes legal and venue approval",
+    );
+    expect(() =>
+      service.previewPintPointMember(
+        repository.getAccountById(manager.id)!,
+        "disabled-pint-points-venue",
+        { code: "ABC123", transactionReference: "disabled-rewards-check" },
+      ),
+    ).toThrow("paused while the launch promotion completes legal and venue approval");
+    await expect(service.planPubGolf(user, {
+      startLocation: "Fitzroy",
+      finishLocation: "Richmond",
+      mode: "auto",
+      drinks: Array.from({ length: 9 }, () => "Non-alcoholic beer"),
+    })).rejects.toThrow("paused pending App Store and Victorian responsible-promotion approval");
   });
 
   it("tracks Pint Points, reserves 50 points for one-time Free Pint Rewards, and scopes venue redemption", async () => {
@@ -10620,14 +10970,18 @@ describe("business demo contribution model", () => {
     const originalFetch = globalThis.fetch;
     let checkoutRequestBody = "";
     try {
-      globalThis.fetch = vi.fn(async (url, init) => {
+      const checkoutFetch = vi.fn(async (url, init) => {
         expect(String(url)).toBe("https://api.stripe.com/v1/checkout/sessions");
         checkoutRequestBody = String(init?.body ?? "");
-        return new Response(JSON.stringify({ url: "https://checkout.stripe.com/c/pay/cs_test_venue_tax" }), {
+        return new Response(JSON.stringify({
+          id: "cs_test_venue_tax",
+          url: "https://checkout.stripe.com/c/pay/cs_test_venue_tax",
+        }), {
           status: 200,
           headers: { "content-type": "application/json" },
         });
-      }) as typeof fetch;
+      });
+      globalThis.fetch = checkoutFetch as typeof fetch;
 
       await expect(service.createBarTierCheckout(
         repository.getAccountById(manager.id)!,
@@ -10637,16 +10991,673 @@ describe("business demo contribution model", () => {
         mode: "stripe",
         checkoutUrl: "https://checkout.stripe.com/c/pay/cs_test_venue_tax",
       });
+      await expect(service.createBarTierCheckout(
+        repository.getAccountById(manager.id)!,
+        "bar-live-checkout-1",
+        { tier: "pro" },
+      )).resolves.toMatchObject({
+        mode: "stripe",
+        checkoutUrl: "https://checkout.stripe.com/c/pay/cs_test_venue_tax",
+        message: expect.stringContaining("existing Stripe Checkout session"),
+      });
+      expect(checkoutFetch).toHaveBeenCalledTimes(1);
 
       const checkoutParams = new URLSearchParams(checkoutRequestBody);
       expect(checkoutParams.get("mode")).toBe("subscription");
       expect(checkoutParams.get("automatic_tax[enabled]")).toBe("true");
+      expect(Number(checkoutParams.get("expires_at"))).toBe(
+        Math.floor((Date.parse(NOW) + 35 * 60 * 1_000) / 1_000),
+      );
       expect(checkoutParams.get("billing_address_collection")).toBe("required");
       expect(checkoutParams.get("tax_id_collection[enabled]")).toBe("true");
       expect(checkoutParams.get("line_items[0][price]")).toBe("price_test_venue_pro");
       expect(checkoutParams.get("metadata[billing_context]")).toBe("venue");
       expect(checkoutParams.get("metadata[venue_id]")).toBe("bar-live-checkout-1");
       expect(checkoutParams.get("subscription_data[metadata][billing_context]")).toBe("venue");
+      expect(checkoutParams.get("subscription_data[trial_period_days]")).toBe("60");
+      expect(checkoutParams.get("payment_method_collection")).toBe("if_required");
+      expect(checkoutParams.get("subscription_data[trial_settings][end_behavior][missing_payment_method]")).toBe("cancel");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("reconciles a completed venue trial after its reservation expires instead of issuing a second trial", async () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository, {
+      DEMO_BILLING_MODE: false,
+      STRIPE_SECRET_KEY: "sk_test_xxx",
+      STRIPE_PRO_PRICE_ID: "price_test_venue_pro",
+    });
+    const admin = createAccount(repository, "delayed-trial-admin", "admin");
+    const manager = createAccount(repository, "delayed-trial-manager");
+    const venueId = "delayed-trial-venue";
+
+    service.assignVenueManager(admin, {
+      userId: manager.id,
+      venueId,
+      venueName: "Delayed Trial Hotel",
+      suburb: "Carlton",
+    });
+
+    const originalFetch = globalThis.fetch;
+    const checkoutBodies: string[] = [];
+    try {
+      const stripeFetch = vi.fn(async (url, init) => {
+        const requestUrl = String(url);
+        if (requestUrl === "https://api.stripe.com/v1/checkout/sessions") {
+          checkoutBodies.push(String(init?.body ?? ""));
+          return new Response(JSON.stringify({
+            id: "cs_delayed_trial",
+            url: "https://checkout.stripe.com/c/pay/cs_delayed_trial",
+          }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        if (requestUrl.includes("/v1/checkout/sessions/cs_delayed_trial?")) {
+          return new Response(JSON.stringify({
+            id: "cs_delayed_trial",
+            status: "complete",
+            customer: "cus_delayed_trial",
+            subscription: {
+              id: "sub_delayed_trial",
+              status: "trialing",
+              current_period_end: 1_775_000_000,
+            },
+            metadata: {
+              billing_context: "venue",
+              user_id: manager.id,
+              venue_id: venueId,
+              venue_membership_tier: "pro",
+            },
+          }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        if (requestUrl === "https://api.stripe.com/v1/billing_portal/sessions") {
+          return new Response(JSON.stringify({
+            url: "https://billing.stripe.com/p/session/delayed-trial",
+          }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        throw new Error(`Unexpected Stripe request: ${requestUrl}`);
+      });
+      globalThis.fetch = stripeFetch as typeof fetch;
+
+      await expect(service.createBarTierCheckout(
+        repository.getAccountById(manager.id)!,
+        venueId,
+        { tier: "pro" },
+      )).resolves.toMatchObject({
+        mode: "stripe",
+        checkoutUrl: "https://checkout.stripe.com/c/pay/cs_delayed_trial",
+      });
+
+      vi.setSystemTime(new Date(Date.parse(NOW) + 36 * 60 * 1_000));
+      await expect(service.createBarTierCheckout(
+        repository.getAccountById(manager.id)!,
+        venueId,
+        { tier: "pro" },
+      )).resolves.toMatchObject({
+        mode: "portal",
+        checkoutUrl: "https://billing.stripe.com/p/session/delayed-trial",
+        message: expect.stringContaining("existing venue trial was recovered"),
+      });
+
+      expect(checkoutBodies).toHaveLength(1);
+      expect(new URLSearchParams(checkoutBodies[0]).get("subscription_data[trial_period_days]")).toBe("60");
+      expect(repository.hasVenueIntroTrialEverClaimed(venueId)).toBe(true);
+      expect(repository.getBarProfile(venueId)).toMatchObject({
+        membershipTier: "pro",
+        stripeCustomerId: "cus_delayed_trial",
+        stripeSubscriptionId: "sub_delayed_trial",
+        subscriptionStatus: "trialing",
+      });
+      expect(stripeFetch).toHaveBeenCalledTimes(3);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("does not re-grant a trial when a newer cancellation races venue checkout reconciliation", async () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository, {
+      DEMO_BILLING_MODE: false,
+      STRIPE_SECRET_KEY: "sk_test_xxx",
+      STRIPE_PRO_PRICE_ID: "price_test_venue_pro",
+    });
+    const admin = createAccount(repository, "trial-race-admin", "admin");
+    const manager = createAccount(repository, "trial-race-manager");
+    const venueId = "trial-race-venue";
+
+    service.assignVenueManager(admin, {
+      userId: manager.id,
+      venueId,
+      venueName: "Trial Race Hotel",
+      suburb: "Carlton",
+    });
+
+    const originalFetch = globalThis.fetch;
+    try {
+      const stripeFetch = vi.fn(async (url) => {
+        const requestUrl = String(url);
+        if (requestUrl === "https://api.stripe.com/v1/checkout/sessions") {
+          return new Response(JSON.stringify({
+            id: "cs_trial_race",
+            url: "https://checkout.stripe.com/c/pay/cs_trial_race",
+          }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        if (requestUrl.includes("/v1/checkout/sessions/cs_trial_race?")) {
+          const cancellationCursor = new Date(Date.now()).toISOString();
+          repository.updateBarSubscription({
+            barId: venueId,
+            membershipTier: "basic",
+            stripePaidMembershipTier: "pro",
+            stripeCustomerId: "cus_trial_race",
+            stripeSubscriptionId: "sub_trial_race",
+            subscriptionStatus: "canceled",
+            subscriptionCurrentPeriodEnd: null,
+            highlightedName: false,
+            premiumBadge: null,
+            promoted: false,
+            featuredSpecialEligible: false,
+            now: cancellationCursor,
+            stripeEventCreatedAt: cancellationCursor,
+          });
+          return new Response(JSON.stringify({
+            id: "cs_trial_race",
+            status: "complete",
+            customer: "cus_trial_race",
+            subscription: {
+              id: "sub_trial_race",
+              status: "trialing",
+              current_period_end: 1_775_000_000,
+            },
+            metadata: {
+              billing_context: "venue",
+              user_id: manager.id,
+              venue_id: venueId,
+              venue_membership_tier: "pro",
+            },
+          }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        throw new Error(`Unexpected Stripe request: ${requestUrl}`);
+      });
+      globalThis.fetch = stripeFetch as typeof fetch;
+
+      await service.createBarTierCheckout(
+        repository.getAccountById(manager.id)!,
+        venueId,
+        { tier: "pro" },
+      );
+      vi.setSystemTime(new Date(Date.parse(NOW) + 36 * 60 * 1_000));
+
+      await expect(service.createBarTierCheckout(
+        repository.getAccountById(manager.id)!,
+        venueId,
+        { tier: "pro" },
+      )).rejects.toMatchObject({
+        statusCode: 409,
+        details: { publicCode: "VENUE_TRIAL_RECONCILIATION_CHANGED" },
+        message: expect.stringContaining("billing changed"),
+      });
+
+      expect(repository.getBarProfile(venueId)).toMatchObject({
+        membershipTier: "basic",
+        stripeCustomerId: "cus_trial_race",
+        stripeSubscriptionId: "sub_trial_race",
+        subscriptionStatus: "canceled",
+        stripeEventCreatedAt: new Date(Date.now()).toISOString(),
+      });
+      expect(repository.hasVenueIntroTrialEverClaimed(venueId)).toBe(true);
+      expect(stripeFetch).toHaveBeenCalledTimes(2);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("replaces a venue trial checkout only after Stripe confirms the prior session expired", async () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository, {
+      DEMO_BILLING_MODE: false,
+      STRIPE_SECRET_KEY: "sk_test_xxx",
+      STRIPE_PRO_PRICE_ID: "price_test_venue_pro",
+    });
+    const admin = createAccount(repository, "expired-session-admin", "admin");
+    const manager = createAccount(repository, "expired-session-manager");
+    const venueId = "expired-session-venue";
+
+    service.assignVenueManager(admin, {
+      userId: manager.id,
+      venueId,
+      venueName: "Expired Session Hotel",
+      suburb: "Richmond",
+    });
+
+    const originalFetch = globalThis.fetch;
+    const checkoutBodies: string[] = [];
+    try {
+      const stripeFetch = vi.fn(async (url, init) => {
+        const requestUrl = String(url);
+        if (requestUrl.includes("/v1/checkout/sessions/cs_expired_trial?")) {
+          return new Response(JSON.stringify({
+            id: "cs_expired_trial",
+            status: "expired",
+            metadata: {
+              billing_context: "venue",
+              user_id: manager.id,
+              venue_id: venueId,
+              venue_membership_tier: "pro",
+            },
+          }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        if (requestUrl === "https://api.stripe.com/v1/checkout/sessions") {
+          checkoutBodies.push(String(init?.body ?? ""));
+          const sessionId = checkoutBodies.length === 1
+            ? "cs_expired_trial"
+            : "cs_replacement_trial";
+          return new Response(JSON.stringify({
+            id: sessionId,
+            url: `https://checkout.stripe.com/c/pay/${sessionId}`,
+          }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        throw new Error(`Unexpected Stripe request: ${requestUrl}`);
+      });
+      globalThis.fetch = stripeFetch as typeof fetch;
+
+      await service.createBarTierCheckout(
+        repository.getAccountById(manager.id)!,
+        venueId,
+        { tier: "pro" },
+      );
+      vi.setSystemTime(new Date(Date.parse(NOW) + 36 * 60 * 1_000));
+
+      await expect(service.createBarTierCheckout(
+        repository.getAccountById(manager.id)!,
+        venueId,
+        { tier: "pro" },
+      )).resolves.toMatchObject({
+        mode: "stripe",
+        checkoutUrl: "https://checkout.stripe.com/c/pay/cs_replacement_trial",
+      });
+
+      expect(checkoutBodies).toHaveLength(2);
+      for (const body of checkoutBodies) {
+        expect(new URLSearchParams(body).get("subscription_data[trial_period_days]")).toBe("60");
+      }
+      expect(repository.hasVenueIntroTrialEverClaimed(venueId)).toBe(false);
+      expect(stripeFetch).toHaveBeenCalledTimes(3);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("fails closed when an expired venue trial reservation has no Stripe session authority", async () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository, {
+      DEMO_BILLING_MODE: false,
+      STRIPE_SECRET_KEY: "sk_test_xxx",
+      STRIPE_PRO_PRICE_ID: "price_test_venue_pro",
+    });
+    const admin = createAccount(repository, "uncertain-trial-admin", "admin");
+    const manager = createAccount(repository, "uncertain-trial-manager");
+    const venueId = "uncertain-trial-venue";
+
+    service.assignVenueManager(admin, {
+      userId: manager.id,
+      venueId,
+      venueName: "Uncertain Trial Hotel",
+      suburb: "Fitzroy",
+    });
+    repository.claimBillingCheckoutReservation({
+      subjectType: "venue",
+      subjectId: venueId,
+      productKey: "venue:pro:trial:60",
+      reservationToken: "uncertain-trial-reservation",
+      expiresAt: new Date(Date.parse(NOW) - 1_000).toISOString(),
+      now: new Date(Date.parse(NOW) - 36 * 60 * 1_000).toISOString(),
+    });
+
+    const originalFetch = globalThis.fetch;
+    try {
+      const stripeFetch = vi.fn();
+      globalThis.fetch = stripeFetch as typeof fetch;
+      await expect(service.createBarTierCheckout(
+        repository.getAccountById(manager.id)!,
+        venueId,
+        { tier: "pro" },
+      )).rejects.toMatchObject({
+        statusCode: 409,
+        details: { publicCode: "VENUE_TRIAL_RECONCILIATION_REQUIRED" },
+        message: expect.stringContaining("No second trial was created"),
+      });
+      expect(stripeFetch).not.toHaveBeenCalled();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("converts an expired venue trial to paid Checkout without granting a second trial", async () => {
+    const { database, repository } = createRepository();
+    const service = createBusinessService(repository, {
+      DEMO_BILLING_MODE: false,
+      STRIPE_SECRET_KEY: "sk_test_xxx",
+      STRIPE_PRO_PRICE_ID: "price_test_venue_pro",
+    });
+    const admin = createAccount(repository, "expired-trial-admin", "admin");
+    const manager = createAccount(repository, "expired-trial-manager");
+    const venueId = "expired-trial-venue";
+
+    service.assignVenueManager(admin, {
+      userId: manager.id,
+      venueId,
+      venueName: "Expired Trial Hotel",
+      suburb: "Carlton",
+    });
+    service.upsertBarProfile(admin, venueId, {
+      name: "Expired Trial Hotel",
+      address: null,
+      suburb: "Carlton",
+      area: "Carlton",
+      phone: null,
+      website: null,
+      instagram: null,
+      description: null,
+      openingHours: {},
+      venueTags: [],
+      membershipTier: "basic",
+      acceptsPintPathCodes: false,
+      active: true,
+    });
+    database.prepare(
+      `UPDATE venue_profiles
+       SET stripe_customer_id = ?,
+           stripe_subscription_id = ?,
+           subscription_status = ?
+       WHERE venue_id = ?`,
+    ).run("cus_expired_trial", "sub_expired_trial", "canceled", venueId);
+
+    const originalFetch = globalThis.fetch;
+    let checkoutRequestBody = "";
+    try {
+      globalThis.fetch = vi.fn(async (url, init) => {
+        expect(String(url)).toBe("https://api.stripe.com/v1/checkout/sessions");
+        checkoutRequestBody = String(init?.body ?? "");
+        return new Response(JSON.stringify({
+          id: "cs_paid_after_trial",
+          url: "https://checkout.stripe.com/c/pay/cs_paid_after_trial",
+        }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }) as typeof fetch;
+
+      await expect(service.createBarTierCheckout(
+        repository.getAccountById(manager.id)!,
+        venueId,
+        { tier: "pro" },
+      )).resolves.toMatchObject({
+        mode: "stripe",
+        message: "Stripe checkout created for this venue tier.",
+      });
+
+      const checkoutParams = new URLSearchParams(checkoutRequestBody);
+      expect(checkoutParams.get("customer")).toBe("cus_expired_trial");
+      expect(checkoutParams.has("customer_email")).toBe(false);
+      expect(checkoutParams.has("subscription_data[trial_period_days]")).toBe(false);
+      expect(checkoutParams.has("payment_method_collection")).toBe(false);
+      expect(checkoutParams.has("subscription_data[trial_settings][end_behavior][missing_payment_method]")).toBe(false);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("does not grant a second venue trial after historical Stripe identifiers are cleared", async () => {
+    const { database, repository } = createRepository();
+    const service = createBusinessService(repository, {
+      DEMO_BILLING_MODE: false,
+      STRIPE_SECRET_KEY: "sk_test_xxx",
+      STRIPE_PRO_PRICE_ID: "price_test_venue_pro",
+    });
+    const admin = createAccount(repository, "historical-trial-admin", "admin");
+    const manager = createAccount(repository, "historical-trial-manager");
+    const venueId = "historical-trial-venue";
+
+    service.assignVenueManager(admin, {
+      userId: manager.id,
+      venueId,
+      venueName: "Historical Trial Hotel",
+      suburb: "Fitzroy",
+    });
+    service.upsertBarProfile(admin, venueId, {
+      name: "Historical Trial Hotel",
+      address: null,
+      suburb: "Fitzroy",
+      area: "Fitzroy",
+      phone: null,
+      website: null,
+      instagram: null,
+      description: null,
+      openingHours: {},
+      venueTags: [],
+      membershipTier: "basic",
+      acceptsPintPathCodes: false,
+      active: true,
+    });
+    database.prepare(
+      `UPDATE venue_profiles
+       SET intro_trial_ever_claimed = 1,
+           stripe_customer_id = NULL,
+           stripe_subscription_id = NULL,
+           subscription_status = 'canceled'
+       WHERE venue_id = ?`,
+    ).run(venueId);
+
+    const originalFetch = globalThis.fetch;
+    let checkoutRequestBody = "";
+    try {
+      globalThis.fetch = vi.fn(async (_url, init) => {
+        checkoutRequestBody = String(init?.body ?? "");
+        return new Response(JSON.stringify({
+          id: "cs_historical_trial",
+          url: "https://checkout.stripe.com/c/pay/cs_historical_trial",
+        }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }) as typeof fetch;
+
+      await service.createBarTierCheckout(
+        repository.getAccountById(manager.id)!,
+        venueId,
+        { tier: "pro" },
+      );
+
+      const checkoutParams = new URLSearchParams(checkoutRequestBody);
+      expect(checkoutParams.has("subscription_data[trial_period_days]")).toBe(false);
+      expect(checkoutParams.has("payment_method_collection")).toBe(false);
+      expect(checkoutParams.has("subscription_data[trial_settings][end_behavior][missing_payment_method]")).toBe(false);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("enforces one introductory trial and one Checkout reservation across a physical venue identity", async () => {
+    const { database, repository } = createRepository();
+    const service = createBusinessService(repository, {
+      DEMO_BILLING_MODE: false,
+      STRIPE_SECRET_KEY: "sk_test_xxx",
+      STRIPE_PRO_PRICE_ID: "price_test_venue_pro",
+    });
+    const admin = createAccount(repository, "aliased-trial-admin", "admin");
+    const manager = createAccount(repository, "aliased-trial-manager");
+    const canonicalVenueId = "aliased-trial-canonical";
+    const duplicateVenueId = "aliased-trial-duplicate";
+
+    for (const venueId of [canonicalVenueId, duplicateVenueId]) {
+      service.upsertBarProfile(admin, venueId, {
+        name: "One Physical Hotel",
+        address: null,
+        suburb: "Richmond",
+        area: "Richmond",
+        phone: null,
+        website: null,
+        instagram: null,
+        description: null,
+        openingHours: {},
+        venueTags: [],
+        membershipTier: "basic",
+        acceptsPintPathCodes: false,
+        active: true,
+      });
+    }
+    repository.upsertVenueIdentityAlias({
+      aliasVenueId: duplicateVenueId,
+      canonicalVenueId,
+      identityKey: "one physical hotel|richmond",
+      now: NOW,
+    });
+    service.assignVenueManager(admin, {
+      userId: manager.id,
+      venueId: duplicateVenueId,
+      venueName: "One Physical Hotel",
+      suburb: "Richmond",
+    });
+    database.prepare(
+      "UPDATE venue_profiles SET intro_trial_ever_claimed = 1 WHERE venue_id = ?",
+    ).run(canonicalVenueId);
+
+    const originalFetch = globalThis.fetch;
+    let checkoutRequestBody = "";
+    try {
+      globalThis.fetch = vi.fn(async (_url, init) => {
+        checkoutRequestBody = String(init?.body ?? "");
+        return new Response(JSON.stringify({
+          id: "cs_aliased_physical_venue",
+          url: "https://checkout.stripe.com/c/pay/cs_aliased_physical_venue",
+        }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }) as typeof fetch;
+
+      await service.createBarTierCheckout(
+        repository.getAccountById(manager.id)!,
+        duplicateVenueId,
+        { tier: "pro" },
+      );
+
+      const checkoutParams = new URLSearchParams(checkoutRequestBody);
+      expect(checkoutParams.has("subscription_data[trial_period_days]")).toBe(false);
+      expect(database.prepare(
+        `SELECT subject_id AS subjectId
+         FROM billing_checkout_reservations
+         WHERE subject_type = 'venue'`,
+      ).get()).toEqual({ subjectId: canonicalVenueId });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("uses an existing consumer Stripe customer for a deliberate paid resubscription", async () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository, {
+      DEMO_BILLING_MODE: false,
+      STRIPE_SECRET_KEY: "sk_test_xxx",
+      STRIPE_PRICE_MONTHLY: "price_test_monthly",
+    });
+    const account = repository.updateSubscription({
+      userId: createAccount(repository, "consumer-resubscribe").id,
+      subscriptionStatus: "free",
+      stripePaidSubscriptionStatus: null,
+      stripeCustomerId: "cus_consumer_resubscribe",
+      premiumUntil: null,
+      now: NOW,
+    });
+
+    const originalFetch = globalThis.fetch;
+    let checkoutRequestBody = "";
+    try {
+      globalThis.fetch = vi.fn(async (url, init) => {
+        expect(String(url)).toBe("https://api.stripe.com/v1/checkout/sessions");
+        checkoutRequestBody = String(init?.body ?? "");
+        return new Response(JSON.stringify({ url: "https://checkout.stripe.com/c/pay/cs_consumer_resubscribe" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }) as typeof fetch;
+
+      await expect(service.createCheckout(account, { plan: "monthly" })).resolves.toMatchObject({
+        mode: "stripe",
+      });
+
+      const checkoutParams = new URLSearchParams(checkoutRequestBody);
+      expect(checkoutParams.get("customer")).toBe("cus_consumer_resubscribe");
+      expect(checkoutParams.has("customer_email")).toBe(false);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("can require a payment method for a controlled 30-day venue Pro trial", async () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository, {
+      DEMO_BILLING_MODE: false,
+      STRIPE_SECRET_KEY: "sk_test_xxx",
+      STRIPE_PRO_PRICE_ID: "price_test_venue_pro",
+      VENUE_PRO_TRIAL_DAYS: 30,
+      VENUE_PRO_TRIAL_REQUIRE_PAYMENT_METHOD: true,
+    });
+    const admin = createAccount(repository, "bar-card-trial-admin", "admin");
+    const manager = createAccount(repository, "bar-card-trial-manager");
+
+    service.assignVenueManager(admin, {
+      userId: manager.id,
+      venueId: "bar-card-trial-venue",
+      venueName: "Card Trial Hotel",
+      suburb: "Richmond",
+    });
+
+    const originalFetch = globalThis.fetch;
+    let checkoutRequestBody = "";
+    try {
+      globalThis.fetch = vi.fn(async (_url, init) => {
+        checkoutRequestBody = String(init?.body ?? "");
+        return new Response(JSON.stringify({
+          id: "cs_test_card_trial",
+          url: "https://checkout.stripe.com/c/pay/cs_test_card_trial",
+        }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }) as typeof fetch;
+
+      await service.createBarTierCheckout(
+        repository.getAccountById(manager.id)!,
+        "bar-card-trial-venue",
+        { tier: "pro" },
+      );
+
+      const checkoutParams = new URLSearchParams(checkoutRequestBody);
+      expect(checkoutParams.get("subscription_data[trial_period_days]")).toBe("30");
+      expect(checkoutParams.get("payment_method_collection")).toBe("always");
+      expect(checkoutParams.has("subscription_data[trial_settings][end_behavior][missing_payment_method]")).toBe(false);
     } finally {
       globalThis.fetch = originalFetch;
     }

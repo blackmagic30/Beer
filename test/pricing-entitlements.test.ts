@@ -54,8 +54,10 @@ describe("premium pricing and entitlements", () => {
     expect(pricingHtml).not.toContain("Exact-price value mode");
     expect(pricingHtml).not.toContain("Personal defaults</h3>");
     expect(pricingHtml).not.toContain("consumerPremiumToolkit");
-    expect(pricingHtml).toContain('href="/account.html?checkoutPlan=monthly"');
-    expect(pricingHtml).toContain('href="/account.html?checkoutPlan=yearly"');
+    expect(pricingHtml).toContain('id="consumerMonthlyAction" class="button button--primary" aria-disabled="true"');
+    expect(pricingHtml).toContain('id="consumerYearlyAction" class="button button--premium" aria-disabled="true"');
+    expect(pricingHtml).toContain('href: "/account.html?checkoutPlan=monthly"');
+    expect(pricingHtml).toContain('href: "/account.html?checkoutPlan=yearly"');
     expect(pricingHtml).toContain("Venue pricing");
     expect(pricingHtml).toContain("For venues");
     expect(pricingHtml).toContain("Venue tools use the same secure Pint Path login.");
@@ -106,6 +108,8 @@ describe("premium pricing and entitlements", () => {
     expect(readme).not.toContain("STRIPE_PLUS_PRICE_ID");
     expect(envExample).toContain("STRIPE_PRICE_MONTHLY=price_monthly_499_aud");
     expect(envExample).toContain("STRIPE_PRICE_YEARLY=price_yearly_50_aud");
+    expect(envExample).toContain("COMMERCIAL_LAUNCH_ENABLED=false");
+    expect(envExample).toContain("CONSUMER_PAID_ENROLLMENT_ENABLED=false");
     expect(envExample).not.toContain("STRIPE_PLUS_PRICE_ID");
 
     const combined = [appSource, pricingHtml, readme, envExample].join("\n");

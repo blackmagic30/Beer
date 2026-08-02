@@ -56,7 +56,6 @@ struct DiscoverView: View {
     @State private var selectedMapVenue: Venue?
     @State private var selectedSuburb: String?
     @State private var selectedBeerKey: String?
-    @State private var partnerOnly = false
     @State private var nearbyOnly = false
     @State private var nearbyRadiusKm = 5.0
     @State private var userLocation: CLLocation?
@@ -84,7 +83,7 @@ struct DiscoverView: View {
     }
 
     private var hasFullBeerAccess: Bool {
-        model.accountDashboard?.access?.hasFullAccess == true
+        model.hasContributorAccess
     }
 
     private var beerOptions: [ExploreBeerOption] {
@@ -182,7 +181,6 @@ struct DiscoverView: View {
                 beers: beerOptions,
                 selectedSuburb: $selectedSuburb,
                 selectedBeerKey: $selectedBeerKey,
-                partnerOnly: $partnerOnly,
                 nearbyOnly: Binding(
                     get: { nearbyOnly },
                     set: { enabled in
@@ -199,12 +197,16 @@ struct DiscoverView: View {
         .onChange(of: model.venues) { _, venues in
             rebuildDistanceCache(for: venues, from: userLocation)
         }
-        .onChange(of: model.accountDashboard?.access?.hasFullAccess) { _, hasFullAccess in
-            guard hasFullAccess != true,
-                  let selectedBeerKey,
-                  !ExploreBeerFilterAccess.isFree(selectedBeerKey)
-            else { return }
-            self.selectedBeerKey = nil
+        .onChange(of: model.accountDashboard?.account.subscriptionStatus) { previousStatus, currentStatus in
+            let contributorAccess = currentStatus?.caseInsensitiveCompare("contributor_unlocked") == .orderedSame
+            if contributorAccess,
+               previousStatus?.caseInsensitiveCompare("contributor_unlocked") != .orderedSame {
+                Task { await model.loadHome() }
+            } else if !contributorAccess,
+                      let selectedBeerKey,
+                      !ExploreBeerFilterAccess.isFree(selectedBeerKey) {
+                self.selectedBeerKey = nil
+            }
         }
         .navigationDestination(for: Venue.self) { venue in
             VenueDetailView(venue: venue)
@@ -232,14 +234,6 @@ struct DiscoverView: View {
                         badge: activeFilterCount
                     ) {
                         showingFilters = true
-                    }
-
-                    FilterChip(
-                        title: "Partner venues",
-                        systemImage: "checkmark.seal.fill",
-                        isSelected: partnerOnly
-                    ) {
-                        partnerOnly.toggle()
                     }
 
                     FilterChip(
@@ -293,9 +287,6 @@ struct DiscoverView: View {
         }
 
         var matches = uniqueVenues.filter { venue in
-            if partnerOnly && venue.membershipTier?.caseInsensitiveCompare("pro") != .orderedSame {
-                return false
-            }
             if let selectedSuburb,
                venue.suburb?.caseInsensitiveCompare(selectedSuburb) != .orderedSame {
                 return false
@@ -334,7 +325,6 @@ struct DiscoverView: View {
     private var activeFilterCount: Int {
         (selectedSuburb == nil ? 0 : 1)
             + (selectedBeerKey == nil ? 0 : 1)
-            + (partnerOnly ? 1 : 0)
             + (nearbyOnly ? 1 : 0)
     }
 
@@ -382,7 +372,6 @@ struct DiscoverView: View {
     private func clearFilterValues() {
         selectedSuburb = nil
         selectedBeerKey = nil
-        partnerOnly = false
         nearbyOnly = false
     }
 
@@ -520,7 +509,6 @@ private struct ExploreFilterSheet: View {
     let beers: [ExploreBeerOption]
     @Binding var selectedSuburb: String?
     @Binding var selectedBeerKey: String?
-    @Binding var partnerOnly: Bool
     @Binding var nearbyOnly: Bool
     @Binding var nearbyRadiusKm: Double
     let isLocating: Bool
@@ -591,10 +579,6 @@ private struct ExploreFilterSheet: View {
                     }
                 }
 
-                Section("Venue type") {
-                    Toggle("Partner venues only", systemImage: "checkmark.seal.fill", isOn: $partnerOnly)
-                }
-
                 Section("Beer type") {
                     Button {
                         selectedBeerKey = nil
@@ -616,7 +600,7 @@ private struct ExploreFilterSheet: View {
                         }
                         .accessibilityHint(
                             isLocked
-                                ? "Available to contributors and paid members"
+                                ? "Available after a contributor unlock"
                                 : "Filters the map to venues with this beer"
                         )
                     }
@@ -681,7 +665,7 @@ private struct ExploreFilterSheet: View {
                 Button("OK", role: .cancel) {}
             } message: {
                 Text(
-                    "Contributors and paid members can filter every beer. Free accounts can filter Guinness, Carlton Draught and Stone & Wood Pacific Ale."
+                    "Contributor unlocks can filter every beer. Other accounts can filter Guinness, Carlton Draught and Stone & Wood Pacific Ale."
                 )
             }
         }
@@ -722,7 +706,7 @@ private struct ExploreFilterSheet: View {
                 Text(beer.name)
                     .foregroundStyle(.primary)
                 if locked {
-                    Text("Contributor or paid")
+                    Text("Contributor unlock")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -893,12 +877,10 @@ private struct ClusteredVenueMap: UIViewRepresentable {
             ) as! MKMarkerAnnotationView
             view.annotation = venueAnnotation
             view.clusteringIdentifier = Self.clusterIdentifier
-            view.markerTintColor = venueAnnotation.snapshot.isPro ? .systemOrange : .systemIndigo
-            view.glyphImage = venueAnnotation.snapshot.isPro
-                ? UIImage(systemName: "star.fill")
-                : (UIImage(named: BeerMapAsset.beerPint)?.withRenderingMode(.alwaysTemplate)
-                    ?? UIImage(systemName: "wineglass.fill"))
-            view.displayPriority = venueAnnotation.snapshot.isPro ? .defaultHigh : .defaultLow
+            view.markerTintColor = .systemIndigo
+            view.glyphImage = UIImage(named: BeerMapAsset.beerPint)?.withRenderingMode(.alwaysTemplate)
+                ?? UIImage(systemName: "wineglass.fill")
+            view.displayPriority = .defaultHigh
             view.canShowCallout = false
             view.collisionMode = .circle
             view.accessibilityLabel = venueAnnotation.snapshot.title
@@ -927,7 +909,6 @@ private struct VenueMapSnapshot: Hashable {
     let title: String
     let location: String
     let coordinate: CLLocationCoordinate2D
-    let isPro: Bool
 
     init?(venue: Venue) {
         guard let latitude = venue.latitude, let longitude = venue.longitude else { return nil }
@@ -936,7 +917,6 @@ private struct VenueMapSnapshot: Hashable {
         title = venue.name
         location = venue.displayLocation
         coordinate = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
-        isPro = venue.membershipTier?.caseInsensitiveCompare("pro") == .orderedSame
     }
 
     static func == (lhs: VenueMapSnapshot, rhs: VenueMapSnapshot) -> Bool {
@@ -945,7 +925,6 @@ private struct VenueMapSnapshot: Hashable {
             && lhs.location == rhs.location
             && lhs.coordinate.latitude == rhs.coordinate.latitude
             && lhs.coordinate.longitude == rhs.coordinate.longitude
-            && lhs.isPro == rhs.isPro
     }
 
     func hash(into hasher: inout Hasher) {
@@ -954,7 +933,6 @@ private struct VenueMapSnapshot: Hashable {
         hasher.combine(location)
         hasher.combine(coordinate.latitude)
         hasher.combine(coordinate.longitude)
-        hasher.combine(isPro)
     }
 }
 
@@ -988,7 +966,7 @@ struct VenueDetailView: View {
             VStack(spacing: 16) {
                 VStack(alignment: .leading, spacing: 12) {
                     SectionHeader(
-                        eyebrow: venue.membershipTier == "pro" ? "Pro venue" : "Venue",
+                        eyebrow: "Venue",
                         title: venue.name,
                         subtitle: venue.address ?? venue.displayLocation,
                         systemImage: "building.2.fill"
@@ -1022,7 +1000,7 @@ struct VenueDetailView: View {
 
                 if let response = priceResponse {
                     if (response.preview?.lockedCount ?? 0) > 0 {
-                        StatusBanner(message: "Some prices remain Premium outside the fixed preview.", isError: false)
+                        StatusBanner(message: "Some prices are outside this iOS preview. Approved contributors can unlock the full beer list.", isError: false)
                     }
                     if response.records.isEmpty {
                         EmptyStateView(title: "No price rows yet", message: "This venue needs a trusted update.", systemImage: "tray", isFramed: false)
@@ -1033,7 +1011,7 @@ struct VenueDetailView: View {
                                     VStack(alignment: .leading, spacing: 4) {
                                         Text(record.beerName ?? "Beer")
                                             .font(.headline)
-                                        Text([record.servingSize, record.happyHour].compactMap { $0 }.joined(separator: " · "))
+                                        Text(record.servingSize ?? "Serving size not listed")
                                             .font(.caption)
                                             .foregroundStyle(.secondary)
                                     }
@@ -1060,7 +1038,7 @@ struct VenueDetailView: View {
                         .beerMapCard()
                     }
                 } else {
-                    EmptyStateView(title: "Prices are server-gated", message: "Tap Show prices to load the same free-preview or account access that the website uses.", systemImage: "lock.shield")
+                    EmptyStateView(title: "Prices are server-gated", message: "Tap Show prices to load the free iOS preview or an earned contributor unlock.", systemImage: "lock.shield")
                 }
             }
             .padding()

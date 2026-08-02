@@ -202,8 +202,8 @@ describe("database schema migration safety", () => {
 
     const migrated = createDatabase(databasePath);
     try {
-      expect(CURRENT_DATABASE_SCHEMA_VERSION).toBe(11);
-      expect(migrated.pragma("user_version", { simple: true })).toBe(11);
+      expect(CURRENT_DATABASE_SCHEMA_VERSION).toBe(13);
+      expect(migrated.pragma("user_version", { simple: true })).toBe(13);
       expect((migrated.prepare("PRAGMA table_info(auth_sessions)").all() as Array<{ name: string }>)
         .map((column) => column.name)).toContain("provider_session_id_hash");
       expect((migrated.prepare("PRAGMA table_info(accounts)").all() as Array<{ name: string }>)
@@ -212,6 +212,13 @@ describe("database schema migration safety", () => {
         .map((column) => column.name)).toContain("stripe_paid_subscription_status");
       expect((migrated.prepare("PRAGMA table_info(venue_profiles)").all() as Array<{ name: string }>)
         .map((column) => column.name)).toContain("stripe_paid_membership_tier");
+      expect((migrated.prepare("PRAGMA table_info(venue_profiles)").all() as Array<{ name: string }>)
+        .map((column) => column.name)).toContain("subscription_current_period_end");
+      expect((migrated.prepare("PRAGMA table_info(venue_profiles)").all() as Array<{ name: string }>)
+        .map((column) => column.name)).toContain("intro_trial_ever_claimed");
+      expect(migrated.prepare(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'billing_checkout_reservations'",
+      ).get()).toBeTruthy();
       expect(migrated.prepare(
         "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'revoked_provider_sessions'",
       ).get()).toBeTruthy();
@@ -248,7 +255,8 @@ describe("database schema migration safety", () => {
       ).get()).toEqual({ points: 1 });
 
       const backupDirectory = path.join(root, "migration-backups");
-      const backupNames = fs.readdirSync(backupDirectory).filter((name) => name.startsWith("schema-6-to-11-"));
+      const backupNames = fs.readdirSync(backupDirectory)
+        .filter((name) => name.startsWith(`schema-6-to-${CURRENT_DATABASE_SCHEMA_VERSION}-`));
       expect(backupNames).toHaveLength(1);
       const backup = new BetterSqlite3(path.join(backupDirectory, backupNames[0]!));
       try {
@@ -291,7 +299,8 @@ describe("database schema migration safety", () => {
     } finally {
       reopened.close();
     }
-    expect(fs.readdirSync(path.join(root, "migration-backups")).some((name) => name.startsWith("schema-6-to-11-")))
+    expect(fs.readdirSync(path.join(root, "migration-backups"))
+      .some((name) => name.startsWith(`schema-6-to-${CURRENT_DATABASE_SCHEMA_VERSION}-`)))
       .toBe(true);
   });
 });

@@ -229,9 +229,7 @@
         const refreshToken = hash.get("refresh_token");
         const callbackType = String(hash.get("type") || "").trim().toLowerCase();
         const isRecoveryResult = callbackType === "recovery";
-        callbackFlowNonce = isRecoveryResult
-          ? MelbBeerBusiness.createAuthFlowNonce()
-          : callbackFlowState?.nonce || MelbBeerBusiness.createAuthFlowNonce();
+        callbackFlowNonce = callbackFlowState?.nonce || MelbBeerBusiness.createAuthFlowNonce();
 
         if (code) {
           if (callbackFlowState?.kind !== "oauth") {
@@ -254,7 +252,6 @@
             refresh_token: data.session.refresh_token,
           });
           if (setSessionError) throw setSessionError;
-          MelbBeerBusiness.clearSupabaseOAuthFlowStorage();
         } else if (accessToken || refreshToken) {
           const expectedFlowKind = isRecoveryResult
             ? "password_recovery"
@@ -279,6 +276,7 @@
           throw new Error("No secure sign-in result was returned. Start again from the Pint Path account page.");
         }
 
+        MelbBeerBusiness.clearSupabaseOAuthFlowStorage();
         await finishCallbackLogin(callbackAuthFlowNonce());
       } catch (error) {
         if (needsBillingRecovery(error)) {
