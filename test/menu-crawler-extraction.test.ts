@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { canonicalizeTrackedBeerName } from "../src/constants/beers.js";
-import { removeNonTextHtmlElements } from "../src/lib/html-plain-text.js";
+import { extractPlainTextFromHtml } from "../src/lib/html-plain-text.js";
 import { crawlerQueueDuplicateKey, crawlerQueueRowKey, crawlerQueueRowOverlapRatio } from "../src/lib/menu-source-dedupe.js";
 import { isTimeLimitedMenuSource } from "../src/lib/menu-source-filter.js";
 import { selectLabeledPintPrice } from "../src/lib/menu-price-selection.js";
@@ -24,7 +24,7 @@ describe("menu crawler extraction", () => {
     ];
 
     for (const html of cases) {
-      expect(removeNonTextHtmlElements(html).replace(/\s+/g, " ").trim()).toBe("Menu text");
+      expect(extractPlainTextFromHtml(html)).toBe("Menu text");
     }
   });
 

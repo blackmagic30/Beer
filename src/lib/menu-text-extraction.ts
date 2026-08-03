@@ -1,5 +1,5 @@
 import { VIEWER_TRACKED_BEERS, canonicalizeTrackedBeerName } from "../constants/beers.js";
-import { decodeHtmlEntitiesOnce, removeNonTextHtmlElements } from "./html-plain-text.js";
+import { decodeHtmlEntitiesOnce, extractPlainTextFromHtml } from "./html-plain-text.js";
 
 export type MenuTextAvailabilityStatus = "on_tap" | "package_only" | "unavailable" | "unknown";
 
@@ -383,11 +383,7 @@ export function decodeMenuHtml(value: string): string {
 }
 
 function stripMenuHtml(value: string): string {
-  return removeNonTextHtmlElements(decodeMenuHtml(value))
-    .replace(/<br\s*\/?>/gi, " ")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  return extractPlainTextFromHtml(value, { separator: " " });
 }
 
 function extractFirstClassText(html: string, className: string): string | null {

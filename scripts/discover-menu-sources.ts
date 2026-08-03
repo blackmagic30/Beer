@@ -9,7 +9,7 @@ import Database from "better-sqlite3";
 import OpenAI from "openai";
 
 import { VIEWER_TRACKED_BEERS, canonicalizeTrackedBeerName, isLikelyBeerName } from "../src/constants/beers.js";
-import { decodeHtmlEntitiesOnce, removeNonTextHtmlElements } from "../src/lib/html-plain-text.js";
+import { decodeHtmlEntitiesOnce, extractPlainTextFromHtml } from "../src/lib/html-plain-text.js";
 import {
   extractOnTapCardRowsFromHtml,
   extractStructuredBeerRowsFromText,
@@ -967,10 +967,7 @@ function inferFreshness(text: string): { freshness: MenuSourceCandidate["freshne
 }
 
 function stripHtml(html: string): string {
-  return removeNonTextHtmlElements(html)
-    .replace(/<[^>]+>/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  return extractPlainTextFromHtml(html, { separator: " " });
 }
 
 function decodeHtml(value: string): string {
@@ -978,14 +975,7 @@ function decodeHtml(value: string): string {
 }
 
 function htmlToPlainText(html: string): string {
-  return removeNonTextHtmlElements(decodeHtml(html))
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/(?:p|div|li|tr|td|th|h[1-6]|section|article|table)>/gi, "\n")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/[ \t]+/g, " ")
-    .replace(/\n\s+/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+  return extractPlainTextFromHtml(html, { separator: "\n" });
 }
 
 function flattenJsonStrings(value: unknown, output: string[] = []): string[] {
