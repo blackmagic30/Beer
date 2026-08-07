@@ -231,7 +231,10 @@ describe("release workflow contracts", () => {
     expect(source.match(/--status-only/g)).toHaveLength(2);
     expect(source).toContain("--dry-run");
     expect(source).toContain('test "$actualProjectRef" = "$PINTPATH_EXPECTED_SUPABASE_PROJECT_REF"');
-    expect(source).toContain("if: always()");
+    expect(source).toContain("id: directory_schema");
+    expect(source).toContain("20260728120312_venue_directory_operational_status");
+    expect(source.match(/if: steps\.directory_schema\.outputs\.ready == 'true'/g)).toHaveLength(2);
+    expect(source).toContain("if: always() && steps.directory_schema.outputs.ready == 'true'");
     expect(source).toContain("ageHours >= 120");
     expect(source).toContain("ageHours >= 138");
     expect(source).toContain("directory_eligible");
