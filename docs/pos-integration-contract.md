@@ -40,4 +40,4 @@ This endpoint records the discount redemption and returns `pointsEarned: 0`. It 
 - Do not send customer name, email, phone, payment-card data, or full receipt contents.
 - Reconcile venue `posReference` values against Pint Path discount activity and reversals at shift close.
 
-Until a vendor adapter passes a real venue pilot, the manager portal QR/code flow is the supported fallback.
+Until a vendor adapter passes a real venue pilot, the manager portal QR/code flow is the supported fallback. In this launch mode, leave `POS_WEBHOOK_SIGNING_SECRET` absent; startup permits the omission, while POS token derivation and signed-webhook use remain disabled and fail closed. Configure a unique 32+ byte secret only when an approved adapter is actually enabled.

@@ -1,10 +1,10 @@
 # pint-path
 
-`pint-path` is a production-minded Node.js + TypeScript app for Melbourne beer-price and happy-hour discovery. The active product is the public map, contributor account flow, venue portal, admin review workflow, aggregate venue analytics, and server-gated price/submission APIs.
+`pint-path` is a production-minded Node.js + TypeScript app for Melbourne beer-price discovery. The current public launch scope is the map, contributor account flow, venue portal, admin review workflow, aggregate venue analytics, and server-gated price/submission APIs. Public happy-hour discovery and contribution are deferred.
 
 ## Current Capabilities
 
-- Public Melbourne beer-price and happy-hour map.
+- Public Melbourne beer-price map; happy-hour discovery is disabled for this release.
 - Server-side price gating, free preview access, premium access, and contributor unlocks.
 - Contributor account dashboard with private evidence handling and submission history.
 - Venue portal for venue-managed beers, prices, happy hours, deals, and pending approval flows.
@@ -34,6 +34,7 @@
 ## Main Routes
 
 - `GET /health`
+- `GET /startup`
 - `GET /ready`
 - `GET /api/business/config`
 - `POST /api/business/auth/signup`
@@ -82,31 +83,31 @@ Field-test note: `/api/admin/*` and `/api/business/admin/*` are admin-only. The 
 
 For the intended beta role boundaries, private-data rules, and approval gates, see [`ROLE_PERMISSION_MATRIX.md`](./ROLE_PERMISSION_MATRIX.md).
 
-## Business Model Demo
+## Current Launch Business Model
 
 The hosted viewer now includes a focused Melbourne/Victoria MVP business layer:
 
-- Free users can view the map, venue pins, suburbs, data freshness, missions, happy hours, and pint prices for Guinness, Carlton Draught, and Stone & Wood Pacific Ale.
-- Premium users can unlock full map utility, every verified beer price, value rings, premium filters, saved night shortcuts, discount-pass access, savings tracking, and venue special-discount details at A$4.99/month or A$50/year.
+- Free users can view the map, venue pins, suburbs, data freshness, non-happy-hour missions, and pint prices for Guinness, Carlton Draught, and Stone & Wood Pacific Ale.
+- New paid consumer and venue enrolment is disabled. Dormant price and trial designs are not approved, advertised as current, or exposed through public configuration; pricing will be decided in a later release.
 - Contributors can earn temporary premium access for the rest of the current month after 15 approved monthly contribution points.
-- Discount redemptions are explicit only: a paid/contributor user generates a rotating code, venue staff redeem it manually, or Pro venues can wire a POS webhook with a per-venue HMAC token. The app records the discounted item, quantity, savings and server redemption time for user savings history and aggregate venue proof-of-value.
+- Discount redemption, rewards, and Pro/POS commercial paths are outside this release and remain disabled.
 - Public submissions are queued as `pending` and do not become trusted map data until reviewed.
 - Approved submissions publish `venue_price_records`, which the map merges into existing venue data for existing venues.
 - Mission points are weighted by usefulness, not by number of bars visited: venues updated in the last 24 hours are worth 0.1 points, week-old data is worth 0.5 points, stale data is worth 1 point, and venues with no trusted data are worth 5 points. Repeated same-venue submissions in the same month are capped.
 - Admin review lives at `/admin.html` and is protected by account role checks via `ADMIN_EMAILS`.
 - Retired call/result APIs are no longer mounted in the active app.
 - The public map no longer exposes legacy admin controls or direct browser reads of exact price records.
-- Exact price records are redacted by default unless they are part of the free preview: happy hours plus pint prices for Guinness, Carlton Draught, and Stone & Wood Pacific Ale.
-- Analytics are captured as aggregate events only. Search, filter, happy-hour interest, map pin clicks, venue opens, beer-list views, and price-detail views feed admin and paid venue-tier reports without exporting individual clickstreams.
+- Exact price records are redacted by default unless they are part of the fixed pint preview for Guinness, Carlton Draught, and Stone & Wood Pacific Ale. Happy-hour and special-price records are removed from public responses for this release.
+- Analytics are captured as aggregate events only. Search, filter, map pin clicks, venue opens, beer-list views, and price-detail views feed admin and future venue-tier reports without exporting individual clickstreams.
 - The admin KPI dashboard tracks early validation metrics, retention cohorts, data coverage, and potential partner leads from aggregated demand.
 - Users can save venues, beers, and suburbs, contact Pint Path, report wrong prices, and request missing venues or beers.
-- The public map includes retention filter chips, active happy-hour previews, recently verified price previews, and wrong-price reporting.
-- The public map supports optional one-time browser location for “near me” sorting, approximate venue distances, and active happy hours nearby. Location is first requested after the user taps “Use my location”; if permission is granted, Pint Path remembers that on-device preference and can request one-time location again on future map visits. Users can tap “Location on” to turn the remembered preference off. Browsing coordinates are kept in browser state and analytics store only coarse context such as approximate suburb, selected radius, distance bucket, and coverage status.
+- The public map includes recently verified price previews and wrong-price reporting; happy-hour filters/cards/badges are disabled.
+- The public map supports optional one-time browser location for “near me” sorting and approximate venue distances. Location is first requested after the user taps “Use my location”; if permission is granted, Pint Path remembers that on-device preference and can request one-time location again on future map visits. Users can tap “Location on” to turn the remembered preference off. Browsing coordinates are kept in browser state and analytics store only coarse context such as approximate suburb, selected radius, distance bucket, and coverage status.
 - Contributor uploads can optionally save an intentional one-time upload-location proof with the private submission record. The browser keeps the proof locally for up to 12 hours or until the submission succeeds, so a contributor can capture location at the venue and submit after signal returns. Approved submissions only earn points when that saved upload location is within 200m of the selected venue.
 
 Business demo pages:
 
-- `/pricing.html`: venue pricing for Free and Pro A$149/month bar plans.
+- `/pricing.html`: future consumer and venue pricing; paid enrolment remains closed while the commercial launch flags are disabled.
 - `/account.html`: signup/login, 18+ confirmation, access status, points, saved items, privacy preferences, requests, session controls, and submission status.
 - `/missions.html`: Needs Data mission board with sorting, quick-win guidance, and points.
 - `/submit.html`: venue data submission with manual rows and photo/source queue.
@@ -119,18 +120,24 @@ Business demo pages:
 Supabase auth/account foundation:
 
 - App APIs still use scoped Pint Path sessions, issued after a verified Supabase Auth exchange through `POST /api/business/auth/supabase-session`. The browser receives that app session in an HttpOnly cookie; native apps keep it in platform-protected storage.
-- `/account.html` uses Supabase Auth for email/password plus configured Google and Apple sign-in. Direct Pint Path password signup/login exists only for localhost/development compatibility and returns `410` in production.
-- Supabase OAuth providers must be configured in the Supabase dashboard. Use only minimal scopes: email/profile for Google and name/email for Apple.
-- In Supabase Auth URL configuration, set the Site URL to `https://pintpath.au` and allow the exact web callbacks `http://localhost:3000/auth/callback` and `https://pintpath.au/auth/callback`. Allow `pintpath://auth-callback` only for an Android release that enables native Google/Apple sign-in. The first-release iOS app is email/password only, declares no custom URL scheme, and uses the HTTPS callback for email confirmation/password recovery.
-- In the Google and Apple provider consoles, allow the Supabase provider callback URL derived from `SUPABASE_URL`. For production with `SUPABASE_URL=https://auth.pintpath.au`, the exact provider callback is `https://auth.pintpath.au/auth/v1/callback`.
+- Supabase is an Auth provider for browser/native clients, not a direct
+  application-data API. The final migration revokes all `anon`/`authenticated`
+  public table, sequence, RPC, and private-helper privileges; venue, profile,
+  submission, privacy, reward, and Storage access goes through the Express API
+  or a server-only service-role path. This also makes a pre-deletion access JWT
+  unable to use the Data API while it waits to expire.
+- `/account.html` uses Supabase Auth for email/password plus configured Google sign-in. Direct Pint Path password signup/login exists only for localhost/development compatibility and returns `410` in production. Apple stays disabled for this launch.
+- Configure Google in the Supabase dashboard with only the minimal email/profile scopes. Do not enable Apple until authorization-token revocation is implemented and tested.
+- In Supabase Auth URL configuration, set the Site URL to `https://pintpath.au` and allow the exact web callbacks `http://localhost:3000/auth/callback` and `https://pintpath.au/auth/callback`. Allow `pintpath://auth-callback` only for a future Android release that enables native provider sign-in; current launch OAuth remains Google-only and Apple is deferred. The first-release iOS app is email/password only, declares no custom URL scheme, and uses the HTTPS callback for email confirmation/password recovery.
+- In the Google provider console, allow the Supabase provider callback URL derived from `SUPABASE_URL`. For production with `SUPABASE_URL=https://auth.pintpath.au`, the exact provider callback is `https://auth.pintpath.au/auth/v1/callback`.
 - New or linked users get an app-facing profile row in the local `profiles` table; private provider/auth data should stay in Supabase Auth, not public app tables.
 - Supabase `user_metadata` is not trusted for age confirmation, legal acceptance, roles, venue access, or paid entitlements. Pint Path records those states through its own server-side account/legal/admin/Stripe flows.
 - Production admin access should use Supabase Auth MFA/Auth Assurance Level 2 (`aal2`) for normal operation. During owner-led field testing, `REQUIRE_ADMIN_MFA_IN_PRODUCTION=false` can temporarily skip MFA while still requiring the admin email allowlist and verified email.
 - Public browsing stays anonymous. Uploads and verification actions require a logged-in account, and submissions always use the authenticated session user rather than a client-provided user id.
 - Users cannot verify their own uploads. Verifications are recorded in `verifications`, and intentional product actions are recorded in `user_activity_events`.
-- Supabase/Postgres RLS-ready tables and policies live in `supabase/migrations/20260512000000_auth_profiles_activity.sql` for `public.profiles`, `beermap_uploads`, `beermap_verifications`, `user_activity_events`, `age_verifications`, and the private `beermap-source-evidence` Storage bucket. `supabase/migrations/20260516000000_user_price_submissions.sql` added an early direct-Supabase contributor scaffold, but the canonical production contribution path is now the Express `POST /api/business/submissions` flow so uploads consistently attach the authenticated user, private evidence, location eligibility, review workflow, and points ledger. `supabase/migrations/20260530000000_deprecate_direct_supabase_contributor_tables.sql` keeps those older direct tables for history while revoking browser writes. `supabase/migrations/20260523000000_submission_location_points.sql` adds private upload-location proof fields and point-award tracking for contributor submissions. `supabase/migrations/20260524010000_account_privacy_settings.sql` adds per-user optional analytics, venue-insight inclusion, product-research, and email-update preferences with owner-only RLS. `supabase/migrations/20260603000000_harden_private_helper_functions.sql` locks down private security-definer helpers with public execute revokes and narrow search paths.
+- Supabase/Postgres tables and defense-in-depth RLS policies live in `supabase/migrations/20260512000000_auth_profiles_activity.sql` and later migrations. Earlier migrations included direct-browser owner policies for `public.profiles`, uploads, verification, activity, privacy, and rewards, but the canonical production path is now Express-only. `20260803000000_revoke_direct_browser_data_api.sql` removes every remaining `anon`/`authenticated` Data API/RPC/helper privilege without weakening server/service-role access. The private `beermap-source-evidence` bucket has no browser object policies.
 - Local database resets, pgTAP coverage, and the isolated CI database gate are documented in [`docs/supabase-database-testing.md`](docs/supabase-database-testing.md). These checks intentionally cover only repository-owned objects; the production `public.venues` schema remains externally managed and must be reconciled separately rather than invented by local tests.
-- `/account.html` now has two states: logged-out users see polished Supabase Google/Apple/email sign-in/create-account forms, while authenticated users see a contributor dashboard with stats, recent submissions, private-evidence copy, and quick beer-price upload entry points. Supabase OAuth and password-reset redirects land on `/auth/callback`, exchange the session, and then return to the account page or requested upload page.
+- `/account.html` now has two states: logged-out production users see Google web sign-in, while authenticated users see a contributor dashboard with stats, recent submissions, private-evidence copy, and quick beer-price upload entry points. Email/password forms remain localhost-only for development; the first iOS release uses Supabase email/password. OAuth, confirmation, and password-recovery redirects land on `/auth/callback`, exchange the session where applicable, and then return to the account page or requested upload page.
 - Age-gated reward readiness is only a foundation: `age_verifications` stores status, `18+` threshold, provider name/reference, expiry, and booleans. Pint Path must not store raw ID documents, ID images, licence/passport/Medicare numbers, or raw proof-of-ID data.
 - Future rewards should use `canAccessAgeGatedRewards(...)`, which requires verified 18+ status, a latest verified age-check record, and a non-expired verification.
 
@@ -140,7 +147,10 @@ Venue partner demo layer:
 - Admin can assign or revoke venue managers from `/admin.html`.
 - Venue managers can only access assigned venues on `/venue-portal`.
 - Free/Basic venue accounts can add beer data and happy-hour data only; Pint Path specials, venue analytics, and monthly reports stay locked.
-- Pro A$149/month unlocks reviewed Pint Path specials, privacy-safe suburb-level analytics, demand snapshots with beer/style opportunities, a staff/customer venue update link for QR prompts, protected monthly report generation/export in CSV or JSON, gold/violet map and listing treatment, featured Pint Path exclusive specials after review, priority admin review ordering for venue updates, a Pro growth studio with premium-placement readiness and weekend playbooks, Pro growth recommendations, and a transparent Best Match discovery boost that does not fake popularity or override cheapest/nearest sorting. Configure `STRIPE_PRO_PRICE_ID` with the Pro Stripe `price_...` ID.
+- A future Pro tier may add reviewed specials, privacy-safe analytics, reports,
+  premium display, and growth tools. No price or offer is approved for this
+  release; do not configure or advertise a live Pro amount until the future
+  commercial contract is reviewed and tested.
 - Venue manager data updates are scoped to assigned venues. Verified public price publishing still goes through the existing review/approval flow.
 - Venue insights are aggregate-only and do not expose user names, individual clickstream, exact user location, private source evidence, or another venue’s private data.
 - The portal includes a listing quality score, wrong-price reports, user requests, current verified records, and a copyable update link for QR/signage use.
@@ -173,7 +183,7 @@ Location/privacy guardrails:
 
 For the Melbourne beta, exact prices must flow through the Express API, not direct browser database reads.
 
-- `/api/business/price-records` returns exact records only for admin, premium, contributor access, or the free preview scope: happy hours plus pint prices for Guinness, Carlton Draught, and Stone & Wood Pacific Ale.
+- `/api/business/price-records` returns exact records only for admin, existing entitled access, contributor access, or the fixed pint preview for Guinness, Carlton Draught, and Stone & Wood Pacific Ale. Public happy-hour and special-price records are excluded for this release.
 - The free preview is fixed rather than quota-based; repeatedly opening venues does not expand it. Premium, contributor, or admin access is required for the full verified price catalogue.
 - The map gets venue pins and preview metadata by default, then requests venue detail records when a user opens a venue panel. The server still decides which exact prices are visible.
 - Admin tools live on `/admin.html` and `/api/business/admin/*`; public map HTML should not include admin unlock forms or secret-entry UI.
@@ -193,7 +203,7 @@ For the Melbourne beta, exact prices must flow through the Express API, not dire
 - Run `npm run security:audit` before deploy to catch high-severity dependency advisories.
 - Run `npm run test:release:pintpath` before a release candidate. This executes the repo-native Pint Path release-readiness suite against synthetic/local data only, plus secret and dependency checks. See `docs/release-readiness-checklist.md` for provider-only blockers that still need staging/manual verification.
 - Production startup now requires an HTTPS `PUBLIC_BASE_URL`, `GOOGLE_MAPS_API_KEY`, and `GOOGLE_MAPS_MAP_ID`; admin routes stay locked until `ADMIN_EMAILS` is configured with the approved owner/admin email.
-- `/ready` initializes the database-backed routers and should be used as the deeper readiness check after `/health`.
+- `/startup` is the production deploy gate: it forces database migration/open, notice-keyring validation, local storage checks, and scheduler startup without depending on fragile external canaries. `/ready` remains the deeper ongoing dependency check after `/health`.
 - See `FIELD_TEST_CHECKLIST.md` before showing the app to real users.
 - See `DEPLOYMENT_CHECKLIST.md` before merging to `main` or deploying the Railway beta; it includes backup, migration, security scan, smoke-test, and rollback steps.
 
@@ -217,18 +227,20 @@ TRUST_PROXY_HOPS=1
 SUPABASE_URL=https://your-production-project.supabase.co
 SUPABASE_ANON_KEY=your_supabase_publishable_or_legacy_anon_key
 SUPABASE_SERVICE_ROLE_KEY=your_server_only_service_role_key
-SUPABASE_OAUTH_PROVIDERS=google,apple
-OFFSITE_BACKUP_SUPABASE_URL=https://your-independent-backup-project.supabase.co
+SUPABASE_OAUTH_PROVIDERS=google
+OFFSITE_BACKUP_SUPABASE_URL=https://your-operational-backup-project.supabase.co
 OFFSITE_BACKUP_SERVICE_ROLE_KEY=your_independent_project_service_role_key
 OFFSITE_BACKUP_BUCKET=pintpath-backups
 OFFSITE_BACKUP_INTERVAL_HOURS=24
 OFFSITE_BACKUP_RETENTION_DAYS=30
 DEMO_BILLING_MODE=false
 ALLOW_DEMO_BILLING_IN_PRODUCTION=false
-FIELD_TEST_MODE=true
-# Optional until the official owner/admin email is approved.
-# Without this, public traffic can run but admin routes are disabled.
-ADMIN_EMAILS=
+COMMERCIAL_LAUNCH_ENABLED=false
+CONSUMER_PAID_ENROLLMENT_ENABLED=false
+VENUE_PRO_TRIAL_DAYS=0
+VENUE_PRO_TRIAL_REQUIRE_PAYMENT_METHOD=false
+FIELD_TEST_MODE=false
+ADMIN_EMAILS=approved-owner-admin@example.com
 SESSION_TTL_DAYS=60
 ADMIN_SESSION_TTL_DAYS=7
 ANALYTICS_MIN_BUCKET_SIZE=5
@@ -252,29 +264,38 @@ REPORT_DELIVERY_DAY=2
 REPORT_DELIVERY_HOUR=9
 REPORT_DELIVERY_CHECK_INTERVAL_MINUTES=60
 REDIS_URL=redis://default:replace_me@host:6379
-REQUIRE_REDIS_RATE_LIMITING=false
+REQUIRE_REDIS_RATE_LIMITING=true
 ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=false
 ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=false
 SOURCE_EVIDENCE_STORAGE_DIR=/app/data/source-evidence
 SOURCE_EVIDENCE_SIGNING_SECRET=replace_with_32_plus_random_characters
 SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS=300
 SOURCE_EVIDENCE_RETENTION_DAYS=90
-POS_WEBHOOK_SIGNING_SECRET=replace_with_a_different_32_plus_random_characters
-STRIPE_SECRET_KEY=sk_test_or_live_xxx
-STRIPE_WEBHOOK_SECRET=whsec_xxx
-STRIPE_PRICE_MONTHLY=price_monthly_499_aud
-STRIPE_PRICE_YEARLY=price_yearly_50_aud
-STRIPE_PRO_PRICE_ID=price_venue_pro_aud
+POS_WEBHOOK_SIGNING_SECRET=
+STRIPE_SECRET_KEY=
+STRIPE_WEBHOOK_SECRET=
+STRIPE_PRICE_MONTHLY=
+STRIPE_PRICE_YEARLY=
+STRIPE_PRO_PRICE_ID=
+ACCOUNT_DELETION_NOTICE_MODE=resend
+RESEND_TRANSACTIONAL_API_KEY=re_xxx
+ACCOUNT_DELETION_NOTICE_FROM="Pint Path <account@pintpath.au>"
+ACCOUNT_DELETION_NOTICE_REPLY_TO=admin@pintpath.au
+RESEND_WEBHOOK_SIGNING_SECRET=whsec_xxx
+ACCOUNT_DELETION_NOTICE_ACTIVE_KEY_ID=2026-08
+ACCOUNT_DELETION_NOTICE_KEYRING_JSON='{"2026-08":"base64_encoded_32_byte_key"}'
+ACCOUNT_DELETION_NOTICE_CHECK_INTERVAL_MINUTES=5
+ACCOUNT_DELETION_REHEARSAL_ENABLED=false
 ```
 
-Replace every placeholder with a real environment-specific value. Production startup requires the Supabase, independent-backup, Google Places, OpenAI, evidence-signing, POS-signing, and Stripe values above; the two Supabase URLs must identify different projects/providers. With `DEMO_BILLING_MODE=false`, there is no env-only billing-off mode and all five Stripe values are required.
+Replace every applicable placeholder with a real environment-specific value. Production startup requires the Supabase, independent-backup, Google Places, OpenAI, evidence-signing, and account-deletion notification values above; the two Supabase URLs must identify different projects/providers. Leave POS signing absent for manual counter entry. With both paid-enrolment flags `false`, Stripe remains deferred and its five values may stay absent; enabling either flag makes all five mandatory.
 
 Run `npm run readiness:providers` after configuring env. It checks required provider values without printing secrets.
 Before broad public launch, run `npm run readiness:launch` with the real production env; it treats provider warnings as launch-blocking. Use [`docs/launch-9-readiness-gates.md`](./docs/launch-9-readiness-gates.md) for the full provider, owner-journey, monitoring, performance, accessibility, and legal evidence pack.
 
 Stripe test-mode webhook check:
 
-1. Set `DEMO_BILLING_MODE=false` and Stripe test keys in `.env`.
+1. In an isolated payment test environment, set `DEMO_BILLING_MODE=false`, enable the paid-enrolment flag under test, and configure all five Stripe test values in `.env`.
 2. Run `npm run dev`.
 3. In another terminal, run:
 
@@ -288,7 +309,7 @@ stripe listen --forward-to localhost:3000/api/business/billing/webhook
 
 Local MVP flow checks:
 
-- Free map: open `http://localhost:3000`, confirm pins appear, happy hours are visible, and only Guinness/Carlton Draught/Stone & Wood Pacific Ale pint prices are exact.
+- Free map: open `http://localhost:3000`, confirm pins appear, no happy-hour surface is visible, and only Guinness/Carlton Draught/Stone & Wood Pacific Ale pint prices are exact.
 - Signup/age gate: create an account, confirm 18+, then submit venue data at `/submit.html`.
 - Admin approval: sign up with an email in `ADMIN_EMAILS`, open `/admin.html`, approve the pending submission, and confirm points are awarded.
 - Contributor unlock: approve enough unique-venue points to reach `CONTRIBUTOR_UNLOCK_POINTS`, then confirm full access and map price visibility.
@@ -314,11 +335,12 @@ TRUST_PROXY_HOPS=1
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_ANON_KEY=your_supabase_publishable_or_legacy_anon_key
 SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
-# Configure Google/Apple OAuth providers in Supabase dashboard.
+# Configure Google OAuth in the Supabase dashboard for this launch. Keep Apple
+# disabled until authorization-token revocation is implemented and verified.
 # Web redirect URLs: http://localhost:3000/auth/callback and
 # https://pintpath.au/auth/callback. pintpath://auth-callback is Android-only
 # when native OAuth is enabled; the first-release iOS app has no custom scheme.
-SUPABASE_OAUTH_PROVIDERS=google,apple
+SUPABASE_OAUTH_PROVIDERS=google
 SUPABASE_MENU_CAPTURE_TABLE=venue_menu_captures
 GOOGLE_MAPS_API_KEY=your_google_maps_api_key
 GOOGLE_MAPS_MAP_ID=your_google_vector_map_id
@@ -364,8 +386,8 @@ POS_WEBHOOK_SIGNING_SECRET=replace_with_a_different_32_plus_random_characters
 FIELD_TEST_MODE=true
 STRIPE_SECRET_KEY=sk_test_xxx
 STRIPE_WEBHOOK_SECRET=whsec_xxx
-STRIPE_PRICE_MONTHLY=price_monthly_499_aud
-STRIPE_PRICE_YEARLY=price_yearly_50_aud
+STRIPE_PRICE_MONTHLY=price_future_consumer_monthly_aud
+STRIPE_PRICE_YEARLY=price_future_consumer_yearly_aud
 STRIPE_PRO_PRICE_ID=price_venue_pro_aud
 ```
 
@@ -377,7 +399,15 @@ What each one does:
 - `SUPABASE_URL`: production Supabase project URL used for email/password and OAuth authentication, private evidence storage, venue imports, and reviewed map-sync writes. It is mandatory in production.
 - `SUPABASE_ANON_KEY`: browser-safe publishable key, or legacy anon key, used by `/account.html` and native clients for Supabase Auth. It is mandatory in production; never use the service-role key in a public client.
 - `SUPABASE_SERVICE_ROLE_KEY`: server-only key required in production for verified auth operations, private evidence storage, venue imports, and reviewed/admin menu-capture sync.
-- `SUPABASE_OAUTH_PROVIDERS`: comma-separated provider buttons to show on `/account.html`; set this to providers configured in the Supabase dashboard, for example `google,apple`.
+- `SUPABASE_OAUTH_PROVIDERS`: comma-separated provider buttons to show on `/account.html`. Use `google` for the current launch; production rejects `apple` until Apple authorization-token revocation is implemented and tested.
+- `ACCOUNT_DELETION_NOTICE_MODE`: `disabled`, test-only `mock`, or production `resend`. Canonical production requires `resend` independently of monthly reports.
+- `RESEND_TRANSACTIONAL_API_KEY`: sending-only Resend key dedicated to account-deletion completion notices.
+- `ACCOUNT_DELETION_NOTICE_FROM` / `ACCOUNT_DELETION_NOTICE_REPLY_TO`: verified transactional sender and monitored privacy/support inbox.
+- `RESEND_WEBHOOK_SIGNING_SECRET`: `whsec_` secret for the signed deletion-notice webhook. Subscribe it to `email.delivered`, `email.delivery_delayed`, `email.bounced`, `email.failed`, `email.suppressed`, and `email.complained`.
+- `ACCOUNT_DELETION_NOTICE_ACTIVE_KEY_ID` / `ACCOUNT_DELETION_NOTICE_KEYRING_JSON`: active ID and bounded JSON keyring of base64-encoded 32-byte recipient-encryption keys. Recipient ciphertext is held for at most 60 days before deletion completes, then purged on verified delivery, an audited terminal resolution, or no later than 30 days after completion. Retain each old key only while a live encrypted recipient references it.
+- `ACCOUNT_DELETION_NOTICE_CHECK_INTERVAL_MINUTES`: canonical-production outbox and provider-status reconciliation interval; defaults to five minutes.
+- `ACCOUNT_DELETION_REHEARSAL_ENABLED`: set `true` only for the sacrificial end-to-end drill on the immutable allowlisted staging Railway service, exact staging origin/volume/data paths, staging Supabase project, Stripe test mode, and staging-only Resend webhook. Leave it `false` or absent in production.
+- Production scaling constraint: keep the Beer service at one replica/region while SQLite owns account-deletion and webhook correlation state. Move that state to a shared transactional datastore before horizontal or multi-region scaling.
 - `SUPABASE_MENU_CAPTURE_TABLE`: server-side reviewed menu/manual capture table. Defaults to `venue_menu_captures`.
 - `GOOGLE_MAPS_API_KEY`: browser-safe Google Maps key used by the hosted viewer.
 - `GOOGLE_MAPS_MAP_ID`: production-required JavaScript/vector Google Maps Map ID for branded map styling and AdvancedMarkerElement support. Local development can fall back to `DEMO_MAP_ID`.
@@ -412,26 +442,27 @@ What each one does:
 - `REDIS_URL`: Redis connection URL for production/distributed rate limiting. Configure this for Railway/production before exposing auth, uploads, price access, feedback, or checkout publicly.
 - `REQUIRE_REDIS_RATE_LIMITING`: hosted-staging fail-closed switch. Set it to `true` for the two-replica Redis outage drill; production already requires Redis whenever the emergency memory override is false.
 - `ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION`: emergency fallback for a single-instance controlled beta only. Defaults to `false`; leave it false for full-scale production so protected routes fail closed if Redis is missing or unavailable.
-- `DEMO_BILLING_MODE`: when `true`, checkout can simulate a premium subscription without Stripe. Keep this `false` for normal production, where all five Stripe values are startup requirements. A production-hosted private demo must also set `ALLOW_DEMO_BILLING_IN_PRODUCTION=true` and clearly label billing as simulated.
+- `DEMO_BILLING_MODE`: when `true`, checkout can simulate a premium subscription without Stripe. Keep this `false` for normal production. Stripe becomes a startup requirement only when either paid-enrolment flag is enabled. A production-hosted private demo must also set `ALLOW_DEMO_BILLING_IN_PRODUCTION=true` and clearly label billing as simulated.
 - `ALLOW_DEMO_BILLING_IN_PRODUCTION`: emergency override that allows demo billing in production. Leave `false` unless you are intentionally running a demo environment.
+- `COMMERCIAL_LAUNCH_ENABLED` / `CONSUMER_PAID_ENROLLMENT_ENABLED`: keep both `false` for the current production deploy so new paid enrolment remains deferred. The controlling launch runbook defines the independent approval required before either scope can change.
 - `ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION`: legacy emergency override for inline demo image evidence. Leave `false`; production uploads should use private Supabase Storage.
 - `SOURCE_EVIDENCE_STORAGE_DIR`: private server-side directory retained for existing volume-backed evidence and local development. On Railway, keep it under the mounted `/app/data` volume, for example `./data/source-evidence`.
 - `SOURCE_EVIDENCE_SIGNING_SECRET`: private 32+ character server-side secret used to sign short-lived source-evidence review/download URLs. Generate it with `openssl rand -base64 32`; never commit it or expose it through `/config.js`. Production boot now fails fast without it so OCR and source-review evidence links are not silently broken.
 - `SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS`: signed evidence URL lifetime. Defaults to `300`.
 - `SOURCE_EVIDENCE_RETENTION_DAYS`: retention window for source-evidence cleanup eligibility. Defaults to `90`; completed deletion and legal/security holds still follow the dedicated retention policy.
-- `OFFSITE_BACKUP_SUPABASE_URL`: mandatory production destination URL for the independent backup project/provider. It must not share the production `SUPABASE_URL` origin.
-- `OFFSITE_BACKUP_SERVICE_ROLE_KEY`: server-only service-role key for that independent destination.
+- `OFFSITE_BACKUP_SUPABASE_URL`: mandatory production destination URL for the separate operational restore-copy project. It must not share the production `SUPABASE_URL` origin. A second Supabase project alone is not immutable/independent disaster recovery.
+- `OFFSITE_BACKUP_SERVICE_ROLE_KEY`: server-only service-role key for that operational destination. Because it can read/list/delete/overwrite Storage, it cannot satisfy the full-scale WORM/append-only backup gate.
 - `OFFSITE_BACKUP_BUCKET`: private Storage bucket in the independent project for verified database and source-evidence backups. Defaults to `pintpath-backups`.
 - Provision that bucket only in the independent backup project with `ops/supabase/independent-backup-project-storage.sql`; it is intentionally excluded from `supabase/migrations/`.
 - `OFFSITE_BACKUP_INTERVAL_HOURS`: automatic production backup interval. Defaults to `24`.
-- `OFFSITE_BACKUP_RETENTION_DAYS`: verified off-volume backup retention. Defaults to `30`.
+- `OFFSITE_BACKUP_RETENTION_DAYS`: operational off-volume copy retention. Defaults to `30`. Full-scale launch separately requires provider-enforced object lock/WORM in a different provider or region, an append/create-only application principal, and separately held restore/retention authority.
 - `POS_WEBHOOK_SIGNING_SECRET`: private 32+ character server-side secret used to derive per-venue POS webhook tokens for Pro venue discount redemptions. Generate it with `openssl rand -base64 32`; rotate it if a POS token is exposed.
 - `FIELD_TEST_MODE`: shows beta contact affordances and an admin field-test summary. Keep enabled for private field tests; disable for a polished public launch.
 - `STRIPE_SECRET_KEY`: Stripe test/live secret key for checkout sessions and webhook calls.
 - `STRIPE_WEBHOOK_SECRET`: Stripe endpoint secret used to verify subscription webhooks.
-- `STRIPE_PRICE_MONTHLY`: Stripe price ID for the A$4.99/month plan.
-- `STRIPE_PRICE_YEARLY`: Stripe price ID for the A$50/year plan.
-- `STRIPE_PRO_PRICE_ID`: Stripe price ID for the premium Pro venue tier.
+- `STRIPE_PRICE_MONTHLY`: future Stripe consumer-monthly price ID; leave unset while pricing is deferred.
+- `STRIPE_PRICE_YEARLY`: future Stripe consumer-yearly price ID; leave unset while pricing is deferred.
+- `STRIPE_PRO_PRICE_ID`: future Stripe venue-Pro price ID; leave unset while pricing is deferred.
 - Stripe checkout is created by the authenticated server route and redirects to a Stripe-hosted Checkout URL; the browser does not initialise Stripe.js or require a publishable key.
 
 ## Exact ngrok Workflow
@@ -511,7 +542,7 @@ Current map-provider split:
 
 Recommended hosted environment values:
 
-Use the complete **Suggested production beta values** block above and the provider runbook. Do not build a production Railway environment from a partial provider subset: current startup validation requires Supabase Auth/storage, independent backup credentials, Google Maps/Places, OpenAI, evidence/POS signing, and either fully configured Stripe or the explicitly allowed simulated-demo mode.
+Use the complete **Suggested production beta values** block above and the provider runbook. Do not build a production Railway environment from a partial provider subset. Keep both paid-enrolment flags false, `VENUE_PRO_TRIAL_DAYS=0`, demo billing false, and Stripe values unset for this pricing-deferred release.
 
 ## Railway Deployment
 
@@ -519,7 +550,8 @@ This repo includes [railway.toml](/Users/zac/Desktop/Beer/railway.toml) with:
 
 - build command: `npm run build`
 - start command: `npm run start`
-- healthcheck path: `/ready`
+- default/staging healthcheck path: `/ready`
+- production deploy healthcheck path: `/startup`
 
 Recommended Railway service setup:
 
@@ -575,7 +607,7 @@ window.MELB_BEER_BOT_VIEWER_CONFIG = {
     fieldTestMode: true,
     supabaseUrl: "https://your-project.supabase.co",
     supabaseAnonKey: "your_supabase_anon_browser_key",
-    supabaseOauthProviders: ["google", "apple"],
+    supabaseOauthProviders: ["google"],
   },
 };
 ```
@@ -703,7 +735,7 @@ The hosted `viewer/index.html` now reads venue pins and approved price previews 
 - `GET /api/business/venues`
 - `GET /api/business/price-records`
 
-`/api/business/price-records` returns redacted records by default, except for the fixed free preview scope: happy hours plus pint prices for Guinness, Carlton Draught, and Stone & Wood Pacific Ale. Opening a venue does not consume or unlock a daily allowance. The server returns the full verified catalogue only for premium, contributor, or admin access.
+`/api/business/price-records` returns redacted records by default, except for the fixed pint preview for Guinness, Carlton Draught, and Stone & Wood Pacific Ale. Public happy-hour/special records are excluded for this release. Opening a venue does not consume or unlock a daily allowance. The server returns the full verified non-happy-hour catalogue only for existing entitled, contributor, or admin access.
 
 Reviewed admin/menu captures can sync into Supabase `venue_menu_captures` for internal review history, but the public browser should not read that table directly. Public map data should come from approved `venue_price_records`.
 
@@ -775,8 +807,8 @@ npm run check
 - Confirm `PUBLIC_BASE_URL=https://pintpath.au` in production.
 - Confirm Supabase Auth Site URL is `https://pintpath.au`.
 - Confirm Supabase redirect URLs include `https://pintpath.au/auth/callback` and local `http://localhost:3000/auth/callback`. Require `pintpath://auth-callback` only for Android native OAuth; the first-release iOS app has no custom URL scheme.
-- Confirm Google OAuth Authorized redirect URIs and Apple Sign in Return URLs include the Supabase provider callback from `SUPABASE_URL`, for example `https://auth.pintpath.au/auth/v1/callback`.
-- Confirm the chosen OAuth provider is enabled in Supabase and its provider console.
+- Confirm the Google OAuth Authorized redirect URI includes the Supabase provider callback from `SUPABASE_URL`, for example `https://auth.pintpath.au/auth/v1/callback`.
+- Confirm Google is enabled in Supabase and its provider console, `SUPABASE_OAUTH_PROVIDERS=google`, and Apple is disabled until authorization-token revocation is implemented and tested.
 - Confirm rate limiting is available: set `REDIS_URL` for production or explicitly allow the in-memory fallback for a short controlled beta.
 
 ### Uploads or source evidence fail

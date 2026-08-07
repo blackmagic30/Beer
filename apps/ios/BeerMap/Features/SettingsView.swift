@@ -94,10 +94,8 @@ struct SettingsView: View {
     }
 
     private var supabaseConfigurationStatus: String {
-        let url = model.config?.supabaseUrl?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let key = model.config?.supabaseAnonKey?.trimmingCharacters(in: .whitespacesAndNewlines)
-        return !(url?.isEmpty ?? true) && !(key?.isEmpty ?? true)
-            ? "Public config present"
+        return AppConfig.supabaseURL != nil && AppConfig.supabaseAnonKey != nil
+            ? "Approved build config present"
             : "Not configured"
     }
 

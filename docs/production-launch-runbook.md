@@ -1,15 +1,30 @@
 # Pint Path production launch runbook
 
-Last audited: 28 July 2026
+Last audited: 3 August 2026
 Scope: full public web launch plus an Australian iOS launch.
+
+The current Railway-volume/SQLite architecture is not a highly available
+“full-scale” architecture: Railway volumes cannot use replicas and require a
+brief service interruption during deployment. It may support only a quantified,
+single-region controlled public launch after capacity/soak and downtime risk are
+accepted in writing. A launch marketed or operated as horizontally scalable,
+multi-region, or highly available requires migration of the authoritative
+SQLite data, deletion outbox, webhook correlation, and job leases to one shared
+transactional datastore before candidate freeze.
 
 The first iOS release has one architecture: free discovery, contribution, and
 assigned venue-Free profile/beer-list management. It contains no consumer paid
 entitlement, StoreKit product, venue Pro surface, venue trial activation,
 billing management, upgrade prompt, or external purchase link. Venue Pro and
-the 60-day introductory Pro offer are web-only.
+the dormant 60-day introductory Pro design are web-only.
 
-The web venue offer is exactly 60 days, once per verified physical venue, with no card required and no automatic charge. The venue returns to Free unless an authorised manager deliberately starts paid Pro on the web.
+Pricing and the venue offer are currently deferred. Both enrolment flags remain
+false, and no price, checkout, or introductory Pro grant may be marketed or
+started in this release. The existing 60-day design shares the commercial flag
+and Stripe path, so it cannot supply the requested free venue access while paid
+enrolment remains closed. Before offering it, the owner must either approve the
+complete pricing/Stripe contract or ship and prove a separately flagged,
+non-billing grant path that expires to Free without creating a subscription.
 
 This is the controlling sequence. Complete it from top to bottom. A later phase never waives a failed earlier gate.
 
@@ -21,23 +36,24 @@ Record these values in the private release register:
 - `candidateSha`: the 40-character PR-head commit containing all application, migration, workflow, iOS, test, and runbook implementation. It freezes only after integrated staging passes.
 - `deploymentSha`: the protected `main` commit first deployed with commercial enrolment disabled.
 - `deployedMainSha`: the exact protected `main` commit serving production at final enablement. It may differ from `candidateSha` only by merge metadata and the evidence-only closeout change allowed by the release-evidence validator.
-- `rollbackBuildSha`: a separately recorded, deployable build proven against schema version 13 and the post-migration Supabase schema.
+- `rollbackBuildSha`: a separately recorded, deployable build proven against schema version 15 and the post-migration Supabase schema.
 
 `candidateSha` and `rollbackBuildSha` never change for a release. If any application, schema, workflow, iOS, threshold, or test file changes after `candidateSha` is recorded, discard that candidate identity and return to integrated staging. Updating only `docs/release-evidence.json` with genuine post-deployment evidence is the sole closeout exception.
 
-Do not record the current production commit `52622fad3330d2f1591425e34b465252831001eb` as `rollbackBuildSha`: that build supports local schema version 11 and refuses a database newer than it supports.
+Do not record the older production commit `52622fad3330d2f1591425e34b465252831001eb` as `rollbackBuildSha`: that build supports local schema version 11 and refuses a database newer than it supports.
 
 ## Current verdict
 
-**No-go for a full-scale commercial launch today.**
+**No-go for the requested full-scale web and iOS launch today.**
 
 The production service is online on commit
-`52622fad3330d2f1591425e34b465252831001eb`, but the launch-enforced smoke is
-not green: ten availability/page/API/commit checks pass, the new launch-flag
-contract fails because the deployed build predates it, and all three
-authenticated roles remain unproved without protected smoke credentials.
+`95b9f2da5e9a99692c8cfafba90d2c29e63ccbc8`. A fresh public smoke on 3 August
+2026 passed nine public availability/page/API checks with zero failures; the
+three authenticated role checks were skipped because protected smoke
+credentials were not supplied. The deployed build predates the new launch-flag,
+Google-only OAuth, schema-15 deletion-notice, and 3 August legal contracts.
 
-Observed production data on 28 July 2026:
+Observed production data on 3 August 2026:
 
 - 612 unique venues across 112 nonblank suburbs.
 - Only 5 of 611 marketed venues (0.82%) have at least three qualifying current verified prices.
@@ -49,7 +65,7 @@ Observed production data on 28 July 2026:
   increase the real workload.
 - The public API returns 62 trusted price rows, but zero expose a source-submission link and private evidence existence cannot be inferred.
 - Zero happy-hour records and zero specials are public.
-- The newest qualifying price was verified on 5 July 2026, about 545 hours
+- The newest qualifying price was verified on 5 July 2026, about 685 hours
   before the latest gate, against a 48-hour launch maximum.
 - Three structured addresses are malformed.
 - Business status is not exposed for the currently public directory, so the absence of closed venues cannot be proved.
@@ -66,20 +82,33 @@ The remaining launch blockers require live/external completion:
 - correct all malformed structured addresses;
 - enable PITR, prove a usable recovery point, and restrict production database network access;
 - configure and dispatch the protected daily status workflow, then connect its failure threshold to the real on-call page;
-- a schema-13-compatible rollback build;
+- a schema-15-compatible rollback build;
 - a clean candidate commit, current remote CI/CodeQL, independent approval, and required branch protections;
+- either a shared transactional datastore that permits replicas or an explicitly
+  limited single-region launch decision backed by quantified peak/soak,
+  write-contention, disk-full, restart, and deployment-recovery evidence;
+- an immutable backup copy in a separate failure domain, written with an
+  application credential that cannot shorten retention or delete prior copies;
+- proof that an access JWT captured before account deletion cannot use the Pint
+  Path API, Supabase Data API/RPC, or Storage after deletion;
+- staging proof that deletion removes raw submissions, item/free text,
+  contribution ledger, evidence links, and submission-derived public rows;
+- proof that an existing Google-only web account can establish email/password
+  access in iOS without creating a second Supabase user or Pint Path account;
 - the approved manual daily account-deletion and moderation operations;
 - signed legal/GST/privacy/liquor/marketing decisions;
-- signed App Store archive validation, physical-device/TestFlight proof, App Review approval, and release evidence.
+- active Apple account/agreements/compliance status, signed App Store archive
+  validation, physical-device/TestFlight proof, defined crash monitoring, App
+  Review approval, and release evidence.
 
 ## Phase 0 — approve and record the immutable launch contract
 
 Do not begin paid outreach, candidate freeze, production mutation, or App Store submission until the owner records:
 
 1. **Initial geography:** the exact ordered list of marketed suburbs. Recommended first scope is Victoria-only and limited to suburbs that pass the gate independently.
-2. **Venue offer:** 60 days, once per verified physical venue, no card, no automatic charge, exact expiry shown, then automatic Free unless paid Pro is deliberately started on the web.
-3. **Paid transition:** a venue that deliberately adds billing during its introductory period keeps the remaining free time and is first charged at the exact trial end; a venue that starts paid Pro after the offer has expired starts billing immediately. Verify this exact Stripe behaviour in staging and the live canary.
-4. **Venue price and GST:** either `A$149/month including GST` or `A$149/month plus GST`, plus the operator's GST-registration decision.
+2. **Venue offer:** currently deferred and disabled. Before enabling it, approve the exact duration, eligibility, expiry, duplicate/fraud handling, support path, and whether it is a separately flagged non-billing grant or a Stripe trial. A free grant must expire to Free without creating a payment obligation.
+3. **Paid transition:** currently deferred and disabled. If a future offer can transition to paid Pro, approve when billing starts, consent/payment-method requirements, cancellation/refund handling, and prove the exact behaviour in staging plus the smallest-value live canary.
+4. **Venue price and GST:** currently deferred. Before paid enrolment, approve the amount, whether it includes GST, the operator's GST-registration decision, and all authoritative copy. Do not treat any dormant internal amount as an approved launch price.
 5. **iOS architecture:** free discovery, contribution, and assigned venue-Free
    profile/beer-list management. No StoreKit, paid consumer entitlement, venue
    Pro capability, trial activation, upgrade prompt, billing portal, or external
@@ -88,11 +117,36 @@ Do not begin paid outreach, candidate freeze, production mutation, or App Store 
 7. **Happy-hour launch choice:** launch without happy-hour discovery. All consumer web and iOS filters, cards, badges, empty states, claims, and promotional copy stay hidden until the 25% threshold is met in a future release.
 8. **Deletion operation:** the named primary and backup operators, the fixed daily review time, the displayed seven-day cancellation window, the guaranteed completion deadline, and the escalation contact.
 9. **Moderation operation:** the named owner, backup, response SLA, appeal path, and emergency takedown path.
-10. **Legal entity:** the same approved entity for the app, Apple developer account, contracts, ABN, Stripe, domains, and provider accounts.
+10. **Legal entity:** the same approved entity for the app, Apple developer
+    account, contracts, ABN, domains, and active provider accounts. Stripe
+    entity alignment becomes mandatory only for a future commercial candidate.
 11. **Data thresholds:** the exact values in Phase 8 and the exact marketed-suburb scope. These values are immutable for this release.
 12. **Named release roles:** deployer, independent reviewer, evidence verifier, rollback operator, and first-72-hours on-call operator.
+13. **Breach response:** named primary/backup incident and privacy decision owners, provider escalation contacts, and a passed tabletop using `docs/data-breach-response-runbook.md`.
+14. **Availability architecture:** either migrate the authoritative SQLite/outbox/job state to shared transactional Postgres and prove replicas, or record that this is a controlled single-region launch with planned deployment downtime, quantified capacity, 2× peak headroom, maintenance communication, and a named migration trigger. Do not call the latter highly available or full-scale.
+15. **Backup authority:** one immutable copy in a different provider or region,
+    an application principal that can create but cannot delete/overwrite retained
+    objects, a separately controlled retention/deletion principal, and tested
+    object-lock/WORM retention. A second Supabase project controlled by the same
+    production service-role key is an operational copy, not this proof.
+16. **Deletion content contract:** delete raw submissions, submission items/free
+    text, contribution ledger, evidence links, and every public price row derived
+    from that submission. Any future publisher-curated retained fact needs a
+    separate fully de-linked ingestion path and written privacy/legal plus App
+    Review approval in a new candidate.
+17. **iOS monitoring:** for a true broad/full-scale release, select a
+    privacy-reviewed production crash source with dSYM symbolication and alert
+    delivery (for example a separately approved crash processor or a first-party
+    MetricKit pipeline), supplemented by TestFlight/App Store Connect and Xcode
+    Organizer. For a controlled cohort only, Apple-native reports may be used
+    while every report is manually reviewed. Name the owner/cadence; require zero
+    reproducible critical crashes and at least 99.5% crash-free sessions over
+    seven days and 500 sessions before broad expansion. With a smaller sample,
+    remain controlled. Any new diagnostics processor requires privacy, retention,
+    policy, and App Store declaration review before candidate freeze.
 
-Canonical venue-offer copy:
+The following dormant copy is not approved for publication until items 2–4 are
+resolved and the chosen grant/billing implementation passes staging:
 
 > 60-day Introductory Pro access for verified venues. No card required. No automatic charge. Your access ends on the exact date and time shown in your venue dashboard. Unless your venue actively starts a paid Pro subscription on the web, it automatically moves to Free when the introductory period ends. Your venue profile and saved data remain. Pro analytics, reports, specials and premium placement switch off at expiry.
 
@@ -105,7 +159,7 @@ Use “60-day,” not “two-month.”
 - [ ] Keep `ALCOHOL_GAMIFICATION_ENABLED=false`.
 - [ ] Keep Pub Golf, alcohol-purchase points, free-pint rewards, and redemption routes out of public pages, screenshots, demos, and App Store metadata.
 - [ ] Keep consumer paid enrolment outside this release.
-- [ ] Keep venue trial and paid-Pro entry points web-only and closed until Phase 18.
+- [ ] Keep venue trial and paid-Pro entry points closed for this release.
 - [ ] Hide all consumer happy-hour UI and copy on both web and iOS.
 - [ ] Do not market broad verified-price coverage while the strict data gate fails.
 - [ ] Do not market suburbs outside the approved, independently passing list.
@@ -121,11 +175,13 @@ DEMO_BILLING_MODE=false
 ALLOW_DEMO_BILLING_IN_PRODUCTION=false
 COMMERCIAL_LAUNCH_ENABLED=false
 CONSUMER_PAID_ENROLLMENT_ENABLED=false
+SUPABASE_OAUTH_PROVIDERS=google
+ACCOUNT_DELETION_REHEARSAL_ENABLED=false
 ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=false
 PINT_POINTS_REWARDS_ENABLED=false
 ALCOHOL_GAMIFICATION_ENABLED=false
 ALCOHOL_PROMOTION_APPROVAL_REFERENCE=
-VENUE_PRO_TRIAL_DAYS=60
+VENUE_PRO_TRIAL_DAYS=0
 VENUE_PRO_TRIAL_REQUIRE_PAYMENT_METHOD=false
 REQUIRE_REDIS_RATE_LIMITING=true
 ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=false
@@ -144,16 +200,18 @@ curl -fsS https://pintpath.au/config.js \
 jq -e '
   .business.commercialLaunchEnabled == false
   and .business.consumerPaidEnrollmentEnabled == false
+  and .business.pricing == null
   and .business.pintPointsRewardsEnabled == false
   and .business.alcoholGamificationEnabled == false
-  and .business.venueProTrialDays == 60
+  and .business.venueProTrialDays == 0
   and .business.venueProTrialRequiresPaymentMethod == false
   and .business.demoBillingMode == false
   and .business.fieldTestMode == false
 ' "$PINTPATH_EVIDENCE_DIR/live-config.json"
 ```
 
-Stop if the response differs. After Phase 18 deliberately enables web venue enrolment, use the separate assertion in that phase.
+Stop if the response differs. Phase 18 repeats this same disabled-state assertion;
+there is no commercial-enable step in this release.
 
 ## Phase 2 — preserve complete current production evidence
 
@@ -285,12 +343,13 @@ The candidate must contain and test:
 - fail-closed source capture before a trusted price becomes public;
 - a complete, target-pinned venue refresh that checks every existing Google Place ID;
 - a reviewed production price-promotion tool satisfying Phase 7;
-- a reviewer-approved, non-public live Stripe canary path that cannot open general enrolment;
+- fail-closed deferred-pricing configuration that exposes no current amount,
+  trial, checkout, or upgrade path while both enrolment flags are false;
 - fixed, scope-bound data thresholds satisfying Phase 8;
 - an approved manual daily deletion operation satisfying Phase 10;
 - a scope-aware release-evidence validator and workflows satisfying Phase 14;
 - protected GitHub-environment production smoke workflows satisfying Phase 17;
-- a schema-version-13-compatible rollback build and rehearsal satisfying Phase 12.
+- a schema-version-15-compatible rollback build and rehearsal satisfying Phase 12.
 
 Any missing item is a blocker. Do not freeze a candidate and promise to add it later.
 
@@ -703,10 +762,20 @@ list, candidate freeze is blocked.
 - [ ] Site URL and exact HTTPS web callback for OAuth, email confirmation, and password recovery verified. The first-release iOS app has no custom URL callback; after completing an email link in the browser, the user returns to the app and signs in.
 - [ ] Email confirmation and custom SMTP tested.
 - [ ] Native Google and Apple providers absent from the first-release archive.
+- [ ] Starting with an existing Google-only web account, use the approved email
+  recovery/set-password path, then sign in on iOS and prove the same Supabase
+  user ID and Pint Path account/public ID are retained. Reject any duplicate
+  identity/account result and test an email-collision attempt explicitly.
 - [ ] Leaked-password protection enabled.
 - [ ] Admin MFA/AAL2 enforced.
 - [ ] Every exposed table has explicit grants and RLS.
 - [ ] Storage policies deny source evidence to public clients.
+- [ ] Capture a short-lived Supabase access JWT before deleting a sacrificial
+  account. After deletion, prove the old JWT cannot exchange for a Pint Path
+  session and cannot read or mutate any Data API table, RPC, or Storage object.
+  Record the configured JWT expiry and keep it at the shortest operationally
+  acceptable value; deleting the Auth user or refresh session alone is not
+  evidence that an already-issued access JWT stopped working.
 
 ### Redis
 
@@ -716,6 +785,14 @@ list, candidate freeze is blocked.
 - [ ] Isolated staging proves protected traffic and readiness fail closed during outage.
 
 ### Stripe web venue billing
+
+This section is a future commercial-release checklist, not a gate for the
+current pricing-deferred release. For this release, prove both enrolment flags
+are false, all Stripe secrets/price IDs may be absent, no checkout/trial/upgrade
+action is reachable, no dormant price is advertised as current, and existing
+lifecycle endpoints reveal no customer data to an unauthorised user. Do not run
+a live charge or enable the flag merely to complete evidence. Before any future
+commercial release, complete every item below against a new candidate:
 
 - [ ] GST treatment and legal entity approved.
 - [ ] Live venue price belongs to that entity.
@@ -731,7 +808,10 @@ list, candidate freeze is blocked.
 - [ ] With commercial enrolment disabled, new enrolment rejects while existing lifecycle management remains available.
 - [ ] No Stripe purchase, portal, venue-upgrade, or billing call-to-action exists in the iOS archive.
 
-The smallest-value live checkout/portal/cancel/refund/webhook proof occurs as a controlled canary after the commercial-disabled production deploy. If no safe allowlisted canary exists, that is a blocker; do not temporarily expose enrolment publicly.
+The future smallest-value live checkout/portal/cancel/refund/webhook proof must
+occur as a controlled canary after a commercial-disabled production deploy and
+before public enrolment. It is intentionally not run for this release. If no
+safe allowlisted canary exists in that future release, do not expose enrolment.
 
 ### Resend and email
 
@@ -764,6 +844,8 @@ Australian technology/privacy, liquor-promotion, and finance/accounting reviewer
 - account access, correction, export, deletion, complaint, incident, and breach handling;
 - marketing/research consent and Spam Act compliance;
 - UGC reporting, blocking, takedown, appeal, and moderation SLA;
+- proof that account deletion removes shared submission content and every
+  submission-derived public row, reconciled to the executable retention policy;
 - liquor-promotion design for every marketed jurisdiction;
 - participating venue/licensee and RSA responsibilities.
 
@@ -789,7 +871,39 @@ Before staging sign-off:
 - [ ] Daily evidence records zero unhandled due or overdue requests.
 - [ ] Provider failure, restart, duplicate execution, partial completion, cancellation, and retention paths pass.
 
-Sign in with Apple token revocation is marked not applicable only while native social login is compile-disabled and the signed Release archive proves no native Apple authorization path can create a token. If native Apple or other social login is enabled at any point, the candidate is invalid and Apple token revocation plus retry/idempotency tests become mandatory before submission.
+Configure the completion-notice path in this exact order:
+
+The production Beer service must remain exactly one application replica in one Railway region while SQLite on its attached volume is authoritative. Redis shares rate-limit state only; it does not share the deletion outbox or webhook correlation state. Do not enable horizontal replicas or multi-region routing until the account-deletion request, outbox, recipient-secret, and webhook-event tables move together to one shared transactional datastore.
+
+1. Deploy schema 15 and the notification worker to staging. Confirm the migration backup was created before the schema change.
+2. In Resend, verify the Pint Path sending domain and create a sending-only API key dedicated to deletion notices. Do not reuse the monthly-report key.
+3. Add a staging-only Resend webhook for `https://<staging RAILWAY_PUBLIC_DOMAIN>/api/business/account-deletion-notifications/resend-webhook`. Subscribe to `email.delivered`, `email.delivery_delayed`, `email.bounced`, `email.failed`, `email.suppressed`, and `email.complained`, then copy that webhook's staging-only `whsec_` signing secret directly into the staging secret manager. Never point the staging proof at the production webhook URL.
+4. Generate the recipient-encryption key without printing it (`openssl rand -base64 32 | pbcopy` on macOS). Choose a key ID such as `2026-08`; store the active ID and a JSON keyring containing that key in Railway. Retain an old key only while the admin queue or database shows a live recipient-secret row using it.
+5. On the isolated staging Beer service, first confirm Railway project `48d8c6cd-1c66-4148-874b-20877f48e1a5`, environment `a4e0f507-d6d3-4df9-a818-ad92c0071a35`, service `6816c4a2-e392-4ee5-826f-2584cb599ec0`, volume `/app/data`, `PUBLIC_BASE_URL=https://$RAILWAY_PUBLIC_DOMAIN`, `DATABASE_PATH=/app/data/pint-path.sqlite`, `SOURCE_EVIDENCE_STORAGE_DIR=/app/data/source-evidence`, and staging Supabase project `ibveugyfyzjptyvautlr`. Stripe must be test mode (`sk_test_`/`rk_test_`) or absent. Remove `OFFSITE_BACKUP_SUPABASE_URL`, `OFFSITE_BACKUP_SERVICE_ROLE_KEY`, `REDIS_URL`, `REDIS_KEY_NAMESPACE`, and every `RESTORE_REHEARSAL_REDIS_*` variable; keep `REQUIRE_REDIS_RATE_LIMITING=false` and set `ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=true` only for this single-instance isolated proof. Then set `ACCOUNT_DELETION_NOTICE_MODE=resend`, the staging-only `RESEND_TRANSACTIONAL_API_KEY`, `ACCOUNT_DELETION_NOTICE_FROM`, `ACCOUNT_DELETION_NOTICE_REPLY_TO`, staging-only `RESEND_WEBHOOK_SIGNING_SECRET`, `ACCOUNT_DELETION_NOTICE_ACTIVE_KEY_ID`, `ACCOUNT_DELETION_NOTICE_KEYRING_JSON`, `ACCOUNT_DELETION_NOTICE_CHECK_INTERVAL_MINUTES=5`, and `ACCOUNT_DELETION_REHEARSAL_ENABLED=true`. Startup rejects any identity, origin, data path, Supabase project, backup credential, Redis reference, or Stripe mode outside this allowlist. Remove the rehearsal switch and in-memory limiter override immediately after the proof.
+6. Set `SUPABASE_OAUTH_PROVIDERS=google`. Keep Apple OAuth disabled until Apple authorization-token revocation is implemented and tested. This is separate from the proof that native social login is absent from the iOS archive.
+7. After the staging migration, run the exact notification-scoped gate below from the deployed staging Beer service. It must report `readinessProfile=account_deletion_rehearsal`; this profile never invokes the off-site backup Storage write canary. The `/ready` assertion separately proves local database/evidence-path and staging Supabase health. Then run the notification suites. Delete a sacrificial verified account only after its safety window is test-adjusted in staging; prove `held -> pending -> accepted -> delivered`, signed-webhook receipt storage, recipient-secret deletion, and audited terminal resolution of an independently verified undeliverable notice.
+
+   ```bash
+   set -o pipefail
+   test "${ACCOUNT_DELETION_REHEARSAL_ENABLED:?}" = "true"
+   test -z "${OFFSITE_BACKUP_SUPABASE_URL:-}${OFFSITE_BACKUP_SERVICE_ROLE_KEY:-}"
+   test -z "${REDIS_URL:-}${REDIS_KEY_NAMESPACE:-}"
+   npm run --silent readiness:providers \
+     | tee /tmp/account-deletion-rehearsal-readiness.json \
+     | jq -e '.readinessProfile == "account_deletion_rehearsal" and .ok == true'
+   curl --fail --silent --show-error "${PUBLIC_BASE_URL%/}/ready" \
+     | jq -e '.ok == true and .data.status == "ready"'
+   ./node_modules/.bin/vitest run \
+     test/account-deletion-notification.test.ts \
+     test/account-deletion-notification-worker.test.ts
+   ```
+8. Test Resend timeout, 429, bounce, invalid signature, replay, out-of-order webhook, worker overlap, process restart, 23-hour uncertain cutoff, the 60-day held-recipient cap, purge on audited terminal resolution, the 30-day post-completion hard limit, and restored-tombstone suppression.
+9. Separately create the production Resend webhook at `https://pintpath.au/api/business/account-deletion-notifications/resend-webhook` with its own production `whsec_` secret and the same six event subscriptions. Then set the production notice variables with independently generated credentials and key material. Never copy the staging signing secret or encryption keyring into production. `ACCOUNT_DELETION_REHEARSAL_ENABLED` must be `false` or absent in production. Deploy once all required values are present; canonical production intentionally fails closed if the notice path is incomplete.
+10. Confirm `/ready`, the admin deletion queue, `job:account_deletion_notifications`, Resend delivery evidence, and the zero-plaintext database check. Record the exact provider message ID and non-identifying receipt for the release evidence packet.
+
+Never paste the API key, webhook signing secret, encryption key, keyring JSON, or a recipient address into release evidence or terminal output. A provider acceptance is not a delivery confirmation. A signed delivery webhook marks the notice delivered; failure, suppression, or a missing webhook remains an operator-visible non-delivery state until it is independently resolved. Purge recipient ciphertext on verified delivery, an audited terminal resolution, or no later than 30 days after deletion completion; ciphertext still held before completion has a 60-day maximum.
+
+Sign in with Apple token revocation is marked not applicable only while Apple OAuth is absent from the production web provider list, native social login is compile-disabled, and the signed Release archive proves no native Apple authorization path can create a token. If Apple login is enabled on either surface, the candidate is invalid and Apple token revocation plus retry/idempotency tests become mandatory before submission.
 
 Policy copy must describe the manual operation and deadline honestly. Copy is not operational proof.
 
@@ -812,18 +926,28 @@ Required sequence:
 9. If public identities or UGC are visible, include report/block/filter controls and prove moderation operations; otherwise keep those surfaces hidden.
 10. Reconcile `PrivacyInfo.xcprivacy`, the generated archive privacy report, App Store Privacy answers, public policy, and every third-party SDK.
 11. Verify team `K5KNW7B34T`, bundle ID `au.pintpath.app`, production API origin, version, and monotonically increasing build. Prove the Release archive declares no custom URL scheme for this first release.
-12. Archive with Xcode 26 or later and the iOS 26 SDK.
-13. Run **Validate App** and resolve every signing, icon, privacy, export, entitlement, and API warning.
-14. Upload this pre-candidate archive to an internal TestFlight group for staging rehearsal only.
-15. Test the processed rehearsal build on a physical device running minimum iOS 17 and another on the current production iOS.
-16. Cover IPv6-only networking, denied/revoked permissions, offline/interruption, email/password auth, the HTTPS browser round trip for email confirmation and password recovery, account export/deletion, support, wrong-price reporting, and contribution.
+12. Confirm the Apple Developer Program membership is active; the Account Holder
+    has working 2FA; the legal seller/entity matches the release contract; all
+    current Developer Program/free-app agreement is accepted; paid-app, tax, and
+    banking agreements are required only if a paid app or IAP is introduced; the
+    app record belongs to the correct team; no compliance review or agreement
+    state blocks submission; and the Account Holder plus one backup App Manager
+    can access certificates, TestFlight, review, and release controls.
+13. Archive with Xcode 26 or later and the iOS 26 SDK.
+14. Run **Validate App** and resolve every signing, icon, privacy, export, entitlement, and API warning.
+15. Upload this pre-candidate archive to an internal TestFlight group for staging rehearsal only.
+16. Test the processed rehearsal build on a physical device running minimum iOS 17 and another on the current production iOS.
+17. Cover IPv6-only networking, denied/revoked permissions, offline/interruption, email/password auth, the HTTPS browser round trip for email confirmation and password recovery, account export/deletion, support, wrong-price reporting, and contribution.
+18. Configure the Phase 0 crash source, dSYM symbolication, environment/build/SHA
+    tags, personal-data scrubbing, primary/backup alert delivery, and privacy
+    declarations. Supplement it with TestFlight/App Store Connect diagnostics
+    and Xcode Organizer. Pass the crash threshold and stop on any critical crash,
+    auth lockout, data loss, or privacy fault.
 
-The current workspace has a user-owned, untracked
-`apps/ios/BeerMap/BeerMap.entitlements` containing a Sign in with Apple
-entitlement. The Xcode target does not reference or copy it. Before candidate
-freeze, the owner must either move/delete it outside the candidate or explicitly
-retain it outside Git; it must not be staged for this release. This ownership
-decision is required to achieve the clean tree in Phase 13.
+The earlier untracked `apps/ios/BeerMap/BeerMap.entitlements` file is absent from
+the current workspace. Keep the clean-tree and signed-archive scans: if that file
+or any Sign in with Apple entitlement reappears, stop and remove it from this
+candidate unless native social authentication is deliberately redesigned.
 
 Archive inspection must prove the excluded native surfaces are absent from the signed product, not just disabled by a production response. This pre-candidate archive is rehearsal evidence only. It must not be submitted to App Review; Phase 13 rebuilds and uploads the final archive from the exact frozen `candidateSha`.
 
@@ -847,7 +971,8 @@ Deploy all implementation to the existing staging environment and execute, in or
 8. the exact strict data gate from Phase 8;
 9. public and authenticated user/venue/admin smoke;
 10. Redis outage proof;
-11. Stripe test clocks and no-card/no-auto-charge trial proof;
+11. commercial-disabled proof: both flags false, Stripe values absent or inert,
+    no advertised current price, and no reachable checkout/trial/upgrade path;
 12. deletion daily-operation rehearsal;
 13. web happy-hour-absence and native compile-scope tests;
 14. physical iOS/TestFlight internal tests.
@@ -855,11 +980,11 @@ Deploy all implementation to the existing staging environment and execute, in or
 Build `rollbackBuildSha` before production:
 
 - it must be a committed, immutable, deployable artifact;
-- it must open and operate on local schema version 13;
-- it must preserve the schema-13 checkout-reservation state and must not create duplicate venue Checkout sessions;
+- it must open and operate on local schema version 15;
+- it must preserve the schema-15 checkout-reservation and account-deletion-notice state and must not create duplicate venue Checkout sessions or deletion notices;
 - it must tolerate the post-migration Supabase schema;
 - it must keep all commercial and alcohol flags closed;
-- it must pass health, readiness, public reads, auth, and data access against a schema-13 staging copy;
+- it must pass health, readiness, public reads, auth, and data access against a schema-15 staging copy;
 - its artifact digest and deployment instructions must be recorded;
 - deploying it must not require a database downgrade.
 
@@ -872,7 +997,7 @@ Rehearse:
 5. redeploy the candidate;
 6. restore the separate backup only in isolated staging and replay deletion tombstones.
 
-If the rollback build cannot run safely after schema 13, stop. The old production SHA is not a substitute.
+If the rollback build cannot run safely after schema 15, stop. The old production SHA is not a substitute.
 
 Any code, migration, workflow, native, threshold, or runbook change resulting from this phase returns to step 1 of this phase.
 
@@ -1026,15 +1151,16 @@ Required evidence IDs are:
 
 - `production_public_smoke`;
 - `production_role_smoke`;
+- `account_deletion_completion_notice`;
 - `ocr_labelled_corpus`;
 - `venue_pilot_one`;
 - `venue_pilot_two`;
 - `venue_pilot_three`;
-- `pos_vendor_pilot`;
+- `moderation_operations`;
 - `backup_restore`;
 - `accessibility_devices`;
 - `legal_billing`;
-- `ios_release`.
+- `ios_release`;
 
 The candidate's required ID set, schema tests, checklists, and strict validator must omit `android_release`. Do not mark a required Android item falsely passed or not applicable.
 
@@ -1197,7 +1323,7 @@ Require `/health` and `/ready` to return `200`, and require the reported SHA to 
 
 Keep `COMMERCIAL_LAUNCH_ENABLED=false` throughout the first deployment and every production proof in Phases 16 and 17. Existing billing management and Stripe lifecycle processing remain available while new enrolment is closed.
 
-If application health fails, deploy `rollbackBuildSha`. Do not redeploy the schema-11 production commit over a schema-13 volume.
+If application health fails, deploy `rollbackBuildSha`. Do not redeploy the schema-11 production commit over a schema-15 volume.
 
 ### 16.5 Promote only the reviewed production price batch
 
@@ -1369,7 +1495,10 @@ gh run watch "$PINTPATH_PRODUCTION_HEALTH_RUN_ID" --exit-status
 
 Require public health plus configured verified user and venue-manager role smoke. The environment must require a reviewer who is not the deployer. Missing credentials or a skipped authenticated job is not a pass.
 
-Run the controlled Stripe live canary without public enrolment, then reconcile checkout, portal, cancellation, refund, and signed webhook. Keep `COMMERCIAL_LAUNCH_ENABLED=false`.
+Do not run a live Stripe charge for this pricing-deferred release. Prove both
+commercial flags remain false, checkout/trial/upgrade paths remain unavailable,
+and no current price is advertised. Stripe canary evidence belongs to a future
+commercial candidate.
 
 At this point production data and backend behavior can be proven, but strict release evidence remains pending until App Review.
 
@@ -1388,9 +1517,9 @@ Use the exact iOS archive bound to `candidateSha`:
 6. Under App Privacy, reconcile every data type with the archive privacy report and policy.
 7. Answer alcohol, UGC, location, and unrestricted-web-access questions honestly.
 8. In review notes, explain that assigned venues can edit only their free public
-   profile and beer list in iOS; venue Pro, the no-card 60-day offer, checkout,
-   billing, and every upgrade prompt exist only on the web and are absent from
-   the iOS binary.
+   profile and beer list in iOS; venue Pro, the dormant 60-day design, checkout,
+   billing, and every upgrade prompt are disabled on the web and absent from the
+   iOS binary for this release.
 9. Explain the manual seven-day deletion operation and provide the consumer/contributor path.
 10. Set Australia availability and manual release with phased release.
 11. Select **Add for Review** and answer follow-up without changing binary or backend behavior.
@@ -1400,7 +1529,7 @@ A material app, backend, policy, data-collection, auth, or scope change invalida
 
 ### 17.2 Close evidence without changing implementation
 
-Complete all 11 web-and-iOS evidence items from Phase 14. Update only `docs/release-evidence.json` in an evidence-closeout PR. The `candidateSha` remains the frozen PR-head SHA.
+Complete all 12 web-and-iOS evidence items from Phase 14. Update only `docs/release-evidence.json` in an evidence-closeout PR. The `candidateSha` remains the frozen PR-head SHA.
 
 After protected merge:
 
@@ -1464,16 +1593,22 @@ Also revoke the admin session at the provider, rotate/revoke any temporary smoke
 
 Do not call a local `npm run smoke:production:auth` invocation a protected-environment proof.
 
-## Phase 18 — final go/no-go, enable only the web venue offer, then release iOS
+## Phase 18 — final go/no-go, keep commercial enrolment closed, then release iOS
 
-The owner and independent reviewer must sign the final checklist before any enablement.
+The owner and independent reviewer must sign the final checklist before release.
 
-The only new commercial surface authorised by this runbook is web venue Pro enrolment and its 60-day offer. The candidate must prove that changing the approved production commercial flag cannot expose native venue, external-purchase, StoreKit, or out-of-scope consumer-paid surfaces.
+No paid or trial surface is authorised by this release. Pricing and the bar offer
+will return as a separate product decision and a new frozen candidate. This
+release must prove that the disabled commercial state cannot expose web or
+native checkout, trial, upgrade, external-purchase, StoreKit, or consumer-paid
+surfaces.
 
-Only after all earlier phases and the final go/no-go checklist pass may the owner approve enablement. Only after all earlier phases and the final independent go/no-go pass may the operator set `COMMERCIAL_LAUNCH_ENABLED=true` against the same `deployedMainSha`. Do not change code, thresholds, scope, or another feature flag.
+After all earlier phases and the final independent go/no-go pass, confirm the
+same `deployedMainSha` still has the closed state below. Do not change code,
+thresholds, scope, or either flag.
 
 ```dotenv
-COMMERCIAL_LAUNCH_ENABLED=true
+COMMERCIAL_LAUNCH_ENABLED=false
 CONSUMER_PAID_ENROLLMENT_ENABLED=false
 ```
 
@@ -1482,37 +1617,40 @@ Save and parse `/config.js`:
 ```bash
 curl -fsS https://pintpath.au/config.js \
   | sed -e '1s/^window\.MELB_BEER_BOT_VIEWER_CONFIG = //' -e '$s/;$//' \
-  > "$PINTPATH_EVIDENCE_DIR/live-config-enabled.json"
+  > "$PINTPATH_EVIDENCE_DIR/live-config-closed.json"
 
 jq -e '
-  .business.commercialLaunchEnabled == true
+  .business.commercialLaunchEnabled == false
   and .business.consumerPaidEnrollmentEnabled == false
+  and .business.pricing == null
   and .business.pintPointsRewardsEnabled == false
   and .business.alcoholGamificationEnabled == false
-  and .business.venueProTrialDays == 60
+  and .business.venueProTrialDays == 0
   and .business.venueProTrialRequiresPaymentMethod == false
   and .business.demoBillingMode == false
   and .business.fieldTestMode == false
-' "$PINTPATH_EVIDENCE_DIR/live-config-enabled.json"
+' "$PINTPATH_EVIDENCE_DIR/live-config-closed.json"
 ```
 
 Repeat:
 
 - public production smoke with `PINTPATH_ENFORCE_LAUNCH_FLAGS=true`,
-  `PINTPATH_EXPECTED_COMMERCIAL_LAUNCH_ENABLED=true`, and
+  `PINTPATH_EXPECTED_COMMERCIAL_LAUNCH_ENABLED=false`, and
   `PINTPATH_EXPECTED_COMMIT_SHA="$deployedMainSha"`;
 - the strict data command from Phase 16;
 - a fresh protected Production Health dispatch;
 - the one-use admin-token ceremony and **Pint Path Release Gate** dispatch with
-  `-f expected_commercial_launch_enabled=true`;
-- web checks proving no-card enrolment, exact expiry, no automatic charge, one offer per physical venue, and automatic downgrade;
+  `-f expected_commercial_launch_enabled=false`;
+- web checks proving no current price is advertised and every checkout, trial,
+  upgrade, and enrolment action is absent or inert;
 - native archive/runtime checks proving no commercial surface appeared.
 
-If any check fails or an unintended surface appears, set `COMMERCIAL_LAUNCH_ENABLED=false` immediately and repeat the disabled-state assertion.
+If any check fails or an unintended surface appears, keep or restore both flags
+to `false`, stop release, and repeat the disabled-state assertion after repair.
 
-Only after the enabled state passes may the owner:
+Only after the disabled state passes may the owner:
 
-1. open approved web venue outreach for passing marketed suburbs;
+1. open free web discovery and free venue-tool outreach only for passing marketed suburbs;
 2. manually release the approved Australian iOS build;
 3. start Apple's phased release;
 4. announce the combined web and iOS launch.
@@ -1525,7 +1663,8 @@ Release web traffic progressively and monitor:
 - p50/p95/p99 latency from Melbourne;
 - email auth failures;
 - Redis readiness and protected-route failures;
-- venue checkout, trial, webhook, entitlement, expiry, and downgrade mismatches;
+- any unexpected venue checkout, trial, billing webhook, paid entitlement, or
+  dormant-price exposure while both flags are false;
 - manual deletion due/overdue count, retries, escalations, and notices;
 - privacy/export/correction request age;
 - moderation queue age and SLA;
@@ -1559,7 +1698,7 @@ Order:
 
 1. Set `COMMERCIAL_LAUNCH_ENABLED=false`.
 2. Disable the affected public path or place the service in the approved maintenance state.
-3. Deploy `rollbackBuildSha`, which is proven against schema version 13.
+3. Deploy `rollbackBuildSha`, which is proven against schema version 15.
 4. Verify `/health`, `/ready`, reported SHA, auth, RLS, public data, and deletion access.
 5. Quarantine only the affected promoted price batch using its reviewed manifest if data is unsupported.
 6. Restore data only if data or schema is damaged; never restore merely to roll back code.
@@ -1639,7 +1778,7 @@ Verify the receipt's `quarantinedIds`, `alreadyQuarantinedIds`, and
 price and inventory path; and confirm source evidence and ingestion history
 remain intact.
 
-Never redeploy the schema-11 production build over schema 13. Never delete the current production volume or overwrite it with an unverified backup.
+Never redeploy the schema-11 production build over schema 15. Never delete the current production volume or overwrite it with an unverified backup.
 
 ## Final go/no-go sign-off
 
@@ -1651,19 +1790,28 @@ The release is **go** only when every item is true for the same `releaseId`, `ca
 - [ ] Android is absent from required release evidence;
 - [ ] local, staging, and live Supabase schema/RLS/Storage checks pass;
 - [ ] fresh PITR/physical backup, SQLite backup, off-site backup, and restore rehearsal pass;
-- [ ] schema-13-compatible rollback build and rehearsal pass;
+- [ ] schema-15-compatible rollback build and rehearsal pass;
 - [ ] complete Place-ID refresh, target pin, transitions, and 24-hour launch freshness pass;
 - [ ] daily monitored status refresh and five-/six-/seven-day alerts pass;
 - [ ] reviewed production price-promotion tool, dry run, publication, evidence, and rollback manifest pass;
 - [ ] every trusted public row has durable evidence;
 - [ ] strict data gate passes independently for every marketed suburb;
 - [ ] all consumer happy-hour UI and claims are hidden under the signed waiver;
-- [ ] Google, email Auth, Redis, Stripe, Resend, and OpenAI proofs pass;
+- [ ] Google, email Auth, Redis, Resend, and OpenAI proofs pass;
+- [ ] commercial and consumer-paid flags remain false; no current price,
+  checkout, trial, or upgrade path is public;
+- [ ] the pre-deletion Supabase JWT denial matrix and Google-web-to-iOS account
+  bridge pass without duplicate identities;
+- [ ] immutable independent backup authority and object-lock/WORM retention pass;
+- [ ] staging deletion proves no raw submission, item/free text, contribution
+  ledger, evidence link, or submission-derived public row remains;
 - [ ] GST, legal, privacy, liquor, marketing, moderation, and finance approvals are recorded;
 - [ ] approved manual daily deletion operation passes;
 - [ ] native social login is compile-disabled and the Sign in with Apple revocation not-applicable proof is recorded;
 - [ ] free discovery/contributor/venue-Free iOS archive, privacy report,
   physical devices, external TestFlight, and App Review pass;
+- [ ] Apple membership, Account Holder/backup access, agreements, compliance
+  review, app ownership, and crash-threshold evidence pass;
 - [ ] strict release evidence and protected authenticated smoke pass;
 - [ ] live flags match the approved state before and after enablement;
 - [ ] named 72-hour operator is available.

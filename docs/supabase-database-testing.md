@@ -2,7 +2,8 @@
 
 Pint Path rebuilds and tests its repository-owned Supabase schema without
 connecting CI to a hosted project. The local test scope is the 17 public tables,
-private helper functions, RLS policies, Data API grants, and the private
+private helper functions, dormant defense-in-depth RLS policies, final Data API
+grant revocation, and the private
 `beermap-source-evidence` bucket created by `supabase/migrations`.
 
 The production `public.venues` relation and conditional legacy relations are
@@ -48,7 +49,8 @@ performance warning as review work before launch even when CI remains green.
 - `SECURITY DEFINER` helpers use a fixed `pg_catalog` search path.
 - Private functions are not executable by `PUBLIC` or `anon`.
 - `anon` has no repository-owned table privileges.
-- `authenticated` receives only the intended table and profile-column grants.
+- `authenticated` has no direct public table/column grants and cannot execute
+  public RPCs or private helpers; application data is Express-API only.
 - Future postgres-owned public objects are not automatically granted to Data
   API roles.
 - Update policies include both `USING` and `WITH CHECK`; insert policies include
@@ -70,9 +72,12 @@ production database change, also capture and review:
 2. The live `pg_policies`, table/column/routine grants, object owners, default
    privileges, views, functions, indexes, extensions, and Realtime
    publications.
-3. A real `anon`, user A, user B, admin, and service-role access matrix.
-4. Auth Site URL/redirects, Google and Apple callbacks, SMTP, password
-   protection, MFA, rate limits, and session revocation behavior.
+3. A real `anon`, user A, user B, admin, and service-role access matrix. Capture
+   a user access JWT before deletion and require explicit permission denial for
+   every table/RPC/Storage attempt immediately after deletion and before expiry.
+4. Auth Site URL/redirects, the Google callback, proof that Apple OAuth is
+   disabled, SMTP, password protection, MFA, rate limits, and session
+   revocation behavior.
 5. Storage denial tests for `anon` and authenticated users plus a controlled
    service-role upload/download/delete canary.
 6. Managed backup/PITR status and a restore rehearsal that includes the

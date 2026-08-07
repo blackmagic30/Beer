@@ -11,7 +11,7 @@ These are native apps, not WebView, React Native, Expo, or Capacitor wrappers.
 
 ## Architecture and authentication
 
-The Express `/api/business/*` API is the product source of truth. Both apps use Supabase Auth REST for email/password, then exchange the Supabase access token for a scoped Pint Path app session at `/api/business/auth/supabase-session`. Android also contains Google/Apple authorization-code PKCE provider login. The first-release iOS target compiles provider login out and declares no custom callback scheme. Apps do not access private Supabase tables and never contain service-role keys.
+The Express `/api/business/*` API is the product source of truth. Both apps use Supabase Auth REST for email/password, then exchange the Supabase access token for a scoped Pint Path app session at `/api/business/auth/supabase-session`. The iOS release reads the public Supabase origin/key from its compiled configuration, pins the origin to `https://auth.pintpath.au`, and never falls back to sending a password to the Express login endpoint. Android retains Google/Apple authorization-code PKCE code but is outside this launch; launch web OAuth is Google-only, and Apple must remain disabled until authorization-token revocation is implemented and tested. The first-release iOS target compiles provider login out and declares no custom callback scheme. Apps do not access private Supabase tables and never contain service-role keys.
 
 Session storage is device-protected:
 
@@ -41,7 +41,7 @@ Only public configuration belongs in native builds:
 - `SUPABASE_URL`
 - `SUPABASE_ANON_KEY`
 
-Android Google/Apple sign-in additionally requires `pintpath://auth-callback` in the Supabase redirect allow list and valid provider-console configuration. The first-release iOS app uses no custom URL scheme; email confirmation and password recovery complete through the exact HTTPS web callback, after which the user returns to the app and signs in.
+Any future Android provider release additionally requires `pintpath://auth-callback` in the Supabase redirect allow list and valid provider-console configuration. Google may be configured for that future release; Apple remains deferred until authorization-token revocation is implemented and tested. Both native password-recovery requests return through the exact HTTPS web callback so it can verify the recovery session before opening password-update mode. The first-release iOS app uses no custom URL scheme; after email confirmation or recovery completes on the web, the user returns to the app and signs in.
 
 iOS local configuration uses `apps/ios/Config.xcconfig`; Android uses `apps/android/local.properties`. Both local files are ignored.
 

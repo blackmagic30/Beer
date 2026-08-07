@@ -226,6 +226,47 @@ function approveMissionSubmission(
 }
 
 describe("autonomous mission lifecycle", () => {
+  it("hides and blocks happy-hour missions while retaining them for admin operations", () => {
+    const { repository, service } = createHarness();
+    const contributor = createAccount(repository, "mission-launch-scope-contributor");
+    const admin = createAccount(repository, "mission-launch-scope-admin", "admin");
+    const regularMission = createMission(service, "mission-launch-regular", "Regular Mission Hotel");
+    const happyHourMission = service.createMission({
+      venueId: "mission-launch-happy-hour",
+      venueName: "Happy Hour Mission Hotel",
+      suburb: "Melbourne",
+      reason: "Missing happy-hour details - add current specials",
+      priority: "high",
+      points: 5,
+      multiplier: 1,
+      active: true,
+    });
+
+    const page = service.getMissionsPage({ limit: 20, offset: 0, sort: "points" }, contributor);
+    expect(page.missions.map((mission) => mission.id)).toEqual([regularMission.id]);
+    expect(page.pagination).toEqual({ total: 1, limit: 20, offset: 0, hasMore: false });
+    expect(service.listMissions({ limit: 20, sort: "missing_happy_hour" }, contributor)
+      .some((mission) => mission.id === happyHourMission.id)).toBe(false);
+    expect(service.listAdminMissions(admin).missions.map((mission) => mission.id))
+      .toContain(happyHourMission.id);
+
+    expect(() => service.acceptMission(contributor, happyHourMission.id))
+      .toThrow("not available during the current public launch");
+    expect(repository.getMissionProgress({ missionId: happyHourMission.id, userId: contributor.id }))
+      .toBeNull();
+
+    expect(repository.acceptMission({
+      missionId: happyHourMission.id,
+      userId: contributor.id,
+      now: START,
+      acceptedAfter: "2020-01-01T00:00:00.000Z",
+    })).toMatchObject({ status: "accepted" });
+    expect(() => submitMission(service, contributor, happyHourMission))
+      .toThrow("not available during the current public launch");
+    expect(repository.getMissionProgress({ missionId: happyHourMission.id, userId: contributor.id }))
+      .toMatchObject({ status: "accepted", submissionId: null });
+  });
+
   it("moves an accepted mission through submitted to completed and archives it on approval", () => {
     const { repository, service } = createHarness();
     const contributor = createAccount(repository, "mission-contributor");

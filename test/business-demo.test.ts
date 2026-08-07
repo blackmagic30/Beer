@@ -17,6 +17,8 @@ import { CURRENT_DATABASE_SCHEMA_VERSION, initializeDatabaseSchema } from "../sr
 import { errorHandler } from "../src/middleware/error-handler.js";
 import { AppError } from "../src/lib/errors.js";
 import { scheduleMissionMaintenance } from "../src/lib/mission-maintenance.js";
+import { createMockAccountDeletionNotificationProvider } from "../src/lib/account-deletion-notification.js";
+import { AccountDeletionNotificationCoordinator } from "../src/lib/account-deletion-notification-worker.js";
 import { SESSION_COOKIE_NAME } from "../src/lib/session-cookie.js";
 import { getZonedMonthKey, getZonedMonthRangeIso } from "../src/lib/time.js";
 import { createAdminRouter } from "../src/modules/admin/admin.routes.js";
@@ -112,6 +114,18 @@ function createBusinessService(
   const evidenceStorageDir = fs.mkdtempSync(path.join(os.tmpdir(), "pintpath-evidence-"));
   evidenceStorageDirs.push(evidenceStorageDir);
 
+  const deletionNotificationCoordinator = new AccountDeletionNotificationCoordinator(repository, {
+    provider: createMockAccountDeletionNotificationProvider(),
+    keyring: {
+      activeKeyId: "test-v1",
+      keys: new Map([["test-v1", Buffer.alloc(32, 7)]]),
+    },
+    publicBaseUrl: "http://127.0.0.1:3000",
+    from: "account@mock.pintpath.local",
+    replyTo: "admin@pintpath.au",
+    supportEmail: "admin@pintpath.au",
+  });
+
   return new BusinessService(repository, {
     PUBLIC_BASE_URL: "http://127.0.0.1:3000",
     CONTRIBUTOR_UNLOCK_POINTS: 15,
@@ -130,6 +144,8 @@ function createBusinessService(
     ANALYTICS_MIN_BUCKET_SIZE: 5,
     REPORT_TIMEZONE: "Australia/Melbourne",
     REPORT_EMAIL_MODE: "disabled",
+    ACCOUNT_DELETION_NOTICE_MODE: "mock",
+    RESEND_WEBHOOK_SIGNING_SECRET: `whsec_${Buffer.alloc(32, 8).toString("base64")}`,
     ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION: false,
     SOURCE_EVIDENCE_STORAGE_DIR: evidenceStorageDir,
     SOURCE_EVIDENCE_SIGNING_SECRET: "test-source-evidence-signing-secret-32-bytes",
@@ -151,7 +167,8 @@ function createBusinessService(
     GOOGLE_MAPS_API_KEY: undefined,
     GOOGLE_PLACES_API_KEY: undefined,
     ...overrides,
-  }, new BeerCatalogRepository(repositoryDatabases.get(repository)!), menuPhotoOcr, supabaseClientOverride);
+  }, new BeerCatalogRepository(repositoryDatabases.get(repository)!), menuPhotoOcr, supabaseClientOverride,
+  undefined, deletionNotificationCoordinator);
 }
 
 function createAccount(repository: BusinessRepository, id: string, role: "user" | "admin" = "user") {
@@ -313,6 +330,7 @@ async function withHttpServer(
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
   openDatabases.forEach((database) => database.close());
   openDatabases = [];
   evidenceStorageDirs.forEach((dir) => fs.rmSync(dir, { recursive: true, force: true }));
@@ -1584,6 +1602,13 @@ describe("Supabase account and verification foundation", () => {
       }],
     })).submission;
     const evidenceId = submission.sourcePhotoUrl!.replace("private:evidence:", "");
+    approve(repository, submission.id, admin.id);
+    expect(database.prepare(
+      "SELECT count(*) AS count FROM venue_price_records WHERE source_submission_id = ?",
+    ).get(submission.id)).toEqual({ count: 1 });
+    expect(database.prepare(
+      "SELECT count(*) AS count FROM contribution_ledger WHERE submission_id = ?",
+    ).get(submission.id)).toEqual({ count: 1 });
     repository.recordEvent({
       id: "deletion-cross-actor-event",
       userId: admin.id,
@@ -1616,6 +1641,7 @@ describe("Supabase account and verification foundation", () => {
     await expect(service.executeAccountDeletion(admin, requestId)).rejects.toThrow(
       "seven-day account deletion safety window",
     );
+    expect(repository.getAccountDeletionCompletionOutbox(requestId)).toBeNull();
 
     database
       .prepare("UPDATE account_deletion_requests SET execute_after = ? WHERE id = ?")
@@ -1623,6 +1649,18 @@ describe("Supabase account and verification foundation", () => {
     const result = await service.executeAccountDeletion(admin, requestId);
 
     expect(result).toEqual(expect.objectContaining({ requestId, status: "completed" }));
+    expect(repository.getAccountDeletionCompletionOutbox(requestId)).toEqual(expect.objectContaining({
+      request_id: requestId,
+      status: "pending",
+      provider_message_id: null,
+    }));
+    const notificationSecret = repository.getAccountDeletionNoticeRecipientSecret(requestId);
+    expect(notificationSecret).toEqual(expect.objectContaining({ key_id: "test-v1" }));
+    expect(Buffer.concat([
+      notificationSecret!.nonce,
+      notificationSecret!.ciphertext,
+      notificationSecret!.auth_tag,
+    ]).includes(Buffer.from(account.email, "utf8"))).toBe(false);
     expect(repository.getAccountById(account.id)).toEqual(expect.objectContaining({
       email: `deleted-${account.id}@invalid.pintpath.local`,
       status: "suspended",
@@ -1632,11 +1670,23 @@ describe("Supabase account and verification foundation", () => {
       dataBase64: null,
       deletedAt: NOW,
     }));
-    expect(repository.getSubmissionById(submission.id)?.submission).toEqual(expect.objectContaining({
-      notes: null,
-      sourcePhotoUrl: null,
-      uploadLatitude: null,
-      uploadLongitude: null,
+    expect(repository.getSubmissionById(submission.id)).toBeNull();
+    expect(database.prepare(
+      "SELECT count(*) AS count FROM submission_items WHERE submission_id = ?",
+    ).get(submission.id)).toEqual({ count: 0 });
+    expect(database.prepare(
+      "SELECT count(*) AS count FROM contribution_ledger WHERE user_id = ? OR submission_id = ?",
+    ).get(account.id, submission.id)).toEqual({ count: 0 });
+    expect(database.prepare(
+      "SELECT count(*) AS count FROM venue_price_records WHERE source_submission_id = ?",
+    ).get(submission.id)).toEqual({ count: 0 });
+    expect(result).toEqual(expect.objectContaining({
+      summary: expect.objectContaining({
+        removedSubmissions: 1,
+        removedSubmissionItems: 1,
+        removedContributionRows: 1,
+        removedDerivedPriceRecords: 1,
+      }),
     }));
     expect(database.prepare("SELECT COUNT(*) AS count FROM auth_sessions WHERE user_id = ?").get(account.id))
       .toEqual({ count: 0 });
@@ -1650,6 +1700,116 @@ describe("Supabase account and verification foundation", () => {
     expect(scrubbedMetadata).not.toContain(account.email.toLowerCase());
     expect(scrubbedMetadata).not.toContain(account.id.toLowerCase());
     expect(scrubbedMetadata).toContain("deleted-email");
+  });
+
+  it("commits local evidence scrubbing before the post-commit deletion cleanup can fail", async () => {
+    const { database, repository } = createRepository();
+    const service = createBusinessService(repository);
+    const account = createAccount(repository, "deletion-atomic-evidence-user");
+    const admin = createAccount(repository, "deletion-atomic-evidence-admin", "admin");
+
+    const submission = service.createSubmission(account, createSubmissionSchema.parse({
+      venueId: "deletion-atomic-evidence-venue",
+      venueName: "Deletion Atomic Evidence Venue",
+      suburb: "Melbourne",
+      submissionType: "single_beer_price",
+      observedAt: NOW,
+      sourcePhotoDataUrl: PNG_DATA_URL,
+      sourcePhotoUrl: null,
+      notes: "This evidence must be scrubbed atomically.",
+      items: [{
+        beerName: "Guinness",
+        servingSize: "pint",
+        price: 13,
+        isHappyHourPrice: false,
+        happyHourDetails: null,
+        isOnTap: "yes",
+      }],
+    })).submission;
+    const evidenceId = submission.sourcePhotoUrl!.replace("private:evidence:", "");
+    database.prepare(
+      "UPDATE source_evidence_objects SET external_url = ? WHERE id = ?",
+    ).run("https://private.example.test/account-evidence.png", evidenceId);
+
+    const requestId = String(service.requestAccountDeletion(account, {}).request.id);
+    database.prepare(
+      "UPDATE account_deletion_requests SET execute_after = ? WHERE id = ?",
+    ).run("2026-05-03T08:00:00.000Z", requestId);
+    vi.spyOn(repository, "markSourceEvidenceDeleted").mockImplementation(() => {
+      throw new Error("simulated post-commit evidence cleanup failure");
+    });
+
+    await expect(service.executeAccountDeletion(admin, requestId)).resolves.toEqual(
+      expect.objectContaining({ requestId, status: "completed" }),
+    );
+
+    expect(database.prepare(
+      `SELECT owner_user_id, data_base64, external_url, byte_size, deleted_at
+         FROM source_evidence_objects WHERE id = ?`,
+    ).get(evidenceId)).toEqual({
+      owner_user_id: null,
+      data_base64: null,
+      external_url: null,
+      byte_size: null,
+      deleted_at: NOW,
+    });
+    expect(database.prepare(
+      "SELECT status, completed_at FROM account_deletion_requests WHERE id = ?",
+    ).get(requestId)).toEqual({ status: "completed", completed_at: NOW });
+  });
+
+  it("orders eligible account deletions oldest-first and reports actionable queue health", () => {
+    const { database, repository } = createRepository();
+    const service = createBusinessService(repository);
+    const admin = createAccount(repository, "deletion-queue-admin", "admin");
+    const dueOldestAccount = createAccount(repository, "deletion-queue-due-oldest");
+    const dueFailedAccount = createAccount(repository, "deletion-queue-due-failed");
+    const futureProcessingAccount = createAccount(repository, "deletion-queue-future-processing");
+    const completedAccount = createAccount(repository, "deletion-queue-completed");
+
+    const dueOldestId = String(service.requestAccountDeletion(dueOldestAccount, {}).request.id);
+    const dueFailedId = String(service.requestAccountDeletion(dueFailedAccount, {}).request.id);
+    const futureProcessingId = String(service.requestAccountDeletion(futureProcessingAccount, {}).request.id);
+    const completedId = String(service.requestAccountDeletion(completedAccount, {}).request.id);
+    const updateQueueRow = database.prepare(
+      `UPDATE account_deletion_requests
+          SET status = ?, requested_at = ?, execute_after = ?
+        WHERE id = ?`,
+    );
+    updateQueueRow.run("pending_review", "2026-04-20T08:00:00.000Z", "2026-04-27T08:00:00.000Z", dueOldestId);
+    updateQueueRow.run("failed", "2026-04-25T08:00:00.000Z", "2026-05-02T08:00:00.000Z", dueFailedId);
+    updateQueueRow.run("processing", "2026-05-03T08:00:00.000Z", "2026-05-10T08:00:00.000Z", futureProcessingId);
+    updateQueueRow.run("completed", "2026-04-01T08:00:00.000Z", "2026-04-08T08:00:00.000Z", completedId);
+
+    const firstPage = service.listAccountDeletionRequests(admin, { limit: 3, offset: 0 });
+    expect(firstPage.requests.map((request) => request.id)).toEqual([
+      dueOldestId,
+      dueFailedId,
+      futureProcessingId,
+    ]);
+    expect(firstPage.summary).toEqual({
+      asOf: NOW,
+      actionableCount: 3,
+      dueCount: 2,
+      failedCount: 1,
+      processingCount: 1,
+      oldestDueAt: "2026-04-27T08:00:00.000Z",
+      nextDueAt: "2026-05-10T08:00:00.000Z",
+      notifications: {
+        pendingCount: 0,
+        acceptedCount: 0,
+        manualReviewCount: 0,
+        overdueRetentionCount: 0,
+        securePurgeCheckpointPendingCount: 0,
+        oldestSecurePurgeCheckpointAt: null,
+        oldestPendingAt: null,
+      },
+    });
+    expect(firstPage.pagination).toEqual({ limit: 3, offset: 0, hasMore: true });
+
+    const secondPage = service.listAccountDeletionRequests(admin, { limit: 3, offset: 3 });
+    expect(secondPage.requests.map((request) => request.id)).toEqual([completedId]);
+    expect(secondPage.pagination.hasMore).toBe(false);
   });
 
   it("saves account privacy settings and suppresses opted-out optional analytics", () => {
@@ -1883,7 +2043,7 @@ describe("Supabase account and verification foundation", () => {
 });
 
 describe("production hardening", () => {
-  it("limits free users to happy hours and core pint price previews server-side", () => {
+  it("limits free users to core pint price previews server-side", () => {
     const { repository } = createRepository();
     const service = createBusinessService(repository);
     const submitter = createAccount(repository, "submitter");
@@ -1935,6 +2095,83 @@ describe("production hardening", () => {
       anonymousSessionId: "anon-price-test",
       since: todayStart.toISOString(),
     })).toBe(0);
+  });
+
+  it("rejects public happy-hour contribution payloads while preserving venue-manager collection", async () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository);
+    const user = createAccount(repository, "launch-scope-user");
+    const manager = createAccount(repository, "launch-scope-manager");
+    const admin = createAccount(repository, "launch-scope-admin", "admin");
+    service.assignVenueManager(admin, {
+      userId: manager.id,
+      venueId: "launch-scope-venue",
+      venueName: "Launch Scope Hotel",
+      suburb: "Melbourne",
+    });
+
+    const submission = (overrides: Record<string, unknown> = {}) => createSubmissionSchema.parse({
+      clientSubmissionId: null,
+      missionId: null,
+      venueId: "launch-scope-venue",
+      venueName: "Launch Scope Hotel",
+      suburb: "Melbourne",
+      newVenue: null,
+      submissionType: "single_beer_price",
+      observedAt: NOW,
+      sourcePhotoDataUrl: null,
+      sourcePhotoDataUrls: [],
+      sourceDocumentDataUrl: null,
+      sourcePhotoUrl: null,
+      uploadLocation: null,
+      notes: null,
+      items: [{
+        beerName: "Carlton Draught",
+        servingSize: "pint",
+        price: 9,
+        isHappyHourPrice: false,
+        happyHourDetails: null,
+        isOnTap: "yes",
+      }],
+      ...overrides,
+    });
+
+    expect(() => service.createSubmission(user, submission({
+      submissionType: "happy_hour_update",
+    }))).toThrow("Happy-hour contributions are not available");
+    expect(() => service.createSubmission(user, submission({
+      items: [{
+        beerName: "Carlton Draught",
+        servingSize: "pint",
+        price: 9,
+        isHappyHourPrice: true,
+        happyHourDetails: null,
+        isOnTap: "yes",
+      }],
+    }))).toThrow("Happy-hour contributions are not available");
+    expect(() => service.createSubmission(user, submission({
+      items: [{
+        beerName: "Carlton Draught",
+        servingSize: "pint",
+        price: 9,
+        isHappyHourPrice: false,
+        happyHourDetails: "Weekdays 5pm-7pm",
+        isOnTap: "yes",
+      }],
+    }))).toThrow("Happy-hour contributions are not available");
+    await expect(service.createUserSubmission(user, submission({
+      submissionType: "happy_hour_update",
+    }))).rejects.toThrow("Happy-hour contributions are not available");
+
+    const venueResult = await service.createVenueManagerSubmission(
+      repository.getAccountById(manager.id)!,
+      "launch-scope-venue",
+      submission({ submissionType: "happy_hour_update" }),
+    );
+    expect(venueResult.submission).toEqual(expect.objectContaining({
+      submissionType: "happy_hour_update",
+      userId: manager.id,
+    }));
   });
 
   it("filters obvious crawler noise out of public price records", () => {
@@ -2431,9 +2668,13 @@ describe("production hardening", () => {
       return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
     });
     vi.stubGlobal("fetch", fetchMock);
+    vi.stubEnv("RAILWAY_ENVIRONMENT_NAME", "production");
     try {
       const service = createBusinessService(repository, {
         NODE_ENV: "production",
+        DEMO_BILLING_MODE: false,
+        COMMERCIAL_LAUNCH_ENABLED: false,
+        CONSUMER_PAID_ENROLLMENT_ENABLED: false,
         SUPABASE_URL: "https://project.supabase.co",
         SUPABASE_ANON_KEY: legacyAnonKey,
         SUPABASE_SERVICE_ROLE_KEY: legacyServiceRoleKey,
@@ -2450,6 +2691,7 @@ describe("production hardening", () => {
         supabaseAuth: expect.objectContaining({ status: "ok", required: true, liveProbe: true }),
         supabaseDatabase: expect.objectContaining({ status: "ok", required: true, liveProbe: true }),
         supabaseEvidenceStorage: expect.objectContaining({ status: "ok", required: true, liveProbe: true }),
+        billingProvider: { status: "deferred", required: false },
       }));
       expect(second.dependencies).toEqual(first.dependencies);
       expect(fetchMock).toHaveBeenCalledTimes(3);
@@ -2467,6 +2709,196 @@ describe("production hardening", () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+
+  it.each([
+    ["commercial launch", { COMMERCIAL_LAUNCH_ENABLED: true, CONSUMER_PAID_ENROLLMENT_ENABLED: false }],
+    ["consumer paid enrollment", { COMMERCIAL_LAUNCH_ENABLED: false, CONSUMER_PAID_ENROLLMENT_ENABLED: true }],
+  ])("requires complete Stripe configuration when %s is enabled", async (_label, paidFlags) => {
+    const { repository } = createRepository();
+    vi.stubEnv("RAILWAY_ENVIRONMENT_NAME", "production");
+
+    const readiness = await createBusinessService(repository, {
+      NODE_ENV: "production",
+      DEMO_BILLING_MODE: true,
+      ...paidFlags,
+    }).getOperationalReadiness();
+
+    expect(readiness.ready).toBe(false);
+    expect(readiness.dependencies.billingProvider).toEqual({
+      status: "missing",
+      required: true,
+    });
+  });
+
+  it("requires Stripe when paid enrollment is enabled in a production-mode staging runtime", async () => {
+    const { repository } = createRepository();
+    vi.stubEnv("RAILWAY_ENVIRONMENT_NAME", "staging");
+
+    const readiness = await createBusinessService(repository, {
+      NODE_ENV: "production",
+      COMMERCIAL_LAUNCH_ENABLED: true,
+      CONSUMER_PAID_ENROLLMENT_ENABLED: false,
+    }).getOperationalReadiness();
+
+    expect(readiness.ready).toBe(false);
+    expect(readiness.dependencies.billingProvider).toEqual({
+      status: "missing",
+      required: true,
+    });
+    expect(readiness.dependencies.venueLookupProvider.required).toBe(false);
+    expect(readiness.dependencies.menuExtractionProvider.required).toBe(false);
+  });
+
+  it("keeps deferred commercial providers optional during a Railway staging deletion rehearsal", async () => {
+    const { repository } = createRepository();
+    const publishableKey = ["sb", "publishable", "deletion_rehearsal_fixture"].join("_");
+    const secretKey = ["sb", "secret", "deletion_rehearsal_fixture"].join("_");
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      if (String(input).includes("/storage/v1/bucket/")) {
+        return new Response(JSON.stringify({
+          public: false,
+          file_size_limit: 8 * 1024 * 1024,
+          allowed_mime_types: [
+            "image/jpeg", "image/png", "image/webp", "image/heic", "image/heif", "application/pdf",
+          ],
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubEnv("RAILWAY_ENVIRONMENT_NAME", "staging");
+
+    const readiness = await createBusinessService(repository, {
+      NODE_ENV: "production",
+      ACCOUNT_DELETION_REHEARSAL_ENABLED: true,
+      DEMO_BILLING_MODE: false,
+      COMMERCIAL_LAUNCH_ENABLED: false,
+      CONSUMER_PAID_ENROLLMENT_ENABLED: false,
+      SUPABASE_URL: "https://deletion-staging.supabase.co",
+      SUPABASE_ANON_KEY: publishableKey,
+      SUPABASE_SERVICE_ROLE_KEY: secretKey,
+      GOOGLE_PLACES_API_KEY: undefined,
+      OPENAI_API_KEY: undefined,
+    }).getOperationalReadiness();
+
+    expect(readiness.ready).toBe(true);
+    expect(readiness.dependencies.billingProvider).toEqual({
+      status: "deferred",
+      required: false,
+    });
+    expect(readiness.dependencies.venueLookupProvider).toEqual({
+      status: "missing",
+      required: false,
+    });
+    expect(readiness.dependencies.menuExtractionProvider).toEqual({
+      status: "missing",
+      required: false,
+    });
+    expect(readiness.dependencies.accountDeletionNotifications).toEqual(expect.objectContaining({
+      status: "operator_attention_required",
+      required: true,
+    }));
+    expect(readiness.dependencies.supabaseDatabase).toEqual(expect.objectContaining({
+      status: "ok",
+      required: true,
+      liveProbe: true,
+    }));
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it.each([
+    ["failed scheduler", "failed", NOW, "scheduler_failed"],
+    ["stale scheduler", "succeeded", "2026-05-04T07:00:00.000Z", "scheduler_stale"],
+  ])("fails deletion operational readiness for a %s", async (_label, state, updatedAt, reason) => {
+    const { repository } = createRepository();
+    repository.setSystemState("job:account_deletion_notifications", { state }, updatedAt);
+
+    const readiness = await createBusinessService(repository, {
+      ACCOUNT_DELETION_REHEARSAL_ENABLED: true,
+      COMMERCIAL_LAUNCH_ENABLED: false,
+      CONSUMER_PAID_ENROLLMENT_ENABLED: false,
+    }).getOperationalReadiness();
+
+    expect(readiness.ready).toBe(false);
+    expect(readiness.dependencies.accountDeletionNotifications).toEqual(expect.objectContaining({
+      required: true,
+      operationalGateReady: false,
+      operationalBlockingReasons: [reason],
+    }));
+  });
+
+  it.each([
+    ["overdue recipient ciphertext", { overdueRetentionCount: 1 }, "recipient_retention_overdue"],
+    [
+      "persistent WAL purge checkpoint",
+      {
+        securePurgeCheckpointPendingCount: 1,
+        oldestSecurePurgeCheckpointAt: "2026-05-04T07:00:00.000Z",
+      },
+      "secure_purge_checkpoint_persistent",
+    ],
+  ])("fails deletion operational readiness for %s", async (_label, queueOverrides, reason) => {
+    const { repository } = createRepository();
+    repository.setSystemState("job:account_deletion_notifications", { state: "succeeded" }, NOW);
+    const queueSummary = repository.getAccountDeletionNotificationQueueSummary(NOW);
+    vi.spyOn(repository, "getAccountDeletionNotificationQueueSummary").mockReturnValue({
+      ...queueSummary,
+      ...queueOverrides,
+    });
+
+    const readiness = await createBusinessService(repository, {
+      ACCOUNT_DELETION_REHEARSAL_ENABLED: true,
+      COMMERCIAL_LAUNCH_ENABLED: false,
+      CONSUMER_PAID_ENROLLMENT_ENABLED: false,
+    }).getOperationalReadiness();
+
+    expect(readiness.ready).toBe(false);
+    expect(readiness.dependencies.accountDeletionNotifications).toEqual(expect.objectContaining({
+      required: true,
+      operationalGateReady: false,
+      operationalBlockingReasons: [reason],
+    }));
+  });
+
+  it("keeps manual-review notifications visible but nonfatal to deletion operational readiness", async () => {
+    const { repository } = createRepository();
+    repository.setSystemState("job:account_deletion_notifications", { state: "succeeded" }, NOW);
+    const queueSummary = repository.getAccountDeletionNotificationQueueSummary(NOW);
+    vi.spyOn(repository, "getAccountDeletionNotificationQueueSummary").mockReturnValue({
+      ...queueSummary,
+      manualReviewCount: 1,
+    });
+
+    const readiness = await createBusinessService(repository, {
+      ACCOUNT_DELETION_REHEARSAL_ENABLED: true,
+      COMMERCIAL_LAUNCH_ENABLED: false,
+      CONSUMER_PAID_ENROLLMENT_ENABLED: false,
+    }).getOperationalReadiness();
+
+    expect(readiness.ready).toBe(true);
+    expect(readiness.dependencies.accountDeletionNotifications).toEqual(expect.objectContaining({
+      status: "operator_attention_required",
+      required: true,
+      manualReviewCount: 1,
+      operationalGateReady: true,
+      operationalBlockingReasons: [],
+    }));
+  });
+
+  it("keeps local startup readiness restart-safe before the deletion scheduler's first tick", () => {
+    const { repository } = createRepository();
+    const startup = createBusinessService(repository, {
+      NODE_ENV: "production",
+      ACCOUNT_DELETION_NOTICE_MODE: "resend",
+    }).getLocalStartupReadiness();
+
+    expect(startup.ready).toBe(true);
+    expect(startup.dependencies.accountDeletionNotifications).toEqual({
+      required: true,
+      configured: true,
+      schedulerState: "not_run",
+    });
   });
 
   it("keeps Supabase live checks required but disables external providers in restore rehearsal mode", async () => {
@@ -5114,8 +5546,25 @@ describe("production hardening", () => {
       "commercial-gate-venue",
     );
 
-    expect(service.getPublicConfig().commercialLaunchEnabled).toBe(false);
-    expect(service.getPublicConfig().consumerPaidEnrollmentEnabled).toBe(false);
+    expect(service.getPublicConfig()).toEqual(expect.objectContaining({
+      commercialLaunchEnabled: false,
+      consumerPaidEnrollmentEnabled: false,
+      pricing: null,
+      venueProTrialDays: 0,
+      venueProTrialRequiresPaymentMethod: false,
+    }));
+    const deferredAccess = service.getAccessState(user, null);
+    expect(deferredAccess).toEqual(expect.objectContaining({
+      canUseHappyHourActiveNow: false,
+      canViewSpecialDiscounts: false,
+      canUseDiscountPass: false,
+      premiumToolkit: expect.objectContaining({
+        title: "Unlock the full map toolkit",
+        primaryAction: { label: "Upload venue data", href: "/submit.html" },
+      }),
+    }));
+    expect(JSON.stringify(deferredAccess)).not.toMatch(/A\$(?:4\.99|50|149)/);
+    expect(JSON.stringify(deferredAccess)).not.toContain("Upgrade monthly");
     await expect(service.createCheckout(user, { plan: "monthly" })).rejects.toMatchObject({
       statusCode: 503,
       details: { publicCode: "CONSUMER_PAID_ENROLLMENT_DISABLED" },
@@ -6478,6 +6927,7 @@ describe("business demo contribution model", () => {
     });
 
     const leaderboard = service.getLeaderboard(firstUser, { period: "all_time", limit: 10 });
+    expect(leaderboard.disabled).toBe(false);
     expect(firstUser.publicAccountId).toMatch(/^PP-[A-Z0-9]{8}$/);
     expect(secondUser.publicAccountId).toMatch(/^PP-[A-Z0-9]{8}$/);
     expect(leaderboard.entries[0]).toEqual(expect.objectContaining({
@@ -6970,7 +7420,7 @@ describe("business demo contribution model", () => {
     expect(dashboard.premiumMemberToolkit).toEqual(expect.objectContaining({
       enabled: true,
       status: "active",
-      title: "Premium member toolkit",
+      title: "Full map toolkit",
       counts: expect.objectContaining({
         totalRedemptions: 1,
         uniqueDiscountVenues: 1,
@@ -6989,7 +7439,7 @@ describe("business demo contribution model", () => {
   });
 
   it("fails closed for Pint Points and Free Pint Rewards when launch approval is not enabled", async () => {
-    const { repository } = createRepository();
+    const { database, repository } = createRepository();
     const service = createBusinessService(repository, {
       PINT_POINTS_REWARDS_ENABLED: false,
       ALCOHOL_GAMIFICATION_ENABLED: false,
@@ -6997,6 +7447,13 @@ describe("business demo contribution model", () => {
     const admin = createAccount(repository, "disabled-pint-points-admin", "admin");
     const manager = createAccount(repository, "disabled-pint-points-manager");
     const user = createAccount(repository, "disabled-pint-points-user");
+    service.updateDisplayName(user, { displayName: "Private Contributor" });
+    const contribution = createSubmission(repository, {
+      id: "disabled-leaderboard-submission",
+      userId: user.id,
+      venueId: "disabled-leaderboard-venue",
+    });
+    approve(repository, contribution.id, admin.id);
 
     service.assignVenueManager(admin, {
       userId: manager.id,
@@ -7008,7 +7465,54 @@ describe("business demo contribution model", () => {
     expect(service.getPublicConfig().pintPointsRewardsEnabled).toBe(false);
     expect(service.getPublicConfig().alcoholGamificationEnabled).toBe(false);
     expect(service.getPublicConfig().happyHourDiscoveryEnabled).toBe(false);
-    expect(service.getAccountDashboard(user).pintPoints).toBeNull();
+    expect(service.getPublicConfig().happyHourContributionsEnabled).toBe(false);
+    expect(database.prepare("SELECT COUNT(*) AS count FROM leaderboard_prize_campaigns").get()).toEqual({ count: 0 });
+    const publicLeaderboard = service.getLeaderboard(null, { period: "month", limit: 50 });
+    expect(publicLeaderboard).toEqual(expect.objectContaining({
+      disabled: true,
+      campaign: null,
+      podium: [],
+      entries: [],
+      me: null,
+    }));
+    expect(JSON.stringify(publicLeaderboard)).not.toContain("Private Contributor");
+    const accountDashboard = service.getAccountDashboard(user);
+    expect(accountDashboard.pintPoints).toBeNull();
+    expect(accountDashboard.leaderboard).toEqual(expect.objectContaining({
+      disabled: true,
+      accountId: null,
+      monthRank: null,
+      campaign: null,
+      entries: [],
+    }));
+    expect(accountDashboard.betaTesting.leaderboard).toEqual(expect.objectContaining({
+      disabled: true,
+      campaign: null,
+      entries: [],
+      me: null,
+    }));
+    expect(accountDashboard.rewards.status).toBe("paused");
+    expect(JSON.stringify(accountDashboard.leaderboard)).not.toContain("Private Contributor");
+    expect(service.getLeaderboardPrizeAdmin(admin)).toEqual(expect.objectContaining({
+      disabled: true,
+      campaign: null,
+      awards: [],
+      vouchers: [],
+    }));
+    expect(() => service.saveLeaderboardPrizeCampaign(admin, {
+      monthKey: MONTH_KEY,
+      title: "Must stay paused",
+      affiliateBar: null,
+      terms: null,
+      firstPlaceCents: 10_000,
+      secondPlaceCents: 5_000,
+      thirdPlaceCents: 2_500,
+    })).toThrow("paused while the launch promotion completes legal and venue approval");
+    expect(() => service.finalizeLeaderboardPrizeCampaign(admin, {
+      monthKey: MONTH_KEY,
+      force: true,
+    })).toThrow("paused while the launch promotion completes legal and venue approval");
+    expect(database.prepare("SELECT COUNT(*) AS count FROM leaderboard_prize_campaigns").get()).toEqual({ count: 0 });
     expect(service.getVenuePortal(
       repository.getAccountById(manager.id)!,
       { venueId: "disabled-pint-points-venue" },
@@ -8700,7 +9204,8 @@ describe("business demo contribution model", () => {
       points: 1,
       reason: expect.stringContaining("Stale drink menu"),
     }));
-    expect(byId.get("auto:venue:auto-fresh:happy-hour")).toEqual(expect.objectContaining({
+    expect(byId.get("auto:venue:auto-fresh:happy-hour")).toBeUndefined();
+    expect(repository.getMissionById("auto:venue:auto-fresh:happy-hour")).toEqual(expect.objectContaining({
       points: 5,
       reason: "Missing happy-hour details - add current specials",
     }));
@@ -9747,20 +10252,16 @@ describe("business demo contribution model", () => {
       venueId: "bar-1",
       anonymousSessionId: "bar-before-approval",
     });
-    expect(publicBeforeApproval.records).toEqual(expect.arrayContaining([
+    expect(publicBeforeApproval.records).toEqual([
       expect.objectContaining({
         beerName: "Carlton Draught",
         price: 13,
         sourceType: "venue_manager_portal",
       }),
-      expect.objectContaining({
-        displayKind: "special",
-        specialTitle: "Venue special",
-        priceRedacted: true,
-        sourceType: "venue_manager_portal:special",
-      }),
-    ]));
-    expect(publicBeforeApproval.records.some((record) => record.displayKind === "happy_hour")).toBe(true);
+    ]);
+    expect(publicBeforeApproval.records.some((record) =>
+      record.displayKind === "happy_hour" || record.displayKind === "special",
+    )).toBe(false);
 
     const approvedPortal = service.getVenuePortal(managerAccount, { venueId: "bar-1" });
     expect(approvedPortal.profile.membershipTier).toBe("pro");
@@ -9779,91 +10280,51 @@ describe("business demo contribution model", () => {
       venueId: "bar-1",
       anonymousSessionId: "bar-preview-anon",
     });
-    expect(publicPreview.records).toEqual(expect.arrayContaining([
+    expect(publicPreview.records).toEqual([
       expect.objectContaining({
         beerName: "Carlton Draught",
         price: 13,
         freePreviewIncluded: true,
         sourceType: "venue_manager_portal",
       }),
-      expect.objectContaining({
-        displayKind: "happy_hour",
-        happyHourDetails: "$9 house pints, selected taps only.",
-        happyHourStartTime: "16:00",
-        happyHourEndTime: "18:00",
-        happyHourBeers: expect.arrayContaining([
-          expect.objectContaining({ beerName: "Carlton Draught", servingSize: "pint", happyHourPrice: 9, offerText: "House pint" }),
-        ]),
-        sourceType: "venue_manager_portal",
-        freePreviewIncluded: true,
-      }),
-      expect.objectContaining({
-        displayKind: "special",
-        beerName: "Venue special",
-        price: null,
-        priceRedacted: true,
-        specialExclusive: false,
-        specialDescription: null,
-        specialDiscount: null,
-        sourceType: "venue_manager_portal:special",
-      }),
-    ]));
-    const previewHappyHour = publicPreview.records.find((record) => record.displayKind === "happy_hour");
-    expect(previewHappyHour?.happyHourBeers?.[0]).toMatchObject({
-      beerName: "Carlton Draught",
-      happyHourPrice: 9,
-      offerText: "House pint",
-    });
-    expect(previewHappyHour?.happyHourBeers?.[0]).not.toHaveProperty("price");
+    ]);
+    expect(publicPreview.records.some((record) =>
+      record.displayKind === "happy_hour" || record.displayKind === "special",
+    )).toBe(false);
 
     const venuePreview = service.listPriceRecords(null, {
       limit: 20,
       venueId: "bar-1",
       anonymousSessionId: "bar-reveal-anon",
     });
-    expect(venuePreview.preview).toEqual(expect.objectContaining({ model: "fixed_preview", lockedCount: 1 }));
-    expect(venuePreview.records).toEqual(expect.arrayContaining([
+    expect(venuePreview.preview).toEqual({ model: "fixed_preview", includedCount: 1, lockedCount: 0 });
+    expect(venuePreview.records).toEqual([
       expect.objectContaining({
         beerName: "Carlton Draught",
         price: 13,
         confidence: "venue_confirmed",
         sourceType: "venue_manager_portal",
       }),
-      expect.objectContaining({
-        displayKind: "happy_hour",
-        happyHourDetails: "$9 house pints, selected taps only.",
-        happyHourStartTime: "16:00",
-        happyHourEndTime: "18:00",
-        happyHourBeers: expect.arrayContaining([
-          expect.objectContaining({ beerName: "Carlton Draught", servingSize: "pint", happyHourPrice: 9, offerText: "House pint" }),
-        ]),
-      }),
-    ]));
-    expect(venuePreview.records).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        displayKind: "special",
-        beerName: "Venue special",
-        priceRedacted: true,
-        specialDescription: null,
-      }),
-    ]));
+    ]);
+    expect(venuePreview.records.some((record) =>
+      record.displayKind === "happy_hour" || record.displayKind === "special",
+    )).toBe(false);
 
     const adminRecords = service.listPriceRecords(admin, {
       limit: 20,
       venueId: "bar-1",
       anonymousSessionId: null,
     });
-    expect(adminRecords.records).toEqual(expect.arrayContaining([
+    expect(adminRecords.records).toEqual([
       expect.objectContaining({
-        displayKind: "special",
-        beerName: "Thursday burger and pint",
-        price: 25,
-        specialTitle: "Thursday burger and pint",
-        specialDescription: "Burger and selected pint special.",
-        specialScheduleNote: "Thursdays from 5pm",
-        specialExclusive: false,
+        displayKind: "beer",
+        beerName: "Carlton Draught",
+        price: 13,
       }),
-    ]));
+    ]);
+    expect(adminRecords.records.some((record) =>
+      record.displayKind === "happy_hour" || record.displayKind === "special",
+    )).toBe(false);
 
     const hideAttempt = service.upsertBarProfile(managerAccount, "bar-1", {
       name: "Corner Hotel",

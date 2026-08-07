@@ -3806,10 +3806,9 @@
         <span id="locationStatus" class="locationStatus">Location off. Tap once to show approximate distances to nearby venues.</span>
       </div>
 
-      <div class="specialsFilterRow" aria-label="Specials filters">
+      <div id="specialsFilterRow" class="specialsFilterRow" aria-label="Specials filters" hidden>
         <div class="filterGroup chipRow__inline">
           <span class="filterGroup__label">Specials</span>
-          <button class="filterChip" type="button" data-filter-chip="happy_hour_active_now" aria-pressed="false" hidden>Happy hour active now</button>
           <button class="filterChip" type="button" data-filter-chip="pint_path_specials" aria-pressed="false">Pint Path specials</button>
         </div>
       </div>
@@ -4035,6 +4034,9 @@
       DEFAULT_GOOGLE_MAPS_KEY;
     const BUSINESS_CONFIG = viewerConfig.business || {};
     const HAPPY_HOUR_DISCOVERY_ENABLED = BUSINESS_CONFIG.happyHourDiscoveryEnabled === true;
+    const COMMERCIAL_LAUNCH_ENABLED = BUSINESS_CONFIG.commercialLaunchEnabled === true;
+    const specialsFilterRow = document.getElementById("specialsFilterRow");
+    if (specialsFilterRow) specialsFilterRow.hidden = !COMMERCIAL_LAUNCH_ENABLED;
     const RESTORE_REHEARSAL_MODE = BUSINESS_CONFIG.restoreRehearsalMode === true;
     const LOCATION_PREFERENCE_STORAGE_KEY = "pintPathLocationPreference";
     const LOCAL_SAVED_VENUES_STORAGE_KEY = "pintPathLocalSavedVenues";

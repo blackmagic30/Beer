@@ -1,10 +1,17 @@
 # Pint Path Mobile Status Report
 
-Status date: 29 July 2026
+Status date: 3 August 2026
 
 ## Executive status
 
-The repository contains one native iOS app and one native Android app. Both are branded **Pint Path** to users while retaining the existing `BeerMap` target/package names for source compatibility. The apps now cover the main public, account, contributor, counter-staff, and venue-manager journeys against the current `/api/business/*` contract.
+The repository contains one native iOS app and one native Android app. Both are branded **Pint Path** to users while retaining the existing `BeerMap` target/package names for source compatibility. The current release is the web app plus a deliberately narrow first iOS binary; Android is not included.
+
+The first iOS release contains public venue discovery, the free price preview,
+reviewed price/photo contribution, account/privacy/deletion controls, and
+assigned venue-Free profile plus beer/stock management. It compiles out native
+social login, paid entitlement, venue Pro/trial/billing, happy-hour discovery or
+submission, specials, rewards/Pub Golf, counter/POS, and admin tools. Broader
+source retained for future releases is not current App Store functionality.
 
 This is not a claim that the binaries are already store-approved. Code-level and static validation can be completed in this checkout; signing, provider consoles, live-device testing, screenshots, reviewer access, and store declarations depend on external credentials and release-owner action.
 
@@ -13,23 +20,23 @@ This is not a claim that the binaries are already store-approved. Code-level and
 | Role | iOS | Android | Notes |
 | --- | --- | --- | --- |
 | Anonymous visitor | Venue discovery, map, price access, reports/requests | Venue discovery, list, external maps, price access, reports/requests | Server remains authoritative for gated price access. |
-| Signed-in member | Saved venues, privacy, sessions, export, deletion controls, codes/rewards | Same | Account deletion includes status and pending-request cancellation. |
-| Contributor | Price/photo/happy-hour evidence, optional one-time location, missions | Same | Submissions remain review-first. |
-| Counter staff | Invitation acceptance, member-code preview, purchase/reward actions | Same | Server verifies venue assignment and permissions. |
-| Venue manager | Profile, beers/stock, happy hours, entitled specials, analytics/planner/reports | Same | Claim-required users are handed to the secure web verification workflow. |
-| Admin | Authority-gated Admin quick-bar tab with secure web workspace handoff | Same | The tab is derived only from current server-verified admin access; moderation remains in the full web workspace. |
+| Signed-in member | Saved venues, privacy, sessions, export, and deletion controls | Broader retained app; not in this launch | Account deletion includes status and pending-request cancellation. |
+| Contributor | Reviewed price/photo evidence, optional one-time location, and non-happy-hour missions | Broader retained app; not in this launch | Submissions remain review-first. |
+| Counter staff | Not compiled into the first release | Broader retained app; not in this launch | Counter/reward tooling remains web/future-release only. |
+| Venue manager | Assigned venue-Free profile and beer/stock management | Broader retained app; not in this launch | Happy hours, Pro, specials, analytics, reports, counter, and billing are excluded from the first iOS archive. |
+| Admin | Not compiled into the first release | Broader retained app; not in this launch | Moderation remains in the secure web workspace. |
 
 ## Remediation completed in this pass
 
 - Corrected session refresh so consent fields and versions are sent only with a complete consent set.
 - Normalized native consent sources to backend-supported `ios` and `android` values.
-- Added native Apple sign-in with direct Supabase ID-token exchange on iOS. Google now uses a constrained `ASWebAuthenticationSession` PKCE flow that captures and validates the exact app callback, dismisses the authentication sheet, and creates the app session. Android retains authorization-code PKCE with the same callback checks.
+- Preserved broader provider-login work outside the submitted iOS scope. The first-release iOS archive compiles out Google/Apple login and custom callback schemes; it uses email/password plus the verified HTTPS web confirmation/recovery callback.
 - Added Supabase access-token storage and best-effort Supabase logout alongside Pint Path session logout.
 - Added fresh-provider proof for session review/revocation, account export/deletion, and global logout, with explicit retry guidance and no false success after a rejected action.
-- Added billing-only recovery for suspended paid users without issuing an app session, including selection between personal and assigned-venue billing profiles.
+- Kept billing, paid-entitlement, and suspended-account recovery surfaces outside the first-release iOS archive while pricing is deferred.
 - Added the required location `capturedAt` field on both platforms.
-- Corrected privacy-save, profile-save, beer-save, happy-hour-save, and special-save response models to match endpoint envelopes.
-- Added account deletion status/cancel and counter-staff invitation decisions.
+- Corrected privacy-save, profile-save, and beer-save response models used by the first iOS release; broader happy-hour/special response work remains outside this binary.
+- Added account deletion status/cancel; counter-staff invitation decisions remain outside this binary.
 - Preserved profile hours/tags and beer ABV/optimistic timestamps instead of overwriting unseen server fields.
 - Reset venue editor state when switching assigned venues and cleared stale price rows while loading a new venue.
 - Added Android external-map directions, safer bounded/downsampled image processing, coarse-location provider handling, and successful-form reset behavior.
@@ -38,25 +45,43 @@ This is not a claim that the binaries are already store-approved. Code-level and
 - Added iOS privacy-manifest coverage for linked account IDs, email, selected photos, optional location, and UserDefaults access.
 - Aligned installed-app branding and user copy to Pint Path.
 - Removed native first-page ceilings: venues, missions, account sessions, and venue prices now follow every offset/cursor page with deduplication and non-progress/repeated-cursor guards.
-- Added an Admin quick-bar tab on both platforms that appears only while the signed-in account has current server-verified admin authority, then hands off to the secure web workspace.
+- Kept native admin tooling outside the first iOS archive; admins use the secure web workspace.
 
 ## Native behavior by area
 
 ### Authentication
 
-Email/password, signup confirmation handling, password recovery, token refresh, provider login, logout, app-session synchronization, recent-authentication prompts, and suspended-account billing-only recovery are implemented. The iOS app now captures the provider return and creates the Pint Path session instead of leaving the user signed in only inside a browser. All provider flows still require matching Supabase/provider settings and signed-device tests.
+Email/password, signup confirmation handling, password recovery, token refresh,
+logout, app-session synchronization, and recent-authentication prompts are in
+the first iOS release. The binary pins its compiled public authentication origin
+to `https://auth.pintpath.au` and has no legacy password fallback. Confirmation
+and recovery use the exact HTTPS web callback. Existing Google website users enter the same email and use Forgot
+password to add iOS password access to the existing account. Native provider
+login and billing recovery are excluded. The same-account bridge still requires
+real Supabase/custom-SMTP proof on signed devices.
 
 ### Contributions
 
-Both platforms support reviewed price, selected-photo, and happy-hour submissions, wrong-price reports, missing venue/beer requests, and mission reserve/release. Optional location is captured only after a user action and attached only to that submission. The native apps do not provide direct camera capture, multi-image/PDF upload, or offline queues.
+The first iOS release supports reviewed price and one selected-photo submission,
+wrong-price reports, missing venue/beer requests, and non-happy-hour mission
+reserve/release. Optional location is captured only after a user action and
+attached only to that submission. Happy-hour contribution, direct camera,
+multi-image/PDF upload, and offline queues are excluded.
 
 ### Account and privacy
 
-Both platforms expose privacy preferences, sessions and revocation, account export, deletion request/status/cancel, rewards/codes, and counter-staff invitations. Sensitive account controls require a fresh provider credential. Suspended paid accounts can reach only the secure billing portal and do not receive an app session. Optional analytics remain opt-in.
+The first iOS release exposes privacy preferences, sessions and revocation,
+account export, and deletion request/status/cancel. Rewards/codes,
+counter-staff invitations, and paid-account billing recovery are excluded.
+Sensitive account controls require fresh provider proof. Optional analytics
+remain opt-in.
 
 ### Venue operations
 
-Assigned venue managers can edit core venue data, inventory, happy hours, eligible specials, counter operations, and reports. Writes refresh server state and send optimistic timestamps where the contract supports them. Claim evidence/admin review remains a web handoff.
+Assigned venue managers can edit the Free-plan venue profile and beer/stock
+inventory. Happy hours, specials, counter operations, analytics, reports, Pro,
+trial, and billing are excluded from the first iOS archive. Claim evidence and
+admin review remain a web handoff.
 
 ## Platform differences
 
@@ -66,11 +91,11 @@ Assigned venue managers can edit core venue data, inventory, happy hours, eligib
 
 ## External release blockers
 
-1. Apple/Google signing identities and final store records.
-2. Live Google/Apple provider-console and Supabase verification; Android additionally requires its redirect allow-list entry.
+1. Active Apple Developer membership, Account Holder 2FA/recovery, current agreement, backup App Manager/Admin, exact app record/team/entity, signing, and final store records.
+2. Live Google web provider-console and Supabase verification, with proof Apple OAuth and both native social providers remain absent from the signed iOS archive.
 3. Physical-device tests for provider return, permissions, photo input, location, export, accessibility, rotation, interruption, and poor networks.
 4. Final icons/screenshots/store copy, reviewer accounts/instructions, support and marketing URLs.
-5. App Store privacy answers and Play Data Safety declarations verified against production policy and retention behavior.
-6. TestFlight and Play internal-testing approval, crash/ANR monitoring, and staged rollout ownership.
+5. App Store privacy answers verified against production policy and retention behavior. Play Data Safety belongs to a future Android release.
+6. Signed archive inspection, TestFlight/App Review approval, dSYM-symbolicated crash monitoring with alerts, and staged rollout ownership. Play/Android remains a future release.
 
 The remaining items require external systems or product scope. They are not hidden code TODOs.

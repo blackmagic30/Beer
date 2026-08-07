@@ -6,6 +6,12 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      run_android:
+        description: Also run Android maintenance CI (Android is not in the current launch)
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -16,6 +22,7 @@ concurrency:
 
 jobs:
   android:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.run_android == true }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -82,7 +89,13 @@ jobs:
           -destination 'generic/platform=iOS Simulator'
           CODE_SIGNING_ALLOWED=NO
           build
-      - name: Validate unsigned iOS release archive
+      - name: Prepare synthetic public configuration for the unsigned iOS Release contract
+        env:
+          PINT_PATH_API_BASE_URL: https://pintpath.au
+          SUPABASE_URL: https://auth.pintpath.au
+          SUPABASE_ANON_KEY: sb_publishable_00000000000000000000000000000000
+        run: apps/ios/Scripts/write-build-config.sh
+      - name: Build unsigned iOS Release archive with synthetic public values
         run: >-
           xcodebuild
           -project apps/ios/BeerMap.xcodeproj
@@ -92,3 +105,74 @@ jobs:
           -archivePath "$RUNNER_TEMP/BeerMap.xcarchive"
           CODE_SIGNING_ALLOWED=NO
           archive
+      - name: Inspect synthetic iOS Release archive configuration
+        env:
+          EXPECTED_PINT_PATH_API_BASE_URL: https://pintpath.au
+          EXPECTED_SUPABASE_ANON_KEY: sb_publishable_00000000000000000000000000000000
+        run: apps/ios/Scripts/inspect-release-archive.sh "$RUNNER_TEMP/BeerMap.xcarchive"
+      - name: Remove generated iOS configuration
+        if: always()
+        run: rm -f apps/ios/Config.xcconfig
+
+  ios-production-configuration:
+    name: iOS protected production configuration archive
+    if: github.event_name == 'workflow_dispatch'
+    needs: ios
+    environment: production
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Select and verify App Store Xcode toolchain
+        shell: bash
+        run: |
+          xcode_app=""
+          for candidate in /Applications/Xcode_26*.app; do
+            if [ -d "$candidate" ]; then
+              xcode_app="$candidate"
+            fi
+          done
+          if [ -z "$xcode_app" ]; then
+            echo "A GitHub runner image with Xcode 26 is required." >&2
+            exit 1
+          fi
+          sudo xcode-select --switch "$xcode_app/Contents/Developer"
+          xcodebuild -version
+          xcode_version="$(xcodebuild -version | awk 'NR == 1 { print $2 }')"
+          sdk_version="$(xcrun --sdk iphoneos --show-sdk-version)"
+          case "$xcode_version" in
+            26.*) ;;
+            *) echo "Expected Xcode 26.x, found $xcode_version." >&2; exit 1 ;;
+          esac
+          case "$sdk_version" in
+            26.*) ;;
+            *) echo "Expected iPhoneOS SDK 26.x, found $sdk_version." >&2; exit 1 ;;
+          esac
+      - name: Generate ignored iOS configuration from protected production secrets
+        env:
+          PINT_PATH_API_BASE_URL: https://pintpath.au
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: apps/ios/Scripts/write-build-config.sh
+      - name: Build unsigned iOS archive with protected production configuration
+        run: >-
+          xcodebuild
+          -project apps/ios/BeerMap.xcodeproj
+          -scheme BeerMap
+          -configuration Release
+          -destination 'generic/platform=iOS'
+          -archivePath "$RUNNER_TEMP/BeerMap-production-config.xcarchive"
+          CODE_SIGNING_ALLOWED=NO
+          archive
+      - name: Inspect protected production values in the iOS archive
+        env:
+          EXPECTED_PINT_PATH_API_BASE_URL: https://pintpath.au
+          EXPECTED_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: >-
+          apps/ios/Scripts/inspect-release-archive.sh
+          "$RUNNER_TEMP/BeerMap-production-config.xcarchive"
+      - name: Remove generated iOS configuration
+        if: always()
+        run: rm -f apps/ios/Config.xcconfig

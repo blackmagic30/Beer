@@ -45,6 +45,7 @@ const productionFixture = {
   SUPABASE_URL: "https://production-ci.supabase.co",
   SUPABASE_ANON_KEY: "ci-browser-safe-key",
   SUPABASE_SERVICE_ROLE_KEY: "ci-primary-server-key",
+  SUPABASE_OAUTH_PROVIDERS: "google",
   OFFSITE_BACKUP_SUPABASE_URL: "https://backup-ci.supabase.co",
   OFFSITE_BACKUP_SERVICE_ROLE_KEY: "ci-independent-backup-server-key",
   SOURCE_EVIDENCE_SIGNING_SECRET: "ci-source-5cb42f19-629e-47c3-9be4-7e52127ce22d",
@@ -57,6 +58,15 @@ const productionFixture = {
   STRIPE_PRO_PRICE_ID: "ci-pro-price",
   REPORT_EMAIL_MODE: "disabled",
   REPORT_DELIVERY_SCHEDULE_ENABLED: "false",
+  ACCOUNT_DELETION_NOTICE_MODE: "resend",
+  RESEND_TRANSACTIONAL_API_KEY: "ci-account-deletion-sending-key", // security-scan allow: synthetic deploy-guard fixture
+  ACCOUNT_DELETION_NOTICE_FROM: "Pint Path <account@pintpath.au>",
+  ACCOUNT_DELETION_NOTICE_REPLY_TO: "admin@pintpath.au",
+  RESEND_WEBHOOK_SIGNING_SECRET: "whsec_cXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXE=", // security-scan allow: synthetic deploy-guard fixture
+  ACCOUNT_DELETION_NOTICE_ACTIVE_KEY_ID: "ci-2026-08",
+  ACCOUNT_DELETION_NOTICE_KEYRING_JSON:
+    '{"ci-2026-08":"MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="}',
+  ACCOUNT_DELETION_NOTICE_CHECK_INTERVAL_MINUTES: "5",
 };
 
 const restoreRehearsalFixture = {
@@ -110,6 +120,14 @@ const restoreRehearsalFixture = {
   REPORT_EMAIL_REPLY_TO: "",
   RESEND_API_KEY: "",
   REPORT_DELIVERY_SCHEDULE_ENABLED: "false",
+  ACCOUNT_DELETION_NOTICE_MODE: "disabled",
+  RESEND_TRANSACTIONAL_API_KEY: "",
+  ACCOUNT_DELETION_NOTICE_FROM: "",
+  ACCOUNT_DELETION_NOTICE_REPLY_TO: "",
+  RESEND_WEBHOOK_SIGNING_SECRET: "",
+  ACCOUNT_DELETION_NOTICE_ACTIVE_KEY_ID: "",
+  ACCOUNT_DELETION_NOTICE_KEYRING_JSON: "",
+  ACCOUNT_DELETION_NOTICE_CHECK_INTERVAL_MINUTES: "5",
   ADMIN_EMAILS: "",
   ADMIN_BEARER_TOKEN: "",
   ADMIN_SHARED_SECRET: "",
@@ -210,6 +228,14 @@ assertExit(
   runValidator({ fixture: restoreRehearsalFixture, overrides: { RESEND_API_KEY: "ci-forbidden-resend-key" } }),
   false,
   "Restore validation with an external-write credential",
+);
+assertExit(
+  runValidator({
+    fixture: restoreRehearsalFixture,
+    overrides: { RESEND_TRANSACTIONAL_API_KEY: "ci-forbidden-transactional-resend-key" },
+  }),
+  false,
+  "Restore validation with an account-deletion notification credential",
 );
 assertExit(
   runValidator({ fixture: restoreRehearsalFixture, overrides: { PINTPATH_SMOKE_USER_PASSWORD: "ci-forbidden-smoke-secret" } }),

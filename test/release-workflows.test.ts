@@ -149,7 +149,7 @@ describe("release workflow contracts", () => {
       .map(workflow)
       .join("\n");
     const expectedPins = new Map([
-      ["actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0", 10],
+      ["actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0", 11],
       ["actions/setup-node@820762786026740c76f36085b0efc47a31fe5020", 6],
       ["actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a", 1],
       ["actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", 2],
@@ -172,7 +172,7 @@ describe("release workflow contracts", () => {
     const checkoutIndexes = lines
       .map((line, index) => line.includes("uses: actions/checkout@") ? index : -1)
       .filter((index) => index >= 0);
-    expect(checkoutIndexes).toHaveLength(10);
+    expect(checkoutIndexes).toHaveLength(11);
     for (const index of checkoutIndexes) {
       expect(lines.slice(index, index + 4).join("\n")).toContain("persist-credentials: false");
     }
@@ -352,34 +352,52 @@ describe("release workflow contracts", () => {
     const app = repositoryFile("src/app.ts");
 
     expect(railway).toContain('healthcheckPath = "/ready"');
-    expect(railway).toContain('[environments.production.deploy]\nhealthcheckPath = "/health"');
+    expect(railway).toContain('[environments.production.deploy]\nhealthcheckPath = "/startup"');
     expect(app).toContain("probeCapabilities: false");
     expect(app).toContain('logger.warn("Operational readiness check failed"');
   });
 
-  it("documents the live POS reference, rotation, and discount-only contract", () => {
+  it("keeps the future POS contract isolated from the current launch checklist", () => {
     const contract = releaseDocument("pos-integration-contract.md");
     const checklist = releaseDocument("external-launch-signoffs.md");
 
-    for (const source of [contract, checklist]) {
-      expect(source).toContain("posReference");
-      expect(source).not.toMatch(/POS[\s\S]{0,1600}`transactionReference`/);
-    }
+    expect(contract).toContain("posReference");
+    expect(contract).not.toMatch(/POS[\s\S]{0,1600}`transactionReference`/);
     expect(contract).toContain("previousTokenValidUntil");
     expect(contract).toContain("10-minute handover window");
     expect(contract).toContain("pointsEarned: 0");
-    expect(checklist).toContain("does not award Pint Points");
+    expect(checklist).toContain("## 8. `moderation_operations`");
+    expect(checklist).toContain("without enabling Pro, trial, paid, reward, counter, or POS");
+    expect(checklist).not.toContain("posReference");
+    expect(checklist).not.toContain("/api/business/pos/discount-redemptions");
   });
 
   it("keeps external closeout evidence aligned with workflow triggers and artifacts", () => {
     const checklist = releaseDocument("external-launch-signoffs.md");
 
     expect(checklist).toContain("Native Apps** must be manually dispatched");
-    expect(checklist).toContain("documentation-only pushes do not match its path filters");
+    expect(checklist).toContain("-f run_android=false");
+    expect(checklist).toContain("`ios-production-configuration` jobs to pass");
+    expect(checklist).toContain("the Android job must be skipped");
     expect(checklist).toContain("security-scan and dependency-audit steps passed");
     expect(checklist).toContain("are not files in the artifact");
     expect(checklist).toContain("does **not** prove public App Store approval");
-    expect(checklist).toContain("does **not** prove production-track approval");
+    expect(checklist).not.toContain("production-track approval");
+  });
+
+  it("keeps the launch runbook aligned with all 12 required evidence IDs", () => {
+    const runbook = releaseDocument("production-launch-runbook.md");
+    const evidence = JSON.parse(releaseDocument("release-evidence.json")) as {
+      items?: Array<{ id?: string }>;
+    };
+    const requiredIds = (evidence.items ?? [])
+      .map((item) => item.id)
+      .filter((id): id is string => Boolean(id));
+
+    expect(requiredIds).toHaveLength(12);
+    for (const id of requiredIds) expect(runbook).toContain(`- \`${id}\`;`);
+    expect(runbook).toContain("Complete all 12 web-and-iOS evidence items from Phase 14.");
+    expect(runbook).not.toContain("Complete all 11 web-and-iOS evidence items");
   });
 
   it("keeps machine-readable launch scripts free of dotenv banner text", () => {
@@ -393,6 +411,21 @@ describe("release workflow contracts", () => {
     ]) {
       expect(repositoryFile(filename), filename).toContain("dotenv.config({ quiet: true })");
     }
+  });
+
+  it("documents the mutation-free account-deletion rehearsal readiness command", () => {
+    const runbook = releaseDocument("production-launch-runbook.md");
+    const providerReadiness = repositoryFile("scripts/provider-readiness-check.ts");
+
+    expect(runbook).toContain('test -z "${OFFSITE_BACKUP_SUPABASE_URL:-}${OFFSITE_BACKUP_SERVICE_ROLE_KEY:-}"');
+    expect(runbook).toContain('test -z "${REDIS_URL:-}${REDIS_KEY_NAMESPACE:-}"');
+    expect(runbook).toContain("npm run --silent readiness:providers");
+    expect(runbook).toContain('.readinessProfile == "account_deletion_rehearsal" and .ok == true');
+    expect(runbook).toContain('"${PUBLIC_BASE_URL%/}/ready"');
+    expect(providerReadiness).toContain("if (isProduction() && !accountDeletionRehearsalEnabled)");
+    expect(providerReadiness).toContain(
+      "const checks = accountDeletionRehearsalEnabled ? deletionRehearsalChecks : launchChecks",
+    );
   });
 
   it("uses the repository SDK downloader without credentialed runtime package downloads", () => {

@@ -71,7 +71,7 @@ describe("release evidence validator", () => {
 
     expect(normal.status).toBe(0);
     expect(normal.output).toMatchObject({ valid: true, launchReady: false, strict: false });
-    expect(normal.output.incomplete).toHaveLength(11);
+    expect(normal.output.incomplete).toHaveLength(12);
     expect(normal.output.incomplete.map((item: { id: string }) => item.id)).not.toContain("android_release");
     expect(normal.output.incomplete[0]).toMatchObject({
       id: "production_public_smoke",

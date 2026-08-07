@@ -21,6 +21,182 @@ afterEach(() => {
 });
 
 describe("database schema migration safety", () => {
+  it("backs up schema 13 and adds the encrypted account-deletion completion outbox in schema 15", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pintpath-v13-notice-migration-"));
+    roots.push(root);
+    const databasePath = path.join(root, "pint-path.sqlite");
+    const legacy = createDatabase(databasePath);
+    try {
+      const repository = new BusinessRepository(legacy);
+      const account = repository.createAccount({
+        id: "schema-13-deletion-user",
+        email: "schema-13-deletion@example.com",
+        passwordHash: "test-password-hash",
+        role: "user",
+        subscriptionStatus: "free",
+        now: "2026-08-03T01:00:00.000Z",
+      });
+      repository.createAccountDeletionRequest({
+        id: "schema-13-deletion-request",
+        userId: account.id,
+        userMessage: "preserve this request",
+        requestedAt: "2026-08-03T01:01:00.000Z",
+        executeAfter: "2026-08-10T01:01:00.000Z",
+      });
+      legacy.exec(`
+        DROP TABLE account_deletion_notification_events;
+        DROP TABLE account_deletion_notice_recipient_secrets;
+        DROP TABLE account_deletion_completion_outbox;
+        PRAGMA user_version = 13;
+      `);
+    } finally {
+      legacy.close();
+    }
+
+    const migrated = createDatabase(databasePath);
+    try {
+      expect(migrated.pragma("user_version", { simple: true })).toBe(15);
+      expect(migrated.pragma("secure_delete", { simple: true })).toBe(1);
+      for (const table of [
+        "account_deletion_completion_outbox",
+        "account_deletion_notice_recipient_secrets",
+        "account_deletion_notification_events",
+      ]) {
+        expect(migrated.prepare(
+          "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        ).get(table)).toBeTruthy();
+      }
+      expect(migrated.prepare(
+        "SELECT id, user_message FROM account_deletion_requests WHERE id = ?",
+      ).get("schema-13-deletion-request")).toEqual({
+        id: "schema-13-deletion-request",
+        user_message: "preserve this request",
+      });
+      const indexNames = (migrated.prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'account_deletion_completion_outbox'",
+      ).all() as Array<{ name: string }>).map((row) => row.name);
+      expect(indexNames).toEqual(expect.arrayContaining([
+        "idx_account_deletion_completion_outbox_due",
+        "idx_account_deletion_completion_outbox_retention",
+      ]));
+    } finally {
+      migrated.close();
+    }
+
+    const backupDirectory = path.join(root, "migration-backups");
+    const backupName = fs.readdirSync(backupDirectory)
+      .find((name) => name.startsWith("schema-13-to-15-"));
+    expect(backupName).toBeTruthy();
+    const backup = new BetterSqlite3(path.join(backupDirectory, backupName!));
+    try {
+      expect(backup.pragma("user_version", { simple: true })).toBe(13);
+      expect(backup.prepare(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'account_deletion_completion_outbox'",
+      ).get()).toBeUndefined();
+    } finally {
+      backup.close();
+    }
+  });
+
+  it("backs up and upgrades an early schema-14 outbox before adding delivery safeguards", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pintpath-v14-outbox-upgrade-"));
+    roots.push(root);
+    const databasePath = path.join(root, "pint-path.sqlite");
+    const backupCiphertextMarker = Buffer.from("MIGRATION_BACKUP_CIPHERTEXT_MARKER_20260803", "utf8");
+    const early = createDatabase(databasePath);
+    try {
+      const repository = new BusinessRepository(early);
+      const account = repository.createAccount({
+        id: "early-v14-notice-user",
+        email: "early-v14-notice@example.com",
+        passwordHash: "test-password-hash",
+        role: "user",
+        subscriptionStatus: "free",
+        now: "2026-08-03T01:00:00.000Z",
+      });
+      repository.createAccountDeletionRequest({
+        id: "early-v14-notice-request",
+        userId: account.id,
+        userMessage: null,
+        requestedAt: "2026-08-03T01:01:00.000Z",
+        executeAfter: "2026-08-10T01:01:00.000Z",
+      });
+      early.prepare(
+        `INSERT INTO account_deletion_completion_outbox (
+           request_id, template_version, idempotency_key, status, created_at, updated_at
+         ) VALUES (?, 'account-deletion-complete-v1', ?, 'held', ?, ?)`,
+      ).run(
+        "early-v14-notice-request",
+        "pintpath-account-deletion/early-v14-notice-request",
+        "2026-08-03T01:01:00.000Z",
+        "2026-08-03T01:01:00.000Z",
+      );
+      early.prepare(
+        `INSERT INTO account_deletion_notice_recipient_secrets (
+           request_id, key_id, nonce, ciphertext, auth_tag, created_at, purge_after
+         ) VALUES (?, 'early-key', ?, ?, ?, ?, ?)`,
+      ).run(
+        "early-v14-notice-request",
+        Buffer.alloc(12, 1),
+        backupCiphertextMarker,
+        Buffer.alloc(16, 2),
+        "2026-08-03T01:01:00.000Z",
+        "2026-10-02T01:01:00.000Z",
+      );
+      early.exec("ALTER TABLE account_deletion_completion_outbox DROP COLUMN payload_fingerprint");
+      early.exec("ALTER TABLE account_deletion_completion_outbox DROP COLUMN secret_purge_checkpoint_pending");
+      early.exec("ALTER TABLE account_deletion_completion_outbox DROP COLUMN secret_purge_generation");
+      expect((early.pragma("table_info(account_deletion_completion_outbox)") as Array<{ name: string }>)
+        .some((column) => column.name === "payload_fingerprint")).toBe(false);
+      expect((early.pragma("table_info(account_deletion_completion_outbox)") as Array<{ name: string }>)
+        .some((column) => column.name === "secret_purge_checkpoint_pending")).toBe(false);
+      expect((early.pragma("table_info(account_deletion_completion_outbox)") as Array<{ name: string }>)
+        .some((column) => column.name === "secret_purge_generation")).toBe(false);
+      early.pragma("user_version = 14");
+    } finally {
+      early.close();
+    }
+
+    const repaired = createDatabase(databasePath);
+    try {
+      const columns = repaired.pragma("table_info(account_deletion_completion_outbox)") as Array<{
+        name: string;
+        type: string;
+      }>;
+      expect(columns.find((candidate) => candidate.name === "payload_fingerprint"))
+        .toEqual(expect.objectContaining({ name: "payload_fingerprint", type: "TEXT" }));
+      expect(columns.find((candidate) => candidate.name === "secret_purge_checkpoint_pending"))
+        .toEqual(expect.objectContaining({ name: "secret_purge_checkpoint_pending", type: "INTEGER" }));
+      expect(columns.find((candidate) => candidate.name === "secret_purge_generation"))
+        .toEqual(expect.objectContaining({ name: "secret_purge_generation", type: "INTEGER" }));
+      expect(repaired.pragma("user_version", { simple: true })).toBe(15);
+    } finally {
+      repaired.close();
+    }
+
+    const backupDirectory = path.join(root, "migration-backups");
+    const backupName = fs.readdirSync(backupDirectory)
+      .find((name) => name.startsWith("schema-14-to-15-"));
+    expect(backupName).toBeTruthy();
+    const backup = new BetterSqlite3(path.join(backupDirectory, backupName!));
+    try {
+      expect(backup.pragma("user_version", { simple: true })).toBe(14);
+      const backupColumns = backup.pragma("table_info(account_deletion_completion_outbox)") as Array<{ name: string }>;
+      expect(backupColumns.some((column) => column.name === "payload_fingerprint")).toBe(false);
+      expect(backupColumns.some((column) => column.name === "secret_purge_checkpoint_pending")).toBe(false);
+      expect(backupColumns.some((column) => column.name === "secret_purge_generation")).toBe(false);
+      expect(backup.prepare(
+        "SELECT count(*) AS count FROM account_deletion_notice_recipient_secrets",
+      ).get()).toEqual({ count: 0 });
+      expect(backup.prepare(
+        "SELECT status FROM account_deletion_completion_outbox WHERE request_id = ?",
+      ).get("early-v14-notice-request")).toEqual({ status: "purged" });
+    } finally {
+      backup.close();
+    }
+    expect(fs.readFileSync(path.join(backupDirectory, backupName!)).includes(backupCiphertextMarker)).toBe(false);
+  });
+
   it("preserves the policy version an account actually consented to when the database reopens", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "pintpath-consent-provenance-"));
     roots.push(root);
@@ -202,8 +378,8 @@ describe("database schema migration safety", () => {
 
     const migrated = createDatabase(databasePath);
     try {
-      expect(CURRENT_DATABASE_SCHEMA_VERSION).toBe(13);
-      expect(migrated.pragma("user_version", { simple: true })).toBe(13);
+      expect(CURRENT_DATABASE_SCHEMA_VERSION).toBe(15);
+      expect(migrated.pragma("user_version", { simple: true })).toBe(15);
       expect((migrated.prepare("PRAGMA table_info(auth_sessions)").all() as Array<{ name: string }>)
         .map((column) => column.name)).toContain("provider_session_id_hash");
       expect((migrated.prepare("PRAGMA table_info(accounts)").all() as Array<{ name: string }>)

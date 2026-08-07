@@ -785,18 +785,22 @@ describe("account page shell", () => {
     expect(html).not.toContain("candidate.uploadLatitude");
   });
 
-  it("uses Supabase OAuth and email auth before falling back to local demo auth", () => {
+  it("keeps production web auth Google-only while retaining localhost email auth", () => {
     const html = accountHtml();
     const script = businessJs();
 
     expect(html).toContain("Continue with Google");
     expect(html).toContain("Continue with Apple");
     expect(html).not.toContain("Continue with Facebook");
-    expect(html.indexOf("Welcome back")).toBeLessThan(html.indexOf("Continue with Google"));
-    expect(html.indexOf("Reset password")).toBeLessThan(html.indexOf("Continue with Google"));
+    expect(html).toContain('const WEB_EMAIL_AUTH_ENABLED = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(window.location.hostname);');
+    expect(html).toContain("const isLocalHost = WEB_EMAIL_AUTH_ENABLED;");
+    expect(html).toContain('id="authTabs" class="authTabs" role="tablist" aria-label="Choose sign in or create account" data-local-email-auth hidden');
+    expect(html).toContain('id="webEmailLoginFields" class="authFields" data-local-email-auth hidden');
+    expect(html).toContain("Email/password access is reserved for the first iOS release.");
+    expect(html).toContain("Email/password sign-in is available in the iOS app. Continue with Google on the website.");
     expect(html).toContain("MelbBeerBusiness.signUpWithEmail");
     expect(html).toContain("MelbBeerBusiness.signInWithEmail");
-    expect(html).toContain('class="authUtilityGrid" aria-label="Account recovery links"');
+    expect(html).toContain('id="webEmailAuthUtilities" class="authUtilityGrid" aria-label="Account recovery links" data-local-email-auth hidden');
     expect(html).toContain('id="passwordResetLink" class="authUtilityCard" href="/reset-password.html"');
     expect(html).toContain('id="resendConfirmationLink" class="authUtilityCard" href="/resend-confirmation.html"');
     expect(html).toContain('authUtilityLink("/reset-password.html")');
@@ -812,7 +816,7 @@ describe("account page shell", () => {
     expect(html).not.toContain('name="oauthTermsAccepted"');
     expect(html).not.toContain('name="oauthPrivacyAccepted"');
     expect(html).not.toContain("legalAcceptance,");
-    expect(html).toContain("first verify your identity");
+    expect(html).toContain("first verifies your identity");
     expect(html).toContain("asked for 18+ and current Terms/Privacy acceptance only after that verification");
     expect(script).toContain("signInWithOAuth({");
     expect(script).toContain('provider,');
@@ -828,7 +832,7 @@ describe("account page shell", () => {
     expect(script).not.toContain("privacy_accepted:");
     expect(script).toContain("window.MELB_BEER_BOT_VIEWER_CONFIG?.business?.legalPolicyVersion");
     expect(script).not.toContain("before continuing with social sign-in");
-    expect(script).toContain('|| "2026-07-28"');
+    expect(script).toContain('|| "2026-08-03"');
     expect(script).toContain("options.applyPendingLegalAcceptance ? getPendingLegalAcceptance() : null");
     expect(script).toContain('consentSource: "web_oauth"');
     expect(script).toContain("LEGAL_ACCEPTANCE_MAX_AGE_MS");
@@ -869,10 +873,11 @@ describe("account page shell", () => {
 
     expect(reset).toContain('id="resetStatus" class="notice" role="status" aria-live="polite" aria-atomic="true" hidden');
     expect(resend).toContain('id="resendStatus" class="notice" role="status" aria-live="polite" aria-atomic="true" hidden');
-    expect(venueLogin).toContain("Log in to your venue");
-    expect(venueLogin).toContain('id="venueLoginForm"');
-    expect(venueLogin).toContain("MelbBeerBusiness.signInWithEmail");
-    expect(venueLogin).toContain('MelbBeerBusiness.apiFetch("/api/business/auth/login"');
+    expect(venueLogin).toContain("Continue to your venue");
+    expect(venueLogin).toContain('id="venueGoogleLoginLink"');
+    expect(venueLogin).toContain("Continue with Google");
+    expect(venueLogin).not.toContain("MelbBeerBusiness.signInWithEmail");
+    expect(venueLogin).not.toContain('MelbBeerBusiness.apiFetch("/api/business/auth/login"');
     expect(venueLogin).toContain("MelbBeerBusiness.isVenuePortalReturnPath(requested)");
   });
 
@@ -1410,7 +1415,7 @@ describe("account page shell", () => {
     expect(html).toContain("function setOauthButtonsLoading");
     expect(html).toContain("function resetCancelledOauth");
     expect(html).toContain("MelbBeerBusiness.clearPendingLegalAcceptance();");
-    expect(html).toContain("Secure login was cancelled. Choose Google, Apple, or email to continue.");
+    expect(html).toContain("Secure Google login was cancelled. Try again when you are ready.");
     expect(html).toContain('window.addEventListener("pageshow", () => resetCancelledOauth())');
     expect(html).toContain('window.addEventListener("focus", () => resetCancelledOauth())');
   });
@@ -1569,9 +1574,9 @@ describe("account page shell", () => {
   it("canonicalises the www host before origin-bound PKCE state can be created", () => {
     const source = appSource();
 
-    expect(source).toContain("requestHost === `www.${canonicalHost}`");
+    expect(source).toContain("shouldRedirectToCanonicalHost(canonicalHost, requestHost)");
     expect(source).toContain("buildCanonicalHostRedirectUrl(publicBaseUrl.origin, req.originalUrl)");
-    expect(source.indexOf("requestHost === `www.${canonicalHost}`")).toBeLessThan(
+    expect(source.indexOf("shouldRedirectToCanonicalHost(canonicalHost, requestHost)")).toBeLessThan(
       source.indexOf("res.locals.cspNonce"),
     );
   });
@@ -1720,7 +1725,7 @@ describe("account page shell", () => {
 
     expect(app).toContain("legalPolicyVersion: publicConfig.legalPolicyVersion");
     expect(script).toContain("window.MELB_BEER_BOT_VIEWER_CONFIG?.business?.legalPolicyVersion");
-    expect(script).toContain('|| "2026-07-28"');
+    expect(script).toContain('|| "2026-08-03"');
   });
 
   it("hydrates HttpOnly sessions once and clears revoked provider sessions locally", () => {
@@ -1747,7 +1752,7 @@ describe("account page shell", () => {
     expect(terms).toContain("scrape protected data");
     expect(terms).toContain("Display names/usernames must be unique");
     expect(terms).toContain("We do not tolerate rude or discriminatory names");
-    expect(terms).toContain("Last updated: 28 July 2026");
+    expect(terms).toContain("Last updated: 3 August 2026");
     expect(terms).toContain("Isaac William De Worsop");
     expect(terms).toContain("ABN 80 319 578 329");
     expect(terms).toContain("WOTSO, Level 3, 11–19 Bank Place, Melbourne VIC 3000, Australia");
@@ -1758,7 +1763,7 @@ describe("account page shell", () => {
     expect(terms).not.toContain("Beta legal-review notice");
     expect(terms).not.toContain("before launch");
     expect(privacy).toContain("Privacy Policy");
-    expect(privacy).toContain("Last updated: 28 July 2026");
+    expect(privacy).toContain("Last updated: 3 August 2026");
     expect(privacy).toContain("Plain-English beta summary");
     expect(privacy).toContain("Service providers and integrations");
     expect(privacy).toContain("Venue reports are aggregate-only");
@@ -1777,7 +1782,7 @@ describe("account page shell", () => {
     expect(feedback).toContain("ABN 80 319 578 329");
     expect(feedback).toContain("WOTSO, Level 3, 11–19 Bank Place");
     expect(feedback).toContain('href="mailto:admin@pintpath.au"');
-    expect(account).toContain("Pint Path updated these policies on 28 July 2026");
+    expect(account).toContain("Pint Path updated these policies on 3 August 2026");
     expect(account).not.toContain("Pint Path updated these policies on 12 July 2026");
     expect(script).toContain("Pint Path · ABN 80 319 578 329");
     expect(script).toContain('href="mailto:admin@pintpath.au"');
@@ -1801,7 +1806,7 @@ describe("account page shell", () => {
     expect(trust).not.toContain("Where did the Trust Centre go?");
     expect(trust).not.toContain("Tap a question when you need detail.");
     expect(trust).toContain("What if a price is wrong?");
-    expect(trust).toContain("How does premium access work?");
+    expect(trust).toContain("How does full map access work?");
     expect(trust).toContain("Can bars edit the map directly?");
     expect(trust).toContain("How do I report a security or privacy concern?");
     expect(trust).toContain("How do I add a missing venue?");

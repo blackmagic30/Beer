@@ -76,8 +76,9 @@ Both scripts refuse to run when `NODE_ENV=production` or when `PUBLIC_BASE_URL` 
 - Admin and analytics preview routes reject anonymous and normal users.
 - Source evidence stays behind private references and signed URLs.
 - Obvious localhost/private/metadata source-photo URLs are rejected before storage.
-- The authenticated owner portal route path covers login, assigned venue access, profile, beer/stock, happy-hour, Pro special, support, cross-owner blocking, and pending-review state.
-- Assigned venue managers publish profile, beer, and happy-hour edits directly for their venue. Tier, code acceptance, and listing activation remain admin-controlled.
+- The authenticated owner portal route path covers the current Free launch paths: login, assigned venue access, profile, beer/stock, support, cross-owner blocking, and pending-review state.
+- Happy-hour collection and Pro-special branches remain covered as dormant/future regression paths. That coverage is not evidence that either feature is public in this release.
+- Assigned venue managers publish profile and beer edits directly for their venue. Retained venue-side happy-hour collection follows the same internal workflow but remains absent from public web and iOS surfaces. Tier, code acceptance, and listing activation remain admin-controlled.
 - A venue-wide fourth beer deletion within an hour is held for admin approval, even when multiple managers perform the earlier deletes.
 - Pending venue changes are visible to the owning venue manager and admins, but not another venue manager.
 - Rejected venue-manager changes do not publish.
@@ -85,9 +86,9 @@ Both scripts refuse to run when `NODE_ENV=production` or when `PUBLIC_BASE_URL` 
 - Admin analytics buckets below `ANALYTICS_MIN_BUCKET_SIZE` are suppressed.
 - Venue analytics hide suburb trends until the privacy floor is met.
 - Analytics metadata redacts email, tokens, and precise location keys.
-- Monthly venue reports generate from aggregate events using the Melbourne reporting timezone.
-- Monthly report exports are restricted to verified assigned Pro venue managers or admins.
-- Report delivery can be mocked for tests without sending real email.
+- Dormant/future monthly-report generation uses aggregate events and the Melbourne reporting timezone.
+- Dormant/future report exports remain restricted to verified assigned Pro venue managers or admins.
+- Report-delivery mocks test the future adapter without sending real email. They do not make reports part of the current launch.
 - Supabase migrations keep source-evidence storage private and do not introduce `public.bars`.
 - Public HTML smoke checks cover key pages and retired Twilio/ElevenLabs leakage.
 
@@ -95,15 +96,21 @@ Both scripts refuse to run when `NODE_ENV=production` or when `PUBLIC_BASE_URL` 
 
 These are launch-critical but require provider/staging verification:
 
-- **Supabase OAuth:** Google and Apple provider credentials, web/Android redirect URLs, provider callback URLs, and email-confirmation behavior must be verified. Supabase should allow `https://pintpath.au/auth/callback`; allow `pintpath://auth-callback` only for an Android release that enables native OAuth. Google/Apple should allow the Supabase provider callback derived from `SUPABASE_URL`, for example `https://auth.pintpath.au/auth/v1/callback`. The first-release iOS app is email/password only, declares no custom URL scheme, and uses the HTTPS callback for email confirmation/password recovery.
+- **Supabase OAuth:** Google provider credentials, web redirect URLs, the provider callback, and email-confirmation behavior must be verified. Supabase should allow `https://pintpath.au/auth/callback`; the Google console should allow the callback derived from `SUPABASE_URL`, for example `https://auth.pintpath.au/auth/v1/callback`. Set `SUPABASE_OAUTH_PROVIDERS=google` and prove Apple is disabled. The first-release iOS app is email/password only, declares no custom URL scheme, and uses the HTTPS callback for email confirmation/password recovery.
 - **Supabase Auth security:** Enable leaked-password protection before public launch.
-- **Supabase RLS live audit:** Apply migrations, then test anonymous/authenticated access in the Supabase dashboard or staging client. Local SQL parsing is not a substitute for live policy verification.
+- **Supabase live access audit:** Apply the final Data API retirement migration, then prove live that `anon` and `authenticated` have zero privileges on public tables, sequences, RPCs, and private helpers. RLS remains defence in depth; only the Express service, using its server-only service role, may access application data. Local SQL parsing is not a substitute for live privilege and denial proof.
 - **Supabase database version:** Confirm the live project is not on deprecated Postgres 14 before launch.
-- **Supabase Data API exposure:** Confirm any new public-schema tables have intentional grants/exposure plus RLS; do not assume new tables are auto-exposed.
+- **Supabase Data API retirement:** Prove direct PostgREST/Data API reads, writes, RPCs, and storage-object access are denied to ordinary clients while the documented Express API paths still work. Future migrations must not add public grants unless a separately reviewed access contract explicitly reintroduces them.
 - **Storage bucket live audit:** Verify `beermap-source-evidence` is private, has the intended file-size/MIME limits, and has no direct `anon` or `authenticated` object policies. Prove ordinary clients are denied and only the server-authorized API/admin signed-URL paths work.
 - **Google Maps Map ID:** Create a JavaScript/vector Map ID in Google Maps Platform, set `GOOGLE_MAPS_MAP_ID`, and verify AdvancedMarkerElement markers render on staging.
-- **Stripe:** Test-mode signed webhooks must first prove verification, duplicate-event idempotency, subscription updates, cancellations, and failed invoices. Before public paid entry points open, complete the controlled smallest-value live checkout/webhook/portal/cancel/refund reconciliation in [`external-launch-signoffs.md`](external-launch-signoffs.md#10-legal_billing); test mode alone is not live-provider evidence.
-- **Report email:** The Resend adapter and monthly scheduler are implemented but opt-in. Do not announce live delivery until the sending domain/key/from address are configured, a targeted staging email proves manager-only recipient scoping, and Railway records a successful `job:monthly_report_delivery` state.
+- **Stripe/pricing:** Keep `COMMERCIAL_LAUNCH_ENABLED=false` and
+  `CONSUMER_PAID_ENROLLMENT_ENABLED=false` for this release. Stripe values may
+  remain absent; prove no current amount, checkout, trial, upgrade, or enrolment
+  action is public. Test-mode lifecycle proof and the smallest-value live canary
+  belong to a future commercial candidate after pricing is approved; do not
+  enable a flag or make a charge for this free launch.
+- **Report email:** Keep `REPORT_EMAIL_MODE=disabled` and `REPORT_DELIVERY_SCHEDULE_ENABLED=false` for this Free venue launch, and prove no report is sent or advertised. Provider-delivery proof belongs to a future Pro/commercial release candidate. This does not replace the separate current-launch account-deletion completion-notice evidence below.
+- **Account-deletion completion notice:** Configure a dedicated Resend sending-only key, verified sender/reply-to, 32-byte recipient-encryption keyring, and signed webhook for `email.delivered`, `email.delivery_delayed`, `email.bounced`, `email.failed`, `email.suppressed`, and `email.complained`. Set `ACCOUNT_DELETION_REHEARSAL_ENABLED=true` only for the sacrificial proof in isolated Railway staging and prove it is `false` or absent in production. Verify delivery and audited terminal-resolution purges, the 30-day post-completion limit, the 60-day pre-completion held cap, invalid/replayed and out-of-order events, failure handling, restart/worker overlap, the pre-24-hour uncertain-send cutoff, and restored-tombstone suppression.
 - **Redis rate limiting:** Full-scale production should use `REDIS_URL`; in-memory fallback is acceptable only for controlled beta/preview. Set `REQUIRE_REDIS_RATE_LIMITING=true` for the isolated two-replica staging outage drill so protected traffic and readiness fail closed when staging Redis is unavailable.
 - **DAST/mobile E2E:** Do not run dynamic scanners against production. Run any ZAP/Lighthouse/Playwright mobile pass only against local, preview, or staging.
 - **Backups/restore:** Run and document a provider-level restore drill before full-scale launch.
@@ -111,9 +118,11 @@ These are launch-critical but require provider/staging verification:
 ## Manual Staging Smoke
 
 - Open the public map logged out and confirm no admin/debug/provider legacy content is visible.
-- Confirm free users only see happy hours plus pint previews for Guinness, Carlton Draught, and Stone & Wood Pacific Ale.
+- Confirm free users see only the fixed pint previews for Guinness, Carlton
+  Draught, and Stone & Wood Pacific Ale; no public happy-hour filter, card,
+  badge, promotional claim, submission mode, or special-price detail appears.
 - Log in, submit a beer price and source photo, and confirm it is pending.
 - Confirm another user cannot see that raw submission/evidence.
 - Approve the submission as admin and confirm the normalized price appears on the map.
-- Assign a venue manager and confirm ordinary profile, beer, and happy-hour edits publish directly for that assigned venue. Then trigger a documented safeguard/restricted change, confirm it stays pending, approve it as admin, and confirm only the approved guarded change publishes.
-- Verify Pro venue analytics remain aggregate-only and hide low-count buckets.
+- Assign a venue manager and confirm ordinary profile and beer edits publish directly for that assigned venue. Exercise the retained venue-side happy-hour collection field, but prove it creates no public happy-hour record, filter, mission, contribution path, SEO claim, or iOS surface. Then trigger a documented safeguard/restricted change, confirm it stays pending, approve it as admin, and confirm only the approved guarded change publishes.
+- Prove Pro, report, special, checkout, counter, reward, and POS surfaces are unavailable in the current web and iOS release, and that scheduled report delivery remains disabled.

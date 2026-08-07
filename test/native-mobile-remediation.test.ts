@@ -63,10 +63,13 @@ describe("native mobile remediation guardrails", () => {
       expect(client).toContain("/auth/v1/token?grant_type=refresh_token");
       expect(client).toContain("/api/business/auth/supabase-session");
       expect(client).not.toContain("/api/business/auth/signup");
-      expect(client).toContain("hasSupabaseConfiguration");
-      expect(client).toContain("/api/business/auth/login");
     }
-    expect(iosAPI).toMatch(/if !hasSupabaseConfiguration\(config\)[\s\S]*\/api\/business\/auth\/login/);
+    expect(iosAPI).not.toContain("hasSupabaseConfiguration");
+    expect(iosAPI).not.toContain("/api/business/auth/login");
+    expect(iosAPI).toContain('static let approvedSupabaseOrigin = "https://auth.pintpath.au"');
+    expect(iosAPI).toMatch(/private func supabaseAuthRequest[\s\S]*AppConfig\.supabaseURL[\s\S]*AppConfig\.supabaseAnonKey/);
+    expect(androidAPI).toContain("hasSupabaseConfiguration");
+    expect(androidAPI).toContain("/api/business/auth/login");
     expect(androidAPI).toMatch(/if \(!hasSupabaseConfiguration\(config\)\)[\s\S]*\/api\/business\/auth\/login/);
     expect(iosAPI).toContain('consentSource: hasCompleteConsent ? "ios" : nil');
     expect(androidAPI).toContain('put("consentSource", "android")');
@@ -85,9 +88,10 @@ describe("native mobile remediation guardrails", () => {
   });
 
   it("reports the effective native Supabase configuration in debug settings", () => {
-    expect(iosSettings).toContain("model.config?.supabaseUrl");
-    expect(iosSettings).toContain("model.config?.supabaseAnonKey");
-    expect(iosSettings).not.toContain("AppConfig.supabaseURL == nil");
+    expect(iosSettings).toContain("AppConfig.supabaseURL != nil");
+    expect(iosSettings).toContain("AppConfig.supabaseAnonKey != nil");
+    expect(iosSettings).not.toContain("model.config?.supabaseUrl");
+    expect(iosSettings).not.toContain("model.config?.supabaseAnonKey");
     expect(androidApp).toContain('state.config.stringOrNull("supabaseUrl")');
     expect(androidApp).toContain('state.config.stringOrNull("supabaseAnonKey")');
     expect(androidApp).toContain("hasServerSupabaseConfig || hasEmbeddedSupabaseConfig");

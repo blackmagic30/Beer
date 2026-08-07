@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Venue Data Missions | Pint Path</title>
-  <meta name="description" content="Find Pint Path missions for stale or missing Melbourne venue data, then submit accurate beer prices and happy hours for review." />
+  <meta name="description" content="Find Pint Path missions for stale or missing Melbourne venue data, then submit accurate beer prices for review." />
   <link rel="canonical" href="https://pintpath.au/missions.html" />
   <link rel="icon" href="/favicon.ico" sizes="any" />
   <link rel="icon" type="image/png" sizes="48x48" href="/favicon.png" />
@@ -15,12 +15,12 @@
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="Pint Path" />
   <meta property="og:title" content="Venue Data Missions | Pint Path" />
-  <meta property="og:description" content="Find stale or missing venue data, then submit accurate beer prices and happy hours for review." />
+  <meta property="og:description" content="Find stale or missing venue data, then submit accurate beer prices for review." />
   <meta property="og:url" content="https://pintpath.au/missions.html" />
   <meta property="og:image" content="https://pintpath.au/assets/pint-path-logo.png" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="Venue Data Missions | Pint Path" />
-  <meta name="twitter:description" content="Find stale or missing venue data, then submit accurate beer prices and happy hours for review." />
+  <meta name="twitter:description" content="Find stale or missing venue data, then submit accurate beer prices for review." />
   <meta name="twitter:image" content="https://pintpath.au/assets/pint-path-logo.png" />
   <link rel="stylesheet" href="./business.css" />
   <script src="./config.js"></script>
@@ -39,7 +39,7 @@
       <div class="missionControlPanel">
         <div class="missionControlGrid">
           <label class="field missionSearchField">Search street, area, venue, or reason
-          <input id="suburbFilter" placeholder="Try Brunswick, Chapel St, Rooftop Bar, happy hour…" autocomplete="off" />
+          <input id="suburbFilter" placeholder="Try Brunswick, Chapel St, or a venue name…" autocomplete="off" />
           <span class="fieldHint">Search an area when location is off, or use your current location for nearby missions.</span>
           </label>
           <label class="field missionSortField">Sort
@@ -49,7 +49,6 @@
             <option value="saved">My saved areas</option>
             <option value="stale">Stale data</option>
             <option value="no_data">No data</option>
-            <option value="missing_happy_hour">Missing happy hour</option>
           </select>
           </label>
         </div>
@@ -89,6 +88,7 @@
     let missionRequestId = 0;
     let missionAreaRequestId = 0;
     let missionPagination = { total: 0, limit: 50, offset: 0, hasMore: false };
+    let missionServerOffset = 0;
     let savedMissionAreas = [];
     const INITIAL_MISSION_COUNT = 5;
     const MISSION_PAGE_SIZE = 5;
@@ -147,11 +147,16 @@
       return terms.every((term) => searchable.includes(term));
     }
 
+    function isHappyHourMission(mission) {
+      return /happy[\s_-]*hour/i.test([
+        mission?.reason,
+        mission?.type,
+        mission?.submissionType,
+      ].filter(Boolean).join(" "));
+    }
+
     function submissionTypeForMission(mission) {
       const reason = String(mission.reason || "").toLowerCase();
-      if (reason.includes("happy")) {
-        return "happy_hour_update";
-      }
       if (!mission.lastVerifiedAt || reason.includes("no data")) {
         return "full_venue_update";
       }
@@ -188,11 +193,18 @@
       const filteredMissions = missionCache.filter((mission) => missionMatches(mission, query));
       const missions = orderedMissionsForDisplay(filteredMissions);
       const visibleMissions = missions.slice(0, visibleMissionCount);
-      const totalMissionCount = Math.max(missions.length, Number(missionPagination.total || 0));
+      const totalMissionCount = missions.length;
       const hiddenCount = Math.max(0, totalMissionCount - visibleMissions.length);
+      const moreAvailable = hiddenCount > 0 || missionPagination.hasMore;
+      const loadMoreMarkup = moreAvailable ? `
+        <div class="missionLoadMore">
+          <span class="helperCopy">Showing ${visibleMissions.length}${missionPagination.hasMore ? "+" : ` of ${totalMissionCount}`} missions.</span>
+          <button id="loadMoreMissionsButton" class="button" type="button">Load more</button>
+        </div>
+      ` : "";
 
       missionsHelp.textContent = query
-        ? `Showing missions matching "${query}". You can search partial area names, venue names, or reasons like stale prices and happy hour.`
+        ? `Showing missions matching "${query}". You can search partial area names, venue names, or reasons like stale prices.`
         : missionLocation?.source === "area_lookup"
           ? `Showing missions within ${missionRadiusSelect.value} km of ${missionLocation.label}.`
         : missionSort.value === "saved"
@@ -204,11 +216,9 @@
           const points = formatPoints(Number(mission.points || 0) * Number(mission.multiplier || 1));
           const reason = String(mission.reason || "");
           const distanceCopy = formatDistance(mission.distanceMeters);
-          const suggestedAction = reason.toLowerCase().includes("happy")
-            ? "confirm the happy-hour days, times, and conditions"
-            : mission.lastVerifiedAt
-              ? "confirm one stale beer price"
-              : "add 3 current beer prices";
+          const suggestedAction = mission.lastVerifiedAt
+            ? "confirm one stale beer price"
+            : "add 3 current beer prices";
           const progress = String(mission.userProgress || "");
           const submissionPending = progress === "submitted";
           const alreadyAccepted = progress === "accepted";
@@ -254,18 +264,13 @@
               </div>
             </article>
           `;
-        }).join("") + (hiddenCount ? `
-          <div class="missionLoadMore">
-            <span class="helperCopy">Showing ${visibleMissions.length} of ${totalMissionCount} missions.</span>
-            <button id="loadMoreMissionsButton" class="button" type="button">Load more</button>
-          </div>
-        ` : "")
+        }).join("") + loadMoreMarkup
         : `
           <div class="listItem emptyState">
             <strong>No active missions matched "${escapeHtml(query || "that search")}".</strong>
             Try a shorter area or venue name, such as ${suggestedSearches().map((item) => `<strong>${escapeHtml(item)}</strong>`).join(", ") || "<strong>Fitzroy</strong>, <strong>Richmond</strong>, or <strong>South Melbourne</strong>"}.
           </div>
-        `;
+        ` + loadMoreMarkup;
 
       missionsList.querySelectorAll("[data-mission]").forEach((link) => {
         link.addEventListener("click", async (event) => {
@@ -357,7 +362,7 @@
       const params = new URLSearchParams({
         sort: missionSort.value,
         limit: String(MISSION_SERVER_PAGE_SIZE),
-        offset: String(append ? missionCache.length : 0),
+        offset: String(append ? missionServerOffset : 0),
       });
       const query = suburbFilter.value.trim();
       if (query && missionLocation?.source !== "area_lookup") {
@@ -371,11 +376,18 @@
       try {
         const data = await MelbBeerBusiness.apiFetch(`/api/business/missions?${params.toString()}`, { signal: controller.signal });
         if (requestId !== missionRequestId) return false;
-        const page = Array.isArray(data.missions) ? data.missions : [];
+        const rawPage = Array.isArray(data.missions) ? data.missions : [];
+        const page = rawPage.filter((mission) => !isHappyHourMission(mission));
+        const responseOffset = Number(data.pagination?.offset ?? (append ? missionServerOffset : 0));
+        missionServerOffset = responseOffset + rawPage.length;
         missionCache = append
           ? [...new Map([...missionCache, ...page].map((mission) => [mission.id, mission])).values()]
           : page;
-        missionPagination = data.pagination || {
+        missionPagination = data.pagination ? {
+          ...data.pagination,
+          offset: responseOffset,
+          hasMore: Boolean(data.pagination.hasMore),
+        } : {
           total: missionCache.length,
           limit: MISSION_SERVER_PAGE_SIZE,
           offset: append ? Math.max(0, missionCache.length - page.length) : 0,
@@ -391,13 +403,15 @@
           });
         }
         renderMissions();
-        const total = Number(missionPagination.total || missionCache.length);
-        MelbBeerBusiness.setStatus(missionsStatus, `${total} mission${total === 1 ? "" : "s"} available.`);
+        const visibleTotal = missionCache.length;
+        const totalCopy = missionPagination.hasMore ? `${visibleTotal}+` : String(visibleTotal);
+        MelbBeerBusiness.setStatus(missionsStatus, `${totalCopy} mission${visibleTotal === 1 && !missionPagination.hasMore ? "" : "s"} available.`);
         return true;
       } catch (error) {
         if (error?.name === "AbortError" || requestId !== missionRequestId) return false;
         if (!append) {
           missionCache = [];
+          missionServerOffset = 0;
           missionPagination = { total: 0, limit: MISSION_SERVER_PAGE_SIZE, offset: 0, hasMore: false };
         }
         renderMissions();

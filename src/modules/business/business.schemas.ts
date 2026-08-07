@@ -287,6 +287,11 @@ export const adminReasonSchema = z.object({
   reason: z.string().trim().min(4).max(500),
 });
 
+export const accountDeletionNotificationResolutionSchema = z.object({
+  resolution: z.enum(["verified_delivered", "undeliverable"]),
+  reason: z.string().trim().min(4).max(500),
+});
+
 export const submissionItemSchema = z.object({
   beerName: z.string().trim().min(1).max(120),
   servingSize: servingSizeSchema.default("pint"),

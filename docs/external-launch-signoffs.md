@@ -1,12 +1,13 @@
 # External launch evidence checklist
 
-This is the executable checklist for the 12 required items in `docs/release-evidence.json`. Repository tests prove code and synthetic contracts; these checks prove the deployed providers, physical devices, real venue operations, legal decisions, backups, and store builds.
+This is the executable checklist for the 12 required items in `docs/release-evidence.json`. Repository tests prove code and synthetic contracts; these checks prove the deployed providers, physical devices, real venue operations, legal decisions, backups, and the signed iOS build.
 
 Do not mark an item `pass` because its code exists or a local test passed. Mark it `pass` only after every step and pass criterion below is satisfied.
 
 ## Common setup for one release candidate
 
 - [ ] Name one release owner with authority to stop the launch.
+- [ ] Complete the named private role/contact register and pass the tabletop gate in `docs/data-breach-response-runbook.md`; an untested template is not production evidence.
 - [ ] Freeze the candidate commit, then initialise one private working directory in every new operator shell:
 
   ```bash
@@ -23,7 +24,7 @@ Do not mark an item `pass` because its code exists or a local test passed. Mark 
   npm ci --include=dev
   ```
 
-- [ ] Confirm CI, automated readiness, and Native Apps are green for that commit.
+- [ ] Confirm ordinary CI, automated readiness, and the required Native Apps `ios` check are green for that commit. Android is informational and outside this launch scope.
 - [ ] Deploy that commit and confirm `/ready` reports the same SHA.
 - [ ] Create a private evidence register for the release. Do not commit tokens, customer identifiers, private menu files, POS secrets, signing keys, backup contents, or unredacted screenshots.
 - [ ] Give the release an immutable ID such as `PP-LAUNCH-2026-001`. Before recording the first completed check, set `release.id` and the full 40-character `release.candidateSha` in `docs/release-evidence.json`. Never change them to rescue stale evidence. The validator requires that SHA to exist, remain an ancestor of `HEAD`, and have no later code changes; only `docs/release-evidence.json` may differ in the evidence-closeout commit.
@@ -55,7 +56,7 @@ For a passed item, update only that matching object in `docs/release-evidence.js
   "id": "production_public_smoke",
   "label": "Production public health, readiness, API, and page smoke",
   "owner": "Release engineer and operations owner",
-  "nextAction": "Enable and prove report email delivery and scheduling, then capture the complete public/provider, performance, load, security-header, and alert exercise against one frozen production SHA.",
+  "nextAction": "Capture the complete public/provider, performance, load, security-header, and alert exercise against one frozen production SHA; keep paid/report delivery disabled and prove deletion delivery in its own gate.",
   "required": true,
   "status": "pass",
   "evidence": "PP-LAUNCH-2026-001/production_public_smoke",
@@ -75,21 +76,21 @@ After each update, run:
 npm run release:evidence
 ```
 
-Keep the final evidence update as one closeout commit that changes only `docs/release-evidence.json`. If signed mobile builds were created from its parent candidate, record both SHAs in the private register. The manual production gate must still run against the final deployed `main` SHA, and **Native Apps** must be manually dispatched for that final SHA because documentation-only pushes do not match its path filters.
+Keep the final evidence update as one closeout commit that changes only `docs/release-evidence.json`. If signed mobile builds were created from its parent candidate, record both SHAs in the private register. The manual production gate must still run against the final deployed `main` SHA, and **Native Apps** must be manually dispatched so its protected production-configuration iOS job runs for that exact final SHA.
 
 ## Recommended order
 
 1. Preliminary privacy/data-processing/content-rights approval.
 2. Production public smoke and providers.
 3. Production role and authentication smoke.
-4. Labelled OCR corpus.
-5. Venue pilots one, two, and three.
-6. POS vendor adapter or manual fallback pilot.
-7. Backup restore rehearsal.
-8. Accessibility and physical-device matrix.
-9. Final legal and billing approval.
-10. iOS TestFlight approval.
-11. Android internal-track approval.
+4. Account-deletion completion notice and old-token denial proof.
+5. Labelled OCR corpus.
+6. Venue pilots one, two, and three.
+7. Moderation, takedown, appeal, and operator-handoff drill.
+8. Backup restore rehearsal.
+9. Accessibility and physical-device matrix.
+10. Final legal and pricing-deferral approval.
+11. iOS TestFlight/App Review preparation.
 12. Final evidence closeout and strict release gate.
 
 The OCR corpus, accessibility review, legal review, and store preparation can run in parallel after the production candidate is stable. Do not run venue pilots before the role and provider checks pass.
@@ -135,16 +136,38 @@ The OCR corpus, accessibility review, legal review, and store preparation can ru
   ```
 
   Securely transfer only that sanitized JSON to the operator host as `$EVIDENCE_DIR/provider-readiness.json`, validate it again, then delete the remote temporary file. Never copy a remote `.env` or provider credential.
-- [ ] In Supabase, verify the production Site URL and exact web/mobile redirect allow list, Google and Apple provider callbacks, email confirmation, leaked-password protection, admin MFA/AAL2, a supported Postgres version, intentional Data API grants, and RLS on every exposed table. Use the current [redirect URL](https://supabase.com/docs/guides/auth/redirect-urls), [RLS](https://supabase.com/docs/guides/database/postgres/row-level-security), and [Data API security](https://supabase.com/docs/guides/api/securing-your-api) guidance.
+- [ ] In Supabase, verify the production Site URL and exact web redirect allow
+  list, Google provider callback, `SUPABASE_OAUTH_PROVIDERS=google`, proof Apple
+  OAuth is disabled, email confirmation, leaked-password protection, admin
+  MFA/AAL2, and a supported Postgres version. Apply the final Data API retirement
+  migration and prove `anon`/`authenticated` have zero public table, sequence,
+  RPC, or private-helper privilege; RLS remains defense in depth and only the
+  server service-role/Express path accesses application data. Use the current
+  [redirect URL](https://supabase.com/docs/guides/auth/redirect-urls),
+  [RLS](https://supabase.com/docs/guides/database/postgres/row-level-security),
+  and [Data API security](https://supabase.com/docs/guides/api/securing-your-api)
+  guidance.
 - [ ] Confirm `beermap-source-evidence` is private and both `anon` and ordinary `authenticated` clients are denied list, download, upload, update, and delete. Prove only the authorized server API/admin signed-URL paths work. The service key must not appear in `/config.js`, browser requests, logs, or evidence.
-- [ ] Confirm the independent backup Supabase URL is a different origin, and both `anon` and `authenticated` clients are denied every operation on `pintpath-backups`. The actual restore proof is item 8.
+- [ ] Confirm the operational backup Supabase URL is a different origin, and
+  both `anon` and `authenticated` clients are denied every operation on
+  `pintpath-backups`. This same-provider project is not the immutable-copy
+  proof: item 9 must also prove an object-locked/WORM copy in a separate failure
+  domain whose application writer cannot delete or shorten retention.
 - [ ] Confirm browser Maps and server Places keys have API-level restrictions, approved origin/service restrictions, quotas, and budget alerts; the production vector Map ID must render live markers. Apply equivalent least-privilege quotas/alerts to OpenAI where the provider supports them.
 - [ ] Confirm Redis is configured for normal production. In isolated staging, set `REQUIRE_REDIS_RATE_LIMITING=true`, confirm `/ready` reports `rateLimiterRedis.required=true`, and use two app instances to prove the third request against a limit of two is rejected across replicas. Then interrupt only staging Redis and prove readiness plus protected traffic return `503` rather than silently switching to process memory. Restore the exact staging Redis reference and confirm recovery; never run the outage drill against production. The Railway environment must remain named `staging`, which disables production backup/report schedulers and deletion-ledger writes; staging must not share the production backup service key or bucket.
-- [ ] Confirm OpenAI, Google, Stripe, Supabase, POS, backup, and report-email secrets remain server-side.
+- [ ] Confirm active OpenAI, Google, Supabase, backup, deletion-notice,
+  webhook-signing, and recipient-encryption secrets remain server-side. Prove
+  Stripe, POS, and report-email credentials are absent or inert while their
+  features are disabled.
 - [ ] Confirm TLS, HSTS/security headers, secure/HttpOnly/SameSite cookies, CSP, CORS, mixed-content blocking, and public cache headers on the deployed site. Run DAST only against staging/preview, never broad production traffic, and resolve all critical/high findings.
 - [ ] Run Lighthouse or WebPageTest on `/`, `/pricing.html`, `/venue-portal.html`, and `/account.html` on mobile and desktop. Require 85+ performance on public landing/pricing, 95+ accessibility/SEO on public pages, 90+ accessibility on authenticated tools, no initial blocking console error, and no document overflow at 390px, 768px, or desktop.
-- [ ] Run a read-only staging load test across map venues/prices/missions and authenticated admin queues. Record tool/version/workload and require zero authorization/data-isolation failures, less than 1% 5xx, public API p95 below 2 seconds, and admin p95 below 3 seconds at the agreed beta concurrency.
-- [ ] Confirm named alerts and escalation for `/health`, `/ready`, 5xx, deployment failure, Redis failure, Stripe webhook failure, login/rate-limit spikes, database/volume size, backup age, and scheduled job failure. Trigger each safely in staging and preserve delivery/acknowledgement evidence.
+- [ ] Define the expected launch peak from a documented acquisition/traffic model, then run read-only staging peak, 2×-peak headroom, and at least 60-minute soak tests across map venues/prices/missions and authenticated admin queues. Include sustained write contention for the approved submission/moderation/deletion-job mix, near-capacity and disk-full containment, process restart, and a volume-backed deploy/recovery timing drill. Record tool/version/workload and require zero authorization/data-isolation failures, less than 1% 5xx, public API p95 below 2 seconds, admin p95 below 3 seconds, no unbounded queue/lock growth, and measured downtime inside the signed launch budget.
+- [ ] Confirm named alerts and escalation for `/health`, `/ready`, 5xx,
+  deployment failure, Redis failure, deletion-notice manual review/retention
+  breach, login/rate-limit spikes, database/volume size, backup age, and enabled
+  scheduled-job failure. Trigger each safely in staging and preserve
+  delivery/acknowledgement evidence. Stripe/report alerts become required only
+  when those future features are enabled.
 
 **Pass:** The exact SHA is deployed; public smoke exits `0`; its JSON parses; provider readiness has no failures/blocking warnings; provider access, distributed limiting, private Storage, TLS/browser security, performance, load, secret exposure, monitoring, and staging DAST checks all pass with no unresolved critical/high finding.
 
@@ -154,10 +177,17 @@ The OCR corpus, accessibility review, legal review, and store preparation can ru
 
 **Owner:** Release engineer and identity owner. **Verifier:** Security or admin owner.
 
-- [ ] Create dedicated verified ordinary-user, second ordinary-user, venue-manager, counter-staff, and admin smoke accounts. Assign the manager only to intended test venues, accept the counter invitation, and require a current MFA/AAL2 admin session.
+- [ ] Create dedicated verified ordinary-user, second ordinary-user,
+  venue-Free-manager, and admin smoke accounts. Assign the manager only to
+  intended test venues and require a current MFA/AAL2 admin session.
 - [ ] Configure production [custom SMTP](https://supabase.com/docs/guides/auth/auth-smtp), SPF/DKIM/DMARC, sender domain, bounce/delivery monitoring, and safe Auth email rate limits. Prove confirmation and password-reset delivery to non-team addresses; the default Supabase SMTP is not production evidence.
-- [ ] Test web email/password signup, email confirmation, password reset, Google sign-in, and Apple sign-in through their normal production redirects. For every web provider test success, cancellation, provider error, stale/replayed callback, and interrupted return. Separately prove the first-release iOS email-only flow and its HTTPS confirmation/recovery browser round trip.
-- [ ] Assign an owner and recurring six-month rotation date for the Apple OAuth secret as required by the current [Supabase Apple OAuth guidance](https://supabase.com/docs/guides/auth/social-login/auth-apple). Rotate once in staging and retest web sign-in plus Android provider sign-in if Android is released. The first-release iOS archive has no Apple OAuth path.
+- [ ] Test Google web sign-in through the normal production redirect, including success, cancellation, provider error, stale/replayed callback, and interrupted return. Prove public web email/password signup/login and Apple are absent. Separately prove the first-release iOS email/password signup, confirmation, login, and recovery flow plus its HTTPS browser round trip.
+- [ ] Begin with a Google-only web user that has never set a password. Complete
+  the approved recovery/set-password flow, sign in on iOS, and prove both
+  surfaces resolve to the same Supabase user ID and Pint Path account/public ID.
+  Attempt the collision/duplicate path and require it to fail or link to that
+  same identity; a second account is a release blocker.
+- [ ] Confirm there is no production Apple OAuth secret or enabled provider. If Apple login is proposed later, assign rotation ownership and implement, test, and evidence authorization-token revocation before enabling it.
 - [ ] Set the dedicated user and venue-manager credentials as protected `production` environment secrets for both hourly **Production Health** and **Pint Path Release Gate**. Use these exact names: `PINTPATH_SMOKE_USER_EMAIL`, `PINTPATH_SMOKE_USER_PASSWORD`, `PINTPATH_SMOKE_VENUE_EMAIL`, and `PINTPATH_SMOKE_VENUE_PASSWORD`. Keep the protected `SUPABASE_URL` and `SUPABASE_ANON_KEY` values in that environment too: the smoke script compares the live public auth config against those pins and sends no password on a mismatch. Do not configure user/venue bearer-token secrets; the workflow creates and revokes disposable sessions at runtime.
 - [ ] Obtain one short-lived Supabase admin access token through a normal password plus MFA ceremony and confirm its JWT is AAL2. Store it temporarily in a mode-`600` file at `$EVIDENCE_DIR/supabase-admin.token`; never paste it into the checklist or shell history. Do not store the admin password or TOTP seed in GitHub Actions.
 - [ ] Exchange the AAL2 Supabase admin token for a one-use Pint Path app token without printing either token or placing it in a process argument:
@@ -209,14 +239,20 @@ The OCR corpus, accessibility review, legal review, and store preparation can ru
   ```
 
 - [ ] Confirm all public checks plus `user_account`, `venue_manager_portal`, and `admin_queues` pass with zero failures and zero skips.
-- [ ] In real browsers, prove logged-out users receive only the fixed free price preview, entitled users receive the intended full set, a normal user cannot load admin/venue-private data, one manager cannot access an unauthorized venue, counter staff see redemption tools only, and the MFA admin can access queues.
+- [ ] In real browsers, prove logged-out users receive only the fixed free price
+  preview, contributors receive the intended earned set, a normal user cannot
+  load admin/venue-private data, one manager cannot access an unauthorized
+  venue, and the MFA admin can access queues. Prove counter/reward/POS and paid
+  surfaces remain unavailable.
 - [ ] As a contributor, submit a price and private photo; prove the second user cannot see raw submission/evidence; approve as admin; then prove the normalized price publishes and points are awarded only after approval.
 - [ ] As the assigned manager, prove ordinary profile, beer, and happy-hour edits follow the documented direct-publish path, while restricted fields and safeguard-triggered changes remain queued for admin review.
 - [ ] Prove privacy-thresholded analytics suppress low-count buckets and never expose another venue or individual activity.
-- [ ] Accept and revoke a counter invitation; prove access begins only after acceptance and stops after revocation.
 - [ ] Across two devices, prove password reset, current-device logout, logout-all, session listing/revocation, export, deletion request/status/cancel, and recent-auth requirements behave as documented. Export must include retained exact location fields but no raw evidence bytes/URLs, tokens, or passwords.
 - [ ] Require zero unexpected browser console errors or failed network requests in the completed role journeys.
-- [ ] Configure the Resend domain, sending-only key, sender, and monitored reply path. Use an active Pro venue, completed report month, enabled delivery, and current email-verified/age-confirmed manager. Require `deliveredCount=1`, zero rejected/uncertain/in-progress sends, a Resend delivered event, and no delivery to counter staff, revoked managers, or other venues. Confirm `job:monthly_report_delivery` succeeds.
+- [ ] Prove `REPORT_EMAIL_MODE=disabled` and
+  `REPORT_DELIVERY_SCHEDULE_ENABLED=false`; no monthly venue report is sent or
+  advertised for this venue-Free release. The dedicated account-deletion
+  Resend path is configured and proved separately in item 3.
 - [ ] Confirm the hourly authenticated job creates and revokes disposable user/venue sessions and that its JSON has both `*_session_cleanup` and `*_provider_session_cleanup` checks passing. Rotate the dedicated account passwords under the credential policy, not on the old bearer-token expiry schedule. Create a fresh MFA/AAL2 admin token for each manual gate; the gate sets `PINTPATH_REVOKE_DIRECT_SMOKE_TOKENS=true` and must show `admin_queues_session_cleanup` passing.
 - [ ] Unset local credential/token variables and securely delete temporary token files when the capture is complete:
 
@@ -228,11 +264,43 @@ The OCR corpus, accessibility review, legal review, and store preparation can ru
     \( -name 'supabase-*.token' -o -name 'pintpath-*.token' \) -delete
   ```
 
-**Pass:** Custom Auth email delivery and every provider/callback work; strict role-smoke JSON passes; the deployed user/contributor/manager/counter/admin journeys, isolation, entitlements, MFA, analytics privacy, session/privacy flows, token rotation, and targeted report delivery all pass with no unexpected console/network error.
+**Pass:** Custom Auth email delivery and every enabled provider/callback work;
+strict role-smoke JSON passes; the deployed user/contributor/venue-Free
+manager/admin journeys, isolation, MFA, analytics privacy, session/privacy
+flows, token rotation, and disabled commercial/report/reward scope all pass with
+no unexpected console/network error.
 
-**Evidence:** Role-smoke JSON or `pintpath-production-release-gate` artifact, provider-flow matrix, redacted isolation screenshots, report delivery ID/job state, SHA, timestamp, and verifier.
+**Evidence:** Role-smoke JSON or `pintpath-production-release-gate` artifact,
+provider-flow matrix, redacted isolation screenshots, disabled report/commercial
+state, SHA, timestamp, and verifier.
 
-## 3. `ocr_labelled_corpus`
+## 3. `account_deletion_completion_notice`
+
+**Owner:** Privacy operations owner and release engineer. **Verifier:** Independent security or privacy reviewer.
+
+- [ ] Deploy schema 15 and the notification worker to isolated staging; preserve the automatic pre-migration SQLite backup.
+- [ ] Pin the production Beer service to exactly one app replica and one region. Prove no autoscaling or second SQLite writer is enabled; Railway volumes do not permit replicas and introduce brief deployment downtime. Horizontal/multi-region or highly available launch claims are a no-go until the authoritative SQLite state, deletion outbox, webhook correlation, and job leases move together to a shared transactional datastore. Otherwise preserve the signed controlled-launch capacity/downtime acceptance and migration trigger.
+- [ ] In Resend, verify the sender domain and create a dedicated sending-only transactional key. Create one staging-only webhook at the exact staging Railway origin and a separate production webhook at `https://pintpath.au/api/business/account-deletion-notifications/resend-webhook`; give each its own `whsec_` secret and subscribe both to `email.delivered`, `email.delivery_delayed`, `email.bounced`, `email.failed`, `email.suppressed`, and `email.complained`. Never send staging events to the production endpoint.
+- [ ] Generate an independent 32-byte recipient-encryption key. Store the active key ID, keyring JSON, Resend key, sender, monitored reply-to, and `whsec_` webhook secret only in the protected Railway/GitHub secret stores. Never paste a secret, keyring, or recipient into evidence.
+- [ ] Keep `SUPABASE_OAUTH_PROVIDERS=google`; prove production startup rejects Apple and an incomplete deletion-notice configuration.
+- [ ] Set `ACCOUNT_DELETION_REHEARSAL_ENABLED=true` only after proving the immutable staging Railway project/environment/service IDs, exact `$RAILWAY_PUBLIC_DOMAIN` origin, `/app/data` volume and data paths, staging Supabase project `ibveugyfyzjptyvautlr`, Stripe test mode or absence, and staging-only Resend webhook/key material. Remove both off-site backup credentials and every Redis reference first; use the explicit in-memory limiter override only for this single-instance proof. Run `npm run --silent readiness:providers`, require `readinessProfile=account_deletion_rehearsal`, and confirm `/ready` separately. Remove the rehearsal switch and override immediately afterward and prove both are false or absent in production.
+- [ ] Use a sacrificial verified staging account. After test-adjusting only its staging safety window, execute deletion and prove `held -> pending -> accepted -> delivered`, a verified webhook receipt, one provider message, and deletion of the encrypted recipient row.
+- [ ] Prove invalid signatures return an error, duplicate `svix-id` deliveries are idempotent, older out-of-order events cannot reverse a newer outcome, worker overlap sends once, restart resumes work, and restored tombstones never send a notice.
+- [ ] Prove timeout/429 retry backoff, bounce/failure operator attention, the 23-hour uncertain-send cutoff, recipient-ciphertext purge on verified delivery or audited terminal resolution, the 30-day post-completion hard limit, the 60-day pre-completion held cap, 400-day non-identifying webhook-receipt retention, and key rotation without removing a still-referenced key.
+- [ ] Before deleting the sacrificial account, retain one short-lived Supabase
+  access JWT in the protected evidence session. After Auth identity deletion and
+  local completion, prove that exact old JWT cannot exchange for a Pint Path
+  session and cannot read or mutate any exposed Data API table, RPC, or Storage
+  object. Record only the JWT expiry and denial matrix, then destroy the token.
+  A failed refresh or deleted Auth user alone does not prove an issued JWT is
+  contained.
+- [ ] Confirm `/ready`, `job:account_deletion_notifications`, and the admin deletion queue report configured/healthy state with no manual-review or overdue-retention rows. Inspect SQLite using aggregate/length checks only and prove there is no plaintext recipient in outbox/admin/log output.
+
+**Pass:** One and only one completion notice reaches the staging recipient, its delivery is cryptographically linked to a verified Resend event, recipient ciphertext is purged on verified delivery, audited terminal resolution, or its applicable hard limit, all abuse/retry/restore/retention cases pass, and production readiness is fail-closed.
+
+**Evidence:** Candidate SHA, schema version and migration-backup receipt, sanitized Resend domain/webhook screenshots, provider message ID, non-identifying webhook event ID/keyed receipt HMAC, admin/job summaries, staging test matrix, timestamp, and verifier. No email address or secret is permitted.
+
+## 4. `ocr_labelled_corpus`
 
 **Owner:** OCR/data QA lead. **Verifier:** Independent human label reviewer.
 
@@ -268,69 +336,108 @@ The OCR corpus, accessibility review, legal review, and store preparation can ru
 
 **Evidence:** Input manifest and source hashes, enriched result, report JSON, model identifiers without keys, per-layout score summary, reviewer, and timestamp.
 
-## 4–6. `venue_pilot_one`, `venue_pilot_two`, `venue_pilot_three`
+## 5–7. `venue_pilot_one`, `venue_pilot_two`, `venue_pilot_three`
 
 **Owner:** Pilot lead. **Verifier:** The owner/manager of each participating venue.
 
-Select three genuinely different venues by size, menu format, staff turnover, device mix, and network quality. A simulation does not count. Repeat every step below independently for each evidence ID.
+Select three genuinely different venues by size, menu format, device mix, and
+network quality. A simulation does not count. Repeat every step independently
+for each evidence ID without enabling Pro, trial, paid, reward, counter, or POS
+features.
 
-### Before the shift
+### Claim and assignment
 
 - [ ] The owner submits a claim through `/venue-portal.html` with a verified account.
-- [ ] Admin independently verifies the owner through a trusted venue phone, email, or partner contact and approves the claim.
-- [ ] Owner adds at least two counter staff by public Pint Path account ID.
-- [ ] Prove the owner can manage profile, beers, prices, happy hours, and staff, while counter staff can access only redemption tools.
-- [ ] Record devices, browsers/app versions, roles, network conditions, start time, and redacted test references.
+- [ ] Admin independently verifies the owner through a trusted venue phone,
+  email, or partner contact and approves only the correct venue assignment.
+- [ ] Prove the manager can see only assigned venues and a different verified
+  user cannot access the venue workspace.
+- [ ] Record devices, browsers/app version, network conditions, start time, and
+  redacted test references.
 
-### During a real shift
+### Free venue operations
 
-- [ ] Test QR scan and six-character member-code entry.
-- [ ] Record at least five paid drinks across two staff accounts.
-- [ ] Replay one transaction reference and prove no duplicate points are awarded.
-- [ ] Disable the network after member preview, submit a receipt, restore connectivity, and retry the queued receipt.
-- [ ] Enter one wrong drink and reverse it. Prove staff can reverse only their own entry within 15 minutes and the manager can correct it later.
-- [ ] Revoke one counter account and prove access stops.
-- [ ] Reconcile customer, counter, owner, and admin totals after reversals.
+- [ ] Update profile/hours and at least three beer/stock/price rows; verify the
+  intended venue-managed fields publish and a safeguard-triggered destructive
+  change is held for admin review.
+- [ ] Submit a separate community beer-price/photo contribution, prove its raw
+  evidence stays private, approve it as admin, and verify only the normalized
+  public price publishes with the expected audit record.
+- [ ] Exercise the retained venue-side happy-hour collection field and prove no
+  public happy-hour record, filter, mission, contribution path, SEO claim, or
+  iOS surface appears.
+- [ ] Interrupt the network before one safe form submission, recover without a
+  duplicate or partial update, and compare venue, manager, and admin views.
+- [ ] File and resolve one wrong-price/support issue; verify priority, owner,
+  response note, and public correction behavior.
+- [ ] Revoke the venue-manager assignment and prove access stops on the existing
+  session and after sign-in on a second device.
+- [ ] Prove both commercial flags, rewards, gamification, reports, specials,
+  counter/POS, trial, checkout, and upgrade actions remain unavailable.
 
 ### Immediate stop conditions
 
-Stop and mark the item `fail` if an unauthorized venue is visible, a member code is stored offline, a retry awards duplicate points, a reversal deletes history, counter staff see billing/POS credentials/analytics, or public data changes outside the intended publish/review path. A legitimately assigned multi-venue owner may see each authorized venue.
+Stop and mark the item `fail` if an unauthorized venue or private evidence is
+visible, an unreviewed community price publishes, a retry duplicates/partially
+applies data, revoked access survives, public happy-hour content appears, or a
+disabled commercial/reward surface becomes reachable.
 
-**Pass:** Every step passes during a real shift, totals reconcile, no stop condition occurs, defects are closed and retested, and the venue owner signs.
+**Pass:** Every Free venue step passes at the real venue, no stop condition
+occurs, defects are closed and retested, and the venue owner plus independent
+verifier sign.
 
-**Evidence:** One pack per venue with date/duration, venue characteristics, devices, roles, redacted references, step results, defects/retests, reconciliation, and venue-owner sign-off.
+**Evidence:** One pack per venue with date/duration, venue characteristics,
+devices, roles, redacted references, before/after public and manager results,
+network/revocation results, defects/retests, and venue-owner sign-off.
 
-## 7. `pos_vendor_pilot`
+## 8. `moderation_operations`
 
-**Owner:** Integration lead. **Verifier:** Venue owner and, for an adapter, vendor representative.
+**Owners:** Primary and backup moderation operators, privacy owner, and release owner.
 
-- [ ] Record one explicit launch choice: a named POS vendor adapter or the supported manual manager-portal fallback.
+- [ ] Record named primary/backup operators, normal/emergency response SLAs,
+  escalation contact, appeal path, and the fixed daily queue-review time.
+- [ ] Seed only synthetic test cases for a wrong price, abusive/free-text
+  submission, private-evidence concern, account/privacy request, and venue claim.
+- [ ] Prove normal users and unrelated venue managers cannot load admin queues,
+  raw evidence, internal notes, assignment controls, or audit metadata.
+- [ ] Triage, assign, reject/redact/take down, and resolve the synthetic cases;
+  verify the public result changes only through the authorized review path and
+  every action creates a redacted security-audit entry.
+- [ ] Exercise one emergency public-data takedown and one appeal/re-review;
+  preserve history without restoring unsafe free text or evidence publicly.
+- [ ] Hand the queue to the backup operator and prove they can continue from the
+  recorded state without shared credentials or private data in chat/email.
+- [ ] Trigger an SLA breach/alert in staging and verify acknowledgement plus
+  escalation. Keep marketing/report delivery, rewards, counter/POS, and paid
+  enrolment disabled throughout.
 
-### Vendor adapter path
+**Pass:** Queue isolation, takedown, appeal, audit, SLA escalation, and backup
+handoff all pass with no private-data exposure or unauthorized publication.
 
-- [ ] Rotate the venue-scoped POS token and place it only in the vendor's protected secret store.
-- [ ] Send the documented payload to `POST /api/business/pos/discount-redemptions` with `X-Pint-Path-POS-Token`.
-- [ ] Keep `posReference` stable across retries.
-- [ ] Prove first submission succeeds and returns `pointsEarned: 0`; exact replay returns success without a second discount redemption or duplicated savings. This endpoint does not award Pint Points—the separate verified-purchase flow does.
-- [ ] Prove 4xx waits for staff correction. Test 5xx/network backoff through staging fault injection or adapter-side network loss, never by deliberately breaking production, and retry the same `posReference`.
-- [ ] Prove a rotated token works immediately, the previous token works only until the returned `previousTokenValidUntil` (10-minute handover), then returns `401`; neither token may access another venue.
-- [ ] Confirm the payload contains no name, email, phone, payment-card data, or full receipt.
-- [ ] Reconcile POS references, Pint Path activity, and reversals at shift close.
+**Evidence:** Sanitized queue/takedown/appeal matrix, timestamps, audit-event
+references, alert acknowledgement, handoff record, defects/retests, and signed
+primary/backup/privacy-owner approval.
 
-### Manual fallback path
-
-- [ ] During a real shift, run the QR/code, two-staff, five-drink, duplicate-reference, offline retry, reversal, revocation, role-scope, and reconciliation steps from a venue pilot.
-- [ ] State explicitly that manual counter entry is the selected launch mode; do not describe a vendor adapter as complete.
-
-**Pass:** One selected path works at a real venue with no secret/PII leak, duplicate discount redemption/savings, role breach, or reconciliation mismatch, and the venue owner signs. Pint Points are claimed only when the separate verified-purchase flow is also completed.
-
-**Evidence:** Selected-mode decision, redacted request/response or manual-flow records, retry/idempotency proof, token-rotation proof if applicable, reconciliation, venue/vendor sign-off, and timestamp.
-
-## 8. `backup_restore`
+## 9. `backup_restore`
 
 **Owner:** Operations/SRE lead. **Verifier:** Second operator and named incident owner.
 
-- [ ] Confirm `OFFSITE_BACKUP_SUPABASE_URL` is a genuinely independent origin and `pintpath-backups` is private with no anonymous/authenticated object policies.
+- [ ] Treat `OFFSITE_BACKUP_SUPABASE_URL` as a private operational restore copy,
+  not by itself as immutable disaster-recovery proof. Confirm it is a different
+  origin and that `pintpath-backups` has no anonymous/authenticated object
+  policies.
+- [ ] Provision a second retained copy in a different provider or region with
+  object lock/WORM retention for at least the signed backup window. The
+  production application principal may create new uniquely named objects but
+  must be unable to overwrite, delete, shorten retention, change object lock,
+  or administer the bucket. Give deletion/retention control to a separate
+  two-person operations principal. Prove those denials with harmless staging
+  objects and preserve the provider policy/versioning/retention evidence.
+- [ ] Replicate each completed schema-15 database, source-evidence set, manifest,
+  and deletion ledger/tombstones into that immutable copy; verify hashes from a
+  separately authorised reader. A service-role key that can both upload and
+  run retention deletion, or two projects in the same failure domain, fails
+  this gate.
 - [ ] Confirm Railway reports `RAILWAY_ENVIRONMENT_NAME=production` in the protected production console. Confirm every staging/preview environment has a different name and neither shares nor writes to the production backup bucket; automatic backup and deletion-ledger writes fail closed outside the canonical production runtime.
 - [ ] Provision the destination only with `ops/supabase/independent-backup-project-storage.sql`, never through the production migration chain.
 - [ ] In a protected production service/container session, prove `DATABASE_PATH` resolves inside the mounted `/app/data` volume and is the running service's readable live SQLite file. Run the backup there—not from an operator laptop or checkout—and capture its JSON without printing provider secrets:
@@ -640,19 +747,23 @@ Stop and mark the item `fail` if an unauthorized venue is visible, a member code
 
 **Evidence:** Backup ID; sanitized backup-creation, SDK-download, verification, and staging JSON; manifest SHA-256; restore result; staging functional sheet and job-state screenshot; purge record; measured RPO/RTO; rollback target; and two-person sign-off. Do not retain object-path listings or raw object-level debug output.
 
-## 9. `accessibility_devices`
+## 10. `accessibility_devices`
 
 **Owner:** Accessibility QA lead. **Verifier:** Release owner.
 
 - [ ] Record release SHA/URL, tester, physical devices, OS/browser versions, VoiceOver/TalkBack versions, text size, and zoom.
-- [ ] Prepare logged-out, member/contributor, counter-staff, venue-manager, and admin accounts using synthetic data.
+- [ ] Prepare logged-out, member/contributor, venue-Free-manager, and admin accounts using synthetic data.
 - [ ] Keyboard-test `/`, `/pricing.html`, `/account.html`, `/submit.html`, `/venue-portal.html`, and `/admin.html` at 100% and 200% zoom.
 - [ ] Verify skip links, logical Tab/Shift-Tab order, visible focus, Enter/Space activation, Escape behavior, dialog focus containment/return, no keyboard trap, and no pointer-only required action.
-- [ ] With VoiceOver or NVDA, test account creation/login, validation errors, password controls, OAuth cancellation, settings tabs, destructive confirmations, map/list details, submissions, portal forms, counter actions, and admin review states.
+- [ ] With VoiceOver or NVDA, test account creation/login, validation errors,
+  password controls, OAuth cancellation, settings tabs, destructive
+  confirmations, map/list details, submissions, Free venue portal forms, and
+  admin review states.
 - [ ] On a physical iPhone, test Safari at default and large text with VoiceOver, including location allow/approximate/deny/no-fix, source-photo/camera input, auth returns, and venue tools.
 - [ ] On a physical Android phone, test Chrome at default and large font/display size with TalkBack across the same flows.
 - [ ] Run a formal axe scan on every public route and representative authenticated state above. Preserve the tool/version and results; require zero critical or serious violation and manually review anything the engine cannot decide.
-- [ ] Test QR/camera permission allowed, denied, and unsupported states; manual code entry must remain usable.
+- [ ] Test source-photo selection and location permission allowed, denied, and
+  unsupported states. Prove no QR/member-code/counter control appears.
 - [ ] Confirm no lost content, horizontal document overflow, clipped controls, unreadable contrast, or unresolved control-size exception.
 - [ ] Log every matrix row and defect, retest fixes on the same candidate, and obtain sign-off.
 
@@ -660,7 +771,7 @@ Stop and mark the item `fail` if an unauthorized venue is visible, a member code
 
 **Evidence:** Completed matrix, device/version inventory, keyboard/zoom screenshots, short screen-reader recordings, permission results, defect disposition, SHA, and signed approval.
 
-## 10. `legal_billing`
+## 11. `legal_billing`
 
 **Owners:** Company/product owner, Australian legal/privacy reviewer, and finance/accounting owner.
 
@@ -668,25 +779,53 @@ Stop and mark the item `fail` if an unauthorized venue is visible, a member code
 - [ ] Finalize legal entity/trading name, ABN/ACN if applicable, address requirements, privacy/support contacts, response windows, governing law, escalation, and dispute contacts.
 - [ ] Reconcile the privacy policy with actual account data, evidence photos/PDFs, exact upload location, optional analytics, reports, support records, security logs, billing state, processors/regions, retention, export, deletion, and backups.
 - [ ] Review 18+ eligibility, responsible-service/RSA language, changing price/availability disclaimers, community submissions, Pint Points/rewards, venue obligations, suspension, liability, and content ownership/licensing.
-- [ ] Confirm every consumer and venue price, billing period, entitlement, automatic renewal statement, cancellation path, paid-period end, failed-payment behavior, refund path, GST/tax invoice, and record-retention rule.
-- [ ] In Stripe test mode, prove checkout, signed webhooks, duplicate/replayed events, subscription update/cancel, portal, failed payment, suspended-account recovery, refund/support, and account-deletion/billing race behavior. Verify invalid and stale signatures are rejected.
-- [ ] Delay a venue-trial webhook beyond the 35-minute Checkout reservation TTL. Prove a completed session is recovered as the same trial, a Stripe-confirmed expired session can be replaced, and missing/mismatched/unavailable session authority blocks for support without issuing a second trial.
-- [ ] Before opening paid production entry points, use the controlled live account to complete the smallest permitted real checkout, receive the live signed webhook, open the billing portal, cancel, refund immediately, and reconcile Stripe, Pint Path entitlement, receipt/tax records, and the refund. Use a company-controlled customer and venue, redact all identifiers, and obtain finance approval. Test-mode results do not prove live key, endpoint, tax, email, or bank configuration.
-- [ ] Explicitly review Apple/Google payment-policy implications of web subscriptions and billing-portal access from native apps.
-- [ ] Reconcile App Store privacy and Play Data Safety answers with the final public policy and actual production processors.
+- [ ] Prove a sacrificial deletion removes its raw submission rows, item/free
+  text, contribution ledger, evidence links, and every public price record whose
+  source is that submission. Search the live database/export/cache by the old
+  account ID, submission IDs, email, and unique test text. A future retained
+  publisher-curated fact requires a separate fully de-linked ingestion path and
+  written privacy/legal plus App Review approval in a new candidate.
+- [ ] For this pricing-deferred release, prove
+  `COMMERCIAL_LAUNCH_ENABLED=false` and
+  `CONSUMER_PAID_ENROLLMENT_ENABLED=false`, no Stripe secret or price ID is
+  required, no checkout/trial/upgrade action is reachable, and no dormant amount
+  is advertised as a current offer. Record the owner/finance decision that no
+  charge, trial, renewal, tax invoice, refund, or paid entitlement starts in
+  this release. Do not enable a flag or make a live charge to complete evidence.
+- [ ] Keep the future billing contract pending outside this release. Before a
+  later commercial candidate, confirm every price/GST/renewal/cancellation/
+  refund rule, run signed Stripe test-mode lifecycle and delayed-webhook tests,
+  then perform the separately approved smallest-value live canary. Those future
+  checks do not block this free launch while both flags remain false.
+- [ ] Record that the submitted iOS binary has no subscription, billing-portal,
+  upgrade, or external-purchase surface. Review Apple/Google payment-policy
+  implications before a future commercial/native candidate.
+- [ ] Reconcile App Store privacy answers with the final public policy and actual production processors. Play Data Safety belongs to a future Android release.
 - [ ] Remove or formally resolve every placeholder/TBD, publish versioned final policies, and verify all website/store links.
 - [ ] Obtain dated approval from the accountable owner, legal/privacy reviewer, and finance/accounting reviewer.
 
-**Pass:** Published wording matches production behavior; entity/contact and billing decisions are final; provider flows pass; mobile declarations reconcile; all three responsible owners sign.
+**Pass:** Published wording matches production behavior; entity/contact and
+retained-content decisions are final; the documented free/deferred-billing state
+matches both flags and every public surface; mobile declarations reconcile; all
+three responsible owners sign.
 
-**Evidence:** Signed legal/privacy memo, finance decision log, policy versions/hashes, live links/screenshots, sanitized Stripe results, processor/retention inventory, and dated approvals.
+**Evidence:** Signed legal/privacy memo, retained-content decision, finance
+deferral record, disabled-flag/public-surface proof, policy versions/hashes, live
+links/screenshots, processor/retention inventory, and dated approvals. No live
+Stripe charge is evidence for this release.
 
-## 11. `ios_release`
+## 12. `ios_release`
 
 **Owners:** Apple Account Holder/App Manager, iOS release engineer, QA lead, and release owner.
 
-- [ ] Record the native source SHA and confirm Native Apps CI is green for it.
+- [ ] Record the native source SHA and confirm the required Native Apps `ios` job is green for it. Android is informational and outside this launch scope.
 - [ ] Confirm App Store Connect bundle ID `au.pintpath.app`, version/build uniqueness, Apple team, distribution certificate, and provisioning profile.
+- [ ] Confirm active Apple Developer Program membership, working Account Holder
+  2FA, a backup App Manager, correct app-record/team ownership, matching legal
+  seller/entity, the current Developer Program/free-app agreement, and no
+  unresolved compliance-review state that blocks upload, TestFlight, review, or
+  release. Paid-app, tax, and banking agreements are required only if a paid app
+  or IAP is introduced. Capture sanitized account-status evidence.
 - [ ] Supply production Supabase public configuration without embedding a private key. The first-release iOS app is email/password only: prove its archive contains no custom URL scheme or native Google/Apple login, then test the exact HTTPS web callback used for email confirmation/password recovery and the return-to-app sign-in flow.
 - [ ] Complete name, subtitle, description, category, keywords, age/alcohol rating, support/marketing/privacy/terms/deletion URLs, review contact, export compliance, and content-rights answers.
 - [ ] Reconcile `PrivacyInfo.xcprivacy` and App Store privacy answers with actual production behavior.
@@ -698,39 +837,22 @@ Stop and mark the item `fail` if an unauthorized venue is visible, a member code
 - [ ] Provide sanitized reviewer credentials and instructions for member, contributor, and assigned venue-Free manager paths. Do not describe counter/admin, Pro, trial, billing, or reward tooling as iOS features.
 - [ ] Install the processed TestFlight build and run email-authentication, role, permission, photo/location, accessibility, offline/interruption, export/deletion, and device checks on the minimum supported iOS 17 release and the current production iOS release.
 - [ ] On both iOS versions, uninstall/reinstall and perform an encrypted device backup/restore or device-transfer rehearsal. Prove protected sessions/tokens are not restored into an unauthorized usable session and normal reauthentication works.
-- [ ] Review crashes and sign-in failures, then assign support, rollback, phased-release, and first-72-hour owners.
+- [ ] Before a broad/full-scale release, select a privacy-reviewed production
+  crash source with dSYM symbolication and primary/backup alert delivery; tag
+  environment, version, build, and candidate SHA and scrub email, token,
+  location, and submission content. Supplement it with TestFlight/App Store
+  Connect diagnostics and Xcode Organizer. For a controlled cohort only,
+  Apple-native reports may be manually reviewed while the sample grows. Require
+  zero reproducible critical crashes and at least 99.5% crash-free sessions
+  across seven days and 500 sessions before broad expansion; with a smaller
+  sample, remain controlled. Reconcile any processor/SDK with the privacy
+  manifest, App Privacy answers, public policy, retention, and provider list.
 
 **Pass:** The signed TestFlight build maps to the approved source SHA/version, validation is clear, metadata/privacy answers and screenshots are approved, the signed-device matrix passes, and no critical/high issue remains.
 
 **Evidence:** App Store Connect build link, SHA/version mapping, artifact hashes, non-secret signing summary, validation result, privacy-answer export, screenshot inventory, TestFlight report, device matrix, and go/no-go approval.
 
 This evidence item approves a signed TestFlight candidate. It does **not** prove public App Store approval. If iOS is part of the public launch, App Review approval, release availability, storefront checks, and the selected phased/manual release state are an additional final no-go condition.
-
-## 12. `android_release`
-
-**Owners:** Play Console owner, Android release engineer, QA lead, and release owner.
-
-- [ ] Record the native source SHA and confirm Native Apps CI is green for it.
-- [ ] Confirm Play package `au.pintpath.beermap` and a unique version code/name.
-- [ ] Enrol in Play App Signing; generate, back up, and securely escrow the upload key. Record certificate fingerprints without committing key material.
-- [ ] Supply production Supabase public configuration securely and verify `pintpath://auth-callback` plus provider-console settings.
-- [ ] Run the unsigned source/CI gate from `apps/android`: `./gradlew --no-daemon lintDebug lintRelease testDebugUnitTest assembleDebug assembleRelease`.
-- [ ] Follow the private zsh procedure in `apps/android/README.md`: provide the keystore path and alias through interactive prompts and both passwords through non-echoing prompts, keep the keystore outside the checkout, and run `./gradlew --no-daemon clean bundleRelease`. The task must fail when signing is absent or partial; never submit the unsigned CI APK.
-- [ ] Verify `app/build/outputs/bundle/release/app-release.aab` with non-strict `jarsigner -verify -verbose -certs` and require `jar verified.`. Review every warning explicitly—a self-signed upload certificate can make `-strict` exit nonzero even when integrity is valid. Inspect the upload certificate with `keytool -printcert -jarfile`, match its validity/algorithms and SHA-256 fingerprint to Play, record `shasum -a 256`, verify package/version/configuration, and scan for embedded private secrets/debug values.
-- [ ] Complete listing name/descriptions, category, icon/feature graphic, required device screenshots, 18+/alcohol framing, target audience, content rating, ads declaration, support/privacy/terms/deletion URLs, notes, and app-access instructions.
-- [ ] Reconcile Play Data Safety with actual account, photo, location, optional analytics, billing, retention/deletion, encryption, sharing, and processor behavior.
-- [ ] Confirm current target-SDK and device-policy compliance in Play Console.
-- [ ] Upload to the internal track and install from Play rather than by sideloading.
-- [ ] Run the complete role/provider/permission/photo/location/accessibility/offline matrix on physical devices, including minimum-supported and current Android versions.
-- [ ] Run the Play pre-launch report and resolve all security, crash, ANR, accessibility, compatibility, and policy blockers.
-- [ ] Verify device backup/transfer does not restore protected session preferences.
-- [ ] Assign staged-rollout, rollback, support, crash/ANR monitoring, and first-72-hour owners.
-
-**Pass:** The Play-delivered signed AAB maps to the approved source SHA/version, internal testing and the physical-device matrix pass, Data Safety/listing answers are approved, the pre-launch report has no blocker, and no critical/high issue remains.
-
-**Evidence:** Play internal-release link, AAB SHA-256, SHA/version mapping, signing-certificate fingerprints, Data Safety export, listing/screenshot inventory, pre-launch report, tester/device matrix, and go/no-go approval.
-
-This evidence item approves the Play internal-track candidate. It does **not** prove production-track approval. If Android is part of the public launch, Play review/production access, country/device availability, and the selected staged rollout state are an additional final no-go condition.
 
 ## Final closeout
 
@@ -757,10 +879,10 @@ This evidence item approves the Play internal-track candidate. It does **not** p
   test "$(git status --porcelain)" = ""
   ```
 
-- [ ] Wait for CI and automated readiness, then manually dispatch **Native Apps** from the final `main` SHA; the workflow's path filters do not run it automatically for a documentation-only closeout:
+- [ ] Wait for CI and automated readiness, then manually dispatch **Native Apps** from the final `main` SHA so the protected production-configuration iOS archive runs. Leave Android maintenance CI disabled because Android is outside this launch:
 
   ```bash
-  gh workflow run native-apps.yml --ref main
+  gh workflow run native-apps.yml --ref main -f run_android=false
   sleep 5
   NATIVE_RUN_ID="$(gh run list --workflow native-apps.yml --branch main \
     --event workflow_dispatch --limit 20 --json databaseId,headSha \
@@ -769,7 +891,10 @@ This evidence item approves the Play internal-track candidate. It does **not** p
   test "$(gh run view "$NATIVE_RUN_ID" --json headSha --jq .headSha)" = "$RELEASE_SHA"
   ```
 
-  Record the run ID/URL and require both Android and iOS jobs to pass. If the run has not appeared after five seconds, retry the `gh run list` lookup; never substitute a run for another SHA.
+  Record the run ID/URL and require the `ios` and protected
+  `ios-production-configuration` jobs to pass; the Android job must be skipped
+  for this dispatch. If the run has not appeared after five seconds, retry the
+  `gh run list` lookup; never substitute a run for another SHA.
 - [ ] Confirm the final `main` SHA is deployed and `/ready` reports it.
 - [ ] Re-run public and strict role smoke against that final deployed SHA.
 - [ ] Manually dispatch **Pint Path Release Gate** against the production GitHub environment and bind its result to the same SHA:
@@ -789,4 +914,10 @@ This evidence item approves the Play internal-track candidate. It does **not** p
 - [ ] In the release-gate job itself, separately confirm the security-scan and dependency-audit steps passed. Those results are step logs/statuses and are not files in the artifact.
 - [ ] Record the final go/no-go decision, launch owner, rollback target, support escalation, and first-72-hour coverage in the private evidence register.
 
-Broad launch remains **no-go** if any required item is pending/failed, the strict command fails, the final-SHA Native Apps dispatch or manual release gate fails, a critical/high defect is open, or the release owner cannot provide the evidence pack. Public native launch additionally remains no-go until the applicable App Store review and/or Play production-track approval is live; TestFlight and internal-track evidence alone authorizes only controlled beta distribution.
+Broad launch remains **no-go** if any required item is pending/failed, the strict
+command fails, the final-SHA Native Apps dispatch or manual release gate fails,
+the immutable-backup/JWT/submission-deletion/account-bridge/Apple-account/crash gates are not
+proved, a critical/high defect is open, either commercial flag is true, or the
+release owner cannot provide the evidence pack. Public native launch additionally
+remains no-go until App Store review and the intended storefront release are
+live; TestFlight evidence alone authorizes only controlled beta distribution.

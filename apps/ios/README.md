@@ -9,15 +9,64 @@ Native SwiftUI app for Pint Path. The existing Xcode target and source module re
 3. Select the `BeerMap` scheme and an iPhone simulator.
 4. Run.
 
-The hosted API defaults to `https://pintpath.au`. For local development, copy `Config.example.xcconfig` to the ignored `Config.xcconfig`, set `PINT_PATH_API_BASE_URL`, and attach it to the target if required.
+The hosted API defaults to `https://pintpath.au`. For local development, copy
+`Config.example.xcconfig` to the ignored `Config.xcconfig` and set
+`PINT_PATH_API_BASE_URL`.
 
 ```xcconfig
 PINT_PATH_API_BASE_URL = http:/$()/127.0.0.1:3000
 ```
 
+`Config.xcconfig` is loaded automatically; do not attach it to the project or
+commit it. Debug builds can omit the Supabase values when authentication is not
+being exercised.
+
+## Release configuration
+
+Every Release build and archive fails before compilation unless it has the
+exact production API origin, the independently pinned Supabase custom origin
+`https://auth.pintpath.au`, and a public Supabase key. Use an
+`sb_publishable_...` key or a legacy JWT with the `anon` role. Never put an
+`sb_secret_...`, legacy `service_role`, or server credential in this app.
+
+1. Obtain the production publishable/anon key from the approved production
+   environment. Confirm its public origin is exactly `https://auth.pintpath.au`.
+2. Generate the ignored config without printing its values:
+
+   ```bash
+   PINT_PATH_API_BASE_URL=https://pintpath.au \
+   SUPABASE_URL=https://auth.pintpath.au \
+   SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY" \
+   apps/ios/Scripts/write-build-config.sh
+   ```
+
+3. Archive from the repository root. The `Validate Release Configuration`
+   build phase stops with a clear error if a value is missing, unexpanded,
+   placeholder-like, non-production, or a private/service-role key.
+4. Inspect the compiled archive values without printing the key:
+
+   ```bash
+   EXPECTED_PINT_PATH_API_BASE_URL=https://pintpath.au \
+   EXPECTED_SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY" \
+   apps/ios/Scripts/inspect-release-archive.sh /path/to/BeerMap.xcarchive
+   ```
+
+5. Remove `apps/ios/Config.xcconfig` when the release session is finished.
+
+Native Apps CI builds an unsigned Release archive with clearly synthetic
+key material and the pinned production origin on every pull request and main
+push, then inspects the archived `Info.plist`. A manual `workflow_dispatch`
+additionally runs the protected
+`production` environment job using `SUPABASE_URL` and `SUPABASE_ANON_KEY`
+secrets. That unsigned CI artifact validates configuration only; it is not the
+signed App Store candidate.
+
 ## Current integration
 
-- Email/password signup, login, refresh, password recovery, and logout use Supabase Auth REST endpoints.
+- Email/password signup, login, refresh, password recovery, and logout use the
+  Supabase Auth REST endpoints compiled into the app. The public API config is
+  not allowed to redirect native credentials, and there is no legacy-password
+  fallback.
 - Social provider login is not compiled into the first App Store release; authentication is email/password only.
 - Supabase access tokens are exchanged at `POST /api/business/auth/supabase-session` for the scoped Pint Path app session.
 - Sensitive session/export/deletion actions require fresh authentication; a rejected action is never reported as complete.

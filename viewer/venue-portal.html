@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Bar Owner Dashboard & Venue Portal | Pint Path</title>
-  <meta name="description" content="Verified bars use the Pint Path venue portal to manage beer data, happy hours, profile details, reviewed specials, and privacy-safe venue reports." />
+  <meta name="description" content="Verified bars use the Pint Path venue portal to manage assigned profile, beer, stock, and price data." />
   <link rel="canonical" href="https://pintpath.au/venue-portal" />
   <link rel="icon" href="/favicon.ico" sizes="any" />
   <link rel="icon" type="image/png" sizes="48x48" href="/favicon.png" />
@@ -15,12 +15,12 @@
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="Pint Path" />
   <meta property="og:title" content="Bar Owner Dashboard & Venue Portal | Pint Path" />
-  <meta property="og:description" content="Manage verified venue data, happy hours, reviewed specials, and privacy-safe reports from the Pint Path venue portal." />
+  <meta property="og:description" content="Manage assigned venue profile, beer, stock, and price data from the Pint Path venue portal." />
   <meta property="og:url" content="https://pintpath.au/venue-portal" />
   <meta property="og:image" content="https://pintpath.au/assets/pint-path-logo.png" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="Bar Owner Dashboard & Venue Portal | Pint Path" />
-  <meta name="twitter:description" content="Manage verified venue data, happy hours, reviewed specials, and privacy-safe reports from the Pint Path venue portal." />
+  <meta name="twitter:description" content="Manage assigned venue profile, beer, stock, and price data from the Pint Path venue portal." />
   <meta name="twitter:image" content="https://pintpath.au/assets/pint-path-logo.png" />
   <link rel="stylesheet" href="./business.css" />
   <script src="./config.js"></script>
@@ -548,10 +548,10 @@
           <section id="venuePanelSpecials" class="tabPanel is-hidden" role="tabpanel" aria-labelledby="venueTabSpecials" tabindex="0" data-panel="specials" hidden>
             <article id="specialsPlanner" class="specialsPlanner panel is-hidden"></article>
             <article id="specialsGate" class="panel is-hidden">
-              <h2>Pint Path specials are a paid venue feature</h2>
-              <p class="muted">Free venue accounts can add beer data and happy-hour data only. Upgrade to Pro to add reviewed Pint Path specials.</p>
+              <h2 data-commercial-open-copy="Pint Path specials are a paid venue feature" data-commercial-closed-copy="Pro venue specials are coming later">Pro venue specials are coming later</h2>
+              <p class="muted" data-commercial-open-copy="Free venue accounts can add beer data and happy-hour data only. Upgrade to Pro to add reviewed Pint Path specials." data-commercial-closed-copy="Free venue accounts can add beer data and happy-hour data now. Pro pricing and enrolment remain closed, and no payment or trial starts from this page.">Free venue accounts can add beer data and happy-hour data now. Pro pricing and enrolment remain closed, and no payment or trial starts from this page.</p>
               <div class="actionRow">
-                <button class="button button--primary" type="button" data-upgrade-tier="pro" data-commercial-original-label="Upgrade to Pro" disabled aria-disabled="true" title="New paid and introductory-trial enrollment is not open yet.">Commercial launch not open</button>
+                <button class="button button--primary" type="button" data-upgrade-tier="pro" data-commercial-original-label="Upgrade to Pro" disabled aria-disabled="true" title="Pro pricing and enrolment are coming later. No payment or trial starts from this page.">Pro enrolment coming later</button>
               </div>
             </article>
             <div id="specialsEditor" class="grid grid--two">
@@ -806,6 +806,30 @@
       }[char]));
     }
 
+    function renderCommercialUpgradeAction(label, className = "button", tier = "pro") {
+      if (!COMMERCIAL_LAUNCH_ENABLED) {
+        return '<span class="helperCopy" data-commercial-enrollment-deferred="true">Pro pricing and enrolment are coming later. No payment or trial starts from this page.</span>';
+      }
+      return `<button class="${escapeHtml(className)}" type="button" data-upgrade-tier="${escapeHtml(tier)}">${escapeHtml(label)}</button>`;
+    }
+
+    function commercialEnrollmentCopy(openCopy, closedCopy) {
+      return escapeHtml(COMMERCIAL_LAUNCH_ENABLED ? openCopy : closedCopy);
+    }
+
+    function syncCommercialEnrollmentCopy(root = document) {
+      const copyNodes = [
+        ...(root instanceof Element && root.matches("[data-commercial-open-copy]") ? [root] : []),
+        ...root.querySelectorAll("[data-commercial-open-copy]"),
+      ];
+      copyNodes.forEach((node) => {
+        const copy = COMMERCIAL_LAUNCH_ENABLED
+          ? node.dataset.commercialOpenCopy
+          : node.dataset.commercialClosedCopy;
+        if (copy != null && node.textContent !== copy) node.textContent = copy;
+      });
+    }
+
     function syncCommercialCheckoutControls(root = document) {
       const controls = [
         ...(root instanceof Element && root.matches("[data-upgrade-tier]") ? [root] : []),
@@ -826,20 +850,24 @@
         }
         if (!control.disabled) control.disabled = true;
         if (control.getAttribute("aria-disabled") !== "true") control.setAttribute("aria-disabled", "true");
-        if (control.title !== "New paid and introductory-trial enrollment is not open yet.") {
-          control.title = "New paid and introductory-trial enrollment is not open yet.";
+        if (control.title !== "Pro pricing and enrolment are coming later. No payment or trial starts from this page.") {
+          control.title = "Pro pricing and enrolment are coming later. No payment or trial starts from this page.";
         }
-        if (control.textContent !== "Commercial launch not open") {
-          control.textContent = "Commercial launch not open";
+        if (control.textContent !== "Pro enrolment coming later") {
+          control.textContent = "Pro enrolment coming later";
         }
       });
     }
 
     syncCommercialCheckoutControls();
+    syncCommercialEnrollmentCopy();
     new MutationObserver((mutations) => {
       mutations.forEach((mutation) => {
         mutation.addedNodes.forEach((node) => {
-          if (node instanceof Element) syncCommercialCheckoutControls(node);
+          if (node instanceof Element) {
+            syncCommercialCheckoutControls(node);
+            syncCommercialEnrollmentCopy(node);
+          }
         });
       });
     }).observe(document.body, { childList: true, subtree: true });
@@ -1816,7 +1844,7 @@
           <div class="premiumLockedCard__preview" aria-hidden="true">
             <span></span><span></span><span></span>
           </div>
-          <button class="button button--small button--premium" type="button" data-upgrade-tier="${escapeHtml(plan)}">Unlock ${escapeHtml(prettyTier(plan))}</button>
+          ${renderCommercialUpgradeAction(`Unlock ${prettyTier(plan)}`, "button button--small button--premium", plan)}
         </article>
       `;
     }
@@ -2135,10 +2163,10 @@
         </div>
         <section class="premiumUpgradeBanner">
           <div>
-            <strong>Upgrade to Pro to understand searches, special views and redemption value.</strong>
-            <p>Free stays useful for beer and happy-hour basics. Pro turns the venue portal into a complete business tool.</p>
+            <strong>${commercialEnrollmentCopy("Upgrade to Pro to understand searches, special views and redemption value.", "Pro insights are coming later.")}</strong>
+            <p>${commercialEnrollmentCopy("Free stays useful for beer and happy-hour basics. Pro turns the venue portal into a complete business tool.", "Free stays useful for beer and happy-hour basics while Pro pricing and enrolment remain closed.")}</p>
           </div>
-          <button class="button button--premium" type="button" data-upgrade-tier="pro">Unlock Pro insights</button>
+          ${renderCommercialUpgradeAction("Unlock Pro insights", "button button--premium")}
         </section>
       `;
     }
@@ -2380,7 +2408,7 @@
           </div>
           <div class="premiumDashboardHeader__tools">
             <span class="premiumPlanBadge premiumPlanBadge--${escapeHtml(plan)}">${escapeHtml(prettyTier(plan))}</span>
-            ${upgradePlan ? `<button class="button button--premium" type="button" data-upgrade-tier="${escapeHtml(upgradePlan)}">Upgrade to ${escapeHtml(prettyTier(upgradePlan))}</button>` : ""}
+            ${upgradePlan ? renderCommercialUpgradeAction(`Upgrade to ${prettyTier(upgradePlan)}`, "button button--premium", upgradePlan) : ""}
             <button class="button" type="button" data-jump-tab="specials">Manage specials</button>
             <button class="button" type="button" data-jump-tab="price-refresh">Keep prices fresh</button>
           </div>
@@ -2724,9 +2752,9 @@
               <div class="eyebrow">Upgrade path</div>
               <span class="pill pill--premium">Pro</span>
             </div>
-            <h2>Create app-only offers</h2>
-            <p class="muted">Free venues can manage beer and happy-hour data. Pro adds reviewed Pint Path specials, insights, and premium discovery.</p>
-            <button class="button button--premium" type="button" data-upgrade-tier="pro">Unlock specials</button>
+            <h2>${commercialEnrollmentCopy("Create app-only offers", "Pro venue specials are coming later")}</h2>
+            <p class="muted">${commercialEnrollmentCopy("Free venues can manage beer and happy-hour data. Pro adds reviewed Pint Path specials, insights, and premium discovery.", "Free venues can manage beer and happy-hour data now. Pro pricing and enrolment remain closed.")}</p>
+            ${renderCommercialUpgradeAction("Unlock specials", "button button--premium")}
           `;
       }
 
@@ -2836,9 +2864,9 @@
           </div>
         ` : `
           <div class="upgradeNudge" style="margin-top:12px;">
-            <strong>Pro adds paid discovery placement</strong>
-            <p class="helperCopy">Upgrade when you want premium map/listing treatment, Pro Pint Path special treatment, priority review, and a sharper monthly growth playbook.</p>
-            <button class="button button--premium" type="button" data-upgrade-tier="pro">Upgrade to Pro</button>
+            <strong>${commercialEnrollmentCopy("Pro adds paid discovery placement", "Pro discovery tools are coming later")}</strong>
+            <p class="helperCopy">${commercialEnrollmentCopy("Upgrade when you want premium map/listing treatment, Pro Pint Path special treatment, priority review, and a sharper monthly growth playbook.", "Free venue tools remain available now while Pro pricing and enrolment are closed.")}</p>
+            ${renderCommercialUpgradeAction("Upgrade to Pro", "button button--premium")}
           </div>
         `}
       `;
@@ -4153,10 +4181,10 @@
       if (locked) {
         analyticsGate.innerHTML = `
           <h2>Live insights are available on Pro</h2>
-          <p class="muted">${escapeHtml(data.tier?.upgradeCopy || "Upgrade to Pro to view privacy-safe area analytics and monthly reports.")}</p>
-          <div class="notice">Free venue accounts can still add beer data and happy-hour data. Pro unlocks reviewed Pint Path specials and live insights.</div>
+          <p class="muted">${commercialEnrollmentCopy(data.tier?.upgradeCopy || "Upgrade to Pro to view privacy-safe area analytics and monthly reports.", "Pro pricing and enrolment are coming later. Free venue tools remain available now.")}</p>
+          <div class="notice">${commercialEnrollmentCopy("Free venue accounts can still add beer data and happy-hour data. Pro unlocks reviewed Pint Path specials and live insights.", "No payment or trial starts from this page while commercial enrolment is closed.")}</div>
           <div class="actionRow">
-            <button class="button" type="button" data-upgrade-tier="pro">Upgrade to Pro</button>
+            ${renderCommercialUpgradeAction("Upgrade to Pro")}
           </div>
         `;
         return;
@@ -4669,9 +4697,9 @@
         reportGate.innerHTML = `
           <h2>Monthly reports are a Pro feature</h2>
           <p class="muted">Reports summarise your venue lookups, beer-list interest, special views and privacy-safe area trends.</p>
-          <div class="notice">Upgrade to Pro to generate and export monthly reports once there is enough area data.</div>
+          <div class="notice">${commercialEnrollmentCopy("Upgrade to Pro to generate and export monthly reports once there is enough area data.", "Pro pricing and enrolment are coming later. No payment or trial starts from this page.")}</div>
           <div class="actionRow">
-            <button class="button" type="button" data-upgrade-tier="pro">Upgrade to Pro</button>
+            ${renderCommercialUpgradeAction("Upgrade to Pro")}
           </div>
         `;
         return;
@@ -5847,9 +5875,9 @@
           const trialRequiresPaymentMethod = viewerConfig.business?.venueProTrialRequiresPaymentMethod === true;
           const trialDisclosure = trialDays > 0
             ? trialRequiresPaymentMethod
-              ? `Start a ${trialDays}-day full Pro trial? Stripe will collect a payment method. Unless you cancel before the trial ends, Pro renews at A$149/month.`
-              : `Start a ${trialDays}-day full Pro trial? No payment method is required. The trial cancels back to Free unless you deliberately add billing and keep Pro active at A$149/month.`
-            : "Continue to Stripe for Pro at A$149/month? The subscription renews monthly until cancelled.";
+              ? `Start a ${trialDays}-day full Pro trial? Stripe will collect a payment method and must show the approved renewal price and cancellation terms before you enrol.`
+              : `Start a ${trialDays}-day full Pro trial? No payment method is required. The trial returns to Free unless you deliberately accept the separately displayed paid terms.`
+            : "Continue to Stripe for Pro? Review the approved price, billing period, renewal, and cancellation terms before confirming.";
           if (!window.confirm(trialDisclosure)) return;
           try {
             const result = await MelbBeerBusiness.apiFetch(`/api/business/venue-portal/${encodeURIComponent(selectedVenueId())}/billing/checkout`, {

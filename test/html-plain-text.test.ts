@@ -130,7 +130,7 @@ describe("HTML plain-text extraction", () => {
     expect(plainText(html)).toBe("Before");
   });
 
-  it("walks deeply nested size-valid HTML without overflowing the call stack", { timeout: 5_000 }, () => {
+  it("walks deeply nested size-valid HTML without overflowing the call stack", () => {
     const depth = 12_000;
     const html = `${"<div>".repeat(depth)}Visible menu${"</div>".repeat(depth)}`;
 

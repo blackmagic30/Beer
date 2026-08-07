@@ -10,7 +10,7 @@ const SENSITIVE_AUTH_RETURN_MAX_AGE_MS = 20 * 60 * 1000;
 const AUTH_FLOW_MAX_AGE_MS = 20 * 60 * 1000;
 const LEGAL_ACCEPTANCE_KEY = "pintPathLegalAcceptance";
 const LEGAL_POLICY_VERSION = String(
-  window.MELB_BEER_BOT_VIEWER_CONFIG?.business?.legalPolicyVersion || "2026-07-28"
+  window.MELB_BEER_BOT_VIEWER_CONFIG?.business?.legalPolicyVersion || "2026-08-03"
 );
 const OPTIONAL_ANALYTICS_KEY = "pintPathOptionalAnalyticsEnabled";
 const VENUE_REPORTS_KEY = "pintPathVenueReportsEnabled";
@@ -869,7 +869,7 @@ function getSupabaseOauthProviders() {
   }
   const config = getViewerConfig();
   const business = getBusinessConfig();
-  const providers = business.supabaseOauthProviders || config.supabaseOauthProviders || ["google", "apple"];
+  const providers = business.supabaseOauthProviders || config.supabaseOauthProviders || ["google"];
   return Array.isArray(providers) ? providers : String(providers).split(",").map((provider) => provider.trim()).filter(Boolean);
 }
 

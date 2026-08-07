@@ -165,6 +165,6 @@ Cannot:
 
 ## Known Beta Limitations
 
-- Public production onboarding is provider-first through Supabase email/OAuth with provider-confirmed email state. Local password signup/login is limited to localhost/development and is not a production onboarding path.
+- Public production onboarding uses Supabase email/password and Google OAuth with provider-confirmed email state. Apple OAuth is deferred until authorization-token revocation is implemented and tested. Local Pint Path password signup/login is limited to localhost/development and is not a production onboarding path.
 - Portal-managed stock/happy-hour rows can be displayed as venue-supplied data for assigned managers; broader trusted-public publishing and disputes still need operational policy.
 - Provider-side Supabase MFA verification, storage access tests, Redis provisioning, and a formal Supabase RLS audit remain in `PROD_FOLLOWUPS.md`.

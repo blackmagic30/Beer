@@ -38,8 +38,9 @@ describe("Supabase auth/upload RLS migrations", () => {
     expect(tests[0]).toContain("RLS is enabled on every repository-owned public table");
     expect(tests[0]).toContain("t.tgname = 'on_auth_user_created_beermap_profile'");
     expect(tests[0]).toContain("no private function is executable by PUBLIC");
-    expect(tests[1]).toContain("anon has no table privileges");
-    expect(tests[1]).toContain("only the intended table-level Data API privileges");
+    expect(tests[1]).toContain("browser JWT roles have no effective privileges on public relations");
+    expect(tests[1]).toContain("browser JWT roles have no effective public column privileges");
+    expect(tests[1]).toContain("browser JWT roles have no effective public sequence privileges");
     expect(tests[2]).toContain("every UPDATE policy has both USING and WITH CHECK");
     expect(tests.join("\n")).not.toContain("'venues'");
   });
@@ -54,6 +55,20 @@ describe("Supabase auth/upload RLS migrations", () => {
     expect(sql).toContain("grant select on table public.profiles to authenticated");
     expect(sql).toContain("grant update (display_name, username, avatar_url, updated_at) on table public.profiles to authenticated");
     expect(sql).not.toContain("grant truncate");
+  });
+
+  it("retires direct browser Data API and RPC access so stale Auth JWTs have no application-data surface", () => {
+    const sql = migration("20260803000000_revoke_direct_browser_data_api.sql");
+
+    expect(sql).toContain("revoke all privileges on all tables in schema public from public, anon, authenticated");
+    expect(sql).toContain("revoke all privileges on all sequences in schema public from public, anon, authenticated");
+    expect(sql).toContain("revoke execute on all functions in schema public from public, anon, authenticated");
+    expect(sql).toContain("alter default privileges for role postgres in schema public");
+    expect(sql).toContain("revoke all on tables from public, anon, authenticated");
+    expect(sql).toContain("revoke all on sequences from public, anon, authenticated");
+    expect(sql).toContain("revoke all on schema private from anon, authenticated");
+    expect(sql).toContain("revoke execute on all functions in schema private from anon, authenticated");
+    expect(sql).not.toMatch(/\bgrant\b/i);
   });
 
   it("lets the backend readiness probe select profiles without widening browser access", () => {

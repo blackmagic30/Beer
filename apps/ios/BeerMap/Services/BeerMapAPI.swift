@@ -1,6 +1,8 @@
 import Foundation
 
 enum AppConfig {
+    static let approvedSupabaseOrigin = "https://auth.pintpath.au"
+
     static var apiBaseURL: URL {
         readURL("PINT_PATH_API_BASE_URL") ?? URL(string: "https://pintpath.au")!
     }
@@ -14,11 +16,49 @@ enum AppConfig {
     }
 
     static var supabaseURL: URL? {
-        readURL("SUPABASE_URL")
+        guard readString("SUPABASE_URL") == approvedSupabaseOrigin else {
+            return nil
+        }
+        return URL(string: approvedSupabaseOrigin)
     }
 
     static var supabaseAnonKey: String? {
-        readString("SUPABASE_ANON_KEY")
+        guard
+            let key = readString("SUPABASE_ANON_KEY"),
+            isPublicSupabaseKey(key)
+        else {
+            return nil
+        }
+        return key
+    }
+
+    private static func isPublicSupabaseKey(_ key: String) -> Bool {
+        if key.range(
+            of: #"^sb_publishable_[A-Za-z0-9_-]{20,}$"#,
+            options: .regularExpression
+        ) != nil {
+            return true
+        }
+
+        let segments = key.split(separator: ".", omittingEmptySubsequences: false)
+        guard segments.count == 3 else {
+            return false
+        }
+        var payload = String(segments[1])
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        let padding = payload.count % 4
+        if padding != 0 {
+            payload += String(repeating: "=", count: 4 - padding)
+        }
+        guard
+            let data = Data(base64Encoded: payload),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            object["role"] as? String == "anon"
+        else {
+            return false
+        }
+        return true
     }
 
     private static func legalURL(path: String) -> URL {
@@ -131,19 +171,10 @@ struct BeerMapAPI {
         password: String,
         config: PublicConfig
     ) async throws -> (authResult: AuthResult, refreshToken: String?, accessToken: String?) {
-        if !hasSupabaseConfiguration(config) {
-            let result: AuthResult = try await send(
-                "/api/business/auth/login",
-                method: "POST",
-                body: LoginRequest(email: email, password: password)
-            )
-            return (result, nil, nil)
-        }
         let tokens: SupabaseAuthTokens = try await supabaseAuthRequest(
             "/auth/v1/token?grant_type=password",
             method: "POST",
-            body: LoginRequest(email: email, password: password),
-            config: config
+            body: LoginRequest(email: email, password: password)
         )
         guard let accessToken = tokens.accessToken else {
             throw BeerMapAPIError.missingData
@@ -190,8 +221,7 @@ struct BeerMapAPI {
                     "legal_policy_version": .string(policyVersion),
                     "consent_source": .string("ios")
                 ]
-            ),
-            config: config
+            )
         )
         guard let accessToken = tokens.accessToken else {
             return SupabaseSignupOutcome(
@@ -248,12 +278,15 @@ struct BeerMapAPI {
     }
 
     func requestPasswordReset(email: String, config: PublicConfig) async throws {
-        let redirectTo = baseURL.appending(path: "reset-password.html").absoluteString
+        // The web callback verifies the Supabase recovery session, binds it to
+        // the existing Pint Path account, and only then opens password-update
+        // mode. A direct reset-page redirect has no recovery marker and strands
+        // OAuth-created accounts in the request-another-email state.
+        let redirectTo = baseURL.appending(path: "auth/callback").absoluteString
         let _: EmptyResponse = try await supabaseAuthRequest(
             "/auth/v1/recover",
             method: "POST",
-            body: PasswordRecoveryRequest(email: email, redirectTo: redirectTo),
-            config: config
+            body: PasswordRecoveryRequest(email: email, redirectTo: redirectTo)
         )
     }
 
@@ -265,8 +298,7 @@ struct BeerMapAPI {
         let tokens: SupabaseAuthTokens = try await supabaseAuthRequest(
             "/auth/v1/token?grant_type=refresh_token",
             method: "POST",
-            body: SupabaseRefreshRequest(refreshToken: refreshToken),
-            config: config
+            body: SupabaseRefreshRequest(refreshToken: refreshToken)
         )
         guard let accessToken = tokens.accessToken else { throw BeerMapAPIError.missingData }
         let result = try await syncSupabase(
@@ -285,7 +317,6 @@ struct BeerMapAPI {
             "/auth/v1/logout?scope=local",
             method: "POST",
             body: EmptyResponse(),
-            config: config,
             accessToken: accessToken
         )
     }
@@ -720,17 +751,16 @@ struct BeerMapAPI {
         _ path: String,
         method: String,
         body: Body,
-        config: PublicConfig,
         accessToken: String? = nil
     ) async throws -> T {
         guard
-            let urlText = config.supabaseUrl?.trimmingCharacters(in: .whitespacesAndNewlines),
-            let supabaseURL = URL(string: urlText),
-            let key = config.supabaseAnonKey?.trimmingCharacters(in: .whitespacesAndNewlines),
-            !key.isEmpty,
+            let supabaseURL = AppConfig.supabaseURL,
+            let key = AppConfig.supabaseAnonKey,
             let url = URL(string: path, relativeTo: supabaseURL)
         else {
-            throw BeerMapAPIError.configuration("Secure account sign-in is temporarily unavailable. Please try again later.")
+            throw BeerMapAPIError.configuration(
+                "This Pint Path build does not contain the approved public authentication configuration. Update the app or contact support."
+            )
         }
 
         var request = URLRequest(url: url)
@@ -761,12 +791,6 @@ struct BeerMapAPI {
             return EmptyResponse() as! T
         }
         return try decoder.decode(T.self, from: data)
-    }
-
-    private func hasSupabaseConfiguration(_ config: PublicConfig) -> Bool {
-        let url = config.supabaseUrl?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let key = config.supabaseAnonKey?.trimmingCharacters(in: .whitespacesAndNewlines)
-        return !(url?.isEmpty ?? true) && !(key?.isEmpty ?? true)
     }
 
     private func requiredLegalPolicyVersion(_ config: PublicConfig) throws -> String {

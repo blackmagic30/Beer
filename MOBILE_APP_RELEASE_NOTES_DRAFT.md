@@ -1,26 +1,26 @@
 # Pint Path Mobile Release Notes Draft
 
 Version: `1.0.0`
-iOS build: `2`
-Android version code: `2`
+iOS build: `3`
+Release scope: first public iPhone candidate; Android is not included in this launch.
 
 ## Store short description
 
-Find Melbourne beer prices and happy hours, contribute verified updates, and manage assigned venues with Pint Path.
+Find Melbourne beer prices, contribute verified updates, and manage an assigned venue's free listing with Pint Path.
 
 ## What is included
 
 - Search venues and inspect server-gated price information.
 - Save venues and report prices or venue details that need review.
-- Submit beer prices, selected source photos, and happy-hour updates, with optional one-time location proof.
+- Submit beer prices and one selected source photo, with optional one-time location proof.
 - Reserve and release local data missions.
-- Manage privacy choices, active sessions, account export, deletion requests, rewards, and staff invitations.
-- For assigned venue teams: update profile, beer/stock, happy hours and eligible specials; use counter tools, analytics/planner insights, and monthly report exports.
-- Sign in with email/password or configured Google/Apple providers. iPhone uses native Apple sign-in and an app-returning Google PKCE session; Android uses secure PKCE authentication.
+- Manage privacy choices, active sessions, account export, and account deletion requests.
+- For assigned venue teams: update the profile and beer/stock data for the assigned venue's Free plan.
+- Sign in with email/password. Existing Google website users use the same email and the Forgot password flow to add iOS password access to the same account. The first iPhone release compiles out native social sign-in and custom callback schemes.
 
 ## Platform notes
 
-iPhone includes an in-app MapKit venue map. Android opens venue coordinates in the user's map app, with a browser fallback. Venue-claim evidence and admin moderation open the secure Pint Path web workflow.
+iPhone includes an in-app MapKit venue map. Venue-claim evidence and admin moderation remain in the secure Pint Path web workflow.
 
 ## Safety and privacy
 
@@ -28,7 +28,7 @@ Pint Path is for adults 18+. Prices, stock, and offers can change, and venues re
 
 ## Not included in 1.0
 
-Direct camera capture, multi-image/PDF submissions, offline upload queues, general native checkout/plan changes, and native admin moderation are not part of this release. Billing-only recovery for a suspended paid account is included and does not restore app access.
+Direct camera capture, multi-image/PDF submissions, offline upload queues, happy-hour discovery or submission, paid consumer access, venue Pro/trial/billing, specials, rewards, Pub Golf, counter/POS tools, native social login, and admin moderation are not part of this release. Pricing and the venue introductory offer will be handled in a later release.
 
 ## Release-owner fields
 

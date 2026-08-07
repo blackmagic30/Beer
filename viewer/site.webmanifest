@@ -1,7 +1,7 @@
 {
   "name": "Pint Path",
   "short_name": "Pint Path",
-  "description": "Verified local beer prices, happy hours, and Pint Path specials.",
+  "description": "Melbourne venue listings with reviewed local beer prices where current evidence exists.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#070A12",

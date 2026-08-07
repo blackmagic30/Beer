@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Pint Path Pricing for Drinkers and Venues | Pint Path</title>
-  <meta name="description" content="Compare Pint Path access for drinkers and verified bar plans for venue profiles, beer data, happy hours, specials, and privacy-safe insights." />
+  <meta name="description" content="See the free Pint Path access available now for drinkers and verified venue managers; paid pricing and enrolment are deferred." />
   <link rel="canonical" href="https://pintpath.au/pricing.html" />
   <link rel="icon" href="/favicon.ico" sizes="any" />
   <link rel="icon" type="image/png" sizes="48x48" href="/favicon.png" />
@@ -15,12 +15,12 @@
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="Pint Path" />
   <meta property="og:title" content="Pint Path Pricing for Drinkers and Venues" />
-  <meta property="og:description" content="Compare Pint Path map access and verified venue tools for beer data, happy hours, specials, and reports." />
+  <meta property="og:description" content="See current free map and venue access. Paid pricing and enrolment are deferred." />
   <meta property="og:url" content="https://pintpath.au/pricing.html" />
   <meta property="og:image" content="https://pintpath.au/assets/pint-path-logo.png" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="Pint Path Pricing for Drinkers and Venues" />
-  <meta name="twitter:description" content="Compare Pint Path map access and verified venue tools for beer data, happy hours, specials, and reports." />
+  <meta name="twitter:description" content="See current free map and venue access. Paid pricing and enrolment are deferred." />
   <meta name="twitter:image" content="https://pintpath.au/assets/pint-path-logo.png" />
   <script type="application/ld+json">
     {
@@ -39,10 +39,10 @@
   <main class="pageShell">
     <div id="nav"></div>
     <section class="hero">
-      <div id="pricingEyebrow" class="eyebrow">User pricing</div>
-      <h1 id="pricingTitle">Unlock the full Pint Path map.</h1>
-      <p id="pricingLead" class="lead">Choose drinker or venue pricing. Pint Path defaults to the view that matches your signed-in account.</p>
-      <div class="pricingAudienceSwitch" role="tablist" aria-label="Choose pricing audience">
+      <div id="pricingEyebrow" class="eyebrow">User access</div>
+      <h1 id="pricingTitle">Earn full Pint Path map access.</h1>
+      <p id="pricingLead" class="lead">Compare what is available now for drinkers and verified venues. Pint Path defaults to the view that matches your signed-in account.</p>
+      <div class="pricingAudienceSwitch" role="tablist" aria-label="Choose access audience">
         <button id="consumerPricingTab" class="button" type="button" role="tab" aria-controls="userPricingSection" aria-selected="true" data-pricing-audience="users">For drinkers</button>
         <button id="venuePricingTab" class="button" type="button" role="tab" aria-controls="venuePricingSection" aria-selected="false" data-pricing-audience="venues">For venues</button>
       </div>
@@ -62,7 +62,7 @@
             <span class="tierBadge tierBadge--plus">Freemium</span>
             <h3>Earn full access</h3>
             <div class="price">15 points</div>
-            <p class="muted">Upload verified beer prices, happy hours, or useful venue data to unlock the same map access as a paid user for the month.</p>
+            <p id="consumerEarnedAccessCopy" class="muted">Upload verified beer prices or other useful venue data to unlock full map access for the month.</p>
             <ul class="cleanList tierList">
               <li>15 approved points unlock premium map access until month end.</li>
               <li>Approved submissions count after reviewer checks.</li>
@@ -77,17 +77,28 @@
           </div>
         </article>
 
-        <article class="card pricingCard card--highlight">
+        <article id="consumerPricingDeferred" class="card pricingCard card--highlight">
+          <div class="pricingCard__body">
+            <span class="tierBadge tierBadge--plus">Paid access</span>
+            <h3>Paid pricing is coming later</h3>
+            <p class="muted">New paid enrolment is closed for this public candidate. Earn full access with 15 approved contribution points in the meantime.</p>
+            <div class="notice">
+              <strong>No payment or checkout is available.</strong>
+              <span>Pint Path will publish final paid pricing before deliberately opening enrolment.</span>
+            </div>
+          </div>
+        </article>
+
+        <article id="consumerMonthlyCard" class="card pricingCard card--highlight" hidden>
           <div class="pricingCard__body">
             <span class="tierBadge tierBadge--plus">Monthly</span>
             <h3>Flexible access</h3>
-            <div class="price">A$4.99</div>
+            <div class="price">Final price pending</div>
             <p class="muted">Best when you want full Pint Path access for this month.</p>
             <ul class="cleanList tierList">
               <li>Every verified beer price, beyond the fixed free preview.</li>
               <li>Value rings on map pins for cheaper-to-expensive beer comparisons.</li>
-              <li>Cheapest-night filters: beer search, cheapest sort, verified only, under A$10, and saved areas.</li>
-              <li>Rotating discount pass for venue specials where available.</li>
+              <li>Cheapest-night filters: beer search, cheapest sort, verified only, value limits, and saved areas.</li>
               <li>Saved night shortcuts, personal defaults, and savings tracking in Account.</li>
               <li>Manage or cancel through Stripe from Account at any time.</li>
             </ul>
@@ -97,11 +108,11 @@
           </div>
         </article>
 
-        <article class="card pricingCard card--tierPro">
+        <article id="consumerYearlyCard" class="card pricingCard card--tierPro" hidden>
           <div class="pricingCard__body">
             <span class="tierBadge tierBadge--pro">Yearly</span>
             <h3>Best value</h3>
-            <div class="price">A$50</div>
+            <div class="price">Final price pending</div>
             <p class="muted">A full year of Pint Path access for regular Melbourne nights out.</p>
             <ul class="cleanList tierList">
               <li>Everything in Monthly.</li>
@@ -131,7 +142,7 @@
         <article class="card venuePricingCard venuePricingCard--free">
           <div class="venuePricingCard__body">
             <span class="tierBadge tierBadge--free">Free</span>
-            <h3>Beer data and happy-hour data</h3>
+            <h3>Beer and listing data</h3>
             <div class="price">A$0 <span>/month</span></div>
             <div class="tierSignalRow">
               <span class="tierSignal">Baseline listing</span>
@@ -140,7 +151,7 @@
             <p class="muted">For verified bars that only need the essentials visible on the map.</p>
             <ul class="cleanList tierList">
               <li>Add and maintain beer data directly for your assigned venue.</li>
-              <li>Add and maintain happy-hour data directly for your assigned venue.</li>
+              <li>Keep core venue listing details current.</li>
               <li>No Pint Path specials on the Free plan.</li>
               <li>No analytics or monthly reports.</li>
             </ul>
@@ -150,36 +161,33 @@
           </div>
         </article>
 
-        <article class="card venuePricingCard venuePricingCard--pro card--tierPro">
+        <article id="venuePricingDeferred" class="card venuePricingCard venuePricingCard--pro card--tierPro">
+          <div class="venuePricingCard__body">
+            <span class="tierBadge tierBadge--pro">Pro</span>
+            <h3>Pro pricing and enrolment are coming later</h3>
+            <p class="muted">Verified venues can use the Free tools now. Pro checkout and introductory trials remain closed until the commercial launch gate is deliberately enabled.</p>
+            <div class="notice">
+              <strong>No payment method is requested.</strong>
+              <span>No trial starts automatically or from this page while commercial enrolment is closed.</span>
+            </div>
+          </div>
+        </article>
+
+        <article id="venueProCard" class="card venuePricingCard venuePricingCard--pro card--tierPro" hidden>
           <div class="venuePricingCard__body">
             <span class="tierBadge tierBadge--pro">Pro</span>
             <h3>Stand out and understand demand</h3>
-            <div class="price">A$149 <span>/month</span></div>
+            <div class="price">Final price pending</div>
             <div id="venueProTrialOffer" class="notice">
               <strong>Commercial enrollment is not open yet.</strong>
               <span>Verified venues can still use the Free plan. Pro trials stay closed until the production, data, legal, and billing gates pass.</span>
             </div>
-            <div class="tierSignalRow">
-              <span class="tierSignal tierSignal--pro">Premium map halo</span>
-              <span class="tierSignal tierSignal--pro">Privacy-safe insights</span>
-              <span class="tierSignal tierSignal--pro">Venue specials</span>
-              <span class="tierSignal tierSignal--pro">Growth studio</span>
-            </div>
-            <p class="muted">For partner venues that want venue specials, paid discovery placement, exportable reports, and sharper monthly action plans.</p>
+            <p class="muted">The exact Pro feature, price, trial, renewal, cancellation, and support contract will be reviewed before enrolment opens.</p>
             <ul class="cleanList tierList">
               <li>Everything in Free.</li>
-              <li>Add and manage Pint Path specials directly.</li>
-              <li>Area-level search and interaction trends.</li>
-              <li>Demand snapshots with beer/style opportunities and next actions.</li>
-              <li>Staff/customer update link for QR tap-list prompts and fresh venue data.</li>
-              <li>Monthly venue reports for views, lookups, and specials.</li>
-              <li>CSV and JSON report exports for owner or team reviews.</li>
-              <li>Suppressed low-count data to protect user and competitor privacy.</li>
-              <li>Premium map pin, listing card, badge, and highlighted venue name.</li>
-              <li>Premium Pint Path special treatment in discovery.</li>
-              <li>Pro growth studio with premium-placement checklist and weekend playbook.</li>
-              <li>Pro growth recommendations inside monthly venue reports.</li>
-              <li>Transparent discovery boost in Best Match lists without faking popularity.</li>
+              <li>No Pro feature or paid placement is promised by this deferred release.</li>
+              <li>Any later analytics must remain aggregate and suppress low-count data.</li>
+              <li>Any later sponsored treatment must be clearly labelled and must not fake popularity.</li>
             </ul>
           </div>
           <div class="venuePricingCard__actions">
@@ -187,7 +195,7 @@
           </div>
         </article>
       </div>
-      <p class="helperCopy">The launch trial is limited to one approved offer per venue. With the default no-card offer, it ends and returns the venue to Free unless the venue deliberately adds a payment method and keeps Pro active. Subscriptions renew automatically until cancelled. A venue starts paid Pro deliberately at A$149/month. Manage or cancel in the Stripe billing portal; cancellation stops the next renewal and access continues through any paid period. Stripe receipts show applicable tax and payment details. Refund and billing requests are assessed under the Australian Consumer Law through Contact us. Venue insights stay aggregate, and Pro placement never fakes popularity or reviews.</p>
+      <p id="venueCommercialTerms" class="helperCopy" hidden>Any future launch offer is limited to one approved offer per venue. The final price, duration, renewal, cancellation, tax, and refund terms must be approved and displayed before enrolment opens. A no-card offer must end by returning the venue to Free unless the venue deliberately accepts the separately displayed paid terms. Venue insights stay aggregate, and paid placement must never fake popularity or reviews.</p>
     </section>
     <p class="footerCopy">Pint Path is 18+ only. Venue access is assigned after Pint Path verifies the bar contact. Prices may change and availability is not guaranteed.</p>
   </main>
@@ -212,6 +220,26 @@
       const yearlyAction = document.getElementById("consumerYearlyAction");
       const trialOffer = document.getElementById("venueProTrialOffer");
       const trialAction = document.getElementById("venueProTrialAction");
+      const consumerPaidCards = [
+        document.getElementById("consumerMonthlyCard"),
+        document.getElementById("consumerYearlyCard"),
+      ].filter(Boolean);
+      const consumerPricingDeferred = document.getElementById("consumerPricingDeferred");
+      const consumerEarnedAccessCopy = document.getElementById("consumerEarnedAccessCopy");
+      const venueProCard = document.getElementById("venueProCard");
+      const venuePricingDeferred = document.getElementById("venuePricingDeferred");
+      const venueCommercialTerms = document.getElementById("venueCommercialTerms");
+
+      consumerPaidCards.forEach((card) => {
+        card.hidden = !consumerPaidEnrollmentEnabled;
+      });
+      if (consumerPricingDeferred) consumerPricingDeferred.hidden = consumerPaidEnrollmentEnabled;
+      if (consumerEarnedAccessCopy && consumerPaidEnrollmentEnabled) {
+        consumerEarnedAccessCopy.textContent = "Upload verified beer prices or other useful venue data to unlock the same map access as a paid user for the month.";
+      }
+      if (venueProCard) venueProCard.hidden = !commercialLaunchEnabled;
+      if (venuePricingDeferred) venuePricingDeferred.hidden = commercialLaunchEnabled;
+      if (venueCommercialTerms) venueCommercialTerms.hidden = !commercialLaunchEnabled;
 
       const configureCommercialAction = (action, enabledConfig, enrollmentEnabled = commercialLaunchEnabled) => {
         if (!action) return;
@@ -250,8 +278,8 @@
           });
         } else if (venueTrialDays > 0) {
           trialOffer.innerHTML = venueTrialRequiresPaymentMethod
-            ? `<strong>Launch offer: ${venueTrialDays} days of full Pro access free.</strong><span>A payment method is required. Unless cancelled before the trial ends, Pro renews at A$149/month.</span>`
-            : `<strong>Launch offer: ${venueTrialDays} days of full Pro access free.</strong><span>No payment method is required. The trial cancels back to Free after ${venueTrialDays} days unless the venue deliberately adds billing and keeps Pro active at A$149/month.</span>`;
+            ? `<strong>Launch offer: ${venueTrialDays} days of full Pro access free.</strong><span>A payment method is required. The approved renewal price and cancellation terms must be shown by Stripe before enrolment.</span>`
+            : `<strong>Launch offer: ${venueTrialDays} days of full Pro access free.</strong><span>No payment method is required. The offer returns to Free after ${venueTrialDays} days unless the venue deliberately accepts the separately displayed paid terms.</span>`;
           configureCommercialAction(trialAction, {
             href: "/venue-portal.html",
             label: `Start ${venueTrialDays}-day free trial`,
@@ -278,13 +306,23 @@
         venueTab.setAttribute("aria-selected", showVenuePricing ? "true" : "false");
         consumerTab.setAttribute("tabindex", showVenuePricing ? "-1" : "0");
         venueTab.setAttribute("tabindex", showVenuePricing ? "0" : "-1");
-        document.getElementById("pricingEyebrow").textContent = showVenuePricing ? "Venue pricing" : "User pricing";
+        document.getElementById("pricingEyebrow").textContent = showVenuePricing
+          ? commercialLaunchEnabled ? "Venue pricing" : "Venue access"
+          : consumerPaidEnrollmentEnabled ? "User pricing" : "User access";
         document.getElementById("pricingTitle").textContent = showVenuePricing
-          ? "Bar plans for keeping Pint Path venue data current."
-          : "Unlock the full Pint Path map.";
+          ? commercialLaunchEnabled
+            ? "Bar plans for keeping Pint Path venue data current."
+            : "Free venue tools are available now."
+          : consumerPaidEnrollmentEnabled
+            ? "Unlock the full Pint Path map."
+            : "Earn full Pint Path map access.";
         document.getElementById("pricingLead").textContent = showVenuePricing
-          ? "Verified bars use the venue dashboard to publish fresh beer data and happy-hour data. Paid venue tiers add reviewed specials, privacy-safe analytics, and premium display tools."
-          : "Signed-out users and normal accounts can unlock exact prices, value rings, premium filters, saved night shortcuts, discount-pass access, and venue special-discount details.";
+          ? commercialLaunchEnabled
+            ? "Verified bars use the venue dashboard to publish fresh beer and listing data. The approved paid contract will be published before enrolment opens."
+            : "Verified bars can publish fresh beer and listing data with Free venue tools. Pro pricing and enrolment are coming later."
+          : consumerPaidEnrollmentEnabled
+            ? "Signed-out users and normal accounts can unlock exact prices, value rings, premium filters, and saved night shortcuts."
+            : "Upload verified venue data to earn exact prices, value rings, premium filters, and saved night shortcuts.";
         if (options.updateUrl) {
           const url = new URL(window.location.href);
           url.searchParams.set("audience", showVenuePricing ? "venues" : "users");

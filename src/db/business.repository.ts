@@ -17,8 +17,63 @@ export type SubscriptionStatus =
   | "admin";
 export type PaidSubscriptionStatus = Extract<SubscriptionStatus, "premium_monthly" | "premium_yearly">;
 
+export type AccountDeletionNotificationStatus =
+  | "held"
+  | "pending"
+  | "sending"
+  | "accepted"
+  | "delivered"
+  | "failed"
+  | "manual_review"
+  | "purged"
+  | "cancelled"
+  | "suppressed_restore";
+
+export interface AccountDeletionCompletionOutboxRow {
+  request_id: string;
+  template_version: string;
+  idempotency_key: string;
+  payload_fingerprint: string | null;
+  secret_purge_checkpoint_pending: number;
+  secret_purge_generation: number;
+  status: AccountDeletionNotificationStatus;
+  attempt_count: number;
+  first_attempt_at: string | null;
+  next_attempt_at: string | null;
+  lease_token: string | null;
+  lease_expires_at: string | null;
+  provider_message_id: string | null;
+  provider_last_event: string | null;
+  provider_event_at: string | null;
+  last_error: string | null;
+  completed_at: string | null;
+  accepted_at: string | null;
+  delivered_at: string | null;
+  terminal_at: string | null;
+  retention_expires_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AccountDeletionNoticeRecipientSecretRow {
+  request_id: string;
+  key_id: string;
+  nonce: Buffer;
+  ciphertext: Buffer;
+  auth_tag: Buffer;
+  created_at: string;
+  purge_after: string;
+}
+
+export interface AccountDeletionNotificationOperatorAudit {
+  id: string;
+  actorUserId: string;
+  actorRole: AccountRole;
+  reason: string;
+}
+
 export const ACCOUNT_DATA_RETENTION_POLICY = {
-  version: "2026-07-14",
+  version: "2026-08-03",
   authSessions: { action: "delete", daysAfterExpiryOrRevocation: 30 },
   revokedProviderSessions: {
     action: "retain_device_denylist_until_account_deletion",
@@ -44,14 +99,20 @@ export const ACCOUNT_DATA_RETENTION_POLICY = {
       "age_verifications", "verifications", "mission_progress", "venue_manager_assignments",
       "discount_redemptions", "pint_point_drink_records", "pint_point_ledger", "free_pint_reward_codes",
       "free_pint_reward_redemptions", "account_reward_vouchers", "leaderboard_prize_awards",
+      "submission_items", "submissions", "contribution_ledger", "submission_derived_venue_price_records",
     ],
     redact: [
-      "accounts", "profiles", "submissions", "source_evidence_objects", "feedback", "wrong_price_reports",
+      "accounts", "profiles", "source_evidence_objects", "feedback", "wrong_price_reports",
       "venue_requests", "venue_interest_requests", "venue_claim_requests", "venue_pending_changes",
       "venue_partner_outreach", "system_state venue-report-delivery settings", "security_audit_log",
       "stripe_webhook_events", "migration_quarantined_records", "account_deletion_requests",
     ],
-    pseudonymise: ["contribution_ledger"],
+    pseudonymise: [],
+    completionNotification: {
+      action: "encrypt_until_delivery_then_purge",
+      maximumDaysAfterCompletion: 30,
+      nonIdentifyingWebhookReceiptDays: 400,
+    },
   },
 } as const;
 export type SubmissionStatus =
@@ -3578,6 +3639,7 @@ export class BusinessRepository {
     securityEnvelopeCutoff: string;
     reviewedLocationCutoff: string;
     migrationQuarantineCutoff: string;
+    deletionNotificationEventCutoff: string;
   }): {
     authSessionsDeleted: number;
     providerRevocationsDeleted: number;
@@ -3587,6 +3649,7 @@ export class BusinessRepository {
     securityEnvelopesDeleted: number;
     reviewedLocationsPurged: number;
     migrationQuarantinePayloadsRedacted: number;
+    deletionNotificationEventsDeleted: number;
   } {
     return this.database.transaction(() => {
       const authSessionsDeleted = this.database.prepare(
@@ -3627,6 +3690,9 @@ export class BusinessRepository {
             SET payload_json = '{"redactedAfterRetention":true}'
           WHERE quarantined_at <= ? AND payload_json <> '{"redactedAfterRetention":true}'`,
       ).run(input.migrationQuarantineCutoff).changes;
+      const deletionNotificationEventsDeleted = this.database.prepare(
+        "DELETE FROM account_deletion_notification_events WHERE received_at <= ?",
+      ).run(input.deletionNotificationEventCutoff).changes;
       return {
         authSessionsDeleted,
         providerRevocationsDeleted,
@@ -3636,6 +3702,7 @@ export class BusinessRepository {
         securityEnvelopesDeleted,
         reviewedLocationsPurged,
         migrationQuarantinePayloadsRedacted,
+        deletionNotificationEventsDeleted,
       };
     })();
   }
@@ -6743,6 +6810,7 @@ export class BusinessRepository {
     weekOldPoints: number;
     stalePoints: number;
     newVenuePoints: number;
+    excludeHappyHourMissions?: boolean;
   }): { missions: BusinessMissionFeedItem[]; total: number } {
     if (input.savedOnly && input.savedSuburbs.length === 0) {
       return { missions: [], total: 0 };
@@ -6761,6 +6829,7 @@ export class BusinessRepository {
       weekOldPoints: input.weekOldPoints,
       stalePoints: input.stalePoints,
       newVenuePoints: input.newVenuePoints,
+      excludeHappyHourMissions: input.excludeHappyHourMissions ? 1 : 0,
       limit: Math.max(1, input.limit),
       offset: Math.max(0, input.offset),
     };
@@ -6801,6 +6870,13 @@ export class BusinessRepository {
       LEFT JOIN mission_progress progress
         ON progress.mission_id = mission.id AND progress.user_id = @userId
       WHERE mission.active = 1
+        AND (
+          @excludeHappyHourMissions = 0
+          OR (
+            lower(mission.reason) NOT LIKE '%happy%'
+            AND (' ' || lower(replace(replace(mission.reason, '-', ' '), '_', ' ')) || ' ') NOT LIKE '% hh %'
+          )
+        )
         AND (@suburb IS NULL OR lower(COALESCE(mission.suburb, '')) = lower(@suburb))
         ${savedClause}
         ${searchClauses.length ? `AND ${searchClauses.join(" AND ")}` : ""}
@@ -10248,12 +10324,103 @@ export class BusinessRepository {
     return this.database.prepare("SELECT * FROM account_deletion_requests WHERE id = ?").get(input.id) as Record<string, unknown>;
   }
 
-  listAccountDeletionRequests(input: { status?: string; limit: number; offset?: number }): Array<Record<string, unknown>> {
+  listAccountDeletionRequests(input: {
+    status?: string;
+    limit: number;
+    offset?: number;
+    asOf?: string;
+  }): Array<Record<string, unknown>> {
     const offset = Math.max(0, input.offset ?? 0);
-    const rows = input.status
-      ? this.database.prepare("SELECT * FROM account_deletion_requests WHERE status = ? ORDER BY requested_at DESC LIMIT ? OFFSET ?").all(input.status, input.limit, offset)
-      : this.database.prepare("SELECT * FROM account_deletion_requests ORDER BY requested_at DESC LIMIT ? OFFSET ?").all(input.limit, offset);
+    const asOf = input.asOf ?? new Date().toISOString();
+    const whereClause = input.status ? "WHERE deletion.status = @status" : "";
+    const rows = this.database.prepare(
+      `SELECT deletion.*,
+              notice.status AS completion_notification_status,
+              notice.attempt_count AS completion_notification_attempt_count,
+              notice.provider_message_id AS completion_notification_provider_message_id,
+              notice.provider_last_event AS completion_notification_provider_event,
+              notice.accepted_at AS completion_notification_accepted_at,
+              notice.delivered_at AS completion_notification_delivered_at,
+              notice.terminal_at AS completion_notification_terminal_at,
+              notice.retention_expires_at AS completion_notification_retention_expires_at,
+              notice.last_error AS completion_notification_last_error,
+              notice.updated_at AS completion_notification_updated_at
+         FROM account_deletion_requests deletion
+         LEFT JOIN account_deletion_completion_outbox notice ON notice.request_id = deletion.id
+         ${whereClause}
+        ORDER BY
+          CASE
+            WHEN deletion.status IN ('pending_review', 'approved', 'failed', 'processing')
+             AND deletion.execute_after <= @asOf THEN 0
+            WHEN deletion.status IN ('pending_review', 'approved', 'failed', 'processing') THEN 1
+            ELSE 2
+          END ASC,
+          CASE
+            WHEN deletion.status IN ('pending_review', 'approved', 'failed', 'processing')
+              THEN deletion.execute_after
+            ELSE NULL
+          END ASC,
+          CASE
+            WHEN deletion.status NOT IN ('pending_review', 'approved', 'failed', 'processing')
+              THEN deletion.requested_at
+            ELSE NULL
+          END DESC,
+          deletion.id ASC
+        LIMIT @limit OFFSET @offset`,
+    ).all(input.status
+      ? { status: input.status, asOf, limit: input.limit, offset }
+      : { asOf, limit: input.limit, offset });
     return rows as Array<Record<string, unknown>>;
+  }
+
+  getAccountDeletionQueueSummary(asOf: string): {
+    actionableCount: number;
+    dueCount: number;
+    failedCount: number;
+    processingCount: number;
+    oldestDueAt: string | null;
+    nextDueAt: string | null;
+  } {
+    const row = this.database.prepare(
+      `SELECT
+         COALESCE(SUM(CASE
+           WHEN status IN ('pending_review', 'approved', 'failed', 'processing') THEN 1
+           ELSE 0
+         END), 0) AS actionable_count,
+         COALESCE(SUM(CASE
+           WHEN status IN ('pending_review', 'approved', 'failed', 'processing')
+            AND execute_after <= @asOf THEN 1
+           ELSE 0
+         END), 0) AS due_count,
+         COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) AS failed_count,
+         COALESCE(SUM(CASE WHEN status = 'processing' THEN 1 ELSE 0 END), 0) AS processing_count,
+         MIN(CASE
+           WHEN status IN ('pending_review', 'approved', 'failed', 'processing')
+            AND execute_after <= @asOf THEN execute_after
+           ELSE NULL
+         END) AS oldest_due_at,
+         MIN(CASE
+           WHEN status IN ('pending_review', 'approved', 'failed', 'processing')
+            AND execute_after > @asOf THEN execute_after
+           ELSE NULL
+         END) AS next_due_at
+       FROM account_deletion_requests`,
+    ).get({ asOf }) as {
+      actionable_count: number;
+      due_count: number;
+      failed_count: number;
+      processing_count: number;
+      oldest_due_at: string | null;
+      next_due_at: string | null;
+    };
+    return {
+      actionableCount: Number(row.actionable_count),
+      dueCount: Number(row.due_count),
+      failedCount: Number(row.failed_count),
+      processingCount: Number(row.processing_count),
+      oldestDueAt: row.oldest_due_at,
+      nextDueAt: row.next_due_at,
+    };
   }
 
   countAccountDeletionRequests(status?: string): number {
@@ -10289,6 +10456,597 @@ export class BusinessRepository {
       .run(input.reviewedBy, input.now, input.now, input.now, input.requestId, input.staleBefore);
     if (result.changes !== 1) return null;
     return this.database.prepare("SELECT * FROM account_deletion_requests WHERE id = ?").get(input.requestId) as Record<string, unknown>;
+  }
+
+  beginAccountDeletionWithCompletionNotification(input: {
+    requestId: string;
+    reviewedBy: string;
+    now: string;
+    staleBefore: string;
+    templateVersion: string;
+    idempotencyKey: string;
+    keyId: string;
+    nonce: Buffer;
+    ciphertext: Buffer;
+    authTag: Buffer;
+    purgeAfter: string;
+  }): Record<string, unknown> | null {
+    const abort = Symbol("account-deletion-claim-failed");
+    const transaction = this.database.transaction((): Record<string, unknown> | typeof abort => {
+      const claimed = this.database.prepare(
+        `UPDATE account_deletion_requests
+            SET status = 'processing', reviewed_by = ?, reviewed_at = COALESCE(reviewed_at, ?),
+                processing_started_at = ?, last_error = NULL, attempt_count = attempt_count + 1, updated_at = ?
+          WHERE id = ? AND (
+            status IN ('pending_review', 'approved', 'failed')
+            OR (status = 'processing' AND processing_started_at <= ?)
+          )`,
+      ).run(input.reviewedBy, input.now, input.now, input.now, input.requestId, input.staleBefore);
+      if (claimed.changes !== 1) return abort;
+
+      this.database.prepare(
+        `INSERT INTO account_deletion_completion_outbox (
+           request_id, template_version, idempotency_key, payload_fingerprint, status, attempt_count,
+           first_attempt_at, next_attempt_at, lease_token, lease_expires_at,
+           provider_message_id, provider_last_event, provider_event_at, last_error,
+           completed_at, accepted_at, delivered_at, terminal_at, retention_expires_at,
+           created_at, updated_at
+         ) VALUES (?, ?, ?, NULL, 'held', 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+                   NULL, NULL, NULL, NULL, NULL, ?, ?)
+         ON CONFLICT(request_id) DO NOTHING`,
+      ).run(input.requestId, input.templateVersion, input.idempotencyKey, input.now, input.now);
+
+      const outbox = this.database.prepare(
+        `SELECT * FROM account_deletion_completion_outbox WHERE request_id = ?`,
+      ).get(input.requestId) as AccountDeletionCompletionOutboxRow | undefined;
+      if (!outbox || outbox.idempotency_key !== input.idempotencyKey) {
+        throw new Error("Account deletion completion notification identity does not match its durable outbox row.");
+      }
+      if (outbox.status === "purged" && outbox.completed_at === null) {
+        this.database.prepare(
+          `UPDATE account_deletion_completion_outbox
+              SET template_version = ?, payload_fingerprint = NULL, status = 'held',
+                  attempt_count = 0, first_attempt_at = NULL, next_attempt_at = NULL,
+                  lease_token = NULL, lease_expires_at = NULL, provider_message_id = NULL,
+                  provider_last_event = NULL, provider_event_at = NULL, last_error = NULL,
+                  accepted_at = NULL, delivered_at = NULL, terminal_at = NULL,
+                  retention_expires_at = NULL, updated_at = ?
+            WHERE request_id = ? AND status = 'purged' AND completed_at IS NULL`,
+        ).run(input.templateVersion, input.now, input.requestId);
+      }
+      const refreshedOutbox = this.database.prepare(
+        `SELECT * FROM account_deletion_completion_outbox WHERE request_id = ?`,
+      ).get(input.requestId) as AccountDeletionCompletionOutboxRow;
+      if (["delivered", "failed", "purged", "cancelled", "suppressed_restore"].includes(refreshedOutbox.status)) {
+        throw new Error("Account deletion completion notification is already terminal.");
+      }
+
+      this.database.prepare(
+        `INSERT INTO account_deletion_notice_recipient_secrets (
+           request_id, key_id, nonce, ciphertext, auth_tag, created_at, purge_after
+         ) VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(request_id) DO NOTHING`,
+      ).run(
+        input.requestId,
+        input.keyId,
+        input.nonce,
+        input.ciphertext,
+        input.authTag,
+        input.now,
+        input.purgeAfter,
+      );
+      const recipientSecret = this.database.prepare(
+        "SELECT request_id FROM account_deletion_notice_recipient_secrets WHERE request_id = ?",
+      ).get(input.requestId);
+      if (!recipientSecret) {
+        throw new Error("Account deletion completion notification recipient was not durably prepared.");
+      }
+      return this.database.prepare("SELECT * FROM account_deletion_requests WHERE id = ?")
+        .get(input.requestId) as Record<string, unknown>;
+    });
+    const result = transaction();
+    return result === abort ? null : result;
+  }
+
+  getAccountDeletionCompletionOutbox(requestId: string): AccountDeletionCompletionOutboxRow | null {
+    return (this.database.prepare(
+      "SELECT * FROM account_deletion_completion_outbox WHERE request_id = ?",
+    ).get(requestId) as AccountDeletionCompletionOutboxRow | undefined) ?? null;
+  }
+
+  getAccountDeletionNoticeRecipientSecret(requestId: string): AccountDeletionNoticeRecipientSecretRow | null {
+    return (this.database.prepare(
+      "SELECT * FROM account_deletion_notice_recipient_secrets WHERE request_id = ?",
+    ).get(requestId) as AccountDeletionNoticeRecipientSecretRow | undefined) ?? null;
+  }
+
+  listReferencedAccountDeletionNoticeKeyIds(): string[] {
+    return (this.database.prepare(
+      "SELECT DISTINCT key_id FROM account_deletion_notice_recipient_secrets ORDER BY key_id",
+    ).all() as Array<{ key_id: string }>).map((row) => row.key_id);
+  }
+
+  lockAccountDeletionNotificationPayload(input: {
+    requestId: string;
+    leaseToken: string;
+    payloadFingerprint: string;
+    now: string;
+  }): boolean {
+    if (!/^[a-f0-9]{64}$/.test(input.payloadFingerprint)) return false;
+    const result = this.database.prepare(
+      `UPDATE account_deletion_completion_outbox
+          SET payload_fingerprint = COALESCE(payload_fingerprint, ?), updated_at = ?
+        WHERE request_id = ? AND status = 'sending' AND lease_token = ?
+          AND (payload_fingerprint IS NULL OR payload_fingerprint = ?)`,
+    ).run(
+      input.payloadFingerprint,
+      input.now,
+      input.requestId,
+      input.leaseToken,
+      input.payloadFingerprint,
+    );
+    return result.changes === 1;
+  }
+
+  claimNextAccountDeletionCompletionNotification(input: {
+    now: string;
+    staleBefore: string;
+    leaseToken: string;
+    leaseExpiresAt: string;
+  }): AccountDeletionCompletionOutboxRow | null {
+    return this.database.transaction(() => {
+      const candidate = this.database.prepare(
+        `SELECT notice.request_id
+           FROM account_deletion_completion_outbox notice
+           JOIN account_deletion_requests deletion ON deletion.id = notice.request_id
+          WHERE deletion.status = 'completed'
+            AND notice.retention_expires_at > @now
+            AND notice.next_attempt_at IS NOT NULL
+            AND notice.next_attempt_at <= @now
+            AND (
+              notice.status IN ('pending', 'accepted')
+              OR (notice.status = 'sending' AND notice.lease_expires_at <= @now)
+            )
+          ORDER BY notice.next_attempt_at ASC, notice.created_at ASC, notice.request_id ASC
+          LIMIT 1`,
+      ).get({ now: input.now }) as { request_id: string } | undefined;
+      if (!candidate) return null;
+      const claimed = this.database.prepare(
+        `UPDATE account_deletion_completion_outbox
+            SET status = 'sending', attempt_count = attempt_count + 1,
+                first_attempt_at = COALESCE(first_attempt_at, ?),
+                lease_token = ?, lease_expires_at = ?, updated_at = ?
+          WHERE request_id = ?
+            AND (
+              status IN ('pending', 'accepted')
+              OR (status = 'sending' AND lease_expires_at <= ?)
+            )`,
+      ).run(
+        input.now,
+        input.leaseToken,
+        input.leaseExpiresAt,
+        input.now,
+        candidate.request_id,
+        input.now,
+      );
+      if (claimed.changes !== 1) return null;
+      return this.getAccountDeletionCompletionOutbox(candidate.request_id);
+    })();
+  }
+
+  markAccountDeletionNotificationAccepted(input: {
+    requestId: string;
+    leaseToken: string;
+    providerMessageId: string;
+    acceptedAt: string;
+    nextCheckAt: string;
+  }): boolean {
+    const result = this.database.prepare(
+      `UPDATE account_deletion_completion_outbox
+          SET status = 'accepted', provider_message_id = COALESCE(provider_message_id, ?),
+              provider_last_event = COALESCE(provider_last_event, 'accepted'),
+              accepted_at = COALESCE(accepted_at, ?), next_attempt_at = ?,
+              lease_token = NULL, lease_expires_at = NULL, last_error = NULL, updated_at = ?
+        WHERE request_id = ? AND status = 'sending' AND lease_token = ?
+          AND (provider_message_id IS NULL OR provider_message_id = ?)`,
+    ).run(
+      input.providerMessageId,
+      input.acceptedAt,
+      input.nextCheckAt,
+      input.acceptedAt,
+      input.requestId,
+      input.leaseToken,
+      input.providerMessageId,
+    );
+    return result.changes === 1;
+  }
+
+  deferAccountDeletionNotification(input: {
+    requestId: string;
+    leaseToken: string;
+    nextAttemptAt: string;
+    error: string;
+    now: string;
+  }): boolean {
+    const result = this.database.prepare(
+      `UPDATE account_deletion_completion_outbox
+          SET status = CASE WHEN provider_message_id IS NULL THEN 'pending' ELSE 'accepted' END,
+              next_attempt_at = ?, lease_token = NULL, lease_expires_at = NULL,
+              last_error = ?, updated_at = ?
+        WHERE request_id = ? AND status = 'sending' AND lease_token = ?`,
+    ).run(
+      input.nextAttemptAt,
+      redactSecrets(input.error).slice(0, 500),
+      input.now,
+      input.requestId,
+      input.leaseToken,
+    );
+    return result.changes === 1;
+  }
+
+  markAccountDeletionNotificationForManualReview(input: {
+    requestId: string;
+    leaseToken: string;
+    providerEvent?: string | null;
+    error: string;
+    now: string;
+  }): boolean {
+    const result = this.database.prepare(
+      `UPDATE account_deletion_completion_outbox
+          SET status = 'manual_review', provider_last_event = COALESCE(?, provider_last_event),
+              provider_event_at = COALESCE(?, provider_event_at), next_attempt_at = NULL,
+              lease_token = NULL, lease_expires_at = NULL, last_error = ?, updated_at = ?
+        WHERE request_id = ? AND status = 'sending' AND lease_token = ?`,
+    ).run(
+      input.providerEvent ?? null,
+      input.providerEvent ? input.now : null,
+      redactSecrets(input.error).slice(0, 500),
+      input.now,
+      input.requestId,
+      input.leaseToken,
+    );
+    return result.changes === 1;
+  }
+
+  markAccountDeletionNotificationFailed(input: {
+    requestId: string;
+    leaseToken: string;
+    providerEvent?: string | null;
+    error: string;
+    now: string;
+  }): boolean {
+    const result = this.database.prepare(
+        `UPDATE account_deletion_completion_outbox
+            SET status = 'failed', provider_last_event = COALESCE(?, provider_last_event),
+                provider_event_at = COALESCE(?, provider_event_at), next_attempt_at = NULL,
+                lease_token = NULL, lease_expires_at = NULL, last_error = ?, terminal_at = ?, updated_at = ?
+          WHERE request_id = ? AND status = 'sending' AND lease_token = ?`,
+      ).run(
+        input.providerEvent ?? null,
+        input.providerEvent ? input.now : null,
+        redactSecrets(input.error).slice(0, 500),
+        input.now,
+        input.now,
+        input.requestId,
+        input.leaseToken,
+      );
+    return result.changes === 1;
+  }
+
+  retryFailedAccountDeletionNotification(input: {
+    requestId: string;
+    now: string;
+    audit: AccountDeletionNotificationOperatorAudit;
+  }): AccountDeletionCompletionOutboxRow | null {
+    return this.database.transaction(() => {
+      const result = this.database.prepare(
+        `UPDATE account_deletion_completion_outbox
+            SET status = 'pending', attempt_count = 0, first_attempt_at = NULL,
+                next_attempt_at = ?, lease_token = NULL, lease_expires_at = NULL,
+                provider_message_id = NULL, provider_last_event = NULL,
+                provider_event_at = NULL, accepted_at = NULL, delivered_at = NULL,
+                payload_fingerprint = NULL, terminal_at = NULL, last_error = NULL, updated_at = ?
+          WHERE request_id = ? AND status = 'failed' AND provider_message_id IS NULL
+            AND retention_expires_at > ?
+            AND EXISTS (
+              SELECT 1 FROM account_deletion_notice_recipient_secrets recipient
+               WHERE recipient.request_id = account_deletion_completion_outbox.request_id
+                 AND recipient.purge_after > ?
+            )`,
+      ).run(input.now, input.now, input.requestId, input.now, input.now);
+      if (result.changes !== 1) return null;
+      this.insertSecurityAuditLog({
+        id: input.audit.id,
+        actorUserId: input.audit.actorUserId,
+        actorRole: input.audit.actorRole,
+        action: "account_deletion_notification_retry_authorized",
+        targetType: "account_deletion_request",
+        targetId: input.requestId,
+        metadata: { reason: redactSecrets(input.audit.reason).slice(0, 220) },
+        ipHash: null,
+        userAgentHash: null,
+        createdAt: input.now,
+      });
+      return this.getAccountDeletionCompletionOutbox(input.requestId);
+    })();
+  }
+
+  resolveAccountDeletionNotificationManualReview(input: {
+    requestId: string;
+    resolution: "verified_delivered" | "undeliverable";
+    now: string;
+    audit: AccountDeletionNotificationOperatorAudit;
+  }): AccountDeletionCompletionOutboxRow | null {
+    return this.database.transaction(() => {
+      const status = input.resolution === "verified_delivered" ? "delivered" : "failed";
+      const providerEvent = input.resolution === "verified_delivered"
+        ? "operator_verified_delivered"
+        : "operator_resolved_undeliverable";
+      const result = this.database.prepare(
+        `UPDATE account_deletion_completion_outbox
+            SET status = ?, provider_last_event = ?,
+                delivered_at = CASE WHEN ? = 'verified_delivered' THEN COALESCE(delivered_at, ?) ELSE delivered_at END,
+                terminal_at = COALESCE(terminal_at, ?), next_attempt_at = NULL,
+                lease_token = NULL, lease_expires_at = NULL,
+                last_error = CASE WHEN ? = 'verified_delivered' THEN NULL
+                                  ELSE 'Operator independently resolved the notice as undeliverable.' END,
+                secret_purge_checkpoint_pending = 1,
+                secret_purge_generation = secret_purge_generation + 1,
+                updated_at = ?
+          WHERE request_id = ?
+            AND (
+              status = 'manual_review'
+              OR status = 'purged'
+              OR (status = 'failed' AND COALESCE(provider_last_event, '') <> 'operator_resolved_undeliverable')
+            )
+            AND (? <> 'verified_delivered' OR provider_message_id IS NOT NULL)`,
+      ).run(
+        status,
+        providerEvent,
+        input.resolution,
+        input.now,
+        input.now,
+        input.resolution,
+        input.now,
+        input.requestId,
+        input.resolution,
+      );
+      if (result.changes !== 1) return null;
+      this.database.prepare(
+        "DELETE FROM account_deletion_notice_recipient_secrets WHERE request_id = ?",
+      ).run(input.requestId);
+      this.insertSecurityAuditLog({
+        id: input.audit.id,
+        actorUserId: input.audit.actorUserId,
+        actorRole: input.audit.actorRole,
+        action: "account_deletion_notification_manually_resolved",
+        targetType: "account_deletion_request",
+        targetId: input.requestId,
+        metadata: {
+          resolution: input.resolution,
+          reason: redactSecrets(input.audit.reason).slice(0, 220),
+        },
+        ipHash: null,
+        userAgentHash: null,
+        createdAt: input.now,
+      });
+      return this.getAccountDeletionCompletionOutbox(input.requestId);
+    })();
+  }
+
+  markAccountDeletionNotificationDelivered(input: {
+    requestId: string;
+    providerEvent: string;
+    eventAt: string;
+    now: string;
+    leaseToken?: string | undefined;
+  }): boolean {
+    return this.database.transaction(() => {
+      const leaseClause = input.leaseToken ? "AND status = 'sending' AND lease_token = @leaseToken" : "";
+      const result = this.database.prepare(
+        `UPDATE account_deletion_completion_outbox
+            SET status = 'delivered', provider_last_event = @providerEvent,
+                provider_event_at = @eventAt, delivered_at = COALESCE(delivered_at, @eventAt),
+                terminal_at = COALESCE(terminal_at, @eventAt), next_attempt_at = NULL,
+                lease_token = NULL, lease_expires_at = NULL, last_error = NULL,
+                secret_purge_checkpoint_pending = 1,
+                secret_purge_generation = secret_purge_generation + 1, updated_at = @now
+          WHERE request_id = @requestId
+            AND status NOT IN ('cancelled', 'suppressed_restore', 'purged')
+            ${leaseClause}`,
+      ).run({
+        requestId: input.requestId,
+        providerEvent: input.providerEvent,
+        eventAt: input.eventAt,
+        now: input.now,
+        leaseToken: input.leaseToken ?? null,
+      });
+      if (result.changes === 1) {
+        this.database.prepare(
+          "DELETE FROM account_deletion_notice_recipient_secrets WHERE request_id = ?",
+        ).run(input.requestId);
+      }
+      return result.changes === 1;
+    })();
+  }
+
+  recordAccountDeletionNotificationWebhook(input: {
+    eventId: string;
+    providerMessageId: string;
+    eventType: string;
+    eventCreatedAt: string;
+    receivedAt: string;
+    payloadSha256: string;
+    outcome: "delivered" | "failed" | "pending";
+  }): { duplicate: boolean; matched: boolean; requestId: string | null } {
+    return this.database.transaction(() => {
+      const notice = this.database.prepare(
+        "SELECT * FROM account_deletion_completion_outbox WHERE provider_message_id = ?",
+      ).get(input.providerMessageId) as AccountDeletionCompletionOutboxRow | undefined;
+      if (!notice) return { duplicate: false, matched: false, requestId: null };
+      const inserted = this.database.prepare(
+        `INSERT INTO account_deletion_notification_events (
+           event_id, request_id, provider_message_id, event_type, event_created_at, received_at, payload_sha256
+         ) VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(event_id) DO NOTHING`,
+      ).run(
+        input.eventId,
+        notice.request_id,
+        input.providerMessageId,
+        input.eventType,
+        input.eventCreatedAt,
+        input.receivedAt,
+        input.payloadSha256,
+      );
+      if (inserted.changes === 0) {
+        return { duplicate: true, matched: true, requestId: notice.request_id };
+      }
+      if (notice.provider_event_at && input.eventCreatedAt < notice.provider_event_at) {
+        return { duplicate: false, matched: true, requestId: notice.request_id };
+      }
+      if (input.outcome === "delivered") {
+        this.database.prepare(
+          `UPDATE account_deletion_completion_outbox
+              SET status = 'delivered', provider_last_event = ?, provider_event_at = ?,
+                  delivered_at = COALESCE(delivered_at, ?), terminal_at = COALESCE(terminal_at, ?),
+                  next_attempt_at = NULL, lease_token = NULL, lease_expires_at = NULL,
+                  last_error = NULL, secret_purge_checkpoint_pending = 1,
+                  secret_purge_generation = secret_purge_generation + 1, updated_at = ?
+            WHERE request_id = ?
+              AND status NOT IN ('cancelled', 'suppressed_restore')
+              AND (status <> 'purged' OR completed_at IS NOT NULL)`,
+        ).run(input.eventType, input.eventCreatedAt, input.eventCreatedAt, input.eventCreatedAt, input.receivedAt, notice.request_id);
+        this.database.prepare(
+          "DELETE FROM account_deletion_notice_recipient_secrets WHERE request_id = ?",
+        ).run(notice.request_id);
+      } else if (input.outcome === "failed") {
+        this.database.prepare(
+          `UPDATE account_deletion_completion_outbox
+              SET status = 'manual_review', provider_last_event = ?, provider_event_at = ?,
+                  next_attempt_at = NULL, lease_token = NULL, lease_expires_at = NULL,
+                  last_error = 'Provider reported that the completion notice was not delivered.', updated_at = ?
+            WHERE request_id = ?
+              AND status NOT IN ('delivered', 'cancelled', 'suppressed_restore', 'purged')
+              AND NOT (
+                status = 'failed'
+                AND provider_last_event = 'operator_resolved_undeliverable'
+              )`,
+        ).run(input.eventType, input.eventCreatedAt, input.receivedAt, notice.request_id);
+      } else {
+        this.database.prepare(
+          `UPDATE account_deletion_completion_outbox
+              SET status = 'accepted', provider_last_event = ?, provider_event_at = ?,
+                  next_attempt_at = ?, lease_token = NULL, lease_expires_at = NULL, updated_at = ?
+            WHERE request_id = ? AND status IN ('sending', 'accepted')`,
+        ).run(
+          input.eventType,
+          input.eventCreatedAt,
+          new Date(new Date(input.receivedAt).getTime() + 15 * 60_000).toISOString(),
+          input.receivedAt,
+          notice.request_id,
+        );
+      }
+      return { duplicate: false, matched: true, requestId: notice.request_id };
+    })();
+  }
+
+  purgeExpiredAccountDeletionNotificationRecipients(now: string): number {
+    return this.database.transaction(() => {
+      const rows = this.database.prepare(
+        `SELECT request_id FROM account_deletion_notice_recipient_secrets WHERE purge_after <= ?`,
+      ).all(now) as Array<{ request_id: string }>;
+      if (rows.length === 0) return 0;
+      for (const row of rows) {
+        this.database.prepare(
+          "DELETE FROM account_deletion_notice_recipient_secrets WHERE request_id = ?",
+        ).run(row.request_id);
+        this.database.prepare(
+          `UPDATE account_deletion_completion_outbox
+              SET status = CASE WHEN status IN ('delivered', 'failed', 'cancelled', 'suppressed_restore')
+                                THEN status ELSE 'purged' END,
+                  terminal_at = COALESCE(terminal_at, ?), next_attempt_at = NULL,
+                  lease_token = NULL, lease_expires_at = NULL,
+                  last_error = CASE WHEN status IN ('delivered', 'failed', 'cancelled', 'suppressed_restore')
+                                    THEN last_error ELSE 'Encrypted notification recipient reached its retention limit.' END,
+                  secret_purge_checkpoint_pending = 1,
+                  secret_purge_generation = secret_purge_generation + 1,
+                  updated_at = ?
+            WHERE request_id = ?`,
+        ).run(now, now, row.request_id);
+      }
+      return rows.length;
+    })();
+  }
+
+  getAccountDeletionNotificationQueueSummary(now: string): {
+    pendingCount: number;
+    acceptedCount: number;
+    manualReviewCount: number;
+    overdueRetentionCount: number;
+    securePurgeCheckpointPendingCount: number;
+    oldestSecurePurgeCheckpointAt: string | null;
+    oldestPendingAt: string | null;
+  } {
+    const row = this.database.prepare(
+      `SELECT
+         COALESCE(SUM(CASE WHEN status IN ('pending', 'sending') THEN 1 ELSE 0 END), 0) AS pending_count,
+         COALESCE(SUM(CASE WHEN status = 'accepted' THEN 1 ELSE 0 END), 0) AS accepted_count,
+         COALESCE(SUM(CASE WHEN status IN ('manual_review', 'purged')
+                                OR (status = 'failed' AND COALESCE(provider_last_event, '') <> 'operator_resolved_undeliverable')
+                           THEN 1 ELSE 0 END), 0) AS manual_review_count,
+         (SELECT COUNT(*)
+            FROM account_deletion_notice_recipient_secrets recipient
+           WHERE recipient.purge_after <= ?) AS overdue_retention_count,
+         COALESCE(SUM(CASE WHEN secret_purge_checkpoint_pending = 1 THEN 1 ELSE 0 END), 0) AS secure_purge_checkpoint_pending_count,
+         MIN(CASE WHEN secret_purge_checkpoint_pending = 1 THEN updated_at ELSE NULL END) AS oldest_secure_purge_checkpoint_at,
+         MIN(CASE WHEN status IN ('pending', 'sending', 'accepted') THEN completed_at ELSE NULL END) AS oldest_pending_at
+       FROM account_deletion_completion_outbox`,
+    ).get(now) as {
+      pending_count: number;
+      accepted_count: number;
+      manual_review_count: number;
+      overdue_retention_count: number;
+      secure_purge_checkpoint_pending_count: number;
+      oldest_secure_purge_checkpoint_at: string | null;
+      oldest_pending_at: string | null;
+    };
+    return {
+      pendingCount: Number(row.pending_count),
+      acceptedCount: Number(row.accepted_count),
+      manualReviewCount: Number(row.manual_review_count),
+      overdueRetentionCount: Number(row.overdue_retention_count),
+      securePurgeCheckpointPendingCount: Number(row.secure_purge_checkpoint_pending_count),
+      oldestSecurePurgeCheckpointAt: row.oldest_secure_purge_checkpoint_at,
+      oldestPendingAt: row.oldest_pending_at,
+    };
+  }
+
+  checkpointAccountDeletionNotificationSecrets(): boolean {
+    try {
+      const snapshot = this.database.prepare(
+        `SELECT request_id, secret_purge_generation
+           FROM account_deletion_completion_outbox
+          WHERE secret_purge_checkpoint_pending = 1`,
+      ).all() as Array<{ request_id: string; secret_purge_generation: number }>;
+      if (snapshot.length === 0) return true;
+      const rows = this.database.pragma("wal_checkpoint(TRUNCATE)") as Array<{ busy?: number }>;
+      if (Number(rows[0]?.busy ?? 1) !== 0) return false;
+      const clearCheckpoint = this.database.prepare(
+        `UPDATE account_deletion_completion_outbox
+            SET secret_purge_checkpoint_pending = 0
+          WHERE request_id = ?
+            AND secret_purge_checkpoint_pending = 1
+            AND secret_purge_generation = ?`,
+      );
+      this.database.transaction(() => {
+        for (const row of snapshot) {
+          clearCheckpoint.run(row.request_id, row.secret_purge_generation);
+        }
+      })();
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   markAccountDeletionIdentityDeleted(input: { requestId: string; now: string }): void {
@@ -10348,8 +11106,9 @@ export class BusinessRepository {
   }
 
   cancelAccountDeletion(input: { requestId: string; userId: string; now: string }): boolean {
-    const result = this.database
-      .prepare(
+    return this.database.transaction(() => {
+      const result = this.database
+        .prepare(
         `UPDATE account_deletion_requests
          SET status = 'cancelled', updated_at = ?
          WHERE id = ? AND user_id = ?
@@ -10359,7 +11118,21 @@ export class BusinessRepository {
            AND status IN ('pending_review', 'approved', 'failed')`,
       )
       .run(input.now, input.requestId, input.userId);
-    return result.changes === 1;
+      if (result.changes === 1) {
+        this.database.prepare(
+          `UPDATE account_deletion_completion_outbox
+              SET status = 'cancelled', terminal_at = ?, next_attempt_at = NULL,
+                  lease_token = NULL, lease_expires_at = NULL, last_error = NULL,
+                  secret_purge_checkpoint_pending = 1,
+                  secret_purge_generation = secret_purge_generation + 1, updated_at = ?
+            WHERE request_id = ? AND status = 'held'`,
+        ).run(input.now, input.now, input.requestId);
+        this.database.prepare(
+          "DELETE FROM account_deletion_notice_recipient_secrets WHERE request_id = ?",
+        ).run(input.requestId);
+      }
+      return result.changes === 1;
+    })();
   }
 
   exportAccountRelatedData(input: { userId: string; email: string; stripeCustomerId: string | null }): Record<string, unknown> {
@@ -10526,7 +11299,13 @@ export class BusinessRepository {
     };
   }
 
-  executeAccountAnonymisation(input: { requestId: string; reviewedBy: string; now: string }): Record<string, unknown> {
+  executeAccountAnonymisation(input: {
+    requestId: string;
+    reviewedBy: string;
+    now: string;
+    completionNotificationDisposition?: "enqueue_live" | "suppress_restore" | "none";
+    completionNotificationRetentionExpiresAt?: string | undefined;
+  }): Record<string, unknown> {
     return this.database.transaction(() => {
       const request = this.database
         .prepare("SELECT * FROM account_deletion_requests WHERE id = ?")
@@ -10593,10 +11372,6 @@ export class BusinessRepository {
                 updated_at = ?
           WHERE updated_by = ? OR instr(lower(COALESCE(notes, '')), ?) > 0`,
       ).run(userId, userId, account.email.toLowerCase(), input.now, userId, account.email.toLowerCase());
-      this.database.prepare(
-        "UPDATE contribution_ledger SET reason = 'Retained anonymised contribution record' WHERE user_id = ?",
-      ).run(userId);
-
       this.database.prepare(
         `UPDATE feedback
             SET user_id = CASE WHEN user_id = ? THEN NULL ELSE user_id END,
@@ -10669,16 +11444,44 @@ export class BusinessRepository {
         userId, account.email, userId, account.email, userId, account.email, surrogateEmail,
         userId, account.email, userId, account.email, userId, userId, input.now, userId, userId, account.email,
       );
+      // Apple account deletion requires shared user-generated content to be
+      // removed with the account. Do not retain the raw submission, item text,
+      // contribution ledger, or a public price row that still derives from it.
+      // A future publisher-curated fact may only be retained through a separate,
+      // fully de-linked legal/App Review approved ingestion path.
       this.database.prepare(
-        `UPDATE submissions
-            SET client_submission_id = NULL, notes = NULL, source_photo_url = NULL,
-                upload_latitude = NULL, upload_longitude = NULL, upload_accuracy_meters = NULL,
-                upload_location_captured_at = NULL,
-                reviewed_by = CASE WHEN reviewed_by = ? THEN NULL ELSE reviewed_by END
-          WHERE user_id = ? OR reviewed_by = ?`,
-      ).run(userId, userId, userId);
-      this.database.prepare("DELETE FROM submission_source_evidence WHERE submission_id IN (SELECT id FROM submissions WHERE user_id = ?)").run(userId);
-      this.database.prepare("UPDATE source_evidence_objects SET owner_user_id = NULL WHERE owner_user_id = ?").run(userId);
+        "UPDATE submissions SET reviewed_by = NULL WHERE reviewed_by = ? AND user_id <> ?",
+      ).run(userId, userId);
+      const removedDerivedPriceRecords = this.database.prepare(
+        `DELETE FROM venue_price_records
+          WHERE source_submission_id IN (SELECT id FROM submissions WHERE user_id = ?)`,
+      ).run(userId).changes;
+      const removedContributionRows = this.database.prepare(
+        `DELETE FROM contribution_ledger
+          WHERE user_id = ?
+             OR submission_id IN (SELECT id FROM submissions WHERE user_id = ?)`,
+      ).run(userId, userId).changes;
+      const removedSubmissionItems = this.database.prepare(
+        `DELETE FROM submission_items
+          WHERE submission_id IN (SELECT id FROM submissions WHERE user_id = ?)`,
+      ).run(userId).changes;
+      const removedSubmissions = this.database.prepare(
+        "DELETE FROM submissions WHERE user_id = ?",
+      ).run(userId).changes;
+      // Commit the local evidence tombstone with the account anonymisation. The
+      // provider object is deleted before this transaction, but SQLite evidence
+      // bytes and URLs must not depend on the best-effort post-commit cleanup
+      // loop: a process exit after this transaction commits must still leave no
+      // recoverable user evidence behind.
+      this.database.prepare(
+        `UPDATE source_evidence_objects
+            SET owner_user_id = NULL,
+                data_base64 = NULL,
+                external_url = NULL,
+                byte_size = NULL,
+                deleted_at = COALESCE(deleted_at, ?)
+          WHERE owner_user_id = ?`,
+      ).run(input.now, userId);
       const reportSettings = this.database.prepare(
         `SELECT key, value_json FROM system_state
           WHERE key LIKE 'venue-report-delivery:%' AND json_valid(value_json)`,
@@ -10787,8 +11590,56 @@ export class BusinessRepository {
         anonymisedAccount: surrogatePublicId,
         surrogatePublicId,
         evidenceIds: evidenceRows.map((row) => row.id),
+        removedSubmissions,
+        removedSubmissionItems,
+        removedContributionRows,
+        removedDerivedPriceRecords,
         retentionPolicyVersion: ACCOUNT_DATA_RETENTION_POLICY.version,
       };
+      const notificationDisposition = input.completionNotificationDisposition ?? "none";
+      if (notificationDisposition === "enqueue_live") {
+        if (!input.completionNotificationRetentionExpiresAt) {
+          throw new Error("Account deletion completion notification retention limit is required.");
+        }
+        this.database.prepare(
+          `UPDATE account_deletion_notice_recipient_secrets
+              SET purge_after = ?
+            WHERE request_id = ?`,
+        ).run(input.completionNotificationRetentionExpiresAt, input.requestId);
+        const activated = this.database.prepare(
+          `UPDATE account_deletion_completion_outbox
+              SET status = 'pending', completed_at = ?, next_attempt_at = ?,
+                  retention_expires_at = (
+                    SELECT purge_after FROM account_deletion_notice_recipient_secrets recipient
+                     WHERE recipient.request_id = account_deletion_completion_outbox.request_id
+                  ),
+                  last_error = NULL, updated_at = ?
+            WHERE request_id = ? AND status = 'held'
+              AND EXISTS (
+                SELECT 1 FROM account_deletion_notice_recipient_secrets recipient
+                 WHERE recipient.request_id = account_deletion_completion_outbox.request_id
+              )`,
+        ).run(input.now, input.now, input.now, input.requestId);
+        if (activated.changes !== 1) {
+          throw new Error("Account deletion completion notification was not durably prepared before anonymisation.");
+        }
+      } else if (notificationDisposition === "suppress_restore") {
+        this.database.prepare(
+          `UPDATE account_deletion_completion_outbox
+              SET status = CASE WHEN status = 'delivered' THEN status ELSE 'suppressed_restore' END,
+                  terminal_at = COALESCE(terminal_at, ?), next_attempt_at = NULL,
+                  lease_token = NULL, lease_expires_at = NULL,
+                  last_error = CASE WHEN status = 'delivered' THEN last_error
+                                    ELSE 'Notification suppressed during deletion-tombstone restore reconciliation.' END,
+                  secret_purge_checkpoint_pending = 1,
+                  secret_purge_generation = secret_purge_generation + 1,
+                  updated_at = ?
+            WHERE request_id = ?`,
+        ).run(input.now, input.now, input.requestId);
+        this.database.prepare(
+          "DELETE FROM account_deletion_notice_recipient_secrets WHERE request_id = ?",
+        ).run(input.requestId);
+      }
       this.database.prepare(
         `UPDATE account_deletion_requests
          SET status = 'completed', reviewed_by = ?, reviewed_at = ?, completed_at = ?,

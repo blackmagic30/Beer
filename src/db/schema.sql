@@ -790,7 +790,7 @@ CREATE TABLE IF NOT EXISTS account_privacy_settings (
   venue_report_inclusion_enabled INTEGER NOT NULL DEFAULT 0,
   product_research_enabled INTEGER NOT NULL DEFAULT 0,
   email_updates_enabled INTEGER NOT NULL DEFAULT 0,
-  consent_version TEXT NOT NULL DEFAULT '2026-07-28',
+  consent_version TEXT NOT NULL DEFAULT '2026-08-03',
   consented_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -831,6 +831,68 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_account_deletion_requests_open_user
 CREATE UNIQUE INDEX IF NOT EXISTS idx_account_deletion_requests_unfinished_user
   ON account_deletion_requests (user_id)
   WHERE status IN ('pending_review', 'approved', 'processing', 'failed');
+
+CREATE TABLE IF NOT EXISTS account_deletion_completion_outbox (
+  request_id TEXT PRIMARY KEY REFERENCES account_deletion_requests(id) ON DELETE CASCADE,
+  template_version TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  payload_fingerprint TEXT CHECK (payload_fingerprint IS NULL OR length(payload_fingerprint) = 64),
+  secret_purge_checkpoint_pending INTEGER NOT NULL DEFAULT 0
+    CHECK (secret_purge_checkpoint_pending IN (0, 1)),
+  secret_purge_generation INTEGER NOT NULL DEFAULT 0
+    CHECK (secret_purge_generation >= 0),
+  status TEXT NOT NULL DEFAULT 'held'
+    CHECK (status IN ('held', 'pending', 'sending', 'accepted', 'delivered', 'failed', 'manual_review', 'purged', 'cancelled', 'suppressed_restore')),
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  first_attempt_at TEXT,
+  next_attempt_at TEXT,
+  lease_token TEXT,
+  lease_expires_at TEXT,
+  provider_message_id TEXT UNIQUE,
+  provider_last_event TEXT,
+  provider_event_at TEXT,
+  last_error TEXT,
+  completed_at TEXT,
+  accepted_at TEXT,
+  delivered_at TEXT,
+  terminal_at TEXT,
+  retention_expires_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS account_deletion_notice_recipient_secrets (
+  request_id TEXT PRIMARY KEY REFERENCES account_deletion_completion_outbox(request_id) ON DELETE CASCADE,
+  key_id TEXT NOT NULL,
+  nonce BLOB NOT NULL CHECK (length(nonce) = 12),
+  ciphertext BLOB NOT NULL,
+  auth_tag BLOB NOT NULL CHECK (length(auth_tag) = 16),
+  created_at TEXT NOT NULL,
+  purge_after TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_account_deletion_completion_outbox_due
+  ON account_deletion_completion_outbox (status, next_attempt_at, lease_expires_at);
+
+CREATE INDEX IF NOT EXISTS idx_account_deletion_completion_outbox_retention
+  ON account_deletion_completion_outbox (retention_expires_at)
+  WHERE status IN ('held', 'pending', 'sending', 'accepted', 'manual_review');
+
+CREATE INDEX IF NOT EXISTS idx_account_deletion_notice_recipient_secrets_purge
+  ON account_deletion_notice_recipient_secrets (purge_after);
+
+CREATE TABLE IF NOT EXISTS account_deletion_notification_events (
+  event_id TEXT PRIMARY KEY,
+  request_id TEXT NOT NULL REFERENCES account_deletion_completion_outbox(request_id) ON DELETE CASCADE,
+  provider_message_id TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  event_created_at TEXT NOT NULL,
+  received_at TEXT NOT NULL,
+  payload_sha256 TEXT NOT NULL CHECK (length(payload_sha256) = 64)
+);
+
+CREATE INDEX IF NOT EXISTS idx_account_deletion_notification_events_request
+  ON account_deletion_notification_events (request_id, event_created_at DESC);
 
 CREATE TABLE IF NOT EXISTS feedback (
   id TEXT PRIMARY KEY,

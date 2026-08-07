@@ -45,16 +45,16 @@
       </div>
 
       <section class="authCard panel" aria-label="Account access">
-        <div id="authTabs" class="authTabs" role="tablist" aria-label="Choose sign in or create account">
+        <div id="authTabs" class="authTabs" role="tablist" aria-label="Choose sign in or create account" data-local-email-auth hidden>
           <button id="showLoginButton" class="authTab is-active" type="button" role="tab" aria-selected="true" aria-controls="loginForm">Sign in</button>
           <button id="showSignupButton" class="authTab" type="button" role="tab" aria-selected="false" aria-controls="signupForm">Create account</button>
         </div>
 
         <form id="loginForm" class="form authForm" role="tabpanel" aria-labelledby="showLoginButton loginHeading">
           <div id="loginPanel" class="authPanelStack">
-            <h2 id="loginHeading">Welcome back</h2>
-            <p class="muted">Sign in to upload venue data, view your submissions, and track contribution progress.</p>
-            <div class="authFields">
+            <h2 id="loginHeading">Continue with Google</h2>
+            <p id="loginLead" class="muted">Google securely verifies your web account. Email/password access is reserved for the first iOS release.</p>
+            <div id="webEmailLoginFields" class="authFields" data-local-email-auth hidden>
               <label class="field">Email
                 <input name="email" type="email" autocomplete="email" required />
               </label>
@@ -65,7 +65,7 @@
                 </span>
               </div>
             </div>
-            <div class="actionRow authActions">
+            <div id="webEmailLoginActions" class="actionRow authActions" data-local-email-auth hidden>
               <button class="button button--primary" type="submit">Sign in</button>
             </div>
             <div id="billingRecoveryPanel" class="notice billingRecoveryPanel" role="status" aria-live="polite" hidden>
@@ -82,7 +82,7 @@
                 <a class="button" href="/feedback.html?type=billing_support">Contact billing support</a>
               </div>
             </div>
-            <div class="authUtilityGrid" aria-label="Account recovery links">
+            <div id="webEmailAuthUtilities" class="authUtilityGrid" aria-label="Account recovery links" data-local-email-auth hidden>
               <a id="passwordResetLink" class="authUtilityCard" href="/reset-password.html">
                 <strong>Reset password</strong>
                 <span>Send a recovery email.</span>
@@ -96,7 +96,7 @@
               <button class="button oauthButton" data-provider="google" type="button">Continue with Google</button>
               <button class="button oauthButton" data-provider="apple" type="button">Continue with Apple</button>
             </div>
-            <p id="oauthHelper" class="helperCopy">Google and Apple first verify your identity. New accounts, or accounts with updated policies, are asked for 18+ and current Terms/Privacy acceptance only after that verification.</p>
+            <p id="oauthHelper" class="helperCopy">Google first verifies your identity. New accounts, or accounts with updated policies, are asked for 18+ and current Terms/Privacy acceptance only after that verification.</p>
           </div>
         </form>
 
@@ -185,7 +185,7 @@
         <div>
           <div class="eyebrow">Action required</div>
           <h2 id="legalAcceptanceGateTitle">Review the current Terms and Privacy Policy</h2>
-          <p class="muted">Pint Path updated these policies on 28 July 2026. Accept the current versions before using account-only features.</p>
+          <p class="muted">Pint Path updated these policies on 3 August 2026. Accept the current versions before using account-only features.</p>
         </div>
         <div class="legalAcceptanceGate__actions">
           <a class="button" href="/terms.html" target="_blank" rel="noopener">Read Terms</a>
@@ -348,7 +348,6 @@
             <fieldset class="field consentField">
               <legend>What do you use Pint Path for?</legend>
               <label class="consentLine"><input name="preferredUseCases" type="checkbox" value="cheapest_beer" /> <span>Finding best-value beer</span></label>
-              <label class="consentLine"><input name="preferredUseCases" type="checkbox" value="happy_hours" /> <span>Finding happy hours</span></label>
               <label class="consentLine"><input name="preferredUseCases" type="checkbox" value="specific_beers" /> <span>Finding specific beers</span></label>
               <label class="consentLine"><input name="preferredUseCases" type="checkbox" value="recently_verified" /> <span>Using recently verified data</span></label>
               <label class="consentLine"><input name="preferredUseCases" type="checkbox" value="contributing_data" /> <span>Contributing venue data</span></label>
@@ -665,6 +664,7 @@
       window.MELB_BEER_BOT_VIEWER_CONFIG?.business?.alcoholGamificationEnabled === true;
     const CONSUMER_PAID_ENROLLMENT_ENABLED =
       window.MELB_BEER_BOT_VIEWER_CONFIG?.business?.consumerPaidEnrollmentEnabled === true;
+    const WEB_EMAIL_AUTH_ENABLED = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(window.location.hostname);
 
     const state = {
       accountData: null,
@@ -1138,7 +1138,9 @@
       state.oauthLoginOpening = loading;
     }
 
-    function resetCancelledOauth(message = "Secure login was cancelled. Choose Google, Apple, or email to continue.") {
+    function resetCancelledOauth(message = WEB_EMAIL_AUTH_ENABLED
+      ? "Secure login was cancelled. Choose Google or local email to continue."
+      : "Secure Google login was cancelled. Try again when you are ready.") {
       if (!state.oauthLoginOpening) {
         return;
       }
@@ -1378,6 +1380,13 @@
     }
 
     function showAuthTab(tab, options = {}) {
+      if (!WEB_EMAIL_AUTH_ENABLED) {
+        $("authTabs").hidden = true;
+        $("loginForm").hidden = false;
+        $("signupForm").hidden = true;
+        setAccountStatus($("authStatus"), "Continue with Google to access Pint Path on the web.");
+        return;
+      }
       $("returningLegalAcceptanceForm").hidden = true;
       $("authTabs").hidden = false;
       const showLogin = tab === "login";
@@ -2195,7 +2204,7 @@
         ...(PINT_POINTS_REWARDS_ENABLED && pintPoints
           ? [{ label: "Pint Points", value: `${pintPoints.available ?? 0}/${pintPoints.threshold ?? 50}`, helper: "Paid alcoholic drinks earn 1 point each. Free pints do not earn points.", tone: "premium" }]
           : []),
-        { label: "Total uploads", value: totalUploads, helper: "Beer price, venue, happy-hour, and source uploads linked to your account.", tone: "neutral" },
+        { label: "Total uploads", value: totalUploads, helper: "Beer price, venue, and source uploads linked to your account.", tone: "neutral" },
         { label: "Verified", value: verifiedCount, helper: "Approved contributions that can count toward contributor unlocks.", tone: "success" },
         { label: "Pending review", value: pendingCount, helper: "Waiting for reviewer checks before they can affect the public map.", tone: "pending" },
         { label: "Rejected", value: rejectedCount, helper: "Rejected uploads stay private and can guide better future submissions.", tone: "warning" },
@@ -2389,9 +2398,13 @@
       renderCanIDrivePanel(result);
       installBetaFeatureMenu();
       showBetaFeature(state.activeBetaFeature);
+      const leaderboardDisabled = beta.leaderboard?.disabled === true;
       const campaign = beta.leaderboard?.campaign || {};
       const monthCopy = campaign.monthKey ? campaign.monthKey.replace("-", " ") : "This month";
-      $("betaCampaignBadge").textContent = `${monthCopy} · ${campaign.status || "active"}`;
+      $("betaCampaignBadge").textContent = leaderboardDisabled
+        ? "Paused"
+        : `${monthCopy} · ${campaign.status || "active"}`;
+      $("displayNameForm").hidden = leaderboardDisabled;
       const podium = [...(beta.leaderboard?.podium || [])].sort((left, right) => Number(left.rank) - Number(right.rank));
       const entries = beta.leaderboard?.entries || [];
       const me = beta.leaderboard?.me || null;
@@ -2446,6 +2459,10 @@
           </div>
         ` : ""}
       `;
+      if (leaderboardDisabled) {
+        $("leaderboardPodium").innerHTML = '<div class="emptyState"><strong>Leaderboard paused.</strong><span>No contributor identities are loaded while this launch feature is disabled.</span></div>';
+        $("leaderboardList").innerHTML = `<div class="betaLeaderboardMeta"><strong>Contributor leaderboard unavailable</strong><span>${escapeHtml(beta.leaderboard?.copy || "Contributor leaderboards and prize campaigns are paused for this launch.")}</span></div>`;
+      }
       const vouchers = result.rewards?.vouchers || [];
       $("rewardVoucherList").innerHTML = vouchers.length
         ? `
@@ -3560,6 +3577,14 @@
 
     async function handleAuth(event, path) {
       event.preventDefault();
+      if (!WEB_EMAIL_AUTH_ENABLED) {
+        MelbBeerBusiness.setStatus(
+          $("authStatus"),
+          "Email/password sign-in is available in the iOS app. Continue with Google on the website.",
+          true,
+        );
+        return;
+      }
       const authFlowId = ++state.authFlowEpoch;
       const form = event.currentTarget;
       const submitButton = form.querySelector('button[type="submit"]');
@@ -3596,7 +3621,7 @@
 
         setLoading(submitButton, true, isSignup ? "Creating..." : "Signing in...");
         const authParams = new URLSearchParams(window.location.search);
-        const isLocalHost = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+        const isLocalHost = WEB_EMAIL_AUTH_ENABLED;
         const useLocalEmailAuth = isLocalHost && authParams.get("supabaseAuth") !== "1";
         supabaseConfigured = Boolean(MelbBeerBusiness.getSupabaseClient()) && !useLocalEmailAuth;
         if (isSignup) {
@@ -3786,7 +3811,9 @@
         $("oauthStack").hidden = true;
         $("oauthHelper").textContent = supabaseConfigured
           ? "No Supabase OAuth providers are enabled in this environment."
-          : "Email login is available. Social login appears after Supabase Auth is configured.";
+          : WEB_EMAIL_AUTH_ENABLED
+            ? "Local email login is available. Google appears after Supabase Auth is configured."
+            : "Google login is temporarily unavailable because Supabase Auth is not configured.";
       }
 
       oauthButtons.forEach((button) => {
@@ -3807,6 +3834,17 @@
 
     window.addEventListener("DOMContentLoaded", async () => {
       $("nav").innerHTML = MelbBeerBusiness.renderNav("account");
+      if (WEB_EMAIL_AUTH_ENABLED) {
+        document.querySelectorAll("[data-local-email-auth]").forEach((element) => {
+          element.hidden = false;
+        });
+        $("loginHeading").textContent = "Welcome back";
+        $("loginLead").textContent = "Sign in to upload venue data, view your submissions, and track contribution progress.";
+      } else {
+        $("authTabs").hidden = true;
+        $("loginForm").hidden = false;
+        $("signupForm").hidden = true;
+      }
       if (!PINT_POINTS_REWARDS_ENABLED) {
         document.querySelectorAll("[data-pint-points-feature]").forEach((element) => {
           element.hidden = true;

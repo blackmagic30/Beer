@@ -39,7 +39,7 @@ describe("public UI hardening", () => {
     expect(html).toContain("Confirm current details with the venue.");
     expect(html).not.toContain("verified beer prices and happy hours across Melbourne");
     expect(html).toContain("const HAPPY_HOUR_DISCOVERY_ENABLED = BUSINESS_CONFIG.happyHourDiscoveryEnabled === true");
-    expect(html).toContain('data-filter-chip="happy_hour_active_now" aria-pressed="false" hidden');
+    expect(html).not.toContain('data-filter-chip="happy_hour_active_now"');
     expect(html).toContain("if (!HAPPY_HOUR_DISCOVERY_ENABLED)");
     expect(html).not.toContain('<option value="happy_hour_changed">');
   });
@@ -166,7 +166,7 @@ describe("public UI hardening", () => {
     expect(map).toContain('venue?.instagram');
     expect(map).toContain('venue?.phone');
     expect(map).toContain('class="beerPopup__openState ${openNow ? "is-open" : ""}"');
-    expect(map).toContain('data-filter-chip="happy_hour_active_now" aria-pressed="false"');
+    expect(map).not.toContain('data-filter-chip="happy_hour_active_now"');
     expect(map).toContain('data-beer-chip="${escapeHtml(beer.query)}" aria-pressed="false"');
     expect(map).toContain('chipEl.setAttribute("aria-pressed", isActive ? "true" : "false")');
   });

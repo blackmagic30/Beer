@@ -1,18 +1,23 @@
-// Copy this file to Config.xcconfig locally if you want to override defaults.
-// Do not commit real secrets. The mobile app must never contain service-role keys.
-// The project has a safe hosted default; this file is only for local developer overrides.
+// Copy this file to Config.xcconfig. The project loads that ignored file
+// automatically; do not attach it manually in Xcode or commit it.
+//
+// Release/archive builds fail closed until all three values below are valid.
+// Debug builds may leave the Supabase values blank while working on screens
+// that do not need native authentication.
 
 PRODUCT_BUNDLE_IDENTIFIER = au.pintpath.app
-DEVELOPMENT_TEAM =
 
-// Use the existing hosted or local BeerMap/Pint Path backend.
+// Use the existing hosted or local Pint Path backend.
 // Hosted default: https:/$()/pintpath.au
 // iOS simulator with local backend: http:/$()/127.0.0.1:3000
 // Physical device with local backend: use an HTTPS tunnel or a LAN URL reachable from the device.
 PINT_PATH_API_BASE_URL = https:/$()/pintpath.au
 
-// Optional public Supabase Auth config used by native email/password and Google/Apple OAuth.
-// Email/password login works through the existing Express API without these.
-// Never use a Supabase service-role key here.
-SUPABASE_URL =
+// Required public Supabase Auth configuration for Release email/password auth.
+// SUPABASE_URL must be the independently approved production custom domain
+// https:/$()/auth.pintpath.au with no path. Use either a modern
+// sb_publishable_ key or a legacy JWT whose role is anon.
+// Never use an sb_secret_ or legacy service-role key here. Public client keys
+// are bundled in Info.plist by design; private/service-role keys remain server-only.
+SUPABASE_URL = https:/$()/auth.pintpath.au
 SUPABASE_ANON_KEY =

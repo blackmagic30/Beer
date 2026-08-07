@@ -10,7 +10,10 @@ import { env } from "./config/env.js";
 import { PREMIUM_PRICING } from "./config/business-rules.js";
 import { AppError } from "./lib/errors.js";
 import { getRateLimitIdentity } from "./lib/client-ip.js";
-import { buildCanonicalHostRedirectUrl } from "./lib/canonical-redirect.js";
+import {
+  buildCanonicalHostRedirectUrl,
+  shouldRedirectToCanonicalHost,
+} from "./lib/canonical-redirect.js";
 import {
   isCanonicalProductionRuntime,
   resolveAccountDeletionLedgerRuntimeConfig,
@@ -294,6 +297,45 @@ async function buildLazyRouters(): Promise<LazyRouters> {
         }, tombstone);
       }
     : undefined;
+  let deletionNotificationCoordinator:
+    | import("./lib/account-deletion-notification-worker.js").AccountDeletionNotificationCoordinator
+    | undefined;
+  if (!env.RESTORE_REHEARSAL_MODE && env.ACCOUNT_DELETION_NOTICE_MODE !== "disabled") {
+    const [notificationModule, workerModule] = await Promise.all([
+      import("./lib/account-deletion-notification.js"),
+      import("./lib/account-deletion-notification-worker.js"),
+    ]);
+    const keyring = workerModule.parseAccountDeletionNotificationKeyring({
+      activeKeyId: env.ACCOUNT_DELETION_NOTICE_ACTIVE_KEY_ID!,
+      keyringJson: env.ACCOUNT_DELETION_NOTICE_KEYRING_JSON!,
+    });
+    const missingReferencedKeys = businessRepository
+      .listReferencedAccountDeletionNoticeKeyIds()
+      .filter((keyId) => !keyring.keys.has(keyId));
+    if (missingReferencedKeys.length > 0) {
+      throw new Error(
+        `Account deletion notification keyring is missing ${missingReferencedKeys.length} key(s) still referenced by encrypted recipients.`,
+      );
+    }
+    const provider = env.ACCOUNT_DELETION_NOTICE_MODE === "mock"
+      ? notificationModule.createMockAccountDeletionNotificationProvider()
+      : notificationModule.createResendAccountDeletionNotificationProvider({
+          apiKey: env.RESEND_TRANSACTIONAL_API_KEY!,
+        });
+    deletionNotificationCoordinator = new workerModule.AccountDeletionNotificationCoordinator(
+      businessRepository,
+      {
+        provider,
+        keyring,
+        publicBaseUrl: env.PUBLIC_BASE_URL,
+        from: env.ACCOUNT_DELETION_NOTICE_FROM ?? "account@mock.pintpath.local",
+        ...(env.ACCOUNT_DELETION_NOTICE_REPLY_TO
+          ? { replyTo: env.ACCOUNT_DELETION_NOTICE_REPLY_TO }
+          : {}),
+        supportEmail: env.ACCOUNT_DELETION_NOTICE_REPLY_TO ?? "admin@pintpath.au",
+      },
+    );
+  }
   const businessService = new BusinessService(
     businessRepository,
     businessRuntimeEnv,
@@ -301,6 +343,7 @@ async function buildLazyRouters(): Promise<LazyRouters> {
     env.RESTORE_REHEARSAL_MODE ? undefined : { extract: (input) => adminService.ocrMenuPhotos(input) },
     undefined,
     deletionTombstoneWriter,
+    deletionNotificationCoordinator,
   );
   const schedulerStops: Array<() => Promise<void>> = [];
   const schedulerOwner = `${process.pid}:${crypto.randomUUID()}`;
@@ -443,6 +486,37 @@ async function buildLazyRouters(): Promise<LazyRouters> {
       scheduleHour: env.REPORT_DELIVERY_HOUR,
       checkIntervalMinutes: env.REPORT_DELIVERY_CHECK_INTERVAL_MINUTES,
       onStatus: (status) => recordOperationalState("monthly_report_delivery", status),
+    });
+    schedulerStops.push(scheduler.stop);
+  }
+  if ((canonicalProductionRuntime || env.ACCOUNT_DELETION_REHEARSAL_ENABLED) && deletionNotificationCoordinator) {
+    const { scheduleMissionMaintenance } = await import("./lib/mission-maintenance.js");
+    const scheduler = scheduleMissionMaintenance({
+      run: async () => {
+        const now = new Date();
+        const leaseKey = "lease:account_deletion_notifications";
+        const acquired = businessRepository.acquireSystemLease({
+          key: leaseKey,
+          owner: schedulerOwner,
+          now: now.toISOString(),
+          leaseUntil: new Date(now.getTime() + 4 * 60 * 1000).toISOString(),
+        });
+        if (!acquired) return { skipped: true, reason: "lease_held_by_another_instance" };
+        try {
+          return businessService.processAccountDeletionCompletionNotifications(20);
+        } finally {
+          businessRepository.releaseSystemLease({
+            key: leaseKey,
+            owner: schedulerOwner,
+            now: new Date().toISOString(),
+          });
+        }
+      },
+      intervalMinutes: env.ACCOUNT_DELETION_NOTICE_CHECK_INTERVAL_MINUTES,
+      onStatus: (status) => recordOperationalState("account_deletion_notifications", {
+        ...status,
+        intervalMinutes: env.ACCOUNT_DELETION_NOTICE_CHECK_INTERVAL_MINUTES,
+      }),
     });
     schedulerStops.push(scheduler.stop);
   }
@@ -780,7 +854,7 @@ export function createApp() {
     const publicBaseUrl = new URL(env.PUBLIC_BASE_URL);
     const canonicalHost = publicBaseUrl.hostname.toLowerCase();
     const requestHost = req.hostname.toLowerCase();
-    if (requestHost === `www.${canonicalHost}`) {
+    if (shouldRedirectToCanonicalHost(canonicalHost, requestHost)) {
       res.redirect(
         308,
         buildCanonicalHostRedirectUrl(publicBaseUrl.origin, req.originalUrl),
@@ -1001,6 +1075,22 @@ export function createApp() {
     );
   });
 
+  app.get("/startup", async (_req, res, next) => {
+    try {
+      res.setHeader("Cache-Control", "no-store");
+      const { businessService } = await getLazyRouters();
+      const startup = businessService.getLocalStartupReadiness();
+      res.status(startup.ready ? 200 : 503).json(success({
+        service: "pint-path",
+        status: startup.ready ? "startup_ready" : "startup_not_ready",
+        deployment: deploymentMetadata(),
+        dependencies: startup.dependencies,
+      }));
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.get("/ready", async (_req, res, next) => {
     try {
       res.setHeader("Cache-Control", "no-store");
@@ -1134,13 +1224,16 @@ export function createApp() {
           pintPointsRewardsEnabled: publicConfig.pintPointsRewardsEnabled,
           alcoholGamificationEnabled: publicConfig.alcoholGamificationEnabled,
           happyHourDiscoveryEnabled: publicConfig.happyHourDiscoveryEnabled,
+          happyHourContributionsEnabled: publicConfig.happyHourContributionsEnabled,
           venueProTrialDays: publicConfig.venueProTrialDays,
           venueProTrialRequiresPaymentMethod: publicConfig.venueProTrialRequiresPaymentMethod,
           legalPolicyVersion: publicConfig.legalPolicyVersion,
-          pricing: {
-            monthly: PREMIUM_PRICING.monthlyLabel,
-            yearly: PREMIUM_PRICING.yearlyLabel,
-          },
+          pricing: publicConfig.pricing
+            ? {
+                monthly: PREMIUM_PRICING.monthlyLabel,
+                yearly: PREMIUM_PRICING.yearlyLabel,
+              }
+            : null,
         },
       };
 

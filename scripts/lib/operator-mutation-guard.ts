@@ -2,8 +2,6 @@ const ENABLED_VALUES = new Set(["1", "true", "yes", "on"]);
 const DISABLED_VALUES = new Set(["0", "false", "no", "off"]);
 const RESTORE_RAILWAY_PROJECT_ID = "48d8c6cd-1c66-4148-874b-20877f48e1a5";
 const RESTORE_RAILWAY_ENVIRONMENT_ID = "a4e0f507-d6d3-4df9-a818-ad92c0071a35";
-const RESTORE_BEER_SERVICE_ID = "6816c4a2-e392-4ee5-826f-2584cb599ec0";
-const RESTORE_REDIS_SERVICE_ID = "d6351cec-fe04-4a6f-8e05-1cc164ea1e73";
 const RESTORE_SUPABASE_REF = "ibveugyfyzjptyvautlr";
 const RESTORE_MARKER_NAMES = [
   "RESTORE_REHEARSAL_PHASE",
@@ -22,8 +20,6 @@ const RESTORE_MARKER_NAMES = [
 function hasRestoreRehearsalMarkers(environment: NodeJS.ProcessEnv): boolean {
   if (
     environment.RAILWAY_ENVIRONMENT_ID?.trim() === RESTORE_RAILWAY_ENVIRONMENT_ID ||
-    environment.RAILWAY_SERVICE_ID?.trim() === RESTORE_BEER_SERVICE_ID ||
-    environment.RAILWAY_SERVICE_ID?.trim() === RESTORE_REDIS_SERVICE_ID ||
     (
       environment.RAILWAY_PROJECT_ID?.trim() === RESTORE_RAILWAY_PROJECT_ID &&
       environment.RAILWAY_ENVIRONMENT_NAME?.trim().toLowerCase() === "staging"

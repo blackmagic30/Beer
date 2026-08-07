@@ -15,6 +15,7 @@ import { createRateLimiter } from "../../middleware/rate-limit.js";
 import {
   accountPreferencesSchema,
   adminReasonSchema,
+  accountDeletionNotificationResolutionSchema,
   accountDeletionRequestSchema,
   accountPrivacySettingsSchema,
   adminAccountSearchSchema,
@@ -500,6 +501,31 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     } catch (error) {
       next(error);
     }
+  });
+
+  router.post("/admin/account-deletions/:id/notification-retry", adminReviewLimiter, (req, res) => {
+    const admin = requireAdmin(req, businessService);
+    const body = parseWithSchema(adminReasonSchema, req.body, "A reason is required to retry a completion notice");
+    res.json(success(businessService.retryFailedAccountDeletionCompletionNotification(
+      admin,
+      String(req.params.id ?? ""),
+      body.reason,
+    )));
+  });
+
+  router.post("/admin/account-deletions/:id/notification-resolution", adminReviewLimiter, (req, res) => {
+    const admin = requireAdmin(req, businessService);
+    const body = parseWithSchema(
+      accountDeletionNotificationResolutionSchema,
+      req.body,
+      "A resolution and audit reason are required for a completion notice",
+    );
+    res.json(success(businessService.resolveAccountDeletionCompletionNotification(
+      admin,
+      String(req.params.id ?? ""),
+      body.resolution,
+      body.reason,
+    )));
   });
 
   router.post("/account/saved-items", writeLimiter, (req, res) => {
@@ -1222,6 +1248,21 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     try {
       const raw = req.rawBody ? Buffer.from(req.rawBody) : Buffer.from(JSON.stringify(req.body ?? {}));
       const result = await businessService.handleStripeWebhook(raw, req.header("stripe-signature") ?? undefined);
+      res.json(success(result));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/account-deletion-notifications/resend-webhook", (req, res, next) => {
+    try {
+      const rawBody = req.rawBody ? Buffer.from(req.rawBody) : Buffer.from(JSON.stringify(req.body ?? {}));
+      const result = businessService.handleResendAccountDeletionWebhook({
+        rawBody,
+        id: req.header("svix-id") ?? undefined,
+        timestamp: req.header("svix-timestamp") ?? undefined,
+        signature: req.header("svix-signature") ?? undefined,
+      });
       res.json(success(result));
     } catch (error) {
       next(error);

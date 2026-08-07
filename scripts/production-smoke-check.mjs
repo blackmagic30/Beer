@@ -267,7 +267,7 @@ if (!authOnly) {
   await Promise.all([
     checkJson("health", "/health", (payload) => nestedData(payload).status === "ok"),
     checkJson("ready", "/ready", (payload) => nestedData(payload).status === "ready"),
-    checkJson("config", "/api/business/config", (payload) => Boolean(nestedData(payload).pricing)),
+    checkJson("config", "/api/business/config", (payload) => nestedData(payload).priceAccessModel === "fixed_preview"),
     checkJson("venues", "/api/business/venues?limit=3", (payload) => Array.isArray(nestedData(payload).venues)),
     checkJson("prices", "/api/business/price-records?limit=3", (payload) => Array.isArray(nestedData(payload).records)),
     checkHtml("map_page", "/", "Pint Path"),
@@ -284,7 +284,7 @@ if (!authOnly) {
         && data.pintPointsRewardsEnabled === false
         && data.alcoholGamificationEnabled === false
         && data.happyHourDiscoveryEnabled === false
-        && data.venueProTrialDays === 60
+        && data.venueProTrialDays === (expectedCommercialLaunchEnabled ? 60 : 0)
         && data.venueProTrialRequiresPaymentMethod === false
         && data.demoBillingMode === false
         && data.fieldTestMode === false;

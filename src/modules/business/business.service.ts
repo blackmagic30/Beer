@@ -57,6 +57,8 @@ import {
   normalizeBeerSearchKey,
 } from "../../constants/beers.js";
 import { AppError, ExternalServiceError } from "../../lib/errors.js";
+import { isCanonicalProductionRuntime } from "../../lib/deployment-environment.js";
+import type { AccountDeletionNotificationCoordinator } from "../../lib/account-deletion-notification-worker.js";
 import { logger } from "../../lib/logger.js";
 import {
   createMockReportEmailProvider,
@@ -257,6 +259,11 @@ const AUTO_MISSION_VENUE_PAGE_SIZE = 500;
 const AUTO_MISSION_REFRESH_INTERVAL_MS = 30 * 60 * 1000;
 const AUTO_MISSION_REFRESH_STATE_KEY = "auto_missions_refresh";
 const MISSION_ACCEPTANCE_TTL_MS = 24 * 60 * 60 * 1000;
+const PUBLIC_HAPPY_HOUR_DISCOVERY_ENABLED = false;
+const PUBLIC_HAPPY_HOUR_CONTRIBUTIONS_ENABLED = false;
+const PUBLIC_SPECIAL_DISCOVERY_ENABLED = false;
+const PUBLIC_HAPPY_HOUR_MISSIONS_ENABLED =
+  PUBLIC_HAPPY_HOUR_DISCOVERY_ENABLED && PUBLIC_HAPPY_HOUR_CONTRIBUTIONS_ENABLED;
 const AUTO_MISSION_TARGET_BEERS = [
   SUPPORTED_BEERS.guinness,
   SUPPORTED_BEERS.carlton_draft,
@@ -289,6 +296,11 @@ const REMOTE_VENUE_PUBLIC_COLUMNS = [
 
 function missionAcceptanceCutoff(now: string): string {
   return new Date(new Date(now).getTime() - MISSION_ACCEPTANCE_TTL_MS).toISOString();
+}
+
+function isHappyHourMission(mission: Pick<BusinessMission, "reason">): boolean {
+  const normalizedReason = mission.reason.toLowerCase().replace(/[-_]+/g, " ");
+  return normalizedReason.includes("happy") || /\bhh\b/.test(normalizedReason);
 }
 
 interface StripeEvent {
@@ -1262,6 +1274,9 @@ function isFullAccess(account: BusinessAccount | null, currentAdmin = false): bo
 function buildConsumerPremiumToolkit(input: {
   account: BusinessAccount | null;
   currentAdmin?: boolean;
+  consumerPaidEnrollmentEnabled: boolean;
+  commercialLaunchEnabled: boolean;
+  contributorUnlockPoints: number;
   savedItems?: SavedItem[];
   preferences?: AccountPreferences | null;
   discountStats?: { totalRedemptions: number; estimatedSavingsCents: number; uniqueVenues: number } | null;
@@ -1287,19 +1302,28 @@ function buildConsumerPremiumToolkit(input: {
     (input.preferences?.preferredSuburbs.length ?? 0) +
     (input.preferences?.preferredBeers.length ?? 0) +
     (input.preferences?.preferredUseCases.length ?? 0);
-  const upgradeCopy = "Upgrade for A$4.99/month, A$50/year, or earn 15 approved points this month.";
+  const contributionCopy = `Earn ${input.contributorUnlockPoints} approved points this month to unlock full map access.`;
+  const upgradeCopy = input.consumerPaidEnrollmentEnabled
+    ? `Upgrade for ${PREMIUM_PRICING.monthlyLabel}, ${PREMIUM_PRICING.yearlyLabel}, or ${contributionCopy.toLowerCase()}`
+    : contributionCopy;
 
   return {
     enabled: hasFullAccess,
     status: hasFullAccess ? "active" : "locked",
-    title: hasFullAccess ? "Premium member toolkit" : "Unlock the premium member toolkit",
+    title: hasFullAccess ? "Full map toolkit" : "Unlock the full map toolkit",
     summary: hasFullAccess
-      ? "Your paid/contributor tools are active: exact prices, value rings, premium filters, discount-pass access, saved night shortcuts, and savings tracking."
-      : `Paid users get exact prices, value rings, premium filters, discount-pass access, saved night shortcuts, and savings tracking. ${upgradeCopy}`,
+      ? input.commercialLaunchEnabled
+        ? "Your full-map tools are active: exact prices, value rings, premium filters, special access, saved night shortcuts, and savings tracking."
+        : "Your contributor full-map tools are active: exact prices, value rings, premium filters, and saved night shortcuts."
+      : input.consumerPaidEnrollmentEnabled
+        ? `Paid or earned access includes exact prices, value rings, premium filters, and saved night shortcuts. ${upgradeCopy}`
+        : `Paid enrolment is closed. ${contributionCopy}`,
     lockedCopy: hasFullAccess ? null : upgradeCopy,
     primaryAction: hasFullAccess
       ? { label: "Open value map", href: "/index.html" }
-      : { label: "Upgrade monthly", href: "/account.html?checkoutPlan=monthly" },
+      : input.consumerPaidEnrollmentEnabled
+        ? { label: "Upgrade monthly", href: "/account.html?checkoutPlan=monthly" }
+        : { label: "Upload venue data", href: "/submit.html" },
     secondaryAction: hasFullAccess
       ? { label: "Manage watchlist", href: "/account.html?settings=watchlist" }
       : { label: "Earn with missions", href: "/missions.html" },
@@ -1319,7 +1343,7 @@ function buildConsumerPremiumToolkit(input: {
         id: "exact_price_mode",
         title: "Exact price and value rings",
         unlocked: hasFullAccess,
-        badge: hasFullAccess ? "Active" : "Paid",
+        badge: hasFullAccess ? "Active" : input.consumerPaidEnrollmentEnabled ? "Paid or earned" : "Earned",
         copy: "See every verified beer price and the green-to-red value ring around venue pins when comparing the same beer.",
         href: "/index.html",
         ctaLabel: "Open map",
@@ -1328,20 +1352,20 @@ function buildConsumerPremiumToolkit(input: {
         id: "premium_filters",
         title: "Cheapest-night filters",
         unlocked: hasFullAccess,
-        badge: hasFullAccess ? "Active" : "Paid",
+        badge: hasFullAccess ? "Active" : input.consumerPaidEnrollmentEnabled ? "Paid or earned" : "Earned",
         copy: "Use beer search, cheapest sort, verified-only, under-A$10, nearby, and saved-area filters across the full verified-price catalogue.",
         href: "/index.html",
         ctaLabel: "Find value",
       },
-      {
+      ...(input.commercialLaunchEnabled ? [{
         id: "discount_pass",
         title: "Rotating special pass",
         unlocked: hasFullAccess,
-        badge: hasFullAccess ? "Ready" : "Paid",
+        badge: hasFullAccess ? "Ready" : input.consumerPaidEnrollmentEnabled ? "Paid or earned" : "Earned",
         copy: "Generate a session-based QR/code for Pint Path specials, then track venue-confirmed savings in your account.",
         href: "/account.html",
         ctaLabel: "Open pass",
-      },
+      }] : []),
       {
         id: "night_shortlist",
         title: "Saved night shortcuts",
@@ -1365,7 +1389,9 @@ function buildConsumerPremiumToolkit(input: {
         title: "Savings and access tracker",
         unlocked: hasFullAccess,
         badge: hasFullAccess ? "Dashboard" : "Preview",
-        copy: "See estimated savings from redeemed specials, contribution progress, trust score, and current access status together.",
+        copy: input.commercialLaunchEnabled
+          ? "See estimated savings from redeemed specials, contribution progress, trust score, and current access status together."
+          : "See contribution progress, trust score, and current access status together.",
         href: "/account.html?settings=stats",
         ctaLabel: "View stats",
       },
@@ -1416,11 +1442,31 @@ const FREE_PREVIEW_BEER_KEYS = new Set([
 ]);
 
 function isHappyHourRecord(record: PublicVenuePriceRecord): boolean {
-  return record.displayKind === "happy_hour" || record.isHappyHourPrice;
+  return record.displayKind === "happy_hour" ||
+    record.isHappyHourPrice ||
+    Boolean(record.happyHourDetails?.trim()) ||
+    Boolean(record.happyHourTitle?.trim()) ||
+    Boolean(record.happyHourDays?.length) ||
+    Boolean(record.happyHourStartTime?.trim()) ||
+    Boolean(record.happyHourEndTime?.trim()) ||
+    Boolean(record.happyHourBeers?.length);
 }
 
 function isSpecialRecord(record: PublicVenuePriceRecord): boolean {
-  return record.displayKind === "special";
+  return record.displayKind === "special" ||
+    Boolean(record.specialTitle?.trim()) ||
+    Boolean(record.specialDescription?.trim()) ||
+    Boolean(record.specialDiscount?.trim()) ||
+    Boolean(record.specialStartsAt?.trim()) ||
+    Boolean(record.specialEndsAt?.trim()) ||
+    Boolean(record.specialStartTime?.trim()) ||
+    Boolean(record.specialEndTime?.trim()) ||
+    Boolean(record.specialScheduleNote?.trim());
+}
+
+function isPublicLaunchPriceRecord(record: PublicVenuePriceRecord): boolean {
+  return (PUBLIC_HAPPY_HOUR_DISCOVERY_ENABLED || !isHappyHourRecord(record)) &&
+    (PUBLIC_SPECIAL_DISCOVERY_ENABLED || !isSpecialRecord(record));
 }
 
 function shouldExposePriceRecord(record: PublicVenuePriceRecord): boolean {
@@ -1521,7 +1567,8 @@ function isFreePreviewBeerRecord(record: PublicVenuePriceRecord): boolean {
 }
 
 function canFreeUserSeeRecord(record: PublicVenuePriceRecord): boolean {
-  return isHappyHourRecord(record) || isFreePreviewBeerRecord(record);
+  return (PUBLIC_HAPPY_HOUR_DISCOVERY_ENABLED && isHappyHourRecord(record)) ||
+    isFreePreviewBeerRecord(record);
 }
 
 function freePreviewPriceRecord(record: PublicVenuePriceRecord):
@@ -2613,6 +2660,10 @@ export class BusinessService {
       | "RESEND_API_KEY"
       | "REPORT_EMAIL_FROM"
       | "REPORT_EMAIL_REPLY_TO"
+      | "ACCOUNT_DELETION_NOTICE_MODE"
+      | "RESEND_WEBHOOK_SIGNING_SECRET"
+      | "ACCOUNT_DELETION_REHEARSAL_ENABLED"
+      | "ACCOUNT_DELETION_NOTICE_CHECK_INTERVAL_MINUTES"
       | "OPENAI_API_KEY"
     >>,
     private readonly beerCatalogRepository?: BeerCatalogRepository,
@@ -2623,6 +2674,7 @@ export class BusinessService {
       userId: string;
       completedAt: string;
     }) => Promise<void>,
+    private readonly accountDeletionNotificationCoordinator?: AccountDeletionNotificationCoordinator,
   ) {
     const supabaseServerKey = config.SUPABASE_SERVICE_ROLE_KEY ?? config.SUPABASE_ANON_KEY;
     if (supabaseClientOverride) {
@@ -2845,11 +2897,14 @@ export class BusinessService {
 
   getPublicConfig() {
     const externalAuthDisconnected = Boolean(this.config.RESTORE_REHEARSAL_MODE);
+    const commercialLaunchEnabled = this.config.COMMERCIAL_LAUNCH_ENABLED;
+    const consumerPaidEnrollmentEnabled = this.config.CONSUMER_PAID_ENROLLMENT_ENABLED;
     return {
-      pricing: PREMIUM_PRICING,
+      pricing: consumerPaidEnrollmentEnabled ? PREMIUM_PRICING : null,
       priceAccessModel: "fixed_preview" as const,
       freePreviewScope: "Pint prices for Guinness, Carlton Draught, and Stone & Wood Pacific Ale.",
-      happyHourDiscoveryEnabled: false,
+      happyHourDiscoveryEnabled: PUBLIC_HAPPY_HOUR_DISCOVERY_ENABLED,
+      happyHourContributionsEnabled: PUBLIC_HAPPY_HOUR_CONTRIBUTIONS_ENABLED,
       contributorUnlockPoints: this.config.CONTRIBUTOR_UNLOCK_POINTS,
       contributorUnlockDays: this.config.CONTRIBUTOR_UNLOCK_DAYS,
       supabaseUrl: externalAuthDisconnected ? null : this.config.SUPABASE_URL ?? null,
@@ -2858,13 +2913,15 @@ export class BusinessService {
         ? []
         : this.config.SUPABASE_OAUTH_PROVIDERS.split(",").map((provider) => provider.trim()).filter(Boolean),
       demoBillingMode: this.config.DEMO_BILLING_MODE,
-      commercialLaunchEnabled: this.config.COMMERCIAL_LAUNCH_ENABLED,
-      consumerPaidEnrollmentEnabled: this.config.CONSUMER_PAID_ENROLLMENT_ENABLED,
+      commercialLaunchEnabled,
+      consumerPaidEnrollmentEnabled,
       fieldTestMode: this.config.FIELD_TEST_MODE,
       pintPointsRewardsEnabled: this.config.PINT_POINTS_REWARDS_ENABLED,
       alcoholGamificationEnabled: this.config.ALCOHOL_GAMIFICATION_ENABLED,
-      venueProTrialDays: this.config.VENUE_PRO_TRIAL_DAYS,
-      venueProTrialRequiresPaymentMethod: this.config.VENUE_PRO_TRIAL_REQUIRE_PAYMENT_METHOD,
+      venueProTrialDays: commercialLaunchEnabled ? this.config.VENUE_PRO_TRIAL_DAYS : 0,
+      venueProTrialRequiresPaymentMethod: commercialLaunchEnabled
+        ? this.config.VENUE_PRO_TRIAL_REQUIRE_PAYMENT_METHOD
+        : false,
       legalPolicyVersion: CURRENT_LEGAL_POLICY_VERSION,
       trackedBeers: this.getTrackedBeerCatalogForViewer(),
     };
@@ -4549,13 +4606,21 @@ export class BusinessService {
       canViewAllPrices: hasFullAccess,
       canUseCheapestSort: hasFullAccess,
       canUseBeerSearch: hasFullAccess,
-      canUseHappyHourActiveNow: true,
+      canUseHappyHourActiveNow: false,
       canUseVerifiedOnly: hasFullAccess,
-      canViewSpecialDiscounts: hasFullAccess,
-      canUseDiscountPass: hasFullAccess,
+      canViewSpecialDiscounts: hasFullAccess && this.config.COMMERCIAL_LAUNCH_ENABLED,
+      canUseDiscountPass: hasFullAccess && this.config.COMMERCIAL_LAUNCH_ENABLED,
       freePreviewScope: "Pint prices for Guinness, Carlton Draught, and Stone & Wood Pacific Ale.",
-      premiumScope: "Every verified beer price, value rings, premium filters, saved night shortcuts, discount-pass access, and venue special-discount details.",
-      premiumToolkit: buildConsumerPremiumToolkit({ account, currentAdmin }),
+      premiumScope: this.config.COMMERCIAL_LAUNCH_ENABLED
+        ? "Every verified beer price, value rings, premium filters, saved night shortcuts, discount-pass access, and venue special-discount details."
+        : "Every verified beer price, value rings, premium filters, and saved night shortcuts through earned contributor access.",
+      premiumToolkit: buildConsumerPremiumToolkit({
+        account,
+        currentAdmin,
+        consumerPaidEnrollmentEnabled: this.config.CONSUMER_PAID_ENROLLMENT_ENABLED,
+        commercialLaunchEnabled: this.config.COMMERCIAL_LAUNCH_ENABLED,
+        contributorUnlockPoints: this.config.CONTRIBUTOR_UNLOCK_POINTS,
+      }),
       premiumUntil: account?.premiumUntil ?? null,
     };
   }
@@ -4564,6 +4629,9 @@ export class BusinessService {
     const now = nowIso();
     const timezone = this.config.REPORT_TIMEZONE || DEFAULT_REPORT_TIMEZONE;
     const monthKey = getZonedMonthKey(new Date(now), timezone);
+    if (!this.config.PINT_POINTS_REWARDS_ENABLED) {
+      return this.getDisabledLeaderboard(query.period, monthKey);
+    }
     const campaign = this.getOrCreateLeaderboardPrizeCampaign(monthKey, now);
     const entries = this.repository.listLeaderboard({ period: query.period, limit: query.limit, now, monthKey });
     const me = account ? this.repository.getLeaderboardRank({ userId: account.id, period: query.period, now, monthKey }) : null;
@@ -4584,6 +4652,7 @@ export class BusinessService {
     }
 
     return {
+      disabled: false,
       period: query.period,
       monthKey,
       campaign: this.sanitizeLeaderboardPrizeCampaign(campaign),
@@ -4591,6 +4660,19 @@ export class BusinessService {
       entries,
       me,
       copy: "Leaderboard rankings count approved Pint Path contribution points only. Rejected, pending, and fraud-flagged updates do not count.",
+    };
+  }
+
+  private getDisabledLeaderboard(period: LeaderboardQuery["period"], monthKey: string) {
+    return {
+      disabled: true,
+      period,
+      monthKey,
+      campaign: null,
+      podium: [],
+      entries: [],
+      me: null,
+      copy: "Contributor leaderboards and prize campaigns are paused for this launch.",
     };
   }
 
@@ -4687,10 +4769,21 @@ export class BusinessService {
     const now = nowIso();
     const timezone = this.config.REPORT_TIMEZONE || DEFAULT_REPORT_TIMEZONE;
     const monthKey = getZonedMonthKey(new Date(now), timezone);
+    if (!this.config.PINT_POINTS_REWARDS_ENABLED) {
+      return {
+        disabled: true,
+        campaign: null,
+        awards: [],
+        vouchers: [],
+        leaderboard: this.getDisabledLeaderboard("month", monthKey),
+        copy: "Contributor leaderboards and prize campaigns are paused for this launch.",
+      };
+    }
     const campaign = this.getOrCreateLeaderboardPrizeCampaign(monthKey, now);
     const leaderboard = this.getLeaderboard(_admin, { period: "month", limit: 25 });
     const awards = this.repository.listLeaderboardPrizeAwards(campaign.monthKey);
     return {
+      disabled: false,
       campaign: this.sanitizeLeaderboardPrizeCampaign(campaign),
       awards,
       vouchers: awards.flatMap((award) => {
@@ -4706,6 +4799,7 @@ export class BusinessService {
   }
 
   saveLeaderboardPrizeCampaign(admin: BusinessAccount, input: LeaderboardPrizeCampaignInput) {
+    this.requirePintPointsRewardsEnabled();
     const now = nowIso();
     const range = monthKeyRange(input.monthKey, this.config.REPORT_TIMEZONE || DEFAULT_REPORT_TIMEZONE);
     const campaign = this.repository.upsertLeaderboardPrizeCampaign({
@@ -4738,6 +4832,7 @@ export class BusinessService {
   }
 
   finalizeLeaderboardPrizeCampaign(admin: BusinessAccount, input: LeaderboardPrizeFinalizeInput) {
+    this.requirePintPointsRewardsEnabled();
     const now = nowIso();
     const campaign = this.repository.getLeaderboardPrizeCampaign(input.monthKey) ??
       this.getOrCreateLeaderboardPrizeCampaign(input.monthKey, now);
@@ -6263,9 +6358,24 @@ export class BusinessService {
     const dashboardAccount = currentMonthPoints === account.contributionPointsCurrentMonth
       ? account
       : { ...account, contributionPointsCurrentMonth: currentMonthPoints };
-    const campaign = this.getOrCreateLeaderboardPrizeCampaign(monthKey, dashboardNow);
-    const leaderboardRank = this.repository.getLeaderboardRank({ userId: account.id, period: "month", now: dashboardNow, monthKey });
-    const leaderboardEntries = this.repository.listLeaderboard({ period: "month", limit: 50, now: dashboardNow, monthKey });
+    const leaderboardEnabled = this.config.PINT_POINTS_REWARDS_ENABLED;
+    const campaign = leaderboardEnabled
+      ? this.getOrCreateLeaderboardPrizeCampaign(monthKey, dashboardNow)
+      : null;
+    const leaderboardRank = leaderboardEnabled
+      ? this.repository.getLeaderboardRank({ userId: account.id, period: "month", now: dashboardNow, monthKey })
+      : null;
+    const leaderboardEntries = leaderboardEnabled
+      ? this.repository.listLeaderboard({ period: "month", limit: 50, now: dashboardNow, monthKey })
+      : [];
+    const leaderboardPodium = campaign
+      ? leaderboardEntries.slice(0, 3).map((entry) => ({
+          ...entry,
+          prizeCents: prizeAmountForRank(campaign, entry.rank),
+          prizeLabel: formatAudCents(prizeAmountForRank(campaign, entry.rank)),
+        }))
+      : [];
+    const disabledLeaderboard = this.getDisabledLeaderboard("month", monthKey);
     const discountStats = this.repository.getDiscountRedemptionStats(account.id);
     const recentDiscountRedemptions = this.repository.listDiscountRedemptionsForUser(account.id, 10);
     const rewardVouchers = this.repository.listAccountRewardVouchers(account.id, 10);
@@ -6359,6 +6469,9 @@ export class BusinessService {
       premiumMemberToolkit: buildConsumerPremiumToolkit({
         account: dashboardAccount,
         currentAdmin,
+        consumerPaidEnrollmentEnabled: this.config.CONSUMER_PAID_ENROLLMENT_ENABLED,
+        commercialLaunchEnabled: this.config.COMMERCIAL_LAUNCH_ENABLED,
+        contributorUnlockPoints: this.config.CONTRIBUTOR_UNLOCK_POINTS,
         savedItems,
         preferences,
         discountStats,
@@ -6369,33 +6482,42 @@ export class BusinessService {
         pointsNeeded: roundPoints(Math.max(0, this.config.CONTRIBUTOR_UNLOCK_POINTS - currentMonthPoints)),
         unlockCopy: "Earn 15 approved points in a month to unlock premium until the end of that month.",
       },
-      leaderboard: {
-        accountId: account.publicAccountId,
-        monthRank: leaderboardRank,
-        monthKey,
-        campaign: this.sanitizeLeaderboardPrizeCampaign(campaign),
-        podium: leaderboardEntries.slice(0, 3).map((entry) => ({
-          ...entry,
-          prizeCents: prizeAmountForRank(campaign, entry.rank),
-          prizeLabel: formatAudCents(prizeAmountForRank(campaign, entry.rank)),
-        })),
-        entries: leaderboardEntries,
-        copy: "Leaderboard counts approved contribution points only.",
-      },
+      leaderboard: leaderboardEnabled && campaign
+        ? {
+            disabled: false,
+            accountId: account.publicAccountId,
+            monthRank: leaderboardRank,
+            monthKey,
+            campaign: this.sanitizeLeaderboardPrizeCampaign(campaign),
+            podium: leaderboardPodium,
+            entries: leaderboardEntries,
+            copy: "Leaderboard counts approved contribution points only.",
+          }
+        : {
+            ...disabledLeaderboard,
+            accountId: null,
+            monthRank: null,
+          },
       discounts: {
-        eligible: hasFullAccess,
+        eligible: hasFullAccess && this.config.COMMERCIAL_LAUNCH_ENABLED,
         totalRedemptions: discountStats.totalRedemptions,
         estimatedSavingsCents: discountStats.estimatedSavingsCents,
         estimatedSavingsDollars: Number((discountStats.estimatedSavingsCents / 100).toFixed(2)),
         uniqueVenues: discountStats.uniqueVenues,
         recentRedemptions: recentDiscountRedemptions,
-        copy: "Discount redemptions are logged only when you show your rotating code or QR at a venue.",
+        copy: this.config.COMMERCIAL_LAUNCH_ENABLED
+          ? "Discount redemptions are logged only when you show your rotating code or QR at a venue."
+          : "Venue discount and redemption tools are not available in this release.",
       },
       pintPoints: pintPointsWallet,
       counterStaffInvitations,
       counterStaffAssignments,
       rewards: {
-        status: rewardVouchers.length ? "active" : "leaderboard_monthly",
+        status: rewardVouchers.length
+          ? "active"
+          : leaderboardEnabled
+            ? "leaderboard_monthly"
+            : "paused",
         eligiblePlaceholder: canAccessAgeGatedRewards({ account, latestAgeVerification }),
         ageGatedEligible: canAccessAgeGatedRewards({ account, latestAgeVerification }),
         ageThreshold: 18,
@@ -6405,17 +6527,16 @@ export class BusinessService {
       betaTesting: {
         enabled: hasFullAccess,
         label: hasFullAccess ? "Beta tools unlocked" : "Premium feature",
-        leaderboard: {
-          monthKey,
-          campaign: this.sanitizeLeaderboardPrizeCampaign(campaign),
-          podium: leaderboardEntries.slice(0, 3).map((entry) => ({
-            ...entry,
-            prizeCents: prizeAmountForRank(campaign, entry.rank),
-            prizeLabel: formatAudCents(prizeAmountForRank(campaign, entry.rank)),
-          })),
-          entries: leaderboardEntries,
-          me: leaderboardRank,
-        },
+        leaderboard: leaderboardEnabled && campaign
+          ? {
+              disabled: false,
+              monthKey,
+              campaign: this.sanitizeLeaderboardPrizeCampaign(campaign),
+              podium: leaderboardPodium,
+              entries: leaderboardEntries,
+              me: leaderboardRank,
+            }
+          : disabledLeaderboard,
         pubGolf: {
           enabled: hasFullAccess && this.config.ALCOHOL_GAMIFICATION_ENABLED,
           defaultDrinks: PUB_GOLF_DEFAULT_DRINKS,
@@ -6939,8 +7060,36 @@ export class BusinessService {
     }
   }
 
+  private assertPublicHappyHourContributionAllowed(
+    account: BusinessAccount,
+    input: CreateSubmissionInput,
+    options: {
+      allowVenueManager?: boolean;
+      photoOcr?: PreparedPhotoOcr | null;
+    } = {},
+  ): void {
+    if (
+      PUBLIC_HAPPY_HOUR_CONTRIBUTIONS_ENABLED ||
+      options.allowVenueManager === true ||
+      this.isAdmin(account)
+    ) {
+      return;
+    }
+
+    const items = [...input.items, ...(options.photoOcr?.items ?? [])];
+    const containsHappyHourData = input.submissionType === "happy_hour_update" ||
+      items.some((item) => item.isHappyHourPrice || Boolean(item.happyHourDetails?.trim()));
+    if (containsHappyHourData) {
+      throw new AppError(
+        "Happy-hour contributions are not available during the current public launch.",
+        403,
+      );
+    }
+  }
+
   async createUserSubmission(account: BusinessAccount, input: CreateSubmissionInput) {
     this.assertAccountCanSubmit(account);
+    this.assertPublicHappyHourContributionAllowed(account, input);
     if (input.clientSubmissionId) {
       const existing = this.repository.getSubmissionByClientSubmissionId(account.id, input.clientSubmissionId);
       if (existing) {
@@ -6997,6 +7146,7 @@ export class BusinessService {
     } = {},
   ) {
     this.assertAccountCanSubmit(account, { allowVenueManager: options.allowVenueManager === true });
+    this.assertPublicHappyHourContributionAllowed(account, input, options);
     const rewardEligible = options.rewardEligible ?? true;
 
     if (input.clientSubmissionId) {
@@ -7034,6 +7184,9 @@ export class BusinessService {
       const mission = this.repository.getMissionById(input.missionId);
       if (!mission || !mission.active) {
         throw new AppError("This mission is no longer active. Refresh Missions and choose a current task.", 409);
+      }
+      if (!PUBLIC_HAPPY_HOUR_MISSIONS_ENABLED && isHappyHourMission(mission)) {
+        throw new AppError("This happy-hour mission is not available during the current public launch.", 403);
       }
       if (mission.venueId !== input.venueId) {
         throw new AppError("The selected venue does not match this mission.", 400);
@@ -7920,6 +8073,7 @@ export class BusinessService {
     if (!this.repository.cancelAccountDeletion({ requestId, userId: account.id, now: nowIso() })) {
       throw new AppError("This deletion request can no longer be cancelled.", 409);
     }
+    this.repository.checkpointAccountDeletionNotificationSecrets();
     this.auditSecurity({
       actor: account,
       action: "account_deletion_cancelled",
@@ -8012,6 +8166,9 @@ export class BusinessService {
         securityEnvelopeCutoff: daysAgoIso(ACCOUNT_DATA_RETENTION_POLICY.securityAuditEnvelope.daysAfterCreation),
         reviewedLocationCutoff: daysAgoIso(ACCOUNT_DATA_RETENTION_POLICY.reviewedSubmissionExactLocation.daysAfterReview),
         migrationQuarantineCutoff: daysAgoIso(ACCOUNT_DATA_RETENTION_POLICY.migrationQuarantinePayload.daysAfterQuarantine),
+        deletionNotificationEventCutoff: daysAgoIso(
+          ACCOUNT_DATA_RETENTION_POLICY.accountDeletion.completionNotification.nonIdentifyingWebhookReceiptDays,
+        ),
       }),
       migrationBackupsDeleted: this.config.DATABASE_PATH
         ? purgeExpiredMigrationBackups(this.config.DATABASE_PATH)
@@ -8021,11 +8178,17 @@ export class BusinessService {
 
   listAccountDeletionRequests(admin: BusinessAccount, query: AdminPaginationInput = { limit: 50, offset: 0 }) {
     if (!this.isAdmin(admin)) throw new AppError("Admin access required.", 403);
-    const requests = this.repository.listAccountDeletionRequests(query);
+    const asOf = nowIso();
+    const requests = this.repository.listAccountDeletionRequests({ ...query, asOf });
     const total = this.repository.countAccountDeletionRequests();
     return {
       requests,
       total,
+      summary: {
+        asOf,
+        ...this.repository.getAccountDeletionQueueSummary(asOf),
+        notifications: this.repository.getAccountDeletionNotificationQueueSummary(asOf),
+      },
       pagination: { ...query, hasMore: query.offset + requests.length < total },
     };
   }
@@ -8048,19 +8211,31 @@ export class BusinessService {
     // this runtime cannot durably record the independent deletion tombstone.
     if (
       this.config.NODE_ENV === "production" &&
-      !this.accountDeletionTombstoneWriter
+      !this.accountDeletionTombstoneWriter &&
+      !this.config.ACCOUNT_DELETION_REHEARSAL_ENABLED
     ) {
       throw new ExternalServiceError(
         "Independent account-deletion ledger is not configured; the request is saved for retry.",
       );
     }
+    if (this.config.NODE_ENV === "production" && !this.accountDeletionNotificationCoordinator) {
+      throw new ExternalServiceError(
+        "Account-deletion completion notifications are not configured; the request is saved for retry.",
+      );
+    }
     const startedAt = nowIso();
-    const processing = this.repository.beginAccountDeletion({
+    const deletionClaim = {
       requestId,
       reviewedBy: admin.id,
       now: startedAt,
       staleBefore: new Date(Date.now() - 10 * 60_000).toISOString(),
-    });
+    };
+    const processing = this.accountDeletionNotificationCoordinator
+      ? this.accountDeletionNotificationCoordinator.beginDeletionWithPreparedNotification({
+          ...deletionClaim,
+          destination: account.email,
+        })
+      : this.repository.beginAccountDeletion(deletionClaim);
     if (!processing) throw new AppError("This deletion request is already being processed.", 409);
     this.repository.revokeUserSessions({ userId: account.id, revokedAt: startedAt });
     this.repository.revokeDiscountPassesForUser({ userId: account.id, revokedAt: startedAt });
@@ -8138,9 +8313,31 @@ export class BusinessService {
         }
       }
       const completedAt = nowIso();
-      const summary = this.repository.executeAccountAnonymisation({ requestId, reviewedBy: admin.id, now: completedAt });
+      const summary = this.repository.executeAccountAnonymisation({
+        requestId,
+        reviewedBy: admin.id,
+        now: completedAt,
+        completionNotificationDisposition: this.accountDeletionNotificationCoordinator ? "enqueue_live" : "none",
+        ...(this.accountDeletionNotificationCoordinator
+          ? {
+              completionNotificationRetentionExpiresAt:
+                this.accountDeletionNotificationCoordinator.completionRetentionExpiresAt(completedAt),
+            }
+          : {}),
+      });
       for (const evidenceId of (summary.evidenceIds as string[] | undefined) ?? []) {
-        this.repository.markSourceEvidenceDeleted({ id: evidenceId, deletedAt: completedAt });
+        try {
+          // The anonymisation transaction has already scrubbed and tombstoned
+          // the local row. Keep this idempotent cleanup for compatibility, but
+          // never turn a committed deletion into a false failure if it cannot
+          // be repeated after the commit.
+          this.repository.markSourceEvidenceDeleted({ id: evidenceId, deletedAt: completedAt });
+        } catch (error) {
+          logger.warn("Post-commit source-evidence tombstone refresh failed", {
+            evidenceId,
+            error: error instanceof Error ? redactSecrets(error.message) : "unknown",
+          });
+        }
       }
       this.auditSecurity({
         actor: admin,
@@ -8152,7 +8349,12 @@ export class BusinessService {
           reason,
         },
       });
-      return { requestId, status: "completed", summary };
+      return {
+        requestId,
+        status: "completed",
+        completionNotificationStatus: this.accountDeletionNotificationCoordinator ? "pending" : "not_configured",
+        summary,
+      };
     } catch (error) {
       const message = error instanceof Error ? redactSecrets(error.message) : "Account deletion failed";
       this.repository.failAccountDeletion({ requestId, error: message, now: nowIso() });
@@ -8165,6 +8367,118 @@ export class BusinessService {
       });
       throw error;
     }
+  }
+
+  async processAccountDeletionCompletionNotifications(limit = 20) {
+    if (!this.accountDeletionNotificationCoordinator) {
+      return {
+        configured: false,
+        claimed: 0,
+        accepted: 0,
+        delivered: 0,
+        deferred: 0,
+        failed: 0,
+        manualReview: 0,
+        recipientsPurged: 0,
+        securePurgeCheckpointPendingCount: 0,
+      };
+    }
+    return {
+      configured: true,
+      ...(await this.accountDeletionNotificationCoordinator.processDue({ limit })),
+    };
+  }
+
+  retryFailedAccountDeletionCompletionNotification(
+    admin: BusinessAccount,
+    requestId: string,
+    reason: string,
+  ) {
+    if (!this.isAdmin(admin)) throw new AppError("Admin access required.", 403);
+    if (!this.accountDeletionNotificationCoordinator) {
+      throw new AppError("Account deletion notifications are not configured.", 503);
+    }
+    const notice = this.repository.getAccountDeletionCompletionOutbox(requestId);
+    if (!notice) throw new AppError("Account deletion completion notice not found.", 404);
+    const retried = this.repository.retryFailedAccountDeletionNotification({
+      requestId,
+      now: nowIso(),
+      audit: {
+        id: crypto.randomUUID(),
+        actorUserId: admin.id,
+        actorRole: admin.role,
+        reason,
+      },
+    });
+    if (!retried) {
+      throw new AppError(
+        "Only a confirmed pre-acceptance failure with an unexpired encrypted recipient can be retried automatically.",
+        409,
+      );
+    }
+    return {
+      requestId,
+      status: retried.status,
+      nextAttemptAt: retried.next_attempt_at,
+    };
+  }
+
+  resolveAccountDeletionCompletionNotification(
+    admin: BusinessAccount,
+    requestId: string,
+    resolution: "verified_delivered" | "undeliverable",
+    reason: string,
+  ) {
+    if (!this.isAdmin(admin)) throw new AppError("Admin access required.", 403);
+    const notice = this.repository.getAccountDeletionCompletionOutbox(requestId);
+    if (!notice) throw new AppError("Account deletion completion notice not found.", 404);
+    const resolvedAt = nowIso();
+    const resolved = this.repository.resolveAccountDeletionNotificationManualReview({
+      requestId,
+      resolution,
+      now: resolvedAt,
+      audit: {
+        id: crypto.randomUUID(),
+        actorUserId: admin.id,
+        actorRole: admin.role,
+        reason,
+      },
+    });
+    if (!resolved) {
+      throw new AppError(
+        "Only an unresolved manual-review, failed, or retention-expired completion notice can be resolved; verified delivery also requires a provider message ID.",
+        409,
+      );
+    }
+    const securePurgeCheckpointSucceeded = this.repository
+      .checkpointAccountDeletionNotificationSecrets();
+    return {
+      requestId,
+      status: resolved.status,
+      resolution,
+      resolvedAt,
+      securePurgeCheckpointSucceeded,
+    };
+  }
+
+  handleResendAccountDeletionWebhook(input: {
+    rawBody: Buffer;
+    id: string | undefined;
+    timestamp: string | undefined;
+    signature: string | undefined;
+  }): { received: true; duplicate: boolean; matched: boolean } {
+    if (!this.accountDeletionNotificationCoordinator || !this.config.RESEND_WEBHOOK_SIGNING_SECRET) {
+      throw new AppError("Account deletion notification webhook is not configured.", 503);
+    }
+    return this.accountDeletionNotificationCoordinator.handleVerifiedWebhook({
+      rawBody: input.rawBody,
+      headers: {
+        id: input.id,
+        timestamp: input.timestamp,
+        signature: input.signature,
+      },
+      signingSecret: this.config.RESEND_WEBHOOK_SIGNING_SECRET,
+    });
   }
 
   async reportWrongPrice(account: BusinessAccount | null, input: WrongPriceReportInput) {
@@ -9740,6 +10054,7 @@ export class BusinessService {
       weekOldPoints: CONTRIBUTION_POINTS.weekOldUpdate,
       stalePoints: CONTRIBUTION_POINTS.staleUpdate,
       newVenuePoints: CONTRIBUTION_POINTS.newVenue,
+      excludeHappyHourMissions: !PUBLIC_HAPPY_HOUR_MISSIONS_ENABLED,
     });
     return {
       total: page.total,
@@ -9806,6 +10121,9 @@ export class BusinessService {
     const mission = this.repository.getMissionById(missionId);
     if (!mission || !mission.active) {
       throw new AppError("This mission is no longer active.", 404);
+    }
+    if (!PUBLIC_HAPPY_HOUR_MISSIONS_ENABLED && isHappyHourMission(mission)) {
+      throw new AppError("This happy-hour mission is not available during the current public launch.", 404);
     }
     const progress = this.repository.acceptMission({
       missionId,
@@ -9944,6 +10262,7 @@ export class BusinessService {
 
       const visibleBatch = globalBatch
         .map(canonicalizeRecord)
+        .filter(isPublicLaunchPriceRecord)
         .filter((record) => {
           if (record.displayKind !== "special" || !record.id.startsWith("venue_special:")) return true;
           const special = this.repository.getBarSpecialById(record.id.slice("venue_special:".length));
@@ -12323,6 +12642,7 @@ export class BusinessService {
       "job:evidence_retention",
       "job:menu_ocr",
       "job:stripe_webhook",
+      "job:account_deletion_notifications",
       AUTO_MISSION_REFRESH_STATE_KEY,
     ];
     return {
@@ -13920,25 +14240,100 @@ export class BusinessService {
     }
 
     const supabase = await this.getSupabaseOperationalReadiness();
-    const billingConfigured = this.config.DEMO_BILLING_MODE || Boolean(
+    const paidEnrollmentRequired = Boolean(
+      this.config.COMMERCIAL_LAUNCH_ENABLED ||
+      this.config.CONSUMER_PAID_ENROLLMENT_ENABLED
+    );
+    const billingConfigured = Boolean(
       this.config.STRIPE_SECRET_KEY &&
       this.config.STRIPE_WEBHOOK_SECRET &&
       this.config.STRIPE_PRICE_MONTHLY &&
       this.config.STRIPE_PRICE_YEARLY &&
       this.config.STRIPE_PRO_PRICE_ID,
     );
+    const billingRequired = !this.config.RESTORE_REHEARSAL_MODE
+      && this.config.NODE_ENV === "production"
+      && paidEnrollmentRequired;
     const venueLookupConfigured = Boolean(this.config.GOOGLE_PLACES_API_KEY);
     const menuExtractionConfigured = Boolean(this.config.OPENAI_API_KEY);
     const reportDeliveryConfigured = this.config.REPORT_EMAIL_MODE === "mock" || Boolean(
       this.config.REPORT_EMAIL_MODE === "resend" && this.config.RESEND_API_KEY && this.config.REPORT_EMAIL_FROM,
     );
-    const externalProvidersRequired = this.config.NODE_ENV === "production" && !this.config.RESTORE_REHEARSAL_MODE;
-    const providerReady = !externalProvidersRequired || (
-      billingConfigured &&
-      venueLookupConfigured &&
-      menuExtractionConfigured &&
-      (!(this.config.REPORT_DELIVERY_SCHEDULE_ENABLED ?? false) || reportDeliveryConfigured)
+    const deletionNotificationConfigured = Boolean(
+      this.accountDeletionNotificationCoordinator &&
+      this.config.ACCOUNT_DELETION_NOTICE_MODE !== "disabled" &&
+      (this.config.ACCOUNT_DELETION_NOTICE_MODE !== "resend" || this.config.RESEND_WEBHOOK_SIGNING_SECRET),
     );
+    const readinessCheckedAt = nowIso();
+    const deletionNotificationQueue = this.repository
+      .getAccountDeletionNotificationQueueSummary(readinessCheckedAt);
+    const deletionNotificationJob = this.repository
+      .getSystemState<Record<string, unknown>>("job:account_deletion_notifications");
+    const deletionNotificationJobState = typeof deletionNotificationJob?.value?.state === "string"
+      ? deletionNotificationJob.value.state
+      : "not_run";
+    const deletionNotificationJobUpdatedAtMs = deletionNotificationJob?.updatedAt
+      ? Date.parse(deletionNotificationJob.updatedAt)
+      : Number.NaN;
+    const deletionNotificationJobMaxAgeMinutes = Math.max(
+      15,
+      (this.config.ACCOUNT_DELETION_NOTICE_CHECK_INTERVAL_MINUTES ?? 5) * 3,
+    );
+    const deletionNotificationJobAgeMinutes = Number.isFinite(deletionNotificationJobUpdatedAtMs)
+      ? Math.max(0, (Date.parse(readinessCheckedAt) - deletionNotificationJobUpdatedAtMs) / 60_000)
+      : null;
+    const deletionNotificationSchedulerStatus = this.config.RESTORE_REHEARSAL_MODE
+      ? "disabled_for_restore_rehearsal"
+      : !deletionNotificationConfigured
+        ? "not_configured"
+        : deletionNotificationJobState === "failed"
+          ? "failed"
+          : deletionNotificationJobAgeMinutes !== null
+              && deletionNotificationJobAgeMinutes > deletionNotificationJobMaxAgeMinutes
+            ? "stale"
+            : deletionNotificationJobState;
+    const fullProviderReadinessRequired = !this.config.RESTORE_REHEARSAL_MODE && isCanonicalProductionRuntime({
+      nodeEnv: this.config.NODE_ENV,
+      railwayEnvironmentName: process.env.RAILWAY_ENVIRONMENT_NAME,
+    });
+    const deletionNotificationsRequired = fullProviderReadinessRequired
+      || Boolean(this.config.ACCOUNT_DELETION_REHEARSAL_ENABLED);
+    const oldestSecurePurgeCheckpointAtMs = deletionNotificationQueue.oldestSecurePurgeCheckpointAt
+      ? Date.parse(deletionNotificationQueue.oldestSecurePurgeCheckpointAt)
+      : null;
+    const securePurgeCheckpointPersistent = deletionNotificationQueue.securePurgeCheckpointPendingCount > 0
+      && (
+        oldestSecurePurgeCheckpointAtMs === null
+        || !Number.isFinite(oldestSecurePurgeCheckpointAtMs)
+        || (Date.parse(readinessCheckedAt) - oldestSecurePurgeCheckpointAtMs) / 60_000
+          > deletionNotificationJobMaxAgeMinutes
+      );
+    const deletionNotificationOperationalBlockingReasons: string[] = [];
+    if (deletionNotificationsRequired) {
+      if (!deletionNotificationConfigured) {
+        deletionNotificationOperationalBlockingReasons.push("notification_path_unconfigured");
+      }
+      if (deletionNotificationSchedulerStatus === "failed") {
+        deletionNotificationOperationalBlockingReasons.push("scheduler_failed");
+      } else if (deletionNotificationSchedulerStatus === "stale") {
+        deletionNotificationOperationalBlockingReasons.push("scheduler_stale");
+      }
+      if (deletionNotificationQueue.overdueRetentionCount > 0) {
+        deletionNotificationOperationalBlockingReasons.push("recipient_retention_overdue");
+      }
+      if (securePurgeCheckpointPersistent) {
+        deletionNotificationOperationalBlockingReasons.push("secure_purge_checkpoint_persistent");
+      }
+    }
+    const deletionNotificationOperationalGateReady =
+      deletionNotificationOperationalBlockingReasons.length === 0;
+    const providerReady = (!billingRequired || billingConfigured) && (
+      !fullProviderReadinessRequired || (
+        venueLookupConfigured &&
+        menuExtractionConfigured &&
+        (!(this.config.REPORT_DELIVERY_SCHEDULE_ENABLED ?? false) || reportDeliveryConfigured)
+      )
+    ) && deletionNotificationOperationalGateReady;
 
     return {
       ready: database.status === "ok" && evidenceStorage.status === "ok" && supabase.ready && providerReady,
@@ -13951,12 +14346,12 @@ export class BusinessService {
         billingProvider: {
           status: this.config.RESTORE_REHEARSAL_MODE
             ? "disabled_for_restore_rehearsal"
-            : this.config.DEMO_BILLING_MODE
-              ? "demo"
+            : !paidEnrollmentRequired
+              ? "deferred"
               : billingConfigured
                 ? "configured"
                 : "missing",
-          required: externalProvidersRequired && !this.config.DEMO_BILLING_MODE,
+          required: billingRequired,
         },
         venueLookupProvider: {
           status: this.config.RESTORE_REHEARSAL_MODE
@@ -13964,7 +14359,7 @@ export class BusinessService {
             : venueLookupConfigured
               ? "configured"
               : "missing",
-          required: externalProvidersRequired,
+          required: fullProviderReadinessRequired,
         },
         menuExtractionProvider: {
           status: this.config.RESTORE_REHEARSAL_MODE
@@ -13972,7 +14367,7 @@ export class BusinessService {
             : menuExtractionConfigured
               ? "configured"
               : "missing",
-          required: externalProvidersRequired,
+          required: fullProviderReadinessRequired,
         },
         reportDelivery: {
           status: this.config.REPORT_EMAIL_MODE === "disabled"
@@ -13981,7 +14376,30 @@ export class BusinessService {
               ? "configured"
               : "missing",
           scheduled: this.config.REPORT_DELIVERY_SCHEDULE_ENABLED ?? false,
-          required: externalProvidersRequired && (this.config.REPORT_DELIVERY_SCHEDULE_ENABLED ?? false),
+          required: fullProviderReadinessRequired && (this.config.REPORT_DELIVERY_SCHEDULE_ENABLED ?? false),
+        },
+        accountDeletionNotifications: {
+          status: this.config.RESTORE_REHEARSAL_MODE
+            ? "disabled_for_restore_rehearsal"
+            : deletionNotificationConfigured
+              ? deletionNotificationQueue.manualReviewCount > 0
+                  || deletionNotificationQueue.securePurgeCheckpointPendingCount > 0
+                  || (["failed", "stale", "not_run"].includes(deletionNotificationSchedulerStatus)
+                    && deletionNotificationsRequired)
+                ? "operator_attention_required"
+                : "configured"
+              : "missing",
+          required: deletionNotificationsRequired,
+          operationalGateReady: deletionNotificationOperationalGateReady,
+          operationalBlockingReasons: deletionNotificationOperationalBlockingReasons,
+          securePurgeCheckpointPersistent,
+          securePurgeCheckpointMaxAgeMinutes: deletionNotificationJobMaxAgeMinutes,
+          scheduler: {
+            status: deletionNotificationSchedulerStatus,
+            updatedAt: deletionNotificationJob?.updatedAt ?? null,
+            maxAgeMinutes: deletionNotificationJobMaxAgeMinutes,
+          },
+          ...deletionNotificationQueue,
         },
         restoreRehearsal: {
           enabled: Boolean(this.config.RESTORE_REHEARSAL_MODE),
@@ -13991,6 +14409,77 @@ export class BusinessService {
             ? "read_only_attested_restored_copy"
             : "primary_runtime_database",
           remoteVenueDirectoryEnabled: !this.config.RESTORE_REHEARSAL_MODE,
+        },
+      },
+    };
+  }
+
+  getLocalStartupReadiness() {
+    let database: { status: "ok" | "failed"; foreignKeyViolations: number; error?: string };
+    try {
+      const health = this.repository.checkDatabaseHealth();
+      database = {
+        status: health.ok ? "ok" : "failed",
+        foreignKeyViolations: health.foreignKeyViolations,
+      };
+    } catch (error) {
+      database = {
+        status: "failed",
+        foreignKeyViolations: 0,
+        error: error instanceof Error
+          ? String(redactSecrets(error.message)).slice(0, 200)
+          : "Database probe failed",
+      };
+    }
+
+    let evidenceStorage: { status: "ok" | "failed"; error?: string };
+    try {
+      if (!this.config.RESTORE_REHEARSAL_MODE) {
+        fs.mkdirSync(this.config.SOURCE_EVIDENCE_STORAGE_DIR, { recursive: true, mode: 0o700 });
+      }
+      fs.accessSync(
+        this.config.SOURCE_EVIDENCE_STORAGE_DIR,
+        this.config.RESTORE_REHEARSAL_MODE
+          ? fs.constants.R_OK
+          : fs.constants.R_OK | fs.constants.W_OK,
+      );
+      evidenceStorage = { status: "ok" };
+    } catch (error) {
+      evidenceStorage = {
+        status: "failed",
+        error: error instanceof Error
+          ? String(redactSecrets(error.message)).slice(0, 200)
+          : "Evidence storage probe failed",
+      };
+    }
+
+    const deletionNotificationsRequired = this.config.NODE_ENV === "production"
+      && !this.config.RESTORE_REHEARSAL_MODE;
+    const deletionNotificationsConfigured = Boolean(
+      this.accountDeletionNotificationCoordinator
+      && this.config.ACCOUNT_DELETION_NOTICE_MODE === "resend"
+      && this.config.RESEND_WEBHOOK_SIGNING_SECRET,
+    );
+    const deletionJob = this.repository
+      .getSystemState<Record<string, unknown>>("job:account_deletion_notifications");
+    const deletionSchedulerState = typeof deletionJob?.value?.state === "string"
+      ? deletionJob.value.state
+      : "not_run";
+    // Startup runs before the scheduler's first tick and must remain restart-safe.
+    // Scheduler freshness and queue retention belong to operational readiness.
+    const deletionStartupReady = !deletionNotificationsRequired || deletionNotificationsConfigured;
+
+    return {
+      ready: database.status === "ok"
+        && evidenceStorage.status === "ok"
+        && deletionStartupReady,
+      dependencies: {
+        database,
+        evidenceStorage,
+        accountDeletionNotifications: {
+          required: deletionNotificationsRequired,
+          configured: deletionNotificationsConfigured,
+          schedulerState: deletionSchedulerState,
         },
       },
     };

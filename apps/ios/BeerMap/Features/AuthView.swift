@@ -195,6 +195,12 @@ struct AuthView: View {
             .buttonStyle(.plain)
             .font(.subheadline.weight(.semibold))
 
+            Text("Already use Google on the Pint Path website? Enter that same email and choose Forgot password to add iOS password access without creating another account.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .accessibilityLabel("Existing website Google users should enter the same email and use Forgot password for iOS access.")
+
             }
         }
         .onChange(of: mode) { _, _ in

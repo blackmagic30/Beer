@@ -5,6 +5,7 @@ import dotenv from "dotenv";
 import { z } from "zod";
 
 import { isCanonicalProductionRuntime } from "../lib/deployment-environment.js";
+import { parseAccountDeletionNotificationKeyring } from "../lib/account-deletion-notification-worker.js";
 
 dotenv.config({ quiet: true });
 
@@ -107,6 +108,10 @@ const RESTORE_REHEARSAL_REDIS_SERVICE_ID = "d6351cec-fe04-4a6f-8e05-1cc164ea1e73
 const RESTORE_REHEARSAL_PRODUCTION_SUPABASE_REF = "jxpubqlmqnnqwadmjgyk";
 const RESTORE_REHEARSAL_BACKUP_SUPABASE_REF = "gjjffexmflwtnewtkkiy";
 const RESTORE_REHEARSAL_SUPABASE_REF = "ibveugyfyzjptyvautlr";
+const ACCOUNT_DELETION_REHEARSAL_RAILWAY_ENVIRONMENT_ID = RESTORE_REHEARSAL_RAILWAY_ENVIRONMENT_ID;
+const ACCOUNT_DELETION_REHEARSAL_RAILWAY_PROJECT_ID = RESTORE_REHEARSAL_RAILWAY_PROJECT_ID;
+const ACCOUNT_DELETION_REHEARSAL_BEER_SERVICE_ID = RESTORE_REHEARSAL_BEER_SERVICE_ID;
+const ACCOUNT_DELETION_REHEARSAL_SUPABASE_REF = RESTORE_REHEARSAL_SUPABASE_REF;
 
 function canonicalSupabaseProjectRef(value: string, variableName: string): string {
   const url = new URL(value);
@@ -171,6 +176,15 @@ function isSafeConfiguredEmail(value: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address);
 }
 
+function isValidResendWebhookSigningSecret(value: string | undefined): boolean {
+  const encoded = value?.trim().match(/^whsec_([A-Za-z0-9+/]+={0,2})$/)?.[1];
+  if (!encoded) return false;
+  const decoded = Buffer.from(encoded, "base64");
+  return decoded.byteLength >= 24
+    && decoded.byteLength <= 64
+    && decoded.toString("base64").replace(/=+$/, "") === encoded.replace(/=+$/, "");
+}
+
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   RESTORE_REHEARSAL_MODE: booleanFromEnv.default(false),
@@ -203,7 +217,7 @@ const envSchema = z.object({
   SUPABASE_SERVICE_ROLE_KEY: optionalStringFromEnv,
   OFFSITE_BACKUP_SUPABASE_URL: optionalHttpUrlFromEnv,
   OFFSITE_BACKUP_SERVICE_ROLE_KEY: optionalStringFromEnv,
-  SUPABASE_OAUTH_PROVIDERS: z.preprocess(sanitizeEnvString, z.string()).default("google,apple"),
+  SUPABASE_OAUTH_PROVIDERS: z.preprocess(sanitizeEnvString, z.string()).default("google"),
   SUPABASE_MENU_CAPTURE_TABLE: optionalStringFromEnv.default("venue_menu_captures"),
   ADMIN_EMAILS: optionalStringFromEnv,
   GOOGLE_MAPS_API_KEY: optionalStringFromEnv,
@@ -227,6 +241,15 @@ const envSchema = z.object({
   REPORT_DELIVERY_DAY: z.coerce.number().int().min(1).max(28).default(2),
   REPORT_DELIVERY_HOUR: z.coerce.number().int().min(0).max(23).default(9),
   REPORT_DELIVERY_CHECK_INTERVAL_MINUTES: z.coerce.number().int().min(5).max(1440).default(60),
+  ACCOUNT_DELETION_NOTICE_MODE: z.enum(["disabled", "mock", "resend"]).default("disabled"),
+  RESEND_TRANSACTIONAL_API_KEY: optionalStringFromEnv,
+  ACCOUNT_DELETION_NOTICE_FROM: optionalStringFromEnv,
+  ACCOUNT_DELETION_NOTICE_REPLY_TO: optionalStringFromEnv,
+  RESEND_WEBHOOK_SIGNING_SECRET: optionalStringFromEnv,
+  ACCOUNT_DELETION_NOTICE_ACTIVE_KEY_ID: optionalStringFromEnv,
+  ACCOUNT_DELETION_NOTICE_KEYRING_JSON: optionalStringFromEnv,
+  ACCOUNT_DELETION_NOTICE_CHECK_INTERVAL_MINUTES: z.coerce.number().int().min(5).max(60).default(5),
+  ACCOUNT_DELETION_REHEARSAL_ENABLED: booleanFromEnv.default(false),
   REDIS_URL: optionalStringFromEnv,
   REDIS_KEY_NAMESPACE: optionalStringFromEnv,
   REQUIRE_REDIS_RATE_LIMITING: booleanFromEnv.default(false),
@@ -256,7 +279,7 @@ const envSchema = z.object({
   VENUE_PRO_TRIAL_DAYS: z.coerce.number().int().refine(
     (value) => value === 0 || value === 30 || value === 60,
     "Use 0, 30, or 60 days.",
-  ).default(60),
+  ).default(0),
   VENUE_PRO_TRIAL_REQUIRE_PAYMENT_METHOD: booleanFromEnv.default(false),
 });
 
@@ -271,6 +294,109 @@ const canonicalProductionRuntime = isCanonicalProductionRuntime({
   nodeEnv: parsedEnv.data.NODE_ENV,
   railwayEnvironmentName: process.env.RAILWAY_ENVIRONMENT_NAME,
 });
+
+if (parsedEnv.data.ACCOUNT_DELETION_REHEARSAL_ENABLED) {
+  if (
+    parsedEnv.data.NODE_ENV !== "production"
+    || railwayEnvironmentName !== "staging"
+    || parsedEnv.data.RESTORE_REHEARSAL_MODE
+  ) {
+    throw new Error(
+      "ACCOUNT_DELETION_REHEARSAL_ENABLED=true is permitted only in the isolated Railway staging environment outside restore mode.",
+    );
+  }
+  if (parsedEnv.data.ACCOUNT_DELETION_NOTICE_MODE !== "resend") {
+    throw new Error("Account deletion rehearsal requires ACCOUNT_DELETION_NOTICE_MODE=resend.");
+  }
+  if (
+    process.env.RAILWAY_PROJECT_ID?.trim() !== ACCOUNT_DELETION_REHEARSAL_RAILWAY_PROJECT_ID
+    || process.env.RAILWAY_ENVIRONMENT_ID?.trim() !== ACCOUNT_DELETION_REHEARSAL_RAILWAY_ENVIRONMENT_ID
+    || process.env.RAILWAY_SERVICE_ID?.trim() !== ACCOUNT_DELETION_REHEARSAL_BEER_SERVICE_ID
+  ) {
+    throw new Error(
+      "Account deletion rehearsal is bound to the immutable Pint Path staging Railway project, environment, and Beer service IDs.",
+    );
+  }
+  if (process.env.RAILWAY_VOLUME_MOUNT_PATH?.trim() !== "/app/data") {
+    throw new Error("Account deletion rehearsal requires the dedicated staging volume at RAILWAY_VOLUME_MOUNT_PATH=/app/data.");
+  }
+  const railwayPublicDomain = process.env.RAILWAY_PUBLIC_DOMAIN?.trim().toLowerCase();
+  const publicBaseUrl = new URL(parsedEnv.data.PUBLIC_BASE_URL);
+  if (
+    !railwayPublicDomain
+    || publicBaseUrl.origin.toLowerCase() !== `https://${railwayPublicDomain}`
+    || publicBaseUrl.pathname !== "/"
+    || publicBaseUrl.search
+    || publicBaseUrl.hash
+    || publicBaseUrl.username
+    || publicBaseUrl.password
+    || ["pintpath.au", "www.pintpath.au", "pintpath.com.au", "www.pintpath.com.au"]
+      .includes(publicBaseUrl.hostname.toLowerCase())
+  ) {
+    throw new Error(
+      "Account deletion rehearsal PUBLIC_BASE_URL must be the exact isolated staging HTTPS origin from RAILWAY_PUBLIC_DOMAIN.",
+    );
+  }
+  if (
+    path.normalize(parsedEnv.data.DATABASE_PATH) !== "/app/data/pint-path.sqlite"
+    || path.normalize(parsedEnv.data.SOURCE_EVIDENCE_STORAGE_DIR) !== "/app/data/source-evidence"
+  ) {
+    throw new Error(
+      "Account deletion rehearsal must use only the dedicated staging SQLite and evidence paths under /app/data.",
+    );
+  }
+  if (
+    !parsedEnv.data.SUPABASE_URL
+    || canonicalSupabaseProjectRef(parsedEnv.data.SUPABASE_URL, "SUPABASE_URL")
+      !== ACCOUNT_DELETION_REHEARSAL_SUPABASE_REF
+  ) {
+    throw new Error("Account deletion rehearsal is bound to the dedicated non-production Supabase project.");
+  }
+  if (
+    parsedEnv.data.STRIPE_SECRET_KEY
+    && !/^(?:sk|rk)_test_/.test(parsedEnv.data.STRIPE_SECRET_KEY)
+  ) {
+    throw new Error("Account deletion rehearsal may use only a Stripe test-mode secret or no Stripe secret.");
+  }
+  const prohibitedBackupCredentials = [
+    ["OFFSITE_BACKUP_SUPABASE_URL", parsedEnv.data.OFFSITE_BACKUP_SUPABASE_URL],
+    ["OFFSITE_BACKUP_SERVICE_ROLE_KEY", parsedEnv.data.OFFSITE_BACKUP_SERVICE_ROLE_KEY],
+  ].filter(([, value]) => value !== undefined);
+  if (prohibitedBackupCredentials.length > 0) {
+    throw new Error(
+      `Account deletion rehearsal prohibits off-site backup credentials: ${prohibitedBackupCredentials
+        .map(([name]) => name)
+        .join(", ")}.`,
+    );
+  }
+  const prohibitedRedisVariables = [
+    ["REDIS_URL", parsedEnv.data.REDIS_URL],
+    ["REDIS_KEY_NAMESPACE", parsedEnv.data.REDIS_KEY_NAMESPACE],
+    ["RESTORE_REHEARSAL_REDIS_ENVIRONMENT_ID", parsedEnv.data.RESTORE_REHEARSAL_REDIS_ENVIRONMENT_ID],
+    ["RESTORE_REHEARSAL_REDIS_SERVICE_ID", parsedEnv.data.RESTORE_REHEARSAL_REDIS_SERVICE_ID],
+    ["RESTORE_REHEARSAL_REDIS_SENTINEL", parsedEnv.data.RESTORE_REHEARSAL_REDIS_SENTINEL],
+  ].filter(([, value]) => value !== undefined);
+  if (prohibitedRedisVariables.length > 0 || parsedEnv.data.REQUIRE_REDIS_RATE_LIMITING) {
+    throw new Error(
+      "Account deletion rehearsal prohibits Redis configuration; remove all Redis references and keep REQUIRE_REDIS_RATE_LIMITING=false.",
+    );
+  }
+  if (!parsedEnv.data.ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION) {
+    throw new Error(
+      "Account deletion rehearsal requires ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=true for its isolated single-instance staging proof.",
+    );
+  }
+  if (
+    parsedEnv.data.COMMERCIAL_LAUNCH_ENABLED
+    || parsedEnv.data.CONSUMER_PAID_ENROLLMENT_ENABLED
+    || parsedEnv.data.REPORT_EMAIL_MODE !== "disabled"
+    || parsedEnv.data.REPORT_DELIVERY_SCHEDULE_ENABLED
+  ) {
+    throw new Error(
+      "Account deletion rehearsal requires paid enrollment and report delivery to remain disabled.",
+    );
+  }
+}
 
 const requireStrongSecret = (name: string, value: string | undefined) => {
   const normalized = value?.trim() ?? "";
@@ -308,7 +434,10 @@ if (!parsedEnv.data.RESTORE_REHEARSAL_MODE) {
   if (parsedEnv.data.REDIS_KEY_NAMESPACE?.startsWith("pint-path:restore:")) {
     restoreMarkers.push("REDIS_KEY_NAMESPACE");
   }
-  if (parsedEnv.data.SUPABASE_URL?.toLowerCase().includes(`${RESTORE_REHEARSAL_SUPABASE_REF}.supabase.co`)) {
+  if (
+    !parsedEnv.data.ACCOUNT_DELETION_REHEARSAL_ENABLED
+    && parsedEnv.data.SUPABASE_URL?.toLowerCase().includes(`${RESTORE_REHEARSAL_SUPABASE_REF}.supabase.co`)
+  ) {
     restoreMarkers.push("SUPABASE_URL");
   }
 
@@ -346,6 +475,44 @@ if (parsedEnv.data.NODE_ENV === "production" && parsedEnv.data.REPORT_EMAIL_MODE
   throw new Error("REPORT_EMAIL_MODE=mock is test-only and cannot be used in production.");
 }
 
+if (parsedEnv.data.NODE_ENV === "production" && parsedEnv.data.ACCOUNT_DELETION_NOTICE_MODE === "mock") {
+  throw new Error("ACCOUNT_DELETION_NOTICE_MODE=mock is test-only and cannot be used in production.");
+}
+
+if (parsedEnv.data.ACCOUNT_DELETION_NOTICE_MODE !== "disabled") {
+  if (!parsedEnv.data.ACCOUNT_DELETION_NOTICE_ACTIVE_KEY_ID || !parsedEnv.data.ACCOUNT_DELETION_NOTICE_KEYRING_JSON) {
+    throw new Error(
+      "Account deletion notifications require ACCOUNT_DELETION_NOTICE_ACTIVE_KEY_ID and ACCOUNT_DELETION_NOTICE_KEYRING_JSON.",
+    );
+  }
+  parseAccountDeletionNotificationKeyring({
+    activeKeyId: parsedEnv.data.ACCOUNT_DELETION_NOTICE_ACTIVE_KEY_ID,
+    keyringJson: parsedEnv.data.ACCOUNT_DELETION_NOTICE_KEYRING_JSON,
+  });
+}
+
+if (parsedEnv.data.ACCOUNT_DELETION_NOTICE_MODE === "resend") {
+  if (!parsedEnv.data.RESEND_TRANSACTIONAL_API_KEY) {
+    throw new Error("RESEND_TRANSACTIONAL_API_KEY is required when ACCOUNT_DELETION_NOTICE_MODE=resend.");
+  }
+  if (!parsedEnv.data.ACCOUNT_DELETION_NOTICE_FROM || !isSafeConfiguredEmail(parsedEnv.data.ACCOUNT_DELETION_NOTICE_FROM)) {
+    throw new Error("ACCOUNT_DELETION_NOTICE_FROM must be a configured sender when account deletion notices use Resend.");
+  }
+  if (!parsedEnv.data.ACCOUNT_DELETION_NOTICE_REPLY_TO || !isSafeConfiguredEmail(parsedEnv.data.ACCOUNT_DELETION_NOTICE_REPLY_TO)) {
+    throw new Error("ACCOUNT_DELETION_NOTICE_REPLY_TO must be a monitored address when account deletion notices use Resend.");
+  }
+  if (!isValidResendWebhookSigningSecret(parsedEnv.data.RESEND_WEBHOOK_SIGNING_SECRET)) {
+    throw new Error("RESEND_WEBHOOK_SIGNING_SECRET must be the valid whsec_ secret copied from the Resend webhook.");
+  }
+}
+
+if (
+  parsedEnv.data.ACCOUNT_DELETION_NOTICE_REPLY_TO &&
+  !isSafeConfiguredEmail(parsedEnv.data.ACCOUNT_DELETION_NOTICE_REPLY_TO)
+) {
+  throw new Error("ACCOUNT_DELETION_NOTICE_REPLY_TO must be a valid email address when configured.");
+}
+
 if (parsedEnv.data.REPORT_EMAIL_MODE === "resend") {
   if (!parsedEnv.data.RESEND_API_KEY) {
     throw new Error("RESEND_API_KEY is required when REPORT_EMAIL_MODE=resend.");
@@ -380,13 +547,29 @@ if (
 
 if (
   parsedEnv.data.NODE_ENV === "production" &&
+  !parsedEnv.data.RESTORE_REHEARSAL_MODE &&
+  !parsedEnv.data.COMMERCIAL_LAUNCH_ENABLED &&
+  (
+    parsedEnv.data.VENUE_PRO_TRIAL_DAYS !== 0 ||
+    parsedEnv.data.VENUE_PRO_TRIAL_REQUIRE_PAYMENT_METHOD
+  )
+) {
+  throw new Error(
+    "Pricing is deferred: keep VENUE_PRO_TRIAL_DAYS=0 and VENUE_PRO_TRIAL_REQUIRE_PAYMENT_METHOD=false while COMMERCIAL_LAUNCH_ENABLED=false.",
+  );
+}
+
+if (
+  parsedEnv.data.NODE_ENV === "production" &&
+  !parsedEnv.data.RESTORE_REHEARSAL_MODE &&
+  parsedEnv.data.COMMERCIAL_LAUNCH_ENABLED &&
   (
     parsedEnv.data.VENUE_PRO_TRIAL_DAYS !== 60 ||
     parsedEnv.data.VENUE_PRO_TRIAL_REQUIRE_PAYMENT_METHOD
   )
 ) {
   throw new Error(
-    "The public launch requires a non-converting 60-day venue Pro offer: VENUE_PRO_TRIAL_DAYS=60 and VENUE_PRO_TRIAL_REQUIRE_PAYMENT_METHOD=false.",
+    "The future commercial launch contract currently requires a non-converting 60-day venue Pro offer: VENUE_PRO_TRIAL_DAYS=60 and VENUE_PRO_TRIAL_REQUIRE_PAYMENT_METHOD=false.",
   );
 }
 
@@ -397,16 +580,59 @@ if (parsedEnv.data.NODE_ENV === "production") {
   }
 
   requireStrongSecret("SOURCE_EVIDENCE_SIGNING_SECRET", parsedEnv.data.SOURCE_EVIDENCE_SIGNING_SECRET);
-  if (!parsedEnv.data.RESTORE_REHEARSAL_MODE) {
+  if (!parsedEnv.data.RESTORE_REHEARSAL_MODE && parsedEnv.data.POS_WEBHOOK_SIGNING_SECRET) {
     requireStrongSecret("POS_WEBHOOK_SIGNING_SECRET", parsedEnv.data.POS_WEBHOOK_SIGNING_SECRET);
+  }
+  if (
+    !parsedEnv.data.RESTORE_REHEARSAL_MODE &&
+    (
+      parsedEnv.data.COMMERCIAL_LAUNCH_ENABLED ||
+      parsedEnv.data.CONSUMER_PAID_ENROLLMENT_ENABLED
+    )
+  ) {
+    const missingStripe = [
+      "STRIPE_SECRET_KEY",
+      "STRIPE_WEBHOOK_SECRET",
+      "STRIPE_PRICE_MONTHLY",
+      "STRIPE_PRICE_YEARLY",
+      "STRIPE_PRO_PRICE_ID",
+    ].filter((name) => !parsedEnv.data[name as keyof typeof parsedEnv.data]);
+    if (missingStripe.length) {
+      throw new Error(`Enabled production paid enrollment requires: ${missingStripe.join(", ")}.`);
+    }
   }
 }
 
 if (canonicalProductionRuntime) {
   const publicBaseUrl = new URL(parsedEnv.data.PUBLIC_BASE_URL);
 
-  if (publicBaseUrl.hostname !== "pintpath.au") {
-    throw new Error("PUBLIC_BASE_URL must be https://pintpath.au in production. Do not use Railway preview domains as the canonical public app URL.");
+  if (parsedEnv.data.ACCOUNT_DELETION_NOTICE_MODE !== "resend") {
+    throw new Error(
+      "Canonical production requires ACCOUNT_DELETION_NOTICE_MODE=resend so completed deletions receive a verified notice.",
+    );
+  }
+
+  if (
+    parsedEnv.data.SUPABASE_OAUTH_PROVIDERS
+      .split(",")
+      .some((provider) => provider.trim().toLowerCase() === "apple")
+  ) {
+    throw new Error(
+      "Apple OAuth must remain disabled until Apple authorization-token revocation is implemented and tested.",
+    );
+  }
+
+  if (
+    publicBaseUrl.protocol !== "https:"
+    || publicBaseUrl.hostname !== "pintpath.au"
+    || publicBaseUrl.port
+    || publicBaseUrl.pathname !== "/"
+    || publicBaseUrl.search
+    || publicBaseUrl.hash
+    || publicBaseUrl.username
+    || publicBaseUrl.password
+  ) {
+    throw new Error("PUBLIC_BASE_URL must be exactly https://pintpath.au/ in production, with no credentials, port, path, query, or fragment. Do not use Railway preview domains as the canonical public app URL.");
   }
 
   if (!parsedEnv.data.GOOGLE_MAPS_API_KEY) {
@@ -423,19 +649,6 @@ if (canonicalProductionRuntime) {
 
   if (!parsedEnv.data.OPENAI_API_KEY) {
     throw new Error("OPENAI_API_KEY is required in production for menu evidence extraction.");
-  }
-
-  if (!parsedEnv.data.DEMO_BILLING_MODE) {
-    const missingStripe = [
-      "STRIPE_SECRET_KEY",
-      "STRIPE_WEBHOOK_SECRET",
-      "STRIPE_PRICE_MONTHLY",
-      "STRIPE_PRICE_YEARLY",
-      "STRIPE_PRO_PRICE_ID",
-    ].filter((name) => !parsedEnv.data[name as keyof typeof parsedEnv.data]);
-    if (missingStripe.length) {
-      throw new Error(`Real production billing requires: ${missingStripe.join(", ")}.`);
-    }
   }
 
   if (!parsedEnv.data.SUPABASE_URL || !parsedEnv.data.SUPABASE_ANON_KEY || !parsedEnv.data.SUPABASE_SERVICE_ROLE_KEY) {
@@ -595,8 +808,12 @@ if (parsedEnv.data.RESTORE_REHEARSAL_MODE) {
   if (parsedEnv.data.SUPABASE_OAUTH_PROVIDERS.trim() !== "") {
     throw new Error("Restore rehearsal requires SUPABASE_OAUTH_PROVIDERS to be explicitly empty.");
   }
-  if (parsedEnv.data.REPORT_EMAIL_MODE !== "disabled" || parsedEnv.data.REPORT_DELIVERY_SCHEDULE_ENABLED) {
-    throw new Error("Restore rehearsal requires reports and scheduled email delivery to remain disabled.");
+  if (
+    parsedEnv.data.REPORT_EMAIL_MODE !== "disabled" ||
+    parsedEnv.data.REPORT_DELIVERY_SCHEDULE_ENABLED ||
+    parsedEnv.data.ACCOUNT_DELETION_NOTICE_MODE !== "disabled"
+  ) {
+    throw new Error("Restore rehearsal requires reports and all email delivery to remain disabled.");
   }
   if (parsedEnv.data.DEMO_BILLING_MODE || parsedEnv.data.ALLOW_DEMO_BILLING_IN_PRODUCTION) {
     throw new Error("Restore rehearsal requires billing to be fully disabled, not demo-enabled.");
@@ -620,6 +837,12 @@ if (parsedEnv.data.RESTORE_REHEARSAL_MODE) {
     ["RESEND_API_KEY", parsedEnv.data.RESEND_API_KEY],
     ["REPORT_EMAIL_FROM", parsedEnv.data.REPORT_EMAIL_FROM],
     ["REPORT_EMAIL_REPLY_TO", parsedEnv.data.REPORT_EMAIL_REPLY_TO],
+    ["RESEND_TRANSACTIONAL_API_KEY", parsedEnv.data.RESEND_TRANSACTIONAL_API_KEY],
+    ["ACCOUNT_DELETION_NOTICE_FROM", parsedEnv.data.ACCOUNT_DELETION_NOTICE_FROM],
+    ["ACCOUNT_DELETION_NOTICE_REPLY_TO", parsedEnv.data.ACCOUNT_DELETION_NOTICE_REPLY_TO],
+    ["RESEND_WEBHOOK_SIGNING_SECRET", parsedEnv.data.RESEND_WEBHOOK_SIGNING_SECRET],
+    ["ACCOUNT_DELETION_NOTICE_ACTIVE_KEY_ID", parsedEnv.data.ACCOUNT_DELETION_NOTICE_ACTIVE_KEY_ID],
+    ["ACCOUNT_DELETION_NOTICE_KEYRING_JSON", parsedEnv.data.ACCOUNT_DELETION_NOTICE_KEYRING_JSON],
     ["STRIPE_SECRET_KEY", parsedEnv.data.STRIPE_SECRET_KEY],
     ["STRIPE_WEBHOOK_SECRET", parsedEnv.data.STRIPE_WEBHOOK_SECRET],
     ["STRIPE_PRICE_MONTHLY", parsedEnv.data.STRIPE_PRICE_MONTHLY],
