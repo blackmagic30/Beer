@@ -235,6 +235,12 @@ describe("release workflow contracts", () => {
     expect(source).toContain("ageHours >= 120");
     expect(source).toContain("ageHours >= 138");
     expect(source).toContain("directory_eligible");
+    expect(source).toContain('serviceRoleKey.startsWith("eyJ")');
+    expect(source).toContain("if (isLegacyJwtKey)");
+    expect(source).toContain("headers.Authorization = `Bearer ${serviceRoleKey}`");
+    expect(source).not.toContain(
+      "Authorization: `Bearer ${serviceRoleKey}`",
+    );
     expect(source).not.toContain("upload-artifact");
 
     const jobPrefix = source.slice(0, source.indexOf("    steps:"));

@@ -88,11 +88,17 @@ jobs:
           query.searchParams.set("order", "last_checked_at.asc");
           query.searchParams.set("limit", "1");
           const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+          const headers = {
+            apikey: serviceRoleKey,
+          };
+          const jwtSegments = serviceRoleKey.split(".");
+          const isLegacyJwtKey = serviceRoleKey.startsWith("eyJ") && jwtSegments.length === 3 &&
+            jwtSegments.every((segment) => /^[A-Za-z0-9_-]+$/.test(segment));
+          if (isLegacyJwtKey) {
+            headers.Authorization = `Bearer ${serviceRoleKey}`;
+          }
           const response = await fetch(query, {
-            headers: {
-              apikey: serviceRoleKey,
-              Authorization: `Bearer ${serviceRoleKey}`,
-            },
+            headers,
           });
           if (!response.ok) {
             throw new Error(`Directory freshness query failed with HTTP ${response.status}.`);
