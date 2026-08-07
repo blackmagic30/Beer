@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = extensions, public, pg_catalog;
 
-select plan(8);
+select plan(9);
 
 select is(
   (
@@ -165,6 +165,20 @@ select is(
   ),
   0::bigint,
   'browser policies do not expose the service-role-only source-evidence bucket'
+);
+
+select ok(
+  exists (
+    select 1
+    from pg_index i
+    join pg_class index_relation on index_relation.oid = i.indexrelid
+    join pg_namespace index_namespace on index_namespace.oid = index_relation.relnamespace
+    where index_namespace.nspname = 'public'
+      and index_relation.relname = 'venue_menu_captures_evidence_reference_idx'
+      and i.indisunique
+      and i.indpred is null
+  ),
+  'the evidence reference unique index supports an unqualified ON CONFLICT target'
 );
 
 select * from finish();
