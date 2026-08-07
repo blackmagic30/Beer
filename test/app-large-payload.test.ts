@@ -1,5 +1,7 @@
+import fs from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
+import path from "node:path";
 import { gunzipSync } from "node:zlib";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -96,6 +98,14 @@ describe("large JSON upload pre-parser containment", () => {
 });
 
 describe("restore rehearsal containment", () => {
+  it("keeps credential checks constant-time without request-path password stretching", () => {
+    const source = fs.readFileSync(path.resolve(process.cwd(), "src/app.ts"), "utf8");
+    expect(source).toContain("TIMING_SAFE_COMPARISON_MAX_BYTES");
+    expect(source).toContain("crypto.timingSafeEqual(leftPadded, rightPadded)");
+    expect(source).toContain("crypto.hkdfSync(");
+    expect(source).not.toContain("crypto.scryptSync(");
+  });
+
   it("gates restored data while leaving health probes available and preserving Bearer app auth", async () => {
     const app = express();
     app.use(createRestoreRehearsalAccessGate({

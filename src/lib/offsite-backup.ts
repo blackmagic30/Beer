@@ -212,7 +212,7 @@ async function probeBackupDestinationReadWrite(
   client: SupabaseClient,
   bucketName: string,
 ): Promise<void> {
-  const prefix = `_readiness/${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const prefix = `_readiness/${process.pid}-${Date.now()}-${crypto.randomUUID()}`;
   const canaries = [
     { path: `${prefix}/probe.pdf`, bytes: Buffer.from("%PDF-readiness"), contentType: "application/pdf" },
     { path: `${prefix}/probe.sqlite`, bytes: Buffer.from("SQLite format 3\0readiness"), contentType: "application/octet-stream" },

@@ -112,6 +112,22 @@ CREATE INDEX IF NOT EXISTS idx_accounts_email
 CREATE INDEX IF NOT EXISTS idx_accounts_stripe_customer
   ON accounts (stripe_customer_id);
 
+CREATE TABLE IF NOT EXISTS billing_checkout_reservations (
+  subject_type TEXT NOT NULL CHECK (subject_type IN ('consumer', 'venue')),
+  subject_id TEXT NOT NULL,
+  product_key TEXT NOT NULL,
+  reservation_token TEXT NOT NULL,
+  stripe_checkout_session_id TEXT,
+  checkout_url TEXT,
+  expires_at TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (subject_type, subject_id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_billing_checkout_reservation_token
+  ON billing_checkout_reservations (reservation_token);
+
 CREATE TABLE IF NOT EXISTS profiles (
   id TEXT PRIMARY KEY,
   public_account_id TEXT UNIQUE,
@@ -610,6 +626,9 @@ CREATE TABLE IF NOT EXISTS venue_price_records (
   confidence TEXT NOT NULL DEFAULT 'user_reported_pending',
   source_type TEXT NOT NULL,
   source_submission_id TEXT,
+  source_ingestion_id TEXT,
+  source_evidence_reference TEXT,
+  source_evidence_verified_at TEXT,
   last_verified_at TEXT NOT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
@@ -624,6 +643,14 @@ CREATE INDEX IF NOT EXISTS idx_venue_price_records_feed
 
 CREATE INDEX IF NOT EXISTS idx_venue_price_records_beer
   ON venue_price_records (normalized_beer_id, last_verified_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_venue_price_records_source_ingestion
+  ON venue_price_records (source_ingestion_id)
+  WHERE source_ingestion_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_venue_price_records_source_evidence_reference
+  ON venue_price_records (source_evidence_reference)
+  WHERE source_evidence_reference IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS missions (
   id TEXT PRIMARY KEY,
@@ -763,7 +790,7 @@ CREATE TABLE IF NOT EXISTS account_privacy_settings (
   venue_report_inclusion_enabled INTEGER NOT NULL DEFAULT 0,
   product_research_enabled INTEGER NOT NULL DEFAULT 0,
   email_updates_enabled INTEGER NOT NULL DEFAULT 0,
-  consent_version TEXT NOT NULL DEFAULT '2026-07-20',
+  consent_version TEXT NOT NULL DEFAULT '2026-08-03',
   consented_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -804,6 +831,68 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_account_deletion_requests_open_user
 CREATE UNIQUE INDEX IF NOT EXISTS idx_account_deletion_requests_unfinished_user
   ON account_deletion_requests (user_id)
   WHERE status IN ('pending_review', 'approved', 'processing', 'failed');
+
+CREATE TABLE IF NOT EXISTS account_deletion_completion_outbox (
+  request_id TEXT PRIMARY KEY REFERENCES account_deletion_requests(id) ON DELETE CASCADE,
+  template_version TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  payload_fingerprint TEXT CHECK (payload_fingerprint IS NULL OR length(payload_fingerprint) = 64),
+  secret_purge_checkpoint_pending INTEGER NOT NULL DEFAULT 0
+    CHECK (secret_purge_checkpoint_pending IN (0, 1)),
+  secret_purge_generation INTEGER NOT NULL DEFAULT 0
+    CHECK (secret_purge_generation >= 0),
+  status TEXT NOT NULL DEFAULT 'held'
+    CHECK (status IN ('held', 'pending', 'sending', 'accepted', 'delivered', 'failed', 'manual_review', 'purged', 'cancelled', 'suppressed_restore')),
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  first_attempt_at TEXT,
+  next_attempt_at TEXT,
+  lease_token TEXT,
+  lease_expires_at TEXT,
+  provider_message_id TEXT UNIQUE,
+  provider_last_event TEXT,
+  provider_event_at TEXT,
+  last_error TEXT,
+  completed_at TEXT,
+  accepted_at TEXT,
+  delivered_at TEXT,
+  terminal_at TEXT,
+  retention_expires_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS account_deletion_notice_recipient_secrets (
+  request_id TEXT PRIMARY KEY REFERENCES account_deletion_completion_outbox(request_id) ON DELETE CASCADE,
+  key_id TEXT NOT NULL,
+  nonce BLOB NOT NULL CHECK (length(nonce) = 12),
+  ciphertext BLOB NOT NULL,
+  auth_tag BLOB NOT NULL CHECK (length(auth_tag) = 16),
+  created_at TEXT NOT NULL,
+  purge_after TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_account_deletion_completion_outbox_due
+  ON account_deletion_completion_outbox (status, next_attempt_at, lease_expires_at);
+
+CREATE INDEX IF NOT EXISTS idx_account_deletion_completion_outbox_retention
+  ON account_deletion_completion_outbox (retention_expires_at)
+  WHERE status IN ('held', 'pending', 'sending', 'accepted', 'manual_review');
+
+CREATE INDEX IF NOT EXISTS idx_account_deletion_notice_recipient_secrets_purge
+  ON account_deletion_notice_recipient_secrets (purge_after);
+
+CREATE TABLE IF NOT EXISTS account_deletion_notification_events (
+  event_id TEXT PRIMARY KEY,
+  request_id TEXT NOT NULL REFERENCES account_deletion_completion_outbox(request_id) ON DELETE CASCADE,
+  provider_message_id TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  event_created_at TEXT NOT NULL,
+  received_at TEXT NOT NULL,
+  payload_sha256 TEXT NOT NULL CHECK (length(payload_sha256) = 64)
+);
+
+CREATE INDEX IF NOT EXISTS idx_account_deletion_notification_events_request
+  ON account_deletion_notification_events (request_id, event_created_at DESC);
 
 CREATE TABLE IF NOT EXISTS feedback (
   id TEXT PRIMARY KEY,
@@ -978,10 +1067,12 @@ CREATE TABLE IF NOT EXISTS venue_profiles (
   stripe_customer_id TEXT,
   stripe_subscription_id TEXT,
   subscription_status TEXT,
+  subscription_current_period_end TEXT,
   stripe_paid_membership_tier TEXT,
   tier_manual_override INTEGER NOT NULL DEFAULT 0,
   accepts_pint_path_codes INTEGER NOT NULL DEFAULT 0,
   stripe_event_created_at TEXT,
+  intro_trial_ever_claimed INTEGER NOT NULL DEFAULT 0,
   pos_webhook_token_version INTEGER NOT NULL DEFAULT 1,
   pos_previous_token_version INTEGER,
   pos_previous_token_valid_until TEXT,

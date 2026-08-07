@@ -16,6 +16,17 @@ const nullableTrimmedStringSchema = z.preprocess((value) => {
   return trimmed.length > 0 ? trimmed : null;
 }, z.string().min(1).max(2_000).nullable());
 
+const nullableAustralianPostcodeSchema = z.preprocess((value) => {
+  if (value == null) {
+    return null;
+  }
+  if (typeof value !== "string") {
+    return value;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}, z.string().regex(/^\d{4}$/, "Postcode must be exactly four digits").nullable());
+
 const nullableOfferTextSchema = z.preprocess((value) => {
   if (value == null) {
     return null;
@@ -276,6 +287,11 @@ export const adminReasonSchema = z.object({
   reason: z.string().trim().min(4).max(500),
 });
 
+export const accountDeletionNotificationResolutionSchema = z.object({
+  resolution: z.enum(["verified_delivered", "undeliverable"]),
+  reason: z.string().trim().min(4).max(500),
+});
+
 export const submissionItemSchema = z.object({
   beerName: z.string().trim().min(1).max(120),
   servingSize: servingSizeSchema.default("pint"),
@@ -299,7 +315,7 @@ export const pendingSubmissionVenueSchema = z.object({
   address: nullableTrimmedStringSchema.default(null),
   suburb: nullableTrimmedStringSchema.default(null),
   state: nullableTrimmedStringSchema.default("VIC"),
-  postcode: nullableTrimmedStringSchema.default(null),
+  postcode: nullableAustralianPostcodeSchema.default(null),
   phone: nullableTrimmedStringSchema.default(null),
   website: nullableUrlSchema.default(null),
   latitude: z.preprocess(

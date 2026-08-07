@@ -84,6 +84,7 @@ describe("production health monitor", () => {
               dependencies: {
                 rateLimiterRedis: {
                   status: "failed",
+                  configured: true,
                   required: true,
                   ready: false,
                   error: "RedisProbeFailed",

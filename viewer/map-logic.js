@@ -2,6 +2,12 @@
   const UNKNOWN_PRICE_TEXT = "Price unknown";
   const UNAVAILABLE_LABELS = new Set(["Unavailable", "Not on tap", "No pints"]);
   const PACKAGE_LABELS = new Set(["Cans or bottles", "Cans only", "Bottles only"]);
+  const TRUSTED_CONFIDENCE_LABELS = new Set([
+    "admin_verified",
+    "venue_confirmed",
+    "photo_verified",
+    "community_confirmed",
+  ]);
   const PRICE_RING_COLORS = Object.freeze({
     cheap: "#16a34a",
     mid: "#facc15",
@@ -104,6 +110,38 @@
   function normalizePositivePrice(value) {
     const numeric = Number(value);
     return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
+  }
+
+  function isFreshVerificationTimestamp(value, options = {}) {
+    const timestampMs = new Date(value || "").getTime();
+    const nowMs = Number(options.nowMs ?? Date.now());
+    const maximumAgeDays = Number(options.maximumAgeDays ?? 30);
+    const futureToleranceMinutes = Number(options.futureToleranceMinutes ?? 5);
+    if (
+      !Number.isFinite(timestampMs) ||
+      !Number.isFinite(nowMs) ||
+      !Number.isFinite(maximumAgeDays) ||
+      maximumAgeDays < 0 ||
+      !Number.isFinite(futureToleranceMinutes) ||
+      futureToleranceMinutes < 0
+    ) {
+      return false;
+    }
+    const ageMs = nowMs - timestampMs;
+    return ageMs >= -(futureToleranceMinutes * 60_000)
+      && ageMs <= maximumAgeDays * 86_400_000;
+  }
+
+  function isCurrentVerifiedBeer(beer, options = {}) {
+    if (!beer || typeof beer !== "object") {
+      return false;
+    }
+    const confidence = String(beer.confidenceLabel || beer.confidence_label || beer.confidence || "")
+      .trim()
+      .toLowerCase();
+    const verifiedAt = beer.lastVerifiedAt || beer.last_verified_at || beer.priceVerifiedAt || beer.price_verified_at;
+    return TRUSTED_CONFIDENCE_LABELS.has(confidence)
+      && isFreshVerificationTimestamp(verifiedAt, options);
   }
 
   function normalizeSearchKey(value) {
@@ -748,6 +786,8 @@
     MARKER_STATE_STYLES,
     PRICE_RING_COLORS,
     normalizeBeerPriceNumeric,
+    isFreshVerificationTimestamp,
+    isCurrentVerifiedBeer,
     getAvailabilityLabel,
     getBeerPriceText,
     getAvailabilityTone,

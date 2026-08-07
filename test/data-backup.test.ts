@@ -127,6 +127,74 @@ describe("production data backups", () => {
     restored.close();
   });
 
+  it("crypto-shreds deletion-notice recipient ciphertext from the backup artifact", async () => {
+    const root = makeTemporaryDirectory();
+    const databasePath = path.join(root, "live.sqlite");
+    const backupPath = path.join(root, "backup");
+    const evidencePath = path.join(root, "source-evidence");
+    fs.mkdirSync(evidencePath, { recursive: true });
+    const database = createDatabase(databasePath);
+    const repository = new BusinessRepository(database);
+    const now = "2026-08-03T10:00:00.000Z";
+    const account = repository.createAccount({
+      id: "backup-secret-account",
+      email: "backup-secret@example.com",
+      passwordHash: "test-password-hash",
+      role: "user",
+      subscriptionStatus: "free",
+      now,
+    });
+    repository.createAccountDeletionRequest({
+      id: "backup-secret-request",
+      userId: account.id,
+      userMessage: null,
+      requestedAt: now,
+      executeAfter: "2026-08-10T10:00:00.000Z",
+    });
+    database.prepare(
+      `INSERT INTO account_deletion_completion_outbox (
+         request_id, template_version, idempotency_key, status, created_at, updated_at
+       ) VALUES (?, 'account-deletion-complete-v1', ?, 'held', ?, ?)`,
+    ).run("backup-secret-request", "pintpath-account-deletion/backup-secret-request", now, now);
+    const ciphertextMarker = Buffer.from("PINTPATH_BACKUP_ONLY_CIPHERTEXT_MARKER_20260803", "utf8");
+    database.prepare(
+      `INSERT INTO account_deletion_notice_recipient_secrets (
+         request_id, key_id, nonce, ciphertext, auth_tag, created_at, purge_after
+       ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "backup-secret-request",
+      "backup-key",
+      Buffer.alloc(12, 1),
+      ciphertextMarker,
+      Buffer.alloc(16, 2),
+      now,
+      "2026-10-02T10:00:00.000Z",
+    );
+    database.close();
+
+    const manifest = await createDataBackup({
+      sourceDatabase: databasePath,
+      sourceEvidence: evidencePath,
+      backupRoot: backupPath,
+    });
+    const backupDatabasePath = path.join(backupPath, manifest.database.path);
+    const backupDatabase = new BetterSqlite3(backupDatabasePath, { readonly: true, fileMustExist: true });
+    expect(backupDatabase.prepare(
+      "SELECT count(*) AS count FROM account_deletion_notice_recipient_secrets",
+    ).get()).toEqual({ count: 0 });
+    expect(backupDatabase.prepare(
+      "SELECT status FROM account_deletion_completion_outbox WHERE request_id = ?",
+    ).get("backup-secret-request")).toEqual({ status: "purged" });
+    backupDatabase.close();
+    expect(fs.readFileSync(backupDatabasePath).includes(ciphertextMarker)).toBe(false);
+
+    const liveDatabase = new BetterSqlite3(databasePath, { readonly: true, fileMustExist: true });
+    expect(liveDatabase.prepare(
+      "SELECT count(*) AS count FROM account_deletion_notice_recipient_secrets",
+    ).get()).toEqual({ count: 1 });
+    liveDatabase.close();
+  });
+
   it("rejects a backup whose evidence no longer matches its manifest", async () => {
     const root = makeTemporaryDirectory();
     const databasePath = path.join(root, "live.sqlite");

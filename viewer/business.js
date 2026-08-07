@@ -2,12 +2,15 @@ const AUTH_TOKEN_KEY = "melbBeerBusinessAuthToken";
 const ACCOUNT_CONTEXT_KEY = "pintPathAccountContext";
 const ANON_SESSION_KEY = "melbBeerAnonSessionId";
 const AUTH_RETURN_KEY = "pintPathAuthReturnTo";
+const AUTH_FLOW_KEY = "pintPathAuthFlow";
+const OAUTH_PKCE_STORAGE_KEY = "pintPathSupabaseOAuth";
 const SENSITIVE_AUTH_RETURN_KEY = "pintPathSensitiveAuthReturnTo";
 const PENDING_PORTAL_REDEMPTION_KEY = "pintPathPendingPortalRedemption";
 const SENSITIVE_AUTH_RETURN_MAX_AGE_MS = 20 * 60 * 1000;
+const AUTH_FLOW_MAX_AGE_MS = 20 * 60 * 1000;
 const LEGAL_ACCEPTANCE_KEY = "pintPathLegalAcceptance";
 const LEGAL_POLICY_VERSION = String(
-  window.MELB_BEER_BOT_VIEWER_CONFIG?.business?.legalPolicyVersion || "2026-07-20"
+  window.MELB_BEER_BOT_VIEWER_CONFIG?.business?.legalPolicyVersion || "2026-08-03"
 );
 const OPTIONAL_ANALYTICS_KEY = "pintPathOptionalAnalyticsEnabled";
 const VENUE_REPORTS_KEY = "pintPathVenueReportsEnabled";
@@ -31,6 +34,9 @@ const RESTORE_REHEARSAL_LOCAL_STORAGE_KEYS = new Set([
   ACCOUNT_CONTEXT_KEY,
   ANON_SESSION_KEY,
   AUTH_RETURN_KEY,
+  AUTH_FLOW_KEY,
+  OAUTH_PKCE_STORAGE_KEY,
+  `${OAUTH_PKCE_STORAGE_KEY}-code-verifier`,
   LEGAL_ACCEPTANCE_KEY,
   ...SUBMISSION_DEVICE_STORAGE_KEYS,
   "pintPathLocationPreference",
@@ -423,14 +429,14 @@ function getAnonymousSessionId() {
   if (isRestoreRehearsalMode()) {
     window.localStorage.removeItem(ANON_SESSION_KEY);
     if (!restoreAnonymousSessionId) {
-      restoreAnonymousSessionId = crypto.randomUUID ? crypto.randomUUID() : `restore-${Date.now()}-${Math.random()}`;
+      restoreAnonymousSessionId = crypto.randomUUID();
     }
     return restoreAnonymousSessionId;
   }
   let value = window.localStorage.getItem(ANON_SESSION_KEY);
 
   if (!value) {
-    value = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+    value = crypto.randomUUID();
     window.localStorage.setItem(ANON_SESSION_KEY, value);
   }
 
@@ -628,12 +634,112 @@ function createAuthFlowNonce() {
   return Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
 }
 
-function getAuthCallbackUrl(returnTo = "/account.html", options = {}) {
-  const url = new URL("/auth/callback", getCanonicalBaseUrl());
-  url.searchParams.set("returnTo", getSafeReturnPath(returnTo));
-  if (options.authFlowNonce) url.searchParams.set("authFlow", String(options.authFlowNonce));
-  return url.toString();
+function normalizeAuthFlowState(record) {
+  if (!record || typeof record !== "object") return null;
+  const createdAt = Number(record.createdAt);
+  const nonce = String(record.nonce || "").trim();
+  const kind = String(record.kind || "").trim().toLowerCase();
+  const now = Date.now();
+  if (
+    !nonce
+    || !Number.isFinite(createdAt)
+    || createdAt > now + 60_000
+    || now - createdAt > AUTH_FLOW_MAX_AGE_MS
+    || !["oauth", "signup", "password_recovery"].includes(kind)
+  ) return null;
+  return {
+    nonce,
+    returnTo: getSafeReturnPath(record.returnTo || "/account.html"),
+    kind,
+    createdAt,
+  };
 }
+
+function storeAuthFlowState(input = {}) {
+  if (isRestoreRehearsalMode()) {
+    clearAuthFlowState();
+    return null;
+  }
+  const record = normalizeAuthFlowState({
+    nonce: input.nonce || createAuthFlowNonce(),
+    returnTo: input.returnTo || "/account.html",
+    kind: input.kind || "oauth",
+    createdAt: Date.now(),
+  });
+  if (!record) throw new Error("Secure sign-in flow generation failed.");
+  window.localStorage.setItem(AUTH_FLOW_KEY, JSON.stringify(record));
+  return record;
+}
+
+function peekAuthFlowState() {
+  if (isRestoreRehearsalMode()) {
+    clearAuthFlowState();
+    return null;
+  }
+  const raw = window.localStorage.getItem(AUTH_FLOW_KEY);
+  if (!raw) return null;
+  try {
+    const record = normalizeAuthFlowState(JSON.parse(raw));
+    if (!record) clearAuthFlowState();
+    return record;
+  } catch {
+    clearAuthFlowState();
+    return null;
+  }
+}
+
+function consumeAuthFlowState() {
+  const record = peekAuthFlowState();
+  window.localStorage.removeItem(AUTH_FLOW_KEY);
+  return record;
+}
+
+function clearSupabaseOAuthFlowStorage() {
+  const ownedKeys = [];
+  for (let index = 0; index < window.localStorage.length; index += 1) {
+    const key = window.localStorage.key(index);
+    if (key === OAUTH_PKCE_STORAGE_KEY || key?.startsWith(`${OAUTH_PKCE_STORAGE_KEY}-`)) {
+      ownedKeys.push(key);
+    }
+  }
+  ownedKeys.forEach((key) => window.localStorage.removeItem(key));
+}
+
+function clearAuthFlowState() {
+  window.localStorage.removeItem(AUTH_FLOW_KEY);
+}
+
+function getAuthCallbackUrl() {
+  return new URL("/auth/callback", getCanonicalBaseUrl()).toString();
+}
+
+function recoverMisroutedAuthCallback() {
+  if (isRestoreRehearsalMode() || window.location.pathname === "/auth/callback") return false;
+  if (!["/", "/index.html"].includes(window.location.pathname)) return false;
+  const query = new URLSearchParams(window.location.search || "");
+  const hash = new URLSearchParams(String(window.location.hash || "").replace(/^#/, ""));
+  const hasAuthResult = Boolean(
+    query.get("code")
+    || query.get("error")
+    || query.get("error_description")
+    || hash.get("access_token")
+    || hash.get("error")
+    || hash.get("error_description")
+  );
+  if (!hasAuthResult) return false;
+
+  // A PKCE code is only useful in the browser that started the flow and holds
+  // the verifier. Implicit email verification/recovery links can be opened on
+  // another device and are still safe to recover from the site-root fallback.
+  if (query.get("code") && !peekAuthFlowState()) return false;
+  const destination = new URL("/auth/callback", getCanonicalBaseUrl());
+  destination.search = window.location.search || "";
+  destination.hash = window.location.hash || "";
+  window.location.replace(destination.toString());
+  return true;
+}
+
+recoverMisroutedAuthCallback();
 
 function legalAcceptancePayload(input = {}) {
   return {
@@ -763,7 +869,7 @@ function getSupabaseOauthProviders() {
   }
   const config = getViewerConfig();
   const business = getBusinessConfig();
-  const providers = business.supabaseOauthProviders || config.supabaseOauthProviders || ["google", "apple"];
+  const providers = business.supabaseOauthProviders || config.supabaseOauthProviders || ["google"];
   return Array.isArray(providers) ? providers : String(providers).split(",").map((provider) => provider.trim()).filter(Boolean);
 }
 
@@ -781,9 +887,10 @@ function getSupabaseClient() {
   if (!window.__melbBeerSupabaseClient) {
     window.__melbBeerSupabaseClient = window.supabase.createClient(config.url, config.anonKey, {
       auth: {
+        flowType: "implicit",
         persistSession: true,
         autoRefreshToken: true,
-        detectSessionInUrl: true,
+        detectSessionInUrl: false,
       },
     });
 
@@ -799,6 +906,28 @@ function getSupabaseClient() {
   }
 
   return window.__melbBeerSupabaseClient;
+}
+
+function getSupabaseOAuthClient() {
+  if (isRestoreRehearsalMode()) {
+    clearSupabaseOAuthFlowStorage();
+    window.__pintPathSupabaseOAuthClient = null;
+    return null;
+  }
+  const config = getSupabaseConfig();
+  if (!window.supabase || !config.url || !config.anonKey) return null;
+  if (!window.__pintPathSupabaseOAuthClient) {
+    window.__pintPathSupabaseOAuthClient = window.supabase.createClient(config.url, config.anonKey, {
+      auth: {
+        flowType: "pkce",
+        persistSession: true,
+        autoRefreshToken: false,
+        detectSessionInUrl: false,
+        storageKey: OAUTH_PKCE_STORAGE_KEY,
+      },
+    });
+  }
+  return window.__pintPathSupabaseOAuthClient;
 }
 
 function isFieldTestMode() {
@@ -1060,7 +1189,7 @@ async function syncSupabaseSession(options = {}) {
 }
 
 async function signInWithOAuth(provider, options = {}) {
-  const client = getSupabaseClient();
+  const client = getSupabaseOAuthClient();
   if (!client) {
     throw new Error("Supabase login is not configured for this environment.");
   }
@@ -1074,12 +1203,17 @@ async function signInWithOAuth(provider, options = {}) {
   window.localStorage.setItem(AUTH_RETURN_KEY, returnTo);
   clearPendingLegalAcceptance();
   const authFlowNonce = createAuthFlowNonce();
+  storeAuthFlowState({
+    nonce: authFlowNonce,
+    returnTo,
+    kind: "oauth",
+  });
 
   try {
     const { error } = await client.auth.signInWithOAuth({
       provider,
       options: {
-        redirectTo: getAuthCallbackUrl(returnTo, { authFlowNonce }),
+        redirectTo: getAuthCallbackUrl(),
         scopes: scopesByProvider[provider] || "email",
       },
     });
@@ -1089,6 +1223,9 @@ async function signInWithOAuth(provider, options = {}) {
     }
   } catch (error) {
     clearPendingLegalAcceptance();
+    clearAuthFlowState();
+    clearSupabaseOAuthFlowStorage();
+    window.localStorage.removeItem(AUTH_RETURN_KEY);
     throw error;
   }
 }
@@ -1108,6 +1245,8 @@ async function signInWithEmail(email, password) {
     throw new Error("Email login did not return a session. Confirm your email, then try again.");
   }
 
+  clearAuthFlowState();
+  clearSupabaseOAuthFlowStorage();
   return syncSupabaseSession();
 }
 
@@ -1117,14 +1256,20 @@ async function signUpWithEmail(email, password, ageConfirmed, termsAccepted, pri
     throw new Error("Supabase email signup is not configured for this environment.");
   }
 
-  const returnTo = getAuthReturnPathFromLocation();
-  window.localStorage.setItem(AUTH_RETURN_KEY, returnTo);
-  clearPendingLegalAcceptance();
-  const authFlowNonce = createAuthFlowNonce();
   const acceptance = legalAcceptancePayload({ ageConfirmed, termsAccepted, privacyAccepted });
   if (!acceptance.ageConfirmed || !acceptance.termsAccepted || !acceptance.privacyAccepted) {
     throw new Error("Confirm you are 18+ and accept the current Terms and Privacy Policy before creating an account.");
   }
+
+  const returnTo = getAuthReturnPathFromLocation();
+  window.localStorage.setItem(AUTH_RETURN_KEY, returnTo);
+  clearPendingLegalAcceptance();
+  const authFlowNonce = createAuthFlowNonce();
+  storeAuthFlowState({
+    nonce: authFlowNonce,
+    returnTo,
+    kind: "signup",
+  });
   // Consent is held briefly on this browser and sent to Pint Path's server after
   // Supabase proves the identity. Supabase user_metadata is editable and is not
   // used as evidence of age or legal acceptance.
@@ -1141,7 +1286,7 @@ async function signUpWithEmail(email, password, ageConfirmed, termsAccepted, pri
       email,
       password,
       options: {
-        emailRedirectTo: getAuthCallbackUrl(returnTo, { authFlowNonce }),
+        emailRedirectTo: getAuthCallbackUrl(),
         data: {
           display_name: displayName || undefined,
           full_name: displayName || undefined,
@@ -1152,13 +1297,19 @@ async function signUpWithEmail(email, password, ageConfirmed, termsAccepted, pri
     data = signup.data;
   } catch (error) {
     clearPendingLegalAcceptance();
+    clearAuthFlowState();
+    window.localStorage.removeItem(AUTH_RETURN_KEY);
     throw error;
   }
 
   if (data.session?.access_token) {
-    const synced = await syncSupabaseSession({ applyPendingLegalAcceptance: true, authFlowNonce });
-
-    return { ...synced, needsEmailConfirmation: false };
+    try {
+      const synced = await syncSupabaseSession({ applyPendingLegalAcceptance: true, authFlowNonce });
+      return { ...synced, needsEmailConfirmation: false };
+    } finally {
+      clearAuthFlowState();
+      window.localStorage.removeItem(AUTH_RETURN_KEY);
+    }
   }
 
   return {
@@ -1175,16 +1326,28 @@ async function resendSignupConfirmation(email) {
     throw new Error("Supabase confirmation email is not configured for this environment.");
   }
 
-  const { error } = await client.auth.resend({
-    type: "signup",
-    email,
-    options: {
-      emailRedirectTo: getAuthCallbackUrl("/account.html"),
-    },
-  });
+  const returnTo = "/account.html";
+  const authFlowNonce = createAuthFlowNonce();
+  window.localStorage.setItem(AUTH_RETURN_KEY, returnTo);
+  storeAuthFlowState({ nonce: authFlowNonce, returnTo, kind: "signup" });
+  const pendingAcceptance = getPendingLegalAcceptance();
+  if (pendingAcceptance) {
+    setPendingLegalAcceptance({ ...pendingAcceptance, authFlowNonce });
+  }
 
-  if (error) {
-    throw new Error(error.message);
+  try {
+    const { error } = await client.auth.resend({
+      type: "signup",
+      email,
+      options: {
+        emailRedirectTo: getAuthCallbackUrl(),
+      },
+    });
+    if (error) throw new Error(error.message);
+  } catch (error) {
+    clearAuthFlowState();
+    window.localStorage.removeItem(AUTH_RETURN_KEY);
+    throw error;
   }
 
   return {
@@ -1198,12 +1361,20 @@ async function requestPasswordReset(email) {
     throw new Error("Password reset is available when Supabase Auth is configured.");
   }
 
-  const { error } = await client.auth.resetPasswordForEmail(email, {
-    redirectTo: getAuthCallbackUrl("/reset-password.html?mode=update"),
-  });
+  const returnTo = "/reset-password.html?mode=update";
+  const authFlowNonce = createAuthFlowNonce();
+  window.localStorage.setItem(AUTH_RETURN_KEY, returnTo);
+  storeAuthFlowState({ nonce: authFlowNonce, returnTo, kind: "password_recovery" });
 
-  if (error) {
-    throw new Error(error.message);
+  try {
+    const { error } = await client.auth.resetPasswordForEmail(email, {
+      redirectTo: getAuthCallbackUrl(),
+    });
+    if (error) throw new Error(error.message);
+  } catch (error) {
+    clearAuthFlowState();
+    window.localStorage.removeItem(AUTH_RETURN_KEY);
+    throw error;
   }
 
   return {
@@ -1303,6 +1474,26 @@ async function updatePassword(password) {
     message: "Password updated. Every Pint Path session was signed out; sign in again with your new password.",
     reauthenticationRequired: true,
   };
+}
+
+function isIOSLegalSurface() {
+  const path = window.location.pathname.replace(/\/+$/, "") || "/";
+  const isLegalPath = ["/terms", "/terms.html", "/privacy", "/privacy.html"].includes(path);
+  return isLegalPath && new URLSearchParams(window.location.search).get("source") === "ios_app";
+}
+
+function renderIOSLegalNav() {
+  return `
+    <nav class="topNav" aria-label="Pint Path legal information">
+      <span class="brand" aria-label="Pint Path">
+        <img class="brandLogo" src="/assets/pint-path-icon-192.png" alt="" width="36" height="36" aria-hidden="true" />
+        <span class="brandText"><strong>Pint Path</strong></span>
+      </span>
+      <div class="navLinks">
+        <a href="mailto:admin@pintpath.au">Contact support</a>
+      </div>
+    </nav>
+  `;
 }
 
 function renderNav(active = "") {
@@ -1441,6 +1632,7 @@ function navActiveKey(nav) {
 async function hydrateAuthSessionNavigation() {
   const nav = document.getElementById("nav");
   if (!nav) return null;
+  if (isIOSLegalSurface()) return null;
   if (!authSessionHydrationPromise) {
     authSessionHydrationPromise = apiFetch("/api/business/auth/session")
       .then((session) => {
@@ -1587,6 +1779,13 @@ function installLegalFooter() {
   const footer = document.createElement("footer");
   footer.className = "legalFooter";
   footer.dataset.legalFooter = "true";
+  if (isIOSLegalSurface()) {
+    footer.innerHTML = `
+      <span>Pint Path · ABN 80 319 578 329 · <a href="mailto:admin@pintpath.au">admin@pintpath.au</a> · Policy version ${LEGAL_POLICY_VERSION}</span>
+    `;
+    main.appendChild(footer);
+    return;
+  }
   footer.innerHTML = `
     <nav aria-label="Legal, privacy, and help">
       <a href="/terms.html">Terms</a>
@@ -1684,6 +1883,7 @@ window.MelbBeerBusiness = {
   getSupabaseConfig,
   getSupabaseOauthProviders,
   getSupabaseClient,
+  getSupabaseOAuthClient,
   getCookieConsentDecision,
   setCookieConsentDecision,
   hasAnalyticsConsent,
@@ -1697,6 +1897,10 @@ window.MelbBeerBusiness = {
   clearSensitiveAuthReturnState,
   getAuthCallbackUrl,
   createAuthFlowNonce,
+  peekAuthFlowState,
+  consumeAuthFlowState,
+  clearAuthFlowState,
+  clearSupabaseOAuthFlowStorage,
   setPrivacyPreferenceCache,
   isFieldTestMode,
   apiFetch,
@@ -1714,6 +1918,8 @@ window.MelbBeerBusiness = {
   markPasswordRecoverySession,
   validatePasswordRecoverySession,
   updatePassword,
+  isIOSLegalSurface,
+  renderIOSLegalNav,
   renderNav,
   hydrateAuthSessionNavigation,
   installNavigationChrome,
@@ -1731,7 +1937,9 @@ window.addEventListener("DOMContentLoaded", async () => {
   installAccessibilityChrome();
   installNavigationChrome();
   installFieldTestChrome();
-  installCookieConsent();
+  if (!isIOSLegalSurface()) {
+    installCookieConsent();
+  }
   installLegalFooter();
   void hydrateAuthSessionNavigation();
 });

@@ -5,6 +5,7 @@ import path from "node:path";
 import BetterSqlite3 from "better-sqlite3";
 
 import { BusinessRepository } from "../db/business.repository.js";
+import { sanitizeAccountDeletionRecipientSecretsInBackup } from "../db/backup-privacy.js";
 
 export interface BackupFile {
   path: string;
@@ -436,6 +437,7 @@ export async function createDataBackup(input: {
   // `-wal`/`-shm` files beside the manifest-authoritative database object.
   const normalizedBackup = new BetterSqlite3(backupDatabase, { fileMustExist: true });
   try {
+    sanitizeAccountDeletionRecipientSecretsInBackup(normalizedBackup);
     const journalMode = normalizedBackup.pragma("journal_mode = DELETE", { simple: true });
     if (String(journalMode).toLowerCase() !== "delete") {
       throw new Error("Could not normalize the backup SQLite journal mode.");
@@ -744,6 +746,7 @@ async function applyAccountDeletionTombstones(input: {
         requestId,
         reviewedBy: tombstone.userId,
         now: tombstone.completedAt,
+        completionNotificationDisposition: "suppress_restore",
       });
       for (const evidenceId of (summary.evidenceIds as string[] | undefined) ?? []) {
         repository.markSourceEvidenceDeleted({ id: evidenceId, deletedAt: tombstone.completedAt });
@@ -766,6 +769,9 @@ async function applyAccountDeletionTombstones(input: {
         await fs.promises.rm(restoredObject, { force: true });
       }
       tombstonesApplied += 1;
+    }
+    if (!repository.checkpointAccountDeletionNotificationSecrets()) {
+      throw new Error("Restored deletion-notice recipient purge could not securely checkpoint the SQLite WAL.");
     }
   } finally {
     database.close();

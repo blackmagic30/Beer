@@ -7,8 +7,9 @@ import BetterSqlite3 from "better-sqlite3";
 import { env } from "../config/env.js";
 import { BeerCatalogRepository, syncStaticBeerCatalog } from "./beer-catalog.repository.js";
 import { isLikelyBeerName } from "../constants/beers.js";
+import { sanitizeAccountDeletionRecipientSecretsInBackup } from "./backup-privacy.js";
 
-export const CURRENT_DATABASE_SCHEMA_VERSION = 11;
+export const CURRENT_DATABASE_SCHEMA_VERSION = 15;
 const MIGRATION_BACKUP_RETENTION = 3;
 export const MIGRATION_BACKUP_MAX_AGE_DAYS = 30;
 
@@ -35,10 +36,12 @@ const venueProfilesColumns = [
   { name: "stripe_customer_id", definition: "TEXT" },
   { name: "stripe_subscription_id", definition: "TEXT" },
   { name: "subscription_status", definition: "TEXT" },
+  { name: "subscription_current_period_end", definition: "TEXT" },
   { name: "stripe_paid_membership_tier", definition: "TEXT" },
   { name: "tier_manual_override", definition: "INTEGER NOT NULL DEFAULT 0" },
   { name: "accepts_pint_path_codes", definition: "INTEGER NOT NULL DEFAULT 0" },
   { name: "stripe_event_created_at", definition: "TEXT" },
+  { name: "intro_trial_ever_claimed", definition: "INTEGER NOT NULL DEFAULT 0" },
   { name: "pos_webhook_token_version", definition: "INTEGER NOT NULL DEFAULT 1" },
   { name: "pos_previous_token_version", definition: "INTEGER" },
   { name: "pos_previous_token_valid_until", definition: "TEXT" },
@@ -176,7 +179,7 @@ const venueRequestColumns = [
 ] as const;
 
 const accountPrivacySettingsColumns = [
-  { name: "consent_version", definition: "TEXT NOT NULL DEFAULT '2026-07-20'" },
+  { name: "consent_version", definition: "TEXT NOT NULL DEFAULT '2026-08-03'" },
   { name: "consented_at", definition: "TEXT" },
 ] as const;
 
@@ -193,6 +196,18 @@ const accountDeletionRequestColumns = [
   { name: "deletion_tombstone_recorded_at", definition: "TEXT" },
   { name: "last_error", definition: "TEXT" },
   { name: "attempt_count", definition: "INTEGER NOT NULL DEFAULT 0" },
+] as const;
+
+const accountDeletionCompletionOutboxColumns = [
+  { name: "payload_fingerprint", definition: "TEXT CHECK (payload_fingerprint IS NULL OR length(payload_fingerprint) = 64)" },
+  {
+    name: "secret_purge_checkpoint_pending",
+    definition: "INTEGER NOT NULL DEFAULT 0 CHECK (secret_purge_checkpoint_pending IN (0, 1))",
+  },
+  {
+    name: "secret_purge_generation",
+    definition: "INTEGER NOT NULL DEFAULT 0 CHECK (secret_purge_generation >= 0)",
+  },
 ] as const;
 
 const venuePartnerOutreachColumns = [
@@ -215,6 +230,12 @@ const venueBeersColumns = [
   { name: "price_verified_at", definition: "TEXT" },
   { name: "stock_verified_at", definition: "TEXT" },
   { name: "source_ingestion_id", definition: "TEXT" },
+] as const;
+
+const venuePriceRecordColumns = [
+  { name: "source_ingestion_id", definition: "TEXT" },
+  { name: "source_evidence_reference", definition: "TEXT" },
+  { name: "source_evidence_verified_at", definition: "TEXT" },
 ] as const;
 
 const PUBLIC_ACCOUNT_ID_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -1172,6 +1193,7 @@ export function initializeDatabaseSchema(database: BetterSqlite3.Database): void
     .replace(/PRAGMA\s+foreign_keys\s*=\s*ON\s*;/gi, "");
   database.pragma("journal_mode = WAL");
   database.pragma("foreign_keys = ON");
+  database.pragma("secure_delete = ON");
   const migrate = database.transaction(() => {
     // Existing databases can be missing columns referenced by newer indexes.
     // Create tables first, upgrade columns second, reconcile legacy rows, then build every index.
@@ -1199,10 +1221,12 @@ export function initializeDatabaseSchema(database: BetterSqlite3.Database): void
     ensureColumns(database, "account_privacy_settings", accountPrivacySettingsColumns);
     ensureColumns(database, "source_evidence_objects", sourceEvidenceColumns);
     ensureColumns(database, "account_deletion_requests", accountDeletionRequestColumns);
+    ensureColumns(database, "account_deletion_completion_outbox", accountDeletionCompletionOutboxColumns);
     ensureColumns(database, "venue_partner_outreach", venuePartnerOutreachColumns);
     ensureColumns(database, "admin_ingestion_queue", adminIngestionQueueColumns);
     redactCompletedAdminIngestionImages(database);
     ensureColumns(database, "venue_beers", venueBeersColumns);
+    ensureColumns(database, "venue_price_records", venuePriceRecordColumns);
     normalizeMissionReservations(database);
     reconcileCounterOnlyAccountRoles(database);
     reconcileLegacyUniqueConstraints(database);
@@ -1247,6 +1271,12 @@ function createPreMigrationBackup(database: BetterSqlite3.Database, databasePath
   );
 
   database.prepare("VACUUM INTO ?").run(backupPath);
+  const backupDatabase = new BetterSqlite3(backupPath, { fileMustExist: true });
+  try {
+    sanitizeAccountDeletionRecipientSecretsInBackup(backupDatabase);
+  } finally {
+    backupDatabase.close();
+  }
   fs.chmodSync(backupPath, 0o600);
 
   purgeExpiredMigrationBackups(databasePath);
@@ -1291,6 +1321,7 @@ export function createDatabase(databasePath = env.DATABASE_PATH): BetterSqlite3.
 
   database.pragma("journal_mode = WAL");
   database.pragma("foreign_keys = ON");
+  database.pragma("secure_delete = ON");
   const schemaVersion = currentDatabaseSchemaVersion(database);
   if (schemaVersion > CURRENT_DATABASE_SCHEMA_VERSION) {
     database.close();

@@ -187,7 +187,7 @@ class BeerMapApiClient(
             path = "/auth/v1/recover",
             body = JSONObject()
                 .put("email", email)
-                .put("redirect_to", baseUrl.trimEnd('/') + "/reset-password.html"),
+                .put("redirect_to", baseUrl.trimEnd('/') + "/auth/callback"),
             config = config
         )
     }

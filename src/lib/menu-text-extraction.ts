@@ -1,4 +1,5 @@
 import { VIEWER_TRACKED_BEERS, canonicalizeTrackedBeerName } from "../constants/beers.js";
+import { decodeHtmlEntitiesOnce, extractPlainTextFromHtml } from "./html-plain-text.js";
 
 export type MenuTextAvailabilityStatus = "on_tap" | "package_only" | "unavailable" | "unknown";
 
@@ -377,30 +378,12 @@ function isEmbeddedInMeasurementToken(line: string, start: number, end: number):
   return /^\s*(?:ml|l\b|oz|cl|g\b|kg\b|%|days?\b|years?\b|yrs?\b|packs?\b|grade\b|tap(?:s|\s+bar|\s+beers?)?\b)/i.test(after);
 }
 
-function decodeMenuHtml(value: string): string {
-  return value
-    .replace(/&nbsp;/g, " ")
-    .replace(/&ndash;/g, "-")
-    .replace(/&mdash;/g, "-")
-    .replace(/&middot;/g, " ")
-    .replace(/&bull;/g, " ")
-    .replace(/&#x([0-9a-f]+);/gi, (_match, hex: string) => String.fromCodePoint(Number.parseInt(hex, 16)))
-    .replace(/&#(\d+);/g, (_match, code: string) => String.fromCodePoint(Number.parseInt(code, 10)))
-    .replace(/&amp;/g, "&")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">");
+export function decodeMenuHtml(value: string): string {
+  return decodeHtmlEntitiesOnce(value);
 }
 
 function stripMenuHtml(value: string): string {
-  return decodeMenuHtml(value)
-    .replace(/<script[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style[\s\S]*?<\/style>/gi, " ")
-    .replace(/<br\s*\/?>/gi, " ")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  return extractPlainTextFromHtml(value, { separator: " " });
 }
 
 function extractFirstClassText(html: string, className: string): string | null {

@@ -62,6 +62,19 @@ function attachManualCaptureSupabase(
           };
         }
 
+        const saveCapture = async (row: unknown) => {
+          const evidenceReference = (row as { evidence_reference?: unknown }).evidence_reference;
+          const existingIndex = insertedCaptures.findIndex(
+            (capture) =>
+              (capture as { evidence_reference?: unknown }).evidence_reference === evidenceReference,
+          );
+          if (existingIndex >= 0) {
+            insertedCaptures[existingIndex] = row;
+          } else {
+            insertedCaptures.push(row);
+          }
+          return { error: null };
+        };
         return {
           select: () => ({
             eq: () => ({
@@ -70,10 +83,8 @@ function attachManualCaptureSupabase(
               }),
             }),
           }),
-          insert: async (row: unknown) => {
-            insertedCaptures.push(row);
-            return { error: null };
-          },
+          upsert: saveCapture,
+          insert: saveCapture,
         };
       }
 
@@ -281,8 +292,18 @@ describe("manual capture helpers", () => {
         isOnTap: "yes",
         confidence: "admin_verified",
         sourceType: "menu_photo_ocr",
+        hasSourceLinkage: true,
+        hasSourceEvidence: true,
       }),
     ]);
+    expect(database.prepare(
+      `SELECT source_evidence_reference, source_evidence_verified_at
+       FROM venue_price_records
+       WHERE id = ?`,
+    ).get(`admin-capture:${venue.id}:carlton-draft:pint`)).toEqual({
+      source_evidence_reference: expect.stringMatching(/^manual-capture:/),
+      source_evidence_verified_at: expect.any(String),
+    });
     expect(repository.listBarBeers(venue.id)).toEqual([
       expect.objectContaining({
         id: `admin-reviewed:${venue.id}:carlton-draft:pint`,
@@ -295,7 +316,7 @@ describe("manual capture helpers", () => {
     ]);
   });
 
-  it("still publishes manual capture rows locally when capture history is unavailable", async () => {
+  it("fails closed without local rows when private capture history is unavailable", async () => {
     database = new BetterSqlite3(":memory:");
     initializeDatabaseSchema(database);
     const repository = new BusinessRepository(database);
@@ -315,7 +336,7 @@ describe("manual capture helpers", () => {
       },
     });
 
-    const result = await service.saveManualCapture({
+    await expect(service.saveManualCapture({
       venueId: venue.id,
       source: "menu_photo_ocr",
       note: "Admin checked OCR.",
@@ -332,23 +353,14 @@ describe("manual capture helpers", () => {
           needsReview: false,
         },
       ],
-    });
+    })).rejects.toThrow("no live venue data was published");
 
-    expect(result.mapPriceRecordCount).toBe(1);
-    expect(result.inventoryBeerCount).toBe(1);
-    expect(result.captureSaved).toBe(false);
-    expect(result.captureWarning).toContain("live venue data was still published");
     expect(insertedCaptures).toHaveLength(0);
-    expect(repository.listBarBeers(venue.id)).toEqual([
-      expect.objectContaining({
-        beerName: "Carlton Draught",
-        price: 13.5,
-        onTap: true,
-      }),
-    ]);
+    expect(repository.listLatestPriceRecords(10, venue.id)).toEqual([]);
+    expect(repository.listBarBeers(venue.id)).toEqual([]);
   });
 
-  it("does not write remote capture history or catalogue rows before local publish commits", async () => {
+  it("registers private evidence before publishing local rows and leaves no live row on local failure", async () => {
     database = new BetterSqlite3(":memory:");
     initializeDatabaseSchema(database);
     const service = new AdminService(
@@ -386,13 +398,15 @@ describe("manual capture helpers", () => {
     };
 
     await expect(service.saveManualCapture(input)).rejects.toThrow("forced manual local failure");
-    expect(insertedCaptures).toHaveLength(0);
+    expect(insertedCaptures).toHaveLength(1);
+    expect(database.prepare("SELECT count(*) AS count FROM venue_price_records WHERE venue_id = ?")
+      .get(venue.id)).toEqual({ count: 0 });
     expect(database.prepare("SELECT count(*) AS count FROM beer_catalog_items WHERE name = ?")
       .get("Manual Rollback Lager")).toEqual({ count: 0 });
 
     internals.publishManualCapturePriceRecords = original;
     await expect(service.saveManualCapture(input)).resolves.toEqual(expect.objectContaining({ captureSaved: true }));
-    expect(insertedCaptures).toHaveLength(1);
+    expect(insertedCaptures).toHaveLength(2);
     expect(database.prepare("SELECT count(*) AS count FROM beer_catalog_items WHERE name = ?")
       .get("Manual Rollback Lager")).toEqual({ count: 1 });
   });

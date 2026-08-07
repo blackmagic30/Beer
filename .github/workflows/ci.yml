@@ -47,3 +47,41 @@ jobs:
 
       - name: Dependency audit
         run: npm run security:audit
+
+  supabase-database:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf # v2.1.1
+        with:
+          version: 2.109.1
+
+      - name: Start isolated Supabase database
+        run: supabase db start
+
+      - name: Rebuild database from migrations
+        run: supabase db reset --local
+
+      - name: Lint database schemas
+        run: supabase db lint --local --schema public,private --level warning --fail-on warning
+
+      - name: Run security advisors
+        run: supabase db advisors --local --type security --level warn --fail-on warn
+
+      - name: Report performance advisors
+        run: supabase db advisors --local --type performance --level warn --fail-on error
+
+      - name: Run pgTAP database tests
+        run: supabase test db --local supabase/tests
+
+      - name: Stop isolated Supabase database
+        if: always()
+        run: supabase stop --no-backup

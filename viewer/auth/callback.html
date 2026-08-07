@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Signing in | Pint Path</title>
   <meta name="robots" content="noindex,nofollow" />
+  <meta name="referrer" content="no-referrer" />
   <link rel="icon" href="/favicon.ico" sizes="any" />
   <link rel="icon" type="image/png" sizes="48x48" href="/favicon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="/assets/pint-path-icon-192.png" />
@@ -39,9 +40,16 @@
   </main>
 
   <script>
+    let callbackFlowState = null;
+    let callbackFlowNonce = "";
+
+    function callbackHashParams() {
+      return new URLSearchParams(String(window.location.hash || "").replace(/^#/, ""));
+    }
+
     function callbackErrorMessage() {
       const query = new URLSearchParams(window.location.search);
-      const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+      const hash = callbackHashParams();
       return query.get("error_description") ||
         query.get("error") ||
         hash.get("error_description") ||
@@ -50,18 +58,53 @@
     }
 
     function safeReturnPath() {
-      const params = new URLSearchParams(window.location.search);
+      const hash = callbackHashParams();
+      const recoveryReturnPath = hash.get("type") === "recovery"
+        ? "/reset-password.html?mode=update"
+        : null;
       return MelbBeerBusiness.getSafeReturnPath(
-        params.get("returnTo") || window.localStorage.getItem("pintPathAuthReturnTo") || "/account.html",
+        recoveryReturnPath ||
+        callbackFlowState?.returnTo ||
+        window.localStorage.getItem("pintPathAuthReturnTo") ||
+        "/account.html",
       );
     }
 
-    function callbackAuthFlowNonce() {
-      return new URLSearchParams(window.location.search).get("authFlow") || "";
+    function replaceWithSafeReturnPath(requestedPath) {
+      const safePath = MelbBeerBusiness.getSafeReturnPath(requestedPath);
+      const destination = new URL(safePath, window.location.origin);
+      if (destination.origin !== window.location.origin) {
+        window.location.replace("/account.html");
+        return;
+      }
+      window.location.replace(`${destination.pathname}${destination.search}${destination.hash}`);
     }
 
-    function redirectWithError(message, options = {}) {
+    function callbackAuthFlowNonce() {
+      return callbackFlowNonce;
+    }
+
+    async function clearCallbackSession() {
+      await MelbBeerBusiness.apiFetch("/api/business/auth/logout", {
+        method: "POST",
+        body: JSON.stringify({}),
+      }).catch(() => null);
+      const clients = [
+        MelbBeerBusiness.getSupabaseOAuthClient?.(),
+        MelbBeerBusiness.getSupabaseClient?.(),
+      ].filter(Boolean);
+      await Promise.all(clients.map((client) => client.auth.signOut({ scope: "local" }).catch(() => null)));
+      MelbBeerBusiness.clearSupabaseOAuthFlowStorage();
+      MelbBeerBusiness.clearAuthFlowState();
+      MelbBeerBusiness.clearSensitiveAuthReturnState();
+      MelbBeerBusiness.setAuthToken(null);
+      MelbBeerBusiness.setAccountContext(null);
+      window.localStorage.removeItem("pintPathAuthReturnTo");
+    }
+
+    async function redirectWithError(message, options = {}) {
       if (options.clearAcceptance) MelbBeerBusiness.clearPendingLegalAcceptance();
+      if (options.clearSession !== false) await clearCallbackSession();
       const accountUrl = new URL("/account.html", window.location.origin);
       accountUrl.searchParams.set("authError", message || "Login failed. Please try again.");
       window.location.replace(accountUrl.toString());
@@ -99,13 +142,13 @@
       const button = document.getElementById("callbackCancelButton");
       button.disabled = true;
       MelbBeerBusiness.clearPendingLegalAcceptance();
-      MelbBeerBusiness.clearSensitiveAuthReturnState();
       try {
-        await MelbBeerBusiness.getSupabaseClient()?.auth.signOut({ scope: "local" }).catch(() => null);
+        await clearCallbackSession();
       } finally {
-        MelbBeerBusiness.setAuthToken(null);
-        window.localStorage.removeItem("pintPathAuthReturnTo");
-        redirectWithError("Sign-in cancelled. No policy choices were saved.", { clearAcceptance: true });
+        await redirectWithError("Sign-in cancelled. No policy choices were saved.", {
+          clearAcceptance: true,
+          clearSession: false,
+        });
       }
     }
 
@@ -131,7 +174,9 @@
         destination = MelbBeerBusiness.isVenuePortalReturnPath(venueReturnPath) ? venueReturnPath : "/venue-portal.html";
       }
       window.localStorage.removeItem("pintPathAuthReturnTo");
-      window.location.replace(destination);
+      MelbBeerBusiness.clearAuthFlowState();
+      MelbBeerBusiness.clearSupabaseOAuthFlowStorage();
+      replaceWithSafeReturnPath(destination);
     }
 
     window.addEventListener("DOMContentLoaded", async () => {
@@ -160,13 +205,14 @@
             showCallbackAcceptance();
             return;
           }
-          redirectWithError(error.message);
+          await redirectWithError(error.message);
         }
       });
 
+      callbackFlowState = MelbBeerBusiness.peekAuthFlowState();
       const errorMessage = callbackErrorMessage();
       if (errorMessage) {
-        redirectWithError(errorMessage, { clearAcceptance: true });
+        await redirectWithError(errorMessage, { clearAcceptance: true });
         return;
       }
 
@@ -176,14 +222,61 @@
           throw new Error("Supabase login is not configured for this environment.");
         }
 
-        const code = new URLSearchParams(window.location.search).get("code");
-        if (code && client.auth.exchangeCodeForSession) {
-          const { error } = await client.auth.exchangeCodeForSession(code);
-          if (error && !/already|invalid_grant/i.test(error.message || "")) {
-            throw error;
+        const query = new URLSearchParams(window.location.search);
+        const hash = callbackHashParams();
+        const code = query.get("code");
+        const accessToken = hash.get("access_token");
+        const refreshToken = hash.get("refresh_token");
+        const callbackType = String(hash.get("type") || "").trim().toLowerCase();
+        const isRecoveryResult = callbackType === "recovery";
+        callbackFlowNonce = callbackFlowState?.nonce || MelbBeerBusiness.createAuthFlowNonce();
+
+        if (code) {
+          if (callbackFlowState?.kind !== "oauth") {
+            throw new Error("This secure provider sign-in request expired or was opened in a different browser. Start again from Pint Path.");
           }
+          const oauthClient = MelbBeerBusiness.getSupabaseOAuthClient();
+          if (!oauthClient?.auth.exchangeCodeForSession) {
+            throw new Error("Secure provider sign-in is unavailable in this browser. Refresh Pint Path and try again.");
+          }
+          const { data, error } = await oauthClient.auth.exchangeCodeForSession(code);
+          if (error) throw error;
+          if (!data?.session?.access_token || !data.session.refresh_token) {
+            throw new Error("The provider did not return a complete secure session. Start the sign-in again.");
+          }
+          if (typeof client.auth.setSession !== "function") {
+            throw new Error("Your sign-in client cannot finish the secure session. Refresh Pint Path and try again.");
+          }
+          const { error: setSessionError } = await client.auth.setSession({
+            access_token: data.session.access_token,
+            refresh_token: data.session.refresh_token,
+          });
+          if (setSessionError) throw setSessionError;
+        } else if (accessToken || refreshToken) {
+          const expectedFlowKind = isRecoveryResult
+            ? "password_recovery"
+            : callbackType === "signup"
+              ? "signup"
+              : null;
+          if (!expectedFlowKind) {
+            throw new Error("This email sign-in link type is not supported. Request a new Pint Path confirmation or recovery link.");
+          }
+          if (!isRecoveryResult && callbackFlowState && callbackFlowState.kind !== expectedFlowKind) {
+            throw new Error("This email sign-in link does not match the secure request started in this browser. Request a new link and try again.");
+          }
+          if (!accessToken || !refreshToken || typeof client.auth.setSession !== "function") {
+            throw new Error("The email sign-in link did not return a complete secure session. Request a new link and try again.");
+          }
+          const { error } = await client.auth.setSession({
+            access_token: accessToken,
+            refresh_token: refreshToken,
+          });
+          if (error) throw error;
+        } else {
+          throw new Error("No secure sign-in result was returned. Start again from the Pint Path account page.");
         }
 
+        MelbBeerBusiness.clearSupabaseOAuthFlowStorage();
         await finishCallbackLogin(callbackAuthFlowNonce());
       } catch (error) {
         if (needsBillingRecovery(error)) {
@@ -194,7 +287,7 @@
           showCallbackAcceptance();
           return;
         }
-        redirectWithError(error.message);
+        await redirectWithError(error.message);
       }
     });
   </script>

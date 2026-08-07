@@ -1,0 +1,8 @@
+// Committed non-secret defaults. Local and CI Release values are loaded from
+// the ignored Config.xcconfig file below.
+
+PINT_PATH_API_BASE_URL = https:/$()/pintpath.au
+SUPABASE_URL =
+SUPABASE_ANON_KEY =
+
+#include? "Config.xcconfig"

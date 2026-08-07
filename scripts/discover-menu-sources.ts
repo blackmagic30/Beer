@@ -2,15 +2,14 @@ import "dotenv/config";
 
 import { execFile } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
-import { promisify } from "node:util";
 import zlib from "node:zlib";
 
 import Database from "better-sqlite3";
 import OpenAI from "openai";
 
 import { VIEWER_TRACKED_BEERS, canonicalizeTrackedBeerName, isLikelyBeerName } from "../src/constants/beers.js";
+import { decodeHtmlEntitiesOnce, extractPlainTextFromHtml } from "../src/lib/html-plain-text.js";
 import {
   extractOnTapCardRowsFromHtml,
   extractStructuredBeerRowsFromText,
@@ -61,7 +60,6 @@ const DEFAULT_MAX_WORDPRESS_LINKS_PER_SITE = 8;
 const FETCH_RETRY_ATTEMPTS = 2;
 const FETCH_RETRY_DELAY_MS = 450;
 
-const execFileAsync = promisify(execFile);
 const textFetchCache = new Map<string, Promise<{ contentType: string; text: string }>>();
 const imageDataUrlCache = new Map<string, Promise<string>>();
 
@@ -969,41 +967,15 @@ function inferFreshness(text: string): { freshness: MenuSourceCandidate["freshne
 }
 
 function stripHtml(html: string): string {
-  return html
-    .replace(/<script[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style[\s\S]*?<\/style>/gi, " ")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  return extractPlainTextFromHtml(html, { separator: " " });
 }
 
 function decodeHtml(value: string): string {
-  return value
-    .replace(/&nbsp;/g, " ")
-    .replace(/&ndash;/g, "-")
-    .replace(/&mdash;/g, "-")
-    .replace(/&middot;/g, " ")
-    .replace(/&bull;/g, " ")
-    .replace(/&#x([0-9a-f]+);/gi, (_match, hex: string) => String.fromCodePoint(Number.parseInt(hex, 16)))
-    .replace(/&#(\d+);/g, (_match, code: string) => String.fromCodePoint(Number.parseInt(code, 10)))
-    .replace(/&amp;/g, "&")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">");
+  return decodeHtmlEntitiesOnce(value);
 }
 
 function htmlToPlainText(html: string): string {
-  return decodeHtml(html)
-    .replace(/<script[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style[\s\S]*?<\/style>/gi, " ")
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/(?:p|div|li|tr|td|th|h[1-6]|section|article|table)>/gi, "\n")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/[ \t]+/g, " ")
-    .replace(/\n\s+/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+  return extractPlainTextFromHtml(html, { separator: "\n" });
 }
 
 function flattenJsonStrings(value: unknown, output: string[] = []): string[] {
@@ -1538,24 +1510,25 @@ function decodePdfTextLikeContent(value: string): string {
 }
 
 async function extractPdfTextWithPdftotext(buffer: Buffer): Promise<string> {
-  const tempPath = path.join(os.tmpdir(), `pintpath-menu-${process.pid}-${Date.now()}.pdf`);
-  fs.writeFileSync(tempPath, buffer);
-  try {
-    const { stdout } = await execFileAsync("pdftotext", ["-layout", tempPath, "-"], {
+  return new Promise((resolve) => {
+    const child = execFile("pdftotext", ["-layout", "-", "-"], {
       encoding: "utf8",
       maxBuffer: MAX_TEXT_EXTRACTION_CHARS * 4,
       timeout: 15_000,
+    }, (error, stdout) => {
+      resolve(error ? "" : String(stdout).trim());
     });
-    return stdout.trim();
-  } catch {
-    return "";
-  } finally {
-    try {
-      fs.unlinkSync(tempPath);
-    } catch {
-      // Best effort cleanup only.
+
+    if (!child.stdin) {
+      child.kill();
+      resolve("");
+      return;
     }
-  }
+    child.stdin.on("error", () => {
+      // The callback reports process and pipe failures as an empty extraction.
+    });
+    child.stdin.end(buffer);
+  });
 }
 
 function extractPdfTextFallback(buffer: Buffer): string {

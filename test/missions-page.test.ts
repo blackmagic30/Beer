@@ -58,11 +58,14 @@ describe("missions page", () => {
     expect(html).toContain("function orderedMissionsForDisplay");
     expect(html).not.toContain("rememberMissionOrder");
     expect(html).toContain("const visibleMissions = missions.slice(0, visibleMissionCount)");
+    expect(html).toContain("const loadMoreMarkup = moreAvailable ?");
+    expect(html).toContain("` + loadMoreMarkup;");
     expect(html).toContain('id="loadMoreMissionsButton"');
     expect(html).toContain("visibleMissionCount += MISSION_PAGE_SIZE");
-    expect(html).toContain('offset: String(append ? missionCache.length : 0)');
+    expect(html).toContain('offset: String(append ? missionServerOffset : 0)');
     expect(html).toContain('sort: missionSort.value');
-    expect(html).toContain("missionPagination = data.pagination");
+    expect(html).toContain("missionPagination = data.pagination ?");
+    expect(html).toContain("rawPage.filter((mission) => !isHappyHourMission(mission))");
     expect(html).toContain("await loadMissions({ append: true })");
     expect(html).toContain("formatDistance(mission.distanceMeters)");
     expect(css).toContain(".missionToolbar");

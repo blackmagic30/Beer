@@ -27,17 +27,18 @@ npm run release:evidence:strict
 
 ## Manual Provider Proof
 
-- Supabase Auth redirects include `https://pintpath.au/auth/callback` and local callback URLs.
-- Supabase Google/Apple provider callback URL derived from `SUPABASE_URL` is present in the provider consoles.
+- Supabase Auth redirects include `https://pintpath.au/auth/callback` and local web callback URLs. Include native `pintpath://auth-callback` only for an Android release that enables native OAuth; the first-release iOS archive has no custom URL scheme and uses the HTTPS callback for email confirmation/password recovery.
+- The Supabase Google provider callback URL derived from `SUPABASE_URL` is present in the Google console, `SUPABASE_OAUTH_PROVIDERS=google`, and Apple OAuth is disabled.
 - Supabase leaked-password protection is enabled for public signup.
 - Supabase admin MFA/AAL2 is configured and an admin staging login proves `aal2` before admin actions.
 - Supabase live project is not on deprecated Postgres 14. Supabase support for Postgres 14 ends on 2026-07-01.
 - Supabase RLS and table grants are checked in the dashboard or RLS Tester after migrations are applied. Do not rely only on SQL text tests.
 - Supabase Storage bucket `beermap-source-evidence` is private, has no direct `anon`/`authenticated` object policies, and is reachable only through the authorized server API/admin signed-URL path.
 - Google Maps browser key is restricted to approved referrers and `GOOGLE_MAPS_MAP_ID` renders AdvancedMarkerElement markers on staging.
-- Stripe test-mode Checkout and signed webhooks prove subscription create/update/cancel, failed invoice handling, and replay idempotency; the smallest-value controlled live checkout/webhook/portal/cancel/refund reconciliation in `external-launch-signoffs.md` must also pass before public paid entry points open.
+- Keep `COMMERCIAL_LAUNCH_ENABLED=false` and `CONSUMER_PAID_ENROLLMENT_ENABLED=false` for the current deploy. Stripe test-mode Checkout and signed webhooks prove subscription create/update/cancel, failed invoice handling, and replay idempotency; the smallest-value controlled live checkout/webhook/portal/cancel/refund reconciliation in `external-launch-signoffs.md` must also pass before the controlling runbook may authorise any public paid entry point.
 - Redis is provisioned through `REDIS_URL`; production does not rely on the in-memory rate-limit override for broad traffic.
 - OpenAI and Google Places keys are server-side, restricted where possible, and absent from `/config.js`.
+- Resend has a dedicated sending-only key and verified deletion-notice sender. The signed webhook targets `/api/business/account-deletion-notifications/resend-webhook` and handles `email.delivered`, `email.delivery_delayed`, `email.bounced`, `email.failed`, `email.suppressed`, and `email.complained`. A sacrificial deletion runs only with `ACCOUNT_DELETION_REHEARSAL_ENABLED=true` in isolated Railway staging; production proves the variable is `false` or absent. Evidence covers `held -> pending -> accepted -> delivered`, purge on verified delivery and audited terminal resolution, the 30-day post-completion limit, the 60-day held cap, invalid signatures, replay, out-of-order events, bounce, timeout, restart, and restore suppression.
 
 ## Authenticated Owner Journey
 

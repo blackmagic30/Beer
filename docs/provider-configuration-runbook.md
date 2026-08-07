@@ -70,7 +70,7 @@ OPENAI_MENU_OCR_REVIEW_PASS=true
 SUPABASE_URL=https://your-production-project.supabase.co
 SUPABASE_ANON_KEY=your_browser_safe_publishable_or_anon_key
 SUPABASE_SERVICE_ROLE_KEY=your_server_only_service_role_key
-SUPABASE_OAUTH_PROVIDERS=google,apple
+SUPABASE_OAUTH_PROVIDERS=google
 REPORT_TIMEZONE=Australia/Melbourne
 REPORT_EMAIL_MODE=disabled
 RESEND_API_KEY=
@@ -80,23 +80,34 @@ REPORT_DELIVERY_SCHEDULE_ENABLED=false
 REPORT_DELIVERY_DAY=2
 REPORT_DELIVERY_HOUR=9
 REPORT_DELIVERY_CHECK_INTERVAL_MINUTES=60
+ACCOUNT_DELETION_NOTICE_MODE=resend
+RESEND_TRANSACTIONAL_API_KEY=replace_with_sending_only_key
+ACCOUNT_DELETION_NOTICE_FROM="Pint Path <account@pintpath.au>"
+ACCOUNT_DELETION_NOTICE_REPLY_TO=admin@pintpath.au
+RESEND_WEBHOOK_SIGNING_SECRET=whsec_replace_in_secret_manager
+ACCOUNT_DELETION_NOTICE_ACTIVE_KEY_ID=2026-08
+ACCOUNT_DELETION_NOTICE_KEYRING_JSON='{"2026-08":"replace_with_base64_32_byte_key"}'
+ACCOUNT_DELETION_NOTICE_CHECK_INTERVAL_MINUTES=5
+ACCOUNT_DELETION_REHEARSAL_ENABLED=false
 REDIS_URL=redis://default:replace_me@host:6379
 REQUIRE_REDIS_RATE_LIMITING=false
 ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=false
 SOURCE_EVIDENCE_SIGNING_SECRET=replace_with_32_plus_random_characters
 SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS=300
-POS_WEBHOOK_SIGNING_SECRET=replace_with_a_different_32_plus_random_characters
+POS_WEBHOOK_SIGNING_SECRET=
 ADMIN_EMAILS=owner@example.com
 REQUIRE_ADMIN_MFA_IN_PRODUCTION=true
 REQUIRE_VERIFIED_ACCOUNT_IN_PRODUCTION=true
 DEMO_BILLING_MODE=false
 ALLOW_DEMO_BILLING_IN_PRODUCTION=false
+COMMERCIAL_LAUNCH_ENABLED=false
+CONSUMER_PAID_ENROLLMENT_ENABLED=false
 ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=false
-STRIPE_SECRET_KEY=sk_test_or_live_xxx
-STRIPE_WEBHOOK_SECRET=whsec_xxx
-STRIPE_PRICE_MONTHLY=price_monthly_499_aud
-STRIPE_PRICE_YEARLY=price_yearly_50_aud
-STRIPE_PRO_PRICE_ID=price_venue_pro_aud
+STRIPE_SECRET_KEY=
+STRIPE_WEBHOOK_SECRET=
+STRIPE_PRICE_MONTHLY=
+STRIPE_PRICE_YEARLY=
+STRIPE_PRO_PRICE_ID=
 OFFSITE_BACKUP_SUPABASE_URL=https://your-independent-backup-project.supabase.co
 OFFSITE_BACKUP_SERVICE_ROLE_KEY=your_independent_project_service_role_key
 OFFSITE_BACKUP_BUCKET=pintpath-backups
@@ -104,7 +115,7 @@ OFFSITE_BACKUP_INTERVAL_HOURS=24
 OFFSITE_BACKUP_RETENTION_DAYS=30
 ```
 
-Replace all placeholders with real environment-specific values. The source-evidence and POS secrets must be different high-entropy values. `OFFSITE_BACKUP_SUPABASE_URL` must have a different origin from `SUPABASE_URL`. With `DEMO_BILLING_MODE=false`, all five Stripe values are startup requirements rather than optional checkout-only settings.
+Replace all applicable placeholders with real environment-specific values. `SOURCE_EVIDENCE_SIGNING_SECRET` is always required. For the selected manual counter-entry launch mode, leave `POS_WEBHOOK_SIGNING_SECRET` absent; the signed POS webhook remains disabled and fails closed. If a POS adapter is later approved, configure a different high-entropy 32+ byte POS secret before enabling it. `OFFSITE_BACKUP_SUPABASE_URL` must have a different origin from `SUPABASE_URL`. The five Stripe values are required only when `COMMERCIAL_LAUNCH_ENABLED=true` or `CONSUMER_PAID_ENROLLMENT_ENABLED=true`; keep both flags and all Stripe values unset for this deferred-pricing production deploy.
 
 Use a persistent Railway volume mounted at `/app/data`. Back it up before each schema-affecting deploy.
 
@@ -132,13 +143,16 @@ Required checks:
 
 - `SUPABASE_URL` and `SUPABASE_ANON_KEY` are set for browser OAuth.
 - `SUPABASE_SERVICE_ROLE_KEY` is only server-side.
-- Google/Apple OAuth providers are configured with minimal scopes.
+- Google OAuth is configured with minimal email/profile scopes for the web app. Apple OAuth remains disabled until authorization-token revocation is implemented and tested. The first-release iOS app is email/password only.
 - Leaked password protection is enabled in Supabase Auth.
 - The hosted database is not on deprecated Postgres 14.
-- Supabase Auth redirect URLs include the app callback pages:
+- Supabase Auth redirect URLs include the web callback pages:
   - `http://localhost:3000/auth/callback`
   - `https://pintpath.au/auth/callback`
-- Google and Apple provider consoles include the Supabase provider callback URL derived from `SUPABASE_URL`:
+- If Android social OAuth is released, its native callback is also allowlisted:
+  - `pintpath://auth-callback`
+- The first-release iOS archive has no custom URL scheme. Its email-confirmation and password-recovery links use the exact HTTPS web callback, after which the user returns to the app and signs in.
+- The Google provider console includes the Supabase provider callback URL derived from `SUPABASE_URL`:
   - `https://auth.pintpath.au/auth/v1/callback` when `SUPABASE_URL=https://auth.pintpath.au`
 - RLS policies from `supabase/migrations/` are applied and tested in staging.
 - New public-schema tables have intentional Data API exposure/grants plus RLS; do not assume new tables are automatically exposed.
@@ -147,7 +161,7 @@ Required checks:
 
 ## Stripe
 
-Keep `DEMO_BILLING_MODE=false` for real launch. Use Stripe test mode first:
+For this launch, keep `DEMO_BILLING_MODE=false` and both paid-enrolment flags `false`; Stripe is deferred and the following values remain absent. Before enabling either paid flag, configure all five and use Stripe test mode first:
 
 - `STRIPE_SECRET_KEY`
 - `STRIPE_WEBHOOK_SECRET`
@@ -167,7 +181,13 @@ Before live payments:
 6. Confirm production uses a live-mode `sk_live_` secret. Test-mode `sk_test_` secrets and test price IDs are staging-only.
 7. Complete the smallest-value controlled live checkout, signed webhook, billing portal, cancellation, immediate refund, and entitlement/receipt reconciliation in `external-launch-signoffs.md` before opening public paid entry points.
 
-## Monthly Reports
+## Future monthly reports — not part of the current launch
+
+Keep `REPORT_EMAIL_MODE=disabled` and
+`REPORT_DELIVERY_SCHEDULE_ENABLED=false` for the current venue-Free release.
+The implementation and rehearsal steps below are retained for a later approved
+Pro/commercial candidate; do not enable or use real delivery to satisfy the
+current release gate.
 
 Monthly reports are generated from privacy-thresholded aggregate events and reporting-period venue redemption totals. They do not include user or account IDs, names, emails, raw coordinates, individual clickstreams, recent redemption rows, or source evidence.
 
@@ -180,7 +200,8 @@ REPORT_EMAIL_MODE=mock npm run reports:deliver:mock -- --month=2026-05
 npm run reports:deliver -- --month=2026-05 --dry-run
 ```
 
-Real delivery is implemented through the Resend HTTPS API but remains opt-in. Before enabling it:
+Real delivery is implemented through the Resend HTTPS API but remains opt-in.
+Only in that later approved candidate, before enabling it:
 
 1. Add and verify a Pint Path sending domain or dedicated sending subdomain in Resend. Configure SPF and DKIM, and add DMARC before public rollout.
 2. Create a sending-only API key and store it in Railway as `RESEND_API_KEY`.
@@ -210,6 +231,14 @@ Protected export route:
 - `GET /api/business/venue-portal/:venueId/reports/:month/export?format=csv`
 
 Only verified Pro venue managers assigned to that venue, or admins, can export the report.
+
+## Account-deletion completion notices
+
+Canonical production uses `ACCOUNT_DELETION_NOTICE_MODE=resend` with a dedicated sending-only `RESEND_TRANSACTIONAL_API_KEY`; do not reuse the optional monthly-report key. Configure the signed webhook at `/api/business/account-deletion-notifications/resend-webhook` for `email.delivered`, `email.delivery_delayed`, `email.bounced`, `email.failed`, `email.suppressed`, and `email.complained`.
+
+Recipient ciphertext is held for at most 60 days while deletion is incomplete. After deletion completes, purge it on verified delivery, an audited terminal resolution, or no later than 30 days after completion. Retain only the non-identifying delivery and audit metadata allowed by the retention policy.
+
+Set `ACCOUNT_DELETION_REHEARSAL_ENABLED=true` only for the sacrificial proof in the isolated Railway environment named `staging`; remove it immediately after the proof. That staging service must have no `OFFSITE_BACKUP_SUPABASE_URL`, `OFFSITE_BACKUP_SERVICE_ROLE_KEY`, `REDIS_URL`, `REDIS_KEY_NAMESPACE`, or restore-Redis identity variables. Use `ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=true` only for this single-instance proof, then remove it. `npm run --silent readiness:providers` automatically selects the mutation-free `account_deletion_rehearsal` profile and must never run the production backup Storage canary in this mode. Leave the rehearsal variable `false` or absent in production.
 
 ## Redis
 
@@ -284,7 +313,7 @@ For an online drill, create a separate temporary secret key in the independent b
 
 ```bash
 : "${BACKUP_ID:?set from the protected production backup result}"
-: "${EXPECTED_MANIFEST_SHA256:?set from that result's manifestSha256}"
+: "${EXPECTED_MANIFEST_SHA256:?set from the result manifestSha256}"
 test ! -e "$BACKUP_PATH"
 test -f "${OFFSITE_BACKUP_SECRET_KEY_FILE:?}"
 test ! -L "$OFFSITE_BACKUP_SECRET_KEY_FILE"
@@ -300,9 +329,15 @@ OFFSITE_BACKUP_BUCKET="${OFFSITE_BACKUP_BUCKET:-pintpath-backups}" \
 npm run --silent data:backup:verify -- --backup="$BACKUP_PATH"
 ```
 
-The downloader uses the lockfile-installed `@supabase/supabase-js`; it needs no runtime `npx`, Supabase CLI, project linking, access token, or experimental command. It accepts the protected key file path, downloads only the exact validated immutable prefix into a private temporary directory, rejects unsafe paths and existing destinations, verifies the manifest, and then publishes the completed output without object-path progress. The manifest plus the independent verification command remains the integrity authority. Use only a trusted independent project. The complete safe variable setup, captures, and cleanup steps are in [`external-launch-signoffs.md`](external-launch-signoffs.md#8-backup_restore).
+The downloader uses the lockfile-installed `@supabase/supabase-js`; it needs no runtime `npx`, Supabase CLI, project linking, access token, or experimental command. It accepts the protected key file path, downloads only the exact validated immutable prefix into a private temporary directory, rejects unsafe paths and existing destinations, verifies the manifest, and then publishes the completed output without object-path progress. The manifest plus the independent verification command remains the integrity authority. Use only a trusted independent project. The complete safe variable setup, captures, and cleanup steps are in [`external-launch-signoffs.md`](external-launch-signoffs.md#9-backup_restore).
 
-The online rehearsal reads the immutable genesis and every deletion object directly, verifies the current aggregate/checkpoint, and accepts a zero-count ledger only when all authority agrees. Set `DATABASE_PATH` to the SQLite file that will be created inside the new rehearsal output, so the operational job state is written only to that isolated restored copy:
+The online rehearsal reads the application-convention append-only genesis and
+every deletion object directly, verifies the current aggregate/checkpoint, and
+accepts a zero-count ledger only when all authority agrees. This detects normal
+drift but is not provider-enforced immutability while Railway holds the Supabase
+service-role key. Set `DATABASE_PATH` to the SQLite file that will be created
+inside the new rehearsal output, so the operational job state is written only
+to that isolated restored copy:
 
 ```bash
 test ! -e "$REHEARSAL_ROOT"
@@ -331,7 +366,24 @@ Restore fails closed if the independent ledger authority is absent, malformed, s
 
 Off-site snapshot retention is capped at 30 days, so old snapshots can physically retain pre-deletion bytes for at most 30 days. A completed deletion has zero unprotected restore window: its independent tombstone must be durable before completion. The scheduled 24-hour run is reconciliation and drift detection, not the primary deletion write. If the ledger append fails, deletion remains failed/retryable and production restore is blocked until the ledger is healthy.
 
-Keep both source and destination buckets private. `/ready` requires a fresh successful backup and live destination capability canaries for list/upload/download/remove across PDF, SQLite/octet-stream, and image objects. Once per quarter, restore the latest verified directory into isolated staging. Rows with `storage_provider='supabase_private'` cannot be tested by pointing `SOURCE_EVIDENCE_STORAGE_DIR` at the local restored tree. Use `npm run data:backup:stage-evidence -- --backup="$BACKUP_PATH" --restore="$REHEARSAL_ROOT"` to upload the restored objects, with manifest MIME types and original paths, into an empty private `beermap-source-evidence` bucket in a separate staging Supabase project. Configure the isolated staging app with the restored database and that project, disable external writes, then confirm `/ready`, login, map prices, private image/PDF review, the orphan report, deletion-tombstone counts, and staging restore-job state. Purge the staging project/object copy after sign-off.
+Keep both source and operational destination buckets private. `/ready` requires a
+fresh successful operational backup and live destination capability canaries for
+list/upload/download/remove across PDF, SQLite/octet-stream, and image objects.
+Those delete canaries prove the existing Supabase restore copy and also prove it
+is not WORM. Replicate every completed set and deletion ledger to a separately
+administered provider/region with object lock and an append/create-only Railway
+principal; verify that copy outside `/ready` with a separately held reader.
+Once per quarter, restore the latest verified directory into isolated staging.
+Rows with `storage_provider='supabase_private'` cannot be tested by pointing
+`SOURCE_EVIDENCE_STORAGE_DIR` at the local restored tree. Use `npm run
+data:backup:stage-evidence -- --backup="$BACKUP_PATH"
+--restore="$REHEARSAL_ROOT"` to upload the restored objects, with manifest MIME
+types and original paths, into an empty private `beermap-source-evidence` bucket
+in a separate staging Supabase project. Configure the isolated staging app with
+the restored database and that project, disable external writes, then confirm
+`/ready`, login, map prices, private image/PDF review, the orphan report,
+deletion-tombstone counts, and staging restore-job state. Purge the staging
+project/object copy after sign-off.
 
 ## No-Go Conditions
 
@@ -344,5 +396,7 @@ Do not launch public production if any of these are true:
 - Automatic report email is presented as live before Resend credentials, verified sender-domain DNS, targeted staging delivery, and scheduler operational state are confirmed.
 - Redis is missing for broad public traffic.
 - Supabase source-evidence Storage is public or untested.
-- The backup destination shares the production project/provider, either bucket is public, or the independent deletion ledger is unavailable.
+- There is no object-locked/WORM copy in a separate provider or region, Railway
+  can delete/overwrite that copy or change its retention, either bucket is
+  public, or the independent deletion ledger is unavailable.
 - There is no complete recent off-site backup (SQLite plus Storage evidence) that passes verification, or the quarterly ledger-backed restore drill has not been completed.

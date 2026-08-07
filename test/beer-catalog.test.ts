@@ -24,6 +24,7 @@ describe("Pint Path beer catalogue", () => {
   });
 
   it("canonicalises common aliases so venue rows do not fork misspelled beer names", () => {
+    expect(normalizeBeerSearchKey("--Carlton Draught--")).toBe("carlton_draught");
     expect(canonicalizeTrackedBeerName("Carlton Draft")).toBe("Carlton Draught");
     expect(canonicalizeTrackedBeerName("Carlton Draught")).toBe("Carlton Draught");
     expect(findTrackedBeerByName("Carlton Draft")).toEqual(expect.objectContaining({

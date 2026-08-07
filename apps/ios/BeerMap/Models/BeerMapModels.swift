@@ -59,22 +59,11 @@ struct APIStatusEnvelope: Decodable {
 
 struct APIErrorPayload: Decodable {
     let message: String?
-    let code: String?
-    let recovery: APIErrorRecovery?
     let details: APIErrorDetails?
-}
-
-struct APIErrorRecovery: Decodable {
-    let eligible: Bool?
-    let endpoint: String?
-    let consumer: Bool?
-    let venues: [BillingRecoveryVenue]?
 }
 
 struct APIErrorDetails: Decodable {
     let reauthenticationRequired: Bool?
-    let billingRecoveryEligible: Bool?
-    let billingRecoveryEndpoint: String?
 }
 
 struct EmptyResponse: Codable {}
@@ -84,13 +73,10 @@ struct LogoutAllRequest: Codable {
 }
 
 struct PublicConfig: Codable {
-    let pricing: JSONValue?
     let contributorUnlockPoints: Int?
     let contributorUnlockDays: Int?
     let supabaseUrl: String?
     let supabaseAnonKey: String?
-    let supabaseOauthProviders: [String]?
-    let demoBillingMode: Bool?
     let fieldTestMode: Bool?
     let trackedBeers: [TrackedBeer]?
     let legalPolicyVersion: String?
@@ -145,30 +131,6 @@ struct LoginRequest: Codable {
     let password: String
 }
 
-struct BillingRecoveryProviderRequest: Codable {
-    let accessToken: String
-    let venueId: String?
-}
-
-struct BillingRecoveryPasswordRequest: Codable {
-    let email: String
-    let password: String
-    let venueId: String?
-}
-
-struct BillingRecoveryVenue: Codable, Identifiable, Hashable {
-    let venueId: String
-    let venueName: String
-
-    var id: String { venueId }
-}
-
-struct BillingRecoveryResult: Codable {
-    let portalUrl: String
-    let accountId: String?
-    let message: String?
-}
-
 struct PasswordRecoveryRequest: Codable {
     let email: String
     let redirectTo: String
@@ -184,16 +146,6 @@ struct SupabaseRefreshRequest: Codable {
 
     enum CodingKeys: String, CodingKey {
         case refreshToken = "refresh_token"
-    }
-}
-
-struct SupabasePKCERequest: Codable {
-    let authCode: String
-    let codeVerifier: String
-
-    enum CodingKeys: String, CodingKey {
-        case authCode = "auth_code"
-        case codeVerifier = "code_verifier"
     }
 }
 
@@ -234,9 +186,6 @@ struct AccountDashboard: Codable {
     let privacySettings: PrivacySettings?
     let access: AccessState?
     let leaderboard: LeaderboardContext?
-    let discounts: AccountDiscountSummary?
-    let pintPoints: AccountPintPoints?
-    let counterStaffInvitations: [CounterStaffInvitation]?
 
     enum CodingKeys: String, CodingKey {
         case account
@@ -246,29 +195,7 @@ struct AccountDashboard: Codable {
         case privacySettings
         case access
         case leaderboard
-        case discounts
-        case pintPoints
-        case counterStaffInvitations
     }
-}
-
-struct CounterStaffInvitation: Codable, Identifiable, Hashable {
-    let id: String
-    let venueId: String
-    let venueName: String
-    let suburb: String?
-    let invitedAt: String?
-    let expiresAt: String?
-}
-
-struct CounterStaffInvitationResponse: Codable {
-    let assignment: VenueAssignment?
-    let account: Account?
-    let message: String?
-}
-
-struct CounterStaffInvitationDecision: Codable {
-    let decision: String
 }
 
 struct Account: Codable, Identifiable, Hashable {
@@ -278,7 +205,6 @@ struct Account: Codable, Identifiable, Hashable {
     let role: String?
     let status: String?
     let subscriptionStatus: String?
-    let authProvider: String?
     let publicAccountId: String?
     let contributionPointsCurrentMonth: Double?
     let contributionPointsAllTime: Double?
@@ -389,39 +315,12 @@ struct AccessState: Codable, Hashable {
     let isAuthenticated: Bool?
     let accountRole: String?
     let isAdmin: Bool?
-    let hasFullAccess: Bool?
     let ageConfirmed: Bool?
-    let priceAccessModel: String?
-    let canViewAllPrices: Bool?
-    let freePreviewScope: String?
 }
 
 struct LeaderboardContext: Codable, Hashable {
     let accountId: String?
     let rank: Int?
-}
-
-struct AccountDiscountSummary: Codable, Hashable {
-    let eligible: Bool?
-    let estimatedSavingsCents: Int?
-}
-
-struct AccountPintPoints: Codable, Hashable {
-    let available: Int?
-    let threshold: Int?
-    let pointsUntilReward: Int?
-    let rewardAvailable: Bool?
-}
-
-struct RotatingCodeResult: Codable, Hashable {
-    let accountId: String?
-    let code: String
-    let qrDataUrl: String?
-    let redeemUrl: String?
-    let expiresAt: String?
-    let validMinutes: Int?
-    let pointsReserved: Int?
-    let copy: String?
 }
 
 struct VenueListResponse: Codable {
@@ -438,11 +337,7 @@ struct Venue: Codable, Identifiable, Hashable {
     let postcode: String?
     let latitude: Double?
     let longitude: Double?
-    let membershipTier: String?
-    let highlightedName: Bool?
-    let premiumBadge: String?
-    let promoted: Bool?
-    let featuredSpecialEligible: Bool?
+    let beerKeys: [String]?
 
     var displayLocation: String {
         [suburb, state].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ", ")
@@ -474,13 +369,11 @@ struct PriceRecord: Codable, Identifiable, Hashable {
     let priceCents: Int?
     let priceRedacted: Bool?
     let freePreviewIncluded: Bool?
-    let isHappyHourPrice: Bool?
-    let happyHour: String?
     let lastVerifiedAt: String?
 
     var formattedPrice: String {
         if priceRedacted == true {
-            return "Premium"
+            return "Preview only"
         }
         if let price {
             return "$\(String(format: "%.2f", price))"
@@ -595,8 +488,6 @@ struct SubmissionItemRequest: Codable, Hashable {
     let beerName: String
     let servingSize: String
     let price: Double?
-    let isHappyHourPrice: Bool
-    let happyHourDetails: String?
     let isOnTap: String
 }
 
@@ -629,21 +520,9 @@ struct VenuePortalData: Codable {
     let assignments: [VenueAssignment]?
     let selectedVenue: SelectedVenue?
     var profile: BarProfile?
-    let tier: TierCapabilities?
     let inventory: VenueInventory?
     let pendingChanges: [PendingChange]?
-    let insights: JSONValue?
-    let analytics: VenueAnalytics?
-    let monthlyReport: JSONValue?
-    let businessToolkit: JSONValue?
-    let demandDashboard: JSONValue?
-    let dailySpecialsPlanner: DailySpecialsPlanner?
-    let discounts: VenueDiscountSummary?
-    let pintPoints: VenuePintPointSummary?
-    let updateLink: String?
     let message: String?
-    let privacyCopy: String?
-    let qrCopy: String?
 }
 
 struct VenueAssignment: Codable, Identifiable, Hashable {
@@ -673,7 +552,6 @@ struct BarProfile: Codable, Hashable {
     var description: String?
     var openingHours: [String: JSONValue]?
     var venueTags: [String]?
-    var membershipTier: String?
     var active: Bool?
     var updatedAt: String?
     var replaceVenueTags: Bool? = nil
@@ -682,25 +560,11 @@ struct BarProfile: Codable, Hashable {
 
 struct BarProfileSaveResult: Codable {
     let profile: BarProfile
-    let tier: TierCapabilities?
     let message: String?
-}
-
-struct TierCapabilities: Codable, Hashable {
-    let tierLabel: String?
-    let canManageSpecials: Bool?
-    let analytics: Bool?
-    let monthlyReports: Bool?
-    let featuredSpecials: Bool?
-    let discoveryBoost: Bool?
-    let analyticsLocked: Bool?
-    let upgradeCopy: String?
 }
 
 struct VenueInventory: Codable, Hashable {
     let beers: [BarBeer]?
-    let happyHours: [BarHappyHour]?
-    let specials: [BarSpecial]?
 }
 
 struct BarBeer: Codable, Identifiable, Hashable {
@@ -727,186 +591,12 @@ struct BarBeerSaveResult: Codable {
     let message: String?
 }
 
-struct BarHappyHour: Codable, Identifiable, Hashable {
-    var id: String?
-    var title: String
-    var daysOfWeek: [String]
-    var startTime: String
-    var endTime: String
-    var description: String
-    var active: Bool
-
-    var stableId: String { id ?? "\(title)-\(startTime)" }
-}
-
-struct BarHappyHourSaveResult: Codable {
-    let happyHour: BarHappyHour
-    let message: String?
-}
-
-struct BarSpecial: Codable, Identifiable, Hashable {
-    var id: String?
-    var title: String
-    var description: String
-    var price: Double?
-    var discount: String?
-    var startsAt: String?
-    var endsAt: String?
-    var startTime: String
-    var endTime: String
-    var scheduleNote: String?
-    var exclusive: Bool
-    var active: Bool
-
-    var stableId: String { id ?? "\(title)-\(startTime)" }
-}
-
-struct BarSpecialSaveResult: Codable {
-    let special: BarSpecial
-    let message: String?
-}
-
 struct PendingChange: Codable, Identifiable, Hashable {
     let id: String
     let section: String?
     let status: String?
     let createdAt: String?
     let summary: String?
-}
-
-struct VenueAnalytics: Codable, Hashable {
-    let barLookups: Int?
-    let profileViews: Int?
-    let beerListViews: Int?
-    let specialsViews: Int?
-    let pricePreviewViews: Int?
-    let directionsClicks: Int?
-    let privacyFloorMet: Bool?
-    let privacyThreshold: Int?
-}
-
-struct DailySpecialsPlanner: Codable, Hashable {
-    let title: String?
-    let venueName: String?
-    let area: String?
-    let summaryDate: String?
-    let sourcePeriod: String?
-    let privacyFloorMet: Bool?
-    let confidenceCopy: String?
-    let summary: String?
-    let demandSignals: [PlannerSignal]?
-    let popularWindows: [PlannerWindow]?
-    let quietWindows: [PlannerWindow]?
-    let localSearchSignals: [PlannerSignal]?
-    let recommendations: [PlannerRecommendation]?
-}
-
-struct PlannerSignal: Codable, Identifiable, Hashable {
-    let label: String
-    let value: JSONValue?
-    let helper: String?
-
-    var id: String { "\(label)-\(helper ?? "")" }
-    var displayValue: String {
-        switch value {
-        case .string(let value): return value
-        case .number(let value):
-            return value.rounded() == value ? "\(Int(value))" : String(format: "%.1f", value)
-        case .bool(let value): return value ? "Yes" : "No"
-        case .none, .null: return "-"
-        default: return "View"
-        }
-    }
-}
-
-struct PlannerWindow: Codable, Identifiable, Hashable {
-    let label: String
-    let startTime: String?
-    let endTime: String?
-    let count: Int?
-    let helper: String?
-
-    var id: String { "\(label)-\(startTime ?? "")-\(endTime ?? "")" }
-}
-
-struct PlannerRecommendation: Codable, Identifiable, Hashable {
-    let title: String
-    let type: String?
-    let window: String?
-    let startTime: String?
-    let endTime: String?
-    let offerIdea: String?
-    let reason: String?
-    let action: String?
-
-    var id: String { "\(title)-\(window ?? "")" }
-}
-
-struct VenueDiscountSummary: Codable, Hashable {
-    let totalRedemptions: Int?
-    let totalQuantity: Int?
-    let uniqueAccounts: Int?
-    let estimatedSavingsCents: Int?
-}
-
-struct VenuePintPointSummary: Codable, Hashable {
-    let today: JSONValue?
-    let month: JSONValue?
-    let rewardThreshold: Int?
-    let copy: String?
-}
-
-struct CounterMemberPreview: Codable, Hashable {
-    let accountId: String
-    let checkoutToken: String
-    let authorizationExpiresAt: String?
-    let pointsRemainingToday: Int?
-    let privacyCopy: String?
-}
-
-struct CounterPurchaseRecord: Codable, Hashable {
-    let id: String?
-}
-
-struct CounterPurchaseResult: Codable, Hashable {
-    let record: CounterPurchaseRecord?
-    let accountId: String?
-    let pointsEarned: Int?
-    let idempotentReplay: Bool?
-    let copy: String?
-    let progressCopy: String?
-    let rewardCopy: String?
-}
-
-struct CounterRewardResult: Codable, Hashable {
-    let status: String?
-    let accountId: String?
-    let copy: String?
-    let instruction: String?
-}
-
-struct CounterMemberPreviewRequest: Codable {
-    let code: String
-    let transactionReference: String
-}
-
-struct CounterPurchaseRequest: Codable {
-    let checkoutToken: String
-    let itemName: String?
-    let beverageCategory: String
-    let quantity: Int
-    let transactionReference: String
-    let notes: String?
-}
-
-struct CounterVoidRequest: Codable {
-    let reason: String
-}
-
-struct CounterRewardDecisionRequest: Codable {
-    let code: String
-    let action: String
-    let reason: String?
 }
 
 struct AccountDeletionRequest: Codable {

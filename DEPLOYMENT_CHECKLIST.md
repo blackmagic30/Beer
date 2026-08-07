@@ -1,5 +1,10 @@
 # Pint Path Deployment Checklist
 
+> This older beta checklist is retained for historical detail. For the current
+> full web plus iOS launch, follow
+> [`docs/production-launch-runbook.md`](docs/production-launch-runbook.md) in
+> order. The production launch runbook is controlling where the two differ.
+
 Use this before merging a beta/hardening branch into `main` or deploying a Railway production beta.
 
 Provider-specific setup lives in [docs/provider-configuration-runbook.md](/Users/zac/Desktop/Beer/docs/provider-configuration-runbook.md).
@@ -31,7 +36,7 @@ Provider-specific setup lives in [docs/provider-configuration-runbook.md](/Users
 - Confirm Google Maps browser keys are HTTP-referrer restricted to localhost and the live beta domain.
 - Confirm a JavaScript/vector Google Maps Map ID exists in Google Maps Platform and is set as `GOOGLE_MAPS_MAP_ID`.
 - Confirm the server Google Places/geocoding key is not exposed in `/config.js` and has Places API plus Geocoding API enabled for venue imports and mission area lookup.
-- Confirm Supabase OAuth providers and redirect URLs are configured if quick login is enabled: `https://pintpath.au/auth/callback` and local `http://localhost:3000/auth/callback`.
+- Confirm Supabase Auth Site URL is `https://pintpath.au`; allow exact web callbacks `http://localhost:3000/auth/callback` and `https://pintpath.au/auth/callback`. Allow `pintpath://auth-callback` only for an Android release that enables native OAuth. The first-release iOS archive must have no custom URL scheme and uses the HTTPS callback for email confirmation/password recovery.
 - Confirm Supabase Auth leaked-password protection is enabled before public signup.
 - Confirm Supabase Row Level Security policies from `supabase/migrations/20260512000000_auth_profiles_activity.sql` are reviewed before any direct browser writes are enabled.
 
@@ -63,6 +68,15 @@ REPORT_DELIVERY_SCHEDULE_ENABLED=false
 REPORT_DELIVERY_DAY=2
 REPORT_DELIVERY_HOUR=9
 REPORT_DELIVERY_CHECK_INTERVAL_MINUTES=60
+ACCOUNT_DELETION_NOTICE_MODE=resend
+RESEND_TRANSACTIONAL_API_KEY=your-dedicated-sending-only-key
+ACCOUNT_DELETION_NOTICE_FROM="Pint Path <account@pintpath.au>"
+ACCOUNT_DELETION_NOTICE_REPLY_TO=admin@pintpath.au
+RESEND_WEBHOOK_SIGNING_SECRET=whsec_replace_in_secret_manager
+ACCOUNT_DELETION_NOTICE_ACTIVE_KEY_ID=2026-08
+ACCOUNT_DELETION_NOTICE_KEYRING_JSON='{"2026-08":"replace_with_base64_32_byte_key"}'
+ACCOUNT_DELETION_NOTICE_CHECK_INTERVAL_MINUTES=5
+ACCOUNT_DELETION_REHEARSAL_ENABLED=false
 SESSION_TTL_DAYS=60
 ADMIN_SESSION_TTL_DAYS=7
 REQUIRE_ADMIN_MFA_IN_PRODUCTION=true
@@ -73,28 +87,34 @@ REDIS_URL=redis://default:replace_me@host:6379
 ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=false
 DEMO_BILLING_MODE=false
 ALLOW_DEMO_BILLING_IN_PRODUCTION=false
+COMMERCIAL_LAUNCH_ENABLED=false
+CONSUMER_PAID_ENROLLMENT_ENABLED=false
 ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=false
 SOURCE_EVIDENCE_STORAGE_DIR=/app/data/source-evidence
 SOURCE_EVIDENCE_SIGNING_SECRET=replace_with_32_plus_random_characters
 SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS=300
-POS_WEBHOOK_SIGNING_SECRET=replace_with_a_different_32_plus_random_characters
+POS_WEBHOOK_SIGNING_SECRET=
 SUPABASE_URL=https://your-production-project.supabase.co
 SUPABASE_ANON_KEY=your-browser-safe-anon-key
 SUPABASE_SERVICE_ROLE_KEY=your-server-only-service-role-key
-SUPABASE_OAUTH_PROVIDERS=google,apple
+SUPABASE_OAUTH_PROVIDERS=google
 OFFSITE_BACKUP_SUPABASE_URL=https://your-independent-backup-project.supabase.co
 OFFSITE_BACKUP_SERVICE_ROLE_KEY=your-independent-project-service-role-key
 OFFSITE_BACKUP_BUCKET=pintpath-backups
 OFFSITE_BACKUP_INTERVAL_HOURS=24
 OFFSITE_BACKUP_RETENTION_DAYS=30
-STRIPE_SECRET_KEY=sk_test_or_live_xxx
-STRIPE_WEBHOOK_SECRET=whsec_xxx
-STRIPE_PRICE_MONTHLY=price_monthly_499_aud
-STRIPE_PRICE_YEARLY=price_yearly_50_aud
-STRIPE_PRO_PRICE_ID=price_venue_pro_aud
+STRIPE_SECRET_KEY=
+STRIPE_WEBHOOK_SECRET=
+STRIPE_PRICE_MONTHLY=
+STRIPE_PRICE_YEARLY=
+STRIPE_PRO_PRICE_ID=
 ```
 
-Replace every placeholder with a real environment-specific value. Production startup requires the Google Places, OpenAI, Supabase, independent-backup, source-evidence, POS-signing, and billing values shown above. The two Supabase URLs must identify different projects/providers.
+Replace every applicable placeholder with a real environment-specific value. Production startup requires the Google Places, OpenAI, Supabase, independent-backup, source-evidence, and account-deletion-notification values shown above. The two Supabase URLs must identify different projects/providers. Leave POS signing absent for manual counter entry and Stripe absent while both paid-enrolment flags remain `false`. Keep Apple OAuth disabled until Apple authorization-token revocation is implemented and tested.
+
+The deletion-notice Resend key must be dedicated and sending-only. Its signed webhook must subscribe to `email.delivered`, `email.delivery_delayed`, `email.bounced`, `email.failed`, `email.suppressed`, and `email.complained`. Purge recipient ciphertext on verified delivery, an audited terminal resolution, or no later than 30 days after deletion completion; ciphertext prepared while deletion is still incomplete has a 60-day maximum. Set `ACCOUNT_DELETION_REHEARSAL_ENABLED=true` only for the isolated Railway staging drill and leave it `false` or absent in production.
+
+Keep the production Beer service at exactly one replica in one Railway region while the authoritative SQLite database and deletion outbox live on its attached volume. Redis does not make that state multi-replica safe.
 
 If you intentionally use simulated checkout for the private field test, set both:
 
@@ -105,11 +125,13 @@ ALLOW_DEMO_BILLING_IN_PRODUCTION=true
 
 In that mode, the pricing UI must be treated as beta/demo billing, not real payment collection.
 
+For the current production deploy, keep `COMMERCIAL_LAUNCH_ENABLED=false` and `CONSUMER_PAID_ENROLLMENT_ENABLED=false`; displayed future pricing does not open paid enrolment.
+
 ## 4. Stripe Modes
 
 - Demo billing: works without Stripe keys, but production blocks it unless `ALLOW_DEMO_BILLING_IN_PRODUCTION=true`.
 - Stripe test mode: set `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_MONTHLY`, `STRIPE_PRICE_YEARLY`, and `STRIPE_PRO_PRICE_ID`; the server creates Stripe-hosted Checkout URLs, so no browser publishable key is required.
-- Production currently has no env-only "billing disabled" mode. With `DEMO_BILLING_MODE=false`, all five Stripe values are required at startup even if checkout is not yet promoted. A private simulated environment must instead set both demo flags above and clearly label billing as simulated.
+- With both paid-enrolment flags `false`, production billing is intentionally deferred and all five Stripe values may remain absent. Enabling either flag requires the complete Stripe configuration. A private simulated environment must instead set both demo flags above and clearly label billing as simulated.
 - Do not process live payments until Stripe Checkout and webhook forwarding have been tested with Stripe CLI.
 - Stripe webhooks must reject missing/invalid signatures when `DEMO_BILLING_MODE=false`; smoke-test this before enabling paid checkout.
 
@@ -156,14 +178,12 @@ In that mode, the pricing UI must be treated as beta/demo billing, not real paym
 - Confirm KPI/field-test dashboard records activity.
 - Open `/for-bars` and confirm it redirects to `/venue-portal` without exposing a public claim form.
 - Assign a venue manager in admin, log in as that user, and confirm `/venue-portal` only shows the assigned venue.
-- Confirm the venue portal can save profile details, beer/on-tap rows, happy hours, and deals/specials for the assigned venue only.
-- Confirm a Basic venue tier sees analytics/monthly report upgrade prompts, and Pro tiers can see aggregate-only suburb analytics once the privacy threshold is met.
-- Run `npm run reports:generate -- --month=YYYY-MM --dry-run` and confirm only active Pro venue reports are generated.
-- Run `npm run reports:deliver -- --month=YYYY-MM --dry-run`, then a targeted Resend staging delivery after domain verification. Confirm only active, email-verified manager assignments receive one message; counter staff and unverified accounts receive none.
-- Enable `REPORT_DELIVERY_SCHEDULE_ENABLED=true` only after that staging proof, then confirm the Railway operational state `job:monthly_report_delivery` records the previous Melbourne month as succeeded and later checks do not regenerate or resend it.
-- Export a Pro venue report from `/api/business/venue-portal/:venueId/reports/:month/export?format=json` as the assigned venue manager and confirm another manager gets `403`.
+- Confirm the venue portal can save profile details and beer/on-tap/price rows for the assigned venue only; public happy-hour, special, Pro, report, reward, and counter/POS surfaces must remain unavailable.
+- Confirm `/config.js` exposes both paid-enrolment flags as `false`, `pricing: null`, venue trial days `0`, and no current checkout, trial, upgrade, amount, or paid-placement claim.
+- Confirm `REPORT_EMAIL_MODE=disabled` and `REPORT_DELIVERY_SCHEDULE_ENABLED=false`; do not run a real monthly-report delivery or present report email as part of this release.
+- Confirm dormant report, special, billing, and counter/POS endpoints remain authorization- and feature-gated even though they are not current launch journeys.
 - Confirm authenticated non-admin users cannot submit public claim requests and only see the invite-only venue portal message.
-- Submit a venue-manager update and confirm it remains pending review.
+- Submit an ordinary assigned-venue profile/beer update and confirm it publishes in scope; trigger a documented guarded/destructive change separately and confirm only that change remains pending review.
 - Check the main pages on a phone-width screen.
 
 ## 8. Security Preflight
@@ -192,7 +212,7 @@ In that mode, the pricing UI must be treated as beta/demo billing, not real paym
   - `FIELD_TEST_MODE=false`
   - `ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=false`
   - `ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=false`
-- There is no production env-only checkout-off switch. Do not remove Stripe price IDs while `DEMO_BILLING_MODE=false`, because production validation will stop the app from booting. Stop checkout by redeploying the previous known-good release or by shipping a controlled change that removes its entry points.
+- Keep both paid-enrolment flags `false` to hold checkout closed without Stripe. If either flag is enabled, do not remove any Stripe value until the flag is disabled or the previous known-good release is restored.
 
 ## 10. Merge Commands
 

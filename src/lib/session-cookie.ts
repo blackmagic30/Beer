@@ -17,6 +17,22 @@ function parseCookie(cookieHeader: string | undefined, name: string): string | n
   return null;
 }
 
+export function hasSessionCredential(req: Request): boolean {
+  if (req.header("authorization") !== undefined) {
+    return true;
+  }
+
+  const cookieHeader = req.header("cookie");
+  if (!cookieHeader) {
+    return false;
+  }
+
+  return cookieHeader.split(";").some((part) => {
+    const separator = part.indexOf("=");
+    return separator >= 0 && part.slice(0, separator).trim() === SESSION_COOKIE_NAME;
+  });
+}
+
 export function getSessionAuthorization(req: Request): string | undefined {
   const header = req.header("authorization");
   if (header && /^Bearer\s+\S/i.test(header)) return header;

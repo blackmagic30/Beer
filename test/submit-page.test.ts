@@ -122,7 +122,7 @@ describe("submit page auth gate", () => {
     expect(html).not.toContain("Use manual fallback for now");
     expect(html).toContain("Request it once, then add the drink data you saw.");
     expect(html).toContain("Drink rows submitted below stay linked to this new venue.");
-    expect(html).toContain("Add beer, cider, or happy-hour data below and use Submit for review to link drinks to this venue.");
+    expect(html).toContain("Add beer or cider data below and use Submit for review to link drinks to this venue.");
   });
 
   it("keeps submit-time and notes constrained while allowing optional evidence in every data-entry mode", () => {
@@ -332,7 +332,7 @@ describe("submit page auth gate", () => {
     const html = submitHtml();
 
     expect(html).toContain('<option value="single_beer_price">Single beer price</option>');
-    expect(html).toContain('<option value="happy_hour_update">Happy-hour</option>');
+    expect(html).toContain('<option value="happy_hour_update" hidden disabled>Happy-hour</option>');
     expect(html).toContain('<option value="full_venue_update">Multiple beer submission</option>');
     expect(html).toContain('<option value="photo_upload">Photo/upload source</option>');
     expect(html.indexOf('value="single_beer_price"')).toBeLessThan(html.indexOf('value="happy_hour_update"'));

@@ -26,7 +26,7 @@ ANALYTICS_MIN_BUCKET_SIZE=5
 ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=false
 ```
 
-For a production-hosted private beta, `DEMO_BILLING_MODE=false` requires all five Stripe values at startup. Do not make live-payment claims until test-mode checkout and signed webhooks pass end to end. If Stripe is intentionally unavailable for a private simulated environment, the supported production fallback is `DEMO_BILLING_MODE=true` together with `ALLOW_DEMO_BILLING_IN_PRODUCTION=true`, with billing clearly labelled as simulated.
+For a production-hosted private beta, keep both paid-enrolment flags `false` to defer Stripe. Enabling either flag requires all five Stripe values at startup. Do not make live-payment claims until test-mode checkout and signed webhooks pass end to end. If billing is simulated, set `DEMO_BILLING_MODE=true` together with `ALLOW_DEMO_BILLING_IN_PRODUCTION=true` and label it clearly.
 
 ## 3. Test Accounts
 
@@ -34,14 +34,16 @@ For a production-hosted private beta, `DEMO_BILLING_MODE=false` requires all fiv
 - Create one admin user using an email listed in `ADMIN_EMAILS`.
 - Optionally create a contributor test user for checking points and unlocks.
 
-## 4. Demo Billing
+## 4. Deferred Commercial Scope
 
 - Open `/pricing.html`.
-- Log in and confirm 18+ first.
-- Click monthly or yearly.
-- Confirm the account page shows premium access.
-- Do not use live payments unless Stripe test mode has passed.
-- Do not enable demo billing in production unless `ALLOW_DEMO_BILLING_IN_PRODUCTION=true` is intentionally set for this private beta.
+- Confirm paid consumer cards, venue Pro pricing, checkout, trial, and upgrade
+  actions remain hidden or unavailable while both paid-enrolment flags are
+  `false`.
+- Confirm the page explains that paid pricing is coming later and that verified
+  venues can use the Free tools.
+- Do not run demo billing, a live payment, or a free-trial grant for this
+  pricing-deferred candidate.
 
 ## 5. Admin Access
 
@@ -54,14 +56,16 @@ For a production-hosted private beta, `DEMO_BILLING_MODE=false` requires all fiv
 - Open `/` while logged out.
 - Confirm venue pins load.
 - Open several venue details and confirm the same fixed free preview is available without a counter.
-- Confirm non-preview prices stay locked and show a clear upgrade/contribute path.
+- Confirm non-preview prices stay locked and show a clear contribute-to-unlock path without a paid checkout action.
+- Confirm no public happy-hour filter, card, badge, promotional claim, or special-price detail appears.
 
 ## 7. Contributor Submission Flow
 
 - Log in as a normal user and confirm 18+.
 - Open `/submit.html`.
 - Search for a venue using a partial name.
-- Submit either a single beer price, full venue update, happy-hour update, or photo/source upload.
+- Submit either a single beer price, full venue update, or photo/source upload.
+- Confirm a URL parameter, restored draft, or queued payload cannot enable the hidden public happy-hour submission mode.
 - Confirm the account page shows the submission as pending.
 
 ## 8. Approve Submissions
@@ -90,12 +94,16 @@ For a production-hosted private beta, `DEMO_BILLING_MODE=false` requires all fiv
 - Log in as the venue manager and open `/venue-portal`.
 - Confirm only the assigned venue is visible.
 - Confirm the Overview, Profile, Beers / stock, Happy hours, Deals & specials, Analytics, and Monthly report tabs load.
-- As a Basic venue account, confirm profile, beers, and happy hours can be edited, while specials, analytics, and monthly reports show a Pro upgrade prompt.
-- Ask admin to set the venue tier to Pro for a demo, then confirm aggregate suburb-level analytics and monthly report preview appear once the privacy threshold is met.
-- Confirm Pro shows premium display metadata in the returned profile, without changing public ranking behaviour.
+- As a Free venue account, confirm profile, beers, and the retained venue-side
+  happy-hour collection tool can be edited, while specials, analytics, and
+  monthly reports remain unavailable with no live Pro-enrolment action.
+- Do not promote a venue to Pro or start a trial for this candidate. Pro,
+  analytics, reports, premium display, and specials belong to a future
+  commercial release.
 - As a verified user with no assigned venue, open `/venue-portal` and confirm it shows invite-only access rather than a claim form.
 - Confirm listing quality, wrong-price reports, requests, and update link are visible.
-- Add a beer row, mark it on tap/in stock, add a happy hour, and add a deal/special.
+- Add a beer row, mark it on tap/in stock, and exercise the retained venue-side
+  happy-hour collection tool without exposing happy-hour discovery publicly.
 - Submit a venue manager update and confirm it appears as pending review, not automatically published.
 - Revoke the assignment and confirm the venue manager portal is blocked.
 
@@ -111,14 +119,14 @@ For a production-hosted private beta, `DEMO_BILLING_MODE=false` requires all fiv
 - Production rejects inline demo image uploads unless `ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=true` is intentionally enabled.
 - Admin source review is protected, but uploaded files should not contain private personal information.
 - Exact-price access is server-gated, but keep Supabase service-role keys server-only.
-- Demo billing is not a real payment.
+- Billing and introductory offers are deferred and must remain disabled.
 - Venue manager analytics are directional aggregate beta counts only.
-- Venue Stripe checkout/portal, Pint Points, and Free Pint Reward code redemption are implemented. They remain pilot-gated until provider testing, participating-venue procedures, age/ID/RSA handling, and release-owner evidence are complete.
+- Venue Stripe checkout/portal, Pint Points, and Free Pint Reward code redemption remain outside this candidate. They require a separately approved future release.
 - Brewery-specific dashboards remain outside the current product.
 
 ## 13. Do Not Enable Yet
 
-- Do not use live payments unless Stripe test checkout and webhooks have passed.
+- Do not enable either paid-enrolment flag, demo billing, a trial, or live payments for this release.
 - Do not publicly launch the implemented Pint Points/Free Pint Reward pilot until participating venues, operational ownership, age/ID/RSA procedures, and end-to-end evidence are approved.
 - Do not collect government ID documents.
 - Do not expose individual user clickstream to venues.

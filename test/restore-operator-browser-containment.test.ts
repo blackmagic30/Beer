@@ -155,7 +155,8 @@ describe("restore rehearsal operator mutation guard", () => {
       RAILWAY_ENVIRONMENT_ID: "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
     })).toBe(true);
     expect(isRestoreRehearsalEnvironment("off", {
-      RAILWAY_SERVICE_ID: "6816c4a2-e392-4ee5-826f-2584cb599ec0",
+      RAILWAY_PROJECT_ID: "48d8c6cd-1c66-4148-874b-20877f48e1a5",
+      RAILWAY_ENVIRONMENT_NAME: "staging",
     })).toBe(true);
     expect(isRestoreRehearsalEnvironment("0", {
       DATABASE_PATH: "/app/data/restore-pint-path-example/pint-path.sqlite",
@@ -163,6 +164,15 @@ describe("restore rehearsal operator mutation guard", () => {
     expect(isRestoreRehearsalEnvironment(undefined, {
       REDIS_KEY_NAMESPACE: "pint-path:restore:environment:backup",
     })).toBe(true);
+  });
+
+  it("does not mistake a shared Railway service ID in production for restore staging", () => {
+    expect(isRestoreRehearsalEnvironment("false", {
+      RAILWAY_PROJECT_ID: "48d8c6cd-1c66-4148-874b-20877f48e1a5",
+      RAILWAY_ENVIRONMENT_ID: "13dab015-df74-45c6-b26f-69323daea99a",
+      RAILWAY_ENVIRONMENT_NAME: "production",
+      RAILWAY_SERVICE_ID: "6816c4a2-e392-4ee5-826f-2584cb599ec0",
+    })).toBe(false);
   });
 
   it("rejects operator writes before a mutator can run", () => {

@@ -33,10 +33,18 @@ export function redactSecrets<T>(value: T, depth = 0): T {
   }
 
   if (value && typeof value === "object") {
-    const output: Record<string, unknown> = {};
+    const outputEntries: Array<[string, unknown]> = [];
     for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
-      output[key] = SENSITIVE_KEY_PATTERN.test(key) ? "[REDACTED]" : redactSecrets(nested, depth + 1);
+      if (key === "__proto__" || key === "prototype" || key === "constructor") {
+        continue;
+      }
+      outputEntries.push([
+        key,
+        SENSITIVE_KEY_PATTERN.test(key) ? "[REDACTED]" : redactSecrets(nested, depth + 1),
+      ]);
     }
+    const output = Object.fromEntries(outputEntries);
+    Object.setPrototypeOf(output, null);
     return output as T;
   }
 

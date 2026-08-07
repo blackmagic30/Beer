@@ -10,7 +10,22 @@ const baseUrl = (process.env.PINTPATH_SMOKE_BASE_URL || "https://pintpath.au").r
 const strictAuth = process.argv.includes("--strict-auth");
 const authOnly = process.argv.includes("--auth-only");
 const expectedCommitSha = process.env.PINTPATH_EXPECTED_COMMIT_SHA?.trim() || null;
+if (expectedCommitSha && !/^[0-9a-f]{40}$/.test(expectedCommitSha)) {
+  throw new Error("PINTPATH_EXPECTED_COMMIT_SHA must be the exact 40-character lowercase commit SHA.");
+}
 const revokeDirectTokens = process.env.PINTPATH_REVOKE_DIRECT_SMOKE_TOKENS === "true";
+const enforceLaunchFlags = process.env.PINTPATH_ENFORCE_LAUNCH_FLAGS === "true";
+const expectedCommercialLaunchValue =
+  process.env.PINTPATH_EXPECTED_COMMERCIAL_LAUNCH_ENABLED?.trim().toLowerCase() ?? "";
+if (
+  enforceLaunchFlags &&
+  !["true", "false"].includes(expectedCommercialLaunchValue)
+) {
+  throw new Error(
+    "PINTPATH_EXPECTED_COMMERCIAL_LAUNCH_ENABLED must be exactly true or false when launch flags are enforced.",
+  );
+}
+const expectedCommercialLaunchEnabled = expectedCommercialLaunchValue === "true";
 
 const rolesArgument = process.argv.find((argument) => argument.startsWith("--roles="));
 const selectedRoles = rolesArgument
@@ -252,7 +267,7 @@ if (!authOnly) {
   await Promise.all([
     checkJson("health", "/health", (payload) => nestedData(payload).status === "ok"),
     checkJson("ready", "/ready", (payload) => nestedData(payload).status === "ready"),
-    checkJson("config", "/api/business/config", (payload) => Boolean(nestedData(payload).pricing)),
+    checkJson("config", "/api/business/config", (payload) => nestedData(payload).priceAccessModel === "fixed_preview"),
     checkJson("venues", "/api/business/venues?limit=3", (payload) => Array.isArray(nestedData(payload).venues)),
     checkJson("prices", "/api/business/price-records?limit=3", (payload) => Array.isArray(nestedData(payload).records)),
     checkHtml("map_page", "/", "Pint Path"),
@@ -261,16 +276,27 @@ if (!authOnly) {
     checkHtml("admin_page", "/admin.html", "Pint Path"),
   ]);
 
+  if (enforceLaunchFlags) {
+    await checkJson("launch_flags", "/api/business/config", (payload) => {
+      const data = nestedData(payload);
+      return data.commercialLaunchEnabled === expectedCommercialLaunchEnabled
+        && data.consumerPaidEnrollmentEnabled === false
+        && data.pintPointsRewardsEnabled === false
+        && data.alcoholGamificationEnabled === false
+        && data.happyHourDiscoveryEnabled === false
+        && data.venueProTrialDays === (expectedCommercialLaunchEnabled ? 60 : 0)
+        && data.venueProTrialRequiresPaymentMethod === false
+        && data.demoBillingMode === false
+        && data.fieldTestMode === false;
+    });
+  }
+
   if (expectedCommitSha) {
     await checkJson("deployed_commit", "/ready", (payload) => {
       const data = nestedData(payload);
       const deployment = data.deployment && typeof data.deployment === "object" ? data.deployment : {};
       const commitSha = String(deployment.commitSha ?? "").trim();
-      return Boolean(commitSha) && (
-        commitSha === expectedCommitSha
-        || commitSha.startsWith(expectedCommitSha)
-        || expectedCommitSha.startsWith(commitSha)
-      );
+      return commitSha === expectedCommitSha;
     });
   }
 }
@@ -333,6 +359,10 @@ console.log(JSON.stringify({
   authOnly,
   roles: [...selectedRoles],
   expectedCommitSha,
+  enforceLaunchFlags,
+  expectedCommercialLaunchEnabled: enforceLaunchFlags
+    ? expectedCommercialLaunchEnabled
+    : null,
   summary: {
     passed: results.filter((result) => result.status === "pass").length,
     failed: failed.length,

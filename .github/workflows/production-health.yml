@@ -24,6 +24,7 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
+          cache: npm
 
       - name: Check public health and backend readiness
         env:
@@ -44,6 +45,16 @@ jobs:
             const demo = missions.filter((row) => String(row?.venueId || "").startsWith("demo:") || String(row?.id || "").includes("demo:"));
             if (demo.length) throw new Error(`Production returned ${demo.length} demo missions`);
           ' "$venues" "$missions"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Observe bounded public production data quality
+        env:
+          PINTPATH_DATA_BASE_URL: https://pintpath.au
+        run: |
+          set -o pipefail
+          npm run --silent readiness:data | tee production-data-readiness.json
 
   authenticated-user-venue-health:
     if: github.event_name == 'workflow_dispatch' || github.event.schedule == '7 * * * *'
@@ -91,6 +102,11 @@ jobs:
             echo
             echo "The public health job remains authoritative for public availability."
           } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            echo "::error::Authenticated user/venue smoke credentials are required for a manual production-health proof."
+            exit 1
+          fi
 
       - name: Checkout
         if: steps.credentials.outputs.configured == 'true'

@@ -56,7 +56,11 @@ function createHarness(options: { nodeEnv?: "test" | "production" } = {}): Harne
     CONTRIBUTOR_UNLOCK_POINTS: 15,
     CONTRIBUTOR_UNLOCK_DAYS: 30,
     DEMO_BILLING_MODE: true,
+    COMMERCIAL_LAUNCH_ENABLED: true,
+    CONSUMER_PAID_ENROLLMENT_ENABLED: true,
     FIELD_TEST_MODE: false,
+    PINT_POINTS_REWARDS_ENABLED: true,
+    ALCOHOL_GAMIFICATION_ENABLED: true,
     SESSION_TTL_DAYS: 60,
     ADMIN_SESSION_TTL_DAYS: 7,
     REQUIRE_ADMIN_MFA_IN_PRODUCTION: true,
@@ -77,6 +81,8 @@ function createHarness(options: { nodeEnv?: "test" | "production" } = {}): Harne
     STRIPE_PRICE_MONTHLY: undefined,
     STRIPE_PRICE_YEARLY: undefined,
     STRIPE_PRO_PRICE_ID: undefined,
+    VENUE_PRO_TRIAL_DAYS: 60,
+    VENUE_PRO_TRIAL_REQUIRE_PAYMENT_METHOD: false,
     SUPABASE_URL: undefined,
     SUPABASE_ANON_KEY: undefined,
     SUPABASE_SERVICE_ROLE_KEY: undefined,
@@ -220,6 +226,47 @@ function approveMissionSubmission(
 }
 
 describe("autonomous mission lifecycle", () => {
+  it("hides and blocks happy-hour missions while retaining them for admin operations", () => {
+    const { repository, service } = createHarness();
+    const contributor = createAccount(repository, "mission-launch-scope-contributor");
+    const admin = createAccount(repository, "mission-launch-scope-admin", "admin");
+    const regularMission = createMission(service, "mission-launch-regular", "Regular Mission Hotel");
+    const happyHourMission = service.createMission({
+      venueId: "mission-launch-happy-hour",
+      venueName: "Happy Hour Mission Hotel",
+      suburb: "Melbourne",
+      reason: "Missing happy-hour details - add current specials",
+      priority: "high",
+      points: 5,
+      multiplier: 1,
+      active: true,
+    });
+
+    const page = service.getMissionsPage({ limit: 20, offset: 0, sort: "points" }, contributor);
+    expect(page.missions.map((mission) => mission.id)).toEqual([regularMission.id]);
+    expect(page.pagination).toEqual({ total: 1, limit: 20, offset: 0, hasMore: false });
+    expect(service.listMissions({ limit: 20, sort: "missing_happy_hour" }, contributor)
+      .some((mission) => mission.id === happyHourMission.id)).toBe(false);
+    expect(service.listAdminMissions(admin).missions.map((mission) => mission.id))
+      .toContain(happyHourMission.id);
+
+    expect(() => service.acceptMission(contributor, happyHourMission.id))
+      .toThrow("not available during the current public launch");
+    expect(repository.getMissionProgress({ missionId: happyHourMission.id, userId: contributor.id }))
+      .toBeNull();
+
+    expect(repository.acceptMission({
+      missionId: happyHourMission.id,
+      userId: contributor.id,
+      now: START,
+      acceptedAfter: "2020-01-01T00:00:00.000Z",
+    })).toMatchObject({ status: "accepted" });
+    expect(() => submitMission(service, contributor, happyHourMission))
+      .toThrow("not available during the current public launch");
+    expect(repository.getMissionProgress({ missionId: happyHourMission.id, userId: contributor.id }))
+      .toMatchObject({ status: "accepted", submissionId: null });
+  });
+
   it("moves an accepted mission through submitted to completed and archives it on approval", () => {
     const { repository, service } = createHarness();
     const contributor = createAccount(repository, "mission-contributor");

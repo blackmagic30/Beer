@@ -24,16 +24,16 @@ interface EvidenceItem {
 const expectedRequiredIds = [
   "production_public_smoke",
   "production_role_smoke",
+  "account_deletion_completion_notice",
   "ocr_labelled_corpus",
   "venue_pilot_one",
   "venue_pilot_two",
   "venue_pilot_three",
-  "pos_vendor_pilot",
+  "moderation_operations",
   "backup_restore",
   "accessibility_devices",
   "legal_billing",
   "ios_release",
-  "android_release",
 ] as const;
 const expectedRequiredIdSet = new Set<string>(expectedRequiredIds);
 const allowedStatuses = new Set(["pending", "pass", "fail", "not_applicable"]);

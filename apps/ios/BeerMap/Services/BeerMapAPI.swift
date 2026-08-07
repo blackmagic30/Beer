@@ -1,16 +1,73 @@
 import Foundation
 
 enum AppConfig {
+    static let approvedSupabaseOrigin = "https://auth.pintpath.au"
+
     static var apiBaseURL: URL {
         readURL("PINT_PATH_API_BASE_URL") ?? URL(string: "https://pintpath.au")!
     }
 
+    static var termsURL: URL {
+        legalURL(path: "terms.html")
+    }
+
+    static var privacyURL: URL {
+        legalURL(path: "privacy.html")
+    }
+
     static var supabaseURL: URL? {
-        readURL("SUPABASE_URL")
+        guard readString("SUPABASE_URL") == approvedSupabaseOrigin else {
+            return nil
+        }
+        return URL(string: approvedSupabaseOrigin)
     }
 
     static var supabaseAnonKey: String? {
-        readString("SUPABASE_ANON_KEY")
+        guard
+            let key = readString("SUPABASE_ANON_KEY"),
+            isPublicSupabaseKey(key)
+        else {
+            return nil
+        }
+        return key
+    }
+
+    private static func isPublicSupabaseKey(_ key: String) -> Bool {
+        if key.range(
+            of: #"^sb_publishable_[A-Za-z0-9_-]{20,}$"#,
+            options: .regularExpression
+        ) != nil {
+            return true
+        }
+
+        let segments = key.split(separator: ".", omittingEmptySubsequences: false)
+        guard segments.count == 3 else {
+            return false
+        }
+        var payload = String(segments[1])
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        let padding = payload.count % 4
+        if padding != 0 {
+            payload += String(repeating: "=", count: 4 - padding)
+        }
+        guard
+            let data = Data(base64Encoded: payload),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            object["role"] as? String == "anon"
+        else {
+            return false
+        }
+        return true
+    }
+
+    private static func legalURL(path: String) -> URL {
+        var components = URLComponents(
+            url: apiBaseURL.appending(path: path),
+            resolvingAgainstBaseURL: false
+        )!
+        components.queryItems = [URLQueryItem(name: "source", value: "ios_app")]
+        return components.url!
     }
 
     private static func readString(_ key: String) -> String? {
@@ -45,12 +102,6 @@ enum BeerMapAPIError: LocalizedError {
         accessToken: String?,
         refreshToken: String?
     )
-    case billingRecoveryAvailable(
-        message: String,
-        accessToken: String?,
-        consumer: Bool,
-        venues: [BillingRecoveryVenue]
-    )
 
     var errorDescription: String? {
         switch self {
@@ -70,8 +121,6 @@ enum BeerMapAPIError: LocalizedError {
             return "For your security, sign out and sign back in before trying this sensitive account action again."
         case .legalAcceptanceRequired(let message, _, _):
             return message
-        case .billingRecoveryAvailable(let message, _, _, _):
-            return message
         }
     }
 
@@ -85,10 +134,6 @@ enum BeerMapAPIError: LocalizedError {
         return false
     }
 
-    var offersBillingRecovery: Bool {
-        if case .billingRecoveryAvailable = self { return true }
-        return false
-    }
 }
 
 struct BeerMapAPI {
@@ -114,8 +159,11 @@ struct BeerMapAPI {
         return URLSession(configuration: configuration)
     }
 
-    func getConfig() async throws -> PublicConfig {
-        try await get("/api/business/config")
+    func getConfig(forceRefresh: Bool = false) async throws -> PublicConfig {
+        try await get(
+            "/api/business/config",
+            bypassCache: forceRefresh
+        )
     }
 
     func login(
@@ -123,19 +171,10 @@ struct BeerMapAPI {
         password: String,
         config: PublicConfig
     ) async throws -> (authResult: AuthResult, refreshToken: String?, accessToken: String?) {
-        if !hasSupabaseConfiguration(config) {
-            let result: AuthResult = try await send(
-                "/api/business/auth/login",
-                method: "POST",
-                body: LoginRequest(email: email, password: password)
-            )
-            return (result, nil, nil)
-        }
         let tokens: SupabaseAuthTokens = try await supabaseAuthRequest(
             "/auth/v1/token?grant_type=password",
             method: "POST",
-            body: LoginRequest(email: email, password: password),
-            config: config
+            body: LoginRequest(email: email, password: password)
         )
         guard let accessToken = tokens.accessToken else {
             throw BeerMapAPIError.missingData
@@ -149,13 +188,6 @@ struct BeerMapAPI {
                 privacyAccepted: nil
             )
             return (result, tokens.refreshToken, accessToken)
-        } catch BeerMapAPIError.billingRecoveryAvailable(let message, _, let consumer, let venues) {
-            throw BeerMapAPIError.billingRecoveryAvailable(
-                message: message,
-                accessToken: accessToken,
-                consumer: consumer,
-                venues: venues
-            )
         } catch BeerMapAPIError.legalAcceptanceRequired(let message, _, _) {
             throw BeerMapAPIError.legalAcceptanceRequired(
                 message: message,
@@ -163,22 +195,6 @@ struct BeerMapAPI {
                 refreshToken: tokens.refreshToken
             )
         }
-    }
-
-    func billingRecoveryPortal(accessToken: String, venueId: String?) async throws -> BillingRecoveryResult {
-        return try await send(
-            "/api/business/billing/recovery-portal",
-            method: "POST",
-            body: BillingRecoveryProviderRequest(accessToken: accessToken, venueId: venueId)
-        )
-    }
-
-    func billingRecoveryPortal(email: String, password: String, venueId: String?) async throws -> BillingRecoveryResult {
-        try await send(
-            "/api/business/billing/recovery-portal",
-            method: "POST",
-            body: BillingRecoveryPasswordRequest(email: email, password: password, venueId: venueId)
-        )
     }
 
     func signup(
@@ -205,8 +221,7 @@ struct BeerMapAPI {
                     "legal_policy_version": .string(policyVersion),
                     "consent_source": .string("ios")
                 ]
-            ),
-            config: config
+            )
         )
         guard let accessToken = tokens.accessToken else {
             return SupabaseSignupOutcome(
@@ -263,12 +278,15 @@ struct BeerMapAPI {
     }
 
     func requestPasswordReset(email: String, config: PublicConfig) async throws {
-        let redirectTo = baseURL.appending(path: "reset-password.html").absoluteString
+        // The web callback verifies the Supabase recovery session, binds it to
+        // the existing Pint Path account, and only then opens password-update
+        // mode. A direct reset-page redirect has no recovery marker and strands
+        // OAuth-created accounts in the request-another-email state.
+        let redirectTo = baseURL.appending(path: "auth/callback").absoluteString
         let _: EmptyResponse = try await supabaseAuthRequest(
             "/auth/v1/recover",
             method: "POST",
-            body: PasswordRecoveryRequest(email: email, redirectTo: redirectTo),
-            config: config
+            body: PasswordRecoveryRequest(email: email, redirectTo: redirectTo)
         )
     }
 
@@ -280,8 +298,7 @@ struct BeerMapAPI {
         let tokens: SupabaseAuthTokens = try await supabaseAuthRequest(
             "/auth/v1/token?grant_type=refresh_token",
             method: "POST",
-            body: SupabaseRefreshRequest(refreshToken: refreshToken),
-            config: config
+            body: SupabaseRefreshRequest(refreshToken: refreshToken)
         )
         guard let accessToken = tokens.accessToken else { throw BeerMapAPIError.missingData }
         let result = try await syncSupabase(
@@ -295,25 +312,11 @@ struct BeerMapAPI {
         return (result, tokens.refreshToken, accessToken)
     }
 
-    func exchangeSupabasePKCE(
-        authCode: String,
-        codeVerifier: String,
-        config: PublicConfig
-    ) async throws -> SupabaseAuthTokens {
-        try await supabaseAuthRequest(
-            "/auth/v1/token?grant_type=pkce",
-            method: "POST",
-            body: SupabasePKCERequest(authCode: authCode, codeVerifier: codeVerifier),
-            config: config
-        )
-    }
-
     func logoutSupabase(accessToken: String, config: PublicConfig) async throws {
         let _: EmptyResponse = try await supabaseAuthRequest(
             "/auth/v1/logout?scope=local",
             method: "POST",
             body: EmptyResponse(),
-            config: config,
             accessToken: accessToken
         )
     }
@@ -400,15 +403,6 @@ struct BeerMapAPI {
         )
     }
 
-    func respondToCounterStaffInvitation(_ assignmentId: String, decision: String, token: String) async throws -> CounterStaffInvitationResponse {
-        try await send(
-            "/api/business/account/counter-staff-invitations/\(escape(assignmentId))/respond",
-            method: "POST",
-            body: CounterStaffInvitationDecision(decision: decision),
-            token: token
-        )
-    }
-
     func requestAccountDeletion(message: String?, token: String, reauthenticationToken: String) async throws -> EmptyResponse {
         try await send(
             "/api/business/account/delete-request",
@@ -419,18 +413,11 @@ struct BeerMapAPI {
         )
     }
 
-    func discountPass(token: String) async throws -> RotatingCodeResult {
-        try await send("/api/business/account/discount-pass", method: "POST", body: EmptyResponse(), token: token)
-    }
-
-    func freePintRewardCode(token: String) async throws -> RotatingCodeResult {
-        try await send("/api/business/account/free-pint-reward-code", method: "POST", body: EmptyResponse(), token: token)
-    }
-
     func listVenues(
         query: String? = nil,
         limit: Int = 250,
-        maximumResults: Int = 1_000
+        maximumResults: Int = 1_000,
+        token: String? = nil
     ) async throws -> [Venue] {
         let resultLimit = min(2_000, max(1, maximumResults))
         let pageSize = min(resultLimit, min(500, max(1, limit)))
@@ -445,7 +432,10 @@ struct BeerMapAPI {
                 URLQueryItem(name: "offset", value: "\(offset)")
             ]
             if let normalizedQuery { items.append(URLQueryItem(name: "q", value: normalizedQuery)) }
-            let response: VenueListResponse = try await get(path("/api/business/venues", queryItems: items))
+            let response: VenueListResponse = try await get(
+                path("/api/business/venues", queryItems: items),
+                token: token
+            )
             let remainingCapacity = resultLimit - venues.count
             venues.append(contentsOf: response.venues
                 .filter { seenIds.insert($0.id).inserted }
@@ -498,8 +488,8 @@ struct BeerMapAPI {
             access = response.access ?? access
             if let pagePreview = response.preview {
                 previewModel = pagePreview.model
-                previewIncludedCount += pagePreview.includedCount
-                previewLockedCount += pagePreview.lockedCount
+                previewIncludedCount += response.records.filter { $0.freePreviewIncluded == true }.count
+                previewLockedCount += response.records.filter { $0.priceRedacted == true }.count
             }
 
             guard let nextCursor = response.nextCursor, !nextCursor.isEmpty else { break }
@@ -524,9 +514,6 @@ struct BeerMapAPI {
     }
 
     private func priceRecordIdentityKey(_ record: PriceRecord) -> String {
-        if record.isHappyHourPrice == true || record.happyHour != nil || record.id.hasPrefix("venue_special:") {
-            return "record:\(record.id)"
-        }
         let beer = record.normalizedBeerId?.nilIfBlank
             ?? normalizedPriceIdentityPart(record.beerName)
         return [
@@ -637,70 +624,20 @@ struct BeerMapAPI {
         return try await send("/api/business/venue-portal/\(escape(venueId))/beers", method: "POST", body: request, token: token)
     }
 
-    func saveHappyHour(_ happyHour: BarHappyHour, venueId: String, token: String) async throws -> BarHappyHourSaveResult {
-        try await send("/api/business/venue-portal/\(escape(venueId))/happy-hours", method: "POST", body: happyHour, token: token)
-    }
-
-    func saveSpecial(_ special: BarSpecial, venueId: String, token: String) async throws -> BarSpecialSaveResult {
-        try await send("/api/business/venue-portal/\(escape(venueId))/specials", method: "POST", body: special, token: token)
-    }
-
-    func previewCounterMember(venueId: String, code: String, transactionReference: String, token: String) async throws -> CounterMemberPreview {
-        try await send(
-            "/api/business/venue-portal/\(escape(venueId))/member-preview",
-            method: "POST",
-            body: CounterMemberPreviewRequest(code: code, transactionReference: transactionReference),
-            token: token
+    func get<T: Decodable>(
+        _ path: String,
+        token: String? = nil,
+        reauthenticationToken: String? = nil,
+        bypassCache: Bool = false
+    ) async throws -> T {
+        try await request(
+            path,
+            method: "GET",
+            body: Optional<EmptyResponse>.none,
+            token: token,
+            reauthenticationToken: reauthenticationToken,
+            bypassCache: bypassCache
         )
-    }
-
-    func recordCounterPurchase(venueId: String, request: CounterPurchaseRequest, token: String) async throws -> CounterPurchaseResult {
-        try await send(
-            "/api/business/venue-portal/\(escape(venueId))/pint-point-drinks",
-            method: "POST",
-            body: request,
-            token: token
-        )
-    }
-
-    func voidCounterPurchase(venueId: String, recordId: String, reason: String, token: String) async throws -> EmptyResponse {
-        try await send(
-            "/api/business/venue-portal/\(escape(venueId))/pint-point-drinks/\(escape(recordId))/void",
-            method: "POST",
-            body: CounterVoidRequest(reason: reason),
-            token: token
-        )
-    }
-
-    func decideFreePintReward(venueId: String, code: String, action: String, reason: String?, token: String) async throws -> CounterRewardResult {
-        try await send(
-            "/api/business/venue-portal/\(escape(venueId))/free-pint-rewards",
-            method: "POST",
-            body: CounterRewardDecisionRequest(code: code, action: action, reason: reason),
-            token: token
-        )
-    }
-
-    func exportVenueMonthlyReport(venueId: String, month: String, format: String, token: String) async throws -> Data {
-        let exportPath = "/api/business/venue-portal/\(escape(venueId))/reports/\(escape(month))/export?format=\(format)"
-        guard let url = URL(string: exportPath, relativeTo: baseURL) else {
-            throw BeerMapAPIError.invalidURL(exportPath)
-        }
-        var request = URLRequest(url: url)
-        request.setValue(format == "csv" ? "text/csv" : "application/json", forHTTPHeaderField: "Accept")
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse else { throw BeerMapAPIError.missingData }
-        guard (200..<300).contains(http.statusCode) else {
-            if http.statusCode == 401 { throw BeerMapAPIError.unexpectedStatus(401) }
-            let envelope = try? decoder.decode(APIEnvelope<EmptyResponse>.self, from: data)
-            throw BeerMapAPIError.server(envelope?.error?.message ?? "Report export failed (\(http.statusCode)).")
-        }
-        return data
-    }
-
-    func get<T: Decodable>(_ path: String, token: String? = nil, reauthenticationToken: String? = nil) async throws -> T {
-        try await request(path, method: "GET", body: Optional<EmptyResponse>.none, token: token, reauthenticationToken: reauthenticationToken)
     }
 
     func send<T: Decodable, Body: Encodable>(
@@ -727,7 +664,8 @@ struct BeerMapAPI {
         body: Body?,
         token: String?,
         reauthenticationToken: String?,
-        timeoutInterval: TimeInterval? = nil
+        timeoutInterval: TimeInterval? = nil,
+        bypassCache: Bool = false
     ) async throws -> T {
         guard let url = URL(string: path, relativeTo: baseURL) else {
             throw BeerMapAPIError.invalidURL(path)
@@ -735,6 +673,11 @@ struct BeerMapAPI {
 
         var request = URLRequest(url: url)
         request.httpMethod = method
+        if bypassCache {
+            request.cachePolicy = .reloadIgnoringLocalCacheData
+            request.setValue("no-cache, no-store", forHTTPHeaderField: "Cache-Control")
+            request.setValue("no-cache", forHTTPHeaderField: "Pragma")
+        }
         if let timeoutInterval {
             request.timeoutInterval = timeoutInterval
         }
@@ -760,33 +703,6 @@ struct BeerMapAPI {
         if !(200..<300).contains(http.statusCode) || statusEnvelope?.ok == false {
             let message = statusEnvelope?.error?.message ?? "Request failed (\(http.statusCode))."
             let normalizedMessage = message.lowercased()
-            let recoveryCode = statusEnvelope?.error?.code
-            let recovery = statusEnvelope?.error?.recovery
-            let recoveryHasTarget = recovery?.consumer == true || recovery?.venues?.isEmpty == false
-            let productionBillingRecovery = (
-                recoveryCode == "ACCOUNT_SUSPENDED_BILLING_RECOVERY" && (
-                    recovery == nil || (recovery?.eligible == true && recoveryHasTarget)
-                )
-            ) || (
-                recoveryCode == "BILLING_RECOVERY_VENUE_SELECTION_REQUIRED" &&
-                recovery?.eligible == true && recovery?.venues?.isEmpty == false
-            )
-            let legacyBillingRecovery = recoveryCode == nil && recovery == nil && (
-                statusEnvelope?.error?.details?.billingRecoveryEligible == true ||
-                normalizedMessage.contains("billing recovery") ||
-                normalizedMessage.contains("billing management remains available")
-            )
-            if http.statusCode == 403 && (
-                productionBillingRecovery ||
-                legacyBillingRecovery
-            ) {
-                throw BeerMapAPIError.billingRecoveryAvailable(
-                    message: message,
-                    accessToken: nil,
-                    consumer: recovery == nil || recovery?.consumer == true,
-                    venues: recovery?.venues ?? []
-                )
-            }
             if http.statusCode == 403 && (
                 statusEnvelope?.error?.details?.reauthenticationRequired == true ||
                 normalizedMessage.contains("reauthenticat") ||
@@ -835,17 +751,16 @@ struct BeerMapAPI {
         _ path: String,
         method: String,
         body: Body,
-        config: PublicConfig,
         accessToken: String? = nil
     ) async throws -> T {
         guard
-            let urlText = config.supabaseUrl?.trimmingCharacters(in: .whitespacesAndNewlines),
-            let supabaseURL = URL(string: urlText),
-            let key = config.supabaseAnonKey?.trimmingCharacters(in: .whitespacesAndNewlines),
-            !key.isEmpty,
+            let supabaseURL = AppConfig.supabaseURL,
+            let key = AppConfig.supabaseAnonKey,
             let url = URL(string: path, relativeTo: supabaseURL)
         else {
-            throw BeerMapAPIError.configuration("Secure account sign-in is temporarily unavailable. Please try again later.")
+            throw BeerMapAPIError.configuration(
+                "This Pint Path build does not contain the approved public authentication configuration. Update the app or contact support."
+            )
         }
 
         var request = URLRequest(url: url)
@@ -876,12 +791,6 @@ struct BeerMapAPI {
             return EmptyResponse() as! T
         }
         return try decoder.decode(T.self, from: data)
-    }
-
-    private func hasSupabaseConfiguration(_ config: PublicConfig) -> Bool {
-        let url = config.supabaseUrl?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let key = config.supabaseAnonKey?.trimmingCharacters(in: .whitespacesAndNewlines)
-        return !(url?.isEmpty ?? true) && !(key?.isEmpty ?? true)
     }
 
     private func requiredLegalPolicyVersion(_ config: PublicConfig) throws -> String {

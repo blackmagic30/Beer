@@ -14,6 +14,8 @@ struct AccountView: View {
                 }
                 if model.isSignedIn, let dashboard = model.accountDashboard {
                     signedInView(dashboard)
+                } else if model.isSignedIn {
+                    signedInRecoveryView
                 } else {
                     AuthView()
                 }
@@ -42,16 +44,16 @@ struct AccountView: View {
             Text("Your saved session will be removed from this device. You can sign back in any time.")
         }
         .confirmationDialog(
-            "Request account deletion review?",
+            "Schedule account deletion?",
             isPresented: $showDeleteConfirmation,
             titleVisibility: .visible
         ) {
-            Button("Request deletion review", role: .destructive) {
+            Button("Schedule deletion", role: .destructive) {
                 Task { await model.requestAccountDeletion() }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Pint Path will create the same manual deletion review used by the website. Legal, security, billing, and moderation records may be retained when required.")
+            Text("Pint Path schedules deletion after a seven-day cancellation window. An authorised operator currently completes provider deletion, and the app keeps the status visible. Records that must be retained by law may be kept.")
         }
         .confirmationDialog(
             "Sign out on every device?",
@@ -67,12 +69,41 @@ struct AccountView: View {
         }
     }
 
+    private var signedInRecoveryView: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionHeader(
+                eyebrow: "Session retained",
+                title: "Account details are temporarily unavailable",
+                subtitle: "You are still signed in. Check your connection and retry; there is no need to sign in again.",
+                systemImage: "person.crop.circle.badge.clock"
+            )
+            PrimaryButton(
+                title: "Retry account details",
+                systemImage: "arrow.clockwise",
+                isLoading: model.isLoading
+            ) {
+                Task {
+                    await model.refreshAccount()
+                    await model.refreshVenuePortal()
+                }
+            }
+            SecondaryButton(
+                title: "Log out or switch account",
+                systemImage: "rectangle.portrait.and.arrow.right",
+                isDestructive: true
+            ) {
+                showLogoutConfirmation = true
+            }
+        }
+        .beerMapCard()
+    }
+
     private func reauthenticationCard(_ context: String) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             SectionHeader(
                 eyebrow: "Security check",
                 title: "Sign in again to continue",
-                subtitle: "Pint Path did not \(context). A fresh provider sign-in is required before you retry.",
+                subtitle: "Pint Path did not \(context). A fresh sign-in is required before you retry.",
                 systemImage: "lock.shield.fill"
             )
             if model.isSignedIn {
@@ -92,7 +123,7 @@ struct AccountView: View {
         VStack(spacing: 16) {
             VStack(alignment: .leading, spacing: 12) {
                 SectionHeader(
-                    eyebrow: dashboard.account.subscriptionStatus ?? "Free",
+                    eyebrow: model.hasContributorAccess ? "Contributor access" : "Account",
                     title: dashboard.account.displayName ?? dashboard.account.email,
                     subtitle: "Manage access, contribution progress, privacy, and session controls.",
                     systemImage: "person.crop.circle.fill"
@@ -134,12 +165,6 @@ struct AccountView: View {
                 )
             }
 
-            specialsCard(dashboard)
-
-            if let invitations = dashboard.counterStaffInvitations, !invitations.isEmpty {
-                counterStaffInvitationsCard(invitations)
-            }
-
             privacyCard(dashboard.privacySettings)
 
             sessionCard
@@ -168,7 +193,7 @@ struct AccountView: View {
             } else {
                 EmptyStateView(
                     title: "No recent submissions",
-                    message: "Your reviewed price updates and venue reports will appear here after you contribute.",
+                    message: "Your reviewed price and venue updates will appear here after you contribute.",
                     systemImage: "tray",
                     isFramed: false
                 )
@@ -199,7 +224,7 @@ struct AccountView: View {
                 }
 
                 if model.accountDeletionRequest == nil || model.accountDeletionRequest?.status == "cancelled" {
-                    SecondaryButton(title: "Request account deletion", systemImage: "person.crop.circle.badge.xmark", isDestructive: true) {
+                    SecondaryButton(title: "Schedule account deletion", systemImage: "person.crop.circle.badge.xmark", isDestructive: true) {
                         showDeleteConfirmation = true
                     }
                 }
@@ -210,37 +235,6 @@ struct AccountView: View {
             }
             .beerMapCard()
         }
-    }
-
-    private func counterStaffInvitationsCard(_ invitations: [CounterStaffInvitation]) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            SectionHeader(
-                eyebrow: "Venue access",
-                title: "Counter invitations",
-                subtitle: "Accept only invitations from venues you recognise. Counter access cannot edit venue data or view private analytics.",
-                systemImage: "person.badge.key.fill"
-            )
-            ForEach(invitations) { invitation in
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(invitation.venueName)
-                        .font(.headline)
-                    Text([invitation.suburb, invitation.expiresAt.map { "Expires \($0)" }].compactMap { $0 }.joined(separator: " · "))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    HStack {
-                        PrimaryButton(title: "Accept", systemImage: "checkmark.circle.fill", isLoading: model.isLoading) {
-                            Task { await model.respondToCounterStaffInvitation(invitation, decision: "accept") }
-                        }
-                        SecondaryButton(title: "Decline", systemImage: "xmark.circle", isDestructive: true) {
-                            Task { await model.respondToCounterStaffInvitation(invitation, decision: "decline") }
-                        }
-                    }
-                }
-                .padding(10)
-                .background(BeerMapTheme.softCard, in: RoundedRectangle(cornerRadius: 8))
-            }
-        }
-        .beerMapCard()
     }
 
     @ViewBuilder
@@ -257,7 +251,7 @@ struct AccountView: View {
                     StatusBanner(message: error, isError: true)
                 } else {
                     StatusBanner(
-                        message: "Your request ID is \(request.id). Pint Path keeps this status visible so you know whether review or processing has started.",
+                        message: "Your request ID is \(request.id). Pint Path keeps this status visible so you know whether the cancellation window or deletion processing has started.",
                         systemImage: "clock.badge.checkmark.fill"
                     )
                 }
@@ -273,7 +267,7 @@ struct AccountView: View {
 
     private func deletionStatusLabel(_ status: String) -> String {
         switch status {
-        case "pending_review": return "Pending review"
+        case "pending_review": return "Scheduled — cancellation window"
         case "approved": return "Approved for processing"
         case "processing": return "Processing"
         case "completed": return "Completed"
@@ -355,57 +349,6 @@ struct AccountView: View {
         .beerMapCard()
     }
 
-    private func specialsCard(_ dashboard: AccountDashboard) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            SectionHeader(
-                eyebrow: "Member specials",
-                title: "Codes and Pint Points",
-                subtitle: "Generate a short-lived code only when venue staff are ready to redeem it.",
-                systemImage: "qrcode.viewfinder"
-            )
-
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-                MetricPill(
-                    title: "Estimated saved",
-                    value: moneyString(cents: dashboard.discounts?.estimatedSavingsCents),
-                    systemImage: "dollarsign.circle.fill",
-                    tint: BeerMapTheme.leaf
-                )
-                MetricPill(
-                    title: "Pint Points",
-                    value: "\(dashboard.pintPoints?.available ?? 0)/\(dashboard.pintPoints?.threshold ?? 50)",
-                    systemImage: "sparkles",
-                    tint: BeerMapTheme.amber
-                )
-            }
-
-            if let pass = model.discountPass {
-                RotatingCodeCard(title: "Pint Path special", result: pass)
-            }
-
-            if let reward = model.freePintReward {
-                RotatingCodeCard(title: "Free Pint Reward", result: reward)
-            }
-
-            HStack(spacing: 10) {
-                SecondaryButton(title: dashboard.discounts?.eligible == true ? "Generate special" : "Special locked", systemImage: "qrcode") {
-                    Task { await model.generateDiscountPass() }
-                }
-                .disabled(dashboard.discounts?.eligible != true)
-
-                PrimaryButton(
-                    title: dashboard.pintPoints?.rewardAvailable == true ? "Free Pint" : "Reward locked",
-                    systemImage: "gift.fill",
-                    isLoading: model.isLoading
-                ) {
-                    Task { await model.generateFreePintReward() }
-                }
-                .disabled(dashboard.pintPoints?.rewardAvailable != true)
-            }
-        }
-        .beerMapCard()
-    }
-
     private func numberString(_ value: Double?) -> String {
         guard let value else { return "0" }
         if value.rounded() == value {
@@ -414,44 +357,6 @@ struct AccountView: View {
         return String(format: "%.1f", value)
     }
 
-    private func moneyString(cents: Int?) -> String {
-        guard let cents else { return "$0" }
-        return "$\(String(format: "%.2f", Double(cents) / 100.0))"
-    }
-}
-
-private struct RotatingCodeCard: View {
-    let title: String
-    let result: RotatingCodeResult
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-                .font(.caption.weight(.black))
-                .foregroundStyle(BeerMapTheme.amber)
-            Text(result.code)
-                .font(.system(.largeTitle, design: .rounded).weight(.black))
-                .tracking(4)
-                .frame(maxWidth: .infinity, alignment: .center)
-                .padding(.vertical, 10)
-                .background(BeerMapTheme.ink, in: RoundedRectangle(cornerRadius: 8))
-                .foregroundStyle(Color.white)
-                .accessibilityLabel("\(title) code \(result.code)")
-            if let copy = result.copy {
-                Text(copy)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            if let expiresAt = result.expiresAt {
-                Label("Expires \(expiresAt)", systemImage: "clock.fill")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .padding(12)
-        .background(BeerMapTheme.softCard, in: RoundedRectangle(cornerRadius: 8))
-    }
 }
 
 struct PrivacySettingsCard: View {

@@ -16,17 +16,34 @@ const productionRequiredEnv = {
   SUPABASE_URL: "https://production-project.supabase.co",
   SUPABASE_ANON_KEY: "fixture-supabase-browser-key",
   SUPABASE_SERVICE_ROLE_KEY: "test-production-service-role",
+  SUPABASE_OAUTH_PROVIDERS: "google",
   OFFSITE_BACKUP_SUPABASE_URL: "https://independent-backup-project.supabase.co",
   OFFSITE_BACKUP_SERVICE_ROLE_KEY: "test-independent-service-role",
   REDIS_URL: "redis://localhost:6379",
   REQUIRE_REDIS_RATE_LIMITING: "false",
   DEMO_BILLING_MODE: "",
   ALLOW_DEMO_BILLING_IN_PRODUCTION: "false",
+  COMMERCIAL_LAUNCH_ENABLED: "false",
+  CONSUMER_PAID_ENROLLMENT_ENABLED: "false",
+  PINT_POINTS_REWARDS_ENABLED: "false",
+  ALCOHOL_GAMIFICATION_ENABLED: "false",
+  ALCOHOL_PROMOTION_APPROVAL_REFERENCE: "",
   STRIPE_SECRET_KEY: "test-fixture-not-a-real-stripe-key",
   STRIPE_WEBHOOK_SECRET: "test-fixture-not-a-real-webhook-secret",
   STRIPE_PRICE_MONTHLY: "fixture-monthly-price-id",
   STRIPE_PRICE_YEARLY: "fixture-yearly-price-id",
   STRIPE_PRO_PRICE_ID: "fixture-venue-pro-price-id",
+  VENUE_PRO_TRIAL_DAYS: "0",
+  VENUE_PRO_TRIAL_REQUIRE_PAYMENT_METHOD: "false",
+  ACCOUNT_DELETION_NOTICE_MODE: "resend",
+  RESEND_TRANSACTIONAL_API_KEY: "re_fixture_transactional_key",
+  ACCOUNT_DELETION_NOTICE_FROM: "Pint Path <account@pintpath.au>",
+  ACCOUNT_DELETION_NOTICE_REPLY_TO: "admin@pintpath.au",
+  RESEND_WEBHOOK_SIGNING_SECRET: `whsec_${Buffer.alloc(32, 8).toString("base64")}`,
+  ACCOUNT_DELETION_NOTICE_ACTIVE_KEY_ID: "fixture-2026-08",
+  ACCOUNT_DELETION_NOTICE_KEYRING_JSON: JSON.stringify({
+    "fixture-2026-08": Buffer.alloc(32, 7).toString("base64"),
+  }),
 };
 
 const restoreRehearsalRequiredEnv = {
@@ -64,10 +81,20 @@ const restoreRehearsalRequiredEnv = {
   RESEND_API_KEY: "",
   REPORT_EMAIL_FROM: "",
   REPORT_EMAIL_REPLY_TO: "",
+  ACCOUNT_DELETION_NOTICE_MODE: "disabled",
+  RESEND_TRANSACTIONAL_API_KEY: "",
+  ACCOUNT_DELETION_NOTICE_FROM: "",
+  ACCOUNT_DELETION_NOTICE_REPLY_TO: "",
+  RESEND_WEBHOOK_SIGNING_SECRET: "",
+  ACCOUNT_DELETION_NOTICE_ACTIVE_KEY_ID: "",
+  ACCOUNT_DELETION_NOTICE_KEYRING_JSON: "",
   OFFSITE_BACKUP_SUPABASE_URL: "",
   OFFSITE_BACKUP_SERVICE_ROLE_KEY: "",
   DEMO_BILLING_MODE: "false",
   ALLOW_DEMO_BILLING_IN_PRODUCTION: "false",
+  PINT_POINTS_REWARDS_ENABLED: "false",
+  ALCOHOL_GAMIFICATION_ENABLED: "false",
+  ALCOHOL_PROMOTION_APPROVAL_REFERENCE: "",
   ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION: "false",
   STRIPE_SECRET_KEY: "",
   STRIPE_WEBHOOK_SECRET: "",
@@ -100,6 +127,31 @@ const restoreRehearsalRequiredEnv = {
   PINTPATH_REPORT_DELIVER: "false",
 };
 
+const accountDeletionRehearsalRequiredEnv = {
+  ...productionRequiredEnv,
+  RAILWAY_ENVIRONMENT_NAME: "staging",
+  RAILWAY_ENVIRONMENT_ID: "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+  RAILWAY_PROJECT_ID: "48d8c6cd-1c66-4148-874b-20877f48e1a5",
+  RAILWAY_SERVICE_ID: "6816c4a2-e392-4ee5-826f-2584cb599ec0",
+  RAILWAY_VOLUME_MOUNT_PATH: "/app/data",
+  RAILWAY_PUBLIC_DOMAIN: "beer-staging.up.railway.app",
+  PUBLIC_BASE_URL: "https://beer-staging.up.railway.app",
+  DATABASE_PATH: "/app/data/pint-path.sqlite",
+  SOURCE_EVIDENCE_STORAGE_DIR: "/app/data/source-evidence",
+  SUPABASE_URL: "https://ibveugyfyzjptyvautlr.supabase.co",
+  SUPABASE_ANON_KEY: "fixture-deletion-rehearsal-anon-key",
+  SUPABASE_SERVICE_ROLE_KEY: "fixture-deletion-rehearsal-service-key",
+  STRIPE_SECRET_KEY: "sk_test_fixture_deletion_rehearsal", // security-scan allow: synthetic test-mode fixture
+  OFFSITE_BACKUP_SUPABASE_URL: "",
+  OFFSITE_BACKUP_SERVICE_ROLE_KEY: "",
+  REDIS_URL: "",
+  REDIS_KEY_NAMESPACE: "",
+  REQUIRE_REDIS_RATE_LIMITING: "false",
+  ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION: "true",
+  RESTORE_REHEARSAL_MODE: "false",
+  ACCOUNT_DELETION_REHEARSAL_ENABLED: "true",
+};
+
 function stubProductionEnv(overrides: Record<string, string> = {}) {
   for (const [key, value] of Object.entries({ ...productionRequiredEnv, ...overrides })) {
     vi.stubEnv(key, value);
@@ -108,6 +160,12 @@ function stubProductionEnv(overrides: Record<string, string> = {}) {
 
 function stubRestoreRehearsalEnv(overrides: Record<string, string> = {}) {
   for (const [key, value] of Object.entries({ ...restoreRehearsalRequiredEnv, ...overrides })) {
+    vi.stubEnv(key, value);
+  }
+}
+
+function stubAccountDeletionRehearsalEnv(overrides: Record<string, string> = {}) {
+  for (const [key, value] of Object.entries({ ...accountDeletionRehearsalRequiredEnv, ...overrides })) {
     vi.stubEnv(key, value);
   }
 }
@@ -129,6 +187,69 @@ describe("environment safety defaults", () => {
 
     expect(env.NODE_ENV).toBe("production");
     expect(env.DEMO_BILLING_MODE).toBe(false);
+    expect(env.COMMERCIAL_LAUNCH_ENABLED).toBe(false);
+    expect(env.CONSUMER_PAID_ENROLLMENT_ENABLED).toBe(false);
+  });
+
+  it("allows canonical production to defer Stripe and POS while both paid enrollment flags are closed", async () => {
+    stubProductionEnv({
+      COMMERCIAL_LAUNCH_ENABLED: "false",
+      CONSUMER_PAID_ENROLLMENT_ENABLED: "false",
+      STRIPE_SECRET_KEY: "",
+      STRIPE_WEBHOOK_SECRET: "",
+      STRIPE_PRICE_MONTHLY: "",
+      STRIPE_PRICE_YEARLY: "",
+      STRIPE_PRO_PRICE_ID: "",
+      POS_WEBHOOK_SIGNING_SECRET: "",
+    });
+
+    const { env } = await loadEnv();
+
+    expect(env.COMMERCIAL_LAUNCH_ENABLED).toBe(false);
+    expect(env.CONSUMER_PAID_ENROLLMENT_ENABLED).toBe(false);
+    expect(env.STRIPE_SECRET_KEY).toBeUndefined();
+    expect(env.STRIPE_PRO_PRICE_ID).toBeUndefined();
+    expect(env.POS_WEBHOOK_SIGNING_SECRET).toBeUndefined();
+  });
+
+  it.each([
+    "COMMERCIAL_LAUNCH_ENABLED",
+    "CONSUMER_PAID_ENROLLMENT_ENABLED",
+  ] as const)("requires the complete Stripe configuration when %s is enabled", async (flag) => {
+    stubProductionEnv({
+      COMMERCIAL_LAUNCH_ENABLED: "false",
+      CONSUMER_PAID_ENROLLMENT_ENABLED: "false",
+      [flag]: "true",
+      ...(flag === "COMMERCIAL_LAUNCH_ENABLED" ? { VENUE_PRO_TRIAL_DAYS: "60" } : {}),
+      STRIPE_SECRET_KEY: "",
+      STRIPE_WEBHOOK_SECRET: "",
+      STRIPE_PRICE_MONTHLY: "",
+      STRIPE_PRICE_YEARLY: "",
+      STRIPE_PRO_PRICE_ID: "",
+    });
+
+    await expect(loadEnv()).rejects.toThrow(
+      "Enabled production paid enrollment requires: STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, STRIPE_PRICE_MONTHLY, STRIPE_PRICE_YEARLY, STRIPE_PRO_PRICE_ID",
+    );
+  });
+
+  it("requires complete Stripe configuration when paid enrollment is enabled in hosted staging", async () => {
+    stubProductionEnv({
+      RAILWAY_ENVIRONMENT_NAME: "staging",
+      PUBLIC_BASE_URL: "https://ordinary-staging.up.railway.app",
+      COMMERCIAL_LAUNCH_ENABLED: "true",
+      CONSUMER_PAID_ENROLLMENT_ENABLED: "false",
+      VENUE_PRO_TRIAL_DAYS: "60",
+      STRIPE_SECRET_KEY: "",
+      STRIPE_WEBHOOK_SECRET: "",
+      STRIPE_PRICE_MONTHLY: "",
+      STRIPE_PRICE_YEARLY: "",
+      STRIPE_PRO_PRICE_ID: "",
+    });
+
+    await expect(loadEnv()).rejects.toThrow(
+      "Enabled production paid enrollment requires: STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, STRIPE_PRICE_MONTHLY, STRIPE_PRICE_YEARLY, STRIPE_PRO_PRICE_ID",
+    );
   });
 
   it("keeps real monthly report delivery and scheduling disabled by default", async () => {
@@ -140,6 +261,121 @@ describe("environment safety defaults", () => {
     expect(env.REPORT_DELIVERY_SCHEDULE_ENABLED).toBe(false);
     expect(env.REPORT_DELIVERY_DAY).toBe(2);
     expect(env.REPORT_DELIVERY_HOUR).toBe(9);
+  });
+
+  it("requires the encrypted Resend completion-notice path in canonical production", async () => {
+    stubProductionEnv({ ACCOUNT_DELETION_NOTICE_MODE: "disabled" });
+
+    await expect(loadEnv()).rejects.toThrow(
+      "Canonical production requires ACCOUNT_DELETION_NOTICE_MODE=resend",
+    );
+  });
+
+  it("keeps Apple OAuth disabled until authorization-token revocation is implemented", async () => {
+    stubProductionEnv({ SUPABASE_OAUTH_PROVIDERS: "google,apple" });
+
+    await expect(loadEnv()).rejects.toThrow(
+      "Apple OAuth must remain disabled until Apple authorization-token revocation is implemented and tested",
+    );
+  });
+
+  it("rejects a deletion-notice keyring that does not contain an exact 32-byte active key", async () => {
+    stubProductionEnv({
+      ACCOUNT_DELETION_NOTICE_KEYRING_JSON: JSON.stringify({ "fixture-2026-08": "dG9vLXNob3J0" }),
+    });
+
+    await expect(loadEnv()).rejects.toThrow("must decode to exactly 32 bytes");
+  });
+
+  it("rejects a deletion-notice webhook secret that was not copied from Resend", async () => {
+    stubProductionEnv({ RESEND_WEBHOOK_SIGNING_SECRET: "not-a-resend-webhook-secret" });
+
+    await expect(loadEnv()).rejects.toThrow(
+      "RESEND_WEBHOOK_SIGNING_SECRET must be the valid whsec_ secret copied from the Resend webhook",
+    );
+  });
+
+  it("keeps the venue offer and alcohol-linked launch features disabled by default", async () => {
+    stubProductionEnv();
+
+    const { env } = await loadEnv();
+
+    expect(env.VENUE_PRO_TRIAL_DAYS).toBe(0);
+    expect(env.VENUE_PRO_TRIAL_REQUIRE_PAYMENT_METHOD).toBe(false);
+    expect(env.PINT_POINTS_REWARDS_ENABLED).toBe(false);
+    expect(env.ALCOHOL_GAMIFICATION_ENABLED).toBe(false);
+  });
+
+  it("requires an explicit commercial launch opt-in before new paid or trial enrollment opens", async () => {
+    stubProductionEnv({
+      COMMERCIAL_LAUNCH_ENABLED: "true",
+      VENUE_PRO_TRIAL_DAYS: "60",
+    });
+
+    const { env } = await loadEnv();
+
+    expect(env.COMMERCIAL_LAUNCH_ENABLED).toBe(true);
+    expect(env.CONSUMER_PAID_ENROLLMENT_ENABLED).toBe(false);
+  });
+
+  it("keeps consumer paid enrollment separate from the venue launch switch", async () => {
+    stubProductionEnv({
+      COMMERCIAL_LAUNCH_ENABLED: "true",
+      CONSUMER_PAID_ENROLLMENT_ENABLED: "false",
+      VENUE_PRO_TRIAL_DAYS: "60",
+    });
+
+    const { env } = await loadEnv();
+
+    expect(env.COMMERCIAL_LAUNCH_ENABLED).toBe(true);
+    expect(env.CONSUMER_PAID_ENROLLMENT_ENABLED).toBe(false);
+  });
+
+  it("accepts only disabled, 30-day, or 60-day venue trial lengths", async () => {
+    stubProductionEnv({ VENUE_PRO_TRIAL_DAYS: "45" });
+
+    await expect(loadEnv()).rejects.toThrow("Use 0, 30, or 60 days");
+  });
+
+  it("requires the deferred release to keep the venue trial disabled", async () => {
+    stubProductionEnv({ VENUE_PRO_TRIAL_DAYS: "60" });
+    await expect(loadEnv()).rejects.toThrow("Pricing is deferred");
+
+    vi.resetModules();
+    stubProductionEnv({ VENUE_PRO_TRIAL_REQUIRE_PAYMENT_METHOD: "true" });
+    await expect(loadEnv()).rejects.toThrow("Pricing is deferred");
+  });
+
+  it("fails a future commercial launch closed unless its current offer contract is 60 days with no payment method", async () => {
+    stubProductionEnv({ COMMERCIAL_LAUNCH_ENABLED: "true", VENUE_PRO_TRIAL_DAYS: "30" });
+    await expect(loadEnv()).rejects.toThrow("non-converting 60-day venue Pro offer");
+
+    vi.resetModules();
+    stubProductionEnv({
+      COMMERCIAL_LAUNCH_ENABLED: "true",
+      VENUE_PRO_TRIAL_DAYS: "60",
+      VENUE_PRO_TRIAL_REQUIRE_PAYMENT_METHOD: "true",
+    });
+    await expect(loadEnv()).rejects.toThrow("non-converting 60-day venue Pro offer");
+  });
+
+  it("blocks alcohol-linked launch features without a recorded approval reference", async () => {
+    stubProductionEnv({
+      PINT_POINTS_REWARDS_ENABLED: "true",
+      ALCOHOL_PROMOTION_APPROVAL_REFERENCE: "",
+    });
+
+    await expect(loadEnv()).rejects.toThrow("ALCOHOL_PROMOTION_APPROVAL_REFERENCE");
+  });
+
+  it("allows an explicitly recorded production approval reference", async () => {
+    stubProductionEnv({
+      ALCOHOL_GAMIFICATION_ENABLED: "true",
+      ALCOHOL_PROMOTION_APPROVAL_REFERENCE: "legal-and-app-review-ticket-2026-07-28",
+    });
+
+    const { env } = await loadEnv();
+    expect(env.ALCOHOL_GAMIFICATION_ENABLED).toBe(true);
   });
 
   it("rejects invalid report timezones before reports or scheduler timers start", async () => {
@@ -340,11 +576,18 @@ describe("environment safety defaults", () => {
     expect(env.REQUIRE_ADMIN_MFA_IN_PRODUCTION).toBe(false);
   });
 
-  it("rejects Railway preview domains as the canonical production public URL", async () => {
-    stubProductionEnv({ PUBLIC_BASE_URL: "https://beer-production-aad4.up.railway.app" });
+  it.each([
+    "https://beer-production-aad4.up.railway.app",
+    "https://user:password@pintpath.au/",
+    "https://pintpath.au:444/",
+    "https://pintpath.au/app",
+    "https://pintpath.au/?preview=true",
+    "https://pintpath.au/#preview",
+  ])("rejects a non-canonical production PUBLIC_BASE_URL: %s", async (publicBaseUrl) => {
+    stubProductionEnv({ PUBLIC_BASE_URL: publicBaseUrl });
 
     await expect(loadEnv()).rejects.toThrow(
-      "PUBLIC_BASE_URL must be https://pintpath.au in production",
+      "PUBLIC_BASE_URL must be exactly https://pintpath.au/ in production",
     );
   });
 
@@ -378,6 +621,42 @@ describe("environment safety defaults", () => {
     const { env } = await loadEnv();
     expect(env.RESTORE_REHEARSAL_MODE).toBe(false);
     expect(env.PUBLIC_BASE_URL).toBe("https://ordinary-staging.up.railway.app");
+  });
+
+  it("allows deletion rehearsal only on the immutable isolated staging stack", async () => {
+    stubAccountDeletionRehearsalEnv();
+
+    const { env } = await loadEnv();
+    expect(env.ACCOUNT_DELETION_REHEARSAL_ENABLED).toBe(true);
+    expect(env.PUBLIC_BASE_URL).toBe("https://beer-staging.up.railway.app");
+    expect(env.SUPABASE_URL).toBe("https://ibveugyfyzjptyvautlr.supabase.co");
+    expect(env.OFFSITE_BACKUP_SUPABASE_URL).toBeUndefined();
+    expect(env.OFFSITE_BACKUP_SERVICE_ROLE_KEY).toBeUndefined();
+    expect(env.REDIS_URL).toBeUndefined();
+    expect(env.ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION).toBe(true);
+  });
+
+  it("rejects deletion rehearsal when immutable staging identities or providers are reused", async () => {
+    for (const [overrides, expected] of [
+      [{ RAILWAY_PROJECT_ID: "wrong-project" }, "immutable Pint Path staging Railway"],
+      [{ RAILWAY_ENVIRONMENT_ID: "wrong-environment" }, "immutable Pint Path staging Railway"],
+      [{ RAILWAY_SERVICE_ID: "wrong-service" }, "immutable Pint Path staging Railway"],
+      [{ PUBLIC_BASE_URL: "https://pintpath.au", RAILWAY_PUBLIC_DOMAIN: "pintpath.au" }, "exact isolated staging HTTPS origin"],
+      [{ SUPABASE_URL: "https://jxpubqlmqnnqwadmjgyk.supabase.co" }, "dedicated non-production Supabase"],
+      [{ STRIPE_SECRET_KEY: "sk_live_forbidden_rehearsal_key" }, "Stripe test-mode secret"], // security-scan allow: synthetic rejected live-mode fixture
+      [{ OFFSITE_BACKUP_SUPABASE_URL: "https://backup.example.com" }, "prohibits off-site backup credentials"],
+      [{ OFFSITE_BACKUP_SERVICE_ROLE_KEY: "forbidden-backup-key" }, "prohibits off-site backup credentials"],
+      [{ REDIS_URL: "redis://production-redis.example:6379" }, "prohibits Redis configuration"],
+      [{ REDIS_KEY_NAMESPACE: "production:pint-path" }, "prohibits Redis configuration"],
+      [{ REQUIRE_REDIS_RATE_LIMITING: "true" }, "prohibits Redis configuration"],
+      [{ ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION: "false" }, "requires ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=true"],
+      [{ COMMERCIAL_LAUNCH_ENABLED: "true" }, "paid enrollment and report delivery to remain disabled"],
+      [{ REPORT_EMAIL_MODE: "resend" }, "paid enrollment and report delivery to remain disabled"],
+    ] as const) {
+      vi.unstubAllEnvs();
+      stubAccountDeletionRehearsalEnv({ ...overrides });
+      await expect(loadEnv()).rejects.toThrow(expected);
+    }
   });
 
   it("rejects weak secrets and insecure transport in ordinary hosted staging", async () => {
@@ -472,6 +751,20 @@ describe("environment safety defaults", () => {
     );
 
     stubRestoreRehearsalEnv({
+      COMMERCIAL_LAUNCH_ENABLED: "true",
+    });
+    await expect(loadEnv()).rejects.toThrow(
+      "prohibits write-enabling flags: COMMERCIAL_LAUNCH_ENABLED",
+    );
+
+    stubRestoreRehearsalEnv({
+      CONSUMER_PAID_ENROLLMENT_ENABLED: "true",
+    });
+    await expect(loadEnv()).rejects.toThrow(
+      "prohibits write-enabling flags: CONSUMER_PAID_ENROLLMENT_ENABLED",
+    );
+
+    stubRestoreRehearsalEnv({
       ADMIN_EMAILS: "",
       PINTPATH_REVOKE_DIRECT_SMOKE_TOKENS: "false",
       FIELD_TEST_MODE: "true",
@@ -490,14 +783,15 @@ describe("environment safety defaults", () => {
     await expect(loadEnv()).rejects.toThrow("requires field-test mode off");
   });
 
-  it("checks all paid-plan and POS launch variables in provider readiness", () => {
+  it("gates paid-plan, optional POS, and report variables in provider readiness", () => {
     const readinessScript = fs.readFileSync(path.resolve(process.cwd(), "scripts/provider-readiness-check.ts"), "utf8");
     const packageJson = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), "package.json"), "utf8")) as {
       scripts: Record<string, string>;
     };
 
-    expect(readinessScript).toContain('checkRequired("STRIPE_PRICE_MONTHLY"');
-    expect(readinessScript).toContain('checkRequired("STRIPE_PRICE_YEARLY"');
+    expect(readinessScript).toContain("const paidEnrollmentEnabled");
+    expect(readinessScript).toContain('"STRIPE_PRICE_MONTHLY"');
+    expect(readinessScript).toContain('"STRIPE_PRICE_YEARLY"');
     expect(readinessScript).not.toContain("NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY");
     expect(readinessScript).toContain('checkRequired("GOOGLE_PLACES_API_KEY"');
     expect(readinessScript).toContain('checkRequired("OPENAI_API_KEY"');
@@ -507,7 +801,7 @@ describe("environment safety defaults", () => {
     expect(readinessScript).toContain("requireNoBucketSizeLimit: true");
     expect(readinessScript).toContain("probeReadWrite: true");
     expect(readinessScript).toContain('"application/pdf"');
-    expect(readinessScript).toContain('checkRequired("POS_WEBHOOK_SIGNING_SECRET"');
+    expect(readinessScript).toContain('checkOptionalStrongSecret(\n  "POS_WEBHOOK_SIGNING_SECRET"');
     expect(readinessScript).toContain("SUPABASE_PROVIDER_CALLBACK_URL");
     expect(readinessScript).toContain("/auth/v1/callback");
     expect(readinessScript).toContain("ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION");

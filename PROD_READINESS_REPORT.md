@@ -1,13 +1,88 @@
 # Pint Path Production Readiness Report
 
 Date: 2026-05-25
-Latest update: 2026-07-14
+Latest update: 2026-08-03
 
 ## Executive Summary
 
-Pint Path is substantially hardened for a controlled Melbourne beta, but it is not yet ready for full-scale production deployment without provider/dashboard verification. The application now has strong server-side price gating, admin/venue-manager authorization tests, pending-review workflows for venue-manager changes, production admin MFA step-up guards, private source-evidence references with signed server URLs, Redis-capable rate limiting, Stripe webhook signature handling, upload validation, security audit logging, production config guards, and a CI path that runs build/test/secret scan/dependency audit.
+Pint Path is substantially hardened for a controlled Melbourne launch, but it
+is not ready for the requested full-scale production launch. The candidate has
+strong server-side price gating, role authorization, provider/configuration
+guards, deletion handling, private evidence access, Redis-backed rate limiting,
+upload validation, security auditing, and local build/test/security gates.
 
-The remaining blockers are now mostly provider and operations verification: Supabase MFA/AAL2 must be configured and tested, private Supabase Storage should be verified before broad source-evidence uploads, Redis must be provisioned for production rate limiting, backup/restore and monitoring must be tested, and live Stripe/Supabase/Google configuration must be verified in staging. The old phone-call automation surface has been retired from the active app.
+The remaining blockers include architecture as well as live proof: the current
+Railway-volume SQLite service is single-region and cannot substantiate a
+high-availability/full-scale claim; the current second-Supabase-project copy is
+not provider-enforced immutable disaster recovery; the real staging service is
+not reachable at the documented hostname; production data coverage/freshness
+fails; and Supabase, Resend, MFA, deletion, restore, monitoring, authenticated
+journeys, signed iOS/TestFlight, App Review, and crash symbolication still need
+evidence against one frozen SHA. The old production deployment reports Redis,
+Storage, and an off-site copy healthy, but that is not candidate or immutable
+restore proof.
+
+## Latest Patch: 3 August 2026 production-launch recheck
+
+This candidate adds the launch-blocking account-deletion completion path, closes paid enrolment while pricing is deferred, hardens the staged/production provider gates, and makes iOS Release configuration fail closed. It has not been deployed.
+
+- Added an encrypted SQLite deletion-notice outbox, deterministic Resend idempotency, signed delivery webhooks, bounded retries, retention/purge enforcement, operator resolution, restore suppression, and privacy-safe backup handling in schema 15.
+- Added the final Supabase migration that removes all direct `anon` and
+  `authenticated` public Data API/table/sequence/RPC/helper privileges. App data
+  is Express-only; a real captured pre-deletion JWT denial matrix remains a
+  staging gate.
+- Changed completed account deletion to remove the user's raw submissions,
+  submission items/free text, contribution ledger rows, and public price rows
+  derived from those submissions. Local evidence bytes, URLs, sizes, ownership,
+  and deletion timestamps are scrubbed inside the same transaction; external
+  object cleanup remains post-commit and cannot falsely turn a committed
+  deletion into a failed deletion. Reviewer references on other users' records
+  are detached.
+- Corrected the iOS recovery redirect to the verified `/auth/callback` flow and
+  added clear same-email/Forgot-password guidance for existing Google website
+  users. Real same-Supabase-ID/no-duplicate provider proof is still required.
+- Removed happy-hour discovery, contribution, mission, SEO, pricing, community,
+  and promotional surfaces from the public launch scope while preserving
+  venue/admin collection and accurate legal disclosure. The server now also
+  filters happy-hour/special price rows and happy-hour missions and rejects
+  public happy-hour submissions, so changing browser markup cannot bypass the
+  launch scope.
+- Made the pricing deferral fail closed: production requires both enrolment
+  flags false, trial days zero, no payment-method trial, public `pricing: null`,
+  and no old consumer/venue amounts or paid-upgrade copy in current public
+  responses. Pricing will be a separate later candidate.
+- Added `/startup`, deletion scheduler/queue operational readiness, exact canonical production URL validation, isolated deletion-rehearsal constraints, and a documented one-replica/one-region launch constraint while SQLite owns the outbox and webhook correlation state.
+- Kept `COMMERCIAL_LAUNCH_ENABLED=false` and `CONSUMER_PAID_ENROLLMENT_ENABLED=false`; Stripe is not a startup requirement while paid enrolment remains closed.
+- Restricted the launch auth contract to Google on web and email/password in the first iOS release. Apple remains disabled until token revocation is implemented and tested.
+- Added an ignored iOS `Config.xcconfig` path, Release-only Supabase validation, protected CI configuration, and compiled-archive inspection that does not print the public key.
+- Verified both Railway TXT ownership records and the `www.pintpath.com.au` CNAME. The live custom domain returns HTTP 200, so the Railway warning shown on 3 August is stale rather than a missing TXT record.
+- The GoDaddy apex forward for `pintpath.com.au` currently points through `http://pintpath.au/`; change its destination to `https://pintpath.au/`. The candidate redirects attached `www` and legacy hosts directly to the canonical HTTPS origin.
+- The currently deployed production SHA remains `95b9f2da5e9a99692c8cfafba90d2c29e63ccbc8`; its public `/health` and `/ready` checks pass, Redis and off-site backup dependencies report healthy, and the last reported off-site backup success is `2026-08-02T22:57:58.427Z`.
+- The documented staging hostname currently returns HTTP 404 and must be reconciled against the actual Railway staging service/domain before any write rehearsal.
+- Fresh public data readiness is not launch-ready: 612 public venues, 288 price rows, only 5 of 611 marketed venues meeting the three-current-trusted-price threshold (0.82%), newest qualifying data about 685 hours old, three malformed structured addresses, and zero current happy-hour coverage. The candidate must be deployed to isolated staging and the strict data gate rerun because the old production SHA does not expose every new status/evidence field.
+- Release evidence is structurally valid and current but intentionally remains 0/12 complete until real provider, restore, pilot, accessibility, legal, authenticated-role, and TestFlight proof is captured against one frozen SHA.
+- The current Supabase off-site copy is classified as a verified operational
+  restore copy, not an immutable independent backup. Full-scale launch requires
+  a separate provider/region with object lock/WORM, an append/create-only
+  application principal, and separately controlled read/retention authority.
+- Apple-only crash reports may support a controlled cohort with manual review;
+  broad expansion requires a privacy-reviewed production crash source, dSYM
+  symbolication, alert delivery, zero critical crashes, and the documented
+  crash-free threshold.
+
+Current integrated verification on this candidate:
+
+- `npm run build`: passed.
+- `npm test -- --reporter=dot`: 74 files and 978 tests passed.
+- `npm run security:scan`: passed.
+- `npm run security:audit`: zero vulnerabilities.
+- `npm run deployment:guard:check`: passed.
+- `npm run release:evidence`: valid/current; 12 required items, 0 passed and 12 pending as designed.
+- `git diff --check`: passed.
+- unsigned iOS Debug simulator build: passed.
+- iOS Release without production public config: rejected as designed.
+- synthetic unsigned iOS Release archive plus compiled configuration inspection: passed with Xcode 26.5 / iOS 26.5 SDK.
+- public production smoke: 9 passed, 0 failed, 3 authenticated-role checks skipped because dedicated credentials were not supplied.
 
 ## Latest Patch: 9/10 Launch Gates
 
@@ -51,7 +126,7 @@ The codebase is mostly ready for a controlled beta behind careful operations, bu
 - Runtime: Node.js 22+ with TypeScript and Express.
 - Frontend: static HTML/CSS/JS in `viewer/`.
 - Database: SQLite via `better-sqlite3`, initialized additively from `src/db/schema.sql`.
-- Auth: Supabase email/password and Google/Apple provider identities are exchanged for scoped Pint Path app sessions. The browser app session uses an HttpOnly cookie; direct Pint Path password signup/login is development/localhost-only. Production admin actions require verified email and, during normal operation, AAL2 step-up claims.
+- Auth: Supabase email/password and Google provider identities are exchanged for scoped Pint Path app sessions. Apple OAuth is disabled for this launch until token revocation is implemented. The browser app session uses an HttpOnly cookie; direct Pint Path password signup/login is development/localhost-only. Production admin actions require verified email and, during normal operation, AAL2 step-up claims.
 - Payments: Stripe Checkout/webhooks plus demo billing mode guarded by env.
 - External services: Supabase, Google Maps, OpenAI, Stripe. Historical phone-call automation code has been removed from the repository and is not built, mounted, or configured.
 - Hosting assumptions: Railway, with build `npm run build`, start `node dist/src/server.js`.
@@ -173,34 +248,56 @@ If this document changes after final validation, rerun all commands in `PRODUCTI
 
 ## Remaining Blockers
 
-See `PROD_FOLLOWUPS.md` for owner/action details.
+See `PROD_FOLLOWUPS.md` for owners, proof, and pass criteria. The P0 set is:
 
-P0 blockers for full-scale production:
-- Supabase/provider MFA setup and staging AAL2 verification are not completed. The code guard is implemented and fail-closed.
-- Private source evidence is no longer publicly exposed, but production Supabase Storage/private object storage must still be provisioned and tested before large-scale public uploads.
-- Production backup/restore, monitoring, alerting, and incident ownership have not been verified.
+- Migrate authoritative SQLite/outbox/job state to shared Postgres and prove
+  replicas for the requested full-scale launch, or explicitly reduce the launch
+  to a measured single-region cohort that is not described as full-scale/HA.
+- Reconcile the actual isolated Railway staging service; the documented hostname
+  returned 404 on 3 August.
+- Repair and reverify production data until every marketed suburb independently
+  passes the signed coverage/freshness/status/evidence thresholds.
+- Apply the final Supabase revoke migration and prove anonymous/authenticated/
+  captured-old-JWT denial for Data API, RPC, Storage, and the Pint Path API;
+  prove Google web auth, iOS same-account password recovery, admin AAL2, and SMTP.
+- Run the complete account-deletion/Resend rehearsal in isolated staging.
+- Create a separate-failure-domain, provider-enforced WORM/object-lock backup and
+  prove a schema-15 restore, integrity, RPO/RTO, and two-person teardown.
+- Complete capacity, Redis outage, monitoring, alerting, DAST, breach tabletop,
+  accessibility, and first-72-hour operating evidence.
+- Complete legal/entity/App Privacy review and signed iOS archive, physical-device
+  TestFlight, crash, App Review, and storefront evidence.
+- Reach 12/12 release-evidence items on one frozen SHA with no critical/high open
+  defects.
 
-P1 blockers before broad paid/public rollout:
-- Live Stripe Checkout/webhook flow needs provider-backed test verification.
-- Supabase RLS migration/policies need to be applied and audited before any direct browser writes. The migration has been expanded but not applied to a real project here.
-- Redis-backed rate limiting must be provisioned and smoke-tested with `REDIS_URL`; the repo now fails closed by default in production if Redis is missing. Do not use the in-memory production override for full-scale launch.
-- Supabase Confirm Email/custom SMTP, provider callback URLs, and verified-email timestamps must be configured and exercised in staging; production onboarding is provider-first and local password signup/login remains intentionally localhost/development-only.
-- Production observability is currently mostly logs/checklists rather than alerting/tracing/SLOs.
-- Legal/privacy review of Terms, Privacy, cookie/analytics consent, account export/deletion wording, and alcohol/responsible-service wording remains a human/provider task before broad public scale.
+Stripe lifecycle, report delivery, public specials/happy hours, rewards,
+counter/POS, Android, and final pricing are deliberately deferred and are not
+blockers while all associated flags and public surfaces remain disabled.
 
 ## Assumptions Made
 
 - No production deployment or production data was touched.
 - Local/test SQLite data only was used.
-- Live Stripe, Supabase, OpenAI, and Google provider credentials were not available locally, so provider-level verification remains a production/staging action.
+- Live Supabase, Resend, Apple, OpenAI, Google, Railway staging, and monitoring
+  authority was not available locally, so provider-level verification remains a
+  staging/release-owner action.
 - The current target is full-scale production readiness, not merely a small private beta.
 
 ## Recommended Next Steps Before Launch
 
-1. Configure Supabase MFA/Auth Assurance Level and verify an admin receives `aal2` before using admin routes in staging.
-2. Provision Supabase Storage/private object storage for `beermap-source-evidence` and verify signed evidence access.
-3. Configure production backups, monitoring alerts, log retention, and incident ownership, then run a restore drill.
-4. Run Stripe CLI signed-webhook tests against staging with real test keys.
-5. Apply and audit Supabase RLS policies in the real Supabase project.
-6. Provision Redis/Upstash/Railway Redis and set `REDIS_URL`; avoid `ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=true` outside emergency beta windows.
-7. Run a mobile browser smoke test and at least one staged end-to-end user/venue/admin approval path before launch.
+Follow `docs/production-launch-runbook.md` in order. The next safe actions are:
+
+1. Leave the working Railway TXT records alone; correct only the GoDaddy apex
+   forwarding target to `https://pintpath.au/` and verify the redirect matrix.
+2. Restore and identify the exact isolated staging stack and deploy this candidate
+   there with the Supabase revoke migration and schema 15.
+3. Complete the Supabase/Auth/deletion/Resend denial and lifecycle proofs.
+4. Repair the production data set and rerun the strict data gate.
+5. Finish immutable backup/restore and choose/prove the full-scale Postgres
+   architecture before capacity and failure testing.
+6. Complete monitoring, security, legal, accessibility, and iOS release evidence.
+7. Freeze one SHA, rerun every automated/live gate, deploy closed/free, reach
+   12/12 evidence, obtain App Review approval, and use a controlled rollout.
+
+Do not enable pricing during this sequence. Handle pricing and any venue free
+offer later as a new reviewed candidate.

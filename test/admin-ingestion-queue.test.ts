@@ -105,6 +105,19 @@ function attachFakeSupabase(
           };
         }
 
+        const saveCapture = async (row: unknown) => {
+          const evidenceReference = (row as { evidence_reference?: unknown }).evidence_reference;
+          const existingIndex = insertedCaptures.findIndex(
+            (capture) =>
+              (capture as { evidence_reference?: unknown }).evidence_reference === evidenceReference,
+          );
+          if (existingIndex >= 0) {
+            insertedCaptures[existingIndex] = row;
+          } else {
+            insertedCaptures.push(row);
+          }
+          return { error: null };
+        };
         return {
           select: () => ({
             eq: () => ({
@@ -113,10 +126,8 @@ function attachFakeSupabase(
               }),
             }),
           }),
-          insert: async (row: unknown) => {
-            insertedCaptures.push(row);
-            return { error: null };
-          },
+          upsert: saveCapture,
+          insert: saveCapture,
         };
       }
 
@@ -437,8 +448,19 @@ describe("AdminIngestionQueueRepository", () => {
         confidence: "admin_verified",
         sourceType: "source_ingestion",
         sourceSubmissionId: null,
+        hasSourceLinkage: true,
+        hasSourceEvidence: true,
       }),
     ]);
+    expect(database!.prepare(
+      `SELECT source_ingestion_id, source_evidence_reference, source_evidence_verified_at
+       FROM venue_price_records
+       WHERE id = ?`,
+    ).get(`source-ingestion:${queueItem.id}:0`)).toEqual({
+      source_ingestion_id: queueItem.id,
+      source_evidence_reference: `source-ingestion:${queueItem.id}`,
+      source_evidence_verified_at: expect.any(String),
+    });
     expect(businessRepository.listBarBeers(queueItem.venueId)).toEqual([
       expect.objectContaining({
         id: `admin-reviewed:${queueItem.venueId}:carlton-draft:pint`,
@@ -452,7 +474,7 @@ describe("AdminIngestionQueueRepository", () => {
     ]);
   });
 
-  it("publishes source ingestion rows locally when capture history table is unavailable", async () => {
+  it("keeps source ingestion pending without local rows when capture history is unavailable", async () => {
     const repository = createRepository();
     const businessRepository = new BusinessRepository(database!);
     const queueItem = queueSource(repository, 1);
@@ -472,7 +494,7 @@ describe("AdminIngestionQueueRepository", () => {
       },
     });
 
-    const result = await service.publishQueuedIngestion(queueItem.id, {
+    await expect(service.publishQueuedIngestion(queueItem.id, {
       beers: [
         {
           name: "Carlton Draught",
@@ -487,32 +509,13 @@ describe("AdminIngestionQueueRepository", () => {
         },
       ],
       note: "Verified against source image.",
-    });
+    })).rejects.toThrow("no live venue data was published");
 
-    expect(result.queueItem.status).toBe("published");
-    expect(result.mapPriceRecordCount).toBe(1);
-    expect(result.inventoryBeerCount).toBe(1);
-    expect(result.captureSaved).toBe(false);
-    expect(result.captureWarning).toContain("live map rows were still published");
     expect(insertedCaptures).toHaveLength(0);
-    expect(repository.count("pending_review")).toBe(0);
-    expect(businessRepository.listLatestPriceRecords(10, queueItem.venueId)).toEqual([
-      expect.objectContaining({
-        id: `source-ingestion:${queueItem.id}:0`,
-        venueName: "Venue 1",
-        beerName: "Carlton Draught",
-        price: 13.5,
-        isOnTap: "yes",
-      }),
-    ]);
-    expect(businessRepository.listBarBeers(queueItem.venueId)).toEqual([
-      expect.objectContaining({
-        beerName: "Carlton Draught",
-        price: 13.5,
-        onTap: true,
-        inStock: true,
-      }),
-    ]);
+    expect(repository.count("pending_review")).toBe(1);
+    expect(repository.getById(queueItem.id)?.status).toBe("pending_review");
+    expect(businessRepository.listLatestPriceRecords(10, queueItem.venueId)).toEqual([]);
+    expect(businessRepository.listBarBeers(queueItem.venueId)).toEqual([]);
   });
 
   it("keeps source ingestion pending when priced rows cannot be written to the live map", async () => {
@@ -595,7 +598,7 @@ describe("AdminIngestionQueueRepository", () => {
     expect(repository.getById(queueItem.id)?.status).toBe("published");
   });
 
-  it("rolls back catalogue writes and avoids remote snapshots when local publishing fails", async () => {
+  it("keeps an idempotent private snapshot but rolls back all local rows when publishing fails", async () => {
     const repository = createRepository();
     const queueItem = queueSource(repository, 1);
     const service = new AdminService(
@@ -635,7 +638,9 @@ describe("AdminIngestionQueueRepository", () => {
     expect(repository.getById(queueItem.id)?.status).toBe("pending_review");
     expect(database!.prepare("SELECT count(*) AS count FROM beer_catalog_items WHERE name = ?")
       .get("Rollback Test Pale Ale")).toEqual({ count: 0 });
-    expect(insertedCaptures).toHaveLength(0);
+    expect(insertedCaptures).toHaveLength(1);
+    expect(database!.prepare("SELECT count(*) AS count FROM venue_price_records WHERE venue_id = ?")
+      .get(queueItem.venueId)).toEqual({ count: 0 });
 
     serviceInternals.publishIngestionPriceRecords = publishRows;
     await expect(service.publishQueuedIngestion(queueItem.id, input)).resolves.toEqual(

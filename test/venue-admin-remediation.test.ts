@@ -54,10 +54,30 @@ describe("venue and admin remediation", () => {
   });
 
   it("retains pending receipt evidence for reconciliation but erases expired authorization", () => {
-    expect(portal).toContain("const { checkoutToken: _expiredCheckoutToken, ...nonSecretPayload } = entry.payload");
+    expect(portal).toContain("const pendingCounterAuthorizations = new Map()");
+    expect(portal).toContain("pendingCounterAuthorizations.delete(entry.id)");
+    expect(portal).toContain("function normalizePendingCounterReceiptPayload");
+    expect(portal).toContain("function pendingCounterReceiptStorageEntry");
+    expect(portal).toContain("payload: normalizePendingCounterReceiptPayload(entry.payload)");
+    expect(portal).not.toContain("const { checkoutToken: _checkoutToken");
+    const storageEntry = sourceBetween(
+      portal,
+      "function pendingCounterReceiptStorageEntry",
+      "function readPendingCounterReceipts",
+    );
+    expect(storageEntry).not.toContain("checkoutToken");
+    const storageReader = sourceBetween(
+      portal,
+      "function readPendingCounterReceipts",
+      "function writePendingCounterReceipts",
+    );
+    expect(storageReader).toContain(".map(pendingCounterReceiptStorageEntry)");
+    expect(storageReader).toContain("Member authorization is not retained after reload.");
+    expect(storageReader).toContain("sanitizedJson !== storedJson");
+    expect(storageReader).not.toContain("authorizationExpiresAt > now || !pendingCounterAuthorizations.has(entry.id)");
     expect(portal).toContain("reconciliationOnly: true");
     expect(portal).toContain("Expired checkout authorization is erased automatically while the non-secret receipt details remain");
-    expect(portal).toContain("Authorization expired; reconcile manually");
+    expect(portal).toContain("Authorization is not held in memory; reconcile manually");
     expect(portal).not.toContain("COUNTER_RECEIPT_QUEUE_TTL_MS");
     expect(portal).not.toContain("COUNTER_RECEIPT_RECONCILIATION_GRACE_MS");
   });
@@ -151,7 +171,10 @@ describe("venue and admin remediation", () => {
     expect(portal).toContain('window.sessionStorage.setItem(COUNTER_RECEIPT_QUEUE_KEY');
     expect(portal).not.toContain('window.localStorage.setItem(COUNTER_RECEIPT_QUEUE_KEY');
     expect(portal).toContain("const existing = entries.find((entry) => entry.id === id);");
-    expect(portal).toContain("JSON.stringify(existing.payload) === JSON.stringify(payload)");
+    expect(portal).toContain("JSON.stringify(existing.payload) === JSON.stringify(storagePayload)");
+    expect(portal).toContain("const receiptPayload = {");
+    expect(portal).toContain("const payload = { ...receiptPayload, checkoutToken };");
+    expect(portal).toContain("receiptPayload,\n            checkoutToken,");
     expect(portal).toContain("? { id, saved: true, idempotent: true }");
     expect(portal).toContain(": { id, saved: false, conflict: true }");
     expect(portal).toContain("if (queuedReceipt.conflict)");
@@ -300,14 +323,30 @@ describe("venue and admin remediation", () => {
     expect(admin).toContain("/api/business/admin/account-deletions?limit=${ACCOUNT_DELETION_PAGE_SIZE}&offset=${requestedOffset}");
     expect(admin).toContain('id="accountDeletionAuditReason"');
     expect(admin).toContain("body: JSON.stringify({ reason })");
+    expect(admin).toContain("/notification-retry");
+    expect(admin).toContain("/notification-resolution");
+    expect(admin).toContain("data-notice-resolution=\"verified_delivered\"");
+    expect(admin).toContain("data-notice-resolution=\"undeliverable\"");
+    expect(admin).toContain("securePurgeCheckpointPendingCount");
     expect(admin).toContain('id="accountDeletionPager"');
+    expect(admin).toContain('id="accountDeletionQueueSummary"');
+    expect(admin).toContain("const summary = data?.summary || {}");
+    expect(admin).toContain("const dueCount = Math.max(0, Number(summary.dueCount) || 0)");
+    expect(admin).toContain("summary.oldestDueAt");
+    expect(admin).toContain("summary.nextDueAt");
     expect(admin).toContain('["pending_review", "approved", "failed", "processing"].includes(request.status)');
     expect(admin).toContain('request.status === "failed"');
     expect(admin).toContain('? "Retry deletion"');
     expect(admin).toContain('? "Retry if stalled"');
+    expect(admin).toContain("const disabled = data.disabled === true || leaderboard.disabled === true");
+    expect(admin).toContain("No contributor identities are loaded while the launch flag is disabled.");
     expect(admin).toContain('id="adminReportOpsForm"');
     expect(admin).toContain("/api/business/admin/reports/monthly/deliver");
     expect(admin).toContain('return { label: "Stale"');
+    expect(admin).toContain('operationalStatus("job:account_deletion_notifications"');
+    expect(admin).toContain("recordedIntervalMinutes * 3");
+    expect(admin).toContain('key === "job:account_deletion_notifications"');
+    expect(admin).not.toContain('"job:account_deletion_notifications": 3 * 60');
     expect(portal).toContain('id="reportDeliveryForm"');
     expect(portal).toContain("/report-delivery");
     expect(css).toContain(".venuePortalHasUnsavedChanges");

@@ -3,12 +3,41 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { canonicalizeTrackedBeerName } from "../src/constants/beers.js";
+import { extractPlainTextFromHtml } from "../src/lib/html-plain-text.js";
 import { crawlerQueueDuplicateKey, crawlerQueueRowKey, crawlerQueueRowOverlapRatio } from "../src/lib/menu-source-dedupe.js";
 import { isTimeLimitedMenuSource } from "../src/lib/menu-source-filter.js";
 import { selectLabeledPintPrice } from "../src/lib/menu-price-selection.js";
-import { extractOnTapCardRowsFromHtml, extractStructuredBeerRowsFromText } from "../src/lib/menu-text-extraction.js";
+import {
+  decodeMenuHtml,
+  extractOnTapCardRowsFromHtml,
+  extractStructuredBeerRowsFromText,
+} from "../src/lib/menu-text-extraction.js";
 
 describe("menu crawler extraction", () => {
+  it("removes script and style bodies with browser-tolerated closing-tag syntax", () => {
+    const cases = [
+      '<script src="menu.js">secret()</script >Menu text',
+      '<script src="menu.js">secret()</script foo="bar">Menu text',
+      "<script src='menu.js'>secret()</script\t\n bar>Menu text",
+      "<ScRiPt>secret()</sCrIpT data-test>Menu text",
+      "<style>body { display: none }</style media=screen>Menu text",
+    ];
+
+    for (const html of cases) {
+      expect(extractPlainTextFromHtml(html)).toBe("Menu text");
+    }
+  });
+
+  it("decodes HTML entities once without turning nested markup into active tags", () => {
+    expect(decodeMenuHtml("Fish &amp; Chips")).toBe("Fish & Chips");
+    expect(decodeMenuHtml("&amp;lt;script&amp;gt;alert(1)&amp;lt;/script&amp;gt;"))
+      .toBe("&lt;script&gt;alert(1)&lt;/script&gt;");
+    expect(decodeMenuHtml("&#38;lt;script&#38;gt;alert(1)&#38;lt;/script&#38;gt;"))
+      .toBe("&lt;script&gt;alert(1)&lt;/script&gt;");
+    expect(decodeMenuHtml("&#x26;lt;script&#x26;gt;alert(1)&#x26;lt;/script&#x26;gt;"))
+      .toBe("&lt;script&gt;alert(1)&lt;/script&gt;");
+  });
+
   it("rejects happy-hour and specials pages as regular crawler price sources", () => {
     const rejectedSources = [
       "https://anglers-tavern.com.au/events/happy-hour/",
@@ -680,6 +709,15 @@ describe("menu crawler extraction", () => {
       expect(source).toContain("temperature: 0");
       expect(source).toContain("CANS OR BOTTLES");
     }
+  });
+
+  it("streams bounded PDF input to pdftotext without writing network bytes to disk", () => {
+    const source = readFileSync(resolve(process.cwd(), "scripts/discover-menu-sources.ts"), "utf8");
+
+    expect(source).toContain('execFile("pdftotext", ["-layout", "-", "-"]');
+    expect(source).toContain("child.stdin.end(buffer)");
+    expect(source).not.toContain("fs.writeFileSync(tempPath, buffer");
+    expect(source).not.toContain('path.join(os.tmpdir(), "pintpath-menu-")');
   });
 
   it("normalizes OCR-labelled pour prices to the pint value before queueing", () => {

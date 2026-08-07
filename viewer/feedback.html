@@ -50,8 +50,8 @@
     <section id="feedbackSupportInfo" class="grid grid--three">
       <article class="card">
         <div class="eyebrow">Privacy and deletion</div>
-        <h2>Account deletion starts as a review request.</h2>
-        <p class="muted">If you can sign in, open Account, choose Support, then use "Request deletion review". If you cannot sign in, choose "Account deletion request" below and include the account email so ownership can be checked.</p>
+        <h2>Schedule deletion from your account.</h2>
+        <p class="muted">If you can sign in, open Account, choose Support, then use "Schedule account deletion". It starts a seven-day cancellation window and shows the scheduled date. If you cannot sign in, choose "Account deletion request" below and include the account email so ownership can be checked.</p>
       </article>
       <article class="card">
         <div class="eyebrow">Support contact</div>
@@ -75,7 +75,7 @@
         <p id="feedbackHelperCopy" class="helperCopy">If you are a bar, tell us the venue name, area, and whether you want to join, claim, or manage an existing listing.</p>
       </article>
 
-      <form id="feedbackForm" class="panel form">
+      <form id="feedbackForm" class="panel form" method="post" action="/api/business/feedback" accept-charset="UTF-8">
         <h2 id="feedbackFormTitle">Send a message</h2>
         <p id="feedbackFormCopy" class="muted">Messages can be anonymous, but if you are signed in we can link it to your account for follow-up.</p>
         <label class="field">Type
@@ -108,6 +108,9 @@
           <button id="feedbackSubmitButton" class="button button--primary" type="submit">Send message</button>
           <a id="feedbackBackLink" class="button" href="/">Back to map</a>
         </div>
+        <noscript>
+          <p class="notice">JavaScript is off. This form will submit securely to Pint Path, but the confirmation will be shown as a plain response.</p>
+        </noscript>
         <div id="feedbackStatus" class="notice">We read every contact message. Please do not include private ID documents, payment details, passwords, or tokens.</div>
       </form>
     </section>

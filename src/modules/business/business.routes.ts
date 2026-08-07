@@ -4,13 +4,18 @@ import { env } from "../../config/env.js";
 import { AppError } from "../../lib/errors.js";
 import { success } from "../../lib/http.js";
 import { getClientIp, getRateLimitIdentity } from "../../lib/client-ip.js";
-import { getSessionAuthorization, SESSION_COOKIE_NAME } from "../../lib/session-cookie.js";
+import {
+  getSessionAuthorization,
+  hasSessionCredential,
+  SESSION_COOKIE_NAME,
+} from "../../lib/session-cookie.js";
 import { parseWithSchema } from "../../lib/validation.js";
 import { createRateLimiter } from "../../middleware/rate-limit.js";
 
 import {
   accountPreferencesSchema,
   adminReasonSchema,
+  accountDeletionNotificationResolutionSchema,
   accountDeletionRequestSchema,
   accountPrivacySettingsSchema,
   adminAccountSearchSchema,
@@ -250,10 +255,10 @@ export function createBusinessRouter(businessService: BusinessService): Router {
   });
 
   router.get("/config", (_req, res) => {
-    res.setHeader(
-      "Cache-Control",
-      env.RESTORE_REHEARSAL_MODE ? "private, no-store" : "public, max-age=300, stale-while-revalidate=600",
-    );
+    // Authentication provider availability and public Supabase keys can change
+    // independently of an app release. Never let a CDN or device keep a stale
+    // provider list that hides or disables a working sign-in option.
+    res.setHeader("Cache-Control", "private, no-store");
     res.json(success(businessService.getPublicConfig()));
   });
 
@@ -498,6 +503,31 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     }
   });
 
+  router.post("/admin/account-deletions/:id/notification-retry", adminReviewLimiter, (req, res) => {
+    const admin = requireAdmin(req, businessService);
+    const body = parseWithSchema(adminReasonSchema, req.body, "A reason is required to retry a completion notice");
+    res.json(success(businessService.retryFailedAccountDeletionCompletionNotification(
+      admin,
+      String(req.params.id ?? ""),
+      body.reason,
+    )));
+  });
+
+  router.post("/admin/account-deletions/:id/notification-resolution", adminReviewLimiter, (req, res) => {
+    const admin = requireAdmin(req, businessService);
+    const body = parseWithSchema(
+      accountDeletionNotificationResolutionSchema,
+      req.body,
+      "A resolution and audit reason are required for a completion notice",
+    );
+    res.json(success(businessService.resolveAccountDeletionCompletionNotification(
+      admin,
+      String(req.params.id ?? ""),
+      body.resolution,
+      body.reason,
+    )));
+  });
+
   router.post("/account/saved-items", writeLimiter, (req, res) => {
     const account = requireAccount(req, businessService);
     const body = parseWithSchema(saveItemSchema, req.body, "Invalid saved item payload");
@@ -519,12 +549,23 @@ export function createBusinessRouter(businessService: BusinessService): Router {
 
   router.get("/venues", async (req, res, next) => {
     try {
+      const credentialsSupplied = hasSessionCredential(req);
+      if (credentialsSupplied) {
+        res.setHeader("Cache-Control", "private, no-store");
+        res.setHeader("Vary", "Authorization, Cookie");
+      }
+      const account = getOptionalAccount(req, businessService);
+      if (credentialsSupplied && !account) {
+        throw new AppError("Login required.", 401);
+      }
       const query = parseWithSchema(venuesQuerySchema, req.query, "Invalid venue query");
-      const result = await businessService.listVenuesPage(query.q, query.limit, query.offset);
-      res.setHeader(
-        "Cache-Control",
-        env.RESTORE_REHEARSAL_MODE ? "private, no-store" : "public, max-age=30, stale-while-revalidate=120",
-      );
+      const result = await businessService.listVenuesPage(query.q, query.limit, query.offset, account);
+      if (!credentialsSupplied) {
+        res.setHeader(
+          "Cache-Control",
+          env.RESTORE_REHEARSAL_MODE ? "private, no-store" : "public, max-age=30, stale-while-revalidate=120",
+        );
+      }
       res.json(success(result));
     } catch (error) {
       next(error);
@@ -737,10 +778,9 @@ export function createBusinessRouter(businessService: BusinessService): Router {
 
   router.get("/venue-portal/:venueId/reports/:month/export", (req, res) => {
     const account = requireAccount(req, businessService);
+    const params = parseWithSchema(monthlyReportParamsSchema, req.params, "Invalid monthly report export request");
     const query = parseWithSchema(monthlyReportExportQuerySchema, req.query, "Invalid monthly report export query");
-    const venueId = String(req.params.venueId ?? "");
-    const month = String(req.params.month ?? "");
-    const result = businessService.exportVenueMonthlyReport(account, venueId, month, query);
+    const result = businessService.exportVenueMonthlyReport(account, params.venueId, params.month, query);
     res
       .type(result.mimeType)
       .setHeader("Cache-Control", "private, no-store")
@@ -1208,6 +1248,21 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     try {
       const raw = req.rawBody ? Buffer.from(req.rawBody) : Buffer.from(JSON.stringify(req.body ?? {}));
       const result = await businessService.handleStripeWebhook(raw, req.header("stripe-signature") ?? undefined);
+      res.json(success(result));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/account-deletion-notifications/resend-webhook", (req, res, next) => {
+    try {
+      const rawBody = req.rawBody ? Buffer.from(req.rawBody) : Buffer.from(JSON.stringify(req.body ?? {}));
+      const result = businessService.handleResendAccountDeletionWebhook({
+        rawBody,
+        id: req.header("svix-id") ?? undefined,
+        timestamp: req.header("svix-timestamp") ?? undefined,
+        signature: req.header("svix-signature") ?? undefined,
+      });
       res.json(success(result));
     } catch (error) {
       next(error);

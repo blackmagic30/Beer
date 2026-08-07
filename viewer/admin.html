@@ -171,8 +171,9 @@
             <button id="refreshAccountDeletionsButton" class="button button--small" type="button">Refresh</button>
           </div>
           <label class="field">Deletion execution audit reason
-            <input id="accountDeletionAuditReason" minlength="4" maxlength="500" placeholder="Required before permanently deleting an account" />
+            <input id="accountDeletionAuditReason" minlength="4" maxlength="500" placeholder="Required before deleting an account or retrying its completion notice" />
           </label>
+          <div id="accountDeletionQueueSummary" class="notice" aria-live="polite">Loading deletion queue status...</div>
           <div id="accountDeletionRequests" class="list"></div>
           <div id="accountDeletionPager" class="adminIngestionPager" aria-live="polite" hidden>
             <button id="accountDeletionPrev" class="button button--small" type="button">Previous 25</button>
@@ -1783,6 +1784,8 @@
         ? data.venuePartners.outreach.filter((item) => !["closed", "not_interested"].includes(String(item.status || "lead"))).length
         : 0;
       const openOutreach = Number(data.venuePartners?.totals?.openOutreach ?? pageOpenOutreach);
+      const prizesDisabled = data.leaderboardPrizes?.disabled === true
+        || data.leaderboardPrizes?.leaderboard?.disabled === true;
       const campaign = data.leaderboardPrizes?.campaign || data.leaderboardPrizes?.leaderboard?.campaign || {};
       const totalTrust = counts.wrongPriceReports + counts.contactMessages + counts.venueRequests;
       const items = [
@@ -1820,11 +1823,11 @@
         },
         {
           label: "Prizes",
-          value: campaign.status || "active",
-          copy: campaign.monthKey || "current month",
+          value: prizesDisabled ? "paused" : campaign.status || "active",
+          copy: prizesDisabled ? "launch flag disabled" : campaign.monthKey || "current month",
           target: "leaderboard",
           selector: "#leaderboardPrizeForm",
-          tone: campaign.status === "finalized" ? "success" : "info",
+          tone: prizesDisabled || campaign.status !== "finalized" ? "info" : "success",
         },
       ];
 
@@ -1900,8 +1903,13 @@
     function renderDashboardPrizeSummary(data = {}) {
       const campaign = data.campaign || data.leaderboard?.campaign || {};
       const leaderboard = data.leaderboard || {};
+      const disabled = data.disabled === true || leaderboard.disabled === true;
       const entries = leaderboard.entries || [];
       const podium = leaderboard.podium || entries.slice(0, 3);
+      if (disabled) {
+        adminDashboardPrizeSummary.innerHTML = '<div class="listItem muted"><strong>Leaderboard prizes paused.</strong><span>The launch feature flag prevents ranking reads and campaign writes.</span></div>';
+        return;
+      }
       const prizeLine = [
         `1st ${formatAudCents(campaign.firstPlaceCents ?? 10000)}`,
         `2nd ${formatAudCents(campaign.secondPlaceCents ?? 5000)}`,
@@ -2121,12 +2129,17 @@
     function renderAdminLeaderboardPrizes(data = {}) {
       const campaign = data.campaign || data.leaderboard?.campaign || {};
       const leaderboard = data.leaderboard || {};
+      const disabled = data.disabled === true || leaderboard.disabled === true;
       const entries = leaderboard.entries || [];
       const podium = leaderboard.podium || entries.slice(0, 3);
       const awards = data.awards || [];
       const vouchers = data.vouchers || [];
 
       fillLeaderboardPrizeForm(campaign);
+      leaderboardPrizeForm.querySelectorAll("input, textarea, button").forEach((control) => {
+        control.disabled = disabled;
+      });
+      if (disabled) leaderboardPrizeCampaignBadge.textContent = "Paused";
       adminLeaderboardPodium.innerHTML = podium.length
         ? podium.map((entry) => `
           <article class="podiumCard podiumCard--rank${escapeHtml(entry.rank)}">
@@ -2136,7 +2149,9 @@
             <small>${escapeHtml(entry.points || 0)} pts · ${escapeHtml(entry.approvedSubmissions || 0)} verified</small>
           </article>
         `).join("")
-        : '<div class="emptyState"><strong>No podium yet.</strong><span>Approved monthly contributions will appear here.</span></div>';
+        : disabled
+          ? '<div class="emptyState"><strong>Leaderboard paused.</strong><span>No contributor identities are loaded while the launch flag is disabled.</span></div>'
+          : '<div class="emptyState"><strong>No podium yet.</strong><span>Approved monthly contributions will appear here.</span></div>';
 
       adminLeaderboardEntries.innerHTML = entries.length
         ? entries.slice(0, 25).map((entry) => `
@@ -2519,11 +2534,53 @@
       const container = document.getElementById("accountDeletionRequests");
       if (!container) return;
       const requests = data?.requests || [];
+      const summary = data?.summary || {};
+      const dueCount = Math.max(0, Number(summary.dueCount) || 0);
+      const actionableCount = Math.max(0, Number(summary.actionableCount) || 0);
+      const failedCount = Math.max(0, Number(summary.failedCount) || 0);
+      const processingCount = Math.max(0, Number(summary.processingCount) || 0);
+      const notificationSummary = summary.notifications || {};
+      const notificationAttentionCount = Math.max(0, Number(notificationSummary.manualReviewCount) || 0);
+      const queueSummary = document.getElementById("accountDeletionQueueSummary");
+      if (queueSummary) {
+        const details = [
+          dueCount
+            ? `${dueCount} deletion request${dueCount === 1 ? " is" : "s are"} eligible now${summary.oldestDueAt ? `; oldest eligible ${MelbBeerBusiness.formatDate(summary.oldestDueAt)}` : ""}.`
+            : `No deletion requests are eligible now${summary.nextDueAt ? `; next eligible ${MelbBeerBusiness.formatDate(summary.nextDueAt)}` : ""}.`,
+          `${actionableCount} actionable total.`,
+          `${failedCount} failed.`,
+          `${processingCount} processing.`,
+          `${Math.max(0, Number(notificationSummary.pendingCount) || 0)} completion notices queued.`,
+          `${Math.max(0, Number(notificationSummary.acceptedCount) || 0)} awaiting delivery confirmation.`,
+          `${notificationAttentionCount} notices need operator attention.`,
+          `${Math.max(0, Number(notificationSummary.securePurgeCheckpointPendingCount) || 0)} secure recipient purges awaiting WAL checkpoint.`,
+        ];
+        queueSummary.textContent = details.join(" ");
+      }
       container.innerHTML = requests.length
         ? requests.map((request) => {
             const executeAfter = new Date(request.execute_after || request.requested_at || 0);
             const due = Number.isFinite(executeAfter.getTime()) && executeAfter.getTime() <= Date.now();
             const actionable = ["pending_review", "approved", "failed", "processing"].includes(request.status);
+            const notificationStatus = String(request.completion_notification_status || "");
+            const operatorResolvedUndeliverable = notificationStatus === "failed"
+              && request.completion_notification_provider_event === "operator_resolved_undeliverable";
+            const notificationRetentionExpiresAt = Date.parse(request.completion_notification_retention_expires_at || "");
+            const notificationRetentionActive = Number.isFinite(notificationRetentionExpiresAt)
+              && notificationRetentionExpiresAt > Date.now();
+            const notificationLabel = notificationStatus === "delivered"
+              ? "Completion notice delivered"
+              : notificationStatus === "accepted"
+                ? "Completion notice accepted; awaiting delivery"
+                : ["pending", "sending"].includes(notificationStatus)
+                  ? "Completion notice queued"
+                  : operatorResolvedUndeliverable
+                    ? "Completion notice resolved as undeliverable"
+                    : ["manual_review", "failed", "purged"].includes(notificationStatus)
+                    ? "Completion notice needs operator attention"
+                    : notificationStatus === "suppressed_restore"
+                      ? "Historical notice suppressed during restore"
+                      : "";
             const actionLabel = actionable && !due
               ? "Safety window"
               : request.status === "failed"
@@ -2535,16 +2592,34 @@
                   : request.status === "cancelled"
                       ? "Cancelled"
                       : "Completed";
+            const notificationRetryButton = notificationStatus === "failed"
+              && !operatorResolvedUndeliverable
+              && notificationRetentionActive
+              ? `<button class="button button--small" type="button" data-retry-account-deletion-notice="${escapeHtml(request.id)}">Retry completion notice</button>`
+              : "";
+            const canResolveNotification = ["manual_review", "failed", "purged"].includes(notificationStatus)
+              && !operatorResolvedUndeliverable;
+            const notificationResolutionButtons = canResolveNotification
+              ? `${request.completion_notification_provider_message_id ? `<button class="button button--small" type="button" data-resolve-account-deletion-notice="${escapeHtml(request.id)}" data-notice-resolution="verified_delivered">Confirm delivered</button>` : ""}
+                 <button class="button button--small button--danger" type="button" data-resolve-account-deletion-notice="${escapeHtml(request.id)}" data-notice-resolution="undeliverable">Resolve undeliverable</button>`
+              : "";
             return `
               <article class="listItem dataRow">
                 <div>
                   <strong>${escapeHtml(request.user_id || "Account")}</strong>
                   <div class="muted">Requested ${MelbBeerBusiness.formatDate(request.requested_at)} · ${actionable ? `Eligible ${MelbBeerBusiness.formatDate(request.execute_after)}` : escapeHtml(request.status)}</div>
                   ${request.processing_step ? `<div class="muted">Current step: ${escapeHtml(request.processing_step)}</div>` : ""}
+                  ${notificationLabel ? `<div class="muted">${escapeHtml(notificationLabel)}${request.completion_notification_provider_event ? ` · ${escapeHtml(request.completion_notification_provider_event)}` : ""}</div>` : ""}
+                  ${request.completion_notification_provider_message_id ? `<div class="muted">Provider message: <code>${escapeHtml(request.completion_notification_provider_message_id)}</code></div>` : ""}
+                  ${request.completion_notification_last_error ? `<div class="fieldHint fieldHint--error">Notice: ${escapeHtml(request.completion_notification_last_error)}</div>` : ""}
                   ${request.last_error ? `<div class="fieldHint fieldHint--error">Last error: ${escapeHtml(request.last_error)}</div>` : ""}
                   ${request.user_message ? `<div class="muted">${escapeHtml(request.user_message)}</div>` : ""}
                 </div>
-                <button class="button button--small button--danger" type="button" data-execute-account-deletion="${escapeHtml(request.id)}" ${!actionable || !due ? "disabled" : ""}>${escapeHtml(actionLabel)}</button>
+                <div class="actionRow actionRow--compact">
+                  ${notificationRetryButton}
+                  ${notificationResolutionButtons}
+                  <button class="button button--small button--danger" type="button" data-execute-account-deletion="${escapeHtml(request.id)}" ${!actionable || !due ? "disabled" : ""}>${escapeHtml(actionLabel)}</button>
+                </div>
               </article>`;
           }).join("")
         : '<div class="listItem muted">No account deletion requests.</div>';
@@ -2567,6 +2642,57 @@
             await loadAccountDeletionRequests();
           } catch (error) {
             MelbBeerBusiness.setStatus(statusEl, error.message || "Account deletion failed.", true);
+            button.disabled = false;
+          }
+        });
+      });
+      container.querySelectorAll("[data-retry-account-deletion-notice]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          const reasonInput = document.getElementById("accountDeletionAuditReason");
+          const reason = String(reasonInput?.value || "").trim();
+          if (reason.length < 4) {
+            MelbBeerBusiness.setStatus(statusEl, "Add an audit reason of at least 4 characters before retrying the notice.", true);
+            reasonInput?.focus();
+            return;
+          }
+          if (!window.confirm(`Retry the failed completion notice for ${button.dataset.retryAccountDeletionNotice}? Use this only after fixing the confirmed provider rejection.`)) return;
+          button.disabled = true;
+          try {
+            await MelbBeerBusiness.apiFetch(`/api/business/admin/account-deletions/${encodeURIComponent(button.dataset.retryAccountDeletionNotice)}/notification-retry`, {
+              method: "POST",
+              body: JSON.stringify({ reason }),
+            });
+            await loadAccountDeletionRequests();
+          } catch (error) {
+            MelbBeerBusiness.setStatus(statusEl, error.message || "Completion notice retry failed.", true);
+            button.disabled = false;
+          }
+        });
+      });
+      container.querySelectorAll("[data-resolve-account-deletion-notice]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          const reasonInput = document.getElementById("accountDeletionAuditReason");
+          const reason = String(reasonInput?.value || "").trim();
+          if (reason.length < 4) {
+            MelbBeerBusiness.setStatus(statusEl, "Add an audit reason of at least 4 characters before resolving the notice.", true);
+            reasonInput?.focus();
+            return;
+          }
+          const resolution = button.dataset.noticeResolution;
+          const requestId = button.dataset.resolveAccountDeletionNotice;
+          const confirmation = resolution === "verified_delivered"
+            ? `Confirm delivery for ${requestId}? First verify the provider message ID in Resend. This permanently purges the encrypted recipient.`
+            : `Resolve ${requestId} as undeliverable? First verify the provider result in Resend. This stops retries and permanently purges the encrypted recipient.`;
+          if (!window.confirm(confirmation)) return;
+          button.disabled = true;
+          try {
+            await MelbBeerBusiness.apiFetch(`/api/business/admin/account-deletions/${encodeURIComponent(requestId)}/notification-resolution`, {
+              method: "POST",
+              body: JSON.stringify({ resolution, reason }),
+            });
+            await loadAccountDeletionRequests();
+          } catch (error) {
+            MelbBeerBusiness.setStatus(statusEl, error.message || "Completion notice resolution failed.", true);
             button.disabled = false;
           }
         });
@@ -3057,14 +3183,28 @@
           ? Math.max(0, Math.round((Date.now() - updatedAt.getTime()) / 60000))
           : null;
         const ageCopy = ageMinutes == null ? "No run recorded yet." : ageMinutes < 60 ? `${ageMinutes}m ago` : `${Math.round(ageMinutes / 60)}h ago`;
-        const maxAgeMinutes = {
+        const staticMaxAgeMinutes = {
           "job:offsite_backup": 26 * 60,
           "job:restore_rehearsal": 35 * 24 * 60,
           "job:evidence_retention": 26 * 60,
           "auto_missions_refresh": 26 * 60,
         }[key];
+        const recordedIntervalMinutes = Number(job?.state?.intervalMinutes);
+        const maxAgeMinutes = key === "job:account_deletion_notifications"
+          ? Math.max(
+              15,
+              Number.isFinite(recordedIntervalMinutes) && recordedIntervalMinutes > 0
+                ? recordedIntervalMinutes * 3
+                : 15,
+            )
+          : staticMaxAgeMinutes;
         if (state === "succeeded" && maxAgeMinutes && (ageMinutes == null || ageMinutes > maxAgeMinutes)) {
-          return { label: "Stale", copy: `Last success ${ageCopy}; expected within ${maxAgeMinutes < 1440 ? `${Math.round(maxAgeMinutes / 60)} hours` : `${Math.round(maxAgeMinutes / 1440)} days`}. Check the scheduler and owner.`, tone: "warning" };
+          const maxAgeCopy = maxAgeMinutes < 60
+            ? `${Math.round(maxAgeMinutes)} minutes`
+            : maxAgeMinutes < 1440
+              ? `${Math.round(maxAgeMinutes / 60)} hours`
+              : `${Math.round(maxAgeMinutes / 1440)} days`;
+          return { label: "Stale", copy: `Last success ${ageCopy}; expected within ${maxAgeCopy}. Check the scheduler and owner.`, tone: "warning" };
         }
         if (state === "succeeded") return { label: "Healthy", copy: `${successCopy} Last success ${ageCopy}.`, tone: "success" };
         if (state === "running") return { label: "Running", copy: `Job started ${ageCopy}.`, tone: "info" };
@@ -3119,6 +3259,12 @@
           status: operationalStatus("job:evidence_retention", "Expired private evidence maintenance completed."),
           target: "review",
           selector: "#adminHealthPanel",
+        },
+        {
+          label: "Account deletion notices",
+          status: operationalStatus("job:account_deletion_notifications", "The completion-notice queue ran and recorded its delivery and secure-purge state."),
+          target: "review",
+          selector: "#accountDeletionRequests",
         },
         {
           label: "User menu OCR",

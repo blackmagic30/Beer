@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Bar Owner Dashboard & Venue Portal | Pint Path</title>
-  <meta name="description" content="Verified bars use the Pint Path venue portal to manage beer data, happy hours, profile details, reviewed specials, and privacy-safe venue reports." />
+  <meta name="description" content="Verified bars use the Pint Path venue portal to manage assigned profile, beer, stock, and price data." />
   <link rel="canonical" href="https://pintpath.au/venue-portal" />
   <link rel="icon" href="/favicon.ico" sizes="any" />
   <link rel="icon" type="image/png" sizes="48x48" href="/favicon.png" />
@@ -15,12 +15,12 @@
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="Pint Path" />
   <meta property="og:title" content="Bar Owner Dashboard & Venue Portal | Pint Path" />
-  <meta property="og:description" content="Manage verified venue data, happy hours, reviewed specials, and privacy-safe reports from the Pint Path venue portal." />
+  <meta property="og:description" content="Manage assigned venue profile, beer, stock, and price data from the Pint Path venue portal." />
   <meta property="og:url" content="https://pintpath.au/venue-portal" />
   <meta property="og:image" content="https://pintpath.au/assets/pint-path-logo.png" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="Bar Owner Dashboard & Venue Portal | Pint Path" />
-  <meta name="twitter:description" content="Manage verified venue data, happy hours, reviewed specials, and privacy-safe reports from the Pint Path venue portal." />
+  <meta name="twitter:description" content="Manage assigned venue profile, beer, stock, and price data from the Pint Path venue portal." />
   <meta name="twitter:image" content="https://pintpath.au/assets/pint-path-logo.png" />
   <link rel="stylesheet" href="./business.css" />
   <script src="./config.js"></script>
@@ -185,7 +185,7 @@
           </section>
 
           <section id="venuePanelRedemption" class="tabPanel is-hidden" role="tabpanel" aria-labelledby="venueTabRedemption" tabindex="0" data-panel="redemption" hidden>
-            <article class="panel staffCounterPanel">
+            <article class="panel staffCounterPanel" data-pint-points-feature>
               <div class="sectionHeader">
                 <div>
                   <div class="eyebrow">Staff counter</div>
@@ -251,7 +251,7 @@
               <div id="pendingCounterReceipts" class="pendingCounterReceipts" hidden></div>
             </article>
 
-            <details class="panel redemptionHeroPanel redemptionGuide">
+            <details class="panel redemptionHeroPanel redemptionGuide" data-pint-points-feature>
               <summary>How staff codes work</summary>
               <div class="redemptionFlowGrid" aria-label="Pint Path code workflow">
                 <div class="redemptionFlowStep">
@@ -326,7 +326,7 @@
             </article>
 
             <div>
-              <article class="panel">
+              <article class="panel" data-pint-points-feature>
                 <div class="sectionHeader">
                   <div>
                     <h2>Free Pint Reward</h2>
@@ -548,10 +548,10 @@
           <section id="venuePanelSpecials" class="tabPanel is-hidden" role="tabpanel" aria-labelledby="venueTabSpecials" tabindex="0" data-panel="specials" hidden>
             <article id="specialsPlanner" class="specialsPlanner panel is-hidden"></article>
             <article id="specialsGate" class="panel is-hidden">
-              <h2>Pint Path specials are a paid venue feature</h2>
-              <p class="muted">Free venue accounts can add beer data and happy-hour data only. Upgrade to Pro to add reviewed Pint Path specials.</p>
+              <h2 data-commercial-open-copy="Pint Path specials are a paid venue feature" data-commercial-closed-copy="Pro venue specials are coming later">Pro venue specials are coming later</h2>
+              <p class="muted" data-commercial-open-copy="Free venue accounts can add beer data and happy-hour data only. Upgrade to Pro to add reviewed Pint Path specials." data-commercial-closed-copy="Free venue accounts can add beer data and happy-hour data now. Pro pricing and enrolment remain closed, and no payment or trial starts from this page.">Free venue accounts can add beer data and happy-hour data now. Pro pricing and enrolment remain closed, and no payment or trial starts from this page.</p>
               <div class="actionRow">
-                <button class="button button--primary" type="button" data-upgrade-tier="pro">Upgrade to Pro</button>
+                <button class="button button--primary" type="button" data-upgrade-tier="pro" data-commercial-original-label="Upgrade to Pro" disabled aria-disabled="true" title="Pro pricing and enrolment are coming later. No payment or trial starts from this page.">Pro enrolment coming later</button>
               </div>
             </article>
             <div id="specialsEditor" class="grid grid--two">
@@ -762,6 +762,8 @@
     const COUNTER_RECEIPT_QUEUE_KEY = "pintPath.counterReceiptQueue.v2";
     const COUNTER_RECEIPT_QUEUE_LIMIT = 20;
     const viewerConfig = window.MELB_BEER_BOT_VIEWER_CONFIG || {};
+    const PINT_POINTS_REWARDS_ENABLED = viewerConfig.business?.pintPointsRewardsEnabled === true;
+    const COMMERCIAL_LAUNCH_ENABLED = viewerConfig.business?.commercialLaunchEnabled === true;
     const TRACKED_BEERS = Array.isArray(viewerConfig.trackedBeers) && viewerConfig.trackedBeers.length
       ? viewerConfig.trackedBeers
           .filter((beer) => beer && typeof beer === "object")
@@ -803,6 +805,72 @@
         "'": "&#039;",
       }[char]));
     }
+
+    function renderCommercialUpgradeAction(label, className = "button", tier = "pro") {
+      if (!COMMERCIAL_LAUNCH_ENABLED) {
+        return '<span class="helperCopy" data-commercial-enrollment-deferred="true">Pro pricing and enrolment are coming later. No payment or trial starts from this page.</span>';
+      }
+      return `<button class="${escapeHtml(className)}" type="button" data-upgrade-tier="${escapeHtml(tier)}">${escapeHtml(label)}</button>`;
+    }
+
+    function commercialEnrollmentCopy(openCopy, closedCopy) {
+      return escapeHtml(COMMERCIAL_LAUNCH_ENABLED ? openCopy : closedCopy);
+    }
+
+    function syncCommercialEnrollmentCopy(root = document) {
+      const copyNodes = [
+        ...(root instanceof Element && root.matches("[data-commercial-open-copy]") ? [root] : []),
+        ...root.querySelectorAll("[data-commercial-open-copy]"),
+      ];
+      copyNodes.forEach((node) => {
+        const copy = COMMERCIAL_LAUNCH_ENABLED
+          ? node.dataset.commercialOpenCopy
+          : node.dataset.commercialClosedCopy;
+        if (copy != null && node.textContent !== copy) node.textContent = copy;
+      });
+    }
+
+    function syncCommercialCheckoutControls(root = document) {
+      const controls = [
+        ...(root instanceof Element && root.matches("[data-upgrade-tier]") ? [root] : []),
+        ...root.querySelectorAll("[data-upgrade-tier]"),
+      ];
+      controls.forEach((control) => {
+        if (!(control instanceof HTMLButtonElement)) return;
+        if (COMMERCIAL_LAUNCH_ENABLED) {
+          const originalLabel = control.dataset.commercialOriginalLabel;
+          if (originalLabel && control.textContent !== originalLabel) control.textContent = originalLabel;
+          if (control.disabled) control.disabled = false;
+          control.removeAttribute("aria-disabled");
+          control.removeAttribute("title");
+          return;
+        }
+        if (!control.dataset.commercialOriginalLabel) {
+          control.dataset.commercialOriginalLabel = control.textContent || "Upgrade to Pro";
+        }
+        if (!control.disabled) control.disabled = true;
+        if (control.getAttribute("aria-disabled") !== "true") control.setAttribute("aria-disabled", "true");
+        if (control.title !== "Pro pricing and enrolment are coming later. No payment or trial starts from this page.") {
+          control.title = "Pro pricing and enrolment are coming later. No payment or trial starts from this page.";
+        }
+        if (control.textContent !== "Pro enrolment coming later") {
+          control.textContent = "Pro enrolment coming later";
+        }
+      });
+    }
+
+    syncCommercialCheckoutControls();
+    syncCommercialEnrollmentCopy();
+    new MutationObserver((mutations) => {
+      mutations.forEach((mutation) => {
+        mutation.addedNodes.forEach((node) => {
+          if (node instanceof Element) {
+            syncCommercialCheckoutControls(node);
+            syncCommercialEnrollmentCopy(node);
+          }
+        });
+      });
+    }).observe(document.body, { childList: true, subtree: true });
 
     function money(value) {
       return value == null ? "No verified price" : new Intl.NumberFormat("en-AU", { style: "currency", currency: "AUD" }).format(value);
@@ -1597,7 +1665,7 @@
       if (requestCodesButton) requestCodesButton.hidden = Boolean(currentPortal?.isAdmin || profile.acceptsPintPathCodes);
       loadedVenueTags = Array.isArray(profile.venueTags)
         ? profile.venueTags.map((tag) => String(tag || "").trim()).filter(Boolean)
-        : [];
+      : [];
       const renderedTags = [...new Set([...tagOptions, ...loadedVenueTags])];
       renderChecklist(venueTags, renderedTags, loadedVenueTags);
       const preview = document.getElementById("publicProfilePreview");
@@ -1776,7 +1844,7 @@
           <div class="premiumLockedCard__preview" aria-hidden="true">
             <span></span><span></span><span></span>
           </div>
-          <button class="button button--small button--premium" type="button" data-upgrade-tier="${escapeHtml(plan)}">Unlock ${escapeHtml(prettyTier(plan))}</button>
+          ${renderCommercialUpgradeAction(`Unlock ${prettyTier(plan)}`, "button button--small button--premium", plan)}
         </article>
       `;
     }
@@ -2095,10 +2163,10 @@
         </div>
         <section class="premiumUpgradeBanner">
           <div>
-            <strong>Upgrade to Pro to understand searches, special views and redemption value.</strong>
-            <p>Free stays useful for beer and happy-hour basics. Pro turns the venue portal into a complete business tool.</p>
+            <strong>${commercialEnrollmentCopy("Upgrade to Pro to understand searches, special views and redemption value.", "Pro insights are coming later.")}</strong>
+            <p>${commercialEnrollmentCopy("Free stays useful for beer and happy-hour basics. Pro turns the venue portal into a complete business tool.", "Free stays useful for beer and happy-hour basics while Pro pricing and enrolment remain closed.")}</p>
           </div>
-          <button class="button button--premium" type="button" data-upgrade-tier="pro">Unlock Pro insights</button>
+          ${renderCommercialUpgradeAction("Unlock Pro insights", "button button--premium")}
         </section>
       `;
     }
@@ -2340,7 +2408,7 @@
           </div>
           <div class="premiumDashboardHeader__tools">
             <span class="premiumPlanBadge premiumPlanBadge--${escapeHtml(plan)}">${escapeHtml(prettyTier(plan))}</span>
-            ${upgradePlan ? `<button class="button button--premium" type="button" data-upgrade-tier="${escapeHtml(upgradePlan)}">Upgrade to ${escapeHtml(prettyTier(upgradePlan))}</button>` : ""}
+            ${upgradePlan ? renderCommercialUpgradeAction(`Upgrade to ${prettyTier(upgradePlan)}`, "button button--premium", upgradePlan) : ""}
             <button class="button" type="button" data-jump-tab="specials">Manage specials</button>
             <button class="button" type="button" data-jump-tab="price-refresh">Keep prices fresh</button>
           </div>
@@ -2684,9 +2752,9 @@
               <div class="eyebrow">Upgrade path</div>
               <span class="pill pill--premium">Pro</span>
             </div>
-            <h2>Create app-only offers</h2>
-            <p class="muted">Free venues can manage beer and happy-hour data. Pro adds reviewed Pint Path specials, insights, and premium discovery.</p>
-            <button class="button button--premium" type="button" data-upgrade-tier="pro">Unlock specials</button>
+            <h2>${commercialEnrollmentCopy("Create app-only offers", "Pro venue specials are coming later")}</h2>
+            <p class="muted">${commercialEnrollmentCopy("Free venues can manage beer and happy-hour data. Pro adds reviewed Pint Path specials, insights, and premium discovery.", "Free venues can manage beer and happy-hour data now. Pro pricing and enrolment remain closed.")}</p>
+            ${renderCommercialUpgradeAction("Unlock specials", "button button--premium")}
           `;
       }
 
@@ -2796,9 +2864,9 @@
           </div>
         ` : `
           <div class="upgradeNudge" style="margin-top:12px;">
-            <strong>Pro adds paid discovery placement</strong>
-            <p class="helperCopy">Upgrade when you want premium map/listing treatment, Pro Pint Path special treatment, priority review, and a sharper monthly growth playbook.</p>
-            <button class="button button--premium" type="button" data-upgrade-tier="pro">Upgrade to Pro</button>
+            <strong>${commercialEnrollmentCopy("Pro adds paid discovery placement", "Pro discovery tools are coming later")}</strong>
+            <p class="helperCopy">${commercialEnrollmentCopy("Upgrade when you want premium map/listing treatment, Pro Pint Path special treatment, priority review, and a sharper monthly growth playbook.", "Free venue tools remain available now while Pro pricing and enrolment are closed.")}</p>
+            ${renderCommercialUpgradeAction("Upgrade to Pro", "button button--premium")}
           </div>
         `}
       `;
@@ -2853,35 +2921,73 @@
     }
 
     function generateCounterReference() {
-      if (window.crypto?.randomUUID) return `counter-${window.crypto.randomUUID()}`;
-      return `counter-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      return `counter-${window.crypto.randomUUID()}`;
+    }
+
+    const pendingCounterAuthorizations = new Map();
+
+    function normalizePendingCounterReceiptPayload(payload = {}) {
+      const quantity = Number(payload.quantity);
+      return {
+        itemName: String(payload.itemName || "").slice(0, 120),
+        beverageCategory: String(payload.beverageCategory || "").slice(0, 80),
+        quantity: Number.isFinite(quantity) && quantity > 0 ? quantity : 1,
+        transactionReference: String(payload.transactionReference || "").slice(0, 120),
+        notes: payload.notes == null ? null : String(payload.notes).slice(0, 500),
+      };
+    }
+
+    function pendingCounterReceiptStorageEntry(entry) {
+      const attempts = Number(entry.attempts);
+      return {
+        id: String(entry.id || ""),
+        venueId: String(entry.venueId || ""),
+        venueName: String(entry.venueName || ""),
+        accountId: String(entry.accountId || ""),
+        payload: normalizePendingCounterReceiptPayload(entry.payload),
+        authorizationExpiresAt: String(entry.authorizationExpiresAt || ""),
+        createdAt: String(entry.createdAt || ""),
+        attempts: Number.isFinite(attempts) && attempts > 0 ? Math.floor(attempts) : 0,
+        lastError: entry.lastError == null ? null : String(entry.lastError).slice(0, 180),
+        reconciliationOnly: entry.reconciliationOnly === true,
+      };
     }
 
     function readPendingCounterReceipts() {
       try {
         window.localStorage.removeItem("pintPath.counterReceiptQueue.v1");
-        const parsed = JSON.parse(window.sessionStorage.getItem(COUNTER_RECEIPT_QUEUE_KEY) || "[]");
+        const storedJson = window.sessionStorage.getItem(COUNTER_RECEIPT_QUEUE_KEY);
+        const parsed = JSON.parse(storedJson || "[]");
         const now = Date.now();
-        let removedExpiredAuthorization = false;
-        const entries = (Array.isArray(parsed) ? parsed : [])
+        const parsedEntries = Array.isArray(parsed) ? parsed : [];
+        const entries = parsedEntries
           .filter((entry) => entry && typeof entry === "object")
+          .map(pendingCounterReceiptStorageEntry)
           .map((entry) => {
             const authorizationExpiresAt = Date.parse(entry.authorizationExpiresAt);
-            if (!Number.isFinite(authorizationExpiresAt) || authorizationExpiresAt > now || !entry.payload?.checkoutToken) {
+            const hasInMemoryAuthorization = pendingCounterAuthorizations.has(entry.id);
+            if (
+              Number.isFinite(authorizationExpiresAt) &&
+              authorizationExpiresAt > now &&
+              hasInMemoryAuthorization
+            ) {
               return entry;
             }
-            removedExpiredAuthorization = true;
-            const { checkoutToken: _expiredCheckoutToken, ...nonSecretPayload } = entry.payload;
+            pendingCounterAuthorizations.delete(entry.id);
             return {
               ...entry,
-              payload: nonSecretPayload,
               reconciliationOnly: true,
-              lastError: entry.lastError || "Member authorization expired. Check the server record before dismissing this receipt.",
+              lastError: entry.lastError || (
+                Number.isFinite(authorizationExpiresAt) && authorizationExpiresAt <= now
+                  ? "Member authorization expired. Check the server record before dismissing this receipt."
+                  : "Member authorization is not retained after reload. Check the server record before dismissing this receipt."
+              ),
             };
           })
           .slice(0, COUNTER_RECEIPT_QUEUE_LIMIT);
-        if (removedExpiredAuthorization || entries.length !== parsed.length) {
-          window.sessionStorage.setItem(COUNTER_RECEIPT_QUEUE_KEY, JSON.stringify(entries));
+        const sanitizedJson = JSON.stringify(entries);
+        if (storedJson !== null && sanitizedJson !== storedJson) {
+          window.sessionStorage.setItem(COUNTER_RECEIPT_QUEUE_KEY, sanitizedJson);
         }
         return entries;
       } catch {
@@ -2893,22 +2999,25 @@
     function writePendingCounterReceipts(entries) {
       try {
         if (entries.length > COUNTER_RECEIPT_QUEUE_LIMIT) return false;
-        window.sessionStorage.setItem(COUNTER_RECEIPT_QUEUE_KEY, JSON.stringify(entries));
+        const storageEntries = entries.map(pendingCounterReceiptStorageEntry);
+        window.sessionStorage.setItem(COUNTER_RECEIPT_QUEUE_KEY, JSON.stringify(storageEntries));
         return true;
       } catch {
         return false;
       }
     }
 
-    function queuePendingCounterReceipt(venueId, accountId, payload, authorizationExpiresAt) {
-      const id = `${venueId}:${String(payload.transactionReference || "").toLowerCase()}`;
+    function queuePendingCounterReceipt(venueId, accountId, receiptPayload, checkoutToken, authorizationExpiresAt) {
+      const storagePayload = normalizePendingCounterReceiptPayload(receiptPayload);
+      const id = `${venueId}:${storagePayload.transactionReference.toLowerCase()}`;
+      const inMemoryAuthorization = String(checkoutToken || "");
       const entries = readPendingCounterReceipts();
       const existing = entries.find((entry) => entry.id === id);
       if (existing) {
         const exactRetry = existing.venueId === venueId
           && existing.accountId === accountId
           && existing.authorizationExpiresAt === authorizationExpiresAt
-          && JSON.stringify(existing.payload) === JSON.stringify(payload);
+          && JSON.stringify(existing.payload) === JSON.stringify(storagePayload);
         renderPendingCounterReceipts();
         return exactRetry
           ? { id, saved: true, idempotent: true }
@@ -2922,18 +3031,20 @@
         venueId,
         venueName: currentPortal?.selectedVenue?.venueName || currentPortal?.profile?.name || venueId,
         accountId,
-        payload,
+        payload: storagePayload,
         authorizationExpiresAt,
         createdAt: new Date().toISOString(),
         attempts: 0,
         lastError: null,
       });
+      if (inMemoryAuthorization) pendingCounterAuthorizations.set(id, inMemoryAuthorization);
       const saved = writePendingCounterReceipts(entries);
       renderPendingCounterReceipts();
       return { id, saved };
     }
 
     function removePendingCounterReceipt(id) {
+      pendingCounterAuthorizations.delete(id);
       writePendingCounterReceipts(readPendingCounterReceipts().filter((entry) => entry.id !== id));
       renderPendingCounterReceipts();
     }
@@ -2958,7 +3069,8 @@
       const entry = readPendingCounterReceipts().find((item) => item.id === id);
       const status = document.getElementById("memberPurchaseStatus");
       if (!entry) return;
-      if (!entry.payload?.checkoutToken || entry.reconciliationOnly) {
+      const checkoutToken = pendingCounterAuthorizations.get(id);
+      if (!checkoutToken || entry.reconciliationOnly) {
         MelbBeerBusiness.setStatus(status, "Member authorization expired. The non-secret receipt details remain for manual reconciliation; check the server record, then dismiss the receipt.", true);
         return;
       }
@@ -2966,7 +3078,7 @@
       try {
         const result = await MelbBeerBusiness.apiFetch(`/api/business/venue-portal/${encodeURIComponent(entry.venueId)}/pint-point-drinks`, {
           method: "POST",
-          body: JSON.stringify(entry.payload),
+          body: JSON.stringify({ ...entry.payload, checkoutToken }),
         });
         removePendingCounterReceipt(id);
         await loadPortal(entry.venueId);
@@ -3008,7 +3120,7 @@
                 ${entry.lastError ? `<small class="fieldHint fieldHint--error">${escapeHtml(entry.lastError)}</small>` : ""}
               </div>
               <div class="actionRow actionRow--compact">
-                <button class="button button--small button--primary" type="button" data-retry-counter-receipt="${escapeHtml(entry.id)}" ${entry.reconciliationOnly || !entry.payload?.checkoutToken ? 'disabled title="Authorization expired; reconcile manually"' : ""}>Retry</button>
+                <button class="button button--small button--primary" type="button" data-retry-counter-receipt="${escapeHtml(entry.id)}" ${entry.reconciliationOnly || !pendingCounterAuthorizations.has(entry.id) ? 'disabled title="Authorization is not held in memory; reconcile manually"' : ""}>Retry</button>
                 <button class="button button--small" type="button" data-remove-counter-receipt="${escapeHtml(entry.id)}">Dismiss</button>
               </div>
             </div>
@@ -3259,6 +3371,7 @@
       const counterOnly = data.accessLevel === "counter_staff";
 
       panel.innerHTML = `
+        ${PINT_POINTS_REWARDS_ENABLED ? `
         <div class="posSetupCard posSetupCard--wide">
           <div class="sectionHeader" style="margin-bottom:10px;">
             <div>
@@ -3283,6 +3396,7 @@
             `).join("") : '<div class="listItem muted">Validated member purchases will appear here for staff reconciliation.</div>'}
           </div>
         </div>
+        ` : ""}
         <div class="posSetupCard" data-manager-ops>
           <div class="sectionHeader" style="margin-bottom:10px;">
             <div>
@@ -4067,10 +4181,10 @@
       if (locked) {
         analyticsGate.innerHTML = `
           <h2>Live insights are available on Pro</h2>
-          <p class="muted">${escapeHtml(data.tier?.upgradeCopy || "Upgrade to Pro to view privacy-safe area analytics and monthly reports.")}</p>
-          <div class="notice">Free venue accounts can still add beer data and happy-hour data. Pro unlocks reviewed Pint Path specials and live insights.</div>
+          <p class="muted">${commercialEnrollmentCopy(data.tier?.upgradeCopy || "Upgrade to Pro to view privacy-safe area analytics and monthly reports.", "Pro pricing and enrolment are coming later. Free venue tools remain available now.")}</p>
+          <div class="notice">${commercialEnrollmentCopy("Free venue accounts can still add beer data and happy-hour data. Pro unlocks reviewed Pint Path specials and live insights.", "No payment or trial starts from this page while commercial enrolment is closed.")}</div>
           <div class="actionRow">
-            <button class="button" type="button" data-upgrade-tier="pro">Upgrade to Pro</button>
+            ${renderCommercialUpgradeAction("Upgrade to Pro")}
           </div>
         `;
         return;
@@ -4583,9 +4697,9 @@
         reportGate.innerHTML = `
           <h2>Monthly reports are a Pro feature</h2>
           <p class="muted">Reports summarise your venue lookups, beer-list interest, special views and privacy-safe area trends.</p>
-          <div class="notice">Upgrade to Pro to generate and export monthly reports once there is enough area data.</div>
+          <div class="notice">${commercialEnrollmentCopy("Upgrade to Pro to generate and export monthly reports once there is enough area data.", "Pro pricing and enrolment are coming later. No payment or trial starts from this page.")}</div>
           <div class="actionRow">
-            <button class="button" type="button" data-upgrade-tier="pro">Upgrade to Pro</button>
+            ${renderCommercialUpgradeAction("Upgrade to Pro")}
           </div>
         `;
         return;
@@ -4782,6 +4896,11 @@
 
     window.addEventListener("DOMContentLoaded", async () => {
       nav.innerHTML = MelbBeerBusiness.renderNav("venue-portal");
+      if (!PINT_POINTS_REWARDS_ENABLED) {
+        document.querySelectorAll("[data-pint-points-feature]").forEach((element) => {
+          element.hidden = true;
+        });
+      }
       MelbBeerBusiness.installFieldTestChrome();
       renderChecklist(venueTags, tagOptions);
       renderChecklist(happyHourDays, dayOptions);
@@ -4817,7 +4936,9 @@
       const selectedPortalVenueId = urlParams.get("venueId");
       const pendingRedemptionMatchesVenue = !pendingPortalRedemption?.venueId || pendingPortalRedemption.venueId === selectedPortalVenueId;
       const discountCodeFromQr = urlParams.get("discountCode") || (pendingRedemptionMatchesVenue ? pendingPortalRedemption?.discountCode : null);
-      const freePintCodeFromQr = urlParams.get("freePintCode") || (pendingRedemptionMatchesVenue ? pendingPortalRedemption?.freePintCode : null);
+      const freePintCodeFromQr = PINT_POINTS_REWARDS_ENABLED
+        ? urlParams.get("freePintCode") || (pendingRedemptionMatchesVenue ? pendingPortalRedemption?.freePintCode : null)
+        : null;
       const requestedTab = urlParams.get("tab");
       const venueClaimForm = document.getElementById("venueClaimForm");
       if (venueClaimForm instanceof HTMLFormElement) {
@@ -5015,15 +5136,16 @@
           const referenceInput = field(memberPurchaseForm, "transactionReference");
           const transactionReference = String(referenceInput.value || "").trim() || generateCounterReference();
           referenceInput.value = transactionReference;
-          const payload = {
-            checkoutToken: activeMemberCheckoutToken,
+          const checkoutToken = activeMemberCheckoutToken;
+          const receiptPayload = {
             itemName: field(memberPurchaseForm, "itemName").value,
             beverageCategory: field(memberPurchaseForm, "beverageCategory").value,
             quantity: Number(field(memberPurchaseForm, "quantity").value || 1),
             transactionReference,
             notes: null,
           };
-          if (!payload.checkoutToken || transactionReference !== activeMemberPreviewReference) {
+          const payload = { ...receiptPayload, checkoutToken };
+          if (!checkoutToken || transactionReference !== activeMemberPreviewReference) {
             MelbBeerBusiness.setStatus(memberPurchaseStatus, "Check the current member code before recording this purchase.", true);
             return;
           }
@@ -5035,7 +5157,8 @@
           const queuedReceipt = queuePendingCounterReceipt(
             venueId,
             activeMemberPreviewAccountId,
-            payload,
+            receiptPayload,
+            checkoutToken,
             activeMemberCheckoutExpiresAt,
           );
           if (queuedReceipt.conflict) {
@@ -5740,6 +5863,22 @@
 
         const upgradeTier = target.dataset.upgradeTier;
         if (upgradeTier) {
+          if (!COMMERCIAL_LAUNCH_ENABLED) {
+            MelbBeerBusiness.setStatus(
+              portalAccess,
+              "New paid and introductory-trial enrollment is not open yet. Existing venue subscriptions can still be managed or cancelled.",
+              true,
+            );
+            return;
+          }
+          const trialDays = Number(viewerConfig.business?.venueProTrialDays || 0);
+          const trialRequiresPaymentMethod = viewerConfig.business?.venueProTrialRequiresPaymentMethod === true;
+          const trialDisclosure = trialDays > 0
+            ? trialRequiresPaymentMethod
+              ? `Start a ${trialDays}-day full Pro trial? Stripe will collect a payment method and must show the approved renewal price and cancellation terms before you enrol.`
+              : `Start a ${trialDays}-day full Pro trial? No payment method is required. The trial returns to Free unless you deliberately accept the separately displayed paid terms.`
+            : "Continue to Stripe for Pro? Review the approved price, billing period, renewal, and cancellation terms before confirming.";
+          if (!window.confirm(trialDisclosure)) return;
           try {
             const result = await MelbBeerBusiness.apiFetch(`/api/business/venue-portal/${encodeURIComponent(selectedVenueId())}/billing/checkout`, {
               method: "POST",

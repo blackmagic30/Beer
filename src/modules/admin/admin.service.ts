@@ -1243,13 +1243,16 @@ export class AdminService {
       .limit(1);
 
     if (error) {
-      throw new ExternalServiceError("Failed to fetch latest manual merge snapshot", {
+      throw new ExternalServiceError(
+        "Private capture evidence history is unavailable, so no live venue data was published.",
+        {
         venueId,
         message: error.message,
         details: error.details,
         hint: error.hint,
         code: error.code,
-      });
+        },
+      );
     }
 
     const row = Array.isArray(data) ? data[0] : null;
@@ -1349,36 +1352,72 @@ export class AdminService {
     const supabase = this.getSupabase();
     const venue = await this.getVenueById(input.venueId);
     const savedAt = new Date().toISOString();
-    let beers = this.standardizeAdminBeerInputs(input.beers, input.source, savedAt, false);
-    let latest: ExistingVenueMenuCaptureSnapshot | null = null;
-    const warnings: string[] = [];
-
+    const evidenceReference = `manual-capture:${randomUUID()}`;
+    const evidenceBeers = this.standardizeAdminBeerInputs(
+      input.beers,
+      input.source,
+      savedAt,
+      false,
+    );
+    const latest = await this.getLatestVenueMenuCapture(input.venueId);
+    const row = {
+      ...buildManualVenueCaptureRow({
+        venue,
+        latestCapture: latest,
+        beers: evidenceBeers,
+        source: input.source,
+        note: input.note,
+        savedAt,
+      }),
+      evidence_reference: evidenceReference,
+    };
+    const captureTable = supabase.from(this.menuCaptureTable);
+    const optionalUpsert = captureTable as unknown as {
+      upsert?: (
+        values: Record<string, unknown>,
+        options: { onConflict: string },
+      ) => PromiseLike<{ error: unknown }>;
+    };
+    let captureResult: { error: unknown };
     try {
-      latest = await this.getLatestVenueMenuCapture(input.venueId);
+      captureResult = typeof optionalUpsert.upsert === "function"
+        ? await optionalUpsert.upsert.call(captureTable, row, { onConflict: "evidence_reference" })
+        : await captureTable.insert(row);
     } catch (error) {
-      const message = getExternalErrorMessage(error);
-      warnings.push("Previous menu capture snapshot unavailable; published live venue data without merging capture history.");
-      logger.warn("Skipping manual capture merge snapshot", {
-        venueId: input.venueId,
-        error: message,
-      });
+      throw new ExternalServiceError(
+        "Private capture evidence could not be registered, so no live venue data was published.",
+        { message: getExternalErrorMessage(error) },
+      );
+    }
+    if (captureResult.error) {
+      throw new ExternalServiceError(
+        "Private capture evidence could not be registered, so no live venue data was published.",
+        { message: getExternalErrorMessage(captureResult.error) },
+      );
     }
 
     let mapPriceRecordCount = 0;
     let inventoryBeerCount = 0;
+    let publishedBeers = evidenceBeers;
     if (this.priceRecordDatabase) {
       const publishLocalState = this.priceRecordDatabase.transaction(() => {
-        beers = this.standardizeAdminBeerInputs(input.beers, input.source, savedAt, true);
+        publishedBeers = this.standardizeAdminBeerInputs(
+          input.beers,
+          input.source,
+          savedAt,
+          true,
+        );
         const mapRows = this.publishManualCapturePriceRecords({
           venue,
           savedAt,
-          beers,
+          beers: publishedBeers,
           source: input.source,
+          sourceEvidenceReference: evidenceReference,
         });
         const inventoryRows = this.syncVenueBeerInventory({
           venue,
           savedAt,
-          beers,
+          beers: publishedBeers,
           source: input.source,
         });
 
@@ -1389,43 +1428,11 @@ export class AdminService {
       inventoryBeerCount = localState.inventoryRows;
     }
 
-    const row = buildManualVenueCaptureRow({
-      venue,
-      latestCapture: latest,
-      beers,
-      source: input.source,
-      note: input.note,
-      savedAt,
-    });
-
-    let captureSaved = false;
-    try {
-      const { error } = await supabase.from(this.menuCaptureTable).insert(row);
-
-      if (error) {
-        const message = getExternalErrorMessage(error);
-        warnings.push("Menu capture history save unavailable; live venue data was still published.");
-        logger.warn("Skipping manual capture history save", {
-          venueId: input.venueId,
-          error: message,
-        });
-      } else {
-        captureSaved = true;
-      }
-    } catch (error) {
-      const message = getExternalErrorMessage(error);
-      warnings.push("Menu capture history save unavailable; live venue data was still published.");
-      logger.warn("Skipping manual capture history save", {
-        venueId: input.venueId,
-        error: message,
-      });
-    }
-
     logger.info("Saved manual beer capture", {
       venueId: venue.id,
       venueName: venue.name,
       source: input.source,
-      beerCount: beers.length,
+      beerCount: publishedBeers.length,
       mapPriceRecordCount,
       inventoryBeerCount,
     });
@@ -1433,11 +1440,11 @@ export class AdminService {
     return {
       venue,
       savedAt,
-      beerCount: beers.length,
+      beerCount: publishedBeers.length,
       mapPriceRecordCount,
       inventoryBeerCount,
-      captureSaved,
-      captureWarning: warnings.join(" ") || null,
+      captureSaved: true,
+      captureWarning: null,
     };
   }
 
@@ -1447,6 +1454,7 @@ export class AdminService {
     note: string | null;
     beers: AdminBeerInput[];
     savedAt: string;
+    evidenceReference: string;
   }): Promise<{
     venue: VenueRow;
     captureSaved: boolean;
@@ -1454,59 +1462,41 @@ export class AdminService {
   }> {
     const supabase = this.getSupabase();
     const venue = input.venue ?? await this.getVenueById(input.venueId);
-    let latest: ExistingVenueMenuCaptureSnapshot | null = null;
-    const warnings: string[] = [];
-
-    try {
-      latest = await this.getLatestVenueMenuCapture(input.venueId);
-    } catch (error) {
-      const message = getExternalErrorMessage(error);
-      warnings.push("Previous menu capture snapshot unavailable; published live map rows without merging capture history.");
-      logger.warn("Skipping source ingestion capture merge snapshot", {
-        venueId: input.venueId,
-        error: message,
-      });
-    }
-
-    const row = buildManualVenueCaptureRow({
-      venue,
-      latestCapture: latest,
-      beers: input.beers,
-      source: "source_ingestion",
-      note: input.note,
-      savedAt: input.savedAt,
-    });
-
-    try {
-      const { error } = await supabase.from(this.menuCaptureTable).insert(row);
-
-      if (error) {
-        const message = getExternalErrorMessage(error);
-        warnings.push("Menu capture history save unavailable; live map rows were still published.");
-        logger.warn("Skipping source ingestion capture history save", {
-          venueId: input.venueId,
-          error: message,
-        });
-
-        return {
-          venue,
-          captureSaved: false,
-          captureWarning: warnings.join(" "),
-        };
-      }
-    } catch (error) {
-      const message = getExternalErrorMessage(error);
-      warnings.push("Menu capture history save unavailable; live map rows were still published.");
-      logger.warn("Skipping source ingestion capture history save", {
-        venueId: input.venueId,
-        error: message,
-      });
-
-      return {
+    const latest = await this.getLatestVenueMenuCapture(input.venueId);
+    const row = {
+      ...buildManualVenueCaptureRow({
         venue,
-        captureSaved: false,
-        captureWarning: warnings.join(" "),
-      };
+        latestCapture: latest,
+        beers: input.beers,
+        source: "source_ingestion",
+        note: input.note,
+        savedAt: input.savedAt,
+      }),
+      evidence_reference: input.evidenceReference,
+    };
+    const captureTable = supabase.from(this.menuCaptureTable);
+    const optionalUpsert = captureTable as unknown as {
+      upsert?: (
+        values: Record<string, unknown>,
+        options: { onConflict: string },
+      ) => PromiseLike<{ error: unknown }>;
+    };
+    let result: { error: unknown };
+    try {
+      result = typeof optionalUpsert.upsert === "function"
+        ? await optionalUpsert.upsert.call(captureTable, row, { onConflict: "evidence_reference" })
+        : await captureTable.insert(row);
+    } catch (error) {
+      throw new ExternalServiceError(
+        "Private source evidence could not be registered, so no live map rows were published.",
+        { message: getExternalErrorMessage(error) },
+      );
+    }
+    if (result.error) {
+      throw new ExternalServiceError(
+        "Private source evidence could not be registered, so no live map rows were published.",
+        { message: getExternalErrorMessage(result.error) },
+      );
     }
 
     logger.info("Saved source ingestion capture history", {
@@ -1518,7 +1508,7 @@ export class AdminService {
     return {
       venue,
       captureSaved: true,
-      captureWarning: warnings.join(" ") || null,
+      captureWarning: null,
     };
   }
 
@@ -1542,11 +1532,15 @@ export class AdminService {
       `INSERT INTO venue_price_records (
         id, venue_id, venue_name, suburb, beer_name, normalized_beer_id, serving_size,
         price, is_happy_hour_price, happy_hour_details, is_on_tap, confidence,
-        source_type, source_submission_id, last_verified_at, created_at, updated_at
+        source_type, source_submission_id, source_ingestion_id, source_evidence_reference,
+        source_evidence_verified_at,
+        last_verified_at, created_at, updated_at
       ) VALUES (
         @id, @venueId, @venueName, @suburb, @beerName, @normalizedBeerId, @servingSize,
         @price, 0, NULL, @isOnTap, 'admin_verified',
-        'source_ingestion', NULL, @lastVerifiedAt, @createdAt, @updatedAt
+        'source_ingestion', NULL, @sourceIngestionId, @sourceEvidenceReference,
+        @sourceEvidenceVerifiedAt,
+        @lastVerifiedAt, @createdAt, @updatedAt
       )
       ON CONFLICT(id) DO UPDATE SET
         venue_name = excluded.venue_name,
@@ -1558,6 +1552,9 @@ export class AdminService {
         is_on_tap = excluded.is_on_tap,
         confidence = excluded.confidence,
         source_type = excluded.source_type,
+        source_ingestion_id = excluded.source_ingestion_id,
+        source_evidence_reference = excluded.source_evidence_reference,
+        source_evidence_verified_at = excluded.source_evidence_verified_at,
         last_verified_at = excluded.last_verified_at,
         updated_at = excluded.updated_at`,
     );
@@ -1590,6 +1587,9 @@ export class AdminService {
           servingSize: beer.servingSize,
           price: beer.priceNumeric,
           isOnTap,
+          sourceIngestionId: input.ingestionId,
+          sourceEvidenceReference: `source-ingestion:${input.ingestionId}`,
+          sourceEvidenceVerifiedAt: input.savedAt,
           lastVerifiedAt: now,
           createdAt: now,
           updatedAt: now,
@@ -1608,6 +1608,7 @@ export class AdminService {
     savedAt: string;
     beers: AdminBeerInput[];
     source: AdminManualCaptureInput["source"];
+    sourceEvidenceReference: string;
   }): number {
     if (!this.priceRecordDatabase) {
       return 0;
@@ -1620,11 +1621,13 @@ export class AdminService {
       `INSERT INTO venue_price_records (
         id, venue_id, venue_name, suburb, beer_name, normalized_beer_id, serving_size,
         price, is_happy_hour_price, happy_hour_details, is_on_tap, confidence,
-        source_type, source_submission_id, last_verified_at, created_at, updated_at
+        source_type, source_submission_id, source_evidence_reference, source_evidence_verified_at,
+        last_verified_at, created_at, updated_at
       ) VALUES (
         @id, @venueId, @venueName, @suburb, @beerName, @normalizedBeerId, @servingSize,
         @price, 0, NULL, @isOnTap, @confidence,
-        @sourceType, NULL, @lastVerifiedAt, @createdAt, @updatedAt
+        @sourceType, NULL, @sourceEvidenceReference, @sourceEvidenceVerifiedAt,
+        @lastVerifiedAt, @createdAt, @updatedAt
       )
       ON CONFLICT(id) DO UPDATE SET
         venue_name = excluded.venue_name,
@@ -1636,6 +1639,8 @@ export class AdminService {
         is_on_tap = excluded.is_on_tap,
         confidence = excluded.confidence,
         source_type = excluded.source_type,
+        source_evidence_reference = excluded.source_evidence_reference,
+        source_evidence_verified_at = excluded.source_evidence_verified_at,
         last_verified_at = excluded.last_verified_at,
         updated_at = excluded.updated_at`,
     );
@@ -1670,6 +1675,8 @@ export class AdminService {
         isOnTap,
         confidence,
         sourceType,
+        sourceEvidenceReference: input.sourceEvidenceReference,
+        sourceEvidenceVerifiedAt: input.savedAt,
         lastVerifiedAt: now,
         createdAt: now,
         updatedAt: now,
@@ -2472,8 +2479,21 @@ export class AdminService {
     let reviewedBeers = validatedBeers;
     let priceRecordCount = 0;
     let inventoryBeerCount = 0;
+    let captureSaved = false;
+    let captureWarning: string | null = null;
+    const evidenceReference = `source-ingestion:${ingestionId}`;
     try {
       venue = await this.getVenueById(queueItem.venueId);
+      const captureResult = await this.persistSourceIngestionCaptureSnapshot({
+        venueId: queueItem.venueId,
+        venue,
+        note: noteParts.length > 0 ? noteParts.join("\n") : null,
+        beers: validatedBeers,
+        savedAt,
+        evidenceReference,
+      });
+      captureSaved = captureResult.captureSaved;
+      captureWarning = captureResult.captureWarning;
 
       if (this.priceRecordDatabase) {
         const publishLocalState = this.priceRecordDatabase.transaction(() => {
@@ -2558,26 +2578,6 @@ export class AdminService {
     } catch (error) {
       repository.releaseReviewClaim(ingestionId, claimToken, new Date().toISOString());
       throw error;
-    }
-
-    let captureSaved = false;
-    let captureWarning: string | null = null;
-    try {
-      const captureResult = await this.persistSourceIngestionCaptureSnapshot({
-        venueId: queueItem.venueId,
-        venue,
-        note: noteParts.length > 0 ? noteParts.join("\n") : null,
-        beers: reviewedBeers,
-        savedAt,
-      });
-      captureSaved = captureResult.captureSaved;
-      captureWarning = captureResult.captureWarning;
-    } catch (error) {
-      captureWarning = "Menu capture history save failed after live rows were published.";
-      logger.warn("Post-commit source-ingestion capture failed", {
-        ingestionId,
-        error: getExternalErrorMessage(error),
-      });
     }
 
     return {

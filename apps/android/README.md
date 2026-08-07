@@ -17,15 +17,15 @@ PINT_PATH_API_BASE_URL=http://10.0.2.2:3000
 
 ## Current integration
 
-- Email/password signup, login, refresh, password recovery, and logout use Supabase Auth REST endpoints.
-- Google and Apple provider login use authorization-code PKCE and the `pintpath://auth-callback` deep link.
+- Email/password signup, login, refresh, password recovery, and logout use Supabase Auth REST endpoints. Recovery emails return through the verified HTTPS `/auth/callback` flow before the browser opens password-update mode.
+- Google and Apple provider-login code uses authorization-code PKCE and the `pintpath://auth-callback` deep link. Android is outside the current launch; launch OAuth is Google-only and Apple must remain disabled until authorization-token revocation is implemented and tested.
 - Supabase access tokens are exchanged at `POST /api/business/auth/supabase-session` for a scoped Pint Path app session.
 - Sensitive session/export/deletion actions require a fresh provider sign-in token; a rejected action is never reported as complete.
 - A suspended paid account receives billing-only recovery without an app session, including personal-versus-managed-venue selection when needed.
 - App, Supabase refresh, and Supabase access tokens are AES-GCM encrypted with an Android Keystore key. Session preferences are excluded from cloud backup and device transfer.
 - No service-role key is bundled, and the app never reads private Supabase tables directly.
 
-Provider login requires the callback URI in Supabase's redirect allow list and completed Google/Apple provider-console configuration.
+Any future Android provider release requires the callback URI in Supabase's redirect allow list and completed Google provider-console configuration. Apple provider configuration remains deferred until authorization-token revocation is implemented and tested.
 
 ## Native coverage
 

@@ -22,6 +22,14 @@ describe("viewer map price logic", () => {
     hasNumericPrice: (beer: Record<string, unknown>) => boolean;
     getLowestKnownPrice: (beers: Array<Record<string, unknown>>) => number | null;
     isUnderPriceThreshold: (beers: Array<Record<string, unknown>>, threshold: number) => boolean;
+    isFreshVerificationTimestamp: (
+      value: unknown,
+      options?: { nowMs?: number; maximumAgeDays?: number; futureToleranceMinutes?: number },
+    ) => boolean;
+    isCurrentVerifiedBeer: (
+      beer: Record<string, unknown>,
+      options?: { nowMs?: number; maximumAgeDays?: number; futureToleranceMinutes?: number },
+    ) => boolean;
     getMarkerColor: (beer: Record<string, unknown>) => string;
     getMarkerLabel: (beer: Record<string, unknown>) => string;
     getPriceTier: (beer: Record<string, unknown>) => string;
@@ -129,6 +137,31 @@ describe("viewer map price logic", () => {
     expect(logic.isUnderPriceThreshold(beers, 10)).toBe(false);
     expect(logic.isUnderPriceThreshold(beers, 12)).toBe(true);
     expect(logic.getLowestKnownPrice([{ priceNumeric: null }, { priceNumeric: 0 }])).toBeNull();
+  });
+
+  it("treats verified data as current only when the same trusted row is at most 30 days old", () => {
+    const nowMs = Date.parse("2026-07-28T12:00:00.000Z");
+
+    expect(logic.isCurrentVerifiedBeer({
+      confidenceLabel: "photo_verified",
+      lastVerifiedAt: "2026-07-05T00:00:00.000Z",
+    }, { nowMs })).toBe(true);
+    expect(logic.isCurrentVerifiedBeer({
+      confidenceLabel: "photo_verified",
+      lastVerifiedAt: "2026-06-01T00:00:00.000Z",
+    }, { nowMs })).toBe(false);
+    expect(logic.isCurrentVerifiedBeer({
+      confidenceLabel: "user_reported_pending",
+      lastVerifiedAt: "2026-07-28T00:00:00.000Z",
+    }, { nowMs })).toBe(false);
+    expect(logic.isCurrentVerifiedBeer({
+      confidenceLabel: "admin_verified",
+      lastVerifiedAt: "not-a-date",
+    }, { nowMs })).toBe(false);
+    expect(logic.isFreshVerificationTimestamp(
+      "2026-07-28T12:06:00.000Z",
+      { nowMs, futureToleranceMinutes: 5 },
+    )).toBe(false);
   });
 
   it("keeps unknown price markers neutral instead of green", () => {
@@ -730,7 +763,7 @@ describe("viewer map UI wiring", () => {
   it("renders location-aware controls and only auto-requests after a saved opt-in", () => {
     expect(html).toContain('id="useLocationButton"');
     expect(html).not.toContain('data-filter-chip="happy_hour_near_me"');
-    expect(html).toContain('data-filter-chip="happy_hour_active_now"');
+    expect(html).not.toContain('data-filter-chip="happy_hour_active_now"');
     expect(html).toContain('data-filter-chip="pint_path_specials"');
     expect(html).toContain('data-filter-chip="recently_verified_near_me"');
     expect(html).toContain('data-filter-chip="nearest"');

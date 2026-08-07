@@ -1,20 +1,51 @@
 import SwiftUI
 
+enum BeerMapAsset {
+    static let beerPint = "BeerPint"
+    static let beerPot = "BeerPot"
+    static let beerSchooner = "BeerSchooner"
+    static let beerJug = "BeerJug"
+}
+
+struct BeerPintIcon: View {
+    var size: CGFloat = 18
+
+    var body: some View {
+        Image(BeerMapAsset.beerPint)
+            .renderingMode(.template)
+            .resizable()
+            .scaledToFit()
+            .frame(width: size, height: size)
+            .accessibilityHidden(true)
+    }
+}
+
 struct SectionHeader: View {
     let eyebrow: String?
     let title: String
     let subtitle: String?
     var systemImage: String?
+    var assetImage: String? = nil
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            if let systemImage {
-                Image(systemName: systemImage)
-                    .font(.headline.weight(.semibold))
-                    .foregroundStyle(BeerMapTheme.amber)
-                    .frame(width: 36, height: 36)
-                    .background(BeerMapTheme.amber.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    .accessibilityHidden(true)
+            if assetImage != nil || systemImage != nil {
+                Group {
+                    if let assetImage {
+                        Image(assetImage)
+                            .renderingMode(.template)
+                            .resizable()
+                            .scaledToFit()
+                            .padding(8)
+                    } else if let systemImage {
+                        Image(systemName: systemImage)
+                            .font(.headline.weight(.semibold))
+                    }
+                }
+                .foregroundStyle(BeerMapTheme.amber)
+                .frame(width: 36, height: 36)
+                .background(BeerMapTheme.amber.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .accessibilityHidden(true)
             }
 
             VStack(alignment: .leading, spacing: 6) {
@@ -76,15 +107,27 @@ struct MetricPill: View {
     let title: String
     let value: String
     var systemImage: String = "chart.bar.fill"
+    var assetImage: String? = nil
     var tint: Color = BeerMapTheme.sky
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: systemImage)
-                .font(.headline)
-                .frame(width: 34, height: 34)
-                .background(tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .foregroundStyle(tint)
+            Group {
+                if let assetImage {
+                    Image(assetImage)
+                        .renderingMode(.template)
+                        .resizable()
+                        .scaledToFit()
+                        .padding(8)
+                } else {
+                    Image(systemName: systemImage)
+                        .font(.headline)
+                }
+            }
+            .frame(width: 34, height: 34)
+            .background(tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .foregroundStyle(tint)
+            .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 Text(value)
                     .font(.headline.weight(.bold))
@@ -311,13 +354,6 @@ struct VenueCard: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                if venue.membershipTier == "pro" {
-                    Text("Pro")
-                        .font(.caption.weight(.black))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(BeerMapTheme.honey.opacity(0.24), in: Capsule())
-                }
             }
             if let address = venue.address, !address.isEmpty {
                 Label(address, systemImage: "mappin.and.ellipse")
@@ -358,7 +394,8 @@ struct LoadingOverlay: View {
 
 struct FilterChip: View {
     let title: String
-    let systemImage: String
+    var systemImage: String? = nil
+    var assetImage: String? = nil
     var isSelected = false
     var badge: Int?
     let action: () -> Void
@@ -366,8 +403,17 @@ struct FilterChip: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 7) {
-                Image(systemName: systemImage)
-                    .accessibilityHidden(true)
+                if let assetImage {
+                    Image(assetImage)
+                        .renderingMode(.template)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 17, height: 17)
+                        .accessibilityHidden(true)
+                } else if let systemImage {
+                    Image(systemName: systemImage)
+                        .accessibilityHidden(true)
+                }
                 Text(title)
                     .lineLimit(1)
                 if let badge, badge > 0 {

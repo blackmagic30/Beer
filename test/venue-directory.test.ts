@@ -4,10 +4,32 @@ import {
   buildReviewVenueRow,
   dedupeReviewVenueRowsByPhone,
   hasStrongBarOrPubNameSignal,
+  isAustralianPostcode,
+  isOperationalGoogleVenueBusinessStatus,
   isStrictBarOrPubPlace,
   isRestaurantLedVenueName,
+  normalizeGoogleVenueBusinessStatus,
   shouldImportBarOrPubPlace,
 } from "../src/lib/venue-directory.js";
+
+describe("venue directory structured data", () => {
+  it("accepts only exact four-digit Australian postcodes", () => {
+    expect(isAustralianPostcode("3000")).toBe(true);
+    expect(isAustralianPostcode(" 3000 ")).toBe(false);
+    expect(isAustralianPostcode("3OOO")).toBe(false);
+    expect(isAustralianPostcode("30000")).toBe(false);
+    expect(isAustralianPostcode(null)).toBe(false);
+  });
+
+  it("normalizes only supported Google business statuses and exposes operational venues", () => {
+    expect(normalizeGoogleVenueBusinessStatus(" operational ")).toBe("OPERATIONAL");
+    expect(normalizeGoogleVenueBusinessStatus("CLOSED_TEMPORARILY")).toBe("CLOSED_TEMPORARILY");
+    expect(normalizeGoogleVenueBusinessStatus("unknown")).toBeNull();
+    expect(isOperationalGoogleVenueBusinessStatus("OPERATIONAL")).toBe(true);
+    expect(isOperationalGoogleVenueBusinessStatus("CLOSED_TEMPORARILY")).toBe(false);
+    expect(isOperationalGoogleVenueBusinessStatus("CLOSED_PERMANENTLY")).toBe(false);
+  });
+});
 
 describe("isStrictBarOrPubPlace", () => {
   it("accepts Google places tagged as a pub", () => {
@@ -137,6 +159,18 @@ describe("shouldImportBarOrPubPlace", () => {
         primaryType: "brewery",
         types: ["brewery", "food", "point_of_interest"],
         businessStatus: "OPERATIONAL",
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps closed Google rows eligible for status synchronization instead of deleting them", () => {
+    expect(
+      shouldImportBarOrPubPlace({
+        displayName: { text: "Archived Hotel" },
+        formattedAddress: "1 Example St, Melbourne VIC 3000, Australia",
+        primaryType: "pub",
+        types: ["pub"],
+        businessStatus: "CLOSED_PERMANENTLY",
       }),
     ).toBe(true);
   });

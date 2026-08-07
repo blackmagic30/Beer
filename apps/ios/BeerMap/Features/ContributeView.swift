@@ -25,11 +25,6 @@ struct ContributeView: View {
     @State private var sourcePhotoPreview: UIImage?
     @State private var sourcePhotoStatus = "Fill the frame, hold the camera square, and avoid glare. OCR will read the beer rows and pint prices."
     @State private var sourcePhotoPreparationTask: Task<Void, Never>?
-    @State private var happyOffer = ""
-    @State private var happyNotes = ""
-    @State private var happyStart = Calendar.current.date(bySettingHour: 16, minute: 0, second: 0, of: Date()) ?? Date()
-    @State private var happyEnd = Calendar.current.date(bySettingHour: 18, minute: 0, second: 0, of: Date()) ?? Date()
-    @State private var happyDays: Set<String> = ["fri"]
     @State private var requestVenueName = ""
     @State private var requestBeerName = ""
     @State private var requestSuburb = ""
@@ -37,18 +32,15 @@ struct ContributeView: View {
     @State private var requestKind: MissingRequestKind = .venue
     @State private var priceSubmissionId = "ios-\(UUID().uuidString)"
     @State private var photoSubmissionId = "ios-photo-\(UUID().uuidString)"
-    @State private var happyHourSubmissionId = "ios-happy-\(UUID().uuidString)"
     @State private var acceptedMissionId: String?
     @State private var attachLocationProof = false
     @FocusState private var focusedPriceField: PriceField?
 
     private let servingSizes = ["pint", "pot", "schooner", "jug", "bottle", "can", "other"]
-    private let dayCodes = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 
     enum ContributionMode: String, CaseIterable, Identifiable {
         case price = "Price"
         case source = "Scan menu"
-        case happyHour = "Happy hour"
         case request = "Request"
         case missions = "Missions"
 
@@ -56,9 +48,8 @@ struct ContributeView: View {
 
         var systemImage: String {
             switch self {
-            case .price: return "mug.fill"
+            case .price: return "plus.circle.fill"
             case .source: return "doc.viewfinder"
-            case .happyHour: return "clock.badge.checkmark.fill"
             case .request: return "paperplane.fill"
             case .missions: return "target"
             }
@@ -83,7 +74,7 @@ struct ContributeView: View {
             VStack(spacing: 16) {
                 if acceptedMissionId != nil {
                     StatusBanner(
-                        message: "Mission reserved. The next update you send from this form will be linked for review.",
+                        message: "Mission reserved for this update.",
                         systemImage: "checkmark.seal.fill"
                     )
                 }
@@ -93,8 +84,6 @@ struct ContributeView: View {
                     priceCard
                 case .source:
                     sourcePhotoCard
-                case .happyHour:
-                    happyHourCard
                 case .request:
                     requestCard
                 case .missions:
@@ -107,13 +96,30 @@ struct ContributeView: View {
         .navigationTitle(selectedMode == .price ? "Add price" : selectedMode.rawValue)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button {
+                    focusedPriceField = nil
+                    model.selectedTab = .explore
+                } label: {
+                    Label("Back", systemImage: "chevron.left")
+                }
+                .accessibilityLabel("Back to map")
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     ForEach(ContributionMode.allCases) { mode in
                         Button {
                             selectedMode = mode
                         } label: {
-                            Label(mode == .price ? "Quick price" : mode.rawValue, systemImage: mode.systemImage)
+                            if mode == .price {
+                                Label {
+                                    Text("Quick price")
+                                } icon: {
+                                    BeerPintIcon(size: 17)
+                                }
+                            } else {
+                                Label(mode.rawValue, systemImage: mode.systemImage)
+                            }
                         }
                     }
                 } label: {
@@ -176,13 +182,12 @@ struct ContributeView: View {
     }
 
     private var priceCard: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            SectionHeader(
-                eyebrow: nil,
-                title: "Quick price",
-                subtitle: model.isSignedIn ? "Confirm four details. We’ll review the update before it appears." : "Sign in first so your update can be reviewed and credited.",
-                systemImage: "mug.fill"
-            )
+        VStack(alignment: .leading, spacing: 12) {
+            if !model.isSignedIn {
+                Label("Sign in from Account to submit a price.", systemImage: "person.crop.circle.badge.exclamationmark")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
 
             priceStep(number: 1, title: "Venue") {
                 venuePicker
@@ -220,13 +225,9 @@ struct ContributeView: View {
                     }
                 }
 
-                if let selectedBeer = selectedTrackedBeer {
-                    Label("Catalogue match: \(selectedBeer.name)", systemImage: "checkmark.circle.fill")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(BeerMapTheme.leaf)
-                } else if !beerName.trimmed.isEmpty {
+                if selectedTrackedBeer == nil && !beerName.trimmed.isEmpty {
                     Toggle(isOn: $confirmedCustomBeerName) {
-                        Text("This is a new beer name — use it exactly as typed")
+                        Text("Use this new beer name")
                             .font(.caption.weight(.semibold))
                     }
                     .tint(BeerMapTheme.primaryAction)
@@ -265,13 +266,13 @@ struct ContributeView: View {
                 servingPicker
             }
 
-            DisclosureGroup("Photo, note, or location proof", isExpanded: $showingAdvancedPriceOptions) {
+            DisclosureGroup("Optional details", isExpanded: $showingAdvancedPriceOptions) {
                 VStack(alignment: .leading, spacing: 12) {
                     sourcePhotoActions(cameraTitle: "Take evidence photo", libraryTitle: "Choose photo")
 
                     sourcePhotoPreviewView
 
-                    if sourcePhotoDataURL != nil || sourcePhotoStatus.hasPrefix("Preparing") {
+                    if sourcePhotoStatus.hasPrefix("Preparing") || sourcePhotoStatus.hasPrefix("Could not") {
                         Text(sourcePhotoStatus)
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -286,7 +287,7 @@ struct ContributeView: View {
             }
             .font(.subheadline.weight(.semibold))
 
-            PrimaryButton(title: "Send price for review", systemImage: "paperplane.fill", isLoading: model.isLoading) {
+            PrimaryButton(title: "Submit price", systemImage: "paperplane.fill", isLoading: model.isLoading) {
                 Task {
                     let location = await requestedLocationProof()
                     if attachLocationProof && location == nil { return }
@@ -308,10 +309,6 @@ struct ContributeView: View {
                 }
             }
             .disabled(priceSubmitDisabled)
-
-            SecondaryButton(title: "Scan a full menu instead", systemImage: "doc.viewfinder") {
-                selectedMode = .source
-            }
         }
         .beerMapCard()
     }
@@ -361,52 +358,6 @@ struct ContributeView: View {
             }
             .disabled(!model.isSignedIn || selectedVenueId.isEmpty || sourcePhotoDataURL == nil)
             StatusBanner(message: "Location proof is optional, requested only when you send, and used only for submission review and points eligibility.")
-        }
-        .beerMapCard()
-    }
-
-    private var happyHourCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            SectionHeader(
-                eyebrow: "Happy hour",
-                title: "Submit a special you saw",
-                subtitle: model.isSignedIn ? "Use this for signs, menu boards, or staff-confirmed recurring offers." : "Sign in first to send happy-hour updates.",
-                systemImage: "clock.badge.checkmark.fill"
-            )
-            venuePicker
-            dayPicker
-            DatePicker("Starts", selection: $happyStart, displayedComponents: .hourAndMinute)
-            DatePicker("Ends", selection: $happyEnd, displayedComponents: .hourAndMinute)
-            TextField("Offer details", text: $happyOffer, axis: .vertical)
-                .lineLimit(3...6)
-                .textFieldStyle(.roundedBorder)
-            TextField("Notes, optional", text: $happyNotes, axis: .vertical)
-                .lineLimit(2...5)
-                .textFieldStyle(.roundedBorder)
-            locationProofToggle
-            PrimaryButton(title: "Send happy-hour update", systemImage: "clock.badge.checkmark.fill", isLoading: model.isLoading) {
-                Task {
-                    let location = await requestedLocationProof()
-                    if attachLocationProof && location == nil { return }
-                    let submitted = await model.submitHappyHourUpdate(
-                        clientSubmissionId: happyHourSubmissionId,
-                        missionId: acceptedMissionId,
-                        venueId: selectedVenueId,
-                        days: Array(happyDays).sorted(),
-                        startTime: contributionTime(happyStart),
-                        endTime: contributionTime(happyEnd),
-                        offerText: happyOffer,
-                        notes: happyNotes,
-                        uploadLocation: location
-                    )
-                    if submitted {
-                        await model.refreshMissions()
-                        clearHappyHourFields()
-                    }
-                }
-            }
-            .disabled(!model.isSignedIn || selectedVenueId.isEmpty || happyDays.isEmpty || happyOffer.trimmed.isEmpty)
-            StatusBanner(message: "If the board has lots of detail, Photo is usually faster and safer.")
         }
         .beerMapCard()
     }
@@ -461,7 +412,7 @@ struct ContributeView: View {
             SectionHeader(
                 eyebrow: "Missions",
                 title: "Venues needing data",
-                subtitle: "Pick one nearby, then use Price, Photo, or Happy hour to send the update.",
+                subtitle: "Pick one nearby, then use Price or Scan menu to send the update.",
                 systemImage: "target"
             )
             if model.missions.isEmpty {
@@ -534,7 +485,10 @@ struct ContributeView: View {
         .beerMapCard()
     }
 
+    @ViewBuilder
     private var venuePicker: some View {
+        let currentVenue = selectedVenue
+
         Group {
             if model.venues.isEmpty {
                 StatusBanner(message: "Venues are not available yet. Refresh and try again.", isError: true)
@@ -545,7 +499,7 @@ struct ContributeView: View {
                         .foregroundStyle(BeerMapTheme.primaryAction)
                         .frame(width: 28)
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(selectedVenue?.name ?? mission.venueName)
+                        Text(currentVenue?.name ?? mission.venueName)
                             .font(.body.weight(.semibold))
                             .foregroundStyle(.primary)
                             .lineLimit(2)
@@ -565,7 +519,7 @@ struct ContributeView: View {
                         .stroke(BeerMapTheme.primaryAction.opacity(0.35), lineWidth: 1)
                 )
                 .accessibilityElement(children: .combine)
-                .accessibilityLabel("Mission venue, \(selectedVenue?.name ?? mission.venueName), locked")
+                .accessibilityLabel("Mission venue, \(currentVenue?.name ?? mission.venueName), locked")
             } else {
                 Button {
                     showingVenuePicker = true
@@ -576,11 +530,11 @@ struct ContributeView: View {
                             .foregroundStyle(BeerMapTheme.primaryAction)
                             .frame(width: 28)
                         VStack(alignment: .leading, spacing: 3) {
-                            Text(selectedVenue?.name ?? "Choose a venue")
+                            Text(currentVenue?.name ?? "Choose a venue")
                                 .font(.body.weight(.semibold))
                                 .foregroundStyle(.primary)
                                 .lineLimit(2)
-                            Text(selectedVenue?.displayLocation.nilIfBlank ?? "Search all \(model.venues.count) venues")
+                            Text(currentVenue?.displayLocation.nilIfBlank ?? "Choose venue")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -596,9 +550,9 @@ struct ContributeView: View {
                 .background(BeerMapTheme.softCard, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(selectedVenue == nil ? Color.orange.opacity(0.55) : BeerMapTheme.separator.opacity(0.4), lineWidth: 1)
+                        .stroke(currentVenue == nil ? Color.orange.opacity(0.55) : BeerMapTheme.separator.opacity(0.4), lineWidth: 1)
                 )
-                .accessibilityLabel(selectedVenue.map { "Venue, \($0.name)" } ?? "Choose a venue")
+                .accessibilityLabel(currentVenue.map { "Venue, \($0.name)" } ?? "Choose a venue")
                 .accessibilityHint("Opens searchable venue selection")
             }
         }
@@ -620,7 +574,7 @@ struct ContributeView: View {
         acceptedMissionId = mission.id
         selectedVenueId = venueId
         lastVenueId = venueId
-        selectedMode = mission.reason?.localizedCaseInsensitiveContains("happy") == true ? .happyHour : .price
+        selectedMode = .price
     }
 
     private func syncAcceptedMission() {
@@ -701,12 +655,22 @@ struct ContributeView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 ForEach(servingSizes.prefix(4), id: \.self) { size in
-                    FilterChip(
-                        title: size.capitalized,
-                        systemImage: servingSystemImage(size),
-                        isSelected: servingSize == size
-                    ) {
-                        servingSize = size
+                    if let assetImage = servingAssetImage(size) {
+                        FilterChip(
+                            title: size.capitalized,
+                            assetImage: assetImage,
+                            isSelected: servingSize == size
+                        ) {
+                            servingSize = size
+                        }
+                    } else {
+                        FilterChip(
+                            title: size.capitalized,
+                            systemImage: servingSystemImage(size),
+                            isSelected: servingSize == size
+                        ) {
+                            servingSize = size
+                        }
                     }
                 }
 
@@ -737,9 +701,19 @@ struct ContributeView: View {
         switch serving {
         case "bottle": return "waterbottle.fill"
         case "can": return "cylinder.fill"
-        case "jug": return "takeoutbag.and.cup.and.straw.fill"
+        case "jug": return "wineglass.fill"
         case "other": return "ellipsis"
-        default: return "mug.fill"
+        default: return "wineglass.fill"
+        }
+    }
+
+    private func servingAssetImage(_ serving: String) -> String? {
+        switch serving {
+        case "pint": return BeerMapAsset.beerPint
+        case "pot": return BeerMapAsset.beerPot
+        case "schooner": return BeerMapAsset.beerSchooner
+        case "jug": return BeerMapAsset.beerJug
+        default: return nil
         }
     }
 
@@ -761,29 +735,6 @@ struct ContributeView: View {
                     .accessibilityAddTraits(.isHeader)
             }
             content()
-        }
-    }
-
-    private var dayPicker: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 68), spacing: 8)], spacing: 8) {
-            ForEach(dayCodes, id: \.self) { day in
-                Button {
-                    if happyDays.contains(day) {
-                        happyDays.remove(day)
-                    } else {
-                        happyDays.insert(day)
-                    }
-                } label: {
-                    Text(day.uppercased())
-                        .font(.caption.weight(.bold))
-                        .frame(maxWidth: .infinity)
-                        .frame(minHeight: 44)
-                }
-                .buttonStyle(.plain)
-                .background(happyDays.contains(day) ? BeerMapTheme.amber.opacity(0.28) : BeerMapTheme.softCard, in: RoundedRectangle(cornerRadius: 8))
-                .accessibilityLabel("\(day.uppercased()) \(happyDays.contains(day) ? "selected" : "not selected")")
-                .accessibilityAddTraits(happyDays.contains(day) ? .isSelected : [])
-            }
         }
     }
 
@@ -992,14 +943,6 @@ struct ContributeView: View {
         acceptedMissionId = nil
     }
 
-    private func clearHappyHourFields() {
-        happyOffer = ""
-        happyNotes = ""
-        happyDays = ["fri"]
-        happyHourSubmissionId = "ios-happy-\(UUID().uuidString)"
-        acceptedMissionId = nil
-    }
-
     private func clearRequestFields() {
         requestVenueName = ""
         requestBeerName = ""
@@ -1014,33 +957,67 @@ private struct VenueSelectionSheet: View {
     let selectedVenueId: String
     let recentVenueId: String
     let onSelect: (Venue) -> Void
+    @StateObject private var locationProvider = VenuePickerLocationProvider()
     @State private var searchText = ""
+    @State private var visibleVenueLimit = 10
+
+    private let venuePageSize = 10
 
     private var recentVenue: Venue? {
         venues.first { $0.id == recentVenueId }
     }
 
-    private var filteredVenues: [Venue] {
+    private func matchingVenues(excluding recentVenueId: String?) -> [Venue] {
         let query = searchText.trimmed
-        let candidates = venues.filter { $0.id != recentVenue?.id }
-        guard !query.isEmpty else {
-            return candidates.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-        }
-        return candidates
-            .filter { venue in
+        let candidates = venues.filter { $0.id != recentVenueId }
+
+        if !query.isEmpty {
+            return candidates
+                .filter { venue in
                 [venue.name, venue.address, venue.suburb, venue.postcode]
                     .compactMap { $0 }
                     .contains { $0.localizedStandardContains(query) }
-            }
+                }
+                .sorted { lhs, rhs in
+                    let lhsPrefix = lhs.name.lowercased().hasPrefix(query.lowercased())
+                    let rhsPrefix = rhs.name.lowercased().hasPrefix(query.lowercased())
+                    if lhsPrefix != rhsPrefix { return lhsPrefix }
+                    return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
+                }
+        }
+
+        guard let origin = locationProvider.location else {
+            // Preserve the API order while the one-shot location request finishes so
+            // the sheet can present immediately without sorting the full catalogue.
+            return candidates
+        }
+
+        let ranked = candidates.map { venue in
+            (venue: venue, distance: venueLocation(venue).map(origin.distance(from:)))
+        }
+        return ranked
             .sorted { lhs, rhs in
-                let lhsPrefix = lhs.name.lowercased().hasPrefix(query.lowercased())
-                let rhsPrefix = rhs.name.lowercased().hasPrefix(query.lowercased())
-                if lhsPrefix != rhsPrefix { return lhsPrefix }
-                return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
+                switch (lhs.distance, rhs.distance) {
+                case let (lhsDistance?, rhsDistance?):
+                    if lhsDistance != rhsDistance { return lhsDistance < rhsDistance }
+                case (_?, nil):
+                    return true
+                case (nil, _?):
+                    return false
+                case (nil, nil):
+                    break
+                }
+                return lhs.venue.name.localizedStandardCompare(rhs.venue.name) == .orderedAscending
             }
+            .map { $0.venue }
     }
 
     var body: some View {
+        let recentVenue = recentVenue
+        let allMatches = matchingVenues(excluding: recentVenue?.id)
+        let visibleVenues = Array(allMatches.prefix(visibleVenueLimit))
+        let remainingVenueCount = max(0, allMatches.count - visibleVenues.count)
+
         NavigationStack {
             List {
                 if let recentVenue {
@@ -1049,13 +1026,42 @@ private struct VenueSelectionSheet: View {
                     }
                 }
 
-                Section(searchText.trimmed.isEmpty ? "All venues" : "Matches") {
-                    if filteredVenues.isEmpty {
+                Section {
+                    if searchText.trimmed.isEmpty, locationProvider.isLocating {
+                        HStack(spacing: 10) {
+                            ProgressView()
+                            Text("Finding venues near you…")
+                                .foregroundStyle(.secondary)
+                        }
+                        .accessibilityElement(children: .combine)
+                    }
+
+                    if visibleVenues.isEmpty {
                         ContentUnavailableView.search(text: searchText)
                     } else {
-                        ForEach(filteredVenues) { venue in
+                        ForEach(visibleVenues) { venue in
                             venueRow(venue)
                         }
+                    }
+
+                    if remainingVenueCount > 0 {
+                        Button {
+                            visibleVenueLimit = min(allMatches.count, visibleVenueLimit + venuePageSize)
+                        } label: {
+                            Label(
+                                "Load \(min(venuePageSize, remainingVenueCount)) more",
+                                systemImage: "arrow.down.circle"
+                            )
+                            .font(.body.weight(.semibold))
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                        }
+                        .accessibilityHint("\(remainingVenueCount) venues remain")
+                    }
+                } header: {
+                    Text(venueSectionTitle)
+                } footer: {
+                    if remainingVenueCount > 0 {
+                        Text("Search checks every venue, including those not yet shown.")
                     }
                 }
             }
@@ -1063,6 +1069,12 @@ private struct VenueSelectionSheet: View {
             .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Venue, suburb, or postcode")
             .textInputAutocapitalization(.words)
             .autocorrectionDisabled()
+            .onChange(of: searchText) { _, _ in
+                visibleVenueLimit = venuePageSize
+            }
+            .onAppear {
+                locationProvider.requestOnce()
+            }
             .navigationTitle("Choose venue")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -1071,6 +1083,11 @@ private struct VenueSelectionSheet: View {
                 }
             }
         }
+    }
+
+    private var venueSectionTitle: String {
+        if !searchText.trimmed.isEmpty { return "Matches" }
+        return locationProvider.location == nil ? "Venues" : "Nearby venues"
     }
 
     private func venueRow(_ venue: Venue) -> some View {
@@ -1086,7 +1103,7 @@ private struct VenueSelectionSheet: View {
                     Text(venue.name)
                         .font(.body.weight(.semibold))
                         .foregroundStyle(.primary)
-                    Text(venue.displayLocation.nilIfBlank ?? venue.address ?? "Melbourne")
+                    Text(venueDetail(venue))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -1102,6 +1119,94 @@ private struct VenueSelectionSheet: View {
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(venue.id == selectedVenueId ? .isSelected : [])
+    }
+
+    private func venueDetail(_ venue: Venue) -> String {
+        let place = venue.displayLocation.nilIfBlank ?? venue.address ?? "Melbourne"
+        guard
+            let origin = locationProvider.location,
+            let venueLocation = venueLocation(venue)
+        else {
+            return place
+        }
+
+        let distance = origin.distance(from: venueLocation)
+        let distanceCopy: String
+        if distance < 1_000 {
+            distanceCopy = "\(max(50, Int((distance / 50).rounded()) * 50)) m"
+        } else {
+            distanceCopy = String(format: "%.1f km", distance / 1_000)
+        }
+        return "\(place) · \(distanceCopy)"
+    }
+
+    private func venueLocation(_ venue: Venue) -> CLLocation? {
+        guard
+            let latitude = venue.latitude,
+            let longitude = venue.longitude,
+            (-90.0...90.0).contains(latitude),
+            (-180.0...180.0).contains(longitude)
+        else {
+            return nil
+        }
+        return CLLocation(latitude: latitude, longitude: longitude)
+    }
+}
+
+@MainActor
+private final class VenuePickerLocationProvider: NSObject, ObservableObject, @preconcurrency CLLocationManagerDelegate {
+    @Published private(set) var location: CLLocation?
+    @Published private(set) var isLocating = false
+
+    private let manager = CLLocationManager()
+    private var hasRequested = false
+
+    override init() {
+        super.init()
+        manager.delegate = self
+        manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+    }
+
+    func requestOnce() {
+        guard !hasRequested else { return }
+        hasRequested = true
+
+        switch manager.authorizationStatus {
+        case .authorizedAlways, .authorizedWhenInUse:
+            isLocating = true
+            manager.requestLocation()
+        case .notDetermined:
+            isLocating = true
+            manager.requestWhenInUseAuthorization()
+        case .denied, .restricted:
+            isLocating = false
+        @unknown default:
+            isLocating = false
+        }
+    }
+
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        guard hasRequested else { return }
+        switch manager.authorizationStatus {
+        case .authorizedAlways, .authorizedWhenInUse:
+            isLocating = true
+            manager.requestLocation()
+        case .denied, .restricted:
+            isLocating = false
+        default:
+            break
+        }
+    }
+
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        location = locations
+            .filter { $0.horizontalAccuracy >= 0 }
+            .max { $0.timestamp < $1.timestamp }
+        isLocating = false
+    }
+
+    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        isLocating = false
     }
 }
 
@@ -1350,12 +1455,6 @@ private struct CameraPhotoPicker: UIViewControllerRepresentable {
             parent.onCancel()
         }
     }
-}
-
-private func contributionTime(_ date: Date) -> String {
-    let formatter = DateFormatter()
-    formatter.dateFormat = "HH:mm"
-    return formatter.string(from: date)
 }
 
 extension String {

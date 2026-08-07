@@ -59,7 +59,7 @@
       <article class="card">
         <div class="eyebrow">Privacy</div>
         <h2>Data requests</h2>
-        <p class="muted">Signed-in users can download a quick account export and request deletion review from Account. Legal or complex requests remain manual review items.</p>
+        <p class="muted">Signed-in users can download a quick account export and schedule account deletion from Account. The workflow has a seven-day cancellation window and authorised-operator execution. After deletion commits, Pint Path automatically queues a completion notice, tracks delivery without exposing its destination in admin, and purges the recipient ciphertext on verified delivery, audited terminal resolution, or the retention deadline.</p>
         <a class="button" href="/account.html?settings=privacy">Account controls</a>
       </article>
     </section>
@@ -70,13 +70,13 @@
           <div class="eyebrow">Operations</div>
           <h2>Live app checks plus provider verification</h2>
         </div>
-        <p class="muted">The service result above is live. Railway, Supabase, email, Stripe, and Google provider incidents still require their own dashboards and alerts.</p>
+        <p class="muted">The service result above is live. Railway, Supabase, transactional email, and Google provider incidents still require their own dashboards and alerts. Stripe is deferred while paid enrolment remains closed.</p>
       </div>
       <div class="policyMatrix">
         <div class="policyRow"><strong>Railway</strong><span>Confirm health checks, latest deploy, logs, restart policy, and rollback target.</span></div>
         <div class="policyRow"><strong>Supabase</strong><span>Confirm Auth provider health, RLS enabled, private storage bucket is private, and backup/PITR status.</span></div>
-        <div class="policyRow"><strong>Resend</strong><span>Confirm domain, DKIM/SPF/DMARC, bounce handling, and delivery for signup/reset emails.</span></div>
-        <div class="policyRow"><strong>Stripe</strong><span>Confirm signed webhook delivery, active product prices, failed-payment handling, and billing portal availability.</span></div>
+        <div class="policyRow"><strong>Email</strong><span>Confirm Supabase Auth SMTP plus the separate Resend account-deletion sender, signed webhook, bounce handling, and completion delivery.</span></div>
+        <div class="policyRow"><strong>Stripe</strong><span>Deferred: confirm both enrolment flags are false, public pricing is null, and no checkout, trial, or upgrade action is available.</span></div>
         <div class="policyRow"><strong>Google Maps</strong><span>Confirm browser-key referrer restrictions and server-key API restrictions.</span></div>
       </div>
     </section>

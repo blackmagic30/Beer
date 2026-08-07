@@ -16,7 +16,6 @@
   <meta property="og:image" content="https://pintpath.au/assets/pint-path-logo.png" />
   <link rel="stylesheet" href="./business.css" />
   <script src="./config.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.103.0/dist/umd/supabase.min.js" integrity="sha384-PsnFqJ58vyp7buRfuvdS2SrjRdUYinBv6lWwJXx3xQ17hWefo/UkwXowVBT53ubG" crossorigin="anonymous" referrerpolicy="no-referrer" defer></script>
   <script src="./business.js" defer></script>
 </head>
 <body>
@@ -26,8 +25,8 @@
     <section class="authShell">
       <div class="authIntro panel">
         <div class="eyebrow">Venue access</div>
-        <h1>Log in to your venue</h1>
-        <p class="lead">Use your assigned Pint Path account to keep venue details, beers, prices, happy hours, and specials current.</p>
+        <h1>Continue to your venue</h1>
+        <p class="lead">Use the same Google-authenticated Pint Path web account that was assigned to your venue. This release provides profile, beer, stock, and price tools.</p>
         <div class="authTrustGrid">
           <div>
             <strong>One secure login</strong>
@@ -45,50 +44,21 @@
       </div>
 
       <section class="authCard panel" aria-label="Venue login">
-        <form id="venueLoginForm" class="form authForm">
-          <div class="authPanelStack">
-            <h2>Venue sign in</h2>
-            <p class="muted">Enter the email and password for your assigned venue account.</p>
-            <div class="authFields">
-              <label class="field">Email
-                <input name="email" type="email" autocomplete="email" required />
-              </label>
-              <div class="field passwordField"><label for="venuePassword">Password</label>
-                <span class="passwordInputWrap">
-                  <input id="venuePassword" name="password" type="password" autocomplete="current-password" required />
-                  <button id="venuePasswordToggle" class="passwordToggle" type="button" aria-controls="venuePassword" aria-pressed="false">Show</button>
-                </span>
-              </div>
-            </div>
-            <div class="actionRow authActions">
-              <button id="venueLoginButton" class="button button--primary" type="submit">Log in as venue</button>
-              <a class="button" href="/account.html">Personal account login</a>
-            </div>
-            <div class="authUtilityGrid" aria-label="Venue account help">
-              <a class="authUtilityCard" href="/reset-password.html">
-                <strong>Reset password</strong>
-                <span>Send a recovery email.</span>
-              </a>
-              <a class="authUtilityCard" href="/resend-confirmation.html">
-                <strong>Resend confirmation</strong>
-                <span>Send the signup email again.</span>
-              </a>
-            </div>
+        <div class="authPanelStack">
+          <h2>Venue sign in</h2>
+          <p class="muted">Google verifies the web identity first; Pint Path then checks that the account has an active assignment for the requested venue.</p>
+          <div class="actionRow authActions">
+            <a id="venueGoogleLoginLink" class="button button--primary" href="/account.html?next=%2Fvenue-portal.html">Continue with Google</a>
+            <a class="button" href="/account.html">Personal account</a>
           </div>
-        </form>
-        <div id="venueLoginStatus" class="notice" role="status" aria-live="polite" aria-atomic="true" hidden></div>
+          <p class="helperCopy">Email/password access is available in the first iOS release, not on the public website.</p>
+        </div>
       </section>
     </section>
   </main>
 
   <script>
     const $ = (id) => document.getElementById(id);
-
-    function setLoading(isLoading) {
-      const button = $("venueLoginButton");
-      button.disabled = isLoading;
-      button.textContent = isLoading ? "Signing in..." : "Log in as venue";
-    }
 
     function venueReturnPath() {
       const requested = new URLSearchParams(window.location.search).get("next") || "";
@@ -97,43 +67,8 @@
 
     window.addEventListener("DOMContentLoaded", () => {
       $("nav").innerHTML = MelbBeerBusiness.renderNav("account");
-
-      $("venuePasswordToggle").addEventListener("click", () => {
-        const input = $("venuePassword");
-        const showing = input.type === "text";
-        input.type = showing ? "password" : "text";
-        $("venuePasswordToggle").textContent = showing ? "Show" : "Hide";
-        $("venuePasswordToggle").setAttribute("aria-pressed", showing ? "false" : "true");
-      });
-
-      $("venueLoginForm").addEventListener("submit", async (event) => {
-        event.preventDefault();
-        const form = event.currentTarget;
-        const email = form.email.value.trim();
-        const password = form.password.value;
-        try {
-          setLoading(true);
-          const params = new URLSearchParams(window.location.search);
-          const isLocalHost = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
-          const useLocalEmailAuth = isLocalHost && params.get("supabaseAuth") !== "1";
-          if (MelbBeerBusiness.getSupabaseClient() && !useLocalEmailAuth) {
-            await MelbBeerBusiness.signInWithEmail(email, password);
-          } else {
-            const result = await MelbBeerBusiness.apiFetch("/api/business/auth/login", {
-              method: "POST",
-              body: JSON.stringify({ email, password }),
-            });
-            MelbBeerBusiness.setAuthToken(result.token);
-            MelbBeerBusiness.setAccountContext(result.account, result.access);
-          }
-          window.location.assign(venueReturnPath());
-        } catch (error) {
-          form.password.value = "";
-          MelbBeerBusiness.setStatus($("venueLoginStatus"), error.message || "Venue login failed.", true);
-        } finally {
-          setLoading(false);
-        }
-      });
+      const returnPath = venueReturnPath();
+      $("venueGoogleLoginLink").href = `/account.html?next=${encodeURIComponent(returnPath)}`;
     });
   </script>
 </body>

@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Submit Beer Prices, Happy Hours & Venue Updates | Pint Path</title>
-  <meta name="description" content="Submit current beer prices, happy hours, source photos, and missing venue details for Pint Path review." />
+  <title>Submit Beer Prices & Venue Updates | Pint Path</title>
+  <meta name="description" content="Submit current beer prices, source photos, and missing venue details for Pint Path review." />
   <link rel="canonical" href="https://pintpath.au/submit.html" />
   <link rel="icon" href="/favicon.ico" sizes="any" />
   <link rel="icon" type="image/png" sizes="48x48" href="/favicon.png" />
@@ -14,12 +14,12 @@
   <meta name="theme-color" content="#070A12" />
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="Pint Path" />
-  <meta property="og:title" content="Submit Beer Prices and Happy Hours | Pint Path" />
+  <meta property="og:title" content="Submit Beer Prices and Venue Updates | Pint Path" />
   <meta property="og:description" content="Share current venue data for Pint Path review and help keep the beer map useful." />
   <meta property="og:url" content="https://pintpath.au/submit.html" />
   <meta property="og:image" content="https://pintpath.au/assets/pint-path-logo.png" />
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="Submit Beer Prices and Happy Hours | Pint Path" />
+  <meta name="twitter:title" content="Submit Beer Prices and Venue Updates | Pint Path" />
   <meta name="twitter:description" content="Share current venue data for Pint Path review and help keep the beer map useful." />
   <meta name="twitter:image" content="https://pintpath.au/assets/pint-path-logo.png" />
   <link rel="stylesheet" href="./business.css" />
@@ -32,7 +32,7 @@
     <section class="hero">
       <div class="eyebrow">Submit venue data</div>
       <h1>Add what you saw.</h1>
-      <p class="lead">Pick a venue, add the beer or happy-hour info, then submit. We review it before it reaches the public map.</p>
+      <p class="lead">Pick a venue, add the beer-price or source information, then submit. We review it before it reaches the public map.</p>
     </section>
 
     <section id="loginRequiredPanel" class="panel">
@@ -177,41 +177,41 @@
           <label class="field submissionTypeField">Submission type
             <select id="submissionTypeSelect" name="submissionType">
               <option value="single_beer_price">Single beer price</option>
-              <option value="happy_hour_update">Happy-hour</option>
+              <option value="happy_hour_update" hidden disabled>Happy-hour</option>
               <option value="full_venue_update">Multiple beer submission</option>
               <option value="photo_upload">Photo/upload source</option>
             </select>
           </label>
           <div id="missionContext" class="notice missionContext is-hidden"></div>
-          <label id="sourcePhotoField" class="field">Optional source photo/menu/receipt/happy-hour board
+          <label id="sourcePhotoField" class="field">Optional source photo, menu, or receipt
             <input id="sourcePhoto" type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp,application/pdf,.pdf" capture="environment" multiple />
             <span id="sourcePhotoHint" class="fieldHint" role="status" aria-live="polite">Evidence is optional for data-entry modes and required for Photo/upload source. Upload up to 6 JPEG, PNG, or WebP images (25MB maximum each), or one flat PDF menu (8MB maximum). For the best menu reading, fill the frame, hold the camera square to the menu, avoid glare, and add overlapping close-ups when the print is small. Convert HEIC/HEIF photos to JPEG first because web-browser decoding is inconsistent.</span>
             <div id="sourcePhotoList" class="sourcePhotoList" aria-live="polite" hidden></div>
           </label>
-          <div id="happyHourSection" class="submitModeBlock is-hidden">
+          <div id="happyHourSection" class="submitModeBlock is-hidden" hidden inert aria-hidden="true">
             <div class="field">
               <span>Days happy hour is on</span>
               <div id="happyHourDays" class="dayChecklist" aria-label="Happy-hour days">
-                <label class="dayChip"><input type="checkbox" value="Mon" /> Mon</label>
-                <label class="dayChip"><input type="checkbox" value="Tue" /> Tue</label>
-                <label class="dayChip"><input type="checkbox" value="Wed" /> Wed</label>
-                <label class="dayChip"><input type="checkbox" value="Thu" /> Thu</label>
-                <label class="dayChip"><input type="checkbox" value="Fri" /> Fri</label>
-                <label class="dayChip"><input type="checkbox" value="Sat" /> Sat</label>
-                <label class="dayChip"><input type="checkbox" value="Sun" /> Sun</label>
+                <label class="dayChip"><input type="checkbox" value="Mon" disabled /> Mon</label>
+                <label class="dayChip"><input type="checkbox" value="Tue" disabled /> Tue</label>
+                <label class="dayChip"><input type="checkbox" value="Wed" disabled /> Wed</label>
+                <label class="dayChip"><input type="checkbox" value="Thu" disabled /> Thu</label>
+                <label class="dayChip"><input type="checkbox" value="Fri" disabled /> Fri</label>
+                <label class="dayChip"><input type="checkbox" value="Sat" disabled /> Sat</label>
+                <label class="dayChip"><input type="checkbox" value="Sun" disabled /> Sun</label>
               </div>
               <span class="fieldHint">Tick every day the venue says the happy hour applies.</span>
             </div>
             <div class="grid grid--two">
               <label class="field">Start time
-                <input id="happyHourStartTime" type="time" />
+                <input id="happyHourStartTime" type="time" disabled />
               </label>
               <label class="field">Finish time
-                <input id="happyHourEndTime" type="time" />
+                <input id="happyHourEndTime" type="time" disabled />
               </label>
             </div>
             <label class="field">What is included
-              <textarea id="happyHourSpecialsInput" placeholder="Example: $9 house pints, $12 selected cocktails, excludes public holidays"></textarea>
+              <textarea id="happyHourSpecialsInput" placeholder="Example: $9 house pints, $12 selected cocktails, excludes public holidays" disabled></textarea>
               <span class="fieldHint">Write the specials and conditions only. The selected days and times are saved with it.</span>
             </label>
           </div>
@@ -288,6 +288,10 @@
     let submissionQueueMigrationAttempted = false;
     let lastKnownSubmissionQueueCount = 0;
     const viewerConfig = window.MELB_BEER_BOT_VIEWER_CONFIG || {};
+    const BUSINESS_CONFIG = viewerConfig.business && typeof viewerConfig.business === "object"
+      ? viewerConfig.business
+      : {};
+    const HAPPY_HOUR_CONTRIBUTIONS_ENABLED = BUSINESS_CONFIG.happyHourContributionsEnabled === true;
     const TRACKED_BEERS = Array.isArray(viewerConfig.trackedBeers) && viewerConfig.trackedBeers.length
       ? viewerConfig.trackedBeers
       : [
@@ -299,6 +303,21 @@
     const statusEl = document.getElementById("status");
     const networkStatusPill = document.getElementById("networkStatusPill");
     const locationStatusPill = document.getElementById("locationStatusPill");
+
+    function isPublicSubmissionTypeEnabled(type) {
+      return type !== "happy_hour_update" || HAPPY_HOUR_CONTRIBUTIONS_ENABLED;
+    }
+
+    function configurePublicSubmissionScope() {
+      const happyHourOption = submissionTypeSelect.querySelector('option[value="happy_hour_update"]');
+      if (happyHourOption) {
+        happyHourOption.hidden = !HAPPY_HOUR_CONTRIBUTIONS_ENABLED;
+        happyHourOption.disabled = !HAPPY_HOUR_CONTRIBUTIONS_ENABLED;
+      }
+      if (!HAPPY_HOUR_CONTRIBUTIONS_ENABLED && submissionTypeSelect.value === "happy_hour_update") {
+        submissionTypeSelect.value = "single_beer_price";
+      }
+    }
 
     function requireActiveSubmissionAccountId() {
       const accountId = activeSubmissionAccountId || MelbBeerBusiness.getAccountScopeId();
@@ -693,10 +712,20 @@
         : "";
     }
 
+    function secureClientIdentifier(prefix) {
+      if (typeof window.crypto?.randomUUID === "function") {
+        return `${prefix}-${window.crypto.randomUUID()}`;
+      }
+      if (typeof window.crypto?.getRandomValues !== "function") {
+        throw new Error("This browser cannot generate a secure submission identifier.");
+      }
+      const bytes = new Uint8Array(16);
+      window.crypto.getRandomValues(bytes);
+      return `${prefix}-${Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("")}`;
+    }
+
     function createQueuedSubmissionId() {
-      return window.crypto?.randomUUID
-        ? window.crypto.randomUUID()
-        : `queued-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      return secureClientIdentifier("queued");
     }
 
     function isRetainedQueuedSubmission(item, now = Date.now()) {
@@ -1219,7 +1248,10 @@
         setNewVenueSelectedSummary(selectedNewVenueGooglePlace);
       }
 
-      if (["full_venue_update", "single_beer_price", "happy_hour_update", "photo_upload"].includes(draft.submissionType)) {
+      if (
+        ["full_venue_update", "single_beer_price", "happy_hour_update", "photo_upload"].includes(draft.submissionType) &&
+        isPublicSubmissionTypeEnabled(draft.submissionType)
+      ) {
         submissionTypeSelect.value = draft.submissionType;
       }
       applySubmissionType();
@@ -1399,7 +1431,7 @@
       newVenueGoogleResults.innerHTML = "";
       newVenueGoogleResults.hidden = true;
       setNewVenueSelectedSummary(place);
-      newVenueGoogleStatus.textContent = `${place.name} selected. Add beer, cider, or happy-hour data below.`;
+      newVenueGoogleStatus.textContent = `${place.name} selected. Add beer or cider data below.`;
       newVenueHelp.textContent = "Venue details are ready for admin review. Drink rows submitted below stay linked to this new venue.";
       newVenueManualDetails.open = false;
       updateNewVenueShortcutState();
@@ -1566,10 +1598,7 @@
     }
 
     function createPendingVenueId() {
-      if (window.crypto?.randomUUID) {
-        return `venue-${window.crypto.randomUUID()}`;
-      }
-      return `venue-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      return secureClientIdentifier("venue");
     }
 
     function collectNewVenue() {
@@ -1654,7 +1683,7 @@
         submittedNewVenueRequestPlaceId = newVenue.googlePlaceId;
         const message = result.message || (result.duplicate
           ? `${newVenue.name} is already in the admin review queue. Add venue data below to link and resolve that request.`
-          : `${newVenue.name} has been added to the admin review queue. Add beer, cider, or happy-hour data below and use Submit for review to link drinks to this venue.`);
+          : `${newVenue.name} has been added to the admin review queue. Add beer or cider data below and use Submit for review to link drinks to this venue.`);
         newVenueSelectedSummary.classList.remove("notice--warning");
         newVenueSelectedSummary.innerHTML = `
           <strong>${escapeHtml(newVenue.name)} ${result.duplicate ? "already queued" : "added for review"}</strong>
@@ -1757,14 +1786,20 @@
     }
 
     function applySubmissionType() {
+      if (!isPublicSubmissionTypeEnabled(submissionTypeSelect.value)) {
+        submissionTypeSelect.value = "single_beer_price";
+      }
       const type = submissionTypeSelect.value;
       const isSingle = type === "single_beer_price";
-      const isHappyHour = type === "happy_hour_update";
+      const isHappyHour = HAPPY_HOUR_CONTRIBUTIONS_ENABLED && type === "happy_hour_update";
       const isPhotoOnly = type === "photo_upload";
       const usesBeerRows = !isHappyHour && !isPhotoOnly;
 
       beerRowsSection.classList.toggle("is-hidden", !usesBeerRows);
       happyHourSection.classList.toggle("is-hidden", !isHappyHour);
+      happyHourSection.hidden = !isHappyHour;
+      happyHourSection.inert = !isHappyHour;
+      happyHourSection.setAttribute("aria-hidden", isHappyHour ? "false" : "true");
       addBeerRowButton.classList.toggle("is-hidden", isSingle);
       sourcePhotoField.classList.remove("is-hidden");
       sourcePhoto.disabled = false;
@@ -2167,6 +2202,9 @@
     }
 
     async function queueSubmissionPayload(payload) {
+      if (!isPublicSubmissionTypeEnabled(payload?.submissionType)) {
+        throw new Error("This submission type is not available during the current public launch scope.");
+      }
       const queue = await readSubmissionQueue();
       if (queue.length >= SUBMISSION_QUEUE_MAX_ITEMS) {
         throw new Error("Local submission queue is full. Restore reception and send queued submissions before adding more.");
@@ -2186,6 +2224,9 @@
     }
 
     async function sendSubmissionPayload(payload) {
+      if (!isPublicSubmissionTypeEnabled(payload?.submissionType)) {
+        throw new Error("This submission type is not available during the current public launch scope.");
+      }
       return MelbBeerBusiness.apiFetch("/api/business/submissions", {
         method: "POST",
         body: JSON.stringify(payload),
@@ -2212,6 +2253,11 @@
           const [next, ...rest] = queue;
           if (next.ownerAccountId !== requireActiveSubmissionAccountId()) {
             throw new Error("A queued upload belongs to another account and was blocked from sending.");
+          }
+          if (!isPublicSubmissionTypeEnabled(next.payload?.submissionType)) {
+            next.lastError = "This saved submission type is paused for the current public launch. You can remove it from this device.";
+            await writeSubmissionQueue(queue);
+            break;
           }
           renderSubmissionQueue(queue, next.id);
           MelbBeerBusiness.setStatus(statusEl, `Sending queued submission ${sent + 1} of ${sent + queue.length}...`);
@@ -2322,6 +2368,7 @@
     window.addEventListener("DOMContentLoaded", async () => {
       await MelbBeerBusiness.prepareRestoreIsolation();
       nav.innerHTML = MelbBeerBusiness.renderNav("submit");
+      configurePublicSubmissionScope();
       if (MelbBeerBusiness.isRestoreRehearsalMode()) {
         loginRequiredPanel.classList.remove("is-hidden");
         submissionPanel.classList.add("is-hidden");
@@ -2353,7 +2400,10 @@
       updateDraftStatus();
       updateLocationStatus();
       appendBeerRow();
-      if (["full_venue_update", "single_beer_price", "happy_hour_update", "photo_upload"].includes(initialSubmissionType)) {
+      if (
+        ["full_venue_update", "single_beer_price", "happy_hour_update", "photo_upload"].includes(initialSubmissionType) &&
+        isPublicSubmissionTypeEnabled(initialSubmissionType)
+      ) {
         submissionTypeSelect.value = initialSubmissionType;
       }
       applySubmissionType();

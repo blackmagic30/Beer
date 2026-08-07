@@ -15,8 +15,7 @@ describe("public UI hardening", () => {
     expect(html).toContain('(IS_LOCAL_VIEWER_ORIGIN && (params.get("googleMapsMapId") || params.get("mapId")))');
     expect(html).toContain('(IS_LOCAL_VIEWER_ORIGIN && (params.get("googleMapsKey") || window.localStorage.getItem("googleMapsKey")))');
     expect(html).toContain('mapId: EFFECTIVE_GOOGLE_MAPS_MAP_ID');
-    expect(html).toContain('GOOGLE_MAPS_DEMO_MAP_ID;');
-    expect(html).not.toContain('GOOGLE_MAPS_MAP_ID ||\n      GOOGLE_MAPS_DEMO_MAP_ID');
+    expect(html).toContain('GOOGLE_MAPS_MAP_ID ||\n      GOOGLE_MAPS_DEMO_MAP_ID');
     expect(html).toContain('if (IS_LOCAL_VIEWER_ORIGIN && params.get("googleMapsKey"))');
     expect(html).toContain('if (response.isAuthenticated) {\n          await window.MelbBeerBusiness.apiFetch("/api/business/account");');
     expect(html).toContain('window.MelbBeerBusiness.setAccountContext(null);\n        console.warn("Could not load business access state"');
@@ -25,13 +24,33 @@ describe("public UI hardening", () => {
     expect(html.indexOf("await refreshBusinessAccess();")).toBeLessThan(html.indexOf("recentlyViewedVenues = readStoredVenues"));
   });
 
+  it("keeps privacy-sensitive feedback out of query strings when JavaScript is unavailable", () => {
+    const html = readViewer("feedback.html");
+
+    expect(html).toContain('method="post" action="/api/business/feedback"');
+    expect(html).toContain("<noscript>");
+    expect(html).not.toContain('method="get"');
+  });
+
+  it("does not overstate production price coverage or expose pre-launch happy-hour discovery", () => {
+    const html = readViewer("index.html");
+
+    expect(html).toContain("Verified price coverage is limited and expanding");
+    expect(html).toContain("Confirm current details with the venue.");
+    expect(html).not.toContain("verified beer prices and happy hours across Melbourne");
+    expect(html).toContain("const HAPPY_HOUR_DISCOVERY_ENABLED = BUSINESS_CONFIG.happyHourDiscoveryEnabled === true");
+    expect(html).not.toContain('data-filter-chip="happy_hour_active_now"');
+    expect(html).toContain("if (!HAPPY_HOUR_DISCOVERY_ENABLED)");
+    expect(html).not.toContain('<option value="happy_hour_changed">');
+  });
+
   it("uses accessible, cancellable dialogs instead of destructive prompt-based reporting", () => {
     const html = readViewer("index.html");
 
     expect(html).toContain('id="venueDetailOverlay" class="is-hidden-panel" role="dialog" aria-modal="true"');
     expect(html).toContain('id="wrongPriceDialog" class="panel wrongPriceDialog"');
     expect(html).toContain('id="wrongPriceStatus" class="notice" role="status" aria-live="polite"');
-    ["price_changed", "beer_not_available", "wrong_serving_size", "happy_hour_changed", "other"].forEach((reason) => {
+    ["price_changed", "beer_not_available", "wrong_serving_size", "other"].forEach((reason) => {
       expect(html).toContain(`<option value="${reason}">`);
     });
     expect(html).toContain('wrongPriceDialog.close("cancel")');
@@ -147,7 +166,7 @@ describe("public UI hardening", () => {
     expect(map).toContain('venue?.instagram');
     expect(map).toContain('venue?.phone');
     expect(map).toContain('class="beerPopup__openState ${openNow ? "is-open" : ""}"');
-    expect(map).toContain('data-filter-chip="happy_hour_active_now" aria-pressed="false"');
+    expect(map).not.toContain('data-filter-chip="happy_hour_active_now"');
     expect(map).toContain('data-beer-chip="${escapeHtml(beer.query)}" aria-pressed="false"');
     expect(map).toContain('chipEl.setAttribute("aria-pressed", isActive ? "true" : "false")');
   });

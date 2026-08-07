@@ -29,6 +29,9 @@ describe("website performance loading", () => {
     expect(html).toContain("if (!nextCursor) break;");
     expect(html).toContain("seenCursors.has(nextCursor)");
     expect(routes).toContain("public, max-age=30, stale-while-revalidate=120");
+    expect(routes).toContain('res.setHeader("Cache-Control", "private, no-store")');
+    expect(routes).toContain('res.setHeader("Vary", "Authorization, Cookie")');
+    expect(routes).toContain("if (credentialsSupplied && !account)");
     expect(service).not.toContain("private publicVenueCache:");
     expect(service).toContain("listPublicVenueDirectoryPage");
     expect(service).toContain('{ count: "exact" }');
