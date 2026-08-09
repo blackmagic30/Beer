@@ -311,6 +311,10 @@ SELECT format(
   :'candidate_verifier'
 ) \gexec
 SELECT format('GRANT pintpath_runtime TO %I', :'candidate_login') \gexec
+SELECT format(
+  'GRANT CONNECT ON DATABASE pintpath_staging TO %I',
+  :'candidate_login'
+) \gexec
 SELECT format('COMMENT ON ROLE %I IS %L', :'candidate_login', :'candidate_owner') \gexec
 SELECT format(
   'ALTER ROLE %I IN DATABASE pintpath_staging SET search_path = pintpath_app, pg_catalog',
@@ -389,6 +393,20 @@ EXISTS (
         ON granted_role.oid = membership.roleid
       WHERE membership.member = candidate_role.oid
         AND granted_role.rolname = 'pintpath_runtime'
+    )
+    AND EXISTS (
+      SELECT 1
+      FROM pg_catalog.pg_database AS runtime_database
+      CROSS JOIN LATERAL pg_catalog.aclexplode(
+        COALESCE(
+          runtime_database.datacl,
+          pg_catalog.acldefault('d', runtime_database.datdba)
+        )
+      ) AS database_privilege
+      WHERE runtime_database.datname = 'pintpath_staging'
+        AND database_privilege.grantee = candidate_role.oid
+        AND database_privilege.privilege_type = 'CONNECT'
+        AND NOT database_privilege.is_grantable
     )
 ) AS candidate_safe \gset
 \if :candidate_absent
@@ -470,6 +488,10 @@ COMMIT;
 SELECT 'absent';
 \elif :candidate_owned
 SELECT format('ALTER ROLE %I NOLOGIN', :'candidate_login') \gexec
+SELECT format(
+  'REVOKE CONNECT ON DATABASE pintpath_staging FROM %I',
+  :'candidate_login'
+) \gexec
 SELECT format('REVOKE pintpath_runtime FROM %I', :'candidate_login') \gexec
 SELECT format('ALTER ROLE %I PASSWORD NULL', :'candidate_login') \gexec
 COMMIT;
@@ -522,6 +544,10 @@ SELECT EXISTS (
 \if :retired_role_exists
 BEGIN;
 SELECT format('ALTER ROLE %I NOLOGIN', :'retired_login') \gexec
+SELECT format(
+  'REVOKE CONNECT ON DATABASE pintpath_staging FROM %I',
+  :'retired_login'
+) \gexec
 SELECT format('REVOKE pintpath_runtime FROM %I', :'retired_login') \gexec
 SELECT format('ALTER ROLE %I PASSWORD NULL', :'retired_login') \gexec
 COMMIT;

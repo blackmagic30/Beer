@@ -145,9 +145,12 @@ client B for the candidate.
    fixed-enum receipt.
 2. On B, run `provision-runtime-candidate --target postgres-runtime`. The
    command serializes the whole lifecycle with a session advisory lock, creates
-   or resumes only its cryptographically owned candidate, proves SCRAM and the
-   complete restricted runtime contract, atomically records durable handoff,
-   and proves authentication/readiness again after handoff.
+   or resumes only its cryptographically owned candidate, grants the candidate
+   direct non-grantable `CONNECT` on the hardened staging database, proves
+   SCRAM and the complete restricted runtime contract, atomically records
+   durable handoff only while that direct grant remains exact, and proves
+   authentication/readiness again after handoff. Owner cleanup and predecessor
+   retirement revoke that direct database grant before completing.
 3. While the provider runtime URL still names the predecessor, configure A to
    run `watch-old-rejection --target postgres-runtime` and redeploy A. Require
    the exact A deployment to be running, then allow it enough time to make its

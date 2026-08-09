@@ -391,6 +391,12 @@ describe("release workflow contracts", () => {
       runbook.indexOf("## Runtime-login rotation"),
       runbook.indexOf("## Template-admin and Redis rotation"),
     );
+    expect(runtimeRotation).toContain(
+      "direct non-grantable `CONNECT` on the hardened staging database",
+    );
+    expect(runtimeRotation).toContain(
+      "retirement revoke that direct database grant",
+    );
     expect(runtimeRotation.indexOf("configure A")).toBeGreaterThan(-1);
     expect(runtimeRotation.indexOf("configure A")).toBeLessThan(
       runtimeRotation.indexOf("With deploys skipped"),

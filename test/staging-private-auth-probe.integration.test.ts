@@ -130,6 +130,77 @@ function withConnection(
   return target.toString();
 }
 
+function forTestDatabase(script: string): string {
+  return script.replaceAll("pintpath_staging", testDatabase);
+}
+
+async function inspectDatabaseConnectPrivilege(
+  client: Client,
+  database: string,
+  roleName: string,
+): Promise<
+  | {
+      roleOid: number;
+      directConnect: boolean;
+      effectiveConnect: boolean;
+    }
+  | undefined
+> {
+  const result = await client.query<{
+    roleOid: number;
+    directConnect: boolean;
+    effectiveConnect: boolean;
+  }>(
+    `SELECT role.oid::integer AS "roleOid",
+            pg_catalog.has_database_privilege(
+              role.oid,
+              runtime_database.oid,
+              'CONNECT'
+            ) AS "effectiveConnect",
+            EXISTS (
+              SELECT 1
+              FROM pg_catalog.aclexplode(
+                COALESCE(
+                  runtime_database.datacl,
+                  pg_catalog.acldefault('d', runtime_database.datdba)
+                )
+              ) AS database_privilege
+              WHERE database_privilege.grantee = role.oid
+                AND database_privilege.privilege_type = 'CONNECT'
+                AND NOT database_privilege.is_grantable
+            ) AS "directConnect"
+       FROM pg_catalog.pg_roles AS role
+       JOIN pg_catalog.pg_database AS runtime_database
+         ON runtime_database.datname = $1
+      WHERE role.rolname = $2`,
+    [database, roleName],
+  );
+  return result.rows[0];
+}
+
+async function databaseAclHasGrantee(
+  client: Client,
+  database: string,
+  roleOid: number,
+): Promise<boolean> {
+  const result = await client.query<{ hasGrantee: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1
+       FROM pg_catalog.pg_database AS runtime_database
+       CROSS JOIN LATERAL pg_catalog.aclexplode(
+         COALESCE(
+           runtime_database.datacl,
+           pg_catalog.acldefault('d', runtime_database.datdba)
+         )
+       ) AS database_privilege
+       WHERE runtime_database.datname = $1
+         AND database_privilege.grantee = $2::oid
+     ) AS "hasGrantee"`,
+    [database, roleOid],
+  );
+  return result.rows[0]?.hasGrantee === true;
+}
+
 async function runPsql17(input: {
   connectionUrl: string;
   stdin?: string;
@@ -258,6 +329,9 @@ describe.skipIf(!configuredAdminUrl || !hasPsql17)(
       }
       await maintenance.query(`CREATE DATABASE ${testDatabase}`);
       createdTestDatabase = true;
+      await maintenance.query(
+        `REVOKE CONNECT ON DATABASE ${testDatabase} FROM PUBLIC`,
+      );
       databaseAdmin = new Client({
         connectionString: withConnection(adminUrl, testDatabase),
       });
@@ -285,6 +359,9 @@ describe.skipIf(!configuredAdminUrl || !hasPsql17)(
       );
       createdPredecessorRole = true;
       await maintenance.query(`GRANT pintpath_runtime TO ${predecessorLogin}`);
+      await maintenance.query(
+        `GRANT CONNECT ON DATABASE ${testDatabase} TO ${predecessorLogin}`,
+      );
       candidateUrl = withConnection(
         adminUrl,
         testDatabase,
@@ -422,9 +499,8 @@ describe.skipIf(!configuredAdminUrl || !hasPsql17)(
       expect(verifier).toMatch(/^SCRAM-SHA-256\$/);
       const provision = await runPsql17({
         connectionUrl: withConnection(adminUrl, testDatabase),
-        stdin: stagingPrivateAuthProbeInternals.scripts.provision.replace(
-          "IN DATABASE pintpath_staging",
-          `IN DATABASE ${testDatabase}`,
+        stdin: forTestDatabase(
+          stagingPrivateAuthProbeInternals.scripts.provision,
         ),
         additionalEnvironment: {
           STAGING_AUTH_PROBE_CANDIDATE_LOGIN: candidateLogin,
@@ -444,9 +520,8 @@ describe.skipIf(!configuredAdminUrl || !hasPsql17)(
       expect(provision.stderr).not.toContain(candidatePassword);
       const resumedProvision = await runPsql17({
         connectionUrl: withConnection(adminUrl, testDatabase),
-        stdin: stagingPrivateAuthProbeInternals.scripts.provision.replace(
-          "IN DATABASE pintpath_staging",
-          `IN DATABASE ${testDatabase}`,
+        stdin: forTestDatabase(
+          stagingPrivateAuthProbeInternals.scripts.provision,
         ),
         additionalEnvironment: {
           STAGING_AUTH_PROBE_CANDIDATE_LOGIN: candidateLogin,
@@ -456,6 +531,16 @@ describe.skipIf(!configuredAdminUrl || !hasPsql17)(
       });
       expect(resumedProvision.exitCode).toBe(0);
       expect(resumedProvision.stdout.trim()).toBe("existing-owned");
+      const candidateConnectPrivilege = await inspectDatabaseConnectPrivilege(
+        maintenance!,
+        testDatabase,
+        candidateLogin,
+      );
+      expect(candidateConnectPrivilege).toMatchObject({
+        directConnect: true,
+        effectiveConnect: true,
+      });
+      const candidateRoleOid = candidateConnectPrivilege!.roleOid;
       const ownedInspection = await runPsql17({
         connectionUrl: withConnection(adminUrl, testDatabase),
         stdin: stagingPrivateAuthProbeInternals.scripts.inspectOwnership,
@@ -540,6 +625,26 @@ describe.skipIf(!configuredAdminUrl || !hasPsql17)(
       await maintenance!.query(`ALTER ROLE ${candidateLogin} NOCREATEROLE`);
       await candidate.end();
 
+      await maintenance!.query(
+        `REVOKE CONNECT ON DATABASE ${testDatabase} FROM ${candidateLogin}`,
+      );
+      const refusedMissingConnectHandoff = await runPsql17({
+        connectionUrl: withConnection(adminUrl, testDatabase),
+        stdin: forTestDatabase(
+          stagingPrivateAuthProbeInternals.scripts.finalizeOwnership,
+        ),
+        additionalEnvironment: {
+          STAGING_AUTH_PROBE_CANDIDATE_HANDOFF: handoffMarker,
+          STAGING_AUTH_PROBE_CANDIDATE_LOGIN: candidateLogin,
+          STAGING_AUTH_PROBE_CANDIDATE_OWNER: ownerMarker,
+        },
+      });
+      expect(refusedMissingConnectHandoff.exitCode).toBe(0);
+      expect(refusedMissingConnectHandoff.stdout.trim()).toBe("unsafe");
+      await maintenance!.query(
+        `GRANT CONNECT ON DATABASE ${testDatabase} TO ${candidateLogin}`,
+      );
+
       const wrongCandidate = new URL(candidateUrl);
       wrongCandidate.password = crypto.randomBytes(32).toString("base64url");
       const wrong = await structuredPgAttempt(wrongCandidate.toString());
@@ -561,7 +666,9 @@ describe.skipIf(!configuredAdminUrl || !hasPsql17)(
       `);
       const refusedUnsafeHandoff = await runPsql17({
         connectionUrl: withConnection(adminUrl, testDatabase),
-        stdin: stagingPrivateAuthProbeInternals.scripts.finalizeOwnership,
+        stdin: forTestDatabase(
+          stagingPrivateAuthProbeInternals.scripts.finalizeOwnership,
+        ),
         additionalEnvironment: {
           STAGING_AUTH_PROBE_CANDIDATE_HANDOFF: handoffMarker,
           STAGING_AUTH_PROBE_CANDIDATE_LOGIN: candidateLogin,
@@ -572,7 +679,7 @@ describe.skipIf(!configuredAdminUrl || !hasPsql17)(
       expect(refusedUnsafeHandoff.stdout.trim()).toBe("unsafe");
       const cleanup = await runPsql17({
         connectionUrl: withConnection(adminUrl, testDatabase),
-        stdin: stagingPrivateAuthProbeInternals.scripts.cleanup,
+        stdin: forTestDatabase(stagingPrivateAuthProbeInternals.scripts.cleanup),
         additionalEnvironment: {
           STAGING_AUTH_PROBE_CANDIDATE_LOGIN: candidateLogin,
           STAGING_AUTH_PROBE_CANDIDATE_OWNER: ownerMarker,
@@ -592,6 +699,13 @@ describe.skipIf(!configuredAdminUrl || !hasPsql17)(
         [candidateLogin],
       );
       expect(candidateGone.rows[0]?.exists).toBe(false);
+      expect(
+        await databaseAclHasGrantee(
+          maintenance!,
+          testDatabase,
+          candidateRoleOid,
+        ),
+      ).toBe(false);
       createdCandidateRole = false;
       const absentInspection = await runPsql17({
         connectionUrl: withConnection(adminUrl, testDatabase),
@@ -605,9 +719,8 @@ describe.skipIf(!configuredAdminUrl || !hasPsql17)(
 
       const handoffProvision = await runPsql17({
         connectionUrl: withConnection(adminUrl, testDatabase),
-        stdin: stagingPrivateAuthProbeInternals.scripts.provision.replace(
-          "IN DATABASE pintpath_staging",
-          `IN DATABASE ${testDatabase}`,
+        stdin: forTestDatabase(
+          stagingPrivateAuthProbeInternals.scripts.provision,
         ),
         additionalEnvironment: {
           STAGING_AUTH_PROBE_CANDIDATE_LOGIN: candidateLogin,
@@ -624,7 +737,9 @@ describe.skipIf(!configuredAdminUrl || !hasPsql17)(
       expect(handoffProvision.stdout.trim()).toBe("created");
       const handoff = await runPsql17({
         connectionUrl: withConnection(adminUrl, testDatabase),
-        stdin: stagingPrivateAuthProbeInternals.scripts.finalizeOwnership,
+        stdin: forTestDatabase(
+          stagingPrivateAuthProbeInternals.scripts.finalizeOwnership,
+        ),
         additionalEnvironment: {
           STAGING_AUTH_PROBE_CANDIDATE_HANDOFF: handoffMarker,
           STAGING_AUTH_PROBE_CANDIDATE_LOGIN: candidateLogin,
@@ -654,7 +769,7 @@ describe.skipIf(!configuredAdminUrl || !hasPsql17)(
       expect(durableHandoffInspection.stdout.trim()).toBe("handed-off");
       const refusedHandedOffCleanup = await runPsql17({
         connectionUrl: withConnection(adminUrl, testDatabase),
-        stdin: stagingPrivateAuthProbeInternals.scripts.cleanup,
+        stdin: forTestDatabase(stagingPrivateAuthProbeInternals.scripts.cleanup),
         additionalEnvironment: {
           STAGING_AUTH_PROBE_CANDIDATE_LOGIN: candidateLogin,
           STAGING_AUTH_PROBE_CANDIDATE_OWNER: ownerMarker,
@@ -695,7 +810,7 @@ describe.skipIf(!configuredAdminUrl || !hasPsql17)(
       await predecessorSession.connect();
       const retirement = await runPsql17({
         connectionUrl: withConnection(adminUrl, testDatabase),
-        stdin: stagingPrivateAuthProbeInternals.scripts.retire,
+        stdin: forTestDatabase(stagingPrivateAuthProbeInternals.scripts.retire),
         additionalEnvironment: {
           STAGING_AUTH_PROBE_RETIRED_LOGIN: predecessorLogin,
         },
@@ -712,16 +827,28 @@ describe.skipIf(!configuredAdminUrl || !hasPsql17)(
       const predecessorRejected = await structuredPgAttempt(predecessorUrl);
       expect(predecessorRejected.connected).toBe(false);
       expect(["28P01", "28000"]).toContain(predecessorRejected.errorCode);
+      expect(
+        await inspectDatabaseConnectPrivilege(
+          maintenance!,
+          testDatabase,
+          predecessorLogin,
+        ),
+      ).toMatchObject({
+        directConnect: false,
+        effectiveConnect: false,
+      });
 
       await maintenance!.query(
         `CREATE ROLE ${unownedLogin} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOREPLICATION NOBYPASSRLS`,
       );
       createdUnownedRole = true;
+      await maintenance!.query(
+        `GRANT CONNECT ON DATABASE ${testDatabase} TO ${unownedLogin}`,
+      );
       const refusedProvision = await runPsql17({
         connectionUrl: withConnection(adminUrl, testDatabase),
-        stdin: stagingPrivateAuthProbeInternals.scripts.provision.replace(
-          "IN DATABASE pintpath_staging",
-          `IN DATABASE ${testDatabase}`,
+        stdin: forTestDatabase(
+          stagingPrivateAuthProbeInternals.scripts.provision,
         ),
         additionalEnvironment: {
           STAGING_AUTH_PROBE_CANDIDATE_LOGIN: unownedLogin,
@@ -742,7 +869,7 @@ describe.skipIf(!configuredAdminUrl || !hasPsql17)(
       expect(unownedInspection.stdout.trim()).toBe("unowned");
       const refusedCleanup = await runPsql17({
         connectionUrl: withConnection(adminUrl, testDatabase),
-        stdin: stagingPrivateAuthProbeInternals.scripts.cleanup,
+        stdin: forTestDatabase(stagingPrivateAuthProbeInternals.scripts.cleanup),
         additionalEnvironment: {
           STAGING_AUTH_PROBE_CANDIDATE_LOGIN: unownedLogin,
           STAGING_AUTH_PROBE_CANDIDATE_OWNER: ownerMarker,
@@ -755,6 +882,16 @@ describe.skipIf(!configuredAdminUrl || !hasPsql17)(
         [unownedLogin],
       );
       expect(unownedStillLogin.rows[0]?.canLogin).toBe(true);
+      expect(
+        await inspectDatabaseConnectPrivilege(
+          maintenance!,
+          testDatabase,
+          unownedLogin,
+        ),
+      ).toMatchObject({
+        directConnect: true,
+        effectiveConnect: true,
+      });
     }, 30_000);
   },
 );

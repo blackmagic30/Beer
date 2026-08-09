@@ -682,17 +682,24 @@ describe("staging private authentication probe", () => {
     expect(JSON.stringify(request.additionalEnvironment)).not.toContain(
       candidatePassword,
     );
-    expect(stagingPrivateAuthProbeInternals.scripts.provision).not.toMatch(
+    const script = stagingPrivateAuthProbeInternals.scripts.provision;
+    expect(script).not.toMatch(
       /candidate_password/i,
     );
-    expect(stagingPrivateAuthProbeInternals.scripts.provision).toContain(
-      "IN DATABASE pintpath_staging",
+    expect(script).toContain("IN DATABASE pintpath_staging");
+    expect(script).not.toContain("current_database()");
+    expect(script).toContain("existing-owned");
+    const directConnectGrant =
+      "GRANT CONNECT ON DATABASE pintpath_staging TO %I";
+    expect(script).toContain(directConnectGrant);
+    expect(script.indexOf("pg_advisory_xact_lock")).toBeLessThan(
+      script.indexOf(directConnectGrant),
     );
-    expect(stagingPrivateAuthProbeInternals.scripts.provision).not.toContain(
-      "current_database()",
+    expect(script.indexOf(directConnectGrant)).toBeLessThan(
+      script.indexOf("COMMENT ON ROLE %I IS %L"),
     );
-    expect(stagingPrivateAuthProbeInternals.scripts.provision).toContain(
-      "existing-owned",
+    expect(script.indexOf(directConnectGrant)).toBeLessThan(
+      script.indexOf("COMMIT;"),
     );
   });
 
@@ -759,6 +766,18 @@ describe("staging private authentication probe", () => {
     expect(script.indexOf("candidate_owned")).toBeLessThan(
       script.indexOf("ALTER ROLE %I NOLOGIN"),
     );
+    const directConnectRevoke =
+      "REVOKE CONNECT ON DATABASE pintpath_staging FROM %I";
+    expect(script).toContain(directConnectRevoke);
+    expect(script.indexOf("ALTER ROLE %I NOLOGIN")).toBeLessThan(
+      script.indexOf(directConnectRevoke),
+    );
+    expect(script.indexOf(directConnectRevoke)).toBeLessThan(
+      script.indexOf("REVOKE pintpath_runtime FROM %I"),
+    );
+    expect(script.indexOf(directConnectRevoke)).toBeLessThan(
+      script.indexOf("COMMIT;", script.indexOf(directConnectRevoke)),
+    );
     expect(script).toContain("SELECT 'unowned'");
     expect(script.indexOf("candidate_sessions_gone")).toBeLessThan(
       script.indexOf("DROP ROLE %I"),
@@ -810,6 +829,12 @@ describe("staging private authentication probe", () => {
       "NOT candidate_role.rolbypassrls",
       "pg_catalog.pg_auth_members",
       "granted_role.rolname = 'pintpath_runtime'",
+      "pg_catalog.pg_database",
+      "runtime_database.datname = 'pintpath_staging'",
+      "pg_catalog.aclexplode",
+      "database_privilege.grantee = candidate_role.oid",
+      "database_privilege.privilege_type = 'CONNECT'",
+      "NOT database_privilege.is_grantable",
     ]) {
       expect(script).toContain(requiredSafetyCheck);
       expect(script.indexOf(requiredSafetyCheck)).toBeLessThan(
@@ -1975,7 +2000,16 @@ describe("staging private authentication probe", () => {
 
   it("commits predecessor credential invalidation before terminating sessions", () => {
     const script = stagingPrivateAuthProbeInternals.scripts.retire;
+    const directConnectRevoke =
+      "REVOKE CONNECT ON DATABASE pintpath_staging FROM %I";
 
+    expect(script).toContain(directConnectRevoke);
+    expect(script.indexOf("ALTER ROLE %I NOLOGIN")).toBeLessThan(
+      script.indexOf(directConnectRevoke),
+    );
+    expect(script.indexOf(directConnectRevoke)).toBeLessThan(
+      script.indexOf("REVOKE pintpath_runtime FROM %I"),
+    );
     expect(script.indexOf("COMMIT;")).toBeGreaterThan(
       script.indexOf("PASSWORD NULL"),
     );
