@@ -341,6 +341,9 @@ describe("release workflow contracts", () => {
     expect(wrapper).toContain('emit "${PGPASSWORD-}"');
     expect(wrapper).toContain("IFS= read -r PGPASSWORD");
     expect(wrapper).toContain("IFS= read -r PGREQUIREAUTH");
+    expect(wrapper).toContain("unset PGCONNECT_TIMEOUT");
+    expect(wrapper).toContain("unset PGAPPNAME");
+    expect(wrapper).toContain("unset PGSSLROOTCERT");
     expect(wrapper).toContain("exec timeout -s KILL 9 psql");
     expect(wrapper).toContain("' sh \"$@\" < <(");
     expect(wrapper).not.toContain("3<&");
@@ -351,6 +354,15 @@ describe("release workflow contracts", () => {
     expect(runbook).toContain("live gate remains **OPEN**");
     expect(runbook).toContain("PGREQUIREAUTH=scram-sha-256");
     expect(runbook).toContain("watch-old-rejection");
+    const runtimeRotation = runbook.slice(
+      runbook.indexOf("## Runtime-login rotation"),
+      runbook.indexOf("## Template-admin and Redis rotation"),
+    );
+    expect(runtimeRotation.indexOf("configure A")).toBeGreaterThan(-1);
+    expect(runtimeRotation.indexOf("configure A")).toBeLessThan(
+      runtimeRotation.indexOf("With deploys skipped"),
+    );
+    expect(runtimeRotation).toContain("Never redeploy A after");
     expect(runbook).toContain("Regenerate password");
     expect(runbook).toContain(
       "Never\nrestore an exposed credential",

@@ -1,0 +1,10 @@
+[build]
+builder = "RAILPACK"
+buildCommand = "npm run build"
+
+[deploy]
+startCommand = "node dist/scripts/staging-private-auth-probe-dispatcher.js"
+restartPolicyType = "NEVER"
+restartPolicyMaxRetries = 0
+overlapSeconds = 0
+drainingSeconds = 0

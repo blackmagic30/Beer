@@ -62,6 +62,33 @@ interface PsqlResult {
   stderr: string;
 }
 
+function classifyPsqlFailure(stderr: string): string {
+  const normalized = stderr.toLowerCase();
+  if (
+    normalized.includes("connect_timeout") ||
+    normalized.includes("invalid integer value")
+  )
+    return "invalid-connect-timeout";
+  if (
+    normalized.includes("no such file or directory") ||
+    normalized.includes("connection to server on socket")
+  )
+    return "socket-connect";
+  if (
+    normalized.includes("authentication method requirement") ||
+    normalized.includes("password authentication failed")
+  )
+    return "auth-policy";
+  if (normalized.includes("timeout:")) return "wrapper-timeout";
+  if (
+    normalized.includes("syntax error") ||
+    normalized.includes("unrecognized option") ||
+    normalized.includes("sh:")
+  )
+    return "script-error";
+  return stderr ? "other" : "empty";
+}
+
 function validateAdminUrl(value: string): URL {
   let url: URL;
   try {
@@ -320,7 +347,10 @@ describe.skipIf(!configuredAdminUrl || !hasPsql17)(
           PGREQUIREAUTH: "none",
         },
       });
-      expect(trustAccepted.exitCode).toBe(0);
+      expect(
+        trustAccepted.exitCode,
+        `trustAccepted=${classifyPsqlFailure(trustAccepted.stderr)}`,
+      ).toBe(0);
       const trustRejected = await runPsql17({
         connectionUrl: withConnection(adminUrl, "postgres"),
         additionalEnvironment: {
@@ -397,7 +427,10 @@ describe.skipIf(!configuredAdminUrl || !hasPsql17)(
       if (provision.exitCode === 0 && provision.stdout.trim() === "created") {
         createdCandidateRole = true;
       }
-      expect(provision.exitCode).toBe(0);
+      expect(
+        provision.exitCode,
+        `provision=${classifyPsqlFailure(provision.stderr)}`,
+      ).toBe(0);
       expect(provision.stdout.trim()).toBe("created");
       expect(provision.stdout).not.toContain(candidatePassword);
       expect(provision.stderr).not.toContain(candidatePassword);

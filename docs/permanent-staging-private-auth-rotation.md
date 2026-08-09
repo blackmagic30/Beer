@@ -20,10 +20,18 @@ network gate described below.
 
 ## Safety boundary
 
-- Keep the staging Beer service at zero replicas and freeze migrations,
-  backups, restores, and scheduled jobs during each credential transition.
+- Set the staging Beer service's desired regional replica count to zero, then
+  verify both zero desired replicas and no active deployment. A previously
+  failed/stopped deployment is not proof that the desired count is zero. Freeze
+  migrations, backups, restores, and scheduled jobs during each credential
+  transition.
 - Re-resolve the pinned Railway project, environment, Postgres, Redis, and
   temporary probe-service IDs before every mutation. Never target production.
+- Require the staging environment to remain the exact persistent fork whose
+  `sourceEnvironment.id` is the pinned production environment. Capture the
+  production service/volume/domain tuples before creating anything; the
+  staging-scoped service-creation exception is accepted only while that fork
+  binding remains exact.
 - Take a current staging recovery point first. Do not rewrite historical backup
   receipts: their credentialed URL hashes remain immutable historical facts.
 - Create two short-lived, source-less client services in the existing staging
@@ -33,6 +41,10 @@ network gate described below.
 - Build those services before adding credential references. Add only Railway
   reference expressions with deploys skipped, then redeploy the already-built
   image. Do not copy a resolved URL or password through a terminal.
+- Select `/railway.auth-probe.toml` explicitly for both temporary instances.
+  Railway config-in-code overrides dashboard settings; using the root
+  `railway.toml` would run the application predeploy validator, app server,
+  `/ready` healthcheck, and restart policy instead of the one-shot probe.
 - Never use `railway environment config --json`, `railway run`, or a database-
   service SSH shell for this ceremony. Treat any resolved environment output as
   a new credential incident.
@@ -52,9 +64,14 @@ resource IDs. Identity failure is a hard failure; there is no override flag.
 
 ## Probe environment contract
 
-Each probe deployment receives the following through protected provider
-references. Do not materialize or log the resolved values:
+Each probe deployment receives the following fixed non-secret controls and
+protected provider references. Do not materialize or log resolved credentials:
 
+- `STAGING_AUTH_PROBE_RAILWAY_CONFIG_PATH`: exactly
+  `/railway.auth-probe.toml`; the dispatcher rejects the root config fallback.
+- `STAGING_AUTH_PROBE_MODE` and `STAGING_AUTH_PROBE_TARGET`: the exact reviewed
+  dispatcher phase and target. Initial source upload uses `build-only`/`all`;
+  later deployments use only the probe's fixed live-mode/target enums.
 - `STAGING_AUTH_PROBE_EXPECTED_SERVICE_ID`: the exact temporary service's own
   Railway ID.
 - `STAGING_AUTH_PROBE_POSTGRES_RESOURCE_ID` and
@@ -81,6 +98,26 @@ Debug environment switches, inherited TLS bypasses, wrong provider resources,
 shared provider passwords, or an unexpected username fail before network
 mutation.
 
+## Temporary-service build contract
+
+Create A and B as source-less services scoped to the exact staging fork. Before
+adding any credential reference, configure each instance with the dedicated
+auth-probe config, Singapore one-replica placement, 0.1 vCPU/0.5 GB limits,
+IPv6 internet egress disabled, zero overlap/draining, and `restartPolicyType`
+`NEVER` with zero retries. Set only the reviewed non-secret build controls:
+Node 22.23.2, PostgreSQL client 17.10, dispatcher mode `build-only`, and target
+`all`.
+
+Upload a pristine archive produced directly from the reviewed green commit.
+The build-only dispatcher must emit one fixed receipt after verifying the exact
+Node and PostgreSQL client major/minor, then exit without network access. Verify
+that the built instances have no repository/image source, predeploy command,
+healthcheck, domain, TCP proxy, volume, or secret variable and that production
+inventory is byte-for-byte unchanged. Only then add the protected Railway
+reference expressions and phase controls with deploys skipped. Every later
+execution must redeploy the already-reviewed built image; never rebuild from an
+unreviewed worktree.
+
 ## Runtime-login rotation
 
 Use client A to retain the predecessor runtime URL from before the cutover and
@@ -93,22 +130,28 @@ client B for the candidate.
    or resumes only its cryptographically owned candidate, proves SCRAM and the
    complete restricted runtime contract, atomically records durable handoff,
    and proves authentication/readiness again after handoff.
-3. With deploys skipped, update the Postgres runtime-password authority, the
+3. While the provider runtime URL still names the predecessor, configure A to
+   run `watch-old-rejection --target postgres-runtime` and redeploy A. Require
+   the exact A deployment to be running, then allow it enough time to make its
+   initial private-network authentication attempt before changing any runtime
+   authority. Never redeploy A after the runtime reference changes: a redeploy
+   would resolve the successor URL and destroy the predecessor proof.
+4. With deploys skipped, update the Postgres runtime-password authority, the
    exact versioned runtime URL, the Beer reference, and the staging expected and
    named URL digests. Compute digests in process without printing the URL or
    digest. Provider resource IDs do not change.
-4. Redeploy B so it resolves the successor reference. Run
+5. Redeploy B so it resolves the successor reference. Run
    `verify-current --target postgres-runtime` with identity `candidate` and
    require accepted authentication plus full runtime readiness.
-5. Start A with `watch-old-rejection --target postgres-runtime` before retiring
-   the predecessor. It must first observe acceptance and later exact rejection;
-   a client that only ever rejects cannot pass.
 6. On B, run `retire-old-runtime --target postgres-runtime`. It requires the
    exact durable handoff under the same lifecycle lock, invalidates the fixed
    predecessor login before terminating its sessions, proves zero survivors,
    and re-proves the successor.
 7. Require both B's retirement receipt and A's transition receipt to pass.
-   Generate a fresh logical backup/recovery receipt under the new URL binding.
+   A must prove that the same retained predecessor reference first authenticated
+   and later received an exact authentication rejection; a client that only
+   ever rejects cannot pass. Generate a fresh logical backup/recovery receipt
+   under the new URL binding.
 
 If candidate creation is incomplete, cleanup can touch only the exact owner
 state. It can never clean a handed-off candidate or an unrelated pre-existing
@@ -151,7 +194,10 @@ frame, or provider response body.
 
 In a guaranteed cleanup path, delete the two exact temporary staging services
 and verify that they have no deployment, domain, TCP proxy, volume, or variable
-rows; verify production service inventory is unchanged. Remove temporary local
-secret material and retain only protected, secret-free receipts. Railway
-variable sealing is a separate irreversible ceremony after every new value and
-URL pin is escrowed and proven; it is not part of this rotation.
+rows. Stop every exact active deployment before deletion, return staging to
+exactly Beer/Postgres-Staging/Redis with no staged changes, and compare the
+production service/volume/domain tuples with the captured baseline. Remove
+temporary local secret material and retain only protected, secret-free
+receipts. Railway variable sealing is a separate irreversible ceremony after
+every new value and URL pin is escrowed and proven; it is not part of this
+rotation.
