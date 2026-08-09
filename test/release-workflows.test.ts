@@ -362,6 +362,13 @@ describe("release workflow contracts", () => {
     expect(runbook).toContain("restartPolicyMaxRetries` value `1`");
     expect(runbook).not.toContain("with zero retries");
     expect(runbook).toContain(
+      "Railway performs a fresh build from that deployment's stored",
+    );
+    expect(runbook).toContain(
+      "A fresh image digest is expected and is not, by itself, a mismatch",
+    );
+    expect(runbook).not.toContain("redeploy the already-reviewed built image");
+    expect(runbook).toContain(
       'RAILPACK_PACKAGES="node@22.23.2 postgres@17.10"',
     );
     expect(runbook).toContain(
