@@ -275,6 +275,12 @@ describe("release workflow contracts", () => {
     expect(job).toContain("npx vitest run test/postgres-account-deletion-recovery-fixture.integration.test.ts");
     expect(job).toContain("npx vitest run test/postgres-account-deletion-replay.integration.test.ts");
     expect(job).toContain("npx vitest run test/postgres-private-storage-recovery.integration.test.ts");
+    expect(job).toContain("PINTPATH_STAGING_AUTH_PROBE_TEST_ADMIN_URL:");
+    expect(job).toContain("PINTPATH_CI_POSTGRES_CONTAINER_ID: ${{ job.services.postgres.id }}");
+    expect(job).toContain('PINTPATH_STAGING_AUTH_PROBE_TEST_REQUIRED: "true"');
+    expect(job).toContain(
+      'PATH="$GITHUB_WORKSPACE/scripts/ci:$PATH" npm run test:staging:auth:probe:pg17',
+    );
     expect(job).toContain("npx vitest run test/privacy-retention.repository.integration.test.ts");
     expect(job).toContain("npx vitest run test/stripe-subscription.repository.integration.test.ts");
     expect(job).toContain("npx vitest run test/billing-checkout.repository.integration.test.ts");
@@ -302,6 +308,47 @@ describe("release workflow contracts", () => {
     expect(migrationStatus).toContain("idx_accounts_admin_search_trgm");
     expect(migrationStatus).toContain("CREATE INDEX CONCURRENTLY");
     expect(migrationStatus).toContain("permanent staging");
+  });
+
+  it("uses the pinned PostgreSQL 17 client for the staging authentication probe contract", () => {
+    const packageJson = JSON.parse(repositoryFile("package.json")) as {
+      scripts?: Record<string, string>;
+    };
+    const wrapperPath = path.resolve(process.cwd(), "scripts/ci/psql");
+    const wrapper = repositoryFile("scripts/ci/psql");
+    const runbook = releaseDocument(
+      "permanent-staging-private-auth-rotation.md",
+    );
+
+    expect(packageJson.scripts?.["staging:auth:probe"]).toBe(
+      "node dist/scripts/staging-private-auth-probe.js",
+    );
+    expect(packageJson.scripts?.["test:staging:auth:probe:pg17"]).toBe(
+      "vitest run test/staging-private-auth-probe.integration.test.ts",
+    );
+    expect(wrapper).toContain("docker exec");
+    expect(wrapper).toContain('"$container_id" psql "$@"');
+    expect(fs.statSync(wrapperPath).mode & 0o777).toBe(0o755);
+    expect(wrapper).toContain("PINTPATH_CI_POSTGRES_CONTAINER_ID");
+    expect(wrapper).toContain(
+      '"6:-X -q -A -t --no-password --set=ON_ERROR_STOP=1"',
+    );
+    expect(wrapper).toContain(
+      '"7:-X -q -A -t --no-password --set=ON_ERROR_STOP=1 --set=VERBOSITY=sqlstate"',
+    );
+    expect(wrapper).toContain("--env PGPASSWORD");
+    expect(wrapper).toContain("--env PGREQUIREAUTH");
+    expect(wrapper).not.toContain("$PGPASSWORD");
+    expect(wrapper).not.toContain("docker run");
+    expect(wrapper).not.toContain("--network host");
+    expect(wrapper).not.toContain("set -x");
+    expect(runbook).toContain("live gate remains **OPEN**");
+    expect(runbook).toContain("PGREQUIREAUTH=scram-sha-256");
+    expect(runbook).toContain("watch-old-rejection");
+    expect(runbook).toContain("Regenerate password");
+    expect(runbook).toContain(
+      "Never\nrestore an exposed credential",
+    );
   });
 
   it("keeps private Storage recovery provider-gated and bound to the local PG17 contract", () => {

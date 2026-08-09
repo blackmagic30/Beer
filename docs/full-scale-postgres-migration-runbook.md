@@ -316,6 +316,11 @@ URL file.
   from production and the disposable restore resources.
 - [ ] Complete the three remaining staging provider credential/configuration
   gates, deploy the reviewed app, and verify provider/domain/callback bindings.
+- [ ] Complete the incident-driven staging Postgres runtime/admin and Redis
+  credential rotations with the isolated-client acceptance/rejection contract
+  in
+  [permanent-staging-private-auth-rotation.md](permanent-staging-private-auth-rotation.md),
+  then refresh the exact URL pins and recovery evidence.
 - [x] Import the approved checksummed synthetic SQLite source with the reviewed
   tool and independently verify its complete receipt. No live production
   credential or unredacted production data was used.

@@ -151,6 +151,13 @@ jobs:
       - name: Run private Storage recovery Postgres contract
         run: npx vitest run test/postgres-private-storage-recovery.integration.test.ts
 
+      - name: Run staging private-auth probe Postgres 17 contract
+        env:
+          PINTPATH_CI_POSTGRES_CONTAINER_ID: ${{ job.services.postgres.id }}
+          PINTPATH_STAGING_AUTH_PROBE_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+          PINTPATH_STAGING_AUTH_PROBE_TEST_REQUIRED: "true"
+        run: PATH="$GITHUB_WORKSPACE/scripts/ci:$PATH" npm run test:staging:auth:probe:pg17
+
       - name: Run privacy-retention Postgres contract
         run: npx vitest run test/privacy-retention.repository.integration.test.ts
 

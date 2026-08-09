@@ -1,0 +1,41 @@
+#!/bin/sh
+set -eu
+
+# GitHub's host image can carry an older libpq client than the PostgreSQL 17
+# service under test. Execute the client inside that exact service container so
+# the integration can prove both TCP SCRAM and its local trust socket. Keep
+# credential values in the child environment and out of argv and logs.
+container_id=${PINTPATH_CI_POSTGRES_CONTAINER_ID:-}
+case "$container_id" in
+  *[!0-9a-f]* | "") exit 64 ;;
+esac
+if [ "${#container_id}" -lt 12 ] || [ "${#container_id}" -gt 64 ]; then
+  exit 64
+fi
+
+case "$#:$*" in
+  "1:--version") ;;
+  "6:-X -q -A -t --no-password --set=ON_ERROR_STOP=1") ;;
+  "7:-X -q -A -t --no-password --set=ON_ERROR_STOP=1 --set=VERBOSITY=sqlstate") ;;
+  *) exit 64 ;;
+esac
+
+exec docker exec --interactive --user postgres \
+  --env LANG \
+  --env LC_ALL \
+  --env PGAPPNAME \
+  --env PGCONNECT_TIMEOUT \
+  --env PGDATABASE \
+  --env PGHOST \
+  --env PGPASSWORD \
+  --env PGPORT \
+  --env PGREQUIREAUTH \
+  --env PGSSLMODE \
+  --env PGSSLROOTCERT \
+  --env PGUSER \
+  --env STAGING_AUTH_PROBE_CANDIDATE_HANDOFF \
+  --env STAGING_AUTH_PROBE_CANDIDATE_LOGIN \
+  --env STAGING_AUTH_PROBE_CANDIDATE_OWNER \
+  --env STAGING_AUTH_PROBE_CANDIDATE_VERIFIER \
+  --env STAGING_AUTH_PROBE_RETIRED_LOGIN \
+  "$container_id" psql "$@"

@@ -83,6 +83,13 @@ a credential incident: stop unrelated work, rotate the exposed staging-only
 authorities with overlap, prove the old credentials fail, and preserve a
 secret-free incident receipt before continuing.
 
+For PostgreSQL and Redis password incidents, follow the separate
+[permanent-staging private authentication rotation runbook](permanent-staging-private-auth-rotation.md).
+It uses isolated private-network clients with PostgreSQL 17 SCRAM enforcement,
+bounded raw Redis authentication, serialized runtime-role handoff, and exact
+old-credential rejection. A same-service database tunnel is not acceptable
+password evidence because a local HBA rule can use `trust`.
+
 ```dotenv
 NODE_ENV=production
 FIELD_TEST_MODE=false
