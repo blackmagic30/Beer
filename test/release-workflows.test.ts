@@ -357,6 +357,9 @@ describe("release workflow contracts", () => {
     expect(runbook).toContain("live gate remains **OPEN**");
     expect(runbook).toContain("PGREQUIREAUTH=scram-sha-256");
     expect(runbook).toContain("watch-old-rejection");
+    expect(runbook).toContain("fresh locked manual recovery point");
+    expect(runbook).toContain("hard timeout\n  plus a 20-minute buffer");
+    expect(runbook).toContain("never delete and guess at the schedule");
     expect(runbook).toContain("derive their phase from the reviewed mode");
     expect(runbook).not.toContain("derive their phase and reject a mismatch");
     expect(runbook).toContain("restartPolicyMaxRetries` value `1`");
