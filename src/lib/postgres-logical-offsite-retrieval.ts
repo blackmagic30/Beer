@@ -71,6 +71,7 @@ interface LatestPointer {
   readonly stateReceiptSha256: string;
   readonly manifestBindingSha256: string;
   readonly sourceDatabaseIdentitySha256: string;
+  readonly runtimeConnectionUrlSha256?: string | undefined;
   readonly overallStateSha256: string;
   readonly remoteObjectSetSha256: string;
   readonly attestationSha256: string;
@@ -93,6 +94,7 @@ interface Attestation {
   readonly stateReceiptSha256: string;
   readonly manifestBindingSha256: string;
   readonly sourceDatabaseIdentitySha256: string;
+  readonly runtimeConnectionUrlSha256?: string | undefined;
   readonly overallStateSha256: string;
   readonly destinationOriginSha256: string;
   readonly bucketNameSha256: string;
@@ -349,6 +351,7 @@ function stateMatchesPointer(
     && state.stateReceiptSha256 === pointer.stateReceiptSha256
     && state.manifestBindingSha256 === pointer.manifestBindingSha256
     && state.sourceDatabaseIdentitySha256 === pointer.sourceDatabaseIdentitySha256
+    && state.runtimeConnectionUrlSha256 === pointer.runtimeConnectionUrlSha256
     && state.overallStateSha256 === pointer.overallStateSha256
     && state.remoteObjectSetSha256 === pointer.remoteObjectSetSha256
     && state.attestationSha256 === pointer.attestationSha256
@@ -377,6 +380,8 @@ function attestationMatchesAuthority(
     && attestation.manifestBindingSha256 === state.manifestBindingSha256
     && attestation.sourceDatabaseIdentitySha256
       === state.sourceDatabaseIdentitySha256
+    && attestation.runtimeConnectionUrlSha256
+      === state.runtimeConnectionUrlSha256
     && attestation.overallStateSha256 === state.overallStateSha256
     && attestation.remoteObjectSetSha256 === state.remoteObjectSetSha256
     && attestation.destinationOriginSha256 === state.destinationOriginSha256

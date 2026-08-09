@@ -23,6 +23,8 @@ const SERVICE_ROLE_FILE = path.join(ROOT, "offsite-service-role-key");
 const DATABASE_SECRET = "runtime-database-secret";
 const SERVICE_ROLE_SECRET = "offsite-service-role-secret";
 const DATABASE_URL = `postgresql://runtime:${DATABASE_SECRET}@db.example.test:5432/pintpath?sslmode=verify-full`;
+const RUNTIME_CONNECTION_URL_SHA256 = crypto
+  .createHash("sha256").update(DATABASE_URL, "utf8").digest("hex");
 const SOURCE_URL = "https://production.example.test";
 const DESTINATION_URL = "https://operational-copy.example.test";
 const HASH = "a".repeat(64);
@@ -113,6 +115,7 @@ function harness(input: {
         backupDirectory: BACKUP_DIRECTORY,
         expectedManifestSha256: HASH,
         runtimeDatabaseIdentitySha256: "9".repeat(64),
+        runtimeConnectionUrlSha256: RUNTIME_CONNECTION_URL_SHA256,
         sourceSupabaseUrl: SOURCE_URL,
         destinationSupabaseUrl: DESTINATION_URL,
         expectedDestinationOriginSha256: DESTINATION_ORIGIN_SHA256,
@@ -150,6 +153,7 @@ describe("Postgres logical off-site attestation CLI", () => {
     expect(JSON.parse(fixture.output[0]!)).toEqual(RESULT);
     for (const forbidden of [
       DATABASE_SECRET,
+      RUNTIME_CONNECTION_URL_SHA256,
       SERVICE_ROLE_SECRET,
       DATABASE_URL,
       SOURCE_URL,

@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -64,6 +65,7 @@ export interface PostgresLogicalOffsiteCliDependencies {
     readonly backupDirectory: string;
     readonly expectedManifestSha256: string;
     readonly runtimeDatabaseIdentitySha256: string;
+    readonly runtimeConnectionUrlSha256: string;
     readonly sourceSupabaseUrl: string;
     readonly destinationSupabaseUrl: string;
     readonly expectedDestinationOriginSha256: string;
@@ -239,6 +241,10 @@ export async function runPostgresLogicalOffsiteCli(
       if (error instanceof PostgresLogicalOffsiteError) throw error;
       throw new SafeCliError("runtime_identity_unavailable");
     }
+    const runtimeConnectionUrlSha256 = crypto
+      .createHash("sha256")
+      .update(runtimeUrl, "utf8")
+      .digest("hex");
     const storage = dependencies.createStorage({
       destinationSupabaseUrl,
       destinationServiceRoleKey,
@@ -247,6 +253,7 @@ export async function runPostgresLogicalOffsiteCli(
       backupDirectory,
       expectedManifestSha256: args.get("--backup-manifest-sha256")!,
       runtimeDatabaseIdentitySha256,
+      runtimeConnectionUrlSha256,
       sourceSupabaseUrl,
       destinationSupabaseUrl,
       expectedDestinationOriginSha256:

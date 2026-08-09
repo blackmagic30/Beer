@@ -26,8 +26,9 @@ Complete these checks from a protected operator host, not a Railway web shell:
   login. It must permit at least two concurrent connections: one exported
   snapshot holder and one `pg_dump` reader.
 - The runtime login is the canonical `pintpath_runtime` login used by the app.
-  It is needed only to verify runtime identity and write the lease/attestation
-  rows in `pintpath_app.system_state`.
+  It verifies runtime identity, supplies the exact connection-URL bytes whose
+  SHA-256 is bound into the immutable attestation/latest pointer and success
+  state, and writes the lease/attestation rows in `pintpath_app.system_state`.
 - `OFFSITE_BACKUP_SUPABASE_URL` is a different HTTPS origin from `SUPABASE_URL`.
 - `OFFSITE_BACKUP_BUCKET` already exists in that operational-copy project, is
   private, permits `application/json` and `application/octet-stream`, and its
@@ -161,8 +162,9 @@ The command performs this fixed sequence:
 2. verifies the source and destination Supabase origins differ, the destination
    origin and bucket match the protected reviewed hashes, and the supplied
    Storage transport is bound to that destination;
-3. verifies the connected runtime PostgreSQL database identity is exactly the
-   source identity bound into the manifest, before any Storage mutation;
+3. hashes the exact protected runtime URL without emitting it or its digest,
+   and verifies the connected runtime PostgreSQL database identity is exactly
+   the source identity bound into the manifest, before any Storage mutation;
 4. verifies the existing destination bucket is private and compatible and the
    runtime PostgreSQL role/schema/import/ACL isolation contract is healthy;
 5. acquires the fenced
@@ -180,8 +182,11 @@ The command performs this fixed sequence:
 10. compare-and-set writes the exact hash-only
     `job:postgres_logical_backup_success` value and releases the lease.
 
-The success output contains timestamps, hashes, and schema version only. It
-contains no URL, object path, bucket name, operator reference, credential,
+The immutable attestation, latest pointer, and hash-only success state bind the
+runtime connection-URL SHA-256 to the same manifest, state receipt, and source
+database identity. The success output deliberately omits that URL digest. It
+contains timestamps, other non-secret evidence hashes, and schema version only;
+it contains no URL, object path, bucket name, operator reference, credential,
 database row, or customer data.
 
 ## 4. Retrieve the exact operational copy
@@ -269,7 +274,10 @@ The SystemState value is accepted only when it has the exact kind/version,
 canonical timestamps, and complete SHA-256 binding set. A migrated legacy
 SQLite value such as `{ "completedAt": "..." }` is invalid. Attestation v2
 also fails closed on a v1 state/pointer/attestation; create a fresh v2
-attestation instead of translating old evidence. No live v1 provider
+attestation instead of translating old evidence. Historical v2 artifacts from
+before the runtime-URL binding remain readable for retrieval, but they do not
+contain that proof and cannot close a new credential-rotation gate. Generate a
+fresh attestation for the candidate runtime URL. No live v1 provider
 attestation existed when this contract was introduced.
 
 The read-only readiness probe validates freshness from `backupCreatedAt`, the

@@ -47,6 +47,9 @@ const DESTINATION_URL = "https://operational-copy.example.test";
 const BUCKET = "pintpath-backups";
 const ATTESTED_AT = "2026-08-09T02:00:00.000Z";
 const RETRIEVED_AT = "2026-08-09T03:00:00.000Z";
+const RUNTIME_CONNECTION_URL_SHA256 = sha256Fixture(
+  "candidate-runtime-connection-url",
+);
 
 interface FakeObject {
   bytes: Buffer;
@@ -254,6 +257,7 @@ async function attestedFixture(): Promise<{
     backupDirectory: fixture.backupDirectory,
     expectedManifestSha256: fixture.manifestSha256,
     runtimeDatabaseIdentitySha256: LOGICAL_OFFSITE_SOURCE_DATABASE_IDENTITY_SHA256,
+    runtimeConnectionUrlSha256: RUNTIME_CONNECTION_URL_SHA256,
     sourceSupabaseUrl: SOURCE_URL,
     destinationSupabaseUrl: DESTINATION_URL,
     expectedDestinationOriginSha256: sha256Fixture(DESTINATION_URL),
@@ -315,6 +319,10 @@ describe("Postgres logical operational-copy retrieval integration", () => {
       archiveSha256: sha256Fixture(LOGICAL_OFFSITE_ARCHIVE_BYTES),
       archiveBytes: LOGICAL_OFFSITE_ARCHIVE_BYTES.length,
     });
+    expect(
+      fixture.state.records.get(POSTGRES_LOGICAL_BACKUP_SUCCESS_STATE_KEY)!
+        .value.runtimeConnectionUrlSha256,
+    ).toBe(RUNTIME_CONNECTION_URL_SHA256);
     expect(fs.readdirSync(options.outputDirectory).sort()).toEqual([
       POSTGRES_LOGICAL_BACKUP_ARCHIVE,
       POSTGRES_LOGICAL_BACKUP_MANIFEST,
@@ -389,6 +397,31 @@ describe("Postgres logical operational-copy retrieval integration", () => {
       ...options,
       expectedSuccessStateSha256: "0".repeat(64),
     })).rejects.toMatchObject({ code: "success_state_mismatch" });
+    expect(fixture.storage.streamedPaths).toEqual([]);
+    expect(fs.existsSync(options.outputDirectory)).toBe(false);
+  });
+
+  it("rejects a runtime URL digest that is not bound to the remote pointer", async () => {
+    const fixture = await attestedFixture();
+    const options = retrievalOptions(fixture);
+    const current = fixture.state.records.get(
+      POSTGRES_LOGICAL_BACKUP_SUCCESS_STATE_KEY,
+    )!;
+    const changedValue = {
+      ...current.value,
+      runtimeConnectionUrlSha256: "0".repeat(64),
+    };
+    fixture.state.records.set(POSTGRES_LOGICAL_BACKUP_SUCCESS_STATE_KEY, {
+      ...current,
+      value: changedValue,
+    });
+
+    await expect(retrievePostgresLogicalOffsiteBackup({
+      ...options,
+      expectedSuccessStateSha256: sha256Fixture(
+        canonicalPostgresBackupJson(changedValue),
+      ),
+    })).rejects.toMatchObject({ code: "object_verification_failed" });
     expect(fixture.storage.streamedPaths).toEqual([]);
     expect(fs.existsSync(options.outputDirectory)).toBe(false);
   });

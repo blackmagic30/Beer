@@ -98,6 +98,7 @@ export interface PostgresLogicalBackupSuccessState {
   readonly stateReceiptSha256: string;
   readonly manifestBindingSha256: string;
   readonly sourceDatabaseIdentitySha256: string;
+  readonly runtimeConnectionUrlSha256?: string | undefined;
   readonly overallStateSha256: string;
   readonly remoteObjectSetSha256: string;
   readonly attestationSha256: string;
@@ -222,6 +223,7 @@ export interface AttestPostgresLogicalBackupOptions {
   readonly backupDirectory: string;
   readonly expectedManifestSha256: string;
   readonly runtimeDatabaseIdentitySha256: string;
+  readonly runtimeConnectionUrlSha256: string;
   readonly sourceSupabaseUrl: string;
   readonly destinationSupabaseUrl: string;
   readonly expectedDestinationOriginSha256: string;
@@ -285,6 +287,7 @@ interface PostgresLogicalOffsiteAttestation {
   readonly stateReceiptSha256: string;
   readonly manifestBindingSha256: string;
   readonly sourceDatabaseIdentitySha256: string;
+  readonly runtimeConnectionUrlSha256?: string | undefined;
   readonly overallStateSha256: string;
   readonly destinationOriginSha256: string;
   readonly bucketNameSha256: string;
@@ -306,6 +309,7 @@ interface PostgresLogicalOffsiteLatestPointer {
   readonly stateReceiptSha256: string;
   readonly manifestBindingSha256: string;
   readonly sourceDatabaseIdentitySha256: string;
+  readonly runtimeConnectionUrlSha256?: string | undefined;
   readonly overallStateSha256: string;
   readonly remoteObjectSetSha256: string;
   readonly attestationSha256: string;
@@ -398,6 +402,16 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 
 function isSha256(value: unknown): value is string {
   return typeof value === "string" && SHA256_PATTERN.test(value);
+}
+
+function exactKeysWithOptionalSha256(
+  value: Record<string, unknown>,
+  expected: readonly string[],
+  optionalKey: string,
+): boolean {
+  const hasOptional = Object.prototype.hasOwnProperty.call(value, optionalKey);
+  return exactKeys(value, hasOptional ? [...expected, optionalKey] : expected)
+    && (!hasOptional || isSha256(value[optionalKey]));
 }
 
 function isBoundedStorageToken(value: unknown): value is string {
@@ -909,13 +923,13 @@ function parseAttestation(bytes: Buffer): PostgresLogicalOffsiteAttestation {
   const value = parseCanonicalJson(bytes);
   if (
     !isPlainObject(value)
-    || !exactKeys(value, [
+    || !exactKeysWithOptionalSha256(value, [
       "kind", "version", "backupId", "backupIdSha256", "backupCreatedAt",
       "verifiedAt", "manifestSha256", "archiveSha256", "stateReceiptSha256",
       "manifestBindingSha256", "sourceDatabaseIdentitySha256", "overallStateSha256",
       "destinationOriginSha256",
       "bucketNameSha256", "operatorIdSha256", "objects", "remoteObjectSetSha256",
-    ])
+    ], "runtimeConnectionUrlSha256")
     || value.kind !== ATTESTATION_KIND
     || value.version !== CONTRACT_VERSION
     || typeof value.backupId !== "string"
@@ -950,7 +964,7 @@ function parseLatestPointer(bytes: Buffer): PostgresLogicalOffsiteLatestPointer 
   const value = parseCanonicalJson(bytes);
   if (
     !isPlainObject(value)
-    || !exactKeys(value, [
+    || !exactKeysWithOptionalSha256(value, [
       "kind", "version", "backupId", "backupIdSha256", "attestationId",
       "backupCreatedAt", "completedAt", "manifestSha256", "archiveSha256",
       "stateReceiptSha256", "manifestBindingSha256", "sourceDatabaseIdentitySha256",
@@ -959,7 +973,7 @@ function parseLatestPointer(bytes: Buffer): PostgresLogicalOffsiteLatestPointer 
       "attestationStorageObjectIdSha256", "attestationStorageVersionSha256",
       "destinationOriginSha256",
       "bucketNameSha256", "operatorIdSha256",
-    ])
+    ], "runtimeConnectionUrlSha256")
     || value.kind !== LATEST_KIND
     || value.version !== CONTRACT_VERSION
     || typeof value.backupId !== "string"
@@ -990,7 +1004,7 @@ export function parsePostgresLogicalBackupSuccessState(
 ): PostgresLogicalBackupSuccessState {
   if (
     !isPlainObject(value)
-    || !exactKeys(value, [
+    || !exactKeysWithOptionalSha256(value, [
       "kind", "version", "backupCreatedAt", "completedAt", "archiveSha256",
       "manifestSha256", "stateReceiptSha256", "manifestBindingSha256",
       "sourceDatabaseIdentitySha256", "overallStateSha256", "remoteObjectSetSha256",
@@ -999,7 +1013,7 @@ export function parsePostgresLogicalBackupSuccessState(
       "latestPointerStorageObjectIdSha256", "latestPointerStorageVersionSha256",
       "backupIdSha256", "destinationOriginSha256",
       "bucketNameSha256", "operatorIdSha256",
-    ])
+    ], "runtimeConnectionUrlSha256")
     || value.kind !== SUCCESS_KIND
     || value.version !== CONTRACT_VERSION
     || !isCanonicalTimestamp(value.backupCreatedAt)
@@ -1033,6 +1047,7 @@ function stateMatchesPointer(
     && state.stateReceiptSha256 === pointer.stateReceiptSha256
     && state.manifestBindingSha256 === pointer.manifestBindingSha256
     && state.sourceDatabaseIdentitySha256 === pointer.sourceDatabaseIdentitySha256
+    && state.runtimeConnectionUrlSha256 === pointer.runtimeConnectionUrlSha256
     && state.overallStateSha256 === pointer.overallStateSha256
     && state.remoteObjectSetSha256 === pointer.remoteObjectSetSha256
     && state.attestationSha256 === pointer.attestationSha256
@@ -1161,6 +1176,9 @@ export async function attestPostgresLogicalBackup(
   const expectedManifestSha256 = assertSha256(options.expectedManifestSha256);
   const runtimeDatabaseIdentitySha256 = assertSha256(
     options.runtimeDatabaseIdentitySha256,
+  );
+  const runtimeConnectionUrlSha256 = assertSha256(
+    options.runtimeConnectionUrlSha256,
   );
   const expectedDestinationOriginSha256 = assertSha256(
     options.expectedDestinationOriginSha256,
@@ -1326,6 +1344,7 @@ export async function attestPostgresLogicalBackup(
       manifestBindingSha256: backup.parsedManifest.state.manifestBindingSha256,
       sourceDatabaseIdentitySha256:
         backup.parsedManifest.state.sourceDatabaseIdentitySha256,
+      runtimeConnectionUrlSha256,
       overallStateSha256: backup.parsedManifest.state.overallStateSha256,
       destinationOriginSha256,
       bucketNameSha256,
@@ -1382,6 +1401,7 @@ export async function attestPostgresLogicalBackup(
       manifestBindingSha256: backup.parsedManifest.state.manifestBindingSha256,
       sourceDatabaseIdentitySha256:
         backup.parsedManifest.state.sourceDatabaseIdentitySha256,
+      runtimeConnectionUrlSha256,
       overallStateSha256: backup.parsedManifest.state.overallStateSha256,
       remoteObjectSetSha256,
       attestationSha256,
@@ -1451,6 +1471,7 @@ export async function attestPostgresLogicalBackup(
       manifestBindingSha256: backup.parsedManifest.state.manifestBindingSha256,
       sourceDatabaseIdentitySha256:
         backup.parsedManifest.state.sourceDatabaseIdentitySha256,
+      runtimeConnectionUrlSha256,
       overallStateSha256: backup.parsedManifest.state.overallStateSha256,
       remoteObjectSetSha256,
       attestationSha256,
@@ -1745,6 +1766,8 @@ export async function probePostgresLogicalOffsiteReadiness(input: {
       || attestation.manifestBindingSha256 !== state.manifestBindingSha256
       || attestation.sourceDatabaseIdentitySha256
         !== state.sourceDatabaseIdentitySha256
+      || attestation.runtimeConnectionUrlSha256
+        !== state.runtimeConnectionUrlSha256
       || attestation.overallStateSha256 !== state.overallStateSha256
       || attestation.remoteObjectSetSha256 !== state.remoteObjectSetSha256
       || attestation.destinationOriginSha256 !== state.destinationOriginSha256

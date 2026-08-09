@@ -44,6 +44,9 @@ const BUCKET = "pintpath-backups";
 const UUID = "123e4567-e89b-42d3-a456-426614174000";
 const SOURCE_DATABASE_IDENTITY_SHA256 =
   LOGICAL_OFFSITE_SOURCE_DATABASE_IDENTITY_SHA256;
+const RUNTIME_CONNECTION_URL_SHA256 = sha256Fixture(
+  "candidate-runtime-connection-url",
+);
 
 interface FakeObject {
   bytes: Buffer;
@@ -239,6 +242,7 @@ function options(input: {
     backupDirectory: input.backupDirectory,
     expectedManifestSha256: input.manifestSha256,
     runtimeDatabaseIdentitySha256: SOURCE_DATABASE_IDENTITY_SHA256,
+    runtimeConnectionUrlSha256: RUNTIME_CONNECTION_URL_SHA256,
     sourceSupabaseUrl: SOURCE_URL,
     destinationSupabaseUrl: DESTINATION_URL,
     expectedDestinationOriginSha256: sha256Fixture(DESTINATION_URL),
@@ -280,6 +284,7 @@ describe("Postgres logical off-site backup attestation", () => {
       overallStateSha256: fixture.manifest.state.overallStateSha256,
       sourceDatabaseIdentitySha256: SOURCE_DATABASE_IDENTITY_SHA256,
     });
+    expect(result).not.toHaveProperty("runtimeConnectionUrlSha256");
     expect(storage.immutableUploads).toHaveLength(4);
     expect(storage.mutableWrites).toEqual([POSTGRES_LOGICAL_OFFSITE_LATEST_OBJECT]);
     expect(storage.removals).toEqual([]);
@@ -291,9 +296,36 @@ describe("Postgres logical off-site backup attestation", () => {
       "latestPointerSha256", "latestPointerStorageObjectIdSha256",
       "latestPointerStorageVersionSha256", "manifestBindingSha256", "manifestSha256",
       "operatorIdSha256", "overallStateSha256", "remoteObjectSetSha256",
-      "sourceDatabaseIdentitySha256",
+      "runtimeConnectionUrlSha256", "sourceDatabaseIdentitySha256",
       "stateReceiptSha256", "version",
     ].sort());
+    expect(persisted.value.runtimeConnectionUrlSha256)
+      .toBe(RUNTIME_CONNECTION_URL_SHA256);
+    const pointer = JSON.parse(
+      storage.objects.get(POSTGRES_LOGICAL_OFFSITE_LATEST_OBJECT)!.bytes.toString("utf8"),
+    ) as Record<string, unknown>;
+    const attestationPath = storage.immutableUploads.find((entry) => (
+      entry.includes("/attestations/")
+    ))!;
+    const attestation = JSON.parse(
+      storage.objects.get(attestationPath)!.bytes.toString("utf8"),
+    ) as Record<string, unknown>;
+    expect(pointer.runtimeConnectionUrlSha256).toBe(RUNTIME_CONNECTION_URL_SHA256);
+    expect(attestation.runtimeConnectionUrlSha256)
+      .toBe(RUNTIME_CONNECTION_URL_SHA256);
+    const legacyState = { ...persisted.value };
+    const legacyPointer = { ...pointer };
+    const legacyAttestation = { ...attestation };
+    delete legacyState.runtimeConnectionUrlSha256;
+    delete legacyPointer.runtimeConnectionUrlSha256;
+    delete legacyAttestation.runtimeConnectionUrlSha256;
+    expect(() => parsePostgresLogicalBackupSuccessState(legacyState)).not.toThrow();
+    expect(() => postgresLogicalOffsiteInternals.parseLatestPointer(
+      Buffer.from(canonicalPostgresBackupJson(legacyPointer), "utf8"),
+    )).not.toThrow();
+    expect(() => postgresLogicalOffsiteInternals.parseAttestation(
+      Buffer.from(canonicalPostgresBackupJson(legacyAttestation), "utf8"),
+    )).not.toThrow();
     expect(canonicalPostgresBackupJson(
       parsePostgresLogicalBackupSuccessState(persisted.value),
     )).not.toContain("release-operator-01");
@@ -326,6 +358,23 @@ describe("Postgres logical off-site backup attestation", () => {
       .toBe(true);
     expect(storage.downloadedPaths.some((entry) => entry.endsWith("/pintpath-postgres.dump")))
       .toBe(false);
+
+    await expect(probePostgresLogicalOffsiteReadiness({
+      stateValue: {
+        ...persisted.value,
+        runtimeConnectionUrlSha256: "0".repeat(64),
+      },
+      runtimeDatabaseIdentitySha256: SOURCE_DATABASE_IDENTITY_SHA256,
+      sourceSupabaseUrl: SOURCE_URL,
+      destinationSupabaseUrl: DESTINATION_URL,
+      bucketName: BUCKET,
+      maxFreshnessHours: 24,
+      storage,
+      now: new Date(NOW),
+    })).resolves.toMatchObject({
+      error: "remote_attestation_mismatch",
+      liveProbe: true,
+    });
   });
 
   it("rejects migrated timestamp-only state before any remote readiness access", async () => {
@@ -633,6 +682,10 @@ describe("Postgres logical off-site backup attestation", () => {
       ...base,
       runtimeDatabaseIdentitySha256: "0".repeat(64),
     })).rejects.toMatchObject({ code: "runtime_identity_mismatch" });
+    await expect(attestPostgresLogicalBackup({
+      ...base,
+      runtimeConnectionUrlSha256: "",
+    })).rejects.toMatchObject({ code: "invalid_arguments" });
     expect(storage.immutableUploads).toEqual([]);
     expect(storage.mutableWrites).toEqual([]);
   });
