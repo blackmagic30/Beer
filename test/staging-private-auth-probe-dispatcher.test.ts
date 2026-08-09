@@ -47,7 +47,8 @@ describe("staging private auth probe Railway dispatcher", () => {
       'startCommand = "node dist/scripts/staging-private-auth-probe-dispatcher.js"',
     );
     expect(dedicated).toContain('restartPolicyType = "NEVER"');
-    expect(dedicated).toContain("restartPolicyMaxRetries = 0");
+    expect(dedicated).toContain("restartPolicyMaxRetries = 1");
+    expect(dedicated).not.toContain("restartPolicyMaxRetries = 0");
     expect(dedicated).not.toMatch(/preDeployCommand|healthcheck|ON_FAILURE/);
     expect(dedicated).not.toContain("dist/src/server.js");
 
