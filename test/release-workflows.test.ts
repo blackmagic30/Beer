@@ -244,6 +244,9 @@ describe("release workflow contracts", () => {
     const job = source.slice(start, end);
 
     expect(job).toContain("image: postgres:17.6-alpine");
+    expect(job).toContain(
+      "POSTGRES_INITDB_ARGS: --auth-local=trust --auth-host=scram-sha-256",
+    );
     expect(job).toContain("PUBLIC_BASE_URL: http://localhost:3000");
     expect(job).toContain("pg_isready -U postgres -d postgres");
     expect(job).toContain("PINTPATH_POSTGRES_MIGRATION_TEST_ADMIN_URL:");

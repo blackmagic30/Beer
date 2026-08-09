@@ -360,6 +360,14 @@ describe.skipIf(!configuredAdminUrl || !hasPsql17)(
       });
       expect(trustRejected.exitCode).toBe(2);
 
+      const adminScramAccepted = await runPsql17({
+        connectionUrl: withConnection(adminUrl, testDatabase),
+      });
+      expect(
+        adminScramAccepted.exitCode,
+        `adminScramAccepted=${classifyPsqlFailure(adminScramAccepted.stderr)}`,
+      ).toBe(0);
+
       const lifecycleLockA = new Client({
         connectionString: withConnection(adminUrl, testDatabase),
       });
