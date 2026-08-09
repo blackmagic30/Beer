@@ -1,5 +1,5 @@
-#!/bin/sh
-set -eu
+#!/usr/bin/env bash
+set -euo pipefail
 
 # GitHub's host image can carry an older libpq client than the PostgreSQL 17
 # service under test. Execute the client inside that exact service container so
@@ -20,22 +20,59 @@ case "$#:$*" in
   *) exit 64 ;;
 esac
 
-exec docker exec --interactive --user postgres \
-  --env LANG \
-  --env LC_ALL \
-  --env PGAPPNAME \
-  --env PGCONNECT_TIMEOUT \
-  --env PGDATABASE \
-  --env PGHOST \
-  --env PGPASSWORD \
-  --env PGPORT \
-  --env PGREQUIREAUTH \
-  --env PGSSLMODE \
-  --env PGSSLROOTCERT \
-  --env PGUSER \
-  --env STAGING_AUTH_PROBE_CANDIDATE_HANDOFF \
-  --env STAGING_AUTH_PROBE_CANDIDATE_LOGIN \
-  --env STAGING_AUTH_PROBE_CANDIDATE_OWNER \
-  --env STAGING_AUTH_PROBE_CANDIDATE_VERIFIER \
-  --env STAGING_AUTH_PROBE_RETIRED_LOGIN \
-  "$container_id" psql "$@"
+emit() {
+  [[ "$1" != *$'\n'* && "$1" != *$'\r'* ]] || exit 64
+  printf '%s\n' "$1"
+}
+
+# Docker exec does not provide Docker run's documented host-value lookup for a
+# bare environment name. Stream the fixed allowlist before the original SQL
+# stdin so no credential becomes an OS argument, command trace, or temporary
+# file.
+exec docker exec --interactive --user postgres "$container_id" sh -c '
+  set -eu
+  IFS= read -r LANG
+  IFS= read -r LC_ALL
+  IFS= read -r PGAPPNAME
+  IFS= read -r PGCONNECT_TIMEOUT
+  IFS= read -r PGDATABASE
+  IFS= read -r PGHOST
+  IFS= read -r PGPASSWORD
+  IFS= read -r PGPORT
+  IFS= read -r PGREQUIREAUTH
+  IFS= read -r PGSSLMODE
+  IFS= read -r PGSSLROOTCERT
+  IFS= read -r PGUSER
+  IFS= read -r STAGING_AUTH_PROBE_CANDIDATE_HANDOFF
+  IFS= read -r STAGING_AUTH_PROBE_CANDIDATE_LOGIN
+  IFS= read -r STAGING_AUTH_PROBE_CANDIDATE_OWNER
+  IFS= read -r STAGING_AUTH_PROBE_CANDIDATE_VERIFIER
+  IFS= read -r STAGING_AUTH_PROBE_RETIRED_LOGIN
+  export LANG LC_ALL PGAPPNAME PGCONNECT_TIMEOUT PGDATABASE PGHOST PGPASSWORD
+  export PGPORT PGREQUIREAUTH PGSSLMODE PGSSLROOTCERT PGUSER
+  export STAGING_AUTH_PROBE_CANDIDATE_HANDOFF
+  export STAGING_AUTH_PROBE_CANDIDATE_LOGIN
+  export STAGING_AUTH_PROBE_CANDIDATE_OWNER
+  export STAGING_AUTH_PROBE_CANDIDATE_VERIFIER
+  export STAGING_AUTH_PROBE_RETIRED_LOGIN
+  exec timeout -s KILL 9 psql "$@"
+' sh "$@" < <(
+  emit "${LANG-}"
+  emit "${LC_ALL-}"
+  emit "${PGAPPNAME-}"
+  emit "${PGCONNECT_TIMEOUT-}"
+  emit "${PGDATABASE-}"
+  emit "${PGHOST-}"
+  emit "${PGPASSWORD-}"
+  emit "${PGPORT-}"
+  emit "${PGREQUIREAUTH-}"
+  emit "${PGSSLMODE-}"
+  emit "${PGSSLROOTCERT-}"
+  emit "${PGUSER-}"
+  emit "${STAGING_AUTH_PROBE_CANDIDATE_HANDOFF-}"
+  emit "${STAGING_AUTH_PROBE_CANDIDATE_LOGIN-}"
+  emit "${STAGING_AUTH_PROBE_CANDIDATE_OWNER-}"
+  emit "${STAGING_AUTH_PROBE_CANDIDATE_VERIFIER-}"
+  emit "${STAGING_AUTH_PROBE_RETIRED_LOGIN-}"
+  cat
+)

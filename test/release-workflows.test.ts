@@ -327,7 +327,9 @@ describe("release workflow contracts", () => {
       "vitest run test/staging-private-auth-probe.integration.test.ts",
     );
     expect(wrapper).toContain("docker exec");
-    expect(wrapper).toContain('"$container_id" psql "$@"');
+    expect(wrapper).toContain(
+      'exec docker exec --interactive --user postgres "$container_id" sh -c',
+    );
     expect(fs.statSync(wrapperPath).mode & 0o777).toBe(0o755);
     expect(wrapper).toContain("PINTPATH_CI_POSTGRES_CONTAINER_ID");
     expect(wrapper).toContain(
@@ -336,9 +338,13 @@ describe("release workflow contracts", () => {
     expect(wrapper).toContain(
       '"7:-X -q -A -t --no-password --set=ON_ERROR_STOP=1 --set=VERBOSITY=sqlstate"',
     );
-    expect(wrapper).toContain("--env PGPASSWORD");
-    expect(wrapper).toContain("--env PGREQUIREAUTH");
-    expect(wrapper).not.toContain("$PGPASSWORD");
+    expect(wrapper).toContain('emit "${PGPASSWORD-}"');
+    expect(wrapper).toContain("IFS= read -r PGPASSWORD");
+    expect(wrapper).toContain("IFS= read -r PGREQUIREAUTH");
+    expect(wrapper).toContain("exec timeout -s KILL 9 psql");
+    expect(wrapper).toContain("' sh \"$@\" < <(");
+    expect(wrapper).not.toContain("3<&");
+    expect(wrapper).not.toContain("--env");
     expect(wrapper).not.toContain("docker run");
     expect(wrapper).not.toContain("--network host");
     expect(wrapper).not.toContain("set -x");
