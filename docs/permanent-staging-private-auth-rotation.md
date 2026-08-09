@@ -84,7 +84,9 @@ protected provider references. Do not materialize or log resolved credentials:
   successor runtime URL appropriate to that deployment.
 - `STAGING_AUTH_PROBE_REDIS_URL`: a reference to the staging Redis URL.
 - `STAGING_AUTH_PROBE_RUNTIME_IDENTITY`: `predecessor` or `candidate`, required
-  by `verify-current`; mutation modes derive their phase and reject a mismatch.
+  by `verify-current`; mutation modes derive their phase from the reviewed mode.
+  Set it consistently for auditability, but it is not an independent mutation-
+  mode input.
 - `STAGING_AUTH_PROBE_RUNTIME_CANDIDATE_LOGIN`: a fresh login matching the
   versioned runtime-login pattern.
 - `STAGING_AUTH_PROBE_RUNTIME_CANDIDATE_PASSWORD`: an independently generated

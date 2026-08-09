@@ -357,6 +357,8 @@ describe("release workflow contracts", () => {
     expect(runbook).toContain("live gate remains **OPEN**");
     expect(runbook).toContain("PGREQUIREAUTH=scram-sha-256");
     expect(runbook).toContain("watch-old-rejection");
+    expect(runbook).toContain("derive their phase from the reviewed mode");
+    expect(runbook).not.toContain("derive their phase and reject a mismatch");
     expect(runbook).toContain("restartPolicyMaxRetries` value `1`");
     expect(runbook).not.toContain("with zero retries");
     expect(runbook).toContain(
