@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 export const STAGING_SUPABASE_KEY_CANARY_LOCK = Object.freeze({
   projectId: "48d8c6cd-1c66-4148-874b-20877f48e1a5",
   environmentId: "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
-  serviceId: "e8095943-0d46-4a57-9db4-afe952a42386",
+  serviceId: "34a312cd-0920-4a7e-90db-8561c1e0746b",
   railwayConfigPath: "/railway.supabase-key-canary.toml",
   stagingOrigin: "https://bbfibbadwjxzrcdncavy.supabase.co",
   offsiteOrigin: "https://hfbmhdxrwtihukmixxta.supabase.co",
