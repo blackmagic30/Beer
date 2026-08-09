@@ -105,9 +105,12 @@ Create A and B as source-less services scoped to the exact staging fork. Before
 adding any credential reference, configure each instance with the dedicated
 auth-probe config, Singapore one-replica placement, 0.1 vCPU/0.5 GB limits,
 IPv6 internet egress disabled, zero overlap/draining, and `restartPolicyType`
-`NEVER` with zero retries. Set only the reviewed non-secret build controls:
-Node 22.23.2, PostgreSQL client 17.10, dispatcher mode `build-only`, and target
-`all`.
+`NEVER` with the parser-required `restartPolicyMaxRetries` value `1` (restarts
+remain disabled by `NEVER`). Set only the reviewed non-secret build controls:
+`RAILPACK_PACKAGES="node@22.23.2 postgres@17.10"`,
+`RAILPACK_BUILD_APT_PACKAGES="... bison flex uuid-dev"`,
+`RAILPACK_DEPLOY_APT_PACKAGES="... libicu72 libreadline8 libssl3 libuuid1 zlib1g"`,
+the dedicated config path, dispatcher mode `build-only`, and target `all`.
 
 Upload a pristine archive produced directly from the reviewed green commit.
 The build-only dispatcher must emit one fixed receipt after verifying the exact

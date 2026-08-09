@@ -357,6 +357,17 @@ describe("release workflow contracts", () => {
     expect(runbook).toContain("live gate remains **OPEN**");
     expect(runbook).toContain("PGREQUIREAUTH=scram-sha-256");
     expect(runbook).toContain("watch-old-rejection");
+    expect(runbook).toContain("restartPolicyMaxRetries` value `1`");
+    expect(runbook).not.toContain("with zero retries");
+    expect(runbook).toContain(
+      'RAILPACK_PACKAGES="node@22.23.2 postgres@17.10"',
+    );
+    expect(runbook).toContain(
+      'RAILPACK_BUILD_APT_PACKAGES="... bison flex uuid-dev"',
+    );
+    expect(runbook).toContain(
+      'RAILPACK_DEPLOY_APT_PACKAGES="... libicu72 libreadline8 libssl3 libuuid1 zlib1g"',
+    );
     expect(runbook).toContain(
       "regional configuration requires at least one desired replica",
     );
