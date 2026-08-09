@@ -661,6 +661,7 @@ describe("staging private authentication probe", () => {
     const result = await stagingPrivateAuthProbeInternals.provisionRuntimeRole(
       {
         adminUrl,
+        handoffMarker: "fixture-handoff-marker",
         login: candidateLogin,
         ownerMarker: "fixture-owner-marker",
         verifier,
@@ -674,6 +675,7 @@ describe("staging private authentication probe", () => {
     expect(runner).toHaveBeenCalledTimes(1);
     const request = runner.mock.calls[0]![0];
     expect(request.additionalEnvironment).toEqual({
+      STAGING_AUTH_PROBE_CANDIDATE_HANDOFF: "fixture-handoff-marker",
       STAGING_AUTH_PROBE_CANDIDATE_LOGIN: candidateLogin,
       STAGING_AUTH_PROBE_CANDIDATE_OWNER: "fixture-owner-marker",
       STAGING_AUTH_PROBE_CANDIDATE_VERIFIER: verifier,
@@ -689,6 +691,8 @@ describe("staging private authentication probe", () => {
     expect(script).toContain("IN DATABASE pintpath_staging");
     expect(script).not.toContain("current_database()");
     expect(script).toContain("existing-owned");
+    expect(script).toContain("existing-handoff");
+    expect(script).toContain("candidate_handed_off");
     const directConnectGrant =
       "GRANT CONNECT ON DATABASE pintpath_staging TO %I";
     expect(script).toContain(directConnectGrant);
@@ -700,6 +704,52 @@ describe("staging private authentication probe", () => {
     );
     expect(script.indexOf(directConnectGrant)).toBeLessThan(
       script.indexOf("COMMIT;"),
+    );
+
+    const handedOffRunner = vi.fn(async () =>
+      processResult({ exitCode: 0, stdout: "existing-handoff\n" }),
+    );
+    await expect(
+      stagingPrivateAuthProbeInternals.provisionRuntimeRole(
+        {
+          adminUrl,
+          handoffMarker: "fixture-handoff-marker",
+          login: candidateLogin,
+          ownerMarker: "fixture-owner-marker",
+          verifier,
+          psqlPath: "psql",
+          timeoutMs: 15_000,
+        },
+        handedOffRunner,
+      ),
+    ).resolves.toBe("existing-handoff");
+  });
+
+  it("distinguishes the exact handoff marker during ambiguous provisioning inspection", async () => {
+    const runner = vi.fn(async () =>
+      processResult({ exitCode: 0, stdout: "handed-off\n" }),
+    );
+
+    await expect(
+      stagingPrivateAuthProbeInternals.inspectRuntimeRoleOwnership(
+        {
+          adminUrl,
+          handoffMarker: "fixture-handoff-marker",
+          login: candidateLogin,
+          ownerMarker: "fixture-owner-marker",
+          psqlPath: "psql",
+          timeoutMs: 15_000,
+        },
+        runner,
+      ),
+    ).resolves.toBe("handed-off");
+    expect(runner.mock.calls[0]![0].additionalEnvironment).toEqual({
+      STAGING_AUTH_PROBE_CANDIDATE_HANDOFF: "fixture-handoff-marker",
+      STAGING_AUTH_PROBE_CANDIDATE_LOGIN: candidateLogin,
+      STAGING_AUTH_PROBE_CANDIDATE_OWNER: "fixture-owner-marker",
+    });
+    expect(stagingPrivateAuthProbeInternals.scripts.inspectOwnership).toContain(
+      "candidate_handed_off",
     );
   });
 
@@ -1379,7 +1429,7 @@ describe("staging private authentication probe", () => {
     });
   });
 
-  it("refuses handoff for an owner-marked role already invalidated by cleanup", async () => {
+  it("rolls back only the exact owner-marked role after deterministic unsafe finalization", async () => {
     const cleanup = vi.fn(async () => "cleaned" as const);
     const finalize = vi.fn(async () => "unsafe" as const);
     const harness = createHarness({ cleanup, finalize });
@@ -1395,11 +1445,41 @@ describe("staging private authentication probe", () => {
       outcome: "failed",
       checks: {
         runtimeHandoff: "not-observed",
-        runtimeMutation: "inconclusive",
+        runtimeMutation: "rolled-back",
       },
     });
     expect(finalize).toHaveBeenCalledTimes(1);
-    expect(cleanup).not.toHaveBeenCalled();
+    expect(cleanup).toHaveBeenCalledTimes(1);
+    expect(cleanup.mock.calls[0]![0].ownerMarker).toBe(
+      finalize.mock.calls[0]![0].ownerMarker,
+    );
+    expect(harness.lifecycleLock.verify).toHaveBeenCalledTimes(4);
+  });
+
+  it("leaves a changed owner or handed-off role untouched after unsafe finalization", async () => {
+    for (const cleanupResult of ["unowned", "inconclusive"] as const) {
+      const cleanup = vi.fn(async () => cleanupResult);
+      const harness = createHarness({
+        cleanup,
+        finalize: vi.fn(async () => "unsafe"),
+      });
+
+      await expect(
+        runStagingPrivateAuthProbe(
+          "provision-runtime-candidate",
+          "postgres-runtime",
+          harness.dependencies,
+        ),
+      ).resolves.toBe(1);
+      expect(onlyReceipt(harness.output)).toMatchObject({
+        outcome: "inconclusive",
+        checks: {
+          runtimeHandoff: "not-observed",
+          runtimeMutation: "cleanup-inconclusive",
+        },
+      });
+      expect(cleanup).toHaveBeenCalledTimes(1);
+    }
   });
 
   it("requires a fresh candidate authentication proof after durable handoff", async () => {
@@ -1424,6 +1504,36 @@ describe("staging private authentication probe", () => {
       outcome: "failed",
       checks: {
         postgresRuntimeAuth: "rejected",
+        runtimeHandoff: "observed",
+        runtimeMutation: "inconclusive",
+      },
+    });
+    expect(attempt).toBe(3);
+    expect(cleanup).not.toHaveBeenCalled();
+  });
+
+  it("never attempts cleanup when a post-handoff proof throws", async () => {
+    let attempt = 0;
+    const cleanup = vi.fn(async () => "cleaned" as const);
+    const harness = createHarness({
+      cleanup,
+      postgresAttempt: vi.fn(async () => {
+        attempt += 1;
+        if (attempt === 3) throw new Error("post-handoff transport failure");
+        return "accepted" as const;
+      }),
+    });
+
+    await expect(
+      runStagingPrivateAuthProbe(
+        "provision-runtime-candidate",
+        "postgres-runtime",
+        harness.dependencies,
+      ),
+    ).resolves.toBe(1);
+    expect(onlyReceipt(harness.output)).toMatchObject({
+      outcome: "inconclusive",
+      checks: {
         runtimeHandoff: "observed",
         runtimeMutation: "inconclusive",
       },
@@ -1677,11 +1787,17 @@ describe("staging private authentication probe", () => {
     );
     expect(retryCleanup).not.toHaveBeenCalled();
 
-    const handedOffProvision = vi.fn(async () => "unowned" as const);
+    const handedOffProvision = vi.fn(async () => "existing-handoff" as const);
+    const handedOffFinalize = vi.fn(async () => "handed-off" as const);
     const handedOffCleanup = vi.fn(async () => "cleaned" as const);
+    const handedOffAttempt = vi.fn(async () => "accepted" as const);
+    const handedOffReadiness = vi.fn(async () => "ready" as const);
     const handedOffRetry = createHarness({
       provision: handedOffProvision,
+      finalize: handedOffFinalize,
       cleanup: handedOffCleanup,
+      postgresAttempt: handedOffAttempt,
+      readiness: handedOffReadiness,
     });
     await expect(
       runStagingPrivateAuthProbe(
@@ -1689,9 +1805,90 @@ describe("staging private authentication probe", () => {
         "postgres-runtime",
         handedOffRetry.dependencies,
       ),
-    ).resolves.toBe(1);
-    expect(onlyReceipt(handedOffRetry.output).outcome).toBe("inconclusive");
+    ).resolves.toBe(0);
+    expect(onlyReceipt(handedOffRetry.output)).toMatchObject({
+      outcome: "passed",
+      checks: {
+        runtimeHandoff: "observed",
+        runtimeMutation: "completed",
+      },
+    });
+    expect(handedOffProvision.mock.calls[0]![0].handoffMarker).toBe(
+      retryProvision.mock.calls[0]![0].handoffMarker,
+    );
+    expect(handedOffAttempt).toHaveBeenCalledTimes(3);
+    expect(handedOffReadiness).toHaveBeenCalledTimes(2);
+    expect(handedOffFinalize).not.toHaveBeenCalled();
     expect(handedOffCleanup).not.toHaveBeenCalled();
+  });
+
+  it("reconciles an exact handoff after ambiguous provisioning output", async () => {
+    const inspect = vi.fn(async () => "handed-off" as const);
+    const finalize = vi.fn(async () => "handed-off" as const);
+    const cleanup = vi.fn(async () => "cleaned" as const);
+    const harness = createHarness({
+      provision: vi.fn(async () => "inconclusive"),
+      inspect,
+      finalize,
+      cleanup,
+    });
+
+    await expect(
+      runStagingPrivateAuthProbe(
+        "provision-runtime-candidate",
+        "postgres-runtime",
+        harness.dependencies,
+      ),
+    ).resolves.toBe(0);
+    expect(onlyReceipt(harness.output)).toMatchObject({
+      outcome: "passed",
+      checks: {
+        runtimeHandoff: "observed",
+        runtimeMutation: "completed",
+      },
+    });
+    expect(inspect).toHaveBeenCalledTimes(1);
+    expect(inspect.mock.calls[0]![0].handoffMarker).toMatch(
+      /^pintpath-staging-auth-probe:handoff-v1:/,
+    );
+    expect(finalize).not.toHaveBeenCalled();
+    expect(cleanup).not.toHaveBeenCalled();
+  });
+
+  it("never cleans a durable handoff after deterministic reconciliation failure", async () => {
+    for (const failure of ["rejected", "not-ready"] as const) {
+      let runtimeAttempt = 0;
+      const cleanup = vi.fn(async () => "cleaned" as const);
+      const harness = createHarness({
+        provision: vi.fn(async () => "existing-handoff"),
+        postgresAttempt: vi.fn(async () => {
+          runtimeAttempt += 1;
+          return failure === "rejected" && runtimeAttempt === 2
+            ? "rejected"
+            : "accepted";
+        }),
+        readiness: vi.fn(async () =>
+          failure === "not-ready" ? "not-ready" : "ready",
+        ),
+        cleanup,
+      });
+
+      await expect(
+        runStagingPrivateAuthProbe(
+          "provision-runtime-candidate",
+          "postgres-runtime",
+          harness.dependencies,
+        ),
+      ).resolves.toBe(1);
+      expect(onlyReceipt(harness.output)).toMatchObject({
+        outcome: "failed",
+        checks: {
+          runtimeHandoff: "observed",
+          runtimeMutation: "inconclusive",
+        },
+      });
+      expect(cleanup).not.toHaveBeenCalled();
+    }
   });
 
   it("does not delete an existing owned candidate after an inconclusive benign rerun", async () => {

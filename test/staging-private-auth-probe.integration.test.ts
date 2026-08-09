@@ -503,6 +503,7 @@ describe.skipIf(!configuredAdminUrl || !hasPsql17)(
           stagingPrivateAuthProbeInternals.scripts.provision,
         ),
         additionalEnvironment: {
+          STAGING_AUTH_PROBE_CANDIDATE_HANDOFF: handoffMarker,
           STAGING_AUTH_PROBE_CANDIDATE_LOGIN: candidateLogin,
           STAGING_AUTH_PROBE_CANDIDATE_OWNER: ownerMarker,
           STAGING_AUTH_PROBE_CANDIDATE_VERIFIER: verifier!,
@@ -524,6 +525,7 @@ describe.skipIf(!configuredAdminUrl || !hasPsql17)(
           stagingPrivateAuthProbeInternals.scripts.provision,
         ),
         additionalEnvironment: {
+          STAGING_AUTH_PROBE_CANDIDATE_HANDOFF: handoffMarker,
           STAGING_AUTH_PROBE_CANDIDATE_LOGIN: candidateLogin,
           STAGING_AUTH_PROBE_CANDIDATE_OWNER: ownerMarker,
           STAGING_AUTH_PROBE_CANDIDATE_VERIFIER: verifier!,
@@ -545,6 +547,7 @@ describe.skipIf(!configuredAdminUrl || !hasPsql17)(
         connectionUrl: withConnection(adminUrl, testDatabase),
         stdin: stagingPrivateAuthProbeInternals.scripts.inspectOwnership,
         additionalEnvironment: {
+          STAGING_AUTH_PROBE_CANDIDATE_HANDOFF: handoffMarker,
           STAGING_AUTH_PROBE_CANDIDATE_LOGIN: candidateLogin,
           STAGING_AUTH_PROBE_CANDIDATE_OWNER: ownerMarker,
         },
@@ -711,6 +714,7 @@ describe.skipIf(!configuredAdminUrl || !hasPsql17)(
         connectionUrl: withConnection(adminUrl, testDatabase),
         stdin: stagingPrivateAuthProbeInternals.scripts.inspectOwnership,
         additionalEnvironment: {
+          STAGING_AUTH_PROBE_CANDIDATE_HANDOFF: handoffMarker,
           STAGING_AUTH_PROBE_CANDIDATE_LOGIN: candidateLogin,
           STAGING_AUTH_PROBE_CANDIDATE_OWNER: ownerMarker,
         },
@@ -723,6 +727,7 @@ describe.skipIf(!configuredAdminUrl || !hasPsql17)(
           stagingPrivateAuthProbeInternals.scripts.provision,
         ),
         additionalEnvironment: {
+          STAGING_AUTH_PROBE_CANDIDATE_HANDOFF: handoffMarker,
           STAGING_AUTH_PROBE_CANDIDATE_LOGIN: candidateLogin,
           STAGING_AUTH_PROBE_CANDIDATE_OWNER: ownerMarker,
           STAGING_AUTH_PROBE_CANDIDATE_VERIFIER: verifier!,
@@ -752,11 +757,12 @@ describe.skipIf(!configuredAdminUrl || !hasPsql17)(
         connectionUrl: withConnection(adminUrl, testDatabase),
         stdin: stagingPrivateAuthProbeInternals.scripts.inspectOwnership,
         additionalEnvironment: {
+          STAGING_AUTH_PROBE_CANDIDATE_HANDOFF: handoffMarker,
           STAGING_AUTH_PROBE_CANDIDATE_LOGIN: candidateLogin,
           STAGING_AUTH_PROBE_CANDIDATE_OWNER: ownerMarker,
         },
       });
-      expect(handedOffInspection.stdout.trim()).toBe("unowned");
+      expect(handedOffInspection.stdout.trim()).toBe("handed-off");
       const durableHandoffInspection = await runPsql17({
         connectionUrl: withConnection(adminUrl, testDatabase),
         stdin: stagingPrivateAuthProbeInternals.scripts.inspectHandoff,
@@ -767,6 +773,20 @@ describe.skipIf(!configuredAdminUrl || !hasPsql17)(
       });
       expect(durableHandoffInspection.exitCode).toBe(0);
       expect(durableHandoffInspection.stdout.trim()).toBe("handed-off");
+      const resumedHandoffProvision = await runPsql17({
+        connectionUrl: withConnection(adminUrl, testDatabase),
+        stdin: forTestDatabase(
+          stagingPrivateAuthProbeInternals.scripts.provision,
+        ),
+        additionalEnvironment: {
+          STAGING_AUTH_PROBE_CANDIDATE_HANDOFF: handoffMarker,
+          STAGING_AUTH_PROBE_CANDIDATE_LOGIN: candidateLogin,
+          STAGING_AUTH_PROBE_CANDIDATE_OWNER: ownerMarker,
+          STAGING_AUTH_PROBE_CANDIDATE_VERIFIER: verifier!,
+        },
+      });
+      expect(resumedHandoffProvision.exitCode).toBe(0);
+      expect(resumedHandoffProvision.stdout.trim()).toBe("existing-handoff");
       const refusedHandedOffCleanup = await runPsql17({
         connectionUrl: withConnection(adminUrl, testDatabase),
         stdin: forTestDatabase(stagingPrivateAuthProbeInternals.scripts.cleanup),
@@ -851,6 +871,7 @@ describe.skipIf(!configuredAdminUrl || !hasPsql17)(
           stagingPrivateAuthProbeInternals.scripts.provision,
         ),
         additionalEnvironment: {
+          STAGING_AUTH_PROBE_CANDIDATE_HANDOFF: handoffMarker,
           STAGING_AUTH_PROBE_CANDIDATE_LOGIN: unownedLogin,
           STAGING_AUTH_PROBE_CANDIDATE_OWNER: ownerMarker,
           STAGING_AUTH_PROBE_CANDIDATE_VERIFIER: verifier!,
@@ -862,6 +883,7 @@ describe.skipIf(!configuredAdminUrl || !hasPsql17)(
         connectionUrl: withConnection(adminUrl, testDatabase),
         stdin: stagingPrivateAuthProbeInternals.scripts.inspectOwnership,
         additionalEnvironment: {
+          STAGING_AUTH_PROBE_CANDIDATE_HANDOFF: handoffMarker,
           STAGING_AUTH_PROBE_CANDIDATE_LOGIN: unownedLogin,
           STAGING_AUTH_PROBE_CANDIDATE_OWNER: ownerMarker,
         },

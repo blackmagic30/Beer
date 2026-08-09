@@ -58,11 +58,20 @@ type MutationReceipt =
   | "inconclusive"
   | "not-run";
 type CandidateCleanupResult = "cleaned" | "absent" | "unowned" | "inconclusive";
-type CandidateOwnershipResult = "owned" | "absent" | "unowned" | "inconclusive";
+type CandidateOwnershipResult =
+  | "owned"
+  | "handed-off"
+  | "absent"
+  | "unowned"
+  | "inconclusive";
 type CandidateHandoffResult =
   "handed-off" | "absent" | "unsafe" | "unowned" | "inconclusive";
 type ProvisionRuntimeRoleResult =
-  "created" | "existing-owned" | "unowned" | "inconclusive";
+  | "created"
+  | "existing-owned"
+  | "existing-handoff"
+  | "unowned"
+  | "inconclusive";
 type RuntimeIdentityPhase = "predecessor" | "candidate" | "invalid";
 
 export interface StagingPrivateAuthProbeReceipt {
@@ -165,7 +174,7 @@ interface CandidateRoleHandoffInput extends RuntimeRoleMutationInput {
 interface FinalizeCandidateRoleInput
   extends CandidateRoleMutationInput, CandidateRoleHandoffInput {}
 
-interface ProvisionRuntimeRoleInput extends CandidateRoleMutationInput {
+interface ProvisionRuntimeRoleInput extends FinalizeCandidateRoleInput {
   verifier: string;
 }
 
@@ -211,7 +220,7 @@ export interface StagingPrivateAuthProbeDependencies {
     input: ProvisionRuntimeRoleInput,
   ) => Promise<ProvisionRuntimeRoleResult>;
   inspectRuntimeRoleOwnership: (
-    input: CandidateRoleMutationInput,
+    input: FinalizeCandidateRoleInput,
   ) => Promise<CandidateOwnershipResult>;
   finalizeRuntimeRoleOwnership: (
     input: FinalizeCandidateRoleInput,
@@ -290,6 +299,7 @@ const PROVISION_RUNTIME_SCRIPT = String.raw`\set ON_ERROR_STOP on
 \getenv candidate_login STAGING_AUTH_PROBE_CANDIDATE_LOGIN
 \getenv candidate_verifier STAGING_AUTH_PROBE_CANDIDATE_VERIFIER
 \getenv candidate_owner STAGING_AUTH_PROBE_CANDIDATE_OWNER
+\getenv candidate_handoff STAGING_AUTH_PROBE_CANDIDATE_HANDOFF
 BEGIN;
 SELECT pg_catalog.pg_advisory_xact_lock(
   pg_catalog.hashtextextended(:'candidate_login', 0)
@@ -302,7 +312,13 @@ EXISTS (
   FROM pg_catalog.pg_roles
   WHERE rolname = :'candidate_login'
     AND pg_catalog.shobj_description(oid, 'pg_authid') = :'candidate_owner'
-) AS candidate_owned \gset
+) AS candidate_owned,
+EXISTS (
+  SELECT 1
+  FROM pg_catalog.pg_roles
+  WHERE rolname = :'candidate_login'
+    AND pg_catalog.shobj_description(oid, 'pg_authid') = :'candidate_handoff'
+) AS candidate_handed_off \gset
 \if :candidate_absent
 SET LOCAL password_encryption = 'scram-sha-256';
 SELECT format(
@@ -325,6 +341,9 @@ SELECT 'created';
 \elif :candidate_owned
 COMMIT;
 SELECT 'existing-owned';
+\elif :candidate_handed_off
+COMMIT;
+SELECT 'existing-handoff';
 \else
 ROLLBACK;
 SELECT 'unowned';
@@ -333,6 +352,7 @@ SELECT 'unowned';
 const INSPECT_RUNTIME_OWNERSHIP_SCRIPT = String.raw`\set ON_ERROR_STOP on
 \getenv candidate_login STAGING_AUTH_PROBE_CANDIDATE_LOGIN
 \getenv candidate_owner STAGING_AUTH_PROBE_CANDIDATE_OWNER
+\getenv candidate_handoff STAGING_AUTH_PROBE_CANDIDATE_HANDOFF
 BEGIN;
 SELECT pg_catalog.pg_advisory_xact_lock(
   pg_catalog.hashtextextended(:'candidate_login', 0)
@@ -345,13 +365,22 @@ EXISTS (
   FROM pg_catalog.pg_roles
   WHERE rolname = :'candidate_login'
     AND pg_catalog.shobj_description(oid, 'pg_authid') = :'candidate_owner'
-) AS candidate_owned \gset
+) AS candidate_owned,
+EXISTS (
+  SELECT 1
+  FROM pg_catalog.pg_roles
+  WHERE rolname = :'candidate_login'
+    AND pg_catalog.shobj_description(oid, 'pg_authid') = :'candidate_handoff'
+) AS candidate_handed_off \gset
 \if :candidate_absent
 COMMIT;
 SELECT 'absent';
 \elif :candidate_owned
 COMMIT;
 SELECT 'owned';
+\elif :candidate_handed_off
+COMMIT;
+SELECT 'handed-off';
 \else
 ROLLBACK;
 SELECT 'unowned';
@@ -1887,6 +1916,7 @@ async function provisionRuntimeRole(
     connectionUrl: input.adminUrl,
     stdin: PROVISION_RUNTIME_SCRIPT,
     additionalEnvironment: {
+      STAGING_AUTH_PROBE_CANDIDATE_HANDOFF: input.handoffMarker,
       STAGING_AUTH_PROBE_CANDIDATE_LOGIN: input.login,
       STAGING_AUTH_PROBE_CANDIDATE_OWNER: input.ownerMarker,
       STAGING_AUTH_PROBE_CANDIDATE_VERIFIER: input.verifier,
@@ -1904,13 +1934,14 @@ async function provisionRuntimeRole(
   const status = result.stdout.trim();
   return status === "created" ||
     status === "existing-owned" ||
+    status === "existing-handoff" ||
     status === "unowned"
     ? status
     : "inconclusive";
 }
 
 async function inspectRuntimeRoleOwnership(
-  input: CandidateRoleMutationInput,
+  input: FinalizeCandidateRoleInput,
   runner: PsqlRunner = runPsql,
 ): Promise<CandidateOwnershipResult> {
   const result = await runner({
@@ -1918,6 +1949,7 @@ async function inspectRuntimeRoleOwnership(
     connectionUrl: input.adminUrl,
     stdin: INSPECT_RUNTIME_OWNERSHIP_SCRIPT,
     additionalEnvironment: {
+      STAGING_AUTH_PROBE_CANDIDATE_HANDOFF: input.handoffMarker,
       STAGING_AUTH_PROBE_CANDIDATE_LOGIN: input.login,
       STAGING_AUTH_PROBE_CANDIDATE_OWNER: input.ownerMarker,
     },
@@ -1932,7 +1964,10 @@ async function inspectRuntimeRoleOwnership(
     return "inconclusive";
   }
   const status = result.stdout.trim();
-  return status === "owned" || status === "absent" || status === "unowned"
+  return status === "owned" ||
+    status === "handed-off" ||
+    status === "absent" ||
+    status === "unowned"
     ? status
     : "inconclusive";
 }
@@ -2426,6 +2461,7 @@ async function provisionRuntimeCandidate(
 
   const mutationInput = {
     adminUrl: configuration.postgresAdminUrl,
+    handoffMarker,
     login: configuration.candidateLogin,
     ownerMarker,
     psqlPath: configuration.psqlPath,
@@ -2444,6 +2480,8 @@ async function provisionRuntimeCandidate(
     }
 
     const createdThisRun = provisionStatus === "created";
+    let forwardOnlyHandoff = provisionStatus === "existing-handoff";
+    if (forwardOnlyHandoff) checks.runtimeHandoff = "observed";
     if (!(await lockIsHeld())) {
       checks.runtimeMutation = createdThisRun
         ? "cleanup-inconclusive"
@@ -2477,7 +2515,11 @@ async function provisionRuntimeCandidate(
         checks.runtimeMutation = "inconclusive";
         return "inconclusive";
       }
-      if (ownership !== "owned") {
+      if (ownership === "handed-off") {
+        forwardOnlyHandoff = true;
+        checks.runtimeHandoff = "observed";
+      }
+      if (ownership !== "owned" && ownership !== "handed-off") {
         checks.runtimeMutation = "cleanup-inconclusive";
         return "inconclusive";
       }
@@ -2505,25 +2547,52 @@ async function provisionRuntimeCandidate(
           checks.runtimeMutation = "inconclusive";
           return "inconclusive";
         }
-        let handoff: CandidateHandoffResult = "inconclusive";
-        try {
-          handoff = await dependencies.finalizeRuntimeRoleOwnership({
-            ...mutationInput,
-            handoffMarker,
-            timeoutMs: boundedTimeout(deadline, dependencies.monotonicNow),
-          });
-        } catch {
-          handoff = "inconclusive";
-        }
-        checks.runtimeHandoff =
-          handoff === "handed-off"
-            ? "observed"
-            : handoff === "inconclusive"
-              ? "inconclusive"
-              : "not-observed";
-        if (handoff !== "handed-off") {
-          checks.runtimeMutation = "inconclusive";
-          return handoff === "inconclusive" ? "inconclusive" : "failed";
+        if (!forwardOnlyHandoff) {
+          let handoff: CandidateHandoffResult = "inconclusive";
+          try {
+            handoff = await dependencies.finalizeRuntimeRoleOwnership({
+              ...mutationInput,
+              timeoutMs: boundedTimeout(deadline, dependencies.monotonicNow),
+            });
+          } catch {
+            handoff = "inconclusive";
+          }
+          checks.runtimeHandoff =
+            handoff === "handed-off"
+              ? "observed"
+              : handoff === "inconclusive"
+                ? "inconclusive"
+                : "not-observed";
+          if (handoff === "unsafe") {
+            if (!(await lockIsHeld())) {
+              checks.runtimeMutation = "cleanup-inconclusive";
+              return "inconclusive";
+            }
+            let cleanup: CandidateCleanupResult = "inconclusive";
+            try {
+              cleanup = await dependencies.cleanupRuntimeRole({
+                ...mutationInput,
+                timeoutMs: boundedTimeout(
+                  deadline,
+                  dependencies.monotonicNow,
+                ),
+              });
+            } catch {
+              cleanup = "inconclusive";
+            }
+            checks.runtimeMutation =
+              cleanup === "cleaned" || cleanup === "absent"
+                ? "rolled-back"
+                : "cleanup-inconclusive";
+            return checks.runtimeMutation === "rolled-back"
+              ? "failed"
+              : "inconclusive";
+          }
+          if (handoff === "handed-off") forwardOnlyHandoff = true;
+          if (handoff !== "handed-off") {
+            checks.runtimeMutation = "inconclusive";
+            return handoff === "inconclusive" ? "inconclusive" : "failed";
+          }
         }
         if (
           !(await lockIsHeld()) ||
@@ -2570,6 +2639,13 @@ async function provisionRuntimeCandidate(
           : "inconclusive";
     } catch {
       outcome = "inconclusive";
+    }
+
+    // A durable handoff is forward-only: all proof failures preserve it for
+    // reconciliation, including deterministic authentication/readiness failures.
+    if (forwardOnlyHandoff) {
+      checks.runtimeMutation = "inconclusive";
+      return outcome;
     }
 
     // An inconclusive proof preserves a crash-owned role for a safe retry.
