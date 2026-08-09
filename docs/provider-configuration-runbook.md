@@ -25,20 +25,27 @@ npm run security:audit
 git diff --check
 ```
 
-Run the provider check with production semantics before setting Railway live:
+Use the ordinary provider report locally only as a configuration diagnostic.
+Do not inject a Railway service environment into the operator host:
 
 ```bash
-NODE_ENV=production npm run readiness:providers
-npm run readiness:launch
+npm run readiness:providers
 ```
 
-The provider check never prints secret values. `readiness:launch` is stricter:
-run it inside the deployed service and require
-`readinessProfile=production_free_launch`; any remaining warning blocks broad
-public launch. It also fails any commercial/trial/reward/report/POS flag or
-credential drift. A GitHub job with injected safe literals is not proof of the
-actual Railway environment. A green local result does **not** close the live
-provider, staging-app, scale, recovery, or cutover blockers above.
+The provider check never prints secret values. Run the secret-aware strict gate
+only inside the deployed service or a Railway one-shot deployment:
+
+```bash
+npm run --silent readiness:launch
+```
+
+It requires Railway's project, environment, service, deployment, and replica
+runtime identities. `railway run`, a local shell with injected variables, and a
+GitHub runner with duplicated application secrets fail that evidence boundary.
+Require `readinessProfile=permanent_staging_complete` in permanent staging and
+`readinessProfile=production_free_launch` in production; any remaining warning
+blocks the corresponding release gate. A green local result does **not** close
+the live provider, staging-app, scale, recovery, or cutover blockers above.
 
 ## Google Maps
 
@@ -73,9 +80,11 @@ Treat Railway configuration and remote-shell output as credential-bearing.
 `railway environment config --json` returns resolved secret values, and a
 Railway SSH session or nested login shell can expose the full remote/session
 environment. Never run either command in a captured terminal, CI log, support
-transcript, or release-evidence workflow. For inspection, use name-only or
-`decryptVariables:false` provider metadata and perform comparisons entirely in
-process without printing values. Write one secret at a time with
+transcript, or release-evidence workflow. For inspection, use only the fixed
+GraphQL metadata fields `id`, `name`, `environmentId`, `serviceId`, `isSealed`,
+`references`, edge cursors, and page information; the query must not request a
+value field. Perform comparisons entirely in process without printing response
+data. Write one secret at a time with
 `railway variable set NAME --stdin --skip-deploys`; use `railway connect --ssh`
 only to launch the intended local database client, with output explicitly
 allowlisted and no nested shell. Any accidental resolved-environment output is
@@ -89,6 +98,24 @@ It uses isolated private-network clients with PostgreSQL 17 SCRAM enforcement,
 bounded raw Redis authentication, serialized runtime-role handoff, and exact
 old-credential rejection. A same-service database tunnel is not acceptable
 password evidence because a local HBA rule can use `trust`.
+
+After the separate post-rotation seal ceremony, run the external metadata gate
+with a project token scoped to the exact permanent-staging environment:
+
+```bash
+npm run --silent readiness:railway:sealed
+```
+
+Load `PINTPATH_RAILWAY_METADATA_TOKEN` from the protected operator/CI secret
+store. The command posts the checked-in read-only paginated query directly to
+Railway and emits one fixed-enum receipt; it never receives an application
+secret value. The nonsecret policy at
+`ops/railway/permanent-staging-sealed-variable-policy.json` binds the exact
+project/environment, every selected source and consumer row, normalized
+references, sealed state, and forbidden retired probe services. Missing,
+extra, shared-shadow, unsealed, reference-drifted, duplicate, or unpaginated
+inventory fails closed. Never replace this gate with `railway run` and never
+unseal a variable merely to repeat readiness.
 
 ```dotenv
 NODE_ENV=production
@@ -385,10 +412,11 @@ and overlapping workers run. Load the reviewed
 `ACCOUNT_DELETION_REHEARSAL_EXPECTED_*` Railway/Supabase pins from the private
 release register and set the independently verified replica count to at least
 two; the runtime profile fails closed on any mismatch.
-`npm run --silent readiness:providers` must select a mutation-free
-`account_deletion_rehearsal` profile that skips the production backup Storage
-canary without skipping shared Redis. Leave the rehearsal variable `false` or
-absent in production.
+Run `npm run --silent readiness:launch` inside the deployed staging service or
+a Railway one-shot deployment. It must select a mutation-free
+`account_deletion_rehearsal` profile, pass the deployed-context check, and skip
+the production backup Storage canary without skipping shared Redis. Leave the
+rehearsal variable `false` or absent in production.
 
 ## Redis
 
@@ -543,7 +571,9 @@ project/object copy after sign-off.
 
 Do not launch public production if any of these are true:
 
-- `NODE_ENV=production npm run readiness:providers` fails.
+- Strict `npm run --silent readiness:launch` fails in either deployed/one-shot
+  permanent staging or production, or the post-seal external
+  `readiness:railway:sealed` receipt fails.
 - The reviewed PostgreSQL build is not deployed and proved in permanent
   staging, production still opens authoritative state through SQLite, or the
   candidate cannot run two safe replicas and a Postgres-native rollback path.

@@ -12,6 +12,7 @@ function sha256(value: string): string {
 interface ReadinessPayload {
   ok: boolean;
   readinessProfile: string;
+  strictLaunchCheck: boolean;
   checks: Array<{ id: string; status: string; details?: string | null }>;
   summary: { blockingWarnings: number; failures: number };
 }
@@ -23,6 +24,11 @@ function providerReadinessEnvironment(
     ...process.env,
     NODE_ENV: "production",
     LAUNCH_READINESS_STRICT: "true",
+    RAILWAY_PROJECT_ID: "deployed-project",
+    RAILWAY_ENVIRONMENT_ID: "deployed-environment",
+    RAILWAY_SERVICE_ID: "deployed-service",
+    RAILWAY_DEPLOYMENT_ID: "deployed-release",
+    RAILWAY_REPLICA_ID: "deployed-replica",
     ACCOUNT_DELETION_REHEARSAL_ENABLED: "false",
     RESTORE_REHEARSAL_MODE: "false",
     PINTPATH_IDENTITY_REGISTRY_PHASE: "complete",
@@ -469,6 +475,37 @@ describe("provider readiness feature gating", () => {
     expect(source).toContain("requiredMimeTypes.has(canary.contentType)");
     expect(source).toContain('contentType: "application/pdf"');
     expect(source).toContain('contentType: "image/jpeg"');
+  });
+
+  it.each([
+    "RAILWAY_PROJECT_ID",
+    "RAILWAY_ENVIRONMENT_ID",
+    "RAILWAY_SERVICE_ID",
+    "RAILWAY_DEPLOYMENT_ID",
+    "RAILWAY_REPLICA_ID",
+  ])("fails secret-aware readiness outside a deployed Railway context when %s is absent", (name) => {
+    const payload = runProviderReadiness({ [name]: "" });
+
+    expect(checkStatuses(payload, ["RAILWAY_DEPLOYED_READINESS_CONTEXT"]))
+      .toEqual({ RAILWAY_DEPLOYED_READINESS_CONTEXT: "fail" });
+    expect(JSON.stringify(payload)).not.toContain("deployed-release");
+    expect(JSON.stringify(payload)).not.toContain("deployed-replica");
+  });
+
+  it("keeps the deployed-context guard scoped to strict launch readiness", () => {
+    const payload = runProviderReadiness({
+      LAUNCH_READINESS_STRICT: "false",
+      RAILWAY_PROJECT_ID: "",
+      RAILWAY_ENVIRONMENT_ID: "",
+      RAILWAY_SERVICE_ID: "",
+      RAILWAY_DEPLOYMENT_ID: "",
+      RAILWAY_REPLICA_ID: "",
+    });
+
+    expect(payload.strictLaunchCheck).toBe(false);
+    expect(payload.checks.map((check) => check.id)).not.toContain(
+      "RAILWAY_DEPLOYED_READINESS_CONTEXT",
+    );
   });
 
   it("passes the source-evidence probe only after exact cleanup and an empty-prefix re-list", async () => {

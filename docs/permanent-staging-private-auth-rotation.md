@@ -246,3 +246,44 @@ temporary local secret material and retain only protected, secret-free
 receipts. Railway variable sealing is a separate irreversible ceremony after
 every new value and URL pin is escrowed and proven; it is not part of this
 rotation.
+
+## Separate post-rotation sealing gate
+
+This repository hardening is not a prerequisite for the PostgreSQL-admin or
+Redis rotation while the selected rows remain unsealed. It **is** a prerequisite
+for the first seal action. Do not combine sealing with an authority mutation or
+use it to bypass any watcher, candidate, old-rejection, recovery, or cleanup
+step above.
+
+1. Finish all rotations and temporary-service cleanup. Confirm every successor
+   value and derived reference has its approved recovery/escrow path; do not
+   preserve a resolved value in release evidence.
+2. In the deployed permanent-staging Beer service or a Railway one-shot
+   deployment, run `npm run --silent readiness:launch`. Require one sanitized
+   receipt with `readinessProfile=permanent_staging_complete`, `ok=true`, zero
+   failures, zero blocking warnings, and a passing
+   `RAILWAY_DEPLOYED_READINESS_CONTEXT`. `railway run` and a local injected
+   environment are not evidence.
+3. Seal only the 14 populated source and consumer rows enumerated by
+   `ops/railway/permanent-staging-sealed-variable-policy.json`. Do not seal
+   blank/future variables or public keys, and do not treat URL hashes or
+   provider-resource pins as secret rows. Verify the action started no
+   unrelated deployment and created no shared/environment-level shadow.
+4. From an external operator or release-gate process holding only a Railway
+   project token scoped to the exact permanent-staging environment, load that
+   token as `PINTPATH_RAILWAY_METADATA_TOKEN` and run `npm run --silent
+   readiness:railway:sealed`. Require exactly one
+   `pintpath-railway-sealed-variable-readiness/v1` receipt with
+   `policy=permanent-staging-post-rotation`, `mode=post-seal`, and
+   `outcome=passed`. The gate paginates the complete inventory and fails on a
+   missing/extra row, shared shadow, unsealed row, reference drift, duplicate,
+   forbidden retired probe service, wrong environment, or malformed response.
+5. Start a fresh reviewed permanent-staging deployment or one-shot deployment
+   after sealing and repeat the strict secret-aware gate from step 2. This proves
+   the platform can still resolve sealed source and consumer references without
+   exporting them. Preserve only the sanitized runtime and metadata receipts.
+
+Any failed or inconclusive check leaves the seal ceremony open. Stop and repair
+forward under Railway's sealed-variable recovery process; never use
+`railway run`, resolved-environment export, raw GraphQL output, or an unseal just
+to make readiness pass.

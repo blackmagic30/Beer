@@ -162,7 +162,11 @@ pilots before the role and provider checks pass.
 
 - [ ] Confirm `health`, `ready`, `config`, `venues`, `prices`, the map, Account, Venue Portal, Admin page, and `deployed_commit` pass.
 - [ ] Confirm the result has zero failures. The only permitted skips are `user_account`, `venue_manager_portal`, and `admin_queues`; those belong to item 2.
-- [ ] Inside a protected production service/container session, use a mode-private temporary file rather than the operator host's `$EVIDENCE_DIR`, which is not available remotely:
+- [ ] Inside the deployed production service or a Railway one-shot deployment,
+  use a mode-private temporary file rather than the operator host's
+  `$EVIDENCE_DIR`, which is not available remotely. `railway run`, a local
+  injected environment, and a generic container without Railway deployment and
+  replica identity are not evidence:
 
   ```bash
   set -euo pipefail
@@ -170,11 +174,25 @@ pilots before the role and provider checks pass.
   PROD_READINESS_RESULT="$(mktemp)"
   npm run --silent readiness:launch | tee "$PROD_READINESS_RESULT"
   jq -e '.readinessProfile == "production_free_launch"
-    and .ok == true and .summary.failures == 0 and .summary.blockingWarnings == 0' \
+    and .ok == true and .summary.failures == 0 and .summary.blockingWarnings == 0
+    and any(.checks[]; .id == "RAILWAY_DEPLOYED_READINESS_CONTEXT" and .status == "pass")' \
     "$PROD_READINESS_RESULT"
   ```
 
   Securely transfer only that sanitized JSON to the operator host as `$EVIDENCE_DIR/provider-readiness.json`, validate it again, then delete the remote temporary file. Never copy a remote `.env` or provider credential.
+- [ ] Before the manual release workflow, close permanent-staging sealing as a
+  separate ordered gate. Preserve a passing deployed/one-shot pre-seal
+  `readiness:launch` receipt with
+  `readinessProfile=permanent_staging_complete`; seal only the 14 populated
+  source/consumer rows in
+  `ops/railway/permanent-staging-sealed-variable-policy.json`; then run
+  `npm run --silent readiness:railway:sealed` externally with only the exact
+  environment-scoped project token loaded as
+  `PINTPATH_RAILWAY_METADATA_TOKEN`. Require the one metadata receipt to report
+  `policy=permanent-staging-post-rotation`, `mode=post-seal`, and
+  `outcome=passed`. Finally, require the same strict permanent-staging profile
+  from a fresh post-seal deployment or one-shot deployment. Never export a
+  resolved row, use `railway run`, or unseal to repeat readiness.
 - [ ] In Supabase, verify the production Site URL and exact web redirect allow
   list, Google provider callback, `SUPABASE_OAUTH_PROVIDERS=google`, proof Apple
   OAuth is disabled, email confirmation, leaked-password protection, admin
@@ -226,7 +244,10 @@ pilots before the role and provider checks pass.
 
 **Pass:** The exact SHA is deployed; public smoke exits `0`; its JSON parses; provider readiness has no failures/blocking warnings; provider access, distributed limiting, private Storage, TLS/browser security, performance, load, secret exposure, monitoring, and staging DAST checks all pass with no unresolved critical/high finding.
 
-**Evidence:** Public-smoke JSON, provider-readiness JSON, deployed SHA, sanitized provider screenshots, key-restriction screenshots, Storage/RLS results, monitor test alert, timestamp, and verifier.
+**Evidence:** Public-smoke JSON, production provider-readiness JSON, permanent-
+staging pre/post-seal deployed-readiness JSON, sealed-variable metadata JSON,
+deployed SHA, sanitized provider screenshots, key-restriction screenshots,
+Storage/RLS results, monitor test alert, timestamp, and verifier.
 
 ## 2. `production_role_smoke`
 
@@ -363,7 +384,8 @@ state, SHA, timestamp, and verifier.
   credentials for the same resource are not separation. The pinned
   staging Supabase origin plus the fixed private `beermap-source-evidence`
   bucket identifies Storage. Run `npm run --silent
-  readiness:providers`, require
+  readiness:launch` inside the deployed staging service or a Railway one-shot
+  deployment, require a passing `RAILWAY_DEPLOYED_READINESS_CONTEXT`, require
   `readinessProfile=account_deletion_rehearsal`, and confirm `/ready` separately.
   Remove the rehearsal switch immediately afterward and prove it is false or
   absent in production.
@@ -791,7 +813,13 @@ manual/phased release → verify Australian storefront availability and install.
   ```
 
   Record the run ID/URL. Retry only the lookup if Actions has not indexed the new run yet.
-- [ ] Download the `pintpath-production-release-gate` artifact and confirm its provider-readiness JSON, authenticated-smoke JSON, strict release-evidence JSON, and tested-SHA file all match the final commit.
+- [ ] Download the `pintpath-production-release-gate` artifact and confirm its
+  permanent-staging sealed-variable metadata JSON, authenticated-smoke JSON,
+  strict release-evidence JSON, and tested-SHA file all match the final commit.
+  Validate the separately captured production and permanent-staging
+  deployed/one-shot provider-readiness receipts from the private evidence pack;
+  the GitHub runner must not regenerate them from duplicated application
+  secrets.
 - [ ] In the release-gate job itself, separately confirm the security-scan and dependency-audit steps passed. Those results are step logs/statuses and are not files in the artifact.
 - [ ] Record the final go/no-go decision, launch owner, rollback target, support escalation, and first-72-hour coverage in the private evidence register.
 - [ ] Only after the strict gate and two-person go/no-go pass, use App Store

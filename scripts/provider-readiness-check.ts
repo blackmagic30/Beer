@@ -205,6 +205,28 @@ function isStrictLaunchCheck(): boolean {
     || process.argv.includes("--launch");
 }
 
+function checkDeployedReadinessContext(): ProviderCheck {
+  const deployed = isProduction()
+    && [
+      "RAILWAY_PROJECT_ID",
+      "RAILWAY_ENVIRONMENT_ID",
+      "RAILWAY_SERVICE_ID",
+      "RAILWAY_DEPLOYMENT_ID",
+      "RAILWAY_REPLICA_ID",
+    ].every(hasValue);
+  return {
+    id: "RAILWAY_DEPLOYED_READINESS_CONTEXT",
+    label: "Deployed Railway provider-readiness context",
+    status: deployed ? "pass" : "fail",
+    action: deployed
+      ? null
+      : "Run secret-aware readiness only inside the deployed Railway service or a Railway one-shot deployment; local variable injection and railway run are not evidence.",
+    details: deployed
+      ? "Platform project, environment, service, deployment, and replica identity are present."
+      : "One or more required platform runtime identities are absent; no identity value is emitted.",
+  };
+}
+
 function checkRequired(name: string, label: string, action: string): ProviderCheck {
   const present = hasValue(name);
   return {
@@ -1526,13 +1548,16 @@ const readinessProfile = stagingIdentityBootstrap
       : isProduction()
         ? "production_free_launch"
         : "development_provider_preview";
-const preflightChecks = stagingIdentityBootstrap
+const selectedPreflightChecks = stagingIdentityBootstrap
   ? stagingBootstrapChecks
   : accountDeletionRehearsalEnabled
     ? deletionRehearsalChecks
     : permanentStagingComplete
       ? permanentStagingCompleteChecks
       : launchPreflightChecks;
+const preflightChecks = strict && isProduction()
+  ? [checkDeployedReadinessContext(), ...selectedPreflightChecks]
+  : selectedPreflightChecks;
 const preflightFailed = preflightChecks.filter((check) => check.status === "fail");
 const preflightWarned = preflightChecks.filter((check) => check.status === "warn");
 const preflightBlocked = preflightFailed.length > 0

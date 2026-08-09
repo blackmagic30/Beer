@@ -16,23 +16,39 @@ git diff --check
 
 The `test:release:pintpath` script runs the full build/test/security gate, validates production-provider configuration, requires every external release-evidence item to be complete, and runs `npm audit --audit-level=high`. Use the ordinary `npm run check` gate during local development; the strict release command is expected to fail until provider and human sign-off evidence is genuinely complete.
 
-After production provider env is configured, also run:
+After each protected provider environment is configured, run this inside its
+deployed service or a Railway one-shot deployment:
 
 ```bash
 npm run readiness:launch
 ```
 
-Run that command inside the deployed permanent-staging and production service
-environments and require `readinessProfile=production_free_launch`. It must
-prove the actual service configuration—not only the safe literal Free-scope
-values used by GitHub Actions—and treats provider warnings as blockers. See
+Require `readinessProfile=permanent_staging_complete` in permanent staging and
+`readinessProfile=production_free_launch` in production. The strict gate also
+requires platform project, environment, service, deployment, and replica
+identity, so `railway run`, a local injected environment, or GitHub-hosted
+duplicate application secrets are not evidence. It proves the actual service
+configuration and treats provider warnings as blockers. See
 `docs/launch-9-readiness-gates.md` for the manual evidence pack that local tests
 cannot prove.
+
+After the separate permanent-staging seal ceremony, run the metadata-only
+external gate with its narrowly scoped project token loaded as
+`PINTPATH_RAILWAY_METADATA_TOKEN`:
+
+```bash
+npm run --silent readiness:railway:sealed
+```
+
+Require its one receipt to report `policy=permanent-staging-post-rotation`,
+`mode=post-seal`, and `outcome=passed`, then repeat the strict deployed
+`readiness:launch` gate from a fresh post-seal deployment. Never use
+`railway run`, export resolved variables, or unseal a row for readiness.
 
 GitHub keeps these two signals deliberately separate:
 
 - **Pint Path Automated Readiness** runs on pushes and pull requests. It proves the build, local release suite, security scan, dependency audit, and reports external evidence without claiming that evidence is complete.
-- **Pint Path Release Gate** is a manual production-environment workflow. It runs strict authenticated production smoke checks and `release:evidence:strict`, so it cannot pass with skipped roles or incomplete sign-offs.
+- **Pint Path Release Gate** is a manual production-environment workflow. It runs the external permanent-staging sealed-variable metadata gate, strict authenticated production smoke checks, and `release:evidence:strict`. The separate sanitized deployed/one-shot provider-readiness receipts remain required external evidence; the workflow does not duplicate application secrets onto its GitHub runner.
 
 The informational evidence command exits successfully when the evidence file is structurally valid, but its JSON keeps `launchReady: false` until every required sign-off passes. Its `incomplete` array names the accountable owner and exact next action for every open gate. Only the strict command is a launch gate.
 
@@ -48,6 +64,11 @@ PINTPATH_SMOKE_USER_PASSWORD
 PINTPATH_SMOKE_VENUE_EMAIL
 PINTPATH_SMOKE_VENUE_PASSWORD
 ```
+
+For the manual release gate only, also configure
+`PINTPATH_RAILWAY_METADATA_TOKEN` as a Railway project token scoped to the exact
+permanent-staging environment. It is used only for the fixed metadata query and
+must not be an account/workspace token or an application variable.
 
 The scheduled workflow signs those dedicated verified accounts in through the public Supabase password flow, exchanges each provider session for a Pint Path session, checks the scoped endpoint, then revokes both the disposable Pint Path session and its current Supabase refresh session. Missing credentials are reported as a monitoring-configuration warning in a separate hourly job; they do not turn a passing public-health job into a false outage alert.
 
@@ -101,6 +122,12 @@ Both scripts refuse to run when `NODE_ENV=production` or when `PUBLIC_BASE_URL` 
 
 These are launch-critical but require provider/staging verification:
 
+- **Railway sealed-variable closure:** Complete private-auth rotation first,
+  capture a passing deployed permanent-staging strict-readiness receipt, seal
+  only the 14 populated policy rows, capture the passing external metadata
+  receipt, then capture a fresh deployed post-seal strict-readiness receipt.
+  Missing/extra/shared-shadow rows, reference drift, an unsealed row, or use of
+  `railway run` keeps this blocker open.
 - **Supabase OAuth:** Google provider credentials, web redirect URLs, the provider callback, and email-confirmation behavior must be verified. Supabase should allow `https://pintpath.au/auth/callback`; the Google console should allow the callback derived from `SUPABASE_URL`, for example `https://auth.pintpath.au/auth/v1/callback`. Set `SUPABASE_OAUTH_PROVIDERS=google` and prove Apple is disabled. The first-release iOS app is email/password only, declares no custom URL scheme, and uses the HTTPS callback for email confirmation/password recovery.
 - **Supabase Auth security:** Enable leaked-password protection before public launch.
 - **Supabase live access audit:** Apply the final Data API retirement migration, then prove live that `anon` and `authenticated` have zero privileges on public tables, sequences, RPCs, and private helpers. RLS remains defence in depth; only the Express service, using its server-only service role, may access application data. Local SQL parsing is not a substitute for live privilege and denial proof.

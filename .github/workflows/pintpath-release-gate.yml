@@ -58,71 +58,12 @@ jobs:
           set -o pipefail
           npm run --silent smoke:production | tee production-public-smoke.json
 
-      - name: Enforce production provider readiness
+      - name: Enforce permanent-staging sealed-variable metadata
         env:
-          NODE_ENV: production
-          PUBLIC_BASE_URL: https://pintpath.au
-          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
-          GOOGLE_MAPS_MAP_ID: ${{ secrets.GOOGLE_MAPS_MAP_ID }}
-          GOOGLE_PLACES_API_KEY: ${{ secrets.GOOGLE_PLACES_API_KEY }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          SUPABASE_OAUTH_PROVIDERS: google
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          PINTPATH_DATABASE_RESOURCE_ID: ${{ secrets.PINTPATH_DATABASE_RESOURCE_ID }}
-          PINTPATH_EXPECTED_DATABASE_RESOURCE_ID: ${{ secrets.PINTPATH_EXPECTED_DATABASE_RESOURCE_ID }}
-          PINTPATH_FORBIDDEN_DATABASE_RESOURCE_IDS: ${{ secrets.PINTPATH_FORBIDDEN_DATABASE_RESOURCE_IDS }}
-          PINTPATH_EXPECTED_DATABASE_URL_SHA256: ${{ secrets.PINTPATH_EXPECTED_DATABASE_URL_SHA256 }}
-          PINTPATH_FORBIDDEN_DATABASE_URL_SHA256S: ${{ secrets.PINTPATH_FORBIDDEN_DATABASE_URL_SHA256S }}
-          REDIS_URL: ${{ secrets.REDIS_URL }}
-          PINTPATH_REDIS_RESOURCE_ID: ${{ secrets.PINTPATH_REDIS_RESOURCE_ID }}
-          PINTPATH_EXPECTED_REDIS_RESOURCE_ID: ${{ secrets.PINTPATH_EXPECTED_REDIS_RESOURCE_ID }}
-          PINTPATH_FORBIDDEN_REDIS_RESOURCE_IDS: ${{ secrets.PINTPATH_FORBIDDEN_REDIS_RESOURCE_IDS }}
-          PINTPATH_EXPECTED_REDIS_URL_SHA256: ${{ secrets.PINTPATH_EXPECTED_REDIS_URL_SHA256 }}
-          PINTPATH_FORBIDDEN_REDIS_URL_SHA256S: ${{ secrets.PINTPATH_FORBIDDEN_REDIS_URL_SHA256S }}
-          REQUIRE_REDIS_RATE_LIMITING: "true"
-          ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION: "false"
-          SOURCE_EVIDENCE_SIGNING_SECRET: ${{ secrets.SOURCE_EVIDENCE_SIGNING_SECRET }}
-          COMMERCIAL_LAUNCH_ENABLED: "false"
-          CONSUMER_PAID_ENROLLMENT_ENABLED: "false"
-          VENUE_PRO_TRIAL_DAYS: "0"
-          VENUE_PRO_TRIAL_REQUIRE_PAYMENT_METHOD: "false"
-          PINT_POINTS_REWARDS_ENABLED: "false"
-          ALCOHOL_GAMIFICATION_ENABLED: "false"
-          STRIPE_SECRET_KEY: ""
-          STRIPE_WEBHOOK_SECRET: ""
-          STRIPE_PRICE_MONTHLY: ""
-          STRIPE_PRICE_YEARLY: ""
-          STRIPE_PRO_PRICE_ID: ""
-          POS_WEBHOOK_SIGNING_SECRET: ""
-          ADMIN_EMAILS: ${{ secrets.ADMIN_EMAILS }}
-          REQUIRE_ADMIN_MFA_IN_PRODUCTION: "true"
-          FIELD_TEST_MODE: "false"
-          OFFSITE_BACKUP_BUCKET: ${{ secrets.OFFSITE_BACKUP_BUCKET }}
-          OFFSITE_BACKUP_SUPABASE_URL: ${{ secrets.OFFSITE_BACKUP_SUPABASE_URL }}
-          OFFSITE_BACKUP_SERVICE_ROLE_KEY: ${{ secrets.OFFSITE_BACKUP_SERVICE_ROLE_KEY }}
-          REPORT_TIMEZONE: Australia/Melbourne
-          REPORT_EMAIL_MODE: disabled
-          REPORT_DELIVERY_SCHEDULE_ENABLED: "false"
-          PINTPATH_REPORT_DELIVER: "false"
-          RESEND_API_KEY: ""
-          ACCOUNT_DELETION_NOTICE_MODE: resend
-          RESEND_TRANSACTIONAL_API_KEY: ${{ secrets.RESEND_TRANSACTIONAL_API_KEY }}
-          ACCOUNT_DELETION_NOTICE_FROM: ${{ secrets.ACCOUNT_DELETION_NOTICE_FROM }}
-          ACCOUNT_DELETION_NOTICE_REPLY_TO: ${{ secrets.ACCOUNT_DELETION_NOTICE_REPLY_TO }}
-          RESEND_WEBHOOK_SIGNING_SECRET: ${{ secrets.RESEND_WEBHOOK_SIGNING_SECRET }}
-          ACCOUNT_DELETION_NOTICE_ACTIVE_KEY_ID: ${{ secrets.ACCOUNT_DELETION_NOTICE_ACTIVE_KEY_ID }}
-          ACCOUNT_DELETION_NOTICE_KEYRING_JSON: ${{ secrets.ACCOUNT_DELETION_NOTICE_KEYRING_JSON }}
-          ACCOUNT_DELETION_NOTICE_CHECK_INTERVAL_MINUTES: "5"
-          ACCOUNT_DELETION_REHEARSAL_ENABLED: "false"
-          DEMO_BILLING_MODE: "false"
-          ALLOW_DEMO_BILLING_IN_PRODUCTION: "false"
-          ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION: "false"
+          PINTPATH_RAILWAY_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_METADATA_TOKEN }}
         run: |
           set -o pipefail
-          npm run --silent readiness:launch | tee provider-readiness-summary.json
+          npm run --silent readiness:railway:sealed | tee railway-sealed-variable-readiness.json
 
       - name: Verify authenticated production roles
         env:
@@ -182,6 +123,6 @@ jobs:
             production-data-readiness.json
             production-role-smoke.json
             release-evidence-summary.json
-            provider-readiness-summary.json
+            railway-sealed-variable-readiness.json
             tested-commit-sha.txt
           if-no-files-found: warn

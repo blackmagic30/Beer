@@ -1,0 +1,180 @@
+{
+  "schemaVersion": "pintpath-railway-sealed-variable-policy/v1",
+  "policyId": "permanent-staging-post-rotation",
+  "projectId": "48d8c6cd-1c66-4148-874b-20877f48e1a5",
+  "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+  "variables": [
+    {
+      "serviceId": "c454955f-263b-4599-aee0-dc447a4d3d15",
+      "name": "POSTGRES_PASSWORD",
+      "isSealed": true,
+      "references": []
+    },
+    {
+      "serviceId": "c454955f-263b-4599-aee0-dc447a4d3d15",
+      "name": "PGPASSWORD",
+      "isSealed": true,
+      "references": [
+        {
+          "serviceId": "c454955f-263b-4599-aee0-dc447a4d3d15",
+          "name": "POSTGRES_PASSWORD"
+        }
+      ]
+    },
+    {
+      "serviceId": "c454955f-263b-4599-aee0-dc447a4d3d15",
+      "name": "DATABASE_URL",
+      "isSealed": true,
+      "references": [
+        {
+          "serviceId": "c454955f-263b-4599-aee0-dc447a4d3d15",
+          "name": "PGDATABASE"
+        },
+        {
+          "serviceId": "c454955f-263b-4599-aee0-dc447a4d3d15",
+          "name": "PGUSER"
+        },
+        {
+          "serviceId": "c454955f-263b-4599-aee0-dc447a4d3d15",
+          "name": "POSTGRES_PASSWORD"
+        },
+        {
+          "serviceId": "c454955f-263b-4599-aee0-dc447a4d3d15",
+          "name": "RAILWAY_PRIVATE_DOMAIN"
+        }
+      ]
+    },
+    {
+      "serviceId": "c454955f-263b-4599-aee0-dc447a4d3d15",
+      "name": "PINTPATH_RUNTIME_PASSWORD",
+      "isSealed": true,
+      "references": []
+    },
+    {
+      "serviceId": "c454955f-263b-4599-aee0-dc447a4d3d15",
+      "name": "PINTPATH_RUNTIME_DATABASE_URL",
+      "isSealed": true,
+      "references": [
+        {
+          "serviceId": "c454955f-263b-4599-aee0-dc447a4d3d15",
+          "name": "PGPORT"
+        },
+        {
+          "serviceId": "c454955f-263b-4599-aee0-dc447a4d3d15",
+          "name": "PINTPATH_RUNTIME_PASSWORD"
+        },
+        {
+          "serviceId": "c454955f-263b-4599-aee0-dc447a4d3d15",
+          "name": "RAILWAY_PRIVATE_DOMAIN"
+        }
+      ]
+    },
+    {
+      "serviceId": "d6351cec-fe04-4a6f-8e05-1cc164ea1e73",
+      "name": "REDIS_PASSWORD",
+      "isSealed": true,
+      "references": []
+    },
+    {
+      "serviceId": "d6351cec-fe04-4a6f-8e05-1cc164ea1e73",
+      "name": "REDISPASSWORD",
+      "isSealed": true,
+      "references": [
+        {
+          "serviceId": "d6351cec-fe04-4a6f-8e05-1cc164ea1e73",
+          "name": "REDIS_PASSWORD"
+        }
+      ]
+    },
+    {
+      "serviceId": "d6351cec-fe04-4a6f-8e05-1cc164ea1e73",
+      "name": "REDIS_URL",
+      "isSealed": true,
+      "references": [
+        {
+          "serviceId": "d6351cec-fe04-4a6f-8e05-1cc164ea1e73",
+          "name": "REDISHOST"
+        },
+        {
+          "serviceId": "d6351cec-fe04-4a6f-8e05-1cc164ea1e73",
+          "name": "REDISPORT"
+        },
+        {
+          "serviceId": "d6351cec-fe04-4a6f-8e05-1cc164ea1e73",
+          "name": "REDISUSER"
+        },
+        {
+          "serviceId": "d6351cec-fe04-4a6f-8e05-1cc164ea1e73",
+          "name": "REDIS_PASSWORD"
+        }
+      ]
+    },
+    {
+      "serviceId": "d6351cec-fe04-4a6f-8e05-1cc164ea1e73",
+      "name": "REDIS_PUBLIC_URL",
+      "isSealed": true,
+      "references": [
+        {
+          "serviceId": "d6351cec-fe04-4a6f-8e05-1cc164ea1e73",
+          "name": "RAILWAY_TCP_PROXY_DOMAIN"
+        },
+        {
+          "serviceId": "d6351cec-fe04-4a6f-8e05-1cc164ea1e73",
+          "name": "RAILWAY_TCP_PROXY_PORT"
+        },
+        {
+          "serviceId": "d6351cec-fe04-4a6f-8e05-1cc164ea1e73",
+          "name": "REDISUSER"
+        },
+        {
+          "serviceId": "d6351cec-fe04-4a6f-8e05-1cc164ea1e73",
+          "name": "REDIS_PASSWORD"
+        }
+      ]
+    },
+    {
+      "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
+      "name": "DATABASE_URL",
+      "isSealed": true,
+      "references": [
+        {
+          "serviceId": "c454955f-263b-4599-aee0-dc447a4d3d15",
+          "name": "PINTPATH_RUNTIME_DATABASE_URL"
+        }
+      ]
+    },
+    {
+      "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
+      "name": "REDIS_URL",
+      "isSealed": true,
+      "references": [
+        {
+          "serviceId": "d6351cec-fe04-4a6f-8e05-1cc164ea1e73",
+          "name": "REDIS_URL"
+        }
+      ]
+    },
+    {
+      "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
+      "name": "SUPABASE_SERVICE_ROLE_KEY",
+      "isSealed": true,
+      "references": []
+    },
+    {
+      "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
+      "name": "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
+      "isSealed": true,
+      "references": []
+    },
+    {
+      "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
+      "name": "SOURCE_EVIDENCE_SIGNING_SECRET",
+      "isSealed": true,
+      "references": []
+    }
+  ],
+  "forbiddenServiceIds": [
+    "9628f2ea-2630-4ae3-90db-3c83c0d5dc63",
+    "e8095943-0d46-4a57-9db4-afe952a42386"
+  ]
+}

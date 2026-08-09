@@ -64,7 +64,10 @@ describe("release workflow contracts", () => {
     expect(source).toContain('PINTPATH_REVOKE_DIRECT_SMOKE_TOKENS: "true"');
     expect(source).toContain("npm run --silent smoke:production | tee production-public-smoke.json");
     expect(source).toContain("npm run --silent smoke:production:auth");
-    expect(source).toContain("npm run --silent readiness:launch");
+    expect(source).not.toContain("npm run --silent readiness:launch");
+    expect(source).toContain(
+      "npm run --silent readiness:railway:sealed | tee railway-sealed-variable-readiness.json",
+    );
     expect(source).toContain("npm run --silent readiness:data | tee production-data-readiness.json");
     expect(source).toContain("npm run --silent release:evidence:strict");
     const postgresRuntimeStep = source.match(
@@ -107,31 +110,18 @@ describe("release workflow contracts", () => {
     expect(e2eStep).not.toContain("PINTPATH_SMOKE_VENUE_PASSWORD");
     expect(e2eStep).not.toContain("PINTPATH_SMOKE_ADMIN_TOKEN");
 
-    const readinessStep = source.match(/- name: Enforce production provider readiness[\s\S]*?(?=\n\s{6}- name:)/)?.[0] || "";
-    expect(readinessStep).toContain("NODE_ENV: production");
-    expect(readinessStep).toContain("SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}");
-    expect(readinessStep).toContain("DATABASE_URL: ${{ secrets.DATABASE_URL }}");
-    expect(readinessStep).toContain("PINTPATH_DATABASE_RESOURCE_ID: ${{ secrets.PINTPATH_DATABASE_RESOURCE_ID }}");
-    expect(readinessStep).toContain("PINTPATH_EXPECTED_DATABASE_RESOURCE_ID: ${{ secrets.PINTPATH_EXPECTED_DATABASE_RESOURCE_ID }}");
-    expect(readinessStep).toContain("PINTPATH_FORBIDDEN_DATABASE_RESOURCE_IDS: ${{ secrets.PINTPATH_FORBIDDEN_DATABASE_RESOURCE_IDS }}");
-    expect(readinessStep).toContain("PINTPATH_EXPECTED_DATABASE_URL_SHA256: ${{ secrets.PINTPATH_EXPECTED_DATABASE_URL_SHA256 }}");
-    expect(readinessStep).toContain("PINTPATH_FORBIDDEN_DATABASE_URL_SHA256S: ${{ secrets.PINTPATH_FORBIDDEN_DATABASE_URL_SHA256S }}");
-    expect(readinessStep).toContain("PINTPATH_REDIS_RESOURCE_ID: ${{ secrets.PINTPATH_REDIS_RESOURCE_ID }}");
-    expect(readinessStep).toContain("PINTPATH_EXPECTED_REDIS_RESOURCE_ID: ${{ secrets.PINTPATH_EXPECTED_REDIS_RESOURCE_ID }}");
-    expect(readinessStep).toContain("PINTPATH_FORBIDDEN_REDIS_RESOURCE_IDS: ${{ secrets.PINTPATH_FORBIDDEN_REDIS_RESOURCE_IDS }}");
-    expect(readinessStep).toContain("PINTPATH_EXPECTED_REDIS_URL_SHA256: ${{ secrets.PINTPATH_EXPECTED_REDIS_URL_SHA256 }}");
-    expect(readinessStep).toContain("PINTPATH_FORBIDDEN_REDIS_URL_SHA256S: ${{ secrets.PINTPATH_FORBIDDEN_REDIS_URL_SHA256S }}");
-    expect(readinessStep).toContain('COMMERCIAL_LAUNCH_ENABLED: "false"');
-    expect(readinessStep).toContain('CONSUMER_PAID_ENROLLMENT_ENABLED: "false"');
-    expect(readinessStep).toContain("REPORT_EMAIL_MODE: disabled");
-    expect(readinessStep).toContain('REPORT_DELIVERY_SCHEDULE_ENABLED: "false"');
-    expect(readinessStep).toContain('PINTPATH_REPORT_DELIVER: "false"');
-    expect(readinessStep).toContain('POS_WEBHOOK_SIGNING_SECRET: ""');
-    expect(readinessStep).toContain('STRIPE_SECRET_KEY: ""');
-    expect(readinessStep).not.toContain("secrets.STRIPE_");
-    expect(readinessStep).not.toContain("secrets.POS_WEBHOOK_SIGNING_SECRET");
-    expect(readinessStep).not.toContain("secrets.RESEND_API_KEY");
-    expect(readinessStep).not.toContain("NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY");
+    const readinessStep = source.match(/- name: Enforce permanent-staging sealed-variable metadata[\s\S]*?(?=\n\s{6}- name:)/)?.[0] || "";
+    expect(readinessStep).toContain(
+      "PINTPATH_RAILWAY_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_METADATA_TOKEN }}",
+    );
+    expect(readinessStep).toContain("readiness:railway:sealed");
+    expect(readinessStep).toContain("railway-sealed-variable-readiness.json");
+    expect(readinessStep.match(/\$\{\{ secrets\./g)).toHaveLength(1);
+    expect(readinessStep).not.toContain("DATABASE_URL");
+    expect(readinessStep).not.toContain("REDIS_URL");
+    expect(readinessStep).not.toContain("SUPABASE_");
+    expect(readinessStep).not.toContain("SOURCE_EVIDENCE_SIGNING_SECRET");
+    expect(source).not.toContain("provider-readiness-summary.json");
 
     const authenticatedSmokeStep = source.match(/- name: Verify authenticated production roles[\s\S]*?(?=\n\s{6}- name:)/)?.[0] || "";
     expect(authenticatedSmokeStep).toContain("PINTPATH_SMOKE_USER_EMAIL: ${{ secrets.PINTPATH_SMOKE_USER_EMAIL }}");
@@ -165,6 +155,65 @@ describe("release workflow contracts", () => {
     expect(jobPrefix).not.toContain("PINTPATH_SMOKE_USER_PASSWORD");
     expect(jobPrefix).not.toContain("PINTPATH_SMOKE_VENUE_PASSWORD");
     expect(jobPrefix).not.toContain("PINTPATH_SMOKE_ADMIN_TOKEN");
+  });
+
+  it("keeps sealed Railway readiness external, metadata-only, and policy-bound", () => {
+    const packageJson = JSON.parse(repositoryFile("package.json")) as {
+      scripts?: Record<string, string>;
+    };
+    const gate = repositoryFile(
+      "scripts/railway-sealed-variable-readiness.ts",
+    );
+    const providerReadiness = repositoryFile(
+      "scripts/provider-readiness-check.ts",
+    );
+    const policy = repositoryFile(
+      "ops/railway/permanent-staging-sealed-variable-policy.json",
+    );
+    const providerRunbook = releaseDocument(
+      "provider-configuration-runbook.md",
+    );
+    const rotationRunbook = releaseDocument(
+      "permanent-staging-private-auth-rotation.md",
+    );
+    const checklist = releaseDocument("release-readiness-checklist.md");
+    const externalSignoffs = releaseDocument("external-launch-signoffs.md");
+
+    expect(packageJson.scripts?.["readiness:railway:sealed"]).toBe(
+      "tsx scripts/railway-sealed-variable-readiness.ts --policy ops/railway/permanent-staging-sealed-variable-policy.json",
+    );
+    expect(gate).toContain(
+      '"https://backboard.railway.com/graphql/v2"',
+    );
+    expect(gate).toContain('"Project-Access-Token": token');
+    expect(gate).toContain("first: 100");
+    expect(gate).toContain("after: $after");
+    expect(gate).toContain("isSealed");
+    expect(gate).toContain("references");
+    expect(gate).not.toContain("child_process");
+    expect(providerReadiness).toContain(
+      'id: "RAILWAY_DEPLOYED_READINESS_CONTEXT"',
+    );
+    expect(providerReadiness).toContain("RAILWAY_DEPLOYMENT_ID");
+    expect(providerReadiness).toContain("RAILWAY_REPLICA_ID");
+    expect(policy).not.toContain("postgresql://");
+    expect(policy).not.toContain("redis://");
+    expect(policy).not.toContain("supabase.co");
+    for (const document of [providerRunbook, rotationRunbook, checklist]) {
+      expect(document).toContain("readiness:railway:sealed");
+      expect(document).toContain("permanent_staging_complete");
+      expect(document).toContain("railway run");
+    }
+    expect(rotationRunbook).toContain(
+      "not a prerequisite for the PostgreSQL-admin or\nRedis rotation",
+    );
+    expect(rotationRunbook).toContain("a prerequisite\nfor the first seal action");
+    expect(externalSignoffs).toContain(
+      "permanent-staging sealed-variable metadata JSON",
+    );
+    expect(externalSignoffs).toContain(
+      "the GitHub runner must not regenerate them from duplicated application",
+    );
   });
 
   it("pins third-party actions to immutable commits", () => {
