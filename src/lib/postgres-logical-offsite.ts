@@ -57,6 +57,8 @@ const MAX_STATE_RECEIPT_BYTES = 4n * 1024n * 1024n;
 const MAX_ARCHIVE_BYTES = 50n * 1024n * 1024n * 1024n;
 const MAX_REMOTE_JSON_BYTES = 256 * 1024;
 const TUS_CHUNK_BYTES = 6 * 1024 * 1024;
+const SECRET_API_KEY_PATTERN = /^sb_secret_[A-Za-z0-9_-]{20,220}$/;
+const LEGACY_JWT_SEGMENT_PATTERN = /^[A-Za-z0-9_-]{2,4096}$/;
 const LEASE_DURATION_MS = 6 * 60 * 60 * 1000;
 const MINIMUM_POINTER_LEASE_REMAINING_MS = 5 * 60 * 1000;
 const IMMUTABLE_CACHE_CONTROL = "31536000";
@@ -1954,6 +1956,44 @@ function encodeTusMetadata(values: Readonly<Record<string, string>>): string {
     .join(",");
 }
 
+function isLegacyServiceRoleApiKey(value: string): boolean {
+  const segments = value.split(".");
+  if (
+    segments.length !== 3
+    || segments.some((segment) => !LEGACY_JWT_SEGMENT_PATTERN.test(segment))
+  ) return false;
+  try {
+    const header: unknown = JSON.parse(
+      Buffer.from(segments[0]!, "base64url").toString("utf8"),
+    );
+    const payload: unknown = JSON.parse(
+      Buffer.from(segments[1]!, "base64url").toString("utf8"),
+    );
+    return isPlainObject(header)
+      && header.alg === "HS256"
+      && header.typ === "JWT"
+      && isPlainObject(payload)
+      && payload.role === "service_role";
+  } catch {
+    return false;
+  }
+}
+
+function tusAuthenticationHeaders(
+  serviceRoleKey: string,
+): Readonly<Record<string, string>> {
+  if (SECRET_API_KEY_PATTERN.test(serviceRoleKey)) {
+    return { apikey: serviceRoleKey };
+  }
+  if (isLegacyServiceRoleApiKey(serviceRoleKey)) {
+    return {
+      authorization: `Bearer ${serviceRoleKey}`,
+      apikey: serviceRoleKey,
+    };
+  }
+  throw offsiteError("object_upload_failed");
+}
+
 class SupabasePostgresLogicalOffsiteStorage implements PostgresLogicalOffsiteStorage {
   private readonly client: SupabaseClient;
   private readonly boundedFetch: typeof globalThis.fetch;
@@ -2166,8 +2206,7 @@ class SupabasePostgresLogicalOffsiteStorage implements PostgresLogicalOffsiteSto
       metadata: JSON.stringify(input.metadata),
     });
     const commonHeaders = {
-      authorization: `Bearer ${this.serviceRoleKey}`,
-      apikey: this.serviceRoleKey,
+      ...tusAuthenticationHeaders(this.serviceRoleKey),
       "tus-resumable": "1.0.0",
     };
     let createResponse: Response;
@@ -2306,4 +2345,6 @@ export const postgresLogicalOffsiteInternals = {
   directTusEndpoint,
   createScopedStorageFetch,
   encodeTusMetadata,
+  isLegacyServiceRoleApiKey,
+  tusAuthenticationHeaders,
 };

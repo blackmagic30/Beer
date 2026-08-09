@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { SqlDatabase } from "../src/db/sql-database.js";
 import type {
@@ -47,6 +47,12 @@ const SOURCE_DATABASE_IDENTITY_SHA256 =
 const RUNTIME_CONNECTION_URL_SHA256 = sha256Fixture(
   "candidate-runtime-connection-url",
 );
+const LEGACY_SERVICE_ROLE_KEY = [
+  Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url"),
+  Buffer.from(JSON.stringify({ role: "service_role", iss: "supabase" })).toString("base64url"),
+  "synthetic-signature",
+].join(".");
+const SECRET_API_KEY = `sb_secret_${"s".repeat(32)}`;
 
 interface FakeObject {
   bytes: Buffer;
@@ -877,6 +883,8 @@ describe("Supabase resumable logical archive transport", () => {
       offset: string | null;
       bytes: number;
       redirect: RequestRedirect | undefined;
+      apikey: string | null;
+      authorization: string | null;
     }[] = [];
     let patchAttempts = 0;
     const fetchImplementation: typeof globalThis.fetch = async (_input, init) => {
@@ -889,6 +897,8 @@ describe("Supabase resumable logical archive transport", () => {
         offset: headers.get("upload-offset"),
         bytes,
         redirect: init?.redirect,
+        apikey: headers.get("apikey"),
+        authorization: headers.get("authorization"),
       });
       if (method === "POST") {
         expect(headers.get("upload-length")).toBe("6");
@@ -916,7 +926,7 @@ describe("Supabase resumable logical archive transport", () => {
     };
     const storage = createSupabasePostgresLogicalOffsiteStorage({
       destinationSupabaseUrl: "https://backup.example.test",
-      destinationServiceRoleKey: "service-role-test-secret",
+      destinationServiceRoleKey: LEGACY_SERVICE_ROLE_KEY,
       requestTimeoutMs: 5_000,
       fetchImplementation,
       clientFactory: () => ({ storage: {} } as unknown as SupabaseClient),
@@ -938,8 +948,104 @@ describe("Supabase resumable logical archive transport", () => {
       offset: "3",
       bytes: 3,
       redirect: "error",
+      apikey: LEGACY_SERVICE_ROLE_KEY,
+      authorization: `Bearer ${LEGACY_SERVICE_ROLE_KEY}`,
     });
     expect(calls.every((call) => call.redirect === "error")).toBe(true);
+    expect(calls.every((call) => call.apikey === LEGACY_SERVICE_ROLE_KEY)).toBe(true);
+    expect(calls.every(
+      (call) => call.authorization === `Bearer ${LEGACY_SERVICE_ROLE_KEY}`,
+    )).toBe(true);
+  });
+
+  it("uses apikey-only TUS authentication for opaque secret API keys", async () => {
+    const root = temporaryRoot();
+    const filePath = path.join(root, "archive.dump");
+    fs.writeFileSync(filePath, "x", { mode: 0o600 });
+    const headers: Headers[] = [];
+    let patchAttempts = 0;
+    const fetchImplementation: typeof globalThis.fetch = async (_input, init) => {
+      const requestHeaders = new Headers(init?.headers);
+      headers.push(requestHeaders);
+      if (init?.method === "POST") {
+        return new Response(null, {
+          status: 201,
+          headers: { location: "/storage/v1/upload/resumable/secret-key-upload" },
+        });
+      }
+      if (init?.method === "PATCH") {
+        patchAttempts += 1;
+        if (patchAttempts === 1) return new Response(null, { status: 503 });
+        return new Response(null, {
+          status: 204,
+          headers: { "upload-offset": "1" },
+        });
+      }
+      if (init?.method === "HEAD") {
+        return new Response(null, {
+          status: 200,
+          headers: { "upload-offset": "0" },
+        });
+      }
+      throw new Error("unexpected request");
+    };
+    const storage = createSupabasePostgresLogicalOffsiteStorage({
+      destinationSupabaseUrl: "https://backup.example.test",
+      destinationServiceRoleKey: SECRET_API_KEY,
+      requestTimeoutMs: 5_000,
+      fetchImplementation,
+      clientFactory: () => ({ storage: {} } as unknown as SupabaseClient),
+    });
+
+    await storage.uploadImmutable({
+      bucketName: BUCKET,
+      objectPath: "_control/postgres-logical-backups/v2/backups/fixture/archive.dump",
+      contentType: "application/octet-stream",
+      cacheControl: "31536000",
+      metadata: { sha256: sha256Fixture("x") },
+      filePath,
+      expectedBytes: 1,
+    });
+
+    expect(headers).toHaveLength(4);
+    for (const requestHeaders of headers) {
+      expect(requestHeaders.get("apikey")).toBe(SECRET_API_KEY);
+      expect(requestHeaders.has("authorization")).toBe(false);
+      expect(requestHeaders.get("tus-resumable")).toBe("1.0.0");
+    }
+  });
+
+  it("rejects malformed opaque keys before any TUS request without echoing them", async () => {
+    const root = temporaryRoot();
+    const filePath = path.join(root, "archive.dump");
+    fs.writeFileSync(filePath, "x", { mode: 0o600 });
+    const malformedKey = "sb_secret_too-short";
+    const fetchImplementation = vi.fn() as unknown as typeof globalThis.fetch;
+    const storage = createSupabasePostgresLogicalOffsiteStorage({
+      destinationSupabaseUrl: "https://backup.example.test",
+      destinationServiceRoleKey: malformedKey,
+      requestTimeoutMs: 5_000,
+      fetchImplementation,
+      clientFactory: () => ({ storage: {} } as unknown as SupabaseClient),
+    });
+    let failure: unknown;
+    try {
+      await storage.uploadImmutable({
+        bucketName: BUCKET,
+        objectPath: "_control/postgres-logical-backups/v2/backups/fixture/archive.dump",
+        contentType: "application/octet-stream",
+        cacheControl: "31536000",
+        metadata: { sha256: sha256Fixture("x") },
+        filePath,
+        expectedBytes: 1,
+      });
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toMatchObject({ code: "object_upload_failed" });
+    expect(JSON.stringify(failure)).not.toContain(malformedKey);
+    expect(fetchImplementation).not.toHaveBeenCalled();
   });
 
   it("never forwards privileged requests outside the exact Storage origins and paths", async () => {

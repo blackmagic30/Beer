@@ -1,6 +1,8 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 export const DEFAULT_SUPABASE_REQUEST_TIMEOUT_MS = 30_000;
+const NEW_SUPABASE_API_KEY_PATTERN =
+  /^sb_(?:publishable|secret)_[A-Za-z0-9_-]{20,220}$/;
 
 interface BoundedSupabaseFetchOptions {
   timeoutMs?: number;
@@ -72,6 +74,35 @@ export function createBoundedSupabaseFetch(
   };
 }
 
+/**
+ * The hosted Supabase gateway accepts opaque publishable/secret API keys in
+ * `apikey`, not as JWT bearer credentials. supabase-js copies its API key into
+ * Authorization while no user session exists, so remove only that exact
+ * synthetic duplicate. A distinct user/session bearer remains authoritative,
+ * and legacy JWT API keys retain their historical header behavior.
+ */
+export function createSupabaseApiKeyAwareFetch(
+  apiKey: string,
+  fetchImplementation: typeof globalThis.fetch,
+): typeof globalThis.fetch {
+  const opaqueApiKey = NEW_SUPABASE_API_KEY_PATTERN.test(apiKey);
+  return async (input, init) => {
+    if (!opaqueApiKey) return fetchImplementation(input, init);
+    const sourceHeaders = init?.headers ?? (
+      typeof Request !== "undefined" && input instanceof Request
+        ? input.headers
+        : undefined
+    );
+    if (!sourceHeaders) return fetchImplementation(input, init);
+    const headers = new Headers(sourceHeaders);
+    if (headers.get("authorization") !== `Bearer ${apiKey}`) {
+      return fetchImplementation(input, init);
+    }
+    headers.delete("authorization");
+    return fetchImplementation(input, { ...init, headers });
+  };
+}
+
 export function createServerSupabaseClient(
   url: string,
   serviceRoleOrAnonKey: string,
@@ -84,7 +115,10 @@ export function createServerSupabaseClient(
       detectSessionInUrl: false,
     },
     global: {
-      fetch: createBoundedSupabaseFetch(options),
+      fetch: createSupabaseApiKeyAwareFetch(
+        serviceRoleOrAnonKey,
+        createBoundedSupabaseFetch(options),
+      ),
     },
   });
 }
