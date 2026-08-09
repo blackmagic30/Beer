@@ -58,6 +58,11 @@ network gate described below.
 - Never use `railway environment config --json`, `railway run`, or a database-
   service SSH shell for this ceremony. Treat any resolved environment output as
   a new credential incident.
+- Address every secret escrow by its exact canonical file path and inspect only
+  its owner, mode, link count, device, and inode unless a reviewed consumer is
+  reading it directly. Never run recursive `rg`, `grep`, `find`, previews,
+  dumps, or hashes across the private migration/evidence root: a diagnostic
+  match can itself copy an otherwise protected value into logs or transcripts.
 - Invoke the command with `npm run --silent`; its only allowed stdout is one
   JSON receipt line and it writes nothing to stderr on a classified result.
 

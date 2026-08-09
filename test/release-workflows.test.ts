@@ -360,6 +360,8 @@ describe("release workflow contracts", () => {
     expect(runbook).toContain("fresh locked manual recovery point");
     expect(runbook).toContain("hard timeout\n  plus a 20-minute buffer");
     expect(runbook).toContain("never delete and guess at the schedule");
+    expect(runbook).toContain("exact canonical file path");
+    expect(runbook).toContain("Never run recursive `rg`, `grep`, `find`");
     expect(runbook).toContain("derive their phase from the reviewed mode");
     expect(runbook).not.toContain("derive their phase and reject a mismatch");
     expect(runbook).toContain("restartPolicyMaxRetries` value `1`");
