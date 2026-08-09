@@ -49,6 +49,8 @@
     "db:postgres:backup:logical:retrieve": "tsx scripts/retrieve-postgres-logical-offsite.ts",
     "db:postgres:backup:logical:worm": "tsx scripts/attest-postgres-logical-worm.ts",
     "db:postgres:restore:logical": "tsx scripts/restore-postgres-logical.ts",
+    "db:postgres:backup:private-storage-recovery": "tsx scripts/capture-postgres-private-storage-recovery.ts",
+    "db:postgres:restore:private-storage-recovery": "tsx scripts/restore-postgres-private-storage-recovery.ts",
     "db:postgres:deletion:recovery-proof": "tsx scripts/prove-postgres-account-deletion-recovery.ts",
     "db:postgres:deletion:replay": "tsx scripts/replay-postgres-account-deletion-tombstones.ts",
     "test:seed:pintpath": "ALLOW_FAKE_SEED=true tsx scripts/seed-pintpath-fake-data.ts",

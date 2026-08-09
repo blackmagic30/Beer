@@ -69,6 +69,20 @@ Target Railway profile after the Postgres adapter and migration tooling are
 implemented and proved in permanent staging. Do not paste this into the current
 SQLite runtime merely to satisfy a presence check:
 
+Treat Railway configuration and remote-shell output as credential-bearing.
+`railway environment config --json` returns resolved secret values, and a
+Railway SSH session or nested login shell can expose the full remote/session
+environment. Never run either command in a captured terminal, CI log, support
+transcript, or release-evidence workflow. For inspection, use name-only or
+`decryptVariables:false` provider metadata and perform comparisons entirely in
+process without printing values. Write one secret at a time with
+`railway variable set NAME --stdin --skip-deploys`; use `railway connect --ssh`
+only to launch the intended local database client, with output explicitly
+allowlisted and no nested shell. Any accidental resolved-environment output is
+a credential incident: stop unrelated work, rotate the exposed staging-only
+authorities with overlap, prove the old credentials fail, and preserve a
+secret-free incident receipt before continuing.
+
 ```dotenv
 NODE_ENV=production
 FIELD_TEST_MODE=false

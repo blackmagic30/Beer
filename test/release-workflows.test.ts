@@ -254,6 +254,7 @@ describe("release workflow contracts", () => {
     expect(job).toContain("PINTPATH_ACCOUNT_PRIVACY_POSTGRES_TEST_ADMIN_URL:");
     expect(job).toContain("PINTPATH_ACCOUNT_DELETION_RECOVERY_POSTGRES_TEST_ADMIN_URL:");
     expect(job).toContain("PINTPATH_POSTGRES_ACCOUNT_DELETION_REPLAY_TEST_ADMIN_URL:");
+    expect(job).toContain("PINTPATH_POSTGRES_PRIVATE_STORAGE_RECOVERY_TEST_ADMIN_URL:");
     expect(job).toContain("PINTPATH_BILLING_CHECKOUT_POSTGRES_TEST_ADMIN_URL:");
     expect(job).toContain("PINTPATH_SUPPORT_FEEDBACK_POSTGRES_TEST_ADMIN_URL:");
     expect(job).toContain("PINTPATH_VENUE_ACCESS_POSTGRES_TEST_ADMIN_URL:");
@@ -273,6 +274,7 @@ describe("release workflow contracts", () => {
     expect(job).toContain("npx vitest run test/account-privacy.repository.integration.test.ts");
     expect(job).toContain("npx vitest run test/postgres-account-deletion-recovery-fixture.integration.test.ts");
     expect(job).toContain("npx vitest run test/postgres-account-deletion-replay.integration.test.ts");
+    expect(job).toContain("npx vitest run test/postgres-private-storage-recovery.integration.test.ts");
     expect(job).toContain("npx vitest run test/privacy-retention.repository.integration.test.ts");
     expect(job).toContain("npx vitest run test/stripe-subscription.repository.integration.test.ts");
     expect(job).toContain("npx vitest run test/billing-checkout.repository.integration.test.ts");
@@ -300,6 +302,25 @@ describe("release workflow contracts", () => {
     expect(migrationStatus).toContain("idx_accounts_admin_search_trgm");
     expect(migrationStatus).toContain("CREATE INDEX CONCURRENTLY");
     expect(migrationStatus).toContain("permanent staging");
+  });
+
+  it("keeps private Storage recovery provider-gated and bound to the local PG17 contract", () => {
+    const packageJson = JSON.parse(repositoryFile("package.json")) as {
+      scripts?: Record<string, string>;
+    };
+    const runbook = releaseDocument("postgres-private-storage-recovery.md");
+
+    expect(
+      packageJson.scripts?.["db:postgres:backup:private-storage-recovery"],
+    ).toBe("tsx scripts/capture-postgres-private-storage-recovery.ts");
+    expect(
+      packageJson.scripts?.["db:postgres:restore:private-storage-recovery"],
+    ).toBe("tsx scripts/restore-postgres-private-storage-recovery.ts");
+    expect(runbook).toContain("launch gates remain **OPEN**");
+    expect(runbook).toContain("No Supabase, Railway, AWS, production, or");
+    expect(runbook).toContain("retry with a fresh");
+    expect(runbook).toContain("destinationDisposalRequired=true");
+    expect(runbook).toContain("This foundation is not live recovery evidence");
   });
 
   it("keeps development types and CI on the production Node 22 baseline", () => {

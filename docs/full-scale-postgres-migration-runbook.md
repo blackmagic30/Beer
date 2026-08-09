@@ -357,6 +357,11 @@ URL file.
   of
   [postgres-logical-offsite-attestation.md](postgres-logical-offsite-attestation.md).
 - [ ] Create and verify the corresponding private application Storage snapshot.
+  The canonical PostgreSQL-native capture/restore-set foundation, restricted
+  PG17 integration test, and operator CLIs are implemented, but no live bucket
+  was read or copied as implementation evidence. Execute and independently
+  verify the substantive capture described in
+  [postgres-private-storage-recovery.md](postgres-private-storage-recovery.md).
 - [x] Create and seal one authentic wholly synthetic deletion-tombstone ledger
   authority tied to the pre-deletion backup; replay it once with
   `newlyApplied=1` and again with `alreadyApplied=1`, require the same semantic
@@ -376,7 +381,11 @@ URL file.
   [postgres-logical-restore-rehearsal.md](postgres-logical-restore-rehearsal.md).
 - [ ] Restore private Storage, exercise the complete application, test
   PITR/WORM retrieval, measure and approve RPO/RTO, and prove the combined
-  recovered system contains no prohibited tombstoned data.
+  recovered system contains no prohibited tombstoned data. The implemented
+  restore command requires an empty policy-matching bucket on a distinct
+  disposable origin, exact logical-state/reference equality, immutable uploads,
+  full re-download verification, and sealed deletion-authority binding; the
+  live restore/application/RPO/RTO evidence remains open.
 - [ ] Remove public access, revoke temporary credentials, delete only the
   recorded disposable resources, and independently verify production and
   permanent staging were unchanged.
@@ -396,6 +405,8 @@ synthetic deletion replay close only their exact checked boxes above. The
 operational copy remains mutable same-provider evidence; it does not prove
 private Storage recovery, a full application boot, PITR, provider-enforced
 WORM, approved RPO/RTO objectives, production recovery, or disposal.
+The private-Storage recovery-set implementation is local foundation evidence
+only and does not change that conclusion.
 Use a dedicated `LOGIN`, `NOSUPERUSER`, `NOCREATEDB`, `NOCREATEROLE`,
 `NOREPLICATION`, `NOBYPASSRLS` backup login that can `SET ROLE
 pintpath_migrator`; the runtime login cannot

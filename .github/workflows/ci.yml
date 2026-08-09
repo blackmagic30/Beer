@@ -83,6 +83,7 @@ jobs:
       PINTPATH_ACCOUNT_PRIVACY_POSTGRES_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
       PINTPATH_ACCOUNT_DELETION_RECOVERY_POSTGRES_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
       PINTPATH_POSTGRES_ACCOUNT_DELETION_REPLAY_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+      PINTPATH_POSTGRES_PRIVATE_STORAGE_RECOVERY_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
       PINTPATH_BILLING_CHECKOUT_POSTGRES_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
       PINTPATH_SUPPORT_FEEDBACK_POSTGRES_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
       PINTPATH_VENUE_ACCESS_POSTGRES_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
@@ -146,6 +147,9 @@ jobs:
 
       - name: Run account-deletion tombstone replay Postgres contract
         run: npx vitest run test/postgres-account-deletion-replay.integration.test.ts
+
+      - name: Run private Storage recovery Postgres contract
+        run: npx vitest run test/postgres-private-storage-recovery.integration.test.ts
 
       - name: Run privacy-retention Postgres contract
         run: npx vitest run test/privacy-retention.repository.integration.test.ts
