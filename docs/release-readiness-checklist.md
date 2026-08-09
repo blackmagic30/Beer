@@ -1,6 +1,6 @@
 # Pint Path Release-Readiness Test Checklist
 
-This checklist adapts the external Pint Path test-pack assumptions to this repository. The automated suite is repo-native Vitest/Express/SQLite and must run only against local, test, preview, or staging data.
+This checklist adapts the external Pint Path test-pack assumptions to this repository. Synthetic automated tests may use the isolated SQLite fixture adapter, but SQLite is not an approved full-scale runtime. Production and permanent integrated staging require the reviewed shared Postgres adapter and must never receive synthetic reset/seed data.
 
 ## Automated Local Gates
 
@@ -22,7 +22,12 @@ After production provider env is configured, also run:
 npm run readiness:launch
 ```
 
-This strict launch gate treats provider warnings as blockers. See `docs/launch-9-readiness-gates.md` for the manual evidence pack that local tests cannot prove.
+Run that command inside the deployed permanent-staging and production service
+environments and require `readinessProfile=production_free_launch`. It must
+prove the actual service configuration—not only the safe literal Free-scope
+values used by GitHub Actions—and treats provider warnings as blockers. See
+`docs/launch-9-readiness-gates.md` for the manual evidence pack that local tests
+cannot prove.
 
 GitHub keeps these two signals deliberately separate:
 
@@ -102,6 +107,12 @@ These are launch-critical but require provider/staging verification:
 - **Supabase database version:** Confirm the live project is not on deprecated Postgres 14 before launch.
 - **Supabase Data API retirement:** Prove direct PostgREST/Data API reads, writes, RPCs, and storage-object access are denied to ordinary clients while the documented Express API paths still work. Future migrations must not add public grants unless a separately reviewed access contract explicitly reintroduces them.
 - **Storage bucket live audit:** Verify `beermap-source-evidence` is private, has the intended file-size/MIME limits, and has no direct `anon` or `authenticated` object policies. Prove ordinary clients are denied and only the server-authorized API/admin signed-URL paths work.
+- **Shared application Postgres:** Implement and exercise the reviewed
+  Postgres persistence adapter before candidate freeze. Permanent staging and
+  production must use a least-privilege pooled TLS `DATABASE_URL`, at least two
+  application replicas, shared Redis, migration/reconciliation proof, and a
+  Postgres-compatible rollback build. A mounted SQLite file is migration input
+  only and fails this gate.
 - **Google Maps Map ID:** Create a JavaScript/vector Map ID in Google Maps Platform, set `GOOGLE_MAPS_MAP_ID`, and verify AdvancedMarkerElement markers render on staging.
 - **Stripe/pricing:** Keep `COMMERCIAL_LAUNCH_ENABLED=false` and
   `CONSUMER_PAID_ENROLLMENT_ENABLED=false` for this release. Stripe values may
@@ -110,10 +121,14 @@ These are launch-critical but require provider/staging verification:
   belong to a future commercial candidate after pricing is approved; do not
   enable a flag or make a charge for this free launch.
 - **Report email:** Keep `REPORT_EMAIL_MODE=disabled` and `REPORT_DELIVERY_SCHEDULE_ENABLED=false` for this Free venue launch, and prove no report is sent or advertised. Provider-delivery proof belongs to a future Pro/commercial release candidate. This does not replace the separate current-launch account-deletion completion-notice evidence below.
-- **Account-deletion completion notice:** Configure a dedicated Resend sending-only key, verified sender/reply-to, 32-byte recipient-encryption keyring, and signed webhook for `email.delivered`, `email.delivery_delayed`, `email.bounced`, `email.failed`, `email.suppressed`, and `email.complained`. Set `ACCOUNT_DELETION_REHEARSAL_ENABLED=true` only for the sacrificial proof in isolated Railway staging and prove it is `false` or absent in production. Verify delivery and audited terminal-resolution purges, the 30-day post-completion limit, the 60-day pre-completion held cap, invalid/replayed and out-of-order events, failure handling, restart/worker overlap, the pre-24-hour uncertain-send cutoff, and restored-tombstone suppression.
-- **Redis rate limiting:** Full-scale production should use `REDIS_URL`; in-memory fallback is acceptable only for controlled beta/preview. Set `REQUIRE_REDIS_RATE_LIMITING=true` for the isolated two-replica staging outage drill so protected traffic and readiness fail closed when staging Redis is unavailable.
+- **Account-deletion completion notice:** Configure a dedicated Resend sending-only key, verified sender/reply-to, 32-byte recipient-encryption keyring, and signed webhook for `email.delivered`, `email.delivery_delayed`, `email.bounced`, `email.failed`, `email.suppressed`, and `email.complained`. Set `ACCOUNT_DELETION_REHEARSAL_ENABLED=true` only for the sacrificial proof in permanent integrated Railway staging and prove it is `false` or absent in production. The reviewed expected Railway/Supabase identity pins must match, Postgres and shared staging Redis must be active, and at least two replicas must participate. Verify delivery and audited terminal-resolution purges, the 30-day post-completion limit, the 60-day pre-completion held cap, invalid/replayed and out-of-order events, failure handling, restart/worker overlap, the pre-24-hour uncertain-send cutoff, and restored-tombstone suppression.
+- **Redis rate limiting:** Full-scale production and permanent integrated staging must use `REDIS_URL`, a distinct environment namespace, and `REQUIRE_REDIS_RATE_LIMITING=true`; in-memory fallback is preview/local only. Run the two-replica staging outage drill so protected traffic and readiness fail closed when staging Redis is unavailable.
 - **DAST/mobile E2E:** Do not run dynamic scanners against production. Run any ZAP/Lighthouse/Playwright mobile pass only against local, preview, or staging.
-- **Backups/restore:** Run and document a provider-level restore drill before full-scale launch.
+- **Backups/restore:** Before full-scale launch, capture Postgres PITR plus
+  logical, private Storage/evidence, and deletion-tombstone exports into the
+  separately administered WORM authority. Retrieve and restore the exact set
+  into newly created ephemeral destructive restore staging, prove RPO/RTO and
+  application invariants, then destroy every recorded disposable resource.
 
 ## Manual Staging Smoke
 

@@ -1,6 +1,16 @@
 # Pint Path Provider Configuration Runbook
 
-Use this before a Railway production or staging deployment. The local app can run with placeholder values, but `NODE_ENV=production` now fails fast if critical provider config is missing.
+Use this before a Railway production or staging deployment for the full-scale Free web-and-iOS release. The local app can run with placeholder values, but `NODE_ENV=production` now fails fast if critical provider config is missing.
+
+> **Full-scale launch blocker:** the checked-in Free-live application now uses
+> the shared transactional PostgreSQL contract and permanent staging has a
+> verified import/runtime/logical backup. The reviewed build is not deployed in
+> staging, however, and production remains attached to SQLite while its
+> provisioned PostgreSQL service is empty and detached. Provider configuration
+> cannot substitute for the remaining provider credentials,
+> two-replica/load/restart, PITR/WORM/full-restore, promotion, and
+> cutover evidence. Every SQLite command below is retained only for one-time
+> source capture, reconciliation, and legacy restore evidence during cutover.
 
 ## Repeatable Checks
 
@@ -22,7 +32,13 @@ NODE_ENV=production npm run readiness:providers
 npm run readiness:launch
 ```
 
-The provider check only reports whether values are present. It never prints secret values. `readiness:launch` is stricter: any remaining provider warning blocks broad public launch.
+The provider check never prints secret values. `readiness:launch` is stricter:
+run it inside the deployed service and require
+`readinessProfile=production_free_launch`; any remaining warning blocks broad
+public launch. It also fails any commercial/trial/reward/report/POS flag or
+credential drift. A GitHub job with injected safe literals is not proof of the
+actual Railway environment. A green local result does **not** close the live
+provider, staging-app, scale, recovery, or cutover blockers above.
 
 ## Google Maps
 
@@ -49,14 +65,31 @@ Keep `GOOGLE_PLACES_API_KEY` server-side for imports/geocoding. Do not expose it
 
 ## Railway
 
-Required production values:
+Target Railway profile after the Postgres adapter and migration tooling are
+implemented and proved in permanent staging. Do not paste this into the current
+SQLite runtime merely to satisfy a presence check:
 
 ```dotenv
 NODE_ENV=production
+FIELD_TEST_MODE=false
 HOST=0.0.0.0
 PORT=8080
 PUBLIC_BASE_URL=https://pintpath.au
-DATABASE_PATH=/app/data/pint-path.sqlite
+PINTPATH_IDENTITY_REGISTRY_PHASE=complete
+PINTPATH_PERMANENT_STAGING_RAILWAY_PROJECT_ID=replace_with_reviewed_staging_project_id
+PINTPATH_PERMANENT_STAGING_RAILWAY_ENVIRONMENT_ID=replace_with_reviewed_staging_environment_id
+PINTPATH_PERMANENT_STAGING_RAILWAY_SERVICE_ID=replace_with_reviewed_staging_app_service_id
+# Do not set DATABASE_PATH in the deployed service. Keep any sealed SQLite
+# migration source outside the runtime environment after reconciliation.
+DATABASE_URL=postgresql://app_user:replace_me@direct-or-session-host:5432/pintpath?uselibpqcompat=true&sslmode=require
+# The checked-in runtime also adds libpq compatibility to its private Pool URL,
+# so the flag above is explicit but not required for correct sslmode=require
+# behavior. Identity pins always hash the exact configured DATABASE_URL bytes;
+# adding, removing, or reordering a query parameter requires new reviewed pins.
+# Plain sslmode=require encrypts without certificate authentication; supplying
+# sslrootcert promotes it to CA verification as in libpq. Use verify-full where
+# the provider supports hostname verification, or verify-ca with one explicit
+# readable sslrootcert when only CA verification is possible.
 # Keep at one on Railway for forwarded scheme/host handling. Client security
 # identity uses Railway's platform-provided X-Real-IP, not proxy hop count.
 TRUST_PROXY_HOPS=1
@@ -74,12 +107,13 @@ SUPABASE_OAUTH_PROVIDERS=google
 REPORT_TIMEZONE=Australia/Melbourne
 REPORT_EMAIL_MODE=disabled
 RESEND_API_KEY=
-REPORT_EMAIL_FROM="Pint Path <reports@pintpath.au>"
-REPORT_EMAIL_REPLY_TO=admin@pintpath.au
+REPORT_EMAIL_FROM=
+REPORT_EMAIL_REPLY_TO=
 REPORT_DELIVERY_SCHEDULE_ENABLED=false
 REPORT_DELIVERY_DAY=2
 REPORT_DELIVERY_HOUR=9
 REPORT_DELIVERY_CHECK_INTERVAL_MINUTES=60
+PINTPATH_REPORT_DELIVER=false
 ACCOUNT_DELETION_NOTICE_MODE=resend
 RESEND_TRANSACTIONAL_API_KEY=replace_with_sending_only_key
 ACCOUNT_DELETION_NOTICE_FROM="Pint Path <account@pintpath.au>"
@@ -90,7 +124,21 @@ ACCOUNT_DELETION_NOTICE_KEYRING_JSON='{"2026-08":"replace_with_base64_32_byte_ke
 ACCOUNT_DELETION_NOTICE_CHECK_INTERVAL_MINUTES=5
 ACCOUNT_DELETION_REHEARSAL_ENABLED=false
 REDIS_URL=redis://default:replace_me@host:6379
-REQUIRE_REDIS_RATE_LIMITING=false
+PINTPATH_DATABASE_RESOURCE_ID=replace_with_live_environment_database_provider_resource_id
+PINTPATH_EXPECTED_DATABASE_RESOURCE_ID=replace_with_registered_environment_database_provider_resource_id
+PINTPATH_FORBIDDEN_DATABASE_RESOURCE_IDS=replace_with_other_two_environment_database_resource_ids
+PINTPATH_PERMANENT_STAGING_DATABASE_RESOURCE_ID=railway:replace_with_staging_environment_id:replace_with_staging_database_service_id
+PINTPATH_REDIS_RESOURCE_ID=replace_with_live_environment_redis_provider_resource_id
+PINTPATH_EXPECTED_REDIS_RESOURCE_ID=replace_with_registered_environment_redis_provider_resource_id
+PINTPATH_FORBIDDEN_REDIS_RESOURCE_IDS=replace_with_other_two_environment_redis_resource_ids
+PINTPATH_PERMANENT_STAGING_REDIS_RESOURCE_ID=railway:replace_with_staging_environment_id:replace_with_staging_redis_service_id
+PINTPATH_EXPECTED_DATABASE_URL_SHA256=replace_with_exact_environment_database_url_digest
+PINTPATH_FORBIDDEN_DATABASE_URL_SHA256S=replace_with_other_registered_environment_database_url_digests
+PINTPATH_PERMANENT_STAGING_DATABASE_URL_SHA256=replace_with_exact_staging_database_url_digest
+PINTPATH_EXPECTED_REDIS_URL_SHA256=replace_with_exact_environment_redis_url_digest
+PINTPATH_FORBIDDEN_REDIS_URL_SHA256S=replace_with_other_registered_environment_redis_url_digests
+PINTPATH_PERMANENT_STAGING_REDIS_URL_SHA256=replace_with_exact_staging_redis_url_digest
+REQUIRE_REDIS_RATE_LIMITING=true
 ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=false
 SOURCE_EVIDENCE_SIGNING_SECRET=replace_with_32_plus_random_characters
 SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS=300
@@ -102,22 +150,84 @@ DEMO_BILLING_MODE=false
 ALLOW_DEMO_BILLING_IN_PRODUCTION=false
 COMMERCIAL_LAUNCH_ENABLED=false
 CONSUMER_PAID_ENROLLMENT_ENABLED=false
+PINT_POINTS_REWARDS_ENABLED=false
+ALCOHOL_GAMIFICATION_ENABLED=false
+VENUE_PRO_TRIAL_DAYS=0
+VENUE_PRO_TRIAL_REQUIRE_PAYMENT_METHOD=false
 ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=false
 STRIPE_SECRET_KEY=
 STRIPE_WEBHOOK_SECRET=
 STRIPE_PRICE_MONTHLY=
 STRIPE_PRICE_YEARLY=
 STRIPE_PRO_PRICE_ID=
-OFFSITE_BACKUP_SUPABASE_URL=https://your-independent-backup-project.supabase.co
-OFFSITE_BACKUP_SERVICE_ROLE_KEY=your_independent_project_service_role_key
+NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=
+OFFSITE_BACKUP_SUPABASE_URL=https://your-operational-restore-copy-project.supabase.co
+OFFSITE_BACKUP_SERVICE_ROLE_KEY=your_operational_restore_copy_service_role_key
 OFFSITE_BACKUP_BUCKET=pintpath-backups
 OFFSITE_BACKUP_INTERVAL_HOURS=24
 OFFSITE_BACKUP_RETENTION_DAYS=30
 ```
 
-Replace all applicable placeholders with real environment-specific values. `SOURCE_EVIDENCE_SIGNING_SECRET` is always required. For the selected manual counter-entry launch mode, leave `POS_WEBHOOK_SIGNING_SECRET` absent; the signed POS webhook remains disabled and fails closed. If a POS adapter is later approved, configure a different high-entropy 32+ byte POS secret before enabling it. `OFFSITE_BACKUP_SUPABASE_URL` must have a different origin from `SUPABASE_URL`. The five Stripe values are required only when `COMMERCIAL_LAUNCH_ENABLED=true` or `CONSUMER_PAID_ENROLLMENT_ENABLED=true`; keep both flags and all Stripe values unset for this deferred-pricing production deploy.
+Replace all applicable placeholders with real environment-specific values. `SOURCE_EVIDENCE_SIGNING_SECRET` is always required. Leave `POS_WEBHOOK_SIGNING_SECRET` absent: counter, reward, redemption, and POS modes are outside this release and must remain disabled. `OFFSITE_BACKUP_SUPABASE_URL` must have a different origin from `SUPABASE_URL`, but that separation alone does not make it independent or immutable. Keep field-test mode, both paid flags, rewards, and alcohol gamification `false`; keep `VENUE_PRO_TRIAL_DAYS=0`, report delivery disabled, and all Stripe values absent for this Free-only release.
 
-Use a persistent Railway volume mounted at `/app/data`. Back it up before each schema-affecting deploy.
+Generate each connection digest from the exact credentialed URL only inside the
+protected environment; never print or duplicate the URL. The expected digest
+must match that environment, while each forbidden digest list contains both of
+the other current production/permanent-staging/restore identities. Also bind
+the live non-secret database and Redis provider resource IDs through provider
+service references, match the protected expected IDs, and forbid both other
+environment resource IDs. Startup and provider readiness require both the URL
+configuration and provider-resource checks; they emit no connection URL or
+digest. Supabase project pinning and the
+fixed private `beermap-source-evidence` bucket provide the corresponding
+Storage identity check.
+
+### First permanent-staging identity bootstrap
+
+The first staging database cannot truthfully name production and restore
+database identities before those service instances exist. Do not invent
+placeholder hashes or IDs. For this one operator-only step, set
+`PINTPATH_IDENTITY_REGISTRY_PHASE=staging-bootstrap`, load the exact protected
+Railway project/environment/app-service tuple, and bind both staging Postgres
+and Redis with matching URL hashes and environment-specific identities in the
+form `railway:<environment-id>:<service-id>`. Leave all four forbidden sibling
+lists absent.
+
+Bootstrap is deliberately non-launchable: `src/server.ts` refuses to import the
+application, routes, or workers; provider readiness skips Storage mutations and
+returns a distinct incomplete profile; production, restore, and deletion
+rehearsal reject the phase. The executable Postgres verifier validates this
+full environment contract before opening its one-connection pool. Once the real
+production and restore service instances exist, atomically register their two
+identities, set `PINTPATH_IDENTITY_REGISTRY_PHASE=complete`, and rerun the full
+deploy and provider gates. Complete production/restore configurations must also
+include the named permanent-staging hashes and service-instance IDs in their
+forbidden lists.
+
+Ordinary Railway staging in complete mode selects
+`readinessProfile=permanent_staging_complete`, not the canonical-production
+profile. Its live/expected/named database and Redis pins must all identify
+permanent staging. Each forbidden list must contain the two distinct production
+and restore siblings; the staging self digest/resource must never be placed in
+its own forbidden list. The gate completes every local identity and
+configuration check before constructing a Supabase client. Only a green strict
+preflight may run the bounded source-evidence and isolated operational-copy
+list/upload/download/remove canaries. A preflight failure performs no Storage
+operation and the app must remain undeployed.
+
+These values now select the implemented server-only `DATABASE_URL` path. The
+checked-in runtime and pinned permanent-staging proof:
+
+- require TLS and use a bounded connection pool sized within the provider connection budget;
+- use a dedicated least-privilege application login, never `postgres`, `service_role`, `anon`, or `authenticated`;
+- keep Pint Path application tables in a non-exposed schema with no Data API grants to `anon` or `authenticated`;
+- use a separate direct/admin connection for migrations and logical backups, rather than giving migration ownership to the runtime role;
+- migrate and checksum all current SQLite state. The synthetic permanent-
+  staging import is verified; two-replica concurrency, idempotency, restart,
+  deploy, rollback, and queue/outbox behaviour remain launch gates; and
+- leave the sealed SQLite file read-only as migration evidence only. All production writes and rollback targets remain Postgres after cutover.
+
+Keep a persistent Railway volume mounted at `/app/data` during the transition for the sealed SQLite source and legacy private evidence. Back it up before each schema-affecting cutover step. It must not remain the authoritative database after the Postgres cutover.
 
 `railway.toml` runs `npm run predeploy:production` after the image is built and before Railway starts a candidate deployment. The command imports the same compiled environment validator used by the server, so missing or invalid production configuration stops that candidate before application startup. This guard validates configuration and runtime invariants only; it does not prove provider connectivity. Keep `npm run readiness:launch` and the real-provider checks in the release gate for external verification.
 
@@ -137,7 +247,7 @@ This value signs short-lived source-evidence review/download URLs. Keep it serve
 
 ## Supabase
 
-Use Supabase for OAuth and private evidence storage, while Pint Path app authorization remains enforced by the Express API.
+Use Supabase for OAuth, private evidence storage, and the target managed Postgres service, while Pint Path app authorization remains enforced by the Express API.
 
 Required checks:
 
@@ -158,8 +268,13 @@ Required checks:
 - New public-schema tables have intentional Data API exposure/grants plus RLS; do not assume new tables are automatically exposed.
 - The `beermap-source-evidence` Storage bucket is private, has no direct `anon`/`authenticated` object policies, and is accessed only through the authorized server API/admin signed-URL path.
 - Supabase MFA is enabled for admin accounts before public launch.
+- Authoritative app tables live in a non-exposed schema and are reached only by the server's least-privilege database role. Do not grant `anon` or `authenticated` access; RLS remains defense in depth rather than the primary server boundary.
+- The application uses a TLS connection pool with a documented maximum. Migrations, schema ownership, `pg_dump`, PITR administration, and restore work use a separately held direct/admin connection.
+- Permanent integrated staging has its own Supabase project/database, Auth users, Storage bucket, Redis, Resend configuration, Railway environment/service, domain, and callbacks. It stays available for migrations, two-replica concurrency, auth, deletion, data repair, smoke, load, deploy, and rollback proof.
+- Disposable restore-staging has a different Railway environment/service, database, Supabase project/Auth/Storage, Redis, secrets, domain, and callbacks from permanent staging, production, and the operational restore copy. It exists only for destructive RPO/RTO proof and is destroyed after signed evidence.
+- Before each destructive drill, copy the disposable restore environment identities from the private release register into the protected `RESTORE_REHEARSAL_EXPECTED_*` variables and verify the runtime identities match. Never repurpose permanent staging. Changing these protected pins for a new disposable restore environment does not require a candidate code change.
 
-## Stripe
+## Future Stripe configuration — not a current launch gate
 
 For this launch, keep `DEMO_BILLING_MODE=false` and both paid-enrolment flags `false`; Stripe is deferred and the following values remain absent. Before enabling either paid flag, configure all five and use Stripe test mode first:
 
@@ -171,7 +286,7 @@ For this launch, keep `DEMO_BILLING_MODE=false` and both paid-enrolment flags `f
 
 The browser does not initialise Stripe.js or need a publishable key. Authenticated checkout requests are created server-side and return a Stripe-hosted Checkout URL.
 
-Before live payments:
+Before any later live-payments release:
 
 1. Run Stripe CLI webhook forwarding to `/api/business/billing/webhook`.
 2. Confirm missing/invalid signatures are rejected.
@@ -219,7 +334,7 @@ Production schedule:
 
 The web service checks asynchronously after 09:00 Melbourne time on day 2 and delivers the previous completed month. A missed window within that calendar month is caught up later. If an older month remains incomplete after the calendar rolls over, deliver it explicitly with `npm run reports:deliver -- --month=YYYY-MM`. Successful months are recorded in persistent `system_state` and short-circuited before regeneration on later checks. Each provider request also has a venue/month/recipient idempotency key. `sending` or uncertain outcomes are not automatically retried; inspect the operational state before an explicit `--retry-rejected` run.
 
-Prefer a maintenance window for manual backfills so their status is easy to audit. The delivery ledger uses atomic SQLite recipient claims, and Resend requests use stable idempotency keys, so overlapping scheduler workers cannot intentionally claim the same venue/month/recipient send. The provider also spaces requests to stay below the normal API rate. A provider `429` is recorded as rejected and must be retried explicitly after the reported limit clears with `--retry-rejected`. The command exits non-zero when no reports were generated, a report has no eligible verified manager, another worker still holds an active send lease, or any delivery is rejected or uncertain; treat those outcomes as an incomplete run rather than a successful no-op.
+Prefer a maintenance window for manual backfills so their status is easy to audit. The current dormant implementation uses atomic SQLite recipient claims and stable Resend idempotency keys; migrate that ledger and its lease semantics to Postgres before any future report release. The provider also spaces requests to stay below the normal API rate. A provider `429` is recorded as rejected and must be retried explicitly after the reported limit clears with `--retry-rejected`. The command exits non-zero when no reports were generated, a report has no eligible verified manager, another worker still holds an active send lease, or any delivery is rejected or uncertain; treat those outcomes as an incomplete run rather than a successful no-op.
 
 Only active, email-verified assignments with `accessLevel=manager` are eligible. Counter staff are excluded. Delivery state stores a recipient hash rather than an email address. `REPORT_EMAIL_MODE=mock` uses a separate state namespace and cannot mark a Resend delivery complete.
 
@@ -238,37 +353,53 @@ Canonical production uses `ACCOUNT_DELETION_NOTICE_MODE=resend` with a dedicated
 
 Recipient ciphertext is held for at most 60 days while deletion is incomplete. After deletion completes, purge it on verified delivery, an audited terminal resolution, or no later than 30 days after completion. Retain only the non-identifying delivery and audit metadata allowed by the retention policy.
 
-Set `ACCOUNT_DELETION_REHEARSAL_ENABLED=true` only for the sacrificial proof in the isolated Railway environment named `staging`; remove it immediately after the proof. That staging service must have no `OFFSITE_BACKUP_SUPABASE_URL`, `OFFSITE_BACKUP_SERVICE_ROLE_KEY`, `REDIS_URL`, `REDIS_KEY_NAMESPACE`, or restore-Redis identity variables. Use `ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=true` only for this single-instance proof, then remove it. `npm run --silent readiness:providers` automatically selects the mutation-free `account_deletion_rehearsal` profile and must never run the production backup Storage canary in this mode. Leave the rehearsal variable `false` or absent in production.
+Set `ACCOUNT_DELETION_REHEARSAL_ENABLED=true` only for the sacrificial proof in
+permanent integrated staging; remove it immediately after the proof. Never use
+disposable destructive restore staging for this ordinary integration rehearsal.
+The staging service must have no production WORM credentials or
+`RESTORE_REHEARSAL_*` variables, but it must retain its dedicated `REDIS_URL`,
+`REQUIRE_REDIS_RATE_LIMITING=true`, and
+`ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=false` while at least two replicas
+and overlapping workers run. Load the reviewed
+`ACCOUNT_DELETION_REHEARSAL_EXPECTED_*` Railway/Supabase pins from the private
+release register and set the independently verified replica count to at least
+two; the runtime profile fails closed on any mismatch.
+`npm run --silent readiness:providers` must select a mutation-free
+`account_deletion_rehearsal` profile that skips the production backup Storage
+canary without skipping shared Redis. Leave the rehearsal variable `false` or
+absent in production.
 
 ## Redis
 
-Full-scale production should set `REDIS_URL`. The in-memory limiter is acceptable only for a short, single-instance private beta with a documented expiry.
+Full-scale production must set `REDIS_URL`, `REQUIRE_REDIS_RATE_LIMITING=true`, and `ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=false`. An in-memory limiter is not an accepted launch configuration.
 
 Before public launch:
 
 - Confirm protected auth/upload/feedback/checkout endpoints rate limit through Redis.
-- In isolated two-replica staging, set `REQUIRE_REDIS_RATE_LIMITING=true` and verify `/ready` reports `rateLimiterRedis.required=true`. Interrupt only staging Redis and prove readiness plus protected traffic fail closed with `503`, then restore the exact staging Redis reference and confirm recovery.
+- In permanent integrated two-replica staging, set `REQUIRE_REDIS_RATE_LIMITING=true` and verify `/ready` reports `rateLimiterRedis.required=true`. Interrupt only staging Redis and prove readiness plus protected traffic fail closed with `503`, then restore the exact staging Redis reference and confirm recovery.
 - Confirm production is not using `ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=true`.
 
 ## Backups And Restore Drills
 
-Production backs up the SQLite database, legacy volume-backed evidence, and every object in the private production `beermap-source-evidence` bucket. Supabase database backups do **not** contain Storage objects, so this Storage export is required for a complete production snapshot.
+> **Transition tooling, not the final full-scale backup contract:** the checked-in commands in this section back up and restore SQLite. Preserve them for a checksummed cutover source and legacy evidence, but do not pass the production gate with them. The final contract requires managed Postgres PITR, a separately checksummed logical Postgres export, every private Storage object and its metadata, the private operational Supabase restore copy, and a provider-enforced object-locked/WORM copy in a separate failure domain. A destructive RPO/RTO proof must restore that complete set into disposable restore-staging.
 
-The `pintpath-backups` destination must be private and in a genuinely independent Supabase project/provider. A bucket in the production project is not disaster isolation and is rejected by startup, provider readiness, and the backup runner.
+The current SQLite transition captures the database, legacy volume-backed evidence, and every object in the private production `beermap-source-evidence` bucket. Supabase database backups do **not** contain Storage objects, so the Storage export is required for a complete transition snapshot.
 
-Run `ops/supabase/independent-backup-project-storage.sql` manually against that independent project. This file deliberately lives outside `supabase/migrations/`, because the normal migration chain targets the production application project and must never create the backup destination there. The previously recorded `20260712010147` production migration remains as an intentional no-op so existing migration histories stay aligned. The backup bucket has no bucket-level object-size cap: SQLite snapshots can grow beyond 100 MiB. Its allowlist includes JSON, SQLite/octet-stream, PDF, and every supported evidence image MIME.
+The `pintpath-backups` destination must be private and in a different Supabase project from production. Treat it only as the **private operational restore copy**: the application-held service-role key can delete and overwrite it, so it is neither independent nor immutable and does not replace WORM.
+
+Run `ops/supabase/independent-backup-project-storage.sql` manually against that operational restore-copy project. The historical filename is preserved because code and tests refer to it. This file deliberately lives outside `supabase/migrations/`, because the normal migration chain targets the production application project and must never create the restore-copy destination there. The previously recorded `20260712010147` production migration remains as an intentional no-op so existing migration histories stay aligned. The bucket has no bucket-level object-size cap: SQLite transition snapshots can grow beyond 100 MiB. Its allowlist includes JSON, SQLite/octet-stream, PDF, and every supported evidence image MIME.
 
 Configure the schedule and retention with:
 
 ```dotenv
-OFFSITE_BACKUP_SUPABASE_URL=https://independent-backup-project.supabase.co
-OFFSITE_BACKUP_SERVICE_ROLE_KEY=replace_with_independent_project_service_role_key
+OFFSITE_BACKUP_SUPABASE_URL=https://operational-restore-copy-project.supabase.co
+OFFSITE_BACKUP_SERVICE_ROLE_KEY=replace_with_operational_restore_copy_service_role_key
 OFFSITE_BACKUP_BUCKET=pintpath-backups
 OFFSITE_BACKUP_INTERVAL_HOURS=24
 OFFSITE_BACKUP_RETENTION_DAYS=30
 ```
 
-Automatic off-site backups and account-deletion-ledger writes run only in the
+Automatic operational restore-copy jobs and account-deletion-ledger writes run only in the
 canonical Railway environment named `production` (or an explicitly operated
 non-Railway `NODE_ENV=production` runtime). Railway staging/preview environments
 must not share the production backup bucket or service key; use an isolated
@@ -278,7 +409,7 @@ ledger or replacing `latest.json`.
 
 Each run uses SQLite's online backup API, captures Storage, then lists Storage again. A changed object set, missing database-referenced object, byte-size mismatch, or MIME mismatch retries the entire snapshot up to three times. The manifest records every SHA-256 checksum and original MIME type, the live database-reference count, reconciliation attempt, and any unreferenced/orphan paths. A snapshot is never published with a missing live evidence object. Every uploaded file is downloaded and checksum-verified; Storage MIME is also verified, including `application/pdf`, before `latest.json` advances.
 
-Deletion suppression is stored outside snapshot prefixes in the independent bucket. An immutable genesis record lives at `_control/account-deletion-ledger-genesis.json`; immutable deletion records live under `_control/account-deletion-ledger/v1/`; the verified aggregate is `_control/account-deletion-tombstones.json`; its genesis/immutable-set/count/hash checkpoint is `_control/account-deletion-ledger-checkpoint.json`. A new installation with no completed deletions therefore has a cryptographically bound zero-count genesis/checkpoint state, not a missing ledger. Deletion entries contain only request ID, internal user ID, and completion time. Production account deletion must durably append and verify its tombstone before the local request can become `completed`. Scheduled backups reconcile the ledger again.
+Deletion suppression is stored outside snapshot prefixes in the operational restore-copy bucket. An application-convention genesis record lives at `_control/account-deletion-ledger-genesis.json`; append-style deletion records live under `_control/account-deletion-ledger/v1/`; the verified aggregate is `_control/account-deletion-tombstones.json`; its genesis/set/count/hash checkpoint is `_control/account-deletion-ledger-checkpoint.json`. A new installation with no completed deletions therefore has a cryptographically bound zero-count genesis/checkpoint state, not a missing ledger. Deletion entries contain only request ID, internal user ID, and completion time. Production account deletion must durably append and verify its tombstone before the local request can become `completed`. Scheduled backups reconcile the ledger again. Because the service-role principal can still remove or replace these objects, only the separately administered WORM replica is immutable authority.
 
 Run an immediate off-volume backup only inside the protected production service/container where `DATABASE_PATH` resolves to the readable live file on the mounted `/app/data` volume. Capture and validate the machine-readable result:
 
@@ -309,7 +440,7 @@ npm run --silent data:backup:verify -- --backup="$LOCAL_BACKUP_PATH"
 
 The local command covers SQLite and legacy filesystem evidence only. It is not a complete production backup when the database contains `supabase_private` evidence references.
 
-For an online drill, create a separate temporary secret key in the independent backup project, store it only in a mode-`600` regular non-symlink file, and delete that temporary key after the drill. Never reuse or revoke the long-lived Railway production backup key. Take the exact `backupId` and trusted `manifestSha256` from the protected production result and use the repository SDK downloader to copy only that immutable prefix into a nonexistent mode-`700` destination:
+For a legacy SQLite transition drill, create a separate temporary secret key in the operational restore-copy project, store it only in a mode-`600` regular non-symlink file, and delete that temporary key after the drill. Never reuse or revoke the long-lived Railway production restore-copy key. Take the exact `backupId` and trusted `manifestSha256` from the protected result and use the repository SDK downloader to copy only that exact prefix into a nonexistent mode-`700` destination:
 
 ```bash
 : "${BACKUP_ID:?set from the protected production backup result}"
@@ -329,7 +460,7 @@ OFFSITE_BACKUP_BUCKET="${OFFSITE_BACKUP_BUCKET:-pintpath-backups}" \
 npm run --silent data:backup:verify -- --backup="$BACKUP_PATH"
 ```
 
-The downloader uses the lockfile-installed `@supabase/supabase-js`; it needs no runtime `npx`, Supabase CLI, project linking, access token, or experimental command. It accepts the protected key file path, downloads only the exact validated immutable prefix into a private temporary directory, rejects unsafe paths and existing destinations, verifies the manifest, and then publishes the completed output without object-path progress. The manifest plus the independent verification command remains the integrity authority. Use only a trusted independent project. The complete safe variable setup, captures, and cleanup steps are in [`external-launch-signoffs.md`](external-launch-signoffs.md#9-backup_restore).
+The downloader uses the lockfile-installed `@supabase/supabase-js`; it needs no runtime `npx`, Supabase CLI, project linking, access token, or experimental command. It accepts the protected key file path, downloads only the exact validated prefix into a private temporary directory, rejects unsafe paths and existing destinations, verifies the manifest, and then publishes the completed output without object-path progress. The manifest plus independent checksum verification is the integrity check for this operational copy, not proof of provider-enforced immutability. The complete safe variable setup, captures, and cleanup steps are in [`external-launch-signoffs.md`](external-launch-signoffs.md#9-backup_restore).
 
 The online rehearsal reads the application-convention append-only genesis and
 every deletion object directly, verifies the current aggregate/checkpoint, and
@@ -362,9 +493,9 @@ DATABASE_PATH=/secure/restore/rehearsal/pint-path.sqlite \
   --output=/secure/restore/rehearsal
 ```
 
-Restore fails closed if the independent ledger authority is absent, malformed, stale, tampered, or an empty aggregate is not bound to the verified genesis/checkpoint. It verifies SQLite, filesystem evidence, Storage evidence, reference-to-object reconciliation, checksums, MIME metadata, and the orphan report before applying all later deletion tombstones. Tombstoned account PII and private evidence are removed from the restored copy before success.
+The legacy restore fails closed if the operational ledger is absent, malformed, stale, tampered, or an empty aggregate is not bound to the verified genesis/checkpoint. It verifies SQLite, filesystem evidence, Storage evidence, reference-to-object reconciliation, checksums, MIME metadata, and the orphan report before applying all later deletion tombstones. Tombstoned account PII and private evidence are removed from the restored copy before success.
 
-Off-site snapshot retention is capped at 30 days, so old snapshots can physically retain pre-deletion bytes for at most 30 days. A completed deletion has zero unprotected restore window: its independent tombstone must be durable before completion. The scheduled 24-hour run is reconciliation and drift detection, not the primary deletion write. If the ledger append fails, deletion remains failed/retryable and production restore is blocked until the ledger is healthy.
+Operational snapshot retention is capped at 30 days, so old snapshots can physically retain pre-deletion bytes for at most 30 days. A completed deletion has zero unprotected restore window: its tombstone must be durable in both the operational copy and the separately administered immutable authority before completion. The scheduled 24-hour run is reconciliation and drift detection, not the primary deletion write. If either append fails, deletion remains failed/retryable and production restore is blocked until the ledger is healthy.
 
 Keep both source and operational destination buckets private. `/ready` requires a
 fresh successful operational backup and live destination capability canaries for
@@ -373,14 +504,16 @@ Those delete canaries prove the existing Supabase restore copy and also prove it
 is not WORM. Replicate every completed set and deletion ledger to a separately
 administered provider/region with object lock and an append/create-only Railway
 principal; verify that copy outside `/ready` with a separately held reader.
-Once per quarter, restore the latest verified directory into isolated staging.
+Once per quarter, restore the latest complete verified Postgres, Storage, ledger,
+and WORM set into disposable restore-staging. Do not use permanent integrated
+staging and do not accept the SQLite-only procedure below as the final drill.
 Rows with `storage_provider='supabase_private'` cannot be tested by pointing
 `SOURCE_EVIDENCE_STORAGE_DIR` at the local restored tree. Use `npm run
 data:backup:stage-evidence -- --backup="$BACKUP_PATH"
 --restore="$REHEARSAL_ROOT"` to upload the restored objects, with manifest MIME
 types and original paths, into an empty private `beermap-source-evidence` bucket
-in a separate staging Supabase project. Configure the isolated staging app with
-the restored database and that project, disable external writes, then confirm
+in the disposable restore-staging Supabase project. Configure the restore-only
+app with the restored database and that project, disable external writes, then confirm
 `/ready`, login, map prices, private image/PDF review, the orphan report,
 deletion-tombstone counts, and staging restore-job state. Purge the staging
 project/object copy after sign-off.
@@ -390,13 +523,17 @@ project/object copy after sign-off.
 Do not launch public production if any of these are true:
 
 - `NODE_ENV=production npm run readiness:providers` fails.
+- The reviewed PostgreSQL build is not deployed and proved in permanent
+  staging, production still opens authoritative state through SQLite, or the
+  candidate cannot run two safe replicas and a Postgres-native rollback path.
 - `GOOGLE_MAPS_MAP_ID` is missing.
 - Admin access is enabled without MFA/verified admin allowlist.
-- Stripe live checkout is enabled before test-mode flow coverage and the controlled smallest-value live checkout/webhook/portal/cancel/refund reconciliation pass.
-- Automatic report email is presented as live before Resend credentials, verified sender-domain DNS, targeted staging delivery, and scheduler operational state are confirmed.
+- Any paid, trial, Pro, reward, counter, redemption, POS, public happy-hour, or report-delivery surface is enabled for this Free-only release.
 - Redis is missing for broad public traffic.
 - Supabase source-evidence Storage is public or untested.
+- Permanent integrated staging and disposable restore-staging share any database, Supabase project/Auth/Storage, Redis, secrets, service, volume, domain, or callback identity.
 - There is no object-locked/WORM copy in a separate provider or region, Railway
   can delete/overwrite that copy or change its retention, either bucket is
-  public, or the independent deletion ledger is unavailable.
-- There is no complete recent off-site backup (SQLite plus Storage evidence) that passes verification, or the quarterly ledger-backed restore drill has not been completed.
+  public, or the WORM-protected deletion ledger is unavailable.
+- There is no complete recent Postgres PITR point, checksummed logical export, Storage export, private operational restore copy, and WORM set, or the quarterly ledger-backed restore drill has not passed in disposable restore-staging.
+- The frozen release SHA has no signed iOS archive, external TestFlight/Beta Review pass, App Review approval, Australia storefront configuration, or manual-release/phased-release hold controlled by the release owner.

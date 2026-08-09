@@ -1,30 +1,42 @@
 # Pint Path production launch runbook
 
-Last audited: 3 August 2026
+Last audited: 8 August 2026
 Scope: full public web launch plus an Australian iOS launch.
 
-The current Railway-volume/SQLite architecture is not a highly available
-“full-scale” architecture: Railway volumes cannot use replicas and require a
-brief service interruption during deployment. It may support only a quantified,
-single-region controlled public launch after capacity/soak and downtime risk are
-accepted in writing. A launch marketed or operated as horizontally scalable,
-multi-region, or highly available requires migration of the authoritative
-SQLite data, deletion outbox, webhook correlation, and job leases to one shared
-transactional datastore before candidate freeze.
+The availability decision is closed for this release. Before candidate freeze,
+migrate all authoritative application state—including current SQLite data,
+account-deletion outbox, webhook correlation, and job leases—to one shared
+transactional Postgres datastore. Production must run at least two application
+replicas against that datastore and prove transaction, idempotency, concurrency,
+restart, deploy, and rollback correctness. SQLite may remain only as a
+checksummed, read-only migration source; it must not be authoritative or receive
+production writes after cutover. A controlled single-region SQLite launch is
+not an alternative for this full-scale release. Follow
+[the full-scale Postgres migration runbook](./full-scale-postgres-migration-runbook.md).
 
-The first iOS release has one architecture: free discovery, contribution, and
-assigned venue-Free profile/beer-list management. It contains no consumer paid
-entitlement, StoreKit product, venue Pro surface, venue trial activation,
-billing management, upgrade prompt, or external purchase link. Venue Pro and
-the dormant 60-day introductory Pro design are web-only.
+This release is Free-only on web and iOS: discovery, contribution, and assigned
+venue-Free profile/beer-list management. Pricing, paid enrolment, venue Pro,
+trials, report delivery, POS/counter tools, rewards, public happy-hour
+discovery, and Android distribution are excluded from every public surface and
+release claim. Their implementation and commercial decisions belong to a
+separate future candidate. No dormant trial or billing path is authorised by
+this release.
 
-Pricing and the venue offer are currently deferred. Both enrolment flags remain
-false, and no price, checkout, or introductory Pro grant may be marketed or
-started in this release. The existing 60-day design shares the commercial flag
-and Stripe path, so it cannot supply the requested free venue access while paid
-enrolment remains closed. Before offering it, the owner must either approve the
-complete pricing/Stripe contract or ship and prove a separately flagged,
-non-billing grant path that expires to Free without creating a subscription.
+**Permanent integrated staging** is the stable Railway staging service plus
+staging Postgres/Supabase, Auth, private Storage, Redis, provider credentials,
+domain, and callbacks. It is used for migrations, two-replica concurrency,
+authentication, deletion, data repair, smoke, load, deploy, and rollback proof.
+
+**Ephemeral destructive restore staging** is created only for backup/PITR
+restoration, RPO/RTO, and deletion-tombstone replay. It has different Railway,
+database, Supabase, Storage, Redis, secret, domain, and callback identities and
+is destroyed only after signed evidence. It is never permanent staging and
+must never share production or permanent-staging credentials or data paths.
+
+Beta App Review or TestFlight acceptance is not full App Review approval. Do
+not announce the combined web+iOS launch until the exact frozen-SHA binary is
+approved for the Australia storefront and held for coordinated manual/phased
+release.
 
 This is the controlling sequence. Complete it from top to bottom. A later phase never waives a failed earlier gate.
 
@@ -36,44 +48,18 @@ Record these values in the private release register:
 - `candidateSha`: the 40-character PR-head commit containing all application, migration, workflow, iOS, test, and runbook implementation. It freezes only after integrated staging passes.
 - `deploymentSha`: the protected `main` commit first deployed with commercial enrolment disabled.
 - `deployedMainSha`: the exact protected `main` commit serving production at final enablement. It may differ from `candidateSha` only by merge metadata and the evidence-only closeout change allowed by the release-evidence validator.
-- `rollbackBuildSha`: a separately recorded, deployable build proven against schema version 15 and the post-migration Supabase schema.
+- `rollbackBuildSha`: a separately recorded, deployable build proven against the candidate Postgres schema and post-migration Supabase schema without resuming SQLite writes.
 
 `candidateSha` and `rollbackBuildSha` never change for a release. If any application, schema, workflow, iOS, threshold, or test file changes after `candidateSha` is recorded, discard that candidate identity and return to integrated staging. Updating only `docs/release-evidence.json` with genuine post-deployment evidence is the sole closeout exception.
-
-Do not record the older production commit `52622fad3330d2f1591425e34b465252831001eb` as `rollbackBuildSha`: that build supports local schema version 11 and refuses a database newer than it supports.
 
 ## Current verdict
 
 **No-go for the requested full-scale web and iOS launch today.**
 
-The production service is online on commit
-`95b9f2da5e9a99692c8cfafba90d2c29e63ccbc8`. A fresh public smoke on 3 August
-2026 passed nine public availability/page/API checks with zero failures; the
-three authenticated role checks were skipped because protected smoke
-credentials were not supplied. The deployed build predates the new launch-flag,
-Google-only OAuth, schema-15 deletion-notice, and 3 August legal contracts.
-
-Observed production data on 3 August 2026:
-
-- 612 unique venues across 112 nonblank suburbs.
-- Only 5 of 611 marketed venues (0.82%) have at least three qualifying current verified prices.
-- Zero suburb buckets pass the required 70% coverage independently.
-- Keeping all 112 suburbs in scope requires at least 478 covered venues because
-  each suburb rounds its own 70% target up. At the observed row distribution,
-  that is at least 473 additional covered venues and a theoretical minimum of
-  1,415 additional qualifying price rows; reverification and rejected rows will
-  increase the real workload.
-- The public API returns 62 trusted price rows, but zero expose a source-submission link and private evidence existence cannot be inferred.
-- Zero happy-hour records and zero specials are public.
-- The newest qualifying price was verified on 5 July 2026, about 685 hours
-  before the latest gate, against a 48-hour launch maximum.
-- Three structured addresses are malformed.
-- Business status is not exposed for the currently public directory, so the absence of closed venues cannot be proved.
-- With the signed no-happy-hour launch scope applied, the gate has five failures and three unknowns: eight blocking issues. Without that signed scope, happy-hour coverage is a ninth blocker.
-
-The local working candidate has passed Node 22 TypeScript and Vitest checks, the repository security and dependency scans, deployment guards, plist validation, an Xcode 26.5 Release simulator build, and an unsigned Release device archive. These are local results, not proof of the final frozen commit, a signed archive, production data, or App Review approval.
-
-The workspace now contains local implementations for the commercial gates, no-card trial rules, evidence linkage, exact Place-ID status refresh, recurring refresh workflow, hidden no-happy-hour scope, web-and-iOS evidence scope, and production price-promotion controls. They remain unproved until the final tree is independently reviewed, committed, pushed, rerun in CI, and exercised in integrated staging.
+The dated live observations and remaining-work ledger are maintained in
+[`PROD_FOLLOWUPS.md`](../PROD_FOLLOWUPS.md). Do not copy old deployment SHAs,
+project refs, counts, or provider state from this runbook. Re-capture them into
+the private release register when the corresponding phase begins.
 
 The remaining launch blockers require live/external completion:
 
@@ -82,11 +68,11 @@ The remaining launch blockers require live/external completion:
 - correct all malformed structured addresses;
 - enable PITR, prove a usable recovery point, and restrict production database network access;
 - configure and dispatch the protected daily status workflow, then connect its failure threshold to the real on-call page;
-- a schema-15-compatible rollback build;
+- a Postgres-compatible rollback build;
 - a clean candidate commit, current remote CI/CodeQL, independent approval, and required branch protections;
-- either a shared transactional datastore that permits replicas or an explicitly
-  limited single-region launch decision backed by quantified peak/soak,
-  write-contention, disk-full, restart, and deployment-recovery evidence;
+- implementation of the mandatory shared Postgres persistence layer, complete
+  SQLite import/reconciliation, at least two replicas, and a Postgres-compatible
+  rollback build;
 - an immutable backup copy in a separate failure domain, written with an
   application credential that cannot shorten retention or delete prior copies;
 - proof that an access JWT captured before account deletion cannot use the Pint
@@ -96,45 +82,55 @@ The remaining launch blockers require live/external completion:
 - proof that an existing Google-only web account can establish email/password
   access in iOS without creating a second Supabase user or Pint Path account;
 - the approved manual daily account-deletion and moderation operations;
-- signed legal/GST/privacy/liquor/marketing decisions;
+- signed legal/privacy/liquor/marketing decisions and commercial-scope deferral;
 - active Apple account/agreements/compliance status, signed App Store archive
   validation, physical-device/TestFlight proof, defined crash monitoring, App
   Review approval, and release evidence.
 
 ## Phase 0 — approve and record the immutable launch contract
 
-Do not begin paid outreach, candidate freeze, production mutation, or App Store submission until the owner records:
+Do not begin public outreach, candidate freeze, production mutation, or App
+Store submission until the owner records:
 
 1. **Initial geography:** the exact ordered list of marketed suburbs. Recommended first scope is Victoria-only and limited to suburbs that pass the gate independently.
-2. **Venue offer:** currently deferred and disabled. Before enabling it, approve the exact duration, eligibility, expiry, duplicate/fraud handling, support path, and whether it is a separately flagged non-billing grant or a Stripe trial. A free grant must expire to Free without creating a payment obligation.
-3. **Paid transition:** currently deferred and disabled. If a future offer can transition to paid Pro, approve when billing starts, consent/payment-method requirements, cancellation/refund handling, and prove the exact behaviour in staging plus the smallest-value live canary.
-4. **Venue price and GST:** currently deferred. Before paid enrolment, approve the amount, whether it includes GST, the operator's GST-registration decision, and all authoritative copy. Do not treat any dormant internal amount as an approved launch price.
-5. **iOS architecture:** free discovery, contribution, and assigned venue-Free
+2. **Commercial scope deferred:** pricing, paid enrolment, venue Pro, trials,
+   report delivery, Stripe lifecycle processing, POS/counter tools, rewards, and
+   every dormant commercial offer remain disabled and absent. Any future grant,
+   price, GST treatment, checkout, trial, or billing decision requires a new
+   candidate and its own signed contract.
+3. **iOS architecture:** free discovery, contribution, and assigned venue-Free
    profile/beer-list management. No StoreKit, paid consumer entitlement, venue
    Pro capability, trial activation, upgrade prompt, billing portal, or external
    purchase link.
-6. **Native authentication:** email-based account access only for the first release; Google and Apple social login are compile-disabled, not merely hidden by a remote provider list.
-7. **Happy-hour launch choice:** launch without happy-hour discovery. All consumer web and iOS filters, cards, badges, empty states, claims, and promotional copy stay hidden until the 25% threshold is met in a future release.
-8. **Deletion operation:** the named primary and backup operators, the fixed daily review time, the displayed seven-day cancellation window, the guaranteed completion deadline, and the escalation contact.
-9. **Moderation operation:** the named owner, backup, response SLA, appeal path, and emergency takedown path.
-10. **Legal entity:** the same approved entity for the app, Apple developer
+4. **Native authentication:** email-based account access only for the first release; Google and Apple social login are compile-disabled, not merely hidden by a remote provider list.
+5. **Happy-hour launch choice:** launch without happy-hour discovery. All consumer web and iOS filters, cards, badges, empty states, claims, and promotional copy stay hidden until the 25% threshold is met in a future release. Venue-side collection remains internal only.
+6. **Deletion operation:** the named primary and backup operators, the fixed daily review time, the displayed seven-day cancellation window, the guaranteed completion deadline, and the escalation contact.
+7. **Moderation operation:** the named owner, backup, response SLA, appeal path, and emergency takedown path.
+8. **Legal entity:** the same approved entity for the app, Apple developer
     account, contracts, ABN, domains, and active provider accounts. Stripe
     entity alignment becomes mandatory only for a future commercial candidate.
-11. **Data thresholds:** the exact values in Phase 8 and the exact marketed-suburb scope. These values are immutable for this release.
-12. **Named release roles:** deployer, independent reviewer, evidence verifier, rollback operator, and first-72-hours on-call operator.
-13. **Breach response:** named primary/backup incident and privacy decision owners, provider escalation contacts, and a passed tabletop using `docs/data-breach-response-runbook.md`.
-14. **Availability architecture:** either migrate the authoritative SQLite/outbox/job state to shared transactional Postgres and prove replicas, or record that this is a controlled single-region launch with planned deployment downtime, quantified capacity, 2× peak headroom, maintenance communication, and a named migration trigger. Do not call the latter highly available or full-scale.
-15. **Backup authority:** one immutable copy in a different provider or region,
+9. **Data thresholds:** the exact values in Phase 8 and the exact marketed-suburb scope. These values are immutable for this release.
+10. **Named release roles:** deployer, independent reviewer, evidence verifier, rollback operator, and first-72-hours on-call operator.
+11. **Breach response:** named primary/backup incident and privacy decision owners, provider escalation contacts, and a passed tabletop using `docs/data-breach-response-runbook.md`.
+12. **Availability architecture:** mandatory shared transactional Postgres for
+    all authoritative state, at least two application replicas, deterministic
+    SQLite import/reconciliation, replica-safe jobs, and a Postgres-compatible
+    rollback build, as specified in the full-scale migration runbook.
+13. **Environment identities:** private registered identities for permanent
+    integrated staging and a separately created ephemeral restore environment.
+    Neither may reuse the other's database, Supabase, Storage, Redis, secrets,
+    domain, or callbacks.
+14. **Backup authority:** one immutable copy in a different provider or region,
     an application principal that can create but cannot delete/overwrite retained
     objects, a separately controlled retention/deletion principal, and tested
     object-lock/WORM retention. A second Supabase project controlled by the same
     production service-role key is an operational copy, not this proof.
-16. **Deletion content contract:** delete raw submissions, submission items/free
+15. **Deletion content contract:** delete raw submissions, submission items/free
     text, contribution ledger, evidence links, and every public price row derived
     from that submission. Any future publisher-curated retained fact needs a
     separate fully de-linked ingestion path and written privacy/legal plus App
     Review approval in a new candidate.
-17. **iOS monitoring:** for a true broad/full-scale release, select a
+16. **iOS monitoring:** for a true broad/full-scale release, select a
     privacy-reviewed production crash source with dSYM symbolication and alert
     delivery (for example a separately approved crash processor or a first-party
     MetricKit pipeline), supplemented by TestFlight/App Store Connect and Xcode
@@ -144,13 +140,6 @@ Do not begin paid outreach, candidate freeze, production mutation, or App Store 
     seven days and 500 sessions before broad expansion. With a smaller sample,
     remain controlled. Any new diagnostics processor requires privacy, retention,
     policy, and App Store declaration review before candidate freeze.
-
-The following dormant copy is not approved for publication until items 2–4 are
-resolved and the chosen grant/billing implementation passes staging:
-
-> 60-day Introductory Pro access for verified venues. No card required. No automatic charge. Your access ends on the exact date and time shown in your venue dashboard. Unless your venue actively starts a paid Pro subscription on the web, it automatically moves to Free when the introductory period ends. Your venue profile and saved data remain. Pro analytics, reports, specials and premium placement switch off at expiry.
-
-Use “60-day,” not “two-month.”
 
 ## Phase 1 — freeze unsafe public scope
 
@@ -170,6 +159,18 @@ Production launch-safe values are:
 ```dotenv
 NODE_ENV=production
 PUBLIC_BASE_URL=https://pintpath.au
+DATABASE_URL=postgresql://app_user:replace_me@pooled-host:5432/pintpath?sslmode=require
+PINTPATH_DATABASE_RESOURCE_ID=replace_with_live_production_database_provider_resource_id
+PINTPATH_EXPECTED_DATABASE_RESOURCE_ID=replace_with_registered_production_database_provider_resource_id
+PINTPATH_FORBIDDEN_DATABASE_RESOURCE_IDS=replace_with_permanent_staging_and_restore_database_resource_ids
+PINTPATH_EXPECTED_DATABASE_URL_SHA256=replace_with_exact_production_database_url_digest
+PINTPATH_FORBIDDEN_DATABASE_URL_SHA256S=replace_with_registered_staging_and_restore_database_url_digests
+REDIS_URL=redis://default:replace_me@host:6379
+PINTPATH_REDIS_RESOURCE_ID=replace_with_live_production_redis_provider_resource_id
+PINTPATH_EXPECTED_REDIS_RESOURCE_ID=replace_with_registered_production_redis_provider_resource_id
+PINTPATH_FORBIDDEN_REDIS_RESOURCE_IDS=replace_with_permanent_staging_and_restore_redis_resource_ids
+PINTPATH_EXPECTED_REDIS_URL_SHA256=replace_with_exact_production_redis_url_digest
+PINTPATH_FORBIDDEN_REDIS_URL_SHA256S=replace_with_registered_staging_and_restore_redis_url_digests
 FIELD_TEST_MODE=false
 DEMO_BILLING_MODE=false
 ALLOW_DEMO_BILLING_IN_PRODUCTION=false
@@ -187,7 +188,23 @@ REQUIRE_REDIS_RATE_LIMITING=true
 ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=false
 REQUIRE_ADMIN_MFA_IN_PRODUCTION=true
 REQUIRE_VERIFIED_ACCOUNT_IN_PRODUCTION=true
+REPORT_EMAIL_MODE=disabled
+RESEND_API_KEY=
+REPORT_EMAIL_FROM=
+REPORT_EMAIL_REPLY_TO=
+REPORT_DELIVERY_SCHEDULE_ENABLED=false
+PINTPATH_REPORT_DELIVER=false
+POS_WEBHOOK_SIGNING_SECRET=
+STRIPE_SECRET_KEY=
+STRIPE_WEBHOOK_SECRET=
+STRIPE_PRICE_MONTHLY=
+STRIPE_PRICE_YEARLY=
+STRIPE_PRO_PRICE_ID=
+NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=
 ```
+
+Web and API tests must prove report delivery, POS/counter, reward, checkout,
+trial, upgrade, and billing entry points are absent or denied.
 
 Do not treat saved provider variables as proof. Before and after every production deployment, save `/config.js` privately and parse its public business object:
 
@@ -223,7 +240,12 @@ The public venue and mission APIs use offset pagination; the public price API us
 set -euo pipefail
 umask 077
 
-PINTPATH_EVIDENCE_DIR=/absolute/private/pintpath-launch-2026-07-28
+PINTPATH_RELEASE_ID="${PINTPATH_RELEASE_ID:?Set the immutable release ID}"
+PINTPATH_EVIDENCE_UTC="${PINTPATH_EVIDENCE_UTC:?Set UTC as YYYYMMDDTHHMMSSZ}"
+PINTPATH_EVIDENCE_ROOT="${PINTPATH_EVIDENCE_ROOT:?Set an encrypted absolute directory}"
+[[ "$PINTPATH_EVIDENCE_UTC" =~ ^[0-9]{8}T[0-9]{6}Z$ ]]
+case "$PINTPATH_EVIDENCE_ROOT" in /*) ;; *) exit 1 ;; esac
+PINTPATH_EVIDENCE_DIR="${PINTPATH_EVIDENCE_ROOT%/}/${PINTPATH_RELEASE_ID}-${PINTPATH_EVIDENCE_UTC}"
 test ! -e "$PINTPATH_EVIDENCE_DIR"
 mkdir -p "$PINTPATH_EVIDENCE_DIR"
 
@@ -343,35 +365,54 @@ The candidate must contain and test:
 - fail-closed source capture before a trusted price becomes public;
 - a complete, target-pinned venue refresh that checks every existing Google Place ID;
 - a reviewed production price-promotion tool satisfying Phase 7;
-- fail-closed deferred-pricing configuration that exposes no current amount,
+- fail-closed deferred-pricing configuration that exposes no commercial plan amount,
   trial, checkout, or upgrade path while both enrolment flags are false;
 - fixed, scope-bound data thresholds satisfying Phase 8;
 - an approved manual daily deletion operation satisfying Phase 10;
 - a scope-aware release-evidence validator and workflows satisfying Phase 14;
 - protected GitHub-environment production smoke workflows satisfying Phase 17;
-- a schema-version-15-compatible rollback build and rehearsal satisfying Phase 12.
+- a Postgres-compatible rollback build and rehearsal satisfying Phase 12.
 
 Any missing item is a blocker. Do not freeze a candidate and promise to add it later.
 
+### Phase 3A — migrate authoritative state to shared Postgres
+
+Implement and complete
+[`docs/full-scale-postgres-migration-runbook.md`](./full-scale-postgres-migration-runbook.md):
+
+- create a non-exposed server-only application schema and least-privilege
+  runtime role; keep `anon` and `authenticated` without direct table, sequence,
+  RPC, or helper access, with RLS retained as defence in depth;
+- replace SQLite-specific repositories, transactions, workers, migrations,
+  readiness, backup, promotion, and rollback paths with Postgres equivalents;
+- export the frozen SQLite source, import transactionally, and reconcile row
+  counts, deterministic hashes, constraints, timestamps, IDs, and application
+  invariants;
+- claim concurrent work in short transactions, use `FOR UPDATE SKIP LOCKED`
+  where appropriate, and keep external provider calls outside database locks;
+- prove at least two Railway replicas and overlapping workers without duplicate
+  or lost work; and
+- prove the rollback build uses the new Postgres schema and never resumes
+  SQLite writes. Retain the legacy SQLite file only as sealed migration evidence.
+
+The current repository does not yet contain the complete Postgres adapter,
+importer, reconciliation, promotion, backup/restore, and rollback tooling.
+Until those implementations and their tests exist, Phase 3A is explicitly
+blocked and no candidate may freeze.
+
 ## Phase 4 — inspect production Supabase without changing it
 
-Production project ref: `jxpubqlmqnnqwadmjgyk`.
-Independent backup project ref: `gjjffexmflwtnewtkkiy`.
-
-Already observed:
-
-- both projects were healthy in `ap-southeast-2`;
-- production used Postgres 17;
-- SSL enforcement was enabled;
-- seven completed daily physical backups were visible;
-- PITR was disabled;
-- database network restrictions allowed `0.0.0.0/0` and `::/0`.
+Resolve the production project ref and private operational-restore project ref
+from the private release register. Never copy an old ref from a runbook. The
+operational restore copy is mutable and same-provider; it is not the independent
+WORM backup required by Phase 0.
 
 Obtain the database password through the provider's secure channel and let `supabase link` prompt. Do not place it in shell history.
 
 ```bash
 set -euo pipefail
-PINTPATH_PRODUCTION_PROJECT_REF=jxpubqlmqnnqwadmjgyk
+PINTPATH_PRODUCTION_PROJECT_REF='replace-with-private-registered-production-ref'
+test "$PINTPATH_PRODUCTION_PROJECT_REF" != 'replace-with-private-registered-production-ref'
 
 supabase link --project-ref "$PINTPATH_PRODUCTION_PROJECT_REF"
 test "$(tr -d '\r\n' < supabase/.temp/project-ref)" = "$PINTPATH_PRODUCTION_PROJECT_REF"
@@ -400,17 +441,27 @@ Review the latest Supabase changelog before the candidate gate. Node 20 support 
 - [ ] Enable PITR on production.
 - [ ] Wait until the provider shows a usable restorable window; merely toggling PITR on is not evidence.
 - [ ] Record retention, target RPO/RTO, earliest restore point, and latest restorable time.
-- [ ] Keep daily physical backups and independent object backups.
-- [ ] Restore into isolated staging, never over production.
+- [ ] Keep daily physical backups and the separately administered WORM copy.
+- [ ] Restore into a newly created ephemeral destructive restore environment,
+      never production or permanent integrated staging.
 - [ ] Verify schema, RLS, Storage denial, counts, hashes, and deletion tombstones.
 - [ ] Measure RPO and RTO.
 - [ ] Destroy restored resources only after evidence is signed.
 - [ ] Replace open database CIDRs only after exact Railway and emergency-operator egress addresses are proven. If stable egress is unavailable, record compensating controls instead of inventing an allowlist.
 - [ ] Recheck SSL after network changes.
 
-Use [the external restore checklist](./external-launch-signoffs.md) for its fail-closed staging identities, volume isolation, Redis namespace, and cleanup procedure.
+Use [the external restore checklist](./external-launch-signoffs.md) for its
+fail-closed restore-only identities, Postgres/Storage isolation, Redis namespace,
+and cleanup procedure. The current SQLite-volume commands in that checklist are
+legacy transition evidence and cannot pass the full-scale restore gate until
+the Postgres/WORM restore implementation replaces them.
 
-### Railway production volume, read-only
+### Legacy Railway SQLite source capture — one-time transition only
+
+This read-only inspection may be used to inventory and reconcile the migration
+source before Phase 3A cutover. It is not a production operating procedure, a
+final backup, or permission to keep SQLite authoritative. Do not run it after
+cutover.
 
 Run in the Railway production service shell, not through a local `railway run`, because the SQLite volume is remote:
 
@@ -452,9 +503,11 @@ Reconcile every public row in the complete trusted set:
 
 Each must map to a durable reviewed submission or a successfully captured source-ingestion item before publication. The public API must expose a non-sensitive evidence-presence/link identifier so the strict gate can prove the mapping. Quarantine every unlinkable row for reverification while preserving its audit history. A public row with `source_submission_id=NULL` and no independently provable captured source is not launch-ready.
 
-## Phase 6 — repair and prove the full venue directory in existing staging
+## Phase 6 — repair and prove the full venue directory in permanent integrated staging
 
-Reuse the separate staging environment already created. Do not create another staging environment and do not use restore-rehearsal staging for these writes.
+Create, inventory, and pin permanent integrated staging if it does not already
+exist. Do not use ephemeral restore staging for these writes and do not load a
+restored production database into permanent staging.
 
 The candidate directory implementation must:
 
@@ -489,14 +542,16 @@ ALTER TABLE public.venues
 
 Do not mark unknown rows operational to make validation pass.
 
-Link and mechanically pin the existing staging project:
+Link and mechanically pin the permanent integrated staging project:
 
 ```bash
 set -euo pipefail
 PINTPATH_STAGING_PROJECT_REF='replace-with-approved-existing-staging-project-ref'
+PINTPATH_PRODUCTION_PROJECT_REF='replace-with-private-registered-production-ref'
 test -n "$PINTPATH_STAGING_PROJECT_REF"
 test "$PINTPATH_STAGING_PROJECT_REF" != "replace-with-approved-existing-staging-project-ref"
-test "$PINTPATH_STAGING_PROJECT_REF" != "jxpubqlmqnnqwadmjgyk"
+test "$PINTPATH_PRODUCTION_PROJECT_REF" != "replace-with-private-registered-production-ref"
+test "$PINTPATH_STAGING_PROJECT_REF" != "$PINTPATH_PRODUCTION_PROJECT_REF"
 
 supabase link --project-ref "$PINTPATH_STAGING_PROJECT_REF"
 test "$(tr -d '\r\n' < supabase/.temp/project-ref)" = "$PINTPATH_STAGING_PROJECT_REF"
@@ -571,8 +626,8 @@ ORDER BY conname;
 Every marketed venue must be `OPERATIONAL`, directory-eligible, and checked within 24 hours of the final strict gate. Both named constraints must report `convalidated=true`. Unresolved rows remain quarantined and outside the marketed scope.
 
 Public status expires after seven days. Before candidate freeze, implement and
-test the recurring job definition; before commercial enablement, configure and
-prove its protected production run. It must:
+test the recurring job definition; before final go/no-go, configure and prove
+its protected production run. It must:
 
 - runs the same target-pinned complete refresh daily;
 - may never go more than six days without a successful complete run;
@@ -584,8 +639,13 @@ prove its protected production run. It must:
 The recurring operation and alert proof are launch blockers, not post-launch follow-up.
 
 The candidate contains `.github/workflows/venue-directory-refresh.yml`. After
-that workflow reaches protected `main` in Phase 16, but before commercial
-enablement:
+that workflow reaches protected `main` in Phase 16, but before final go/no-go:
+
+The workflow deliberately pins the reviewed production Supabase ref in code and
+compares it with the runtime URL before any write. That code-owned target is a
+fail-closed guard, not an instruction to copy a dated ref from this runbook.
+Changing the production project requires a reviewed workflow change, repeated
+permanent staging, and a new candidate.
 
 1. Configure the protected `production` environment secrets `SUPABASE_URL`,
    `SUPABASE_SERVICE_ROLE_KEY`, and `GOOGLE_PLACES_API_KEY`.
@@ -604,94 +664,42 @@ The scheduled run is daily at `23 14 * * *` UTC. After merge, the schedule runs
 from the default branch; confirm that its checked-out SHA contains the reviewed
 workflow before relying on it.
 
-## Phase 7 — build trustworthy price coverage and a safe production promotion path
+## Phase 7 — build trustworthy price coverage and a Postgres-safe promotion path
 
-Run fresh discovery in bounded staging batches:
+The current discovery/review tools and `scripts/promote-reviewed-price-data.ts`
+still depend on SQLite. They are useful only to prepare and audit migration
+source data; their mutation modes are not authorised against production for
+this full-scale release. Before candidate freeze, replace or adapt them to the
+Postgres repository and prove the exact new commands in permanent integrated
+staging. Do not substitute direct SQL or the legacy SQLite commands from an old
+runbook.
 
-```bash
-set -euo pipefail
-PINTPATH_APPROVED_SUBURB='replace-with-one-approved-suburb'
-PINTPATH_DISCOVERY_LIMIT='replace-with-reviewed-positive-integer'
-test "$PINTPATH_APPROVED_SUBURB" != "replace-with-one-approved-suburb"
-[[ "$PINTPATH_DISCOVERY_LIMIT" =~ ^[1-9][0-9]*$ ]]
-test "${SUPABASE_URL%/}" = "https://${PINTPATH_STAGING_PROJECT_REF}.supabase.co"
-test "$PUBLIC_BASE_URL" = "$PINTPATH_STAGING_BASE_URL"
-test "$DATABASE_PATH" = "$PINTPATH_STAGING_DATABASE_PATH"
-npm run menus:discover -- \
-  --venue-query="$PINTPATH_APPROVED_SUBURB" \
-  --limit="$PINTPATH_DISCOVERY_LIMIT"
-```
+The reviewed Postgres promotion workflow must:
 
-Run this only in the existing staging service environment with its staging admin bearer, SQLite volume, source-evidence directory, Supabase, and provider credentials. Repeat only for approved marketed suburbs. Never use a broad unreviewed publish.
+- run only for one explicitly approved marketed-suburb batch and exact private
+  input manifest;
+- bind the target database identity, Supabase project, candidate SHA, manifest
+  SHA-256, source-ingestion UUIDs, recovery-point attestation, operator,
+  independent reviewer, and approval reference without hard-coded old refs;
+- provide a production-targeted no-write plan, allow only reviewed row IDs,
+  and refuse production, staging, and restore identity mismatches;
+- transactionally create/verify durable private evidence linkage and publish
+  the authorised Postgres rows, or leave all affected public state unchanged;
+- be idempotent and safe under retry, duplicate input, concurrent workers,
+  partial provider failure, process termination, and rollback;
+- produce a canonical, secret-free receipt with counts and before/after hashes;
+- support a receipt-authorised quarantine that preserves evidence and history;
+  and
+- pass success, duplicate, partial-failure, concurrency, restart, and rollback
+  tests with at least two app/worker replicas.
 
-`scripts/queue-menu-crawler-results.ts` can mutate schema even with `--dry-run`; use only a copied or staging SQLite database:
+Run a human or authorised-venue verification sprint, clear high-severity
+wrong-price reports, and retain reviewed private source evidence. Production
+publication occurs only through the exact candidate implementation in Phase
+16.6 and after the final post-promotion Postgres/WORM recovery set from that
+phase has been independently retrieved and restore-tested.
 
-```bash
-DATABASE_PATH=/absolute/staging-copy/pint-path.sqlite \
-  npm run menus:queue-review -- \
-  --file=/absolute/private/report.json \
-  --dry-run
-```
-
-Before any public publish, make evidence capture fail closed:
-
-1. Create or confirm the durable private source submission/capture.
-2. Verify its object exists and its hash/signature matches.
-3. Link the proposed public row to that durable identity.
-4. Publish only after steps 1–3 commit successfully.
-5. If capture or linking fails, retain a non-public `evidence_pending` item and exit nonzero.
-
-Do not publish to SQLite first and merely warn if Supabase capture fails. Do not use `--skip-source-check` for a launch publication.
-
-### Mandatory production-promotion tool
-
-The candidate contains `scripts/promote-reviewed-price-data.ts`, exposed only as
-`npm run menus:promote-reviewed -- <mode>`. Its mutation modes hard-refuse every
-Supabase project except production `jxpubqlmqnnqwadmjgyk`; refuse restore
-identities; require the four launch flags explicitly false; and bind the exact
-candidate SHA, production SQLite path, Supabase origin/ref, canonical manifest,
-manifest hash, approved source-ingestion UUIDs, backup attestation, operator,
-independent reviewer, and approval reference.
-
-It must continue to:
-
-- require an explicit production target and refuse staging/restore identities;
-- require the approved input manifest and SHA-256;
-- provide a production-data no-write plan mode that writes only a new
-  permission-`0600` private review manifest;
-- allow only explicitly reviewed row IDs;
-- require source checks and durable evidence linkage;
-- be idempotent;
-- make publication fail closed across SQLite and Supabase capture, with a defined compensation/reconciliation state where one datastore cannot be committed atomically with the other;
-- exit nonzero on any read, evidence, validation, or write failure;
-- produce canonical, tamper-evident, operator/reviewer-attributed manifests and
-  receipts with target identities, counts, source authority hashes, before/after
-  state hashes, `candidateSha`, backup authority, and exact rollback authority;
-- support a reviewed rollback/quarantine operation for only the promoted batch;
-- pass staging success, retry, duplicate, partial-failure, and rollback tests.
-
-Operational limits are deliberate:
-
-- the tool verifies and records a fresh backup attestation but does not create
-  or restore-test that backup;
-- Supabase evidence registration precedes each local publication, so a
-  multi-item apply is not globally atomic; a partial result is enumerated in
-  the immutable receipt and the exact receipt-authorised quarantine handles
-  finalized partial or reserved `in_progress` crash state;
-- quarantine marks only authorised rows `disputed` and
-  `source_ingestion_quarantined`; it preserves evidence and queue history and
-  does not delete or rewind them;
-- the operator must supply the actual mounted authoritative production SQLite
-  file and approved `candidateSha`; the tool binds but does not infer them;
-- source reachability is point-in-time at plan and apply.
-
-The exact plan, apply, and quarantine invocations are in Phase 16.5. Do not
-substitute `menus:publish-map-base`, a staging script, direct SQLite statements,
-or ad hoc SQL.
-
-Run a human or authorised-venue verification sprint, clear high-severity wrong-price reports, and retain the reviewed private source evidence. Production publication occurs only in Phase 16 after fresh recovery points.
-
-## Phase 8 — lock and pass the commercial data contract in staging
+## Phase 8 — lock and pass the Free-launch data contract in permanent integrated staging
 
 These are required release values, not recommendations:
 
@@ -746,7 +754,7 @@ code or an immutable signed release contract and make the workflow compare its
 reported scope hash to that value. Until that comparison exists for the chosen
 list, candidate freeze is blocked.
 
-## Phase 9 — finish providers, billing, legal, privacy, and operations
+## Phase 9 — finish providers, legal, privacy, and operations
 
 ### Google
 
@@ -782,36 +790,16 @@ list, candidate freeze is blocked.
 - [ ] Production `REDIS_URL` points to the intended authenticated private service.
 - [ ] `REQUIRE_REDIS_RATE_LIMITING=true`.
 - [ ] `ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=false`.
-- [ ] Isolated staging proves protected traffic and readiness fail closed during outage.
+- [ ] Permanent integrated staging proves protected traffic and readiness fail closed during outage.
 
-### Stripe web venue billing
+### Deferred commercial providers
 
-This section is a future commercial-release checklist, not a gate for the
-current pricing-deferred release. For this release, prove both enrolment flags
-are false, all Stripe secrets/price IDs may be absent, no checkout/trial/upgrade
-action is reachable, no dormant price is advertised as current, and existing
-lifecycle endpoints reveal no customer data to an unauthorised user. Do not run
-a live charge or enable the flag merely to complete evidence. Before any future
-commercial release, complete every item below against a new candidate:
-
-- [ ] GST treatment and legal entity approved.
-- [ ] Live venue price belongs to that entity.
-- [ ] Automatic tax and tax-ID collection match the finance decision.
-- [ ] Venue Checkout asks for no payment method during the 60-day offer.
-- [ ] Missing-payment-method end behaviour is `cancel`.
-- [ ] Exact authoritative trial end is stored and displayed.
-- [ ] The venue cannot receive a second offer through another user account.
-- [ ] Let a trial Checkout reservation age past 35 minutes with its webhook delayed. A completed Stripe session must reconcile to the existing trial; a confirmed expired session may be replaced; missing, mismatched, or unavailable Stripe authority must block and enter support review without creating another trial.
-- [ ] Expired access returns to Free automatically.
-- [ ] Deliberate paid conversion has no second `trial_period_days`.
-- [ ] Portal, cancellation, invoices, refunds, duplicate/out-of-order webhooks, and test clocks pass.
-- [ ] With commercial enrolment disabled, new enrolment rejects while existing lifecycle management remains available.
-- [ ] No Stripe purchase, portal, venue-upgrade, or billing call-to-action exists in the iOS archive.
-
-The future smallest-value live checkout/portal/cancel/refund/webhook proof must
-occur as a controlled canary after a commercial-disabled production deploy and
-before public enrolment. It is intentionally not run for this release. If no
-safe allowlisted canary exists in that future release, do not expose enrolment.
+Stripe, paid pricing, venue Pro, trials, report delivery, POS/counter tooling,
+and rewards are not current launch providers. Keep their credentials absent or
+inert, their flags false, and their routes/UI unavailable. Do not run a charge,
+trial, report, or POS canary for this release. A future commercial candidate
+must define and prove its own legal, GST, price, consent, billing, refund,
+provider, and App Store contract.
 
 ### Resend and email
 
@@ -831,12 +819,13 @@ safe allowlisted canary exists in that future release, do not expose enrolment.
 - [ ] Unknown names remain quarantined.
 - [ ] Raw private evidence never enters public analytics or logs.
 
-### Legal and finance sign-off
+### Legal and operational sign-off
 
-Australian technology/privacy, liquor-promotion, and finance/accounting reviewers must approve:
+Australian technology/privacy and liquor-promotion reviewers must approve:
 
-- legal entity, contracting party, venue price, and GST;
-- offer eligibility, expiry, downgrade, cancellation, and refund copy;
+- legal entity and contracting party for this Free release;
+- the signed deferral of every price, GST, offer, trial, checkout, billing,
+  report, POS/counter, and reward decision to a future candidate;
 - Australian Consumer Law and small-business unfair-contract protections;
 - provider inventory, countries, recipients, purposes, security, and retention;
 - Privacy Act and Victorian Health Records Act analysis;
@@ -864,7 +853,7 @@ Before staging sign-off:
 - [ ] The due-request list is checked at the fixed recorded time every day, including weekends and holidays.
 - [ ] A missed primary check pages the backup immediately.
 - [ ] Every due request is processed by the displayed deadline.
-- [ ] Processing removes or anonymises documented data, public/cache/search references, the Stripe customer, and the Supabase identity in an idempotent order.
+- [ ] Processing removes or anonymises documented data, public/cache/search references, and the Supabase identity in an idempotent order. Any legacy provider identity is handled only under an approved retention/deletion map.
 - [ ] Lawful-retention exceptions are recorded without retaining unrelated data.
 - [ ] Every failure is logged, retried, escalated, and alerted before becoming overdue.
 - [ ] Every completion sends confirmation and receives a signed operator record.
@@ -873,21 +862,56 @@ Before staging sign-off:
 
 Configure the completion-notice path in this exact order:
 
-The production Beer service must remain exactly one application replica in one Railway region while SQLite on its attached volume is authoritative. Redis shares rate-limit state only; it does not share the deletion outbox or webhook correlation state. Do not enable horizontal replicas or multi-region routing until the account-deletion request, outbox, recipient-secret, and webhook-event tables move together to one shared transactional datastore.
+Before this rehearsal, move account-deletion requests, outbox, recipient
+secrets, webhook events, and job leases into shared Postgres. Permanent
+integrated staging and production must then run at least two replicas and prove
+overlapping workers cannot duplicate or lose a notice. Redis remains required
+for shared rate limiting; it is not a substitute for transactional Postgres.
 
-1. Deploy schema 15 and the notification worker to staging. Confirm the migration backup was created before the schema change.
+1. Deploy the candidate Postgres schema, importer, and notification worker to permanent integrated staging. Confirm the pre-migration recovery point and reconciliation receipt before the schema change.
 2. In Resend, verify the Pint Path sending domain and create a sending-only API key dedicated to deletion notices. Do not reuse the monthly-report key.
 3. Add a staging-only Resend webhook for `https://<staging RAILWAY_PUBLIC_DOMAIN>/api/business/account-deletion-notifications/resend-webhook`. Subscribe to `email.delivered`, `email.delivery_delayed`, `email.bounced`, `email.failed`, `email.suppressed`, and `email.complained`, then copy that webhook's staging-only `whsec_` signing secret directly into the staging secret manager. Never point the staging proof at the production webhook URL.
 4. Generate the recipient-encryption key without printing it (`openssl rand -base64 32 | pbcopy` on macOS). Choose a key ID such as `2026-08`; store the active ID and a JSON keyring containing that key in Railway. Retain an old key only while the admin queue or database shows a live recipient-secret row using it.
-5. On the isolated staging Beer service, first confirm Railway project `48d8c6cd-1c66-4148-874b-20877f48e1a5`, environment `a4e0f507-d6d3-4df9-a818-ad92c0071a35`, service `6816c4a2-e392-4ee5-826f-2584cb599ec0`, volume `/app/data`, `PUBLIC_BASE_URL=https://$RAILWAY_PUBLIC_DOMAIN`, `DATABASE_PATH=/app/data/pint-path.sqlite`, `SOURCE_EVIDENCE_STORAGE_DIR=/app/data/source-evidence`, and staging Supabase project `ibveugyfyzjptyvautlr`. Stripe must be test mode (`sk_test_`/`rk_test_`) or absent. Remove `OFFSITE_BACKUP_SUPABASE_URL`, `OFFSITE_BACKUP_SERVICE_ROLE_KEY`, `REDIS_URL`, `REDIS_KEY_NAMESPACE`, and every `RESTORE_REHEARSAL_REDIS_*` variable; keep `REQUIRE_REDIS_RATE_LIMITING=false` and set `ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=true` only for this single-instance isolated proof. Then set `ACCOUNT_DELETION_NOTICE_MODE=resend`, the staging-only `RESEND_TRANSACTIONAL_API_KEY`, `ACCOUNT_DELETION_NOTICE_FROM`, `ACCOUNT_DELETION_NOTICE_REPLY_TO`, staging-only `RESEND_WEBHOOK_SIGNING_SECRET`, `ACCOUNT_DELETION_NOTICE_ACTIVE_KEY_ID`, `ACCOUNT_DELETION_NOTICE_KEYRING_JSON`, `ACCOUNT_DELETION_NOTICE_CHECK_INTERVAL_MINUTES=5`, and `ACCOUNT_DELETION_REHEARSAL_ENABLED=true`. Startup rejects any identity, origin, data path, Supabase project, backup credential, Redis reference, or Stripe mode outside this allowlist. Remove the rehearsal switch and in-memory limiter override immediately after the proof.
+5. On permanent integrated staging, resolve the exact Railway project,
+   environment, service, Postgres/Supabase, Storage, Redis, domain, and callback
+   identities from the private release register. Assert each differs from
+   production and ephemeral restore staging. Require the Postgres connection,
+   `REQUIRE_REDIS_RATE_LIMITING=true`, and
+   `ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=false`; remove production WORM
+   credentials and every `RESTORE_REHEARSAL_*` variable. Keep Stripe, report,
+   POS, and reward credentials absent. Set the staging-only deletion-notice
+   Resend values and `ACCOUNT_DELETION_REHEARSAL_ENABLED=true`. Load every
+   reviewed `ACCOUNT_DELETION_REHEARSAL_EXPECTED_*` pin plus the independently
+   verified replica count. Hash the exact credentialed staging `DATABASE_URL`
+   and `REDIS_URL` locally without printing either URL; load those digests as
+   `PINTPATH_EXPECTED_DATABASE_URL_SHA256` and
+   `PINTPATH_EXPECTED_REDIS_URL_SHA256`, and load the registered production and
+   restore digests into the matching `PINTPATH_FORBIDDEN_*_URL_SHA256S` lists.
+   The deployed runtime identities must match, no expected digest may appear in
+   a forbidden list. Bind `PINTPATH_DATABASE_RESOURCE_ID` and
+   `PINTPATH_REDIS_RESOURCE_ID` from the provider service references, match the
+   protected staging `PINTPATH_EXPECTED_*_RESOURCE_ID` pins, and require both
+   production and current restore resource IDs in each
+   `PINTPATH_FORBIDDEN_*_RESOURCE_IDS` list. This resource check prevents an
+   alternate credential or URL spelling for the same provider resource from
+   bypassing the URL digest check. No mounted SQLite path is allowed. The
+   already pinned staging Supabase project plus the hard-coded private
+   `beermap-source-evidence` bucket identify Storage. Remove the rehearsal
+   switch immediately after proof.
 6. Set `SUPABASE_OAUTH_PROVIDERS=google`. Keep Apple OAuth disabled until Apple authorization-token revocation is implemented and tested. This is separate from the proof that native social login is absent from the iOS archive.
-7. After the staging migration, run the exact notification-scoped gate below from the deployed staging Beer service. It must report `readinessProfile=account_deletion_rehearsal`; this profile never invokes the off-site backup Storage write canary. The `/ready` assertion separately proves local database/evidence-path and staging Supabase health. Then run the notification suites. Delete a sacrificial verified account only after its safety window is test-adjusted in staging; prove `held -> pending -> accepted -> delivered`, signed-webhook receipt storage, recipient-secret deletion, and audited terminal resolution of an independently verified undeliverable notice.
+7. After the staging migration, run the exact notification-scoped gate below from the deployed staging Beer service. It must report `readinessProfile=account_deletion_rehearsal`; this profile never invokes the off-site backup Storage write canary. The `/ready` assertion separately proves shared Postgres, Redis, private Storage, and staging Supabase health. Then run the notification suites. Delete a sacrificial verified account only after its safety window is test-adjusted in staging; prove `held -> pending -> accepted -> delivered`, signed-webhook receipt storage, recipient-secret deletion, and audited terminal resolution of an independently verified undeliverable notice.
 
    ```bash
    set -o pipefail
    test "${ACCOUNT_DELETION_REHEARSAL_ENABLED:?}" = "true"
    test -z "${OFFSITE_BACKUP_SUPABASE_URL:-}${OFFSITE_BACKUP_SERVICE_ROLE_KEY:-}"
-   test -z "${REDIS_URL:-}${REDIS_KEY_NAMESPACE:-}"
+   test -n "${REDIS_URL:-}"
+   test -n "${PINTPATH_EXPECTED_DATABASE_URL_SHA256:-}${PINTPATH_FORBIDDEN_DATABASE_URL_SHA256S:-}"
+   test -n "${PINTPATH_EXPECTED_REDIS_URL_SHA256:-}${PINTPATH_FORBIDDEN_REDIS_URL_SHA256S:-}"
+   test -n "${PINTPATH_DATABASE_RESOURCE_ID:-}${PINTPATH_EXPECTED_DATABASE_RESOURCE_ID:-}${PINTPATH_FORBIDDEN_DATABASE_RESOURCE_IDS:-}"
+   test -n "${PINTPATH_REDIS_RESOURCE_ID:-}${PINTPATH_EXPECTED_REDIS_RESOURCE_ID:-}${PINTPATH_FORBIDDEN_REDIS_RESOURCE_IDS:-}"
+   test "${REQUIRE_REDIS_RATE_LIMITING:?}" = "true"
+   test "${ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION:-false}" = "false"
    npm run --silent readiness:providers \
      | tee /tmp/account-deletion-rehearsal-readiness.json \
      | jq -e '.readinessProfile == "account_deletion_rehearsal" and .ok == true'
@@ -953,26 +977,27 @@ Archive inspection must prove the excluded native surfaces are absent from the s
 
 Do not begin external TestFlight or App Review until the commercial-disabled backend is deployed and proven in Phase 16.
 
-## Phase 12 — run integrated staging and prove the rollback build
+## Phase 12 — run permanent integrated staging and prove the rollback build
 
-Deploy all implementation to the existing staging environment and execute, in order:
+Deploy all implementation to permanent integrated staging and execute, in order:
 
-1. the reviewed migration dry run;
-2. the migration;
+1. the reviewed SQLite-to-Postgres import dry run and source manifest;
+2. the Postgres schema migration, import, and deterministic reconciliation;
 3. local and linked pgTAP, RLS, grant, and Storage checks;
 4. the complete target-pinned venue dry run and write;
 5. transition review and 24-hour status-freshness query;
-6. isolated success, retry, duplicate, partial-failure, crash-reconciliation,
-   and quarantine tests for the production-promotion engine, plus an
-   evidence-first staging publication through the same reviewed
-   `AdminService` path; the production-locked CLI mutation modes must not be
-   weakened to target staging;
+6. success, retry, duplicate, concurrency, partial-failure,
+   crash-reconciliation, and quarantine tests for the Postgres promotion
+   engine, plus an evidence-first staging publication through the same reviewed
+   service path;
 7. trusted-set evidence reconciliation;
 8. the exact strict data gate from Phase 8;
 9. public and authenticated user/venue/admin smoke;
-10. Redis outage proof;
-11. commercial-disabled proof: both flags false, Stripe values absent or inert,
-    no advertised current price, and no reachable checkout/trial/upgrade path;
+10. two-replica/overlapping-worker, connection-pool, Redis outage, restart,
+    rolling-deploy, 2x-headroom, and soak proof;
+11. Free-only proof: both commercial flags false; Stripe/report/POS/reward
+    values absent or inert; no commercial plan/subscription price; and no reachable
+    checkout/trial/upgrade/report/counter path;
 12. deletion daily-operation rehearsal;
 13. web happy-hour-absence and native compile-scope tests;
 14. physical iOS/TestFlight internal tests.
@@ -980,13 +1005,15 @@ Deploy all implementation to the existing staging environment and execute, in or
 Build `rollbackBuildSha` before production:
 
 - it must be a committed, immutable, deployable artifact;
-- it must open and operate on local schema version 15;
-- it must preserve the schema-15 checkout-reservation and account-deletion-notice state and must not create duplicate venue Checkout sessions or deletion notices;
+- it must open and operate on the candidate Postgres schema;
+- it must preserve account-deletion, outbox, webhook, job-lease, moderation,
+  and evidence state and must not create duplicate external effects;
 - it must tolerate the post-migration Supabase schema;
 - it must keep all commercial and alcohol flags closed;
-- it must pass health, readiness, public reads, auth, and data access against a schema-15 staging copy;
+- it must pass health, readiness, public reads, auth, Free-scope writes, and
+  worker overlap against the permanent-staging Postgres copy;
 - its artifact digest and deployment instructions must be recorded;
-- deploying it must not require a database downgrade.
+- deploying it must not require a database downgrade or resume SQLite writes.
 
 Rehearse:
 
@@ -995,9 +1022,11 @@ Rehearse:
 3. deploy `rollbackBuildSha` without restoring the database;
 4. rerun health, auth, RLS, public data, and deletion checks;
 5. redeploy the candidate;
-6. restore the separate backup only in isolated staging and replay deletion tombstones.
+6. restore the WORM-backed Postgres/Storage backup only in newly created
+   ephemeral destructive restore staging and replay deletion tombstones.
 
-If the rollback build cannot run safely after schema 15, stop. The old production SHA is not a substitute.
+If the rollback build cannot run safely on the candidate Postgres schema, stop.
+An old SQLite production SHA is not a substitute.
 
 Any code, migration, workflow, native, threshold, or runbook change resulting from this phase returns to step 1 of this phase.
 
@@ -1080,15 +1109,11 @@ Before pushing the candidate, configure **GitHub Settings → Branches → `main
 - enforce the rule for administrators;
 - block force pushes and branch deletion.
 
-Read-only inspection on 28 July 2026 found only `build-test-scan`,
-`release-readiness`, and `CodeQL JavaScript and TypeScript` required. Pull-request
-reviews were not required, administrator enforcement was off, and no repository
-ruleset supplied the missing controls. PR 12 was still a draft and behind
-`main`; its latest recorded CodeQL gate failed. The default-branch code-scanning
-API reported 26 open alerts: 21 high and five medium. The local candidate
-contains fixes for the reviewed findings, but only a fresh remote scan of the
-exact pushed SHA can close them. Treat every remote alert as unresolved until
-that scan is green and the protection API confirms the settings above.
+Re-inspect current branch protection, rulesets, reviews, and CodeQL state for the
+exact candidate. Never use a dated runbook snapshot or hard-coded PR number as
+evidence. Treat every current remote alert and missing protection as unresolved
+until the exact pushed SHA is green and the protection API confirms the settings
+below.
 
 Configure **GitHub Settings → Environments → `production`** to:
 
@@ -1109,13 +1134,17 @@ Stop until the protections are visible and tested with a non-production dry disp
 Push, then wait for all PR checks:
 
 ```bash
-git push origin codex/fix-codeql-alerts
-gh pr checks 12 --watch
+PINTPATH_RELEASE_BRANCH='replace-with-reviewed-release-branch'
+PINTPATH_RELEASE_PR_NUMBER='replace-with-reviewed-pr-number'
+test "$PINTPATH_RELEASE_BRANCH" != 'replace-with-reviewed-release-branch'
+[[ "$PINTPATH_RELEASE_PR_NUMBER" =~ ^[1-9][0-9]*$ ]]
+git push origin "$PINTPATH_RELEASE_BRANCH"
+gh pr checks "$PINTPATH_RELEASE_PR_NUMBER" --watch
 ```
 
 If the reviewed branch was deliberately rebased, first verify no other person
 advanced the remote branch; only then replace the first command with
-`git push --force-with-lease origin codex/fix-codeql-alerts`. Never use a plain
+`git push --force-with-lease origin "$PINTPATH_RELEASE_BRANCH"`. Never use a plain
 force push.
 
 Required launch checks:
@@ -1184,8 +1213,19 @@ No candidate release schema, production data, or application-deployment mutation
 
 ```bash
 set -euo pipefail
-PINTPATH_PRODUCTION_PROJECT_REF=jxpubqlmqnnqwadmjgyk
+PINTPATH_PRODUCTION_PROJECT_REF='replace-with-private-registered-production-ref'
+test "$PINTPATH_PRODUCTION_PROJECT_REF" != 'replace-with-private-registered-production-ref'
 PINTPATH_EXPECTED_SUPABASE_PROJECT_REF="$PINTPATH_PRODUCTION_PROJECT_REF"
+test -n "${PINTPATH_EXPECTED_DATABASE_URL_SHA256:?}"
+test -n "${PINTPATH_FORBIDDEN_DATABASE_URL_SHA256S:?}"
+test -n "${PINTPATH_DATABASE_RESOURCE_ID:?}"
+test -n "${PINTPATH_EXPECTED_DATABASE_RESOURCE_ID:?}"
+test -n "${PINTPATH_FORBIDDEN_DATABASE_RESOURCE_IDS:?}"
+test -n "${PINTPATH_EXPECTED_REDIS_URL_SHA256:?}"
+test -n "${PINTPATH_FORBIDDEN_REDIS_URL_SHA256S:?}"
+test -n "${PINTPATH_REDIS_RESOURCE_ID:?}"
+test -n "${PINTPATH_EXPECTED_REDIS_RESOURCE_ID:?}"
+test -n "${PINTPATH_FORBIDDEN_REDIS_RESOURCE_IDS:?}"
 
 supabase link --project-ref "$PINTPATH_PRODUCTION_PROJECT_REF"
 test "$(tr -d '\r\n' < supabase/.temp/project-ref)" = "$PINTPATH_PRODUCTION_PROJECT_REF"
@@ -1194,15 +1234,33 @@ supabase migration list --linked
 supabase db push --linked --dry-run
 ```
 
-Stop if CLI link, `SUPABASE_URL`, importer expected ref, or reviewed migration set does not resolve to `jxpubqlmqnnqwadmjgyk`. Production and backup-project refs must never be interchangeable.
+Stop if the CLI link, `SUPABASE_URL`, importer target, or reviewed migration set
+does not resolve to the privately registered production identity. Production,
+permanent staging, restore staging, and the private operational-restore project
+must never be interchangeable. The provider gate hashes the live credentialed
+database and Redis URLs in memory, emits neither URL nor digest, requires exact
+matches to the protected production digests, and rejects the permanent-staging
+and current restore digests. It independently compares live provider resource
+IDs with the protected production pins and forbids those same two other
+provider resources, so alternate credentials cannot hide a cross-environment
+alias. Canonical production startup performs the same checks before workers run.
 
 In the ordinary production service environment, verify provider configuration without printing secrets:
 
 ```bash
-npm run readiness:launch
+npm run --silent readiness:launch \
+  | tee "$PINTPATH_EVIDENCE_DIR/production-provider-readiness.json"
+jq -e '.readinessProfile == "production_free_launch"
+  and .ok == true and .summary.failures == 0 and .summary.blockingWarnings == 0' \
+  "$PINTPATH_EVIDENCE_DIR/production-provider-readiness.json"
 ```
 
-This probe must run while all Phase 1 flags are false. Stop on any provider, Storage, Redis, billing, email, or restore-identity failure. Run it before capturing the fresh recovery point because provider readiness can perform a bounded write-and-cleanup probe.
+This probe must run inside the deployed production service while all Phase 1
+values are explicitly closed. A GitHub job that injects safe literals does not
+prove the Railway configuration. Stop on any Postgres, provider, Storage,
+Redis, Free-scope, credential, email, or restore-identity failure. Run it before
+capturing the fresh recovery point because provider readiness can perform a
+bounded write-and-cleanup probe.
 
 ### Fresh Supabase restore point
 
@@ -1218,23 +1276,30 @@ Immediately before the first production database write:
 
 Also create and hash a fresh schema dump after the pin.
 
-### Fresh Railway SQLite and evidence backup
+### Fresh Postgres, private Storage, and WORM recovery point
 
-Run in the ordinary production service environment, never restore staging:
+Use only the reviewed Phase 3A backup tooling. Create and verify a current
+Postgres PITR point, logical export, private Storage/evidence snapshot,
+deletion-tombstone/ledger export, and provider-enforced WORM copy. The
+application writer must be unable to delete, overwrite, or shorten WORM
+retention. Restore that exact set in ephemeral destructive restore staging and
+record measured RPO/RTO before production cutover.
 
-```bash
-set -euo pipefail
-PINTPATH_RELEASE_ID='replace-with-immutable-release-id'
-test "$PINTPATH_RELEASE_ID" != "replace-with-immutable-release-id"
-PINTPATH_BACKUP_DIR="/app/data/release-backups/$PINTPATH_RELEASE_ID"
-test ! -e "$PINTPATH_BACKUP_DIR"
+Immediately before the one-time import, also seal the final SQLite source and
+its evidence directory with integrity/foreign-key results and a SHA-256
+manifest. This is migration evidence only; `npm run data:backup`, mounted-volume
+SQLite backups, and the mutable Supabase operational copy cannot satisfy the
+full-scale recovery gate by themselves.
 
-npm run data:backup -- --output "$PINTPATH_BACKUP_DIR"
-npm run data:backup:verify -- --backup "$PINTPATH_BACKUP_DIR"
-npm run data:backup:offsite
-```
+Record the Postgres recovery point, logical/Storage/WORM manifest hashes,
+restore result, final SQLite source hash, `candidateSha`, `rollbackBuildSha`,
+current production SHA, database targets, and two-person approval. Stop on any
+failure.
 
-Record the backup ID, manifest hash, off-site result, PITR timestamp/backup ID, `candidateSha`, `rollbackBuildSha`, current production SHA, database targets, and two-person approval. Stop on any failure.
+This pre-import recovery set protects the old state and migration source. It is
+not the rollback authority for the migrated Postgres state. Phase 16 must create,
+retrieve, restore-test, and sign a new reconciled post-import Postgres/Storage/
+tombstone WORM set before application traffic is routed.
 
 If more than 30 minutes elapse before the reviewed migration begins, or any unplanned production data mutation occurs between capture and that migration, repeat all of Phase 15 and record the newer recovery point.
 
@@ -1244,19 +1309,21 @@ If more than 30 minutes elapse before the reviewed migration begins, or any unpl
 
 ```bash
 set -euo pipefail
-if [ "$(gh pr view 12 --json isDraft --jq .isDraft)" = "true" ]; then
-  gh pr ready 12
+PINTPATH_RELEASE_PR_NUMBER='replace-with-reviewed-pr-number'
+[[ "$PINTPATH_RELEASE_PR_NUMBER" =~ ^[1-9][0-9]*$ ]]
+if [ "$(gh pr view "$PINTPATH_RELEASE_PR_NUMBER" --json isDraft --jq .isDraft)" = "true" ]; then
+  gh pr ready "$PINTPATH_RELEASE_PR_NUMBER"
 fi
-gh pr checks 12 --watch
-test "$(gh pr view 12 --json headRefOid --jq .headRefOid)" = "$candidateSha"
-gh pr merge 12 --merge --match-head-commit "$candidateSha"
+gh pr checks "$PINTPATH_RELEASE_PR_NUMBER" --watch
+test "$(gh pr view "$PINTPATH_RELEASE_PR_NUMBER" --json headRefOid --jq .headRefOid)" = "$candidateSha"
+gh pr merge "$PINTPATH_RELEASE_PR_NUMBER" --merge --match-head-commit "$candidateSha"
 ```
 
 Wait until GitHub reports the protected merge complete, then:
 
 ```bash
 set -euo pipefail
-test "$(gh pr view 12 --json state --jq .state)" = "MERGED"
+test "$(gh pr view "$PINTPATH_RELEASE_PR_NUMBER" --json state --jq .state)" = "MERGED"
 git fetch origin main
 deploymentSha="$(git rev-parse origin/main)"
 git merge-base --is-ancestor "$candidateSha" "$deploymentSha"
@@ -1265,7 +1332,16 @@ test -z "$(git diff --name-only "$candidateSha..$deploymentSha")"
 
 Require protected-branch merge and independent approval. Record `deploymentSha`. If `main` advanced with unrelated content, stop and restage; do not deploy an unproved tree.
 
-### 16.2 Apply the reviewed Supabase migration while the old web build remains live
+### 16.2 Cut authoritative state over to Postgres and apply the reviewed Supabase migration
+
+Enter the signed write-maintenance window. Stop and fence every SQLite writer
+and background worker, capture the fresh Phase 15 recovery set, and run the
+exact candidate importer. Require every per-table count/hash, foreign key,
+constraint, timestamp/ID, idempotency, and application invariant to reconcile.
+Do not deploy or route traffic on any mismatch. The importer command must come
+from the Phase 3A implementation; no executable placeholder is supplied here.
+
+Apply the separately reviewed Supabase migration only after target pins pass:
 
 ```bash
 set -euo pipefail
@@ -1308,7 +1384,26 @@ Both runs must exit zero. Review and countersign every transition, failed count,
 
 Confirm the monitored daily recurring job targets the same ref, has a successful test run, warns at five days, pages before six days, and cannot allow a seven-day-expired status to remain public.
 
-### 16.4 Deploy the exact protected `main` build with enrolment disabled
+### 16.4 Capture and restore-test the reconciled post-import base recovery set
+
+After the import, Supabase migration, directory refresh, and every reconciliation
+pass—but before routing application traffic—create a new Postgres PITR point,
+logical export, complete private Storage/evidence snapshot, and deletion
+ledger/tombstone export. Write the exact set to the separately administered
+object-lock/WORM destination and record its manifest hashes.
+
+Retrieve that WORM set through the independent recovery principal, restore it
+into a newly created ephemeral destructive restore environment, and rerun the
+schema, row-count/hash, foreign-key, object/MIME/reference, application-invariant,
+and deletion-tombstone checks. Measure RPO/RTO, tear down only the recorded
+disposable resources, and obtain two-person sign-off. If the post-import set
+cannot be retrieved and restored exactly, do not deploy or reopen traffic.
+This set is the rollback authority for the migrated base state, but it is not
+the final launch recovery authority: public ingress remains closed until the
+reviewed price promotion and the new post-promotion recovery set in Phase 16.6
+have also passed independent retrieval and restore proof.
+
+### 16.5 Deploy the exact protected `main` build with enrolment disabled
 
 Railway must deploy `deploymentSha` with the Phase 1 environment values. Wait for deployment completion, then:
 
@@ -1321,143 +1416,83 @@ PINTPATH_EXPECTED_COMMIT_SHA="$deploymentSha" \
 
 Require `/health` and `/ready` to return `200`, and require the reported SHA to equal `deploymentSha`. Re-run the Phase 1 live-config assertion. Commercial enrolment, rewards, and gamification must still be false.
 
-Keep `COMMERCIAL_LAUNCH_ENABLED=false` throughout the first deployment and every production proof in Phases 16 and 17. Existing billing management and Stripe lifecycle processing remain available while new enrolment is closed.
+Keep public application ingress in the signed maintenance/closed state during
+this deployment. A healthy deployment is not authority to route traffic yet.
 
-If application health fails, deploy `rollbackBuildSha`. Do not redeploy the schema-11 production commit over a schema-15 volume.
+Keep `COMMERCIAL_LAUNCH_ENABLED=false` throughout the first deployment and
+every production proof in Phases 16 and 17. No public billing management,
+Stripe lifecycle, venue-Pro, report-delivery, POS/counter, or reward entry point
+is part of this release.
 
-### 16.5 Promote only the reviewed production price batch
+If application health fails, deploy `rollbackBuildSha` against the same
+Postgres schema. Never reopen the sealed SQLite source for writes.
 
-Run the reviewed production-promotion tool from Phase 7 in the Railway
-production service shell against the pinned production Supabase target and
-authoritative mounted volume.
+### 16.6 Promote only the reviewed Postgres price batch
 
-First create the private, data-no-write review manifest. Replace the ID
-placeholder with only the independently reviewed source-ingestion UUIDs; do not
-include whitespace:
+Run only the exact Postgres promotion implementation proven in Phase 7 and
+permanent integrated staging. The current SQLite-based
+`menus:promote-reviewed` mutation modes, mounted-volume path, and hard-coded
+project-ref examples are legacy transition tooling and are not authorised for
+this release.
 
-```bash
-set -euo pipefail
-umask 077
+In the protected production operator environment:
 
-test "$NODE_ENV" = "production"
-test "${SUPABASE_URL%/}" = "https://jxpubqlmqnnqwadmjgyk.supabase.co"
-[[ "$candidateSha" =~ ^[0-9a-f]{40}$ ]]
+1. Assert the privately registered production Postgres/Supabase identity,
+   exact `deploymentSha`, Free-only flags, and absence of restore markers.
+2. Create a no-write canonical plan bound to the reviewed source-ingestion
+   IDs, input manifest/hash, Postgres recovery point, WORM manifest, operator,
+   independent reviewer, and signed approval.
+3. Have the independent reviewer compare every proposed venue/beer/price row,
+   private source-evidence hash, target identity, and rollback/quarantine
+   authority without editing the plan.
+4. Reconfirm the recovery point is within the signed freshness window and that
+   its WORM copy and disposable restore proof are valid.
+5. Apply once. Require a single Postgres transaction for the authorised public
+   state and evidence linkage, or a formally proven saga whose incomplete
+   state cannot become public. Exit nonzero on any mismatch.
+6. Verify the secret-free receipt, before/after hashes, promoted counts,
+   durable evidence links, no public `evidence_pending` row, and zero
+   high-severity wrong-price reports.
+7. On uncertainty or failure, do not retry blindly. Close the affected public
+   path and use only the receipt-authorised idempotent quarantine/rollback.
+8. While public ingress is still closed, create a new post-promotion Postgres
+   PITR point, logical export, complete private Storage/evidence snapshot, and
+   deletion-ledger/tombstone export. Write the exact set to the independent
+   object-lock/WORM destination, retrieve it through the separate recovery
+   principal, restore it into a fresh disposable restore environment, rerun
+   deterministic reconciliation and deletion replay, measure RPO/RTO, tear
+   down only the recorded disposable resources, and obtain two-person
+   sign-off. This post-promotion set—not the Phase 15 or Phase 16.4 set—is the
+   final launch recovery authority. Do not route traffic if any part fails.
 
-PINTPATH_PROMOTION_DATABASE="$(realpath "$DATABASE_PATH")"
-PINTPATH_PROMOTION_IDS='replace-with-reviewed-uuid1,uuid2'
-PINTPATH_PROMOTION_MANIFEST="$PINTPATH_EVIDENCE_DIR/${PINTPATH_RELEASE_ID}-reviewed-price-manifest.json"
-PINTPATH_PROMOTION_PLAN_LOG="$PINTPATH_EVIDENCE_DIR/${PINTPATH_RELEASE_ID}-reviewed-price-plan.json"
+The Phase 3A implementation must supply and test the exact plan/apply/
+quarantine commands. Until it does, this phase is blocked; direct Postgres SQL,
+the legacy SQLite CLI, or ad hoc scripts are forbidden.
 
-test -f "$PINTPATH_PROMOTION_DATABASE"
-test "$PINTPATH_PROMOTION_IDS" != "replace-with-reviewed-uuid1,uuid2"
-test ! -e "$PINTPATH_PROMOTION_MANIFEST"
-test ! -e "$PINTPATH_PROMOTION_PLAN_LOG"
+### 16.7 Restore controlled observation ingress, then run strict production checks
 
-promotion_plan_output="$(
-  npm run --silent menus:promote-reviewed -- plan \
-    --candidate-sha="$candidateSha" \
-    --database="$PINTPATH_PROMOTION_DATABASE" \
-    --expected-project-ref=jxpubqlmqnnqwadmjgyk \
-    --ids="$PINTPATH_PROMOTION_IDS" \
-    --manifest="$PINTPATH_PROMOTION_MANIFEST"
-)"
-printf '%s\n' "$promotion_plan_output" | tee "$PINTPATH_PROMOTION_PLAN_LOG"
+Public ingress is still closed when Phase 16.6 finishes. Before any command in
+this phase targets `https://pintpath.au`, the incident commander must:
 
-PINTPATH_PROMOTION_MANIFEST_SHA256="$(
-  printf '%s\n' "$promotion_plan_output" | jq -er '.manifestSha256'
-)"
-test "$(
-  shasum -a 256 "$PINTPATH_PROMOTION_MANIFEST" | awk '{print $1}'
-)" = "$PINTPATH_PROMOTION_MANIFEST_SHA256"
-```
+1. verify that the exact post-promotion recovery set, independent restore,
+   reconciliation, deletion replay, RPO/RTO result, and two-person sign-off from
+   Phase 16.6 all passed;
+2. record the exact `deploymentSha`, canonical route, start time, owner, reviewer,
+   and rollback trigger for this observation window; and
+3. restore only the canonical production route in tightly controlled,
+   non-marketed observation mode, with commercial flags disabled, WAF/rate
+   limits and alerting active, and the maintenance/closed state ready for
+   immediate restoration.
 
-Stop for independent review. The reviewer must read the canonical manifest,
-recheck every ID, venue, source URL, selected beer/price row, policy threshold,
-source snapshot hash, production database path, Supabase origin/ref, and
-`candidateSha`, then record approval without editing the manifest.
+This routing change exists only so the public-URL data, health, authenticated
+role, and App Review checks can reach the real production deployment. It is not
+the public web launch: do not announce, promote, begin venue outreach, or open
+the coordinated Free discovery release. If controlled observation ingress
+cannot be restored safely, keep ingress closed and stop; a maintenance response
+or an unimplemented/ad hoc bypass is not a passing public-URL check.
 
-Immediately before apply, create and verify a new SQLite/source-evidence backup
-if the Phase 15 backup is more than 30 minutes old or any intervening production
-write occurred. Fill the exact completed backup authority and two distinct
-human identities below. The backup timestamp must be canonical UTC with
-milliseconds and at most 30 minutes old:
-
-```bash
-set -euo pipefail
-umask 077
-
-test "$NODE_ENV" = "production"
-test "${COMMERCIAL_LAUNCH_ENABLED,,}" = "false"
-test "${CONSUMER_PAID_ENROLLMENT_ENABLED,,}" = "false"
-test "${PINT_POINTS_REWARDS_ENABLED,,}" = "false"
-test "${ALCOHOL_GAMIFICATION_ENABLED,,}" = "false"
-test "${SUPABASE_URL%/}" = "https://jxpubqlmqnnqwadmjgyk.supabase.co"
-test -n "${SUPABASE_SERVICE_ROLE_KEY:-}"
-
-PINTPATH_PROMOTION_OPERATOR='replace-with-named-operator'
-PINTPATH_PROMOTION_REVIEWER='replace-with-different-named-reviewer'
-PINTPATH_PROMOTION_APPROVAL_REFERENCE='replace-with-signed-change-reference'
-PINTPATH_PROMOTION_BACKUP_ID='replace-with-pint-path-backup-id'
-PINTPATH_PROMOTION_BACKUP_MANIFEST_SHA256='replace-with-64-lower-hex'
-PINTPATH_PROMOTION_BACKUP_VERIFIED_AT='replace-with-UTC-ISO-milliseconds'
-PINTPATH_PROMOTION_RECEIPT="$PINTPATH_EVIDENCE_DIR/${PINTPATH_RELEASE_ID}-reviewed-price-receipt.json"
-PINTPATH_PROMOTION_APPLY_LOG="$PINTPATH_EVIDENCE_DIR/${PINTPATH_RELEASE_ID}-reviewed-price-apply.json"
-
-test "$PINTPATH_PROMOTION_OPERATOR" != "replace-with-named-operator"
-test "$PINTPATH_PROMOTION_REVIEWER" != "replace-with-different-named-reviewer"
-test "$PINTPATH_PROMOTION_OPERATOR" != "$PINTPATH_PROMOTION_REVIEWER"
-test "$PINTPATH_PROMOTION_APPROVAL_REFERENCE" != "replace-with-signed-change-reference"
-test "$PINTPATH_PROMOTION_BACKUP_ID" != "replace-with-pint-path-backup-id"
-[[ "$PINTPATH_PROMOTION_BACKUP_MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ ]]
-test "$PINTPATH_PROMOTION_BACKUP_VERIFIED_AT" != "replace-with-UTC-ISO-milliseconds"
-test ! -e "$PINTPATH_PROMOTION_RECEIPT"
-test ! -e "$PINTPATH_PROMOTION_APPLY_LOG"
-
-promotion_apply_output="$(
-  SUPABASE_MENU_CAPTURE_TABLE=venue_menu_captures \
-    npm run --silent menus:promote-reviewed -- apply \
-      --candidate-sha="$candidateSha" \
-      --database="$PINTPATH_PROMOTION_DATABASE" \
-      --expected-project-ref=jxpubqlmqnnqwadmjgyk \
-      --manifest="$PINTPATH_PROMOTION_MANIFEST" \
-      --manifest-sha256="$PINTPATH_PROMOTION_MANIFEST_SHA256" \
-      --receipt="$PINTPATH_PROMOTION_RECEIPT" \
-      --operator="$PINTPATH_PROMOTION_OPERATOR" \
-      --reviewer="$PINTPATH_PROMOTION_REVIEWER" \
-      --approval-reference="$PINTPATH_PROMOTION_APPROVAL_REFERENCE" \
-      --backup-id="$PINTPATH_PROMOTION_BACKUP_ID" \
-      --backup-manifest-sha256="$PINTPATH_PROMOTION_BACKUP_MANIFEST_SHA256" \
-      --backup-verified-at="$PINTPATH_PROMOTION_BACKUP_VERIFIED_AT"
-)"
-printf '%s\n' "$promotion_apply_output" | tee "$PINTPATH_PROMOTION_APPLY_LOG"
-printf '%s\n' "$promotion_apply_output" | jq -e '.ok == true'
-
-PINTPATH_PROMOTION_RECEIPT_SHA256="$(
-  printf '%s\n' "$promotion_apply_output" | jq -er '.receiptSha256'
-)"
-test "$(
-  shasum -a 256 "$PINTPATH_PROMOTION_RECEIPT" | awk '{print $1}'
-)" = "$PINTPATH_PROMOTION_RECEIPT_SHA256"
-```
-
-If the apply command exits nonzero, do not rerun it blindly. Preserve the known
-receipt path. A receipt may contain a finalized partial result or the reserved
-`in_progress` crash authority; inspect and hash that exact file, close public
-paths, and use the pre-reviewed quarantine command under **Rollback triggers
-and exact order**.
-
-After promotion:
-
-- verify every promoted trusted row has durable evidence;
-- verify no `evidence_pending` row is public;
-- verify and countersign the canonical promotion manifest, receipt hashes, and
-  rollback/quarantine authority;
-- rerun aggregate Railway queries;
-- resolve every high-severity wrong-price report.
-
-### 16.6 Run strict production data and protected user/venue smoke
-
-Use the immutable values:
+After the controlled route is demonstrably serving `deploymentSha`, use the
+immutable values:
 
 ```bash
 PINTPATH_DATA_BASE_URL=https://pintpath.au \
@@ -1495,10 +1530,15 @@ gh run watch "$PINTPATH_PRODUCTION_HEALTH_RUN_ID" --exit-status
 
 Require public health plus configured verified user and venue-manager role smoke. The environment must require a reviewer who is not the deployer. Missing credentials or a skipped authenticated job is not a pass.
 
-Do not run a live Stripe charge for this pricing-deferred release. Prove both
-commercial flags remain false, checkout/trial/upgrade paths remain unavailable,
-and no current price is advertised. Stripe canary evidence belongs to a future
-commercial candidate.
+Keep this ingress in non-marketed observation mode only after the strict data
+check and protected role smoke pass. If either check fails, immediately restore
+the signed maintenance/closed state. Do not broaden or market access until App
+Review, strict evidence, and the final go/no-go in Phases 17-18 pass; Phase 18
+alone authorises the coordinated Free web discovery and iOS release.
+
+Do not configure or exercise Stripe for this Free-only release. Prove both
+commercial flags remain false and checkout/trial/upgrade/report/POS/reward paths
+remain unavailable. Any provider canary belongs to a future commercial candidate.
 
 At this point production data and backend behavior can be proven, but strict release evidence remains pending until App Review.
 
@@ -1516,10 +1556,10 @@ Use the exact iOS archive bound to `candidateSha`:
 5. Do not show happy-hour discovery, rewards, Pub Golf, venue Pro, trial, billing, StoreKit, or external purchase prompts.
 6. Under App Privacy, reconcile every data type with the archive privacy report and policy.
 7. Answer alcohol, UGC, location, and unrestricted-web-access questions honestly.
-8. In review notes, explain that assigned venues can edit only their free public
-   profile and beer list in iOS; venue Pro, the dormant 60-day design, checkout,
-   billing, and every upgrade prompt are disabled on the web and absent from the
-   iOS binary for this release.
+8. In review notes, explain that assigned venues can edit only their Free public
+   profile and beer list in iOS; venue Pro, trials, checkout, billing, reports,
+   POS/counter tools, rewards, and every upgrade prompt are absent from this
+   release.
 9. Explain the manual seven-day deletion operation and provide the consumer/contributor path.
 10. Set Australia availability and manual release with phased release.
 11. Select **Add for Review** and answer follow-up without changing binary or backend behavior.
@@ -1556,8 +1596,7 @@ Create a fresh, one-use MFA/AAL2 admin smoke token only after the production-env
 gh secret set PINTPATH_SMOKE_ADMIN_TOKEN --env production
 git fetch origin main
 test "$(git rev-parse origin/main)" = "$deployedMainSha"
-gh workflow run pintpath-release-gate.yml --ref main \
-  -f expected_commercial_launch_enabled=false
+gh workflow run pintpath-release-gate.yml --ref main
 ```
 
 Obtain the exact dispatched run ID and watch it:
@@ -1639,9 +1678,10 @@ Repeat:
   `PINTPATH_EXPECTED_COMMIT_SHA="$deployedMainSha"`;
 - the strict data command from Phase 16;
 - a fresh protected Production Health dispatch;
-- the one-use admin-token ceremony and **Pint Path Release Gate** dispatch with
-  `-f expected_commercial_launch_enabled=false`;
-- web checks proving no current price is advertised and every checkout, trial,
+- the one-use admin-token ceremony and **Pint Path Release Gate** dispatch; its
+  workflow contract hard-codes the expected commercial launch state to `false`
+  and exposes no operator override;
+- web checks proving no commercial plan/subscription price is advertised and every checkout, trial,
   upgrade, and enrolment action is absent or inert;
 - native archive/runtime checks proving no commercial surface appeared.
 
@@ -1683,10 +1723,10 @@ Rollback immediately for:
 
 - auth or RLS cross-account access;
 - leaked private evidence, token, or personal data;
-- wrong Supabase, Railway, Redis, Stripe, or Storage target;
+- wrong Postgres, Supabase, Railway, Redis, or Storage target;
 - failed or destructive migration;
 - Redis bypass when required;
-- incorrect charge, offer, entitlement, expiry, or downgrade;
+- any reachable or active paid, trial, report, POS/counter, or reward path;
 - unsupported or corrupted public price;
 - missing trusted evidence;
 - closed, unknown, or seven-day-expired venue shown active;
@@ -1696,89 +1736,38 @@ Rollback immediately for:
 
 Order:
 
-1. Set `COMMERCIAL_LAUNCH_ENABLED=false`.
+1. Restore and assert the complete Phase 1 Free-only contract:
+   `COMMERCIAL_LAUNCH_ENABLED=false`,
+   `CONSUMER_PAID_ENROLLMENT_ENABLED=false`,
+   `VENUE_PRO_TRIAL_DAYS=0`, `PINT_POINTS_REWARDS_ENABLED=false`,
+   `ALCOHOL_GAMIFICATION_ENABLED=false`, `REPORT_EMAIL_MODE=disabled`,
+   `REPORT_DELIVERY_SCHEDULE_ENABLED=false`,
+   `PINTPATH_REPORT_DELIVER=false`, empty `POS_WEBHOOK_SIGNING_SECRET`, and the
+   signed no-public-happy-hour scope/reference. Remove Stripe/report/POS/reward
+   credentials and stop if `/config.js` does not reflect the disabled public
+   state.
 2. Disable the affected public path or place the service in the approved maintenance state.
-3. Deploy `rollbackBuildSha`, which is proven against schema version 15.
+3. Deploy `rollbackBuildSha`, which is proven against the candidate Postgres schema and never resumes SQLite writes.
 4. Verify `/health`, `/ready`, reported SHA, auth, RLS, public data, and deletion access.
 5. Quarantine only the affected promoted price batch using its reviewed manifest if data is unsupported.
 6. Restore data only if data or schema is damaged; never restore merely to roll back code.
-7. If restoring, use the recorded pre-change PITR timestamp or verified backup in isolation first, preserve newer legal/deletion records, and replay deletion tombstones before reopening.
+7. If restoring, prove the recorded PITR/WORM set first in newly created ephemeral destructive restore staging, preserve newer legal/deletion records, and replay deletion tombstones before reopening.
 8. Re-run public, authenticated, strict data, and flag checks.
 9. Record incident timeline, scope, customer impact, evidence, and corrective action.
 
-For step 5, first create and verify another fresh backup and fill its authority.
-Then run this only after the affected batch and exact manifest/receipt authority
-have been independently confirmed. It performs no deletes:
+For step 5, create and verify a fresh Postgres/Storage/WORM recovery point,
+then run only the idempotent Postgres quarantine command produced and proven by
+the Phase 3A implementation. Bind it to the exact promotion plan/receipt
+hashes, target identity, candidate SHA, recovery authority, named rollback
+operator, different independent reviewer, and signed change reference. It
+must preserve private source evidence and history, remove only receipt-
+authorised public rows, and emit a secret-free receipt listing quarantined,
+already-quarantined, and absent IDs. Direct SQL and the legacy SQLite
+`menus:promote-reviewed -- quarantine` command are forbidden.
 
-```bash
-set -euo pipefail
-umask 077
-
-test "$NODE_ENV" = "production"
-test "${COMMERCIAL_LAUNCH_ENABLED,,}" = "false"
-test "${CONSUMER_PAID_ENROLLMENT_ENABLED,,}" = "false"
-test "${PINT_POINTS_REWARDS_ENABLED,,}" = "false"
-test "${ALCOHOL_GAMIFICATION_ENABLED,,}" = "false"
-test "${SUPABASE_URL%/}" = "https://jxpubqlmqnnqwadmjgyk.supabase.co"
-[[ "$candidateSha" =~ ^[0-9a-f]{40}$ ]]
-
-PINTPATH_PROMOTION_DATABASE="$(realpath "$DATABASE_PATH")"
-PINTPATH_PROMOTION_RECEIPT_SHA256="$(
-  shasum -a 256 "$PINTPATH_PROMOTION_RECEIPT" | awk '{print $1}'
-)"
-PINTPATH_QUARANTINE_OPERATOR='replace-with-named-rollback-operator'
-PINTPATH_QUARANTINE_REVIEWER='replace-with-different-named-reviewer'
-PINTPATH_QUARANTINE_APPROVAL_REFERENCE='replace-with-rollback-change-reference'
-PINTPATH_QUARANTINE_BACKUP_ID='replace-with-fresh-pint-path-backup-id'
-PINTPATH_QUARANTINE_BACKUP_MANIFEST_SHA256='replace-with-64-lower-hex'
-PINTPATH_QUARANTINE_BACKUP_VERIFIED_AT='replace-with-UTC-ISO-milliseconds'
-PINTPATH_QUARANTINE_RECEIPT="$PINTPATH_EVIDENCE_DIR/${PINTPATH_RELEASE_ID}-reviewed-price-quarantine.json"
-PINTPATH_QUARANTINE_LOG="$PINTPATH_EVIDENCE_DIR/${PINTPATH_RELEASE_ID}-reviewed-price-quarantine-output.json"
-
-test "$PINTPATH_QUARANTINE_OPERATOR" != "replace-with-named-rollback-operator"
-test "$PINTPATH_QUARANTINE_REVIEWER" != "replace-with-different-named-reviewer"
-test "$PINTPATH_QUARANTINE_OPERATOR" != "$PINTPATH_QUARANTINE_REVIEWER"
-test "$PINTPATH_QUARANTINE_APPROVAL_REFERENCE" != "replace-with-rollback-change-reference"
-test "$PINTPATH_QUARANTINE_BACKUP_ID" != "replace-with-fresh-pint-path-backup-id"
-[[ "$PINTPATH_QUARANTINE_BACKUP_MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ ]]
-test "$PINTPATH_QUARANTINE_BACKUP_VERIFIED_AT" != "replace-with-UTC-ISO-milliseconds"
-test ! -e "$PINTPATH_QUARANTINE_RECEIPT"
-test ! -e "$PINTPATH_QUARANTINE_LOG"
-
-quarantine_output="$(
-  npm run --silent menus:promote-reviewed -- quarantine \
-    --candidate-sha="$candidateSha" \
-    --database="$PINTPATH_PROMOTION_DATABASE" \
-    --expected-project-ref=jxpubqlmqnnqwadmjgyk \
-    --manifest="$PINTPATH_PROMOTION_MANIFEST" \
-    --manifest-sha256="$PINTPATH_PROMOTION_MANIFEST_SHA256" \
-    --promotion-receipt="$PINTPATH_PROMOTION_RECEIPT" \
-    --promotion-receipt-sha256="$PINTPATH_PROMOTION_RECEIPT_SHA256" \
-    --quarantine-receipt="$PINTPATH_QUARANTINE_RECEIPT" \
-    --operator="$PINTPATH_QUARANTINE_OPERATOR" \
-    --reviewer="$PINTPATH_QUARANTINE_REVIEWER" \
-    --approval-reference="$PINTPATH_QUARANTINE_APPROVAL_REFERENCE" \
-    --backup-id="$PINTPATH_QUARANTINE_BACKUP_ID" \
-    --backup-manifest-sha256="$PINTPATH_QUARANTINE_BACKUP_MANIFEST_SHA256" \
-    --backup-verified-at="$PINTPATH_QUARANTINE_BACKUP_VERIFIED_AT"
-)"
-printf '%s\n' "$quarantine_output" | tee "$PINTPATH_QUARANTINE_LOG"
-printf '%s\n' "$quarantine_output" | jq -e '.ok == true'
-
-PINTPATH_QUARANTINE_RECEIPT_SHA256="$(
-  printf '%s\n' "$quarantine_output" | jq -er '.quarantineReceiptSha256'
-)"
-test "$(
-  shasum -a 256 "$PINTPATH_QUARANTINE_RECEIPT" | awk '{print $1}'
-)" = "$PINTPATH_QUARANTINE_RECEIPT_SHA256"
-```
-
-Verify the receipt's `quarantinedIds`, `alreadyQuarantinedIds`, and
-`absentIds`; confirm only the authorised rows disappeared from every public
-price and inventory path; and confirm source evidence and ingestion history
-remain intact.
-
-Never redeploy the schema-11 production build over schema 15. Never delete the current production volume or overwrite it with an unverified backup.
+Never redeploy an SQLite production build, reopen the sealed SQLite source for
+writes, delete the current production Postgres database, or overwrite it with
+an unverified backup.
 
 ## Final go/no-go sign-off
 
@@ -1788,24 +1777,32 @@ The release is **go** only when every item is true for the same `releaseId`, `ca
 - [ ] candidate contains all implementation and its tree matches `deployedMainSha` except the permitted evidence-only closeout;
 - [ ] required web/iOS CI, CodeQL, review, and branch protections pass;
 - [ ] Android is absent from required release evidence;
-- [ ] local, staging, and live Supabase schema/RLS/Storage checks pass;
-- [ ] fresh PITR/physical backup, SQLite backup, off-site backup, and restore rehearsal pass;
-- [ ] schema-15-compatible rollback build and rehearsal pass;
+- [ ] authoritative Postgres migration/import/reconciliation and at least two
+  production replicas pass; SQLite is sealed read-only migration evidence;
+- [ ] local, permanent-staging, and live Postgres plus Supabase
+  schema/grant/RLS/Storage checks pass;
+- [ ] fresh PITR, logical/private-Storage backup, WORM copy, and ephemeral
+  destructive restore rehearsal pass;
+- [ ] Postgres-compatible rollback build and rehearsal pass without SQLite writes;
 - [ ] complete Place-ID refresh, target pin, transitions, and 24-hour launch freshness pass;
 - [ ] daily monitored status refresh and five-/six-/seven-day alerts pass;
-- [ ] reviewed production price-promotion tool, dry run, publication, evidence, and rollback manifest pass;
+- [ ] reviewed Postgres production price-promotion tool, dry run, publication, evidence, and rollback manifest pass;
 - [ ] every trusted public row has durable evidence;
 - [ ] strict data gate passes independently for every marketed suburb;
 - [ ] all consumer happy-hour UI and claims are hidden under the signed waiver;
 - [ ] Google, email Auth, Redis, Resend, and OpenAI proofs pass;
-- [ ] commercial and consumer-paid flags remain false; no current price,
-  checkout, trial, or upgrade path is public;
+- [ ] the complete Phase 1 Free-only environment contract is asserted; Pro,
+  commercial-plan/subscription pricing, checkout, trial, upgrade, report
+  delivery, counter/POS, reward/redemption, alcohol gamification, and public
+  happy-hour web/API/iOS surfaces are absent or denied and their credentials are
+  absent or inert;
 - [ ] the pre-deletion Supabase JWT denial matrix and Google-web-to-iOS account
   bridge pass without duplicate identities;
-- [ ] immutable independent backup authority and object-lock/WORM retention pass;
-- [ ] staging deletion proves no raw submission, item/free text, contribution
+- [ ] independently administered object-lock/WORM authority and retention pass;
+- [ ] permanent-staging deletion proves no raw submission, item/free text, contribution
   ledger, evidence link, or submission-derived public row remains;
-- [ ] GST, legal, privacy, liquor, marketing, moderation, and finance approvals are recorded;
+- [ ] Free-release legal, privacy, liquor, marketing, moderation, and signed
+  commercial-scope deferral approvals are recorded;
 - [ ] approved manual daily deletion operation passes;
 - [ ] native social login is compile-disabled and the Sign in with Apple revocation not-applicable proof is recorded;
 - [ ] free discovery/contributor/venue-Free iOS archive, privacy report,
@@ -1813,7 +1810,7 @@ The release is **go** only when every item is true for the same `releaseId`, `ca
 - [ ] Apple membership, Account Holder/backup access, agreements, compliance
   review, app ownership, and crash-threshold evidence pass;
 - [ ] strict release evidence and protected authenticated smoke pass;
-- [ ] live flags match the approved state before and after enablement;
+- [ ] live flags match the approved Free-only state before and after web/iOS release;
 - [ ] named 72-hour operator is available.
 
 Any unchecked box is a no-go. Narrowing scope requires new approved claims, a new scope hash, repeated staging, and a new candidate if implementation changes.
@@ -1831,4 +1828,3 @@ Any unchecked box is a no-go. Narrowing scope requires new approved claims, a ne
 - [ACCC contracts and unfair terms](https://www.accc.gov.au/business/selling-products-and-services/contracts)
 - [Supabase database testing](https://supabase.com/docs/guides/database/testing)
 - [Supabase CLI testing and linting](https://supabase.com/docs/guides/local-development/cli/testing-and-linting)
-- [Stripe free trials](https://docs.stripe.com/payments/checkout/free-trials?locale=en-GB)

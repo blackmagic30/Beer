@@ -167,6 +167,13 @@ CREATE INDEX IF NOT EXISTS idx_auth_sessions_user
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_provider_session
   ON auth_sessions (user_id, provider_session_id_hash);
 
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_retention_revoked
+  ON auth_sessions (revoked_at, token_hash COLLATE BINARY)
+  WHERE revoked_at IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_retention_expired
+  ON auth_sessions (expires_at, token_hash COLLATE BINARY);
+
 CREATE TABLE IF NOT EXISTS revoked_provider_sessions (
   user_id TEXT NOT NULL,
   provider_session_id_hash TEXT NOT NULL,
@@ -179,6 +186,14 @@ CREATE TABLE IF NOT EXISTS revoked_provider_sessions (
 CREATE INDEX IF NOT EXISTS idx_revoked_provider_sessions_user
   ON revoked_provider_sessions (user_id, revoked_at DESC);
 
+CREATE INDEX IF NOT EXISTS idx_revoked_provider_sessions_retention
+  ON revoked_provider_sessions (
+    revoked_at,
+    user_id COLLATE BINARY,
+    provider_session_id_hash COLLATE BINARY
+  )
+  WHERE reason IN ('password_reset_completed', 'all_app_sessions_revoked');
+
 CREATE TABLE IF NOT EXISTS migration_quarantined_records (
   id TEXT PRIMARY KEY,
   entity_type TEXT NOT NULL,
@@ -190,6 +205,10 @@ CREATE TABLE IF NOT EXISTS migration_quarantined_records (
 
 CREATE INDEX IF NOT EXISTS idx_migration_quarantine_entity
   ON migration_quarantined_records (entity_type, original_id, quarantined_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_migration_quarantined_records_retention
+  ON migration_quarantined_records (quarantined_at, id COLLATE BINARY)
+  WHERE payload_json <> '{"redactedAfterRetention":true}';
 
 CREATE TABLE IF NOT EXISTS account_discount_passes (
   id TEXT PRIMARY KEY,
@@ -518,6 +537,20 @@ CREATE INDEX IF NOT EXISTS idx_submissions_user_venue_month
 CREATE INDEX IF NOT EXISTS idx_submissions_mission
   ON submissions (mission_id, status, created_at DESC);
 
+CREATE INDEX IF NOT EXISTS idx_submissions_venue_created_id
+  ON submissions (venue_id, created_at DESC, id COLLATE BINARY);
+
+CREATE INDEX IF NOT EXISTS idx_submissions_reviewed_location_retention
+  ON submissions (reviewed_at, id COLLATE BINARY)
+  WHERE reviewed_at IS NOT NULL
+    AND status NOT IN ('pending', 'needs_more_evidence', 'disputed')
+    AND (
+      upload_latitude IS NOT NULL
+      OR upload_longitude IS NOT NULL
+      OR upload_accuracy_meters IS NOT NULL
+      OR upload_location_captured_at IS NOT NULL
+    );
+
 CREATE TABLE IF NOT EXISTS submission_source_evidence (
   submission_id TEXT NOT NULL,
   evidence_id TEXT NOT NULL,
@@ -644,6 +677,21 @@ CREATE INDEX IF NOT EXISTS idx_venue_price_records_feed
 CREATE INDEX IF NOT EXISTS idx_venue_price_records_beer
   ON venue_price_records (normalized_beer_id, last_verified_at DESC);
 
+CREATE INDEX IF NOT EXISTS idx_venue_price_records_duplicate_name
+  ON venue_price_records (
+    lower(trim(venue_name)),
+    lower(trim(COALESCE(suburb, ''))),
+    venue_id COLLATE BINARY,
+    id COLLATE BINARY
+  );
+
+CREATE INDEX IF NOT EXISTS idx_venue_price_records_venue_normalized_beer
+  ON venue_price_records (venue_id, normalized_beer_id)
+  WHERE normalized_beer_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_venue_price_records_venue_beer_name
+  ON venue_price_records (venue_id, lower(trim(beer_name)));
+
 CREATE INDEX IF NOT EXISTS idx_venue_price_records_source_ingestion
   ON venue_price_records (source_ingestion_id)
   WHERE source_ingestion_id IS NOT NULL;
@@ -671,6 +719,22 @@ CREATE TABLE IF NOT EXISTS missions (
 CREATE INDEX IF NOT EXISTS idx_missions_active_priority
   ON missions (active, priority, updated_at DESC);
 
+CREATE INDEX IF NOT EXISTS idx_missions_updated_cursor
+  ON missions (updated_at DESC, id ASC);
+
+CREATE INDEX IF NOT EXISTS idx_missions_active_updated_cursor
+  ON missions (active, updated_at DESC, id ASC);
+
+-- SQLite keeps projected columns at the tail of these indexes; the Postgres
+-- generator converts them to INCLUDE columns so admin analytics can use
+-- index-only paths without changing deterministic ordering.
+CREATE INDEX IF NOT EXISTS idx_missions_admin_active_score
+  ON missions ((points * multiplier) DESC, updated_at DESC, id ASC, venue_name)
+  WHERE active;
+
+CREATE INDEX IF NOT EXISTS idx_missions_venue_updated_id
+  ON missions (venue_id, updated_at DESC, id ASC, venue_name);
+
 CREATE TABLE IF NOT EXISTS mission_progress (
   id TEXT PRIMARY KEY,
   mission_id TEXT NOT NULL,
@@ -690,11 +754,14 @@ CREATE TABLE IF NOT EXISTS mission_progress (
 CREATE INDEX IF NOT EXISTS idx_mission_progress_user_status
   ON mission_progress (user_id, status, updated_at DESC);
 
+CREATE INDEX IF NOT EXISTS idx_mission_progress_user_updated_cursor
+  ON mission_progress (user_id, updated_at DESC, id ASC);
+
 CREATE INDEX IF NOT EXISTS idx_mission_progress_submission
   ON mission_progress (submission_id);
 
 CREATE INDEX IF NOT EXISTS idx_mission_progress_acceptance_expiry
-  ON mission_progress (status, accepted_at);
+  ON mission_progress (status, accepted_at, id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_mission_progress_open_reservation
   ON mission_progress (mission_id)
@@ -703,7 +770,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_mission_progress_open_reservation
 CREATE TABLE IF NOT EXISTS system_state (
   key TEXT PRIMARY KEY,
   value_json TEXT NOT NULL DEFAULT '{}',
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  revision TEXT NOT NULL CHECK (length(revision) > 0)
 );
 
 CREATE TABLE IF NOT EXISTS contribution_ledger (
@@ -722,6 +790,9 @@ CREATE TABLE IF NOT EXISTS contribution_ledger (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_contribution_ledger_user_venue_month
   ON contribution_ledger (user_id, venue_id, month_key);
 
+CREATE INDEX IF NOT EXISTS idx_contribution_ledger_created_points
+  ON contribution_ledger (created_at, points);
+
 CREATE TABLE IF NOT EXISTS venue_location_cache (
   venue_id TEXT PRIMARY KEY,
   venue_name TEXT NOT NULL,
@@ -733,6 +804,13 @@ CREATE TABLE IF NOT EXISTS venue_location_cache (
 
 CREATE INDEX IF NOT EXISTS idx_venue_location_cache_suburb
   ON venue_location_cache (suburb, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_venue_location_cache_duplicate_name
+  ON venue_location_cache (
+    lower(trim(venue_name)),
+    lower(trim(COALESCE(suburb, ''))),
+    venue_id COLLATE BINARY
+  );
 
 CREATE TABLE IF NOT EXISTS events (
   id TEXT PRIMARY KEY,
@@ -894,6 +972,9 @@ CREATE TABLE IF NOT EXISTS account_deletion_notification_events (
 CREATE INDEX IF NOT EXISTS idx_account_deletion_notification_events_request
   ON account_deletion_notification_events (request_id, event_created_at DESC);
 
+CREATE INDEX IF NOT EXISTS idx_account_deletion_notification_events_retention
+  ON account_deletion_notification_events (received_at, event_id COLLATE BINARY);
+
 CREATE TABLE IF NOT EXISTS feedback (
   id TEXT PRIMARY KEY,
   user_id TEXT REFERENCES accounts(id) ON DELETE SET NULL,
@@ -944,6 +1025,9 @@ CREATE TABLE IF NOT EXISTS wrong_price_reports (
 CREATE INDEX IF NOT EXISTS idx_wrong_price_reports_record
   ON wrong_price_reports (price_record_id, status, created_at DESC);
 
+CREATE INDEX IF NOT EXISTS idx_wrong_price_reports_venue_created_id
+  ON wrong_price_reports (venue_id, created_at DESC, id COLLATE BINARY);
+
 CREATE TABLE IF NOT EXISTS venue_requests (
   id TEXT PRIMARY KEY,
   user_id TEXT REFERENCES accounts(id) ON DELETE SET NULL,
@@ -971,8 +1055,14 @@ CREATE TABLE IF NOT EXISTS venue_requests (
 CREATE INDEX IF NOT EXISTS idx_venue_requests_type_status
   ON venue_requests (request_type, status, created_at DESC);
 
+CREATE INDEX IF NOT EXISTS idx_venue_requests_created_id
+  ON venue_requests (created_at DESC, id ASC);
+
 CREATE INDEX IF NOT EXISTS idx_venue_requests_venue
   ON venue_requests (venue_id, venue_name, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_venue_requests_source_submission
+  ON venue_requests (source_submission_id);
 
 CREATE INDEX IF NOT EXISTS idx_venue_requests_google_place
   ON venue_requests (google_place_id, request_type, status, created_at DESC);
@@ -1014,7 +1104,10 @@ CREATE TABLE IF NOT EXISTS venue_interest_requests (
 );
 
 CREATE INDEX IF NOT EXISTS idx_venue_interest_status_created
-  ON venue_interest_requests (status, created_at DESC);
+  ON venue_interest_requests (status, created_at DESC, id ASC);
+
+CREATE INDEX IF NOT EXISTS idx_venue_interest_created_id
+  ON venue_interest_requests (created_at DESC, id ASC);
 
 CREATE INDEX IF NOT EXISTS idx_venue_interest_venue
   ON venue_interest_requests (venue_id, venue_name, created_at DESC);
@@ -1088,6 +1181,14 @@ CREATE INDEX IF NOT EXISTS idx_venue_profiles_membership
 
 CREATE INDEX IF NOT EXISTS idx_venue_profiles_area
   ON venue_profiles (area, suburb, active);
+
+CREATE INDEX IF NOT EXISTS idx_venue_profiles_duplicate_name
+  ON venue_profiles (
+    lower(trim(name)),
+    lower(trim(COALESCE(suburb, ''))),
+    venue_id COLLATE BINARY
+  )
+  WHERE active = 1;
 
 CREATE TABLE IF NOT EXISTS venue_beers (
   id TEXT PRIMARY KEY,
@@ -1284,7 +1385,10 @@ CREATE TABLE IF NOT EXISTS venue_partner_outreach (
 );
 
 CREATE INDEX IF NOT EXISTS idx_venue_partner_outreach_status
-  ON venue_partner_outreach (status, updated_at DESC);
+  ON venue_partner_outreach (status, updated_at DESC, venue_id ASC);
+
+CREATE INDEX IF NOT EXISTS idx_venue_partner_outreach_updated_id
+  ON venue_partner_outreach (updated_at DESC, venue_id ASC);
 
 CREATE TABLE IF NOT EXISTS stripe_webhook_events (
   id TEXT PRIMARY KEY,

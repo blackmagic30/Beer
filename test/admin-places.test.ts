@@ -3,6 +3,7 @@ import BetterSqlite3 from "better-sqlite3";
 
 import { BeerCatalogRepository } from "../src/db/beer-catalog.repository.js";
 import { initializeDatabaseSchema } from "../src/db/database.js";
+import { asAsyncSqliteDatabase } from "../src/db/sql-database.js";
 import { AdminService } from "../src/modules/admin/admin.service.js";
 
 const JPEG_DATA_URL = `data:image/jpeg;base64,${Buffer.from([
@@ -197,13 +198,14 @@ describe("admin Google Places venue lookup", () => {
 
     try {
       initializeDatabaseSchema(database);
-      const beerCatalog = new BeerCatalogRepository(database);
-      beerCatalog.resolveBeerName({
+      const sqlDatabase = asAsyncSqliteDatabase(database);
+      const beerCatalog = new BeerCatalogRepository(sqlDatabase);
+      await beerCatalog.resolveBeerName({
         name: "Very Local Hazy Pint",
         source: "test_dynamic_catalog",
         now: "2026-06-30T00:00:00.000Z",
       });
-      beerCatalog.approvePendingBeer({
+      await beerCatalog.approvePendingBeer({
         key: "very_local_hazy_pint",
         now: "2026-06-30T00:01:00.000Z",
       });
@@ -215,7 +217,7 @@ describe("admin Google Places venue lookup", () => {
         "venue_menu_captures",
         "test-openai-key",
         undefined,
-        database,
+        sqlDatabase,
       );
       const prompts: string[] = [];
       const create = vi.fn(async (request: {

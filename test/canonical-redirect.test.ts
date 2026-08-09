@@ -26,11 +26,11 @@ describe("canonical host redirects", () => {
 
   it("does not apply Pint Path production aliases to an isolated staging origin", () => {
     expect(shouldRedirectToCanonicalHost(
-      "beer-staging.up.railway.app",
-      "www.beer-staging.up.railway.app",
+      "pintpath-permanent-staging.example.test",
+      "www.pintpath-permanent-staging.example.test",
     )).toBe(true);
     expect(shouldRedirectToCanonicalHost(
-      "beer-staging.up.railway.app",
+      "pintpath-permanent-staging.example.test",
       "www.pintpath.com.au",
     )).toBe(false);
   });

@@ -33,7 +33,14 @@ type LazyRouters = {
   adminRouter: RequestHandler;
   businessRouter: RequestHandler;
   businessService: BusinessService;
-  getOffsiteBackupLastSuccess: () => string | null;
+  probeOffsiteBackupReadiness: () => Promise<{
+    status: "ok" | "failed" | "required_unconfigured";
+    required: boolean;
+    liveProbe: boolean;
+    lastSuccessfulAt: string | null;
+    ageHours: number | null;
+    error?: string | undefined;
+  }>;
   shutdown: () => Promise<void>;
 };
 
@@ -194,18 +201,37 @@ function hasSyntacticallyValidSession(req: Request): boolean {
   return Boolean(authorization && /^Bearer\s+\S{20,}$/i.test(authorization));
 }
 
+export function replicaIdSha256(
+  replicaId = process.env.RAILWAY_REPLICA_ID,
+): string | undefined {
+  const normalized = replicaId?.trim();
+  if (!normalized) return undefined;
+  return crypto
+    .createHash("sha256")
+    .update("pintpath/replica-evidence/v1\0", "utf8")
+    .update(normalized, "utf8")
+    .digest("hex");
+}
+
 function deploymentMetadata() {
   const rawCommit = process.env.RAILWAY_GIT_COMMIT_SHA ?? process.env.GITHUB_SHA ?? process.env.VERCEL_GIT_COMMIT_SHA ?? "unknown";
   const rawVersion = process.env.PINT_PATH_VERSION ?? process.env.npm_package_version ?? "0.1.0";
+  const replicaDigest = replicaIdSha256();
   return {
     version: /^[a-z0-9._-]{1,80}$/i.test(rawVersion) ? rawVersion : "unknown",
     commitSha: /^[a-f0-9]{7,64}$/i.test(rawCommit) ? rawCommit : "unknown",
     environment: env.NODE_ENV,
+    ...(replicaDigest ? { replicaIdSha256: replicaDigest } : {}),
   };
 }
 
 async function buildLazyRouters(): Promise<LazyRouters> {
   console.info("Initializing backend services...");
+
+  const canonicalProductionRuntime = isCanonicalProductionRuntime({
+    nodeEnv: env.NODE_ENV,
+    railwayEnvironmentName: process.env.RAILWAY_ENVIRONMENT_NAME,
+  });
 
   if (env.RESTORE_REHEARSAL_MODE) {
     if (env.RESTORE_REHEARSAL_PHASE !== "active") {
@@ -227,33 +253,128 @@ async function buildLazyRouters(): Promise<LazyRouters> {
   }
 
   const [
-    { createDatabase, openReadOnlyDatabase },
+    { createRuntimePersistence, shouldUsePostgresRuntime },
     { AdminIngestionQueueRepository },
+    { AccountSessionRepository },
+    { AccountProfilePreferencesRepository },
+    { AccountDeletionQueueRepository },
+    { AccountPrivacyRepository },
+    { PrivacyRetentionRepository },
+    { CommunitySubmissionRepository },
+    { VenueManagerInternalSubmissionRepository },
+    { SourceEvidenceObjectRepository },
+    { SourceEvidenceRetentionRepository },
+    { VenuePendingChangeRepository },
+    { VenueDataReadRepository },
     { BeerCatalogRepository },
-    { BusinessRepository },
+    { PublicPriceRepository },
+    { PublicVenueDirectoryRepository },
+    { SystemStateRepository },
+    { ActivityAuditRepository },
+    { SupportFeedbackRepository },
+    { VenueInventoryRepository },
+    { VenueIdentityRepository },
+    { BillingCheckoutRepository },
+    { VenueAccessRepository },
+    { MissionLifecycleRepository },
+    { MissionDiscoveryAutomationRepository },
+    { StripeSubscriptionRepository },
+    { VenueRequestRepository },
+    { VenuePartnerRepository },
+    { AdminAnalyticsRepository },
+    { VenueManagerInsightsRepository },
+    { AdminAccountRepository },
+    { checkPostgresRuntimeReadiness },
     { createAdminRouter },
     { AdminService },
     { createBusinessRouter },
     { BusinessService },
   ] = await Promise.all([
-    import("./db/database.js"),
+    import("./db/runtime-persistence.js"),
     import("./db/admin-ingestion-queue.repository.js"),
+    import("./db/account-session.repository.js"),
+    import("./db/account-profile-preferences.repository.js"),
+    import("./db/account-deletion-queue.repository.js"),
+    import("./db/account-privacy.repository.js"),
+    import("./db/privacy-retention.repository.js"),
+    import("./db/community-submission.repository.js"),
+    import("./db/venue-manager-internal-submission.repository.js"),
+    import("./db/source-evidence-object.repository.js"),
+    import("./db/source-evidence-retention.repository.js"),
+    import("./db/venue-pending-change.repository.js"),
+    import("./db/venue-data-read.repository.js"),
     import("./db/beer-catalog.repository.js"),
-    import("./db/business.repository.js"),
+    import("./db/public-price.repository.js"),
+    import("./db/public-venue-directory.repository.js"),
+    import("./db/system-state.repository.js"),
+    import("./db/activity-audit.repository.js"),
+    import("./db/support-feedback.repository.js"),
+    import("./db/venue-inventory.repository.js"),
+    import("./db/venue-identity.repository.js"),
+    import("./db/billing-checkout.repository.js"),
+    import("./db/venue-access.repository.js"),
+    import("./db/mission-lifecycle.repository.js"),
+    import("./db/mission-discovery-automation.repository.js"),
+    import("./db/stripe-subscription.repository.js"),
+    import("./db/venue-request.repository.js"),
+    import("./db/venue-partner.repository.js"),
+    import("./db/admin-analytics.repository.js"),
+    import("./db/venue-manager-insights.repository.js"),
+    import("./db/admin-account.repository.js"),
+    import("./db/postgres-runtime.js"),
     import("./modules/admin/admin.routes.js"),
     import("./modules/admin/admin.service.js"),
     import("./modules/business/business.routes.js"),
     import("./modules/business/business.service.js"),
   ]);
 
-  const database = env.RESTORE_REHEARSAL_MODE
-    ? openReadOnlyDatabase()
-    : createDatabase();
-  const adminIngestionQueueRepository = env.RESTORE_REHEARSAL_MODE
-    ? undefined
-    : new AdminIngestionQueueRepository(database);
-  const beerCatalogRepository = new BeerCatalogRepository(database);
-  const businessRepository = new BusinessRepository(database);
+  const postgresRuntime = shouldUsePostgresRuntime({
+    nodeEnv: env.NODE_ENV,
+    restoreRehearsalMode: env.RESTORE_REHEARSAL_MODE,
+    databaseUrl: env.DATABASE_URL,
+  });
+  const persistence = await createRuntimePersistence({
+    postgresRuntime,
+    restoreRehearsalMode: env.RESTORE_REHEARSAL_MODE,
+    databaseUrl: env.DATABASE_URL,
+  });
+  const {
+    sqlDatabase,
+    businessRepository,
+    performAccountDeletionSecretPhysicalCheckpoint,
+  } = persistence;
+  const adminIngestionQueueRepository = !env.RESTORE_REHEARSAL_MODE
+    ? new AdminIngestionQueueRepository(sqlDatabase)
+    : undefined;
+  const beerCatalogRepository = new BeerCatalogRepository(sqlDatabase);
+  const publicPriceRepository = new PublicPriceRepository(sqlDatabase);
+  const publicVenueDirectoryRepository = new PublicVenueDirectoryRepository(sqlDatabase);
+  const systemStateRepository = new SystemStateRepository(sqlDatabase);
+  const activityAuditRepository = new ActivityAuditRepository(sqlDatabase);
+  const supportFeedbackRepository = new SupportFeedbackRepository(sqlDatabase);
+  const accountSessionRepository = new AccountSessionRepository(sqlDatabase);
+  const accountProfilePreferencesRepository = new AccountProfilePreferencesRepository(sqlDatabase);
+  const venueInventoryRepository = new VenueInventoryRepository(sqlDatabase);
+  const venueIdentityRepository = new VenueIdentityRepository(sqlDatabase);
+  const billingCheckoutRepository = new BillingCheckoutRepository(sqlDatabase);
+  const venueAccessRepository = new VenueAccessRepository(sqlDatabase);
+  const missionLifecycleRepository = new MissionLifecycleRepository(sqlDatabase);
+  const missionDiscoveryAutomationRepository = new MissionDiscoveryAutomationRepository(sqlDatabase);
+  const stripeSubscriptionRepository = new StripeSubscriptionRepository(sqlDatabase);
+  const venueRequestRepository = new VenueRequestRepository(sqlDatabase);
+  const venuePartnerRepository = new VenuePartnerRepository(sqlDatabase);
+  const adminAnalyticsRepository = new AdminAnalyticsRepository(sqlDatabase);
+  const venueManagerInsightsRepository = new VenueManagerInsightsRepository(sqlDatabase);
+  const adminAccountRepository = new AdminAccountRepository(sqlDatabase);
+  const accountDeletionQueueRepository = new AccountDeletionQueueRepository(sqlDatabase);
+  const accountPrivacyRepository = new AccountPrivacyRepository(sqlDatabase);
+  const privacyRetentionRepository = new PrivacyRetentionRepository(sqlDatabase);
+  const communitySubmissionRepository = new CommunitySubmissionRepository(sqlDatabase);
+  const venueManagerInternalSubmissionRepository = new VenueManagerInternalSubmissionRepository(sqlDatabase);
+  const sourceEvidenceObjectRepository = new SourceEvidenceObjectRepository(sqlDatabase);
+  const sourceEvidenceRetentionRepository = new SourceEvidenceRetentionRepository(sqlDatabase);
+  const venuePendingChangeRepository = new VenuePendingChangeRepository(sqlDatabase);
+  const venueDataReadRepository = new VenueDataReadRepository(sqlDatabase);
   const adminService = new AdminService(
     adminIngestionQueueRepository,
     env.RESTORE_REHEARSAL_MODE ? undefined : env.SUPABASE_URL,
@@ -261,12 +382,12 @@ async function buildLazyRouters(): Promise<LazyRouters> {
     env.SUPABASE_MENU_CAPTURE_TABLE,
     env.RESTORE_REHEARSAL_MODE ? undefined : env.OPENAI_API_KEY,
     env.RESTORE_REHEARSAL_MODE ? undefined : env.GOOGLE_PLACES_API_KEY ?? env.GOOGLE_MAPS_API_KEY,
-    env.RESTORE_REHEARSAL_MODE ? undefined : database,
+    env.RESTORE_REHEARSAL_MODE ? undefined : sqlDatabase,
   );
-  const canonicalProductionRuntime = isCanonicalProductionRuntime({
-    nodeEnv: env.NODE_ENV,
-    railwayEnvironmentName: process.env.RAILWAY_ENVIRONMENT_NAME,
-  });
+  await adminService.initializeIngestionQueue();
+  const canonicalBusinessRuntimeEnv: Omit<typeof env, "DATABASE_PATH"> &
+    Partial<Pick<typeof env, "DATABASE_PATH">> = { ...env };
+  delete canonicalBusinessRuntimeEnv.DATABASE_PATH;
   const businessRuntimeEnv = env.RESTORE_REHEARSAL_MODE
     ? {
         ...env,
@@ -275,8 +396,8 @@ async function buildLazyRouters(): Promise<LazyRouters> {
         OPENAI_API_KEY: undefined,
         REPORT_DELIVERY_SCHEDULE_ENABLED: false,
       }
-    : canonicalProductionRuntime
-      ? env
+    : persistence.mode === "postgres"
+      ? canonicalBusinessRuntimeEnv
       : { ...env, REPORT_DELIVERY_SCHEDULE_ENABLED: false };
   const deletionLedgerRuntimeConfig = resolveAccountDeletionLedgerRuntimeConfig({
     nodeEnv: env.NODE_ENV,
@@ -309,8 +430,8 @@ async function buildLazyRouters(): Promise<LazyRouters> {
       activeKeyId: env.ACCOUNT_DELETION_NOTICE_ACTIVE_KEY_ID!,
       keyringJson: env.ACCOUNT_DELETION_NOTICE_KEYRING_JSON!,
     });
-    const missingReferencedKeys = businessRepository
-      .listReferencedAccountDeletionNoticeKeyIds()
+    const missingReferencedKeys = (await accountDeletionQueueRepository
+      .listReferencedAccountDeletionNoticeKeyIds())
       .filter((keyId) => !keyring.keys.has(keyId));
     if (missingReferencedKeys.length > 0) {
       throw new Error(
@@ -323,10 +444,11 @@ async function buildLazyRouters(): Promise<LazyRouters> {
           apiKey: env.RESEND_TRANSACTIONAL_API_KEY!,
         });
     deletionNotificationCoordinator = new workerModule.AccountDeletionNotificationCoordinator(
-      businessRepository,
+      accountDeletionQueueRepository,
       {
         provider,
         keyring,
+        performRecipientSecretPhysicalCheckpoint: performAccountDeletionSecretPhysicalCheckpoint,
         publicBaseUrl: env.PUBLIC_BASE_URL,
         from: env.ACCOUNT_DELETION_NOTICE_FROM ?? "account@mock.pintpath.local",
         ...(env.ACCOUNT_DELETION_NOTICE_REPLY_TO
@@ -339,11 +461,46 @@ async function buildLazyRouters(): Promise<LazyRouters> {
   const businessService = new BusinessService(
     businessRepository,
     businessRuntimeEnv,
+    publicVenueDirectoryRepository,
+    publicPriceRepository,
+    systemStateRepository,
+    activityAuditRepository,
+    supportFeedbackRepository,
+    accountSessionRepository,
+    accountProfilePreferencesRepository,
+    venueInventoryRepository,
+    venueIdentityRepository,
+    billingCheckoutRepository,
+    venueAccessRepository,
+    missionLifecycleRepository,
+    missionDiscoveryAutomationRepository,
+    stripeSubscriptionRepository,
+    venueRequestRepository,
+    venuePartnerRepository,
+    adminAnalyticsRepository,
+    venueManagerInsightsRepository,
+    adminAccountRepository,
+    accountDeletionQueueRepository,
+    accountPrivacyRepository,
+    privacyRetentionRepository,
+    communitySubmissionRepository,
+    venueManagerInternalSubmissionRepository,
+    sourceEvidenceObjectRepository,
+    sourceEvidenceRetentionRepository,
+    venuePendingChangeRepository,
+    venueDataReadRepository,
+    performAccountDeletionSecretPhysicalCheckpoint,
     beerCatalogRepository,
     env.RESTORE_REHEARSAL_MODE ? undefined : { extract: (input) => adminService.ocrMenuPhotos(input) },
     undefined,
     deletionTombstoneWriter,
     deletionNotificationCoordinator,
+    sqlDatabase.dialect === "postgres"
+      ? async () => {
+          const readiness = await checkPostgresRuntimeReadiness(sqlDatabase);
+          return { ok: readiness.ready, foreignKeyViolations: 0 };
+        }
+      : async () => businessRepository.checkDatabaseHealth(),
   );
   const schedulerStops: Array<() => Promise<void>> = [];
   const schedulerOwner = `${process.pid}:${crypto.randomUUID()}`;
@@ -353,39 +510,59 @@ async function buildLazyRouters(): Promise<LazyRouters> {
     void task.finally(() => backgroundTasks.delete(task));
   };
   businessService.logStartupSummary();
-  const recordOperationalState = (key: string, value: Record<string, unknown>) => {
+  const recordOperationalState = async (key: string, value: Record<string, unknown>) => {
     const recordedAt = new Date().toISOString();
-    businessRepository.setSystemState(`job:${key}`, { ...value, recordedAt }, recordedAt);
+    await systemStateRepository.set(`job:${key}`, { ...value, recordedAt }, recordedAt);
   };
-  const runEvidenceRetention = async () => {
+  const withSystemLease = async <T>(input: {
+    key: string;
+    durationMs: number;
+    run: () => T | Promise<T>;
+  }): Promise<T | { skipped: true; reason: "lease_held_by_another_instance" }> => {
     const now = new Date();
-    const leaseKey = "lease:evidence_retention";
-    const acquired = businessRepository.acquireSystemLease({
-      key: leaseKey,
+    const leaseToken = crypto.randomUUID();
+    const acquired = await systemStateRepository.acquireLease({
+      key: input.key,
       owner: schedulerOwner,
+      leaseToken,
       now: now.toISOString(),
-      leaseUntil: new Date(now.getTime() + 55 * 60 * 1000).toISOString(),
+      leaseUntil: new Date(now.getTime() + input.durationMs).toISOString(),
     });
     if (!acquired) return { skipped: true, reason: "lease_held_by_another_instance" };
     try {
-      const evidence = await businessService.purgeExpiredSourceEvidence(100);
-      const ingestionImages = adminService.purgeQueuedIngestionImages(now.toISOString());
-      const privacyRetention = businessService.runPrivacyRetention();
-      return { ...evidence, ingestionImages, privacyRetention };
+      return await input.run();
     } finally {
-      businessRepository.releaseSystemLease({ key: leaseKey, owner: schedulerOwner, now: new Date().toISOString() });
+      await systemStateRepository.releaseLease({
+        key: input.key,
+        owner: schedulerOwner,
+        leaseToken,
+        now: new Date().toISOString(),
+      });
     }
   };
+  const runEvidenceRetention = async () => {
+    return withSystemLease({
+      key: "lease:evidence_retention",
+      durationMs: 55 * 60 * 1_000,
+      run: async () => {
+        const now = new Date();
+      const evidence = await businessService.purgeExpiredSourceEvidence(100);
+      const ingestionImages = await adminService.purgeQueuedIngestionImages(now.toISOString());
+      const privacyRetention = await businessService.runPrivacyRetention();
+      return { ...evidence, ingestionImages, privacyRetention };
+      },
+    });
+  };
   if (env.NODE_ENV === "test") {
-    trackBackgroundTask(runEvidenceRetention().then((result) => {
-      recordOperationalState("evidence_retention", {
+    trackBackgroundTask(runEvidenceRetention().then(async (result) => {
+      await recordOperationalState("evidence_retention", {
         state: "succeeded",
         trigger: "startup",
         completedAt: new Date().toISOString(),
         ...result,
       });
-    }).catch((error) => {
-      recordOperationalState("evidence_retention", {
+    }).catch(async (error) => {
+      await recordOperationalState("evidence_retention", {
         state: "failed",
         trigger: "startup",
         completedAt: new Date().toISOString(),
@@ -404,65 +581,13 @@ async function buildLazyRouters(): Promise<LazyRouters> {
     });
     schedulerStops.push(evidenceScheduler.stop);
     const scheduler = scheduleMissionMaintenance({
-      run: async () => {
-        const now = new Date();
-        const leaseKey = "lease:mission_maintenance";
-        const acquired = businessRepository.acquireSystemLease({
-          key: leaseKey,
-          owner: schedulerOwner,
-          now: now.toISOString(),
-          leaseUntil: new Date(now.getTime() + 25 * 60 * 1000).toISOString(),
-        });
-        if (!acquired) return { skipped: true, reason: "lease_held_by_another_instance" };
-        try {
-          return businessService.runMissionMaintenance();
-        } finally {
-          businessRepository.releaseSystemLease({ key: leaseKey, owner: schedulerOwner, now: new Date().toISOString() });
-        }
-      },
+      run: () => withSystemLease({
+        key: "lease:mission_maintenance",
+        durationMs: 25 * 60 * 1_000,
+        run: () => businessService.runMissionMaintenance(),
+      }),
       intervalMinutes: 30,
       onStatus: (status) => recordOperationalState("mission_maintenance", { ...status }),
-    });
-    schedulerStops.push(scheduler.stop);
-  }
-  if (
-    canonicalProductionRuntime &&
-    env.SUPABASE_URL &&
-    env.SUPABASE_SERVICE_ROLE_KEY &&
-    env.OFFSITE_BACKUP_SUPABASE_URL &&
-    env.OFFSITE_BACKUP_SERVICE_ROLE_KEY
-  ) {
-    const { scheduleOffsiteBackups } = await import("./lib/offsite-backup.js");
-    const scheduler = scheduleOffsiteBackups({
-      databasePath: env.DATABASE_PATH,
-      evidencePath: env.SOURCE_EVIDENCE_STORAGE_DIR,
-      sourceSupabaseUrl: env.SUPABASE_URL,
-      sourceServiceRoleKey: env.SUPABASE_SERVICE_ROLE_KEY,
-      destinationSupabaseUrl: env.OFFSITE_BACKUP_SUPABASE_URL,
-      destinationServiceRoleKey: env.OFFSITE_BACKUP_SERVICE_ROLE_KEY,
-      bucketName: env.OFFSITE_BACKUP_BUCKET,
-      intervalHours: env.OFFSITE_BACKUP_INTERVAL_HOURS,
-      retentionDays: env.OFFSITE_BACKUP_RETENTION_DAYS,
-      acquireLease: () => {
-        const now = new Date();
-        return businessRepository.acquireSystemLease({
-          key: "lease:offsite_backup",
-          owner: schedulerOwner,
-          now: now.toISOString(),
-          leaseUntil: new Date(now.getTime() + 2 * 60 * 60 * 1000).toISOString(),
-        });
-      },
-      releaseLease: () => {
-        businessRepository.releaseSystemLease({
-          key: "lease:offsite_backup",
-          owner: schedulerOwner,
-          now: new Date().toISOString(),
-        });
-      },
-      onStatus: (status) => {
-        recordOperationalState("offsite_backup", status);
-        if (status.state === "succeeded") recordOperationalState("offsite_backup_success", status);
-      },
     });
     schedulerStops.push(scheduler.stop);
   }
@@ -476,7 +601,9 @@ async function buildLazyRouters(): Promise<LazyRouters> {
     }
     const scheduler = scheduleMonthlyReportDelivery({
       generator: businessService,
-      repository: businessRepository,
+      repository: venueAccessRepository,
+      accountRepository: accountSessionRepository,
+      stateRepository: systemStateRepository,
       provider: createResendReportEmailProvider({ apiKey: env.RESEND_API_KEY }),
       publicBaseUrl: env.PUBLIC_BASE_URL,
       from: env.REPORT_EMAIL_FROM,
@@ -485,6 +612,9 @@ async function buildLazyRouters(): Promise<LazyRouters> {
       scheduleDay: env.REPORT_DELIVERY_DAY,
       scheduleHour: env.REPORT_DELIVERY_HOUR,
       checkIntervalMinutes: env.REPORT_DELIVERY_CHECK_INTERVAL_MINUTES,
+      leaseKey: "lease:monthly_report_delivery",
+      leaseOwner: schedulerOwner,
+      leaseDurationMs: 55 * 60 * 1_000,
       onStatus: (status) => recordOperationalState("monthly_report_delivery", status),
     });
     schedulerStops.push(scheduler.stop);
@@ -492,26 +622,11 @@ async function buildLazyRouters(): Promise<LazyRouters> {
   if ((canonicalProductionRuntime || env.ACCOUNT_DELETION_REHEARSAL_ENABLED) && deletionNotificationCoordinator) {
     const { scheduleMissionMaintenance } = await import("./lib/mission-maintenance.js");
     const scheduler = scheduleMissionMaintenance({
-      run: async () => {
-        const now = new Date();
-        const leaseKey = "lease:account_deletion_notifications";
-        const acquired = businessRepository.acquireSystemLease({
-          key: leaseKey,
-          owner: schedulerOwner,
-          now: now.toISOString(),
-          leaseUntil: new Date(now.getTime() + 4 * 60 * 1000).toISOString(),
-        });
-        if (!acquired) return { skipped: true, reason: "lease_held_by_another_instance" };
-        try {
-          return businessService.processAccountDeletionCompletionNotifications(20);
-        } finally {
-          businessRepository.releaseSystemLease({
-            key: leaseKey,
-            owner: schedulerOwner,
-            now: new Date().toISOString(),
-          });
-        }
-      },
+      run: () => withSystemLease({
+        key: "lease:account_deletion_notifications",
+        durationMs: 4 * 60 * 1_000,
+        run: () => businessService.processAccountDeletionCompletionNotifications(20),
+      }),
       intervalMinutes: env.ACCOUNT_DELETION_NOTICE_CHECK_INTERVAL_MINUTES,
       onStatus: (status) => recordOperationalState("account_deletion_notifications", {
         ...status,
@@ -527,9 +642,56 @@ async function buildLazyRouters(): Promise<LazyRouters> {
     adminRouter: createAdminRouter(adminService, businessService),
     businessRouter: createBusinessRouter(businessService),
     businessService,
-    getOffsiteBackupLastSuccess: () => {
-      const state = businessRepository.getSystemState<{ completedAt?: unknown }>("job:offsite_backup_success");
-      return typeof state?.value.completedAt === "string" ? state.value.completedAt : null;
+    probeOffsiteBackupReadiness: async () => {
+      if (
+        persistence.mode === "postgres" &&
+        !env.ACCOUNT_DELETION_REHEARSAL_ENABLED
+      ) {
+        const state = await systemStateRepository.get<Record<string, unknown>>(
+          "job:postgres_logical_backup_success",
+        );
+        const {
+          inspectPostgresLogicalRuntimeDatabaseIdentity,
+          probePostgresLogicalOffsiteReadiness,
+        } = await import("./lib/postgres-logical-offsite.js");
+        let runtimeDatabaseIdentitySha256 = "";
+        try {
+          runtimeDatabaseIdentitySha256 =
+            await inspectPostgresLogicalRuntimeDatabaseIdentity(sqlDatabase);
+        } catch {
+          // The strict probe maps an unavailable/invalid identity to a safe
+          // binding failure without exposing database identity material.
+        }
+        return probePostgresLogicalOffsiteReadiness({
+          stateValue: state?.value,
+          runtimeDatabaseIdentitySha256,
+          sourceSupabaseUrl: env.SUPABASE_URL,
+          destinationSupabaseUrl: env.OFFSITE_BACKUP_SUPABASE_URL,
+          destinationServiceRoleKey: env.OFFSITE_BACKUP_SERVICE_ROLE_KEY,
+          bucketName: env.OFFSITE_BACKUP_BUCKET,
+          maxFreshnessHours: env.OFFSITE_BACKUP_INTERVAL_HOURS + 2,
+          requestTimeoutMs: 10_000,
+        });
+      }
+      const state = await systemStateRepository.get<{ completedAt?: unknown }>(
+        "job:offsite_backup_success",
+      );
+      const { probeOffsiteBackupReadiness } = await import(
+        "./lib/offsite-backup.js"
+      );
+      return probeOffsiteBackupReadiness({
+        sourceSupabaseUrl: env.SUPABASE_URL,
+        destinationSupabaseUrl: env.OFFSITE_BACKUP_SUPABASE_URL,
+        destinationServiceRoleKey: env.OFFSITE_BACKUP_SERVICE_ROLE_KEY,
+        bucketName: env.OFFSITE_BACKUP_BUCKET,
+        lastSuccessfulAt:
+          typeof state?.value.completedAt === "string"
+            ? state.value.completedAt
+            : null,
+        maxFreshnessHours: env.OFFSITE_BACKUP_INTERVAL_HOURS + 2,
+        required: false,
+        probeCapabilities: false,
+      });
     },
     shutdown: async () => {
       await Promise.allSettled(schedulerStops.splice(0).map((stop) => stop()));
@@ -538,7 +700,7 @@ async function buildLazyRouters(): Promise<LazyRouters> {
       }
       const { shutdownRateLimitRedis } = await import("./middleware/rate-limit.js");
       await shutdownRateLimitRedis();
-      database.close();
+      await sqlDatabase.close();
     },
   };
 }
@@ -735,6 +897,30 @@ function renderPublicVenuePage(
   </main>
 </body>
 </html>`;
+}
+
+export function createPublicVenuePageHandler(
+  getBusinessService: () => Promise<Pick<BusinessService, "getPublicVenueById">>,
+): RequestHandler {
+  return async (req, res, next) => {
+    try {
+      const businessService = await getBusinessService();
+      const venueId = req.params.venueId;
+      if (typeof venueId !== "string") {
+        throw new AppError("Venue not found.", 404);
+      }
+      const venue = await businessService.getPublicVenueById(venueId);
+      res
+        .type("html")
+        .setHeader(
+          "Cache-Control",
+          env.NODE_ENV === "production" && !env.RESTORE_REHEARSAL_MODE ? "public, max-age=300" : "no-store",
+        )
+        .send(renderPublicVenuePage(venue, String(res.locals["cspNonce"])));
+    } catch (error) {
+      next(error);
+    }
+  };
 }
 
 async function getLazyRouters(): Promise<LazyRouters> {
@@ -1079,7 +1265,7 @@ export function createApp() {
     try {
       res.setHeader("Cache-Control", "no-store");
       const { businessService } = await getLazyRouters();
-      const startup = businessService.getLocalStartupReadiness();
+      const startup = await businessService.getLocalStartupReadiness();
       res.status(startup.ready ? 200 : 503).json(success({
         service: "pint-path",
         status: startup.ready ? "startup_ready" : "startup_not_ready",
@@ -1119,28 +1305,11 @@ export function createApp() {
         }));
         return;
       }
-      const { businessService, getOffsiteBackupLastSuccess } = await getLazyRouters();
+      const { businessService, probeOffsiteBackupReadiness } = await getLazyRouters();
       const [readiness, rateLimiterRedis, offsiteBackup] = await Promise.all([
         businessService.getOperationalReadiness(),
         import("./middleware/rate-limit.js").then(({ probeRateLimitRedis }) => probeRateLimitRedis()),
-        import("./lib/offsite-backup.js").then(({ probeOffsiteBackupReadiness }) => (
-          probeOffsiteBackupReadiness({
-            sourceSupabaseUrl: env.SUPABASE_URL,
-            destinationSupabaseUrl: env.OFFSITE_BACKUP_SUPABASE_URL,
-            destinationServiceRoleKey: env.OFFSITE_BACKUP_SERVICE_ROLE_KEY,
-            bucketName: env.OFFSITE_BACKUP_BUCKET,
-            lastSuccessfulAt: getOffsiteBackupLastSuccess(),
-            maxFreshnessHours: env.OFFSITE_BACKUP_INTERVAL_HOURS + 2,
-            required: isCanonicalProductionRuntime({
-              nodeEnv: env.NODE_ENV,
-              railwayEnvironmentName: process.env.RAILWAY_ENVIRONMENT_NAME,
-            }),
-            // A recent successful scheduled backup is the serving-readiness
-            // signal. Privileged write/list/download/delete canaries belong in
-            // provider/release checks, not in a public GET or deploy gate.
-            probeCapabilities: false,
-          })
-        )),
+        probeOffsiteBackupReadiness(),
       ]);
       const restoreRuntimeReady = !env.RESTORE_REHEARSAL_MODE || Boolean(verifiedRestoreRuntime);
       const ready = readiness.ready && rateLimiterRedis.ready && offsiteBackup.status === "ok" && restoreRuntimeReady;
@@ -1197,7 +1366,7 @@ export function createApp() {
   app.get("/config.js", async (_req, res, next) => {
     try {
       const { businessService } = await getLazyRouters();
-      const publicConfig = businessService.getPublicConfig();
+      const publicConfig = await businessService.getPublicConfig();
       const viewerConfig = {
         // The public viewer uses server-gated API routes for venue and price data.
         // Supabase anon config is exposed only for OAuth login; exact price access stays server-gated.
@@ -1256,21 +1425,10 @@ export function createApp() {
   app.get("/for-bars.html", (_req, res) => {
     res.redirect(302, "/venue-portal");
   });
-  app.get("/venues/:venueId", async (req, res, next) => {
-    try {
-      const { businessService } = await getLazyRouters();
-      const venue = await businessService.getPublicVenueById(req.params.venueId);
-      res
-        .type("html")
-        .setHeader(
-          "Cache-Control",
-          env.NODE_ENV === "production" && !env.RESTORE_REHEARSAL_MODE ? "public, max-age=300" : "no-store",
-        )
-        .send(renderPublicVenuePage(venue, String(res.locals.cspNonce)));
-    } catch (error) {
-      next(error);
-    }
-  });
+  app.get(
+    "/venues/:venueId",
+    createPublicVenuePageHandler(async () => (await getLazyRouters()).businessService),
+  );
   app.use(async (req, res, next) => {
     if (!['GET', 'HEAD'].includes(req.method)) {
       next();

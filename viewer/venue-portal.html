@@ -99,27 +99,27 @@
           <label class="mobileSectionPicker" for="venueMobileTabSelect">Dashboard section
             <select id="venueMobileTabSelect">
               <option value="overview" data-manager-only>Overview</option>
-              <option value="redemption">Redeem code</option>
+              <option value="redemption" data-commercial-surface hidden>Redeem code</option>
               <option value="profile" data-manager-only>Profile</option>
               <option value="beers" data-manager-only>Beers / stock</option>
               <option value="happy-hours" data-manager-only>Happy hours</option>
-              <option value="specials" data-specials-only data-manager-only>Specials planner</option>
-              <option value="staff-access" data-manager-only>Staff access</option>
+              <option value="specials" data-commercial-surface data-specials-only data-manager-only hidden>Specials planner</option>
+              <option value="staff-access" data-commercial-surface data-manager-only hidden>Staff access</option>
               <option value="pending-reviews" data-manager-only>Pending reviews</option>
-              <option value="report" data-manager-only>Insights & reports</option>
+              <option value="report" data-commercial-surface data-manager-only hidden>Insights & reports</option>
               <option value="support" data-manager-only>Support</option>
             </select>
           </label>
           <nav class="tabNav" role="tablist" aria-label="Bar dashboard sections">
             <button id="venueTabOverview" class="tabButton is-active" type="button" role="tab" aria-selected="true" aria-controls="venuePanelOverview" tabindex="0" data-tab="overview" data-manager-only>Overview</button>
-            <button id="venueTabRedemption" class="tabButton" type="button" role="tab" aria-selected="false" aria-controls="venuePanelRedemption" tabindex="-1" data-tab="redemption">Redeem code</button>
+            <button id="venueTabRedemption" class="tabButton" type="button" role="tab" aria-selected="false" aria-controls="venuePanelRedemption" tabindex="-1" data-tab="redemption" data-commercial-surface hidden>Redeem code</button>
             <button id="venueTabProfile" class="tabButton" type="button" role="tab" aria-selected="false" aria-controls="venuePanelProfile" tabindex="-1" data-tab="profile" data-manager-only>Profile</button>
             <button id="venueTabBeers" class="tabButton" type="button" role="tab" aria-selected="false" aria-controls="venuePanelBeers" tabindex="-1" data-tab="beers" data-manager-only>Beers / stock</button>
             <button id="venueTabHappyHours" class="tabButton" type="button" role="tab" aria-selected="false" aria-controls="venuePanelHappyHours" tabindex="-1" data-tab="happy-hours" data-manager-only>Happy hours</button>
-            <button id="venueTabSpecials" class="tabButton" type="button" role="tab" aria-selected="false" aria-controls="venuePanelSpecials" tabindex="-1" data-tab="specials" data-specials-only data-manager-only>Specials planner</button>
-            <button id="venueTabStaffAccess" class="tabButton" type="button" role="tab" aria-selected="false" aria-controls="venuePanelStaffAccess" tabindex="-1" data-tab="staff-access" data-manager-only>Staff access</button>
+            <button id="venueTabSpecials" class="tabButton" type="button" role="tab" aria-selected="false" aria-controls="venuePanelSpecials" tabindex="-1" data-tab="specials" data-commercial-surface data-specials-only data-manager-only hidden>Specials planner</button>
+            <button id="venueTabStaffAccess" class="tabButton" type="button" role="tab" aria-selected="false" aria-controls="venuePanelStaffAccess" tabindex="-1" data-tab="staff-access" data-commercial-surface data-manager-only hidden>Staff access</button>
             <button id="venueTabPendingReviews" class="tabButton" type="button" role="tab" aria-selected="false" aria-controls="venuePanelPendingReviews" tabindex="-1" data-tab="pending-reviews" data-manager-only>Pending reviews</button>
-            <button id="venueTabReport" class="tabButton" type="button" role="tab" aria-selected="false" aria-controls="venuePanelReport" tabindex="-1" data-tab="report" data-manager-only>Insights & reports</button>
+            <button id="venueTabReport" class="tabButton" type="button" role="tab" aria-selected="false" aria-controls="venuePanelReport" tabindex="-1" data-tab="report" data-commercial-surface data-manager-only hidden>Insights & reports</button>
             <button id="venueTabSupport" class="tabButton" type="button" role="tab" aria-selected="false" aria-controls="venuePanelSupport" tabindex="-1" data-tab="support" data-manager-only>Support</button>
           </nav>
           <button id="venueLogoutButton" class="button button--danger venueLogoutButton" type="button">Log out</button>
@@ -158,12 +158,12 @@
           <section id="venuePanelPendingReviews" class="tabPanel is-hidden" role="tabpanel" aria-labelledby="venueTabPendingReviews" tabindex="0" data-panel="pending-reviews" hidden>
             <article class="panel" style="margin-top:16px;">
               <h2>Pending review</h2>
-              <p class="helperCopy">Beer, price, profile, and happy-hour edits save straight to your assigned venue. Only controlled subscription, promotion, and bulk-deletion actions require admin review.</p>
+              <p class="helperCopy">Beer, price, profile, and internal happy-hour edits save straight to your assigned venue. Guarded bulk deletions require admin review.</p>
               <div id="pendingChanges" class="list"></div>
             </article>
           </section>
 
-          <section id="venuePanelStaffAccess" class="tabPanel is-hidden" role="tabpanel" aria-labelledby="venueTabStaffAccess" tabindex="0" data-panel="staff-access" hidden>
+          <section id="venuePanelStaffAccess" class="tabPanel is-hidden" role="tabpanel" aria-labelledby="venueTabStaffAccess" tabindex="0" data-panel="staff-access" data-commercial-surface hidden>
             <article class="panel">
               <div class="sectionHeader">
                 <div>
@@ -184,7 +184,7 @@
             </article>
           </section>
 
-          <section id="venuePanelRedemption" class="tabPanel is-hidden" role="tabpanel" aria-labelledby="venueTabRedemption" tabindex="0" data-panel="redemption" hidden>
+          <section id="venuePanelRedemption" class="tabPanel is-hidden" role="tabpanel" aria-labelledby="venueTabRedemption" tabindex="0" data-panel="redemption" data-commercial-surface hidden>
             <article class="panel staffCounterPanel" data-pint-points-feature>
               <div class="sectionHeader">
                 <div>
@@ -401,11 +401,11 @@
                 Active / listed
               </label>
               <p id="venueActiveHint" class="fieldHint">Only Pint Path admins can change whether a canonical venue is publicly listed.</p>
-              <label class="dayChip" id="acceptsPintPathCodesField">
+              <label class="dayChip" id="acceptsPintPathCodesField" data-commercial-surface hidden>
                 <input name="acceptsPintPathCodes" type="checkbox" />
                 Accepts Pint Path user codes
               </label>
-              <button id="requestCodeAcceptanceButton" class="button button--small" type="button" data-jump-tab="support">Request code-acceptance review</button>
+              <button id="requestCodeAcceptanceButton" class="button button--small" type="button" data-jump-tab="support" data-commercial-surface hidden>Request code-acceptance review</button>
               <div id="profileStatus" class="notice" role="status" hidden></div>
             </form>
           </section>
@@ -505,6 +505,7 @@
             <div class="grid grid--two">
               <form id="happyHourForm" class="panel form">
                 <h2>Happy hours</h2>
+                <p class="muted">Happy-hour details are saved for internal venue operations and a future reviewed release. They are not shown on the public website or iOS app.</p>
                 <input name="id" type="hidden" />
                 <label class="field">Title
                   <input name="title" placeholder="e.g. Weekday happy hour" required />
@@ -540,12 +541,13 @@
               </form>
               <article class="panel">
                 <h2>Current happy hours</h2>
+                <p class="muted">These records are an internal planning view only. Saving or activating one does not publish it to the public website or iOS app.</p>
                 <div id="happyHourList" class="list"></div>
               </article>
             </div>
           </section>
 
-          <section id="venuePanelSpecials" class="tabPanel is-hidden" role="tabpanel" aria-labelledby="venueTabSpecials" tabindex="0" data-panel="specials" hidden>
+          <section id="venuePanelSpecials" class="tabPanel is-hidden" role="tabpanel" aria-labelledby="venueTabSpecials" tabindex="0" data-panel="specials" data-commercial-surface hidden>
             <article id="specialsPlanner" class="specialsPlanner panel is-hidden"></article>
             <article id="specialsGate" class="panel is-hidden">
               <h2 data-commercial-open-copy="Pint Path specials are a paid venue feature" data-commercial-closed-copy="Pro venue specials are coming later">Pro venue specials are coming later</h2>
@@ -611,7 +613,7 @@
             </div>
           </section>
 
-          <section id="venuePanelReport" class="tabPanel is-hidden" role="tabpanel" aria-labelledby="venueTabReport" tabindex="0" data-panel="report" hidden>
+          <section id="venuePanelReport" class="tabPanel is-hidden" role="tabpanel" aria-labelledby="venueTabReport" tabindex="0" data-panel="report" data-commercial-surface hidden>
             <article id="venueDemandPanel" class="venueDemandPanel is-hidden"></article>
             <article id="premiumVenueDashboard" class="premiumVenueDashboard"></article>
             <article id="businessToolkit" class="panel businessToolkit is-hidden"></article>
@@ -680,7 +682,7 @@
                 <div>
                   <div class="eyebrow">Venue support</div>
                   <h2>Ask Pint Path a question</h2>
-                  <p class="muted">Use this for venue setup, dashboard questions, plan changes, staff access, Pint Path specials, or account support.</p>
+                  <p class="muted">Use this for venue setup, listing questions, wrong venue data, or account support.</p>
                 </div>
                 <a class="button" href="/feedback.html?audience=bars">Open support page</a>
               </div>
@@ -689,7 +691,7 @@
                   <label class="field">Topic
                     <select name="feedbackType">
                       <option value="venue_partner_interest">Venue account or partnership</option>
-                      <option value="billing_support">Pricing or billing</option>
+                      <option value="billing_support" data-commercial-surface hidden>Pricing or billing</option>
                       <option value="bug">Dashboard issue</option>
                       <option value="wrong_data">Wrong venue data</option>
                       <option value="feature_idea">Feature idea</option>
@@ -712,10 +714,10 @@
       </div>
     </section>
 
-    <p class="footerCopy">Venue insights are aggregate and directional while the beta grows. We do not expose individual user clickstream or exact user location to venues. Prices may change. Drink responsibly.</p>
+    <p class="footerCopy">Assigned venue managers can maintain profile, opening-hour, beer, stock, and price details. Internal happy-hour records are not published in this release. Prices may change. Drink responsibly.</p>
   </main>
 
-  <dialog id="voidPintPointDialog" class="reviewDecisionDialog">
+  <dialog id="voidPintPointDialog" class="reviewDecisionDialog" data-commercial-surface hidden>
     <form id="voidPintPointForm" class="reviewDecisionDialog__panel" method="dialog">
       <div>
         <div class="eyebrow">Audited correction</div>
@@ -808,7 +810,7 @@
 
     function renderCommercialUpgradeAction(label, className = "button", tier = "pro") {
       if (!COMMERCIAL_LAUNCH_ENABLED) {
-        return '<span class="helperCopy" data-commercial-enrollment-deferred="true">Pro pricing and enrolment are coming later. No payment or trial starts from this page.</span>';
+        return "";
       }
       return `<button class="${escapeHtml(className)}" type="button" data-upgrade-tier="${escapeHtml(tier)}">${escapeHtml(label)}</button>`;
     }
@@ -838,6 +840,7 @@
       controls.forEach((control) => {
         if (!(control instanceof HTMLButtonElement)) return;
         if (COMMERCIAL_LAUNCH_ENABLED) {
+          control.hidden = false;
           const originalLabel = control.dataset.commercialOriginalLabel;
           if (originalLabel && control.textContent !== originalLabel) control.textContent = originalLabel;
           if (control.disabled) control.disabled = false;
@@ -848,6 +851,8 @@
         if (!control.dataset.commercialOriginalLabel) {
           control.dataset.commercialOriginalLabel = control.textContent || "Upgrade to Pro";
         }
+        control.dataset.commercialSurface = "";
+        control.hidden = true;
         if (!control.disabled) control.disabled = true;
         if (control.getAttribute("aria-disabled") !== "true") control.setAttribute("aria-disabled", "true");
         if (control.title !== "Pro pricing and enrolment are coming later. No payment or trial starts from this page.") {
@@ -859,6 +864,29 @@
       });
     }
 
+    function revealEnabledCommercialSurfaces() {
+      if (!COMMERCIAL_LAUNCH_ENABLED) return;
+      document.querySelectorAll(`
+        #venueMobileTabSelect option[data-commercial-surface],
+        .tabButton[data-commercial-surface],
+        #acceptsPintPathCodesField,
+        #requestCodeAcceptanceButton,
+        #voidPintPointDialog
+      `).forEach((surface) => {
+        surface.hidden = false;
+      });
+    }
+
+    function removeDeferredCommercialSurfaces(root = document) {
+      if (COMMERCIAL_LAUNCH_ENABLED) return;
+      const surfaces = [
+        ...(root instanceof Element && root.matches("[data-commercial-surface]") ? [root] : []),
+        ...root.querySelectorAll("[data-commercial-surface]"),
+      ];
+      surfaces.forEach((surface) => surface.remove());
+    }
+
+    revealEnabledCommercialSurfaces();
     syncCommercialCheckoutControls();
     syncCommercialEnrollmentCopy();
     new MutationObserver((mutations) => {
@@ -867,10 +895,12 @@
           if (node instanceof Element) {
             syncCommercialCheckoutControls(node);
             syncCommercialEnrollmentCopy(node);
+            removeDeferredCommercialSurfaces(node);
           }
         });
       });
     }).observe(document.body, { childList: true, subtree: true });
+    removeDeferredCommercialSurfaces();
 
     function money(value) {
       return value == null ? "No verified price" : new Intl.NumberFormat("en-AU", { style: "currency", currency: "AUD" }).format(value);
@@ -1053,11 +1083,11 @@
     }
 
     function portalCanManageSpecials(data = currentPortal) {
-      return Boolean(data?.tier?.canManageSpecials);
+      return COMMERCIAL_LAUNCH_ENABLED && Boolean(data?.tier?.canManageSpecials);
     }
 
     function portalCanFeatureSpecials(data = currentPortal) {
-      return Boolean(data?.tier?.featuredSpecials);
+      return COMMERCIAL_LAUNCH_ENABLED && Boolean(data?.tier?.featuredSpecials);
     }
 
     function nullableNumber(value) {
@@ -1360,9 +1390,13 @@
     }
 
     function showTab(name, options = {}) {
-      const counterOnly = currentPortal?.accessLevel === "counter_staff";
+      const counterOnly = COMMERCIAL_LAUNCH_ENABLED && currentPortal?.accessLevel === "counter_staff";
       const safeName = PORTAL_TAB_NAMES.has(name) ? name : "overview";
-      const requestedName = counterOnly ? "redemption" : safeName;
+      const requestedName = counterOnly
+        ? "redemption"
+        : !COMMERCIAL_LAUNCH_ENABLED && ["redemption", "specials", "staff-access", "report"].includes(safeName)
+          ? "overview"
+          : safeName;
       const nextName = requestedName === "specials" && !portalCanManageSpecials() ? "beers" : requestedName;
       if (nextName !== "redemption") stopMemberQrScanner();
       document.querySelectorAll(".tabButton").forEach((button) => {
@@ -1400,11 +1434,13 @@
     }
 
     function syncPortalAccessControls(data) {
-      const counterOnly = data?.accessLevel === "counter_staff";
+      const counterOnly = COMMERCIAL_LAUNCH_ENABLED && data?.accessLevel === "counter_staff";
       document.body.classList.toggle("venuePortalCounterMode", counterOnly);
       document.querySelectorAll("[data-manager-only]").forEach((element) => {
-        element.hidden = counterOnly;
-        if ("disabled" in element) element.disabled = counterOnly;
+        const commercialSurfaceClosed = !COMMERCIAL_LAUNCH_ENABLED
+          && element.matches("[data-commercial-surface]");
+        element.hidden = counterOnly || commercialSurfaceClosed;
+        if ("disabled" in element) element.disabled = counterOnly || commercialSurfaceClosed;
       });
       if (counterOnly) showTab("redemption");
     }
@@ -1576,17 +1612,16 @@
 
       const profile = data.profile;
       lastSelectedVenueId = data.selectedVenue?.venueId || lastSelectedVenueId;
-      const tier = data.tier || { tier: profile.membershipTier, analyticsLocked: true };
       const venueBillingManagementAvailable = data.billing?.managementAvailable === true;
       syncPortalAccessControls(data);
       syncTierControls(data);
       selectedVenueSummary.innerHTML = `
         <strong>${escapeHtml(profile.name)}</strong>
         <span>${escapeHtml(profile.suburb || "Melbourne")}</span>
-        <span class="pill">${escapeHtml(prettyTier(profile.membershipTier))}</span>
-        ${profile.subscriptionStatus ? `<small>${escapeHtml(String(profile.subscriptionStatus).replaceAll("_", " "))}${profile.subscriptionCurrentPeriodEnd ? ` · renews/ends ${escapeHtml(MelbBeerBusiness.formatDate(profile.subscriptionCurrentPeriodEnd))}` : venueBillingManagementAvailable ? " · renewal date available in Stripe" : ""}</small>` : ""}
-        ${data.accessLevel !== "counter_staff" && profile.membershipTier === "pro" ? venueBillingManagementAvailable
-          ? '<button class="button button--small" type="button" data-manage-venue-billing aria-describedby="venueBillingStatus">Manage billing</button><div class="notice" id="venueBillingStatus" data-venue-billing-status role="status" aria-live="polite" aria-atomic="true" tabindex="-1" hidden></div>'
+        <span class="pill">${escapeHtml(COMMERCIAL_LAUNCH_ENABLED ? prettyTier(profile.membershipTier) : "Free")}</span>
+        ${COMMERCIAL_LAUNCH_ENABLED && profile.subscriptionStatus ? `<small>${escapeHtml(String(profile.subscriptionStatus).replaceAll("_", " "))}${profile.subscriptionCurrentPeriodEnd ? ` · renews/ends ${escapeHtml(MelbBeerBusiness.formatDate(profile.subscriptionCurrentPeriodEnd))}` : venueBillingManagementAvailable ? " · renewal date available in Stripe" : ""}</small>` : ""}
+        ${COMMERCIAL_LAUNCH_ENABLED && data.accessLevel !== "counter_staff" && profile.membershipTier === "pro" ? venueBillingManagementAvailable
+          ? '<button class="button button--small" type="button" data-manage-venue-billing data-commercial-surface aria-describedby="venueBillingStatus">Manage billing</button><div class="notice" id="venueBillingStatus" data-venue-billing-status data-commercial-surface role="status" aria-live="polite" aria-atomic="true" tabindex="-1" hidden></div>'
           : '<div class="notice notice--warning" role="status">Pro access is active, but no paid Stripe billing profile is linked. <a href="/feedback.html?type=billing_support">Contact billing support</a> if you expected a paid subscription.</div>'
           : ""}
       `;
@@ -1599,7 +1634,11 @@
       if (venuePortalMeta) {
         const metaParts = [
           profile.suburb || data.selectedVenue?.suburb || null,
-          data.accessLevel === "counter_staff" ? "Counter staff" : prettyTier(profile.membershipTier),
+          COMMERCIAL_LAUNCH_ENABLED && data.accessLevel === "counter_staff"
+            ? "Counter staff"
+            : COMMERCIAL_LAUNCH_ENABLED
+              ? prettyTier(profile.membershipTier)
+              : "Free",
         ].filter(Boolean);
         venuePortalMeta.textContent = metaParts.join(" · ");
         venuePortalMeta.classList.toggle("is-hidden", !metaParts.length);
@@ -1609,7 +1648,7 @@
       const happyHours = data.inventory?.happyHours || [];
       const specials = data.inventory?.specials || [];
 
-      if (data.accessLevel === "counter_staff") {
+      if (COMMERCIAL_LAUNCH_ENABLED && data.accessLevel === "counter_staff") {
         renderDiscountOps(data);
         renderPendingCounterReceipts();
         renderDiscountSpecialChoices(data);
@@ -1623,23 +1662,25 @@
       renderPriceRefreshPanel(beers);
       renderHappyHourBeerChoices();
       renderHappyHours(happyHours);
-      renderSpecials(specials);
-      renderSpecialsPlanner(data);
       renderDashboardSetupProgress(data);
       renderVenueDailyActions(data);
+      renderOverviewData(data);
+      renderPendingChanges(data.pendingChanges || []);
+      if (!COMMERCIAL_LAUNCH_ENABLED) return;
+
+      renderSpecials(specials);
+      renderSpecialsPlanner(data);
       renderVenuePulseGrid(data);
       renderVenuePortalLaunchCards(data);
       renderVenueDemandPanel(data);
       renderPremiumVenueDashboard(data);
       renderBusinessToolkit(data);
-      renderOverviewData(data);
       renderDiscountOps(data);
       void loadVenueReconciliation(0);
       renderPendingCounterReceipts();
       renderDiscountSpecialChoices(data);
       renderRedemptionItemOptions(data);
       renderCounterStaff(data);
-      renderPendingChanges(data.pendingChanges || []);
       renderAnalytics(data);
       renderMonthlyReport(data);
     }
@@ -1658,11 +1699,15 @@
       document.getElementById("venueActiveField")?.classList.toggle("is-disabled", !currentPortal?.isAdmin);
       document.getElementById("venueActiveHint")?.classList.toggle("is-hidden", Boolean(currentPortal?.isAdmin));
       const acceptsCodesControl = field(profileForm, "acceptsPintPathCodes");
-      acceptsCodesControl.checked = Boolean(profile.acceptsPintPathCodes);
-      acceptsCodesControl.disabled = !currentPortal?.isAdmin;
+      if (acceptsCodesControl) {
+        acceptsCodesControl.checked = COMMERCIAL_LAUNCH_ENABLED && Boolean(profile.acceptsPintPathCodes);
+        acceptsCodesControl.disabled = !COMMERCIAL_LAUNCH_ENABLED || !currentPortal?.isAdmin;
+      }
       document.getElementById("acceptsPintPathCodesField")?.classList.toggle("is-disabled", !currentPortal?.isAdmin);
       const requestCodesButton = document.getElementById("requestCodeAcceptanceButton");
-      if (requestCodesButton) requestCodesButton.hidden = Boolean(currentPortal?.isAdmin || profile.acceptsPintPathCodes);
+      if (requestCodesButton) {
+        requestCodesButton.hidden = !COMMERCIAL_LAUNCH_ENABLED || Boolean(currentPortal?.isAdmin || profile.acceptsPintPathCodes);
+      }
       loadedVenueTags = Array.isArray(profile.venueTags)
         ? profile.venueTags.map((tag) => String(tag || "").trim()).filter(Boolean)
       : [];
@@ -1763,8 +1808,8 @@
           target: "price-refresh",
         },
         {
-          label: "Happy-hour signal",
-          helper: "A simple time window helps nearby users decide tonight.",
+          label: "Internal happy-hour record",
+          helper: "Keep the venue's operating schedule on file for a future reviewed release; it is not published now.",
           complete: activeHappyHours > 0,
           target: "happy-hours",
           focusField: "happyHourTitle",
@@ -2449,20 +2494,27 @@
             : null,
         happyHours.length
           ? null
-          : { label: "Add happy hour", tab: "happy-hours", copy: "Happy-hour details help users choose you tonight." },
-        data.tier?.canManageSpecials && !activeSpecials
+          : { label: "Add internal happy hour", tab: "happy-hours", copy: "Save an internal venue-operations record for a future reviewed release; it is not public now." },
+        COMMERCIAL_LAUNCH_ENABLED && data.tier?.canManageSpecials && !activeSpecials
           ? { label: "Create special", tab: "specials", copy: "Add one clear Pint Path offer staff can redeem." }
           : null,
         pendingCount
           ? { label: "Review pending", tab: "pending-reviews", copy: `${formatCount(pendingCount)} change${pendingCount === 1 ? "" : "s"} waiting for admin review.` }
           : null,
       ].filter(Boolean).slice(0, 4);
-      const fallbackActions = [
-        { label: "Open staff mode", tab: "redemption", copy: "Redeem Pint Path codes and record approved offers." },
-        { label: "Monthly report", tab: "report", copy: "Check the venue-safe summary for this month." },
-        { label: "Invite staff", tab: "staff-access", copy: "Invite counter staff and review pending access before the next shift." },
-        { label: "Check profile", tab: "profile", copy: "Confirm contact, suburb, website, and opening basics still look right." },
-      ];
+      const fallbackActions = COMMERCIAL_LAUNCH_ENABLED
+        ? [
+            { label: "Open staff mode", tab: "redemption", copy: "Redeem Pint Path codes and record approved offers." },
+            { label: "Monthly report", tab: "report", copy: "Check the venue-safe summary for this month." },
+            { label: "Invite staff", tab: "staff-access", copy: "Invite counter staff and review pending access before the next shift." },
+            { label: "Check profile", tab: "profile", copy: "Confirm contact, suburb, website, and opening basics still look right." },
+          ]
+        : [
+            { label: "Check profile", tab: "profile", copy: "Confirm contact, suburb, website, and opening hours are current." },
+            { label: "Check beer list", tab: "beers", copy: "Confirm stock and prices while the tap list is fresh." },
+            { label: "Check internal hours", tab: "happy-hours", copy: "Keep the internal happy-hour record current without publishing it." },
+            { label: "Contact support", tab: "support", copy: "Report wrong venue data or ask for listing help." },
+          ];
       const visibleActions = [...actions];
       fallbackActions.forEach((action) => {
         if (visibleActions.length < 4 && !visibleActions.some((item) => item.tab === action.tab)) {
@@ -2472,7 +2524,9 @@
       const stats = [
         { label: "Beer rows", value: formatCount(beers.length), tone: beers.length >= 3 ? "success" : "warning" },
         { label: "Price checks", value: staleOrMissingPrices ? `${formatCount(staleOrMissingPrices)} due` : "Fresh", tone: staleOrMissingPrices ? "warning" : "success" },
-        { label: "Specials", value: activeSpecials ? formatCount(activeSpecials) : "None", tone: activeSpecials ? "premium" : "warning" },
+        ...(COMMERCIAL_LAUNCH_ENABLED
+          ? [{ label: "Specials", value: activeSpecials ? formatCount(activeSpecials) : "None", tone: activeSpecials ? "premium" : "warning" }]
+          : [{ label: "Internal hours", value: formatCount(happyHours.length), tone: happyHours.length ? "success" : "info" }]),
         { label: "Quality", value: typeof quality.score === "number" ? `${formatCount(quality.score)}%` : "--", tone: quality.score >= 80 ? "success" : "info" },
       ];
 
@@ -2513,7 +2567,7 @@
           .join("") + '<li>Canonical identity and coordinates are maintained by Pint Path; contact support if those checks are wrong.</li>';
       } else {
         qualityScore.innerHTML = `<strong>--</strong><span class="muted">listing quality</span>`;
-        qualityChecklist.innerHTML = '<li>Build the venue profile, beer list, and happy hours to unlock a quality score.</li>';
+        qualityChecklist.innerHTML = '<li>Build the venue profile and beer list to unlock a quality score. Happy-hour records remain internal-only.</li>';
       }
 
       const records = data.insights?.priceRecords || [];
@@ -2700,7 +2754,7 @@
         : beers.length < 3
           ? { label: "Add 3 beers", tab: "beers", copy: "Three current tap prices make the venue useful on the map and in beer search." }
             : !happyHours.length
-              ? { label: "Add happy hour", tab: "happy-hours", copy: "Happy hours are one of the fastest ways to get users to choose a venue tonight." }
+              ? { label: "Add internal happy hour", tab: "happy-hours", copy: "Record an internal operating window for a future reviewed release. It is not shown on public web or iOS." }
             : tier.canManageSpecials && !specials.length
               ? { label: "Add app special", tab: "specials", copy: "Pro venues can add reviewed Pint Path specials for extra conversion proof." }
               : { label: "Keep prices fresh", tab: "price-refresh", copy: "Confirm unchanged prices in one pass, or edit only the rows that changed." };
@@ -3672,7 +3726,7 @@
             <span class="pill">Admin review</span>
           </div>
         `).join("")
-        : '<div class="emptyState"><strong>No safeguarded actions pending.</strong><br />Routine assigned-venue edits publish immediately. Protected deletion bursts, access, subscription and promotion changes appear here when admin review is required.</div>';
+        : '<div class="emptyState"><strong>No safeguarded actions pending.</strong><br />Routine assigned-venue edits publish immediately. Guarded deletion bursts appear here when admin review is required.</div>';
     }
 
     function summarizePendingPayload(payload = {}) {
@@ -3905,7 +3959,7 @@
         : `
           <div class="emptyState">
             <strong>No happy hours yet.</strong><br />
-            Add one simple time window so nearby users can spot a reason to visit tonight.
+            Add an internal operating window for venue planning and a future reviewed release. It will not appear on the public website or iOS app.
             <div class="actionRow actionRow--compact" style="margin-top:12px;">
               <button class="button button--small button--primary" type="button" data-focus-venue-field="happyHourTitle">Add happy hour</button>
             </div>
@@ -4852,10 +4906,18 @@
 
     function scrubRedemptionCodesFromUrl() {
       const url = new URL(window.location.href);
-      const hadShortLivedCode = url.searchParams.has("discountCode") || url.searchParams.has("freePintCode");
-      if (!hadShortLivedCode) return;
+      const removableKeys = [
+        "discountCode",
+        "freePintCode",
+        ...(!COMMERCIAL_LAUNCH_ENABLED ? ["checkout", "billing"] : []),
+      ];
+      if (!removableKeys.some((key) => url.searchParams.has(key))) return;
       url.searchParams.delete("discountCode");
       url.searchParams.delete("freePintCode");
+      if (!COMMERCIAL_LAUNCH_ENABLED) {
+        url.searchParams.delete("checkout");
+        url.searchParams.delete("billing");
+      }
       window.history.replaceState(window.history.state || {}, "", url);
     }
 
@@ -4935,8 +4997,10 @@
       const pendingPortalRedemption = MelbBeerBusiness.consumePendingPortalRedemption();
       const selectedPortalVenueId = urlParams.get("venueId");
       const pendingRedemptionMatchesVenue = !pendingPortalRedemption?.venueId || pendingPortalRedemption.venueId === selectedPortalVenueId;
-      const discountCodeFromQr = urlParams.get("discountCode") || (pendingRedemptionMatchesVenue ? pendingPortalRedemption?.discountCode : null);
-      const freePintCodeFromQr = PINT_POINTS_REWARDS_ENABLED
+      const discountCodeFromQr = COMMERCIAL_LAUNCH_ENABLED
+        ? urlParams.get("discountCode") || (pendingRedemptionMatchesVenue ? pendingPortalRedemption?.discountCode : null)
+        : null;
+      const freePintCodeFromQr = COMMERCIAL_LAUNCH_ENABLED && PINT_POINTS_REWARDS_ENABLED
         ? urlParams.get("freePintCode") || (pendingRedemptionMatchesVenue ? pendingPortalRedemption?.freePintCode : null)
         : null;
       const requestedTab = urlParams.get("tab");
@@ -5034,13 +5098,13 @@
         scrubRedemptionCodesFromUrl();
         const checkoutState = urlParams.get("checkout");
         const billingState = urlParams.get("billing");
-        if (checkoutState === "success") {
+        if (COMMERCIAL_LAUNCH_ENABLED && checkoutState === "success") {
           MelbBeerBusiness.setStatus(portalAccess, "Payment completed. Pint Path is waiting for signed Stripe confirmation; refresh shortly if the Pro tier is not active yet.");
           portalAccess.classList.remove("is-hidden");
-        } else if (checkoutState === "cancelled") {
+        } else if (COMMERCIAL_LAUNCH_ENABLED && checkoutState === "cancelled") {
           MelbBeerBusiness.setStatus(portalAccess, "Checkout was cancelled. No venue plan change was applied.");
           portalAccess.classList.remove("is-hidden");
-        } else if (billingState === "returned") {
+        } else if (COMMERCIAL_LAUNCH_ENABLED && billingState === "returned") {
           MelbBeerBusiness.setStatus(portalAccess, "Returned from Stripe billing. The plan shown below is the latest server-confirmed state.");
           portalAccess.classList.remove("is-hidden");
         }
@@ -5345,7 +5409,9 @@
           description: currentPortal?.profile?.description || null,
           openingHours: collectOpeningHours(),
           venueTags: [...new Set([...preservedUnknownTags, ...checkedValues(venueTags)])],
-          acceptsPintPathCodes: currentPortal?.isAdmin ? field(profileForm, "acceptsPintPathCodes").checked : Boolean(currentPortal?.profile?.acceptsPintPathCodes),
+          acceptsPintPathCodes: COMMERCIAL_LAUNCH_ENABLED && currentPortal?.isAdmin
+            ? Boolean(field(profileForm, "acceptsPintPathCodes")?.checked)
+            : false,
           active: currentPortal?.isAdmin ? field(profileForm, "active").checked : Boolean(currentPortal?.profile?.active),
           expectedUpdatedAt: currentPortal?.profile?.updatedAt || null,
         };
@@ -5866,7 +5932,7 @@
           if (!COMMERCIAL_LAUNCH_ENABLED) {
             MelbBeerBusiness.setStatus(
               portalAccess,
-              "New paid and introductory-trial enrollment is not open yet. Existing venue subscriptions can still be managed or cancelled.",
+              "Paid and introductory-trial venue enrollment is not available in the current Free release.",
               true,
             );
             return;
@@ -5949,7 +6015,10 @@
             MelbBeerBusiness.setStatus(portalAccess, "Pint Path specials are available on Pro venue tiers.", true);
             return;
           }
-          const confirmed = window.confirm(`Remove this ${label}? The public map keeps the last approved data until Pint Path finishes review.`);
+          const removalImpact = route === "happy-hours"
+            ? "This removes the internal venue-operations record; happy-hour details are not published to public web or iOS."
+            : "The public map keeps the last approved data until Pint Path finishes review.";
+          const confirmed = window.confirm(`Remove this ${label}? ${removalImpact}`);
           if (!confirmed) return;
           target.setAttribute("disabled", "true");
           MelbBeerBusiness.setStatus(portalAccess, `Removing ${label}...`);
@@ -5981,6 +6050,8 @@
           return;
         }
       });
+
+      removeDeferredCommercialSurfaces();
     });
   </script>
 </body>

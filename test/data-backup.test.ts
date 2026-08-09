@@ -7,7 +7,9 @@ import BetterSqlite3 from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { BusinessRepository } from "../src/db/business.repository.js";
+import { AccountDeletionQueueRepository } from "../src/db/account-deletion-queue.repository.js";
 import { createDatabase } from "../src/db/database.js";
+import { asAsyncSqliteDatabase } from "../src/db/sql-database.js";
 import { createDataBackup, rehearseDataRestore, verifyDataBackup } from "../src/lib/data-backup.js";
 
 const temporaryDirectories: string[] = [];
@@ -135,6 +137,7 @@ describe("production data backups", () => {
     fs.mkdirSync(evidencePath, { recursive: true });
     const database = createDatabase(databasePath);
     const repository = new BusinessRepository(database);
+    const queueRepository = new AccountDeletionQueueRepository(asAsyncSqliteDatabase(database));
     const now = "2026-08-03T10:00:00.000Z";
     const account = repository.createAccount({
       id: "backup-secret-account",
@@ -144,7 +147,7 @@ describe("production data backups", () => {
       subscriptionStatus: "free",
       now,
     });
-    repository.createAccountDeletionRequest({
+    await queueRepository.createAccountDeletionRequest({
       id: "backup-secret-request",
       userId: account.id,
       userMessage: null,
@@ -288,18 +291,18 @@ describe("production data backups", () => {
       subscriptionStatus: "free",
       now: "2026-07-01T00:00:00.000Z",
     });
-    repository.createSourceEvidenceObject({
-      id: "later-deleted-evidence",
-      ownerUserId: "later-deleted-user",
-      storageProvider: "filesystem_private",
-      objectPath: "later-deleted-user/menu.pdf",
-      mimeType: "application/pdf",
-      byteSize: 12,
-      dataBase64: null,
-      externalUrl: null,
-      retentionExpiresAt: "2026-10-01T00:00:00.000Z",
-      createdAt: "2026-07-01T00:00:00.000Z",
-    });
+    database.prepare(
+      `INSERT INTO source_evidence_objects (
+         id, owner_user_id, storage_provider, object_path, mime_type, byte_size,
+         data_base64, external_url, retention_expires_at, deleted_at, created_at
+       ) VALUES (?, ?, 'filesystem_private', ?, 'application/pdf', 12, NULL, NULL, ?, NULL, ?)`,
+    ).run(
+      "later-deleted-evidence",
+      "later-deleted-user",
+      "later-deleted-user/menu.pdf",
+      "2026-10-01T00:00:00.000Z",
+      "2026-07-01T00:00:00.000Z",
+    );
     database.close();
     fs.mkdirSync(path.join(evidencePath, "later-deleted-user"), { recursive: true });
     fs.writeFileSync(path.join(evidencePath, "later-deleted-user", "menu.pdf"), "private-menu");

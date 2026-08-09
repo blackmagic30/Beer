@@ -120,7 +120,7 @@ describe("business route hardening", () => {
     const source = adminRoutesSource();
 
     expect(source).toContain("function getRequestContext");
-    expect(source).toContain("businessService.requireAdmin(getSessionAuthorization(req), getRequestContext(req));");
+    expect(source).toContain("await businessService.requireAdmin(getSessionAuthorization(req), getRequestContext(req));");
     expect(source).toContain('import { getSessionAuthorization } from "../../lib/session-cookie.js";');
   });
 });

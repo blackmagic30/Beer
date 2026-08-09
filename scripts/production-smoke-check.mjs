@@ -72,6 +72,57 @@ async function checkJson(id, pathname, assertion, token) {
   }
 }
 
+async function checkProductionReadiness() {
+  try {
+    const response = await fetch(`${baseUrl}/ready`, {
+      redirect: "error",
+      signal: AbortSignal.timeout(20_000),
+    });
+    const payload = await parseJson(response, "ready");
+    const data = nestedData(payload);
+    const rateLimiterRedis = data.dependencies?.rateLimiterRedis;
+    const offsiteBackup = data.dependencies?.offsiteBackup;
+    const readyPassed = response.ok
+      && data.status === "ready"
+      && rateLimiterRedis?.required === true
+      && rateLimiterRedis?.configured === true
+      && rateLimiterRedis?.ready === true;
+    const logicalBackupPassed = response.ok
+      && offsiteBackup?.status === "ok"
+      && offsiteBackup?.required === true
+      && offsiteBackup?.liveProbe === true
+      && typeof offsiteBackup?.lastSuccessfulAt === "string"
+      && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(
+        offsiteBackup.lastSuccessfulAt,
+      )
+      && typeof offsiteBackup?.ageHours === "number"
+      && Number.isFinite(offsiteBackup.ageHours)
+      && offsiteBackup.ageHours >= 0;
+    results.push({
+      id: "ready",
+      status: readyPassed ? "pass" : "fail",
+      detail: readyPassed
+        ? `HTTP ${response.status}`
+        : `Unexpected HTTP ${response.status} response`,
+    });
+    results.push({
+      id: "postgres_logical_backup_attestation",
+      status: logicalBackupPassed ? "pass" : "fail",
+      detail: logicalBackupPassed
+        ? "Fresh live-bound remote attestation"
+        : "Postgres logical-backup attestation is absent, stale, unbound, or unreachable",
+    });
+  } catch (error) {
+    const detail = detailFromError(error, "Request failed");
+    results.push({ id: "ready", status: "fail", detail });
+    results.push({
+      id: "postgres_logical_backup_attestation",
+      status: "fail",
+      detail,
+    });
+  }
+}
+
 async function checkHtml(id, pathname, requiredText) {
   try {
     const response = await fetch(`${baseUrl}${pathname}`, { redirect: "error", signal: AbortSignal.timeout(20_000) });
@@ -266,7 +317,7 @@ function revokeProviderSession(providerSession) {
 if (!authOnly) {
   await Promise.all([
     checkJson("health", "/health", (payload) => nestedData(payload).status === "ok"),
-    checkJson("ready", "/ready", (payload) => nestedData(payload).status === "ready"),
+    checkProductionReadiness(),
     checkJson("config", "/api/business/config", (payload) => nestedData(payload).priceAccessModel === "fixed_preview"),
     checkJson("venues", "/api/business/venues?limit=3", (payload) => Array.isArray(nestedData(payload).venues)),
     checkJson("prices", "/api/business/price-records?limit=3", (payload) => Array.isArray(nestedData(payload).records)),

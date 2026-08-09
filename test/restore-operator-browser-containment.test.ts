@@ -9,6 +9,11 @@ import {
   isRestoreRehearsalEnvironment,
 } from "../scripts/lib/operator-mutation-guard.js";
 
+const RESTORE_RAILWAY_ENVIRONMENT_ID = "fixture-restore-environment";
+const RESTORE_RAILWAY_PROJECT_ID = "fixture-restore-project";
+const RESTORE_RAILWAY_APP_SERVICE_ID = "fixture-restore-app-service";
+const RESTORE_SUPABASE_URL = "https://restoreref0000000001.supabase.co";
+
 class BrowserStorage {
   constructor(readonly values = new Map<string, string>()) {}
 
@@ -150,13 +155,23 @@ describe("restore rehearsal operator mutation guard", () => {
     expect(isRestoreRehearsalEnvironment("typo-that-must-not-disable-containment")).toBe(true);
   });
 
-  it("does not let an explicit false flag bypass immutable staging or restore markers", () => {
+  it("does not let an explicit false flag bypass reviewed restore pins or restore markers", () => {
     expect(isRestoreRehearsalEnvironment("false", {
-      RAILWAY_ENVIRONMENT_ID: "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+      RAILWAY_ENVIRONMENT_ID: RESTORE_RAILWAY_ENVIRONMENT_ID,
+      RESTORE_REHEARSAL_EXPECTED_RAILWAY_ENVIRONMENT_ID: RESTORE_RAILWAY_ENVIRONMENT_ID,
     })).toBe(true);
     expect(isRestoreRehearsalEnvironment("off", {
-      RAILWAY_PROJECT_ID: "48d8c6cd-1c66-4148-874b-20877f48e1a5",
+      RAILWAY_PROJECT_ID: RESTORE_RAILWAY_PROJECT_ID,
       RAILWAY_ENVIRONMENT_NAME: "staging",
+      RESTORE_REHEARSAL_EXPECTED_RAILWAY_PROJECT_ID: RESTORE_RAILWAY_PROJECT_ID,
+    })).toBe(true);
+    expect(isRestoreRehearsalEnvironment("false", {
+      SUPABASE_URL: RESTORE_SUPABASE_URL,
+      RESTORE_REHEARSAL_EXPECTED_SUPABASE_URL: RESTORE_SUPABASE_URL,
+    })).toBe(true);
+    expect(isRestoreRehearsalEnvironment("false", {
+      RAILWAY_ENVIRONMENT_ID: "fixture-wrong-environment",
+      RESTORE_REHEARSAL_EXPECTED_RAILWAY_ENVIRONMENT_ID: RESTORE_RAILWAY_ENVIRONMENT_ID,
     })).toBe(true);
     expect(isRestoreRehearsalEnvironment("0", {
       DATABASE_PATH: "/app/data/restore-pint-path-example/pint-path.sqlite",
@@ -166,13 +181,38 @@ describe("restore rehearsal operator mutation guard", () => {
     })).toBe(true);
   });
 
-  it("does not mistake a shared Railway service ID in production for restore staging", () => {
+  it("does not mistake distinct production or permanent-staging identities for restore staging", () => {
     expect(isRestoreRehearsalEnvironment("false", {
-      RAILWAY_PROJECT_ID: "48d8c6cd-1c66-4148-874b-20877f48e1a5",
-      RAILWAY_ENVIRONMENT_ID: "13dab015-df74-45c6-b26f-69323daea99a",
+      RAILWAY_PROJECT_ID: "fixture-production-project",
+      RAILWAY_ENVIRONMENT_ID: "fixture-production-environment",
       RAILWAY_ENVIRONMENT_NAME: "production",
-      RAILWAY_SERVICE_ID: "6816c4a2-e392-4ee5-826f-2584cb599ec0",
+      RAILWAY_SERVICE_ID: RESTORE_RAILWAY_APP_SERVICE_ID,
+      SUPABASE_URL: "https://productionref0000001.supabase.co",
     })).toBe(false);
+    expect(isRestoreRehearsalEnvironment("false", {
+      RAILWAY_PROJECT_ID: "fixture-permanent-staging-project",
+      RAILWAY_ENVIRONMENT_ID: "fixture-permanent-staging-environment",
+      RAILWAY_ENVIRONMENT_NAME: "staging",
+      RAILWAY_SERVICE_ID: "fixture-permanent-staging-app-service",
+      SUPABASE_URL: "https://stagingref0000000001.supabase.co",
+      ACCOUNT_DELETION_REHEARSAL_EXPECTED_RAILWAY_PROJECT_ID: "fixture-permanent-staging-project",
+      ACCOUNT_DELETION_REHEARSAL_EXPECTED_RAILWAY_ENVIRONMENT_ID: "fixture-permanent-staging-environment",
+      ACCOUNT_DELETION_REHEARSAL_EXPECTED_RAILWAY_SERVICE_ID: "fixture-permanent-staging-app-service",
+      ACCOUNT_DELETION_REHEARSAL_EXPECTED_SUPABASE_URL: "https://stagingref0000000001.supabase.co",
+    })).toBe(false);
+  });
+
+  it("derives destructive restore identity only from protected runtime pins", () => {
+    const source = fs.readFileSync(
+      path.resolve(process.cwd(), "scripts/lib/operator-mutation-guard.ts"),
+      "utf8",
+    );
+
+    expect(source).toContain("RESTORE_REHEARSAL_EXPECTED_RAILWAY_ENVIRONMENT_ID");
+    expect(source).toContain("RESTORE_REHEARSAL_EXPECTED_RAILWAY_PROJECT_ID");
+    expect(source).toContain("RESTORE_REHEARSAL_EXPECTED_RAILWAY_SERVICE_ID");
+    expect(source).toContain("RESTORE_REHEARSAL_EXPECTED_SUPABASE_URL");
+    expect(source).not.toMatch(/^const RESTORE_(?:RAILWAY|SUPABASE)[A-Z_]*\s*=\s*["']/m);
   });
 
   it("rejects operator writes before a mutator can run", () => {

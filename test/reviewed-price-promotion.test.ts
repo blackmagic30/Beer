@@ -7,8 +7,10 @@ import BetterSqlite3 from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AdminIngestionQueueRepository } from "../src/db/admin-ingestion-queue.repository.js";
-import { BusinessRepository } from "../src/db/business.repository.js";
 import { initializeDatabaseSchema } from "../src/db/database.js";
+import { PublicPriceRepository } from "../src/db/public-price.repository.js";
+import { PublicVenueDirectoryRepository } from "../src/db/public-venue-directory.repository.js";
+import { asAsyncSqliteDatabase } from "../src/db/sql-database.js";
 import {
   PRODUCTION_MAP_BASE_POLICY,
   PRODUCTION_SUPABASE_PROJECT_REF,
@@ -57,19 +59,19 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function createFixture(): {
+async function createFixture(): Promise<{
   database: BetterSqlite3.Database;
   databasePath: string;
   repository: AdminIngestionQueueRepository;
-} {
+}> {
   temporaryRoot = fs.realpathSync(
     fs.mkdtempSync(path.join(os.tmpdir(), "pintpath-price-promotion-")),
   );
   const databasePath = path.join(temporaryRoot, "pint-path.sqlite");
   database = new BetterSqlite3(databasePath);
   initializeDatabaseSchema(database);
-  const repository = new AdminIngestionQueueRepository(database);
-  const created = repository.create({
+  const repository = new AdminIngestionQueueRepository(asAsyncSqliteDatabase(database));
+  const created = await repository.create({
     capturedNotes: "Public regular drinks menu.",
     errorMessage: null,
     extractedBeers: [
@@ -111,7 +113,7 @@ function createFixture(): {
 }
 
 async function createManifest(): Promise<ReviewedPricePromotionManifest> {
-  const fixture = createFixture();
+  const fixture = await createFixture();
   return buildReviewedPricePromotionManifest({
     candidateSha: CANDIDATE_SHA,
     database: fixture.database,
@@ -124,8 +126,8 @@ async function createManifest(): Promise<ReviewedPricePromotionManifest> {
 }
 
 async function createTwoItemManifest(): Promise<ReviewedPricePromotionManifest> {
-  const fixture = createFixture();
-  const created = fixture.repository.create({
+  const fixture = await createFixture();
+  const created = await fixture.repository.create({
     capturedNotes: "Second public regular drinks menu.",
     errorMessage: null,
     extractedBeers: [
@@ -312,7 +314,7 @@ describe("reviewed production price promotion", () => {
   });
 
   it("builds a deterministic exact-ID manifest with the immutable conservative policy", async () => {
-    const fixture = createFixture();
+    const fixture = await createFixture();
     const sourceVerifier = vi.fn(async () => undefined);
     const input = {
       candidateSha: CANDIDATE_SHA,
@@ -555,9 +557,13 @@ describe("reviewed production price promotion", () => {
       SAVED_AT,
       SAVED_AT,
     );
-    const publicRepository = new BusinessRepository(database!);
-    expect(publicRepository.listVenueManagerPriceRecords(10, VENUE_ID)).toHaveLength(1);
-    expect(publicRepository.listPublicVenueBeerKeys([VENUE_ID]).get(VENUE_ID)).toEqual([
+    const sqlDatabase = asAsyncSqliteDatabase(database!);
+    const publicRepository = new PublicPriceRepository(sqlDatabase);
+    const publicVenueDirectoryRepository = new PublicVenueDirectoryRepository(
+      sqlDatabase,
+    );
+    expect(await publicRepository.listVenueManagerPriceRecords(10, VENUE_ID)).toHaveLength(1);
+    expect((await publicVenueDirectoryRepository.listPublicVenueBeerKeys([VENUE_ID])).get(VENUE_ID)).toEqual([
       "carlton_draft",
     ]);
     const queueBefore = database!.prepare(
@@ -589,9 +595,9 @@ describe("reviewed production price promotion", () => {
     expect(database!.prepare(
       "SELECT * FROM admin_ingestion_queue WHERE id = ?",
     ).get(INGESTION_ID)).toEqual(queueBefore);
-    expect(publicRepository.listLatestPriceRecords(10, VENUE_ID)).toEqual([]);
-    expect(publicRepository.listVenueManagerPriceRecords(10, VENUE_ID)).toEqual([]);
-    expect(publicRepository.listPublicVenueBeerKeys([VENUE_ID]).get(VENUE_ID)).toEqual([]);
+    expect(await publicRepository.listLatestPriceRecords(10, VENUE_ID)).toEqual([]);
+    expect(await publicRepository.listVenueManagerPriceRecords(10, VENUE_ID)).toEqual([]);
+    expect((await publicVenueDirectoryRepository.listPublicVenueBeerKeys([VENUE_ID])).get(VENUE_ID)).toEqual([]);
     expect(database!.prepare(
       `SELECT count(*) AS total
          FROM venue_price_records
@@ -818,8 +824,8 @@ describe("reviewed production price promotion", () => {
   });
 
   it("fails the entire quarantine preflight when one receipt-listed row is incomplete, without partially hiding valid rows", async () => {
-    const fixture = createFixture();
-    const queue = fixture.repository.getById(INGESTION_ID)!;
+    const fixture = await createFixture();
+    const queue = (await fixture.repository.getById(INGESTION_ID))!;
     fixture.database.prepare(
       `UPDATE admin_ingestion_queue
           SET extracted_beers_json = ?,

@@ -53,7 +53,7 @@ describe("release workflow contracts", () => {
     const source = workflow("pintpath-release-gate.yml");
 
     expect(source).toContain("workflow_dispatch:");
-    expect(source).toContain("expected_commercial_launch_enabled:");
+    expect(source).not.toContain("expected_commercial_launch_enabled:");
     expect(source).toContain("environment: production");
     expect(source).toContain("fetch-depth: 0");
     expect(source).toContain("PINTPATH_SMOKE_USER_EMAIL: ${{ secrets.PINTPATH_SMOKE_USER_EMAIL }}");
@@ -67,17 +67,32 @@ describe("release workflow contracts", () => {
     expect(source).toContain("npm run --silent readiness:launch");
     expect(source).toContain("npm run --silent readiness:data | tee production-data-readiness.json");
     expect(source).toContain("npm run --silent release:evidence:strict");
+    const postgresRuntimeStep = source.match(
+      /- name: Prove canonical PostgreSQL runtime selection[\s\S]*?(?=\n\s{6}- name:)/,
+    )?.[0] || "";
+    expect(postgresRuntimeStep).toContain("test/runtime-persistence.test.ts");
+    expect(postgresRuntimeStep).toContain(
+      "test/provider-readiness-reporting.test.ts",
+    );
     expect(source).toContain("PINTPATH_EXPECTED_COMMIT_SHA: ${{ github.sha }}");
     expect(source).toContain('PINTPATH_ENFORCE_LAUNCH_FLAGS: "true"');
-    expect(source).toContain(
-      "PINTPATH_EXPECTED_COMMERCIAL_LAUNCH_ENABLED: ${{ inputs.expected_commercial_launch_enabled }}",
-    );
+    expect(source).toContain('PINTPATH_EXPECTED_COMMERCIAL_LAUNCH_ENABLED: "false"');
+    expect(source).not.toContain("inputs.expected_commercial_launch_enabled");
     expect(source).toContain("tested-commit-sha.txt");
     expect(productionSmoke()).toContain("deployment.commitSha");
     expect(productionSmoke()).toContain("exact 40-character lowercase commit SHA");
     expect(productionSmoke()).not.toContain("commitSha.startsWith");
     expect(productionSmoke()).not.toContain("expectedCommitSha.startsWith");
     expect(productionSmoke()).toContain('checkJson("launch_flags"');
+    expect(productionSmoke()).toContain("rateLimiterRedis?.required === true");
+    expect(productionSmoke()).toContain("rateLimiterRedis?.configured === true");
+    expect(productionSmoke()).toContain("rateLimiterRedis?.ready === true");
+    expect(productionSmoke()).toContain(
+      'id: "postgres_logical_backup_attestation"',
+    );
+    expect(productionSmoke()).toContain('offsiteBackup?.status === "ok"');
+    expect(productionSmoke()).toContain("offsiteBackup?.required === true");
+    expect(productionSmoke()).toContain("offsiteBackup?.liveProbe === true");
     expect(productionSmoke()).toContain("data.consumerPaidEnrollmentEnabled === false");
     expect(productionSmoke()).not.toContain("nestedData(payload).commitSha");
     expect(productionSmoke()).toContain('path: "/api/business/admin/queues?limit=1&offset=0"');
@@ -95,7 +110,28 @@ describe("release workflow contracts", () => {
     const readinessStep = source.match(/- name: Enforce production provider readiness[\s\S]*?(?=\n\s{6}- name:)/)?.[0] || "";
     expect(readinessStep).toContain("NODE_ENV: production");
     expect(readinessStep).toContain("SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}");
-    expect(readinessStep).toContain("STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}");
+    expect(readinessStep).toContain("DATABASE_URL: ${{ secrets.DATABASE_URL }}");
+    expect(readinessStep).toContain("PINTPATH_DATABASE_RESOURCE_ID: ${{ secrets.PINTPATH_DATABASE_RESOURCE_ID }}");
+    expect(readinessStep).toContain("PINTPATH_EXPECTED_DATABASE_RESOURCE_ID: ${{ secrets.PINTPATH_EXPECTED_DATABASE_RESOURCE_ID }}");
+    expect(readinessStep).toContain("PINTPATH_FORBIDDEN_DATABASE_RESOURCE_IDS: ${{ secrets.PINTPATH_FORBIDDEN_DATABASE_RESOURCE_IDS }}");
+    expect(readinessStep).toContain("PINTPATH_EXPECTED_DATABASE_URL_SHA256: ${{ secrets.PINTPATH_EXPECTED_DATABASE_URL_SHA256 }}");
+    expect(readinessStep).toContain("PINTPATH_FORBIDDEN_DATABASE_URL_SHA256S: ${{ secrets.PINTPATH_FORBIDDEN_DATABASE_URL_SHA256S }}");
+    expect(readinessStep).toContain("PINTPATH_REDIS_RESOURCE_ID: ${{ secrets.PINTPATH_REDIS_RESOURCE_ID }}");
+    expect(readinessStep).toContain("PINTPATH_EXPECTED_REDIS_RESOURCE_ID: ${{ secrets.PINTPATH_EXPECTED_REDIS_RESOURCE_ID }}");
+    expect(readinessStep).toContain("PINTPATH_FORBIDDEN_REDIS_RESOURCE_IDS: ${{ secrets.PINTPATH_FORBIDDEN_REDIS_RESOURCE_IDS }}");
+    expect(readinessStep).toContain("PINTPATH_EXPECTED_REDIS_URL_SHA256: ${{ secrets.PINTPATH_EXPECTED_REDIS_URL_SHA256 }}");
+    expect(readinessStep).toContain("PINTPATH_FORBIDDEN_REDIS_URL_SHA256S: ${{ secrets.PINTPATH_FORBIDDEN_REDIS_URL_SHA256S }}");
+    expect(readinessStep).toContain('COMMERCIAL_LAUNCH_ENABLED: "false"');
+    expect(readinessStep).toContain('CONSUMER_PAID_ENROLLMENT_ENABLED: "false"');
+    expect(readinessStep).toContain("REPORT_EMAIL_MODE: disabled");
+    expect(readinessStep).toContain('REPORT_DELIVERY_SCHEDULE_ENABLED: "false"');
+    expect(readinessStep).toContain('PINTPATH_REPORT_DELIVER: "false"');
+    expect(readinessStep).toContain('POS_WEBHOOK_SIGNING_SECRET: ""');
+    expect(readinessStep).toContain('STRIPE_SECRET_KEY: ""');
+    expect(readinessStep).not.toContain("secrets.STRIPE_");
+    expect(readinessStep).not.toContain("secrets.POS_WEBHOOK_SIGNING_SECRET");
+    expect(readinessStep).not.toContain("secrets.RESEND_API_KEY");
+    expect(readinessStep).not.toContain("NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY");
 
     const authenticatedSmokeStep = source.match(/- name: Verify authenticated production roles[\s\S]*?(?=\n\s{6}- name:)/)?.[0] || "";
     expect(authenticatedSmokeStep).toContain("PINTPATH_SMOKE_USER_EMAIL: ${{ secrets.PINTPATH_SMOKE_USER_EMAIL }}");
@@ -149,8 +185,8 @@ describe("release workflow contracts", () => {
       .map(workflow)
       .join("\n");
     const expectedPins = new Map([
-      ["actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0", 11],
-      ["actions/setup-node@820762786026740c76f36085b0efc47a31fe5020", 6],
+      ["actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0", 12],
+      ["actions/setup-node@820762786026740c76f36085b0efc47a31fe5020", 7],
       ["actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a", 1],
       ["actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", 2],
       ["android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699", 1],
@@ -172,7 +208,7 @@ describe("release workflow contracts", () => {
     const checkoutIndexes = lines
       .map((line, index) => line.includes("uses: actions/checkout@") ? index : -1)
       .filter((index) => index >= 0);
-    expect(checkoutIndexes).toHaveLength(11);
+    expect(checkoutIndexes).toHaveLength(12);
     for (const index of checkoutIndexes) {
       expect(lines.slice(index, index + 4).join("\n")).toContain("persist-credentials: false");
     }
@@ -186,7 +222,9 @@ describe("release workflow contracts", () => {
     expect(databaseJob).toContain("version: 2.109.1");
     expect(databaseJob).toContain("supabase db start");
     expect(databaseJob).toContain("supabase db reset --local");
-    expect(databaseJob).toContain("supabase db lint --local --schema public,private --level warning --fail-on warning");
+    expect(databaseJob).toContain(
+      "supabase db lint --local --schema public,private,pintpath_app,pintpath_ops --level warning --fail-on warning",
+    );
     expect(databaseJob).toContain("supabase db advisors --local --type security --level warn --fail-on warn");
     expect(databaseJob).toContain("supabase db advisors --local --type performance --level warn --fail-on error");
     expect(databaseJob).toContain("supabase test db --local supabase/tests");
@@ -197,6 +235,71 @@ describe("release workflow contracts", () => {
     expect(databaseJob).not.toContain("SUPABASE_ACCESS_TOKEN");
     expect(databaseJob).not.toContain("SUPABASE_DB_PASSWORD");
     expect(databaseJob).not.toContain("SUPABASE_SERVICE_ROLE_KEY");
+  });
+
+  it("runs the real native Postgres contracts against an isolated PostgreSQL 17 service", () => {
+    const source = workflow("ci.yml");
+    const start = source.indexOf("  postgres-migration-integration:");
+    const end = source.indexOf("\n  supabase-database:", start);
+    const job = source.slice(start, end);
+
+    expect(job).toContain("image: postgres:17.6-alpine");
+    expect(job).toContain("PUBLIC_BASE_URL: http://localhost:3000");
+    expect(job).toContain("pg_isready -U postgres -d postgres");
+    expect(job).toContain("PINTPATH_POSTGRES_MIGRATION_TEST_ADMIN_URL:");
+    expect(job).toContain("PINTPATH_ACCOUNT_SESSION_POSTGRES_TEST_ADMIN_URL:");
+    expect(job).toContain("PINTPATH_ACCOUNT_PROFILE_PREFERENCES_POSTGRES_TEST_ADMIN_URL:");
+    expect(job).toContain("PINTPATH_ACTIVITY_AUDIT_POSTGRES_TEST_ADMIN_URL:");
+    expect(job).toContain("PINTPATH_ACCOUNT_DELETION_QUEUE_POSTGRES_TEST_ADMIN_URL:");
+    expect(job).toContain("PINTPATH_ACCOUNT_PRIVACY_POSTGRES_TEST_ADMIN_URL:");
+    expect(job).toContain("PINTPATH_ACCOUNT_DELETION_RECOVERY_POSTGRES_TEST_ADMIN_URL:");
+    expect(job).toContain("PINTPATH_POSTGRES_ACCOUNT_DELETION_REPLAY_TEST_ADMIN_URL:");
+    expect(job).toContain("PINTPATH_BILLING_CHECKOUT_POSTGRES_TEST_ADMIN_URL:");
+    expect(job).toContain("PINTPATH_SUPPORT_FEEDBACK_POSTGRES_TEST_ADMIN_URL:");
+    expect(job).toContain("PINTPATH_VENUE_ACCESS_POSTGRES_TEST_ADMIN_URL:");
+    expect(job).toContain("PINTPATH_SOURCE_EVIDENCE_OBJECT_POSTGRES_TEST_ADMIN_URL:");
+    expect(job).toContain("PINTPATH_VENUE_MANAGER_INTERNAL_SUBMISSION_POSTGRES_TEST_ADMIN_URL:");
+    expect(job).toContain("npm run db:postgres:schema:check");
+    expect(job).toContain("npm run db:postgres:migration:contract:check");
+    expect(job).toContain("npx vitest run test/postgres-migration-target.integration.test.ts");
+    expect(job).toContain("npx vitest run test/postgres-logical-offsite-retrieval.integration.test.ts");
+    expect(job).toContain("npx vitest run test/public-venue-directory.repository.integration.test.ts");
+    expect(job).toContain("npx vitest run test/venue-identity.repository.integration.test.ts");
+    expect(job).toContain("npx vitest run test/system-state.repository.integration.test.ts");
+    expect(job).toContain("npx vitest run test/account-session.repository.integration.test.ts");
+    expect(job).toContain("npx vitest run test/account-profile-preferences.repository.integration.test.ts");
+    expect(job).toContain("npx vitest run test/activity-audit.repository.integration.test.ts");
+    expect(job).toContain("npx vitest run test/account-deletion-queue.repository.integration.test.ts");
+    expect(job).toContain("npx vitest run test/account-privacy.repository.integration.test.ts");
+    expect(job).toContain("npx vitest run test/postgres-account-deletion-recovery-fixture.integration.test.ts");
+    expect(job).toContain("npx vitest run test/postgres-account-deletion-replay.integration.test.ts");
+    expect(job).toContain("npx vitest run test/privacy-retention.repository.integration.test.ts");
+    expect(job).toContain("npx vitest run test/stripe-subscription.repository.integration.test.ts");
+    expect(job).toContain("npx vitest run test/billing-checkout.repository.integration.test.ts");
+    expect(job).toContain("npx vitest run test/public-price.repository.integration.test.ts");
+    expect(job).toContain("npx vitest run test/community-submission.repository.integration.test.ts");
+    expect(job).toContain("npx vitest run test/source-evidence-object.repository.integration.test.ts");
+    expect(job).toContain("npx vitest run test/source-evidence-retention.repository.integration.test.ts");
+    expect(job).toContain("npx vitest run test/venue-manager-internal-submission.repository.integration.test.ts");
+    expect(job).toContain("npx vitest run test/venue-inventory.repository.integration.test.ts");
+    expect(job).toContain("npx vitest run test/venue-pending-change.repository.integration.test.ts");
+    expect(job).toContain("npx vitest run test/venue-data-read.repository.integration.test.ts");
+    expect(job).toContain("npx vitest run test/support-feedback.repository.integration.test.ts");
+    expect(job).toContain("npx vitest run test/venue-access.repository.integration.test.ts");
+    expect(job).toContain("npx vitest run test/mission-lifecycle.repository.integration.test.ts");
+    expect(job).toContain("npx vitest run test/mission-discovery-automation.repository.integration.test.ts");
+    expect(job).toContain("npx vitest run test/venue-request.repository.integration.test.ts");
+    expect(job).toContain("npx vitest run test/venue-partner.repository.integration.test.ts");
+    expect(job).toContain("npx vitest run test/admin-analytics.repository.integration.test.ts");
+    expect(job).toContain("npx vitest run test/venue-manager-insights.repository.integration.test.ts");
+    expect(job).toContain("npx vitest run test/admin-account.repository.integration.test.ts");
+    expect(job).not.toContain("secrets.");
+    expect(job).not.toContain("supabase db push");
+
+    const migrationStatus = repositoryFile("docs/postgres-migration-execution-status.md");
+    expect(migrationStatus).toContain("idx_accounts_admin_search_trgm");
+    expect(migrationStatus).toContain("CREATE INDEX CONCURRENTLY");
+    expect(migrationStatus).toContain("permanent staging");
   });
 
   it("keeps development types and CI on the production Node 22 baseline", () => {
@@ -390,8 +493,126 @@ describe("release workflow contracts", () => {
     expect(checklist).toContain("the Android job must be skipped");
     expect(checklist).toContain("security-scan and dependency-audit steps passed");
     expect(checklist).toContain("are not files in the artifact");
-    expect(checklist).toContain("does **not** prove public App Store approval");
+    expect(checklist).toContain("external TestFlight/Beta App Review");
+    expect(checklist).toContain("full App Review approval");
+    expect(checklist).toContain("Australia storefront");
+    expect(checklist).toContain("manual release");
+    expect(checklist).toContain("phased release");
+    expect(checklist).toContain("approved build held");
+    expect(checklist).not.toContain("does **not** prove public App Store approval");
     expect(checklist).not.toContain("production-track approval");
+  });
+
+  it("keeps iOS and venue-pilot evidence aligned with the full-scale release contract", () => {
+    const evidence = releaseDocument("release-evidence.json");
+    const iosReadme = repositoryFile("apps/ios/README.md");
+    const mobileChecklist = repositoryFile("MOBILE_APP_STORE_CHECKLIST.md");
+
+    for (const document of [evidence, iosReadme, mobileChecklist]) {
+      const normalized = document.replace(/\s+/g, " ");
+      expect(normalized).toContain("exact frozen candidate SHA");
+      expect(normalized).toContain("external TestFlight");
+      expect(normalized).toContain("Beta App Review");
+      expect(normalized).toContain("full App Review approval");
+      expect(normalized).toContain("Australia storefront");
+      expect(normalized).toContain("manual release");
+      expect(normalized).toContain("phased release");
+      expect(normalized).toContain("approved build");
+    }
+
+    expect(evidence.match(/docs\/venue-pilot-runbook\.md/g)).toHaveLength(3);
+    expect(evidence.match(/internal-only happy-hour/g)).toHaveLength(3);
+    expect(evidence.match(/absence from public web\/iOS/g)).toHaveLength(3);
+  });
+
+  it("keeps one Postgres, staging, restore, and WORM contract for full-scale launch", () => {
+    const launch = releaseDocument("production-launch-runbook.md");
+    const migration = releaseDocument("full-scale-postgres-migration-runbook.md");
+    const checklist = releaseDocument("external-launch-signoffs.md");
+    const provider = releaseDocument("provider-configuration-runbook.md");
+    const normalizedMigration = migration.replace(/\s+/g, " ");
+    const evidence = JSON.parse(releaseDocument("release-evidence.json")) as {
+      items?: Array<{ id?: string; label?: string; nextAction?: string }>;
+    };
+    const backup = evidence.items?.find((item) => item.id === "backup_restore");
+
+    expect(launch).toContain("The availability decision is closed for this release");
+    expect(launch).toContain("A controlled single-region SQLite launch is");
+    expect(launch).toContain("not an alternative for this full-scale release");
+    expect(launch).toContain("Permanent integrated staging");
+    expect(launch).toContain("Ephemeral destructive restore staging");
+    expect(launch).toContain("at least two application replicas");
+    expect(launch).not.toContain("gh pr checks 12");
+    expect(launch).not.toContain("jxpubqlmqnnqwadmjgyk");
+
+    expect(normalizedMigration).toContain(
+      "Status: **NO-GO — Free-live PostgreSQL application implementation plus the permanent-staging import/runtime/logical-backup and disposable database-restore receipt are complete; provider, app-deploy, scale, full recovery, promotion, and cutover evidence is not complete**",
+    );
+    expect(normalizedMigration).toContain(
+      "Writable SQLite is limited to development/test tooling",
+    );
+    expect(normalizedMigration).toContain("non-exposed server-only application schema");
+    expect(normalizedMigration).toContain("least-privilege runtime role");
+    expect(normalizedMigration).toContain("FOR UPDATE SKIP LOCKED");
+    expect(normalizedMigration).toContain("object-lock/WORM");
+    expect(normalizedMigration).toContain("must never resume SQLite writes");
+
+    expect(provider).toContain(
+      "Identity pins always hash the exact configured DATABASE_URL bytes",
+    );
+    expect(provider).toContain("private operational restore copy");
+    expect(checklist).toContain("newly created restore-only");
+    expect(checklist).toContain("RESTORE_REHEARSAL_EXPECTED_*");
+    expect(checklist).not.toMatch(/https:\/\/[a-z0-9]{20}\.supabase\.co/);
+    expect(checklist).not.toContain("one app replica and one region");
+
+    expect(backup?.label).toContain("Postgres, private Storage, and WORM");
+    expect(backup?.nextAction).toContain("ephemeral destructive restore environment");
+    expect(backup?.nextAction).toContain("distinct from production and permanent staging");
+  });
+
+  it("keeps the AWS Object Lock implementation pinned and its live authority gate open", () => {
+    const packageJson = JSON.parse(repositoryFile("package.json")) as {
+      scripts?: Record<string, string>;
+      dependencies?: Record<string, string>;
+    };
+    const ci = workflow("ci.yml");
+    const stepStart = ci.indexOf(
+      "      - name: Assert live AWS WORM integration remains explicitly gated",
+    );
+    const stepEnd = ci.indexOf("\n\n  postgres-migration-integration:", stepStart);
+    const gatedStep = ci.slice(stepStart, stepEnd);
+    const runbook = releaseDocument("postgres-logical-worm-attestation.md");
+    const status = releaseDocument("postgres-migration-execution-status.md");
+    const implementation = repositoryFile("src/lib/postgres-logical-worm.ts");
+
+    expect(packageJson.scripts?.["db:postgres:backup:logical:worm"])
+      .toBe("tsx scripts/attest-postgres-logical-worm.ts");
+    expect(packageJson.scripts?.["test:db:postgres:backup:logical:worm:aws"])
+      .toBe("vitest run test/postgres-logical-worm.integration.test.ts");
+    for (const dependency of [
+      "@aws-sdk/client-s3",
+      "@aws-sdk/client-sts",
+      "@aws-sdk/credential-providers",
+    ]) expect(packageJson.dependencies?.[dependency], dependency).toBe("3.1098.0");
+
+    expect(stepStart).toBeGreaterThan(-1);
+    expect(gatedStep).toContain('PINTPATH_TEST_POSTGRES_LOGICAL_WORM_AWS: "disabled"');
+    expect(gatedStep).toContain('PINTPATH_POSTGRES_LOGICAL_WORM: "disabled"');
+    expect(gatedStep).toContain('PINTPATH_POSTGRES_LOGICAL_WORM_AWS: "disabled"');
+    expect(gatedStep).toContain("npm run test:db:postgres:backup:logical:worm:aws");
+    expect(gatedStep).not.toContain("secrets.");
+    expect(gatedStep).not.toMatch(/AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN/);
+
+    expect(runbook).toContain("IMPLEMENTED, NOT PROVISIONED");
+    expect(runbook).toContain("The launch gate remains **OPEN**");
+    expect(runbook).toContain("No AWS account, bucket, role, credential, or object was created");
+    expect(status).toContain("This is implementation evidence only");
+    expect(status).toContain("no AWS recovery account, bucket, role, credential, or object was provisioned");
+    expect(implementation).toContain('Action: "s3:PutObject"');
+    expect(implementation).toContain('"s3:if-none-match": "*"');
+    expect(implementation).toContain("POSTGRES_LOGICAL_WORM_RETENTION_DAYS = 30");
+    expect(implementation).toContain('POSTGRES_LOGICAL_WORM_REGION = "ap-southeast-4"');
   });
 
   it("keeps the launch runbook aligned with all 12 required evidence IDs", () => {
@@ -422,19 +643,23 @@ describe("release workflow contracts", () => {
     }
   });
 
-  it("documents the mutation-free account-deletion rehearsal readiness command", () => {
+  it("documents the isolated Postgres account-deletion rehearsal readiness command", () => {
     const runbook = releaseDocument("production-launch-runbook.md");
     const providerReadiness = repositoryFile("scripts/provider-readiness-check.ts");
 
     expect(runbook).toContain('test -z "${OFFSITE_BACKUP_SUPABASE_URL:-}${OFFSITE_BACKUP_SERVICE_ROLE_KEY:-}"');
-    expect(runbook).toContain('test -z "${REDIS_URL:-}${REDIS_KEY_NAMESPACE:-}"');
+    expect(runbook).toContain('test -n "${REDIS_URL:-}"');
+    expect(runbook).toContain('test "${REQUIRE_REDIS_RATE_LIMITING:?}" = "true"');
+    expect(runbook).toContain('test "${ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION:-false}" = "false"');
+    expect(runbook).toContain("move account-deletion requests, outbox, recipient");
+    expect(runbook).toContain("at least two replicas");
     expect(runbook).toContain("npm run --silent readiness:providers");
     expect(runbook).toContain('.readinessProfile == "account_deletion_rehearsal" and .ok == true');
     expect(runbook).toContain('"${PUBLIC_BASE_URL%/}/ready"');
-    expect(providerReadiness).toContain("if (isProduction() && !accountDeletionRehearsalEnabled)");
-    expect(providerReadiness).toContain(
-      "const checks = accountDeletionRehearsalEnabled ? deletionRehearsalChecks : launchChecks",
-    );
+    expect(providerReadiness).toContain("storageCanariesAllowed && !preflightBlocked");
+    expect(providerReadiness).toContain("permanentStagingCompleteChecks");
+    expect(providerReadiness).toContain("permanent_staging_identity_bootstrap_incomplete");
+    expect(providerReadiness).toContain("permanent_staging_complete");
   });
 
   it("uses the repository SDK downloader without credentialed runtime package downloads", () => {

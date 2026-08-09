@@ -35,11 +35,12 @@ async function boot(): Promise<void> {
         meta: getDeployMeta(),
       }),
     );
-    const [{ createApp, initializeAppServices, shutdownAppServices }, { env }, { logger }] = await Promise.all([
-      import("./app.js"),
+    const [{ env, assertApplicationServerStartAllowed }, { logger }] = await Promise.all([
       import("./config/env.js"),
       import("./lib/logger.js"),
     ]);
+    assertApplicationServerStartAllowed();
+    const { createApp, initializeAppServices, shutdownAppServices } = await import("./app.js");
     const app = createApp();
     await initializeAppServices();
     shutdownServices = shutdownAppServices;

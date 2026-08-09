@@ -44,7 +44,9 @@ function validate(value: unknown, strict = false): { status: number | null; outp
   fs.writeFileSync(filename, `${JSON.stringify(value)}\n`);
   const result = spawnSync(
     process.execPath,
-    ["--import=tsx", validator, ...(strict ? ["--strict"] : [])],
+    // The supported Node 22 runtime strips these erasable TypeScript annotations
+    // itself. Avoid starting a separate tsx loader for every CLI fixture.
+    [validator, ...(strict ? ["--strict"] : [])],
     {
       cwd: root,
       encoding: "utf8",

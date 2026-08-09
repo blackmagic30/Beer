@@ -5,11 +5,14 @@ import path from "node:path";
 import BetterSqlite3 from "better-sqlite3";
 
 import { env } from "../config/env.js";
-import { BeerCatalogRepository, syncStaticBeerCatalog } from "./beer-catalog.repository.js";
+import {
+  resolveBeerNameForSqliteBootstrap,
+  syncStaticBeerCatalog,
+} from "./beer-catalog.repository.js";
 import { isLikelyBeerName } from "../constants/beers.js";
 import { sanitizeAccountDeletionRecipientSecretsInBackup } from "./backup-privacy.js";
 
-export const CURRENT_DATABASE_SCHEMA_VERSION = 15;
+export const CURRENT_DATABASE_SCHEMA_VERSION = 16;
 const MIGRATION_BACKUP_RETENTION = 3;
 export const MIGRATION_BACKUP_MAX_AGE_DAYS = 30;
 
@@ -215,6 +218,70 @@ const venuePartnerOutreachColumns = [
   { name: "next_action", definition: "TEXT" },
   { name: "last_contacted_at", definition: "TEXT" },
 ] as const;
+
+const canonicalUtcTimestampPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+const legacySystemStateRevisionPattern = new RegExp(
+  `^(${canonicalUtcTimestampPattern.source.slice(1, -1)})#`
+  + "[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+  "i",
+);
+const systemStateSchemaV16 = `CREATE TABLE system_state (
+  key TEXT PRIMARY KEY,
+  value_json TEXT NOT NULL DEFAULT '{}',
+  updated_at TEXT NOT NULL,
+  revision TEXT NOT NULL CHECK (length(revision) > 0)
+)`;
+
+function assertCanonicalSystemStateTimestamp(value: string): string {
+  try {
+    if (!canonicalUtcTimestampPattern.test(value) || new Date(value).toISOString() !== value) {
+      throw new Error("non-canonical");
+    }
+    return value;
+  } catch {
+    throw new Error("system_state contains a non-canonical updated_at timestamp.");
+  }
+}
+
+function splitLegacySystemStateRevision(value: string): { updatedAt: string; revision: string } {
+  const match = legacySystemStateRevisionPattern.exec(value);
+  if (match?.[1]) {
+    return { updatedAt: assertCanonicalSystemStateTimestamp(match[1]), revision: value };
+  }
+  if (value.includes("#")) {
+    throw new Error("system_state contains an invalid legacy delivery revision.");
+  }
+  return { updatedAt: assertCanonicalSystemStateTimestamp(value), revision: value };
+}
+
+function migrateSystemStateRevision(database: BetterSqlite3.Database): void {
+  const columns = database.pragma("table_info(system_state)") as Array<{ name: string }>;
+  if (columns.some((column) => column.name === "revision")) {
+    const invalid = database.prepare(
+      "SELECT updated_at, revision FROM system_state WHERE revision = '' OR instr(updated_at, '#') > 0",
+    ).all() as Array<{ updated_at: string; revision: string }>;
+    if (invalid.length > 0) {
+      throw new Error("system_state revision migration is incomplete or invalid.");
+    }
+    const timestamps = database.prepare("SELECT updated_at FROM system_state").all() as Array<{ updated_at: string }>;
+    timestamps.forEach((row) => assertCanonicalSystemStateTimestamp(row.updated_at));
+    return;
+  }
+
+  const legacyRows = database
+    .prepare("SELECT key, value_json, updated_at FROM system_state ORDER BY key")
+    .all() as Array<{ key: string; value_json: string; updated_at: string }>;
+  const normalized = legacyRows.map((row) => ({
+    ...row,
+    ...splitLegacySystemStateRevision(row.updated_at),
+  }));
+  database.exec(`ALTER TABLE system_state RENAME TO system_state_schema_15;\n${systemStateSchemaV16};`);
+  const insert = database.prepare(
+    "INSERT INTO system_state (key, value_json, updated_at, revision) VALUES (?, ?, ?, ?)",
+  );
+  normalized.forEach((row) => insert.run(row.key, row.value_json, row.updatedAt, row.revision));
+  database.exec("DROP TABLE system_state_schema_15");
+}
 
 const adminIngestionQueueColumns = [
   { name: "crawler_feedback_json", definition: "TEXT" },
@@ -1101,7 +1168,6 @@ function shouldCatalogBeerName(value: string | null | undefined, isHappyHour = f
 }
 
 function backfillBeerNames(database: BetterSqlite3.Database): void {
-  const repository = new BeerCatalogRepository(database);
   const now = new Date().toISOString();
   const backfillTable = (input: {
     source: string;
@@ -1121,7 +1187,7 @@ function backfillBeerNames(database: BetterSqlite3.Database): void {
           continue;
         }
 
-        const resolved = repository.resolveBeerName({
+        const resolved = resolveBeerNameForSqliteBootstrap(database, {
           name: row.beer_name,
           source: input.source,
           now,
@@ -1223,6 +1289,7 @@ export function initializeDatabaseSchema(database: BetterSqlite3.Database): void
     ensureColumns(database, "account_deletion_requests", accountDeletionRequestColumns);
     ensureColumns(database, "account_deletion_completion_outbox", accountDeletionCompletionOutboxColumns);
     ensureColumns(database, "venue_partner_outreach", venuePartnerOutreachColumns);
+    migrateSystemStateRevision(database);
     ensureColumns(database, "admin_ingestion_queue", adminIngestionQueueColumns);
     redactCompletedAdminIngestionImages(database);
     ensureColumns(database, "venue_beers", venueBeersColumns);

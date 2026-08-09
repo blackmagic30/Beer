@@ -61,6 +61,22 @@ additionally runs the protected
 secrets. That unsigned CI artifact validates configuration only; it is not the
 signed App Store candidate.
 
+### App Store release evidence
+
+The `ios_release` gate passes only for one build bound to the exact frozen
+candidate SHA. The release evidence must include the source SHA, version/build,
+signed archive and exported IPA SHA-256 values, Organizer validation, and the
+signed physical-device matrix. An unsigned CI archive or an internal TestFlight
+upload is not release evidence.
+
+Distribute that same signed build to an external TestFlight group and pass Beta
+App Review before submitting it for full App Review. The final gate requires
+full App Review approval for the same build, the Australia storefront selected,
+manual release selected, and phased release configured. Keep the approved build
+held in App Store Connect until every web-and-iOS gate passes and the release
+owner authorizes the manual launch; do not replace the binary or change its
+frozen backend contract during review.
+
 ## Current integration
 
 - Email/password signup, login, refresh, password recovery, and logout use the

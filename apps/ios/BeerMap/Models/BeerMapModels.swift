@@ -253,6 +253,8 @@ struct PrivacySettings: Codable, Hashable {
     var venueReportInclusionEnabled: Bool?
     var productResearchEnabled: Bool?
     var emailUpdatesEnabled: Bool?
+    var consentedAt: String? = nil
+    var updatedAt: String? = nil
 }
 
 struct PrivacySettingsSaveResult: Codable, Hashable {
@@ -608,6 +610,7 @@ struct PrivacySettingsRequest: Codable {
     let venueReportInclusionEnabled: Bool
     let productResearchEnabled: Bool
     let emailUpdatesEnabled: Bool
+    let expectedUpdatedAt: String?
 }
 
 enum ObservedPriceParser {

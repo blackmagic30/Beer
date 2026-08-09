@@ -82,8 +82,10 @@ describe("premium pricing and entitlements", () => {
     expect(readme).not.toContain("Pro A$149/month");
     expect(readme).toContain("No price or offer is approved");
     expect(readme).not.toContain("STRIPE_PLUS_PRICE_ID");
-    expect(envExample).toContain("STRIPE_PRICE_MONTHLY=price_future_consumer_monthly_aud");
-    expect(envExample).toContain("STRIPE_PRICE_YEARLY=price_future_consumer_yearly_aud");
+    expect(envExample).toContain("STRIPE_PRICE_MONTHLY=\n");
+    expect(envExample).toContain("STRIPE_PRICE_YEARLY=\n");
+    expect(envExample).toContain("STRIPE_PRO_PRICE_ID=\n");
+    expect(envExample).toContain("POS_WEBHOOK_SIGNING_SECRET=\n");
     expect(envExample).toContain("COMMERCIAL_LAUNCH_ENABLED=false");
     expect(envExample).toContain("CONSUMER_PAID_ENROLLMENT_ENABLED=false");
     expect(envExample).toContain("VENUE_PRO_TRIAL_DAYS=0");

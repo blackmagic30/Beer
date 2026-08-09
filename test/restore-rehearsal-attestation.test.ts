@@ -142,7 +142,8 @@ function createFixture(input: FixtureInput = {}): Fixture {
     CREATE TABLE system_state (
       key TEXT PRIMARY KEY,
       value_json TEXT NOT NULL,
-      updated_at TEXT NOT NULL
+      updated_at TEXT NOT NULL,
+      revision TEXT NOT NULL CHECK (length(revision) > 0)
     );
     CREATE TABLE source_evidence_objects (
       id TEXT PRIMARY KEY,
@@ -182,7 +183,7 @@ function createFixture(input: FixtureInput = {}): Fixture {
     database.prepare("INSERT INTO child_records (id, parent_id) VALUES ('child', 'missing')").run();
   }
   database.prepare(
-    "INSERT INTO system_state (key, value_json, updated_at) VALUES (?, ?, ?)",
+    "INSERT INTO system_state (key, value_json, updated_at, revision) VALUES (?, ?, ?, ?)",
   ).run("job:restore_rehearsal", JSON.stringify({
     state: input.restoreState ?? "succeeded",
     startedAt,
@@ -199,7 +200,7 @@ function createFixture(input: FixtureInput = {}): Fixture {
     tombstonesApplied: 0,
     evidenceFilesPurged: input.evidenceFilesPurged ?? 0,
     evidencePurgedPathSha256s: [],
-  }), updatedAt);
+  }), updatedAt, `${updatedAt}#restore-attestation`);
   database.close();
 
   return {

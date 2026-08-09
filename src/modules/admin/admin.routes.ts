@@ -26,8 +26,8 @@ function getRequestContext(req: Request) {
   };
 }
 
-function requireRoleAdmin(req: Request, businessService: BusinessService): void {
-  businessService.requireAdmin(getSessionAuthorization(req), getRequestContext(req));
+async function requireRoleAdmin(req: Request, businessService: BusinessService): Promise<void> {
+  await businessService.requireAdmin(getSessionAuthorization(req), getRequestContext(req));
 }
 
 function rateLimitIdentity(req: Request): string | null {
@@ -117,9 +117,9 @@ export function createAdminRouter(adminService: AdminService, businessService: B
     next();
   });
 
-  router.use((req, _res, next) => {
+  router.use(async (req, _res, next) => {
     try {
-      requireRoleAdmin(req, businessService);
+      await requireRoleAdmin(req, businessService);
       next();
     } catch (error) {
       next(error);
@@ -152,18 +152,20 @@ export function createAdminRouter(adminService: AdminService, businessService: B
       const status = parseIngestionStatus(req.query.status);
       const limit = parseBoundedInteger(req.query.limit, 50, 100);
       const offset = parseBoundedInteger(req.query.offset, 0);
-      const items = adminService.listQueuedIngestions(status, limit, offset);
-      const total = adminService.countQueuedIngestions(status);
-      const imageRetention = adminService.getQueuedIngestionImageRetentionStatus();
+      const [items, total, imageRetention] = await Promise.all([
+        adminService.listQueuedIngestions(status, limit, offset),
+        adminService.countQueuedIngestions(status),
+        adminService.getQueuedIngestionImageRetentionStatus(),
+      ]);
       res.json(success({ items, total, limit, offset, imageRetention }));
     } catch (error) {
       next(error);
     }
   });
 
-  router.get("/ingestions/:id/evidence", (req, res, next) => {
+  router.get("/ingestions/:id/evidence", async (req, res, next) => {
     try {
-      const evidence = adminService.getQueuedIngestionEvidence(stringParam(req.params.id));
+      const evidence = await adminService.getQueuedIngestionEvidence(stringParam(req.params.id));
       res.setHeader("Cache-Control", "private, no-store");
       res.setHeader("Content-Type", evidence.mimeType);
       res.setHeader("Content-Length", String(evidence.bytes.length));
@@ -233,7 +235,7 @@ export function createAdminRouter(adminService: AdminService, businessService: B
         req.body,
         "Invalid source review bulk reject payload",
       );
-      const result = adminService.rejectQueuedIngestions(body);
+      const result = await adminService.rejectQueuedIngestions(body);
       res.json(success(result));
     } catch (error) {
       next(error);
@@ -261,7 +263,7 @@ export function createAdminRouter(adminService: AdminService, businessService: B
         req.body,
         "Invalid source review reject payload",
       );
-      const result = adminService.rejectQueuedIngestion(stringParam(req.params.id), body);
+      const result = await adminService.rejectQueuedIngestion(stringParam(req.params.id), body);
       res.json(success(result));
     } catch (error) {
       next(error);

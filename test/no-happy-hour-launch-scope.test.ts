@@ -67,7 +67,15 @@ describe("signed no-happy-hour public launch scope", () => {
     expect(read("viewer/terms.html")).toMatch(/happy[ -]?hour/i);
     expect(read("viewer/account.html")).toContain('item.isHappyHourPrice ? "Special price" : ""');
     expect(read("viewer/account.html")).not.toContain("Finding happy hours");
-    expect(read("viewer/venue-portal.html")).toContain('id="happyHourForm"');
+    const venuePortal = read("viewer/venue-portal.html");
+    expect(venuePortal).toContain('id="happyHourForm"');
+    expect(venuePortal).toContain("Happy-hour details are saved for internal venue operations and a future reviewed release.");
+    expect(venuePortal).toContain("They are not shown on the public website or iOS app.");
+    expect(venuePortal).toContain("These records are an internal planning view only.");
+    expect(venuePortal).not.toContain("Happy-hour details help users choose you tonight.");
+    expect(venuePortal).not.toContain("Happy hours are one of the fastest ways to get users to choose a venue tonight.");
+    expect(venuePortal).not.toContain("A simple time window helps nearby users decide tonight.");
+    expect(venuePortal).not.toContain("Add one simple time window so nearby users can spot a reason to visit tonight.");
     expect(read("viewer/admin.html")).toContain('item.isHappyHourPrice ? "Happy-hour price" : null');
     expect(read("src/modules/business/business.routes.ts")).toContain('router.post("/venue-portal/:venueId/happy-hours"');
   });

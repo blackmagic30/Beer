@@ -1,0 +1,2380 @@
+import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+
+import BetterSqlite3 from "better-sqlite3";
+import { Client, type QueryResultRow } from "pg";
+
+import { POSTGRES_MIGRATION_CONTRACT } from "./postgres-migration-contract.js";
+import { readPostgresMigrationLedgerAuthority } from "./postgres-migration-ledger.js";
+import {
+  inspectPostgresMigrationSchema,
+  serializeCanonicalPostgresMigrationJson,
+  sha256PostgresMigrationBytes,
+  sha256PostgresMigrationContract,
+  type PostgresMigrationColumnContract,
+  type PostgresMigrationSchemaDescriptor,
+  type PostgresMigrationTableContract,
+} from "./postgres-migration-schema.js";
+import {
+  POSTGRES_MIGRATION_PLAN_KIND,
+  POSTGRES_MIGRATION_PLAN_VERSION,
+  POSTGRES_MIGRATION_SNAPSHOT_DATABASE_FILE,
+  PostgresMigrationSourceError,
+  postgresMigrationSourceInternals,
+  type PostgresMigrationPlan,
+  type PostgresMigrationPlanChunk,
+  type PostgresMigrationPlanTable,
+  type PostgresMigrationSnapshotManifest,
+} from "./postgres-migration-source.js";
+
+const APPLICATION_SCHEMA = "pintpath_app";
+const OPERATIONS_SCHEMA = "pintpath_ops";
+const MIGRATOR_ROLE = "pintpath_migrator";
+const RUNTIME_ROLE = "pintpath_runtime";
+const TARGET_RECEIPT_KIND = "pint-path-postgres-migration-receipt" as const;
+const TARGET_RECEIPT_VERSION = 1 as const;
+const MIGRATION_LOCK_KEY = "721426590137322906";
+const MAX_INSERT_PARAMETERS = 60_000;
+const MAX_KEY_PARAMETERS = 20_000;
+const MAX_ARTIFACT_BYTES = 128 * 1024 * 1024;
+const SIGNED_INT64_MIN = -(1n << 63n);
+const SIGNED_INT64_MAX = (1n << 63n) - 1n;
+
+export type PostgresMigrationTargetErrorCode =
+  | "ARGUMENT_INVALID"
+  | "ARTIFACT_INVALID"
+  | "IDENTITY_MISMATCH"
+  | "IMPORT_FAILED"
+  | "PLAN_MISMATCH"
+  | "RECONCILIATION_FAILED"
+  | "RESUME_MISMATCH"
+  | "SOURCE_CHANGED"
+  | "SOURCE_DATA_INVALID"
+  | "TARGET_BUSY"
+  | "TARGET_CHANGED"
+  | "TARGET_NOT_EMPTY"
+  | "TARGET_UNSAFE";
+
+const TARGET_ERROR_MESSAGES: Readonly<Record<PostgresMigrationTargetErrorCode, string>> = {
+  ARGUMENT_INVALID: "Postgres migration target arguments are invalid.",
+  ARTIFACT_INVALID: "A Postgres migration artifact is invalid.",
+  IDENTITY_MISMATCH: "Postgres migration identity binding does not match.",
+  IMPORT_FAILED: "Postgres migration import failed.",
+  PLAN_MISMATCH: "Postgres migration plan reconciliation failed.",
+  RECONCILIATION_FAILED: "Postgres migration target reconciliation failed.",
+  RESUME_MISMATCH: "Postgres migration target is not the exact resumable run.",
+  SOURCE_CHANGED: "Postgres migration source changed during the run.",
+  SOURCE_DATA_INVALID: "Postgres migration source data is invalid.",
+  TARGET_BUSY: "Another Postgres migration owns the target lock.",
+  TARGET_CHANGED: "Postgres migration target data changed after import.",
+  TARGET_NOT_EMPTY: "Postgres migration target is not empty.",
+  TARGET_UNSAFE: "Postgres migration target security or schema checks failed.",
+};
+
+export const POSTGRES_MIGRATION_TARGET_URL_ENV = "PINTPATH_POSTGRES_MIGRATION_DATABASE_URL" as const;
+
+export interface SafePostgresMigrationTargetFailure {
+  readonly code: PostgresMigrationTargetErrorCode | "UNEXPECTED_FAILURE";
+  readonly message: string;
+  readonly exitCode: 2 | 3 | 4;
+  readonly retryable: boolean;
+}
+
+export class PostgresMigrationTargetError extends Error {
+  constructor(readonly code: PostgresMigrationTargetErrorCode) {
+    super(TARGET_ERROR_MESSAGES[code]);
+    this.name = "PostgresMigrationTargetError";
+  }
+}
+
+export function safePostgresMigrationTargetFailure(error: unknown): SafePostgresMigrationTargetFailure {
+  if (error instanceof PostgresMigrationTargetError) {
+    return {
+      code: error.code,
+      message: TARGET_ERROR_MESSAGES[error.code],
+      exitCode: error.code === "ARGUMENT_INVALID" ? 2 : error.code === "TARGET_BUSY" ? 4 : 3,
+      retryable: error.code === "TARGET_BUSY",
+    };
+  }
+  return {
+    code: "UNEXPECTED_FAILURE",
+    message: "Postgres migration target command failed unexpectedly; inspect protected application logs.",
+    exitCode: 3,
+    retryable: false,
+  };
+}
+
+export type PostgresMigrationEnvironment = "permanent-staging" | "production";
+
+export interface PostgresMigrationTargetInspection {
+  readonly targetIdentitySha256: string;
+  readonly targetUrlSha256: string;
+  readonly targetDdlSha256: string;
+  readonly tableCount: number;
+  readonly columnCount: number;
+  readonly foreignKeyCount: number;
+}
+
+export interface PostgresMigrationReceipt {
+  readonly kind: typeof TARGET_RECEIPT_KIND;
+  readonly version: typeof TARGET_RECEIPT_VERSION;
+  readonly status: "ready";
+  readonly expectedEnvironment: PostgresMigrationEnvironment;
+  readonly approvalReferenceSha256: string;
+  readonly operatorIdSha256: string;
+  readonly verifierIdSha256: string;
+  readonly runIdSha256: string;
+  readonly runBindingSha256: string;
+  readonly targetIdentitySha256: string;
+  readonly targetUrlSha256: string;
+  readonly targetDdlSha256: string;
+  readonly sourceSnapshotSha256: string;
+  readonly sourceSchemaFingerprint: string;
+  readonly contractSha256: string;
+  readonly manifestSha256: string;
+  readonly planSha256: string;
+  readonly candidateSha: string;
+  readonly tableSetSha256: string;
+  readonly transformedDataSha256: string;
+  readonly keyRangesSha256: string;
+  readonly stateTotalsSha256: string;
+  readonly schemaMetadataSha256: string;
+  readonly tableCount: number;
+  readonly columnCount: number;
+  readonly rowCount: number;
+  readonly chunkCount: number;
+  readonly zeroRowTableCount: number;
+  readonly foreignKeyCount: number;
+  readonly receiptSha256: string;
+}
+
+export interface PostgresMigrationTargetInput {
+  readonly snapshotManifestPath: string;
+  readonly expectedSnapshotManifestSha256: string;
+  readonly planPath: string;
+  readonly expectedPlanSha256: string;
+  readonly targetDdlPath: string;
+  readonly expectedTargetDdlSha256: string;
+  readonly targetUrl: string;
+  readonly expectedTargetUrlSha256: string;
+  readonly expectedTargetIdentitySha256: string;
+  readonly expectedEnvironment: PostgresMigrationEnvironment;
+  readonly candidateSha: string;
+  readonly approvalReference: string;
+  readonly operatorId: string;
+  readonly verifierId: string;
+}
+
+export interface PostgresMigrationTargetQueryResult<Row extends QueryResultRow = QueryResultRow> {
+  readonly rows: Row[];
+  readonly rowCount: number | null;
+}
+
+export interface PostgresMigrationTargetConnection {
+  query<Row extends QueryResultRow = QueryResultRow>(
+    text: string,
+    values?: readonly unknown[],
+  ): Promise<PostgresMigrationTargetQueryResult<Row>>;
+}
+
+interface CloseableTargetConnection extends PostgresMigrationTargetConnection {
+  close(): Promise<void>;
+}
+
+type StableArtifact = {
+  readonly bytes: number;
+  readonly contents: Buffer;
+  readonly sha256: string;
+  readonly stat: fs.BigIntStats;
+};
+
+type StableFileDigest = Omit<StableArtifact, "contents">;
+
+type TargetIdentityRow = QueryResultRow & {
+  systemIdentifier: string;
+  databaseOid: string;
+  databaseName: string;
+  sessionUser: string;
+  currentUser: string;
+  serverVersionNum: string;
+  sessionSuperuser: boolean;
+  currentSuperuser: boolean;
+  sessionBypassRls: boolean;
+  currentBypassRls: boolean;
+  migratorMember: boolean;
+  runtimeMember: boolean;
+  applicationSchemaUsage: boolean;
+  operationsSchemaUsage: boolean;
+  forbiddenMutationPrivilege: boolean;
+};
+
+type TargetColumnRow = QueryResultRow & {
+  tableName: string;
+  columnName: string;
+  dataType: string;
+  ordinalPosition: number;
+  isNullable: boolean;
+  rlsEnabled: boolean;
+  rlsForced: boolean;
+};
+
+type TargetPrimaryKeyRow = QueryResultRow & {
+  tableName: string;
+  columnName: string;
+  primaryKeyPosition: number;
+};
+
+type TargetConstraintSummaryRow = QueryResultRow & {
+  foreignKeyCount: number;
+  unvalidatedCount: number;
+};
+
+type TargetControlTableRow = QueryResultRow & {
+  schemaName: string;
+  tableName: string;
+  rlsEnabled: boolean;
+  rlsForced: boolean;
+};
+
+type TargetForeignKeyRow = QueryResultRow & {
+  childTable: string;
+  parentTable: string;
+  childColumn: string;
+  parentColumn: string;
+  columnPosition: number;
+  onUpdate: string;
+  onDelete: string;
+  matchType: string;
+  deferrable: boolean;
+};
+
+type MetadataRow = QueryResultRow & { key: string; value: string };
+type TableCountRow = QueryResultRow & { tableName: string; rowCount: string };
+type AdvisoryLockRow = QueryResultRow & { acquired: boolean };
+
+type MigrationRunRow = QueryResultRow & {
+  runId: string;
+  sourceSnapshotSha256: string;
+  sourceSchemaFingerprint: string;
+  contractSha256: string;
+  manifestSha256: string;
+  targetDdlSha256: string;
+  sourceSchemaVersion: number;
+  candidateSha: string;
+  targetBindingSha256: string;
+  expectedEnvironment: string;
+  approvalReferenceSha256: string;
+  operatorIdSha256: string;
+  verifierIdSha256: string | null;
+  status: "planned" | "importing" | "verifying" | "ready" | "failed";
+  receiptSha256: string | null;
+  failureCode: string | null;
+};
+
+type MigrationChunkRow = QueryResultRow & {
+  runId: string;
+  tableName: string;
+  chunkOrdinal: number;
+  rowCount: number;
+  sourceTransformedSha256: string;
+  targetSha256: string;
+};
+
+type TargetContext = {
+  readonly manifest: PostgresMigrationSnapshotManifest;
+  readonly manifestSha256: string;
+  readonly plan: PostgresMigrationPlan;
+  readonly planSha256: string;
+  readonly targetDdlSha256: string;
+  readonly targetUrlSha256: string;
+  readonly targetIdentitySha256: string;
+  readonly contractSha256: string;
+  readonly approvalReferenceSha256: string;
+  readonly operatorIdSha256: string;
+  readonly verifierIdSha256: string;
+  readonly targetBindingSha256: string;
+  readonly runId: string;
+  readonly expectedEnvironment: PostgresMigrationEnvironment;
+  readonly sourceDatabasePath: string;
+  readonly sourceDescriptor: PostgresMigrationSchemaDescriptor;
+};
+
+type TransformedRow = {
+  readonly raw: Record<string, unknown>;
+  readonly target: readonly unknown[];
+  readonly canonicalRow: Buffer;
+  readonly primaryKeySha256: string;
+};
+
+type SourceChunk = {
+  readonly plan: PostgresMigrationPlanChunk;
+  readonly rows: readonly TransformedRow[];
+  readonly transformedSha256: string;
+};
+
+type ReconciliationSummary = {
+  readonly tableSetSha256: string;
+  readonly transformedDataSha256: string;
+  readonly keyRangesSha256: string;
+  readonly stateTotalsSha256: string;
+  readonly chunkCount: number;
+  readonly zeroRowTableCount: number;
+  readonly foreignKeyCount: number;
+};
+
+function targetError(code: PostgresMigrationTargetErrorCode): PostgresMigrationTargetError {
+  return new PostgresMigrationTargetError(code);
+}
+
+function compareStrings(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function assertSha256(value: string): string {
+  const normalized = value.trim().toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(normalized)) throw targetError("ARGUMENT_INVALID");
+  return normalized;
+}
+
+function normalizeCandidateSha(value: string): string {
+  const normalized = value.trim().toLowerCase();
+  if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(normalized)) throw targetError("ARGUMENT_INVALID");
+  return normalized;
+}
+
+function identitySha256(value: string, label: string): string {
+  const normalized = value.trim().replace(/\s+/g, " ");
+  if (normalized.length < 3 || normalized.length > 160 || /[\r\n\0]/.test(normalized)) {
+    throw targetError("ARGUMENT_INVALID");
+  }
+  return sha256PostgresMigrationBytes(`${label}\0${normalized}`);
+}
+
+function canonicalSha256(value: unknown): string {
+  return sha256PostgresMigrationBytes(serializeCanonicalPostgresMigrationJson(value));
+}
+
+function assertCanonicalAbsoluteFile(filePath: string): void {
+  if (!path.isAbsolute(filePath) || path.resolve(filePath) !== filePath || filePath.includes("\0")) {
+    throw targetError("ARTIFACT_INVALID");
+  }
+}
+
+function sameFileIdentity(left: fs.BigIntStats, right: fs.BigIntStats): boolean {
+  return left.dev === right.dev
+    && left.ino === right.ino
+    && left.mode === right.mode
+    && left.nlink === right.nlink
+    && left.size === right.size
+    && left.mtimeNs === right.mtimeNs
+    && left.ctimeNs === right.ctimeNs;
+}
+
+async function readStableArtifact(
+  filePath: string,
+  options: { readonly requiredMode?: number; readonly maxBytes?: number } = {},
+): Promise<StableArtifact> {
+  assertCanonicalAbsoluteFile(filePath);
+  let pathStat: fs.BigIntStats;
+  try {
+    pathStat = fs.lstatSync(filePath, { bigint: true });
+    if (
+      !pathStat.isFile()
+      || pathStat.isSymbolicLink()
+      || pathStat.nlink !== 1n
+      || fs.realpathSync(filePath) !== filePath
+    ) {
+      throw new Error("unsafe");
+    }
+  } catch {
+    throw targetError("ARTIFACT_INVALID");
+  }
+  if (
+    options.requiredMode !== undefined
+    && Number(pathStat.mode & 0o777n) !== options.requiredMode
+  ) {
+    throw targetError("ARTIFACT_INVALID");
+  }
+  const maxBytes = options.maxBytes ?? MAX_ARTIFACT_BYTES;
+  if (pathStat.size > BigInt(maxBytes)) throw targetError("ARTIFACT_INVALID");
+  const handle = await fs.promises.open(filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+  try {
+    const before = await handle.stat({ bigint: true });
+    if (!sameFileIdentity(pathStat, before)) throw targetError("SOURCE_CHANGED");
+    const contents = await handle.readFile();
+    const after = await handle.stat({ bigint: true });
+    if (!sameFileIdentity(before, after) || BigInt(contents.length) !== before.size) {
+      throw targetError("SOURCE_CHANGED");
+    }
+    return {
+      bytes: contents.length,
+      contents,
+      sha256: sha256PostgresMigrationBytes(contents),
+      stat: after,
+    };
+  } finally {
+    await handle.close();
+  }
+}
+
+async function assertSnapshotLedgerAuthority(
+  snapshotDirectory: string,
+  manifest: PostgresMigrationSnapshotManifest,
+  failureCode: "ARTIFACT_INVALID" | "SOURCE_CHANGED",
+): Promise<void> {
+  try {
+    const expected = manifest.deletionLedger;
+    const bundle = await readPostgresMigrationLedgerAuthority(path.join(
+      snapshotDirectory,
+      expected.directory,
+      expected.authorityManifestFile,
+    ));
+    if (
+      bundle.manifestSha256 !== expected.authorityManifestSha256
+      || bundle.manifest.current.sha256 !== expected.currentLedgerSha256
+      || bundle.manifest.genesis.sha256 !== expected.genesisSha256
+      || bundle.manifest.checkpoint.sha256 !== expected.checkpointSha256
+      || bundle.manifest.checkpoint.immutableObjectCount !== expected.immutableObjectCount
+      || bundle.manifest.checkpoint.immutableSetSha256 !== expected.immutableSetSha256
+      || bundle.manifest.checkpoint.tombstoneCount !== expected.tombstoneCount
+      || bundle.manifest.checkpoint.latestCompletedAt !== expected.latestCompletedAt
+    ) {
+      throw targetError(failureCode);
+    }
+  } catch (error) {
+    if (error instanceof PostgresMigrationTargetError) throw error;
+    throw targetError(failureCode);
+  }
+}
+
+async function digestStableFile(
+  filePath: string,
+  options: { readonly requiredMode?: number; readonly maxBytes?: number } = {},
+): Promise<StableFileDigest> {
+  assertCanonicalAbsoluteFile(filePath);
+  let pathStat: fs.BigIntStats;
+  try {
+    pathStat = fs.lstatSync(filePath, { bigint: true });
+    if (
+      !pathStat.isFile()
+      || pathStat.isSymbolicLink()
+      || pathStat.nlink !== 1n
+      || fs.realpathSync(filePath) !== filePath
+    ) throw new Error("unsafe");
+  } catch {
+    throw targetError("ARTIFACT_INVALID");
+  }
+  if (
+    options.requiredMode !== undefined
+    && Number(pathStat.mode & 0o777n) !== options.requiredMode
+  ) throw targetError("ARTIFACT_INVALID");
+  if (pathStat.size > BigInt(options.maxBytes ?? Number.MAX_SAFE_INTEGER)) {
+    throw targetError("ARTIFACT_INVALID");
+  }
+  const handle = await fs.promises.open(filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+  try {
+    const before = await handle.stat({ bigint: true });
+    if (!sameFileIdentity(pathStat, before)) throw targetError("SOURCE_CHANGED");
+    const hash = crypto.createHash("sha256");
+    const buffer = Buffer.allocUnsafe(1024 * 1024);
+    let position = 0;
+    while (true) {
+      const read = await handle.read(buffer, 0, buffer.length, position);
+      if (read.bytesRead === 0) break;
+      hash.update(buffer.subarray(0, read.bytesRead));
+      position += read.bytesRead;
+    }
+    const after = await handle.stat({ bigint: true });
+    if (!sameFileIdentity(before, after) || BigInt(position) !== before.size) {
+      throw targetError("SOURCE_CHANGED");
+    }
+    return { bytes: position, sha256: hash.digest("hex"), stat: after };
+  } finally {
+    await handle.close();
+  }
+}
+
+function assertExactKeys(value: Record<string, unknown>, expected: readonly string[]): void {
+  if (JSON.stringify(Object.keys(value).sort(compareStrings)) !== JSON.stringify([...expected].sort(compareStrings))) {
+    throw targetError("ARTIFACT_INVALID");
+  }
+}
+
+function jsonObject(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw targetError("ARTIFACT_INVALID");
+  return value as Record<string, unknown>;
+}
+
+function safeCount(value: unknown): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw targetError("ARTIFACT_INVALID");
+  }
+  return value;
+}
+
+function normalizePlan(value: unknown): PostgresMigrationPlan {
+  const plan = jsonObject(value);
+  assertExactKeys(plan, [
+    "candidateSha",
+    "chunkRows",
+    "columnCount",
+    "contractSha256",
+    "importOrder",
+    "kind",
+    "snapshotManifestSha256",
+    "sourceDatabaseSha256",
+    "sourceSchemaFingerprint",
+    "sourceSchemaVersion",
+    "tableCount",
+    "tables",
+    "totalRows",
+    "version",
+  ]);
+  if (plan.kind !== POSTGRES_MIGRATION_PLAN_KIND || plan.version !== POSTGRES_MIGRATION_PLAN_VERSION) {
+    throw targetError("ARTIFACT_INVALID");
+  }
+  if (!Array.isArray(plan.importOrder) || !Array.isArray(plan.tables)) throw targetError("ARTIFACT_INVALID");
+  const conversionKeys = [
+    "binary", "boolean", "calendar-month", "decimal", "float64", "integer",
+    "json-array", "json-object", "local-time", "text", "utc-instant",
+  ].sort(compareStrings);
+  const tables: PostgresMigrationPlanTable[] = plan.tables.map((rawTable) => {
+    const table = jsonObject(rawTable);
+    assertExactKeys(table, ["chunks", "columnCount", "conversionCounts", "name", "rowCount", "transformedSha256"]);
+    const conversionCounts = jsonObject(table.conversionCounts);
+    if (JSON.stringify(Object.keys(conversionCounts).sort(compareStrings)) !== JSON.stringify(conversionKeys)) {
+      throw targetError("ARTIFACT_INVALID");
+    }
+    if (!Array.isArray(table.chunks)) throw targetError("ARTIFACT_INVALID");
+    const chunks: PostgresMigrationPlanChunk[] = table.chunks.map((rawChunk, index) => {
+      const chunk = jsonObject(rawChunk);
+      assertExactKeys(chunk, [
+        "firstPrimaryKeySha256", "lastPrimaryKeySha256", "ordinal", "rowCount", "transformedSha256",
+      ]);
+      const ordinal = safeCount(chunk.ordinal);
+      const rowCount = safeCount(chunk.rowCount);
+      if (ordinal !== index || rowCount < 1) throw targetError("ARTIFACT_INVALID");
+      return {
+        ordinal,
+        rowCount,
+        transformedSha256: assertSha256(String(chunk.transformedSha256 ?? "")),
+        firstPrimaryKeySha256: assertSha256(String(chunk.firstPrimaryKeySha256 ?? "")),
+        lastPrimaryKeySha256: assertSha256(String(chunk.lastPrimaryKeySha256 ?? "")),
+      };
+    });
+    const normalizedCounts = Object.fromEntries(
+      conversionKeys.map((key) => [key, safeCount(conversionCounts[key])]),
+    ) as PostgresMigrationPlanTable["conversionCounts"];
+    const rowCount = safeCount(table.rowCount);
+    if (chunks.reduce((total, chunk) => total + chunk.rowCount, 0) !== rowCount) {
+      throw targetError("ARTIFACT_INVALID");
+    }
+    return {
+      name: String(table.name ?? ""),
+      columnCount: safeCount(table.columnCount),
+      rowCount,
+      transformedSha256: assertSha256(String(table.transformedSha256 ?? "")),
+      conversionCounts: normalizedCounts,
+      chunks,
+    };
+  });
+  const normalized: PostgresMigrationPlan = {
+    kind: POSTGRES_MIGRATION_PLAN_KIND,
+    version: POSTGRES_MIGRATION_PLAN_VERSION,
+    candidateSha: normalizeCandidateSha(String(plan.candidateSha ?? "")),
+    contractSha256: assertSha256(String(plan.contractSha256 ?? "")),
+    snapshotManifestSha256: assertSha256(String(plan.snapshotManifestSha256 ?? "")),
+    sourceDatabaseSha256: assertSha256(String(plan.sourceDatabaseSha256 ?? "")),
+    sourceSchemaVersion: safeCount(plan.sourceSchemaVersion),
+    sourceSchemaFingerprint: assertSha256(String(plan.sourceSchemaFingerprint ?? "")),
+    chunkRows: safeCount(plan.chunkRows),
+    tableCount: safeCount(plan.tableCount),
+    columnCount: safeCount(plan.columnCount),
+    totalRows: safeCount(plan.totalRows),
+    importOrder: plan.importOrder.map((item) => String(item)),
+    tables,
+  };
+  if (
+    normalized.chunkRows < 1
+    || normalized.chunkRows > 10_000
+    || normalized.tableCount !== POSTGRES_MIGRATION_CONTRACT.expectedCounts.tables
+    || normalized.columnCount !== POSTGRES_MIGRATION_CONTRACT.expectedCounts.columns
+    || normalized.tables.length !== normalized.tableCount
+    || normalized.tables.reduce((total, table) => total + table.rowCount, 0) !== normalized.totalRows
+    || JSON.stringify(normalized.importOrder) !== JSON.stringify(POSTGRES_MIGRATION_CONTRACT.importOrder)
+    || JSON.stringify(normalized.tables.map((table) => table.name)) !== JSON.stringify(normalized.importOrder)
+  ) {
+    throw targetError("ARTIFACT_INVALID");
+  }
+  for (let index = 0; index < normalized.tables.length; index += 1) {
+    const table = POSTGRES_MIGRATION_CONTRACT.tables.find((entry) => entry.name === normalized.tables[index]!.name);
+    if (!table || table.columns.length !== normalized.tables[index]!.columnCount) {
+      throw targetError("ARTIFACT_INVALID");
+    }
+    if (normalized.tables[index]!.chunks.some((chunk) => chunk.rowCount > normalized.chunkRows)) {
+      throw targetError("ARTIFACT_INVALID");
+    }
+  }
+  return normalized;
+}
+
+function validateTargetUrl(value: string): { readonly digest: string; readonly clientUrl: string } {
+  if (value.length < 1 || value.length > 4096 || /[\r\n\0]/.test(value)) throw targetError("ARGUMENT_INVALID");
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw targetError("ARGUMENT_INVALID");
+  }
+  if (
+    !["postgres:", "postgresql:"].includes(url.protocol)
+    || !url.username
+    || !url.password
+    || !url.hostname
+    || !url.pathname
+    || url.pathname === "/"
+    || url.hash
+  ) {
+    throw targetError("ARGUMENT_INVALID");
+  }
+  const sslModes = url.searchParams.getAll("sslmode");
+  if (sslModes.length !== 1 || !["require", "verify-ca", "verify-full"].includes(sslModes[0]!)) {
+    throw targetError("TARGET_UNSAFE");
+  }
+  const libpqCompatibilityFlags = url.searchParams.getAll("uselibpqcompat");
+  if (
+    libpqCompatibilityFlags.length > 1
+    || (libpqCompatibilityFlags.length === 1 && libpqCompatibilityFlags[0] !== "true")
+  ) {
+    throw targetError("TARGET_UNSAFE");
+  }
+  const sslRootCertificates = url.searchParams.getAll("sslrootcert");
+  if (
+    sslRootCertificates.length > 1
+    || (sslRootCertificates.length === 1 && !sslRootCertificates[0]!.trim())
+    || (sslModes[0] === "verify-ca" && sslRootCertificates.length !== 1)
+  ) {
+    throw targetError("TARGET_UNSAFE");
+  }
+  if (
+    url.hostname.toLowerCase().includes("pooler")
+    || url.port === "6543"
+  ) {
+    throw targetError("TARGET_UNSAFE");
+  }
+  // pg-connection-string 2.x otherwise aliases require and verify-ca to
+  // verify-full and lets the parsed URL replace an explicit Client.ssl value.
+  // Normalize only the private client copy; evidence remains bound to the
+  // exact operator-supplied bytes above.
+  url.searchParams.set("uselibpqcompat", "true");
+  return { digest: sha256PostgresMigrationBytes(value), clientUrl: url.toString() };
+}
+
+class DirectPostgresMigrationConnection implements CloseableTargetConnection {
+  private constructor(private readonly client: Client) {}
+
+  static async connect(targetUrl: string): Promise<DirectPostgresMigrationConnection> {
+    const validated = validateTargetUrl(targetUrl);
+    let client: Client | null = null;
+    try {
+      client = new Client({
+        connectionString: validated.clientUrl,
+        application_name: "pintpath-postgres-migration",
+        connectionTimeoutMillis: 10_000,
+        query_timeout: 120_000,
+      });
+      await client.connect();
+      await client.query(`/* pintpath:migration:session-hardening */
+        SET statement_timeout = '120s';
+        SET lock_timeout = '10s';
+        SET idle_in_transaction_session_timeout = '30s';
+        SET search_path = ${APPLICATION_SCHEMA}, pg_catalog`);
+      return new DirectPostgresMigrationConnection(client);
+    } catch {
+      if (client) {
+        try { await client.end(); } catch { /* keep the safe error */ }
+      }
+      throw targetError("TARGET_UNSAFE");
+    }
+  }
+
+  async query<Row extends QueryResultRow = QueryResultRow>(
+    text: string,
+    values: readonly unknown[] = [],
+  ): Promise<PostgresMigrationTargetQueryResult<Row>> {
+    const result = await this.client.query<Row>(text, [...values]);
+    return { rows: result.rows, rowCount: result.rowCount };
+  }
+
+  async close(): Promise<void> {
+    try { await this.client.end(); } catch { /* connection is already unusable */ }
+  }
+}
+
+function quoteIdentifier(identifier: string, allowed: ReadonlySet<string>): string {
+  if (!allowed.has(identifier) || !/^[a-z][a-z0-9_]*$/.test(identifier)) {
+    throw targetError("ARTIFACT_INVALID");
+  }
+  return `"${identifier}"`;
+}
+
+function tableIdentifiers(table: PostgresMigrationTableContract): {
+  readonly table: string;
+  readonly columns: ReadonlySet<string>;
+} {
+  const columns = new Set(table.columns.map((column) => column[0]));
+  const tables = new Set(POSTGRES_MIGRATION_CONTRACT.tables.map((entry) => entry.name));
+  return { table: quoteIdentifier(table.name, tables), columns };
+}
+
+function updateLengthFramed(hash: crypto.Hash, value: string | Buffer): void {
+  const bytes = typeof value === "string" ? Buffer.from(value, "utf8") : value;
+  const length = Buffer.allocUnsafe(8);
+  length.writeBigUInt64BE(BigInt(bytes.length));
+  hash.update(length);
+  hash.update(bytes);
+}
+
+function canonicalRawKey(values: readonly unknown[]): Buffer {
+  const hash = crypto.createHash("sha256");
+  updateLengthFramed(hash, "pint-path-source-primary-key-v1");
+  for (const value of values) {
+    if (value === null) updateLengthFramed(hash, "N");
+    else if (Buffer.isBuffer(value)) updateLengthFramed(hash, `X${value.toString("base64")}`);
+    else if (typeof value === "bigint") updateLengthFramed(hash, `I${value}`);
+    else if (typeof value === "number") {
+      const bytes = Buffer.allocUnsafe(8);
+      bytes.writeDoubleBE(value);
+      updateLengthFramed(hash, `F${bytes.toString("hex")}`);
+    } else if (typeof value === "string") updateLengthFramed(hash, `T${value}`);
+    else throw targetError("SOURCE_DATA_INVALID");
+  }
+  return hash.digest();
+}
+
+function canonicalRow(table: PostgresMigrationTableContract, row: Record<string, unknown>): Buffer {
+  const hash = crypto.createHash("sha256");
+  updateLengthFramed(hash, "pint-path-postgres-transformed-row-v1");
+  updateLengthFramed(hash, table.name);
+  for (const column of table.columns) {
+    updateLengthFramed(hash, column[0]);
+    try {
+      updateLengthFramed(hash, postgresMigrationSourceInternals.canonicalSourceValue(row[column[0]], column));
+    } catch {
+      throw targetError("SOURCE_DATA_INVALID");
+    }
+  }
+  return hash.digest();
+}
+
+function transformedChunkSha256(
+  contractSha256: string,
+  tableName: string,
+  ordinal: number,
+  rows: readonly TransformedRow[],
+): string {
+  const hash = crypto.createHash("sha256");
+  updateLengthFramed(hash, "pint-path-postgres-transformed-chunk-v1");
+  updateLengthFramed(hash, contractSha256);
+  updateLengthFramed(hash, tableName);
+  updateLengthFramed(hash, String(ordinal));
+  for (const row of rows) updateLengthFramed(hash, row.canonicalRow);
+  return hash.digest("hex");
+}
+
+function beginTransformedTableHash(
+  contractSha256: string,
+  table: PostgresMigrationTableContract,
+): crypto.Hash {
+  const hash = crypto.createHash("sha256");
+  updateLengthFramed(hash, "pint-path-postgres-transformed-table-v1");
+  updateLengthFramed(hash, contractSha256);
+  updateLengthFramed(hash, table.name);
+  for (const column of table.columns) updateLengthFramed(hash, column[0]);
+  return hash;
+}
+
+function targetCast(column: PostgresMigrationColumnContract): string {
+  switch (column[2]) {
+    case "binary": return "bytea";
+    case "boolean": return "boolean";
+    case "calendar-month":
+    case "text": return "text";
+    case "decimal": return "numeric";
+    case "float64": return "double precision";
+    case "integer": return "bigint";
+    case "json-array":
+    case "json-object": return "jsonb";
+    case "local-time": return "time without time zone";
+    case "utc-instant": return "timestamp with time zone";
+  }
+}
+
+function transformSourceValue(value: unknown, column: PostgresMigrationColumnContract): unknown {
+  if (value === null) {
+    if (!column[3]) throw targetError("SOURCE_DATA_INVALID");
+    return null;
+  }
+  let canonical: string;
+  try {
+    canonical = postgresMigrationSourceInternals.canonicalSourceValue(value, column);
+  } catch {
+    throw targetError("SOURCE_DATA_INVALID");
+  }
+  switch (column[2]) {
+    case "binary": return Buffer.from(value as Buffer);
+    case "boolean": return canonical === "B1";
+    case "calendar-month":
+    case "text": return canonical.slice(1);
+    case "decimal": return canonical.slice(1);
+    case "float64": return value;
+    case "integer": {
+      const integer = value as bigint;
+      if (integer < SIGNED_INT64_MIN || integer > SIGNED_INT64_MAX) throw targetError("SOURCE_DATA_INVALID");
+      return integer.toString();
+    }
+    case "json-array":
+    case "json-object": return canonical.slice(1);
+    case "local-time":
+      return canonical.slice(1);
+    case "utc-instant": {
+      const instant = canonical.slice(1);
+      if (instant.startsWith("0000-")) throw targetError("SOURCE_DATA_INVALID");
+      return instant;
+    }
+  }
+}
+
+function targetValueToSource(value: unknown, column: PostgresMigrationColumnContract): unknown {
+  if (value === null) {
+    if (!column[3]) throw targetError("TARGET_CHANGED");
+    return null;
+  }
+  try {
+    switch (column[2]) {
+      case "binary":
+        if (!Buffer.isBuffer(value)) throw new Error("type");
+        return Buffer.from(value);
+      case "boolean":
+        if (typeof value !== "boolean") throw new Error("type");
+        return value ? 1n : 0n;
+      case "calendar-month":
+      case "text":
+      case "json-array":
+      case "json-object":
+      case "local-time":
+      case "utc-instant":
+        if (typeof value !== "string") throw new Error("type");
+        return value;
+      case "decimal": {
+        if (typeof value !== "string") throw new Error("type");
+        const number = Number(value);
+        if (!Number.isFinite(number)) throw new Error("range");
+        if (
+          postgresMigrationSourceInternals.normalizeExactDecimalToken(value)
+          !== postgresMigrationSourceInternals.normalizeExactDecimalToken(number.toString())
+        ) {
+          throw new Error("precision");
+        }
+        return number;
+      }
+      case "float64": {
+        const number = typeof value === "number" ? value : Number(value);
+        if (!Number.isFinite(number)) throw new Error("range");
+        return number;
+      }
+      case "integer": {
+        if (typeof value !== "string" && typeof value !== "bigint" && typeof value !== "number") {
+          throw new Error("type");
+        }
+        const integer = BigInt(value);
+        if (integer < SIGNED_INT64_MIN || integer > SIGNED_INT64_MAX) throw new Error("range");
+        return integer;
+      }
+    }
+  } catch {
+    throw targetError("TARGET_CHANGED");
+  }
+}
+
+function transformSourceRow(
+  table: PostgresMigrationTableContract,
+  raw: Record<string, unknown>,
+): TransformedRow {
+  const primaryKey = table.columns
+    .filter((column) => column[4] > 0)
+    .sort((left, right) => left[4] - right[4]);
+  return {
+    raw,
+    target: table.columns.map((column) => transformSourceValue(raw[column[0]], column)),
+    canonicalRow: canonicalRow(table, raw),
+    primaryKeySha256: canonicalRawKey(primaryKey.map((column) => raw[column[0]])).toString("hex"),
+  };
+}
+
+function sourceSelect(table: PostgresMigrationTableContract): string {
+  const identifiers = tableIdentifiers(table);
+  const primaryKey = table.columns
+    .filter((column) => column[4] > 0)
+    .sort((left, right) => left[4] - right[4]);
+  const select = table.columns.map((column) => quoteIdentifier(column[0], identifiers.columns)).join(", ");
+  const order = primaryKey.map((column) => (
+    column[1] === "TEXT"
+      ? `${quoteIdentifier(column[0], identifiers.columns)} COLLATE BINARY ASC`
+      : `${quoteIdentifier(column[0], identifiers.columns)} ASC`
+  )).join(", ");
+  return `SELECT ${select} FROM ${identifiers.table} ORDER BY ${order}`;
+}
+
+function readSourceChunks(
+  database: BetterSqlite3.Database,
+  table: PostgresMigrationTableContract,
+  planTable: PostgresMigrationPlanTable,
+  contractSha256: string,
+): SourceChunk[] {
+  const chunks: SourceChunk[] = [];
+  const iterator = database.prepare(sourceSelect(table)).safeIntegers(true).iterate() as IterableIterator<Record<string, unknown>>;
+  let rows: TransformedRow[] = [];
+  let ordinal = 0;
+  for (const raw of iterator) {
+    rows.push(transformSourceRow(table, raw));
+    if (rows.length === (planTable.chunks[ordinal]?.rowCount ?? Number.POSITIVE_INFINITY)) {
+      const planned = planTable.chunks[ordinal];
+      if (!planned) throw targetError("PLAN_MISMATCH");
+      const digest = transformedChunkSha256(contractSha256, table.name, ordinal, rows);
+      if (
+        digest !== planned.transformedSha256
+        || rows[0]?.primaryKeySha256 !== planned.firstPrimaryKeySha256
+        || rows.at(-1)?.primaryKeySha256 !== planned.lastPrimaryKeySha256
+      ) {
+        throw targetError("PLAN_MISMATCH");
+      }
+      chunks.push({ plan: planned, rows, transformedSha256: digest });
+      rows = [];
+      ordinal += 1;
+    }
+  }
+  if (rows.length > 0 || ordinal !== planTable.chunks.length) throw targetError("PLAN_MISMATCH");
+  if (planTable.rowCount === 0 && chunks.length !== 0) throw targetError("PLAN_MISMATCH");
+  return chunks;
+}
+
+function targetProjection(table: PostgresMigrationTableContract): string {
+  const { columns } = tableIdentifiers(table);
+  return table.columns.map((column) => {
+    const identifier = quoteIdentifier(column[0], columns);
+    let expression = identifier;
+    if (["json-array", "json-object", "decimal", "integer", "float64"].includes(column[2])) {
+      expression = `${identifier}::text`;
+    } else if (column[2] === "utc-instant") {
+      expression = `to_char(${identifier} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
+    } else if (column[2] === "local-time") {
+      expression = `to_char(${identifier}, 'HH24:MI:SS.US')`;
+    }
+    return `${expression} AS ${identifier}`;
+  }).join(", ");
+}
+
+function primaryKeyColumns(table: PostgresMigrationTableContract): PostgresMigrationColumnContract[] {
+  return table.columns
+    .filter((column) => column[4] > 0)
+    .sort((left, right) => left[4] - right[4]);
+}
+
+function targetRowFromResult(
+  table: PostgresMigrationTableContract,
+  result: Record<string, unknown>,
+): TransformedRow {
+  const raw = Object.fromEntries(
+    table.columns.map((column) => [column[0], targetValueToSource(result[column[0]], column)]),
+  );
+  return transformSourceRow(table, raw);
+}
+
+async function fetchTargetRowsForSourceRows(
+  connection: PostgresMigrationTargetConnection,
+  table: PostgresMigrationTableContract,
+  sourceRows: readonly TransformedRow[],
+): Promise<TransformedRow[]> {
+  if (sourceRows.length === 0) return [];
+  const keys = primaryKeyColumns(table);
+  const { table: tableIdentifier, columns } = tableIdentifiers(table);
+  const output = new Map<string, TransformedRow>();
+  const rowsPerQuery = Math.max(1, Math.floor(MAX_KEY_PARAMETERS / keys.length));
+  for (let offset = 0; offset < sourceRows.length; offset += rowsPerQuery) {
+    const batch = sourceRows.slice(offset, offset + rowsPerQuery);
+    const values: unknown[] = [];
+    const predicates = batch.map((row) => {
+      const clauses = keys.map((column) => {
+        const sourceColumnIndex = table.columns.findIndex((entry) => entry[0] === column[0]);
+        values.push(row.target[sourceColumnIndex]);
+        return `${quoteIdentifier(column[0], columns)} = $${values.length}::${targetCast(column)}`;
+      });
+      return `(${clauses.join(" AND ")})`;
+    });
+    const result = await connection.query(
+      `/* pintpath:migration:fetch-target-chunk */
+       SELECT ${targetProjection(table)}
+       FROM ${APPLICATION_SCHEMA}.${tableIdentifier}
+       WHERE ${predicates.join(" OR ")}`,
+      values,
+    );
+    for (const raw of result.rows) {
+      const transformed = targetRowFromResult(table, raw);
+      if (output.has(transformed.primaryKeySha256)) throw targetError("TARGET_CHANGED");
+      output.set(transformed.primaryKeySha256, transformed);
+    }
+  }
+  return sourceRows.map((source) => {
+    const target = output.get(source.primaryKeySha256);
+    if (!target) throw targetError("TARGET_CHANGED");
+    return target;
+  });
+}
+
+async function countExistingTargetRows(
+  connection: PostgresMigrationTargetConnection,
+  table: PostgresMigrationTableContract,
+  sourceRows: readonly TransformedRow[],
+): Promise<number> {
+  if (sourceRows.length === 0) return 0;
+  try {
+    const rows = await fetchTargetRowsForSourceRows(connection, table, sourceRows);
+    return rows.length;
+  } catch (error) {
+    if (error instanceof PostgresMigrationTargetError && error.code === "TARGET_CHANGED") {
+      const keys = primaryKeyColumns(table);
+      const { table: tableIdentifier, columns } = tableIdentifiers(table);
+      let count = 0;
+      const rowsPerQuery = Math.max(1, Math.floor(MAX_KEY_PARAMETERS / keys.length));
+      for (let offset = 0; offset < sourceRows.length; offset += rowsPerQuery) {
+        const batch = sourceRows.slice(offset, offset + rowsPerQuery);
+        const values: unknown[] = [];
+        const predicates = batch.map((row) => `(${keys.map((column) => {
+          const columnIndex = table.columns.findIndex((entry) => entry[0] === column[0]);
+          values.push(row.target[columnIndex]);
+          return `${quoteIdentifier(column[0], columns)} = $${values.length}::${targetCast(column)}`;
+        }).join(" AND ")})`);
+        const result = await connection.query<QueryResultRow & { rowCount: string }>(
+          `/* pintpath:migration:count-target-keys */
+           SELECT count(*)::text AS "rowCount"
+           FROM ${APPLICATION_SCHEMA}.${tableIdentifier}
+           WHERE ${predicates.join(" OR ")}`,
+          values,
+        );
+        count += Number(result.rows[0]?.rowCount ?? "0");
+      }
+      return count;
+    }
+    throw error;
+  }
+}
+
+async function insertSourceRows(
+  connection: PostgresMigrationTargetConnection,
+  table: PostgresMigrationTableContract,
+  rows: readonly TransformedRow[],
+): Promise<void> {
+  if (rows.length === 0) return;
+  const { table: tableIdentifier, columns } = tableIdentifiers(table);
+  const columnSql = table.columns.map((column) => quoteIdentifier(column[0], columns)).join(", ");
+  const primaryKeySql = primaryKeyColumns(table)
+    .map((column) => quoteIdentifier(column[0], columns))
+    .join(", ");
+  const rowsPerInsert = Math.max(1, Math.floor(MAX_INSERT_PARAMETERS / table.columns.length));
+  for (let offset = 0; offset < rows.length; offset += rowsPerInsert) {
+    const batch = rows.slice(offset, offset + rowsPerInsert);
+    const values: unknown[] = [];
+    const tuples = batch.map((row) => `(${table.columns.map((column, columnIndex) => {
+      values.push(row.target[columnIndex]);
+      return `$${values.length}::${targetCast(column)}`;
+    }).join(", ")})`);
+    const result = await connection.query(
+      `/* pintpath:migration:insert-target-chunk */
+       INSERT INTO ${APPLICATION_SCHEMA}.${tableIdentifier} (${columnSql})
+       VALUES ${tuples.join(", ")}
+       ON CONFLICT (${primaryKeySql}) DO NOTHING`,
+      values,
+    );
+    if (result.rowCount !== batch.length) throw targetError("TARGET_CHANGED");
+  }
+}
+
+function hashTargetChunk(
+  contractSha256: string,
+  table: PostgresMigrationTableContract,
+  ordinal: number,
+  rows: readonly TransformedRow[],
+): string {
+  return transformedChunkSha256(contractSha256, table.name, ordinal, rows);
+}
+
+async function inTransaction<Result>(
+  connection: PostgresMigrationTargetConnection,
+  work: () => Promise<Result>,
+): Promise<Result> {
+  await connection.query("/* pintpath:migration:begin */ BEGIN");
+  try {
+    const result = await work();
+    await connection.query("/* pintpath:migration:commit */ COMMIT");
+    return result;
+  } catch (error) {
+    try { await connection.query("/* pintpath:migration:rollback */ ROLLBACK"); } catch { /* keep original */ }
+    throw error;
+  }
+}
+
+function expectedPostgresType(column: PostgresMigrationColumnContract): string {
+  return targetCast(column);
+}
+
+async function inspectTargetIdentity(
+  connection: PostgresMigrationTargetConnection,
+): Promise<{ readonly digest: string; readonly row: TargetIdentityRow }> {
+  const result = await connection.query<TargetIdentityRow>(`/* pintpath:migration:target-identity */
+    SELECT
+      control.system_identifier::text AS "systemIdentifier",
+      database.oid::text AS "databaseOid",
+      current_database() AS "databaseName",
+      session_user AS "sessionUser",
+      current_user AS "currentUser",
+      current_setting('server_version_num') AS "serverVersionNum",
+      login_role.rolsuper AS "sessionSuperuser",
+      active_role.rolsuper AS "currentSuperuser",
+      login_role.rolbypassrls AS "sessionBypassRls",
+      active_role.rolbypassrls AS "currentBypassRls",
+      COALESCE(pg_has_role(session_user, to_regrole('${MIGRATOR_ROLE}'), 'MEMBER'), false)
+        AND COALESCE(pg_has_role(current_user, to_regrole('${MIGRATOR_ROLE}'), 'USAGE'), false)
+        AS "migratorMember",
+      COALESCE(pg_has_role(session_user, to_regrole('${RUNTIME_ROLE}'), 'MEMBER'), false)
+        AS "runtimeMember",
+      has_schema_privilege(current_user, application_namespace.oid, 'USAGE') AS "applicationSchemaUsage",
+      has_schema_privilege(current_user, operations_namespace.oid, 'USAGE') AS "operationsSchemaUsage",
+      EXISTS (
+        SELECT 1
+        FROM pg_catalog.pg_class AS forbidden_relation
+        JOIN pg_catalog.pg_namespace AS forbidden_namespace
+          ON forbidden_namespace.oid = forbidden_relation.relnamespace
+        WHERE forbidden_namespace.nspname IN ('${APPLICATION_SCHEMA}', '${OPERATIONS_SCHEMA}')
+          AND forbidden_relation.relkind IN ('r', 'p')
+          AND (
+            has_table_privilege(current_user, forbidden_relation.oid, 'DELETE')
+            OR has_table_privilege(current_user, forbidden_relation.oid, 'TRUNCATE')
+            OR (
+              forbidden_namespace.nspname = '${APPLICATION_SCHEMA}'
+              AND forbidden_relation.relname <> 'schema_metadata'
+              AND has_table_privilege(current_user, forbidden_relation.oid, 'UPDATE')
+            )
+          )
+      ) AS "forbiddenMutationPrivilege"
+    FROM pg_catalog.pg_database AS database
+    CROSS JOIN pg_catalog.pg_control_system() AS control
+    JOIN pg_catalog.pg_roles AS login_role ON login_role.rolname = session_user
+    JOIN pg_catalog.pg_roles AS active_role ON active_role.rolname = current_user
+    JOIN pg_catalog.pg_namespace AS application_namespace ON application_namespace.nspname = '${APPLICATION_SCHEMA}'
+    JOIN pg_catalog.pg_namespace AS operations_namespace ON operations_namespace.nspname = '${OPERATIONS_SCHEMA}'
+    WHERE database.datname = current_database()`);
+  const row = result.rows[0];
+  if (!row || result.rows.length !== 1) throw targetError("TARGET_UNSAFE");
+  if (
+    row.sessionSuperuser
+    || row.currentSuperuser
+    || row.sessionBypassRls
+    || row.currentBypassRls
+    || !row.migratorMember
+    || row.runtimeMember
+    || !row.applicationSchemaUsage
+    || !row.operationsSchemaUsage
+    || row.forbiddenMutationPrivilege
+    || !/^\d+$/.test(row.systemIdentifier)
+    || !/^\d+$/.test(row.databaseOid)
+    || !/^\d+$/.test(row.serverVersionNum)
+  ) {
+    throw targetError("TARGET_UNSAFE");
+  }
+  return {
+    row,
+    digest: canonicalSha256({
+      databaseName: row.databaseName,
+      databaseOid: row.databaseOid,
+      currentUser: row.currentUser,
+      serverVersionNum: row.serverVersionNum,
+      sessionUser: row.sessionUser,
+      systemIdentifier: row.systemIdentifier,
+    }),
+  };
+}
+
+async function inspectTargetSchema(
+  connection: PostgresMigrationTargetConnection,
+): Promise<{ readonly tableCount: number; readonly columnCount: number; readonly foreignKeyCount: number }> {
+  const columnsResult = await connection.query<TargetColumnRow>(`/* pintpath:migration:target-columns */
+    SELECT
+      relation.relname AS "tableName",
+      attribute.attname AS "columnName",
+      pg_catalog.format_type(attribute.atttypid, attribute.atttypmod) AS "dataType",
+      attribute.attnum::integer AS "ordinalPosition",
+      NOT attribute.attnotnull AS "isNullable",
+      relation.relrowsecurity AS "rlsEnabled",
+      relation.relforcerowsecurity AS "rlsForced"
+    FROM pg_catalog.pg_class AS relation
+    JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+    JOIN pg_catalog.pg_attribute AS attribute ON attribute.attrelid = relation.oid
+    WHERE namespace.nspname = '${APPLICATION_SCHEMA}'
+      AND relation.relkind IN ('r', 'p')
+      AND relation.relname <> 'schema_metadata'
+      AND attribute.attnum > 0
+      AND NOT attribute.attisdropped
+    ORDER BY relation.relname, attribute.attnum`);
+  const expectedRows = POSTGRES_MIGRATION_CONTRACT.tables.flatMap((table) => table.columns.map((column, index) => ({
+    tableName: table.name,
+    columnName: column[0],
+    dataType: expectedPostgresType(column),
+    ordinalPosition: index + 1,
+    isNullable: column[3],
+  }))).sort((left, right) => compareStrings(left.tableName, right.tableName) || left.ordinalPosition - right.ordinalPosition);
+  const actualRows = [...columnsResult.rows].sort(
+    (left, right) => compareStrings(left.tableName, right.tableName) || left.ordinalPosition - right.ordinalPosition,
+  );
+  if (actualRows.length !== expectedRows.length) throw targetError("TARGET_UNSAFE");
+  for (let index = 0; index < expectedRows.length; index += 1) {
+    const actual = actualRows[index]!;
+    const expected = expectedRows[index]!;
+    if (
+      actual.tableName !== expected.tableName
+      || actual.columnName !== expected.columnName
+      || actual.dataType !== expected.dataType
+      || actual.ordinalPosition !== expected.ordinalPosition
+      || actual.isNullable !== expected.isNullable
+      || !actual.rlsEnabled
+      || !actual.rlsForced
+    ) {
+      throw targetError("TARGET_UNSAFE");
+    }
+  }
+  const primaryKeysResult = await connection.query<TargetPrimaryKeyRow>(`/* pintpath:migration:target-primary-keys */
+    SELECT
+      relation.relname AS "tableName",
+      attribute.attname AS "columnName",
+      key_ordinal.ordinality::integer AS "primaryKeyPosition"
+    FROM pg_catalog.pg_constraint AS constraint_record
+    JOIN pg_catalog.pg_class AS relation ON relation.oid = constraint_record.conrelid
+    JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+    CROSS JOIN LATERAL unnest(constraint_record.conkey) WITH ORDINALITY AS key_ordinal(attnum, ordinality)
+    JOIN pg_catalog.pg_attribute AS attribute
+      ON attribute.attrelid = relation.oid AND attribute.attnum = key_ordinal.attnum
+    WHERE namespace.nspname = '${APPLICATION_SCHEMA}'
+      AND relation.relname <> 'schema_metadata'
+      AND constraint_record.contype = 'p'
+    ORDER BY relation.relname, key_ordinal.ordinality`);
+  const expectedPrimaryKeys = POSTGRES_MIGRATION_CONTRACT.tables.flatMap((table) => table.columns
+    .filter((column) => column[4] > 0)
+    .map((column) => ({ tableName: table.name, columnName: column[0], primaryKeyPosition: column[4] })))
+    .sort((left, right) => compareStrings(left.tableName, right.tableName) || left.primaryKeyPosition - right.primaryKeyPosition);
+  const actualPrimaryKeys = [...primaryKeysResult.rows].sort(
+    (left, right) => compareStrings(left.tableName, right.tableName) || left.primaryKeyPosition - right.primaryKeyPosition,
+  );
+  if (JSON.stringify(actualPrimaryKeys) !== JSON.stringify(expectedPrimaryKeys)) throw targetError("TARGET_UNSAFE");
+  const constraints = await connection.query<TargetConstraintSummaryRow>(`/* pintpath:migration:target-constraints */
+    SELECT
+      count(*) FILTER (WHERE constraint_record.contype = 'f')::integer AS "foreignKeyCount",
+      count(*) FILTER (WHERE NOT constraint_record.convalidated)::integer AS "unvalidatedCount"
+    FROM pg_catalog.pg_constraint AS constraint_record
+    JOIN pg_catalog.pg_class AS relation ON relation.oid = constraint_record.conrelid
+    JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+    WHERE namespace.nspname = '${APPLICATION_SCHEMA}'
+      AND relation.relname <> 'schema_metadata'
+      AND constraint_record.contype IN ('c', 'f', 'p', 'u')`);
+  const constraintSummary = constraints.rows[0];
+  if (
+    !constraintSummary
+    || constraintSummary.foreignKeyCount !== POSTGRES_MIGRATION_CONTRACT.expectedCounts.foreignKeys
+    || constraintSummary.unvalidatedCount !== 0
+  ) {
+    throw targetError("TARGET_UNSAFE");
+  }
+  const controlTables = await connection.query<TargetControlTableRow>(`/* pintpath:migration:target-control-tables */
+    SELECT
+      namespace.nspname AS "schemaName",
+      relation.relname AS "tableName",
+      relation.relrowsecurity AS "rlsEnabled",
+      relation.relforcerowsecurity AS "rlsForced"
+    FROM pg_catalog.pg_class AS relation
+    JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+    WHERE (namespace.nspname = '${APPLICATION_SCHEMA}' AND relation.relname = 'schema_metadata')
+       OR (namespace.nspname = '${OPERATIONS_SCHEMA}' AND relation.relname IN ('migration_runs', 'migration_chunks'))
+    ORDER BY namespace.nspname, relation.relname`);
+  const expectedControlTables: TargetControlTableRow[] = [
+    { schemaName: APPLICATION_SCHEMA, tableName: "schema_metadata", rlsEnabled: true, rlsForced: true },
+    { schemaName: OPERATIONS_SCHEMA, tableName: "migration_chunks", rlsEnabled: true, rlsForced: true },
+    { schemaName: OPERATIONS_SCHEMA, tableName: "migration_runs", rlsEnabled: true, rlsForced: true },
+  ];
+  if (JSON.stringify(controlTables.rows) !== JSON.stringify(expectedControlTables)) {
+    throw targetError("TARGET_UNSAFE");
+  }
+  return {
+    tableCount: POSTGRES_MIGRATION_CONTRACT.expectedCounts.tables,
+    columnCount: expectedRows.length,
+    foreignKeyCount: constraintSummary.foreignKeyCount,
+  };
+}
+
+function postgresForeignKeyAction(action: string): string {
+  const actions: Readonly<Record<string, string>> = {
+    "NO ACTION": "a",
+    RESTRICT: "r",
+    CASCADE: "c",
+    "SET NULL": "n",
+    "SET DEFAULT": "d",
+  };
+  const result = actions[action];
+  if (!result) throw targetError("RECONCILIATION_FAILED");
+  return result;
+}
+
+async function inspectTargetForeignKeys(
+  connection: PostgresMigrationTargetConnection,
+  descriptor: PostgresMigrationSchemaDescriptor,
+): Promise<void> {
+  const result = await connection.query<TargetForeignKeyRow>(`/* pintpath:migration:target-foreign-keys */
+    SELECT
+      child_relation.relname AS "childTable",
+      parent_relation.relname AS "parentTable",
+      child_attribute.attname AS "childColumn",
+      parent_attribute.attname AS "parentColumn",
+      child_key.ordinality::integer AS "columnPosition",
+      constraint_record.confupdtype::text AS "onUpdate",
+      constraint_record.confdeltype::text AS "onDelete",
+      constraint_record.confmatchtype::text AS "matchType",
+      constraint_record.condeferrable AS "deferrable"
+    FROM pg_catalog.pg_constraint AS constraint_record
+    JOIN pg_catalog.pg_class AS child_relation ON child_relation.oid = constraint_record.conrelid
+    JOIN pg_catalog.pg_namespace AS child_namespace ON child_namespace.oid = child_relation.relnamespace
+    JOIN pg_catalog.pg_class AS parent_relation ON parent_relation.oid = constraint_record.confrelid
+    CROSS JOIN LATERAL unnest(constraint_record.conkey) WITH ORDINALITY AS child_key(attnum, ordinality)
+    JOIN LATERAL unnest(constraint_record.confkey) WITH ORDINALITY AS parent_key(attnum, ordinality)
+      ON parent_key.ordinality = child_key.ordinality
+    JOIN pg_catalog.pg_attribute AS child_attribute
+      ON child_attribute.attrelid = child_relation.oid AND child_attribute.attnum = child_key.attnum
+    JOIN pg_catalog.pg_attribute AS parent_attribute
+      ON parent_attribute.attrelid = parent_relation.oid AND parent_attribute.attnum = parent_key.attnum
+    WHERE child_namespace.nspname = '${APPLICATION_SCHEMA}'
+      AND constraint_record.contype = 'f'`);
+  const expected = descriptor.tables.flatMap((table) => table.foreignKeys.map((foreignKey) => ({
+    childTable: table.name,
+    parentTable: foreignKey.table,
+    childColumn: foreignKey.from,
+    parentColumn: foreignKey.to,
+    columnPosition: foreignKey.seq + 1,
+    onUpdate: postgresForeignKeyAction(foreignKey.on_update),
+    onDelete: postgresForeignKeyAction(foreignKey.on_delete),
+    matchType: foreignKey.match === "NONE" ? "s" : foreignKey.match.toLowerCase().slice(0, 1),
+    deferrable: false,
+  })));
+  const compare = (left: TargetForeignKeyRow, right: TargetForeignKeyRow) => (
+    compareStrings(left.childTable, right.childTable)
+    || compareStrings(left.parentTable, right.parentTable)
+    || compareStrings(left.childColumn, right.childColumn)
+    || compareStrings(left.parentColumn, right.parentColumn)
+    || left.columnPosition - right.columnPosition
+    || compareStrings(left.onUpdate, right.onUpdate)
+    || compareStrings(left.onDelete, right.onDelete)
+  );
+  const actual = [...result.rows].sort(compare);
+  expected.sort(compare);
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    throw targetError("TARGET_UNSAFE");
+  }
+}
+
+async function acquireMigrationLock(connection: PostgresMigrationTargetConnection): Promise<void> {
+  const result = await connection.query<AdvisoryLockRow>(
+    `/* pintpath:migration:lock */ SELECT pg_try_advisory_lock($1::bigint) AS acquired`,
+    [MIGRATION_LOCK_KEY],
+  );
+  if (result.rows[0]?.acquired !== true) throw targetError("TARGET_BUSY");
+}
+
+async function releaseMigrationLock(connection: PostgresMigrationTargetConnection): Promise<void> {
+  try {
+    await connection.query(
+      `/* pintpath:migration:unlock */ SELECT pg_advisory_unlock($1::bigint)`,
+      [MIGRATION_LOCK_KEY],
+    );
+  } catch {
+    // Closing the single connection releases the session advisory lock.
+  }
+}
+
+async function loadMetadata(connection: PostgresMigrationTargetConnection): Promise<Map<string, string>> {
+  const result = await connection.query<MetadataRow>(`/* pintpath:migration:metadata */
+    SELECT key, value FROM ${APPLICATION_SCHEMA}.schema_metadata ORDER BY key`);
+  const metadata = new Map<string, string>();
+  for (const row of result.rows) {
+    if (metadata.has(row.key)) throw targetError("TARGET_UNSAFE");
+    metadata.set(row.key, row.value);
+  }
+  if (metadata.get("schema_version") !== "1" || !metadata.has("import_state")) {
+    throw targetError("TARGET_UNSAFE");
+  }
+  return metadata;
+}
+
+async function loadTableCounts(connection: PostgresMigrationTargetConnection): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+  for (const table of POSTGRES_MIGRATION_CONTRACT.tables) {
+    const { table: tableIdentifier } = tableIdentifiers(table);
+    const result = await connection.query<QueryResultRow & { rowCount: string }>(
+      `/* pintpath:migration:table-count */ SELECT count(*)::text AS "rowCount" FROM ${APPLICATION_SCHEMA}.${tableIdentifier}`,
+    );
+    const value = result.rows[0]?.rowCount;
+    if (!value || !/^\d+$/.test(value)) throw targetError("TARGET_UNSAFE");
+    const count = Number(value);
+    if (!Number.isSafeInteger(count)) throw targetError("TARGET_UNSAFE");
+    counts.set(table.name, count);
+  }
+  return counts;
+}
+
+async function loadMigrationRuns(connection: PostgresMigrationTargetConnection): Promise<MigrationRunRow[]> {
+  const result = await connection.query<MigrationRunRow>(`/* pintpath:migration:runs */
+    SELECT
+      run_id AS "runId",
+      source_snapshot_sha256 AS "sourceSnapshotSha256",
+      source_schema_fingerprint AS "sourceSchemaFingerprint",
+      contract_sha256 AS "contractSha256",
+      manifest_sha256 AS "manifestSha256",
+      target_ddl_sha256 AS "targetDdlSha256",
+      source_schema_version AS "sourceSchemaVersion",
+      candidate_commit_sha AS "candidateSha",
+      target_binding_sha256 AS "targetBindingSha256",
+      expected_environment AS "expectedEnvironment",
+      approval_reference_sha256 AS "approvalReferenceSha256",
+      operator_id_sha256 AS "operatorIdSha256",
+      verifier_id_sha256 AS "verifierIdSha256",
+      status,
+      receipt_sha256 AS "receiptSha256",
+      failure_code AS "failureCode"
+    FROM ${OPERATIONS_SCHEMA}.migration_runs
+    ORDER BY run_id`);
+  return result.rows;
+}
+
+function assertExactRun(run: MigrationRunRow, context: TargetContext, environment: PostgresMigrationEnvironment): void {
+  if (
+    run.runId !== context.runId
+    || run.sourceSnapshotSha256 !== context.manifest.database.sha256
+    || run.sourceSchemaFingerprint !== context.manifest.schema.fingerprint
+    || run.contractSha256 !== context.contractSha256
+    || run.manifestSha256 !== context.manifestSha256
+    || run.targetDdlSha256 !== context.targetDdlSha256
+    || run.sourceSchemaVersion !== context.manifest.schema.sourceVersion
+    || run.candidateSha !== context.plan.candidateSha
+    || run.targetBindingSha256 !== context.targetBindingSha256
+    || run.expectedEnvironment !== environment
+    || run.approvalReferenceSha256 !== context.approvalReferenceSha256
+    || run.operatorIdSha256 !== context.operatorIdSha256
+    || (run.verifierIdSha256 !== null && run.verifierIdSha256 !== context.verifierIdSha256)
+  ) {
+    throw targetError("RESUME_MISMATCH");
+  }
+}
+
+async function createMigrationRun(
+  connection: PostgresMigrationTargetConnection,
+  context: TargetContext,
+  environment: PostgresMigrationEnvironment,
+): Promise<void> {
+  await inTransaction(connection, async () => {
+    const inserted = await connection.query(
+      `/* pintpath:migration:create-run */
+       INSERT INTO ${OPERATIONS_SCHEMA}.migration_runs (
+         run_id, source_snapshot_sha256, source_schema_fingerprint, contract_sha256,
+         manifest_sha256, target_ddl_sha256, source_schema_version, candidate_commit_sha,
+         target_binding_sha256, expected_environment, approval_reference_sha256,
+         operator_id_sha256, status, started_at
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'planned', clock_timestamp())`,
+      [
+        context.runId,
+        context.manifest.database.sha256,
+        context.manifest.schema.fingerprint,
+        context.contractSha256,
+        context.manifestSha256,
+        context.targetDdlSha256,
+        context.manifest.schema.sourceVersion,
+        context.plan.candidateSha,
+        context.targetBindingSha256,
+        environment,
+        context.approvalReferenceSha256,
+        context.operatorIdSha256,
+      ],
+    );
+    if (inserted.rowCount !== 1) throw targetError("IMPORT_FAILED");
+    const updated = await connection.query(
+      `/* pintpath:migration:set-import-state */
+       UPDATE ${APPLICATION_SCHEMA}.schema_metadata
+       SET value = 'importing', updated_at = clock_timestamp()
+       WHERE key = 'import_state' AND value = 'empty'`,
+    );
+    if (updated.rowCount !== 1) throw targetError("TARGET_NOT_EMPTY");
+  });
+}
+
+async function loadCompletedChunks(
+  connection: PostgresMigrationTargetConnection,
+  context: TargetContext,
+): Promise<Map<string, MigrationChunkRow>> {
+  const result = await connection.query<MigrationChunkRow>(`/* pintpath:migration:chunks */
+    SELECT
+      run_id AS "runId",
+      table_name AS "tableName",
+      chunk_ordinal AS "chunkOrdinal",
+      row_count AS "rowCount",
+      source_transformed_sha256 AS "sourceTransformedSha256",
+      target_sha256 AS "targetSha256"
+    FROM ${OPERATIONS_SCHEMA}.migration_chunks
+    WHERE run_id = $1
+    ORDER BY table_name, chunk_ordinal`, [context.runId]);
+  const valid = new Set(context.plan.tables.flatMap((table) => table.chunks.map((chunk) => `${table.name}\0${chunk.ordinal}`)));
+  const chunks = new Map<string, MigrationChunkRow>();
+  for (const row of result.rows) {
+    const key = `${row.tableName}\0${row.chunkOrdinal}`;
+    if (row.runId !== context.runId || !valid.has(key) || chunks.has(key)) throw targetError("RESUME_MISMATCH");
+    chunks.set(key, row);
+  }
+  return chunks;
+}
+
+async function updateRunStatus(
+  connection: PostgresMigrationTargetConnection,
+  runId: string,
+  status: "importing" | "verifying",
+): Promise<void> {
+  const runUpdate = await connection.query(
+    `/* pintpath:migration:update-run-status */
+     UPDATE ${OPERATIONS_SCHEMA}.migration_runs
+     SET status = $2, failure_code = NULL
+     WHERE run_id = $1`,
+    [runId, status],
+  );
+  if (runUpdate.rowCount !== 1) throw targetError("RESUME_MISMATCH");
+  const metadataUpdate = await connection.query(
+    `/* pintpath:migration:update-import-state */
+     UPDATE ${APPLICATION_SCHEMA}.schema_metadata
+     SET value = $1, updated_at = clock_timestamp()
+     WHERE key = 'import_state'`,
+    [status],
+  );
+  if (metadataUpdate.rowCount !== 1) throw targetError("TARGET_UNSAFE");
+}
+
+async function recordFailedRun(
+  connection: PostgresMigrationTargetConnection,
+  runId: string,
+  code: PostgresMigrationTargetErrorCode,
+): Promise<void> {
+  try {
+    await inTransaction(connection, async () => {
+      await connection.query(
+        `/* pintpath:migration:fail-run */
+         UPDATE ${OPERATIONS_SCHEMA}.migration_runs
+         SET status = 'failed', failure_code = $2, completed_at = clock_timestamp()
+         WHERE run_id = $1`,
+        [runId, code],
+      );
+      await connection.query(
+        `/* pintpath:migration:fail-import-state */
+         UPDATE ${APPLICATION_SCHEMA}.schema_metadata
+         SET value = 'failed', updated_at = clock_timestamp()
+         WHERE key = 'import_state'`,
+      );
+    });
+  } catch {
+    // The caller retains the original static error code.
+  }
+}
+
+async function applyChunks(
+  connection: PostgresMigrationTargetConnection,
+  source: BetterSqlite3.Database,
+  context: TargetContext,
+  completed: Map<string, MigrationChunkRow>,
+): Promise<void> {
+  const contractByName = new Map<string, PostgresMigrationTableContract>(
+    POSTGRES_MIGRATION_CONTRACT.tables.map((table) => [table.name, table]),
+  );
+  for (const planTable of context.plan.tables) {
+    const table = contractByName.get(planTable.name);
+    if (!table) throw targetError("PLAN_MISMATCH");
+    const chunks = readSourceChunks(source, table, planTable, context.contractSha256);
+    for (const chunk of chunks) {
+      const key = `${table.name}\0${chunk.plan.ordinal}`;
+      const checkpoint = completed.get(key);
+      if (checkpoint) {
+        if (
+          checkpoint.rowCount !== chunk.rows.length
+          || checkpoint.sourceTransformedSha256 !== chunk.transformedSha256
+        ) {
+          throw targetError("RESUME_MISMATCH");
+        }
+        const targetRows = await fetchTargetRowsForSourceRows(connection, table, chunk.rows);
+        const targetHash = hashTargetChunk(context.contractSha256, table, chunk.plan.ordinal, targetRows);
+        if (targetHash !== checkpoint.targetSha256 || targetHash !== chunk.transformedSha256) {
+          throw targetError("TARGET_CHANGED");
+        }
+        continue;
+      }
+      const existingRows = await countExistingTargetRows(connection, table, chunk.rows);
+      if (existingRows !== 0) throw targetError("TARGET_CHANGED");
+      await inTransaction(connection, async () => {
+        await insertSourceRows(connection, table, chunk.rows);
+        const targetRows = await fetchTargetRowsForSourceRows(connection, table, chunk.rows);
+        const targetHash = hashTargetChunk(context.contractSha256, table, chunk.plan.ordinal, targetRows);
+        if (targetHash !== chunk.transformedSha256) throw targetError("TARGET_CHANGED");
+        const checkpointed = await connection.query(
+          `/* pintpath:migration:checkpoint-chunk */
+           INSERT INTO ${OPERATIONS_SCHEMA}.migration_chunks (
+             run_id, table_name, chunk_ordinal, row_count,
+             source_transformed_sha256, target_sha256, completed_at
+           ) VALUES ($1, $2, $3, $4, $5, $6, clock_timestamp())`,
+          [
+            context.runId,
+            table.name,
+            chunk.plan.ordinal,
+            chunk.rows.length,
+            chunk.transformedSha256,
+            targetHash,
+          ],
+        );
+        if (checkpointed.rowCount !== 1) throw targetError("RESUME_MISMATCH");
+      });
+      completed.set(key, {
+        runId: context.runId,
+        tableName: table.name,
+        chunkOrdinal: chunk.plan.ordinal,
+        rowCount: chunk.rows.length,
+        sourceTransformedSha256: chunk.transformedSha256,
+        targetSha256: chunk.transformedSha256,
+      });
+    }
+  }
+}
+
+async function verifyCompletedChunks(
+  connection: PostgresMigrationTargetConnection,
+  source: BetterSqlite3.Database,
+  context: TargetContext,
+  completed: Map<string, MigrationChunkRow>,
+): Promise<void> {
+  const expectedChunkCount = context.plan.tables.reduce((total, table) => total + table.chunks.length, 0);
+  if (completed.size !== expectedChunkCount) throw targetError("RECONCILIATION_FAILED");
+  const contractByName = new Map<string, PostgresMigrationTableContract>(
+    POSTGRES_MIGRATION_CONTRACT.tables.map((table) => [table.name, table]),
+  );
+  for (const planTable of context.plan.tables) {
+    const table = contractByName.get(planTable.name);
+    if (!table) throw targetError("PLAN_MISMATCH");
+    for (const chunk of readSourceChunks(source, table, planTable, context.contractSha256)) {
+      const checkpoint = completed.get(`${table.name}\0${chunk.plan.ordinal}`);
+      if (
+        !checkpoint
+        || checkpoint.rowCount !== chunk.rows.length
+        || checkpoint.sourceTransformedSha256 !== chunk.transformedSha256
+      ) {
+        throw targetError("RECONCILIATION_FAILED");
+      }
+      const targetRows = await fetchTargetRowsForSourceRows(connection, table, chunk.rows);
+      const targetHash = hashTargetChunk(context.contractSha256, table, chunk.plan.ordinal, targetRows);
+      if (targetHash !== checkpoint.targetSha256 || targetHash !== chunk.transformedSha256) {
+        throw targetError("TARGET_CHANGED");
+      }
+    }
+  }
+}
+
+function stateColumn(column: PostgresMigrationColumnContract): boolean {
+  return column[0] === "status"
+    || column[0] === "state"
+    || column[0].endsWith("_status")
+    || column[0].endsWith("_state");
+}
+
+function addStateTotals(
+  totals: Map<string, number>,
+  table: PostgresMigrationTableContract,
+  rows: readonly TransformedRow[],
+): void {
+  for (const row of rows) {
+    for (const column of table.columns.filter(stateColumn)) {
+      let canonical: string;
+      try {
+        canonical = postgresMigrationSourceInternals.canonicalSourceValue(row.raw[column[0]], column);
+      } catch {
+        throw targetError("RECONCILIATION_FAILED");
+      }
+      const valueDigest = sha256PostgresMigrationBytes(canonical);
+      const key = `${table.name}\0${column[0]}\0${valueDigest}`;
+      totals.set(key, (totals.get(key) ?? 0) + 1);
+    }
+  }
+}
+
+function stateTotalsSha256(totals: Map<string, number>): string {
+  const hash = crypto.createHash("sha256");
+  updateLengthFramed(hash, "pint-path-postgres-state-totals-v1");
+  for (const [key, count] of [...totals.entries()].sort(([left], [right]) => compareStrings(left, right))) {
+    updateLengthFramed(hash, key);
+    updateLengthFramed(hash, String(count));
+  }
+  return hash.digest("hex");
+}
+
+function foreignKeyGroups(descriptor: PostgresMigrationSchemaDescriptor): Array<{
+  readonly childTable: string;
+  readonly parentTable: string;
+  readonly columns: readonly { readonly from: string; readonly to: string }[];
+}> {
+  const groups: Array<{
+    childTable: string;
+    parentTable: string;
+    columns: Array<{ from: string; to: string }>;
+  }> = [];
+  for (const table of descriptor.tables) {
+    const byId = new Map<number, typeof table.foreignKeys>();
+    for (const foreignKey of table.foreignKeys) {
+      const existing = byId.get(foreignKey.id) ?? [];
+      byId.set(foreignKey.id, [...existing, foreignKey]);
+    }
+    for (const rows of byId.values()) {
+      const ordered = [...rows].sort((left, right) => left.seq - right.seq);
+      const first = ordered[0];
+      if (!first) throw targetError("RECONCILIATION_FAILED");
+      groups.push({
+        childTable: table.name,
+        parentTable: first.table,
+        columns: ordered.map((row) => ({ from: row.from, to: row.to })),
+      });
+    }
+  }
+  return groups;
+}
+
+async function assertNoOrphans(
+  connection: PostgresMigrationTargetConnection,
+  descriptor: PostgresMigrationSchemaDescriptor,
+): Promise<number> {
+  const tableNames = new Set<string>(POSTGRES_MIGRATION_CONTRACT.tables.map((table) => table.name));
+  const columnsByTable = new Map<string, ReadonlySet<string>>(POSTGRES_MIGRATION_CONTRACT.tables.map(
+    (table) => [table.name, new Set<string>(table.columns.map((column) => column[0]))],
+  ));
+  const foreignKeys = foreignKeyGroups(descriptor);
+  if (descriptor.tables.reduce((total, table) => total + table.foreignKeys.length, 0) !== POSTGRES_MIGRATION_CONTRACT.expectedCounts.foreignKeys) {
+    throw targetError("RECONCILIATION_FAILED");
+  }
+  for (const foreignKey of foreignKeys) {
+    const childColumns = columnsByTable.get(foreignKey.childTable);
+    const parentColumns = columnsByTable.get(foreignKey.parentTable);
+    if (!childColumns || !parentColumns) throw targetError("RECONCILIATION_FAILED");
+    const childTable = quoteIdentifier(foreignKey.childTable, tableNames);
+    const parentTable = quoteIdentifier(foreignKey.parentTable, tableNames);
+    const joins = foreignKey.columns.map(({ from, to }) => (
+      `parent.${quoteIdentifier(to, parentColumns)} = child.${quoteIdentifier(from, childColumns)}`
+    ));
+    const nonNull = foreignKey.columns.map(({ from }) => (
+      `child.${quoteIdentifier(from, childColumns)} IS NOT NULL`
+    ));
+    const missing = `parent.${quoteIdentifier(foreignKey.columns[0]!.to, parentColumns)} IS NULL`;
+    const result = await connection.query<QueryResultRow & { hasOrphan: boolean }>(
+      `/* pintpath:migration:orphan-check */
+       SELECT EXISTS (
+         SELECT 1
+         FROM ${APPLICATION_SCHEMA}.${childTable} AS child
+         LEFT JOIN ${APPLICATION_SCHEMA}.${parentTable} AS parent ON ${joins.join(" AND ")}
+         WHERE ${nonNull.join(" AND ")} AND ${missing}
+         LIMIT 1
+       ) AS "hasOrphan"`,
+    );
+    if (result.rows[0]?.hasOrphan !== false) throw targetError("RECONCILIATION_FAILED");
+  }
+  return foreignKeys.length;
+}
+
+async function reconcileTarget(
+  connection: PostgresMigrationTargetConnection,
+  source: BetterSqlite3.Database,
+  context: TargetContext,
+): Promise<ReconciliationSummary> {
+  await inspectTargetSchema(connection);
+  await inspectTargetForeignKeys(connection, context.sourceDescriptor);
+  const targetCounts = await loadTableCounts(connection);
+  const contractByName = new Map<string, PostgresMigrationTableContract>(
+    POSTGRES_MIGRATION_CONTRACT.tables.map((table) => [table.name, table]),
+  );
+  const sourceStateTotals = new Map<string, number>();
+  const targetStateTotals = new Map<string, number>();
+  const tableSetHash = crypto.createHash("sha256");
+  const transformedDataHash = crypto.createHash("sha256");
+  const keyRangesHash = crypto.createHash("sha256");
+  updateLengthFramed(tableSetHash, "pint-path-postgres-table-set-v1");
+  updateLengthFramed(transformedDataHash, "pint-path-postgres-transformed-data-v1");
+  updateLengthFramed(keyRangesHash, "pint-path-postgres-key-ranges-v1");
+  let chunkCount = 0;
+  let zeroRowTableCount = 0;
+  for (const planTable of context.plan.tables) {
+    const table = contractByName.get(planTable.name);
+    if (!table || targetCounts.get(table.name) !== planTable.rowCount) {
+      throw targetError("RECONCILIATION_FAILED");
+    }
+    const sourceChunks = readSourceChunks(source, table, planTable, context.contractSha256);
+    const sourceTableHash = beginTransformedTableHash(context.contractSha256, table);
+    const targetTableHash = beginTransformedTableHash(context.contractSha256, table);
+    if (sourceChunks.length === 0) zeroRowTableCount += 1;
+    for (const chunk of sourceChunks) {
+      const targetRows = await fetchTargetRowsForSourceRows(connection, table, chunk.rows);
+      const targetChunkHash = hashTargetChunk(context.contractSha256, table, chunk.plan.ordinal, targetRows);
+      if (targetChunkHash !== chunk.transformedSha256) throw targetError("RECONCILIATION_FAILED");
+      for (const row of chunk.rows) updateLengthFramed(sourceTableHash, row.canonicalRow);
+      for (const row of targetRows) updateLengthFramed(targetTableHash, row.canonicalRow);
+      addStateTotals(sourceStateTotals, table, chunk.rows);
+      addStateTotals(targetStateTotals, table, targetRows);
+      updateLengthFramed(keyRangesHash, table.name);
+      updateLengthFramed(keyRangesHash, chunk.plan.firstPrimaryKeySha256);
+      updateLengthFramed(keyRangesHash, chunk.plan.lastPrimaryKeySha256);
+      updateLengthFramed(keyRangesHash, targetRows[0]!.primaryKeySha256);
+      updateLengthFramed(keyRangesHash, targetRows.at(-1)!.primaryKeySha256);
+      chunkCount += 1;
+    }
+    const sourceTableSha256 = sourceTableHash.digest("hex");
+    const targetTableSha256 = targetTableHash.digest("hex");
+    if (sourceTableSha256 !== planTable.transformedSha256 || targetTableSha256 !== planTable.transformedSha256) {
+      throw targetError("RECONCILIATION_FAILED");
+    }
+    updateLengthFramed(tableSetHash, table.name);
+    updateLengthFramed(tableSetHash, String(planTable.rowCount));
+    updateLengthFramed(transformedDataHash, table.name);
+    updateLengthFramed(transformedDataHash, targetTableSha256);
+  }
+  const sourceStateSha256 = stateTotalsSha256(sourceStateTotals);
+  const targetStateSha256 = stateTotalsSha256(targetStateTotals);
+  if (sourceStateSha256 !== targetStateSha256) throw targetError("RECONCILIATION_FAILED");
+  const foreignKeyCount = await assertNoOrphans(connection, context.sourceDescriptor);
+  return {
+    tableSetSha256: tableSetHash.digest("hex"),
+    transformedDataSha256: transformedDataHash.digest("hex"),
+    keyRangesSha256: keyRangesHash.digest("hex"),
+    stateTotalsSha256: targetStateSha256,
+    chunkCount,
+    zeroRowTableCount,
+    foreignKeyCount,
+  };
+}
+
+function metadataForReady(context: TargetContext): Readonly<Record<string, string>> {
+  return {
+    import_state: "ready",
+    migration_candidate_sha: context.plan.candidateSha,
+    migration_contract_sha256: context.contractSha256,
+    migration_manifest_sha256: context.manifestSha256,
+    migration_plan_sha256: context.planSha256,
+    migration_run_sha256: context.runId,
+    source_schema_fingerprint: context.manifest.schema.fingerprint,
+    source_schema_version: String(context.manifest.schema.sourceVersion),
+    source_snapshot_sha256: context.manifest.database.sha256,
+    target_ddl_sha256: context.targetDdlSha256,
+  };
+}
+
+function assertExistingMetadataBinding(
+  metadata: ReadonlyMap<string, string>,
+  context: TargetContext,
+  run: MigrationRunRow,
+): void {
+  const ready = metadataForReady(context);
+  const bindingKeys = Object.keys(ready).filter((key) => key !== "import_state" && key !== "migration_contract_sha256");
+  const placeholders: Readonly<Record<string, string>> = {
+    migration_candidate_sha: "",
+    migration_manifest_sha256: "",
+    migration_plan_sha256: "",
+    migration_run_sha256: "",
+    source_schema_fingerprint: "",
+    source_schema_version: "0",
+    source_snapshot_sha256: "",
+    target_ddl_sha256: "",
+  };
+  const isReadyBinding = bindingKeys.every((key) => metadata.get(key) === ready[key]);
+  const isPlaceholderBinding = bindingKeys.every((key) => metadata.get(key) === placeholders[key]);
+  if (run.status === "ready") {
+    if (
+      metadata.get("import_state") !== "ready"
+      || !isReadyBinding
+      || run.verifierIdSha256 !== context.verifierIdSha256
+      || !run.receiptSha256
+    ) {
+      throw targetError("RESUME_MISMATCH");
+    }
+    return;
+  }
+  if (
+    !["importing", "verifying", "failed"].includes(metadata.get("import_state") ?? "")
+    || (!isReadyBinding && !isPlaceholderBinding)
+    || (isReadyBinding && (run.verifierIdSha256 !== context.verifierIdSha256 || !run.receiptSha256))
+    || (isPlaceholderBinding && (run.verifierIdSha256 !== null || run.receiptSha256 !== null))
+  ) {
+    throw targetError("RESUME_MISMATCH");
+  }
+}
+
+function buildReceipt(
+  context: TargetContext,
+  summary: ReconciliationSummary,
+): PostgresMigrationReceipt {
+  const metadataSha256 = canonicalSha256(metadataForReady(context));
+  const withoutReceipt = {
+    kind: TARGET_RECEIPT_KIND,
+    version: TARGET_RECEIPT_VERSION,
+    status: "ready" as const,
+    expectedEnvironment: context.expectedEnvironment,
+    approvalReferenceSha256: context.approvalReferenceSha256,
+    operatorIdSha256: context.operatorIdSha256,
+    verifierIdSha256: context.verifierIdSha256,
+    runIdSha256: context.runId,
+    runBindingSha256: context.targetBindingSha256,
+    targetIdentitySha256: context.targetIdentitySha256,
+    targetUrlSha256: context.targetUrlSha256,
+    targetDdlSha256: context.targetDdlSha256,
+    sourceSnapshotSha256: context.manifest.database.sha256,
+    sourceSchemaFingerprint: context.manifest.schema.fingerprint,
+    contractSha256: context.contractSha256,
+    manifestSha256: context.manifestSha256,
+    planSha256: context.planSha256,
+    candidateSha: context.plan.candidateSha,
+    tableSetSha256: summary.tableSetSha256,
+    transformedDataSha256: summary.transformedDataSha256,
+    keyRangesSha256: summary.keyRangesSha256,
+    stateTotalsSha256: summary.stateTotalsSha256,
+    schemaMetadataSha256: metadataSha256,
+    tableCount: context.plan.tableCount,
+    columnCount: context.plan.columnCount,
+    rowCount: context.plan.totalRows,
+    chunkCount: summary.chunkCount,
+    zeroRowTableCount: summary.zeroRowTableCount,
+    foreignKeyCount: summary.foreignKeyCount,
+  };
+  return { ...withoutReceipt, receiptSha256: canonicalSha256(withoutReceipt) };
+}
+
+async function markReady(
+  connection: PostgresMigrationTargetConnection,
+  context: TargetContext,
+  receipt: PostgresMigrationReceipt,
+): Promise<void> {
+  await inTransaction(connection, async () => {
+    for (const [key, value] of Object.entries(metadataForReady(context))) {
+      const updated = await connection.query(
+        `/* pintpath:migration:write-ready-metadata */
+         UPDATE ${APPLICATION_SCHEMA}.schema_metadata
+         SET value = $2, updated_at = clock_timestamp()
+         WHERE key = $1`,
+        [key, value],
+      );
+      if (updated.rowCount !== 1) throw targetError("TARGET_UNSAFE");
+    }
+    const readyRun = await connection.query(
+      `/* pintpath:migration:ready-run */
+       UPDATE ${OPERATIONS_SCHEMA}.migration_runs
+       SET status = 'ready', verifier_id_sha256 = $2, receipt_sha256 = $3,
+           failure_code = NULL, completed_at = clock_timestamp()
+       WHERE run_id = $1`,
+      [context.runId, context.verifierIdSha256, receipt.receiptSha256],
+    );
+    if (readyRun.rowCount !== 1) throw targetError("RESUME_MISMATCH");
+  });
+  const metadata = await loadMetadata(connection);
+  for (const [key, value] of Object.entries(metadataForReady(context))) {
+    if (metadata.get(key) !== value) throw targetError("RECONCILIATION_FAILED");
+  }
+  const runs = await loadMigrationRuns(connection);
+  if (
+    runs.length !== 1
+    || runs[0]?.runId !== context.runId
+    || runs[0]?.status !== "ready"
+    || runs[0]?.receiptSha256 !== receipt.receiptSha256
+    || runs[0]?.verifierIdSha256 !== context.verifierIdSha256
+  ) {
+    throw targetError("RECONCILIATION_FAILED");
+  }
+}
+
+async function validateSourceArtifacts(
+  input: PostgresMigrationTargetInput,
+): Promise<Omit<TargetContext, "expectedEnvironment" | "targetIdentitySha256" | "targetBindingSha256" | "runId">> {
+  const expectedManifestSha256 = assertSha256(input.expectedSnapshotManifestSha256);
+  const expectedPlanSha256 = assertSha256(input.expectedPlanSha256);
+  const expectedDdlSha256 = assertSha256(input.expectedTargetDdlSha256);
+  const expectedTargetUrlSha256 = assertSha256(input.expectedTargetUrlSha256);
+  const candidateSha = normalizeCandidateSha(input.candidateSha);
+  const contractSha256 = sha256PostgresMigrationContract(POSTGRES_MIGRATION_CONTRACT);
+  const manifestArtifact = await readStableArtifact(input.snapshotManifestPath, { requiredMode: 0o600, maxBytes: 1024 * 1024 });
+  if (manifestArtifact.sha256 !== expectedManifestSha256) throw targetError("ARTIFACT_INVALID");
+  let manifest: PostgresMigrationSnapshotManifest;
+  try {
+    const parsed = JSON.parse(manifestArtifact.contents.toString("utf8"));
+    manifest = postgresMigrationSourceInternals.normalizeSnapshotManifest(parsed);
+  } catch (error) {
+    if (error instanceof PostgresMigrationSourceError) throw targetError("ARTIFACT_INVALID");
+    throw targetError("ARTIFACT_INVALID");
+  }
+  if (!manifestArtifact.contents.equals(serializeCanonicalPostgresMigrationJson(manifest))) {
+    throw targetError("ARTIFACT_INVALID");
+  }
+  const planArtifact = await readStableArtifact(input.planPath, { requiredMode: 0o600, maxBytes: 64 * 1024 * 1024 });
+  if (planArtifact.sha256 !== expectedPlanSha256) throw targetError("ARTIFACT_INVALID");
+  let plan: PostgresMigrationPlan;
+  try {
+    plan = normalizePlan(JSON.parse(planArtifact.contents.toString("utf8")));
+  } catch (error) {
+    if (error instanceof PostgresMigrationTargetError) throw error;
+    throw targetError("ARTIFACT_INVALID");
+  }
+  if (!planArtifact.contents.equals(serializeCanonicalPostgresMigrationJson(plan))) {
+    throw targetError("ARTIFACT_INVALID");
+  }
+  const ddlArtifact = await readStableArtifact(input.targetDdlPath, { maxBytes: MAX_ARTIFACT_BYTES });
+  if (ddlArtifact.sha256 !== expectedDdlSha256) throw targetError("ARTIFACT_INVALID");
+  const validatedUrl = validateTargetUrl(input.targetUrl);
+  if (validatedUrl.digest !== expectedTargetUrlSha256) throw targetError("IDENTITY_MISMATCH");
+  const operatorIdSha256 = identitySha256(input.operatorId, "operator-id");
+  if (operatorIdSha256 !== manifest.operatorIdSha256) throw targetError("IDENTITY_MISMATCH");
+  if (
+    candidateSha !== manifest.candidateSha
+    || candidateSha !== plan.candidateSha
+    || plan.contractSha256 !== contractSha256
+    || plan.contractSha256 !== manifest.contractSha256
+    || plan.snapshotManifestSha256 !== manifestArtifact.sha256
+    || plan.sourceDatabaseSha256 !== manifest.database.sha256
+    || plan.sourceSchemaVersion !== manifest.schema.sourceVersion
+    || plan.sourceSchemaFingerprint !== manifest.schema.fingerprint
+  ) {
+    throw targetError("PLAN_MISMATCH");
+  }
+  if (!(["permanent-staging", "production"] as const).includes(input.expectedEnvironment)) {
+    throw targetError("ARGUMENT_INVALID");
+  }
+  const snapshotDirectory = path.dirname(input.snapshotManifestPath);
+  let directoryStat: fs.BigIntStats;
+  try {
+    directoryStat = fs.lstatSync(snapshotDirectory, { bigint: true });
+    if (
+      !directoryStat.isDirectory()
+      || directoryStat.isSymbolicLink()
+      || Number(directoryStat.mode & 0o777n) !== 0o700
+      || fs.realpathSync(snapshotDirectory) !== snapshotDirectory
+    ) throw new Error("unsafe");
+  } catch {
+    throw targetError("ARTIFACT_INVALID");
+  }
+  const sourceDatabasePath = path.join(snapshotDirectory, POSTGRES_MIGRATION_SNAPSHOT_DATABASE_FILE);
+  const databaseArtifact = await digestStableFile(sourceDatabasePath, { requiredMode: 0o600 });
+  if (databaseArtifact.sha256 !== manifest.database.sha256 || databaseArtifact.bytes !== manifest.database.bytes) {
+    throw targetError("SOURCE_CHANGED");
+  }
+  for (const suffix of ["-journal", "-shm", "-wal"]) {
+    if (fs.existsSync(`${sourceDatabasePath}${suffix}`)) throw targetError("ARTIFACT_INVALID");
+  }
+  await assertSnapshotLedgerAuthority(snapshotDirectory, manifest, "ARTIFACT_INVALID");
+  const database = new BetterSqlite3(sourceDatabasePath, { readonly: true, fileMustExist: true });
+  let sourceDescriptor: PostgresMigrationSchemaDescriptor;
+  try {
+    database.pragma("query_only = ON");
+    database.pragma("foreign_keys = ON");
+    const integrity = database.pragma("integrity_check") as Array<Record<string, unknown>>;
+    const foreignKeys = database.pragma("foreign_key_check") as Array<Record<string, unknown>>;
+    const inspection = inspectPostgresMigrationSchema(database);
+    if (
+      integrity.length !== 1
+      || String(Object.values(integrity[0] ?? {})[0] ?? "").toLowerCase() !== "ok"
+      || foreignKeys.length !== 0
+      || inspection.fingerprint !== manifest.schema.fingerprint
+      || JSON.stringify(inspection.counts) !== JSON.stringify(manifest.schema.counts)
+    ) throw targetError("SOURCE_CHANGED");
+    sourceDescriptor = inspection.descriptor;
+  } finally {
+    database.close();
+  }
+  return {
+    manifest,
+    manifestSha256: manifestArtifact.sha256,
+    plan,
+    planSha256: planArtifact.sha256,
+    targetDdlSha256: ddlArtifact.sha256,
+    targetUrlSha256: validatedUrl.digest,
+    contractSha256,
+    approvalReferenceSha256: identitySha256(input.approvalReference, "approval-reference"),
+    operatorIdSha256,
+    verifierIdSha256: identitySha256(input.verifierId, "verifier-id"),
+    sourceDatabasePath,
+    sourceDescriptor,
+  };
+}
+
+function bindTargetContext(
+  source: Omit<TargetContext, "expectedEnvironment" | "targetIdentitySha256" | "targetBindingSha256" | "runId">,
+  targetIdentitySha256: string,
+  environment: PostgresMigrationEnvironment,
+): TargetContext {
+  const targetBindingSha256 = canonicalSha256({
+    approvalReferenceSha256: source.approvalReferenceSha256,
+    candidateSha: source.plan.candidateSha,
+    contractSha256: source.contractSha256,
+    expectedEnvironment: environment,
+    manifestSha256: source.manifestSha256,
+    operatorIdSha256: source.operatorIdSha256,
+    planSha256: source.planSha256,
+    sourceSchemaFingerprint: source.manifest.schema.fingerprint,
+    sourceSchemaVersion: source.manifest.schema.sourceVersion,
+    sourceSnapshotSha256: source.manifest.database.sha256,
+    targetDdlSha256: source.targetDdlSha256,
+    targetIdentitySha256,
+    targetUrlSha256: source.targetUrlSha256,
+    verifierIdSha256: source.verifierIdSha256,
+  });
+  return {
+    ...source,
+    expectedEnvironment: environment,
+    targetIdentitySha256,
+    targetBindingSha256,
+    runId: sha256PostgresMigrationBytes(`pint-path-postgres-migration-run-v1\0${targetBindingSha256}`),
+  };
+}
+
+async function prepareTargetRun(
+  connection: PostgresMigrationTargetConnection,
+  context: TargetContext,
+  environment: PostgresMigrationEnvironment,
+): Promise<{ readonly existingRun: boolean; readonly run: MigrationRunRow }> {
+  const metadata = await loadMetadata(connection);
+  const runs = await loadMigrationRuns(connection);
+  for (const key of Object.keys(metadataForReady(context))) {
+    if (!metadata.has(key)) throw targetError("TARGET_UNSAFE");
+  }
+  if (metadata.get("migration_contract_sha256") !== context.contractSha256) {
+    throw targetError("TARGET_UNSAFE");
+  }
+  if (runs.length > 1) throw targetError("RESUME_MISMATCH");
+  const existing = runs[0];
+  if (!existing) {
+    const counts = await loadTableCounts(connection);
+    if (metadata.get("import_state") !== "empty" || [...counts.values()].some((count) => count !== 0)) {
+      throw targetError("TARGET_NOT_EMPTY");
+    }
+    await createMigrationRun(connection, context, environment);
+    const created = (await loadMigrationRuns(connection))[0];
+    if (!created) throw targetError("IMPORT_FAILED");
+    assertExactRun(created, context, environment);
+    return { existingRun: false, run: created };
+  }
+  assertExactRun(existing, context, environment);
+  if (!["planned", "importing", "verifying", "ready", "failed"].includes(existing.status)) {
+    throw targetError("RESUME_MISMATCH");
+  }
+  assertExistingMetadataBinding(metadata, context, existing);
+  return { existingRun: true, run: existing };
+}
+
+async function assertSourceUnchanged(context: TargetContext): Promise<void> {
+  const artifact = await digestStableFile(context.sourceDatabasePath, {
+    requiredMode: 0o600,
+  });
+  if (artifact.sha256 !== context.manifest.database.sha256 || artifact.bytes !== context.manifest.database.bytes) {
+    throw targetError("SOURCE_CHANGED");
+  }
+  await assertSnapshotLedgerAuthority(
+    path.dirname(context.sourceDatabasePath),
+    context.manifest,
+    "SOURCE_CHANGED",
+  );
+}
+
+export async function inspectPostgresMigrationTarget(input: {
+  readonly targetUrl: string;
+  readonly targetDdlPath: string;
+  readonly expectedTargetDdlSha256: string;
+}): Promise<PostgresMigrationTargetInspection> {
+  validateTargetUrl(input.targetUrl);
+  const connection = await DirectPostgresMigrationConnection.connect(input.targetUrl);
+  try {
+    return await inspectPostgresMigrationTargetWithConnection(input, connection);
+  } finally {
+    await connection.close();
+  }
+}
+
+export async function inspectPostgresMigrationTargetWithConnection(
+  input: {
+    readonly targetUrl: string;
+    readonly targetDdlPath: string;
+    readonly expectedTargetDdlSha256: string;
+  },
+  connection: PostgresMigrationTargetConnection,
+): Promise<PostgresMigrationTargetInspection> {
+  const ddl = await readStableArtifact(input.targetDdlPath, { maxBytes: MAX_ARTIFACT_BYTES });
+  if (ddl.sha256 !== assertSha256(input.expectedTargetDdlSha256)) throw targetError("ARTIFACT_INVALID");
+  const validatedUrl = validateTargetUrl(input.targetUrl);
+  try {
+    const identity = await inspectTargetIdentity(connection);
+    const schema = await inspectTargetSchema(connection);
+    return {
+      targetIdentitySha256: identity.digest,
+      targetUrlSha256: validatedUrl.digest,
+      targetDdlSha256: ddl.sha256,
+      ...schema,
+    };
+  } catch (error) {
+    if (error instanceof PostgresMigrationTargetError) throw error;
+    throw targetError("TARGET_UNSAFE");
+  }
+}
+
+export async function applyPostgresMigrationWithConnection(
+  input: PostgresMigrationTargetInput,
+  connection: PostgresMigrationTargetConnection,
+): Promise<PostgresMigrationReceipt> {
+  const sourceContext = await validateSourceArtifacts(input);
+  const expectedIdentitySha256 = assertSha256(input.expectedTargetIdentitySha256);
+  const identity = await inspectTargetIdentity(connection);
+  if (identity.digest !== expectedIdentitySha256) throw targetError("IDENTITY_MISMATCH");
+  await inspectTargetSchema(connection);
+  const context = bindTargetContext(sourceContext, identity.digest, input.expectedEnvironment);
+  let lockAcquired = false;
+  let exactRun = false;
+  try {
+    await acquireMigrationLock(connection);
+    lockAcquired = true;
+    await inspectTargetSchema(connection);
+    await inspectTargetForeignKeys(connection, context.sourceDescriptor);
+    const prepared = await prepareTargetRun(connection, context, input.expectedEnvironment);
+    exactRun = true;
+    const completed = await loadCompletedChunks(connection, context);
+    await updateRunStatus(connection, context.runId, "importing");
+    const source = new BetterSqlite3(context.sourceDatabasePath, { readonly: true, fileMustExist: true });
+    try {
+      source.pragma("query_only = ON");
+      source.pragma("foreign_keys = ON");
+      await applyChunks(connection, source, context, completed);
+      await assertSourceUnchanged(context);
+      await updateRunStatus(connection, context.runId, "verifying");
+      const summary = await reconcileTarget(connection, source, context);
+      await assertSourceUnchanged(context);
+      const receipt = buildReceipt(context, summary);
+      if (prepared.run.receiptSha256 !== null && prepared.run.receiptSha256 !== receipt.receiptSha256) {
+        throw targetError("TARGET_CHANGED");
+      }
+      await markReady(connection, context, receipt);
+      return receipt;
+    } finally {
+      source.close();
+    }
+  } catch (error) {
+    const safe = error instanceof PostgresMigrationTargetError ? error : targetError("IMPORT_FAILED");
+    if (exactRun) await recordFailedRun(connection, context.runId, safe.code);
+    throw safe;
+  } finally {
+    if (lockAcquired) await releaseMigrationLock(connection);
+  }
+}
+
+export async function applyPostgresMigration(
+  input: PostgresMigrationTargetInput,
+): Promise<PostgresMigrationReceipt> {
+  validateTargetUrl(input.targetUrl);
+  const connection = await DirectPostgresMigrationConnection.connect(input.targetUrl);
+  try {
+    return await applyPostgresMigrationWithConnection(input, connection);
+  } catch (error) {
+    if (error instanceof PostgresMigrationTargetError) throw error;
+    throw targetError("IMPORT_FAILED");
+  } finally {
+    await connection.close();
+  }
+}
+
+export async function verifyPostgresMigrationWithConnection(
+  input: PostgresMigrationTargetInput,
+  connection: PostgresMigrationTargetConnection,
+): Promise<PostgresMigrationReceipt> {
+  const sourceContext = await validateSourceArtifacts(input);
+  const expectedIdentitySha256 = assertSha256(input.expectedTargetIdentitySha256);
+  const identity = await inspectTargetIdentity(connection);
+  if (identity.digest !== expectedIdentitySha256) throw targetError("IDENTITY_MISMATCH");
+  const context = bindTargetContext(sourceContext, identity.digest, input.expectedEnvironment);
+  let lockAcquired = false;
+  try {
+    await acquireMigrationLock(connection);
+    lockAcquired = true;
+    await inspectTargetSchema(connection);
+    await inspectTargetForeignKeys(connection, context.sourceDescriptor);
+    const runs = await loadMigrationRuns(connection);
+    if (runs.length !== 1 || !runs[0]) throw targetError("RESUME_MISMATCH");
+    const run = runs[0];
+    assertExactRun(run, context, input.expectedEnvironment);
+    if (
+      run.status !== "ready"
+      || run.verifierIdSha256 !== context.verifierIdSha256
+      || !run.receiptSha256
+    ) {
+      throw targetError("RECONCILIATION_FAILED");
+    }
+    const source = new BetterSqlite3(context.sourceDatabasePath, { readonly: true, fileMustExist: true });
+    try {
+      source.pragma("query_only = ON");
+      source.pragma("foreign_keys = ON");
+      const completed = await loadCompletedChunks(connection, context);
+      await verifyCompletedChunks(connection, source, context, completed);
+      const summary = await reconcileTarget(connection, source, context);
+      await assertSourceUnchanged(context);
+      const receipt = buildReceipt(context, summary);
+      if (receipt.receiptSha256 !== run.receiptSha256) throw targetError("RECONCILIATION_FAILED");
+      const metadata = await loadMetadata(connection);
+      for (const [key, value] of Object.entries(metadataForReady(context))) {
+        if (metadata.get(key) !== value) throw targetError("RECONCILIATION_FAILED");
+      }
+      return receipt;
+    } finally {
+      source.close();
+    }
+  } catch (error) {
+    if (error instanceof PostgresMigrationTargetError) throw error;
+    throw targetError("RECONCILIATION_FAILED");
+  } finally {
+    if (lockAcquired) await releaseMigrationLock(connection);
+  }
+}
+
+export async function verifyPostgresMigration(
+  input: PostgresMigrationTargetInput,
+): Promise<PostgresMigrationReceipt> {
+  validateTargetUrl(input.targetUrl);
+  const connection = await DirectPostgresMigrationConnection.connect(input.targetUrl);
+  try {
+    return await verifyPostgresMigrationWithConnection(input, connection);
+  } catch (error) {
+    if (error instanceof PostgresMigrationTargetError) throw error;
+    throw targetError("RECONCILIATION_FAILED");
+  } finally {
+    await connection.close();
+  }
+}
+
+export const postgresMigrationTargetInternals = {
+  bindTargetContext,
+  buildReceipt,
+  canonicalRawKey,
+  canonicalRow,
+  hashTargetChunk,
+  normalizePlan,
+  targetValueToSource,
+  transformSourceValue,
+  transformedChunkSha256,
+  validateTargetUrl,
+};

@@ -12,6 +12,7 @@ describe("commercial launch gate", () => {
     const envSource = readRepoFile("src/config/env.ts");
     const envExample = readRepoFile(".env.example");
     const serviceSource = readRepoFile("src/modules/business/business.service.ts");
+    const routesSource = readRepoFile("src/modules/business/business.routes.ts");
     const appSource = readRepoFile("src/app.ts");
 
     expect(envSource).toContain("COMMERCIAL_LAUNCH_ENABLED: booleanFromEnv.default(false)");
@@ -24,6 +25,12 @@ describe("commercial launch gate", () => {
     expect(serviceSource).toContain("venueProTrialDays: commercialLaunchEnabled ? this.config.VENUE_PRO_TRIAL_DAYS : 0");
     expect(serviceSource).toContain('publicCode: "COMMERCIAL_LAUNCH_DISABLED"');
     expect(serviceSource).toContain('publicCode: "CONSUMER_PAID_ENROLLMENT_DISABLED"');
+    expect(serviceSource).toContain('publicCode: "COMMERCIAL_VENUE_FEATURE_DISABLED"');
+    expect(serviceSource).toContain("Paid and introductory-trial venue enrollment is not available in the current Free release.");
+    expect(serviceSource).toContain("Consumer paid enrollment is not available in the current Free release.");
+    expect(serviceSource).not.toContain("Existing subscriptions and billing management remain available.");
+    expect(routesSource).toContain("isDeferredCommercialVenueRoute(req.path)");
+    expect(routesSource).toContain("businessService.assertCommercialVenueFeatureOpen()");
     expect(appSource).toContain("commercialLaunchEnabled: publicConfig.commercialLaunchEnabled");
     expect(appSource).toContain(
       "consumerPaidEnrollmentEnabled: publicConfig.consumerPaidEnrollmentEnabled",
@@ -34,6 +41,7 @@ describe("commercial launch gate", () => {
   it("keeps every new-enrollment browser path inert unless config explicitly enables launch", () => {
     const pricingHtml = readRepoFile("viewer/pricing.html");
     const accountHtml = readRepoFile("viewer/account.html");
+    const indexHtml = readRepoFile("viewer/index.html");
     const venuePortalHtml = readRepoFile("viewer/venue-portal.html");
 
     expect(pricingHtml).toContain('id="consumerMonthlyAction" class="button button--primary" aria-disabled="true"');
@@ -49,12 +57,32 @@ describe("commercial launch gate", () => {
     expect(accountResume.indexOf("if (!CONSUMER_PAID_ENROLLMENT_ENABLED)")).toBeGreaterThan(-1);
     expect(accountResume.indexOf("if (!CONSUMER_PAID_ENROLLMENT_ENABLED)"))
       .toBeLessThan(accountResume.indexOf('apiFetch("/api/business/billing/checkout"'));
-    expect(accountResume).toContain("Existing subscriptions can still be managed or cancelled");
+    expect(accountResume).toContain("Paid subscriptions are not available in the current Free release.");
+    expect(accountResume).not.toContain("Existing subscriptions can still be managed or cancelled");
+    expect(accountHtml).toContain("const COMMERCIAL_LAUNCH_ENABLED =");
+    expect(accountHtml).toContain("const PINT_POINTS_REWARDS_ENABLED = COMMERCIAL_LAUNCH_ENABLED &&");
+    expect(accountHtml).toContain('COMMERCIAL_LAUNCH_ENABLED ? "Freemium" : "Free"');
+    expect(accountHtml).toContain('accountDiscountFeature accountHeroMetric accountHeroMetric--special" data-commercial-surface hidden');
+    expect(accountHtml).toContain('id="counterStaffAccess" class="panel" aria-labelledby="counterStaffAccessTitle" data-commercial-surface hidden');
+    expect(accountHtml).toContain('id="discountPassModal" class="discountPassModal" role="dialog" aria-modal="true" aria-labelledby="discountPassModalTitle" data-commercial-surface hidden');
+    expect(accountHtml).toContain('id="betaTestingNavButton" class="settingsNavButton settingsNavButton--beta"');
+    expect(accountHtml).toContain('aria-selected="false" data-commercial-surface hidden>Beta tools</button>');
+    expect(accountHtml).toContain('id="settingsBetaTestingPanel" class="settingsPanel" data-settings-panel="beta-testing" role="tabpanel" aria-labelledby="betaTestingNavButton" data-commercial-surface hidden');
+
+    const venueLegend = indexHtml.slice(
+      indexHtml.indexOf("function getLegendConfig"),
+      indexHtml.indexOf("function renderLegend"),
+    );
+    expect(venueLegend).toContain("items: COMMERCIAL_LAUNCH_ENABLED");
+    expect(venueLegend).toContain("This is the full Free venue footprint.");
+    expect(venueLegend.indexOf("COMMERCIAL_LAUNCH_ENABLED"))
+      .toBeLessThan(venueLegend.indexOf('["pro", "Premium venue"'));
 
     expect(venuePortalHtml).toContain("viewerConfig.business?.commercialLaunchEnabled === true");
     expect(venuePortalHtml).toContain("syncCommercialCheckoutControls");
+    expect(venuePortalHtml).toContain("removeDeferredCommercialSurfaces");
     expect(venuePortalHtml).toContain("new MutationObserver");
-    expect(venuePortalHtml).toContain('disabled aria-disabled="true"');
+    expect(venuePortalHtml).toContain("surfaces.forEach((surface) => surface.remove())");
     const venueUpgradeHandler = venuePortalHtml.slice(
       venuePortalHtml.indexOf("const upgradeTier = target.dataset.upgradeTier"),
       venuePortalHtml.indexOf("const happyHourId = target.dataset.editHappyHour"),
@@ -103,10 +131,21 @@ describe("commercial launch gate", () => {
     );
     expect(upgradeActionRenderer.indexOf("if (!COMMERCIAL_LAUNCH_ENABLED)"))
       .toBeLessThan(upgradeActionRenderer.indexOf('return `<button class="${escapeHtml(className)}"'));
-    expect(upgradeActionRenderer).toContain("No payment or trial starts from this page.");
-    expect(venuePortalHtml.match(/<button[^>]*data-upgrade-tier=/g) || []).toHaveLength(2);
-    expect(venuePortalHtml).toContain('disabled aria-disabled="true"');
-    expect(venuePortalHtml).toContain("renderCommercialUpgradeAction(\"Upgrade to Pro\")");
+    expect(upgradeActionRenderer).toContain('return ""');
+    expect(venuePortalHtml).toContain('data-panel="redemption" data-commercial-surface hidden');
+    expect(venuePortalHtml).toContain('data-panel="staff-access" data-commercial-surface hidden');
+    expect(venuePortalHtml).toContain('data-panel="specials" data-commercial-surface hidden');
+    expect(venuePortalHtml).toContain('data-panel="report" data-commercial-surface hidden');
+    expect(venuePortalHtml).toContain("if (!COMMERCIAL_LAUNCH_ENABLED) return;");
+    expect(venuePortalHtml).toContain("requestCodesButton.hidden = !COMMERCIAL_LAUNCH_ENABLED");
+    expect(venuePortalHtml).toContain("removeDeferredCommercialSurfaces();");
+    const portalAccessSync = venuePortalHtml.slice(
+      venuePortalHtml.indexOf("function syncPortalAccessControls"),
+      venuePortalHtml.indexOf("function clearStatus"),
+    );
+    expect(portalAccessSync).toContain("!COMMERCIAL_LAUNCH_ENABLED");
+    expect(portalAccessSync).toContain('element.matches("[data-commercial-surface]")');
+    expect(portalAccessSync).toContain("element.hidden = counterOnly || commercialSurfaceClosed");
 
     const paidTerms = termsHtml.slice(
       termsHtml.indexOf("<h2>9. Paid access and billing</h2>"),
@@ -128,6 +167,8 @@ describe("commercial launch gate", () => {
     expect(runbook).not.toContain("set `COMMERCIAL_LAUNCH_ENABLED=true`");
     expect(runbook).not.toContain("PINTPATH_EXPECTED_COMMERCIAL_LAUNCH_ENABLED=true");
     expect(runbook).toContain("CONSUMER_PAID_ENROLLMENT_ENABLED=false");
-    expect(runbook).toMatch(/billing management and Stripe lifecycle processing remain\s+available/);
+    expect(runbook).toContain("No public billing management");
+    expect(runbook).toContain("Stripe lifecycle, venue-Pro, report-delivery, POS/counter, or reward entry point");
+    expect(runbook).not.toMatch(/billing management and Stripe lifecycle processing remain\s+available/);
   });
 });

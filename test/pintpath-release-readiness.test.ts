@@ -3,16 +3,47 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import type { AddressInfo } from "node:net";
+import crypto from "node:crypto";
 
 import BetterSqlite3 from "better-sqlite3";
 import express from "express";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { BusinessRepository, type BusinessAccount } from "../src/db/business.repository.js";
+import { AccountSessionRepository } from "../src/db/account-session.repository.js";
+import { AccountProfilePreferencesRepository } from "../src/db/account-profile-preferences.repository.js";
+import { AccountDeletionQueueRepository } from "../src/db/account-deletion-queue.repository.js";
+import { AccountPrivacyRepository } from "../src/db/account-privacy.repository.js";
+import { PrivacyRetentionRepository } from "../src/db/privacy-retention.repository.js";
+import { CommunitySubmissionRepository } from "../src/db/community-submission.repository.js";
+import { VenueManagerInternalSubmissionRepository } from "../src/db/venue-manager-internal-submission.repository.js";
+import { SourceEvidenceObjectRepository } from "../src/db/source-evidence-object.repository.js";
+import { SourceEvidenceRetentionRepository } from "../src/db/source-evidence-retention.repository.js";
+import { VenuePendingChangeRepository } from "../src/db/venue-pending-change.repository.js";
+import { VenueDataReadRepository } from "../src/db/venue-data-read.repository.js";
 import { initializeDatabaseSchema } from "../src/db/database.js";
+import { PublicVenueDirectoryRepository } from "../src/db/public-venue-directory.repository.js";
+import { PublicPriceRepository } from "../src/db/public-price.repository.js";
+import { asAsyncSqliteDatabase } from "../src/db/sql-database.js";
+import { SystemStateRepository } from "../src/db/system-state.repository.js";
+import { ActivityAuditRepository } from "../src/db/activity-audit.repository.js";
+import { SupportFeedbackRepository } from "../src/db/support-feedback.repository.js";
+import { VenueInventoryRepository } from "../src/db/venue-inventory.repository.js";
+import { VenueIdentityRepository } from "../src/db/venue-identity.repository.js";
+import { BillingCheckoutRepository } from "../src/db/billing-checkout.repository.js";
+import { VenueAccessRepository } from "../src/db/venue-access.repository.js";
+import { MissionLifecycleRepository } from "../src/db/mission-lifecycle.repository.js";
+import { MissionDiscoveryAutomationRepository } from "../src/db/mission-discovery-automation.repository.js";
+import { StripeSubscriptionRepository } from "../src/db/stripe-subscription.repository.js";
+import { VenueRequestRepository } from "../src/db/venue-request.repository.js";
+import { VenuePartnerRepository } from "../src/db/venue-partner.repository.js";
+import { AdminAnalyticsRepository } from "../src/db/admin-analytics.repository.js";
+import { VenueManagerInsightsRepository } from "../src/db/venue-manager-insights.repository.js";
+import { AdminAccountRepository } from "../src/db/admin-account.repository.js";
 import { errorHandler } from "../src/middleware/error-handler.js";
 import { createBusinessRouter } from "../src/modules/business/business.routes.js";
 import { BusinessService } from "../src/modules/business/business.service.js";
+import { createSqliteAccountDeletionSecretPhysicalCheckpoint } from "../src/lib/account-deletion-secret-checkpoint.js";
 
 const NOW = "2026-05-21T09:00:00.000Z";
 const PASSWORD = "release-pass-123";
@@ -23,6 +54,8 @@ const PNG_DATA_URL = `data:image/png;base64,${Buffer.from([
 type Harness = {
   database: BetterSqlite3.Database;
   repository: BusinessRepository;
+  activityAuditRepository: ActivityAuditRepository;
+  venueAccessRepository: VenueAccessRepository;
   service: BusinessService;
   app: express.Express;
 };
@@ -53,6 +86,9 @@ function createHarness(overrides: Partial<ConstructorParameters<typeof BusinessS
   evidenceStorageDirs.push(evidenceStorageDir);
 
   const repository = new BusinessRepository(database);
+  const sqlDatabase = asAsyncSqliteDatabase(database);
+  const activityAuditRepository = new ActivityAuditRepository(sqlDatabase);
+  const venueAccessRepository = new VenueAccessRepository(sqlDatabase);
   const service = new BusinessService(repository, {
     PUBLIC_BASE_URL: "http://127.0.0.1:3000",
     CONTRIBUTOR_UNLOCK_POINTS: 15,
@@ -92,14 +128,14 @@ function createHarness(overrides: Partial<ConstructorParameters<typeof BusinessS
     GOOGLE_MAPS_API_KEY: undefined,
     GOOGLE_PLACES_API_KEY: undefined,
     ...overrides,
-  });
+  }, new PublicVenueDirectoryRepository(sqlDatabase), new PublicPriceRepository(sqlDatabase), new SystemStateRepository(sqlDatabase), activityAuditRepository, new SupportFeedbackRepository(sqlDatabase), new AccountSessionRepository(sqlDatabase), new AccountProfilePreferencesRepository(sqlDatabase), new VenueInventoryRepository(sqlDatabase), new VenueIdentityRepository(sqlDatabase), new BillingCheckoutRepository(sqlDatabase), venueAccessRepository, new MissionLifecycleRepository(sqlDatabase), new MissionDiscoveryAutomationRepository(sqlDatabase), new StripeSubscriptionRepository(sqlDatabase), new VenueRequestRepository(sqlDatabase), new VenuePartnerRepository(sqlDatabase), new AdminAnalyticsRepository(sqlDatabase), new VenueManagerInsightsRepository(sqlDatabase), new AdminAccountRepository(sqlDatabase), new AccountDeletionQueueRepository(sqlDatabase), new AccountPrivacyRepository(sqlDatabase), new PrivacyRetentionRepository(sqlDatabase), new CommunitySubmissionRepository(sqlDatabase), new VenueManagerInternalSubmissionRepository(sqlDatabase), new SourceEvidenceObjectRepository(sqlDatabase), new SourceEvidenceRetentionRepository(sqlDatabase), new VenuePendingChangeRepository(sqlDatabase), new VenueDataReadRepository(sqlDatabase), createSqliteAccountDeletionSecretPhysicalCheckpoint(database));
 
   const app = express();
   app.use(express.json({ limit: "8mb" }));
   app.use("/api/business", createBusinessRouter(service));
   app.use(errorHandler);
 
-  return { database, repository, service, app };
+  return { database, repository, activityAuditRepository, venueAccessRepository, service, app };
 }
 
 async function withHttpServer(app: express.Express, callback: (baseUrl: string) => Promise<void>) {
@@ -207,12 +243,12 @@ function venueProfileInput(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function recordSearchEvents(
-  repository: BusinessRepository,
+async function recordSearchEvents(
+  repository: ActivityAuditRepository,
   input: { count: number; beerId: string; suburb: string; prefix: string },
-) {
+): Promise<void> {
   for (let index = 0; index < input.count; index += 1) {
-    repository.recordEvent({
+    await repository.recordEvent({
       id: `${input.prefix}:${index}`,
       userId: null,
       anonymousSessionId: `anon:${input.prefix}:${index}`,
@@ -504,19 +540,96 @@ describe("Pint Path release-readiness security gates", () => {
     });
   });
 
+  it("awaits admin-account search and atomically contains suspended sessions over HTTP", async () => {
+    const harness = createHarness();
+    const user = await signup(harness, "admin-account-target@pintpath.test");
+    const admin = await signup(harness, "admin@pintpath.test");
+    const tokenHash = crypto.createHash("sha256").update(user.token).digest("hex");
+    harness.repository.createDiscountPass({
+      id: "admin-account-http-pass",
+      userId: user.account.id,
+      sessionTokenHash: tokenHash,
+      codeHash: "admin-account-http-code-hash",
+      createdAt: NOW,
+      expiresAt: "2026-06-21T09:00:00.000Z",
+    });
+
+    await withHttpServer(harness.app, async (baseUrl) => {
+      const unauthorized = await requestJson(
+        baseUrl,
+        "/api/business/admin/accounts?q=admin-account-target&limit=25",
+        { token: user.token },
+      );
+      expect(unauthorized.response.status).toBe(403);
+
+      const search = await requestJson(
+        baseUrl,
+        "/api/business/admin/accounts?q=admin-account-target&limit=25",
+        { token: admin.token },
+      );
+      expect(search.response.status).toBe(200);
+      expect((search.json?.data as { accounts: Array<{ id: string }> }).accounts)
+        .toEqual([expect.objectContaining({ id: user.account.id })]);
+
+      const suspended = await requestJson(
+        baseUrl,
+        `/api/business/admin/users/${encodeURIComponent(user.account.id)}/status`,
+        {
+          method: "POST",
+          token: admin.token,
+          body: {
+            status: "suspended",
+            reason: "Release-gate atomic containment regression.",
+          },
+        },
+      );
+      expect(suspended.response.status).toBe(200);
+      expect(suspended.json?.data).toEqual(expect.objectContaining({
+        account: expect.objectContaining({ id: user.account.id, status: "suspended" }),
+      }));
+
+      const containedSession = await requestJson(baseUrl, "/api/business/account", {
+        token: user.token,
+      });
+      expect(containedSession.response.status).toBe(401);
+    });
+
+    expect(harness.database.prepare(
+      `SELECT account.status, profile.account_status AS profile_status,
+              session.revoked_at, pass.status AS pass_status, pass.revoked_at AS pass_revoked_at
+         FROM accounts account
+         JOIN profiles profile ON profile.id = account.id
+         JOIN auth_sessions session ON session.user_id = account.id
+         JOIN account_discount_passes pass ON pass.user_id = account.id
+        WHERE account.id = ? AND session.token_hash = ?`,
+    ).get(user.account.id, tokenHash)).toEqual({
+      status: "suspended",
+      profile_status: "suspended",
+      revoked_at: "2026-05-21T09:00:00.001Z",
+      pass_status: "revoked",
+      pass_revoked_at: "2026-05-21T09:00:00.001Z",
+    });
+    expect((await harness.activityAuditRepository.listSecurityAuditLogs({
+      action: "admin_user_status_override",
+      limit: 10,
+    })).items).toEqual([
+      expect.objectContaining({ actorUserId: admin.account.id, targetId: user.account.id }),
+    ]);
+  });
+
   it("keeps source evidence private and rejects obvious SSRF source URLs", async () => {
     const harness = createHarness();
     const owner = await signup(harness, "evidence-owner@pintpath.test");
     const other = await signup(harness, "evidence-other@pintpath.test");
 
-    expect(() => harness.service.createSubmission(owner.account, validSubmission({
+    await expect(harness.service.createSubmission(owner.account, validSubmission({
       sourcePhotoUrl: "http://127.0.0.1:8080/menu.jpg",
-    }))).toThrow("local, private, or metadata network hosts");
-    expect(() => harness.service.createSubmission(owner.account, validSubmission({
+    }))).rejects.toThrow("local, private, or metadata network hosts");
+    await expect(harness.service.createSubmission(owner.account, validSubmission({
       sourcePhotoUrl: "http://169.254.169.254/latest/meta-data/menu.jpg",
-    }))).toThrow("local, private, or metadata network hosts");
+    }))).rejects.toThrow("local, private, or metadata network hosts");
 
-    const result = harness.service.createSubmission(owner.account, validSubmission({
+    const result = await harness.service.createSubmission(owner.account, validSubmission({
       submissionType: "photo_upload",
       sourcePhotoDataUrl: PNG_DATA_URL,
       sourcePhotoUrl: null,
@@ -524,10 +637,10 @@ describe("Pint Path release-readiness security gates", () => {
     }));
     expect(result.submission.sourcePhotoUrl).toMatch(/^private:evidence:/);
 
-    expect(() => harness.service.getSubmissionSourceEvidenceUrl(other.account, result.submission.id))
-      .toThrow("own source evidence");
+    await expect(harness.service.getSubmissionSourceEvidenceUrl(other.account, result.submission.id))
+      .rejects.toThrow("own source evidence");
 
-    const signed = harness.service.getSubmissionSourceEvidenceUrl(owner.account, result.submission.id);
+    const signed = await harness.service.getSubmissionSourceEvidenceUrl(owner.account, result.submission.id);
     expect(signed.signedUrl).toContain("/api/business/source-evidence/");
 
     await withHttpServer(harness.app, async (baseUrl) => {
@@ -539,19 +652,111 @@ describe("Pint Path release-readiness security gates", () => {
 });
 
 describe("Pint Path release-readiness venue-manager approval workflow", () => {
+  it("serializes concurrent manager happy-hour intake without public or reward effects", async () => {
+    const harness = createHarness({ COMMERCIAL_LAUNCH_ENABLED: false });
+    const admin = await signup(harness, "admin@pintpath.test");
+    const manager = await signup(harness, "internal-happy-hour-manager@pintpath.test");
+    const venueId = "venue-internal-happy-hour";
+    await harness.service.assignVenueManager(admin.account, {
+      userId: manager.account.id,
+      venueId,
+      venueName: "Internal Happy Hour Hotel",
+      suburb: "Richmond",
+    });
+
+    const payload = validSubmission({
+      clientSubmissionId: "http-manager-happy-hour-1",
+      venueId,
+      venueName: "Internal Happy Hour Hotel",
+      suburb: "Richmond",
+      submissionType: "happy_hour_update",
+      sourcePhotoDataUrl: PNG_DATA_URL,
+      items: [{
+        beerName: "Guinness",
+        servingSize: "pint",
+        price: 10,
+        isHappyHourPrice: true,
+        happyHourDetails: "Monday to Friday, 4pm-6pm",
+        isOnTap: "yes",
+      }],
+    });
+
+    await withHttpServer(harness.app, async (baseUrl) => {
+      const responses = await Promise.all([
+        requestJson(baseUrl, `/api/business/venue-portal/${venueId}/submissions`, {
+          method: "POST",
+          token: manager.token,
+          body: payload,
+        }),
+        requestJson(baseUrl, `/api/business/venue-portal/${venueId}/submissions`, {
+          method: "POST",
+          token: manager.token,
+          body: payload,
+        }),
+      ]);
+      expect(responses.map(({ response }) => response.status)).toEqual([201, 201]);
+      const results = responses.map(({ json }) => json?.data as {
+        submission: { id: string; internalOnly: boolean; pointsAwarded: number };
+        idempotentReplay?: boolean;
+      });
+      expect(new Set(results.map((result) => result.submission.id)).size).toBe(1);
+      expect(results.map((result) => Boolean(result.idempotentReplay)).sort()).toEqual([false, true]);
+      expect(results[0]?.submission).toEqual(expect.objectContaining({
+        internalOnly: true,
+        pointsAwarded: 0,
+      }));
+
+      const conflict = await requestJson(baseUrl, `/api/business/venue-portal/${venueId}/submissions`, {
+        method: "POST",
+        token: manager.token,
+        body: {
+          ...payload,
+          items: [{ ...payload.items[0], price: 11 }],
+        },
+      });
+      expect(conflict.response.status).toBe(409);
+      expect(conflict.json?.error?.message).toBe("Internal venue submission state changed. Refresh and try again.");
+    });
+
+    const submissionId = (harness.database.prepare(
+      "SELECT id FROM submissions WHERE user_id = ? AND client_submission_id = ?",
+    ).get(manager.account.id, "http-manager-happy-hour-1") as { id: string }).id;
+    expect(harness.database.prepare(
+      "SELECT count(*) AS count FROM submissions WHERE id = ?",
+    ).get(submissionId)).toEqual({ count: 1 });
+    expect(harness.database.prepare(
+      "SELECT count(*) AS count FROM submission_items WHERE submission_id = ?",
+    ).get(submissionId)).toEqual({ count: 1 });
+    expect(harness.database.prepare(
+      "SELECT count(*) AS count FROM submission_source_evidence WHERE submission_id = ?",
+    ).get(submissionId)).toEqual({ count: 1 });
+    expect(harness.database.prepare(
+      "SELECT count(*) AS count FROM source_evidence_objects WHERE owner_user_id = ? AND deleted_at IS NULL",
+    ).get(manager.account.id)).toEqual({ count: 1 });
+    expect(harness.database.prepare(
+      "SELECT count(*) AS count FROM venue_price_records WHERE source_submission_id = ?",
+    ).get(submissionId)).toEqual({ count: 0 });
+    expect(harness.database.prepare(
+      "SELECT count(*) AS count FROM venue_happy_hours WHERE venue_id = ?",
+    ).get(venueId)).toEqual({ count: 0 });
+    expect(harness.database.prepare(
+      "SELECT count(*) AS count FROM contribution_ledger WHERE submission_id = ?",
+    ).get(submissionId)).toEqual({ count: 0 });
+  });
+
   it("keeps scoped manager access while publishing assigned venue edits directly", async () => {
     const harness = createHarness({ ANALYTICS_MIN_BUCKET_SIZE: 5 });
     const admin = (await signup(harness, "admin@pintpath.test")).account;
     const managerA = (await signup(harness, "manager-a@pintpath.test")).account;
     const managerB = (await signup(harness, "manager-b@pintpath.test")).account;
 
-    harness.service.assignVenueManager(admin, {
+    await harness.service.assignVenueManager(admin, {
       userId: managerA.id,
       venueId: "venue-a",
       venueName: "Half Moon",
       suburb: "Brighton",
     });
-    harness.service.assignVenueManager(admin, {
+    await harness.service.assignVenueManager(admin, {
       userId: managerB.id,
       venueId: "venue-b",
       venueName: "Neighbour Pub",
@@ -560,8 +765,8 @@ describe("Pint Path release-readiness venue-manager approval workflow", () => {
     const updatedManagerA = harness.repository.getAccountById(managerA.id)!;
     const updatedManagerB = harness.repository.getAccountById(managerB.id)!;
 
-    harness.service.upsertBarProfile(admin, "venue-a", venueProfileInput({ membershipTier: "basic" }));
-    const directBeer = harness.service.upsertBarBeer(updatedManagerA, "venue-a", {
+    await harness.service.upsertBarProfile(admin, "venue-a", venueProfileInput({ membershipTier: "basic" }));
+    const directBeer = await harness.service.upsertBarBeer(updatedManagerA, "venue-a", {
       id: null,
       beerName: "Asahi Super Dry",
       brewery: "Asahi",
@@ -575,18 +780,18 @@ describe("Pint Path release-readiness venue-manager approval workflow", () => {
     }) as { beer: { id: string; beerName: string; price: number } };
 
     expect(directBeer.beer).toMatchObject({ beerName: "Asahi Super Dry", price: 12 });
-    expect(harness.service.listPriceRecords(null, {
+    expect((await harness.service.listPriceRecords(null, {
       venueId: "venue-a",
       anonymousSessionId: "anon-release",
       limit: 20,
-    }).records.some((record) => record.beerName === "Asahi Super Dry")).toBe(true);
+    })).records.some((record) => record.beerName === "Asahi Super Dry")).toBe(true);
 
-    expect(harness.service.getVenuePortal(updatedManagerA, { venueId: "venue-a" }).pendingChanges)
+    expect((await harness.service.getVenuePortal(updatedManagerA, { venueId: "venue-a" })).pendingChanges)
       .toHaveLength(0);
-    expect(() => harness.service.getVenuePortal(updatedManagerB, { venueId: "venue-a" }))
-      .toThrow("assigned venues");
+    await expect(harness.service.getVenuePortal(updatedManagerB, { venueId: "venue-a" }))
+      .rejects.toThrow("assigned venues");
 
-    const savedHappyHour = harness.service.upsertBarHappyHour(updatedManagerA, "venue-a", {
+    const savedHappyHour = await harness.service.upsertBarHappyHour(updatedManagerA, "venue-a", {
       id: null,
       title: "Synthetic reviewed happy hour",
       daysOfWeek: ["fri"],
@@ -597,16 +802,16 @@ describe("Pint Path release-readiness venue-manager approval workflow", () => {
     }) as { happyHour: { id: string; title: string } };
 
     expect(savedHappyHour.happyHour).toMatchObject({ title: "Synthetic reviewed happy hour" });
-    expect(harness.service.getVenuePartnerAdmin(admin).pendingChanges).toHaveLength(0);
-    const publishedRecords = harness.service.listPriceRecords(admin, {
+    expect((await harness.service.getVenuePartnerAdmin(admin)).pendingChanges).toHaveLength(0);
+    const publishedRecords = (await harness.service.listPriceRecords(admin, {
       venueId: "venue-a",
       anonymousSessionId: null,
       limit: 20,
-    }).records;
+    })).records;
     expect(publishedRecords.some((record) => record.beerName === "Asahi Super Dry" && record.price === 12))
       .toBe(true);
 
-    expect(() => harness.service.upsertBarSpecial(updatedManagerA, "venue-a", {
+    await expect(harness.service.upsertBarSpecial(updatedManagerA, "venue-a", {
       id: null,
       title: "Synthetic rejected special",
       description: "Should not publish.",
@@ -619,11 +824,11 @@ describe("Pint Path release-readiness venue-manager approval workflow", () => {
       scheduleNote: null,
       exclusive: false,
       active: true,
-    })).toThrow("Pro venue tier required");
-    expect(harness.service.getVenuePortal(updatedManagerA, { venueId: "venue-a" }).inventory.specials)
+    })).rejects.toThrow("Pro venue tier required");
+    expect((await harness.service.getVenuePortal(updatedManagerA, { venueId: "venue-a" })).inventory.specials)
       .toEqual([]);
 
-    const basicPortal = harness.service.getVenuePortal(updatedManagerA, { venueId: "venue-a" });
+    const basicPortal = await harness.service.getVenuePortal(updatedManagerA, { venueId: "venue-a" });
     expect(basicPortal.tier?.analyticsLocked).toBe(true);
     expect(basicPortal.analytics).toBeNull();
   });
@@ -634,19 +839,19 @@ describe("Pint Path release-readiness venue-manager approval workflow", () => {
     const owner = await signup(harness, "owner-journey@pintpath.test");
     const otherOwner = await signup(harness, "owner-journey-other@pintpath.test");
 
-    harness.service.assignVenueManager(admin.account, {
+    await harness.service.assignVenueManager(admin.account, {
       userId: owner.account.id,
       venueId: "venue-owner-journey",
       venueName: "Owner Journey Bar",
       suburb: "Richmond",
     });
-    harness.service.assignVenueManager(admin.account, {
+    await harness.service.assignVenueManager(admin.account, {
       userId: otherOwner.account.id,
       venueId: "venue-owner-other",
       venueName: "Other Owner Bar",
       suburb: "Carlton",
     });
-    harness.service.upsertBarProfile(admin.account, "venue-owner-journey", venueProfileInput({
+    await harness.service.upsertBarProfile(admin.account, "venue-owner-journey", venueProfileInput({
       name: "Owner Journey Bar",
       suburb: "Richmond",
       area: "Richmond",
@@ -688,6 +893,21 @@ describe("Pint Path release-readiness venue-manager approval workflow", () => {
       expect(profileUpdate.response.status).toBe(200);
       expect((profileUpdate.json?.data as { profile: { name: string; membershipTier: string } }).profile)
         .toMatchObject({ name: "Owner Journey Bar", membershipTier: "pro" });
+
+      const staleProfileUpdate = await requestJson(baseUrl, "/api/business/venue-portal/venue-owner-journey/profile", {
+        method: "POST",
+        token: ownerToken,
+        body: venueProfileInput({
+          name: "Stale Owner Journey Bar",
+          suburb: "Richmond",
+          area: "Richmond",
+          membershipTier: "pro",
+          expectedUpdatedAt: profileUpdatedAt,
+        }),
+      });
+      expect(staleProfileUpdate.response.status).toBe(409);
+      expect((staleProfileUpdate.json?.error as { message: string }).message)
+        .toContain("changed in another session");
 
       const beerUpdate = await requestJson(baseUrl, "/api/business/venue-portal/venue-owner-journey/beers", {
         method: "POST",
@@ -800,30 +1020,106 @@ describe("Pint Path release-readiness venue-manager approval workflow", () => {
 });
 
 describe("Pint Path release-readiness analytics and report privacy", () => {
+  it("fences account-preference HTTP writes while keeping first-time clients compatible", async () => {
+    const harness = createHarness();
+    const { token } = await signup(harness, "preference-occ@pintpath.test");
+
+    await withHttpServer(harness.app, async (baseUrl) => {
+      const first = await requestJson(baseUrl, "/api/business/account/preferences", {
+        method: "POST",
+        token,
+        body: {
+          preferredSuburbs: ["Fitzroy"],
+          preferredBeers: ["Guinness"],
+          preferredUseCases: ["specific_beers"],
+          onboardingCompleted: true,
+        },
+      });
+      expect(first.response.status).toBe(200);
+      const firstPreferences = (first.json?.data as { preferences: { updatedAt: string } }).preferences;
+      expect(firstPreferences.updatedAt).toBe(NOW);
+
+      const omittedRevision = await requestJson(baseUrl, "/api/business/account/preferences", {
+        method: "POST",
+        token,
+        body: {
+          preferredSuburbs: ["Carlton"],
+          preferredBeers: [],
+          preferredUseCases: [],
+          onboardingCompleted: true,
+        },
+      });
+      expect(omittedRevision.response.status).toBe(409);
+      expect(omittedRevision.json?.error?.message).toBe("Account settings changed. Refresh and try again.");
+
+      const staleRevision = await requestJson(baseUrl, "/api/business/account/preferences", {
+        method: "POST",
+        token,
+        body: {
+          preferredSuburbs: ["Richmond"],
+          preferredBeers: [],
+          preferredUseCases: [],
+          onboardingCompleted: true,
+          expectedUpdatedAt: "2026-05-21T08:59:59.999Z",
+        },
+      });
+      expect(staleRevision.response.status).toBe(409);
+
+      const currentRevision = await requestJson(baseUrl, "/api/business/account/preferences", {
+        method: "POST",
+        token,
+        body: {
+          preferredSuburbs: ["Richmond"],
+          preferredBeers: ["Carlton Draught"],
+          preferredUseCases: ["recently_verified"],
+          onboardingCompleted: true,
+          expectedUpdatedAt: firstPreferences.updatedAt,
+        },
+      });
+      expect(currentRevision.response.status).toBe(200);
+      const updatedPreferences = (currentRevision.json?.data as { preferences: { updatedAt: string } }).preferences;
+      expect(updatedPreferences.updatedAt).toBe("2026-05-21T09:00:00.001Z");
+
+      const replayedRevision = await requestJson(baseUrl, "/api/business/account/preferences", {
+        method: "POST",
+        token,
+        body: {
+          preferredSuburbs: ["Brunswick"],
+          preferredBeers: [],
+          preferredUseCases: [],
+          onboardingCompleted: true,
+          expectedUpdatedAt: firstPreferences.updatedAt,
+        },
+      });
+      expect(replayedRevision.response.status).toBe(409);
+    });
+  });
+
   it("suppresses low-count admin analytics buckets and redacts sensitive event metadata", async () => {
     const harness = createHarness({ ANALYTICS_MIN_BUCKET_SIZE: 5 });
     const admin = (await signup(harness, "admin@pintpath.test")).account;
     const user = (await signup(harness, "privacy-user@pintpath.test")).account;
-    harness.service.savePrivacySettings(user, {
+    await harness.service.savePrivacySettings(user, {
       optionalAnalyticsEnabled: true,
       venueReportInclusionEnabled: true,
       productResearchEnabled: false,
       emailUpdatesEnabled: false,
+      expectedUpdatedAt: null,
     });
 
-    recordSearchEvents(harness.repository, {
+    await recordSearchEvents(harness.activityAuditRepository, {
       count: 4,
       beerId: "rare-private-beer",
       suburb: "Carlton",
       prefix: "rare",
     });
-    recordSearchEvents(harness.repository, {
+    await recordSearchEvents(harness.activityAuditRepository, {
       count: 5,
       beerId: "guinness",
       suburb: "Fitzroy",
       prefix: "guinness",
     });
-    harness.service.trackEvent(user, {
+    await harness.service.trackEvent(user, {
       anonymousSessionId: null,
       eventType: "map_viewed",
       venueId: null,
@@ -838,7 +1134,7 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
       },
     });
 
-    const preview = harness.service.getAnalyticsPreview(admin);
+    const preview = await harness.service.getAnalyticsPreview(admin);
     expect(preview.topSearchedBeers).toEqual([{ key: "guinness", count: 5 }]);
     expect(JSON.stringify(preview)).not.toContain("rare-private-beer");
 
@@ -859,13 +1155,13 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
     const admin = (await signup(harness, "admin@pintpath.test")).account;
     const manager = (await signup(harness, "pro-manager@pintpath.test")).account;
 
-    harness.service.assignVenueManager(admin, {
+    await harness.service.assignVenueManager(admin, {
       userId: manager.id,
       venueId: "venue-pro",
       venueName: "Pro Venue",
       suburb: "Fitzroy",
     });
-    harness.service.upsertBarProfile(admin, "venue-pro", venueProfileInput({
+    await harness.service.upsertBarProfile(admin, "venue-pro", venueProfileInput({
       name: "Pro Venue",
       suburb: "Fitzroy",
       area: "Fitzroy",
@@ -874,7 +1170,7 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
     const updatedManager = harness.repository.getAccountById(manager.id)!;
 
     for (let index = 0; index < 9; index += 1) {
-      harness.repository.recordEvent({
+      await harness.activityAuditRepository.recordEvent({
         id: `below-floor:${index}`,
         userId: null,
         anonymousSessionId: `anon-floor:${index}`,
@@ -886,7 +1182,7 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
         createdAt: NOW,
       });
     }
-    harness.repository.recordEvent({
+    await harness.activityAuditRepository.recordEvent({
       id: "style-below-floor",
       userId: null,
       anonymousSessionId: "anon-floor:0",
@@ -898,13 +1194,13 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
       createdAt: NOW,
     });
 
-    const belowFloorPortal = harness.service.getVenuePortal(updatedManager, { venueId: "venue-pro" });
+    const belowFloorPortal = await harness.service.getVenuePortal(updatedManager, { venueId: "venue-pro" });
     expect(belowFloorPortal.tier?.analyticsLocked).toBe(false);
     expect(belowFloorPortal.analytics?.privacyFloorMet).toBe(false);
     expect(belowFloorPortal.analytics?.areaStyleSearches).toEqual([]);
     expect(JSON.stringify(belowFloorPortal.analytics)).not.toContain("@");
 
-    harness.repository.recordEvent({
+    await harness.activityAuditRepository.recordEvent({
       id: "at-floor",
       userId: null,
       anonymousSessionId: "anon-floor:at",
@@ -916,7 +1212,7 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
       createdAt: NOW,
     });
     for (let index = 0; index < 10; index += 1) {
-      harness.repository.recordEvent({
+      await harness.activityAuditRepository.recordEvent({
         id: `style-at-floor:${index}`,
         userId: null,
         anonymousSessionId: `anon-floor:${index}`,
@@ -929,19 +1225,19 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
       });
     }
 
-    const atFloorPortal = harness.service.getVenuePortal(updatedManager, { venueId: "venue-pro" });
+    const atFloorPortal = await harness.service.getVenuePortal(updatedManager, { venueId: "venue-pro" });
     expect(atFloorPortal.analytics?.privacyFloorMet).toBe(true);
     expect(atFloorPortal.monthlyReport?.data).toBeTruthy();
     expect(atFloorPortal.analytics?.areaStyleSearches).toEqual([{ key: "lager", count: 10 }]);
   });
 
-  it("counts distinct venue actors, suppresses unsafe trend buckets, and never widens a missing area globally", () => {
+  it("counts distinct venue actors, suppresses unsafe trend buckets, and never widens a missing area globally", async () => {
     const harness = createHarness({ ANALYTICS_MIN_BUCKET_SIZE: 5 });
     const venueId = "venue-distinct-reporting";
     const suburb = "Fitzroy";
     const customerSession = "distinct-customer";
-    const record = (id: string, eventType: string, anonymousSessionId: string | null, metadata: Record<string, unknown> = {}) => {
-      harness.repository.recordEvent({
+    const record = async (id: string, eventType: string, anonymousSessionId: string | null, metadata: Record<string, unknown> = {}) => {
+      await harness.activityAuditRepository.recordEvent({
         id,
         userId: null,
         anonymousSessionId,
@@ -954,23 +1250,23 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
       });
     };
 
-    record("distinct-pin-1", "map_pin_click", customerSession);
-    record("distinct-pin-2", "map_pin_click", customerSession);
-    record("distinct-detail-1", "venue_detail_opened", customerSession);
-    record("distinct-detail-2", "venue_detail_opened", customerSession);
-    record("distinct-beer-list-1", "beer_list_viewed", customerSession);
-    record("distinct-beer-list-2", "beer_list_viewed", customerSession);
-    record("distinct-price", "free_preview_viewed", customerSession);
-    record("distinct-directions", "directions_clicked", customerSession);
-    record("distinct-directions-legacy", "venue_lookup", customerSession, { interactionType: "directions_click" });
-    record("distinct-share", "venue_shared", customerSession);
-    record("distinct-share-copy", "share_link_copied", customerSession);
-    record("owner-portal", "venue_portal_viewed", "venue-owner-session");
-    record("unknown-actor-pin", "map_pin_click", null);
+    await record("distinct-pin-1", "map_pin_click", customerSession);
+    await record("distinct-pin-2", "map_pin_click", customerSession);
+    await record("distinct-detail-1", "venue_detail_opened", customerSession);
+    await record("distinct-detail-2", "venue_detail_opened", customerSession);
+    await record("distinct-beer-list-1", "beer_list_viewed", customerSession);
+    await record("distinct-beer-list-2", "beer_list_viewed", customerSession);
+    await record("distinct-price", "free_preview_viewed", customerSession);
+    await record("distinct-directions", "directions_clicked", customerSession);
+    await record("distinct-directions-legacy", "venue_lookup", customerSession, { interactionType: "directions_click" });
+    await record("distinct-share", "venue_shared", customerSession);
+    await record("distinct-share-copy", "share_link_copied", customerSession);
+    await record("owner-portal", "venue_portal_viewed", "venue-owner-session");
+    await record("unknown-actor-pin", "map_pin_click", null);
 
     for (let index = 0; index < 12; index += 1) {
-      record(`repeat-beer-search:${index}`, "beer_search_performed", customerSession, { query: "lager" });
-      record(`repeat-style-search:${index}`, "style_search", customerSession, { query: "lager", searchKind: "style" });
+      await record(`repeat-beer-search:${index}`, "beer_search_performed", customerSession, { query: "lager" });
+      await record(`repeat-style-search:${index}`, "style_search", customerSession, { query: "lager", searchKind: "style" });
     }
     for (let index = 0; index < 12; index += 1) {
       harness.repository.recordVenueAnalyticsEvent({
@@ -1032,8 +1328,8 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
 
     for (let index = 1; index < 10; index += 1) {
       const actor = `distinct-area-actor:${index}`;
-      record(`distinct-area-beer:${index}`, "beer_search_performed", actor, { query: "lager" });
-      record(`distinct-area-style:${index}`, "style_search", actor, { query: "lager", searchKind: "style" });
+      await record(`distinct-area-beer:${index}`, "beer_search_performed", actor, { query: "lager" });
+      await record(`distinct-area-style:${index}`, "style_search", actor, { query: "lager", searchKind: "style" });
     }
 
     const atFloor = harness.repository.getVenueAreaAnalytics({
@@ -1069,20 +1365,20 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
     const admin = await signup(harness, "admin@pintpath.test");
     const owner = await signup(harness, "historical-report-owner@pintpath.test");
     const venueId = "venue-historical-report";
-    harness.service.assignVenueManager(admin.account, {
+    await harness.service.assignVenueManager(admin.account, {
       userId: owner.account.id,
       venueId,
       venueName: "Historical Report Venue",
       suburb: "Richmond",
     });
-    harness.service.upsertBarProfile(admin.account, venueId, venueProfileInput({
+    await harness.service.upsertBarProfile(admin.account, venueId, venueProfileInput({
       name: "Historical Report Venue",
       suburb: "Richmond",
       area: "Inner East",
       membershipTier: "pro",
     }));
     for (let index = 0; index < 10; index += 1) {
-      harness.repository.recordEvent({
+      await harness.activityAuditRepository.recordEvent({
         id: `historical-report-open:${index}`,
         userId: null,
         anonymousSessionId: `historical-report-actor:${index}`,
@@ -1093,7 +1389,7 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
         metadata: {},
         createdAt: "2026-05-10T10:00:00.000Z",
       });
-      harness.repository.recordEvent({
+      await harness.activityAuditRepository.recordEvent({
         id: `historical-report-area-search:${index}`,
         userId: null,
         anonymousSessionId: `historical-report-actor:${index}`,
@@ -1106,7 +1402,7 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
       });
     }
 
-    const generated = harness.service.generateVenueMonthlyReports(admin.account, {
+    const generated = await harness.service.generateVenueMonthlyReports(admin.account, {
       month: "2026-05",
       venueId,
       dryRun: false,
@@ -1123,7 +1419,7 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
     expect(firstSummary).not.toHaveProperty("openVenueRequests");
     expect(firstSummary).not.toHaveProperty("discoveryPlacement");
 
-    harness.repository.recordEvent({
+    await harness.activityAuditRepository.recordEvent({
       id: "historical-report-late-open",
       userId: null,
       anonymousSessionId: "historical-report-late-actor",
@@ -1134,7 +1430,7 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
       metadata: {},
       createdAt: "2026-05-11T10:00:00.000Z",
     });
-    const scheduledRetry = harness.service.generateScheduledVenueMonthlyReports({
+    const scheduledRetry = await harness.service.generateScheduledVenueMonthlyReports({
       month: "2026-05",
       venueId,
       dryRun: false,
@@ -1143,12 +1439,12 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
     expect(harness.repository.getVenueMonthlyReport({ venueId, month: "2026-05" })?.createdAt)
       .toBe(firstSaved.createdAt);
     const ownerAccount = harness.repository.getAccountById(owner.account.id)!;
-    const frozen = harness.service.getVenueMonthlyReport(ownerAccount, venueId, "2026-05");
+    const frozen = await harness.service.getVenueMonthlyReport(ownerAccount, venueId, "2026-05");
     expect((frozen.data.summary as Record<string, unknown>).uniqueProfileViews).toBe(10);
-    expect(() => harness.service.getVenueMonthlyReport(ownerAccount, venueId, "2026-13"))
-      .toThrow("valid YYYY-MM");
-    expect(() => harness.service.getVenueMonthlyReport(ownerAccount, venueId, "0000-01"))
-      .toThrow("valid YYYY-MM");
+    await expect(harness.service.getVenueMonthlyReport(ownerAccount, venueId, "2026-13"))
+      .rejects.toThrow("valid YYYY-MM");
+    await expect(harness.service.getVenueMonthlyReport(ownerAccount, venueId, "0000-01"))
+      .rejects.toThrow("valid YYYY-MM");
 
     const refreshedAt = "2026-07-01T00:00:00.000Z";
     harness.repository.upsertVenueMonthlyReport({
@@ -1168,19 +1464,19 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
     const owner = (await signup(harness, "report-owner@pintpath.test")).account;
     const otherOwner = (await signup(harness, "report-other-owner@pintpath.test")).account;
 
-    harness.service.assignVenueManager(admin, {
+    await harness.service.assignVenueManager(admin, {
       userId: owner.id,
       venueId: "venue-monthly",
       venueName: "Monthly Venue",
       suburb: "Richmond",
     });
-    harness.service.assignVenueManager(admin, {
+    await harness.service.assignVenueManager(admin, {
       userId: otherOwner.id,
       venueId: "venue-other",
       venueName: "Other Venue",
       suburb: "Carlton",
     });
-    harness.service.upsertBarProfile(admin, "venue-monthly", venueProfileInput({
+    await harness.service.upsertBarProfile(admin, "venue-monthly", venueProfileInput({
       name: "Monthly Venue",
       suburb: "Richmond",
       area: "Richmond",
@@ -1190,7 +1486,7 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
     const otherOwnerAccount = harness.repository.getAccountById(otherOwner.id)!;
 
     for (let index = 0; index < 3; index += 1) {
-      harness.repository.recordEvent({
+      await harness.activityAuditRepository.recordEvent({
         id: `may-click:${index}`,
         userId: null,
         anonymousSessionId: `anon-may-click:${index}`,
@@ -1203,7 +1499,7 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
       });
     }
     for (let index = 0; index < 4; index += 1) {
-      harness.repository.recordEvent({
+      await harness.activityAuditRepository.recordEvent({
         id: `june-click:${index}`,
         userId: null,
         anonymousSessionId: `anon-june-click:${index}`,
@@ -1216,7 +1512,7 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
       });
     }
     for (let index = 0; index < 10; index += 1) {
-      harness.repository.recordEvent({
+      await harness.activityAuditRepository.recordEvent({
         id: `may-search:${index}`,
         userId: null,
         anonymousSessionId: `anon-may-search:${index}`,
@@ -1227,7 +1523,7 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
         metadata: { query: "stout" },
         createdAt: `2026-05-${String(index + 3).padStart(2, "0")}T11:00:00.000Z`,
       });
-      harness.repository.recordEvent({
+      await harness.activityAuditRepository.recordEvent({
         id: `may-style:${index}`,
         userId: null,
         anonymousSessionId: `anon-may-search:${index}`,
@@ -1238,7 +1534,7 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
         metadata: { query: "stout", searchKind: "style" },
         createdAt: `2026-05-${String(index + 3).padStart(2, "0")}T11:00:00.000Z`,
       });
-      harness.repository.recordEvent({
+      await harness.activityAuditRepository.recordEvent({
         id: `june-search:${index}`,
         userId: null,
         anonymousSessionId: `anon-june-search:${index}`,
@@ -1249,7 +1545,7 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
         metadata: { query: "lager" },
         createdAt: `2026-06-${String(index + 3).padStart(2, "0")}T11:00:00.000Z`,
       });
-      harness.repository.recordEvent({
+      await harness.activityAuditRepository.recordEvent({
         id: `june-style:${index}`,
         userId: null,
         anonymousSessionId: `anon-june-search:${index}`,
@@ -1262,7 +1558,7 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
       });
     }
     for (let index = 0; index < 10; index += 1) {
-      harness.repository.recordEvent({
+      await harness.activityAuditRepository.recordEvent({
         id: `may-contact-beer:${index}`,
         userId: null,
         anonymousSessionId: `anon-may-contact:${index}`,
@@ -1273,7 +1569,7 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
         metadata: { query: "Call 0412 345 678" },
         createdAt: `2026-05-${String(index + 3).padStart(2, "0")}T12:00:00.000Z`,
       });
-      harness.repository.recordEvent({
+      await harness.activityAuditRepository.recordEvent({
         id: `may-contact-style:${index}`,
         userId: null,
         anonymousSessionId: `anon-may-contact:${index}`,
@@ -1327,12 +1623,12 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
     expect(JSON.stringify(directMayAnalytics)).not.toContain("0412");
     expect(JSON.stringify(directMayAnalytics)).not.toContain("example.com");
 
-    const ownerPortal = harness.service.getVenuePortal(ownerAccount, { venueId: "venue-monthly" });
+    const ownerPortal = await harness.service.getVenuePortal(ownerAccount, { venueId: "venue-monthly" });
     expect(ownerPortal.monthlyReport?.month).toBe("2026-06");
     expect(ownerPortal.monthlyReport?.data.schemaVersion).toBe(2);
     expect(JSON.stringify(ownerPortal.monthlyReport)).not.toContain("safeAggregate");
     expect(JSON.stringify(ownerPortal.monthlyReport)).not.toContain("listingQualityScore");
-    const selectedMayReport = harness.service.getVenueMonthlyReport(ownerAccount, "venue-monthly", "2026-05");
+    const selectedMayReport = await harness.service.getVenueMonthlyReport(ownerAccount, "venue-monthly", "2026-05");
     const serializedReport = JSON.stringify(selectedMayReport);
     expect(selectedMayReport.data.schemaVersion).toBe(2);
     expect(serializedReport).not.toContain("should-not-leak");
@@ -1341,7 +1637,7 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
     expect(serializedReport).not.toContain("0412 345 678");
     expect(serializedReport).not.toContain("safeAggregate");
 
-    const regeneratedExport = harness.service.exportVenueMonthlyReport(
+    const regeneratedExport = await harness.service.exportVenueMonthlyReport(
       ownerAccount,
       "venue-monthly",
       "2026-05",
@@ -1351,17 +1647,17 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
     expect(regeneratedExport.body).not.toContain("safeAggregate");
     expect(harness.repository.getVenueMonthlyReport({ venueId: "venue-monthly", month: "2026-05" })?.data.schemaVersion).toBe(2);
 
-    const currentPreview = harness.service.getVenueMonthlyReport(ownerAccount, "venue-monthly", "2026-07");
+    const currentPreview = await harness.service.getVenueMonthlyReport(ownerAccount, "venue-monthly", "2026-07");
     expect(currentPreview.data.generated).toBe(false);
     expect(harness.repository.getVenueMonthlyReport({ venueId: "venue-monthly", month: "2026-07" })).toBeNull();
-    expect(() => harness.service.exportVenueMonthlyReport(
+    await expect(harness.service.exportVenueMonthlyReport(
       ownerAccount,
       "venue-monthly",
       "2026-07",
       { format: "json" },
-    )).toThrow("completed calendar months");
-    expect(() => harness.service.getVenueMonthlyReport(ownerAccount, "venue-monthly", "2026-08"))
-      .toThrow("Future monthly reports");
+    )).rejects.toThrow("completed calendar months");
+    await expect(harness.service.getVenueMonthlyReport(ownerAccount, "venue-monthly", "2026-08"))
+      .rejects.toThrow("Future monthly reports");
 
     harness.repository.upsertVenueMonthlyReport({
       id: "premature-june-embedded-snapshot",
@@ -1376,7 +1672,7 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
         summary: { prematureEmbeddedSnapshot: true },
       },
     });
-    const portalWithPrematureSavedReport = harness.service.getVenuePortal(ownerAccount, { venueId: "venue-monthly" });
+    const portalWithPrematureSavedReport = await harness.service.getVenuePortal(ownerAccount, { venueId: "venue-monthly" });
     expect(portalWithPrematureSavedReport.monthlyReport?.month).toBe("2026-06");
     expect(portalWithPrematureSavedReport.monthlyReport?.data.generated).toBe(false);
     expect(JSON.stringify(portalWithPrematureSavedReport.monthlyReport)).not.toContain("prematureEmbeddedSnapshot");
@@ -1395,7 +1691,7 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
       },
     });
     vi.setSystemTime(new Date("2026-08-02T00:00:00.000Z"));
-    const regeneratedJuly = harness.service.generateScheduledVenueMonthlyReports({
+    const regeneratedJuly = await harness.service.generateScheduledVenueMonthlyReports({
       month: "2026-07",
       venueId: "venue-monthly",
       dryRun: false,
@@ -1404,8 +1700,8 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
     expect(Date.parse(String(regeneratedJuly.reports[0]?.data.generatedAt)))
       .toBeGreaterThanOrEqual(Date.parse("2026-07-31T14:00:00.000Z"));
 
-    expect(() => harness.service.getVenuePortal(otherOwnerAccount, { venueId: "venue-monthly" }))
-      .toThrow("assigned venues");
+    await expect(harness.service.getVenuePortal(otherOwnerAccount, { venueId: "venue-monthly" }))
+      .rejects.toThrow("assigned venues");
   });
 
   it("generates, mock-delivers, and exports monthly reports only to authorised venue owners", async () => {
@@ -1418,26 +1714,32 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
     const otherOwner = await signup(harness, "http-report-other-owner@pintpath.test");
     const basicOwner = await signup(harness, "http-report-basic-owner@pintpath.test");
 
-    harness.service.assignVenueManager(admin.account, {
+    await harness.service.assignVenueManager(admin.account, {
       userId: owner.account.id,
       venueId: "venue-http-report",
       venueName: "HTTP Report Venue",
       suburb: "Richmond",
     });
-    harness.service.assignVenueManager(admin.account, {
+    await harness.service.assignVenueManager(admin.account, {
       userId: unverifiedManager.account.id,
       venueId: "venue-http-report",
       venueName: "HTTP Report Venue",
       suburb: "Richmond",
     });
-    harness.repository.assignVenueManager({
-      id: "http-report-counter-assignment",
+    const counterInvitation = await harness.venueAccessRepository.inviteCounterStaff({
+      invitationToken: crypto.randomUUID(),
+      inviterAccountId: admin.account.id,
       userId: counterStaff.account.id,
       venueId: "venue-http-report",
       venueName: "HTTP Report Venue",
       suburb: "Richmond",
-      accessLevel: "counter_staff",
-      approvedBy: admin.account.id,
+      now: NOW,
+      expiresAt: "2026-05-24T09:00:00.000Z",
+    });
+    await harness.venueAccessRepository.respondToCounterStaffInvitation({
+      invitationToken: counterInvitation.assignment.id,
+      userId: counterStaff.account.id,
+      decision: "accept",
       now: NOW,
     });
     harness.repository.updateAccountSecurityClaims({
@@ -1450,25 +1752,25 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
       emailVerifiedAt: NOW,
       now: NOW,
     });
-    harness.service.assignVenueManager(admin.account, {
+    await harness.service.assignVenueManager(admin.account, {
       userId: otherOwner.account.id,
       venueId: "venue-http-other",
       venueName: "Other HTTP Report Venue",
       suburb: "Carlton",
     });
-    harness.service.assignVenueManager(admin.account, {
+    await harness.service.assignVenueManager(admin.account, {
       userId: basicOwner.account.id,
       venueId: "venue-http-basic",
       venueName: "HTTP Basic Venue",
       suburb: "Richmond",
     });
-    harness.service.upsertBarProfile(admin.account, "venue-http-report", venueProfileInput({
+    await harness.service.upsertBarProfile(admin.account, "venue-http-report", venueProfileInput({
       name: "HTTP Report Venue",
       suburb: "Richmond",
       area: "Richmond",
       membershipTier: "pro",
     }));
-    harness.service.upsertBarProfile(admin.account, "venue-http-basic", venueProfileInput({
+    await harness.service.upsertBarProfile(admin.account, "venue-http-basic", venueProfileInput({
       name: "HTTP Basic Venue",
       suburb: "Richmond",
       area: "Richmond",
@@ -1476,7 +1778,7 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
     }));
 
     for (let index = 0; index < 12; index += 1) {
-      harness.repository.recordEvent({
+      await harness.activityAuditRepository.recordEvent({
         id: `http-report-search:${index}`,
         userId: null,
         anonymousSessionId: `http-report-anon:${index}`,
@@ -1487,7 +1789,7 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
         metadata: { query: "guinness" },
         createdAt: `2026-05-${String(index + 1).padStart(2, "0")}T10:00:00.000Z`,
       });
-      harness.repository.recordEvent({
+      await harness.activityAuditRepository.recordEvent({
         id: `http-report-direction:${index}`,
         userId: null,
         anonymousSessionId: `http-report-direction-anon:${index}`,
@@ -1652,5 +1954,98 @@ describe("Pint Path release-readiness public contracts and accessibility smoke",
       expect(html).not.toContain("Twilio");
       expect(html).not.toContain("ElevenLabs");
     }
+  });
+});
+
+describe("ActivityAudit admin HTTP cutover", () => {
+  it("authorizes and traverses deterministic audit pages with paired cursors", async () => {
+    const harness = createHarness();
+    const admin = await signup(harness, "admin@pintpath.test");
+    for (const id of ["audit-page-a", "audit-page-c", "audit-page-b"]) {
+      await harness.activityAuditRepository.insertSecurityAuditLog({
+        id,
+        actorUserId: admin.account.id,
+        actorRole: "admin",
+        action: "admin_test_event",
+        targetType: "account",
+        targetId: admin.account.id,
+        metadata: { id },
+        ipHash: null,
+        userAgentHash: null,
+        createdAt: NOW,
+      });
+    }
+
+    await withHttpServer(harness.app, async (baseUrl) => {
+      const unauthorized = await requestJson(baseUrl, "/api/business/admin/security-audit?limit=2");
+      expect(unauthorized.response.status).toBe(401);
+
+      const first = await requestJson(
+        baseUrl,
+        "/api/business/admin/security-audit?limit=2&offset=0&action=admin_test_event",
+        { token: admin.token },
+      );
+      expect(first.response.status).toBe(200);
+      const firstData = first.json?.data as {
+        logs: Array<{ id: string }>;
+        pagination: {
+          total: number;
+          limit: number;
+          offset: number;
+          hasMore: boolean;
+          nextCursor: { createdAt: string; id: string } | null;
+        };
+      };
+      expect(firstData.logs.map((log) => log.id)).toEqual(["audit-page-c", "audit-page-b"]);
+      expect(firstData.pagination).toEqual(expect.objectContaining({
+        total: 3,
+        limit: 2,
+        offset: 0,
+        hasMore: true,
+      }));
+      expect(firstData.pagination.nextCursor).toEqual({ createdAt: NOW, id: "audit-page-b" });
+
+      const cursor = firstData.pagination.nextCursor!;
+      const second = await requestJson(
+        baseUrl,
+        `/api/business/admin/security-audit?limit=2&offset=2&action=admin_test_event&cursorCreatedAt=${encodeURIComponent(cursor.createdAt)}&cursorId=${encodeURIComponent(cursor.id)}`,
+        { token: admin.token },
+      );
+      expect(second.response.status).toBe(200);
+      const secondData = second.json?.data as typeof firstData;
+      expect(secondData.logs.map((log) => log.id)).toEqual(["audit-page-a"]);
+      expect(secondData.pagination).toEqual(expect.objectContaining({
+        total: 3,
+        limit: 2,
+        offset: 2,
+        hasMore: false,
+        nextCursor: null,
+      }));
+      expect(new Set([...firstData.logs, ...secondData.logs].map((log) => log.id)).size).toBe(3);
+
+      const incomplete = await requestJson(
+        baseUrl,
+        `/api/business/admin/security-audit?cursorCreatedAt=${encodeURIComponent(NOW)}`,
+        { token: admin.token },
+      );
+      expect(incomplete.response.status).toBe(400);
+      expect(incomplete.json?.error?.message).toBe("Both security audit cursor fields are required.");
+
+      harness.database.prepare(
+        `INSERT INTO security_audit_log (
+           id, actor_user_id, actor_role, action, target_type, target_id,
+           metadata_json, ip_hash, user_agent_hash, created_at
+         ) VALUES ('malformed-audit-row', ?, 'admin', 'malformed_audit_test',
+                   'account', ?, '[]', NULL, NULL, ?)`,
+      ).run(admin.account.id, admin.account.id, NOW);
+      const malformed = await requestJson(
+        baseUrl,
+        "/api/business/admin/security-audit?action=malformed_audit_test",
+        { token: admin.token },
+      );
+      expect(malformed.response.status).toBe(500);
+      expect(malformed.json?.error?.message).toBe("Internal server error");
+      expect(JSON.stringify(malformed.json)).not.toContain("metadata_json");
+    });
   });
 });

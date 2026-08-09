@@ -1,6 +1,10 @@
 import crypto from "node:crypto";
 
-import type { BusinessRepository } from "../db/business.repository.js";
+import {
+  type AccountDeletionRequestRow,
+  type AccountDeletionSecretPurgeCheckpointEntry,
+  AccountDeletionQueueRepository,
+} from "../db/account-deletion-queue.repository.js";
 import { AppError } from "./errors.js";
 import {
   AccountDeletionNotificationError,
@@ -30,6 +34,9 @@ export interface AccountDeletionNotificationKeyring {
 export interface AccountDeletionNotificationWorkerConfig {
   provider: AccountDeletionNotificationProvider;
   keyring: AccountDeletionNotificationKeyring;
+  performRecipientSecretPhysicalCheckpoint: (
+    snapshot: readonly AccountDeletionSecretPurgeCheckpointEntry[],
+  ) => Promise<boolean>;
   publicBaseUrl: string;
   from: string;
   replyTo?: string | undefined;
@@ -377,7 +384,7 @@ export function verifyResendWebhook(input: {
 
 export class AccountDeletionNotificationCoordinator {
   constructor(
-    private readonly repository: BusinessRepository,
+    private readonly repository: AccountDeletionQueueRepository,
     private readonly config: AccountDeletionNotificationWorkerConfig,
   ) {}
 
@@ -387,7 +394,7 @@ export class AccountDeletionNotificationCoordinator {
     destination: string;
     now: string;
     staleBefore: string;
-  }): Record<string, unknown> | null {
+  }): Promise<AccountDeletionRequestRow | null> {
     const now = assertIso(input.now, "Notification preparation time");
     const activeKey = this.config.keyring.keys.get(this.config.keyring.activeKeyId);
     if (!activeKey) throw new Error("The active account deletion notification encryption key is unavailable.");
@@ -415,6 +422,12 @@ export class AccountDeletionNotificationCoordinator {
     return addDays(assertIso(completedAt, "Deletion completion time"), ACCOUNT_DELETION_NOTICE_RECIPIENT_RETENTION_DAYS);
   }
 
+  async checkpointRecipientSecrets(): Promise<boolean> {
+    return this.repository.checkpointAccountDeletionNotificationSecrets(
+      this.config.performRecipientSecretPhysicalCheckpoint,
+    );
+  }
+
   async processDue(input: { now?: Date | undefined; limit?: number | undefined } = {}): Promise<{
     claimed: number;
     accepted: number;
@@ -431,8 +444,8 @@ export class AccountDeletionNotificationCoordinator {
     // Retry any prior secure-delete checkpoint before claiming new work. A
     // busy reader can temporarily prevent WAL truncation, so the durable flag
     // remains set until a later pass succeeds.
-    this.repository.checkpointAccountDeletionNotificationSecrets();
-    const recipientsPurged = this.repository.purgeExpiredAccountDeletionNotificationRecipients(now);
+    await this.checkpointRecipientSecrets();
+    const recipientsPurged = await this.repository.purgeExpiredAccountDeletionNotificationRecipients(now);
     const summary = {
       claimed: 0,
       accepted: 0,
@@ -445,7 +458,7 @@ export class AccountDeletionNotificationCoordinator {
     };
     for (let index = 0; index < limit; index += 1) {
       const leaseToken = crypto.randomUUID();
-      const notice = this.repository.claimNextAccountDeletionCompletionNotification({
+      const notice = await this.repository.claimNextAccountDeletionCompletionNotification({
         now,
         staleBefore: addMinutes(now, -ACCOUNT_DELETION_NOTICE_LEASE_MINUTES),
         leaseToken,
@@ -460,13 +473,13 @@ export class AccountDeletionNotificationCoordinator {
         !notice.provider_message_id
         && firstAttemptAgeMs >= ACCOUNT_DELETION_NOTICE_IDEMPOTENCY_WINDOW_HOURS * 60 * 60_000
       ) {
-        this.repository.markAccountDeletionNotificationForManualReview({
+        const transitioned = await this.repository.markAccountDeletionNotificationForManualReview({
           requestId: notice.request_id,
           leaseToken,
           error: "Send outcome was not reconciled inside the provider idempotency window.",
           now,
         });
-        summary.manualReview += 1;
+        if (transitioned) summary.manualReview += 1;
         continue;
       }
       try {
@@ -475,47 +488,49 @@ export class AccountDeletionNotificationCoordinator {
             const acceptedAt = new Date(notice.accepted_at ?? notice.first_attempt_at ?? now).getTime();
             const reviewAt = acceptedAt + ACCOUNT_DELETION_NOTICE_WEBHOOK_GRACE_HOURS * 60 * 60_000;
             if (nowDate.getTime() >= reviewAt) {
-              this.repository.markAccountDeletionNotificationForManualReview({
+              const transitioned = await this.repository.markAccountDeletionNotificationForManualReview({
                 requestId: notice.request_id,
                 leaseToken,
                 error: "No verified delivery event arrived inside the webhook confirmation window.",
                 now,
               });
-              summary.manualReview += 1;
+              if (transitioned) summary.manualReview += 1;
             } else {
-              this.repository.deferAccountDeletionNotification({
+              const transitioned = await this.repository.deferAccountDeletionNotification({
                 requestId: notice.request_id,
                 leaseToken,
                 nextAttemptAt: new Date(reviewAt).toISOString(),
                 error: "Awaiting a signed provider delivery webhook.",
                 now,
               });
-              summary.deferred += 1;
+              if (transitioned) summary.deferred += 1;
             }
             continue;
           }
           const providerStatus = await this.config.provider.getStatus(notice.provider_message_id);
           if (providerStatus.deliveryStatus === "delivered") {
-            this.repository.markAccountDeletionNotificationDelivered({
+            const transitioned = await this.repository.markAccountDeletionNotificationDelivered({
               requestId: notice.request_id,
               providerEvent: providerStatus.lastEvent ?? "delivered",
               eventAt: now,
               now,
               leaseToken,
             });
-            this.repository.checkpointAccountDeletionNotificationSecrets();
-            summary.delivered += 1;
+            if (transitioned) {
+              await this.checkpointRecipientSecrets();
+              summary.delivered += 1;
+            }
           } else if (providerStatus.deliveryStatus === "failed") {
-            this.repository.markAccountDeletionNotificationForManualReview({
+            const transitioned = await this.repository.markAccountDeletionNotificationForManualReview({
               requestId: notice.request_id,
               leaseToken,
               providerEvent: providerStatus.lastEvent,
               error: "Provider reported that the completion notice was not delivered.",
               now,
             });
-            summary.manualReview += 1;
+            if (transitioned) summary.manualReview += 1;
           } else {
-            this.repository.deferAccountDeletionNotification({
+            const transitioned = await this.repository.deferAccountDeletionNotification({
               requestId: notice.request_id,
               leaseToken,
               nextAttemptAt: addMinutes(now, ACCOUNT_DELETION_NOTICE_STATUS_CHECK_MINUTES),
@@ -524,7 +539,7 @@ export class AccountDeletionNotificationCoordinator {
                 : "Provider delivery is still pending.",
               now,
             });
-            summary.deferred += 1;
+            if (transitioned) summary.deferred += 1;
           }
           continue;
         }
@@ -532,19 +547,19 @@ export class AccountDeletionNotificationCoordinator {
         if (notice.idempotency_key !== `pintpath-account-deletion/${notice.request_id}`) {
           throw new AccountDeletionNotificationError("Stored notification idempotency key is invalid.", "permanent");
         }
-        const recipient = this.repository.getAccountDeletionNoticeRecipientSecret(notice.request_id);
+        const recipient = await this.repository.getAccountDeletionNoticeRecipientSecret(notice.request_id);
         if (!recipient) {
           throw new AccountDeletionNotificationError("Encrypted notification recipient is unavailable.", "permanent");
         }
         const key = this.config.keyring.keys.get(recipient.key_id);
         if (!key) {
-          this.repository.markAccountDeletionNotificationForManualReview({
+          const transitioned = await this.repository.markAccountDeletionNotificationForManualReview({
             requestId: notice.request_id,
             leaseToken,
             error: "The encryption key referenced by this notification is unavailable.",
             now,
           });
-          summary.manualReview += 1;
+          if (transitioned) summary.manualReview += 1;
           continue;
         }
         const destination = decryptAccountDeletionDestination({
@@ -569,13 +584,13 @@ export class AccountDeletionNotificationCoordinator {
             supportEmail: this.config.supportEmail,
           });
         } catch (error) {
-          this.repository.markAccountDeletionNotificationForManualReview({
+          const transitioned = await this.repository.markAccountDeletionNotificationForManualReview({
             requestId: notice.request_id,
             leaseToken,
             error: error instanceof Error ? error.message : "The stored notification template is unsupported.",
             now,
           });
-          summary.manualReview += 1;
+          if (transitioned) summary.manualReview += 1;
           continue;
         }
         const fingerprint = messageFingerprint({
@@ -584,23 +599,23 @@ export class AccountDeletionNotificationCoordinator {
           message,
           key,
         });
-        if (!this.repository.lockAccountDeletionNotificationPayload({
+        if (!await this.repository.lockAccountDeletionNotificationPayload({
           requestId: notice.request_id,
           leaseToken,
           payloadFingerprint: fingerprint,
           now,
         })) {
-          this.repository.markAccountDeletionNotificationForManualReview({
+          const transitioned = await this.repository.markAccountDeletionNotificationForManualReview({
             requestId: notice.request_id,
             leaseToken,
             error: "The queued completion notice payload changed after its idempotency key was reserved.",
             now,
           });
-          summary.manualReview += 1;
+          if (transitioned) summary.manualReview += 1;
           continue;
         }
         const sent = await this.config.provider.send(message);
-        this.repository.markAccountDeletionNotificationAccepted({
+        const transitioned = await this.repository.markAccountDeletionNotificationAccepted({
           requestId: notice.request_id,
           leaseToken,
           providerMessageId: sent.id,
@@ -609,60 +624,60 @@ export class AccountDeletionNotificationCoordinator {
             ? addMinutes(now, ACCOUNT_DELETION_NOTICE_STATUS_CHECK_MINUTES)
             : addMinutes(now, ACCOUNT_DELETION_NOTICE_WEBHOOK_GRACE_HOURS * 60),
         });
-        summary.accepted += 1;
+        if (transitioned) summary.accepted += 1;
       } catch (error) {
         const notificationError = error instanceof AccountDeletionNotificationError ? error : null;
         if (notificationError?.outcome === "idempotency_conflict") {
-          this.repository.markAccountDeletionNotificationForManualReview({
+          const transitioned = await this.repository.markAccountDeletionNotificationForManualReview({
             requestId: notice.request_id,
             leaseToken,
             providerEvent: "invalid_idempotent_request",
             error: "The provider reports that this idempotency key is bound to a different payload; automatic retry is blocked.",
             now,
           });
-          summary.manualReview += 1;
+          if (transitioned) summary.manualReview += 1;
           continue;
         }
         if (notificationError?.outcome === "permanent") {
-          this.repository.markAccountDeletionNotificationFailed({
+          const transitioned = await this.repository.markAccountDeletionNotificationFailed({
             requestId: notice.request_id,
             leaseToken,
             error: notificationError.message,
             now,
           });
-          summary.failed += 1;
+          if (transitioned) summary.failed += 1;
           continue;
         }
         const nextAttemptAt = addMinutes(now, retryDelayMinutes(notice.attempt_count));
-        this.repository.deferAccountDeletionNotification({
+        const transitioned = await this.repository.deferAccountDeletionNotification({
           requestId: notice.request_id,
           leaseToken,
           nextAttemptAt,
           error: notificationError?.message ?? "Account deletion notification delivery failed.",
           now,
         });
-        summary.deferred += 1;
+        if (transitioned) summary.deferred += 1;
       }
     }
-    this.repository.checkpointAccountDeletionNotificationSecrets();
-    summary.securePurgeCheckpointPendingCount = this.repository
-      .getAccountDeletionNotificationQueueSummary(now)
-      .securePurgeCheckpointPendingCount;
+    await this.checkpointRecipientSecrets();
+    summary.securePurgeCheckpointPendingCount = (
+      await this.repository.getAccountDeletionNotificationQueueSummary(now)
+    ).securePurgeCheckpointPendingCount;
     return summary;
   }
 
-  handleVerifiedWebhook(input: {
+  async handleVerifiedWebhook(input: {
     rawBody: Buffer;
     headers: ResendWebhookHeaders;
     signingSecret: string;
     now?: Date | undefined;
-  }): { received: true; duplicate: boolean; matched: boolean } {
+  }): Promise<{ received: true; duplicate: boolean; matched: boolean }> {
     const now = input.now ?? new Date();
     const event = verifyResendWebhook({ ...input, now });
     if (!event.relevant) {
       return { received: true, duplicate: false, matched: false };
     }
-    const result = this.repository.recordAccountDeletionNotificationWebhook({
+    const result = await this.repository.recordAccountDeletionNotificationWebhook({
       eventId: event.eventId,
       providerMessageId: event.providerMessageId,
       eventType: event.type,
@@ -677,7 +692,7 @@ export class AccountDeletionNotificationCoordinator {
     if (
       event.outcome === "delivered"
       && result.matched
-      && !this.repository.checkpointAccountDeletionNotificationSecrets()
+      && !await this.checkpointRecipientSecrets()
     ) {
       // Resend retries non-2xx webhook responses. The event insert is
       // idempotent, and the durable purge flag keeps retrying WAL truncation.

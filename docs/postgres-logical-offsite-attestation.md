@@ -1,0 +1,324 @@
+# PostgreSQL logical backup operational-copy attestation
+
+Status: the isolated permanent-staging upload, live database-bound readiness
+probe, and one complete byte-for-byte retrieval have passed. This remains a
+mutable same-provider operational copy, not provider-enforced WORM evidence.
+
+This runbook publishes an already-created, hardened PostgreSQL 17 logical
+backup to the existing private Supabase **operational restore-copy** bucket,
+verifies the remote bytes and metadata, and only then records the bounded
+hash-only `job:postgres_logical_backup_success` system-state attestation.
+
+It does not run `pg_dump` in the web process, create a provider project or
+bucket, change provider billing, prune old objects, or replace the separately
+maintained account-deletion tombstone ledger. This operational copy is mutable
+and same-provider; it is not the separately administered WORM disaster-recovery
+authority required for full-scale recovery assurance.
+
+## 1. Preconditions
+
+Complete these checks from a protected operator host, not a Railway web shell:
+
+- PostgreSQL 17 `pg_dump` and `pg_restore` are installed for the hardened local
+  logical-backup command.
+- The production backup login is direct, TLS-protected, non-superuser,
+  non-replication, non-`BYPASSRLS`, read-only, and separate from the runtime
+  login. It must permit at least two concurrent connections: one exported
+  snapshot holder and one `pg_dump` reader.
+- The runtime login is the canonical `pintpath_runtime` login used by the app.
+  It is needed only to verify runtime identity and write the lease/attestation
+  rows in `pintpath_app.system_state`.
+- `OFFSITE_BACKUP_SUPABASE_URL` is a different HTTPS origin from `SUPABASE_URL`.
+- `OFFSITE_BACKUP_BUCKET` already exists in that operational-copy project, is
+  private, permits `application/json` and `application/octet-stream`, and its
+  object limit is at least the archive size. Do not provision or resize it as
+  part of this command.
+- The approved release record contains the independently reviewed SHA-256 of
+  the exact destination HTTPS origin and bucket name. Supply those protected
+  pins verbatim. Do not calculate them from the current operator environment
+  during this invocation; doing so would turn a misconfigured destination into
+  first-use authority for the full archive.
+- The service-role key is scoped to that operational-copy project. Treat it as
+  destructive because it can overwrite the mutable latest pointer.
+- The destination project must expose non-empty, bounded `id` and `version`
+  values from Supabase Storage `info()` for every uploaded object. The command
+  fails closed if this capability is absent.
+- No restore-rehearsal marker is active. The shared operator mutation guard
+  rejects this command inside a restore rehearsal.
+
+Create four separate operator-owned paths. All secret files must be regular,
+non-symlink files readable only by the current user; the backup output must not
+exist yet.
+
+```sh
+umask 077
+export RELEASE_ROOT=/absolute/private/pintpath-release-YYYYMMDDTHHMMSSZ
+mkdir -m 700 "$RELEASE_ROOT"
+
+export BACKUP_CONNECTION_FILE="$RELEASE_ROOT/postgres-backup-url"
+export RUNTIME_DATABASE_URL_FILE="$RELEASE_ROOT/postgres-runtime-url"
+export OFFSITE_SERVICE_ROLE_KEY_FILE="$RELEASE_ROOT/offsite-service-role.key"
+export LOGICAL_BACKUP_DIRECTORY="$RELEASE_ROOT/postgres-logical-backup"
+
+test -f "$BACKUP_CONNECTION_FILE" && test ! -L "$BACKUP_CONNECTION_FILE"
+test -f "$RUNTIME_DATABASE_URL_FILE" && test ! -L "$RUNTIME_DATABASE_URL_FILE"
+test -f "$OFFSITE_SERVICE_ROLE_KEY_FILE" && test ! -L "$OFFSITE_SERVICE_ROLE_KEY_FILE"
+chmod 600 \
+  "$BACKUP_CONNECTION_FILE" \
+  "$RUNTIME_DATABASE_URL_FILE" \
+  "$OFFSITE_SERVICE_ROLE_KEY_FILE"
+test ! -e "$LOGICAL_BACKUP_DIRECTORY"
+```
+
+The two PostgreSQL URLs must contain exactly one
+`sslmode=require|verify-ca|verify-full` value. Never put either URL or the
+service-role key in arguments, shell tracing, logs, Git, screenshots, or the
+attestation evidence file.
+
+## 2. Create the hardened local logical backup
+
+```sh
+export BACKUP_RESULT="$RELEASE_ROOT/logical-backup-result.json"
+npm run --silent db:postgres:backup:logical -- \
+  --connection-file="$BACKUP_CONNECTION_FILE" \
+  --output="$LOGICAL_BACKUP_DIRECTORY" \
+  >"$BACKUP_RESULT"
+chmod 600 "$BACKUP_RESULT"
+
+jq -e '.ok == true
+  and .schemaVersion == 2
+  and (.manifestSha256 | test("^[a-f0-9]{64}$"))
+  and (.archiveSha256 | test("^[a-f0-9]{64}$"))
+  and (.stateReceiptSha256 | test("^[a-f0-9]{64}$"))
+  and (.overallStateSha256 | test("^[a-f0-9]{64}$"))' \
+  "$BACKUP_RESULT"
+
+export EXPECTED_MANIFEST_SHA256="$(jq -er '.manifestSha256' "$BACKUP_RESULT")"
+test "$(stat -f '%Lp' "$LOGICAL_BACKUP_DIRECTORY" 2>/dev/null || stat -c '%a' "$LOGICAL_BACKUP_DIRECTORY")" = 700
+```
+
+The backup command creates exactly these mode-`600` files in the mode-`700`
+directory:
+
+- `pintpath-postgres.dump`
+- `manifest.json`
+- `state-receipt.json`
+
+It already validates the PostgreSQL 17 tools, exported snapshot, archive TOC,
+schema/ACL scope, migration contract, authoritative table inventory, control
+tables, and state receipt. The off-site command re-parses the exact restore
+authority's manifest and receipt contract before any Storage write.
+
+## 3. Upload, verify, and attest the operational copy
+
+Choose a non-secret, stable operator/change reference. The command stores only
+its SHA-256 hash.
+
+```sh
+: "${SUPABASE_URL:?set the production Supabase HTTPS origin}"
+: "${OFFSITE_BACKUP_SUPABASE_URL:?set the distinct operational-copy HTTPS origin}"
+export OFFSITE_BACKUP_BUCKET="${OFFSITE_BACKUP_BUCKET:-pintpath-backups}"
+: "${EXPECTED_OFFSITE_DESTINATION_ORIGIN_SHA256:?set the reviewed destination-origin SHA-256}"
+: "${EXPECTED_OFFSITE_BUCKET_NAME_SHA256:?set the reviewed bucket-name SHA-256}"
+printf '%s\n' "$EXPECTED_OFFSITE_DESTINATION_ORIGIN_SHA256" \
+  | grep -Eq '^[a-f0-9]{64}$'
+printf '%s\n' "$EXPECTED_OFFSITE_BUCKET_NAME_SHA256" \
+  | grep -Eq '^[a-f0-9]{64}$'
+export OPERATOR_REFERENCE="approved-change-reference"
+export OFFSITE_ATTESTATION_RESULT="$RELEASE_ROOT/logical-offsite-attestation.json"
+
+PINTPATH_POSTGRES_LOGICAL_OFFSITE=confirmed \
+SUPABASE_URL="$SUPABASE_URL" \
+OFFSITE_BACKUP_SUPABASE_URL="$OFFSITE_BACKUP_SUPABASE_URL" \
+OFFSITE_BACKUP_BUCKET="$OFFSITE_BACKUP_BUCKET" \
+  npm run --silent db:postgres:backup:logical:offsite -- \
+    --backup-directory="$LOGICAL_BACKUP_DIRECTORY" \
+    --backup-manifest-sha256="$EXPECTED_MANIFEST_SHA256" \
+    --expected-destination-origin-sha256="$EXPECTED_OFFSITE_DESTINATION_ORIGIN_SHA256" \
+    --expected-bucket-name-sha256="$EXPECTED_OFFSITE_BUCKET_NAME_SHA256" \
+    --runtime-database-url-file="$RUNTIME_DATABASE_URL_FILE" \
+    --service-role-key-file="$OFFSITE_SERVICE_ROLE_KEY_FILE" \
+    --operator-id="$OPERATOR_REFERENCE" \
+  >"$OFFSITE_ATTESTATION_RESULT"
+chmod 600 "$OFFSITE_ATTESTATION_RESULT"
+
+jq -e --arg manifest "$EXPECTED_MANIFEST_SHA256" \
+  '.ok == true
+   and .schemaVersion == 1
+   and .manifestSha256 == $manifest
+   and (.attestationSha256 | test("^[a-f0-9]{64}$"))
+   and (.latestPointerSha256 | test("^[a-f0-9]{64}$"))
+   and (.remoteObjectSetSha256 | test("^[a-f0-9]{64}$"))
+   and (.backupIdSha256 | test("^[a-f0-9]{64}$"))' \
+  "$OFFSITE_ATTESTATION_RESULT"
+```
+
+The command performs this fixed sequence:
+
+1. validates the private directory, exact file set, ownership, modes, regular
+   files, link count, stable inode/timestamps/size, trusted manifest hash,
+   archive hash/size, receipt hash, and manifest-to-receipt state binding;
+2. verifies the source and destination Supabase origins differ, the destination
+   origin and bucket match the protected reviewed hashes, and the supplied
+   Storage transport is bound to that destination;
+3. verifies the connected runtime PostgreSQL database identity is exactly the
+   source identity bound into the manifest, before any Storage mutation;
+4. verifies the existing destination bucket is private and compatible and the
+   runtime PostgreSQL role/schema/import/ACL isolation contract is healthy;
+5. acquires the fenced
+   `lease:postgres_logical_backup_offsite_attestation` system-state lease;
+6. uploads immutable archive, manifest, and state receipt objects beneath
+   `_control/postgres-logical-backups/v2/backups/` (the archive uses the
+   Supabase TUS endpoint with the required 6 MiB chunks and bounded retries);
+7. re-downloads every object with cache bypass, streams and checks its exact
+   bytes/SHA-256, and independently checks size, MIME, cache policy, and custom
+   hash metadata; the Storage `id` and `version` must also remain identical
+   across the pre-download and post-download `info()` calls;
+8. re-hashes the local files to detect mutation during transfer;
+9. writes and re-verifies an immutable canonical attestation, then writes and
+   re-verifies the canonical latest pointer;
+10. compare-and-set writes the exact hash-only
+    `job:postgres_logical_backup_success` value and releases the lease.
+
+The success output contains timestamps, hashes, and schema version only. It
+contains no URL, object path, bucket name, operator reference, credential,
+database row, or customer data.
+
+## 4. Retrieve the exact operational copy
+
+Use the protected release register's independently captured SHA-256 of the
+complete canonical `job:postgres_logical_backup_success` value. Do not derive
+that expected hash, the destination-origin pin, or the bucket-name pin from the
+same mutable environment being tested. The output parent must be a physical,
+current-user-owned directory with no group/other permissions, and the requested
+output directory must not exist.
+
+```sh
+: "${SUPABASE_URL:?set the source Supabase HTTPS origin}"
+: "${OFFSITE_BACKUP_SUPABASE_URL:?set the distinct operational-copy HTTPS origin}"
+export OFFSITE_BACKUP_BUCKET="${OFFSITE_BACKUP_BUCKET:-pintpath-backups}"
+: "${EXPECTED_LOGICAL_SUCCESS_STATE_SHA256:?set the reviewed success-state SHA-256}"
+: "${EXPECTED_OFFSITE_DESTINATION_ORIGIN_SHA256:?set the reviewed destination-origin SHA-256}"
+: "${EXPECTED_OFFSITE_BUCKET_NAME_SHA256:?set the reviewed bucket-name SHA-256}"
+export RETRIEVED_LOGICAL_BACKUP_DIRECTORY="$RELEASE_ROOT/retrieved-postgres-logical-backup"
+export OFFSITE_RETRIEVAL_RESULT="$RELEASE_ROOT/logical-offsite-retrieval.json"
+
+test ! -e "$RETRIEVED_LOGICAL_BACKUP_DIRECTORY"
+SUPABASE_URL="$SUPABASE_URL" \
+OFFSITE_BACKUP_SUPABASE_URL="$OFFSITE_BACKUP_SUPABASE_URL" \
+OFFSITE_BACKUP_BUCKET="$OFFSITE_BACKUP_BUCKET" \
+  npm run --silent db:postgres:backup:logical:retrieve -- \
+    --expected-success-state-sha256="$EXPECTED_LOGICAL_SUCCESS_STATE_SHA256" \
+    --expected-destination-origin-sha256="$EXPECTED_OFFSITE_DESTINATION_ORIGIN_SHA256" \
+    --expected-bucket-name-sha256="$EXPECTED_OFFSITE_BUCKET_NAME_SHA256" \
+    --output-directory="$RETRIEVED_LOGICAL_BACKUP_DIRECTORY" \
+    --runtime-database-url-file="$RUNTIME_DATABASE_URL_FILE" \
+    --service-role-key-file="$OFFSITE_SERVICE_ROLE_KEY_FILE" \
+  >"$OFFSITE_RETRIEVAL_RESULT"
+chmod 600 "$OFFSITE_RETRIEVAL_RESULT"
+
+jq -e --arg state "$EXPECTED_LOGICAL_SUCCESS_STATE_SHA256" \
+  '.ok == true
+   and .schemaVersion == 1
+   and .kind == "pintpath-postgres-logical-offsite-retrieval"
+   and .successStateSha256 == $state
+   and (.archiveSha256 | test("^[a-f0-9]{64}$"))
+   and (.manifestSha256 | test("^[a-f0-9]{64}$"))
+   and (.stateReceiptSha256 | test("^[a-f0-9]{64}$"))
+   and (.localArtifactSetSha256 | test("^[a-f0-9]{64}$"))' \
+  "$OFFSITE_RETRIEVAL_RESULT"
+```
+
+The retriever is read-only at the provider. It performs this fixed contract:
+
+1. checks canonical arguments, the distinct source/destination origins, both
+   reviewed destination pins, canonical runtime readiness, and the connected
+   source database identity;
+2. reads and strictly parses the complete live success state, requires its
+   canonical SHA-256 to equal the operator pin, and retains the state revision
+   as the first half of an execution-wide fence;
+3. requires the bucket to remain private, then downloads and verifies the
+   canonical latest pointer and immutable attestation against their hashes,
+   custom metadata, exact Storage `id`, and exact Storage `version`;
+4. checks all three attested artifact descriptors, creates one new exact
+   mode-`700` output directory, and streams the manifest, state receipt, and
+   archive into exclusive mode-`600` regular files with independent byte-count
+   and SHA-256 checks;
+5. compares each object's complete normalized Storage metadata, `id`, and
+   `version` before and after its stream, re-hashes each local file, strictly
+   parses the restore manifest and receipt, and verifies their full binding;
+6. re-downloads the latest pointer and rereads the live success-state revision
+   after all bytes are durable, failing if either authority changed; and
+7. emits only timestamps, decimal byte counts, and hashes. It never emits the
+   raw backup ID, object path, bucket, origin, credential, database identity
+   components, or local path.
+
+Success leaves exactly `pintpath-postgres.dump`, `manifest.json`, and
+`state-receipt.json` in the new restore-compatible directory. Ordinary failure
+removes only that invocation's exact partial directory; an unexpected entry or
+directory-identity change fails cleanup closed instead of recursively deleting
+an untrusted path. The staging recovery proof retrieved the pre-deletion set by
+this contract and matched all three remote objects byte-for-byte before restore.
+That closes only operational-copy transport evidence. Private application
+Storage recovery, a full application boot, PITR, provider-enforced WORM,
+approved RPO/RTO objectives, and production restore/cutover remain open.
+
+## 5. Readiness meaning
+
+The SystemState value is accepted only when it has the exact kind/version,
+canonical timestamps, and complete SHA-256 binding set. A migrated legacy
+SQLite value such as `{ "completedAt": "..." }` is invalid. Attestation v2
+also fails closed on a v1 state/pointer/attestation; create a fresh v2
+attestation instead of translating old evidence. No live v1 provider
+attestation existed when this contract was introduced.
+
+The read-only readiness probe validates freshness from `backupCreatedAt`, the
+live connected runtime database identity, and destination/bucket hashes. It
+downloads and verifies the fixed latest pointer plus its immutable attestation,
+and checks that all three bound backup objects still exist with the attested
+size/MIME/cache/custom metadata and exact hash-only Storage `id`/`version`
+binding. Every probe also downloads and SHA-256 verifies the bounded manifest
+and state receipt, strictly parses both, and rechecks their complete binding;
+it does not re-download the archive, which may be as large as 50 GiB. It
+performs no Storage write or delete. The web `/ready` path must pass the
+complete SystemState value and a freshly computed runtime database identity to
+this probe; it must never accept `value.completedAt` by itself.
+
+Supabase Storage `id` plus `version` detects replacement through the normal
+Storage API (`version` changes on upsert; `id` changes on delete/recreate). It
+is an opaque provider generation binding, not S3 bucket versioning, Object
+Lock, WORM, or independent proof that the archive bytes are unchanged.
+Storage `info()` ETag/size values are upload metadata; a TUS/multipart ETag is
+not a whole-object SHA-256 and is deliberately not a content authority here.
+The initial attestation always streams and hashes the full archive. Residual
+protection against privileged Storage database/backend replacement requires a
+scheduled full streamed archive hash or, preferably, the separately
+administered WORM authority plus restore proof.
+
+## 6. Replay and failure recovery
+
+- Exact replay is safe. Immutable objects are never overwritten; existing
+  objects must match their full byte and metadata contract. The latest pointer
+  is overwritten only after all immutable evidence is verified.
+- A different manifest with the same backup timestamp, or any backup older
+  than the current valid Postgres attestation, is rejected as state regression.
+- Before the latest pointer is written, failure cleanup can remove only the
+  exact objects newly created by that invocation under the dedicated logical
+  backup `backups/` or `attestations/` namespaces. It cannot list, prune, or
+  address `_control/account-deletion-*` paths.
+- From the moment mutable latest-pointer mutation is attempted, all immutable
+  evidence is intentionally retained, including when the server may have
+  committed the pointer before returning a transport error. If pointer
+  verification or the final SystemState CAS fails, readiness remains closed
+  because state and pointer do not agree. Resolve the database/lease issue and
+  rerun the exact command; do not hand-edit Storage or SystemState.
+- A crashed invocation leaves a bounded six-hour lease. Do not delete or edit
+  the lease. Investigate the operator host, then retry after expiry.
+- TUS and this operational-copy authority have a 50 GiB per-archive bound. If
+  the logical archive reaches that bound, move the reviewed design to the
+  separately administered large-object/WORM authority; do not split or weaken
+  the manifest contract ad hoc.
+
+No retention deletion is performed here. Any future operational-copy retention
+job needs a separate review, must preserve the latest verified recovery set,
+and must remain unable to alter the deletion tombstone ledger authority.

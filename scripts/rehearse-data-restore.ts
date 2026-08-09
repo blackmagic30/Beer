@@ -38,11 +38,15 @@ function recordRestoreState(databasePath: string, value: Record<string, unknown>
       .get();
     if (!stateTable) return;
     const updatedAt = new Date().toISOString();
+    const revision = `${updatedAt}#restore-rehearsal`;
     database.prepare(
-      `INSERT INTO system_state (key, value_json, updated_at)
-       VALUES ('job:restore_rehearsal', ?, ?)
-       ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at`,
-    ).run(JSON.stringify(value), updatedAt);
+      `INSERT INTO system_state (key, value_json, updated_at, revision)
+       VALUES ('job:restore_rehearsal', ?, ?, ?)
+       ON CONFLICT(key) DO UPDATE SET
+         value_json = excluded.value_json,
+         updated_at = excluded.updated_at,
+         revision = excluded.revision`,
+    ).run(JSON.stringify(value), updatedAt, revision);
   } finally {
     database.close();
   }

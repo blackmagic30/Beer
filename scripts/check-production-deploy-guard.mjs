@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import crypto from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -7,8 +8,37 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const packagePath = path.join(root, "package.json");
 const railwayPath = path.join(root, "railway.toml");
+const serverPath = path.join(root, "src/server.ts");
 const compiledEnvPath = path.join(root, "dist/src/config/env.js");
 const expectedPredeployScript = "NODE_ENV=production node dist/src/config/env.js";
+const syntheticRestoreIdentity = Object.freeze({
+  railwayEnvironmentId: "fixture-restore-environment",
+  railwayProjectId: "fixture-restore-project",
+  railwayServiceId: "fixture-restore-app-service",
+  railwayPublicDomain: "restore-staging-fixture.up.railway.app",
+  redisServiceId: "fixture-restore-redis-service",
+  supabaseUrl: "https://restoreref0000000001.supabase.co",
+});
+const syntheticPermanentStagingSupabaseUrl = "https://stagingref0000000001.supabase.co";
+const syntheticProductionSupabaseUrl = "https://productionref0000001.supabase.co";
+const syntheticBackupSupabaseUrl = "https://backupref00000000001.supabase.co";
+const syntheticProductionDatabaseUrl = "postgresql://ci_app:fixture-password@production-postgres.internal:5432/pintpath?sslmode=require";
+const syntheticProductionRedisUrl = "redis://default:fixture-password@production-redis.internal:6379";
+const syntheticStagingDatabaseUrl = "postgresql://ci_app:fixture-password@staging-postgres.internal:5432/pintpath?sslmode=require";
+const syntheticStagingRedisUrl = "redis://default:fixture-password@staging-redis.internal:6379";
+const syntheticProductionEnvironmentId = "env-production-71b26d90";
+const syntheticStagingEnvironmentId = "env-staging-40e62ca1";
+const syntheticRestoreEnvironmentId = "env-restore-5a821e3c";
+const productionDatabaseResource = `railway:${syntheticProductionEnvironmentId}:svc-postgres-1d829a`;
+const stagingDatabaseResource = `railway:${syntheticStagingEnvironmentId}:svc-postgres-1d829a`;
+const restoreDatabaseResource = `railway:${syntheticRestoreEnvironmentId}:svc-postgres-1d829a`;
+const productionRedisResource = `railway:${syntheticProductionEnvironmentId}:svc-redis-4ac109`;
+const stagingRedisResource = `railway:${syntheticStagingEnvironmentId}:svc-redis-4ac109`;
+const restoreRedisResource = `railway:${syntheticRestoreEnvironmentId}:svc-redis-4ac109`;
+
+function sha256(value) {
+  return crypto.createHash("sha256").update(value, "utf8").digest("hex");
+}
 
 function assert(condition, message) {
   if (!condition) {
@@ -32,11 +62,40 @@ assert(
   existsSync(compiledEnvPath),
   "dist/src/config/env.js is missing. Run npm run build before checking the production deploy guard.",
 );
+const serverSource = readFileSync(serverPath, "utf8");
+assert(
+  serverSource.indexOf("assertApplicationServerStartAllowed();") >= 0
+    && serverSource.indexOf("assertApplicationServerStartAllowed();") < serverSource.indexOf('import("./app.js")'),
+  "src/server.ts must reject staging-bootstrap before importing the app, routes, or workers.",
+);
 
 const productionFixture = {
   NODE_ENV: "production",
   RAILWAY_ENVIRONMENT_NAME: "production",
+  RAILWAY_ENVIRONMENT_ID: syntheticProductionEnvironmentId,
+  RAILWAY_PROJECT_ID: "project-pintpath-4af98c",
+  RAILWAY_SERVICE_ID: "svc-pintpath-app-92d01b",
   PUBLIC_BASE_URL: "https://pintpath.au",
+  DATABASE_URL: syntheticProductionDatabaseUrl,
+  DATABASE_PATH: "",
+  PINTPATH_IDENTITY_REGISTRY_PHASE: "complete",
+  PINTPATH_DATABASE_RESOURCE_ID: productionDatabaseResource,
+  PINTPATH_EXPECTED_DATABASE_RESOURCE_ID: productionDatabaseResource,
+  PINTPATH_FORBIDDEN_DATABASE_RESOURCE_IDS: `${stagingDatabaseResource},${restoreDatabaseResource}`,
+  PINTPATH_EXPECTED_DATABASE_URL_SHA256: sha256(syntheticProductionDatabaseUrl),
+  PINTPATH_FORBIDDEN_DATABASE_URL_SHA256S: `${sha256(syntheticStagingDatabaseUrl)},${sha256("restore-database-url")}`,
+  PINTPATH_PERMANENT_STAGING_DATABASE_RESOURCE_ID: stagingDatabaseResource,
+  PINTPATH_PERMANENT_STAGING_DATABASE_URL_SHA256: sha256(syntheticStagingDatabaseUrl),
+  REDIS_URL: syntheticProductionRedisUrl,
+  PINTPATH_REDIS_RESOURCE_ID: productionRedisResource,
+  PINTPATH_EXPECTED_REDIS_RESOURCE_ID: productionRedisResource,
+  PINTPATH_FORBIDDEN_REDIS_RESOURCE_IDS: `${stagingRedisResource},${restoreRedisResource}`,
+  PINTPATH_EXPECTED_REDIS_URL_SHA256: sha256(syntheticProductionRedisUrl),
+  PINTPATH_FORBIDDEN_REDIS_URL_SHA256S: `${sha256(syntheticStagingRedisUrl)},${sha256("restore-redis-url")}`,
+  PINTPATH_PERMANENT_STAGING_REDIS_RESOURCE_ID: stagingRedisResource,
+  PINTPATH_PERMANENT_STAGING_REDIS_URL_SHA256: sha256(syntheticStagingRedisUrl),
+  REQUIRE_REDIS_RATE_LIMITING: "true",
+  ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION: "false",
   PORT: "3000",
   GOOGLE_MAPS_API_KEY: "ci-maps-browser-key",
   GOOGLE_MAPS_MAP_ID: "ci-vector-map-id",
@@ -71,32 +130,42 @@ const productionFixture = {
 
 const restoreRehearsalFixture = {
   NODE_ENV: "production",
+  PINTPATH_IDENTITY_REGISTRY_PHASE: "complete",
   RAILWAY_ENVIRONMENT_NAME: "staging",
-  RAILWAY_ENVIRONMENT_ID: "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
-  RAILWAY_PROJECT_ID: "48d8c6cd-1c66-4148-874b-20877f48e1a5",
-  RAILWAY_SERVICE_ID: "6816c4a2-e392-4ee5-826f-2584cb599ec0",
+  RAILWAY_ENVIRONMENT_ID: syntheticRestoreIdentity.railwayEnvironmentId,
+  RAILWAY_PROJECT_ID: syntheticRestoreIdentity.railwayProjectId,
+  RAILWAY_SERVICE_ID: syntheticRestoreIdentity.railwayServiceId,
   RAILWAY_VOLUME_MOUNT_PATH: "/app/data",
-  RAILWAY_PUBLIC_DOMAIN: "beer-staging.up.railway.app",
+  RAILWAY_PUBLIC_DOMAIN: syntheticRestoreIdentity.railwayPublicDomain,
   RESTORE_REHEARSAL_MODE: "true",
   RESTORE_REHEARSAL_PHASE: "active",
   RESTORE_REHEARSAL_BACKUP_ID: "pint-path-ci-backup",
   RESTORE_REHEARSAL_SOURCE_MANIFEST_SHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   RESTORE_REHEARSAL_RUNTIME_ATTESTATION_SHA256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-  RESTORE_REHEARSAL_PRODUCTION_SUPABASE_URL: "https://jxpubqlmqnnqwadmjgyk.supabase.co",
-  RESTORE_REHEARSAL_BACKUP_SUPABASE_URL: "https://gjjffexmflwtnewtkkiy.supabase.co",
-  RESTORE_REHEARSAL_REDIS_ENVIRONMENT_ID: "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
-  RESTORE_REHEARSAL_REDIS_SERVICE_ID: "d6351cec-fe04-4a6f-8e05-1cc164ea1e73",
+  RESTORE_REHEARSAL_EXPECTED_RAILWAY_ENVIRONMENT_ID: syntheticRestoreIdentity.railwayEnvironmentId,
+  RESTORE_REHEARSAL_EXPECTED_RAILWAY_PROJECT_ID: syntheticRestoreIdentity.railwayProjectId,
+  RESTORE_REHEARSAL_EXPECTED_RAILWAY_SERVICE_ID: syntheticRestoreIdentity.railwayServiceId,
+  RESTORE_REHEARSAL_EXPECTED_SUPABASE_URL: syntheticRestoreIdentity.supabaseUrl,
+  RESTORE_REHEARSAL_EXPECTED_REDIS_SERVICE_ID: syntheticRestoreIdentity.redisServiceId,
+  RESTORE_REHEARSAL_PRODUCTION_SUPABASE_URL: syntheticProductionSupabaseUrl,
+  RESTORE_REHEARSAL_BACKUP_SUPABASE_URL: syntheticBackupSupabaseUrl,
+  RESTORE_REHEARSAL_REDIS_ENVIRONMENT_ID: syntheticRestoreIdentity.railwayEnvironmentId,
+  RESTORE_REHEARSAL_REDIS_SERVICE_ID: syntheticRestoreIdentity.redisServiceId,
   RESTORE_REHEARSAL_REDIS_SENTINEL: "ci-restore-redis-sentinel-42fbe92a-2f56",
   RESTORE_REHEARSAL_ACCESS_USERNAME: "restore-operator",
   RESTORE_REHEARSAL_ACCESS_PASSWORD: "ci-restore-access-1cd92e0a-784f-4f21",
-  PUBLIC_BASE_URL: "https://beer-staging.up.railway.app",
+  PUBLIC_BASE_URL: `https://${syntheticRestoreIdentity.railwayPublicDomain}`,
   DATABASE_PATH: "/app/data/restore-pint-path-ci-backup/pint-path.sqlite",
+  PINTPATH_FORBIDDEN_DATABASE_RESOURCE_IDS: `${stagingDatabaseResource},${productionDatabaseResource}`,
+  PINTPATH_FORBIDDEN_DATABASE_URL_SHA256S: `${sha256(syntheticStagingDatabaseUrl)},${sha256(syntheticProductionDatabaseUrl)}`,
+  PINTPATH_PERMANENT_STAGING_DATABASE_RESOURCE_ID: stagingDatabaseResource,
+  PINTPATH_PERMANENT_STAGING_DATABASE_URL_SHA256: sha256(syntheticStagingDatabaseUrl),
   SOURCE_EVIDENCE_STORAGE_DIR: "/app/data/restore-pint-path-ci-backup/source-evidence",
   GOOGLE_MAPS_API_KEY: "ci-staging-origin-restricted-maps-key",
   GOOGLE_MAPS_MAP_ID: "ci-staging-vector-map-id",
   GOOGLE_PLACES_API_KEY: "",
   OPENAI_API_KEY: "",
-  SUPABASE_URL: "https://ibveugyfyzjptyvautlr.supabase.co",
+  SUPABASE_URL: syntheticRestoreIdentity.supabaseUrl,
   SUPABASE_ANON_KEY: "ci-restore-browser-key",
   SUPABASE_SERVICE_ROLE_KEY: "ci-restore-service-key",
   SUPABASE_OAUTH_PROVIDERS: "",
@@ -105,7 +174,11 @@ const restoreRehearsalFixture = {
   SOURCE_EVIDENCE_SIGNING_SECRET: "ci-restore-source-bb07c1be-75cf-4ec8-b8f6",
   POS_WEBHOOK_SIGNING_SECRET: "",
   REDIS_URL: "redis://default:fixture-password@redis.railway.internal:6379",
-  REDIS_KEY_NAMESPACE: "pint-path:restore:a4e0f507-d6d3-4df9-a818-ad92c0071a35:pint-path-ci-backup",
+  PINTPATH_FORBIDDEN_REDIS_RESOURCE_IDS: `${stagingRedisResource},${productionRedisResource}`,
+  PINTPATH_FORBIDDEN_REDIS_URL_SHA256S: `${sha256(syntheticStagingRedisUrl)},${sha256(syntheticProductionRedisUrl)}`,
+  PINTPATH_PERMANENT_STAGING_REDIS_RESOURCE_ID: stagingRedisResource,
+  PINTPATH_PERMANENT_STAGING_REDIS_URL_SHA256: sha256(syntheticStagingRedisUrl),
+  REDIS_KEY_NAMESPACE: `pint-path:restore:${syntheticRestoreIdentity.railwayEnvironmentId}:pint-path-ci-backup`,
   REQUIRE_REDIS_RATE_LIMITING: "true",
   DEMO_BILLING_MODE: "false",
   ALLOW_DEMO_BILLING_IN_PRODUCTION: "false",
@@ -172,6 +245,38 @@ function assertExit(result, expectedSuccess, label) {
 }
 
 assertExit(runValidator(), true, "Complete production environment validation");
+for (const nodeEnv of ["", "development"]) {
+  assertExit(
+    runValidator({ overrides: { NODE_ENV: nodeEnv } }),
+    false,
+    `Hosted production validation with NODE_ENV=${nodeEnv || "unset"}`,
+  );
+}
+
+for (const variable of [
+  "DATABASE_URL",
+  "PINTPATH_DATABASE_RESOURCE_ID",
+  "PINTPATH_EXPECTED_DATABASE_RESOURCE_ID",
+  "PINTPATH_FORBIDDEN_DATABASE_RESOURCE_IDS",
+  "PINTPATH_EXPECTED_DATABASE_URL_SHA256",
+  "PINTPATH_FORBIDDEN_DATABASE_URL_SHA256S",
+  "PINTPATH_PERMANENT_STAGING_DATABASE_RESOURCE_ID",
+  "PINTPATH_PERMANENT_STAGING_DATABASE_URL_SHA256",
+  "REDIS_URL",
+  "PINTPATH_REDIS_RESOURCE_ID",
+  "PINTPATH_EXPECTED_REDIS_RESOURCE_ID",
+  "PINTPATH_FORBIDDEN_REDIS_RESOURCE_IDS",
+  "PINTPATH_EXPECTED_REDIS_URL_SHA256",
+  "PINTPATH_FORBIDDEN_REDIS_URL_SHA256S",
+  "PINTPATH_PERMANENT_STAGING_REDIS_RESOURCE_ID",
+  "PINTPATH_PERMANENT_STAGING_REDIS_URL_SHA256",
+]) {
+  assertExit(
+    runValidator({ unset: [variable] }),
+    false,
+    `Production validation without connection identity ${variable}`,
+  );
+}
 
 for (const variable of ["OFFSITE_BACKUP_SUPABASE_URL", "OFFSITE_BACKUP_SERVICE_ROLE_KEY"]) {
   assertExit(
@@ -192,6 +297,27 @@ assertExit(
   true,
   "Complete restore rehearsal environment validation",
 );
+for (const variable of [
+  "RESTORE_REHEARSAL_EXPECTED_RAILWAY_ENVIRONMENT_ID",
+  "RESTORE_REHEARSAL_EXPECTED_RAILWAY_PROJECT_ID",
+  "RESTORE_REHEARSAL_EXPECTED_RAILWAY_SERVICE_ID",
+  "RESTORE_REHEARSAL_EXPECTED_SUPABASE_URL",
+  "RESTORE_REHEARSAL_EXPECTED_REDIS_SERVICE_ID",
+  "PINTPATH_FORBIDDEN_DATABASE_RESOURCE_IDS",
+  "PINTPATH_FORBIDDEN_DATABASE_URL_SHA256S",
+  "PINTPATH_PERMANENT_STAGING_DATABASE_RESOURCE_ID",
+  "PINTPATH_PERMANENT_STAGING_DATABASE_URL_SHA256",
+  "PINTPATH_FORBIDDEN_REDIS_RESOURCE_IDS",
+  "PINTPATH_FORBIDDEN_REDIS_URL_SHA256S",
+  "PINTPATH_PERMANENT_STAGING_REDIS_RESOURCE_ID",
+  "PINTPATH_PERMANENT_STAGING_REDIS_URL_SHA256",
+]) {
+  assertExit(
+    runValidator({ fixture: restoreRehearsalFixture, unset: [variable] }),
+    false,
+    `Restore validation without protected pin ${variable}`,
+  );
+}
 assertExit(
   runValidator({ fixture: restoreRehearsalFixture, overrides: { RESTORE_REHEARSAL_MODE: "false" } }),
   false,
@@ -200,21 +326,123 @@ assertExit(
 const ordinaryStagingFixture = {
   NODE_ENV: "production",
   RAILWAY_ENVIRONMENT_NAME: "staging",
-  RAILWAY_ENVIRONMENT_ID: "ordinary-staging-environment",
+  RAILWAY_ENVIRONMENT_ID: syntheticStagingEnvironmentId,
+  RAILWAY_PROJECT_ID: "project-pintpath-4af98c",
+  RAILWAY_SERVICE_ID: "svc-pintpath-app-92d01b",
   PUBLIC_BASE_URL: "https://ordinary-staging.up.railway.app",
+  PINTPATH_IDENTITY_REGISTRY_PHASE: "staging-bootstrap",
+  PINTPATH_PERMANENT_STAGING_RAILWAY_ENVIRONMENT_ID: syntheticStagingEnvironmentId,
+  PINTPATH_PERMANENT_STAGING_RAILWAY_PROJECT_ID: "project-pintpath-4af98c",
+  PINTPATH_PERMANENT_STAGING_RAILWAY_SERVICE_ID: "svc-pintpath-app-92d01b",
+  DATABASE_URL: syntheticStagingDatabaseUrl,
+  DATABASE_PATH: "",
+  PINTPATH_DATABASE_RESOURCE_ID: stagingDatabaseResource,
+  PINTPATH_EXPECTED_DATABASE_RESOURCE_ID: stagingDatabaseResource,
+  PINTPATH_FORBIDDEN_DATABASE_RESOURCE_IDS: "",
+  PINTPATH_EXPECTED_DATABASE_URL_SHA256: sha256(syntheticStagingDatabaseUrl),
+  PINTPATH_FORBIDDEN_DATABASE_URL_SHA256S: "",
+  PINTPATH_PERMANENT_STAGING_DATABASE_RESOURCE_ID: stagingDatabaseResource,
+  PINTPATH_PERMANENT_STAGING_DATABASE_URL_SHA256: sha256(syntheticStagingDatabaseUrl),
+  REDIS_URL: syntheticStagingRedisUrl,
+  PINTPATH_REDIS_RESOURCE_ID: stagingRedisResource,
+  PINTPATH_EXPECTED_REDIS_RESOURCE_ID: stagingRedisResource,
+  PINTPATH_FORBIDDEN_REDIS_RESOURCE_IDS: "",
+  PINTPATH_EXPECTED_REDIS_URL_SHA256: sha256(syntheticStagingRedisUrl),
+  PINTPATH_FORBIDDEN_REDIS_URL_SHA256S: "",
+  PINTPATH_PERMANENT_STAGING_REDIS_RESOURCE_ID: stagingRedisResource,
+  PINTPATH_PERMANENT_STAGING_REDIS_URL_SHA256: sha256(syntheticStagingRedisUrl),
+  REDIS_KEY_NAMESPACE: "pintpath:permanent-staging-bootstrap",
+  REQUIRE_REDIS_RATE_LIMITING: "true",
+  ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION: "false",
   SOURCE_EVIDENCE_SIGNING_SECRET: "ci-staging-source-bf644d2c-401c-493b-b590",
   POS_WEBHOOK_SIGNING_SECRET: "ci-staging-pos-f71ed34d-c2dd-4175-bda0",
   DEMO_BILLING_MODE: "false",
+  ACCOUNT_DELETION_NOTICE_MODE: "disabled",
 };
 assertExit(
   runValidator({ fixture: ordinaryStagingFixture }),
   true,
-  "Clean ordinary staging validation",
+  "Clean operator-only staging identity bootstrap validation",
+);
+for (const variable of [
+  "REDIS_URL",
+  "PINTPATH_PERMANENT_STAGING_RAILWAY_PROJECT_ID",
+  "PINTPATH_PERMANENT_STAGING_RAILWAY_ENVIRONMENT_ID",
+  "PINTPATH_PERMANENT_STAGING_RAILWAY_SERVICE_ID",
+  "PINTPATH_PERMANENT_STAGING_DATABASE_RESOURCE_ID",
+  "PINTPATH_PERMANENT_STAGING_DATABASE_URL_SHA256",
+  "PINTPATH_PERMANENT_STAGING_REDIS_RESOURCE_ID",
+  "PINTPATH_PERMANENT_STAGING_REDIS_URL_SHA256",
+]) {
+  assertExit(
+    runValidator({ fixture: ordinaryStagingFixture, unset: [variable] }),
+    false,
+    `Staging bootstrap without protected self pin ${variable}`,
+  );
+}
+assertExit(
+  runValidator({
+    fixture: ordinaryStagingFixture,
+    overrides: { PINTPATH_FORBIDDEN_DATABASE_RESOURCE_IDS: productionDatabaseResource },
+  }),
+  false,
+  "Staging bootstrap with invented sibling identities",
+);
+assertExit(
+  runValidator({
+    fixture: ordinaryStagingFixture,
+    overrides: { PINTPATH_DATABASE_RESOURCE_ID: `railway:${syntheticStagingEnvironmentId}:fixture-postgres` },
+  }),
+  false,
+  "Staging bootstrap with a placeholder resource identity",
+);
+assertExit(
+  runValidator({
+    fixture: ordinaryStagingFixture,
+    overrides: { RAILWAY_ENVIRONMENT_NAME: "production" },
+  }),
+  false,
+  "Production validation with staging-bootstrap phase",
+);
+for (const nodeEnv of ["", "development"]) {
+  assertExit(
+    runValidator({ fixture: ordinaryStagingFixture, overrides: { NODE_ENV: nodeEnv } }),
+    false,
+    `Ordinary hosted staging validation with NODE_ENV=${nodeEnv || "unset"}`,
+  );
+}
+assertExit(
+  runValidator({ fixture: ordinaryStagingFixture, unset: ["DATABASE_URL"] }),
+  false,
+  "Ordinary staging validation without Postgres",
+);
+assertExit(
+  runValidator({ fixture: ordinaryStagingFixture, overrides: { DATABASE_PATH: "/app/data/pint-path.sqlite" } }),
+  false,
+  "Ordinary staging validation with SQLite",
 );
 assertExit(
   runValidator({ fixture: ordinaryStagingFixture, overrides: { PUBLIC_BASE_URL: "http://ordinary-staging.up.railway.app" } }),
   false,
   "Ordinary staging validation with insecure transport",
+);
+assertExit(
+  runValidator({
+    fixture: restoreRehearsalFixture,
+    overrides: {
+      RAILWAY_ENVIRONMENT_ID: "fixture-permanent-staging-environment",
+    },
+  }),
+  false,
+  "Restore validation with permanent-staging Railway reuse",
+);
+assertExit(
+  runValidator({
+    fixture: restoreRehearsalFixture,
+    overrides: { SUPABASE_URL: syntheticPermanentStagingSupabaseUrl },
+  }),
+  false,
+  "Restore validation with permanent-staging Supabase reuse",
 );
 assertExit(
   runValidator({

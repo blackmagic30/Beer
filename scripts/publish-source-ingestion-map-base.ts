@@ -7,6 +7,7 @@ import Database from "better-sqlite3";
 
 import { AdminIngestionQueueRepository } from "../src/db/admin-ingestion-queue.repository.js";
 import type { AdminIngestionBeerRecord, AdminIngestionQueueRecord } from "../src/db/models.js";
+import { asAsyncSqliteDatabase } from "../src/db/sql-database.js";
 import { env } from "../src/config/env.js";
 import { redactSecrets } from "../src/lib/redact.js";
 import { AdminService } from "../src/modules/admin/admin.service.js";
@@ -268,7 +269,8 @@ async function main(): Promise<void> {
     assertOperatorMutationAllowed("Menu review publication");
   }
   const database = new Database(options.databasePath);
-  const repository = new AdminIngestionQueueRepository(database);
+  const queueDatabase = asAsyncSqliteDatabase(database);
+  const repository = new AdminIngestionQueueRepository(queueDatabase);
   const coveredVenueIds = options.includeCoveredVenues
     ? new Set<string>()
     : new Set(
@@ -289,10 +291,11 @@ async function main(): Promise<void> {
     env.SUPABASE_MENU_CAPTURE_TABLE,
     env.OPENAI_API_KEY,
     env.GOOGLE_PLACES_API_KEY ?? env.GOOGLE_MAPS_API_KEY,
-    database,
+    queueDatabase,
   );
+  await adminService.initializeIngestionQueue();
 
-  const pending = repository.list("pending_review", options.queueLimit, 0);
+  const pending = await repository.list("pending_review", options.queueLimit, 0);
   const candidates = pending
     .map((queueItem) => ({
       queueItem,

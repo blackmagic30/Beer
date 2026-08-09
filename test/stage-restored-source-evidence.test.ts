@@ -158,18 +158,20 @@ async function makeFixture(options: {
       subscriptionStatus: "free",
       now: "2026-07-14T00:00:00.000Z",
     });
-    repository.createSourceEvidenceObject({
-      id: "menu-evidence",
-      ownerUserId: "owner",
-      storageProvider: "supabase_private",
-      objectPath: files[0]!.path,
-      mimeType: files[0]!.contentType,
-      byteSize: files[0]!.bytes.length,
-      dataBase64: null,
-      externalUrl: null,
-      retentionExpiresAt: "2026-10-14T00:00:00.000Z",
-      createdAt: "2026-07-14T00:00:00.000Z",
-    });
+    database.prepare(
+      `INSERT INTO source_evidence_objects (
+         id, owner_user_id, storage_provider, object_path, mime_type, byte_size,
+         data_base64, external_url, retention_expires_at, deleted_at, created_at
+       ) VALUES (?, ?, 'supabase_private', ?, ?, ?, NULL, NULL, ?, NULL, ?)`,
+    ).run(
+      "menu-evidence",
+      "owner",
+      files[0]!.path,
+      files[0]!.contentType,
+      files[0]!.bytes.length,
+      "2026-10-14T00:00:00.000Z",
+      "2026-07-14T00:00:00.000Z",
+    );
   }
   database.close();
 

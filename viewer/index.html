@@ -7324,12 +7324,17 @@
                 `${filteredRows.length} listed venues`,
                 `${missingCount} still need data`,
               ],
-          items: [
-            ["neutral", "Free listing", "Captured venue information and community-verified details."],
-            ["pro", "Premium venue", "Paid venue with premium discovery treatment."],
-            ["codes", "Accepts Pint Path codes", "Staff can enter a rotating Pint Path member code for eligible venue specials."],
-            ["needs", "Needs data", "Beer prices or source evidence still need verification."],
-          ],
+          items: COMMERCIAL_LAUNCH_ENABLED
+            ? [
+                ["neutral", "Free listing", "Captured venue information and community-verified details."],
+                ["pro", "Premium venue", "Paid venue with premium discovery treatment."],
+                ["codes", "Accepts Pint Path codes", "Staff can enter a rotating Pint Path member code for eligible venue specials."],
+                ["needs", "Needs data", "Beer prices or source evidence still need verification."],
+              ]
+            : [
+                ["neutral", "Populated venue", "Captured venue information and community-verified details."],
+                ["needs", "Needs data", "Beer prices or source evidence still need verification."],
+              ],
           hint: "Search or filter the directory, then open any card for details. Prices may change; check with the venue before ordering.",
         };
       }
@@ -7433,18 +7438,26 @@
 
       return {
         title: "All venues",
-        subtitle: "This is the full venue footprint. Blue markers are populated free listings, purple markers are premium venues, and muted grey markers still need details.",
+        subtitle: COMMERCIAL_LAUNCH_ENABLED
+          ? "This is the full venue footprint. Blue markers are populated free listings, purple markers are premium venues, and muted grey markers still need details."
+          : "This is the full Free venue footprint. Blue markers have populated listings, and muted grey markers still need details.",
         stats: [
           `${filteredRows.length} mapped venues`,
           `${missingCount} still need data`,
         ],
-        items: [
-          ["neutral", "Populated free venue", "Blue markers have captured beer prices or venue-supplied details."],
-          ["pro", "Premium venue", "Purple markers are paid venues with premium discovery treatment."],
-          ["codes", "Accepts Pint Path codes", "Cyan outline means staff can scan or enter a rotating Pint Path member code for eligible venue specials."],
-          ["needs", "Needs data", "Muted grey question-mark markers still need beer prices."],
-          ["selected", "Selected venue", "Gold ring shows the marker currently open in the venue card."],
-        ],
+        items: COMMERCIAL_LAUNCH_ENABLED
+          ? [
+              ["neutral", "Populated free venue", "Blue markers have captured beer prices or venue-supplied details."],
+              ["pro", "Premium venue", "Purple markers are paid venues with premium discovery treatment."],
+              ["codes", "Accepts Pint Path codes", "Cyan outline means staff can scan or enter a rotating Pint Path member code for eligible venue specials."],
+              ["needs", "Needs data", "Muted grey question-mark markers still need beer prices."],
+              ["selected", "Selected venue", "Gold ring shows the marker currently open in the venue card."],
+            ]
+          : [
+              ["neutral", "Populated venue", "Blue markers have captured beer prices or venue-supplied details."],
+              ["needs", "Needs data", "Muted grey question-mark markers still need beer prices."],
+              ["selected", "Selected venue", "Gold ring shows the marker currently open in the venue card."],
+            ],
             hint: "Switch to a beer search when you want green, yellow, orange, and dark-red price rings."
           };
     }

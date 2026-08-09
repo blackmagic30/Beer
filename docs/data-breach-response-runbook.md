@@ -81,9 +81,11 @@ close the incident, and only after the completion checks below.
 
 ## Provider-specific containment checklist
 
-- **Railway/application:** identify exact project/environment/service/deployment,
-  disable the narrow route or deploy the proven rollback, preserve logs and
-  volume identity, and do not wipe or detach the production volume.
+- **Railway/application:** identify the exact project/environment/service/
+  deployment plus Postgres, private Storage, and Redis identities; disable the
+  narrow route or deploy the Postgres-compatible rollback and preserve logs.
+  Do not delete the production database/Storage, detach the sealed migration-
+  source volume, or destroy forensic evidence.
 - **Supabase Auth/Database/Storage:** revoke affected refresh sessions, rotate an
   exposed key using a staged replacement, tighten grants/RLS/bucket policies,
   preserve audit evidence, and test old access JWTs until their expiry. Deleting

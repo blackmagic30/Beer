@@ -5,10 +5,40 @@ import crypto from "node:crypto";
 import BetterSqlite3 from "better-sqlite3";
 
 import { BusinessRepository } from "../src/db/business.repository.js";
+import { AccountSessionRepository } from "../src/db/account-session.repository.js";
+import { AccountProfilePreferencesRepository } from "../src/db/account-profile-preferences.repository.js";
+import { AccountDeletionQueueRepository } from "../src/db/account-deletion-queue.repository.js";
+import { AccountPrivacyRepository } from "../src/db/account-privacy.repository.js";
+import { PrivacyRetentionRepository } from "../src/db/privacy-retention.repository.js";
+import { CommunitySubmissionRepository } from "../src/db/community-submission.repository.js";
+import { VenueManagerInternalSubmissionRepository } from "../src/db/venue-manager-internal-submission.repository.js";
+import { SourceEvidenceObjectRepository } from "../src/db/source-evidence-object.repository.js";
+import { SourceEvidenceRetentionRepository } from "../src/db/source-evidence-retention.repository.js";
+import { VenuePendingChangeRepository } from "../src/db/venue-pending-change.repository.js";
+import { VenueDataReadRepository } from "../src/db/venue-data-read.repository.js";
+import { PublicPriceRepository } from "../src/db/public-price.repository.js";
 import { initializeDatabaseSchema } from "../src/db/database.js";
+import { PublicVenueDirectoryRepository } from "../src/db/public-venue-directory.repository.js";
+import { asAsyncSqliteDatabase } from "../src/db/sql-database.js";
+import { SystemStateRepository } from "../src/db/system-state.repository.js";
+import { ActivityAuditRepository } from "../src/db/activity-audit.repository.js";
+import { SupportFeedbackRepository } from "../src/db/support-feedback.repository.js";
+import { VenueInventoryRepository } from "../src/db/venue-inventory.repository.js";
+import { VenueIdentityRepository } from "../src/db/venue-identity.repository.js";
+import { BillingCheckoutRepository } from "../src/db/billing-checkout.repository.js";
+import { VenueAccessRepository } from "../src/db/venue-access.repository.js";
+import { MissionLifecycleRepository } from "../src/db/mission-lifecycle.repository.js";
+import { MissionDiscoveryAutomationRepository } from "../src/db/mission-discovery-automation.repository.js";
+import { StripeSubscriptionRepository } from "../src/db/stripe-subscription.repository.js";
+import { VenueRequestRepository } from "../src/db/venue-request.repository.js";
+import { VenuePartnerRepository } from "../src/db/venue-partner.repository.js";
+import { AdminAnalyticsRepository } from "../src/db/admin-analytics.repository.js";
+import { VenueManagerInsightsRepository } from "../src/db/venue-manager-insights.repository.js";
+import { AdminAccountRepository } from "../src/db/admin-account.repository.js";
 import { findTrackedBeerByName, normalizeBeerSearchKey } from "../src/constants/beers.js";
 import { getZonedMonthRangeIso } from "../src/lib/time.js";
 import { BusinessService } from "../src/modules/business/business.service.js";
+import { createSqliteAccountDeletionSecretPhysicalCheckpoint } from "../src/lib/account-deletion-secret-checkpoint.js";
 import { assertOperatorMutationAllowed } from "./lib/operator-mutation-guard.js";
 
 assertOperatorMutationAllowed("Synthetic Pint Path data seed");
@@ -719,8 +749,9 @@ function insertActivity(database: BetterSqlite3.Database, users: FakeUser[], ven
   return eventCount;
 }
 
-function generateMonthlyReports(database: BetterSqlite3.Database): number {
+async function generateMonthlyReports(database: BetterSqlite3.Database): Promise<number> {
   const repository = new BusinessRepository(database);
+  const sqlDatabase = asAsyncSqliteDatabase(database);
   const service = new BusinessService(repository, {
     PUBLIC_BASE_URL: "http://127.0.0.1:3000",
     CONTRIBUTOR_UNLOCK_POINTS: 15,
@@ -760,13 +791,13 @@ function generateMonthlyReports(database: BetterSqlite3.Database): number {
     ADMIN_EMAILS: "admin@pintpath.test",
     GOOGLE_MAPS_API_KEY: undefined,
     GOOGLE_PLACES_API_KEY: undefined,
-  });
+  }, new PublicVenueDirectoryRepository(sqlDatabase), new PublicPriceRepository(sqlDatabase), new SystemStateRepository(sqlDatabase), new ActivityAuditRepository(sqlDatabase), new SupportFeedbackRepository(sqlDatabase), new AccountSessionRepository(sqlDatabase), new AccountProfilePreferencesRepository(sqlDatabase), new VenueInventoryRepository(sqlDatabase), new VenueIdentityRepository(sqlDatabase), new BillingCheckoutRepository(sqlDatabase), new VenueAccessRepository(sqlDatabase), new MissionLifecycleRepository(sqlDatabase), new MissionDiscoveryAutomationRepository(sqlDatabase), new StripeSubscriptionRepository(sqlDatabase), new VenueRequestRepository(sqlDatabase), new VenuePartnerRepository(sqlDatabase), new AdminAnalyticsRepository(sqlDatabase), new VenueManagerInsightsRepository(sqlDatabase), new AdminAccountRepository(sqlDatabase), new AccountDeletionQueueRepository(sqlDatabase), new AccountPrivacyRepository(sqlDatabase), new PrivacyRetentionRepository(sqlDatabase), new CommunitySubmissionRepository(sqlDatabase), new VenueManagerInternalSubmissionRepository(sqlDatabase), new SourceEvidenceObjectRepository(sqlDatabase), new SourceEvidenceRetentionRepository(sqlDatabase), new VenuePendingChangeRepository(sqlDatabase), new VenueDataReadRepository(sqlDatabase), createSqliteAccountDeletionSecretPhysicalCheckpoint(database));
 
-  return service.generateScheduledVenueMonthlyReports({
+  return (await service.generateScheduledVenueMonthlyReports({
     month: SIMULATION_MONTH,
     venueId: null,
     dryRun: false,
-  }).generatedCount;
+  })).generatedCount;
 }
 
 const range = monthRange(SIMULATION_MONTH);
@@ -789,7 +820,7 @@ database.transaction(() => {
   generatedEvents = insertActivity(database, users, venues, range);
 })();
 
-generatedReports = generateMonthlyReports(database);
+generatedReports = await generateMonthlyReports(database);
 
 database.close();
 

@@ -3,6 +3,15 @@ import { z } from "zod";
 import { CURRENT_LEGAL_POLICY_VERSION } from "../../config/legal.js";
 import { CONTRIBUTION_POINTS } from "../../config/business-rules.js";
 
+const canonicalUtcTimestampSchema = z.string().refine((value) => {
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) return false;
+  try {
+    return new Date(value).toISOString() === value;
+  } catch {
+    return false;
+  }
+}, "Timestamp must be a canonical UTC ISO timestamp");
+
 const nullableTrimmedStringSchema = z.preprocess((value) => {
   if (value == null) {
     return null;
@@ -267,6 +276,7 @@ export const accountPreferencesSchema = z.object({
     "contributing_data",
   ])).max(8).default([]),
   onboardingCompleted: z.boolean().default(true),
+  expectedUpdatedAt: canonicalUtcTimestampSchema.nullable().default(null),
 });
 
 export const accountPrivacySettingsSchema = z.object({
@@ -277,6 +287,7 @@ export const accountPrivacySettingsSchema = z.object({
   // Accepted only for backwards compatibility with older web clients. The
   // service always records the server-owned current legal policy version.
   consentVersion: z.string().trim().min(1).max(40).optional(),
+  expectedUpdatedAt: canonicalUtcTimestampSchema.nullable().default(null),
 });
 
 export const accountDeletionRequestSchema = z.object({
@@ -696,13 +707,21 @@ export const venueOutreachSchema = z.object({
   status: venueOutreachStatusSchema.default("lead"),
   tierFit: venueOutreachTierFitSchema.default(null),
   nextAction: nullableTrimmedStringSchema.default(null),
-  lastContactedAt: nullableTrimmedStringSchema.default(null),
+  lastContactedAt: z.preprocess((value) => {
+    if (value == null || typeof value === "string" && value.trim() === "") return null;
+    if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value.trim())) {
+      return `${value.trim()}T00:00:00.000Z`;
+    }
+    return value;
+  }, canonicalUtcTimestampSchema.nullable()).default(null),
   contactName: nullableTrimmedStringSchema.default(null),
   notes: nullableTrimmedStringSchema.default(null),
+  expectedUpdatedAt: canonicalUtcTimestampSchema.nullable().default(null),
 });
 
 export const venueInterestStatusSchema = z.object({
   status: partnerInterestStatusSchema,
+  expectedUpdatedAt: canonicalUtcTimestampSchema,
 });
 
 export const venuePortalQuerySchema = z.object({

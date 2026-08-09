@@ -12,6 +12,7 @@ import { z } from "zod";
 
 import { AdminIngestionQueueRepository } from "../src/db/admin-ingestion-queue.repository.js";
 import type { AdminIngestionQueueRecord } from "../src/db/models.js";
+import { asAsyncSqliteDatabase, type SqlDatabase } from "../src/db/sql-database.js";
 import { redactSecrets } from "../src/lib/redact.js";
 import { AdminService } from "../src/modules/admin/admin.service.js";
 import type { AdminBeerInput } from "../src/modules/admin/admin.schemas.js";
@@ -568,11 +569,11 @@ export async function buildReviewedPricePromotionManifest(input: {
 }): Promise<ReviewedPricePromotionManifest> {
   const candidateSha = z.string().regex(/^[a-f0-9]{40}$/).parse(input.candidateSha);
   const ids = assertExactUniqueIds(input.ids);
-  const repository = new AdminIngestionQueueRepository(input.database);
+  const repository = new AdminIngestionQueueRepository(asAsyncSqliteDatabase(input.database));
   const items: ReviewedPricePromotionManifest["items"] = [];
 
   for (const id of ids) {
-    const queueItem = repository.getById(id);
+    const queueItem = await repository.getById(id);
     if (!queueItem) {
       throw new Error(`Source-ingestion item ${id} was not found.`);
     }
@@ -807,12 +808,12 @@ function verifyPublishedRows(
   });
 }
 
-function preflightManifestItem(
+async function preflightManifestItem(
   database: Database.Database,
   repository: AdminIngestionQueueRepository,
   item: ReviewedPricePromotionManifest["items"][number],
-): AdminIngestionQueueRecord {
-  const queueItem = repository.getById(item.id);
+): Promise<AdminIngestionQueueRecord> {
+  const queueItem = await repository.getById(item.id);
   if (!queueItem) {
     throw new Error("Source-ingestion item no longer exists.");
   }
@@ -847,16 +848,19 @@ export async function executeReviewedPricePromotion(input: {
   database: Database.Database;
   manifest: ReviewedPricePromotionManifest;
   publisher: PromotionPublisher;
+  queueDatabase?: SqlDatabase;
   sourceVerifier: ReachableSourceVerifier;
 }): Promise<PromotionExecutionResult> {
-  const repository = new AdminIngestionQueueRepository(input.database);
+  const repository = new AdminIngestionQueueRepository(
+    input.queueDatabase ?? asAsyncSqliteDatabase(input.database),
+  );
   const ids = input.manifest.items.map((item) => item.id);
   const beforePublicRows = listPublicRowsForIngestionIds(input.database, ids);
   const failed: PromotionFailure[] = [];
 
   for (const item of input.manifest.items) {
     try {
-      preflightManifestItem(input.database, repository, item);
+      await preflightManifestItem(input.database, repository, item);
       await input.sourceVerifier(item.sourceUrl);
     } catch (error) {
       failed.push({
@@ -883,7 +887,7 @@ export async function executeReviewedPricePromotion(input: {
     try {
       // Repeat the local authority check immediately before this exact write so
       // a concurrent local change after the all-item preflight cannot pass.
-      preflightManifestItem(input.database, repository, item);
+      await preflightManifestItem(input.database, repository, item);
       result = await input.publisher(
         item.id,
         item.rows,
@@ -1710,12 +1714,14 @@ async function runApply(argv: readonly string[]): Promise<void> {
         afterPublicRows: emergencyBeforeRows,
         beforePublicRows: emergencyBeforeRows,
       };
-      const repository = new AdminIngestionQueueRepository(database);
+      const queueDatabase = asAsyncSqliteDatabase(database);
+      const repository = new AdminIngestionQueueRepository(queueDatabase);
       let adminService: AdminService | null = null;
       execution = await executeReviewedPricePromotion({
         controls,
         database,
         manifest: loaded.manifest,
+        queueDatabase,
         publisher: async (id, rows, note) => {
           // Construct the mutating service only after every exact manifest item
           // and public source has passed the read-only preflight.
@@ -1726,7 +1732,7 @@ async function runApply(argv: readonly string[]): Promise<void> {
             menuCaptureTable,
             undefined,
             undefined,
-            database!,
+            queueDatabase,
           );
           const result = await adminService.publishQueuedIngestion(id, { beers: rows, note });
           return { mapPriceRecordCount: result.mapPriceRecordCount, savedAt: result.savedAt };

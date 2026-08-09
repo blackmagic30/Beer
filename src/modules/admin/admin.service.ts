@@ -1,6 +1,5 @@
 import OpenAI from "openai";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type BetterSqlite3 from "better-sqlite3";
 import { request as httpRequest, type IncomingHttpHeaders } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
@@ -9,7 +8,8 @@ import { randomUUID } from "node:crypto";
 import { SUBMISSION_LIMITS } from "../../config/business-rules.js";
 import type { AdminIngestionQueueRepository } from "../../db/admin-ingestion-queue.repository.js";
 import { BeerCatalogRepository, type ResolvedBeerCatalogItem } from "../../db/beer-catalog.repository.js";
-import { ACCOUNT_DATA_RETENTION_POLICY } from "../../db/business.repository.js";
+import { ACCOUNT_DATA_RETENTION_POLICY } from "../../db/privacy-retention.repository.js";
+import type { SqlDatabase } from "../../db/sql-database.js";
 import type {
   AdminIngestionBeerRecord,
   AdminIngestionCrawlerFeedback,
@@ -890,7 +890,7 @@ export class AdminService {
     private readonly menuCaptureTable = "venue_menu_captures",
     openaiApiKey?: string,
     private readonly googlePlacesApiKey?: string,
-    private readonly priceRecordDatabase?: BetterSqlite3.Database,
+    private readonly priceRecordDatabase?: SqlDatabase,
   ) {
     if (supabaseUrl && supabaseServiceRoleKey) {
       this.supabase = createServerSupabaseClient(supabaseUrl, supabaseServiceRoleKey);
@@ -907,16 +907,17 @@ export class AdminService {
     if (priceRecordDatabase) {
       this.beerCatalogRepository = new BeerCatalogRepository(priceRecordDatabase);
     }
+  }
 
-    if (ingestionQueueRepository) {
-      const now = new Date();
-      const recovered = ingestionQueueRepository.recoverStaleReviewClaims({
-        now: now.toISOString(),
-        staleBefore: new Date(now.getTime() - SOURCE_INGESTION_REVIEW_CLAIM_TTL_MS).toISOString(),
-      });
-      if (recovered > 0) {
-        logger.warn("Recovered stale source-ingestion review claims", { recovered });
-      }
+  async initializeIngestionQueue(): Promise<void> {
+    if (!this.ingestionQueueRepository) return;
+    const now = new Date();
+    const recovered = await this.ingestionQueueRepository.recoverStaleReviewClaims({
+      now: now.toISOString(),
+      staleBefore: new Date(now.getTime() - SOURCE_INGESTION_REVIEW_CLAIM_TTL_MS).toISOString(),
+    });
+    if (recovered > 0) {
+      logger.warn("Recovered stale source-ingestion review claims", { recovered });
     }
   }
 
@@ -941,8 +942,10 @@ export class AdminService {
     return this.supabase;
   }
 
-  private getTrackedBeerNamesForOcrPrompt(): string {
-    const beers = this.beerCatalogRepository?.listForViewer() ?? VIEWER_TRACKED_BEERS;
+  private async getTrackedBeerNamesForOcrPrompt(): Promise<string> {
+    const beers = this.beerCatalogRepository
+      ? await this.beerCatalogRepository.listForViewer()
+      : VIEWER_TRACKED_BEERS;
     return Array.from(new Set(beers.map((beer) => beer.name.trim()).filter(Boolean))).join(", ");
   }
 
@@ -1259,14 +1262,14 @@ export class AdminService {
     return row ? (row as ExistingVenueMenuCaptureSnapshot) : null;
   }
 
-  private resolveSystemBeer(input: {
+  private async resolveSystemBeer(input: {
     name: string;
     source: string;
     now: string;
     createIfMissing?: boolean;
     brewery?: string | null;
     abv?: number | null;
-  }): ResolvedBeerCatalogItem {
+  }): Promise<ResolvedBeerCatalogItem> {
     if (this.beerCatalogRepository) {
       return this.beerCatalogRepository.resolveBeerName(input);
     }
@@ -1286,37 +1289,44 @@ export class AdminService {
     };
   }
 
-  private standardizeAdminBeerInputs(
+  private sqlBoolean(value: boolean): boolean | number {
+    return this.priceRecordDatabase?.dialect === "sqlite" ? Number(value) : value;
+  }
+
+  private async standardizeAdminBeerInputs(
     beers: AdminBeerInput[],
     source: string,
     now: string,
     createIfMissing = true,
-  ): AdminBeerInput[] {
-    return beers.map((beer) => {
-      const resolved = this.resolveSystemBeer({
+  ): Promise<AdminBeerInput[]> {
+    const standardized: AdminBeerInput[] = [];
+    for (const beer of beers) {
+      const resolved = await this.resolveSystemBeer({
         name: beer.name,
         source,
         now,
         createIfMissing,
       });
 
-      return {
+      standardized.push({
         ...beer,
         name: resolved.name,
         needsReview: beer.needsReview || resolved.status === "pending_review" || resolved.created,
-      };
-    });
+      });
+    }
+    return standardized;
   }
 
-  private standardizeIngestionBeerRecords<T extends AdminIngestionBeerRecord>(
+  private async standardizeIngestionBeerRecords<T extends AdminIngestionBeerRecord>(
     beers: T[],
     source: string,
     now: string,
     createIfMissing = true,
-  ): T[] {
-    return beers.map((beer) => {
+  ): Promise<T[]> {
+    const standardized: T[] = [];
+    for (const beer of beers) {
       const catalogMetadata = beer as T & { brewery?: string | null; abv?: number | null };
-      const resolved = this.resolveSystemBeer({
+      const resolved = await this.resolveSystemBeer({
         name: beer.name,
         source,
         now,
@@ -1331,13 +1341,14 @@ export class AdminService {
             ? `System beer catalog review needed: ${resolved.name}.`
             : null;
 
-      return {
+      standardized.push({
         ...beer,
         name: resolved.name,
         needsReview: beer.needsReview || resolved.status === "pending_review" || resolved.created,
         notes: [beer.notes, systemNote].filter(Boolean).join(" ") || null,
-      } as T;
-    });
+      } as T);
+    }
+    return standardized;
   }
 
   private async persistManualCapture(input: AdminManualCaptureInput): Promise<{
@@ -1353,7 +1364,7 @@ export class AdminService {
     const venue = await this.getVenueById(input.venueId);
     const savedAt = new Date().toISOString();
     const evidenceReference = `manual-capture:${randomUUID()}`;
-    const evidenceBeers = this.standardizeAdminBeerInputs(
+    const evidenceBeers = await this.standardizeAdminBeerInputs(
       input.beers,
       input.source,
       savedAt,
@@ -1400,21 +1411,21 @@ export class AdminService {
     let inventoryBeerCount = 0;
     let publishedBeers = evidenceBeers;
     if (this.priceRecordDatabase) {
-      const publishLocalState = this.priceRecordDatabase.transaction(() => {
-        publishedBeers = this.standardizeAdminBeerInputs(
+      const publishLocalState = this.priceRecordDatabase.transaction(async () => {
+        publishedBeers = await this.standardizeAdminBeerInputs(
           input.beers,
           input.source,
           savedAt,
           true,
         );
-        const mapRows = this.publishManualCapturePriceRecords({
+        const mapRows = await this.publishManualCapturePriceRecords({
           venue,
           savedAt,
           beers: publishedBeers,
           source: input.source,
           sourceEvidenceReference: evidenceReference,
         });
-        const inventoryRows = this.syncVenueBeerInventory({
+        const inventoryRows = await this.syncVenueBeerInventory({
           venue,
           savedAt,
           beers: publishedBeers,
@@ -1423,7 +1434,7 @@ export class AdminService {
 
         return { mapRows, inventoryRows };
       });
-      const localState = publishLocalState();
+      const localState = await publishLocalState();
       mapPriceRecordCount = localState.mapRows;
       inventoryBeerCount = localState.inventoryRows;
     }
@@ -1512,18 +1523,18 @@ export class AdminService {
     };
   }
 
-  private publishIngestionPriceRecords(input: {
+  private async publishIngestionPriceRecords(input: {
     ingestionId: string;
     venue: VenueRow;
     savedAt: string;
     beers: AdminBeerInput[];
-  }): number {
+  }): Promise<number> {
     if (!this.priceRecordDatabase) {
       return 0;
     }
 
     const now = input.savedAt;
-    this.priceRecordDatabase.prepare(
+    await this.priceRecordDatabase.prepare(
       `DELETE FROM venue_price_records
        WHERE source_type = 'source_ingestion'
          AND id LIKE ?`,
@@ -1537,7 +1548,7 @@ export class AdminService {
         last_verified_at, created_at, updated_at
       ) VALUES (
         @id, @venueId, @venueName, @suburb, @beerName, @normalizedBeerId, @servingSize,
-        @price, 0, NULL, @isOnTap, 'admin_verified',
+        @price, FALSE, NULL, @isOnTap, 'admin_verified',
         'source_ingestion', NULL, @sourceIngestionId, @sourceEvidenceReference,
         @sourceEvidenceVerifiedAt,
         @lastVerifiedAt, @createdAt, @updatedAt
@@ -1559,14 +1570,14 @@ export class AdminService {
         updated_at = excluded.updated_at`,
     );
 
-    const publish = this.priceRecordDatabase.transaction(() => {
+    const publish = this.priceRecordDatabase.transaction(async () => {
       let published = 0;
-      input.beers.forEach((beer, index) => {
+      for (const [index, beer] of input.beers.entries()) {
         if (!Number.isFinite(beer.priceNumeric ?? Number.NaN) || beer.priceNumeric == null) {
-          return;
+          continue;
         }
 
-        const resolvedBeer = this.resolveSystemBeer({
+        const resolvedBeer = await this.resolveSystemBeer({
           name: beer.name,
           source: "source_ingestion_price_record",
           now,
@@ -1577,7 +1588,7 @@ export class AdminService {
             ? "no"
             : "unknown";
 
-        upsertPriceRecord.run({
+        await upsertPriceRecord.run({
           id: `source-ingestion:${input.ingestionId}:${index}`,
           venueId: input.venue.id,
           venueName: input.venue.name,
@@ -1595,7 +1606,7 @@ export class AdminService {
           updatedAt: now,
         });
         published += 1;
-      });
+      }
 
       return published;
     });
@@ -1603,13 +1614,13 @@ export class AdminService {
     return publish();
   }
 
-  private publishManualCapturePriceRecords(input: {
+  private async publishManualCapturePriceRecords(input: {
     venue: VenueRow;
     savedAt: string;
     beers: AdminBeerInput[];
     source: AdminManualCaptureInput["source"];
     sourceEvidenceReference: string;
-  }): number {
+  }): Promise<number> {
     if (!this.priceRecordDatabase) {
       return 0;
     }
@@ -1625,7 +1636,7 @@ export class AdminService {
         last_verified_at, created_at, updated_at
       ) VALUES (
         @id, @venueId, @venueName, @suburb, @beerName, @normalizedBeerId, @servingSize,
-        @price, 0, NULL, @isOnTap, @confidence,
+        @price, FALSE, NULL, @isOnTap, @confidence,
         @sourceType, NULL, @sourceEvidenceReference, @sourceEvidenceVerifiedAt,
         @lastVerifiedAt, @createdAt, @updatedAt
       )
@@ -1646,12 +1657,12 @@ export class AdminService {
     );
 
     let published = 0;
-    input.beers.forEach((beer) => {
+    for (const beer of input.beers) {
       if (!Number.isFinite(beer.priceNumeric ?? Number.NaN) || beer.priceNumeric == null) {
-        return;
+        continue;
       }
 
-      const resolvedBeer = this.resolveSystemBeer({
+      const resolvedBeer = await this.resolveSystemBeer({
         name: beer.name,
         source: "admin_manual_capture_price_record",
         now,
@@ -1663,7 +1674,7 @@ export class AdminService {
           : "unknown";
       const beerSegment = toRecordIdSegment(resolvedBeer.key || resolvedBeer.name);
 
-      upsertPriceRecord.run({
+      await upsertPriceRecord.run({
         id: `admin-capture:${input.venue.id}:${beerSegment}:${beer.servingSize}`,
         venueId: input.venue.id,
         venueName: input.venue.name,
@@ -1682,17 +1693,17 @@ export class AdminService {
         updatedAt: now,
       });
       published += 1;
-    });
+    }
 
     return published;
   }
 
-  private upsertVenueProfileForAdminVenue(venue: VenueRow, now: string): void {
+  private async upsertVenueProfileForAdminVenue(venue: VenueRow, now: string): Promise<void> {
     if (!this.priceRecordDatabase) {
       return;
     }
 
-    this.priceRecordDatabase
+    await this.priceRecordDatabase
       .prepare(
         `INSERT INTO venue_profiles (
           venue_id, name, address, suburb, area, phone, website, opening_hours_json, venue_tags_json, created_at, updated_at
@@ -1706,7 +1717,7 @@ export class AdminService {
           area = COALESCE(venue_profiles.area, excluded.area),
           phone = COALESCE(excluded.phone, venue_profiles.phone),
           website = COALESCE(excluded.website, venue_profiles.website),
-          active = 1,
+          active = TRUE,
           updated_at = excluded.updated_at`,
       )
       .run({
@@ -1722,18 +1733,18 @@ export class AdminService {
       });
   }
 
-  private syncVenueBeerInventory(input: {
+  private async syncVenueBeerInventory(input: {
     venue: VenueRow;
     savedAt: string;
     beers: AdminBeerInput[];
     source: AdminManualCaptureInput["source"] | "source_ingestion";
     sourceIngestionId?: string | null;
-  }): number {
+  }): Promise<number> {
     if (!this.priceRecordDatabase) {
       return 0;
     }
 
-    this.upsertVenueProfileForAdminVenue(input.venue, input.savedAt);
+    await this.upsertVenueProfileForAdminVenue(input.venue, input.savedAt);
     const upsertVenueBeer = this.priceRecordDatabase.prepare(
       `INSERT INTO venue_beers (
         id, venue_id, beer_name, normalized_beer_id, brewery, style, abv, serve_size,
@@ -1759,13 +1770,13 @@ export class AdminService {
     );
 
     let synced = 0;
-    input.beers.forEach((beer) => {
+    for (const beer of input.beers) {
       const name = beer.name.trim();
       if (!name) {
-        return;
+        continue;
       }
 
-      const resolvedBeer = this.resolveSystemBeer({
+      const resolvedBeer = await this.resolveSystemBeer({
         name,
         source: "admin_reviewed_venue_inventory",
         now: input.savedAt,
@@ -1782,7 +1793,7 @@ export class AdminService {
         beer.needsReview ? "Beer catalog review may still be needed." : null,
       ].filter(Boolean).join(" ");
 
-      upsertVenueBeer.run({
+      await upsertVenueBeer.run({
         id: `admin-reviewed:${input.venue.id}:${beerSegment}:${beer.servingSize}`,
         venueId: input.venue.id,
         beerName: resolvedBeer.name,
@@ -1792,15 +1803,15 @@ export class AdminService {
         abv: resolvedBeer.abv,
         serveSize: beer.servingSize,
         price: beer.priceNumeric,
-        onTap: onTap ? 1 : 0,
-        inStock: inStock ? 1 : 0,
+        onTap: this.sqlBoolean(onTap),
+        inStock: this.sqlBoolean(inStock),
         notes,
         sourceIngestionId: input.sourceIngestionId ?? null,
         createdAt: input.savedAt,
         updatedAt: input.savedAt,
       });
       synced += 1;
-    });
+    }
 
     return synced;
   }
@@ -2015,6 +2026,7 @@ export class AdminService {
       return firstPass;
     }
 
+    const trackedBeerNames = await this.getTrackedBeerNamesForOcrPrompt();
     const prompt = [
       "You are doing a second-pass quality check on beer menu OCR for Pint Path.",
       "Compare the proposed structured extraction against every supplied image. Return corrected data using the required schema.",
@@ -2054,7 +2066,7 @@ export class AdminService {
       "  ],",
       '  "rejected_candidates": [{ "source_text": string, "product_category": string, "reason": string }]',
       "}",
-      `Canonical tracked beer names to prefer when clearly matched: ${this.getTrackedBeerNamesForOcrPrompt()}.`,
+      `Canonical tracked beer names to prefer when clearly matched: ${trackedBeerNames}.`,
       input.venueNameHint ? `Venue hint: ${input.venueNameHint}` : "Venue hint: none",
       `Proposed first-pass extraction JSON: ${JSON.stringify(firstPass.payload)}`,
     ].join("\n");
@@ -2097,6 +2109,7 @@ export class AdminService {
       imageDataUrls: input.imageDataUrls.map(validateAdminMenuImageDataUrl),
       documentDataUrls: documentDataUrls.map(validateMenuPdfDataUrl),
     };
+    const trackedBeerNames = await this.getTrackedBeerNamesForOcrPrompt();
     const prompt = [
       "Extract accurate beer, cider, RTD, and non-alcoholic beer information from all supplied pub/bar menu, tap-board, receipt, or shelf images.",
       `There ${sourceCount === 1 ? "is 1 source" : `are ${sourceCount} sources`}. Read every image or PDF page, every column, and all lower sections before returning the structured result.`,
@@ -2130,7 +2143,7 @@ export class AdminService {
       "Only put genuine beer, cider, RTD, and non-alcoholic beer products in beers. The product name must be visibly supported by source_text.",
       "Do not include standalone gin, vodka, whisky, bourbon, tequila, cocktails, wine, food, steaks, meals, headings, venue welcome copy, promo copy, category descriptions, event text, or unreadable OCR fragments as beer rows; put them in rejected_candidates instead. Keep a clearly labelled packaged premixed RTD even when its product name contains a spirit word.",
       "Never turn a sentence, heading, serving instruction, package volume, ABV, price, venue slogan, or number of taps into a product name.",
-      `If a beer clearly matches one of these tracked beers, use the exact canonical name: ${this.getTrackedBeerNamesForOcrPrompt()}.`,
+      `If a beer clearly matches one of these tracked beers, use the exact canonical name: ${trackedBeerNames}.`,
       "Correct only obvious OCR punctuation, spacing, and character errors. Do not guess a tracked beer merely because its name is similar.",
       "Use confidence values from 0 to 1 based on how readable and reliable each beer item looks.",
       "If a beer has a visible price, put the numeric value in price_numeric and preserve the menu wording in price_text.",
@@ -2212,7 +2225,7 @@ export class AdminService {
         sourceText: string | null;
       };
     });
-    const beers = this.standardizeIngestionBeerRecords(
+    const beers = await this.standardizeIngestionBeerRecords(
       rawBeers,
       "menu_photo_ocr_preview",
       new Date().toISOString(),
@@ -2341,13 +2354,13 @@ export class AdminService {
       venueNameHint: venue.name,
       imageDataUrls: [imageDataUrl],
     });
-    const extractedBeers = this.standardizeIngestionBeerRecords(
+    const extractedBeers = await this.standardizeIngestionBeerRecords(
       extracted.beers,
       "source_ingestion_crawler",
       new Date().toISOString(),
     );
 
-    const queueItem = repository.create({
+    const queueItem = await repository.create({
       venueId: venue.id,
       venueName: venue.name,
       sourceType: input.sourceType,
@@ -2372,16 +2385,20 @@ export class AdminService {
     return queueItem;
   }
 
-  listQueuedIngestions(status?: AdminIngestionStatus, limit = 50, offset = 0): AdminIngestionQueueRecord[] {
+  listQueuedIngestions(
+    status?: AdminIngestionStatus,
+    limit = 50,
+    offset = 0,
+  ): Promise<AdminIngestionQueueRecord[]> {
     return this.getIngestionQueue().list(status, limit, offset);
   }
 
-  countQueuedIngestions(status?: AdminIngestionStatus): number {
+  countQueuedIngestions(status?: AdminIngestionStatus): Promise<number> {
     return this.getIngestionQueue().count(status);
   }
 
-  getQueuedIngestionEvidence(ingestionId: string): { mimeType: string; bytes: Buffer } {
-    const queueItem = this.getIngestionQueue().getById(ingestionId);
+  async getQueuedIngestionEvidence(ingestionId: string): Promise<{ mimeType: string; bytes: Buffer }> {
+    const queueItem = await this.getIngestionQueue().getById(ingestionId);
     if (!queueItem) {
       throw new AppError("Source ingestion item was not found.", 404);
     }
@@ -2403,7 +2420,7 @@ export class AdminService {
     return { mimeType: matched[1]!.toLowerCase(), bytes };
   }
 
-  getQueuedIngestionImageRetentionStatus(now = new Date().toISOString()) {
+  async getQueuedIngestionImageRetentionStatus(now = new Date().toISOString()) {
     const cutoff = new Date(now);
     cutoff.setUTCDate(
       cutoff.getUTCDate() - ACCOUNT_DATA_RETENTION_POLICY.pendingIngestionImages.hardCapDaysAfterCreation,
@@ -2414,7 +2431,7 @@ export class AdminService {
     });
   }
 
-  purgeQueuedIngestionImages(now = new Date().toISOString()) {
+  async purgeQueuedIngestionImages(now = new Date().toISOString()) {
     const cutoff = new Date(now);
     cutoff.setUTCDate(
       cutoff.getUTCDate() - ACCOUNT_DATA_RETENTION_POLICY.pendingIngestionImages.hardCapDaysAfterCreation,
@@ -2443,8 +2460,8 @@ export class AdminService {
     const staleBefore = new Date(
       new Date(savedAt).getTime() - SOURCE_INGESTION_REVIEW_CLAIM_TTL_MS,
     ).toISOString();
-    repository.recoverStaleReviewClaims({ staleBefore, now: savedAt });
-    const queueItem = repository.getById(ingestionId);
+    await repository.recoverStaleReviewClaims({ staleBefore, now: savedAt });
+    const queueItem = await repository.getById(ingestionId);
 
     if (!queueItem) {
       throw new AppError("Source ingestion item was not found.", 404);
@@ -2454,7 +2471,7 @@ export class AdminService {
       throw new AppError("This source ingestion item is no longer pending review.", 409);
     }
 
-    const validatedBeers = this.standardizeAdminBeerInputs(
+    const validatedBeers = await this.standardizeAdminBeerInputs(
       input.beers,
       "source_ingestion_review",
       savedAt,
@@ -2471,7 +2488,9 @@ export class AdminService {
       input.note,
     ].filter(Boolean);
     const claimToken = randomUUID();
-    if (!repository.claimPendingReview(ingestionId, "publish", claimToken, savedAt, staleBefore)) {
+    // This single-statement claim commits before any provider I/O. Postgres
+    // wiring can replace this seam with its SKIP LOCKED worker claim primitive.
+    if (!await repository.claimPendingReview(ingestionId, "publish", claimToken, savedAt, staleBefore)) {
       throw new AppError("This source ingestion item is already being reviewed or is no longer pending review.", 409);
     }
 
@@ -2496,8 +2515,8 @@ export class AdminService {
       captureWarning = captureResult.captureWarning;
 
       if (this.priceRecordDatabase) {
-        const publishLocalState = this.priceRecordDatabase.transaction(() => {
-          reviewedBeers = this.standardizeAdminBeerInputs(
+        const localState = await repository.transaction(async () => {
+          reviewedBeers = await this.standardizeAdminBeerInputs(
             input.beers,
             "source_ingestion_review",
             savedAt,
@@ -2510,10 +2529,10 @@ export class AdminService {
             note: input.note,
             generatedAt: savedAt,
           });
-          this.priceRecordDatabase!.prepare(
+          await this.priceRecordDatabase!.prepare(
             "DELETE FROM venue_beers WHERE source_ingestion_id = ?",
           ).run(ingestionId);
-          const published = this.publishIngestionPriceRecords({
+          const published = await this.publishIngestionPriceRecords({
             ingestionId,
             venue,
             savedAt,
@@ -2527,7 +2546,7 @@ export class AdminService {
             );
           }
 
-          const syncedInventory = this.syncVenueBeerInventory({
+          const syncedInventory = await this.syncVenueBeerInventory({
             venue,
             savedAt,
             beers: reviewedBeers,
@@ -2535,7 +2554,7 @@ export class AdminService {
             sourceIngestionId: ingestionId,
           });
 
-          repository.markPublished(
+          await repository.markPublished(
             ingestionId,
             claimToken,
             reviewedBeers.map((beer) => ({
@@ -2551,7 +2570,6 @@ export class AdminService {
           return { published, syncedInventory };
         });
 
-        const localState = publishLocalState();
         priceRecordCount = localState.published;
         inventoryBeerCount = localState.syncedInventory;
       } else {
@@ -2562,7 +2580,7 @@ export class AdminService {
           note: input.note,
           generatedAt: savedAt,
         });
-        repository.markPublished(
+        await repository.markPublished(
           ingestionId,
           claimToken,
           reviewedBeers.map((beer) => ({
@@ -2576,12 +2594,12 @@ export class AdminService {
         );
       }
     } catch (error) {
-      repository.releaseReviewClaim(ingestionId, claimToken, new Date().toISOString());
+      await repository.releaseReviewClaim(ingestionId, claimToken, new Date().toISOString());
       throw error;
     }
 
     return {
-      queueItem: repository.getById(ingestionId)!,
+      queueItem: (await repository.getById(ingestionId))!,
       venue,
       savedAt,
       beerCount: reviewedBeers.length,
@@ -2592,14 +2610,17 @@ export class AdminService {
     };
   }
 
-  rejectQueuedIngestion(ingestionId: string, input: AdminRejectQueuedIngestionInput): { queueItem: AdminIngestionQueueRecord } {
+  async rejectQueuedIngestion(
+    ingestionId: string,
+    input: AdminRejectQueuedIngestionInput,
+  ): Promise<{ queueItem: AdminIngestionQueueRecord }> {
     const repository = this.getIngestionQueue();
     const rejectedAt = new Date().toISOString();
     const staleBefore = new Date(
       new Date(rejectedAt).getTime() - SOURCE_INGESTION_REVIEW_CLAIM_TTL_MS,
     ).toISOString();
-    repository.recoverStaleReviewClaims({ staleBefore, now: rejectedAt });
-    const queueItem = repository.getById(ingestionId);
+    await repository.recoverStaleReviewClaims({ staleBefore, now: rejectedAt });
+    const queueItem = await repository.getById(ingestionId);
 
     if (!queueItem) {
       throw new AppError("Source ingestion item was not found.", 404);
@@ -2610,7 +2631,7 @@ export class AdminService {
     }
 
     const claimToken = randomUUID();
-    if (!repository.claimPendingReview(ingestionId, "reject", claimToken, rejectedAt, staleBefore)) {
+    if (!await repository.claimPendingReview(ingestionId, "reject", claimToken, rejectedAt, staleBefore)) {
       throw new AppError("This source ingestion item is already being reviewed or is no longer pending review.", 409);
     }
     try {
@@ -2620,27 +2641,27 @@ export class AdminService {
         note: input.note,
         generatedAt: rejectedAt,
       });
-      repository.markRejected(ingestionId, claimToken, input.note, crawlerFeedback, rejectedAt);
+      await repository.markRejected(ingestionId, claimToken, input.note, crawlerFeedback, rejectedAt);
     } catch (error) {
-      repository.releaseReviewClaim(ingestionId, claimToken, new Date().toISOString());
+      await repository.releaseReviewClaim(ingestionId, claimToken, new Date().toISOString());
       throw error;
     }
     return {
-      queueItem: repository.getById(ingestionId)!,
+      queueItem: (await repository.getById(ingestionId))!,
     };
   }
 
-  rejectQueuedIngestions(input: AdminBulkRejectQueuedIngestionsInput): {
+  async rejectQueuedIngestions(input: AdminBulkRejectQueuedIngestionsInput): Promise<{
     queueItems: AdminIngestionQueueRecord[];
     rejectedCount: number;
-  } {
+  }> {
     const repository = this.getIngestionQueue();
     const uniqueIds = [...new Set(input.ids)];
     if (uniqueIds.length !== input.ids.length) {
       throw new AppError("Bulk source rejection contains duplicate item IDs.", 400);
     }
     for (const id of uniqueIds) {
-      const item = repository.getById(id);
+      const item = await repository.getById(id);
       if (!item) {
         throw new AppError("Source ingestion item was not found.", 404, { ingestionId: id });
       }
@@ -2651,9 +2672,13 @@ export class AdminService {
         });
       }
     }
-    const queueItems = repository.transaction(() => uniqueIds.map(
-      (id) => this.rejectQueuedIngestion(id, { note: input.note }).queueItem,
-    ));
+    const queueItems = await repository.transaction(async () => {
+      const rejected: AdminIngestionQueueRecord[] = [];
+      for (const id of uniqueIds) {
+        rejected.push((await this.rejectQueuedIngestion(id, { note: input.note })).queueItem);
+      }
+      return rejected;
+    });
 
     return {
       queueItems,

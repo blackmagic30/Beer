@@ -1,6 +1,6 @@
 # Pint Path Mobile Store Checklist
 
-Status date: 3 August 2026
+Status date: 8 August 2026
 
 > For the current full web plus first iOS launch, follow
 > [`docs/production-launch-runbook.md`](docs/production-launch-runbook.md) in
@@ -61,10 +61,12 @@ Checkboxes marked complete are repository-backed. Unchecked items require releas
 - [x] CI builds an unsigned simulator app and validates an unsigned Release archive.
 - [ ] Set the Apple development team, distribution certificate, provisioning profile, and final App Store record.
 - [ ] Validate final app icon and launch appearance on supported devices.
-- [ ] Create a signed archive, export a signed IPA with private signing/export options, scan it for embedded private secrets/debug configuration, hash it, run Organizer validation, upload to TestFlight, and clear all warnings.
+- [ ] From the exact frozen candidate SHA, create a signed archive, export a signed IPA with private signing/export options, scan it for embedded private secrets/debug configuration, hash both artifacts, run Organizer validation, upload that exact build to TestFlight, and clear all warnings.
 - [ ] Run the full device/accessibility/email-authentication matrix on minimum-supported iOS 17 and the current iOS release; include uninstall/reinstall and encrypted device-backup/restore or device-transfer session checks.
 - [ ] Prove the signed iOS archive contains no Pro/trial/billing, external purchase, counter/admin, happy-hour, reward, or social-login surface.
-- [ ] Provide screenshots, review notes, demo account, privacy answers, export-compliance answers, and phased-release owner.
+- [ ] Provide screenshots, review notes, demo accounts, privacy answers, export-compliance answers, and release ownership; distribute the same signed build to an external TestFlight group and pass Beta App Review.
+- [ ] Submit that same build for full App Review and obtain approval with the Australia storefront, manual release, and phased release configured.
+- [ ] Keep the approved build held in App Store Connect until every web-and-iOS gate passes and the release owner authorizes the manual launch.
 
 ## Future Android submission — not part of this launch
 
@@ -84,8 +86,8 @@ evidence. Start them only when Android becomes its own approved candidate.
 ## Release gate
 
 - [ ] Repository tests and native CI are green at the exact release commit.
-- [ ] TestFlight uses the exact current iOS commit/version. Require the same mapping for Play only when Android becomes a separate release candidate.
+- [ ] The signed archive, exported IPA, App Store Connect build, external TestFlight/Beta App Review, and full App Review approval all map to the exact frozen candidate SHA and version/build. Require the equivalent Play mapping only when Android becomes a separate release candidate.
 - [ ] Zero unresolved critical/high security, privacy, crash, auth, data-loss, or accessibility findings.
 - [ ] Rollback/kill-switch, support escalation, crash/ANR monitoring, and first-72-hour ownership are documented.
 - [ ] Release owner records final go/no-go approval with evidence links.
-- [ ] Treat TestFlight approval as controlled-beta authorization only. The current iOS launch remains no-go until App Store review/release is approved and live in the intended storefront. Apply the equivalent Play rule only to a future Android candidate.
+- [ ] Treat TestFlight approval as controlled-beta authorization only. The current iOS launch remains no-go until the same build has full App Review approval, the Australia storefront/manual release/phased release settings are verified, and the approved build is held for the coordinated launch. Apply the equivalent Play rule only to a future Android candidate.

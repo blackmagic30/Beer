@@ -48,6 +48,165 @@ jobs:
       - name: Dependency audit
         run: npm run security:audit
 
+      - name: Assert live AWS WORM integration remains explicitly gated
+        env:
+          PINTPATH_TEST_POSTGRES_LOGICAL_WORM_AWS: "disabled"
+          PINTPATH_POSTGRES_LOGICAL_WORM: "disabled"
+          PINTPATH_POSTGRES_LOGICAL_WORM_AWS: "disabled"
+        run: npm run test:db:postgres:backup:logical:worm:aws
+
+  postgres-migration-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17.6-alpine
+        env:
+          POSTGRES_DB: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      NODE_ENV: test
+      PUBLIC_BASE_URL: http://localhost:3000
+      PINTPATH_POSTGRES_MIGRATION_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+      PINTPATH_ACCOUNT_SESSION_POSTGRES_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+      PINTPATH_ACCOUNT_PROFILE_PREFERENCES_POSTGRES_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+      PINTPATH_ACTIVITY_AUDIT_POSTGRES_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+      PINTPATH_ACCOUNT_DELETION_QUEUE_POSTGRES_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+      PINTPATH_ACCOUNT_PRIVACY_POSTGRES_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+      PINTPATH_ACCOUNT_DELETION_RECOVERY_POSTGRES_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+      PINTPATH_POSTGRES_ACCOUNT_DELETION_REPLAY_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+      PINTPATH_BILLING_CHECKOUT_POSTGRES_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+      PINTPATH_SUPPORT_FEEDBACK_POSTGRES_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+      PINTPATH_VENUE_ACCESS_POSTGRES_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+      PINTPATH_SOURCE_EVIDENCE_OBJECT_POSTGRES_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+      PINTPATH_VENUE_MANAGER_INTERNAL_SUBMISSION_POSTGRES_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify generated Postgres schema
+        run: npm run db:postgres:schema:check
+
+      - name: Verify frozen SQLite migration contract
+        run: npm run db:postgres:migration:contract:check
+
+      - name: Run real Postgres import and reconciliation
+        run: npx vitest run test/postgres-migration-target.integration.test.ts
+
+      - name: Run verified logical offsite retrieval contract
+        run: npx vitest run test/postgres-logical-offsite-retrieval.integration.test.ts
+
+      - name: Run public venue-directory Postgres contract
+        run: npx vitest run test/public-venue-directory.repository.integration.test.ts
+
+      - name: Run venue identity Postgres contract
+        run: npx vitest run test/venue-identity.repository.integration.test.ts
+
+      - name: Run system-state Postgres authority contract
+        run: npx vitest run test/system-state.repository.integration.test.ts
+
+      - name: Run account and session Postgres contract
+        run: npx vitest run test/account-session.repository.integration.test.ts
+
+      - name: Run account profile and preferences Postgres contract
+        run: npx vitest run test/account-profile-preferences.repository.integration.test.ts
+
+      - name: Run activity and audit Postgres contract
+        run: npx vitest run test/activity-audit.repository.integration.test.ts
+
+      - name: Run account-deletion queue Postgres contract
+        run: npx vitest run test/account-deletion-queue.repository.integration.test.ts
+
+      - name: Run account privacy Postgres contract
+        run: npx vitest run test/account-privacy.repository.integration.test.ts
+
+      - name: Run account-deletion recovery fixture Postgres contract
+        run: npx vitest run test/postgres-account-deletion-recovery-fixture.integration.test.ts
+
+      - name: Run account-deletion tombstone replay Postgres contract
+        run: npx vitest run test/postgres-account-deletion-replay.integration.test.ts
+
+      - name: Run privacy-retention Postgres contract
+        run: npx vitest run test/privacy-retention.repository.integration.test.ts
+
+      - name: Run Stripe subscription Postgres contract
+        run: npx vitest run test/stripe-subscription.repository.integration.test.ts
+
+      - name: Run billing checkout Postgres contract
+        run: npx vitest run test/billing-checkout.repository.integration.test.ts
+
+      - name: Run public-price Postgres contract
+        run: npx vitest run test/public-price.repository.integration.test.ts
+
+      - name: Run community-submission Postgres contract
+        run: npx vitest run test/community-submission.repository.integration.test.ts
+
+      - name: Run source-evidence object Postgres contract
+        run: npx vitest run test/source-evidence-object.repository.integration.test.ts
+
+      - name: Run source-evidence retention Postgres contract
+        run: npx vitest run test/source-evidence-retention.repository.integration.test.ts
+
+      - name: Run internal venue-manager submission Postgres contract
+        run: npx vitest run test/venue-manager-internal-submission.repository.integration.test.ts
+
+      - name: Run venue-inventory Postgres contract
+        run: npx vitest run test/venue-inventory.repository.integration.test.ts
+
+      - name: Run venue pending-change Postgres contract
+        run: npx vitest run test/venue-pending-change.repository.integration.test.ts
+
+      - name: Run venue data read Postgres contract
+        run: npx vitest run test/venue-data-read.repository.integration.test.ts
+
+      - name: Run support and wrong-price Postgres contract
+        run: npx vitest run test/support-feedback.repository.integration.test.ts
+
+      - name: Run venue access Postgres contract
+        run: npx vitest run test/venue-access.repository.integration.test.ts
+
+      - name: Run mission lifecycle Postgres contract
+        run: npx vitest run test/mission-lifecycle.repository.integration.test.ts
+
+      - name: Run mission discovery and automation Postgres contract
+        run: npx vitest run test/mission-discovery-automation.repository.integration.test.ts
+
+      - name: Run venue-request Postgres contract
+        run: npx vitest run test/venue-request.repository.integration.test.ts
+
+      - name: Run venue-partner Postgres contract
+        run: npx vitest run test/venue-partner.repository.integration.test.ts
+
+      - name: Run admin analytics Postgres contract
+        run: npx vitest run test/admin-analytics.repository.integration.test.ts
+
+      - name: Run venue-manager insights Postgres contract
+        run: npx vitest run test/venue-manager-insights.repository.integration.test.ts
+
+      - name: Run admin account Postgres contract
+        run: npx vitest run test/admin-account.repository.integration.test.ts
+
   supabase-database:
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -71,7 +230,7 @@ jobs:
         run: supabase db reset --local
 
       - name: Lint database schemas
-        run: supabase db lint --local --schema public,private --level warning --fail-on warning
+        run: supabase db lint --local --schema public,private,pintpath_app,pintpath_ops --level warning --fail-on warning
 
       - name: Run security advisors
         run: supabase db advisors --local --type security --level warn --fail-on warn

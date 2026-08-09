@@ -5,6 +5,7 @@ import BetterSqlite3 from "better-sqlite3";
 import dotenv from "dotenv";
 
 import { initializeDatabaseSchema } from "../src/db/database.js";
+import { asAsyncSqliteDatabase } from "../src/db/sql-database.js";
 import { scoreOcrBenchmark, type OcrBenchmarkManifest } from "../src/lib/menu-ocr-benchmark.js";
 import { assertOperatorMutationAllowed } from "./lib/operator-mutation-guard.js";
 
@@ -59,7 +60,7 @@ if (live) {
     "venue_menu_captures",
     process.env.OPENAI_API_KEY,
     undefined,
-    database,
+    asAsyncSqliteDatabase(database),
   );
   const manifestDirectory = path.dirname(manifestPath);
   for (const benchmarkCase of manifest.cases) {

@@ -83,7 +83,7 @@ describe("mission maintenance scheduler", () => {
       release = resolve;
     }));
     const scheduler = scheduleMissionMaintenance({ run, intervalMinutes: 30 });
-    expect(run).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
 
     let stopped = false;
     const stopPromise = scheduler.stop().then(() => {
@@ -94,6 +94,29 @@ describe("mission maintenance scheduler", () => {
 
     release?.();
     await stopPromise;
+    expect(stopped).toBe(true);
+  });
+
+  it("waits for an asynchronous terminal status callback before stop resolves", async () => {
+    let releaseStatus: (() => void) | undefined;
+    let terminalStatusStarted = false;
+    const scheduler = scheduleMissionMaintenance({
+      run: vi.fn(async () => ({ refreshed: true })),
+      intervalMinutes: 30,
+      onStatus: (status) => {
+        if (status.state !== "succeeded") return;
+        terminalStatusStarted = true;
+        return new Promise<void>((resolve) => { releaseStatus = resolve; });
+      },
+    });
+    await vi.waitFor(() => expect(terminalStatusStarted).toBe(true));
+
+    let stopped = false;
+    const stopPromise = scheduler.stop().then(() => { stopped = true; });
+    await Promise.resolve();
+    expect(stopped).toBe(false);
+    releaseStatus?.();
+    await expect(stopPromise).resolves.toBeUndefined();
     expect(stopped).toBe(true);
   });
 

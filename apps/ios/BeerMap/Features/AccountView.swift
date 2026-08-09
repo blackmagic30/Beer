@@ -395,7 +395,8 @@ struct PrivacySettingsCard: View {
                         optionalAnalyticsEnabled: optionalAnalytics,
                         venueReportInclusionEnabled: venueReports,
                         productResearchEnabled: productResearch,
-                        emailUpdatesEnabled: emailUpdates
+                        emailUpdatesEnabled: emailUpdates,
+                        expectedUpdatedAt: settings.consentedAt == nil ? nil : settings.updatedAt
                     ))
                 }
             }

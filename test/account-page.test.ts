@@ -469,7 +469,8 @@ describe("account page shell", () => {
     expect(html).toContain("async function resumeCheckoutIfRequested");
     expect(html).toContain("async function reconcileCheckoutReturnIfNeeded");
     expect(html).toContain("if (!CONSUMER_PAID_ENROLLMENT_ENABLED)");
-    expect(html).toContain("Existing subscriptions can still be managed or cancelled from Account.");
+    expect(html).toContain("Paid subscriptions are not available in the current Free release.");
+    expect(html).not.toContain("Existing subscriptions can still be managed or cancelled from Account.");
     expect(html).toContain('MelbBeerBusiness.apiFetch("/api/business/billing/checkout"');
     expect(html).toContain('MelbBeerBusiness.apiFetch("/api/business/billing/checkout/reconcile"');
     expect(html).toContain("Confirm you are 18+ on this account before starting checkout.");
@@ -708,7 +709,7 @@ describe("account page shell", () => {
     expect(html).toContain('id="betaTestingNavButton"');
     expect(html).toContain('data-settings-target="beta-testing"');
     expect(html).toContain('aria-controls="settingsBetaTestingPanel"');
-    expect(html).toContain('data-settings-panel="beta-testing" role="tabpanel" aria-labelledby="betaTestingNavButton" hidden');
+    expect(html).toContain('data-settings-panel="beta-testing" role="tabpanel" aria-labelledby="betaTestingNavButton" data-commercial-surface hidden');
     expect(html).toContain("function showAccountSettingsPanel");
     expect(html).toContain('document.querySelectorAll("[data-settings-target]")');
     expect(html).toContain("showAccountSettingsPanel(button.dataset.settingsTarget)");
@@ -1902,6 +1903,10 @@ describe("account page shell", () => {
     expect(html).toContain("await MelbBeerBusiness.syncSupabaseSession()");
     expect(html).toContain("/api/business/account/privacy-settings");
     expect(html).toContain("consentVersion: MelbBeerBusiness.LEGAL_POLICY_VERSION");
+    expect(html).toContain("expectedUpdatedAt: state.accountData?.privacySettings?.consentedAt");
+    expect(html).toContain("state.accountData.privacySettings = result.privacySettings || settings");
+    expect(html).toContain("expectedUpdatedAt: state.accountData?.preferences?.updatedAt || null");
+    expect(html).toContain("state.accountData.preferences = result.preferences || {}");
     expect(html).toContain("/api/business/auth/logout-all");
     expect(html).toContain("await supabaseClient.auth.getSession()");
     expect(html).toContain("JSON.stringify(accessToken ? { accessToken } : {})");

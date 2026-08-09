@@ -182,18 +182,19 @@ function makeDatabase(root: string, pdfBytes: Buffer): string {
     subscriptionStatus: "free",
     now: "2026-07-01T00:00:00.000Z",
   });
-  repository.createSourceEvidenceObject({
-    id: "storage-pdf",
-    ownerUserId: "storage-owner",
-    storageProvider: "supabase_private",
-    objectPath: "storage-owner/menu.pdf",
-    mimeType: "application/pdf",
-    byteSize: pdfBytes.length,
-    dataBase64: null,
-    externalUrl: null,
-    retentionExpiresAt: "2026-10-01T00:00:00.000Z",
-    createdAt: "2026-07-01T00:00:00.000Z",
-  });
+  database.prepare(
+    `INSERT INTO source_evidence_objects (
+       id, owner_user_id, storage_provider, object_path, mime_type, byte_size,
+       data_base64, external_url, retention_expires_at, deleted_at, created_at
+     ) VALUES (?, ?, 'supabase_private', ?, 'application/pdf', ?, NULL, NULL, ?, NULL, ?)`,
+  ).run(
+    "storage-pdf",
+    "storage-owner",
+    "storage-owner/menu.pdf",
+    pdfBytes.length,
+    "2026-10-01T00:00:00.000Z",
+    "2026-07-01T00:00:00.000Z",
+  );
   database.prepare(
     `INSERT INTO account_deletion_requests (
        id, user_id, status, requested_at, execute_after, completed_at, created_at, updated_at
@@ -449,6 +450,39 @@ describe("off-site backup durability", () => {
     expect(releaseAttempts).toBe(1);
 
     await scheduler.stop();
+  });
+
+  it("drains an asynchronous status callback before stop resolves", async () => {
+    let releaseStatus: (() => void) | undefined;
+    let runningStatusStarted = false;
+    const scheduler = scheduleOffsiteBackups({
+      databasePath: "/unused.sqlite",
+      evidencePath: "/unused-evidence",
+      sourceSupabaseUrl: "https://same.supabase.co",
+      sourceServiceRoleKey: "source-key",
+      destinationSupabaseUrl: "https://same.supabase.co",
+      destinationServiceRoleKey: "destination-key",
+      bucketName: "pintpath-backups",
+      retentionDays: 30,
+      intervalHours: 24,
+      acquireLease: () => true,
+      onStatus: (status) => {
+        if (status.state !== "running") return;
+        runningStatusStarted = true;
+        return new Promise<void>((resolve) => { releaseStatus = resolve; });
+      },
+    });
+
+    const runPromise = scheduler.runNow();
+    await vi.waitFor(() => expect(runningStatusStarted).toBe(true));
+    let stopped = false;
+    const stopPromise = scheduler.stop().then(() => { stopped = true; });
+    await Promise.resolve();
+    expect(stopped).toBe(false);
+    releaseStatus?.();
+    await expect(runPromise).resolves.toBeUndefined();
+    await expect(stopPromise).resolves.toBeUndefined();
+    expect(stopped).toBe(true);
   });
 
   it("authenticates a zero-deletion genesis and rehearses a fresh-install restore", async () => {
