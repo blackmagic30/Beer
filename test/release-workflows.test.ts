@@ -395,13 +395,13 @@ describe("release workflow contracts", () => {
     expect(runbook).toContain("This foundation is not live recovery evidence");
   });
 
-  it("keeps development types and CI on the production Node 22 baseline", () => {
+  it("pins development to the reviewed Node 22 runtime baseline", () => {
     const packageJson = JSON.parse(repositoryFile("package.json")) as {
       engines?: Record<string, string>;
       devDependencies?: Record<string, string>;
     };
 
-    expect(repositoryFile(".node-version").trim()).toBe("22");
+    expect(repositoryFile(".node-version").trim()).toBe("22.23.2");
     expect(packageJson.engines?.node).toBe(">=22");
     expect(packageJson.devDependencies?.["@types/node"]).toMatch(/^\^22\./);
     for (const name of [
