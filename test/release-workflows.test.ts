@@ -362,12 +362,15 @@ describe("release workflow contracts", () => {
     expect(runbook).toContain("restartPolicyMaxRetries` value `1`");
     expect(runbook).not.toContain("with zero retries");
     expect(runbook).toContain(
-      "Railway performs a fresh build from that deployment's stored",
+      "with GraphQL `usePreviousImageTag: true`",
     );
     expect(runbook).toContain(
-      "A fresh image digest is expected and is not, by itself, a mismatch",
+      "Ordinary\n  Railway CLI redeploy omits this flag",
     );
     expect(runbook).not.toContain("redeploy the already-reviewed built image");
+    expect(runbook).not.toContain(
+      "A fresh image digest is expected and is not, by itself, a mismatch",
+    );
     expect(runbook).toContain(
       'RAILPACK_PACKAGES="node@22.23.2 postgres@17.10"',
     );

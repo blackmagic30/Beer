@@ -40,10 +40,12 @@ network gate described below.
   token; pin one reviewed commit, Node 22, PostgreSQL client 17, restart `NEVER`,
   one replica, small resource limits, and a 20-minute outer timeout.
 - Build those services before adding credential references. Add only Railway
-  reference expressions with deploys skipped, then redeploy the selected
-  deployment. Railway performs a fresh build from that deployment's stored
-  source snapshot; it does not upload the current worktree. Do not copy a
-  resolved URL or password through a terminal.
+  reference expressions with deploys skipped, then redeploy the exact reviewed
+  deployment with GraphQL `usePreviousImageTag: true`. Require the child image
+  digest to equal the parent and require zero build-stage records. Ordinary
+  Railway CLI redeploy omits this flag and performs a fresh same-source build,
+  so it is not valid for this ceremony. Do not copy a resolved URL or password
+  through a terminal.
 - Select `/railway.auth-probe.toml` explicitly for both temporary instances.
   Railway config-in-code overrides dashboard settings; using the root
   `railway.toml` would run the application predeploy validator, app server,
@@ -123,11 +125,11 @@ that the built instances have no repository/image source, predeploy command,
 healthcheck, domain, TCP proxy, volume, or secret variable and that production
 inventory is byte-for-byte unchanged. Only then add the protected Railway
 reference expressions and phase controls with deploys skipped. Every later
-execution must redeploy an exact reviewed deployment ID and prove the resulting
-deployment remains bound to the same stored source commit and reviewed build
-contract. A fresh image digest is expected and is not, by itself, a mismatch.
-Never use `railway up`, `--from-source`, or an unreviewed worktree during the
-ceremony.
+execution must redeploy an exact reviewed deployment ID with
+`usePreviousImageTag: true`, retain the exact parent image digest and provenance,
+and emit no build, export, or image-push records. Never use ordinary
+`railway redeploy`, `railway up`, `--from-source`, an omitted or false
+`usePreviousImageTag`, or an unreviewed worktree during the ceremony.
 
 ## Runtime-login rotation
 
