@@ -170,19 +170,23 @@ client B for the candidate.
    reference changes: a redeploy would resolve the successor URL and destroy
    the predecessor proof.
 4. Do not mutate runtime authority until the canonical watcher-arming line from
-   step 3 has been validated and captured. With deploys skipped, update the
-   Postgres runtime-password authority, the
-   exact versioned runtime URL, the Beer reference, and the staging expected and
-   named URL digests. Compute digests in process without printing the URL or
-   digest. Provider resource IDs do not change.
+   step 3 has been validated and captured. With deploys skipped, update only the
+   Postgres runtime-password authority and exact versioned runtime URL. Do not
+   update Beer yet. Verify that no dependent deployment started and that A is
+   still the same running, armed deployment.
 5. Redeploy B so it resolves the successor reference. Run
    `verify-current --target postgres-runtime` with identity `candidate` and
    require accepted authentication plus full runtime readiness.
-6. On B, run `retire-old-runtime --target postgres-runtime`. It requires the
+6. Only after step 5 passes, with deploys skipped, update the Beer runtime
+   reference plus the staging expected and named URL digests. Compute digests
+   in process without printing the URL or digest. Provider resource IDs and
+   forbidden URL hashes do not change. Require Beer to remain stopped and prove
+   that the update triggered no deployment.
+7. On B, run `retire-old-runtime --target postgres-runtime`. It requires the
    exact durable handoff under the same lifecycle lock, invalidates the fixed
    predecessor login before terminating its sessions, proves zero survivors,
    and re-proves the successor.
-7. Require both B's retirement receipt and A's transition receipt to pass.
+8. Require both B's retirement receipt and A's transition receipt to pass.
    A must prove that the same retained predecessor reference first authenticated
    and later received an exact authentication rejection; a client that only
    ever rejects cannot pass. Generate a fresh logical backup/recovery receipt

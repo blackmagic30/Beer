@@ -403,6 +403,21 @@ describe("release workflow contracts", () => {
     expect(runtimeRotation.indexOf("configure A")).toBeLessThan(
       runtimeRotation.indexOf("With deploys skipped"),
     );
+    const postgresAuthority = runtimeRotation.indexOf(
+      "update only the\n   Postgres runtime-password authority",
+    );
+    const candidateVerification = runtimeRotation.indexOf(
+      "Redeploy B so it resolves the successor reference",
+    );
+    const beerReference = runtimeRotation.indexOf(
+      "update the Beer runtime\n   reference",
+    );
+    expect(postgresAuthority).toBeGreaterThan(-1);
+    expect(candidateVerification).toBeGreaterThan(postgresAuthority);
+    expect(beerReference).toBeGreaterThan(candidateVerification);
+    expect(runtimeRotation.indexOf("retire-old-runtime")).toBeGreaterThan(
+      beerReference,
+    );
     expect(runtimeRotation).toContain("Never redeploy A after");
     expect(runbook).toContain("Regenerate password");
     expect(runbook).toContain(
