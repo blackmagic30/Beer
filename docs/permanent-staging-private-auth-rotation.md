@@ -20,11 +20,12 @@ network gate described below.
 
 ## Safety boundary
 
-- Set the staging Beer service's desired regional replica count to zero, then
-  verify both zero desired replicas and no active deployment. A previously
-  failed/stopped deployment is not proof that the desired count is zero. Freeze
-  migrations, backups, restores, and scheduled jobs during each credential
-  transition.
+- Keep the staging Beer service provider-stopped and verify it has no active
+  deployment or running instance before every credential transition. Railway's
+  regional configuration requires at least one desired replica, so do not
+  attempt to encode zero there and do not restart, redeploy, or otherwise
+  activate Beer during this ceremony. Freeze migrations, backups, restores,
+  and scheduled jobs as well.
 - Re-resolve the pinned Railway project, environment, Postgres, Redis, and
   temporary probe-service IDs before every mutation. Never target production.
 - Require the staging environment to remain the exact persistent fork whose

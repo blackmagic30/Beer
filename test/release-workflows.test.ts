@@ -357,6 +357,10 @@ describe("release workflow contracts", () => {
     expect(runbook).toContain("live gate remains **OPEN**");
     expect(runbook).toContain("PGREQUIREAUTH=scram-sha-256");
     expect(runbook).toContain("watch-old-rejection");
+    expect(runbook).toContain(
+      "regional configuration requires at least one desired replica",
+    );
+    expect(runbook).not.toContain("zero desired replicas");
     const runtimeRotation = runbook.slice(
       runbook.indexOf("## Runtime-login rotation"),
       runbook.indexOf("## Template-admin and Redis rotation"),
