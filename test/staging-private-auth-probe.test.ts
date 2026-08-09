@@ -18,6 +18,7 @@ import {
   type CapturedProcessResult,
   type ProvisionLifecycleLock,
   type StagingPrivateAuthProbeDependencies,
+  type StagingPrivateAuthProbeProgress,
   type StagingPrivateAuthProbeReceipt,
 } from "../scripts/staging-private-auth-probe.js";
 
@@ -118,6 +119,22 @@ function onlyReceipt(output: string[]): StagingPrivateAuthProbeReceipt {
   expect(output).toHaveLength(1);
   expect(output[0]!.endsWith("\n")).toBe(true);
   return JSON.parse(output[0]!) as StagingPrivateAuthProbeReceipt;
+}
+
+function watcherOutput(output: string[]): {
+  progress: StagingPrivateAuthProbeProgress;
+  receipt: StagingPrivateAuthProbeReceipt;
+} {
+  expect(output).toHaveLength(2);
+  for (const line of output) {
+    expect(line.endsWith("\n")).toBe(true);
+    expect(line.slice(0, -1)).not.toContain("\n");
+  }
+  const progress = JSON.parse(output[0]!) as StagingPrivateAuthProbeProgress;
+  const receipt = JSON.parse(output[1]!) as StagingPrivateAuthProbeReceipt;
+  expect(progress.schemaVersion).toBe("staging-private-auth-probe-progress/v1");
+  expect(receipt.schemaVersion).toBe("staging-private-auth-probe/v1");
+  return { progress, receipt };
 }
 
 function processResult(
@@ -685,9 +702,7 @@ describe("staging private authentication probe", () => {
       candidatePassword,
     );
     const script = stagingPrivateAuthProbeInternals.scripts.provision;
-    expect(script).not.toMatch(
-      /candidate_password/i,
-    );
+    expect(script).not.toMatch(/candidate_password/i);
     expect(script).toContain("IN DATABASE pintpath_staging");
     expect(script).not.toContain("current_database()");
     expect(script).toContain("existing-owned");
@@ -1212,31 +1227,69 @@ describe("staging private authentication probe", () => {
     expect(adminReuseRetire).not.toHaveBeenCalled();
   });
 
-  it("watches fresh connections until every old credential transitions from accepted to rejected", async () => {
+  it("arms a single-target watcher exactly once after that target accepts", async () => {
+    const redisAttempt = vi
+      .fn<StagingPrivateAuthProbeDependencies["attemptRedis"]>()
+      .mockResolvedValueOnce("accepted")
+      .mockResolvedValueOnce("rejected");
+    const harness = createHarness({ redisAttempt });
+
+    const exitCode = await runStagingPrivateAuthProbe(
+      "watch-old-rejection",
+      "redis",
+      harness.dependencies,
+    );
+    const { progress, receipt } = watcherOutput(harness.output);
+
+    expect(exitCode).toBe(0);
+    expect(progress).toEqual({
+      schemaVersion: "staging-private-auth-probe-progress/v1",
+      deploymentId,
+      mode: "watch-old-rejection",
+      target: "redis",
+      event: "watcher-armed",
+      outcome: "accepted",
+    });
+    expect(receipt.outcome).toBe("passed");
+    expect(redisAttempt).toHaveBeenCalledTimes(2);
+  });
+
+  it("arms all targets only after every selected old credential has accepted", async () => {
     const postgresStates = new Map([
-      [adminUrl, ["accepted", "rejected"] as const],
-      [oldRuntimeUrl, ["accepted", "rejected"] as const],
+      [adminUrl, ["accepted", "accepted", "rejected"] as const],
+      [oldRuntimeUrl, ["accepted", "accepted", "rejected"] as const],
     ]);
     const postgresIndexes = new Map<string, number>();
     const postgresAttempt = vi.fn(async (url: string) => {
       const index = postgresIndexes.get(url) ?? 0;
       postgresIndexes.set(url, index + 1);
-      return postgresStates.get(url)?.[Math.min(index, 1)] ?? "inconclusive";
+      return postgresStates.get(url)?.[Math.min(index, 2)] ?? "inconclusive";
     });
     let redisIndex = 0;
-    const redisAttempt = vi.fn(async () =>
-      redisIndex++ === 0 ? ("accepted" as const) : ("rejected" as const),
-    );
-    const harness = createHarness({ postgresAttempt, redisAttempt });
+    let harness: ReturnType<typeof createHarness>;
+    const redisAttempt = vi.fn(async () => {
+      if (redisIndex < 2) expect(harness.output).toEqual([]);
+      const result = ["inconclusive", "accepted", "rejected"] as const;
+      return result[Math.min(redisIndex++, 2)]!;
+    });
+    harness = createHarness({ postgresAttempt, redisAttempt });
 
     const exitCode = await runStagingPrivateAuthProbe(
       "watch-old-rejection",
       "all",
       harness.dependencies,
     );
-    const receipt = onlyReceipt(harness.output);
+    const { progress, receipt } = watcherOutput(harness.output);
 
     expect(exitCode).toBe(0);
+    expect(progress).toEqual({
+      schemaVersion: "staging-private-auth-probe-progress/v1",
+      deploymentId,
+      mode: "watch-old-rejection",
+      target: "all",
+      event: "watcher-armed",
+      outcome: "accepted",
+    });
     expect(receipt.outcome).toBe("passed");
     expect(receipt.checks).toMatchObject({
       postgresAdminAuth: "rejected",
@@ -1246,32 +1299,70 @@ describe("staging private authentication probe", () => {
       postgresRuntimeTransition: "observed",
       redisTransition: "observed",
     });
-    expect(postgresAttempt).toHaveBeenCalledTimes(4);
-    expect(redisAttempt).toHaveBeenCalledTimes(2);
-    expect(harness.output[0]).not.toContain("fixture_admin_password");
-    expect(harness.output[0]).not.toContain("fixture_runtime_password");
-    expect(harness.output[0]).not.toContain("fixture_redis_password");
+    expect(postgresAttempt).toHaveBeenCalledTimes(6);
+    expect(redisAttempt).toHaveBeenCalledTimes(3);
+    const serializedOutput = harness.output.join("");
+    expect(serializedOutput).not.toContain("fixture_admin_password");
+    expect(serializedOutput).not.toContain("fixture_runtime_password");
+    expect(serializedOutput).not.toContain("fixture_redis_password");
+    expect(serializedOutput).not.toContain("postgresql://");
+    expect(serializedOutput).not.toContain("redis://");
   });
 
-  it("does not accept an already-rejected credential as an observed transition", async () => {
-    const redisAttempt = vi.fn(async () => "rejected" as const);
-    const harness = createHarness({
-      redisAttempt,
-      sleepAdvanceMs: STAGING_PRIVATE_AUTH_PROBE_LOCK.maximumDurationMs,
+  it.each(["rejected", "inconclusive"] as const)(
+    "does not arm or observe a transition for an old credential that is only %s",
+    async (authenticationResult) => {
+      const redisAttempt = vi.fn(async () => authenticationResult);
+      const harness = createHarness({
+        redisAttempt,
+        sleepAdvanceMs: STAGING_PRIVATE_AUTH_PROBE_LOCK.maximumDurationMs,
+      });
+
+      const exitCode = await runStagingPrivateAuthProbe(
+        "watch-old-rejection",
+        "redis",
+        harness.dependencies,
+      );
+      const receipt = onlyReceipt(harness.output);
+
+      expect(exitCode).toBe(1);
+      expect(receipt.outcome).toBe("inconclusive");
+      expect(receipt.checks.redisAuth).toBe(authenticationResult);
+      expect(receipt.checks.redisTransition).toBe("not-observed");
+      expect(redisAttempt).toHaveBeenCalledTimes(1);
+      expect(harness.output).toHaveLength(1);
+      expect(harness.output[0]).not.toContain(
+        "staging-private-auth-probe-progress",
+      );
+    },
+  );
+
+  it("does not arm or count a transition that occurs before every target accepts", async () => {
+    let adminAttempt = 0;
+    const postgresAttempt = vi.fn(async (url: string) => {
+      if (url === adminUrl)
+        return adminAttempt++ === 0
+          ? ("accepted" as const)
+          : ("rejected" as const);
+      return "inconclusive" as const;
     });
+    const redisAttempt = vi.fn(async () => "inconclusive" as const);
+    const harness = createHarness({ postgresAttempt, redisAttempt });
 
     const exitCode = await runStagingPrivateAuthProbe(
       "watch-old-rejection",
-      "redis",
+      "all",
       harness.dependencies,
     );
     const receipt = onlyReceipt(harness.output);
 
     expect(exitCode).toBe(1);
     expect(receipt.outcome).toBe("inconclusive");
-    expect(receipt.checks.redisAuth).toBe("rejected");
-    expect(receipt.checks.redisTransition).toBe("not-observed");
-    expect(redisAttempt).toHaveBeenCalledTimes(1);
+    expect(receipt.checks.postgresAdminAuth).toBe("rejected");
+    expect(receipt.checks.postgresAdminTransition).toBe("not-observed");
+    expect(harness.output[0]).not.toContain(
+      "staging-private-auth-probe-progress",
+    );
   });
 
   it("verifies admin, runtime readiness, and Redis in one bounded all-target run", async () => {
@@ -2218,7 +2309,7 @@ describe("staging private authentication probe", () => {
     );
   });
 
-  it("keeps the executable output surface to one allowlisted JSON receipt", () => {
+  it("keeps the executable output surface to allowlisted canonical JSON records", () => {
     const source = fs.readFileSync(
       "scripts/staging-private-auth-probe.ts",
       "utf8",

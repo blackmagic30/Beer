@@ -4,6 +4,8 @@ import { fileURLToPath } from "node:url";
 import {
   runStagingPrivateAuthProbe,
   stagingPrivateAuthProbeInternals,
+  type StagingPrivateAuthProbeProgress,
+  type StagingPrivateAuthProbeReceipt,
   type StagingPrivateAuthProbeMode,
   type StagingPrivateAuthProbeTarget,
 } from "./staging-private-auth-probe.js";
@@ -28,6 +30,77 @@ const TARGETS = new Set<StagingPrivateAuthProbeTarget>([
 const MAX_CONTROL_VALUE_LENGTH = 64;
 const TOOLCHAIN_TIMEOUT_MS = 15_000;
 const POSTGRES_CLIENT_VERSION_PATTERN = /^psql \(PostgreSQL\) 17\.10(?:\s|$)/;
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const RECEIPT_KEYS = [
+  "schemaVersion",
+  "timestamp",
+  "deploymentId",
+  "mode",
+  "target",
+  "outcome",
+  "identity",
+  "checks",
+] as const;
+const IDENTITY_KEYS = [
+  "project",
+  "environment",
+  "service",
+  "deployment",
+  "debugLoggingDisabled",
+  "postgresResource",
+  "redisResource",
+  "postgresAdminTarget",
+  "postgresRuntimeTarget",
+  "redisTarget",
+  "postgresAdminLogin",
+  "postgresRuntimeLogin",
+  "redisLogin",
+  "postgresCredentialsDistinct",
+  "providerCredentialsDistinct",
+  "postgresClient17",
+  "runtimeCandidateDistinct",
+  "runtimeCandidateSecretDistinct",
+  "runtimeCandidateOwnerSecretValid",
+  "retiredRuntimeDistinct",
+] as const;
+const CHECK_KEYS = [
+  "postgresAdminAuth",
+  "postgresRuntimeAuth",
+  "redisAuth",
+  "postgresAdminTransition",
+  "postgresRuntimeTransition",
+  "redisTransition",
+  "runtimeHandoff",
+  "runtimeReadiness",
+  "runtimeMutation",
+] as const;
+const AUTHENTICATION_RECEIPTS = new Set([
+  "accepted",
+  "rejected",
+  "inconclusive",
+  "not-run",
+]);
+const TRANSITION_RECEIPTS = new Set(["observed", "not-observed", "not-run"]);
+const HANDOFF_RECEIPTS = new Set([
+  "observed",
+  "not-observed",
+  "inconclusive",
+  "not-run",
+]);
+const READINESS_RECEIPTS = new Set([
+  "ready",
+  "not-ready",
+  "inconclusive",
+  "not-run",
+]);
+const MUTATION_RECEIPTS = new Set([
+  "completed",
+  "rolled-back",
+  "cleanup-inconclusive",
+  "inconclusive",
+  "not-run",
+]);
 
 type DispatcherReceiptMode = "build-only" | "invalid";
 type DispatcherReceiptTarget = "all" | "invalid";
@@ -91,7 +164,7 @@ function createDispatcherReceipt(input: {
       node22_23_2: input.nodeVersion === STAGING_AUTH_PROBE_NODE_VERSION,
       postgresClient17_10: Boolean(
         input.psqlVersion &&
-        POSTGRES_CLIENT_VERSION_PATTERN.test(input.psqlVersion.trim()),
+          POSTGRES_CLIENT_VERSION_PATTERN.test(input.psqlVersion.trim()),
       ),
     },
   };
@@ -104,26 +177,105 @@ function writeReceipt(
   writeOutput(`${JSON.stringify(receipt)}\n`);
 }
 
-function isCanonicalDelegatedReceipt(
+function hasExactKeys(
+  value: unknown,
+  expectedKeys: readonly string[],
+): value is Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    return false;
+  const actualKeys = Object.keys(value);
+  return (
+    actualKeys.length === expectedKeys.length &&
+    expectedKeys.every((key, index) => actualKeys[index] === key)
+  );
+}
+
+function isCanonicalTimestamp(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const parsed = new Date(value);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString() === value;
+}
+
+function parseCanonicalDelegatedReceipt(
   output: string,
   mode: StagingPrivateAuthProbeMode,
   target: StagingPrivateAuthProbeTarget,
   exitCode: 0 | 1,
-): boolean {
-  if (!output.endsWith("\n") || output.slice(0, -1).includes("\n"))
-    return false;
+): StagingPrivateAuthProbeReceipt | null {
+  if (!output.endsWith("\n") || output.slice(0, -1).includes("\n")) return null;
   try {
-    const parsed = JSON.parse(output) as Record<string, unknown>;
-    const outcome = String(parsed.outcome);
-    return (
+    const parsed: unknown = JSON.parse(output);
+    if (!hasExactKeys(parsed, RECEIPT_KEYS)) return null;
+    const identity = parsed.identity;
+    const checks = parsed.checks;
+    if (
+      !hasExactKeys(identity, IDENTITY_KEYS) ||
+      !hasExactKeys(checks, CHECK_KEYS)
+    ) {
+      return null;
+    }
+    const outcome = parsed.outcome;
+    if (
       parsed.schemaVersion === "staging-private-auth-probe/v1" &&
+      isCanonicalTimestamp(parsed.timestamp) &&
+      typeof parsed.deploymentId === "string" &&
+      (UUID_PATTERN.test(parsed.deploymentId) ||
+        parsed.deploymentId === "unavailable") &&
       parsed.mode === mode &&
       parsed.target === target &&
-      ["passed", "failed", "inconclusive"].includes(outcome) &&
-      (outcome === "passed" ? exitCode === 0 : exitCode === 1)
-    );
+      (outcome === "passed" ||
+        outcome === "failed" ||
+        outcome === "inconclusive") &&
+      (outcome === "passed" ? exitCode === 0 : exitCode === 1) &&
+      IDENTITY_KEYS.every((key) => typeof identity[key] === "boolean") &&
+      AUTHENTICATION_RECEIPTS.has(checks.postgresAdminAuth as string) &&
+      AUTHENTICATION_RECEIPTS.has(checks.postgresRuntimeAuth as string) &&
+      AUTHENTICATION_RECEIPTS.has(checks.redisAuth as string) &&
+      TRANSITION_RECEIPTS.has(checks.postgresAdminTransition as string) &&
+      TRANSITION_RECEIPTS.has(checks.postgresRuntimeTransition as string) &&
+      TRANSITION_RECEIPTS.has(checks.redisTransition as string) &&
+      HANDOFF_RECEIPTS.has(checks.runtimeHandoff as string) &&
+      READINESS_RECEIPTS.has(checks.runtimeReadiness as string) &&
+      MUTATION_RECEIPTS.has(checks.runtimeMutation as string) &&
+      `${JSON.stringify(parsed)}\n` === output
+    ) {
+      return parsed as unknown as StagingPrivateAuthProbeReceipt;
+    }
+    return null;
   } catch {
-    return false;
+    return null;
+  }
+}
+
+function parseCanonicalProgress(
+  output: string,
+): StagingPrivateAuthProbeProgress | null {
+  if (!output.endsWith("\n") || output.slice(0, -1).includes("\n")) return null;
+  try {
+    const parsed = JSON.parse(output) as Record<string, unknown>;
+    const keys = Object.keys(parsed);
+    if (
+      keys.length !== 6 ||
+      keys[0] !== "schemaVersion" ||
+      keys[1] !== "deploymentId" ||
+      keys[2] !== "mode" ||
+      keys[3] !== "target" ||
+      keys[4] !== "event" ||
+      keys[5] !== "outcome" ||
+      parsed.schemaVersion !== "staging-private-auth-probe-progress/v1" ||
+      typeof parsed.deploymentId !== "string" ||
+      !UUID_PATTERN.test(parsed.deploymentId) ||
+      parsed.mode !== "watch-old-rejection" ||
+      !TARGETS.has(parsed.target as StagingPrivateAuthProbeTarget) ||
+      parsed.event !== "watcher-armed" ||
+      parsed.outcome !== "accepted" ||
+      `${JSON.stringify(parsed)}\n` !== output
+    ) {
+      return null;
+    }
+    return parsed as unknown as StagingPrivateAuthProbeProgress;
+  } catch {
+    return null;
   }
 }
 
@@ -220,13 +372,45 @@ export async function runStagingPrivateAuthProbeDispatcher(
     return 1;
   }
 
-  const delegatedOutput: string[] = [];
+  const delegatedMode = mode as StagingPrivateAuthProbeMode;
+  const delegatedTarget = target as StagingPrivateAuthProbeTarget;
+  const expectedDeploymentId = controlValue(
+    dependencies.env,
+    "RAILWAY_DEPLOYMENT_ID",
+  );
+  let delegatedInvalid = false;
+  let delegatedTerminal: string | null = null;
+  let progress: StagingPrivateAuthProbeProgress | null = null;
+  const captureDelegatedOutput = (output: string): void => {
+    if (delegatedInvalid) return;
+    const candidateProgress = parseCanonicalProgress(output);
+    if (candidateProgress) {
+      if (
+        delegatedMode !== "watch-old-rejection" ||
+        delegatedTerminal !== null ||
+        progress !== null ||
+        candidateProgress.deploymentId !== expectedDeploymentId ||
+        candidateProgress.target !== delegatedTarget
+      ) {
+        delegatedInvalid = true;
+        return;
+      }
+      progress = candidateProgress;
+      dependencies.writeOutput(output);
+      return;
+    }
+    if (delegatedTerminal !== null) {
+      delegatedInvalid = true;
+      return;
+    }
+    delegatedTerminal = output;
+  };
   let exitCode: 0 | 1;
   try {
     exitCode = await dependencies.runProbe(
-      mode as StagingPrivateAuthProbeMode,
-      target as StagingPrivateAuthProbeTarget,
-      (output) => delegatedOutput.push(output),
+      delegatedMode,
+      delegatedTarget,
+      captureDelegatedOutput,
     );
   } catch {
     writeReceipt(
@@ -238,14 +422,27 @@ export async function runStagingPrivateAuthProbeDispatcher(
     );
     return 1;
   }
+  const terminalReceipt = delegatedTerminal
+    ? parseCanonicalDelegatedReceipt(
+        delegatedTerminal,
+        delegatedMode,
+        delegatedTarget,
+        exitCode,
+      )
+    : null;
+  const watchProgressIsConsistent =
+    delegatedMode !== "watch-old-rejection" ||
+    Boolean(
+      terminalReceipt &&
+        terminalReceipt.deploymentId === expectedDeploymentId &&
+        (terminalReceipt.outcome === "passed" ? progress !== null : true) &&
+        (progress === null || terminalReceipt.outcome !== "failed"),
+    );
   if (
-    delegatedOutput.length !== 1 ||
-    !isCanonicalDelegatedReceipt(
-      delegatedOutput[0] ?? "",
-      mode as StagingPrivateAuthProbeMode,
-      target as StagingPrivateAuthProbeTarget,
-      exitCode,
-    )
+    delegatedInvalid ||
+    delegatedTerminal === null ||
+    terminalReceipt === null ||
+    !watchProgressIsConsistent
   ) {
     writeReceipt(
       dependencies.writeOutput,
@@ -256,7 +453,7 @@ export async function runStagingPrivateAuthProbeDispatcher(
     );
     return 1;
   }
-  dependencies.writeOutput(delegatedOutput[0]!);
+  dependencies.writeOutput(delegatedTerminal);
   return exitCode;
 }
 

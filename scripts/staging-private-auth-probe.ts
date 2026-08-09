@@ -41,7 +41,10 @@ export type StagingPrivateAuthProbeMode =
   | "retire-old-runtime";
 
 export type StagingPrivateAuthProbeTarget =
-  "all" | "postgres-admin" | "postgres-runtime" | "redis";
+  | "all"
+  | "postgres-admin"
+  | "postgres-runtime"
+  | "redis";
 
 type ReceiptMode = StagingPrivateAuthProbeMode | "invalid";
 type ReceiptTarget = StagingPrivateAuthProbeTarget | "invalid";
@@ -65,7 +68,11 @@ type CandidateOwnershipResult =
   | "unowned"
   | "inconclusive";
 type CandidateHandoffResult =
-  "handed-off" | "absent" | "unsafe" | "unowned" | "inconclusive";
+  | "handed-off"
+  | "absent"
+  | "unsafe"
+  | "unowned"
+  | "inconclusive";
 type ProvisionRuntimeRoleResult =
   | "created"
   | "existing-owned"
@@ -114,6 +121,15 @@ export interface StagingPrivateAuthProbeReceipt {
     runtimeReadiness: ReadinessReceipt;
     runtimeMutation: MutationReceipt;
   };
+}
+
+export interface StagingPrivateAuthProbeProgress {
+  schemaVersion: "staging-private-auth-probe-progress/v1";
+  deploymentId: string;
+  mode: "watch-old-rejection";
+  target: StagingPrivateAuthProbeTarget;
+  event: "watcher-armed";
+  outcome: "accepted";
 }
 
 interface ParsedPostgresTarget {
@@ -172,7 +188,8 @@ interface CandidateRoleHandoffInput extends RuntimeRoleMutationInput {
 }
 
 interface FinalizeCandidateRoleInput
-  extends CandidateRoleMutationInput, CandidateRoleHandoffInput {}
+  extends CandidateRoleMutationInput,
+    CandidateRoleHandoffInput {}
 
 interface ProvisionRuntimeRoleInput extends FinalizeCandidateRoleInput {
   verifier: string;
@@ -674,6 +691,20 @@ function createReceipt(input: {
   };
 }
 
+function createWatcherArmedProgress(
+  deploymentId: string,
+  target: StagingPrivateAuthProbeTarget,
+): StagingPrivateAuthProbeProgress {
+  return {
+    schemaVersion: "staging-private-auth-probe-progress/v1",
+    deploymentId,
+    mode: "watch-old-rejection",
+    target,
+    event: "watcher-armed",
+    outcome: "accepted",
+  };
+}
+
 function trimmedEnvironmentValue(
   env: Readonly<Record<string, string | undefined>>,
   name: string,
@@ -895,52 +926,52 @@ function configurationFromEnvironment(
           : "invalid";
   const runtimeLoginExact = Boolean(
     parsedRuntime &&
-    (runtimeIdentityPhase === "predecessor"
-      ? parsedRuntime.username ===
-        STAGING_PRIVATE_AUTH_PROBE_LOCK.postgresPredecessorRuntimeLogin
-      : runtimeIdentityPhase === "candidate" &&
-        VERSIONED_RUNTIME_LOGIN_PATTERN.test(candidateLogin) &&
-        URL_SAFE_PASSWORD_PATTERN.test(candidatePassword) &&
-        parsedRuntime.username === candidateLogin &&
-        parsedRuntime.password === candidatePassword),
+      (runtimeIdentityPhase === "predecessor"
+        ? parsedRuntime.username ===
+          STAGING_PRIVATE_AUTH_PROBE_LOCK.postgresPredecessorRuntimeLogin
+        : runtimeIdentityPhase === "candidate" &&
+          VERSIONED_RUNTIME_LOGIN_PATTERN.test(candidateLogin) &&
+          URL_SAFE_PASSWORD_PATTERN.test(candidatePassword) &&
+          parsedRuntime.username === candidateLogin &&
+          parsedRuntime.password === candidatePassword),
   );
   const postgresCredentialsDistinct = Boolean(
     parsedAdmin &&
-    parsedRuntime &&
-    parsedAdmin.raw !== parsedRuntime.raw &&
-    parsedAdmin.username !== parsedRuntime.username &&
-    parsedAdmin.password !== parsedRuntime.password,
+      parsedRuntime &&
+      parsedAdmin.raw !== parsedRuntime.raw &&
+      parsedAdmin.username !== parsedRuntime.username &&
+      parsedAdmin.password !== parsedRuntime.password,
   );
   const candidateSecretDistinct = Boolean(
     parsedAdmin &&
-    parsedRuntime &&
-    parsedRedis &&
-    URL_SAFE_PASSWORD_PATTERN.test(candidatePassword) &&
-    candidatePassword !== parsedAdmin.password &&
-    candidatePassword !== parsedRedis.password &&
-    (runtimeIdentityPhase === "candidate"
-      ? candidatePassword === parsedRuntime.password
-      : candidatePassword !== parsedRuntime.password),
+      parsedRuntime &&
+      parsedRedis &&
+      URL_SAFE_PASSWORD_PATTERN.test(candidatePassword) &&
+      candidatePassword !== parsedAdmin.password &&
+      candidatePassword !== parsedRedis.password &&
+      (runtimeIdentityPhase === "candidate"
+        ? candidatePassword === parsedRuntime.password
+        : candidatePassword !== parsedRuntime.password),
   );
   const providerCredentialsDistinct = Boolean(
     parsedAdmin &&
-    parsedRuntime &&
-    parsedRedis &&
-    new Set([
-      parsedAdmin.password,
-      parsedRuntime.password,
-      parsedRedis.password,
-    ]).size === 3,
+      parsedRuntime &&
+      parsedRedis &&
+      new Set([
+        parsedAdmin.password,
+        parsedRuntime.password,
+        parsedRedis.password,
+      ]).size === 3,
   );
   const candidateOwnerSecretValid = Boolean(
     parsedAdmin &&
-    parsedRuntime &&
-    parsedRedis &&
-    URL_SAFE_PASSWORD_PATTERN.test(candidateOwnerSecret) &&
-    candidateOwnerSecret !== candidatePassword &&
-    candidateOwnerSecret !== parsedAdmin.password &&
-    candidateOwnerSecret !== parsedRuntime.password &&
-    candidateOwnerSecret !== parsedRedis.password,
+      parsedRuntime &&
+      parsedRedis &&
+      URL_SAFE_PASSWORD_PATTERN.test(candidateOwnerSecret) &&
+      candidateOwnerSecret !== candidatePassword &&
+      candidateOwnerSecret !== parsedAdmin.password &&
+      candidateOwnerSecret !== parsedRuntime.password &&
+      candidateOwnerSecret !== parsedRedis.password,
   );
 
   return {
@@ -1012,16 +1043,16 @@ function configurationFromEnvironment(
       postgresClient17: false,
       runtimeCandidateDistinct: Boolean(
         candidateUrl &&
-        parsedRuntime &&
-        candidateLogin !== parsedRuntime.username,
+          parsedRuntime &&
+          candidateLogin !== parsedRuntime.username,
       ),
       runtimeCandidateSecretDistinct: candidateSecretDistinct,
       runtimeCandidateOwnerSecretValid: candidateOwnerSecretValid,
       retiredRuntimeDistinct: Boolean(
         parsedRuntime &&
-        runtimeIdentityPhase === "candidate" &&
-        parsedRuntime.username !==
-          STAGING_PRIVATE_AUTH_PROBE_LOCK.postgresPredecessorRuntimeLogin,
+          runtimeIdentityPhase === "candidate" &&
+          parsedRuntime.username !==
+            STAGING_PRIVATE_AUTH_PROBE_LOCK.postgresPredecessorRuntimeLogin,
       ),
     },
   };
@@ -1417,7 +1448,8 @@ export async function closePostgresClientBounded(
 }
 
 type BoundedPostgresOperation<T> =
-  { completed: true; value: T } | { completed: false };
+  | { completed: true; value: T }
+  | { completed: false };
 
 async function runPostgresOperationBounded<T>(
   client: PostgresClientShutdownSurface,
@@ -2092,13 +2124,13 @@ function runtimeRoleIsRestricted(
 ): boolean {
   return Boolean(
     role &&
-    role.canLogin === true &&
-    role.inheritsMembership === true &&
-    role.isSuperuser === false &&
-    role.canCreateDatabase === false &&
-    role.canCreateRole === false &&
-    role.canReplicate === false &&
-    role.canBypassRls === false,
+      role.canLogin === true &&
+      role.inheritsMembership === true &&
+      role.isSuperuser === false &&
+      role.canCreateDatabase === false &&
+      role.canCreateRole === false &&
+      role.canReplicate === false &&
+      role.canBypassRls === false,
   );
 }
 
@@ -2303,6 +2335,7 @@ async function watchOldRejection(
   deadline: number,
   checks: StagingPrivateAuthProbeReceipt["checks"],
 ): Promise<ProbeOutcome> {
+  let armedProgressEmitted = false;
   const states = new Map(
     selectedTargets(configuration.target).map((target) => [
       target,
@@ -2330,7 +2363,23 @@ async function watchOldRejection(
       );
       setAuthenticationReceipt(checks, target, result);
       if (result === "accepted") state.accepted = true;
+      if (
+        !armedProgressEmitted &&
+        !deadlineReached(deadline, dependencies.monotonicNow) &&
+        [...states.values()].every((candidate) => candidate.accepted)
+      ) {
+        armedProgressEmitted = true;
+        dependencies.writeOutput(
+          `${JSON.stringify(
+            createWatcherArmedProgress(
+              configuration.deploymentId,
+              configuration.target,
+            ),
+          )}\n`,
+        );
+      }
       if (result === "rejected" && state.accepted) {
+        if (!armedProgressEmitted) return "inconclusive";
         state.transitioned = true;
         setTransitionReceipt(checks, target, "observed");
       }
@@ -2572,10 +2621,7 @@ async function provisionRuntimeCandidate(
             try {
               cleanup = await dependencies.cleanupRuntimeRole({
                 ...mutationInput,
-                timeoutMs: boundedTimeout(
-                  deadline,
-                  dependencies.monotonicNow,
-                ),
+                timeoutMs: boundedTimeout(deadline, dependencies.monotonicNow),
               });
             } catch {
               cleanup = "inconclusive";
@@ -2964,7 +3010,8 @@ function parseCliArguments(argv: readonly string[]): {
     });
     const mode = parsed.get("mode") as StagingPrivateAuthProbeMode | undefined;
     const target = parsed.get("--target") as
-      StagingPrivateAuthProbeTarget | undefined;
+      | StagingPrivateAuthProbeTarget
+      | undefined;
     return mode && target && PROBE_MODES.has(mode) && PROBE_TARGETS.has(target)
       ? { mode, target }
       : null;

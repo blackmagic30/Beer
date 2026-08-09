@@ -63,8 +63,10 @@ network gate described below.
   reading it directly. Never run recursive `rg`, `grep`, `find`, previews,
   dumps, or hashes across the private migration/evidence root: a diagnostic
   match can itself copy an otherwise protected value into logs or transcripts.
-- Invoke the command with `npm run --silent`; its only allowed stdout is one
-  JSON receipt line and it writes nothing to stderr on a classified result.
+- Invoke the command with `npm run --silent`; its allowed stdout is exactly one
+  canonical terminal JSON receipt. Only `watch-old-rejection` may precede that
+  receipt with one canonical secret-free watcher-arming progress line, and it
+  writes nothing to stderr on a classified result.
 
 Build the reviewed commit before invoking the compiled command:
 
@@ -158,11 +160,18 @@ client B for the candidate.
    retirement revoke that direct database grant before completing.
 3. While the provider runtime URL still names the predecessor, configure A to
    run `watch-old-rejection --target postgres-runtime` and redeploy A. Require
-   the exact A deployment to be running, then allow it enough time to make its
-   initial private-network authentication attempt before changing any runtime
-   authority. Never redeploy A after the runtime reference changes: a redeploy
-   would resolve the successor URL and destroy the predecessor proof.
-4. With deploys skipped, update the Postgres runtime-password authority, the
+   the exact A deployment to be running and require its dispatcher to stream
+   exactly one `staging-private-auth-probe-progress/v1` line bound to that
+   `RAILWAY_DEPLOYMENT_ID`, mode, and target, with `event=watcher-armed` and
+   `outcome=accepted`. The probe emits it only after every selected target has
+   authenticated successfully in that same process. A selected credential that
+   transitions before this global latch ends the watch inconclusively and is
+   never counted as post-arm evidence. Never redeploy A after the runtime
+   reference changes: a redeploy would resolve the successor URL and destroy
+   the predecessor proof.
+4. Do not mutate runtime authority until the canonical watcher-arming line from
+   step 3 has been validated and captured. With deploys skipped, update the
+   Postgres runtime-password authority, the
    exact versioned runtime URL, the Beer reference, and the staging expected and
    named URL digests. Compute digests in process without printing the URL or
    digest. Provider resource IDs do not change.
@@ -193,8 +202,11 @@ probe does not invent a database-template mutation API.
 For each authority separately:
 
 1. Deploy A with the old reference and start the matching
-   `watch-old-rejection` target.
-2. Obtain action-time operator confirmation, then use Railway Database Config
+   `watch-old-rejection` target. Before any provider mutation, require its one
+   canonical watcher-arming progress line bound to the exact deployment, mode,
+   and target. Rejected or inconclusive attempts do not arm the watcher.
+2. Only after that arming line is validated, obtain action-time operator
+   confirmation, then use Railway Database Config
    **Regenerate password** for Postgres admin or Redis. Do not merely edit the
    stored variable: an existing database volume does not consume initialization
    variables again.
@@ -212,11 +224,14 @@ restore an exposed credential.
 
 ## Evidence and cleanup
 
-Accept only a single canonical JSON line with the expected deployment ID,
+Accept exactly one canonical terminal receipt with the expected deployment ID,
 mode, target, `outcome=passed`, all relevant identity booleans true, and the
-required authentication/transition/readiness/mutation classifications. The
-receipt intentionally contains no URL, credential, hash, role verifier, Redis
-frame, or provider response body.
+required authentication/transition/readiness/mutation classifications. A watch
+also requires exactly one preceding canonical arming progress line; no other
+mode may emit progress. The dispatcher streams that line immediately but fails
+closed on malformed, duplicate, reordered, deployment/mode/target-mismatched,
+or terminal-contradicting progress. Neither line contains a URL, credential,
+hash, role verifier, Redis frame, or provider response body.
 
 In a guaranteed cleanup path, delete the two exact temporary staging services
 and verify that they have no deployment, domain, TCP proxy, volume, or variable
