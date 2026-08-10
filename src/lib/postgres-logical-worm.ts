@@ -598,6 +598,9 @@ async function validateLocalBackup(input: {
   } catch {
     throw wormError("backup_manifest_invalid");
   }
+  if (parsedManifest.schemaVersion !== 3) {
+    throw wormError("backup_manifest_invalid");
+  }
   const archive = await snapshotTrustedFile({
     filePath: archivePath,
     uid: uid!,

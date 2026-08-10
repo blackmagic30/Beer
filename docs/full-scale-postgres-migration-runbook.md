@@ -403,6 +403,9 @@ URL file.
   require a provider-safe Singapore placement proof before retrying.
 - [x] Create an independently verified logical PostgreSQL export from permanent
   staging with its archive, version-2 manifest, and complete state receipt.
+  This describes immutable historical evidence. Version 2 remains readable for
+  retrieval/restore but cannot authorize a new capture or close the current
+  pinned-transport gate; new backups must be schema version 3.
 - [x] Upload that frozen logical set to the isolated staging-offsite Supabase
   project, verify the complete remote object set, and pass the live
   database-bound readiness probe.
@@ -499,15 +502,17 @@ matching scoped group and read inside a read-only transaction. Manual plaintext
 `CREATE ROLE ... PASSWORD`, `psql` variable substitution, and hand-built
 dynamic SQL remain forbidden.
 
-Live provisioning is still operationally **STOPPED**. The manager currently
-accepts only standard system-root `verify-full`, while the stock Railway
-endpoint cannot satisfy that transport. Repository tests, including the
-verifier logger-suppression fixture, are implementation evidence rather than
-authority to run the command. Do not execute `arm`, `provision`, or `retire`
-against staging until the shared reviewed `railway-stock-localhost-ca-v1`
-transport is implemented identically in this manager and the logical-backup
-client, its protected CA hash/endpoint receipt is approved, and the resulting
-tracked bytes receive independent review.
+Live provisioning is still operationally **STOPPED**. The manager and logical
+backup client require the same explicit `railway-stock-localhost-ca-v1`
+transport: the stock volume's single root certificate is independently pinned
+by its DER SHA-256, the Railway private hostname resolves to one approved
+`fd12::/16` address, and TLS authenticates the stock leaf as `localhost` without
+rewriting the source URL authority. Repository tests, including the verifier
+logger-suppression fixture, are implementation evidence rather than authority
+to run the command. Do not execute `arm`, `provision`, or `retire` against
+staging until the exact mode-600 root-CA file and DER pin are independently
+approved for the intended Postgres service, the live endpoint proof passes,
+and the integrated tracked bytes receive independent review.
 
 The following role shape remains the exact live contract:
 
@@ -524,27 +529,34 @@ direct ACLs: non-grantable CONNECT on this database only; non-grantable EXECUTE
              on this database's pg_catalog.pg_control_system() only
 ```
 
-### Backup LOGIN manager ceremony (blocked on shared Railway transport)
+### Backup LOGIN manager ceremony (live authority still stopped)
 
 The manager takes no credential in an argument or environment variable. The
 administrator URL is an absolute, canonical, current-UID-owned mode-600 regular
 file with one direct non-pooler URL; its independently reviewed logical URL
-SHA-256 is a separate argument. The source database identity SHA-256 must come
-from independently reviewed Railway endpoint/system evidence. The intended
+SHA-256 is a separate argument. The source database identity SHA-256 and root
+certificate DER SHA-256 must come from independently reviewed Railway
+endpoint/system evidence. The mode-600 CA file contains exactly that one public
+root certificate; never extract, copy, or mount `root.key` or a server private
+key. The intended
 escrow path must not exist, its canonical parent must be mode 700, and each
 receipt path must be absent inside a separate canonical mode-700 evidence
 directory. The operation also binds the clean upstream-equal Git HEAD/tree,
 exact Node 22 version, UID, permanent-staging environment, operation ID,
 approval reference, and canonical positive login version.
 
-When the shared transport blocker is closed, derive the mutation arm first
-with the complete operation flags. `arm` reads no database URL or secret:
+Once the live CA, endpoint, database-identity, and reviewed-SHA authority gates
+above are closed, derive the mutation arm first with the complete operation
+flags. `arm` reads no database URL or secret:
 
 ```sh
 npm run --silent db:postgres:backup:login -- arm provision \
   --admin-connection-file /absolute/private/postgres-admin-url.key \
   --expected-admin-url-sha256 <reviewed-64-hex-logical-url-sha256> \
   --expected-database-identity-sha256 <reviewed-64-hex-source-identity-sha256> \
+  --transport-profile railway-stock-localhost-ca-v1 \
+  --root-ca-file /absolute/private/railway-postgres-root-ca.pem \
+  --expected-root-ca-der-sha256 <reviewed-64-hex-root-certificate-DER-sha256> \
   --expected-head-sha <reviewed-40-hex-clean-head> \
   --expected-tree-sha <reviewed-40-hex-clean-tree> \
   --expected-uid <canonical-current-uid> \
@@ -583,31 +595,39 @@ external hashes with the backup/retrieval evidence before creating a later
 version.
 
 Never put the password or resulting URL in Git, command arguments, logs, or
-evidence. Keep the direct, non-pooler URL with exactly
-`sslmode=verify-full` in a current-user-owned mode-600 file. The backup client
-forces Node certificate verification and libpq `PGSSLROOTCERT=system`; no
-weaker production TLS mode is accepted. Separately obtain the trusted
-lowercase SHA-256 of the logical trimmed URL from the reviewed provisioning
-authority. Do not derive that pin from the mutable URL file during the backup
-ceremony. The exact connection limit of two bounds the
+evidence. Keep the direct, non-pooler Railway private URL with exactly
+`sslmode=verify-full` in a current-user-owned mode-600 file. The shared
+transport dials one pinned private address while Node verifies the leaf as
+`localhost` against only the held CA and libpq uses the same address,
+`PGHOST=localhost`, the same exclusive CA copy, and TLS 1.2 or newer. No system
+root, `sslmode=require`, `verify-ca`, public proxy, or alternate-address
+fallback is accepted. Separately obtain the trusted lowercase SHA-256 of the
+logical trimmed URL and the root certificate's DER SHA-256 from the reviewed
+provisioning authority. Do not derive either pin from the mutable files during
+the backup ceremony. The exact connection limit of two bounds the
 exported-snapshot holder plus the `pg_dump` reader; any other value fails
 closed. Inability to read `pg_control_system()` is a hard failure, not a reason
 to use a superuser. The
 output directory must be a new path inside the mode-700 release evidence
 directory:
 
-The stock Railway Postgres SSL image does not satisfy this system-root,
-hostname-verified contract: its private self-signed root is not in the system
-trust store and its [server leaf names only
+The stock Railway Postgres SSL image cannot use ordinary system-root validation:
+its private self-signed root is not in the system trust store and its [server leaf names only
 `localhost`](https://github.com/railwayapp-templates/postgres-ssl/blob/35fb8234ad6c88d400c4be1f19d9a11d6c6c3564/init-ssl.sh), not the Railway private
-DNS hostname. Keep this ceremony stopped until the separately reviewed shared
-pinned-CA/`localhost` transport profile lands for both login management and
-backup. Do not weaken either path to `sslmode=require` implicitly.
+DNS hostname. The named profile handles that exact stock layout by pinning the
+root and retaining `localhost` as the certificate identity while separately
+pinning the original Railway URL and database identity. Certificate rotation,
+DNS drift, fewer than 24 hours of remaining CA validity, or any pin mismatch is
+a new STOP requiring re-authorization. Do not weaken either path to
+`sslmode=require` implicitly.
 
 ```sh
 npm run db:postgres:backup:logical -- \
   --connection-file /absolute/private/postgres-backup-url.key \
   --expected-source-url-sha256 "$EXPECTED_SOURCE_URL_SHA256" \
+  --transport-profile railway-stock-localhost-ca-v1 \
+  --root-ca-file /absolute/private/railway-postgres-root-ca.pem \
+  --expected-root-ca-der-sha256 "$EXPECTED_ROOT_CA_DER_SHA256" \
   --output /absolute/private/release-id/postgres-logical
 ```
 
@@ -635,7 +655,11 @@ with the exact live-database-OID predicate on all 59 tables. The mode-600 privat
 `schema_metadata`, `migration_runs`, and `migration_chunks` in reviewed primary
 key order, with bounded pages, exact native-type canonicalization, counts,
 table/data/state/key-range hashes, source/database/snapshot hashes, and the
-archive/manifest binding. `manifest.json` schema version 2 binds that receipt.
+archive/manifest binding. New `manifest.json` files use schema version 3 and
+bind the exact transport profile plus validated root-certificate DER SHA-256 in
+a new domain-separated manifest-binding preimage. Historical version-2 sets
+remain byte-for-byte readable for retrieval and restore only; they cannot
+authorize a new offsite/WORM/private-Storage capture or close current readiness.
 Standard output contains only fixed booleans, decimal counts, and SHA-256
 values; it contains no URL, login, database name, row value, or local path.
 

@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import tls from "node:tls";
 
 import { Client, type ClientConfig, type QueryResultRow } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -19,11 +20,20 @@ import {
   type PostgresLogicalBackupLoginDependencies,
   type PostgresLogicalBackupLoginManagerOptions,
 } from "../src/lib/postgres-logical-backup-login.js";
+import {
+  POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+  type PostgresRailwayStockLocalhostCaTransport,
+} from "../src/lib/postgres-railway-stock-localhost-ca.js";
 
 const ADMIN_URL_ENV = "PINTPATH_POSTGRES_LOGICAL_BACKUP_LOGIN_TEST_ADMIN_URL";
 const SERVER_LOG_ENV = "PINTPATH_POSTGRES_LOGICAL_BACKUP_LOGIN_TEST_SERVER_LOG";
+const ROOT_CA_FILE_ENV = "PINTPATH_POSTGRES_LOGICAL_BACKUP_LOGIN_TEST_ROOT_CA_FILE";
+const ROOT_CA_DER_SHA256_ENV =
+  "PINTPATH_POSTGRES_LOGICAL_BACKUP_LOGIN_TEST_ROOT_CA_DER_SHA256";
 const configuredAdminUrl = process.env[ADMIN_URL_ENV]?.trim() ?? "";
 const configuredServerLog = process.env[SERVER_LOG_ENV]?.trim() ?? "";
+const configuredRootCaFile = process.env[ROOT_CA_FILE_ENV]?.trim() ?? "";
+const configuredRootCaDerSha256 = process.env[ROOT_CA_DER_SHA256_ENV]?.trim() ?? "";
 const uniqueSuffix = `${process.pid}_${Date.now().toString(36)}`.toLowerCase();
 const databaseName = `pintpath_login_manager_${uniqueSuffix}`;
 const loginVersion = `${Date.now()}${process.pid}`.slice(0, 20);
@@ -73,14 +83,17 @@ function validateAdminUrl(value: string): URL {
   }
   if (
     !["postgres:", "postgresql:"].includes(url.protocol)
-    || !["127.0.0.1", "localhost", "[::1]", "::1"].includes(url.hostname.toLowerCase())
+    || url.hostname.toLowerCase() !== "localhost"
+    || url.port !== "5432"
     || decodeURIComponent(url.pathname.slice(1)) !== "postgres"
     || !url.username
     || !url.password
-    || url.searchParams.get("sslmode") !== "disable"
+    || url.searchParams.get("sslmode") !== "verify-full"
     || [...url.searchParams.keys()].some((key) => key !== "sslmode")
     || url.hash
-  ) throw new Error(`${ADMIN_URL_ENV} must be a disposable loopback PostgreSQL URL.`);
+  ) throw new Error(
+    `${ADMIN_URL_ENV} must be a disposable localhost:5432 PostgreSQL verify-full URL.`,
+  );
   return url;
 }
 
@@ -90,10 +103,20 @@ function withDatabase(url: URL, database: string): URL {
   return result;
 }
 
-function verifyingAuthorityUrl(actual: URL, database: string): string {
-  const result = withDatabase(actual, database);
-  result.search = "?sslmode=verify-full";
-  return result.toString();
+function tlsClientConfig(url: URL, rootCaPem: string): ClientConfig {
+  return {
+    host: url.hostname,
+    port: Number(url.port),
+    database: decodeURIComponent(url.pathname.slice(1)),
+    user: decodeURIComponent(url.username),
+    password: decodeURIComponent(url.password),
+    ssl: {
+      ca: rootCaPem,
+      servername: "localhost",
+      rejectUnauthorized: true,
+      minVersion: "TLSv1.2",
+    },
+  };
 }
 
 async function readServerLogSettings(client: Client): Promise<ServerLogSettingsRow> {
@@ -259,24 +282,12 @@ class TestConnection implements PostgresLogicalBackupLoginConnection {
 
   static async connect(
     config: ClientConfig,
-    actual: URL,
     sensitiveValues: string[],
     forceVerifierBindFailure: boolean,
     onForcedVerifierBind: () => void,
     onCandidateOid: (roleName: string, oid: string) => void,
   ): Promise<TestConnection> {
-    const client = new Client({
-      host: actual.hostname,
-      port: Number(actual.port || "5432"),
-      database: config.database,
-      user: config.user,
-      password: config.password,
-      ssl: false,
-      application_name: config.application_name,
-      connectionTimeoutMillis: config.connectionTimeoutMillis,
-      query_timeout: config.query_timeout,
-      statement_timeout: config.statement_timeout,
-    });
+    const client = new Client(config);
     const result = new TestConnection(
       client,
       sensitiveValues,
@@ -328,7 +339,12 @@ class TestConnection implements PostgresLogicalBackupLoginConnection {
   }
 }
 
-const integration = configuredAdminUrl ? describe : describe.skip;
+const integration = configuredAdminUrl
+  && configuredServerLog
+  && configuredRootCaFile
+  && configuredRootCaDerSha256
+  ? describe
+  : describe.skip;
 
 integration("PostgreSQL 17 logical-backup LOGIN manager", () => {
   let maintenance: Client | undefined;
@@ -337,6 +353,8 @@ integration("PostgreSQL 17 logical-backup LOGIN manager", () => {
   let root = "";
   let adminConnectionFile = "";
   let adminAuthorityUrl = "";
+  let rootCaPem = "";
+  let rootCaDerSha256 = "";
   let databaseIdentitySha256 = "";
   let databaseOid = "";
   let groupRole = "";
@@ -348,13 +366,14 @@ integration("PostgreSQL 17 logical-backup LOGIN manager", () => {
   const createdRoleOids = new Map<string, string>();
   const observedCandidateRoleOids = new Map<string, Set<string>>();
   const sensitiveValues: string[] = [];
+  const observedManagerConfigs: ClientConfig[] = [];
 
   const connect: PostgresLogicalBackupLoginDependencies["connect"] = async (config) => {
     const password = config.password;
     if (typeof password === "string") sensitiveValues.push(password);
+    observedManagerConfigs.push(config);
     return TestConnection.connect(
       config,
-      actualAdminUrl,
       sensitiveValues,
       forceVerifierBindFailure,
       () => { forcedVerifierBindObserved = true; },
@@ -374,6 +393,9 @@ integration("PostgreSQL 17 logical-backup LOGIN manager", () => {
       operation,
       adminConnectionFile,
       expectedAdminUrlSha256: sha256(adminAuthorityUrl),
+      transportProfile: POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+      rootCaFile: configuredRootCaFile,
+      expectedRootCaDerSha256: rootCaDerSha256,
       expectedDatabaseIdentitySha256: databaseIdentitySha256,
       expectedHeadSha: headSha,
       expectedTreeSha: treeSha,
@@ -420,6 +442,46 @@ integration("PostgreSQL 17 logical-backup LOGIN manager", () => {
         fsmonitorAbsentOrFalse: true,
       }),
       connect,
+      openTransport: async (): Promise<PostgresRailwayStockLocalhostCaTransport> => ({
+        profile: POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+        rootCaDerSha256,
+        sourceUrlAuthority: { hostname: "localhost", port: 5_432 },
+        resolvedAddress: "127.0.0.1",
+        temporaryDirectory: path.join(root, "test-transport"),
+        passwordFileDirectory: path.join(root, "test-transport", "pgpass"),
+        passwordFileHost: "localhost",
+        nodeConnection: {
+          host: "127.0.0.1",
+          port: 5_432,
+          ssl: {
+            ca: rootCaPem,
+            servername: "localhost",
+            rejectUnauthorized: true,
+            minVersion: "TLSv1.2",
+            checkServerIdentity: (hostname, certificate) =>
+              hostname === "localhost"
+                ? tls.checkServerIdentity(hostname, certificate)
+                : new Error("unexpected_test_tls_hostname"),
+          },
+        },
+        libpqEnvironment: {
+          PGHOST: "localhost",
+          PGHOSTADDR: "127.0.0.1",
+          PGPORT: "5432",
+          PGSSLMODE: "verify-full",
+          PGSSLROOTCERT: configuredRootCaFile,
+          PGSSLMINPROTOCOLVERSION: "TLSv1.2",
+          PGSSLSNI: "1",
+        },
+        assertExact: async () => {
+          const current = fs.readFileSync(configuredRootCaFile, "utf8");
+          if (
+            current !== rootCaPem
+            || sha256(new crypto.X509Certificate(current).raw) !== rootCaDerSha256
+          ) throw new Error("test_transport_drift");
+        },
+        close: async () => undefined,
+      }),
     };
   }
 
@@ -428,7 +490,29 @@ integration("PostgreSQL 17 logical-backup LOGIN manager", () => {
     if (!configuredServerLog || !path.isAbsolute(configuredServerLog)) {
       throw new Error(`${SERVER_LOG_ENV} must be an absolute PostgreSQL server-log path.`);
     }
-    maintenance = new Client({ connectionString: actualAdminUrl.toString() });
+    if (
+      !path.isAbsolute(configuredRootCaFile)
+      || path.normalize(configuredRootCaFile) !== configuredRootCaFile
+      || fs.realpathSync(configuredRootCaFile) !== configuredRootCaFile
+      || !/^[a-f0-9]{64}$/.test(configuredRootCaDerSha256)
+    ) throw new Error("test_root_ca_authority_invalid");
+    const rootCaStat = fs.lstatSync(configuredRootCaFile, { bigint: true });
+    if (
+      !rootCaStat.isFile()
+      || rootCaStat.isSymbolicLink()
+      || rootCaStat.uid !== BigInt(uid)
+      || rootCaStat.nlink !== 1n
+      || (rootCaStat.mode & 0o077n) !== 0n
+    ) throw new Error("test_root_ca_file_untrusted");
+    rootCaPem = fs.readFileSync(configuredRootCaFile, "utf8");
+    if ((rootCaPem.match(/-----BEGIN CERTIFICATE-----/g) ?? []).length !== 1) {
+      throw new Error("test_root_ca_bundle_invalid");
+    }
+    rootCaDerSha256 = sha256(new crypto.X509Certificate(rootCaPem).raw);
+    if (rootCaDerSha256 !== configuredRootCaDerSha256) {
+      throw new Error("test_root_ca_pin_mismatch");
+    }
+    maintenance = new Client(tlsClientConfig(actualAdminUrl, rootCaPem));
     await maintenance.connect();
 
     const clusterOwner = await maintenance.query<{
@@ -489,7 +573,10 @@ integration("PostgreSQL 17 logical-backup LOGIN manager", () => {
     ) throw new Error("created_database_identity_invalid");
     databaseOid = createdDatabaseRow.oid;
 
-    databaseAdmin = new Client({ connectionString: withDatabase(actualAdminUrl, databaseName).toString() });
+    databaseAdmin = new Client(tlsClientConfig(
+      withDatabase(actualAdminUrl, databaseName),
+      rootCaPem,
+    ));
     await databaseAdmin.connect();
     const targetPrestate = await databaseAdmin.query<{ count: number }>(`SELECT count(*)::integer AS count
       FROM pg_catalog.pg_class AS relation
@@ -543,7 +630,7 @@ integration("PostgreSQL 17 logical-backup LOGIN manager", () => {
       path.join(os.tmpdir(), "pintpath-backup-login-integration-"),
     ));
     fs.chmodSync(root, 0o700);
-    adminAuthorityUrl = verifyingAuthorityUrl(actualAdminUrl, databaseName);
+    adminAuthorityUrl = withDatabase(actualAdminUrl, databaseName).toString();
     adminConnectionFile = path.join(root, "admin-url.key");
     fs.writeFileSync(adminConnectionFile, `${adminAuthorityUrl}\n`, { mode: 0o600 });
     fs.chmodSync(adminConnectionFile, 0o600);
@@ -704,6 +791,7 @@ integration("PostgreSQL 17 logical-backup LOGIN manager", () => {
       dependencies(provision),
     );
     expect(provisioned.receipt).toMatchObject({
+      schemaVersion: 2,
       operation: "provision",
       status: "provisioned",
       databaseOid,
@@ -711,8 +799,22 @@ integration("PostgreSQL 17 logical-backup LOGIN manager", () => {
       loginRole,
       authorityPolicyCount: 236,
       authorityDependencyCount: 61,
+      transportProfile: POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+      rootCaDerSha256,
       canary: { saslScramSha256: true, setRole: true, readOnly: true },
     });
+    expect(observedManagerConfigs.length).toBeGreaterThanOrEqual(2);
+    for (const config of observedManagerConfigs) {
+      expect(config.host).toBe("127.0.0.1");
+      expect(config.port).toBe(5_432);
+      expect(config.ssl).toMatchObject({
+        ca: rootCaPem,
+        servername: "localhost",
+        rejectUnauthorized: true,
+        minVersion: "TLSv1.2",
+      });
+      expect(config.ssl).not.toBe(false);
+    }
     createdRoleOids.set(loginRole, provisioned.receipt.loginRoleOid);
     const active = await databaseAdmin.query<{
       oid: string;
@@ -753,12 +855,17 @@ integration("PostgreSQL 17 logical-backup LOGIN manager", () => {
       decodeURIComponent(escrowUrl.password),
     );
     const liveCandidate = new Client({
-      host: actualAdminUrl.hostname,
-      port: Number(actualAdminUrl.port || "5432"),
+      host: "127.0.0.1",
+      port: 5_432,
       database: databaseName,
       user: loginRole,
       password: decodeURIComponent(escrowUrl.password),
-      ssl: false,
+      ssl: {
+        ca: rootCaPem,
+        servername: "localhost",
+        rejectUnauthorized: true,
+        minVersion: "TLSv1.2",
+      },
     });
     let candidateTerminationObserved = false;
     liveCandidate.on("error", () => { candidateTerminationObserved = true; });

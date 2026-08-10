@@ -11,6 +11,9 @@ import {
   type PostgresLogicalBackupFailureCode,
   type PostgresLogicalBackupResult,
 } from "../src/lib/postgres-logical-backup.js";
+import {
+  POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+} from "../src/lib/postgres-railway-stock-localhost-ca.js";
 
 export interface PostgresLogicalBackupCliFailure {
   schemaVersion: 1;
@@ -19,7 +22,7 @@ export interface PostgresLogicalBackupCliFailure {
 }
 
 export interface PostgresLogicalBackupCliSuccess {
-  schemaVersion: 2;
+  schemaVersion: 3;
   ok: true;
   archiveSha256: string;
   manifestSha256: string;
@@ -57,16 +60,37 @@ export async function runPostgresLogicalBackupCli(
   };
   try {
     const argumentsByName = parseStrictArguments(argv, {
-      allowed: new Set(["--connection-file", "--expected-source-url-sha256", "--output"]),
-      required: new Set(["--connection-file", "--expected-source-url-sha256", "--output"]),
+      allowed: new Set([
+        "--connection-file",
+        "--expected-source-url-sha256",
+        "--transport-profile",
+        "--root-ca-file",
+        "--expected-root-ca-der-sha256",
+        "--output",
+      ]),
+      required: new Set([
+        "--connection-file",
+        "--expected-source-url-sha256",
+        "--transport-profile",
+        "--root-ca-file",
+        "--expected-root-ca-der-sha256",
+        "--output",
+      ]),
     });
+    const transportProfile = argumentsByName.get("--transport-profile");
+    if (transportProfile !== POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE) {
+      throw new PostgresLogicalBackupError("invalid_arguments");
+    }
     const result = await dependencies.createBackup({
       connectionFile: argumentsByName.get("--connection-file")!,
       expectedSourceUrlSha256: argumentsByName.get("--expected-source-url-sha256")!,
+      transportProfile,
+      rootCaFile: argumentsByName.get("--root-ca-file")!,
+      expectedRootCaDerSha256: argumentsByName.get("--expected-root-ca-der-sha256")!,
       outputDirectory: argumentsByName.get("--output")!,
     });
     const success: PostgresLogicalBackupCliSuccess = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       ok: true,
       archiveSha256: result.archiveSha256,
       manifestSha256: result.manifestSha256,

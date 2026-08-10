@@ -11,8 +11,10 @@ application/private-Storage recovery gates.
 
 ## What this proves
 
-The restore command authenticates the version-2 manifest, private source-state
-receipt, and archive before opening a database connection. It restores both
+The restore command authenticates a strict historical version-2 or current
+version-3 manifest, private source-state receipt, and archive before opening a
+database connection. Version 3 additionally binds the exact backup transport
+profile and root-certificate DER SHA-256. It restores both
 private schemas in one `pg_restore --single-transaction`, reconstructs the
 reviewed ACL model, and verifies:
 
@@ -49,8 +51,10 @@ Create a fresh disposable PostgreSQL database on a non-production cluster. Befor
 6. Use the untouched mode-0700 backup directory created by the logical-backup
    command. It must contain exactly `manifest.json`, `state-receipt.json`, and
    `pintpath-postgres.dump`, all current-user-owned mode-0600 regular files.
-   The manifest is accepted only at schema version 2 and must bind the exact
-   source receipt and archive; version 1/count-only archives fail closed.
+   The manifest is accepted only as canonical schema version 2 or 3 and must
+   bind the exact source receipt and archive. Version 3 requires its exact
+   transport binding; version 2 is historical restore/retrieval compatibility
+   only. Version 1/count-only archives fail closed.
 7. Create a current-user-owned mode-0700 evidence directory for the receipt. The receipt file must not already exist.
 
 ## Exact sequence
@@ -105,7 +109,7 @@ npm run db:postgres:deletion:recovery-proof -- inspect \
   --fixture-receipt-sha256 <fixture-receipt-sha256>
 ```
 
-Create and verify the version-2 logical backup at this point. Then complete the
+Create and verify a new version-3 logical backup at this point. Then complete the
 live synthetic deletion. The service-role key file must belong to the isolated
 operational-copy project; destination origin and bucket pins must be reviewed
 independently before invocation.

@@ -320,8 +320,13 @@ function sourceObjects() {
 function captureHarness(
   root: string,
   storage = new MemoryStorage(SOURCE_ORIGIN, sourceObjects()),
+  manifestSchemaVersion: 2 | 3 = 3,
 ) {
-  const backup = writeLogicalOffsiteFixture(root);
+  const backup = writeLogicalOffsiteFixture(
+    root,
+    "2026-08-09T01:00:00.000Z",
+    manifestSchemaVersion,
+  );
   const authority = writeDeletionAuthority(root);
   const outputDirectory = path.join(root, "recovery-set");
   const options: CapturePostgresPrivateStorageRecoveryOptions = {
@@ -377,10 +382,53 @@ function restoreOptions(
   };
 }
 
+function rebindRecoverySetToLogicalBackup(
+  recoverySetDirectory: string,
+  backup: ReturnType<typeof writeLogicalOffsiteFixture>,
+): {
+  readonly recoverySetSha256: string;
+  readonly recoveryManifestSha256: string;
+} {
+  const manifestPath = path.join(
+    recoverySetDirectory,
+    POSTGRES_PRIVATE_STORAGE_RECOVERY_MANIFEST,
+  );
+  const current = postgresPrivateStorageRecoveryInternals.parseRecoveryManifest(
+    fs.readFileSync(manifestPath),
+  );
+  const { recoverySetSha256: _previousBinding, ...withoutBinding } = current;
+  const reboundWithoutBinding = {
+    ...withoutBinding,
+    logicalBackup: {
+      ...withoutBinding.logicalBackup,
+      manifestSha256: backup.manifestSha256,
+      archiveSha256: backup.archiveSha256,
+      stateReceiptSha256: backup.receiptSha256,
+      sourceDatabaseIdentitySha256:
+        backup.manifest.state.sourceDatabaseIdentitySha256,
+      sourceUrlSha256: backup.manifest.state.sourceUrlSha256,
+      overallStateSha256: backup.manifest.state.overallStateSha256,
+    },
+  };
+  const recoverySetSha256 = postgresPrivateStorageRecoveryInternals
+    .recoverySetBinding(reboundWithoutBinding);
+  const rebound = {
+    ...reboundWithoutBinding,
+    recoverySetSha256,
+  };
+  const bytes = Buffer.from(canonicalPostgresBackupJson(rebound), "utf8");
+  writePrivate(manifestPath, bytes);
+  return {
+    recoverySetSha256,
+    recoveryManifestSha256: sha256(bytes),
+  };
+}
+
 describe("Postgres private Storage recovery sets", () => {
   it("captures the full private bucket and restores it exactly to an empty distinct destination", async () => {
     const root = privateRoot();
     const harness = await capturedHarness(root);
+    expect(harness.backup.manifest.schemaVersion).toBe(3);
     expect(harness.result).toMatchObject({
       ok: true,
       storageObjectCount: 2,
@@ -436,6 +484,51 @@ describe("Postgres private Storage recovery sets", () => {
       bytes: sourceObjects()["accounts/evidence.pdf"].bytes,
       contentType: "application/pdf",
     });
+  });
+
+  it("rejects a valid schema-v2 backup before any source Storage call", async () => {
+    const root = privateRoot();
+    const storage = new MemoryStorage(SOURCE_ORIGIN, sourceObjects());
+    const inspectBucket = vi.spyOn(storage, "inspectBucket");
+    const listObjects = vi.spyOn(storage, "listObjects");
+    const downloadObject = vi.spyOn(storage, "downloadObject");
+    const harness = captureHarness(root, storage, 2);
+    await expect(capturePostgresPrivateStorageRecovery(harness.options))
+      .rejects.toEqual(new PostgresPrivateStorageRecoveryError("backup_invalid"));
+    expect(inspectBucket).not.toHaveBeenCalled();
+    expect(listObjects).not.toHaveBeenCalled();
+    expect(downloadObject).not.toHaveBeenCalled();
+    expect(fs.existsSync(harness.outputDirectory)).toBe(false);
+  });
+
+  it("restores a frozen schema-v2 logical backup and matching historical recovery set", async () => {
+    const root = privateRoot();
+    const captured = await capturedHarness(root);
+    const legacyRoot = privateRoot();
+    const legacyBackup = writeLogicalOffsiteFixture(
+      legacyRoot,
+      "2026-08-09T01:00:00.000Z",
+      2,
+    );
+    const rebound = rebindRecoverySetToLogicalBackup(
+      captured.outputDirectory,
+      legacyBackup,
+    );
+    const historical = {
+      ...captured,
+      backup: legacyBackup,
+      result: { ...captured.result, ...rebound },
+    };
+    const destination = new MemoryStorage(DESTINATION_ORIGIN, {});
+    await expect(restorePostgresPrivateStorageRecovery(
+      restoreOptions(historical, destination),
+    )).resolves.toMatchObject({
+      schemaVersion: 1,
+      ok: true,
+      recoverySetSha256: rebound.recoverySetSha256,
+      recoveryManifestSha256: rebound.recoveryManifestSha256,
+    });
+    expect(destination.uploads).toContain("accounts/evidence.pdf");
   });
 
   it("rejects source inventory drift and preserves the unpinned partial output for forensics", async () => {

@@ -522,6 +522,10 @@ resource pins, operator approvals, or two-person evidence.
   manifest, and state receipt matched their remote authorities byte-for-byte.
   The operational copy is isolated from production but is still mutable same-
   provider storage, not WORM.
+  This historical version-2 set remains valid retrieval/restore evidence. It
+  cannot authorize a new offsite/WORM/private-Storage capture or satisfy the
+  current transport gate; those require a newly captured version-3 manifest
+  bound to the reviewed pinned-CA profile.
 - Created a locked manual Railway volume baseline for permanent-staging
   Postgres and enabled its six-day daily snapshot schedule. The recorded
   backup references 889 MB; even treating the locked baseline and every

@@ -1,7 +1,6 @@
 import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { TextDecoder } from "node:util";
 
@@ -26,6 +25,14 @@ import {
   type PostgresLogicalStateInventory,
   type PostgresLogicalStateQueryResult,
 } from "./postgres-logical-state.js";
+import {
+  POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+  PostgresRailwayStockLocalhostCaError,
+  openPostgresRailwayStockLocalhostCaTransport,
+  type OpenPostgresRailwayStockLocalhostCaTransportOptions,
+  type PostgresRailwayStockLocalhostCaNodeConnection,
+  type PostgresRailwayStockLocalhostCaTransport,
+} from "./postgres-railway-stock-localhost-ca.js";
 
 export const POSTGRES_LOGICAL_BACKUP_SCHEMAS = Object.freeze([
   "pintpath_app",
@@ -108,8 +115,7 @@ export interface PostgresLogicalBackupStateBinding {
   overallStateSha256: string;
 }
 
-export interface PostgresLogicalBackupManifest {
-  schemaVersion: 2;
+interface PostgresLogicalBackupManifestBase {
   kind: "pintpath-postgres-logical-backup";
   createdAt: string;
   archive: {
@@ -136,8 +142,24 @@ export interface PostgresLogicalBackupManifest {
   state: PostgresLogicalBackupStateBinding;
 }
 
-export interface PostgresLogicalBackupResult {
+export interface PostgresLogicalBackupManifestV2 extends PostgresLogicalBackupManifestBase {
   schemaVersion: 2;
+}
+
+export interface PostgresLogicalBackupManifestV3 extends PostgresLogicalBackupManifestBase {
+  schemaVersion: 3;
+  transport: {
+    profile: typeof POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE;
+    rootCaCertificateSha256: string;
+  };
+}
+
+export type PostgresLogicalBackupManifest =
+  | PostgresLogicalBackupManifestV2
+  | PostgresLogicalBackupManifestV3;
+
+export interface PostgresLogicalBackupResult {
+  schemaVersion: 3;
   ok: true;
   outputDirectory: string;
   archivePath: string;
@@ -154,6 +176,9 @@ export interface CreatePostgresLogicalBackupOptions {
   connectionFile: string;
   outputDirectory: string;
   expectedSourceUrlSha256: string;
+  transportProfile: typeof POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE;
+  rootCaFile: string;
+  expectedRootCaDerSha256: string;
 }
 
 export interface PostgresLogicalBackupDependencies {
@@ -169,8 +194,9 @@ export interface PostgresLogicalBackupDependencies {
   computeState: (
     connection: PostgresLogicalBackupConnection,
   ) => Promise<PostgresLogicalStateInventory>;
-  /** Test seam only: also requires NODE_ENV=test and an exact loopback host. */
-  allowInsecureLoopbackForTests: boolean;
+  openTransport: (
+    options: OpenPostgresRailwayStockLocalhostCaTransportOptions,
+  ) => Promise<PostgresRailwayStockLocalhostCaTransport>;
 }
 
 interface StableFileSnapshot {
@@ -193,14 +219,20 @@ interface FileIdentity {
 }
 
 interface SafeConnection {
-  pgEnvironment: Readonly<Record<string, string>>;
-  clientConfig: PostgresLogicalBackupConnectionConfig;
+  sourceUrlAuthority: {
+    readonly hostname: string;
+    readonly port: number;
+  };
+  database: string;
+  user: string;
+  password: string;
   urlSha256: string;
 }
 
 interface EphemeralPgpass {
   readonly directoryPath: string;
   readonly directoryIdentity: DirectoryIdentity;
+  readonly authorityFilePath: string;
   readonly filePath: string;
   readonly fileSnapshot: StableFileSnapshot;
   // Holding the original inode open prevents unlink-and-recreate from recycling
@@ -214,7 +246,7 @@ export interface PostgresLogicalBackupConnectionConfig {
   readonly database: string;
   readonly user: string;
   readonly password: string;
-  readonly ssl: false | { readonly rejectUnauthorized: boolean };
+  readonly ssl: PostgresRailwayStockLocalhostCaNodeConnection["ssl"];
   readonly application_name: string;
   readonly connectionTimeoutMillis: number;
   readonly query_timeout: number;
@@ -521,7 +553,7 @@ const DEFAULT_DEPENDENCIES: PostgresLogicalBackupDependencies = {
   runProcess: runPostgresBackupProcess,
   connect: DirectBackupConnection.connect,
   computeState: computePostgresLogicalStateInventory,
-  allowInsecureLoopbackForTests: false,
+  openTransport: (options) => openPostgresRailwayStockLocalhostCaTransport(options),
 };
 
 function sameFileIdentity(
@@ -635,7 +667,6 @@ function decodeUrlComponent(value: string): string | null {
 
 function parseSafeConnectionUrl(
   value: string,
-  dependencies: PostgresLogicalBackupDependencies,
 ): SafeConnection {
   let parsed: URL;
   try {
@@ -661,12 +692,6 @@ function parseSafeConnectionUrl(
   const normalizedHost = hostname.startsWith("[") && hostname.endsWith("]")
     ? hostname.slice(1, -1)
     : hostname;
-  const loopback = ["127.0.0.1", "localhost", "::1"].includes(normalizedHost);
-  const insecureTestLoopback = dependencies.allowInsecureLoopbackForTests
-    && dependencies.env.NODE_ENV === "test"
-    && loopback
-    && sslMode === "disable";
-
   if (
     !["postgres:", "postgresql:"].includes(parsed.protocol)
     || !hostname
@@ -685,36 +710,52 @@ function parseSafeConnectionUrl(
     || parsed.hash
     || sslModeEntries.length !== 1
     || hasUnsupportedQuery
-    || (!insecureTestLoopback && sslMode !== "verify-full")
+    || sslMode !== "verify-full"
   ) {
     throw new PostgresLogicalBackupError("unsafe_connection_url");
   }
 
   return {
-    pgEnvironment: Object.freeze({
-      PGHOST: normalizedHost,
-      PGPORT: String(port),
-      PGDATABASE: database,
-      PGUSER: username,
-      PGSSLMODE: sslMode,
-      ...(insecureTestLoopback ? {} : { PGSSLROOTCERT: "system" }),
-      PGGSSENCMODE: "disable",
-      PGCONNECT_TIMEOUT: "15",
-      PGAPPNAME: "pintpath-logical-backup",
-    }),
-    clientConfig: {
-      host: normalizedHost,
+    sourceUrlAuthority: {
+      hostname: normalizedHost,
       port,
-      database,
-      user: username,
-      password,
-      ssl: insecureTestLoopback ? false : { rejectUnauthorized: true },
-      application_name: "pintpath-logical-backup-state",
-      connectionTimeoutMillis: 15_000,
-      query_timeout: 120_000,
     },
+    database,
+    user: username,
+    password,
     urlSha256: crypto.createHash("sha256").update(value, "utf8").digest("hex"),
   };
+}
+
+function transportConnectionConfig(
+  connection: SafeConnection,
+  transport: PostgresRailwayStockLocalhostCaTransport,
+): PostgresLogicalBackupConnectionConfig {
+  return {
+    host: transport.nodeConnection.host,
+    port: transport.nodeConnection.port,
+    database: connection.database,
+    user: connection.user,
+    password: connection.password,
+    ssl: transport.nodeConnection.ssl,
+    application_name: "pintpath-logical-backup-state",
+    connectionTimeoutMillis: 15_000,
+    query_timeout: 120_000,
+  };
+}
+
+function transportPgEnvironment(
+  connection: SafeConnection,
+  transport: PostgresRailwayStockLocalhostCaTransport,
+): Readonly<Record<string, string>> {
+  return Object.freeze({
+    ...transport.libpqEnvironment,
+    PGDATABASE: connection.database,
+    PGUSER: connection.user,
+    PGGSSENCMODE: "disable",
+    PGCONNECT_TIMEOUT: "15",
+    PGAPPNAME: "pintpath-logical-backup",
+  });
 }
 
 async function assertConnectionFileUnchanged(
@@ -933,13 +974,13 @@ function escapePgpassField(value: string): string {
   return value.replaceAll("\\", "\\\\").replaceAll(":", "\\:");
 }
 
-function pgpassRecord(connection: SafeConnection): Buffer {
+function pgpassRecord(connection: SafeConnection, passwordFileHost: string): Buffer {
   return Buffer.from(`${[
-    connection.clientConfig.host,
-    String(connection.clientConfig.port),
-    connection.clientConfig.database,
-    connection.clientConfig.user,
-    connection.clientConfig.password,
+    passwordFileHost,
+    String(connection.sourceUrlAuthority.port),
+    connection.database,
+    connection.user,
+    connection.password,
   ].map(escapePgpassField).join(":")}\n`, "utf8");
 }
 
@@ -965,8 +1006,12 @@ async function ephemeralPgpassIsExact(
       || (guardedFile.mode & 0o7777) !== 0o600
       || !sameFileIdentity(pgpass.fileSnapshot, guardedFile)
     ) return false;
-    const entries = await fs.promises.readdir(pgpass.directoryPath);
-    if (entries.length !== 1 || entries[0] !== path.basename(pgpass.filePath)) return false;
+    const entries = (await fs.promises.readdir(pgpass.directoryPath)).sort();
+    const expectedEntries = [
+      path.basename(pgpass.authorityFilePath),
+      path.basename(pgpass.filePath),
+    ].sort();
+    if (JSON.stringify(entries) !== JSON.stringify(expectedEntries)) return false;
     const file = await snapshotTrustedFile(pgpass.filePath, expectedUid, true);
     return sameSnapshot(file, pgpass.fileSnapshot);
   } catch {
@@ -1021,13 +1066,12 @@ async function cleanupEphemeralPgpassPath(
       || directory.ino !== pgpass.directoryIdentity.ino
     ) return false;
     if ((directory.mode & 0o7777) !== 0o700) exact = false;
-    if ((await fs.promises.readdir(pgpass.directoryPath)).length !== 0) return false;
-    await fs.promises.rmdir(pgpass.directoryPath);
-    const remainingDirectory = await fs.promises.lstat(pgpass.directoryPath).catch((error: unknown) => {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-      throw error;
-    });
-    return remainingDirectory === null && exact;
+    const entries = await fs.promises.readdir(pgpass.directoryPath);
+    if (
+      entries.length !== 1
+      || entries[0] !== path.basename(pgpass.authorityFilePath)
+    ) return false;
+    return exact;
   } catch {
     return false;
   }
@@ -1050,6 +1094,7 @@ async function cleanupEphemeralPgpass(
 async function cleanupPartialEphemeralPgpass(
   directoryPath: string,
   directoryIdentity: DirectoryIdentity,
+  authorityFilePath: string,
   filePath: string | null,
   fileIdentity: FileIdentity | null,
   expectedUid: number,
@@ -1083,8 +1128,8 @@ async function cleanupPartialEphemeralPgpass(
         exact = false;
       }
     }
-    if ((await fs.promises.readdir(directoryPath)).length !== 0) return false;
-    await fs.promises.rmdir(directoryPath);
+    const entries = await fs.promises.readdir(directoryPath);
+    if (entries.length !== 1 || entries[0] !== path.basename(authorityFilePath)) return false;
     return exact;
   } catch {
     return false;
@@ -1093,47 +1138,40 @@ async function cleanupPartialEphemeralPgpass(
 
 async function createEphemeralPgpass(
   connection: SafeConnection,
+  passwordFileHost: string,
+  directoryPathInput: string,
+  authorityFilePathInput: string,
   expectedUid: number,
 ): Promise<EphemeralPgpass> {
   let directoryPath: string | null = null;
   let directoryIdentity: DirectoryIdentity | null = null;
+  let authorityFilePath: string | null = null;
   let filePath: string | null = null;
   let fileIdentity: FileIdentity | null = null;
   let fileSnapshot: StableFileSnapshot | null = null;
   let record: Buffer | null = null;
   let handle: fs.promises.FileHandle | null = null;
   try {
-    const configuredTempRoot = os.tmpdir();
-    if (!path.isAbsolute(configuredTempRoot) || configuredTempRoot.includes("\0")) {
-      throw new Error("unsafe_temporary_root");
-    }
-    const canonicalTempRoot = await fs.promises.realpath(configuredTempRoot);
-    const tempRoot = await fs.promises.lstat(canonicalTempRoot);
-    if (tempRoot.isSymbolicLink() || !tempRoot.isDirectory()) {
-      throw new Error("unsafe_temporary_root");
-    }
-    directoryPath = await fs.promises.mkdtemp(
-      path.join(canonicalTempRoot, "pintpath-logical-backup-pgpass-"),
-    );
-    if (path.dirname(directoryPath) !== canonicalTempRoot) {
-      throw new Error("unsafe_temporary_directory");
-    }
-    const createdDirectory = await fs.promises.lstat(directoryPath);
+    directoryPath = path.resolve(directoryPathInput);
+    authorityFilePath = path.resolve(authorityFilePathInput);
     if (
-      createdDirectory.isSymbolicLink()
-      || !createdDirectory.isDirectory()
-      || createdDirectory.uid !== expectedUid
+      directoryPath !== directoryPathInput
+      || authorityFilePath !== authorityFilePathInput
+      || path.dirname(authorityFilePath) !== directoryPath
+      || await fs.promises.realpath(directoryPath) !== directoryPath
     ) throw new Error("unsafe_temporary_directory");
-    directoryIdentity = { dev: createdDirectory.dev, ino: createdDirectory.ino };
-    await fs.promises.chmod(directoryPath, 0o700);
     const directory = await fs.promises.lstat(directoryPath);
     if (
       directory.isSymbolicLink()
       || !directory.isDirectory()
       || directory.uid !== expectedUid
       || (directory.mode & 0o7777) !== 0o700
-      || directory.dev !== directoryIdentity.dev
-      || directory.ino !== directoryIdentity.ino
+    ) throw new Error("unsafe_temporary_directory");
+    directoryIdentity = { dev: directory.dev, ino: directory.ino };
+    const initialEntries = await fs.promises.readdir(directoryPath);
+    if (
+      initialEntries.length !== 1
+      || initialEntries[0] !== path.basename(authorityFilePath)
     ) throw new Error("unsafe_temporary_directory");
 
     filePath = path.join(directoryPath, "pgpass");
@@ -1155,7 +1193,7 @@ async function createEphemeralPgpass(
     ) throw new Error("unsafe_pgpass_file");
     fileIdentity = { dev: created.dev, ino: created.ino };
     await handle.chmod(0o600);
-    record = pgpassRecord(connection);
+    record = pgpassRecord(connection, passwordFileHost);
     await handle.writeFile(record);
     await handle.sync();
     const opened = await handle.stat();
@@ -1181,6 +1219,7 @@ async function createEphemeralPgpass(
     const pgpass: EphemeralPgpass = {
       directoryPath,
       directoryIdentity,
+      authorityFilePath,
       filePath,
       fileSnapshot,
       guardHandle: handle,
@@ -1192,10 +1231,18 @@ async function createEphemeralPgpass(
     return pgpass;
   } catch {
     record?.fill(0);
-    if (directoryPath && directoryIdentity && filePath && fileSnapshot && handle) {
+    if (
+      directoryPath
+      && directoryIdentity
+      && authorityFilePath
+      && filePath
+      && fileSnapshot
+      && handle
+    ) {
       const candidate = {
         directoryPath,
         directoryIdentity,
+        authorityFilePath,
         filePath,
         fileSnapshot,
         guardHandle: handle,
@@ -1210,10 +1257,11 @@ async function createEphemeralPgpass(
         }
       }
       await handle?.close().catch(() => undefined);
-      if (directoryPath && directoryIdentity) {
+      if (directoryPath && directoryIdentity && authorityFilePath) {
         await cleanupPartialEphemeralPgpass(
           directoryPath,
           directoryIdentity,
+          authorityFilePath,
           filePath,
           fileIdentity,
           expectedUid,
@@ -1325,9 +1373,26 @@ function stateBindingWithoutReceipt(
 }
 
 export function postgresLogicalBackupManifestBindingSha256(
-  manifest: Pick<PostgresLogicalBackupManifest,
-  "schemaVersion" | "kind" | "createdAt" | "archive" | "tools" | "validation" | "state">,
+  manifest:
+    | Pick<PostgresLogicalBackupManifestV2,
+      "schemaVersion" | "kind" | "createdAt" | "archive" | "tools" | "validation" | "state">
+    | Pick<PostgresLogicalBackupManifestV3,
+      "schemaVersion" | "kind" | "createdAt" | "archive" | "tools" | "validation" | "transport" | "state">,
 ): string {
+  if (manifest.schemaVersion === 3) {
+    return sha256CanonicalPostgresLogicalState({
+      kind: "pintpath-postgres-logical-backup-manifest-binding",
+      version: 2,
+      schemaVersion: manifest.schemaVersion,
+      backupKind: manifest.kind,
+      createdAt: manifest.createdAt,
+      archive: manifest.archive,
+      tools: manifest.tools,
+      validation: manifest.validation,
+      transport: manifest.transport,
+      state: stateBindingWithoutReceipt(manifest.state),
+    });
+  }
   return sha256CanonicalPostgresLogicalState({
     kind: "pintpath-postgres-logical-backup-manifest-binding",
     version: 1,
@@ -2100,14 +2165,84 @@ function asSafeFailure(
     : new PostgresLogicalBackupError(fallback);
 }
 
+function isExactAuthorityPath(value: string): boolean {
+  return value.length > 0
+    && !value.includes("\0")
+    && path.isAbsolute(value)
+    && path.normalize(value) === value
+    && path.resolve(value) === value;
+}
+
+function pathsOverlap(first: string, second: string): boolean {
+  return first === second
+    || first.startsWith(`${second}${path.sep}`)
+    || second.startsWith(`${first}${path.sep}`);
+}
+
+function transportAuthorityIsExact(
+  transport: PostgresRailwayStockLocalhostCaTransport,
+  options: CreatePostgresLogicalBackupOptions,
+  connection: SafeConnection,
+): boolean {
+  try {
+    const authority = transport.sourceUrlAuthority;
+    return transport.profile === options.transportProfile
+      && transport.rootCaDerSha256 === options.expectedRootCaDerSha256
+      && Object.keys(authority).length === 2
+      && Object.hasOwn(authority, "hostname")
+      && Object.hasOwn(authority, "port")
+      && authority.hostname === connection.sourceUrlAuthority.hostname
+      && authority.port === connection.sourceUrlAuthority.port;
+  } catch {
+    return false;
+  }
+}
+
+function asTransportFailure(error: unknown): PostgresLogicalBackupError {
+  return error instanceof PostgresRailwayStockLocalhostCaError && error.code === "cleanup_failed"
+    ? new PostgresLogicalBackupError("cleanup_failed")
+    : new PostgresLogicalBackupError("source_unreachable_or_unsafe");
+}
+
+async function assertTransportExact(
+  transport: PostgresRailwayStockLocalhostCaTransport,
+): Promise<void> {
+  try {
+    await transport.assertExact();
+  } catch (error) {
+    throw asTransportFailure(error);
+  }
+}
+
 export async function createPostgresLogicalBackup(
   options: CreatePostgresLogicalBackupOptions,
   overrides: Partial<PostgresLogicalBackupDependencies> = {},
 ): Promise<PostgresLogicalBackupResult> {
   if (
-    typeof options.expectedSourceUrlSha256 !== "string"
+    !options
+    || typeof options.connectionFile !== "string"
+    || typeof options.outputDirectory !== "string"
+    || typeof options.expectedSourceUrlSha256 !== "string"
     || !SHA256_PATTERN.test(options.expectedSourceUrlSha256)
+    || options.transportProfile !== POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE
+    || typeof options.rootCaFile !== "string"
+    || typeof options.expectedRootCaDerSha256 !== "string"
+    || !SHA256_PATTERN.test(options.expectedRootCaDerSha256)
+    || !isExactAuthorityPath(options.connectionFile)
+    || !isExactAuthorityPath(options.rootCaFile)
+    || !isExactAuthorityPath(options.outputDirectory)
+    || pathsOverlap(options.connectionFile, options.rootCaFile)
+    || pathsOverlap(options.outputDirectory, options.connectionFile)
+    || pathsOverlap(options.outputDirectory, options.rootCaFile)
   ) throw new PostgresLogicalBackupError("invalid_arguments");
+  const stableOptions: CreatePostgresLogicalBackupOptions = Object.freeze({
+    connectionFile: options.connectionFile,
+    outputDirectory: options.outputDirectory,
+    expectedSourceUrlSha256: options.expectedSourceUrlSha256,
+    transportProfile: options.transportProfile,
+    rootCaFile: options.rootCaFile,
+    expectedRootCaDerSha256: options.expectedRootCaDerSha256,
+  });
   const dependencies: PostgresLogicalBackupDependencies = {
     ...DEFAULT_DEPENDENCIES,
     ...overrides,
@@ -2117,35 +2252,55 @@ export async function createPostgresLogicalBackup(
     throw new PostgresLogicalBackupError("unsafe_connection_file");
   }
 
-  const connectionFile = path.resolve(options.connectionFile);
+  const connectionFile = stableOptions.connectionFile;
   const trustedConnection = await readTrustedConnectionFile(connectionFile, uid);
-  const parsedConnection = parseSafeConnectionUrl(trustedConnection.value, dependencies);
-  if (parsedConnection.urlSha256 !== options.expectedSourceUrlSha256) {
+  const parsedConnection = parseSafeConnectionUrl(trustedConnection.value);
+  if (parsedConnection.urlSha256 !== stableOptions.expectedSourceUrlSha256) {
     throw new PostgresLogicalBackupError("unsafe_connection_url");
   }
-  const processEnvironment = makeBaseProcessEnvironment(dependencies.env);
-  const [pgDump, pgRestore] = await Promise.all([
-    identifyTool("pg_dump", dependencies.pgDumpCommand, processEnvironment, dependencies.runProcess),
-    identifyTool("pg_restore", dependencies.pgRestoreCommand, processEnvironment, dependencies.runProcess),
-  ]);
-  if (pgDump.major !== pgRestore.major) {
-    throw new PostgresLogicalBackupError("tool_unavailable_or_unsupported");
-  }
-
-  await assertConnectionFileUnchanged(connectionFile, uid, trustedConnection);
-  let sourceConnection: PostgresLogicalBackupConnection;
+  let transport: PostgresRailwayStockLocalhostCaTransport;
   try {
-    sourceConnection = await dependencies.connect(parsedConnection.clientConfig);
+    transport = await dependencies.openTransport({
+      profile: stableOptions.transportProfile,
+      rootCaFile: stableOptions.rootCaFile,
+      expectedRootCaDerSha256: stableOptions.expectedRootCaDerSha256,
+      expectedUid: uid,
+      sourceUrlAuthority: parsedConnection.sourceUrlAuthority,
+    });
   } catch (error) {
-    if (error instanceof PostgresLogicalBackupError) throw error;
-    throw new PostgresLogicalBackupError("source_unreachable_or_unsafe");
+    throw asTransportFailure(error);
   }
 
+  let sourceConnection: PostgresLogicalBackupConnection | null = null;
   let snapshotOpen = false;
   let prepared: Awaited<ReturnType<typeof prepareFreshOutputDirectory>> | null = null;
   let pendingError: PostgresLogicalBackupError | null = null;
   let completed: PostgresLogicalBackupResult | null = null;
   try {
+    if (!transportAuthorityIsExact(transport, stableOptions, parsedConnection)) {
+      throw new PostgresLogicalBackupError("source_unreachable_or_unsafe");
+    }
+    await assertTransportExact(transport);
+    const processEnvironment = makeBaseProcessEnvironment(dependencies.env);
+    const [pgDump, pgRestore] = await Promise.all([
+      identifyTool("pg_dump", dependencies.pgDumpCommand, processEnvironment, dependencies.runProcess),
+      identifyTool("pg_restore", dependencies.pgRestoreCommand, processEnvironment, dependencies.runProcess),
+    ]);
+    if (pgDump.major !== pgRestore.major) {
+      throw new PostgresLogicalBackupError("tool_unavailable_or_unsupported");
+    }
+
+    await assertConnectionFileUnchanged(connectionFile, uid, trustedConnection);
+    await assertTransportExact(transport);
+    try {
+      sourceConnection = await dependencies.connect(
+        transportConnectionConfig(parsedConnection, transport),
+      );
+    } catch (error) {
+      if (error instanceof PostgresLogicalBackupError) throw error;
+      throw new PostgresLogicalBackupError("source_unreachable_or_unsafe");
+    }
+    await assertTransportExact(transport);
     const sourceIdentity = await inspectSafeSourceIdentity(sourceConnection);
     const snapshot = await beginExportedSourceSnapshot(
       sourceConnection,
@@ -2154,6 +2309,7 @@ export async function createPostgresLogicalBackup(
       sourceIdentity.backupRoleName,
     );
     snapshotOpen = true;
+    await assertTransportExact(transport);
 
     let state: PostgresLogicalStateInventory;
     try {
@@ -2170,7 +2326,8 @@ export async function createPostgresLogicalBackup(
     ) throw new PostgresLogicalBackupError("source_contract_invalid");
 
     await assertConnectionFileUnchanged(connectionFile, uid, trustedConnection);
-    prepared = await prepareFreshOutputDirectory(options.outputDirectory, uid);
+    await assertTransportExact(transport);
+    prepared = await prepareFreshOutputDirectory(stableOptions.outputDirectory, uid);
     const archivePath = path.join(prepared.outputDirectory, POSTGRES_LOGICAL_BACKUP_ARCHIVE);
     const manifestPath = path.join(prepared.outputDirectory, POSTGRES_LOGICAL_BACKUP_MANIFEST);
     const stateReceiptPath = path.join(
@@ -2183,10 +2340,17 @@ export async function createPostgresLogicalBackup(
       throw new PostgresLogicalBackupError("unsafe_output_path");
     }
 
-    const pgpass = await createEphemeralPgpass(parsedConnection, uid);
+    await assertTransportExact(transport);
+    const pgpass = await createEphemeralPgpass(
+      parsedConnection,
+      transport.passwordFileHost,
+      transport.passwordFileDirectory,
+      transport.libpqEnvironment.PGSSLROOTCERT,
+      uid,
+    );
     const dumpEnvironment = Object.freeze({
       ...processEnvironment,
-      ...parsedConnection.pgEnvironment,
+      ...transportPgEnvironment(parsedConnection, transport),
       PGPASSFILE: pgpass.filePath,
     });
     let dumpResult: ProcessResult | null = null;
@@ -2195,6 +2359,7 @@ export async function createPostgresLogicalBackup(
       if (!await ephemeralPgpassIsExact(pgpass, uid)) {
         throw new PostgresLogicalBackupError("cleanup_failed");
       }
+      await assertTransportExact(transport);
       dumpResult = await dependencies.runProcess({
         command: dependencies.pgDumpCommand,
         args: [
@@ -2216,6 +2381,7 @@ export async function createPostgresLogicalBackup(
         maxStdoutBytes: DUMP_OUTPUT_LIMIT,
         maxStderrBytes: DUMP_OUTPUT_LIMIT,
       });
+      await assertTransportExact(transport);
     } catch (error) {
       dumpError = error instanceof PostgresLogicalBackupError
         ? error
@@ -2259,6 +2425,7 @@ export async function createPostgresLogicalBackup(
     }
     await assertDirectoryIdentity(prepared.outputDirectory, prepared.identity, uid);
     await assertConnectionFileUnchanged(connectionFile, uid, trustedConnection);
+    await assertTransportExact(transport);
 
     let createdAt: string;
     try {
@@ -2279,6 +2446,10 @@ export async function createPostgresLogicalBackup(
     const validation: PostgresLogicalBackupManifest["validation"] = {
       method: "pg_restore --list",
       ...listing,
+    };
+    const manifestTransport: PostgresLogicalBackupManifestV3["transport"] = {
+      profile: transport.profile,
+      rootCaCertificateSha256: transport.rootCaDerSha256,
     };
     const provisionalState: PostgresLogicalBackupStateBinding = {
       receiptFile: POSTGRES_LOGICAL_BACKUP_STATE_RECEIPT,
@@ -2304,12 +2475,13 @@ export async function createPostgresLogicalBackup(
       overallStateSha256: state.overallStateSha256,
     };
     const manifestBindingSha256 = postgresLogicalBackupManifestBindingSha256({
-      schemaVersion: 2,
+      schemaVersion: 3,
       kind: "pintpath-postgres-logical-backup",
       createdAt,
       archive,
       tools,
       validation,
+      transport: manifestTransport,
       state: provisionalState,
     });
     const stateReceipt = buildPostgresLogicalSourceStateReceipt({
@@ -2331,13 +2503,14 @@ export async function createPostgresLogicalBackup(
     }
     const stateReceiptSnapshot = await snapshotTrustedFile(stateReceiptPath, uid, true)
       .catch(() => { throw new PostgresLogicalBackupError("state_receipt_failed"); });
-    const manifest: PostgresLogicalBackupManifest = {
-      schemaVersion: 2,
+    const manifest: PostgresLogicalBackupManifestV3 = {
+      schemaVersion: 3,
       kind: "pintpath-postgres-logical-backup",
       createdAt,
       archive,
       tools,
       validation,
+      transport: manifestTransport,
       state: {
         ...provisionalState,
         receiptSha256: stateReceiptSnapshot.sha256,
@@ -2362,8 +2535,9 @@ export async function createPostgresLogicalBackup(
     const manifestSnapshot = await snapshotTrustedFile(manifestPath, uid, true);
     await assertDirectoryIdentity(prepared.outputDirectory, prepared.identity, uid);
     await assertConnectionFileUnchanged(connectionFile, uid, trustedConnection);
+    await assertTransportExact(transport);
     completed = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       ok: true,
       outputDirectory: prepared.outputDirectory,
       archivePath,
@@ -2378,14 +2552,21 @@ export async function createPostgresLogicalBackup(
   } catch (error) {
     pendingError = asSafeFailure(error, "archive_invalid");
   } finally {
-    let snapshotClosed = true;
-    if (snapshotOpen) snapshotClosed = await endSourceSnapshot(sourceConnection);
-    try {
-      await sourceConnection.close();
-    } catch {
-      snapshotClosed = false;
+    let cleanupFailed = false;
+    if (sourceConnection) {
+      if (snapshotOpen && !await endSourceSnapshot(sourceConnection)) cleanupFailed = true;
+      try {
+        await sourceConnection.close();
+      } catch {
+        cleanupFailed = true;
+      }
     }
-    if (!snapshotClosed && !pendingError) {
+    try {
+      await transport.close();
+    } catch {
+      cleanupFailed = true;
+    }
+    if (cleanupFailed) {
       pendingError = new PostgresLogicalBackupError("cleanup_failed");
     }
   }

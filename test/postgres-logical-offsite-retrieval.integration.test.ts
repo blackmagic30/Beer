@@ -22,7 +22,9 @@ import {
 import {
   POSTGRES_LOGICAL_BACKUP_SUCCESS_STATE_KEY,
   POSTGRES_LOGICAL_OFFSITE_LATEST_OBJECT,
+  POSTGRES_LOGICAL_OFFSITE_PREFIX,
   attestPostgresLogicalBackup,
+  probePostgresLogicalOffsiteReadiness,
   type PostgresLogicalOffsiteBucketInfo,
   type PostgresLogicalOffsiteDownload,
   type PostgresLogicalOffsiteObjectInfo,
@@ -242,6 +244,230 @@ function temporaryRoot(): string {
   return root;
 }
 
+function canonicalSha256(value: unknown): string {
+  return sha256Fixture(canonicalPostgresBackupJson(value));
+}
+
+function compactTimestamp(value: string): string {
+  return value.replace(/[-:.]/g, "");
+}
+
+function historicalStorageMetadata(input: {
+  readonly objectKind: string;
+  readonly objectSha256: string;
+  readonly manifestSha256: string;
+  readonly backupIdSha256: string;
+}): Readonly<Record<string, string>> {
+  return {
+    contract: "pintpath-postgres-logical-offsite-v2",
+    objectKind: input.objectKind,
+    sha256: input.objectSha256,
+    manifestSha256: input.manifestSha256,
+    backupIdSha256: input.backupIdSha256,
+  };
+}
+
+async function historicalV2AttestedFixture(): Promise<{
+  readonly root: string;
+  readonly storage: FakeStorage;
+  readonly state: FakeState;
+  readonly stateSha256: string;
+  readonly backupId: string;
+}> {
+  const root = temporaryRoot();
+  const fixture = writeLogicalOffsiteFixture(
+    root,
+    "2026-08-09T01:00:00.000Z",
+    2,
+  );
+  if (fixture.manifest.schemaVersion !== 2) {
+    throw new Error("historical fixture must remain schema v2");
+  }
+  const storage = new FakeStorage();
+  const state = new FakeState();
+  const backupId = `${compactTimestamp(fixture.manifest.createdAt)}-${fixture.manifestSha256}`;
+  const backupIdSha256 = sha256Fixture(backupId);
+  const localObjects = [
+    {
+      kind: "archive",
+      objectKind: "postgres-logical-archive",
+      filename: POSTGRES_LOGICAL_BACKUP_ARCHIVE,
+      bytes: LOGICAL_OFFSITE_ARCHIVE_BYTES,
+      sha256: fixture.archiveSha256,
+      contentType: "application/octet-stream",
+    },
+    {
+      kind: "manifest",
+      objectKind: "postgres-logical-manifest",
+      filename: POSTGRES_LOGICAL_BACKUP_MANIFEST,
+      bytes: fs.readFileSync(path.join(
+        fixture.backupDirectory,
+        POSTGRES_LOGICAL_BACKUP_MANIFEST,
+      )),
+      sha256: fixture.manifestSha256,
+      contentType: "application/json",
+    },
+    {
+      kind: "state-receipt",
+      objectKind: "postgres-logical-state-receipt",
+      filename: POSTGRES_LOGICAL_BACKUP_STATE_RECEIPT,
+      bytes: fs.readFileSync(path.join(
+        fixture.backupDirectory,
+        POSTGRES_LOGICAL_BACKUP_STATE_RECEIPT,
+      )),
+      sha256: fixture.receiptSha256,
+      contentType: "application/json",
+    },
+  ] as const;
+  const descriptors = localObjects.map((local, index) => {
+    const objectPath = `${POSTGRES_LOGICAL_OFFSITE_PREFIX}/backups/${backupId}/${local.filename}`;
+    const metadata = historicalStorageMetadata({
+      objectKind: local.objectKind,
+      objectSha256: local.sha256,
+      manifestSha256: fixture.manifestSha256,
+      backupIdSha256,
+    });
+    const storageObjectId = `historical-v2-object-${index + 1}`;
+    const storageVersion = `historical-v2-version-${index + 1}`;
+    storage.objects.set(objectPath, {
+      bytes: Buffer.from(local.bytes),
+      info: {
+        bytes: local.bytes.length,
+        contentType: local.contentType,
+        cacheControl: "31536000",
+        metadata,
+        storageObjectId,
+        storageVersion,
+      },
+    });
+    return {
+      kind: local.kind,
+      objectPathSha256: sha256Fixture(objectPath),
+      bytes: String(local.bytes.length),
+      sha256: local.sha256,
+      contentType: local.contentType,
+      metadataSha256: canonicalSha256(metadata),
+      storageObjectIdSha256: sha256Fixture(storageObjectId),
+      storageVersionSha256: sha256Fixture(storageVersion),
+    };
+  });
+  const remoteObjectSetSha256 = canonicalSha256(descriptors);
+  const commonEvidence = {
+    backupId,
+    backupIdSha256,
+    backupCreatedAt: fixture.manifest.createdAt,
+    manifestSha256: fixture.manifestSha256,
+    archiveSha256: fixture.archiveSha256,
+    stateReceiptSha256: fixture.receiptSha256,
+    manifestBindingSha256: fixture.manifest.state.manifestBindingSha256,
+    sourceDatabaseIdentitySha256:
+      fixture.manifest.state.sourceDatabaseIdentitySha256,
+    runtimeConnectionUrlSha256: RUNTIME_CONNECTION_URL_SHA256,
+    overallStateSha256: fixture.manifest.state.overallStateSha256,
+    destinationOriginSha256: sha256Fixture(DESTINATION_URL),
+    bucketNameSha256: sha256Fixture(BUCKET),
+    operatorIdSha256: sha256Fixture("retrieval-integration-operator"),
+  } as const;
+  const attestation = {
+    kind: "pintpath-postgres-logical-offsite-attestation",
+    version: 2,
+    ...commonEvidence,
+    verifiedAt: ATTESTED_AT,
+    objects: descriptors,
+    remoteObjectSetSha256,
+  } as const;
+  const attestationBytes = Buffer.from(canonicalPostgresBackupJson(attestation), "utf8");
+  const attestationSha256 = sha256Fixture(attestationBytes);
+  const attestationId = `${compactTimestamp(ATTESTED_AT)}-${attestationSha256}`;
+  const attestationPath = `${POSTGRES_LOGICAL_OFFSITE_PREFIX}/attestations/${backupId}/${attestationId}.json`;
+  const attestationStorageObjectId = "historical-v2-attestation-object";
+  const attestationStorageVersion = "historical-v2-attestation-version";
+  storage.objects.set(attestationPath, {
+    bytes: attestationBytes,
+    info: {
+      bytes: attestationBytes.length,
+      contentType: "application/json",
+      cacheControl: "31536000",
+      metadata: historicalStorageMetadata({
+        objectKind: "postgres-logical-offsite-attestation",
+        objectSha256: attestationSha256,
+        manifestSha256: fixture.manifestSha256,
+        backupIdSha256,
+      }),
+      storageObjectId: attestationStorageObjectId,
+      storageVersion: attestationStorageVersion,
+    },
+  });
+  const pointer = {
+    kind: "pintpath-postgres-logical-offsite-latest",
+    version: 2,
+    ...commonEvidence,
+    attestationId,
+    completedAt: ATTESTED_AT,
+    remoteObjectSetSha256,
+    attestationSha256,
+    attestationStorageObjectIdSha256: sha256Fixture(attestationStorageObjectId),
+    attestationStorageVersionSha256: sha256Fixture(attestationStorageVersion),
+  } as const;
+  const pointerBytes = Buffer.from(canonicalPostgresBackupJson(pointer), "utf8");
+  const latestPointerSha256 = sha256Fixture(pointerBytes);
+  const latestPointerStorageObjectId = "historical-v2-pointer-object";
+  const latestPointerStorageVersion = "historical-v2-pointer-version";
+  storage.objects.set(POSTGRES_LOGICAL_OFFSITE_LATEST_OBJECT, {
+    bytes: pointerBytes,
+    info: {
+      bytes: pointerBytes.length,
+      contentType: "application/json",
+      cacheControl: "0",
+      metadata: historicalStorageMetadata({
+        objectKind: "postgres-logical-offsite-latest",
+        objectSha256: latestPointerSha256,
+        manifestSha256: fixture.manifestSha256,
+        backupIdSha256,
+      }),
+      storageObjectId: latestPointerStorageObjectId,
+      storageVersion: latestPointerStorageVersion,
+    },
+  });
+  const successState = {
+    kind: "pintpath-postgres-logical-backup-success",
+    version: 2,
+    backupCreatedAt: fixture.manifest.createdAt,
+    completedAt: ATTESTED_AT,
+    archiveSha256: fixture.archiveSha256,
+    manifestSha256: fixture.manifestSha256,
+    stateReceiptSha256: fixture.receiptSha256,
+    manifestBindingSha256: fixture.manifest.state.manifestBindingSha256,
+    sourceDatabaseIdentitySha256:
+      fixture.manifest.state.sourceDatabaseIdentitySha256,
+    runtimeConnectionUrlSha256: RUNTIME_CONNECTION_URL_SHA256,
+    overallStateSha256: fixture.manifest.state.overallStateSha256,
+    remoteObjectSetSha256,
+    attestationSha256,
+    attestationStorageObjectIdSha256: sha256Fixture(attestationStorageObjectId),
+    attestationStorageVersionSha256: sha256Fixture(attestationStorageVersion),
+    latestPointerSha256,
+    latestPointerStorageObjectIdSha256: sha256Fixture(latestPointerStorageObjectId),
+    latestPointerStorageVersionSha256: sha256Fixture(latestPointerStorageVersion),
+    backupIdSha256,
+    destinationOriginSha256: sha256Fixture(DESTINATION_URL),
+    bucketNameSha256: sha256Fixture(BUCKET),
+    operatorIdSha256: sha256Fixture("retrieval-integration-operator"),
+  } as const;
+  state.records.set(POSTGRES_LOGICAL_BACKUP_SUCCESS_STATE_KEY, {
+    value: successState,
+    updatedAt: ATTESTED_AT,
+    revision: "historical-v2-state",
+  });
+  return {
+    root,
+    storage,
+    state,
+    stateSha256: canonicalSha256(successState),
+    backupId,
+  };
+}
+
 async function attestedFixture(): Promise<{
   readonly root: string;
   readonly storage: FakeStorage;
@@ -303,7 +529,7 @@ afterEach(() => {
 });
 
 describe("Postgres logical operational-copy retrieval integration", () => {
-  it("retrieves an attested v2 backup into the exact restore-compatible directory", async () => {
+  it("retrieves an attested manifest-v3 backup into the exact restore-compatible directory", async () => {
     const fixture = await attestedFixture();
     const options = retrievalOptions(fixture);
 
@@ -347,6 +573,7 @@ describe("Postgres logical operational-copy retrieval integration", () => {
     ));
     const manifest = parsePostgresLogicalBackupManifest(manifestBytes);
     const receipt = parsePostgresLogicalSourceStateReceipt(receiptBytes);
+    expect(manifest.schemaVersion).toBe(3);
     expect(() => assertPostgresLogicalBackupStateReceiptBinding(receipt, manifest))
       .not.toThrow();
     expect(fixture.storage.streamedPaths).toHaveLength(3);
@@ -360,6 +587,45 @@ describe("Postgres logical operational-copy retrieval integration", () => {
       fixture.backupId,
       "retrieval-integration-operator",
     ]) expect(serialized).not.toContain(sensitive);
+  });
+
+  it("retrieves a frozen historical manifest-v2 authority without enabling new v2 writes", async () => {
+    const fixture = await historicalV2AttestedFixture();
+    const options = retrievalOptions(fixture);
+    await expect(probePostgresLogicalOffsiteReadiness({
+      stateValue: fixture.state.records.get(POSTGRES_LOGICAL_BACKUP_SUCCESS_STATE_KEY)!.value,
+      runtimeDatabaseIdentitySha256: LOGICAL_OFFSITE_SOURCE_DATABASE_IDENTITY_SHA256,
+      sourceSupabaseUrl: SOURCE_URL,
+      destinationSupabaseUrl: DESTINATION_URL,
+      bucketName: BUCKET,
+      maxFreshnessHours: 24,
+      storage: fixture.storage,
+      now: new Date(ATTESTED_AT),
+    })).resolves.toMatchObject({
+      status: "failed",
+      liveProbe: true,
+      error: "remote_attestation_mismatch",
+    });
+    const result = await retrievePostgresLogicalOffsiteBackup(options);
+    expect(result).toMatchObject({
+      schemaVersion: 1,
+      kind: "pintpath-postgres-logical-offsite-retrieval",
+      ok: true,
+      successStateSha256: fixture.stateSha256,
+      archiveSha256: sha256Fixture(LOGICAL_OFFSITE_ARCHIVE_BYTES),
+    });
+    const manifest = parsePostgresLogicalBackupManifest(fs.readFileSync(path.join(
+      options.outputDirectory,
+      POSTGRES_LOGICAL_BACKUP_MANIFEST,
+    )));
+    const receipt = parsePostgresLogicalSourceStateReceipt(fs.readFileSync(path.join(
+      options.outputDirectory,
+      POSTGRES_LOGICAL_BACKUP_STATE_RECEIPT,
+    )));
+    expect(manifest.schemaVersion).toBe(2);
+    expect(() => assertPostgresLogicalBackupStateReceiptBinding(receipt, manifest))
+      .not.toThrow();
+    expect(fixture.storage.streamedPaths).toHaveLength(3);
   });
 
   it("rejects a changed Storage generation after streaming and removes partial output", async () => {

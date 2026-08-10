@@ -29,11 +29,18 @@ import {
   type PostgresLogicalOffsiteStorage,
   type PostgresLogicalOffsiteUpload,
 } from "../src/lib/postgres-logical-offsite.js";
-import { canonicalPostgresBackupJson } from "../src/lib/postgres-logical-backup.js";
+import {
+  POSTGRES_LOGICAL_BACKUP_MANIFEST,
+  canonicalPostgresBackupJson,
+} from "../src/lib/postgres-logical-backup.js";
+import {
+  parsePostgresLogicalBackupManifest,
+} from "../src/lib/postgres-logical-restore.js";
 import {
   sha256Fixture,
   LOGICAL_OFFSITE_SOURCE_DATABASE_IDENTITY,
   LOGICAL_OFFSITE_SOURCE_DATABASE_IDENTITY_SHA256,
+  LOGICAL_OFFSITE_V2_GOLDEN,
   writeLogicalOffsiteFixture,
 } from "./postgres-logical-offsite.fixtures.js";
 
@@ -269,6 +276,13 @@ afterEach(() => {
 describe("Postgres logical off-site backup attestation", () => {
   it("uploads and re-downloads every bound artifact before writing exact hash-only state", async () => {
     const fixture = writeLogicalOffsiteFixture(temporaryRoot());
+    expect(fixture.manifest).toMatchObject({
+      schemaVersion: 3,
+      transport: {
+        profile: "railway-stock-localhost-ca-v1",
+        rootCaCertificateSha256: "f".repeat(64),
+      },
+    });
     const storage = new FakeStorage();
     const state = new FakeState();
 
@@ -381,6 +395,46 @@ describe("Postgres logical off-site backup attestation", () => {
       error: "remote_attestation_mismatch",
       liveProbe: true,
     });
+  });
+
+  it("rejects a valid schema-v2 manifest before any destination or state call", async () => {
+    const fixture = writeLogicalOffsiteFixture(
+      temporaryRoot(),
+      "2026-08-09T01:00:00.000Z",
+      2,
+    );
+    const storage = new FakeStorage();
+    const state = new FakeState();
+    const inspectBucket = vi.spyOn(storage, "inspectBucket");
+    const objectInfo = vi.spyOn(storage, "objectInfo");
+    const acquireLease = vi.spyOn(state, "acquireLease");
+    const getState = vi.spyOn(state, "get");
+
+    expect({
+      archiveSha256: fixture.archiveSha256,
+      manifestBindingSha256: fixture.manifest.state.manifestBindingSha256,
+      manifestSha256: fixture.manifestSha256,
+      receiptSha256: fixture.receiptSha256,
+    }).toEqual(LOGICAL_OFFSITE_V2_GOLDEN);
+    expect(parsePostgresLogicalBackupManifest(fs.readFileSync(path.join(
+      fixture.backupDirectory,
+      POSTGRES_LOGICAL_BACKUP_MANIFEST,
+    ))).schemaVersion).toBe(2);
+
+    await expect(attestPostgresLogicalBackup(options({
+      backupDirectory: fixture.backupDirectory,
+      manifestSha256: fixture.manifestSha256,
+      storage,
+      state,
+    }))).rejects.toEqual(new PostgresLogicalOffsiteError("backup_manifest_invalid"));
+
+    expect(inspectBucket).not.toHaveBeenCalled();
+    expect(objectInfo).not.toHaveBeenCalled();
+    expect(acquireLease).not.toHaveBeenCalled();
+    expect(getState).not.toHaveBeenCalled();
+    expect(storage.immutableUploads).toEqual([]);
+    expect(storage.mutableWrites).toEqual([]);
+    expect(state.records.size).toBe(0);
   });
 
   it("rejects migrated timestamp-only state before any remote readiness access", async () => {

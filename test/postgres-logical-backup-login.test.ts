@@ -29,6 +29,11 @@ import {
   type PostgresLogicalBackupLoginDependencies,
   type PostgresLogicalBackupLoginManagerOptions,
 } from "../src/lib/postgres-logical-backup-login.js";
+import {
+  POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+  type OpenPostgresRailwayStockLocalhostCaTransportOptions,
+  type PostgresRailwayStockLocalhostCaTransport,
+} from "../src/lib/postgres-railway-stock-localhost-ca.js";
 
 const temporaryDirectories: string[] = [];
 const uid = process.getuid?.() ?? 501;
@@ -43,10 +48,13 @@ const groupRole = `pintpath_logical_backup_d${databaseOid}`;
 const loginRole = `${groupRole}_v${loginVersion}`;
 const adminPassword = "admin-secret-must-never-escape";
 const adminUrl = `postgresql://postgres:${adminPassword}@db.example.invalid:5432/${databaseName}?sslmode=verify-full`;
+const rootCaPem = "-----BEGIN CERTIFICATE-----\nunit-test-held-root-ca\n-----END CERTIFICATE-----\n";
+const rootCaDerSha256 = "c".repeat(64);
 const receiptKeys = [
   "schemaVersion", "kind", "operation", "status", "createdAt", "operationId",
   "approvalReference", "expectedEnvironment", "executorUid", "mutationArm",
-  "headSha", "treeSha", "nodeVersion", "adminUrlSha256",
+  "headSha", "treeSha", "nodeVersion", "adminUrlSha256", "transportProfile",
+  "rootCaDerSha256",
   "databaseIdentitySha256", "databaseOid", "databaseNameSha256", "loginVersion",
   "loginRole", "loginRoleOid", "groupRole", "marker", "markerSha256",
   "escrowIntentSha256", "escrowUrlSha256", "loggerInventorySha256",
@@ -87,6 +95,13 @@ afterEach(() => {
 function writeAdminFile(root: string, value = adminUrl, mode = 0o600): string {
   const file = path.join(root, "admin-url.key");
   fs.writeFileSync(file, `${value}\n`, { mode });
+  fs.chmodSync(file, mode);
+  return file;
+}
+
+function writeRootCaFile(root: string, mode = 0o600): string {
+  const file = path.join(root, "railway-stock-root-ca.pem");
+  fs.writeFileSync(file, rootCaPem, { mode });
   fs.chmodSync(file, mode);
   return file;
 }
@@ -183,6 +198,9 @@ function provisionOptions(root: string): PostgresLogicalBackupLoginManagerOption
     operation: "provision",
     adminConnectionFile: writeAdminFile(root),
     expectedAdminUrlSha256: sha256(adminUrl),
+    transportProfile: POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+    rootCaFile: writeRootCaFile(root),
+    expectedRootCaDerSha256: rootCaDerSha256,
     expectedDatabaseIdentitySha256: databaseIdentitySha256,
     expectedHeadSha: headSha,
     expectedTreeSha: treeSha,
@@ -224,10 +242,64 @@ interface FakeCandidate {
   validUntilIsNull: boolean;
 }
 
+class FakeRailwayTransport implements PostgresRailwayStockLocalhostCaTransport {
+  readonly profile = POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE;
+  readonly rootCaDerSha256: string;
+  readonly sourceUrlAuthority: { readonly hostname: string; readonly port: number };
+  readonly resolvedAddress = "fd12:3456:789a::10";
+  readonly temporaryDirectory = "/private/var/folders/unit/transport";
+  readonly passwordFileDirectory = "/private/var/folders/unit/transport/pgpass";
+  readonly passwordFileHost = "localhost" as const;
+  readonly nodeConnection = {
+    host: this.resolvedAddress,
+    port: 5_432 as const,
+    ssl: {
+      ca: rootCaPem,
+      servername: "localhost" as const,
+      rejectUnauthorized: true as const,
+      minVersion: "TLSv1.2" as const,
+      checkServerIdentity: () => undefined,
+    },
+  };
+  readonly libpqEnvironment = {
+    PGHOST: "localhost" as const,
+    PGHOSTADDR: this.resolvedAddress,
+    PGPORT: "5432" as const,
+    PGSSLMODE: "verify-full" as const,
+    PGSSLROOTCERT: "/private/var/folders/unit/transport/root.crt",
+    PGSSLMINPROTOCOLVERSION: "TLSv1.2" as const,
+    PGSSLSNI: "1" as const,
+  };
+  assertCount = 0;
+  closeCount = 0;
+  failAssertAt = 0;
+  failCloseCount = 0;
+
+  constructor(options: PostgresLogicalBackupLoginManagerOptions) {
+    this.rootCaDerSha256 = options.expectedRootCaDerSha256;
+    const parsed = new URL(adminUrl);
+    this.sourceUrlAuthority = {
+      hostname: parsed.hostname,
+      port: Number(parsed.port),
+    };
+  }
+
+  async assertExact(): Promise<void> {
+    this.assertCount += 1;
+    if (this.assertCount === this.failAssertAt) throw new Error("forced-transport-drift");
+  }
+
+  async close(): Promise<void> {
+    this.closeCount += 1;
+    if (this.closeCount <= this.failCloseCount) throw new Error("forced-close-ambiguity");
+  }
+}
+
 class FakePostgres {
   readonly statements: Array<{ text: string; values: readonly unknown[] }> = [];
   readonly configs: Array<Record<string, unknown>> = [];
   readonly boundVerifiers: string[] = [];
+  connectionCloseCount = 0;
   pgauditInstalled = false;
   canaryAuthenticationMethod: "scram-sha-256" | "other" = "scram-sha-256";
   groupExists = true;
@@ -237,6 +309,7 @@ class FakePostgres {
   failCommitNumber = 0;
   commitCount = 0;
   mutationObserver: (() => void) | null = null;
+  connectObserver: (() => void) | null = null;
   candidate: FakeCandidate = {
     exists: false,
     oid: "24680",
@@ -250,11 +323,12 @@ class FakePostgres {
   };
 
   connect = async (config: Record<string, unknown>): Promise<PostgresLogicalBackupLoginConnection> => {
+    this.connectObserver?.();
     this.configs.push(config);
     const canary = config.user === loginRole;
     return {
       authenticationMethod: canary ? this.canaryAuthenticationMethod : "unknown",
-      close: async () => undefined,
+      close: async () => { this.connectionCloseCount += 1; },
       query: async <Row extends Record<string, unknown>>(
         text: string,
         values: readonly unknown[] = [],
@@ -479,6 +553,7 @@ class FakePostgres {
 function dependencies(
   options: PostgresLogicalBackupLoginManagerOptions,
   database: FakePostgres,
+  transport = new FakeRailwayTransport(options),
 ): Partial<PostgresLogicalBackupLoginDependencies> {
   return {
     env: {
@@ -506,7 +581,34 @@ function dependencies(
       fsmonitorAbsentOrFalse: true,
     }),
     connect: database.connect,
+    openTransport: async (openOptions: OpenPostgresRailwayStockLocalhostCaTransportOptions) => {
+      expect(openOptions).toEqual({
+        profile: options.transportProfile,
+        rootCaFile: options.rootCaFile,
+        expectedRootCaDerSha256: options.expectedRootCaDerSha256,
+        expectedUid: options.expectedUid,
+        sourceUrlAuthority: { hostname: "db.example.invalid", port: 5_432 },
+      });
+      return transport;
+    },
   };
+}
+
+function expectOnlyHeldTransportConfigs(database: FakePostgres): void {
+  expect(database.configs.length).toBeGreaterThan(0);
+  for (const config of database.configs) {
+    expect(config.host).toBe("fd12:3456:789a::10");
+    expect(config.host).not.toBe("db.example.invalid");
+    expect(config.port).toBe(5_432);
+    expect(config.ssl).toMatchObject({
+      ca: rootCaPem,
+      servername: "localhost",
+      rejectUnauthorized: true,
+      minVersion: "TLSv1.2",
+    });
+    expect(typeof (config.ssl as { checkServerIdentity?: unknown }).checkServerIdentity)
+      .toBe("function");
+  }
 }
 
 function optionArguments(options: PostgresLogicalBackupLoginManagerOptions): string[] {
@@ -519,11 +621,14 @@ function optionArguments(options: PostgresLogicalBackupLoginManagerOptions): str
     ["--expected-environment", options.expectedEnvironment],
     ["--expected-head-sha", options.expectedHeadSha],
     ["--expected-node-version", options.expectedNodeVersion],
+    ["--expected-root-ca-der-sha256", options.expectedRootCaDerSha256],
     ["--expected-tree-sha", options.expectedTreeSha],
     ["--expected-uid", String(options.expectedUid)],
     ["--login-version", options.loginVersion],
     ["--operation-id", options.operationId],
     ["--receipt", options.receiptFile],
+    ["--root-ca-file", options.rootCaFile],
+    ["--transport-profile", options.transportProfile],
   ];
   if (options.operation === "retire") {
     values.push(
@@ -570,6 +675,7 @@ describe("PostgreSQL logical-backup LOGIN manager", () => {
       dependencies(provision, database),
     );
     expect(provisioned.receipt).toMatchObject({
+      schemaVersion: 2,
       operation: "provision",
       status: "provisioned",
       databaseOid,
@@ -577,14 +683,31 @@ describe("PostgreSQL logical-backup LOGIN manager", () => {
       groupRole,
       authorityPolicyCount: 236,
       authorityDependencyCount: 61,
+      transportProfile: POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+      rootCaDerSha256,
       canary: { saslScramSha256: true, setRole: true, readOnly: true },
     });
     expect(Object.keys(provisioned.receipt).sort()).toEqual(receiptKeys);
+    expectOnlyHeldTransportConfigs(database);
     const provisionReceiptBytes = fs.readFileSync(provision.receiptFile);
     expect(provisionReceiptBytes.toString("utf8"))
       .toBe(canonicalPostgresBackupJson(provisioned.receipt));
     expect(sha256(provisionReceiptBytes)).toBe(provisioned.receiptSha256);
     expect(fs.statSync(provision.receiptFile).mode & 0o7777).toBe(0o600);
+    expect(provisionReceiptBytes.toString("utf8")).not.toContain(provision.rootCaFile);
+    expect(provisionReceiptBytes.toString("utf8")).not.toContain(rootCaPem);
+    expect(provisionReceiptBytes.toString("utf8")).not.toContain("fd12:3456:789a::10");
+    const provisionIntent = JSON.parse(fs.readFileSync(path.join(
+      provision.escrowDirectory,
+      POSTGRES_LOGICAL_BACKUP_LOGIN_ESCROW_INTENT_FILE,
+    ), "utf8")) as Record<string, unknown>;
+    expect(provisionIntent).toMatchObject({
+      schemaVersion: 2,
+      transportProfile: POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+      rootCaDerSha256,
+    });
+    expect(JSON.stringify(provisionIntent)).not.toContain(provision.rootCaFile);
+    expect(JSON.stringify(provisionIntent)).not.toContain(rootCaPem);
     expect(database.candidate).toMatchObject({ exists: true, canLogin: true });
     expect(database.boundVerifiers).toHaveLength(1);
     const escrowUrl = fs.readFileSync(
@@ -625,6 +748,7 @@ describe("PostgreSQL logical-backup LOGIN manager", () => {
       dependencies(retirement, database),
     );
     expect(retired.receipt).toMatchObject({
+      schemaVersion: 2,
       operation: "retire",
       status: "retired",
       loginRole,
@@ -632,6 +756,8 @@ describe("PostgreSQL logical-backup LOGIN manager", () => {
       canary: { saslScramSha256: false, setRole: false, readOnly: false },
       provisionReceiptSha256: provisioned.receiptSha256,
       adminUrlSha256: sha256(rotatedAdminUrl),
+      transportProfile: POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+      rootCaDerSha256,
     });
     expect(Object.keys(retired.receipt).sort()).toEqual(receiptKeys);
     expect(database.candidate.exists).toBe(false);
@@ -639,9 +765,18 @@ describe("PostgreSQL logical-backup LOGIN manager", () => {
       POSTGRES_LOGICAL_BACKUP_LOGIN_RETIRE_INTENT_FILE,
       POSTGRES_LOGICAL_BACKUP_LOGIN_RETIRE_DISABLED_FILE,
     ]) {
-      const stat = fs.statSync(path.join(provision.escrowDirectory, leaf));
+      const leafPath = path.join(provision.escrowDirectory, leaf);
+      const stat = fs.statSync(leafPath);
       expect(stat.mode & 0o7777).toBe(0o600);
       expect(stat.nlink).toBe(1);
+      const authority = JSON.parse(fs.readFileSync(leafPath, "utf8")) as Record<string, unknown>;
+      expect(authority).toMatchObject({
+        schemaVersion: 2,
+        transportProfile: POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+        rootCaDerSha256,
+      });
+      expect(JSON.stringify(authority)).not.toContain(provision.rootCaFile);
+      expect(JSON.stringify(authority)).not.toContain(rootCaPem);
     }
     const retirementSql = database.statements.slice(retirementStart)
       .map((statement) => statement.text).join("\n");
@@ -700,13 +835,145 @@ describe("PostgreSQL logical-backup LOGIN manager", () => {
     fs.chmodSync(receiptParent, 0o755);
     const adjusted = { ...options, receiptFile: path.join(receiptParent, "receipt.json") };
     const database = new FakePostgres();
+    let transportOpenCount = 0;
+    const baseDependencies = dependencies(adjusted, database);
     await expect(managePostgresLogicalBackupLogin(
       adjusted,
-      dependencies(adjusted, database),
+      {
+        ...baseDependencies,
+        openTransport: async (transportOptions) => {
+          transportOpenCount += 1;
+          return baseDependencies.openTransport!(transportOptions);
+        },
+      },
     )).rejects.toMatchObject({ code: "receipt_invalid" });
+    expect(transportOpenCount).toBe(0);
     expect(database.configs).toHaveLength(0);
     expect(database.statements).toHaveLength(0);
     expect(fs.existsSync(adjusted.escrowDirectory)).toBe(false);
+  });
+
+  it("stops on held transport drift before DDL and after a committed candidate", async () => {
+    const beforeRoot = temporaryDirectory();
+    const beforeOptions = provisionOptions(beforeRoot);
+    const beforeDatabase = new FakePostgres();
+    const beforeTransport = new FakeRailwayTransport(beforeOptions);
+    beforeTransport.failAssertAt = 6;
+    await expect(managePostgresLogicalBackupLogin(
+      beforeOptions,
+      dependencies(beforeOptions, beforeDatabase, beforeTransport),
+    )).rejects.toMatchObject({ code: "source_authority_invalid" });
+    expect(beforeDatabase.candidate.exists).toBe(false);
+    expect(beforeDatabase.statements.map((entry) => entry.text).join("\n"))
+      .not.toContain("backup-login:create-candidate");
+    expect(fs.existsSync(beforeOptions.receiptFile)).toBe(false);
+    expect(beforeTransport.closeCount).toBe(1);
+
+    const afterRoot = temporaryDirectory();
+    const afterOptions = provisionOptions(afterRoot);
+    const afterDatabase = new FakePostgres();
+    const afterTransport = new FakeRailwayTransport(afterOptions);
+    afterDatabase.mutationObserver = () => {
+      afterTransport.failAssertAt = afterTransport.assertCount + 1;
+    };
+    await expect(managePostgresLogicalBackupLogin(
+      afterOptions,
+      dependencies(afterOptions, afterDatabase, afterTransport),
+    )).rejects.toMatchObject({ code: "source_authority_invalid" });
+    expect(afterDatabase.candidate).toMatchObject({ exists: true, canLogin: true });
+    expect(fs.existsSync(afterOptions.receiptFile)).toBe(false);
+    expect(afterTransport.closeCount).toBe(1);
+  });
+
+  it("opens one shared transport only after preflight and holds it through every connection", async () => {
+    const root = temporaryDirectory();
+    const options = provisionOptions(root);
+    const database = new FakePostgres();
+    const transport = new FakeRailwayTransport(options);
+    const base = dependencies(options, database, transport);
+    let openCount = 0;
+    let opened = false;
+    database.connectObserver = () => {
+      expect(opened).toBe(true);
+      expect(transport.closeCount).toBe(0);
+    };
+    await managePostgresLogicalBackupLogin(options, {
+      ...base,
+      openTransport: async (transportOptions) => {
+        openCount += 1;
+        opened = true;
+        return base.openTransport!(transportOptions);
+      },
+    });
+    expect(openCount).toBe(1);
+    expect(transport.closeCount).toBe(1);
+    expect(database.connectionCloseCount).toBe(database.configs.length);
+    expectOnlyHeldTransportConfigs(database);
+  });
+
+  it("lets transport cleanup ambiguity dominate success and catalog failure", async () => {
+    for (const withCatalogFailure of [false, true]) {
+      const root = temporaryDirectory();
+      const options = provisionOptions(root);
+      const database = new FakePostgres();
+      database.pgauditInstalled = withCatalogFailure;
+      const transport = new FakeRailwayTransport(options);
+      transport.failCloseCount = 1;
+      await expect(managePostgresLogicalBackupLogin(
+        options,
+        dependencies(options, database, transport),
+      )).rejects.toMatchObject({ code: "cleanup_failed" });
+      expect(transport.closeCount).toBe(1);
+      expectOnlyHeldTransportConfigs(database);
+      if (withCatalogFailure) {
+        expect(database.candidate.exists).toBe(false);
+        expect(fs.existsSync(options.receiptFile)).toBe(false);
+      } else {
+        expect(database.candidate).toMatchObject({ exists: true, canLogin: true });
+        expect(fs.existsSync(options.receiptFile)).toBe(true);
+      }
+    }
+  });
+
+  it("rejects invalid transport authority options before opening transport or database", async () => {
+    const root = temporaryDirectory();
+    const options = provisionOptions(root);
+    const cases: PostgresLogicalBackupLoginManagerOptions[] = [
+      {
+        ...options,
+        transportProfile: "railway-stock-unknown" as
+          PostgresLogicalBackupLoginManagerOptions["transportProfile"],
+      },
+      { ...options, expectedRootCaDerSha256: "D".repeat(64) },
+      { ...options, rootCaFile: options.adminConnectionFile },
+    ];
+    for (const invalid of cases) {
+      const database = new FakePostgres();
+      let opened = false;
+      await expect(managePostgresLogicalBackupLogin(invalid, {
+        ...dependencies(options, database),
+        openTransport: async () => {
+          opened = true;
+          return new FakeRailwayTransport(options);
+        },
+      })).rejects.toMatchObject({ code: "invalid_arguments" });
+      expect(opened).toBe(false);
+      expect(database.configs).toHaveLength(0);
+    }
+  });
+
+  it("rejects a mismatched opened transport and closes it before any database access", async () => {
+    const root = temporaryDirectory();
+    const options = provisionOptions(root);
+    const database = new FakePostgres();
+    const transport = new FakeRailwayTransport(options);
+    Object.defineProperty(transport, "rootCaDerSha256", { value: "d".repeat(64) });
+    await expect(managePostgresLogicalBackupLogin(
+      options,
+      dependencies(options, database, transport),
+    )).rejects.toMatchObject({ code: "source_authority_invalid" });
+    expect(database.configs).toHaveLength(0);
+    expect(transport.closeCount).toBe(1);
   });
 
   it("rejects receipt-parent replacement through the held preflight authority", async () => {
@@ -746,6 +1013,29 @@ describe("PostgreSQL logical-backup LOGIN manager", () => {
     expect(database.statements.slice(before).map((entry) => entry.text).join("\n"))
       .not.toContain("backup-login:create-candidate");
     expect(database.boundVerifiers).toHaveLength(1);
+  });
+
+  it("rejects a provision receipt rebound to a different root CA pin", async () => {
+    const root = temporaryDirectory();
+    const options = provisionOptions(root);
+    const database = new FakePostgres();
+    const provisioned = await managePostgresLogicalBackupLogin(
+      options,
+      dependencies(options, database),
+    );
+    fs.writeFileSync(options.receiptFile, canonicalPostgresBackupJson({
+      ...provisioned.receipt,
+      rootCaDerSha256: "d".repeat(64),
+    }), { mode: 0o600 });
+    fs.chmodSync(options.receiptFile, 0o600);
+    const before = database.statements.length;
+    await expect(managePostgresLogicalBackupLogin(
+      options,
+      dependencies(options, database),
+    )).rejects.toMatchObject({ code: "receipt_invalid" });
+    expect(database.statements.slice(before).map((entry) => entry.text).join("\n"))
+      .not.toContain("backup-login:create-candidate");
+    expect(database.candidate).toMatchObject({ exists: true, canLogin: true });
   });
 
   it("revalidates logger authority and fresh SCRAM canary on an existing receipt", async () => {
@@ -1222,6 +1512,8 @@ describe("PostgreSQL logical-backup LOGIN manager", () => {
     });
     expect(output).not.toContain(adminPassword);
     expect(output).not.toContain(adminUrl);
+    expect(output).not.toContain(options.rootCaFile);
+    expect(output).not.toContain(rootCaPem);
   });
 
   it("contains a production client socket failure behind one canonical CLI failure", async () => {
@@ -1268,6 +1560,7 @@ describe("PostgreSQL logical-backup LOGIN manager", () => {
     const root = temporaryDirectory();
     const options = provisionOptions(root);
     fs.unlinkSync(options.adminConnectionFile);
+    fs.unlinkSync(options.rootCaFile);
     let output = "";
     const status = await runPostgresLogicalBackupLoginCli([
       "arm",
@@ -1284,5 +1577,14 @@ describe("PostgreSQL logical-backup LOGIN manager", () => {
       schemaVersion: 1,
     });
     expect(output).not.toContain(adminPassword);
+    expect(output).not.toContain(options.rootCaFile);
+    expect(postgresLogicalBackupLoginMutationArm({
+      ...options,
+      rootCaFile: path.join(root, "different-root-ca.pem"),
+    })).not.toBe(receipt.mutationArm);
+    expect(postgresLogicalBackupLoginMutationArm({
+      ...options,
+      expectedRootCaDerSha256: "d".repeat(64),
+    })).not.toBe(receipt.mutationArm);
   });
 });

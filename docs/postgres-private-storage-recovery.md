@@ -9,7 +9,8 @@ launch gates remain **OPEN**.
 The recovery set joins four authorities that must describe one database
 snapshot:
 
-- the exact three-file PostgreSQL logical backup v2 set;
+- the exact three-file PostgreSQL logical backup set (version 3 for every new
+  capture; historical version 2 is restore-only);
 - a repeatable-read inventory of all PostgreSQL logical state and every live
   `supabase_private` `source_evidence_objects` reference;
 - a stable, complete inventory and byte-for-byte copy of the fixed private
@@ -26,9 +27,11 @@ are deterministic path hashes, avoiding case-folding and path-depth ambiguity.
 ## Fixed safety contract
 
 - PostgreSQL is version 17, direct and non-pooler. Production URLs require TLS.
-- The backup login is `LOGIN`, `NOSUPERUSER`, `NOCREATEDB`, `NOCREATEROLE`,
-  `NOREPLICATION`, and `NOBYPASSRLS`; it must be able to `SET ROLE
-pintpath_migrator` and execute `pg_control_system()`.
+- The versioned backup login is `LOGIN`, `NOINHERIT`, `NOSUPERUSER`,
+  `NOCREATEDB`, `NOCREATEROLE`, `NOREPLICATION`, and `NOBYPASSRLS`; it can set
+  only its matching database-OID-scoped backup group, cannot set the migrator
+  or runtime roles, and has direct non-grantable `CONNECT` plus
+  `pg_control_system()` execution only.
 - The source and target PostgreSQL URL bytes are independently SHA-256 pinned.
 - The Storage bucket name is exactly `beermap-source-evidence`. It must be
   private, have an exact 8 MiB file limit, and allow exactly PDF, JPEG, PNG,
@@ -48,6 +51,10 @@ pintpath_migrator` and execute `pg_control_system()`.
 - A failed capture does not authorize recursive cleanup or path reuse. Preserve
   its mode-700 partial directory for forensic review and retry with a fresh
   output path. Only a successful hash-only result authorizes later restore.
+- Capture accepts only a schema-version-3 logical manifest with the pinned-CA
+  transport binding. Restore accepts canonical historical version 2 or current
+  version 3; it never upgrades old bytes or lets version 2 authorize a new
+  capture.
 - Restore requires a distinct canonical Supabase project-ref Storage origin,
   an independently pinned disposable target database, exact source-state
   equality, a private policy-matching bucket, and a completely empty

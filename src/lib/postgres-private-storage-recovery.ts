@@ -705,7 +705,6 @@ async function validateLogicalBackup(
     throw recoveryError("backup_invalid");
   }
   if (
-    manifest.schemaVersion !== 2 ||
     manifest.state.receiptSha256 !== stateReceiptFile.sha256 ||
     manifest.archive.sha256 !== archiveFile.sha256 ||
     manifest.archive.bytes !== Number(archiveFile.size)
@@ -1319,6 +1318,9 @@ export async function capturePostgresPrivateStorageRecovery(
     options.expectedBackupManifestSha256,
     uid,
   );
+  if (backup.manifest.schemaVersion !== 3) {
+    throw recoveryError("backup_invalid");
+  }
   const authority = await validateDeletionAuthority({
     directoryPath: exactAbsolutePath(options.deletionAuthorityDirectory),
     uid,

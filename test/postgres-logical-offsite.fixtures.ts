@@ -37,6 +37,15 @@ export const LOGICAL_OFFSITE_SOURCE_DATABASE_IDENTITY_SHA256 =
     ...LOGICAL_OFFSITE_SOURCE_DATABASE_IDENTITY,
   });
 
+export const LOGICAL_OFFSITE_ROOT_CA_CERTIFICATE_SHA256 = "f".repeat(64);
+
+export const LOGICAL_OFFSITE_V2_GOLDEN = Object.freeze({
+  archiveSha256: "07535e17589863a5bb1f13d9fcac3f15be3f24fed12415cd751554a46c20c445",
+  manifestBindingSha256: "a2f0cf1fd96f8f079b4de541e64476df4eb0c8f851e52a34e2e5fbb385892a0f",
+  manifestSha256: "d6d4ce365aea2360da298c6bdd8f88d00f26c188b04c64a26cfc181690f20405",
+  receiptSha256: "06712c88385f51501e64d8bc21a7bad327b41f494824467e36acfb3d3fbe351f",
+});
+
 export function sha256Fixture(value: crypto.BinaryLike): string {
   return crypto.createHash("sha256").update(value).digest("hex");
 }
@@ -133,6 +142,7 @@ function stateInventory(): PostgresLogicalStateInventory {
 export function writeLogicalOffsiteFixture(
   root: string,
   createdAt = "2026-08-09T01:00:00.000Z",
+  manifestSchemaVersion: 2 | 3 = 3,
 ): {
   readonly backupDirectory: string;
   readonly manifest: PostgresLogicalBackupManifest;
@@ -145,8 +155,7 @@ export function writeLogicalOffsiteFixture(
   fs.chmodSync(backupDirectory, 0o700);
   const archiveSha256 = sha256Fixture(LOGICAL_OFFSITE_ARCHIVE_BYTES);
   const inventory = stateInventory();
-  const provisional: PostgresLogicalBackupManifest = {
-    schemaVersion: 2,
+  const common = {
     kind: "pintpath-postgres-logical-backup",
     createdAt,
     archive: {
@@ -193,7 +202,17 @@ export function writeLogicalOffsiteFixture(
       archivedControlKeyRangesSha256: inventory.archivedControlKeyRangesSha256,
       overallStateSha256: inventory.overallStateSha256,
     },
-  };
+  } as const;
+  const provisional: PostgresLogicalBackupManifest = manifestSchemaVersion === 2
+    ? { schemaVersion: 2, ...common }
+    : {
+      schemaVersion: 3,
+      ...common,
+      transport: {
+        profile: "railway-stock-localhost-ca-v1",
+        rootCaCertificateSha256: LOGICAL_OFFSITE_ROOT_CA_CERTIFICATE_SHA256,
+      },
+    };
   const bindingSha256 = postgresLogicalBackupManifestBindingSha256(provisional);
   const receipt = buildPostgresLogicalSourceStateReceipt({
     capturedAt: createdAt,

@@ -97,6 +97,11 @@ Use the exact mode-700 backup directory and manifest hash produced by
 role ARNs by SHA-256. The AWS SDK resolves short-lived credentials from the two
 named profiles; do not pass access keys as arguments.
 
+The writer accepts only a new schema-version-3 logical manifest whose binding
+includes `railway-stock-localhost-ca-v1` and the validated root-certificate DER
+SHA-256. Historical version-2 logical sets remain restore/retrieval evidence but
+cannot authorize a new WORM attestation.
+
 Generate each pin over the exact UTF-8 value with no trailing newline, for
 example `printf %s "$WORM_BUCKET" | shasum -a 256`. Role pins use the stable
 `arn:aws:iam::<account>:role/<role-name>` ARN, not the STS session ARN.

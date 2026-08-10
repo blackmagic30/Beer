@@ -8,6 +8,13 @@ import { Client, type ClientConfig, type QueryResultRow } from "pg";
 
 import { POSTGRES_MIGRATION_CONTRACT } from "../db/postgres-migration-contract.js";
 import { canonicalPostgresBackupJson } from "./postgres-logical-backup.js";
+import {
+  POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+  openPostgresRailwayStockLocalhostCaTransport,
+  type OpenPostgresRailwayStockLocalhostCaTransportOptions,
+  type PostgresRailwayStockLocalhostCaNodeConnection,
+  type PostgresRailwayStockLocalhostCaTransport,
+} from "./postgres-railway-stock-localhost-ca.js";
 
 export const POSTGRES_LOGICAL_BACKUP_LOGIN_ENVIRONMENT = "permanent-staging" as const;
 export const POSTGRES_LOGICAL_BACKUP_LOGIN_ENVIRONMENT_ENV =
@@ -25,7 +32,7 @@ export const POSTGRES_LOGICAL_BACKUP_LOGIN_RETIRE_INTENT_FILE =
 export const POSTGRES_LOGICAL_BACKUP_LOGIN_RETIRE_DISABLED_FILE =
   "retire-disabled.json" as const;
 
-const MANAGER_SCHEMA_VERSION = 1 as const;
+const MANAGER_SCHEMA_VERSION = 2 as const;
 const MAX_PRIVATE_FILE_BYTES = 64 * 1024;
 const MAX_ADMIN_URL_BYTES = 16 * 1024;
 const SCRAM_ITERATIONS = 4_096;
@@ -95,6 +102,9 @@ export interface PostgresLogicalBackupLoginManagerOptions {
   readonly operation: PostgresLogicalBackupLoginOperation;
   readonly adminConnectionFile: string;
   readonly expectedAdminUrlSha256: string;
+  readonly transportProfile: typeof POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE;
+  readonly rootCaFile: string;
+  readonly expectedRootCaDerSha256: string;
   readonly expectedDatabaseIdentitySha256: string;
   readonly expectedHeadSha: string;
   readonly expectedTreeSha: string;
@@ -125,6 +135,8 @@ export interface PostgresLogicalBackupLoginReceipt {
   readonly treeSha: string;
   readonly nodeVersion: string;
   readonly adminUrlSha256: string;
+  readonly transportProfile: typeof POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE;
+  readonly rootCaDerSha256: string;
   readonly databaseIdentitySha256: string;
   readonly databaseOid: string;
   readonly databaseNameSha256: string;
@@ -187,6 +199,9 @@ export interface PostgresLogicalBackupLoginDependencies {
   readonly connect: (
     config: PostgresLogicalBackupLoginConnectionConfig,
   ) => Promise<PostgresLogicalBackupLoginConnection>;
+  readonly openTransport: (
+    options: OpenPostgresRailwayStockLocalhostCaTransportOptions,
+  ) => Promise<PostgresRailwayStockLocalhostCaTransport>;
 }
 
 interface PostgresLogicalBackupLoginConnectionConfig extends ClientConfig {
@@ -195,7 +210,7 @@ interface PostgresLogicalBackupLoginConnectionConfig extends ClientConfig {
   readonly database: string;
   readonly user: string;
   readonly password: string;
-  readonly ssl: { readonly rejectUnauthorized: true };
+  readonly ssl: PostgresRailwayStockLocalhostCaNodeConnection["ssl"];
   readonly application_name: string;
   readonly connectionTimeoutMillis: number;
   readonly query_timeout: number;
@@ -250,7 +265,6 @@ interface DirectoryIdentity {
 }
 
 interface SafeAdminConnection {
-  readonly config: PostgresLogicalBackupLoginConnectionConfig;
   readonly urlSha256: string;
   readonly protocol: "postgres:" | "postgresql:";
   readonly host: string;
@@ -282,6 +296,8 @@ interface ProvisionIntent {
   readonly treeSha: string;
   readonly nodeVersion: string;
   readonly adminUrlSha256: string;
+  readonly transportProfile: typeof POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE;
+  readonly rootCaDerSha256: string;
   readonly databaseIdentitySha256: string;
   readonly databaseOid: string;
   readonly databaseNameSha256: string;
@@ -307,6 +323,8 @@ interface RetireIntent {
   readonly treeSha: string;
   readonly nodeVersion: string;
   readonly adminUrlSha256: string;
+  readonly transportProfile: typeof POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE;
+  readonly rootCaDerSha256: string;
   readonly databaseIdentitySha256: string;
   readonly loginVersion: string;
   readonly loginRole: string;
@@ -696,18 +714,6 @@ function parseSafeAdminUrl(value: string): SafeAdminConnection {
     || sslEntries[0]?.[1] !== "verify-full"
   ) throw new PostgresLogicalBackupLoginError("unsafe_admin_connection_url");
   return {
-    config: {
-      host: normalizedHost,
-      port,
-      database,
-      user: username,
-      password,
-      ssl: { rejectUnauthorized: true },
-      application_name: "pintpath-logical-backup-login-manager",
-      connectionTimeoutMillis: 15_000,
-      query_timeout: 30_000,
-      statement_timeout: 30_000,
-    },
     urlSha256: sha256(value),
     protocol: parsed.protocol as "postgres:" | "postgresql:",
     host: normalizedHost,
@@ -715,6 +721,27 @@ function parseSafeAdminUrl(value: string): SafeAdminConnection {
     database,
     username,
     password,
+  };
+}
+
+function postgresConnectionConfig(
+  admin: SafeAdminConnection,
+  transport: PostgresRailwayStockLocalhostCaTransport,
+  user: string,
+  password: string,
+  applicationName: string,
+): PostgresLogicalBackupLoginConnectionConfig {
+  return {
+    host: transport.nodeConnection.host,
+    port: transport.nodeConnection.port,
+    database: admin.database,
+    user,
+    password,
+    ssl: transport.nodeConnection.ssl,
+    application_name: applicationName,
+    connectionTimeoutMillis: 15_000,
+    query_timeout: 30_000,
+    statement_timeout: 30_000,
   };
 }
 
@@ -792,6 +819,9 @@ function mutationArmInput(options: PostgresLogicalBackupLoginManagerOptions): Re
     operation: options.operation,
     expectedEnvironment: options.expectedEnvironment,
     expectedAdminUrlSha256: options.expectedAdminUrlSha256,
+    transportProfile: options.transportProfile,
+    rootCaFile: options.rootCaFile,
+    rootCaDerSha256: options.expectedRootCaDerSha256,
     expectedDatabaseIdentitySha256: options.expectedDatabaseIdentitySha256,
     expectedHeadSha: options.expectedHeadSha,
     expectedTreeSha: options.expectedTreeSha,
@@ -821,6 +851,8 @@ function validateOptions(
   if (
     !["provision", "retire"].includes(options.operation)
     || !SHA256_PATTERN.test(options.expectedAdminUrlSha256)
+    || options.transportProfile !== POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE
+    || !SHA256_PATTERN.test(options.expectedRootCaDerSha256)
     || !SHA256_PATTERN.test(options.expectedDatabaseIdentitySha256)
     || !GIT_SHA1_PATTERN.test(options.expectedHeadSha)
     || !GIT_SHA1_PATTERN.test(options.expectedTreeSha)
@@ -841,11 +873,13 @@ function validateOptions(
   ) throw new PostgresLogicalBackupLoginError("invalid_arguments");
   if (paths) {
     exactAbsolutePath(options.adminConnectionFile);
+    exactAbsolutePath(options.rootCaFile);
     exactAbsolutePath(options.escrowDirectory);
     exactAbsolutePath(options.receiptFile);
     if (options.provisionReceiptFile) exactAbsolutePath(options.provisionReceiptFile);
     const pathValues = [
       options.adminConnectionFile,
+      options.rootCaFile,
       options.escrowDirectory,
       options.receiptFile,
       ...(options.provisionReceiptFile ? [options.provisionReceiptFile] : []),
@@ -854,7 +888,9 @@ function validateOptions(
       throw new PostgresLogicalBackupLoginError("invalid_arguments");
     }
     if (
-      options.receiptFile.startsWith(`${options.escrowDirectory}${path.sep}`)
+      options.adminConnectionFile.startsWith(`${options.escrowDirectory}${path.sep}`)
+      || options.rootCaFile.startsWith(`${options.escrowDirectory}${path.sep}`)
+      || options.receiptFile.startsWith(`${options.escrowDirectory}${path.sep}`)
       || options.provisionReceiptFile?.startsWith(`${options.escrowDirectory}${path.sep}`)
     ) throw new PostgresLogicalBackupLoginError("invalid_arguments");
   }
@@ -1041,7 +1077,52 @@ const DEFAULT_DEPENDENCIES: PostgresLogicalBackupLoginDependencies = {
   repositoryRoot: path.resolve("."),
   inspectRepository: inspectRepositoryDefault,
   connect: DirectClientConnection.connect,
+  openTransport: (options) => openPostgresRailwayStockLocalhostCaTransport(options),
 };
+
+function transportBindingIsExact(
+  transport: PostgresRailwayStockLocalhostCaTransport,
+  options: PostgresLogicalBackupLoginManagerOptions,
+  admin: SafeAdminConnection,
+): boolean {
+  return transport.profile === options.transportProfile
+    && transport.rootCaDerSha256 === options.expectedRootCaDerSha256
+    && transport.sourceUrlAuthority.hostname === admin.host
+    && transport.sourceUrlAuthority.port === admin.port
+    && transport.nodeConnection.host === transport.resolvedAddress
+    && transport.nodeConnection.port === 5_432
+    && transport.nodeConnection.ssl.servername === "localhost"
+    && transport.nodeConnection.ssl.rejectUnauthorized === true
+    && transport.nodeConnection.ssl.minVersion === "TLSv1.2"
+    && typeof transport.nodeConnection.ssl.ca === "string"
+    && transport.nodeConnection.ssl.ca.length > 0
+    && typeof transport.nodeConnection.ssl.checkServerIdentity === "function";
+}
+
+async function assertTransportExact(
+  transport: PostgresRailwayStockLocalhostCaTransport,
+  options: PostgresLogicalBackupLoginManagerOptions,
+  admin: SafeAdminConnection,
+): Promise<void> {
+  if (!transportBindingIsExact(transport, options, admin)) {
+    throw new PostgresLogicalBackupLoginError("source_authority_invalid");
+  }
+  try {
+    await transport.assertExact();
+  } catch {
+    throw new PostgresLogicalBackupLoginError("source_authority_invalid");
+  }
+}
+
+async function closeTransportExact(
+  transport: PostgresRailwayStockLocalhostCaTransport,
+): Promise<void> {
+  try {
+    await transport.close();
+  } catch {
+    throw new PostgresLogicalBackupLoginError("cleanup_failed");
+  }
+}
 
 async function closeConnectionExact(
   connection: PostgresLogicalBackupLoginConnection,
@@ -1549,7 +1630,7 @@ function parseProvisionIntent(value: Buffer): ProvisionIntent {
   const expectedKeys = [
     "schemaVersion", "kind", "createdAt", "operationId", "approvalReference",
     "expectedEnvironment", "executorUid", "mutationArm", "headSha", "treeSha",
-    "nodeVersion", "adminUrlSha256",
+    "nodeVersion", "adminUrlSha256", "transportProfile", "rootCaDerSha256",
     "databaseIdentitySha256", "databaseOid", "databaseNameSha256", "loginVersion",
     "loginRole", "groupRole", "escrowUrlSha256", "scramSaltBase64",
     "scramVerifierSha256", "loggerInventorySha256",
@@ -1569,6 +1650,8 @@ function parseProvisionIntent(value: Buffer): ProvisionIntent {
     || !GIT_SHA1_PATTERN.test(String(parsed.treeSha))
     || !NODE_VERSION_PATTERN.test(String(parsed.nodeVersion))
     || !SHA256_PATTERN.test(String(parsed.adminUrlSha256))
+    || parsed.transportProfile !== POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE
+    || !SHA256_PATTERN.test(String(parsed.rootCaDerSha256))
     || !SHA256_PATTERN.test(String(parsed.databaseIdentitySha256))
     || !DATABASE_OID_PATTERN.test(String(parsed.databaseOid))
     || !SHA256_PATTERN.test(String(parsed.databaseNameSha256))
@@ -1598,6 +1681,8 @@ function intentMatches(
     && intent.treeSha === options.expectedTreeSha
     && intent.nodeVersion === options.expectedNodeVersion
     && intent.adminUrlSha256 === options.expectedAdminUrlSha256
+    && intent.transportProfile === options.transportProfile
+    && intent.rootCaDerSha256 === options.expectedRootCaDerSha256
     && intent.databaseIdentitySha256 === options.expectedDatabaseIdentitySha256
     && intent.databaseOid === identity.databaseOid
     && intent.databaseNameSha256 === sha256(identity.databaseName)
@@ -1690,6 +1775,7 @@ async function createEscrow(
   options: PostgresLogicalBackupLoginManagerOptions,
   identity: SourceIdentity,
   admin: SafeAdminConnection,
+  transport: PostgresRailwayStockLocalhostCaTransport,
   loggerInventorySha256: string,
   dependencies: PostgresLogicalBackupLoginDependencies,
 ): Promise<EscrowBundle> {
@@ -1735,6 +1821,8 @@ async function createEscrow(
       treeSha: options.expectedTreeSha,
       nodeVersion: options.expectedNodeVersion,
       adminUrlSha256: options.expectedAdminUrlSha256,
+      transportProfile: transport.profile,
+      rootCaDerSha256: transport.rootCaDerSha256,
       databaseIdentitySha256: options.expectedDatabaseIdentitySha256,
       databaseOid: identity.databaseOid,
       databaseNameSha256: sha256(identity.databaseName),
@@ -3050,27 +3138,35 @@ async function provisionCandidateTransaction(
 }
 
 async function canaryProvisionedLogin(
+  options: PostgresLogicalBackupLoginManagerOptions,
   admin: SafeAdminConnection,
   escrow: EscrowBundle,
+  transport: PostgresRailwayStockLocalhostCaTransport,
   dependencies: PostgresLogicalBackupLoginDependencies,
 ): Promise<PostgresLogicalBackupLoginReceipt["canary"]> {
-  const config: PostgresLogicalBackupLoginConnectionConfig = {
-    ...admin.config,
-    user: escrow.intent.loginRole,
-    password: escrow.password,
-    application_name: "pintpath-logical-backup-login-canary",
-  };
+  await assertTransportExact(transport, options, admin);
+  const config = postgresConnectionConfig(
+    admin,
+    transport,
+    escrow.intent.loginRole,
+    escrow.password,
+    "pintpath-logical-backup-login-canary",
+  );
   let connection: PostgresLogicalBackupLoginConnection | null = null;
   let transaction = false;
+  let result: PostgresLogicalBackupLoginReceipt["canary"] | null = null;
   try {
-    connection = await dependencies.connect(config);
+    connection = await dependencies.connect(config).catch(() => {
+      throw new PostgresLogicalBackupLoginError("canary_failed");
+    });
+    await assertTransportExact(transport, options, admin);
     if (connection.authenticationMethod !== "scram-sha-256") {
       throw new PostgresLogicalBackupLoginError("canary_failed");
     }
     await connection.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
     transaction = true;
     await connection.query(`SET ROLE ${quoteIdentifier(escrow.intent.groupRole)}`);
-    const result = await connection.query<{
+    const queryResult = await connection.query<{
       sessionRole: string;
       effectiveRole: string;
       transactionReadOnly: boolean;
@@ -3081,9 +3177,9 @@ async function canaryProvisionedLogin(
         current_user AS "effectiveRole",
         pg_catalog.current_setting('transaction_read_only')::boolean AS "transactionReadOnly",
         (SELECT count(*)::integer FROM pintpath_app.schema_metadata) AS "rowsObserved"`);
-    const row = result.rows[0];
+    const row = queryResult.rows[0];
     if (
-      result.rows.length !== 1
+      queryResult.rows.length !== 1
       || !row
       || row.sessionRole !== escrow.intent.loginRole
       || row.effectiveRole !== escrow.intent.groupRole
@@ -3093,13 +3189,20 @@ async function canaryProvisionedLogin(
     ) throw new PostgresLogicalBackupLoginError("canary_failed");
     await connection.query("ROLLBACK");
     transaction = false;
-    return { saslScramSha256: true, setRole: true, readOnly: true };
+    result = { saslScramSha256: true, setRole: true, readOnly: true };
   } catch (error) {
     if (transaction) await connection?.query("ROLLBACK").catch(() => undefined);
+    if (
+      error instanceof PostgresLogicalBackupLoginError
+      && ["cleanup_failed", "source_authority_invalid"].includes(error.code)
+    ) throw error;
     throw new PostgresLogicalBackupLoginError("canary_failed");
   } finally {
     if (connection) await closeConnectionExact(connection);
   }
+  await assertTransportExact(transport, options, admin);
+  if (!result) throw new PostgresLogicalBackupLoginError("canary_failed");
+  return result;
 }
 
 function parseManagerReceipt(value: Buffer): PostgresLogicalBackupLoginReceipt {
@@ -3117,7 +3220,8 @@ function parseManagerReceipt(value: Buffer): PostgresLogicalBackupLoginReceipt {
     "schemaVersion", "kind", "operation", "status", "createdAt", "operationId",
     "approvalReference", "expectedEnvironment", "executorUid", "mutationArm",
     "headSha", "treeSha", "nodeVersion",
-    "adminUrlSha256", "databaseIdentitySha256", "databaseOid", "databaseNameSha256",
+    "adminUrlSha256", "transportProfile", "rootCaDerSha256",
+    "databaseIdentitySha256", "databaseOid", "databaseNameSha256",
     "loginVersion", "loginRole", "loginRoleOid", "groupRole", "marker", "markerSha256",
     "escrowIntentSha256", "escrowUrlSha256", "loggerInventorySha256",
     "authorityPolicyCount", "authorityDependencyCount", "canary",
@@ -3142,6 +3246,8 @@ function parseManagerReceipt(value: Buffer): PostgresLogicalBackupLoginReceipt {
     || !GIT_SHA1_PATTERN.test(String(parsed.treeSha))
     || !NODE_VERSION_PATTERN.test(String(parsed.nodeVersion))
     || !SHA256_PATTERN.test(String(parsed.adminUrlSha256))
+    || parsed.transportProfile !== POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE
+    || !SHA256_PATTERN.test(String(parsed.rootCaDerSha256))
     || !SHA256_PATTERN.test(String(parsed.databaseIdentitySha256))
     || !DATABASE_OID_PATTERN.test(String(parsed.databaseOid))
     || !SHA256_PATTERN.test(String(parsed.databaseNameSha256))
@@ -3350,6 +3456,7 @@ function buildProvisionReceipt(
   options: PostgresLogicalBackupLoginManagerOptions,
   identity: SourceIdentity,
   escrow: EscrowBundle,
+  transport: PostgresRailwayStockLocalhostCaTransport,
   roleOid: string,
   marker: string,
   group: GroupAuthorityState,
@@ -3371,6 +3478,8 @@ function buildProvisionReceipt(
     treeSha: options.expectedTreeSha,
     nodeVersion: options.expectedNodeVersion,
     adminUrlSha256: options.expectedAdminUrlSha256,
+    transportProfile: transport.profile,
+    rootCaDerSha256: transport.rootCaDerSha256,
     databaseIdentitySha256: options.expectedDatabaseIdentitySha256,
     databaseOid: identity.databaseOid,
     databaseNameSha256: sha256(identity.databaseName),
@@ -3408,20 +3517,30 @@ function decodeConnectionFile(file: StablePrivateFile): string {
 async function reconnectAdminWithLock(
   admin: SafeAdminConnection,
   options: PostgresLogicalBackupLoginManagerOptions,
+  transport: PostgresRailwayStockLocalhostCaTransport,
   dependencies: PostgresLogicalBackupLoginDependencies,
 ): Promise<{
   connection: PostgresLogicalBackupLoginConnection;
   identity: SourceIdentity;
 }> {
-  const connection = await dependencies.connect(admin.config).catch(() => {
+  await assertTransportExact(transport, options, admin);
+  const connection = await dependencies.connect(postgresConnectionConfig(
+    admin,
+    transport,
+    admin.username,
+    admin.password,
+    "pintpath-logical-backup-login-manager",
+  )).catch(() => {
     throw new PostgresLogicalBackupLoginError("source_authority_invalid");
   });
   try {
+    await assertTransportExact(transport, options, admin);
     await acquireManagerLock(connection);
     const identity = await inspectSourceIdentity(
       connection,
       options.expectedDatabaseIdentitySha256,
     );
+    await assertTransportExact(transport, options, admin);
     return { connection, identity };
   } catch (error) {
     await closeConnectionExact(connection);
@@ -3434,12 +3553,13 @@ async function manageProvision(
   adminFile: StablePrivateFile,
   admin: SafeAdminConnection,
   receiptAuthority: ReceiptAuthority,
+  transport: PostgresRailwayStockLocalhostCaTransport,
   dependencies: PostgresLogicalBackupLoginDependencies,
 ): Promise<PostgresLogicalBackupLoginManagerResult> {
   let locked: Awaited<ReturnType<typeof reconnectAdminWithLock>> | null = null;
   let escrow: EscrowBundle | null = null;
   try {
-    locked = await reconnectAdminWithLock(admin, options, dependencies);
+    locked = await reconnectAdminWithLock(admin, options, transport, dependencies);
     const identity = locked.identity;
     const loginRole = versionedLoginRole(identity.databaseOid, options.loginVersion);
     const groupRole = scopedGroupRole(identity.databaseOid);
@@ -3469,6 +3589,8 @@ async function manageProvision(
         || existing.treeSha !== options.expectedTreeSha
         || existing.nodeVersion !== options.expectedNodeVersion
         || existing.adminUrlSha256 !== options.expectedAdminUrlSha256
+        || existing.transportProfile !== transport.profile
+        || existing.rootCaDerSha256 !== transport.rootCaDerSha256
         || existing.databaseIdentitySha256 !== options.expectedDatabaseIdentitySha256
         || existing.databaseOid !== identity.databaseOid
         || existing.databaseNameSha256 !== sha256(identity.databaseName)
@@ -3491,17 +3613,25 @@ async function manageProvision(
       await assertManagerLockHeld(locked.connection);
       await assertStablePrivateFileUnchanged(adminFile, options.expectedUid);
       await assertEscrowUnchanged(escrow, options.expectedUid);
-      const canary = await canaryProvisionedLogin(admin, escrow, dependencies);
+      const canary = await canaryProvisionedLogin(
+        options,
+        admin,
+        escrow,
+        transport,
+        dependencies,
+      );
       const expected = buildProvisionReceipt(
         options,
         identity,
         escrow,
+        transport,
         existing.loginRoleOid,
         existing.marker,
         group,
         canary,
         dependencies,
       );
+      await assertTransportExact(transport, options, admin);
       return await publishOrValidateReceipt(receiptAuthority, expected, options.expectedUid);
     }
     if (!escrow) {
@@ -3512,10 +3642,12 @@ async function manageProvision(
       if (!group.exact) {
         throw new PostgresLogicalBackupLoginError("source_authority_invalid");
       }
+      await assertTransportExact(transport, options, admin);
       escrow = await createEscrow(
         options,
         identity,
         admin,
+        transport,
         inventorySha256,
         dependencies,
       );
@@ -3548,6 +3680,7 @@ async function manageProvision(
       }
     } else {
       await assertReceiptAuthorityUnchanged(receiptAuthority, options.expectedUid);
+      await assertTransportExact(transport, options, admin);
       try {
         const provisioned = await provisionCandidateTransaction(
           locked.connection,
@@ -3560,7 +3693,7 @@ async function manageProvision(
         group = provisioned.group;
       } catch (error) {
         await closeConnectionExact(locked.connection);
-        locked = await reconnectAdminWithLock(admin, options, dependencies);
+        locked = await reconnectAdminWithLock(admin, options, transport, dependencies);
         const candidate = await inspectCandidateState(
           locked.connection,
           loginRole,
@@ -3585,7 +3718,13 @@ async function manageProvision(
     await assertManagerLockHeld(locked.connection);
     await assertStablePrivateFileUnchanged(adminFile, options.expectedUid);
     await assertEscrowUnchanged(escrow, options.expectedUid);
-    const canary = await canaryProvisionedLogin(admin, escrow, dependencies);
+    const canary = await canaryProvisionedLogin(
+      options,
+      admin,
+      escrow,
+      transport,
+      dependencies,
+    );
     const finalCandidate = await inspectCandidateState(
       locked.connection,
       loginRole,
@@ -3604,12 +3743,14 @@ async function manageProvision(
       options,
       identity,
       escrow,
+      transport,
       roleOid,
       marker,
       finalGroup,
       canary,
       dependencies,
     );
+    await assertTransportExact(transport, options, admin);
     return await publishOrValidateReceipt(receiptAuthority, receipt, options.expectedUid);
   } finally {
     escrow?.urlFile.value.fill(0);
@@ -3632,6 +3773,8 @@ function provisionIntentMatchesReceipt(
     && intent.treeSha === receipt.treeSha
     && intent.nodeVersion === receipt.nodeVersion
     && intent.adminUrlSha256 === receipt.adminUrlSha256
+    && intent.transportProfile === receipt.transportProfile
+    && intent.rootCaDerSha256 === receipt.rootCaDerSha256
     && intent.databaseIdentitySha256 === receipt.databaseIdentitySha256
     && intent.databaseOid === receipt.databaseOid
     && intent.databaseNameSha256 === receipt.databaseNameSha256
@@ -3937,6 +4080,7 @@ function retireIntentBase(
   options: PostgresLogicalBackupLoginManagerOptions,
   provisionReceipt: PostgresLogicalBackupLoginReceipt,
   provisionReceiptSha256: string,
+  transport: PostgresRailwayStockLocalhostCaTransport,
 ): Omit<RetireIntent, "createdAt"> {
   return {
     schemaVersion: MANAGER_SCHEMA_VERSION,
@@ -3950,6 +4094,8 @@ function retireIntentBase(
     treeSha: options.expectedTreeSha,
     nodeVersion: options.expectedNodeVersion,
     adminUrlSha256: options.expectedAdminUrlSha256,
+    transportProfile: transport.profile,
+    rootCaDerSha256: transport.rootCaDerSha256,
     databaseIdentitySha256: options.expectedDatabaseIdentitySha256,
     loginVersion: options.loginVersion,
     loginRole: provisionReceipt.loginRole,
@@ -3964,6 +4110,7 @@ async function createOrLoadRetireIntent(
   options: PostgresLogicalBackupLoginManagerOptions,
   provisionReceipt: PostgresLogicalBackupLoginReceipt,
   provisionReceiptSha256: string,
+  transport: PostgresRailwayStockLocalhostCaTransport,
   dependencies: PostgresLogicalBackupLoginDependencies,
   allowCreate: boolean,
 ): Promise<{ value: RetireIntent; file: StablePrivateFile; sha256: string }> {
@@ -3971,7 +4118,7 @@ async function createOrLoadRetireIntent(
     options.escrowDirectory,
     POSTGRES_LOGICAL_BACKUP_LOGIN_RETIRE_INTENT_FILE,
   );
-  const base = retireIntentBase(options, provisionReceipt, provisionReceiptSha256);
+  const base = retireIntentBase(options, provisionReceipt, provisionReceiptSha256, transport);
   const existing = await fs.promises.lstat(filePath).then(() => true).catch((error: unknown) => {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
     throw error;
@@ -4053,6 +4200,7 @@ function buildRetireReceipt(
   options: PostgresLogicalBackupLoginManagerOptions,
   identity: SourceIdentity,
   provisionReceipt: PostgresLogicalBackupLoginReceipt,
+  transport: PostgresRailwayStockLocalhostCaTransport,
   provisionReceiptSha256: string,
   retireIntentSha256: string,
   retireDisabledSha256: string,
@@ -4075,6 +4223,8 @@ function buildRetireReceipt(
     treeSha: options.expectedTreeSha,
     nodeVersion: options.expectedNodeVersion,
     adminUrlSha256: options.expectedAdminUrlSha256,
+    transportProfile: transport.profile,
+    rootCaDerSha256: transport.rootCaDerSha256,
     databaseIdentitySha256: options.expectedDatabaseIdentitySha256,
     databaseOid: identity.databaseOid,
     databaseNameSha256: sha256(identity.databaseName),
@@ -4099,11 +4249,16 @@ function buildRetireReceipt(
 function assertProvisionReceiptForRetirement(
   options: PostgresLogicalBackupLoginManagerOptions,
   receipt: PostgresLogicalBackupLoginReceipt,
+  transport: PostgresRailwayStockLocalhostCaTransport,
 ): void {
   if (
     receipt.operation !== "provision"
     || receipt.status !== "provisioned"
     || receipt.expectedEnvironment !== options.expectedEnvironment
+    || receipt.transportProfile !== transport.profile
+    || receipt.rootCaDerSha256 !== transport.rootCaDerSha256
+    || receipt.transportProfile !== options.transportProfile
+    || receipt.rootCaDerSha256 !== options.expectedRootCaDerSha256
     || receipt.databaseIdentitySha256 !== options.expectedDatabaseIdentitySha256
     || receipt.loginVersion !== options.loginVersion
     || !Object.values(receipt.canary).every(Boolean)
@@ -4116,6 +4271,7 @@ async function manageRetire(
   admin: SafeAdminConnection,
   receiptAuthority: ReceiptAuthority,
   provisionAuthority: ReceiptAuthority,
+  transport: PostgresRailwayStockLocalhostCaTransport,
   dependencies: PostgresLogicalBackupLoginDependencies,
 ): Promise<PostgresLogicalBackupLoginManagerResult> {
   const provisionPath = options.provisionReceiptFile;
@@ -4129,13 +4285,13 @@ async function manageRetire(
     || !provision
     || provision.file.sha256 !== provisionSha256
   ) throw new PostgresLogicalBackupLoginError("receipt_invalid");
-  assertProvisionReceiptForRetirement(options, provision.receipt);
+  assertProvisionReceiptForRetirement(options, provision.receipt, transport);
   let locked: Awaited<ReturnType<typeof reconnectAdminWithLock>> | null = null;
   let escrow: EscrowBundle | null = null;
   let retireIntent: Awaited<ReturnType<typeof createOrLoadRetireIntent>> | null = null;
   let disabledCheckpoint: Awaited<ReturnType<typeof createOrLoadDisabledCheckpoint>> | null = null;
   try {
-    locked = await reconnectAdminWithLock(admin, options, dependencies);
+    locked = await reconnectAdminWithLock(admin, options, transport, dependencies);
     const identity = locked.identity;
     if (
       identity.databaseOid !== provision.receipt.databaseOid
@@ -4201,6 +4357,7 @@ async function manageRetire(
         options,
         provision.receipt,
         provisionSha256,
+        transport,
         dependencies,
         false,
       );
@@ -4223,10 +4380,12 @@ async function manageRetire(
         throw new PostgresLogicalBackupLoginError("mutation_ambiguous");
       }
       if (!retireIntent) {
+        await assertTransportExact(transport, options, admin);
         retireIntent = await createOrLoadRetireIntent(
           options,
           provision.receipt,
           provisionSha256,
+          transport,
           dependencies,
           true,
         );
@@ -4248,6 +4407,7 @@ async function manageRetire(
       await assertStablePrivateFileUnchanged(retireIntent.file, options.expectedUid)
         .catch((error) => remapPreservingCleanup(error, "escrow_invalid"));
       await assertPrivatePathAbsent(disabledCheckpointPath);
+      await assertTransportExact(transport, options, admin);
       try {
         group = await disableCandidateTransaction(
           locked.connection,
@@ -4256,7 +4416,7 @@ async function manageRetire(
         );
       } catch (error) {
         await closeConnectionExact(locked.connection);
-        locked = await reconnectAdminWithLock(admin, options, dependencies);
+        locked = await reconnectAdminWithLock(admin, options, transport, dependencies);
         candidate = await inspectCandidateState(
           locked.connection,
           provision.receipt.loginRole,
@@ -4295,6 +4455,7 @@ async function manageRetire(
       } else {
         await assertPrivatePathAbsent(disabledCheckpointPath);
       }
+      await assertTransportExact(transport, options, admin);
       await terminateCandidateSessions(locked.connection, provision.receipt.loginRoleOid);
       const afterTermination = await inspectCandidateState(
         locked.connection,
@@ -4307,6 +4468,7 @@ async function manageRetire(
         throw new PostgresLogicalBackupLoginError("mutation_ambiguous");
       }
       if (!disabledCheckpoint) {
+        await assertTransportExact(transport, options, admin);
         disabledCheckpoint = await createOrLoadDisabledCheckpoint(
           options,
           retireIntent.value,
@@ -4324,11 +4486,12 @@ async function manageRetire(
       await assertStablePrivateFileUnchanged(disabledCheckpoint.file, options.expectedUid)
         .catch((error) => remapPreservingCleanup(error, "escrow_invalid"));
       await assertReceiptAuthorityUnchanged(receiptAuthority, options.expectedUid);
+      await assertTransportExact(transport, options, admin);
       try {
         group = await dropDisabledCandidateTransaction(locked.connection, provision.receipt);
       } catch (error) {
         await closeConnectionExact(locked.connection);
-        locked = await reconnectAdminWithLock(admin, options, dependencies);
+        locked = await reconnectAdminWithLock(admin, options, transport, dependencies);
         const reconciled = await inspectCandidateState(
           locked.connection,
           provision.receipt.loginRole,
@@ -4337,6 +4500,7 @@ async function manageRetire(
           provision.receipt.loginRoleOid,
         );
         if (reconciled.disabledExact) {
+          await assertTransportExact(transport, options, admin);
           group = await dropDisabledCandidateTransaction(locked.connection, provision.receipt);
         } else if (!reconciled.exists) {
           group = await inspectGroupAuthority(
@@ -4384,6 +4548,7 @@ async function manageRetire(
       options,
       identity,
       provision.receipt,
+      transport,
       provisionSha256,
       retireIntent.sha256,
       disabledCheckpoint.sha256,
@@ -4391,6 +4556,7 @@ async function manageRetire(
       inventorySha256,
       dependencies,
     );
+    await assertTransportExact(transport, options, admin);
     return await publishOrValidateReceipt(receiptAuthority, receipt, options.expectedUid);
   } finally {
     escrow?.urlFile.value.fill(0);
@@ -4414,6 +4580,7 @@ export async function managePostgresLogicalBackupLogin(
   let adminFile: HeldStablePrivateFile | null = null;
   let receiptAuthority: ReceiptAuthority | null = null;
   let provisionAuthority: ReceiptAuthority | null = null;
+  let transport: PostgresRailwayStockLocalhostCaTransport | null = null;
   try {
     adminFile = await openStablePrivateFile(
       options.adminConnectionFile,
@@ -4440,14 +4607,37 @@ export async function managePostgresLogicalBackupLogin(
         true,
       );
     }
+    try {
+      transport = await dependencies.openTransport({
+        profile: options.transportProfile,
+        rootCaFile: options.rootCaFile,
+        expectedRootCaDerSha256: options.expectedRootCaDerSha256,
+        expectedUid: options.expectedUid,
+        sourceUrlAuthority: { hostname: admin.host, port: admin.port },
+      });
+    } catch (error) {
+      if (isRecord(error) && error.code === "cleanup_failed") {
+        throw new PostgresLogicalBackupLoginError("cleanup_failed");
+      }
+      throw new PostgresLogicalBackupLoginError("source_authority_invalid");
+    }
+    await assertTransportExact(transport, options, admin);
     return options.operation === "provision"
-      ? await manageProvision(options, adminFile, admin, receiptAuthority, dependencies)
+      ? await manageProvision(
+        options,
+        adminFile,
+        admin,
+        receiptAuthority,
+        transport,
+        dependencies,
+      )
       : await manageRetire(
         options,
         adminFile,
         admin,
         receiptAuthority,
         provisionAuthority!,
+        transport,
         dependencies,
       );
   } catch (error) {
@@ -4455,6 +4645,13 @@ export async function managePostgresLogicalBackupLogin(
     throw new PostgresLogicalBackupLoginError("mutation_ambiguous");
   } finally {
     let cleanupFailed = false;
+    if (transport) {
+      try {
+        await closeTransportExact(transport);
+      } catch {
+        cleanupFailed = true;
+      }
+    }
     if (provisionAuthority) {
       try {
         await closeReceiptAuthority(provisionAuthority);

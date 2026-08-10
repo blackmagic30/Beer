@@ -2,6 +2,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { canonicalPostgresBackupJson } from "../src/lib/postgres-logical-backup.js";
+import { POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE } from
+  "../src/lib/postgres-railway-stock-localhost-ca.js";
 import {
   POSTGRES_LOGICAL_BACKUP_LOGIN_MUTATION_ENV,
   PostgresLogicalBackupLoginError,
@@ -23,11 +25,14 @@ const COMMON_ARGUMENTS = new Set([
   "--expected-environment",
   "--expected-head-sha",
   "--expected-node-version",
+  "--expected-root-ca-der-sha256",
   "--expected-tree-sha",
   "--expected-uid",
   "--login-version",
   "--operation-id",
   "--receipt",
+  "--root-ca-file",
+  "--transport-profile",
 ]);
 
 const RETIRE_ARGUMENTS = new Set([
@@ -81,6 +86,10 @@ export function parsePostgresLogicalBackupLoginOptions(
     operation: requestedOperation,
     adminConnectionFile: parsed.get("--admin-connection-file")!,
     expectedAdminUrlSha256: parsed.get("--expected-admin-url-sha256")!,
+    transportProfile: parsed.get("--transport-profile")! as
+      typeof POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+    rootCaFile: parsed.get("--root-ca-file")!,
+    expectedRootCaDerSha256: parsed.get("--expected-root-ca-der-sha256")!,
     expectedDatabaseIdentitySha256: parsed.get("--expected-database-identity-sha256")!,
     expectedHeadSha: parsed.get("--expected-head-sha")!,
     expectedTreeSha: parsed.get("--expected-tree-sha")!,

@@ -234,13 +234,17 @@ afterEach(() => {
   }
 });
 
-function fixture() {
+function fixture(manifestSchemaVersion: 2 | 3 = 3) {
   const root = fs.realpathSync(
     fs.mkdtempSync(path.join(os.tmpdir(), "pintpath-worm-test-")),
   );
   fs.chmodSync(root, 0o700);
   temporaryRoots.push(root);
-  return writeLogicalOffsiteFixture(root);
+  return writeLogicalOffsiteFixture(
+    root,
+    "2026-08-09T01:00:00.000Z",
+    manifestSchemaVersion,
+  );
 }
 
 function options(
@@ -349,6 +353,21 @@ describe("Postgres logical WORM authority", () => {
       attestationOptions.backupDirectory,
       "version/1+opaque=",
     ]) expect(publicOutput).not.toContain(forbidden);
+  });
+
+  it("rejects a valid schema-v2 manifest before any provider call", async () => {
+    const provider = new MemoryWormProvider();
+    const inspectWriter = vi.spyOn(provider, "inspectWriterIdentity");
+    const inspectReader = vi.spyOn(provider, "inspectReaderIdentity");
+    const inspectBucket = vi.spyOn(provider, "inspectBucketControls");
+    const listVersions = vi.spyOn(provider, "listExactVersions");
+    await expect(attestPostgresLogicalWorm(options(provider, fixture(2))))
+      .rejects.toEqual(new PostgresLogicalWormError("backup_manifest_invalid"));
+    expect(inspectWriter).not.toHaveBeenCalled();
+    expect(inspectReader).not.toHaveBeenCalled();
+    expect(inspectBucket).not.toHaveBeenCalled();
+    expect(listVersions).not.toHaveBeenCalled();
+    expect(provider.puts).toEqual([]);
   });
 
   it("rejects a mismatched or non-independent authority before uploading", async () => {

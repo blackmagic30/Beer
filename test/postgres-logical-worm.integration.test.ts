@@ -73,6 +73,7 @@ liveDescribe("Postgres logical WORM AWS integration", () => {
     );
     fs.chmodSync(root, 0o700);
     const fixture = writeLogicalOffsiteFixture(root, createdAt);
+    expect(fixture.manifest.schemaVersion).toBe(3);
     const loaded = loadAwsSdkV3WormProvider({
       bucketName,
       writerProfile,

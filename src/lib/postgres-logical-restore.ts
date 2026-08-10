@@ -25,6 +25,9 @@ import {
   type PostgresLogicalSourceStateReceipt,
   type PostgresLogicalStateInventory,
 } from "./postgres-logical-state.js";
+import {
+  POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+} from "./postgres-railway-stock-localhost-ca.js";
 
 const APPLICATION_SCHEMA = "pintpath_app";
 const OPERATIONS_SCHEMA = "pintpath_ops";
@@ -621,6 +624,14 @@ function validStateBinding(value: unknown): boolean {
     && /^\d+$/.test(value.archivedControlRowCount);
 }
 
+function validManifestTransport(value: unknown): boolean {
+  return isPlainObject(value)
+    && exactKeys(value, ["profile", "rootCaCertificateSha256"])
+    && value.profile === POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE
+    && typeof value.rootCaCertificateSha256 === "string"
+    && SHA256_PATTERN.test(value.rootCaCertificateSha256);
+}
+
 function parseManifest(bytes: Buffer): PostgresLogicalBackupManifest {
   const text = safeDecodeUtf8(bytes);
   let value: unknown;
@@ -632,9 +643,16 @@ function parseManifest(bytes: Buffer): PostgresLogicalBackupManifest {
   if (!isPlainObject(value) || canonicalPostgresBackupJson(value) !== text) {
     throw restoreError("backup_manifest_invalid");
   }
-  if (!exactKeys(value, [
-    "schemaVersion", "kind", "createdAt", "archive", "tools", "validation", "state",
-  ])) {
+  const schemaVersion = value.schemaVersion;
+  const topLevelKeys = schemaVersion === 2
+    ? ["schemaVersion", "kind", "createdAt", "archive", "tools", "validation", "state"]
+    : schemaVersion === 3
+      ? [
+        "schemaVersion", "kind", "createdAt", "archive", "tools", "validation",
+        "transport", "state",
+      ]
+      : null;
+  if (!topLevelKeys || !exactKeys(value, topLevelKeys)) {
     throw restoreError("backup_manifest_invalid");
   }
   const archive = value.archive;
@@ -655,8 +673,8 @@ function parseManifest(bytes: Buffer): PostgresLogicalBackupManifest {
   const archiveSchemas = archive.schemas;
   const requiredOptions = archive.requiredRestoreOptions;
   if (
-    value.schemaVersion !== 2
-    || value.kind !== "pintpath-postgres-logical-backup"
+    value.kind !== "pintpath-postgres-logical-backup"
+    || (schemaVersion === 3 && !validManifestTransport(value.transport))
     || !exactDate
     || !exactKeys(archive, [
       "file", "format", "bytes", "sha256", "schemas", "aclStatementsIncluded",

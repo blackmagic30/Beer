@@ -32,6 +32,7 @@ import {
   POSTGRES_LOGICAL_RESTORE_CONFIRMATION_VALUE,
   PostgresLogicalRestoreError,
   inspectPostgresLogicalRestoreTarget,
+  parsePostgresLogicalBackupManifest,
   restorePostgresLogicalBackup,
   type PostgresLogicalRestoreConnection,
   type PostgresLogicalRestoreConnectionConfig,
@@ -44,6 +45,7 @@ const secret = "restore-target-super-secret";
 const targetUrl = `postgresql://restore_admin:${secret}@db.example.invalid:5432/pintpath_restore?sslmode=verify-full`;
 const archiveBytes = Buffer.from("PGDMP-restore-test-archive", "utf8");
 const now = "2026-08-08T06:00:00.000Z";
+const rootCaCertificateSha256 = "f".repeat(64);
 
 function sha256(value: crypto.BinaryLike): string {
   return crypto.createHash("sha256").update(value).digest("hex");
@@ -132,13 +134,15 @@ function stateInventory(): PostgresLogicalStateInventory {
   };
 }
 
-function makeArtifacts(listing = archiveListing()): {
+function makeArtifacts(
+  listing = archiveListing(),
+  manifestSchemaVersion: 2 | 3 = 3,
+): {
   manifest: PostgresLogicalBackupManifest;
   receiptBytes: string;
 } {
   const state = stateInventory();
-  const provisional: PostgresLogicalBackupManifest = {
-    schemaVersion: 2,
+  const common = {
     kind: "pintpath-postgres-logical-backup",
     createdAt: "2026-08-08T05:00:00.000Z",
     archive: {
@@ -185,7 +189,17 @@ function makeArtifacts(listing = archiveListing()): {
       archivedControlKeyRangesSha256: state.archivedControlKeyRangesSha256,
       overallStateSha256: state.overallStateSha256,
     },
-  };
+  } as const;
+  const provisional: PostgresLogicalBackupManifest = manifestSchemaVersion === 2
+    ? { schemaVersion: 2, ...common }
+    : {
+      schemaVersion: 3,
+      ...common,
+      transport: {
+        profile: "railway-stock-localhost-ca-v1",
+        rootCaCertificateSha256,
+      },
+    };
   const binding = postgresLogicalBackupManifestBindingSha256(provisional);
   const receipt = buildPostgresLogicalSourceStateReceipt({
     capturedAt: provisional.createdAt,
@@ -212,7 +226,7 @@ function makeArtifacts(listing = archiveListing()): {
   };
 }
 
-function writeFixture(root: string): {
+function writeFixture(root: string, manifestSchemaVersion: 2 | 3 = 3): {
   backupDirectory: string;
   manifestPath: string;
   manifestSha256: string;
@@ -227,7 +241,7 @@ function writeFixture(root: string): {
   const stateReceiptPath = path.join(backupDirectory, POSTGRES_LOGICAL_BACKUP_STATE_RECEIPT);
   fs.writeFileSync(archivePath, archiveBytes, { mode: 0o600 });
   fs.chmodSync(archivePath, 0o600);
-  const artifacts = makeArtifacts();
+  const artifacts = makeArtifacts(archiveListing(), manifestSchemaVersion);
   const manifestBytes = canonicalPostgresBackupJson(artifacts.manifest);
   fs.writeFileSync(manifestPath, manifestBytes, { mode: 0o600 });
   fs.chmodSync(manifestPath, 0o600);
@@ -492,6 +506,64 @@ afterEach(() => {
 });
 
 describe("Postgres logical restore rehearsal", () => {
+  it("strictly parses canonical v3 and frozen v2 manifests", () => {
+    const v3 = makeArtifacts().manifest;
+    const v2 = makeArtifacts(archiveListing(), 2).manifest;
+    if (v3.schemaVersion !== 3 || v2.schemaVersion !== 2) {
+      throw new Error("fixture manifest version mismatch");
+    }
+    expect(parsePostgresLogicalBackupManifest(Buffer.from(
+      canonicalPostgresBackupJson(v3),
+      "utf8",
+    ))).toEqual(v3);
+    expect(parsePostgresLogicalBackupManifest(Buffer.from(
+      canonicalPostgresBackupJson(v2),
+      "utf8",
+    ))).toEqual(v2);
+    expect(v3).toMatchObject({
+      schemaVersion: 3,
+      transport: {
+        profile: "railway-stock-localhost-ca-v1",
+        rootCaCertificateSha256,
+      },
+    });
+    expect(v2).not.toHaveProperty("transport");
+  });
+
+  it("rejects mixed version/transport shapes and binds the exact v3 transport", () => {
+    const v3 = makeArtifacts().manifest;
+    const v2 = makeArtifacts(archiveListing(), 2).manifest;
+    if (v3.schemaVersion !== 3 || v2.schemaVersion !== 2) {
+      throw new Error("fixture manifest version mismatch");
+    }
+    const candidates: unknown[] = [
+      { ...v2, transport: v3.transport },
+      Object.fromEntries(Object.entries(v3).filter(([key]) => key !== "transport")),
+      { ...v3, unexpected: true },
+      { ...v3, transport: { ...v3.transport, profile: "railway-stock-localhost-ca-v2" } },
+      {
+        ...v3,
+        transport: {
+          ...v3.transport,
+          rootCaCertificateSha256: rootCaCertificateSha256.toUpperCase(),
+        },
+      },
+      {
+        ...v3,
+        transport: {
+          ...v3.transport,
+          rootCaCertificateSha256: "e".repeat(64),
+        },
+      },
+    ];
+    for (const candidate of candidates) {
+      expect(() => parsePostgresLogicalBackupManifest(Buffer.from(
+        canonicalPostgresBackupJson(candidate),
+        "utf8",
+      ))).toThrowError(PostgresLogicalRestoreError);
+    }
+  });
+
   it("validates the disposable target and emits only its identity hash", async () => {
     const root = temporaryRoot();
     const fixture = writeFixture(root);
@@ -600,6 +672,21 @@ describe("Postgres logical restore rehearsal", () => {
       exactDataReconciliation: "canonical-contract-exact",
     });
     expect(receiptBytes).not.toContain("required-not-implemented");
+  });
+
+  it("restores a frozen schema-v2 manifest through the compatibility parser", async () => {
+    const root = temporaryRoot();
+    const fixture = writeFixture(root, 2);
+    const harness = createHarness();
+    await expect(restorePostgresLogicalBackup(
+      restoreOptions(fixture),
+      harness.dependencies,
+    )).resolves.toMatchObject({
+      schemaVersion: 1,
+      ok: true,
+      backupManifestSha256: fixture.manifestSha256,
+    });
+    expect(harness.connectCount).toBe(1);
   });
 
   it("detects archive and canonical-manifest tampering before connecting", async () => {

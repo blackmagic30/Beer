@@ -59,12 +59,13 @@ Complete these checks from a protected operator host, not a Railway web shell:
   SCRAM-SHA-256 verifier in process, binds only the verifier after exact logger
   guards, provisions `NOLOGIN` before enabling `LOGIN` last, performs a fresh
   SASL/read-only canary, and writes only fixed secret-free receipts. Its
-  repository implementation does not authorize a live ceremony. Provisioning,
-  retirement, and any later rotation remain operationally **STOPPED** until the
-  same reviewed `railway-stock-localhost-ca-v1` transport profile is shared by
-  the manager and logical-backup client. Do not manually execute `CREATE ROLE
-  ... PASSWORD`, use `psql` password substitution, or weaken TLS while that
-  blocker remains.
+  repository implementation does not authorize a live ceremony. The manager
+  and logical-backup client now share the reviewed
+  `railway-stock-localhost-ca-v1` transport, but provisioning, retirement, and
+  any later rotation remain operationally **STOPPED** until the exact mode-600
+  root certificate, DER pin, private endpoint, source database identity, and
+  integrated tracked SHA are independently approved. Do not manually execute
+  `CREATE ROLE ... PASSWORD`, use `psql` password substitution, or weaken TLS.
 - The exact 236 portable-policy inventory with the current-database scoped
   group absent is a safe, inert `policy-only` state, not backup authority.
   PostgreSQL 17 gives a role created by a non-superuser `CREATEROLE` principal
@@ -110,36 +111,45 @@ export RUNTIME_DATABASE_URL_FILE="$RELEASE_ROOT/postgres-runtime-url"
 export OFFSITE_SERVICE_ROLE_KEY_FILE="$RELEASE_ROOT/offsite-service-role.key"
 export LOGICAL_BACKUP_DIRECTORY="$RELEASE_ROOT/postgres-logical-backup"
 : "${EXPECTED_SOURCE_URL_SHA256:?inject the reviewed trimmed backup URL SHA-256}"
+: "${EXPECTED_ROOT_CA_DER_SHA256:?inject the reviewed root certificate DER SHA-256}"
+export POSTGRES_ROOT_CA_FILE="$RELEASE_ROOT/railway-postgres-root-ca.pem"
 
 test -f "$BACKUP_CONNECTION_FILE" && test ! -L "$BACKUP_CONNECTION_FILE"
 test -f "$RUNTIME_DATABASE_URL_FILE" && test ! -L "$RUNTIME_DATABASE_URL_FILE"
 test -f "$OFFSITE_SERVICE_ROLE_KEY_FILE" && test ! -L "$OFFSITE_SERVICE_ROLE_KEY_FILE"
+test -f "$POSTGRES_ROOT_CA_FILE" && test ! -L "$POSTGRES_ROOT_CA_FILE"
 chmod 600 \
   "$BACKUP_CONNECTION_FILE" \
   "$RUNTIME_DATABASE_URL_FILE" \
+  "$POSTGRES_ROOT_CA_FILE" \
   "$OFFSITE_SERVICE_ROLE_KEY_FILE"
 test ! -e "$LOGICAL_BACKUP_DIRECTORY"
 ```
 
 The backup URL must contain exactly one `sslmode=verify-full` value. The backup
-library also forces Node certificate verification and libpq
-`PGSSLROOTCERT=system`; `require`, `verify-ca`, a duplicate mode, and every
-non-test `disable` value fail before tools or a database connection. The
-runtime URL retains its separately reviewed TLS contract. Obtain
-`EXPECTED_SOURCE_URL_SHA256` from the reviewed provisioning authority, not by
-rehashing the mutable connection file during the ceremony. It is the SHA-256
-of the logical trimmed URL and pins that URL before tool discovery, database
-connection, output creation, or temporary credential creation. Never put
-either URL or the service-role key in arguments, shell tracing, logs, Git,
+library requires `railway-stock-localhost-ca-v1`: it holds the exact mode-600
+single-certificate CA file, pins the X.509 DER hash, resolves exactly one
+private `fd12::/16` address, authenticates the stock leaf as `localhost`, and
+uses the same address and CA for Node and libpq with TLS 1.2 or newer. `require`,
+`verify-ca`, system-root fallback, duplicate modes, and every `disable`
+value fail before tools or a database connection. The runtime URL retains its
+separately reviewed TLS contract. Obtain `EXPECTED_SOURCE_URL_SHA256` and
+`EXPECTED_ROOT_CA_DER_SHA256` from the reviewed provisioning authority, not by
+rehashing the mutable files during the ceremony. They pin the logical trimmed
+URL and certificate before tool discovery, database connection, output
+creation, or temporary credential creation. Never put either URL, the CA path
+or bytes, or the service-role key in command output, shell tracing, logs, Git,
 screenshots, or the attestation evidence file.
 
-The stock Railway Postgres SSL image cannot satisfy that system-root,
-hostname-verified contract: its private self-signed root is absent from the
-system trust store and its [server leaf names only
+The stock Railway Postgres SSL image cannot satisfy ordinary system-root
+hostname verification: its private self-signed root is absent from the system
+trust store and its [server leaf names only
 `localhost`](https://github.com/railwayapp-templates/postgres-ssl/blob/35fb8234ad6c88d400c4be1f19d9a11d6c6c3564/init-ssl.sh), not the Railway private
-DNS hostname. Keep this ceremony stopped until the separately reviewed shared
-pinned-CA/`localhost` transport profile lands for both login management and
-backup. Do not implicitly weaken either path to `sslmode=require`.
+DNS hostname. The named profile is the only accepted stock-image bridge. Keep
+the live ceremony stopped until its exact CA file, DER pin, private endpoint,
+and source database identity are independently approved. Rotation, DNS drift,
+or fewer than 24 hours of CA validity requires a new approval. Do not weaken
+either path to `sslmode=require`.
 
 The complete non-secret provisioning/retirement flag set, mutation-arm
 environment, escrow lifecycle, and forward-only recovery contract are in the
@@ -159,12 +169,15 @@ export BACKUP_RESULT="$RELEASE_ROOT/logical-backup-result.json"
 npm run --silent db:postgres:backup:logical -- \
   --connection-file="$BACKUP_CONNECTION_FILE" \
   --expected-source-url-sha256="$EXPECTED_SOURCE_URL_SHA256" \
+  --transport-profile=railway-stock-localhost-ca-v1 \
+  --root-ca-file="$POSTGRES_ROOT_CA_FILE" \
+  --expected-root-ca-der-sha256="$EXPECTED_ROOT_CA_DER_SHA256" \
   --output="$LOGICAL_BACKUP_DIRECTORY" \
   >"$BACKUP_RESULT"
 chmod 600 "$BACKUP_RESULT"
 
 jq -e '.ok == true
-  and .schemaVersion == 2
+  and .schemaVersion == 3
   and (.manifestSha256 | test("^[a-f0-9]{64}$"))
   and (.archiveSha256 | test("^[a-f0-9]{64}$"))
   and (.stateReceiptSha256 | test("^[a-f0-9]{64}$"))
@@ -181,6 +194,11 @@ directory:
 - `pintpath-postgres.dump`
 - `manifest.json`
 - `state-receipt.json`
+
+New manifests are schema version 3 and bind the exact named transport plus the
+validated root-certificate DER SHA-256. The offsite writer and live readiness
+gate reject historical version-2 manifests. Retrieval and restore retain strict
+version-2 compatibility so existing evidence is not rewritten or stranded.
 
 The URL password is never placed in `PGPASSWORD`. Immediately before
 `pg_dump`, the command creates one exclusive mode-`600` pgpass leaf in a new

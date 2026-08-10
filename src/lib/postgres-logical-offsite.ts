@@ -658,6 +658,9 @@ async function validateLocalBackup(
   } catch {
     throw offsiteError("backup_manifest_invalid");
   }
+  if (parsedManifest.schemaVersion !== 3) {
+    throw offsiteError("backup_manifest_invalid");
+  }
   const archive = await snapshotTrustedFile({
     filePath: archivePath,
     uid: uid!,
@@ -1854,6 +1857,9 @@ export async function probePostgresLogicalOffsiteReadiness(input: {
     }
     try {
       const remoteManifest = parsePostgresLogicalBackupManifest(remoteManifestBytes);
+      if (remoteManifest.schemaVersion !== 3) {
+        throw offsiteError("object_verification_failed");
+      }
       const remoteReceipt = parsePostgresLogicalSourceStateReceipt(remoteReceiptBytes);
       assertPostgresLogicalBackupStateReceiptBinding(remoteReceipt, remoteManifest);
       if (
