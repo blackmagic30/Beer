@@ -12,11 +12,16 @@ import { AdminIngestionQueueRepository } from "../src/db/admin-ingestion-queue.r
 import type { AdminIngestionQueueRecord } from "../src/db/models.js";
 import type { SqlDatabase } from "../src/db/sql-database.js";
 import { redactSecrets } from "../src/lib/redact.js";
+import {
+  REVIEWED_PRICE_SELECTION_DEFAULT_OPTIONS,
+  REVIEWED_PRICE_SELECTION_POLICY_SHA256,
+  selectPublishableMapBaseRows,
+  type ReviewedPriceSelectionOptions,
+} from "../src/lib/reviewed-price-selection-policy.js";
 import type { AdminService } from "../src/modules/admin/admin.service.js";
 import type { AdminBeerInput } from "../src/modules/admin/admin.schemas.js";
 import { assertOperatorMutationAllowed } from "./lib/operator-mutation-guard.js";
 import { parseStrictArguments } from "./lib/strict-arguments.js";
-import type { PublishMapBaseOptions } from "./publish-source-ingestion-map-base.js";
 
 const MANIFEST_KIND = "pintpath-reviewed-price-promotion-manifest";
 const RECEIPT_KIND = "pintpath-reviewed-price-promotion-receipt";
@@ -38,16 +43,6 @@ const TRUSTED_PUBLIC_CONFIDENCE = [
   "community_confirmed",
 ] as const;
 
-async function selectLegacyPublishableMapBaseRows(
-  queueItem: AdminIngestionQueueRecord,
-  options: PublishMapBaseOptions,
-) {
-  const { selectPublishableMapBaseRows } = await import(
-    "./publish-source-ingestion-map-base.js"
-  );
-  return selectPublishableMapBaseRows(queueItem, options);
-}
-
 async function createLegacyQueueDatabase(
   database: Database.Database,
 ): Promise<SqlDatabase> {
@@ -55,14 +50,8 @@ async function createLegacyQueueDatabase(
   return asAsyncSqliteDatabase(database);
 }
 
-export const PRODUCTION_MAP_BASE_POLICY: Readonly<PublishMapBaseOptions> = Object.freeze({
-  minOverallConfidence: 0.72,
-  minRowConfidence: 0.82,
-  minPrice: 8,
-  maxPrice: 25,
-  allowHomepage: false,
-  allowSpecialSources: false,
-});
+export const PRODUCTION_MAP_BASE_POLICY: Readonly<ReviewedPriceSelectionOptions> =
+  REVIEWED_PRICE_SELECTION_DEFAULT_OPTIONS;
 
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
 const beerSchema = z.object({
@@ -599,7 +588,7 @@ export async function buildReviewedPricePromotionManifest(input: {
       throw new Error(`Source-ingestion item ${id} is ${queueItem.status}, not pending_review.`);
     }
     assertVenueHasNoTrustedPublicRows(input.database, queueItem.venueId);
-    const selection = await selectLegacyPublishableMapBaseRows(
+    const selection = selectPublishableMapBaseRows(
       queueItem,
       PRODUCTION_MAP_BASE_POLICY,
     );
@@ -636,7 +625,7 @@ export async function buildReviewedPricePromotionManifest(input: {
     items,
     kind: MANIFEST_KIND,
     policy: { ...PRODUCTION_MAP_BASE_POLICY },
-    policySha256: sha256Json(PRODUCTION_MAP_BASE_POLICY),
+    policySha256: REVIEWED_PRICE_SELECTION_POLICY_SHA256,
     rowCount: items.reduce((total, item) => total + item.rowCount, 0),
     sourceSnapshotSha256: sha256Json(items.map(manifestItemAuthority)),
     supabaseOrigin: input.supabaseOrigin,
@@ -654,7 +643,7 @@ export function validateManifestIntegrity(value: unknown): ReviewedPricePromotio
   if (manifest.rowCount !== manifest.items.reduce((total, item) => total + item.rowCount, 0)) {
     throw new Error("Manifest row count does not match its exact item rows.");
   }
-  if (manifest.policySha256 !== sha256Json(PRODUCTION_MAP_BASE_POLICY)) {
+  if (manifest.policySha256 !== REVIEWED_PRICE_SELECTION_POLICY_SHA256) {
     throw new Error("Manifest policy hash does not match the immutable production policy.");
   }
   const ids = manifest.items.map((item) => item.id);
@@ -853,7 +842,7 @@ async function preflightManifestItem(
     throw new Error("Source-ingestion queue item changed after the reviewed manifest was created.");
   }
   assertVenueHasNoTrustedPublicRows(database, queueItem.venueId);
-  const selection = await selectLegacyPublishableMapBaseRows(
+  const selection = selectPublishableMapBaseRows(
     queueItem,
     PRODUCTION_MAP_BASE_POLICY,
   );

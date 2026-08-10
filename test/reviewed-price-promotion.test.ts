@@ -11,6 +11,7 @@ import { initializeDatabaseSchema } from "../src/db/database.js";
 import { PublicPriceRepository } from "../src/db/public-price.repository.js";
 import { PublicVenueDirectoryRepository } from "../src/db/public-venue-directory.repository.js";
 import { asAsyncSqliteDatabase } from "../src/db/sql-database.js";
+import { REVIEWED_PRICE_SELECTION_POLICY_SHA256 } from "../src/lib/reviewed-price-selection-policy.js";
 import {
   PRODUCTION_MAP_BASE_POLICY,
   PRODUCTION_SUPABASE_PROJECT_REF,
@@ -425,6 +426,7 @@ describe("reviewed production price promotion", () => {
 
     expect(canonicalJson(first)).toBe(canonicalJson(second));
     expect(first.policy).toEqual(PRODUCTION_MAP_BASE_POLICY);
+    expect(first.policySha256).toBe(REVIEWED_PRICE_SELECTION_POLICY_SHA256);
     expect(first.candidateSha).toBe(CANDIDATE_SHA);
     expect(first.items).toEqual([
       expect.objectContaining({
