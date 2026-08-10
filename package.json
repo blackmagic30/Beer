@@ -46,6 +46,7 @@
     "db:postgres:migration:contract:check": "tsx scripts/generate-postgres-migration-contract.ts --check",
     "db:postgres:runtime:verify": "tsx scripts/verify-postgres-runtime.ts",
     "db:postgres:backup:logical": "tsx scripts/backup-postgres-logical.ts",
+    "db:postgres:backup:login": "tsx scripts/manage-postgres-logical-backup-login.ts",
     "db:postgres:backup:logical:offsite": "tsx scripts/attest-postgres-logical-backup-offsite.ts",
     "db:postgres:backup:logical:retrieve": "tsx scripts/retrieve-postgres-logical-offsite.ts",
     "db:postgres:backup:logical:worm": "tsx scripts/attest-postgres-logical-worm.ts",

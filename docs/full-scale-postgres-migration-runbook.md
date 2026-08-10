@@ -487,14 +487,29 @@ substitute a provider monitoring role: extra or transitive memberships fail
 closed. The runtime login cannot read `pintpath_ops` and is not an
 authoritative backup principal.
 
-Operational provisioning is **STOP** until the reviewed in-process helper can
-accept a precomputed SCRAM-SHA-256 verifier, bind it without command-line or SQL
-log exposure, validate the resulting catalog contract, and emit only secret-
-free evidence. Manual plaintext `CREATE ROLE ... PASSWORD`, `psql` variable
-substitution, and hand-built dynamic SQL are forbidden. PostgreSQL 17
-membership options must ultimately be explicit rather than relying on defaults.
-The following is a structural contract only; it is deliberately non-executable
-and is not an authorization to provision or rotate a live credential:
+The tracked in-process manager is `npm run db:postgres:backup:login`. It derives
+a 48-random-byte base64url password and a 4,096-iteration SCRAM-SHA-256 verifier
+locally, passes only the verifier as an extended-protocol bind after exact
+PostgreSQL logger guards, and emits a fixed secret-free receipt. It never uses
+`psql`, a shell credential, `PGPASSWORD`, or a direct `pg_authid` update. It
+creates the candidate `NOLOGIN`, verifies its marker/OID, two direct ACLs and
+single explicit PostgreSQL 17 membership, and enables `LOGIN` only as the last
+transactional write. A fresh SASL/SCRAM connection must then set only the
+matching scoped group and read inside a read-only transaction. Manual plaintext
+`CREATE ROLE ... PASSWORD`, `psql` variable substitution, and hand-built
+dynamic SQL remain forbidden.
+
+Live provisioning is still operationally **STOPPED**. The manager currently
+accepts only standard system-root `verify-full`, while the stock Railway
+endpoint cannot satisfy that transport. Repository tests, including the
+verifier logger-suppression fixture, are implementation evidence rather than
+authority to run the command. Do not execute `arm`, `provision`, or `retire`
+against staging until the shared reviewed `railway-stock-localhost-ca-v1`
+transport is implemented identically in this manager and the logical-backup
+client, its protected CA hash/endpoint receipt is approved, and the resulting
+tracked bytes receive independent review.
+
+The following role shape remains the exact live contract:
 
 ```text
 NON-EXECUTABLE ROLE CONTRACT
@@ -508,6 +523,64 @@ membership: matching pintpath_logical_backup_d{verified-current-database-oid}
 direct ACLs: non-grantable CONNECT on this database only; non-grantable EXECUTE
              on this database's pg_catalog.pg_control_system() only
 ```
+
+### Backup LOGIN manager ceremony (blocked on shared Railway transport)
+
+The manager takes no credential in an argument or environment variable. The
+administrator URL is an absolute, canonical, current-UID-owned mode-600 regular
+file with one direct non-pooler URL; its independently reviewed logical URL
+SHA-256 is a separate argument. The source database identity SHA-256 must come
+from independently reviewed Railway endpoint/system evidence. The intended
+escrow path must not exist, its canonical parent must be mode 700, and each
+receipt path must be absent inside a separate canonical mode-700 evidence
+directory. The operation also binds the clean upstream-equal Git HEAD/tree,
+exact Node 22 version, UID, permanent-staging environment, operation ID,
+approval reference, and canonical positive login version.
+
+When the shared transport blocker is closed, derive the mutation arm first
+with the complete operation flags. `arm` reads no database URL or secret:
+
+```sh
+npm run --silent db:postgres:backup:login -- arm provision \
+  --admin-connection-file /absolute/private/postgres-admin-url.key \
+  --expected-admin-url-sha256 <reviewed-64-hex-logical-url-sha256> \
+  --expected-database-identity-sha256 <reviewed-64-hex-source-identity-sha256> \
+  --expected-head-sha <reviewed-40-hex-clean-head> \
+  --expected-tree-sha <reviewed-40-hex-clean-tree> \
+  --expected-uid <canonical-current-uid> \
+  --expected-node-version <exact-v22.x.y> \
+  --expected-environment permanent-staging \
+  --operation-id <approved-nonsecret-operation-id> \
+  --approval-reference <approved-nonsecret-reference> \
+  --login-version <positive-1-to-20-digit-version> \
+  --escrow-directory /absolute/private/new-login-escrow \
+  --receipt /absolute/private/release/new-provision-receipt.json
+```
+
+The canonical arm output supplies only the name and value for
+`PINTPATH_POSTGRES_LOGICAL_BACKUP_LOGIN_MUTATION`. Execution additionally
+requires `NODE_ENV=production`,
+`PINTPATH_POSTGRES_LOGICAL_BACKUP_LOGIN_ENVIRONMENT=permanent-staging`, and
+`PINTPATH_POSTGRES_LOGICAL_BACKUP_LOGIN_OPERATION=provision`, with the same
+flags after `provision`. It refuses every standard `PG*` connection variable
+and `DATABASE_URL`. Before any role DDL it durably publishes a mode-700 escrow
+directory containing only the mode-600 direct URL and canonical provision
+intent, then revalidates both inode identities and the administrator file.
+
+Retirement is a separate approved operation using `arm retire` and `retire`.
+It requires the exact mode-600 provision receipt plus its independently
+retained SHA-256, the same escrow and login version, and a new operation ID,
+approval reference, receipt path, mutation arm, and operation environment. It
+accepts only the receipt-bound role name, OID and cryptographic marker. It
+first commits `NOLOGIN`, `PASSWORD NULL`, and exact membership/ACL revocation;
+then terminates sessions by `usesysid`; then requires zero dependencies before
+`DROP ROLE`. It never uses `DROP OWNED`, `CASCADE`, wildcard cleanup, credential
+re-enablement, or an overlapping rotation. A crash is resumed only with the
+same exact protected inputs and durable intent/checkpoint; an unclassified
+partial state stops for a separately reviewed recovery ceremony. Preserve the
+provision receipt, retirement receipt, escrow intent/checkpoints, and their
+external hashes with the backup/retrieval evidence before creating a later
+version.
 
 Never put the password or resulting URL in Git, command arguments, logs, or
 evidence. Keep the direct, non-pooler URL with exactly

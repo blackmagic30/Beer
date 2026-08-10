@@ -55,12 +55,16 @@ Complete these checks from a protected operator host, not a Railway web shell:
   names, permissiveness, commands, role OID arrays, `USING`, and `WITH CHECK`.
   This makes the dump portable without allowing a source- or sibling-database
   scoped role to see target rows.
-- Backup-login provisioning and rotation remain operationally **STOPPED** until
-  a separately reviewed in-process helper accepts a precomputed SCRAM-SHA-256
-  verifier without exposing plaintext in SQL text, arguments, logs, or
-  evidence. Do not manually execute `CREATE ROLE ... PASSWORD` or use `psql`
-  password substitution. The structural role contract is documented in the
-  full migration runbook; it is not a live provisioning procedure.
+- The tracked `db:postgres:backup:login` manager generates the password and
+  SCRAM-SHA-256 verifier in process, binds only the verifier after exact logger
+  guards, provisions `NOLOGIN` before enabling `LOGIN` last, performs a fresh
+  SASL/read-only canary, and writes only fixed secret-free receipts. Its
+  repository implementation does not authorize a live ceremony. Provisioning,
+  retirement, and any later rotation remain operationally **STOPPED** until the
+  same reviewed `railway-stock-localhost-ca-v1` transport profile is shared by
+  the manager and logical-backup client. Do not manually execute `CREATE ROLE
+  ... PASSWORD`, use `psql` password substitution, or weaken TLS while that
+  blocker remains.
 - The exact 236 portable-policy inventory with the current-database scoped
   group absent is a safe, inert `policy-only` state, not backup authority.
   PostgreSQL 17 gives a role created by a non-superuser `CREATEROLE` principal
@@ -136,6 +140,17 @@ system trust store and its [server leaf names only
 DNS hostname. Keep this ceremony stopped until the separately reviewed shared
 pinned-CA/`localhost` transport profile lands for both login management and
 backup. Do not implicitly weaken either path to `sslmode=require`.
+
+The complete non-secret provisioning/retirement flag set, mutation-arm
+environment, escrow lifecycle, and forward-only recovery contract are in the
+full migration runbook. In particular, a successful active login must retain
+catalog `rolvaliduntil IS NULL` exactly; `infinity` and every timestamp fail
+both manager and backup-runtime validation. Preserve the mode-600 provision
+receipt and its external SHA-256 with the release authority. Retirement may
+run only after the protected successful backup/retrieval evidence authorizes
+loss of that credential; it disables the exact receipt-bound role before
+terminating sessions and dependency-gated drop. It never performs overlapping
+rotation, wildcard cleanup, `DROP OWNED`, or `CASCADE`.
 
 ## 2. Create the hardened local logical backup
 
