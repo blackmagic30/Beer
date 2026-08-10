@@ -16,6 +16,7 @@ import {
   runStagingPostgresBackupCanary,
   stagingPostgresBackupDatabaseIdentitySha256,
   type StagingPostgresBackupCanaryConnection,
+  type StagingPostgresBackupCanaryDependencies,
 } from "../scripts/staging-postgres-backup-canary.js";
 import type { PostgresRailwayStockLocalhostCaTransport } from
   "../src/lib/postgres-railway-stock-localhost-ca.js";
@@ -70,6 +71,15 @@ function environment(
     [STAGING_POSTGRES_BACKUP_CANARY_ROOT_CA_ENV]: rootCaPem,
     ...overrides,
   };
+}
+
+function runCanary(
+  overrides: Partial<StagingPostgresBackupCanaryDependencies>,
+): Promise<number> {
+  return runStagingPostgresBackupCanary({
+    nodeVersion: () => "v22.23.2",
+    ...overrides,
+  });
 }
 
 function fakeTransport(overrides: Partial<PostgresRailwayStockLocalhostCaTransport> = {}):
@@ -202,7 +212,7 @@ describe("staging Postgres backup authority canary", () => {
       expect(JSON.stringify(config)).not.toContain(adminUrl);
       return connection;
     });
-    const exitCode = await runStagingPostgresBackupCanary({
+    const exitCode = await runCanary({
       argv: [],
       env,
       getUid: () => process.getuid!(),
@@ -299,7 +309,7 @@ describe("staging Postgres backup authority canary", () => {
     const env = environment(overrides);
     const openTransport = vi.fn();
     const connect = vi.fn();
-    const exitCode = await runStagingPostgresBackupCanary({
+    const exitCode = await runCanary({
       argv: [],
       env,
       getUid: () => process.getuid!(),
@@ -326,7 +336,7 @@ describe("staging Postgres backup authority canary", () => {
 
   it("rejects arguments before transport", async () => {
     const openTransport = vi.fn();
-    const exitCode = await runStagingPostgresBackupCanary({
+    const exitCode = await runCanary({
       argv: ["--unexpected"],
       env: environment(),
       getUid: () => process.getuid!(),
@@ -350,7 +360,7 @@ describe("staging Postgres backup authority canary", () => {
     const openTransport = vi.fn();
     const connect = vi.fn();
     const temporaryRoot = vi.fn();
-    const exitCode = await runStagingPostgresBackupCanary({
+    const exitCode = await runCanary({
       argv: [],
       env,
       getUid: () => process.getuid!(),
@@ -410,7 +420,7 @@ describe("staging Postgres backup authority canary", () => {
     const openTransport = vi.fn();
     const connect = vi.fn();
     const output: string[] = [];
-    const exitCode = await runStagingPostgresBackupCanary({
+    const exitCode = await runCanary({
       argv: [],
       env: environment({
         [STAGING_POSTGRES_BACKUP_CANARY_MODE_ENV]: "build-only",
@@ -435,7 +445,7 @@ describe("staging Postgres backup authority canary", () => {
   it("rejects the wrong Node runtime before either mode can touch authority", async () => {
     const openTransport = vi.fn();
     const output: string[] = [];
-    const exitCode = await runStagingPostgresBackupCanary({
+    const exitCode = await runCanary({
       argv: [],
       env: environment(),
       getUid: () => process.getuid!(),
@@ -464,7 +474,7 @@ describe("staging Postgres backup authority canary", () => {
     const openTransport = vi.fn();
     const connect = vi.fn();
     const temporaryRoot = vi.fn();
-    const exitCode = await runStagingPostgresBackupCanary({
+    const exitCode = await runCanary({
       argv: [],
       env: environment({
         [STAGING_POSTGRES_BACKUP_CANARY_MODE_ENV]: "build-only",
@@ -492,7 +502,7 @@ describe("staging Postgres backup authority canary", () => {
     const output: string[] = [];
     const transport = fakeTransport({ rootCaDerSha256: "0".repeat(64) });
     const connect = vi.fn();
-    const exitCode = await runStagingPostgresBackupCanary({
+    const exitCode = await runCanary({
       argv: [],
       env: environment(),
       getUid: () => process.getuid!(),
@@ -511,7 +521,7 @@ describe("staging Postgres backup authority canary", () => {
   it("requires SCRAM before issuing any SQL", async () => {
     const transport = fakeTransport();
     const connection = fakeConnection(sourceRow, "other");
-    const exitCode = await runStagingPostgresBackupCanary({
+    const exitCode = await runCanary({
       argv: [],
       env: environment(),
       getUid: () => process.getuid!(),
@@ -535,7 +545,7 @@ describe("staging Postgres backup authority canary", () => {
   ])("rejects %s source identity and rolls back", async (_name, row) => {
     const output: string[] = [];
     const connection = fakeConnection(row);
-    const exitCode = await runStagingPostgresBackupCanary({
+    const exitCode = await runCanary({
       argv: [],
       env: environment(),
       getUid: () => process.getuid!(),
@@ -563,7 +573,7 @@ describe("staging Postgres backup authority canary", () => {
       return { rows: [], rowCount: null };
     });
     vi.mocked(connection.close).mockRejectedValue(new Error("raw-close"));
-    const exitCode = await runStagingPostgresBackupCanary({
+    const exitCode = await runCanary({
       argv: [],
       env: environment(),
       getUid: () => process.getuid!(),
