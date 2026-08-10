@@ -173,6 +173,10 @@ function harness(overrides: Partial<StagingPostgresBuildCanaryExecutorDependenci
       calls.push("cleanup");
       return true;
     },
+    finalize: async () => {
+      calls.push("finalize");
+      return true;
+    },
     ...overrides,
   };
   return { calls, dependencies };
@@ -194,15 +198,29 @@ describe("staging Postgres build-canary executor", () => {
 
   it("returns one fixed blocked receipt without consulting any dependency", async () => {
     const output: string[] = [];
+    const dependencyAccess = vi.fn();
+    const poison = new Proxy(
+      {} as StagingPostgresBuildCanaryExecutorDependencies,
+      {
+        get: () => {
+          dependencyAccess();
+          throw new Error("disabled dependency reached");
+        },
+      },
+    );
     const spy = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
       output.push(String(chunk));
       return true;
     });
     try {
-      await expect(runStagingPostgresBuildCanaryExecutor()).resolves.toBe(1);
+      const invoke = runStagingPostgresBuildCanaryExecutor as unknown as (
+        dependencies: StagingPostgresBuildCanaryExecutorDependencies,
+      ) => Promise<0 | 1>;
+      await expect(invoke(poison)).resolves.toBe(1);
     } finally {
       spy.mockRestore();
     }
+    expect(dependencyAccess).not.toHaveBeenCalled();
     expect(output).toHaveLength(1);
     const receipt = JSON.parse(output[0]!) as Record<string, unknown>;
     expect(receipt).toMatchObject({
@@ -211,6 +229,9 @@ describe("staging Postgres build-canary executor", () => {
       deploymentId: null,
       intentSha256: null,
       terminalEvidenceSha256: null,
+      checks: {
+        finalizationExact: false,
+      },
     });
     expect(JSON.stringify(receipt)).not.toContain("token");
   });
@@ -243,7 +264,9 @@ describe("staging Postgres build-canary executor", () => {
       "local",
       "cleanup",
       "terminal",
+      "finalize",
     ]);
+    expect(receipt.checks.finalizationExact).toBe(true);
     expect(calls.filter((call) => call === "upload")).toHaveLength(1);
   });
 
@@ -529,6 +552,18 @@ describe("staging Postgres build-canary executor", () => {
     expect(receipt.checks.cleanupExact).toBe(false);
   });
 
+  it("rejects a truthy non-boolean cleanup result", async () => {
+    const { dependencies } = harness({
+      cleanup: async () => "true" as unknown as boolean,
+    });
+    const receipt = await stagingPostgresBuildCanaryExecutorInternals.executeEnabled(
+      dependencies,
+    );
+    expect(receipt.outcome).toBe("cleanup_failed");
+    expect(receipt.checks.cleanupExact).toBe(false);
+    expect(receipt.checks.finalizationExact).toBe(true);
+  });
+
   it("keeps cleanup failure precedence when terminal evidence also fails", async () => {
     const { dependencies } = harness({
       cleanup: async () => false,
@@ -541,6 +576,47 @@ describe("staging Postgres build-canary executor", () => {
     );
     expect(receipt.outcome).toBe("cleanup_failed");
     expect(receipt.terminalEvidenceSha256).toBeNull();
+  });
+
+  it("finalizes after terminal evidence failure", async () => {
+    const { calls, dependencies } = harness({
+      persistTerminalEvidence: async () => {
+        calls.push("terminal");
+        throw new Error("evidence unavailable");
+      },
+    });
+    const receipt = await stagingPostgresBuildCanaryExecutorInternals.executeEnabled(
+      dependencies,
+    );
+    expect(receipt.outcome).toBe("mutation_uncertain");
+    expect(receipt.terminalEvidenceSha256).toBeNull();
+    expect(receipt.checks.finalizationExact).toBe(true);
+    expect(calls.slice(-3)).toEqual(["cleanup", "terminal", "finalize"]);
+  });
+
+  it.each([
+    ["returns false", async () => false],
+    ["returns a non-boolean", async () => "true" as unknown as boolean],
+    ["throws", async () => { throw new Error("raw finalization failure"); }],
+  ])("gives finalization failure precedence when finalize %s", async (
+    _label,
+    finalize,
+  ) => {
+    const { calls, dependencies } = harness({
+      finalize: async (_signal) => {
+        calls.push("finalize");
+        return finalize();
+      },
+    });
+    const receipt = await stagingPostgresBuildCanaryExecutorInternals.executeEnabled(
+      dependencies,
+    );
+    expect(receipt.outcome).toBe("cleanup_failed");
+    expect(receipt.terminalEvidenceSha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(receipt.checks.cleanupExact).toBe(true);
+    expect(receipt.checks.finalizationExact).toBe(false);
+    expect(calls.slice(-3)).toEqual(["cleanup", "terminal", "finalize"]);
+    expect(JSON.stringify(receipt)).not.toContain("raw finalization failure");
   });
 
   it("persists only a non-green reconciliation candidate", async () => {
@@ -646,6 +722,35 @@ describe("staging Postgres build-canary executor", () => {
       const receipt = await pending;
       expect(receipt.outcome).toBe("mutation_uncertain");
       expect(receipt.terminalEvidenceSha256).toBeNull();
+      expect(receipt.checks.finalizationExact).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("times out stalled finalization and preserves cleanup-failed precedence", async () => {
+    vi.useFakeTimers();
+    try {
+      let signal: AbortSignal | null = null;
+      const { calls, dependencies } = harness({
+        finalize: async (finalizeSignal) => {
+          calls.push("finalize");
+          signal = finalizeSignal;
+          return await new Promise(() => undefined);
+        },
+      });
+      const pending = stagingPostgresBuildCanaryExecutorInternals.executeEnabled(
+        dependencies,
+      );
+      await vi.advanceTimersByTimeAsync(
+        STAGING_POSTGRES_BUILD_CANARY_DEADLINES.finalizationMs,
+      );
+      const receipt = await pending;
+      expect(receipt.outcome).toBe("cleanup_failed");
+      expect(receipt.checks.cleanupExact).toBe(true);
+      expect(receipt.checks.finalizationExact).toBe(false);
+      expect(signal?.aborted).toBe(true);
+      expect(calls.slice(-3)).toEqual(["cleanup", "terminal", "finalize"]);
     } finally {
       vi.useRealTimers();
     }

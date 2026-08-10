@@ -56,6 +56,7 @@ export const STAGING_POSTGRES_BUILD_CANARY_DEADLINES = Object.freeze({
   uploadMs: 120_000,
   postflightMs: 300_000,
   cleanupMs: 20_000,
+  finalizationMs: 20_000,
 } as const);
 
 export interface StagingPostgresBuildCanaryLocalAuthority {
@@ -195,6 +196,7 @@ export interface StagingPostgresBuildCanaryExecutorChecks {
   targetPostflightExact: boolean;
   localPostflightExact: boolean;
   cleanupExact: boolean;
+  finalizationExact: boolean;
 }
 
 export type StagingPostgresBuildCanaryExecutorOutcome =
@@ -244,6 +246,7 @@ export interface StagingPostgresBuildCanaryExecutorDependencies {
     signal: AbortSignal,
   ) => Promise<StagingPostgresBuildCanaryDurableArtifactEvidence>;
   readonly cleanup: (signal: AbortSignal) => Promise<boolean>;
+  readonly finalize: (signal: AbortSignal) => Promise<boolean>;
 }
 
 function initialChecks(): StagingPostgresBuildCanaryExecutorChecks {
@@ -262,6 +265,7 @@ function initialChecks(): StagingPostgresBuildCanaryExecutorChecks {
     targetPostflightExact: false,
     localPostflightExact: false,
     cleanupExact: false,
+    finalizationExact: false,
   };
 }
 
@@ -676,7 +680,7 @@ async function executeEnabled(
       checks.cleanupExact = await withDeadline(
         STAGING_POSTGRES_BUILD_CANARY_DEADLINES.cleanupMs,
         dependencies.cleanup,
-      );
+      ) === true;
     } catch {
       checks.cleanupExact = false;
     }
@@ -721,6 +725,15 @@ async function executeEnabled(
       ? (writeAttempted || recoveryOnly ? "mutation_uncertain" : "failed")
       : "cleanup_failed";
   }
+  try {
+    checks.finalizationExact = await withDeadline(
+      STAGING_POSTGRES_BUILD_CANARY_DEADLINES.finalizationMs,
+      dependencies.finalize,
+    ) === true;
+  } catch {
+    checks.finalizationExact = false;
+  }
+  if (!checks.finalizationExact) outcome = "cleanup_failed";
   return makeReceipt(
     "sequential-single-write",
     outcome,
