@@ -21,10 +21,45 @@ Complete these checks from a protected operator host, not a Railway web shell:
 
 - PostgreSQL 17 `pg_dump` and `pg_restore` are installed for the hardened local
   logical-backup command.
-- The production backup login is direct, TLS-protected, non-superuser,
-  non-replication, non-`BYPASSRLS`, read-only, and separate from the runtime
-  login. It must permit at least two concurrent connections: one exported
-  snapshot holder and one `pg_dump` reader.
+- The production backup login is direct, TLS-protected, read-only, separate
+  from the runtime login, and named exactly
+  `pintpath_logical_backup_d<current-database-oid>_v<positive-version>`. The
+  database OID is the canonical positive decimal OID of `current_database()`;
+  the version is 1–20 canonical decimal digits. It is `LOGIN`, `NOINHERIT`,
+  `NOSUPERUSER`, `NOCREATEDB`, `NOCREATEROLE`, `NOREPLICATION`,
+  `NOBYPASSRLS`, and has `CONNECTION LIMIT 2` exactly. It has no children or
+  role settings and exactly one direct role membership: the matching
+  `pintpath_logical_backup_d<current-database-oid>` group with `ADMIN FALSE`,
+  `INHERIT FALSE`, and `SET TRUE`; it cannot set `pintpath_migrator`,
+  `pintpath_runtime`, or any sibling database-scoped backup role.
+- The versioned login has exactly one direct, non-grantable database privilege
+  (`CONNECT` on this source database) and one direct, non-grantable function
+  privilege (`EXECUTE` on `pg_catalog.pg_control_system()`). It has no direct
+  application/control object grants and owns no private objects. Its only two
+  `pg_shdepend` rows are the current-database `CONNECT` and
+  `pg_control_system()` ACL dependencies. The database-scoped group is
+  `NOLOGIN`/`NOINHERIT`, has no parents or settings, database/function grants,
+  or ownership, has `USAGE` without `CREATE` on both private schemas, and has
+  direct non-grantable `SELECT` on exactly 59 reviewed tables. Its exact 61
+  `pg_shdepend` rows are those two schema and 59 table ACLs in this database.
+  The current contract contains zero sequences and grants the group no private-
+  function execution.
+- Every reviewed table has one permissive SELECT-only policy targeted to
+  `PUBLIC`, but that policy admits only the exact current user named
+  `pintpath_logical_backup_d` plus the live OID of `current_database()`. The
+  policies carry no object authority and name no role. Any other private-schema
+  policy fails closed, including an arbitrary nonreserved policy for a named
+  sibling role. The complete allowlist is exactly 177 runtime/migrator policies
+  before the upgrade and 236 policies after adding the 59 backups, with exact
+  names, permissiveness, commands, role OID arrays, `USING`, and `WITH CHECK`.
+  This makes the dump portable without allowing a source- or sibling-database
+  scoped role to see target rows.
+- Backup-login provisioning and rotation remain operationally **STOPPED** until
+  a separately reviewed in-process helper accepts a precomputed SCRAM-SHA-256
+  verifier without exposing plaintext in SQL text, arguments, logs, or
+  evidence. Do not manually execute `CREATE ROLE ... PASSWORD` or use `psql`
+  password substitution. The structural role contract is documented in the
+  full migration runbook; it is not a live provisioning procedure.
 - The runtime login is the canonical `pintpath_runtime` login used by the app.
   It verifies runtime identity, supplies the exact connection-URL bytes whose
   SHA-256 is bound into the immutable attestation/latest pointer and success
@@ -60,6 +95,7 @@ export BACKUP_CONNECTION_FILE="$RELEASE_ROOT/postgres-backup-url"
 export RUNTIME_DATABASE_URL_FILE="$RELEASE_ROOT/postgres-runtime-url"
 export OFFSITE_SERVICE_ROLE_KEY_FILE="$RELEASE_ROOT/offsite-service-role.key"
 export LOGICAL_BACKUP_DIRECTORY="$RELEASE_ROOT/postgres-logical-backup"
+: "${EXPECTED_SOURCE_URL_SHA256:?inject the reviewed trimmed backup URL SHA-256}"
 
 test -f "$BACKUP_CONNECTION_FILE" && test ! -L "$BACKUP_CONNECTION_FILE"
 test -f "$RUNTIME_DATABASE_URL_FILE" && test ! -L "$RUNTIME_DATABASE_URL_FILE"
@@ -71,10 +107,17 @@ chmod 600 \
 test ! -e "$LOGICAL_BACKUP_DIRECTORY"
 ```
 
-The two PostgreSQL URLs must contain exactly one
-`sslmode=require|verify-ca|verify-full` value. Never put either URL or the
-service-role key in arguments, shell tracing, logs, Git, screenshots, or the
-attestation evidence file.
+The backup URL must contain exactly one `sslmode=verify-full` value. The backup
+library also forces Node certificate verification and libpq
+`PGSSLROOTCERT=system`; `require`, `verify-ca`, a duplicate mode, and every
+non-test `disable` value fail before tools or a database connection. The
+runtime URL retains its separately reviewed TLS contract. Obtain
+`EXPECTED_SOURCE_URL_SHA256` from the reviewed provisioning authority, not by
+rehashing the mutable connection file during the ceremony. It is the SHA-256
+of the logical trimmed URL and pins that URL before tool discovery, database
+connection, output creation, or temporary credential creation. Never put
+either URL or the service-role key in arguments, shell tracing, logs, Git,
+screenshots, or the attestation evidence file.
 
 ## 2. Create the hardened local logical backup
 
@@ -82,6 +125,7 @@ attestation evidence file.
 export BACKUP_RESULT="$RELEASE_ROOT/logical-backup-result.json"
 npm run --silent db:postgres:backup:logical -- \
   --connection-file="$BACKUP_CONNECTION_FILE" \
+  --expected-source-url-sha256="$EXPECTED_SOURCE_URL_SHA256" \
   --output="$LOGICAL_BACKUP_DIRECTORY" \
   >"$BACKUP_RESULT"
 chmod 600 "$BACKUP_RESULT"
@@ -105,9 +149,32 @@ directory:
 - `manifest.json`
 - `state-receipt.json`
 
-It already validates the PostgreSQL 17 tools, exported snapshot, archive TOC,
-schema/ACL scope, migration contract, authoritative table inventory, control
-tables, and state receipt. The off-site command re-parses the exact restore
+The URL password is never placed in `PGPASSWORD`. Immediately before
+`pg_dump`, the command creates one exclusive mode-`600` pgpass leaf in a new
+mode-`700` directory beneath the canonical operating-system temporary root.
+It escapes the single exact host/port/database/user/password record, fsyncs and
+snapshots it, exposes only `PGPASSFILE` to `pg_dump`, validates the same inode
+and content afterwards, and removes it nonrecursively before inspecting the
+dump result. Version probes and `pg_restore` never receive `PGPASSFILE`.
+Missing, changed, multiply linked, replaced, or unexpectedly populated
+temporary state returns `cleanup_failed`; an untrusted replacement path is
+never deleted.
+
+It already validates the PostgreSQL 17 tools; versioned login attributes,
+live-database-OID binding, sole membership options, direct ACL/dependency
+allowlist, and inability to set the migrator, runtime, or sibling group; the
+effective database-scoped read-only group and its exact children,
+schemas/tables/PUBLIC-policy/functions/zero-sequence contract; exported
+snapshot; archive TOC; schema/ACL scope; migration contract; authoritative
+table inventory; control tables; and state receipt. `pg_dump` imports the
+exported snapshot with
+`--role=pintpath_logical_backup_d<validated-source-database-oid>
+--enable-row-security`. It retains the portable dynamic policies but uses
+`--no-acl`, so a restore requires no source-OID role. PostgreSQL renders the
+default `PUBLIC` target without a `TO` clause; the restored catalog must still
+contain `polroles = ARRAY[0]`, permissive `SELECT`, no `WITH CHECK`, and the
+exact live-database-OID predicate on all 59 tables. The off-site command
+re-parses the exact restore
 authority's manifest and receipt contract before any Storage write.
 
 ## 3. Upload, verify, and attest the operational copy
@@ -264,6 +331,16 @@ removes only that invocation's exact partial directory; an unexpected entry or
 directory-identity change fails cleanup closed instead of recursively deleting
 an untrusted path. The staging recovery proof retrieved the pre-deletion set by
 this contract and matched all three remote objects byte-for-byte before restore.
+On a distinct-database-OID restore, the source scoped role is not a prerequisite
+and must not appear in the rendered archive. The restored catalog must contain
+the exact 59 dynamic `PUBLIC` policies while the target-OID scoped group and
+versioned-login namespace remain absent. This is the only accepted
+`restored_policy_only` state. Applying the reviewed
+`20260810003612_add_pintpath_logical_backup_role.sql` forward migration then
+acquires its fixed transaction advisory lock and creates the target-OID group
+and its exact 61 ACL dependencies; a fully exact state is verification-only.
+A target backup login is provisioned separately only after that zero-child
+migration succeeds and the stopped SCRAM-verifier helper has been reviewed.
 That closes only operational-copy transport evidence. Private application
 Storage recovery, a full application boot, PITR, provider-enforced WORM,
 approved RPO/RTO objectives, and production restore/cutover remain open.

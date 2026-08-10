@@ -25,7 +25,6 @@ BEGIN
   ) THEN
     CREATE ROLE pintpath_migrator NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOREPLICATION NOBYPASSRLS;
   END IF;
-
   FOREACH role_name IN ARRAY ARRAY['pintpath_runtime', 'pintpath_migrator'] LOOP
     IF EXISTS (
       SELECT 1
@@ -51,6 +50,7 @@ BEGIN
         HINT = 'Have a cluster administrator harden or recreate the role, then rerun this migration.';
     END IF;
   END LOOP;
+
 END
 $$;
 
@@ -2508,5 +2508,812 @@ GRANT SELECT, UPDATE ON schema_metadata TO pintpath_migrator;
 REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA pintpath_app FROM PUBLIC;
 REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA pintpath_ops FROM PUBLIC;
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA pintpath_app TO pintpath_runtime;
+
+-- The reusable backup group is scoped to this database OID. PostgreSQL
+-- role names are cluster-global, so the OID binding prevents a login for one
+-- database from assuming another database's reviewed backup role.
+DO $$
+DECLARE
+  database_oid oid;
+  database_oid_text text;
+  backup_role_name text;
+  backup_role_oid oid;
+  target record;
+BEGIN
+  SELECT database.oid, database.oid::text
+    INTO STRICT database_oid, database_oid_text
+  FROM pg_catalog.pg_database AS database
+  WHERE database.datname = pg_catalog.current_database();
+
+  IF database_oid = 0::oid
+     OR database_oid_text !~ '^[1-9][0-9]{0,9}$' THEN
+    RAISE EXCEPTION USING
+      ERRCODE = '22023',
+      MESSAGE = 'Refusing Pint Path schema bootstrap because the current database OID is not canonical.';
+  END IF;
+  backup_role_name := 'pintpath_logical_backup_d' || database_oid_text;
+
+  IF EXISTS (
+    SELECT 1 FROM pg_catalog.pg_roles AS role
+    WHERE role.rolname LIKE (backup_role_name || '\_v%') ESCAPE '\'
+  ) THEN
+    RAISE EXCEPTION USING
+      ERRCODE = '55000',
+      MESSAGE = 'Refusing Pint Path schema bootstrap because the current database login namespace is not empty.';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_catalog.pg_roles AS role
+    WHERE role.rolname = backup_role_name
+  ) THEN
+    EXECUTE pg_catalog.format(
+      'CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS',
+      backup_role_name
+    );
+  END IF;
+
+  SELECT role.oid INTO STRICT backup_role_oid
+  FROM pg_catalog.pg_roles AS role
+  WHERE role.rolname = backup_role_name;
+
+  IF EXISTS (
+    SELECT 1
+    FROM pg_catalog.pg_roles AS role
+    WHERE role.oid = backup_role_oid
+      AND (
+        role.rolcanlogin
+        OR role.rolsuper
+        OR role.rolcreatedb
+        OR role.rolcreaterole
+        OR role.rolinherit
+        OR role.rolreplication
+        OR role.rolbypassrls
+        OR EXISTS (
+          SELECT 1 FROM pg_catalog.pg_auth_members AS membership
+          WHERE membership.member = role.oid
+        )
+        OR EXISTS (
+          SELECT 1 FROM pg_catalog.pg_auth_members AS membership
+          WHERE membership.roleid = role.oid
+        )
+        OR EXISTS (
+          SELECT 1 FROM pg_catalog.pg_db_role_setting AS setting
+          WHERE setting.setrole = role.oid
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM pg_catalog.pg_database AS granted_database
+          CROSS JOIN LATERAL pg_catalog.aclexplode(coalesce(
+            granted_database.datacl,
+            pg_catalog.acldefault('d', granted_database.datdba)
+          )) AS privilege
+          WHERE privilege.grantee = role.oid
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM pg_catalog.pg_proc AS routine
+          CROSS JOIN LATERAL pg_catalog.aclexplode(coalesce(
+            routine.proacl,
+            pg_catalog.acldefault('f', routine.proowner)
+          )) AS privilege
+          WHERE privilege.grantee = role.oid
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM pg_catalog.pg_namespace AS namespace
+          CROSS JOIN LATERAL pg_catalog.aclexplode(coalesce(
+            namespace.nspacl,
+            pg_catalog.acldefault('n', namespace.nspowner)
+          )) AS privilege
+          WHERE privilege.grantee = role.oid
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM pg_catalog.pg_class AS relation
+          CROSS JOIN LATERAL pg_catalog.aclexplode(coalesce(
+            relation.relacl,
+            pg_catalog.acldefault(
+              (CASE WHEN relation.relkind = 'S' THEN 'S' ELSE 'r' END)::"char",
+              relation.relowner
+            )
+          )) AS privilege
+          WHERE privilege.grantee = role.oid
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM pg_catalog.pg_attribute AS attribute
+          CROSS JOIN LATERAL pg_catalog.aclexplode(attribute.attacl) AS privilege
+          WHERE attribute.attnum > 0
+            AND NOT attribute.attisdropped
+            AND attribute.attacl IS NOT NULL
+            AND privilege.grantee = role.oid
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM pg_catalog.pg_shdepend AS dependency
+          WHERE dependency.refclassid = 'pg_catalog.pg_authid'::pg_catalog.regclass
+            AND dependency.refobjid = role.oid
+        )
+      )
+  ) THEN
+    RAISE EXCEPTION USING
+      ERRCODE = '42501',
+      MESSAGE = pg_catalog.format(
+        'Refusing Pint Path schema bootstrap because scoped role %I is unsafe or already active.',
+        backup_role_name
+      ),
+      DETAIL = 'Required: safe NOLOGIN NOINHERIT role with no parents, children, settings, ACLs, or ownership before bootstrap grants.';
+  END IF;
+
+  EXECUTE pg_catalog.format(
+    'GRANT USAGE ON SCHEMA pintpath_app, pintpath_ops TO %I',
+    backup_role_name
+  );
+  FOR target IN
+    SELECT * FROM (VALUES
+      ('pintpath_app', 'account_deletion_completion_outbox'),
+      ('pintpath_app', 'account_deletion_notice_recipient_secrets'),
+      ('pintpath_app', 'account_deletion_notification_events'),
+      ('pintpath_app', 'account_deletion_requests'),
+      ('pintpath_app', 'account_discount_passes'),
+      ('pintpath_app', 'account_preferences'),
+      ('pintpath_app', 'account_privacy_settings'),
+      ('pintpath_app', 'account_reward_vouchers'),
+      ('pintpath_app', 'accounts'),
+      ('pintpath_app', 'admin_ingestion_queue'),
+      ('pintpath_app', 'age_verifications'),
+      ('pintpath_app', 'auth_sessions'),
+      ('pintpath_app', 'beer_catalog_aliases'),
+      ('pintpath_app', 'beer_catalog_items'),
+      ('pintpath_app', 'billing_checkout_reservations'),
+      ('pintpath_app', 'contribution_ledger'),
+      ('pintpath_app', 'discount_redemptions'),
+      ('pintpath_app', 'events'),
+      ('pintpath_app', 'feedback'),
+      ('pintpath_app', 'free_pint_reward_codes'),
+      ('pintpath_app', 'free_pint_reward_redemptions'),
+      ('pintpath_app', 'leaderboard_prize_awards'),
+      ('pintpath_app', 'leaderboard_prize_campaigns'),
+      ('pintpath_app', 'migration_quarantined_records'),
+      ('pintpath_app', 'mission_progress'),
+      ('pintpath_app', 'missions'),
+      ('pintpath_app', 'pint_point_drink_records'),
+      ('pintpath_app', 'pint_point_ledger'),
+      ('pintpath_app', 'profiles'),
+      ('pintpath_app', 'revoked_provider_sessions'),
+      ('pintpath_app', 'saved_items'),
+      ('pintpath_app', 'schema_metadata'),
+      ('pintpath_app', 'security_audit_log'),
+      ('pintpath_app', 'source_evidence_objects'),
+      ('pintpath_app', 'stripe_webhook_events'),
+      ('pintpath_app', 'submission_items'),
+      ('pintpath_app', 'submission_source_evidence'),
+      ('pintpath_app', 'submissions'),
+      ('pintpath_app', 'system_state'),
+      ('pintpath_app', 'user_activity_events'),
+      ('pintpath_app', 'venue_analytics_events'),
+      ('pintpath_app', 'venue_beers'),
+      ('pintpath_app', 'venue_claim_requests'),
+      ('pintpath_app', 'venue_happy_hours'),
+      ('pintpath_app', 'venue_identity_aliases'),
+      ('pintpath_app', 'venue_interest_requests'),
+      ('pintpath_app', 'venue_location_cache'),
+      ('pintpath_app', 'venue_manager_assignments'),
+      ('pintpath_app', 'venue_monthly_reports'),
+      ('pintpath_app', 'venue_partner_outreach'),
+      ('pintpath_app', 'venue_pending_changes'),
+      ('pintpath_app', 'venue_price_records'),
+      ('pintpath_app', 'venue_profiles'),
+      ('pintpath_app', 'venue_requests'),
+      ('pintpath_app', 'venue_specials'),
+      ('pintpath_app', 'verifications'),
+      ('pintpath_app', 'wrong_price_reports'),
+      ('pintpath_ops', 'migration_chunks'),
+      ('pintpath_ops', 'migration_runs')
+    ) AS inventory(schema_name, table_name)
+  LOOP
+    EXECUTE pg_catalog.format(
+      'GRANT SELECT ON %I.%I TO %I',
+      target.schema_name,
+      target.table_name,
+      backup_role_name
+    );
+  END LOOP;
+
+  -- The reviewed generated inventory currently has no sequences. SELECT is
+  -- the only sequence privilege pg_dump may receive if that inventory changes.
+  EXECUTE pg_catalog.format(
+    'GRANT SELECT ON ALL SEQUENCES IN SCHEMA pintpath_app, pintpath_ops TO %I',
+    backup_role_name
+  );
+
+  IF (
+    SELECT count(*)
+    FROM pg_catalog.pg_shdepend AS dependency
+    WHERE dependency.refclassid = 'pg_catalog.pg_authid'::pg_catalog.regclass
+      AND dependency.refobjid = backup_role_oid
+  ) <> 61 OR (
+    SELECT count(*)
+    FROM pg_catalog.pg_shdepend AS dependency
+    WHERE dependency.refclassid = 'pg_catalog.pg_authid'::pg_catalog.regclass
+      AND dependency.refobjid = backup_role_oid
+      AND dependency.dbid = database_oid
+      AND dependency.objsubid = 0
+      AND dependency.deptype = 'a'
+      AND (
+        (
+          dependency.classid = 'pg_catalog.pg_namespace'::pg_catalog.regclass
+          AND EXISTS (
+            SELECT 1 FROM pg_catalog.pg_namespace AS namespace
+            WHERE namespace.oid = dependency.objid
+              AND namespace.nspname = ANY(ARRAY['pintpath_app', 'pintpath_ops'])
+          )
+        )
+        OR (
+          dependency.classid = 'pg_catalog.pg_class'::pg_catalog.regclass
+          AND EXISTS (
+            SELECT 1
+            FROM pg_catalog.pg_class AS relation
+            JOIN pg_catalog.pg_namespace AS namespace
+              ON namespace.oid = relation.relnamespace
+            WHERE relation.oid = dependency.objid
+              AND namespace.nspname = ANY(ARRAY['pintpath_app', 'pintpath_ops'])
+              AND relation.relkind IN ('r', 'p')
+          )
+        )
+      )
+  ) <> 61 THEN
+    RAISE EXCEPTION USING
+      ERRCODE = '42501',
+      MESSAGE = 'Pint Path schema bootstrap produced unexpected scoped-role dependencies.';
+  END IF;
+END
+$$;
+
+CREATE POLICY account_deletion_completion_outbox_logical_backup_select ON pintpath_app.account_deletion_completion_outbox
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY account_deletion_notice_recipient_secrets_logical_backup_select ON pintpath_app.account_deletion_notice_recipient_secrets
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY account_deletion_notification_events_logical_backup_select ON pintpath_app.account_deletion_notification_events
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY account_deletion_requests_logical_backup_select ON pintpath_app.account_deletion_requests
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY account_discount_passes_logical_backup_select ON pintpath_app.account_discount_passes
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY account_preferences_logical_backup_select ON pintpath_app.account_preferences
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY account_privacy_settings_logical_backup_select ON pintpath_app.account_privacy_settings
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY account_reward_vouchers_logical_backup_select ON pintpath_app.account_reward_vouchers
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY accounts_logical_backup_select ON pintpath_app.accounts
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY admin_ingestion_queue_logical_backup_select ON pintpath_app.admin_ingestion_queue
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY age_verifications_logical_backup_select ON pintpath_app.age_verifications
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY auth_sessions_logical_backup_select ON pintpath_app.auth_sessions
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY beer_catalog_aliases_logical_backup_select ON pintpath_app.beer_catalog_aliases
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY beer_catalog_items_logical_backup_select ON pintpath_app.beer_catalog_items
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY billing_checkout_reservations_logical_backup_select ON pintpath_app.billing_checkout_reservations
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY contribution_ledger_logical_backup_select ON pintpath_app.contribution_ledger
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY discount_redemptions_logical_backup_select ON pintpath_app.discount_redemptions
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY events_logical_backup_select ON pintpath_app.events
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY feedback_logical_backup_select ON pintpath_app.feedback
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY free_pint_reward_codes_logical_backup_select ON pintpath_app.free_pint_reward_codes
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY free_pint_reward_redemptions_logical_backup_select ON pintpath_app.free_pint_reward_redemptions
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY leaderboard_prize_awards_logical_backup_select ON pintpath_app.leaderboard_prize_awards
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY leaderboard_prize_campaigns_logical_backup_select ON pintpath_app.leaderboard_prize_campaigns
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY migration_quarantined_records_logical_backup_select ON pintpath_app.migration_quarantined_records
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY mission_progress_logical_backup_select ON pintpath_app.mission_progress
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY missions_logical_backup_select ON pintpath_app.missions
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY pint_point_drink_records_logical_backup_select ON pintpath_app.pint_point_drink_records
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY pint_point_ledger_logical_backup_select ON pintpath_app.pint_point_ledger
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY profiles_logical_backup_select ON pintpath_app.profiles
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY revoked_provider_sessions_logical_backup_select ON pintpath_app.revoked_provider_sessions
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY saved_items_logical_backup_select ON pintpath_app.saved_items
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY schema_metadata_logical_backup_select ON pintpath_app.schema_metadata
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY security_audit_log_logical_backup_select ON pintpath_app.security_audit_log
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY source_evidence_objects_logical_backup_select ON pintpath_app.source_evidence_objects
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY stripe_webhook_events_logical_backup_select ON pintpath_app.stripe_webhook_events
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY submission_items_logical_backup_select ON pintpath_app.submission_items
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY submission_source_evidence_logical_backup_select ON pintpath_app.submission_source_evidence
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY submissions_logical_backup_select ON pintpath_app.submissions
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY system_state_logical_backup_select ON pintpath_app.system_state
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY user_activity_events_logical_backup_select ON pintpath_app.user_activity_events
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY venue_analytics_events_logical_backup_select ON pintpath_app.venue_analytics_events
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY venue_beers_logical_backup_select ON pintpath_app.venue_beers
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY venue_claim_requests_logical_backup_select ON pintpath_app.venue_claim_requests
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY venue_happy_hours_logical_backup_select ON pintpath_app.venue_happy_hours
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY venue_identity_aliases_logical_backup_select ON pintpath_app.venue_identity_aliases
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY venue_interest_requests_logical_backup_select ON pintpath_app.venue_interest_requests
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY venue_location_cache_logical_backup_select ON pintpath_app.venue_location_cache
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY venue_manager_assignments_logical_backup_select ON pintpath_app.venue_manager_assignments
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY venue_monthly_reports_logical_backup_select ON pintpath_app.venue_monthly_reports
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY venue_partner_outreach_logical_backup_select ON pintpath_app.venue_partner_outreach
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY venue_pending_changes_logical_backup_select ON pintpath_app.venue_pending_changes
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY venue_price_records_logical_backup_select ON pintpath_app.venue_price_records
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY venue_profiles_logical_backup_select ON pintpath_app.venue_profiles
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY venue_requests_logical_backup_select ON pintpath_app.venue_requests
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY venue_specials_logical_backup_select ON pintpath_app.venue_specials
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY verifications_logical_backup_select ON pintpath_app.verifications
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY wrong_price_reports_logical_backup_select ON pintpath_app.wrong_price_reports
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY migration_chunks_logical_backup_select ON pintpath_ops.migration_chunks
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+CREATE POLICY migration_runs_logical_backup_select ON pintpath_ops.migration_runs
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));
+
+DO $$
+DECLARE
+  runtime_role_oid oid;
+  migrator_role_oid oid;
+  private_policy_count integer;
+  exact_base_policy_count integer;
+  exact_backup_policy_count integer;
+BEGIN
+  SELECT pg_catalog.to_regrole('pintpath_runtime')::oid,
+         pg_catalog.to_regrole('pintpath_migrator')::oid
+    INTO STRICT runtime_role_oid, migrator_role_oid;
+
+  SELECT count(*)::integer INTO private_policy_count
+  FROM pg_catalog.pg_policy AS policy
+  JOIN pg_catalog.pg_class AS relation ON relation.oid = policy.polrelid
+  JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+  WHERE namespace.nspname = ANY(ARRAY['pintpath_app', 'pintpath_ops']);
+
+  SELECT count(*)::integer INTO exact_base_policy_count
+  FROM pg_catalog.pg_policy AS policy
+  JOIN pg_catalog.pg_class AS relation ON relation.oid = policy.polrelid
+  JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+  WHERE namespace.nspname = ANY(ARRAY['pintpath_app', 'pintpath_ops'])
+    AND policy.polpermissive
+    AND (
+      (
+        namespace.nspname = 'pintpath_app'
+        AND relation.relname <> 'schema_metadata'
+        AND (
+          (
+            policy.polname = (relation.relname || '_runtime_all')::name
+            AND policy.polroles = ARRAY[runtime_role_oid]::oid[]
+            AND policy.polcmd = '*'
+            AND pg_catalog.pg_get_expr(policy.polqual, policy.polrelid, false) = 'true'
+            AND pg_catalog.pg_get_expr(policy.polwithcheck, policy.polrelid, false) = 'true'
+          )
+          OR (
+            policy.polname = (relation.relname || '_migrator_select')::name
+            AND policy.polroles = ARRAY[migrator_role_oid]::oid[]
+            AND policy.polcmd = 'r'
+            AND pg_catalog.pg_get_expr(policy.polqual, policy.polrelid, false) = 'true'
+            AND policy.polwithcheck IS NULL
+          )
+          OR (
+            policy.polname = (relation.relname || '_migrator_insert')::name
+            AND policy.polroles = ARRAY[migrator_role_oid]::oid[]
+            AND policy.polcmd = 'a'
+            AND policy.polqual IS NULL
+            AND pg_catalog.pg_get_expr(policy.polwithcheck, policy.polrelid, false) = 'true'
+          )
+        )
+      )
+      OR (
+        namespace.nspname = 'pintpath_app'
+        AND relation.relname = 'schema_metadata'
+        AND (
+          (
+            policy.polname = 'schema_metadata_runtime_read'::name
+            AND policy.polroles = ARRAY[runtime_role_oid]::oid[]
+            AND policy.polcmd = 'r'
+            AND pg_catalog.pg_get_expr(policy.polqual, policy.polrelid, false) = 'true'
+            AND policy.polwithcheck IS NULL
+          )
+          OR (
+            policy.polname = 'schema_metadata_migrator_select'::name
+            AND policy.polroles = ARRAY[migrator_role_oid]::oid[]
+            AND policy.polcmd = 'r'
+            AND pg_catalog.pg_get_expr(policy.polqual, policy.polrelid, false) = 'true'
+            AND policy.polwithcheck IS NULL
+          )
+          OR (
+            policy.polname = 'schema_metadata_migrator_update'::name
+            AND policy.polroles = ARRAY[migrator_role_oid]::oid[]
+            AND policy.polcmd = 'w'
+            AND pg_catalog.pg_get_expr(policy.polqual, policy.polrelid, false) = 'true'
+            AND pg_catalog.pg_get_expr(policy.polwithcheck, policy.polrelid, false) = 'true'
+          )
+        )
+      )
+      OR (
+        namespace.nspname = 'pintpath_ops'
+        AND relation.relname = ANY(ARRAY['migration_chunks', 'migration_runs'])
+        AND (
+          (
+            policy.polname = (relation.relname || '_migrator_select')::name
+            AND policy.polroles = ARRAY[migrator_role_oid]::oid[]
+            AND policy.polcmd = 'r'
+            AND pg_catalog.pg_get_expr(policy.polqual, policy.polrelid, false) = 'true'
+            AND policy.polwithcheck IS NULL
+          )
+          OR (
+            policy.polname = (relation.relname || '_migrator_insert')::name
+            AND policy.polroles = ARRAY[migrator_role_oid]::oid[]
+            AND policy.polcmd = 'a'
+            AND policy.polqual IS NULL
+            AND pg_catalog.pg_get_expr(policy.polwithcheck, policy.polrelid, false) = 'true'
+          )
+          OR (
+            policy.polname = (relation.relname || '_migrator_update')::name
+            AND policy.polroles = ARRAY[migrator_role_oid]::oid[]
+            AND policy.polcmd = 'w'
+            AND pg_catalog.pg_get_expr(policy.polqual, policy.polrelid, false) = 'true'
+            AND pg_catalog.pg_get_expr(policy.polwithcheck, policy.polrelid, false) = 'true'
+          )
+        )
+      )
+    );
+
+  SELECT count(*)::integer INTO exact_backup_policy_count
+  FROM pg_catalog.pg_policy AS policy
+  JOIN pg_catalog.pg_class AS relation ON relation.oid = policy.polrelid
+  JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+  WHERE namespace.nspname = ANY(ARRAY['pintpath_app', 'pintpath_ops'])
+    AND policy.polname = (relation.relname || '_logical_backup_select')::name
+    AND policy.polroles = ARRAY[0]::oid[]
+    AND policy.polcmd = 'r'
+    AND policy.polpermissive
+    AND pg_catalog.pg_get_expr(policy.polqual, policy.polrelid, false) = $policy$(CURRENT_USER = ('pintpath_logical_backup_d'::text || ( SELECT (database.oid)::text AS oid
+   FROM pg_database database
+  WHERE (database.datname = current_database()))))$policy$
+    AND policy.polwithcheck IS NULL;
+
+  IF private_policy_count <> 236
+     OR exact_base_policy_count <> 177
+     OR exact_backup_policy_count <> 59 THEN
+    RAISE EXCEPTION USING
+      ERRCODE = '42501',
+      MESSAGE = 'Pint Path schema bootstrap produced a non-canonical private policy inventory.',
+      DETAIL = 'Required: exactly 177 runtime/migrator policies plus 59 portable logical-backup policies, with no extras or omissions.';
+  END IF;
+END
+$$;
 
 COMMIT;

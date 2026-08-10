@@ -27,6 +27,9 @@ const checkedInPostgresSchema = fs.readFileSync(
 const supabaseRuntimeMigrations = fs.readdirSync(
   path.resolve(process.cwd(), "supabase/migrations"),
 ).filter((fileName) => fileName.endsWith("_create_pintpath_postgres_runtime.sql"));
+const logicalBackupForwardMigrations = fs.readdirSync(
+  path.resolve(process.cwd(), "supabase/migrations"),
+).filter((fileName) => fileName.endsWith("_add_pintpath_logical_backup_role.sql"));
 
 const expectedTargetTypeByConversion = {
   binary: "bytea",
@@ -304,6 +307,67 @@ describe("Postgres schema generation", () => {
     });
   });
 
+  it("keeps the additive logical-backup upgrade bound to the exact generated inventory", () => {
+    expect(logicalBackupForwardMigrations).toHaveLength(1);
+    const migration = fs.readFileSync(
+      path.resolve(
+        process.cwd(),
+        "supabase/migrations",
+        logicalBackupForwardMigrations[0]!,
+      ),
+      "utf8",
+    );
+    const qualifiedTables = postgresTables(generateSchema())
+      .map((table) => table.qualifiedName)
+      .sort();
+    const expectedInventory = Array.from(
+      migration.matchAll(/^    '(pintpath_(?:app|ops)\.[a-z0-9_]+)'[,]?$/gm),
+      (match) => match[1]!,
+    );
+
+    expect(qualifiedTables).toHaveLength(59);
+    expect(expectedInventory).toEqual(qualifiedTables);
+    expect(migration).toContain("Expected exactly 59 reviewed application/control tables.");
+    expect(migration).toContain(
+      "backup_role_name := 'pintpath_logical_backup_d' || current_database_oid_text;",
+    );
+    expect(migration).toContain(
+      "'create role %I nologin nosuperuser nocreatedb nocreaterole noinherit noreplication nobypassrls'",
+    );
+    expect(migration).toContain("migration_state := 'absent'");
+    expect(migration).toContain("migration_state := 'restored-policy-only'");
+    expect(migration).toContain("migration_state := 'exact-candidate'");
+    expect(migration).toContain(
+      "perform pg_catalog.pg_advisory_xact_lock(-1516610544307388182);",
+    );
+    expect(migration).toContain("reserved_login_role_count <> 0");
+    expect(migration).toContain("where membership.member = role.oid");
+    expect(migration).toContain("where membership.roleid = role.oid");
+    expect(migration).toContain("policy.polroles = array[0]::oid[]");
+    expect(migration).toContain("private_policy_count = 177");
+    expect(migration).toContain("private_policy_count = 236");
+    expect(migration).toContain("exact_base_policy_count = 177");
+    expect(migration).toContain("private_policy_count <> 236");
+    expect(migration).toContain("exact_base_policy_count <> 177");
+    expect(migration).toContain("if migration_state <> 'exact' then");
+    expect(migration).toContain("a policy directly names the scoped role");
+    expect(migration).toContain("dependency.deptype = 'a'");
+    expect(migration).toContain(") = 61");
+    expect(migration).toContain(
+      "current_user = (''pintpath_logical_backup_d'' || (select database.oid::text",
+    );
+    expect(migration).toContain("relation.relkind = 'S'");
+    expect(migration).toContain(
+      "grant select on all sequences in schema pintpath_app, pintpath_ops",
+    );
+    expect(migration).not.toMatch(
+      /grant\s+(?:insert|update|delete|truncate|references|trigger|usage)\s+on\s+(?:table|all tables|sequence|all sequences)/i,
+    );
+    expect(migration).not.toMatch(/grant\s+execute\s+on\s+function/i);
+    expect(migration).not.toMatch(/alter\s+role\s+pintpath_logical_backup/i);
+    expect(migration).not.toMatch(/to\s+pintpath_logical_backup(?:\s|;|$)/i);
+  });
+
   it("orders every source table after all of its non-self foreign-key dependencies", () => {
     withInitializedDatabase((database) => {
       const generatedTables = postgresTables(generateSchema());
@@ -527,6 +591,9 @@ describe("Postgres schema generation", () => {
     expect(generated).not.toContain("GRANT USAGE ON SCHEMA pintpath_ops TO pintpath_runtime;");
     expect(generated).toContain("GRANT USAGE ON SCHEMA pintpath_app TO pintpath_migrator;");
     expect(generated).toContain("GRANT USAGE ON SCHEMA pintpath_ops TO pintpath_migrator;");
+    expect(generated).toContain(
+      "'GRANT USAGE ON SCHEMA pintpath_app, pintpath_ops TO %I'",
+    );
     expect(generated).toContain("SET LOCAL search_path = pintpath_app, pg_catalog;");
     expect(generated).toMatch(
       /CREATE ROLE pintpath_runtime\s+NOLOGIN\s+NOSUPERUSER\s+NOCREATEDB\s+NOCREATEROLE\s+INHERIT\s+NOREPLICATION\s+NOBYPASSRLS;/,
@@ -534,7 +601,17 @@ describe("Postgres schema generation", () => {
     expect(generated).toMatch(
       /CREATE ROLE pintpath_migrator\s+NOLOGIN\s+NOSUPERUSER\s+NOCREATEDB\s+NOCREATEROLE\s+INHERIT\s+NOREPLICATION\s+NOBYPASSRLS;/,
     );
-    expect(generated).not.toMatch(/ALTER ROLE\s+pintpath_(?:runtime|migrator)\b/i);
+    expect(generated).toContain(
+      "'CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS'",
+    );
+    expect(generated).toContain(
+      "backup_role_name := 'pintpath_logical_backup_d' || database_oid_text;",
+    );
+    expect(generated).toContain("database_oid_text !~ '^[1-9][0-9]{0,9}$'");
+    expect(generated).toContain("backup_role_name || '\\_v%'");
+    expect(generated).not.toMatch(
+      /ALTER ROLE\s+pintpath_(?:runtime|migrator|logical_backup)\b/i,
+    );
     expect(generated).toContain(
       "FOREACH role_name IN ARRAY ARRAY['pintpath_runtime', 'pintpath_migrator'] LOOP",
     );
@@ -556,6 +633,14 @@ describe("Postgres schema generation", () => {
     expect(generated).toContain(
       "Have a cluster administrator harden or recreate the role, then rerun this migration.",
     );
+    expect(generated).toContain("WHERE membership.member = role.oid");
+    expect(generated).toContain("WHERE membership.roleid = role.oid");
+    expect(generated).toContain("dependency.deptype = 'a'");
+    expect(generated).toContain(") <> 61 OR (");
+    expect(generated).toContain("private_policy_count <> 236");
+    expect(generated).toContain("exact_base_policy_count <> 177");
+    expect(generated).toContain("exact_backup_policy_count <> 59");
+    expect(generated).toContain("non-canonical private policy inventory");
     expect(generated).not.toMatch(/SECURITY\s+DEFINER/i);
 
     for (const { name: tableName } of sourceApplicationTables) {
@@ -574,6 +659,12 @@ describe("Postgres schema generation", () => {
         `CREATE POLICY ${tableName}_migrator_insert ON ${tableName}\n  FOR INSERT TO pintpath_migrator WITH CHECK (true);`,
       );
       expect(generated).toContain(`GRANT SELECT, INSERT ON ${tableName} TO pintpath_migrator;`);
+      expect(generated).toContain(
+        `CREATE POLICY ${tableName}_logical_backup_select ON pintpath_app.${tableName}\n  AS PERMISSIVE\n  FOR SELECT TO PUBLIC\n  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text`,
+      );
+      expect(generated).toContain(
+        `('pintpath_app', '${tableName}')`,
+      );
       expect(generated).not.toContain(
         `GRANT SELECT, INSERT, UPDATE ON ${tableName} TO pintpath_migrator;`,
       );
@@ -592,6 +683,10 @@ describe("Postgres schema generation", () => {
       "CREATE POLICY schema_metadata_migrator_update ON schema_metadata\n  FOR UPDATE TO pintpath_migrator USING (true) WITH CHECK (true);",
     );
     expect(generated).toContain("GRANT SELECT, UPDATE ON schema_metadata TO pintpath_migrator;");
+    expect(generated).toContain(
+      "CREATE POLICY schema_metadata_logical_backup_select ON pintpath_app.schema_metadata\n  AS PERMISSIVE\n  FOR SELECT TO PUBLIC",
+    );
+    expect(generated).toContain("('pintpath_app', 'schema_metadata')");
     expect(generated).not.toContain("CREATE POLICY schema_metadata_migrator_insert");
     expect(generated).not.toMatch(
       /GRANT\s+[^;]*\bINSERT\b[^;]*ON\s+(?:pintpath_app\.)?schema_metadata\s+TO\s+pintpath_migrator\b/i,
@@ -622,10 +717,30 @@ describe("Postgres schema generation", () => {
       expect(generated).toContain(
         `GRANT SELECT, INSERT, UPDATE ON pintpath_ops.${tableName} TO pintpath_migrator;`,
       );
+      expect(generated).toContain(
+        `CREATE POLICY ${tableName}_logical_backup_select ON pintpath_ops.${tableName}\n  AS PERMISSIVE\n  FOR SELECT TO PUBLIC`,
+      );
+      expect(generated).toContain(
+        `('pintpath_ops', '${tableName}')`,
+      );
     }
     expect(generated).not.toMatch(
       /GRANT\s+[^;]*(?:DELETE|TRUNCATE)[^;]*\s+TO\s+pintpath_migrator\b/i,
     );
+    expect(generated).not.toMatch(
+      /'GRANT\s+[^']*\b(?:INSERT|UPDATE|DELETE|TRUNCATE|REFERENCES|TRIGGER)\b[^']*\s+TO\s+%I'/i,
+    );
+    expect(generated).toContain(
+      "'GRANT SELECT ON ALL SEQUENCES IN SCHEMA pintpath_app, pintpath_ops TO %I'",
+    );
+    expect(generated).not.toMatch(
+      /'GRANT\s+(?:USAGE|UPDATE)[^']*ON(?:\s+ALL)?\s+SEQUENCES?[^']*TO\s+%I'/i,
+    );
+    expect(generated).not.toMatch(
+      /'GRANT\s+EXECUTE\s+ON[^']*TO\s+%I'/i,
+    );
+    expect(generated.match(/FOR SELECT TO PUBLIC/g)).toHaveLength(59);
+    expect(generated).not.toMatch(/FOR SELECT TO pintpath_logical_backup_d[0-9]+/i);
 
     const accessStatements = generated
       .split(";")

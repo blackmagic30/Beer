@@ -513,6 +513,371 @@ CREATE POLICY ${tableName}_migrator_update ON pintpath_ops.${tableName}
 GRANT SELECT, INSERT, UPDATE ON pintpath_ops.${tableName} TO pintpath_migrator;`).join("\n");
 }
 
+function logicalBackupSecurityBoundary(tableNames: readonly string[]): string {
+  const targets = [
+    ...tableNames.map((tableName) => ({
+      schemaName: "pintpath_app",
+      tableName,
+    })),
+    { schemaName: "pintpath_app", tableName: "schema_metadata" },
+    { schemaName: "pintpath_ops", tableName: "migration_chunks" },
+    { schemaName: "pintpath_ops", tableName: "migration_runs" },
+  ].sort((left, right) => {
+    const leftName = `${left.schemaName}.${left.tableName}`;
+    const rightName = `${right.schemaName}.${right.tableName}`;
+    return leftName < rightName ? -1 : leftName > rightName ? 1 : 0;
+  });
+  const targetValues = targets
+    .map(({ schemaName, tableName }) => `      ('${schemaName}', '${tableName}')`)
+    .join(",\n");
+  const policies = targets.map(({ schemaName, tableName }) => `
+CREATE POLICY ${tableName}_logical_backup_select ON ${schemaName}.${tableName}
+  AS PERMISSIVE
+  FOR SELECT TO PUBLIC
+  USING (CURRENT_USER = ('pintpath_logical_backup_d' || (SELECT database.oid::text
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database())));`).join("\n");
+
+  const policyInventoryGuard = `DO $$
+DECLARE
+  runtime_role_oid oid;
+  migrator_role_oid oid;
+  private_policy_count integer;
+  exact_base_policy_count integer;
+  exact_backup_policy_count integer;
+BEGIN
+  SELECT pg_catalog.to_regrole('pintpath_runtime')::oid,
+         pg_catalog.to_regrole('pintpath_migrator')::oid
+    INTO STRICT runtime_role_oid, migrator_role_oid;
+
+  SELECT count(*)::integer INTO private_policy_count
+  FROM pg_catalog.pg_policy AS policy
+  JOIN pg_catalog.pg_class AS relation ON relation.oid = policy.polrelid
+  JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+  WHERE namespace.nspname = ANY(ARRAY['pintpath_app', 'pintpath_ops']);
+
+  SELECT count(*)::integer INTO exact_base_policy_count
+  FROM pg_catalog.pg_policy AS policy
+  JOIN pg_catalog.pg_class AS relation ON relation.oid = policy.polrelid
+  JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+  WHERE namespace.nspname = ANY(ARRAY['pintpath_app', 'pintpath_ops'])
+    AND policy.polpermissive
+    AND (
+      (
+        namespace.nspname = 'pintpath_app'
+        AND relation.relname <> 'schema_metadata'
+        AND (
+          (
+            policy.polname = (relation.relname || '_runtime_all')::name
+            AND policy.polroles = ARRAY[runtime_role_oid]::oid[]
+            AND policy.polcmd = '*'
+            AND pg_catalog.pg_get_expr(policy.polqual, policy.polrelid, false) = 'true'
+            AND pg_catalog.pg_get_expr(policy.polwithcheck, policy.polrelid, false) = 'true'
+          )
+          OR (
+            policy.polname = (relation.relname || '_migrator_select')::name
+            AND policy.polroles = ARRAY[migrator_role_oid]::oid[]
+            AND policy.polcmd = 'r'
+            AND pg_catalog.pg_get_expr(policy.polqual, policy.polrelid, false) = 'true'
+            AND policy.polwithcheck IS NULL
+          )
+          OR (
+            policy.polname = (relation.relname || '_migrator_insert')::name
+            AND policy.polroles = ARRAY[migrator_role_oid]::oid[]
+            AND policy.polcmd = 'a'
+            AND policy.polqual IS NULL
+            AND pg_catalog.pg_get_expr(policy.polwithcheck, policy.polrelid, false) = 'true'
+          )
+        )
+      )
+      OR (
+        namespace.nspname = 'pintpath_app'
+        AND relation.relname = 'schema_metadata'
+        AND (
+          (
+            policy.polname = 'schema_metadata_runtime_read'::name
+            AND policy.polroles = ARRAY[runtime_role_oid]::oid[]
+            AND policy.polcmd = 'r'
+            AND pg_catalog.pg_get_expr(policy.polqual, policy.polrelid, false) = 'true'
+            AND policy.polwithcheck IS NULL
+          )
+          OR (
+            policy.polname = 'schema_metadata_migrator_select'::name
+            AND policy.polroles = ARRAY[migrator_role_oid]::oid[]
+            AND policy.polcmd = 'r'
+            AND pg_catalog.pg_get_expr(policy.polqual, policy.polrelid, false) = 'true'
+            AND policy.polwithcheck IS NULL
+          )
+          OR (
+            policy.polname = 'schema_metadata_migrator_update'::name
+            AND policy.polroles = ARRAY[migrator_role_oid]::oid[]
+            AND policy.polcmd = 'w'
+            AND pg_catalog.pg_get_expr(policy.polqual, policy.polrelid, false) = 'true'
+            AND pg_catalog.pg_get_expr(policy.polwithcheck, policy.polrelid, false) = 'true'
+          )
+        )
+      )
+      OR (
+        namespace.nspname = 'pintpath_ops'
+        AND relation.relname = ANY(ARRAY['migration_chunks', 'migration_runs'])
+        AND (
+          (
+            policy.polname = (relation.relname || '_migrator_select')::name
+            AND policy.polroles = ARRAY[migrator_role_oid]::oid[]
+            AND policy.polcmd = 'r'
+            AND pg_catalog.pg_get_expr(policy.polqual, policy.polrelid, false) = 'true'
+            AND policy.polwithcheck IS NULL
+          )
+          OR (
+            policy.polname = (relation.relname || '_migrator_insert')::name
+            AND policy.polroles = ARRAY[migrator_role_oid]::oid[]
+            AND policy.polcmd = 'a'
+            AND policy.polqual IS NULL
+            AND pg_catalog.pg_get_expr(policy.polwithcheck, policy.polrelid, false) = 'true'
+          )
+          OR (
+            policy.polname = (relation.relname || '_migrator_update')::name
+            AND policy.polroles = ARRAY[migrator_role_oid]::oid[]
+            AND policy.polcmd = 'w'
+            AND pg_catalog.pg_get_expr(policy.polqual, policy.polrelid, false) = 'true'
+            AND pg_catalog.pg_get_expr(policy.polwithcheck, policy.polrelid, false) = 'true'
+          )
+        )
+      )
+    );
+
+  SELECT count(*)::integer INTO exact_backup_policy_count
+  FROM pg_catalog.pg_policy AS policy
+  JOIN pg_catalog.pg_class AS relation ON relation.oid = policy.polrelid
+  JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+  WHERE namespace.nspname = ANY(ARRAY['pintpath_app', 'pintpath_ops'])
+    AND policy.polname = (relation.relname || '_logical_backup_select')::name
+    AND policy.polroles = ARRAY[0]::oid[]
+    AND policy.polcmd = 'r'
+    AND policy.polpermissive
+    AND pg_catalog.pg_get_expr(policy.polqual, policy.polrelid, false) = $policy$(CURRENT_USER = ('pintpath_logical_backup_d'::text || ( SELECT (database.oid)::text AS oid
+   FROM pg_database database
+  WHERE (database.datname = current_database()))))$policy$
+    AND policy.polwithcheck IS NULL;
+
+  IF private_policy_count <> 236
+     OR exact_base_policy_count <> 177
+     OR exact_backup_policy_count <> 59 THEN
+    RAISE EXCEPTION USING
+      ERRCODE = '42501',
+      MESSAGE = 'Pint Path schema bootstrap produced a non-canonical private policy inventory.',
+      DETAIL = 'Required: exactly 177 runtime/migrator policies plus 59 portable logical-backup policies, with no extras or omissions.';
+  END IF;
+END
+$$;`;
+
+  return `-- The reusable backup group is scoped to this database OID. PostgreSQL
+-- role names are cluster-global, so the OID binding prevents a login for one
+-- database from assuming another database's reviewed backup role.
+DO $$
+DECLARE
+  database_oid oid;
+  database_oid_text text;
+  backup_role_name text;
+  backup_role_oid oid;
+  target record;
+BEGIN
+  SELECT database.oid, database.oid::text
+    INTO STRICT database_oid, database_oid_text
+  FROM pg_catalog.pg_database AS database
+  WHERE database.datname = pg_catalog.current_database();
+
+  IF database_oid = 0::oid
+     OR database_oid_text !~ '^[1-9][0-9]{0,9}$' THEN
+    RAISE EXCEPTION USING
+      ERRCODE = '22023',
+      MESSAGE = 'Refusing Pint Path schema bootstrap because the current database OID is not canonical.';
+  END IF;
+  backup_role_name := 'pintpath_logical_backup_d' || database_oid_text;
+
+  IF EXISTS (
+    SELECT 1 FROM pg_catalog.pg_roles AS role
+    WHERE role.rolname LIKE (backup_role_name || '\\_v%') ESCAPE '\\'
+  ) THEN
+    RAISE EXCEPTION USING
+      ERRCODE = '55000',
+      MESSAGE = 'Refusing Pint Path schema bootstrap because the current database login namespace is not empty.';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_catalog.pg_roles AS role
+    WHERE role.rolname = backup_role_name
+  ) THEN
+    EXECUTE pg_catalog.format(
+      'CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS',
+      backup_role_name
+    );
+  END IF;
+
+  SELECT role.oid INTO STRICT backup_role_oid
+  FROM pg_catalog.pg_roles AS role
+  WHERE role.rolname = backup_role_name;
+
+  IF EXISTS (
+    SELECT 1
+    FROM pg_catalog.pg_roles AS role
+    WHERE role.oid = backup_role_oid
+      AND (
+        role.rolcanlogin
+        OR role.rolsuper
+        OR role.rolcreatedb
+        OR role.rolcreaterole
+        OR role.rolinherit
+        OR role.rolreplication
+        OR role.rolbypassrls
+        OR EXISTS (
+          SELECT 1 FROM pg_catalog.pg_auth_members AS membership
+          WHERE membership.member = role.oid
+        )
+        OR EXISTS (
+          SELECT 1 FROM pg_catalog.pg_auth_members AS membership
+          WHERE membership.roleid = role.oid
+        )
+        OR EXISTS (
+          SELECT 1 FROM pg_catalog.pg_db_role_setting AS setting
+          WHERE setting.setrole = role.oid
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM pg_catalog.pg_database AS granted_database
+          CROSS JOIN LATERAL pg_catalog.aclexplode(coalesce(
+            granted_database.datacl,
+            pg_catalog.acldefault('d', granted_database.datdba)
+          )) AS privilege
+          WHERE privilege.grantee = role.oid
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM pg_catalog.pg_proc AS routine
+          CROSS JOIN LATERAL pg_catalog.aclexplode(coalesce(
+            routine.proacl,
+            pg_catalog.acldefault('f', routine.proowner)
+          )) AS privilege
+          WHERE privilege.grantee = role.oid
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM pg_catalog.pg_namespace AS namespace
+          CROSS JOIN LATERAL pg_catalog.aclexplode(coalesce(
+            namespace.nspacl,
+            pg_catalog.acldefault('n', namespace.nspowner)
+          )) AS privilege
+          WHERE privilege.grantee = role.oid
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM pg_catalog.pg_class AS relation
+          CROSS JOIN LATERAL pg_catalog.aclexplode(coalesce(
+            relation.relacl,
+            pg_catalog.acldefault(
+              (CASE WHEN relation.relkind = 'S' THEN 'S' ELSE 'r' END)::"char",
+              relation.relowner
+            )
+          )) AS privilege
+          WHERE privilege.grantee = role.oid
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM pg_catalog.pg_attribute AS attribute
+          CROSS JOIN LATERAL pg_catalog.aclexplode(attribute.attacl) AS privilege
+          WHERE attribute.attnum > 0
+            AND NOT attribute.attisdropped
+            AND attribute.attacl IS NOT NULL
+            AND privilege.grantee = role.oid
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM pg_catalog.pg_shdepend AS dependency
+          WHERE dependency.refclassid = 'pg_catalog.pg_authid'::pg_catalog.regclass
+            AND dependency.refobjid = role.oid
+        )
+      )
+  ) THEN
+    RAISE EXCEPTION USING
+      ERRCODE = '42501',
+      MESSAGE = pg_catalog.format(
+        'Refusing Pint Path schema bootstrap because scoped role %I is unsafe or already active.',
+        backup_role_name
+      ),
+      DETAIL = 'Required: safe NOLOGIN NOINHERIT role with no parents, children, settings, ACLs, or ownership before bootstrap grants.';
+  END IF;
+
+  EXECUTE pg_catalog.format(
+    'GRANT USAGE ON SCHEMA pintpath_app, pintpath_ops TO %I',
+    backup_role_name
+  );
+  FOR target IN
+    SELECT * FROM (VALUES
+${targetValues}
+    ) AS inventory(schema_name, table_name)
+  LOOP
+    EXECUTE pg_catalog.format(
+      'GRANT SELECT ON %I.%I TO %I',
+      target.schema_name,
+      target.table_name,
+      backup_role_name
+    );
+  END LOOP;
+
+  -- The reviewed generated inventory currently has no sequences. SELECT is
+  -- the only sequence privilege pg_dump may receive if that inventory changes.
+  EXECUTE pg_catalog.format(
+    'GRANT SELECT ON ALL SEQUENCES IN SCHEMA pintpath_app, pintpath_ops TO %I',
+    backup_role_name
+  );
+
+  IF (
+    SELECT count(*)
+    FROM pg_catalog.pg_shdepend AS dependency
+    WHERE dependency.refclassid = 'pg_catalog.pg_authid'::pg_catalog.regclass
+      AND dependency.refobjid = backup_role_oid
+  ) <> 61 OR (
+    SELECT count(*)
+    FROM pg_catalog.pg_shdepend AS dependency
+    WHERE dependency.refclassid = 'pg_catalog.pg_authid'::pg_catalog.regclass
+      AND dependency.refobjid = backup_role_oid
+      AND dependency.dbid = database_oid
+      AND dependency.objsubid = 0
+      AND dependency.deptype = 'a'
+      AND (
+        (
+          dependency.classid = 'pg_catalog.pg_namespace'::pg_catalog.regclass
+          AND EXISTS (
+            SELECT 1 FROM pg_catalog.pg_namespace AS namespace
+            WHERE namespace.oid = dependency.objid
+              AND namespace.nspname = ANY(ARRAY['pintpath_app', 'pintpath_ops'])
+          )
+        )
+        OR (
+          dependency.classid = 'pg_catalog.pg_class'::pg_catalog.regclass
+          AND EXISTS (
+            SELECT 1
+            FROM pg_catalog.pg_class AS relation
+            JOIN pg_catalog.pg_namespace AS namespace
+              ON namespace.oid = relation.relnamespace
+            WHERE relation.oid = dependency.objid
+              AND namespace.nspname = ANY(ARRAY['pintpath_app', 'pintpath_ops'])
+              AND relation.relkind IN ('r', 'p')
+          )
+        )
+      )
+  ) <> 61 THEN
+    RAISE EXCEPTION USING
+      ERRCODE = '42501',
+      MESSAGE = 'Pint Path schema bootstrap produced unexpected scoped-role dependencies.';
+  END IF;
+END
+$$;
+${policies}
+
+${policyInventoryGuard}`;
+}
+
 export function generatePostgresSchema(input: {
   sqliteSchema: string;
   databaseModule: string;
@@ -621,7 +986,6 @@ BEGIN
   ) THEN
     CREATE ROLE pintpath_migrator NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOREPLICATION NOBYPASSRLS;
   END IF;
-
   FOREACH role_name IN ARRAY ARRAY['pintpath_runtime', 'pintpath_migrator'] LOOP
     IF EXISTS (
       SELECT 1
@@ -647,6 +1011,7 @@ BEGIN
         HINT = 'Have a cluster administrator harden or recreate the role, then rerun this migration.';
     END IF;
   END LOOP;
+
 END
 $$;
 
@@ -733,6 +1098,8 @@ GRANT SELECT, UPDATE ON schema_metadata TO pintpath_migrator;
 REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA pintpath_app FROM PUBLIC;
 REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA pintpath_ops FROM PUBLIC;
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA pintpath_app TO pintpath_runtime;
+
+${logicalBackupSecurityBoundary(tables.map((table) => table.name))}
 
 COMMIT;
 `;

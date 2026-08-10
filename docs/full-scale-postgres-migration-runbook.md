@@ -1,6 +1,6 @@
 # Full-scale Postgres migration runbook
 
-Last audited: 9 August 2026
+Last audited: 10 August 2026
 
 Status: **NO-GO — Free-live PostgreSQL application implementation plus the
 permanent-staging import/runtime/logical-backup and disposable database-restore
@@ -169,15 +169,50 @@ line, print it, or put it in Git.
    ```
 
    The generated role bootstrap is safe on both standalone PostgreSQL and
-   managed Supabase PostgreSQL. It creates `pintpath_runtime` and
-   `pintpath_migrator` with the complete reviewed least-privilege attribute set
-   only when they are absent. On a rerun, it validates the catalog attributes
-   and continues only when both roles remain `NOLOGIN`, `NOSUPERUSER`,
-   `NOCREATEDB`, `NOCREATEROLE`, `INHERIT`, `NOREPLICATION`, and `NOBYPASSRLS`.
-   It deliberately does not issue managed-superuser-only `ALTER ROLE`
-   hardening. Any unsafe pre-existing role aborts the transaction with SQLSTATE
-   `42501`; a cluster administrator must harden or recreate that role before
-   this gate is rerun.
+   managed Supabase PostgreSQL. It creates `pintpath_runtime`,
+   `pintpath_migrator`, and a database-scoped read-only group named exactly
+   `pintpath_logical_backup_d<current-database-oid>`. The OID is the canonical
+   positive decimal OID of `current_database()`, with no leading zero. The
+   runtime and migrator bootstrap validates those roles on replay and continues
+   only while they remain `NOLOGIN`, `NOSUPERUSER`, `NOCREATEDB`,
+   `NOCREATEROLE`, `INHERIT`, `NOREPLICATION`, and `NOBYPASSRLS`. The fresh
+   scoped-role boundary accepts only an absent role or a pre-existing inert
+   `NOLOGIN`/`NOINHERIT` role with all dangerous attributes false and no
+   parents, children, settings, ACLs, ownership, or shared dependencies. Do not
+   replay the fresh bootstrap after its grants and policies exist; the additive
+   forward migration is the idempotent exact-state path.
+
+   Only the scoped group receives direct non-grantable `USAGE` on the two
+   private schemas and direct non-grantable `SELECT` on the exact 59 reviewed
+   application/control tables. Its cross-catalog `pg_shdepend` allowlist is
+   exactly those 61 current-database ACL dependencies. The current inventory
+   has zero sequences and grants no private-function execution. Every reviewed
+   table instead has a portable, permissive, SELECT-only policy targeted to
+   `PUBLIC` whose predicate admits only `current_user =
+   'pintpath_logical_backup_d' || <live-current-database-oid>`. The policy
+   carries no object grant, names no role, and produces no role dependency; a
+   source-database scoped role therefore cannot read a sibling or restored
+   target even if someone grants it target table `SELECT` by mistake. The
+   complete policy allowlist is exact: 177 existing runtime/migrator policies
+   in the pre-upgrade state and 236 after adding the 59 backup policies. Name,
+   permissiveness, command, role OID array, `USING`, and `WITH CHECK` must all
+   match; any arbitrary named-role policy is a hard failure.
+
+   Existing databases created by the earlier bootstrap must receive the
+   additive transaction in
+   `20260810003612_add_pintpath_logical_backup_role.sql` before a backup login
+   is provisioned. The migration accepts only a wholly absent pre-upgrade
+   state, an exact 59-policy-only state restored from `--no-acl`, or a fully
+   exact zero-child state. It rejects every partial/mixed state, unexpected
+   private-schema `PUBLIC` policy, extra reserved backup-policy name, current-
+   OID versioned login, or unsafe catalog dependency before writing. It takes
+   the fixed transaction advisory lock `-1516610544307388182` before its first
+   catalog classification, and a fully exact state performs verification only,
+   with no repeated grants or policy writes. Apply it through the separately
+   reviewed migration-administrator path; do not rerun it while a versioned
+   backup login is attached. The bootstrap and migration deliberately avoid
+   broad `ALTER ROLE` repair. Any unsafe pre-existing state aborts with SQLSTATE
+   `42501` and requires independent remediation.
 
 2. While production is still serving normally, prove that the independent
    deletion authority is readable and export its mutually consistent current,
@@ -412,32 +447,90 @@ private Storage recovery, a full application boot, PITR, provider-enforced
 WORM, approved RPO/RTO objectives, production recovery, or disposal.
 The private-Storage recovery-set implementation is local foundation evidence
 only and does not change that conclusion.
-Use a dedicated `LOGIN`, `NOSUPERUSER`, `NOCREATEDB`, `NOCREATEROLE`,
-`NOREPLICATION`, `NOBYPASSRLS` backup login that can `SET ROLE
-pintpath_migrator`; the runtime login cannot
-read `pintpath_ops` and is not an authoritative backup principal. Keep its
-direct, TLS-required, non-pooler URL in a current-user-owned mode-600 file. The
-login must permit at least two concurrent connections because the command
-holds one exported-snapshot session open while `pg_dump` imports that snapshot
-through a second session. A connection limit of one fails closed. The login
-also needs the narrowly reviewed ability to read `pg_control_system()`
-(direct `EXECUTE` or the provider's equivalent monitoring membership) so the
-receipt can bind a hashed cluster identity; inability to read it is a hard
-failure, not a reason to use a superuser. The
+Use a dedicated versioned login named exactly
+`pintpath_logical_backup_d<current-database-oid>_v<positive-version>`. Both
+decimal components are canonical, the database OID must equal the live OID of
+`current_database()`, and the version is 1–20 digits with no leading zero. It
+must be `LOGIN`, `NOSUPERUSER`, `NOCREATEDB`, `NOCREATEROLE`, `NOINHERIT`,
+`NOREPLICATION`, `NOBYPASSRLS`, and `CONNECTION LIMIT 2`, with no children or
+role settings and exactly one membership: direct membership in the matching
+`pintpath_logical_backup_d<current-database-oid>` group with `ADMIN FALSE`,
+`INHERIT FALSE`, and `SET TRUE`. It must be unable to `SET ROLE
+pintpath_migrator`, `pintpath_runtime`, or any sibling database-scoped backup
+group.
+
+The login itself receives exactly one direct, non-grantable database privilege
+(`CONNECT` on the source database) and exactly one direct, non-grantable
+function privilege (`EXECUTE` on `pg_catalog.pg_control_system()`). Its
+`pg_shdepend` allowlist is exactly those two ACL dependencies: the shared
+current-database ACL row and the current-database function ACL row. It receives
+no private schema/table/column/sequence authority and owns nothing. Do not
+substitute a provider monitoring role: extra or transitive memberships fail
+closed. The runtime login cannot read `pintpath_ops` and is not an
+authoritative backup principal.
+
+Operational provisioning is **STOP** until the reviewed in-process helper can
+accept a precomputed SCRAM-SHA-256 verifier, bind it without command-line or SQL
+log exposure, validate the resulting catalog contract, and emit only secret-
+free evidence. Manual plaintext `CREATE ROLE ... PASSWORD`, `psql` variable
+substitution, and hand-built dynamic SQL are forbidden. PostgreSQL 17
+membership options must ultimately be explicit rather than relying on defaults.
+The following is a structural contract only; it is deliberately non-executable
+and is not an authorization to provision or rotate a live credential:
+
+```text
+NON-EXECUTABLE ROLE CONTRACT
+name: pintpath_logical_backup_d{verified-current-database-oid}_v{positive-version}
+attributes: LOGIN, NOINHERIT, NOSUPERUSER, NOCREATEDB, NOCREATEROLE,
+            NOREPLICATION, NOBYPASSRLS, CONNECTION LIMIT 2
+password input: precomputed SCRAM-SHA-256 verifier, never plaintext
+membership: matching pintpath_logical_backup_d{verified-current-database-oid}
+            with ADMIN FALSE, INHERIT FALSE, SET TRUE
+direct ACLs: non-grantable CONNECT on this database only; non-grantable EXECUTE
+             on this database's pg_catalog.pg_control_system() only
+```
+
+Never put the password or resulting URL in Git, command arguments, logs, or
+evidence. Keep the direct, non-pooler URL with exactly
+`sslmode=verify-full` in a current-user-owned mode-600 file. The backup client
+forces Node certificate verification and libpq `PGSSLROOTCERT=system`; no
+weaker production TLS mode is accepted. Separately obtain the trusted
+lowercase SHA-256 of the logical trimmed URL from the reviewed provisioning
+authority. Do not derive that pin from the mutable URL file during the backup
+ceremony. The exact connection limit of two bounds the
+exported-snapshot holder plus the `pg_dump` reader; any other value fails
+closed. Inability to read `pg_control_system()` is a hard failure, not a reason
+to use a superuser. The
 output directory must be a new path inside the mode-700 release evidence
 directory:
 
 ```sh
 npm run db:postgres:backup:logical -- \
   --connection-file /absolute/private/postgres-backup-url.key \
+  --expected-source-url-sha256 "$EXPECTED_SOURCE_URL_SHA256" \
   --output /absolute/private/release-id/postgres-logical
 ```
 
-The command accepts PostgreSQL 17 only. It sets `pintpath_migrator`, opens one
-`REPEATABLE READ READ ONLY` transaction, exports that snapshot, and keeps it
-open while it hashes state and while `pg_dump --snapshot` reads the same view.
+The command accepts PostgreSQL 17 only. Before tool discovery, connection, or
+output creation, it requires the exact trimmed URL to match the supplied source
+pin. It binds the login and group OID segment to the live source database OID,
+validates both complete authority contracts,
+sets the matching database-scoped group, opens one `REPEATABLE READ READ ONLY`
+transaction, exports that snapshot, and keeps it open while it hashes state and
+while `pg_dump --snapshot --role=<validated-scoped-group>` reads the same view.
+It never exports `PGPASSWORD`. For `pg_dump` alone, it creates one exclusive,
+fsynced mode-600 pgpass leaf inside a fresh mode-700 directory under the
+canonical operating-system temporary root, then validates and removes that
+exact inode nonrecursively before inspecting the child result. Tool version
+probes and `pg_restore` receive no credential file. Any missing, drifted,
+multiply linked, replaced, or unexpectedly populated temporary state fails as
+`cleanup_failed`, and an untrusted replacement is left untouched for explicit
+incident handling.
 The custom archive contains only `pintpath_app` and `pintpath_ops`, has row
-security enabled, and has no owner or ACL statements. The mode-600 private
+security enabled, and has no owner or ACL statements. Its portable policies
+name no scoped source role: PostgreSQL may render the default `PUBLIC` target by
+omitting the `TO` clause, and restore must still produce `polroles = ARRAY[0]`
+with the exact live-database-OID predicate on all 59 tables. The mode-600 private
 `state-receipt.json` commits to every column of all 56 authoritative tables,
 `schema_metadata`, `migration_runs`, and `migration_chunks` in reviewed primary
 key order, with bounded pages, exact native-type canonicalization, counts,
@@ -471,6 +564,19 @@ Restore success requires a fresh independently computed receipt to match every
 source authoritative and archived-control count/hash exactly. Any mismatch
 after `pg_restore` requires disposal of the complete target. Register the
 backup, source-state, restore, migration-verification, and PITR hashes together.
+Because restore uses `--no-acl`, the source-OID group and its grants are neither
+required nor recreated. The exact `PUBLIC` policies do restore and evaluate the
+target's live database OID, leaving the database in the intentionally inert
+`restored_policy_only` state: 59 exact policies, no target-OID scoped group, and
+no target-OID versioned login. Before that restored database can itself become
+a backup source, apply
+`20260810003612_add_pintpath_logical_backup_role.sql` through the reviewed
+migration-administrator path. It accepts that exact policy-only state and
+constructs only the target-OID group and 61 target ACLs; provision a target-OID
+versioned login separately afterward. A source-OID role must remain unable to
+set the target group or see target rows, even if temporary target `USAGE` and
+`SELECT` are deliberately granted during the isolation rehearsal.
+
 The completed operational-copy retrieval, matching database receipt, and
 synthetic deletion replay are still not complete recovery authority. The
 provider-enforced copy must also be retrieved from the independent failure

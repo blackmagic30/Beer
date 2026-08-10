@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -5,7 +6,9 @@ import path from "node:path";
 import { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { POSTGRES_MIGRATION_CONTRACT } from "../src/db/postgres-migration-contract.js";
 import {
+  POSTGRES_LOGICAL_BACKUP_ARCHIVE,
   createPostgresLogicalBackup,
   runPostgresBackupProcess,
 } from "../src/lib/postgres-logical-backup.js";
@@ -14,15 +17,22 @@ import {
   inspectPostgresLogicalRestoreTarget,
   restorePostgresLogicalBackup,
 } from "../src/lib/postgres-logical-restore.js";
-import { POSTGRES_MIGRATION_CONTRACT } from "../src/db/postgres-migration-contract.js";
 
 const ADMIN_URL_ENV = "PINTPATH_POSTGRES_LOGICAL_RESTORE_TEST_ADMIN_URL";
 const configuredAdminUrl = process.env[ADMIN_URL_ENV]?.trim() ?? "";
 const UNIQUE_SUFFIX = `${process.pid}_${Date.now().toString(36)}`.toLowerCase();
 const SOURCE_DATABASE = `pintpath_lr_source_${UNIQUE_SUFFIX}`;
+const SIBLING_DATABASE = `pintpath_lr_sibling_${UNIQUE_SUFFIX}`;
 const TARGET_DATABASE = `pintpath_lr_target_${UNIQUE_SUFFIX}`;
-const BACKUP_LOGIN = `pintpath_lr_backup_${UNIQUE_SUFFIX}`;
+const BACKUP_VERSION = `${Date.now()}${process.pid}`.slice(0, 20);
 const BACKUP_PASSWORD = `PintpathLogicalReceipt_${UNIQUE_SUFFIX}`;
+const SCHEMA_PATH = path.resolve("src/db/postgres-schema.sql");
+const FORWARD_MIGRATION_PATH = path.resolve(
+  "supabase/migrations/20260810003612_add_pintpath_logical_backup_role.sql",
+);
+const LOGICAL_BACKUP_POLICY_EXPRESSION = `(CURRENT_USER = ('pintpath_logical_backup_d'::text || ( SELECT (database.oid)::text AS oid
+   FROM pg_database database
+  WHERE (database.datname = current_database()))))`;
 
 function validateAdminUrl(value: string): URL {
   let url: URL;
@@ -50,6 +60,55 @@ function withDatabase(url: URL, database: string): URL {
   return result;
 }
 
+function withCredentials(url: URL, username: string, password: string): URL {
+  const result = new URL(url.toString());
+  result.username = username;
+  result.password = password;
+  return result;
+}
+
+function escapePgpassField(value: string): string {
+  return value.replaceAll("\\", "\\\\").replaceAll(":", "\\:");
+}
+
+function expectedPgpassRecord(url: URL): string {
+  const hostname = url.hostname.startsWith("[") && url.hostname.endsWith("]")
+    ? url.hostname.slice(1, -1)
+    : url.hostname;
+  return `${[
+    hostname,
+    url.port || "5432",
+    decodeURIComponent(url.pathname.slice(1)),
+    decodeURIComponent(url.username),
+    decodeURIComponent(url.password),
+  ].map(escapePgpassField).join(":")}\n`;
+}
+
+function scopedBackupRole(databaseOid: string): string {
+  if (!/^[1-9][0-9]{0,9}$/.test(databaseOid)) throw new Error("invalid_test_database_oid");
+  const value = BigInt(databaseOid);
+  if (value > 4_294_967_295n) throw new Error("invalid_test_database_oid");
+  return `pintpath_logical_backup_d${databaseOid}`;
+}
+
+async function currentDatabaseOid(connection: Client): Promise<string> {
+  const result = await connection.query<{ oid: string }>(`SELECT database.oid::text AS oid
+    FROM pg_catalog.pg_database AS database
+    WHERE database.datname = pg_catalog.current_database()`);
+  const oid = result.rows[0]?.oid;
+  if (result.rows.length !== 1 || !oid) throw new Error("test_database_oid_unavailable");
+  return oid;
+}
+
+async function expectSqlState(
+  connection: Client,
+  sql: string,
+  code = "42501",
+): Promise<void> {
+  const error = await connection.query(sql).catch((value: unknown) => value as { code?: string });
+  expect(error).toMatchObject({ code });
+}
+
 async function createLogicalBackup(
   sourceUrl: URL,
   sourceAdminUrl: URL,
@@ -63,18 +122,34 @@ async function createLogicalBackup(
   fs.writeFileSync(sourceUrlFile, `${sourceUrl.toString()}\n`, { mode: 0o600 });
   fs.chmodSync(sourceUrlFile, 0o600);
   let concurrentWriteCommitted = false;
+  let pgpassPath = "";
   const result = await createPostgresLogicalBackup({
     connectionFile: sourceUrlFile,
+    expectedSourceUrlSha256: crypto.createHash("sha256")
+      .update(sourceUrl.toString(), "utf8").digest("hex"),
     outputDirectory: directory,
   }, {
     env: { ...process.env, NODE_ENV: "test" },
     allowInsecureLoopbackForTests: true,
     runProcess: async (invocation) => {
+      if (invocation.args[0] === "--version" || invocation.command.endsWith("pg_restore")) {
+        expect(invocation.env.PGPASSFILE).toBeUndefined();
+        expect(invocation.env.PGPASSWORD).toBeUndefined();
+      }
       if (
         !concurrentWriteCommitted
         && invocation.command.endsWith("pg_dump")
         && invocation.args[0] !== "--version"
       ) {
+        pgpassPath = invocation.env.PGPASSFILE ?? "";
+        expect(pgpassPath).not.toBe("");
+        expect(invocation.env.PGPASSWORD).toBeUndefined();
+        expect(invocation.env.PGSSLMODE).toBe("disable");
+        expect(invocation.env.PGSSLROOTCERT).toBeUndefined();
+        expect(fs.statSync(pgpassPath).mode & 0o7777).toBe(0o600);
+        expect(fs.statSync(path.dirname(pgpassPath)).mode & 0o7777).toBe(0o700);
+        expect(path.dirname(path.dirname(pgpassPath))).toBe(fs.realpathSync(os.tmpdir()));
+        expect(fs.readFileSync(pgpassPath, "utf8")).toBe(expectedPgpassRecord(sourceUrl));
         const writer = new Client({ connectionString: sourceAdminUrl.toString() });
         await writer.connect();
         try {
@@ -91,21 +166,57 @@ async function createLogicalBackup(
     },
   });
   if (!concurrentWriteCommitted) throw new Error("Concurrent snapshot test write was not committed.");
+  expect(pgpassPath).not.toBe("");
+  expect(fs.existsSync(pgpassPath)).toBe(false);
+  expect(fs.existsSync(path.dirname(pgpassPath))).toBe(false);
   return { directory, manifestSha256: result.manifestSha256 };
+}
+
+async function renderArchive(backupDirectory: string): Promise<string> {
+  const result = await runPostgresBackupProcess({
+    command: "pg_restore",
+    args: [
+      "--format=custom",
+      "--file=-",
+      "--no-owner",
+      "--no-acl",
+      path.join(backupDirectory, POSTGRES_LOGICAL_BACKUP_ARCHIVE),
+    ],
+    env: {
+      PATH: process.env.PATH ?? "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin",
+      LC_ALL: "C",
+    },
+    timeoutMs: 60_000,
+    maxStdoutBytes: 32 * 1024 * 1024,
+    maxStderrBytes: 1024 * 1024,
+  });
+  expect(result).toMatchObject({ exitCode: 0, stderr: "" });
+  return result.stdout;
 }
 
 describe.skipIf(!configuredAdminUrl)("real PostgreSQL logical restore rehearsal", () => {
   let adminUrl: URL;
   let admin: Client;
+  let adminConnected = false;
   let root = "";
+  let rolesInspected = false;
   let runtimeRoleExisted = false;
   let migratorRoleExisted = false;
+  let sourceDatabaseOid = "";
+  let siblingDatabaseOid = "";
+  let targetDatabaseOid = "";
+  let sourceBackupRole = "";
+  let siblingBackupRole = "";
+  let targetBackupRole = "";
+  let backupLogin = "";
+  let bootstrapProbeRole = "";
   let backupLoginCreated = false;
 
   beforeAll(async () => {
     adminUrl = validateAdminUrl(configuredAdminUrl);
     admin = new Client({ connectionString: adminUrl.toString() });
     await admin.connect();
+    adminConnected = true;
     const version = await admin.query<{ version: string }>(
       "SELECT current_setting('server_version_num') AS version",
     );
@@ -116,21 +227,64 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL logical restore rehearsal"
       "SELECT rolname FROM pg_catalog.pg_roles WHERE rolname = ANY($1::text[])",
       [["pintpath_runtime", "pintpath_migrator"]],
     );
+    rolesInspected = true;
     runtimeRoleExisted = roles.rows.some((row) => row.rolname === "pintpath_runtime");
     migratorRoleExisted = roles.rows.some((row) => row.rolname === "pintpath_migrator");
-    for (const database of [SOURCE_DATABASE, TARGET_DATABASE]) {
+
+    for (const database of [SOURCE_DATABASE, SIBLING_DATABASE]) {
       await admin.query(`CREATE DATABASE ${database}`);
     }
-    await admin.query(
-      `ALTER DATABASE ${TARGET_DATABASE} SET pintpath.logical_restore_target_class TO 'disposable-rehearsal'`,
-    );
-    root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pintpath-logical-restore-integration-")));
+    root = fs.realpathSync(fs.mkdtempSync(path.join(
+      os.tmpdir(),
+      "pintpath-logical-restore-integration-",
+    )));
     fs.chmodSync(root, 0o700);
 
-    const source = new Client({ connectionString: withDatabase(adminUrl, SOURCE_DATABASE).toString() });
+    const source = new Client({
+      connectionString: withDatabase(adminUrl, SOURCE_DATABASE).toString(),
+    });
+    const sibling = new Client({
+      connectionString: withDatabase(adminUrl, SIBLING_DATABASE).toString(),
+    });
     await source.connect();
+    await sibling.connect();
     try {
-      await source.query(fs.readFileSync(path.resolve("src/db/postgres-schema.sql"), "utf8"));
+      sourceDatabaseOid = await currentDatabaseOid(source);
+      siblingDatabaseOid = await currentDatabaseOid(sibling);
+      expect(sourceDatabaseOid).not.toBe(siblingDatabaseOid);
+      sourceBackupRole = scopedBackupRole(sourceDatabaseOid);
+      siblingBackupRole = scopedBackupRole(siblingDatabaseOid);
+      backupLogin = `${sourceBackupRole}_v${BACKUP_VERSION}`;
+      bootstrapProbeRole = `pintpath_backup_bootstrap_probe_${process.pid}`;
+      const collisions = await admin.query<{ rolname: string }>(
+        "SELECT rolname FROM pg_catalog.pg_roles WHERE rolname = ANY($1::text[])",
+        [[sourceBackupRole, siblingBackupRole, backupLogin, bootstrapProbeRole]],
+      );
+      if (collisions.rows.length !== 0) throw new Error("disposable_role_name_collision");
+
+      const schemaSql = fs.readFileSync(SCHEMA_PATH, "utf8");
+      const forwardMigrationSql = fs.readFileSync(FORWARD_MIGRATION_PATH, "utf8");
+      await source.query(`CREATE ROLE ${sourceBackupRole}
+        NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS`);
+      await source.query(`CREATE ROLE ${bootstrapProbeRole}
+        NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS`);
+      await source.query(`GRANT ${sourceBackupRole} TO ${bootstrapProbeRole}
+        WITH ADMIN FALSE, INHERIT FALSE, SET TRUE`);
+      await expectSqlState(source, schemaSql, "42501");
+      await source.query("ROLLBACK");
+      const rolledBackBootstrap = await source.query<{ absent: boolean }>(
+        "SELECT pg_catalog.to_regnamespace('pintpath_app') IS NULL AS absent",
+      );
+      expect(rolledBackBootstrap.rows).toEqual([{ absent: true }]);
+      await source.query(`REVOKE ${sourceBackupRole} FROM ${bootstrapProbeRole}`);
+      await source.query(`DROP ROLE ${bootstrapProbeRole}`);
+      bootstrapProbeRole = "";
+      await source.query(`DROP ROLE ${sourceBackupRole}`);
+
+      await source.query(schemaSql);
+      await source.query(forwardMigrationSql);
+      await sibling.query(schemaSql);
+      await sibling.query(forwardMigrationSql);
       await source.query(`UPDATE pintpath_app.schema_metadata
         SET value = CASE key
           WHEN 'import_state' THEN 'ready'
@@ -149,62 +303,206 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL logical restore rehearsal"
         String(POSTGRES_MIGRATION_CONTRACT.sourceSchemaVersion),
         "4".repeat(64), "5".repeat(64),
       ]);
-      const revision = await source.query<{ exists: boolean }>(`SELECT EXISTS (
-        SELECT 1 FROM pg_catalog.pg_attribute AS attribute
-        JOIN pg_catalog.pg_class AS relation ON relation.oid = attribute.attrelid
-        JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
-        WHERE namespace.nspname = 'pintpath_app'
-          AND relation.relname = 'system_state'
-          AND attribute.attname = 'revision'
-          AND attribute.attnum > 0
-          AND NOT attribute.attisdropped
-      ) AS exists`);
-      if (revision.rows[0]?.exists) {
-        await source.query(`INSERT INTO pintpath_app.system_state
-          (key, value_json, revision, updated_at)
-          VALUES ('restore-integration', '{"ok":true}'::jsonb, 'integration-revision', clock_timestamp())`);
-      } else {
-        await source.query(`INSERT INTO pintpath_app.system_state
-          (key, value_json, updated_at)
-          VALUES ('restore-integration', '{"ok":true}'::jsonb, clock_timestamp())`);
-      }
-      await source.query(`CREATE ROLE ${BACKUP_LOGIN}
-        LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS
+      await source.query(`INSERT INTO pintpath_app.system_state
+        (key, value_json, revision, updated_at)
+        VALUES ('restore-integration', '{"ok":true}'::jsonb,
+                'integration-revision', clock_timestamp())`);
+
+      await source.query(`CREATE ROLE ${backupLogin}
+        LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS
+        CONNECTION LIMIT 2
         PASSWORD '${BACKUP_PASSWORD}'`);
       backupLoginCreated = true;
-      await source.query(`GRANT pintpath_migrator TO ${BACKUP_LOGIN}`);
-      await source.query(`GRANT EXECUTE ON FUNCTION pg_catalog.pg_control_system() TO ${BACKUP_LOGIN}`);
+      await source.query(`REVOKE ALL ON DATABASE ${SOURCE_DATABASE} FROM ${backupLogin}`);
+      await source.query(`GRANT CONNECT ON DATABASE ${SOURCE_DATABASE} TO ${backupLogin}`);
+      await source.query(`GRANT ${sourceBackupRole} TO ${backupLogin}
+        WITH ADMIN FALSE, INHERIT FALSE, SET TRUE`);
+      await source.query(
+        `GRANT EXECUTE ON FUNCTION pg_catalog.pg_control_system() TO ${backupLogin}`,
+      );
     } finally {
       await source.end();
+      await sibling.end();
     }
-  }, 30_000);
+  }, 60_000);
 
   afterAll(async () => {
     if (root) fs.rmSync(root, { recursive: true, force: true });
-    if (admin) {
-      for (const database of [SOURCE_DATABASE, TARGET_DATABASE]) {
+    if (admin && adminConnected) {
+      for (const database of [SOURCE_DATABASE, SIBLING_DATABASE, TARGET_DATABASE]) {
         await admin.query(
           "SELECT pg_terminate_backend(pid) FROM pg_catalog.pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()",
           [database],
         ).catch(() => undefined);
         await admin.query(`DROP DATABASE IF EXISTS ${database}`).catch(() => undefined);
       }
-      if (backupLoginCreated) {
-        await admin.query(`DROP ROLE IF EXISTS ${BACKUP_LOGIN}`).catch(() => undefined);
+      if (backupLogin && backupLoginCreated) {
+        await admin.query(`DROP ROLE IF EXISTS ${backupLogin}`).catch(() => undefined);
       }
-      if (!runtimeRoleExisted) await admin.query("DROP ROLE IF EXISTS pintpath_runtime").catch(() => undefined);
-      if (!migratorRoleExisted) await admin.query("DROP ROLE IF EXISTS pintpath_migrator").catch(() => undefined);
+      backupLoginCreated = false;
+      if (bootstrapProbeRole) {
+        await admin.query(`DROP ROLE IF EXISTS ${bootstrapProbeRole}`).catch(() => undefined);
+      }
+      for (const role of [sourceBackupRole, siblingBackupRole, targetBackupRole]) {
+        if (role) await admin.query(`DROP ROLE IF EXISTS ${role}`).catch(() => undefined);
+      }
+      if (rolesInspected && !runtimeRoleExisted) {
+        await admin.query("DROP ROLE IF EXISTS pintpath_runtime").catch(() => undefined);
+      }
+      if (rolesInspected && !migratorRoleExisted) {
+        await admin.query("DROP ROLE IF EXISTS pintpath_migrator").catch(() => undefined);
+      }
       await admin.end().catch(() => undefined);
+      adminConnected = false;
     }
-  }, 30_000);
+  }, 60_000);
 
-  it("restores a real PG17 custom archive and verifies the native private schema", async () => {
+  it("restores a portable PG17 archive and reconstructs target-OID backup authority", async () => {
     const sourceAdminUrl = withDatabase(adminUrl, SOURCE_DATABASE);
-    const sourceUrl = withDatabase(adminUrl, SOURCE_DATABASE);
-    sourceUrl.username = BACKUP_LOGIN;
-    sourceUrl.password = BACKUP_PASSWORD;
-    const targetUrl = withDatabase(adminUrl, TARGET_DATABASE);
+    const sourceUrl = withCredentials(sourceAdminUrl, backupLogin, BACKUP_PASSWORD);
+    const restrictedSource = new Client({ connectionString: sourceUrl.toString() });
+    await restrictedSource.connect();
+    try {
+      await expectSqlState(restrictedSource, "SET ROLE pintpath_migrator");
+      await expectSqlState(restrictedSource, "SET ROLE pintpath_runtime");
+      await expectSqlState(restrictedSource, `SET ROLE ${siblingBackupRole}`);
+      await restrictedSource.query(`SET ROLE ${sourceBackupRole}`);
+      const contract = await restrictedSource.query<{
+        currentRole: string;
+        tableCount: number;
+        sequenceCount: number;
+        executableFunctionCount: number;
+      }>(`SELECT
+        current_user AS "currentRole",
+        (SELECT count(*)::integer
+         FROM pg_catalog.pg_class AS relation
+         JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+         WHERE namespace.nspname = ANY(ARRAY['pintpath_app', 'pintpath_ops'])
+           AND relation.relkind IN ('r', 'p')
+           AND pg_catalog.has_table_privilege(current_user, relation.oid, 'SELECT')) AS "tableCount",
+        (SELECT count(*)::integer
+         FROM pg_catalog.pg_class AS relation
+         JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+         WHERE namespace.nspname = ANY(ARRAY['pintpath_app', 'pintpath_ops'])
+           AND relation.relkind = 'S') AS "sequenceCount",
+        (SELECT count(*)::integer
+         FROM pg_catalog.pg_proc AS routine
+         JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = routine.pronamespace
+         WHERE namespace.nspname = ANY(ARRAY['pintpath_app', 'pintpath_ops'])
+           AND pg_catalog.has_function_privilege(current_user, routine.oid, 'EXECUTE'))
+          AS "executableFunctionCount"`);
+      expect(contract.rows).toEqual([{
+        currentRole: sourceBackupRole,
+        tableCount: 59,
+        sequenceCount: 0,
+        executableFunctionCount: 0,
+      }]);
+      await expectSqlState(
+        restrictedSource,
+        "INSERT INTO pintpath_app.schema_metadata (key, value) VALUES ('forbidden', 'write')",
+      );
+      await expectSqlState(restrictedSource, "CREATE TABLE pintpath_app.forbidden_backup_ddl (id integer)");
+      await expectSqlState(restrictedSource, "SELECT pintpath_app.json_valid('{}'::jsonb)");
+    } finally {
+      await restrictedSource.end();
+    }
+
+    const siblingUrl = withCredentials(
+      withDatabase(adminUrl, SIBLING_DATABASE),
+      backupLogin,
+      BACKUP_PASSWORD,
+    );
+    const restrictedSibling = new Client({ connectionString: siblingUrl.toString() });
+    await restrictedSibling.connect();
+    try {
+      await expectSqlState(restrictedSibling, `SET ROLE ${siblingBackupRole}`);
+      await restrictedSibling.query(`SET ROLE ${sourceBackupRole}`);
+      await expectSqlState(restrictedSibling, "SELECT count(*) FROM pintpath_app.accounts");
+      await expectSqlState(
+        restrictedSibling,
+        "INSERT INTO pintpath_app.schema_metadata (key, value) VALUES ('forbidden', 'write')",
+      );
+    } finally {
+      await restrictedSibling.end();
+    }
+
+    const sourcePolicyProbe = new Client({ connectionString: sourceAdminUrl.toString() });
+    await sourcePolicyProbe.connect();
+    try {
+      await sourcePolicyProbe.query(`CREATE POLICY accounts_sibling_bypass
+        ON pintpath_app.accounts AS PERMISSIVE FOR SELECT
+        TO ${siblingBackupRole} USING (true)`);
+    } finally {
+      await sourcePolicyProbe.end();
+    }
+    const driftedBackup = await createLogicalBackup(sourceUrl, sourceAdminUrl, root)
+      .catch((error: unknown) => error as { code?: string });
+    expect(driftedBackup).toMatchObject({ code: "source_unreachable_or_unsafe" });
+    expect(fs.existsSync(path.join(root, "backup"))).toBe(false);
+    const sourcePolicyCleanup = new Client({ connectionString: sourceAdminUrl.toString() });
+    await sourcePolicyCleanup.connect();
+    try {
+      await sourcePolicyCleanup.query(
+        "DROP POLICY accounts_sibling_bypass ON pintpath_app.accounts",
+      );
+    } finally {
+      await sourcePolicyCleanup.end();
+    }
+
     const backup = await createLogicalBackup(sourceUrl, sourceAdminUrl, root);
+    const renderedArchive = await renderArchive(backup.directory);
+    const renderedBackupPolicies = renderedArchive.match(
+      /^CREATE POLICY .*_logical_backup_select ON .* FOR SELECT USING \(\(CURRENT_USER =/gm,
+    );
+    expect(renderedBackupPolicies).toHaveLength(59);
+    expect(renderedBackupPolicies?.every((statement) => !statement.includes(" TO "))).toBe(true);
+    expect(renderedArchive).toContain("pintpath_logical_backup_d'::text");
+    expect(renderedArchive).toContain("current_database()");
+    expect(renderedArchive).not.toContain(sourceBackupRole);
+
+    const source = new Client({ connectionString: sourceAdminUrl.toString() });
+    await source.connect();
+    try {
+      await source.query(`REVOKE EXECUTE ON FUNCTION pg_catalog.pg_control_system() FROM ${backupLogin}`);
+      await source.query(`REVOKE CONNECT ON DATABASE ${SOURCE_DATABASE} FROM ${backupLogin}`);
+      await source.query(`REVOKE ${sourceBackupRole} FROM ${backupLogin}`);
+    } finally {
+      await source.end();
+    }
+    await admin.query(`DROP ROLE ${backupLogin}`);
+    backupLoginCreated = false;
+    await admin.query(
+      "SELECT pg_terminate_backend(pid) FROM pg_catalog.pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()",
+      [SOURCE_DATABASE],
+    );
+    await admin.query(`DROP DATABASE ${SOURCE_DATABASE}`);
+    await admin.query(`DROP ROLE ${sourceBackupRole}`);
+    const absentSourceRoles = await admin.query<{ count: number }>(
+      "SELECT count(*)::integer AS count FROM pg_catalog.pg_roles WHERE rolname = ANY($1::text[])",
+      [[sourceBackupRole, backupLogin]],
+    );
+    expect(absentSourceRoles.rows).toEqual([{ count: 0 }]);
+
+    await admin.query(`CREATE DATABASE ${TARGET_DATABASE}`);
+    await admin.query(
+      `ALTER DATABASE ${TARGET_DATABASE} SET pintpath.logical_restore_target_class TO 'disposable-rehearsal'`,
+    );
+    const targetUrl = withDatabase(adminUrl, TARGET_DATABASE);
+    const targetProbe = new Client({ connectionString: targetUrl.toString() });
+    await targetProbe.connect();
+    try {
+      targetDatabaseOid = await currentDatabaseOid(targetProbe);
+    } finally {
+      await targetProbe.end();
+    }
+    expect(targetDatabaseOid).not.toBe(sourceDatabaseOid);
+    targetBackupRole = scopedBackupRole(targetDatabaseOid);
+    const targetRoleBeforeRestore = await admin.query<{ present: boolean }>(
+      "SELECT pg_catalog.to_regrole($1) IS NOT NULL AS present",
+      [targetBackupRole],
+    );
+    expect(targetRoleBeforeRestore.rows).toEqual([{ present: false }]);
+
     const targetUrlFile = path.join(root, "target-url");
     fs.writeFileSync(targetUrlFile, `${targetUrl.toString()}\n`, { mode: 0o600 });
     fs.chmodSync(targetUrlFile, 0o600);
@@ -232,6 +530,7 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL logical restore rehearsal"
       promotionReconciliationReady: true,
       sourceStateBindingStatus: "exact-match",
     });
+
     const target = new Client({ connectionString: targetUrl.toString() });
     await target.connect();
     try {
@@ -243,9 +542,220 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL logical restore rehearsal"
         SELECT 1 FROM pintpath_app.system_state WHERE key = 'outside-exported-snapshot'
       ) AS present`);
       expect(outside.rows).toEqual([{ present: false }]);
+
+      const policyOnly = await target.query<{
+        groupPresent: boolean;
+        reservedLoginCount: number;
+        privatePolicyCount: number;
+        exactPolicyCount: number;
+        publicPolicyCount: number;
+        reservedPolicyCount: number;
+        unsafePublicPolicyCount: number;
+      }>(`SELECT
+        pg_catalog.to_regrole($1) IS NOT NULL AS "groupPresent",
+        (SELECT count(*)::integer
+         FROM pg_catalog.pg_roles AS role
+         WHERE role.rolname LIKE ($1 || '\\_v%') ESCAPE '\\') AS "reservedLoginCount",
+        (SELECT count(*)::integer
+         FROM pg_catalog.pg_policy AS policy
+         JOIN pg_catalog.pg_class AS relation ON relation.oid = policy.polrelid
+         JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+         WHERE namespace.nspname = ANY(ARRAY['pintpath_app', 'pintpath_ops']))
+          AS "privatePolicyCount",
+        (SELECT count(*)::integer
+         FROM pg_catalog.pg_policy AS policy
+         JOIN pg_catalog.pg_class AS relation ON relation.oid = policy.polrelid
+         JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+         WHERE namespace.nspname = ANY(ARRAY['pintpath_app', 'pintpath_ops'])
+           AND policy.polname = (relation.relname || '_logical_backup_select')::name
+           AND policy.polroles = ARRAY[0]::oid[]
+           AND policy.polcmd = 'r'
+           AND policy.polpermissive
+           AND pg_catalog.pg_get_expr(policy.polqual, policy.polrelid, false) = $2
+           AND policy.polwithcheck IS NULL) AS "exactPolicyCount",
+        (SELECT count(*)::integer
+         FROM pg_catalog.pg_policy AS policy
+         JOIN pg_catalog.pg_class AS relation ON relation.oid = policy.polrelid
+         JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+         WHERE namespace.nspname = ANY(ARRAY['pintpath_app', 'pintpath_ops'])
+           AND 0::oid = ANY(policy.polroles)) AS "publicPolicyCount",
+        (SELECT count(*)::integer
+         FROM pg_catalog.pg_policy AS policy
+         JOIN pg_catalog.pg_class AS relation ON relation.oid = policy.polrelid
+         JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+         WHERE namespace.nspname = ANY(ARRAY['pintpath_app', 'pintpath_ops'])
+           AND policy.polname::text ~ '_logical_backup_select$') AS "reservedPolicyCount",
+        (SELECT count(*)::integer
+         FROM pg_catalog.pg_policy AS policy
+         JOIN pg_catalog.pg_class AS relation ON relation.oid = policy.polrelid
+         JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+         WHERE namespace.nspname = ANY(ARRAY['pintpath_app', 'pintpath_ops'])
+           AND 0::oid = ANY(policy.polroles)
+           AND NOT (
+             policy.polname = (relation.relname || '_logical_backup_select')::name
+             AND policy.polroles = ARRAY[0]::oid[]
+             AND policy.polcmd = 'r'
+             AND policy.polpermissive
+             AND pg_catalog.pg_get_expr(policy.polqual, policy.polrelid, false) = $2
+             AND policy.polwithcheck IS NULL
+           )) AS "unsafePublicPolicyCount"`, [
+        targetBackupRole,
+        LOGICAL_BACKUP_POLICY_EXPRESSION,
+      ]);
+      expect(policyOnly.rows).toEqual([{
+        groupPresent: false,
+        reservedLoginCount: 0,
+        privatePolicyCount: 236,
+        exactPolicyCount: 59,
+        publicPolicyCount: 59,
+        reservedPolicyCount: 59,
+        unsafePublicPolicyCount: 0,
+      }]);
+
+      const targetForwardMigrationSql = fs.readFileSync(FORWARD_MIGRATION_PATH, "utf8");
+      await target.query(`CREATE POLICY accounts_sibling_bypass
+        ON pintpath_app.accounts AS PERMISSIVE FOR SELECT
+        TO ${siblingBackupRole} USING (true)`);
+      await expectSqlState(target, targetForwardMigrationSql, "55000");
+      await target.query("ROLLBACK");
+      await target.query("DROP POLICY accounts_sibling_bypass ON pintpath_app.accounts");
+
+      await target.query(`ALTER POLICY accounts_runtime_all
+        ON pintpath_app.accounts USING (false) WITH CHECK (true)`);
+      await expectSqlState(target, targetForwardMigrationSql, "55000");
+      await target.query("ROLLBACK");
+      await target.query(`ALTER POLICY accounts_runtime_all
+        ON pintpath_app.accounts USING (true) WITH CHECK (true)`);
+
+      await target.query(
+        "DROP POLICY accounts_logical_backup_select ON pintpath_app.accounts",
+      );
+      await expectSqlState(target, targetForwardMigrationSql, "55000");
+      await target.query("ROLLBACK");
+      await target.query(`CREATE POLICY accounts_logical_backup_select
+        ON pintpath_app.accounts AS PERMISSIVE FOR SELECT TO PUBLIC
+        USING (CURRENT_USER = ('pintpath_logical_backup_d' || (
+          SELECT database.oid::text FROM pg_catalog.pg_database AS database
+          WHERE database.datname = pg_catalog.current_database()
+        )))`);
+
+      await target.query(`CREATE POLICY accounts_unexpected_logical_backup_select
+        ON pintpath_app.accounts AS PERMISSIVE FOR SELECT TO PUBLIC USING (true)`);
+      await expectSqlState(target, targetForwardMigrationSql, "55000");
+      await target.query("ROLLBACK");
+      await target.query(
+        "DROP POLICY accounts_unexpected_logical_backup_select ON pintpath_app.accounts",
+      );
+
+      const orphanTargetLogin = `${targetBackupRole}_vprobe`;
+      await target.query(`CREATE ROLE ${orphanTargetLogin}
+        NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS`);
+      await expectSqlState(target, targetForwardMigrationSql, "55000");
+      await target.query("ROLLBACK");
+      await target.query(`DROP ROLE ${orphanTargetLogin}`);
+      const rejectedClassifierWrites = await target.query<{ groupPresent: boolean }>(
+        "SELECT pg_catalog.to_regrole($1) IS NOT NULL AS \"groupPresent\"",
+        [targetBackupRole],
+      );
+      expect(rejectedClassifierWrites.rows).toEqual([{ groupPresent: false }]);
+
+      await target.query(targetForwardMigrationSql);
+      const hardened = await target.query<{
+        childCount: number;
+        parentCount: number;
+        dependencyCount: number;
+        selectableTableCount: number;
+      }>(`SELECT
+        (SELECT count(*)::integer FROM pg_catalog.pg_auth_members AS membership
+         WHERE membership.roleid = role.oid) AS "childCount",
+        (SELECT count(*)::integer FROM pg_catalog.pg_auth_members AS membership
+         WHERE membership.member = role.oid) AS "parentCount",
+        (SELECT count(*)::integer FROM pg_catalog.pg_shdepend AS dependency
+         WHERE dependency.refclassid = 'pg_catalog.pg_authid'::pg_catalog.regclass
+           AND dependency.refobjid = role.oid) AS "dependencyCount",
+        (SELECT count(*)::integer
+         FROM pg_catalog.pg_class AS relation
+         JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+         WHERE namespace.nspname = ANY(ARRAY['pintpath_app', 'pintpath_ops'])
+           AND relation.relkind IN ('r', 'p')
+           AND pg_catalog.has_table_privilege(role.oid, relation.oid, 'SELECT'))
+          AS "selectableTableCount"
+        FROM pg_catalog.pg_roles AS role
+        WHERE role.rolname = $1`, [targetBackupRole]);
+      expect(hardened.rows).toEqual([{
+        childCount: 0,
+        parentCount: 0,
+        dependencyCount: 61,
+        selectableTableCount: 59,
+      }]);
+
+      await target.query(`SET ROLE ${targetBackupRole}`);
+      try {
+        const targetRead = await target.query<{ count: number }>(
+          "SELECT count(*)::integer AS count FROM pintpath_app.system_state",
+        );
+        expect(targetRead.rows).toEqual([{ count: 1 }]);
+        await expectSqlState(
+          target,
+          "INSERT INTO pintpath_app.schema_metadata (key, value) VALUES ('forbidden', 'write')",
+        );
+        await expectSqlState(target, "CREATE TABLE pintpath_app.forbidden_target_ddl (id integer)");
+        await expectSqlState(target, "SELECT pintpath_app.json_valid('{}'::jsonb)");
+      } finally {
+        await target.query("RESET ROLE");
+      }
+
+      await target.query(`CREATE ROLE ${sourceBackupRole}
+        NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS`);
+      await target.query(`CREATE ROLE ${backupLogin}
+        LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS
+        CONNECTION LIMIT 2
+        PASSWORD '${BACKUP_PASSWORD}'`);
+      backupLoginCreated = true;
+      await target.query(`GRANT CONNECT ON DATABASE ${TARGET_DATABASE} TO ${backupLogin}`);
+      await target.query(`GRANT ${sourceBackupRole} TO ${backupLogin}
+        WITH ADMIN FALSE, INHERIT FALSE, SET TRUE`);
+      await target.query(`GRANT USAGE ON SCHEMA pintpath_app, pintpath_ops TO ${sourceBackupRole}`);
+      await target.query(`GRANT SELECT ON TABLE pintpath_app.system_state TO ${sourceBackupRole}`);
     } finally {
       await target.end();
     }
+
+    const oldSourceUrl = withCredentials(targetUrl, backupLogin, BACKUP_PASSWORD);
+    const oldSource = new Client({ connectionString: oldSourceUrl.toString() });
+    await oldSource.connect();
+    try {
+      await expectSqlState(oldSource, `SET ROLE ${targetBackupRole}`);
+      await expectSqlState(oldSource, "SET ROLE pintpath_migrator");
+      await expectSqlState(oldSource, "SET ROLE pintpath_runtime");
+      await oldSource.query(`SET ROLE ${sourceBackupRole}`);
+      const hidden = await oldSource.query<{ count: number }>(
+        "SELECT count(*)::integer AS count FROM pintpath_app.system_state",
+      );
+      expect(hidden.rows).toEqual([{ count: 0 }]);
+      await expectSqlState(
+        oldSource,
+        "INSERT INTO pintpath_app.system_state (key, value_json, revision, updated_at) VALUES ('forbidden', '{}'::jsonb, 'forbidden', clock_timestamp())",
+      );
+    } finally {
+      await oldSource.end();
+    }
+
+    const cleanupTarget = new Client({ connectionString: targetUrl.toString() });
+    await cleanupTarget.connect();
+    try {
+      await cleanupTarget.query(`REVOKE ${sourceBackupRole} FROM ${backupLogin}`);
+      await cleanupTarget.query(`REVOKE CONNECT ON DATABASE ${TARGET_DATABASE} FROM ${backupLogin}`);
+      await cleanupTarget.query(`REVOKE SELECT ON TABLE pintpath_app.system_state FROM ${sourceBackupRole}`);
+      await cleanupTarget.query(`REVOKE USAGE ON SCHEMA pintpath_app, pintpath_ops FROM ${sourceBackupRole}`);
+      await cleanupTarget.query(`DROP ROLE ${backupLogin}`);
+      backupLoginCreated = false;
+      await cleanupTarget.query(`DROP ROLE ${sourceBackupRole}`);
+      await cleanupTarget.query(fs.readFileSync(FORWARD_MIGRATION_PATH, "utf8"));
+    } finally {
+      await cleanupTarget.end();
+    }
+
     expect(fs.statSync(receiptFile).mode & 0o7777).toBe(0o600);
-  }, 120_000);
+  }, 240_000);
 });

@@ -6,6 +6,7 @@ import {
   canonicalPostgresBackupJson,
   createPostgresLogicalBackup,
   PostgresLogicalBackupError,
+  type CreatePostgresLogicalBackupOptions,
   type PostgresLogicalBackupDependencies,
   type PostgresLogicalBackupFailureCode,
   type PostgresLogicalBackupResult,
@@ -29,7 +30,7 @@ export interface PostgresLogicalBackupCliSuccess {
 
 export interface PostgresLogicalBackupCliDependencies {
   createBackup: (
-    options: { connectionFile: string; outputDirectory: string },
+    options: CreatePostgresLogicalBackupOptions,
     overrides?: Partial<PostgresLogicalBackupDependencies>,
   ) => Promise<PostgresLogicalBackupResult>;
   writeOutput: (value: string) => void;
@@ -56,11 +57,12 @@ export async function runPostgresLogicalBackupCli(
   };
   try {
     const argumentsByName = parseStrictArguments(argv, {
-      allowed: new Set(["--connection-file", "--output"]),
-      required: new Set(["--connection-file", "--output"]),
+      allowed: new Set(["--connection-file", "--expected-source-url-sha256", "--output"]),
+      required: new Set(["--connection-file", "--expected-source-url-sha256", "--output"]),
     });
     const result = await dependencies.createBackup({
       connectionFile: argumentsByName.get("--connection-file")!,
+      expectedSourceUrlSha256: argumentsByName.get("--expected-source-url-sha256")!,
       outputDirectory: argumentsByName.get("--output")!,
     });
     const success: PostgresLogicalBackupCliSuccess = {
