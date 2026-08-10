@@ -1,4 +1,6 @@
+import crypto from "node:crypto";
 import fs from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 
@@ -8,6 +10,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { POSTGRES_MIGRATION_CONTRACT } from "../src/db/postgres-migration-contract.js";
 import {
   POSTGRES_LOGICAL_BACKUP_ARCHIVE,
+  POSTGRES_LOGICAL_BACKUP_MANIFEST,
+  createPostgresLogicalBackup,
   runPostgresBackupProcess,
 } from "../src/lib/postgres-logical-backup.js";
 import {
@@ -15,9 +19,23 @@ import {
   inspectPostgresLogicalRestoreTarget,
   restorePostgresLogicalBackup,
 } from "../src/lib/postgres-logical-restore.js";
+import {
+  POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+  openPostgresRailwayStockLocalhostCaTransport,
+} from "../src/lib/postgres-railway-stock-localhost-ca.js";
 
 const ADMIN_URL_ENV = "PINTPATH_POSTGRES_LOGICAL_RESTORE_TEST_ADMIN_URL";
-const configuredAdminUrl = process.env[ADMIN_URL_ENV]?.trim() ?? "";
+const REQUIRED_ENV = "PINTPATH_POSTGRES_LOGICAL_RESTORE_TEST_REQUIRED";
+const ROOT_CA_FILE_ENV = "PINTPATH_POSTGRES_LOGICAL_RESTORE_TEST_ROOT_CA_FILE";
+const ROOT_CA_DER_SHA256_ENV =
+  "PINTPATH_POSTGRES_LOGICAL_RESTORE_TEST_ROOT_CA_DER_SHA256";
+const RESOLVED_ADDRESS_ENV =
+  "PINTPATH_POSTGRES_LOGICAL_RESTORE_TEST_RESOLVED_ADDRESS";
+const PG_DUMP_ENV = "PINTPATH_POSTGRES_LOGICAL_RESTORE_TEST_PG_DUMP";
+const PG_RESTORE_ENV = "PINTPATH_POSTGRES_LOGICAL_RESTORE_TEST_PG_RESTORE";
+const CONFIGURATION_ERROR = "invalid_postgres_logical_restore_test_configuration";
+const BACKUP_SOURCE_HOSTNAME = "pintpath-logical-restore.railway.internal";
+const EXPECTED_POSTGRES_TOOL_VERSION = "17.10 (Ubuntu 17.10-1.pgdg24.04+1)";
 const UNIQUE_SUFFIX = `${process.pid}_${Date.now().toString(36)}`.toLowerCase();
 const SOURCE_DATABASE = `pintpath_lr_source_${UNIQUE_SUFFIX}`;
 const SIBLING_DATABASE = `pintpath_lr_sibling_${UNIQUE_SUFFIX}`;
@@ -34,6 +52,89 @@ const FORWARD_MIGRATION_PATH = path.resolve(
 const LOGICAL_BACKUP_POLICY_EXPRESSION = `(CURRENT_USER = ('pintpath_logical_backup_d'::text || ( SELECT (database.oid)::text AS oid
    FROM pg_database database
   WHERE (database.datname = current_database()))))`;
+
+interface LogicalRestoreTestConfiguration {
+  readonly adminUrl: string;
+  readonly rootCaFile: string;
+  readonly rootCaDerSha256: string;
+  readonly resolvedAddress: string;
+  readonly pgDumpCommand: string;
+  readonly pgRestoreCommand: string;
+}
+
+function configurationError(): Error {
+  return new Error(CONFIGURATION_ERROR);
+}
+
+function readExactEnvironment(name: string): string {
+  const value = process.env[name];
+  if (
+    typeof value !== "string"
+    || !value
+    || value !== value.trim()
+    || value.includes("\0")
+  ) throw configurationError();
+  return value;
+}
+
+function validateExactFilePath(
+  value: string,
+  expectedBasename: string | null,
+  kind: "root-ca" | "postgres-tool",
+): string {
+  if (
+    !path.isAbsolute(value)
+    || path.normalize(value) !== value
+    || path.resolve(value) !== value
+    || (expectedBasename !== null && path.basename(value) !== expectedBasename)
+  ) throw configurationError();
+  try {
+    const stat = fs.lstatSync(value);
+    const currentUid = process.getuid?.();
+    if (
+      stat.isSymbolicLink()
+      || !stat.isFile()
+      || stat.nlink !== 1
+      || fs.realpathSync(value) !== value
+      || !Number.isInteger(currentUid)
+    ) throw configurationError();
+    if (kind === "root-ca") {
+      if (
+        stat.uid !== currentUid
+        || (stat.mode & 0o7777) !== 0o600
+        || stat.size < 1
+        || stat.size > 64 * 1024
+      ) throw configurationError();
+    } else if (
+      (stat.uid !== 0 && stat.uid !== currentUid)
+      || (stat.mode & 0o111) === 0
+      || (stat.mode & 0o022) !== 0
+      || (stat.mode & 0o6000) !== 0
+    ) throw configurationError();
+    if (kind === "postgres-tool") fs.accessSync(value, fs.constants.X_OK);
+  } catch {
+    throw configurationError();
+  }
+  return value;
+}
+
+function validateCanonicalFd12Address(value: string): string {
+  if (value !== value.toLowerCase() || value.includes("%") || net.isIPv6(value) !== true) {
+    throw configurationError();
+  }
+  try {
+    const hostname = new URL(`http://[${value}]/`).hostname;
+    if (
+      !hostname.startsWith("[")
+      || !hostname.endsWith("]")
+      || hostname.slice(1, -1) !== value
+      || value.split(":", 1)[0] !== "fd12"
+    ) throw configurationError();
+  } catch {
+    throw configurationError();
+  }
+  return value;
+}
 
 function validateAdminUrl(value: string): URL {
   let url: URL;
@@ -55,6 +156,63 @@ function validateAdminUrl(value: string): URL {
   return url;
 }
 
+function readTestConfiguration(): LogicalRestoreTestConfiguration | null {
+  const required = process.env[REQUIRED_ENV] ?? "";
+  if (required !== "" && required !== "true") throw configurationError();
+  const adminUrl = process.env[ADMIN_URL_ENV] ?? "";
+  const fixtureNames = [
+    ROOT_CA_FILE_ENV,
+    ROOT_CA_DER_SHA256_ENV,
+    RESOLVED_ADDRESS_ENV,
+    PG_DUMP_ENV,
+    PG_RESTORE_ENV,
+  ] as const;
+  const fixtureConfigured = fixtureNames.some((name) => (process.env[name] ?? "") !== "");
+  if (required === "" && adminUrl === "" && !fixtureConfigured) return null;
+  if (!adminUrl || (required === "true" && !fixtureConfigured)) throw configurationError();
+  try {
+    validateAdminUrl(readExactEnvironment(ADMIN_URL_ENV));
+  } catch {
+    throw configurationError();
+  }
+  const rootCaFile = validateExactFilePath(
+    readExactEnvironment(ROOT_CA_FILE_ENV), null, "root-ca",
+  );
+  const rootCaDerSha256 = readExactEnvironment(ROOT_CA_DER_SHA256_ENV);
+  if (!/^[a-f0-9]{64}$/.test(rootCaDerSha256)) throw configurationError();
+  const pgDumpCommand = validateExactFilePath(
+    readExactEnvironment(PG_DUMP_ENV),
+    "pg_dump",
+    "postgres-tool",
+  );
+  const pgRestoreCommand = validateExactFilePath(
+    readExactEnvironment(PG_RESTORE_ENV),
+    "pg_restore",
+    "postgres-tool",
+  );
+  if (path.dirname(pgDumpCommand) !== path.dirname(pgRestoreCommand)) {
+    throw configurationError();
+  }
+  return Object.freeze({
+    adminUrl,
+    rootCaFile,
+    rootCaDerSha256,
+    resolvedAddress: validateCanonicalFd12Address(
+      readExactEnvironment(RESOLVED_ADDRESS_ENV),
+    ),
+    pgDumpCommand,
+    pgRestoreCommand,
+  });
+}
+
+const testConfiguration = readTestConfiguration();
+const configuredAdminUrl = testConfiguration?.adminUrl ?? "";
+
+function activeTestConfiguration(): LogicalRestoreTestConfiguration {
+  if (!testConfiguration) throw configurationError();
+  return testConfiguration;
+}
+
 function withDatabase(url: URL, database: string): URL {
   const result = new URL(url.toString());
   result.pathname = `/${database}`;
@@ -66,6 +224,29 @@ function withCredentials(url: URL, username: string, password: string): URL {
   result.username = username;
   result.password = password;
   return result;
+}
+
+function asRailwayBackupSourceUrl(loopbackUrl: URL): URL {
+  const result = new URL(loopbackUrl.toString());
+  result.hostname = BACKUP_SOURCE_HOSTNAME;
+  result.port = "5432";
+  result.search = "";
+  result.searchParams.set("sslmode", "verify-full");
+  return result;
+}
+
+function escapePgpassField(value: string): string {
+  return value.replaceAll("\\", "\\\\").replaceAll(":", "\\:");
+}
+
+function expectedPgpassRecord(url: URL): string {
+  return `${[
+    "localhost",
+    url.port || "5432",
+    decodeURIComponent(url.pathname.slice(1)),
+    decodeURIComponent(url.username),
+    decodeURIComponent(url.password),
+  ].map(escapePgpassField).join(":")}\n`;
 }
 
 function scopedBackupRole(databaseOid: string): string {
@@ -101,17 +282,151 @@ async function createLogicalBackup(
   directory: string;
   manifestSha256: string;
 }> {
-  void sourceUrl;
-  void sourceAdminUrl;
-  void root;
-  throw new Error(
-    "The loopback restore harness cannot create a v3 backup without the required Railway localhost-CA transport.",
-  );
+  const configuration = activeTestConfiguration();
+  const directory = path.join(root, "backup");
+  const sourceUrlFile = path.join(root, "source-url");
+  fs.writeFileSync(sourceUrlFile, `${sourceUrl.toString()}\n`, { mode: 0o600 });
+  fs.chmodSync(sourceUrlFile, 0o600);
+  let concurrentWriteCommitted = false;
+  let pgpassPath = "";
+  let transportDirectory = "";
+  let transportRootCaFile = "";
+  try {
+    const result = await createPostgresLogicalBackup({
+      connectionFile: sourceUrlFile,
+      expectedSourceUrlSha256: crypto.createHash("sha256")
+        .update(sourceUrl.toString(), "utf8").digest("hex"),
+      outputDirectory: directory,
+      transportProfile: POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+      rootCaFile: configuration.rootCaFile,
+      expectedRootCaDerSha256: configuration.rootCaDerSha256,
+    }, {
+      env: { ...process.env, NODE_ENV: "test" },
+      pgDumpCommand: configuration.pgDumpCommand,
+      pgRestoreCommand: configuration.pgRestoreCommand,
+      openTransport: async (options) => {
+        if (
+          options.sourceUrlAuthority.hostname !== BACKUP_SOURCE_HOSTNAME
+          || options.sourceUrlAuthority.port !== 5_432
+        ) throw configurationError();
+        const transport = await openPostgresRailwayStockLocalhostCaTransport(options, {
+          resolve6: async (hostname, signal) => {
+            if (hostname !== BACKUP_SOURCE_HOSTNAME || signal.aborted) {
+              throw configurationError();
+            }
+            return Object.freeze([configuration.resolvedAddress]);
+          },
+        });
+        transportDirectory = transport.temporaryDirectory;
+        transportRootCaFile = transport.libpqEnvironment.PGSSLROOTCERT;
+        try {
+          if (
+            transport.profile !== POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE
+            || transport.rootCaDerSha256 !== configuration.rootCaDerSha256
+            || transport.resolvedAddress !== configuration.resolvedAddress
+            || transport.sourceUrlAuthority.hostname !== BACKUP_SOURCE_HOSTNAME
+            || transport.sourceUrlAuthority.port !== 5_432
+            || transport.passwordFileHost !== "localhost"
+            || transportRootCaFile === configuration.rootCaFile
+            || path.dirname(transportRootCaFile) !== transportDirectory
+            || (fs.statSync(transportRootCaFile).mode & 0o7777) !== 0o600
+            || !fs.readFileSync(transportRootCaFile).equals(
+              fs.readFileSync(configuration.rootCaFile),
+            )
+          ) throw new Error("invalid_backup_transport_contract");
+        } catch {
+          await transport.close().catch(() => undefined);
+          throw new Error("invalid_backup_transport_contract");
+        }
+        return transport;
+      },
+      runProcess: async (invocation) => {
+        if (
+          invocation.command !== configuration.pgDumpCommand
+          && invocation.command !== configuration.pgRestoreCommand
+        ) throw configurationError();
+        if (
+          invocation.args[0] === "--version"
+          || invocation.command === configuration.pgRestoreCommand
+        ) {
+          expect(invocation.env.PGPASSFILE).toBeUndefined();
+          if (invocation.env.PGPASSWORD !== undefined) {
+            throw new Error("unsafe_backup_process_environment");
+          }
+          for (const name of [
+            "PGHOST",
+            "PGHOSTADDR",
+            "PGPORT",
+            "PGSSLMODE",
+            "PGSSLROOTCERT",
+            "PGSSLMINPROTOCOLVERSION",
+            "PGSSLSNI",
+          ]) expect(invocation.env[name]).toBeUndefined();
+          if (invocation.command === configuration.pgRestoreCommand && pgpassPath) {
+            expect(fs.existsSync(pgpassPath)).toBe(false);
+          }
+        }
+        if (
+          !concurrentWriteCommitted
+          && invocation.command === configuration.pgDumpCommand
+          && invocation.args[0] !== "--version"
+        ) {
+          pgpassPath = invocation.env.PGPASSFILE ?? "";
+          expect(pgpassPath).not.toBe("");
+          if (invocation.env.PGPASSWORD !== undefined) {
+            throw new Error("unsafe_backup_process_environment");
+          }
+          expect(invocation.env).toMatchObject({
+            PGHOST: "localhost",
+            PGHOSTADDR: configuration.resolvedAddress,
+            PGPORT: "5432",
+            PGSSLMODE: "verify-full",
+            PGSSLROOTCERT: transportRootCaFile,
+            PGSSLMINPROTOCOLVERSION: "TLSv1.2",
+            PGSSLSNI: "1",
+            PGDATABASE: SOURCE_DATABASE,
+            PGUSER: decodeURIComponent(sourceUrl.username),
+            PGGSSENCMODE: "disable",
+          });
+          expect(fs.statSync(pgpassPath).mode & 0o7777).toBe(0o600);
+          expect(fs.statSync(path.dirname(pgpassPath)).mode & 0o7777).toBe(0o700);
+          expect(path.dirname(pgpassPath)).toBe(transportDirectory);
+          const actualPgpass = fs.readFileSync(pgpassPath);
+          const expectedPgpass = Buffer.from(expectedPgpassRecord(sourceUrl), "utf8");
+          const pgpassMatches = actualPgpass.byteLength === expectedPgpass.byteLength
+            && crypto.timingSafeEqual(actualPgpass, expectedPgpass);
+          actualPgpass.fill(0);
+          expectedPgpass.fill(0);
+          if (!pgpassMatches) throw new Error("invalid_backup_password_file_contract");
+          const writer = new Client({ connectionString: sourceAdminUrl.toString() });
+          await writer.connect();
+          try {
+            await writer.query(`INSERT INTO pintpath_app.system_state
+              (key, value_json, revision, updated_at)
+              VALUES ('outside-exported-snapshot', '{"outside":true}'::jsonb,
+                      'outside-snapshot', clock_timestamp())`);
+            concurrentWriteCommitted = true;
+          } finally {
+            await writer.end();
+          }
+        }
+        return runPostgresBackupProcess(invocation);
+      },
+    });
+    if (!concurrentWriteCommitted) throw new Error("concurrent_snapshot_write_not_committed");
+    expect(pgpassPath).not.toBe("");
+    return { directory, manifestSha256: result.manifestSha256 };
+  } finally {
+    if (pgpassPath) expect(fs.existsSync(pgpassPath)).toBe(false);
+    if (transportRootCaFile) expect(fs.existsSync(transportRootCaFile)).toBe(false);
+    if (transportDirectory) expect(fs.existsSync(transportDirectory)).toBe(false);
+  }
 }
 
 async function renderArchive(backupDirectory: string): Promise<string> {
+  const configuration = activeTestConfiguration();
   const result = await runPostgresBackupProcess({
-    command: "pg_restore",
+    command: configuration.pgRestoreCommand,
     args: [
       "--format=custom",
       "--file=-",
@@ -464,11 +779,13 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL logical restore rehearsal"
     }
   }, 120_000);
 
-  // Backup creation is deliberately not downgraded to plaintext loopback. Re-enable
-  // this only with a dedicated TLS fixture that implements the frozen Railway profile.
-  it.skip("restores a portable PG17 archive and reconstructs target-OID backup authority", async () => {
+  it("restores a portable PG17 archive and reconstructs target-OID backup authority", async () => {
     const sourceAdminUrl = withDatabase(adminUrl, SOURCE_DATABASE);
     const sourceUrl = withCredentials(sourceAdminUrl, backupLogin, BACKUP_PASSWORD);
+    const backupSourceUrl = asRailwayBackupSourceUrl(sourceUrl);
+    expect(backupSourceUrl.hostname).toBe(BACKUP_SOURCE_HOSTNAME);
+    expect(backupSourceUrl.port).toBe("5432");
+    expect(backupSourceUrl.searchParams.get("sslmode")).toBe("verify-full");
     const restrictedSource = new Client({ connectionString: sourceUrl.toString() });
     await restrictedSource.connect();
     try {
@@ -544,7 +861,7 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL logical restore rehearsal"
     } finally {
       await sourcePolicyProbe.end();
     }
-    const driftedBackup = await createLogicalBackup(sourceUrl, sourceAdminUrl, root)
+    const driftedBackup = await createLogicalBackup(backupSourceUrl, sourceAdminUrl, root)
       .catch((error: unknown) => error as { code?: string });
     expect(driftedBackup).toMatchObject({ code: "source_unreachable_or_unsafe" });
     expect(fs.existsSync(path.join(root, "backup"))).toBe(false);
@@ -558,7 +875,42 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL logical restore rehearsal"
       await sourcePolicyCleanup.end();
     }
 
-    const backup = await createLogicalBackup(sourceUrl, sourceAdminUrl, root);
+    const backup = await createLogicalBackup(backupSourceUrl, sourceAdminUrl, root);
+    const configuration = activeTestConfiguration();
+    const manifestBytes = fs.readFileSync(
+      path.join(backup.directory, POSTGRES_LOGICAL_BACKUP_MANIFEST),
+      "utf8",
+    );
+    const manifest = JSON.parse(manifestBytes) as {
+      schemaVersion: number;
+      archive: { bytes: number; sha256: string };
+      tools: {
+        pgDump: { name: string; major: number; version: string };
+        pgRestore: { name: string; major: number; version: string };
+      };
+      transport: { profile: string; rootCaCertificateSha256: string };
+    };
+    expect(manifest.schemaVersion).toBe(3);
+    expect(manifest.transport.profile).toBe(POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE);
+    expect(manifest.transport.rootCaCertificateSha256).toBe(configuration.rootCaDerSha256);
+    expect(manifest.tools.pgDump.name).toBe("pg_dump");
+    expect(manifest.tools.pgDump.major).toBe(17);
+    expect(manifest.tools.pgDump.version).toBe(EXPECTED_POSTGRES_TOOL_VERSION);
+    expect(manifest.tools.pgRestore.name).toBe("pg_restore");
+    expect(manifest.tools.pgRestore.major).toBe(17);
+    expect(manifest.tools.pgRestore.version).toBe(EXPECTED_POSTGRES_TOOL_VERSION);
+    if (
+      manifestBytes.includes(BACKUP_SOURCE_HOSTNAME)
+      || manifestBytes.includes(BACKUP_PASSWORD)
+      || manifestBytes.includes(backupLogin)
+    ) throw new Error("backup_manifest_contains_sensitive_authority");
+    const archiveBytes = fs.readFileSync(
+      path.join(backup.directory, POSTGRES_LOGICAL_BACKUP_ARCHIVE),
+    );
+    expect(archiveBytes.subarray(0, 5).toString("ascii")).toBe("PGDMP");
+    expect(archiveBytes.byteLength).toBe(manifest.archive.bytes);
+    expect(crypto.createHash("sha256").update(archiveBytes).digest("hex"))
+      .toBe(manifest.archive.sha256);
     const renderedArchive = await renderArchive(backup.directory);
     const renderedBackupPolicies = renderedArchive.match(
       /^CREATE POLICY .*_logical_backup_select ON .* FOR SELECT USING \(\(CURRENT_USER =/gm,
@@ -615,9 +967,18 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL logical restore rehearsal"
     const targetUrlFile = path.join(root, "target-url");
     fs.writeFileSync(targetUrlFile, `${targetUrl.toString()}\n`, { mode: 0o600 });
     fs.chmodSync(targetUrlFile, 0o600);
+    let restoreProcessCount = 0;
     const dependencyOverrides = {
       env: { ...process.env, NODE_ENV: "test" },
       allowInsecureLoopbackForTests: true,
+      pgRestoreCommand: configuration.pgRestoreCommand,
+      runProcess: async (invocation: Parameters<typeof runPostgresBackupProcess>[0]) => {
+        if (invocation.command !== configuration.pgRestoreCommand) {
+          throw configurationError();
+        }
+        restoreProcessCount += 1;
+        return runPostgresBackupProcess(invocation);
+      },
     } as const;
     const inspection = await inspectPostgresLogicalRestoreTarget(
       { targetUrlFile },
@@ -639,6 +1000,7 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL logical restore rehearsal"
       promotionReconciliationReady: true,
       sourceStateBindingStatus: "exact-match",
     });
+    expect(restoreProcessCount).toBeGreaterThanOrEqual(3);
 
     const target = new Client({ connectionString: targetUrl.toString() });
     await target.connect();

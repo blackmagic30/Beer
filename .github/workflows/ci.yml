@@ -56,8 +56,8 @@ jobs:
         run: npm run test:db:postgres:backup:logical:worm:aws
 
   postgres-migration-integration:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     services:
       postgres:
         image: postgres:17.6-alpine
@@ -218,6 +218,24 @@ jobs:
 
       - name: Run admin account Postgres contract
         run: npx vitest run test/admin-account.repository.integration.test.ts
+
+      - name: Install pinned PostgreSQL 17 logical-backup client
+        run: bash scripts/ci/install-postgresql-client-17
+
+      - name: Configure disposable fd12 PostgreSQL TLS fixture
+        env:
+          PINTPATH_CI_POSTGRES_CONTAINER_ID: ${{ job.services.postgres.id }}
+        run: bash scripts/ci/postgres-logical-restore-tls-fixture setup
+
+      - name: Run mandatory PostgreSQL 17 TLS logical backup and restore
+        env:
+          PINTPATH_POSTGRES_LOGICAL_RESTORE_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+          PINTPATH_POSTGRES_LOGICAL_RESTORE_TEST_REQUIRED: "true"
+        run: npx vitest run test/postgres-logical-restore.integration.test.ts
+
+      - name: Remove disposable PostgreSQL TLS fixture
+        if: always()
+        run: bash scripts/ci/postgres-logical-restore-tls-fixture cleanup
 
   supabase-database:
     runs-on: ubuntu-latest

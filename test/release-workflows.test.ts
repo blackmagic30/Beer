@@ -456,6 +456,156 @@ describe("release workflow contracts", () => {
     expect(migrationStatus).toContain("permanent staging");
   });
 
+  it("requires a pinned PG17 TLS backup-to-restore receipt in isolated CI", () => {
+    const source = workflow("ci.yml");
+    const start = source.indexOf("  postgres-migration-integration:");
+    const end = source.indexOf("\n  supabase-database:", start);
+    const job = source.slice(start, end);
+    const installStep = job.indexOf(
+      "      - name: Install pinned PostgreSQL 17 logical-backup client",
+    );
+    const setupStep = job.indexOf(
+      "      - name: Configure disposable fd12 PostgreSQL TLS fixture",
+    );
+    const testStep = job.indexOf(
+      "      - name: Run mandatory PostgreSQL 17 TLS logical backup and restore",
+    );
+    const cleanupStep = job.indexOf(
+      "      - name: Remove disposable PostgreSQL TLS fixture",
+    );
+    const logicalRestoreSteps = job.slice(installStep);
+    const clientInstaller = repositoryFile("scripts/ci/install-postgresql-client-17");
+    const tlsFixture = repositoryFile(
+      "scripts/ci/postgres-logical-restore-tls-fixture",
+    );
+    const restoreIntegration = repositoryFile(
+      "test/postgres-logical-restore.integration.test.ts",
+    );
+    const initialStateReceipt = tlsFixture.indexOf(
+      'write_state_receipt "$fixture_root" "$network_name" "$network_id" "$container_id" false',
+    );
+    const networkCreation = tlsFixture.indexOf("network_id=$(docker network create");
+    const cleanupFunction = tlsFixture.slice(
+      tlsFixture.indexOf("cleanup_fixture()"),
+      tlsFixture.indexOf("fixture_paths\ncase"),
+    );
+
+    expect(job).toContain("timeout-minutes: 30");
+    expect(job).toContain("runs-on: ubuntu-24.04");
+    expect(installStep).toBeGreaterThan(-1);
+    expect(setupStep).toBeGreaterThan(installStep);
+    expect(testStep).toBeGreaterThan(setupStep);
+    expect(cleanupStep).toBeGreaterThan(testStep);
+    expect(logicalRestoreSteps).toContain(
+      "run: bash scripts/ci/install-postgresql-client-17",
+    );
+    expect(logicalRestoreSteps).toContain(
+      "PINTPATH_CI_POSTGRES_CONTAINER_ID: ${{ job.services.postgres.id }}",
+    );
+    expect(logicalRestoreSteps).toContain(
+      "run: bash scripts/ci/postgres-logical-restore-tls-fixture setup",
+    );
+    expect(logicalRestoreSteps).toContain(
+      'PINTPATH_POSTGRES_LOGICAL_RESTORE_TEST_REQUIRED: "true"',
+    );
+    expect(logicalRestoreSteps).toContain(
+      "PINTPATH_POSTGRES_LOGICAL_RESTORE_TEST_ADMIN_URL:",
+    );
+    expect(logicalRestoreSteps).toContain(
+      "npx vitest run test/postgres-logical-restore.integration.test.ts",
+    );
+    expect(logicalRestoreSteps).toContain("if: always()");
+    expect(logicalRestoreSteps).toContain(
+      "run: bash scripts/ci/postgres-logical-restore-tls-fixture cleanup",
+    );
+    expect(logicalRestoreSteps).not.toContain("continue-on-error");
+    expect(logicalRestoreSteps).not.toContain("secrets.");
+
+    expect(clientInstaller).toContain(
+      'EXPECTED_KEY_SHA256="0144068502a1eddd2a0280ede10ef607d1ec592ce819940991203941564e8e76"',
+    );
+    expect(clientInstaller).toContain(
+      'EXPECTED_PACKAGE_VERSION="17.10-1.pgdg24.04+1"',
+    );
+    expect(clientInstaller).toContain(
+      'EXPECTED_TOOL_VERSION="17.10 (Ubuntu 17.10-1.pgdg24.04+1)"',
+    );
+    expect(clientInstaller).toContain('[[ "${VERSION_CODENAME:-}" == "noble" ]]');
+    expect(clientInstaller).toContain('[[ "$(dpkg --print-architecture)" == "amd64" ]]');
+    expect(clientInstaller).toContain(
+      "/usr/lib/postgresql/17/bin/pg_dump",
+    );
+    expect(clientInstaller).toContain(
+      "/usr/lib/postgresql/17/bin/pg_restore",
+    );
+    expect(clientInstaller).toContain("signed-by=$KEYRING");
+    expect(clientInstaller).toContain('"postgresql-client-17=$EXPECTED_PACKAGE_VERSION"');
+    expect(clientInstaller).toContain("--connect-timeout 15");
+    expect(clientInstaller).toContain("--max-time 60");
+    expect(clientInstaller).toContain(
+      'stat -c \'%u:%g:%a:%h\' "$PG_DUMP"',
+    );
+    expect(clientInstaller).toContain(
+      '"$($PG_DUMP --version)" == "pg_dump (PostgreSQL) $EXPECTED_TOOL_VERSION"',
+    );
+    expect(clientInstaller).toContain(
+      '"$($PG_RESTORE --version)" == "pg_restore (PostgreSQL) $EXPECTED_TOOL_VERSION"',
+    );
+    expect(clientInstaller).not.toContain("set -x");
+
+    expect(tlsFixture).toContain('IPV6_SUBNET="fd12:7069:6e74:7061::/64"');
+    expect(tlsFixture).toContain('IPV6_ADDRESS="fd12:7069:6e74:7061::17"');
+    expect(tlsFixture).toContain("--ipv6");
+    expect(tlsFixture).toContain('--subnet "$IPV6_SUBNET"');
+    expect(tlsFixture).toContain('--ip6 "$IPV6_ADDRESS"');
+    expect(tlsFixture).toContain(
+      '--label "$NETWORK_FIXTURE_LABEL=$NETWORK_FIXTURE_LABEL_VALUE"',
+    );
+    expect(tlsFixture).toContain('"basicConstraints=critical,CA:TRUE"');
+    expect(tlsFixture).toContain('"subjectAltName=DNS:localhost"');
+    expect(tlsFixture).toContain('chmod 0600 "$ca_key" "$ca_cert"');
+    expect(tlsFixture).toContain("ALTER SYSTEM SET ssl = 'on'");
+    expect(tlsFixture).toContain("ALTER SYSTEM RESET $parameter");
+    expect(tlsFixture).toContain('BASELINE_SSL_SETTINGS="off|server.crt|server.key"');
+    expect(tlsFixture).toContain(
+      'write_state_receipt "$fixture_root" "$network_name" "$network_id" "$container_id" false',
+    );
+    expect(tlsFixture).toContain('network_id="pending"');
+    expect(tlsFixture).toContain("restore_ssl_baseline");
+    expect(tlsFixture).toContain("network_names=$(docker network ls");
+    expect(tlsFixture).toContain("container_tls_directory_absent");
+    expect(tlsFixture).toContain("postgres_logical_restore_tls_cleanup_pending");
+    expect(initialStateReceipt).toBeGreaterThan(-1);
+    expect(networkCreation).toBeGreaterThan(initialStateReceipt);
+    expect(cleanupFunction.indexOf('restore_ssl_baseline "$container_id"'))
+      .toBeLessThan(cleanupFunction.indexOf('remove_container_keys "$container_id"'));
+    expect(tlsFixture.match(/rm -f -- "\$state_file"/g)).toHaveLength(1);
+    expect(tlsFixture).not.toContain("cleanup_fixture || true");
+    expect(tlsFixture).not.toContain("if: always()");
+    expect(tlsFixture).toContain("remove_container_keys");
+    expect(tlsFixture).toContain("remove_network");
+    expect(tlsFixture).toContain("remove_host_fixture");
+    expect(tlsFixture).not.toContain("--network host");
+    expect(tlsFixture).not.toContain("set -x");
+
+    expect(restoreIntegration).toContain("createPostgresLogicalBackup({");
+    expect(restoreIntegration).toContain(
+      "openPostgresRailwayStockLocalhostCaTransport(options",
+    );
+    expect(restoreIntegration).toContain(
+      'const REQUIRED_ENV = "PINTPATH_POSTGRES_LOGICAL_RESTORE_TEST_REQUIRED"',
+    );
+    expect(restoreIntegration).toContain(
+      'const EXPECTED_POSTGRES_TOOL_VERSION = "17.10 (Ubuntu 17.10-1.pgdg24.04+1)"',
+    );
+    expect(restoreIntegration).not.toMatch(
+      /it\.skip\(\s*["']restores a portable PG17 archive/,
+    );
+    expect(restoreIntegration).not.toContain(
+      "The loopback restore harness cannot create a v3 backup",
+    );
+  });
+
   it("uses the pinned PostgreSQL 17 client for the staging authentication probe contract", () => {
     const packageJson = JSON.parse(repositoryFile("package.json")) as {
       scripts?: Record<string, string>;
