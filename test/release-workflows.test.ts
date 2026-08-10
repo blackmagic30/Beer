@@ -458,6 +458,9 @@ describe("release workflow contracts", () => {
 
   it("requires a pinned PG17 TLS backup-to-restore receipt in isolated CI", () => {
     const source = workflow("ci.yml");
+    const buildStart = source.indexOf("  build-test-scan:");
+    const buildEnd = source.indexOf("\n  postgres-migration-integration:", buildStart);
+    const requiredBuildJob = source.slice(buildStart, buildEnd);
     const start = source.indexOf("  postgres-migration-integration:");
     const end = source.indexOf("\n  supabase-database:", start);
     const job = source.slice(start, end);
@@ -490,6 +493,18 @@ describe("release workflow contracts", () => {
       tlsFixture.indexOf("fixture_paths\ncase"),
     );
 
+    expect(requiredBuildJob).toContain("needs: postgres-migration-integration");
+    expect(requiredBuildJob).toContain("if: ${{ always() }}");
+    expect(requiredBuildJob).toContain(
+      "POSTGRES_MIGRATION_INTEGRATION_RESULT: ${{ needs.postgres-migration-integration.result }}",
+    );
+    expect(requiredBuildJob).toContain(
+      'if [ "$POSTGRES_MIGRATION_INTEGRATION_RESULT" != "success" ]; then',
+    );
+    expect(requiredBuildJob).toContain("exit 1");
+    expect(requiredBuildJob).not.toContain("continue-on-error");
+    expect(requiredBuildJob.indexOf("POSTGRES_MIGRATION_INTEGRATION_RESULT:"))
+      .toBeLessThan(requiredBuildJob.indexOf("Checkout"));
     expect(job).toContain("timeout-minutes: 30");
     expect(job).toContain("runs-on: ubuntu-24.04");
     expect(installStep).toBeGreaterThan(-1);
