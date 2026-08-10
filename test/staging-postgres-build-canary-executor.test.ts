@@ -24,6 +24,34 @@ function sha256(source: string): string {
   return crypto.createHash("sha256").update(source, "utf8").digest("hex");
 }
 
+function rejectOnAbort(signal: AbortSignal): Promise<never> {
+  return new Promise((_resolve, reject) => {
+    const abort = () => reject(new Error("dependency_aborted"));
+    if (signal.aborted) {
+      abort();
+      return;
+    }
+    signal.addEventListener("abort", abort, { once: true });
+  });
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, reject, resolve };
+}
+
+async function awaitAbort(signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return;
+  await new Promise<void>((resolve) => {
+    signal.addEventListener("abort", () => resolve(), { once: true });
+  });
+}
+
 function durable(source: string) {
   return {
     publication: "created-durable" as const,
@@ -373,6 +401,39 @@ describe("staging Postgres build-canary executor", () => {
     expect(calls).not.toContain("upload");
   });
 
+  it.each([
+    "deploymentInventoryIds",
+    "domainIds",
+    "tcpProxyIds",
+    "volumeIds",
+    "activeDeploymentIds",
+    "preDeployCommands",
+    "watchPatterns",
+    "variableNames",
+  ] as const)("rejects an array-shaped object for %s", async (field) => {
+    const fakeArray = Object.assign(Object.create(null) as Record<string, unknown>, {
+      hidden: "unvalidated-resource",
+      length: 0,
+    });
+    const { calls, dependencies } = harness({
+      preflight: async () => {
+        calls.push("preflight");
+        return {
+          ...exactPreflight(),
+          [field]: fakeArray,
+        } as unknown as StagingPostgresBuildCanaryBoundarySnapshot;
+      },
+    });
+
+    const receipt = await stagingPostgresBuildCanaryExecutorInternals.executeEnabled(
+      dependencies,
+    );
+    expect(receipt.outcome).toBe("failed");
+    expect(receipt.checks.boundaryPreflightExact).toBe(false);
+    expect(receipt.checks.writeAttempted).toBe(false);
+    expect(calls).not.toContain("upload");
+  });
+
   it("does not write when durable intent identity is unproven", async () => {
     const { calls, dependencies } = harness({
       persistIntent: async () => {
@@ -473,6 +534,26 @@ describe("staging Postgres build-canary executor", () => {
     expect(JSON.stringify(receipt)).not.toContain("untrusted path detail");
   });
 
+  it.each([
+    ["false", false],
+    ["zero", 0],
+    ["an empty string", ""],
+  ])("does not treat %s as an absent durable intent", async (_label, value) => {
+    const { calls, dependencies } = harness({
+      inspectIntent: async () => value as unknown as null,
+    });
+    const receipt = await stagingPostgresBuildCanaryExecutorInternals.executeEnabled(
+      dependencies,
+    );
+    expect(receipt.outcome).toBe("mutation_uncertain");
+    expect(receipt.checks.durableIntentExact).toBe(false);
+    expect(receipt.checks.writeAttempted).toBe(false);
+    expect(calls).not.toContain("preflight");
+    expect(calls).not.toContain("intent");
+    expect(calls).not.toContain("upload");
+    expect(calls).toContain("postflight:null");
+  });
+
   it("does not replay when another process wins the intent publication race", async () => {
     const { calls, dependencies } = harness({
       persistIntent: async (source) => ({
@@ -508,6 +589,66 @@ describe("staging Postgres build-canary executor", () => {
     expect(receipt.outcome).toBe("failed");
     expect(receipt.checks.localAuthorityReasserted).toBe(false);
     expect(calls).not.toContain("upload");
+  });
+
+  it("rejects accessor-backed local authority without invoking or leaking it", async () => {
+    const raw = "raw-local-authority-/tmp/secret";
+    const local = exactLocal();
+    const getter = vi.fn(() => {
+      throw new Error(raw);
+    });
+    Object.defineProperty(local, "sourceManifestSha256", {
+      configurable: true,
+      enumerable: true,
+      get: getter,
+    });
+    const { calls, dependencies } = harness({
+      inspectLocalAuthority: async () => local,
+    });
+
+    const receipt = await stagingPostgresBuildCanaryExecutorInternals.executeEnabled(
+      dependencies,
+    );
+    expect(receipt.outcome).toBe("failed");
+    expect(receipt.checks.localPreflightExact).toBe(false);
+    expect(calls).not.toContain("preflight");
+    expect(calls).not.toContain("upload");
+    expect(getter).not.toHaveBeenCalled();
+    expect(JSON.stringify(receipt)).not.toContain(raw);
+  });
+
+  it("rejects accessor descriptors when Object.prototype.value is polluted", () => {
+    const local = exactLocal();
+    const getter = vi.fn(() => "0".repeat(64));
+    Object.defineProperty(local, "sourceManifestSha256", {
+      configurable: true,
+      enumerable: true,
+      get: getter,
+    });
+    const prior = Object.getOwnPropertyDescriptor(Object.prototype, "value");
+    let rejected = false;
+    try {
+      Object.defineProperty(Object.prototype, "value", {
+        configurable: true,
+        enumerable: false,
+        writable: true,
+        value: STAGING_POSTGRES_BUILD_CANARY_EXECUTOR_LOCK
+          .expectedSourceManifestSha256,
+      });
+      try {
+        stagingPostgresBuildCanaryExecutorInternals.snapshotDependencyResult(local);
+      } catch {
+        rejected = true;
+      }
+    } finally {
+      if (prior) {
+        Object.defineProperty(Object.prototype, "value", prior);
+      } else {
+        delete (Object.prototype as { value?: unknown }).value;
+      }
+    }
+    expect(rejected).toBe(true);
+    expect(getter).not.toHaveBeenCalled();
   });
 
   it("reasserts the full boundary immediately before writing", async () => {
@@ -595,6 +736,139 @@ describe("staging Postgres build-canary executor", () => {
     expect(calls.filter((call) => call === "upload")).toHaveLength(1);
   });
 
+  it("does not coerce a non-string acknowledgement ID", async () => {
+    const { calls, dependencies } = harness({
+      uploadExactlyOnce: async () => {
+        calls.push("upload");
+        return {
+          deploymentId: 111_111 as unknown as string,
+        };
+      },
+    });
+    const receipt = await stagingPostgresBuildCanaryExecutorInternals.executeEnabled(
+      dependencies,
+    );
+    expect(receipt.outcome).toBe("mutation_uncertain");
+    expect(receipt.deploymentId).toBeNull();
+    expect(receipt.checks.acknowledgementExact).toBe(false);
+    expect(calls.filter((call) => call === "upload")).toHaveLength(1);
+  });
+
+  it("cannot pass with a stateful acknowledgement getter", async () => {
+    let reads = 0;
+    const acknowledgement = {} as { deploymentId: string };
+    Object.defineProperty(acknowledgement, "deploymentId", {
+      configurable: true,
+      enumerable: true,
+      get: () => {
+        reads += 1;
+        return reads === 1 ? DEPLOYMENT_ID : RECONCILIATION_DEPLOYMENT_ID;
+      },
+    });
+    const { calls, dependencies } = harness({
+      uploadExactlyOnce: async () => {
+        calls.push("upload");
+        return acknowledgement;
+      },
+      postflight: async () => ({
+        ...exactPostflight(),
+        deploymentId: RECONCILIATION_DEPLOYMENT_ID,
+        latestDeploymentId: RECONCILIATION_DEPLOYMENT_ID,
+        deploymentInventoryIds: [RECONCILIATION_DEPLOYMENT_ID],
+      }),
+    });
+
+    const receipt = await stagingPostgresBuildCanaryExecutorInternals.executeEnabled(
+      dependencies,
+    );
+    expect(receipt.outcome).toBe("mutation_uncertain");
+    expect(receipt.deploymentId).toBeNull();
+    expect(receipt.checks.acknowledgementExact).toBe(false);
+    expect(reads).toBe(0);
+    expect(calls.filter((call) => call === "upload")).toHaveLength(1);
+  });
+
+  it("rejects accessor-backed durable evidence before any upload", async () => {
+    const raw = "raw-durable-evidence-secret";
+    const getter = vi.fn(() => {
+      throw new Error(raw);
+    });
+    const { calls, dependencies } = harness({
+      persistIntent: async (source) => {
+        const result = durable(source);
+        Object.defineProperty(result, "sha256", {
+          configurable: true,
+          enumerable: true,
+          get: getter,
+        });
+        return result;
+      },
+    });
+
+    const receipt = await stagingPostgresBuildCanaryExecutorInternals.executeEnabled(
+      dependencies,
+    );
+    expect(receipt.outcome).toBe("mutation_uncertain");
+    expect(receipt.checks.durableIntentExact).toBe(false);
+    expect(receipt.checks.writeAttempted).toBe(false);
+    expect(calls).not.toContain("upload");
+    expect(getter).not.toHaveBeenCalled();
+    expect(JSON.stringify(receipt)).not.toContain(raw);
+  });
+
+  it("contains a throwing recovery postflight and still finalizes fixed evidence", async () => {
+    const raw = "raw-postflight-secret-/tmp/evidence";
+    let localReads = 0;
+    let persisted = "";
+    const throwingPostflight = new Proxy(
+      {} as StagingPostgresBuildCanaryPostflight,
+      {
+        get: (_target, property) => {
+          if (property === "then") return undefined;
+          throw new Error(raw);
+        },
+      },
+    );
+    const { calls, dependencies } = harness({
+      inspectLocalAuthority: async () => {
+        calls.push("local");
+        localReads += 1;
+        if (localReads > 1) throw new Error("raw local drift detail");
+        return exactLocal();
+      },
+      inspectIntent: async (source) => ({
+        ...durable(source),
+        publication: "existing-exact",
+        exclusiveCreate: false,
+      }),
+      postflight: async () => throwingPostflight,
+      persistTerminalEvidence: async (source) => {
+        calls.push("terminal");
+        persisted = source;
+        return durable(source);
+      },
+    });
+
+    const receipt = await stagingPostgresBuildCanaryExecutorInternals.executeEnabled(
+      dependencies,
+    );
+    expect(receipt.outcome).toBe("mutation_uncertain");
+    expect(receipt.deploymentId).toBeNull();
+    expect(receipt.reconciliationDeploymentId).toBeNull();
+    expect(receipt.childAuthority).toBeNull();
+    expect(receipt.checks.postflightAttempted).toBe(true);
+    expect(receipt.checks.boundaryPostflightExact).toBe(false);
+    expect(receipt.checks.targetPostflightExact).toBe(false);
+    expect(receipt.checks.cleanupExact).toBe(true);
+    expect(receipt.checks.finalizationExact).toBe(true);
+    expect(receipt.terminalEvidenceSha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(calls).not.toContain("upload");
+    expect(calls.slice(-3)).toEqual(["cleanup", "terminal", "finalize"]);
+    expect(JSON.stringify(receipt)).not.toContain(raw);
+    expect(persisted).not.toContain(raw);
+    expect(persisted).not.toContain("raw local drift detail");
+  });
+
   it("retains an exact reconciliation candidate when acknowledgement is absent", async () => {
     const { dependencies } = harness({
       uploadExactlyOnce: async () => ({
@@ -610,6 +884,50 @@ describe("staging Postgres build-canary executor", () => {
     expect(receipt.checks.acknowledgementExact).toBe(false);
     expect(receipt.checks.targetPostflightExact).toBe(true);
     expect(receipt.childAuthority).not.toBeNull();
+  });
+
+  it("rejects an array-shaped postflight deployment inventory", async () => {
+    const fakeInventory = Object.assign(
+      Object.create(null) as Record<string, unknown>,
+      {
+        0: DEPLOYMENT_ID,
+        hidden: "second-deployment",
+        length: 1,
+      },
+    );
+    const { dependencies } = harness({
+      postflight: async () => ({
+        ...exactPostflight(),
+        deploymentInventoryIds: fakeInventory,
+      } as unknown as StagingPostgresBuildCanaryPostflight),
+    });
+    const receipt = await stagingPostgresBuildCanaryExecutorInternals.executeEnabled(
+      dependencies,
+    );
+    expect(receipt.outcome).toBe("mutation_uncertain");
+    expect(receipt.checks.boundaryPostflightExact).toBe(false);
+    expect(receipt.checks.targetPostflightExact).toBe(false);
+    expect(receipt.childAuthority).toBeNull();
+  });
+
+  it("rejects an array-shaped postflight active-deployment inventory", async () => {
+    const fakeActive = Object.assign(
+      Object.create(null) as Record<string, unknown>,
+      { hidden: "active-deployment", length: 0 },
+    );
+    const { dependencies } = harness({
+      postflight: async () => ({
+        ...exactPostflight(),
+        activeDeploymentIds: fakeActive,
+      } as unknown as StagingPostgresBuildCanaryPostflight),
+    });
+    const receipt = await stagingPostgresBuildCanaryExecutorInternals.executeEnabled(
+      dependencies,
+    );
+    expect(receipt.outcome).toBe("mutation_uncertain");
+    expect(receipt.checks.boundaryPostflightExact).toBe(true);
+    expect(receipt.checks.targetPostflightExact).toBe(false);
+    expect(receipt.childAuthority).toBeNull();
   });
 
   it("rejects a non-UUID postflight discovery without retaining child authority", async () => {
@@ -797,7 +1115,7 @@ describe("staging Postgres build-canary executor", () => {
     vi.useFakeTimers();
     try {
       const { calls, dependencies } = harness({
-        postflight: async () => await new Promise(() => undefined),
+        postflight: async (_deploymentId, signal) => await rejectOnAbort(signal),
       });
       const pending = stagingPostgresBuildCanaryExecutorInternals.executeEnabled(
         dependencies,
@@ -822,7 +1140,7 @@ describe("staging Postgres build-canary executor", () => {
         uploadExactlyOnce: async (_intent, uploadSignal) => {
           calls.push("upload");
           signal = uploadSignal;
-          return await new Promise(() => undefined);
+          return await rejectOnAbort(uploadSignal);
         },
       });
       const pending = stagingPostgresBuildCanaryExecutorInternals.executeEnabled(
@@ -846,7 +1164,7 @@ describe("staging Postgres build-canary executor", () => {
     vi.useFakeTimers();
     try {
       const { dependencies } = harness({
-        cleanup: async () => await new Promise(() => undefined),
+        cleanup: async (signal) => await rejectOnAbort(signal),
       });
       const pending = stagingPostgresBuildCanaryExecutorInternals.executeEnabled(
         dependencies,
@@ -866,7 +1184,9 @@ describe("staging Postgres build-canary executor", () => {
     vi.useFakeTimers();
     try {
       const { dependencies } = harness({
-        persistTerminalEvidence: async () => await new Promise(() => undefined),
+        persistTerminalEvidence: async (_source, signal) => {
+          return await rejectOnAbort(signal);
+        },
       });
       const pending = stagingPostgresBuildCanaryExecutorInternals.executeEnabled(
         dependencies,
@@ -891,7 +1211,7 @@ describe("staging Postgres build-canary executor", () => {
         finalize: async (finalizeSignal) => {
           calls.push("finalize");
           signal = finalizeSignal;
-          return await new Promise(() => undefined);
+          return await rejectOnAbort(finalizeSignal);
         },
       });
       const pending = stagingPostgresBuildCanaryExecutorInternals.executeEnabled(
@@ -916,10 +1236,255 @@ describe("staging Postgres build-canary executor", () => {
     await expect(
       stagingPostgresBuildCanaryExecutorInternals.withDeadline(
         10,
-        async () => await new Promise(() => undefined),
+        async (signal) => await rejectOnAbort(signal),
       ),
     ).rejects.toThrow("operation_timeout");
     expect(Date.now() - started).toBeGreaterThanOrEqual(5);
+  });
+
+  it("does not advance after a deadline until the aborted operation settles", async () => {
+    vi.useFakeTimers();
+    try {
+      let uploadSignal: AbortSignal | null = null;
+      let releaseUpload: (() => void) | null = null;
+      const uploadRelease = new Promise<void>((resolve) => {
+        releaseUpload = resolve;
+      });
+      const { calls, dependencies } = harness({
+        uploadExactlyOnce: async (_intent, signal) => {
+          calls.push("upload");
+          uploadSignal = signal;
+          await new Promise<void>((resolve) => {
+            if (signal.aborted) {
+              resolve();
+              return;
+            }
+            signal.addEventListener("abort", () => resolve(), { once: true });
+          });
+          await uploadRelease;
+          return { deploymentId: DEPLOYMENT_ID };
+        },
+      });
+      let executorSettled = false;
+      const pending = stagingPostgresBuildCanaryExecutorInternals.executeEnabled(
+        dependencies,
+      ).finally(() => {
+        executorSettled = true;
+      });
+
+      await vi.advanceTimersByTimeAsync(
+        STAGING_POSTGRES_BUILD_CANARY_DEADLINES.uploadMs,
+      );
+      await Promise.resolve();
+      expect(uploadSignal?.aborted).toBe(true);
+      expect(executorSettled).toBe(false);
+      expect(calls).not.toContain("postflight:null");
+      expect(calls).not.toContain("cleanup");
+
+      releaseUpload?.();
+      const receipt = await pending;
+      expect(receipt.outcome).toBe("mutation_uncertain");
+      expect(receipt.checks.acknowledgementExact).toBe(false);
+      expect(calls).toContain("postflight:null");
+      expect(calls).toContain("cleanup");
+      expect(calls.filter((call) => call === "upload")).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not reassert or postflight until a timed-out intent write settles", async () => {
+    vi.useFakeTimers();
+    try {
+      const release = deferred<ReturnType<typeof durable>>();
+      let persistedSource = "";
+      let persistSignal: AbortSignal | null = null;
+      const { calls, dependencies } = harness({
+        persistIntent: async (source, signal) => {
+          calls.push("intent");
+          persistedSource = source;
+          persistSignal = signal;
+          await awaitAbort(signal);
+          return await release.promise;
+        },
+      });
+      let settled = false;
+      const pending = stagingPostgresBuildCanaryExecutorInternals.executeEnabled(
+        dependencies,
+      ).finally(() => {
+        settled = true;
+      });
+
+      await vi.advanceTimersByTimeAsync(
+        STAGING_POSTGRES_BUILD_CANARY_DEADLINES.durableEvidenceMs,
+      );
+      expect(persistSignal?.aborted).toBe(true);
+      expect(settled).toBe(false);
+      expect(calls.filter((call) => call === "local")).toHaveLength(1);
+      expect(calls).not.toContain("postflight:null");
+      expect(calls).not.toContain("cleanup");
+
+      release.resolve(durable(persistedSource));
+      const receipt = await pending;
+      expect(receipt.outcome).toBe("mutation_uncertain");
+      expect(receipt.checks.durableIntentExact).toBe(false);
+      expect(receipt.checks.writeAttempted).toBe(false);
+      expect(calls).toContain("postflight:null");
+      expect(calls).toContain("cleanup");
+      expect(calls).not.toContain("upload");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not clean up until a timed-out postflight settles", async () => {
+    vi.useFakeTimers();
+    try {
+      const release = deferred<StagingPostgresBuildCanaryPostflight>();
+      let postflightSignal: AbortSignal | null = null;
+      const { calls, dependencies } = harness({
+        postflight: async (deploymentId, signal) => {
+          calls.push(`postflight:${deploymentId ?? "null"}`);
+          postflightSignal = signal;
+          await awaitAbort(signal);
+          return await release.promise;
+        },
+      });
+      let settled = false;
+      const pending = stagingPostgresBuildCanaryExecutorInternals.executeEnabled(
+        dependencies,
+      ).finally(() => {
+        settled = true;
+      });
+
+      await vi.advanceTimersByTimeAsync(
+        STAGING_POSTGRES_BUILD_CANARY_DEADLINES.postflightMs,
+      );
+      expect(postflightSignal?.aborted).toBe(true);
+      expect(settled).toBe(false);
+      expect(calls).not.toContain("cleanup");
+
+      release.resolve(exactPostflight());
+      const receipt = await pending;
+      expect(receipt.outcome).toBe("mutation_uncertain");
+      expect(receipt.checks.boundaryPostflightExact).toBe(false);
+      expect(receipt.checks.targetPostflightExact).toBe(false);
+      expect(calls).toContain("cleanup");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not persist terminal evidence until timed-out cleanup settles", async () => {
+    vi.useFakeTimers();
+    try {
+      const release = deferred<boolean>();
+      let cleanupSignal: AbortSignal | null = null;
+      const { calls, dependencies } = harness({
+        cleanup: async (signal) => {
+          calls.push("cleanup");
+          cleanupSignal = signal;
+          await awaitAbort(signal);
+          return await release.promise;
+        },
+      });
+      let settled = false;
+      const pending = stagingPostgresBuildCanaryExecutorInternals.executeEnabled(
+        dependencies,
+      ).finally(() => {
+        settled = true;
+      });
+
+      await vi.advanceTimersByTimeAsync(
+        STAGING_POSTGRES_BUILD_CANARY_DEADLINES.cleanupMs,
+      );
+      expect(cleanupSignal?.aborted).toBe(true);
+      expect(settled).toBe(false);
+      expect(calls).not.toContain("terminal");
+      expect(calls).not.toContain("finalize");
+
+      release.resolve(true);
+      const receipt = await pending;
+      expect(receipt.outcome).toBe("cleanup_failed");
+      expect(receipt.checks.cleanupExact).toBe(false);
+      expect(calls.slice(-3)).toEqual(["cleanup", "terminal", "finalize"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not finalize until a timed-out terminal write settles", async () => {
+    vi.useFakeTimers();
+    try {
+      const release = deferred<ReturnType<typeof durable>>();
+      let terminalSource = "";
+      let terminalSignal: AbortSignal | null = null;
+      const { calls, dependencies } = harness({
+        persistTerminalEvidence: async (source, signal) => {
+          calls.push("terminal");
+          terminalSource = source;
+          terminalSignal = signal;
+          await awaitAbort(signal);
+          return await release.promise;
+        },
+      });
+      let settled = false;
+      const pending = stagingPostgresBuildCanaryExecutorInternals.executeEnabled(
+        dependencies,
+      ).finally(() => {
+        settled = true;
+      });
+
+      await vi.advanceTimersByTimeAsync(
+        STAGING_POSTGRES_BUILD_CANARY_DEADLINES.durableEvidenceMs,
+      );
+      expect(terminalSignal?.aborted).toBe(true);
+      expect(settled).toBe(false);
+      expect(calls).not.toContain("finalize");
+
+      release.resolve(durable(terminalSource));
+      const receipt = await pending;
+      expect(receipt.outcome).toBe("mutation_uncertain");
+      expect(receipt.terminalEvidenceSha256).toBeNull();
+      expect(receipt.checks.finalizationExact).toBe(true);
+      expect(calls.at(-1)).toBe("finalize");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not return until timed-out finalization settles", async () => {
+    vi.useFakeTimers();
+    try {
+      const release = deferred<boolean>();
+      let finalizationSignal: AbortSignal | null = null;
+      const { dependencies } = harness({
+        finalize: async (signal) => {
+          finalizationSignal = signal;
+          await awaitAbort(signal);
+          return await release.promise;
+        },
+      });
+      let settled = false;
+      const pending = stagingPostgresBuildCanaryExecutorInternals.executeEnabled(
+        dependencies,
+      ).finally(() => {
+        settled = true;
+      });
+
+      await vi.advanceTimersByTimeAsync(
+        STAGING_POSTGRES_BUILD_CANARY_DEADLINES.finalizationMs,
+      );
+      expect(finalizationSignal?.aborted).toBe(true);
+      expect(settled).toBe(false);
+
+      release.resolve(true);
+      const receipt = await pending;
+      expect(receipt.outcome).toBe("cleanup_failed");
+      expect(receipt.checks.finalizationExact).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
 });

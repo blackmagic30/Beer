@@ -275,21 +275,120 @@ function sha256(value: string): string {
   return crypto.createHash("sha256").update(value, "utf8").digest("hex");
 }
 
+const MAX_DEPENDENCY_SNAPSHOT_DEPTH = 8;
+const MAX_DEPENDENCY_SNAPSHOT_NODES = 4_096;
+const MAX_DEPENDENCY_ARRAY_LENGTH = 2_048;
+const MAX_DEPENDENCY_OBJECT_KEYS = 512;
+const MAX_DEPENDENCY_STRING_BYTES = 64 * 1_024;
+
+function snapshotDependencyResult<T>(input: T): T {
+  let nodes = 0;
+  const seen = new Set<object>();
+  const snapshot = (value: unknown, depth: number): unknown => {
+    nodes += 1;
+    if (
+      nodes > MAX_DEPENDENCY_SNAPSHOT_NODES
+      || depth > MAX_DEPENDENCY_SNAPSHOT_DEPTH
+    ) throw new Error("dependency_result_invalid");
+    if (value === null || typeof value === "boolean") return value;
+    if (typeof value === "string") {
+      if (Buffer.byteLength(value, "utf8") > MAX_DEPENDENCY_STRING_BYTES) {
+        throw new Error("dependency_result_invalid");
+      }
+      return value;
+    }
+    if (typeof value === "number") {
+      if (!Number.isFinite(value)) throw new Error("dependency_result_invalid");
+      return value;
+    }
+    if (typeof value !== "object" || seen.has(value)) {
+      throw new Error("dependency_result_invalid");
+    }
+    seen.add(value);
+    const prototype = Object.getPrototypeOf(value);
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    const keys = Reflect.ownKeys(descriptors);
+    if (Array.isArray(value)) {
+      if (prototype !== Array.prototype) throw new Error("dependency_result_invalid");
+      const lengthDescriptor = descriptors.length;
+      if (
+        !lengthDescriptor
+        || !Object.hasOwn(lengthDescriptor, "value")
+        || !Number.isSafeInteger(lengthDescriptor.value)
+        || lengthDescriptor.value < 0
+        || lengthDescriptor.value > MAX_DEPENDENCY_ARRAY_LENGTH
+        || keys.length !== lengthDescriptor.value + 1
+      ) throw new Error("dependency_result_invalid");
+      const output: unknown[] = [];
+      for (let index = 0; index < lengthDescriptor.value; index += 1) {
+        const descriptor = descriptors[String(index)];
+        if (
+          !descriptor
+          || !Object.hasOwn(descriptor, "value")
+          || !descriptor.enumerable
+        ) {
+          throw new Error("dependency_result_invalid");
+        }
+        output.push(snapshot(descriptor.value, depth + 1));
+      }
+      if (keys.some((key) =>
+        typeof key !== "string"
+        || key !== "length" && !/^(?:0|[1-9][0-9]*)$/.test(key)
+      )) throw new Error("dependency_result_invalid");
+      return Object.freeze(output);
+    }
+    if (
+      prototype !== Object.prototype
+      && prototype !== null
+      || keys.length > MAX_DEPENDENCY_OBJECT_KEYS
+      || keys.some((key) => typeof key !== "string")
+    ) throw new Error("dependency_result_invalid");
+    const output = Object.create(null) as Record<string, unknown>;
+    for (const key of keys as string[]) {
+      const descriptor = descriptors[key];
+      if (
+        !descriptor
+        || !Object.hasOwn(descriptor, "value")
+        || !descriptor.enumerable
+      ) {
+        throw new Error("dependency_result_invalid");
+      }
+      Object.defineProperty(output, key, {
+        configurable: false,
+        enumerable: true,
+        writable: false,
+        value: snapshot(descriptor.value, depth + 1),
+      });
+    }
+    return Object.freeze(output);
+  };
+  return snapshot(input, 0) as T;
+}
+
 async function withDeadline<T>(
   timeoutMs: number,
   operation: (signal: AbortSignal) => Promise<T>,
 ): Promise<T> {
   const controller = new AbortController();
+  let timedOut = false;
   let timeout: ReturnType<typeof setTimeout> | null = null;
-  const deadline = new Promise<never>((_resolve, reject) => {
-    timeout = setTimeout(() => {
-      controller.abort();
-      reject(new Error("operation_timeout"));
-    }, timeoutMs);
-  });
+  timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
   try {
-    const running = Promise.resolve().then(() => operation(controller.signal));
-    return await Promise.race([running, deadline]);
+    // A deadline requests cancellation; it never authorizes the next phase to
+    // overlap an operation that may still be mutating external or durable
+    // state. A non-cooperative dependency therefore fail-stops this executor.
+    let result: T;
+    try {
+      result = await Promise.resolve().then(() => operation(controller.signal));
+    } catch (error) {
+      if (timedOut) throw new Error("operation_timeout");
+      throw error;
+    }
+    if (timedOut) throw new Error("operation_timeout");
+    return result;
   } finally {
     if (timeout) clearTimeout(timeout);
   }
@@ -318,11 +417,23 @@ function durableArtifactExact(
 }
 
 function exactStringArray(
-  actual: readonly string[],
+  actual: unknown,
   expected: readonly string[],
 ): boolean {
-  return actual.length === expected.length
+  return Array.isArray(actual)
+    && actual.length === expected.length
     && expected.every((value, index) => actual[index] === value);
+}
+
+function exactEmptyArray(actual: unknown): boolean {
+  return Array.isArray(actual) && actual.length === 0;
+}
+
+function exactSingleStringArray(actual: unknown, expected: unknown): boolean {
+  return typeof expected === "string"
+    && Array.isArray(actual)
+    && actual.length === 1
+    && actual[0] === expected;
 }
 
 function targetConfigurationExact(
@@ -332,9 +443,9 @@ function targetConfigurationExact(
   return snapshot.serviceName === lock.serviceName
     && snapshot.railwayConfigPath === lock.railwayConfigPath
     && snapshot.inventoriesComplete === true
-    && snapshot.domainIds.length === 0
-    && snapshot.tcpProxyIds.length === 0
-    && snapshot.volumeIds.length === 0
+    && exactEmptyArray(snapshot.domainIds)
+    && exactEmptyArray(snapshot.tcpProxyIds)
+    && exactEmptyArray(snapshot.volumeIds)
     && snapshot.region === "asia-southeast1-eqsg3a"
     && snapshot.replicaCount === 1
     && snapshot.cpuLimit === 0.1
@@ -349,11 +460,11 @@ function targetConfigurationExact(
     && snapshot.drainingSeconds === 0
     && snapshot.ipv6EgressEnabled === false
     && snapshot.sleepApplication === false
-    && snapshot.preDeployCommands.length === 0
+    && exactEmptyArray(snapshot.preDeployCommands)
     && snapshot.healthcheckPath === null
     && snapshot.healthcheckTimeout === null
     && snapshot.cronSchedule === null
-    && snapshot.watchPatterns.length === 0
+    && exactEmptyArray(snapshot.watchPatterns)
     && exactStringArray(snapshot.variableNames, EXPECTED_VARIABLE_NAMES)
     && snapshot.variableMetadataExact === true;
 }
@@ -396,11 +507,11 @@ function preflightExact(
     && snapshot.autoDeploy === false
     && snapshot.triggerCount === 0
     && targetConfigurationExact(snapshot)
-    && snapshot.deploymentInventoryIds.length === 0
+    && exactEmptyArray(snapshot.deploymentInventoryIds)
     && snapshot.sourceImage === null
     && snapshot.sourceRepo === null
     && snapshot.latestDeploymentId === null
-    && snapshot.activeDeploymentIds.length === 0;
+    && exactEmptyArray(snapshot.activeDeploymentIds);
 }
 
 function postflightBoundaryExact(
@@ -420,8 +531,10 @@ function postflightBoundaryExact(
     && snapshot.autoDeploy === false
     && snapshot.triggerCount === 0
     && targetConfigurationExact(snapshot)
-    && snapshot.deploymentInventoryIds.length === 1
-    && snapshot.deploymentInventoryIds[0] === snapshot.deploymentId
+    && exactSingleStringArray(
+      snapshot.deploymentInventoryIds,
+      snapshot.deploymentId,
+    )
     && snapshot.sourceImage === null
     && snapshot.sourceRepo === null;
 }
@@ -438,7 +551,7 @@ function targetPostflightExact(
     && UUID_PATTERN.test(snapshot.deploymentSnapshotId)
     && typeof snapshot.deploymentImageDigest === "string"
     && IMAGE_DIGEST_PATTERN.test(snapshot.deploymentImageDigest)
-    && snapshot.activeDeploymentIds.length === 0
+    && exactEmptyArray(snapshot.activeDeploymentIds)
     && snapshot.buildOnlyReceiptPassed === true
     && typeof snapshot.buildOnlyReceiptSha256 === "string"
     && SHA256_PATTERN.test(snapshot.buildOnlyReceiptSha256)
@@ -564,40 +677,55 @@ async function executeEnabled(
       observedChildAuthority = childAuthority(postflight);
     }
   };
+  const applyPostflightObservationSafely = (): void => {
+    checks.boundaryPostflightExact = false;
+    checks.targetPostflightExact = false;
+    reconciliationDeploymentId = null;
+    observedChildAuthority = null;
+    try {
+      applyPostflightObservation();
+    } catch {
+      postflight = null;
+      checks.boundaryPostflightExact = false;
+      checks.targetPostflightExact = false;
+      reconciliationDeploymentId = null;
+      observedChildAuthority = null;
+    }
+  };
 
   try {
-    const local = await withDeadline(
+    const local = snapshotDependencyResult(await withDeadline(
       STAGING_POSTGRES_BUILD_CANARY_DEADLINES.localAuthorityMs,
       dependencies.inspectLocalAuthority,
-    );
+    ));
     checks.localPreflightExact = localAuthorityExact(local);
     if (!checks.localPreflightExact) throw new Error("local_authority_invalid");
 
     const canonicalIntent = canonical(makeIntent(local));
     const expectedIntentSha256 = sha256(canonicalIntent);
     recoveryOnly = true;
-    const existingIntent = await withDeadline(
+    const existingIntent = snapshotDependencyResult(await withDeadline(
       STAGING_POSTGRES_BUILD_CANARY_DEADLINES.durableEvidenceMs,
       (signal) => dependencies.inspectIntent(canonicalIntent, signal),
-    );
-    if (existingIntent) {
+    ));
+    if (existingIntent !== null) {
       checks.durableIntentExact = existingIntent.publication === "existing-exact"
         && durableArtifactExact(existingIntent, expectedIntentSha256);
       if (checks.durableIntentExact) intentSha256 = existingIntent.sha256;
     } else {
       recoveryOnly = false;
-      const boundary = await withDeadline(
+      const boundary = snapshotDependencyResult(await withDeadline(
         STAGING_POSTGRES_BUILD_CANARY_DEADLINES.boundaryMs,
         dependencies.preflight,
-      );
+      ));
       checks.boundaryPreflightExact = preflightExact(boundary);
       if (!checks.boundaryPreflightExact) throw new Error("boundary_invalid");
 
       recoveryOnly = true;
-      const persistedIntent = await withDeadline(
+      const persistedIntent = snapshotDependencyResult(await withDeadline(
         STAGING_POSTGRES_BUILD_CANARY_DEADLINES.durableEvidenceMs,
         (signal) => dependencies.persistIntent(canonicalIntent, signal),
-      );
+      ));
       checks.durableIntentExact = durableArtifactExact(
         persistedIntent,
         expectedIntentSha256,
@@ -609,30 +737,33 @@ async function executeEnabled(
     }
 
     checks.localAuthorityReasserted = localAuthorityExact(
-      await withDeadline(
+      snapshotDependencyResult(await withDeadline(
         STAGING_POSTGRES_BUILD_CANARY_DEADLINES.localAuthorityMs,
         dependencies.inspectLocalAuthority,
-      ),
+      )),
     );
     if (!checks.localAuthorityReasserted) throw new Error("local_authority_drift");
 
     if (!recoveryOnly) {
       checks.boundaryReasserted = preflightExact(
-        await withDeadline(
+        snapshotDependencyResult(await withDeadline(
           STAGING_POSTGRES_BUILD_CANARY_DEADLINES.boundaryMs,
           dependencies.preflight,
-        ),
+        )),
       );
       if (!checks.boundaryReasserted) throw new Error("boundary_drift");
 
       writeAttempted = true;
       checks.writeAttempted = true;
       try {
-        const acknowledgement = await withDeadline(
+        const acknowledgement = snapshotDependencyResult(await withDeadline(
           STAGING_POSTGRES_BUILD_CANARY_DEADLINES.uploadMs,
           (signal) => dependencies.uploadExactlyOnce(intentSha256!, signal),
-        );
-        if (UUID_PATTERN.test(acknowledgement.deploymentId)) {
+        ));
+        if (
+          typeof acknowledgement.deploymentId === "string"
+          && UUID_PATTERN.test(acknowledgement.deploymentId)
+        ) {
           deploymentId = acknowledgement.deploymentId;
           checks.acknowledgementExact = true;
         }
@@ -642,21 +773,21 @@ async function executeEnabled(
     }
     checks.postflightAttempted = true;
     try {
-      postflight = await withDeadline(
+      postflight = snapshotDependencyResult(await withDeadline(
         STAGING_POSTGRES_BUILD_CANARY_DEADLINES.postflightMs,
         (signal) => dependencies.postflight(deploymentId, signal),
-      );
+      ));
     } catch {
       postflight = null;
     }
 
-    applyPostflightObservation();
+    applyPostflightObservationSafely();
     try {
       checks.localPostflightExact = localAuthorityExact(
-        await withDeadline(
+        snapshotDependencyResult(await withDeadline(
           STAGING_POSTGRES_BUILD_CANARY_DEADLINES.localAuthorityMs,
           dependencies.inspectLocalAuthority,
-        ),
+        )),
       );
     } catch {
       checks.localPostflightExact = false;
@@ -674,15 +805,15 @@ async function executeEnabled(
     if (recoveryOnly && !checks.postflightAttempted) {
       checks.postflightAttempted = true;
       try {
-        postflight = await withDeadline(
+        postflight = snapshotDependencyResult(await withDeadline(
           STAGING_POSTGRES_BUILD_CANARY_DEADLINES.postflightMs,
           (signal) => dependencies.postflight(null, signal),
-        );
+        ));
       } catch {
         postflight = null;
       }
     }
-    applyPostflightObservation();
+    applyPostflightObservationSafely();
     outcome = writeAttempted || recoveryOnly ? "mutation_uncertain" : "failed";
   } finally {
     try {
@@ -720,10 +851,10 @@ async function executeEnabled(
       checks: { ...checks },
     });
     const expectedEvidenceSha256 = sha256(candidate);
-    const persistedEvidence = await withDeadline(
+    const persistedEvidence = snapshotDependencyResult(await withDeadline(
       STAGING_POSTGRES_BUILD_CANARY_DEADLINES.durableEvidenceMs,
       (signal) => dependencies.persistTerminalEvidence(candidate, signal),
-    );
+    ));
     if (durableArtifactExact(persistedEvidence, expectedEvidenceSha256)) {
       terminalEvidenceSha256 = persistedEvidence.sha256;
     } else {
@@ -770,6 +901,7 @@ export const stagingPostgresBuildCanaryExecutorInternals = {
   localAuthorityExact,
   postflightBoundaryExact,
   preflightExact,
+  snapshotDependencyResult,
   targetPostflightExact,
   withDeadline,
 };

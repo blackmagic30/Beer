@@ -8,10 +8,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   STAGING_POSTGRES_BUILD_CANARY_EVIDENCE_LEAVES,
   StagingPostgresBuildCanaryEvidenceError,
-  openStagingPostgresBuildCanaryEvidenceStore,
+  openStagingPostgresBuildCanaryEvidenceStore as openEvidenceStore,
   stagingPostgresBuildCanaryEvidenceInternals,
   type StagingPostgresBuildCanaryEvidenceDependencies,
   type StagingPostgresBuildCanaryEvidenceLeaf,
+  type StagingPostgresBuildCanaryEvidenceStore,
 } from "../scripts/lib/staging-postgres-build-canary-evidence.js";
 
 const roots: string[] = [];
@@ -28,6 +29,37 @@ const alternateIntent = JSON.stringify({
   operation: "staging-postgres-build-canary-upload",
   sequentialNotAtomic: false,
 });
+const NEVER_ABORTED_SIGNAL = new AbortController().signal;
+
+interface TestEvidenceStore extends Omit<
+  StagingPostgresBuildCanaryEvidenceStore,
+  "inspect" | "persist"
+> {
+  inspect(
+    leaf: StagingPostgresBuildCanaryEvidenceLeaf,
+    canonicalContent: string,
+    signal?: AbortSignal,
+  ): ReturnType<StagingPostgresBuildCanaryEvidenceStore["inspect"]>;
+  persist(
+    leaf: StagingPostgresBuildCanaryEvidenceLeaf,
+    canonicalContent: string,
+    signal?: AbortSignal,
+  ): ReturnType<StagingPostgresBuildCanaryEvidenceStore["persist"]>;
+}
+
+async function openStagingPostgresBuildCanaryEvidenceStore(
+  parentDirectory: string,
+  overrides: Partial<StagingPostgresBuildCanaryEvidenceDependencies> = {},
+): Promise<TestEvidenceStore> {
+  const store = await openEvidenceStore(parentDirectory, overrides);
+  return {
+    inspect: (leaf, canonicalContent, signal = NEVER_ABORTED_SIGNAL) =>
+      store.inspect(leaf, canonicalContent, signal),
+    persist: (leaf, canonicalContent, signal = NEVER_ABORTED_SIGNAL) =>
+      store.persist(leaf, canonicalContent, signal),
+    close: () => store.close(),
+  };
+}
 
 function privateRoot(): string {
   const created = fs.mkdtempSync(
@@ -113,6 +145,365 @@ describe("staging Postgres build-canary durable evidence", () => {
     await expect(store.inspect(terminalLeaf, intent)).resolves.toBeNull();
     expect(fs.readdirSync(root)).toEqual([]);
     await store.close();
+  });
+
+  it("rejects a missing or already-aborted signal before any evidence filesystem action", async () => {
+    const root = privateRoot();
+    const open = vi.fn<StagingPostgresBuildCanaryEvidenceDependencies["open"]>(
+      async (filename, flags, mode) => mode === undefined
+        ? fs.promises.open(filename, flags)
+        : fs.promises.open(filename, flags, mode),
+    );
+    const lstat = vi.fn(async (filename: string) =>
+      fs.promises.lstat(filename, { bigint: true })
+    );
+    const realpath = vi.fn(async (filename: string) =>
+      fs.promises.realpath(filename)
+    );
+    const link = vi.fn(async (temporaryPath: string, finalPath: string) =>
+      fs.promises.link(temporaryPath, finalPath)
+    );
+    const unlink = vi.fn(async (filename: string) =>
+      fs.promises.unlink(filename)
+    );
+    const syncHandle = vi.fn(async (handle: fs.promises.FileHandle) =>
+      handle.sync()
+    );
+    const store = await openEvidenceStore(root, {
+      link,
+      lstat,
+      open,
+      realpath,
+      syncHandle,
+      unlink,
+    });
+    const callsAtRest = {
+      link: link.mock.calls.length,
+      lstat: lstat.mock.calls.length,
+      open: open.mock.calls.length,
+      realpath: realpath.mock.calls.length,
+      syncHandle: syncHandle.mock.calls.length,
+      unlink: unlink.mock.calls.length,
+    };
+    const controller = new AbortController();
+    controller.abort();
+
+    await expectCode(
+      store.inspect(intentLeaf, intent, controller.signal),
+      "evidence_invalid",
+    );
+    await expectCode(
+      store.persist(intentLeaf, intent, controller.signal),
+      "evidence_invalid",
+    );
+    await expectCode(
+      store.persist(intentLeaf, intent, undefined as unknown as AbortSignal),
+      "evidence_invalid",
+    );
+    await expectCode(
+      store.inspect(intentLeaf, intent, undefined as unknown as AbortSignal),
+      "evidence_invalid",
+    );
+
+    expect({
+      link: link.mock.calls.length,
+      lstat: lstat.mock.calls.length,
+      open: open.mock.calls.length,
+      realpath: realpath.mock.calls.length,
+      syncHandle: syncHandle.mock.calls.length,
+      unlink: unlink.mock.calls.length,
+    }).toEqual(callsAtRest);
+    expect(fs.readdirSync(root)).toEqual([]);
+    await store.close();
+  });
+
+  it("exact-cleans a private temporary leaf when aborted during pre-commit fsync", async () => {
+    const root = privateRoot();
+    const controller = new AbortController();
+    let aborted = false;
+    const link = vi.fn(async (temporaryPath: string, finalPath: string) => {
+      await fs.promises.link(temporaryPath, finalPath);
+    });
+    const syncHandle = vi.fn(async (handle: fs.promises.FileHandle) => {
+      const stat = await handle.stat();
+      if (stat.isFile() && !aborted) {
+        aborted = true;
+        controller.abort();
+      }
+      await handle.sync();
+    });
+    const store = await openStagingPostgresBuildCanaryEvidenceStore(root, {
+      link,
+      syncHandle,
+    });
+
+    await expectCode(
+      store.persist(intentLeaf, intent, controller.signal),
+      "evidence_invalid",
+    );
+    expect(controller.signal.aborted).toBe(true);
+    expect(link).not.toHaveBeenCalled();
+    expect(fs.readdirSync(root)).toEqual([]);
+
+    await expect(
+      store.persist(intentLeaf, intent, NEVER_ABORTED_SIGNAL),
+    ).resolves.toMatchObject({ publication: "created-durable" });
+    expect(fs.readdirSync(root)).toEqual([intentLeaf]);
+    await store.close();
+  });
+
+  it("derives held identity and exact-cleans when abort follows exclusive temp open", async () => {
+    const root = privateRoot();
+    const controller = new AbortController();
+    const link = vi.fn(async (temporaryPath: string, finalPath: string) => {
+      await fs.promises.link(temporaryPath, finalPath);
+    });
+    const open: StagingPostgresBuildCanaryEvidenceDependencies["open"] = async (
+      filename,
+      flags,
+      mode,
+    ) => {
+      const handle = mode === undefined
+        ? await fs.promises.open(filename, flags)
+        : await fs.promises.open(filename, flags, mode);
+      if (mode === 0o600) controller.abort();
+      return handle;
+    };
+    const store = await openStagingPostgresBuildCanaryEvidenceStore(root, {
+      link,
+      open,
+    });
+
+    await expectCode(
+      store.persist(intentLeaf, intent, controller.signal),
+      "evidence_invalid",
+    );
+    expect(controller.signal.aborted).toBe(true);
+    expect(link).not.toHaveBeenCalled();
+    expect(fs.readdirSync(root)).toEqual([]);
+    await store.close();
+  });
+
+  it("reports cleanup failure when parent replacement strands a pre-link temp", async () => {
+    const root = privateRoot();
+    const original = `${root}-original`;
+    const controller = new AbortController();
+    let replaced = false;
+    const syncHandle = vi.fn(async (handle: fs.promises.FileHandle) => {
+      const stat = await handle.stat();
+      await handle.sync();
+      if (stat.isFile() && !replaced) {
+        replaced = true;
+        fs.renameSync(root, original);
+        fs.mkdirSync(root, { mode: 0o700 });
+        fs.chmodSync(root, 0o700);
+        controller.abort();
+      }
+    });
+    const store = await openStagingPostgresBuildCanaryEvidenceStore(root, {
+      syncHandle,
+    });
+
+    await expectCode(
+      store.persist(intentLeaf, intent, controller.signal),
+      "cleanup_failed",
+    );
+    expect(controller.signal.aborted).toBe(true);
+    expect(fs.readdirSync(root)).toEqual([]);
+    expect(fs.readdirSync(original)).toHaveLength(1);
+    expect(fs.readdirSync(original)[0]).toMatch(/^\..+\.tmp$/);
+    await expectCode(store.close(), "cleanup_failed");
+  });
+
+  it("does not publish when aborted after the temp read descriptor opens", async () => {
+    const root = privateRoot();
+    const controller = new AbortController();
+    const link = vi.fn(async (temporaryPath: string, finalPath: string) => {
+      await fs.promises.link(temporaryPath, finalPath);
+    });
+    const open: StagingPostgresBuildCanaryEvidenceDependencies["open"] = async (
+      filename,
+      flags,
+      mode,
+    ) => {
+      const handle = mode === undefined
+        ? await fs.promises.open(filename, flags)
+        : await fs.promises.open(filename, flags, mode);
+      if (mode === undefined && filename.endsWith(".tmp")) controller.abort();
+      return handle;
+    };
+    const store = await openStagingPostgresBuildCanaryEvidenceStore(root, {
+      link,
+      open,
+    });
+
+    await expectCode(
+      store.persist(intentLeaf, intent, controller.signal),
+      "evidence_invalid",
+    );
+    expect(controller.signal.aborted).toBe(true);
+    expect(link).not.toHaveBeenCalled();
+    expect(fs.readdirSync(root)).toEqual([]);
+    await store.close();
+  });
+
+  it("finishes the durable commit region when cancellation follows a successful link", async () => {
+    const root = privateRoot();
+    const finalPath = path.join(root, intentLeaf);
+    const controller = new AbortController();
+    let releaseParentSync!: () => void;
+    let reachedParentSync!: () => void;
+    const release = new Promise<void>((resolve) => {
+      releaseParentSync = resolve;
+    });
+    const reached = new Promise<void>((resolve) => {
+      reachedParentSync = resolve;
+    });
+    let parentSyncCompleted = false;
+    let postSyncFinalStats = 0;
+    let closedReadDescriptors = 0;
+    const link = vi.fn(async (temporaryPath: string, finalPath: string) => {
+      await fs.promises.link(temporaryPath, finalPath);
+      controller.abort();
+    });
+    const lstat = vi.fn(async (filename: string) => {
+      const stat = await fs.promises.lstat(filename, { bigint: true });
+      if (parentSyncCompleted && filename === finalPath) postSyncFinalStats += 1;
+      return stat;
+    });
+    const syncHandle = vi.fn(async (handle: fs.promises.FileHandle) => {
+      const stat = await handle.stat();
+      if (stat.isDirectory() && controller.signal.aborted) {
+        reachedParentSync();
+        await release;
+        await handle.sync();
+        parentSyncCompleted = true;
+        return;
+      }
+      await handle.sync();
+    });
+    const closeHandle = vi.fn(async (handle: fs.promises.FileHandle) => {
+      const stat = await handle.stat();
+      if (stat.isFile() && controller.signal.aborted) {
+        closedReadDescriptors += 1;
+      }
+      await handle.close();
+    });
+    const store = await openStagingPostgresBuildCanaryEvidenceStore(root, {
+      closeHandle,
+      link,
+      lstat,
+      syncHandle,
+    });
+    let settled = false;
+    const pending = store.persist(intentLeaf, intent, controller.signal)
+      .finally(() => {
+        settled = true;
+      });
+
+    await reached;
+    expect(controller.signal.aborted).toBe(true);
+    expect(settled).toBe(false);
+    expect(parentSyncCompleted).toBe(false);
+    expect(postSyncFinalStats).toBe(0);
+    expect(closedReadDescriptors).toBe(0);
+
+    releaseParentSync();
+    await expect(pending).resolves.toMatchObject({
+      publication: "created-durable",
+      sha256: sha256(intent),
+      fileFsync: true,
+      parentFsync: true,
+      readbackExact: true,
+    });
+    expect(settled).toBe(true);
+    expect(parentSyncCompleted).toBe(true);
+    expect(postSyncFinalStats).toBe(1);
+    expect(closedReadDescriptors).toBe(1);
+    expect(link).toHaveBeenCalledTimes(1);
+    expect(fs.readdirSync(root)).toEqual([intentLeaf]);
+    expect(fs.readFileSync(finalPath, "utf8")).toBe(intent);
+    await store.close();
+  });
+
+  it.each(["inspect", "persist"] as const)(
+    "closes the existing-leaf descriptor when %s is aborted mid-verification",
+    async (operation) => {
+      const root = privateRoot();
+      const setup = await openStagingPostgresBuildCanaryEvidenceStore(root);
+      await setup.persist(intentLeaf, intent);
+      await setup.close();
+
+      const controller = new AbortController();
+      let aborted = false;
+      let closedFileDescriptors = 0;
+      const syncHandle = vi.fn(async (handle: fs.promises.FileHandle) => {
+        const stat = await handle.stat();
+        if (stat.isFile() && !aborted) {
+          aborted = true;
+          controller.abort();
+        }
+        await handle.sync();
+      });
+      const closeHandle = vi.fn(async (handle: fs.promises.FileHandle) => {
+        const stat = await handle.stat();
+        if (stat.isFile()) closedFileDescriptors += 1;
+        await handle.close();
+      });
+      const store = await openStagingPostgresBuildCanaryEvidenceStore(root, {
+        closeHandle,
+        syncHandle,
+      });
+      const pending = operation === "inspect"
+        ? store.inspect(intentLeaf, intent, controller.signal)
+        : store.persist(intentLeaf, intent, controller.signal);
+
+      await expectCode(pending, "evidence_invalid");
+      expect(controller.signal.aborted).toBe(true);
+      expect(closedFileDescriptors).toBe(1);
+      expect(fs.readdirSync(root)).toEqual([intentLeaf]);
+      expect(fs.readFileSync(path.join(root, intentLeaf), "utf8")).toBe(intent);
+      await store.close();
+    },
+  );
+
+  it("allows close only after an aborted pre-commit operation has quiesced", async () => {
+    const root = privateRoot();
+    const controller = new AbortController();
+    let releaseSync!: () => void;
+    let reachedSync!: () => void;
+    const release = new Promise<void>((resolve) => {
+      releaseSync = resolve;
+    });
+    const reached = new Promise<void>((resolve) => {
+      reachedSync = resolve;
+    });
+    let held = false;
+    const syncHandle = vi.fn(async (handle: fs.promises.FileHandle) => {
+      const stat = await handle.stat();
+      if (stat.isFile() && !held) {
+        held = true;
+        controller.abort();
+        reachedSync();
+        await release;
+      }
+      await handle.sync();
+    });
+    const store = await openStagingPostgresBuildCanaryEvidenceStore(root, {
+      syncHandle,
+    });
+    const pending = store.persist(intentLeaf, intent, controller.signal);
+
+    await reached;
+    await expectCode(store.close(), "cleanup_failed");
+    expect(fs.readdirSync(root).some((entry) => entry.endsWith(".tmp"))).toBe(
+      true,
+    );
+
+    releaseSync();
+    await expectCode(pending, "evidence_invalid");
+    expect(fs.readdirSync(root)).toEqual([]);
+    await expect(store.close()).resolves.toBeUndefined();
   });
 
   it("rejects existing content drift without changing the authoritative leaf", async () => {
@@ -354,6 +745,38 @@ describe("staging Postgres build-canary durable evidence", () => {
     });
     const store = await openStagingPostgresBuildCanaryEvidenceStore(root, { link });
     await expectCode(store.persist(intentLeaf, intent), "cleanup_failed");
+    expect(fs.readFileSync(path.join(root, intentLeaf), "utf8")).toBe(intent);
+    expect(fs.readdirSync(root)).toEqual([intentLeaf]);
+    await store.close();
+  });
+
+  it("finishes exact cleanup when an aborted link succeeds and then throws", async () => {
+    const root = privateRoot();
+    const controller = new AbortController();
+    let closedReadDescriptors = 0;
+    const link = vi.fn(async (temporaryPath: string, finalPath: string) => {
+      fs.linkSync(temporaryPath, finalPath);
+      controller.abort();
+      throw errno("EIO");
+    });
+    const closeHandle = vi.fn(async (handle: fs.promises.FileHandle) => {
+      const stat = await handle.stat();
+      if (stat.isFile() && controller.signal.aborted) {
+        closedReadDescriptors += 1;
+      }
+      await handle.close();
+    });
+    const store = await openStagingPostgresBuildCanaryEvidenceStore(root, {
+      closeHandle,
+      link,
+    });
+
+    await expectCode(
+      store.persist(intentLeaf, intent, controller.signal),
+      "cleanup_failed",
+    );
+    expect(controller.signal.aborted).toBe(true);
+    expect(closedReadDescriptors).toBe(1);
     expect(fs.readFileSync(path.join(root, intentLeaf), "utf8")).toBe(intent);
     expect(fs.readdirSync(root)).toEqual([intentLeaf]);
     await store.close();

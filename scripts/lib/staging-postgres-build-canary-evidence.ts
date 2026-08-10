@@ -95,6 +95,10 @@ function cleanupFailed(): StagingPostgresBuildCanaryEvidenceError {
   return new StagingPostgresBuildCanaryEvidenceError("cleanup_failed");
 }
 
+function checkSignal(signal: AbortSignal): void {
+  if (!(signal instanceof AbortSignal) || signal.aborted) throw invalid();
+}
+
 function errnoIs(error: unknown, code: string): boolean {
   return (error as NodeJS.ErrnoException | null)?.code === code;
 }
@@ -242,30 +246,38 @@ async function readExactStable(
   expected: Buffer,
   uid: bigint,
   expectedLinks: bigint,
+  signal?: AbortSignal,
 ): Promise<fs.BigIntStats> {
+  if (signal) checkSignal(signal);
   const before = await handle.stat({ bigint: true });
+  if (signal) checkSignal(signal);
   assertPrivateFile(before, uid, expected.length, expectedLinks);
   const actual = Buffer.alloc(expected.length);
   try {
     let offset = 0;
     while (offset < actual.length) {
+      if (signal) checkSignal(signal);
       const result = await handle.read(
         actual,
         offset,
         actual.length - offset,
         offset,
       );
+      if (signal) checkSignal(signal);
       if (result.bytesRead === 0) throw invalid();
       offset += result.bytesRead;
     }
     const overflow = Buffer.alloc(1);
     try {
+      if (signal) checkSignal(signal);
       const extra = await handle.read(overflow, 0, 1, actual.length);
+      if (signal) checkSignal(signal);
       if (extra.bytesRead !== 0) throw invalid();
     } finally {
       overflow.fill(0);
     }
     const after = await handle.stat({ bigint: true });
+    if (signal) checkSignal(signal);
     if (!sameStableFile(before, after) || !actual.equals(expected)) throw invalid();
     return after;
   } finally {
@@ -299,10 +311,12 @@ export interface StagingPostgresBuildCanaryEvidenceStore {
   inspect(
     leaf: StagingPostgresBuildCanaryEvidenceLeaf,
     canonicalContent: string,
+    signal: AbortSignal,
   ): Promise<StagingPostgresBuildCanaryDurableArtifactEvidence | null>;
   persist(
     leaf: StagingPostgresBuildCanaryEvidenceLeaf,
     canonicalContent: string,
+    signal: AbortSignal,
   ): Promise<StagingPostgresBuildCanaryDurableArtifactEvidence>;
   close(): Promise<void>;
 }
@@ -319,12 +333,14 @@ class EvidenceStore implements StagingPostgresBuildCanaryEvidenceStore {
     private readonly dependencies: StagingPostgresBuildCanaryEvidenceDependencies,
   ) {}
 
-  private async assertParentExact(): Promise<void> {
+  private async assertParentExact(signal?: AbortSignal): Promise<void> {
+    if (signal) checkSignal(signal);
     const [descriptor, atPath, real] = await Promise.all([
       this.parentHandle.stat({ bigint: true }),
       this.dependencies.lstat(this.parentPath),
       this.dependencies.realpath(this.parentPath),
     ]);
+    if (signal) checkSignal(signal);
     assertPrivateParent(descriptor, this.uid);
     assertPrivateParent(atPath, this.uid);
     if (
@@ -360,27 +376,46 @@ class EvidenceStore implements StagingPostgresBuildCanaryEvidenceStore {
   private async verifyExisting(
     filePath: string,
     expected: Buffer,
+    signal: AbortSignal,
   ): Promise<StagingPostgresBuildCanaryDurableArtifactEvidence> {
     let handle: FileHandle | null = null;
     let failure: unknown = null;
     try {
-      await this.assertParentExact();
+      await this.assertParentExact(signal);
       const initialPath = await this.dependencies.lstat(filePath);
+      checkSignal(signal);
       assertPrivateFile(initialPath, this.uid, expected.length, 1n);
       handle = await this.dependencies.open(
         filePath,
         fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
       );
-      const descriptor = await readExactStable(handle, expected, this.uid, 1n);
+      checkSignal(signal);
+      const descriptor = await readExactStable(
+        handle,
+        expected,
+        this.uid,
+        1n,
+        signal,
+      );
       if (!sameStableFile(descriptor, initialPath)) throw invalid();
       const atPath = await this.dependencies.lstat(filePath);
+      checkSignal(signal);
       assertPrivateFile(atPath, this.uid, expected.length, 1n);
       if (!sameStableFile(descriptor, atPath)) throw invalid();
       await this.dependencies.syncHandle(handle);
+      checkSignal(signal);
       await this.dependencies.syncHandle(this.parentHandle);
-      await this.assertParentExact();
-      const finalDescriptor = await readExactStable(handle, expected, this.uid, 1n);
+      checkSignal(signal);
+      await this.assertParentExact(signal);
+      const finalDescriptor = await readExactStable(
+        handle,
+        expected,
+        this.uid,
+        1n,
+        signal,
+      );
       const finalPath = await this.dependencies.lstat(filePath);
+      checkSignal(signal);
       if (!sameStableFile(finalDescriptor, finalPath)) throw invalid();
       return evidence("existing-exact", sha256(expected));
     } catch (error) {
@@ -403,19 +438,24 @@ class EvidenceStore implements StagingPostgresBuildCanaryEvidenceStore {
   async inspect(
     leafInput: StagingPostgresBuildCanaryEvidenceLeaf,
     canonicalContent: string,
+    signal: AbortSignal,
   ): Promise<StagingPostgresBuildCanaryDurableArtifactEvidence | null> {
+    checkSignal(signal);
     this.enter();
     let expected: Buffer | null = null;
     try {
       expected = canonicalUtf8Bytes(canonicalContent);
+      checkSignal(signal);
       const leaf = exactLeaf(leafInput);
       const filePath = path.join(this.parentPath, leaf);
-      await this.assertParentExact();
+      await this.assertParentExact(signal);
       if (!await lstatIfPresent(this.dependencies, filePath)) {
-        await this.assertParentExact();
+        checkSignal(signal);
+        await this.assertParentExact(signal);
         return null;
       }
-      return await this.verifyExisting(filePath, expected);
+      checkSignal(signal);
+      return await this.verifyExisting(filePath, expected, signal);
     } catch (error) {
       throw error instanceof StagingPostgresBuildCanaryEvidenceError
         ? error
@@ -482,6 +522,22 @@ class EvidenceStore implements StagingPostgresBuildCanaryEvidenceStore {
     if (!input.temporaryCreated) return true;
     let exact = true;
     let cleanupHandle = input.handle;
+    let cleanupIdentity = input.identity;
+    try {
+      await this.assertParentExact();
+    } catch {
+      exact = false;
+    }
+    if (!exact) {
+      if (cleanupHandle) {
+        try {
+          await this.dependencies.closeHandle(cleanupHandle);
+        } catch {
+          // Cleanup is already inexact; retain failure precedence.
+        }
+      }
+      return false;
+    }
     if (!input.alreadyUnlinked) {
       let atPath: fs.BigIntStats | null = null;
       try {
@@ -490,7 +546,25 @@ class EvidenceStore implements StagingPostgresBuildCanaryEvidenceStore {
         exact = false;
       }
       if (atPath) {
-        if (!input.identity) {
+        if (!cleanupIdentity && cleanupHandle) {
+          try {
+            const descriptor = await cleanupHandle.stat({ bigint: true });
+            if (
+              descriptor.size < 0n
+              || descriptor.size > BigInt(MAX_CANONICAL_CONTENT_BYTES)
+            ) throw invalid();
+            assertPrivateFile(
+              descriptor,
+              this.uid,
+              Number(descriptor.size),
+              input.linked ? 2n : 1n,
+            );
+            cleanupIdentity = fileIdentity(descriptor);
+          } catch {
+            cleanupIdentity = null;
+          }
+        }
+        if (!cleanupIdentity) {
           exact = false;
         } else {
           let pathExact = atPath.size >= 0n
@@ -508,7 +582,7 @@ class EvidenceStore implements StagingPostgresBuildCanaryEvidenceStore {
             pathExact = false;
           }
           pathExact = pathExact
-            && sameFileIdentity(input.identity, fileIdentity(atPath));
+            && sameFileIdentity(cleanupIdentity, fileIdentity(atPath));
           if (!pathExact) {
             exact = false;
           } else {
@@ -517,7 +591,7 @@ class EvidenceStore implements StagingPostgresBuildCanaryEvidenceStore {
               try {
                 const descriptor = await cleanupHandle.stat({ bigint: true });
                 descriptorExact = sameFileIdentity(
-                  input.identity,
+                  cleanupIdentity,
                   fileIdentity(descriptor),
                 );
               } catch {
@@ -548,7 +622,7 @@ class EvidenceStore implements StagingPostgresBuildCanaryEvidenceStore {
               || !await this.unlinkExactTemporary(
                 input.temporaryPath,
                 cleanupHandle,
-                input.identity,
+                cleanupIdentity,
                 input.linked ? 2n : 1n,
                 input.linked ? input.finalPath : null,
               )
@@ -564,6 +638,11 @@ class EvidenceStore implements StagingPostgresBuildCanaryEvidenceStore {
         exact = false;
       }
     }
+    try {
+      await this.assertParentExact();
+    } catch {
+      exact = false;
+    }
     return exact;
   }
 
@@ -571,7 +650,9 @@ class EvidenceStore implements StagingPostgresBuildCanaryEvidenceStore {
     filePath: string,
     leaf: StagingPostgresBuildCanaryEvidenceLeaf,
     expected: Buffer,
+    signal: AbortSignal,
   ): Promise<StagingPostgresBuildCanaryDurableArtifactEvidence> {
+    checkSignal(signal);
     const random = this.dependencies.randomBytes(RANDOM_TEMPORARY_BYTES);
     if (!Buffer.isBuffer(random) || random.length !== RANDOM_TEMPORARY_BYTES) {
       throw invalid();
@@ -590,7 +671,8 @@ class EvidenceStore implements StagingPostgresBuildCanaryEvidenceStore {
     let temporaryUnlinked = false;
     let normalResult = false;
     try {
-      await this.assertParentExact();
+      await this.assertParentExact(signal);
+      checkSignal(signal);
       try {
         writeHandle = await this.dependencies.open(
           temporaryPath,
@@ -619,20 +701,26 @@ class EvidenceStore implements StagingPostgresBuildCanaryEvidenceStore {
       const created = await writeHandle.stat({ bigint: true });
       assertPrivateFile(created, this.uid, 0, 1n);
       identity = fileIdentity(created);
+      checkSignal(signal);
       let offset = 0;
       while (offset < expected.length) {
+        checkSignal(signal);
         const result = await writeHandle.write(
           expected,
           offset,
           expected.length - offset,
           offset,
         );
+        checkSignal(signal);
         if (result.bytesWritten === 0) throw invalid();
         offset += result.bytesWritten;
       }
       await this.dependencies.syncHandle(writeHandle);
+      checkSignal(signal);
       const written = await writeHandle.stat({ bigint: true });
+      checkSignal(signal);
       const writtenPath = await this.dependencies.lstat(temporaryPath);
+      checkSignal(signal);
       assertPrivateFile(written, this.uid, expected.length, 1n);
       assertPrivateFile(writtenPath, this.uid, expected.length, 1n);
       if (
@@ -641,15 +729,28 @@ class EvidenceStore implements StagingPostgresBuildCanaryEvidenceStore {
       ) throw invalid();
       await this.closeFileWithPrecedence(writeHandle);
       writeHandle = null;
+      checkSignal(signal);
 
       readHandle = await this.dependencies.open(
         temporaryPath,
         fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
       );
-      const readback = await readExactStable(readHandle, expected, this.uid, 1n);
+      checkSignal(signal);
+      const readback = await readExactStable(
+        readHandle,
+        expected,
+        this.uid,
+        1n,
+        signal,
+      );
       if (!sameFileIdentity(identity, fileIdentity(readback))) throw invalid();
-      await this.assertParentExact();
+      await this.assertParentExact(signal);
+      checkSignal(signal);
 
+      // The hard link is the publication commit point. Cancellation is checked
+      // immediately before it. Once the link succeeds, the store must finish
+      // unlinking the temporary name, fsyncing the parent, and stable readback;
+      // returning early would leave publication durability ambiguous.
       try {
         await this.dependencies.link(temporaryPath, filePath);
         linked = true;
@@ -665,8 +766,9 @@ class EvidenceStore implements StagingPostgresBuildCanaryEvidenceStore {
           temporaryUnlinked = true;
           await this.closeFileWithPrecedence(readHandle);
           readHandle = null;
+          checkSignal(signal);
           normalResult = true;
-          return await this.verifyExisting(filePath, expected);
+          return await this.verifyExisting(filePath, expected, signal);
         }
         let descriptor: fs.BigIntStats;
         let final: fs.BigIntStats | null;
@@ -756,18 +858,28 @@ class EvidenceStore implements StagingPostgresBuildCanaryEvidenceStore {
   async persist(
     leafInput: StagingPostgresBuildCanaryEvidenceLeaf,
     canonicalContent: string,
+    signal: AbortSignal,
   ): Promise<StagingPostgresBuildCanaryDurableArtifactEvidence> {
+    checkSignal(signal);
     this.enter();
     let expected: Buffer | null = null;
     try {
       expected = canonicalUtf8Bytes(canonicalContent);
+      checkSignal(signal);
       const leaf = exactLeaf(leafInput);
       const filePath = path.join(this.parentPath, leaf);
-      await this.assertParentExact();
+      await this.assertParentExact(signal);
       if (await lstatIfPresent(this.dependencies, filePath)) {
-        return await this.verifyExisting(filePath, expected);
+        checkSignal(signal);
+        return await this.verifyExisting(filePath, expected, signal);
       }
-      return await this.createOrVerifyExisting(filePath, leaf, expected);
+      checkSignal(signal);
+      return await this.createOrVerifyExisting(
+        filePath,
+        leaf,
+        expected,
+        signal,
+      );
     } catch (error) {
       throw error instanceof StagingPostgresBuildCanaryEvidenceError
         ? error
