@@ -185,13 +185,14 @@ complete. Those remain bound by the migration snapshot, plan, apply receipt,
 independent `verify-target` receipt, and the full-scale runbook's provider and
 two-person RPO/RTO gates.
 
-The local disposable PostgreSQL 17 integration proves the snapshot invariant
-by committing a write after receipt hashing but before `pg_dump`; both the
-archive and receipt exclude it through the one exported snapshot. Separately,
-the provider-backed staging proof above retrieved the operational copy,
-restored the independently pinned disposable target, and replayed one authentic
-synthetic tombstone twice. Neither proof includes private Storage recovery, a
-full application boot, PITR, provider-enforced WORM, approved RPO/RTO
-objectives, or any production restore/cutover.
+The required isolated CI PostgreSQL 17 integration proves the snapshot
+invariant by committing a write after receipt hashing but before `pg_dump`;
+both the archive and receipt exclude it through the one exported snapshot. Its
+source data, CA, route, database, and roles are synthetic and disposable.
+Separately, the provider-backed staging proof above retrieved the operational
+copy, restored the independently pinned disposable target, and replayed one
+authentic synthetic tombstone twice. Neither proof includes private Storage
+recovery, a full application boot, PITR, provider-enforced WORM, approved
+RPO/RTO objectives, or any production restore/cutover.
 
 The archive intentionally contains no owners or ACLs. The restore command therefore reapplies a fixed least-privilege ACL contract transactionally and records only that contract's SHA-256. Cluster-global roles, role memberships, database settings other than the disposable marker, extensions outside the two private schemas, and provider-level PITR/retention configuration are not part of this archive and must be tested separately.

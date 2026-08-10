@@ -484,6 +484,12 @@ describe("release workflow contracts", () => {
     const restoreIntegration = repositoryFile(
       "test/postgres-logical-restore.integration.test.ts",
     );
+    const migrationStatus = repositoryFile(
+      "docs/postgres-migration-execution-status.md",
+    );
+    const restoreRehearsal = repositoryFile(
+      "docs/postgres-logical-restore-rehearsal.md",
+    );
     const initialStateReceipt = tlsFixture.indexOf(
       'write_state_receipt "$fixture_root" "$network_name" "$network_id" "$container_id" false',
     );
@@ -505,6 +511,23 @@ describe("release workflow contracts", () => {
     expect(requiredBuildJob).not.toContain("continue-on-error");
     expect(requiredBuildJob.indexOf("POSTGRES_MIGRATION_INTEGRATION_RESULT:"))
       .toBeLessThan(requiredBuildJob.indexOf("Checkout"));
+    expect(migrationStatus).not.toContain(
+      "remains a separately executed local proof",
+    );
+    expect(migrationStatus).toContain("needs: postgres-migration-integration");
+    expect(migrationStatus).toContain("schema-version-3");
+    expect(migrationStatus).toContain(
+      "synthetic/disposable CI implementation evidence",
+    );
+    expect(migrationStatus).toContain(
+      "This historical version-2 set remains valid retrieval/restore evidence.",
+    );
+    expect(restoreRehearsal).toContain(
+      "required isolated CI PostgreSQL 17 integration",
+    );
+    expect(restoreRehearsal).toContain(
+      "source data, CA, route, database, and roles are synthetic and disposable",
+    );
     expect(job).toContain("timeout-minutes: 30");
     expect(job).toContain("runs-on: ubuntu-24.04");
     expect(installStep).toBeGreaterThan(-1);

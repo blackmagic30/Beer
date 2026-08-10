@@ -1,6 +1,6 @@
 # Postgres migration execution status
 
-Last updated: 9 August 2026
+Last updated: 11 August 2026
 
 Overall state: **NO-GO — the Free-live PostgreSQL application implementation,
 permanent-staging database import/runtime proof, logical backup, and isolated
@@ -433,24 +433,33 @@ resource pins, operator approvals, or two-person evidence.
   admin-account database contracts in
   addition to import reconciliation, public venue-directory, venue-identity,
   and system-state coverage. The
-  logical dump/restore integration remains a separately executed local proof
-  until CI has a pinned PostgreSQL 17 client toolchain.
+  required `postgres-migration-integration` job now installs exact PostgreSQL
+  17.10 `pg_dump` and `pg_restore` clients and runs a real schema-version-3
+  logical backup and restore. `pg_dump` connects through a disposable fd12
+  `verify-full` endpoint whose fixture CA DER SHA-256 is pinned; `pg_restore`
+  restores into a distinct disposable loopback target. The branch-required
+  `build-test-scan` job declares `needs: postgres-migration-integration`,
+  evaluates with `if: always()`, and rejects every dependency result except
+  `success`, so a failed, skipped, or cancelled rehearsal cannot produce a
+  passing required check.
 - Added a protected PostgreSQL 17 logical-backup/restore foundation for the two
   private schemas. Backup accepts a direct TLS URL only from a mode-600 file,
   rejects privileged or pooled logins, sets the reviewed migrator role, and
   holds one exported `REPEATABLE READ READ ONLY` snapshot across bounded state
-  hashing and `pg_dump --snapshot`. Its version-2 manifest binds a private
+  hashing and `pg_dump --snapshot`. Its current schema-version-3 manifest binds
+  the exact transport profile and root-CA DER SHA-256 together with the private
   canonical receipt for all rows/columns of the 56 authoritative tables,
   `schema_metadata`, `migration_runs`, and `migration_chunks`, plus native-type,
   metadata, DDL, source identity, snapshot, archive, table/data/state/key-range,
-  and manifest hashes. Restore authenticates all three mode-600 artifacts before
-  connecting, uses a single-transaction disposable restore, reapplies the ACL
-  contract, independently recomputes the same complete inventory, and reports
-  promotion reconciliation ready only on exact equality. A local disposable
-  PG17 test committed a concurrent write between hashing and `pg_dump` and
-  proved that both artifacts consistently excluded it; it also completed exact
-  restore reconciliation and removed the uniquely named databases/logins.
-  This is local evidence, not a provider, staging, WORM, PITR, or production run.
+  receipt, and manifest hashes. Restore authenticates all three mode-600
+  artifacts before connecting, uses a single-transaction disposable restore,
+  reapplies the ACL contract, independently recomputes the same complete
+  inventory, and reports promotion reconciliation ready only on exact equality.
+  The required isolated CI PG17 test committed a concurrent write between
+  hashing and `pg_dump` and proved that both artifacts consistently excluded it;
+  it also completed exact restore reconciliation and removed the uniquely named
+  databases/logins. This is synthetic/disposable CI implementation evidence,
+  not provider, permanent-staging, WORM, PITR, or production evidence.
 - Completed the reachable-runtime cutover audit for the mandatory Free launch.
   Its HTTP handlers, repositories, moderation paths, schedulers, queue workers,
   reports required by the Free scope, scripts, readiness checks, and privacy/
