@@ -24,6 +24,7 @@
     "ocr:benchmark:live": "tsx scripts/benchmark-menu-ocr.ts --live",
     "menus:publish-map-base": "tsx scripts/publish-source-ingestion-map-base.ts",
     "menus:promote-reviewed": "tsx scripts/promote-reviewed-price-data.ts",
+    "menus:promote-reviewed:postgres": "tsx scripts/postgres-reviewed-price-promotion.ts",
     "readiness:data": "tsx scripts/production-data-readiness.ts",
     "readiness:providers": "tsx scripts/provider-readiness-check.ts",
     "readiness:railway:sealed": "tsx scripts/railway-sealed-variable-readiness.ts --policy ops/railway/permanent-staging-sealed-variable-policy.json",

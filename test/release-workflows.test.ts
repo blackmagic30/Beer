@@ -382,6 +382,9 @@ describe("release workflow contracts", () => {
 
   it("runs the real native Postgres contracts against an isolated PostgreSQL 17 service", () => {
     const source = workflow("ci.yml");
+    const packageJson = JSON.parse(repositoryFile("package.json")) as {
+      scripts?: Record<string, string>;
+    };
     const start = source.indexOf("  postgres-migration-integration:");
     const end = source.indexOf("\n  supabase-database:", start);
     const job = source.slice(start, end);
@@ -416,6 +419,33 @@ describe("release workflow contracts", () => {
       "- name: Run real PostgreSQL 17 import, reconciliation, and reviewed-price planner no-write proof",
     );
     expect(job).toContain("npx vitest run test/postgres-migration-target.integration.test.ts");
+    expect(packageJson.scripts?.["menus:promote-reviewed:postgres"]).toBe(
+      "tsx scripts/postgres-reviewed-price-promotion.ts",
+    );
+    expect(migrationIntegration).toContain(
+      "runPostgresReviewedPricePromotionCli",
+    );
+    expect(migrationIntegration).toContain(
+      '"--expected-planner-target-identity-sha256"',
+    );
+    expect(migrationIntegration).toContain('"--output-plan"');
+    expect(migrationIntegration).toContain(
+      '"postgresql://postgres-staging.railway.internal:5432/pintpath_staging"',
+    );
+    expect(migrationIntegration).toContain(
+      'const rootCaPath = path.join(cliRoot, "railway-stock-root-ca.pem")',
+    );
+    expect(migrationIntegration).toContain(
+      "expectedRootCaDerSha256: testRootCaDerSha256",
+    );
+    expect(migrationIntegration).toContain("environment: {}");
+    expect(migrationIntegration).toContain(
+      "expect(plannerAssertExactCount).toBe(3)",
+    );
+    expect(migrationIntegration).toContain(
+      "expect(plannerReleaseCount).toBe(1)",
+    );
+    expect(migrationIntegration).toContain("fs.chmodSync(cliRoot, 0o700)");
     expect(migrationIntegration).toContain(
       "PINTPATH_POSTGRES_MIGRATION_TEST_REQUIRED",
     );
