@@ -28,7 +28,8 @@ Complete these checks from a protected operator host, not a Railway web shell:
   the version is 1–20 canonical decimal digits. It is `LOGIN`, `NOINHERIT`,
   `NOSUPERUSER`, `NOCREATEDB`, `NOCREATEROLE`, `NOREPLICATION`,
   `NOBYPASSRLS`, and has `CONNECTION LIMIT 2` exactly. It has no children or
-  role settings and exactly one direct role membership: the matching
+  role settings, its catalog `rolvaliduntil` is `NULL` exactly, and it has
+  exactly one direct role membership: the matching
   `pintpath_logical_backup_d<current-database-oid>` group with `ADMIN FALSE`,
   `INHERIT FALSE`, and `SET TRUE`; it cannot set `pintpath_migrator`,
   `pintpath_runtime`, or any sibling database-scoped backup role.
@@ -60,6 +61,15 @@ Complete these checks from a protected operator host, not a Railway web shell:
   evidence. Do not manually execute `CREATE ROLE ... PASSWORD` or use `psql`
   password substitution. The structural role contract is documented in the
   full migration runbook; it is not a live provisioning procedure.
+- The exact 236 portable-policy inventory with the current-database scoped
+  group absent is a safe, inert `policy-only` state, not backup authority.
+  PostgreSQL 17 gives a role created by a non-superuser `CREATEROLE` principal
+  an automatic administrator child that the creator cannot revoke, so the
+  reviewed migrations never create the scoped group in that context. Continue
+  only after a true cluster superuser runs the reviewed forward SQL or a
+  separately reviewed helper atomically establishes and verifies the full
+  zero-child group plus exact 61 ACL dependencies. A merely pre-created inert
+  group is an unaccepted mixed state.
 - The runtime login is the canonical `pintpath_runtime` login used by the app.
   It verifies runtime identity, supplies the exact connection-URL bytes whose
   SHA-256 is bound into the immutable attestation/latest pointer and success
@@ -118,6 +128,14 @@ of the logical trimmed URL and pins that URL before tool discovery, database
 connection, output creation, or temporary credential creation. Never put
 either URL or the service-role key in arguments, shell tracing, logs, Git,
 screenshots, or the attestation evidence file.
+
+The stock Railway Postgres SSL image cannot satisfy that system-root,
+hostname-verified contract: its private self-signed root is absent from the
+system trust store and its [server leaf names only
+`localhost`](https://github.com/railwayapp-templates/postgres-ssl/blob/35fb8234ad6c88d400c4be1f19d9a11d6c6c3564/init-ssl.sh), not the Railway private
+DNS hostname. Keep this ceremony stopped until the separately reviewed shared
+pinned-CA/`localhost` transport profile lands for both login management and
+backup. Do not implicitly weaken either path to `sslmode=require`.
 
 ## 2. Create the hardened local logical backup
 
@@ -338,9 +356,11 @@ versioned-login namespace remain absent. This is the only accepted
 `restored_policy_only` state. Applying the reviewed
 `20260810003612_add_pintpath_logical_backup_role.sql` forward migration then
 acquires its fixed transaction advisory lock and creates the target-OID group
-and its exact 61 ACL dependencies; a fully exact state is verification-only.
-A target backup login is provisioned separately only after that zero-child
-migration succeeds and the stopped SCRAM-verifier helper has been reviewed.
+and its exact 61 ACL dependencies only when executed by a true cluster
+superuser; a non-superuser preserves the inert policy-only state. A fully exact
+state is verification-only. A target backup login is provisioned separately
+only after the full zero-child group/ACL contract is exact and the stopped
+SCRAM-verifier helper has been reviewed.
 That closes only operational-copy transport evidence. Private application
 Storage recovery, a full application boot, PITR, provider-enforced WORM,
 approved RPO/RTO objectives, and production restore/cutover remain open.

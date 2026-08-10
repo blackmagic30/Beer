@@ -14,6 +14,7 @@ declare
   runtime_role_oid oid;
   migrator_role_oid oid;
   role_exists boolean;
+  executor_is_superuser boolean;
   role_contract_exact boolean := false;
   migration_state text;
   private_policy_count integer;
@@ -102,6 +103,10 @@ begin
       message = 'Refusing logical-backup upgrade because the current database OID is not canonical.';
   end if;
   backup_role_name := 'pintpath_logical_backup_d' || current_database_oid_text;
+
+  select role.rolsuper into strict executor_is_superuser
+  from pg_catalog.pg_roles as role
+  where role.rolname = current_user;
 
   select pg_catalog.to_regrole('pintpath_runtime')::oid,
          pg_catalog.to_regrole('pintpath_migrator')::oid
@@ -470,7 +475,7 @@ begin
         );
     end if;
     migration_state := 'exact';
-  else
+  elsif executor_is_superuser then
     execute pg_catalog.format(
       'create role %I nologin nosuperuser nocreatedb nocreaterole noinherit noreplication nobypassrls',
       backup_role_name
@@ -511,11 +516,34 @@ begin
         errcode = '42501',
         message = 'Logical-backup upgrade did not create an inert scoped role.';
     end if;
+    role_exists := true;
   end if;
 
-  -- A fully exact zero-child state is a genuine no-op. Only the two accepted
-  -- upgrade states may create the scoped role's policies or ACLs.
-  if migration_state <> 'exact' then
+  -- Only the fully absent state needs policy DDL. Exact restored policies stay
+  -- a genuine no-op when a non-superuser cannot safely create the scoped role.
+  if migration_state = 'absent' then
+    for target in
+      select namespace.nspname as schema_name, relation.relname as relation_name
+      from pg_catalog.pg_class as relation
+      join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
+      where pg_catalog.format('%I.%I', namespace.nspname, relation.relname)
+              = any(expected_relations)
+        and relation.relkind in ('r', 'p')
+      order by namespace.nspname collate "C", relation.relname collate "C"
+    loop
+      target_policy := (target.relation_name || '_logical_backup_select')::name;
+      execute pg_catalog.format(
+        'create policy %I on %I.%I as permissive for select to public using (current_user = (''pintpath_logical_backup_d'' || (select database.oid::text from pg_catalog.pg_database as database where database.datname = pg_catalog.current_database())))',
+        target_policy,
+        target.schema_name,
+        target.relation_name
+      );
+    end loop;
+  end if;
+
+  -- A fully exact role is a genuine no-op. A true superuser may create the
+  -- zero-child role; non-superuser CREATEROLE execution remains policy-only.
+  if role_exists and migration_state <> 'exact' then
     execute pg_catalog.format(
       'grant usage on schema pintpath_app, pintpath_ops to %I',
       backup_role_name
@@ -530,22 +558,6 @@ begin
         and relation.relkind in ('r', 'p')
       order by namespace.nspname collate "C", relation.relname collate "C"
     loop
-      target_policy := (target.relation_name || '_logical_backup_select')::name;
-      if not exists (
-        select 1
-        from pg_catalog.pg_policy as policy
-        where policy.polrelid = pg_catalog.to_regclass(
-          pg_catalog.format('%I.%I', target.schema_name, target.relation_name)
-        )
-          and policy.polname = target_policy
-      ) then
-        execute pg_catalog.format(
-          'create policy %I on %I.%I as permissive for select to public using (current_user = (''pintpath_logical_backup_d'' || (select database.oid::text from pg_catalog.pg_database as database where database.datname = pg_catalog.current_database())))',
-          target_policy,
-          target.schema_name,
-          target.relation_name
-        );
-      end if;
       execute pg_catalog.format(
         'grant select on %I.%I to %I',
         target.schema_name,
@@ -680,7 +692,8 @@ begin
       message = 'Logical-backup upgrade did not establish the canonical 236-policy inventory.';
   end if;
 
-  if (
+  if role_exists then
+    if (
     select count(*)
     from pg_catalog.pg_namespace as namespace
     cross join lateral pg_catalog.aclexplode(coalesce(
@@ -701,13 +714,13 @@ begin
         or privilege.privilege_type <> 'USAGE'
         or privilege.is_grantable
       )
-  ) then
-    raise exception using
-      errcode = '42501',
-      message = 'Logical-backup upgrade did not establish exact scoped schema ACLs.';
-  end if;
+    ) then
+      raise exception using
+        errcode = '42501',
+        message = 'Logical-backup upgrade did not establish exact scoped schema ACLs.';
+    end if;
 
-  if (
+    if (
     select count(*)
     from pg_catalog.pg_class as relation
     join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
@@ -738,13 +751,13 @@ begin
         or privilege.privilege_type <> 'SELECT'
         or privilege.is_grantable
       )
-  ) then
-    raise exception using
-      errcode = '42501',
-      message = 'Logical-backup upgrade did not establish exact scoped table ACLs.';
-  end if;
+    ) then
+      raise exception using
+        errcode = '42501',
+        message = 'Logical-backup upgrade did not establish exact scoped table ACLs.';
+    end if;
 
-  if (
+    if (
     select count(*)
     from pg_catalog.pg_shdepend as dependency
     where dependency.refclassid = 'pg_catalog.pg_authid'::pg_catalog.regclass
@@ -779,13 +792,13 @@ begin
           )
         )
       )
-  ) <> 61 then
-    raise exception using
-      errcode = '42501',
-      message = 'Logical-backup upgrade produced unexpected shared role dependencies.';
-  end if;
+    ) <> 61 then
+      raise exception using
+        errcode = '42501',
+        message = 'Logical-backup upgrade produced unexpected shared role dependencies.';
+    end if;
 
-  if exists (
+    if exists (
     select 1
     from pg_catalog.pg_auth_members as membership
     where membership.member = backup_role_oid or membership.roleid = backup_role_oid
@@ -793,10 +806,16 @@ begin
     select 1
     from pg_catalog.pg_db_role_setting as setting
     where setting.setrole = backup_role_oid
-  ) then
+    ) then
+      raise exception using
+        errcode = '42501',
+        message = 'Logical-backup upgrade left the scoped role active or configurable.';
+    end if;
+  elsif executor_is_superuser
+        or pg_catalog.to_regrole(backup_role_name) is not null then
     raise exception using
       errcode = '42501',
-      message = 'Logical-backup upgrade left the scoped role active or configurable.';
+      message = 'Logical-backup upgrade did not preserve an exact policy-only state.';
   end if;
 end
 $$;

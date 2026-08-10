@@ -93,71 +93,105 @@ select ok(
                'pg_namespace'::regclass,
                'pg_class'::regclass
              )) = 61
+  )
+  or (
+    not (select rolsuper from pg_roles where rolname = current_user)
+    and not exists (
+      with scoped as (
+        select 'pintpath_logical_backup_d' || database.oid::text as role_name
+        from pg_database as database where database.datname = current_database()
+      )
+      select 1 from pg_roles r cross join scoped where r.rolname = scoped.role_name
+    )
+    and not exists (
+      with scoped as (
+        select 'pintpath_logical_backup_d' || database.oid::text as role_name
+        from pg_database as database where database.datname = current_database()
+      )
+      select 1 from pg_roles r cross join scoped
+      where r.rolname like (scoped.role_name || '\_v%') escape '\'
+    )
   ),
-  'the OID-scoped logical-backup group is inert and has only 61 allowlisted current-database ACL dependencies'
+  'logical backup is either a full exact scoped group or an inert non-superuser policy-only state'
 );
 
 select ok(
   (with scoped as (
-     select 'pintpath_logical_backup_d' || database.oid::text as role_name
+     select 'pintpath_logical_backup_d' || database.oid::text as role_name,
+            to_regrole('pintpath_logical_backup_d' || database.oid::text)::oid as role_oid
      from pg_database as database where database.datname = current_database()
-   ) select has_schema_privilege(scoped.role_name, 'pintpath_app', 'USAGE')
-       and has_schema_privilege(scoped.role_name, 'pintpath_ops', 'USAGE')
-       and not has_schema_privilege(scoped.role_name, 'pintpath_app', 'CREATE')
-       and not has_schema_privilege(scoped.role_name, 'pintpath_ops', 'CREATE')
+   ) select case
+       when scoped.role_oid is null then
+         not (select rolsuper from pg_roles where rolname = current_user)
+       else has_schema_privilege(scoped.role_oid, 'pintpath_app', 'USAGE')
+         and has_schema_privilege(scoped.role_oid, 'pintpath_ops', 'USAGE')
+         and not has_schema_privilege(scoped.role_oid, 'pintpath_app', 'CREATE')
+         and not has_schema_privilege(scoped.role_oid, 'pintpath_ops', 'CREATE')
+       end
      from scoped),
-  'the OID-scoped logical-backup group can resolve but cannot create in either private schema'
-);
-
-select is(
-  (
-    with scoped as (
-      select 'pintpath_logical_backup_d' || database.oid::text as role_name
-      from pg_database as database where database.datname = current_database()
-    )
-    select count(*)
-    from pg_class c
-    join pg_namespace n on n.oid = c.relnamespace
-    cross join scoped
-    where n.nspname in ('pintpath_app', 'pintpath_ops')
-      and c.relkind in ('r', 'p')
-      and has_table_privilege(scoped.role_name, c.oid, 'SELECT')
-      and not has_table_privilege(
-        scoped.role_name, c.oid,
-        'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER'
-      )
-  ),
-  59::bigint,
-  'the OID-scoped logical-backup group has SELECT and no mutation authority on the exact 59-table inventory'
+  'the full scoped group has USAGE-only schemas or the non-superuser state has no group'
 );
 
 select ok(
-  not exists (
+  (
     with scoped as (
-      select ('pintpath_logical_backup_d' || database.oid::text)::regrole as role_oid
+      select to_regrole('pintpath_logical_backup_d' || database.oid::text)::oid as role_oid
       from pg_database as database where database.datname = current_database()
     )
-    select 1
-    from pg_class c
-    join pg_namespace n on n.oid = c.relnamespace
-    cross join scoped
-    where n.nspname in ('pintpath_app', 'pintpath_ops')
-      and c.relkind in ('r', 'p')
-      and (
-        (select count(*)
-         from aclexplode(coalesce(c.relacl, acldefault('r', c.relowner))) privilege
-         where privilege.grantee = scoped.role_oid
-           and privilege.privilege_type = 'SELECT'
-           and not privilege.is_grantable) <> 1
-        or exists (
-          select 1
-          from aclexplode(coalesce(c.relacl, acldefault('r', c.relowner))) privilege
-          where privilege.grantee = scoped.role_oid
-            and (privilege.privilege_type <> 'SELECT' or privilege.is_grantable)
-        )
-      )
+    select case
+      when scoped.role_oid is null then
+        not (select rolsuper from pg_roles where rolname = current_user)
+      else (
+        select count(*)
+        from pg_class c
+        join pg_namespace n on n.oid = c.relnamespace
+        where n.nspname in ('pintpath_app', 'pintpath_ops')
+          and c.relkind in ('r', 'p')
+          and has_table_privilege(scoped.role_oid, c.oid, 'SELECT')
+          and not has_table_privilege(
+            scoped.role_oid, c.oid,
+            'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER'
+          )
+      ) = 59
+      end
+    from scoped
   ),
-  'every OID-scoped logical-backup table ACL is one direct non-grantable SELECT and nothing else'
+  'the full scoped group has SELECT-only authority or the non-superuser state has no group'
+);
+
+select ok(
+  (
+    with scoped as (
+      select to_regrole('pintpath_logical_backup_d' || database.oid::text)::oid as role_oid
+      from pg_database as database where database.datname = current_database()
+    )
+    select case
+      when scoped.role_oid is null then
+        not (select rolsuper from pg_roles where rolname = current_user)
+      else not exists (
+        select 1
+        from pg_class c
+        join pg_namespace n on n.oid = c.relnamespace
+        where n.nspname in ('pintpath_app', 'pintpath_ops')
+          and c.relkind in ('r', 'p')
+          and (
+            (select count(*)
+             from aclexplode(coalesce(c.relacl, acldefault('r', c.relowner))) privilege
+             where privilege.grantee = scoped.role_oid
+               and privilege.privilege_type = 'SELECT'
+               and not privilege.is_grantable) <> 1
+            or exists (
+              select 1
+              from aclexplode(coalesce(c.relacl, acldefault('r', c.relowner))) privilege
+              where privilege.grantee = scoped.role_oid
+                and (privilege.privilege_type <> 'SELECT' or privilege.is_grantable)
+            )
+          )
+      )
+      end
+    from scoped
+  ),
+  'the full scoped group has exact direct table ACLs or the non-superuser state has no group'
 );
 
 select ok(
@@ -274,7 +308,7 @@ select ok(
          and policy.polname::text ~ '_logical_backup_select$') = 59
   and not exists (
     with scoped as (
-      select ('pintpath_logical_backup_d' || database.oid::text)::regrole as role_oid
+      select to_regrole('pintpath_logical_backup_d' || database.oid::text)::oid as role_oid
       from pg_database as database where database.datname = current_database()
     )
     select 1
@@ -283,6 +317,7 @@ select ok(
     join pg_namespace namespace on namespace.oid = relation.relnamespace
     cross join scoped
     where namespace.nspname in ('pintpath_app', 'pintpath_ops')
+      and scoped.role_oid is not null
       and scoped.role_oid = any(policy.polroles)
   ),
   'the exact 59 portable PUBLIC database-OID policies exist with no extra PUBLIC, reserved-name, or scoped-role policy'
@@ -301,19 +336,25 @@ select is(
 );
 
 select ok(
-  not exists (
+  (
     with scoped as (
-      select 'pintpath_logical_backup_d' || database.oid::text as role_name
+      select to_regrole('pintpath_logical_backup_d' || database.oid::text)::oid as role_oid
       from pg_database as database where database.datname = current_database()
     )
-    select 1
-    from pg_proc p
-    join pg_namespace n on n.oid = p.pronamespace
-    cross join scoped
-    where n.nspname in ('pintpath_app', 'pintpath_ops')
-      and has_function_privilege(scoped.role_name, p.oid, 'EXECUTE')
+    select case
+      when scoped.role_oid is null then
+        not (select rolsuper from pg_roles where rolname = current_user)
+      else not exists (
+        select 1
+        from pg_proc p
+        join pg_namespace n on n.oid = p.pronamespace
+        where n.nspname in ('pintpath_app', 'pintpath_ops')
+          and has_function_privilege(scoped.role_oid, p.oid, 'EXECUTE')
+      )
+      end
+    from scoped
   ),
-  'the OID-scoped logical-backup group cannot execute private functions'
+  'the full scoped group has no private function authority or the non-superuser state has no group'
 );
 
 select is(

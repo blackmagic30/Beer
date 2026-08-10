@@ -24,6 +24,9 @@ const UNIQUE_SUFFIX = `${process.pid}_${Date.now().toString(36)}`.toLowerCase();
 const SOURCE_DATABASE = `pintpath_lr_source_${UNIQUE_SUFFIX}`;
 const SIBLING_DATABASE = `pintpath_lr_sibling_${UNIQUE_SUFFIX}`;
 const TARGET_DATABASE = `pintpath_lr_target_${UNIQUE_SUFFIX}`;
+const NON_SUPERUSER_DATABASE = `pintpath_lr_policy_only_${UNIQUE_SUFFIX}`;
+const NON_SUPERUSER_ROLE = `pintpath_lr_creator_${UNIQUE_SUFFIX}`;
+const AUTO_MEMBERSHIP_PROBE_ROLE = `pintpath_lr_auto_edge_${UNIQUE_SUFFIX}`;
 const BACKUP_VERSION = `${Date.now()}${process.pid}`.slice(0, 20);
 const BACKUP_PASSWORD = `PintpathLogicalReceipt_${UNIQUE_SUFFIX}`;
 const SCHEMA_PATH = path.resolve("src/db/postgres-schema.sql");
@@ -208,6 +211,7 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL logical restore rehearsal"
   let sourceBackupRole = "";
   let siblingBackupRole = "";
   let targetBackupRole = "";
+  let nonSuperuserBackupRole = "";
   let backupLogin = "";
   let bootstrapProbeRole = "";
   let backupLoginCreated = false;
@@ -320,6 +324,12 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL logical restore rehearsal"
       await source.query(
         `GRANT EXECUTE ON FUNCTION pg_catalog.pg_control_system() TO ${backupLogin}`,
       );
+      const loginExpiry = await source.query<{ passwordNeverExpires: boolean }>(
+        `SELECT role.rolvaliduntil IS NULL AS "passwordNeverExpires"
+         FROM pg_catalog.pg_roles AS role WHERE role.rolname = $1`,
+        [backupLogin],
+      );
+      expect(loginExpiry.rows).toEqual([{ passwordNeverExpires: true }]);
     } finally {
       await source.end();
       await sibling.end();
@@ -329,7 +339,12 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL logical restore rehearsal"
   afterAll(async () => {
     if (root) fs.rmSync(root, { recursive: true, force: true });
     if (admin && adminConnected) {
-      for (const database of [SOURCE_DATABASE, SIBLING_DATABASE, TARGET_DATABASE]) {
+      for (const database of [
+        SOURCE_DATABASE,
+        SIBLING_DATABASE,
+        TARGET_DATABASE,
+        NON_SUPERUSER_DATABASE,
+      ]) {
         await admin.query(
           "SELECT pg_terminate_backend(pid) FROM pg_catalog.pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()",
           [database],
@@ -343,7 +358,14 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL logical restore rehearsal"
       if (bootstrapProbeRole) {
         await admin.query(`DROP ROLE IF EXISTS ${bootstrapProbeRole}`).catch(() => undefined);
       }
-      for (const role of [sourceBackupRole, siblingBackupRole, targetBackupRole]) {
+      for (const role of [
+        sourceBackupRole,
+        siblingBackupRole,
+        targetBackupRole,
+        nonSuperuserBackupRole,
+        AUTO_MEMBERSHIP_PROBE_ROLE,
+        NON_SUPERUSER_ROLE,
+      ]) {
         if (role) await admin.query(`DROP ROLE IF EXISTS ${role}`).catch(() => undefined);
       }
       if (rolesInspected && !runtimeRoleExisted) {
@@ -356,6 +378,157 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL logical restore rehearsal"
       adminConnected = false;
     }
   }, 60_000);
+
+  it("keeps PG17 non-superuser CREATEROLE bootstrap policy-only and inert", async () => {
+    const collisions = await admin.query<{ rolname: string }>(
+      "SELECT rolname FROM pg_catalog.pg_roles WHERE rolname = ANY($1::text[])",
+      [[NON_SUPERUSER_ROLE, AUTO_MEMBERSHIP_PROBE_ROLE]],
+    );
+    if (collisions.rows.length !== 0) throw new Error("disposable_role_name_collision");
+
+    await admin.query(`CREATE ROLE ${NON_SUPERUSER_ROLE}
+      NOLOGIN NOSUPERUSER NOCREATEDB CREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS`);
+    await admin.query(`CREATE DATABASE ${NON_SUPERUSER_DATABASE} OWNER ${NON_SUPERUSER_ROLE}`);
+    const probeUrl = withDatabase(adminUrl, NON_SUPERUSER_DATABASE);
+    const probe = new Client({ connectionString: probeUrl.toString() });
+    await probe.connect();
+    try {
+      const databaseOid = await currentDatabaseOid(probe);
+      nonSuperuserBackupRole = scopedBackupRole(databaseOid);
+      await probe.query(`SET ROLE ${NON_SUPERUSER_ROLE}`);
+      const executor = await probe.query<{
+        currentRole: string;
+        isSuperuser: boolean;
+        canCreateRole: boolean;
+      }>(`SELECT current_user AS "currentRole", role.rolsuper AS "isSuperuser",
+                 role.rolcreaterole AS "canCreateRole"
+          FROM pg_catalog.pg_roles AS role WHERE role.rolname = current_user`);
+      expect(executor.rows).toEqual([{
+        currentRole: NON_SUPERUSER_ROLE,
+        isSuperuser: false,
+        canCreateRole: true,
+      }]);
+
+      await probe.query(`CREATE ROLE ${AUTO_MEMBERSHIP_PROBE_ROLE}
+        NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS`);
+      const automaticMembership = await probe.query<{
+        memberRole: string;
+        adminOption: boolean;
+        inheritOption: boolean;
+        setOption: boolean;
+      }>(`SELECT member.rolname AS "memberRole",
+                 membership.admin_option AS "adminOption",
+                 membership.inherit_option AS "inheritOption",
+                 membership.set_option AS "setOption"
+          FROM pg_catalog.pg_auth_members AS membership
+          JOIN pg_catalog.pg_roles AS granted ON granted.oid = membership.roleid
+          JOIN pg_catalog.pg_roles AS member ON member.oid = membership.member
+          WHERE granted.rolname = $1`, [AUTO_MEMBERSHIP_PROBE_ROLE]);
+      expect(automaticMembership.rows).toEqual([{
+        memberRole: NON_SUPERUSER_ROLE,
+        adminOption: true,
+        inheritOption: false,
+        setOption: false,
+      }]);
+      await probe.query("RESET ROLE");
+      await probe.query(`DROP ROLE ${AUTO_MEMBERSHIP_PROBE_ROLE}`);
+      await probe.query(`SET ROLE ${NON_SUPERUSER_ROLE}`);
+
+      await probe.query(fs.readFileSync(SCHEMA_PATH, "utf8"));
+      await probe.query(`DO $$
+        DECLARE target record;
+        BEGIN
+          FOR target IN
+            SELECT policy.polname, namespace.nspname, relation.relname
+            FROM pg_catalog.pg_policy AS policy
+            JOIN pg_catalog.pg_class AS relation ON relation.oid = policy.polrelid
+            JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+            WHERE namespace.nspname = ANY(ARRAY['pintpath_app', 'pintpath_ops'])
+              AND policy.polname = (relation.relname || '_logical_backup_select')::name
+          LOOP
+            EXECUTE pg_catalog.format(
+              'DROP POLICY %I ON %I.%I',
+              target.polname,
+              target.nspname,
+              target.relname
+            );
+          END LOOP;
+        END;
+      $$`);
+      const absentUpgradeState = await probe.query<{
+        groupPresent: boolean;
+        privatePolicyCount: number;
+      }>(`SELECT
+        pg_catalog.to_regrole($1) IS NOT NULL AS "groupPresent",
+        (SELECT count(*)::integer
+         FROM pg_catalog.pg_policy AS policy
+         JOIN pg_catalog.pg_class AS relation ON relation.oid = policy.polrelid
+         JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+         WHERE namespace.nspname = ANY(ARRAY['pintpath_app', 'pintpath_ops']))
+          AS "privatePolicyCount"`, [nonSuperuserBackupRole]);
+      expect(absentUpgradeState.rows).toEqual([{
+        groupPresent: false,
+        privatePolicyCount: 177,
+      }]);
+
+      const forwardMigrationSql = fs.readFileSync(FORWARD_MIGRATION_PATH, "utf8");
+      await probe.query(forwardMigrationSql);
+      await probe.query(forwardMigrationSql);
+      const policyOnly = await probe.query<{
+        groupPresent: boolean;
+        reservedLoginCount: number;
+        privatePolicyCount: number;
+        exactPolicyCount: number;
+      }>(`SELECT
+        pg_catalog.to_regrole($1) IS NOT NULL AS "groupPresent",
+        (SELECT count(*)::integer FROM pg_catalog.pg_roles AS role
+         WHERE role.rolname LIKE ($1 || '\\_v%') ESCAPE '\\') AS "reservedLoginCount",
+        (SELECT count(*)::integer
+         FROM pg_catalog.pg_policy AS policy
+         JOIN pg_catalog.pg_class AS relation ON relation.oid = policy.polrelid
+         JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+         WHERE namespace.nspname = ANY(ARRAY['pintpath_app', 'pintpath_ops']))
+          AS "privatePolicyCount",
+        (SELECT count(*)::integer
+         FROM pg_catalog.pg_policy AS policy
+         JOIN pg_catalog.pg_class AS relation ON relation.oid = policy.polrelid
+         JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+         WHERE namespace.nspname = ANY(ARRAY['pintpath_app', 'pintpath_ops'])
+           AND policy.polname = (relation.relname || '_logical_backup_select')::name
+           AND policy.polroles = ARRAY[0]::oid[]
+           AND policy.polcmd = 'r'
+           AND policy.polpermissive
+           AND pg_catalog.pg_get_expr(policy.polqual, policy.polrelid, false) = $2
+           AND policy.polwithcheck IS NULL) AS "exactPolicyCount"`, [
+        nonSuperuserBackupRole,
+        LOGICAL_BACKUP_POLICY_EXPRESSION,
+      ]);
+      expect(policyOnly.rows).toEqual([{
+        groupPresent: false,
+        reservedLoginCount: 0,
+        privatePolicyCount: 236,
+        exactPolicyCount: 59,
+      }]);
+      await expectSqlState(probe, `SET ROLE ${nonSuperuserBackupRole}`, "22023");
+    } finally {
+      await probe.query("ROLLBACK").catch(() => undefined);
+      await probe.query("RESET ROLE").catch(() => undefined);
+      await probe.end().catch(() => undefined);
+      await admin.query(
+        "SELECT pg_terminate_backend(pid) FROM pg_catalog.pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()",
+        [NON_SUPERUSER_DATABASE],
+      ).catch(() => undefined);
+      await admin.query(`DROP DATABASE IF EXISTS ${NON_SUPERUSER_DATABASE}`).catch(() => undefined);
+      for (const role of [
+        nonSuperuserBackupRole,
+        AUTO_MEMBERSHIP_PROBE_ROLE,
+        NON_SUPERUSER_ROLE,
+      ]) {
+        if (role) await admin.query(`DROP ROLE IF EXISTS ${role}`).catch(() => undefined);
+      }
+      nonSuperuserBackupRole = "";
+    }
+  }, 120_000);
 
   it("restores a portable PG17 archive and reconstructs target-OID backup authority", async () => {
     const sourceAdminUrl = withDatabase(adminUrl, SOURCE_DATABASE);

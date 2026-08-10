@@ -203,6 +203,9 @@ interface EphemeralPgpass {
   readonly directoryIdentity: DirectoryIdentity;
   readonly filePath: string;
   readonly fileSnapshot: StableFileSnapshot;
+  // Holding the original inode open prevents unlink-and-recreate from recycling
+  // its inode number before the pathname identity check during cleanup.
+  readonly guardHandle: fs.promises.FileHandle;
 }
 
 export interface PostgresLogicalBackupConnectionConfig {
@@ -244,6 +247,7 @@ interface SourceIdentityRow extends QueryResultRow {
   readonly canLogin: boolean;
   readonly inheritsPrivileges: boolean;
   readonly connectionLimit: number;
+  readonly validUntilIsNull: boolean;
   readonly superuser: boolean;
   readonly createDatabase: boolean;
   readonly createRole: boolean;
@@ -953,6 +957,14 @@ async function ephemeralPgpassIsExact(
       || directory.dev !== pgpass.directoryIdentity.dev
       || directory.ino !== pgpass.directoryIdentity.ino
     ) return false;
+    const guardedFile = await pgpass.guardHandle.stat();
+    if (
+      !guardedFile.isFile()
+      || guardedFile.nlink !== 1
+      || guardedFile.uid !== expectedUid
+      || (guardedFile.mode & 0o7777) !== 0o600
+      || !sameFileIdentity(pgpass.fileSnapshot, guardedFile)
+    ) return false;
     const entries = await fs.promises.readdir(pgpass.directoryPath);
     if (entries.length !== 1 || entries[0] !== path.basename(pgpass.filePath)) return false;
     const file = await snapshotTrustedFile(pgpass.filePath, expectedUid, true);
@@ -962,7 +974,7 @@ async function ephemeralPgpassIsExact(
   }
 }
 
-async function cleanupEphemeralPgpass(
+async function cleanupEphemeralPgpassPath(
   pgpass: EphemeralPgpass,
   expectedUid: number,
 ): Promise<boolean> {
@@ -1019,6 +1031,20 @@ async function cleanupEphemeralPgpass(
   } catch {
     return false;
   }
+}
+
+async function cleanupEphemeralPgpass(
+  pgpass: EphemeralPgpass,
+  expectedUid: number,
+): Promise<boolean> {
+  const pathCleanupSucceeded = await cleanupEphemeralPgpassPath(pgpass, expectedUid);
+  let descriptorCleanupSucceeded = true;
+  try {
+    await pgpass.guardHandle.close();
+  } catch {
+    descriptorCleanupSucceeded = false;
+  }
+  return pathCleanupSucceeded && descriptorCleanupSucceeded;
 }
 
 async function cleanupPartialEphemeralPgpass(
@@ -1152,38 +1178,47 @@ async function createEphemeralPgpass(
     };
     record.fill(0);
     record = null;
-    await handle.close();
-    handle = null;
     const pgpass: EphemeralPgpass = {
       directoryPath,
       directoryIdentity,
       filePath,
       fileSnapshot,
+      guardHandle: handle,
     };
     if (!await ephemeralPgpassIsExact(pgpass, expectedUid)) {
       throw new Error("unsafe_pgpass_snapshot");
     }
+    handle = null;
     return pgpass;
   } catch {
     record?.fill(0);
-    if (!fileIdentity && handle) {
-      const opened = await handle.stat().catch(() => null);
-      if (opened?.isFile() && opened.nlink === 1 && opened.uid === expectedUid) {
-        fileIdentity = { dev: opened.dev, ino: opened.ino };
-      }
-    }
-    await handle?.close().catch(() => undefined);
-    if (directoryPath && directoryIdentity && filePath && fileSnapshot) {
-      const candidate = { directoryPath, directoryIdentity, filePath, fileSnapshot };
-      await cleanupEphemeralPgpass(candidate, expectedUid);
-    } else if (directoryPath && directoryIdentity) {
-      await cleanupPartialEphemeralPgpass(
+    if (directoryPath && directoryIdentity && filePath && fileSnapshot && handle) {
+      const candidate = {
         directoryPath,
         directoryIdentity,
         filePath,
-        fileIdentity,
-        expectedUid,
-      );
+        fileSnapshot,
+        guardHandle: handle,
+      };
+      handle = null;
+      await cleanupEphemeralPgpass(candidate, expectedUid);
+    } else {
+      if (!fileIdentity && handle) {
+        const opened = await handle.stat().catch(() => null);
+        if (opened?.isFile() && opened.nlink === 1 && opened.uid === expectedUid) {
+          fileIdentity = { dev: opened.dev, ino: opened.ino };
+        }
+      }
+      await handle?.close().catch(() => undefined);
+      if (directoryPath && directoryIdentity) {
+        await cleanupPartialEphemeralPgpass(
+          directoryPath,
+          directoryIdentity,
+          filePath,
+          fileIdentity,
+          expectedUid,
+        );
+      }
     }
     throw new PostgresLogicalBackupError("cleanup_failed");
   }
@@ -1333,6 +1368,7 @@ async function inspectSafeSourceIdentity(
         login.rolcanlogin AS "canLogin",
         login.rolinherit AS "inheritsPrivileges",
         login.rolconnlimit AS "connectionLimit",
+        (login.rolvaliduntil IS NULL) AS "validUntilIsNull",
         login.rolsuper AS "superuser",
         login.rolcreatedb AS "createDatabase",
         login.rolcreaterole AS "createRole",
@@ -1519,6 +1555,7 @@ async function inspectSafeSourceIdentity(
     || row.canLogin !== true
     || row.inheritsPrivileges !== false
     || row.connectionLimit !== 2
+    || row.validUntilIsNull !== true
     || row.superuser !== false
     || row.createDatabase !== false
     || row.createRole !== false

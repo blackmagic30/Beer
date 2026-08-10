@@ -169,10 +169,17 @@ line, print it, or put it in Git.
    ```
 
    The generated role bootstrap is safe on both standalone PostgreSQL and
-   managed Supabase PostgreSQL. It creates `pintpath_runtime`,
-   `pintpath_migrator`, and a database-scoped read-only group named exactly
-   `pintpath_logical_backup_d<current-database-oid>`. The OID is the canonical
-   positive decimal OID of `current_database()`, with no leading zero. The
+   managed Supabase PostgreSQL. It creates `pintpath_runtime` and
+   `pintpath_migrator`. A true cluster superuser also creates the database-
+   scoped read-only group named exactly
+   `pintpath_logical_backup_d<current-database-oid>`; a non-superuser leaves
+   that group absent and installs only the exact inert portable policies. The
+   OID is the canonical positive decimal OID of `current_database()`, with no
+   leading zero. PostgreSQL 17 automatically gives a non-superuser
+   `CREATEROLE` principal an `ADMIN TRUE`, `INHERIT FALSE`, `SET FALSE` child
+   edge on every role it creates, and that creator cannot revoke the bootstrap-
+   superuser grant. The bootstrap therefore never creates the scoped group in
+   that context and never accepts the automatic administrator child. The
    runtime and migrator bootstrap validates those roles on replay and continues
    only while they remain `NOLOGIN`, `NOSUPERUSER`, `NOCREATEDB`,
    `NOCREATEROLE`, `INHERIT`, `NOREPLICATION`, and `NOBYPASSRLS`. The fresh
@@ -208,10 +215,20 @@ line, print it, or put it in Git.
    OID versioned login, or unsafe catalog dependency before writing. It takes
    the fixed transaction advisory lock `-1516610544307388182` before its first
    catalog classification, and a fully exact state performs verification only,
-   with no repeated grants or policy writes. Apply it through the separately
-   reviewed migration-administrator path; do not rerun it while a versioned
-   backup login is attached. The bootstrap and migration deliberately avoid
-   broad `ALTER ROLE` repair. Any unsafe pre-existing state aborts with SQLSTATE
+   with no repeated grants or policy writes. When either accepted no-role
+   pre-state (wholly absent or restored policy-only) is processed by a
+   non-superuser, it creates or retains the exact 236-policy inventory while
+   the scoped group and all 61 backup ACL dependencies remain absent. That
+   `policy-only/inert` state is not backup-ready. A fully exact group and
+   61-dependency state remains verification-only even for a non-superuser. A
+   merely pre-created inert group remains an unaccepted mixed state. Before
+   versioned-login provisioning, either run the reviewed forward SQL as a true
+   cluster superuser or use a separately reviewed helper that atomically
+   provisions and verifies the complete target-OID group and exact
+   61-dependency ACL contract. Apply it through the separately reviewed
+   migration-administrator path; do not rerun it while a versioned backup login
+   is attached. The bootstrap and migration deliberately avoid broad
+   `ALTER ROLE` repair. Any unsafe pre-existing state aborts with SQLSTATE
    `42501` and requires independent remediation.
 
 2. While production is still serving normally, prove that the independent
@@ -453,7 +470,8 @@ decimal components are canonical, the database OID must equal the live OID of
 `current_database()`, and the version is 1–20 digits with no leading zero. It
 must be `LOGIN`, `NOSUPERUSER`, `NOCREATEDB`, `NOCREATEROLE`, `NOINHERIT`,
 `NOREPLICATION`, `NOBYPASSRLS`, and `CONNECTION LIMIT 2`, with no children or
-role settings and exactly one membership: direct membership in the matching
+role settings, `rolvaliduntil` must be catalog `NULL` exactly, and it has
+exactly one membership: direct membership in the matching
 `pintpath_logical_backup_d<current-database-oid>` group with `ADMIN FALSE`,
 `INHERIT FALSE`, and `SET TRUE`. It must be unable to `SET ROLE
 pintpath_migrator`, `pintpath_runtime`, or any sibling database-scoped backup
@@ -483,6 +501,7 @@ NON-EXECUTABLE ROLE CONTRACT
 name: pintpath_logical_backup_d{verified-current-database-oid}_v{positive-version}
 attributes: LOGIN, NOINHERIT, NOSUPERUSER, NOCREATEDB, NOCREATEROLE,
             NOREPLICATION, NOBYPASSRLS, CONNECTION LIMIT 2
+catalog expiry: rolvaliduntil NULL exactly
 password input: precomputed SCRAM-SHA-256 verifier, never plaintext
 membership: matching pintpath_logical_backup_d{verified-current-database-oid}
             with ADMIN FALSE, INHERIT FALSE, SET TRUE
@@ -503,6 +522,14 @@ closed. Inability to read `pg_control_system()` is a hard failure, not a reason
 to use a superuser. The
 output directory must be a new path inside the mode-700 release evidence
 directory:
+
+The stock Railway Postgres SSL image does not satisfy this system-root,
+hostname-verified contract: its private self-signed root is not in the system
+trust store and its [server leaf names only
+`localhost`](https://github.com/railwayapp-templates/postgres-ssl/blob/35fb8234ad6c88d400c4be1f19d9a11d6c6c3564/init-ssl.sh), not the Railway private
+DNS hostname. Keep this ceremony stopped until the separately reviewed shared
+pinned-CA/`localhost` transport profile lands for both login management and
+backup. Do not weaken either path to `sslmode=require` implicitly.
 
 ```sh
 npm run db:postgres:backup:logical -- \
@@ -571,9 +598,11 @@ target's live database OID, leaving the database in the intentionally inert
 no target-OID versioned login. Before that restored database can itself become
 a backup source, apply
 `20260810003612_add_pintpath_logical_backup_role.sql` through the reviewed
-migration-administrator path. It accepts that exact policy-only state and
-constructs only the target-OID group and 61 target ACLs; provision a target-OID
-versioned login separately afterward. A source-OID role must remain unable to
+migration-administrator path. It accepts that exact policy-only state. A true
+cluster superuser constructs only the target-OID group and 61 target ACLs; a
+non-superuser preserves the inert policy-only state and must STOP. Provision a
+target-OID versioned login separately only after the full target-OID group/ACL
+contract is exact. A source-OID role must remain unable to
 set the target group or see target rows, even if temporary target `USAGE` and
 `SELECT` are deliberately granted during the isolation rehearsal.
 

@@ -2518,6 +2518,8 @@ DECLARE
   database_oid_text text;
   backup_role_name text;
   backup_role_oid oid;
+  executor_is_superuser boolean;
+  role_exists boolean;
   target record;
 BEGIN
   SELECT database.oid, database.oid::text
@@ -2533,6 +2535,10 @@ BEGIN
   END IF;
   backup_role_name := 'pintpath_logical_backup_d' || database_oid_text;
 
+  SELECT role.rolsuper INTO STRICT executor_is_superuser
+  FROM pg_catalog.pg_roles AS role
+  WHERE role.rolname = current_user;
+
   IF EXISTS (
     SELECT 1 FROM pg_catalog.pg_roles AS role
     WHERE role.rolname LIKE (backup_role_name || '\_v%') ESCAPE '\'
@@ -2542,10 +2548,20 @@ BEGIN
       MESSAGE = 'Refusing Pint Path schema bootstrap because the current database login namespace is not empty.';
   END IF;
 
-  IF NOT EXISTS (
+  SELECT EXISTS (
     SELECT 1 FROM pg_catalog.pg_roles AS role
     WHERE role.rolname = backup_role_name
-  ) THEN
+  ) INTO role_exists;
+
+  -- PostgreSQL 17 makes a non-superuser CREATEROLE principal an ADMIN-only
+  -- child of each role it creates. That cluster-global authority cannot be
+  -- revoked by the creator, so leave the portable policies inert instead of
+  -- weakening the zero-child backup-group contract.
+  IF NOT role_exists AND NOT executor_is_superuser THEN
+    RETURN;
+  END IF;
+
+  IF NOT role_exists THEN
     EXECUTE pg_catalog.format(
       'CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS',
       backup_role_name

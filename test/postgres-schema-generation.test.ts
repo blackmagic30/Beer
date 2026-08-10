@@ -349,7 +349,11 @@ describe("Postgres schema generation", () => {
     expect(migration).toContain("exact_base_policy_count = 177");
     expect(migration).toContain("private_policy_count <> 236");
     expect(migration).toContain("exact_base_policy_count <> 177");
-    expect(migration).toContain("if migration_state <> 'exact' then");
+    expect(migration).toContain("where role.rolname = current_user");
+    expect(migration).toContain("elsif executor_is_superuser then");
+    expect(migration).toContain("if migration_state = 'absent' then");
+    expect(migration).toContain("if role_exists and migration_state <> 'exact' then");
+    expect(migration).toContain("did not preserve an exact policy-only state");
     expect(migration).toContain("a policy directly names the scoped role");
     expect(migration).toContain("dependency.deptype = 'a'");
     expect(migration).toContain(") = 61");
@@ -609,6 +613,12 @@ describe("Postgres schema generation", () => {
     );
     expect(generated).toContain("database_oid_text !~ '^[1-9][0-9]{0,9}$'");
     expect(generated).toContain("backup_role_name || '\\_v%'");
+    expect(generated).toContain("WHERE role.rolname = current_user;");
+    expect(generated).toContain("IF NOT role_exists AND NOT executor_is_superuser THEN");
+    expect(generated).toContain("RETURN;");
+    expect(generated).toContain(
+      "leave the portable policies inert instead of",
+    );
     expect(generated).not.toMatch(
       /ALTER ROLE\s+pintpath_(?:runtime|migrator|logical_backup)\b/i,
     );
