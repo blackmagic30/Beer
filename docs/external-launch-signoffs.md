@@ -180,6 +180,16 @@ pilots before the role and provider checks pass.
   ```
 
   Securely transfer only that sanitized JSON to the operator host as `$EVIDENCE_DIR/provider-readiness.json`, validate it again, then delete the remote temporary file. Never copy a remote `.env` or provider credential.
+- [ ] Before the manual release workflow, run
+  `npm run --silent readiness:railway:mutation-boundary` with two distinct
+  project tokens scoped to the exact production and staging environments.
+  Require the token identity checks, both undecrypted staged-patch checks, and
+  every production Postgres deployment/snapshot/source/digest check to be
+  `true`. The current incident baseline is intentionally non-passing. Do not
+  edit it to accept the 2026-08-10 redeploy, commit/discard a staged patch, or
+  use this read-only receipt as mutation authority. Railway writes remain
+  stopped until the tracked one-operation executor owns an immediate preflight
+  and unconditional postflight.
 - [ ] Before the manual release workflow, close permanent-staging sealing as a
   separate ordered gate. Preserve a passing deployed/one-shot pre-seal
   `readiness:launch` receipt with

@@ -567,6 +567,13 @@ resource pins, operator approvals, or two-person evidence.
 
 ## Live execution still required
 
+Every Railway create, configuration, scale, deploy, rollback, PITR, route, or
+teardown item below remains blocked until the tracked
+`readiness:railway:mutation-boundary` executor owns its immediate preflight,
+one exact operation, and unconditional postflight. The standalone receipt is
+read-only and the checked-in incident baseline intentionally fails; do not use
+dashboard **Deploy**, Git autodeploy, or an ad-hoc CLI/API write instead.
+
 - Complete the three remaining staging provider credential/configuration gates.
 - Deploy the reviewed application build to permanent staging at one replica and
   pass provider, Auth, role, private Storage, and Free-scope smoke checks.

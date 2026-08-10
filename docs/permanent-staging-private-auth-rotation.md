@@ -33,6 +33,12 @@ network gate described below.
   no-collision window is unavailable; never delete and guess at the schedule.
 - Re-resolve the pinned Railway project, environment, Postgres, Redis, and
   temporary probe-service IDs before every mutation. Never target production.
+- Before every Railway mutation, require a passing
+  `readiness:railway:mutation-boundary` receipt from distinct production and
+  staging environment-scoped metadata tokens. Re-query both undecrypted staged
+  patches immediately before the exact write and in a guaranteed cleanup path,
+  including after timeout or provider error. Either nonempty or unparseable
+  patch stops the whole ceremony. Never commit or discard an unrelated patch.
 - Require the staging environment to remain the exact persistent fork whose
   `sourceEnvironment.id` is the pinned production environment. Capture the
   production service/volume/domain tuples before creating anything; the
@@ -246,6 +252,12 @@ temporary local secret material and retain only protected, secret-free
 receipts. Railway variable sealing is a separate irreversible ceremony after
 every new value and URL pin is escrowed and proven; it is not part of this
 rotation.
+
+The standalone mutation-boundary command is not the mutation executor for this
+ceremony. Do not bridge that gap with a manual dashboard click or ad-hoc CLI
+command. The tracked rotation executor must own the preflight, one closed
+operation, and unconditional postflight before this section becomes
+executable.
 
 ## Separate post-rotation sealing gate
 

@@ -27,6 +27,7 @@
     "readiness:data": "tsx scripts/production-data-readiness.ts",
     "readiness:providers": "tsx scripts/provider-readiness-check.ts",
     "readiness:railway:sealed": "tsx scripts/railway-sealed-variable-readiness.ts --policy ops/railway/permanent-staging-sealed-variable-policy.json",
+    "readiness:railway:mutation-boundary": "tsx scripts/check-railway-mutation-boundary.ts --policy ops/railway/production-staging-mutation-policy.json",
     "reports:generate": "tsx scripts/generate-monthly-reports.ts",
     "reports:deliver": "tsx scripts/deliver-monthly-reports.ts",
     "reports:deliver:mock": "REPORT_EMAIL_MODE=mock tsx scripts/deliver-monthly-reports.ts",

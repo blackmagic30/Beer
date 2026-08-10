@@ -14,6 +14,11 @@ until the controlled cutover.
 
 Pint Path remains no-go. Before candidate freeze:
 
+All Railway provider-writing work in these gates is non-executable until the
+tracked `readiness:railway:mutation-boundary` executor owns the immediate
+preflight, one exact operation, and unconditional postflight. Its standalone
+receipt is read-only; the current incident baseline intentionally fails.
+
 1. Complete the three remaining staging provider credential/configuration
    gates and deploy the exact reviewed app build to permanent staging. The
    isolated private offsite operational copy is now attested and live-probed.

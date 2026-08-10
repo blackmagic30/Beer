@@ -5,6 +5,17 @@
 > [`docs/production-launch-runbook.md`](docs/production-launch-runbook.md) in
 > order. The production launch runbook is controlling where the two differ.
 
+## Railway mutation boundary (document-wide stop)
+
+Every Railway create, configuration, variable, deploy, redeploy, rollback,
+route, backup, or teardown instruction in this checklist is non-executable
+unless a tracked one-operation executor owns the immediate
+`readiness:railway:mutation-boundary` preflight, the one exact reviewed write,
+and an unconditional postflight. The standalone boundary command is read-only,
+and the checked-in incident baseline intentionally fails. Do not use dashboard
+**Deploy**, Git autodeploy, an ad-hoc CLI/API command, or commit/discard an
+unrelated staged patch to bypass this stop.
+
 Use this before merging a beta/hardening branch into `main` or deploying a Railway production beta.
 
 Provider-specific setup lives in [docs/provider-configuration-runbook.md](/Users/zac/Desktop/Beer/docs/provider-configuration-runbook.md).
@@ -204,10 +215,20 @@ For the current production deploy, keep `COMMERCIAL_LAUNCH_ENABLED=false` and `C
 ## 9. Rollback Plan
 
 - Identify the previous production commit with `git log --oneline main`.
+- Confirm Railway Git autodeploy is disabled before merging or pushing a release
+  candidate. A `main` push must not itself create a production deployment.
+- Run `npm run --silent readiness:railway:mutation-boundary` with distinct
+  production and staging environment-scoped metadata tokens. Both staged
+  patches must be `{}`, and the production deployment/snapshot/source/digest
+  must match the reviewed policy. A failure stops rollback and release work; it
+  is not permission to discard or commit a patch.
 - If the bad deploy came from a merge commit, revert it with `git revert -m 1 <merge_commit_sha>`.
-- If it was a fast-forward push, create a revert commit for the problematic range or redeploy the previous SHA from Railway if available.
-- Push the rollback commit to `main` and let Railway redeploy.
-- If data migration caused issues, stop the app, restore the pre-deploy database backup, then redeploy the previous commit.
+- If it was a fast-forward push, create a revert commit for the problematic range.
+- Push the rollback commit to `main` only after it is reviewed. Deploy only
+  through the tracked Railway executor that repeats the mutation-boundary check
+  before and after one exact deployment. Ordinary `railway redeploy`, a
+  dashboard **Deploy**, and autodeploy are not rollback authorities.
+- If data migration caused issues, stop the app, restore the pre-deploy database backup, then use the guarded executor to deploy the previous immutable image.
 - Fast feature-disable env switches:
   - `FIELD_TEST_MODE=false`
   - `ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=false`
@@ -226,4 +247,6 @@ npm run check
 git push origin main
 ```
 
-If `--ff-only` fails, stop and inspect the merge before continuing.
+If `--ff-only` fails, stop and inspect the merge before continuing. This push
+must not autodeploy; the separately reviewed deployment phase owns the exact
+image and provider mutation.

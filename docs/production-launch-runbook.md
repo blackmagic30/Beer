@@ -3,6 +3,17 @@
 Last audited: 8 August 2026
 Scope: full public web launch plus an Australian iOS launch.
 
+## Railway mutation boundary (document-wide stop)
+
+Every Railway create, configuration, variable, scale, deploy, redeploy,
+rollback, route, backup, PITR, or teardown instruction anywhere in this runbook
+is non-executable unless a tracked one-operation executor owns the immediate
+`readiness:railway:mutation-boundary` preflight, the one exact reviewed write,
+and an unconditional postflight. The standalone boundary command is read-only,
+and the checked-in incident baseline intentionally fails. Do not use dashboard
+**Deploy**, Git autodeploy, an ad-hoc CLI/API command, or commit/discard an
+unrelated staged patch to bypass this stop.
+
 The availability decision is closed for this release. Before candidate freeze,
 migrate all authoritative application state—including current SQLite data,
 account-deletion outbox, webhook correlation, and job leases—to one shared
@@ -862,6 +873,12 @@ Before staging sign-off:
 
 Configure the completion-notice path in this exact order:
 
+Every Railway deploy, secret update, and route operation in this rehearsal is
+subject to the production-and-staging mutation boundary in Phase 16 and must be
+performed by its tracked preflight/write/finally-postflight executor. Because
+that executor is not yet implemented, the provider-writing parts of this
+sequence remain blocked even when the other prerequisites pass.
+
 Before this rehearsal, move account-deletion requests, outbox, recipient
 secrets, webhook events, and job leases into shared Postgres. Permanent
 integrated staging and production must then run at least two replicas and prove
@@ -1305,6 +1322,31 @@ If more than 30 minutes elapse before the reviewed migration begins, or any unpl
 
 ## Phase 16 — merge, mutate production, deploy commercial-disabled, and prove live data
 
+Production and staging Railway writes remain stopped unless the read-only
+mutation-boundary receipt passes immediately before the operation and a tracked
+executor repeats the same checks in an unconditional postflight. The command
+is:
+
+```bash
+npm run --silent readiness:railway:mutation-boundary
+```
+
+It requires distinct environment-scoped production and staging metadata
+tokens. Both undecrypted staged patches must be exact empty objects, and the
+approved production Postgres deployment ID, snapshot ID, source image, and
+resolved image digest must match the checked-in policy. Never auto-commit or
+auto-discard drift. Railway Git autodeploy must be disabled before Phase 16.1;
+the application predeploy hook runs too late to prevent a stale environment
+patch from creating a deployment.
+
+The current policy intentionally fails after the 2026-08-10 production
+Postgres redeploy and mutable-tag re-resolution. Do not edit it merely to make
+the gate green. Rebaseline only after the incident is explicitly accepted,
+Postgres data-level readiness and recovery authority are proven, and the
+production image source is immutable. A standalone passing preflight is not a
+mutation executor, so this phase remains non-executable until the closed
+preflight/write/postflight implementation is reviewed.
+
 ### 16.1 Merge the reviewed candidate
 
 ```bash
@@ -1405,7 +1447,13 @@ have also passed independent retrieval and restore proof.
 
 ### 16.5 Deploy the exact protected `main` build with enrolment disabled
 
-Railway must deploy `deploymentSha` with the Phase 1 environment values. Wait for deployment completion, then:
+Railway must deploy `deploymentSha` with the Phase 1 environment values through
+the tracked guarded executor. Ordinary `railway redeploy`, dashboard **Deploy**,
+and Git autodeploy are prohibited. The executor must prove both staged patches
+empty before the write, deploy one exact immutable image, re-query both patches
+in `finally`, and require the child deployment's resolved digest to equal the
+independently approved digest with no `patchId`. Wait for deployment completion,
+then:
 
 ```bash
 PINTPATH_ENFORCE_LAUNCH_FLAGS=true \
@@ -1424,8 +1472,9 @@ every production proof in Phases 16 and 17. No public billing management,
 Stripe lifecycle, venue-Pro, report-delivery, POS/counter, or reward entry point
 is part of this release.
 
-If application health fails, deploy `rollbackBuildSha` against the same
-Postgres schema. Never reopen the sealed SQLite source for writes.
+If application health fails, use the same guarded executor to deploy the exact
+immutable `rollbackBuildSha` image against the same Postgres schema. Never
+reopen the sealed SQLite source for writes.
 
 ### 16.6 Promote only the reviewed Postgres price batch
 
@@ -1479,7 +1528,7 @@ this phase targets `https://pintpath.au`, the incident commander must:
    Phase 16.6 all passed;
 2. record the exact `deploymentSha`, canonical route, start time, owner, reviewer,
    and rollback trigger for this observation window; and
-3. restore only the canonical production route in tightly controlled,
+3. use the tracked guarded executor to restore only the canonical production route in tightly controlled,
    non-marketed observation mode, with commercial flags disabled, WAF/rate
    limits and alerting active, and the maintenance/closed state ready for
    immediate restoration.
@@ -1586,7 +1635,10 @@ unexpected_paths="$(
 test -z "$unexpected_paths"
 ```
 
-Record `deployedMainSha` in the private release register. Railway must deploy that exact commit with commercial enrolment still disabled. Require the reported production SHA to equal `deployedMainSha` and repeat the Phase 1 live-config assertion.
+Record `deployedMainSha` in the private release register. The tracked guarded
+executor must deploy that exact immutable image with commercial enrolment still
+disabled. Require the reported production SHA to equal `deployedMainSha` and
+repeat the Phase 1 live-config assertion.
 
 ### 17.3 Run strict authenticated evidence through the protected environment
 

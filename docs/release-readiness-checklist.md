@@ -2,6 +2,17 @@
 
 This checklist adapts the external Pint Path test-pack assumptions to this repository. Synthetic automated tests may use the isolated SQLite fixture adapter, but SQLite is not an approved full-scale runtime. Production and permanent integrated staging require the reviewed shared Postgres adapter and must never receive synthetic reset/seed data.
 
+## Railway mutation boundary (document-wide stop)
+
+Every instruction below that would create a Railway one-shot deployment,
+release, redeploy, restart, variable update, or recovery mutation remains
+non-executable until `readiness:railway:mutation-boundary` passes and the
+separately reviewed one-operation executor owns the exact write plus its
+unconditional postflight. The standalone boundary and sealed-variable checks
+are read-only evidence, not mutation authority. If the executor or any required
+authority is unavailable, leave Railway unchanged; never substitute dashboard
+**Deploy**, Git autodeploy, `railway run`, or an ad-hoc CLI/API command.
+
 ## Automated Local Gates
 
 Run before any release candidate:
@@ -42,8 +53,29 @@ npm run --silent readiness:railway:sealed
 
 Require its one receipt to report `policy=permanent-staging-post-rotation`,
 `mode=post-seal`, and `outcome=passed`, then repeat the strict deployed
-`readiness:launch` gate from a fresh post-seal deployment. Never use
+`readiness:launch` gate from a fresh post-seal deployment created only by the
+reviewed executor. Never use
 `railway run`, export resolved variables, or unseal a row for readiness.
+
+Separately, before any Railway release or recovery mutation, load two distinct
+environment-scoped project tokens as
+`PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN` and
+`PINTPATH_RAILWAY_STAGING_METADATA_TOKEN`, then run:
+
+```bash
+npm run --silent readiness:railway:mutation-boundary
+```
+
+Require `mode=read-only-boundary`, `outcome=passed`, and every check `true`.
+The command proves both project tokens identify the expected single
+environment, both undecrypted staged patches are empty, and the reviewed
+production Postgres deployment, snapshot, source, and resolved image digest
+remain bound. It does not execute or authorize a mutation. Railway Git autodeploy,
+dashboard **Deploy**, and ordinary CLI redeploy remain disabled; a tracked
+executor must repeat the boundary before and after its one closed operation.
+The checked-in incident baseline is intentionally non-passing until the
+production recovery and immutable-source reauthorization are separately
+reviewed.
 
 GitHub keeps these two signals deliberately separate:
 
@@ -69,6 +101,17 @@ For the manual release gate only, also configure
 `PINTPATH_RAILWAY_METADATA_TOKEN` as a Railway project token scoped to the exact
 permanent-staging environment. It is used only for the fixed metadata query and
 must not be an account/workspace token or an application variable.
+
+Also configure the manual gate's two mutation-boundary secrets with separate
+tokens scoped to their exact environments:
+
+```text
+PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN
+PINTPATH_RAILWAY_STAGING_METADATA_TOKEN
+```
+
+Do not reuse one project-wide or account token for both. The boundary gate
+rejects identical token material before making a request.
 
 The scheduled workflow signs those dedicated verified accounts in through the public Supabase password flow, exchanges each provider session for a Pint Path session, checks the scoped endpoint, then revokes both the disposable Pint Path session and its current Supabase refresh session. Missing credentials are reported as a monitoring-configuration warning in a separate hourly job; they do not turn a passing public-health job into a false outage alert.
 
@@ -128,6 +171,11 @@ These are launch-critical but require provider/staging verification:
   receipt, then capture a fresh deployed post-seal strict-readiness receipt.
   Missing/extra/shared-shadow rows, reference drift, an unsealed row, or use of
   `railway run` keeps this blocker open.
+- **Railway mutation boundary:** Keep production and staging staged patches
+  empty, disable Git autodeploy, replace mutable production database image
+  authority with an independently approved immutable source, and implement the
+  tracked preflight/write/finally-postflight executor. The standalone
+  read-only receipt cannot close this blocker by itself.
 - **Supabase OAuth:** Google provider credentials, web redirect URLs, the provider callback, and email-confirmation behavior must be verified. Supabase should allow `https://pintpath.au/auth/callback`; the Google console should allow the callback derived from `SUPABASE_URL`, for example `https://auth.pintpath.au/auth/v1/callback`. Set `SUPABASE_OAUTH_PROVIDERS=google` and prove Apple is disabled. The first-release iOS app is email/password only, declares no custom URL scheme, and uses the HTTPS callback for email confirmation/password recovery.
 - **Supabase Auth security:** Enable leaked-password protection before public launch.
 - **Supabase live access audit:** Apply the final Data API retirement migration, then prove live that `anon` and `authenticated` have zero privileges on public tables, sequences, RPCs, and private helpers. RLS remains defence in depth; only the Express service, using its server-only service role, may access application data. Local SQL parsing is not a substitute for live privilege and denial proof.

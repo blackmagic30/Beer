@@ -30,15 +30,16 @@ function repositoryFile(name: string): string {
 }
 
 describe("release workflow contracts", () => {
-  it("keeps ordinary CI informative and makes manual readiness checks strict", () => {
+  it("keeps automated readiness informative and reserves manual authority for the release gate", () => {
     const source = workflow("pintpath-release-readiness.yml");
 
     expect(source).toContain("name: Pint Path Automated Readiness");
     expect(source).toContain("fetch-depth: 0");
     expect(source).toContain("npm run test:e2e:pintpath");
     expect(source).toContain("npm run --silent release:evidence | tee release-evidence-summary.json");
-    expect(source).toContain("npm run --silent release:evidence:strict | tee release-evidence-summary.json");
-    expect(source).toContain("if: github.event_name == 'workflow_dispatch'");
+    expect(source).not.toContain("workflow_dispatch:");
+    expect(source).not.toContain("release:evidence:strict");
+    expect(source).toContain("name: pintpath-automated-readiness-evidence");
     expect(evidenceValidator()).toContain("ok: launchReady");
     expect(evidenceValidator()).toContain("launchReady,");
     expect(evidenceValidator()).toContain("expectedRequiredIds");
@@ -67,6 +68,9 @@ describe("release workflow contracts", () => {
     expect(source).not.toContain("npm run --silent readiness:launch");
     expect(source).toContain(
       "npm run --silent readiness:railway:sealed | tee railway-sealed-variable-readiness.json",
+    );
+    expect(source).toContain(
+      "npm run --silent readiness:railway:mutation-boundary | tee railway-mutation-boundary-readiness.json",
     );
     expect(source).toContain("npm run --silent readiness:data | tee production-data-readiness.json");
     expect(source).toContain("npm run --silent release:evidence:strict");
@@ -123,6 +127,22 @@ describe("release workflow contracts", () => {
     expect(readinessStep).not.toContain("SOURCE_EVIDENCE_SIGNING_SECRET");
     expect(source).not.toContain("provider-readiness-summary.json");
 
+    const mutationBoundaryStep = source.match(/- name: Enforce empty Railway mutation boundary and production image authority[\s\S]*?(?=\n\s{6}- name:)/)?.[0] || "";
+    expect(mutationBoundaryStep).toContain(
+      "PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}",
+    );
+    expect(mutationBoundaryStep).toContain(
+      "PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}",
+    );
+    expect(mutationBoundaryStep).toContain(
+      "readiness:railway:mutation-boundary",
+    );
+    expect(mutationBoundaryStep).toContain("set -o pipefail");
+    expect(mutationBoundaryStep.match(/\$\{\{ secrets\./g)).toHaveLength(2);
+    expect(mutationBoundaryStep).not.toContain("DATABASE_URL");
+    expect(mutationBoundaryStep).not.toContain("RAILWAY_TOKEN");
+    expect(mutationBoundaryStep).not.toContain("RAILWAY_API_TOKEN");
+
     const authenticatedSmokeStep = source.match(/- name: Verify authenticated production roles[\s\S]*?(?=\n\s{6}- name:)/)?.[0] || "";
     expect(authenticatedSmokeStep).toContain("PINTPATH_SMOKE_USER_EMAIL: ${{ secrets.PINTPATH_SMOKE_USER_EMAIL }}");
     expect(authenticatedSmokeStep).toContain("PINTPATH_SMOKE_USER_PASSWORD: ${{ secrets.PINTPATH_SMOKE_USER_PASSWORD }}");
@@ -148,6 +168,7 @@ describe("release workflow contracts", () => {
     expect(dataReadinessStep).not.toContain("secrets.");
     expect(source).toContain("production-public-smoke.json");
     expect(source).toContain("production-data-readiness.json");
+    expect(source).toContain("railway-mutation-boundary-readiness.json");
 
     const jobPrefix = source.slice(0, source.indexOf("    steps:"));
     expect(jobPrefix).not.toContain("SUPABASE_SERVICE_ROLE_KEY");
@@ -155,6 +176,73 @@ describe("release workflow contracts", () => {
     expect(jobPrefix).not.toContain("PINTPATH_SMOKE_USER_PASSWORD");
     expect(jobPrefix).not.toContain("PINTPATH_SMOKE_VENUE_PASSWORD");
     expect(jobPrefix).not.toContain("PINTPATH_SMOKE_ADMIN_TOKEN");
+  });
+
+  it("keeps documented Railway writes behind the reviewed mutation executor", () => {
+    const documentWideBoundary =
+      "## Railway mutation boundary (document-wide stop)";
+    const expectBoundaryBefore = (document: string, firstInstruction: string) => {
+      const boundaryIndex = document.indexOf(documentWideBoundary);
+      const instructionIndex = document.indexOf(firstInstruction);
+      expect(boundaryIndex).toBeGreaterThan(-1);
+      expect(instructionIndex).toBeGreaterThan(boundaryIndex);
+    };
+    const requiredDocuments = [
+      repositoryFile("SECURITY.md"),
+      repositoryFile("README.md"),
+      repositoryFile("SECURITY_BACKLOG.md"),
+      repositoryFile("PROD_FOLLOWUPS.md"),
+      repositoryFile("FIELD_TEST_CHECKLIST.md"),
+      repositoryFile("DEPLOYMENT_CHECKLIST.md"),
+      repositoryFile("PRODUCTION_CHECKLIST.md"),
+      releaseDocument("provider-configuration-runbook.md"),
+      releaseDocument("permanent-staging-private-auth-rotation.md"),
+      releaseDocument("production-launch-runbook.md"),
+      releaseDocument("release-readiness-checklist.md"),
+      releaseDocument("external-launch-signoffs.md"),
+      releaseDocument("data-breach-response-runbook.md"),
+      releaseDocument("internal-readiness-audit-2026-07-15.md"),
+      releaseDocument("full-product-audit-2026-07-12.md"),
+      releaseDocument("full-remediation-2026-07-14.md"),
+      releaseDocument("full-scale-postgres-migration-runbook.md"),
+      releaseDocument("postgres-migration-execution-status.md"),
+      releaseDocument("launch-9-readiness-gates.md"),
+    ];
+    for (const document of requiredDocuments) {
+      expect(document).toContain("mutation-boundary");
+    }
+    expect(repositoryFile("SECURITY.md")).toContain(
+      "tracked\none-operation executor",
+    );
+    expect(releaseDocument("provider-configuration-runbook.md")).toContain(
+      "Railway writes stay\nstopped",
+    );
+    expect(releaseDocument("production-launch-runbook.md")).toContain(
+      "provider-writing parts of this\nsequence remain blocked",
+    );
+    expect(releaseDocument("data-breach-response-runbook.md")).toContain(
+      "Contain outside Railway instead",
+    );
+    expectBoundaryBefore(
+      repositoryFile("DEPLOYMENT_CHECKLIST.md"),
+      "Use this before merging a beta/hardening branch",
+    );
+    expectBoundaryBefore(
+      repositoryFile("PRODUCTION_CHECKLIST.md"),
+      "Use this for a full production release",
+    );
+    expectBoundaryBefore(
+      releaseDocument("production-launch-runbook.md"),
+      "This is the controlling sequence.",
+    );
+    expectBoundaryBefore(
+      releaseDocument("provider-configuration-runbook.md"),
+      "Use this before a Railway production or staging deployment",
+    );
+    expectBoundaryBefore(
+      releaseDocument("release-readiness-checklist.md"),
+      "After each protected provider environment is configured",
+    );
   });
 
   it("keeps sealed Railway readiness external, metadata-only, and policy-bound", () => {
@@ -213,6 +301,12 @@ describe("release workflow contracts", () => {
     );
     expect(externalSignoffs).toContain(
       "the GitHub runner must not regenerate them from duplicated application",
+    );
+    expect(externalSignoffs).toContain(
+      "readiness:railway:mutation-boundary",
+    );
+    expect(externalSignoffs).toContain(
+      "current incident baseline is intentionally non-passing",
     );
   });
 

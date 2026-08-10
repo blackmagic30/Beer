@@ -1,5 +1,18 @@
 # Pint Path Provider Configuration Runbook
 
+## Railway mutation boundary (document-wide stop)
+
+Every instruction in this document that would create or update a Railway
+variable, service, deployment, route, replica, volume, source, restart, or
+rollback is non-executable until the checked-in
+`readiness:railway:mutation-boundary` preflight passes and the separately
+reviewed one-operation executor owns the exact write plus its unconditional
+postflight. The standalone preflight is read-only and does not authorize a
+dashboard **Deploy**, Git autodeploy, `railway up`, `railway variable set`, or
+another ad-hoc CLI/API write. If that executor or any required authority is
+unavailable, leave Railway unchanged; provider-side key creation and local
+configuration may continue without copying values into Railway.
+
 Use this before a Railway production or staging deployment for the full-scale Free web-and-iOS release. The local app can run with placeholder values, but `NODE_ENV=production` now fails fast if critical provider config is missing.
 
 > **Full-scale launch blocker:** the checked-in Free-live application now uses
@@ -61,7 +74,9 @@ Configure in Google Cloud:
 3. Open **Google Maps Platform > Map Management**.
 4. Create a new Map ID named `Pint Path Production Vector Map`.
 5. Choose platform/type **JavaScript** and a vector map style.
-6. Copy the generated Map ID into Railway and local `.env` as `GOOGLE_MAPS_MAP_ID`.
+6. Record the generated Map ID in the protected local `.env` as
+   `GOOGLE_MAPS_MAP_ID`; add it to Railway only through the reviewed executor
+   after the document-wide stop above is closed.
 7. Restrict the browser API key to HTTP referrers:
    - `https://pintpath.au/*`
    - `http://localhost:3000/*`
@@ -85,12 +100,44 @@ GraphQL metadata fields `id`, `name`, `environmentId`, `serviceId`, `isSealed`,
 `references`, edge cursors, and page information; the query must not request a
 value field. Perform comparisons entirely in process without printing response
 data. Write one secret at a time with
-`railway variable set NAME --stdin --skip-deploys`; use `railway connect --ssh`
+`railway variable set NAME --stdin --skip-deploys` only through the tracked
+mutation executor described below; use `railway connect --ssh`
 only to launch the intended local database client, with output explicitly
 allowlisted and no nested shell. Any accidental resolved-environment output is
 a credential incident: stop unrelated work, rotate the exposed staging-only
 authorities with overlap, prove the old credentials fail, and preserve a
 secret-free incident receipt before continuing.
+
+Railway staged changes are environment-wide, not command-local. A later
+**Deploy** or patch commit applies the entire pending changeset and can redeploy
+services unrelated to the operator's immediate action. Before any Railway
+write, run the checked-in metadata-only boundary gate with two distinct
+environment-scoped project tokens:
+
+```bash
+npm run --silent readiness:railway:mutation-boundary
+```
+
+Load `PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN` and
+`PINTPATH_RAILWAY_STAGING_METADATA_TOKEN` only from protected operator/CI
+secret stores. The gate requests each environment's undecrypted staged patch
+and the exact reviewed production Postgres deployment, snapshot, source, and
+image digest. It also requires Railway's own project-token identity query to
+bind each token to the expected project and exactly one expected environment.
+It emits a fixed boolean receipt and never emits patch contents,
+deployment metadata, image tags, or token values. Both patches must be plain
+empty objects. Never auto-commit or auto-discard a nonempty production patch.
+
+The checked-in production baseline deliberately remains failed after the
+2026-08-10 incident: the reviewed deployment is no longer current and its
+source is a mutable `:17.10` tag rather than a digest-pinned reference. A gate
+failure is not an instruction to roll back or edit Railway. Re-authorizing the
+new deployment or changing the source requires separate recovery evidence,
+review, and a policy update. Even a passing receipt is only a point-in-time
+read-only preflight; it does not authorize dashboard changes or arbitrary
+Railway CLI/API commands. Until a tracked executor performs this check both
+immediately before and in a guaranteed post-mutation path, Railway writes stay
+stopped.
 
 For PostgreSQL and Redis password incidents, follow the separate
 [permanent-staging private authentication rotation runbook](permanent-staging-private-auth-rotation.md).

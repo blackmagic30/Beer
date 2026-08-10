@@ -1,5 +1,11 @@
 # Pint Path full remediation audit
 
+> Historical, non-executable snapshot. Its deploy and Railway configuration
+> tasks are superseded by the current production launch and provider runbooks.
+> Every Railway write now requires the tracked
+> `readiness:railway:mutation-boundary` executor with an immediate preflight and
+> unconditional postflight.
+
 **Audit and remediation date:** 14 July 2026
 **Repository:** `/Users/zac/Desktop/Beer`
 **Scope:** public website, authenticated consumer accounts, contributor accounts, venue managers, counter staff, admins, API/backend, SQLite/Supabase storage, Stripe, backup/restore, iOS, Android, accessibility, performance, operations, and release evidence.

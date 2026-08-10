@@ -211,6 +211,7 @@ For the Melbourne launch, exact prices must flow through the Express API, not di
 - Run `npm run security:scan` before deploy to catch common committed secret patterns. If it flags a real key, rotate it immediately and replace it with an env placeholder.
 - Run `npm run security:audit` before deploy to catch high-severity dependency advisories.
 - Run `npm run test:release:pintpath` before a release candidate. This executes the repo-native Pint Path release-readiness suite against synthetic/local data only, plus secret and dependency checks. See `docs/release-readiness-checklist.md` for provider-only blockers that still need staging/manual verification.
+- Before any Railway write, require `npm run --silent readiness:railway:mutation-boundary` and the tracked one-operation executor that repeats the boundary in an unconditional postflight. The standalone receipt is read-only; dashboard Deploy, Git autodeploy, and ordinary redeploy remain prohibited.
 - Production startup now requires an HTTPS `PUBLIC_BASE_URL`, `GOOGLE_MAPS_API_KEY`, and `GOOGLE_MAPS_MAP_ID`; admin routes stay locked until `ADMIN_EMAILS` is configured with the approved owner/admin email.
 - `/startup` is the production deploy gate: it forces database migration/open, notice-keyring validation, local storage checks, and scheduler startup without depending on fragile external canaries. `/ready` remains the deeper ongoing dependency check after `/health`.
 - See `FIELD_TEST_CHECKLIST.md` before showing the app to real users.
@@ -218,8 +219,8 @@ For the Melbourne launch, exact prices must flow through the Express API, not di
 
 Security and rotation notes:
 
-- Browser Google Maps keys are public by design, but should still be restricted to `https://pintpath.au/*`, `http://localhost:3000/*`, and `http://127.0.0.1:3000/*`. If a browser key was ever committed or shared too broadly, rotate it in Google Cloud and update Railway/local env.
-- Supabase service-role keys, Stripe secret keys, Stripe webhook secrets, OpenAI keys, and private Google Places keys must stay server-side only. If any were exposed, rotate them with the provider, update Railway env, restart the service, and run `npm run security:scan`.
+- Browser Google Maps keys are public by design, but should still be restricted to `https://pintpath.au/*`, `http://localhost:3000/*`, and `http://127.0.0.1:3000/*`. If a browser key was ever committed or shared too broadly, rotate it in Google Cloud and update Railway/local configuration only through the guarded executor.
+- Supabase service-role keys, Stripe secret keys, Stripe webhook secrets, OpenAI keys, and private Google Places keys must stay server-side only. If any were exposed, rotate them with the provider, update Railway configuration and restart only through the guarded executor, then run `npm run security:scan`.
 - Do not use standalone static viewer mode for public launch price data, because it cannot enforce server-side price gating.
 
 Candidate canonical-production values after the reviewed Postgres target has
@@ -568,7 +569,7 @@ PUBLIC_BASE_URL=https://pintpath.au
 Recommended rollout:
 
 1. Keep local development on `localhost` and ngrok.
-2. Deploy the app to Railway.
+2. Deploy the exact immutable app image through the tracked Railway mutation-boundary executor.
 3. Point `pintpath.au` at that host with DNS.
 4. Switch `PUBLIC_BASE_URL` to `https://pintpath.au`.
 5. Add the domain to your Google Maps browser key referrer rules.

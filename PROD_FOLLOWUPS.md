@@ -11,6 +11,11 @@ launch remains no-go until every P0 item below is proved against one frozen
 candidate SHA. A checklist entry is not evidence; store the private evidence
 reference and verifier in `docs/release-evidence.json`.
 
+Every Railway create, pin, variable, route, deploy, scale, or destroy action in
+this ledger remains blocked behind the tracked `readiness:railway:mutation-boundary`
+executor. The standalone receipt is read-only; dashboard **Deploy**, Git
+autodeploy, ordinary redeploy, and ad-hoc CLI/API writes are not substitutes.
+
 ## P0 — implement and prove the selected production data architecture
 
 - **Repository state:** Canonical production now opens only the reviewed

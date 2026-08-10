@@ -4,6 +4,17 @@
 > [`docs/production-launch-runbook.md`](docs/production-launch-runbook.md) in
 > order. The launch runbook is controlling where this older checklist differs.
 
+## Railway mutation boundary (document-wide stop)
+
+Every Railway create, configuration, variable, deploy, redeploy, rollback,
+route, backup, or teardown instruction in this checklist is non-executable
+unless a tracked one-operation executor owns the immediate
+`readiness:railway:mutation-boundary` preflight, the one exact reviewed write,
+and an unconditional postflight. The standalone boundary command is read-only,
+and the checked-in incident baseline intentionally fails. Do not use dashboard
+**Deploy**, Git autodeploy, an ad-hoc CLI/API command, or commit/discard an
+unrelated staged patch to bypass this stop.
+
 Use this for a full production release. For smaller private beta releases, also use `FIELD_TEST_CHECKLIST.md` and `DEPLOYMENT_CHECKLIST.md`.
 
 Provider-specific setup lives in [docs/provider-configuration-runbook.md](/Users/zac/Desktop/Beer/docs/provider-configuration-runbook.md).
@@ -141,15 +152,22 @@ Provider-specific setup lives in [docs/provider-configuration-runbook.md](/Users
 ## Rollback Checklist
 
 - Identify previous known-good production commit.
+- Require a passing `readiness:railway:mutation-boundary` receipt before any
+  provider action. Both production and staging patches must be empty, and the
+  reviewed production Postgres deployment, snapshot, source, and image digest
+  must still be exact. Never auto-commit or auto-discard drift.
 - If the release was a merge commit, use `git revert -m 1 <merge_sha>`.
-- If the release was fast-forwarded, revert the problematic commit range or redeploy the previous Railway SHA.
+- If the release was fast-forwarded, revert the problematic commit range.
+- Keep Railway Git autodeploy disabled. Use only the tracked guarded deployment
+  executor; ordinary Railway redeploy/dashboard actions can resolve mutable
+  image tags or commit unrelated staged changes.
 - Disable risky features quickly with env:
   - `DEMO_BILLING_MODE=false`
   - `ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=false`
   - `FIELD_TEST_MODE=false`
   - `ACCOUNT_DELETION_REHEARSAL_ENABLED=false`
 - Keep both paid-enrolment flags `false` during rollback so absent Stripe configuration remains valid and checkout stays closed. If either paid flag is enabled, preserve all five Stripe values or roll back to a release/configuration with paid enrolment disabled.
-- If schema/data is impacted, stop the app, restore the pre-deploy DB backup, then redeploy the previous commit.
+- If schema/data is impacted, stop the app, restore the pre-deploy DB backup, then use the guarded executor to deploy the previous immutable image.
 - After rollback, verify `/health`, `/ready`, map load, account login, admin access, and price gating.
 
 ## Go / No-Go Criteria

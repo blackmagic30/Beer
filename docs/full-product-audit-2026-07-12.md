@@ -1,5 +1,11 @@
 # Pint Path Full Product, Data, Workflow, and UI Audit
 
+> Historical, non-executable snapshot. Its deploy and Railway region-move
+> recommendations are superseded by the current production launch and provider
+> runbooks. Every Railway write now requires the tracked
+> `readiness:railway:mutation-boundary` executor with an immediate preflight and
+> unconditional postflight.
+
 **Original audit date:** 12 July 2026  
 **Remediation reassessment:** 13 July 2026  
 **Production originally reviewed:** `https://pintpath.au`  

@@ -1,0 +1,24 @@
+{
+  "schemaVersion": "pintpath-railway-production-staging-mutation-policy/v1",
+  "policyId": "pintpath-production-staging-mutation-boundary",
+  "projectId": "48d8c6cd-1c66-4148-874b-20877f48e1a5",
+  "environments": [
+    {
+      "name": "production",
+      "environmentId": "13dab015-df74-45c6-b26f-69323daea99a"
+    },
+    {
+      "name": "staging",
+      "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35"
+    }
+  ],
+  "productionPostgres": {
+    "environmentId": "13dab015-df74-45c6-b26f-69323daea99a",
+    "serviceId": "4a2334a1-71e7-4745-970a-2cd95da10169",
+    "deploymentId": "c6004774-7680-41ec-a816-d872221d5890",
+    "snapshotId": "3f601066-8b66-4315-8f2e-ef499d17fad8",
+    "sourceImage": "ghcr.io/railwayapp-templates/postgres-ssl:17.10",
+    "imageDigest": "sha256:786bb8fbbb78ba8d7f8cbef17eb1a2f15d39f118b17017bb12837345c4b16786",
+    "requireImmutableSource": true
+  }
+}

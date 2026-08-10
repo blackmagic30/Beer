@@ -5,7 +5,6 @@ on:
   push:
     branches:
       - main
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -47,7 +46,6 @@ jobs:
         run: npm run test:e2e:pintpath
 
       - name: Report external launch evidence status during ordinary CI
-        if: github.event_name != 'workflow_dispatch'
         run: |
           set -o pipefail
           npm run --silent release:evidence | tee release-evidence-summary.json
@@ -58,17 +56,11 @@ jobs:
       - name: Dependency audit
         run: npm run security:audit
 
-      - name: Enforce external launch evidence on manual release checks
-        if: github.event_name == 'workflow_dispatch'
-        run: |
-          set -o pipefail
-          npm run --silent release:evidence:strict | tee release-evidence-summary.json
-
-      - name: Upload launch evidence report
+      - name: Upload automated readiness evidence report
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: pintpath-launch-evidence
+          name: pintpath-automated-readiness-evidence
           path: |
             docs/release-evidence.json
             release-evidence-summary.json

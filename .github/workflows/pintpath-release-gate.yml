@@ -58,6 +58,14 @@ jobs:
           set -o pipefail
           npm run --silent smoke:production | tee production-public-smoke.json
 
+      - name: Enforce empty Railway mutation boundary and production image authority
+        env:
+          PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
+        run: |
+          set -o pipefail
+          npm run --silent readiness:railway:mutation-boundary | tee railway-mutation-boundary-readiness.json
+
       - name: Enforce permanent-staging sealed-variable metadata
         env:
           PINTPATH_RAILWAY_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_METADATA_TOKEN }}
@@ -123,6 +131,7 @@ jobs:
             production-data-readiness.json
             production-role-smoke.json
             release-evidence-summary.json
+            railway-mutation-boundary-readiness.json
             railway-sealed-variable-readiness.json
             tested-commit-sha.txt
           if-no-files-found: warn

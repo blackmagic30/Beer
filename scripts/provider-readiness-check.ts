@@ -979,7 +979,7 @@ const stagingBootstrapChecks: ProviderCheck[] = [
       && isEnabled("REQUIRE_REDIS_RATE_LIMITING")
       && !isEnabled("ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION")
       ? null
-      : "Configure shared staging Redis, require it, and keep the in-memory production fallback disabled.",
+      : "Use the reviewed Railway mutation-boundary executor to configure shared staging Redis, require it, and keep the in-memory production fallback disabled.",
   },
   checkPermanentStagingServiceInstances(),
   checkPermanentStagingSelfPins(),
@@ -993,7 +993,7 @@ const stagingBootstrapChecks: ProviderCheck[] = [
     id: "PERMANENT_STAGING_BOOTSTRAP_NOT_CUTOVER_READY",
     label: "Staging bootstrap is not launch-ready",
     status: "fail",
-    action: "Provision and register real production and restore database/Redis identities, set PINTPATH_IDENTITY_REGISTRY_PHASE=complete, redeploy, and run the full provider gate before any app server starts.",
+    action: "Use the reviewed Railway mutation-boundary executor to provision and register real production and restore database/Redis identities, set PINTPATH_IDENTITY_REGISTRY_PHASE=complete, deploy the exact reviewed image, and run the full provider gate before any app server starts.",
     details: "This operator-only profile performs no Supabase/Storage canary and can never satisfy launch readiness.",
   },
 ];
@@ -1168,8 +1168,8 @@ const deletionNoticeKeyringCheck: ProviderCheck = (() => {
 const launchPreflightChecks: ProviderCheck[] = [
   checkRequired("GOOGLE_MAPS_API_KEY", "Google Maps browser API key", "Create/restrict a browser key and set GOOGLE_MAPS_API_KEY."),
   checkRequired("GOOGLE_MAPS_MAP_ID", "Google Maps JavaScript vector map ID", "Create a JavaScript Map ID in Google Maps Platform and set GOOGLE_MAPS_MAP_ID."),
-  checkRequired("GOOGLE_PLACES_API_KEY", "Google Places server API key", "Set GOOGLE_PLACES_API_KEY on the Railway app service for admin venue lookup and future request flows."),
-  checkRequired("OPENAI_API_KEY", "OpenAI menu OCR key", "Set OPENAI_API_KEY on the Railway app service and redeploy so menu photo OCR can initialise."),
+  checkRequired("GOOGLE_PLACES_API_KEY", "Google Places server API key", "Use the reviewed Railway mutation-boundary executor to set GOOGLE_PLACES_API_KEY on the app service for admin venue lookup and future request flows."),
+  checkRequired("OPENAI_API_KEY", "OpenAI menu OCR key", "Use the reviewed Railway mutation-boundary executor to set OPENAI_API_KEY and deploy the exact reviewed image so menu photo OCR can initialise."),
   checkRequired("SUPABASE_URL", "Supabase project URL", "Set SUPABASE_URL for OAuth and provider-backed auth."),
   checkRequired("SUPABASE_ANON_KEY", "Supabase publishable/anon key", "Set the browser-safe Supabase publishable/anon key."),
   checkRequired("SUPABASE_SERVICE_ROLE_KEY", "Supabase server service-role key", "Set SUPABASE_SERVICE_ROLE_KEY for private source-evidence capture history."),
@@ -1182,7 +1182,7 @@ const launchPreflightChecks: ProviderCheck[] = [
   productionDatabaseIdentityCheck,
   productionDatabaseResourceCheck,
   postgresRuntimeImplementationCheck,
-  checkRequired("REDIS_URL", "Redis-backed rate limiter", "Provision Railway Redis/Upstash and set REDIS_URL before broad production."),
+  checkRequired("REDIS_URL", "Redis-backed rate limiter", "Provision the reviewed Redis authority, then use the Railway mutation-boundary executor to set REDIS_URL before broad production."),
   productionRedisIdentityCheck,
   productionRedisResourceCheck,
   checkRequired("SOURCE_EVIDENCE_SIGNING_SECRET", "Source evidence signing secret", "Generate a unique 32+ character secret for signed evidence URLs."),

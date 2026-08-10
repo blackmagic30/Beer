@@ -1,5 +1,11 @@
 # Pint Path internal readiness audit — 15 July 2026
 
+> Historical, non-executable snapshot. Its Railway update/deploy/region-move
+> language is superseded by the current production launch and provider
+> runbooks. No provider command here is authority: every Railway write now
+> requires the tracked `readiness:railway:mutation-boundary` executor with an
+> immediate preflight and unconditional postflight.
+
 ## Verdict
 
 The audited candidate has no known internal code, dependency, database-integrity, or release-automation blocker. The complete local gate passes, the linked Supabase migrations are applied, and the live Supabase advisor and schema-lint gates return no warning or error.

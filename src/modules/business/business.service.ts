@@ -1077,7 +1077,7 @@ function describeStripeCheckoutFailure(status: number, stripeMessage?: string | 
   }
 
   if (normalized.includes("inactive") && normalized.includes("price")) {
-    return "Stripe price is inactive. Activate the monthly/yearly Stripe Price or update Railway to use an active recurring Price ID.";
+    return "Stripe price is inactive. Activate the monthly/yearly Stripe Price or update the configured recurring Price ID through the reviewed provider-change procedure.";
   }
 
   if (

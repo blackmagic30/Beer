@@ -39,6 +39,13 @@ promote reviewed data, or announce the combined launch until every exit
 criterion below has passed in permanent integrated staging and the resulting
 implementation is part of the frozen commit.
 
+Every Railway create, configuration, scale, deploy, rollback, PITR, route, or
+teardown step below is non-executable until the tracked
+`readiness:railway:mutation-boundary` executor owns its immediate preflight,
+one exact operation, and unconditional postflight. The standalone receipt is
+read-only, the checked-in incident baseline intentionally fails, and no
+dashboard, Git autodeploy, or ad-hoc CLI/API action may bridge that gap.
+
 ## Non-negotiable outcome
 
 Before candidate freeze, migrate every authoritative application record from
