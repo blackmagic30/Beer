@@ -4,7 +4,7 @@ import { STAGING_POSTGRES_BACKUP_CANARY_LOCK } from
   "../../src/lib/postgres-staging-backup-canary.js";
 
 export const STAGING_POSTGRES_BUILD_CANARY_EXECUTOR_SCHEMA =
-  "pintpath-staging-postgres-build-canary-executor/v1" as const;
+  "pintpath-staging-postgres-build-canary-executor/v2" as const;
 export const STAGING_POSTGRES_BUILD_CANARY_OPERATION =
   "staging-postgres-build-canary-upload" as const;
 export const STAGING_POSTGRES_BUILD_CANARY_EXECUTOR_STATE =
@@ -24,12 +24,12 @@ export const STAGING_POSTGRES_BUILD_CANARY_EXECUTOR_LOCK = Object.freeze({
   expectedSourceManifestSha256:
     "388abd36d7f64f01b717659acfb37b63b7589d3c9342fb0fa65455be30192c76",
   sourceManifestAlgorithm:
-    "sha256-json-bytewise-path-type-mode-size-content-v1",
+    "sha256-json-depth-first-bytewise-siblings-path-type-mode-size-content-v1",
   expectedSourceEntryCount: 684,
   expectedSourceDirectoryCount: 82,
   expectedSourceFileCount: 602,
   expectedSourceFileBytes: 14_904_195,
-  expectedConfigEtag:
+  expectedOpaqueConfigEtag:
     "97a3a71ae08a9b0cb797aec06f47ba601b52ad844a9dd44b136bb5d795348546",
   railwayVersion: "5.32.0",
   railwayBinary: "/opt/homebrew/Cellar/railway/5.32.0/bin/railway",
@@ -42,12 +42,11 @@ const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const IMAGE_DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
-const EXPECTED_VARIABLES = Object.freeze({
-  RAILPACK_PACKAGES: "node@22.23.2",
-  STAGING_POSTGRES_CA_CANARY_MODE: "build-only",
-  STAGING_POSTGRES_CA_CANARY_RAILWAY_CONFIG_PATH:
-    "/railway.postgres-backup-canary.toml",
-} as const);
+const EXPECTED_VARIABLE_NAMES = Object.freeze([
+  "RAILPACK_PACKAGES",
+  "STAGING_POSTGRES_CA_CANARY_MODE",
+  "STAGING_POSTGRES_CA_CANARY_RAILWAY_CONFIG_PATH",
+] as const);
 
 export const STAGING_POSTGRES_BUILD_CANARY_DEADLINES = Object.freeze({
   localAuthorityMs: 20_000,
@@ -74,7 +73,7 @@ export interface StagingPostgresBuildCanaryLocalAuthority {
   readonly sourceDirectoryCount: number;
   readonly sourceFileCount: number;
   readonly sourceFileBytes: number;
-  readonly linkedContextExact: boolean;
+  readonly explicitUploadTargetExact: boolean;
 }
 
 export interface StagingPostgresBuildCanaryBoundarySnapshot {
@@ -89,7 +88,7 @@ export interface StagingPostgresBuildCanaryBoundarySnapshot {
   readonly productionPatchEmpty: boolean;
   readonly stagingPatchEmpty: boolean;
   readonly productionFreeze: boolean;
-  readonly configEtag: string;
+  readonly opaqueConfigEtag: string;
   readonly autoDeploy: boolean;
   readonly triggerCount: number;
   readonly inventoriesComplete: boolean;
@@ -115,7 +114,8 @@ export interface StagingPostgresBuildCanaryBoundarySnapshot {
   readonly healthcheckTimeout: number | null;
   readonly cronSchedule: string | null;
   readonly watchPatterns: readonly string[];
-  readonly variables: Readonly<Record<string, string>>;
+  readonly variableNames: readonly string[];
+  readonly variableMetadataExact: boolean;
   readonly sourceImage: string | null;
   readonly sourceRepo: string | null;
   readonly latestDeploymentId: string | null;
@@ -133,6 +133,7 @@ export interface StagingPostgresBuildCanaryPostflight
   readonly buildOnlyReceiptSha256: string | null;
   readonly credentialCandidatesNull: boolean;
   readonly dedicatedRailwayConfig: boolean;
+  readonly runtimePublicConfigurationExact: boolean;
 }
 
 export interface StagingPostgresBuildCanaryUploadAcknowledgement {
@@ -140,7 +141,7 @@ export interface StagingPostgresBuildCanaryUploadAcknowledgement {
 }
 
 interface StagingPostgresBuildCanaryIntent {
-  readonly schemaVersion: "pintpath-staging-postgres-build-canary-intent/v1";
+  readonly schemaVersion: "pintpath-staging-postgres-build-canary-intent/v2";
   readonly operation: typeof STAGING_POSTGRES_BUILD_CANARY_OPERATION;
   readonly projectId: string;
   readonly environmentId: string;
@@ -149,7 +150,7 @@ interface StagingPostgresBuildCanaryIntent {
   readonly headSha: string;
   readonly treeSha: string;
   readonly sourceManifestSha256: string;
-  readonly configEtag: string;
+  readonly opaqueConfigEtag: string;
   readonly serviceName: string;
   readonly railwayConfigPath: string;
   readonly rootCaDerSha256: string;
@@ -212,6 +213,7 @@ export interface StagingPostgresBuildCanaryExecutorReceipt {
   readonly mode: "framework-disabled" | "sequential-single-write";
   readonly outcome: StagingPostgresBuildCanaryExecutorOutcome;
   readonly deploymentId: string | null;
+  readonly reconciliationDeploymentId: string | null;
   readonly intentSha256: string | null;
   readonly terminalEvidenceSha256: string | null;
   readonly childAuthority: StagingPostgresBuildCanaryChildAuthority | null;
@@ -323,17 +325,6 @@ function exactStringArray(
     && expected.every((value, index) => actual[index] === value);
 }
 
-function exactPublicVariables(
-  actual: Readonly<Record<string, string>>,
-): boolean {
-  const keys = Object.keys(actual);
-  const expectedKeys = Object.keys(EXPECTED_VARIABLES);
-  return exactStringArray(keys, expectedKeys)
-    && expectedKeys.every((key) =>
-      actual[key] === EXPECTED_VARIABLES[key as keyof typeof EXPECTED_VARIABLES]
-    );
-}
-
 function targetConfigurationExact(
   snapshot: StagingPostgresBuildCanaryBoundarySnapshot,
 ): boolean {
@@ -363,7 +354,8 @@ function targetConfigurationExact(
     && snapshot.healthcheckTimeout === null
     && snapshot.cronSchedule === null
     && snapshot.watchPatterns.length === 0
-    && exactPublicVariables(snapshot.variables);
+    && exactStringArray(snapshot.variableNames, EXPECTED_VARIABLE_NAMES)
+    && snapshot.variableMetadataExact === true;
 }
 
 function localAuthorityExact(
@@ -384,7 +376,7 @@ function localAuthorityExact(
     && authority.sourceDirectoryCount === lock.expectedSourceDirectoryCount
     && authority.sourceFileCount === lock.expectedSourceFileCount
     && authority.sourceFileBytes === lock.expectedSourceFileBytes
-    && authority.linkedContextExact === true;
+    && authority.explicitUploadTargetExact === true;
 }
 
 function preflightExact(
@@ -400,7 +392,7 @@ function preflightExact(
     && snapshot.productionPatchEmpty === true
     && snapshot.stagingPatchEmpty === true
     && snapshot.productionFreeze === true
-    && snapshot.configEtag === lock.expectedConfigEtag
+    && snapshot.opaqueConfigEtag === lock.expectedOpaqueConfigEtag
     && snapshot.autoDeploy === false
     && snapshot.triggerCount === 0
     && targetConfigurationExact(snapshot)
@@ -424,7 +416,7 @@ function postflightBoundaryExact(
     && snapshot.productionPatchEmpty === true
     && snapshot.stagingPatchEmpty === true
     && snapshot.productionFreeze === true
-    && snapshot.configEtag === lock.expectedConfigEtag
+    && snapshot.opaqueConfigEtag === lock.expectedOpaqueConfigEtag
     && snapshot.autoDeploy === false
     && snapshot.triggerCount === 0
     && targetConfigurationExact(snapshot)
@@ -451,7 +443,8 @@ function targetPostflightExact(
     && typeof snapshot.buildOnlyReceiptSha256 === "string"
     && SHA256_PATTERN.test(snapshot.buildOnlyReceiptSha256)
     && snapshot.credentialCandidatesNull === true
-    && snapshot.dedicatedRailwayConfig === true;
+    && snapshot.dedicatedRailwayConfig === true
+    && snapshot.runtimePublicConfigurationExact === true;
 }
 
 function childAuthority(
@@ -483,7 +476,7 @@ function makeIntent(
 ): StagingPostgresBuildCanaryIntent {
   const lock = STAGING_POSTGRES_BUILD_CANARY_EXECUTOR_LOCK;
   return {
-    schemaVersion: "pintpath-staging-postgres-build-canary-intent/v1",
+    schemaVersion: "pintpath-staging-postgres-build-canary-intent/v2",
     operation: STAGING_POSTGRES_BUILD_CANARY_OPERATION,
     projectId: lock.projectId,
     environmentId: lock.environmentId,
@@ -492,7 +485,7 @@ function makeIntent(
     headSha: local.headSha,
     treeSha: local.treeSha,
     sourceManifestSha256: local.sourceManifestSha256,
-    configEtag: lock.expectedConfigEtag,
+    opaqueConfigEtag: lock.expectedOpaqueConfigEtag,
     serviceName: lock.serviceName,
     railwayConfigPath: lock.railwayConfigPath,
     rootCaDerSha256: lock.rootCaDerSha256,
@@ -506,6 +499,7 @@ function makeReceipt(
   mode: StagingPostgresBuildCanaryExecutorReceipt["mode"],
   outcome: StagingPostgresBuildCanaryExecutorOutcome,
   deploymentId: string | null,
+  reconciliationDeploymentId: string | null,
   intentSha256: string | null,
   terminalEvidenceSha256: string | null,
   child: StagingPostgresBuildCanaryChildAuthority | null,
@@ -517,6 +511,7 @@ function makeReceipt(
     mode,
     outcome,
     deploymentId,
+    reconciliationDeploymentId,
     intentSha256,
     terminalEvidenceSha256,
     childAuthority: child,
@@ -532,6 +527,7 @@ function fixedDisabledReceipt(): StagingPostgresBuildCanaryExecutorReceipt {
     null,
     null,
     null,
+    null,
     initialChecks(),
   );
 }
@@ -542,6 +538,7 @@ async function executeEnabled(
   const checks = initialChecks();
   checks.frameworkEnabled = true;
   let deploymentId: string | null = null;
+  let reconciliationDeploymentId: string | null = null;
   let intentSha256: string | null = null;
   let outcome: StagingPostgresBuildCanaryExecutorOutcome = "failed";
   let postflight: StagingPostgresBuildCanaryPostflight | null = null;
@@ -549,6 +546,24 @@ async function executeEnabled(
   let writeAttempted = false;
   let uploadFailed = false;
   let recoveryOnly = false;
+  const applyPostflightObservation = (): void => {
+    if (!postflight) return;
+    checks.boundaryPostflightExact = postflightBoundaryExact(postflight);
+    const candidateDeploymentId = postflight.deploymentId;
+    if (
+      !checks.boundaryPostflightExact
+      || typeof candidateDeploymentId !== "string"
+      || !UUID_PATTERN.test(candidateDeploymentId)
+    ) return;
+    reconciliationDeploymentId = candidateDeploymentId;
+    const acknowledgementMatches = deploymentId === null
+      || deploymentId === candidateDeploymentId;
+    checks.targetPostflightExact = acknowledgementMatches
+      && targetPostflightExact(postflight, candidateDeploymentId);
+    if (checks.targetPostflightExact) {
+      observedChildAuthority = childAuthority(postflight);
+    }
+  };
 
   try {
     const local = await withDeadline(
@@ -635,15 +650,7 @@ async function executeEnabled(
       postflight = null;
     }
 
-    if (postflight) {
-      checks.boundaryPostflightExact = postflightBoundaryExact(postflight);
-      if (deploymentId) {
-        checks.targetPostflightExact = targetPostflightExact(postflight, deploymentId);
-        if (checks.targetPostflightExact) {
-          observedChildAuthority = childAuthority(postflight);
-        }
-      }
-    }
+    applyPostflightObservation();
     try {
       checks.localPostflightExact = localAuthorityExact(
         await withDeadline(
@@ -657,6 +664,7 @@ async function executeEnabled(
     const passed = !recoveryOnly
       && !uploadFailed
       && checks.acknowledgementExact
+      && deploymentId === reconciliationDeploymentId
       && checks.boundaryReasserted
       && checks.boundaryPostflightExact
       && checks.targetPostflightExact
@@ -674,6 +682,7 @@ async function executeEnabled(
         postflight = null;
       }
     }
+    applyPostflightObservation();
     outcome = writeAttempted || recoveryOnly ? "mutation_uncertain" : "failed";
   } finally {
     try {
@@ -691,6 +700,7 @@ async function executeEnabled(
     "sequential-single-write",
     outcome,
     deploymentId,
+    reconciliationDeploymentId,
     intentSha256,
     null,
     observedChildAuthority,
@@ -699,11 +709,12 @@ async function executeEnabled(
   let terminalEvidenceSha256: string | null = null;
   try {
     const candidate = canonical({
-      schemaVersion: "pintpath-staging-postgres-build-canary-evidence-candidate/v1",
+      schemaVersion: "pintpath-staging-postgres-build-canary-evidence-candidate/v2",
       state: "pending-reconciliation",
       operation: STAGING_POSTGRES_BUILD_CANARY_OPERATION,
       candidateReceiptSha256: sha256(canonical(provisional)),
       deploymentId,
+      reconciliationDeploymentId,
       intentSha256,
       childAuthority: observedChildAuthority,
       checks: { ...checks },
@@ -738,6 +749,7 @@ async function executeEnabled(
     "sequential-single-write",
     outcome,
     deploymentId,
+    reconciliationDeploymentId,
     intentSha256,
     terminalEvidenceSha256,
     observedChildAuthority,

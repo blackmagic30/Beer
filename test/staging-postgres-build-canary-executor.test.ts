@@ -15,6 +15,7 @@ import {
 } from "../scripts/execute-staging-postgres-build-canary.js";
 
 const DEPLOYMENT_ID = "11111111-1111-4111-8111-111111111111";
+const RECONCILIATION_DEPLOYMENT_ID = "55555555-5555-4555-8555-555555555555";
 const SNAPSHOT_ID = "22222222-2222-4222-8222-222222222222";
 const IMAGE_DIGEST = `sha256:${"3".repeat(64)}`;
 const BUILD_RECEIPT_SHA256 = "4".repeat(64);
@@ -59,7 +60,7 @@ function exactLocal(): StagingPostgresBuildCanaryLocalAuthority {
     sourceDirectoryCount: lock.expectedSourceDirectoryCount,
     sourceFileCount: lock.expectedSourceFileCount,
     sourceFileBytes: lock.expectedSourceFileBytes,
-    linkedContextExact: true,
+    explicitUploadTargetExact: true,
   };
 }
 
@@ -77,7 +78,7 @@ function exactPreflight(): StagingPostgresBuildCanaryBoundarySnapshot {
     productionPatchEmpty: true,
     stagingPatchEmpty: true,
     productionFreeze: true,
-    configEtag: lock.expectedConfigEtag,
+    opaqueConfigEtag: lock.expectedOpaqueConfigEtag,
     autoDeploy: false,
     triggerCount: 0,
     inventoriesComplete: true,
@@ -103,12 +104,12 @@ function exactPreflight(): StagingPostgresBuildCanaryBoundarySnapshot {
     healthcheckTimeout: null,
     cronSchedule: null,
     watchPatterns: [],
-    variables: {
-      RAILPACK_PACKAGES: "node@22.23.2",
-      STAGING_POSTGRES_CA_CANARY_MODE: "build-only",
-      STAGING_POSTGRES_CA_CANARY_RAILWAY_CONFIG_PATH:
-        "/railway.postgres-backup-canary.toml",
-    },
+    variableNames: [
+      "RAILPACK_PACKAGES",
+      "STAGING_POSTGRES_CA_CANARY_MODE",
+      "STAGING_POSTGRES_CA_CANARY_RAILWAY_CONFIG_PATH",
+    ],
+    variableMetadataExact: true,
     sourceImage: null,
     sourceRepo: null,
     latestDeploymentId: null,
@@ -130,6 +131,7 @@ function exactPostflight(): StagingPostgresBuildCanaryPostflight {
     buildOnlyReceiptSha256: BUILD_RECEIPT_SHA256,
     credentialCandidatesNull: true,
     dedicatedRailwayConfig: true,
+    runtimePublicConfigurationExact: true,
   };
 }
 
@@ -194,6 +196,10 @@ describe("staging Postgres build-canary executor", () => {
     expect(lock.serviceInstanceId).toBe("716b4818-7695-4b9f-b5f9-35249e785a58");
     expect(lock.productionFreeze).toBe(true);
     expect(lock.railwayBinarySha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(lock.sourceManifestAlgorithm).toBe(
+      "sha256-json-depth-first-bytewise-siblings-path-type-mode-size-content-v1",
+    );
+    expect(lock.expectedOpaqueConfigEtag).toMatch(/^[a-f0-9]{64}$/);
   });
 
   it("returns one fixed blocked receipt without consulting any dependency", async () => {
@@ -224,9 +230,11 @@ describe("staging Postgres build-canary executor", () => {
     expect(output).toHaveLength(1);
     const receipt = JSON.parse(output[0]!) as Record<string, unknown>;
     expect(receipt).toMatchObject({
+      schemaVersion: "pintpath-staging-postgres-build-canary-executor/v2",
       mode: "framework-disabled",
       outcome: "blocked",
       deploymentId: null,
+      reconciliationDeploymentId: null,
       intentSha256: null,
       terminalEvidenceSha256: null,
       checks: {
@@ -242,8 +250,12 @@ describe("staging Postgres build-canary executor", () => {
       dependencies,
     );
     expect(receipt.outcome).toBe("passed");
+    expect(receipt.schemaVersion).toBe(
+      "pintpath-staging-postgres-build-canary-executor/v2",
+    );
     expect(receipt.mode).toBe("sequential-single-write");
     expect(receipt.deploymentId).toBe(DEPLOYMENT_ID);
+    expect(receipt.reconciliationDeploymentId).toBe(DEPLOYMENT_ID);
     expect(receipt.intentSha256).toMatch(/^[a-f0-9]{64}$/);
     expect(receipt.terminalEvidenceSha256).toMatch(/^[a-f0-9]{64}$/);
     expect(receipt.childAuthority).toEqual({
@@ -270,11 +282,37 @@ describe("staging Postgres build-canary executor", () => {
     expect(calls.filter((call) => call === "upload")).toHaveLength(1);
   });
 
+  it("persists a v2 intent that names the opaque etag without claiming derivation", async () => {
+    let persistedIntent = "";
+    const { dependencies } = harness({
+      persistIntent: async (source) => {
+        persistedIntent = source;
+        return durable(source);
+      },
+    });
+    const receipt = await stagingPostgresBuildCanaryExecutorInternals.executeEnabled(
+      dependencies,
+    );
+    expect(receipt.outcome).toBe("passed");
+    const intent = JSON.parse(persistedIntent) as Record<string, unknown>;
+    expect(intent).toMatchObject({
+      schemaVersion: "pintpath-staging-postgres-build-canary-intent/v2",
+      opaqueConfigEtag:
+        STAGING_POSTGRES_BUILD_CANARY_EXECUTOR_LOCK.expectedOpaqueConfigEtag,
+    });
+    expect(intent).not.toHaveProperty("configEtag");
+    expect(JSON.stringify(intent)).not.toContain("STAGING_POSTGRES_CA_CANARY_MODE\":\"build-only");
+  });
+
   it.each([
     ["the source authority drifts", { headSha: "0".repeat(40) }],
     ["the source manifest drifts", { sourceManifestSha256: "0".repeat(64) }],
     ["the Railway binary drifts", { railwayBinarySha256: "0".repeat(64) }],
     ["the source path is not canonical", { sourceDirectoryAbsolute: false }],
+    ["the source manifest algorithm is ambiguous", {
+      sourceManifestAlgorithm: "sha256-json-bytewise-path-type-mode-size-content-v1",
+    }],
+    ["the upload target is implicit", { explicitUploadTargetExact: false }],
   ])("does not write when %s", async (_label, patch) => {
     const { calls, dependencies } = harness({
       inspectLocalAuthority: async () => {
@@ -298,7 +336,7 @@ describe("staging Postgres build-canary executor", () => {
     ["staging has staged drift", { stagingPatchEmpty: false }],
     ["autodeploy is enabled", { autoDeploy: true }],
     ["a trigger exists", { triggerCount: 1 }],
-    ["the config etag drifts", { configEtag: "0".repeat(64) }],
+    ["the opaque config etag drifts", { opaqueConfigEtag: "0".repeat(64) }],
     ["an old deployment remains", { latestDeploymentId: DEPLOYMENT_ID }],
     ["the service name drifts", { serviceName: "wrong-service" }],
     ["the dedicated config path drifts", { railwayConfigPath: "/railway.toml" }],
@@ -307,13 +345,16 @@ describe("staging Postgres build-canary executor", () => {
     ["a volume exists", { volumeIds: ["volume-id"] }],
     ["the region drifts", { region: "europe-west4-drams3a" }],
     ["the CPU cap drifts", { cpuLimit: 1 }],
-    ["a required variable is missing", { variables: { RAILPACK_PACKAGES: "node@22.23.2" } }],
-    ["the build-only mode drifts", {
-      variables: {
-        ...exactPreflight().variables,
-        STAGING_POSTGRES_CA_CANARY_MODE: "verify",
-      },
+    ["a required variable name is missing", {
+      variableNames: exactPreflight().variableNames.slice(0, 2),
     }],
+    ["variable names are reordered", {
+      variableNames: [...exactPreflight().variableNames].reverse(),
+    }],
+    ["an extra variable name exists", {
+      variableNames: [...exactPreflight().variableNames, "UNEXPECTED_PUBLIC_VALUE"],
+    }],
+    ["variable metadata is not exact", { variableMetadataExact: false }],
     ["a predeploy command exists", { preDeployCommands: ["echo forbidden"] }],
     ["a healthcheck path exists", { healthcheckPath: "/health" }],
     ["a watch pattern exists", { watchPatterns: ["src/**"] }],
@@ -382,6 +423,11 @@ describe("staging Postgres build-canary executor", () => {
     expect(receipt.checks.durableIntentExact).toBe(true);
     expect(receipt.checks.writeAttempted).toBe(false);
     expect(receipt.checks.postflightAttempted).toBe(true);
+    expect(receipt.deploymentId).toBeNull();
+    expect(receipt.reconciliationDeploymentId).toBe(DEPLOYMENT_ID);
+    expect(receipt.checks.acknowledgementExact).toBe(false);
+    expect(receipt.checks.targetPostflightExact).toBe(true);
+    expect(receipt.childAuthority).not.toBeNull();
     expect(calls).not.toContain("upload");
     expect(calls).not.toContain("preflight");
     expect(calls).not.toContain("intent");
@@ -487,10 +533,16 @@ describe("staging Postgres build-canary executor", () => {
   });
 
   it("postflights after an upload throw and marks the mutation uncertain", async () => {
+    let persisted = "";
     const { calls, dependencies } = harness({
       uploadExactlyOnce: async () => {
         calls.push("upload");
         throw new Error("raw provider error must not escape");
+      },
+      persistTerminalEvidence: async (source) => {
+        calls.push("terminal");
+        persisted = source;
+        return durable(source);
       },
     });
     const receipt = await stagingPostgresBuildCanaryExecutorInternals.executeEnabled(
@@ -498,9 +550,29 @@ describe("staging Postgres build-canary executor", () => {
     );
     expect(receipt.outcome).toBe("mutation_uncertain");
     expect(receipt.deploymentId).toBeNull();
+    expect(receipt.reconciliationDeploymentId).toBe(DEPLOYMENT_ID);
+    expect(receipt.checks.acknowledgementExact).toBe(false);
+    expect(receipt.checks.targetPostflightExact).toBe(true);
+    expect(receipt.childAuthority).toEqual({
+      snapshotId: SNAPSHOT_ID,
+      imageDigest: IMAGE_DIGEST,
+      buildOnlyReceiptSha256: BUILD_RECEIPT_SHA256,
+    });
     expect(receipt.checks.postflightAttempted).toBe(true);
     expect(calls).toContain("postflight:null");
     expect(JSON.stringify(receipt)).not.toContain("raw provider error");
+    expect(JSON.parse(persisted)).toMatchObject({
+      schemaVersion: "pintpath-staging-postgres-build-canary-evidence-candidate/v2",
+      state: "pending-reconciliation",
+      deploymentId: null,
+      reconciliationDeploymentId: DEPLOYMENT_ID,
+      childAuthority: {
+        snapshotId: SNAPSHOT_ID,
+        imageDigest: IMAGE_DIGEST,
+        buildOnlyReceiptSha256: BUILD_RECEIPT_SHA256,
+      },
+    });
+    expect(persisted).not.toContain("raw provider error");
   });
 
   it("postflights after a malformed acknowledgement without retrying", async () => {
@@ -514,14 +586,90 @@ describe("staging Postgres build-canary executor", () => {
       dependencies,
     );
     expect(receipt.outcome).toBe("mutation_uncertain");
+    expect(receipt.deploymentId).toBeNull();
+    expect(receipt.reconciliationDeploymentId).toBe(DEPLOYMENT_ID);
     expect(receipt.checks.acknowledgementExact).toBe(false);
+    expect(receipt.checks.targetPostflightExact).toBe(true);
+    expect(receipt.childAuthority).not.toBeNull();
     expect(calls).toContain("postflight:null");
     expect(calls.filter((call) => call === "upload")).toHaveLength(1);
   });
 
+  it("retains an exact reconciliation candidate when acknowledgement is absent", async () => {
+    const { dependencies } = harness({
+      uploadExactlyOnce: async () => ({
+        deploymentId: undefined as unknown as string,
+      }),
+    });
+    const receipt = await stagingPostgresBuildCanaryExecutorInternals.executeEnabled(
+      dependencies,
+    );
+    expect(receipt.outcome).toBe("mutation_uncertain");
+    expect(receipt.deploymentId).toBeNull();
+    expect(receipt.reconciliationDeploymentId).toBe(DEPLOYMENT_ID);
+    expect(receipt.checks.acknowledgementExact).toBe(false);
+    expect(receipt.checks.targetPostflightExact).toBe(true);
+    expect(receipt.childAuthority).not.toBeNull();
+  });
+
+  it("rejects a non-UUID postflight discovery without retaining child authority", async () => {
+    const malformed = "not-a-deployment-id";
+    const { dependencies } = harness({
+      uploadExactlyOnce: async () => {
+        throw new Error("ack lost");
+      },
+      postflight: async () => ({
+        ...exactPostflight(),
+        deploymentId: malformed,
+        latestDeploymentId: malformed,
+        deploymentInventoryIds: [malformed],
+      }),
+    });
+    const receipt = await stagingPostgresBuildCanaryExecutorInternals.executeEnabled(
+      dependencies,
+    );
+    expect(receipt.outcome).toBe("mutation_uncertain");
+    expect(receipt.deploymentId).toBeNull();
+    expect(receipt.reconciliationDeploymentId).toBeNull();
+    expect(receipt.checks.boundaryPostflightExact).toBe(true);
+    expect(receipt.checks.targetPostflightExact).toBe(false);
+    expect(receipt.childAuthority).toBeNull();
+  });
+
+  it("retains mismatched acknowledgement and reconciliation IDs without child authority", async () => {
+    let persisted = "";
+    const { dependencies } = harness({
+      postflight: async () => ({
+        ...exactPostflight(),
+        deploymentId: RECONCILIATION_DEPLOYMENT_ID,
+        latestDeploymentId: RECONCILIATION_DEPLOYMENT_ID,
+        deploymentInventoryIds: [RECONCILIATION_DEPLOYMENT_ID],
+      }),
+      persistTerminalEvidence: async (source) => {
+        persisted = source;
+        return durable(source);
+      },
+    });
+    const receipt = await stagingPostgresBuildCanaryExecutorInternals.executeEnabled(
+      dependencies,
+    );
+    expect(receipt.outcome).toBe("mutation_uncertain");
+    expect(receipt.deploymentId).toBe(DEPLOYMENT_ID);
+    expect(receipt.reconciliationDeploymentId).toBe(RECONCILIATION_DEPLOYMENT_ID);
+    expect(receipt.checks.acknowledgementExact).toBe(true);
+    expect(receipt.checks.boundaryPostflightExact).toBe(true);
+    expect(receipt.checks.targetPostflightExact).toBe(false);
+    expect(receipt.childAuthority).toBeNull();
+    expect(JSON.parse(persisted)).toMatchObject({
+      deploymentId: DEPLOYMENT_ID,
+      reconciliationDeploymentId: RECONCILIATION_DEPLOYMENT_ID,
+      childAuthority: null,
+    });
+  });
+
   it.each([
     ["patch drift", { stagingPatchEmpty: false }],
-    ["etag drift", { configEtag: "0".repeat(64) }],
+    ["opaque etag drift", { opaqueConfigEtag: "0".repeat(64) }],
     ["an active container remains", { activeDeploymentIds: [DEPLOYMENT_ID] }],
     ["the build receipt is absent", { buildOnlyReceiptPassed: false }],
     ["the build receipt hash is absent", { buildOnlyReceiptSha256: null }],
@@ -529,6 +677,9 @@ describe("staging Postgres build-canary executor", () => {
     ["the snapshot is absent", { deploymentSnapshotId: null }],
     ["credentials were exercised", { credentialCandidatesNull: false }],
     ["the config path is not exact", { dedicatedRailwayConfig: false }],
+    ["runtime public configuration is not exact", {
+      runtimePublicConfigurationExact: false,
+    }],
     ["a postflight domain exists", { domainIds: ["domain-id"] }],
     ["the postflight region drifts", { region: "europe-west4-drams3a" }],
     ["the deployment inventory is incomplete", { inventoriesComplete: false }],
@@ -541,6 +692,7 @@ describe("staging Postgres build-canary executor", () => {
     );
     expect(receipt.outcome).toBe("mutation_uncertain");
     expect(receipt.checks.writeAttempted).toBe(true);
+    expect(receipt.childAuthority).toBeNull();
   });
 
   it("gives cleanup failure precedence over an otherwise successful write", async () => {
@@ -632,8 +784,11 @@ describe("staging Postgres build-canary executor", () => {
     );
     expect(receipt.outcome).toBe("passed");
     expect(JSON.parse(persisted)).toMatchObject({
+      schemaVersion: "pintpath-staging-postgres-build-canary-evidence-candidate/v2",
       state: "pending-reconciliation",
       operation: "staging-postgres-build-canary-upload",
+      deploymentId: DEPLOYMENT_ID,
+      reconciliationDeploymentId: DEPLOYMENT_ID,
     });
     expect(persisted).not.toContain('"outcome":"passed"');
   });
