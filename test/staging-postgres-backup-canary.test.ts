@@ -9,6 +9,7 @@ import {
   STAGING_POSTGRES_BACKUP_CANARY_ADMIN_URL_ENV,
   STAGING_POSTGRES_BACKUP_CANARY_CONFIG_PATH_ENV,
   STAGING_POSTGRES_BACKUP_CANARY_LOCK,
+  STAGING_POSTGRES_BACKUP_CANARY_MODE_ENV,
   STAGING_POSTGRES_BACKUP_CANARY_ROOT_CA_ENV,
   STAGING_POSTGRES_BACKUP_CANARY_SCHEMA,
   STAGING_POSTGRES_BACKUP_CANARY_SCOPE,
@@ -64,6 +65,7 @@ function environment(
     RAILWAY_DEPLOYMENT_ID: deploymentId,
     [STAGING_POSTGRES_BACKUP_CANARY_CONFIG_PATH_ENV]:
       STAGING_POSTGRES_BACKUP_CANARY_LOCK.railwayConfigPath,
+    [STAGING_POSTGRES_BACKUP_CANARY_MODE_ENV]: "verify",
     [STAGING_POSTGRES_BACKUP_CANARY_ADMIN_URL_ENV]: adminUrl,
     [STAGING_POSTGRES_BACKUP_CANARY_ROOT_CA_ENV]: rootCaPem,
     ...overrides,
@@ -227,6 +229,7 @@ describe("staging Postgres backup authority canary", () => {
     expect(Object.keys(receipt)).toEqual([
       "schemaVersion",
       "scope",
+      "mode",
       "outcome",
       "deploymentId",
       "transport",
@@ -236,6 +239,7 @@ describe("staging Postgres backup authority canary", () => {
     expect(receipt).toEqual({
       schemaVersion: STAGING_POSTGRES_BACKUP_CANARY_SCHEMA,
       scope: STAGING_POSTGRES_BACKUP_CANARY_SCOPE,
+      mode: "verify",
       outcome: "passed",
       deploymentId,
       transport: {
@@ -254,6 +258,10 @@ describe("staging Postgres backup authority canary", () => {
         railwayDeployment: true,
         dedicatedRailwayConfig: true,
         forbiddenEnvironmentAbsent: true,
+        node22_23_2: true,
+        credentialEnvironmentCleared: true,
+        credentialInputsExact: true,
+        runtimeUidExact: true,
         adminUrlAuthority: true,
         rootCaAuthority: true,
         transportAuthority: true,
@@ -275,6 +283,7 @@ describe("staging Postgres backup authority canary", () => {
     ["service name", { RAILWAY_SERVICE_NAME: "production" }],
     ["deployment", { RAILWAY_DEPLOYMENT_ID: "invalid" }],
     ["config", { [STAGING_POSTGRES_BACKUP_CANARY_CONFIG_PATH_ENV]: "/railway.toml" }],
+    ["mode", { [STAGING_POSTGRES_BACKUP_CANARY_MODE_ENV]: "mutate" }],
     ["PG environment", { PGHOST: "unexpected" }],
     ["database URL", { DATABASE_URL: "postgresql://unexpected" }],
     ["TLS override", { NODE_TLS_REJECT_UNAUTHORIZED: "0" }],
@@ -329,6 +338,154 @@ describe("staging Postgres backup authority canary", () => {
     });
     expect(exitCode).toBe(1);
     expect(openTransport).not.toHaveBeenCalled();
+  });
+
+  it("passes build-only with no credential inputs, filesystem, DNS, or database access", async () => {
+    const output: string[] = [];
+    const env = environment({
+      [STAGING_POSTGRES_BACKUP_CANARY_MODE_ENV]: "build-only",
+      [STAGING_POSTGRES_BACKUP_CANARY_ADMIN_URL_ENV]: undefined,
+      [STAGING_POSTGRES_BACKUP_CANARY_ROOT_CA_ENV]: undefined,
+    });
+    const openTransport = vi.fn();
+    const connect = vi.fn();
+    const temporaryRoot = vi.fn();
+    const exitCode = await runStagingPostgresBackupCanary({
+      argv: [],
+      env,
+      getUid: () => process.getuid!(),
+      getEuid: () => process.getuid!(),
+      nodeVersion: () => "v22.23.2",
+      temporaryRoot,
+      openTransport,
+      connect,
+      writeOutput: (value) => output.push(value),
+    });
+    expect(exitCode).toBe(0);
+    expect(openTransport).not.toHaveBeenCalled();
+    expect(connect).not.toHaveBeenCalled();
+    expect(temporaryRoot).not.toHaveBeenCalled();
+    expect(parseReceipt(output)).toEqual({
+      schemaVersion: STAGING_POSTGRES_BACKUP_CANARY_SCHEMA,
+      scope: STAGING_POSTGRES_BACKUP_CANARY_SCOPE,
+      mode: "build-only",
+      outcome: "passed",
+      deploymentId,
+      transport: {
+        profile: STAGING_POSTGRES_BACKUP_CANARY_LOCK.transportProfile,
+        rootCaDerSha256: STAGING_POSTGRES_BACKUP_CANARY_LOCK.rootCaDerSha256,
+      },
+      candidates: { adminUrlSha256: null, databaseIdentitySha256: null },
+      identity: {
+        railwayProject: true,
+        railwayEnvironment: true,
+        railwayService: true,
+        railwayServiceName: true,
+        railwayDeployment: true,
+        dedicatedRailwayConfig: true,
+        forbiddenEnvironmentAbsent: true,
+        node22_23_2: true,
+        credentialEnvironmentCleared: true,
+        credentialInputsExact: true,
+        runtimeUidExact: true,
+        adminUrlAuthority: false,
+        rootCaAuthority: false,
+        transportAuthority: false,
+        tlsScram: false,
+        readOnlyTransaction: false,
+        stagingDatabase: false,
+        administrator: false,
+      },
+    });
+  });
+
+  it.each([
+    ["admin URL", STAGING_POSTGRES_BACKUP_CANARY_ADMIN_URL_ENV, adminUrl],
+    ["root CA", STAGING_POSTGRES_BACKUP_CANARY_ROOT_CA_ENV, rootCaPem],
+  ])("fails build-only before side effects when %s authority is present", async (
+    _name,
+    key,
+    value,
+  ) => {
+    const openTransport = vi.fn();
+    const connect = vi.fn();
+    const output: string[] = [];
+    const exitCode = await runStagingPostgresBackupCanary({
+      argv: [],
+      env: environment({
+        [STAGING_POSTGRES_BACKUP_CANARY_MODE_ENV]: "build-only",
+        [STAGING_POSTGRES_BACKUP_CANARY_ADMIN_URL_ENV]: undefined,
+        [STAGING_POSTGRES_BACKUP_CANARY_ROOT_CA_ENV]: undefined,
+        [key]: value,
+      }),
+      getUid: () => process.getuid!(),
+      getEuid: () => process.getuid!(),
+      nodeVersion: () => "v22.23.2",
+      temporaryRoot: vi.fn(),
+      openTransport,
+      connect,
+      writeOutput: (entry) => output.push(entry),
+    });
+    expect(exitCode).toBe(1);
+    expect(openTransport).not.toHaveBeenCalled();
+    expect(connect).not.toHaveBeenCalled();
+    expect(parseReceipt(output).outcome).toBe("failed");
+  });
+
+  it("rejects the wrong Node runtime before either mode can touch authority", async () => {
+    const openTransport = vi.fn();
+    const output: string[] = [];
+    const exitCode = await runStagingPostgresBackupCanary({
+      argv: [],
+      env: environment(),
+      getUid: () => process.getuid!(),
+      getEuid: () => process.getuid!(),
+      nodeVersion: () => "v22.23.1",
+      temporaryRoot: vi.fn(),
+      openTransport,
+      connect: vi.fn(),
+      writeOutput: (entry) => output.push(entry),
+    });
+    expect(exitCode).toBe(1);
+    expect(openTransport).not.toHaveBeenCalled();
+    expect(parseReceipt(output).outcome).toBe("failed");
+  });
+
+  it.each([
+    ["mismatched", () => 1_000, () => 1_001],
+    ["throwing UID", () => { throw new Error("uid unavailable"); }, () => 1_000],
+    ["throwing EUID", () => 1_000, () => { throw new Error("euid unavailable"); }],
+  ])("rejects %s runtime identity before build-only can pass", async (
+    _name,
+    getUid,
+    getEuid,
+  ) => {
+    const output: string[] = [];
+    const openTransport = vi.fn();
+    const connect = vi.fn();
+    const temporaryRoot = vi.fn();
+    const exitCode = await runStagingPostgresBackupCanary({
+      argv: [],
+      env: environment({
+        [STAGING_POSTGRES_BACKUP_CANARY_MODE_ENV]: "build-only",
+        [STAGING_POSTGRES_BACKUP_CANARY_ADMIN_URL_ENV]: undefined,
+        [STAGING_POSTGRES_BACKUP_CANARY_ROOT_CA_ENV]: undefined,
+      }),
+      getUid,
+      getEuid,
+      nodeVersion: () => "v22.23.2",
+      temporaryRoot,
+      openTransport,
+      connect,
+      writeOutput: (entry) => output.push(entry),
+    });
+    expect(exitCode).toBe(1);
+    expect(openTransport).not.toHaveBeenCalled();
+    expect(connect).not.toHaveBeenCalled();
+    expect(temporaryRoot).not.toHaveBeenCalled();
+    const receipt = parseReceipt(output);
+    expect(receipt.outcome).toBe("failed");
+    expect((receipt.identity as Record<string, unknown>).runtimeUidExact).toBe(false);
   });
 
   it("closes a mismatched transport without connecting", async () => {

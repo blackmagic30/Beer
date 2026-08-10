@@ -32,7 +32,7 @@ export const STAGING_POSTGRES_BACKUP_CANARY_LOCK = Object.freeze({
 } as const);
 
 export const STAGING_POSTGRES_BACKUP_CANARY_SCHEMA =
-  "pintpath-staging-postgres-backup-canary/v1" as const;
+  "pintpath-staging-postgres-backup-canary/v2" as const;
 export const STAGING_POSTGRES_BACKUP_CANARY_SCOPE =
   "permanent-staging-postgres-backup-authority-candidates" as const;
 export const STAGING_POSTGRES_BACKUP_CANARY_ADMIN_URL_ENV =
@@ -41,6 +41,8 @@ export const STAGING_POSTGRES_BACKUP_CANARY_ROOT_CA_ENV =
   "STAGING_POSTGRES_CA_CANARY_ROOT_CA_PEM" as const;
 export const STAGING_POSTGRES_BACKUP_CANARY_CONFIG_PATH_ENV =
   "STAGING_POSTGRES_CA_CANARY_RAILWAY_CONFIG_PATH" as const;
+export const STAGING_POSTGRES_BACKUP_CANARY_MODE_ENV =
+  "STAGING_POSTGRES_CA_CANARY_MODE" as const;
 
 const APPLICATION_NAME = "pintpath-staging-postgres-backup-canary";
 const MAX_ADMIN_URL_BYTES = 16 * 1_024;
@@ -100,6 +102,10 @@ interface CanaryIdentity {
   railwayDeployment: boolean;
   dedicatedRailwayConfig: boolean;
   forbiddenEnvironmentAbsent: boolean;
+  node22_23_2: boolean;
+  credentialEnvironmentCleared: boolean;
+  credentialInputsExact: boolean;
+  runtimeUidExact: boolean;
   adminUrlAuthority: boolean;
   rootCaAuthority: boolean;
   transportAuthority: boolean;
@@ -117,6 +123,7 @@ interface CanaryCandidates {
 export interface StagingPostgresBackupCanaryReceipt {
   schemaVersion: typeof STAGING_POSTGRES_BACKUP_CANARY_SCHEMA;
   scope: typeof STAGING_POSTGRES_BACKUP_CANARY_SCOPE;
+  mode: "build-only" | "verify" | null;
   outcome: "passed" | "failed";
   deploymentId: string | null;
   transport: {
@@ -163,6 +170,7 @@ export interface StagingPostgresBackupCanaryDependencies {
   readonly env: Record<string, string | undefined>;
   readonly getUid: () => number | null;
   readonly getEuid: () => number | null;
+  readonly nodeVersion: () => string;
   readonly temporaryRoot: () => string;
   readonly openTransport: (
     options: OpenPostgresRailwayStockLocalhostCaTransportOptions,
@@ -272,6 +280,7 @@ const DEFAULT_DEPENDENCIES: StagingPostgresBackupCanaryDependencies = {
   env: process.env,
   getUid: () => process.getuid?.() ?? null,
   getEuid: () => process.geteuid?.() ?? null,
+  nodeVersion: () => process.version,
   temporaryRoot: () => os.tmpdir(),
   openTransport: (options) => openPostgresRailwayStockLocalhostCaTransport(options),
   connect: (config) => DirectCanaryConnection.connect(config),
@@ -307,6 +316,10 @@ function emptyIdentity(): CanaryIdentity {
     railwayDeployment: false,
     dedicatedRailwayConfig: false,
     forbiddenEnvironmentAbsent: false,
+    node22_23_2: false,
+    credentialEnvironmentCleared: false,
+    credentialInputsExact: false,
+    runtimeUidExact: false,
     adminUrlAuthority: false,
     rootCaAuthority: false,
     transportAuthority: false,
@@ -322,16 +335,42 @@ function failedCandidates(): CanaryCandidates {
 }
 
 function fixedReceipt(
+  mode: "build-only" | "verify" | null,
   deploymentId: string | null,
   identity: CanaryIdentity,
   candidates: CanaryCandidates,
 ): StagingPostgresBackupCanaryReceipt {
-  const passed = Object.values(identity).every((value) => value === true)
-    && SHA256_PATTERN.test(candidates.adminUrlSha256 ?? "")
-    && SHA256_PATTERN.test(candidates.databaseIdentitySha256 ?? "");
+  const basePassed = identity.railwayProject
+    && identity.railwayEnvironment
+    && identity.railwayService
+    && identity.railwayServiceName
+    && identity.railwayDeployment
+    && identity.dedicatedRailwayConfig
+    && identity.forbiddenEnvironmentAbsent
+    && identity.node22_23_2
+    && identity.credentialEnvironmentCleared
+    && identity.credentialInputsExact
+    && identity.runtimeUidExact;
+  const passed = mode === "build-only"
+    ? basePassed
+      && !identity.adminUrlAuthority
+      && !identity.rootCaAuthority
+      && !identity.transportAuthority
+      && !identity.tlsScram
+      && !identity.readOnlyTransaction
+      && !identity.stagingDatabase
+      && !identity.administrator
+      && candidates.adminUrlSha256 === null
+      && candidates.databaseIdentitySha256 === null
+    : mode === "verify"
+      && basePassed
+      && Object.values(identity).every((value) => value === true)
+      && SHA256_PATTERN.test(candidates.adminUrlSha256 ?? "")
+      && SHA256_PATTERN.test(candidates.databaseIdentitySha256 ?? "");
   return {
     schemaVersion: STAGING_POSTGRES_BACKUP_CANARY_SCHEMA,
     scope: STAGING_POSTGRES_BACKUP_CANARY_SCOPE,
+    mode,
     outcome: passed ? "passed" : "failed",
     deploymentId,
     transport: {
@@ -600,6 +639,8 @@ function safeConfiguration(
   identity: CanaryIdentity,
 ): {
   deploymentId: string | null;
+  mode: "build-only" | "verify" | null;
+  buildOnlyReady: boolean;
   admin: SafeAdminConnection | null;
   rootCaPem: Buffer | null;
   uid: number | null;
@@ -619,6 +660,15 @@ function safeConfiguration(
     && exactEnvironment(env, STAGING_POSTGRES_BACKUP_CANARY_CONFIG_PATH_ENV, 128)
       === STAGING_POSTGRES_BACKUP_CANARY_LOCK.railwayConfigPath;
   identity.forbiddenEnvironmentAbsent = forbiddenEnvironmentAbsent(env);
+  try {
+    identity.node22_23_2 = dependencies.nodeVersion() === "v22.23.2";
+  } catch {
+    identity.node22_23_2 = false;
+  }
+  const modeValue = exactEnvironment(env, STAGING_POSTGRES_BACKUP_CANARY_MODE_ENV, 32);
+  const mode = modeValue === "build-only" || modeValue === "verify"
+    ? modeValue
+    : null;
 
   const adminUrl = env[STAGING_POSTGRES_BACKUP_CANARY_ADMIN_URL_ENV];
   const rootCa = env[STAGING_POSTGRES_BACKUP_CANARY_ROOT_CA_ENV];
@@ -631,6 +681,7 @@ function safeConfiguration(
   } catch {
     environmentCleared = false;
   }
+  identity.credentialEnvironmentCleared = environmentCleared;
   let uid: number | null = null;
   let euid: number | null = null;
   try {
@@ -640,9 +691,10 @@ function safeConfiguration(
     uid = null;
     euid = null;
   }
+  identity.runtimeUidExact = uid !== null && uid === euid;
   let admin: SafeAdminConnection | null = null;
   let rootCaPem: Buffer | null = null;
-  try {
+  if (mode === "verify") try {
     if (
       typeof adminUrl !== "string"
       || adminUrl !== adminUrl.trim()
@@ -662,6 +714,15 @@ function safeConfiguration(
     rootCaPem?.fill(0);
     rootCaPem = null;
   }
+  const credentialInputsAbsent = (adminUrl === undefined || adminUrl === "")
+    && (rootCa === undefined || rootCa === "");
+  identity.credentialInputsExact = mode === "build-only"
+    ? credentialInputsAbsent
+    : mode === "verify"
+      && typeof adminUrl === "string"
+      && adminUrl.length > 0
+      && typeof rootCa === "string"
+      && rootCa.length > 0;
   const baseExact = identity.railwayProject
     && identity.railwayEnvironment
     && identity.railwayService
@@ -669,20 +730,28 @@ function safeConfiguration(
     && identity.railwayDeployment
     && identity.dedicatedRailwayConfig
     && identity.forbiddenEnvironmentAbsent
-    && identity.adminUrlAuthority
-    && identity.rootCaAuthority
+    && identity.node22_23_2
     && environmentCleared
-    && uid !== null
-    && uid === euid;
-  if (!baseExact) {
+    && identity.runtimeUidExact
+    && mode !== null;
+  const verifyExact = baseExact
+    && mode === "verify"
+    && identity.adminUrlAuthority
+    && identity.rootCaAuthority;
+  const buildOnlyReady = baseExact
+    && mode === "build-only"
+    && credentialInputsAbsent;
+  if (!verifyExact) {
     rootCaPem?.fill(0);
     rootCaPem = null;
   }
   return {
     deploymentId: UUID_PATTERN.test(deploymentId) ? deploymentId : null,
-    admin: baseExact ? admin : null,
-    rootCaPem: baseExact ? rootCaPem : null,
-    uid: baseExact ? uid : null,
+    mode,
+    buildOnlyReady,
+    admin: verifyExact ? admin : null,
+    rootCaPem: verifyExact ? rootCaPem : null,
+    uid: verifyExact || buildOnlyReady ? uid : null,
   };
 }
 
@@ -773,6 +842,7 @@ export async function runStagingPostgresBackupCanary(
     ...dependencyOverrides,
   };
   const identity = emptyIdentity();
+  let mode: "build-only" | "verify" | null = null;
   let deploymentId: string | null = null;
   let candidates = failedCandidates();
   let rootCaPem: Buffer | null = null;
@@ -784,58 +854,62 @@ export async function runStagingPostgresBackupCanary(
   let cleanupExact = true;
   try {
     const configuration = safeConfiguration(dependencies, identity);
+    mode = configuration.mode;
     deploymentId = configuration.deploymentId;
     rootCaPem = configuration.rootCaPem;
-    if (!configuration.admin || !rootCaPem || configuration.uid === null) {
+    if (configuration.mode === "build-only" && configuration.buildOnlyReady) {
+      candidates = failedCandidates();
+    } else if (!configuration.admin || !rootCaPem || configuration.uid === null) {
       throw new StagingPostgresBackupCanaryError("configuration_invalid");
+    } else {
+      expectedUid = configuration.uid;
+      materialized = await materializeRootCa(
+        rootCaPem,
+        configuration.uid,
+        dependencies.temporaryRoot(),
+      );
+      expectedPemSha256 = sha256(rootCaPem);
+      rootCaPem.fill(0);
+      rootCaPem = null;
+      transport = await dependencies.openTransport({
+        profile: STAGING_POSTGRES_BACKUP_CANARY_LOCK.transportProfile,
+        rootCaFile: materialized.filePath,
+        expectedRootCaDerSha256: STAGING_POSTGRES_BACKUP_CANARY_LOCK.rootCaDerSha256,
+        expectedUid: configuration.uid,
+        sourceUrlAuthority: {
+          hostname: configuration.admin.hostname,
+          port: configuration.admin.port,
+        },
+      });
+      identity.transportAuthority = exactReturnedTransport(transport, expectedPemSha256);
+      if (!identity.transportAuthority) {
+        throw new StagingPostgresBackupCanaryError("source_authority_invalid");
+      }
+      await transport.assertExact();
+      connection = await dependencies.connect({
+        host: transport.nodeConnection.host,
+        port: transport.nodeConnection.port,
+        database: configuration.admin.database,
+        user: configuration.admin.username,
+        password: configuration.admin.password,
+        ssl: transport.nodeConnection.ssl,
+        application_name: APPLICATION_NAME,
+        connectionTimeoutMillis: CONNECTION_TIMEOUT_MS,
+        query_timeout: QUERY_TIMEOUT_MS,
+        statement_timeout: QUERY_TIMEOUT_MS,
+      });
+      identity.tlsScram = connection.authenticationMethod === "scram-sha-256";
+      if (!identity.tlsScram) {
+        throw new StagingPostgresBackupCanaryError("source_authority_invalid");
+      }
+      await transport.assertExact();
+      const databaseIdentitySha256 = await inspectSource(connection, identity);
+      await transport.assertExact();
+      candidates = {
+        adminUrlSha256: configuration.admin.urlSha256,
+        databaseIdentitySha256,
+      };
     }
-    expectedUid = configuration.uid;
-    materialized = await materializeRootCa(
-      rootCaPem,
-      configuration.uid,
-      dependencies.temporaryRoot(),
-    );
-    expectedPemSha256 = sha256(rootCaPem);
-    rootCaPem.fill(0);
-    rootCaPem = null;
-    transport = await dependencies.openTransport({
-      profile: STAGING_POSTGRES_BACKUP_CANARY_LOCK.transportProfile,
-      rootCaFile: materialized.filePath,
-      expectedRootCaDerSha256: STAGING_POSTGRES_BACKUP_CANARY_LOCK.rootCaDerSha256,
-      expectedUid: configuration.uid,
-      sourceUrlAuthority: {
-        hostname: configuration.admin.hostname,
-        port: configuration.admin.port,
-      },
-    });
-    identity.transportAuthority = exactReturnedTransport(transport, expectedPemSha256);
-    if (!identity.transportAuthority) {
-      throw new StagingPostgresBackupCanaryError("source_authority_invalid");
-    }
-    await transport.assertExact();
-    connection = await dependencies.connect({
-      host: transport.nodeConnection.host,
-      port: transport.nodeConnection.port,
-      database: configuration.admin.database,
-      user: configuration.admin.username,
-      password: configuration.admin.password,
-      ssl: transport.nodeConnection.ssl,
-      application_name: APPLICATION_NAME,
-      connectionTimeoutMillis: CONNECTION_TIMEOUT_MS,
-      query_timeout: QUERY_TIMEOUT_MS,
-      statement_timeout: QUERY_TIMEOUT_MS,
-    });
-    identity.tlsScram = connection.authenticationMethod === "scram-sha-256";
-    if (!identity.tlsScram) {
-      throw new StagingPostgresBackupCanaryError("source_authority_invalid");
-    }
-    await transport.assertExact();
-    const databaseIdentitySha256 = await inspectSource(connection, identity);
-    await transport.assertExact();
-    candidates = {
-      adminUrlSha256: configuration.admin.urlSha256,
-      databaseIdentitySha256,
-    };
   } catch {
     candidates = failedCandidates();
   } finally {
@@ -856,7 +930,7 @@ export async function runStagingPostgresBackupCanary(
     }
   }
   if (!cleanupExact) candidates = failedCandidates();
-  const receipt = fixedReceipt(deploymentId, identity, candidates);
+  const receipt = fixedReceipt(mode, deploymentId, identity, candidates);
   try {
     dependencies.writeOutput(`${JSON.stringify(receipt)}\n`);
   } catch {
