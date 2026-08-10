@@ -30,6 +30,36 @@ function repositoryFile(name: string): string {
 }
 
 describe("release workflow contracts", () => {
+  it("keeps permanent-staging provider writes behind the hard-disabled runner", () => {
+    const packageJson = JSON.parse(repositoryFile("package.json")) as {
+      scripts?: Record<string, string>;
+    };
+    const executor = repositoryFile(
+      "scripts/lib/permanent-staging-provider-variable-write-executor.ts",
+    );
+    const wrapper = repositoryFile(
+      "scripts/execute-permanent-staging-provider-variable-write.ts",
+    );
+    const policy = repositoryFile(
+      "ops/railway/permanent-staging-provider-variable-write-policy.json",
+    );
+    expect(packageJson.scripts?.["railway:staging:provider-variable:write"])
+      .toBe("tsx scripts/execute-permanent-staging-provider-variable-write.ts");
+    expect(policy).toContain('"activationState": "HARD_DISABLED_REVIEW_REQUIRED"');
+    expect(executor).toContain(
+      "runPermanentStagingProviderVariableWriteExecutor():",
+    );
+    expect(executor).toContain('mode: "framework-disabled"');
+    expect(executor).toContain('outcome: "blocked"');
+    expect(executor).not.toContain("node:child_process");
+    expect(executor).not.toContain("process.argv");
+    expect(executor).not.toContain("process.stdin");
+    expect(executor).not.toContain("process.env");
+    expect(executor).not.toContain("variableCollectionUpsert");
+    expect(wrapper).toContain("fileURLToPath(import.meta.url)");
+    expect(wrapper).not.toContain("node:child_process");
+  });
+
   it("keeps automated readiness informative and reserves manual authority for the release gate", () => {
     const source = workflow("pintpath-release-readiness.yml");
 

@@ -1,6 +1,6 @@
 # Pint Path production follow-ups
 
-Last reconciled: 9 August 2026
+Last reconciled: 11 August 2026
 
 Scope: full public web launch plus the first Australian iOS release. Pricing,
 paid enrolment, venue Pro, report delivery, rewards, counter/POS tools, public
@@ -25,8 +25,11 @@ autodeploy, ordinary redeploy, and ad-hoc CLI/API writes are not substitutes.
   deletion-notice outbox, webhook authority, and job leases have async Postgres
   owners with restricted PostgreSQL 17 contract tests.
 - **Deployment state:** The live Railway production environment remains on the
-  older authoritative SQLite deployment. No reviewed production target has
-  been provisioned, imported, reconciled, or exercised with two replicas.
+  older authoritative SQLite deployment. A dedicated production PostgreSQL 17
+  service is provisioned and pinned, but it is empty, detached from the Beer
+  service, has not received the reviewed import, and serves no traffic. The
+  production import, reconciliation, two-replica proof, and controlled cutover
+  therefore remain open.
 - **Decision for this release:** The requested launch is full-scale, so the
   controlled single-region SQLite alternative is closed. Execute and prove the
   reviewed snapshot/import/reconciliation/cutover against shared Postgres, run
@@ -37,24 +40,33 @@ autodeploy, ordinary redeploy, and ad-hoc CLI/API writes are not substitutes.
   writes, and the rollback build must continue using Postgres.
 - **Blocks requested launch:** Yes.
 
-## P0 — create permanent staging and separate destructive restore staging
+## P0 — complete permanent staging and separate destructive restore staging
 
-- **Current state:** The documented `beer-staging.up.railway.app` health URL
-  returned HTTP 404 on 8 August. The currently authenticated Supabase account
-  exposes production and the operational backup project but no permanent
-  staging project. No live write rehearsal may use production as a substitute.
-- **Permanent integrated staging:** Create and pin a stable Railway service and
-  domain, staging Postgres/Supabase project, Auth/Storage, Redis, provider
-  callbacks, and staging-only credentials. It mirrors the production topology
-  and is used for migrations, two-replica concurrency, Auth, deletion, data
-  repair, DAST, load, smoke, and rollback-build proof.
-- **Ephemeral destructive restore staging:** Use different Railway,
-  Postgres/Supabase, Storage, Redis, secrets, data paths, and domain identities
-  for each destructive restore drill. Never restore production data over
-  production or permanent staging; destroy only the recorded restore resources
-  after evidence is signed.
-- **Required proof:** Both identity sets are recorded and mechanically checked;
-  permanent staging returns `200` from `/health`, `/startup`, and `/ready`.
+- **Current state:** Permanent integrated staging now exists with pinned,
+  separate Railway Postgres and Redis resources plus Supabase/Auth/private
+  Storage identities. Its synthetic import, restricted runtime proof, direct
+  logical backup, and isolated operational-copy retrieval are verified. The
+  reviewed Beer build is not deployed there, three provider
+  credential/configuration gates remain open, and no live write rehearsal may
+  use production as a substitute.
+- **Permanent integrated staging:** Keep the recorded identities and one-replica
+  budgeted topology. Only after the document-wide Railway mutation stop is
+  closed, complete provider configuration one exact variable at a time through
+  a separately activated and reviewed provider-variable executor. Deploy the
+  exact reviewed build only through its separately reviewed one-operation
+  deployment executor. Then use the same system for two-replica concurrency,
+  Auth, deletion, data repair, DAST, load, smoke, and rollback-build proof before
+  returning to one replica.
+- **Ephemeral destructive restore staging:** A separate Railway Postgres/Redis
+  restore project exists and its database restore plus one-tombstone replay are
+  verified. It still needs isolated Supabase/Storage, PITR/WORM retrieval, full
+  application recovery, signed RPO/RTO, and exact safe teardown. Never restore
+  production data over production or permanent staging; destroy only the
+  recorded restore resources after evidence is signed.
+- **Required proof:** Both identity sets remain mechanically checked; the exact
+  staging build returns `200` from `/health`, `/startup`, and `/ready`; the full
+  destructive recovery drill passes; and the recorded disposable resources are
+  removed without affecting production or permanent staging.
 - **Blocks requested launch:** Yes.
 
 ## P0 — repair and re-prove production data readiness

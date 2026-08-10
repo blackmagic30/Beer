@@ -139,6 +139,14 @@ Railway CLI/API commands. Until a tracked executor performs this check both
 immediately before and in a guaranteed post-mutation path, Railway writes stay
 stopped.
 
+The checked-in `npm run railway:staging:provider-variable:write` command is a
+hard-disabled review scaffold. It emits only a fixed blocked receipt. Do not
+give it a Railway token, provider value, or secret. No Railway write is
+authorized until a separate implementation removes the scaffold hard-disable,
+is independently reviewed, and proves the complete immediate-preflight,
+one-exact-write, and unconditional-postflight contract in an isolated fixture
+while preserving the document-wide stop above.
+
 For PostgreSQL and Redis password incidents, follow the separate
 [permanent-staging private authentication rotation runbook](permanent-staging-private-auth-rotation.md).
 It uses isolated private-network clients with PostgreSQL 17 SCRAM enforcement,
