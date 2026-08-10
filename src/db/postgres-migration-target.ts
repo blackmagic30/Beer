@@ -8,6 +8,16 @@ import { Client, type QueryResultRow } from "pg";
 import { POSTGRES_MIGRATION_CONTRACT } from "./postgres-migration-contract.js";
 import { readPostgresMigrationLedgerAuthority } from "./postgres-migration-ledger.js";
 import {
+  buildPostgresMigrationReadyMetadata,
+  derivePostgresMigrationRunId,
+  finalizePostgresMigrationReceipt,
+  sha256PostgresMigrationRunBinding,
+  sha256PostgresMigrationReadyMetadata,
+  sha256PostgresMigrationTargetIdentity,
+  type PostgresMigrationReadyMetadata,
+  type PostgresMigrationReceipt as CanonicalPostgresMigrationReceipt,
+} from "./postgres-migration-receipt.js";
+import {
   inspectPostgresMigrationSchema,
   serializeCanonicalPostgresMigrationJson,
   sha256PostgresMigrationBytes,
@@ -32,8 +42,6 @@ const APPLICATION_SCHEMA = "pintpath_app";
 const OPERATIONS_SCHEMA = "pintpath_ops";
 const MIGRATOR_ROLE = "pintpath_migrator";
 const RUNTIME_ROLE = "pintpath_runtime";
-const TARGET_RECEIPT_KIND = "pint-path-postgres-migration-receipt" as const;
-const TARGET_RECEIPT_VERSION = 1 as const;
 const MIGRATION_LOCK_KEY = "721426590137322906";
 const MAX_INSERT_PARAMETERS = 60_000;
 const MAX_KEY_PARAMETERS = 20_000;
@@ -116,38 +124,7 @@ export interface PostgresMigrationTargetInspection {
   readonly foreignKeyCount: number;
 }
 
-export interface PostgresMigrationReceipt {
-  readonly kind: typeof TARGET_RECEIPT_KIND;
-  readonly version: typeof TARGET_RECEIPT_VERSION;
-  readonly status: "ready";
-  readonly expectedEnvironment: PostgresMigrationEnvironment;
-  readonly approvalReferenceSha256: string;
-  readonly operatorIdSha256: string;
-  readonly verifierIdSha256: string;
-  readonly runIdSha256: string;
-  readonly runBindingSha256: string;
-  readonly targetIdentitySha256: string;
-  readonly targetUrlSha256: string;
-  readonly targetDdlSha256: string;
-  readonly sourceSnapshotSha256: string;
-  readonly sourceSchemaFingerprint: string;
-  readonly contractSha256: string;
-  readonly manifestSha256: string;
-  readonly planSha256: string;
-  readonly candidateSha: string;
-  readonly tableSetSha256: string;
-  readonly transformedDataSha256: string;
-  readonly keyRangesSha256: string;
-  readonly stateTotalsSha256: string;
-  readonly schemaMetadataSha256: string;
-  readonly tableCount: number;
-  readonly columnCount: number;
-  readonly rowCount: number;
-  readonly chunkCount: number;
-  readonly zeroRowTableCount: number;
-  readonly foreignKeyCount: number;
-  readonly receiptSha256: string;
-}
+export type { PostgresMigrationReceipt } from "./postgres-migration-receipt.js";
 
 export interface PostgresMigrationTargetInput {
   readonly snapshotManifestPath: string;
@@ -349,10 +326,6 @@ function identitySha256(value: string, label: string): string {
     throw targetError("ARGUMENT_INVALID");
   }
   return sha256PostgresMigrationBytes(`${label}\0${normalized}`);
-}
-
-function canonicalSha256(value: unknown): string {
-  return sha256PostgresMigrationBytes(serializeCanonicalPostgresMigrationJson(value));
 }
 
 function assertCanonicalAbsoluteFile(filePath: string): void {
@@ -1195,7 +1168,7 @@ async function inspectTargetIdentity(
   }
   return {
     row,
-    digest: canonicalSha256({
+    digest: sha256PostgresMigrationTargetIdentity({
       databaseName: row.databaseName,
       databaseOid: row.databaseOid,
       currentUser: row.currentUser,
@@ -1870,8 +1843,8 @@ async function reconcileTarget(
   };
 }
 
-function metadataForReady(context: TargetContext): Readonly<Record<string, string>> {
-  return {
+function metadataForReady(context: TargetContext): PostgresMigrationReadyMetadata {
+  return buildPostgresMigrationReadyMetadata({
     import_state: "ready",
     migration_candidate_sha: context.plan.candidateSha,
     migration_contract_sha256: context.contractSha256,
@@ -1882,7 +1855,7 @@ function metadataForReady(context: TargetContext): Readonly<Record<string, strin
     source_schema_version: String(context.manifest.schema.sourceVersion),
     source_snapshot_sha256: context.manifest.database.sha256,
     target_ddl_sha256: context.targetDdlSha256,
-  };
+  });
 }
 
 function assertExistingMetadataBinding(
@@ -1891,7 +1864,16 @@ function assertExistingMetadataBinding(
   run: MigrationRunRow,
 ): void {
   const ready = metadataForReady(context);
-  const bindingKeys = Object.keys(ready).filter((key) => key !== "import_state" && key !== "migration_contract_sha256");
+  const bindingKeys = [
+    "migration_candidate_sha",
+    "migration_manifest_sha256",
+    "migration_plan_sha256",
+    "migration_run_sha256",
+    "source_schema_fingerprint",
+    "source_schema_version",
+    "source_snapshot_sha256",
+    "target_ddl_sha256",
+  ] as const;
   const placeholders: Readonly<Record<string, string>> = {
     migration_candidate_sha: "",
     migration_manifest_sha256: "",
@@ -1928,11 +1910,11 @@ function assertExistingMetadataBinding(
 function buildReceipt(
   context: TargetContext,
   summary: ReconciliationSummary,
-): PostgresMigrationReceipt {
-  const metadataSha256 = canonicalSha256(metadataForReady(context));
+): CanonicalPostgresMigrationReceipt {
+  const metadataSha256 = sha256PostgresMigrationReadyMetadata(metadataForReady(context));
   const withoutReceipt = {
-    kind: TARGET_RECEIPT_KIND,
-    version: TARGET_RECEIPT_VERSION,
+    kind: "pint-path-postgres-migration-receipt" as const,
+    version: 1 as const,
     status: "ready" as const,
     expectedEnvironment: context.expectedEnvironment,
     approvalReferenceSha256: context.approvalReferenceSha256,
@@ -1961,13 +1943,13 @@ function buildReceipt(
     zeroRowTableCount: summary.zeroRowTableCount,
     foreignKeyCount: summary.foreignKeyCount,
   };
-  return { ...withoutReceipt, receiptSha256: canonicalSha256(withoutReceipt) };
+  return finalizePostgresMigrationReceipt(withoutReceipt);
 }
 
 async function markReady(
   connection: PostgresMigrationTargetConnection,
   context: TargetContext,
-  receipt: PostgresMigrationReceipt,
+  receipt: CanonicalPostgresMigrationReceipt,
 ): Promise<void> {
   await inTransaction(connection, async () => {
     for (const [key, value] of Object.entries(metadataForReady(context))) {
@@ -2123,7 +2105,7 @@ function bindTargetContext(
   targetIdentitySha256: string,
   environment: PostgresMigrationEnvironment,
 ): TargetContext {
-  const targetBindingSha256 = canonicalSha256({
+  const targetBindingSha256 = sha256PostgresMigrationRunBinding({
     approvalReferenceSha256: source.approvalReferenceSha256,
     candidateSha: source.plan.candidateSha,
     contractSha256: source.contractSha256,
@@ -2144,7 +2126,7 @@ function bindTargetContext(
     expectedEnvironment: environment,
     targetIdentitySha256,
     targetBindingSha256,
-    runId: sha256PostgresMigrationBytes(`pint-path-postgres-migration-run-v1\0${targetBindingSha256}`),
+    runId: derivePostgresMigrationRunId(targetBindingSha256),
   };
 }
 
@@ -2239,7 +2221,7 @@ export async function inspectPostgresMigrationTargetWithConnection(
 export async function applyPostgresMigrationWithConnection(
   input: PostgresMigrationTargetInput,
   connection: PostgresMigrationTargetConnection,
-): Promise<PostgresMigrationReceipt> {
+): Promise<CanonicalPostgresMigrationReceipt> {
   const sourceContext = await validateSourceArtifacts(input);
   const expectedIdentitySha256 = assertSha256(input.expectedTargetIdentitySha256);
   const identity = await inspectTargetIdentity(connection);
@@ -2286,7 +2268,7 @@ export async function applyPostgresMigrationWithConnection(
 
 export async function applyPostgresMigration(
   input: PostgresMigrationTargetInput,
-): Promise<PostgresMigrationReceipt> {
+): Promise<CanonicalPostgresMigrationReceipt> {
   validateTargetUrl(input.targetUrl);
   const connection = await DirectPostgresMigrationConnection.connect(input.targetUrl);
   try {
@@ -2302,7 +2284,7 @@ export async function applyPostgresMigration(
 export async function verifyPostgresMigrationWithConnection(
   input: PostgresMigrationTargetInput,
   connection: PostgresMigrationTargetConnection,
-): Promise<PostgresMigrationReceipt> {
+): Promise<CanonicalPostgresMigrationReceipt> {
   const sourceContext = await validateSourceArtifacts(input);
   const expectedIdentitySha256 = assertSha256(input.expectedTargetIdentitySha256);
   const identity = await inspectTargetIdentity(connection);
@@ -2353,7 +2335,7 @@ export async function verifyPostgresMigrationWithConnection(
 
 export async function verifyPostgresMigration(
   input: PostgresMigrationTargetInput,
-): Promise<PostgresMigrationReceipt> {
+): Promise<CanonicalPostgresMigrationReceipt> {
   validateTargetUrl(input.targetUrl);
   const connection = await DirectPostgresMigrationConnection.connect(input.targetUrl);
   try {
