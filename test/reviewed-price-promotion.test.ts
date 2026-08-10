@@ -313,6 +313,100 @@ describe("reviewed production price promotion", () => {
     expect(invoked.stderr).toContain("Choose exactly one mode");
   });
 
+  it("hard-disables legacy SQLite mutation modes before parsing poison inputs or touching paths", () => {
+    temporaryRoot = fs.realpathSync(
+      fs.mkdtempSync(path.join(os.tmpdir(), "pintpath-disabled-price-promotion-")),
+    );
+    const databasePath = path.join(temporaryRoot, "poison.sqlite");
+    const manifestPath = path.join(temporaryRoot, "poison-manifest.json");
+    const promotionReceiptPath = path.join(temporaryRoot, "poison-promotion-receipt.json");
+    const dotenvPath = path.join(temporaryRoot, ".env");
+    const applyReceiptPath = path.join(temporaryRoot, "must-not-create-apply-receipt.json");
+    const quarantineReceiptPath = path.join(temporaryRoot, "must-not-create-quarantine-receipt.json");
+    const sentinels = new Map([
+      [databasePath, Buffer.from("database sentinel: do not open or replace\n")],
+      [manifestPath, Buffer.from("manifest sentinel: deliberately invalid JSON\n")],
+      [promotionReceiptPath, Buffer.from("receipt sentinel: deliberately invalid JSON\n")],
+      [dotenvPath, Buffer.from("RESTORE_REHEARSAL_MODE=true\nSUPABASE_URL=poison://dotenv.invalid\n")],
+    ]);
+    for (const [sentinelPath, contents] of sentinels) {
+      fs.writeFileSync(sentinelPath, contents, { mode: 0o600 });
+    }
+    const sentinelMtimes = new Map(
+      [...sentinels].map(([sentinelPath]) => [sentinelPath, fs.statSync(sentinelPath).mtimeMs]),
+    );
+    const poisonEnvironment = {
+      ...process.env,
+      DOTENV_CONFIG_DEBUG: "true",
+      DOTENV_CONFIG_PATH: dotenvPath,
+      NODE_ENV: "test",
+      NODE_PG_FORCE_NATIVE: "true",
+      RESTORE_REHEARSAL_BACKUP_ID: "poison-restore-marker",
+      RESTORE_REHEARSAL_MODE: "true",
+      SUPABASE_MENU_CAPTURE_TABLE: "poison_table",
+      SUPABASE_SERVICE_ROLE_KEY: "poison-not-a-credential",
+      SUPABASE_URL: "poison://must-not-parse.invalid",
+    };
+    const cliPrefix = [
+      path.join(process.cwd(), "node_modules/tsx/dist/cli.mjs"),
+      path.join(process.cwd(), "scripts/promote-reviewed-price-data.ts"),
+    ];
+    const cases = [
+      {
+        args: [
+          "--poison-unsupported-switch",
+          "must-not-parse",
+          "--database",
+          databasePath,
+          "--manifest",
+          manifestPath,
+          "--receipt",
+          applyReceiptPath,
+        ],
+        message: "Legacy SQLite reviewed-price apply is disabled; PostgreSQL promotion is required.",
+        mode: "apply",
+        outputPath: applyReceiptPath,
+      },
+      {
+        args: [
+          "--poison-unsupported-switch",
+          "must-not-parse",
+          "--database",
+          databasePath,
+          "--manifest",
+          manifestPath,
+          "--promotion-receipt",
+          promotionReceiptPath,
+          "--quarantine-receipt",
+          quarantineReceiptPath,
+        ],
+        message: "Legacy SQLite reviewed-price quarantine is disabled; PostgreSQL quarantine is required.",
+        mode: "quarantine",
+        outputPath: quarantineReceiptPath,
+      },
+    ] as const;
+
+    for (const testCase of cases) {
+      const invoked = spawnSync(
+        process.execPath,
+        [...cliPrefix, testCase.mode, ...testCase.args],
+        {
+          cwd: temporaryRoot,
+          encoding: "utf8",
+          env: poisonEnvironment,
+        },
+      );
+      expect(invoked.status).toBe(1);
+      expect(invoked.stdout).toBe("");
+      expect(invoked.stderr.trim()).toBe(testCase.message);
+      expect(fs.existsSync(testCase.outputPath)).toBe(false);
+      for (const [sentinelPath, contents] of sentinels) {
+        expect(fs.readFileSync(sentinelPath)).toEqual(contents);
+        expect(fs.statSync(sentinelPath).mtimeMs).toBe(sentinelMtimes.get(sentinelPath));
+      }
+    }
+  });
+
   it("builds a deterministic exact-ID manifest with the immutable conservative policy", async () => {
     const fixture = await createFixture();
     const sourceVerifier = vi.fn(async () => undefined);

@@ -1,5 +1,3 @@
-import "dotenv/config";
-
 import crypto from "node:crypto";
 import dns from "node:dns/promises";
 import fs from "node:fs";
@@ -12,20 +10,21 @@ import { z } from "zod";
 
 import { AdminIngestionQueueRepository } from "../src/db/admin-ingestion-queue.repository.js";
 import type { AdminIngestionQueueRecord } from "../src/db/models.js";
-import { asAsyncSqliteDatabase, type SqlDatabase } from "../src/db/sql-database.js";
+import type { SqlDatabase } from "../src/db/sql-database.js";
 import { redactSecrets } from "../src/lib/redact.js";
-import { AdminService } from "../src/modules/admin/admin.service.js";
+import type { AdminService } from "../src/modules/admin/admin.service.js";
 import type { AdminBeerInput } from "../src/modules/admin/admin.schemas.js";
 import { assertOperatorMutationAllowed } from "./lib/operator-mutation-guard.js";
 import { parseStrictArguments } from "./lib/strict-arguments.js";
-import {
-  selectPublishableMapBaseRows,
-  type PublishMapBaseOptions,
-} from "./publish-source-ingestion-map-base.js";
+import type { PublishMapBaseOptions } from "./publish-source-ingestion-map-base.js";
 
 const MANIFEST_KIND = "pintpath-reviewed-price-promotion-manifest";
 const RECEIPT_KIND = "pintpath-reviewed-price-promotion-receipt";
 const QUARANTINE_RECEIPT_KIND = "pintpath-reviewed-price-quarantine-receipt";
+const LEGACY_SQLITE_APPLY_DISABLED_ERROR =
+  "Legacy SQLite reviewed-price apply is disabled; PostgreSQL promotion is required.";
+const LEGACY_SQLITE_QUARANTINE_DISABLED_ERROR =
+  "Legacy SQLite reviewed-price quarantine is disabled; PostgreSQL quarantine is required.";
 export const PRODUCTION_SUPABASE_PROJECT_REF = "jxpubqlmqnnqwadmjgyk";
 const QUARANTINED_SOURCE_TYPE = "source_ingestion_quarantined";
 const MAX_ITEMS_PER_PROMOTION = 50;
@@ -38,6 +37,23 @@ const TRUSTED_PUBLIC_CONFIDENCE = [
   "photo_verified",
   "community_confirmed",
 ] as const;
+
+async function selectLegacyPublishableMapBaseRows(
+  queueItem: AdminIngestionQueueRecord,
+  options: PublishMapBaseOptions,
+) {
+  const { selectPublishableMapBaseRows } = await import(
+    "./publish-source-ingestion-map-base.js"
+  );
+  return selectPublishableMapBaseRows(queueItem, options);
+}
+
+async function createLegacyQueueDatabase(
+  database: Database.Database,
+): Promise<SqlDatabase> {
+  const { asAsyncSqliteDatabase } = await import("../src/db/sql-database.js");
+  return asAsyncSqliteDatabase(database);
+}
 
 export const PRODUCTION_MAP_BASE_POLICY: Readonly<PublishMapBaseOptions> = Object.freeze({
   minOverallConfidence: 0.72,
@@ -569,7 +585,9 @@ export async function buildReviewedPricePromotionManifest(input: {
 }): Promise<ReviewedPricePromotionManifest> {
   const candidateSha = z.string().regex(/^[a-f0-9]{40}$/).parse(input.candidateSha);
   const ids = assertExactUniqueIds(input.ids);
-  const repository = new AdminIngestionQueueRepository(asAsyncSqliteDatabase(input.database));
+  const repository = new AdminIngestionQueueRepository(
+    await createLegacyQueueDatabase(input.database),
+  );
   const items: ReviewedPricePromotionManifest["items"] = [];
 
   for (const id of ids) {
@@ -581,7 +599,10 @@ export async function buildReviewedPricePromotionManifest(input: {
       throw new Error(`Source-ingestion item ${id} is ${queueItem.status}, not pending_review.`);
     }
     assertVenueHasNoTrustedPublicRows(input.database, queueItem.venueId);
-    const selection = selectPublishableMapBaseRows(queueItem, PRODUCTION_MAP_BASE_POLICY);
+    const selection = await selectLegacyPublishableMapBaseRows(
+      queueItem,
+      PRODUCTION_MAP_BASE_POLICY,
+    );
     if (selection.reasons.length > 0 || selection.beers.length === 0) {
       throw new Error(
         `Source-ingestion item ${id} failed immutable map-base policy: ${selection.reasons.join(", ") || "no rows"}.`,
@@ -832,7 +853,10 @@ async function preflightManifestItem(
     throw new Error("Source-ingestion queue item changed after the reviewed manifest was created.");
   }
   assertVenueHasNoTrustedPublicRows(database, queueItem.venueId);
-  const selection = selectPublishableMapBaseRows(queueItem, PRODUCTION_MAP_BASE_POLICY);
+  const selection = await selectLegacyPublishableMapBaseRows(
+    queueItem,
+    PRODUCTION_MAP_BASE_POLICY,
+  );
   if (
     selection.reasons.length > 0 ||
     selection.beers.length !== item.rows.length ||
@@ -852,7 +876,7 @@ export async function executeReviewedPricePromotion(input: {
   sourceVerifier: ReachableSourceVerifier;
 }): Promise<PromotionExecutionResult> {
   const repository = new AdminIngestionQueueRepository(
-    input.queueDatabase ?? asAsyncSqliteDatabase(input.database),
+    input.queueDatabase ?? await createLegacyQueueDatabase(input.database),
   );
   const ids = input.manifest.items.map((item) => item.id);
   const beforePublicRows = listPublicRowsForIngestionIds(input.database, ids);
@@ -1608,6 +1632,7 @@ const QUARANTINE_ARGUMENTS = new Set([
 ]);
 
 async function runPlan(argv: readonly string[]): Promise<void> {
+  await import("dotenv/config");
   const args = parseStrictArguments(argv, { allowed: PLAN_ARGUMENTS, required: PLAN_ARGUMENTS });
   const databasePath = assertCanonicalAbsoluteFile(args.get("--database")!, "Database path");
   const manifestPath = assertNewCanonicalAbsoluteFile(args.get("--manifest")!, "Manifest path");
@@ -1714,7 +1739,7 @@ async function runApply(argv: readonly string[]): Promise<void> {
         afterPublicRows: emergencyBeforeRows,
         beforePublicRows: emergencyBeforeRows,
       };
-      const queueDatabase = asAsyncSqliteDatabase(database);
+      const queueDatabase = await createLegacyQueueDatabase(database);
       const repository = new AdminIngestionQueueRepository(queueDatabase);
       let adminService: AdminService | null = null;
       execution = await executeReviewedPricePromotion({
@@ -1725,15 +1750,20 @@ async function runApply(argv: readonly string[]): Promise<void> {
         publisher: async (id, rows, note) => {
           // Construct the mutating service only after every exact manifest item
           // and public source has passed the read-only preflight.
-          adminService ??= new AdminService(
-            repository,
-            target.origin,
-            requiredEnvironment("SUPABASE_SERVICE_ROLE_KEY"),
-            menuCaptureTable,
-            undefined,
-            undefined,
-            queueDatabase,
-          );
+          if (!adminService) {
+            const { AdminService: AdminServiceConstructor } = await import(
+              "../src/modules/admin/admin.service.js"
+            );
+            adminService = new AdminServiceConstructor(
+              repository,
+              target.origin,
+              requiredEnvironment("SUPABASE_SERVICE_ROLE_KEY"),
+              menuCaptureTable,
+              undefined,
+              undefined,
+              queueDatabase,
+            );
+          }
           const result = await adminService.publishQueuedIngestion(id, { beers: rows, note });
           return { mapPriceRecordCount: result.mapPriceRecordCount, savedAt: result.savedAt };
         },
@@ -1921,17 +1951,15 @@ async function runQuarantine(argv: readonly string[]): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  const [mode, ...argv] = process.argv.slice(2);
-  if (mode === "plan") {
-    await runPlan(argv);
-    return;
-  }
+  const mode = process.argv[2];
   if (mode === "apply") {
-    await runApply(argv);
-    return;
+    throw new Error(LEGACY_SQLITE_APPLY_DISABLED_ERROR);
   }
   if (mode === "quarantine") {
-    await runQuarantine(argv);
+    throw new Error(LEGACY_SQLITE_QUARANTINE_DISABLED_ERROR);
+  }
+  if (mode === "plan") {
+    await runPlan(process.argv.slice(3));
     return;
   }
   throw new Error("Choose exactly one mode: plan, apply, or quarantine.");
