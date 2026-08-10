@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { TextDecoder } from "node:util";
 import { fileURLToPath } from "node:url";
 
 import { parseStrictArguments } from "./lib/strict-arguments.js";
@@ -81,8 +82,10 @@ interface RailwayVariableMetadata {
 interface RailwayMetadataPage {
   environmentId: string;
   variables: RailwayVariableMetadata[];
+  edgeCursors: string[];
   hasNextPage: boolean;
   endCursor: string | null;
+  requestedAfter: string | null;
 }
 
 interface ReadinessChecks {
@@ -366,9 +369,20 @@ function queryIsMetadataOnly(query: string): boolean {
   );
 }
 
-function parseMetadataPage(source: string): RailwayMetadataPage | null {
+function exactCursor(value: unknown): value is string {
+  return typeof value === "string"
+    && value.length >= 1
+    && value.length <= 512
+    && !/[\r\n\0]/.test(value);
+}
+
+function parseMetadataPage(
+  source: string,
+  requestedAfter: string | null = null,
+): RailwayMetadataPage | null {
   if (Buffer.byteLength(source, "utf8") > MAX_QUERY_BYTES) return null;
   try {
+    if (!(requestedAfter === null || exactCursor(requestedAfter))) return null;
     const parsed: unknown = JSON.parse(source);
     if (!exactKeys(parsed, ["data"])) return null;
     const data = parsed.data;
@@ -377,7 +391,9 @@ function parseMetadataPage(source: string): RailwayMetadataPage | null {
     if (!exactKeys(environment, ["id", "variables"])) return null;
     const connection = environment.variables;
     if (!exactKeys(connection, ["edges", "pageInfo"])) return null;
-    if (!Array.isArray(connection.edges)) return null;
+    if (!Array.isArray(connection.edges) || connection.edges.length > 100) {
+      return null;
+    }
     const pageInfo = connection.pageInfo;
     if (!exactKeys(pageInfo, ["hasNextPage", "endCursor"])) return null;
     if (
@@ -385,23 +401,18 @@ function parseMetadataPage(source: string): RailwayMetadataPage | null {
       typeof pageInfo.hasNextPage !== "boolean" ||
       !(
         pageInfo.endCursor === null ||
-        (typeof pageInfo.endCursor === "string" &&
-          pageInfo.endCursor.length >= 1 &&
-          pageInfo.endCursor.length <= 512 &&
-          !/[\r\n\0]/.test(pageInfo.endCursor))
+        exactCursor(pageInfo.endCursor)
       )
     ) {
       return null;
     }
 
     const variables: RailwayVariableMetadata[] = [];
+    const edgeCursors: string[] = [];
     for (const edge of connection.edges) {
       if (
         !exactKeys(edge, ["cursor", "node"]) ||
-        typeof edge.cursor !== "string" ||
-        edge.cursor.length < 1 ||
-        edge.cursor.length > 512 ||
-        /[\r\n\0]/.test(edge.cursor)
+        !exactCursor(edge.cursor)
       ) {
         return null;
       }
@@ -445,15 +456,125 @@ function parseMetadataPage(source: string): RailwayMetadataPage | null {
         isSealed: node.isSealed,
         references,
       });
+      edgeCursors.push(edge.cursor);
+    }
+    if (
+      new Set(edgeCursors).size !== edgeCursors.length
+      || (pageInfo.hasNextPage && edgeCursors.length === 0)
+      || (edgeCursors.length === 0 && pageInfo.endCursor !== null)
+      || (
+        edgeCursors.length > 0
+        && pageInfo.endCursor !== edgeCursors[edgeCursors.length - 1]
+      )
+    ) {
+      return null;
     }
     return {
       environmentId: environment.id,
       variables,
+      edgeCursors,
       hasNextPage: pageInfo.hasNextPage,
       endCursor: pageInfo.endCursor,
+      requestedAfter,
     };
   } catch {
     return null;
+  }
+}
+
+function metadataQueryFailed(): Error {
+  return new Error("metadata_query_failed");
+}
+
+function cancelResponseBody(response: Response): void {
+  try {
+    const cancellation = response.body?.cancel();
+    if (cancellation) void cancellation.catch(() => undefined);
+  } catch {
+    // The public failure is fixed below; cancellation details are never exposed.
+  }
+}
+
+function cancelReader(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+): void {
+  const release = (): void => {
+    try {
+      reader.releaseLock();
+    } catch {
+      // A still-pending read retains the lock until cancellation settles.
+    }
+  };
+  try {
+    void reader.cancel().then(release, release);
+  } catch {
+    release();
+  }
+}
+
+async function settleBeforeAbort<T>(
+  operation: PromiseLike<T>,
+  signal: AbortSignal,
+): Promise<T> {
+  if (signal.aborted) throw metadataQueryFailed();
+  return await new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const finish = (callback: () => void): void => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", abort);
+      callback();
+    };
+    const abort = (): void => finish(() => reject(metadataQueryFailed()));
+    signal.addEventListener("abort", abort, { once: true });
+    Promise.resolve(operation).then(
+      (value) => finish(() => resolve(value)),
+      () => finish(() => reject(metadataQueryFailed())),
+    );
+    if (signal.aborted) abort();
+  });
+}
+
+async function readBoundedResponseText(
+  response: Response,
+  maximumBytes: number,
+  signal: AbortSignal,
+): Promise<string> {
+  if (!response.body || signal.aborted) throw metadataQueryFailed();
+  const reader = response.body.getReader();
+  const bytes = Buffer.allocUnsafe(maximumBytes);
+  const validator = new TextDecoder("utf-8", { fatal: true });
+  let offset = 0;
+  let complete = false;
+  try {
+    while (true) {
+      const result = await settleBeforeAbort(reader.read(), signal);
+      if (result.done) break;
+      if (!(result.value instanceof Uint8Array) || result.value.byteLength === 0) {
+        throw metadataQueryFailed();
+      }
+      if (result.value.byteLength > maximumBytes - offset) {
+        throw metadataQueryFailed();
+      }
+      validator.decode(result.value, { stream: true });
+      Buffer.from(
+        result.value.buffer,
+        result.value.byteOffset,
+        result.value.byteLength,
+      ).copy(bytes, offset);
+      offset += result.value.byteLength;
+    }
+    validator.decode();
+    const decoded = new TextDecoder("utf-8", { fatal: true }).decode(
+      bytes.subarray(0, offset),
+    );
+    complete = true;
+    return decoded;
+  } catch {
+    cancelReader(reader);
+    throw metadataQueryFailed();
+  } finally {
+    if (complete) reader.releaseLock();
   }
 }
 
@@ -470,34 +591,116 @@ async function defaultQueryMetadataPage(
     token !== token.trim() ||
     /[\r\n\0]/.test(token)
   ) {
-    throw new Error("metadata_query_failed");
+    throw metadataQueryFailed();
   }
-  const response = await fetchImpl(RAILWAY_GRAPHQL_ENDPOINT, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Project-Access-Token": token,
-    },
-    body: JSON.stringify({
-      operationName: "PintPathRailwayVariableMetadata",
-      query: RAILWAY_VARIABLE_METADATA_QUERY,
-      variables,
-    }),
-    cache: "no-store",
-    redirect: "error",
-    signal: AbortSignal.timeout(QUERY_TIMEOUT_MS),
-  });
-  if (!response.ok) throw new Error("metadata_query_failed");
-  const contentLength = response.headers.get("content-length");
+  const controller = new AbortController();
+  const deadline = setTimeout(() => controller.abort(), QUERY_TIMEOUT_MS);
+  let response: Response | null = null;
+  try {
+    let responsePromise: Promise<Response>;
+    try {
+      responsePromise = Promise.resolve(fetchImpl(RAILWAY_GRAPHQL_ENDPOINT, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Project-Access-Token": token,
+        },
+        body: JSON.stringify({
+          operationName: "PintPathRailwayVariableMetadata",
+          query: RAILWAY_VARIABLE_METADATA_QUERY,
+          variables,
+        }),
+        cache: "no-store",
+        redirect: "error",
+        signal: controller.signal,
+      }));
+    } catch {
+      throw metadataQueryFailed();
+    }
+    void responsePromise.then((lateResponse) => {
+      if (controller.signal.aborted) cancelResponseBody(lateResponse);
+    }, () => undefined);
+    response = await settleBeforeAbort(responsePromise, controller.signal);
+    if (!response.ok) {
+      cancelResponseBody(response);
+      throw metadataQueryFailed();
+    }
+    const contentLength = response.headers.get("content-length");
+    if (
+      contentLength !== null &&
+      (!/^\d+$/.test(contentLength) || Number(contentLength) > MAX_QUERY_BYTES)
+    ) {
+      cancelResponseBody(response);
+      throw metadataQueryFailed();
+    }
+    const source = await readBoundedResponseText(
+      response,
+      MAX_QUERY_BYTES,
+      controller.signal,
+    );
+    if (controller.signal.aborted) throw metadataQueryFailed();
+    const parsed = parseMetadataPage(source, variables.after);
+    if (!parsed || controller.signal.aborted) throw metadataQueryFailed();
+    return parsed;
+  } catch {
+    controller.abort();
+    if (response) cancelResponseBody(response);
+    throw metadataQueryFailed();
+  } finally {
+    clearTimeout(deadline);
+  }
+}
+
+function cloneRuntimeMetadataVariable(
+  value: unknown,
+): RailwayVariableMetadata | null {
+  if (!exactKeys(value, [
+    "id",
+    "name",
+    "environmentId",
+    "serviceId",
+    "isSealed",
+    "references",
+  ])) return null;
   if (
-    contentLength !== null &&
-    (!/^\d+$/.test(contentLength) || Number(contentLength) > MAX_QUERY_BYTES)
-  ) {
-    throw new Error("metadata_query_failed");
+    typeof value.id !== "string"
+    || value.id.length < 1
+    || value.id.length > 256
+    || /[\r\n\0]/.test(value.id)
+    || typeof value.name !== "string"
+    || !VARIABLE_NAME_PATTERN.test(value.name)
+    || typeof value.environmentId !== "string"
+    || !UUID_PATTERN.test(value.environmentId)
+    || !(value.serviceId === null
+      || (typeof value.serviceId === "string" && UUID_PATTERN.test(value.serviceId)))
+    || typeof value.isSealed !== "boolean"
+    || !Array.isArray(value.references)
+    || value.references.length > 100
+  ) return null;
+  const references: RailwayVariableReference[] = [];
+  for (const candidate of value.references) {
+    if (
+      !exactKeys(candidate, ["serviceId", "name"])
+      || typeof candidate.serviceId !== "string"
+      || !UUID_PATTERN.test(candidate.serviceId)
+      || typeof candidate.name !== "string"
+      || !VARIABLE_NAME_PATTERN.test(candidate.name)
+    ) return null;
+    references.push({
+      serviceId: candidate.serviceId,
+      name: candidate.name,
+    });
   }
-  const parsed = parseMetadataPage(await response.text());
-  if (!parsed) throw new Error("metadata_query_failed");
-  return parsed;
+  const normalizedReferences = sortAndValidateReferences(references);
+  if (!normalizedReferences) return null;
+  return {
+    id: value.id,
+    name: value.name,
+    environmentId: value.environmentId,
+    serviceId: value.serviceId,
+    isSealed: value.isSealed,
+    references: normalizedReferences,
+  };
 }
 
 const DEFAULT_DEPENDENCIES: ReadinessDependencies = {
@@ -514,26 +717,57 @@ async function collectInventory(
   queryMetadataPage: ReadinessDependencies["queryMetadataPage"],
 ): Promise<RailwayVariableMetadata[] | null> {
   const variables: RailwayVariableMetadata[] = [];
-  const cursors = new Set<string>();
+  const edgeCursors = new Set<string>();
   let after: string | null = null;
   for (let pageNumber = 0; pageNumber < MAX_PAGES; pageNumber += 1) {
-    let page: RailwayMetadataPage;
     try {
-      page = await queryMetadataPage({
+      const page: unknown = await queryMetadataPage({
         projectId: policy.projectId,
         environmentId: policy.environmentId,
         after,
       });
+      if (
+        !exactKeys(page, [
+          "environmentId",
+          "variables",
+          "edgeCursors",
+          "hasNextPage",
+          "endCursor",
+          "requestedAfter",
+        ])
+        || page.environmentId !== policy.environmentId
+        || page.requestedAfter !== after
+        || typeof page.hasNextPage !== "boolean"
+        || !(page.endCursor === null || exactCursor(page.endCursor))
+        || !Array.isArray(page.variables)
+        || !Array.isArray(page.edgeCursors)
+        || page.variables.length !== page.edgeCursors.length
+        || page.edgeCursors.length > 100
+        || page.edgeCursors.some((cursor) => !exactCursor(cursor))
+        || new Set(page.edgeCursors).size !== page.edgeCursors.length
+        || page.edgeCursors.some((cursor) => edgeCursors.has(cursor))
+        || (page.hasNextPage && page.edgeCursors.length === 0)
+        || (page.edgeCursors.length === 0 && page.endCursor !== null)
+        || (
+          page.edgeCursors.length > 0
+          && page.endCursor !== page.edgeCursors[page.edgeCursors.length - 1]
+        )
+      ) return null;
+      const clonedVariables: RailwayVariableMetadata[] = [];
+      for (const variable of page.variables) {
+        const cloned = cloneRuntimeMetadataVariable(variable);
+        if (!cloned || cloned.environmentId !== policy.environmentId) return null;
+        clonedVariables.push(cloned);
+      }
+      for (const cursor of page.edgeCursors) edgeCursors.add(cursor);
+      variables.push(...clonedVariables);
+      if (variables.length > MAX_VARIABLES) return null;
+      if (!page.hasNextPage) return variables;
+      if (!page.endCursor) return null;
+      after = page.endCursor;
     } catch {
       return null;
     }
-    if (page.environmentId !== policy.environmentId) return null;
-    variables.push(...page.variables);
-    if (variables.length > MAX_VARIABLES) return null;
-    if (!page.hasNextPage) return variables;
-    if (!page.endCursor || cursors.has(page.endCursor)) return null;
-    cursors.add(page.endCursor);
-    after = page.endCursor;
   }
   return null;
 }

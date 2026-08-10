@@ -100,16 +100,46 @@ function unrelatedInventory(count: number): VariableFixture[] {
   }));
 }
 
+function metadataPageSource(
+  edgeCursors: readonly string[],
+  pageInfo: { hasNextPage: boolean; endCursor: string | null },
+): string {
+  return JSON.stringify({
+    data: {
+      environment: {
+        id: ENVIRONMENT_ID,
+        variables: {
+          edges: edgeCursors.map((cursor, index) => ({
+            cursor,
+            node: {
+              id: `metadata-variable-${index}`,
+              name: `UNRELATED_${index}`,
+              environmentId: ENVIRONMENT_ID,
+              serviceId: SERVICE_B,
+              isSealed: false,
+              references: [],
+            },
+          })),
+          pageInfo,
+        },
+      },
+    },
+  });
+}
+
 async function runWithInventory(inventory: VariableFixture[]) {
   const output: string[] = [];
+  const edgeCursors = inventory.map((_variable, index) => `cursor-${index + 1}`);
   const code = await runRailwaySealedVariableReadiness({
     argv: ["--policy", "fixture-policy.json"],
     readPolicy: () => JSON.stringify(policyFixture()),
     queryMetadataPage: async () => ({
       environmentId: ENVIRONMENT_ID,
       variables: inventory,
+      edgeCursors,
       hasNextPage: false,
-      endCursor: null,
+      endCursor: edgeCursors.at(-1) ?? null,
+      requestedAfter: null,
     }),
     writeOutput: (line) => output.push(line),
   });
@@ -139,11 +169,20 @@ describe("Railway sealed-variable readiness", () => {
       queryMetadataPage: async (variables) => {
         calls.push(variables);
         const firstPage = variables.after === null;
+        const pageVariables = firstPage
+          ? inventory.slice(0, 100)
+          : inventory.slice(100);
+        const cursorOffset = firstPage ? 0 : 100;
+        const edgeCursors = pageVariables.map(
+          (_variable, index) => `cursor-${cursorOffset + index + 1}`,
+        );
         return {
           environmentId: ENVIRONMENT_ID,
-          variables: firstPage ? inventory.slice(0, 100) : inventory.slice(100),
+          variables: pageVariables,
+          edgeCursors,
           hasNextPage: firstPage,
-          endCursor: firstPage ? "cursor-100" : null,
+          endCursor: edgeCursors.at(-1) ?? null,
+          requestedAfter: variables.after,
         };
       },
       writeOutput: (line) => output.push(line),
@@ -179,6 +218,42 @@ describe("Railway sealed-variable readiness", () => {
         },
       })}\n`,
     );
+  });
+
+  it("accepts an empty final page only when it is bound to the full page cursor", async () => {
+    const inventory = [...unrelatedInventory(97), ...governedInventory()];
+    const edgeCursors = inventory.map((_variable, index) => `cursor-${index + 1}`);
+    const calls: Array<string | null> = [];
+    const output: string[] = [];
+    const code = await runRailwaySealedVariableReadiness({
+      argv: ["--policy", "fixture-policy.json"],
+      readPolicy: () => JSON.stringify(policyFixture()),
+      queryMetadataPage: async (variables) => {
+        calls.push(variables.after);
+        if (variables.after === null) {
+          return {
+            environmentId: ENVIRONMENT_ID,
+            variables: inventory,
+            edgeCursors,
+            hasNextPage: true,
+            endCursor: "cursor-100",
+            requestedAfter: null,
+          };
+        }
+        return {
+          environmentId: ENVIRONMENT_ID,
+          variables: [],
+          edgeCursors: [],
+          hasNextPage: false,
+          endCursor: null,
+          requestedAfter: variables.after,
+        };
+      },
+      writeOutput: (line) => output.push(line),
+    });
+    expect(code).toBe(0);
+    expect(calls).toEqual([null, "cursor-100"]);
+    expect(JSON.parse(output[0]!)).toMatchObject({ outcome: "passed" });
   });
 
   it.each([
@@ -304,7 +379,7 @@ describe("Railway sealed-variable readiness", () => {
                 },
               },
             ],
-            pageInfo: { hasNextPage: false, endCursor: null },
+            pageInfo: { hasNextPage: false, endCursor: "cursor-1" },
           },
         },
       },
@@ -338,17 +413,63 @@ describe("Railway sealed-variable readiness", () => {
     }
   });
 
+  it("binds every metadata page to a bounded unique edge-cursor sequence", () => {
+    expect(
+      railwaySealedVariableReadinessInternals.parseMetadataPage(
+        metadataPageSource(
+          ["cursor-1", "cursor-2"],
+          { hasNextPage: true, endCursor: "cursor-2" },
+        ),
+        "prior-page-cursor",
+      ),
+    ).toMatchObject({
+      edgeCursors: ["cursor-1", "cursor-2"],
+      hasNextPage: true,
+      endCursor: "cursor-2",
+      requestedAfter: "prior-page-cursor",
+    });
+
+    for (const malformed of [
+      metadataPageSource(
+        ["cursor-1"],
+        { hasNextPage: true, endCursor: "different-cursor" },
+      ),
+      metadataPageSource(
+        ["duplicate", "duplicate"],
+        { hasNextPage: true, endCursor: "duplicate" },
+      ),
+      metadataPageSource(
+        [],
+        { hasNextPage: true, endCursor: "empty-page-cursor" },
+      ),
+      metadataPageSource(
+        ["cursor-1"],
+        { hasNextPage: false, endCursor: null },
+      ),
+      metadataPageSource(
+        Array.from({ length: 101 }, (_value, index) => `cursor-${index}`),
+        { hasNextPage: false, endCursor: "cursor-100" },
+      ),
+    ]) {
+      expect(
+        railwaySealedVariableReadinessInternals.parseMetadataPage(malformed),
+      ).toBeNull();
+    }
+  });
+
   it("fails with a fixed receipt on malformed pages, cursor loops, and raw errors", async () => {
     const sensitive = "postgresql://secret@private.internal/pintpath";
     const cases = [
       vi.fn(async () => {
         throw new Error(sensitive);
       }),
-      vi.fn(async () => ({
+      vi.fn(async (variables: { after: string | null }) => ({
         environmentId: ENVIRONMENT_ID,
-        variables: [],
+        variables: unrelatedInventory(1),
+        edgeCursors: ["same-cursor"],
         hasNextPage: true,
         endCursor: "same-cursor",
+        requestedAfter: variables.after,
       })),
     ];
 
@@ -366,6 +487,77 @@ describe("Railway sealed-variable readiness", () => {
       expect(JSON.parse(output[0]!)).toMatchObject({
         policy: "permanent-staging-post-rotation",
         mode: "post-seal",
+        outcome: "failed",
+        checks: { completeInventory: false },
+      });
+    }
+  });
+
+  it("fails closed when a page is not bound to the requested after cursor", async () => {
+    const output: string[] = [];
+    const code = await runRailwaySealedVariableReadiness({
+      argv: ["--policy", "fixture-policy.json"],
+      readPolicy: () => JSON.stringify(policyFixture()),
+      queryMetadataPage: async () => ({
+        environmentId: ENVIRONMENT_ID,
+        variables: governedInventory(),
+        edgeCursors: ["cursor-1", "cursor-2", "cursor-3"],
+        hasNextPage: false,
+        endCursor: "cursor-3",
+        requestedAfter: "not-the-requested-cursor",
+      }),
+      writeOutput: (line) => output.push(line),
+    });
+    expect(code).toBe(1);
+    expect(JSON.parse(output[0]!)).toMatchObject({
+      outcome: "failed",
+      checks: { completeInventory: false },
+    });
+  });
+
+  it("contains every fulfilled runtime-malformed dependency page", async () => {
+    const sensitive = "sensitive-environmentId";
+    const basePage = {
+      environmentId: ENVIRONMENT_ID,
+      variables: governedInventory(),
+      edgeCursors: ["cursor-1", "cursor-2", "cursor-3"],
+      hasNextPage: false,
+      endCursor: "cursor-3",
+      requestedAfter: null,
+    };
+    const malformed: unknown[] = [
+      null,
+      undefined,
+      {
+        ...basePage,
+        variables: [null],
+        edgeCursors: ["cursor-1"],
+        endCursor: "cursor-1",
+      },
+      {
+        ...basePage,
+        variables: [{ ...governedInventory()[0]!, references: null }],
+        edgeCursors: ["cursor-1"],
+        endCursor: "cursor-1",
+      },
+      new Proxy(basePage, {
+        get(target, property, receiver) {
+          if (property === "environmentId") throw new Error(sensitive);
+          return Reflect.get(target, property, receiver);
+        },
+      }),
+    ];
+    for (const candidate of malformed) {
+      const output: string[] = [];
+      await expect(runRailwaySealedVariableReadiness({
+        argv: ["--policy", "fixture-policy.json"],
+        readPolicy: () => JSON.stringify(policyFixture()),
+        queryMetadataPage: async () => candidate as never,
+        writeOutput: (line) => output.push(line),
+      })).resolves.toBe(1);
+      expect(output).toHaveLength(1);
+      expect(output[0]).not.toContain(sensitive);
+      expect(JSON.parse(output[0]!)).toMatchObject({
         outcome: "failed",
         checks: { completeInventory: false },
       });
@@ -453,6 +645,184 @@ describe("Railway sealed-variable readiness", () => {
       "https://backboard.railway.com/graphql/v2",
       expect.objectContaining({ redirect: "error", cache: "no-store" }),
     );
+  });
+
+  it("bounds a chunked decoded body before parsing and cancels on overflow", async () => {
+    const maximumBytes = 1024 * 1024;
+    const chunkBytes = 64 * 1024;
+    let bytesProduced = 0;
+    let cancellations = 0;
+    const body = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          bytesProduced += chunkBytes;
+          controller.enqueue(new Uint8Array(chunkBytes).fill(0x20));
+        },
+        cancel() {
+          cancellations += 1;
+        },
+      },
+      { highWaterMark: 0 },
+    );
+    const fetchImpl = vi.fn(
+      async () => new Response(body, { status: 200 }),
+    ) as unknown as typeof fetch;
+    await expect(
+      railwaySealedVariableReadinessInternals.defaultQueryMetadataPage(
+        {
+          projectId: PROJECT_ID,
+          environmentId: ENVIRONMENT_ID,
+          after: null,
+        },
+        { PINTPATH_RAILWAY_METADATA_TOKEN: "synthetic-project-token" },
+        fetchImpl,
+      ),
+    ).rejects.toThrow("metadata_query_failed");
+    await vi.waitFor(() => expect(cancellations).toBe(1));
+    expect(bytesProduced).toBeGreaterThan(maximumBytes);
+    expect(bytesProduced).toBeLessThanOrEqual(maximumBytes + chunkBytes);
+  });
+
+  it("uses fatal UTF-8 decoding and cancels without waiting for stream completion", async () => {
+    let cancellations = 0;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(Uint8Array.from([0xff]));
+      },
+      cancel() {
+        cancellations += 1;
+      },
+    });
+    const fetchImpl = vi.fn(
+      async () => new Response(body, { status: 200 }),
+    ) as unknown as typeof fetch;
+    await expect(
+      railwaySealedVariableReadinessInternals.defaultQueryMetadataPage(
+        {
+          projectId: PROJECT_ID,
+          environmentId: ENVIRONMENT_ID,
+          after: null,
+        },
+        { PINTPATH_RAILWAY_METADATA_TOKEN: "synthetic-project-token" },
+        fetchImpl,
+      ),
+    ).rejects.toThrow("metadata_query_failed");
+    await vi.waitFor(() => expect(cancellations).toBe(1));
+  });
+
+  it.each([
+    ["a non-OK response", { status: 503 }],
+    [
+      "an oversized declared response",
+      { status: 200, headers: { "Content-Length": "1048577" } },
+    ],
+  ])("cancels %s with one fixed failure", async (_label, responseInit) => {
+    let cancellations = 0;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(Uint8Array.from([0x7b]));
+      },
+      cancel() {
+        cancellations += 1;
+      },
+    });
+    const fetchImpl = vi.fn(
+      async () => new Response(body, responseInit),
+    ) as unknown as typeof fetch;
+    await expect(
+      railwaySealedVariableReadinessInternals.defaultQueryMetadataPage(
+        {
+          projectId: PROJECT_ID,
+          environmentId: ENVIRONMENT_ID,
+          after: null,
+        },
+        { PINTPATH_RAILWAY_METADATA_TOKEN: "synthetic-project-token" },
+        fetchImpl,
+      ),
+    ).rejects.toThrow("metadata_query_failed");
+    await vi.waitFor(() => expect(cancellations).toBe(1));
+  });
+
+  it.each(["fetch", "body"])(
+    "enforces one abort deadline across a stalled %s",
+    async (stall) => {
+      vi.useFakeTimers();
+      try {
+        let capturedSignal: AbortSignal | null = null;
+        let cancellations = 0;
+        const fetchImpl = vi.fn(
+          async (_input: string | URL | Request, init?: RequestInit) => {
+            capturedSignal = init?.signal as AbortSignal;
+            if (stall === "fetch") {
+              return await new Promise<Response>(() => undefined);
+            }
+            return new Response(new ReadableStream<Uint8Array>({
+              cancel() {
+                cancellations += 1;
+              },
+            }), { status: 200 });
+          },
+        ) as typeof fetch;
+        const pending = railwaySealedVariableReadinessInternals
+          .defaultQueryMetadataPage(
+            {
+              projectId: PROJECT_ID,
+              environmentId: ENVIRONMENT_ID,
+              after: null,
+            },
+            { PINTPATH_RAILWAY_METADATA_TOKEN: "synthetic-project-token" },
+            fetchImpl,
+          );
+        const rejected = expect(pending).rejects.toThrow(
+          "metadata_query_failed",
+        );
+        await vi.advanceTimersByTimeAsync(20_000);
+        await rejected;
+        expect(capturedSignal?.aborted).toBe(true);
+        if (stall === "body") expect(cancellations).toBe(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it("keeps the query deadline referenced while fetch is pending", async () => {
+    let releaseFetch: ((response: Response) => void) | null = null;
+    const fetchImpl = vi.fn(
+      async (_input: string | URL | Request, _init?: RequestInit) =>
+        await new Promise<Response>((resolve) => {
+          releaseFetch = resolve;
+        }),
+    ) as typeof fetch;
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+    const response = new Response(
+      metadataPageSource([], { hasNextPage: false, endCursor: null }),
+      { status: 200 },
+    );
+    const pending = railwaySealedVariableReadinessInternals
+      .defaultQueryMetadataPage(
+        {
+          projectId: PROJECT_ID,
+          environmentId: ENVIRONMENT_ID,
+          after: null,
+        },
+        { PINTPATH_RAILWAY_METADATA_TOKEN: "synthetic-project-token" },
+        fetchImpl,
+      );
+    try {
+      const deadline = setTimeoutSpy.mock.results[0]?.value as
+        ReturnType<typeof setTimeout> & { hasRef?: () => boolean };
+      expect(deadline).toBeDefined();
+      expect(deadline.hasRef?.()).toBe(true);
+      releaseFetch?.(response);
+      await expect(pending).resolves.toMatchObject({
+        environmentId: ENVIRONMENT_ID,
+        requestedAfter: null,
+      });
+    } finally {
+      releaseFetch?.(response);
+      setTimeoutSpy.mockRestore();
+    }
   });
 
   it("accepts the checked-in nonsecret policy and covers the selected populated rows", () => {
