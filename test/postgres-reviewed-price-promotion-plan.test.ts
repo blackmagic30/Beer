@@ -24,6 +24,7 @@ import type {
 } from "../src/db/sql-database.js";
 import {
   POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_BLOCKERS,
+  POSTGRES_REVIEWED_PRICE_PROMOTION_IDENTITY_QUERY,
   POSTGRES_REVIEWED_PRICE_PROMOTION_PRIVATE_INPUT_KIND,
   POSTGRES_REVIEWED_PRICE_PROMOTION_READ_ONLY_TRANSACTION,
   POSTGRES_REVIEWED_PRICE_PROMOTION_ROW_SECURITY,
@@ -75,6 +76,72 @@ const FROZEN_INTERNAL_RECEIPT_SHA =
   "9d1d4f907a8106a6ec4c903c1d19df391ae7997ac48b14f65dce903975daf0b3";
 const FROZEN_RECEIPT_FILE_SHA =
   "b7472be77c445ddd87b37cf34abcdb0487a9612af66c5389304e9a51aed70f00";
+const PLANNER_ROLE_OID = 16_385;
+const LOGICAL_BACKUP_SELECT_POLICY_EXPRESSION =
+  "(CURRENT_USER = ('pintpath_logical_backup_d'::text || ( SELECT (database.oid)::text AS oid\n"
+  + "   FROM pg_database database\n"
+  + "  WHERE (database.datname = current_database()))))";
+
+interface PolicyInventoryRow {
+  readonly command: string;
+  readonly name: string;
+  readonly permissive: boolean;
+  readonly roles: readonly number[];
+  readonly usingExpression: string;
+  readonly withCheckExpression: string | null;
+}
+
+function exactPolicyRoles(actual: readonly number[], expected: number): boolean {
+  return actual.length === 1 && actual[0] === expected;
+}
+
+function policyInventoryPassesIdentityGuard(
+  relationName: string,
+  plannerPolicyName: string,
+  policies: readonly PolicyInventoryRow[],
+): boolean {
+  const applicablePolicies = policies.filter((policy) => (
+    policy.roles.includes(0) || policy.roles.includes(PLANNER_ROLE_OID)
+  ));
+  const exactPlannerPolicy = applicablePolicies.some((policy) => (
+    policy.name === plannerPolicyName
+    && policy.command === "r"
+    && policy.permissive
+    && exactPolicyRoles(policy.roles, PLANNER_ROLE_OID)
+    && policy.usingExpression === "true"
+    && policy.withCheckExpression === null
+  ));
+  const exactLogicalBackupPolicy = applicablePolicies.some((policy) => (
+    policy.name === `${relationName}_logical_backup_select`
+    && policy.command === "r"
+    && policy.permissive
+    && exactPolicyRoles(policy.roles, 0)
+    && policy.usingExpression === LOGICAL_BACKUP_SELECT_POLICY_EXPRESSION
+    && policy.withCheckExpression === null
+  ));
+  return applicablePolicies.length === 2 && exactPlannerPolicy && exactLogicalBackupPolicy;
+}
+
+function canonicalPolicyInventory(): readonly PolicyInventoryRow[] {
+  return [
+    {
+      command: "r",
+      name: "schema_metadata_reviewed_price_planner_select",
+      permissive: true,
+      roles: [PLANNER_ROLE_OID],
+      usingExpression: "true",
+      withCheckExpression: null,
+    },
+    {
+      command: "r",
+      name: "schema_metadata_logical_backup_select",
+      permissive: true,
+      roles: [0],
+      usingExpression: LOGICAL_BACKUP_SELECT_POLICY_EXPRESSION,
+      withCheckExpression: null,
+    },
+  ];
+}
 
 type QueryTag =
   | "identity"
@@ -560,6 +627,75 @@ describe("Postgres reviewed-price no-write plan candidate", () => {
       priceRecordCount: 0,
       venueBeerCount: 0,
     });
+  });
+
+  it("requires the exact canonical PUBLIC and planner-only RLS policy inventory", () => {
+    const identitySql = POSTGRES_REVIEWED_PRICE_PROMOTION_IDENTITY_QUERY
+      .replace(/\s+/g, " ")
+      .trim();
+    const logicalBackupExpression = LOGICAL_BACKUP_SELECT_POLICY_EXPRESSION
+      .replace(/\s+/g, " ");
+
+    expect(identitySql).toContain(
+      "WHERE policy.polrelid = relation.oid "
+      + "AND (0::oid = ANY(policy.polroles) OR planner.oid = ANY(policy.polroles)) "
+      + ") <> 2",
+    );
+    expect(identitySql).toContain(
+      "policy.polname = relation.planner_policy_name "
+      + "AND policy.polcmd = 'r' "
+      + "AND policy.polpermissive "
+      + "AND policy.polroles = ARRAY[planner.oid]::oid[] "
+      + "AND pg_catalog.pg_get_expr(policy.polqual, policy.polrelid, false) = 'true' "
+      + "AND policy.polwithcheck IS NULL",
+    );
+    expect(identitySql).toContain(
+      "policy.polname = (relation.relname || '_logical_backup_select')::name "
+      + "AND policy.polcmd = 'r' "
+      + "AND policy.polpermissive "
+      + "AND policy.polroles = ARRAY[0]::oid[] "
+      + "AND pg_catalog.pg_get_expr(policy.polqual, policy.polrelid, false) "
+      + `= $pintpath_policy$${logicalBackupExpression}$pintpath_policy$ `
+      + "AND policy.polwithcheck IS NULL",
+    );
+  });
+
+  it.each([
+    ["a missing logical-backup policy", canonicalPolicyInventory().slice(0, 1)],
+    ["a renamed logical-backup policy", canonicalPolicyInventory().map((policy, index) => (
+      index === 1 ? { ...policy, name: "schema_metadata_logical_backup_select_renamed" } : policy
+    ))],
+    ["a wrong logical-backup expression", canonicalPolicyInventory().map((policy, index) => (
+      index === 1 ? { ...policy, usingExpression: "true" } : policy
+    ))],
+    ["a third applicable policy", [
+      ...canonicalPolicyInventory(),
+      {
+        command: "r",
+        name: "schema_metadata_unexpected_select",
+        permissive: true,
+        roles: [0],
+        usingExpression: "true",
+        withCheckExpression: null,
+      },
+    ]],
+  ] satisfies ReadonlyArray<readonly [string, readonly PolicyInventoryRow[]]>)(
+    "rejects %s in the required relation policy inventory",
+    (_description, policies) => {
+      expect(policyInventoryPassesIdentityGuard(
+        "schema_metadata",
+        "schema_metadata_reviewed_price_planner_select",
+        policies,
+      )).toBe(false);
+    },
+  );
+
+  it("accepts only the two canonical policies in the unit policy model", () => {
+    expect(policyInventoryPassesIdentityGuard(
+      "schema_metadata",
+      "schema_metadata_reviewed_price_planner_select",
+      canonicalPolicyInventory(),
+    )).toBe(true);
   });
 
   it("rejects unsafe roles and an exact catalog identity mismatch", async () => {

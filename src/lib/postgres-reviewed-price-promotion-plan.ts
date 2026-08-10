@@ -45,6 +45,10 @@ const MAX_WRONG_PRICE_ROWS = 1_000;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const CANDIDATE_PATTERN = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
 const UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
+const LOGICAL_BACKUP_SELECT_POLICY_EXPRESSION =
+  "(CURRENT_USER = ('pintpath_logical_backup_d'::text || ( SELECT (database.oid)::text AS oid\n"
+  + "   FROM pg_database database\n"
+  + "  WHERE (database.datname = current_database()))))";
 const TRUSTED_PUBLIC_CONFIDENCE = Object.freeze([
   "admin_verified",
   "venue_confirmed",
@@ -93,7 +97,7 @@ export const POSTGRES_REVIEWED_PRICE_PROMOTION_ROW_SECURITY =
   "SET LOCAL row_security = on" as const;
 
 export const POSTGRES_REVIEWED_PRICE_PROMOTION_IDENTITY_QUERY = `/* pintpath:reviewed-price-plan:identity */
-WITH relation_spec(nspname, relname, relkind, policy_name, columns) AS (
+WITH relation_spec(nspname, relname, relkind, planner_policy_name, columns) AS (
   VALUES
     ('${APPLICATION_SCHEMA}', 'schema_metadata', 'r'::"char",
       'schema_metadata_reviewed_price_planner_select', ARRAY['key','value']::text[]),
@@ -148,7 +152,7 @@ required_relations AS (
     spec.nspname,
     spec.relname,
     spec.relkind,
-    spec.policy_name,
+    spec.planner_policy_name,
     spec.columns,
     relation.oid,
     relation.relowner,
@@ -254,15 +258,26 @@ WHERE database.datname = current_database()
         FROM pg_catalog.pg_policy AS policy
         WHERE policy.polrelid = relation.oid
           AND (0::oid = ANY(policy.polroles) OR planner.oid = ANY(policy.polroles))
-      ) <> 1
+      ) <> 2
       OR NOT EXISTS (
         SELECT 1 FROM pg_catalog.pg_policy AS policy
         WHERE policy.polrelid = relation.oid
-          AND policy.polname = relation.policy_name
+          AND policy.polname = relation.planner_policy_name
           AND policy.polcmd = 'r'
           AND policy.polpermissive
           AND policy.polroles = ARRAY[planner.oid]::oid[]
-          AND pg_catalog.pg_get_expr(policy.polqual, policy.polrelid, true) = 'true'
+          AND pg_catalog.pg_get_expr(policy.polqual, policy.polrelid, false) = 'true'
+          AND policy.polwithcheck IS NULL
+      )
+      OR NOT EXISTS (
+        SELECT 1 FROM pg_catalog.pg_policy AS policy
+        WHERE policy.polrelid = relation.oid
+          AND policy.polname = (relation.relname || '_logical_backup_select')::name
+          AND policy.polcmd = 'r'
+          AND policy.polpermissive
+          AND policy.polroles = ARRAY[0]::oid[]
+          AND pg_catalog.pg_get_expr(policy.polqual, policy.polrelid, false)
+            = $pintpath_policy$${LOGICAL_BACKUP_SELECT_POLICY_EXPRESSION}$pintpath_policy$
           AND policy.polwithcheck IS NULL
       )
   )

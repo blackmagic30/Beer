@@ -88,6 +88,7 @@ jobs:
       NODE_ENV: test
       PUBLIC_BASE_URL: http://localhost:3000
       PINTPATH_POSTGRES_MIGRATION_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+      PINTPATH_POSTGRES_MIGRATION_TEST_REQUIRED: "true"
       PINTPATH_ACCOUNT_SESSION_POSTGRES_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
       PINTPATH_ACCOUNT_PROFILE_PREFERENCES_POSTGRES_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
       PINTPATH_ACTIVITY_AUDIT_POSTGRES_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
@@ -124,7 +125,7 @@ jobs:
       - name: Verify frozen SQLite migration contract
         run: npm run db:postgres:migration:contract:check
 
-      - name: Run real Postgres import and reconciliation
+      - name: Run real PostgreSQL 17 import, reconciliation, and reviewed-price planner no-write proof
         run: npx vitest run test/postgres-migration-target.integration.test.ts
 
       - name: Run verified logical offsite retrieval contract

@@ -385,6 +385,9 @@ describe("release workflow contracts", () => {
     const start = source.indexOf("  postgres-migration-integration:");
     const end = source.indexOf("\n  supabase-database:", start);
     const job = source.slice(start, end);
+    const migrationIntegration = repositoryFile(
+      "test/postgres-migration-target.integration.test.ts",
+    );
 
     expect(job).toContain("image: postgres:17.6-alpine");
     expect(job).toContain(
@@ -393,6 +396,7 @@ describe("release workflow contracts", () => {
     expect(job).toContain("PUBLIC_BASE_URL: http://localhost:3000");
     expect(job).toContain("pg_isready -U postgres -d postgres");
     expect(job).toContain("PINTPATH_POSTGRES_MIGRATION_TEST_ADMIN_URL:");
+    expect(job).toContain('PINTPATH_POSTGRES_MIGRATION_TEST_REQUIRED: "true"');
     expect(job).toContain("PINTPATH_ACCOUNT_SESSION_POSTGRES_TEST_ADMIN_URL:");
     expect(job).toContain("PINTPATH_ACCOUNT_PROFILE_PREFERENCES_POSTGRES_TEST_ADMIN_URL:");
     expect(job).toContain("PINTPATH_ACTIVITY_AUDIT_POSTGRES_TEST_ADMIN_URL:");
@@ -408,7 +412,24 @@ describe("release workflow contracts", () => {
     expect(job).toContain("PINTPATH_VENUE_MANAGER_INTERNAL_SUBMISSION_POSTGRES_TEST_ADMIN_URL:");
     expect(job).toContain("npm run db:postgres:schema:check");
     expect(job).toContain("npm run db:postgres:migration:contract:check");
+    expect(job).toContain(
+      "- name: Run real PostgreSQL 17 import, reconciliation, and reviewed-price planner no-write proof",
+    );
     expect(job).toContain("npx vitest run test/postgres-migration-target.integration.test.ts");
+    expect(migrationIntegration).toContain(
+      "PINTPATH_POSTGRES_MIGRATION_TEST_REQUIRED",
+    );
+    expect(migrationIntegration).toContain(
+      "is mandatory when ${REQUIRED_ENV}=true",
+    );
+    expect(migrationIntegration).toContain(
+      'mutationEnabled: false',
+    );
+    expect(migrationIntegration).toContain(
+      'code: "42501"',
+    );
+    expect(migrationIntegration).not.toContain("DROP OWNED BY");
+    expect(migrationIntegration).not.toContain("DROP ROLE IF EXISTS pintpath_reviewed_price_planner");
     expect(job).toContain("npx vitest run test/postgres-logical-offsite-retrieval.integration.test.ts");
     expect(job).toContain("npx vitest run test/public-venue-directory.repository.integration.test.ts");
     expect(job).toContain("npx vitest run test/venue-identity.repository.integration.test.ts");
