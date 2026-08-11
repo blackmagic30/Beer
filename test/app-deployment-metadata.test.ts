@@ -75,6 +75,104 @@ afterEach(async () => {
 });
 
 describe("Railway deployment identity evidence", () => {
+  it("single-flights concurrent readiness work and retries after completion or failure", async () => {
+    const resolveReadiness =
+      appDeploymentMetadataInternals.createReadinessProbeSingleFlight<{
+        statusCode: 200 | 503;
+      }>();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const operational = vi.fn(async () => {
+      await gate;
+      return true;
+    });
+    const redis = vi.fn(async () => {
+      await gate;
+      return true;
+    });
+    const offsite = vi.fn(async () => {
+      await gate;
+      return false;
+    });
+    const load = async () => {
+      const checks = await Promise.all([operational(), redis(), offsite()]);
+      return { statusCode: checks.every(Boolean) ? 200 as const : 503 as const };
+    };
+
+    const pending = Array.from({ length: 32 }, () => resolveReadiness(load));
+    expect(new Set(pending).size).toBe(1);
+    await Promise.resolve();
+    expect(operational).toHaveBeenCalledTimes(1);
+    expect(redis).toHaveBeenCalledTimes(1);
+    expect(offsite).toHaveBeenCalledTimes(1);
+    release();
+
+    const results = await Promise.all(pending);
+    expect(new Set(results).size).toBe(1);
+    expect(results[0]).toEqual({ statusCode: 503 });
+
+    await expect(resolveReadiness(load)).resolves.toEqual({ statusCode: 503 });
+    expect(operational).toHaveBeenCalledTimes(2);
+    expect(redis).toHaveBeenCalledTimes(2);
+    expect(offsite).toHaveBeenCalledTimes(2);
+
+    const resolveFailure =
+      appDeploymentMetadataInternals.createReadinessProbeSingleFlight<string>();
+    const failure = new Error("readiness_fixture_failure");
+    const failingLoad = vi.fn(async () => {
+      throw failure;
+    });
+    const failures = await Promise.allSettled(
+      Array.from({ length: 32 }, () => resolveFailure(failingLoad)),
+    );
+    expect(failingLoad).toHaveBeenCalledTimes(1);
+    expect(failures.every((result) => (
+      result.status === "rejected" && result.reason === failure
+    ))).toBe(true);
+    await expect(resolveFailure(async () => "recovered")).resolves.toBe("recovered");
+
+    let releaseSlowDependency!: () => void;
+    const slowDependencyGate = new Promise<void>((resolve) => {
+      releaseSlowDependency = resolve;
+    });
+    const fastFailure = new Error("fast_readiness_fixture_failure");
+    const fastDependency = vi.fn(async () => {
+      throw fastFailure;
+    });
+    const slowDependency = vi.fn(async () => {
+      await slowDependencyGate;
+      return "slow_complete";
+    });
+    const settledDependency = vi.fn(async () => "settled_complete");
+    const resolveDrainingFailure =
+      appDeploymentMetadataInternals.createReadinessProbeSingleFlight<string>();
+    const drainingLoad = vi.fn(async () => {
+      await appDeploymentMetadataInternals.awaitReadinessDependencies(
+        fastDependency(),
+        slowDependency(),
+        settledDependency(),
+      );
+      return "unreachable";
+    });
+    const drainingFailure = resolveDrainingFailure(drainingLoad);
+    await Promise.resolve();
+    await Promise.resolve();
+    const sharedDrainingFailure = resolveDrainingFailure(drainingLoad);
+    expect(sharedDrainingFailure).toBe(drainingFailure);
+    expect(drainingLoad).toHaveBeenCalledTimes(1);
+    expect(fastDependency).toHaveBeenCalledTimes(1);
+    expect(slowDependency).toHaveBeenCalledTimes(1);
+    expect(settledDependency).toHaveBeenCalledTimes(1);
+
+    releaseSlowDependency();
+    await expect(drainingFailure).rejects.toBe(fastFailure);
+    await expect(resolveDrainingFailure(async () => "retry_after_drain")).resolves.toBe(
+      "retry_after_drain",
+    );
+  });
+
   it("uses a distinct domain for every Railway deployment identity", () => {
     const hashes = railwayDeploymentIdentityHashes({
       RAILWAY_PROJECT_ID: RAILWAY_IDS.project,

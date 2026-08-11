@@ -292,7 +292,53 @@ function sendSecureProbeJson(
   APP_REFLECT_APPLY(end, response, [body]);
 }
 
+function createReadinessProbeSingleFlight<T>(): (
+  load: () => Promise<T>,
+) => Promise<T> {
+  let active: Promise<T> | undefined;
+  let activeMarker: object | undefined;
+  return (load) => {
+    if (active) return active;
+
+    const marker = {};
+    const operation = (async () => {
+      // Publish the shared promise before a synchronously throwing loader can
+      // enter the cleanup path.
+      await 0;
+      try {
+        return await load();
+      } finally {
+        if (activeMarker === marker) {
+          active = undefined;
+          activeMarker = undefined;
+        }
+      }
+    })();
+    activeMarker = marker;
+    active = operation;
+    return operation;
+  };
+}
+
+async function awaitReadinessDependencies<A, B, C>(
+  operational: Promise<A>,
+  redis: Promise<B>,
+  offsite: Promise<C>,
+): Promise<readonly [A, B, C]> {
+  const [operationalResult, redisResult, offsiteResult] = await Promise.allSettled([
+    operational,
+    redis,
+    offsite,
+  ]);
+  if (operationalResult.status === "rejected") throw operationalResult.reason;
+  if (redisResult.status === "rejected") throw redisResult.reason;
+  if (offsiteResult.status === "rejected") throw offsiteResult.reason;
+  return [operationalResult.value, redisResult.value, offsiteResult.value];
+}
+
 export const appDeploymentMetadataInternals = APP_OBJECT_CONSTRUCTOR.freeze({
+  awaitReadinessDependencies,
+  createReadinessProbeSingleFlight,
   secureProbeJson,
 });
 
@@ -1249,6 +1295,10 @@ export function createApp() {
     keyPrefix: "restore:access-attempt",
     keyGenerator: getRateLimitIdentity,
   });
+  const resolveNormalReadinessProbe = createReadinessProbeSingleFlight<{
+    readonly statusCode: 200 | 503;
+    readonly payload: unknown;
+  }>();
   const cspConnectSources = [
     "'self'",
     "https://maps.googleapis.com",
@@ -1533,57 +1583,63 @@ export function createApp() {
         }));
         return;
       }
-      const { businessService, probeOffsiteBackupReadiness } = await getLazyRouters();
-      const [readiness, rateLimiterRedis, offsiteBackup] = await Promise.all([
-        businessService.getOperationalReadiness(),
-        import("./middleware/rate-limit.js").then(({ probeRateLimitRedis }) => probeRateLimitRedis()),
-        probeOffsiteBackupReadiness(),
-      ]);
-      const restoreRuntimeReady = !env.RESTORE_REHEARSAL_MODE || Boolean(verifiedRestoreRuntime);
-      const ready = readiness.ready && rateLimiterRedis.ready && offsiteBackup.status === "ok" && restoreRuntimeReady;
-      if (!ready) {
-        const safeDependencyFields = [
-          "status",
-          "required",
-          "ready",
-          "liveProbe",
-          "error",
-          "foreignKeyViolations",
-          "lastSuccessfulAt",
-          "ageHours",
-        ];
-        const dependencies = {
-          ...readiness.dependencies,
-          rateLimiterRedis,
-          offsiteBackup,
-        };
-        logger.warn("Operational readiness check failed", {
-          dependencies: Object.fromEntries(Object.entries(dependencies).map(([name, value]) => [
-            name,
-            Object.fromEntries(safeDependencyFields.flatMap((field) => (
-              Object.prototype.hasOwnProperty.call(value, field)
-                ? [[field, (value as Record<string, unknown>)[field]]]
-                : []
-            ))),
-          ])),
-          restoreRuntimeReady,
-        });
-      }
-      sendSecureProbeJson(res, ready ? 200 : 503, success({
-          service: "pint-path",
-          status: ready ? "ready" : "not_ready",
-          deployment: deploymentMetadata(),
-          dependencies: {
+      const result = await resolveNormalReadinessProbe(async () => {
+        const { businessService, probeOffsiteBackupReadiness } = await getLazyRouters();
+        const [readiness, rateLimiterRedis, offsiteBackup] = await awaitReadinessDependencies(
+          businessService.getOperationalReadiness(),
+          import("./middleware/rate-limit.js").then(({ probeRateLimitRedis }) => probeRateLimitRedis()),
+          probeOffsiteBackupReadiness(),
+        );
+        const restoreRuntimeReady = !env.RESTORE_REHEARSAL_MODE || Boolean(verifiedRestoreRuntime);
+        const ready = readiness.ready && rateLimiterRedis.ready && offsiteBackup.status === "ok" && restoreRuntimeReady;
+        if (!ready) {
+          const safeDependencyFields = [
+            "status",
+            "required",
+            "ready",
+            "liveProbe",
+            "error",
+            "foreignKeyViolations",
+            "lastSuccessfulAt",
+            "ageHours",
+          ];
+          const dependencies = {
             ...readiness.dependencies,
             rateLimiterRedis,
             offsiteBackup,
-            ...(env.RESTORE_REHEARSAL_MODE
-              ? {
-                  restoreRuntime: getPublicRestoreRuntimeReadiness(Boolean(verifiedRestoreRuntime)),
-                }
-              : {}),
-          },
-        }));
+          };
+          logger.warn("Operational readiness check failed", {
+            dependencies: Object.fromEntries(Object.entries(dependencies).map(([name, value]) => [
+              name,
+              Object.fromEntries(safeDependencyFields.flatMap((field) => (
+                Object.prototype.hasOwnProperty.call(value, field)
+                  ? [[field, (value as Record<string, unknown>)[field]]]
+                  : []
+              ))),
+            ])),
+            restoreRuntimeReady,
+          });
+        }
+        return {
+          statusCode: ready ? 200 as const : 503 as const,
+          payload: success({
+            service: "pint-path",
+            status: ready ? "ready" : "not_ready",
+            deployment: deploymentMetadata(),
+            dependencies: {
+              ...readiness.dependencies,
+              rateLimiterRedis,
+              offsiteBackup,
+              ...(env.RESTORE_REHEARSAL_MODE
+                ? {
+                    restoreRuntime: getPublicRestoreRuntimeReadiness(Boolean(verifiedRestoreRuntime)),
+                  }
+                : {}),
+            },
+          }),
+        };
+      });
+      sendSecureProbeJson(res, result.statusCode, result.payload);
     } catch (error) {
       next(error);
     }
