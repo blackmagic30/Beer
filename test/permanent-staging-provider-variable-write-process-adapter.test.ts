@@ -1036,56 +1036,58 @@ describe("permanent staging provider-variable process adapter", () => {
     const malicious = "#!/bin/sh\nexit 9\n";
     const copyPath = writePrivateCopy(root, malicious);
     const probe = await fs.promises.open(copyPath, "r");
-    const prototype = Object.getPrototypeOf(probe) as object;
-    await probe.close();
-    const nativeRead = Object.getOwnPropertyDescriptor(prototype, "read");
-    const inheritedRead = Object.getOwnPropertyDescriptor(
-      Object.prototype,
-      "read",
-    );
-    const fakeRead = vi.fn(async (
-      buffer: Buffer,
-      offset: number,
-      length: number,
-    ) => {
-      Buffer.from(trusted).copy(buffer, offset, 0, length);
-      return { bytesRead: length, buffer };
-    });
-    let opened: Awaited<ReturnType<
-      typeof openPermanentStagingProviderVariableWriteProcessAdapter
-    >> | undefined;
-    let failure: unknown;
     try {
-      Reflect.deleteProperty(prototype, "read");
-      Object.defineProperty(Object.prototype, "read", {
-        configurable: true,
-        value: fakeRead,
-        writable: true,
+      const prototype = Object.getPrototypeOf(probe) as object;
+      const nativeRead = Object.getOwnPropertyDescriptor(prototype, "read");
+      const inheritedRead = Object.getOwnPropertyDescriptor(
+        Object.prototype,
+        "read",
+      );
+      const fakeRead = vi.fn(async (
+        buffer: Buffer,
+        offset: number,
+        length: number,
+      ) => {
+        Buffer.from(trusted).copy(buffer, offset, 0, length);
+        return { bytesRead: length, buffer };
       });
-      opened = await openPermanentStagingProviderVariableWriteProcessAdapter({
-        privateExecutableCopyPath: copyPath,
-        expectedSourceSha256: sha256(trusted),
-        spawn: vi.fn(),
-        killProcessGroup: vi.fn(),
-        probeProcessGroupEmpty: () => true,
-      });
-    } catch (error) {
-      failure = error;
+      let opened: Awaited<ReturnType<
+        typeof openPermanentStagingProviderVariableWriteProcessAdapter
+      >> | undefined;
+      let failure: unknown;
+      try {
+        Reflect.deleteProperty(prototype, "read");
+        Object.defineProperty(Object.prototype, "read", {
+          configurable: true,
+          value: fakeRead,
+          writable: true,
+        });
+        opened = await openPermanentStagingProviderVariableWriteProcessAdapter({
+          privateExecutableCopyPath: copyPath,
+          expectedSourceSha256: sha256(trusted),
+          spawn: vi.fn(),
+          killProcessGroup: vi.fn(),
+          probeProcessGroupEmpty: () => true,
+        });
+      } catch (error) {
+        failure = error;
+      } finally {
+        if (nativeRead !== undefined) {
+          Object.defineProperty(prototype, "read", nativeRead);
+        }
+        if (inheritedRead === undefined) {
+          Reflect.deleteProperty(Object.prototype, "read");
+        } else {
+          Object.defineProperty(Object.prototype, "read", inheritedRead);
+        }
+      }
+      await opened?.close();
+      expect(failure).toMatchObject({ code: "process_adapter_invalid" });
+      expect(fakeRead).not.toHaveBeenCalled();
+      expect(fs.readFileSync(probe.fd, "utf8")).toBe(malicious);
     } finally {
-      if (nativeRead !== undefined) {
-        Object.defineProperty(prototype, "read", nativeRead);
-      }
-      if (inheritedRead === undefined) {
-        Reflect.deleteProperty(Object.prototype, "read");
-      } else {
-        Object.defineProperty(Object.prototype, "read", inheritedRead);
-      }
+      await probe.close();
     }
-    await opened?.close();
-    expect(failure).toMatchObject({ code: "process_adapter_invalid" });
-    expect(fakeRead).not.toHaveBeenCalled();
-    // codeql[js/file-system-race] -- This private fixture intentionally verifies the replaced path after the held-descriptor rejection.
-    expect(fs.readFileSync(copyPath, "utf8")).toBe(malicious);
   });
 
   it("snapshots exact dependency capabilities before they self-mutate", async () => {
