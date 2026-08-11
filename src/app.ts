@@ -1,5 +1,7 @@
 import crypto from "node:crypto";
+import { ServerResponse } from "node:http";
 import path from "node:path";
+import { types as utilTypes } from "node:util";
 
 import compression from "compression";
 import express from "express";
@@ -18,6 +20,7 @@ import {
   isCanonicalProductionRuntime,
   resolveAccountDeletionLedgerRuntimeConfig,
 } from "./lib/deployment-environment.js";
+import { railwayDeploymentIdentityHashes } from "./lib/railway-deployment-identity.js";
 import { success } from "./lib/http.js";
 import { logger } from "./lib/logger.js";
 import { redactSecrets } from "./lib/redact.js";
@@ -62,6 +65,236 @@ const RESTORE_REHEARSAL_ALLOWED_API_READS = new Set([
   "/api/business/price-records",
 ]);
 const TIMING_SAFE_COMPARISON_MAX_BYTES = 1024;
+const APP_ARRAY_IS_ARRAY = Array.isArray;
+const APP_BUFFER_CONSTRUCTOR = Buffer;
+const APP_BUFFER_BYTE_LENGTH = APP_BUFFER_CONSTRUCTOR.byteLength;
+const APP_JSON_OBJECT = JSON;
+const APP_JSON_STRINGIFY = APP_JSON_OBJECT.stringify;
+const APP_NUMBER_CONSTRUCTOR = Number;
+const APP_NUMBER_IS_FINITE = APP_NUMBER_CONSTRUCTOR.isFinite;
+const APP_OBJECT_CONSTRUCTOR = Object;
+const APP_OBJECT_GET_OWN_PROPERTY_DESCRIPTOR =
+  APP_OBJECT_CONSTRUCTOR.getOwnPropertyDescriptor;
+const APP_OBJECT_GET_PROTOTYPE_OF = APP_OBJECT_CONSTRUCTOR.getPrototypeOf;
+const APP_OBJECT_HAS_OWN = APP_OBJECT_CONSTRUCTOR.hasOwn;
+const APP_OBJECT_KEYS = APP_OBJECT_CONSTRUCTOR.keys;
+const APP_OBJECT_PROTOTYPE = APP_OBJECT_CONSTRUCTOR.prototype;
+const APP_REFLECT_OBJECT = Reflect;
+const APP_REFLECT_APPLY = APP_REFLECT_OBJECT.apply;
+const APP_REFLECT_DEFINE_PROPERTY = APP_REFLECT_OBJECT.defineProperty;
+const APP_REGEXP_EXEC = RegExp.prototype.exec;
+const APP_RESPONSE_END = ServerResponse.prototype.end;
+const APP_RESPONSE_SET_HEADER = ServerResponse.prototype.setHeader;
+const APP_SET_CONSTRUCTOR = Set;
+const APP_SET_ADD = APP_SET_CONSTRUCTOR.prototype.add;
+const APP_SET_DELETE = APP_SET_CONSTRUCTOR.prototype.delete;
+const APP_SET_HAS = APP_SET_CONSTRUCTOR.prototype.has;
+const APP_PROCESS_ENV = process.env;
+const APP_UTIL_IS_PROXY = utilTypes.isProxy;
+const APP_COMMIT_PATTERN = /^[a-f0-9]{7,64}$/i;
+const APP_VERSION_PATTERN = /^[a-z0-9._-]{1,80}$/i;
+const APP_PROBE_MAX_JSON_BYTES = 1_048_576;
+const APP_PROBE_MAX_JSON_DEPTH = 32;
+const APP_PROBE_MAX_JSON_NODES = 20_000;
+
+function ownProcessEnvironmentString(name: string): string | undefined {
+  if (APP_REFLECT_APPLY(APP_UTIL_IS_PROXY, utilTypes, [APP_PROCESS_ENV]) === true) {
+    return undefined;
+  }
+  const descriptor = APP_REFLECT_APPLY(
+    APP_OBJECT_GET_OWN_PROPERTY_DESCRIPTOR,
+    APP_OBJECT_CONSTRUCTOR,
+    [APP_PROCESS_ENV, name],
+  ) as PropertyDescriptor | undefined;
+  if (
+    descriptor === undefined
+    || descriptor.enumerable !== true
+    || APP_REFLECT_APPLY(
+      APP_OBJECT_HAS_OWN,
+      APP_OBJECT_CONSTRUCTOR,
+      [descriptor, "value"],
+    )
+      !== true
+    || typeof descriptor.value !== "string"
+  ) return undefined;
+  return descriptor.value;
+}
+
+function secureProbeJson(value: unknown): string {
+  const ancestors = new APP_SET_CONSTRUCTOR<object>();
+  let nodes = 0;
+
+  const encode = (candidate: unknown, depth: number): string => {
+    nodes += 1;
+    if (nodes > APP_PROBE_MAX_JSON_NODES || depth > APP_PROBE_MAX_JSON_DEPTH) {
+      throw new Error("probe_json_invalid");
+    }
+    if (candidate === null) return "null";
+    if (typeof candidate === "string") {
+      const encoded = APP_REFLECT_APPLY(
+        APP_JSON_STRINGIFY,
+        APP_JSON_OBJECT,
+        [candidate],
+      ) as unknown;
+      if (typeof encoded !== "string") throw new Error("probe_json_invalid");
+      return encoded;
+    }
+    if (typeof candidate === "boolean") return candidate ? "true" : "false";
+    if (typeof candidate === "number") {
+      if (APP_REFLECT_APPLY(
+        APP_NUMBER_IS_FINITE,
+        APP_NUMBER_CONSTRUCTOR,
+        [candidate],
+      ) !== true) return "null";
+      const encoded = APP_REFLECT_APPLY(
+        APP_JSON_STRINGIFY,
+        APP_JSON_OBJECT,
+        [candidate],
+      ) as unknown;
+      if (typeof encoded !== "string") throw new Error("probe_json_invalid");
+      return encoded;
+    }
+    if (typeof candidate !== "object" || candidate === null) {
+      throw new Error("probe_json_invalid");
+    }
+    if (APP_REFLECT_APPLY(APP_UTIL_IS_PROXY, utilTypes, [candidate]) === true) {
+      throw new Error("probe_json_invalid");
+    }
+    if (APP_REFLECT_APPLY(APP_SET_HAS, ancestors, [candidate]) === true) {
+      throw new Error("probe_json_invalid");
+    }
+    APP_REFLECT_APPLY(APP_SET_ADD, ancestors, [candidate]);
+    try {
+      if (APP_ARRAY_IS_ARRAY(candidate)) {
+        let result = "[";
+        for (let index = 0; index < candidate.length; index += 1) {
+          if (index > 0) result += ",";
+          const descriptor = APP_REFLECT_APPLY(
+            APP_OBJECT_GET_OWN_PROPERTY_DESCRIPTOR,
+            APP_OBJECT_CONSTRUCTOR,
+            [candidate, `${index}`],
+          ) as PropertyDescriptor | undefined;
+          if (
+            descriptor === undefined
+            || descriptor.enumerable !== true
+            || APP_REFLECT_APPLY(
+              APP_OBJECT_HAS_OWN,
+              APP_OBJECT_CONSTRUCTOR,
+              [descriptor, "value"],
+            ) !== true
+          ) throw new Error("probe_json_invalid");
+          result += encode(descriptor.value, depth + 1);
+        }
+        return `${result}]`;
+      }
+      const prototype = APP_REFLECT_APPLY(
+        APP_OBJECT_GET_PROTOTYPE_OF,
+        APP_OBJECT_CONSTRUCTOR,
+        [candidate],
+      );
+      if (prototype !== APP_OBJECT_PROTOTYPE && prototype !== null) {
+        throw new Error("probe_json_invalid");
+      }
+      const keys = APP_REFLECT_APPLY(
+        APP_OBJECT_KEYS,
+        APP_OBJECT_CONSTRUCTOR,
+        [candidate],
+      ) as string[];
+      let result = "{";
+      for (let index = 0; index < keys.length; index += 1) {
+        const key = keys[index];
+        if (typeof key !== "string") throw new Error("probe_json_invalid");
+        const descriptor = APP_REFLECT_APPLY(
+          APP_OBJECT_GET_OWN_PROPERTY_DESCRIPTOR,
+          APP_OBJECT_CONSTRUCTOR,
+          [candidate, key],
+        ) as PropertyDescriptor | undefined;
+        if (
+          descriptor === undefined
+          || descriptor.enumerable !== true
+          || APP_REFLECT_APPLY(
+            APP_OBJECT_HAS_OWN,
+            APP_OBJECT_CONSTRUCTOR,
+            [descriptor, "value"],
+          ) !== true
+        ) throw new Error("probe_json_invalid");
+        if (index > 0) result += ",";
+        result += `${encode(key, depth + 1)}:${encode(descriptor.value, depth + 1)}`;
+      }
+      return `${result}}`;
+    } finally {
+      APP_REFLECT_APPLY(APP_SET_DELETE, ancestors, [candidate]);
+    }
+  };
+
+  const result = encode(value, 0);
+  const byteLength = APP_REFLECT_APPLY(
+    APP_BUFFER_BYTE_LENGTH,
+    APP_BUFFER_CONSTRUCTOR,
+    [result, "utf8"],
+  ) as number;
+  if (byteLength < 1 || byteLength > APP_PROBE_MAX_JSON_BYTES) {
+    throw new Error("probe_json_invalid");
+  }
+  return result;
+}
+
+function sendSecureProbeJson(
+  response: Response,
+  statusCode: number,
+  value: unknown,
+): void {
+  const body = secureProbeJson(value);
+  const byteLength = APP_REFLECT_APPLY(
+    APP_BUFFER_BYTE_LENGTH,
+    APP_BUFFER_CONSTRUCTOR,
+    [body, "utf8"],
+  ) as number;
+  const statusDefined = APP_REFLECT_APPLY(
+    APP_REFLECT_DEFINE_PROPERTY,
+    APP_REFLECT_OBJECT,
+    [response, "statusCode", {
+      configurable: true,
+      enumerable: true,
+      writable: true,
+      value: statusCode,
+    }],
+  );
+  if (statusDefined !== true || response.statusCode !== statusCode) {
+    throw new Error("probe_response_invalid");
+  }
+  APP_REFLECT_APPLY(APP_RESPONSE_SET_HEADER, response, [
+    "Cache-Control",
+    "no-store",
+  ]);
+  APP_REFLECT_APPLY(APP_RESPONSE_SET_HEADER, response, [
+    "Content-Type",
+    "application/json; charset=utf-8",
+  ]);
+  APP_REFLECT_APPLY(APP_RESPONSE_SET_HEADER, response, [
+    "Content-Length",
+    `${byteLength}`,
+  ]);
+  const endDescriptor = APP_REFLECT_APPLY(
+    APP_OBJECT_GET_OWN_PROPERTY_DESCRIPTOR,
+    APP_OBJECT_CONSTRUCTOR,
+    [response, "end"],
+  ) as PropertyDescriptor | undefined;
+  const end = endDescriptor !== undefined
+    && APP_REFLECT_APPLY(
+      APP_OBJECT_HAS_OWN,
+      APP_OBJECT_CONSTRUCTOR,
+      [endDescriptor, "value"],
+    ) === true
+    && typeof endDescriptor.value === "function"
+    ? endDescriptor.value as typeof APP_RESPONSE_END
+    : APP_RESPONSE_END;
+  APP_REFLECT_APPLY(end, response, [body]);
+}
+
+export const appDeploymentMetadataInternals = APP_OBJECT_CONSTRUCTOR.freeze({
+  secureProbeJson,
+});
 
 function timingSafeStringEqual(left: string, right: string): boolean {
   const leftBytes = Buffer.from(left, "utf8");
@@ -201,27 +434,23 @@ function hasSyntacticallyValidSession(req: Request): boolean {
   return Boolean(authorization && /^Bearer\s+\S{20,}$/i.test(authorization));
 }
 
-export function replicaIdSha256(
-  replicaId = process.env.RAILWAY_REPLICA_ID,
-): string | undefined {
-  const normalized = replicaId?.trim();
-  if (!normalized) return undefined;
-  return crypto
-    .createHash("sha256")
-    .update("pintpath/replica-evidence/v1\0", "utf8")
-    .update(normalized, "utf8")
-    .digest("hex");
-}
+export { replicaIdSha256 } from "./lib/railway-deployment-identity.js";
 
 function deploymentMetadata() {
-  const rawCommit = process.env.RAILWAY_GIT_COMMIT_SHA ?? process.env.GITHUB_SHA ?? process.env.VERCEL_GIT_COMMIT_SHA ?? "unknown";
-  const rawVersion = process.env.PINT_PATH_VERSION ?? process.env.npm_package_version ?? "0.1.0";
-  const replicaDigest = replicaIdSha256();
+  const rawCommit = ownProcessEnvironmentString("RAILWAY_GIT_COMMIT_SHA")
+    ?? ownProcessEnvironmentString("GITHUB_SHA")
+    ?? ownProcessEnvironmentString("VERCEL_GIT_COMMIT_SHA")
+    ?? "unknown";
+  const rawVersion = ownProcessEnvironmentString("PINT_PATH_VERSION")
+    ?? ownProcessEnvironmentString("npm_package_version")
+    ?? "0.1.0";
   return {
-    version: /^[a-z0-9._-]{1,80}$/i.test(rawVersion) ? rawVersion : "unknown",
-    commitSha: /^[a-f0-9]{7,64}$/i.test(rawCommit) ? rawCommit : "unknown",
+    version: APP_REFLECT_APPLY(APP_REGEXP_EXEC, APP_VERSION_PATTERN, [rawVersion])
+      !== null ? rawVersion : "unknown",
+    commitSha: APP_REFLECT_APPLY(APP_REGEXP_EXEC, APP_COMMIT_PATTERN, [rawCommit])
+      !== null ? rawCommit : "unknown",
     environment: env.NODE_ENV,
-    ...(replicaDigest ? { replicaIdSha256: replicaDigest } : {}),
+    ...railwayDeploymentIdentityHashes(APP_PROCESS_ENV),
   };
 }
 
@@ -1247,26 +1476,26 @@ export function createApp() {
   });
   app.use(express.urlencoded({ extended: true, limit: "1mb", verify: captureRawBody }));
 
-  app.get("/health", (_req, res) => {
-    res.setHeader("Cache-Control", "no-store");
-    res.json(
-      success({
+  app.get("/health", (_req, res, next) => {
+    try {
+      sendSecureProbeJson(res, 200, success({
         service: "pint-path",
         status: "ok",
         deployment: deploymentMetadata(),
         ...(env.RESTORE_REHEARSAL_MODE
           ? { restoreRehearsal: { phase: env.RESTORE_REHEARSAL_PHASE } }
           : {}),
-      }),
-    );
+      }));
+    } catch (error) {
+      next(error);
+    }
   });
 
   app.get("/startup", async (_req, res, next) => {
     try {
-      res.setHeader("Cache-Control", "no-store");
       const { businessService } = await getLazyRouters();
       const startup = await businessService.getLocalStartupReadiness();
-      res.status(startup.ready ? 200 : 503).json(success({
+      sendSecureProbeJson(res, startup.ready ? 200 : 503, success({
         service: "pint-path",
         status: startup.ready ? "startup_ready" : "startup_not_ready",
         deployment: deploymentMetadata(),
@@ -1279,7 +1508,6 @@ export function createApp() {
 
   app.get("/ready", async (_req, res, next) => {
     try {
-      res.setHeader("Cache-Control", "no-store");
       if (env.RESTORE_REHEARSAL_MODE && env.RESTORE_REHEARSAL_PHASE === "bootstrap") {
         const fs = await import("node:fs/promises");
         let volumeReady = false;
@@ -1292,7 +1520,7 @@ export function createApp() {
         } catch {
           volumeReady = false;
         }
-        res.status(volumeReady ? 200 : 503).json(success({
+        sendSecureProbeJson(res, volumeReady ? 200 : 503, success({
           service: "pint-path",
           status: volumeReady ? "bootstrap_ready" : "bootstrap_not_ready",
           deployment: deploymentMetadata(),
@@ -1341,8 +1569,7 @@ export function createApp() {
           restoreRuntimeReady,
         });
       }
-      res.status(ready ? 200 : 503).json(
-        success({
+      sendSecureProbeJson(res, ready ? 200 : 503, success({
           service: "pint-path",
           status: ready ? "ready" : "not_ready",
           deployment: deploymentMetadata(),
@@ -1356,8 +1583,7 @@ export function createApp() {
                 }
               : {}),
           },
-        }),
-      );
+        }));
     } catch (error) {
       next(error);
     }

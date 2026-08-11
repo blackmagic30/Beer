@@ -1,9 +1,13 @@
 import { z } from "zod";
 
 import {
-  canonicalPostgresLogicalStateJson,
-  sha256CanonicalPostgresLogicalState,
-} from "./postgres-logical-state.js";
+  sha256PostgresMigrationBytes,
+} from "../db/postgres-migration-schema.js";
+
+const JSON_OBJECT = JSON;
+const JSON_STRINGIFY = JSON.stringify;
+const REFLECT_APPLY = Reflect.apply;
+const TYPE_ERROR = TypeError;
 
 export const POSTGRES_DATABASE_IDENTITY_KIND =
   "pintpath-postgres-logical-source-database" as const;
@@ -66,15 +70,24 @@ export function parsePostgresDatabaseIdentity(
 export function canonicalPostgresDatabaseIdentityJson(
   value: PostgresDatabaseIdentity,
 ): string {
-  return canonicalPostgresLogicalStateJson(
-    parsePostgresDatabaseIdentity(value),
-  );
+  const identity = parsePostgresDatabaseIdentity(value);
+  const encode = (input: string): string => {
+    const encoded = REFLECT_APPLY(JSON_STRINGIFY, JSON_OBJECT, [input]);
+    if (typeof encoded !== "string") throw new TYPE_ERROR("database_identity_invalid");
+    return encoded;
+  };
+  return `{"databaseName":${encode(identity.databaseName)},`
+    + `"databaseOid":${encode(identity.databaseOid)},`
+    + `"kind":${encode(identity.kind)},`
+    + `"serverVersionNum":${encode(identity.serverVersionNum)},`
+    + `"systemIdentifier":${encode(identity.systemIdentifier)},`
+    + `"version":1}\n`;
 }
 
 export function sha256PostgresDatabaseIdentity(
   value: PostgresDatabaseIdentityFields,
 ): string {
-  return sha256CanonicalPostgresLogicalState(
+  return sha256PostgresMigrationBytes(canonicalPostgresDatabaseIdentityJson(
     buildPostgresDatabaseIdentity(value),
-  );
+  ));
 }

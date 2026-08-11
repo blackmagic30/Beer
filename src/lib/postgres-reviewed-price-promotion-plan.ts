@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { QueryResultRow } from "pg";
+import { types as utilTypes } from "node:util";
 
 import {
   serializeCanonicalPostgresMigrationJson,
@@ -27,12 +28,97 @@ import {
 } from "./reviewed-price-selection-policy.js";
 import type { AdminBeerInput } from "../modules/admin/admin.schemas.js";
 
+const ARRAY_CONSTRUCTOR = Array;
+const ARRAY_IS_ARRAY = Array.isArray;
+const ARRAY_PROTOTYPE = Array.prototype;
+const ARRAY_SORT = Array.prototype.sort;
+const BUFFER_BYTE_LENGTH = Buffer.byteLength;
+const BUFFER_OBJECT = Buffer;
+const JSON_CONSTRUCTOR = JSON;
+const JSON_OBJECT = JSON;
+const JSON_PARSE = JSON.parse;
+const MAP_CONSTRUCTOR = Map;
+const MAP_GET = Map.prototype.get;
+const MAP_HAS = Map.prototype.has;
+const MAP_SET = Map.prototype.set;
+const NUMBER_CONSTRUCTOR = Number;
+const NUMBER_IS_FINITE = Number.isFinite;
+const NUMBER_IS_SAFE_INTEGER = Number.isSafeInteger;
+const NUMBER_TO_STRING = Number.prototype.toString;
+const OBJECT_CONSTRUCTOR = Object;
+const OBJECT_CREATE = Object.create;
+const OBJECT_DEFINE_PROPERTY = Object.defineProperty;
+const OBJECT_FREEZE = Object.freeze;
+const OBJECT_GET_OWN_PROPERTY_DESCRIPTOR = Object.getOwnPropertyDescriptor;
+const OBJECT_GET_PROTOTYPE_OF = Object.getPrototypeOf;
+const OBJECT_HAS_OWN = Object.hasOwn;
+const OBJECT_IS = Object.is;
+const OBJECT_PROTOTYPE = Object.prototype;
+const REFLECT_APPLY = Reflect.apply;
+const REFLECT_CONSTRUCT = Reflect.construct;
+const REFLECT_OWN_KEYS = Reflect.ownKeys;
+const REGEXP_CONSTRUCTOR = RegExp;
+const REGEXP_EXEC = RegExp.prototype.exec;
+const SET_CONSTRUCTOR = Set;
+const SET_ADD = Set.prototype.add;
+const SET_HAS = Set.prototype.has;
+const SET_SIZE = Object.getOwnPropertyDescriptor(Set.prototype, "size")?.get;
+const STRING_CHAR_CODE_AT = String.prototype.charCodeAt;
+const STRING_CONSTRUCTOR = String;
+const STRING_TO_LOWER_CASE = String.prototype.toLowerCase;
+const STRING_TRIM = String.prototype.trim;
+const UTIL_IS_PROXY = utilTypes.isProxy;
+
+interface IntrinsicSurface {
+  readonly descriptors: readonly PropertyDescriptor[];
+  readonly keys: readonly PropertyKey[];
+  readonly target: object;
+}
+
+function captureIntrinsicSurface(target: object): IntrinsicSurface {
+  const keys = REFLECT_OWN_KEYS(target);
+  const descriptors = new ARRAY_CONSTRUCTOR<PropertyDescriptor>(keys.length);
+  for (let index = 0; index < keys.length; index += 1) {
+    const key = keys[index];
+    const descriptor = key === undefined
+      ? undefined
+      : OBJECT_GET_OWN_PROPERTY_DESCRIPTOR(target, key);
+    if (!descriptor) throw new Error("intrinsic_surface_unavailable");
+    defineDenseArrayValue(descriptors, index, OBJECT_FREEZE({ ...descriptor }));
+  }
+  return OBJECT_FREEZE({
+    descriptors: OBJECT_FREEZE(descriptors),
+    keys: OBJECT_FREEZE(keys),
+    target,
+  });
+}
+
+const PLAN_INTRINSIC_SURFACES = OBJECT_FREEZE([
+  captureIntrinsicSurface(ARRAY_CONSTRUCTOR),
+  captureIntrinsicSurface(ARRAY_PROTOTYPE),
+  captureIntrinsicSurface(BUFFER_OBJECT),
+  captureIntrinsicSurface(BUFFER_OBJECT.prototype),
+  captureIntrinsicSurface(JSON_CONSTRUCTOR),
+  captureIntrinsicSurface(MAP_CONSTRUCTOR),
+  captureIntrinsicSurface(MAP_CONSTRUCTOR.prototype),
+  captureIntrinsicSurface(NUMBER_CONSTRUCTOR),
+  captureIntrinsicSurface(NUMBER_CONSTRUCTOR.prototype),
+  captureIntrinsicSurface(OBJECT_CONSTRUCTOR),
+  captureIntrinsicSurface(OBJECT_PROTOTYPE),
+  captureIntrinsicSurface(REGEXP_CONSTRUCTOR),
+  captureIntrinsicSurface(REGEXP_CONSTRUCTOR.prototype),
+  captureIntrinsicSurface(SET_CONSTRUCTOR),
+  captureIntrinsicSurface(SET_CONSTRUCTOR.prototype),
+  captureIntrinsicSurface(STRING_CONSTRUCTOR),
+  captureIntrinsicSurface(STRING_CONSTRUCTOR.prototype),
+]);
+
 export const POSTGRES_REVIEWED_PRICE_PROMOTION_PRIVATE_INPUT_KIND =
   "pintpath-postgres-reviewed-price-promotion-private-input" as const;
 export const POSTGRES_REVIEWED_PRICE_PROMOTION_PLAN_KIND =
   "pintpath-postgres-reviewed-price-promotion-plan-candidate" as const;
 export const POSTGRES_REVIEWED_PRICE_PROMOTION_PRIVATE_INPUT_VERSION = 1 as const;
-export const POSTGRES_REVIEWED_PRICE_PROMOTION_PLAN_VERSION = 2 as const;
+export const POSTGRES_REVIEWED_PRICE_PROMOTION_PLAN_VERSION = 3 as const;
 export const POSTGRES_REVIEWED_PRICE_PROMOTION_SOURCE_SCHEMA_SHA256 =
   "b5a093844709f725bd71415dadb37062b75e40dbd6475082732fa28b1ef1fcc9" as const;
 
@@ -394,15 +480,15 @@ export const postgresReviewedPricePromotionPrivateInputSchema = z.object({
   if (value.itemCount !== value.items.length) {
     context.addIssue({ code: "custom", message: "itemCount mismatch" });
   }
-  const ids = value.items.map((item) => item.sourceIngestionId);
+  const ids = denseArrayMap(value.items, (item) => item.sourceIngestionId);
   if (
-    new Set(ids).size !== ids.length
-    || ids.some((id, index) => index > 0 && ids[index - 1]! >= id)
+    uniqueStringCount(ids) !== ids.length
+    || denseArraySome(ids, (id, index) => index > 0 && ids[index - 1]! >= id)
   ) {
     context.addIssue({ code: "custom", message: "items must have unique bytewise-sorted IDs" });
   }
-  const venueHashes = value.items.map((item) => item.venueIdSha256);
-  if (new Set(venueHashes).size !== venueHashes.length) {
+  const venueHashes = denseArrayMap(value.items, (item) => item.venueIdSha256);
+  if (uniqueStringCount(venueHashes) !== venueHashes.length) {
     context.addIssue({ code: "custom", message: "one ingestion per venue is required" });
   }
 });
@@ -412,6 +498,8 @@ export type PostgresReviewedPricePromotionPrivateInput = z.infer<
 >;
 
 const deploymentSchema = z.object({
+  attestationFileSha256: sha256Schema,
+  attestationPolicySha256: sha256Schema,
   deploymentIdSha256: sha256Schema,
   environmentIdSha256: sha256Schema,
   imageDigestSha256: sha256Schema,
@@ -924,8 +1012,39 @@ function fail(code: PostgresReviewedPricePromotionPlanErrorCode): never {
   throw new PostgresReviewedPricePromotionPlanError(code);
 }
 
+function sameIntrinsicDescriptor(
+  actual: PropertyDescriptor,
+  expected: PropertyDescriptor,
+): boolean {
+  return actual.configurable === expected.configurable
+    && actual.enumerable === expected.enumerable
+    && actual.get === expected.get
+    && actual.set === expected.set
+    && OBJECT_IS(actual.value, expected.value)
+    && actual.writable === expected.writable;
+}
+
+function assertPlanIntrinsicSurfacesExact(): void {
+  for (let surfaceIndex = 0; surfaceIndex < PLAN_INTRINSIC_SURFACES.length; surfaceIndex += 1) {
+    const surface = PLAN_INTRINSIC_SURFACES[surfaceIndex];
+    if (!surface) fail("inspection_invalid");
+    const actualKeys = REFLECT_OWN_KEYS(surface.target);
+    if (actualKeys.length !== surface.keys.length) fail("inspection_invalid");
+    for (let keyIndex = 0; keyIndex < surface.keys.length; keyIndex += 1) {
+      const key = surface.keys[keyIndex];
+      if (key === undefined || actualKeys[keyIndex] !== key) fail("inspection_invalid");
+      const descriptor = OBJECT_GET_OWN_PROPERTY_DESCRIPTOR(surface.target, key);
+      const expected = surface.descriptors[keyIndex];
+      if (!descriptor || !expected || !sameIntrinsicDescriptor(descriptor, expected)) {
+        fail("inspection_invalid");
+      }
+    }
+  }
+}
+
 function parseOrFail<Output>(schema: z.ZodType<Output>, value: unknown): Output {
   try {
+    assertPlanIntrinsicSurfacesExact();
     const parsed = schema.safeParse(value);
     if (!parsed.success) fail("argument_invalid");
     return parsed.data;
@@ -936,11 +1055,164 @@ function parseOrFail<Output>(schema: z.ZodType<Output>, value: unknown): Output 
 }
 
 function normalizeHumanText(value: string): string {
-  return value.trim().replace(/\s+/g, " ");
+  const trimmed = REFLECT_APPLY(STRING_TRIM, value, []) as string;
+  let output = "";
+  let whitespacePending = false;
+  for (let index = 0; index < trimmed.length; index += 1) {
+    const code = REFLECT_APPLY(STRING_CHAR_CODE_AT, trimmed, [index]) as number;
+    const whitespace = code === 0x09
+      || code === 0x0a
+      || code === 0x0b
+      || code === 0x0c
+      || code === 0x0d
+      || code === 0x20
+      || code === 0xa0
+      || code === 0x1680
+      || code >= 0x2000 && code <= 0x200a
+      || code === 0x2028
+      || code === 0x2029
+      || code === 0x202f
+      || code === 0x205f
+      || code === 0x3000
+      || code === 0xfeff;
+    if (whitespace) {
+      whitespacePending = output.length > 0;
+      continue;
+    }
+    if (whitespacePending) output += " ";
+    output += trimmed[index];
+    whitespacePending = false;
+  }
+  return output;
+}
+
+function lowercase(value: string): string {
+  return REFLECT_APPLY(STRING_TO_LOWER_CASE, value, []) as string;
 }
 
 function bytewiseCompare(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function regexpMatches(pattern: RegExp, value: string): boolean {
+  return REFLECT_APPLY(REGEXP_EXEC, pattern, [value]) !== null;
+}
+
+function exactStringArrayEquals(value: unknown, expected: readonly string[]): boolean {
+  try {
+    if (
+      typeof value !== "object"
+      || value === null
+      || UTIL_IS_PROXY(value)
+      || !ARRAY_IS_ARRAY(value)
+      || OBJECT_GET_PROTOTYPE_OF(value) !== ARRAY_PROTOTYPE
+    ) return false;
+    const lengthDescriptor = OBJECT_GET_OWN_PROPERTY_DESCRIPTOR(value, "length");
+    if (
+      !lengthDescriptor
+      || !OBJECT_HAS_OWN(lengthDescriptor, "value")
+      || lengthDescriptor.value !== expected.length
+      || REFLECT_OWN_KEYS(value).length !== expected.length + 1
+    ) return false;
+    for (let index = 0; index < expected.length; index += 1) {
+      const descriptor = OBJECT_GET_OWN_PROPERTY_DESCRIPTOR(value, `${index}`);
+      if (
+        !descriptor
+        || !OBJECT_HAS_OWN(descriptor, "value")
+        || descriptor.enumerable !== true
+        || descriptor.value !== expected[index]
+      ) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function defineDenseArrayValue(
+  target: unknown[],
+  index: number,
+  value: unknown,
+): void {
+  OBJECT_DEFINE_PROPERTY(target, `${index}`, {
+    configurable: true,
+    enumerable: true,
+    value,
+    writable: true,
+  });
+}
+
+function denseArrayMap<Input, Output>(
+  values: readonly Input[],
+  transform: (value: Input, index: number) => Output,
+): Output[] {
+  const output = new ARRAY_CONSTRUCTOR<Output>(values.length);
+  for (let index = 0; index < values.length; index += 1) {
+    const value = values[index];
+    if (value === undefined) fail("inspection_invalid");
+    defineDenseArrayValue(output, index, transform(value, index));
+  }
+  return output;
+}
+
+function denseArraySome<Input>(
+  values: readonly Input[],
+  predicate: (value: Input, index: number) => boolean,
+): boolean {
+  for (let index = 0; index < values.length; index += 1) {
+    const value = values[index];
+    if (value === undefined) fail("inspection_invalid");
+    if (predicate(value, index)) return true;
+  }
+  return false;
+}
+
+function denseArrayCount<Input>(
+  values: readonly Input[],
+  predicate: (value: Input, index: number) => boolean,
+): number {
+  let count = 0;
+  for (let index = 0; index < values.length; index += 1) {
+    const value = values[index];
+    if (value === undefined) fail("inspection_invalid");
+    if (predicate(value, index)) count += 1;
+  }
+  return count;
+}
+
+function denseStringSort(values: readonly string[]): string[] {
+  const output = denseArrayMap(values, (value) => value);
+  REFLECT_APPLY(ARRAY_SORT, output, [bytewiseCompare]);
+  return output;
+}
+
+function uniqueStringCount(values: readonly string[]): number {
+  if (typeof SET_SIZE !== "function") fail("inspection_invalid");
+  const seen = REFLECT_CONSTRUCT(SET_CONSTRUCTOR, []) as Set<string>;
+  for (let index = 0; index < values.length; index += 1) {
+    const value = values[index];
+    if (typeof value !== "string") fail("inspection_invalid");
+    REFLECT_APPLY(SET_ADD, seen, [value]);
+  }
+  const size = REFLECT_APPLY(SET_SIZE, seen, []);
+  if (!NUMBER_IS_SAFE_INTEGER(size) || size < 0) fail("inspection_invalid");
+  return size;
+}
+
+function mapGet<Key, Value>(map: Map<Key, Value>, key: Key): Value | undefined {
+  return REFLECT_APPLY(MAP_GET, map, [key]) as Value | undefined;
+}
+
+function mapHas<Key, Value>(map: Map<Key, Value>, key: Key): boolean {
+  return REFLECT_APPLY(MAP_HAS, map, [key]) === true;
+}
+
+function mapSet<Key, Value>(map: Map<Key, Value>, key: Key, value: Value): void {
+  REFLECT_APPLY(MAP_SET, map, [key, value]);
+}
+
+function setHas<Value>(set: Set<Value>, value: Value): boolean {
+  return REFLECT_APPLY(SET_HAS, set, [value]) === true;
 }
 
 export function canonicalPostgresReviewedPricePromotionJson(value: unknown): Buffer {
@@ -967,16 +1239,22 @@ function nullableDigest(label: string, value: string | null): string | null {
 function exactNumeric(value: number | string | null): string | null {
   if (value === null) return null;
   if (typeof value !== "number" && typeof value !== "string") fail("inspection_invalid");
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) fail("inspection_invalid");
-  return typeof value === "number" ? value.toString() : value;
+  const numeric = REFLECT_APPLY(NUMBER_CONSTRUCTOR, undefined, [value]) as number;
+  if (!NUMBER_IS_FINITE(numeric)) fail("inspection_invalid");
+  return typeof value === "number"
+    ? REFLECT_APPLY(NUMBER_TO_STRING, value, []) as string
+    : value;
 }
 
 function parseJsonArray(value: string | null): unknown[] | null {
   if (value === null) return null;
   try {
-    if (Buffer.byteLength(value, "utf8") > MAX_SOURCE_JSON_BYTES) fail("source_mismatch");
-    const parsed: unknown = JSON.parse(value);
+    assertPlanIntrinsicSurfacesExact();
+    if (
+      REFLECT_APPLY(BUFFER_BYTE_LENGTH, BUFFER_OBJECT, [value, "utf8"])
+        > MAX_SOURCE_JSON_BYTES
+    ) fail("source_mismatch");
+    const parsed: unknown = REFLECT_APPLY(JSON_PARSE, JSON_OBJECT, [value]);
     return Array.isArray(parsed) && parsed.length <= MAX_SOURCE_ROWS_PER_ITEM
       ? parsed
       : fail("source_mismatch");
@@ -988,6 +1266,7 @@ function parseJsonArray(value: string | null): unknown[] | null {
 
 function canonicalPrivateInput(value: unknown): PostgresReviewedPricePromotionPrivateInput {
   try {
+    assertPlanIntrinsicSurfacesExact();
     const parsed = postgresReviewedPricePromotionPrivateInputSchema.safeParse(value);
     if (!parsed.success) fail("private_input_mismatch");
     return parsed.data;
@@ -999,6 +1278,7 @@ function canonicalPrivateInput(value: unknown): PostgresReviewedPricePromotionPr
 
 function canonicalMigrationReceipt(value: unknown): PostgresMigrationReceipt {
   try {
+    assertPlanIntrinsicSurfacesExact();
     const parsed = postgresMigrationReceiptSchema.safeParse(value);
     if (!parsed.success) fail("migration_mismatch");
     return parsed.data;
@@ -1009,18 +1289,37 @@ function canonicalMigrationReceipt(value: unknown): PostgresMigrationReceipt {
 }
 
 function normalizeBeerKey(value: string): string {
-  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  const normalized = lowercase(REFLECT_APPLY(STRING_TRIM, value, []) as string);
+  let output = "";
+  let separatorPending = false;
+  for (let index = 0; index < normalized.length; index += 1) {
+    const code = REFLECT_APPLY(STRING_CHAR_CODE_AT, normalized, [index]) as number;
+    const allowed = code >= 0x61 && code <= 0x7a || code >= 0x30 && code <= 0x39;
+    if (!allowed) {
+      separatorPending = output.length > 0;
+      continue;
+    }
+    if (separatorPending) output += "_";
+    output += normalized[index];
+    separatorPending = false;
+  }
+  return output;
 }
 
 function selectedSourceBeers(row: QueueRow): AdminBeerInput[] {
-  const overallConfidence = Number(row.overallConfidence);
+  assertPlanIntrinsicSurfacesExact();
+  const overallConfidence = REFLECT_APPLY(
+    NUMBER_CONSTRUCTOR,
+    undefined,
+    [row.overallConfidence],
+  ) as number;
   if (
     row.status !== "pending_review"
     || row.reviewClaimToken !== null
     || row.reviewClaimedAt !== null
     || row.publishedAt !== null
     || row.rejectedAt !== null
-    || !Number.isFinite(overallConfidence)
+    || !NUMBER_IS_FINITE(overallConfidence)
     || overallConfidence < REVIEWED_PRICE_SELECTION_DEFAULT_OPTIONS.minOverallConfidence
   ) fail("source_mismatch");
 
@@ -1037,6 +1336,7 @@ function selectedSourceBeers(row: QueueRow): AdminBeerInput[] {
       sourceType: row.sourceType as "source_reference",
       sourceUrl: row.sourceUrl,
     }, REVIEWED_PRICE_SELECTION_DEFAULT_OPTIONS);
+    assertPlanIntrinsicSurfacesExact();
     if (selection.reasons.length !== 0 || selection.beers.length === 0) fail("source_mismatch");
     return selection.beers;
   } catch (error) {
@@ -1096,16 +1396,17 @@ function physicalDatabaseIdentityDigest(
 }
 
 function assertSafeIdentity(row: IdentityRow | undefined): asserts row is IdentityRow {
+  assertPlanIntrinsicSurfacesExact();
   if (
     !row
-    || !/^\d+$/.test(row.systemIdentifier)
-    || !/^\d+$/.test(row.databaseOid)
-    || !/^17\d{4}$/.test(row.serverVersionNum)
+    || !regexpMatches(/^\d+$/, row.systemIdentifier)
+    || !regexpMatches(/^\d+$/, row.databaseOid)
+    || !regexpMatches(/^17\d{4}$/, row.serverVersionNum)
     || row.sessionUser !== PLANNER_ROLE
     || row.currentUser !== PLANNER_ROLE
     || row.transactionIsolation !== "repeatable read"
     || row.transactionReadOnly !== true
-    || JSON.stringify(row.searchPathSchemas) !== JSON.stringify(["pg_catalog"])
+    || !exactStringArrayEquals(row.searchPathSchemas, ["pg_catalog"])
     || row.roleAuthorityValid !== true
     || row.requiredRelationCount !== 9
     || row.requiredColumnCount !== 84
@@ -1113,13 +1414,27 @@ function assertSafeIdentity(row: IdentityRow | undefined): asserts row is Identi
 }
 
 function exactMetadata(rows: readonly MetadataRow[]): Readonly<Record<string, string>> {
-  const actualKeys = rows.map((row) => row.key);
-  if (
-    rows.some((row) => typeof row.key !== "string" || typeof row.value !== "string")
-    || new Set(actualKeys).size !== actualKeys.length
-    || JSON.stringify(actualKeys) !== JSON.stringify(EXPECTED_METADATA_KEYS)
-  ) fail("migration_mismatch");
-  return Object.fromEntries(rows.map((row) => [row.key, row.value]));
+  assertPlanIntrinsicSurfacesExact();
+  if (rows.length !== EXPECTED_METADATA_KEYS.length) fail("migration_mismatch");
+  const output = OBJECT_CREATE(null) as Record<string, string>;
+  for (let index = 0; index < EXPECTED_METADATA_KEYS.length; index += 1) {
+    const row = rows[index];
+    const expectedKey = EXPECTED_METADATA_KEYS[index];
+    if (
+      !row
+      || typeof row.key !== "string"
+      || typeof row.value !== "string"
+      || row.key !== expectedKey
+      || expectedKey === undefined
+    ) fail("migration_mismatch");
+    OBJECT_DEFINE_PROPERTY(output, expectedKey, {
+      configurable: false,
+      enumerable: true,
+      value: row.value,
+      writable: false,
+    });
+  }
+  return output;
 }
 
 function expectedMigrationRunBinding(
@@ -1160,7 +1475,7 @@ function validateMigration(
   if (row && row.expectedEnvironment !== environment) fail("environment_mismatch");
   if (
     !row
-    || !Number.isSafeInteger(row.sourceSchemaVersion)
+    || !NUMBER_IS_SAFE_INTEGER(row.sourceSchemaVersion)
     || row.sourceSchemaVersion !== POSTGRES_MIGRATION_CONTRACT.sourceSchemaVersion
   ) fail("migration_mismatch");
   let runAuthority: ReturnType<typeof expectedMigrationRunBinding>;
@@ -1208,13 +1523,13 @@ function validateMigration(
     || row.verifierIdSha256 === null
     || row.completedAt === null
     || row.completedAt < row.startedAt
-    || !SHA256_PATTERN.test(row.approvalReferenceSha256)
-    || !SHA256_PATTERN.test(row.operatorIdSha256)
-    || !SHA256_PATTERN.test(row.verifierIdSha256)
+    || !regexpMatches(SHA256_PATTERN, row.approvalReferenceSha256)
+    || !regexpMatches(SHA256_PATTERN, row.operatorIdSha256)
+    || !regexpMatches(SHA256_PATTERN, row.verifierIdSha256)
     || receipt.expectedEnvironment !== environment
     || receipt.candidateSha !== candidateSha
     || receipt.targetIdentitySha256 !== sha256PostgresMigrationTargetIdentity(migrationTargetIdentity)
-    || !/^17\d{4}$/.test(migrationTargetIdentity.serverVersionNum)
+    || !regexpMatches(/^17\d{4}$/, migrationTargetIdentity.serverVersionNum)
     || migrationTargetIdentity.systemIdentifier !== liveIdentity.systemIdentifier
     || migrationTargetIdentity.databaseOid !== liveIdentity.databaseOid
     || migrationTargetIdentity.databaseName !== liveIdentity.databaseName
@@ -1237,16 +1552,34 @@ function validateMigration(
     || metadata.source_snapshot_sha256 !== row.sourceSnapshotSha256
     || metadata.target_ddl_sha256 !== row.targetDdlSha256
     || metadata.source_schema_sha256 !== POSTGRES_REVIEWED_PRICE_PROMOTION_SOURCE_SCHEMA_SHA256
-    || !/^\d+$/.test(metadata.source_schema_version ?? "")
+    || !regexpMatches(/^\d+$/, metadata.source_schema_version ?? "")
   ) fail("migration_mismatch");
 }
 
 function sanitizedConflictRow(row: Readonly<Record<string, unknown>>): Record<string, unknown> {
-  return Object.fromEntries(Object.entries(row).map(([key, value]) => {
-    if (value === null || typeof value === "boolean" || typeof value === "number") return [key, value];
-    if (typeof value === "string") return [key, nullableDigest(`conflict-${key}`, value)];
-    return [key, sha256PostgresReviewedPricePromotionValue(value)];
-  }));
+  const output = OBJECT_CREATE(null) as Record<string, unknown>;
+  for (let index = 0; index < WRONG_PRICE_ROW_KEYS.length; index += 1) {
+    const key = WRONG_PRICE_ROW_KEYS[index];
+    if (key === undefined) fail("inspection_invalid");
+    const descriptor = OBJECT_GET_OWN_PROPERTY_DESCRIPTOR(row, key);
+    if (!descriptor || !OBJECT_HAS_OWN(descriptor, "value")) fail("inspection_invalid");
+    const value = descriptor.value;
+    let sanitized: unknown;
+    if (value === null || typeof value === "boolean" || typeof value === "number") {
+      sanitized = value;
+    } else if (typeof value === "string") {
+      sanitized = nullableDigest(`conflict-${key}`, value);
+    } else {
+      sanitized = sha256PostgresReviewedPricePromotionValue(value);
+    }
+    OBJECT_DEFINE_PROPERTY(output, key, {
+      configurable: false,
+      enumerable: true,
+      value: sanitized,
+      writable: false,
+    });
+  }
+  return output;
 }
 
 const WRONG_PRICE_ROW_KEYS = Object.freeze([
@@ -1270,57 +1603,66 @@ function exactOwnDataSnapshot(
   value: unknown,
   expectedKeys: readonly string[],
 ): Record<string, unknown> {
-  if (value === null || typeof value !== "object") fail("inspection_invalid");
-  const prototype = Object.getPrototypeOf(value);
-  if (prototype !== Object.prototype && prototype !== null) fail("inspection_invalid");
-  if (Object.getOwnPropertySymbols(value).length !== 0) fail("inspection_invalid");
-  const descriptors = Object.getOwnPropertyDescriptors(value) as Record<string, PropertyDescriptor>;
-  const actualKeys = Object.keys(descriptors).sort(bytewiseCompare);
-  if (JSON.stringify(actualKeys) !== JSON.stringify([...expectedKeys].sort(bytewiseCompare))) {
-    fail("inspection_invalid");
-  }
-  const snapshot: Record<string, unknown> = Object.create(null);
-  for (const key of expectedKeys) {
-    const descriptor = descriptors[key];
+  assertPlanIntrinsicSurfacesExact();
+  if (
+    value === null
+    || typeof value !== "object"
+    || UTIL_IS_PROXY(value)
+  ) fail("inspection_invalid");
+  const prototype = OBJECT_GET_PROTOTYPE_OF(value);
+  if (prototype !== OBJECT_PROTOTYPE && prototype !== null) fail("inspection_invalid");
+  const actualKeys = REFLECT_OWN_KEYS(value);
+  if (actualKeys.length !== expectedKeys.length) fail("inspection_invalid");
+  const snapshot: Record<string, unknown> = OBJECT_CREATE(null) as Record<string, unknown>;
+  for (let index = 0; index < expectedKeys.length; index += 1) {
+    const key = expectedKeys[index];
+    if (typeof key !== "string") fail("inspection_invalid");
+    const descriptor = OBJECT_GET_OWN_PROPERTY_DESCRIPTOR(value, key);
     if (
       !descriptor
-      || !Object.hasOwn(descriptor, "value")
+      || !OBJECT_HAS_OWN(descriptor, "value")
       || descriptor.enumerable !== true
     ) fail("inspection_invalid");
-    snapshot[key] = descriptor.value;
+    OBJECT_DEFINE_PROPERTY(snapshot, key, {
+      configurable: false,
+      enumerable: true,
+      value: descriptor.value,
+      writable: false,
+    });
   }
   return snapshot;
 }
 
 function exactArrayItems(value: unknown, maximum: number): unknown[] {
-  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) {
+  assertPlanIntrinsicSurfacesExact();
+  if (
+    typeof value !== "object"
+    || value === null
+    || UTIL_IS_PROXY(value)
+    || !ARRAY_IS_ARRAY(value)
+    || OBJECT_GET_PROTOTYPE_OF(value) !== ARRAY_PROTOTYPE
+  ) {
     fail("inspection_invalid");
   }
-  if (Object.getOwnPropertySymbols(value).length !== 0) fail("inspection_invalid");
-  const descriptors = Object.getOwnPropertyDescriptors(value) as Record<string, PropertyDescriptor>;
-  const lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
+  const lengthDescriptor = OBJECT_GET_OWN_PROPERTY_DESCRIPTOR(value, "length");
   if (
     !lengthDescriptor
-    || !Object.hasOwn(lengthDescriptor, "value")
+    || !OBJECT_HAS_OWN(lengthDescriptor, "value")
     || typeof lengthDescriptor.value !== "number"
-    || !Number.isSafeInteger(lengthDescriptor.value)
+    || !NUMBER_IS_SAFE_INTEGER(lengthDescriptor.value)
     || lengthDescriptor.value < 0
     || lengthDescriptor.value > maximum
+    || REFLECT_OWN_KEYS(value).length !== lengthDescriptor.value + 1
   ) fail("inspection_invalid");
-  const expectedIndexKeys = Array.from({ length: lengthDescriptor.value }, (_, index) => String(index));
-  const actualIndexKeys = Object.keys(descriptors)
-    .filter((key) => key !== "length")
-    .sort((left, right) => Number(left) - Number(right));
-  if (JSON.stringify(actualIndexKeys) !== JSON.stringify(expectedIndexKeys)) {
-    fail("inspection_invalid");
-  }
-  return expectedIndexKeys.map((key) => {
-    const descriptor = descriptors[key];
-    if (!descriptor || !Object.hasOwn(descriptor, "value") || !descriptor.enumerable) {
+  const output = new ARRAY_CONSTRUCTOR<unknown>(lengthDescriptor.value);
+  for (let index = 0; index < lengthDescriptor.value; index += 1) {
+    const descriptor = OBJECT_GET_OWN_PROPERTY_DESCRIPTOR(value, `${index}`);
+    if (!descriptor || !OBJECT_HAS_OWN(descriptor, "value") || !descriptor.enumerable) {
       return fail("inspection_invalid");
     }
-    return descriptor.value;
-  });
+    defineDenseArrayValue(output, index, descriptor.value);
+  }
+  return output;
 }
 
 function exactRowArray<Output>(
@@ -1331,11 +1673,15 @@ function exactRowArray<Output>(
   code: PostgresReviewedPricePromotionPlanErrorCode,
 ): Output[] {
   try {
-    return exactArrayItems(value, maximum).map((row) => {
+    const rows = exactArrayItems(value, maximum);
+    const output = new ARRAY_CONSTRUCTOR<Output>(rows.length);
+    for (let index = 0; index < rows.length; index += 1) {
+      const row = rows[index];
       const parsed = schema.safeParse(exactOwnDataSnapshot(row, expectedKeys));
       if (!parsed.success) fail(code);
-      return parsed.data;
-    });
+      defineDenseArrayValue(output, index, parsed.data);
+    }
+    return output;
   } catch (error) {
     if (error instanceof PostgresReviewedPricePromotionPlanError) {
       if (error.code === "inspection_invalid" && code !== "inspection_invalid") fail(code);
@@ -1351,14 +1697,24 @@ function exactWrongPriceRows(
 ): WrongPriceRow[] {
   try {
     const rows = exactArrayItems(value, MAX_WRONG_PRICE_ROWS);
-    const allowedVenues = new Set(venueIds);
-    return rows.map((row) => {
+    const allowedVenues = REFLECT_CONSTRUCT(SET_CONSTRUCTOR, []) as Set<string>;
+    for (let index = 0; index < venueIds.length; index += 1) {
+      const venueId = venueIds[index];
+      if (typeof venueId !== "string") fail("inspection_invalid");
+      REFLECT_APPLY(SET_ADD, allowedVenues, [venueId]);
+    }
+    const output = new ARRAY_CONSTRUCTOR<WrongPriceRow>(rows.length);
+    for (let index = 0; index < rows.length; index += 1) {
+      const row = rows[index];
       const parsed = wrongPriceRowSchema.safeParse(
         exactOwnDataSnapshot(row, WRONG_PRICE_ROW_KEYS),
       );
-      if (!parsed.success || !allowedVenues.has(parsed.data.venueId)) fail("inspection_invalid");
-      return parsed.data;
-    });
+      if (!parsed.success || !setHas(allowedVenues, parsed.data.venueId)) {
+        fail("inspection_invalid");
+      }
+      defineDenseArrayValue(output, index, parsed.data);
+    }
+    return output;
   } catch (error) {
     if (error instanceof PostgresReviewedPricePromotionPlanError) throw error;
     return fail("inspection_invalid");
@@ -1390,6 +1746,7 @@ function exactIdentityRow(value: unknown): IdentityRow {
 export async function buildPostgresReviewedPricePromotionPlanCandidate(
   input: BuildPostgresReviewedPricePromotionPlanInput,
 ): Promise<PostgresReviewedPricePromotionPlanCandidate> {
+  assertPlanIntrinsicSurfacesExact();
   let database: SqlDatabase;
   try {
     database = input.database;
@@ -1445,6 +1802,7 @@ export async function buildPostgresReviewedPricePromotionPlanCandidate(
   let inspect: () => Promise<PostgresReviewedPricePromotionPlanCandidate>;
   try {
     inspect = database.transaction(async () => {
+    assertPlanIntrinsicSurfacesExact();
     await database.exec(POSTGRES_REVIEWED_PRICE_PROMOTION_READ_ONLY_TRANSACTION);
     await database.exec(POSTGRES_REVIEWED_PRICE_PROMOTION_SEARCH_PATH);
     await database.exec(POSTGRES_REVIEWED_PRICE_PROMOTION_ROW_SECURITY);
@@ -1521,7 +1879,10 @@ export async function buildPostgresReviewedPricePromotionPlanCandidate(
       argumentsValue.candidateSha,
     );
 
-    const ids = privateInput.items.map((item) => item.sourceIngestionId);
+    const ids = denseArrayMap(
+      privateInput.items,
+      (item) => item.sourceIngestionId,
+    );
     const queueRows = exactRowArray(
       queueRowSchema,
       await database.prepare(`/* pintpath:reviewed-price-plan:queue */
@@ -1555,17 +1916,39 @@ export async function buildPostgresReviewedPricePromotionPlanCandidate(
       MAX_ITEMS + 1,
       "source_mismatch",
     );
-    if (queueRows.length !== ids.length || queueRows.some((row, index) => row.id !== ids[index])) {
+    if (
+      queueRows.length !== ids.length
+      || denseArraySome(queueRows, (row, index) => row.id !== ids[index])
+    ) {
       fail("source_mismatch");
     }
 
-    const selectedById = new Map<string, AdminBeerInput[]>();
-    for (const row of queueRows) selectedById.set(row.id, selectedSourceBeers(row));
-    const privateById = new Map(privateInput.items.map((item) => [item.sourceIngestionId, item]));
-    for (const row of queueRows) {
-      const authority = privateById.get(row.id)!;
+    const selectedById = REFLECT_CONSTRUCT(MAP_CONSTRUCTOR, []) as Map<
+      string,
+      AdminBeerInput[]
+    >;
+    for (let index = 0; index < queueRows.length; index += 1) {
+      const row = queueRows[index];
+      if (!row) fail("source_mismatch");
+      mapSet(selectedById, row.id, selectedSourceBeers(row));
+    }
+    assertPlanIntrinsicSurfacesExact();
+    const privateById = REFLECT_CONSTRUCT(MAP_CONSTRUCTOR, []) as Map<
+      string,
+      PostgresReviewedPricePromotionPrivateInput["items"][number]
+    >;
+    for (let index = 0; index < privateInput.items.length; index += 1) {
+      const item = privateInput.items[index];
+      if (!item) fail("private_input_mismatch");
+      mapSet(privateById, item.sourceIngestionId, item);
+    }
+    for (let index = 0; index < queueRows.length; index += 1) {
+      const row = queueRows[index];
+      if (!row) fail("source_mismatch");
+      const authority = mapGet(privateById, row.id);
       if (
-        authority.venueIdSha256
+        !authority
+        || authority.venueIdSha256
           !== sha256PostgresReviewedPricePromotionIdentity("venue-id", row.venueId)
         || authority.evidenceReferenceSha256
           !== sha256PostgresReviewedPricePromotionIdentity(
@@ -1575,8 +1958,8 @@ export async function buildPostgresReviewedPricePromotionPlanCandidate(
       ) fail("private_input_mismatch");
     }
 
-    const venueIds = queueRows.map((row) => row.venueId).sort(bytewiseCompare);
-    if (new Set(venueIds).size !== venueIds.length) fail("private_input_mismatch");
+    const venueIds = denseStringSort(denseArrayMap(queueRows, (row) => row.venueId));
+    if (uniqueStringCount(venueIds) !== venueIds.length) fail("private_input_mismatch");
     const profiles = exactRowArray(
       venueProfileRowSchema,
       await database.prepare(`/* pintpath:reviewed-price-plan:profiles */
@@ -1597,22 +1980,49 @@ export async function buildPostgresReviewedPricePromotionPlanCandidate(
       "source_mismatch",
     );
     if (profiles.length !== venueIds.length) fail("source_mismatch");
-    const profileByVenue = new Map(profiles.map((profile) => [profile.venueId, profile]));
-    for (const queue of queueRows) {
-      const profile = profileByVenue.get(queue.venueId);
+    const profileByVenue = REFLECT_CONSTRUCT(MAP_CONSTRUCTOR, []) as Map<
+      string,
+      VenueProfileRow
+    >;
+    for (let index = 0; index < profiles.length; index += 1) {
+      const profile = profiles[index];
+      if (!profile) fail("source_mismatch");
+      mapSet(profileByVenue, profile.venueId, profile);
+    }
+    for (let index = 0; index < queueRows.length; index += 1) {
+      const queue = queueRows[index];
+      if (!queue) fail("source_mismatch");
+      const profile = mapGet(profileByVenue, queue.venueId);
       if (
         !profile
         || profile.active !== true
         || profile.suburb === null
-        || normalizeHumanText(profile.suburb).toLowerCase()
-          !== privateInput.marketedSuburb.toLowerCase()
+        || lowercase(normalizeHumanText(profile.suburb))
+          !== lowercase(privateInput.marketedSuburb)
         || normalizeHumanText(profile.name) !== normalizeHumanText(queue.venueName)
       ) fail("source_mismatch");
     }
 
-    const catalogKeys = [...new Set(
-      [...selectedById.values()].flatMap((beers) => beers.map((beer) => normalizeBeerKey(beer.name))),
-    )].sort(bytewiseCompare);
+    const catalogKeySet = REFLECT_CONSTRUCT(SET_CONSTRUCTOR, []) as Set<string>;
+    const unsortedCatalogKeys = new ARRAY_CONSTRUCTOR<string>();
+    let catalogKeyCount = 0;
+    for (let queueIndex = 0; queueIndex < queueRows.length; queueIndex += 1) {
+      const queue = queueRows[queueIndex];
+      if (!queue) fail("catalog_mismatch");
+      const beers = mapGet(selectedById, queue.id);
+      if (!beers) fail("catalog_mismatch");
+      for (let beerIndex = 0; beerIndex < beers.length; beerIndex += 1) {
+        const beer = beers[beerIndex];
+        if (!beer) fail("catalog_mismatch");
+        const key = normalizeBeerKey(beer.name);
+        if (!setHas(catalogKeySet, key)) {
+          REFLECT_APPLY(SET_ADD, catalogKeySet, [key]);
+          defineDenseArrayValue(unsortedCatalogKeys, catalogKeyCount, key);
+          catalogKeyCount += 1;
+        }
+      }
+    }
+    const catalogKeys = denseStringSort(unsortedCatalogKeys);
     if (catalogKeys.length === 0 || catalogKeys.length > MAX_CATALOG_KEYS) fail("catalog_mismatch");
     const catalogRows = exactRowArray(
       catalogRowSchema,
@@ -1638,16 +2048,20 @@ export async function buildPostgresReviewedPricePromotionPlanCandidate(
       "catalog_mismatch",
     );
     if (catalogRows.length > catalogKeys.length) fail("catalog_mismatch");
-    const catalogByAlias = new Map<string, CatalogRow>();
-    for (const row of catalogRows) {
+    const catalogByAlias = REFLECT_CONSTRUCT(MAP_CONSTRUCTOR, []) as Map<string, CatalogRow>;
+    for (let index = 0; index < catalogRows.length; index += 1) {
+      const row = catalogRows[index];
+      if (!row) fail("catalog_mismatch");
       if (
-        catalogByAlias.has(row.aliasKey)
+        mapHas(catalogByAlias, row.aliasKey)
         || row.status !== "active"
         || row.aliasKey !== normalizeBeerKey(row.alias)
       ) fail("catalog_mismatch");
-      catalogByAlias.set(row.aliasKey, row);
+      mapSet(catalogByAlias, row.aliasKey, row);
     }
-    if (catalogKeys.some((key) => !catalogByAlias.has(key))) fail("catalog_mismatch");
+    if (denseArraySome(catalogKeys, (key) => !mapHas(catalogByAlias, key))) {
+      fail("catalog_mismatch");
+    }
 
     const priceConflict = exactPresenceRow(await database.prepare(`/* pintpath:reviewed-price-plan:price-conflicts */
       SELECT EXISTS (
@@ -1688,17 +2102,22 @@ export async function buildPostgresReviewedPricePromotionPlanCandidate(
       ORDER BY venue_id COLLATE "C", created_at, id COLLATE "C"
       LIMIT ${MAX_WRONG_PRICE_ROWS + 1}`).all<WrongPriceRow>(venueIds);
     const wrongPrices = exactWrongPriceRows(rawWrongPrices, venueIds);
-    const openWrongPriceCount = wrongPrices.filter((row) => OPEN_WRONG_PRICE_STATUSES.has(row.status)).length;
+    const openWrongPriceCount = denseArrayCount(
+      wrongPrices,
+      (row) => setHas(OPEN_WRONG_PRICE_STATUSES, row.status),
+    );
     if (openWrongPriceCount > 0) fail("wrong_price_open");
-    const resolvedCount = wrongPrices.filter((row) => row.status === "resolved").length;
-    const rejectedCount = wrongPrices.filter((row) => row.status === "rejected").length;
-    const wrongPriceSanitized = wrongPrices.map(sanitizedConflictRow);
+    const resolvedCount = denseArrayCount(wrongPrices, (row) => row.status === "resolved");
+    const rejectedCount = denseArrayCount(wrongPrices, (row) => row.status === "rejected");
+    const wrongPriceSanitized = denseArrayMap(wrongPrices, sanitizedConflictRow);
 
-    const sourceItems = queueRows.map((queue) => {
-      const selected = selectedById.get(queue.id)!;
-      const profile = profileByVenue.get(queue.venueId)!;
-      const catalog = selected.map((beer) => {
-        const row = catalogByAlias.get(normalizeBeerKey(beer.name))!;
+    const sourceItems = denseArrayMap(queueRows, (queue) => {
+      const selected = mapGet(selectedById, queue.id);
+      const profile = mapGet(profileByVenue, queue.venueId);
+      if (!selected || !profile) fail("source_mismatch");
+      const catalog = denseArrayMap(selected, (beer) => {
+        const row = mapGet(catalogByAlias, normalizeBeerKey(beer.name));
+        if (!row) fail("catalog_mismatch");
         return {
           abv: exactNumeric(row.abv),
           aliasKeySha256: nullableDigest("catalog-alias-key", row.aliasKey),
@@ -1761,14 +2180,17 @@ export async function buildPostgresReviewedPricePromotionPlanCandidate(
       transactionIsolation: identity.transactionIsolation,
       transactionReadOnly: identity.transactionReadOnly,
     };
-    const evidenceSet = privateInput.items.map((item) => ({
+    const evidenceSet = denseArrayMap(privateInput.items, (item) => ({
       evidenceContentSha256: item.evidenceContentSha256,
       evidenceReferenceSha256: item.evidenceReferenceSha256,
       sourceIngestionId: item.sourceIngestionId,
       venueIdSha256: item.venueIdSha256,
     }));
     const withoutHash = {
-      activationBlockers: [...POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_BLOCKERS] as [
+      activationBlockers: denseArrayMap(
+        POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_BLOCKERS,
+        (blocker) => blocker,
+      ) as [
         typeof POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_BLOCKERS[0],
         typeof POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_BLOCKERS[1],
         typeof POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_BLOCKERS[2],
@@ -1833,18 +2255,23 @@ export async function buildPostgresReviewedPricePromotionPlanCandidate(
       version: POSTGRES_REVIEWED_PRICE_PROMOTION_PLAN_VERSION,
     };
     const strictWithoutHash = parseOrFail(planWithoutHashSchema, withoutHash);
-    return postgresReviewedPricePromotionPlanCandidateSchema.parse({
+    const candidate = postgresReviewedPricePromotionPlanCandidateSchema.parse({
       ...strictWithoutHash,
       planCandidateSha256: sha256PostgresReviewedPricePromotionValue(strictWithoutHash),
     });
+    assertPlanIntrinsicSurfacesExact();
+    return candidate;
     });
+    assertPlanIntrinsicSurfacesExact();
   } catch (error) {
     if (error instanceof PostgresReviewedPricePromotionPlanError) throw error;
     return fail("inspection_invalid");
   }
 
   try {
-    return await inspect();
+    const candidate = await inspect();
+    assertPlanIntrinsicSurfacesExact();
+    return candidate;
   } catch (error) {
     if (error instanceof PostgresReviewedPricePromotionPlanError) throw error;
     return fail("inspection_invalid");

@@ -1194,9 +1194,9 @@ describe("environment safety defaults", () => {
     expect(deferredCredentialsCheck).toContain('"NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY"');
     expect(readinessScript).toContain('checkRequired("GOOGLE_PLACES_API_KEY"');
     expect(readinessScript).toContain('checkRequired("OPENAI_API_KEY"');
-    expect(readinessScript).toContain('checkRequired("SUPABASE_SERVICE_ROLE_KEY"');
+    expect(readinessScript).toContain('checkSupabaseKeyFormat("SUPABASE_SERVICE_ROLE_KEY", "secret"');
     expect(readinessScript).toContain('checkRequired("OFFSITE_BACKUP_SUPABASE_URL"');
-    expect(readinessScript).toContain('checkRequired("OFFSITE_BACKUP_SERVICE_ROLE_KEY"');
+    expect(readinessScript).toContain('checkSupabaseKeyFormat("OFFSITE_BACKUP_SERVICE_ROLE_KEY", "secret"');
     expect(readinessScript).toContain("Private operational restore-copy URL");
     expect(readinessScript).toContain("separately prove WORM authority");
     expect(readinessScript).not.toContain("Independent off-site backup destination");

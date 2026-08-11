@@ -1,0 +1,27 @@
+{
+  "schemaVersion": "pintpath-railway-application-deployment-attestation-policy/v1",
+  "policyId": "pintpath-permanent-staging-application-deployment-attestation",
+  "mode": "read-only-observation",
+  "activationAuthorized": false,
+  "launchBlockerRemoved": false,
+  "graphqlEndpoint": "https://backboard.railway.com/graphql/v2",
+  "projectId": "48d8c6cd-1c66-4148-874b-20877f48e1a5",
+  "stagingEnvironmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+  "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
+  "forbiddenProduction": {
+    "environmentId": "13dab015-df74-45c6-b26f-69323daea99a",
+    "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+  },
+  "allowedDomainSuffix": ".up.railway.app",
+  "runtimeRoutes": [
+    "/health",
+    "/startup",
+    "/ready"
+  ],
+  "limits": {
+    "maximumProviderResponseBytes": 1048576,
+    "maximumRuntimeResponseBytes": 1048576,
+    "maximumObservationSeconds": 120,
+    "maximumReceiptAgeSeconds": 900
+  }
+}

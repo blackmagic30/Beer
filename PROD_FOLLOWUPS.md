@@ -11,10 +11,15 @@ launch remains no-go until every P0 item below is proved against one frozen
 candidate SHA. A checklist entry is not evidence; store the private evidence
 reference and verifier in `docs/release-evidence.json`.
 
-Every Railway create, pin, variable, route, deploy, scale, or destroy action in
-this ledger remains blocked behind the tracked `readiness:railway:mutation-boundary`
-executor. The standalone receipt is read-only; dashboard **Deploy**, Git
-autodeploy, ordinary redeploy, and ad-hoc CLI/API writes are not substitutes.
+Every Railway create, pin, variable, route, deploy, scale, delete, destroy, or
+teardown action in this ledger remains blocked behind the tracked
+`readiness:railway:mutation-boundary` executor and its immediate preflight,
+one exact reviewed operation, and unconditional postflight. The standalone
+receipt is read-only; dashboard **Deploy**, Git autodeploy, ordinary redeploy,
+and ad-hoc CLI/API writes are not substitutes. Restore-staging teardown also
+requires complete resource/evidence reconciliation, specific authorization
+naming the exact resource IDs, and the exact reviewed teardown executor; signed
+evidence or two-person sign-off alone is not mutation authority.
 
 ## P0 — implement and prove the selected production data architecture
 
@@ -46,9 +51,36 @@ autodeploy, ordinary redeploy, and ad-hoc CLI/API writes are not substitutes.
   separate Railway Postgres and Redis resources plus Supabase/Auth/private
   Storage identities. Its synthetic import, restricted runtime proof, direct
   logical backup, and isolated operational-copy retrieval are verified. The
-  reviewed Beer build is not deployed there, three provider
-  credential/configuration gates remain open, and no live write rehearsal may
-  use production as a substitute.
+  reviewed Beer build is not deployed there. Three Google/OpenAI provider
+  categories remain open, comprising four exact Railway variable operations:
+  Google Maps client configuration (`GOOGLE_MAPS_API_KEY` and
+  `GOOGLE_MAPS_MAP_ID`), Google Places server access
+  (`GOOGLE_PLACES_API_KEY`), and OpenAI menu OCR (`OPENAI_API_KEY`). Separately,
+  the three Supabase replacement-key operations (`SUPABASE_ANON_KEY`,
+  `SUPABASE_SERVICE_ROLE_KEY`, and `OFFSITE_BACKUP_SERVICE_ROLE_KEY`) remain
+  `HARD_DISABLED_REVIEW_REQUIRED` and unauthorized. No live write rehearsal
+  may use production as a substitute.
+- **Deployment evidence foundation:** The reviewed build now emits only
+  domain-separated Railway identity hashes on its readiness routes, and a
+  read-only attestor can bind a stable provider deployment/image observation
+  to those routes in a short-lived canonical receipt. The reviewed-price
+  planner rejects free-form deployment hashes and consumes only that receipt.
+  No authentic receipt exists while the staging app is undeployed; this does
+  not authorize a deploy or close the provider-observed deployment blocker.
+- **Keychain custody checkpoint:** The operator terminal capture showed only
+  the pinned Railway project and permanent-staging environment UUIDs; it did
+  not show the token value. Read-only Keychain metadata confirms that the
+  intended generic-password item exists in the default login keychain under
+  the exact account `permanent-staging:<project-id>:<environment-id>` and was
+  created immediately after the failed command shown in the capture. The
+  secret bytes were not read and no provider request was made. The locked
+  attestation worker must retrieve only that exact service/account pair without
+  copying the value into argv, environment variables, externally supplied or
+  ambient IPC, logs, or durable files. The sole approved transport is the
+  fixed, bounded private stdout pipe from `/usr/bin/security`; its buffer must
+  be wiped immediately on every result path. A capture or disclosure of the
+  actual value would still require
+  immediate revocation, replacement, and proof that the old token is denied.
 - **Permanent integrated staging:** Keep the recorded identities and one-replica
   budgeted topology. Only after the document-wide Railway mutation stop is
   closed, complete provider configuration one exact variable at a time through
@@ -61,8 +93,11 @@ autodeploy, ordinary redeploy, and ad-hoc CLI/API writes are not substitutes.
   restore project exists and its database restore plus one-tombstone replay are
   verified. It still needs isolated Supabase/Storage, PITR/WORM retrieval, full
   application recovery, signed RPO/RTO, and exact safe teardown. Never restore
-  production data over production or permanent staging; destroy only the
-  recorded restore resources after evidence is signed.
+  production data over production or permanent staging. Signed evidence is a
+  prerequisite, not teardown authority: reconcile the complete resource and
+  evidence set, obtain specific authorization for the exact recorded resource
+  IDs, and use only the reviewed teardown executor with its immediate
+  mutation-boundary preflight and unconditional postflight.
 - **Required proof:** Both identity sets remain mechanically checked; the exact
   staging build returns `200` from `/health`, `/startup`, and `/ready`; the full
   destructive recovery drill passes; and the recorded disposable resources are

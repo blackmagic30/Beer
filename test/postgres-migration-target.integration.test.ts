@@ -30,6 +30,12 @@ vi.mock("../scripts/lib/postgres-reviewed-price-promotion-runtime.js", () => ({
     get expectedRootCaDerSha256() {
       return reviewedPriceCliRuntimeState.dependencies?.expectedRootCaDerSha256 ?? "";
     },
+    now: () => {
+      if (!reviewedPriceCliRuntimeState.dependencies?.now) {
+        throw new Error("test_runtime_not_configured");
+      }
+      return reviewedPriceCliRuntimeState.dependencies.now();
+    },
     writeOutput: (value: string) => {
       if (!reviewedPriceCliRuntimeState.dependencies?.writeOutput) {
         throw new Error("test_runtime_not_configured");
@@ -76,6 +82,12 @@ import {
 } from "../src/db/sql-database.js";
 import { sha256PostgresDatabaseIdentity } from
   "../src/lib/postgres-database-identity.js";
+import {
+  RAILWAY_APPLICATION_DEPLOYMENT_ATTESTATION_POLICY_SHA256,
+  buildRailwayApplicationDeploymentAttestationReceipt,
+  canonicalRailwayApplicationDeploymentAttestationReceipt,
+  type RailwayApplicationDeploymentAttestationEvaluation,
+} from "../src/lib/railway-application-deployment-attestation.js";
 import {
   POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_BLOCKERS,
   POSTGRES_REVIEWED_PRICE_PROMOTION_PRIVATE_INPUT_KIND,
@@ -259,6 +271,62 @@ function writePrivateFixtureFile(filename: string, bytes: Buffer): string {
   fs.writeFileSync(filename, bytes, { flag: "wx", mode: 0o600 });
   fs.chmodSync(filename, 0o600);
   return sha256PostgresMigrationBytes(bytes);
+}
+
+function canonicalDeploymentAttestationBytes(
+  deployment: {
+    readonly deploymentIdSha256: string;
+    readonly environmentIdSha256: string;
+    readonly imageDigestSha256: string;
+    readonly projectIdSha256: string;
+    readonly serviceIdSha256: string;
+  },
+): Buffer {
+  const checks: RailwayApplicationDeploymentAttestationEvaluation["checks"] = {
+    policyExact: true,
+    queriesReadOnly: true,
+    tokenScopeExact: true,
+    patchEmptyBefore: true,
+    patchEmptyAfter: true,
+    providerTargetExact: true,
+    providerSnapshotStable: true,
+    deploymentSuccessful: true,
+    providerOriginAttached: true,
+    candidateExact: true,
+    runtimeRoutesExact: true,
+    runtimeIdentityExact: true,
+    singleReplicaExact: true,
+    restoreStateAbsent: true,
+    observationWindowBounded: true,
+    readOnlyStateRetained: true,
+  };
+  const receipt = buildRailwayApplicationDeploymentAttestationReceipt({
+    candidateSha: CANDIDATE_SHA,
+    startedAt: "2026-08-07T23:59:59.000Z",
+    completedAt: NOW,
+    expiresAt: "2026-08-08T00:15:00.000Z",
+    checks,
+    hashes: {
+      policySha256: RAILWAY_APPLICATION_DEPLOYMENT_ATTESTATION_POLICY_SHA256,
+      projectIdSha256: deployment.projectIdSha256,
+      environmentIdSha256: deployment.environmentIdSha256,
+      serviceInstanceIdSha256: "2".repeat(64),
+      serviceIdSha256: deployment.serviceIdSha256,
+      deploymentIdSha256: deployment.deploymentIdSha256,
+      snapshotIdSha256: "3".repeat(64),
+      imageDigestSha256: deployment.imageDigestSha256,
+      targetOriginSha256: "4".repeat(64),
+      providerSnapshotSha256: "5".repeat(64),
+      healthResponseSha256: "6".repeat(64),
+      startupResponseSha256: "7".repeat(64),
+      readyResponseSha256: "8".repeat(64),
+      replicaIdSha256s: ["9".repeat(64)],
+    },
+  });
+  return Buffer.from(
+    canonicalRailwayApplicationDeploymentAttestationReceipt(receipt),
+    "utf8",
+  );
 }
 
 function verifiedLedger(): VerifiedAccountDeletionLedger {
@@ -1389,7 +1457,7 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL migration target", () => {
         currentUser: PLANNER_ROLE,
         sessionUser: PLANNER_ROLE,
       };
-      const expectedDeployment = {
+      const receiptDeployment = {
         deploymentIdSha256: sha256PostgresReviewedPricePromotionValue(
           "integration-deployment",
         ),
@@ -1411,6 +1479,10 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL migration target", () => {
         path.join(temporaryRoot, "reviewed-price-plan-cli-"),
       ));
       fs.chmodSync(cliRoot, 0o700);
+      const deploymentAttestationPath = path.join(
+        cliRoot,
+        "deployment-attestation.json",
+      );
       const plannerUrlPath = path.join(cliRoot, "planner-url");
       const rootCaPath = path.join(cliRoot, "railway-stock-root-ca.pem");
       const migrationReceiptPath = path.join(cliRoot, "migration-receipt.json");
@@ -1445,6 +1517,16 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL migration target", () => {
         plannerUrlPath,
         plannerUrlBytes,
       );
+      const deploymentAttestationFileSha256 = writePrivateFixtureFile(
+        deploymentAttestationPath,
+        canonicalDeploymentAttestationBytes(receiptDeployment),
+      );
+      const expectedDeployment = {
+        attestationFileSha256: deploymentAttestationFileSha256,
+        attestationPolicySha256:
+          RAILWAY_APPLICATION_DEPLOYMENT_ATTESTATION_POLICY_SHA256,
+        ...receiptDeployment,
+      };
       writePrivateFixtureFile(rootCaPath, rootCaBytes);
       const migrationReceiptFileSha256 = writePrivateFixtureFile(
         migrationReceiptPath,
@@ -1572,6 +1654,7 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL migration target", () => {
         buildPlan: buildPostgresReviewedPricePromotionPlanCandidate,
         environment: {},
         expectedRootCaDerSha256: testRootCaDerSha256,
+        now: () => new Date(NOW),
         writeOutput: (value) => cliOutput.push(value),
       };
       let cliExitCode: 0 | 1;
@@ -1580,11 +1663,8 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL migration target", () => {
         "plan",
         "--candidate-sha", CANDIDATE_SHA,
         "--expected-environment", "permanent-staging",
-        "--deployment-project-id-sha256", expectedDeployment.projectIdSha256,
-        "--deployment-environment-id-sha256", expectedDeployment.environmentIdSha256,
-        "--deployment-service-id-sha256", expectedDeployment.serviceIdSha256,
-        "--deployment-id-sha256", expectedDeployment.deploymentIdSha256,
-        "--deployment-image-digest-sha256", expectedDeployment.imageDigestSha256,
+        "--deployment-attestation", deploymentAttestationPath,
+        "--deployment-attestation-sha256", deploymentAttestationFileSha256,
         "--planner-url-file", plannerUrlPath,
         "--planner-url-sha256", plannerUrlFileSha256,
         "--expected-target-database-identity-sha256",
@@ -1615,6 +1695,7 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL migration target", () => {
       expect(cliRootStat.mode & 0o7777).toBe(0o700);
       expect(cliRootStat.uid).toBe(currentUid);
       for (const inputPath of [
+        deploymentAttestationPath,
         plannerUrlPath,
         rootCaPath,
         migrationReceiptPath,
@@ -1635,6 +1716,7 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL migration target", () => {
       expect(outputPlanStat.nlink).toBe(1);
       expect(outputPlanStat.uid).toBe(currentUid);
       expect(fs.readdirSync(cliRoot).sort()).toEqual([
+        "deployment-attestation.json",
         "migration-receipt.json",
         "migration-target-identity.json",
         "plan-candidate.json",
@@ -1642,6 +1724,9 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL migration target", () => {
         "private-input.json",
         "railway-stock-root-ca.pem",
       ]);
+      expect(sha256PostgresMigrationBytes(
+        fs.readFileSync(deploymentAttestationPath),
+      )).toBe(deploymentAttestationFileSha256);
       expect(sha256PostgresMigrationBytes(fs.readFileSync(plannerUrlPath))).toBe(
         plannerUrlFileSha256,
       );

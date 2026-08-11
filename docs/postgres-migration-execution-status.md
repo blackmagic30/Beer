@@ -102,6 +102,19 @@ resource pins, operator approvals, or two-person evidence.
   closes only the role-neutral target-identity blocker: the command remains
   mutation-disabled and still reports eight planner/provider/approval/WORM/
   apply/quarantine/ledger/atomicity/wrong-price blockers.
+- Added the read-only permanent-staging application-deployment attestation
+  foundation. Runtime readiness responses expose only domain-separated hashes
+  of Railway project, environment, service, deployment, and replica identity.
+  The attestor pins the exact staging Beer target, rejects nonempty staged
+  patches, joins the sole active successful provider deployment and image to
+  `/health`, `/startup`, and `/ready`, fences the provider snapshot before and
+  after, and writes a short-lived canonical receipt without raw provider
+  metadata. Reviewed-price plan version 3 derives its five deployment hashes
+  only from that receipt, retains the exact receipt-file and policy hashes, and
+  rejects the former free-form hash flags. This is
+  offline implementation evidence only: the Beer service remains undeployed in
+  permanent staging, no authentic receipt exists, no Railway write is
+  authorized, and the provider-observed deployment blocker remains open.
 - Ported the administrative ingestion queue, its HTTP/operator call sites, and
   claim/finalization flow to the shared asynchronous SQL boundary. Its related
   Free-live price, inventory, review, and publication writes now use the same
@@ -602,14 +615,24 @@ resource pins, operator approvals, or two-person evidence.
 
 ## Live execution still required
 
-Every Railway create, configuration, scale, deploy, rollback, PITR, route, or
-teardown item below remains blocked until the tracked
+Every Railway create, configuration, scale, deploy, rollback, PITR, route,
+delete, destroy, or teardown item below remains blocked until the tracked
 `readiness:railway:mutation-boundary` executor owns its immediate preflight,
 one exact operation, and unconditional postflight. The standalone receipt is
 read-only and the checked-in incident baseline intentionally fails; do not use
 dashboard **Deploy**, Git autodeploy, or an ad-hoc CLI/API write instead.
+Restore-staging teardown additionally requires complete resource/evidence
+reconciliation, specific authorization naming the exact resource IDs, and the
+exact reviewed teardown executor. Signed evidence or two-person sign-off alone
+is not mutation authority.
 
-- Complete the three remaining staging provider credential/configuration gates.
+- Complete three Google/OpenAI provider categories comprising four exact
+  Railway variable operations: Google Maps client configuration
+  (`GOOGLE_MAPS_API_KEY` and `GOOGLE_MAPS_MAP_ID`), Google Places server access
+  (`GOOGLE_PLACES_API_KEY`), and OpenAI menu OCR (`OPENAI_API_KEY`). Separately,
+  the three Supabase replacement-key operations (`SUPABASE_ANON_KEY`,
+  `SUPABASE_SERVICE_ROLE_KEY`, and `OFFSITE_BACKUP_SERVICE_ROLE_KEY`) remain
+  `HARD_DISABLED_REVIEW_REQUIRED` and unauthorized.
 - Deploy the reviewed application build to permanent staging at one replica and
   pass provider, Auth, role, private Storage, and Free-scope smoke checks.
 - Temporarily run the same reviewed build with at least two application
@@ -621,9 +644,12 @@ dashboard **Deploy**, Git autodeploy, or an ad-hoc CLI/API write instead.
   the separately controlled AWS account/bucket/roles; run the implemented WORM
   attestor and later independent retrieval; extend disposable recovery to
   private Storage and full application smoke; obtain approved two-person
-  RPO/RTO evidence; and safely tear down only the recorded disposable
-  resources. The completed database tombstone replay is evidence for the
-  recorded staging set, not a substitute for those remaining recovery gates.
+  RPO/RTO evidence; then reconcile the complete resource/evidence set and seek
+  specific authorization for the exact recorded disposable resource IDs. Only
+  the reviewed teardown executor may delete them, with its immediate
+  mutation-boundary preflight and unconditional postflight. The completed
+  database tombstone replay is evidence for the recorded staging set, not a
+  substitute for those remaining recovery gates.
 - Complete the maintenance-window production snapshot/import/reconciliation,
   post-import and post-promotion recovery sets, two restore proofs, monitored
   cutover, and coordinated web/iOS launch only after every prior gate passes.
@@ -632,9 +658,10 @@ dashboard **Deploy**, Git autodeploy, or an ad-hoc CLI/API write instead.
 
 - Permanent staging now has pinned Postgres, Supabase/Auth/private Storage, and
   Redis resources, a verified import/runtime, a verified direct logical backup,
-  and a live destination-bound operational-copy attestation. Three provider
-  credential/configuration gates remain open, and the staging application has
-  not yet been deployed.
+  and a live destination-bound operational-copy attestation. The three
+  Google/OpenAI categories/four exact Railway variable operations remain open;
+  the separate three Supabase replacement-key operations remain hard-disabled
+  and unauthorized; and the staging application has not yet been deployed.
 - The separate offsite Supabase project, private logical-backup bucket, remote
   re-download verification, live database-bound readiness probe, and one exact
   full-retrieval drill all pass. It is an operational copy only and cannot
@@ -673,9 +700,12 @@ dashboard **Deploy**, Git autodeploy, or an ad-hoc CLI/API write instead.
 
 ## Exact remaining sequence
 
-1. Complete the three remaining provider credential/configuration gates. Keep
-   the verified isolated logical operational copy and live readiness probe in
-   force without treating them as WORM.
+1. Complete the three Google/OpenAI categories/four exact Railway variable
+   operations only after their reviewed authority exists. Keep the separate
+   three Supabase replacement-key operations hard-disabled and unauthorized
+   until their own reviewed provider and Railway authorities exist. Keep the
+   verified isolated logical operational copy and live readiness probe in force
+   without treating them as WORM.
 2. Deploy the exact reviewed application build to permanent staging at one
    replica and complete provider/Auth/role/Storage/Free-scope smoke.
 3. Scale the same build temporarily to two replicas; complete overlap,
@@ -684,9 +714,12 @@ dashboard **Deploy**, Git autodeploy, or an ad-hoc CLI/API write instead.
 4. Enable/test PITR; have the independent recovery administrator provision and
    exercise the implemented AWS WORM contract; then extend the existing
    disposable logical restore through WORM retrieval, private Storage and full
-   application recovery, sign RPO/RTO, and safely tear down the disposable
-   environment. Retain the completed operational-copy retrieval and database
-   deletion-replay evidence without treating either as WORM or full recovery.
+   application recovery and sign RPO/RTO. Then complete resource/evidence
+   reconciliation and obtain specific authorization for the exact resource IDs
+   before the reviewed teardown executor runs its mutation-boundary preflight,
+   one exact delete operation, and unconditional postflight. Retain the
+   completed operational-copy retrieval and database deletion-replay evidence
+   without treating either as WORM or full recovery.
 5. Freeze the exact candidate only after every staging and recovery gate passes.
    Then run the maintenance-mode production snapshot, import,
    reconciliation, post-import recovery set, restore proof, deployment,

@@ -6,13 +6,19 @@ Scope: full public web launch plus an Australian iOS launch.
 ## Railway mutation boundary (document-wide stop)
 
 Every Railway create, configuration, variable, scale, deploy, redeploy,
-rollback, route, backup, PITR, or teardown instruction anywhere in this runbook
-is non-executable unless a tracked one-operation executor owns the immediate
-`readiness:railway:mutation-boundary` preflight, the one exact reviewed write,
-and an unconditional postflight. The standalone boundary command is read-only,
-and the checked-in incident baseline intentionally fails. Do not use dashboard
-**Deploy**, Git autodeploy, an ad-hoc CLI/API command, or commit/discard an
-unrelated staged patch to bypass this stop.
+rollback, route, backup, PITR, delete, destroy, or teardown instruction anywhere
+in this runbook is non-executable unless a tracked one-operation executor owns
+the immediate `readiness:railway:mutation-boundary` preflight, the one exact
+reviewed write, and an unconditional postflight. The standalone boundary
+command is read-only, and the checked-in incident baseline intentionally fails.
+Do not use dashboard **Deploy**, Git autodeploy, an ad-hoc CLI/API command, or
+commit/discard an unrelated staged patch to bypass this stop.
+
+Any restore-staging delete, destroy, or teardown additionally requires complete
+resource/evidence reconciliation, specific authorization naming the exact
+resource IDs, and the exact reviewed teardown executor with an immediate
+mutation-boundary preflight plus unconditional postflight. Signed evidence or
+two-person sign-off alone is not mutation authority.
 
 The availability decision is closed for this release. Before candidate freeze,
 migrate all authoritative application state—including current SQLite data,
@@ -41,8 +47,11 @@ authentication, deletion, data repair, smoke, load, deploy, and rollback proof.
 **Ephemeral destructive restore staging** is created only for backup/PITR
 restoration, RPO/RTO, and deletion-tombstone replay. It has different Railway,
 database, Supabase, Storage, Redis, secret, domain, and callback identities and
-is destroyed only after signed evidence. It is never permanent staging and
-must never share production or permanent-staging credentials or data paths.
+is eligible for teardown only after signed evidence and complete
+resource/evidence reconciliation. Destruction still requires specific
+authorization for the exact resource IDs and the reviewed executor plus
+mutation-boundary preflight/postflight. It is never permanent staging and must
+never share production or permanent-staging credentials or data paths.
 
 Beta App Review or TestFlight acceptance is not full App Review approval. Do
 not announce the combined web+iOS launch until the exact frozen-SHA binary is
@@ -74,18 +83,20 @@ the private release register when the corresponding phase begins.
 
 The remaining launch blockers require live/external completion:
 
+- deploy the exact reviewed build to permanent staging, repeat the
+  candidate-bound import/reconciliation proof there, and pass
+  provider/Auth/private Storage smoke plus two-replica concurrency, load,
+  restart, deploy, and rollback evidence;
 - deploy and verify the status/evidence schema, then reconcile every trusted public row;
 - build qualifying current prices until every marketed suburb independently passes;
 - correct all malformed structured addresses;
 - enable PITR, prove a usable recovery point, and restrict production database network access;
 - configure and dispatch the protected daily status workflow, then connect its failure threshold to the real on-call page;
-- a Postgres-compatible rollback build;
+- build and rehearse the immutable Postgres-compatible rollback artifact;
 - a clean candidate commit, current remote CI/CodeQL, independent approval, and required branch protections;
-- implementation of the mandatory shared Postgres persistence layer, complete
-  SQLite import/reconciliation, at least two replicas, and a Postgres-compatible
-  rollback build;
-- an immutable backup copy in a separate failure domain, written with an
-  application credential that cannot shorten retention or delete prior copies;
+- provision the implemented immutable backup authority in a separate failure
+  domain, then independently retrieve and restore it with an identity that
+  cannot write, shorten retention, or delete prior copies;
 - proof that an access JWT captured before account deletion cannot use the Pint
   Path API, Supabase Data API/RPC, or Storage after deletion;
 - staging proof that deletion removes raw submissions, item/free text,
@@ -97,6 +108,21 @@ The remaining launch blockers require live/external completion:
 - active Apple account/agreements/compliance status, signed App Store archive
   validation, physical-device/TestFlight proof, defined crash monitoring, App
   Review approval, and release evidence.
+
+Repository and isolated-test results are not live provider evidence. The exact
+reviewed application remains undeployed in permanent staging, no authentic
+application-deployment attestation receipt exists, and the current
+release-evidence result remains `launchReady=false` with 0 of 12 external evidence
+items passed. All 12 items remain launch gates.
+
+The reviewed recurring permanent-staging envelope is approximately
+US$46.80/month. The retained disposable-restore Postgres and Redis resources
+are temporary evidence capacity outside that envelope; at their current caps
+they would add approximately US$20.13/month if retained for a full month.
+Finish the remaining recovery proof before disposal, reconcile the exact
+recorded resource identities and signed evidence, and keep teardown behind the
+Railway mutation boundary rather than treating those resources as permanent
+staging.
 
 ## Phase 0 — approve and record the immutable launch contract
 
@@ -406,10 +432,16 @@ Implement and complete
 - prove the rollback build uses the new Postgres schema and never resumes
   SQLite writes. Retain the legacy SQLite file only as sealed migration evidence.
 
-The current repository does not yet contain the complete Postgres adapter,
-importer, reconciliation, promotion, backup/restore, and rollback tooling.
-Until those implementations and their tests exist, Phase 3A is explicitly
-blocked and no candidate may freeze.
+The repository now contains and tests the Free-live Postgres persistence
+adapter, migration snapshot/planner/importer, deterministic reconciliation,
+logical backup/restore and private-recovery foundations, and Postgres-compatible
+runtime contracts. The reviewed-price Postgres command remains a
+mutation-disabled version-3 planner: no apply or quarantine command is
+authorised. These repository-only results do not close the candidate-bound
+live permanent-staging import/reconciliation, application deployment,
+two-replica, immutable cross-failure-domain retrieval, PITR, complete recovery,
+promotion, rollback, provider-evidence, or production-cutover gates. No
+candidate may freeze while any of those gates remains open.
 
 ## Phase 4 — inspect production Supabase without changing it
 
@@ -429,7 +461,7 @@ supabase link --project-ref "$PINTPATH_PRODUCTION_PROJECT_REF"
 test "$(tr -d '\r\n' < supabase/.temp/project-ref)" = "$PINTPATH_PRODUCTION_PROJECT_REF"
 supabase migration list --linked
 supabase db push --linked --dry-run
-supabase db lint --linked --schema public,private --level warning --fail-on warning
+supabase db lint --linked --schema public,private,pintpath_app,pintpath_ops --level warning --fail-on warning
 supabase db advisors --linked --type security --level warn --fail-on warn
 supabase db advisors --linked --type performance --level warn --fail-on error
 
@@ -457,7 +489,10 @@ Review the latest Supabase changelog before the candidate gate. Node 20 support 
       never production or permanent integrated staging.
 - [ ] Verify schema, RLS, Storage denial, counts, hashes, and deletion tombstones.
 - [ ] Measure RPO and RTO.
-- [ ] Destroy restored resources only after evidence is signed.
+- [ ] After evidence is signed, complete resource/evidence reconciliation and
+  obtain specific authorization naming the exact disposable resource IDs; only
+  the reviewed teardown executor may delete them, with its immediate
+  mutation-boundary preflight and unconditional postflight.
 - [ ] Replace open database CIDRs only after exact Railway and emergency-operator egress addresses are proven. If stable egress is unavailable, record compensating controls instead of inventing an allowlist.
 - [ ] Recheck SSL after network changes.
 
@@ -681,11 +716,14 @@ The current discovery/review tools and `scripts/promote-reviewed-price-data.ts`
 still depend on SQLite. They are useful only to prepare and audit migration
 source data; their mutation modes are not authorised against production for
 this full-scale release. The checked-in Postgres `plan` command now produces a
-canonical, mutation-disabled version-2 candidate. It requires the existing
-migration-receipt identity, the live restricted planner observation, and the
-operator-pinned physical-database identity to agree on the same system
-identifier, database OID/name, and PostgreSQL server version, while binding the
-planner login separately. It does not apply or quarantine rows. Before
+canonical, mutation-disabled version-3 candidate. It requires a canonical,
+fresh Railway application-deployment attestation for the exact candidate and
+permanent-staging target, and binds both that receipt file SHA-256 and its
+checked-in policy SHA-256. It also requires the existing migration-receipt
+identity, the live restricted planner observation, and the operator-pinned
+physical-database identity to agree on the same system identifier, database
+OID/name, and PostgreSQL server version, while binding the planner login
+separately. It does not apply or quarantine rows. Before
 candidate freeze, implement and prove the exact Postgres apply and quarantine
 commands in permanent integrated staging. Do not substitute direct SQL or the
 legacy SQLite commands from an old runbook.
@@ -694,10 +732,12 @@ The reviewed Postgres promotion workflow must:
 
 - run only for one explicitly approved marketed-suburb batch and exact private
   input manifest;
-- retain the version-2 role-neutral physical-database and separate planner-login
-  bindings, and bind the Supabase project, candidate SHA, manifest
-  SHA-256, source-ingestion UUIDs, recovery-point attestation, operator,
-  independent reviewer, and approval reference without hard-coded old refs;
+- retain the version-3 Railway attestation receipt-file, policy, project,
+  environment, service, deployment, and image bindings; retain the
+  role-neutral physical-database and separate planner-login bindings; and bind
+  the Supabase project, candidate SHA, manifest SHA-256, source-ingestion UUIDs,
+  recovery-point attestation, operator, independent reviewer, and approval
+  reference without hard-coded old refs;
 - provide a production-targeted no-write plan, allow only reviewed row IDs,
   and refuse production, staging, and restore identity mismatches;
 - transactionally create/verify durable private evidence linkage and publish
@@ -1104,7 +1144,7 @@ git diff --check
 trap 'supabase stop --no-backup >/dev/null 2>&1 || true' EXIT
 supabase start
 supabase db reset --local
-supabase db lint --local --schema public,private --level warning --fail-on warning
+supabase db lint --local --schema public,private,pintpath_app,pintpath_ops --level warning --fail-on warning
 supabase db advisors --local --type security --level warn --fail-on warn
 supabase db advisors --local --type performance --level warn --fail-on error
 supabase test db --local supabase/tests

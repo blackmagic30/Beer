@@ -1,11 +1,73 @@
 import crypto from "node:crypto";
 import dns from "node:dns/promises";
-import fs from "node:fs";
+import nodeFs from "node:fs";
+import type * as Fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import tls from "node:tls";
 import { TextDecoder } from "node:util";
+
+// The locked production worker revokes the public fs module after this graph
+// has initialized. Keep exact original capabilities in a private facade, but
+// retain live module dispatch outside that finalized worker so fault-injection
+// tests can still exercise every cleanup path.
+const FINALIZED_WORKER_MARKER =
+  "__PINTPATH_LOCKED_SENSITIVE_FINALIZED_V1__" as const;
+const ORIGINAL_FS_PROMISES = nodeFs.promises;
+const ORIGINAL_FS_PROMISE_CAPABILITIES = Object.freeze({
+  chmod: nodeFs.promises.chmod,
+  lstat: nodeFs.promises.lstat,
+  mkdtemp: nodeFs.promises.mkdtemp,
+  open: nodeFs.promises.open,
+  readdir: nodeFs.promises.readdir,
+  realpath: nodeFs.promises.realpath,
+  rmdir: nodeFs.promises.rmdir,
+  unlink: nodeFs.promises.unlink,
+});
+type FsPromiseCapabilityName = keyof typeof ORIGINAL_FS_PROMISE_CAPABILITIES;
+
+function finalizedLockedWorker(): boolean {
+  const descriptor = Object.getOwnPropertyDescriptor(
+    globalThis,
+    FINALIZED_WORKER_MARKER,
+  );
+  return descriptor !== undefined
+    && descriptor.configurable === false
+    && descriptor.writable === false
+    && "value" in descriptor
+    && typeof descriptor.value === "object"
+    && descriptor.value !== null
+    && Object.isFrozen(descriptor.value)
+    && (descriptor.value as { readonly version?: unknown }).version === 1;
+}
+
+function callFsPromiseCapability(
+  name: FsPromiseCapabilityName,
+  args: readonly unknown[],
+): unknown {
+  const capability = finalizedLockedWorker()
+    ? ORIGINAL_FS_PROMISE_CAPABILITIES[name]
+    : ORIGINAL_FS_PROMISES[name];
+  return Reflect.apply(capability, ORIGINAL_FS_PROMISES, args);
+}
+
+const fs = Object.freeze({
+  constants: nodeFs.constants,
+  promises: Object.freeze({
+    chmod: (...args: unknown[]) => callFsPromiseCapability("chmod", args),
+    lstat: (...args: unknown[]) => callFsPromiseCapability("lstat", args),
+    mkdtemp: (...args: unknown[]) => callFsPromiseCapability("mkdtemp", args),
+    open: (...args: unknown[]) => callFsPromiseCapability("open", args),
+    readdir: (...args: unknown[]) => callFsPromiseCapability("readdir", args),
+    realpath: (...args: unknown[]) => callFsPromiseCapability("realpath", args),
+    rmdir: (...args: unknown[]) => callFsPromiseCapability("rmdir", args),
+    unlink: (...args: unknown[]) => callFsPromiseCapability("unlink", args),
+  }) as unknown as Pick<
+    typeof nodeFs.promises,
+    FsPromiseCapabilityName
+  >,
+});
 
 export const POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE =
   "railway-stock-localhost-ca-v1" as const;
@@ -144,7 +206,7 @@ interface DirectoryIdentity {
 
 interface HeldRootCaFile {
   readonly path: string;
-  readonly handle: fs.promises.FileHandle;
+  readonly handle: Fs.promises.FileHandle;
   readonly identity: FileIdentity;
   readonly pemSha256: string;
   readonly pem: string;
@@ -154,11 +216,11 @@ interface OwnedTransportResources {
   source: HeldRootCaFile | null;
   directoryPath: string | null;
   directoryIdentity: DirectoryIdentity | null;
-  directoryHandle: fs.promises.FileHandle | null;
+  directoryHandle: Fs.promises.FileHandle | null;
   rootCaPath: string | null;
   rootCaCreatedIdentity: CreatedFileIdentity | null;
   rootCaIdentity: FileIdentity | null;
-  rootCaHandle: fs.promises.FileHandle | null;
+  rootCaHandle: Fs.promises.FileHandle | null;
 }
 
 interface ValidatedRootCa {
@@ -235,7 +297,7 @@ function validateOptions(options: OpenPostgresRailwayStockLocalhostCaTransportOp
   exactAbsolutePath(options.rootCaFile);
 }
 
-function fileIdentity(stat: fs.BigIntStats): FileIdentity {
+function fileIdentity(stat: Fs.BigIntStats): FileIdentity {
   return {
     dev: stat.dev,
     ino: stat.ino,
@@ -249,11 +311,11 @@ function fileIdentity(stat: fs.BigIntStats): FileIdentity {
   };
 }
 
-function createdFileIdentity(stat: fs.BigIntStats): CreatedFileIdentity {
+function createdFileIdentity(stat: Fs.BigIntStats): CreatedFileIdentity {
   return { dev: stat.dev, ino: stat.ino, uid: stat.uid };
 }
 
-function directoryIdentity(stat: fs.BigIntStats): DirectoryIdentity {
+function directoryIdentity(stat: Fs.BigIntStats): DirectoryIdentity {
   return {
     dev: stat.dev,
     ino: stat.ino,
@@ -265,7 +327,7 @@ function directoryIdentity(stat: fs.BigIntStats): DirectoryIdentity {
 
 function sameCreatedFile(
   expected: CreatedFileIdentity,
-  actual: Pick<fs.BigIntStats, "dev" | "ino" | "uid">,
+  actual: Pick<Fs.BigIntStats, "dev" | "ino" | "uid">,
 ): boolean {
   return expected.dev === actual.dev
     && expected.ino === actual.ino
@@ -299,7 +361,7 @@ function sameDirectoryObject(expected: DirectoryIdentity, actual: DirectoryIdent
 }
 
 function assertPrivateRootCaStat(
-  stat: fs.BigIntStats,
+  stat: Fs.BigIntStats,
   expectedUid: number,
   maximumBytes = MAX_ROOT_CA_BYTES,
   allowEmpty = false,
@@ -315,7 +377,7 @@ function assertPrivateRootCaStat(
   ) throw new PostgresRailwayStockLocalhostCaError("unsafe_root_ca_file");
 }
 
-function assertOwnedTemporaryDirectory(stat: fs.BigIntStats, expectedUid: number): void {
+function assertOwnedTemporaryDirectory(stat: Fs.BigIntStats, expectedUid: number): void {
   if (
     stat.isSymbolicLink()
     || !stat.isDirectory()
@@ -325,7 +387,7 @@ function assertOwnedTemporaryDirectory(stat: fs.BigIntStats, expectedUid: number
   ) throw new PostgresRailwayStockLocalhostCaError("unsafe_temporary_authority");
 }
 
-async function closeHandleExact(handle: fs.promises.FileHandle): Promise<boolean> {
+async function closeHandleExact(handle: Fs.promises.FileHandle): Promise<boolean> {
   try {
     await handle.close();
     return true;
@@ -336,7 +398,7 @@ async function closeHandleExact(handle: fs.promises.FileHandle): Promise<boolean
 }
 
 async function readExactFile(
-  handle: fs.promises.FileHandle,
+  handle: Fs.promises.FileHandle,
   size: number,
 ): Promise<Buffer> {
   const bytes = Buffer.alloc(size);
@@ -370,7 +432,7 @@ async function openStableRootCaFile(
   expectedUid: number,
 ): Promise<HeldRootCaFile> {
   const filePath = exactAbsolutePath(filePathInput);
-  let handle: fs.promises.FileHandle | null = null;
+  let handle: Fs.promises.FileHandle | null = null;
   let bytes: Buffer | null = null;
   try {
     if (await fs.promises.realpath(filePath) !== filePath) {
@@ -556,7 +618,7 @@ async function resolveExactRailwayPrivateAddress(
 }
 
 async function writeAll(
-  handle: fs.promises.FileHandle,
+  handle: Fs.promises.FileHandle,
   bytes: Buffer,
 ): Promise<void> {
   let offset = 0;

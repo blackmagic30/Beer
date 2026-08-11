@@ -260,8 +260,8 @@ describe("staging Postgres build-canary Railway contract candidates", () => {
     expect(parseProjectTokenScopeResponse(JSON.stringify({
       data: {
         projectToken: {
-          project: { id: LOCK.projectId },
-          environment: { id: LOCK.environmentId },
+          projectId: LOCK.projectId,
+          environmentId: LOCK.environmentId,
         },
       },
     }))).toEqual({ projectId: LOCK.projectId, environmentId: LOCK.environmentId });

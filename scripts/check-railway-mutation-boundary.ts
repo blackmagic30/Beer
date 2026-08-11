@@ -36,12 +36,8 @@ export const RAILWAY_ENVIRONMENT_MUTATION_BOUNDARY_QUERY = `query PintPathRailwa
 
 export const RAILWAY_PROJECT_TOKEN_SCOPE_QUERY = `query PintPathRailwayProjectTokenScope {
   projectToken {
-    project {
-      id
-    }
-    environment {
-      id
-    }
+    projectId
+    environmentId
   }
 }`;
 
@@ -209,19 +205,17 @@ export function parseProjectTokenScopeResponse(
     if (!exactKeys(data, ["projectToken"])) return null;
     const projectToken = data.projectToken;
     if (
-      !exactKeys(projectToken, ["project", "environment"])
-      || !exactKeys(projectToken.project, ["id"])
-      || typeof projectToken.project.id !== "string"
-      || !UUID_PATTERN.test(projectToken.project.id)
-      || !exactKeys(projectToken.environment, ["id"])
-      || typeof projectToken.environment.id !== "string"
-      || !UUID_PATTERN.test(projectToken.environment.id)
+      !exactKeys(projectToken, ["projectId", "environmentId"])
+      || typeof projectToken.projectId !== "string"
+      || !UUID_PATTERN.test(projectToken.projectId)
+      || typeof projectToken.environmentId !== "string"
+      || !UUID_PATTERN.test(projectToken.environmentId)
     ) {
       return null;
     }
     return {
-      projectId: projectToken.project.id,
-      environmentId: projectToken.environment.id,
+      projectId: projectToken.projectId,
+      environmentId: projectToken.environmentId,
     };
   } catch {
     return null;

@@ -1,7 +1,9 @@
 import crypto from "node:crypto";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -28,6 +30,12 @@ vi.mock("../scripts/lib/postgres-reviewed-price-promotion-runtime.js", () => ({
     },
     get expectedRootCaDerSha256() {
       return cliRuntimeState.dependencies?.expectedRootCaDerSha256 ?? "";
+    },
+    now: () => {
+      if (!cliRuntimeState.dependencies?.now) {
+        throw new Error("test_runtime_not_configured");
+      }
+      return cliRuntimeState.dependencies.now();
     },
     writeOutput: (value: string) => {
       if (!cliRuntimeState.dependencies?.writeOutput) {
@@ -56,6 +64,13 @@ import type { SqlDatabase } from "../src/db/sql-database.js";
 import { sha256PostgresDatabaseIdentity } from
   "../src/lib/postgres-database-identity.js";
 import {
+  RAILWAY_APPLICATION_DEPLOYMENT_ATTESTATION_POLICY_SHA256,
+  buildRailwayApplicationDeploymentAttestationReceipt,
+  canonicalRailwayApplicationDeploymentAttestationReceipt,
+  type RailwayApplicationDeploymentAttestationEvaluation,
+  type RailwayApplicationDeploymentAttestationReceipt,
+} from "../src/lib/railway-application-deployment-attestation.js";
+import {
   POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_BLOCKERS,
   POSTGRES_REVIEWED_PRICE_PROMOTION_PLAN_KIND,
   POSTGRES_REVIEWED_PRICE_PROMOTION_PRIVATE_INPUT_KIND,
@@ -70,6 +85,8 @@ const HASH = "a".repeat(64);
 const INGESTION_ID = "11111111-1111-4111-8111-111111111111";
 const PLANNER_PASSWORD = "PRIVATE_PLANNER_PASSWORD";
 const NOW = "2026-08-08T00:00:00.000Z";
+const ATTESTATION_STARTED_AT = "2026-08-07T23:59:59.000Z";
+const ATTESTATION_EXPIRES_AT = "2026-08-08T00:15:00.000Z";
 
 const TEST_ROOT_CA_PEM = `-----BEGIN CERTIFICATE-----
 MIIDUjCCAjqgAwIBAgIUYBQyRs0suyX5rXqgVNuwjILfVgwwDQYJKoZIhvcNAQEL
@@ -134,6 +151,11 @@ function writePrivate(filename: string, bytes: Buffer | string): void {
   fs.chmodSync(filename, 0o600);
 }
 
+function rewritePrivate(filename: string, bytes: Buffer | string): void {
+  fs.unlinkSync(filename);
+  writePrivate(filename, bytes);
+}
+
 class StubPlannerPgClient {}
 
 function setArgument(argv: readonly string[], name: string, value: string): string[] {
@@ -171,6 +193,53 @@ function historicalIdentity(): PostgresMigrationTargetIdentity {
     sessionUser: "pintpath_migration_verifier",
     systemIdentifier: "7460011223344556677",
   };
+}
+
+function deploymentAttestation(
+  deployment: PostgresReviewedPricePromotionPlanCandidate["expectedDeployment"],
+  candidateSha = CANDIDATE_SHA,
+): RailwayApplicationDeploymentAttestationReceipt {
+  const checks: RailwayApplicationDeploymentAttestationEvaluation["checks"] = {
+    policyExact: true,
+    queriesReadOnly: true,
+    tokenScopeExact: true,
+    patchEmptyBefore: true,
+    patchEmptyAfter: true,
+    providerTargetExact: true,
+    providerSnapshotStable: true,
+    deploymentSuccessful: true,
+    providerOriginAttached: true,
+    candidateExact: true,
+    runtimeRoutesExact: true,
+    runtimeIdentityExact: true,
+    singleReplicaExact: true,
+    restoreStateAbsent: true,
+    observationWindowBounded: true,
+    readOnlyStateRetained: true,
+  };
+  return buildRailwayApplicationDeploymentAttestationReceipt({
+    candidateSha,
+    startedAt: ATTESTATION_STARTED_AT,
+    completedAt: NOW,
+    expiresAt: ATTESTATION_EXPIRES_AT,
+    checks,
+    hashes: {
+      policySha256: RAILWAY_APPLICATION_DEPLOYMENT_ATTESTATION_POLICY_SHA256,
+      projectIdSha256: deployment.projectIdSha256,
+      environmentIdSha256: deployment.environmentIdSha256,
+      serviceInstanceIdSha256: "2".repeat(64),
+      serviceIdSha256: deployment.serviceIdSha256,
+      deploymentIdSha256: deployment.deploymentIdSha256,
+      snapshotIdSha256: "3".repeat(64),
+      imageDigestSha256: deployment.imageDigestSha256,
+      targetOriginSha256: "4".repeat(64),
+      providerSnapshotSha256: "5".repeat(64),
+      healthResponseSha256: "6".repeat(64),
+      startupResponseSha256: "7".repeat(64),
+      readyResponseSha256: "8".repeat(64),
+      replicaIdSha256s: ["9".repeat(64)],
+    },
+  });
 }
 
 function planCandidate(input: {
@@ -258,7 +327,7 @@ function planCandidate(input: {
       physicalIdentitySha256: input.physicalIdentitySha256,
       plannerLoginIdentitySha256: input.plannerLoginIdentitySha256,
     },
-    version: 2 as const,
+    version: 3 as const,
   };
   return {
     ...withoutHash,
@@ -272,6 +341,8 @@ function harness(): {
     Partial<PostgresReviewedPricePromotionCliDependencies>["buildPlan"]
   >;
   readonly database: SqlDatabase;
+  readonly deployment: PostgresReviewedPricePromotionPlanCandidate["expectedDeployment"];
+  readonly deploymentAttestationPath: string;
   readonly dependencies: Partial<PostgresReviewedPricePromotionCliDependencies>;
   readonly migrationReceiptPath: string;
   readonly migrationTargetIdentityPath: string;
@@ -288,6 +359,7 @@ function harness(): {
   readonly root: string;
 } {
   const root = canonicalRoot();
+  const deploymentAttestationPath = path.join(root, "deployment-attestation.json");
   const plannerUrlPath = path.join(root, "planner-url");
   const rootCaPath = path.join(root, "railway-root-ca.pem");
   const migrationReceiptPath = path.join(root, "migration-receipt.json");
@@ -350,12 +422,25 @@ function harness(): {
   writePrivate(migrationTargetIdentityPath, migrationTargetIdentityBytes);
   writePrivate(privateInputPath, privateInputBytes);
 
-  const deployment = {
+  const receiptDeployment = {
     deploymentIdSha256: "5".repeat(64),
     environmentIdSha256: "6".repeat(64),
     imageDigestSha256: "7".repeat(64),
     projectIdSha256: "8".repeat(64),
     serviceIdSha256: "9".repeat(64),
+  };
+  const deploymentAttestationBytes = Buffer.from(
+    canonicalRailwayApplicationDeploymentAttestationReceipt(
+      deploymentAttestation(receiptDeployment),
+    ),
+    "utf8",
+  );
+  writePrivate(deploymentAttestationPath, deploymentAttestationBytes);
+  const deployment = {
+    attestationFileSha256: sha256(deploymentAttestationBytes),
+    attestationPolicySha256:
+      RAILWAY_APPLICATION_DEPLOYMENT_ATTESTATION_POLICY_SHA256,
+    ...receiptDeployment,
   };
   const physicalIdentitySha256 = sha256PostgresDatabaseIdentity(identity);
   const plannerLoginIdentitySha256 = sha256PostgresReviewedPricePromotionValue({
@@ -398,17 +483,15 @@ function harness(): {
     buildPlan,
     environment: {},
     expectedRootCaDerSha256: TEST_ROOT_CA_DER_SHA256,
+    now: () => new Date(NOW),
     writeOutput: (value) => output.push(value),
   };
   const argv = [
     POSTGRES_REVIEWED_PRICE_PROMOTION_COMMAND,
     "--candidate-sha", CANDIDATE_SHA,
     "--expected-environment", "permanent-staging",
-    "--deployment-project-id-sha256", deployment.projectIdSha256,
-    "--deployment-environment-id-sha256", deployment.environmentIdSha256,
-    "--deployment-service-id-sha256", deployment.serviceIdSha256,
-    "--deployment-id-sha256", deployment.deploymentIdSha256,
-    "--deployment-image-digest-sha256", deployment.imageDigestSha256,
+    "--deployment-attestation", deploymentAttestationPath,
+    "--deployment-attestation-sha256", sha256(deploymentAttestationBytes),
     "--planner-url-file", plannerUrlPath,
     "--planner-url-sha256", sha256(plannerUrlBytes),
     "--expected-target-database-identity-sha256", physicalIdentitySha256,
@@ -425,6 +508,8 @@ function harness(): {
     argv,
     buildPlan,
     database,
+    deployment,
+    deploymentAttestationPath,
     dependencies,
     migrationReceiptPath,
     migrationTargetIdentityPath,
@@ -454,8 +539,10 @@ describe("Postgres reviewed-price promotion plan CLI", () => {
     expect(fixture.buildPlan).toHaveBeenCalledTimes(1);
     const plan = await fixture.buildPlan.mock.results[0]!.value;
     expect(fixture.buildPlan).toHaveBeenCalledWith(expect.objectContaining({
+      expectedDeployment: fixture.deployment,
       expectedPhysicalDatabaseIdentitySha256: plan.target.physicalIdentitySha256,
     }));
+    expect(plan.expectedDeployment).toEqual(fixture.deployment);
     expect(fixture.buildPlan.mock.calls[0]![0]).not.toHaveProperty(
       "expectedTargetIdentitySha256",
     );
@@ -482,6 +569,7 @@ describe("Postgres reviewed-price promotion plan CLI", () => {
       PLANNER_PASSWORD,
       fixture.plannerUrl,
       fixture.root,
+      fixture.deploymentAttestationPath,
       fixture.plannerUrlPath,
       fixture.privateInputPath,
     ]) {
@@ -511,8 +599,8 @@ describe("Postgres reviewed-price promotion plan CLI", () => {
   });
 
   it("requires the command and every exact argument once", async () => {
-    expect(postgresReviewedPricePromotionCliInternals.ARGUMENT_COUNT).toBe(17);
-    expect((harness().argv.length - 1) / 2).toBe(17);
+    expect(postgresReviewedPricePromotionCliInternals.ARGUMENT_COUNT).toBe(14);
+    expect((harness().argv.length - 1) / 2).toBe(14);
     const missingCommand = harness();
     await expect(runPostgresReviewedPricePromotionCli(
       missingCommand.argv.slice(1),
@@ -551,6 +639,116 @@ describe("Postgres reviewed-price promotion plan CLI", () => {
     expect(legacyIdentityFlag.buildPlan).not.toHaveBeenCalled();
     expect(JSON.parse(legacyIdentityFlag.output[0]!).failureCode)
       .toBe("argument_invalid");
+  });
+
+  it("rejects every legacy free-form deployment hash before files or Postgres", async () => {
+    for (const legacyFlag of [
+      "--deployment-project-id-sha256",
+      "--deployment-environment-id-sha256",
+      "--deployment-service-id-sha256",
+      "--deployment-id-sha256",
+      "--deployment-image-digest-sha256",
+    ]) {
+      const fixture = harness();
+      const artifactOpen = vi.spyOn(fs.promises, "open");
+
+      await expect(runPostgresReviewedPricePromotionCli([
+        ...fixture.argv,
+        legacyFlag,
+        HASH,
+      ])).resolves.toBe(1);
+
+      expect(artifactOpen).not.toHaveBeenCalled();
+      expect(fixture.dependencies.openDatabase).not.toHaveBeenCalled();
+      expect(fixture.buildPlan).not.toHaveBeenCalled();
+      expect(JSON.parse(fixture.output[0]!)).toEqual({
+        command: "plan",
+        failureCode: "argument_invalid",
+        ok: false,
+      });
+      artifactOpen.mockRestore();
+    }
+  });
+
+  it("requires an independently hashed canonical fresh deployment attestation", async () => {
+    const wrongHash = harness();
+    await expect(runPostgresReviewedPricePromotionCli(setArgument(
+      wrongHash.argv,
+      "--deployment-attestation-sha256",
+      HASH,
+    ))).resolves.toBe(1);
+    expect(wrongHash.dependencies.openDatabase).not.toHaveBeenCalled();
+    expect(JSON.parse(wrongHash.output[0]!).failureCode)
+      .toBe("artifact_hash_mismatch");
+
+    const noncanonical = harness();
+    const noncanonicalReceipt = JSON.parse(
+      fs.readFileSync(noncanonical.deploymentAttestationPath, "utf8"),
+    ) as unknown;
+    const prettyBytes = Buffer.from(
+      `${JSON.stringify(noncanonicalReceipt, null, 2)}\n`,
+      "utf8",
+    );
+    rewritePrivate(noncanonical.deploymentAttestationPath, prettyBytes);
+    await expect(runPostgresReviewedPricePromotionCli(setArgument(
+      noncanonical.argv,
+      "--deployment-attestation-sha256",
+      sha256(prettyBytes),
+    ))).resolves.toBe(1);
+    expect(noncanonical.dependencies.openDatabase).not.toHaveBeenCalled();
+    expect(JSON.parse(noncanonical.output[0]!).failureCode)
+      .toBe("artifact_invalid");
+
+    const stale = harness();
+    stale.dependencies.now = () => new Date("2026-08-08T00:15:00.001Z");
+    await expect(runPostgresReviewedPricePromotionCli(stale.argv)).resolves.toBe(1);
+    expect(stale.dependencies.openDatabase).not.toHaveBeenCalled();
+    expect(JSON.parse(stale.output[0]!).failureCode).toBe("artifact_invalid");
+  });
+
+  it("rejects attestation candidate, environment, read-only, or check drift", async () => {
+    for (const mutate of [
+      (receipt: Record<string, unknown>) => ({
+        ...receipt,
+        candidateSha: "d".repeat(40),
+      }),
+      (receipt: Record<string, unknown>) => ({
+        ...receipt,
+        expectedEnvironment: "production",
+      }),
+      (receipt: Record<string, unknown>) => ({
+        ...receipt,
+        readOnlyEvidence: false,
+      }),
+      (receipt: Record<string, unknown>) => ({
+        ...receipt,
+        checks: {
+          ...(receipt.checks as Record<string, unknown>),
+          queriesReadOnly: false,
+        },
+      }),
+    ]) {
+      const fixture = harness();
+      const parsed = JSON.parse(
+        fs.readFileSync(fixture.deploymentAttestationPath, "utf8"),
+      ) as Record<string, unknown>;
+      const bytes = Buffer.from(`${JSON.stringify(mutate(parsed))}\n`, "utf8");
+      rewritePrivate(fixture.deploymentAttestationPath, bytes);
+
+      await expect(runPostgresReviewedPricePromotionCli(setArgument(
+        fixture.argv,
+        "--deployment-attestation-sha256",
+        sha256(bytes),
+      ))).resolves.toBe(1);
+
+      expect(fixture.dependencies.openDatabase).not.toHaveBeenCalled();
+      expect(fixture.buildPlan).not.toHaveBeenCalled();
+      expect(JSON.parse(fixture.output[0]!)).toEqual({
+        command: "plan",
+        failureCode: "artifact_invalid",
+        ok: false,
+      });
+    }
   });
 
   it("rejects the former role-bearing planner-login hash as physical authority", async () => {
@@ -634,6 +832,14 @@ describe("Postgres reviewed-price promotion plan CLI", () => {
   });
 
   it("rejects unsafe descriptors, wrong hashes, and noncanonical JSON before opening Postgres", async () => {
+    const unsafeAttestation = harness();
+    fs.chmodSync(unsafeAttestation.deploymentAttestationPath, 0o640);
+    await expect(runPostgresReviewedPricePromotionCli(
+      unsafeAttestation.argv,
+    )).resolves.toBe(1);
+    expect(JSON.parse(unsafeAttestation.output[0]!).failureCode)
+      .toBe("artifact_file_unsafe");
+
     const permissive = harness();
     fs.chmodSync(permissive.plannerUrlPath, 0o640);
     await expect(runPostgresReviewedPricePromotionCli(
@@ -657,7 +863,12 @@ describe("Postgres reviewed-price promotion plan CLI", () => {
     )).resolves.toBe(1);
     expect(JSON.parse(noncanonical.output[0]!).failureCode).toBe("artifact_invalid");
 
-    for (const fixture of [permissive, wrongHash, noncanonical]) {
+    for (const fixture of [
+      unsafeAttestation,
+      permissive,
+      wrongHash,
+      noncanonical,
+    ]) {
       expect(fixture.dependencies.openDatabase).not.toHaveBeenCalled();
     }
   });
@@ -725,7 +936,7 @@ describe("Postgres reviewed-price promotion plan CLI", () => {
     }
   });
 
-  it("requires six distinct files under one held private parent and validates the pinned CA", async () => {
+  it("requires seven distinct files under one held private parent and validates the pinned CA", async () => {
     const permissiveParent = harness();
     fs.chmodSync(permissiveParent.root, 0o750);
     await expect(runPostgresReviewedPricePromotionCli(
@@ -869,6 +1080,392 @@ describe("Postgres reviewed-price promotion plan CLI", () => {
     expect(JSON.parse(fixture.output[0]!).failureCode).toBe("plan_result_invalid");
   });
 
+  it("rejects a validly rehashed plan that drifts a receipt-derived deployment hash", async () => {
+    const fixture = harness();
+    const valid = await fixture.buildPlan({} as never);
+    const { planCandidateSha256: _validHash, ...validWithoutHash } = valid;
+    const driftedWithoutHash = {
+      ...validWithoutHash,
+      expectedDeployment: {
+        ...valid.expectedDeployment,
+        deploymentIdSha256: "0".repeat(64),
+      },
+    };
+    fixture.dependencies.buildPlan = vi.fn(async () => ({
+      ...driftedWithoutHash,
+      planCandidateSha256:
+        sha256PostgresReviewedPricePromotionValue(driftedWithoutHash),
+    }) as PostgresReviewedPricePromotionPlanCandidate);
+
+    await expect(runPostgresReviewedPricePromotionCli(fixture.argv))
+      .resolves.toBe(1);
+
+    expect(fixture.release).toHaveBeenCalledTimes(1);
+    expect(fs.existsSync(fixture.outputPlanPath)).toBe(false);
+    expect(JSON.parse(fixture.output[0]!).failureCode)
+      .toBe("plan_result_invalid");
+  });
+
+  it("keeps receipt-derived deployment bindings immutable across the builder callback", async () => {
+    const fixture = harness();
+    const valid = await fixture.buildPlan({} as never);
+    fixture.dependencies.buildPlan = vi.fn(async (input) => {
+      expect(Reflect.set(
+        input.expectedDeployment,
+        "deploymentIdSha256",
+        "0".repeat(64),
+      )).toBe(false);
+      const { planCandidateSha256: _hash, ...withoutHash } = valid;
+      const drifted = {
+        ...withoutHash,
+        expectedDeployment: {
+          ...valid.expectedDeployment,
+          deploymentIdSha256: "0".repeat(64),
+        },
+      };
+      return {
+        ...drifted,
+        planCandidateSha256: sha256PostgresReviewedPricePromotionValue(drifted),
+      } as PostgresReviewedPricePromotionPlanCandidate;
+    });
+
+    await expect(runPostgresReviewedPricePromotionCli(fixture.argv)).resolves.toBe(1);
+    expect(fs.existsSync(fixture.outputPlanPath)).toBe(false);
+    expect(JSON.parse(fixture.output[0]!).failureCode).toBe("plan_result_invalid");
+  });
+
+  it("keeps held bytes private from a poisoned Array push mutation and leak", async () => {
+    const fixture = harness();
+    const originalDescriptor = Object.getOwnPropertyDescriptor(Array.prototype, "push")!;
+    const originalPush = originalDescriptor.value as typeof Array.prototype.push;
+    let exposedByteCustodies = 0;
+    let equalLengthMutationAttempts = 0;
+    let heldPushCalls = 0;
+    let leakedPlannerUrl = "";
+    let exit: 0 | 1 | undefined;
+    try {
+      Object.defineProperty(Array.prototype, "push", {
+        ...originalDescriptor,
+        value(this: unknown[], ...values: unknown[]) {
+          const candidate = values.length === 1 ? values[0] : undefined;
+          if (
+            typeof candidate === "object"
+            && candidate !== null
+            && Object.hasOwn(candidate, "path")
+            && Object.hasOwn(candidate, "sha256")
+            && Object.hasOwn(candidate, "assertExact")
+            && Object.hasOwn(candidate, "close")
+          ) {
+            heldPushCalls += 1;
+            const exposed = (candidate as { readonly bytes?: unknown }).bytes;
+            if (Buffer.isBuffer(exposed)) {
+              exposedByteCustodies += 1;
+              const source = exposed.toString("utf8");
+              if (source.includes("postgresql://")) {
+                leakedPlannerUrl = source;
+                const forged = Buffer.from(exposed);
+                const passwordOffset = forged.indexOf(PLANNER_PASSWORD, 0, "utf8");
+                if (passwordOffset >= 0) {
+                  const replacement = "X".repeat(PLANNER_PASSWORD.length);
+                  forged.write(replacement, passwordOffset, "utf8");
+                  if (forged.length !== exposed.length) {
+                    throw new Error("equal-length held-byte fixture drifted");
+                  }
+                  forged.copy(exposed);
+                  equalLengthMutationAttempts += 1;
+                }
+              }
+            }
+            return Reflect.apply(originalPush, this, [
+              new Proxy(candidate, {}),
+            ]);
+          }
+          return Reflect.apply(originalPush, this, values);
+        },
+      });
+      exit = await runPostgresReviewedPricePromotionCli(fixture.argv);
+    } finally {
+      Object.defineProperty(Array.prototype, "push", originalDescriptor);
+    }
+
+    expect(exit).toBe(0);
+    expect(heldPushCalls).toBe(0);
+    expect(exposedByteCustodies).toBe(0);
+    expect(equalLengthMutationAttempts).toBe(0);
+    expect(leakedPlannerUrl).not.toContain(PLANNER_PASSWORD);
+    expect(fixture.release).toHaveBeenCalledTimes(1);
+    expect(fs.existsSync(fixture.outputPlanPath)).toBe(true);
+  });
+
+  it("binds argv directly without a live Map get redirection", async () => {
+    const fixture = harness();
+    const forgedReceiptPath = path.join(fixture.root, "forged-attestation.json");
+    writePrivate(forgedReceiptPath, "{}\n");
+    const forgedReceiptSha256 = sha256("{}\n");
+    const originalDescriptor = Object.getOwnPropertyDescriptor(
+      Map.prototype,
+      "get",
+    )!;
+    const originalGet = originalDescriptor.value as typeof Map.prototype.get;
+    let redirectedArgumentGets = 0;
+    let exit: 0 | 1 | undefined;
+    try {
+      Object.defineProperty(Map.prototype, "get", {
+        ...originalDescriptor,
+        value(this: Map<unknown, unknown>, key: unknown) {
+          if (key === "--deployment-attestation") {
+            redirectedArgumentGets += 1;
+            return forgedReceiptPath;
+          }
+          if (key === "--deployment-attestation-sha256") {
+            redirectedArgumentGets += 1;
+            return forgedReceiptSha256;
+          }
+          return Reflect.apply(originalGet, this, [key]);
+        },
+      });
+      exit = await runPostgresReviewedPricePromotionCli(fixture.argv);
+    } finally {
+      Object.defineProperty(Map.prototype, "get", originalDescriptor);
+    }
+
+    expect(exit).toBe(0);
+    expect(redirectedArgumentGets).toBe(0);
+    expect(fixture.release).toHaveBeenCalledTimes(1);
+    expect(fs.existsSync(fixture.outputPlanPath)).toBe(true);
+  });
+
+  it("keeps planner secrets behind captured byte, URL, regex, and fs primitives", async () => {
+    const fixture = harness();
+    const probe = await fs.promises.open(fixture.plannerUrlPath, "r");
+    const fileHandlePrototype = Object.getPrototypeOf(probe) as object;
+    await probe.close();
+    const originalIncludes = String.prototype.includes;
+    const restores: Array<() => void> = [];
+    const calls = {
+      bufferEquals: 0,
+      bufferFrom: 0,
+      decoder: 0,
+      fileHandleRead: 0,
+      fsOpen: 0,
+      typedFill: 0,
+      urlSearchParams: 0,
+    };
+    let secretObservations = 0;
+    const seesSecret = (value: unknown): boolean => typeof value === "string"
+      && Reflect.apply(originalIncludes, value, [PLANNER_PASSWORD]);
+    const replaceMethod = (
+      target: object,
+      key: string,
+      observe: (receiver: unknown, values: readonly unknown[]) => void,
+    ): void => {
+      const descriptor = Object.getOwnPropertyDescriptor(target, key);
+      if (!descriptor || typeof descriptor.value !== "function") {
+        throw new Error(`missing poison fixture ${key}`);
+      }
+      const original = descriptor.value as (...values: unknown[]) => unknown;
+      Object.defineProperty(target, key, {
+        ...descriptor,
+        value(this: unknown, ...values: unknown[]) {
+          observe(this, values);
+          return Reflect.apply(original, this, values);
+        },
+      });
+      restores.push(() => Object.defineProperty(target, key, descriptor));
+    };
+
+    replaceMethod(fs.promises, "open", (_receiver, values) => {
+      calls.fsOpen += 1;
+      if (seesSecret(values[0])) secretObservations += 1;
+    });
+    replaceMethod(fileHandlePrototype, "read", () => {
+      calls.fileHandleRead += 1;
+    });
+    replaceMethod(TextDecoder.prototype, "decode", () => {
+      calls.decoder += 1;
+    });
+    replaceMethod(Buffer, "from", (_receiver, values) => {
+      calls.bufferFrom += 1;
+      if (seesSecret(values[0])) secretObservations += 1;
+    });
+    replaceMethod(Buffer.prototype, "equals", () => {
+      calls.bufferEquals += 1;
+    });
+    replaceMethod(Object.getPrototypeOf(Uint8Array.prototype) as object, "fill", () => {
+      calls.typedFill += 1;
+    });
+    replaceMethod(RegExp.prototype, "test", (_receiver, values) => {
+      if (seesSecret(values[0])) secretObservations += 1;
+    });
+    for (const key of [
+      "endsWith",
+      "includes",
+      "indexOf",
+      "slice",
+      "startsWith",
+      "toUpperCase",
+      "trim",
+    ]) {
+      replaceMethod(String.prototype, key, (receiver, values) => {
+        if (seesSecret(receiver) || values.some(seesSecret)) {
+          secretObservations += 1;
+        }
+      });
+    }
+    for (const key of ["append", "get", "getAll", "toString"]) {
+      replaceMethod(URLSearchParams.prototype, key, (_receiver, values) => {
+        calls.urlSearchParams += 1;
+        if (values.some(seesSecret)) secretObservations += 1;
+      });
+    }
+    const urlDescriptor = Object.getOwnPropertyDescriptor(globalThis, "URL")!;
+    const OriginalURL = urlDescriptor.value as typeof URL;
+    Object.defineProperty(globalThis, "URL", {
+      ...urlDescriptor,
+      value: function PoisonedURL(this: unknown, ...values: unknown[]) {
+        if (values.some(seesSecret)) secretObservations += 1;
+        return Reflect.construct(OriginalURL, values);
+      },
+    });
+    restores.push(() => Object.defineProperty(globalThis, "URL", urlDescriptor));
+    const constructDescriptor = Object.getOwnPropertyDescriptor(Reflect, "construct")!;
+    const originalConstruct = constructDescriptor.value as typeof Reflect.construct;
+    Object.defineProperty(Reflect, "construct", {
+      ...constructDescriptor,
+      value(target: Function, values: ArrayLike<unknown>, newTarget?: Function) {
+        for (let index = 0; index < values.length; index += 1) {
+          if (seesSecret(values[index])) secretObservations += 1;
+        }
+        return newTarget === undefined
+          ? originalConstruct(target, values)
+          : originalConstruct(target, values, newTarget);
+      },
+    });
+    restores.push(() => Object.defineProperty(Reflect, "construct", constructDescriptor));
+
+    let exit: 0 | 1 | undefined;
+    try {
+      exit = await runPostgresReviewedPricePromotionCli(fixture.argv);
+    } finally {
+      for (let index = restores.length - 1; index >= 0; index -= 1) {
+        restores[index]!();
+      }
+    }
+
+    expect(exit).toBe(0);
+    expect(calls.bufferEquals).toBe(0);
+    expect(calls.decoder).toBe(0);
+    expect(calls.fileHandleRead).toBe(0);
+    expect(calls.fsOpen).toBe(0);
+    expect(calls.typedFill).toBe(0);
+    expect(calls.urlSearchParams).toBe(0);
+    expect(secretObservations).toBe(0);
+    expect(fixture.release).toHaveBeenCalledTimes(1);
+    expect(fs.existsSync(fixture.outputPlanPath)).toBe(true);
+  });
+
+  it("writes the runtime summary through captured exact stdout primitives", () => {
+    const runtimeUrl = pathToFileURL(path.resolve(
+      process.cwd(),
+      "scripts/lib/postgres-reviewed-price-promotion-runtime.ts",
+    )).href;
+    const script = `
+      const runtime = await import(${JSON.stringify(runtimeUrl)});
+      const fs = (await import("node:fs")).default;
+      const originalFrom = Buffer.from;
+      const originalWriteSync = fs.writeSync;
+      const originalSafeInteger = Number.isSafeInteger;
+      let bufferFromCalls = 0;
+      let writeCalls = 0;
+      let numberCalls = 0;
+      Buffer.from = function (...values) {
+        bufferFromCalls += 1;
+        return Reflect.apply(originalFrom, Buffer, values);
+      };
+      fs.writeSync = function (...values) {
+        writeCalls += 1;
+        return Reflect.apply(originalWriteSync, fs, values);
+      };
+      Number.isSafeInteger = function (value) {
+        numberCalls += 1;
+        return Reflect.apply(originalSafeInteger, Number, [value]);
+      };
+      try {
+        runtime.POSTGRES_REVIEWED_PRICE_PROMOTION_RUNTIME.writeOutput(
+          '{"runtime":true}\\n',
+        );
+      } finally {
+        Buffer.from = originalFrom;
+        fs.writeSync = originalWriteSync;
+        Number.isSafeInteger = originalSafeInteger;
+      }
+      process.stderr.write(JSON.stringify({ bufferFromCalls, numberCalls, writeCalls }));
+    `;
+    const result = spawnSync(process.execPath, [
+      "--import",
+      "tsx",
+      "--input-type=module",
+      "--eval",
+      script,
+    ], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe('{"runtime":true}\n');
+    expect(JSON.parse(result.stderr)).toEqual({
+      bufferFromCalls: 0,
+      numberCalls: 0,
+      writeCalls: 0,
+    });
+  });
+
+  it("compares activation blockers without live JSON stringify", async () => {
+    const fixture = harness();
+    const originalBuildPlan = fixture.buildPlan;
+    const originalStringify = JSON.stringify;
+    let poisonCalls = 0;
+    fixture.dependencies.buildPlan = vi.fn(async (input) => {
+      const candidate = await originalBuildPlan(input);
+      JSON.stringify = (() => {
+        poisonCalls += 1;
+        throw new Error(`activation blocker stringify ${PLANNER_PASSWORD}`);
+      }) as typeof JSON.stringify;
+      return candidate;
+    });
+
+    let exit: 0 | 1 | undefined;
+    try {
+      exit = await runPostgresReviewedPricePromotionCli(fixture.argv);
+    } finally {
+      JSON.stringify = originalStringify;
+    }
+
+    expect(exit).toBe(0);
+    expect(poisonCalls).toBe(0);
+    expect(fixture.release).toHaveBeenCalledTimes(1);
+    expect(fs.existsSync(fixture.outputPlanPath)).toBe(true);
+  });
+
+  it("rechecks deployment-attestation freshness immediately around publication", async () => {
+    for (const expireOnCall of [2, 3]) {
+      const fixture = harness();
+      let nowCalls = 0;
+      fixture.dependencies.now = () => {
+        nowCalls += 1;
+        return new Date(nowCalls >= expireOnCall
+          ? "2026-08-08T00:15:00.001Z"
+          : NOW);
+      };
+
+      await expect(runPostgresReviewedPricePromotionCli(fixture.argv)).resolves.toBe(1);
+      expect(fixture.release).toHaveBeenCalledTimes(1);
+      expect(fs.existsSync(fixture.outputPlanPath)).toBe(false);
+      expect(JSON.parse(fixture.output[0]!).failureCode).toBe("artifact_invalid");
+    }
+  });
+
   it("rejects independently drifted physical and planner-login identity bindings", async () => {
     for (const targetField of [
       "physicalIdentitySha256",
@@ -914,7 +1511,7 @@ describe("Postgres reviewed-price promotion plan CLI", () => {
     expect(JSON.parse(fixture.output[0]!).failureCode).toBe("output_file_unsafe");
   });
 
-  it("unlinks the temporary publication name exactly once", async () => {
+  it("does not dispatch temporary publication cleanup through a replaced fs method", async () => {
     const fixture = harness();
     const originalUnlink = fs.promises.unlink.bind(fs.promises);
     let temporaryUnlinkCount = 0;
@@ -936,15 +1533,18 @@ describe("Postgres reviewed-price promotion plan CLI", () => {
     await expect(runPostgresReviewedPricePromotionCli(fixture.argv))
       .resolves.toBe(0);
 
-    expect(temporaryUnlinkCount).toBe(1);
+    expect(temporaryUnlinkCount).toBe(0);
     expect(fs.existsSync(fixture.outputPlanPath)).toBe(true);
+    expect(fs.readdirSync(fixture.root).some((filename) => filename.startsWith(
+      ".pintpath-postgres-reviewed-price-plan-",
+    ))).toBe(false);
     expect(JSON.parse(fixture.output[0]!)).toMatchObject({
       command: "plan",
       ok: true,
     });
   });
 
-  it("rolls back the exact published inode on summary, output-close, or parent-close failure", async () => {
+  it("rolls back the exact published inode on summary failure", async () => {
     const summaryFailure = harness();
     summaryFailure.dependencies.writeOutput = vi.fn(() => {
       throw new Error(`summary ${PLANNER_PASSWORD}`);
@@ -953,59 +1553,93 @@ describe("Postgres reviewed-price promotion plan CLI", () => {
       .resolves.toBe(1);
     expect(summaryFailure.release).toHaveBeenCalledTimes(1);
     expect(fs.existsSync(summaryFailure.outputPlanPath)).toBe(false);
+  });
 
-    const outputCloseFailure = harness();
-    const originalOpenForOutput = fs.promises.open.bind(fs.promises);
-    let outputCloseWrapped = false;
-    vi.spyOn(fs.promises, "open").mockImplementation(async (...args) => {
-      const handle = await originalOpenForOutput(...args as Parameters<typeof fs.promises.open>);
-      if (
-        !outputCloseWrapped
-        && typeof args[0] === "string"
-        && path.basename(args[0]).startsWith(
-          ".pintpath-postgres-reviewed-price-plan-",
-        )
-      ) {
-        outputCloseWrapped = true;
-        const close = handle.close.bind(handle);
-        handle.close = vi.fn(async () => {
-          await close();
-          throw new Error(`output close ${PLANNER_PASSWORD}`);
-        });
+  it("uses the captured unlink primitive when stdout fails", async () => {
+    const fixture = harness();
+    const originalUnlink = fs.promises.unlink.bind(fs.promises);
+    let replacementCalls = 0;
+    vi.spyOn(fs.promises, "unlink").mockImplementation(async (filename) => {
+      replacementCalls += 1;
+      if (String(filename) === fixture.outputPlanPath) {
+        throw Object.assign(new Error("plan unlink fixture"), { code: "EIO" });
       }
-      return handle;
+      await originalUnlink(filename);
     });
-    await expect(runPostgresReviewedPricePromotionCli(outputCloseFailure.argv))
+    fixture.dependencies.writeOutput = vi.fn()
+      .mockImplementationOnce(() => {
+        throw new Error(`summary ${PLANNER_PASSWORD}`);
+      })
+      .mockImplementation((value: string) => fixture.output.push(value));
+
+    await expect(runPostgresReviewedPricePromotionCli(fixture.argv))
       .resolves.toBe(1);
-    expect(fs.existsSync(outputCloseFailure.outputPlanPath)).toBe(false);
-    expect(JSON.parse(outputCloseFailure.output[0]!)).toEqual({
+
+    expect(fixture.release).toHaveBeenCalledTimes(1);
+    expect(replacementCalls).toBe(0);
+    expect(fs.existsSync(fixture.outputPlanPath)).toBe(false);
+    expect(JSON.parse(fixture.output[0]!)).toEqual({
+      command: "plan",
+      failureCode: "unexpected_failure",
+      ok: false,
+    });
+  });
+
+  it("invalidates the held plan inode when stdout renames it before failing", async () => {
+    const fixture = harness();
+    const renamedPlanPath = path.join(fixture.root, "renamed-plan.json");
+    fixture.dependencies.writeOutput = vi.fn()
+      .mockImplementationOnce(() => {
+        fs.renameSync(fixture.outputPlanPath, renamedPlanPath);
+        throw new Error(`renamed summary ${PLANNER_PASSWORD}`);
+      })
+      .mockImplementation((value: string) => fixture.output.push(value));
+
+    await expect(runPostgresReviewedPricePromotionCli(fixture.argv))
+      .resolves.toBe(1);
+
+    expect(fixture.release).toHaveBeenCalledTimes(1);
+    expect(fs.existsSync(fixture.outputPlanPath)).toBe(false);
+    expect(fs.existsSync(renamedPlanPath)).toBe(true);
+    expect(fs.statSync(renamedPlanPath).size).toBe(0);
+    expect(() => JSON.parse(fs.readFileSync(renamedPlanPath, "utf8")))
+      .toThrow();
+    expect(JSON.parse(fixture.output[0]!)).toEqual({
       command: "plan",
       failureCode: "output_file_unsafe",
       ok: false,
     });
-    vi.restoreAllMocks();
+  });
 
-    const parentCloseFailure = harness();
-    const originalOpenForParent = fs.promises.open.bind(fs.promises);
-    let parentCloseWrapped = false;
-    vi.spyOn(fs.promises, "open").mockImplementation(async (...args) => {
-      const handle = await originalOpenForParent(...args as Parameters<typeof fs.promises.open>);
-      if (!parentCloseWrapped && args[0] === parentCloseFailure.root) {
-        parentCloseWrapped = true;
-        const close = handle.close.bind(handle);
-        handle.close = vi.fn(async () => {
-          await close();
-          throw new Error(`parent close ${PLANNER_PASSWORD}`);
-        });
+  it("uses the captured unlink primitive for an expired post-publication plan", async () => {
+    const fixture = harness();
+    let nowCalls = 0;
+    fixture.dependencies.now = () => {
+      nowCalls += 1;
+      return new Date(nowCalls >= 3
+        ? "2026-08-08T00:15:00.001Z"
+        : NOW);
+    };
+    const originalUnlink = fs.promises.unlink.bind(fs.promises);
+    let replacementCalls = 0;
+    vi.spyOn(fs.promises, "unlink").mockImplementation(async (filename) => {
+      replacementCalls += 1;
+      if (String(filename) === fixture.outputPlanPath) {
+        throw Object.assign(new Error("freshness unlink fixture"), { code: "EIO" });
       }
-      return handle;
+      await originalUnlink(filename);
     });
-    await expect(runPostgresReviewedPricePromotionCli(parentCloseFailure.argv))
+
+    await expect(runPostgresReviewedPricePromotionCli(fixture.argv))
       .resolves.toBe(1);
-    expect(fs.existsSync(parentCloseFailure.outputPlanPath)).toBe(false);
-    expect(JSON.parse(parentCloseFailure.output[0]!)).toEqual({
+
+    expect(nowCalls).toBe(3);
+    expect(fixture.release).toHaveBeenCalledTimes(1);
+    expect(replacementCalls).toBe(0);
+    expect(fs.existsSync(fixture.outputPlanPath)).toBe(false);
+    expect(JSON.parse(fixture.output[0]!)).toEqual({
       command: "plan",
-      failureCode: "artifact_file_unsafe",
+      failureCode: "artifact_invalid",
       ok: false,
     });
   });
@@ -1227,6 +1861,64 @@ describe("Postgres reviewed-price promotion plan CLI", () => {
     ]);
     expect(end).toHaveBeenCalledTimes(1);
     expect(closeTransport).toHaveBeenCalledTimes(1);
+  });
+
+  it("validates database password options without live RegExp test dispatch", async () => {
+    const root = canonicalRoot();
+    const rootCaFile = path.join(root, "railway-root-ca.pem");
+    writePrivate(rootCaFile, TEST_ROOT_CA_PEM);
+    const transport = {
+      nodeConnection: {
+        host: "fd12:3456:789a::10",
+        port: 5_432,
+        ssl: Object.freeze({
+          ca: TEST_ROOT_CA_PEM,
+          servername: "localhost" as const,
+          rejectUnauthorized: true as const,
+          minVersion: "TLSv1.2" as const,
+          checkServerIdentity: () => undefined,
+        }),
+      },
+      assertExact: vi.fn(async () => undefined),
+      close: vi.fn(async () => undefined),
+    };
+    class CapturedPool {
+      totalCount = 1;
+      idleCount = 1;
+      waitingCount = 0;
+      on(): this { return this; }
+      async connect() { return { release: () => undefined }; }
+      async query() { return { rowCount: 0, rows: [] }; }
+      async end() { return undefined; }
+    }
+    const descriptor = Object.getOwnPropertyDescriptor(RegExp.prototype, "test")!;
+    const originalTest = descriptor.value as typeof RegExp.prototype.test;
+    let passwordTestCalls = 0;
+    let handle: Awaited<ReturnType<typeof openRailwayPlannerDatabase>> | null = null;
+    try {
+      Object.defineProperty(RegExp.prototype, "test", {
+        ...descriptor,
+        value(this: RegExp, value: string) {
+          if (value === PLANNER_PASSWORD) passwordTestCalls += 1;
+          return Reflect.apply(originalTest, this, [value]);
+        },
+      });
+      handle = await openRailwayPlannerDatabase(plannerDatabaseOptions(rootCaFile), {
+        openTransport: async () => transport as never,
+        loadPgRuntime: async () => ({
+          Client: StubPlannerPgClient as never,
+          Pool: CapturedPool as never,
+          compileQuery: (text: string) => ({ text, values: [] }),
+          createTypeOverrides: () => ({}) as never,
+        }),
+      });
+    } finally {
+      Object.defineProperty(RegExp.prototype, "test", descriptor);
+    }
+
+    expect(passwordTestCalls).toBe(0);
+    expect(handle).not.toBeNull();
+    await handle!.release();
   });
 
   it("closes transport on Pool startup failure and closes it after a failing Pool end", async () => {
@@ -1473,7 +2165,7 @@ describe("Postgres reviewed-price promotion plan CLI", () => {
     }
   });
 
-  it("pins the package entry and imports no ambient provider or mutation authority", () => {
+  it("pins the package entry and keeps the production planner graph provider-neutral", () => {
     const packageJson = JSON.parse(fs.readFileSync(
       path.resolve(process.cwd(), "package.json"),
       "utf8",
@@ -1489,21 +2181,69 @@ describe("Postgres reviewed-price promotion plan CLI", () => {
       ),
       "utf8",
     );
-
-    expect(packageJson.scripts["menus:promote-reviewed:postgres"]).toBe(
-      "tsx scripts/postgres-reviewed-price-promotion.ts",
+    const databaseIdentitySource = fs.readFileSync(
+      path.resolve(process.cwd(), "src/lib/postgres-database-identity.ts"),
+      "utf8",
     );
+
+    expect(packageJson.scripts["menus:promote-reviewed:postgres"]).toBeUndefined();
     expect(source).not.toMatch(/@supabase|service[_-]role|dotenv/);
+    expect(databaseIdentitySource).toContain("postgres-migration-schema.js");
+    expect(databaseIdentitySource).not.toMatch(
+      /postgres-logical-state|postgres-migration-source|better-sqlite|@supabase|supabase-client/,
+    );
     expect(runtimeSource).toContain("environment: process.env");
-    expect(runtimeSource).toContain("fs.writeSync(");
+    expect(runtimeSource).toContain("const DATE_CONSTRUCTOR = Date;");
+    expect(runtimeSource).toContain("now: () => new DATE_CONSTRUCTOR()");
+    expect(runtimeSource).not.toContain("now: () => new Date()");
+    expect(runtimeSource).toContain("const FS_WRITE_SYNC = fs.writeSync;");
+    expect(runtimeSource).toContain("REFLECT_APPLY(FS_WRITE_SYNC, FS_OBJECT");
     expect(runtimeSource).not.toContain("runPostgresReviewedPricePromotionCliWithDependencies");
-    expect(source).toContain('import("pg")');
-    expect(source).not.toMatch(/import\s+\{[^}]*\}\s+from\s+["']pg["']/s);
+    expect(source).toContain('import postgresRuntime, {');
+    expect(source).toContain('} from "pg";');
+    expect(source).not.toContain('import("pg")');
+    expect(source).not.toContain('import("../src/db/sql-database.js")');
+    expect(runtimeSource).not.toContain('await import(');
     expect(source).not.toContain("runPostgresReviewedPricePromotionCliForTest");
     expect(runPostgresReviewedPricePromotionCli).toHaveLength(1);
-    expect(source).not.toMatch(/applyPostgresMigration|quarantine|INSERT\s|UPDATE\s|DELETE\s|TRUNCATE\s/i);
+    expect(source).not.toMatch(
+      /applyPostgresMigration|quarantine|INSERT\s+INTO|UPDATE\s+\w|DELETE\s+FROM|TRUNCATE\s+TABLE/i,
+    );
     expect(source).toContain("maxConnections: 1");
     expect(source).toContain("plan.mutationEnabled !== false");
     expect(source).toContain("POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_BLOCKERS");
+  });
+
+  it("loads no Supabase or better-sqlite3 module before planner finalization", () => {
+    const plannerUrl = pathToFileURL(path.resolve(
+      process.cwd(),
+      "scripts/postgres-reviewed-price-promotion.ts",
+    )).href;
+    const script = `
+      const Module = (await import("node:module")).default;
+      await import(${JSON.stringify(plannerUrl)});
+      const loaded = Object.keys(Module._cache ?? {});
+      const forbidden = loaded.filter((filename) => (
+        filename.includes("/@supabase+")
+        || filename.includes("/node_modules/@supabase/")
+        || filename.includes("/better-sqlite3@")
+        || filename.includes("/node_modules/better-sqlite3/")
+      ));
+      process.stdout.write(JSON.stringify(forbidden));
+    `;
+    const result = spawnSync(process.execPath, [
+      "--import",
+      "tsx",
+      "--input-type=module",
+      "--eval",
+      script,
+    ], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual([]);
+    expect(result.stderr).toBe("");
   });
 });

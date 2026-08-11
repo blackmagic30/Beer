@@ -115,6 +115,9 @@ const restoreDatabaseResource = `railway:${restoreEnvironmentId}:svc-postgres-1d
 const productionRedisResource = `railway:${productionEnvironmentId}:svc-redis-4ac109`;
 const stagingRedisResource = `railway:${stagingEnvironmentId}:svc-redis-4ac109`;
 const restoreRedisResource = `railway:${restoreEnvironmentId}:svc-redis-4ac109`;
+const supabasePublishableKey = `sb_publishable_${"p".repeat(32)}`;
+const primarySupabaseSecretKey = `sb_secret_${"s".repeat(32)}`;
+const offsiteSupabaseSecretKey = `sb_secret_${"o".repeat(32)}`;
 
 function productionIdentityOverrides(overrides: Record<string, string> = {}): Record<string, string> {
   return {
@@ -170,8 +173,8 @@ function deletionRehearsalOverrides(overrides: Record<string, string> = {}): Rec
     SUPABASE_URL: "https://fixture-staging.supabase.co",
     ACCOUNT_DELETION_REHEARSAL_EXPECTED_SUPABASE_URL: "https://fixture-staging.supabase.co",
     ACCOUNT_DELETION_REHEARSAL_PRODUCTION_SUPABASE_URL: "https://fixture-production.supabase.co",
-    SUPABASE_ANON_KEY: "fixture-deletion-rehearsal-anon-key",
-    SUPABASE_SERVICE_ROLE_KEY: "fixture-deletion-rehearsal-service-role-key",
+    SUPABASE_ANON_KEY: supabasePublishableKey,
+    SUPABASE_SERVICE_ROLE_KEY: primarySupabaseSecretKey,
     SUPABASE_OAUTH_PROVIDERS: "google",
     ACCOUNT_DELETION_NOTICE_MODE: "resend",
     RESEND_TRANSACTIONAL_API_KEY: "re_fixture_staging_deletion_notice",
@@ -263,11 +266,11 @@ function stagingCompleteOverrides(overrides: Record<string, string> = {}): Recor
     GOOGLE_PLACES_API_KEY: "fixture-staging-places-key",
     OPENAI_API_KEY: "fixture-staging-openai-key", // security-scan allow: synthetic readiness fixture
     SUPABASE_URL: "https://fixture-staging.supabase.co",
-    SUPABASE_ANON_KEY: "fixture-staging-anon-key",
-    SUPABASE_SERVICE_ROLE_KEY: "fixture-staging-service-role-key",
+    SUPABASE_ANON_KEY: supabasePublishableKey,
+    SUPABASE_SERVICE_ROLE_KEY: primarySupabaseSecretKey,
     SUPABASE_OAUTH_PROVIDERS: "google",
     OFFSITE_BACKUP_SUPABASE_URL: "https://fixture-staging-backup.supabase.co",
-    OFFSITE_BACKUP_SERVICE_ROLE_KEY: "fixture-staging-backup-service-role-key",
+    OFFSITE_BACKUP_SERVICE_ROLE_KEY: offsiteSupabaseSecretKey,
     ADMIN_EMAILS: "staging-admin@example.test",
     REQUIRE_ADMIN_MFA_IN_PRODUCTION: "true",
     ...overrides,
@@ -408,11 +411,11 @@ async function runProviderReadinessWithStorageProbe(
   const logs: string[] = [];
   process.env = providerReadinessEnvironment(stagingCompleteOverrides({
     SUPABASE_URL: "https://source-readiness.supabase.co",
-    SUPABASE_ANON_KEY: "fixture-source-anon-key",
-    SUPABASE_SERVICE_ROLE_KEY: "fixture-source-service-role-key",
+    SUPABASE_ANON_KEY: supabasePublishableKey,
+    SUPABASE_SERVICE_ROLE_KEY: primarySupabaseSecretKey,
     SUPABASE_OAUTH_PROVIDERS: "google",
     OFFSITE_BACKUP_SUPABASE_URL: "https://backup-readiness.supabase.co",
-    OFFSITE_BACKUP_SERVICE_ROLE_KEY: "fixture-backup-service-role-key",
+    OFFSITE_BACKUP_SERVICE_ROLE_KEY: offsiteSupabaseSecretKey,
     RESTORE_REHEARSAL_PHASE: "",
     RESTORE_REHEARSAL_BACKUP_ID: "",
     RESTORE_REHEARSAL_SOURCE_MANIFEST_SHA256: "",
@@ -506,6 +509,187 @@ describe("provider readiness feature gating", () => {
     expect(payload.checks.map((check) => check.id)).not.toContain(
       "RAILWAY_DEPLOYED_READINESS_CONTEXT",
     );
+  });
+
+  it("accepts only the reviewed Supabase key families in production, complete staging, and deletion rehearsal", () => {
+    const production = runProviderReadiness({
+      SUPABASE_ANON_KEY: supabasePublishableKey,
+      SUPABASE_SERVICE_ROLE_KEY: primarySupabaseSecretKey,
+      OFFSITE_BACKUP_SERVICE_ROLE_KEY: offsiteSupabaseSecretKey,
+    });
+    const staging = runProviderReadiness(stagingCompleteOverrides({
+      GOOGLE_MAPS_API_KEY: "",
+    }));
+    const deletion = runProviderReadiness(deletionRehearsalOverrides());
+
+    expect(checkStatuses(production, [
+      "SUPABASE_ANON_KEY",
+      "SUPABASE_SERVICE_ROLE_KEY",
+      "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
+      "SUPABASE_SERVICE_ROLE_KEYS_DISTINCT",
+    ])).toEqual({
+      SUPABASE_ANON_KEY: "pass",
+      SUPABASE_SERVICE_ROLE_KEY: "pass",
+      OFFSITE_BACKUP_SERVICE_ROLE_KEY: "pass",
+      SUPABASE_SERVICE_ROLE_KEYS_DISTINCT: "pass",
+    });
+    expect(checkStatuses(staging, [
+      "SUPABASE_ANON_KEY",
+      "SUPABASE_SERVICE_ROLE_KEY",
+      "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
+      "SUPABASE_SERVICE_ROLE_KEYS_DISTINCT",
+    ])).toEqual({
+      SUPABASE_ANON_KEY: "pass",
+      SUPABASE_SERVICE_ROLE_KEY: "pass",
+      OFFSITE_BACKUP_SERVICE_ROLE_KEY: "pass",
+      SUPABASE_SERVICE_ROLE_KEYS_DISTINCT: "pass",
+    });
+    expect(checkStatuses(deletion, [
+      "SUPABASE_ANON_KEY",
+      "SUPABASE_SERVICE_ROLE_KEY",
+    ])).toEqual({
+      SUPABASE_ANON_KEY: "pass",
+      SUPABASE_SERVICE_ROLE_KEY: "pass",
+    });
+
+    const reports = [production, staging, deletion].map((payload) => JSON.stringify(payload));
+    for (const report of reports) {
+      expect(report).not.toContain(supabasePublishableKey);
+      expect(report).not.toContain(primarySupabaseSecretKey);
+      expect(report).not.toContain(offsiteSupabaseSecretKey);
+    }
+  });
+
+  it("accepts the exact inclusive Supabase key suffix boundaries", () => {
+    const minimumPublishable = `sb_publishable_${"a".repeat(20)}`;
+    const minimumSecret = `sb_secret_${"b".repeat(20)}`;
+    const maximumDistinctSecret = `sb_secret_${"c".repeat(220)}`;
+    const payload = runProviderReadiness({
+      SUPABASE_ANON_KEY: minimumPublishable,
+      SUPABASE_SERVICE_ROLE_KEY: minimumSecret,
+      OFFSITE_BACKUP_SERVICE_ROLE_KEY: maximumDistinctSecret,
+    });
+
+    expect(checkStatuses(payload, [
+      "SUPABASE_ANON_KEY",
+      "SUPABASE_SERVICE_ROLE_KEY",
+      "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
+      "SUPABASE_SERVICE_ROLE_KEYS_DISTINCT",
+    ])).toEqual({
+      SUPABASE_ANON_KEY: "pass",
+      SUPABASE_SERVICE_ROLE_KEY: "pass",
+      OFFSITE_BACKUP_SERVICE_ROLE_KEY: "pass",
+      SUPABASE_SERVICE_ROLE_KEYS_DISTINCT: "pass",
+    });
+    const report = JSON.stringify(payload);
+    expect(report).not.toContain(minimumPublishable);
+    expect(report).not.toContain(minimumSecret);
+    expect(report).not.toContain(maximumDistinctSecret);
+  });
+
+  it("rejects legacy Supabase key values in production, complete staging, and deletion rehearsal", () => {
+    const legacyKeys = {
+      SUPABASE_ANON_KEY: "legacy-anon-key-with-sufficient-length",
+      SUPABASE_SERVICE_ROLE_KEY: "legacy-service-role-key-with-sufficient-length",
+      OFFSITE_BACKUP_SERVICE_ROLE_KEY: "different-legacy-service-role-key-with-sufficient-length",
+    };
+    const production = runProviderReadiness(legacyKeys);
+    const staging = runProviderReadiness(stagingCompleteOverrides({
+      ...legacyKeys,
+      GOOGLE_MAPS_API_KEY: "",
+    }));
+    const deletion = runProviderReadiness(deletionRehearsalOverrides(legacyKeys));
+
+    for (const payload of [production, staging]) {
+      expect(checkStatuses(payload, [
+        "SUPABASE_ANON_KEY",
+        "SUPABASE_SERVICE_ROLE_KEY",
+        "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
+        "SUPABASE_SERVICE_ROLE_KEYS_DISTINCT",
+      ])).toEqual({
+        SUPABASE_ANON_KEY: "fail",
+        SUPABASE_SERVICE_ROLE_KEY: "fail",
+        OFFSITE_BACKUP_SERVICE_ROLE_KEY: "fail",
+        SUPABASE_SERVICE_ROLE_KEYS_DISTINCT: "fail",
+      });
+    }
+    expect(checkStatuses(deletion, [
+      "SUPABASE_ANON_KEY",
+      "SUPABASE_SERVICE_ROLE_KEY",
+    ])).toEqual({
+      SUPABASE_ANON_KEY: "fail",
+      SUPABASE_SERVICE_ROLE_KEY: "fail",
+    });
+    expect(JSON.stringify([production, staging, deletion])).not.toContain(
+      legacyKeys.SUPABASE_SERVICE_ROLE_KEY,
+    );
+  });
+
+  it.each([
+    ["a short publishable suffix", "SUPABASE_ANON_KEY", `sb_publishable_${"a".repeat(19)}`],
+    ["an overlong publishable suffix", "SUPABASE_ANON_KEY", `sb_publishable_${"a".repeat(221)}`],
+    ["a publishable key in the secret slot", "SUPABASE_SERVICE_ROLE_KEY", supabasePublishableKey],
+    ["an invalid secret suffix character", "OFFSITE_BACKUP_SERVICE_ROLE_KEY", `sb_secret_${"b".repeat(20)}!`],
+    ["leading whitespace", "SUPABASE_ANON_KEY", ` ${supabasePublishableKey}`],
+    ["trailing whitespace", "SUPABASE_SERVICE_ROLE_KEY", `${primarySupabaseSecretKey} `],
+  ] as const)("rejects %s", (_label, name, value) => {
+    const payload = runProviderReadiness({
+      SUPABASE_ANON_KEY: supabasePublishableKey,
+      SUPABASE_SERVICE_ROLE_KEY: primarySupabaseSecretKey,
+      OFFSITE_BACKUP_SERVICE_ROLE_KEY: offsiteSupabaseSecretKey,
+      [name]: value,
+    });
+
+    expect(checkStatuses(payload, [name])).toEqual({ [name]: "fail" });
+    expect(JSON.stringify(payload)).not.toContain(value);
+  });
+
+  it("fails when production or complete staging reuses the primary project secret for the operational copy", () => {
+    const production = runProviderReadiness({
+      SUPABASE_ANON_KEY: supabasePublishableKey,
+      SUPABASE_SERVICE_ROLE_KEY: primarySupabaseSecretKey,
+      OFFSITE_BACKUP_SERVICE_ROLE_KEY: primarySupabaseSecretKey,
+    });
+    const staging = runProviderReadiness(stagingCompleteOverrides({
+      GOOGLE_MAPS_API_KEY: "",
+      OFFSITE_BACKUP_SERVICE_ROLE_KEY: primarySupabaseSecretKey,
+    }));
+
+    for (const payload of [production, staging]) {
+      expect(checkStatuses(payload, [
+        "SUPABASE_SERVICE_ROLE_KEY",
+        "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
+        "SUPABASE_SERVICE_ROLE_KEYS_DISTINCT",
+      ])).toEqual({
+        SUPABASE_SERVICE_ROLE_KEY: "pass",
+        OFFSITE_BACKUP_SERVICE_ROLE_KEY: "pass",
+        SUPABASE_SERVICE_ROLE_KEYS_DISTINCT: "fail",
+      });
+      expect(JSON.stringify(payload)).not.toContain(primarySupabaseSecretKey);
+    }
+  });
+
+  it("warns rather than passing malformed or legacy Supabase keys in development", () => {
+    const payload = runProviderReadiness({
+      NODE_ENV: "development",
+      LAUNCH_READINESS_STRICT: "false",
+      SUPABASE_ANON_KEY: "legacy-anon-key",
+      SUPABASE_SERVICE_ROLE_KEY: `sb_secret_${"s".repeat(19)}`,
+      OFFSITE_BACKUP_SERVICE_ROLE_KEY: `sb_secret_${"o".repeat(20)}!`,
+    });
+
+    expect(payload.readinessProfile).toBe("development_provider_preview");
+    expect(checkStatuses(payload, [
+      "SUPABASE_ANON_KEY",
+      "SUPABASE_SERVICE_ROLE_KEY",
+      "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
+      "SUPABASE_SERVICE_ROLE_KEYS_DISTINCT",
+    ])).toEqual({
+      SUPABASE_ANON_KEY: "warn",
+      SUPABASE_SERVICE_ROLE_KEY: "warn",
+      OFFSITE_BACKUP_SERVICE_ROLE_KEY: "warn",
+      SUPABASE_SERVICE_ROLE_KEYS_DISTINCT: "warn",
+    });
   });
 
   it("passes the source-evidence probe only after exact cleanup and an empty-prefix re-list", async () => {

@@ -2,22 +2,26 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { TextDecoder } from "node:util";
+import { TextDecoder, types as utilTypes } from "node:util";
 import { fileURLToPath } from "node:url";
 
-import type {
-  SqlBindings,
-  SqlDatabase,
-  SqlPoolMetrics,
+import {
+  sqlDatabaseInternals,
+  type SqlBindings,
+  type SqlDatabase,
+  type SqlPoolMetrics,
 } from "../src/db/sql-database.js";
-import type {
-  Client,
-  ClientConfig,
-  Pool,
-  PoolClient,
-  PoolConfig,
-  QueryResultRow,
+import postgresRuntime, {
+  type Client,
+  type ClientConfig,
+  type Pool,
+  type PoolClient,
+  type PoolConfig,
+  type QueryResultRow,
 } from "pg";
+// These production dependencies are values, not deferred imports. The locked
+// bootstrap must finish evaluating the complete pg/SQL graph before it seals
+// module loading and before either private database input is read.
 import {
   postgresMigrationReceiptSchema,
   postgresMigrationTargetIdentitySchema,
@@ -28,8 +32,14 @@ import { sha256PostgresMigrationBytes } from
 import { sha256PostgresDatabaseIdentity } from
   "../src/lib/postgres-database-identity.js";
 import {
+  RAILWAY_APPLICATION_DEPLOYMENT_ATTESTATION_MAX_RECEIPT_BYTES,
+  RAILWAY_APPLICATION_DEPLOYMENT_ATTESTATION_POLICY_SHA256,
+  parseRailwayApplicationDeploymentAttestationReceipt,
+  railwayApplicationDeploymentAttestationReceiptFreshAt,
+  type RailwayApplicationDeploymentAttestationReceipt,
+} from "../src/lib/railway-application-deployment-attestation.js";
+import {
   POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_BLOCKERS,
-  PostgresReviewedPricePromotionPlanError,
   canonicalPostgresReviewedPricePromotionJson,
   postgresReviewedPricePromotionPlanCandidateSchema,
   postgresReviewedPricePromotionPrivateInputSchema,
@@ -46,32 +56,181 @@ import {
 } from "../src/lib/postgres-railway-stock-localhost-ca.js";
 import { POSTGRES_REVIEWED_PRICE_PROMOTION_RUNTIME } from
   "./lib/postgres-reviewed-price-promotion-runtime.js";
-import { parseStrictArguments } from "./lib/strict-arguments.js";
 
 export const POSTGRES_REVIEWED_PRICE_PROMOTION_COMMAND = "plan" as const;
 
-const ARGUMENTS = new Set([
-  "--candidate-sha",
-  "--deployment-environment-id-sha256",
-  "--deployment-id-sha256",
-  "--deployment-image-digest-sha256",
-  "--deployment-project-id-sha256",
-  "--deployment-service-id-sha256",
-  "--expected-environment",
-  "--expected-target-database-identity-sha256",
-  "--migration-receipt",
-  "--migration-receipt-sha256",
-  "--migration-target-identity",
-  "--migration-target-identity-sha256",
-  "--output-plan",
-  "--planner-url-file",
-  "--planner-url-sha256",
-  "--private-input",
-  "--private-input-sha256",
-]);
-
+const ARGUMENT_COUNT = 14;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const CANDIDATE_PATTERN = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
+const CONTROL_CHARACTER_PATTERN = /[\r\n\0]/;
+const PEM_BODY_PATTERN = /^[A-Za-z0-9+/]+={0,2}$/;
+const FORBIDDEN_DATABASE_URL_PATTERN = /^PINTPATH_.*DATABASE_URL/;
+const ARRAY_IS_ARRAY = Array.isArray;
+const ARRAY_PROTOTYPE = Array.prototype;
+const ARRAY_SLICE = Array.prototype.slice;
+const BUFFER_CONSTRUCTOR = Buffer;
+const BUFFER_ALLOC = Buffer.alloc;
+const BUFFER_BYTE_LENGTH = Buffer.byteLength;
+const BUFFER_EQUALS = Buffer.prototype.equals;
+const BUFFER_FROM = Buffer.from;
+const BUFFER_IS_BUFFER = Buffer.isBuffer;
+const BUFFER_TO_STRING = Buffer.prototype.toString;
+const BIGINT_CONSTRUCTOR = BigInt;
+const CRYPTO_OBJECT = crypto;
+const CRYPTO_RANDOM_BYTES = crypto.randomBytes;
+const CRYPTO_X509_CERTIFICATE = crypto.X509Certificate;
+const X509_CERTIFICATE_PROTOTYPE = crypto.X509Certificate.prototype;
+const X509_CHECK_ISSUED = X509_CERTIFICATE_PROTOTYPE.checkIssued;
+const X509_VERIFY = X509_CERTIFICATE_PROTOTYPE.verify;
+const DATE_NOW = Date.now;
+const DATE_OBJECT = Date;
+const DATE_PARSE = Date.parse;
+const DECODE_URI_COMPONENT = decodeURIComponent;
+const JSON_OBJECT = JSON;
+const JSON_PARSE = JSON.parse;
+const NUMBER_TO_STRING = Number.prototype.toString;
+const NUMBER_OBJECT = Number;
+const NUMBER_IS_FINITE = Number.isFinite;
+const NUMBER_IS_INTEGER = Number.isInteger;
+const NUMBER_IS_SAFE_INTEGER = Number.isSafeInteger;
+const OBJECT_CONSTRUCTOR = Object;
+const OBJECT_FREEZE = Object.freeze;
+const OBJECT_GET_OWN_PROPERTY_DESCRIPTOR = Object.getOwnPropertyDescriptor;
+const OBJECT_GET_PROTOTYPE_OF = Object.getPrototypeOf;
+const OBJECT_HAS_OWN = Object.hasOwn;
+const X509_CA_GETTER = OBJECT_GET_OWN_PROPERTY_DESCRIPTOR(
+  X509_CERTIFICATE_PROTOTYPE,
+  "ca",
+)?.get;
+const X509_ISSUER_GETTER = OBJECT_GET_OWN_PROPERTY_DESCRIPTOR(
+  X509_CERTIFICATE_PROTOTYPE,
+  "issuer",
+)?.get;
+const X509_PUBLIC_KEY_GETTER = OBJECT_GET_OWN_PROPERTY_DESCRIPTOR(
+  X509_CERTIFICATE_PROTOTYPE,
+  "publicKey",
+)?.get;
+const X509_RAW_GETTER = OBJECT_GET_OWN_PROPERTY_DESCRIPTOR(
+  X509_CERTIFICATE_PROTOTYPE,
+  "raw",
+)?.get;
+const X509_SUBJECT_GETTER = OBJECT_GET_OWN_PROPERTY_DESCRIPTOR(
+  X509_CERTIFICATE_PROTOTYPE,
+  "subject",
+)?.get;
+const X509_VALID_FROM_GETTER = OBJECT_GET_OWN_PROPERTY_DESCRIPTOR(
+  X509_CERTIFICATE_PROTOTYPE,
+  "validFrom",
+)?.get;
+const X509_VALID_TO_GETTER = OBJECT_GET_OWN_PROPERTY_DESCRIPTOR(
+  X509_CERTIFICATE_PROTOTYPE,
+  "validTo",
+)?.get;
+const PATH_OBJECT = path;
+const PATH_DIRNAME = path.dirname;
+const PATH_IS_ABSOLUTE = path.isAbsolute;
+const PATH_JOIN = path.join;
+const PATH_NORMALIZE = path.normalize;
+const PATH_RESOLVE = path.resolve;
+const REFLECT_APPLY = Reflect.apply;
+const REFLECT_CONSTRUCT = Reflect.construct;
+const REFLECT_DEFINE_PROPERTY = Reflect.defineProperty;
+const REFLECT_OWN_KEYS = Reflect.ownKeys;
+const REFLECT_OBJECT = Reflect;
+const REGEXP_EXEC = RegExp.prototype.exec;
+const SET_HAS = Set.prototype.has;
+const STRING_ENDS_WITH = String.prototype.endsWith;
+const STRING_CHAR_AT = String.prototype.charAt;
+const STRING_INCLUDES = String.prototype.includes;
+const STRING_INDEX_OF = String.prototype.indexOf;
+const STRING_SLICE = String.prototype.slice;
+const STRING_STARTS_WITH = String.prototype.startsWith;
+const STRING_TO_UPPER_CASE = String.prototype.toUpperCase;
+const STRING_TRIM = String.prototype.trim;
+const TEXT_DECODER_DECODE = TextDecoder.prototype.decode;
+const TYPED_ARRAY_PROTOTYPE = OBJECT_GET_PROTOTYPE_OF(
+  Uint8Array.prototype,
+) as object;
+const TYPED_ARRAY_LENGTH_GETTER = OBJECT_GET_OWN_PROPERTY_DESCRIPTOR(
+  TYPED_ARRAY_PROTOTYPE,
+  "length",
+)?.get;
+const TYPED_ARRAY_FILL = Uint8Array.prototype.fill;
+const URL_CONSTRUCTOR = URL;
+const URL_PROTOTYPE = URL.prototype;
+const URL_HASH_GETTER = Object.getOwnPropertyDescriptor(URL.prototype, "hash")?.get;
+const URL_HOSTNAME_GETTER = Object.getOwnPropertyDescriptor(URL.prototype, "hostname")?.get;
+const URL_PASSWORD_GETTER = Object.getOwnPropertyDescriptor(URL.prototype, "password")?.get;
+const URL_PATHNAME_GETTER = Object.getOwnPropertyDescriptor(URL.prototype, "pathname")?.get;
+const URL_PORT_GETTER = Object.getOwnPropertyDescriptor(URL.prototype, "port")?.get;
+const URL_PROTOCOL_GETTER = Object.getOwnPropertyDescriptor(URL.prototype, "protocol")?.get;
+const URL_SEARCH_GETTER = Object.getOwnPropertyDescriptor(URL.prototype, "search")?.get;
+const URL_SEARCH_PARAMS_GETTER = Object.getOwnPropertyDescriptor(
+  URL.prototype,
+  "searchParams",
+)?.get;
+const URL_TO_STRING = URL.prototype.toString;
+const URL_USERNAME_GETTER = Object.getOwnPropertyDescriptor(URL.prototype, "username")?.get;
+const URL_SEARCH_PARAMS_CONSTRUCTOR = URLSearchParams;
+const URL_SEARCH_PARAMS_PROTOTYPE = URLSearchParams.prototype;
+const URL_SEARCH_PARAMS_APPEND = URLSearchParams.prototype.append;
+const URL_SEARCH_PARAMS_GET = URLSearchParams.prototype.get;
+const URL_SEARCH_PARAMS_GET_ALL = URLSearchParams.prototype.getAll;
+const URL_SEARCH_PARAMS_TO_STRING = URLSearchParams.prototype.toString;
+const UTIL_IS_PROXY = utilTypes.isProxy;
+const UTIL_TYPES_OBJECT = utilTypes;
+const WEAK_MAP_GET = WeakMap.prototype.get;
+const WEAK_MAP_SET = WeakMap.prototype.set;
+const WEAK_SET_ADD = WeakSet.prototype.add;
+const WEAK_SET_HAS = WeakSet.prototype.has;
+const UTF8_FATAL_DECODER = new TextDecoder("utf-8", { fatal: true });
+
+const FS_PROMISES_OBJECT = fs.promises;
+const PROCESS_OBJECT = process;
+const PROCESS_GETEUID = process.geteuid;
+const PROCESS_ENVIRONMENT = process.env;
+const FS_PROMISES_LINK = fs.promises.link;
+const FS_PROMISES_LSTAT = fs.promises.lstat;
+const FS_PROMISES_OPEN = fs.promises.open;
+const FS_PROMISES_REALPATH = fs.promises.realpath;
+const FS_PROMISES_UNLINK = fs.promises.unlink;
+const O_CREAT = fs.constants.O_CREAT;
+const O_DIRECTORY = fs.constants.O_DIRECTORY;
+const O_EXCL = fs.constants.O_EXCL;
+const O_NOFOLLOW = fs.constants.O_NOFOLLOW;
+const O_NONBLOCK = fs.constants.O_NONBLOCK ?? 0;
+const O_RDONLY = fs.constants.O_RDONLY;
+const O_RDWR = fs.constants.O_RDWR;
+const S_IFDIR = REFLECT_APPLY(BIGINT_CONSTRUCTOR, undefined, [fs.constants.S_IFDIR]);
+const S_IFMT = REFLECT_APPLY(BIGINT_CONSTRUCTOR, undefined, [fs.constants.S_IFMT]);
+const S_IFREG = REFLECT_APPLY(BIGINT_CONSTRUCTOR, undefined, [fs.constants.S_IFREG]);
+
+const FILE_HANDLE_PROBE = await REFLECT_APPLY(
+  FS_PROMISES_OPEN,
+  FS_PROMISES_OBJECT,
+  [fileURLToPath(import.meta.url), O_RDONLY],
+) as fs.promises.FileHandle;
+const FILE_HANDLE_PROTOTYPE = OBJECT_GET_PROTOTYPE_OF(FILE_HANDLE_PROBE) as {
+  chmod: (...args: never[]) => unknown;
+  read: (...args: never[]) => unknown;
+  stat: (...args: never[]) => unknown;
+  sync: (...args: never[]) => unknown;
+  truncate: (...args: never[]) => unknown;
+  writeFile: (...args: never[]) => unknown;
+};
+const FILE_HANDLE_CHMOD = FILE_HANDLE_PROTOTYPE.chmod;
+const FILE_HANDLE_PROBE_CLOSE = FILE_HANDLE_PROBE.close;
+const FILE_HANDLE_READ = FILE_HANDLE_PROTOTYPE.read;
+const FILE_HANDLE_STAT = FILE_HANDLE_PROTOTYPE.stat;
+const FILE_HANDLE_SYNC = FILE_HANDLE_PROTOTYPE.sync;
+const FILE_HANDLE_TRUNCATE = FILE_HANDLE_PROTOTYPE.truncate;
+const FILE_HANDLE_WRITE_FILE = FILE_HANDLE_PROTOTYPE.writeFile;
+await REFLECT_APPLY(FILE_HANDLE_PROBE_CLOSE, FILE_HANDLE_PROBE, []);
+const FILE_HANDLE_CLOSES = new WeakMap<
+  fs.promises.FileHandle,
+  () => Promise<void>
+>();
+const LOWERCASE_HEX = "0123456789abcdef";
 const PLANNER_ROLE = "pintpath_reviewed_price_planner";
 const PERMANENT_STAGING_HOST = "postgres-staging.railway.internal";
 const PERMANENT_STAGING_PORT = "5432";
@@ -84,6 +243,7 @@ const MAX_MIGRATION_RECEIPT_BYTES = 64 * 1_024;
 const MAX_MIGRATION_TARGET_IDENTITY_BYTES = 16 * 1_024;
 const MAX_PRIVATE_INPUT_BYTES = 256 * 1_024;
 const MAX_PLAN_BYTES = 256 * 1_024;
+const HELD_FILE_COUNT = 6;
 
 export type PostgresReviewedPricePromotionCliFailureCode =
   | PostgresReviewedPricePromotionPlanErrorCode
@@ -130,11 +290,13 @@ const CLI_FAILURE_CODES = new Set<PostgresReviewedPricePromotionCliFailureCode>(
   "output_file_unsafe",
   "unexpected_failure",
 ]);
+const SAFE_CLI_ERROR_BRAND = new WeakSet<object>();
 
 class SafeCliError extends Error {
   constructor(readonly code: PostgresReviewedPricePromotionCliFailureCode) {
     super(code);
     this.name = "SafeCliError";
+    REFLECT_APPLY(WEAK_SET_ADD, SAFE_CLI_ERROR_BRAND, [this]);
   }
 }
 
@@ -161,6 +323,7 @@ export interface PostgresReviewedPricePromotionPlannerDatabaseOptions {
 }
 
 export interface PostgresReviewedPricePromotionCliDependencies {
+  readonly assertProductionBoundary?: () => void;
   readonly openDatabase: (
     options: PostgresReviewedPricePromotionPlannerDatabaseOptions,
   ) => PostgresReviewedPricePromotionPlannerDatabaseHandle
@@ -170,6 +333,7 @@ export interface PostgresReviewedPricePromotionCliDependencies {
   ) => Promise<PostgresReviewedPricePromotionPlanCandidate>;
   readonly environment: Readonly<NodeJS.ProcessEnv>;
   readonly expectedRootCaDerSha256: string;
+  readonly now: () => Date;
   readonly writeOutput: (value: string) => void;
 }
 
@@ -197,8 +361,8 @@ function normalizePlannerBindings(bindings: unknown[]): SqlBindings {
     bindings.length === 1
     && bindings[0] !== null
     && typeof bindings[0] === "object"
-    && !Array.isArray(bindings[0])
-    && !Buffer.isBuffer(bindings[0])
+    && !ARRAY_IS_ARRAY(bindings[0])
+    && !REFLECT_APPLY(BUFFER_IS_BUFFER, BUFFER_CONSTRUCTOR, [bindings[0]])
     && !(bindings[0] instanceof Date)
   ) return bindings[0] as Readonly<Record<string, unknown>>;
   return bindings;
@@ -242,7 +406,7 @@ class RailwayPlannerSqlDatabase implements SqlDatabase {
           compiled.values,
         );
       } else {
-        assertNoForbiddenAmbientAuthority(process.env);
+        assertNoForbiddenAmbientAuthority(PROCESS_ENVIRONMENT);
         result = await this.pool.query<Row>(compiled.text, compiled.values);
       }
       this.completedQueries += 1;
@@ -298,7 +462,7 @@ class RailwayPlannerSqlDatabase implements SqlDatabase {
         }
       }
       if (this.closed) throw new Error("Database is closed.");
-      assertNoForbiddenAmbientAuthority(process.env);
+      assertNoForbiddenAmbientAuthority(PROCESS_ENVIRONMENT);
       const client = await this.pool.connect();
       try {
         await client.query("BEGIN");
@@ -344,16 +508,11 @@ class RailwayPlannerSqlDatabase implements SqlDatabase {
 
 const DEFAULT_RAILWAY_DATABASE_DEPENDENCIES: OpenRailwayPlannerDatabaseDependencies = {
   loadPgRuntime: async () => {
-    const [postgres, sqlDatabase] = await Promise.all([
-      import("pg"),
-      import("../src/db/sql-database.js"),
-    ]);
     return {
-      Client: postgres.Client,
-      Pool: postgres.Pool,
-      compileQuery: sqlDatabase.sqlDatabaseInternals.compilePostgresQuery,
-      createTypeOverrides:
-        sqlDatabase.sqlDatabaseInternals.createPostgresTypeOverrides,
+      Client: postgresRuntime.Client,
+      Pool: postgresRuntime.Pool,
+      compileQuery: sqlDatabaseInternals.compilePostgresQuery,
+      createTypeOverrides: sqlDatabaseInternals.createPostgresTypeOverrides,
     };
   },
   openTransport: openPostgresRailwayStockLocalhostCaTransport,
@@ -366,16 +525,17 @@ function assertExactPlannerDatabaseOptions(
     options.applicationName !== "pintpath-reviewed-price-promotion-planner"
     || options.connectionTimeoutMs !== 10_000
     || options.database !== PERMANENT_STAGING_DATABASE
-    || !SHA256_PATTERN.test(options.expectedRootCaDerSha256)
+    || !regexMatches(SHA256_PATTERN, options.expectedRootCaDerSha256)
     || options.hostname !== PERMANENT_STAGING_HOST
     || options.idleInTransactionTimeoutMs !== 10_000
     || options.idleTimeoutMs !== 5_000
     || options.maxConnections !== 1
     || typeof options.password !== "string"
     || !options.password
-    || /[\r\n\0]/.test(options.password)
+    || regexMatches(CONTROL_CHARACTER_PATTERN, options.password)
     || options.port !== 5_432
-    || path.dirname(options.rootCaFile) === options.rootCaFile
+    || REFLECT_APPLY(PATH_DIRNAME, PATH_OBJECT, [options.rootCaFile])
+      === options.rootCaFile
     || options.statementTimeoutMs !== 30_000
     || options.user !== PLANNER_ROLE
   ) fail("database_open_failed");
@@ -426,23 +586,23 @@ export async function openRailwayPlannerDatabase(
       profile: POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
       rootCaFile: options.rootCaFile,
       expectedRootCaDerSha256: options.expectedRootCaDerSha256,
-      expectedUid: Number(effectiveUid()),
+      expectedUid: REFLECT_APPLY(NUMBER_OBJECT, undefined, [effectiveUid()]) as number,
       sourceUrlAuthority: {
         hostname: options.hostname,
         port: options.port,
       },
     });
     await transport.assertExact();
-    assertNoForbiddenAmbientAuthority(process.env);
+    assertNoForbiddenAmbientAuthority(PROCESS_ENVIRONMENT);
     const runtime = await dependencies.loadPgRuntime();
-    assertNoForbiddenAmbientAuthority(process.env);
+    assertNoForbiddenAmbientAuthority(PROCESS_ENVIRONMENT);
     await transport.assertExact();
     const RuntimeClient = runtime.Client;
     class AuthorityGuardedPlannerClient extends RuntimeClient {
       constructor(config?: string | ClientConfig) {
-        assertNoForbiddenAmbientAuthority(process.env);
+        assertNoForbiddenAmbientAuthority(PROCESS_ENVIRONMENT);
         super(config);
-        assertNoForbiddenAmbientAuthority(process.env);
+        assertNoForbiddenAmbientAuthority(PROCESS_ENVIRONMENT);
       }
     }
     const poolConfig: PoolConfig = {
@@ -458,21 +618,20 @@ export async function openRailwayPlannerDatabase(
       idleTimeoutMillis: options.idleTimeoutMs,
       connectionTimeoutMillis: options.connectionTimeoutMs,
       query_timeout: options.statementTimeoutMs,
-      options: [
-        "-c search_path=pg_catalog",
-        "-c default_transaction_read_only=on",
-        "-c row_security=on",
-        `-c statement_timeout=${options.statementTimeoutMs}`,
-        `-c idle_in_transaction_session_timeout=${options.idleInTransactionTimeoutMs}`,
-        "-c lock_timeout=10000",
-        "-c synchronous_commit=on",
-      ].join(" "),
+      options: "-c search_path=pg_catalog -c default_transaction_read_only=on"
+        + " -c row_security=on -c statement_timeout=30000"
+        + " -c idle_in_transaction_session_timeout=10000"
+        + " -c lock_timeout=10000 -c synchronous_commit=on",
       types: runtime.createTypeOverrides(),
     };
-    if (Object.hasOwn(poolConfig, "connectionString")) fail("database_open_failed");
-    assertNoForbiddenAmbientAuthority(process.env);
+    if (REFLECT_APPLY(
+      OBJECT_HAS_OWN,
+      OBJECT_CONSTRUCTOR,
+      [poolConfig, "connectionString"],
+    )) fail("database_open_failed");
+    assertNoForbiddenAmbientAuthority(PROCESS_ENVIRONMENT);
     pool = new runtime.Pool(poolConfig);
-    assertNoForbiddenAmbientAuthority(process.env);
+    assertNoForbiddenAmbientAuthority(PROCESS_ENVIRONMENT);
     let releasePromise: Promise<void> | null = null;
     const openPool = pool;
     const openTransport = transport;
@@ -486,7 +645,7 @@ export async function openRailwayPlannerDatabase(
       release,
     );
     await transport.assertExact();
-    assertNoForbiddenAmbientAuthority(process.env);
+    assertNoForbiddenAmbientAuthority(PROCESS_ENVIRONMENT);
     const client = await pool.connect();
     client.release();
     await transport.assertExact();
@@ -528,7 +687,6 @@ interface StableDirectoryIdentity {
 }
 
 interface PrivateArtifact<Value> {
-  readonly bytes: Buffer;
   readonly sha256: string;
   readonly value: Value;
 }
@@ -544,14 +702,479 @@ interface PrivateParentAuthority {
 
 interface HeldPrivateFile {
   readonly path: string;
-  readonly bytes: Buffer;
   readonly sha256: string;
   assertExact(): Promise<void>;
   close(): Promise<void>;
 }
 
+interface HeldPrivateFileState {
+  readonly authority: PrivateParentAuthority;
+  readonly filename: string;
+  readonly handle: fs.promises.FileHandle;
+  readonly identity: StableFileIdentity;
+  readonly maximumBytes: number;
+  readonly sha256: string;
+  readonly size: number;
+  readonly uid: bigint;
+  closed: boolean;
+}
+
+const HELD_PRIVATE_FILE_STATES = new WeakMap<
+  HeldPrivateFile,
+  HeldPrivateFileState
+>();
+
+interface ExactCliArguments {
+  readonly candidateSha: string;
+  readonly deploymentAttestation: string;
+  readonly deploymentAttestationSha256: string;
+  readonly expectedEnvironment: string;
+  readonly expectedTargetDatabaseIdentitySha256: string;
+  readonly migrationReceipt: string;
+  readonly migrationReceiptSha256: string;
+  readonly migrationTargetIdentity: string;
+  readonly migrationTargetIdentitySha256: string;
+  readonly outputPlan: string;
+  readonly plannerUrlFile: string;
+  readonly plannerUrlSha256: string;
+  readonly privateInput: string;
+  readonly privateInputSha256: string;
+}
+
 function fail(code: PostgresReviewedPricePromotionCliFailureCode): never {
   throw new SafeCliError(code);
+}
+
+function isSafeCliError(value: unknown): value is SafeCliError {
+  return value !== null
+    && typeof value === "object"
+    && REFLECT_APPLY(WEAK_SET_HAS, SAFE_CLI_ERROR_BRAND, [value]) === true;
+}
+
+function isProxy(value: object): boolean {
+  return REFLECT_APPLY(UTIL_IS_PROXY, UTIL_TYPES_OBJECT, [value]) as boolean;
+}
+
+function ownDataValue(
+  value: object,
+  key: string,
+  failureCode: "argument_invalid" | "artifact_file_unsafe" | "output_file_unsafe",
+): unknown {
+  const descriptor = REFLECT_APPLY(
+    OBJECT_GET_OWN_PROPERTY_DESCRIPTOR,
+    OBJECT_CONSTRUCTOR,
+    [value, key],
+  ) as PropertyDescriptor | undefined;
+  if (
+    !descriptor
+    || REFLECT_APPLY(OBJECT_HAS_OWN, OBJECT_CONSTRUCTOR, [descriptor, "value"])
+      !== true
+  ) fail(failureCode);
+  return descriptor.value;
+}
+
+function ownDependencyValue(
+  value: object,
+  key: string,
+  failureCode: "argument_invalid" | "database_open_failed" = "argument_invalid",
+): unknown {
+  const descriptor = REFLECT_APPLY(
+    OBJECT_GET_OWN_PROPERTY_DESCRIPTOR,
+    OBJECT_CONSTRUCTOR,
+    [value, key],
+  ) as PropertyDescriptor | undefined;
+  if (!descriptor) fail(failureCode);
+  if (REFLECT_APPLY(OBJECT_HAS_OWN, OBJECT_CONSTRUCTOR, [descriptor, "value"])) {
+    return descriptor.value;
+  }
+  if (typeof descriptor.get !== "function" || descriptor.set !== undefined) {
+    fail(failureCode);
+  }
+  return REFLECT_APPLY(descriptor.get, value, []);
+}
+
+function snapshotCliDependencies(
+  input: PostgresReviewedPricePromotionCliDependencies,
+): PostgresReviewedPricePromotionCliDependencies {
+  if (input === null || typeof input !== "object" || isProxy(input)) {
+    fail("argument_invalid");
+  }
+  const openDatabase = ownDependencyValue(input, "openDatabase");
+  const buildPlan = ownDependencyValue(input, "buildPlan");
+  const environment = ownDependencyValue(input, "environment");
+  const expectedRootCaDerSha256 = ownDependencyValue(
+    input,
+    "expectedRootCaDerSha256",
+  );
+  const now = ownDependencyValue(input, "now");
+  const writeOutput = ownDependencyValue(input, "writeOutput");
+  if (
+    typeof openDatabase !== "function"
+    || typeof buildPlan !== "function"
+    || environment === null
+    || typeof environment !== "object"
+    || isProxy(environment)
+    || typeof expectedRootCaDerSha256 !== "string"
+    || typeof now !== "function"
+    || typeof writeOutput !== "function"
+  ) fail("argument_invalid");
+  return OBJECT_FREEZE({
+    openDatabase,
+    buildPlan,
+    environment: environment as Readonly<NodeJS.ProcessEnv>,
+    expectedRootCaDerSha256,
+    now,
+    writeOutput,
+  }) as PostgresReviewedPricePromotionCliDependencies;
+}
+
+function snapshotPlannerDatabaseHandle(
+  input: unknown,
+): PostgresReviewedPricePromotionPlannerDatabaseHandle {
+  if (input === null || typeof input !== "object" || isProxy(input)) {
+    fail("database_open_failed");
+  }
+  const database = ownDependencyValue(input, "database", "database_open_failed");
+  const assertExact = ownDependencyValue(input, "assertExact", "database_open_failed");
+  const release = ownDependencyValue(input, "release", "database_open_failed");
+  const dialect = database !== null && typeof database === "object"
+    ? ownDependencyValue(database, "dialect", "database_open_failed")
+    : null;
+  if (
+    database === null
+    || typeof database !== "object"
+    || isProxy(database)
+    || dialect !== "postgres"
+    || typeof assertExact !== "function"
+    || typeof release !== "function"
+  ) fail("database_open_failed");
+  return OBJECT_FREEZE({
+    database: database as SqlDatabase,
+    assertExact: () => REFLECT_APPLY(assertExact, input, []) as Promise<void>,
+    release: () => REFLECT_APPLY(release, input, []) as Promise<void>,
+  });
+}
+
+function exactArrayLength(
+  value: readonly unknown[],
+  failureCode: "argument_invalid" | "artifact_file_unsafe",
+): number {
+  if (
+    !ARRAY_IS_ARRAY(value)
+    || isProxy(value)
+    || REFLECT_APPLY(OBJECT_GET_PROTOTYPE_OF, OBJECT_CONSTRUCTOR, [value])
+      !== ARRAY_PROTOTYPE
+  ) fail(failureCode);
+  const length = ownDataValue(value, "length", failureCode);
+  if (
+    !REFLECT_APPLY(NUMBER_IS_SAFE_INTEGER, NUMBER_OBJECT, [length])
+    || (length as number) < 0
+  ) fail(failureCode);
+  return length as number;
+}
+
+function exactArrayItem(
+  value: readonly unknown[],
+  index: number,
+  failureCode: "argument_invalid" | "artifact_file_unsafe",
+): unknown {
+  const key = REFLECT_APPLY(NUMBER_TO_STRING, index, []) as string;
+  return ownDataValue(value, key, failureCode);
+}
+
+function argumentSlot(name: string): number {
+  switch (name) {
+    case "--candidate-sha": return 0;
+    case "--deployment-attestation": return 1;
+    case "--deployment-attestation-sha256": return 2;
+    case "--expected-environment": return 3;
+    case "--expected-target-database-identity-sha256": return 4;
+    case "--migration-receipt": return 5;
+    case "--migration-receipt-sha256": return 6;
+    case "--migration-target-identity": return 7;
+    case "--migration-target-identity-sha256": return 8;
+    case "--output-plan": return 9;
+    case "--planner-url-file": return 10;
+    case "--planner-url-sha256": return 11;
+    case "--private-input": return 12;
+    case "--private-input-sha256": return 13;
+    default: return -1;
+  }
+}
+
+function defineArraySlot(
+  value: unknown[],
+  index: number,
+  item: unknown,
+  failureCode: "argument_invalid" | "artifact_file_unsafe",
+): void {
+  const key = REFLECT_APPLY(NUMBER_TO_STRING, index, []) as string;
+  if (!REFLECT_APPLY(REFLECT_DEFINE_PROPERTY, REFLECT_OBJECT, [value, key, {
+    configurable: true,
+    enumerable: true,
+    value: item,
+    writable: true,
+  }])) fail(failureCode);
+}
+
+function parseExactCliArguments(argv: readonly string[]): ExactCliArguments {
+  const length = exactArrayLength(argv, "argument_invalid");
+  if (length < ARGUMENT_COUNT + 1 || length > ARGUMENT_COUNT * 2 + 1) {
+    fail("argument_invalid");
+  }
+  if (
+    exactArrayItem(argv, 0, "argument_invalid")
+    !== POSTGRES_REVIEWED_PRICE_PROMOTION_COMMAND
+  ) fail("argument_invalid");
+
+  const slots: Array<string | null> = [
+    null, null, null, null, null, null, null,
+    null, null, null, null, null, null, null,
+  ];
+  let index = 1;
+  while (index < length) {
+    const token = exactArrayItem(argv, index, "argument_invalid");
+    if (typeof token !== "string" || token.length < 3) fail("argument_invalid");
+    const equalsAt = REFLECT_APPLY(STRING_INDEX_OF, token, ["="]) as number;
+    let name: string;
+    let argumentValue: string;
+    if (equalsAt >= 0) {
+      name = REFLECT_APPLY(STRING_SLICE, token, [0, equalsAt]) as string;
+      argumentValue = REFLECT_APPLY(STRING_SLICE, token, [equalsAt + 1]) as string;
+      index += 1;
+    } else {
+      name = token;
+      index += 1;
+      if (index >= length) fail("argument_invalid");
+      const next = exactArrayItem(argv, index, "argument_invalid");
+      if (typeof next !== "string") fail("argument_invalid");
+      argumentValue = next;
+      index += 1;
+    }
+    if (
+      argumentValue.length === 0
+      || REFLECT_APPLY(STRING_STARTS_WITH, argumentValue, ["--"]) === true
+    ) fail("argument_invalid");
+    const slot = argumentSlot(name);
+    if (slot < 0 || exactArrayItem(slots, slot, "argument_invalid") !== null) {
+      fail("argument_invalid");
+    }
+    defineArraySlot(slots, slot, argumentValue, "argument_invalid");
+  }
+  for (let slot = 0; slot < ARGUMENT_COUNT; slot += 1) {
+    if (typeof exactArrayItem(slots, slot, "argument_invalid") !== "string") {
+      fail("argument_invalid");
+    }
+  }
+  return OBJECT_FREEZE({
+    candidateSha: exactArrayItem(slots, 0, "argument_invalid") as string,
+    deploymentAttestation: exactArrayItem(slots, 1, "argument_invalid") as string,
+    deploymentAttestationSha256:
+      exactArrayItem(slots, 2, "argument_invalid") as string,
+    expectedEnvironment: exactArrayItem(slots, 3, "argument_invalid") as string,
+    expectedTargetDatabaseIdentitySha256:
+      exactArrayItem(slots, 4, "argument_invalid") as string,
+    migrationReceipt: exactArrayItem(slots, 5, "argument_invalid") as string,
+    migrationReceiptSha256: exactArrayItem(slots, 6, "argument_invalid") as string,
+    migrationTargetIdentity:
+      exactArrayItem(slots, 7, "argument_invalid") as string,
+    migrationTargetIdentitySha256:
+      exactArrayItem(slots, 8, "argument_invalid") as string,
+    outputPlan: exactArrayItem(slots, 9, "argument_invalid") as string,
+    plannerUrlFile: exactArrayItem(slots, 10, "argument_invalid") as string,
+    plannerUrlSha256: exactArrayItem(slots, 11, "argument_invalid") as string,
+    privateInput: exactArrayItem(slots, 12, "argument_invalid") as string,
+    privateInputSha256: exactArrayItem(slots, 13, "argument_invalid") as string,
+  });
+}
+
+function exactFileHandle(
+  value: unknown,
+  failureCode: "artifact_file_unsafe" | "output_file_unsafe",
+): fs.promises.FileHandle {
+  if (
+    value === null
+    || typeof value !== "object"
+    || isProxy(value)
+    || REFLECT_APPLY(OBJECT_GET_PROTOTYPE_OF, OBJECT_CONSTRUCTOR, [value])
+      !== FILE_HANDLE_PROTOTYPE
+  ) fail(failureCode);
+  return value as fs.promises.FileHandle;
+}
+
+async function capturedOpen(
+  filename: string,
+  flags: number,
+  mode: number | undefined,
+  failureCode: "artifact_file_unsafe" | "output_file_unsafe",
+): Promise<fs.promises.FileHandle> {
+  const argumentsList = mode === undefined
+    ? [filename, flags]
+    : [filename, flags, mode];
+  const opened = await REFLECT_APPLY(
+    FS_PROMISES_OPEN,
+    FS_PROMISES_OBJECT,
+    argumentsList,
+  );
+  const handle = exactFileHandle(opened, failureCode);
+  const close = ownDataValue(handle, "close", failureCode);
+  if (typeof close !== "function") fail(failureCode);
+  REFLECT_APPLY(WEAK_MAP_SET, FILE_HANDLE_CLOSES, [handle, close]);
+  return handle;
+}
+
+async function capturedLstat(
+  filename: string,
+  failureCode: "artifact_file_unsafe" | "output_file_unsafe",
+): Promise<fs.BigIntStats> {
+  const value = await REFLECT_APPLY(FS_PROMISES_LSTAT, FS_PROMISES_OBJECT, [
+    filename,
+    { bigint: true },
+  ]);
+  if (value === null || typeof value !== "object" || isProxy(value)) {
+    fail(failureCode);
+  }
+  return value as fs.BigIntStats;
+}
+
+async function capturedRealpath(
+  filename: string,
+  failureCode: "artifact_file_unsafe" | "output_file_unsafe",
+): Promise<string> {
+  const value = await REFLECT_APPLY(
+    FS_PROMISES_REALPATH,
+    FS_PROMISES_OBJECT,
+    [filename],
+  );
+  if (typeof value !== "string") fail(failureCode);
+  return value;
+}
+
+async function capturedLink(
+  existingPath: string,
+  newPath: string,
+): Promise<void> {
+  await REFLECT_APPLY(FS_PROMISES_LINK, FS_PROMISES_OBJECT, [
+    existingPath,
+    newPath,
+  ]);
+}
+
+async function capturedUnlink(filename: string): Promise<void> {
+  await REFLECT_APPLY(FS_PROMISES_UNLINK, FS_PROMISES_OBJECT, [filename]);
+}
+
+async function capturedHandleStat(
+  handle: fs.promises.FileHandle,
+  failureCode: "artifact_file_unsafe" | "output_file_unsafe",
+): Promise<fs.BigIntStats> {
+  exactFileHandle(handle, failureCode);
+  const value = await REFLECT_APPLY(FILE_HANDLE_STAT, handle, [{ bigint: true }]);
+  if (value === null || typeof value !== "object" || isProxy(value)) {
+    fail(failureCode);
+  }
+  return value as fs.BigIntStats;
+}
+
+async function capturedHandleRead(
+  handle: fs.promises.FileHandle,
+  bytes: Buffer,
+  offset: number,
+  length: number,
+  position: number,
+  failureCode: "artifact_file_unsafe" | "output_file_unsafe",
+): Promise<number> {
+  exactFileHandle(handle, failureCode);
+  const value = await REFLECT_APPLY(FILE_HANDLE_READ, handle, [
+    bytes,
+    offset,
+    length,
+    position,
+  ]);
+  if (value === null || typeof value !== "object" || isProxy(value)) {
+    fail(failureCode);
+  }
+  const bytesRead = ownDataValue(value, "bytesRead", failureCode);
+  if (
+    !REFLECT_APPLY(NUMBER_IS_SAFE_INTEGER, NUMBER_OBJECT, [bytesRead])
+    || (bytesRead as number) < 0
+  ) {
+    fail(failureCode);
+  }
+  return bytesRead as number;
+}
+
+async function capturedHandleClose(
+  handle: fs.promises.FileHandle,
+  failureCode: "artifact_file_unsafe" | "output_file_unsafe",
+): Promise<void> {
+  exactFileHandle(handle, failureCode);
+  const close = REFLECT_APPLY(WEAK_MAP_GET, FILE_HANDLE_CLOSES, [handle]);
+  if (typeof close !== "function") fail(failureCode);
+  await REFLECT_APPLY(close, handle, []);
+}
+
+async function capturedHandleChmod(
+  handle: fs.promises.FileHandle,
+  mode: number,
+): Promise<void> {
+  exactFileHandle(handle, "output_file_unsafe");
+  await REFLECT_APPLY(FILE_HANDLE_CHMOD, handle, [mode]);
+}
+
+async function capturedHandleSync(
+  handle: fs.promises.FileHandle,
+  failureCode: "artifact_file_unsafe" | "output_file_unsafe",
+): Promise<void> {
+  exactFileHandle(handle, failureCode);
+  await REFLECT_APPLY(FILE_HANDLE_SYNC, handle, []);
+}
+
+async function capturedHandleTruncate(
+  handle: fs.promises.FileHandle,
+  length: number,
+): Promise<void> {
+  exactFileHandle(handle, "output_file_unsafe");
+  await REFLECT_APPLY(FILE_HANDLE_TRUNCATE, handle, [length]);
+}
+
+async function capturedHandleWriteFile(
+  handle: fs.promises.FileHandle,
+  bytes: Buffer,
+): Promise<void> {
+  exactFileHandle(handle, "output_file_unsafe");
+  await REFLECT_APPLY(FILE_HANDLE_WRITE_FILE, handle, [bytes]);
+}
+
+function wipeBytes(bytes: Uint8Array | null | undefined): void {
+  if (bytes) REFLECT_APPLY(TYPED_ARRAY_FILL, bytes, [0]);
+}
+
+function exactBytesEqual(left: Buffer, right: Uint8Array): boolean {
+  return REFLECT_APPLY(BUFFER_EQUALS, left, [right]) as boolean;
+}
+
+function exactBufferLength(
+  value: Buffer,
+  failureCode: PostgresReviewedPricePromotionCliFailureCode,
+): number {
+  if (
+    typeof TYPED_ARRAY_LENGTH_GETTER !== "function"
+    || !REFLECT_APPLY(BUFFER_IS_BUFFER, BUFFER_CONSTRUCTOR, [value])
+    || isProxy(value)
+  ) fail(failureCode);
+  const length = REFLECT_APPLY(TYPED_ARRAY_LENGTH_GETTER, value, []);
+  if (
+    !REFLECT_APPLY(NUMBER_IS_SAFE_INTEGER, NUMBER_OBJECT, [length])
+    || length < 0
+  ) {
+    fail(failureCode);
+  }
+  return length as number;
+}
+
+function regexMatches(pattern: RegExp, value: string): boolean {
+  return REFLECT_APPLY(REGEXP_EXEC, pattern, [value]) !== null;
 }
 
 function errnoIs(error: unknown, code: string): boolean {
@@ -560,43 +1183,76 @@ function errnoIs(error: unknown, code: string): boolean {
 
 function assertRequiredFilesystemAuthority(): void {
   if (
-    !Number.isInteger(fs.constants.O_NOFOLLOW)
-    || fs.constants.O_NOFOLLOW <= 0
-    || !Number.isInteger(fs.constants.O_DIRECTORY)
-    || fs.constants.O_DIRECTORY <= 0
-    || typeof process.geteuid !== "function"
+    !REFLECT_APPLY(NUMBER_IS_INTEGER, NUMBER_OBJECT, [O_NOFOLLOW])
+    || O_NOFOLLOW <= 0
+    || !REFLECT_APPLY(NUMBER_IS_INTEGER, NUMBER_OBJECT, [O_DIRECTORY])
+    || O_DIRECTORY <= 0
+    || typeof PROCESS_GETEUID !== "function"
   ) fail("artifact_file_unsafe");
 }
 
 function effectiveUid(): bigint {
-  if (typeof process.geteuid !== "function") fail("artifact_file_unsafe");
-  const value = process.geteuid();
-  if (!Number.isSafeInteger(value) || value < 0) fail("artifact_file_unsafe");
-  return BigInt(value);
+  if (typeof PROCESS_GETEUID !== "function") fail("artifact_file_unsafe");
+  const value = REFLECT_APPLY(PROCESS_GETEUID, PROCESS_OBJECT, []);
+  if (
+    !REFLECT_APPLY(NUMBER_IS_SAFE_INTEGER, NUMBER_OBJECT, [value])
+    || value < 0
+  ) fail("artifact_file_unsafe");
+  return REFLECT_APPLY(BIGINT_CONSTRUCTOR, undefined, [value]) as bigint;
 }
 
 function exactAbsolutePath(value: string): string {
   if (
     typeof value !== "string"
-    || !path.isAbsolute(value)
-    || path.normalize(value) !== value
-    || path.resolve(value) !== value
-    || value === path.parse(value).root
-    || value.includes("\0")
-    || /[\r\n]/.test(value)
-    || Buffer.byteLength(value, "utf8") > MAX_PATH_BYTES
+    || !REFLECT_APPLY(PATH_IS_ABSOLUTE, PATH_OBJECT, [value])
+    || REFLECT_APPLY(PATH_NORMALIZE, PATH_OBJECT, [value]) !== value
+    || REFLECT_APPLY(PATH_RESOLVE, PATH_OBJECT, [value]) !== value
+    || REFLECT_APPLY(PATH_DIRNAME, PATH_OBJECT, [value]) === value
+    || REFLECT_APPLY(STRING_INCLUDES, value, ["\0"]) === true
+    || regexMatches(CONTROL_CHARACTER_PATTERN, value)
+    || REFLECT_APPLY(BUFFER_BYTE_LENGTH, BUFFER_CONSTRUCTOR, [value, "utf8"])
+      > MAX_PATH_BYTES
   ) fail("argument_invalid");
   return value;
 }
 
 function exactSha256(value: string): string {
-  if (!SHA256_PATTERN.test(value)) fail("argument_invalid");
+  if (!regexMatches(SHA256_PATTERN, value)) fail("argument_invalid");
   return value;
 }
 
 function exactCandidateSha(value: string): string {
-  if (!CANDIDATE_PATTERN.test(value)) fail("argument_invalid");
+  if (!regexMatches(CANDIDATE_PATTERN, value)) fail("argument_invalid");
   return value;
+}
+
+function exactDistinctPaths(values: readonly string[]): boolean {
+  const length = exactArrayLength(values, "argument_invalid");
+  for (let left = 0; left < length; left += 1) {
+    const leftValue = exactArrayItem(values, left, "argument_invalid");
+    if (typeof leftValue !== "string") fail("argument_invalid");
+    for (let right = left + 1; right < length; right += 1) {
+      if (leftValue === exactArrayItem(values, right, "argument_invalid")) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+function allPathsHaveParent(
+  values: readonly string[],
+  expectedParent: string,
+): boolean {
+  const length = exactArrayLength(values, "argument_invalid");
+  for (let index = 0; index < length; index += 1) {
+    const filename = exactArrayItem(values, index, "argument_invalid");
+    if (
+      typeof filename !== "string"
+      || REFLECT_APPLY(PATH_DIRNAME, PATH_OBJECT, [filename]) !== expectedParent
+    ) return false;
+  }
+  return true;
 }
 
 function fileIdentity(stat: fs.BigIntStats): StableFileIdentity {
@@ -666,14 +1322,17 @@ function assertPrivateFile(
   expectedBytes?: number,
 ): void {
   if (
-    !stat.isFile()
-    || stat.isSymbolicLink()
+    (stat.mode & S_IFMT) !== S_IFREG
     || stat.uid !== uid
     || stat.nlink !== 1n
     || (stat.mode & 0o7777n) !== 0o600n
     || stat.size < 1n
-    || stat.size > BigInt(maximumBytes)
-    || expectedBytes !== undefined && stat.size !== BigInt(expectedBytes)
+    || stat.size > REFLECT_APPLY(BIGINT_CONSTRUCTOR, undefined, [maximumBytes])
+    || expectedBytes !== undefined && stat.size !== REFLECT_APPLY(
+      BIGINT_CONSTRUCTOR,
+      undefined,
+      [expectedBytes],
+    )
   ) fail("artifact_file_unsafe");
 }
 
@@ -683,19 +1342,17 @@ function assertPrivateOutputFile(
   expectedBytes: number,
 ): void {
   if (
-    !stat.isFile()
-    || stat.isSymbolicLink()
+    (stat.mode & S_IFMT) !== S_IFREG
     || stat.uid !== uid
     || stat.nlink !== 1n
     || (stat.mode & 0o7777n) !== 0o600n
-    || stat.size !== BigInt(expectedBytes)
+    || stat.size !== REFLECT_APPLY(BIGINT_CONSTRUCTOR, undefined, [expectedBytes])
   ) fail("output_file_unsafe");
 }
 
 function assertPrivateOutputParent(stat: fs.BigIntStats, uid: bigint): void {
   if (
-    !stat.isDirectory()
-    || stat.isSymbolicLink()
+    (stat.mode & S_IFMT) !== S_IFDIR
     || stat.uid !== uid
     || stat.nlink < 1n
     || (stat.mode & 0o7777n) !== 0o700n
@@ -704,8 +1361,7 @@ function assertPrivateOutputParent(stat: fs.BigIntStats, uid: bigint): void {
 
 function assertPrivateInputParent(stat: fs.BigIntStats, uid: bigint): void {
   if (
-    !stat.isDirectory()
-    || stat.isSymbolicLink()
+    (stat.mode & S_IFMT) !== S_IFDIR
     || stat.uid !== uid
     || stat.nlink < 1n
     || (stat.mode & 0o7777n) !== 0o700n
@@ -715,11 +1371,12 @@ function assertPrivateInputParent(stat: fs.BigIntStats, uid: bigint): void {
 async function assertParentAuthorityExact(
   authority: PrivateParentAuthority,
 ): Promise<void> {
-  const [descriptor, atPath, real] = await Promise.all([
-    authority.handle.stat({ bigint: true }),
-    fs.promises.lstat(authority.path, { bigint: true }),
-    fs.promises.realpath(authority.path),
-  ]);
+  const descriptor = await capturedHandleStat(
+    authority.handle,
+    "artifact_file_unsafe",
+  );
+  const atPath = await capturedLstat(authority.path, "artifact_file_unsafe");
+  const real = await capturedRealpath(authority.path, "artifact_file_unsafe");
   assertPrivateInputParent(descriptor, authority.uid);
   assertPrivateInputParent(atPath, authority.uid);
   if (
@@ -737,18 +1394,18 @@ async function openPrivateParentAuthority(
   const uid = effectiveUid();
   let handle: fs.promises.FileHandle | null = null;
   try {
-    const [real, atPath] = await Promise.all([
-      fs.promises.realpath(parent),
-      fs.promises.lstat(parent, { bigint: true }),
-    ]);
+    const real = await capturedRealpath(parent, "artifact_file_unsafe");
+    const atPath = await capturedLstat(parent, "artifact_file_unsafe");
     if (real !== parent) fail("artifact_file_unsafe");
     assertPrivateInputParent(atPath, uid);
     const identity = directoryIdentity(atPath);
-    handle = await fs.promises.open(
+    handle = await capturedOpen(
       parent,
-      fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW,
+      O_RDONLY | O_DIRECTORY | O_NOFOLLOW,
+      undefined,
+      "artifact_file_unsafe",
     );
-    const opened = await handle.stat({ bigint: true });
+    const opened = await capturedHandleStat(handle, "artifact_file_unsafe");
     assertPrivateInputParent(opened, uid);
     if (!sameDirectoryIdentity(identity, directoryIdentity(opened))) {
       fail("artifact_file_unsafe");
@@ -774,7 +1431,7 @@ async function openPrivateParentAuthority(
         }
         closed = true;
         try {
-          await heldParentHandle.close();
+          await capturedHandleClose(heldParentHandle, "artifact_file_unsafe");
         } catch {
           failed = true;
         }
@@ -786,12 +1443,12 @@ async function openPrivateParentAuthority(
   } catch (error) {
     if (handle) {
       try {
-        await handle.close();
+        await capturedHandleClose(handle, "artifact_file_unsafe");
       } catch {
         return fail("artifact_file_unsafe");
       }
     }
-    if (error instanceof SafeCliError) throw error;
+    if (isSafeCliError(error)) throw error;
     return fail("artifact_file_unsafe");
   }
 }
@@ -802,21 +1459,81 @@ async function readExactDescriptor(
   failureCode: "artifact_file_unsafe" | "output_file_unsafe" =
     "artifact_file_unsafe",
 ): Promise<Buffer> {
-  const bytes = Buffer.alloc(size);
+  const bytes = REFLECT_APPLY(BUFFER_ALLOC, BUFFER_CONSTRUCTOR, [size]) as Buffer;
   let offset = 0;
   while (offset < size) {
-    const result = await handle.read(bytes, offset, size - offset, offset);
-    if (result.bytesRead === 0) fail(failureCode);
-    offset += result.bytesRead;
+    const bytesRead = await capturedHandleRead(
+      handle,
+      bytes,
+      offset,
+      size - offset,
+      offset,
+      failureCode,
+    );
+    if (bytesRead === 0) fail(failureCode);
+    offset += bytesRead;
   }
-  const overflow = Buffer.alloc(1);
+  const overflow = REFLECT_APPLY(BUFFER_ALLOC, BUFFER_CONSTRUCTOR, [1]) as Buffer;
   try {
-    const result = await handle.read(overflow, 0, 1, size);
-    if (result.bytesRead !== 0) fail(failureCode);
+    const bytesRead = await capturedHandleRead(
+      handle,
+      overflow,
+      0,
+      1,
+      size,
+      failureCode,
+    );
+    if (bytesRead !== 0) fail(failureCode);
   } finally {
-    overflow.fill(0);
+    wipeBytes(overflow);
   }
   return bytes;
+}
+
+function heldPrivateFileState(held: HeldPrivateFile): HeldPrivateFileState {
+  const state = REFLECT_APPLY(
+    WEAK_MAP_GET,
+    HELD_PRIVATE_FILE_STATES,
+    [held],
+  ) as HeldPrivateFileState | undefined;
+  if (!state) fail("artifact_file_unsafe");
+  return state;
+}
+
+async function withFreshVerifiedHeldBytes<Value>(
+  held: HeldPrivateFile,
+  expectedSha256: string | null,
+  use: (bytes: Buffer) => Value | Promise<Value>,
+): Promise<Value> {
+  const state = heldPrivateFileState(held);
+  if (state.closed) fail("artifact_file_unsafe");
+  if (
+    expectedSha256 !== null
+    && state.sha256 !== exactSha256(expectedSha256)
+  ) fail("artifact_hash_mismatch");
+  await state.authority.assertExact();
+  const descriptor = await capturedHandleStat(
+    state.handle,
+    "artifact_file_unsafe",
+  );
+  const atPath = await capturedLstat(state.filename, "artifact_file_unsafe");
+  const real = await capturedRealpath(state.filename, "artifact_file_unsafe");
+  assertPrivateFile(descriptor, state.uid, state.maximumBytes, state.size);
+  assertPrivateFile(atPath, state.uid, state.maximumBytes, state.size);
+  if (
+    real !== state.filename
+    || !sameFileIdentity(state.identity, fileIdentity(descriptor))
+    || !sameFileIdentity(state.identity, fileIdentity(atPath))
+  ) fail("artifact_file_unsafe");
+  const actual = await readExactDescriptor(state.handle, state.size);
+  try {
+    if (sha256PostgresMigrationBytes(actual) !== state.sha256) {
+      fail("artifact_file_unsafe");
+    }
+    return await use(actual);
+  } finally {
+    wipeBytes(actual);
+  }
 }
 
 async function openHeldPrivateFile(
@@ -826,39 +1543,42 @@ async function openHeldPrivateFile(
 ): Promise<HeldPrivateFile> {
   assertRequiredFilesystemAuthority();
   const filename = exactAbsolutePath(filenameInput);
-  if (path.dirname(filename) !== authority.path) fail("artifact_file_unsafe");
+  if (REFLECT_APPLY(PATH_DIRNAME, PATH_OBJECT, [filename]) !== authority.path) {
+    fail("artifact_file_unsafe");
+  }
   const uid = authority.uid;
   let handle: fs.promises.FileHandle | null = null;
   let bytes: Buffer | null = null;
   try {
     await authority.assertExact();
-    const [real, pathBefore] = await Promise.all([
-      fs.promises.realpath(filename),
-      fs.promises.lstat(filename, { bigint: true }),
-    ]);
+    const real = await capturedRealpath(filename, "artifact_file_unsafe");
+    const pathBefore = await capturedLstat(filename, "artifact_file_unsafe");
     if (real !== filename) fail("artifact_file_unsafe");
     assertPrivateFile(pathBefore, uid, maximumBytes);
-    handle = await fs.promises.open(
+    handle = await capturedOpen(
       filename,
-      fs.constants.O_RDONLY
-        | fs.constants.O_NOFOLLOW
-        | (fs.constants.O_NONBLOCK ?? 0),
+      O_RDONLY | O_NOFOLLOW | O_NONBLOCK,
+      undefined,
+      "artifact_file_unsafe",
     );
-    const before = await handle.stat({ bigint: true });
+    const before = await capturedHandleStat(handle, "artifact_file_unsafe");
     assertPrivateFile(before, uid, maximumBytes);
     const beforeIdentity = fileIdentity(before);
-    const pathOpened = await fs.promises.lstat(filename, { bigint: true });
+    const pathOpened = await capturedLstat(filename, "artifact_file_unsafe");
     assertPrivateFile(pathOpened, uid, maximumBytes);
     if (!sameFileIdentity(beforeIdentity, fileIdentity(pathOpened))) {
       fail("artifact_file_unsafe");
     }
-    const size = Number(before.size);
+    const size = REFLECT_APPLY(NUMBER_OBJECT, undefined, [before.size]);
+    if (
+      !REFLECT_APPLY(NUMBER_IS_SAFE_INTEGER, NUMBER_OBJECT, [size])
+      || size < 1
+      || size > maximumBytes
+    ) fail("artifact_file_unsafe");
     bytes = await readExactDescriptor(handle, size);
-    const [after, pathAfter, realAfter] = await Promise.all([
-      handle.stat({ bigint: true }),
-      fs.promises.lstat(filename, { bigint: true }),
-      fs.promises.realpath(filename),
-    ]);
+    const after = await capturedHandleStat(handle, "artifact_file_unsafe");
+    const pathAfter = await capturedLstat(filename, "artifact_file_unsafe");
+    const realAfter = await capturedRealpath(filename, "artifact_file_unsafe");
     assertPrivateFile(after, uid, maximumBytes, size);
     assertPrivateFile(pathAfter, uid, maximumBytes, size);
     if (
@@ -869,114 +1589,117 @@ async function openHeldPrivateFile(
     await authority.assertExact();
     const sha256 = sha256PostgresMigrationBytes(bytes);
     const identity = beforeIdentity;
-    const heldBytes = bytes;
     const heldHandle = handle;
-    let closed = false;
-    const held: HeldPrivateFile = {
+    const state: HeldPrivateFileState = {
+      authority,
+      closed: false,
+      filename,
+      handle: heldHandle,
+      identity,
+      maximumBytes,
+      sha256,
+      size,
+      uid,
+    };
+    let held: HeldPrivateFile;
+    held = OBJECT_FREEZE({
       path: filename,
-      bytes: heldBytes,
       sha256,
       assertExact: async () => {
-        if (closed) fail("artifact_file_unsafe");
-        await authority.assertExact();
-        const [descriptor, atPath, real] = await Promise.all([
-          heldHandle.stat({ bigint: true }),
-          fs.promises.lstat(filename, { bigint: true }),
-          fs.promises.realpath(filename),
-        ]);
-        assertPrivateFile(descriptor, uid, maximumBytes, heldBytes.length);
-        assertPrivateFile(atPath, uid, maximumBytes, heldBytes.length);
-        if (
-          real !== filename
-          || !sameFileIdentity(identity, fileIdentity(descriptor))
-          || !sameFileIdentity(identity, fileIdentity(atPath))
-        ) fail("artifact_file_unsafe");
-        const actual = await readExactDescriptor(heldHandle, heldBytes.length);
-        try {
-          if (sha256PostgresMigrationBytes(actual) !== sha256) {
-            fail("artifact_file_unsafe");
-          }
-        } finally {
-          actual.fill(0);
-        }
+        await withFreshVerifiedHeldBytes(held, null, () => undefined);
       },
       close: async () => {
-        if (closed) fail("artifact_file_unsafe");
+        if (state.closed) fail("artifact_file_unsafe");
         let failed = false;
         try {
-          await held.assertExact();
+          await withFreshVerifiedHeldBytes(held, null, () => undefined);
         } catch {
           failed = true;
         }
-        closed = true;
-        heldBytes.fill(0);
+        state.closed = true;
         try {
-          await heldHandle.close();
+          await capturedHandleClose(heldHandle, "artifact_file_unsafe");
         } catch {
           failed = true;
         }
         if (failed) fail("artifact_file_unsafe");
       },
-    };
+    });
+    REFLECT_APPLY(WEAK_MAP_SET, HELD_PRIVATE_FILE_STATES, [held, state]);
     handle = null;
+    wipeBytes(bytes);
     bytes = null;
     return held;
   } catch (error) {
-    bytes?.fill(0);
+    wipeBytes(bytes);
     if (handle) {
       try {
-        await handle.close();
+        await capturedHandleClose(handle, "artifact_file_unsafe");
       } catch {
         return fail("artifact_file_unsafe");
       }
     }
-    if (error instanceof SafeCliError) throw error;
+    if (isSafeCliError(error)) throw error;
     return fail("artifact_file_unsafe");
   }
 }
 
-function assertHeldFileHash(
-  held: HeldPrivateFile,
-  expectedSha256: string,
-): void {
-  if (held.sha256 !== exactSha256(expectedSha256)) {
-    fail("artifact_hash_mismatch");
-  }
-}
-
 function decodeExactUtf8(bytes: Buffer): string {
+  let roundTrip: Buffer | null = null;
   try {
-    const value = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-    if (!Buffer.from(value, "utf8").equals(bytes)) fail("artifact_invalid");
+    const value = REFLECT_APPLY(TEXT_DECODER_DECODE, UTF8_FATAL_DECODER, [
+      bytes,
+    ]);
+    if (typeof value !== "string") fail("artifact_invalid");
+    roundTrip = REFLECT_APPLY(
+      BUFFER_FROM,
+      BUFFER_CONSTRUCTOR,
+      [value, "utf8"],
+    ) as Buffer;
+    if (!exactBytesEqual(roundTrip, bytes)) fail("artifact_invalid");
     return value;
   } catch (error) {
-    if (error instanceof SafeCliError) throw error;
+    if (isSafeCliError(error)) throw error;
     return fail("artifact_invalid");
+  } finally {
+    wipeBytes(roundTrip);
   }
 }
 
-function readCanonicalJsonArtifact<Value>(input: {
+async function readCanonicalJsonArtifact<Value>(input: {
   readonly held: HeldPrivateFile;
   readonly expectedSha256: string;
   readonly parse: (value: unknown) => { readonly success: boolean; readonly data?: Value };
-}): PrivateArtifact<Value> {
-  assertHeldFileHash(input.held, input.expectedSha256);
-  let raw: unknown;
-  try {
-    raw = JSON.parse(decodeExactUtf8(input.held.bytes)) as unknown;
-  } catch (error) {
-    if (error instanceof SafeCliError) throw error;
-    return fail("artifact_invalid");
-  }
-  const parsed = input.parse(raw);
-  if (!parsed.success || parsed.data === undefined) fail("artifact_invalid");
-  const canonical = canonicalPostgresReviewedPricePromotionJson(parsed.data);
-  if (!canonical.equals(input.held.bytes)) fail("artifact_invalid");
-  return {
-    bytes: input.held.bytes,
-    sha256: input.held.sha256,
-    value: parsed.data,
-  };
+}): Promise<PrivateArtifact<Value>> {
+  return withFreshVerifiedHeldBytes(
+    input.held,
+    input.expectedSha256,
+    (bytes) => {
+      let raw: unknown;
+      try {
+        raw = REFLECT_APPLY(
+          JSON_PARSE,
+          JSON_OBJECT,
+          [decodeExactUtf8(bytes)],
+        ) as unknown;
+      } catch (error) {
+        if (isSafeCliError(error)) throw error;
+        return fail("artifact_invalid");
+      }
+      const parsed = input.parse(raw);
+      if (!parsed.success || parsed.data === undefined) fail("artifact_invalid");
+      const canonical = canonicalPostgresReviewedPricePromotionJson(parsed.data);
+      try {
+        if (!exactBytesEqual(canonical, bytes)) fail("artifact_invalid");
+      } finally {
+        wipeBytes(canonical);
+      }
+      return {
+        sha256: input.held.sha256,
+        value: parsed.data,
+      };
+    },
+  );
 }
 
 interface PlannerUrlAuthority {
@@ -987,133 +1710,328 @@ interface PlannerUrlAuthority {
 function directVerifyFullPlannerUrl(bytes: Buffer): PlannerUrlAuthority {
   const line = decodeExactUtf8(bytes);
   if (
-    !line.endsWith("\n")
-    || line.indexOf("\n") !== line.length - 1
-    || /[\r\0]/.test(line)
+    REFLECT_APPLY(STRING_ENDS_WITH, line, ["\n"]) !== true
+    || REFLECT_APPLY(STRING_INDEX_OF, line, ["\n"]) !== line.length - 1
+    || regexMatches(CONTROL_CHARACTER_PATTERN, REFLECT_APPLY(
+      STRING_SLICE,
+      line,
+      [0, -1],
+    ) as string)
   ) fail("planner_url_unsafe");
-  const value = line.slice(0, -1);
-  if (!value || value.trim() !== value) fail("planner_url_unsafe");
+  const value = REFLECT_APPLY(STRING_SLICE, line, [0, -1]) as string;
+  if (
+    !value
+    || REFLECT_APPLY(STRING_TRIM, value, []) !== value
+  ) fail("planner_url_unsafe");
   let parsed: URL;
   try {
-    parsed = new URL(value);
+    parsed = REFLECT_APPLY(
+      REFLECT_CONSTRUCT,
+      REFLECT_OBJECT,
+      [URL_CONSTRUCTOR, [value]],
+    ) as URL;
+    if (
+      isProxy(parsed)
+      || REFLECT_APPLY(OBJECT_GET_PROTOTYPE_OF, OBJECT_CONSTRUCTOR, [parsed])
+        !== URL_PROTOTYPE
+    ) fail("planner_url_unsafe");
   } catch {
     return fail("planner_url_unsafe");
   }
+  if (
+    typeof URL_HASH_GETTER !== "function"
+    || typeof URL_HOSTNAME_GETTER !== "function"
+    || typeof URL_PASSWORD_GETTER !== "function"
+    || typeof URL_PATHNAME_GETTER !== "function"
+    || typeof URL_PORT_GETTER !== "function"
+    || typeof URL_PROTOCOL_GETTER !== "function"
+    || typeof URL_SEARCH_GETTER !== "function"
+    || typeof URL_SEARCH_PARAMS_GETTER !== "function"
+    || typeof URL_USERNAME_GETTER !== "function"
+  ) fail("planner_url_unsafe");
+  const encodedUsername = REFLECT_APPLY(URL_USERNAME_GETTER, parsed, []) as unknown;
+  const encodedPassword = REFLECT_APPLY(URL_PASSWORD_GETTER, parsed, []) as unknown;
+  const pathname = REFLECT_APPLY(URL_PATHNAME_GETTER, parsed, []) as unknown;
+  const searchParams = REFLECT_APPLY(URL_SEARCH_PARAMS_GETTER, parsed, []) as unknown;
+  if (
+    typeof encodedUsername !== "string"
+    || typeof encodedPassword !== "string"
+    || typeof pathname !== "string"
+    || searchParams === null
+    || typeof searchParams !== "object"
+    || isProxy(searchParams)
+    || REFLECT_APPLY(OBJECT_GET_PROTOTYPE_OF, OBJECT_CONSTRUCTOR, [searchParams])
+      !== URL_SEARCH_PARAMS_PROTOTYPE
+  ) fail("planner_url_unsafe");
   let username: string;
   let databaseName: string;
   let password: string;
   try {
-    username = decodeURIComponent(parsed.username);
-    password = decodeURIComponent(parsed.password);
-    databaseName = decodeURIComponent(parsed.pathname.slice(1));
+    username = REFLECT_APPLY(DECODE_URI_COMPONENT, undefined, [
+      encodedUsername,
+    ]) as string;
+    password = REFLECT_APPLY(DECODE_URI_COMPONENT, undefined, [
+      encodedPassword,
+    ]) as string;
+    databaseName = REFLECT_APPLY(DECODE_URI_COMPONENT, undefined, [
+      REFLECT_APPLY(STRING_SLICE, pathname, [1]),
+    ]) as string;
   } catch {
     return fail("planner_url_unsafe");
   }
-  const keys = [...parsed.searchParams.keys()];
-  const rootCaEntries = parsed.searchParams.getAll("sslrootcert");
-  const rootCaFile = rootCaEntries[0] ?? "";
-  const expectedSearch = new URLSearchParams([
-    ["sslmode", "verify-full"],
-    ["sslrootcert", rootCaFile],
-  ]).toString();
+  const rootCaEntries = REFLECT_APPLY(
+    URL_SEARCH_PARAMS_GET_ALL,
+    searchParams,
+    ["sslrootcert"],
+  ) as unknown;
+  const sslModeEntries = REFLECT_APPLY(
+    URL_SEARCH_PARAMS_GET_ALL,
+    searchParams,
+    ["sslmode"],
+  ) as unknown;
   if (
-    parsed.protocol !== "postgresql:"
-    || parsed.toString() !== value
+    !ARRAY_IS_ARRAY(rootCaEntries)
+    || exactArrayLength(rootCaEntries, "argument_invalid") !== 1
+    || !ARRAY_IS_ARRAY(sslModeEntries)
+    || exactArrayLength(sslModeEntries, "argument_invalid") !== 1
+  ) fail("planner_url_unsafe");
+  const rootCaFile = exactArrayItem(
+    rootCaEntries,
+    0,
+    "argument_invalid",
+  );
+  const sslMode = exactArrayItem(sslModeEntries, 0, "argument_invalid");
+  if (typeof rootCaFile !== "string" || typeof sslMode !== "string") {
+    fail("planner_url_unsafe");
+  }
+  const expectedParameters = REFLECT_APPLY(
+    REFLECT_CONSTRUCT,
+    REFLECT_OBJECT,
+    [URL_SEARCH_PARAMS_CONSTRUCTOR, []],
+  ) as URLSearchParams;
+  if (
+    isProxy(expectedParameters)
+    || REFLECT_APPLY(
+      OBJECT_GET_PROTOTYPE_OF,
+      OBJECT_CONSTRUCTOR,
+      [expectedParameters],
+    ) !== URL_SEARCH_PARAMS_PROTOTYPE
+  ) fail("planner_url_unsafe");
+  REFLECT_APPLY(URL_SEARCH_PARAMS_APPEND, expectedParameters, [
+    "sslmode",
+    "verify-full",
+  ]);
+  REFLECT_APPLY(URL_SEARCH_PARAMS_APPEND, expectedParameters, [
+    "sslrootcert",
+    rootCaFile,
+  ]);
+  const expectedSearch = REFLECT_APPLY(
+    URL_SEARCH_PARAMS_TO_STRING,
+    expectedParameters,
+    [],
+  ) as unknown;
+  const protocol = REFLECT_APPLY(URL_PROTOCOL_GETTER, parsed, []) as unknown;
+  const hostname = REFLECT_APPLY(URL_HOSTNAME_GETTER, parsed, []) as unknown;
+  const port = REFLECT_APPLY(URL_PORT_GETTER, parsed, []) as unknown;
+  const hash = REFLECT_APPLY(URL_HASH_GETTER, parsed, []) as unknown;
+  const search = REFLECT_APPLY(URL_SEARCH_GETTER, parsed, []) as unknown;
+  const serialized = REFLECT_APPLY(URL_TO_STRING, parsed, []) as unknown;
+  const exactSslMode = REFLECT_APPLY(URL_SEARCH_PARAMS_GET, searchParams, [
+    "sslmode",
+  ]) as unknown;
+  if (
+    protocol !== "postgresql:"
+    || serialized !== value
     || username !== PLANNER_ROLE
     || !password
-    || /[\r\n\0]/.test(password)
-    || parsed.hostname !== PERMANENT_STAGING_HOST
-    || parsed.port !== PERMANENT_STAGING_PORT
+    || regexMatches(CONTROL_CHARACTER_PATTERN, password)
+    || hostname !== PERMANENT_STAGING_HOST
+    || port !== PERMANENT_STAGING_PORT
     || databaseName !== PERMANENT_STAGING_DATABASE
-    || parsed.pathname !== `/${PERMANENT_STAGING_DATABASE}`
-    || parsed.hash
-    || keys.length !== 2
-    || keys[0] !== "sslmode"
-    || keys[1] !== "sslrootcert"
-    || parsed.searchParams.getAll("sslmode").length !== 1
-    || parsed.searchParams.get("sslmode") !== "verify-full"
-    || rootCaEntries.length !== 1
+    || pathname !== `/${PERMANENT_STAGING_DATABASE}`
+    || hash !== ""
+    || exactSslMode !== "verify-full"
+    || sslMode !== "verify-full"
     || !rootCaFile
-    || parsed.search.slice(1) !== expectedSearch
+    || typeof search !== "string"
+    || typeof expectedSearch !== "string"
+    || REFLECT_APPLY(STRING_SLICE, search, [1]) !== expectedSearch
   ) fail("planner_url_unsafe");
-  return {
+  return OBJECT_FREEZE({
     password,
     rootCaFile: exactAbsolutePath(rootCaFile),
-  };
+  });
 }
 
 function singlePemCertificate(value: string): boolean {
-  if (!value || value.includes("\0")) return false;
+  if (
+    !value
+    || REFLECT_APPLY(STRING_INCLUDES, value, ["\0"]) === true
+  ) return false;
   const begin = "-----BEGIN CERTIFICATE-----";
   const end = "-----END CERTIFICATE-----";
-  const firstBegin = value.indexOf(begin);
-  const firstEnd = value.indexOf(end, firstBegin + begin.length);
+  const firstBegin = REFLECT_APPLY(STRING_INDEX_OF, value, [begin]) as number;
+  const firstEnd = REFLECT_APPLY(
+    STRING_INDEX_OF,
+    value,
+    [end, firstBegin + begin.length],
+  ) as number;
   if (
     firstBegin < 0
     || firstEnd < 0
-    || value.indexOf(begin, firstBegin + begin.length) !== -1
-    || value.indexOf(end, firstEnd + end.length) !== -1
-    || value.slice(0, firstBegin).trim() !== ""
-    || value.slice(firstEnd + end.length).trim() !== ""
+    || REFLECT_APPLY(
+      STRING_INDEX_OF,
+      value,
+      [begin, firstBegin + begin.length],
+    ) !== -1
+    || REFLECT_APPLY(
+      STRING_INDEX_OF,
+      value,
+      [end, firstEnd + end.length],
+    ) !== -1
+    || REFLECT_APPLY(
+      STRING_TRIM,
+      REFLECT_APPLY(STRING_SLICE, value, [0, firstBegin]),
+      [],
+    ) !== ""
+    || REFLECT_APPLY(
+      STRING_TRIM,
+      REFLECT_APPLY(STRING_SLICE, value, [firstEnd + end.length]),
+      [],
+    ) !== ""
   ) return false;
-  const body = value.slice(firstBegin + begin.length, firstEnd).replace(/\s/g, "");
-  return body.length > 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(body);
+  const rawBody = REFLECT_APPLY(
+    STRING_SLICE,
+    value,
+    [firstBegin + begin.length, firstEnd],
+  ) as string;
+  let body = "";
+  for (let index = 0; index < rawBody.length; index += 1) {
+    const character = REFLECT_APPLY(STRING_CHAR_AT, rawBody, [index]) as string;
+    if (
+      character === " "
+      || character === "\t"
+      || character === "\r"
+      || character === "\n"
+      || character === "\v"
+      || character === "\f"
+    ) continue;
+    body += character;
+  }
+  return body.length > 0 && regexMatches(PEM_BODY_PATTERN, body);
 }
 
-function validateHeldRootCa(
+async function validateHeldRootCa(
   held: HeldPrivateFile,
   expectedDerSha256Input: string,
-): void {
+): Promise<void> {
   const expectedDerSha256 = exactSha256(expectedDerSha256Input);
-  let certificate: crypto.X509Certificate;
-  try {
-    const pem = decodeExactUtf8(held.bytes);
-    if (!singlePemCertificate(pem)) fail("root_ca_invalid");
-    certificate = new crypto.X509Certificate(pem);
-  } catch (error) {
-    if (error instanceof SafeCliError) throw error;
-    return fail("root_ca_invalid");
-  }
-  const actualDerSha256 = sha256PostgresMigrationBytes(certificate.raw);
-  if (actualDerSha256 !== expectedDerSha256) fail("root_ca_pin_mismatch");
-  const now = Date.now();
-  const validFrom = Date.parse(certificate.validFrom);
-  const validTo = Date.parse(certificate.validTo);
-  let selfSigned = false;
-  try {
-    selfSigned = certificate.subject === certificate.issuer
-      && certificate.checkIssued(certificate)
-      && certificate.verify(certificate.publicKey);
-  } catch {
-    selfSigned = false;
-  }
-  if (
-    !certificate.ca
-    || !selfSigned
-    || !Number.isFinite(now)
-    || !Number.isFinite(validFrom)
-    || !Number.isFinite(validTo)
-    || now < validFrom
-    || now >= validTo
-    || validTo - now < MINIMUM_CA_REMAINING_VALIDITY_MS
-  ) fail("root_ca_invalid");
+  await withFreshVerifiedHeldBytes(held, null, (bytes) => {
+    let certificate: crypto.X509Certificate;
+    try {
+      const pem = decodeExactUtf8(bytes);
+      if (!singlePemCertificate(pem)) fail("root_ca_invalid");
+      certificate = REFLECT_APPLY(
+        REFLECT_CONSTRUCT,
+        REFLECT_OBJECT,
+        [CRYPTO_X509_CERTIFICATE, [pem]],
+      ) as crypto.X509Certificate;
+      if (
+        isProxy(certificate)
+        || REFLECT_APPLY(
+          OBJECT_GET_PROTOTYPE_OF,
+          OBJECT_CONSTRUCTOR,
+          [certificate],
+        ) !== X509_CERTIFICATE_PROTOTYPE
+      ) fail("root_ca_invalid");
+    } catch (error) {
+      if (isSafeCliError(error)) throw error;
+      return fail("root_ca_invalid");
+    }
+    if (
+      typeof X509_CA_GETTER !== "function"
+      || typeof X509_ISSUER_GETTER !== "function"
+      || typeof X509_PUBLIC_KEY_GETTER !== "function"
+      || typeof X509_RAW_GETTER !== "function"
+      || typeof X509_SUBJECT_GETTER !== "function"
+      || typeof X509_VALID_FROM_GETTER !== "function"
+      || typeof X509_VALID_TO_GETTER !== "function"
+    ) fail("root_ca_invalid");
+    const raw = REFLECT_APPLY(X509_RAW_GETTER, certificate, []) as unknown;
+    if (
+      !REFLECT_APPLY(BUFFER_IS_BUFFER, BUFFER_CONSTRUCTOR, [raw])
+      || isProxy(raw as object)
+    ) fail("root_ca_invalid");
+    const actualDerSha256 = sha256PostgresMigrationBytes(raw as Buffer);
+    if (actualDerSha256 !== expectedDerSha256) fail("root_ca_pin_mismatch");
+    const now = REFLECT_APPLY(DATE_NOW, DATE_OBJECT, []) as number;
+    const validFromText = REFLECT_APPLY(
+      X509_VALID_FROM_GETTER,
+      certificate,
+      [],
+    );
+    const validToText = REFLECT_APPLY(X509_VALID_TO_GETTER, certificate, []);
+    if (typeof validFromText !== "string" || typeof validToText !== "string") {
+      fail("root_ca_invalid");
+    }
+    const validFrom = REFLECT_APPLY(DATE_PARSE, DATE_OBJECT, [validFromText]) as number;
+    const validTo = REFLECT_APPLY(DATE_PARSE, DATE_OBJECT, [validToText]) as number;
+    let selfSigned = false;
+    try {
+      const subject = REFLECT_APPLY(X509_SUBJECT_GETTER, certificate, []);
+      const issuer = REFLECT_APPLY(X509_ISSUER_GETTER, certificate, []);
+      const publicKey = REFLECT_APPLY(X509_PUBLIC_KEY_GETTER, certificate, []);
+      selfSigned = typeof subject === "string"
+        && subject === issuer
+        && REFLECT_APPLY(X509_CHECK_ISSUED, certificate, [certificate]) === true
+        && REFLECT_APPLY(X509_VERIFY, certificate, [publicKey]) === true;
+    } catch {
+      selfSigned = false;
+    }
+    if (
+      REFLECT_APPLY(X509_CA_GETTER, certificate, []) !== true
+      || !selfSigned
+      || !REFLECT_APPLY(NUMBER_IS_FINITE, NUMBER_OBJECT, [now])
+      || !REFLECT_APPLY(NUMBER_IS_FINITE, NUMBER_OBJECT, [validFrom])
+      || !REFLECT_APPLY(NUMBER_IS_FINITE, NUMBER_OBJECT, [validTo])
+      || now < validFrom
+      || now >= validTo
+      || validTo - now < MINIMUM_CA_REMAINING_VALIDITY_MS
+    ) fail("root_ca_invalid");
+  });
 }
 
 function forbiddenAmbientAuthorityName(name: string): boolean {
-  const canonical = name.toUpperCase();
+  const canonical = REFLECT_APPLY(STRING_TO_UPPER_CASE, name, []) as string;
   return canonical === "DATABASE_URL"
     || canonical === "DIRECT_URL"
     || canonical === "NODE_PG_FORCE_NATIVE"
-    || canonical.startsWith("PG")
-    || canonical.includes("SUPABASE")
-    || canonical.startsWith("PINTPATH_RUNTIME_")
-    || /^PINTPATH_.*DATABASE_URL/.test(canonical);
+    || REFLECT_APPLY(STRING_STARTS_WITH, canonical, ["PG"]) === true
+    || REFLECT_APPLY(STRING_INCLUDES, canonical, ["SUPABASE"]) === true
+    || REFLECT_APPLY(STRING_STARTS_WITH, canonical, ["PINTPATH_RUNTIME_"])
+      === true
+    || regexMatches(FORBIDDEN_DATABASE_URL_PATTERN, canonical);
 }
 
 function assertNoForbiddenAmbientAuthority(
   environment: Readonly<NodeJS.ProcessEnv>,
 ): void {
-  for (const [name, value] of Object.entries(environment)) {
+  if (
+    environment === null
+    || typeof environment !== "object"
+    || isProxy(environment)
+  ) fail("argument_invalid");
+  const keys = REFLECT_APPLY(
+    REFLECT_OWN_KEYS,
+    REFLECT_OBJECT,
+    [environment],
+  ) as unknown;
+  if (!ARRAY_IS_ARRAY(keys)) fail("argument_invalid");
+  const length = exactArrayLength(keys, "argument_invalid");
+  for (let index = 0; index < length; index += 1) {
+    const name = exactArrayItem(keys, index, "argument_invalid");
+    if (typeof name !== "string") fail("argument_invalid");
+    const value = ownDataValue(environment, name, "argument_invalid");
     if (
       typeof value === "string"
       && value.length > 0
@@ -1124,22 +2042,28 @@ function assertNoForbiddenAmbientAuthority(
 
 async function assertHeldAuthorityExact(input: {
   readonly authority: PrivateParentAuthority;
-  readonly files: readonly HeldPrivateFile[];
+  readonly files: readonly (HeldPrivateFile | null)[];
   readonly rootCa: HeldPrivateFile;
   readonly expectedRootCaDerSha256: string;
 }): Promise<void> {
   await input.authority.assertExact();
-  for (const file of input.files) await file.assertExact();
-  validateHeldRootCa(input.rootCa, input.expectedRootCaDerSha256);
+  for (let index = 0; index < HELD_FILE_COUNT; index += 1) {
+    const file = exactHeldFileSlot(input.files, index, false);
+    if (!file) fail("artifact_file_unsafe");
+    await file.assertExact();
+  }
+  await validateHeldRootCa(input.rootCa, input.expectedRootCaDerSha256);
   await input.authority.assertExact();
 }
 
 async function closeHeldAuthority(input: {
   readonly authority: PrivateParentAuthority | null;
-  readonly files: readonly HeldPrivateFile[];
+  readonly files: readonly (HeldPrivateFile | null)[];
 }): Promise<boolean> {
   let exact = true;
-  for (const file of [...input.files].reverse()) {
+  for (let index = HELD_FILE_COUNT - 1; index >= 0; index -= 1) {
+    const file = exactHeldFileSlot(input.files, index, true);
+    if (!file) continue;
     try {
       await file.close();
     } catch {
@@ -1156,9 +2080,28 @@ async function closeHeldAuthority(input: {
   return exact;
 }
 
+function exactHeldFileSlot(
+  files: readonly (HeldPrivateFile | null)[],
+  index: number,
+  allowNull: boolean,
+): HeldPrivateFile | null {
+  if (exactArrayLength(files, "artifact_file_unsafe") !== HELD_FILE_COUNT) {
+    fail("artifact_file_unsafe");
+  }
+  const value = exactArrayItem(files, index, "artifact_file_unsafe");
+  if (value === null && allowNull) return null;
+  if (
+    value === null
+    || typeof value !== "object"
+    || isProxy(value)
+  ) fail("artifact_file_unsafe");
+  heldPrivateFileState(value as HeldPrivateFile);
+  return value as HeldPrivateFile;
+}
+
 async function pathExists(filename: string): Promise<boolean> {
   try {
-    await fs.promises.lstat(filename);
+    await capturedLstat(filename, "output_file_unsafe");
     return true;
   } catch (error) {
     if (errnoIs(error, "ENOENT")) return false;
@@ -1168,7 +2111,7 @@ async function pathExists(filename: string): Promise<boolean> {
 
 async function removeTemporaryOutput(filename: string): Promise<void> {
   try {
-    await fs.promises.unlink(filename);
+    await capturedUnlink(filename);
   } catch (error) {
     if (!errnoIs(error, "ENOENT")) fail("output_file_unsafe");
   }
@@ -1177,8 +2120,44 @@ async function removeTemporaryOutput(filename: string): Promise<void> {
 interface PublishedPrivatePlan {
   readonly sha256: string;
   readonly identity: StableFileIdentity;
-  close(): Promise<void>;
+  prepareForSummary(): Promise<void>;
+  release(): Promise<void>;
   rollback(): Promise<void>;
+}
+
+function freshTemporarySuffix(): string {
+  let random: Buffer | null = null;
+  try {
+    random = REFLECT_APPLY(
+      CRYPTO_RANDOM_BYTES,
+      CRYPTO_OBJECT,
+      [16],
+    ) as Buffer;
+    if (
+      typeof TYPED_ARRAY_LENGTH_GETTER !== "function"
+      || !REFLECT_APPLY(BUFFER_IS_BUFFER, BUFFER_CONSTRUCTOR, [random])
+      || isProxy(random)
+      || REFLECT_APPLY(TYPED_ARRAY_LENGTH_GETTER, random, []) !== 16
+    ) fail("output_file_unsafe");
+    let output = "";
+    for (let index = 0; index < 16; index += 1) {
+      const byte = random[index];
+      if (
+        typeof byte !== "number"
+        || !REFLECT_APPLY(NUMBER_IS_INTEGER, NUMBER_OBJECT, [byte])
+        || byte < 0
+        || byte > 255
+      ) {
+        fail("output_file_unsafe");
+      }
+      output += REFLECT_APPLY(STRING_CHAR_AT, LOWERCASE_HEX, [byte >>> 4]);
+      output += REFLECT_APPLY(STRING_CHAR_AT, LOWERCASE_HEX, [byte & 15]);
+    }
+    if (!regexMatches(/^[a-f0-9]{32}$/, output)) fail("output_file_unsafe");
+    return output;
+  } finally {
+    wipeBytes(random);
+  }
 }
 
 async function writeNewPrivateCanonicalPlan(
@@ -1189,47 +2168,62 @@ async function writeNewPrivateCanonicalPlan(
   assertRequiredFilesystemAuthority();
   const filename = exactAbsolutePath(filenameInput);
   const bytes = canonicalPostgresReviewedPricePromotionJson(value);
-  if (bytes.length < 1 || bytes.length > MAX_PLAN_BYTES) fail("plan_result_invalid");
-  const parent = path.dirname(filename);
+  const byteCount = exactBufferLength(bytes, "plan_result_invalid");
+  if (byteCount < 1 || byteCount > MAX_PLAN_BYTES) fail("plan_result_invalid");
+  const parent = REFLECT_APPLY(PATH_DIRNAME, PATH_OBJECT, [filename]) as string;
   if (parent !== authority.path) fail("output_file_unsafe");
   const uid = authority.uid;
   const sha256 = sha256PostgresMigrationBytes(bytes);
   let fileHandle: fs.promises.FileHandle | null = null;
+  let rollbackFileHandle: fs.promises.FileHandle | null = null;
   let published = false;
   let retained = false;
   let ownedTemporaryPresent = false;
-  const temporaryPath = path.join(
+  let publishedIdentity: StableFileIdentity | null = null;
+  const temporaryPath = REFLECT_APPLY(PATH_JOIN, PATH_OBJECT, [
     parent,
-    `.pintpath-postgres-reviewed-price-plan-${crypto.randomBytes(16).toString("hex")}.tmp`,
-  );
+    `.pintpath-postgres-reviewed-price-plan-${freshTemporarySuffix()}.tmp`,
+  ]) as string;
+  if (
+    exactAbsolutePath(temporaryPath) !== temporaryPath
+    || REFLECT_APPLY(PATH_DIRNAME, PATH_OBJECT, [temporaryPath]) !== parent
+  ) fail("output_file_unsafe");
   try {
     await authority.assertExact();
     if (await pathExists(filename)) fail("output_file_unsafe");
 
-    fileHandle = await fs.promises.open(
+    fileHandle = await capturedOpen(
       temporaryPath,
-      fs.constants.O_CREAT
-        | fs.constants.O_EXCL
-        | fs.constants.O_RDWR
-        | fs.constants.O_NOFOLLOW,
+      O_CREAT | O_EXCL | O_RDWR | O_NOFOLLOW,
       0o600,
+      "output_file_unsafe",
     );
     ownedTemporaryPresent = true;
-    await fileHandle.writeFile(bytes);
-    await fileHandle.chmod(0o600);
-    await fileHandle.sync();
-    const written = await fileHandle.stat({ bigint: true });
-    assertPrivateOutputFile(written, uid, bytes.length);
-    const readback = await readExactDescriptor(fileHandle, bytes.length);
-    if (!readback.equals(bytes)) fail("output_file_unsafe");
+    await capturedHandleWriteFile(fileHandle, bytes);
+    await capturedHandleChmod(fileHandle, 0o600);
+    await capturedHandleSync(fileHandle, "output_file_unsafe");
+    const written = await capturedHandleStat(fileHandle, "output_file_unsafe");
+    assertPrivateOutputFile(written, uid, byteCount);
+    const readback = await readExactDescriptor(fileHandle, byteCount);
+    try {
+      if (!exactBytesEqual(readback, bytes)) fail("output_file_unsafe");
+    } finally {
+      wipeBytes(readback);
+    }
 
     await authority.assertExact();
-    const [parentBeforePublish, parentPathBeforePublish, parentRealBeforePublish] =
-      await Promise.all([
-        authority.handle.stat({ bigint: true }),
-        fs.promises.lstat(parent, { bigint: true }),
-        fs.promises.realpath(parent),
-      ]);
+    const parentBeforePublish = await capturedHandleStat(
+      authority.handle,
+      "output_file_unsafe",
+    );
+    const parentPathBeforePublish = await capturedLstat(
+      parent,
+      "output_file_unsafe",
+    );
+    const parentRealBeforePublish = await capturedRealpath(
+      parent,
+      "output_file_unsafe",
+    );
     assertPrivateOutputParent(parentBeforePublish, uid);
     assertPrivateOutputParent(parentPathBeforePublish, uid);
     if (
@@ -1237,118 +2231,240 @@ async function writeNewPrivateCanonicalPlan(
       || !sameDirectoryIdentity(authority.identity, directoryIdentity(parentBeforePublish))
       || !sameDirectoryIdentity(authority.identity, directoryIdentity(parentPathBeforePublish))
     ) fail("output_file_unsafe");
+    if (sha256PostgresMigrationBytes(bytes) !== sha256) {
+      fail("output_file_unsafe");
+    }
 
-    await fs.promises.link(temporaryPath, filename);
+    await capturedLink(temporaryPath, filename);
     published = true;
-    await fs.promises.unlink(temporaryPath);
+    await capturedUnlink(temporaryPath);
     ownedTemporaryPresent = false;
-    await authority.handle.sync();
+    await capturedHandleSync(authority.handle, "output_file_unsafe");
 
-    const [descriptorAfter, pathAfter, parentAfter, parentPathAfter, finalReal] =
-      await Promise.all([
-        fileHandle.stat({ bigint: true }),
-        fs.promises.lstat(filename, { bigint: true }),
-        authority.handle.stat({ bigint: true }),
-        fs.promises.lstat(parent, { bigint: true }),
-        fs.promises.realpath(filename),
-      ]);
-    assertPrivateOutputFile(descriptorAfter, uid, bytes.length);
-    assertPrivateOutputFile(pathAfter, uid, bytes.length);
+    const descriptorAfter = await capturedHandleStat(
+      fileHandle,
+      "output_file_unsafe",
+    );
+    const pathAfter = await capturedLstat(filename, "output_file_unsafe");
+    const parentAfter = await capturedHandleStat(
+      authority.handle,
+      "output_file_unsafe",
+    );
+    const parentPathAfter = await capturedLstat(parent, "output_file_unsafe");
+    const finalReal = await capturedRealpath(filename, "output_file_unsafe");
+    assertPrivateOutputFile(descriptorAfter, uid, byteCount);
+    assertPrivateOutputFile(pathAfter, uid, byteCount);
     assertPrivateOutputParent(parentAfter, uid);
     assertPrivateOutputParent(parentPathAfter, uid);
     const identity = fileIdentity(descriptorAfter);
+    publishedIdentity = identity;
     if (
       finalReal !== filename
       || !sameFileIdentity(identity, fileIdentity(pathAfter))
       || !sameDirectoryIdentity(authority.identity, directoryIdentity(parentAfter))
       || !sameDirectoryIdentity(authority.identity, directoryIdentity(parentPathAfter))
     ) fail("output_file_unsafe");
-    const finalReadback = await readExactDescriptor(fileHandle, bytes.length);
-    if (!finalReadback.equals(bytes)) fail("output_file_unsafe");
+    const finalReadback = await readExactDescriptor(fileHandle, byteCount);
+    try {
+      if (
+        !exactBytesEqual(finalReadback, bytes)
+        || sha256PostgresMigrationBytes(finalReadback) !== sha256
+        || sha256PostgresMigrationBytes(bytes) !== sha256
+      ) fail("output_file_unsafe");
+    } finally {
+      wipeBytes(finalReadback);
+    }
     await authority.assertExact();
 
+    rollbackFileHandle = await capturedOpen(
+      filename,
+      O_RDWR | O_NOFOLLOW | O_NONBLOCK,
+      undefined,
+      "output_file_unsafe",
+    );
+    const rollbackDescriptor = await capturedHandleStat(
+      rollbackFileHandle,
+      "output_file_unsafe",
+    );
+    assertPrivateOutputFile(rollbackDescriptor, uid, byteCount);
+    if (!sameFileIdentity(identity, fileIdentity(rollbackDescriptor))) {
+      fail("output_file_unsafe");
+    }
+
     const retainedHandle = fileHandle;
-    let state: "open" | "closed" | "rolled-back" = "open";
+    const retainedRollbackHandle = rollbackFileHandle;
+    let state: "open" | "prepared" | "failed" | "released" | "rolled-back" =
+      "open";
+    let retainedHandleClosed = false;
+    let retainedRollbackHandleClosed = false;
+    let bytesWiped = false;
+    const wipePlanBytes = (): void => {
+      if (bytesWiped) return;
+      wipeBytes(bytes);
+      bytesWiped = true;
+    };
     const result: PublishedPrivatePlan = {
       sha256,
       identity,
-      close: async () => {
+      prepareForSummary: async () => {
         if (state !== "open") fail("output_file_unsafe");
         let exact = true;
         let current: Buffer | null = null;
         try {
-          const [descriptor, atPath, real] = await Promise.all([
-            retainedHandle.stat({ bigint: true }),
-            fs.promises.lstat(filename, { bigint: true }),
-            fs.promises.realpath(filename),
-          ]);
-          assertPrivateOutputFile(descriptor, uid, bytes.length);
-          assertPrivateOutputFile(atPath, uid, bytes.length);
+          const descriptor = await capturedHandleStat(
+            retainedHandle,
+            "output_file_unsafe",
+          );
+          const rollbackDescriptor = await capturedHandleStat(
+            retainedRollbackHandle,
+            "output_file_unsafe",
+          );
+          const atPath = await capturedLstat(filename, "output_file_unsafe");
+          const real = await capturedRealpath(filename, "output_file_unsafe");
+          assertPrivateOutputFile(descriptor, uid, byteCount);
+          assertPrivateOutputFile(rollbackDescriptor, uid, byteCount);
+          assertPrivateOutputFile(atPath, uid, byteCount);
+          if (
+            real !== filename
+            || !sameFileIdentity(identity, fileIdentity(descriptor))
+            || !sameFileIdentity(identity, fileIdentity(rollbackDescriptor))
+            || !sameFileIdentity(identity, fileIdentity(atPath))
+          ) exact = false;
+          current = await readExactDescriptor(
+            retainedHandle,
+            byteCount,
+            "output_file_unsafe",
+          );
+          if (!exactBytesEqual(current, bytes)) exact = false;
+        } catch {
+          exact = false;
+        } finally {
+          wipeBytes(current);
+          try {
+            await capturedHandleClose(retainedHandle, "output_file_unsafe");
+            retainedHandleClosed = true;
+          } catch {
+            exact = false;
+          }
+          state = exact ? "prepared" : "failed";
+        }
+        if (!exact) fail("output_file_unsafe");
+      },
+      release: async () => {
+        if (state !== "prepared") fail("output_file_unsafe");
+        let exact = true;
+        try {
+          const descriptor = await capturedHandleStat(
+            retainedRollbackHandle,
+            "output_file_unsafe",
+          );
+          const atPath = await capturedLstat(filename, "output_file_unsafe");
+          const real = await capturedRealpath(filename, "output_file_unsafe");
+          assertPrivateOutputFile(descriptor, uid, byteCount);
+          assertPrivateOutputFile(atPath, uid, byteCount);
           if (
             real !== filename
             || !sameFileIdentity(identity, fileIdentity(descriptor))
             || !sameFileIdentity(identity, fileIdentity(atPath))
           ) exact = false;
-          current = await readExactDescriptor(
-            retainedHandle,
-            bytes.length,
-            "output_file_unsafe",
-          );
-          if (!current.equals(bytes)) exact = false;
         } catch {
           exact = false;
-        } finally {
-          current?.fill(0);
+        }
+        if (exact) {
           try {
-            await retainedHandle.close();
+            await capturedHandleClose(
+              retainedRollbackHandle,
+              "output_file_unsafe",
+            );
+            retainedRollbackHandleClosed = true;
           } catch {
             exact = false;
           }
-          state = "closed";
         }
+        state = exact ? "released" : "failed";
+        wipePlanBytes();
         if (!exact) fail("output_file_unsafe");
       },
       rollback: async () => {
         if (state === "rolled-back") return;
-        let exact = await removeExactPublishedPlan(
-          authority,
-          filename,
-          sha256,
-          identity,
-        );
-        if (state === "open") {
+        if (state === "released") fail("output_file_unsafe");
+        let exact = true;
+        let invalidationExact = false;
+        const heldRollbackHandle = !retainedRollbackHandleClosed
+          ? retainedRollbackHandle
+          : !retainedHandleClosed
+            ? retainedHandle
+            : null;
+        try {
+          invalidationExact = await invalidateAndRemoveExactPublishedPlan(
+            authority,
+            filename,
+            sha256,
+            identity,
+            byteCount,
+            heldRollbackHandle,
+          );
+        } catch {
+          invalidationExact = false;
+        }
+        if (!invalidationExact) {
+          exact = false;
           try {
-            await retainedHandle.close();
+            await invalidateAndRemoveExactPublishedPlan(
+              authority,
+              filename,
+              sha256,
+              identity,
+              byteCount,
+              null,
+            );
+          } catch {
+            // The first cleanup failure remains authoritative.
+          }
+        }
+        if (!retainedHandleClosed) {
+          try {
+            await capturedHandleClose(retainedHandle, "output_file_unsafe");
+            retainedHandleClosed = true;
+          } catch {
+            exact = false;
+          }
+        }
+        if (!retainedRollbackHandleClosed) {
+          try {
+            await capturedHandleClose(
+              retainedRollbackHandle,
+              "output_file_unsafe",
+            );
+            retainedRollbackHandleClosed = true;
           } catch {
             exact = false;
           }
         }
         state = "rolled-back";
+        wipePlanBytes();
         if (!exact) fail("output_file_unsafe");
       },
     };
     retained = true;
     fileHandle = null;
+    rollbackFileHandle = null;
     return result;
   } catch (error) {
-    if (error instanceof SafeCliError) throw error;
+    if (isSafeCliError(error)) throw error;
     return fail("output_file_unsafe");
   } finally {
     let cleanupFailed = false;
     if (published && !retained && fileHandle) {
       try {
-        const [descriptor, atPath] = await Promise.all([
-          fileHandle.stat({ bigint: true }),
-          fs.promises.lstat(filename, { bigint: true }),
-        ]);
-        assertPrivateOutputFile(descriptor, uid, bytes.length);
-        assertPrivateOutputFile(atPath, uid, bytes.length);
-        if (descriptor.dev !== atPath.dev || descriptor.ino !== atPath.ino) {
-          throw new Error("published_output_identity_drift");
-        }
-        await fs.promises.unlink(filename);
-        await authority.handle.sync();
-        if (await pathExists(filename)) throw new Error("published_output_remained");
+        if (!await invalidateAndRemoveExactPublishedPlan(
+          authority,
+          filename,
+          sha256,
+          publishedIdentity,
+          byteCount,
+          fileHandle,
+        )) cleanupFailed = true;
       } catch {
         cleanupFailed = true;
       }
@@ -1362,94 +2478,226 @@ async function writeNewPrivateCanonicalPlan(
     }
     if (fileHandle) {
       try {
-        await fileHandle.close();
+        await capturedHandleClose(fileHandle, "output_file_unsafe");
       } catch {
         cleanupFailed = true;
       }
     }
+    if (rollbackFileHandle) {
+      try {
+        await capturedHandleClose(rollbackFileHandle, "output_file_unsafe");
+      } catch {
+        cleanupFailed = true;
+      }
+    }
+    if (!retained) wipeBytes(bytes);
     if (cleanupFailed) fail("output_file_unsafe");
   }
 }
 
-async function removeExactPublishedPlan(
+async function invalidateAndRemoveExactPublishedPlan(
   authority: PrivateParentAuthority,
   filename: string,
   expectedSha256: string,
-  expectedIdentity: StableFileIdentity,
+  expectedIdentity: StableFileIdentity | null,
+  expectedBytes: number,
+  heldHandle: fs.promises.FileHandle | null,
 ): Promise<boolean> {
   let parentHandle: fs.promises.FileHandle | null = null;
-  let fileHandle: fs.promises.FileHandle | null = null;
+  let reopenedFileHandle: fs.promises.FileHandle | null = null;
   let bytes: Buffer | null = null;
   let exact = true;
+  let invalidated = false;
+  let removed = false;
+  let descriptorBefore: fs.BigIntStats | null = null;
   try {
-    const [parentReal, parentAtPath] = await Promise.all([
-      fs.promises.realpath(authority.path),
-      fs.promises.lstat(authority.path, { bigint: true }),
-    ]);
+    if (expectedBytes < 1 || expectedBytes > MAX_PLAN_BYTES) return false;
+
+    let targetHandle = heldHandle;
+    if (!targetHandle) {
+      const parentReal = await capturedRealpath(
+        authority.path,
+        "output_file_unsafe",
+      );
+      const parentAtPath = await capturedLstat(
+        authority.path,
+        "output_file_unsafe",
+      );
+      if (
+        parentReal !== authority.path
+        || (parentAtPath.mode & S_IFMT) !== S_IFDIR
+        || !sameDirectoryIdentity(authority.identity, directoryIdentity(parentAtPath))
+      ) return false;
+      assertPrivateOutputParent(parentAtPath, authority.uid);
+      const atPath = await capturedLstat(filename, "output_file_unsafe");
+      if (!expectedIdentity) return false;
+      assertPrivateOutputFile(atPath, authority.uid, expectedBytes);
+      if (!sameFileIdentity(expectedIdentity, fileIdentity(atPath))) return false;
+      reopenedFileHandle = await capturedOpen(
+        filename,
+        O_RDWR | O_NOFOLLOW | O_NONBLOCK,
+        undefined,
+        "output_file_unsafe",
+      );
+      targetHandle = reopenedFileHandle;
+    }
+
+    descriptorBefore = await capturedHandleStat(targetHandle, "output_file_unsafe");
+    if ((descriptorBefore.mode & S_IFMT) !== S_IFREG) return false;
+    if (heldHandle) {
+      if (
+        descriptorBefore.uid !== authority.uid
+        || descriptorBefore.size !== REFLECT_APPLY(
+          BIGINT_CONSTRUCTOR,
+          undefined,
+          [expectedBytes],
+        )
+        || (descriptorBefore.mode & 0o7777n) !== 0o600n
+        || descriptorBefore.nlink < 1n
+        || descriptorBefore.nlink > 2n
+        || expectedIdentity !== null && (
+          descriptorBefore.dev !== expectedIdentity.dev
+          || descriptorBefore.ino !== expectedIdentity.ino
+          || !sameFileIdentity(expectedIdentity, fileIdentity(descriptorBefore))
+        )
+      ) exact = false;
+    } else if (
+      !expectedIdentity
+      || !sameFileIdentity(expectedIdentity, fileIdentity(descriptorBefore))
+    ) {
+      return false;
+    }
+
+    if (descriptorBefore.size === REFLECT_APPLY(
+      BIGINT_CONSTRUCTOR,
+      undefined,
+      [expectedBytes],
+    )) {
+      try {
+        bytes = await readExactDescriptor(
+          targetHandle,
+          expectedBytes,
+          "output_file_unsafe",
+        );
+        if (sha256PostgresMigrationBytes(bytes) !== expectedSha256) exact = false;
+      } catch {
+        exact = false;
+      }
+    } else {
+      exact = false;
+    }
+
+    await capturedHandleTruncate(targetHandle, 0);
+    await capturedHandleSync(targetHandle, "output_file_unsafe");
+    invalidated = true;
+    const descriptorAfter = await capturedHandleStat(
+      targetHandle,
+      "output_file_unsafe",
+    );
+    const pathAfter = await capturedLstat(filename, "output_file_unsafe");
+    if (
+      (descriptorAfter.mode & S_IFMT) !== S_IFREG
+      || descriptorAfter.uid !== authority.uid
+      || (descriptorAfter.mode & 0o7777n) !== 0o600n
+      || descriptorAfter.size !== 0n
+      || (pathAfter.mode & S_IFMT) !== S_IFREG
+      || pathAfter.uid !== authority.uid
+      || (pathAfter.mode & 0o7777n) !== 0o600n
+      || pathAfter.size !== 0n
+      || descriptorAfter.dev !== descriptorBefore.dev
+      || descriptorAfter.ino !== descriptorBefore.ino
+      || descriptorAfter.size !== 0n
+    ) return false;
+    if (
+      descriptorAfter.uid !== authority.uid
+      || (descriptorAfter.mode & 0o7777n) !== 0o600n
+      || descriptorAfter.nlink !== descriptorBefore.nlink
+    ) exact = false;
+    if (
+      (pathAfter.mode & S_IFMT) !== S_IFREG
+      || pathAfter.dev !== descriptorBefore.dev
+      || pathAfter.ino !== descriptorBefore.ino
+      || pathAfter.size !== 0n
+    ) return false;
+    if (
+      pathAfter.uid !== authority.uid
+      || (pathAfter.mode & 0o7777n) !== 0o600n
+      || pathAfter.nlink !== descriptorBefore.nlink
+    ) exact = false;
+
+    const parentReal = await capturedRealpath(
+      authority.path,
+      "output_file_unsafe",
+    );
+    const parentAtPath = await capturedLstat(
+      authority.path,
+      "output_file_unsafe",
+    );
     if (
       parentReal !== authority.path
-      || !parentAtPath.isDirectory()
-      || parentAtPath.isSymbolicLink()
+      || (parentAtPath.mode & S_IFMT) !== S_IFDIR
       || !sameDirectoryIdentity(authority.identity, directoryIdentity(parentAtPath))
     ) return false;
     assertPrivateOutputParent(parentAtPath, authority.uid);
-    parentHandle = await fs.promises.open(
+    parentHandle = await capturedOpen(
       authority.path,
-      fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW,
+      O_RDONLY | O_DIRECTORY | O_NOFOLLOW,
+      undefined,
+      "output_file_unsafe",
     );
-    const parentDescriptor = await parentHandle.stat({ bigint: true });
+    const parentDescriptor = await capturedHandleStat(
+      parentHandle,
+      "output_file_unsafe",
+    );
     assertPrivateOutputParent(parentDescriptor, authority.uid);
     if (!sameDirectoryIdentity(
       authority.identity,
       directoryIdentity(parentDescriptor),
     )) return false;
-    fileHandle = await fs.promises.open(
-      filename,
-      fs.constants.O_RDONLY
-        | fs.constants.O_NOFOLLOW
-        | (fs.constants.O_NONBLOCK ?? 0),
-    );
-    const descriptor = await fileHandle.stat({ bigint: true });
-    if (descriptor.size < 1n || descriptor.size > BigInt(MAX_PLAN_BYTES)) return false;
-    const size = Number(descriptor.size);
-    assertPrivateOutputFile(descriptor, authority.uid, size);
-    const atPath = await fs.promises.lstat(filename, { bigint: true });
-    assertPrivateOutputFile(atPath, authority.uid, size);
+
+    const beforeUnlink = await capturedLstat(filename, "output_file_unsafe");
     if (
-      !sameFileIdentity(expectedIdentity, fileIdentity(descriptor))
-      || !sameFileIdentity(expectedIdentity, fileIdentity(atPath))
+      (beforeUnlink.mode & S_IFMT) !== S_IFREG
+      || beforeUnlink.size !== 0n
+      || beforeUnlink.dev !== descriptorBefore.dev
+      || beforeUnlink.ino !== descriptorBefore.ino
     ) return false;
-    bytes = await readExactDescriptor(fileHandle, size, "output_file_unsafe");
-    if (sha256PostgresMigrationBytes(bytes) !== expectedSha256) return false;
-    await fs.promises.unlink(filename);
-    const unlinked = await fileHandle.stat({ bigint: true });
     if (
-      unlinked.dev !== descriptor.dev
-      || unlinked.ino !== descriptor.ino
-      || unlinked.nlink !== 0n
+      beforeUnlink.uid !== authority.uid
+      || (beforeUnlink.mode & 0o7777n) !== 0o600n
+      || beforeUnlink.nlink !== descriptorBefore.nlink
+    ) exact = false;
+    await capturedUnlink(filename);
+    removed = true;
+    await capturedHandleSync(parentHandle, "output_file_unsafe");
+    const unlinked = await capturedHandleStat(targetHandle, "output_file_unsafe");
+    if (
+      unlinked.dev !== descriptorBefore.dev
+      || unlinked.ino !== descriptorBefore.ino
+      || unlinked.size !== 0n
+      || unlinked.nlink !== descriptorBefore.nlink - 1n
       || await pathExists(filename)
     ) exact = false;
-    await parentHandle.sync();
   } catch {
     exact = false;
   } finally {
-    bytes?.fill(0);
-    if (fileHandle) {
+    wipeBytes(bytes);
+    if (reopenedFileHandle) {
       try {
-        await fileHandle.close();
+        await capturedHandleClose(reopenedFileHandle, "output_file_unsafe");
       } catch {
         exact = false;
       }
     }
     if (parentHandle) {
       try {
-        await parentHandle.close();
+        await capturedHandleClose(parentHandle, "output_file_unsafe");
       } catch {
         exact = false;
       }
     }
   }
-  return exact;
+  return invalidated && removed && exact;
 }
 
 function fixedOwnFailureCode(
@@ -1457,13 +2705,18 @@ function fixedOwnFailureCode(
   allowed: ReadonlySet<string>,
 ): PostgresReviewedPricePromotionCliFailureCode | null {
   try {
-    if (typeof error !== "object" || error === null) return null;
-    const descriptor = Object.getOwnPropertyDescriptor(error, "code");
+    if (typeof error !== "object" || error === null || isProxy(error)) return null;
+    const descriptor = REFLECT_APPLY(
+      OBJECT_GET_OWN_PROPERTY_DESCRIPTOR,
+      OBJECT_CONSTRUCTOR,
+      [error, "code"],
+    ) as PropertyDescriptor | undefined;
     if (
       !descriptor
-      || !Object.hasOwn(descriptor, "value")
+      || REFLECT_APPLY(OBJECT_HAS_OWN, OBJECT_CONSTRUCTOR, [descriptor, "value"])
+        !== true
       || typeof descriptor.value !== "string"
-      || !allowed.has(descriptor.value as PostgresReviewedPricePromotionCliFailureCode)
+      || REFLECT_APPLY(SET_HAS, allowed, [descriptor.value]) !== true
     ) return null;
     return descriptor.value as PostgresReviewedPricePromotionCliFailureCode;
   } catch {
@@ -1473,12 +2726,10 @@ function fixedOwnFailureCode(
 
 function safeFailureCode(error: unknown): PostgresReviewedPricePromotionCliFailureCode {
   try {
-    if (error instanceof SafeCliError) {
+    if (isSafeCliError(error)) {
       return fixedOwnFailureCode(error, CLI_FAILURE_CODES) ?? "unexpected_failure";
     }
-    if (error instanceof PostgresReviewedPricePromotionPlanError) {
-      return fixedOwnFailureCode(error, PLAN_FAILURE_CODES) ?? "unexpected_failure";
-    }
+    return fixedOwnFailureCode(error, PLAN_FAILURE_CODES) ?? "unexpected_failure";
   } catch {
     // Proxies and hostile prototype traps cannot escape the fixed fallback.
   }
@@ -1489,9 +2740,14 @@ function writeSummary(
   dependencies: PostgresReviewedPricePromotionCliDependencies,
   value: unknown,
 ): void {
-  dependencies.writeOutput(
-    canonicalPostgresReviewedPricePromotionJson(value).toString("utf8"),
-  );
+  const bytes = canonicalPostgresReviewedPricePromotionJson(value);
+  try {
+    const summary = REFLECT_APPLY(BUFFER_TO_STRING, bytes, ["utf8"]);
+    if (typeof summary !== "string") fail("unexpected_failure");
+    dependencies.writeOutput(summary);
+  } finally {
+    wipeBytes(bytes);
+  }
 }
 
 async function assertPlannerDatabaseExact(
@@ -1502,6 +2758,33 @@ async function assertPlannerDatabaseExact(
   } catch {
     fail("database_open_failed");
   }
+}
+
+function activationBlockersExact(value: unknown): boolean {
+  if (
+    !ARRAY_IS_ARRAY(value)
+    || value.length !== POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_BLOCKERS.length
+  ) return false;
+  for (
+    let index = 0;
+    index < POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_BLOCKERS.length;
+    index += 1
+  ) {
+    const key = REFLECT_APPLY(NUMBER_TO_STRING, index, []) as string;
+    const descriptor = REFLECT_APPLY(
+      OBJECT_GET_OWN_PROPERTY_DESCRIPTOR,
+      OBJECT_CONSTRUCTOR,
+      [value, key],
+    ) as PropertyDescriptor | undefined;
+    if (
+      !descriptor
+      || REFLECT_APPLY(OBJECT_HAS_OWN, OBJECT_CONSTRUCTOR, [descriptor, "value"])
+        !== true
+      || descriptor.value
+      !== POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_BLOCKERS[index]
+    ) return false;
+  }
+  return true;
 }
 
 function assertExactPlanBindings(input: {
@@ -1517,10 +2800,24 @@ function assertExactPlanBindings(input: {
   const parsed = postgresReviewedPricePromotionPlanCandidateSchema.safeParse(input.plan);
   if (!parsed.success) fail("plan_result_invalid");
   const plan = parsed.data;
+  const expectedDeployment = input.deployment;
   if (
     plan.candidateSha !== input.candidateSha
     || plan.expectedEnvironment !== "permanent-staging"
-    || JSON.stringify(plan.expectedDeployment) !== JSON.stringify(input.deployment)
+    || plan.expectedDeployment.attestationFileSha256
+      !== expectedDeployment.attestationFileSha256
+    || plan.expectedDeployment.attestationPolicySha256
+      !== expectedDeployment.attestationPolicySha256
+    || plan.expectedDeployment.deploymentIdSha256
+      !== expectedDeployment.deploymentIdSha256
+    || plan.expectedDeployment.environmentIdSha256
+      !== expectedDeployment.environmentIdSha256
+    || plan.expectedDeployment.imageDigestSha256
+      !== expectedDeployment.imageDigestSha256
+    || plan.expectedDeployment.projectIdSha256
+      !== expectedDeployment.projectIdSha256
+    || plan.expectedDeployment.serviceIdSha256
+      !== expectedDeployment.serviceIdSha256
     || plan.migration.receiptFileSha256 !== input.migrationReceiptFileSha256
     || plan.privateInput.manifestSha256 !== input.privateInputFileSha256
     || plan.privateInput.itemCount !== input.privateInputItemCount
@@ -1528,20 +2825,72 @@ function assertExactPlanBindings(input: {
     || plan.target.physicalIdentitySha256 !== input.physicalIdentitySha256
     || plan.target.plannerLoginIdentitySha256 !== input.plannerLoginIdentitySha256
     || plan.mutationEnabled !== false
-    || JSON.stringify(plan.activationBlockers)
-      !== JSON.stringify(POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_BLOCKERS)
+    || !activationBlockersExact(plan.activationBlockers)
   ) fail("plan_result_invalid");
   return plan;
 }
 
+function deploymentFromAttestation(
+  receipt: RailwayApplicationDeploymentAttestationReceipt,
+  attestationFileSha256: string,
+): BuildPostgresReviewedPricePromotionPlanInput["expectedDeployment"] {
+  return OBJECT_FREEZE({
+    attestationFileSha256,
+    attestationPolicySha256: receipt.hashes.policySha256,
+    deploymentIdSha256: receipt.hashes.deploymentIdSha256,
+    environmentIdSha256: receipt.hashes.environmentIdSha256,
+    imageDigestSha256: receipt.hashes.imageDigestSha256,
+    projectIdSha256: receipt.hashes.projectIdSha256,
+    serviceIdSha256: receipt.hashes.serviceIdSha256,
+  });
+}
+
 async function runPostgresReviewedPricePromotionCliWithDependencies(
   argv: readonly string[],
-  dependencies: PostgresReviewedPricePromotionCliDependencies,
+  dependencyInput: PostgresReviewedPricePromotionCliDependencies,
 ): Promise<0 | 1> {
+  try {
+    const productionGuard = dependencyInput.assertProductionBoundary;
+    if (productionGuard !== undefined) {
+      if (typeof productionGuard !== "function") return 1;
+      REFLECT_APPLY(productionGuard, undefined, []);
+    }
+  } catch {
+    return 1;
+  }
+  let dependencies: PostgresReviewedPricePromotionCliDependencies;
+  try {
+    dependencies = snapshotCliDependencies(dependencyInput);
+  } catch {
+    return 1;
+  }
   let databaseHandle: PostgresReviewedPricePromotionPlannerDatabaseHandle | null = null;
   let parentAuthority: PrivateParentAuthority | null = null;
-  const heldFiles: HeldPrivateFile[] = [];
+  const heldFiles: Array<HeldPrivateFile | null> = [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+  ];
+  let heldFileCount = 0;
+  const retainHeldFile = (file: HeldPrivateFile): void => {
+    if (
+      heldFileCount >= HELD_FILE_COUNT
+      || exactHeldFileSlot(heldFiles, heldFileCount, true) !== null
+    ) fail("artifact_file_unsafe");
+    defineArraySlot(
+      heldFiles,
+      heldFileCount,
+      file,
+      "artifact_file_unsafe",
+    );
+    heldFileCount += 1;
+  };
   let rootCaFile: HeldPrivateFile | null = null;
+  let retainedDeploymentAttestation:
+    RailwayApplicationDeploymentAttestationReceipt | null = null;
   let plan: PostgresReviewedPricePromotionPlanCandidate | null = null;
   let outputPlan = "";
   let failureCode: PostgresReviewedPricePromotionCliFailureCode | null = null;
@@ -1554,105 +2903,116 @@ async function runPostgresReviewedPricePromotionCliWithDependencies(
   } | null = null;
 
   try {
-    if (argv[0] !== POSTGRES_REVIEWED_PRICE_PROMOTION_COMMAND) {
-      fail("argument_invalid");
-    }
-    let args: ReadonlyMap<string, string>;
-    try {
-      args = parseStrictArguments(argv.slice(1), {
-        allowed: ARGUMENTS,
-        required: ARGUMENTS,
-      });
-    } catch {
-      return fail("argument_invalid");
-    }
-    if (args.get("--expected-environment") !== "permanent-staging") {
+    const args = parseExactCliArguments(argv);
+    if (args.expectedEnvironment !== "permanent-staging") {
       fail("environment_not_allowed");
     }
     assertNoForbiddenAmbientAuthority(dependencies.environment);
 
-    const candidateSha = exactCandidateSha(args.get("--candidate-sha")!);
-    const deployment = {
-      deploymentIdSha256: exactSha256(args.get("--deployment-id-sha256")!),
-      environmentIdSha256: exactSha256(
-        args.get("--deployment-environment-id-sha256")!,
-      ),
-      imageDigestSha256: exactSha256(
-        args.get("--deployment-image-digest-sha256")!,
-      ),
-      projectIdSha256: exactSha256(
-        args.get("--deployment-project-id-sha256")!,
-      ),
-      serviceIdSha256: exactSha256(
-        args.get("--deployment-service-id-sha256")!,
-      ),
-    };
-    const plannerUrlPath = exactAbsolutePath(args.get("--planner-url-file")!);
-    const migrationReceiptPath = exactAbsolutePath(args.get("--migration-receipt")!);
-    const migrationTargetIdentityPath = exactAbsolutePath(
-      args.get("--migration-target-identity")!,
+    const candidateSha = exactCandidateSha(args.candidateSha);
+    const deploymentAttestationPath = exactAbsolutePath(
+      args.deploymentAttestation,
     );
-    const privateInputPath = exactAbsolutePath(args.get("--private-input")!);
-    outputPlan = exactAbsolutePath(args.get("--output-plan")!);
-    if (
-      new Set([
-        plannerUrlPath,
-        migrationReceiptPath,
-        migrationTargetIdentityPath,
-        privateInputPath,
-        outputPlan,
-      ]).size !== 5
-    ) fail("argument_invalid");
-    const commonParent = path.dirname(plannerUrlPath);
-    if ([
+    const plannerUrlPath = exactAbsolutePath(args.plannerUrlFile);
+    const migrationReceiptPath = exactAbsolutePath(args.migrationReceipt);
+    const migrationTargetIdentityPath = exactAbsolutePath(
+      args.migrationTargetIdentity,
+    );
+    const privateInputPath = exactAbsolutePath(args.privateInput);
+    outputPlan = exactAbsolutePath(args.outputPlan);
+    if (!exactDistinctPaths([
+      deploymentAttestationPath,
+      plannerUrlPath,
       migrationReceiptPath,
       migrationTargetIdentityPath,
       privateInputPath,
       outputPlan,
-    ].some((filename) => path.dirname(filename) !== commonParent)) {
+    ])) fail("argument_invalid");
+    const commonParent = REFLECT_APPLY(
+      PATH_DIRNAME,
+      PATH_OBJECT,
+      [plannerUrlPath],
+    ) as string;
+    if (!allPathsHaveParent([
+      deploymentAttestationPath,
+      migrationReceiptPath,
+      migrationTargetIdentityPath,
+      privateInputPath,
+      outputPlan,
+    ], commonParent)) {
       fail("artifact_file_unsafe");
     }
     parentAuthority = await openPrivateParentAuthority(commonParent);
     if (await pathExists(outputPlan)) fail("output_file_unsafe");
+
+    const deploymentAttestationFile = await openHeldPrivateFile(
+      parentAuthority,
+      deploymentAttestationPath,
+      RAILWAY_APPLICATION_DEPLOYMENT_ATTESTATION_MAX_RECEIPT_BYTES,
+    );
+    retainHeldFile(deploymentAttestationFile);
+    const deploymentAttestation = await withFreshVerifiedHeldBytes(
+      deploymentAttestationFile,
+      exactSha256(args.deploymentAttestationSha256),
+      (bytes) => parseRailwayApplicationDeploymentAttestationReceipt(bytes),
+    );
+    if (
+      !deploymentAttestation
+      || deploymentAttestation.expectedEnvironment !== "permanent-staging"
+      || deploymentAttestation.candidateSha !== candidateSha
+      || deploymentAttestation.hashes.policySha256
+        !== RAILWAY_APPLICATION_DEPLOYMENT_ATTESTATION_POLICY_SHA256
+      || !railwayApplicationDeploymentAttestationReceiptFreshAt(
+        deploymentAttestation,
+        dependencies.now(),
+      )
+    ) fail("artifact_invalid");
+    retainedDeploymentAttestation = deploymentAttestation;
+    const deployment = deploymentFromAttestation(
+      deploymentAttestation,
+      deploymentAttestationFile.sha256,
+    );
 
     const plannerUrlFile = await openHeldPrivateFile(
       parentAuthority,
       plannerUrlPath,
       MAX_PLANNER_URL_FILE_BYTES,
     );
-    heldFiles.push(plannerUrlFile);
-    assertHeldFileHash(
+    retainHeldFile(plannerUrlFile);
+    const plannerUrl = await withFreshVerifiedHeldBytes(
       plannerUrlFile,
-      exactSha256(args.get("--planner-url-sha256")!),
+      exactSha256(args.plannerUrlSha256),
+      directVerifyFullPlannerUrl,
     );
-    const plannerUrl = directVerifyFullPlannerUrl(plannerUrlFile.bytes);
     if (
-      path.dirname(plannerUrl.rootCaFile) !== commonParent
-      || new Set([
+      REFLECT_APPLY(PATH_DIRNAME, PATH_OBJECT, [plannerUrl.rootCaFile])
+        !== commonParent
+      || !exactDistinctPaths([
+        deploymentAttestationPath,
         plannerUrlPath,
         plannerUrl.rootCaFile,
         migrationReceiptPath,
         migrationTargetIdentityPath,
         privateInputPath,
         outputPlan,
-      ]).size !== 6
+      ])
     ) fail("artifact_file_unsafe");
     rootCaFile = await openHeldPrivateFile(
       parentAuthority,
       plannerUrl.rootCaFile,
       MAX_ROOT_CA_BYTES,
     );
-    heldFiles.push(rootCaFile);
+    retainHeldFile(rootCaFile);
 
     const migrationReceiptFile = await openHeldPrivateFile(
       parentAuthority,
       migrationReceiptPath,
       MAX_MIGRATION_RECEIPT_BYTES,
     );
-    heldFiles.push(migrationReceiptFile);
-    const migrationReceipt = readCanonicalJsonArtifact({
+    retainHeldFile(migrationReceiptFile);
+    const migrationReceipt = await readCanonicalJsonArtifact({
       held: migrationReceiptFile,
-      expectedSha256: exactSha256(args.get("--migration-receipt-sha256")!),
+      expectedSha256: exactSha256(args.migrationReceiptSha256),
       parse: (value) => postgresMigrationReceiptSchema.safeParse(value),
     });
     const migrationTargetIdentityFile = await openHeldPrivateFile(
@@ -1660,12 +3020,10 @@ async function runPostgresReviewedPricePromotionCliWithDependencies(
       migrationTargetIdentityPath,
       MAX_MIGRATION_TARGET_IDENTITY_BYTES,
     );
-    heldFiles.push(migrationTargetIdentityFile);
-    const migrationTargetIdentity = readCanonicalJsonArtifact({
+    retainHeldFile(migrationTargetIdentityFile);
+    const migrationTargetIdentity = await readCanonicalJsonArtifact({
       held: migrationTargetIdentityFile,
-      expectedSha256: exactSha256(
-        args.get("--migration-target-identity-sha256")!,
-      ),
+      expectedSha256: exactSha256(args.migrationTargetIdentitySha256),
       parse: (value) => postgresMigrationTargetIdentitySchema.safeParse(value),
     });
     const privateInputFile = await openHeldPrivateFile(
@@ -1673,10 +3031,10 @@ async function runPostgresReviewedPricePromotionCliWithDependencies(
       privateInputPath,
       MAX_PRIVATE_INPUT_BYTES,
     );
-    heldFiles.push(privateInputFile);
-    const privateInput = readCanonicalJsonArtifact({
+    retainHeldFile(privateInputFile);
+    const privateInput = await readCanonicalJsonArtifact({
       held: privateInputFile,
-      expectedSha256: exactSha256(args.get("--private-input-sha256")!),
+      expectedSha256: exactSha256(args.privateInputSha256),
       parse: (value) => postgresReviewedPricePromotionPrivateInputSchema.safeParse(value),
     });
     const expectedRootCaDerSha256 = exactSha256(
@@ -1689,7 +3047,7 @@ async function runPostgresReviewedPricePromotionCliWithDependencies(
       expectedRootCaDerSha256,
     });
     const expectedPhysicalDatabaseIdentitySha256 = exactSha256(
-      args.get("--expected-target-database-identity-sha256")!,
+      args.expectedTargetDatabaseIdentitySha256,
     );
     let historicalPhysicalDatabaseIdentitySha256: string;
     try {
@@ -1725,7 +3083,8 @@ async function runPostgresReviewedPricePromotionCliWithDependencies(
       plannerLoginIdentitySha256: expectedPlannerLoginIdentitySha256,
     };
     try {
-      databaseHandle = await dependencies.openDatabase({
+      databaseHandle = snapshotPlannerDatabaseHandle(
+        await dependencies.openDatabase({
         applicationName: "pintpath-reviewed-price-promotion-planner",
         connectionTimeoutMs: 10_000,
         database: PERMANENT_STAGING_DATABASE,
@@ -1738,16 +3097,11 @@ async function runPostgresReviewedPricePromotionCliWithDependencies(
         port: 5_432,
         rootCaFile: plannerUrl.rootCaFile,
         statementTimeoutMs: 30_000,
-        user: PLANNER_ROLE,
-      });
-      if (
-        !databaseHandle
-        || databaseHandle.database?.dialect !== "postgres"
-        || typeof databaseHandle.assertExact !== "function"
-        || typeof databaseHandle.release !== "function"
-      ) fail("database_open_failed");
+          user: PLANNER_ROLE,
+        }),
+      );
     } catch (error) {
-      if (error instanceof SafeCliError) throw error;
+      if (isSafeCliError(error)) throw error;
       return fail("database_open_failed");
     }
     await assertHeldAuthorityExact({
@@ -1836,6 +3190,13 @@ async function runPostgresReviewedPricePromotionCliWithDependencies(
   let planFileSha256: string | null = null;
   if (plan && !failureCode && parentAuthority && rootCaFile) {
     try {
+      if (
+        !retainedDeploymentAttestation
+        || !railwayApplicationDeploymentAttestationReceiptFreshAt(
+          retainedDeploymentAttestation,
+          dependencies.now(),
+        )
+      ) fail("artifact_invalid");
       await assertHeldAuthorityExact({
         authority: parentAuthority,
         files: heldFiles,
@@ -1854,6 +3215,10 @@ async function runPostgresReviewedPricePromotionCliWithDependencies(
         rootCa: rootCaFile,
         expectedRootCaDerSha256: dependencies.expectedRootCaDerSha256,
       });
+      if (!railwayApplicationDeploymentAttestationReceiptFreshAt(
+        retainedDeploymentAttestation,
+        dependencies.now(),
+      )) fail("artifact_invalid");
     } catch (error) {
       failureCode = safeFailureCode(error);
       plan = null;
@@ -1871,7 +3236,7 @@ async function runPostgresReviewedPricePromotionCliWithDependencies(
 
   if (publishedPlan && plan && !failureCode) {
     try {
-      await publishedPlan.close();
+      await publishedPlan.prepareForSummary();
     } catch {
       failureCode = "output_file_unsafe";
       plan = null;
@@ -1888,7 +3253,7 @@ async function runPostgresReviewedPricePromotionCliWithDependencies(
   }
 
   try {
-    if (!plan || !planFileSha256 || !summaryInput || failureCode) {
+    if (!plan || !planFileSha256 || !summaryInput || !publishedPlan || failureCode) {
       writeSummary(dependencies, {
         command: POSTGRES_REVIEWED_PRICE_PROMOTION_COMMAND,
         failureCode: failureCode ?? "unexpected_failure",
@@ -1909,14 +3274,27 @@ async function runPostgresReviewedPricePromotionCliWithDependencies(
       physicalIdentitySha256: summaryInput.physicalIdentitySha256,
       plannerLoginIdentitySha256: summaryInput.plannerLoginIdentitySha256,
     });
+    await publishedPlan.release();
+    publishedPlan = null;
     return 0;
   } catch {
+    let finalFailureCode: PostgresReviewedPricePromotionCliFailureCode =
+      "unexpected_failure";
     if (publishedPlan) {
       try {
         await publishedPlan.rollback();
       } catch {
-        // The synchronous summary capability already failed closed.
+        finalFailureCode = "output_file_unsafe";
       }
+    }
+    try {
+      writeSummary(dependencies, {
+        command: POSTGRES_REVIEWED_PRICE_PROMOTION_COMMAND,
+        failureCode: finalFailureCode,
+        ok: false,
+      });
+    } catch {
+      // The fixed exit status remains authoritative when stdout is unavailable.
     }
     return 1;
   }
@@ -1931,15 +3309,19 @@ export async function runPostgresReviewedPricePromotionCli(
   );
 }
 
-const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : "";
+const invokedPath = process.argv[1]
+  ? REFLECT_APPLY(PATH_RESOLVE, PATH_OBJECT, [process.argv[1]]) as string
+  : "";
 if (invokedPath === fileURLToPath(import.meta.url)) {
   process.exitCode = await runPostgresReviewedPricePromotionCli(
-    process.argv.slice(2),
+    REFLECT_APPLY(ARRAY_SLICE, process.argv, [2]) as string[],
   );
 }
 
 export const postgresReviewedPricePromotionCliInternals = Object.freeze({
-  ARGUMENT_COUNT: ARGUMENTS.size,
+  ARGUMENT_COUNT,
+  MAX_DEPLOYMENT_ATTESTATION_BYTES:
+    RAILWAY_APPLICATION_DEPLOYMENT_ATTESTATION_MAX_RECEIPT_BYTES,
   MAX_MIGRATION_RECEIPT_BYTES,
   MAX_MIGRATION_TARGET_IDENTITY_BYTES,
   MAX_PLAN_BYTES,

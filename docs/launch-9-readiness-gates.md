@@ -14,14 +14,26 @@ until the controlled cutover.
 
 Pint Path remains no-go. Before candidate freeze:
 
-All Railway provider-writing work in these gates is non-executable until the
-tracked `readiness:railway:mutation-boundary` executor owns the immediate
-preflight, one exact operation, and unconditional postflight. Its standalone
-receipt is read-only; the current incident baseline intentionally fails.
+Every Railway create, configuration, variable, scale, deploy, rollback, PITR,
+route, delete, destroy, or teardown operation in these gates is non-executable
+until the tracked `readiness:railway:mutation-boundary` executor owns the
+immediate preflight, one exact reviewed operation, and unconditional postflight.
+Its standalone receipt is read-only; the current incident baseline
+intentionally fails. Restore-staging teardown additionally requires complete
+resource/evidence reconciliation, specific authorization naming the exact
+resource IDs, and the exact reviewed teardown executor. Signed evidence or
+two-person sign-off alone is not mutation authority.
 
-1. Complete the three remaining staging provider credential/configuration
-   gates and deploy the exact reviewed app build to permanent staging. The
-   isolated private offsite operational copy is now attested and live-probed.
+1. Complete the three Google/OpenAI provider categories, comprising four exact
+   Railway variable operations: Google Maps client configuration
+   (`GOOGLE_MAPS_API_KEY` and `GOOGLE_MAPS_MAP_ID`), Google Places server access
+   (`GOOGLE_PLACES_API_KEY`), and OpenAI menu OCR (`OPENAI_API_KEY`). Separately,
+   the three Supabase replacement-key operations (`SUPABASE_ANON_KEY`,
+   `SUPABASE_SERVICE_ROLE_KEY`, and `OFFSITE_BACKUP_SERVICE_ROLE_KEY`) remain
+   `HARD_DISABLED_REVIEW_REQUIRED` and unauthorized. After their separate
+   reviewed authorities and all mutation stops are satisfied, deploy the exact
+   reviewed app build to permanent staging. The isolated private offsite
+   operational copy is now attested and live-probed.
 2. Pass real provider/Auth/role/private-Storage/Free-scope smoke, then scale the
    same build temporarily from one to two replicas for concurrency, queue/
    outbox, idempotency, load/soak, restart, rolling-deploy, rollback, and pool-
@@ -48,7 +60,10 @@ allowance, the reviewed recurring envelope is approximately US$46.80/month.
 - The disposable restore resources are temporary metered evidence capacity and
   are excluded from the recurring staging envelope. At their current caps they
   would add approximately US$20.13/month if left running; finish the drill and
-  dispose the exact recorded resources promptly.
+  complete resource/evidence reconciliation promptly. Disposal then requires
+  specific authorization for the exact recorded resource IDs and the reviewed
+  teardown executor's immediate mutation-boundary preflight and unconditional
+  postflight.
 - Production, permanent staging, restore-staging, and the private operational restore-copy project must never share credentials or mutable resources. After each disposable restore system is created, load its reviewed `RESTORE_REHEARSAL_EXPECTED_*` values through protected environment configuration and require the runtime identities to match; never hard-code or repurpose permanent staging.
 
 ## Automated gates
@@ -132,7 +147,7 @@ TestFlight alone is not approval to launch.
 - Managed Postgres PITR is enabled and tested. A separate checksummed logical Postgres export and complete private Storage inventory are produced on schedule.
 - A separate Supabase project may be used as a **private operational restore copy**. Because its service-role principal can list/delete/overwrite, it is not independent or immutable.
 - A separately administered provider/region stores the complete database, Storage, manifest, and deletion-ledger set under provider-enforced object lock/WORM. The application writer cannot delete, overwrite, shorten retention, or read with the separately held recovery principal.
-- A dated destructive drill restores PITR/logical Postgres, Storage, and the deletion ledger from the operational and WORM authorities into disposable restore-staging, meets RPO/RTO, proves reconciliation and key journeys, and then destroys the one-shot environment.
+- A dated destructive drill restores PITR/logical Postgres, Storage, and the deletion ledger from the operational and WORM authorities into disposable restore-staging, meets RPO/RTO, and proves reconciliation and key journeys. It does not itself authorize destruction; the exact-resource teardown contract above still applies.
 - Existing SQLite backup/restore commands are one-time cutover/legacy evidence only and cannot satisfy this gate.
 
 ## Performance budget

@@ -28,6 +28,7 @@ import {
   POSTGRES_REVIEWED_PRICE_PROMOTION_IDENTITY_QUERY,
   POSTGRES_REVIEWED_PRICE_PROMOTION_PRIVATE_INPUT_KIND,
   POSTGRES_REVIEWED_PRICE_PROMOTION_PRIVATE_INPUT_VERSION,
+  POSTGRES_REVIEWED_PRICE_PROMOTION_PLAN_KIND,
   POSTGRES_REVIEWED_PRICE_PROMOTION_PLAN_VERSION,
   POSTGRES_REVIEWED_PRICE_PROMOTION_READ_ONLY_TRANSACTION,
   POSTGRES_REVIEWED_PRICE_PROMOTION_ROW_SECURITY,
@@ -177,6 +178,7 @@ function queryTag(sql: string): QueryTag {
 
 class FakeSqlDatabase implements SqlDatabase {
   readonly events: DatabaseEvent[] = [];
+  onRead: ((tag: QueryTag) => void) | null = null;
   transactionCount = 0;
 
   constructor(
@@ -195,12 +197,14 @@ class FakeSqlDatabase implements SqlDatabase {
         ...bindings: unknown[]
       ): Promise<Row | undefined> => {
         this.events.push({ bindings, method: "get", sql });
+        this.onRead?.(tag);
         return this.rows[tag][0] as Row | undefined;
       },
       all: async <Row extends QueryResultRow = QueryResultRow>(
         ...bindings: unknown[]
       ): Promise<Row[]> => {
         this.events.push({ bindings, method: "all", sql });
+        this.onRead?.(tag);
         return this.rows[tag] as Row[];
       },
     };
@@ -554,6 +558,8 @@ function fixture(): {
     candidateSha: CANDIDATE_SHA,
     database,
     expectedDeployment: {
+      attestationFileSha256: digest("deployment-attestation-file"),
+      attestationPolicySha256: digest("deployment-attestation-policy"),
       deploymentIdSha256: digest("deployment"),
       environmentIdSha256: digest("environment"),
       imageDigestSha256: digest("image"),
@@ -1031,6 +1037,109 @@ describe("Postgres reviewed-price no-write plan candidate", () => {
     },
   );
 
+  it("rejects persistent collection intrinsic replacement before it can bypass authority", async () => {
+    const filterTarget = fixture();
+    filterTarget.rows["wrong-prices"].push(wrongPriceRow("open"));
+    const originalFilter = Array.prototype.filter;
+    let filterCalls = 0;
+    filterTarget.database.onRead = (tag) => {
+      if (tag !== "wrong-prices" || Array.prototype.filter !== originalFilter) return;
+      Array.prototype.filter = function poisonedFilter(
+        this: unknown[],
+        predicate: (value: unknown, index: number, array: unknown[]) => unknown,
+      ): unknown[] {
+        filterCalls += 1;
+        if (this.length === 1 && (this[0] as { status?: unknown } | undefined)?.status === "open") {
+          return [];
+        }
+        return Reflect.apply(originalFilter, this, [predicate]) as unknown[];
+      } as typeof Array.prototype.filter;
+    };
+    let filterFailure: unknown;
+    try {
+      await buildPostgresReviewedPricePromotionPlanCandidate(filterTarget.input);
+    } catch (error) {
+      filterFailure = error;
+    } finally {
+      Array.prototype.filter = originalFilter;
+    }
+    expect(filterCalls).toBe(0);
+    expect(filterFailure).toMatchObject({ code: "inspection_invalid" });
+
+    const mapTarget = fixture();
+    const originalMapGet = Map.prototype.get;
+    let mapGetCalls = 0;
+    mapTarget.database.onRead = (tag) => {
+      if (tag !== "queue" || Map.prototype.get !== originalMapGet) return;
+      Map.prototype.get = function poisonedMapGet<Key, Value>(
+        this: Map<Key, Value>,
+        key: Key,
+      ): Value | undefined {
+        mapGetCalls += 1;
+        return Reflect.apply(originalMapGet, this, [key]) as Value | undefined;
+      } as typeof Map.prototype.get;
+    };
+    let mapFailure: unknown;
+    try {
+      await buildPostgresReviewedPricePromotionPlanCandidate(mapTarget.input);
+    } catch (error) {
+      mapFailure = error;
+    } finally {
+      Map.prototype.get = originalMapGet;
+    }
+    expect(mapGetCalls).toBe(0);
+    expect(mapFailure).toMatchObject({ code: "source_mismatch" });
+  });
+
+  it("keeps source selection pinned when a late URL constructor tries a self-restoring poison", async () => {
+    const target = fixture();
+    target.rows.queue[0]!.sourceUrl = "https://example.test/about";
+    const originalUrl = globalThis.URL;
+    const originalFilter = Array.prototype.filter;
+    const safeUrl = new originalUrl("https://safe.example.test/menu.pdf");
+    let proxyInstalled = false;
+    let constructCalls = 0;
+    let targetedFilterCalls = 0;
+    target.database.onRead = (tag) => {
+      if (tag !== "queue" || proxyInstalled) return;
+      proxyInstalled = true;
+      globalThis.URL = new Proxy(originalUrl, {
+        construct() {
+          constructCalls += 1;
+          Array.prototype.filter = function poisonedFilter(
+            this: unknown[],
+            predicate: (value: unknown, index: number, array: unknown[]) => unknown,
+          ): unknown[] {
+            targetedFilterCalls += 1;
+            Array.prototype.filter = originalFilter;
+            if (
+              this.length === 1
+              && typeof this[0] === "object"
+              && this[0] !== null
+              && "priceNumeric" in this[0]
+            ) return [this[0]];
+            return Reflect.apply(originalFilter, this, [predicate]) as unknown[];
+          } as typeof Array.prototype.filter;
+          return safeUrl;
+        },
+      }) as typeof URL;
+    };
+
+    let failure: unknown;
+    try {
+      await buildPostgresReviewedPricePromotionPlanCandidate(target.input);
+    } catch (error) {
+      failure = error;
+    } finally {
+      globalThis.URL = originalUrl;
+      Array.prototype.filter = originalFilter;
+    }
+    expect(proxyInstalled).toBe(true);
+    expect(constructCalls).toBe(0);
+    expect(targetedFilterCalls).toBe(0);
+    expect(failure).toMatchObject({ code: "source_mismatch" });
+  });
+
   it("rejects unknown wrong-price states and inconsistent terminal authority", async () => {
     const unknown = fixture();
     unknown.rows["wrong-prices"].push(wrongPriceRow("closed"));
@@ -1187,22 +1296,28 @@ describe("Postgres reviewed-price no-write plan candidate", () => {
     await expectPlanError(augmentedPresence.input, "inspection_invalid");
   });
 
-  it("binds expected deployment hashes and changes the candidate when deployment changes", async () => {
-    const first = fixture();
-    const second = fixture();
-    const secondInput = {
-      ...second.input,
-      expectedDeployment: {
-        ...second.input.expectedDeployment,
-        deploymentIdSha256: digest("other-deployment"),
-      },
-    };
-    const firstPlan = await buildPostgresReviewedPricePromotionPlanCandidate(first.input);
-    const secondPlan = await buildPostgresReviewedPricePromotionPlanCandidate(secondInput);
+  it("binds the deployment attestation and changes the candidate on authority drift", async () => {
+    for (const field of [
+      "attestationFileSha256",
+      "attestationPolicySha256",
+      "deploymentIdSha256",
+    ] as const) {
+      const first = fixture();
+      const second = fixture();
+      const secondInput = {
+        ...second.input,
+        expectedDeployment: {
+          ...second.input.expectedDeployment,
+          [field]: digest(`other-${field}`),
+        },
+      };
+      const firstPlan = await buildPostgresReviewedPricePromotionPlanCandidate(first.input);
+      const secondPlan = await buildPostgresReviewedPricePromotionPlanCandidate(secondInput);
 
-    expect(firstPlan.expectedDeployment).toEqual(first.input.expectedDeployment);
-    expect(secondPlan.expectedDeployment).toEqual(secondInput.expectedDeployment);
-    expect(secondPlan.planCandidateSha256).not.toBe(firstPlan.planCandidateSha256);
+      expect(firstPlan.expectedDeployment).toEqual(first.input.expectedDeployment);
+      expect(secondPlan.expectedDeployment).toEqual(secondInput.expectedDeployment);
+      expect(secondPlan.planCandidateSha256).not.toBe(firstPlan.planCandidateSha256);
+    }
   });
 
   it("emits a deterministic, strict, canonical candidate without raw URLs or private values", async () => {
@@ -1216,7 +1331,7 @@ describe("Postgres reviewed-price no-write plan candidate", () => {
       canonicalPostgresReviewedPricePromotionJson(secondPlan),
     );
     expect(firstPlan.version).toBe(POSTGRES_REVIEWED_PRICE_PROMOTION_PLAN_VERSION);
-    expect(firstPlan.version).toBe(2);
+    expect(firstPlan.version).toBe(3);
     expect(firstPlan.target.physicalIdentitySha256).toBe(
       physicalIdentitySha256(first.rows.identity[0]!),
     );
@@ -1263,6 +1378,99 @@ describe("Postgres reviewed-price no-write plan candidate", () => {
     expect(serialized).not.toContain("PRIVATE_");
     expect(serialized).not.toContain("123 Private Street");
     expect(serialized).not.toContain("pintpath_reviewed_price_planner");
+  });
+
+  it("keeps validation, canonical bytes, and hashes pinned after JSON intrinsic replacement", async () => {
+    const target = fixture();
+    const cleanPlan = await buildPostgresReviewedPricePromotionPlanCandidate(target.input);
+    const cleanBytes = canonicalPostgresReviewedPricePromotionJson(cleanPlan);
+    const cleanHash = sha256PostgresReviewedPricePromotionValue(cleanPlan);
+    const { planCandidateSha256: _cleanPlanCandidateSha256, ...cleanWithoutHash } = cleanPlan;
+    const forgedWithoutHash = {
+      ...cleanWithoutHash,
+      candidateSha: "d".repeat(40),
+      expectedDeployment: {
+        ...cleanWithoutHash.expectedDeployment,
+        serviceIdSha256: "8".repeat(64),
+      },
+    };
+    const forgedPlan = {
+      ...forgedWithoutHash,
+      planCandidateSha256: sha256PostgresReviewedPricePromotionValue(forgedWithoutHash),
+    };
+    const forgedWithoutHashText = canonicalPostgresReviewedPricePromotionJson(
+      forgedWithoutHash,
+    ).toString("utf8").slice(0, -1);
+    const forgedPlanText = canonicalPostgresReviewedPricePromotionJson(
+      forgedPlan,
+    ).toString("utf8").slice(0, -1);
+    const originalStringify = JSON.stringify;
+    const originalToJson = Object.getOwnPropertyDescriptor(Object.prototype, "toJSON");
+    let matchedPoison = 0;
+    let inheritedToJsonCalls = 0;
+    let parsedUnderPoison: ReturnType<
+      typeof postgresReviewedPricePromotionPlanCandidateSchema.safeParse
+    > | null = null;
+    let bytesUnderPoison: Buffer | null = null;
+    let hashUnderPoison: string | null = null;
+    try {
+      Object.defineProperty(Object.prototype, "toJSON", {
+        configurable: true,
+        value: () => {
+          inheritedToJsonCalls += 1;
+          return forgedPlan;
+        },
+      });
+      JSON.stringify = ((value: unknown, replacer?: unknown, space?: unknown): string => {
+        if (
+          value
+          && typeof value === "object"
+          && (value as { kind?: unknown }).kind === POSTGRES_REVIEWED_PRICE_PROMOTION_PLAN_KIND
+        ) {
+          matchedPoison += 1;
+          return Object.hasOwn(value, "planCandidateSha256")
+            ? forgedPlanText
+            : forgedWithoutHashText;
+        }
+        return Reflect.apply(originalStringify, JSON, [value, replacer, space]) as string;
+      }) as typeof JSON.stringify;
+      parsedUnderPoison = postgresReviewedPricePromotionPlanCandidateSchema.safeParse(cleanPlan);
+      bytesUnderPoison = canonicalPostgresReviewedPricePromotionJson(cleanPlan);
+      hashUnderPoison = sha256PostgresReviewedPricePromotionValue(cleanPlan);
+    } finally {
+      JSON.stringify = originalStringify;
+      if (originalToJson) {
+        Object.defineProperty(Object.prototype, "toJSON", originalToJson);
+      } else {
+        Reflect.deleteProperty(Object.prototype, "toJSON");
+      }
+    }
+
+    expect(matchedPoison).toBe(0);
+    expect(inheritedToJsonCalls).toBe(0);
+    expect(parsedUnderPoison?.success).toBe(true);
+    expect(bytesUnderPoison).toEqual(cleanBytes);
+    expect(hashUnderPoison).toBe(cleanHash);
+    expect(bytesUnderPoison).not.toEqual(Buffer.from(`${forgedPlanText}\n`, "utf8"));
+
+    const unsafeIdentity = fixture();
+    unsafeIdentity.rows.identity[0]!.searchPathSchemas = ["public"];
+    let identityPoisonInstalled = false;
+    unsafeIdentity.database.onRead = (tag) => {
+      if (tag !== "identity" || identityPoisonInstalled) return;
+      identityPoisonInstalled = true;
+      JSON.stringify = (() => "[\"pg_catalog\"]") as typeof JSON.stringify;
+    };
+    let failure: unknown;
+    try {
+      await buildPostgresReviewedPricePromotionPlanCandidate(unsafeIdentity.input);
+    } catch (error) {
+      failure = error;
+    } finally {
+      JSON.stringify = originalStringify;
+    }
+    expect(identityPoisonInstalled).toBe(true);
+    expect(failure).toMatchObject({ code: "inspection_invalid" });
   });
 
   it("freezes the v16 schema, selection policy, and canonical receipt hash chain", () => {

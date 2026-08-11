@@ -237,6 +237,75 @@ function checkRequired(name: string, label: string, action: string): ProviderChe
   };
 }
 
+type SupabaseKeyFormat = "publishable" | "secret";
+
+const SUPABASE_KEY_MAXIMUM_BYTES = 256;
+const SUPABASE_KEY_SUFFIX_MINIMUM_LENGTH = 20;
+const SUPABASE_KEY_SUFFIX_MAXIMUM_LENGTH = 220;
+
+function hasExactSupabaseKeyShape(
+  value: string,
+  format: SupabaseKeyFormat,
+): boolean {
+  const prefix = format === "publishable" ? "sb_publishable_" : "sb_secret_";
+  const suffixLength = value.length - prefix.length;
+  if (
+    Buffer.byteLength(value, "utf8") < 1
+    || Buffer.byteLength(value, "utf8") > SUPABASE_KEY_MAXIMUM_BYTES
+    || !value.startsWith(prefix)
+    || suffixLength < SUPABASE_KEY_SUFFIX_MINIMUM_LENGTH
+    || suffixLength > SUPABASE_KEY_SUFFIX_MAXIMUM_LENGTH
+  ) return false;
+
+  for (let index = prefix.length; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    const allowed = (code >= 0x30 && code <= 0x39)
+      || (code >= 0x41 && code <= 0x5a)
+      || code === 0x5f
+      || (code >= 0x61 && code <= 0x7a)
+      || code === 0x2d;
+    if (!allowed) return false;
+  }
+  return true;
+}
+
+function checkSupabaseKeyFormat(
+  name: "SUPABASE_ANON_KEY" | "SUPABASE_SERVICE_ROLE_KEY" | "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
+  format: SupabaseKeyFormat,
+  label: string,
+  action: string,
+): ProviderCheck {
+  const exact = hasExactSupabaseKeyShape(process.env[name] ?? "", format);
+  return {
+    id: name,
+    label,
+    status: exact ? "pass" : isProduction() ? "fail" : "warn",
+    action: exact ? null : action,
+    details: exact
+      ? `Configured key uses the reviewed sb_${format}_ format; no key value is emitted.`
+      : `Key is absent, malformed, or legacy; expected the reviewed sb_${format}_ format and no key value is emitted.`,
+  };
+}
+
+function checkDistinctSupabaseSecretKeys(): ProviderCheck {
+  const primary = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+  const offsite = process.env.OFFSITE_BACKUP_SERVICE_ROLE_KEY ?? "";
+  const exactAndDistinct = hasExactSupabaseKeyShape(primary, "secret")
+    && hasExactSupabaseKeyShape(offsite, "secret")
+    && primary !== offsite;
+  return {
+    id: "SUPABASE_SERVICE_ROLE_KEYS_DISTINCT",
+    label: "Distinct primary and operational restore Supabase secret keys",
+    status: exactAndDistinct ? "pass" : isProduction() ? "fail" : "warn",
+    action: exactAndDistinct
+      ? null
+      : "Configure exact sb_secret_ keys from two separate projects and ensure the primary and operational restore keys differ.",
+    details: exactAndDistinct
+      ? "The two reviewed project secret keys are distinct; no key value is emitted."
+      : "One or both secret keys are absent, malformed, legacy, or reused; no key value is emitted.",
+  };
+}
+
 function checkOptionalStrongSecret(name: string, label: string, action: string): ProviderCheck {
   const value = getValue(name);
   if (!value) {
@@ -562,7 +631,7 @@ async function checkPrivateStorageBucket(input: {
       id: input.id,
       label: input.label,
       status: "fail",
-      action: `Confirm ${input.bucketName} exists, is private, and is reachable with the service-role key.`,
+      action: `Confirm ${input.bucketName} exists, is private, and is reachable with the configured server secret key.`,
     };
   }
 }
@@ -1065,12 +1134,13 @@ const permanentStagingCompleteChecks: ProviderCheck[] = [
   checkRequired("GOOGLE_PLACES_API_KEY", "Staging Google Places server API key", "Set the staging-only server Places key."),
   checkRequired("OPENAI_API_KEY", "Staging OpenAI menu OCR key", "Set the staging-only menu OCR key."),
   checkRequired("SUPABASE_URL", "Permanent-staging Supabase project URL", "Set the reviewed permanent-staging Supabase URL."),
-  checkRequired("SUPABASE_ANON_KEY", "Permanent-staging Supabase publishable/anon key", "Set the staging project's browser-safe Supabase key."),
-  checkRequired("SUPABASE_SERVICE_ROLE_KEY", "Permanent-staging Supabase service-role key", "Set the staging project's server-only service-role key."),
+  checkSupabaseKeyFormat("SUPABASE_ANON_KEY", "publishable", "Permanent-staging Supabase publishable key", "Set the staging project's exact sb_publishable_ key."),
+  checkSupabaseKeyFormat("SUPABASE_SERVICE_ROLE_KEY", "secret", "Permanent-staging Supabase secret key", "Set the staging project's exact server-only sb_secret_ key."),
   checkSupabaseOauthLaunchProviders(),
   checkSupabaseProviderCallbackUrl(),
   checkRequired("OFFSITE_BACKUP_SUPABASE_URL", "Staging operational restore-copy URL", "Set an isolated staging operational-copy origin distinct from the staging Supabase project."),
-  checkRequired("OFFSITE_BACKUP_SERVICE_ROLE_KEY", "Staging operational restore-copy service-role key", "Set the server-only key for the isolated staging operational copy."),
+  checkSupabaseKeyFormat("OFFSITE_BACKUP_SERVICE_ROLE_KEY", "secret", "Staging operational restore-copy secret key", "Set the isolated staging operational-copy project's exact server-only sb_secret_ key."),
+  checkDistinctSupabaseSecretKeys(),
   operationalRestoreCopyDestinationCheck,
   checkRequiredStrongSecret(
     "SOURCE_EVIDENCE_SIGNING_SECRET",
@@ -1171,11 +1241,12 @@ const launchPreflightChecks: ProviderCheck[] = [
   checkRequired("GOOGLE_PLACES_API_KEY", "Google Places server API key", "Use the reviewed Railway mutation-boundary executor to set GOOGLE_PLACES_API_KEY on the app service for admin venue lookup and future request flows."),
   checkRequired("OPENAI_API_KEY", "OpenAI menu OCR key", "Use the reviewed Railway mutation-boundary executor to set OPENAI_API_KEY and deploy the exact reviewed image so menu photo OCR can initialise."),
   checkRequired("SUPABASE_URL", "Supabase project URL", "Set SUPABASE_URL for OAuth and provider-backed auth."),
-  checkRequired("SUPABASE_ANON_KEY", "Supabase publishable/anon key", "Set the browser-safe Supabase publishable/anon key."),
-  checkRequired("SUPABASE_SERVICE_ROLE_KEY", "Supabase server service-role key", "Set SUPABASE_SERVICE_ROLE_KEY for private source-evidence capture history."),
+  checkSupabaseKeyFormat("SUPABASE_ANON_KEY", "publishable", "Supabase publishable key", "Set SUPABASE_ANON_KEY to the project's exact browser-safe sb_publishable_ key."),
+  checkSupabaseKeyFormat("SUPABASE_SERVICE_ROLE_KEY", "secret", "Supabase server secret key", "Set SUPABASE_SERVICE_ROLE_KEY to the project's exact server-only sb_secret_ key for private source-evidence capture history."),
   checkSupabaseOauthLaunchProviders(),
   checkRequired("OFFSITE_BACKUP_SUPABASE_URL", "Private operational restore-copy URL", "Set OFFSITE_BACKUP_SUPABASE_URL to an operational restore-copy origin different from SUPABASE_URL; separately prove WORM authority."),
-  checkRequired("OFFSITE_BACKUP_SERVICE_ROLE_KEY", "Operational restore-copy service-role key", "Set the service-role key for the private operational restore copy; it is not the WORM recovery credential."),
+  checkSupabaseKeyFormat("OFFSITE_BACKUP_SERVICE_ROLE_KEY", "secret", "Operational restore-copy secret key", "Set OFFSITE_BACKUP_SERVICE_ROLE_KEY to the operational-copy project's exact sb_secret_ key; it is not the WORM recovery credential."),
+  checkDistinctSupabaseSecretKeys(),
   operationalRestoreCopyDestinationCheck,
   checkSupabaseProviderCallbackUrl(),
   productionPostgresCheck,
@@ -1478,8 +1549,8 @@ const deletionRehearsalChecks: ProviderCheck[] = [
   checkPermanentStagingSelfPins(),
   deletionRehearsalReplicaCheck,
   deletionRehearsalSupabaseIdentityCheck,
-  checkRequired("SUPABASE_ANON_KEY", "Staging Supabase publishable/anon key", "Set the staging project's browser-safe Supabase key."),
-  checkRequired("SUPABASE_SERVICE_ROLE_KEY", "Staging Supabase service-role key", "Set the staging project's server-only service-role key."),
+  checkSupabaseKeyFormat("SUPABASE_ANON_KEY", "publishable", "Staging Supabase publishable key", "Set the staging project's exact browser-safe sb_publishable_ key."),
+  checkSupabaseKeyFormat("SUPABASE_SERVICE_ROLE_KEY", "secret", "Staging Supabase secret key", "Set the staging project's exact server-only sb_secret_ key."),
   {
     id: "SUPABASE_OAUTH_PROVIDERS",
     label: "Staging OAuth provider scope",

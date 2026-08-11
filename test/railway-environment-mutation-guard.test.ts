@@ -329,6 +329,33 @@ describe("Railway mutation boundary guard", () => {
 
   it("parses only exact metadata responses and discards raw deployment metadata", () => {
     expect(
+      railwayMutationBoundaryInternals.parseProjectTokenScopeResponse(
+        JSON.stringify({
+          data: {
+            projectToken: {
+              projectId: PROJECT_ID,
+              environmentId: PRODUCTION_ENVIRONMENT_ID,
+            },
+          },
+        }),
+      ),
+    ).toEqual({
+      projectId: PROJECT_ID,
+      environmentId: PRODUCTION_ENVIRONMENT_ID,
+    });
+    expect(
+      railwayMutationBoundaryInternals.parseProjectTokenScopeResponse(
+        JSON.stringify({
+          data: {
+            projectToken: {
+              project: { id: PROJECT_ID },
+              environment: { id: PRODUCTION_ENVIRONMENT_ID },
+            },
+          },
+        }),
+      ),
+    ).toBeNull();
+    expect(
       railwayMutationBoundaryInternals.parseEnvironmentBoundaryResponse(
         environmentResponse(PRODUCTION_ENVIRONMENT_ID),
       ),
@@ -358,6 +385,10 @@ describe("Railway mutation boundary guard", () => {
       "patch(decryptVariables: false)",
     );
     expect(RAILWAY_PROJECT_TOKEN_SCOPE_QUERY).toContain("projectToken");
+    expect(RAILWAY_PROJECT_TOKEN_SCOPE_QUERY).toContain("projectId");
+    expect(RAILWAY_PROJECT_TOKEN_SCOPE_QUERY).toContain("environmentId");
+    expect(RAILWAY_PROJECT_TOKEN_SCOPE_QUERY).not.toContain("project {");
+    expect(RAILWAY_PROJECT_TOKEN_SCOPE_QUERY).not.toContain("environment {");
     expect(RAILWAY_PRODUCTION_POSTGRES_PIN_QUERY).toContain("snapshotId");
     expect(RAILWAY_PRODUCTION_POSTGRES_PIN_QUERY).toContain("meta");
 
@@ -372,8 +403,8 @@ describe("Railway mutation boundary guard", () => {
           ? JSON.stringify({
             data: {
               projectToken: {
-                project: { id: PROJECT_ID },
-                environment: { id: PRODUCTION_ENVIRONMENT_ID },
+                projectId: PROJECT_ID,
+                environmentId: PRODUCTION_ENVIRONMENT_ID,
               },
             },
           })

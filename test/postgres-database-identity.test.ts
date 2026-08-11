@@ -36,6 +36,23 @@ describe("canonical PostgreSQL physical database identity", () => {
     expect(sha256PostgresDatabaseIdentity(PHYSICAL_IDENTITY)).toBe(LEGACY_SHA256);
   });
 
+  it("does not dispatch canonical identity bytes through replaced JSON", () => {
+    const originalStringify = JSON.stringify;
+    let poisonCalls = 0;
+    JSON.stringify = (() => {
+      poisonCalls += 1;
+      throw new Error("poisoned_json_stringify");
+    }) as typeof JSON.stringify;
+    try {
+      expect(canonicalPostgresDatabaseIdentityJson(CANONICAL_IDENTITY))
+        .toBe(CANONICAL_JSON);
+      expect(sha256PostgresDatabaseIdentity(PHYSICAL_IDENTITY)).toBe(LEGACY_SHA256);
+    } finally {
+      JSON.stringify = originalStringify;
+    }
+    expect(poisonCalls).toBe(0);
+  });
+
   it("derives the same physical identity across distinct database roles", () => {
     const migratorIdentity = {
       ...PHYSICAL_IDENTITY,

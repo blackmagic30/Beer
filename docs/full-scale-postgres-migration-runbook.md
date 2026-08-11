@@ -39,8 +39,8 @@ promote reviewed data, or announce the combined launch until every exit
 criterion below has passed in permanent integrated staging and the resulting
 implementation is part of the frozen commit.
 
-Every Railway create, configuration, scale, deploy, rollback, PITR, route, or
-teardown step below is non-executable until the tracked
+Every Railway create, configuration, scale, deploy, rollback, PITR, route,
+delete, destroy, or teardown step below is non-executable until the tracked
 `readiness:railway:mutation-boundary` executor owns its immediate preflight,
 one exact operation, and unconditional postflight. The standalone receipt is
 read-only, the checked-in incident baseline intentionally fails, and no
@@ -66,14 +66,25 @@ cutover. A one-replica SQLite launch is not an alternative for this release.
 - **Permanent integrated staging** is the stable Railway staging service with
   pinned Postgres, Supabase/Auth/private Storage, and Redis resources. Its core
   identities, synthetic import, runtime proof, and logical backup are complete;
-  three provider credentials, the app deploy, and live evidence remain open.
+  three Google/OpenAI provider categories remain open, comprising four exact
+  Railway variable operations: Google Maps client configuration
+  (`GOOGLE_MAPS_API_KEY` and `GOOGLE_MAPS_MAP_ID`), Google Places server access
+  (`GOOGLE_PLACES_API_KEY`), and OpenAI menu OCR (`OPENAI_API_KEY`). Separately,
+  the three Supabase replacement-key operations (`SUPABASE_ANON_KEY`,
+  `SUPABASE_SERVICE_ROLE_KEY`, and `OFFSITE_BACKUP_SERVICE_ROLE_KEY`) remain
+  `HARD_DISABLED_REVIEW_REQUIRED` and unauthorized. The app deploy and live
+  evidence also remain open.
 - **Ephemeral destructive restore staging** currently has an isolated Railway
   project, Postgres database, and Redis resource, and its logical database
   receipt, one-tombstone replay, idempotent second replay, semantic projection,
   and post-replay runtime readiness match staging. A complete rehearsal must
   additionally use isolated Supabase/private Storage, credentials, domain, and
-  callbacks before application/PITR/WORM/RPO/RTO proof; destroy it only after
-  two-person sign-off.
+  callbacks before application/PITR/WORM/RPO/RTO proof. Two-person sign-off is
+  necessary but not sufficient for teardown: first complete resource/evidence
+  reconciliation and obtain specific authorization naming the exact resource
+  IDs; then only the exact reviewed teardown executor may delete or destroy
+  them through its immediate mutation-boundary preflight, one exact operation,
+  and unconditional postflight.
 - Neither environment may share production credentials, database paths,
   service-role keys, Redis namespaces, or callbacks. Restored production data
   must never be loaded into permanent integrated staging.
@@ -373,8 +384,11 @@ URL file.
 - [x] Create and pin the permanent-staging Railway app service, Postgres,
   Supabase/Auth/private Storage, and Redis core identities; prove they differ
   from production and the disposable restore resources.
-- [ ] Complete the three remaining staging provider credential/configuration
-  gates, deploy the reviewed app, and verify provider/domain/callback bindings.
+- [ ] Complete the three Google/OpenAI categories/four exact Railway variable
+  operations only through their reviewed authority. Keep the separate three
+  Supabase replacement-key operations hard-disabled and unauthorized until
+  their own reviewed authorities exist. Then deploy the reviewed app and verify
+  provider/domain/callback bindings.
 - [ ] Complete the incident-driven staging Postgres runtime/admin and Redis
   credential rotations with the isolated-client acceptance/rejection contract
   in

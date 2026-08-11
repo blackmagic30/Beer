@@ -2,16 +2,25 @@
 
 ## Railway mutation boundary (document-wide stop)
 
-Every instruction in this document that would create or update a Railway
-variable, service, deployment, route, replica, volume, source, restart, or
-rollback is non-executable until the checked-in
+Every instruction in this document that would create, update, delete, destroy,
+or tear down a Railway variable, service, deployment, route, replica, volume,
+source, restart, or rollback is non-executable until the checked-in
 `readiness:railway:mutation-boundary` preflight passes and the separately
 reviewed one-operation executor owns the exact write plus its unconditional
 postflight. The standalone preflight is read-only and does not authorize a
 dashboard **Deploy**, Git autodeploy, `railway up`, `railway variable set`, or
 another ad-hoc CLI/API write. If that executor or any required authority is
-unavailable, leave Railway unchanged; provider-side key creation and local
-configuration may continue without copying values into Railway.
+unavailable, leave Railway unchanged. Supabase provider-side key creation,
+rotation, and legacy-key disablement require a separate reviewed
+Supabase-provider operation authority; the current containment path is
+hard-disabled and is not that authority. Local non-secret configuration review
+may continue, but no provider mutation may.
+
+Any restore-staging delete, destroy, or teardown additionally requires complete
+resource/evidence reconciliation, specific authorization naming the exact
+resource IDs, and the exact reviewed teardown executor with an immediate
+mutation-boundary preflight plus unconditional postflight. Signed evidence or
+two-person sign-off alone is not mutation authority.
 
 Use this before a Railway production or staging deployment for the full-scale Free web-and-iOS release. The local app can run with placeholder values, but `NODE_ENV=production` now fails fast if critical provider config is missing.
 
@@ -87,9 +96,11 @@ Keep `GOOGLE_PLACES_API_KEY` server-side for imports/geocoding. Do not expose it
 
 ## Railway
 
-Target Railway profile after the Postgres adapter and migration tooling are
-implemented and proved in permanent staging. Do not paste this into the current
-SQLite runtime merely to satisfy a presence check:
+Railway Postgres is the application system-of-record target for permanent
+staging and production. The repository implementation exists, but the exact
+reviewed build and its live migration evidence must still be proved in
+permanent staging. Do not paste this profile into the current SQLite production
+runtime merely to satisfy a presence check:
 
 Treat Railway configuration and remote-shell output as credential-bearing.
 `railway environment config --json` returns resolved secret values, and a
@@ -177,6 +188,38 @@ boundary/target preflight, durable intent, exactly one write attempt,
 unconditional postflight, secret zeroization, and terminal evidence. Permanent
 staging and production are not acceptable substitutes for that fixture.
 
+The three Google/OpenAI provider categories comprise four exact Railway
+variable operations: Google Maps client configuration (`GOOGLE_MAPS_API_KEY`
+and `GOOGLE_MAPS_MAP_ID`), Google Places server access
+(`GOOGLE_PLACES_API_KEY`), and OpenAI menu OCR (`OPENAI_API_KEY`). The
+review-only path authorises none of those operations while its policy remains
+`HARD_DISABLED_REVIEW_REQUIRED`, and it does not accept or authorise
+`SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, or
+`OFFSITE_BACKUP_SERVICE_ROLE_KEY`. Those are the three Supabase replacement-key
+operations under a separate containment path that also remains
+`HARD_DISABLED_REVIEW_REQUIRED`; it does not authorise a Railway upsert,
+Supabase key creation or rotation, legacy-key disablement, a canary deployment,
+or any provider mutation.
+
+The read-only application-deployment attestor is documented in
+[`railway-application-deployment-attestation.md`](railway-application-deployment-attestation.md).
+Use it only after the separately reviewed provider-variable and deployment
+operations have produced a real permanent-staging application. The build emits
+hash-only Railway project, environment, service, deployment, and replica
+identity on `/health`, `/startup`, and `/ready`; the attestor joins those hashes
+to stable before/after provider metadata and writes a short-lived canonical
+receipt. It cannot deploy, set variables, commit or discard a patch, or remove
+the reviewed-price deployment-authority blocker. Do not run it merely to
+manufacture a local success receipt while the staging app remains absent.
+For the attestor, do not export a Railway token. The only reviewed token source
+is the exact fixed macOS login Keychain item named in the attestor document, and
+the only authoritative invocation is the executable
+`./scripts/run-locked-sensitive-worker.sh attestor` from the exact reviewed
+repository root. Direct `tsx`, TypeScript-source, `/bin/sh`, npm, and inherited
+Node invocations are not operator ceremonies, and no npm alias is exposed. The
+executable launcher clears its environment before zsh starts and the
+locked child rejects any authority or primordial drift before Keychain access.
+
 For PostgreSQL and Redis password incidents, follow the separate
 [permanent-staging private authentication rotation runbook](permanent-staging-private-auth-rotation.md).
 It uses isolated private-network clients with PostgreSQL 17 SCRAM enforcement,
@@ -234,8 +277,8 @@ OPENAI_MENU_OCR_MODEL=gpt-5.6-sol
 OPENAI_MENU_OCR_FALLBACK_MODEL=gpt-4.1
 OPENAI_MENU_OCR_REVIEW_PASS=true
 SUPABASE_URL=https://your-production-project.supabase.co
-SUPABASE_ANON_KEY=your_browser_safe_publishable_or_anon_key
-SUPABASE_SERVICE_ROLE_KEY=your_server_only_service_role_key
+SUPABASE_ANON_KEY=REDACTED_USE_PROJECT_SB_PUBLISHABLE_KEY
+SUPABASE_SERVICE_ROLE_KEY=REDACTED_USE_PROJECT_SB_SECRET_KEY
 SUPABASE_OAUTH_PROVIDERS=google
 REPORT_TIMEZONE=Australia/Melbourne
 REPORT_EMAIL_MODE=disabled
@@ -295,13 +338,23 @@ STRIPE_PRICE_YEARLY=
 STRIPE_PRO_PRICE_ID=
 NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=
 OFFSITE_BACKUP_SUPABASE_URL=https://your-operational-restore-copy-project.supabase.co
-OFFSITE_BACKUP_SERVICE_ROLE_KEY=your_operational_restore_copy_service_role_key
+OFFSITE_BACKUP_SERVICE_ROLE_KEY=REDACTED_USE_DISTINCT_RESTORE_SB_SECRET_KEY
 OFFSITE_BACKUP_BUCKET=pintpath-backups
 OFFSITE_BACKUP_INTERVAL_HOURS=24
 OFFSITE_BACKUP_RETENTION_DAYS=30
 ```
 
 Replace all applicable placeholders with real environment-specific values. `SOURCE_EVIDENCE_SIGNING_SECRET` is always required. Leave `POS_WEBHOOK_SIGNING_SECRET` absent: counter, reward, redemption, and POS modes are outside this release and must remain disabled. `OFFSITE_BACKUP_SUPABASE_URL` must have a different origin from `SUPABASE_URL`, but that separation alone does not make it independent or immutable. Keep field-test mode, both paid flags, rewards, and alcohol gamification `false`; keep `VENUE_PRO_TRIAL_DAYS=0`, report delivery disabled, and all Stripe values absent for this Free-only release.
+
+The variable names are retained for application compatibility, but their values
+must use current Supabase key formats: `SUPABASE_ANON_KEY` carries the target
+project's `sb_publishable_...` key, `SUPABASE_SERVICE_ROLE_KEY` carries that
+project's server-only `sb_secret_...` key, and
+`OFFSITE_BACKUP_SERVICE_ROLE_KEY` carries a distinct `sb_secret_...` key from
+the operational restore-copy project. Do not use legacy JWT `anon` or
+`service_role` keys. These requirements do not activate the hard-disabled
+replacement path or authorize provider-side creation, rotation, disablement, or
+any Railway write.
 
 Generate each connection digest from the exact credentialed URL only inside the
 protected environment; never print or duplicate the URL. The expected digest
@@ -380,12 +433,19 @@ This value signs short-lived source-evidence review/download URLs. Keep it serve
 
 ## Supabase
 
-Use Supabase for OAuth, private evidence storage, and the target managed Postgres service, while Pint Path app authorization remains enforced by the Express API.
+Use Supabase for Auth/OAuth, private evidence Storage, and its restricted Data
+API surfaces, while Pint Path application authorization remains enforced by the
+Express API. Supabase is not the application system-of-record target: Railway
+Postgres holds authoritative Pint Path application state after cutover.
 
 Required checks:
 
-- `SUPABASE_URL` and `SUPABASE_ANON_KEY` are set for browser OAuth.
-- `SUPABASE_SERVICE_ROLE_KEY` is only server-side.
+- `SUPABASE_URL` and an `sb_publishable_...` value in `SUPABASE_ANON_KEY` are
+  set for browser OAuth; a legacy JWT `anon` key is not accepted.
+- `SUPABASE_SERVICE_ROLE_KEY` carries only the target project's server-side
+  `sb_secret_...` key; a legacy JWT `service_role` key is not accepted.
+- `OFFSITE_BACKUP_SERVICE_ROLE_KEY` carries a distinct server-side
+  `sb_secret_...` key from the operational restore-copy project.
 - Google OAuth is configured with minimal email/profile scopes for the web app. Apple OAuth remains disabled until authorization-token revocation is implemented and tested. The first-release iOS app is email/password only.
 - Leaked password protection is enabled in Supabase Auth.
 - The hosted database is not on deprecated Postgres 14.
@@ -404,7 +464,7 @@ Required checks:
 - Authoritative app tables live in a non-exposed schema and are reached only by the server's least-privilege database role. Do not grant `anon` or `authenticated` access; RLS remains defense in depth rather than the primary server boundary.
 - The application uses a TLS connection pool with a documented maximum. Migrations, schema ownership, `pg_dump`, PITR administration, and restore work use a separately held direct/admin connection.
 - Permanent integrated staging has its own Supabase project/database, Auth users, Storage bucket, Redis, Resend configuration, Railway environment/service, domain, and callbacks. It stays available for migrations, two-replica concurrency, auth, deletion, data repair, smoke, load, deploy, and rollback proof.
-- Disposable restore-staging has a different Railway environment/service, database, Supabase project/Auth/Storage, Redis, secrets, domain, and callbacks from permanent staging, production, and the operational restore copy. It exists only for destructive RPO/RTO proof and is destroyed after signed evidence.
+- Disposable restore-staging has a different Railway environment/service, database, Supabase project/Auth/Storage, Redis, secrets, domain, and callbacks from permanent staging, production, and the operational restore copy. It exists only for destructive RPO/RTO proof. Signed evidence is required but is not teardown authority; delete only after complete resource/evidence reconciliation and specific authorization through the exact reviewed teardown executor and its mutation-boundary preflight/postflight.
 - Before each destructive drill, copy the disposable restore environment identities from the private release register into the protected `RESTORE_REHEARSAL_EXPECTED_*` variables and verify the runtime identities match. Never repurpose permanent staging. Changing these protected pins for a new disposable restore environment does not require a candidate code change.
 
 ## Future Stripe configuration — not a current launch gate
@@ -527,7 +587,7 @@ Configure the schedule and retention with:
 
 ```dotenv
 OFFSITE_BACKUP_SUPABASE_URL=https://operational-restore-copy-project.supabase.co
-OFFSITE_BACKUP_SERVICE_ROLE_KEY=replace_with_operational_restore_copy_service_role_key
+OFFSITE_BACKUP_SERVICE_ROLE_KEY=REDACTED_USE_DISTINCT_RESTORE_SB_SECRET_KEY
 OFFSITE_BACKUP_BUCKET=pintpath-backups
 OFFSITE_BACKUP_INTERVAL_HOURS=24
 OFFSITE_BACKUP_RETENTION_DAYS=30

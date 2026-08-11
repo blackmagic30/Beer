@@ -467,15 +467,27 @@ describe("release workflow contracts", () => {
       "- name: Run real PostgreSQL 17 import, reconciliation, and reviewed-price planner no-write proof",
     );
     expect(job).toContain("npx vitest run test/postgres-migration-target.integration.test.ts");
-    expect(packageJson.scripts?.["menus:promote-reviewed:postgres"]).toBe(
-      "tsx scripts/postgres-reviewed-price-promotion.ts",
-    );
+    expect(packageJson.scripts?.["menus:promote-reviewed:postgres"])
+      .toBeUndefined();
     expect(migrationIntegration).toContain(
       "runPostgresReviewedPricePromotionCli",
     );
     expect(migrationIntegration).toContain(
       '"--expected-target-database-identity-sha256"',
     );
+    expect(migrationIntegration).toContain('"--deployment-attestation"');
+    expect(migrationIntegration).toContain(
+      '"--deployment-attestation-sha256"',
+    );
+    for (const legacyDeploymentFlag of [
+      "--deployment-project-id-sha256",
+      "--deployment-environment-id-sha256",
+      "--deployment-service-id-sha256",
+      "--deployment-id-sha256",
+      "--deployment-image-digest-sha256",
+    ]) {
+      expect(migrationIntegration).not.toContain(`"${legacyDeploymentFlag}"`);
+    }
     expect(migrationIntegration).not.toContain(
       '"--expected-planner-target-identity-sha256"',
     );
@@ -1247,6 +1259,148 @@ describe("release workflow contracts", () => {
     expect(backup?.label).toContain("Postgres, private Storage, and WORM");
     expect(backup?.nextAction).toContain("ephemeral destructive restore environment");
     expect(backup?.nextAction).toContain("distinct from production and permanent staging");
+  });
+
+  it("keeps launch, provider, Supabase, and budget runbooks aligned with the current no-go", () => {
+    const launch = releaseDocument("production-launch-runbook.md");
+    const provider = releaseDocument("provider-configuration-runbook.md");
+    const databaseTesting = releaseDocument("supabase-database-testing.md");
+    const followups = repositoryFile("PROD_FOLLOWUPS.md");
+    const launchGates = releaseDocument("launch-9-readiness-gates.md");
+    const migrationStatus = releaseDocument("postgres-migration-execution-status.md");
+    const fullScaleMigration = releaseDocument("full-scale-postgres-migration-runbook.md");
+    const normalizedLaunch = launch.replace(/\s+/g, " ");
+    const normalizedProvider = provider.replace(/\s+/g, " ");
+
+    expect(normalizedLaunch).toContain("No-go for the requested full-scale web and iOS launch today");
+    expect(normalizedLaunch).toContain("no authentic application-deployment attestation receipt exists");
+    expect(normalizedLaunch).toContain("`launchReady=false` with 0 of 12 external evidence items passed");
+    expect(normalizedLaunch).toContain("All 12 items remain launch gates");
+    expect(normalizedLaunch).toContain("approximately US$46.80/month");
+    expect(normalizedLaunch).toContain("approximately US$20.13/month if retained for a full month");
+    expect(normalizedLaunch).toContain("keep teardown behind the Railway mutation boundary");
+    expect(normalizedLaunch).toContain("candidate-bound live permanent-staging import/reconciliation");
+    expect(normalizedLaunch).toContain("immutable cross-failure-domain retrieval");
+    expect(normalizedLaunch).toContain("provider-evidence");
+    expect(launch).not.toContain(
+      "The current repository does not yet contain the complete Postgres adapter",
+    );
+
+    expect(normalizedProvider).toContain(
+      "Railway Postgres is the application system-of-record target",
+    );
+    expect(normalizedProvider).toContain(
+      "Supabase is not the application system-of-record target",
+    );
+    expect(normalizedProvider).not.toContain("the target managed Postgres service");
+    expect(normalizedProvider).toContain(
+      "Supabase provider-side key creation, rotation, and legacy-key disablement require a separate reviewed Supabase-provider operation authority",
+    );
+    expect(normalizedProvider).toContain(
+      "the current containment path is hard-disabled and is not that authority",
+    );
+    expect(normalizedProvider).not.toContain(
+      "provider-side key creation and local configuration may continue",
+    );
+
+    for (const document of [
+      provider,
+      followups,
+      launchGates,
+      migrationStatus,
+      fullScaleMigration,
+    ]) {
+      const normalized = document.replace(/\s+/g, " ").toLowerCase();
+      expect(normalized).toContain("three google/openai provider categories");
+      expect(normalized).toContain("four exact railway variable operations");
+      expect(normalized).toContain("three supabase replacement-key operations");
+      expect(document).toContain("HARD_DISABLED_REVIEW_REQUIRED");
+      for (const variableName of [
+        "GOOGLE_MAPS_API_KEY",
+        "GOOGLE_MAPS_MAP_ID",
+        "GOOGLE_PLACES_API_KEY",
+        "OPENAI_API_KEY",
+        "SUPABASE_ANON_KEY",
+        "SUPABASE_SERVICE_ROLE_KEY",
+        "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
+      ]) expect(document).toContain(variableName);
+      expect(normalized).not.toMatch(
+        /three (?:remaining )?(?:staging )?provider credential/,
+      );
+      expect(normalized).not.toContain("three provider credentials");
+    }
+
+    for (const document of [
+      launch,
+      provider,
+      followups,
+      launchGates,
+      migrationStatus,
+    ]) {
+      const normalized = document.replace(/\s+/g, " ").toLowerCase();
+      expect(normalized).toContain("delete, destroy, or teardown");
+      expect(normalized).toContain("complete resource/evidence reconciliation");
+      expect(normalized).toContain("specific authorization");
+      expect(normalized).toContain("exact reviewed teardown executor");
+      expect(normalized).toContain("mutation-boundary preflight");
+      expect(normalized).toContain("unconditional postflight");
+      expect(normalized).toContain(
+        "signed evidence or two-person sign-off alone is not mutation authority",
+      );
+    }
+
+    const normalizedFullScale = fullScaleMigration
+      .replace(/\s+/g, " ")
+      .toLowerCase();
+    for (const requirement of [
+      "delete, destroy, or teardown",
+      "complete resource/evidence reconciliation",
+      "specific authorization",
+      "exact reviewed teardown executor",
+      "mutation-boundary preflight",
+      "unconditional postflight",
+    ]) expect(normalizedFullScale).toContain(requirement);
+    expect(normalizedFullScale).toContain(
+      "two-person sign-off is necessary but not sufficient for teardown",
+    );
+
+    expect(normalizedProvider).toContain(
+      "`SUPABASE_ANON_KEY` carries the target project's `sb_publishable_...` key",
+    );
+    expect(normalizedProvider).toContain(
+      "`SUPABASE_SERVICE_ROLE_KEY` carries that project's server-only `sb_secret_...` key",
+    );
+    expect(normalizedProvider).toContain(
+      "`OFFSITE_BACKUP_SERVICE_ROLE_KEY` carries a distinct `sb_secret_...` key from the operational restore-copy project",
+    );
+    expect(normalizedProvider).toContain(
+      "Do not use legacy JWT `anon` or `service_role` keys",
+    );
+    expect(provider).toContain(
+      "SUPABASE_ANON_KEY=REDACTED_USE_PROJECT_SB_PUBLISHABLE_KEY",
+    );
+    expect(provider).toContain(
+      "SUPABASE_SERVICE_ROLE_KEY=REDACTED_USE_PROJECT_SB_SECRET_KEY",
+    );
+    expect(provider.match(
+      /OFFSITE_BACKUP_SERVICE_ROLE_KEY=REDACTED_USE_DISTINCT_RESTORE_SB_SECRET_KEY/g,
+    )).toHaveLength(2);
+    expect(provider).not.toContain("publishable_or_anon");
+    expect(provider).not.toContain("your_server_only_service_role_key");
+    expect(provider).not.toContain(
+      "replace_with_operational_restore_copy_service_role_key",
+    );
+
+    const lintCommands = [launch, provider, databaseTesting]
+      .flatMap((document) => document.split("\n"))
+      .filter((line) => line.includes("supabase db lint"));
+    expect(lintCommands.length).toBeGreaterThanOrEqual(3);
+    for (const command of lintCommands) {
+      expect(command).toContain(
+        "--schema public,private,pintpath_app,pintpath_ops",
+      );
+      expect(command).not.toContain("--schema public,private --");
+    }
   });
 
   it("keeps the AWS Object Lock implementation pinned and its live authority gate open", () => {

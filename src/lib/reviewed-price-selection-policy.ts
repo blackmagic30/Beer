@@ -1,10 +1,41 @@
 import { createHash } from "node:crypto";
+import { URL as NodeUrl } from "node:url";
 
 import type {
   AdminIngestionBeerRecord,
   AdminIngestionQueueRecord,
 } from "../db/models.js";
 import type { AdminBeerInput } from "../modules/admin/admin.schemas.js";
+
+// Selection runs after database and dependency callbacks. Keep every semantic
+// decision on captured primitives so a post-import prototype/global mutation
+// cannot turn an ineligible source or row into publishable map data.
+const ARRAY_IS_ARRAY = Array.isArray;
+const DECODE_URI_COMPONENT = decodeURIComponent;
+const NUMBER_CONSTRUCTOR = Number;
+const NUMBER_IS_FINITE = NUMBER_CONSTRUCTOR.isFinite;
+const NUMBER_IS_SAFE_INTEGER = NUMBER_CONSTRUCTOR.isSafeInteger;
+const NUMBER_TO_FIXED = NUMBER_CONSTRUCTOR.prototype.toFixed;
+const NUMBER_TO_STRING = NUMBER_CONSTRUCTOR.prototype.toString;
+const OBJECT_CONSTRUCTOR = Object;
+const OBJECT_GET_OWN_PROPERTY_DESCRIPTOR = OBJECT_CONSTRUCTOR.getOwnPropertyDescriptor;
+const OBJECT_HAS_OWN = OBJECT_CONSTRUCTOR.hasOwn;
+const REFLECT_OBJECT = Reflect;
+const REFLECT_APPLY = REFLECT_OBJECT.apply;
+const REFLECT_CONSTRUCT = REFLECT_OBJECT.construct;
+const REFLECT_DEFINE_PROPERTY = REFLECT_OBJECT.defineProperty;
+const REGEXP_EXEC = RegExp.prototype.exec;
+const STRING_CHAR_AT = String.prototype.charAt;
+const STRING_TO_LOWER_CASE = String.prototype.toLowerCase;
+const STRING_TRIM = String.prototype.trim;
+const URL_PROTOCOL_GETTER = OBJECT_GET_OWN_PROPERTY_DESCRIPTOR(
+  NodeUrl.prototype,
+  "protocol",
+)!.get!;
+const URL_PATHNAME_GETTER = OBJECT_GET_OWN_PROPERTY_DESCRIPTOR(
+  NodeUrl.prototype,
+  "pathname",
+)!.get!;
 
 export interface ReviewedPriceSelectionOptions {
   minOverallConfidence: number;
@@ -202,11 +233,115 @@ const NON_BASELINE_ROW_CONTEXT_RE = new RegExp(
   REVIEWED_PRICE_SELECTION_PATTERNS.nonBaselineRowContext.source,
   REVIEWED_PRICE_SELECTION_PATTERNS.nonBaselineRowContext.flags,
 );
+const WHITESPACE_CHARACTER_RE = /^\s$/;
+
+function ownDataDescriptor(
+  value: object,
+  key: PropertyKey,
+): PropertyDescriptor | null {
+  const descriptor = REFLECT_APPLY(
+    OBJECT_GET_OWN_PROPERTY_DESCRIPTOR,
+    OBJECT_CONSTRUCTOR,
+    [value, key],
+  ) as PropertyDescriptor | undefined;
+  return descriptor !== undefined
+    && REFLECT_APPLY(OBJECT_HAS_OWN, OBJECT_CONSTRUCTOR, [descriptor, "value"]) === true
+    ? descriptor
+    : null;
+}
+
+function arrayLength(value: unknown): number | null {
+  if (ARRAY_IS_ARRAY(value) !== true) return null;
+  const descriptor = ownDataDescriptor(value, "length");
+  return descriptor !== null
+    && typeof descriptor.value === "number"
+    && NUMBER_IS_SAFE_INTEGER(descriptor.value)
+    && descriptor.value >= 0
+    ? descriptor.value
+    : null;
+}
+
+function arrayValue<T>(value: readonly T[], index: number): T | undefined {
+  const key = REFLECT_APPLY(NUMBER_TO_STRING, index, []) as string;
+  const descriptor = ownDataDescriptor(value, key);
+  return descriptor !== null && descriptor.enumerable === true
+    ? descriptor.value as T
+    : undefined;
+}
+
+function defineDenseArrayValue<T>(target: T[], index: number, value: T): boolean {
+  const key = REFLECT_APPLY(NUMBER_TO_STRING, index, []) as string;
+  const defined = REFLECT_APPLY(
+    REFLECT_DEFINE_PROPERTY,
+    REFLECT_OBJECT,
+    [target, key, {
+      configurable: true,
+      enumerable: true,
+      writable: true,
+      value,
+    }],
+  );
+  const descriptor = ownDataDescriptor(target, key);
+  return defined === true
+    && descriptor !== null
+    && descriptor.enumerable === true
+    && descriptor.value === value
+    && arrayLength(target) === index + 1;
+}
+
+function appendDenseArrayValue<T>(target: T[], value: T): boolean {
+  const length = arrayLength(target);
+  return length !== null && defineDenseArrayValue(target, length, value);
+}
+
+function matches(pattern: RegExp, value: string): boolean {
+  return REFLECT_APPLY(REGEXP_EXEC, pattern, [value]) !== null;
+}
+
+function trimmed(value: string): string {
+  return REFLECT_APPLY(STRING_TRIM, value, []) as string;
+}
+
+function lowerCase(value: string): string {
+  return REFLECT_APPLY(STRING_TO_LOWER_CASE, value, []) as string;
+}
+
+function numeric(value: unknown): number {
+  return REFLECT_APPLY(NUMBER_CONSTRUCTOR, undefined, [value]) as number;
+}
 
 function sourceHaystack(queueItem: ReviewedPriceSourceItem): string {
-  return [queueItem.sourceUrl, queueItem.note, queueItem.capturedNotes]
-    .filter(Boolean)
-    .join("\n");
+  let output = "";
+  const append = (value: string | null): void => {
+    if (!value) return;
+    if (output !== "") output += "\n";
+    output += value;
+  };
+  append(queueItem.sourceUrl);
+  append(queueItem.note);
+  append(queueItem.capturedNotes);
+  return output;
+}
+
+function normalizedPathname(pathname: string): string {
+  const decoded = REFLECT_APPLY(
+    DECODE_URI_COMPONENT,
+    undefined,
+    [pathname],
+  ) as string;
+  let output = "";
+  let separatorOpen = false;
+  for (let index = 0; index < decoded.length; index += 1) {
+    const character = REFLECT_APPLY(STRING_CHAR_AT, decoded, [index]) as string;
+    if (character === "-" || character === "_") {
+      if (!separatorOpen) output += " ";
+      separatorOpen = true;
+      continue;
+    }
+    separatorOpen = false;
+    output += character;
+  }
+  return output;
 }
 
 export function isLikelyBaselineMenuSource(
@@ -216,71 +351,131 @@ export function isLikelyBaselineMenuSource(
 ): boolean {
   if (!queueItem.sourceUrl) return false;
 
-  let url: URL;
+  let url: NodeUrl;
   try {
-    url = new URL(queueItem.sourceUrl);
+    url = REFLECT_CONSTRUCT(NodeUrl, [queueItem.sourceUrl]) as NodeUrl;
   } catch {
     return false;
   }
 
-  if (!["http:", "https:"].includes(url.protocol)) return false;
+  const protocol = REFLECT_APPLY(URL_PROTOCOL_GETTER, url, []) as string;
+  if (protocol !== "http:" && protocol !== "https:") return false;
 
   const haystack = sourceHaystack(queueItem);
-  if (!options.allowSpecialSources && EVENT_OR_SPECIAL_RE.test(haystack)) return false;
+  if (!options.allowSpecialSources && matches(EVENT_OR_SPECIAL_RE, haystack)) return false;
 
-  const pathname = decodeURIComponent(url.pathname).replace(/[-_]+/g, " ");
-  if (EXCLUDED_SOURCE_PATH_RE.test(pathname)) return false;
-  if (DIRECT_RASTER_IMAGE_RE.test(url.pathname)) return false;
+  const rawPathname = REFLECT_APPLY(URL_PATHNAME_GETTER, url, []) as string;
+  const pathname = normalizedPathname(rawPathname);
+  if (matches(EXCLUDED_SOURCE_PATH_RE, pathname)) return false;
+  if (matches(DIRECT_RASTER_IMAGE_RE, rawPathname)) return false;
 
-  if (pathname === "/" || pathname.trim() === "") {
-    return options.allowHomepage && HOMEPAGE_MENU_SIGNAL_RE.test(haystack);
+  if (pathname === "/" || trimmed(pathname) === "") {
+    return options.allowHomepage && matches(HOMEPAGE_MENU_SIGNAL_RE, haystack);
   }
 
-  return BASELINE_MENU_PATH_RE.test(pathname);
+  return matches(BASELINE_MENU_PATH_RE, pathname);
 }
 
 function isUsableBeerRow(
   row: AdminIngestionBeerRecord,
   options: ReviewedPriceSelectionOptions,
 ): boolean {
-  const name = row.name.trim();
-  const price = Number(row.priceNumeric);
-  const confidence = Number(row.confidence);
-  const context = [row.priceText, row.notes].filter(Boolean).join(" ");
+  const name = trimmed(row.name);
+  const price = numeric(row.priceNumeric);
+  const confidence = numeric(row.confidence);
+  let context = "";
+  if (row.priceText) context = row.priceText;
+  if (row.notes) context += `${context === "" ? "" : " "}${row.notes}`;
 
-  return Boolean(name)
+  return name !== ""
     && name.length >= 3
-    && !NOISY_BEER_NAME_RE.test(name)
-    && !NON_BASELINE_ROW_CONTEXT_RE.test(context)
+    && !matches(NOISY_BEER_NAME_RE, name)
+    && !matches(NON_BASELINE_ROW_CONTEXT_RE, context)
     && row.servingSize === "pint"
     && row.availabilityStatus === "on_tap"
     && row.availablePackageOnly !== true
     && row.availableOnTap !== false
-    && Number.isFinite(price)
+    && NUMBER_IS_FINITE(price)
     && price >= options.minPrice
     && price <= options.maxPrice
-    && Number.isFinite(confidence)
+    && NUMBER_IS_FINITE(confidence)
     && confidence >= options.minRowConfidence;
 }
 
 function beerKey(name: string): string {
-  return name.trim().replace(/\s+/g, " ").toLowerCase();
+  const source = trimmed(name);
+  let output = "";
+  let whitespaceOpen = false;
+  for (let index = 0; index < source.length; index += 1) {
+    const character = REFLECT_APPLY(STRING_CHAR_AT, source, [index]) as string;
+    if (matches(WHITESPACE_CHARACTER_RE, character)) {
+      if (!whitespaceOpen) output += " ";
+      whitespaceOpen = true;
+      continue;
+    }
+    whitespaceOpen = false;
+    output += character;
+  }
+  return lowerCase(output);
 }
 
 function dedupeAndDropAmbiguousRows(
   rows: readonly AdminIngestionBeerRecord[],
 ): AdminIngestionBeerRecord[] {
-  const grouped = new Map<string, AdminIngestionBeerRecord[]>();
-  for (const row of rows) {
+  const grouped: Array<{
+    key: string;
+    rows: AdminIngestionBeerRecord[];
+  }> = [];
+  const rowCount = arrayLength(rows);
+  if (rowCount === null) return [];
+  for (let rowIndex = 0; rowIndex < rowCount; rowIndex += 1) {
+    const row = arrayValue(rows, rowIndex);
+    if (row === undefined) return [];
     const key = beerKey(row.name);
-    grouped.set(key, [...(grouped.get(key) ?? []), row]);
+    let groupIndex = -1;
+    const groupCount = arrayLength(grouped)!;
+    for (let index = 0; index < groupCount; index += 1) {
+      if (arrayValue(grouped, index)?.key === key) {
+        groupIndex = index;
+        break;
+      }
+    }
+    if (groupIndex === -1) {
+      const group = { key, rows: [] as AdminIngestionBeerRecord[] };
+      if (!appendDenseArrayValue(group.rows, row)) return [];
+      if (!appendDenseArrayValue(grouped, group)) return [];
+      continue;
+    }
+    const group = arrayValue(grouped, groupIndex);
+    if (group === undefined || !appendDenseArrayValue(group.rows, row)) return [];
   }
 
   const output: AdminIngestionBeerRecord[] = [];
-  for (const groupRows of grouped.values()) {
-    const prices = new Set(groupRows.map((row) => Number(row.priceNumeric).toFixed(2)));
-    if (prices.size > 1) continue;
-    output.push(groupRows[0]!);
+  const groupCount = arrayLength(grouped)!;
+  for (let groupIndex = 0; groupIndex < groupCount; groupIndex += 1) {
+    const groupRows = arrayValue(grouped, groupIndex)?.rows;
+    const groupRowCount = groupRows === undefined ? null : arrayLength(groupRows);
+    if (groupRows === undefined || groupRowCount === null || groupRowCount === 0) return [];
+    const firstRow = arrayValue(groupRows, 0);
+    if (firstRow === undefined) return [];
+    const firstPrice = REFLECT_APPLY(
+      NUMBER_TO_FIXED,
+      numeric(firstRow.priceNumeric),
+      [2],
+    ) as string;
+    let ambiguous = false;
+    for (let rowIndex = 1; rowIndex < groupRowCount; rowIndex += 1) {
+      const row = arrayValue(groupRows, rowIndex);
+      if (row === undefined) return [];
+      const price = REFLECT_APPLY(
+        NUMBER_TO_FIXED,
+        numeric(row.priceNumeric),
+        [2],
+      ) as string;
+      if (price !== firstPrice) ambiguous = true;
+    }
+    if (ambiguous) continue;
+    if (!appendDenseArrayValue(output, firstRow)) return [];
   }
   return output;
 }
@@ -289,7 +484,7 @@ function toAdminBeerInput(row: AdminIngestionBeerRecord): AdminBeerInput {
   return {
     name: row.name,
     servingSize: "pint",
-    priceNumeric: Number(row.priceNumeric),
+    priceNumeric: numeric(row.priceNumeric),
     priceText: row.priceText,
     availabilityStatus: "on_tap",
     availableOnTap: true,
@@ -304,27 +499,52 @@ export function selectPublishableMapBaseRows(
   options: ReviewedPriceSelectionOptions = REVIEWED_PRICE_SELECTION_DEFAULT_OPTIONS,
 ): ReviewedPriceSelectionResult {
   const reasons: string[] = [];
+  const addReason = (reason: string): void => {
+    if (!appendDenseArrayValue(reasons, reason)) {
+      throw new Error("reviewed_price_selection_array_invalid");
+    }
+  };
 
   if (queueItem.sourceType !== "source_reference") {
-    reasons.push("source_type_not_reference");
+    addReason("source_type_not_reference");
   }
   if (!isLikelyBaselineMenuSource(queueItem, options)) {
-    reasons.push("not_baseline_menu_source");
+    addReason("not_baseline_menu_source");
   }
   if ((queueItem.overallConfidence ?? 0) < options.minOverallConfidence) {
-    reasons.push("low_overall_confidence");
+    addReason("low_overall_confidence");
   }
 
-  const usableRows = queueItem.extractedBeers.filter((row) => isUsableBeerRow(row, options));
-  if (usableRows.length === 0) {
-    reasons.push("no_usable_on_tap_pint_rows");
+  const usableRows: AdminIngestionBeerRecord[] = [];
+  const extractedCount = arrayLength(queueItem.extractedBeers);
+  if (extractedCount !== null) {
+    for (let index = 0; index < extractedCount; index += 1) {
+      const row = arrayValue(queueItem.extractedBeers, index);
+      if (row !== undefined && isUsableBeerRow(row, options)) {
+        if (!appendDenseArrayValue(usableRows, row)) {
+          throw new Error("reviewed_price_selection_array_invalid");
+        }
+      }
+    }
+  }
+  const usableRowCount = arrayLength(usableRows)!;
+  if (usableRowCount === 0) {
+    addReason("no_usable_on_tap_pint_rows");
   }
 
   const dedupedRows = dedupeAndDropAmbiguousRows(usableRows);
-  if (usableRows.length > 0 && dedupedRows.length === 0) {
-    reasons.push("ambiguous_duplicate_prices");
+  const dedupedRowCount = arrayLength(dedupedRows)!;
+  if (usableRowCount > 0 && dedupedRowCount === 0) {
+    addReason("ambiguous_duplicate_prices");
   }
 
-  if (reasons.length > 0) return { beers: [], reasons };
-  return { beers: dedupedRows.map(toAdminBeerInput), reasons: [] };
+  if (arrayLength(reasons)! > 0) return { beers: [], reasons };
+  const beers: AdminBeerInput[] = [];
+  for (let index = 0; index < dedupedRowCount; index += 1) {
+    const row = arrayValue(dedupedRows, index);
+    if (row === undefined || !appendDenseArrayValue(beers, toAdminBeerInput(row))) {
+      throw new Error("reviewed_price_selection_array_invalid");
+    }
+  }
+  return { beers, reasons: [] };
 }
