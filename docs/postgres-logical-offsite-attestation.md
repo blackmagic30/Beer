@@ -211,6 +211,49 @@ Missing, changed, multiply linked, replaced, or unexpectedly populated
 temporary state returns `cleanup_failed`; an untrusted replacement path is
 never deleted.
 
+The archive pathname is not delegated to either PostgreSQL child. The command
+requires the canonical output parent and newly created output directory to be
+current-user-owned mode-`700` directories and retains guards for both. It then
+creates and retains one exclusive mode-`600` archive descriptor. `pg_dump`
+writes only to a pipe; the parent synchronously copies those bytes into the
+held descriptor, so neither the child nor one of its descendants receives the
+writable archive descriptor. After fsync and an exact inode/hash snapshot, the
+command opens and validates a separate read-only descriptor for the same inode
+and passes that descriptor as `pg_restore --list` standard input. The two
+independently opened file descriptions prevent the dump's end-of-file offset
+from affecting TOC parsing. Both descriptors remain held until their child has
+settled and the archive identity, size, timestamps, mode, link count, and
+SHA-256 have been revalidated. An ancestor-directory or leaf-path replacement
+therefore cannot redirect the bytes written or parsed and is treated as archive
+tampering. PostgreSQL tools run in dedicated process groups. Reaping starts when
+the leader exits, and timeout or output-limit failure destroys the parent pipe
+before settlement; ordinary same-group descendants are killed and the group is
+proved empty before return.
+
+This process-group boundary cannot observe a child that creates a new session,
+and the production CLI currently resolves bare `pg_dump` and `pg_restore`
+names through ambient `PATH`, checking only self-reported PostgreSQL-17 version
+text. A substituted wrapper could therefore escape the group and retain the
+credential environment or the read-only archive descriptor. The pipe relay
+prevents such a process from retaining writable archive authority after a
+failure, but it does not prove exact executable authorship. Treat exact
+reviewed executable paths, expected binary SHA-256 pins, held-byte custody, and
+a capability-bound native launcher or immutable digest-pinned execution image
+as an unresolved activation requirement. Until that authority exists, these
+bytes are review-only defense in depth and must not authorize a live backup
+ceremony.
+The exact canonical state receipt and manifest are independently hashed against
+their in-memory canonical bytes and held by validated descriptors through the
+same post-cleanup revalidation; a replacement cannot become its own baseline.
+When a failure is known before descriptor release, the command truncates and
+fsyncs every still-held archive, manifest, and receipt inode before closing it.
+A failure discovered while closing a descriptor is `cleanup_failed` and leaves
+the retained set untouched for incident review. The command never recursively
+deletes the output pathname: a pathname check followed by recursive removal
+would permit a rename/swap to redirect deletion. A separately reviewed operator
+procedure must inspect and remove that exact private mode-`700` marker;
+rerunning the command against it fails closed.
+
 It already validates the PostgreSQL 17 tools; versioned login attributes,
 live-database-OID binding, sole membership options, direct ACL/dependency
 allowlist, and inability to set the migrator, runtime, or sibling group; the
@@ -377,10 +420,11 @@ The retriever is read-only at the provider. It performs this fixed contract:
    components, or local path.
 
 Success leaves exactly `pintpath-postgres.dump`, `manifest.json`, and
-`state-receipt.json` in the new restore-compatible directory. Ordinary failure
-removes only that invocation's exact partial directory; an unexpected entry or
-directory-identity change fails cleanup closed instead of recursively deleting
-an untrusted path. The staging recovery proof retrieved the pre-deletion set by
+`state-receipt.json` in the new restore-compatible directory. Failure retains
+the private marker and zeroizes artifacts still under held writable custody;
+it never recursively deletes a pathname. An unexpected entry, descriptor-close
+failure, or directory-identity change fails cleanup closed and preserves the
+set for incident review. The staging recovery proof retrieved the pre-deletion set by
 this contract and matched all three remote objects byte-for-byte before restore.
 On a distinct-database-OID restore, the source scoped role is not a prerequisite
 and must not appear in the rendered archive. The restored catalog must contain

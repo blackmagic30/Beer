@@ -61,10 +61,16 @@ interface TransportTestControl {
 }
 
 function makeTemporaryDirectory(): string {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "pintpath-postgres-backup-test-"));
+  const directory = fs.mkdtempSync(
+    path.join(fs.realpathSync(os.tmpdir()), "pintpath-postgres-backup-test-"),
+  );
   fs.chmodSync(directory, 0o700);
   temporaryDirectories.push(directory);
   return directory;
+}
+
+function openTestFileDescriptor(filePath: string, flags: number): number {
+  return fs.openSync(filePath, flags);
 }
 
 async function openTestTransport(
@@ -259,9 +265,321 @@ interface PgpassObservation {
   directoryMode: number;
 }
 
+interface ArchiveDescriptorObservation {
+  fileDescriptor: number;
+  bytes: Buffer;
+}
+
+interface ArchiveDescriptorObservations {
+  dump?: ArchiveDescriptorObservation;
+  restoreList?: ArchiveDescriptorObservation;
+  tamper?: ArchiveDescriptorObservation;
+}
+
+function writeAllToDescriptor(fileDescriptor: number, bytes: Buffer): void {
+  let offset = 0;
+  while (offset < bytes.length) {
+    const bytesWritten = fs.writeSync(
+      fileDescriptor,
+      bytes,
+      offset,
+      bytes.length - offset,
+      null,
+    );
+    if (bytesWritten < 1) throw new Error("test descriptor write made no progress");
+    offset += bytesWritten;
+  }
+}
+
+interface TrackedFileHandles {
+  handlesByPath: Map<string, fs.promises.FileHandle[]>;
+  openedStatsByHandle: Map<fs.promises.FileHandle, fs.Stats>;
+  restore(): void;
+}
+
+type TrackedFileOpenHook = (
+  filePath: string | null,
+  handle: fs.promises.FileHandle,
+) => void | Promise<void>;
+
+function trackFileHandles(
+  filePaths: readonly string[],
+  onOpen?: TrackedFileOpenHook,
+): TrackedFileHandles {
+  const targets = new Set(filePaths);
+  const handlesByPath = new Map<string, fs.promises.FileHandle[]>();
+  const openedStatsByHandle = new Map<fs.promises.FileHandle, fs.Stats>();
+  const originalOpen = fs.promises.open.bind(fs.promises);
+  const openSpy = vi.spyOn(fs.promises, "open").mockImplementation((async (...args: unknown[]) => {
+    const handle = await (originalOpen as (
+      ...values: unknown[]
+    ) => Promise<fs.promises.FileHandle>)(...args);
+    const filePath = typeof args[0] === "string" ? args[0] : null;
+    if (filePath && targets.has(filePath)) {
+      const handles = handlesByPath.get(filePath) ?? [];
+      handles.push(handle);
+      handlesByPath.set(filePath, handles);
+      openedStatsByHandle.set(handle, fs.fstatSync(handle.fd));
+    }
+    await onOpen?.(filePath, handle);
+    return handle;
+  }) as typeof fs.promises.open);
+  return {
+    handlesByPath,
+    openedStatsByHandle,
+    restore: () => openSpy.mockRestore(),
+  };
+}
+
+async function fileHandleIsOpen(handle: fs.promises.FileHandle): Promise<boolean> {
+  try {
+    await handle.stat();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function openTrackedHandles(
+  tracker: TrackedFileHandles,
+  filePath: string,
+): Promise<fs.promises.FileHandle[]> {
+  const open: fs.promises.FileHandle[] = [];
+  for (const handle of tracker.handlesByPath.get(filePath) ?? []) {
+    if (await fileHandleIsOpen(handle)) open.push(handle);
+  }
+  return open;
+}
+
+interface RetainedOutputPaths {
+  outputParent: string;
+  outputDirectory: string;
+  archive: string;
+  manifest: string;
+  stateReceipt: string;
+}
+
+interface RetainedOutputTracker {
+  paths: RetainedOutputPaths;
+  tracker: TrackedFileHandles;
+}
+
+interface RetainedOutputSyncTracker extends RetainedOutputTracker {
+  syncStatesByPath: Map<string, Array<"zero-length" | "non-empty">>;
+}
+
+function retainedOutputPaths(requestedOutputDirectory: string): RetainedOutputPaths {
+  const outputParent = fs.realpathSync(path.dirname(requestedOutputDirectory));
+  const outputDirectory = path.join(outputParent, path.basename(requestedOutputDirectory));
+  return {
+    outputParent,
+    outputDirectory,
+    archive: path.join(outputDirectory, POSTGRES_LOGICAL_BACKUP_ARCHIVE),
+    manifest: path.join(outputDirectory, POSTGRES_LOGICAL_BACKUP_MANIFEST),
+    stateReceipt: path.join(outputDirectory, POSTGRES_LOGICAL_BACKUP_STATE_RECEIPT),
+  };
+}
+
+function trackRetainedOutput(
+  requestedOutputDirectory: string,
+  onOpen?: TrackedFileOpenHook,
+): RetainedOutputTracker {
+  const paths = retainedOutputPaths(requestedOutputDirectory);
+  return {
+    paths,
+    tracker: trackFileHandles(Object.values(paths), onOpen),
+  };
+}
+
+function trackRetainedOutputSyncs(
+  requestedOutputDirectory: string,
+): RetainedOutputSyncTracker {
+  const paths = retainedOutputPaths(requestedOutputDirectory);
+  const artifactPaths = new Set([paths.archive, paths.manifest, paths.stateReceipt]);
+  const syncStatesByPath = new Map<string, Array<"zero-length" | "non-empty">>();
+  const tracker = trackFileHandles(Object.values(paths), (filePath, handle) => {
+    if (!filePath || !artifactPaths.has(filePath)) return;
+    const states = syncStatesByPath.get(filePath) ?? [];
+    syncStatesByPath.set(filePath, states);
+    const originalSync = handle.sync.bind(handle);
+    Object.defineProperty(handle, "sync", {
+      configurable: true,
+      value: async () => {
+        await originalSync();
+        const stat = await handle.stat();
+        states.push(stat.size === 0 ? "zero-length" : "non-empty");
+      },
+    });
+  });
+  return { paths, syncStatesByPath, tracker };
+}
+
+function expectCompletedArtifactsWereZeroizedAndSynced(
+  retained: RetainedOutputSyncTracker,
+): void {
+  for (const artifactPath of [
+    retained.paths.archive,
+    retained.paths.manifest,
+    retained.paths.stateReceipt,
+  ]) {
+    expect(retained.syncStatesByPath.get(artifactPath)).toEqual([
+      "zero-length",
+      "non-empty",
+      "zero-length",
+    ]);
+  }
+}
+
+function sameFileIdentity(
+  left: Pick<fs.Stats, "dev" | "ino">,
+  right: Pick<fs.Stats, "dev" | "ino">,
+): boolean {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+async function expectRetainedZeroizedOutput(
+  retained: RetainedOutputTracker,
+  artifactFiles: readonly string[],
+): Promise<void> {
+  const artifactPaths = artifactFiles.map((artifactFile) => (
+    path.join(retained.paths.outputDirectory, artifactFile)
+  ));
+  const heldPaths = [
+    retained.paths.outputParent,
+    retained.paths.outputDirectory,
+    ...artifactPaths,
+  ];
+  for (const heldPath of heldPaths) {
+    const handles = retained.tracker.handlesByPath.get(heldPath) ?? [];
+    expect(handles.length).toBeGreaterThan(0);
+    expect(await openTrackedHandles(retained.tracker, heldPath)).toEqual([]);
+  }
+
+  const directoryHandles = retained.tracker.handlesByPath.get(
+    retained.paths.outputDirectory,
+  ) ?? [];
+  const openedDirectory = retained.tracker.openedStatsByHandle.get(directoryHandles[0]!);
+  expect(openedDirectory).toBeDefined();
+  const directoryFileDescriptor = fs.openSync(
+    retained.paths.outputDirectory,
+    fs.constants.O_RDONLY
+      | (fs.constants.O_DIRECTORY ?? 0)
+      | (fs.constants.O_NOFOLLOW ?? 0),
+  );
+  try {
+    const directoryStat = fs.fstatSync(directoryFileDescriptor);
+    expect(directoryStat.isDirectory()).toBe(true);
+    expect(directoryStat.uid).toBe(process.getuid?.() ?? directoryStat.uid);
+    expect(directoryStat.mode & 0o7777).toBe(0o700);
+    expect(sameFileIdentity(directoryStat, openedDirectory!)).toBe(true);
+  } finally {
+    fs.closeSync(directoryFileDescriptor);
+  }
+
+  for (const artifactPath of artifactPaths) {
+    const artifactHandles = retained.tracker.handlesByPath.get(artifactPath) ?? [];
+    const openedArtifact = retained.tracker.openedStatsByHandle.get(artifactHandles[0]!);
+    expect(openedArtifact).toBeDefined();
+    const artifactFileDescriptor = fs.openSync(
+      artifactPath,
+      fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
+    );
+    try {
+      const artifactStat = fs.fstatSync(artifactFileDescriptor);
+      expect(artifactStat.isFile()).toBe(true);
+      expect(artifactStat.uid).toBe(process.getuid?.() ?? artifactStat.uid);
+      expect(artifactStat.mode & 0o7777).toBe(0o600);
+      expect(artifactStat.nlink).toBe(1);
+      expect(artifactStat.size).toBe(0);
+      expect(sameFileIdentity(artifactStat, openedArtifact!)).toBe(true);
+    } finally {
+      fs.closeSync(artifactFileDescriptor);
+    }
+  }
+}
+
+function readExactDescriptorBytes(fileDescriptor: number, byteLength: number): Buffer {
+  const bytes = Buffer.alloc(byteLength);
+  let offset = 0;
+  while (offset < bytes.length) {
+    const bytesRead = fs.readSync(
+      fileDescriptor,
+      bytes,
+      offset,
+      bytes.length - offset,
+      offset,
+    );
+    if (bytesRead < 1) break;
+    offset += bytesRead;
+  }
+  return bytes.subarray(0, offset);
+}
+
+interface HeldOperatorVictim {
+  bytes: Buffer;
+  directory: string;
+  directoryFileDescriptor: number;
+  directoryStat: fs.Stats;
+  sentinelFileDescriptor: number;
+  sentinelStat: fs.Stats;
+}
+
+function createHeldOperatorVictim(root: string, label: string): HeldOperatorVictim {
+  const directory = path.join(root, `${label}-operator-victim`);
+  const sentinelPath = path.join(directory, "operator-sentinel");
+  const bytes = Buffer.from(`preserve-${label}-victim`);
+  fs.mkdirSync(directory, { mode: 0o700 });
+  fs.writeFileSync(sentinelPath, bytes, { mode: 0o600 });
+  const directoryFileDescriptor = fs.openSync(
+    directory,
+    fs.constants.O_RDONLY | (fs.constants.O_DIRECTORY ?? 0),
+  );
+  const sentinelFileDescriptor = fs.openSync(sentinelPath, fs.constants.O_RDONLY);
+  return {
+    bytes,
+    directory,
+    directoryFileDescriptor,
+    directoryStat: fs.fstatSync(directoryFileDescriptor),
+    sentinelFileDescriptor,
+    sentinelStat: fs.fstatSync(sentinelFileDescriptor),
+  };
+}
+
+function expectHeldOperatorVictimExact(victim: HeldOperatorVictim): void {
+  const directoryStat = fs.fstatSync(victim.directoryFileDescriptor);
+  const sentinelStat = fs.fstatSync(victim.sentinelFileDescriptor);
+  expect(sameFileIdentity(directoryStat, victim.directoryStat)).toBe(true);
+  expect(directoryStat.mode & 0o7777).toBe(0o700);
+  expect(sameFileIdentity(sentinelStat, victim.sentinelStat)).toBe(true);
+  expect(sentinelStat.mode & 0o7777).toBe(0o600);
+  expect(sentinelStat.size).toBe(victim.bytes.length);
+  expect(readExactDescriptorBytes(victim.sentinelFileDescriptor, victim.bytes.length)).toEqual(
+    victim.bytes,
+  );
+}
+
+function forbidRecursiveOutputRm(outputDirectory: string, victimDirectory: string) {
+  let swapped = false;
+  const displacedOutputDirectory = `${outputDirectory}-displaced-by-rm-test`;
+  const rmSpy = vi.spyOn(fs.promises, "rm").mockImplementation((async (...args: unknown[]) => {
+    if (String(args[0]) === outputDirectory) {
+      await fs.promises.rename(outputDirectory, displacedOutputDirectory);
+      await fs.promises.rename(victimDirectory, outputDirectory);
+      swapped = true;
+    }
+    throw new Error("recursive output cleanup is forbidden");
+  }) as typeof fs.promises.rm);
+  return {
+    callCount: () => rmSpy.mock.calls.length,
+    restore: () => rmSpy.mockRestore(),
+    wasSwapped: () => swapped,
+  };
+}
+
 function createProcessHarness(options: ProcessHarnessOptions = {}) {
   const invocations: ProcessInvocation[] = [];
   const pgpassObservations: PgpassObservation[] = [];
+  const archiveDescriptorObservations: ArchiveDescriptorObservations = {};
   const runner = async (invocation: ProcessInvocation): Promise<ProcessResult> => {
     invocations.push(invocation);
     if (invocation.args.length === 1 && invocation.args[0] === "--version") {
@@ -297,17 +615,48 @@ function createProcessHarness(options: ProcessHarnessOptions = {}) {
       } else if (options.pgpassMutation === "missing") {
         fs.unlinkSync(pgpassPath);
       }
-      const outputArgument = invocation.args.find((argument) => argument.startsWith("--file="));
-      if (!outputArgument) throw new Error("test dump invocation omitted --file");
-      const archivePath = outputArgument.slice("--file=".length);
-      fs.writeFileSync(archivePath, Buffer.from("PGDMP-test-archive"));
+      if (invocation.args.some((argument) => argument.startsWith("--file"))) {
+        throw new Error("test dump invocation passed --file");
+      }
+      const stdoutFileDescriptor = invocation.stdoutFileDescriptor;
+      if (stdoutFileDescriptor === undefined) {
+        throw new Error("test dump invocation omitted stdoutFileDescriptor");
+      }
+      const archiveBytes = Buffer.from("PGDMP-test-archive");
+      // The injected runner emulates the real runner's parent-side stdout pipe
+      // copier; pg_dump itself never inherits this archive descriptor.
+      writeAllToDescriptor(stdoutFileDescriptor, archiveBytes);
+      archiveDescriptorObservations.dump = {
+        fileDescriptor: stdoutFileDescriptor,
+        bytes: archiveBytes,
+      };
       return options.dumpResult ?? { exitCode: 0, stdout: "", stderr: "" };
     }
     if (invocation.command.includes("restore")) {
       options.events?.push("process.list");
+      const stdinFileDescriptor = invocation.stdinFileDescriptor;
+      if (stdinFileDescriptor === undefined) {
+        throw new Error("test restore-list invocation omitted stdinFileDescriptor");
+      }
+      if (stdinFileDescriptor === archiveDescriptorObservations.dump?.fileDescriptor) {
+        throw new Error("test restore-list invocation reused dump stdoutFileDescriptor");
+      }
+      const archiveBytes = fs.readFileSync(stdinFileDescriptor);
+      archiveDescriptorObservations.restoreList = {
+        fileDescriptor: stdinFileDescriptor,
+        bytes: archiveBytes,
+      };
       if (options.tamperDuringListing) {
-        const archivePath = invocation.args.at(-1)!;
-        fs.appendFileSync(archivePath, "tampered");
+        const dumpFileDescriptor = archiveDescriptorObservations.dump?.fileDescriptor;
+        if (dumpFileDescriptor === undefined) {
+          throw new Error("test restore-list invocation had no observed dump descriptor");
+        }
+        const tamperBytes = Buffer.from("tampered");
+        writeAllToDescriptor(dumpFileDescriptor, tamperBytes);
+        archiveDescriptorObservations.tamper = {
+          fileDescriptor: dumpFileDescriptor,
+          bytes: tamperBytes,
+        };
       }
       return options.listingResult ?? {
         exitCode: 0,
@@ -317,7 +666,7 @@ function createProcessHarness(options: ProcessHarnessOptions = {}) {
     }
     throw new Error("unexpected test process");
   };
-  return { invocations, pgpassObservations, runner };
+  return { archiveDescriptorObservations, invocations, pgpassObservations, runner };
 }
 
 function dependencies(
@@ -608,8 +957,260 @@ describe("Postgres logical backup foundation", () => {
     }
   });
 
+  it("copies a child stdout pipe into the parent-owned output descriptor", async () => {
+    const root = makeTemporaryDirectory();
+    const outputPath = path.join(root, "archive-output");
+    const output = "descriptor-custodied-archive\n";
+    const outputBytes = Buffer.from(output);
+    const stderr = "captured diagnostic\n";
+    const stdoutFileDescriptor = fs.openSync(
+      outputPath,
+      fs.constants.O_RDWR | fs.constants.O_CREAT | fs.constants.O_EXCL,
+      0o600,
+    );
+
+    try {
+      const result = await runPostgresBackupProcess({
+        command: process.execPath,
+        args: [
+          "-e",
+          [
+            'const fs = require("node:fs")',
+            "if (fs.fstatSync(1).isFile()) process.exit(91)",
+            `process.stdout.write(${JSON.stringify(output)})`,
+            `process.stderr.write(${JSON.stringify(stderr)})`,
+          ].join(";"),
+        ],
+        env: { LC_ALL: "C" },
+        timeoutMs: 5_000,
+        maxStdoutBytes: 0,
+        maxStderrBytes: 1_024,
+        stdoutFileDescriptor,
+      });
+
+      expect(result).toEqual({ exitCode: 0, stdout: "", stderr });
+      const observedOutput = Buffer.alloc(outputBytes.length + 1);
+      const bytesRead = fs.readSync(
+        stdoutFileDescriptor,
+        observedOutput,
+        0,
+        observedOutput.length,
+        0,
+      );
+      expect(bytesRead).toBe(outputBytes.length);
+      expect(observedOutput.subarray(0, bytesRead)).toEqual(outputBytes);
+      const outputStat = fs.fstatSync(stdoutFileDescriptor);
+      expect(outputStat.isFile()).toBe(true);
+      expect(outputStat.size).toBe(outputBytes.length);
+    } finally {
+      fs.closeSync(stdoutFileDescriptor);
+    }
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "promptly reaps and rejects a same-group grandchild retaining the stdout pipe",
+    async () => {
+      const root = makeTemporaryDirectory();
+      const outputPath = path.join(root, "grandchild-output");
+      const stdoutFileDescriptor = fs.openSync(
+        outputPath,
+        fs.constants.O_RDWR | fs.constants.O_CREAT | fs.constants.O_EXCL,
+        0o600,
+      );
+      const grandchildCode = [
+        "setInterval(() => undefined, 1_000)",
+      ].join(";");
+      const leaderCode = [
+        'const fs = require("node:fs")',
+        'const { spawn } = require("node:child_process")',
+        `const grandchild = spawn(process.execPath, ["-e", ${JSON.stringify(grandchildCode)}], { stdio: ["ignore", 1, "ignore"] })`,
+        "grandchild.unref()",
+        'fs.writeSync(1, `${grandchild.pid}\\n`)',
+        "process.exit(0)",
+      ].join(";");
+      let grandchildPid: number | null = null;
+
+      try {
+        const startedAt = Date.now();
+        const error = await runPostgresBackupProcess({
+          command: process.execPath,
+          args: ["-e", leaderCode],
+          env: { LC_ALL: "C" },
+          timeoutMs: 5_000,
+          maxStdoutBytes: 0,
+          maxStderrBytes: 1_024,
+          stdoutFileDescriptor,
+        }).catch((caught: unknown) => caught);
+        const elapsedMs = Date.now() - startedAt;
+
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error).message).toBe("process_descendants_detected");
+        expect(elapsedMs).toBeLessThan(2_000);
+        const initialOutput = Buffer.alloc(64);
+        const initialBytesRead = fs.readSync(
+          stdoutFileDescriptor,
+          initialOutput,
+          0,
+          initialOutput.length,
+          0,
+        );
+        const grandchildPidRecord = initialOutput.subarray(0, initialBytesRead).toString("utf8");
+        expect(grandchildPidRecord).toMatch(/^[1-9][0-9]*\n$/);
+        grandchildPid = Number.parseInt(grandchildPidRecord, 10);
+        expect(Number.isSafeInteger(grandchildPid) && grandchildPid > 0).toBe(true);
+        let lookupError: NodeJS.ErrnoException | null = null;
+        try {
+          process.kill(grandchildPid, 0);
+        } catch (error) {
+          lookupError = error as NodeJS.ErrnoException;
+        }
+        expect(lookupError?.code).toBe("ESRCH");
+
+        await new Promise<void>((resolve) => setTimeout(resolve, 350));
+        const observedOutput = Buffer.alloc(64);
+        const observedBytesRead = fs.readSync(
+          stdoutFileDescriptor,
+          observedOutput,
+          0,
+          observedOutput.length,
+          0,
+        );
+        expect(observedOutput.subarray(0, observedBytesRead).toString("utf8")).toBe(
+          grandchildPidRecord,
+        );
+        const outputStat = fs.fstatSync(stdoutFileDescriptor);
+        expect(outputStat.isFile()).toBe(true);
+        expect(outputStat.size).toBe(Buffer.byteLength(grandchildPidRecord));
+      } finally {
+        if (grandchildPid !== null) {
+          try {
+            process.kill(grandchildPid, "SIGKILL");
+          } catch {
+            // Expected once the process-group reaper has removed the descendant.
+          }
+        }
+        fs.closeSync(stdoutFileDescriptor);
+      }
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "revokes the stdout pipe when a setsid descendant escapes the leader process group",
+    async () => {
+      const root = makeTemporaryDirectory();
+      const targetPath = path.join(root, "escaped-descendant-output");
+      const pidPath = path.join(root, "escaped-descendant-pid");
+      const targetFileDescriptor = fs.openSync(
+        targetPath,
+        fs.constants.O_RDWR | fs.constants.O_CREAT | fs.constants.O_EXCL,
+        0o600,
+      );
+      const pidFileDescriptor = fs.openSync(
+        pidPath,
+        fs.constants.O_RDWR | fs.constants.O_CREAT | fs.constants.O_EXCL,
+        0o600,
+      );
+      const stableTargetBytes = Buffer.from("parent-owned-prefix\n");
+      const delayedBytes = Buffer.from("escaped-delayed-output");
+      writeAllToDescriptor(targetFileDescriptor, stableTargetBytes);
+      const escapedCode = [
+        'const fs = require("node:fs")',
+        `setTimeout(() => { try { fs.writeSync(1, ${JSON.stringify(delayedBytes.toString("utf8"))}) } catch {} }, 900)`,
+        "setInterval(() => undefined, 1_000)",
+      ].join(";");
+      const leaderCode = [
+        'const fs = require("node:fs")',
+        'const { spawn } = require("node:child_process")',
+        `const escaped = spawn(process.execPath, ["-e", ${JSON.stringify(escapedCode)}], { detached: true, stdio: ["ignore", 1, "ignore"] })`,
+        "escaped.unref()",
+        'fs.writeFileSync(process.argv[1], String(escaped.pid), { encoding: "utf8" })',
+        "process.exit(0)",
+      ].join(";");
+      const readPid = (): number | null => {
+        const buffer = Buffer.alloc(64);
+        const bytesRead = fs.readSync(
+          pidFileDescriptor,
+          buffer,
+          0,
+          buffer.length,
+          0,
+        );
+        const record = buffer.subarray(0, bytesRead).toString("utf8");
+        return /^[1-9][0-9]*$/.test(record) ? Number.parseInt(record, 10) : null;
+      };
+      const readTarget = (): Buffer => {
+        const buffer = Buffer.alloc(stableTargetBytes.length + delayedBytes.length + 64);
+        const bytesRead = fs.readSync(
+          targetFileDescriptor,
+          buffer,
+          0,
+          buffer.length,
+          0,
+        );
+        return Buffer.from(buffer.subarray(0, bytesRead));
+      };
+      let escapedPid: number | null = null;
+
+      try {
+        const error = await runPostgresBackupProcess({
+          command: process.execPath,
+          args: ["-e", leaderCode, pidPath],
+          env: { LC_ALL: "C" },
+          timeoutMs: 500,
+          maxStdoutBytes: 0,
+          maxStderrBytes: 1_024,
+          stdoutFileDescriptor: targetFileDescriptor,
+        }).catch((caught: unknown) => caught);
+
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error).message).toBe("process_timeout");
+        escapedPid = readPid();
+        expect(escapedPid).not.toBeNull();
+        expect(() => process.kill(escapedPid!, 0)).not.toThrow();
+        expect(() => process.kill(-escapedPid!, 0)).not.toThrow();
+        expect(readTarget()).toEqual(stableTargetBytes);
+
+        await new Promise<void>((resolve) => setTimeout(resolve, 600));
+        expect(readTarget()).toEqual(stableTargetBytes);
+        const targetStat = fs.fstatSync(targetFileDescriptor);
+        expect(targetStat.isFile()).toBe(true);
+        expect(targetStat.size).toBe(stableTargetBytes.length);
+      } finally {
+        escapedPid ??= readPid();
+        if (escapedPid !== null) {
+          try {
+            process.kill(-escapedPid, "SIGKILL");
+          } catch {
+            try {
+              process.kill(escapedPid, "SIGKILL");
+            } catch {
+              // The escaped descendant may already have been reaped.
+            }
+          }
+          const reapDeadline = Date.now() + 5_000;
+          let escapedPidExists = true;
+          while (escapedPidExists && Date.now() < reapDeadline) {
+            try {
+              process.kill(escapedPid, 0);
+              await new Promise<void>((resolve) => setTimeout(resolve, 10));
+            } catch (error) {
+              if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+              escapedPidExists = false;
+            }
+          }
+          if (escapedPidExists) throw new Error("escaped test descendant was not reaped");
+        }
+        fs.closeSync(pidFileDescriptor);
+        fs.closeSync(targetFileDescriptor);
+      }
+    },
+  );
+
   it.each([
     -1,
+    0,
+    1,
+    2,
     0.5,
     Number.NaN,
     Number.POSITIVE_INFINITY,
@@ -624,6 +1225,117 @@ describe("Postgres logical backup foundation", () => {
       maxStderrBytes: 1_024,
       stdinFileDescriptor,
     })).rejects.toThrow("invalid_process_invocation");
+  });
+
+  it.each([
+    -1,
+    0,
+    1,
+    2,
+    0.5,
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    0x8000_0000,
+  ])("rejects invalid stdout file descriptor %s before spawning", async (stdoutFileDescriptor) => {
+    await expect(runPostgresBackupProcess({
+      command: path.join(makeTemporaryDirectory(), "must-not-spawn"),
+      args: [],
+      env: { LC_ALL: "C" },
+      timeoutMs: 5_000,
+      maxStdoutBytes: 1_024,
+      maxStderrBytes: 1_024,
+      stdoutFileDescriptor,
+    })).rejects.toThrow("invalid_process_invocation");
+  });
+
+  it.skipIf(process.platform === "win32").each([
+    "stdinFileDescriptor",
+    "stdoutFileDescriptor",
+  ] as const)("rejects a non-regular directory as %s", async (descriptorField) => {
+    const root = makeTemporaryDirectory();
+    const directoryFileDescriptor = fs.openSync(
+      root,
+      fs.constants.O_RDONLY | (fs.constants.O_DIRECTORY ?? 0),
+    );
+
+    try {
+      await expect(runPostgresBackupProcess({
+        command: path.join(root, "must-not-spawn"),
+        args: [],
+        env: { LC_ALL: "C" },
+        timeoutMs: 5_000,
+        maxStdoutBytes: 1_024,
+        maxStderrBytes: 1_024,
+        [descriptorField]: directoryFileDescriptor,
+      })).rejects.toThrow("invalid_process_invocation");
+      expect(fs.fstatSync(directoryFileDescriptor).isDirectory()).toBe(true);
+    } finally {
+      fs.closeSync(directoryFileDescriptor);
+    }
+  });
+
+  it("rejects reusing one file descriptor for child stdin and stdout", async () => {
+    const root = makeTemporaryDirectory();
+    const descriptorPath = path.join(root, "shared-descriptor");
+    const sharedFileDescriptor = fs.openSync(
+      descriptorPath,
+      fs.constants.O_RDWR | fs.constants.O_CREAT | fs.constants.O_EXCL,
+      0o600,
+    );
+
+    try {
+      await expect(runPostgresBackupProcess({
+        command: path.join(root, "must-not-spawn"),
+        args: [],
+        env: { LC_ALL: "C" },
+        timeoutMs: 5_000,
+        maxStdoutBytes: 1_024,
+        maxStderrBytes: 1_024,
+        stdinFileDescriptor: sharedFileDescriptor,
+        stdoutFileDescriptor: sharedFileDescriptor,
+      })).rejects.toThrow("invalid_process_invocation");
+      expect(fs.fstatSync(sharedFileDescriptor).isFile()).toBe(true);
+    } finally {
+      fs.closeSync(sharedFileDescriptor);
+    }
+  });
+
+  it("rejects distinct stdin and stdout descriptors for the same inode", async () => {
+    const root = makeTemporaryDirectory();
+    const descriptorPath = path.join(root, "shared-inode");
+    fs.writeFileSync(descriptorPath, "input-must-remain-exact", { mode: 0o600 });
+    const stdinFileDescriptor = fs.openSync(descriptorPath, fs.constants.O_RDONLY);
+    const stdoutFileDescriptor = openTestFileDescriptor(
+      descriptorPath,
+      fs.constants.O_RDWR,
+    );
+
+    try {
+      await expect(runPostgresBackupProcess({
+        command: path.join(root, "must-not-spawn"),
+        args: [],
+        env: { LC_ALL: "C" },
+        timeoutMs: 5_000,
+        maxStdoutBytes: 1_024,
+        maxStderrBytes: 1_024,
+        stdinFileDescriptor,
+        stdoutFileDescriptor,
+      })).rejects.toThrow("invalid_process_invocation");
+      const observed = Buffer.alloc(64);
+      const bytesRead = fs.readSync(
+        stdinFileDescriptor,
+        observed,
+        0,
+        observed.length,
+        0,
+      );
+      expect(observed.subarray(0, bytesRead).toString("utf8")).toBe(
+        "input-must-remain-exact",
+      );
+    } finally {
+      fs.closeSync(stdoutFileDescriptor);
+      fs.closeSync(stdinFileDescriptor);
+    }
   });
 
   it.each([
@@ -750,6 +1462,19 @@ describe("Postgres logical backup foundation", () => {
       authoritativeRowCount: "1",
       overallStateSha256: "9".repeat(64),
     });
+    expect(harness.archiveDescriptorObservations).toEqual({
+      dump: {
+        fileDescriptor: expect.any(Number),
+        bytes: Buffer.from("PGDMP-test-archive"),
+      },
+      restoreList: {
+        fileDescriptor: expect.any(Number),
+        bytes: Buffer.from("PGDMP-test-archive"),
+      },
+    });
+    expect(harness.archiveDescriptorObservations.dump?.fileDescriptor).not.toBe(
+      harness.archiveDescriptorObservations.restoreList?.fileDescriptor,
+    );
     expect(fs.statSync(outputDirectory).mode & 0o7777).toBe(0o700);
     expect(fs.statSync(result.archivePath).mode & 0o7777).toBe(0o600);
     expect(fs.statSync(result.manifestPath).mode & 0o7777).toBe(0o600);
@@ -970,45 +1695,308 @@ describe("Postgres logical backup foundation", () => {
     expect(events.at(-1)).toBe("transport.close");
   });
 
+  it("holds directory and artifact descriptors through cleanup and closes them before return", async () => {
+    const root = makeTemporaryDirectory();
+    const outputParent = fs.realpathSync(root);
+    const outputDirectory = path.join(outputParent, "held-cleanup-handles");
+    const trackedPaths = {
+      outputParent,
+      outputDirectory,
+      archive: path.join(outputDirectory, POSTGRES_LOGICAL_BACKUP_ARCHIVE),
+      manifest: path.join(outputDirectory, POSTGRES_LOGICAL_BACKUP_MANIFEST),
+      stateReceipt: path.join(outputDirectory, POSTGRES_LOGICAL_BACKUP_STATE_RECEIPT),
+    };
+    const tracker = trackFileHandles(Object.values(trackedPaths));
+    const harness = createProcessHarness();
+    const base = dependencies(harness.runner);
+    const cleanupObservations: Array<{
+      phase: "connection.close" | "transport.close";
+      openCounts: Record<keyof typeof trackedPaths, number>;
+    }> = [];
+    const observeHeldHandles = async (
+      phase: "connection.close" | "transport.close",
+    ): Promise<void> => {
+      const openCounts = {} as Record<keyof typeof trackedPaths, number>;
+      for (const [label, filePath] of Object.entries(trackedPaths) as Array<[
+        keyof typeof trackedPaths,
+        string,
+      ]>) {
+        openCounts[label] = (await openTrackedHandles(tracker, filePath)).length;
+      }
+      cleanupObservations.push({ phase, openCounts });
+    };
+
+    try {
+      const result = await createTestPostgresLogicalBackup({
+        connectionFile: writeConnectionFile(root),
+        expectedSourceUrlSha256: sha256(directTlsUrl),
+        outputDirectory,
+      }, {
+        ...base,
+        connect: async (config) => {
+          const connection = await base.connect!(config);
+          return {
+            ...connection,
+            close: async () => {
+              await observeHeldHandles("connection.close");
+              await connection.close();
+            },
+          };
+        },
+        openTransport: async (options) => {
+          const transport = await base.openTransport!(options);
+          return {
+            ...transport,
+            close: async () => {
+              await observeHeldHandles("transport.close");
+              await transport.close();
+            },
+          };
+        },
+      });
+
+      expect(result.ok).toBe(true);
+      expect(cleanupObservations).toEqual([
+        {
+          phase: "connection.close",
+          openCounts: {
+            outputParent: 1,
+            outputDirectory: 1,
+            archive: 1,
+            manifest: 1,
+            stateReceipt: 1,
+          },
+        },
+        {
+          phase: "transport.close",
+          openCounts: {
+            outputParent: 1,
+            outputDirectory: 1,
+            archive: 1,
+            manifest: 1,
+            stateReceipt: 1,
+          },
+        },
+      ]);
+      for (const filePath of Object.values(trackedPaths)) {
+        expect(await openTrackedHandles(tracker, filePath)).toEqual([]);
+      }
+    } finally {
+      tracker.restore();
+    }
+  });
+
+  it.each(["connection.close", "transport.close"] as const)(
+    "zeroizes, fsyncs, and closes completed artifacts when only %s fails",
+    async (failurePhase) => {
+      const root = makeTemporaryDirectory();
+      const outputDirectory = path.join(root, `completed-${failurePhase}-failure`);
+      const retained = trackRetainedOutputSyncs(outputDirectory);
+      const events: string[] = [];
+      const control: TransportTestControl = {
+        events,
+        closeFails: failurePhase === "transport.close",
+      };
+      const harness = createProcessHarness({ events });
+      const base = dependencies(harness.runner, [], control);
+      const overrides: Partial<PostgresLogicalBackupDependencies> = { ...base };
+      if (failurePhase === "connection.close") {
+        overrides.connect = async (config) => {
+          const connection = await base.connect!(config);
+          return {
+            ...connection,
+            close: async () => {
+              await connection.close();
+              throw new Error("injected completed connection cleanup failure");
+            },
+          };
+        };
+      }
+
+      try {
+        const error = await createTestPostgresLogicalBackup({
+          connectionFile: writeConnectionFile(root),
+          expectedSourceUrlSha256: sha256(directTlsUrl),
+          outputDirectory,
+        }, overrides).catch((caught: unknown) => caught);
+
+        expectBackupError(error, "cleanup_failed");
+        expect(harness.invocations.some((invocation) => (
+          invocation.command.endsWith("pg_dump") && invocation.args[0] !== "--version"
+        ))).toBe(true);
+        expect(harness.invocations.some((invocation) => invocation.args.includes("--list"))).toBe(
+          true,
+        );
+        expectCompletedArtifactsWereZeroizedAndSynced(retained);
+        await expectRetainedZeroizedOutput(retained, [
+          POSTGRES_LOGICAL_BACKUP_ARCHIVE,
+          POSTGRES_LOGICAL_BACKUP_MANIFEST,
+          POSTGRES_LOGICAL_BACKUP_STATE_RECEIPT,
+        ]);
+        expect(events.indexOf("connection.close")).toBeLessThan(events.indexOf("transport.close"));
+      } finally {
+        retained.tracker.restore();
+      }
+    },
+  );
+
+  it.each(["connection.close", "transport.close"] as const)(
+    "detects archive mutation during %s, zeroizes retained artifacts, and closes held handles",
+    async (mutationPhase) => {
+      const root = makeTemporaryDirectory();
+      const outputParent = fs.realpathSync(root);
+      const outputDirectory = path.join(outputParent, `cleanup-mutation-${mutationPhase}`);
+      const trackedPaths = {
+        outputParent,
+        outputDirectory,
+        archive: path.join(outputDirectory, POSTGRES_LOGICAL_BACKUP_ARCHIVE),
+        manifest: path.join(outputDirectory, POSTGRES_LOGICAL_BACKUP_MANIFEST),
+        stateReceipt: path.join(outputDirectory, POSTGRES_LOGICAL_BACKUP_STATE_RECEIPT),
+      };
+      const tracker = trackFileHandles(Object.values(trackedPaths));
+      const harness = createProcessHarness();
+      const base = dependencies(harness.runner);
+      let mutated = false;
+      let openCountsAtMutation: Record<keyof typeof trackedPaths, number> | null = null;
+      const mutateHeldArchive = async (): Promise<void> => {
+        const openCounts = {} as Record<keyof typeof trackedPaths, number>;
+        for (const [label, filePath] of Object.entries(trackedPaths) as Array<[
+          keyof typeof trackedPaths,
+          string,
+        ]>) {
+          openCounts[label] = (await openTrackedHandles(tracker, filePath)).length;
+        }
+        openCountsAtMutation = openCounts;
+        const archiveFileDescriptor = harness.archiveDescriptorObservations.dump?.fileDescriptor;
+        if (archiveFileDescriptor === undefined) {
+          throw new Error("test cleanup mutation had no held archive descriptor");
+        }
+        writeAllToDescriptor(archiveFileDescriptor, Buffer.from("cleanup-tamper"));
+        mutated = true;
+      };
+      const overrides: Partial<PostgresLogicalBackupDependencies> = { ...base };
+      if (mutationPhase === "connection.close") {
+        overrides.connect = async (config) => {
+          const connection = await base.connect!(config);
+          return {
+            ...connection,
+            close: async () => {
+              await mutateHeldArchive();
+              await connection.close();
+            },
+          };
+        };
+      } else {
+        overrides.openTransport = async (options) => {
+          const transport = await base.openTransport!(options);
+          return {
+            ...transport,
+            close: async () => {
+              await mutateHeldArchive();
+              await transport.close();
+            },
+          };
+        };
+      }
+
+      try {
+        const error = await createTestPostgresLogicalBackup({
+          connectionFile: writeConnectionFile(root),
+          expectedSourceUrlSha256: sha256(directTlsUrl),
+          outputDirectory,
+        }, overrides).catch((caught: unknown) => caught);
+
+        expectBackupError(error, "archive_tampered");
+        expect(mutated).toBe(true);
+        expect(openCountsAtMutation).toEqual({
+          outputParent: 1,
+          outputDirectory: 1,
+          archive: 1,
+          manifest: 1,
+          stateReceipt: 1,
+        });
+        for (const filePath of Object.values(trackedPaths)) {
+          expect(await openTrackedHandles(tracker, filePath)).toEqual([]);
+        }
+        await expectRetainedZeroizedOutput(
+          { paths: trackedPaths, tracker },
+          [
+            POSTGRES_LOGICAL_BACKUP_ARCHIVE,
+            POSTGRES_LOGICAL_BACKUP_MANIFEST,
+            POSTGRES_LOGICAL_BACKUP_STATE_RECEIPT,
+          ],
+        );
+      } finally {
+        tracker.restore();
+      }
+    },
+  );
+
   it.each([
-    ["exported snapshot", 5],
-    ["pg_dump completion", 9],
-    ["manifest finalization", 11],
-  ])("fails closed on transport drift at the %s boundary", async (_label, failAssertionAt) => {
+    ["exported snapshot", 5, []],
+    ["pg_dump completion", 9, [POSTGRES_LOGICAL_BACKUP_ARCHIVE]],
+    [
+      "manifest finalization",
+      11,
+      [
+        POSTGRES_LOGICAL_BACKUP_ARCHIVE,
+        POSTGRES_LOGICAL_BACKUP_MANIFEST,
+        POSTGRES_LOGICAL_BACKUP_STATE_RECEIPT,
+      ],
+    ],
+  ] as const)(
+    "fails closed on transport drift at the %s boundary without retaining backup bytes",
+    async (_label, failAssertionAt, retainedArtifacts) => {
     const root = makeTemporaryDirectory();
     const outputDirectory = path.join(root, `transport-drift-${failAssertionAt}`);
+    const retained = retainedArtifacts.length > 0
+      ? trackRetainedOutput(outputDirectory)
+      : null;
     const events: string[] = [];
     const control: TransportTestControl = { events, failAssertionAt };
     const harness = createProcessHarness({ events });
-    const error = await createTestPostgresLogicalBackup({
-      connectionFile: writeConnectionFile(root),
-      expectedSourceUrlSha256: sha256(directTlsUrl),
-      outputDirectory,
-    }, dependencies(harness.runner, [], control)).catch((caught: unknown) => caught);
+    try {
+      const error = await createTestPostgresLogicalBackup({
+        connectionFile: writeConnectionFile(root),
+        expectedSourceUrlSha256: sha256(directTlsUrl),
+        outputDirectory,
+      }, dependencies(harness.runner, [], control)).catch((caught: unknown) => caught);
 
-    expectBackupError(error, "source_unreachable_or_unsafe");
-    expect(fs.existsSync(outputDirectory)).toBe(false);
-    expect(events.indexOf("connection.close")).toBeLessThan(events.indexOf("transport.close"));
+      expectBackupError(error, "source_unreachable_or_unsafe");
+      if (retained) {
+        await expectRetainedZeroizedOutput(retained, retainedArtifacts);
+      } else {
+        expect(fs.existsSync(outputDirectory)).toBe(false);
+      }
+      expect(events.indexOf("connection.close")).toBeLessThan(events.indexOf("transport.close"));
+    } finally {
+      retained?.tracker.restore();
+    }
   });
 
-  it("gives transport cleanup failure precedence over a pg_dump failure", async () => {
+  it("gives transport cleanup failure precedence and retains only a zeroized archive", async () => {
     const root = makeTemporaryDirectory();
     const outputDirectory = path.join(root, "transport-close-dominance");
+    const retained = trackRetainedOutput(outputDirectory);
     const events: string[] = [];
     const control: TransportTestControl = { events, closeFails: true };
     const harness = createProcessHarness({
       events,
       dumpResult: { exitCode: 1, stdout: "", stderr: "test-only failure" },
     });
-    const error = await createTestPostgresLogicalBackup({
-      connectionFile: writeConnectionFile(root),
-      expectedSourceUrlSha256: sha256(directTlsUrl),
-      outputDirectory,
-    }, dependencies(harness.runner, [], control)).catch((caught: unknown) => caught);
+    try {
+      const error = await createTestPostgresLogicalBackup({
+        connectionFile: writeConnectionFile(root),
+        expectedSourceUrlSha256: sha256(directTlsUrl),
+        outputDirectory,
+      }, dependencies(harness.runner, [], control)).catch((caught: unknown) => caught);
 
-    expectBackupError(error, "cleanup_failed");
-    expect(fs.existsSync(outputDirectory)).toBe(false);
-    expect(events.indexOf("connection.close")).toBeLessThan(events.indexOf("transport.close"));
+      expectBackupError(error, "cleanup_failed");
+      await expectRetainedZeroizedOutput(retained, [POSTGRES_LOGICAL_BACKUP_ARCHIVE]);
+      expect(events.indexOf("connection.close")).toBeLessThan(events.indexOf("transport.close"));
+    } finally {
+      retained.tracker.restore();
+    }
   });
 
   it("contains transport-open failures before tools, connection, or output creation", async () => {
@@ -1068,7 +2056,7 @@ describe("Postgres logical backup foundation", () => {
     const root = makeTemporaryDirectory();
     const harness = createProcessHarness();
     const queries: string[] = [];
-    const result = await createTestPostgresLogicalBackup({
+    await createTestPostgresLogicalBackup({
       connectionFile: writeConnectionFile(root),
       expectedSourceUrlSha256: sha256(directTlsUrl),
       outputDirectory: path.join(root, "backup"),
@@ -1081,7 +2069,6 @@ describe("Postgres logical backup foundation", () => {
     const versionInvocations = harness.invocations.filter((invocation) => invocation.args[0] === "--version");
     expect(dump.args).toEqual([
       "--format=custom",
-      `--file=${result.archivePath}`,
       "--snapshot=00000003-0000001B-1",
       `--role=${backupRole}`,
       "--no-owner",
@@ -1093,6 +2080,10 @@ describe("Postgres logical backup foundation", () => {
       "--schema=pintpath_app",
       "--schema=pintpath_ops",
     ]);
+    expect(dump.stdinFileDescriptor).toBeUndefined();
+    expect(dump.stdoutFileDescriptor).toBe(
+      harness.archiveDescriptorObservations.dump?.fileDescriptor,
+    );
     expect(JSON.stringify(dump.args)).not.toContain(connectionSecret);
     expect(JSON.stringify(dump.args)).not.toContain(sourceHostname);
     expect(JSON.stringify(dump.args)).not.toContain("backup_user");
@@ -1129,7 +2120,12 @@ describe("Postgres logical backup foundation", () => {
     expect(path.dirname(path.dirname(dump.env.PGPASSFILE))).toBe(fs.realpathSync(os.tmpdir()));
     expect(fs.existsSync(dump.env.PGPASSFILE)).toBe(false);
     expect(fs.existsSync(path.dirname(dump.env.PGPASSFILE))).toBe(false);
-    expect(restoreList.args).toEqual(["--list", "--format=custom", result.archivePath]);
+    expect(restoreList.args).toEqual(["--list", "--format=custom"]);
+    expect(restoreList.stdinFileDescriptor).toBe(
+      harness.archiveDescriptorObservations.restoreList?.fileDescriptor,
+    );
+    expect(restoreList.stdinFileDescriptor).not.toBe(dump.stdoutFileDescriptor);
+    expect(restoreList.stdoutFileDescriptor).toBeUndefined();
     expect(restoreList.env.PGPASSWORD).toBeUndefined();
     expect(restoreList.env.PGPASSFILE).toBeUndefined();
     expect(restoreList.env.DATABASE_URL).toBeUndefined();
@@ -1139,6 +2135,9 @@ describe("Postgres logical backup foundation", () => {
     expect(versionInvocations.every((invocation) => invocation.env.DATABASE_URL === undefined)).toBe(true);
     expect(versionInvocations.every((invocation) => (
       invocation.stdinFileDescriptor === undefined
+    ))).toBe(true);
+    expect(versionInvocations.every((invocation) => (
+      invocation.stdoutFileDescriptor === undefined
     ))).toBe(true);
     expect(queries.filter((query) => query.includes("logical-backup:set-role"))).toEqual([
       `/* pintpath:logical-backup:set-role */ SET ROLE ${backupRole}`,
@@ -1365,6 +2364,218 @@ describe("Postgres logical backup foundation", () => {
     expect(harness.invocations).toEqual([]);
   });
 
+  it("requires a current-user mode-700 output parent without deleting an unsafe parent", async () => {
+    const root = makeTemporaryDirectory();
+    const outputParent = path.join(root, "unsafe-output-parent");
+    fs.mkdirSync(outputParent, { mode: 0o700 });
+    fs.chmodSync(outputParent, 0o755);
+    const outputDirectory = path.join(outputParent, "logical-backup");
+    fs.mkdirSync(outputDirectory, { mode: 0o700 });
+    const sentinelPath = path.join(outputDirectory, "operator-sentinel");
+    fs.writeFileSync(sentinelPath, "preserve me", { mode: 0o600 });
+    const outputParentFileDescriptor = fs.openSync(
+      outputParent,
+      fs.constants.O_RDONLY | (fs.constants.O_DIRECTORY ?? 0),
+    );
+    const outputDirectoryFileDescriptor = fs.openSync(
+      outputDirectory,
+      fs.constants.O_RDONLY | (fs.constants.O_DIRECTORY ?? 0),
+    );
+    const sentinelFileDescriptor = fs.openSync(sentinelPath, fs.constants.O_RDONLY);
+    const parentBefore = fs.fstatSync(outputParentFileDescriptor);
+    const outputBefore = fs.fstatSync(outputDirectoryFileDescriptor);
+    const sentinelBefore = fs.fstatSync(sentinelFileDescriptor);
+    const harness = createProcessHarness();
+
+    try {
+      expect(parentBefore.uid).toBe(process.getuid?.() ?? parentBefore.uid);
+      expect(parentBefore.mode & 0o7777).toBe(0o755);
+      const error = await createTestPostgresLogicalBackup({
+        connectionFile: writeConnectionFile(root),
+        expectedSourceUrlSha256: sha256(directTlsUrl),
+        outputDirectory,
+      }, dependencies(harness.runner)).catch((caught: unknown) => caught);
+
+      expectBackupError(error, "unsafe_output_path");
+      expect(harness.invocations.some((invocation) => (
+        invocation.command.endsWith("pg_dump") && invocation.args[0] !== "--version"
+      ))).toBe(false);
+      const parentAfter = fs.fstatSync(outputParentFileDescriptor);
+      const outputAfter = fs.fstatSync(outputDirectoryFileDescriptor);
+      const sentinelAfter = fs.fstatSync(sentinelFileDescriptor);
+      expect({ dev: parentAfter.dev, ino: parentAfter.ino, nlink: parentAfter.nlink }).toEqual({
+        dev: parentBefore.dev,
+        ino: parentBefore.ino,
+        nlink: parentBefore.nlink,
+      });
+      expect({ dev: outputAfter.dev, ino: outputAfter.ino, nlink: outputAfter.nlink }).toEqual({
+        dev: outputBefore.dev,
+        ino: outputBefore.ino,
+        nlink: outputBefore.nlink,
+      });
+      expect({ dev: sentinelAfter.dev, ino: sentinelAfter.ino, nlink: sentinelAfter.nlink }).toEqual({
+        dev: sentinelBefore.dev,
+        ino: sentinelBefore.ino,
+        nlink: sentinelBefore.nlink,
+      });
+      const sentinelBytes = Buffer.alloc(Buffer.byteLength("preserve me") + 1);
+      const bytesRead = fs.readSync(
+        sentinelFileDescriptor,
+        sentinelBytes,
+        0,
+        sentinelBytes.length,
+        0,
+      );
+      expect(sentinelBytes.subarray(0, bytesRead).toString("utf8")).toBe("preserve me");
+    } finally {
+      fs.closeSync(sentinelFileDescriptor);
+      fs.closeSync(outputDirectoryFileDescriptor);
+      fs.closeSync(outputParentFileDescriptor);
+    }
+  });
+
+  it("rejects an output parent whose held descriptor reports another owner", async () => {
+    const root = makeTemporaryDirectory();
+    const outputParent = path.join(fs.realpathSync(root), "wrong-owner-output-parent");
+    fs.mkdirSync(outputParent, { mode: 0o700 });
+    const outputDirectory = path.join(outputParent, "logical-backup");
+    const sentinelPath = path.join(outputParent, "operator-sentinel");
+    fs.writeFileSync(sentinelPath, "preserve me", { mode: 0o600 });
+    const outputParentFileDescriptor = fs.openSync(
+      outputParent,
+      fs.constants.O_RDONLY | (fs.constants.O_DIRECTORY ?? 0),
+    );
+    const sentinelFileDescriptor = fs.openSync(sentinelPath, fs.constants.O_RDONLY);
+    const parentBefore = fs.fstatSync(outputParentFileDescriptor);
+    const sentinelBefore = fs.fstatSync(sentinelFileDescriptor);
+    const harness = createProcessHarness();
+    const originalOpen = fs.promises.open.bind(fs.promises);
+    let parentHandle: fs.promises.FileHandle | null = null;
+    let ownerSpoofed = false;
+    const openSpy = vi.spyOn(fs.promises, "open").mockImplementation((async (...args: unknown[]) => {
+      const handle = await (originalOpen as (
+        ...values: unknown[]
+      ) => Promise<fs.promises.FileHandle>)(...args);
+      if (String(args[0]) === outputParent) {
+        parentHandle = handle;
+        const originalStat = handle.stat.bind(handle);
+        Object.defineProperty(handle, "stat", {
+          configurable: true,
+          value: async (...statArgs: unknown[]) => {
+            const stat = await (originalStat as (
+              ...values: unknown[]
+            ) => Promise<fs.Stats>)(...statArgs);
+            Object.defineProperty(stat, "uid", {
+              configurable: true,
+              value: parentBefore.uid + 1,
+            });
+            ownerSpoofed = true;
+            return stat;
+          },
+        });
+      }
+      return handle;
+    }) as typeof fs.promises.open);
+    try {
+      let error: unknown;
+      try {
+        error = await createTestPostgresLogicalBackup({
+          connectionFile: writeConnectionFile(root),
+          expectedSourceUrlSha256: sha256(directTlsUrl),
+          outputDirectory,
+        }, dependencies(harness.runner)).catch((caught: unknown) => caught);
+      } finally {
+        openSpy.mockRestore();
+      }
+
+      expectBackupError(error, "unsafe_output_path");
+      expect(ownerSpoofed).toBe(true);
+      expect(harness.invocations.some((invocation) => (
+        invocation.command.endsWith("pg_dump") && invocation.args[0] !== "--version"
+      ))).toBe(false);
+      const parentAfter = fs.fstatSync(outputParentFileDescriptor);
+      const sentinelAfter = fs.fstatSync(sentinelFileDescriptor);
+      expect({ dev: parentAfter.dev, ino: parentAfter.ino, nlink: parentAfter.nlink }).toEqual({
+        dev: parentBefore.dev,
+        ino: parentBefore.ino,
+        nlink: parentBefore.nlink,
+      });
+      expect({ dev: sentinelAfter.dev, ino: sentinelAfter.ino, nlink: sentinelAfter.nlink }).toEqual({
+        dev: sentinelBefore.dev,
+        ino: sentinelBefore.ino,
+        nlink: sentinelBefore.nlink,
+      });
+      const sentinelBytes = Buffer.alloc(Buffer.byteLength("preserve me") + 1);
+      const bytesRead = fs.readSync(
+        sentinelFileDescriptor,
+        sentinelBytes,
+        0,
+        sentinelBytes.length,
+        0,
+      );
+      expect(sentinelBytes.subarray(0, bytesRead).toString("utf8")).toBe("preserve me");
+      expect(parentHandle).not.toBeNull();
+      expect(await fileHandleIsOpen(parentHandle!)).toBe(false);
+    } finally {
+      fs.closeSync(sentinelFileDescriptor);
+      fs.closeSync(outputParentFileDescriptor);
+    }
+  });
+
+  it("reasserts the held output parent and retains only a zeroized archive before pg_dump", async () => {
+    const root = makeTemporaryDirectory();
+    const outputParent = fs.realpathSync(root);
+    const outputDirectory = path.join(outputParent, "pre-dump-parent-drift");
+    const outputParentFileDescriptor = fs.openSync(
+      outputParent,
+      fs.constants.O_RDONLY | (fs.constants.O_DIRECTORY ?? 0),
+    );
+    const harness = createProcessHarness();
+    let pgpassStatCalls = 0;
+    let parentMutated = false;
+    const retained = trackRetainedOutput(outputDirectory, (filePath, handle) => {
+      if (filePath && path.basename(filePath) === "pgpass") {
+        const originalStat = handle.stat.bind(handle);
+        Object.defineProperty(handle, "stat", {
+          configurable: true,
+          value: async (...statArgs: unknown[]) => {
+            const stat = await (originalStat as (
+              ...values: unknown[]
+            ) => Promise<fs.Stats>)(...statArgs);
+            pgpassStatCalls += 1;
+            if (pgpassStatCalls === 4) {
+              fs.fchmodSync(outputParentFileDescriptor, 0o755);
+              parentMutated = true;
+            }
+            return stat;
+          },
+        });
+      }
+    });
+
+    try {
+      const error = await createTestPostgresLogicalBackup({
+        connectionFile: writeConnectionFile(root),
+        expectedSourceUrlSha256: sha256(directTlsUrl),
+        outputDirectory,
+      }, dependencies(harness.runner)).catch((caught: unknown) => caught);
+
+      expectBackupError(error, "archive_tampered");
+      expect(parentMutated).toBe(true);
+      expect(pgpassStatCalls).toBeGreaterThanOrEqual(4);
+      expect(fs.fstatSync(outputParentFileDescriptor).mode & 0o7777).toBe(0o755);
+      expect(harness.invocations.some((invocation) => (
+        invocation.command.endsWith("pg_dump") && invocation.args[0] !== "--version"
+      ))).toBe(false);
+      fs.fchmodSync(outputParentFileDescriptor, 0o700);
+      await expectRetainedZeroizedOutput(retained, [POSTGRES_LOGICAL_BACKUP_ARCHIVE]);
+    } finally {
+      retained.tracker.restore();
+      fs.fchmodSync(outputParentFileDescriptor, 0o700);
+      fs.closeSync(outputParentFileDescriptor);
+    }
+  });
+
   it("refuses an existing output directory without deleting it", async () => {
     const root = makeTemporaryDirectory();
     const outputDirectory = path.join(root, "existing-backup");
@@ -1383,9 +2594,102 @@ describe("Postgres logical backup foundation", () => {
     expect(fs.readFileSync(sentinel, "utf8")).toBe("preserve me");
   });
 
-  it("removes a partial output directory when pg_dump fails and redacts its diagnostics", async () => {
+  it("never recursively removes a newly created marker when preparation fails", async () => {
+    const root = makeTemporaryDirectory();
+    const outputDirectory = retainedOutputPaths(
+      path.join(root, "prepare-catch-retained-marker"),
+    ).outputDirectory;
+    const victim = createHeldOperatorVictim(root, "prepare-catch");
+    const rmGuard = forbidRecursiveOutputRm(outputDirectory, victim.directory);
+    const harness = createProcessHarness();
+    const originalOpen = fs.promises.open.bind(fs.promises);
+    let parentHandle: fs.promises.FileHandle | null = null;
+    const openSpy = vi.spyOn(fs.promises, "open").mockImplementation((async (
+      ...args: unknown[]
+    ) => {
+      const filePath = String(args[0]);
+      if (filePath === outputDirectory) {
+        throw new Error("injected output-directory open failure");
+      }
+      const handle = await (originalOpen as (
+        ...values: unknown[]
+      ) => Promise<fs.promises.FileHandle>)(...args);
+      if (filePath === path.dirname(outputDirectory)) parentHandle = handle;
+      return handle;
+    }) as typeof fs.promises.open);
+
+    try {
+      const error = await createTestPostgresLogicalBackup({
+        connectionFile: writeConnectionFile(root),
+        expectedSourceUrlSha256: sha256(directTlsUrl),
+        outputDirectory,
+      }, dependencies(harness.runner)).catch((caught: unknown) => caught);
+
+      expectBackupError(error, "unsafe_output_path");
+      expect(rmGuard.callCount()).toBe(0);
+      expect(rmGuard.wasSwapped()).toBe(false);
+      expect(parentHandle).not.toBeNull();
+      expect(await fileHandleIsOpen(parentHandle!)).toBe(false);
+      expect(harness.invocations.some((invocation) => (
+        invocation.command.endsWith("pg_dump") && invocation.args[0] !== "--version"
+      ))).toBe(false);
+      const markerFileDescriptor = fs.openSync(
+        outputDirectory,
+        fs.constants.O_RDONLY
+          | (fs.constants.O_DIRECTORY ?? 0)
+          | (fs.constants.O_NOFOLLOW ?? 0),
+      );
+      try {
+        const markerStat = fs.fstatSync(markerFileDescriptor);
+        expect(markerStat.isDirectory()).toBe(true);
+        expect(markerStat.uid).toBe(process.getuid?.() ?? markerStat.uid);
+        expect(markerStat.mode & 0o7777).toBe(0o700);
+      } finally {
+        fs.closeSync(markerFileDescriptor);
+      }
+      expectHeldOperatorVictimExact(victim);
+    } finally {
+      openSpy.mockRestore();
+      rmGuard.restore();
+      fs.closeSync(victim.sentinelFileDescriptor);
+      fs.closeSync(victim.directoryFileDescriptor);
+    }
+  });
+
+  it("never recursively removes a prepared marker after a final backup error", async () => {
+    const root = makeTemporaryDirectory();
+    const outputDirectory = path.join(root, "final-error-retained-marker");
+    const victim = createHeldOperatorVictim(root, "final-error");
+    const retained = trackRetainedOutput(outputDirectory);
+    const rmGuard = forbidRecursiveOutputRm(retained.paths.outputDirectory, victim.directory);
+    const harness = createProcessHarness({
+      dumpResult: { exitCode: 1, stdout: "", stderr: "test-only failure" },
+    });
+
+    try {
+      const error = await createTestPostgresLogicalBackup({
+        connectionFile: writeConnectionFile(root),
+        expectedSourceUrlSha256: sha256(directTlsUrl),
+        outputDirectory,
+      }, dependencies(harness.runner)).catch((caught: unknown) => caught);
+
+      expectBackupError(error, "dump_failed");
+      expect(rmGuard.callCount()).toBe(0);
+      expect(rmGuard.wasSwapped()).toBe(false);
+      await expectRetainedZeroizedOutput(retained, [POSTGRES_LOGICAL_BACKUP_ARCHIVE]);
+      expectHeldOperatorVictimExact(victim);
+    } finally {
+      rmGuard.restore();
+      retained.tracker.restore();
+      fs.closeSync(victim.sentinelFileDescriptor);
+      fs.closeSync(victim.directoryFileDescriptor);
+    }
+  });
+
+  it("retains a zeroized private archive marker when pg_dump fails and redacts diagnostics", async () => {
     const root = makeTemporaryDirectory();
     const outputDirectory = path.join(root, "failed-dump");
+    const retained = trackRetainedOutput(outputDirectory);
     const harness = createProcessHarness({
       dumpResult: {
         exitCode: 1,
@@ -1394,38 +2698,73 @@ describe("Postgres logical backup foundation", () => {
       },
     });
 
-    const error = await createTestPostgresLogicalBackup({
-      connectionFile: writeConnectionFile(root),
-      expectedSourceUrlSha256: sha256(directTlsUrl),
-      outputDirectory,
-    }, dependencies(harness.runner)).catch((caught: unknown) => caught);
+    try {
+      const error = await createTestPostgresLogicalBackup({
+        connectionFile: writeConnectionFile(root),
+        expectedSourceUrlSha256: sha256(directTlsUrl),
+        outputDirectory,
+      }, dependencies(harness.runner)).catch((caught: unknown) => caught);
 
-    expectBackupError(error, "dump_failed");
-    expect(fs.existsSync(outputDirectory)).toBe(false);
+      expectBackupError(error, "dump_failed");
+      await expectRetainedZeroizedOutput(retained, [POSTGRES_LOGICAL_BACKUP_ARCHIVE]);
+    } finally {
+      retained.tracker.restore();
+    }
   });
 
-  it("cleans up when the injected process runner throws a credential-bearing error", async () => {
+  it("retains a zeroized archive when the process runner throws a credential-bearing error", async () => {
     const root = makeTemporaryDirectory();
     const outputDirectory = path.join(root, "thrown-dump-error");
+    const retained = trackRetainedOutput(outputDirectory);
     const harness = createProcessHarness({ throwOnDump: true });
 
-    const error = await createTestPostgresLogicalBackup({
-      connectionFile: writeConnectionFile(root),
-      expectedSourceUrlSha256: sha256(directTlsUrl),
-      outputDirectory,
-    }, dependencies(harness.runner)).catch((caught: unknown) => caught);
+    try {
+      const error = await createTestPostgresLogicalBackup({
+        connectionFile: writeConnectionFile(root),
+        expectedSourceUrlSha256: sha256(directTlsUrl),
+        outputDirectory,
+      }, dependencies(harness.runner)).catch((caught: unknown) => caught);
 
-    expectBackupError(error, "dump_failed");
-    expect(fs.existsSync(outputDirectory)).toBe(false);
+      expectBackupError(error, "dump_failed");
+      await expectRetainedZeroizedOutput(retained, [POSTGRES_LOGICAL_BACKUP_ARCHIVE]);
+    } finally {
+      retained.tracker.restore();
+    }
   });
 
   it.each(["same-inode-content", "same-inode-mode"] as const)(
-    "unlinks a %s pgpass drift, removes its directory, and fails cleanup closed",
+    "unlinks a %s pgpass drift, removes its pgpass directory, and retains a zeroized archive",
     async (pgpassMutation) => {
       const root = makeTemporaryDirectory();
       const outputDirectory = path.join(root, "pgpass-content-drift");
+      const retained = trackRetainedOutput(outputDirectory);
       const harness = createProcessHarness({ pgpassMutation });
 
+      try {
+        const error = await createTestPostgresLogicalBackup({
+          connectionFile: writeConnectionFile(root),
+          expectedSourceUrlSha256: sha256(directTlsUrl),
+          outputDirectory,
+        }, dependencies(harness.runner)).catch((caught: unknown) => caught);
+
+        expectBackupError(error, "cleanup_failed");
+        const pgpassPath = harness.pgpassObservations[0]!.path;
+        expect(fs.existsSync(pgpassPath)).toBe(false);
+        expect(fs.existsSync(path.dirname(pgpassPath))).toBe(false);
+        await expectRetainedZeroizedOutput(retained, [POSTGRES_LOGICAL_BACKUP_ARCHIVE]);
+      } finally {
+        retained.tracker.restore();
+      }
+    },
+  );
+
+  it("never deletes a replacement pgpass and retains a zeroized archive on cleanup failure", async () => {
+    const root = makeTemporaryDirectory();
+    const outputDirectory = path.join(root, "pgpass-replacement");
+    const retained = trackRetainedOutput(outputDirectory);
+    const harness = createProcessHarness({ pgpassMutation: "replacement" });
+
+    try {
       const error = await createTestPostgresLogicalBackup({
         connectionFile: writeConnectionFile(root),
         expectedSourceUrlSha256: sha256(directTlsUrl),
@@ -1434,29 +2773,13 @@ describe("Postgres logical backup foundation", () => {
 
       expectBackupError(error, "cleanup_failed");
       const pgpassPath = harness.pgpassObservations[0]!.path;
-      expect(fs.existsSync(pgpassPath)).toBe(false);
-      expect(fs.existsSync(path.dirname(pgpassPath))).toBe(false);
-      expect(fs.existsSync(outputDirectory)).toBe(false);
-    },
-  );
-
-  it("never deletes a replacement pgpass pathname and still fails cleanup closed", async () => {
-    const root = makeTemporaryDirectory();
-    const outputDirectory = path.join(root, "pgpass-replacement");
-    const harness = createProcessHarness({ pgpassMutation: "replacement" });
-
-    const error = await createTestPostgresLogicalBackup({
-      connectionFile: writeConnectionFile(root),
-      expectedSourceUrlSha256: sha256(directTlsUrl),
-      outputDirectory,
-    }, dependencies(harness.runner)).catch((caught: unknown) => caught);
-
-    expectBackupError(error, "cleanup_failed");
-    const pgpassPath = harness.pgpassObservations[0]!.path;
-    expect(fs.readFileSync(pgpassPath, "utf8")).toBe("untrusted-replacement\n");
-    expect(fs.existsSync(outputDirectory)).toBe(false);
-    fs.unlinkSync(pgpassPath);
-    fs.rmdirSync(path.dirname(pgpassPath));
+      expect(fs.readFileSync(pgpassPath, "utf8")).toBe("untrusted-replacement\n");
+      await expectRetainedZeroizedOutput(retained, [POSTGRES_LOGICAL_BACKUP_ARCHIVE]);
+      fs.unlinkSync(pgpassPath);
+      fs.rmdirSync(path.dirname(pgpassPath));
+    } finally {
+      retained.tracker.restore();
+    }
   });
 
   it("removes only the trusted pgpass when an unexpected sibling blocks nonrecursive cleanup", async () => {
@@ -1548,9 +2871,165 @@ describe("Postgres logical backup foundation", () => {
     ))).toBe(false);
   });
 
-  it("rejects and cleans an archive that pg_restore cannot validate", async () => {
+  it.each([
+    [
+      "state receipt",
+      POSTGRES_LOGICAL_BACKUP_STATE_RECEIPT,
+      "state_receipt_failed",
+      [
+        POSTGRES_LOGICAL_BACKUP_ARCHIVE,
+        POSTGRES_LOGICAL_BACKUP_STATE_RECEIPT,
+      ],
+    ],
+    [
+      "manifest",
+      POSTGRES_LOGICAL_BACKUP_MANIFEST,
+      "manifest_failed",
+      [
+        POSTGRES_LOGICAL_BACKUP_ARCHIVE,
+        POSTGRES_LOGICAL_BACKUP_MANIFEST,
+        POSTGRES_LOGICAL_BACKUP_STATE_RECEIPT,
+      ],
+    ],
+  ] as const)(
+    "rejects and zeroizes a %s mutation through its held writer descriptor",
+    async (_label, artifactFile, expectedError, retainedArtifacts) => {
+      const root = makeTemporaryDirectory();
+      const outputDirectory = path.join(fs.realpathSync(root), `mutated-${artifactFile}`);
+      const artifactPath = path.join(outputDirectory, artifactFile);
+      const harness = createProcessHarness();
+      let writerHandle: fs.promises.FileHandle | null = null;
+      let writerOpenDuringMutation = false;
+      const writerSyncStates: Array<"zero-length" | "non-empty"> = [];
+      let mutated = false;
+      const retained = trackRetainedOutput(outputDirectory, async (filePath, handle) => {
+        if (filePath === artifactPath) {
+          writerHandle = handle;
+          const originalSync = handle.sync.bind(handle);
+          Object.defineProperty(handle, "sync", {
+            configurable: true,
+            value: async () => {
+              await originalSync();
+              const stat = await handle.stat();
+              writerSyncStates.push(stat.size === 0 ? "zero-length" : "non-empty");
+              if (
+                writerSyncStates.length === 2
+                && writerSyncStates[1] === "non-empty"
+                && !mutated
+              ) {
+                writerOpenDuringMutation = await fileHandleIsOpen(handle);
+                writeAllToDescriptor(handle.fd, Buffer.from("tampered-after-writer"));
+                mutated = true;
+              }
+            },
+          });
+        }
+      });
+      let error: unknown;
+      try {
+        error = await createTestPostgresLogicalBackup({
+          connectionFile: writeConnectionFile(root),
+          expectedSourceUrlSha256: sha256(directTlsUrl),
+          outputDirectory,
+        }, dependencies(harness.runner)).catch((caught: unknown) => caught);
+      } finally {
+        retained.tracker.restore();
+      }
+
+      expectBackupError(error, expectedError);
+      expect(mutated).toBe(true);
+      expect(writerSyncStates).toEqual(["zero-length", "non-empty", "zero-length"]);
+      expect(writerOpenDuringMutation).toBe(true);
+      expect(writerHandle).not.toBeNull();
+      expect(await fileHandleIsOpen(writerHandle!)).toBe(false);
+      await expectRetainedZeroizedOutput(retained, retainedArtifacts);
+    },
+  );
+
+  it("closes the exact canonical writer handle when its zeroization fsync fails", async () => {
+    const root = makeTemporaryDirectory();
+    const outputDirectory = path.join(fs.realpathSync(root), "writer-zeroize-sync-failure");
+    const artifactPath = path.join(outputDirectory, POSTGRES_LOGICAL_BACKUP_STATE_RECEIPT);
+    const harness = createProcessHarness();
+    let writerHandle: fs.promises.FileHandle | null = null;
+    let writerFileDescriptor: number | null = null;
+    let writerCloseCalls = 0;
+    let mutated = false;
+    const syncEvents: Array<
+      "zero-length-synced" | "non-empty-synced" | "zero-length-sync-failed"
+    > = [];
+    const retained = trackRetainedOutput(outputDirectory, async (filePath, handle) => {
+      if (filePath !== artifactPath) return;
+      writerHandle = handle;
+      writerFileDescriptor = handle.fd;
+      const originalSync = handle.sync.bind(handle);
+      const originalClose = handle.close.bind(handle);
+      let syncCalls = 0;
+      Object.defineProperty(handle, "sync", {
+        configurable: true,
+        value: async () => {
+          syncCalls += 1;
+          const before = await handle.stat();
+          if (syncCalls === 3) {
+            if (before.size === 0) syncEvents.push("zero-length-sync-failed");
+            throw new Error("injected canonical writer zeroization sync failure");
+          }
+          await originalSync();
+          const after = await handle.stat();
+          syncEvents.push(after.size === 0 ? "zero-length-synced" : "non-empty-synced");
+          if (syncCalls === 2) {
+            writeAllToDescriptor(handle.fd, Buffer.from("tampered-canonical-writer"));
+            mutated = true;
+          }
+        },
+      });
+      Object.defineProperty(handle, "close", {
+        configurable: true,
+        value: async () => {
+          writerCloseCalls += 1;
+          await originalClose();
+        },
+      });
+    });
+
+    try {
+      const error = await createTestPostgresLogicalBackup({
+        connectionFile: writeConnectionFile(root),
+        expectedSourceUrlSha256: sha256(directTlsUrl),
+        outputDirectory,
+      }, dependencies(harness.runner)).catch((caught: unknown) => caught);
+
+      expectBackupError(error, "cleanup_failed");
+      expect(mutated).toBe(true);
+      expect(syncEvents).toEqual([
+        "zero-length-synced",
+        "non-empty-synced",
+        "zero-length-sync-failed",
+      ]);
+      expect(writerCloseCalls).toBe(1);
+      expect(writerHandle).not.toBeNull();
+      expect(await fileHandleIsOpen(writerHandle!)).toBe(false);
+      expect(writerFileDescriptor).not.toBeNull();
+      let descriptorError: NodeJS.ErrnoException | null = null;
+      try {
+        fs.fstatSync(writerFileDescriptor!);
+      } catch (error) {
+        descriptorError = error as NodeJS.ErrnoException;
+      }
+      expect(descriptorError?.code).toBe("EBADF");
+      await expectRetainedZeroizedOutput(retained, [
+        POSTGRES_LOGICAL_BACKUP_ARCHIVE,
+        POSTGRES_LOGICAL_BACKUP_STATE_RECEIPT,
+      ]);
+    } finally {
+      retained.tracker.restore();
+    }
+  });
+
+  it("rejects pg_restore validation and retains only a zeroized archive", async () => {
     const root = makeTemporaryDirectory();
     const outputDirectory = path.join(root, "invalid-archive");
+    const retained = trackRetainedOutput(outputDirectory);
     const harness = createProcessHarness({
       listingResult: {
         exitCode: 1,
@@ -1559,34 +3038,68 @@ describe("Postgres logical backup foundation", () => {
       },
     });
 
-    const error = await createTestPostgresLogicalBackup({
-      connectionFile: writeConnectionFile(root),
-      expectedSourceUrlSha256: sha256(directTlsUrl),
-      outputDirectory,
-    }, dependencies(harness.runner)).catch((caught: unknown) => caught);
+    try {
+      const error = await createTestPostgresLogicalBackup({
+        connectionFile: writeConnectionFile(root),
+        expectedSourceUrlSha256: sha256(directTlsUrl),
+        outputDirectory,
+      }, dependencies(harness.runner)).catch((caught: unknown) => caught);
 
-    expectBackupError(error, "archive_invalid");
-    expect(fs.existsSync(outputDirectory)).toBe(false);
+      expectBackupError(error, "archive_invalid");
+      await expectRetainedZeroizedOutput(retained, [POSTGRES_LOGICAL_BACKUP_ARCHIVE]);
+    } finally {
+      retained.tracker.restore();
+    }
   });
 
-  it("detects archive tampering during pg_restore validation and cleans the output", async () => {
+  it("detects pg_restore-time tampering and retains only a zeroized archive", async () => {
     const root = makeTemporaryDirectory();
     const outputDirectory = path.join(root, "tampered-archive");
+    const retained = trackRetainedOutput(outputDirectory);
     const harness = createProcessHarness({ tamperDuringListing: true });
 
-    const error = await createTestPostgresLogicalBackup({
-      connectionFile: writeConnectionFile(root),
-      expectedSourceUrlSha256: sha256(directTlsUrl),
-      outputDirectory,
-    }, dependencies(harness.runner)).catch((caught: unknown) => caught);
+    try {
+      const error = await createTestPostgresLogicalBackup({
+        connectionFile: writeConnectionFile(root),
+        expectedSourceUrlSha256: sha256(directTlsUrl),
+        outputDirectory,
+      }, dependencies(harness.runner)).catch((caught: unknown) => caught);
 
-    expectBackupError(error, "archive_tampered");
-    expect(fs.existsSync(outputDirectory)).toBe(false);
+      expectBackupError(error, "archive_tampered");
+      expect(harness.archiveDescriptorObservations).toEqual({
+        dump: {
+          fileDescriptor: expect.any(Number),
+          bytes: Buffer.from("PGDMP-test-archive"),
+        },
+        restoreList: {
+          fileDescriptor: expect.any(Number),
+          bytes: Buffer.from("PGDMP-test-archive"),
+        },
+        tamper: {
+          fileDescriptor: harness.archiveDescriptorObservations.dump?.fileDescriptor,
+          bytes: Buffer.from("tampered"),
+        },
+      });
+      expect(harness.archiveDescriptorObservations.restoreList?.fileDescriptor).not.toBe(
+        harness.archiveDescriptorObservations.dump?.fileDescriptor,
+      );
+      const restoreList = harness.invocations.find((invocation) => (
+        invocation.args.includes("--list")
+      ));
+      expect(restoreList?.args).toEqual(["--list", "--format=custom"]);
+      expect(restoreList?.stdinFileDescriptor).toBe(
+        harness.archiveDescriptorObservations.restoreList?.fileDescriptor,
+      );
+      await expectRetainedZeroizedOutput(retained, [POSTGRES_LOGICAL_BACKUP_ARCHIVE]);
+    } finally {
+      retained.tracker.restore();
+    }
   });
 
-  it("rejects a listing that does not prove both private schemas are present", async () => {
+  it("rejects an incomplete schema listing and retains only a zeroized archive", async () => {
     const root = makeTemporaryDirectory();
     const outputDirectory = path.join(root, "missing-schema");
+    const retained = trackRetainedOutput(outputDirectory);
     const harness = createProcessHarness({
       listing: validArchiveListing().replace(
         "3; 2615 101 SCHEMA - pintpath_ops backup_user\n",
@@ -1594,14 +3107,18 @@ describe("Postgres logical backup foundation", () => {
       ),
     });
 
-    const error = await createTestPostgresLogicalBackup({
-      connectionFile: writeConnectionFile(root),
-      expectedSourceUrlSha256: sha256(directTlsUrl),
-      outputDirectory,
-    }, dependencies(harness.runner)).catch((caught: unknown) => caught);
+    try {
+      const error = await createTestPostgresLogicalBackup({
+        connectionFile: writeConnectionFile(root),
+        expectedSourceUrlSha256: sha256(directTlsUrl),
+        outputDirectory,
+      }, dependencies(harness.runner)).catch((caught: unknown) => caught);
 
-    expectBackupError(error, "archive_invalid");
-    expect(fs.existsSync(outputDirectory)).toBe(false);
+      expectBackupError(error, "archive_invalid");
+      await expectRetainedZeroizedOutput(retained, [POSTGRES_LOGICAL_BACKUP_ARCHIVE]);
+    } finally {
+      retained.tracker.restore();
+    }
   });
 
   it("rejects mismatched pg_dump and pg_restore majors before creating output", async () => {

@@ -76,6 +76,7 @@ export interface ProcessInvocation {
   maxStdoutBytes: number;
   maxStderrBytes: number;
   readonly stdinFileDescriptor?: number;
+  readonly stdoutFileDescriptor?: number;
 }
 
 export interface ProcessResult {
@@ -212,6 +213,19 @@ interface StableFileSnapshot {
 interface DirectoryIdentity {
   dev: number;
   ino: number;
+}
+
+interface TrustedDirectoryGuard {
+  path: string;
+  identity: DirectoryIdentity;
+  handle: fs.promises.FileHandle;
+}
+
+interface PreparedOutputDirectory {
+  outputDirectory: string;
+  identity: DirectoryIdentity;
+  parent: TrustedDirectoryGuard;
+  directoryHandle: fs.promises.FileHandle;
 }
 
 interface FileIdentity {
@@ -416,8 +430,34 @@ function appendBounded(
   return nextBytes;
 }
 
+function inheritedArchiveFileDescriptorsAreSafe(
+  stdinFileDescriptor: number | undefined,
+  stdoutFileDescriptor: number | undefined,
+): boolean {
+  const inspect = (value: number | undefined): fs.Stats | null | undefined => {
+    if (value === undefined) return undefined;
+    if (!Number.isSafeInteger(value) || value <= 2 || value > 0x7fff_ffff) return null;
+    try {
+      const stat = fs.fstatSync(value);
+      return stat.isFile() ? stat : null;
+    } catch {
+      return null;
+    }
+  };
+  const stdinStat = inspect(stdinFileDescriptor);
+  const stdoutStat = inspect(stdoutFileDescriptor);
+  if (stdinStat === null || stdoutStat === null) return false;
+  return !(
+    stdinStat
+    && stdoutStat
+    && stdinStat.dev === stdoutStat.dev
+    && stdinStat.ino === stdoutStat.ino
+  );
+}
+
 export const runPostgresBackupProcess: ProcessRunner = async (invocation) => {
   const stdinFileDescriptor = invocation.stdinFileDescriptor;
+  const stdoutFileDescriptor = invocation.stdoutFileDescriptor;
   if (
     !invocation.command ||
     invocation.command.includes("\0") ||
@@ -425,35 +465,79 @@ export const runPostgresBackupProcess: ProcessRunner = async (invocation) => {
     Object.entries(invocation.env).some(([key, value]) => (
       !key || key.includes("\0") || value.includes("\0")
     )) ||
-    (stdinFileDescriptor !== undefined && (
-      !Number.isSafeInteger(stdinFileDescriptor) ||
-      stdinFileDescriptor < 0 ||
-      stdinFileDescriptor > 0x7fff_ffff
-    ))
+    !inheritedArchiveFileDescriptorsAreSafe(
+      stdinFileDescriptor,
+      stdoutFileDescriptor,
+    )
   ) {
     throw new Error("invalid_process_invocation");
   }
 
   return new Promise<ProcessResult>((resolve, reject) => {
+    const detachedProcessGroup = process.platform !== "win32";
     const child = spawn(invocation.command, [...invocation.args], {
       env: { ...invocation.env },
       shell: false,
-      stdio: [stdinFileDescriptor ?? "ignore", "pipe", "pipe"],
+      detached: detachedProcessGroup,
+      stdio: [
+        stdinFileDescriptor ?? "ignore",
+        "pipe",
+        "pipe",
+      ],
     });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     let stdoutBytes = 0;
     let stderrBytes = 0;
     let settled = false;
+    let closeObserved = false;
     let forcedFailure: Error | null = null;
+    let processGroupReap: Promise<boolean> | null = null;
+
+    const processGroupEmpty = (): boolean => {
+      if (!detachedProcessGroup || !Number.isSafeInteger(child.pid) || !child.pid) return true;
+      try {
+        process.kill(-child.pid, 0);
+        return false;
+      } catch (error) {
+        return (error as NodeJS.ErrnoException).code === "ESRCH";
+      }
+    };
+    const killProcessGroup = (): void => {
+      if (!detachedProcessGroup || !Number.isSafeInteger(child.pid) || !child.pid) {
+        child.kill("SIGKILL");
+        return;
+      }
+      try {
+        process.kill(-child.pid, "SIGKILL");
+      } catch {
+        // Exact process-group emptiness, not kill's return value, is authoritative.
+      }
+    };
+    const reapProcessGroup = async (): Promise<boolean> => {
+      if (!detachedProcessGroup || !Number.isSafeInteger(child.pid) || !child.pid) return false;
+      let descendantsDetected = false;
+      while (!processGroupEmpty()) {
+        descendantsDetected = true;
+        killProcessGroup();
+        await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, 10));
+      }
+      return descendantsDetected;
+    };
+    const beginProcessGroupReap = (): Promise<boolean> => {
+      processGroupReap ??= reapProcessGroup();
+      return processGroupReap;
+    };
 
     const fail = (error: Error): void => {
-      if (settled || forcedFailure) return;
+      if (settled || closeObserved || forcedFailure) return;
       forcedFailure = error;
       clearTimeout(timeout);
       try {
+        child.stdout?.destroy();
+        child.stderr?.destroy();
         if (child.exitCode === null && child.signalCode === null) {
-          child.kill("SIGKILL");
+          killProcessGroup();
         }
       } catch {
         // Fail closed: do not return control while the child may still be able
@@ -466,21 +550,37 @@ export const runPostgresBackupProcess: ProcessRunner = async (invocation) => {
     );
     timeout.unref();
 
-    child.stdout!.on("data", (value: Buffer | string) => {
-      if (settled || forcedFailure) return;
+    child.stdout?.on("data", (value: Buffer | string) => {
+      if (settled || closeObserved || forcedFailure) return;
       try {
-        stdoutBytes = appendBounded(
-          stdout,
-          Buffer.isBuffer(value) ? value : Buffer.from(value),
-          stdoutBytes,
-          invocation.maxStdoutBytes,
-        );
+        const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
+        if (stdoutFileDescriptor === undefined) {
+          stdoutBytes = appendBounded(
+            stdout,
+            chunk,
+            stdoutBytes,
+            invocation.maxStdoutBytes,
+          );
+        } else {
+          let offset = 0;
+          while (offset < chunk.byteLength) {
+            const bytesWritten = fs.writeSync(
+              stdoutFileDescriptor,
+              chunk,
+              offset,
+              chunk.byteLength - offset,
+              null,
+            );
+            if (bytesWritten < 1) throw new Error("process_output_write_failed");
+            offset += bytesWritten;
+          }
+        }
       } catch (error) {
-        fail(error instanceof Error ? error : new Error("process_output_limit_exceeded"));
+        fail(error instanceof Error ? error : new Error("process_output_write_failed"));
       }
     });
     child.stderr!.on("data", (value: Buffer | string) => {
-      if (settled || forcedFailure) return;
+      if (settled || closeObserved || forcedFailure) return;
       try {
         stderrBytes = appendBounded(
           stderr,
@@ -493,27 +593,46 @@ export const runPostgresBackupProcess: ProcessRunner = async (invocation) => {
       }
     });
     child.once("error", (error) => {
-      if (settled || forcedFailure) return;
+      if (settled || closeObserved || forcedFailure) return;
       settled = true;
       clearTimeout(timeout);
       reject(error);
     });
+    child.once("exit", () => {
+      // A same-group descendant can retain a pipe after the leader exits, which
+      // prevents `close` from firing. Start exact group reaping at leader exit;
+      // settlement still waits for both pipe closure and group emptiness below.
+      void beginProcessGroupReap().catch(() => undefined);
+    });
     child.once("close", (exitCode, signal) => {
-      if (settled) return;
-      settled = true;
+      if (settled || closeObserved) return;
+      closeObserved = true;
       clearTimeout(timeout);
-      if (forcedFailure) {
-        reject(forcedFailure);
-        return;
-      }
-      if (signal || exitCode === null) {
-        reject(new Error("process_terminated_without_exit_code"));
-        return;
-      }
-      resolve({
-        exitCode,
-        stdout: Buffer.concat(stdout, stdoutBytes).toString("utf8"),
-        stderr: Buffer.concat(stderr, stderrBytes).toString("utf8"),
+      void (async () => {
+        const descendantsDetected = await beginProcessGroupReap();
+        if (settled) return;
+        settled = true;
+        if (forcedFailure) {
+          reject(forcedFailure);
+          return;
+        }
+        if (descendantsDetected) {
+          reject(new Error("process_descendants_detected"));
+          return;
+        }
+        if (signal || exitCode === null) {
+          reject(new Error("process_terminated_without_exit_code"));
+          return;
+        }
+        resolve({
+          exitCode,
+          stdout: Buffer.concat(stdout, stdoutBytes).toString("utf8"),
+          stderr: Buffer.concat(stderr, stderrBytes).toString("utf8"),
+        });
+      })().catch((error: unknown) => {
+        if (settled) return;
+        settled = true;
+        reject(error instanceof Error ? error : new Error("process_group_reap_failed"));
       });
     });
   });
@@ -588,6 +707,13 @@ function sameFileIdentity(
     && expected.size === actual.size
     && expected.mtimeMs === actual.mtimeMs
     && expected.ctimeMs === actual.ctimeMs;
+}
+
+function sameStableFileAttributes(expected: fs.Stats, actual: fs.Stats): boolean {
+  return sameFileIdentity(expected, actual)
+    && expected.uid === actual.uid
+    && expected.nlink === actual.nlink
+    && (expected.mode & 0o7777) === (actual.mode & 0o7777);
 }
 
 async function readTrustedConnectionFile(
@@ -839,90 +965,172 @@ async function identifyTool(
   return parseToolIdentity(name, result);
 }
 
+async function openTrustedDirectoryGuard(
+  directoryPath: string,
+  expectedUid: number,
+): Promise<TrustedDirectoryGuard> {
+  let handle: fs.promises.FileHandle | null = null;
+  try {
+    handle = await fs.promises.open(
+      directoryPath,
+      fs.constants.O_RDONLY
+        | (fs.constants.O_DIRECTORY ?? 0)
+        | (fs.constants.O_NOFOLLOW ?? 0),
+    );
+    const opened = await handle.stat();
+    const pathStat = await fs.promises.lstat(directoryPath);
+    if (
+      !opened.isDirectory()
+      || opened.isSymbolicLink()
+      || opened.uid !== expectedUid
+      || (opened.mode & 0o7777) !== 0o700
+      || opened.dev !== pathStat.dev
+      || opened.ino !== pathStat.ino
+      || pathStat.isSymbolicLink()
+      || !pathStat.isDirectory()
+      || pathStat.uid !== expectedUid
+      || (pathStat.mode & 0o7777) !== 0o700
+      || await fs.promises.realpath(directoryPath) !== directoryPath
+    ) throw new Error("unsafe_directory");
+    return {
+      path: directoryPath,
+      identity: { dev: opened.dev, ino: opened.ino },
+      handle,
+    };
+  } catch (error) {
+    if (handle) {
+      try {
+        await handle.close();
+      } catch {
+        throw new PostgresLogicalBackupError("cleanup_failed");
+      }
+    }
+    throw error;
+  }
+}
+
+async function assertTrustedDirectoryGuard(
+  guard: TrustedDirectoryGuard,
+  expectedUid: number,
+): Promise<void> {
+  try {
+    const opened = await guard.handle.stat();
+    const pathStat = await fs.promises.lstat(guard.path);
+    if (
+      !opened.isDirectory()
+      || opened.isSymbolicLink()
+      || opened.uid !== expectedUid
+      || (opened.mode & 0o7777) !== 0o700
+      || opened.dev !== guard.identity.dev
+      || opened.ino !== guard.identity.ino
+      || pathStat.isSymbolicLink()
+      || !pathStat.isDirectory()
+      || pathStat.uid !== expectedUid
+      || (pathStat.mode & 0o7777) !== 0o700
+      || pathStat.dev !== guard.identity.dev
+      || pathStat.ino !== guard.identity.ino
+      || await fs.promises.realpath(guard.path) !== guard.path
+    ) throw new Error("changed");
+  } catch {
+    throw new PostgresLogicalBackupError("archive_tampered");
+  }
+}
+
 async function prepareFreshOutputDirectory(
   requestedPath: string,
   expectedUid: number,
-): Promise<{ outputDirectory: string; identity: DirectoryIdentity }> {
+): Promise<PreparedOutputDirectory> {
   const resolved = path.resolve(requestedPath);
   if (resolved === path.parse(resolved).root || path.basename(resolved) === ".") {
     throw new PostgresLogicalBackupError("unsafe_output_path");
   }
-  let canonicalParent: string;
+  const canonicalParent = path.dirname(resolved);
+  const outputDirectory = resolved;
+  let parent: TrustedDirectoryGuard | null = null;
+  let output: TrustedDirectoryGuard | null = null;
+  let cleanupFailed = false;
   try {
-    canonicalParent = await fs.promises.realpath(path.dirname(resolved));
-  } catch {
-    throw new PostgresLogicalBackupError("unsafe_output_path");
-  }
-  const outputDirectory = path.join(canonicalParent, path.basename(resolved));
-  let created = false;
-  try {
+    parent = await openTrustedDirectoryGuard(canonicalParent, expectedUid);
     await fs.promises.mkdir(outputDirectory, { mode: 0o700, recursive: false });
-    created = true;
-    const stat = await fs.promises.lstat(outputDirectory);
-    if (
-      stat.isSymbolicLink()
-      || !stat.isDirectory()
-      || stat.uid !== expectedUid
-      || (stat.mode & 0o7777) !== 0o700
-    ) {
-      throw new Error("unsafe_created_directory");
-    }
-    return { outputDirectory, identity: { dev: stat.dev, ino: stat.ino } };
-  } catch {
-    if (created) {
-      const createdStat = await fs.promises.lstat(outputDirectory).catch(() => null);
-      if (createdStat?.isDirectory() && !createdStat.isSymbolicLink()) {
-        try {
-          await fs.promises.rm(outputDirectory, { recursive: true, force: false });
-        } catch {
-          throw new PostgresLogicalBackupError("cleanup_failed");
-        }
-      } else if (createdStat) {
-        throw new PostgresLogicalBackupError("cleanup_failed");
+    output = await openTrustedDirectoryGuard(outputDirectory, expectedUid);
+    await assertTrustedDirectoryGuard(parent, expectedUid);
+    return {
+      outputDirectory,
+      identity: output.identity,
+      parent,
+      directoryHandle: output.handle,
+    };
+  } catch (error) {
+    for (const handle of [output?.handle, parent?.handle]) {
+      if (!handle) continue;
+      try {
+        await handle.close();
+      } catch {
+        cleanupFailed = true;
       }
     }
+    if (
+      cleanupFailed
+      || (error instanceof PostgresLogicalBackupError && error.code === "cleanup_failed")
+    ) throw new PostgresLogicalBackupError("cleanup_failed");
     throw new PostgresLogicalBackupError("unsafe_output_path");
   }
 }
 
-async function assertDirectoryIdentity(
-  directoryPath: string,
-  identity: DirectoryIdentity,
+async function assertPreparedOutputDirectory(
+  prepared: PreparedOutputDirectory,
   expectedUid: number,
 ): Promise<void> {
-  let stat: fs.Stats;
-  try {
-    stat = await fs.promises.lstat(directoryPath);
-  } catch {
-    throw new PostgresLogicalBackupError("archive_tampered");
-  }
-  if (
-    stat.isSymbolicLink()
-    || !stat.isDirectory()
-    || stat.dev !== identity.dev
-    || stat.ino !== identity.ino
-    || stat.uid !== expectedUid
-    || (stat.mode & 0o7777) !== 0o700
-  ) {
-    throw new PostgresLogicalBackupError("archive_tampered");
-  }
+  await assertTrustedDirectoryGuard(prepared.parent, expectedUid);
+  await assertTrustedDirectoryGuard({
+    path: prepared.outputDirectory,
+    identity: prepared.identity,
+    handle: prepared.directoryHandle,
+  }, expectedUid);
 }
 
-async function createExclusiveFile(filePath: string): Promise<void> {
-  const handle = await fs.promises.open(filePath, "wx", 0o600);
+async function createExclusiveFile(
+  filePath: string,
+  expectedUid: number,
+): Promise<fs.promises.FileHandle> {
+  const handle = await fs.promises.open(
+    filePath,
+    fs.constants.O_RDWR
+      | fs.constants.O_CREAT
+      | fs.constants.O_EXCL
+      | (fs.constants.O_NOFOLLOW ?? 0),
+    0o600,
+  );
   try {
+    const opened = await handle.stat();
+    const pathStat = await fs.promises.lstat(filePath);
+    if (
+      !opened.isFile()
+      || opened.isSymbolicLink()
+      || opened.nlink !== 1
+      || opened.uid !== expectedUid
+      || (opened.mode & 0o7777) !== 0o600
+      || !sameFileIdentity(opened, pathStat)
+    ) throw new PostgresLogicalBackupError("unsafe_output_path");
     await handle.sync();
-  } finally {
-    await handle.close();
+    return handle;
+  } catch (error) {
+    try {
+      await handle.close();
+    } catch {
+      throw new PostgresLogicalBackupError("cleanup_failed");
+    }
+    throw error;
   }
 }
 
-async function snapshotTrustedFile(
+async function snapshotTrustedFileHandle(
+  handle: fs.promises.FileHandle,
   filePath: string,
   expectedUid: number,
   requireNonEmpty: boolean,
 ): Promise<StableFileSnapshot> {
-  const before = await fs.promises.lstat(filePath);
+  const before = await handle.stat();
   if (
     before.isSymbolicLink()
     || !before.isFile()
@@ -933,46 +1141,34 @@ async function snapshotTrustedFile(
   ) {
     throw new PostgresLogicalBackupError("archive_invalid");
   }
-  const handle = await fs.promises.open(
-    filePath,
-    fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
-  );
   const hash = crypto.createHash("sha256");
-  try {
-    const opened = await handle.stat();
-    if (!sameFileIdentity(before, opened)) {
+  const buffer = Buffer.allocUnsafe(256 * 1024);
+  let offset = 0;
+  while (offset < before.size) {
+    const read = await handle.read(
+      buffer,
+      0,
+      Math.min(buffer.length, before.size - offset),
+      offset,
+    );
+    if (read.bytesRead === 0) {
       throw new PostgresLogicalBackupError("archive_tampered");
     }
-    const buffer = Buffer.allocUnsafe(256 * 1024);
-    let offset = 0;
-    while (offset < opened.size) {
-      const read = await handle.read(
-        buffer,
-        0,
-        Math.min(buffer.length, opened.size - offset),
-        offset,
-      );
-      if (read.bytesRead === 0) {
-        throw new PostgresLogicalBackupError("archive_tampered");
-      }
-      hash.update(buffer.subarray(0, read.bytesRead));
-      offset += read.bytesRead;
-    }
-    const afterDescriptor = await handle.stat();
-    const afterPath = await fs.promises.lstat(filePath);
-    if (
-      afterPath.isSymbolicLink()
-      || !afterPath.isFile()
-      || afterPath.nlink !== 1
-      || afterPath.uid !== expectedUid
-      || (afterPath.mode & 0o7777) !== 0o600
-      || !sameFileIdentity(before, afterDescriptor)
-      || !sameFileIdentity(before, afterPath)
-    ) {
-      throw new PostgresLogicalBackupError("archive_tampered");
-    }
-  } finally {
-    await handle.close();
+    hash.update(buffer.subarray(0, read.bytesRead));
+    offset += read.bytesRead;
+  }
+  const afterDescriptor = await handle.stat();
+  const afterPath = await fs.promises.lstat(filePath);
+  if (
+    afterPath.isSymbolicLink()
+    || !afterPath.isFile()
+    || afterPath.nlink !== 1
+    || afterPath.uid !== expectedUid
+    || (afterPath.mode & 0o7777) !== 0o600
+    || !sameStableFileAttributes(before, afterDescriptor)
+    || !sameStableFileAttributes(before, afterPath)
+  ) {
+    throw new PostgresLogicalBackupError("archive_tampered");
   }
   return {
     dev: before.dev,
@@ -982,6 +1178,69 @@ async function snapshotTrustedFile(
     ctimeMs: before.ctimeMs,
     sha256: hash.digest("hex"),
   };
+}
+
+async function snapshotTrustedFile(
+  filePath: string,
+  expectedUid: number,
+  requireNonEmpty: boolean,
+): Promise<StableFileSnapshot> {
+  const handle = await fs.promises.open(
+    filePath,
+    fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
+  );
+  let snapshot: StableFileSnapshot;
+  try {
+    snapshot = await snapshotTrustedFileHandle(
+      handle,
+      filePath,
+      expectedUid,
+      requireNonEmpty,
+    );
+  } catch (error) {
+    try {
+      await handle.close();
+    } catch {
+      throw new PostgresLogicalBackupError("cleanup_failed");
+    }
+    throw error;
+  }
+  try {
+    await handle.close();
+  } catch {
+    throw new PostgresLogicalBackupError("cleanup_failed");
+  }
+  return snapshot;
+}
+
+async function openTrustedFileHandle(
+  filePath: string,
+  expectedUid: number,
+  expected: StableFileSnapshot,
+): Promise<fs.promises.FileHandle> {
+  const handle = await fs.promises.open(
+    filePath,
+    fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
+  );
+  try {
+    const snapshot = await snapshotTrustedFileHandle(
+      handle,
+      filePath,
+      expectedUid,
+      true,
+    );
+    if (!sameSnapshot(expected, snapshot)) {
+      throw new PostgresLogicalBackupError("archive_tampered");
+    }
+    return handle;
+  } catch (error) {
+    try {
+      await handle.close();
+    } catch {
+      throw new PostgresLogicalBackupError("cleanup_failed");
+    }
+    throw error;
+  }
 }
 
 function sameSnapshot(first: StableFileSnapshot, second: StableFileSnapshot): boolean {
@@ -1339,33 +1598,102 @@ export function canonicalPostgresBackupJson(value: unknown): string {
   return canonicalPostgresLogicalStateJson(value);
 }
 
+interface HeldCanonicalFile {
+  handle: fs.promises.FileHandle;
+  snapshot: StableFileSnapshot;
+}
+
+async function zeroizeHeldOutput(handle: fs.promises.FileHandle): Promise<void> {
+  try {
+    await handle.truncate(0);
+    await handle.sync();
+    const stat = await handle.stat();
+    if (!stat.isFile() || stat.size !== 0) throw new Error("not-zeroized");
+  } catch {
+    throw new PostgresLogicalBackupError("cleanup_failed");
+  }
+}
+
+async function writeCanonicalHeldFile(
+  filePath: string,
+  bytes: Buffer,
+  expectedUid: number,
+  failureCode: "manifest_failed" | "state_receipt_failed",
+): Promise<HeldCanonicalFile> {
+  let handle: fs.promises.FileHandle | null = null;
+  try {
+    handle = await createExclusiveFile(filePath, expectedUid);
+    await handle.writeFile(bytes);
+    await handle.sync();
+    const snapshot = await snapshotTrustedFileHandle(
+      handle,
+      filePath,
+      expectedUid,
+      true,
+    );
+    const expectedSha256 = crypto.createHash("sha256").update(bytes).digest("hex");
+    if (snapshot.sha256 !== expectedSha256) {
+      throw new PostgresLogicalBackupError(failureCode);
+    }
+    return { handle, snapshot };
+  } catch (error) {
+    if (handle) {
+      let cleanupFailed = false;
+      try {
+        await zeroizeHeldOutput(handle);
+      } catch {
+        cleanupFailed = true;
+      }
+      try {
+        await handle.close();
+      } catch {
+        cleanupFailed = true;
+      }
+      if (cleanupFailed) throw new PostgresLogicalBackupError("cleanup_failed");
+    }
+    if (error instanceof PostgresLogicalBackupError && error.code === "cleanup_failed") throw error;
+    if (error instanceof PostgresLogicalBackupError && error.code === failureCode) throw error;
+    throw new PostgresLogicalBackupError(failureCode);
+  }
+}
+
 async function writeCanonicalManifest(
   manifestPath: string,
   manifest: PostgresLogicalBackupManifest,
-): Promise<void> {
-  const handle = await fs.promises.open(manifestPath, "wx", 0o600);
+  expectedUid: number,
+): Promise<HeldCanonicalFile> {
+  const bytes = Buffer.from(canonicalPostgresBackupJson(manifest), "utf8");
   try {
-    await handle.writeFile(canonicalPostgresBackupJson(manifest), "utf8");
-    await handle.sync();
+    return await writeCanonicalHeldFile(
+      manifestPath,
+      bytes,
+      expectedUid,
+      "manifest_failed",
+    );
   } finally {
-    await handle.close();
+    bytes.fill(0);
   }
 }
 
 async function writeCanonicalStateReceipt(
   receiptPath: string,
   receipt: PostgresLogicalSourceStateReceipt,
-): Promise<void> {
+  expectedUid: number,
+): Promise<HeldCanonicalFile> {
   const bytes = Buffer.from(canonicalPostgresBackupJson(receipt), "utf8");
   if (bytes.length < 1 || bytes.length > STATE_RECEIPT_MAX_BYTES) {
+    bytes.fill(0);
     throw new PostgresLogicalBackupError("state_receipt_failed");
   }
-  const handle = await fs.promises.open(receiptPath, "wx", 0o600);
   try {
-    await handle.writeFile(bytes);
-    await handle.sync();
+    return await writeCanonicalHeldFile(
+      receiptPath,
+      bytes,
+      expectedUid,
+      "state_receipt_failed",
+    );
   } finally {
-    await handle.close();
+    bytes.fill(0);
   }
 }
 
@@ -2158,27 +2486,6 @@ async function endSourceSnapshot(connection: PostgresLogicalBackupConnection): P
   return clean;
 }
 
-async function cleanCreatedDirectory(
-  outputDirectory: string,
-  identity: DirectoryIdentity,
-): Promise<boolean> {
-  try {
-    const stat = await fs.promises.lstat(outputDirectory);
-    if (
-      stat.isSymbolicLink()
-      || !stat.isDirectory()
-      || stat.dev !== identity.dev
-      || stat.ino !== identity.ino
-    ) {
-      return false;
-    }
-    await fs.promises.rm(outputDirectory, { recursive: true, force: false });
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "ENOENT";
-  }
-}
-
 function asSafeFailure(
   error: unknown,
   fallback: PostgresLogicalBackupFailureCode,
@@ -2297,6 +2604,13 @@ export async function createPostgresLogicalBackup(
   let sourceConnection: PostgresLogicalBackupConnection | null = null;
   let snapshotOpen = false;
   let prepared: Awaited<ReturnType<typeof prepareFreshOutputDirectory>> | null = null;
+  let archiveOutputHandle: fs.promises.FileHandle | null = null;
+  let archiveListingHandle: fs.promises.FileHandle | null = null;
+  let manifestHandle: fs.promises.FileHandle | null = null;
+  let stateReceiptHandle: fs.promises.FileHandle | null = null;
+  let completedArchiveSnapshot: StableFileSnapshot | null = null;
+  let completedManifestSnapshot: StableFileSnapshot | null = null;
+  let completedStateReceiptSnapshot: StableFileSnapshot | null = null;
   let pendingError: PostgresLogicalBackupError | null = null;
   let completed: PostgresLogicalBackupResult | null = null;
   try {
@@ -2358,10 +2672,15 @@ export async function createPostgresLogicalBackup(
       POSTGRES_LOGICAL_BACKUP_STATE_RECEIPT,
     );
     try {
-      await createExclusiveFile(archivePath);
-    } catch {
+      archiveOutputHandle = await createExclusiveFile(archivePath, uid);
+    } catch (error) {
+      if (error instanceof PostgresLogicalBackupError && error.code === "cleanup_failed") {
+        throw error;
+      }
       throw new PostgresLogicalBackupError("unsafe_output_path");
     }
+    await assertPreparedOutputDirectory(prepared, uid);
+    await snapshotTrustedFileHandle(archiveOutputHandle, archivePath, uid, false);
 
     await assertTransportExact(transport);
     const pgpass = await createEphemeralPgpass(
@@ -2382,12 +2701,13 @@ export async function createPostgresLogicalBackup(
       if (!await ephemeralPgpassIsExact(pgpass, uid)) {
         throw new PostgresLogicalBackupError("cleanup_failed");
       }
+      await assertPreparedOutputDirectory(prepared, uid);
+      await snapshotTrustedFileHandle(archiveOutputHandle, archivePath, uid, false);
       await assertTransportExact(transport);
       dumpResult = await dependencies.runProcess({
         command: dependencies.pgDumpCommand,
         args: [
           "--format=custom",
-          `--file=${archivePath}`,
           `--snapshot=${snapshot.snapshotIdentifier}`,
           `--role=${sourceIdentity.backupRoleName}`,
           "--no-owner",
@@ -2403,6 +2723,7 @@ export async function createPostgresLogicalBackup(
         timeoutMs: DUMP_TIMEOUT_MS,
         maxStdoutBytes: DUMP_OUTPUT_LIMIT,
         maxStderrBytes: DUMP_OUTPUT_LIMIT,
+        stdoutFileDescriptor: archiveOutputHandle.fd,
       });
       await assertTransportExact(transport);
     } catch (error) {
@@ -2420,33 +2741,83 @@ export async function createPostgresLogicalBackup(
       throw new PostgresLogicalBackupError("dump_failed");
     }
 
-    await assertDirectoryIdentity(prepared.outputDirectory, prepared.identity, uid);
-    const beforeValidation = await snapshotTrustedFile(archivePath, uid, true);
-    let listingResult: ProcessResult;
+    await assertPreparedOutputDirectory(prepared, uid);
+    if (!archiveOutputHandle) {
+      throw new PostgresLogicalBackupError("archive_invalid");
+    }
+    try {
+      await archiveOutputHandle.sync();
+    } catch {
+      throw new PostgresLogicalBackupError("archive_invalid");
+    }
+    const beforeValidation = await snapshotTrustedFileHandle(
+      archiveOutputHandle,
+      archivePath,
+      uid,
+      true,
+    );
+    archiveListingHandle = await openTrustedFileHandle(
+      archivePath,
+      uid,
+      beforeValidation,
+    );
+    if (archiveListingHandle.fd === archiveOutputHandle.fd) {
+      throw new PostgresLogicalBackupError("archive_tampered");
+    }
+    let listingResult: ProcessResult | null = null;
+    let listingInvocationFailed = false;
     try {
       listingResult = await dependencies.runProcess({
         command: dependencies.pgRestoreCommand,
-        args: ["--list", "--format=custom", archivePath],
+        args: ["--list", "--format=custom"],
         env: processEnvironment,
         timeoutMs: RESTORE_LIST_TIMEOUT_MS,
         maxStdoutBytes: RESTORE_LIST_OUTPUT_LIMIT,
         maxStderrBytes: DUMP_OUTPUT_LIMIT,
+        stdinFileDescriptor: archiveListingHandle.fd,
       });
     } catch {
-      throw new PostgresLogicalBackupError("archive_invalid");
+      listingInvocationFailed = true;
     }
-    if (listingResult.exitCode !== 0 || listingResult.stderr.trim()) {
-      throw new PostgresLogicalBackupError("archive_invalid");
+    let afterValidation: StableFileSnapshot;
+    try {
+      const outputSnapshot = await snapshotTrustedFileHandle(
+        archiveOutputHandle,
+        archivePath,
+        uid,
+        true,
+      );
+      const listingSnapshot = await snapshotTrustedFileHandle(
+        archiveListingHandle,
+        archivePath,
+        uid,
+        true,
+      );
+      if (
+        !sameSnapshot(beforeValidation, outputSnapshot)
+        || !sameSnapshot(beforeValidation, listingSnapshot)
+      ) throw new PostgresLogicalBackupError("archive_tampered");
+      afterValidation = outputSnapshot;
+    } catch {
+      throw new PostgresLogicalBackupError("archive_tampered");
     }
+    try {
+      await archiveListingHandle.close();
+      archiveListingHandle = null;
+    } catch {
+      throw new PostgresLogicalBackupError("cleanup_failed");
+    }
+    if (
+      listingInvocationFailed
+      || !listingResult
+      || listingResult.exitCode !== 0
+      || listingResult.stderr.trim()
+    ) throw new PostgresLogicalBackupError("archive_invalid");
     const listing = parseArchiveListing(listingResult.stdout);
     if (listing.dumpedByPgDumpVersion !== pgDump.version) {
       throw new PostgresLogicalBackupError("archive_invalid");
     }
-    const afterValidation = await snapshotTrustedFile(archivePath, uid, true);
-    if (!sameSnapshot(beforeValidation, afterValidation)) {
-      throw new PostgresLogicalBackupError("archive_tampered");
-    }
-    await assertDirectoryIdentity(prepared.outputDirectory, prepared.identity, uid);
+    await assertPreparedOutputDirectory(prepared, uid);
     await assertConnectionFileUnchanged(connectionFile, uid, trustedConnection);
     await assertTransportExact(transport);
 
@@ -2518,14 +2889,13 @@ export async function createPostgresLogicalBackup(
       manifestBindingSha256,
       state,
     });
-    try {
-      await writeCanonicalStateReceipt(stateReceiptPath, stateReceipt);
-    } catch (error) {
-      if (error instanceof PostgresLogicalBackupError) throw error;
-      throw new PostgresLogicalBackupError("state_receipt_failed");
-    }
-    const stateReceiptSnapshot = await snapshotTrustedFile(stateReceiptPath, uid, true)
-      .catch(() => { throw new PostgresLogicalBackupError("state_receipt_failed"); });
+    const heldStateReceipt = await writeCanonicalStateReceipt(
+      stateReceiptPath,
+      stateReceipt,
+      uid,
+    );
+    stateReceiptHandle = heldStateReceipt.handle;
+    const stateReceiptSnapshot = heldStateReceipt.snapshot;
     const manifest: PostgresLogicalBackupManifestV3 = {
       schemaVersion: 3,
       kind: "pintpath-postgres-logical-backup",
@@ -2543,22 +2913,46 @@ export async function createPostgresLogicalBackup(
     if (postgresLogicalBackupManifestBindingSha256(manifest) !== manifestBindingSha256) {
       throw new PostgresLogicalBackupError("manifest_failed");
     }
-    try {
-      await writeCanonicalManifest(manifestPath, manifest);
-    } catch {
-      throw new PostgresLogicalBackupError("manifest_failed");
-    }
+    const heldManifest = await writeCanonicalManifest(manifestPath, manifest, uid);
+    manifestHandle = heldManifest.handle;
+    const initialManifestSnapshot = heldManifest.snapshot;
 
+    if (!archiveOutputHandle || !stateReceiptHandle || !manifestHandle) {
+      throw new PostgresLogicalBackupError("archive_tampered");
+    }
+    const finalHeldArchive = await snapshotTrustedFileHandle(
+      archiveOutputHandle,
+      archivePath,
+      uid,
+      true,
+    );
     const finalArchive = await snapshotTrustedFile(archivePath, uid, true);
-    const finalStateReceipt = await snapshotTrustedFile(stateReceiptPath, uid, true);
+    const finalStateReceipt = await snapshotTrustedFileHandle(
+      stateReceiptHandle,
+      stateReceiptPath,
+      uid,
+      true,
+    );
     if (
-      !sameSnapshot(afterValidation, finalArchive)
+      !sameSnapshot(afterValidation, finalHeldArchive)
+      || !sameSnapshot(afterValidation, finalArchive)
       || !sameSnapshot(stateReceiptSnapshot, finalStateReceipt)
     ) throw new PostgresLogicalBackupError("archive_tampered");
-    const manifestSnapshot = await snapshotTrustedFile(manifestPath, uid, true);
-    await assertDirectoryIdentity(prepared.outputDirectory, prepared.identity, uid);
+    const manifestSnapshot = await snapshotTrustedFileHandle(
+      manifestHandle,
+      manifestPath,
+      uid,
+      true,
+    );
+    if (!sameSnapshot(initialManifestSnapshot, manifestSnapshot)) {
+      throw new PostgresLogicalBackupError("manifest_failed");
+    }
+    await assertPreparedOutputDirectory(prepared, uid);
     await assertConnectionFileUnchanged(connectionFile, uid, trustedConnection);
     await assertTransportExact(transport);
+    completedArchiveSnapshot = finalHeldArchive;
+    completedManifestSnapshot = manifestSnapshot;
+    completedStateReceiptSnapshot = finalStateReceipt;
     completed = {
       schemaVersion: 3,
       ok: true,
@@ -2590,15 +2984,94 @@ export async function createPostgresLogicalBackup(
       cleanupFailed = true;
     }
     if (cleanupFailed) {
+      completed = null;
+      pendingError = new PostgresLogicalBackupError("cleanup_failed");
+    }
+    if (completed) {
+      if (
+        !prepared
+        || !archiveOutputHandle
+        || !manifestHandle
+        || !stateReceiptHandle
+        || !completedArchiveSnapshot
+        || !completedManifestSnapshot
+        || !completedStateReceiptSnapshot
+      ) {
+        completed = null;
+        pendingError = new PostgresLogicalBackupError("archive_tampered");
+      } else {
+        try {
+          const postCleanupHeldArchive = await snapshotTrustedFileHandle(
+            archiveOutputHandle,
+            completed.archivePath,
+            uid,
+            true,
+          );
+          const postCleanupManifest = await snapshotTrustedFileHandle(
+            manifestHandle,
+            completed.manifestPath,
+            uid,
+            true,
+          );
+          const postCleanupStateReceipt = await snapshotTrustedFileHandle(
+            stateReceiptHandle,
+            completed.stateReceiptPath,
+            uid,
+            true,
+          );
+          await assertPreparedOutputDirectory(prepared, uid);
+          if (
+            !sameSnapshot(completedArchiveSnapshot, postCleanupHeldArchive)
+            || !sameSnapshot(completedManifestSnapshot, postCleanupManifest)
+            || !sameSnapshot(completedStateReceiptSnapshot, postCleanupStateReceipt)
+          ) throw new PostgresLogicalBackupError("archive_tampered");
+        } catch (error) {
+          completed = null;
+          if (error instanceof PostgresLogicalBackupError && error.code === "cleanup_failed") {
+            cleanupFailed = true;
+            pendingError = error;
+          } else {
+            pendingError = new PostgresLogicalBackupError("archive_tampered");
+          }
+        }
+      }
+    }
+    if (!completed) {
+      for (const handle of [stateReceiptHandle, manifestHandle, archiveOutputHandle]) {
+        if (!handle) continue;
+        try {
+          await zeroizeHeldOutput(handle);
+        } catch {
+          cleanupFailed = true;
+        }
+      }
+    }
+    for (const handle of [
+      archiveListingHandle,
+      stateReceiptHandle,
+      manifestHandle,
+      archiveOutputHandle,
+      prepared?.directoryHandle,
+      prepared?.parent.handle,
+    ]) {
+      if (!handle) continue;
+      try {
+        await handle.close();
+      } catch {
+        cleanupFailed = true;
+      }
+    }
+    archiveListingHandle = null;
+    stateReceiptHandle = null;
+    manifestHandle = null;
+    archiveOutputHandle = null;
+    if (cleanupFailed) {
+      completed = null;
       pendingError = new PostgresLogicalBackupError("cleanup_failed");
     }
   }
 
   if (pendingError || !completed) {
-    if (prepared) {
-      const cleaned = await cleanCreatedDirectory(prepared.outputDirectory, prepared.identity);
-      if (!cleaned) throw new PostgresLogicalBackupError("cleanup_failed");
-    }
     throw pendingError ?? new PostgresLogicalBackupError("archive_invalid");
   }
   return completed;

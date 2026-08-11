@@ -281,9 +281,11 @@ async function createLogicalBackup(
 ): Promise<{
   directory: string;
   manifestSha256: string;
+  processObservations: readonly string[];
 }> {
   const configuration = activeTestConfiguration();
   const directory = path.join(root, "backup");
+  const archivePath = path.join(directory, POSTGRES_LOGICAL_BACKUP_ARCHIVE);
   const sourceUrlFile = path.join(root, "source-url");
   fs.writeFileSync(sourceUrlFile, `${sourceUrl.toString()}\n`, { mode: 0o600 });
   fs.chmodSync(sourceUrlFile, 0o600);
@@ -291,6 +293,52 @@ async function createLogicalBackup(
   let pgpassPath = "";
   let transportDirectory = "";
   let transportRootCaFile = "";
+  let dumpArchiveFileDescriptor: number | undefined;
+  let listingArchiveFileDescriptor: number | undefined;
+  let dumpArchiveIdentity: { dev: number; ino: number } | undefined;
+  const processObservationState = {
+    pgDumpVersion: null as string | null,
+    pgRestoreVersion: null as string | null,
+    pgDump: null as string | null,
+    pgRestoreList: null as string | null,
+  };
+
+  const recordProcessObservation = (
+    phase: keyof typeof processObservationState,
+    observation: string,
+  ): void => {
+    if (processObservationState[phase] !== null) {
+      throw new Error("duplicate_backup_process_integration_invocation");
+    }
+    processObservationState[phase] = observation;
+  };
+
+  const inspectArchiveDescriptor = (
+    value: number | undefined,
+    expectedSize: "empty" | "non-empty",
+  ): fs.Stats => {
+    if (
+      value === undefined
+      || !Number.isSafeInteger(value)
+      || value < 0
+      || value > 0x7fff_ffff
+    ) throw new Error("invalid_backup_archive_file_descriptor");
+    const descriptorStat = fs.fstatSync(value);
+    const currentUid = process.getuid?.();
+    if (!Number.isInteger(currentUid)) throw configurationError();
+    expect(descriptorStat.isFile()).toBe(true);
+    expect({
+      mode: descriptorStat.mode & 0o7777,
+      nlink: descriptorStat.nlink,
+      uid: descriptorStat.uid,
+    }).toEqual({ mode: 0o600, nlink: 1, uid: currentUid });
+    if (expectedSize === "empty") {
+      expect(descriptorStat.size).toBe(0);
+    } else {
+      expect(descriptorStat.size).toBeGreaterThan(0);
+    }
+    return descriptorStat;
+  };
   try {
     const result = await createPostgresLogicalBackup({
       connectionFile: sourceUrlFile,
@@ -345,8 +393,30 @@ async function createLogicalBackup(
           invocation.command !== configuration.pgDumpCommand
           && invocation.command !== configuration.pgRestoreCommand
         ) throw configurationError();
+
+        const isPgDumpVersion = invocation.command === configuration.pgDumpCommand
+          && invocation.args.length === 1
+          && invocation.args[0] === "--version";
+        const isPgRestoreVersion = invocation.command === configuration.pgRestoreCommand
+          && invocation.args.length === 1
+          && invocation.args[0] === "--version";
+        const isPgDump = invocation.command === configuration.pgDumpCommand
+          && invocation.args[0] !== "--version";
+        const isPgRestoreList = invocation.command === configuration.pgRestoreCommand
+          && invocation.args.length === 2
+          && invocation.args[0] === "--list"
+          && invocation.args[1] === "--format=custom";
         if (
-          invocation.args[0] === "--version"
+          Number(isPgDumpVersion)
+            + Number(isPgRestoreVersion)
+            + Number(isPgDump)
+            + Number(isPgRestoreList)
+          !== 1
+        ) throw new Error("unexpected_backup_process_integration_invocation");
+
+        if (
+          isPgDumpVersion
+          || isPgRestoreVersion
           || invocation.command === configuration.pgRestoreCommand
         ) {
           expect(invocation.env.PGPASSFILE).toBeUndefined();
@@ -366,10 +436,21 @@ async function createLogicalBackup(
             expect(fs.existsSync(pgpassPath)).toBe(false);
           }
         }
+
+        if (isPgDumpVersion || isPgRestoreVersion) {
+          expect(invocation.stdinFileDescriptor).toBeUndefined();
+          expect(invocation.stdoutFileDescriptor).toBeUndefined();
+          const result = await runPostgresBackupProcess(invocation);
+          recordProcessObservation(
+            isPgDumpVersion ? "pgDumpVersion" : "pgRestoreVersion",
+            `${isPgDumpVersion ? "pg-dump" : "pg-restore"}-version:no-stdin-or-stdout:${result.exitCode}`,
+          );
+          return result;
+        }
+
         if (
           !concurrentWriteCommitted
-          && invocation.command === configuration.pgDumpCommand
-          && invocation.args[0] !== "--version"
+          && isPgDump
         ) {
           pgpassPath = invocation.env.PGPASSFILE ?? "";
           expect(pgpassPath).not.toBe("");
@@ -410,12 +491,68 @@ async function createLogicalBackup(
             await writer.end();
           }
         }
-        return runPostgresBackupProcess(invocation);
+
+        if (isPgDump) {
+          expect(invocation.stdinFileDescriptor).toBeUndefined();
+          expect(invocation.args.some((argument) => (
+            argument === "--file" || argument.startsWith("--file=")
+          ))).toBe(false);
+          expect(invocation.args).not.toContain(archivePath);
+          dumpArchiveFileDescriptor = invocation.stdoutFileDescriptor;
+          const descriptorStat = inspectArchiveDescriptor(
+            dumpArchiveFileDescriptor,
+            "empty",
+          );
+          dumpArchiveIdentity = {
+            dev: descriptorStat.dev,
+            ino: descriptorStat.ino,
+          };
+        } else {
+          expect(invocation.args).toEqual(["--list", "--format=custom"]);
+          expect(invocation.args).not.toContain(archivePath);
+          expect(invocation.args).not.toContain(POSTGRES_LOGICAL_BACKUP_ARCHIVE);
+          expect(invocation.args).not.toContain("-");
+          expect(invocation.args.every((argument) => !argument.includes(archivePath)))
+            .toBe(true);
+          expect(invocation.stdoutFileDescriptor).toBeUndefined();
+          listingArchiveFileDescriptor = invocation.stdinFileDescriptor;
+          const descriptorStat = inspectArchiveDescriptor(
+            listingArchiveFileDescriptor,
+            "non-empty",
+          );
+          expect(dumpArchiveFileDescriptor).toBeTypeOf("number");
+          expect(listingArchiveFileDescriptor).not.toBe(dumpArchiveFileDescriptor);
+          expect({ dev: descriptorStat.dev, ino: descriptorStat.ino })
+            .toEqual(dumpArchiveIdentity);
+        }
+
+        const result = await runPostgresBackupProcess(invocation);
+        recordProcessObservation(
+          isPgDump ? "pgDump" : "pgRestoreList",
+          `${isPgDump ? "pg-dump:trusted-archive-stdout" : "pg-restore-list:trusted-archive-stdin"}:${result.exitCode}`,
+        );
+        return result;
       },
     });
     if (!concurrentWriteCommitted) throw new Error("concurrent_snapshot_write_not_committed");
     expect(pgpassPath).not.toBe("");
-    return { directory, manifestSha256: result.manifestSha256 };
+    expect(dumpArchiveFileDescriptor).toBeTypeOf("number");
+    expect(listingArchiveFileDescriptor).toBeTypeOf("number");
+    expect(listingArchiveFileDescriptor).not.toBe(dumpArchiveFileDescriptor);
+    const processObservations = [
+      processObservationState.pgDumpVersion,
+      processObservationState.pgRestoreVersion,
+      processObservationState.pgDump,
+      processObservationState.pgRestoreList,
+    ];
+    if (processObservations.some((observation) => observation === null)) {
+      throw new Error("missing_backup_process_integration_invocation");
+    }
+    return {
+      directory,
+      manifestSha256: result.manifestSha256,
+      processObservations: processObservations as readonly string[],
+    };
   } finally {
     if (pgpassPath) expect(fs.existsSync(pgpassPath)).toBe(false);
     if (transportRootCaFile) expect(fs.existsSync(transportRootCaFile)).toBe(false);
@@ -876,6 +1013,12 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL logical restore rehearsal"
     }
 
     const backup = await createLogicalBackup(backupSourceUrl, sourceAdminUrl, root);
+    expect(backup.processObservations).toEqual([
+      "pg-dump-version:no-stdin-or-stdout:0",
+      "pg-restore-version:no-stdin-or-stdout:0",
+      "pg-dump:trusted-archive-stdout:0",
+      "pg-restore-list:trusted-archive-stdin:0",
+    ]);
     const configuration = activeTestConfiguration();
     const manifestBytes = fs.readFileSync(
       path.join(backup.directory, POSTGRES_LOGICAL_BACKUP_MANIFEST),
@@ -997,8 +1140,11 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL logical restore rehearsal"
 
         if (isVersionProbe) {
           expect(invocation.stdinFileDescriptor).toBeUndefined();
+          expect(invocation.stdoutFileDescriptor).toBeUndefined();
           const result = await runPostgresBackupProcess(invocation);
-          pgRestoreProcessObservations.push(`version:no-stdin:${result.exitCode}`);
+          pgRestoreProcessObservations.push(
+            `version:no-stdin-or-stdout:${result.exitCode}`,
+          );
           return result;
         }
 
@@ -1007,6 +1153,7 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL logical restore rehearsal"
         expect(invocation.args).not.toContain("-");
         expect(invocation.args.every((argument) => !argument.includes(backupArchivePath)))
           .toBe(true);
+        expect(invocation.stdoutFileDescriptor).toBeUndefined();
         const archiveFileDescriptor = invocation.stdinFileDescriptor;
         if (
           !Number.isSafeInteger(archiveFileDescriptor)
@@ -1058,7 +1205,7 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL logical restore rehearsal"
       sourceStateBindingStatus: "exact-match",
     });
     expect(pgRestoreProcessObservations).toEqual([
-      "version:no-stdin:0",
+      "version:no-stdin-or-stdout:0",
       "list:trusted-archive-stdin:0",
       "mutation:trusted-archive-stdin:0",
     ]);

@@ -667,6 +667,40 @@ probes and `pg_restore` receive no credential file. Any missing, drifted,
 multiply linked, replaced, or unexpectedly populated temporary state fails as
 `cleanup_failed`, and an untrusted replacement is left untouched for explicit
 incident handling.
+The archive pathname is never passed to `pg_dump` or to the validating
+`pg_restore --list` process. The canonical parent and new output directory must
+both be current-user-owned mode-`700` directories and remain descriptor-guarded
+through cleanup. `pg_dump` writes to a parent-owned pipe; the parent alone
+copies those bytes into an exclusive held mode-`600` descriptor. After fsync
+and an exact inode/hash snapshot, `pg_restore --list` reads from a separately
+opened and identity-matched read-only descriptor at offset zero. Both handles
+stay open until their respective child has settled, and descriptor plus
+pathname snapshots are rechecked before a manifest or receipt can be returned.
+This prevents a leaf or ancestor pathname ABA from substituting a different
+archive at either child-open boundary. Each tool runs in its own process group;
+reaping starts at leader exit, and forced failures destroy the parent pipe
+before settling, so ordinary same-group descendants cannot retain archive-write
+authority.
+
+That process-group proof does not cover a wrapper that calls `setsid`. The
+production CLI also still resolves bare tool names through ambient `PATH` and
+checks only self-reported PostgreSQL-17 version text. Exact reviewed binary
+paths, expected SHA-256 pins, held-byte identity across probe and use, and a
+capability-bound native launcher or immutable digest-pinned execution image
+remain mandatory before activation. The current review-only implementation
+must not authorize a live backup or restore ceremony: an escaped substituted
+tool could retain its credential environment or a read-only archive descriptor
+even though it cannot retain the parent's writable archive descriptor.
+The canonical state receipt and manifest are likewise checked against their
+in-memory canonical bytes, retained by validated descriptors, and revalidated
+after database and transport cleanup before success is emitted.
+When failure is known before descriptor release, every still-held artifact is
+zeroized and fsynced. A descriptor-close failure instead reports
+`cleanup_failed` and preserves the retained set for incident review. No failure
+path recursively removes the output pathname: check-then-recursive-delete would
+itself be a rename/swap deletion capability. Do not reuse that mode-`700`
+marker or remove it with an ad-hoc launch command; cleanup requires a separately
+reviewed exact-target procedure.
 The custom archive contains only `pintpath_app` and `pintpath_ops`, has row
 security enabled, and has no owner or ACL statements. Its portable policies
 name no scoped source role: PostgreSQL may render the default `PUBLIC` target by
