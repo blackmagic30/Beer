@@ -19,6 +19,7 @@ import {
 import { POSTGRES_MIGRATION_CONTRACT } from "../db/postgres-migration-contract.js";
 import { sha256PostgresMigrationContract } from "../db/postgres-migration-schema.js";
 import type { SqlDatabase } from "../db/sql-database.js";
+import { sha256PostgresDatabaseIdentity } from "./postgres-database-identity.js";
 import {
   REVIEWED_PRICE_SELECTION_DEFAULT_OPTIONS,
   REVIEWED_PRICE_SELECTION_POLICY_SHA256,
@@ -30,7 +31,8 @@ export const POSTGRES_REVIEWED_PRICE_PROMOTION_PRIVATE_INPUT_KIND =
   "pintpath-postgres-reviewed-price-promotion-private-input" as const;
 export const POSTGRES_REVIEWED_PRICE_PROMOTION_PLAN_KIND =
   "pintpath-postgres-reviewed-price-promotion-plan-candidate" as const;
-export const POSTGRES_REVIEWED_PRICE_PROMOTION_PLAN_VERSION = 1 as const;
+export const POSTGRES_REVIEWED_PRICE_PROMOTION_PRIVATE_INPUT_VERSION = 1 as const;
+export const POSTGRES_REVIEWED_PRICE_PROMOTION_PLAN_VERSION = 2 as const;
 export const POSTGRES_REVIEWED_PRICE_PROMOTION_SOURCE_SCHEMA_SHA256 =
   "b5a093844709f725bd71415dadb37062b75e40dbd6475082732fa28b1ef1fcc9" as const;
 
@@ -79,7 +81,6 @@ const EXPECTED_METADATA_KEYS = Object.freeze([
 
 export const POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_BLOCKERS = Object.freeze([
   "dedicated_read_only_planner_role_and_complete_acl_rls_visibility",
-  "role_neutral_migration_target_identity_authority",
   "provider_observed_deployment_authority",
   "signed_approval_trust_root",
   "immutable_private_evidence_and_worm_authority",
@@ -388,7 +389,7 @@ export const postgresReviewedPricePromotionPrivateInputSchema = z.object({
   items: z.array(privateInputItemSchema).min(1).max(MAX_ITEMS),
   kind: z.literal(POSTGRES_REVIEWED_PRICE_PROMOTION_PRIVATE_INPUT_KIND),
   marketedSuburb: canonicalSuburbSchema,
-  version: z.literal(POSTGRES_REVIEWED_PRICE_PROMOTION_PLAN_VERSION),
+  version: z.literal(POSTGRES_REVIEWED_PRICE_PROMOTION_PRIVATE_INPUT_VERSION),
 }).strict().superRefine((value, context) => {
   if (value.itemCount !== value.items.length) {
     context.addIssue({ code: "custom", message: "itemCount mismatch" });
@@ -441,7 +442,6 @@ const activationBlockersSchema = z.tuple([
   z.literal(POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_BLOCKERS[5]),
   z.literal(POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_BLOCKERS[6]),
   z.literal(POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_BLOCKERS[7]),
-  z.literal(POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_BLOCKERS[8]),
 ]);
 
 const planWithoutHashSchema = z.object({
@@ -505,7 +505,8 @@ const planWithoutHashSchema = z.object({
       sessionUserSha256: sha256Schema,
       systemIdentifierSha256: sha256Schema,
     }).strict(),
-    identitySha256: sha256Schema,
+    physicalIdentitySha256: sha256Schema,
+    plannerLoginIdentitySha256: sha256Schema,
   }).strict(),
   version: z.literal(POSTGRES_REVIEWED_PRICE_PROMOTION_PLAN_VERSION),
 }).strict();
@@ -553,7 +554,7 @@ export interface BuildPostgresReviewedPricePromotionPlanInput {
   readonly migrationTargetIdentity: z.input<typeof postgresMigrationTargetIdentitySchema>;
   readonly migrationReceipt: unknown;
   readonly expectedPrivateInputSha256: string;
-  readonly expectedTargetIdentitySha256: string;
+  readonly expectedPhysicalDatabaseIdentitySha256: string;
   readonly privateInput: unknown;
 }
 
@@ -1072,7 +1073,7 @@ function queueSnapshot(row: QueueRow, selected: readonly AdminBeerInput[]): Reco
   };
 }
 
-function identityDigest(row: IdentityRow): string {
+function plannerLoginIdentityDigest(row: IdentityRow): string {
   return sha256PostgresReviewedPricePromotionValue({
     currentUser: row.currentUser,
     databaseName: row.databaseName,
@@ -1081,6 +1082,17 @@ function identityDigest(row: IdentityRow): string {
     sessionUser: row.sessionUser,
     systemIdentifier: row.systemIdentifier,
   });
+}
+
+function physicalDatabaseIdentityDigest(
+  value: Parameters<typeof sha256PostgresDatabaseIdentity>[0],
+  errorCode: "argument_invalid" | "identity_mismatch",
+): string {
+  try {
+    return sha256PostgresDatabaseIdentity(value);
+  } catch {
+    return fail(errorCode);
+  }
 }
 
 function assertSafeIdentity(row: IdentityRow | undefined): asserts row is IdentityRow {
@@ -1393,10 +1405,11 @@ export async function buildPostgresReviewedPricePromotionPlanCandidate(
     expectedDeployment: deploymentSchema,
     expectedMigration: expectedMigrationSchema,
     migrationTargetIdentity: postgresMigrationTargetIdentitySchema,
+    expectedPhysicalDatabaseIdentitySha256: sha256Schema,
     expectedPrivateInputSha256: sha256Schema,
-    expectedTargetIdentitySha256: sha256Schema,
   }).strict();
   let argumentsValue: z.infer<typeof argumentSchema>;
+  let historicalPhysicalIdentitySha256: string;
   let migrationReceipt: PostgresMigrationReceipt;
   let privateInput: PostgresReviewedPricePromotionPrivateInput;
   try {
@@ -1406,9 +1419,14 @@ export async function buildPostgresReviewedPricePromotionPlanCandidate(
       expectedDeployment: input.expectedDeployment,
       expectedMigration: input.expectedMigration,
       migrationTargetIdentity: input.migrationTargetIdentity,
+      expectedPhysicalDatabaseIdentitySha256:
+        input.expectedPhysicalDatabaseIdentitySha256,
       expectedPrivateInputSha256: input.expectedPrivateInputSha256,
-      expectedTargetIdentitySha256: input.expectedTargetIdentitySha256,
     });
+    historicalPhysicalIdentitySha256 = physicalDatabaseIdentityDigest(
+      argumentsValue.migrationTargetIdentity,
+      "argument_invalid",
+    );
     migrationReceipt = canonicalMigrationReceipt(input.migrationReceipt);
     if (
       sha256PostgresReviewedPricePromotionValue(migrationReceipt)
@@ -1435,10 +1453,19 @@ export async function buildPostgresReviewedPricePromotionPlanCandidate(
       .prepare(POSTGRES_REVIEWED_PRICE_PROMOTION_IDENTITY_QUERY)
       .get<IdentityRow>());
     assertSafeIdentity(identity);
-    const targetIdentitySha256 = identityDigest(identity);
-    if (targetIdentitySha256 !== argumentsValue.expectedTargetIdentitySha256) {
+    const physicalIdentitySha256 = physicalDatabaseIdentityDigest(
+      identity,
+      "identity_mismatch",
+    );
+    if (
+      physicalIdentitySha256
+        !== argumentsValue.expectedPhysicalDatabaseIdentitySha256
+      || historicalPhysicalIdentitySha256
+        !== argumentsValue.expectedPhysicalDatabaseIdentitySha256
+    ) {
       fail("identity_mismatch");
     }
+    const plannerLoginIdentitySha256 = plannerLoginIdentityDigest(identity);
 
     const metadataRows = exactRowArray(
       metadataRowSchema,
@@ -1750,7 +1777,6 @@ export async function buildPostgresReviewedPricePromotionPlanCandidate(
         typeof POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_BLOCKERS[5],
         typeof POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_BLOCKERS[6],
         typeof POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_BLOCKERS[7],
-        typeof POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_BLOCKERS[8],
       ],
       candidateSha: argumentsValue.candidateSha,
       expectedEnvironment: argumentsValue.expectedEnvironment,
@@ -1801,7 +1827,8 @@ export async function buildPostgresReviewedPricePromotionPlanCandidate(
             identity.systemIdentifier,
           )!,
         },
-        identitySha256: targetIdentitySha256,
+        physicalIdentitySha256,
+        plannerLoginIdentitySha256,
       },
       version: POSTGRES_REVIEWED_PRICE_PROMOTION_PLAN_VERSION,
     };

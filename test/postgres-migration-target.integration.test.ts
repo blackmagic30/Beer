@@ -74,6 +74,8 @@ import {
   type SqlPoolMetrics,
   type SqlStatement,
 } from "../src/db/sql-database.js";
+import { sha256PostgresDatabaseIdentity } from
+  "../src/lib/postgres-database-identity.js";
 import {
   POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_BLOCKERS,
   POSTGRES_REVIEWED_PRICE_PROMOTION_PRIVATE_INPUT_KIND,
@@ -1456,9 +1458,14 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL migration target", () => {
         privateInputPath,
         serializeCanonicalPostgresMigrationJson(privateInput),
       );
-      const expectedPlannerTargetIdentitySha256 =
+      const expectedPhysicalDatabaseIdentitySha256 =
+        sha256PostgresDatabaseIdentity(historicalIdentity);
+      const expectedPlannerLoginIdentitySha256 =
         sha256PostgresReviewedPricePromotionValue(plannerIdentity);
-      expect(expectedPlannerTargetIdentitySha256).not.toBe(
+      expect(expectedPlannerLoginIdentitySha256).not.toBe(
+        expectedPhysicalDatabaseIdentitySha256,
+      );
+      expect(expectedPhysicalDatabaseIdentitySha256).not.toBe(
         receipt.targetIdentitySha256,
       );
       const plan = await buildPostgresReviewedPricePromotionPlanCandidate({
@@ -1470,7 +1477,7 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL migration target", () => {
           receiptFileSha256: migrationReceiptFileSha256,
         },
         expectedPrivateInputSha256: privateInputFileSha256,
-        expectedTargetIdentitySha256: expectedPlannerTargetIdentitySha256,
+        expectedPhysicalDatabaseIdentitySha256,
         migrationReceipt: receipt,
         migrationTargetIdentity: historicalIdentity,
         privateInput,
@@ -1498,6 +1505,8 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL migration target", () => {
           catalogIdentity: {
             serverVersionNum: expect.stringMatching(/^17\d{4}$/),
           },
+          physicalIdentitySha256: expectedPhysicalDatabaseIdentitySha256,
+          plannerLoginIdentitySha256: expectedPlannerLoginIdentitySha256,
         },
       });
       expect(plan.sourceSnapshot.items).toEqual([
@@ -1578,8 +1587,8 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL migration target", () => {
         "--deployment-image-digest-sha256", expectedDeployment.imageDigestSha256,
         "--planner-url-file", plannerUrlPath,
         "--planner-url-sha256", plannerUrlFileSha256,
-        "--expected-planner-target-identity-sha256",
-        expectedPlannerTargetIdentitySha256,
+        "--expected-target-database-identity-sha256",
+        expectedPhysicalDatabaseIdentitySha256,
         "--migration-receipt", migrationReceiptPath,
         "--migration-receipt-sha256", migrationReceiptFileSha256,
         "--migration-target-identity", migrationTargetIdentityPath,
@@ -1657,7 +1666,8 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL migration target", () => {
         ok: true,
         planCandidateSha256: plan.planCandidateSha256,
         planFileSha256: sha256PostgresMigrationBytes(cliPlanBytes),
-        targetIdentitySha256: plan.target.identitySha256,
+        physicalIdentitySha256: plan.target.physicalIdentitySha256,
+        plannerLoginIdentitySha256: plan.target.plannerLoginIdentitySha256,
       });
       const cliPublishedBytes = Buffer.concat([
         Buffer.from(cliOutput[0]!, "utf8"),

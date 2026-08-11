@@ -25,12 +25,15 @@ import {
 } from "../src/db/postgres-migration-receipt.js";
 import { sha256PostgresMigrationBytes } from
   "../src/db/postgres-migration-schema.js";
+import { sha256PostgresDatabaseIdentity } from
+  "../src/lib/postgres-database-identity.js";
 import {
   POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_BLOCKERS,
   PostgresReviewedPricePromotionPlanError,
   canonicalPostgresReviewedPricePromotionJson,
   postgresReviewedPricePromotionPlanCandidateSchema,
   postgresReviewedPricePromotionPrivateInputSchema,
+  sha256PostgresReviewedPricePromotionValue,
   type BuildPostgresReviewedPricePromotionPlanInput,
   type PostgresReviewedPricePromotionPlanCandidate,
   type PostgresReviewedPricePromotionPlanErrorCode,
@@ -55,7 +58,7 @@ const ARGUMENTS = new Set([
   "--deployment-project-id-sha256",
   "--deployment-service-id-sha256",
   "--expected-environment",
-  "--expected-planner-target-identity-sha256",
+  "--expected-target-database-identity-sha256",
   "--migration-receipt",
   "--migration-receipt-sha256",
   "--migration-target-identity",
@@ -1508,7 +1511,8 @@ function assertExactPlanBindings(input: {
   readonly migrationReceiptFileSha256: string;
   readonly privateInputFileSha256: string;
   readonly privateInputItemCount: number;
-  readonly targetIdentitySha256: string;
+  readonly physicalIdentitySha256: string;
+  readonly plannerLoginIdentitySha256: string;
 }): PostgresReviewedPricePromotionPlanCandidate {
   const parsed = postgresReviewedPricePromotionPlanCandidateSchema.safeParse(input.plan);
   if (!parsed.success) fail("plan_result_invalid");
@@ -1521,7 +1525,8 @@ function assertExactPlanBindings(input: {
     || plan.privateInput.manifestSha256 !== input.privateInputFileSha256
     || plan.privateInput.itemCount !== input.privateInputItemCount
     || plan.sourceSnapshot.items.length !== input.privateInputItemCount
-    || plan.target.identitySha256 !== input.targetIdentitySha256
+    || plan.target.physicalIdentitySha256 !== input.physicalIdentitySha256
+    || plan.target.plannerLoginIdentitySha256 !== input.plannerLoginIdentitySha256
     || plan.mutationEnabled !== false
     || JSON.stringify(plan.activationBlockers)
       !== JSON.stringify(POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_BLOCKERS)
@@ -1544,7 +1549,8 @@ async function runPostgresReviewedPricePromotionCliWithDependencies(
     readonly candidateSha: string;
     readonly expectedEnvironment: "permanent-staging";
     readonly itemCount: number;
-    readonly targetIdentitySha256: string;
+    readonly physicalIdentitySha256: string;
+    readonly plannerLoginIdentitySha256: string;
   } | null = null;
 
   try {
@@ -1682,22 +1688,41 @@ async function runPostgresReviewedPricePromotionCliWithDependencies(
       rootCa: rootCaFile,
       expectedRootCaDerSha256,
     });
-    const expectedTargetIdentitySha256 = exactSha256(
-      args.get("--expected-planner-target-identity-sha256")!,
+    const expectedPhysicalDatabaseIdentitySha256 = exactSha256(
+      args.get("--expected-target-database-identity-sha256")!,
     );
+    let historicalPhysicalDatabaseIdentitySha256: string;
+    try {
+      historicalPhysicalDatabaseIdentitySha256 =
+        sha256PostgresDatabaseIdentity(migrationTargetIdentity.value);
+    } catch {
+      return fail("artifact_invalid");
+    }
     if (
       migrationReceipt.value.expectedEnvironment !== "permanent-staging"
       || migrationReceipt.value.candidateSha !== candidateSha
       || migrationReceipt.value.targetIdentitySha256 !== migrationTargetIdentity.sha256
       || sha256PostgresMigrationTargetIdentity(migrationTargetIdentity.value)
         !== migrationTargetIdentity.sha256
+      || historicalPhysicalDatabaseIdentitySha256
+        !== expectedPhysicalDatabaseIdentitySha256
     ) fail("artifact_invalid");
+    const expectedPlannerLoginIdentitySha256 =
+      sha256PostgresReviewedPricePromotionValue({
+        currentUser: PLANNER_ROLE,
+        databaseName: migrationTargetIdentity.value.databaseName,
+        databaseOid: migrationTargetIdentity.value.databaseOid,
+        serverVersionNum: migrationTargetIdentity.value.serverVersionNum,
+        sessionUser: PLANNER_ROLE,
+        systemIdentifier: migrationTargetIdentity.value.systemIdentifier,
+      });
 
     summaryInput = {
       candidateSha,
       expectedEnvironment: "permanent-staging",
       itemCount: privateInput.value.itemCount,
-      targetIdentitySha256: expectedTargetIdentitySha256,
+      physicalIdentitySha256: expectedPhysicalDatabaseIdentitySha256,
+      plannerLoginIdentitySha256: expectedPlannerLoginIdentitySha256,
     };
     try {
       databaseHandle = await dependencies.openDatabase({
@@ -1741,7 +1766,7 @@ async function runPostgresReviewedPricePromotionCliWithDependencies(
       migrationReceipt: migrationReceipt.value,
       migrationTargetIdentity: migrationTargetIdentity.value,
       expectedPrivateInputSha256: privateInput.sha256,
-      expectedTargetIdentitySha256,
+      expectedPhysicalDatabaseIdentitySha256,
       privateInput: privateInput.value,
     });
     await assertPlannerDatabaseExact(databaseHandle);
@@ -1758,7 +1783,8 @@ async function runPostgresReviewedPricePromotionCliWithDependencies(
       migrationReceiptFileSha256: migrationReceipt.sha256,
       privateInputFileSha256: privateInput.sha256,
       privateInputItemCount: privateInput.value.itemCount,
-      targetIdentitySha256: expectedTargetIdentitySha256,
+      physicalIdentitySha256: expectedPhysicalDatabaseIdentitySha256,
+      plannerLoginIdentitySha256: expectedPlannerLoginIdentitySha256,
     });
   } catch (error) {
     failureCode = safeFailureCode(error);
@@ -1880,7 +1906,8 @@ async function runPostgresReviewedPricePromotionCliWithDependencies(
       ok: true,
       planCandidateSha256: plan.planCandidateSha256,
       planFileSha256,
-      targetIdentitySha256: summaryInput.targetIdentitySha256,
+      physicalIdentitySha256: summaryInput.physicalIdentitySha256,
+      plannerLoginIdentitySha256: summaryInput.plannerLoginIdentitySha256,
     });
     return 0;
   } catch {

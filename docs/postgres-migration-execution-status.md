@@ -93,6 +93,15 @@ resource pins, operator approvals, or two-person evidence.
   tables, 717 columns, and 76 foreign keys through a least-privilege migrator
   login; the disposable database and login were removed afterward. A gated
   real-Postgres CI job now repeats that proof.
+- Added a canonical PostgreSQL physical-database identity shared with logical
+  backup/recovery evidence and upgraded the reviewed-price no-write plan to
+  version 2. The plan now requires the receipt-bound historical migrator
+  identity, live restricted planner identity, and operator-pinned expected
+  identity to agree on system identifier, database OID/name, and PostgreSQL
+  server version. Planner-login authority remains a separate digest. This
+  closes only the role-neutral target-identity blocker: the command remains
+  mutation-disabled and still reports eight planner/provider/approval/WORM/
+  apply/quarantine/ledger/atomicity/wrong-price blockers.
 - Ported the administrative ingestion queue, its HTTP/operator call sites, and
   claim/finalization flow to the shared asynchronous SQL boundary. Its related
   Free-live price, inventory, review, and publication writes now use the same

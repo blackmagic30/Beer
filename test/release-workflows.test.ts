@@ -456,6 +456,9 @@ describe("release workflow contracts", () => {
       "runPostgresReviewedPricePromotionCli",
     );
     expect(migrationIntegration).toContain(
+      '"--expected-target-database-identity-sha256"',
+    );
+    expect(migrationIntegration).not.toContain(
       '"--expected-planner-target-identity-sha256"',
     );
     expect(migrationIntegration).toContain('"--output-plan"');

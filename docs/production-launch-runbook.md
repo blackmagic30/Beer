@@ -680,16 +680,22 @@ workflow before relying on it.
 The current discovery/review tools and `scripts/promote-reviewed-price-data.ts`
 still depend on SQLite. They are useful only to prepare and audit migration
 source data; their mutation modes are not authorised against production for
-this full-scale release. Before candidate freeze, replace or adapt them to the
-Postgres repository and prove the exact new commands in permanent integrated
-staging. Do not substitute direct SQL or the legacy SQLite commands from an old
-runbook.
+this full-scale release. The checked-in Postgres `plan` command now produces a
+canonical, mutation-disabled version-2 candidate. It requires the existing
+migration-receipt identity, the live restricted planner observation, and the
+operator-pinned physical-database identity to agree on the same system
+identifier, database OID/name, and PostgreSQL server version, while binding the
+planner login separately. It does not apply or quarantine rows. Before
+candidate freeze, implement and prove the exact Postgres apply and quarantine
+commands in permanent integrated staging. Do not substitute direct SQL or the
+legacy SQLite commands from an old runbook.
 
 The reviewed Postgres promotion workflow must:
 
 - run only for one explicitly approved marketed-suburb batch and exact private
   input manifest;
-- bind the target database identity, Supabase project, candidate SHA, manifest
+- retain the version-2 role-neutral physical-database and separate planner-login
+  bindings, and bind the Supabase project, candidate SHA, manifest
   SHA-256, source-ingestion UUIDs, recovery-point attestation, operator,
   independent reviewer, and approval reference without hard-coded old refs;
 - provide a production-targeted no-write plan, allow only reviewed row IDs,

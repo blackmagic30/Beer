@@ -22,10 +22,13 @@ import type {
   SqlRunResult,
   SqlStatement,
 } from "../src/db/sql-database.js";
+import { sha256PostgresDatabaseIdentity } from "../src/lib/postgres-database-identity.js";
 import {
   POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_BLOCKERS,
   POSTGRES_REVIEWED_PRICE_PROMOTION_IDENTITY_QUERY,
   POSTGRES_REVIEWED_PRICE_PROMOTION_PRIVATE_INPUT_KIND,
+  POSTGRES_REVIEWED_PRICE_PROMOTION_PRIVATE_INPUT_VERSION,
+  POSTGRES_REVIEWED_PRICE_PROMOTION_PLAN_VERSION,
   POSTGRES_REVIEWED_PRICE_PROMOTION_READ_ONLY_TRANSACTION,
   POSTGRES_REVIEWED_PRICE_PROMOTION_ROW_SECURITY,
   POSTGRES_REVIEWED_PRICE_PROMOTION_SEARCH_PATH,
@@ -77,6 +80,12 @@ const FROZEN_INTERNAL_RECEIPT_SHA =
 const FROZEN_RECEIPT_FILE_SHA =
   "b7472be77c445ddd87b37cf34abcdb0487a9612af66c5389304e9a51aed70f00";
 const PLANNER_ROLE_OID = 16_385;
+const PHYSICAL_IDENTITY_DRIFT_CASES = [
+  ["systemIdentifier", "7521976435570874595"],
+  ["databaseOid", "24576"],
+  ["databaseName", "railway_clone"],
+  ["serverVersionNum", "170007"],
+] as const;
 const LOGICAL_BACKUP_SELECT_POLICY_EXPRESSION =
   "(CURRENT_USER = ('pintpath_logical_backup_d'::text || ( SELECT (database.oid)::text AS oid\n"
   + "   FROM pg_database database\n"
@@ -303,7 +312,7 @@ function safeIdentityRow(): QueryResultRow {
   };
 }
 
-function targetIdentitySha256(identity: QueryResultRow): string {
+function plannerLoginIdentitySha256(identity: QueryResultRow): string {
   return sha256PostgresMigrationTargetIdentity({
     currentUser: identity.currentUser,
     databaseName: identity.databaseName,
@@ -311,6 +320,20 @@ function targetIdentitySha256(identity: QueryResultRow): string {
     serverVersionNum: identity.serverVersionNum,
     sessionUser: identity.sessionUser,
     systemIdentifier: identity.systemIdentifier,
+  });
+}
+
+function physicalIdentitySha256(identity: {
+  readonly databaseName: unknown;
+  readonly databaseOid: unknown;
+  readonly serverVersionNum: unknown;
+  readonly systemIdentifier: unknown;
+}): string {
+  return sha256PostgresDatabaseIdentity({
+    databaseName: String(identity.databaseName),
+    databaseOid: String(identity.databaseOid),
+    serverVersionNum: String(identity.serverVersionNum),
+    systemIdentifier: String(identity.systemIdentifier),
   });
 }
 
@@ -453,7 +476,7 @@ function fixture(): {
     }],
     kind: POSTGRES_REVIEWED_PRICE_PROMOTION_PRIVATE_INPUT_KIND,
     marketedSuburb: "Fitzroy",
-    version: 1,
+    version: POSTGRES_REVIEWED_PRICE_PROMOTION_PRIVATE_INPUT_VERSION,
   };
   const rows: Record<QueryTag, QueryResultRow[]> = {
     catalog: [{
@@ -544,7 +567,7 @@ function fixture(): {
     migrationReceipt: authority.receipt,
     migrationTargetIdentity: historicalIdentity,
     expectedPrivateInputSha256: sha256PostgresReviewedPricePromotionValue(privateInput),
-    expectedTargetIdentitySha256: targetIdentitySha256(identity),
+    expectedPhysicalDatabaseIdentitySha256: physicalIdentitySha256(identity),
     privateInput,
   };
   return {
@@ -623,6 +646,13 @@ describe("Postgres reviewed-price no-write plan candidate", () => {
     expect(target.database.events.filter((event) => event.method === "exec")).toHaveLength(3);
     expect(plan.mutationEnabled).toBe(false);
     expect(plan.activationBlockers).toEqual(POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_BLOCKERS);
+    expect(plan.activationBlockers).toHaveLength(8);
+    expect(plan.activationBlockers).not.toContain(
+      "role_neutral_migration_target_identity_authority",
+    );
+    expect(plan.activationBlockers).toContain(
+      "dedicated_read_only_planner_role_and_complete_acl_rls_visibility",
+    );
     expect(plan.sourceSnapshot.publicConflicts).toMatchObject({
       priceRecordCount: 0,
       venueBeerCount: 0,
@@ -706,7 +736,7 @@ describe("Postgres reviewed-price no-write plan candidate", () => {
     const mismatch = fixture();
     await expectPlanError({
       ...mismatch.input,
-      expectedTargetIdentitySha256: digest("wrong-target"),
+      expectedPhysicalDatabaseIdentitySha256: digest("wrong-target"),
     }, "identity_mismatch");
   });
 
@@ -864,19 +894,75 @@ describe("Postgres reviewed-price no-write plan candidate", () => {
     expect(target.receipt.targetIdentitySha256).toBe(
       sha256PostgresMigrationTargetIdentity(target.migrationTargetIdentity),
     );
-    expect(target.receipt.targetIdentitySha256).not.toBe(targetIdentitySha256(liveIdentity));
-    expect(plan.target.identitySha256).toBe(targetIdentitySha256(liveIdentity));
+    expect(target.receipt.targetIdentitySha256).not.toBe(
+      plannerLoginIdentitySha256(liveIdentity),
+    );
+    expect(plan.target.plannerLoginIdentitySha256).toBe(
+      plannerLoginIdentitySha256(liveIdentity),
+    );
+    expect(plan.target.physicalIdentitySha256).toBe(
+      physicalIdentitySha256(target.migrationTargetIdentity),
+    );
+    expect(plan.target.physicalIdentitySha256).toBe(physicalIdentitySha256(liveIdentity));
+    expect(plan.target.physicalIdentitySha256).toBe(
+      target.input.expectedPhysicalDatabaseIdentitySha256,
+    );
   });
 
-  it("rejects a receipt transplanted onto a different physical database identity", async () => {
-    const target = fixture();
-    target.rows.identity[0]!.databaseOid = "24576";
-    const changedLiveIdentitySha256 = targetIdentitySha256(target.rows.identity[0]!);
+  it.each(PHYSICAL_IDENTITY_DRIFT_CASES)(
+    "rejects historical %s drift from the live and expected physical identity",
+    async (field, changedValue) => {
+      const target = fixture();
+      await expectPlanError({
+        ...target.input,
+        migrationTargetIdentity: {
+          ...target.migrationTargetIdentity,
+          [field]: changedValue,
+        },
+      }, "identity_mismatch");
+    },
+  );
 
+  it.each(PHYSICAL_IDENTITY_DRIFT_CASES)(
+    "rejects live %s drift from the historical and expected physical identity",
+    async (field, changedValue) => {
+      const target = fixture();
+      target.rows.identity[0]![field] = changedValue;
+      await expectPlanError(target.input, "identity_mismatch");
+    },
+  );
+
+  it.each(PHYSICAL_IDENTITY_DRIFT_CASES)(
+    "rejects expected %s drift from the historical and live physical identity",
+    async (field, changedValue) => {
+      const target = fixture();
+      const changedExpectedIdentity = {
+        ...target.migrationTargetIdentity,
+        [field]: changedValue,
+      };
+      await expectPlanError({
+        ...target.input,
+        expectedPhysicalDatabaseIdentitySha256:
+          physicalIdentitySha256(changedExpectedIdentity),
+      }, "identity_mismatch");
+    },
+  );
+
+  it("maps historical and live physical-identity parser failures to fixed errors", async () => {
+    const historical = fixture();
     await expectPlanError({
-      ...target.input,
-      expectedTargetIdentitySha256: changedLiveIdentitySha256,
-    }, "migration_mismatch");
+      ...historical.input,
+      migrationTargetIdentity: {
+        ...historical.migrationTargetIdentity,
+        databaseName: "d".repeat(64),
+      },
+    }, "argument_invalid");
+    expect(historical.database.transactionCount).toBe(0);
+
+    const live = fixture();
+    live.rows.identity[0]!.databaseName = "d".repeat(64);
+    await expectPlanError(live.input, "identity_mismatch");
+    expect(live.database.transactionCount).toBe(1);
   });
 
   it("contains raw receipt and binding parser failures behind static migration errors", async () => {
@@ -1129,7 +1215,19 @@ describe("Postgres reviewed-price no-write plan candidate", () => {
     expect(canonicalPostgresReviewedPricePromotionJson(firstPlan)).toEqual(
       canonicalPostgresReviewedPricePromotionJson(secondPlan),
     );
-    expect(firstPlan.target.identitySha256).toBe(targetIdentitySha256(first.rows.identity[0]!));
+    expect(firstPlan.version).toBe(POSTGRES_REVIEWED_PRICE_PROMOTION_PLAN_VERSION);
+    expect(firstPlan.version).toBe(2);
+    expect(firstPlan.target.physicalIdentitySha256).toBe(
+      physicalIdentitySha256(first.rows.identity[0]!),
+    );
+    expect(firstPlan.target.plannerLoginIdentitySha256).toBe(
+      plannerLoginIdentitySha256(first.rows.identity[0]!),
+    );
+    expect(Object.keys(firstPlan.target).sort()).toEqual([
+      "catalogIdentity",
+      "physicalIdentitySha256",
+      "plannerLoginIdentitySha256",
+    ]);
     expect(firstPlan.sourceSnapshot.combinedSha256).toMatch(/^[a-f0-9]{64}$/);
     expect(firstPlan.sourceSnapshot.selectionPolicySha256).toBe(REVIEWED_PRICE_SELECTION_POLICY_SHA256);
     expect(firstPlan.planCandidateSha256).toMatch(/^[a-f0-9]{64}$/);
@@ -1143,6 +1241,17 @@ describe("Postgres reviewed-price no-write plan candidate", () => {
     expect(postgresReviewedPricePromotionPlanCandidateSchema.safeParse({
       ...firstPlan,
       mutationEnabled: true,
+    }).success).toBe(false);
+    expect(postgresReviewedPricePromotionPlanCandidateSchema.safeParse({
+      ...firstPlan,
+      version: 1,
+    }).success).toBe(false);
+    expect(postgresReviewedPricePromotionPlanCandidateSchema.safeParse({
+      ...firstPlan,
+      target: {
+        ...firstPlan.target,
+        identitySha256: plannerLoginIdentitySha256(first.rows.identity[0]!),
+      },
     }).success).toBe(false);
     expect(postgresReviewedPricePromotionPlanCandidateSchema.safeParse({
       ...firstPlan,

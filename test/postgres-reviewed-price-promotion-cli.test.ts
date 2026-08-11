@@ -53,6 +53,8 @@ import {
 import { sha256PostgresMigrationBytes } from
   "../src/db/postgres-migration-schema.js";
 import type { SqlDatabase } from "../src/db/sql-database.js";
+import { sha256PostgresDatabaseIdentity } from
+  "../src/lib/postgres-database-identity.js";
 import {
   POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_BLOCKERS,
   POSTGRES_REVIEWED_PRICE_PROMOTION_PLAN_KIND,
@@ -181,7 +183,8 @@ function planCandidate(input: {
   };
   readonly migrationReceiptFileSha256: string;
   readonly privateInputFileSha256: string;
-  readonly plannerTargetIdentitySha256: string;
+  readonly physicalIdentitySha256: string;
+  readonly plannerLoginIdentitySha256: string;
 }): PostgresReviewedPricePromotionPlanCandidate {
   const withoutHash = {
     activationBlockers: [...POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_BLOCKERS],
@@ -252,9 +255,10 @@ function planCandidate(input: {
         sessionUserSha256: "f".repeat(64),
         systemIdentifierSha256: "1".repeat(64),
       },
-      identitySha256: input.plannerTargetIdentitySha256,
+      physicalIdentitySha256: input.physicalIdentitySha256,
+      plannerLoginIdentitySha256: input.plannerLoginIdentitySha256,
     },
-    version: 1 as const,
+    version: 2 as const,
   };
   return {
     ...withoutHash,
@@ -270,8 +274,11 @@ function harness(): {
   readonly database: SqlDatabase;
   readonly dependencies: Partial<PostgresReviewedPricePromotionCliDependencies>;
   readonly migrationReceiptPath: string;
+  readonly migrationTargetIdentityPath: string;
   readonly output: string[];
   readonly outputPlanPath: string;
+  readonly physicalIdentitySha256: string;
+  readonly plannerLoginIdentitySha256: string;
   readonly plannerUrl: string;
   readonly plannerUrlPath: string;
   readonly privateInputPath: string;
@@ -350,7 +357,8 @@ function harness(): {
     projectIdSha256: "8".repeat(64),
     serviceIdSha256: "9".repeat(64),
   };
-  const plannerTargetIdentitySha256 = sha256PostgresReviewedPricePromotionValue({
+  const physicalIdentitySha256 = sha256PostgresDatabaseIdentity(identity);
+  const plannerLoginIdentitySha256 = sha256PostgresReviewedPricePromotionValue({
     ...identity,
     currentUser: "pintpath_reviewed_price_planner",
     sessionUser: "pintpath_reviewed_price_planner",
@@ -359,7 +367,8 @@ function harness(): {
     deployment,
     migrationReceiptFileSha256: sha256(migrationReceiptBytes),
     privateInputFileSha256: sha256(privateInputBytes),
-    plannerTargetIdentitySha256,
+    physicalIdentitySha256,
+    plannerLoginIdentitySha256,
   });
   const database = { dialect: "postgres" } as SqlDatabase;
   const assertExact = vi.fn(async () => undefined);
@@ -402,7 +411,7 @@ function harness(): {
     "--deployment-image-digest-sha256", deployment.imageDigestSha256,
     "--planner-url-file", plannerUrlPath,
     "--planner-url-sha256", sha256(plannerUrlBytes),
-    "--expected-planner-target-identity-sha256", plannerTargetIdentitySha256,
+    "--expected-target-database-identity-sha256", physicalIdentitySha256,
     "--migration-receipt", migrationReceiptPath,
     "--migration-receipt-sha256", sha256(migrationReceiptBytes),
     "--migration-target-identity", migrationTargetIdentityPath,
@@ -418,8 +427,11 @@ function harness(): {
     database,
     dependencies,
     migrationReceiptPath,
+    migrationTargetIdentityPath,
     output,
     outputPlanPath,
+    physicalIdentitySha256,
+    plannerLoginIdentitySha256,
     plannerUrl: exactPlannerUrl,
     plannerUrlPath,
     privateInputPath,
@@ -441,13 +453,20 @@ describe("Postgres reviewed-price promotion plan CLI", () => {
     expect(fixture.release).toHaveBeenCalledTimes(1);
     expect(fixture.buildPlan).toHaveBeenCalledTimes(1);
     const plan = await fixture.buildPlan.mock.results[0]!.value;
+    expect(fixture.buildPlan).toHaveBeenCalledWith(expect.objectContaining({
+      expectedPhysicalDatabaseIdentitySha256: plan.target.physicalIdentitySha256,
+    }));
+    expect(fixture.buildPlan.mock.calls[0]![0]).not.toHaveProperty(
+      "expectedTargetIdentitySha256",
+    );
     const planBytes = fs.readFileSync(fixture.outputPlanPath);
     expect(planBytes).toEqual(canonicalPostgresReviewedPricePromotionJson(plan));
     const stat = fs.lstatSync(fixture.outputPlanPath);
     expect(stat.mode & 0o7777).toBe(0o600);
     expect(stat.nlink).toBe(1);
     expect(JSON.parse(fixture.output[0]!)).toEqual({
-      activationBlockerCount: 9,
+      activationBlockerCount:
+        POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_BLOCKERS.length,
       candidateSha: CANDIDATE_SHA,
       command: "plan",
       expectedEnvironment: "permanent-staging",
@@ -456,7 +475,8 @@ describe("Postgres reviewed-price promotion plan CLI", () => {
       ok: true,
       planCandidateSha256: plan.planCandidateSha256,
       planFileSha256: sha256(planBytes),
-      targetIdentitySha256: JSON.parse(fixture.output[0]!).targetIdentitySha256,
+      physicalIdentitySha256: plan.target.physicalIdentitySha256,
+      plannerLoginIdentitySha256: plan.target.plannerLoginIdentitySha256,
     });
     for (const forbidden of [
       PLANNER_PASSWORD,
@@ -514,6 +534,80 @@ describe("Postgres reviewed-price promotion plan CLI", () => {
       "confirmed",
     ])).resolves.toBe(1);
     expect(JSON.parse(unsupported.output[0]!).failureCode).toBe("argument_invalid");
+
+    const legacyIdentityFlag = harness();
+    const artifactOpen = vi.spyOn(fs.promises, "open");
+    const legacyArgv = [...legacyIdentityFlag.argv];
+    const physicalIdentityFlagIndex = legacyArgv.indexOf(
+      "--expected-target-database-identity-sha256",
+    );
+    expect(physicalIdentityFlagIndex).toBeGreaterThan(0);
+    legacyArgv[physicalIdentityFlagIndex] =
+      "--expected-planner-target-identity-sha256";
+    await expect(runPostgresReviewedPricePromotionCli(legacyArgv))
+      .resolves.toBe(1);
+    expect(artifactOpen).not.toHaveBeenCalled();
+    expect(legacyIdentityFlag.dependencies.openDatabase).not.toHaveBeenCalled();
+    expect(legacyIdentityFlag.buildPlan).not.toHaveBeenCalled();
+    expect(JSON.parse(legacyIdentityFlag.output[0]!).failureCode)
+      .toBe("argument_invalid");
+  });
+
+  it("rejects the former role-bearing planner-login hash as physical authority", async () => {
+    const fixture = harness();
+    const argv = setArgument(
+      fixture.argv,
+      "--expected-target-database-identity-sha256",
+      fixture.plannerLoginIdentitySha256,
+    );
+
+    await expect(runPostgresReviewedPricePromotionCli(argv)).resolves.toBe(1);
+
+    expect(fixture.dependencies.openDatabase).not.toHaveBeenCalled();
+    expect(fixture.buildPlan).not.toHaveBeenCalled();
+    expect(JSON.parse(fixture.output[0]!).failureCode).toBe("artifact_invalid");
+  });
+
+  it("maps a roleful-only historical identity outside the physical domain to artifact_invalid", async () => {
+    const fixture = harness();
+    const invalidPhysicalIdentity = {
+      ...historicalIdentity(),
+      databaseName: "d".repeat(64),
+    };
+    const invalidIdentityBytes = canonicalPostgresReviewedPricePromotionJson(
+      invalidPhysicalIdentity,
+    );
+    const invalidIdentitySha256 = sha256(invalidIdentityBytes);
+    const receipt = JSON.parse(
+      fs.readFileSync(fixture.migrationReceiptPath, "utf8"),
+    ) as ReturnType<typeof finalizePostgresMigrationReceipt>;
+    const { receiptSha256: _receiptSha256, ...receiptWithoutHash } = receipt;
+    const reboundReceipt = finalizePostgresMigrationReceipt({
+      ...receiptWithoutHash,
+      targetIdentitySha256: invalidIdentitySha256,
+    });
+    const reboundReceiptBytes = canonicalPostgresReviewedPricePromotionJson(
+      reboundReceipt,
+    );
+    fs.unlinkSync(fixture.migrationTargetIdentityPath);
+    fs.unlinkSync(fixture.migrationReceiptPath);
+    writePrivate(fixture.migrationTargetIdentityPath, invalidIdentityBytes);
+    writePrivate(fixture.migrationReceiptPath, reboundReceiptBytes);
+    const argv = setArgument(
+      setArgument(
+        fixture.argv,
+        "--migration-target-identity-sha256",
+        invalidIdentitySha256,
+      ),
+      "--migration-receipt-sha256",
+      sha256(reboundReceiptBytes),
+    );
+
+    await expect(runPostgresReviewedPricePromotionCli(argv)).resolves.toBe(1);
+
+    expect(fixture.dependencies.openDatabase).not.toHaveBeenCalled();
+    expect(fixture.buildPlan).not.toHaveBeenCalled();
+    expect(JSON.parse(fixture.output[0]!).failureCode).toBe("artifact_invalid");
   });
 
   it("rejects ambient Postgres, database URL, Supabase, and runtime authority before files or pg", async () => {
@@ -773,6 +867,37 @@ describe("Postgres reviewed-price promotion plan CLI", () => {
     expect(fixture.release).toHaveBeenCalledTimes(1);
     expect(fs.existsSync(fixture.outputPlanPath)).toBe(false);
     expect(JSON.parse(fixture.output[0]!).failureCode).toBe("plan_result_invalid");
+  });
+
+  it("rejects independently drifted physical and planner-login identity bindings", async () => {
+    for (const targetField of [
+      "physicalIdentitySha256",
+      "plannerLoginIdentitySha256",
+    ] as const) {
+      const fixture = harness();
+      const valid = await fixture.buildPlan({} as never);
+      const { planCandidateSha256: _validHash, ...validWithoutHash } = valid;
+      const driftedWithoutHash = {
+        ...validWithoutHash,
+        target: {
+          ...valid.target,
+          [targetField]: "0".repeat(64),
+        },
+      };
+      fixture.dependencies.buildPlan = vi.fn(async () => ({
+        ...driftedWithoutHash,
+        planCandidateSha256:
+          sha256PostgresReviewedPricePromotionValue(driftedWithoutHash),
+      }) as PostgresReviewedPricePromotionPlanCandidate);
+
+      await expect(runPostgresReviewedPricePromotionCli(fixture.argv))
+        .resolves.toBe(1);
+
+      expect(fixture.release).toHaveBeenCalledTimes(1);
+      expect(fs.existsSync(fixture.outputPlanPath)).toBe(false);
+      expect(JSON.parse(fixture.output[0]!).failureCode)
+        .toBe("plan_result_invalid");
+    }
   });
 
   it("never overwrites an existing output artifact", async () => {

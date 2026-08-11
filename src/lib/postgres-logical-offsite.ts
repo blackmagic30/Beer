@@ -11,6 +11,7 @@ import type {
   SystemStateRepository,
 } from "../db/system-state.repository.js";
 import type { SqlDatabase } from "../db/sql-database.js";
+import { sha256PostgresDatabaseIdentity } from "./postgres-database-identity.js";
 import {
   POSTGRES_LOGICAL_BACKUP_ARCHIVE,
   POSTGRES_LOGICAL_BACKUP_MANIFEST,
@@ -381,9 +382,7 @@ export async function inspectPostgresLogicalRuntimeDatabaseIdentity(
     || typeof row.serverVersionNum !== "string"
     || !/^17\d{4}$/.test(row.serverVersionNum)
   ) throw offsiteError("runtime_identity_unavailable");
-  return sha256CanonicalPostgresLogicalState({
-    kind: "pintpath-postgres-logical-source-database",
-    version: 1,
+  return sha256PostgresDatabaseIdentity({
     systemIdentifier: row.systemIdentifier,
     databaseOid: row.databaseOid,
     databaseName: row.databaseName,
