@@ -165,12 +165,16 @@ the submitted value, and the CLI upsert is sequential rather than atomic.
 The injected-child transport is fixture-only: its counters are not operating-
 system spawn authority, and the held binary descriptor does not bind later
 execution of the Homebrew pathname. It cannot be reused as the live adapter.
-The JavaScript evidence store is likewise scoped to a non-hostile current-UID
-boundary: Node's path-based `unlink` cannot identity-bind cleanup against a
-same-UID replacement between validation and deletion. Activation therefore
-requires an identity-bound native cleanup primitive (or a separately reviewed
-threat model that explicitly excludes hostile current-UID actors); a later
-failure check cannot make a wrongly deleted replacement recoverable.
+The JavaScript evidence store creates the fixed final evidence leaf directly
+with exclusive create, no-follow, and mode `0600`; it then writes, fsyncs,
+reads back through the held descriptor, validates the pathname identity, and
+fsyncs the held parent directory. It never unlinks or replaces an artifact it
+created. A failure after exclusive creation therefore leaves the final leaf as
+a fail-closed marker. Partial or otherwise inexact content blocks automatic
+replay and requires separately reviewed manual recovery of the private evidence
+directory. This removes the path-based cleanup deletion race; it does not make
+the review-only worker an operating-system sandbox against hostile same-UID
+code.
 
 No Railway write is authorized until the incident baseline above is separately
 recovered, the external Railway mutation freeze is approved, and an isolated

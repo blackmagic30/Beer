@@ -115,7 +115,6 @@ export class PermanentStagingProviderVariableWriteEvidenceError extends Error {
 
 const MAX_CANONICAL_CONTENT_BYTES = 64 * 1_024;
 const MAX_PARENT_PATH_BYTES = 4_096;
-const RANDOM_TEMPORARY_BYTES = 16;
 const MAX_CANONICAL_DEPTH = 64;
 const MAX_CANONICAL_NODES = 131_072;
 const ALLOWED_LEAVES = new Set<string>(FIXED_EVIDENCE_LEAVES);
@@ -136,17 +135,14 @@ const BUFFER_IS_BUFFER = Buffer.isBuffer;
 const BUFFER_PROTOTYPE = Buffer.prototype;
 const BUFFER_EXACT = Buffer;
 const CRYPTO_CREATE_HASH = crypto.createHash;
-const CRYPTO_RANDOM_BYTES = crypto.randomBytes;
 const FS_PROMISES = fs.promises;
 const FS_LSTAT = FS_PROMISES.lstat;
-const FS_LINK = FS_PROMISES.link;
 const FS_OPEN = FS_PROMISES.open;
 const FS_REALPATH = FS_PROMISES.realpath;
-const FS_UNLINK = FS_PROMISES.unlink;
 const FS_O_CREAT = fs.constants.O_CREAT;
 const FS_O_EXCL = fs.constants.O_EXCL;
 const FS_O_RDONLY = fs.constants.O_RDONLY;
-const FS_O_WRONLY = fs.constants.O_WRONLY;
+const FS_O_RDWR = fs.constants.O_RDWR;
 const HASH_PROTOTYPE = Object.getPrototypeOf(CRYPTO_CREATE_HASH("sha256")) as
   object;
 const HASH_UPDATE = Object.getOwnPropertyDescriptor(
@@ -175,7 +171,6 @@ const REFLECT_APPLY = Reflect.apply;
 const REFLECT_OWN_KEYS = Reflect.ownKeys;
 const REGEXP_EXEC = RegExp.prototype.exec;
 const SET_HAS = Set.prototype.has;
-const STRING_CHAR_AT = String.prototype.charAt;
 const STRING_CHAR_CODE_AT = String.prototype.charCodeAt;
 const STRING_EXACT = String;
 const STRING_INCLUDES = String.prototype.includes;
@@ -212,7 +207,6 @@ const PATH_JOIN = path.join;
 const PATH_NORMALIZE = path.normalize;
 const PATH_PARSE = path.parse;
 const PATH_RESOLVE = path.resolve;
-const LOWERCASE_HEX = "0123456789abcdef";
 
 // This layer is deliberately schema-neutral: it receives only secret-free
 // intent or terminal-evidence JSON from the kernel and never a provider value.
@@ -228,9 +222,6 @@ export interface PermanentStagingProviderVariableWriteEvidenceDependencies {
   ) => Promise<FileHandle>;
   readonly lstat: (filename: string) => Promise<fs.BigIntStats>;
   readonly realpath: (filename: string) => Promise<string>;
-  readonly link: (existingPath: string, newPath: string) => Promise<void>;
-  readonly unlink: (filename: string) => Promise<void>;
-  readonly randomBytes: (size: number) => Buffer;
   readonly effectiveUid: () => number;
   readonly syncHandle: (handle: FileHandle) => Promise<void>;
   readonly closeHandle: (handle: FileHandle) => Promise<void>;
@@ -249,12 +240,6 @@ const DEFAULT_DEPENDENCIES: PermanentStagingProviderVariableWriteEvidenceDepende
     FS_PROMISES,
     [filename],
   ) as Promise<string>,
-  link: (existingPath, newPath) => REFLECT_APPLY(FS_LINK, FS_PROMISES, [
-    existingPath,
-    newPath,
-  ]),
-  unlink: (filename) => REFLECT_APPLY(FS_UNLINK, FS_PROMISES, [filename]),
-  randomBytes: (size) => REFLECT_APPLY(CRYPTO_RANDOM_BYTES, crypto, [size]),
   effectiveUid: () => {
     if (typeof PROCESS_GETEUID !== "function") throw invalid();
     return REFLECT_APPLY(PROCESS_GETEUID, process, []);
@@ -271,9 +256,6 @@ const DEPENDENCY_KEYS = OBJECT_FREEZE([
   "open",
   "lstat",
   "realpath",
-  "link",
-  "unlink",
-  "randomBytes",
   "effectiveUid",
   "syncHandle",
   "closeHandle",
@@ -447,9 +429,6 @@ function captureDependencies(
     open: read("open"),
     lstat: read("lstat"),
     realpath: read("realpath"),
-    link: read("link"),
-    unlink: read("unlink"),
-    randomBytes: read("randomBytes"),
     effectiveUid: read("effectiveUid"),
     syncHandle: read("syncHandle"),
     closeHandle: read("closeHandle"),
@@ -622,82 +601,6 @@ function requiredOpenFlag(value: unknown): number {
 
 const O_NOFOLLOW_EXACT = requiredOpenFlag(fs.constants.O_NOFOLLOW);
 const O_DIRECTORY_EXACT = requiredOpenFlag(fs.constants.O_DIRECTORY);
-
-function exactLowercaseHex32(value: unknown): value is string {
-  if (typeof value !== "string" || value.length !== 32) return false;
-  for (let index = 0; index < value.length; index += 1) {
-    const code = REFLECT_APPLY(STRING_CHAR_CODE_AT, value, [index]) as number;
-    if (!((code >= 48 && code <= 57) || (code >= 97 && code <= 102))) {
-      return false;
-    }
-  }
-  return true;
-}
-
-function exactRandomHex(
-  dependencies: PermanentStagingProviderVariableWriteEvidenceDependencies,
-): string {
-  let candidate: unknown;
-  let hex: string | null = null;
-  let caught = false;
-  let failure: unknown;
-  let wipeRequired = false;
-  try {
-    candidate = dependencies.randomBytes(RANDOM_TEMPORARY_BYTES);
-    const isView = REFLECT_APPLY(ARRAY_BUFFER_IS_VIEW, ARRAY_BUFFER_EXACT, [
-      candidate,
-    ]) as boolean;
-    const isBuffer = REFLECT_APPLY(BUFFER_IS_BUFFER, BUFFER_EXACT, [candidate]) as
-      boolean;
-    if (!isView || !isBuffer) throw invalid();
-    if (OBJECT_GET_PROTOTYPE_OF(candidate) !== BUFFER_PROTOTYPE) throw invalid();
-    wipeRequired = true;
-    if (typeof TYPED_ARRAY_BYTE_LENGTH_GETTER !== "function") throw invalid();
-    const length = REFLECT_APPLY(
-      TYPED_ARRAY_BYTE_LENGTH_GETTER,
-      candidate,
-      [],
-    ) as number;
-    if (length !== RANDOM_TEMPORARY_BYTES) throw invalid();
-    const random = candidate as Buffer;
-    let rendered = "";
-    for (let index = 0; index < RANDOM_TEMPORARY_BYTES; index += 1) {
-      const byte = random[index];
-      if (
-        !NUMBER_IS_SAFE_INTEGER(byte)
-        || (byte as number) < 0
-        || (byte as number) > 255
-      ) throw invalid();
-      rendered += REFLECT_APPLY(
-        STRING_CHAR_AT,
-        LOWERCASE_HEX,
-        [(byte as number) >>> 4],
-      ) as string;
-      rendered += REFLECT_APPLY(
-        STRING_CHAR_AT,
-        LOWERCASE_HEX,
-        [(byte as number) & 0x0f],
-      ) as string;
-    }
-    if (!exactLowercaseHex32(rendered)) throw invalid();
-    hex = rendered;
-  } catch (error) {
-    caught = true;
-    failure = error;
-  }
-  if (wipeRequired) {
-    try {
-      wipeBuffer(candidate as Buffer);
-    } catch {
-      throw cleanupFailed();
-    }
-  }
-  if (caught) {
-    throw normalizeFailure(failure);
-  }
-  if (hex === null) throw invalid();
-  return hex;
-}
 
 function checkSignal(signal: AbortSignal): void {
   if (
@@ -1454,313 +1357,76 @@ class EvidenceStore implements PermanentStagingProviderVariableWriteEvidenceStor
     }
   }
 
-  private async unlinkExactTemporary(
-    temporaryPath: string,
-    handle: FileHandle,
-    identity: FileIdentity,
-    expectedLinks: bigint,
-    finalPath: string | null,
-  ): Promise<boolean> {
-    // This path-based cleanup is exact only inside the documented non-hostile
-    // current-UID boundary. Node exposes no unlinkat-style descriptor-relative
-    // primitive here; activation requires a native identity-bound replacement
-    // or an explicitly reviewed continuation of that trust boundary.
-    try {
-      const descriptor = await handleStat(
-        handle,
-        this.fileHandleIntrinsics,
-        this.statPrototype,
-      );
-      const temporaryRaw = await nativePromise(
-        this.dependencies.lstat(temporaryPath),
-      );
-      const temporary = snapshotStat(temporaryRaw, this.statPrototype);
-      if (
-        descriptor.size < 0n
-        || descriptor.size > BIGINT_EXACT(MAX_CANONICAL_CONTENT_BYTES)
-      ) return false;
-      assertPrivateFile(
-        descriptor,
-        this.uid,
-        NUMBER_EXACT(descriptor.size),
-        expectedLinks,
-      );
-      assertPrivateFile(
-        temporary,
-        this.uid,
-        NUMBER_EXACT(descriptor.size),
-        expectedLinks,
-      );
-      if (
-        !sameFileIdentity(identity, fileIdentity(descriptor))
-        || !sameFileIdentity(identity, fileIdentity(temporary))
-      ) return false;
-      if (finalPath) {
-        const final = snapshotStat(
-          await this.dependencies.lstat(finalPath),
-          this.statPrototype,
-        );
-        assertPrivateFile(
-          final,
-          this.uid,
-          NUMBER_EXACT(descriptor.size),
-          expectedLinks,
-        );
-        if (!sameFileIdentity(identity, fileIdentity(final))) return false;
-      }
-      await this.dependencies.unlink(temporaryPath);
-      const after = await handleStat(
-        handle,
-        this.fileHandleIntrinsics,
-        this.statPrototype,
-      );
-      if (
-        !sameFileIdentity(identity, fileIdentity(after))
-        || after.nlink !== expectedLinks - 1n
-      ) return false;
-      if (await lstatIfPresent(
-        this.dependencies,
-        temporaryPath,
-        this.statPrototype,
-      )) return false;
-      if (!finalPath) return after.nlink === 0n;
-      const final = snapshotStat(
-        await this.dependencies.lstat(finalPath),
-        this.statPrototype,
-      );
-      return after.nlink === 1n
-        && final.nlink === 1n
-        && sameFileIdentity(identity, fileIdentity(final));
-    } catch {
-      return false;
-    }
-  }
-
-  private async cleanupTemporary(input: {
-    temporaryPath: string;
-    identity: FileIdentity | null;
-    handle: FileHandle | null;
-    linked: boolean;
-    finalPath: string;
-    alreadyUnlinked: boolean;
-    temporaryCreated: boolean;
-  }): Promise<boolean> {
-    if (!input.temporaryCreated) return true;
-    let exact = true;
-    let cleanupHandle = input.handle;
-    let cleanupIdentity = input.identity;
-    try {
-      await this.assertParentExact();
-    } catch {
-      exact = false;
-    }
-    if (!exact) {
-      if (cleanupHandle) {
-        try {
-          await this.dependencies.closeHandle(cleanupHandle);
-        } catch {
-          // Cleanup is already inexact; retain failure precedence.
-        }
-      }
-      return false;
-    }
-    if (!input.alreadyUnlinked) {
-      let atPath: StableStat | null = null;
-      try {
-        atPath = await lstatIfPresent(
-          this.dependencies,
-          input.temporaryPath,
-          this.statPrototype,
-        );
-      } catch {
-        exact = false;
-      }
-      if (atPath) {
-        if (!cleanupIdentity && cleanupHandle) {
-          try {
-            const descriptor = await handleStat(
-              cleanupHandle,
-              this.fileHandleIntrinsics,
-              this.statPrototype,
-            );
-            if (
-              descriptor.size < 0n
-              || descriptor.size > BIGINT_EXACT(MAX_CANONICAL_CONTENT_BYTES)
-            ) throw invalid();
-            assertPrivateFile(
-              descriptor,
-              this.uid,
-              NUMBER_EXACT(descriptor.size),
-              input.linked ? 2n : 1n,
-            );
-            cleanupIdentity = fileIdentity(descriptor);
-          } catch {
-            cleanupIdentity = null;
-          }
-        }
-        if (!cleanupIdentity) {
-          exact = false;
-        } else {
-          let pathExact = atPath.size >= 0n
-            && atPath.size <= BIGINT_EXACT(MAX_CANONICAL_CONTENT_BYTES);
-          try {
-            if (pathExact) {
-              assertPrivateFile(
-                atPath,
-                this.uid,
-                NUMBER_EXACT(atPath.size),
-                input.linked ? 2n : 1n,
-              );
-            }
-          } catch {
-            pathExact = false;
-          }
-          pathExact = pathExact
-            && sameFileIdentity(cleanupIdentity, fileIdentity(atPath));
-          if (!pathExact) {
-            exact = false;
-          } else {
-            if (cleanupHandle) {
-              let descriptorExact = false;
-              try {
-                const descriptor = await handleStat(
-                  cleanupHandle,
-                  this.fileHandleIntrinsics,
-                  this.statPrototype,
-                );
-                descriptorExact = sameFileIdentity(
-                  cleanupIdentity,
-                  fileIdentity(descriptor),
-                );
-              } catch {
-                descriptorExact = false;
-              }
-              if (!descriptorExact) {
-                try {
-                  await this.dependencies.closeHandle(cleanupHandle);
-                } catch {
-                  exact = false;
-                }
-                cleanupHandle = null;
-                exact = false;
-              }
-            }
-            if (!cleanupHandle) {
-              try {
-                cleanupHandle = await this.dependencies.open(
-                  input.temporaryPath,
-                  FS_O_RDONLY | O_NOFOLLOW_EXACT,
-                );
-                registerFileHandle(
-                  cleanupHandle,
-                  this.fileHandleIntrinsics,
-                );
-              } catch {
-                cleanupHandle = null;
-              }
-            }
-            if (
-              !cleanupHandle
-              || !await this.unlinkExactTemporary(
-                input.temporaryPath,
-                cleanupHandle,
-                cleanupIdentity,
-                input.linked ? 2n : 1n,
-                input.linked ? input.finalPath : null,
-              )
-            ) exact = false;
-          }
-        }
-      }
-    }
-    if (cleanupHandle) {
-      try {
-        await this.dependencies.closeHandle(cleanupHandle);
-      } catch {
-        exact = false;
-      }
-    }
-    try {
-      await this.assertParentExact();
-    } catch {
-      exact = false;
-    }
-    return exact;
-  }
-
   private async createOrVerifyExisting(
     filePath: string,
-    leaf: PermanentStagingProviderVariableWriteEvidenceLeaf,
     expected: Buffer,
     signal: AbortSignal,
   ): Promise<PermanentStagingProviderVariableWriteDurableArtifactEvidence> {
     checkSignal(signal);
-    const randomHex = exactRandomHex(this.dependencies);
-    const temporaryLeaf = `.${leaf}.${randomHex}.tmp`;
-    const temporaryPath = PATH_JOIN(this.parentPath, temporaryLeaf);
-    if (
-      PATH_DIRNAME(temporaryPath) !== this.parentPath
-      || PATH_BASENAME(temporaryPath) !== temporaryLeaf
-    ) throw invalid();
-
-    let writeHandle: FileHandle | null = null;
-    let readHandle: FileHandle | null = null;
+    let handle: FileHandle | null = null;
     let identity: FileIdentity | null = null;
-    let temporaryCreated = false;
-    let linked = false;
-    let temporaryUnlinked = false;
-    let normalResult = false;
+    let artifactCreated = false;
     try {
       await this.assertParentExact(signal);
       checkSignal(signal);
       try {
-        writeHandle = await this.dependencies.open(
-          temporaryPath,
-          FS_O_WRONLY
+        handle = await this.dependencies.open(
+          filePath,
+          FS_O_RDWR
             | FS_O_CREAT
             | FS_O_EXCL
             | O_NOFOLLOW_EXACT,
           0o600,
         );
-        registerFileHandle(writeHandle, this.fileHandleIntrinsics);
+        registerFileHandle(handle, this.fileHandleIntrinsics);
       } catch (error) {
-        if (errnoIs(error, "EEXIST")) throw invalid();
-        let possiblePartial: StableStat | null;
+        if (errnoIs(error, "EEXIST")) {
+          checkSignal(signal);
+          return await this.verifyExisting(filePath, expected, signal);
+        }
+        let possibleArtifact: StableStat | null;
         try {
-          possiblePartial = await lstatIfPresent(
+          possibleArtifact = await lstatIfPresent(
             this.dependencies,
-            temporaryPath,
+            filePath,
             this.statPrototype,
           );
         } catch {
           throw cleanupFailed();
         }
-        if (possiblePartial) throw cleanupFailed();
+        if (possibleArtifact) throw cleanupFailed();
         throw invalid();
       }
-      temporaryCreated = true;
-      assertFileHandleExact(writeHandle, this.fileHandleIntrinsics);
+      artifactCreated = true;
+      checkSignal(signal);
+      assertFileHandleExact(handle, this.fileHandleIntrinsics);
       await nativePromise(REFLECT_APPLY(
         this.fileHandleIntrinsics.chmod,
-        writeHandle,
+        handle,
         [0o600],
       ));
-      const created = await handleStat(
-        writeHandle,
+      const createdStat = await handleStat(
+        handle,
         this.fileHandleIntrinsics,
         this.statPrototype,
       );
-      assertPrivateFile(created, this.uid, 0, 1n);
-      identity = fileIdentity(created);
+      assertPrivateFile(createdStat, this.uid, 0, 1n);
+      identity = fileIdentity(createdStat);
+      const createdPath = snapshotStat(
+        await this.dependencies.lstat(filePath),
+        this.statPrototype,
+      );
+      assertPrivateFile(createdPath, this.uid, 0, 1n);
+      if (!sameStableFile(createdStat, createdPath)) throw cleanupFailed();
       checkSignal(signal);
       let offset = 0;
       while (offset < bufferLength(expected)) {
         checkSignal(signal);
-        assertFileHandleExact(writeHandle, this.fileHandleIntrinsics);
+        assertFileHandleExact(handle, this.fileHandleIntrinsics);
         const maximum = bufferLength(expected) - offset;
         const result = await nativePromise(REFLECT_APPLY(
           this.fileHandleIntrinsics.write,
-          writeHandle,
+          handle,
           [expected, offset, maximum, offset],
         ));
         checkSignal(signal);
@@ -1768,37 +1434,10 @@ class EvidenceStore implements PermanentStagingProviderVariableWriteEvidenceStor
         if (bytesWritten === 0) throw invalid();
         offset += bytesWritten;
       }
-      await this.dependencies.syncHandle(writeHandle);
-      checkSignal(signal);
-      const written = await handleStat(
-        writeHandle,
-        this.fileHandleIntrinsics,
-        this.statPrototype,
-      );
-      checkSignal(signal);
-      const writtenPath = snapshotStat(
-        await this.dependencies.lstat(temporaryPath),
-        this.statPrototype,
-      );
-      checkSignal(signal);
-      assertPrivateFile(written, this.uid, bufferLength(expected), 1n);
-      assertPrivateFile(writtenPath, this.uid, bufferLength(expected), 1n);
-      if (
-        !sameFileIdentity(identity, fileIdentity(written))
-        || !sameStableFile(written, writtenPath)
-      ) throw invalid();
-      await this.closeFileWithPrecedence(writeHandle);
-      writeHandle = null;
-      checkSignal(signal);
-
-      readHandle = await this.dependencies.open(
-        temporaryPath,
-        FS_O_RDONLY | O_NOFOLLOW_EXACT,
-      );
-      registerFileHandle(readHandle, this.fileHandleIntrinsics);
+      await this.dependencies.syncHandle(handle);
       checkSignal(signal);
       const readback = await readExactStable(
-        readHandle,
+        handle,
         this.fileHandleIntrinsics,
         this.statPrototype,
         expected,
@@ -1807,139 +1446,49 @@ class EvidenceStore implements PermanentStagingProviderVariableWriteEvidenceStor
         signal,
       );
       if (!sameFileIdentity(identity, fileIdentity(readback))) throw invalid();
-      await this.assertParentExact(signal);
-      checkSignal(signal);
-
-      // The hard link is the publication commit point. Cancellation is checked
-      // immediately before it. Once the link succeeds, the store must finish
-      // unlinking the temporary name, fsyncing the parent, and stable readback;
-      // returning early would leave publication durability ambiguous.
-      try {
-        await this.dependencies.link(temporaryPath, filePath);
-        linked = true;
-      } catch (error) {
-        if (errnoIs(error, "EEXIST")) {
-          if (!await this.unlinkExactTemporary(
-            temporaryPath,
-            readHandle,
-            identity,
-            1n,
-            null,
-          )) throw cleanupFailed();
-          temporaryUnlinked = true;
-          await this.closeFileWithPrecedence(readHandle);
-          readHandle = null;
-          checkSignal(signal);
-          normalResult = true;
-          return await this.verifyExisting(filePath, expected, signal);
-        }
-        let descriptor: StableStat;
-        let final: StableStat | null;
-        try {
-          descriptor = await handleStat(
-            readHandle,
-            this.fileHandleIntrinsics,
-            this.statPrototype,
-          );
-          final = await lstatIfPresent(
-            this.dependencies,
-            filePath,
-            this.statPrototype,
-          );
-        } catch {
-          throw cleanupFailed();
-        }
-        linked = final !== null
-          && descriptor.nlink >= 1n
-          && sameFileIdentity(identity, fileIdentity(descriptor))
-          && sameFileIdentity(identity, fileIdentity(final));
-        if (linked) throw cleanupFailed();
-        throw invalid();
-      }
-
-      const linkedDescriptor = await handleStat(
-        readHandle,
-        this.fileHandleIntrinsics,
+      const readbackPath = snapshotStat(
+        await this.dependencies.lstat(filePath),
         this.statPrototype,
       );
-      const linkedTemporaryRaw = await nativePromise(
-        this.dependencies.lstat(temporaryPath),
+      assertPrivateFile(
+        readbackPath,
+        this.uid,
+        bufferLength(expected),
+        1n,
       );
-      const linkedFinalRaw = await nativePromise(
-        this.dependencies.lstat(filePath),
-      );
-      const linkedTemporary = snapshotStat(
-        linkedTemporaryRaw,
-        this.statPrototype,
-      );
-      const linkedFinal = snapshotStat(linkedFinalRaw, this.statPrototype);
-      assertPrivateFile(linkedDescriptor, this.uid, bufferLength(expected), 2n);
-      assertPrivateFile(linkedTemporary, this.uid, bufferLength(expected), 2n);
-      assertPrivateFile(linkedFinal, this.uid, bufferLength(expected), 2n);
-      if (
-        !sameFileIdentity(identity, fileIdentity(linkedDescriptor))
-        || !sameFileIdentity(identity, fileIdentity(linkedTemporary))
-        || !sameFileIdentity(identity, fileIdentity(linkedFinal))
-      ) throw cleanupFailed();
-      if (!await this.unlinkExactTemporary(
-        temporaryPath,
-        readHandle,
-        identity,
-        2n,
-        filePath,
-      )) throw cleanupFailed();
-      temporaryUnlinked = true;
+      if (!sameStableFile(readback, readbackPath)) throw cleanupFailed();
       await this.dependencies.syncHandle(this.parentHandle);
-      await this.assertParentExact();
+      await this.assertParentExact(signal);
       const finalDescriptor = await readExactStable(
-        readHandle,
+        handle,
         this.fileHandleIntrinsics,
         this.statPrototype,
         expected,
         this.uid,
         1n,
+        signal,
       );
       const finalPath = snapshotStat(
         await this.dependencies.lstat(filePath),
         this.statPrototype,
       );
+      checkSignal(signal);
       if (
         !sameStableFile(finalDescriptor, finalPath)
         || !sameFileIdentity(identity, fileIdentity(finalPath))
       ) throw cleanupFailed();
-      await this.closeFileWithPrecedence(readHandle);
-      readHandle = null;
-      normalResult = true;
       return evidence("created-durable", sha256(expected));
     } catch (error) {
-      const cleanupExact = await this.cleanupTemporary({
-        temporaryPath,
-        identity,
-        handle: readHandle ?? writeHandle,
-        linked,
-        finalPath: filePath,
-        alreadyUnlinked: temporaryUnlinked,
-        temporaryCreated,
-      });
-      readHandle = null;
-      writeHandle = null;
-      if (
-        linked
-        || !cleanupExact
-        || fixedErrorCode(error) === "cleanup_failed"
-      ) {
+      if (artifactCreated || fixedErrorCode(error) === "cleanup_failed") {
         throw cleanupFailed();
       }
-      throw invalid();
+      throw normalizeFailure(error);
     } finally {
-      if (!normalResult && (readHandle || writeHandle)) {
-        const dangling = readHandle ?? writeHandle;
-        if (dangling) {
-          try {
-            await this.dependencies.closeHandle(dangling);
-          } catch {
-            throw cleanupFailed();
-          }
+      if (handle) {
+        try {
+          await this.dependencies.closeHandle(handle);
+        } catch {
+          throw cleanupFailed();
         }
       }
     }
@@ -1970,7 +1519,6 @@ class EvidenceStore implements PermanentStagingProviderVariableWriteEvidenceStor
       checkSignal(signal);
       return await this.createOrVerifyExisting(
         filePath,
-        leaf,
         expected,
         signal,
       );
@@ -2052,9 +1600,6 @@ export async function openPermanentStagingProviderVariableWriteEvidenceStore(
       open: originalDependencies.open,
       lstat: originalDependencies.lstat,
       realpath: originalDependencies.realpath,
-      link: originalDependencies.link,
-      unlink: originalDependencies.unlink,
-      randomBytes: originalDependencies.randomBytes,
       effectiveUid: originalDependencies.effectiveUid,
       syncHandle: capturedDependencies.syncOverridden
         ? originalDependencies.syncHandle
