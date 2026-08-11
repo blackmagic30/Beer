@@ -46,8 +46,12 @@ failures, and min/mean/p50/p95/p99/max latency. The JSON report fails unless:
 
 `/health` and `/ready` replica probes request fresh connections so a
 connection-pool stickiness artifact cannot masquerade as two-replica proof.
-The server returns only a domain-separated SHA-256 marker; raw Railway replica
-IDs and credentials never enter the report.
+Every `/health` and `/ready` response must also return the exact
+domain-separated project, environment, and service ID hashes derived from the
+three reviewed Railway identity pins. The runner rejects a missing or different
+hash before load begins and aborts if any hash changes during the profile. The
+server returns only domain-separated SHA-256 markers; raw Railway resource IDs
+and credentials never enter the report.
 
 ## Prepare reviewed identities
 
@@ -69,6 +73,11 @@ PINTPATH_PERMANENT_STAGING_RAILWAY_ENVIRONMENT_ID
 PINTPATH_PERMANENT_STAGING_RAILWAY_SERVICE_ID
 PINTPATH_STAGING_LOAD_EXPECTED_IDENTITY_SHA256
 ```
+
+The three Railway resource IDs must use Railway's exact lowercase canonical
+UUID spelling. Leading or trailing whitespace, uppercase letters, and other
+noncanonical UUID spellings are invalid; the runner rejects them without
+trimming or case-normalizing them.
 
 The base URL must be a bare HTTPS origin whose exact hostname contains a
 standalone `staging` label. Use the staging Railway domain, not a production

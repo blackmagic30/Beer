@@ -12,12 +12,21 @@ import {
   type PermanentStagingLoadConfiguration,
   type PermanentStagingLoadSecrets,
 } from "../scripts/permanent-staging-load-soak.js";
+import { railwayDeploymentIdentityIdSha256 } from "../src/lib/railway-deployment-identity.js";
 
 const targetOrigin = "https://pintpath-staging.up.railway.app";
-const projectId = "project-pintpath-4af98c";
-const environmentId = "environment-staging-3c182a";
-const serviceId = "service-pintpath-92d01b";
+const projectId = "48d8c6cd-1c66-4148-874b-20877f48e1a5";
+const environmentId = "a4e0f507-d6d3-4df9-a818-ad92c0071a35";
+const serviceId = "6816c4a2-e392-4ee5-826f-2584cb599ec0";
 const commitSha = "a".repeat(40);
+const projectIdSha256 = railwayDeploymentIdentityIdSha256("project", projectId)!;
+const environmentIdSha256 = railwayDeploymentIdentityIdSha256(
+  "environment",
+  environmentId,
+)!;
+const serviceIdSha256 = railwayDeploymentIdentityIdSha256("service", serviceId)!;
+const railwayIdentityIds = { projectId, environmentId, serviceId } as const;
+const railwayIdentitySha256 = permanentStagingIdentitySha256(railwayIdentityIds);
 const fixture = {
   schemaVersion: 1,
   purpose: "permanent-staging-disposable-load",
@@ -45,11 +54,7 @@ function validEnvironment(): Record<string, string> {
     PINTPATH_PERMANENT_STAGING_RAILWAY_PROJECT_ID: projectId,
     PINTPATH_PERMANENT_STAGING_RAILWAY_ENVIRONMENT_ID: environmentId,
     PINTPATH_PERMANENT_STAGING_RAILWAY_SERVICE_ID: serviceId,
-    PINTPATH_STAGING_LOAD_EXPECTED_IDENTITY_SHA256: permanentStagingIdentitySha256({
-      projectId,
-      environmentId,
-      serviceId,
-    }),
+    PINTPATH_STAGING_LOAD_EXPECTED_IDENTITY_SHA256: railwayIdentitySha256,
     PINTPATH_STAGING_LOAD_EXPECTED_RPS: "2",
     PINTPATH_STAGING_LOAD_EXPECTED_CONCURRENCY: "4",
     PINTPATH_STAGING_LOAD_EXPECTED_REPLICA_COUNT: "2",
@@ -93,6 +98,9 @@ describe("permanent-staging load/soak configuration", () => {
       expectedReplicaCount: 2,
       targetOrigin,
       targetOriginSha256: sha256(targetOrigin),
+      targetProjectIdSha256: projectIdSha256,
+      targetEnvironmentIdSha256: environmentIdSha256,
+      targetServiceIdSha256: serviceIdSha256,
       expectedCommitSha: commitSha,
     });
     expect(configuration).not.toHaveProperty("userAToken");
@@ -152,6 +160,79 @@ describe("permanent-staging load/soak configuration", () => {
     );
   });
 
+  const railwayIdentityInputs = [
+    {
+      label: "project",
+      environmentName: "PINTPATH_PERMANENT_STAGING_RAILWAY_PROJECT_ID",
+      identityField: "projectId",
+      value: projectId,
+    },
+    {
+      label: "environment",
+      environmentName: "PINTPATH_PERMANENT_STAGING_RAILWAY_ENVIRONMENT_ID",
+      identityField: "environmentId",
+      value: environmentId,
+    },
+    {
+      label: "service",
+      environmentName: "PINTPATH_PERMANENT_STAGING_RAILWAY_SERVICE_ID",
+      identityField: "serviceId",
+      value: serviceId,
+    },
+  ] as const;
+
+  const invalidRailwayIdentityInputs = railwayIdentityInputs.flatMap((input) => {
+    const uppercase = input.value.toUpperCase();
+    const nonRfcVersion = `${input.value.slice(0, 14)}0${input.value.slice(15)}`;
+    return [
+      {
+        ...input,
+        state: "leading whitespace",
+        invalidValue: ` ${input.value}`,
+        expectedIdentitySha256: railwayIdentitySha256,
+      },
+      {
+        ...input,
+        state: "trailing whitespace",
+        invalidValue: `${input.value} `,
+        expectedIdentitySha256: railwayIdentitySha256,
+      },
+      {
+        ...input,
+        state: "uppercase spelling",
+        invalidValue: uppercase,
+        expectedIdentitySha256: permanentStagingIdentitySha256({
+          ...railwayIdentityIds,
+          [input.identityField]: uppercase,
+        }),
+      },
+      {
+        ...input,
+        state: "non-RFC version spelling",
+        invalidValue: nonRfcVersion,
+        expectedIdentitySha256: permanentStagingIdentitySha256({
+          ...railwayIdentityIds,
+          [input.identityField]: nonRfcVersion,
+        }),
+      },
+    ];
+  });
+
+  it.each(invalidRailwayIdentityInputs)(
+    "rejects a $state for the raw Railway $label ID before hashing",
+    ({ environmentName, invalidValue, expectedIdentitySha256 }) => {
+      expectConfigurationFailure(
+        {
+          ...validEnvironment(),
+          [environmentName]: invalidValue,
+          PINTPATH_STAGING_LOAD_EXPECTED_IDENTITY_SHA256: expectedIdentitySha256,
+        },
+        ["--profile=expected-peak", "--duration-minutes=10"],
+        "identity_pin_invalid",
+      );
+    },
+  );
+
   it("loads distinct credentials and only the exact pinned reviewed fixture", async () => {
     const configuration = parsePermanentStagingLoadConfiguration(
       validEnvironment(),
@@ -191,6 +272,15 @@ const adminToken = "admin-opaque-token-12345678900";
 const replicaA = "1".repeat(64);
 const replicaB = "2".repeat(64);
 
+type DeploymentIdentityHashField =
+  | "projectIdSha256"
+  | "environmentIdSha256"
+  | "serviceIdSha256";
+
+type DeploymentIdentityHashOverrides = Partial<
+  Record<DeploymentIdentityHashField, string | undefined>
+>;
+
 function response(data: Record<string, unknown>, status = 200): Response {
   return new Response(JSON.stringify({ ok: true, data }), {
     status,
@@ -198,7 +288,13 @@ function response(data: Record<string, unknown>, status = 200): Response {
   });
 }
 
-function fakeRun(input: { leakToUserB?: boolean } = {}): {
+function fakeRun(input: {
+  leakToUserB?: boolean;
+  preflightDeploymentOverrides?: Partial<
+    Record<"health" | "ready", DeploymentIdentityHashOverrides>
+  >;
+  timedDeploymentOverrides?: DeploymentIdentityHashOverrides;
+} = {}): {
   configuration: PermanentStagingLoadConfiguration;
   secrets: PermanentStagingLoadSecrets;
   fetchImplementation: typeof fetch;
@@ -223,11 +319,24 @@ function fakeRun(input: { leakToUserB?: boolean } = {}): {
     const authorization = new Headers(requestInit?.headers).get("authorization") ?? "";
     const token = authorization.replace(/^Bearer\s+/i, "");
     if (url.pathname === "/health" || url.pathname === "/ready") {
-      const replicaIdSha256 = replicaProbe++ % 2 === 0 ? replicaA : replicaB;
+      const probeIndex = replicaProbe++;
+      const replicaIdSha256 = probeIndex % 2 === 0 ? replicaA : replicaB;
+      const route = url.pathname === "/health" ? "health" : "ready";
+      const deploymentOverrides = probeIndex < 2
+        ? input.preflightDeploymentOverrides?.[route]
+        : input.timedDeploymentOverrides;
       return response({
         service: "pint-path",
         status: url.pathname === "/health" ? "ok" : "ready",
-        deployment: { commitSha, environment: "production", replicaIdSha256 },
+        deployment: {
+          commitSha,
+          environment: "production",
+          projectIdSha256,
+          environmentIdSha256,
+          serviceIdSha256,
+          replicaIdSha256,
+          ...deploymentOverrides,
+        },
       });
     }
     if (url.pathname === "/api/business/config") {
@@ -345,4 +454,77 @@ describe("permanent-staging load/soak execution", () => {
       "write_journey_failed",
     ]));
   });
+
+  const invalidIdentityHashes = ([
+    "projectIdSha256",
+    "environmentIdSha256",
+    "serviceIdSha256",
+  ] as const).flatMap((field) => [
+    { field, state: "missing" as const, value: undefined },
+    { field, state: "wrong" as const, value: "f".repeat(64) },
+  ]);
+
+  it.each(invalidIdentityHashes.flatMap(({ field, state, value }) => [
+    { field, state, value, route: "health" as const },
+    { field, state, value, route: "ready" as const },
+  ]))(
+    "rejects a $state $field from the preflight $route response",
+    async ({ field, value, route }) => {
+      const harness = fakeRun({
+        preflightDeploymentOverrides: {
+          [route]: { [field]: value },
+        },
+      });
+      let monotonic = 0;
+      let wallNow = Date.parse("2026-08-09T00:00:00.000Z");
+      const report = await runPermanentStagingLoadSoak(
+        harness.configuration,
+        harness.secrets,
+        {
+          fetch: harness.fetchImplementation,
+          wallNow: () => wallNow,
+          monotonicNow: () => monotonic += 1,
+          randomBytes: () => Buffer.from("0123456789abcdef01234567", "hex"),
+          sleep: async (milliseconds) => { wallNow += milliseconds; },
+        },
+      );
+
+      expect(report.passed).toBe(false);
+      expect(report.failureCodes).toEqual(expect.arrayContaining([
+        "target_preflight_failed",
+        "profile_incomplete",
+      ]));
+      expect(report.journeys.writeCyclesAttempted).toBe(0);
+      expect(report.totals.contractFailures).toBe(1);
+    },
+  );
+
+  it.each(invalidIdentityHashes)(
+    "rejects a $state $field after the exact preflight",
+    async ({ field, value }) => {
+      const harness = fakeRun({
+        timedDeploymentOverrides: { [field]: value },
+      });
+      let monotonic = 0;
+      let wallNow = Date.parse("2026-08-09T00:00:00.000Z");
+      const report = await runPermanentStagingLoadSoak(
+        harness.configuration,
+        harness.secrets,
+        {
+          fetch: harness.fetchImplementation,
+          wallNow: () => wallNow,
+          monotonicNow: () => monotonic += 1,
+          randomBytes: () => Buffer.from("0123456789abcdef01234567", "hex"),
+          sleep: async (milliseconds) => { wallNow += milliseconds; },
+        },
+      );
+
+      expect(report.passed).toBe(false);
+      expect(report.failureCodes).toEqual(expect.arrayContaining([
+        "target_identity_changed",
+        "profile_incomplete",
+      ]));
+      expect(report.totals.contractFailures).toBeGreaterThanOrEqual(1);
+    },
+  );
 });

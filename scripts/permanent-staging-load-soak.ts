@@ -5,6 +5,7 @@ import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 
+import { railwayDeploymentIdentityIdSha256 } from "../src/lib/railway-deployment-identity.js";
 import { isRestoreRehearsalEnvironment } from "./lib/operator-mutation-guard.js";
 
 export type PermanentStagingLoadProfile = "expected-peak" | "2x-peak" | "soak";
@@ -57,6 +58,9 @@ export interface PermanentStagingLoadConfiguration {
   readonly targetOrigin: string;
   readonly targetOriginSha256: string;
   readonly targetIdentitySha256: string;
+  readonly targetProjectIdSha256: string;
+  readonly targetEnvironmentIdSha256: string;
+  readonly targetServiceIdSha256: string;
   readonly expectedCommitSha: string;
   readonly userATokenFile: string;
   readonly userBTokenFile: string;
@@ -272,8 +276,11 @@ export function permanentStagingIdentitySha256(input: {
     .digest("hex");
 }
 
-function requiredValue(environment: Readonly<Record<string, string | undefined>>, name: string): string {
-  const value = environment[name]?.trim() ?? "";
+function requiredRawIdentityValue(
+  environment: Readonly<Record<string, string | undefined>>,
+  name: string,
+): string {
+  const value = environment[name] ?? "";
   if (!value) configurationError("identity_pin_invalid");
   return value;
 }
@@ -407,20 +414,37 @@ export function parsePermanentStagingLoadConfiguration(
   const expectedCommitSha = environment.PINTPATH_STAGING_LOAD_EXPECTED_COMMIT_SHA?.trim() ?? "";
   if (!COMMIT_SHA_PATTERN.test(expectedCommitSha)) configurationError("commit_pin_invalid");
 
-  const projectId = requiredValue(environment, "PINTPATH_PERMANENT_STAGING_RAILWAY_PROJECT_ID");
-  const environmentId = requiredValue(environment, "PINTPATH_PERMANENT_STAGING_RAILWAY_ENVIRONMENT_ID");
-  const serviceId = requiredValue(environment, "PINTPATH_PERMANENT_STAGING_RAILWAY_SERVICE_ID");
-  const expectedIdentitySha256 = environment.PINTPATH_STAGING_LOAD_EXPECTED_IDENTITY_SHA256?.trim() ?? "";
-  const actualIdentitySha256 = permanentStagingIdentitySha256({ projectId, environmentId, serviceId });
+  const projectId = requiredRawIdentityValue(
+    environment,
+    "PINTPATH_PERMANENT_STAGING_RAILWAY_PROJECT_ID",
+  );
+  const environmentId = requiredRawIdentityValue(
+    environment,
+    "PINTPATH_PERMANENT_STAGING_RAILWAY_ENVIRONMENT_ID",
+  );
+  const serviceId = requiredRawIdentityValue(
+    environment,
+    "PINTPATH_PERMANENT_STAGING_RAILWAY_SERVICE_ID",
+  );
+  const targetProjectIdSha256 = railwayDeploymentIdentityIdSha256("project", projectId);
+  const targetEnvironmentIdSha256 = railwayDeploymentIdentityIdSha256("environment", environmentId);
+  const targetServiceIdSha256 = railwayDeploymentIdentityIdSha256("service", serviceId);
   if (
     !validIdentity(projectId)
     || !validIdentity(environmentId)
     || !validIdentity(serviceId)
-    || !SHA256_PATTERN.test(expectedIdentitySha256)
-    || actualIdentitySha256 !== expectedIdentitySha256
+    || targetProjectIdSha256 === undefined
+    || targetEnvironmentIdSha256 === undefined
+    || targetServiceIdSha256 === undefined
   ) {
     configurationError("identity_pin_invalid");
   }
+  const expectedIdentitySha256 = environment.PINTPATH_STAGING_LOAD_EXPECTED_IDENTITY_SHA256?.trim() ?? "";
+  const actualIdentitySha256 = permanentStagingIdentitySha256({ projectId, environmentId, serviceId });
+  if (
+    !SHA256_PATTERN.test(expectedIdentitySha256)
+    || actualIdentitySha256 !== expectedIdentitySha256
+  ) configurationError("identity_pin_invalid");
 
   const expectedRps = parseFiniteNumber(environment.PINTPATH_STAGING_LOAD_EXPECTED_RPS);
   const expectedConcurrency = parseIntegerInRange(
@@ -487,6 +511,9 @@ export function parsePermanentStagingLoadConfiguration(
     targetOrigin: target.origin,
     targetOriginSha256,
     targetIdentitySha256: actualIdentitySha256,
+    targetProjectIdSha256,
+    targetEnvironmentIdSha256,
+    targetServiceIdSha256,
     expectedCommitSha,
     userATokenFile,
     userBTokenFile,
@@ -860,6 +887,12 @@ function validateDeploymentResponse(
     && deployment
     && deployment.commitSha === context.configuration.expectedCommitSha
     && deployment.environment === "production"
+    && deployment.projectIdSha256
+      === context.configuration.targetProjectIdSha256
+    && deployment.environmentIdSha256
+      === context.configuration.targetEnvironmentIdSha256
+    && deployment.serviceIdSha256
+      === context.configuration.targetServiceIdSha256
     && validReplicaDigest(deployment.replicaIdSha256),
   );
   if (!valid || !deployment || !validReplicaDigest(deployment.replicaIdSha256)) {
