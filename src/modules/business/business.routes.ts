@@ -374,7 +374,7 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     }
   });
 
-  router.get("/account/sessions", async (req, res) => {
+  router.get("/account/sessions", authLimiter, async (req, res) => {
     const account = await requireAccount(req, businessService);
     await businessService.requireRecentAuthentication(account, getAuthorization(req), getReauthenticationProof(req));
     const query = parseWithSchema(adminPaginationSchema, req.query, "Invalid session pagination");
