@@ -1113,19 +1113,21 @@ describe("Postgres logical backup foundation", () => {
       const stableTargetBytes = Buffer.from("parent-owned-prefix\n");
       const delayedBytes = Buffer.from("escaped-delayed-output");
       writeAllToDescriptor(targetFileDescriptor, stableTargetBytes);
-      const escapedCode = [
-        'const fs = require("node:fs")',
-        `setTimeout(() => { try { fs.writeSync(1, ${JSON.stringify(delayedBytes.toString("utf8"))}) } catch {} }, 900)`,
-        "setInterval(() => undefined, 1_000)",
-      ].join(";");
-      const leaderCode = [
-        'const fs = require("node:fs")',
-        'const { spawn } = require("node:child_process")',
-        `const escaped = spawn(process.execPath, ["-e", ${JSON.stringify(escapedCode)}], { detached: true, stdio: ["ignore", 1, "ignore"] })`,
-        "escaped.unref()",
-        'fs.writeFileSync(process.argv[1], String(escaped.pid), { encoding: "utf8" })',
-        "process.exit(0)",
-      ].join(";");
+      const leaderCode = String.raw`
+        const fs = require("node:fs");
+        const { spawn } = require("node:child_process");
+        const escaped = spawn(
+          process.execPath,
+          [
+            "-e",
+            'setTimeout(() => { try { require("node:fs").writeSync(1, "escaped-delayed-output") } catch {} }, 900); setInterval(() => undefined, 1_000)',
+          ],
+          { detached: true, stdio: ["ignore", 1, "ignore"] },
+        );
+        escaped.unref();
+        fs.writeFileSync(process.argv[1], String(escaped.pid), { encoding: "utf8" });
+        process.exit(0);
+      `;
       const readPid = (): number | null => {
         const buffer = Buffer.alloc(64);
         const bytesRead = fs.readSync(
