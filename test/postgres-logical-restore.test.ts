@@ -941,29 +941,29 @@ describe("Postgres logical restore rehearsal", () => {
       fixture.backupDirectory,
       POSTGRES_LOGICAL_BACKUP_ARCHIVE,
     );
-    const stableTimestampSeconds = 1_700_000_000;
-    fs.utimesSync(archivePath, stableTimestampSeconds, stableTimestampSeconds);
-    const originalStat = fs.statSync(archivePath, { bigint: true });
-    const attackerBytes = Buffer.alloc(archiveBytes.length, 0x59);
-    const harness = createHarness();
-    const runProcess = harness.dependencies.runProcess!;
-    let revertedStat: fs.BigIntStats | null = null;
-    harness.dependencies.runProcess = async (invocation) => {
-      if (!invocation.args.includes("--single-transaction")) {
-        return runProcess(invocation);
-      }
-      fs.writeFileSync(archivePath, attackerBytes, { mode: 0o600 });
-      const result = await runProcess(invocation);
-      fs.writeFileSync(archivePath, archiveBytes, { mode: 0o600 });
-      fs.utimesSync(archivePath, stableTimestampSeconds, stableTimestampSeconds);
-      revertedStat = fs.statSync(archivePath, { bigint: true });
-      return result;
-    };
     const archiveProbe = fs.openSync(
       archivePath,
       fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
     );
     try {
+      const stableTimestampSeconds = 1_700_000_000;
+      fs.futimesSync(archiveProbe, stableTimestampSeconds, stableTimestampSeconds);
+      const originalStat = fs.fstatSync(archiveProbe, { bigint: true });
+      const attackerBytes = Buffer.alloc(archiveBytes.length, 0x59);
+      const harness = createHarness();
+      const runProcess = harness.dependencies.runProcess!;
+      let revertedStat: fs.BigIntStats | null = null;
+      harness.dependencies.runProcess = async (invocation) => {
+        if (!invocation.args.includes("--single-transaction")) {
+          return runProcess(invocation);
+        }
+        fs.writeFileSync(archivePath, attackerBytes, { mode: 0o600 });
+        const result = await runProcess(invocation);
+        fs.writeFileSync(archivePath, archiveBytes, { mode: 0o600 });
+        fs.futimesSync(archiveProbe, stableTimestampSeconds, stableTimestampSeconds);
+        revertedStat = fs.fstatSync(archiveProbe, { bigint: true });
+        return result;
+      };
       const error = await restorePostgresLogicalBackup(
         restoreOptions(fixture),
         harness.dependencies,
