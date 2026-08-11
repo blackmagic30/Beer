@@ -75,6 +75,7 @@ export interface ProcessInvocation {
   timeoutMs: number;
   maxStdoutBytes: number;
   maxStderrBytes: number;
+  readonly stdinFileDescriptor?: number;
 }
 
 export interface ProcessResult {
@@ -416,12 +417,18 @@ function appendBounded(
 }
 
 export const runPostgresBackupProcess: ProcessRunner = async (invocation) => {
+  const stdinFileDescriptor = invocation.stdinFileDescriptor;
   if (
     !invocation.command ||
     invocation.command.includes("\0") ||
     invocation.args.some((argument) => argument.includes("\0")) ||
     Object.entries(invocation.env).some(([key, value]) => (
       !key || key.includes("\0") || value.includes("\0")
+    )) ||
+    (stdinFileDescriptor !== undefined && (
+      !Number.isSafeInteger(stdinFileDescriptor) ||
+      stdinFileDescriptor < 0 ||
+      stdinFileDescriptor > 0x7fff_ffff
     ))
   ) {
     throw new Error("invalid_process_invocation");
@@ -431,20 +438,27 @@ export const runPostgresBackupProcess: ProcessRunner = async (invocation) => {
     const child = spawn(invocation.command, [...invocation.args], {
       env: { ...invocation.env },
       shell: false,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: [stdinFileDescriptor ?? "ignore", "pipe", "pipe"],
     });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     let stdoutBytes = 0;
     let stderrBytes = 0;
     let settled = false;
+    let forcedFailure: Error | null = null;
 
     const fail = (error: Error): void => {
-      if (settled) return;
-      settled = true;
+      if (settled || forcedFailure) return;
+      forcedFailure = error;
       clearTimeout(timeout);
-      child.kill("SIGKILL");
-      reject(error);
+      try {
+        if (child.exitCode === null && child.signalCode === null) {
+          child.kill("SIGKILL");
+        }
+      } catch {
+        // Fail closed: do not return control while the child may still be able
+        // to consume an inherited descriptor or mutate its target database.
+      }
     };
     const timeout = setTimeout(
       () => fail(new Error("process_timeout")),
@@ -452,8 +466,8 @@ export const runPostgresBackupProcess: ProcessRunner = async (invocation) => {
     );
     timeout.unref();
 
-    child.stdout.on("data", (value: Buffer | string) => {
-      if (settled) return;
+    child.stdout!.on("data", (value: Buffer | string) => {
+      if (settled || forcedFailure) return;
       try {
         stdoutBytes = appendBounded(
           stdout,
@@ -465,8 +479,8 @@ export const runPostgresBackupProcess: ProcessRunner = async (invocation) => {
         fail(error instanceof Error ? error : new Error("process_output_limit_exceeded"));
       }
     });
-    child.stderr.on("data", (value: Buffer | string) => {
-      if (settled) return;
+    child.stderr!.on("data", (value: Buffer | string) => {
+      if (settled || forcedFailure) return;
       try {
         stderrBytes = appendBounded(
           stderr,
@@ -478,11 +492,20 @@ export const runPostgresBackupProcess: ProcessRunner = async (invocation) => {
         fail(error instanceof Error ? error : new Error("process_output_limit_exceeded"));
       }
     });
-    child.once("error", (error) => fail(error));
+    child.once("error", (error) => {
+      if (settled || forcedFailure) return;
+      settled = true;
+      clearTimeout(timeout);
+      reject(error);
+    });
     child.once("close", (exitCode, signal) => {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
+      if (forcedFailure) {
+        reject(forcedFailure);
+        return;
+      }
       if (signal || exitCode === null) {
         reject(new Error("process_terminated_without_exit_code"));
         return;

@@ -17,6 +17,7 @@ import {
   POSTGRES_LOGICAL_BACKUP_STATE_RECEIPT,
   PostgresLogicalBackupError,
   postgresLogicalBackupManifestBindingSha256,
+  runPostgresBackupProcess,
   type CreatePostgresLogicalBackupOptions,
   type PostgresLogicalBackupDependencies,
   type PostgresLogicalBackupManifest,
@@ -563,6 +564,117 @@ afterEach(() => {
 });
 
 describe("Postgres logical backup foundation", () => {
+  it("ignores child stdin when no inherited file descriptor is supplied", async () => {
+    const result = await runPostgresBackupProcess({
+      command: process.execPath,
+      args: [
+        "-e",
+        'process.stdout.write(JSON.stringify(require("node:fs").readFileSync(0, "utf8")))',
+      ],
+      env: { LC_ALL: "C" },
+      timeoutMs: 5_000,
+      maxStdoutBytes: 1_024,
+      maxStderrBytes: 1_024,
+    });
+
+    expect(result).toEqual({ exitCode: 0, stdout: JSON.stringify(""), stderr: "" });
+  });
+
+  it("inherits an explicitly supplied stdin file descriptor", async () => {
+    const root = makeTemporaryDirectory();
+    const inputPath = path.join(root, "archive-input");
+    const input = "descriptor-custodied-archive\n";
+    fs.writeFileSync(inputPath, input, { mode: 0o600 });
+    const stdinFileDescriptor = fs.openSync(inputPath, fs.constants.O_RDONLY);
+
+    try {
+      const result = await runPostgresBackupProcess({
+        command: process.execPath,
+        args: [
+          "-e",
+          'process.stdout.write(require("node:fs").readFileSync(0, "utf8"))',
+        ],
+        env: { LC_ALL: "C" },
+        timeoutMs: 5_000,
+        maxStdoutBytes: 1_024,
+        maxStderrBytes: 1_024,
+        stdinFileDescriptor,
+      });
+
+      expect(result).toEqual({ exitCode: 0, stdout: input, stderr: "" });
+      expect(fs.fstatSync(stdinFileDescriptor).isFile()).toBe(true);
+    } finally {
+      fs.closeSync(stdinFileDescriptor);
+    }
+  });
+
+  it.each([
+    -1,
+    0.5,
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    0x8000_0000,
+  ])("rejects invalid stdin file descriptor %s before spawning", async (stdinFileDescriptor) => {
+    await expect(runPostgresBackupProcess({
+      command: path.join(makeTemporaryDirectory(), "must-not-spawn"),
+      args: [],
+      env: { LC_ALL: "C" },
+      timeoutMs: 5_000,
+      maxStdoutBytes: 1_024,
+      maxStderrBytes: 1_024,
+      stdinFileDescriptor,
+    })).rejects.toThrow("invalid_process_invocation");
+  });
+
+  it.each([
+    ["process_output_limit_exceeded", 5_000, 0] as const,
+    ["process_timeout", 1_000, 1_024] as const,
+  ])("reaps the exact child before rejecting with %s", async (
+    expectedError,
+    timeoutMs,
+    maxStdoutBytes,
+  ) => {
+    const root = makeTemporaryDirectory();
+    const inputPath = path.join(root, "archive-input");
+    const childPidPath = path.join(root, "child-pid");
+    fs.writeFileSync(inputPath, "descriptor-custodied-archive\n", { mode: 0o600 });
+    const stdinFileDescriptor = fs.openSync(inputPath, fs.constants.O_RDONLY);
+
+    try {
+      await expect(runPostgresBackupProcess({
+        command: process.execPath,
+        args: [
+          "-e",
+          [
+            'const fs = require("node:fs")',
+            'fs.writeFileSync(process.argv[1], String(process.pid), { mode: 0o600 })',
+            'process.stdout.write("trigger-output-limit")',
+            "setInterval(() => undefined, 1_000)",
+          ].join(";"),
+          childPidPath,
+        ],
+        env: { LC_ALL: "C" },
+        timeoutMs,
+        maxStdoutBytes,
+        maxStderrBytes: 1_024,
+        stdinFileDescriptor,
+      })).rejects.toThrow(expectedError);
+
+      expect(fs.fstatSync(stdinFileDescriptor).isFile()).toBe(true);
+      const childPid = Number.parseInt(fs.readFileSync(childPidPath, "utf8"), 10);
+      expect(Number.isSafeInteger(childPid) && childPid > 0).toBe(true);
+      let childLookupError: NodeJS.ErrnoException | null = null;
+      try {
+        process.kill(childPid, 0);
+      } catch (error) {
+        childLookupError = error as NodeJS.ErrnoException;
+      }
+      expect(childLookupError?.code).toBe("ESRCH");
+    } finally {
+      fs.closeSync(stdinFileDescriptor);
+    }
+  });
+
   it("preserves the historical v2 binding domain and binds v3 transport under domain v2", () => {
     const v2 = historicalV2Manifest();
     expect(postgresLogicalBackupManifestBindingSha256(v2)).toBe(
@@ -1025,6 +1137,9 @@ describe("Postgres logical backup foundation", () => {
     expect(versionInvocations.every((invocation) => invocation.env.PGPASSWORD === undefined)).toBe(true);
     expect(versionInvocations.every((invocation) => invocation.env.PGPASSFILE === undefined)).toBe(true);
     expect(versionInvocations.every((invocation) => invocation.env.DATABASE_URL === undefined)).toBe(true);
+    expect(versionInvocations.every((invocation) => (
+      invocation.stdinFileDescriptor === undefined
+    ))).toBe(true);
     expect(queries.filter((query) => query.includes("logical-backup:set-role"))).toEqual([
       `/* pintpath:logical-backup:set-role */ SET ROLE ${backupRole}`,
     ]);

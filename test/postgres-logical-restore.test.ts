@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   runPostgresLogicalRestoreCli,
@@ -314,8 +314,26 @@ interface HarnessOptions {
   wrongState?: boolean;
 }
 
+interface ProcessArchiveInput {
+  readonly phase: "list" | "restore";
+  readonly fileDescriptor: number;
+  readonly bytes: Buffer;
+}
+
+function readProcessArchiveInput(fileDescriptor: number): Buffer {
+  const chunks: Buffer[] = [];
+  const buffer = Buffer.allocUnsafe(16 * 1024);
+  while (true) {
+    const bytesRead = fs.readSync(fileDescriptor, buffer, 0, buffer.length, null);
+    if (bytesRead === 0) break;
+    chunks.push(Buffer.from(buffer.subarray(0, bytesRead)));
+  }
+  return Buffer.concat(chunks);
+}
+
 function createHarness(options: HarnessOptions = {}) {
   const invocations: ProcessInvocation[] = [];
+  const archiveInputs: ProcessArchiveInput[] = [];
   const queries: string[] = [];
   const connectionConfigs: PostgresLogicalRestoreConnectionConfig[] = [];
   const events: string[] = [];
@@ -436,9 +454,25 @@ function createHarness(options: HarnessOptions = {}) {
       return { exitCode: 0, stdout: "pg_restore (PostgreSQL) 17.10 (Homebrew)\n", stderr: "" };
     }
     if (invocation.args[0] === "--list") {
+      if (invocation.stdinFileDescriptor === undefined) {
+        throw new Error("listing archive descriptor missing");
+      }
+      archiveInputs.push({
+        phase: "list",
+        fileDescriptor: invocation.stdinFileDescriptor,
+        bytes: readProcessArchiveInput(invocation.stdinFileDescriptor),
+      });
       events.push("archive-validated");
       return { exitCode: 0, stdout: archiveListing(), stderr: "" };
     }
+    if (invocation.stdinFileDescriptor === undefined) {
+      throw new Error("restore archive descriptor missing");
+    }
+    archiveInputs.push({
+      phase: "restore",
+      fileDescriptor: invocation.stdinFileDescriptor,
+      bytes: readProcessArchiveInput(invocation.stdinFileDescriptor),
+    });
     events.push("restore-started");
     const result = options.restoreResult ?? { exitCode: 0, stdout: "", stderr: "" };
     if (result.exitCode === 0 && !result.stdout.trim() && !result.stderr.trim()) restored = true;
@@ -473,6 +507,7 @@ function createHarness(options: HarnessOptions = {}) {
   };
   return {
     dependencies,
+    archiveInputs,
     events,
     invocations,
     queries,
@@ -501,7 +536,41 @@ function expectRestoreError(error: unknown, code: PostgresLogicalRestoreError["c
   expect(String((error as Error).message)).not.toContain("db.example.invalid");
 }
 
+function failArchiveHandleClose(
+  archivePath: string,
+  archiveOpenOrdinal: 2 | 3,
+): { readonly openedFileDescriptors: number[] } {
+  const originalOpen = fs.promises.open.bind(fs.promises);
+  const openedFileDescriptors: number[] = [];
+  let matchingOpenCount = 0;
+  vi.spyOn(fs.promises, "open").mockImplementation(async (...args) => {
+    const handle = await originalOpen(...args);
+    if (path.resolve(String(args[0])) !== archivePath) return handle;
+    matchingOpenCount += 1;
+    if (matchingOpenCount === 2 || matchingOpenCount === 3) {
+      openedFileDescriptors.push(handle.fd);
+    }
+    if (matchingOpenCount === archiveOpenOrdinal) {
+      const close = handle.close.bind(handle);
+      let failedOnce = false;
+      Object.defineProperty(handle, "close", {
+        configurable: true,
+        value: async () => {
+          if (!failedOnce) {
+            failedOnce = true;
+            throw new Error("simulated archive close failure");
+          }
+          await close();
+        },
+      });
+    }
+    return handle;
+  });
+  return { openedFileDescriptors };
+}
+
 afterEach(() => {
+  vi.restoreAllMocks();
   while (roots.length > 0) fs.rmSync(roots.pop()!, { recursive: true, force: true });
 });
 
@@ -611,6 +680,18 @@ describe("Postgres logical restore rehearsal", () => {
     const restoreInvocation = harness.invocations.find((invocation) => (
       invocation.args.includes("--single-transaction")
     ))!;
+    const listingInvocation = harness.invocations.find((invocation) => (
+      invocation.args[0] === "--list"
+    ))!;
+    const versionInvocation = harness.invocations.find((invocation) => (
+      invocation.args[0] === "--version"
+    ))!;
+    const archivePath = path.join(
+      fixture.backupDirectory,
+      POSTGRES_LOGICAL_BACKUP_ARCHIVE,
+    );
+    expect(versionInvocation.stdinFileDescriptor).toBeUndefined();
+    expect(listingInvocation.args).toEqual(["--list", "--format=custom"]);
     expect(restoreInvocation.args).toEqual([
       "--format=custom",
       "--dbname=",
@@ -619,8 +700,23 @@ describe("Postgres logical restore rehearsal", () => {
       "--exit-on-error",
       "--single-transaction",
       "--no-password",
-      path.join(fixture.backupDirectory, POSTGRES_LOGICAL_BACKUP_ARCHIVE),
     ]);
+    expect(listingInvocation.args).not.toContain("-");
+    expect(restoreInvocation.args).not.toContain("-");
+    expect(JSON.stringify(listingInvocation.args)).not.toContain(archivePath);
+    expect(JSON.stringify(restoreInvocation.args)).not.toContain(archivePath);
+    expect(harness.archiveInputs).toHaveLength(2);
+    expect(harness.archiveInputs.map((input) => input.phase)).toEqual(["list", "restore"]);
+    expect(harness.archiveInputs[0]?.fileDescriptor).not.toBe(
+      harness.archiveInputs[1]?.fileDescriptor,
+    );
+    expect(harness.archiveInputs.map((input) => input.bytes)).toEqual([
+      archiveBytes,
+      archiveBytes,
+    ]);
+    for (const input of harness.archiveInputs) {
+      expect(() => fs.fstatSync(input.fileDescriptor)).toThrow();
+    }
     expect(JSON.stringify(restoreInvocation.args)).not.toContain(secret);
     expect(restoreInvocation.env).toMatchObject({
       PATH: "/safe/bin",
@@ -672,6 +768,241 @@ describe("Postgres logical restore rehearsal", () => {
       exactDataReconciliation: "canonical-contract-exact",
     });
     expect(receiptBytes).not.toContain("required-not-implemented");
+  });
+
+  it("feeds the trusted listing descriptor through an ancestor-directory ABA", async () => {
+    const root = temporaryRoot();
+    const fixture = writeFixture(root);
+    const harness = createHarness();
+    const runProcess = harness.dependencies.runProcess!;
+    const parkedDirectory = path.join(root, "trusted-listing-backup-parked");
+    let abaCompleted = false;
+    harness.dependencies.runProcess = async (invocation) => {
+      if (invocation.args[0] !== "--list") return runProcess(invocation);
+      fs.renameSync(fixture.backupDirectory, parkedDirectory);
+      fs.mkdirSync(fixture.backupDirectory, { mode: 0o700 });
+      fs.chmodSync(fixture.backupDirectory, 0o700);
+      fs.writeFileSync(
+        path.join(fixture.backupDirectory, POSTGRES_LOGICAL_BACKUP_ARCHIVE),
+        Buffer.from("attacker-controlled-listing-archive", "utf8"),
+        { mode: 0o600 },
+      );
+      try {
+        return await runProcess(invocation);
+      } finally {
+        fs.rmSync(fixture.backupDirectory, { recursive: true, force: true });
+        fs.renameSync(parkedDirectory, fixture.backupDirectory);
+        abaCompleted = true;
+      }
+    };
+
+    await expect(restorePostgresLogicalBackup(
+      restoreOptions(fixture),
+      harness.dependencies,
+    )).resolves.toMatchObject({ ok: true, backupArchiveSha256: sha256(archiveBytes) });
+    expect(abaCompleted).toBe(true);
+    expect(harness.archiveInputs.map((input) => [input.phase, input.bytes])).toEqual([
+      ["list", archiveBytes],
+      ["restore", archiveBytes],
+    ]);
+  });
+
+  it("feeds the retained restore descriptor through an ancestor-directory ABA", async () => {
+    const root = temporaryRoot();
+    const fixture = writeFixture(root);
+    const harness = createHarness();
+    const runProcess = harness.dependencies.runProcess!;
+    const parkedDirectory = path.join(root, "trusted-backup-parked");
+    let abaCompleted = false;
+    harness.dependencies.runProcess = async (invocation) => {
+      if (!invocation.args.includes("--single-transaction")) {
+        return runProcess(invocation);
+      }
+      fs.renameSync(fixture.backupDirectory, parkedDirectory);
+      fs.mkdirSync(fixture.backupDirectory, { mode: 0o700 });
+      fs.chmodSync(fixture.backupDirectory, 0o700);
+      fs.writeFileSync(
+        path.join(fixture.backupDirectory, POSTGRES_LOGICAL_BACKUP_ARCHIVE),
+        Buffer.from("attacker-controlled-archive", "utf8"),
+        { mode: 0o600 },
+      );
+      try {
+        return await runProcess(invocation);
+      } finally {
+        fs.rmSync(fixture.backupDirectory, { recursive: true, force: true });
+        fs.renameSync(parkedDirectory, fixture.backupDirectory);
+        abaCompleted = true;
+      }
+    };
+
+    await expect(restorePostgresLogicalBackup(
+      restoreOptions(fixture),
+      harness.dependencies,
+    )).resolves.toMatchObject({ ok: true, backupArchiveSha256: sha256(archiveBytes) });
+    expect(abaCompleted).toBe(true);
+    expect(harness.archiveInputs.find((input) => input.phase === "restore")?.bytes)
+      .toEqual(archiveBytes);
+    expect(fs.readFileSync(
+      path.join(fixture.backupDirectory, POSTGRES_LOGICAL_BACKUP_ARCHIVE),
+    )).toEqual(archiveBytes);
+  });
+
+  it("rejects custody-handle close failures before connecting or writing a receipt", async () => {
+    const root = temporaryRoot();
+    const fixture = writeFixture(root);
+    const archivePath = path.join(
+      fixture.backupDirectory,
+      POSTGRES_LOGICAL_BACKUP_ARCHIVE,
+    );
+    const closeFailure = failArchiveHandleClose(archivePath, 2);
+    const harness = createHarness();
+    const error = await restorePostgresLogicalBackup(
+      restoreOptions(fixture),
+      harness.dependencies,
+    ).catch((caught: unknown) => caught);
+
+    expectRestoreError(error, "backup_tampered");
+    expect(harness.connectCount).toBe(0);
+    expect(fs.existsSync(fixture.receiptFile)).toBe(false);
+    expect(closeFailure.openedFileDescriptors).toHaveLength(2);
+    for (const fileDescriptor of closeFailure.openedFileDescriptors) {
+      expect(() => fs.fstatSync(fileDescriptor)).toThrow();
+    }
+  });
+
+  it("requires target disposal when the mutation handle cannot close before receipt", async () => {
+    const root = temporaryRoot();
+    const fixture = writeFixture(root);
+    const archivePath = path.join(
+      fixture.backupDirectory,
+      POSTGRES_LOGICAL_BACKUP_ARCHIVE,
+    );
+    const closeFailure = failArchiveHandleClose(archivePath, 3);
+    const harness = createHarness();
+    const error = await restorePostgresLogicalBackup(
+      restoreOptions(fixture),
+      harness.dependencies,
+    ).catch((caught: unknown) => caught);
+
+    expectRestoreError(error, "verification_failed_target_disposal_required");
+    expect(harness.connectCount).toBe(1);
+    expect(harness.events).toContain("restore-started");
+    expect(fs.existsSync(fixture.receiptFile)).toBe(false);
+    expect(closeFailure.openedFileDescriptors).toHaveLength(2);
+    for (const fileDescriptor of closeFailure.openedFileDescriptors) {
+      expect(() => fs.fstatSync(fileDescriptor)).toThrow();
+    }
+  });
+
+  it("retains descriptor custody until a deferred restore-runner rejection settles", async () => {
+    const root = temporaryRoot();
+    const fixture = writeFixture(root);
+    const harness = createHarness({
+      restoreResult: { exitCode: 1, stdout: "", stderr: "deferred" },
+    });
+    const runProcess = harness.dependencies.runProcess!;
+    let rejectRestore!: () => void;
+    let restoreFileDescriptor = -1;
+    let signalRestorePending!: () => void;
+    const restorePending = new Promise<void>((resolve) => {
+      signalRestorePending = resolve;
+    });
+    harness.dependencies.runProcess = async (invocation) => {
+      const result = await runProcess(invocation);
+      if (!invocation.args.includes("--single-transaction")) return result;
+      restoreFileDescriptor = invocation.stdinFileDescriptor!;
+      return new Promise<ProcessResult>((_resolve, reject) => {
+        rejectRestore = () => reject(new Error("deferred runner rejection"));
+        signalRestorePending();
+      });
+    };
+
+    const pendingRestore = restorePostgresLogicalBackup(
+      restoreOptions(fixture),
+      harness.dependencies,
+    );
+    await restorePending;
+    expect(fs.fstatSync(restoreFileDescriptor).isFile()).toBe(true);
+    expect(fs.existsSync(fixture.receiptFile)).toBe(false);
+    rejectRestore();
+    const error = await pendingRestore.catch((caught: unknown) => caught);
+
+    expectRestoreError(error, "restore_rollback_unverified_target_disposal_required");
+    expect(() => fs.fstatSync(restoreFileDescriptor)).toThrow();
+    expect(fs.existsSync(fixture.receiptFile)).toBe(false);
+    expect(harness.queries.filter((query) => query.includes("private-schemas-before")))
+      .toHaveLength(2);
+  });
+
+  it("detects a transient same-inode write-and-revert concealed before postflight", async () => {
+    const root = temporaryRoot();
+    const fixture = writeFixture(root);
+    const archivePath = path.join(
+      fixture.backupDirectory,
+      POSTGRES_LOGICAL_BACKUP_ARCHIVE,
+    );
+    const stableTimestampSeconds = 1_700_000_000;
+    fs.utimesSync(archivePath, stableTimestampSeconds, stableTimestampSeconds);
+    const originalStat = fs.statSync(archivePath, { bigint: true });
+    const attackerBytes = Buffer.alloc(archiveBytes.length, 0x59);
+    const harness = createHarness();
+    const runProcess = harness.dependencies.runProcess!;
+    let revertedStat: fs.BigIntStats | null = null;
+    harness.dependencies.runProcess = async (invocation) => {
+      if (!invocation.args.includes("--single-transaction")) {
+        return runProcess(invocation);
+      }
+      fs.writeFileSync(archivePath, attackerBytes, { mode: 0o600 });
+      const result = await runProcess(invocation);
+      fs.writeFileSync(archivePath, archiveBytes, { mode: 0o600 });
+      fs.utimesSync(archivePath, stableTimestampSeconds, stableTimestampSeconds);
+      revertedStat = fs.statSync(archivePath, { bigint: true });
+      return result;
+    };
+    const error = await restorePostgresLogicalBackup(
+      restoreOptions(fixture),
+      harness.dependencies,
+    ).catch((caught: unknown) => caught);
+
+    expectRestoreError(error, "verification_failed_target_disposal_required");
+    expect(harness.archiveInputs.find((input) => input.phase === "restore")?.bytes)
+      .toEqual(attackerBytes);
+    expect(fs.readFileSync(archivePath)).toEqual(archiveBytes);
+    expect(revertedStat?.mtimeNs).toBe(originalStat.mtimeNs);
+    expect(revertedStat?.ctimeNs).not.toBe(originalStat.ctimeNs);
+    expect(fs.existsSync(fixture.receiptFile)).toBe(false);
+  });
+
+  it("requires target disposal after same-inode archive drift during mutation", async () => {
+    const root = temporaryRoot();
+    const fixture = writeFixture(root);
+    const archivePath = path.join(
+      fixture.backupDirectory,
+      POSTGRES_LOGICAL_BACKUP_ARCHIVE,
+    );
+    const harness = createHarness();
+    const runProcess = harness.dependencies.runProcess!;
+    harness.dependencies.runProcess = async (invocation) => {
+      const result = await runProcess(invocation);
+      if (invocation.args.includes("--single-transaction")) {
+        const replacement = Buffer.alloc(archiveBytes.length, 0x58);
+        fs.writeFileSync(archivePath, replacement, { mode: 0o600 });
+        fs.chmodSync(archivePath, 0o600);
+      }
+      return result;
+    };
+    const error = await restorePostgresLogicalBackup(
+      restoreOptions(fixture),
+      harness.dependencies,
+    ).catch((caught: unknown) => caught);
+
+    expectRestoreError(error, "verification_failed_target_disposal_required");
+    expect(harness.archiveInputs.find((input) => input.phase === "restore")?.bytes)
+      .toEqual(archiveBytes);
+    expect(fs.existsSync(fixture.receiptFile)).toBe(false);
+    for (const input of harness.archiveInputs) {
+      expect(() => fs.fstatSync(input.fileDescriptor)).toThrow();
+    }
   });
 
   it("restores a frozen schema-v2 manifest through the compatibility parser", async () => {
@@ -773,24 +1104,26 @@ describe("Postgres logical restore rehearsal", () => {
     expect(nonemptyHarness.invocations.some((item) => item.args.includes("--single-transaction"))).toBe(false);
   });
 
-  it("relies on pg_restore single-transaction rollback and requires disposal if rollback cannot be proven", async () => {
+  it("requires disposal for every abnormal pg_restore outcome without a rollback query", async () => {
     const root = temporaryRoot();
     const fixture = writeFixture(root);
     const rolledBackHarness = createHarness({
       restoreResult: {
-        exitCode: 1,
-        stdout: "",
-        stderr: `raw connection failure ${targetUrl}`,
+        exitCode: 0,
+        stdout: `unexpected output ${targetUrl}`,
+        stderr: "",
       },
     });
     const rolledBackError = await restorePostgresLogicalBackup(
       restoreOptions(fixture),
       rolledBackHarness.dependencies,
     ).catch((caught: unknown) => caught);
-    expectRestoreError(rolledBackError, "restore_failed");
+    expectRestoreError(rolledBackError, "restore_rollback_unverified_target_disposal_required");
     expect(fs.existsSync(fixture.receiptFile)).toBe(false);
     expect(rolledBackHarness.invocations.find((item) => item.args.includes("--single-transaction"))?.args)
       .toContain("--exit-on-error");
+    expect(rolledBackHarness.queries.filter((query) => query.includes("private-schemas-before")))
+      .toHaveLength(2);
 
     const partialHarness = createHarness({
       restoreResult: { exitCode: 1, stdout: "", stderr: "partial" },
@@ -802,6 +1135,8 @@ describe("Postgres logical restore rehearsal", () => {
     ).catch((caught: unknown) => caught);
     expectRestoreError(partialError, "restore_rollback_unverified_target_disposal_required");
     expect(fs.existsSync(fixture.receiptFile)).toBe(false);
+    expect(partialHarness.queries.filter((query) => query.includes("private-schemas-before")))
+      .toHaveLength(2);
   });
 
   it("requires private current-user files and a direct TLS non-pooler URL", async () => {

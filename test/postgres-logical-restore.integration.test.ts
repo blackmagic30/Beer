@@ -967,7 +967,13 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL logical restore rehearsal"
     const targetUrlFile = path.join(root, "target-url");
     fs.writeFileSync(targetUrlFile, `${targetUrl.toString()}\n`, { mode: 0o600 });
     fs.chmodSync(targetUrlFile, 0o600);
-    let restoreProcessCount = 0;
+    const backupArchivePath = path.join(
+      backup.directory,
+      POSTGRES_LOGICAL_BACKUP_ARCHIVE,
+    );
+    const pgRestoreProcessObservations: string[] = [];
+    let listingArchiveFileDescriptor: number | undefined;
+    let mutationArchiveFileDescriptor: number | undefined;
     const dependencyOverrides = {
       env: { ...process.env, NODE_ENV: "test" },
       allowInsecureLoopbackForTests: true,
@@ -976,8 +982,59 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL logical restore rehearsal"
         if (invocation.command !== configuration.pgRestoreCommand) {
           throw configurationError();
         }
-        restoreProcessCount += 1;
-        return runPostgresBackupProcess(invocation);
+        const isVersionProbe = invocation.args.length === 1
+          && invocation.args[0] === "--version";
+        const isArchiveListing = invocation.args.length === 2
+          && invocation.args[0] === "--list"
+          && invocation.args[1] === "--format=custom";
+        const isArchiveMutation = invocation.args.includes("--single-transaction");
+        if (
+          Number(isVersionProbe)
+            + Number(isArchiveListing)
+            + Number(isArchiveMutation)
+          !== 1
+        ) throw new Error("unexpected_pg_restore_integration_invocation");
+
+        if (isVersionProbe) {
+          expect(invocation.stdinFileDescriptor).toBeUndefined();
+          const result = await runPostgresBackupProcess(invocation);
+          pgRestoreProcessObservations.push(`version:no-stdin:${result.exitCode}`);
+          return result;
+        }
+
+        expect(invocation.args).not.toContain(backupArchivePath);
+        expect(invocation.args).not.toContain(POSTGRES_LOGICAL_BACKUP_ARCHIVE);
+        expect(invocation.args).not.toContain("-");
+        expect(invocation.args.every((argument) => !argument.includes(backupArchivePath)))
+          .toBe(true);
+        const archiveFileDescriptor = invocation.stdinFileDescriptor;
+        if (
+          !Number.isSafeInteger(archiveFileDescriptor)
+          || archiveFileDescriptor === undefined
+          || archiveFileDescriptor < 0
+        ) throw new Error("invalid_pg_restore_archive_file_descriptor");
+        const descriptorStat = fs.fstatSync(archiveFileDescriptor);
+        expect(descriptorStat.isFile()).toBe(true);
+        expect({
+          mode: descriptorStat.mode & 0o7777,
+          nlink: descriptorStat.nlink,
+          size: descriptorStat.size,
+        }).toEqual({
+          mode: 0o600,
+          nlink: 1,
+          size: manifest.archive.bytes,
+        });
+
+        const phase = isArchiveListing ? "list" : "mutation";
+        if (isArchiveListing) {
+          listingArchiveFileDescriptor = archiveFileDescriptor;
+        } else {
+          mutationArchiveFileDescriptor = archiveFileDescriptor;
+          expect(mutationArchiveFileDescriptor).not.toBe(listingArchiveFileDescriptor);
+        }
+        const result = await runPostgresBackupProcess(invocation);
+        pgRestoreProcessObservations.push(`${phase}:trusted-archive-stdin:${result.exitCode}`);
+        return result;
       },
     } as const;
     const inspection = await inspectPostgresLogicalRestoreTarget(
@@ -1000,7 +1057,14 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL logical restore rehearsal"
       promotionReconciliationReady: true,
       sourceStateBindingStatus: "exact-match",
     });
-    expect(restoreProcessCount).toBeGreaterThanOrEqual(3);
+    expect(pgRestoreProcessObservations).toEqual([
+      "version:no-stdin:0",
+      "list:trusted-archive-stdin:0",
+      "mutation:trusted-archive-stdin:0",
+    ]);
+    expect(listingArchiveFileDescriptor).toBeTypeOf("number");
+    expect(mutationArchiveFileDescriptor).toBeTypeOf("number");
+    expect(mutationArchiveFileDescriptor).not.toBe(listingArchiveFileDescriptor);
 
     const target = new Client({ connectionString: targetUrl.toString() });
     await target.connect();

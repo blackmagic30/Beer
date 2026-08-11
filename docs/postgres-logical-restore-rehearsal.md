@@ -167,7 +167,14 @@ recorded staging set only.
 
 ## Failure handling
 
-- `restore_failed` means `pg_restore` failed and the tool verified that both private schemas remain absent. The archive command always uses `--exit-on-error --single-transaction --no-owner --no-acl`.
+- The archive is supplied to `pg_restore` through separate, held file descriptors
+  for listing and mutation; the validated archive pathname is never reopened by
+  either child. The archive command always uses
+  `--exit-on-error --single-transaction --no-owner --no-acl`.
+- Any rejected, non-zero, or diagnostically non-empty `pg_restore` mutation is
+  `restore_rollback_unverified_target_disposal_required`. Reaping the local
+  process does not prove that its PostgreSQL backend cannot finish a transaction,
+  so an immediate schema-absence query is never treated as rollback proof.
 - Any failure ending in `_target_disposal_required` means the database must be discarded in full. Do not repair it, rerun against it, or promote it.
 - A source/target state mismatch, inability to finish the repeatable-read target
   scan, or target URL/artifact identity change after restore is
