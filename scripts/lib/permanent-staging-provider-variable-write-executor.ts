@@ -1,5 +1,5 @@
 export const PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_POLICY_SCHEMA =
-  "pintpath-permanent-staging-provider-variable-write-policy/v1" as const;
+  "pintpath-permanent-staging-provider-variable-write-policy/v2" as const;
 export const PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_EXECUTOR_SCHEMA =
   "pintpath-permanent-staging-provider-variable-executor/v1" as const;
 export const PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_OPERATION =
@@ -19,6 +19,48 @@ export type PermanentStagingProviderVariableName =
 
 const EMPTY_REFERENCES = Object.freeze([] as const);
 
+function operation(
+  operationId: string,
+  variableName: PermanentStagingProviderVariableName,
+  evidenceSlug: string,
+) {
+  return Object.freeze({
+    operationId,
+    variableName,
+    intentLeaf:
+      `pintpath-permanent-staging-provider-variable-${evidenceSlug}-intent.json`,
+    terminalEvidenceLeaf:
+      `pintpath-permanent-staging-provider-variable-${evidenceSlug}-terminal-evidence.json`,
+  });
+}
+
+export const PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_OPERATIONS =
+  Object.freeze([
+    operation(
+      "permanent-staging-provider-variable-create/google-maps-api-key",
+      "GOOGLE_MAPS_API_KEY",
+      "google-maps-api-key",
+    ),
+    operation(
+      "permanent-staging-provider-variable-create/google-maps-map-id",
+      "GOOGLE_MAPS_MAP_ID",
+      "google-maps-map-id",
+    ),
+    operation(
+      "permanent-staging-provider-variable-create/google-places-api-key",
+      "GOOGLE_PLACES_API_KEY",
+      "google-places-api-key",
+    ),
+    operation(
+      "permanent-staging-provider-variable-create/openai-api-key",
+      "OPENAI_API_KEY",
+      "openai-api-key",
+    ),
+  ] as const);
+
+export type PermanentStagingProviderVariableWriteOperation =
+  (typeof PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_OPERATIONS)[number];
+
 export const PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_LOCK = Object.freeze({
   policyId: PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_OPERATION,
   activationState: PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_EXECUTOR_STATE,
@@ -33,11 +75,19 @@ export const PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_LOCK = Object.freeze({
       "26e3e0fd2b59fd9f7b1e891cbc8f3ca9b0266556545f00ba4db3ce754fbc10d1",
   }),
   writeContract: Object.freeze({
+    mode: "create-only",
     stdinOnly: true,
     skipDeploys: true,
+    jsonOutput: false,
     maximumValueBytes: 4_096,
+    expectedBefore: "absent",
     expectedIsSealed: false,
     expectedReferences: EMPTY_REFERENCES,
+    sequentialNotAtomic: true,
+    externalMutationFreezeRequired: true,
+    stdoutHandling: "discard",
+    stderrHandling: "discard",
+    deploymentDeltaAllowed: false,
   }),
 } as const);
 
@@ -56,8 +106,8 @@ export interface PermanentStagingProviderVariableWritePolicy {
     typeof PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_LOCK.stagingEnvironmentId;
   readonly serviceId:
     typeof PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_LOCK.serviceId;
-  readonly allowedVariableNames:
-    readonly PermanentStagingProviderVariableName[];
+  readonly operations:
+    typeof PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_OPERATIONS;
   readonly railwayCli: {
     readonly version:
       typeof PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_LOCK.railwayCli.version;
@@ -67,11 +117,19 @@ export interface PermanentStagingProviderVariableWritePolicy {
       typeof PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_LOCK.railwayCli.sha256;
   };
   readonly writeContract: {
+    readonly mode: "create-only";
     readonly stdinOnly: true;
     readonly skipDeploys: true;
+    readonly jsonOutput: false;
     readonly maximumValueBytes: 4096;
+    readonly expectedBefore: "absent";
     readonly expectedIsSealed: false;
     readonly expectedReferences: readonly [];
+    readonly sequentialNotAtomic: true;
+    readonly externalMutationFreezeRequired: true;
+    readonly stdoutHandling: "discard";
+    readonly stderrHandling: "discard";
+    readonly deploymentDeltaAllowed: false;
   };
 }
 
@@ -118,7 +176,7 @@ function buildCanonicalPolicy(): PermanentStagingProviderVariableWritePolicy {
     productionEnvironmentId: lock.productionEnvironmentId,
     stagingEnvironmentId: lock.stagingEnvironmentId,
     serviceId: lock.serviceId,
-    allowedVariableNames: PERMANENT_STAGING_PROVIDER_VARIABLE_NAMES,
+    operations: PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_OPERATIONS,
     railwayCli: lock.railwayCli,
     writeContract: lock.writeContract,
   });

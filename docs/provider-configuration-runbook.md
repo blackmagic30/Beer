@@ -139,13 +139,43 @@ Railway CLI/API commands. Until a tracked executor performs this check both
 immediately before and in a guaranteed post-mutation path, Railway writes stay
 stopped.
 
-The checked-in `npm run railway:staging:provider-variable:write` command is a
-hard-disabled review scaffold. It emits only a fixed blocked receipt. Do not
-give it a Railway token, provider value, or secret. No Railway write is
-authorized until a separate implementation removes the scaffold hard-disable,
-is independently reviewed, and proves the complete immediate-preflight,
-one-exact-write, and unconditional-postflight contract in an isolated fixture
-while preserving the document-wide stop above.
+The checked-in `npm run railway:staging:provider-variable:write` command remains
+hard-disabled and emits only a fixed blocked receipt. Do not give that public
+command a Railway token, provider value, or secret. Beneath the public stop, the
+repository carries an internal review-only create kernel, fixed per-variable
+intent/evidence leaves, bounded secret-input custody, read-only Railway metadata
+parsers, and a one-attempt local transport contract. The kernel can evaluate
+only an absent-to-present metadata transition for one exact service-scoped
+variable. It rejects overwrites, shared shadows, incomplete pagination,
+nonempty staged patches, deployment drift, and retries after any durable intent
+or ambiguous write. Its success-shaped result is explicitly
+`acknowledged_pending_runtime_proof`: value-free Railway metadata cannot prove
+the submitted value, and the CLI upsert is sequential rather than atomic.
+The injected-child transport is fixture-only: its counters are not operating-
+system spawn authority, and the held binary descriptor does not bind later
+execution of the Homebrew pathname. It cannot be reused as the live adapter.
+The JavaScript evidence store is likewise scoped to a non-hostile current-UID
+boundary: Node's path-based `unlink` cannot identity-bind cleanup against a
+same-UID replacement between validation and deletion. Activation therefore
+requires an identity-bound native cleanup primitive (or a separately reviewed
+threat model that explicitly excludes hostile current-UID actors); a later
+failure check cannot make a wrongly deleted replacement recoverable.
+
+No Railway write is authorized until the incident baseline above is separately
+recovered, the external Railway mutation freeze is approved, and an isolated
+disposable live fixture proves the exact CLI 5.32.0 token, stdin, output,
+`--skip-deploys`, staged-patch, deployment, acknowledgement-loss, and eventual
+metadata behavior. A later activation change must independently review and wire
+the provider-capable adapter, execute only a private copy made from the held
+verified descriptor, and independently enforce one child, the exact sanitized
+environment, stdin closure, output disposal, process-group reaping, and receipt
+binding. Its bounded stdin source and child writer must also turn abort into a
+settled read/write operation before returning; the review-only primitives wait
+for quiescence and deliberately remain pending when an injected iterator or
+writer ignores cancellation. The adapter must preserve immediate
+boundary/target preflight, durable intent, exactly one write attempt,
+unconditional postflight, secret zeroization, and terminal evidence. Permanent
+staging and production are not acceptable substitutes for that fixture.
 
 For PostgreSQL and Redis password incidents, follow the separate
 [permanent-staging private authentication rotation runbook](permanent-staging-private-auth-rotation.md).

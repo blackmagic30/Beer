@@ -12,6 +12,7 @@ import {
   PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_EXECUTOR_STATE,
   PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_LOCK,
   PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_OPERATION,
+  PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_OPERATIONS,
   parsePermanentStagingProviderVariableWritePolicy,
   runPermanentStagingProviderVariableWriteExecutor,
 } from "../scripts/lib/permanent-staging-provider-variable-write-executor.js";
@@ -44,11 +45,19 @@ describe("permanent staging provider-variable write executor", () => {
           "26e3e0fd2b59fd9f7b1e891cbc8f3ca9b0266556545f00ba4db3ce754fbc10d1",
       },
       writeContract: {
+        mode: "create-only",
         stdinOnly: true,
         skipDeploys: true,
+        jsonOutput: false,
         maximumValueBytes: 4096,
+        expectedBefore: "absent",
         expectedIsSealed: false,
         expectedReferences: [],
+        sequentialNotAtomic: true,
+        externalMutationFreezeRequired: true,
+        stdoutHandling: "discard",
+        stderrHandling: "discard",
+        deploymentDeltaAllowed: false,
       },
     });
     expect(PERMANENT_STAGING_PROVIDER_VARIABLE_NAMES).toEqual([
@@ -61,6 +70,13 @@ describe("permanent staging provider-variable write executor", () => {
     expect(Object.isFrozen(lock.railwayCli)).toBe(true);
     expect(Object.isFrozen(lock.writeContract)).toBe(true);
     expect(Object.isFrozen(PERMANENT_STAGING_PROVIDER_VARIABLE_NAMES)).toBe(true);
+    expect(PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_OPERATIONS.map(
+      (operation) => operation.variableName,
+    )).toEqual(PERMANENT_STAGING_PROVIDER_VARIABLE_NAMES);
+    expect(PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_OPERATIONS).toHaveLength(4);
+    expect(PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_OPERATIONS.every(
+      (operation) => Object.isFrozen(operation),
+    )).toBe(true);
   });
 
   it("accepts only the exact canonical checked-in policy bytes", () => {
@@ -83,14 +99,16 @@ describe("permanent staging provider-variable write executor", () => {
       "productionEnvironmentId",
       "stagingEnvironmentId",
       "serviceId",
-      "allowedVariableNames",
+      "operations",
       "railwayCli",
       "writeContract",
     ]);
     expect(Object.isFrozen(parsed)).toBe(true);
     expect(Object.isFrozen(parsed!.railwayCli)).toBe(true);
     expect(Object.isFrozen(parsed!.writeContract)).toBe(true);
-    expect(Object.isFrozen(parsed!.allowedVariableNames)).toBe(true);
+    expect(Object.isFrozen(parsed!.operations)).toBe(true);
+    expect(parsed!.operations.every((operation) => Object.isFrozen(operation)))
+      .toBe(true);
   });
 
   it.each([
@@ -129,22 +147,19 @@ describe("permanent staging provider-variable write executor", () => {
         },
       });
     }],
-    ["a reordered allowlist", () => policySource({
+    ["reordered operations", () => policySource({
       ...policyObject(),
-      allowedVariableNames: [
-        "GOOGLE_MAPS_MAP_ID",
-        "GOOGLE_MAPS_API_KEY",
-        "GOOGLE_PLACES_API_KEY",
-        "OPENAI_API_KEY",
+      operations: [
+        ...(policyObject().operations as unknown[]).slice(1),
+        (policyObject().operations as unknown[])[0],
       ],
     })],
-    ["a duplicate allowlist entry", () => policySource({
+    ["a duplicate operation", () => policySource({
       ...policyObject(),
-      allowedVariableNames: [
-        "GOOGLE_MAPS_API_KEY",
-        "GOOGLE_MAPS_API_KEY",
-        "GOOGLE_PLACES_API_KEY",
-        "OPENAI_API_KEY",
+      operations: [
+        (policyObject().operations as unknown[])[0],
+        (policyObject().operations as unknown[])[0],
+        ...(policyObject().operations as unknown[]).slice(2),
       ],
     })],
     ["malformed JSON", () => "{"],
@@ -157,7 +172,7 @@ describe("permanent staging provider-variable write executor", () => {
     const source =
       PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_CANONICAL_POLICY_SOURCE.replace(
         '  "policyId":',
-        '  "schemaVersion": "pintpath-permanent-staging-provider-variable-write-policy/v1",\n  "policyId":',
+        '  "schemaVersion": "pintpath-permanent-staging-provider-variable-write-policy/v2",\n  "policyId":',
       );
     expect(source.match(/"schemaVersion"/g)).toHaveLength(2);
     expect(parsePermanentStagingProviderVariableWritePolicy(source)).toBeNull();
