@@ -286,6 +286,8 @@ describe("Railway deployment identity evidence", () => {
   it("does not publish inherited commit, version, or Railway identity metadata", async () => {
     const names = [
       "RAILWAY_GIT_COMMIT_SHA",
+      "GITHUB_SHA",
+      "VERCEL_GIT_COMMIT_SHA",
       "PINT_PATH_VERSION",
       "RAILWAY_PROJECT_ID",
       "RAILWAY_ENVIRONMENT_ID",
@@ -295,6 +297,8 @@ describe("Railway deployment identity evidence", () => {
     ] as const;
     const inherited: Record<typeof names[number], string> = {
       RAILWAY_GIT_COMMIT_SHA: "a".repeat(40),
+      GITHUB_SHA: "b".repeat(40),
+      VERCEL_GIT_COMMIT_SHA: "c".repeat(40),
       PINT_PATH_VERSION: "9.9.9-forged",
       RAILWAY_PROJECT_ID: RAILWAY_IDS.project,
       RAILWAY_ENVIRONMENT_ID: RAILWAY_IDS.environment,
