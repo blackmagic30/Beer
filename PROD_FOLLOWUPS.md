@@ -67,6 +67,12 @@ evidence or two-person sign-off alone is not mutation authority.
   planner rejects free-form deployment hashes and consumes only that receipt.
   No authentic receipt exists while the staging app is undeployed; this does
   not authorize a deploy or close the provider-observed deployment blocker.
+- **Deployment mutation scaffold:** The canonical
+  [`permanent-staging application source-upload`](docs/permanent-staging-app-deployment.md)
+  policy and zero-argument runner are `HARD_DISABLED_REVIEW_REQUIRED`. They pin
+  the intended target and fail closed with one fixed blocked receipt, but have
+  no credential, provider, network, child-process, or upload transport. The
+  scaffold does not authorize spend or change the deployment blocker.
 - **Keychain custody checkpoint:** The operator terminal capture showed only
   the pinned Railway project and permanent-staging environment UUIDs; it did
   not show the token value. Read-only Keychain metadata confirms that the

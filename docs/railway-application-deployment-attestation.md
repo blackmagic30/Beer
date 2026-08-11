@@ -35,7 +35,9 @@ Do not run the command until all of these are true:
 2. The four staging provider-variable gates have been completed through a
    separately activated, reviewed one-operation writer.
 3. The exact reviewed candidate has been deployed to the pinned Beer service
-   through a separately reviewed deployment executor.
+   through a separately reviewed deployment executor. The current
+   [source-upload scaffold](permanent-staging-app-deployment.md) is hard-disabled
+   implementation evidence only and cannot perform or authorize that deploy.
 4. Railway shows no undecrypted staged patch for permanent staging.
 5. A dedicated environment-scoped project token is present only in the fixed
    macOS login Keychain item at

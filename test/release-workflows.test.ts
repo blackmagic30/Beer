@@ -30,6 +30,47 @@ function repositoryFile(name: string): string {
 }
 
 describe("release workflow contracts", () => {
+  it("keeps permanent-staging app upload behind the hard-disabled scaffold", () => {
+    const packageJson = JSON.parse(repositoryFile("package.json")) as {
+      scripts?: Record<string, string>;
+    };
+    const executor = repositoryFile(
+      "scripts/lib/permanent-staging-app-deployment-executor.ts",
+    );
+    const wrapper = repositoryFile(
+      "scripts/execute-permanent-staging-app-deployment.ts",
+    );
+    const policy = repositoryFile(
+      "ops/railway/permanent-staging-app-deployment-policy.json",
+    );
+    const workflows = allWorkflows().map((name) => workflow(name)).join("\n");
+    expect(packageJson.scripts).not.toHaveProperty(
+      "railway:staging:app:deploy",
+    );
+    expect(policy).toContain(
+      '"activationState": "HARD_DISABLED_REVIEW_REQUIRED"',
+    );
+    expect(policy).toContain('"transportImplemented": false');
+    expect(policy).toContain('"providerNetworkAllowed": false');
+    expect(executor).toContain(
+      "runPermanentStagingAppDeploymentExecutor(): Promise<1>",
+    );
+    expect(executor).toContain('mode: "framework-disabled"');
+    expect(executor).toContain('outcome: "blocked"');
+    expect(executor).not.toContain("node:child_process");
+    expect(executor).not.toContain("process.argv");
+    expect(executor).not.toContain("process.stdin");
+    expect(executor).not.toContain("process.env");
+    expect(executor).not.toContain("serviceInstanceDeploy");
+    expect(executor).not.toContain("deploymentRollback");
+    expect(wrapper).toContain("fileURLToPath(import.meta.url)");
+    expect(wrapper).not.toContain("node:child_process");
+    expect(workflows).not.toContain(
+      "execute-permanent-staging-app-deployment",
+    );
+    expect(workflows).not.toContain("permanent-staging-app-source-upload");
+  });
+
   it("keeps permanent-staging provider writes behind the hard-disabled runner", () => {
     const packageJson = JSON.parse(repositoryFile("package.json")) as {
       scripts?: Record<string, string>;

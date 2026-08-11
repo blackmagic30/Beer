@@ -115,6 +115,14 @@ resource pins, operator approvals, or two-person evidence.
   offline implementation evidence only: the Beer service remains undeployed in
   permanent staging, no authentic receipt exists, no Railway write is
   authorized, and the provider-observed deployment blocker remains open.
+- Added the canonical
+  [permanent-staging application source-upload scaffold](permanent-staging-app-deployment.md).
+  It pins the target, source/config hashes, one-replica postflight contract,
+  adjacent-mutation prohibitions, and staging spend ceiling, but is intentionally
+  `HARD_DISABLED_REVIEW_REQUIRED`. Its zero-argument runner emits only one fixed
+  blocked receipt and has no credential, provider, network, child-process, or
+  mutation transport. This does not deploy the Beer service, authorize spend,
+  or close any live launch gate.
 - Ported the administrative ingestion queue, its HTTP/operator call sites, and
   claim/finalization flow to the shared asynchronous SQL boundary. Its related
   Free-live price, inventory, review, and publication writes now use the same
