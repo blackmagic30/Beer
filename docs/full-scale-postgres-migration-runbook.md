@@ -649,12 +649,21 @@ npm run db:postgres:backup:logical -- \
   --transport-profile railway-stock-localhost-ca-v1 \
   --root-ca-file /absolute/private/railway-postgres-root-ca.pem \
   --expected-root-ca-der-sha256 "$EXPECTED_ROOT_CA_DER_SHA256" \
+  --pg-dump-file "$PG_DUMP_FILE" \
+  --expected-pg-dump-sha256 "$EXPECTED_PG_DUMP_SHA256" \
+  --pg-restore-file "$PG_RESTORE_FILE" \
+  --expected-pg-restore-sha256 "$EXPECTED_PG_RESTORE_SHA256" \
   --output /absolute/private/release-id/postgres-logical
 ```
 
-The command accepts PostgreSQL 17 only. Before tool discovery, connection, or
-output creation, it requires the exact trimmed URL to match the supplied source
-pin. It binds the login and group OID segment to the live source database OID,
+`PG_DUMP_FILE` and `PG_RESTORE_FILE` must be independently reviewed canonical
+absolute paths, and both expected hashes must be independently retained
+lowercase SHA-256 pins; bare tool names and ambient `PATH` lookup are rejected.
+The command accepts PostgreSQL 17 only. Before transport opening, database
+connection, or output creation, it sequentially opens, descriptor-hashes, and
+version-probes the dump authority and then the list authority. It also requires
+the exact trimmed URL to match the supplied source pin. It binds the login and
+group OID segment to the live source database OID,
 validates both complete authority contracts,
 sets the matching database-scoped group, opens one `REPEATABLE READ READ ONLY`
 transaction, exports that snapshot, and keeps it open while it hashes state and
@@ -682,15 +691,22 @@ reaping starts at leader exit, and forced failures destroy the parent pipe
 before settling, so ordinary same-group descendants cannot retain archive-write
 authority.
 
-That process-group proof does not cover a wrapper that calls `setsid`. The
-production CLI also still resolves bare tool names through ambient `PATH` and
-checks only self-reported PostgreSQL-17 version text. Exact reviewed binary
-paths, expected SHA-256 pins, held-byte identity across probe and use, and a
-capability-bound native launcher or immutable digest-pinned execution image
-remain mandatory before activation. The current review-only implementation
-must not authorize a live backup or restore ceremony: an escaped substituted
-tool could retain its credential environment or a read-only archive descriptor
-even though it cannot retain the parent's writable archive descriptor.
+Each purpose-bound authority retains its exact reviewed binary descriptor and
+revalidates its hash, metadata, canonical pathname, and PostgreSQL-17 evidence
+around its permitted operation. The production factories pre-bind the exact
+process runner and do not publish a generic runner or test filesystem seam.
+That is still not activation authority. Node launches by pathname, leaving a
+same-UID execution ABA between preflight and `spawn`; a binary hash does not
+bind the dynamic loader or full shared-library dependency tree; the worker must
+run in a pristine realm with locked Promise primordials; and the archive needs
+an independently retained external digest guard across recovery. The
+process-group proof also cannot observe a substituted child that calls
+`setsid`. Until an immutable digest-pinned runtime or reviewed descriptor-native
+launcher binds all of those surfaces and the exact pre-bound runner, this
+review-only implementation must not authorize a live backup or restore
+ceremony. An escaped substituted tool could retain its credential environment
+or a read-only archive descriptor even though it cannot retain the parent's
+writable archive descriptor.
 The canonical state receipt and manifest are likewise checked against their
 in-memory canonical bytes, retained by validated descriptors, and revalidated
 after database and transport cleanup before success is emitted.

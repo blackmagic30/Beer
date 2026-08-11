@@ -33,6 +33,15 @@ import {
   type PostgresRailwayStockLocalhostCaNodeConnection,
   type PostgresRailwayStockLocalhostCaTransport,
 } from "./postgres-railway-stock-localhost-ca.js";
+import {
+  PostgresToolAuthorityError,
+  createPostgresToolProcessResultCarrier,
+  openPostgresToolAuthority,
+  type PostgresDumpToolAuthority,
+  type PostgresListToolAuthority,
+  type PostgresToolAuthorityProcessRunner,
+  type PostgresToolProcessResultCarrier,
+} from "./postgres-tool-authority.js";
 
 export const POSTGRES_LOGICAL_BACKUP_SCHEMAS = Object.freeze([
   "pintpath_app",
@@ -181,15 +190,27 @@ export interface CreatePostgresLogicalBackupOptions {
   transportProfile: typeof POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE;
   rootCaFile: string;
   expectedRootCaDerSha256: string;
+  pgDumpFile: string;
+  expectedPgDumpSha256: string;
+  pgRestoreFile: string;
+  expectedPgRestoreSha256: string;
+}
+
+export interface PostgresLogicalBackupToolAuthorityOptions {
+  readonly executableFile: string;
+  readonly expectedSha256: string;
 }
 
 export interface PostgresLogicalBackupDependencies {
   env: Readonly<Record<string, string | undefined>>;
   getUid: () => number | null;
   now: () => Date;
-  pgDumpCommand: string;
-  pgRestoreCommand: string;
-  runProcess: ProcessRunner;
+  openDumpAuthority: (
+    options: PostgresLogicalBackupToolAuthorityOptions,
+  ) => Promise<PostgresDumpToolAuthority>;
+  openListAuthority: (
+    options: PostgresLogicalBackupToolAuthorityOptions,
+  ) => Promise<PostgresListToolAuthority>;
   connect: (
     config: PostgresLogicalBackupConnectionConfig,
   ) => Promise<PostgresLogicalBackupConnection>;
@@ -367,11 +388,6 @@ interface SnapshotRow extends QueryResultRow {
 
 const MAX_CONNECTION_FILE_BYTES = 16 * 1024;
 const VERSION_OUTPUT_LIMIT = 4 * 1024;
-const TOOL_TIMEOUT_MS = 15_000;
-const DUMP_TIMEOUT_MS = 60 * 60 * 1_000;
-const RESTORE_LIST_TIMEOUT_MS = 5 * 60 * 1_000;
-const DUMP_OUTPUT_LIMIT = 512 * 1024;
-const RESTORE_LIST_OUTPUT_LIMIT = 32 * 1024 * 1024;
 const STATE_RECEIPT_MAX_BYTES = 4 * 1024 * 1024;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const SAFE_VERSION_PATTERN = /^[0-9]+(?:\.[0-9]+){0,3}(?:[-+._a-zA-Z0-9 ()~:]{0,96})$/;
@@ -455,25 +471,28 @@ function inheritedArchiveFileDescriptorsAreSafe(
   );
 }
 
-export const runPostgresBackupProcess: ProcessRunner = async (invocation) => {
-  const stdinFileDescriptor = invocation.stdinFileDescriptor;
-  const stdoutFileDescriptor = invocation.stdoutFileDescriptor;
-  if (
-    !invocation.command ||
-    invocation.command.includes("\0") ||
-    invocation.args.some((argument) => argument.includes("\0")) ||
-    Object.entries(invocation.env).some(([key, value]) => (
-      !key || key.includes("\0") || value.includes("\0")
-    )) ||
-    !inheritedArchiveFileDescriptorsAreSafe(
-      stdinFileDescriptor,
-      stdoutFileDescriptor,
-    )
-  ) {
-    throw new Error("invalid_process_invocation");
-  }
+export const runPostgresBackupProcess = (
+  invocation: ProcessInvocation,
+): Promise<PostgresToolProcessResultCarrier> =>
+  new Promise<PostgresToolProcessResultCarrier>((resolve, reject) => {
+    const stdinFileDescriptor = invocation.stdinFileDescriptor;
+    const stdoutFileDescriptor = invocation.stdoutFileDescriptor;
+    if (
+      !invocation.command ||
+      invocation.command.includes("\0") ||
+      invocation.args.some((argument) => argument.includes("\0")) ||
+      Object.entries(invocation.env).some(([key, value]) => (
+        !key || key.includes("\0") || value.includes("\0")
+      )) ||
+      !inheritedArchiveFileDescriptorsAreSafe(
+        stdinFileDescriptor,
+        stdoutFileDescriptor,
+      )
+    ) {
+      reject(new Error("invalid_process_invocation"));
+      return;
+    }
 
-  return new Promise<ProcessResult>((resolve, reject) => {
     const detachedProcessGroup = process.platform !== "win32";
     const child = spawn(invocation.command, [...invocation.args], {
       env: { ...invocation.env },
@@ -624,11 +643,16 @@ export const runPostgresBackupProcess: ProcessRunner = async (invocation) => {
           reject(new Error("process_terminated_without_exit_code"));
           return;
         }
-        resolve({
-          exitCode,
-          stdout: Buffer.concat(stdout, stdoutBytes).toString("utf8"),
-          stderr: Buffer.concat(stderr, stderrBytes).toString("utf8"),
-        });
+        try {
+          const result = createPostgresToolProcessResultCarrier({
+            exitCode,
+            stdout: Buffer.concat(stdout, stdoutBytes).toString("utf8"),
+            stderr: Buffer.concat(stderr, stderrBytes).toString("utf8"),
+          });
+          resolve(result);
+        } catch (error) {
+          reject(error);
+        }
       })().catch((error: unknown) => {
         if (settled) return;
         settled = true;
@@ -636,7 +660,9 @@ export const runPostgresBackupProcess: ProcessRunner = async (invocation) => {
       });
     });
   });
-};
+
+const POSTGRES_TOOL_AUTHORITY_PROCESS_RUNNER: PostgresToolAuthorityProcessRunner =
+  runPostgresBackupProcess;
 
 class DirectBackupConnection implements PostgresLogicalBackupConnection {
   private constructor(
@@ -690,9 +716,14 @@ const DEFAULT_DEPENDENCIES: PostgresLogicalBackupDependencies = {
   env: process.env,
   getUid: () => process.getuid?.() ?? null,
   now: () => new Date(),
-  pgDumpCommand: "pg_dump",
-  pgRestoreCommand: "pg_restore",
-  runProcess: runPostgresBackupProcess,
+  openDumpAuthority: (options) => openPostgresToolAuthority(
+    { ...options, purpose: "dump" },
+    POSTGRES_TOOL_AUTHORITY_PROCESS_RUNNER,
+  ),
+  openListAuthority: (options) => openPostgresToolAuthority(
+    { ...options, purpose: "list" },
+    POSTGRES_TOOL_AUTHORITY_PROCESS_RUNNER,
+  ),
   connect: DirectBackupConnection.connect,
   computeState: computePostgresLogicalStateInventory,
   openTransport: (options) => openPostgresRailwayStockLocalhostCaTransport(options),
@@ -924,15 +955,24 @@ function parseToolIdentity(
   name: PostgresLogicalBackupToolIdentity["name"],
   result: ProcessResult,
 ): PostgresLogicalBackupToolIdentity {
-  if (result.exitCode !== 0 || result.stderr.trim() || result.stdout.length > VERSION_OUTPUT_LIMIT) {
+  if (
+    result.exitCode !== 0
+    || result.stderr !== ""
+    || result.stdout.length > VERSION_OUTPUT_LIMIT
+  ) {
     throw new PostgresLogicalBackupError("tool_unavailable_or_unsupported");
   }
   const line = result.stdout.trim();
   const prefix = `${name} (PostgreSQL) `;
-  if (!line.startsWith(prefix) || line.includes("\n") || line.includes("\r")) {
+  if (
+    (result.stdout !== line && result.stdout !== `${line}\n`)
+    || !line.startsWith(prefix)
+    || line.includes("\n")
+    || line.includes("\r")
+  ) {
     throw new PostgresLogicalBackupError("tool_unavailable_or_unsupported");
   }
-  const version = line.slice(prefix.length).trim();
+  const version = line.slice(prefix.length);
   if (!SAFE_VERSION_PATTERN.test(version)) {
     throw new PostgresLogicalBackupError("tool_unavailable_or_unsupported");
   }
@@ -941,28 +981,6 @@ function parseToolIdentity(
     throw new PostgresLogicalBackupError("tool_unavailable_or_unsupported");
   }
   return { name, version, major };
-}
-
-async function identifyTool(
-  name: PostgresLogicalBackupToolIdentity["name"],
-  command: string,
-  processEnvironment: Readonly<Record<string, string>>,
-  runProcess: ProcessRunner,
-): Promise<PostgresLogicalBackupToolIdentity> {
-  let result: ProcessResult;
-  try {
-    result = await runProcess({
-      command,
-      args: ["--version"],
-      env: processEnvironment,
-      timeoutMs: TOOL_TIMEOUT_MS,
-      maxStdoutBytes: VERSION_OUTPUT_LIMIT,
-      maxStderrBytes: VERSION_OUTPUT_LIMIT,
-    });
-  } catch {
-    throw new PostgresLogicalBackupError("tool_unavailable_or_unsupported");
-  }
-  return parseToolIdentity(name, result);
 }
 
 async function openTrustedDirectoryGuard(
@@ -2558,12 +2576,24 @@ export async function createPostgresLogicalBackup(
     || typeof options.rootCaFile !== "string"
     || typeof options.expectedRootCaDerSha256 !== "string"
     || !SHA256_PATTERN.test(options.expectedRootCaDerSha256)
+    || typeof options.pgDumpFile !== "string"
+    || typeof options.expectedPgDumpSha256 !== "string"
+    || !SHA256_PATTERN.test(options.expectedPgDumpSha256)
+    || typeof options.pgRestoreFile !== "string"
+    || typeof options.expectedPgRestoreSha256 !== "string"
+    || !SHA256_PATTERN.test(options.expectedPgRestoreSha256)
     || !isExactAuthorityPath(options.connectionFile)
     || !isExactAuthorityPath(options.rootCaFile)
     || !isExactAuthorityPath(options.outputDirectory)
+    || !isExactAuthorityPath(options.pgDumpFile)
+    || !isExactAuthorityPath(options.pgRestoreFile)
+    || path.basename(options.pgDumpFile) !== "pg_dump"
+    || path.basename(options.pgRestoreFile) !== "pg_restore"
     || pathsOverlap(options.connectionFile, options.rootCaFile)
     || pathsOverlap(options.outputDirectory, options.connectionFile)
     || pathsOverlap(options.outputDirectory, options.rootCaFile)
+    || pathsOverlap(options.outputDirectory, options.pgDumpFile)
+    || pathsOverlap(options.outputDirectory, options.pgRestoreFile)
   ) throw new PostgresLogicalBackupError("invalid_arguments");
   const stableOptions: CreatePostgresLogicalBackupOptions = Object.freeze({
     connectionFile: options.connectionFile,
@@ -2572,6 +2602,10 @@ export async function createPostgresLogicalBackup(
     transportProfile: options.transportProfile,
     rootCaFile: options.rootCaFile,
     expectedRootCaDerSha256: options.expectedRootCaDerSha256,
+    pgDumpFile: options.pgDumpFile,
+    expectedPgDumpSha256: options.expectedPgDumpSha256,
+    pgRestoreFile: options.pgRestoreFile,
+    expectedPgRestoreSha256: options.expectedPgRestoreSha256,
   });
   const dependencies: PostgresLogicalBackupDependencies = {
     ...DEFAULT_DEPENDENCIES,
@@ -2588,19 +2622,9 @@ export async function createPostgresLogicalBackup(
   if (parsedConnection.urlSha256 !== stableOptions.expectedSourceUrlSha256) {
     throw new PostgresLogicalBackupError("unsafe_connection_url");
   }
-  let transport: PostgresRailwayStockLocalhostCaTransport;
-  try {
-    transport = await dependencies.openTransport({
-      profile: stableOptions.transportProfile,
-      rootCaFile: stableOptions.rootCaFile,
-      expectedRootCaDerSha256: stableOptions.expectedRootCaDerSha256,
-      expectedUid: uid,
-      sourceUrlAuthority: parsedConnection.sourceUrlAuthority,
-    });
-  } catch (error) {
-    throw asTransportFailure(error);
-  }
-
+  let dumpAuthority: PostgresDumpToolAuthority | null = null;
+  let listAuthority: PostgresListToolAuthority | null = null;
+  let transport: PostgresRailwayStockLocalhostCaTransport | null = null;
   let sourceConnection: PostgresLogicalBackupConnection | null = null;
   let snapshotOpen = false;
   let prepared: Awaited<ReturnType<typeof prepareFreshOutputDirectory>> | null = null;
@@ -2614,18 +2638,53 @@ export async function createPostgresLogicalBackup(
   let pendingError: PostgresLogicalBackupError | null = null;
   let completed: PostgresLogicalBackupResult | null = null;
   try {
+    let pgDump: PostgresLogicalBackupToolIdentity;
+    try {
+      dumpAuthority = await dependencies.openDumpAuthority(Object.freeze({
+        executableFile: stableOptions.pgDumpFile,
+        expectedSha256: stableOptions.expectedPgDumpSha256,
+      }));
+      pgDump = parseToolIdentity("pg_dump", await dumpAuthority.version());
+    } catch (error) {
+      if (error instanceof PostgresToolAuthorityError && error.code === "cleanup_failed") {
+        throw new PostgresLogicalBackupError("cleanup_failed");
+      }
+      throw new PostgresLogicalBackupError("tool_unavailable_or_unsupported");
+    }
+
+    let pgRestore: PostgresLogicalBackupToolIdentity;
+    try {
+      listAuthority = await dependencies.openListAuthority(Object.freeze({
+        executableFile: stableOptions.pgRestoreFile,
+        expectedSha256: stableOptions.expectedPgRestoreSha256,
+      }));
+      pgRestore = parseToolIdentity("pg_restore", await listAuthority.version());
+    } catch (error) {
+      if (error instanceof PostgresToolAuthorityError && error.code === "cleanup_failed") {
+        throw new PostgresLogicalBackupError("cleanup_failed");
+      }
+      throw new PostgresLogicalBackupError("tool_unavailable_or_unsupported");
+    }
+    if (pgDump.major !== pgRestore.major) {
+      throw new PostgresLogicalBackupError("tool_unavailable_or_unsupported");
+    }
+
+    try {
+      transport = await dependencies.openTransport({
+        profile: stableOptions.transportProfile,
+        rootCaFile: stableOptions.rootCaFile,
+        expectedRootCaDerSha256: stableOptions.expectedRootCaDerSha256,
+        expectedUid: uid,
+        sourceUrlAuthority: parsedConnection.sourceUrlAuthority,
+      });
+    } catch (error) {
+      throw asTransportFailure(error);
+    }
     if (!transportAuthorityIsExact(transport, stableOptions, parsedConnection)) {
       throw new PostgresLogicalBackupError("source_unreachable_or_unsafe");
     }
     await assertTransportExact(transport);
     const processEnvironment = makeBaseProcessEnvironment(dependencies.env);
-    const [pgDump, pgRestore] = await Promise.all([
-      identifyTool("pg_dump", dependencies.pgDumpCommand, processEnvironment, dependencies.runProcess),
-      identifyTool("pg_restore", dependencies.pgRestoreCommand, processEnvironment, dependencies.runProcess),
-    ]);
-    if (pgDump.major !== pgRestore.major) {
-      throw new PostgresLogicalBackupError("tool_unavailable_or_unsupported");
-    }
 
     await assertConnectionFileUnchanged(connectionFile, uid, trustedConnection);
     await assertTransportExact(transport);
@@ -2704,26 +2763,11 @@ export async function createPostgresLogicalBackup(
       await assertPreparedOutputDirectory(prepared, uid);
       await snapshotTrustedFileHandle(archiveOutputHandle, archivePath, uid, false);
       await assertTransportExact(transport);
-      dumpResult = await dependencies.runProcess({
-        command: dependencies.pgDumpCommand,
-        args: [
-          "--format=custom",
-          `--snapshot=${snapshot.snapshotIdentifier}`,
-          `--role=${sourceIdentity.backupRoleName}`,
-          "--no-owner",
-          "--no-acl",
-          "--enable-row-security",
-          "--strict-names",
-          "--lock-wait-timeout=30s",
-          "--no-password",
-          "--schema=pintpath_app",
-          "--schema=pintpath_ops",
-        ],
-        env: dumpEnvironment,
-        timeoutMs: DUMP_TIMEOUT_MS,
-        maxStdoutBytes: DUMP_OUTPUT_LIMIT,
-        maxStderrBytes: DUMP_OUTPUT_LIMIT,
-        stdoutFileDescriptor: archiveOutputHandle.fd,
+      dumpResult = await dumpAuthority.dump({
+        snapshotIdentifier: snapshot.snapshotIdentifier,
+        roleName: sourceIdentity.backupRoleName,
+        environment: dumpEnvironment,
+        archiveOutputFileDescriptor: archiveOutputHandle.fd,
       });
       await assertTransportExact(transport);
     } catch (error) {
@@ -2733,6 +2777,14 @@ export async function createPostgresLogicalBackup(
     } finally {
       if (!await cleanupEphemeralPgpass(pgpass, uid)) {
         dumpError = new PostgresLogicalBackupError("cleanup_failed");
+      }
+      if (dumpAuthority) {
+        try {
+          await dumpAuthority.close();
+        } catch {
+          dumpError = new PostgresLogicalBackupError("cleanup_failed");
+        }
+        dumpAuthority = null;
       }
     }
     if (dumpError) throw dumpError;
@@ -2765,19 +2817,14 @@ export async function createPostgresLogicalBackup(
       throw new PostgresLogicalBackupError("archive_tampered");
     }
     let listingResult: ProcessResult | null = null;
-    let listingInvocationFailed = false;
+    let listingFailure: PostgresLogicalBackupError | null = null;
     try {
-      listingResult = await dependencies.runProcess({
-        command: dependencies.pgRestoreCommand,
-        args: ["--list", "--format=custom"],
-        env: processEnvironment,
-        timeoutMs: RESTORE_LIST_TIMEOUT_MS,
-        maxStdoutBytes: RESTORE_LIST_OUTPUT_LIMIT,
-        maxStderrBytes: DUMP_OUTPUT_LIMIT,
-        stdinFileDescriptor: archiveListingHandle.fd,
-      });
-    } catch {
-      listingInvocationFailed = true;
+      listingResult = await listAuthority.list(archiveListingHandle.fd);
+    } catch (error) {
+      listingFailure = error instanceof PostgresToolAuthorityError
+        && error.code === "archive_drift"
+        ? new PostgresLogicalBackupError("archive_tampered")
+        : new PostgresLogicalBackupError("archive_invalid");
     }
     let afterValidation: StableFileSnapshot;
     try {
@@ -2802,17 +2849,24 @@ export async function createPostgresLogicalBackup(
       throw new PostgresLogicalBackupError("archive_tampered");
     }
     try {
+      await listAuthority.close();
+      listAuthority = null;
+    } catch {
+      listAuthority = null;
+      throw new PostgresLogicalBackupError("cleanup_failed");
+    }
+    try {
       await archiveListingHandle.close();
       archiveListingHandle = null;
     } catch {
       throw new PostgresLogicalBackupError("cleanup_failed");
     }
     if (
-      listingInvocationFailed
+      listingFailure
       || !listingResult
       || listingResult.exitCode !== 0
-      || listingResult.stderr.trim()
-    ) throw new PostgresLogicalBackupError("archive_invalid");
+      || listingResult.stderr !== ""
+    ) throw listingFailure ?? new PostgresLogicalBackupError("archive_invalid");
     const listing = parseArchiveListing(listingResult.stdout);
     if (listing.dumpedByPgDumpVersion !== pgDump.version) {
       throw new PostgresLogicalBackupError("archive_invalid");
@@ -2978,10 +3032,29 @@ export async function createPostgresLogicalBackup(
         cleanupFailed = true;
       }
     }
-    try {
-      await transport.close();
-    } catch {
-      cleanupFailed = true;
+    if (transport) {
+      try {
+        await transport.close();
+      } catch {
+        cleanupFailed = true;
+      }
+      transport = null;
+    }
+    if (dumpAuthority) {
+      try {
+        await dumpAuthority.close();
+      } catch {
+        cleanupFailed = true;
+      }
+      dumpAuthority = null;
+    }
+    if (listAuthority) {
+      try {
+        await listAuthority.close();
+      } catch {
+        cleanupFailed = true;
+      }
+      listAuthority = null;
     }
     if (cleanupFailed) {
       completed = null;

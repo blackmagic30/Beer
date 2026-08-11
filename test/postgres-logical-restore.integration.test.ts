@@ -15,6 +15,10 @@ import {
   runPostgresBackupProcess,
 } from "../src/lib/postgres-logical-backup.js";
 import {
+  openPostgresToolAuthority,
+  type PostgresToolAuthorityProcessRunner,
+} from "../src/lib/postgres-tool-authority.js";
+import {
   POSTGRES_LOGICAL_RESTORE_CONFIRMATION_VALUE,
   inspectPostgresLogicalRestoreTarget,
   restorePostgresLogicalBackup,
@@ -32,7 +36,11 @@ const ROOT_CA_DER_SHA256_ENV =
 const RESOLVED_ADDRESS_ENV =
   "PINTPATH_POSTGRES_LOGICAL_RESTORE_TEST_RESOLVED_ADDRESS";
 const PG_DUMP_ENV = "PINTPATH_POSTGRES_LOGICAL_RESTORE_TEST_PG_DUMP";
+const PG_DUMP_SHA256_ENV =
+  "PINTPATH_POSTGRES_LOGICAL_RESTORE_TEST_PG_DUMP_SHA256";
 const PG_RESTORE_ENV = "PINTPATH_POSTGRES_LOGICAL_RESTORE_TEST_PG_RESTORE";
+const PG_RESTORE_SHA256_ENV =
+  "PINTPATH_POSTGRES_LOGICAL_RESTORE_TEST_PG_RESTORE_SHA256";
 const CONFIGURATION_ERROR = "invalid_postgres_logical_restore_test_configuration";
 const BACKUP_SOURCE_HOSTNAME = "pintpath-logical-restore.railway.internal";
 const EXPECTED_POSTGRES_TOOL_VERSION = "17.10 (Ubuntu 17.10-1.pgdg24.04+1)";
@@ -59,7 +67,9 @@ interface LogicalRestoreTestConfiguration {
   readonly rootCaDerSha256: string;
   readonly resolvedAddress: string;
   readonly pgDumpCommand: string;
+  readonly expectedPgDumpSha256: string;
   readonly pgRestoreCommand: string;
+  readonly expectedPgRestoreSha256: string;
 }
 
 function configurationError(): Error {
@@ -165,7 +175,9 @@ function readTestConfiguration(): LogicalRestoreTestConfiguration | null {
     ROOT_CA_DER_SHA256_ENV,
     RESOLVED_ADDRESS_ENV,
     PG_DUMP_ENV,
+    PG_DUMP_SHA256_ENV,
     PG_RESTORE_ENV,
+    PG_RESTORE_SHA256_ENV,
   ] as const;
   const fixtureConfigured = fixtureNames.some((name) => (process.env[name] ?? "") !== "");
   if (required === "" && adminUrl === "" && !fixtureConfigured) return null;
@@ -190,6 +202,12 @@ function readTestConfiguration(): LogicalRestoreTestConfiguration | null {
     "pg_restore",
     "postgres-tool",
   );
+  const expectedPgDumpSha256 = readExactEnvironment(PG_DUMP_SHA256_ENV);
+  const expectedPgRestoreSha256 = readExactEnvironment(PG_RESTORE_SHA256_ENV);
+  if (
+    !/^[a-f0-9]{64}$/.test(expectedPgDumpSha256)
+    || !/^[a-f0-9]{64}$/.test(expectedPgRestoreSha256)
+  ) throw configurationError();
   if (path.dirname(pgDumpCommand) !== path.dirname(pgRestoreCommand)) {
     throw configurationError();
   }
@@ -201,7 +219,9 @@ function readTestConfiguration(): LogicalRestoreTestConfiguration | null {
       readExactEnvironment(RESOLVED_ADDRESS_ENV),
     ),
     pgDumpCommand,
+    expectedPgDumpSha256,
     pgRestoreCommand,
+    expectedPgRestoreSha256,
   });
 }
 
@@ -339,6 +359,156 @@ async function createLogicalBackup(
     }
     return descriptorStat;
   };
+  const realBackupProcessRunner: PostgresToolAuthorityProcessRunner =
+    runPostgresBackupProcess;
+
+  const observedBackupProcessRunner = (
+    purpose: "dump" | "list",
+  ): PostgresToolAuthorityProcessRunner => async (invocation) => {
+    const expectedCommand = purpose === "dump"
+      ? configuration.pgDumpCommand
+      : configuration.pgRestoreCommand;
+    if (invocation.command !== expectedCommand) throw configurationError();
+
+    const isPgDumpVersion = purpose === "dump"
+      && invocation.operation === "version"
+      && invocation.args.length === 1
+      && invocation.args[0] === "--version";
+    const isPgRestoreVersion = purpose === "list"
+      && invocation.operation === "version"
+      && invocation.args.length === 1
+      && invocation.args[0] === "--version";
+    const isPgDump = purpose === "dump"
+      && invocation.operation === "dump"
+      && invocation.args[0] !== "--version";
+    const isPgRestoreList = purpose === "list"
+      && invocation.operation === "list"
+      && invocation.args.length === 2
+      && invocation.args[0] === "--list"
+      && invocation.args[1] === "--format=custom";
+    if (
+      Number(isPgDumpVersion)
+        + Number(isPgRestoreVersion)
+        + Number(isPgDump)
+        + Number(isPgRestoreList)
+      !== 1
+    ) throw new Error("unexpected_backup_process_integration_invocation");
+
+    if (isPgDumpVersion || isPgRestoreVersion || isPgRestoreList) {
+      expect(invocation.env.PGPASSFILE).toBeUndefined();
+      if (invocation.env.PGPASSWORD !== undefined) {
+        throw new Error("unsafe_backup_process_environment");
+      }
+      for (const name of [
+        "PGHOST",
+        "PGHOSTADDR",
+        "PGPORT",
+        "PGSSLMODE",
+        "PGSSLROOTCERT",
+        "PGSSLMINPROTOCOLVERSION",
+        "PGSSLSNI",
+      ]) expect(invocation.env[name]).toBeUndefined();
+      if (isPgRestoreList && pgpassPath) {
+        expect(fs.existsSync(pgpassPath)).toBe(false);
+      }
+    }
+
+    if (isPgDumpVersion || isPgRestoreVersion) {
+      expect(invocation.stdinFileDescriptor).toBeUndefined();
+      expect(invocation.stdoutFileDescriptor).toBeUndefined();
+      const result = await realBackupProcessRunner(invocation);
+      recordProcessObservation(
+        isPgDumpVersion ? "pgDumpVersion" : "pgRestoreVersion",
+        `${isPgDumpVersion ? "pg-dump" : "pg-restore"}-version:no-stdin-or-stdout:${result.exitCode}`,
+      );
+      return result;
+    }
+
+    if (!concurrentWriteCommitted && isPgDump) {
+      pgpassPath = invocation.env.PGPASSFILE ?? "";
+      expect(pgpassPath).not.toBe("");
+      if (invocation.env.PGPASSWORD !== undefined) {
+        throw new Error("unsafe_backup_process_environment");
+      }
+      expect(invocation.env).toMatchObject({
+        PGHOST: "localhost",
+        PGHOSTADDR: configuration.resolvedAddress,
+        PGPORT: "5432",
+        PGSSLMODE: "verify-full",
+        PGSSLROOTCERT: transportRootCaFile,
+        PGSSLMINPROTOCOLVERSION: "TLSv1.2",
+        PGSSLSNI: "1",
+        PGDATABASE: SOURCE_DATABASE,
+        PGUSER: decodeURIComponent(sourceUrl.username),
+        PGGSSENCMODE: "disable",
+      });
+      expect(fs.statSync(pgpassPath).mode & 0o7777).toBe(0o600);
+      expect(fs.statSync(path.dirname(pgpassPath)).mode & 0o7777).toBe(0o700);
+      expect(path.dirname(pgpassPath)).toBe(transportDirectory);
+      const actualPgpass = fs.readFileSync(pgpassPath);
+      const expectedPgpass = Buffer.from(expectedPgpassRecord(sourceUrl), "utf8");
+      const pgpassMatches = actualPgpass.byteLength === expectedPgpass.byteLength
+        && crypto.timingSafeEqual(actualPgpass, expectedPgpass);
+      actualPgpass.fill(0);
+      expectedPgpass.fill(0);
+      if (!pgpassMatches) throw new Error("invalid_backup_password_file_contract");
+      const writer = new Client({ connectionString: sourceAdminUrl.toString() });
+      await writer.connect();
+      try {
+        await writer.query(`INSERT INTO pintpath_app.system_state
+          (key, value_json, revision, updated_at)
+          VALUES ('outside-exported-snapshot', '{"outside":true}'::jsonb,
+                  'outside-snapshot', clock_timestamp())`);
+        concurrentWriteCommitted = true;
+      } finally {
+        await writer.end();
+      }
+    }
+
+    if (isPgDump) {
+      expect(invocation.stdinFileDescriptor).toBeUndefined();
+      expect(invocation.args.some((argument) => (
+        argument === "--file" || argument.startsWith("--file=")
+      ))).toBe(false);
+      expect(invocation.args).not.toContain(archivePath);
+      dumpArchiveFileDescriptor = invocation.stdoutFileDescriptor;
+      const descriptorStat = inspectArchiveDescriptor(
+        dumpArchiveFileDescriptor,
+        "empty",
+      );
+      dumpArchiveIdentity = {
+        dev: descriptorStat.dev,
+        ino: descriptorStat.ino,
+      };
+    } else {
+      expect(invocation.args).toEqual(["--list", "--format=custom"]);
+      expect(invocation.args).not.toContain(archivePath);
+      expect(invocation.args).not.toContain(POSTGRES_LOGICAL_BACKUP_ARCHIVE);
+      expect(invocation.args).not.toContain("-");
+      expect(invocation.args.every((argument) => !argument.includes(archivePath)))
+        .toBe(true);
+      expect(invocation.stdoutFileDescriptor).toBeUndefined();
+      listingArchiveFileDescriptor = invocation.stdinFileDescriptor;
+      const descriptorStat = inspectArchiveDescriptor(
+        listingArchiveFileDescriptor,
+        "non-empty",
+      );
+      expect(dumpArchiveFileDescriptor).toBeTypeOf("number");
+      expect(listingArchiveFileDescriptor).not.toBe(dumpArchiveFileDescriptor);
+      expect({ dev: descriptorStat.dev, ino: descriptorStat.ino })
+        .toEqual(dumpArchiveIdentity);
+    }
+
+    const result = await realBackupProcessRunner(invocation);
+    recordProcessObservation(
+      isPgDump ? "pgDump" : "pgRestoreList",
+      `${isPgDump ? "pg-dump:trusted-archive-stdout" : "pg-restore-list:trusted-archive-stdin"}:${result.exitCode}`,
+    );
+    return result;
+  };
+  const dumpProcessRunner = observedBackupProcessRunner("dump");
+  const listProcessRunner = observedBackupProcessRunner("list");
+
   try {
     const result = await createPostgresLogicalBackup({
       connectionFile: sourceUrlFile,
@@ -348,14 +518,47 @@ async function createLogicalBackup(
       transportProfile: POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
       rootCaFile: configuration.rootCaFile,
       expectedRootCaDerSha256: configuration.rootCaDerSha256,
+      pgDumpFile: configuration.pgDumpCommand,
+      expectedPgDumpSha256: configuration.expectedPgDumpSha256,
+      pgRestoreFile: configuration.pgRestoreCommand,
+      expectedPgRestoreSha256: configuration.expectedPgRestoreSha256,
     }, {
       env: { ...process.env, NODE_ENV: "test" },
-      pgDumpCommand: configuration.pgDumpCommand,
-      pgRestoreCommand: configuration.pgRestoreCommand,
+      openDumpAuthority: (options) => {
+        if (
+          options.executableFile !== configuration.pgDumpCommand
+          || options.expectedSha256 !== configuration.expectedPgDumpSha256
+          || Object.values(processObservationState).some((value) => value !== null)
+        ) throw configurationError();
+        return openPostgresToolAuthority(Object.freeze({
+          purpose: "dump",
+          executableFile: options.executableFile,
+          expectedSha256: options.expectedSha256,
+        }), dumpProcessRunner);
+      },
+      openListAuthority: (options) => {
+        if (
+          options.executableFile !== configuration.pgRestoreCommand
+          || options.expectedSha256 !== configuration.expectedPgRestoreSha256
+          || processObservationState.pgDumpVersion === null
+          || processObservationState.pgRestoreVersion !== null
+          || processObservationState.pgDump !== null
+          || processObservationState.pgRestoreList !== null
+        ) throw configurationError();
+        return openPostgresToolAuthority(Object.freeze({
+          purpose: "list",
+          executableFile: options.executableFile,
+          expectedSha256: options.expectedSha256,
+        }), listProcessRunner);
+      },
       openTransport: async (options) => {
         if (
           options.sourceUrlAuthority.hostname !== BACKUP_SOURCE_HOSTNAME
           || options.sourceUrlAuthority.port !== 5_432
+          || processObservationState.pgDumpVersion === null
+          || processObservationState.pgRestoreVersion === null
+          || processObservationState.pgDump !== null
+          || processObservationState.pgRestoreList !== null
         ) throw configurationError();
         const transport = await openPostgresRailwayStockLocalhostCaTransport(options, {
           resolve6: async (hostname, signal) => {
@@ -387,151 +590,6 @@ async function createLogicalBackup(
           throw new Error("invalid_backup_transport_contract");
         }
         return transport;
-      },
-      runProcess: async (invocation) => {
-        if (
-          invocation.command !== configuration.pgDumpCommand
-          && invocation.command !== configuration.pgRestoreCommand
-        ) throw configurationError();
-
-        const isPgDumpVersion = invocation.command === configuration.pgDumpCommand
-          && invocation.args.length === 1
-          && invocation.args[0] === "--version";
-        const isPgRestoreVersion = invocation.command === configuration.pgRestoreCommand
-          && invocation.args.length === 1
-          && invocation.args[0] === "--version";
-        const isPgDump = invocation.command === configuration.pgDumpCommand
-          && invocation.args[0] !== "--version";
-        const isPgRestoreList = invocation.command === configuration.pgRestoreCommand
-          && invocation.args.length === 2
-          && invocation.args[0] === "--list"
-          && invocation.args[1] === "--format=custom";
-        if (
-          Number(isPgDumpVersion)
-            + Number(isPgRestoreVersion)
-            + Number(isPgDump)
-            + Number(isPgRestoreList)
-          !== 1
-        ) throw new Error("unexpected_backup_process_integration_invocation");
-
-        if (
-          isPgDumpVersion
-          || isPgRestoreVersion
-          || invocation.command === configuration.pgRestoreCommand
-        ) {
-          expect(invocation.env.PGPASSFILE).toBeUndefined();
-          if (invocation.env.PGPASSWORD !== undefined) {
-            throw new Error("unsafe_backup_process_environment");
-          }
-          for (const name of [
-            "PGHOST",
-            "PGHOSTADDR",
-            "PGPORT",
-            "PGSSLMODE",
-            "PGSSLROOTCERT",
-            "PGSSLMINPROTOCOLVERSION",
-            "PGSSLSNI",
-          ]) expect(invocation.env[name]).toBeUndefined();
-          if (invocation.command === configuration.pgRestoreCommand && pgpassPath) {
-            expect(fs.existsSync(pgpassPath)).toBe(false);
-          }
-        }
-
-        if (isPgDumpVersion || isPgRestoreVersion) {
-          expect(invocation.stdinFileDescriptor).toBeUndefined();
-          expect(invocation.stdoutFileDescriptor).toBeUndefined();
-          const result = await runPostgresBackupProcess(invocation);
-          recordProcessObservation(
-            isPgDumpVersion ? "pgDumpVersion" : "pgRestoreVersion",
-            `${isPgDumpVersion ? "pg-dump" : "pg-restore"}-version:no-stdin-or-stdout:${result.exitCode}`,
-          );
-          return result;
-        }
-
-        if (
-          !concurrentWriteCommitted
-          && isPgDump
-        ) {
-          pgpassPath = invocation.env.PGPASSFILE ?? "";
-          expect(pgpassPath).not.toBe("");
-          if (invocation.env.PGPASSWORD !== undefined) {
-            throw new Error("unsafe_backup_process_environment");
-          }
-          expect(invocation.env).toMatchObject({
-            PGHOST: "localhost",
-            PGHOSTADDR: configuration.resolvedAddress,
-            PGPORT: "5432",
-            PGSSLMODE: "verify-full",
-            PGSSLROOTCERT: transportRootCaFile,
-            PGSSLMINPROTOCOLVERSION: "TLSv1.2",
-            PGSSLSNI: "1",
-            PGDATABASE: SOURCE_DATABASE,
-            PGUSER: decodeURIComponent(sourceUrl.username),
-            PGGSSENCMODE: "disable",
-          });
-          expect(fs.statSync(pgpassPath).mode & 0o7777).toBe(0o600);
-          expect(fs.statSync(path.dirname(pgpassPath)).mode & 0o7777).toBe(0o700);
-          expect(path.dirname(pgpassPath)).toBe(transportDirectory);
-          const actualPgpass = fs.readFileSync(pgpassPath);
-          const expectedPgpass = Buffer.from(expectedPgpassRecord(sourceUrl), "utf8");
-          const pgpassMatches = actualPgpass.byteLength === expectedPgpass.byteLength
-            && crypto.timingSafeEqual(actualPgpass, expectedPgpass);
-          actualPgpass.fill(0);
-          expectedPgpass.fill(0);
-          if (!pgpassMatches) throw new Error("invalid_backup_password_file_contract");
-          const writer = new Client({ connectionString: sourceAdminUrl.toString() });
-          await writer.connect();
-          try {
-            await writer.query(`INSERT INTO pintpath_app.system_state
-              (key, value_json, revision, updated_at)
-              VALUES ('outside-exported-snapshot', '{"outside":true}'::jsonb,
-                      'outside-snapshot', clock_timestamp())`);
-            concurrentWriteCommitted = true;
-          } finally {
-            await writer.end();
-          }
-        }
-
-        if (isPgDump) {
-          expect(invocation.stdinFileDescriptor).toBeUndefined();
-          expect(invocation.args.some((argument) => (
-            argument === "--file" || argument.startsWith("--file=")
-          ))).toBe(false);
-          expect(invocation.args).not.toContain(archivePath);
-          dumpArchiveFileDescriptor = invocation.stdoutFileDescriptor;
-          const descriptorStat = inspectArchiveDescriptor(
-            dumpArchiveFileDescriptor,
-            "empty",
-          );
-          dumpArchiveIdentity = {
-            dev: descriptorStat.dev,
-            ino: descriptorStat.ino,
-          };
-        } else {
-          expect(invocation.args).toEqual(["--list", "--format=custom"]);
-          expect(invocation.args).not.toContain(archivePath);
-          expect(invocation.args).not.toContain(POSTGRES_LOGICAL_BACKUP_ARCHIVE);
-          expect(invocation.args).not.toContain("-");
-          expect(invocation.args.every((argument) => !argument.includes(archivePath)))
-            .toBe(true);
-          expect(invocation.stdoutFileDescriptor).toBeUndefined();
-          listingArchiveFileDescriptor = invocation.stdinFileDescriptor;
-          const descriptorStat = inspectArchiveDescriptor(
-            listingArchiveFileDescriptor,
-            "non-empty",
-          );
-          expect(dumpArchiveFileDescriptor).toBeTypeOf("number");
-          expect(listingArchiveFileDescriptor).not.toBe(dumpArchiveFileDescriptor);
-          expect({ dev: descriptorStat.dev, ino: descriptorStat.ino })
-            .toEqual(dumpArchiveIdentity);
-        }
-
-        const result = await runPostgresBackupProcess(invocation);
-        recordProcessObservation(
-          isPgDump ? "pgDump" : "pgRestoreList",
-          `${isPgDump ? "pg-dump:trusted-archive-stdout" : "pg-restore-list:trusted-archive-stdin"}:${result.exitCode}`,
-        );
-        return result;
       },
     });
     if (!concurrentWriteCommitted) throw new Error("concurrent_snapshot_write_not_committed");

@@ -736,6 +736,24 @@ describe("release workflow contracts", () => {
     );
     const logicalRestoreSteps = job.slice(installStep);
     const clientInstaller = repositoryFile("scripts/ci/install-postgresql-client-17");
+    const packageHashCheck = clientInstaller.indexOf(
+      'printf \'%s  %s\\n\' "$EXPECTED_PACKAGE_SHA256" "$package_deb"',
+    );
+    const packageMetadataCheck = clientInstaller.indexOf(
+      'dpkg-deb --field "$package_deb" Package',
+    );
+    const localPackageInstall = clientInstaller.indexOf(
+      "sudo env DEBIAN_FRONTEND=noninteractive apt-get install",
+    );
+    const dumpHashCheck = clientInstaller.indexOf(
+      'printf \'%s  %s\\n\' "$EXPECTED_PG_DUMP_SHA256" "$PG_DUMP"',
+    );
+    const restoreHashCheck = clientInstaller.indexOf(
+      'printf \'%s  %s\\n\' "$EXPECTED_PG_RESTORE_SHA256" "$PG_RESTORE"',
+    );
+    const hashExports = clientInstaller.indexOf(
+      '"PINTPATH_POSTGRES_LOGICAL_RESTORE_TEST_PG_DUMP_SHA256"',
+    );
     const tlsFixture = repositoryFile(
       "scripts/ci/postgres-logical-restore-tls-fixture",
     );
@@ -824,7 +842,16 @@ describe("release workflow contracts", () => {
       'EXPECTED_PACKAGE_VERSION="17.10-1.pgdg24.04+1"',
     );
     expect(clientInstaller).toContain(
+      'EXPECTED_PACKAGE_SHA256="e8806cd10a1c9ce453ef5feec242c6f9ba1229ce31ea862a6335277eae027987"',
+    );
+    expect(clientInstaller).toContain(
       'EXPECTED_TOOL_VERSION="17.10 (Ubuntu 17.10-1.pgdg24.04+1)"',
+    );
+    expect(clientInstaller).toContain(
+      'EXPECTED_PG_DUMP_SHA256="8cca9f4a2380df3cfa47704e13722059fd88291451b6c7be3642081db59d743b"',
+    );
+    expect(clientInstaller).toContain(
+      'EXPECTED_PG_RESTORE_SHA256="1b58a9c383ccee5f30c8a09d48ba0d50826a6841904430955295e1a6a6e7f34d"',
     );
     expect(clientInstaller).toContain('[[ "${VERSION_CODENAME:-}" == "noble" ]]');
     expect(clientInstaller).toContain('[[ "$(dpkg --print-architecture)" == "amd64" ]]');
@@ -835,7 +862,27 @@ describe("release workflow contracts", () => {
       "/usr/lib/postgresql/17/bin/pg_restore",
     );
     expect(clientInstaller).toContain("signed-by=$KEYRING");
-    expect(clientInstaller).toContain('"postgresql-client-17=$EXPECTED_PACKAGE_VERSION"');
+    expect(clientInstaller).toContain(
+      'apt-get download "postgresql-client-17=$EXPECTED_PACKAGE_VERSION"',
+    );
+    expect(clientInstaller).toContain('[[ "${#downloaded_packages[@]}" -eq 1 ]]');
+    expect(clientInstaller).toContain(
+      'dpkg-deb --field "$package_deb" Package)" == "postgresql-client-17"',
+    );
+    expect(clientInstaller).toContain(
+      'dpkg-deb --field "$package_deb" Version)" == "$EXPECTED_PACKAGE_VERSION"',
+    );
+    expect(clientInstaller).toContain(
+      'dpkg-deb --field "$package_deb" Architecture)" == "amd64"',
+    );
+    expect(clientInstaller).toContain(
+      'printf \'%s  %s\\n\' "$EXPECTED_PACKAGE_SHA256" "$package_deb"',
+    );
+    expect(clientInstaller.match(/sha256sum --check --status -/g)).toHaveLength(3);
+    expect(clientInstaller).toContain('"$package_deb"');
+    expect(packageHashCheck).toBeGreaterThan(-1);
+    expect(packageMetadataCheck).toBeGreaterThan(packageHashCheck);
+    expect(localPackageInstall).toBeGreaterThan(packageMetadataCheck);
     expect(clientInstaller).toContain("--connect-timeout 15");
     expect(clientInstaller).toContain("--max-time 60");
     expect(clientInstaller).toContain(
@@ -846,6 +893,27 @@ describe("release workflow contracts", () => {
     );
     expect(clientInstaller).toContain(
       '"$($PG_RESTORE --version)" == "pg_restore (PostgreSQL) $EXPECTED_TOOL_VERSION"',
+    );
+    expect(clientInstaller).toContain(
+      'printf \'%s  %s\\n\' "$EXPECTED_PG_DUMP_SHA256" "$PG_DUMP"',
+    );
+    expect(clientInstaller).toContain(
+      'printf \'%s  %s\\n\' "$EXPECTED_PG_RESTORE_SHA256" "$PG_RESTORE"',
+    );
+    expect(clientInstaller).toContain(
+      '"PINTPATH_POSTGRES_LOGICAL_RESTORE_TEST_PG_DUMP_SHA256" "$EXPECTED_PG_DUMP_SHA256"',
+    );
+    expect(clientInstaller).toContain(
+      '"PINTPATH_POSTGRES_LOGICAL_RESTORE_TEST_PG_RESTORE_SHA256" "$EXPECTED_PG_RESTORE_SHA256"',
+    );
+    expect(dumpHashCheck).toBeGreaterThan(localPackageInstall);
+    expect(restoreHashCheck).toBeGreaterThan(dumpHashCheck);
+    expect(hashExports).toBeGreaterThan(restoreHashCheck);
+    expect(clientInstaller).not.toMatch(
+      /EXPECTED_(?:PACKAGE|PG_DUMP|PG_RESTORE)_SHA256=\$\(/,
+    );
+    expect(clientInstaller).not.toMatch(
+      /PINTPATH_POSTGRES_LOGICAL_RESTORE_TEST_PG_(?:DUMP|RESTORE)_SHA256"\s+"?\$\([^\n]*sha256sum/,
     );
     expect(clientInstaller).not.toContain("set -x");
 

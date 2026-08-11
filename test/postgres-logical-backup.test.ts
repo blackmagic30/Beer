@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -24,8 +25,15 @@ import {
   type PostgresLogicalBackupManifestV2,
   type PostgresLogicalBackupManifestV3,
   type ProcessInvocation,
-  type ProcessResult,
 } from "../src/lib/postgres-logical-backup.js";
+import {
+  PostgresToolAuthorityError,
+  createPostgresToolProcessResultCarrier,
+  type PostgresDumpOperationInput,
+  type PostgresDumpToolAuthority,
+  type PostgresListToolAuthority,
+  type PostgresToolProcessResult,
+} from "../src/lib/postgres-tool-authority.js";
 import {
   POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
   PostgresRailwayStockLocalhostCaError,
@@ -47,10 +55,24 @@ const directTlsUrl = `postgresql://${backupLogin}:${connectionSecret}@${sourceHo
 const testResolvedAddress = "fd12:3456:789a::10";
 const testRootCaDerSha256 = "a".repeat(64);
 const testRootCaPem = "test-only-public-root-ca\n";
+const testPgDumpFile = "/reviewed/postgresql/17/bin/pg_dump";
+const testPgDumpSha256 = crypto.createHash("sha256")
+  .update("reviewed-test-pg-dump", "utf8")
+  .digest("hex");
+const testPgRestoreFile = "/reviewed/postgresql/17/bin/pg_restore";
+const testPgRestoreSha256 = crypto.createHash("sha256")
+  .update("reviewed-test-pg-restore", "utf8")
+  .digest("hex");
 const requiredTransportOptions = Object.freeze({
   transportProfile: POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
   rootCaFile: "/private/railway-root-ca.pem",
   expectedRootCaDerSha256: testRootCaDerSha256,
+});
+const requiredToolOptions = Object.freeze({
+  pgDumpFile: testPgDumpFile,
+  expectedPgDumpSha256: testPgDumpSha256,
+  pgRestoreFile: testPgRestoreFile,
+  expectedPgRestoreSha256: testPgRestoreSha256,
 });
 
 interface TransportTestControl {
@@ -200,10 +222,20 @@ async function openTestTransport(
 
 function createTestPostgresLogicalBackup(
   options: Omit<CreatePostgresLogicalBackupOptions,
-    "transportProfile" | "rootCaFile" | "expectedRootCaDerSha256">,
+    | "transportProfile"
+    | "rootCaFile"
+    | "expectedRootCaDerSha256"
+    | "pgDumpFile"
+    | "expectedPgDumpSha256"
+    | "pgRestoreFile"
+    | "expectedPgRestoreSha256">,
   overrides: Partial<PostgresLogicalBackupDependencies> = {},
 ) {
-  return createPostgresLogicalBackup({ ...requiredTransportOptions, ...options }, overrides);
+  return createPostgresLogicalBackup({
+    ...requiredTransportOptions,
+    ...requiredToolOptions,
+    ...options,
+  }, overrides);
 }
 
 function writeConnectionFile(root: string, value = directTlsUrl, mode = 0o600): string {
@@ -240,13 +272,19 @@ function validArchiveListing(): string {
   ].join("\n");
 }
 
-interface ProcessHarnessOptions {
-  dumpResult?: ProcessResult;
-  listingResult?: ProcessResult;
+interface ToolAuthorityHarnessOptions {
+  dumpResult?: PostgresToolProcessResult;
+  listingResult?: PostgresToolProcessResult;
   listing?: string;
   tamperDuringListing?: boolean;
   pgDumpVersion?: string;
   pgRestoreVersion?: string;
+  dumpOpenFails?: boolean;
+  listOpenFails?: boolean;
+  dumpVersionFails?: boolean;
+  listVersionFails?: boolean;
+  dumpCloseFails?: boolean;
+  listCloseFails?: boolean;
   throwOnDump?: boolean;
   events?: string[];
   pgpassMutation?:
@@ -576,101 +614,299 @@ function forbidRecursiveOutputRm(outputDirectory: string, victimDirectory: strin
   };
 }
 
-function createProcessHarness(options: ProcessHarnessOptions = {}) {
-  const invocations: ProcessInvocation[] = [];
+interface ToolAuthorityOpenObservation {
+  purpose: "dump" | "list";
+  executableFile: string;
+  expectedSha256: string;
+}
+
+interface ToolProcessObservation extends ProcessInvocation {
+  operation: "version" | "dump" | "list";
+}
+
+interface ToolAuthorityLifecycle {
+  opened: number;
+  versionCalls: number;
+  operationCalls: number;
+  assertExactCalls: number;
+  closeCalls: number;
+  operatedWhileOpen: boolean;
+  closed: boolean;
+}
+
+function carrierResult(result: PostgresToolProcessResult) {
+  return createPostgresToolProcessResultCarrier({
+    exitCode: result.exitCode,
+    stdout: result.stdout,
+    stderr: result.stderr,
+  });
+}
+
+function createToolAuthorityHarness(options: ToolAuthorityHarnessOptions = {}) {
+  const invocations: ToolProcessObservation[] = [];
   const pgpassObservations: PgpassObservation[] = [];
   const archiveDescriptorObservations: ArchiveDescriptorObservations = {};
-  const runner = async (invocation: ProcessInvocation): Promise<ProcessResult> => {
-    invocations.push(invocation);
-    if (invocation.args.length === 1 && invocation.args[0] === "--version") {
-      options.events?.push("process.version");
-      const name = invocation.command.includes("restore") ? "pg_restore" : "pg_dump";
-      const version = name === "pg_restore"
-        ? options.pgRestoreVersion ?? "17.10 (Homebrew)"
-        : options.pgDumpVersion ?? "17.10 (Homebrew)";
-      return { exitCode: 0, stdout: `${name} (PostgreSQL) ${version}\n`, stderr: "" };
-    }
-    if (invocation.command.includes("dump")) {
-      options.events?.push("process.dump");
-      if (options.throwOnDump) throw new Error(`could not connect to ${directTlsUrl}`);
-      const pgpassPath = invocation.env.PGPASSFILE;
-      if (!pgpassPath) throw new Error("test dump invocation omitted PGPASSFILE");
-      pgpassObservations.push({
-        path: pgpassPath,
-        contents: fs.readFileSync(pgpassPath, "utf8"),
-        fileMode: fs.statSync(pgpassPath).mode & 0o7777,
-        directoryMode: fs.statSync(path.dirname(pgpassPath)).mode & 0o7777,
-      });
-      if (options.pgpassMutation === "same-inode-content") {
-        fs.writeFileSync(pgpassPath, "tampered-in-place\n", { mode: 0o600 });
-      } else if (options.pgpassMutation === "same-inode-mode") {
-        fs.chmodSync(pgpassPath, 0o400);
-      } else if (options.pgpassMutation === "replacement") {
-        fs.unlinkSync(pgpassPath);
-        fs.writeFileSync(pgpassPath, "untrusted-replacement\n", { mode: 0o600 });
-      } else if (options.pgpassMutation === "extra-sibling") {
-        fs.writeFileSync(path.join(path.dirname(pgpassPath), "unexpected"), "keep");
-      } else if (options.pgpassMutation === "hardlink") {
-        fs.linkSync(pgpassPath, path.join(path.dirname(pgpassPath), "retained-hardlink"));
-      } else if (options.pgpassMutation === "missing") {
-        fs.unlinkSync(pgpassPath);
-      }
-      if (invocation.args.some((argument) => argument.startsWith("--file"))) {
-        throw new Error("test dump invocation passed --file");
-      }
-      const stdoutFileDescriptor = invocation.stdoutFileDescriptor;
-      if (stdoutFileDescriptor === undefined) {
-        throw new Error("test dump invocation omitted stdoutFileDescriptor");
-      }
-      const archiveBytes = Buffer.from("PGDMP-test-archive");
-      // The injected runner emulates the real runner's parent-side stdout pipe
-      // copier; pg_dump itself never inherits this archive descriptor.
-      writeAllToDescriptor(stdoutFileDescriptor, archiveBytes);
-      archiveDescriptorObservations.dump = {
-        fileDescriptor: stdoutFileDescriptor,
-        bytes: archiveBytes,
-      };
-      return options.dumpResult ?? { exitCode: 0, stdout: "", stderr: "" };
-    }
-    if (invocation.command.includes("restore")) {
-      options.events?.push("process.list");
-      const stdinFileDescriptor = invocation.stdinFileDescriptor;
-      if (stdinFileDescriptor === undefined) {
-        throw new Error("test restore-list invocation omitted stdinFileDescriptor");
-      }
-      if (stdinFileDescriptor === archiveDescriptorObservations.dump?.fileDescriptor) {
-        throw new Error("test restore-list invocation reused dump stdoutFileDescriptor");
-      }
-      const archiveBytes = fs.readFileSync(stdinFileDescriptor);
-      archiveDescriptorObservations.restoreList = {
-        fileDescriptor: stdinFileDescriptor,
-        bytes: archiveBytes,
-      };
-      if (options.tamperDuringListing) {
-        const dumpFileDescriptor = archiveDescriptorObservations.dump?.fileDescriptor;
-        if (dumpFileDescriptor === undefined) {
-          throw new Error("test restore-list invocation had no observed dump descriptor");
-        }
-        const tamperBytes = Buffer.from("tampered");
-        writeAllToDescriptor(dumpFileDescriptor, tamperBytes);
-        archiveDescriptorObservations.tamper = {
-          fileDescriptor: dumpFileDescriptor,
-          bytes: tamperBytes,
-        };
-      }
-      return options.listingResult ?? {
-        exitCode: 0,
-        stdout: options.listing ?? validArchiveListing(),
-        stderr: "",
-      };
-    }
-    throw new Error("unexpected test process");
+  const authorityOpens: ToolAuthorityOpenObservation[] = [];
+  const authorityLifecycle: Record<"dump" | "list", ToolAuthorityLifecycle> = {
+    dump: {
+      opened: 0,
+      versionCalls: 0,
+      operationCalls: 0,
+      assertExactCalls: 0,
+      closeCalls: 0,
+      operatedWhileOpen: false,
+      closed: false,
+    },
+    list: {
+      opened: 0,
+      versionCalls: 0,
+      operationCalls: 0,
+      assertExactCalls: 0,
+      closeCalls: 0,
+      operatedWhileOpen: false,
+      closed: false,
+    },
   };
-  return { archiveDescriptorObservations, invocations, pgpassObservations, runner };
+
+  const observeDump = async (
+    executableFile: string,
+    input: PostgresDumpOperationInput,
+  ): Promise<PostgresToolProcessResult> => {
+    const invocation: ToolProcessObservation = {
+      operation: "dump",
+      command: executableFile,
+      args: [
+        "--format=custom",
+        `--snapshot=${input.snapshotIdentifier}`,
+        `--role=${input.roleName}`,
+        "--no-owner",
+        "--no-acl",
+        "--enable-row-security",
+        "--strict-names",
+        "--lock-wait-timeout=30s",
+        "--no-password",
+        "--schema=pintpath_app",
+        "--schema=pintpath_ops",
+      ],
+      env: input.environment,
+      timeoutMs: 60 * 60 * 1_000,
+      maxStdoutBytes: 512 * 1_024,
+      maxStderrBytes: 512 * 1_024,
+      stdoutFileDescriptor: input.archiveOutputFileDescriptor,
+    };
+    invocations.push(invocation);
+    options.events?.push("process.dump");
+    if (options.throwOnDump) throw new Error(`could not connect to ${directTlsUrl}`);
+    const pgpassPath = invocation.env.PGPASSFILE;
+    if (!pgpassPath) throw new Error("test dump invocation omitted PGPASSFILE");
+    pgpassObservations.push({
+      path: pgpassPath,
+      contents: fs.readFileSync(pgpassPath, "utf8"),
+      fileMode: fs.statSync(pgpassPath).mode & 0o7777,
+      directoryMode: fs.statSync(path.dirname(pgpassPath)).mode & 0o7777,
+    });
+    if (options.pgpassMutation === "same-inode-content") {
+      fs.writeFileSync(pgpassPath, "tampered-in-place\n", { mode: 0o600 });
+    } else if (options.pgpassMutation === "same-inode-mode") {
+      fs.chmodSync(pgpassPath, 0o400);
+    } else if (options.pgpassMutation === "replacement") {
+      fs.unlinkSync(pgpassPath);
+      fs.writeFileSync(pgpassPath, "untrusted-replacement\n", { mode: 0o600 });
+    } else if (options.pgpassMutation === "extra-sibling") {
+      fs.writeFileSync(path.join(path.dirname(pgpassPath), "unexpected"), "keep");
+    } else if (options.pgpassMutation === "hardlink") {
+      fs.linkSync(pgpassPath, path.join(path.dirname(pgpassPath), "retained-hardlink"));
+    } else if (options.pgpassMutation === "missing") {
+      fs.unlinkSync(pgpassPath);
+    }
+    if (invocation.args.some((argument) => argument.startsWith("--file"))) {
+      throw new Error("test dump invocation passed --file");
+    }
+    const stdoutFileDescriptor = invocation.stdoutFileDescriptor;
+    if (stdoutFileDescriptor === undefined) {
+      throw new Error("test dump invocation omitted stdoutFileDescriptor");
+    }
+    const archiveBytes = Buffer.from("PGDMP-test-archive");
+    // The fake pre-bound authority emulates the real runner's parent-side
+    // stdout pipe copier; pg_dump itself never inherits this archive descriptor.
+    writeAllToDescriptor(stdoutFileDescriptor, archiveBytes);
+    archiveDescriptorObservations.dump = {
+      fileDescriptor: stdoutFileDescriptor,
+      bytes: archiveBytes,
+    };
+    return carrierResult(options.dumpResult ?? { exitCode: 0, stdout: "", stderr: "" });
+  };
+
+  const observeList = async (
+    executableFile: string,
+    archiveInputFileDescriptor: number,
+  ): Promise<PostgresToolProcessResult> => {
+    const invocation: ToolProcessObservation = {
+      operation: "list",
+      command: executableFile,
+      args: ["--list", "--format=custom"],
+      env: Object.freeze({ LC_ALL: "C" }),
+      timeoutMs: 5 * 60 * 1_000,
+      maxStdoutBytes: 32 * 1_024 * 1_024,
+      maxStderrBytes: 512 * 1_024,
+      stdinFileDescriptor: archiveInputFileDescriptor,
+    };
+    invocations.push(invocation);
+    options.events?.push("process.list");
+    if (archiveInputFileDescriptor === archiveDescriptorObservations.dump?.fileDescriptor) {
+      throw new Error("test restore-list invocation reused dump stdoutFileDescriptor");
+    }
+    const archiveStat = fs.fstatSync(archiveInputFileDescriptor);
+    const archiveBytes = readExactDescriptorBytes(
+      archiveInputFileDescriptor,
+      Number(archiveStat.size),
+    );
+    archiveDescriptorObservations.restoreList = {
+      fileDescriptor: archiveInputFileDescriptor,
+      bytes: archiveBytes,
+    };
+    if (options.tamperDuringListing) {
+      const dumpFileDescriptor = archiveDescriptorObservations.dump?.fileDescriptor;
+      if (dumpFileDescriptor === undefined) {
+        throw new Error("test restore-list invocation had no observed dump descriptor");
+      }
+      const tamperBytes = Buffer.from("tampered");
+      writeAllToDescriptor(dumpFileDescriptor, tamperBytes);
+      archiveDescriptorObservations.tamper = {
+        fileDescriptor: dumpFileDescriptor,
+        bytes: tamperBytes,
+      };
+    }
+    return carrierResult(options.listingResult ?? {
+      exitCode: 0,
+      stdout: options.listing ?? validArchiveListing(),
+      stderr: "",
+    });
+  };
+
+  const openDumpAuthority: PostgresLogicalBackupDependencies["openDumpAuthority"] = async (
+    openOptions,
+  ) => {
+    authorityOpens.push({ purpose: "dump", ...openOptions });
+    options.events?.push("authority.dump.open");
+    const lifecycle = authorityLifecycle.dump;
+    lifecycle.opened += 1;
+    if (options.dumpOpenFails) throw new PostgresToolAuthorityError("unsafe_executable");
+    let closePromise: Promise<void> | null = null;
+    const authority = Object.assign(Object.create(null), {
+      version: Object.freeze(async () => {
+        if (lifecycle.closed) throw new Error("test dump authority version after close");
+        lifecycle.versionCalls += 1;
+        options.events?.push("authority.dump.version");
+        options.events?.push("process.version");
+        invocations.push({
+          operation: "version",
+          command: openOptions.executableFile,
+          args: ["--version"],
+          env: Object.freeze({ LC_ALL: "C" }),
+          timeoutMs: 15_000,
+          maxStdoutBytes: 4 * 1_024,
+          maxStderrBytes: 4 * 1_024,
+        });
+        if (options.dumpVersionFails) throw new PostgresToolAuthorityError("process_failed");
+        return carrierResult({
+          exitCode: 0,
+          stdout: `pg_dump (PostgreSQL) ${options.pgDumpVersion ?? "17.10 (Homebrew)"}\n`,
+          stderr: "",
+        });
+      }),
+      dump: Object.freeze(async (input: PostgresDumpOperationInput) => {
+        lifecycle.operationCalls += 1;
+        lifecycle.operatedWhileOpen = !lifecycle.closed;
+        if (lifecycle.closed) throw new Error("test dump authority operation after close");
+        return observeDump(openOptions.executableFile, input);
+      }),
+      assertExact: Object.freeze(async () => {
+        lifecycle.assertExactCalls += 1;
+        if (lifecycle.closed) throw new Error("test dump authority assertion after close");
+      }),
+      close: Object.freeze(() => {
+        lifecycle.closeCalls += 1;
+        if (closePromise) return closePromise;
+        lifecycle.closed = true;
+        options.events?.push("authority.dump.close");
+        closePromise = options.dumpCloseFails
+          ? Promise.reject(new PostgresToolAuthorityError("cleanup_failed"))
+          : Promise.resolve();
+        return closePromise;
+      }),
+    }) as PostgresDumpToolAuthority;
+    return Object.freeze(authority);
+  };
+
+  const openListAuthority: PostgresLogicalBackupDependencies["openListAuthority"] = async (
+    openOptions,
+  ) => {
+    authorityOpens.push({ purpose: "list", ...openOptions });
+    options.events?.push("authority.list.open");
+    const lifecycle = authorityLifecycle.list;
+    lifecycle.opened += 1;
+    if (options.listOpenFails) throw new PostgresToolAuthorityError("unsafe_executable");
+    let closePromise: Promise<void> | null = null;
+    const authority = Object.assign(Object.create(null), {
+      version: Object.freeze(async () => {
+        if (lifecycle.closed) throw new Error("test list authority version after close");
+        lifecycle.versionCalls += 1;
+        options.events?.push("authority.list.version");
+        options.events?.push("process.version");
+        invocations.push({
+          operation: "version",
+          command: openOptions.executableFile,
+          args: ["--version"],
+          env: Object.freeze({ LC_ALL: "C" }),
+          timeoutMs: 15_000,
+          maxStdoutBytes: 4 * 1_024,
+          maxStderrBytes: 4 * 1_024,
+        });
+        if (options.listVersionFails) throw new PostgresToolAuthorityError("process_failed");
+        return carrierResult({
+          exitCode: 0,
+          stdout: `pg_restore (PostgreSQL) ${options.pgRestoreVersion ?? "17.10 (Homebrew)"}\n`,
+          stderr: "",
+        });
+      }),
+      list: Object.freeze(async (archiveInputFileDescriptor: number) => {
+        lifecycle.operationCalls += 1;
+        lifecycle.operatedWhileOpen = !lifecycle.closed;
+        if (lifecycle.closed) throw new Error("test list authority operation after close");
+        return observeList(openOptions.executableFile, archiveInputFileDescriptor);
+      }),
+      assertExact: Object.freeze(async () => {
+        lifecycle.assertExactCalls += 1;
+        if (lifecycle.closed) throw new Error("test list authority assertion after close");
+      }),
+      close: Object.freeze(() => {
+        lifecycle.closeCalls += 1;
+        if (closePromise) return closePromise;
+        lifecycle.closed = true;
+        options.events?.push("authority.list.close");
+        closePromise = options.listCloseFails
+          ? Promise.reject(new PostgresToolAuthorityError("cleanup_failed"))
+          : Promise.resolve();
+        return closePromise;
+      }),
+    }) as PostgresListToolAuthority;
+    return Object.freeze(authority);
+  };
+
+  return {
+    archiveDescriptorObservations,
+    authorityLifecycle,
+    authorityOpens,
+    invocations,
+    openDumpAuthority,
+    openListAuthority,
+    pgpassObservations,
+  };
 }
 
 function dependencies(
-  runner: PostgresLogicalBackupDependencies["runProcess"],
+  harness: ReturnType<typeof createToolAuthorityHarness>,
   queries: string[] = [],
   transportControl: TransportTestControl = {},
 ): Partial<PostgresLogicalBackupDependencies> {
@@ -778,9 +1014,8 @@ function dependencies(
       AWS_SECRET_ACCESS_KEY: "unrelated-secret-must-not-leak",
     },
     now: () => new Date("2026-08-08T01:02:03.000Z"),
-    pgDumpCommand: "/safe/bin/pg_dump",
-    pgRestoreCommand: "/safe/bin/pg_restore",
-    runProcess: runner,
+    openDumpAuthority: harness.openDumpAuthority,
+    openListAuthority: harness.openListAuthority,
     connect: async () => {
       transportControl.events?.push("connection.open");
       return connection;
@@ -1005,6 +1240,95 @@ describe("Postgres logical backup foundation", () => {
     } finally {
       fs.closeSync(stdoutFileDescriptor);
     }
+  });
+
+  it("returns the branded frozen null-prototype carrier from the direct process runner", async () => {
+    const result = await runPostgresBackupProcess({
+      command: process.execPath,
+      args: [
+        "-e",
+        'process.stdout.write("carrier-stdout"); process.stderr.write("carrier-stderr")',
+      ],
+      env: { LC_ALL: "C" },
+      timeoutMs: 5_000,
+      maxStdoutBytes: 1_024,
+      maxStderrBytes: 1_024,
+    });
+
+    expect(result).toEqual({
+      exitCode: 0,
+      stdout: "carrier-stdout",
+      stderr: "carrier-stderr",
+    });
+    expect(Object.getPrototypeOf(result)).toBeNull();
+    expect(Object.isFrozen(result)).toBe(true);
+    expect(Reflect.ownKeys(result)).toEqual(["exitCode", "stdout", "stderr"]);
+  });
+
+  it("settles the direct process carrier without consulting inherited Object.prototype.then", () => {
+    // Promise.prototype integrity belongs to the locked launch/runtime boundary.
+    // This isolates the runner's own result-carrier assimilation guarantee.
+    const moduleFile = path.join(process.cwd(), "src/lib/postgres-logical-backup.ts");
+    const script = String.raw`
+      import process from "node:process";
+      import { pathToFileURL } from "node:url";
+      const moduleFile = process.argv[1];
+      const backupModule = await import(pathToFileURL(moduleFile).href);
+      const ObjectExact = Object;
+      const PromiseExact = Promise;
+      const originalThen = ObjectExact.getOwnPropertyDescriptor(ObjectExact.prototype, "then");
+      let thenGetterCalls = 0;
+      let unhandledRejections = 0;
+      const onUnhandled = () => { unhandledRejections += 1; };
+      process.on("unhandledRejection", onUnhandled);
+      await new PromiseExact((resolve) => setImmediate(resolve));
+      await new PromiseExact((resolve) => setImmediate(resolve));
+      try {
+        ObjectExact.defineProperty(ObjectExact.prototype, "then", {
+          configurable: true,
+          get() {
+            thenGetterCalls += 1;
+            throw new Error("inherited Object.prototype.then getter must not run");
+          },
+        });
+        const result = await backupModule.runPostgresBackupProcess({
+          command: process.execPath,
+          args: ["-e", "process.stdout.write('isolated-carrier')"],
+          env: { LC_ALL: "C" },
+          timeoutMs: 5000,
+          maxStdoutBytes: 1024,
+          maxStderrBytes: 1024,
+        });
+        if (
+          ObjectExact.getPrototypeOf(result) !== null
+          || !ObjectExact.isFrozen(result)
+          || result.exitCode !== 0
+          || result.stdout !== "isolated-carrier"
+          || result.stderr !== ""
+        ) throw new Error("unexpected direct runner carrier");
+        await new PromiseExact((resolve) => setImmediate(resolve));
+      } finally {
+        if (originalThen === undefined) Reflect.deleteProperty(ObjectExact.prototype, "then");
+        else ObjectExact.defineProperty(ObjectExact.prototype, "then", originalThen);
+        process.off("unhandledRejection", onUnhandled);
+      }
+      if (thenGetterCalls !== 0 || unhandledRejections !== 0) {
+        throw new Error("unsafe Promise settlement observed");
+      }
+      process.stdout.write("ok");
+    `;
+    const output = execFileSync(process.execPath, [
+      "--import",
+      "tsx",
+      "--input-type=module",
+      "--eval",
+      script,
+      moduleFile,
+    ], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+    });
+    expect(output).toBe("ok");
   });
 
   it.skipIf(process.platform === "win32")(
@@ -1437,7 +1761,7 @@ describe("Postgres logical backup foundation", () => {
     const connectionFile = writeConnectionFile(root);
     const outputDirectory = path.join(root, "logical-backup");
     const canonicalOutputDirectory = path.join(fs.realpathSync(root), "logical-backup");
-    const harness = createProcessHarness();
+    const harness = createToolAuthorityHarness();
 
     const result = await createTestPostgresLogicalBackup(
       {
@@ -1445,7 +1769,7 @@ describe("Postgres logical backup foundation", () => {
         expectedSourceUrlSha256: sha256(directTlsUrl),
         outputDirectory,
       },
-      dependencies(harness.runner),
+      dependencies(harness),
     );
 
     expect(result).toEqual({
@@ -1560,12 +1884,13 @@ describe("Postgres logical backup foundation", () => {
     let uidRead = false;
     const error = await createPostgresLogicalBackup({
       ...requiredTransportOptions,
+      ...requiredToolOptions,
       connectionFile: writeConnectionFile(root),
       expectedSourceUrlSha256: sha256(directTlsUrl),
       outputDirectory: path.join(root, "invalid-transport-input"),
       ...change,
     } as CreatePostgresLogicalBackupOptions, {
-      ...dependencies(createProcessHarness().runner),
+      ...dependencies(createToolAuthorityHarness()),
       getUid: () => {
         uidRead = true;
         return process.getuid?.() ?? 0;
@@ -1574,6 +1899,44 @@ describe("Postgres logical backup foundation", () => {
     expectBackupError(error, "invalid_arguments");
     expect(uidRead).toBe(false);
   });
+
+  it.each([
+    ["missing pg_dump path", { pgDumpFile: undefined }],
+    ["bare pg_dump path", { pgDumpFile: "pg_dump" }],
+    ["padded pg_dump path", { pgDumpFile: ` ${testPgDumpFile}` }],
+    ["missing pg_dump hash", { expectedPgDumpSha256: undefined }],
+    ["uppercase pg_dump hash", { expectedPgDumpSha256: testPgDumpSha256.toUpperCase() }],
+    ["missing pg_restore path", { pgRestoreFile: undefined }],
+    ["bare pg_restore path", { pgRestoreFile: "pg_restore" }],
+    ["padded pg_restore path", { pgRestoreFile: `${testPgRestoreFile} ` }],
+    ["missing pg_restore hash", { expectedPgRestoreSha256: undefined }],
+    ["uppercase pg_restore hash", { expectedPgRestoreSha256: testPgRestoreSha256.toUpperCase() }],
+  ] as const)(
+    "rejects the required tool authority input %s before reading runtime authority",
+    async (_label, change) => {
+      const root = makeTemporaryDirectory();
+      const harness = createToolAuthorityHarness();
+      let uidRead = false;
+      const error = await createPostgresLogicalBackup({
+        ...requiredTransportOptions,
+        ...requiredToolOptions,
+        connectionFile: writeConnectionFile(root),
+        expectedSourceUrlSha256: sha256(directTlsUrl),
+        outputDirectory: path.join(root, "invalid-tool-authority-input"),
+        ...change,
+      } as unknown as CreatePostgresLogicalBackupOptions, {
+        ...dependencies(harness),
+        getUid: () => {
+          uidRead = true;
+          return process.getuid?.() ?? 0;
+        },
+      }).catch((caught: unknown) => caught);
+
+      expectBackupError(error, "invalid_arguments");
+      expect(uidRead).toBe(false);
+      expect(harness.authorityOpens).toEqual([]);
+    },
+  );
 
   it("rejects noncanonical or overlapping authority paths before any asynchronous authority read", async () => {
     const root = makeTemporaryDirectory();
@@ -1592,12 +1955,13 @@ describe("Postgres logical backup foundation", () => {
       let uidRead = false;
       const error = await createPostgresLogicalBackup({
         ...requiredTransportOptions,
+        ...requiredToolOptions,
         connectionFile,
         expectedSourceUrlSha256: sha256(directTlsUrl),
         outputDirectory,
         ...change,
       }, {
-        ...dependencies(createProcessHarness().runner),
+        ...dependencies(createToolAuthorityHarness()),
         getUid: () => {
           uidRead = true;
           return process.getuid?.() ?? 0;
@@ -1607,6 +1971,68 @@ describe("Postgres logical backup foundation", () => {
       expect(uidRead).toBe(false);
     }
   });
+
+  it.each([
+    [
+      "dump open",
+      { dumpOpenFails: true },
+      [] as const,
+      { dump: 0, list: 0 },
+    ],
+    [
+      "dump version",
+      { dumpVersionFails: true },
+      ["version"] as const,
+      { dump: 1, list: 0 },
+    ],
+    [
+      "list open",
+      { listOpenFails: true },
+      ["version"] as const,
+      { dump: 1, list: 0 },
+    ],
+    [
+      "list version",
+      { listVersionFails: true },
+      ["version", "version"] as const,
+      { dump: 1, list: 1 },
+    ],
+  ] as const)(
+    "contains %s authority failure before transport, connection, or output creation",
+    async (_label, harnessOptions, expectedOperations, expectedCloseCalls) => {
+      const root = makeTemporaryDirectory();
+      const outputDirectory = path.join(root, "tool-authority-failure");
+      const harness = createToolAuthorityHarness(harnessOptions);
+      const base = dependencies(harness);
+      let transportOpened = false;
+      let connected = false;
+      const error = await createTestPostgresLogicalBackup({
+        connectionFile: writeConnectionFile(root),
+        expectedSourceUrlSha256: sha256(directTlsUrl),
+        outputDirectory,
+      }, {
+        ...base,
+        openTransport: async (transportOptions) => {
+          transportOpened = true;
+          return base.openTransport!(transportOptions);
+        },
+        connect: async (config) => {
+          connected = true;
+          return base.connect!(config);
+        },
+      }).catch((caught: unknown) => caught);
+
+      expectBackupError(error, "tool_unavailable_or_unsupported");
+      expect(harness.invocations.map((invocation) => invocation.operation)).toEqual(
+        expectedOperations,
+      );
+      expect(harness.authorityLifecycle.dump.closeCalls).toBe(expectedCloseCalls.dump);
+      expect(harness.authorityLifecycle.list.closeCalls).toBe(expectedCloseCalls.list);
+      expect(transportOpened).toBe(false);
+      expect(connected).toBe(false);
+      expect(fs.existsSync(outputDirectory)).toBe(false);
+    },
+  );
 
   it.each([
     ["profile", (transport: PostgresRailwayStockLocalhostCaTransport) => ({
@@ -1629,19 +2055,21 @@ describe("Postgres logical backup foundation", () => {
       ...transport,
       sourceUrlAuthority: { hostname: sourceHostname, port: 5_432, extra: true },
     })],
-  ])("rejects a returned transport with mismatched %s before tools or connection", async (_label, mutate) => {
+  ])(
+    "rejects a returned transport with mismatched %s after tool pinning but before connection",
+    async (_label, mutate) => {
     const root = makeTemporaryDirectory();
     const outputDirectory = path.join(root, "mismatched-returned-transport");
     const events: string[] = [];
     const control: TransportTestControl = { events };
-    const harness = createProcessHarness({ events });
+    const harness = createToolAuthorityHarness({ events });
     let connected = false;
     const error = await createTestPostgresLogicalBackup({
       connectionFile: writeConnectionFile(root),
       expectedSourceUrlSha256: sha256(directTlsUrl),
       outputDirectory,
     }, {
-      ...dependencies(harness.runner, [], control),
+      ...dependencies(harness, [], control),
       openTransport: async (transportOptions) => mutate(
         await openTestTransport(transportOptions, control)
       ) as unknown as PostgresRailwayStockLocalhostCaTransport,
@@ -1652,50 +2080,195 @@ describe("Postgres logical backup foundation", () => {
     }).catch((caught: unknown) => caught);
 
     expectBackupError(error, "source_unreachable_or_unsafe");
-    expect(harness.invocations).toEqual([]);
+    expect(harness.invocations.map((invocation) => invocation.operation)).toEqual([
+      "version",
+      "version",
+    ]);
+    expect(harness.authorityLifecycle.dump.closeCalls).toBe(1);
+    expect(harness.authorityLifecycle.list.closeCalls).toBe(1);
     expect(connected).toBe(false);
     expect(fs.existsSync(outputDirectory)).toBe(false);
     expect(events).toContain("transport.close");
-  });
+    },
+  );
 
   it("gives cleanup failure precedence when rejecting a mismatched returned transport", async () => {
     const root = makeTemporaryDirectory();
     const control: TransportTestControl = { closeFails: true };
-    const harness = createProcessHarness();
+    const harness = createToolAuthorityHarness();
     const error = await createTestPostgresLogicalBackup({
       connectionFile: writeConnectionFile(root),
       expectedSourceUrlSha256: sha256(directTlsUrl),
       outputDirectory: path.join(root, "mismatch-close-failure"),
     }, {
-      ...dependencies(harness.runner),
+      ...dependencies(harness),
       openTransport: async (transportOptions) => ({
         ...await openTestTransport(transportOptions, control),
         rootCaDerSha256: "b".repeat(64),
       }) as PostgresRailwayStockLocalhostCaTransport,
     }).catch((caught: unknown) => caught);
     expectBackupError(error, "cleanup_failed");
-    expect(harness.invocations).toEqual([]);
+    expect(harness.invocations.map((invocation) => invocation.operation)).toEqual([
+      "version",
+      "version",
+    ]);
+    expect(harness.authorityLifecycle.dump.closeCalls).toBe(1);
+    expect(harness.authorityLifecycle.list.closeCalls).toBe(1);
   });
 
-  it("opens and pins the transport before tools or database access and closes it last", async () => {
+  it("pins tools sequentially before transport or database access and closes each authority", async () => {
     const root = makeTemporaryDirectory();
     const events: string[] = [];
     const control: TransportTestControl = { events };
-    const harness = createProcessHarness({ events });
+    const harness = createToolAuthorityHarness({ events });
     await createTestPostgresLogicalBackup({
       connectionFile: writeConnectionFile(root),
       expectedSourceUrlSha256: sha256(directTlsUrl),
       outputDirectory: path.join(root, "ordered-lifecycle"),
-    }, dependencies(harness.runner, [], control));
+    }, dependencies(harness, [], control));
 
     expect(control.assertions).toBe(11);
-    expect(events.indexOf("transport.open")).toBeLessThan(events.indexOf("process.version"));
-    expect(events.lastIndexOf("process.version")).toBeLessThan(events.indexOf("connection.open"));
+    expect(events.indexOf("authority.dump.open")).toBeLessThan(
+      events.indexOf("authority.dump.version"),
+    );
+    expect(events.indexOf("authority.dump.version")).toBeLessThan(
+      events.indexOf("authority.list.open"),
+    );
+    expect(events.indexOf("authority.list.open")).toBeLessThan(
+      events.indexOf("authority.list.version"),
+    );
+    expect(events.indexOf("authority.list.version")).toBeLessThan(events.indexOf("transport.open"));
+    expect(events.indexOf("transport.open")).toBeLessThan(events.indexOf("connection.open"));
     expect(events.indexOf("connection.open")).toBeLessThan(events.indexOf("process.dump"));
+    expect(events.indexOf("process.dump")).toBeLessThan(events.indexOf("authority.dump.close"));
     expect(events.indexOf("process.dump")).toBeLessThan(events.indexOf("process.list"));
+    expect(events.indexOf("process.list")).toBeLessThan(events.indexOf("authority.list.close"));
     expect(events.indexOf("connection.close")).toBeLessThan(events.indexOf("transport.close"));
     expect(events.at(-1)).toBe("transport.close");
+    expect(harness.authorityLifecycle.dump).toMatchObject({
+      opened: 1,
+      versionCalls: 1,
+      operationCalls: 1,
+      closeCalls: 1,
+      operatedWhileOpen: true,
+      closed: true,
+    });
+    expect(harness.authorityLifecycle.list).toMatchObject({
+      opened: 1,
+      versionCalls: 1,
+      operationCalls: 1,
+      closeCalls: 1,
+      operatedWhileOpen: true,
+      closed: true,
+    });
   });
+
+  it("uses exact pinned tool files without PATH fallback or manifest schema expansion", async () => {
+    const root = makeTemporaryDirectory();
+    const harness = createToolAuthorityHarness();
+    const base = dependencies(harness);
+    const result = await createTestPostgresLogicalBackup({
+      connectionFile: writeConnectionFile(root),
+      expectedSourceUrlSha256: sha256(directTlsUrl),
+      outputDirectory: path.join(root, "pinned-tools-no-path-fallback"),
+    }, {
+      ...base,
+      env: { ...base.env, PATH: "/attacker-controlled/bin" },
+    });
+
+    expect(harness.authorityOpens).toEqual([
+      {
+        purpose: "dump",
+        executableFile: testPgDumpFile,
+        expectedSha256: testPgDumpSha256,
+      },
+      {
+        purpose: "list",
+        executableFile: testPgRestoreFile,
+        expectedSha256: testPgRestoreSha256,
+      },
+    ]);
+    expect(harness.invocations.map((invocation) => invocation.command)).toEqual([
+      testPgDumpFile,
+      testPgRestoreFile,
+      testPgDumpFile,
+      testPgRestoreFile,
+    ]);
+    expect(harness.invocations.some((invocation) => (
+      invocation.command === "pg_dump" || invocation.command === "pg_restore"
+    ))).toBe(false);
+    const dump = harness.invocations.find((invocation) => invocation.operation === "dump");
+    expect(dump?.env.PATH).toBe("/attacker-controlled/bin");
+
+    const manifestBytes = fs.readFileSync(result.manifestPath, "utf8");
+    const manifest = JSON.parse(manifestBytes) as PostgresLogicalBackupManifestV3;
+    expect(manifest.schemaVersion).toBe(3);
+    expect(manifest.tools).toEqual({
+      pgDump: { name: "pg_dump", version: "17.10 (Homebrew)", major: 17 },
+      pgRestore: { name: "pg_restore", version: "17.10 (Homebrew)", major: 17 },
+    });
+    expect(manifestBytes).not.toContain(testPgDumpFile);
+    expect(manifestBytes).not.toContain(testPgRestoreFile);
+    expect(manifestBytes).not.toContain(testPgDumpSha256);
+    expect(manifestBytes).not.toContain(testPgRestoreSha256);
+  });
+
+  it.each([
+    [
+      "dump close-only failure",
+      { dumpCloseFails: true },
+      { dump: 1, list: 0 },
+    ],
+    [
+      "dump close failure after an operation failure",
+      {
+        dumpCloseFails: true,
+        dumpResult: { exitCode: 1, stdout: "", stderr: "injected dump failure" },
+      },
+      { dump: 1, list: 0 },
+    ],
+    [
+      "list close-only failure",
+      { listCloseFails: true },
+      { dump: 1, list: 1 },
+    ],
+    [
+      "list close failure after an operation failure",
+      {
+        listCloseFails: true,
+        listingResult: { exitCode: 1, stdout: "", stderr: "injected list failure" },
+      },
+      { dump: 1, list: 1 },
+    ],
+  ] as const)(
+    "%s yields cleanup_failed and zeroizes held output",
+    async (_label, harnessOptions, expectedOperations) => {
+      const root = makeTemporaryDirectory();
+      const outputDirectory = path.join(root, "authority-close-dominance");
+      const retained = trackRetainedOutput(outputDirectory);
+      const harness = createToolAuthorityHarness(harnessOptions);
+      try {
+        const error = await createTestPostgresLogicalBackup({
+          connectionFile: writeConnectionFile(root),
+          expectedSourceUrlSha256: sha256(directTlsUrl),
+          outputDirectory,
+        }, dependencies(harness)).catch((caught: unknown) => caught);
+
+        expectBackupError(error, "cleanup_failed");
+        expect(harness.authorityLifecycle.dump.operationCalls).toBe(expectedOperations.dump);
+        expect(harness.authorityLifecycle.list.operationCalls).toBe(expectedOperations.list);
+        expect(harness.authorityLifecycle.dump.closeCalls).toBe(1);
+        expect(harness.authorityLifecycle.list.closeCalls).toBe(1);
+        expect(harness.authorityLifecycle.dump.operatedWhileOpen).toBe(true);
+        if (expectedOperations.list === 1) {
+          expect(harness.authorityLifecycle.list.operatedWhileOpen).toBe(true);
+        }
+        await expectRetainedZeroizedOutput(retained, [POSTGRES_LOGICAL_BACKUP_ARCHIVE]);
+      } finally {
+        retained.tracker.restore();
+      }
+    },
+  );
 
   it("holds directory and artifact descriptors through cleanup and closes them before return", async () => {
     const root = makeTemporaryDirectory();
@@ -1709,8 +2282,8 @@ describe("Postgres logical backup foundation", () => {
       stateReceipt: path.join(outputDirectory, POSTGRES_LOGICAL_BACKUP_STATE_RECEIPT),
     };
     const tracker = trackFileHandles(Object.values(trackedPaths));
-    const harness = createProcessHarness();
-    const base = dependencies(harness.runner);
+    const harness = createToolAuthorityHarness();
+    const base = dependencies(harness);
     const cleanupObservations: Array<{
       phase: "connection.close" | "transport.close";
       openCounts: Record<keyof typeof trackedPaths, number>;
@@ -1799,8 +2372,8 @@ describe("Postgres logical backup foundation", () => {
         events,
         closeFails: failurePhase === "transport.close",
       };
-      const harness = createProcessHarness({ events });
-      const base = dependencies(harness.runner, [], control);
+      const harness = createToolAuthorityHarness({ events });
+      const base = dependencies(harness, [], control);
       const overrides: Partial<PostgresLogicalBackupDependencies> = { ...base };
       if (failurePhase === "connection.close") {
         overrides.connect = async (config) => {
@@ -1856,8 +2429,8 @@ describe("Postgres logical backup foundation", () => {
         stateReceipt: path.join(outputDirectory, POSTGRES_LOGICAL_BACKUP_STATE_RECEIPT),
       };
       const tracker = trackFileHandles(Object.values(trackedPaths));
-      const harness = createProcessHarness();
-      const base = dependencies(harness.runner);
+      const harness = createToolAuthorityHarness();
+      const base = dependencies(harness);
       let mutated = false;
       let openCountsAtMutation: Record<keyof typeof trackedPaths, number> | null = null;
       const mutateHeldArchive = async (): Promise<void> => {
@@ -1956,13 +2529,13 @@ describe("Postgres logical backup foundation", () => {
       : null;
     const events: string[] = [];
     const control: TransportTestControl = { events, failAssertionAt };
-    const harness = createProcessHarness({ events });
+    const harness = createToolAuthorityHarness({ events });
     try {
       const error = await createTestPostgresLogicalBackup({
         connectionFile: writeConnectionFile(root),
         expectedSourceUrlSha256: sha256(directTlsUrl),
         outputDirectory,
-      }, dependencies(harness.runner, [], control)).catch((caught: unknown) => caught);
+      }, dependencies(harness, [], control)).catch((caught: unknown) => caught);
 
       expectBackupError(error, "source_unreachable_or_unsafe");
       if (retained) {
@@ -1982,7 +2555,7 @@ describe("Postgres logical backup foundation", () => {
     const retained = trackRetainedOutput(outputDirectory);
     const events: string[] = [];
     const control: TransportTestControl = { events, closeFails: true };
-    const harness = createProcessHarness({
+    const harness = createToolAuthorityHarness({
       events,
       dumpResult: { exitCode: 1, stdout: "", stderr: "test-only failure" },
     });
@@ -1991,7 +2564,7 @@ describe("Postgres logical backup foundation", () => {
         connectionFile: writeConnectionFile(root),
         expectedSourceUrlSha256: sha256(directTlsUrl),
         outputDirectory,
-      }, dependencies(harness.runner, [], control)).catch((caught: unknown) => caught);
+      }, dependencies(harness, [], control)).catch((caught: unknown) => caught);
 
       expectBackupError(error, "cleanup_failed");
       await expectRetainedZeroizedOutput(retained, [POSTGRES_LOGICAL_BACKUP_ARCHIVE]);
@@ -2001,17 +2574,17 @@ describe("Postgres logical backup foundation", () => {
     }
   });
 
-  it("contains transport-open failures before tools, connection, or output creation", async () => {
+  it("contains transport-open failures after tool pinning but before connection or output", async () => {
     const root = makeTemporaryDirectory();
     const outputDirectory = path.join(root, "transport-open-failure");
-    const harness = createProcessHarness();
+    const harness = createToolAuthorityHarness();
     let connected = false;
     const error = await createTestPostgresLogicalBackup({
       connectionFile: writeConnectionFile(root),
       expectedSourceUrlSha256: sha256(directTlsUrl),
       outputDirectory,
     }, {
-      ...dependencies(harness.runner),
+      ...dependencies(harness),
       openTransport: async () => {
         throw new PostgresRailwayStockLocalhostCaError("root_ca_pin_mismatch");
       },
@@ -2022,47 +2595,69 @@ describe("Postgres logical backup foundation", () => {
     }).catch((caught: unknown) => caught);
 
     expectBackupError(error, "source_unreachable_or_unsafe");
-    expect(harness.invocations).toEqual([]);
+    expect(harness.invocations.map((invocation) => invocation.operation)).toEqual([
+      "version",
+      "version",
+    ]);
+    expect(harness.authorityLifecycle.dump.closeCalls).toBe(1);
+    expect(harness.authorityLifecycle.list.closeCalls).toBe(1);
     expect(connected).toBe(false);
     expect(fs.existsSync(outputDirectory)).toBe(false);
   });
 
-  it("snapshots URL, CA, profile, and output authorities before asynchronous work", async () => {
+  it("snapshots URL, CA, tool, profile, and output authorities before asynchronous work", async () => {
     const root = makeTemporaryDirectory();
     const originalOutput = path.join(root, "snapshotted-options");
-    const harness = createProcessHarness();
-    const base = dependencies(harness.runner);
+    const harness = createToolAuthorityHarness();
+    const base = dependencies(harness);
     const supplied: CreatePostgresLogicalBackupOptions = {
       ...requiredTransportOptions,
+      ...requiredToolOptions,
       connectionFile: writeConnectionFile(root),
       expectedSourceUrlSha256: sha256(directTlsUrl),
       outputDirectory: originalOutput,
     };
     const result = await createPostgresLogicalBackup(supplied, {
       ...base,
-      openTransport: async (transportOptions) => {
+      openDumpAuthority: async (authorityOptions) => {
         const mutable = supplied as unknown as Record<string, unknown>;
         mutable.expectedSourceUrlSha256 = "b".repeat(64);
-        mutable.expectedRootCaDerSha256 = "c".repeat(64);
+        mutable.expectedRootCaDerSha256 = "d".repeat(64);
         mutable.transportProfile = "railway-stock-localhost-ca-v2";
         mutable.rootCaFile = "/private/replaced-root-ca.pem";
+        mutable.pgDumpFile = "/private/replaced-pg-dump";
+        mutable.expectedPgDumpSha256 = "e".repeat(64);
+        mutable.pgRestoreFile = "/private/replaced-pg-restore";
+        mutable.expectedPgRestoreSha256 = "f".repeat(64);
         mutable.outputDirectory = path.join(root, "mutated-output");
-        return base.openTransport!(transportOptions);
+        return base.openDumpAuthority!(authorityOptions);
       },
     });
     expect(result.outputDirectory).toBe(fs.realpathSync(originalOutput));
     expect(fs.existsSync(path.join(root, "mutated-output"))).toBe(false);
+    expect(harness.authorityOpens).toEqual([
+      {
+        purpose: "dump",
+        executableFile: testPgDumpFile,
+        expectedSha256: testPgDumpSha256,
+      },
+      {
+        purpose: "list",
+        executableFile: testPgRestoreFile,
+        expectedSha256: testPgRestoreSha256,
+      },
+    ]);
   });
 
   it("passes credentials only through a scoped pg_dump environment", async () => {
     const root = makeTemporaryDirectory();
-    const harness = createProcessHarness();
+    const harness = createToolAuthorityHarness();
     const queries: string[] = [];
     await createTestPostgresLogicalBackup({
       connectionFile: writeConnectionFile(root),
       expectedSourceUrlSha256: sha256(directTlsUrl),
       outputDirectory: path.join(root, "backup"),
-    }, dependencies(harness.runner, queries));
+    }, dependencies(harness, queries));
 
     const dump = harness.invocations.find((invocation) => (
       invocation.command.endsWith("pg_dump") && invocation.args[0] !== "--version"
@@ -2160,10 +2755,10 @@ describe("Postgres logical backup foundation", () => {
     const root = makeTemporaryDirectory();
     const connectionFile = writeConnectionFile(root);
     const outputDirectory = path.join(root, "hash-mismatch");
-    const harness = createProcessHarness();
+    const harness = createToolAuthorityHarness();
     const beforePgpassEntries = pgpassTemporaryEntries();
     let connected = false;
-    const base = dependencies(harness.runner);
+    const base = dependencies(harness);
 
     const mismatch = await createTestPostgresLogicalBackup({
       connectionFile,
@@ -2208,13 +2803,13 @@ describe("Postgres logical backup foundation", () => {
     const connectionFile = path.join(root, "postgres-url");
     fs.writeFileSync(connectionFile, ` \t${directTlsUrl}\n`, { mode: 0o600 });
     fs.chmodSync(connectionFile, 0o600);
-    const harness = createProcessHarness();
+    const harness = createToolAuthorityHarness();
 
     await createTestPostgresLogicalBackup({
       connectionFile,
       expectedSourceUrlSha256: sha256(directTlsUrl),
       outputDirectory: path.join(root, "trimmed-url"),
-    }, dependencies(harness.runner));
+    }, dependencies(harness));
 
     expect(harness.invocations.some((invocation) => (
       invocation.command.endsWith("pg_dump") && invocation.args[0] !== "--version"
@@ -2223,8 +2818,8 @@ describe("Postgres logical backup foundation", () => {
 
   it("uses only the pinned localhost-CA projection and rejects the old loopback fallback", async () => {
     const root = makeTemporaryDirectory();
-    const strictHarness = createProcessHarness();
-    const strictBase = dependencies(strictHarness.runner);
+    const strictHarness = createToolAuthorityHarness();
+    const strictBase = dependencies(strictHarness);
     const strictDelegate = await strictBase.connect!({} as never);
     let strictConfig: Parameters<NonNullable<PostgresLogicalBackupDependencies["connect"]>>[0] | null = null;
     await createTestPostgresLogicalBackup({
@@ -2264,12 +2859,12 @@ describe("Postgres logical backup foundation", () => {
     expect(strictDump.env.PGSSLROOTCERT).not.toBe("system");
 
     const loopbackUrl = `postgresql://${backupLogin}:${connectionSecret}@127.0.0.1:5432/pintpath?sslmode=disable`;
-    const loopbackHarness = createProcessHarness();
+    const loopbackHarness = createToolAuthorityHarness();
     const loopbackError = await createTestPostgresLogicalBackup({
       connectionFile: writeConnectionFile(root, loopbackUrl),
       expectedSourceUrlSha256: sha256(loopbackUrl),
       outputDirectory: path.join(root, "loopback-test-seam"),
-    }, dependencies(loopbackHarness.runner)).catch((error: unknown) => error);
+    }, dependencies(loopbackHarness)).catch((error: unknown) => error);
     expectBackupError(loopbackError, "unsafe_connection_url");
     expect(loopbackHarness.invocations).toEqual([]);
   });
@@ -2279,13 +2874,13 @@ describe("Postgres logical backup foundation", () => {
     const database = "pint:path";
     const password = "secret:with\\backslash";
     const url = `postgresql://${backupLogin}:${encodeURIComponent(password)}@${sourceHostname}:5432/${encodeURIComponent(database)}?sslmode=verify-full`;
-    const harness = createProcessHarness();
+    const harness = createToolAuthorityHarness();
 
     await createTestPostgresLogicalBackup({
       connectionFile: writeConnectionFile(root, url),
       expectedSourceUrlSha256: sha256(url),
       outputDirectory: path.join(root, "escaped-pgpass"),
-    }, dependencies(harness.runner));
+    }, dependencies(harness));
 
     expect(harness.pgpassObservations[0]?.contents).toBe(
       `localhost:5432:pint\\:path:${backupLogin}:secret\\:with\\\\backslash\n`,
@@ -2318,13 +2913,13 @@ describe("Postgres logical backup foundation", () => {
     "postgresql://backup_user:secret@db.example.invalid/pintpath*?sslmode=verify-full",
   ])("rejects an unsafe or pooled connection before invoking tools: %s", async (url) => {
     const root = makeTemporaryDirectory();
-    const harness = createProcessHarness();
+    const harness = createToolAuthorityHarness();
 
     const error = await createTestPostgresLogicalBackup({
       connectionFile: writeConnectionFile(root, url),
       expectedSourceUrlSha256: sha256(url),
       outputDirectory: path.join(root, "backup"),
-    }, dependencies(harness.runner)).catch((caught: unknown) => caught);
+    }, dependencies(harness)).catch((caught: unknown) => caught);
 
     expectBackupError(error, "unsafe_connection_url");
     expect(harness.invocations).toEqual([]);
@@ -2333,13 +2928,13 @@ describe("Postgres logical backup foundation", () => {
 
   it("requires a current-user-owned regular mode-600 connection file", async () => {
     const root = makeTemporaryDirectory();
-    const harness = createProcessHarness();
+    const harness = createToolAuthorityHarness();
     const worldReadable = writeConnectionFile(root, directTlsUrl, 0o644);
     const worldReadableError = await createTestPostgresLogicalBackup({
       connectionFile: worldReadable,
       expectedSourceUrlSha256: sha256(directTlsUrl),
       outputDirectory: path.join(root, "backup-mode"),
-    }, dependencies(harness.runner)).catch((caught: unknown) => caught);
+    }, dependencies(harness)).catch((caught: unknown) => caught);
     expectBackupError(worldReadableError, "unsafe_connection_file");
 
     fs.rmSync(worldReadable);
@@ -2350,7 +2945,7 @@ describe("Postgres logical backup foundation", () => {
       connectionFile: symbolicLink,
       expectedSourceUrlSha256: sha256(directTlsUrl),
       outputDirectory: path.join(root, "backup-link"),
-    }, dependencies(harness.runner)).catch((caught: unknown) => caught);
+    }, dependencies(harness)).catch((caught: unknown) => caught);
     expectBackupError(symbolicLinkError, "unsafe_connection_file");
 
     const uid = process.getuid?.() ?? 0;
@@ -2359,7 +2954,7 @@ describe("Postgres logical backup foundation", () => {
       expectedSourceUrlSha256: sha256(directTlsUrl),
       outputDirectory: path.join(root, "backup-owner"),
     }, {
-      ...dependencies(harness.runner),
+      ...dependencies(harness),
       getUid: () => uid + 1,
     }).catch((caught: unknown) => caught);
     expectBackupError(wrongOwnerError, "unsafe_connection_file");
@@ -2387,7 +2982,7 @@ describe("Postgres logical backup foundation", () => {
     const parentBefore = fs.fstatSync(outputParentFileDescriptor);
     const outputBefore = fs.fstatSync(outputDirectoryFileDescriptor);
     const sentinelBefore = fs.fstatSync(sentinelFileDescriptor);
-    const harness = createProcessHarness();
+    const harness = createToolAuthorityHarness();
 
     try {
       expect(parentBefore.uid).toBe(process.getuid?.() ?? parentBefore.uid);
@@ -2396,7 +2991,7 @@ describe("Postgres logical backup foundation", () => {
         connectionFile: writeConnectionFile(root),
         expectedSourceUrlSha256: sha256(directTlsUrl),
         outputDirectory,
-      }, dependencies(harness.runner)).catch((caught: unknown) => caught);
+      }, dependencies(harness)).catch((caught: unknown) => caught);
 
       expectBackupError(error, "unsafe_output_path");
       expect(harness.invocations.some((invocation) => (
@@ -2450,7 +3045,7 @@ describe("Postgres logical backup foundation", () => {
     const sentinelFileDescriptor = fs.openSync(sentinelPath, fs.constants.O_RDONLY);
     const parentBefore = fs.fstatSync(outputParentFileDescriptor);
     const sentinelBefore = fs.fstatSync(sentinelFileDescriptor);
-    const harness = createProcessHarness();
+    const harness = createToolAuthorityHarness();
     const originalOpen = fs.promises.open.bind(fs.promises);
     let parentHandle: fs.promises.FileHandle | null = null;
     let ownerSpoofed = false;
@@ -2485,7 +3080,7 @@ describe("Postgres logical backup foundation", () => {
           connectionFile: writeConnectionFile(root),
           expectedSourceUrlSha256: sha256(directTlsUrl),
           outputDirectory,
-        }, dependencies(harness.runner)).catch((caught: unknown) => caught);
+        }, dependencies(harness)).catch((caught: unknown) => caught);
       } finally {
         openSpy.mockRestore();
       }
@@ -2532,7 +3127,7 @@ describe("Postgres logical backup foundation", () => {
       outputParent,
       fs.constants.O_RDONLY | (fs.constants.O_DIRECTORY ?? 0),
     );
-    const harness = createProcessHarness();
+    const harness = createToolAuthorityHarness();
     let pgpassStatCalls = 0;
     let parentMutated = false;
     const retained = trackRetainedOutput(outputDirectory, (filePath, handle) => {
@@ -2560,7 +3155,7 @@ describe("Postgres logical backup foundation", () => {
         connectionFile: writeConnectionFile(root),
         expectedSourceUrlSha256: sha256(directTlsUrl),
         outputDirectory,
-      }, dependencies(harness.runner)).catch((caught: unknown) => caught);
+      }, dependencies(harness)).catch((caught: unknown) => caught);
 
       expectBackupError(error, "archive_tampered");
       expect(parentMutated).toBe(true);
@@ -2584,13 +3179,13 @@ describe("Postgres logical backup foundation", () => {
     fs.mkdirSync(outputDirectory);
     const sentinel = path.join(outputDirectory, "belongs-to-operator.txt");
     fs.writeFileSync(sentinel, "preserve me");
-    const harness = createProcessHarness();
+    const harness = createToolAuthorityHarness();
 
     const error = await createTestPostgresLogicalBackup({
       connectionFile: writeConnectionFile(root),
       expectedSourceUrlSha256: sha256(directTlsUrl),
       outputDirectory,
-    }, dependencies(harness.runner)).catch((caught: unknown) => caught);
+    }, dependencies(harness)).catch((caught: unknown) => caught);
 
     expectBackupError(error, "unsafe_output_path");
     expect(fs.readFileSync(sentinel, "utf8")).toBe("preserve me");
@@ -2603,7 +3198,7 @@ describe("Postgres logical backup foundation", () => {
     ).outputDirectory;
     const victim = createHeldOperatorVictim(root, "prepare-catch");
     const rmGuard = forbidRecursiveOutputRm(outputDirectory, victim.directory);
-    const harness = createProcessHarness();
+    const harness = createToolAuthorityHarness();
     const originalOpen = fs.promises.open.bind(fs.promises);
     let parentHandle: fs.promises.FileHandle | null = null;
     const openSpy = vi.spyOn(fs.promises, "open").mockImplementation((async (
@@ -2625,7 +3220,7 @@ describe("Postgres logical backup foundation", () => {
         connectionFile: writeConnectionFile(root),
         expectedSourceUrlSha256: sha256(directTlsUrl),
         outputDirectory,
-      }, dependencies(harness.runner)).catch((caught: unknown) => caught);
+      }, dependencies(harness)).catch((caught: unknown) => caught);
 
       expectBackupError(error, "unsafe_output_path");
       expect(rmGuard.callCount()).toBe(0);
@@ -2664,7 +3259,7 @@ describe("Postgres logical backup foundation", () => {
     const victim = createHeldOperatorVictim(root, "final-error");
     const retained = trackRetainedOutput(outputDirectory);
     const rmGuard = forbidRecursiveOutputRm(retained.paths.outputDirectory, victim.directory);
-    const harness = createProcessHarness({
+    const harness = createToolAuthorityHarness({
       dumpResult: { exitCode: 1, stdout: "", stderr: "test-only failure" },
     });
 
@@ -2673,7 +3268,7 @@ describe("Postgres logical backup foundation", () => {
         connectionFile: writeConnectionFile(root),
         expectedSourceUrlSha256: sha256(directTlsUrl),
         outputDirectory,
-      }, dependencies(harness.runner)).catch((caught: unknown) => caught);
+      }, dependencies(harness)).catch((caught: unknown) => caught);
 
       expectBackupError(error, "dump_failed");
       expect(rmGuard.callCount()).toBe(0);
@@ -2692,7 +3287,7 @@ describe("Postgres logical backup foundation", () => {
     const root = makeTemporaryDirectory();
     const outputDirectory = path.join(root, "failed-dump");
     const retained = trackRetainedOutput(outputDirectory);
-    const harness = createProcessHarness({
+    const harness = createToolAuthorityHarness({
       dumpResult: {
         exitCode: 1,
         stdout: "",
@@ -2705,7 +3300,7 @@ describe("Postgres logical backup foundation", () => {
         connectionFile: writeConnectionFile(root),
         expectedSourceUrlSha256: sha256(directTlsUrl),
         outputDirectory,
-      }, dependencies(harness.runner)).catch((caught: unknown) => caught);
+      }, dependencies(harness)).catch((caught: unknown) => caught);
 
       expectBackupError(error, "dump_failed");
       await expectRetainedZeroizedOutput(retained, [POSTGRES_LOGICAL_BACKUP_ARCHIVE]);
@@ -2714,18 +3309,18 @@ describe("Postgres logical backup foundation", () => {
     }
   });
 
-  it("retains a zeroized archive when the process runner throws a credential-bearing error", async () => {
+  it("retains a zeroized archive when the dump authority throws a credential-bearing error", async () => {
     const root = makeTemporaryDirectory();
     const outputDirectory = path.join(root, "thrown-dump-error");
     const retained = trackRetainedOutput(outputDirectory);
-    const harness = createProcessHarness({ throwOnDump: true });
+    const harness = createToolAuthorityHarness({ throwOnDump: true });
 
     try {
       const error = await createTestPostgresLogicalBackup({
         connectionFile: writeConnectionFile(root),
         expectedSourceUrlSha256: sha256(directTlsUrl),
         outputDirectory,
-      }, dependencies(harness.runner)).catch((caught: unknown) => caught);
+      }, dependencies(harness)).catch((caught: unknown) => caught);
 
       expectBackupError(error, "dump_failed");
       await expectRetainedZeroizedOutput(retained, [POSTGRES_LOGICAL_BACKUP_ARCHIVE]);
@@ -2740,14 +3335,14 @@ describe("Postgres logical backup foundation", () => {
       const root = makeTemporaryDirectory();
       const outputDirectory = path.join(root, "pgpass-content-drift");
       const retained = trackRetainedOutput(outputDirectory);
-      const harness = createProcessHarness({ pgpassMutation });
+      const harness = createToolAuthorityHarness({ pgpassMutation });
 
       try {
         const error = await createTestPostgresLogicalBackup({
           connectionFile: writeConnectionFile(root),
           expectedSourceUrlSha256: sha256(directTlsUrl),
           outputDirectory,
-        }, dependencies(harness.runner)).catch((caught: unknown) => caught);
+        }, dependencies(harness)).catch((caught: unknown) => caught);
 
         expectBackupError(error, "cleanup_failed");
         const pgpassPath = harness.pgpassObservations[0]!.path;
@@ -2764,14 +3359,14 @@ describe("Postgres logical backup foundation", () => {
     const root = makeTemporaryDirectory();
     const outputDirectory = path.join(root, "pgpass-replacement");
     const retained = trackRetainedOutput(outputDirectory);
-    const harness = createProcessHarness({ pgpassMutation: "replacement" });
+    const harness = createToolAuthorityHarness({ pgpassMutation: "replacement" });
 
     try {
       const error = await createTestPostgresLogicalBackup({
         connectionFile: writeConnectionFile(root),
         expectedSourceUrlSha256: sha256(directTlsUrl),
         outputDirectory,
-      }, dependencies(harness.runner)).catch((caught: unknown) => caught);
+      }, dependencies(harness)).catch((caught: unknown) => caught);
 
       expectBackupError(error, "cleanup_failed");
       const pgpassPath = harness.pgpassObservations[0]!.path;
@@ -2786,13 +3381,13 @@ describe("Postgres logical backup foundation", () => {
 
   it("removes only the trusted pgpass when an unexpected sibling blocks nonrecursive cleanup", async () => {
     const root = makeTemporaryDirectory();
-    const harness = createProcessHarness({ pgpassMutation: "extra-sibling" });
+    const harness = createToolAuthorityHarness({ pgpassMutation: "extra-sibling" });
 
     const error = await createTestPostgresLogicalBackup({
       connectionFile: writeConnectionFile(root),
       expectedSourceUrlSha256: sha256(directTlsUrl),
       outputDirectory: path.join(root, "pgpass-extra-sibling"),
-    }, dependencies(harness.runner)).catch((caught: unknown) => caught);
+    }, dependencies(harness)).catch((caught: unknown) => caught);
 
     expectBackupError(error, "cleanup_failed");
     const pgpassPath = harness.pgpassObservations[0]!.path;
@@ -2805,13 +3400,13 @@ describe("Postgres logical backup foundation", () => {
 
   it("unlinks the exact pgpass pathname but retains a post-spawn hardlink", async () => {
     const root = makeTemporaryDirectory();
-    const harness = createProcessHarness({ pgpassMutation: "hardlink" });
+    const harness = createToolAuthorityHarness({ pgpassMutation: "hardlink" });
 
     const error = await createTestPostgresLogicalBackup({
       connectionFile: writeConnectionFile(root),
       expectedSourceUrlSha256: sha256(directTlsUrl),
       outputDirectory: path.join(root, "pgpass-hardlink"),
-    }, dependencies(harness.runner)).catch((caught: unknown) => caught);
+    }, dependencies(harness)).catch((caught: unknown) => caught);
 
     expectBackupError(error, "cleanup_failed");
     const pgpassPath = harness.pgpassObservations[0]!.path;
@@ -2824,13 +3419,13 @@ describe("Postgres logical backup foundation", () => {
 
   it("removes an empty exact pgpass directory when the leaf disappears", async () => {
     const root = makeTemporaryDirectory();
-    const harness = createProcessHarness({ pgpassMutation: "missing" });
+    const harness = createToolAuthorityHarness({ pgpassMutation: "missing" });
 
     const error = await createTestPostgresLogicalBackup({
       connectionFile: writeConnectionFile(root),
       expectedSourceUrlSha256: sha256(directTlsUrl),
       outputDirectory: path.join(root, "pgpass-missing"),
-    }, dependencies(harness.runner)).catch((caught: unknown) => caught);
+    }, dependencies(harness)).catch((caught: unknown) => caught);
 
     expectBackupError(error, "cleanup_failed");
     const pgpassPath = harness.pgpassObservations[0]!.path;
@@ -2840,7 +3435,7 @@ describe("Postgres logical backup foundation", () => {
 
   it("identity-safely removes a partial pgpass when writing fails before its full snapshot", async () => {
     const root = makeTemporaryDirectory();
-    const harness = createProcessHarness();
+    const harness = createToolAuthorityHarness();
     const beforePgpassEntries = pgpassTemporaryEntries();
     const originalOpen = fs.promises.open.bind(fs.promises);
     const openSpy = vi.spyOn(fs.promises, "open").mockImplementation((async (...args: unknown[]) => {
@@ -2861,7 +3456,7 @@ describe("Postgres logical backup foundation", () => {
         connectionFile: writeConnectionFile(root),
         expectedSourceUrlSha256: sha256(directTlsUrl),
         outputDirectory: path.join(root, "pgpass-partial-write"),
-      }, dependencies(harness.runner)).catch((caught: unknown) => caught);
+      }, dependencies(harness)).catch((caught: unknown) => caught);
     } finally {
       openSpy.mockRestore();
     }
@@ -2899,7 +3494,7 @@ describe("Postgres logical backup foundation", () => {
       const root = makeTemporaryDirectory();
       const outputDirectory = path.join(fs.realpathSync(root), `mutated-${artifactFile}`);
       const artifactPath = path.join(outputDirectory, artifactFile);
-      const harness = createProcessHarness();
+      const harness = createToolAuthorityHarness();
       let writerHandle: fs.promises.FileHandle | null = null;
       let writerOpenDuringMutation = false;
       const writerSyncStates: Array<"zero-length" | "non-empty"> = [];
@@ -2933,7 +3528,7 @@ describe("Postgres logical backup foundation", () => {
           connectionFile: writeConnectionFile(root),
           expectedSourceUrlSha256: sha256(directTlsUrl),
           outputDirectory,
-        }, dependencies(harness.runner)).catch((caught: unknown) => caught);
+        }, dependencies(harness)).catch((caught: unknown) => caught);
       } finally {
         retained.tracker.restore();
       }
@@ -2952,7 +3547,7 @@ describe("Postgres logical backup foundation", () => {
     const root = makeTemporaryDirectory();
     const outputDirectory = path.join(fs.realpathSync(root), "writer-zeroize-sync-failure");
     const artifactPath = path.join(outputDirectory, POSTGRES_LOGICAL_BACKUP_STATE_RECEIPT);
-    const harness = createProcessHarness();
+    const harness = createToolAuthorityHarness();
     let writerHandle: fs.promises.FileHandle | null = null;
     let writerFileDescriptor: number | null = null;
     let writerCloseCalls = 0;
@@ -2999,7 +3594,7 @@ describe("Postgres logical backup foundation", () => {
         connectionFile: writeConnectionFile(root),
         expectedSourceUrlSha256: sha256(directTlsUrl),
         outputDirectory,
-      }, dependencies(harness.runner)).catch((caught: unknown) => caught);
+      }, dependencies(harness)).catch((caught: unknown) => caught);
 
       expectBackupError(error, "cleanup_failed");
       expect(mutated).toBe(true);
@@ -3032,7 +3627,7 @@ describe("Postgres logical backup foundation", () => {
     const root = makeTemporaryDirectory();
     const outputDirectory = path.join(root, "invalid-archive");
     const retained = trackRetainedOutput(outputDirectory);
-    const harness = createProcessHarness({
+    const harness = createToolAuthorityHarness({
       listingResult: {
         exitCode: 1,
         stdout: "",
@@ -3045,7 +3640,7 @@ describe("Postgres logical backup foundation", () => {
         connectionFile: writeConnectionFile(root),
         expectedSourceUrlSha256: sha256(directTlsUrl),
         outputDirectory,
-      }, dependencies(harness.runner)).catch((caught: unknown) => caught);
+      }, dependencies(harness)).catch((caught: unknown) => caught);
 
       expectBackupError(error, "archive_invalid");
       await expectRetainedZeroizedOutput(retained, [POSTGRES_LOGICAL_BACKUP_ARCHIVE]);
@@ -3058,14 +3653,14 @@ describe("Postgres logical backup foundation", () => {
     const root = makeTemporaryDirectory();
     const outputDirectory = path.join(root, "tampered-archive");
     const retained = trackRetainedOutput(outputDirectory);
-    const harness = createProcessHarness({ tamperDuringListing: true });
+    const harness = createToolAuthorityHarness({ tamperDuringListing: true });
 
     try {
       const error = await createTestPostgresLogicalBackup({
         connectionFile: writeConnectionFile(root),
         expectedSourceUrlSha256: sha256(directTlsUrl),
         outputDirectory,
-      }, dependencies(harness.runner)).catch((caught: unknown) => caught);
+      }, dependencies(harness)).catch((caught: unknown) => caught);
 
       expectBackupError(error, "archive_tampered");
       expect(harness.archiveDescriptorObservations).toEqual({
@@ -3102,7 +3697,7 @@ describe("Postgres logical backup foundation", () => {
     const root = makeTemporaryDirectory();
     const outputDirectory = path.join(root, "missing-schema");
     const retained = trackRetainedOutput(outputDirectory);
-    const harness = createProcessHarness({
+    const harness = createToolAuthorityHarness({
       listing: validArchiveListing().replace(
         "3; 2615 101 SCHEMA - pintpath_ops backup_user\n",
         "",
@@ -3114,7 +3709,7 @@ describe("Postgres logical backup foundation", () => {
         connectionFile: writeConnectionFile(root),
         expectedSourceUrlSha256: sha256(directTlsUrl),
         outputDirectory,
-      }, dependencies(harness.runner)).catch((caught: unknown) => caught);
+      }, dependencies(harness)).catch((caught: unknown) => caught);
 
       expectBackupError(error, "archive_invalid");
       await expectRetainedZeroizedOutput(retained, [POSTGRES_LOGICAL_BACKUP_ARCHIVE]);
@@ -3126,13 +3721,13 @@ describe("Postgres logical backup foundation", () => {
   it("rejects mismatched pg_dump and pg_restore majors before creating output", async () => {
     const root = makeTemporaryDirectory();
     const outputDirectory = path.join(root, "mismatched-tools");
-    const harness = createProcessHarness({ pgRestoreVersion: "16.8" });
+    const harness = createToolAuthorityHarness({ pgRestoreVersion: "16.8" });
 
     const error = await createTestPostgresLogicalBackup({
       connectionFile: writeConnectionFile(root),
       expectedSourceUrlSha256: sha256(directTlsUrl),
       outputDirectory,
-    }, dependencies(harness.runner)).catch((caught: unknown) => caught);
+    }, dependencies(harness)).catch((caught: unknown) => caught);
 
     expectBackupError(error, "tool_unavailable_or_unsupported");
     expect(fs.existsSync(outputDirectory)).toBe(false);
@@ -3140,8 +3735,8 @@ describe("Postgres logical backup foundation", () => {
 
   it("fails closed for a privileged source login before creating an archive", async () => {
     const root = makeTemporaryDirectory();
-    const harness = createProcessHarness();
-    const base = dependencies(harness.runner);
+    const harness = createToolAuthorityHarness();
+    const base = dependencies(harness);
     let closed = false;
     const error = await createTestPostgresLogicalBackup({
       connectionFile: writeConnectionFile(root),
@@ -3203,8 +3798,8 @@ describe("Postgres logical backup foundation", () => {
     ["a wrong shared dependency", { exactSharedDependencyCount: 1 }],
   ])("rejects %s before creating an archive", async (_description, override) => {
     const root = makeTemporaryDirectory();
-    const harness = createProcessHarness();
-    const base = dependencies(harness.runner);
+    const harness = createToolAuthorityHarness();
+    const base = dependencies(harness);
     const delegate = await base.connect!({} as never);
     const error = await createTestPostgresLogicalBackup({
       connectionFile: writeConnectionFile(root),
@@ -3263,8 +3858,8 @@ describe("Postgres logical backup foundation", () => {
     ["a policy naming the scoped role", { directScopedPolicyCount: 1 }],
   ])("rejects the effective backup group with %s", async (_description, override) => {
     const root = makeTemporaryDirectory();
-    const harness = createProcessHarness();
-    const base = dependencies(harness.runner);
+    const harness = createToolAuthorityHarness();
+    const base = dependencies(harness);
     const delegate = await base.connect!({} as never);
     const error = await createTestPostgresLogicalBackup({
       connectionFile: writeConnectionFile(root),
@@ -3297,8 +3892,8 @@ describe("Postgres logical backup foundation", () => {
   it("rolls back, resets the role, closes, and removes artifacts on state failure", async () => {
     const root = makeTemporaryDirectory();
     const connectionFile = writeConnectionFile(root);
-    const harness = createProcessHarness();
-    const base = dependencies(harness.runner);
+    const harness = createToolAuthorityHarness();
+    const base = dependencies(harness);
     const queries: string[] = [];
     let closed = false;
     const delegate = await base.connect!({} as never);
@@ -3328,8 +3923,8 @@ describe("Postgres logical backup foundation", () => {
   it("detects a connection-file identity change before pg_dump", async () => {
     const root = makeTemporaryDirectory();
     const connectionFile = writeConnectionFile(root);
-    const harness = createProcessHarness();
-    const base = dependencies(harness.runner);
+    const harness = createToolAuthorityHarness();
+    const base = dependencies(harness);
     const error = await createTestPostgresLogicalBackup({
       connectionFile,
       expectedSourceUrlSha256: sha256(directTlsUrl),
@@ -3368,6 +3963,10 @@ describe("Postgres logical backup foundation", () => {
       "--transport-profile", POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
       "--root-ca-file", "/private/railway-root-ca.pem",
       "--expected-root-ca-der-sha256", testRootCaDerSha256,
+      "--pg-dump-file", testPgDumpFile,
+      "--expected-pg-dump-sha256", testPgDumpSha256,
+      "--pg-restore-file", testPgRestoreFile,
+      "--expected-pg-restore-sha256", testPgRestoreSha256,
       "--output", "/private/output",
     ], cliDependencies);
 
@@ -3412,6 +4011,10 @@ describe("Postgres logical backup foundation", () => {
       "--transport-profile", POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
       "--root-ca-file", "/private/railway-root-ca.pem",
       "--expected-root-ca-der-sha256", testRootCaDerSha256,
+      "--pg-dump-file", testPgDumpFile,
+      "--expected-pg-dump-sha256", testPgDumpSha256,
+      "--pg-restore-file", testPgRestoreFile,
+      "--expected-pg-restore-sha256", testPgRestoreSha256,
       "--output", "/private/output",
     ], cliDependencies);
 
@@ -3422,6 +4025,10 @@ describe("Postgres logical backup foundation", () => {
       transportProfile: POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
       rootCaFile: "/private/railway-root-ca.pem",
       expectedRootCaDerSha256: testRootCaDerSha256,
+      pgDumpFile: testPgDumpFile,
+      expectedPgDumpSha256: testPgDumpSha256,
+      pgRestoreFile: testPgRestoreFile,
+      expectedPgRestoreSha256: testPgRestoreSha256,
       outputDirectory: "/private/output",
     });
     expect(output).toEqual([
@@ -3436,6 +4043,10 @@ describe("Postgres logical backup foundation", () => {
     "--transport-profile",
     "--root-ca-file",
     "--expected-root-ca-der-sha256",
+    "--pg-dump-file",
+    "--expected-pg-dump-sha256",
+    "--pg-restore-file",
+    "--expected-pg-restore-sha256",
   ])("requires the %s CLI flag before invoking the backup", async (missingFlag) => {
     const output: string[] = [];
     let invoked = false;
@@ -3445,6 +4056,10 @@ describe("Postgres logical backup foundation", () => {
       "--transport-profile", POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
       "--root-ca-file", "/private/railway-root-ca.pem",
       "--expected-root-ca-der-sha256", testRootCaDerSha256,
+      "--pg-dump-file", testPgDumpFile,
+      "--expected-pg-dump-sha256", testPgDumpSha256,
+      "--pg-restore-file", testPgRestoreFile,
+      "--expected-pg-restore-sha256", testPgRestoreSha256,
       "--output", "/private/output",
     ];
     const missingIndex = completeArguments.indexOf(missingFlag);
@@ -3473,6 +4088,10 @@ describe("Postgres logical backup foundation", () => {
       "--transport-profile", "railway-stock-localhost-ca-v2",
       "--root-ca-file", "/private/railway-root-ca.pem",
       "--expected-root-ca-der-sha256", testRootCaDerSha256,
+      "--pg-dump-file", testPgDumpFile,
+      "--expected-pg-dump-sha256", testPgDumpSha256,
+      "--pg-restore-file", testPgRestoreFile,
+      "--expected-pg-restore-sha256", testPgRestoreSha256,
       "--output", "/private/output",
     ], {
       createBackup: async () => {

@@ -66,6 +66,10 @@ export async function runPostgresLogicalBackupCli(
         "--transport-profile",
         "--root-ca-file",
         "--expected-root-ca-der-sha256",
+        "--pg-dump-file",
+        "--expected-pg-dump-sha256",
+        "--pg-restore-file",
+        "--expected-pg-restore-sha256",
         "--output",
       ]),
       required: new Set([
@@ -74,6 +78,10 @@ export async function runPostgresLogicalBackupCli(
         "--transport-profile",
         "--root-ca-file",
         "--expected-root-ca-der-sha256",
+        "--pg-dump-file",
+        "--expected-pg-dump-sha256",
+        "--pg-restore-file",
+        "--expected-pg-restore-sha256",
         "--output",
       ]),
     });
@@ -87,6 +95,10 @@ export async function runPostgresLogicalBackupCli(
       transportProfile,
       rootCaFile: argumentsByName.get("--root-ca-file")!,
       expectedRootCaDerSha256: argumentsByName.get("--expected-root-ca-der-sha256")!,
+      pgDumpFile: argumentsByName.get("--pg-dump-file")!,
+      expectedPgDumpSha256: argumentsByName.get("--expected-pg-dump-sha256")!,
+      pgRestoreFile: argumentsByName.get("--pg-restore-file")!,
+      expectedPgRestoreSha256: argumentsByName.get("--expected-pg-restore-sha256")!,
       outputDirectory: argumentsByName.get("--output")!,
     });
     const success: PostgresLogicalBackupCliSuccess = {

@@ -19,8 +19,10 @@ authority required for full-scale recovery assurance.
 
 Complete these checks from a protected operator host, not a Railway web shell:
 
-- PostgreSQL 17 `pg_dump` and `pg_restore` are installed for the hardened local
-  logical-backup command.
+- Exact canonical absolute paths to reviewed PostgreSQL 17 `pg_dump` and
+  `pg_restore` binaries and their independently retained lowercase SHA-256
+  pins are available to the hardened local logical-backup command. Bare names
+  and ambient `PATH` lookup are rejected.
 - The production backup login is direct, TLS-protected, read-only, separate
   from the runtime login, and named exactly
   `pintpath_logical_backup_d<current-database-oid>_v<positive-version>`. The
@@ -113,6 +115,10 @@ export LOGICAL_BACKUP_DIRECTORY="$RELEASE_ROOT/postgres-logical-backup"
 : "${EXPECTED_SOURCE_URL_SHA256:?inject the reviewed trimmed backup URL SHA-256}"
 : "${EXPECTED_ROOT_CA_DER_SHA256:?inject the reviewed root certificate DER SHA-256}"
 export POSTGRES_ROOT_CA_FILE="$RELEASE_ROOT/railway-postgres-root-ca.pem"
+: "${PG_DUMP_FILE:?inject the reviewed canonical absolute pg_dump path}"
+: "${EXPECTED_PG_DUMP_SHA256:?inject the reviewed lowercase pg_dump SHA-256}"
+: "${PG_RESTORE_FILE:?inject the reviewed canonical absolute pg_restore path}"
+: "${EXPECTED_PG_RESTORE_SHA256:?inject the reviewed lowercase pg_restore SHA-256}"
 
 test -f "$BACKUP_CONNECTION_FILE" && test ! -L "$BACKUP_CONNECTION_FILE"
 test -f "$RUNTIME_DATABASE_URL_FILE" && test ! -L "$RUNTIME_DATABASE_URL_FILE"
@@ -132,12 +138,14 @@ single-certificate CA file, pins the X.509 DER hash, resolves exactly one
 private `fd12::/16` address, authenticates the stock leaf as `localhost`, and
 uses the same address and CA for Node and libpq with TLS 1.2 or newer. `require`,
 `verify-ca`, system-root fallback, duplicate modes, and every `disable`
-value fail before tools or a database connection. The runtime URL retains its
-separately reviewed TLS contract. Obtain `EXPECTED_SOURCE_URL_SHA256` and
+value fail before tool opening or a database connection. The runtime URL retains
+its separately reviewed TLS contract. Obtain `EXPECTED_SOURCE_URL_SHA256` and
 `EXPECTED_ROOT_CA_DER_SHA256` from the reviewed provisioning authority, not by
-rehashing the mutable files during the ceremony. They pin the logical trimmed
-URL and certificate before tool discovery, database connection, output
-creation, or temporary credential creation. Never put either URL, the CA path
+rehashing the mutable files during the ceremony. The exact URL and all supplied
+pins and paths are snapshotted before tool opening. The URL pin is checked before
+the sequential tool probes; the held CA file, DER pin, and transport contract
+are checked after those probes but before database connection, output creation,
+or temporary credential creation. Never put either URL, the CA path
 or bytes, or the service-role key in command output, shell tracing, logs, Git,
 screenshots, or the attestation evidence file.
 
@@ -172,6 +180,10 @@ npm run --silent db:postgres:backup:logical -- \
   --transport-profile=railway-stock-localhost-ca-v1 \
   --root-ca-file="$POSTGRES_ROOT_CA_FILE" \
   --expected-root-ca-der-sha256="$EXPECTED_ROOT_CA_DER_SHA256" \
+  --pg-dump-file="$PG_DUMP_FILE" \
+  --expected-pg-dump-sha256="$EXPECTED_PG_DUMP_SHA256" \
+  --pg-restore-file="$PG_RESTORE_FILE" \
+  --expected-pg-restore-sha256="$EXPECTED_PG_RESTORE_SHA256" \
   --output="$LOGICAL_BACKUP_DIRECTORY" \
   >"$BACKUP_RESULT"
 chmod 600 "$BACKUP_RESULT"
@@ -230,18 +242,27 @@ the leader exits, and timeout or output-limit failure destroys the parent pipe
 before settlement; ordinary same-group descendants are killed and the group is
 proved empty before return.
 
-This process-group boundary cannot observe a child that creates a new session,
-and the production CLI currently resolves bare `pg_dump` and `pg_restore`
-names through ambient `PATH`, checking only self-reported PostgreSQL-17 version
-text. A substituted wrapper could therefore escape the group and retain the
-credential environment or the read-only archive descriptor. The pipe relay
-prevents such a process from retaining writable archive authority after a
-failure, but it does not prove exact executable authorship. Treat exact
-reviewed executable paths, expected binary SHA-256 pins, held-byte custody, and
-a capability-bound native launcher or immutable digest-pinned execution image
-as an unresolved activation requirement. Until that authority exists, these
-bytes are review-only defense in depth and must not authorize a live backup
-ceremony.
+The production wrapper now accepts only canonical absolute `pg_dump` and
+`pg_restore` paths plus lowercase SHA-256 pins. It opens each reviewed binary,
+holds and hashes that descriptor, requires exact PostgreSQL-17 version evidence,
+and revalidates descriptor and pathname identity around its one permitted
+operation. The dump, list, and version argument/environment/timeout surfaces are
+purpose-bound; the generic process runner and test filesystem seam are not
+exposed by the production factories.
+
+This remains review-only. Node still launches the executable by pathname, so a
+hostile same-UID actor can attempt a pathname execution ABA between preflight
+and `spawn`. Hashing the executable alone does not bind its dynamic loader or
+complete shared-library dependency tree. Activation therefore still requires
+an immutable digest-pinned runtime (or reviewed descriptor-native launcher)
+that binds those dependencies, runs the exact pre-bound process runner in a
+pristine worker with locked Promise primordials, and retains the archive's
+independently reviewed external digest guard across recovery. The process-group
+proof also cannot observe a substituted child that calls `setsid`; such a child
+could retain the credential environment or read-only archive descriptor even
+though the parent-only pipe prevents it retaining writable archive authority.
+Do not authorize a live backup ceremony until every boundary is independently
+reviewed and approved.
 The exact canonical state receipt and manifest are independently hashed against
 their in-memory canonical bytes and held by validated descriptors through the
 same post-cleanup revalidation; a replacement cannot become its own baseline.
