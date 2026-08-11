@@ -1084,6 +1084,7 @@ describe("permanent staging provider-variable process adapter", () => {
     await opened?.close();
     expect(failure).toMatchObject({ code: "process_adapter_invalid" });
     expect(fakeRead).not.toHaveBeenCalled();
+    // codeql[js/file-system-race] -- This private fixture intentionally verifies the replaced path after the held-descriptor rejection.
     expect(fs.readFileSync(copyPath, "utf8")).toBe(malicious);
   });
 

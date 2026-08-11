@@ -6,6 +6,70 @@ import path from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
+// Receipt tests need the genuine local/process brand chain, while Linux CI
+// deliberately has no reviewed macOS Railway binary. Replace only this
+// isolated test graph's immutable CLI lock with a private, never-run fixture.
+const KERNEL_RAILWAY_CLI_FIXTURE = vi.hoisted(() => {
+  const fsExact = process.getBuiltinModule("node:fs") as typeof import("node:fs");
+  const osExact = process.getBuiltinModule("node:os") as typeof import("node:os");
+  const pathExact = process.getBuiltinModule("node:path") as typeof import("node:path");
+  const cryptoExact = process.getBuiltinModule("node:crypto") as typeof import("node:crypto");
+  const root = fsExact.realpathSync(fsExact.mkdtempSync(
+    pathExact.join(osExact.tmpdir(), "pintpath-kernel-reviewed-cli."),
+  ));
+  fsExact.chmodSync(root, 0o700);
+  const absolutePath = pathExact.join(root, "railway-fixture-never-executed");
+  const bytes = Buffer.from("#!/bin/sh\nexit 0\n", "utf8");
+  fsExact.writeFileSync(absolutePath, bytes, {
+    flag: "wx",
+    mode: 0o555,
+  });
+  fsExact.chmodSync(absolutePath, 0o555);
+  return Object.freeze({
+    absolutePath,
+    root,
+    sha256: cryptoExact.createHash("sha256").update(bytes).digest("hex"),
+  });
+});
+
+vi.mock(
+  "../scripts/lib/permanent-staging-provider-variable-write-executor.js",
+  async (importOriginal) => {
+    const actual = await importOriginal<typeof import(
+      "../scripts/lib/permanent-staging-provider-variable-write-executor.js"
+    )>();
+    const railwayCli = Object.freeze({
+      ...actual.PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_LOCK.railwayCli,
+      absolutePath: KERNEL_RAILWAY_CLI_FIXTURE.absolutePath,
+      sha256: KERNEL_RAILWAY_CLI_FIXTURE.sha256,
+    });
+    const lock = Object.freeze({
+      ...actual.PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_LOCK,
+      railwayCli,
+    });
+    const canonicalPolicySource = `${JSON.stringify({
+      schemaVersion:
+        actual.PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_POLICY_SCHEMA,
+      policyId: actual.PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_OPERATION,
+      activationState:
+        actual.PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_EXECUTOR_STATE,
+      projectId: lock.projectId,
+      productionEnvironmentId: lock.productionEnvironmentId,
+      stagingEnvironmentId: lock.stagingEnvironmentId,
+      serviceId: lock.serviceId,
+      operations: actual.PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_OPERATIONS,
+      railwayCli,
+      writeContract: lock.writeContract,
+    }, null, 2)}\n`;
+    return {
+      ...actual,
+      PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_CANONICAL_POLICY_SOURCE:
+        canonicalPolicySource,
+      PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_LOCK: lock,
+    };
+  },
+);
+
 import {
   PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_CANONICAL_POLICY_SOURCE,
   PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_LOCK,
@@ -638,6 +702,14 @@ function fixture(): DependencyFixture {
 const execute = permanentStagingProviderVariableWriteKernelInternals.executeEnabled;
 
 beforeAll(async () => {
+  if (
+    PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_LOCK.railwayCli.absolutePath
+      !== KERNEL_RAILWAY_CLI_FIXTURE.absolutePath
+    || PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_LOCK.railwayCli.sha256
+      !== KERNEL_RAILWAY_CLI_FIXTURE.sha256
+  ) {
+    throw new Error("kernel Railway CLI fixture lock was not installed");
+  }
   RECEIPT_FIXTURE_ROOT = await fs.promises.realpath(await fs.promises.mkdtemp(
     path.join(os.tmpdir(), "pintpath-kernel-local-receipt."),
   ));
@@ -723,6 +795,10 @@ afterAll(async () => {
       force: false,
     });
   }
+  await fs.promises.rm(KERNEL_RAILWAY_CLI_FIXTURE.root, {
+    recursive: true,
+    force: true,
+  });
 });
 
 describe("permanent staging provider-variable write kernel", () => {
