@@ -21,6 +21,8 @@ const INSPECT_ARGUMENTS = new Set(["--target-url-file"]);
 const RESTORE_ARGUMENTS = new Set([
   "--backup-directory",
   "--backup-manifest-sha256",
+  "--expected-pg-restore-sha256",
+  "--pg-restore-file",
   "--receipt",
   "--target-identity-sha256",
   "--target-url-file",
@@ -79,13 +81,19 @@ export async function runPostgresLogicalRestoreCli(
     ...DEFAULT_DEPENDENCIES,
     ...overrides,
   };
+  let durableReceiptCreated = false;
   try {
     const [subcommand, ...rawArguments] = argv;
     if (subcommand === "inspect-target") {
-      const args = parseStrictArguments(rawArguments, {
-        allowed: INSPECT_ARGUMENTS,
-        required: INSPECT_ARGUMENTS,
-      });
+      let args: ReturnType<typeof parseStrictArguments>;
+      try {
+        args = parseStrictArguments(rawArguments, {
+          allowed: INSPECT_ARGUMENTS,
+          required: INSPECT_ARGUMENTS,
+        });
+      } catch {
+        throw new PostgresLogicalRestoreError("invalid_arguments");
+      }
       const result = await dependencies.inspectTarget({
         targetUrlFile: exactAbsolutePath(args.get("--target-url-file")!),
       });
@@ -100,10 +108,15 @@ export async function runPostgresLogicalRestoreCli(
       return 0;
     }
     if (subcommand !== "restore") throw new PostgresLogicalRestoreError("invalid_arguments");
-    const args = parseStrictArguments(rawArguments, {
-      allowed: RESTORE_ARGUMENTS,
-      required: RESTORE_ARGUMENTS,
-    });
+    let args: ReturnType<typeof parseStrictArguments>;
+    try {
+      args = parseStrictArguments(rawArguments, {
+        allowed: RESTORE_ARGUMENTS,
+        required: RESTORE_ARGUMENTS,
+      });
+    } catch {
+      throw new PostgresLogicalRestoreError("invalid_arguments");
+    }
     if (
       environment[POSTGRES_LOGICAL_RESTORE_CONFIRMATION_ENV]
       !== POSTGRES_LOGICAL_RESTORE_CONFIRMATION_VALUE
@@ -116,11 +129,14 @@ export async function runPostgresLogicalRestoreCli(
     const result = await dependencies.restoreBackup({
       backupDirectory: exactAbsolutePath(args.get("--backup-directory")!),
       expectedBackupManifestSha256: args.get("--backup-manifest-sha256")!,
+      pgRestoreFile: exactAbsolutePath(args.get("--pg-restore-file")!),
+      expectedPgRestoreSha256: args.get("--expected-pg-restore-sha256")!,
       targetUrlFile: exactAbsolutePath(args.get("--target-url-file")!),
       expectedTargetIdentitySha256: args.get("--target-identity-sha256")!,
       receiptFile: exactAbsolutePath(args.get("--receipt")!),
       confirmation: POSTGRES_LOGICAL_RESTORE_CONFIRMATION_VALUE,
     });
+    durableReceiptCreated = true;
     dependencies.writeOutput(canonicalPostgresBackupJson({
       schemaVersion: 1,
       ok: true,
@@ -138,7 +154,17 @@ export async function runPostgresLogicalRestoreCli(
     }));
     return 0;
   } catch (error) {
-    dependencies.writeOutput(canonicalPostgresBackupJson(safeFailure(error)));
+    const failure = durableReceiptCreated
+      ? safeFailure(new PostgresLogicalRestoreError(
+        "receipt_failed_target_disposal_required",
+      ))
+      : safeFailure(error);
+    try {
+      dependencies.writeOutput(canonicalPostgresBackupJson(failure));
+    } catch {
+      // Exit nonzero even when the output sink cannot publish the fallback.
+      // A receipt is not authorized without its separately captured digest.
+    }
     return 1;
   }
 }

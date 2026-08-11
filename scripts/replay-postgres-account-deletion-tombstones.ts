@@ -17,6 +17,7 @@ import { parseStrictArguments } from "./lib/strict-arguments.js";
 const ARGUMENTS = new Set([
   "--base-restore-receipt",
   "--deletion-ledger-authority-directory",
+  "--expected-base-restore-receipt-sha256",
   "--expected-ledger-checkpoint-sha256",
   "--expected-ledger-current-sha256",
   "--expected-ledger-genesis-sha256",
@@ -66,6 +67,13 @@ function exactPositiveInteger(value: string): number {
   return parsed;
 }
 
+function exactSha256(value: string): string {
+  if (!/^[a-f0-9]{64}$/.test(value)) {
+    throw new PostgresAccountDeletionReplayError("invalid_arguments");
+  }
+  return value;
+}
+
 function safeFailure(error: unknown): SafeCliFailure {
   const failureCode = error instanceof PostgresAccountDeletionReplayError
     ? error.code
@@ -87,8 +95,14 @@ export async function runPostgresAccountDeletionReplayCli(
     ...DEFAULT_DEPENDENCIES,
     ...overrides,
   };
+  let durableReceiptCreated = false;
   try {
-    const args = parseStrictArguments(argv, { allowed: ARGUMENTS, required: ARGUMENTS });
+    let args: ReadonlyMap<string, string>;
+    try {
+      args = parseStrictArguments(argv, { allowed: ARGUMENTS, required: ARGUMENTS });
+    } catch {
+      throw new PostgresAccountDeletionReplayError("invalid_arguments");
+    }
     if (
       environment[POSTGRES_ACCOUNT_DELETION_REPLAY_CONFIRMATION_ENV]
       !== POSTGRES_ACCOUNT_DELETION_REPLAY_CONFIRMATION_VALUE
@@ -101,6 +115,9 @@ export async function runPostgresAccountDeletionReplayCli(
     const result = await dependencies.replay({
       runtimeUrlFile: exactAbsolutePath(args.get("--runtime-url-file")!),
       baseRestoreReceiptFile: exactAbsolutePath(args.get("--base-restore-receipt")!),
+      expectedBaseRestoreReceiptSha256: exactSha256(
+        args.get("--expected-base-restore-receipt-sha256")!,
+      ),
       deletionLedgerAuthorityDirectory: exactAbsolutePath(
         args.get("--deletion-ledger-authority-directory")!,
       ),
@@ -114,6 +131,7 @@ export async function runPostgresAccountDeletionReplayCli(
       receiptFile: exactAbsolutePath(args.get("--receipt")!),
       confirmation: POSTGRES_ACCOUNT_DELETION_REPLAY_CONFIRMATION_VALUE,
     });
+    durableReceiptCreated = true;
     dependencies.writeOutput(canonicalPostgresBackupJson({
       schemaVersion: 1,
       ok: true,
@@ -130,7 +148,18 @@ export async function runPostgresAccountDeletionReplayCli(
     }));
     return 0;
   } catch (error) {
-    dependencies.writeOutput(canonicalPostgresBackupJson(safeFailure(error)));
+    const failure = durableReceiptCreated
+      ? safeFailure(new PostgresAccountDeletionReplayError(
+        "receipt_failed_target_disposal_required",
+      ))
+      : safeFailure(error);
+    try {
+      dependencies.writeOutput(canonicalPostgresBackupJson(failure));
+    } catch {
+      // The process still exits nonzero if neither the success result nor the
+      // fallback failure can be published. The retained receipt is not
+      // authorized without the separately captured successful digest.
+    }
     return 1;
   }
 }

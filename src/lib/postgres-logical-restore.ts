@@ -16,7 +16,6 @@ import {
   postgresLogicalBackupManifestBindingSha256,
   runPostgresBackupProcess,
   type PostgresLogicalBackupManifest,
-  type ProcessRunner,
 } from "./postgres-logical-backup.js";
 import {
   computePostgresLogicalStateInventory,
@@ -28,6 +27,21 @@ import {
 import {
   POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
 } from "./postgres-railway-stock-localhost-ca.js";
+import {
+  PostgresToolAuthorityError,
+  openPostgresToolAuthority,
+  type PostgresRestoreToolAuthority,
+  type PostgresToolAuthorityProcessRunner,
+} from "./postgres-tool-authority.js";
+
+/*
+ * Review-only activation boundary: the entire restore worker must start in a
+ * pristine frozen-intrinsics realm before imports or secret reads. Ordinary
+ * async carriers below include connection-file bytes, parsed credentials,
+ * connection capabilities, and query rows; hardening only the tool authority's
+ * Promise boundary cannot make those carriers safe from inherited then
+ * poisoning. The current npm/tsx launcher does not provide this containment.
+ */
 
 const APPLICATION_SCHEMA = "pintpath_app";
 const OPERATIONS_SCHEMA = "pintpath_ops";
@@ -35,17 +49,12 @@ const RUNTIME_ROLE = "pintpath_runtime";
 const MIGRATOR_ROLE = "pintpath_migrator";
 const DISPOSABLE_TARGET_CLASS = "disposable-rehearsal";
 const RESTORE_LOCK_KEY = "-5884877150838658403";
+const RESTORE_WORKER_APPLICATION_NAME = "pintpath-logical-restore-worker";
 const RECEIPT_KIND = "pintpath-postgres-logical-restore-rehearsal" as const;
 const RECEIPT_VERSION = 1 as const;
 const MAX_MANIFEST_BYTES = 256 * 1024;
 const MAX_STATE_RECEIPT_BYTES = 4 * 1024 * 1024;
 const MAX_ARCHIVE_BYTES = 1024n * 1024n * 1024n * 1024n;
-const VERSION_OUTPUT_LIMIT = 4 * 1024;
-const LISTING_OUTPUT_LIMIT = 64 * 1024 * 1024;
-const RESTORE_OUTPUT_LIMIT = 1024 * 1024;
-const TOOL_TIMEOUT_MS = 15_000;
-const LIST_TIMEOUT_MS = 5 * 60 * 1_000;
-const RESTORE_TIMEOUT_MS = 2 * 60 * 60 * 1_000;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const VERSION_PATTERN = /^[0-9]+(?:\.[0-9]+){0,3}(?:[-+._a-zA-Z0-9 ()~:]{0,96})$/;
 
@@ -163,6 +172,8 @@ export interface InspectPostgresLogicalRestoreTargetOptions {
 export interface RestorePostgresLogicalBackupOptions {
   readonly backupDirectory: string;
   readonly expectedBackupManifestSha256: string;
+  readonly pgRestoreFile: string;
+  readonly expectedPgRestoreSha256: string;
   readonly targetUrlFile: string;
   readonly expectedTargetIdentitySha256: string;
   readonly receiptFile: string;
@@ -185,8 +196,10 @@ export interface PostgresLogicalRestoreDependencies {
   readonly env: Readonly<Record<string, string | undefined>>;
   readonly getUid: () => number | null;
   readonly now: () => Date;
-  readonly pgRestoreCommand: string;
-  readonly runProcess: ProcessRunner;
+  readonly openRestoreAuthority: (options: {
+    readonly executableFile: string;
+    readonly expectedSha256: string;
+  }) => Promise<PostgresRestoreToolAuthority>;
   readonly connect: (
     config: PostgresLogicalRestoreConnectionConfig,
   ) => Promise<PostgresLogicalRestoreConnection>;
@@ -221,8 +234,11 @@ interface ParsedConnection {
 
 interface TrustedConnectionFile {
   readonly filePath: string;
-  readonly value: string;
   readonly snapshot: TrustedFileSnapshot;
+}
+
+interface ReadTrustedConnectionFile extends TrustedConnectionFile {
+  readonly value: string;
 }
 
 interface ValidatedBackup {
@@ -236,6 +252,7 @@ interface ValidatedBackup {
   readonly parsedManifest: PostgresLogicalBackupManifest;
   readonly parsedStateReceipt: PostgresLogicalSourceStateReceipt;
   readonly restoreArchiveHandle: fs.promises.FileHandle;
+  readonly restoreAuthority: PostgresRestoreToolAuthority;
 }
 
 interface TargetIdentityRow extends QueryResultRow {
@@ -386,21 +403,6 @@ function sameSnapshot(left: TrustedFileSnapshot, right: TrustedFileSnapshot): bo
     && left.sha256 === right.sha256;
 }
 
-function makeBaseProcessEnvironment(
-  environment: Readonly<Record<string, string | undefined>>,
-): Record<string, string> {
-  const result: Record<string, string> = {};
-  for (const key of ["PATH", "LANG", "LC_ALL", "TZ"] as const) {
-    const value = environment[key];
-    if (typeof value === "string" && value.length > 0 && !value.includes("\0")) {
-      result[key] = value;
-    }
-  }
-  if (!result.PATH) result.PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin";
-  result.LC_ALL = "C";
-  return result;
-}
-
 class DirectRestoreConnection implements PostgresLogicalRestoreConnection {
   private constructor(private readonly client: Client) {}
 
@@ -439,12 +441,17 @@ class DirectRestoreConnection implements PostgresLogicalRestoreConnection {
   }
 }
 
+const POSTGRES_RESTORE_TOOL_AUTHORITY_PROCESS_RUNNER: PostgresToolAuthorityProcessRunner =
+  runPostgresBackupProcess;
+
 const DEFAULT_DEPENDENCIES: PostgresLogicalRestoreDependencies = {
   env: process.env,
   getUid: () => process.getuid?.() ?? null,
   now: () => new Date(),
-  pgRestoreCommand: "pg_restore",
-  runProcess: runPostgresBackupProcess,
+  openRestoreAuthority: (options) => openPostgresToolAuthority(
+    { ...options, purpose: "restore" },
+    POSTGRES_RESTORE_TOOL_AUTHORITY_PROCESS_RUNNER,
+  ),
   connect: DirectRestoreConnection.connect,
   computeState: computePostgresLogicalStateInventory,
   allowInsecureLoopbackForTests: false,
@@ -461,6 +468,44 @@ function exactUid(dependencies: PostgresLogicalRestoreDependencies): number {
 function canonicalAbsolutePath(value: string): string {
   if (!value || value.includes("\0")) throw restoreError("invalid_arguments");
   return path.resolve(value);
+}
+
+function validateRestoreOptions(
+  options: RestorePostgresLogicalBackupOptions,
+): RestorePostgresLogicalBackupOptions {
+  try {
+    const stableOptions: RestorePostgresLogicalBackupOptions = Object.freeze({
+      backupDirectory: options.backupDirectory,
+      expectedBackupManifestSha256: options.expectedBackupManifestSha256,
+      pgRestoreFile: options.pgRestoreFile,
+      expectedPgRestoreSha256: options.expectedPgRestoreSha256,
+      targetUrlFile: options.targetUrlFile,
+      expectedTargetIdentitySha256: options.expectedTargetIdentitySha256,
+      receiptFile: options.receiptFile,
+      confirmation: options.confirmation,
+    });
+    if (
+      typeof stableOptions.backupDirectory !== "string"
+      || typeof stableOptions.expectedBackupManifestSha256 !== "string"
+      || !SHA256_PATTERN.test(stableOptions.expectedBackupManifestSha256)
+      || typeof stableOptions.pgRestoreFile !== "string"
+      || !path.isAbsolute(stableOptions.pgRestoreFile)
+      || path.normalize(stableOptions.pgRestoreFile) !== stableOptions.pgRestoreFile
+      || path.resolve(stableOptions.pgRestoreFile) !== stableOptions.pgRestoreFile
+      || path.basename(stableOptions.pgRestoreFile) !== "pg_restore"
+      || stableOptions.pgRestoreFile.includes("\0")
+      || typeof stableOptions.expectedPgRestoreSha256 !== "string"
+      || !SHA256_PATTERN.test(stableOptions.expectedPgRestoreSha256)
+      || typeof stableOptions.targetUrlFile !== "string"
+      || typeof stableOptions.expectedTargetIdentitySha256 !== "string"
+      || !SHA256_PATTERN.test(stableOptions.expectedTargetIdentitySha256)
+      || typeof stableOptions.receiptFile !== "string"
+      || typeof stableOptions.confirmation !== "string"
+    ) throw new Error("invalid");
+    return stableOptions;
+  } catch {
+    throw restoreError("invalid_arguments");
+  }
 }
 
 async function trustedDirectory(directoryInput: string, uid: number): Promise<TrustedDirectory> {
@@ -516,6 +561,11 @@ async function snapshotTrustedFile(input: {
 }): Promise<TrustedFileSnapshot> {
   let pathStat: fs.BigIntStats;
   let handle: fs.promises.FileHandle | null = null;
+  let readBuffer: Buffer | null = null;
+  const retainedChunks: Buffer[] = [];
+  let retainedBytes: Buffer | null = null;
+  let snapshot: TrustedFileSnapshot | null = null;
+  let failure: unknown;
   try {
     pathStat = fs.lstatSync(input.filePath, { bigint: true });
     if (
@@ -535,18 +585,17 @@ async function snapshotTrustedFile(input: {
     const opened = await handle.stat({ bigint: true });
     if (!sameFileIdentity(pathStat, opened)) throw new Error("changed");
     const hash = crypto.createHash("sha256");
-    const chunks: Buffer[] = [];
-    const buffer = Buffer.allocUnsafe(256 * 1024);
+    readBuffer = Buffer.allocUnsafe(256 * 1024);
     let offset = 0n;
     while (offset < opened.size) {
-      const length = Number(opened.size - offset > BigInt(buffer.length)
-        ? BigInt(buffer.length)
+      const length = Number(opened.size - offset > BigInt(readBuffer.length)
+        ? BigInt(readBuffer.length)
         : opened.size - offset);
-      const result = await handle.read(buffer, 0, length, Number(offset));
+      const result = await handle.read(readBuffer, 0, length, Number(offset));
       if (result.bytesRead === 0) throw new Error("changed");
-      const bytes = buffer.subarray(0, result.bytesRead);
+      const bytes = readBuffer.subarray(0, result.bytesRead);
       hash.update(bytes);
-      if (input.retainBytes) chunks.push(Buffer.from(bytes));
+      if (input.retainBytes) retainedChunks.push(Buffer.from(bytes));
       offset += BigInt(result.bytesRead);
     }
     const afterDescriptor = await handle.stat({ bigint: true });
@@ -554,21 +603,39 @@ async function snapshotTrustedFile(input: {
     if (!sameFileIdentity(pathStat, afterDescriptor) || !sameFileIdentity(pathStat, afterPath)) {
       throw new Error("changed");
     }
-    return {
+    retainedBytes = input.retainBytes ? Buffer.concat(retainedChunks) : null;
+    snapshot = {
       dev: pathStat.dev,
       ino: pathStat.ino,
       size: pathStat.size,
       mtimeNs: pathStat.mtimeNs,
       ctimeNs: pathStat.ctimeNs,
       sha256: hash.digest("hex"),
-      ...(input.retainBytes ? { bytes: Buffer.concat(chunks) } : {}),
+      ...(retainedBytes ? { bytes: retainedBytes } : {}),
     };
   } catch (error) {
-    if (error instanceof PostgresLogicalRestoreError) throw error;
-    throw restoreError(input.invalidCode);
-  } finally {
-    await handle?.close().catch(() => undefined);
+    failure = error;
   }
+  readBuffer?.fill(0);
+  for (const chunk of retainedChunks) chunk.fill(0);
+  if (handle) {
+    const snapshotHandleToClose = handle;
+    handle = null;
+    try {
+      await snapshotHandleToClose.close();
+    } catch {
+      // Snapshot descriptor release is part of the authorization result.
+      // Never publish a successful snapshot after an ambiguous close, and
+      // never retry a close whose effects are unknown.
+      failure = restoreError(input.invalidCode);
+    }
+  }
+  if (failure || !snapshot) {
+    retainedBytes?.fill(0);
+    if (failure instanceof PostgresLogicalRestoreError) throw failure;
+    throw restoreError(input.invalidCode);
+  }
+  return snapshot;
 }
 
 function sameSnapshotAsStat(
@@ -588,20 +655,24 @@ async function hashTrustedFileHandle(
 ): Promise<string> {
   const hash = crypto.createHash("sha256");
   const buffer = Buffer.allocUnsafe(256 * 1024);
-  let offset = 0n;
-  while (offset < size) {
-    const length = Number(size - offset > BigInt(buffer.length)
-      ? BigInt(buffer.length)
-      : size - offset);
-    // A positional read is deliberate: validating either independently opened
-    // descriptor must not advance the open-file-description offset inherited
-    // by pg_restore as stdin.
-    const result = await handle.read(buffer, 0, length, Number(offset));
-    if (result.bytesRead === 0) throw new Error("archive_changed");
-    hash.update(buffer.subarray(0, result.bytesRead));
-    offset += BigInt(result.bytesRead);
+  try {
+    let offset = 0n;
+    while (offset < size) {
+      const length = Number(size - offset > BigInt(buffer.length)
+        ? BigInt(buffer.length)
+        : size - offset);
+      // A positional read is deliberate: validating either independently opened
+      // descriptor must not advance the open-file-description offset inherited
+      // by pg_restore as stdin.
+      const result = await handle.read(buffer, 0, length, Number(offset));
+      if (result.bytesRead === 0) throw new Error("archive_changed");
+      hash.update(buffer.subarray(0, result.bytesRead));
+      offset += BigInt(result.bytesRead);
+    }
+    return hash.digest("hex");
+  } finally {
+    buffer.fill(0);
   }
-  return hash.digest("hex");
 }
 
 async function assertTrustedArchiveHandle(input: {
@@ -959,12 +1030,38 @@ async function validateBackupBeforeConnection(
   validateStateReceiptBinding(parsedStateReceipt, parsedManifest);
   await assertTrustedDirectory(directory, uid);
 
-  const processEnvironment = makeBaseProcessEnvironment(dependencies.env);
+  let restoreAuthority: PostgresRestoreToolAuthority | null = null;
   let listingArchiveHandle: fs.promises.FileHandle | null = null;
   let restoreArchiveHandle: fs.promises.FileHandle | null = null;
   try {
-    // pg_restore receives independently opened descriptors for inspection and
-    // mutation. Neither child ever resolves the operator-controlled pathname.
+    try {
+      restoreAuthority = await dependencies.openRestoreAuthority(Object.freeze({
+        executableFile: options.pgRestoreFile,
+        expectedSha256: options.expectedPgRestoreSha256,
+      }));
+    } catch {
+      throw restoreError("tool_unavailable_or_unsupported");
+    }
+
+    let version;
+    try {
+      version = await restoreAuthority.version();
+    } catch {
+      throw restoreError("tool_unavailable_or_unsupported");
+    }
+    const toolMajor = parseToolMajor(version.stdout);
+    if (
+      version.exitCode !== 0
+      || version.stderr !== ""
+      || toolMajor !== parsedManifest.tools.pgRestore.major
+    ) {
+      throw restoreError("tool_unavailable_or_unsupported");
+    }
+
+    // The single purpose-bound authority receives independently opened archive
+    // descriptors for inspection and mutation. Neither child ever resolves
+    // the operator-controlled archive pathname, while the caller retains its
+    // separate full-digest guard across both operations.
     listingArchiveHandle = await openTrustedArchiveHandle({
       filePath: archivePath,
       expected: archive,
@@ -979,40 +1076,19 @@ async function validateBackupBeforeConnection(
       throw restoreError("backup_tampered");
     }
 
-    let version;
+    let listing;
     try {
-      version = await dependencies.runProcess({
-        command: dependencies.pgRestoreCommand,
-        args: ["--version"],
-        env: processEnvironment,
-        timeoutMs: TOOL_TIMEOUT_MS,
-        maxStdoutBytes: VERSION_OUTPUT_LIMIT,
-        maxStderrBytes: VERSION_OUTPUT_LIMIT,
-      });
-    } catch {
-      throw restoreError("tool_unavailable_or_unsupported");
-    }
-    if (version.exitCode !== 0 || version.stderr.trim()) {
-      throw restoreError("tool_unavailable_or_unsupported");
-    }
-    const toolMajor = parseToolMajor(version.stdout);
-    if (toolMajor !== parsedManifest.tools.pgRestore.major) {
-      throw restoreError("tool_unavailable_or_unsupported");
-    }
-    let listing: Awaited<ReturnType<ProcessRunner>> | null = null;
-    let listingInvocationFailed = false;
-    try {
-      listing = await dependencies.runProcess({
-        command: dependencies.pgRestoreCommand,
-        args: ["--list", "--format=custom"],
-        env: processEnvironment,
-        timeoutMs: LIST_TIMEOUT_MS,
-        maxStdoutBytes: LISTING_OUTPUT_LIMIT,
-        maxStderrBytes: RESTORE_OUTPUT_LIMIT,
-        stdinFileDescriptor: listingArchiveHandle.fd,
-      });
-    } catch {
-      listingInvocationFailed = true;
+      listing = await restoreAuthority.list(listingArchiveHandle.fd);
+    } catch (error) {
+      if (
+        error instanceof PostgresToolAuthorityError
+        && error.code === "archive_drift"
+      ) throw restoreError("backup_tampered");
+      if (
+        error instanceof PostgresToolAuthorityError
+        && (error.code === "tool_drift" || error.code === "cleanup_failed")
+      ) throw restoreError("tool_unavailable_or_unsupported");
+      throw restoreError("backup_manifest_invalid");
     }
     try {
       await assertTrustedArchiveHandle({
@@ -1030,13 +1106,12 @@ async function validateBackupBeforeConnection(
     } catch {
       throw restoreError("backup_tampered");
     }
-    await closeArchiveHandle(listingArchiveHandle, "backup_tampered");
+    const listedHandle = listingArchiveHandle;
     listingArchiveHandle = null;
+    await closeArchiveHandle(listedHandle, "backup_tampered");
     if (
-      listingInvocationFailed
-      || !listing
-      || listing.exitCode !== 0
-      || listing.stderr.trim()
+      listing.exitCode !== 0
+      || listing.stderr !== ""
     ) {
       throw restoreError("backup_manifest_invalid");
     }
@@ -1071,8 +1146,15 @@ async function validateBackupBeforeConnection(
       throw restoreError("backup_tampered");
     }
     await assertTrustedDirectory(directory, uid);
+    try {
+      await restoreAuthority.assertExact();
+    } catch {
+      throw restoreError("tool_unavailable_or_unsupported");
+    }
     const retainedRestoreArchiveHandle = restoreArchiveHandle;
+    const retainedRestoreAuthority = restoreAuthority;
     restoreArchiveHandle = null;
+    restoreAuthority = null;
     return {
       directory,
       archivePath,
@@ -1084,23 +1166,43 @@ async function validateBackupBeforeConnection(
       parsedManifest,
       parsedStateReceipt,
       restoreArchiveHandle: retainedRestoreArchiveHandle,
+      restoreAuthority: retainedRestoreAuthority,
     };
   } catch (error) {
+    let failure = error instanceof PostgresLogicalRestoreError
+      ? error
+      : restoreError("backup_tampered");
     const handles = [listingArchiveHandle, restoreArchiveHandle].filter(
       (handle): handle is fs.promises.FileHandle => handle !== null,
     );
-    await Promise.all(handles.map((handle) => handle.close().catch(() => undefined)));
     listingArchiveHandle = null;
     restoreArchiveHandle = null;
-    if (error instanceof PostgresLogicalRestoreError) throw error;
-    throw restoreError("backup_tampered");
+    for (const handle of handles) {
+      try {
+        await handle.close();
+      } catch {
+        failure = restoreError("backup_tampered");
+      }
+    }
+    const authorityToClose = restoreAuthority;
+    restoreAuthority = null;
+    if (authorityToClose) {
+      try {
+        await authorityToClose.close();
+      } catch {
+        // A retained executable descriptor that cannot be released is a tool
+        // custody failure and dominates every pre-mutation validation error.
+        failure = restoreError("tool_unavailable_or_unsupported");
+      }
+    }
+    throw failure;
   }
 }
 
 async function readTrustedConnectionFile(
   fileInput: string,
   uid: number,
-): Promise<TrustedConnectionFile> {
+): Promise<ReadTrustedConnectionFile> {
   const filePath = canonicalAbsolutePath(fileInput);
   const snapshot = await snapshotTrustedFile({
     filePath,
@@ -1110,16 +1212,30 @@ async function readTrustedConnectionFile(
     invalidCode: "unsafe_connection_file",
   });
   if (!snapshot.bytes) throw restoreError("unsafe_connection_file");
+  const connectionBytes = snapshot.bytes;
   let decoded: string;
   try {
-    decoded = new TextDecoder("utf-8", { fatal: true }).decode(snapshot.bytes).trim();
+    decoded = new TextDecoder("utf-8", { fatal: true }).decode(connectionBytes).trim();
   } catch {
     throw restoreError("unsafe_connection_file");
+  } finally {
+    connectionBytes.fill(0);
   }
   if (!decoded || decoded.includes("\0") || /[\r\n]/.test(decoded)) {
     throw restoreError("unsafe_connection_file");
   }
-  return { filePath, value: decoded, snapshot };
+  return {
+    filePath,
+    value: decoded,
+    snapshot: {
+      dev: snapshot.dev,
+      ino: snapshot.ino,
+      size: snapshot.size,
+      mtimeNs: snapshot.mtimeNs,
+      ctimeNs: snapshot.ctimeNs,
+      sha256: snapshot.sha256,
+    },
+  };
 }
 
 
@@ -1220,7 +1336,7 @@ function parseSafeTargetUrl(
       PGSSLMODE: sslMode,
       PGGSSENCMODE: "disable",
       PGCONNECT_TIMEOUT: "15",
-      PGAPPNAME: "pintpath-logical-restore-rehearsal",
+      PGAPPNAME: RESTORE_WORKER_APPLICATION_NAME,
     }),
     urlSha256: sha256(value),
   };
@@ -1344,14 +1460,26 @@ async function acquireRestoreLock(connection: PostgresLogicalRestoreConnection):
   }
 }
 
-async function releaseRestoreLock(connection: PostgresLogicalRestoreConnection): Promise<void> {
+async function assertNoOtherTargetClientBackends(
+  connection: PostgresLogicalRestoreConnection,
+  failureCode: "target_busy" | "verification_failed_target_disposal_required",
+): Promise<void> {
   try {
-    await connection.query(
-      "/* pintpath:logical-restore:unlock */ SELECT pg_advisory_unlock($1::bigint)",
-      [RESTORE_LOCK_KEY],
+    const result = await connection.query<QueryResultRow & { otherClientBackendCount: string }>(
+      `/* pintpath:logical-restore:client-backend-quiescence */
+       SELECT count(*)::text AS "otherClientBackendCount"
+       FROM pg_catalog.pg_stat_activity
+       WHERE datname = current_database()
+         AND backend_type = 'client backend'
+         AND pid <> pg_backend_pid()`,
     );
+    if (
+      result.rowCount !== 1
+      || result.rows.length !== 1
+      || result.rows[0]?.otherClientBackendCount !== "0"
+    ) throw new Error("target_not_quiescent");
   } catch {
-    // Closing the dedicated connection releases a session advisory lock.
+    throw restoreError(failureCode);
   }
 }
 
@@ -1366,6 +1494,10 @@ async function connectTarget(
 }> {
   const connectionFile = await readTrustedConnectionFile(targetUrlFile, uid);
   const parsed = parseSafeTargetUrl(connectionFile.value, dependencies);
+  const retainedConnectionFile: TrustedConnectionFile = {
+    filePath: connectionFile.filePath,
+    snapshot: connectionFile.snapshot,
+  };
   let connection: PostgresLogicalRestoreConnection;
   try {
     connection = await dependencies.connect(parsed.clientConfig);
@@ -1373,7 +1505,7 @@ async function connectTarget(
     if (error instanceof PostgresLogicalRestoreError) throw error;
     throw restoreError("target_unreachable");
   }
-  return { connection, parsed, connectionFile };
+  return { connection, parsed, connectionFile: retainedConnectionFile };
 }
 
 export async function inspectPostgresLogicalRestoreTarget(
@@ -1383,20 +1515,32 @@ export async function inspectPostgresLogicalRestoreTarget(
   const dependencies: PostgresLogicalRestoreDependencies = { ...DEFAULT_DEPENDENCIES, ...overrides };
   const uid = exactUid(dependencies);
   const { connection, connectionFile } = await connectTarget(options.targetUrlFile, dependencies, uid);
+  let inspection: PostgresLogicalRestoreTargetInspection | null = null;
+  let inspectionFailed = false;
+  let inspectionFailure: unknown;
   try {
     const targetIdentitySha256Value = await inspectTargetIdentity(connection);
     await assertPrivateSchemasAbsent(connection);
     await assertTargetConnectionFileUnchanged(connectionFile, uid);
-    return {
+    inspection = {
       schemaVersion: 1,
       ok: true,
       targetIdentitySha256: targetIdentitySha256Value,
       disposableTarget: true,
       privateSchemasAbsent: true,
     };
-  } finally {
-    await connection.close().catch(() => undefined);
+  } catch (error) {
+    inspectionFailed = true;
+    inspectionFailure = error;
   }
+  try {
+    await connection.close();
+  } catch {
+    throw restoreError("target_not_disposable");
+  }
+  if (inspectionFailed) throw inspectionFailure;
+  if (!inspection) throw restoreError("target_not_disposable");
+  return inspection;
 }
 
 function quoteIdentifier(value: string): string {
@@ -2032,7 +2176,14 @@ function validateReceiptDestination(fileInput: string, uid: number): ReceiptDest
     throw restoreError("invalid_arguments");
   }
   try {
-    if (fs.existsSync(filePath)) throw new Error("exists");
+    let leafAbsent = false;
+    try {
+      fs.lstatSync(filePath, { bigint: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") leafAbsent = true;
+      else throw error;
+    }
+    if (!leafAbsent) throw new Error("exists");
     const parent = fs.lstatSync(parentPath, { bigint: true });
     if (
       !parent.isDirectory()
@@ -2053,33 +2204,69 @@ function validateReceiptDestination(fileInput: string, uid: number): ReceiptDest
   }
 }
 
+async function readbackPrivateReceipt(
+  handle: fs.promises.FileHandle,
+  byteLength: number,
+): Promise<string> {
+  const hash = crypto.createHash("sha256");
+  const buffer = Buffer.allocUnsafe(Math.min(64 * 1024, Math.max(byteLength, 1)));
+  let offset = 0;
+  while (offset < byteLength) {
+    const length = Math.min(buffer.length, byteLength - offset);
+    const result = await handle.read(buffer, 0, length, offset);
+    if (result.bytesRead < 1) throw new Error("receipt_truncated");
+    hash.update(buffer.subarray(0, result.bytesRead));
+    offset += result.bytesRead;
+  }
+  const eof = await handle.read(buffer, 0, 1, byteLength);
+  if (eof.bytesRead !== 0) throw new Error("receipt_extended");
+  return hash.digest("hex");
+}
+
+function openExclusivePrivateReceipt(filePath: string): Promise<fs.promises.FileHandle> {
+  return fs.promises.open(
+    filePath,
+    fs.constants.O_RDWR
+      | fs.constants.O_CREAT
+      | fs.constants.O_EXCL
+      | (fs.constants.O_NOFOLLOW ?? 0),
+    0o600,
+  );
+}
+
 async function writePrivateReceipt(
   destination: ReceiptDestination,
   receipt: PostgresLogicalRestoreReceipt,
 ): Promise<string> {
   const bytes = Buffer.from(canonicalPostgresBackupJson(receipt), "utf8");
+  const intendedReceiptSha256 = sha256(bytes);
+  let parentHandle: fs.promises.FileHandle | null = null;
   let handle: fs.promises.FileHandle | null = null;
-  let createdIdentity: { dev: bigint; ino: bigint } | null = null;
   try {
-    const parent = fs.lstatSync(destination.parentPath, { bigint: true });
-    if (
-      !parent.isDirectory()
-      || parent.isSymbolicLink()
-      || parent.uid !== BigInt(destination.uid)
-      || Number(parent.mode & 0o7777n) !== 0o700
-      || parent.dev !== destination.parentDev
-      || parent.ino !== destination.parentIno
-    ) throw new Error("parent_changed");
-    handle = await fs.promises.open(
-      destination.filePath,
-      fs.constants.O_WRONLY
-        | fs.constants.O_CREAT
-        | fs.constants.O_EXCL
+    // Retaining the canonical parent narrows ordinary swaps and provides the
+    // durability handle, but portable Node has no openat-style fd-relative
+    // exclusive create. A hostile current-UID namespace toggler can still race
+    // the absolute leaf open; activation requires a protected namespace.
+    parentHandle = await fs.promises.open(
+      destination.parentPath,
+      fs.constants.O_RDONLY
+        | (fs.constants.O_DIRECTORY ?? 0)
         | (fs.constants.O_NOFOLLOW ?? 0),
-      0o600,
     );
+    const openedParent = await parentHandle.stat({ bigint: true });
+    const openedParentPath = fs.lstatSync(destination.parentPath, { bigint: true });
+    if (
+      !openedParent.isDirectory()
+      || openedParent.isSymbolicLink()
+      || openedParent.uid !== BigInt(destination.uid)
+      || Number(openedParent.mode & 0o7777n) !== 0o700
+      || openedParent.dev !== destination.parentDev
+      || openedParent.ino !== destination.parentIno
+      || !sameFileIdentity(openedParent, openedParentPath)
+      || fs.realpathSync(destination.parentPath) !== destination.parentPath
+    ) throw new Error("parent_changed");
+    handle = await openExclusivePrivateReceipt(destination.filePath);
     const created = await handle.stat({ bigint: true });
-    createdIdentity = { dev: created.dev, ino: created.ino };
     if (
       !created.isFile()
       || created.nlink !== 1n
@@ -2088,33 +2275,76 @@ async function writePrivateReceipt(
     ) throw new Error("unsafe_receipt");
     await handle.writeFile(bytes);
     await handle.sync();
-    const after = await handle.stat({ bigint: true });
-    const pathStat = fs.lstatSync(destination.filePath, { bigint: true });
+    const written = await handle.stat({ bigint: true });
+    const writtenPath = fs.lstatSync(destination.filePath, { bigint: true });
     if (
-      after.dev !== created.dev
-      || after.ino !== created.ino
-      || pathStat.dev !== created.dev
-      || pathStat.ino !== created.ino
-      || pathStat.size !== BigInt(bytes.length)
-      || Number(pathStat.mode & 0o7777n) !== 0o600
+      !sameFileIdentity(written, writtenPath)
+      || written.dev !== created.dev
+      || written.ino !== created.ino
+      || written.size !== BigInt(bytes.length)
+      || written.nlink !== 1n
+      || written.uid !== BigInt(destination.uid)
+      || Number(written.mode & 0o7777n) !== 0o600
     ) throw new Error("unsafe_receipt");
-    return sha256(bytes);
-  } catch {
-    await handle?.close().catch(() => undefined);
+    const readbackSha256 = await readbackPrivateReceipt(handle, bytes.length);
+    const readback = await handle.stat({ bigint: true });
+    const readbackPath = fs.lstatSync(destination.filePath, { bigint: true });
+    if (
+      readbackSha256 !== intendedReceiptSha256
+      || !sameFileIdentity(written, readback)
+      || !sameFileIdentity(written, readbackPath)
+    ) throw new Error("unsafe_receipt");
+    const receiptHandleToClose = handle;
     handle = null;
-    if (createdIdentity) {
-      try {
-        const current = fs.lstatSync(destination.filePath, { bigint: true });
-        if (current.dev === createdIdentity.dev && current.ino === createdIdentity.ino) {
-          await fs.promises.unlink(destination.filePath);
-        }
-      } catch {
-        // Do not remove any path whose exact created identity cannot be proven.
-      }
+    // Close is part of receipt authorization. Null the tracked handle before
+    // awaiting so a rejected close is never ambiguously retried.
+    await receiptHandleToClose.close();
+    const parentAfterCreate = await parentHandle.stat({ bigint: true });
+    const parentPathAfterCreate = fs.lstatSync(destination.parentPath, { bigint: true });
+    if (
+      !parentAfterCreate.isDirectory()
+      || parentAfterCreate.uid !== BigInt(destination.uid)
+      || Number(parentAfterCreate.mode & 0o7777n) !== 0o700
+      || parentAfterCreate.dev !== destination.parentDev
+      || parentAfterCreate.ino !== destination.parentIno
+      || !sameFileIdentity(parentAfterCreate, parentPathAfterCreate)
+      || fs.realpathSync(destination.parentPath) !== destination.parentPath
+    ) throw new Error("parent_changed");
+    await parentHandle.sync();
+    const syncedParent = await parentHandle.stat({ bigint: true });
+    const syncedParentPath = fs.lstatSync(destination.parentPath, { bigint: true });
+    if (
+      !sameFileIdentity(parentAfterCreate, syncedParent)
+      || !sameFileIdentity(parentAfterCreate, syncedParentPath)
+      || fs.realpathSync(destination.parentPath) !== destination.parentPath
+    ) throw new Error("parent_changed");
+    const parentHandleToClose = parentHandle;
+    parentHandle = null;
+    await parentHandleToClose.close();
+    const closedPath = fs.lstatSync(destination.filePath, { bigint: true });
+    const closedParent = fs.lstatSync(destination.parentPath, { bigint: true });
+    if (
+      !sameFileIdentity(written, closedPath)
+      || !sameFileIdentity(parentAfterCreate, closedParent)
+      || fs.realpathSync(destination.parentPath) !== destination.parentPath
+    ) throw new Error("unsafe_receipt");
+    return intendedReceiptSha256;
+  } catch {
+    if (handle) {
+      const receiptHandleToClose = handle;
+      handle = null;
+      await receiptHandleToClose.close().catch(() => undefined);
     }
+    if (parentHandle) {
+      const parentHandleToClose = parentHandle;
+      parentHandle = null;
+      await parentHandleToClose.close().catch(() => undefined);
+    }
+    // Do not unlink by pathname after creation uncertainty. Portable Node has
+    // no fd-relative unlink operation that can bind the deletion to the held
+    // parent and exact inode; leave the unauthorized leaf as incident evidence
+    // instead of risking deletion of an attacker-swapped operator file.
     throw restoreError("receipt_failed_target_disposal_required");
-  } finally {
-    await handle?.close().catch(() => undefined);
   }
 }
 
@@ -2157,24 +2387,31 @@ export async function restorePostgresLogicalBackup(
   options: RestorePostgresLogicalBackupOptions,
   overrides: Partial<PostgresLogicalRestoreDependencies> = {},
 ): Promise<PostgresLogicalRestoreResult> {
+  const stableOptions = validateRestoreOptions(options);
   const dependencies: PostgresLogicalRestoreDependencies = { ...DEFAULT_DEPENDENCIES, ...overrides };
-  if (options.confirmation !== POSTGRES_LOGICAL_RESTORE_CONFIRMATION_VALUE) {
+  if (stableOptions.confirmation !== POSTGRES_LOGICAL_RESTORE_CONFIRMATION_VALUE) {
     throw restoreError("confirmation_required");
   }
-  const expectedTargetIdentitySha256 = assertSha256(options.expectedTargetIdentitySha256);
+  const expectedTargetIdentitySha256 = stableOptions.expectedTargetIdentitySha256;
   const uid = exactUid(dependencies);
-  const receiptDestination = validateReceiptDestination(options.receiptFile, uid);
+  const receiptDestination = validateReceiptDestination(stableOptions.receiptFile, uid);
+  const backupDirectoryPath = canonicalAbsolutePath(stableOptions.backupDirectory);
+  const targetUrlFilePath = canonicalAbsolutePath(stableOptions.targetUrlFile);
+  if (
+    receiptDestination.parentPath === backupDirectoryPath
+    || receiptDestination.parentPath === path.dirname(targetUrlFilePath)
+  ) throw restoreError("invalid_arguments");
 
   // The backup is fully authenticated, hashed, and structurally listed before
   // any network connection is attempted.
-  const backup = await validateBackupBeforeConnection(options, dependencies, uid);
+  const backup = await validateBackupBeforeConnection(stableOptions, dependencies, uid);
   let restoreArchiveHandle: fs.promises.FileHandle | null = backup.restoreArchiveHandle;
+  let restoreAuthority: PostgresRestoreToolAuthority | null = backup.restoreAuthority;
   let connection: PostgresLogicalRestoreConnection | null = null;
-  let lockAcquired = false;
   let restoreStarted = false;
   try {
     const target = await connectTarget(
-      options.targetUrlFile,
+      stableOptions.targetUrlFile,
       dependencies,
       uid,
     );
@@ -2186,15 +2423,16 @@ export async function restorePostgresLogicalBackup(
     }
     await assertPrivateSchemasAbsent(connection);
     await acquireRestoreLock(connection);
-    lockAcquired = true;
     const lockedIdentity = await inspectTargetIdentity(connection);
     if (lockedIdentity !== expectedTargetIdentitySha256) {
       throw restoreError("target_identity_mismatch");
     }
     await assertPrivateSchemasAbsent(connection);
+    await assertNoOtherTargetClientBackends(connection, "target_busy");
     await assertBackupUnchanged(backup, uid);
     await assertTargetConnectionFileUnchanged(connectionFile, uid);
     if (!restoreArchiveHandle) throw restoreError("backup_tampered");
+    if (!restoreAuthority) throw restoreError("tool_unavailable_or_unsupported");
     await assertTrustedArchiveHandle({
       handle: restoreArchiveHandle,
       filePath: backup.archivePath,
@@ -2203,34 +2441,40 @@ export async function restorePostgresLogicalBackup(
     }).catch(() => {
       throw restoreError("backup_tampered");
     });
-
-    const restoreEnvironment = Object.freeze({
-      ...makeBaseProcessEnvironment(dependencies.env),
-      ...parsed.pgEnvironment,
-    });
-    restoreStarted = true;
-    let restored: Awaited<ReturnType<ProcessRunner>> | null = null;
-    let restoreInvocationFailed = false;
     try {
-      restored = await dependencies.runProcess({
-        command: dependencies.pgRestoreCommand,
-        args: [
-          "--format=custom",
-          "--dbname=",
-          "--no-owner",
-          "--no-acl",
-          "--exit-on-error",
-          "--single-transaction",
-          "--no-password",
-        ],
-        env: restoreEnvironment,
-        timeoutMs: RESTORE_TIMEOUT_MS,
-        maxStdoutBytes: RESTORE_OUTPUT_LIMIT,
-        maxStderrBytes: RESTORE_OUTPUT_LIMIT,
-        stdinFileDescriptor: restoreArchiveHandle.fd,
-      });
+      await restoreAuthority.assertExact();
     } catch {
-      restoreInvocationFailed = true;
+      throw restoreError("tool_unavailable_or_unsupported");
+    }
+
+    // The parsed target contributes the complete closed restore environment.
+    // Ambient PATH, locale, and process variables never cross this boundary;
+    // the authority reconstructs this exact key set and adds only LC_ALL=C.
+    const restoreEnvironment = parsed.pgEnvironment;
+    restoreStarted = true;
+    let restored: Awaited<ReturnType<PostgresRestoreToolAuthority["restore"]>> | null = null;
+    let restoreFailure: PostgresLogicalRestoreError | null = null;
+    try {
+      restored = await restoreAuthority.restore({
+        environment: restoreEnvironment,
+        archiveInputFileDescriptor: restoreArchiveHandle.fd,
+      });
+    } catch (error) {
+      restoreFailure = error instanceof PostgresToolAuthorityError
+        && (error.code === "archive_drift" || error.code === "tool_drift")
+        ? restoreError("verification_failed_target_disposal_required")
+        : restoreError("restore_rollback_unverified_target_disposal_required");
+    }
+
+    let postRestoreAuthorityFailure: PostgresLogicalRestoreError | null = null;
+    if (!restoreFailure) {
+      try {
+        await restoreAuthority.assertExact();
+      } catch {
+        postRestoreAuthorityFailure = restoreError(
+          "verification_failed_target_disposal_required",
+        );
+      }
     }
     try {
       await assertTrustedArchiveHandle({
@@ -2241,16 +2485,33 @@ export async function restorePostgresLogicalBackup(
       });
       await assertBackupUnchanged(backup, uid);
     } catch {
-      throw restoreError("verification_failed_target_disposal_required");
+      postRestoreAuthorityFailure = restoreError(
+        "verification_failed_target_disposal_required",
+      );
     }
-    await closeArchiveHandle(
-      restoreArchiveHandle,
-      "verification_failed_target_disposal_required",
-    );
+    const authorityToClose = restoreAuthority;
+    restoreAuthority = null;
+    try {
+      await authorityToClose.close();
+    } catch {
+      postRestoreAuthorityFailure = restoreError(
+        "verification_failed_target_disposal_required",
+      );
+    }
+    const restoredArchiveHandle = restoreArchiveHandle;
     restoreArchiveHandle = null;
-    if (restoreInvocationFailed) {
-      throw restoreError("restore_rollback_unverified_target_disposal_required");
+    try {
+      await closeArchiveHandle(
+        restoredArchiveHandle,
+        "verification_failed_target_disposal_required",
+      );
+    } catch {
+      postRestoreAuthorityFailure = restoreError(
+        "verification_failed_target_disposal_required",
+      );
     }
+    if (postRestoreAuthorityFailure) throw postRestoreAuthorityFailure;
+    if (restoreFailure) throw restoreFailure;
     if (
       !restored
       || restored.exitCode !== 0
@@ -2259,6 +2520,10 @@ export async function restorePostgresLogicalBackup(
     ) {
       throw restoreError("restore_rollback_unverified_target_disposal_required");
     }
+    await assertNoOtherTargetClientBackends(
+      connection,
+      "verification_failed_target_disposal_required",
+    );
     // ACLs are intentionally absent from both the archive and pg_restore.
     // Reconstruct the reviewed least-privilege model transactionally before
     // the restored target is considered valid.
@@ -2285,6 +2550,26 @@ export async function restorePostgresLogicalBackup(
       restoredAt,
       computeState: dependencies.computeState,
     });
+    await assertNoOtherTargetClientBackends(
+      connection,
+      "verification_failed_target_disposal_required",
+    );
+    await assertBackupUnchanged(backup, uid).catch(() => {
+      throw restoreError("verification_failed_target_disposal_required");
+    });
+    await assertTargetConnectionFileUnchanged(connectionFile, uid).catch(() => {
+      throw restoreError("verification_failed_target_disposal_required");
+    });
+    const verifiedTargetConnection = connection;
+    connection = null;
+    try {
+      // Keep the session-level advisory lock until the control session itself
+      // closes. An explicit unlock would create an avoidable cooperative race
+      // before session cleanup; successful close releases the lock server-side.
+      await verifiedTargetConnection.close();
+    } catch {
+      throw restoreError("verification_failed_target_disposal_required");
+    }
     await assertBackupUnchanged(backup, uid).catch(() => {
       throw restoreError("verification_failed_target_disposal_required");
     });
@@ -2312,31 +2597,46 @@ export async function restorePostgresLogicalBackup(
       : restoreError(restoreStarted
         ? "verification_failed_target_disposal_required"
         : "target_not_disposable");
-    if (restoreArchiveHandle) {
+    let authorityCloseFailed = false;
+    const authorityToClose = restoreAuthority;
+    restoreAuthority = null;
+    if (authorityToClose) {
       try {
-        await restoreArchiveHandle.close();
-        restoreArchiveHandle = null;
+        await authorityToClose.close();
       } catch {
+        authorityCloseFailed = true;
         failure = restoreError(restoreStarted
           ? "verification_failed_target_disposal_required"
-          : "backup_tampered");
+          : "tool_unavailable_or_unsupported");
       }
     }
-    throw failure;
-  } finally {
     if (restoreArchiveHandle) {
+      const archiveHandleToClose = restoreArchiveHandle;
+      restoreArchiveHandle = null;
       try {
-        await restoreArchiveHandle.close();
-        restoreArchiveHandle = null;
+        await archiveHandleToClose.close();
       } catch {
-        // A failed close has already prevented a success receipt. The retained
-        // handle is not treated as released and no later restore work runs.
+        if (!authorityCloseFailed) {
+          failure = restoreError(restoreStarted
+            ? "verification_failed_target_disposal_required"
+            : "backup_tampered");
+        }
       }
     }
     if (connection) {
-      if (lockAcquired) await releaseRestoreLock(connection);
-      await connection.close().catch(() => undefined);
+      const targetConnectionToClose = connection;
+      connection = null;
+      try {
+        await targetConnectionToClose.close();
+      } catch {
+        if (!authorityCloseFailed) {
+          failure = restoreError(restoreStarted
+            ? "verification_failed_target_disposal_required"
+            : "target_not_disposable");
+        }
+      }
     }
+    throw failure;
   }
 }
 

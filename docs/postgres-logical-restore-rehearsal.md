@@ -9,6 +9,15 @@ passed before the exact replay database and its two temporary login roles were
 removed; the broader restore project remains retained for the still-open full
 application/private-Storage recovery gates.
 
+The current pinned-binary restore and tombstone-replay implementations are
+review-only and do not authorize a new live ceremony. The historical proof
+above predates this wiring.
+Activation still requires an immutable digest-pinned executable, dynamic-loader,
+and complete shared-library closure (or a reviewed descriptor-native launcher),
+plus dedicated restore and replay workers that start with frozen intrinsics in
+pristine realms before any import or secret read. The ordinary `npm`/`tsx`
+commands below are not those workers.
+
 ## What this proves
 
 The restore command authenticates a strict historical version-2 or current
@@ -56,6 +65,15 @@ Create a fresh disposable PostgreSQL database on a non-production cluster. Befor
    transport binding; version 2 is historical restore/retrieval compatibility
    only. Version 1/count-only archives fail closed.
 7. Create a current-user-owned mode-0700 evidence directory for the receipt. The receipt file must not already exist.
+8. Independently retain the canonical absolute `pg_restore` path and its exact
+   lowercase SHA-256. The basename must be `pg_restore`; bare names, `PATH`
+   lookup, symlinks, and unpinned binaries fail closed. The tool must report an
+   exact PostgreSQL 17 version.
+9. Isolate the disposable target and its credential. No other person, service,
+   pool, or automation may hold a usable target credential during the ceremony.
+   The restore checks `pg_stat_activity` for zero other client backends before
+   mutation, immediately after `pg_restore`, and after verification, but those
+   are point-in-time observations rather than durable admission control.
 
 ## Exact sequence
 
@@ -81,6 +99,8 @@ PINTPATH_POSTGRES_LOGICAL_RESTORE=confirmed \
 npm run db:postgres:restore:logical -- restore \
   --backup-directory /absolute/private/postgres-logical-backup \
   --backup-manifest-sha256 <trusted-64-hex-manifest-sha256> \
+  --pg-restore-file /absolute/reviewed/postgresql-17/bin/pg_restore \
+  --expected-pg-restore-sha256 <trusted-lowercase-pg-restore-sha256> \
   --target-url-file /absolute/private/target-postgres-url \
   --target-identity-sha256 <inspected-64-hex-target-identity-sha256> \
   --receipt /absolute/private/evidence/postgres-logical-restore-receipt.json
@@ -131,15 +151,19 @@ npm run db:postgres:deletion:recovery-proof -- complete \
 ```
 
 Retrieve that exact pre-deletion backup from the isolated operational-copy
-bucket, then restore it into a fresh inspected disposable target. Replay the
-sealed three-file ledger authority only after the retrieval receipt, base
-restore receipt, and target identity have been independently checked:
+bucket, then restore it into a fresh inspected disposable target. Retain the
+exact lowercase SHA-256 returned only by a successful restore receipt
+publication; do not derive replay authority by hashing whichever file is later
+present at that pathname. Replay the sealed three-file ledger authority only
+after the retrieval receipt, base restore receipt and its retained success
+digest, and target identity have been independently checked:
 
 ```sh
 PINTPATH_POSTGRES_ACCOUNT_DELETION_REPLAY=confirmed \
 npm run db:postgres:deletion:replay -- \
   --runtime-url-file /absolute/private/restore-runtime-url \
   --base-restore-receipt /absolute/private/evidence/postgres-logical-restore-receipt.json \
+  --expected-base-restore-receipt-sha256 <retained-success-receipt-sha256> \
   --deletion-ledger-authority-directory /absolute/private/evidence/deletion-ledger-authority \
   --expected-target-identity-sha256 <target-identity-sha256> \
   --expected-ledger-current-sha256 <ledger-current-sha256> \
@@ -171,6 +195,12 @@ recorded staging set only.
   for listing and mutation; the validated archive pathname is never reopened by
   either child. The archive command always uses
   `--exit-on-error --single-transaction --no-owner --no-acl`.
+- One purpose-bound restore authority retains the reviewed `pg_restore`
+  descriptor across version, list, target preflight, and mutation. It rechecks
+  the exact binary around each allowed operation, receives a closed fixed
+  environment, and is closed exactly once before privilege hardening or receipt
+  creation. The caller separately retains full digest-bound archive evidence;
+  the authority's archive inode join is supplemental, not a content proof.
 - Any rejected, non-zero, or diagnostically non-empty `pg_restore` mutation is
   `restore_rollback_unverified_target_disposal_required`. Reaping the local
   process does not prove that its PostgreSQL backend cannot finish a transaction,
@@ -179,6 +209,29 @@ recorded staging set only.
 - A source/target state mismatch, inability to finish the repeatable-read target
   scan, or target URL/artifact identity change after restore is
   `verification_failed_target_disposal_required`.
+- Tool/archive drift, process uncertainty, a remaining client backend, or any
+  authority/archive/target-connection close uncertainty after restore starts
+  also requires whole-target disposal. Before mutation, an authority close
+  failure fails closed as `tool_unavailable_or_unsupported` without creating a
+  restore receipt.
+- Success closes the dedicated target session while its session advisory lock
+  is still held; it does not issue a separate unlock query before receipt
+  creation. The receipt is read back and hashed through its held descriptor,
+  file- and parent-directory-fsynced, identity-checked, and closed before its
+  hash is returned. A failed close never authorizes a receipt.
+- Failed receipt publication may leave an unauthorized final-path leaf because
+  the writer never deletes by pathname after losing exact descriptor custody.
+  Never consume, locally rehash, or use that leaf to manufacture the replay
+  pin. Tombstone replay requires the independently retained digest returned by
+  successful publication and compares it with the exact trusted file snapshot
+  before receipt parsing, ledger-authority loading, connection, or mutation.
+- Replay authenticates that successful digest and the sealed ledger before
+  reading its runtime URL, wipes the source buffers after parsing, and reasserts
+  all authorities after its sole database session closes. Its output receipt
+  must use a different mode-0700 parent from both the runtime credential and
+  exact three-file ledger directory. Database/descriptor, file-or-parent
+  fsync/close, or CLI success-output uncertainty requires disposal and leaves
+  any retained replay leaf unauthorized.
 - The tool never drops schemas, uses `--clean`, overwrites a receipt, prints child-process diagnostics, or removes an operator-created target.
 - A successful rehearsal target is still disposable. Destroy it after the protected evidence has been retained.
 
@@ -201,5 +254,28 @@ copy, restored the independently pinned disposable target, and replayed one
 authentic synthetic tombstone twice. Neither proof includes private Storage
 recovery, a full application boot, PITR, provider-enforced WORM, approved
 RPO/RTO objectives, or any production restore/cutover.
+
+Pinned tool custody does not yet bind the pathname Node passes to `spawn`, the
+dynamic loader, or libpq/OpenSSL/zstd and the rest of the shared-library tree. A
+same-UID pathname toggler can exploit that execution gap, and a substituted
+child can call `setsid` outside the reviewed process-group observation. The
+entire restore and replay wrappers—not only the tool-authority module—must run
+in pristine frozen-intrinsics realms. Ordinary async carriers currently include
+plaintext connection material, parsed `PGPASSWORD`, connection capabilities,
+tombstone identifiers, and query rows that inherited `then` poisoning could
+observe. The current CLIs do not provide that containment.
+
+The restore's three and replay's two backend-quiescence checks cannot prevent a
+newly authorized client from connecting after the final observation. Replay
+disables idle retirement of its sole pooled backend, rejects any pool error or
+non-empty post-close metrics, and places its final advisory-lock proof
+immediately before close; activation still requires that reviewed one-session
+dependency and exclusive credential custody. Likewise, both receipt writers
+retain and fsync the reviewed parent directory, but portable Node does not
+provide the fd-relative `openat`/`O_EXCL` operation needed to atomically bind
+the new leaf against a hostile current-UID namespace toggler. Activation
+therefore also requires exclusive target-credential custody and a protected,
+immutable filesystem namespace. These are launch blockers, not properties
+proved by the review-only implementation.
 
 The archive intentionally contains no owners or ACLs. The restore command therefore reapplies a fixed least-privilege ACL contract transactionally and records only that contract's SHA-256. Cluster-global roles, role memberships, database settings other than the disposable marker, extensions outside the two private schemas, and provider-level PITR/retention configuration are not part of this archive and must be tested separately.

@@ -1165,7 +1165,13 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL logical restore rehearsal"
     );
     expect(targetRoleBeforeRestore.rows).toEqual([{ present: false }]);
 
-    const targetUrlFile = path.join(root, "target-url");
+    const targetCredentialDirectory = path.join(root, "target-credentials");
+    const restoreEvidenceDirectory = path.join(root, "restore-evidence");
+    fs.mkdirSync(targetCredentialDirectory, { mode: 0o700 });
+    fs.chmodSync(targetCredentialDirectory, 0o700);
+    fs.mkdirSync(restoreEvidenceDirectory, { mode: 0o700 });
+    fs.chmodSync(restoreEvidenceDirectory, 0o700);
+    const targetUrlFile = path.join(targetCredentialDirectory, "target-url");
     fs.writeFileSync(targetUrlFile, `${targetUrl.toString()}\n`, { mode: 0o600 });
     fs.chmodSync(targetUrlFile, 0o600);
     const backupArchivePath = path.join(
@@ -1173,83 +1179,168 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL logical restore rehearsal"
       POSTGRES_LOGICAL_BACKUP_ARCHIVE,
     );
     const pgRestoreProcessObservations: string[] = [];
+    let restoreAuthorityOpenCount = 0;
     let listingArchiveFileDescriptor: number | undefined;
     let mutationArchiveFileDescriptor: number | undefined;
+    let listingArchiveIdentity: { dev: number; ino: number } | undefined;
+    const realRestoreProcessRunner: PostgresToolAuthorityProcessRunner =
+      runPostgresBackupProcess;
+    const observedRestoreProcessRunner: PostgresToolAuthorityProcessRunner = async (
+      invocation,
+    ) => {
+      if (invocation.command !== configuration.pgRestoreCommand) {
+        throw configurationError();
+      }
+      const isVersionProbe = invocation.operation === "version"
+        && invocation.args.length === 1
+        && invocation.args[0] === "--version";
+      const isArchiveListing = invocation.operation === "list"
+        && invocation.args.length === 2
+        && invocation.args[0] === "--list"
+        && invocation.args[1] === "--format=custom";
+      const isArchiveMutation = invocation.operation === "restore"
+        && invocation.args.length === 7
+        && invocation.args.includes("--single-transaction");
+      if (
+        Number(isVersionProbe)
+          + Number(isArchiveListing)
+          + Number(isArchiveMutation)
+        !== 1
+      ) throw new Error("unexpected_pg_restore_integration_invocation");
+
+      expect(Object.getPrototypeOf(invocation)).toBeNull();
+      expect(Object.isFrozen(invocation)).toBe(true);
+      expect(Object.isFrozen(invocation.args)).toBe(true);
+      expect(Object.getPrototypeOf(invocation.env)).toBeNull();
+      expect(Object.isFrozen(invocation.env)).toBe(true);
+
+      if (isVersionProbe) {
+        expect(Object.keys(invocation.env)).toEqual(["LC_ALL"]);
+        expect(invocation.env.LC_ALL).toBe("C");
+        expect(invocation.stdinFileDescriptor).toBeUndefined();
+        expect(invocation.stdoutFileDescriptor).toBeUndefined();
+        const result = await realRestoreProcessRunner(invocation);
+        pgRestoreProcessObservations.push(
+          `version:no-stdin-or-stdout:${result.exitCode}`,
+        );
+        return result;
+      }
+
+      expect(invocation.args).not.toContain(backupArchivePath);
+      expect(invocation.args).not.toContain(POSTGRES_LOGICAL_BACKUP_ARCHIVE);
+      expect(invocation.args).not.toContain("-");
+      expect(invocation.args.every((argument) => !argument.includes(backupArchivePath)))
+        .toBe(true);
+      expect(invocation.stdoutFileDescriptor).toBeUndefined();
+      const archiveFileDescriptor = invocation.stdinFileDescriptor;
+      if (
+        !Number.isSafeInteger(archiveFileDescriptor)
+        || archiveFileDescriptor === undefined
+        || archiveFileDescriptor < 0
+      ) throw new Error("invalid_pg_restore_archive_file_descriptor");
+      const descriptorStat = fs.fstatSync(archiveFileDescriptor);
+      expect(descriptorStat.isFile()).toBe(true);
+      expect({
+        mode: descriptorStat.mode & 0o7777,
+        nlink: descriptorStat.nlink,
+        size: descriptorStat.size,
+      }).toEqual({
+        mode: 0o600,
+        nlink: 1,
+        size: manifest.archive.bytes,
+      });
+
+      const phase = isArchiveListing ? "list" : "mutation";
+      if (isArchiveListing) {
+        expect(invocation.args).toEqual(["--list", "--format=custom"]);
+        expect(Object.keys(invocation.env)).toEqual(["LC_ALL"]);
+        expect(invocation.env.LC_ALL).toBe("C");
+        listingArchiveFileDescriptor = archiveFileDescriptor;
+        listingArchiveIdentity = { dev: descriptorStat.dev, ino: descriptorStat.ino };
+      } else {
+        expect(invocation.args).toEqual([
+          "--format=custom",
+          "--dbname=",
+          "--no-owner",
+          "--no-acl",
+          "--exit-on-error",
+          "--single-transaction",
+          "--no-password",
+        ]);
+        expect(Object.keys(invocation.env).sort()).toEqual([
+          "LC_ALL",
+          "PGAPPNAME",
+          "PGCONNECT_TIMEOUT",
+          "PGDATABASE",
+          "PGGSSENCMODE",
+          "PGHOST",
+          "PGPASSWORD",
+          "PGPORT",
+          "PGSSLMODE",
+          "PGUSER",
+        ]);
+        const { PGPASSWORD: observedPassword, ...nonSecretRestoreEnvironment } = invocation.env;
+        expect(nonSecretRestoreEnvironment).toEqual({
+          LC_ALL: "C",
+          PGHOST: targetUrl.hostname,
+          PGPORT: targetUrl.port || "5432",
+          PGDATABASE: TARGET_DATABASE,
+          PGUSER: decodeURIComponent(targetUrl.username),
+          PGSSLMODE: "disable",
+          PGGSSENCMODE: "disable",
+          PGCONNECT_TIMEOUT: "15",
+          PGAPPNAME: "pintpath-logical-restore-worker",
+        });
+        expect(typeof observedPassword).toBe("string");
+        const observedPasswordSha256 = crypto.createHash("sha256")
+          .update(observedPassword ?? "", "utf8")
+          .digest("hex");
+        const expectedPasswordSha256 = crypto.createHash("sha256")
+          .update(decodeURIComponent(targetUrl.password), "utf8")
+          .digest("hex");
+        expect(observedPasswordSha256).toBe(expectedPasswordSha256);
+        mutationArchiveFileDescriptor = archiveFileDescriptor;
+        expect(mutationArchiveFileDescriptor).not.toBe(listingArchiveFileDescriptor);
+        expect({ dev: descriptorStat.dev, ino: descriptorStat.ino })
+          .toEqual(listingArchiveIdentity);
+      }
+      const result = await realRestoreProcessRunner(invocation);
+      pgRestoreProcessObservations.push(`${phase}:trusted-archive-stdin:${result.exitCode}`);
+      return result;
+    };
     const dependencyOverrides = {
       env: { ...process.env, NODE_ENV: "test" },
       allowInsecureLoopbackForTests: true,
-      pgRestoreCommand: configuration.pgRestoreCommand,
-      runProcess: async (invocation: Parameters<typeof runPostgresBackupProcess>[0]) => {
-        if (invocation.command !== configuration.pgRestoreCommand) {
-          throw configurationError();
-        }
-        const isVersionProbe = invocation.args.length === 1
-          && invocation.args[0] === "--version";
-        const isArchiveListing = invocation.args.length === 2
-          && invocation.args[0] === "--list"
-          && invocation.args[1] === "--format=custom";
-        const isArchiveMutation = invocation.args.includes("--single-transaction");
+      openRestoreAuthority: (options: {
+        readonly executableFile: string;
+        readonly expectedSha256: string;
+      }) => {
         if (
-          Number(isVersionProbe)
-            + Number(isArchiveListing)
-            + Number(isArchiveMutation)
-          !== 1
-        ) throw new Error("unexpected_pg_restore_integration_invocation");
-
-        if (isVersionProbe) {
-          expect(invocation.stdinFileDescriptor).toBeUndefined();
-          expect(invocation.stdoutFileDescriptor).toBeUndefined();
-          const result = await runPostgresBackupProcess(invocation);
-          pgRestoreProcessObservations.push(
-            `version:no-stdin-or-stdout:${result.exitCode}`,
-          );
-          return result;
-        }
-
-        expect(invocation.args).not.toContain(backupArchivePath);
-        expect(invocation.args).not.toContain(POSTGRES_LOGICAL_BACKUP_ARCHIVE);
-        expect(invocation.args).not.toContain("-");
-        expect(invocation.args.every((argument) => !argument.includes(backupArchivePath)))
-          .toBe(true);
-        expect(invocation.stdoutFileDescriptor).toBeUndefined();
-        const archiveFileDescriptor = invocation.stdinFileDescriptor;
-        if (
-          !Number.isSafeInteger(archiveFileDescriptor)
-          || archiveFileDescriptor === undefined
-          || archiveFileDescriptor < 0
-        ) throw new Error("invalid_pg_restore_archive_file_descriptor");
-        const descriptorStat = fs.fstatSync(archiveFileDescriptor);
-        expect(descriptorStat.isFile()).toBe(true);
-        expect({
-          mode: descriptorStat.mode & 0o7777,
-          nlink: descriptorStat.nlink,
-          size: descriptorStat.size,
-        }).toEqual({
-          mode: 0o600,
-          nlink: 1,
-          size: manifest.archive.bytes,
-        });
-
-        const phase = isArchiveListing ? "list" : "mutation";
-        if (isArchiveListing) {
-          listingArchiveFileDescriptor = archiveFileDescriptor;
-        } else {
-          mutationArchiveFileDescriptor = archiveFileDescriptor;
-          expect(mutationArchiveFileDescriptor).not.toBe(listingArchiveFileDescriptor);
-        }
-        const result = await runPostgresBackupProcess(invocation);
-        pgRestoreProcessObservations.push(`${phase}:trusted-archive-stdin:${result.exitCode}`);
-        return result;
+          restoreAuthorityOpenCount !== 0
+          || options.executableFile !== configuration.pgRestoreCommand
+          || options.expectedSha256 !== configuration.expectedPgRestoreSha256
+          || pgRestoreProcessObservations.length !== 0
+        ) throw configurationError();
+        restoreAuthorityOpenCount += 1;
+        return openPostgresToolAuthority(Object.freeze({
+          purpose: "restore",
+          executableFile: options.executableFile,
+          expectedSha256: options.expectedSha256,
+        }), observedRestoreProcessRunner);
       },
     } as const;
     const inspection = await inspectPostgresLogicalRestoreTarget(
       { targetUrlFile },
       dependencyOverrides,
     );
-    const receiptFile = path.join(root, "restore-receipt.json");
+    expect(restoreAuthorityOpenCount).toBe(0);
+    expect(pgRestoreProcessObservations).toEqual([]);
+    const receiptFile = path.join(restoreEvidenceDirectory, "restore-receipt.json");
     const restored = await restorePostgresLogicalBackup({
       backupDirectory: backup.directory,
       expectedBackupManifestSha256: backup.manifestSha256,
+      pgRestoreFile: configuration.pgRestoreCommand,
+      expectedPgRestoreSha256: configuration.expectedPgRestoreSha256,
       targetUrlFile,
       expectedTargetIdentitySha256: inspection.targetIdentitySha256,
       receiptFile,
@@ -1267,9 +1358,16 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL logical restore rehearsal"
       "list:trusted-archive-stdin:0",
       "mutation:trusted-archive-stdin:0",
     ]);
+    expect(restoreAuthorityOpenCount).toBe(1);
     expect(listingArchiveFileDescriptor).toBeTypeOf("number");
     expect(mutationArchiveFileDescriptor).toBeTypeOf("number");
     expect(mutationArchiveFileDescriptor).not.toBe(listingArchiveFileDescriptor);
+    const lingeringRestoreWorkers = await admin.query<{ count: number }>(`SELECT count(*)::integer AS count
+      FROM pg_catalog.pg_stat_activity
+      WHERE datname = $1
+        AND backend_type = 'client backend'
+        AND application_name = 'pintpath-logical-restore-worker'`, [TARGET_DATABASE]);
+    expect(lingeringRestoreWorkers.rows).toEqual([{ count: 0 }]);
 
     const target = new Client({ connectionString: targetUrl.toString() });
     await target.connect();

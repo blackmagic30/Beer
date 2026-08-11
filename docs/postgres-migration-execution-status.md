@@ -542,7 +542,8 @@ resource pins, operator approvals, or two-person evidence.
 - Added a fail-closed synthetic nonzero account-deletion recovery harness and a
   separate restored-target tombstone replay authority. They bind the runtime
   database identity, pre-deletion logical-backup receipt, verified ledger
-  genesis/current/checkpoint hashes, restore receipt, target identity, secret
+  genesis/current/checkpoint hashes, the exact restore receipt through its
+  independently retained successful-publication SHA-256, target identity, secret
   physical checkpoint, and idempotent semantic projection. Restricted local
   PostgreSQL 17 tests pass. The provider execution recorded below completed the
   permanent-staging prepare/pre-deletion backup/deletion sequence and both

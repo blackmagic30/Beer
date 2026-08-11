@@ -40,6 +40,7 @@ const TARGET_IDENTITY_SHA256 = postgresAccountDeletionReplayTargetIdentitySha256
 const roots: string[] = [];
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 
@@ -57,6 +58,62 @@ function privateRoot(): string {
 function writePrivate(filePath: string, bytes: string | Buffer): void {
   fs.writeFileSync(filePath, bytes, { mode: 0o600 });
   fs.chmodSync(filePath, 0o600);
+}
+
+function failMatchingFileHandleClose(filePath: string, matchingOpenOrdinal: number): {
+  readonly closeCallCount: () => number;
+  readonly openedFileDescriptors: number[];
+} {
+  const originalOpen = fs.promises.open.bind(fs.promises);
+  let matchingOpenCount = 0;
+  let closeCallCount = 0;
+  const openedFileDescriptors: number[] = [];
+  vi.spyOn(fs.promises, "open").mockImplementation(async (...args) => {
+    const handle = await originalOpen(...args);
+    if (path.resolve(String(args[0])) !== filePath) return handle;
+    matchingOpenCount += 1;
+    if (matchingOpenCount !== matchingOpenOrdinal) return handle;
+    openedFileDescriptors.push(handle.fd);
+    const close = handle.close.bind(handle);
+    Object.defineProperty(handle, "close", {
+      configurable: true,
+      value: async () => {
+        closeCallCount += 1;
+        await close();
+        throw new Error("simulated descriptor close failure");
+      },
+    });
+    return handle;
+  });
+  return { closeCallCount: () => closeCallCount, openedFileDescriptors };
+}
+
+function failReceiptParentOperation(
+  parentPath: string,
+  operation: "sync" | "close",
+): {
+  readonly operationCallCount: () => number;
+  readonly openedFileDescriptors: number[];
+} {
+  const originalOpen = fs.promises.open.bind(fs.promises);
+  let operationCallCount = 0;
+  const openedFileDescriptors: number[] = [];
+  vi.spyOn(fs.promises, "open").mockImplementation(async (...args) => {
+    const handle = await originalOpen(...args);
+    if (path.resolve(String(args[0])) !== parentPath) return handle;
+    openedFileDescriptors.push(handle.fd);
+    const originalOperation = handle[operation].bind(handle);
+    Object.defineProperty(handle, operation, {
+      configurable: true,
+      value: async () => {
+        operationCallCount += 1;
+        await originalOperation();
+        throw new Error(`simulated receipt parent ${operation} failure`);
+      },
+    });
+    return handle;
+  });
+  return { operationCallCount: () => operationCallCount, openedFileDescriptors };
 }
 
 function baseReceipt(): PostgresLogicalRestoreReceipt {
@@ -155,6 +212,9 @@ interface MutableReplayState {
   beginCalls: number;
   privacyInputs: unknown[];
   lockAvailable: boolean;
+  otherClientBackends: number;
+  otherClientBackendObservations: number[];
+  preparedSql: string[];
   closed: boolean;
 }
 
@@ -239,7 +299,9 @@ function semanticRow(state: MutableReplayState): Record<string, unknown> {
 }
 
 function fakeDatabase(state: MutableReplayState): SqlDatabase {
-  const prepare = (sql: string): SqlStatement => ({
+  const prepare = (sql: string): SqlStatement => {
+    state.preparedSql.push(sql);
+    return ({
     run: async () => ({ changes: 0 }),
     get: async <Row>() => {
       if (sql.includes("target-inspection")) {
@@ -272,6 +334,13 @@ function fakeDatabase(state: MutableReplayState): SqlDatabase {
       if (sql.includes("restore-lock-held")) {
         return { held: true, backendPid: "4242" } as Row;
       }
+      if (sql.includes("other-client-backends")) {
+        return {
+          otherClientBackends: String(
+            state.otherClientBackendObservations.shift() ?? state.otherClientBackends,
+          ),
+        } as Row;
+      }
       if (sql.includes("restore-lock")) {
         return { acquired: state.lockAvailable, backendPid: "4242" } as Row;
       }
@@ -292,7 +361,8 @@ function fakeDatabase(state: MutableReplayState): SqlDatabase {
       }
       return [];
     },
-  });
+    });
+  };
   return {
     dialect: "postgres",
     prepare,
@@ -314,13 +384,18 @@ function fakeDatabase(state: MutableReplayState): SqlDatabase {
 
 function fixture() {
   const root = privateRoot();
+  const evidenceDirectory = path.join(root, "evidence");
+  fs.mkdirSync(evidenceDirectory, { mode: 0o700 });
+  fs.chmodSync(evidenceDirectory, 0o700);
   const runtimeUrlFile = path.join(root, "runtime-url");
   writePrivate(
     runtimeUrlFile,
     "postgresql://pintpath_replay_login:private-password@127.0.0.1:55432/pintpath_restore_test?sslmode=disable\n",
   );
   const baseRestoreReceiptFile = path.join(root, "base-restore-receipt.json");
-  writePrivate(baseRestoreReceiptFile, canonicalPostgresBackupJson(baseReceipt()));
+  const baseRestoreReceiptBytes = canonicalPostgresBackupJson(baseReceipt());
+  writePrivate(baseRestoreReceiptFile, baseRestoreReceiptBytes);
+  const baseRestoreReceiptSha256 = sha256(baseRestoreReceiptBytes);
   const authority = writeAuthority(root);
   const state: MutableReplayState = {
     completed: false,
@@ -328,6 +403,9 @@ function fixture() {
     beginCalls: 0,
     privacyInputs: [],
     lockAvailable: true,
+    otherClientBackends: 0,
+    otherClientBackendObservations: [],
+    preparedSql: [],
     closed: false,
   };
   const database = fakeDatabase(state);
@@ -365,6 +443,7 @@ function fixture() {
   const options = (receiptName: string) => ({
     runtimeUrlFile,
     baseRestoreReceiptFile,
+    expectedBaseRestoreReceiptSha256: baseRestoreReceiptSha256,
     deletionLedgerAuthorityDirectory: authority.directory,
     expectedTargetIdentitySha256: TARGET_IDENTITY_SHA256,
     expectedLedgerCurrentSha256: authority.currentSha256,
@@ -372,10 +451,20 @@ function fixture() {
     expectedLedgerCheckpointSha256: authority.checkpointSha256,
     expectedLedgerImmutableSetSha256: authority.immutableSetSha256,
     expectedTombstoneCount: 1,
-    receiptFile: path.join(root, receiptName),
+    receiptFile: path.join(evidenceDirectory, receiptName),
     confirmation: POSTGRES_ACCOUNT_DELETION_REPLAY_CONFIRMATION_VALUE,
   });
-  return { root, runtimeUrlFile, baseRestoreReceiptFile, authority, state, dependencies, options };
+  return {
+    root,
+    evidenceDirectory,
+    runtimeUrlFile,
+    baseRestoreReceiptFile,
+    baseRestoreReceiptSha256,
+    authority,
+    state,
+    dependencies,
+    options,
+  };
 }
 
 describe("Postgres account-deletion tombstone replay", () => {
@@ -405,6 +494,10 @@ describe("Postgres account-deletion tombstone replay", () => {
       },
     })]);
     expect(fs.statSync(harness.options("first-receipt.json").receiptFile).mode & 0o7777).toBe(0o600);
+    expect(JSON.parse(fs.readFileSync(
+      harness.options("first-receipt.json").receiptFile,
+      "utf8",
+    )).baseRestoreReceiptSha256).toBe(harness.baseRestoreReceiptSha256);
 
     harness.state.closed = false;
     const second = await replayPostgresAccountDeletionTombstones(
@@ -421,6 +514,7 @@ describe("Postgres account-deletion tombstone replay", () => {
     });
     expect(second.semanticProjectionSha256).toBe(first.semanticProjectionSha256);
     expect(harness.state.beginCalls).toBe(1);
+    expect(harness.state.preparedSql.some((sql) => sql.includes("restore-unlock"))).toBe(false);
   });
 
   it("rejects a world-readable authority artifact before opening a database", async () => {
@@ -449,20 +543,280 @@ describe("Postgres account-deletion tombstone replay", () => {
   it("rejects a noncanonical or target-mismatched base receipt before connecting", async () => {
     const harness = fixture();
     const receipt = { ...baseReceipt(), targetIdentitySha256: "f".repeat(64) };
-    writePrivate(harness.baseRestoreReceiptFile, canonicalPostgresBackupJson(receipt));
+    const receiptBytes = canonicalPostgresBackupJson(receipt);
+    writePrivate(harness.baseRestoreReceiptFile, receiptBytes);
     const createDatabase = vi.fn(() => fakeDatabase(harness.state));
     await expect(replayPostgresAccountDeletionTombstones(
-      harness.options("receipt.json"),
+      {
+        ...harness.options("receipt.json"),
+        expectedBaseRestoreReceiptSha256: sha256(receiptBytes),
+      },
       { ...harness.dependencies, createDatabase },
     )).rejects.toEqual(expect.objectContaining({ code: "base_restore_receipt_invalid" }));
     expect(createDatabase).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ["missing", undefined, "invalid_arguments"],
+    ["wrong", "0".repeat(64), "base_restore_receipt_invalid"],
+    ["uppercase", "A".repeat(64), "invalid_arguments"],
+  ] as const)(
+    "rejects a %s base restore receipt pin before connection or mutation",
+    async (_case, pin, failureCode) => {
+      const harness = fixture();
+      fs.chmodSync(path.join(harness.authority.directory, "current.json"), 0o644);
+      const createDatabase = vi.fn(() => fakeDatabase(harness.state));
+      await expect(replayPostgresAccountDeletionTombstones({
+        ...harness.options("receipt.json"),
+        expectedBaseRestoreReceiptSha256: pin as unknown as string,
+      }, {
+        ...harness.dependencies,
+        createDatabase,
+      })).rejects.toEqual(expect.objectContaining({ code: failureCode }));
+      expect(createDatabase).not.toHaveBeenCalled();
+      expect(harness.state.beginCalls).toBe(0);
+      expect(harness.state.privacyInputs).toHaveLength(0);
+      expect(fs.existsSync(harness.options("receipt.json").receiptFile)).toBe(false);
+    },
+  );
+
+  it("authenticates the successful base receipt before reading the runtime credential", async () => {
+    const harness = fixture();
+    fs.chmodSync(harness.runtimeUrlFile, 0o644);
+    const createDatabase = vi.fn(() => fakeDatabase(harness.state));
+    await expect(replayPostgresAccountDeletionTombstones({
+      ...harness.options("receipt.json"),
+      expectedBaseRestoreReceiptSha256: "0".repeat(64),
+    }, {
+      ...harness.dependencies,
+      createDatabase,
+    })).rejects.toEqual(expect.objectContaining({ code: "base_restore_receipt_invalid" }));
+    expect(createDatabase).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      name: "runtime credential directory",
+      receiptFile: (harness: ReturnType<typeof fixture>) => path.join(
+        harness.root,
+        "overlap-receipt.json",
+      ),
+    },
+    {
+      name: "sealed ledger authority directory",
+      receiptFile: (harness: ReturnType<typeof fixture>) => path.join(
+        harness.authority.directory,
+        "overlap-receipt.json",
+      ),
+    },
+  ])("rejects the $name as a receipt parent before connection", async ({ receiptFile }) => {
+    const harness = fixture();
+    const createDatabase = vi.fn(() => fakeDatabase(harness.state));
+    await expect(replayPostgresAccountDeletionTombstones({
+      ...harness.options("unused.json"),
+      receiptFile: receiptFile(harness),
+    }, {
+      ...harness.dependencies,
+      createDatabase,
+    })).rejects.toEqual(expect.objectContaining({ code: "invalid_arguments" }));
+    expect(createDatabase).not.toHaveBeenCalled();
+    expect(harness.state.beginCalls).toBe(0);
+  });
+
+  it("rejects a dangling receipt symlink before connection or mutation", async () => {
+    const harness = fixture();
+    const receiptFile = harness.options("dangling-receipt.json").receiptFile;
+    fs.symlinkSync(path.join(harness.root, "missing-receipt-target"), receiptFile);
+    const createDatabase = vi.fn(() => fakeDatabase(harness.state));
+    await expect(replayPostgresAccountDeletionTombstones({
+      ...harness.options("unused.json"),
+      receiptFile,
+    }, {
+      ...harness.dependencies,
+      createDatabase,
+    })).rejects.toEqual(expect.objectContaining({ code: "invalid_arguments" }));
+    expect(createDatabase).not.toHaveBeenCalled();
+    expect(fs.lstatSync(receiptFile).isSymbolicLink()).toBe(true);
+  });
+
+  it("fails before mutation when another client backend is present", async () => {
+    const harness = fixture();
+    harness.state.otherClientBackends = 1;
+    await expect(replayPostgresAccountDeletionTombstones(
+      harness.options("busy-receipt.json"),
+      harness.dependencies,
+    )).rejects.toEqual(expect.objectContaining({ code: "target_busy" }));
+    expect(harness.state.beginCalls).toBe(0);
+    expect(harness.state.closed).toBe(true);
+  });
+
+  it("requires disposal when another client backend appears after replay", async () => {
+    const harness = fixture();
+    harness.state.otherClientBackendObservations.push(0, 1);
+    const receiptFile = harness.options("late-client-receipt.json").receiptFile;
+    await expect(replayPostgresAccountDeletionTombstones(
+      harness.options("late-client-receipt.json"),
+      harness.dependencies,
+    )).rejects.toEqual(expect.objectContaining({
+      code: "verification_failed_target_disposal_required",
+    }));
+    expect(harness.state.beginCalls).toBe(1);
+    expect(harness.state.closed).toBe(true);
+    expect(() => fs.lstatSync(receiptFile)).toThrow();
+  });
+
+  it("always attempts database close when pre-close metrics are uncertain", async () => {
+    const harness = fixture();
+    const baseDatabase = fakeDatabase(harness.state);
+    let metricsCalls = 0;
+    let closeCalls = 0;
+    const database: SqlDatabase = {
+      ...baseDatabase,
+      metrics: () => {
+        metricsCalls += 1;
+        if (metricsCalls === 1) throw new Error("simulated metrics failure");
+        return baseDatabase.metrics();
+      },
+      close: async () => {
+        closeCalls += 1;
+        await baseDatabase.close();
+      },
+    };
+    const receiptFile = harness.options("metrics-receipt.json").receiptFile;
+    await expect(replayPostgresAccountDeletionTombstones(
+      harness.options("metrics-receipt.json"),
+      { ...harness.dependencies, createDatabase: () => database },
+    )).rejects.toEqual(expect.objectContaining({
+      code: "verification_failed_target_disposal_required",
+    }));
+    expect(closeCalls).toBe(1);
+    expect(harness.state.closed).toBe(true);
+    expect(() => fs.lstatSync(receiptFile)).toThrow();
+  });
+
+  it("requires disposal when the database close promise rejects", async () => {
+    const harness = fixture();
+    const baseDatabase = fakeDatabase(harness.state);
+    let closeCalls = 0;
+    const database: SqlDatabase = {
+      ...baseDatabase,
+      close: async () => {
+        closeCalls += 1;
+        await baseDatabase.close();
+        throw new Error("simulated close failure");
+      },
+    };
+    await expect(replayPostgresAccountDeletionTombstones(
+      harness.options("close-failed-receipt.json"),
+      { ...harness.dependencies, createDatabase: () => database },
+    )).rejects.toEqual(expect.objectContaining({
+      code: "verification_failed_target_disposal_required",
+    }));
+    expect(closeCalls).toBe(1);
+    expect(harness.state.closed).toBe(true);
+  });
+
+  it("reasserts the base receipt after database close before publishing replay evidence", async () => {
+    const harness = fixture();
+    const baseDatabase = fakeDatabase(harness.state);
+    const originalSize = Buffer.byteLength(canonicalPostgresBackupJson(baseReceipt()), "utf8");
+    const database: SqlDatabase = {
+      ...baseDatabase,
+      close: async () => {
+        await baseDatabase.close();
+        writePrivate(harness.baseRestoreReceiptFile, Buffer.alloc(originalSize, 0x58));
+      },
+    };
+    const receiptFile = harness.options("post-close-drift-receipt.json").receiptFile;
+    await expect(replayPostgresAccountDeletionTombstones(
+      harness.options("post-close-drift-receipt.json"),
+      { ...harness.dependencies, createDatabase: () => database },
+    )).rejects.toEqual(expect.objectContaining({
+      code: "verification_failed_target_disposal_required",
+    }));
+    expect(() => fs.lstatSync(receiptFile)).toThrow();
+  });
+
+  it.each([
+    {
+      name: "initial base-receipt",
+      matchingOpenOrdinal: 1,
+      expectedCode: "base_restore_receipt_invalid",
+      expectedDatabaseCreates: 0,
+    },
+    {
+      name: "post-session base-receipt",
+      matchingOpenOrdinal: 4,
+      expectedCode: "verification_failed_target_disposal_required",
+      expectedDatabaseCreates: 1,
+    },
+  ])(
+    "fails closed when the $name snapshot descriptor cannot close",
+    async ({ matchingOpenOrdinal, expectedCode, expectedDatabaseCreates }) => {
+      const harness = fixture();
+      const closeFailure = failMatchingFileHandleClose(
+        harness.baseRestoreReceiptFile,
+        matchingOpenOrdinal,
+      );
+      const createDatabase = vi.fn(() => fakeDatabase(harness.state));
+      await expect(replayPostgresAccountDeletionTombstones(
+        harness.options("snapshot-close-receipt.json"),
+        { ...harness.dependencies, createDatabase },
+      )).rejects.toEqual(expect.objectContaining({ code: expectedCode }));
+      expect(createDatabase).toHaveBeenCalledTimes(expectedDatabaseCreates);
+      expect(closeFailure.closeCallCount()).toBe(1);
+      expect(closeFailure.openedFileDescriptors).toHaveLength(1);
+      expect(() => fs.fstatSync(closeFailure.openedFileDescriptors[0]!)).toThrow();
+    },
+  );
+
+  it("retains an unauthorized receipt when its file descriptor cannot close", async () => {
+    const harness = fixture();
+    const receiptFile = harness.options("receipt-close-failed.json").receiptFile;
+    const closeFailure = failMatchingFileHandleClose(receiptFile, 1);
+    await expect(replayPostgresAccountDeletionTombstones(
+      harness.options("receipt-close-failed.json"),
+      harness.dependencies,
+    )).rejects.toEqual(expect.objectContaining({
+      code: "receipt_failed_target_disposal_required",
+    }));
+    expect(closeFailure.closeCallCount()).toBe(1);
+    expect(closeFailure.openedFileDescriptors).toHaveLength(1);
+    expect(() => fs.fstatSync(closeFailure.openedFileDescriptors[0]!)).toThrow();
+    expect(JSON.parse(fs.readFileSync(receiptFile, "utf8"))).toMatchObject({
+      kind: "pintpath-postgres-account-deletion-tombstone-replay",
+      status: "verified",
+    });
+  });
+
+  it.each(["sync", "close"] as const)(
+    "retains an unauthorized receipt when parent-directory %s fails",
+    async (operation) => {
+      const harness = fixture();
+      const receiptFile = harness.options(`parent-${operation}-failed.json`).receiptFile;
+      const failure = failReceiptParentOperation(harness.evidenceDirectory, operation);
+      await expect(replayPostgresAccountDeletionTombstones(
+        harness.options(`parent-${operation}-failed.json`),
+        harness.dependencies,
+      )).rejects.toEqual(expect.objectContaining({
+        code: "receipt_failed_target_disposal_required",
+      }));
+      expect(failure.operationCallCount()).toBe(1);
+      expect(failure.openedFileDescriptors).toHaveLength(1);
+      expect(() => fs.fstatSync(failure.openedFileDescriptors[0]!)).toThrow();
+      expect(JSON.parse(fs.readFileSync(receiptFile, "utf8"))).toMatchObject({
+        kind: "pintpath-postgres-account-deletion-tombstone-replay",
+        status: "verified",
+      });
+    },
+  );
 
   it("exposes a strict, confirmed, operator-guarded CLI with secret-free failures", async () => {
     const harness = fixture();
     const argv = [
       "--runtime-url-file", harness.runtimeUrlFile,
       "--base-restore-receipt", harness.baseRestoreReceiptFile,
+      "--expected-base-restore-receipt-sha256", harness.baseRestoreReceiptSha256,
       "--deletion-ledger-authority-directory", harness.authority.directory,
       "--expected-target-identity-sha256", TARGET_IDENTITY_SHA256,
       "--expected-ledger-current-sha256", harness.authority.currentSha256,
@@ -470,7 +824,7 @@ describe("Postgres account-deletion tombstone replay", () => {
       "--expected-ledger-checkpoint-sha256", harness.authority.checkpointSha256,
       "--expected-ledger-immutable-set-sha256", harness.authority.immutableSetSha256,
       "--expected-tombstone-count", "1",
-      "--receipt", path.join(harness.root, "cli-receipt.json"),
+      "--receipt", path.join(harness.evidenceDirectory, "cli-receipt.json"),
     ];
     const replay = vi.fn(async () => ({
       schemaVersion: 1 as const,
@@ -496,6 +850,7 @@ describe("Postgres account-deletion tombstone replay", () => {
       writeOutput: (value) => outputs.push(value),
     })).toBe(0);
     expect(replay).toHaveBeenCalledWith(expect.objectContaining({
+      expectedBaseRestoreReceiptSha256: harness.baseRestoreReceiptSha256,
       expectedTombstoneCount: 1,
       confirmation: POSTGRES_ACCOUNT_DELETION_REPLAY_CONFIRMATION_VALUE,
     }));
@@ -514,6 +869,132 @@ describe("Postgres account-deletion tombstone replay", () => {
       targetDisposalRequired: false,
     });
     expect(outputs[0]).not.toContain("private-password");
+  });
+
+  it("requires disposal when the successful receipt digest cannot be published", async () => {
+    const harness = fixture();
+    const argv = [
+      "--runtime-url-file", harness.runtimeUrlFile,
+      "--base-restore-receipt", harness.baseRestoreReceiptFile,
+      "--expected-base-restore-receipt-sha256", harness.baseRestoreReceiptSha256,
+      "--deletion-ledger-authority-directory", harness.authority.directory,
+      "--expected-target-identity-sha256", TARGET_IDENTITY_SHA256,
+      "--expected-ledger-current-sha256", harness.authority.currentSha256,
+      "--expected-ledger-genesis-sha256", harness.authority.genesisSha256,
+      "--expected-ledger-checkpoint-sha256", harness.authority.checkpointSha256,
+      "--expected-ledger-immutable-set-sha256", harness.authority.immutableSetSha256,
+      "--expected-tombstone-count", "1",
+      "--receipt", path.join(harness.evidenceDirectory, "cli-output-failed.json"),
+    ];
+    const outputs: string[] = [];
+    let outputCalls = 0;
+    const exit = await runPostgresAccountDeletionReplayCli(argv, {
+      [POSTGRES_ACCOUNT_DELETION_REPLAY_CONFIRMATION_ENV]:
+        POSTGRES_ACCOUNT_DELETION_REPLAY_CONFIRMATION_VALUE,
+    }, {
+      replay: async () => ({
+        schemaVersion: 1,
+        ok: true,
+        receiptSha256: "1".repeat(64),
+        targetIdentitySha256: TARGET_IDENTITY_SHA256,
+        ledgerCurrentSha256: harness.authority.currentSha256,
+        ledgerTombstoneCount: 1,
+        seen: 1,
+        newlyApplied: 1,
+        alreadyApplied: 0,
+        missing: 0,
+        failed: 0,
+        semanticProjectionSha256: "2".repeat(64),
+      }),
+      assertMutationAllowed: () => undefined,
+      writeOutput: (value) => {
+        outputCalls += 1;
+        if (outputCalls === 1) throw new Error("simulated output failure");
+        outputs.push(value);
+      },
+    });
+    expect(exit).toBe(1);
+    expect(outputCalls).toBe(2);
+    expect(JSON.parse(outputs[0]!)).toEqual({
+      failureCode: "receipt_failed_target_disposal_required",
+      ok: false,
+      schemaVersion: 1,
+      targetDisposalRequired: true,
+    });
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["uppercase", "A".repeat(64)],
+  ] as const)("the CLI rejects a %s base receipt pin before replay", async (_case, pin) => {
+    const harness = fixture();
+    const argv = [
+      "--runtime-url-file", harness.runtimeUrlFile,
+      "--base-restore-receipt", harness.baseRestoreReceiptFile,
+      ...(pin === undefined
+        ? []
+        : ["--expected-base-restore-receipt-sha256", pin]),
+      "--deletion-ledger-authority-directory", harness.authority.directory,
+      "--expected-target-identity-sha256", TARGET_IDENTITY_SHA256,
+      "--expected-ledger-current-sha256", harness.authority.currentSha256,
+      "--expected-ledger-genesis-sha256", harness.authority.genesisSha256,
+      "--expected-ledger-checkpoint-sha256", harness.authority.checkpointSha256,
+      "--expected-ledger-immutable-set-sha256", harness.authority.immutableSetSha256,
+      "--expected-tombstone-count", "1",
+      "--receipt", path.join(harness.evidenceDirectory, "cli-invalid-receipt.json"),
+    ];
+    const replay = vi.fn();
+    const outputs: string[] = [];
+    expect(await runPostgresAccountDeletionReplayCli(argv, {
+      [POSTGRES_ACCOUNT_DELETION_REPLAY_CONFIRMATION_ENV]:
+        POSTGRES_ACCOUNT_DELETION_REPLAY_CONFIRMATION_VALUE,
+    }, {
+      replay,
+      assertMutationAllowed: vi.fn(),
+      writeOutput: (value) => outputs.push(value),
+    })).toBe(1);
+    expect(replay).not.toHaveBeenCalled();
+    expect(JSON.parse(outputs[0]!)).toMatchObject({
+      ok: false,
+      failureCode: "invalid_arguments",
+      targetDisposalRequired: false,
+    });
+  });
+
+  it("the CLI rejects a wrong lowercase base receipt pin without connecting", async () => {
+    const harness = fixture();
+    const createDatabase = vi.fn(() => fakeDatabase(harness.state));
+    const outputs: string[] = [];
+    expect(await runPostgresAccountDeletionReplayCli([
+      "--runtime-url-file", harness.runtimeUrlFile,
+      "--base-restore-receipt", harness.baseRestoreReceiptFile,
+      "--expected-base-restore-receipt-sha256", "0".repeat(64),
+      "--deletion-ledger-authority-directory", harness.authority.directory,
+      "--expected-target-identity-sha256", TARGET_IDENTITY_SHA256,
+      "--expected-ledger-current-sha256", harness.authority.currentSha256,
+      "--expected-ledger-genesis-sha256", harness.authority.genesisSha256,
+      "--expected-ledger-checkpoint-sha256", harness.authority.checkpointSha256,
+      "--expected-ledger-immutable-set-sha256", harness.authority.immutableSetSha256,
+      "--expected-tombstone-count", "1",
+      "--receipt", path.join(harness.evidenceDirectory, "cli-wrong-receipt.json"),
+    ], {
+      [POSTGRES_ACCOUNT_DELETION_REPLAY_CONFIRMATION_ENV]:
+        POSTGRES_ACCOUNT_DELETION_REPLAY_CONFIRMATION_VALUE,
+    }, {
+      replay: (options) => replayPostgresAccountDeletionTombstones(options, {
+        ...harness.dependencies,
+        createDatabase,
+      }),
+      assertMutationAllowed: vi.fn(),
+      writeOutput: (value) => outputs.push(value),
+    })).toBe(1);
+    expect(createDatabase).not.toHaveBeenCalled();
+    expect(harness.state.beginCalls).toBe(0);
+    expect(JSON.parse(outputs[0]!)).toMatchObject({
+      ok: false,
+      failureCode: "base_restore_receipt_invalid",
+      targetDisposalRequired: false,
+    });
   });
 
   it("uses stable error messages without interpolating sensitive values", () => {

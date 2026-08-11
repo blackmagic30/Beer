@@ -111,6 +111,7 @@ class DisposableLoopbackPostgresDatabase implements SqlDatabase {
     this.pool = new Pool({
       connectionString,
       max: 1,
+      idleTimeoutMillis: 0,
       types: sqlDatabaseInternals.createPostgresTypeOverrides(),
       options: [
         "-c search_path=pintpath_app,pg_catalog",
@@ -119,6 +120,9 @@ class DisposableLoopbackPostgresDatabase implements SqlDatabase {
         "-c lock_timeout=10000",
         "-c synchronous_commit=on",
       ].join(" "),
+    });
+    this.pool.on("error", () => {
+      this.failedQueries += 1;
     });
   }
 
@@ -230,6 +234,7 @@ describe.skipIf(!configuredAdminUrl)("real restricted PG17 deletion tombstone re
   let root = "";
   let runtimeUrl = "";
   let targetIdentitySha256 = "";
+  let baseRestoreReceiptSha256 = "";
   let authority: {
     directory: string;
     currentSha256: string;
@@ -366,6 +371,9 @@ describe.skipIf(!configuredAdminUrl)("real restricted PG17 deletion tombstone re
 
     root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pintpath-replay-pg17-")));
     fs.chmodSync(root, 0o700);
+    const evidenceDirectory = path.join(root, "evidence");
+    fs.mkdirSync(evidenceDirectory, { mode: 0o700 });
+    fs.chmodSync(evidenceDirectory, 0o700);
     const runtimeUrlFile = path.join(root, "runtime-url");
     writePrivate(runtimeUrlFile, `${runtimeUrl}\n`);
     const baseReceipt: PostgresLogicalRestoreReceipt = {
@@ -406,7 +414,9 @@ describe.skipIf(!configuredAdminUrl)("real restricted PG17 deletion tombstone re
       restoredOverallStateSha256: "ab".repeat(32),
       exactDataReconciliation: "canonical-contract-exact",
     };
-    writePrivate(path.join(root, "base-restore-receipt.json"), canonicalPostgresBackupJson(baseReceipt));
+    const baseRestoreReceiptBytes = canonicalPostgresBackupJson(baseReceipt);
+    writePrivate(path.join(root, "base-restore-receipt.json"), baseRestoreReceiptBytes);
+    baseRestoreReceiptSha256 = sha256(baseRestoreReceiptBytes);
     const authorityDirectory = path.join(root, "authority");
     fs.mkdirSync(authorityDirectory, { mode: 0o700 });
     fs.chmodSync(authorityDirectory, 0o700);
@@ -486,6 +496,7 @@ describe.skipIf(!configuredAdminUrl)("real restricted PG17 deletion tombstone re
     const options = (receipt: string) => ({
       runtimeUrlFile,
       baseRestoreReceiptFile,
+      expectedBaseRestoreReceiptSha256: baseRestoreReceiptSha256,
       deletionLedgerAuthorityDirectory: authority.directory,
       expectedTargetIdentitySha256: targetIdentitySha256,
       expectedLedgerCurrentSha256: authority.currentSha256,
@@ -493,7 +504,7 @@ describe.skipIf(!configuredAdminUrl)("real restricted PG17 deletion tombstone re
       expectedLedgerCheckpointSha256: authority.checkpointSha256,
       expectedLedgerImmutableSetSha256: authority.immutableSetSha256,
       expectedTombstoneCount: 1,
-      receiptFile: path.join(root, receipt),
+      receiptFile: path.join(root, "evidence", receipt),
       confirmation: POSTGRES_ACCOUNT_DELETION_REPLAY_CONFIRMATION_VALUE,
     });
     const overrides = {
@@ -503,6 +514,8 @@ describe.skipIf(!configuredAdminUrl)("real restricted PG17 deletion tombstone re
       allowInsecureLoopbackForTests: true,
       createDatabase: () => new DisposableLoopbackPostgresDatabase(runtimeUrl),
     };
+    await targetAdmin!.end();
+    targetAdmin = null;
     const first = await replayPostgresAccountDeletionTombstones(
       options("replay-first.json"),
       overrides,
@@ -526,8 +539,15 @@ describe.skipIf(!configuredAdminUrl)("real restricted PG17 deletion tombstone re
       failed: 0,
     });
     expect(second.semanticProjectionSha256).toBe(first.semanticProjectionSha256);
-    expect(fs.statSync(path.join(root, "replay-first.json")).mode & 0o7777).toBe(0o600);
+    const firstReceiptFile = path.join(root, "evidence", "replay-first.json");
+    expect(fs.statSync(firstReceiptFile).mode & 0o7777).toBe(0o600);
+    expect(JSON.parse(fs.readFileSync(
+      firstReceiptFile,
+      "utf8",
+    )).baseRestoreReceiptSha256).toBe(baseRestoreReceiptSha256);
 
+    targetAdmin = new Client({ connectionString: withDatabase(adminUrl, TEST_DATABASE) });
+    await targetAdmin.connect();
     const verification = await targetAdmin!.query<{
       accountStatus: string;
       authProvider: string;

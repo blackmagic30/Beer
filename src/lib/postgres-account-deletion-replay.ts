@@ -104,6 +104,7 @@ export class PostgresAccountDeletionReplayError extends Error {
 export interface ReplayPostgresAccountDeletionTombstonesOptions {
   readonly runtimeUrlFile: string;
   readonly baseRestoreReceiptFile: string;
+  readonly expectedBaseRestoreReceiptSha256: string;
   readonly deletionLedgerAuthorityDirectory: string;
   readonly expectedTargetIdentitySha256: string;
   readonly expectedLedgerCurrentSha256: string;
@@ -214,7 +215,7 @@ export interface PostgresAccountDeletionReplayDependencies {
   readonly allowInsecureLoopbackForTests: boolean;
 }
 
-interface TrustedFileSnapshot {
+interface TrustedFileIdentity {
   readonly path: string;
   readonly dev: bigint;
   readonly ino: bigint;
@@ -222,6 +223,9 @@ interface TrustedFileSnapshot {
   readonly mtimeNs: bigint;
   readonly ctimeNs: bigint;
   readonly sha256: string;
+}
+
+interface TrustedFileSnapshot extends TrustedFileIdentity {
   readonly bytes: Buffer;
 }
 
@@ -254,9 +258,9 @@ interface LedgerCheckpoint {
 
 interface TrustedAuthority {
   readonly directory: TrustedDirectorySnapshot;
-  readonly current: TrustedFileSnapshot;
-  readonly genesis: TrustedFileSnapshot;
-  readonly checkpoint: TrustedFileSnapshot;
+  readonly current: TrustedFileIdentity;
+  readonly genesis: TrustedFileIdentity;
+  readonly checkpoint: TrustedFileIdentity;
   readonly tombstones: readonly AccountDeletionTombstone[];
   readonly checkpointDocument: LedgerCheckpoint;
 }
@@ -346,6 +350,10 @@ interface LockHeldRow extends QueryResultRow {
   readonly backendPid: string;
 }
 
+interface OtherClientBackendsRow extends QueryResultRow {
+  readonly otherClientBackends: string;
+}
+
 interface ReplayProjection {
   readonly tombstoneSha256: string;
   readonly completedAt: string;
@@ -413,6 +421,9 @@ const DEFAULT_DEPENDENCIES: PostgresAccountDeletionReplayDependencies = {
     connectionString,
     applicationName: "pintpath-account-deletion-tombstone-replay",
     maxConnections: 1,
+    // The session-level advisory lock is an authorization boundary. Do not let
+    // the pool retire its sole idle backend between exact lock proofs.
+    idleTimeoutMs: 0,
     statementTimeoutMs: 30_000,
     idleInTransactionTimeoutMs: 30_000,
   }),
@@ -493,6 +504,18 @@ function sameFileIdentity(left: fs.BigIntStats, right: fs.BigIntStats): boolean 
     && left.ctimeNs === right.ctimeNs;
 }
 
+function retainTrustedFileIdentity(snapshot: TrustedFileSnapshot): TrustedFileIdentity {
+  return {
+    path: snapshot.path,
+    dev: snapshot.dev,
+    ino: snapshot.ino,
+    size: snapshot.size,
+    mtimeNs: snapshot.mtimeNs,
+    ctimeNs: snapshot.ctimeNs,
+    sha256: snapshot.sha256,
+  };
+}
+
 async function readTrustedPrivateFile(input: {
   filePath: string;
   uid: number;
@@ -501,6 +524,9 @@ async function readTrustedPrivateFile(input: {
 }): Promise<TrustedFileSnapshot> {
   const filePath = canonicalAbsolutePath(input.filePath);
   let handle: fs.promises.FileHandle | null = null;
+  let bytes: Buffer | null = null;
+  let snapshot: TrustedFileSnapshot | null = null;
+  let failed = false;
   try {
     const pathStat = fs.lstatSync(filePath, { bigint: true });
     if (
@@ -519,7 +545,7 @@ async function readTrustedPrivateFile(input: {
     );
     const opened = await handle.stat({ bigint: true });
     if (!sameFileIdentity(pathStat, opened)) throw new Error("changed");
-    const bytes = await handle.readFile();
+    bytes = await handle.readFile();
     const afterDescriptor = await handle.stat({ bigint: true });
     const afterPath = fs.lstatSync(filePath, { bigint: true });
     if (
@@ -527,7 +553,7 @@ async function readTrustedPrivateFile(input: {
       || !sameFileIdentity(pathStat, afterPath)
       || bytes.length !== Number(pathStat.size)
     ) throw new Error("changed");
-    return {
+    snapshot = {
       path: filePath,
       dev: pathStat.dev,
       ino: pathStat.ino,
@@ -537,16 +563,27 @@ async function readTrustedPrivateFile(input: {
       sha256: sha256(bytes),
       bytes,
     };
-  } catch (error) {
-    if (error instanceof PostgresAccountDeletionReplayError) throw error;
-    throw replayError(input.invalidCode);
-  } finally {
-    await handle?.close().catch(() => undefined);
+  } catch {
+    failed = true;
   }
+  if (handle) {
+    const closing = handle;
+    handle = null;
+    try {
+      await closing.close();
+    } catch {
+      failed = true;
+    }
+  }
+  if (failed || !snapshot) {
+    bytes?.fill(0);
+    throw replayError(input.invalidCode);
+  }
+  return snapshot;
 }
 
 async function assertTrustedFileUnchanged(
-  expected: TrustedFileSnapshot,
+  expected: TrustedFileIdentity,
   uid: number,
   code: PostgresAccountDeletionReplayFailureCode,
 ): Promise<void> {
@@ -556,14 +593,18 @@ async function assertTrustedFileUnchanged(
     maxBytes: Number(expected.size),
     invalidCode: code,
   });
-  if (
-    actual.dev !== expected.dev
-    || actual.ino !== expected.ino
-    || actual.size !== expected.size
-    || actual.mtimeNs !== expected.mtimeNs
-    || actual.ctimeNs !== expected.ctimeNs
-    || actual.sha256 !== expected.sha256
-  ) throw replayError(code);
+  try {
+    if (
+      actual.dev !== expected.dev
+      || actual.ino !== expected.ino
+      || actual.size !== expected.size
+      || actual.mtimeNs !== expected.mtimeNs
+      || actual.ctimeNs !== expected.ctimeNs
+      || actual.sha256 !== expected.sha256
+    ) throw replayError(code);
+  } finally {
+    actual.bytes.fill(0);
+  }
 }
 
 function safeUtf8(bytes: Buffer, code: PostgresAccountDeletionReplayFailureCode): string {
@@ -717,64 +758,71 @@ async function readAuthority(input: {
   } catch {
     throw replayError("unsafe_authority_directory");
   }
-  const [current, genesis, checkpoint] = await Promise.all([
-    readTrustedPrivateFile({
+  let current: TrustedFileSnapshot | null = null;
+  let genesis: TrustedFileSnapshot | null = null;
+  let checkpoint: TrustedFileSnapshot | null = null;
+  try {
+    current = await readTrustedPrivateFile({
       filePath: path.join(directoryPath, AUTHORITY_CURRENT_FILE),
       uid: input.uid,
       maxBytes: MAX_CURRENT_BYTES,
       invalidCode: "unsafe_authority_directory",
-    }),
-    readTrustedPrivateFile({
+    });
+    genesis = await readTrustedPrivateFile({
       filePath: path.join(directoryPath, AUTHORITY_GENESIS_FILE),
       uid: input.uid,
       maxBytes: MAX_CONTROL_BYTES,
       invalidCode: "unsafe_authority_directory",
-    }),
-    readTrustedPrivateFile({
+    });
+    checkpoint = await readTrustedPrivateFile({
       filePath: path.join(directoryPath, AUTHORITY_CHECKPOINT_FILE),
       uid: input.uid,
       maxBytes: MAX_CONTROL_BYTES,
       invalidCode: "unsafe_authority_directory",
-    }),
-  ]);
-  if (
-    current.sha256 !== input.expectedCurrentSha256
-    || genesis.sha256 !== input.expectedGenesisSha256
-    || checkpoint.sha256 !== input.expectedCheckpointSha256
-  ) throw replayError("authority_tampered");
-  const tombstones = parseCanonicalTombstones(current.bytes);
-  const genesisDocument = parseCanonicalGenesis(genesis.bytes);
-  const checkpointDocument = parseCanonicalCheckpoint(checkpoint.bytes);
-  const latestCompletedAt = tombstones.reduce<string | null>(
-    (latest, tombstone) => latest === null || tombstone.completedAt > latest
-      ? tombstone.completedAt
-      : latest,
-    null,
-  );
-  const currentValue = strictJson(current.bytes, "authority_invalid");
-  const expectedGeneratedAt = new Date(Math.max(
-    Date.parse(genesisDocument.createdAt),
-    latestCompletedAt === null ? Number.NEGATIVE_INFINITY : Date.parse(latestCompletedAt),
-  )).toISOString();
-  if (
-    checkpointDocument.currentLedgerSha256 !== current.sha256
-    || checkpointDocument.genesisSha256 !== genesis.sha256
-    || checkpointDocument.generatedAt !== currentValue.generatedAt
-    || checkpointDocument.generatedAt !== expectedGeneratedAt
-    || checkpointDocument.immutableSetSha256 !== input.expectedImmutableSetSha256
-    || checkpointDocument.immutableObjectCount < tombstones.length
-    || checkpointDocument.tombstoneCount !== input.expectedTombstoneCount
-    || tombstones.length !== input.expectedTombstoneCount
-    || checkpointDocument.latestCompletedAt !== latestCompletedAt
-  ) throw replayError("authority_tampered");
-  return {
-    directory: { path: directoryPath, dev: directoryStat.dev, ino: directoryStat.ino },
-    current,
-    genesis,
-    checkpoint,
-    tombstones,
-    checkpointDocument,
-  };
+    });
+    if (
+      current.sha256 !== input.expectedCurrentSha256
+      || genesis.sha256 !== input.expectedGenesisSha256
+      || checkpoint.sha256 !== input.expectedCheckpointSha256
+    ) throw replayError("authority_tampered");
+    const tombstones = parseCanonicalTombstones(current.bytes);
+    const genesisDocument = parseCanonicalGenesis(genesis.bytes);
+    const checkpointDocument = parseCanonicalCheckpoint(checkpoint.bytes);
+    const latestCompletedAt = tombstones.reduce<string | null>(
+      (latest, tombstone) => latest === null || tombstone.completedAt > latest
+        ? tombstone.completedAt
+        : latest,
+      null,
+    );
+    const currentValue = strictJson(current.bytes, "authority_invalid");
+    const expectedGeneratedAt = new Date(Math.max(
+      Date.parse(genesisDocument.createdAt),
+      latestCompletedAt === null ? Number.NEGATIVE_INFINITY : Date.parse(latestCompletedAt),
+    )).toISOString();
+    if (
+      checkpointDocument.currentLedgerSha256 !== current.sha256
+      || checkpointDocument.genesisSha256 !== genesis.sha256
+      || checkpointDocument.generatedAt !== currentValue.generatedAt
+      || checkpointDocument.generatedAt !== expectedGeneratedAt
+      || checkpointDocument.immutableSetSha256 !== input.expectedImmutableSetSha256
+      || checkpointDocument.immutableObjectCount < tombstones.length
+      || checkpointDocument.tombstoneCount !== input.expectedTombstoneCount
+      || tombstones.length !== input.expectedTombstoneCount
+      || checkpointDocument.latestCompletedAt !== latestCompletedAt
+    ) throw replayError("authority_tampered");
+    return {
+      directory: { path: directoryPath, dev: directoryStat.dev, ino: directoryStat.ino },
+      current: retainTrustedFileIdentity(current),
+      genesis: retainTrustedFileIdentity(genesis),
+      checkpoint: retainTrustedFileIdentity(checkpoint),
+      tombstones,
+      checkpointDocument,
+    };
+  } finally {
+    current?.bytes.fill(0);
+    genesis?.bytes.fill(0);
+    checkpoint?.bytes.fill(0);
+  }
 }
 
 async function assertAuthorityUnchanged(authority: TrustedAuthority, uid: number): Promise<void> {
@@ -797,11 +845,12 @@ async function assertAuthorityUnchanged(authority: TrustedAuthority, uid: number
   } catch {
     throw replayError("authority_tampered");
   }
-  await Promise.all([
-    assertTrustedFileUnchanged(authority.current, uid, "authority_tampered"),
-    assertTrustedFileUnchanged(authority.genesis, uid, "authority_tampered"),
-    assertTrustedFileUnchanged(authority.checkpoint, uid, "authority_tampered"),
-  ]);
+  // Settle each descriptor lifecycle before starting the next one. A
+  // fail-fast Promise.all would let later reads/close attempts continue after
+  // the caller had already begun database cleanup or receipt handling.
+  await assertTrustedFileUnchanged(authority.current, uid, "authority_tampered");
+  await assertTrustedFileUnchanged(authority.genesis, uid, "authority_tampered");
+  await assertTrustedFileUnchanged(authority.checkpoint, uid, "authority_tampered");
 }
 
 function validBaseRestoreReceipt(value: Record<string, unknown>): boolean {
@@ -1049,9 +1098,22 @@ async function assertRestoreLockHeld(database: SqlDatabase, backendPid: string):
   if (row?.held !== true || row.backendPid !== backendPid) throw replayError("target_busy");
 }
 
-async function releaseRestoreLock(database: SqlDatabase): Promise<void> {
-  await database.prepare(`/* pintpath:deletion-replay:restore-unlock */
-    SELECT pg_advisory_unlock(?::bigint) AS "released"`).get(RESTORE_LOCK_KEY).catch(() => undefined);
+async function assertNoOtherClientBackends(
+  database: SqlDatabase,
+  failureCode: "target_busy" | "verification_failed_target_disposal_required",
+): Promise<void> {
+  let row: OtherClientBackendsRow | undefined;
+  try {
+    row = await database.prepare(`/* pintpath:deletion-replay:other-client-backends */
+      SELECT count(*)::text AS "otherClientBackends"
+        FROM pg_catalog.pg_stat_activity
+       WHERE datname = current_database()
+         AND backend_type = 'client backend'
+         AND pid <> pg_backend_pid()`).get<OtherClientBackendsRow>();
+  } catch {
+    throw replayError(failureCode);
+  }
+  if (row?.otherClientBackends !== "0") throw replayError(failureCode);
 }
 
 async function readTargetMetadata(database: SqlDatabase): Promise<{
@@ -1320,7 +1382,14 @@ function validateReceiptDestination(fileInput: string, uid: number): ReceiptDest
   const filePath = canonicalAbsolutePath(fileInput);
   const parentPath = path.dirname(filePath);
   try {
-    if (fs.existsSync(filePath)) throw new Error("exists");
+    let leafAbsent = false;
+    try {
+      fs.lstatSync(filePath, { bigint: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") leafAbsent = true;
+      else throw error;
+    }
+    if (!leafAbsent) throw new Error("exists");
     const parent = fs.lstatSync(parentPath, { bigint: true });
     if (
       !parent.isDirectory()
@@ -1341,25 +1410,50 @@ async function writeReceipt(
 ): Promise<string> {
   const bytes = Buffer.from(canonicalPostgresBackupJson(receipt), "utf8");
   let handle: fs.promises.FileHandle | null = null;
-  let created: { dev: bigint; ino: bigint } | null = null;
+  let parentHandle: fs.promises.FileHandle | null = null;
   try {
-    const parent = fs.lstatSync(destination.parentPath, { bigint: true });
+    parentHandle = await fs.promises.open(
+      destination.parentPath,
+      fs.constants.O_RDONLY
+        | (fs.constants.O_DIRECTORY ?? 0)
+      | (fs.constants.O_NOFOLLOW ?? 0),
+    );
+    const openedParent = await parentHandle.stat({ bigint: true });
+    const openedParentPath = fs.lstatSync(destination.parentPath, { bigint: true });
     if (
-      parent.dev !== destination.parentDev
-      || parent.ino !== destination.parentIno
-      || parent.uid !== BigInt(destination.uid)
-      || Number(parent.mode & 0o7777n) !== 0o700
+      !openedParent.isDirectory()
+      || openedParent.dev !== destination.parentDev
+      || openedParent.ino !== destination.parentIno
+      || openedParent.uid !== BigInt(destination.uid)
+      || Number(openedParent.mode & 0o7777n) !== 0o700
+      || !sameFileIdentity(openedParent, openedParentPath)
+      || fs.realpathSync(destination.parentPath) !== destination.parentPath
     ) throw new Error("parent-changed");
     handle = await fs.promises.open(
       destination.filePath,
-      fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL
+      fs.constants.O_RDWR | fs.constants.O_CREAT | fs.constants.O_EXCL
         | (fs.constants.O_NOFOLLOW ?? 0),
       0o600,
     );
     const before = await handle.stat({ bigint: true });
-    created = { dev: before.dev, ino: before.ino };
     await handle.writeFile(bytes);
     await handle.sync();
+    const readback = Buffer.alloc(bytes.length);
+    let offset = 0;
+    while (offset < readback.length) {
+      const { bytesRead } = await handle.read(
+        readback,
+        offset,
+        readback.length - offset,
+        offset,
+      );
+      if (bytesRead < 1) throw new Error("receipt-short-read");
+      offset += bytesRead;
+    }
+    const eof = await handle.read(Buffer.alloc(1), 0, 1, bytes.length);
+    if (eof.bytesRead !== 0 || !crypto.timingSafeEqual(readback, bytes)) {
+      throw new Error("receipt-readback-mismatch");
+    }
     const after = await handle.stat({ bigint: true });
     const pathStat = fs.lstatSync(destination.filePath, { bigint: true });
     if (
@@ -1369,27 +1463,59 @@ async function writeReceipt(
       || Number(after.mode & 0o7777n) !== 0o600
       || after.dev !== before.dev
       || after.ino !== before.ino
+      || after.size !== BigInt(bytes.length)
+      || !pathStat.isFile()
+      || pathStat.isSymbolicLink()
+      || pathStat.nlink !== 1n
+      || pathStat.uid !== BigInt(destination.uid)
+      || Number(pathStat.mode & 0o7777n) !== 0o600
       || pathStat.dev !== before.dev
       || pathStat.ino !== before.ino
       || pathStat.size !== BigInt(bytes.length)
     ) throw new Error("unsafe-receipt");
-    return sha256(bytes);
-  } catch {
-    await handle?.close().catch(() => undefined);
+    await parentHandle.sync();
+    const finalParentDescriptor = await parentHandle.stat({ bigint: true });
+    const finalParentPath = fs.lstatSync(destination.parentPath, { bigint: true });
+    if (
+      !finalParentDescriptor.isDirectory()
+      || finalParentDescriptor.dev !== destination.parentDev
+      || finalParentDescriptor.ino !== destination.parentIno
+      || finalParentDescriptor.uid !== BigInt(destination.uid)
+      || Number(finalParentDescriptor.mode & 0o7777n) !== 0o700
+      || !finalParentPath.isDirectory()
+      || finalParentPath.isSymbolicLink()
+      || finalParentPath.dev !== destination.parentDev
+      || finalParentPath.ino !== destination.parentIno
+      || finalParentPath.uid !== BigInt(destination.uid)
+      || Number(finalParentPath.mode & 0o7777n) !== 0o700
+    ) throw new Error("parent-changed");
+    const receiptSha256 = sha256(readback);
+    const closingHandle = handle;
     handle = null;
-    if (created) {
-      try {
-        const current = fs.lstatSync(destination.filePath, { bigint: true });
-        if (current.dev === created.dev && current.ino === created.ino) {
-          await fs.promises.unlink(destination.filePath);
-        }
-      } catch {
-        // Never unlink a path unless it is the exact inode created above.
-      }
+    await closingHandle.close();
+    const closingParentHandle = parentHandle;
+    parentHandle = null;
+    await closingParentHandle.close();
+    const closedPath = fs.lstatSync(destination.filePath, { bigint: true });
+    const closedParent = fs.lstatSync(destination.parentPath, { bigint: true });
+    if (
+      !sameFileIdentity(after, closedPath)
+      || !sameFileIdentity(finalParentDescriptor, closedParent)
+      || fs.realpathSync(destination.parentPath) !== destination.parentPath
+    ) throw new Error("unsafe-receipt");
+    return receiptSha256;
+  } catch {
+    if (handle) {
+      const closing = handle;
+      handle = null;
+      await closing.close().catch(() => undefined);
+    }
+    if (parentHandle) {
+      const closing = parentHandle;
+      parentHandle = null;
+      await closing.close().catch(() => undefined);
     }
     throw replayError("receipt_failed_target_disposal_required");
-  } finally {
-    await handle?.close().catch(() => undefined);
   }
 }
 
@@ -1405,6 +1531,9 @@ export async function replayPostgresAccountDeletionTombstones(
     throw replayError("confirmation_required");
   }
   const uid = exactUid(dependencies);
+  const expectedBaseRestoreReceiptSha256 = exactSha256(
+    options.expectedBaseRestoreReceiptSha256,
+  );
   const expectedTargetIdentitySha256 = exactSha256(options.expectedTargetIdentitySha256);
   const expectedLedgerCurrentSha256 = exactSha256(options.expectedLedgerCurrentSha256);
   const expectedLedgerGenesisSha256 = exactSha256(options.expectedLedgerGenesisSha256);
@@ -1412,25 +1541,39 @@ export async function replayPostgresAccountDeletionTombstones(
   const expectedLedgerImmutableSetSha256 = exactSha256(options.expectedLedgerImmutableSetSha256);
   const expectedTombstoneCount = exactCount(options.expectedTombstoneCount, false);
   const receiptDestination = validateReceiptDestination(options.receiptFile, uid);
+  const runtimeUrlFilePath = canonicalAbsolutePath(options.runtimeUrlFile);
+  const baseRestoreReceiptFilePath = canonicalAbsolutePath(options.baseRestoreReceiptFile);
+  const authorityDirectoryPath = canonicalAbsolutePath(options.deletionLedgerAuthorityDirectory);
+  if (
+    receiptDestination.parentPath === path.dirname(runtimeUrlFilePath)
+    || receiptDestination.parentPath === authorityDirectoryPath
+  ) throw replayError("invalid_arguments");
 
-  // Every authority artifact is authenticated and retained as an inode-bound
-  // snapshot before the first connection or mutation is attempted.
-  const connectionFile = await readTrustedPrivateFile({
-    filePath: options.runtimeUrlFile,
-    uid,
-    maxBytes: MAX_CONNECTION_FILE_BYTES,
-    invalidCode: "unsafe_connection_file",
-  });
-  const connectionString = parseRuntimeUrl(connectionFile.bytes, dependencies);
-  const baseReceiptFile = await readTrustedPrivateFile({
-    filePath: options.baseRestoreReceiptFile,
+  // Authenticate every non-credential authority before reading the runtime
+  // credential. Retain only inode/hash identities after parsing and wipe the
+  // source buffers synchronously.
+  const baseReceiptSnapshot = await readTrustedPrivateFile({
+    filePath: baseRestoreReceiptFilePath,
     uid,
     maxBytes: MAX_RECEIPT_BYTES,
     invalidCode: "base_restore_receipt_invalid",
   });
-  const baseReceipt = parseBaseRestoreReceipt(baseReceiptFile, expectedTargetIdentitySha256);
+  let baseReceiptFile: TrustedFileIdentity;
+  let baseReceipt: PostgresLogicalRestoreReceipt;
+  try {
+    if (baseReceiptSnapshot.sha256 !== expectedBaseRestoreReceiptSha256) {
+      throw replayError("base_restore_receipt_invalid");
+    }
+    baseReceipt = parseBaseRestoreReceipt(
+      baseReceiptSnapshot,
+      expectedTargetIdentitySha256,
+    );
+    baseReceiptFile = retainTrustedFileIdentity(baseReceiptSnapshot);
+  } finally {
+    baseReceiptSnapshot.bytes.fill(0);
+  }
   const authority = await readAuthority({
-    directory: options.deletionLedgerAuthorityDirectory,
+    directory: authorityDirectoryPath,
     uid,
     expectedCurrentSha256: expectedLedgerCurrentSha256,
     expectedGenesisSha256: expectedLedgerGenesisSha256,
@@ -1438,23 +1581,84 @@ export async function replayPostgresAccountDeletionTombstones(
     expectedImmutableSetSha256: expectedLedgerImmutableSetSha256,
     expectedTombstoneCount,
   });
+  const connectionSnapshot = await readTrustedPrivateFile({
+    filePath: runtimeUrlFilePath,
+    uid,
+    maxBytes: MAX_CONNECTION_FILE_BYTES,
+    invalidCode: "unsafe_connection_file",
+  });
+  let connectionString = "";
+  const connectionFile = retainTrustedFileIdentity(connectionSnapshot);
+  try {
+    connectionString = parseRuntimeUrl(connectionSnapshot.bytes, dependencies);
+  } finally {
+    connectionSnapshot.bytes.fill(0);
+  }
 
   let database: SqlDatabase;
   try {
     database = dependencies.createDatabase(connectionString);
   } catch {
     throw replayError("target_unreachable");
+  } finally {
+    // Strings cannot be reliably wiped in JavaScript, but do not retain this
+    // redundant local copy after the database boundary has consumed it.
+    connectionString = "";
   }
-  let lockAcquired = false;
   let mutationStarted = false;
+  let databaseCloseAttempted = false;
+  let databaseCloseFailed = false;
+  const closeDatabaseOnce = async (): Promise<void> => {
+    if (databaseCloseAttempted) {
+      if (databaseCloseFailed) throw new Error("database-close-unverified");
+      return;
+    }
+    databaseCloseAttempted = true;
+    let closeUncertain = false;
+    try {
+      const beforeClose = database.metrics();
+      if (
+        beforeClose.dialect !== "postgres"
+        || beforeClose.failedQueries !== 0
+        || beforeClose.transactionFailures !== 0
+        || beforeClose.totalConnections !== 1
+        || beforeClose.idleConnections !== 1
+        || beforeClose.waitingRequests !== 0
+      ) closeUncertain = true;
+    } catch {
+      closeUncertain = true;
+    }
+    try {
+      await database.close();
+    } catch {
+      closeUncertain = true;
+    }
+    try {
+      const closedMetrics = database.metrics();
+      if (
+        closedMetrics.dialect !== "postgres"
+        || closedMetrics.failedQueries !== 0
+        || closedMetrics.transactionFailures !== 0
+        || closedMetrics.totalConnections !== 0
+        || closedMetrics.idleConnections !== 0
+        || closedMetrics.waitingRequests !== 0
+      ) closeUncertain = true;
+    } catch {
+      closeUncertain = true;
+    }
+    if (closeUncertain) {
+      databaseCloseFailed = true;
+      throw new Error("database-close-unverified");
+    }
+  };
   try {
     const initialInspection = await inspectTarget(database);
     if (initialInspection.targetIdentitySha256 !== expectedTargetIdentitySha256) {
       throw replayError("target_identity_mismatch");
     }
     const backendPid = await acquireRestoreLock(database);
-    lockAcquired = true;
     await assertRestoreLockHeld(database, backendPid);
+    await assertNoOtherClientBackends(database, "target_busy");
     const lockedInspection = await inspectTarget(database);
     if (lockedInspection.targetIdentitySha256 !== expectedTargetIdentitySha256) {
       throw replayError("target_identity_mismatch");
@@ -1576,6 +1780,21 @@ export async function replayPostgresAccountDeletionTombstones(
       semanticProjectionSha256,
       idempotency: "exact-semantic-projection",
     };
+    // Keep the final backend and lock checks immediately adjacent to the
+    // intentional pool drain. A pool error or non-empty post-close metrics is
+    // authorization failure, not best-effort cleanup.
+    await assertNoOtherClientBackends(
+      database,
+      "verification_failed_target_disposal_required",
+    );
+    await assertRestoreLockHeld(database, backendPid);
+    await closeDatabaseOnce();
+    // Database close is an injected asynchronous boundary and may itself run
+    // adversarial cleanup. Reassert every source after it settles and before a
+    // receipt can be created.
+    await assertAuthorityUnchanged(authority, uid);
+    await assertTrustedFileUnchanged(connectionFile, uid, "unsafe_connection_file");
+    await assertTrustedFileUnchanged(baseReceiptFile, uid, "base_restore_receipt_invalid");
     const receiptSha256 = await writeReceipt(receiptDestination, receipt);
     return {
       schemaVersion: 1,
@@ -1588,6 +1807,14 @@ export async function replayPostgresAccountDeletionTombstones(
       semanticProjectionSha256,
     };
   } catch (error) {
+    if (!databaseCloseAttempted) {
+      await closeDatabaseOnce().catch(() => undefined);
+    }
+    if (databaseCloseFailed) {
+      throw replayError(mutationStarted
+        ? "verification_failed_target_disposal_required"
+        : "target_not_disposable");
+    }
     if (error instanceof PostgresAccountDeletionReplayError) {
       if (mutationStarted && !error.code.endsWith("_target_disposal_required")) {
         throw replayError("verification_failed_target_disposal_required");
@@ -1597,9 +1824,6 @@ export async function replayPostgresAccountDeletionTombstones(
     throw replayError(mutationStarted
       ? "verification_failed_target_disposal_required"
       : "target_not_disposable");
-  } finally {
-    if (lockAcquired) await releaseRestoreLock(database);
-    await database.close().catch(() => undefined);
   }
 }
 

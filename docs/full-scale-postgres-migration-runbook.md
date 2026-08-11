@@ -750,10 +750,52 @@ PINTPATH_POSTGRES_LOGICAL_RESTORE=confirmed \
 npm run db:postgres:restore:logical -- restore \
   --backup-directory /absolute/private/release-id/postgres-logical \
   --backup-manifest-sha256 <trusted-64-hex-manifest-sha256> \
+  --pg-restore-file "$PG_RESTORE_FILE" \
+  --expected-pg-restore-sha256 "$EXPECTED_PG_RESTORE_SHA256" \
   --target-url-file /absolute/private/disposable-target-url.key \
   --target-identity-sha256 <inspected-64-hex-target-identity-sha256> \
   --receipt /absolute/private/release-id/postgres-logical-restore-receipt.json
 ```
+
+The restore-only flags are mandatory; inspect-target intentionally accepts
+neither. `PG_RESTORE_FILE` must be an independently reviewed canonical absolute
+path with basename `pg_restore`, and its expected hash must be an independently
+retained lowercase SHA-256. One purpose-bound authority retains that exact tool
+across PostgreSQL-17 version proof, archive listing, target preflight, and the
+single restore. The listing and restore use separate held archive descriptors,
+while the restore wrapper retains its independent full digest-bound archive
+guard. Authority, archive descriptor, advisory lock, and target-connection
+closure are authorization gates, not best-effort cleanup; any uncertainty after
+mutation requires disposal and prevents a receipt.
+
+These restore and deletion-replay paths remain review-only. Node still launches by pathname and does
+not bind the dynamic loader or complete shared-library closure, and a substituted
+child can escape process-group observation with `setsid`. More importantly, the
+entire restore and replay CLI/workers—not just the tool-authority module—must
+start in pristine frozen-intrinsics realms before imports or secret reads. Their
+ordinary async carriers include plaintext target URL material, parsed
+`PGPASSWORD`, connection capabilities, tombstone identifiers, and query rows;
+inherited `then` poisoning can observe them. The current `npm`/`tsx` commands
+are not activation launchers. Use neither these implementations nor these example commands for a new
+live ceremony until an immutable digest-pinned runtime or reviewed
+descriptor-native launcher, complete dependency closure, and whole-worker
+then-safety have passed independent review.
+
+The disposable target must also be isolated, with no concurrent credential
+holder. Restore checks run before mutation, after `pg_restore`, and after final
+target verification; replay checks before mutation and immediately before its
+final lock proof and sole-session close. Each `pg_stat_activity` result is only
+a point-in-time observation and cannot stop a new client from connecting
+afterward. Replay also disables idle retirement and rejects any pool error or
+non-empty post-close metrics, but activation must lock its injected database
+factory to that reviewed one-session behavior. Receipt bytes are read back
+through held descriptors, fsynced with held parent directories, and closed
+before their hashes are authorized. A CLI success-output failure leaves the
+receipt unauthorized and requires disposal. Portable Node still lacks an
+fd-relative exclusive leaf creation
+that atomically binds that pathname to the retained parent against a hostile
+current-UID namespace toggler, so a protected immutable namespace remains an
+activation requirement.
 
 Restore success requires a fresh independently computed receipt to match every
 source authoritative and archived-control count/hash exactly. Any mismatch
