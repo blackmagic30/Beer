@@ -959,18 +959,26 @@ describe("Postgres logical restore rehearsal", () => {
       revertedStat = fs.statSync(archivePath, { bigint: true });
       return result;
     };
-    const error = await restorePostgresLogicalBackup(
-      restoreOptions(fixture),
-      harness.dependencies,
-    ).catch((caught: unknown) => caught);
+    const archiveProbe = fs.openSync(
+      archivePath,
+      fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
+    );
+    try {
+      const error = await restorePostgresLogicalBackup(
+        restoreOptions(fixture),
+        harness.dependencies,
+      ).catch((caught: unknown) => caught);
 
-    expectRestoreError(error, "verification_failed_target_disposal_required");
-    expect(harness.archiveInputs.find((input) => input.phase === "restore")?.bytes)
-      .toEqual(attackerBytes);
-    expect(fs.readFileSync(archivePath)).toEqual(archiveBytes);
-    expect(revertedStat?.mtimeNs).toBe(originalStat.mtimeNs);
-    expect(revertedStat?.ctimeNs).not.toBe(originalStat.ctimeNs);
-    expect(fs.existsSync(fixture.receiptFile)).toBe(false);
+      expectRestoreError(error, "verification_failed_target_disposal_required");
+      expect(harness.archiveInputs.find((input) => input.phase === "restore")?.bytes)
+        .toEqual(attackerBytes);
+      expect(fs.readFileSync(archiveProbe)).toEqual(archiveBytes);
+      expect(revertedStat?.mtimeNs).toBe(originalStat.mtimeNs);
+      expect(revertedStat?.ctimeNs).not.toBe(originalStat.ctimeNs);
+      expect(fs.existsSync(fixture.receiptFile)).toBe(false);
+    } finally {
+      fs.closeSync(archiveProbe);
+    }
   });
 
   it("requires target disposal after same-inode archive drift during mutation", async () => {
