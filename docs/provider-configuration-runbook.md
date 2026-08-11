@@ -162,9 +162,62 @@ nonempty staged patches, deployment drift, and retries after any durable intent
 or ambiguous write. Its success-shaped result is explicitly
 `acknowledged_pending_runtime_proof`: value-free Railway metadata cannot prove
 the submitted value, and the CLI upsert is sequential rather than atomic.
-The injected-child transport is fixture-only: its counters are not operating-
-system spawn authority, and the held binary descriptor does not bind later
-execution of the Homebrew pathname. It cannot be reused as the live adapter.
+The injected-child transport remains unreachable from the public command. An
+offline supervisor foundation now verifies and holds a pre-existing private
+Railway executable copy under a current-user mode-`0700` parent. The copy must
+be a current-user mode-`0500`, single-link regular file whose held-descriptor
+bytes equal the pinned CLI digest. Only an explicitly injected spawn capability
+can launch it; there is no native spawn default, credential source, public
+executor import, package command, CI entry, or locked-worker import. The
+supervisor fixes `shell:false`, a null-prototype environment containing only
+`RAILWAY_TOKEN`, exactly one token-bearing launcher capability, one stdin write
+followed by EOF, discarded stdout/stderr, one detached child group,
+TERM-to-KILL abort escalation, close/error settlement,
+group-empty proof, and post-settlement private-copy reassertion. Its offline
+tests use only a local fake CLI. The local-authority, durable-intent, command,
+process-receipt, acknowledgement, kernel-receipt, and terminal-evidence hashes
+bind the private-copy, environment, stdin, and process-group authorities; an
+arbitrary well-formed digest is not accepted as acknowledgement evidence.
+The adapter's review-only claim APIs privately pair and consume an exact binding,
+one token-bearing launcher, child facade, and child result; wrappers, clones,
+cross-adapter objects, and replay fail those claim checks. In the kernel's tested
+normal sequence, it calls the local-attempt factory only after durable intent and
+binds the returned identity to the exact operation and variable, input commitment
+and byte length, intent, local-authority and command hashes, and private-copy,
+adapter, environment, stdin, and process-group authority hashes. The local writer
+checks and consumes that tuple before spawn and privately pairs its successful
+receipt with the same attempt; the kernel consumes the pair at most once.
+These public review primitives do not enforce that sequence as authorization.
+The data-only attempt factory can be called before persistence, and a returned
+token-bearing launcher can be invoked directly without the claim API, local
+writer, kernel, durable intent, or evidence store. Activation therefore requires
+a module-private locked assembly and opaque, one-use session issuer that consumes
+a genuine durable-persist authority and binds the exact store, parent directory,
+adapter, local authority, input, and credential instances before any launch.
+
+The held-input module accepts only an own-data callback ingress with synchronous
+chunk delivery and an explicit one-shot settlement callback. It latches swallowed
+callback failures, closes acceptance atomically at settlement, wipes late chunks,
+and has its own abort gate for a source that never settles. Its inspection
+truthfully records `callbackIngressOnly:true` and
+`stdinSourceAuthorityAvailable:false`: arbitrary injected callback bytes are not
+proof of stdin, Keychain, or credential provenance. A future private branded
+native/Keychain bridge must deliver the exact stdin value, prove quiescence at
+settlement, and prevent callbacks after settlement.
+
+Each offline layer snapshots an exact own-data dependency capability set before
+its first await and does not redispatch mutable dependency properties later.
+That does not protect an ordinary injected object result while its producer's
+Promise is being assimilated before the snapshot. Activation requires exact
+then-safe/null-prototype branded producers or callback bridges running in a
+locked pristine realm. Injected filesystem and Promise dependencies remain
+review-only and do not establish the native provenance of the module-private
+default callback filesystem path.
+Process-adapter bindings and local-authority objects are immutable inspection
+snapshots: `providerInvokedDuringInspection:false` and `descriptorHeld:true`
+describe that inspection, not live lifecycle facts after a launcher runs or a
+handle closes. Exact adapter/local instance and descriptor-lifetime coupling
+remain activation blockers.
 The JavaScript evidence store creates the fixed final evidence leaf directly
 with exclusive create, no-follow, and mode `0600`; it then writes, fsyncs,
 reads back through the held descriptor, validates the pathname identity, and
@@ -175,21 +228,71 @@ replay and requires separately reviewed manual recovery of the private evidence
 directory. This removes the path-based cleanup deletion race; it does not make
 the review-only worker an operating-system sandbox against hostile same-UID
 code.
+The returned store is only a frozen null-prototype `read`/`inspect`/`persist`/
+`close` facade; its raw parent handle, generic open function, dependencies, and
+internal class are not reachable. The default path uses module-private captured
+native callback operations rather than a generic exported raw-file opener.
+Injected filesystem overrides are adversarial test seams, not activation
+authority. Durable evidence currently binds fixed leaf content and file identity
+but not an opaque exact store/parent/session identity, so persistence in a second
+otherwise-valid private directory can be semantically indistinguishable. Exact
+evidence-store and parent-directory authority is an activation blocker.
+
+This supervisor foundation is not activation-ready. It verifies a copy supplied
+by its caller, but the repository does not yet materialize that copy from the
+already-held pinned source descriptor or bind that creation provenance. Node's
+pathname-based spawn also leaves a residual hostile-same-UID replacement window
+even while a copy descriptor is held; the mode-`0700` parent narrows but does
+not eliminate that operating-system boundary. Exact group-empty probes
+immediately precede TERM and KILL, but the probe-to-signal interval retains the
+same process-group-ID reuse boundary; activation needs a reviewed native custody
+design rather than treating the JavaScript probe as atomic. The retained private
+copy must not be unlinked after a path-only revalidation; removal needs a
+separately reviewed, identity-safe cleanup design. JavaScript token strings are
+not zeroizable. The supervisor permits only one token-bearing launcher, takes
+and clears its retained token reference for the one launch, and scrubs the
+temporary environment property as soon as synchronous spawn returns, but a
+caller may still retain its own string copy. No reviewed credential-custody
+bridge supplies `RAILWAY_TOKEN`. An injected spawn capability could retain the
+environment or make its token property nonconfigurable, or create a child and
+then throw or return no owned positive process-group ID, leaving JavaScript
+without reaping authority. A future native capability must prove synchronous
+environment consumption without retention, no child creation on throw or a
+malformed return, and custody of the returned positive process-group ID. The
+current full-tuple attempt binding proves semantic equality, not the provenance
+of an exact token, adapter instance, or local-authority instance; a future
+credential bridge must bind those opaque per-instance authorities before
+activation. The same applies to the exact input and evidence-store instances;
+hash equality is not authority. The directly callable review launcher is also
+broader than the locked policy: its structural command parser accepts an
+uppercase variable name and nonempty project, environment, and service strings,
+not only the four canonical permanent-staging operations. The adapter and
+launcher must be hidden behind the private session-bound assembly or bound to the
+exact canonical command target before native spawn or token wiring. The adapter
+also accepts a caller-supplied expected executable digest; without the local
+authority's separate lock, a direct caller can authorize any matching private
+mode-`0500` binary. The future assembly must bind the exact reviewed CLI source
+and copy authority, not merely a caller-selected digest.
+After durable intent, recovery entry, or any write attempt, cleanup,
+terminal-evidence, or finalization failure remains `mutation_uncertain`; those
+failures cannot relabel a possibly mutated provider state as a mere local
+cleanup failure.
 
 No Railway write is authorized until the incident baseline above is separately
 recovered, the external Railway mutation freeze is approved, and an isolated
 disposable live fixture proves the exact CLI 5.32.0 token, stdin, output,
 `--skip-deploys`, staged-patch, deployment, acknowledgement-loss, and eventual
 metadata behavior. A later activation change must independently review and wire
-the provider-capable adapter, execute only a private copy made from the held
-verified descriptor, and independently enforce one child, the exact sanitized
-environment, stdin closure, output disposal, process-group reaping, and receipt
-binding. Its bounded stdin source and child writer must also turn abort into a
-settled read/write operation before returning; the review-only primitives wait
-for quiescence and deliberately remain pending when an injected iterator or
-writer ignores cancellation. The adapter must preserve immediate
+the native spawn/process-group capabilities, the credential bridge, and a
+private copy made directly from the held verified source descriptor. Its
+private branded stdin/callback source and child writer must turn abort into a
+settled read/write operation before returning and prove that settlement means no
+later callbacks. The kernel's boundary, target, and provider-metadata producers
+must publish exact then-safe branded results before any Promise assimilation.
+The adapter must preserve immediate
 boundary/target preflight, durable intent, exactly one write attempt,
-unconditional postflight, secret zeroization, and terminal evidence. Permanent
+unconditional postflight, provider-value buffer/input zeroization, prompt token
+reference release, and terminal evidence. Permanent
 staging and production are not acceptable substitutes for that fixture.
 
 The three Google/OpenAI provider categories comprise four exact Railway

@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { types as utilTypes } from "node:util";
 
 import {
   PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_CANONICAL_POLICY_SOURCE,
@@ -15,13 +16,18 @@ import {
   parsePermanentStagingProviderVariableInventoryPage,
   type PermanentStagingProviderVariableCreatePreflightCandidate,
 } from "./permanent-staging-provider-variable-write-railway-contract.js";
+import {
+  consumePermanentStagingProviderVariableWriteLocalReceiptAuthority,
+  createPermanentStagingProviderVariableWriteLocalAttemptAuthority,
+  type PermanentStagingProviderVariableWriteLocalAttemptAuthority,
+} from "./permanent-staging-provider-variable-write-local-authority.js";
 
 export const PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_KERNEL_SCHEMA =
-  "pintpath-permanent-staging-provider-variable-write-kernel/v1" as const;
+  "pintpath-permanent-staging-provider-variable-write-kernel/v3" as const;
 export const PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_INTENT_SCHEMA =
-  "pintpath-permanent-staging-provider-variable-write-intent/v2" as const;
+  "pintpath-permanent-staging-provider-variable-write-intent/v3" as const;
 export const PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_TERMINAL_SCHEMA =
-  "pintpath-permanent-staging-provider-variable-write-terminal-evidence/v2" as const;
+  "pintpath-permanent-staging-provider-variable-write-terminal-evidence/v4" as const;
 export const PERMANENT_STAGING_PROVIDER_VARIABLE_PREFLIGHT_LINEAGE_SCHEMA =
   "pintpath-permanent-staging-provider-variable-preflight-lineage/v1" as const;
 
@@ -42,12 +48,16 @@ const SAFE_ABORT_CONTROLLER_SIGNAL = Object.getOwnPropertyDescriptor(
   "signal",
 )?.get;
 const SAFE_ARRAY_IS_ARRAY = Array.isArray;
-const SAFE_ARRAY_BUFFER_IS_VIEW = ArrayBuffer.isView;
+const SAFE_ARRAY_BUFFER = ArrayBuffer;
+const SAFE_ARRAY_BUFFER_IS_VIEW = SAFE_ARRAY_BUFFER.isView;
 const SAFE_ARRAY_PROTOTYPE = Array.prototype;
-const SAFE_BUFFER_BYTE_LENGTH = Buffer.byteLength;
-const SAFE_BUFFER_IS_BUFFER = Buffer.isBuffer;
-const SAFE_BUFFER_PROTOTYPE = Buffer.prototype;
-const SAFE_CRYPTO_CREATE_HASH = crypto.createHash;
+const SAFE_BUFFER = Buffer;
+const SAFE_BUFFER_BYTE_LENGTH = SAFE_BUFFER.byteLength;
+const SAFE_BUFFER_IS_BUFFER = SAFE_BUFFER.isBuffer;
+const SAFE_BUFFER_PROTOTYPE = SAFE_BUFFER.prototype;
+const SAFE_CRYPTO = crypto;
+const SAFE_ERROR = Error;
+const SAFE_CRYPTO_CREATE_HASH = SAFE_CRYPTO.createHash;
 const SAFE_CRYPTO_HASH_PROBE = SAFE_CRYPTO_CREATE_HASH("sha256");
 const SAFE_CRYPTO_HASH_DIGEST = SAFE_CRYPTO_HASH_PROBE.digest;
 const SAFE_CRYPTO_HASH_UPDATE = SAFE_CRYPTO_HASH_PROBE.update;
@@ -55,7 +65,8 @@ const SAFE_JSON_PARSE = JSON.parse;
 const SAFE_JSON_STRINGIFY = JSON.stringify;
 const SAFE_NUMBER_IS_FINITE = Number.isFinite;
 const SAFE_NUMBER_IS_SAFE_INTEGER = Number.isSafeInteger;
-const SAFE_OBJECT_CREATE = Object.create;
+const SAFE_OBJECT = Object;
+const SAFE_OBJECT_CREATE = SAFE_OBJECT.create;
 const SAFE_OBJECT_DEFINE_PROPERTY = Object.defineProperty;
 const SAFE_OBJECT_FREEZE = Object.freeze;
 const SAFE_OBJECT_GET_OWN_PROPERTY_DESCRIPTOR =
@@ -64,12 +75,15 @@ const SAFE_OBJECT_GET_PROTOTYPE_OF = Object.getPrototypeOf;
 const SAFE_OBJECT_HAS_OWN = Object.hasOwn;
 const SAFE_OBJECT_KEYS = Object.keys;
 const SAFE_OBJECT_PROTOTYPE = Object.prototype;
+const SAFE_OBJECT_SET_PROTOTYPE_OF = Object.setPrototypeOf;
 const SAFE_REFLECT_APPLY = Reflect.apply;
 const SAFE_REFLECT_OWN_KEYS = Reflect.ownKeys;
 const SAFE_REGEXP_EXEC = RegExp.prototype.exec;
 const SAFE_REGEXP_TEST = RegExp.prototype.test;
-const SAFE_CLEAR_TIMEOUT = globalThis.clearTimeout;
-const SAFE_SET_TIMEOUT = globalThis.setTimeout;
+const SAFE_GLOBAL_THIS = globalThis;
+const SAFE_CLEAR_TIMEOUT = SAFE_GLOBAL_THIS.clearTimeout;
+const SAFE_SET_TIMEOUT = SAFE_GLOBAL_THIS.setTimeout;
+const SAFE_STRING_CONSTRUCTOR = String;
 const SAFE_WEAK_SET = WeakSet;
 const SAFE_WEAK_SET_ADD = WeakSet.prototype.add;
 const SAFE_WEAK_SET_HAS = WeakSet.prototype.has;
@@ -81,7 +95,22 @@ const SAFE_TYPED_ARRAY_BYTE_LENGTH_GETTER =
     SAFE_TYPED_ARRAY_PROTOTYPE,
     "byteLength",
   )?.get;
+const SAFE_UTIL_TYPES = utilTypes;
+const SAFE_UTIL_IS_PROXY = SAFE_UTIL_TYPES.isProxy;
 const LOWERCASE_HEX = "0123456789abcdef";
+
+function freezeNullRecord<T extends object>(value: T): T {
+  SAFE_REFLECT_APPLY(
+    SAFE_OBJECT_SET_PROTOTYPE_OF,
+    SAFE_OBJECT,
+    [value, null],
+  );
+  return SAFE_OBJECT_FREEZE(value);
+}
+
+function kernelError(message: string): Error {
+  return new SAFE_ERROR(message);
+}
 SAFE_OBJECT_DEFINE_PROPERTY(SHA256_PATTERN, "exec", {
   configurable: false,
   enumerable: false,
@@ -93,11 +122,21 @@ const VARIABLE_INVENTORY_HASH_DOMAIN =
   "pintpath/permanent-staging/provider-variable-write/variable-inventory/v1\0";
 const DEPLOYMENT_INVENTORY_HASH_DOMAIN =
   "pintpath/permanent-staging/provider-variable-write/deployment-inventory/v1\0";
-
+const LOCAL_AUTHORITY_HASH_DOMAIN =
+  "pintpath/permanent-staging/provider-variable-write/local-authority/v2\0";
+const COMMAND_HASH_DOMAIN =
+  "pintpath/permanent-staging/provider-variable-write/command/v2\0";
+const WRITE_ACKNOWLEDGEMENT_HASH_DOMAIN =
+  "pintpath/permanent-staging/provider-variable-write/write-acknowledgement/v2\0";
 function appendOwnArrayItem<T>(values: T[], value: T): boolean {
   try {
     const index = values.length;
-    SAFE_OBJECT_DEFINE_PROPERTY(values, String(index), {
+    const key = SAFE_REFLECT_APPLY(
+      SAFE_STRING_CONSTRUCTOR,
+      undefined,
+      [index],
+    ) as string;
+    SAFE_OBJECT_DEFINE_PROPERTY(values, key, {
       configurable: true,
       enumerable: true,
       writable: true,
@@ -109,7 +148,8 @@ function appendOwnArrayItem<T>(values: T[], value: T): boolean {
   }
 }
 
-export const PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_DEADLINES = Object.freeze({
+export const PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_DEADLINES =
+SAFE_OBJECT_FREEZE({
   inputMs: 20_000,
   localAuthorityMs: 20_000,
   boundaryMs: 30_000,
@@ -123,20 +163,21 @@ export const PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_DEADLINES = Object.freeze
 
 export interface PermanentStagingProviderVariableInputAuthority {
   readonly schemaVersion:
-    "pintpath-permanent-staging-provider-variable-write-input/v1";
+    "pintpath-permanent-staging-provider-variable-write-input/v2";
   readonly variableName: string;
   readonly byteLength: number;
   readonly commitmentDomain:
     "pintpath/permanent-staging/provider-variable-write/input-commitment/v1";
   readonly commitmentSha256: string;
-  readonly stdinOnly: true;
+  readonly callbackIngressOnly: true;
+  readonly stdinSourceAuthorityAvailable: false;
   readonly validUtf8: true;
   readonly controlCharactersAbsent: true;
 }
 
 export interface PermanentStagingProviderVariableLocalAuthority {
   readonly schemaVersion:
-    "pintpath-permanent-staging-provider-variable-write-local-authority/v1";
+    "pintpath-permanent-staging-provider-variable-write-local-authority/v2";
   readonly railwayCliVersion: string;
   readonly railwayCliAbsolutePath: string;
   readonly railwayCliSha256: string;
@@ -150,7 +191,19 @@ export interface PermanentStagingProviderVariableLocalAuthority {
   readonly descriptorHeld: true;
   readonly pathAndDescriptorIdentityExact: true;
   readonly bytesHashedFromHeldDescriptor: true;
-  readonly providerInvoked: false;
+  readonly privateExecutableCopyAbsolutePath: string;
+  readonly privateExecutableCopySha256: string;
+  readonly privateExecutableCopyBytes: number;
+  readonly privateExecutableCopyIdentitySha256: string;
+  readonly privateExecutableCopyAuthoritySha256: string;
+  readonly environmentAuthoritySha256: string;
+  readonly stdinAuthoritySha256: string;
+  readonly processGroupAuthoritySha256: string;
+  readonly processAdapterAuthoritySha256: string;
+  readonly privateExecutableCopyDescriptorHeld: true;
+  readonly privateExecutableCopyParentMode0700: true;
+  readonly processAdapterInjectedSpawnOnly: true;
+  readonly providerInvokedDuringInspection: false;
 }
 
 export interface PermanentStagingProviderVariableBoundaryAuthority {
@@ -225,11 +278,18 @@ export interface PermanentStagingProviderVariableTargetPostflight {
 
 export interface PermanentStagingProviderVariableWriteAcknowledgement {
   readonly schemaVersion:
-    "pintpath-permanent-staging-provider-variable-write-local-receipt/v1";
+    "pintpath-permanent-staging-provider-variable-write-local-receipt/v3";
   readonly variableName: string;
   readonly inputCommitmentSha256: string;
+  readonly intentSha256: string;
   readonly localAuthoritySha256: string;
   readonly commandSha256: string;
+  readonly processAdapterAuthoritySha256: string;
+  readonly privateExecutableCopyAuthoritySha256: string;
+  readonly environmentAuthoritySha256: string;
+  readonly stdinAuthoritySha256: string;
+  readonly processGroupAuthoritySha256: string;
+  readonly processAdapterReceiptSha256: string;
   readonly childAttempts: number;
   readonly stdinWrites: number;
   readonly exitCode: number;
@@ -237,6 +297,12 @@ export interface PermanentStagingProviderVariableWriteAcknowledgement {
   readonly stdoutBytesCaptured: number;
   readonly stderrBytesCaptured: number;
   readonly childCloseAwaited: boolean;
+  readonly environmentNullPrototype: boolean;
+  readonly stdinWriteCompleted: boolean;
+  readonly stdinEof: boolean;
+  readonly detachedProcessGroup: boolean;
+  readonly processGroupEmpty: boolean;
+  readonly closeAndErrorSettled: boolean;
   readonly providerAcknowledgementInspected: boolean;
 }
 
@@ -311,6 +377,8 @@ export interface PermanentStagingProviderVariableWriteKernelDependencies {
   readonly writeExactlyOnce: (
     operation: PermanentStagingProviderVariableWriteOperation,
     intentSha256: string,
+    attemptAuthority:
+      PermanentStagingProviderVariableWriteLocalAttemptAuthority,
     signal: AbortSignal,
   ) => Promise<PermanentStagingProviderVariableWriteAcknowledgement>;
   readonly inspectTargetPostflight: (
@@ -330,6 +398,79 @@ export interface PermanentStagingProviderVariableWriteKernelDependencies {
   readonly finalize: (signal: AbortSignal) => Promise<boolean>;
 }
 
+const KERNEL_DEPENDENCY_NAMES = SAFE_OBJECT_FREEZE([
+  "inspectTerminalEvidence",
+  "inspectInput",
+  "inspectLocalAuthority",
+  "inspectBoundary",
+  "inspectTargetPreflight",
+  "inspectIntent",
+  "persistIntent",
+  "writeExactlyOnce",
+  "inspectTargetPostflight",
+  "persistTerminalEvidence",
+  "cleanup",
+  "finalize",
+] as const satisfies readonly (keyof
+PermanentStagingProviderVariableWriteKernelDependencies)[]);
+
+type CapturedKernelDependencies = Readonly<
+  PermanentStagingProviderVariableWriteKernelDependencies & {
+    readonly receiver: object;
+  }
+>;
+
+function captureKernelDependencies(
+  value: unknown,
+): CapturedKernelDependencies {
+  if (
+    typeof value !== "object"
+    || value === null
+    || SAFE_ARRAY_IS_ARRAY(value)
+    || SAFE_REFLECT_APPLY(SAFE_UTIL_IS_PROXY, SAFE_UTIL_TYPES, [value]) === true
+  ) throw kernelError("dependencies_invalid");
+  const prototype = SAFE_OBJECT_GET_PROTOTYPE_OF(value);
+  if (prototype !== SAFE_OBJECT_PROTOTYPE && prototype !== null) {
+    throw kernelError("dependencies_invalid");
+  }
+  const keys = SAFE_REFLECT_OWN_KEYS(value);
+  if (keys.length !== KERNEL_DEPENDENCY_NAMES.length) {
+    throw kernelError("dependencies_invalid");
+  }
+  const captured = SAFE_OBJECT_CREATE(null) as Record<PropertyKey, unknown>;
+  SAFE_OBJECT_DEFINE_PROPERTY(captured, "receiver", {
+    configurable: false,
+    enumerable: true,
+    value,
+    writable: false,
+  });
+  for (let index = 0; index < KERNEL_DEPENDENCY_NAMES.length; index += 1) {
+    const name = KERNEL_DEPENDENCY_NAMES[index]!;
+    const descriptor = SAFE_OBJECT_GET_OWN_PROPERTY_DESCRIPTOR(value, name);
+    if (
+      descriptor === undefined
+      || !SAFE_OBJECT_HAS_OWN(descriptor, "value")
+      || descriptor.enumerable !== true
+      || typeof descriptor.value !== "function"
+    ) throw kernelError("dependencies_invalid");
+    SAFE_OBJECT_DEFINE_PROPERTY(captured, name, {
+      configurable: false,
+      enumerable: true,
+      value: descriptor.value,
+      writable: false,
+    });
+  }
+  return SAFE_OBJECT_FREEZE(captured) as CapturedKernelDependencies;
+}
+
+function applyDependency<TArguments extends readonly unknown[], TResult>(
+  capability: (...args: TArguments) => TResult,
+  receiver: object,
+  args: TArguments,
+): TResult {
+  return SAFE_REFLECT_APPLY(capability, receiver, args) as TResult;
+}
+
 export interface PermanentStagingProviderVariableWriteIntent {
   readonly schemaVersion:
     typeof PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_INTENT_SCHEMA;
@@ -341,6 +482,13 @@ export interface PermanentStagingProviderVariableWriteIntent {
   readonly serviceId: string;
   readonly valueByteLength: number;
   readonly valueCommitmentSha256: string;
+  readonly localAuthoritySha256: string;
+  readonly commandSha256: string;
+  readonly processAdapterAuthoritySha256: string;
+  readonly privateExecutableCopyAuthoritySha256: string;
+  readonly environmentAuthoritySha256: string;
+  readonly stdinAuthoritySha256: string;
+  readonly processGroupAuthoritySha256: string;
   readonly boundarySnapshotSha256: string;
   readonly metadataInventorySha256: string;
   readonly deploymentInventorySha256: string;
@@ -392,6 +540,7 @@ export interface PermanentStagingProviderVariableWriteKernelReceipt {
   readonly variableName: string;
   readonly intentSha256: string | null;
   readonly terminalEvidenceSha256: string | null;
+  readonly writeAcknowledgementSha256: string | null;
   readonly recoveryOnly: boolean;
   readonly runtimeValueProof: false;
   readonly activationAuthorized: false;
@@ -417,15 +566,19 @@ export interface PermanentStagingProviderVariableWriteTerminalEvidence {
 function digestLowercaseHex(value: unknown): string {
   if (
     typeof SAFE_TYPED_ARRAY_BYTE_LENGTH_GETTER !== "function"
-    || !SAFE_REFLECT_APPLY(SAFE_BUFFER_IS_BUFFER, Buffer, [value])
-    || !SAFE_REFLECT_APPLY(SAFE_ARRAY_BUFFER_IS_VIEW, ArrayBuffer, [value])
+    || !SAFE_REFLECT_APPLY(SAFE_BUFFER_IS_BUFFER, SAFE_BUFFER, [value])
+    || !SAFE_REFLECT_APPLY(
+      SAFE_ARRAY_BUFFER_IS_VIEW,
+      SAFE_ARRAY_BUFFER,
+      [value],
+    )
     || SAFE_OBJECT_GET_PROTOTYPE_OF(value) !== SAFE_BUFFER_PROTOTYPE
     || SAFE_REFLECT_APPLY(
       SAFE_TYPED_ARRAY_BYTE_LENGTH_GETTER,
       value,
       [],
     ) !== 32
-  ) throw new Error("hash_invalid");
+  ) throw kernelError("hash_invalid");
   let output = "";
   for (let index = 0; index < 32; index += 1) {
     const byte = (value as Buffer)[index];
@@ -435,19 +588,19 @@ function digestLowercaseHex(value: unknown): string {
       || byte < 0
       || byte > 0xff
     ) {
-      throw new Error("hash_invalid");
+      throw kernelError("hash_invalid");
     }
     output += LOWERCASE_HEX[byte >>> 4] ?? "";
     output += LOWERCASE_HEX[byte & 0x0f] ?? "";
   }
-  if (output.length !== 64) throw new Error("hash_invalid");
+  if (output.length !== 64) throw kernelError("hash_invalid");
   return output;
 }
 
 function sha256(value: string): string {
   const hash = SAFE_REFLECT_APPLY(
     SAFE_CRYPTO_CREATE_HASH,
-    crypto,
+    SAFE_CRYPTO,
     ["sha256"],
   ) as ReturnType<typeof crypto.createHash>;
   SAFE_REFLECT_APPLY(SAFE_CRYPTO_HASH_UPDATE, hash, [value, "utf8"]);
@@ -467,29 +620,29 @@ function canonical(value: unknown): string {
     if (
       nodes > MAX_DEPENDENCY_SNAPSHOT_NODES
       || depth > MAX_DEPENDENCY_SNAPSHOT_DEPTH
-    ) throw new Error("canonical_data_invalid");
+    ) throw kernelError("canonical_data_invalid");
     if (candidate === null) return "null";
     if (typeof candidate === "boolean") return candidate ? "true" : "false";
     if (typeof candidate === "string") {
       if (
         SAFE_BUFFER_BYTE_LENGTH(candidate, "utf8")
           > MAX_DEPENDENCY_STRING_BYTES
-      ) throw new Error("canonical_data_invalid");
+      ) throw kernelError("canonical_data_invalid");
       const encoded = SAFE_JSON_STRINGIFY(candidate);
-      if (typeof encoded !== "string") throw new Error("canonical_data_invalid");
+      if (typeof encoded !== "string") throw kernelError("canonical_data_invalid");
       return encoded;
     }
     if (typeof candidate === "number") {
       if (!SAFE_NUMBER_IS_FINITE(candidate)) {
-        throw new Error("canonical_data_invalid");
+        throw kernelError("canonical_data_invalid");
       }
       const encoded = SAFE_JSON_STRINGIFY(candidate);
-      if (typeof encoded !== "string") throw new Error("canonical_data_invalid");
+      if (typeof encoded !== "string") throw kernelError("canonical_data_invalid");
       return encoded;
     }
-    if (typeof candidate !== "object") throw new Error("canonical_data_invalid");
+    if (typeof candidate !== "object") throw kernelError("canonical_data_invalid");
     if (SAFE_REFLECT_APPLY(SAFE_WEAK_SET_HAS, seen, [candidate]) === true) {
-      throw new Error("canonical_data_invalid");
+      throw kernelError("canonical_data_invalid");
     }
     SAFE_REFLECT_APPLY(SAFE_WEAK_SET_ADD, seen, [candidate]);
 
@@ -497,7 +650,7 @@ function canonical(value: unknown): string {
     const keys = SAFE_REFLECT_OWN_KEYS(candidate);
     if (SAFE_ARRAY_IS_ARRAY(candidate)) {
       if (prototype !== SAFE_ARRAY_PROTOTYPE) {
-        throw new Error("canonical_data_invalid");
+        throw kernelError("canonical_data_invalid");
       }
       const lengthDescriptor = SAFE_OBJECT_GET_OWN_PROPERTY_DESCRIPTOR(
         candidate,
@@ -510,18 +663,22 @@ function canonical(value: unknown): string {
         || lengthDescriptor.value < 0
         || lengthDescriptor.value > MAX_DEPENDENCY_ARRAY_LENGTH
         || keys.length !== lengthDescriptor.value + 1
-      ) throw new Error("canonical_data_invalid");
+      ) throw kernelError("canonical_data_invalid");
       let serialized = "[";
       for (let index = 0; index < lengthDescriptor.value; index += 1) {
         const descriptor = SAFE_OBJECT_GET_OWN_PROPERTY_DESCRIPTOR(
           candidate,
-          String(index),
+          SAFE_REFLECT_APPLY(
+            SAFE_STRING_CONSTRUCTOR,
+            undefined,
+            [index],
+          ) as string,
         );
         if (
           descriptor === undefined
           || !SAFE_OBJECT_HAS_OWN(descriptor, "value")
           || descriptor.enumerable !== true
-        ) throw new Error("canonical_data_invalid");
+        ) throw kernelError("canonical_data_invalid");
         if (index > 0) serialized += ",";
         serialized += serialize(descriptor.value, depth + 1);
       }
@@ -532,22 +689,22 @@ function canonical(value: unknown): string {
       prototype !== SAFE_OBJECT_PROTOTYPE
       && prototype !== null
       || keys.length > MAX_DEPENDENCY_OBJECT_KEYS
-    ) throw new Error("canonical_data_invalid");
+    ) throw kernelError("canonical_data_invalid");
     let serialized = "{";
     for (let index = 0; index < keys.length; index += 1) {
       const key = keys[index];
-      if (typeof key !== "string") throw new Error("canonical_data_invalid");
+      if (typeof key !== "string") throw kernelError("canonical_data_invalid");
       const descriptor = SAFE_OBJECT_GET_OWN_PROPERTY_DESCRIPTOR(candidate, key);
       if (
         descriptor === undefined
         || !SAFE_OBJECT_HAS_OWN(descriptor, "value")
         || descriptor.enumerable !== true
-      ) throw new Error("canonical_data_invalid");
+      ) throw kernelError("canonical_data_invalid");
       if (
         SAFE_BUFFER_BYTE_LENGTH(key, "utf8") > MAX_DEPENDENCY_STRING_BYTES
-      ) throw new Error("canonical_data_invalid");
+      ) throw kernelError("canonical_data_invalid");
       const encodedKey = SAFE_JSON_STRINGIFY(key);
-      if (typeof encodedKey !== "string") throw new Error("canonical_data_invalid");
+      if (typeof encodedKey !== "string") throw kernelError("canonical_data_invalid");
       if (index > 0) serialized += ",";
       serialized += `${encodedKey}:${serialize(descriptor.value, depth + 1)}`;
     }
@@ -559,7 +716,7 @@ function canonical(value: unknown): string {
 function canonicalSha256(domain: string, value: unknown): string {
   const hash = SAFE_REFLECT_APPLY(
     SAFE_CRYPTO_CREATE_HASH,
-    crypto,
+    SAFE_CRYPTO,
     ["sha256"],
   ) as ReturnType<typeof crypto.createHash>;
   SAFE_REFLECT_APPLY(SAFE_CRYPTO_HASH_UPDATE, hash, [domain, "utf8"]);
@@ -604,20 +761,20 @@ function snapshotDependencyResult<T>(input: T): T {
     if (
       nodes > MAX_DEPENDENCY_SNAPSHOT_NODES
       || depth > MAX_DEPENDENCY_SNAPSHOT_DEPTH
-    ) throw new Error("dependency_result_invalid");
+    ) throw kernelError("dependency_result_invalid");
     if (value === null || typeof value === "boolean") return value;
     if (typeof value === "string") {
       if (
         SAFE_BUFFER_BYTE_LENGTH(value, "utf8")
           > MAX_DEPENDENCY_STRING_BYTES
       ) {
-        throw new Error("dependency_result_invalid");
+        throw kernelError("dependency_result_invalid");
       }
       return value;
     }
     if (typeof value === "number") {
       if (!SAFE_NUMBER_IS_FINITE(value)) {
-        throw new Error("dependency_result_invalid");
+        throw kernelError("dependency_result_invalid");
       }
       return value;
     }
@@ -625,14 +782,14 @@ function snapshotDependencyResult<T>(input: T): T {
       typeof value !== "object"
       || SAFE_REFLECT_APPLY(SAFE_WEAK_SET_HAS, seen, [value]) === true
     ) {
-      throw new Error("dependency_result_invalid");
+      throw kernelError("dependency_result_invalid");
     }
     SAFE_REFLECT_APPLY(SAFE_WEAK_SET_ADD, seen, [value]);
     const prototype = SAFE_OBJECT_GET_PROTOTYPE_OF(value);
     const keys = SAFE_REFLECT_OWN_KEYS(value);
     if (SAFE_ARRAY_IS_ARRAY(value)) {
       if (prototype !== SAFE_ARRAY_PROTOTYPE) {
-        throw new Error("dependency_result_invalid");
+        throw kernelError("dependency_result_invalid");
       }
       const lengthDescriptor = SAFE_OBJECT_GET_OWN_PROPERTY_DESCRIPTOR(
         value,
@@ -645,22 +802,26 @@ function snapshotDependencyResult<T>(input: T): T {
         || lengthDescriptor.value < 0
         || lengthDescriptor.value > MAX_DEPENDENCY_ARRAY_LENGTH
         || keys.length !== lengthDescriptor.value + 1
-      ) throw new Error("dependency_result_invalid");
+      ) throw kernelError("dependency_result_invalid");
       const output: unknown[] = [];
       for (let index = 0; index < lengthDescriptor.value; index += 1) {
         const descriptor = SAFE_OBJECT_GET_OWN_PROPERTY_DESCRIPTOR(
           value,
-          String(index),
+          SAFE_REFLECT_APPLY(
+            SAFE_STRING_CONSTRUCTOR,
+            undefined,
+            [index],
+          ) as string,
         );
         if (
           !descriptor
           || !SAFE_OBJECT_HAS_OWN(descriptor, "value")
           || descriptor.enumerable !== true
-        ) throw new Error("dependency_result_invalid");
+        ) throw kernelError("dependency_result_invalid");
         if (!appendOwnArrayItem(
           output,
           snapshot(descriptor.value, depth + 1),
-        )) throw new Error("dependency_result_invalid");
+        )) throw kernelError("dependency_result_invalid");
       }
       return SAFE_OBJECT_FREEZE(output);
     }
@@ -668,17 +829,17 @@ function snapshotDependencyResult<T>(input: T): T {
       prototype !== SAFE_OBJECT_PROTOTYPE
       && prototype !== null
       || keys.length > MAX_DEPENDENCY_OBJECT_KEYS
-    ) throw new Error("dependency_result_invalid");
+    ) throw kernelError("dependency_result_invalid");
     const output = SAFE_OBJECT_CREATE(null) as Record<string, unknown>;
     for (let index = 0; index < keys.length; index += 1) {
       const key = keys[index];
-      if (typeof key !== "string") throw new Error("dependency_result_invalid");
+      if (typeof key !== "string") throw kernelError("dependency_result_invalid");
       const descriptor = SAFE_OBJECT_GET_OWN_PROPERTY_DESCRIPTOR(value, key);
       if (
         !descriptor
         || !SAFE_OBJECT_HAS_OWN(descriptor, "value")
         || descriptor.enumerable !== true
-      ) throw new Error("dependency_result_invalid");
+      ) throw kernelError("dependency_result_invalid");
       SAFE_OBJECT_DEFINE_PROPERTY(output, key, {
         configurable: false,
         enumerable: true,
@@ -696,7 +857,7 @@ async function withDeadline<T>(
   operation: (signal: AbortSignal) => Promise<T>,
 ): Promise<T> {
   if (typeof SAFE_ABORT_CONTROLLER_SIGNAL !== "function") {
-    throw new Error("operation_timeout");
+    throw kernelError("operation_timeout");
   }
   const controller = new SAFE_ABORT_CONTROLLER();
   const signal = SAFE_REFLECT_APPLY(
@@ -705,7 +866,7 @@ async function withDeadline<T>(
     [],
   ) as AbortSignal;
   let timedOut = false;
-  const timeout = SAFE_REFLECT_APPLY(SAFE_SET_TIMEOUT, globalThis, [() => {
+  const timeout = SAFE_REFLECT_APPLY(SAFE_SET_TIMEOUT, SAFE_GLOBAL_THIS, [() => {
     timedOut = true;
     SAFE_REFLECT_APPLY(SAFE_ABORT_CONTROLLER_ABORT, controller, []);
   }, timeoutMs]) as ReturnType<typeof setTimeout>;
@@ -714,13 +875,13 @@ async function withDeadline<T>(
     try {
       result = await operation(signal);
     } catch (error) {
-      if (timedOut) throw new Error("operation_timeout");
+      if (timedOut) throw kernelError("operation_timeout");
       throw error;
     }
-    if (timedOut) throw new Error("operation_timeout");
+    if (timedOut) throw kernelError("operation_timeout");
     return result;
   } finally {
-    SAFE_REFLECT_APPLY(SAFE_CLEAR_TIMEOUT, globalThis, [timeout]);
+    SAFE_REFLECT_APPLY(SAFE_CLEAR_TIMEOUT, SAFE_GLOBAL_THIS, [timeout]);
   }
 }
 
@@ -771,7 +932,7 @@ function inputAuthorityExact(
   operation: PermanentStagingProviderVariableWriteOperation,
 ): boolean {
   return value.schemaVersion
-      === "pintpath-permanent-staging-provider-variable-write-input/v1"
+      === "pintpath-permanent-staging-provider-variable-write-input/v2"
     && value.variableName === operation.variableName
     && SAFE_NUMBER_IS_SAFE_INTEGER(value.byteLength)
     && value.byteLength > 0
@@ -781,7 +942,8 @@ function inputAuthorityExact(
     && value.commitmentDomain
       === "pintpath/permanent-staging/provider-variable-write/input-commitment/v1"
     && sha256StringExact(value.commitmentSha256)
-    && value.stdinOnly === true
+    && value.callbackIngressOnly === true
+    && value.stdinSourceAuthorityAvailable === false
     && value.validUtf8 === true
     && value.controlCharactersAbsent === true;
 }
@@ -811,8 +973,37 @@ function localAuthorityExact(
   value: PermanentStagingProviderVariableLocalAuthority,
 ): boolean {
   const lock = PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_LOCK;
+  if (!exactObjectKeys(value, [
+    "schemaVersion",
+    "railwayCliVersion",
+    "railwayCliAbsolutePath",
+    "railwayCliSha256",
+    "railwayCliBytes",
+    "railwayCliIdentitySha256",
+    "absoluteCanonicalNonSymlinkPath",
+    "regularFile",
+    "currentUid",
+    "mode0555",
+    "nlinkOne",
+    "descriptorHeld",
+    "pathAndDescriptorIdentityExact",
+    "bytesHashedFromHeldDescriptor",
+    "privateExecutableCopyAbsolutePath",
+    "privateExecutableCopySha256",
+    "privateExecutableCopyBytes",
+    "privateExecutableCopyIdentitySha256",
+    "privateExecutableCopyAuthoritySha256",
+    "environmentAuthoritySha256",
+    "stdinAuthoritySha256",
+    "processGroupAuthoritySha256",
+    "processAdapterAuthoritySha256",
+    "privateExecutableCopyDescriptorHeld",
+    "privateExecutableCopyParentMode0700",
+    "processAdapterInjectedSpawnOnly",
+    "providerInvokedDuringInspection",
+  ])) return false;
   return value.schemaVersion
-      === "pintpath-permanent-staging-provider-variable-write-local-authority/v1"
+      === "pintpath-permanent-staging-provider-variable-write-local-authority/v2"
     && value.railwayCliAbsolutePath === lock.railwayCli.absolutePath
     && value.railwayCliVersion === lock.railwayCli.version
     && value.railwayCliSha256 === lock.railwayCli.sha256
@@ -828,7 +1019,85 @@ function localAuthorityExact(
     && value.descriptorHeld === true
     && value.pathAndDescriptorIdentityExact === true
     && value.bytesHashedFromHeldDescriptor === true
-    && value.providerInvoked === false;
+    && typeof value.privateExecutableCopyAbsolutePath === "string"
+    && value.privateExecutableCopyAbsolutePath.length > 0
+    && value.privateExecutableCopyAbsolutePath !== value.railwayCliAbsolutePath
+    && value.privateExecutableCopySha256 === value.railwayCliSha256
+    && value.privateExecutableCopyBytes === value.railwayCliBytes
+    && sha256StringExact(value.privateExecutableCopyIdentitySha256)
+    && sha256StringExact(value.privateExecutableCopyAuthoritySha256)
+    && sha256StringExact(value.environmentAuthoritySha256)
+    && sha256StringExact(value.stdinAuthoritySha256)
+    && sha256StringExact(value.processGroupAuthoritySha256)
+    && sha256StringExact(value.processAdapterAuthoritySha256)
+    && value.privateExecutableCopyDescriptorHeld === true
+    && value.privateExecutableCopyParentMode0700 === true
+    && value.processAdapterInjectedSpawnOnly === true
+    && value.providerInvokedDuringInspection === false;
+}
+
+function localAuthoritySha256(
+  value: PermanentStagingProviderVariableLocalAuthority,
+): string {
+  return canonicalSha256(LOCAL_AUTHORITY_HASH_DOMAIN, value);
+}
+
+function expectedCommand(
+  operation: PermanentStagingProviderVariableWriteOperation,
+  local: PermanentStagingProviderVariableLocalAuthority,
+): unknown {
+  const lock = PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_LOCK;
+  return {
+    schemaVersion:
+      "pintpath-permanent-staging-provider-variable-write-command/v2",
+    executable: local.privateExecutableCopyAbsolutePath,
+    executableAuthority: {
+      privateExecutableCopySha256: local.privateExecutableCopySha256,
+      privateExecutableCopyIdentitySha256:
+        local.privateExecutableCopyIdentitySha256,
+      privateExecutableCopyAuthoritySha256:
+        local.privateExecutableCopyAuthoritySha256,
+      descriptorHeld: true,
+    },
+    argv: [
+      "variable",
+      "set",
+      operation.variableName,
+      "--stdin",
+      "--skip-deploys",
+      "--project",
+      lock.projectId,
+      "--environment",
+      lock.stagingEnvironmentId,
+      "--service",
+      lock.serviceId,
+    ],
+    environment: {
+      inherit: false,
+      prototype: "null",
+      ownEnumerableDataPropertiesOnly: true,
+      exactNames: ["RAILWAY_TOKEN"],
+      valuesHandledByThisModule: false,
+    },
+    shell: false,
+    stdin: "pipe",
+    stdinWrites: 1,
+    stdinEndCalls: 1,
+    stdout: "ignore",
+    stderr: "ignore",
+    maximumCapturedStdoutBytes: 0,
+    maximumCapturedStderrBytes: 0,
+    detached: true,
+    abortSignalSequence: ["SIGTERM", "SIGKILL"],
+    processGroupEmptyBeforeSettlement: true,
+  };
+}
+
+function commandSha256(
+  operation: PermanentStagingProviderVariableWriteOperation,
+  local: PermanentStagingProviderVariableLocalAuthority,
+): string {
+  return canonicalSha256(COMMAND_HASH_DOMAIN, expectedCommand(operation, local));
 }
 
 function boundaryAuthorityExact(
@@ -916,7 +1185,11 @@ function denseTranscriptArray(
   for (let index = 0; index < lengthDescriptor.value; index += 1) {
     const descriptor = SAFE_OBJECT_GET_OWN_PROPERTY_DESCRIPTOR(
       value,
-      String(index),
+      SAFE_REFLECT_APPLY(
+        SAFE_STRING_CONSTRUCTOR,
+        undefined,
+        [index],
+      ) as string,
     );
     if (
       descriptor === undefined
@@ -1104,13 +1377,58 @@ function targetPostflightExact(
 function writeAcknowledgementExact(
   value: PermanentStagingProviderVariableWriteAcknowledgement,
   input: PermanentStagingProviderVariableInputAuthority,
+  intent: PermanentStagingProviderVariableWriteIntent,
+  expectedIntentSha256: string,
+  attemptAuthority:
+    PermanentStagingProviderVariableWriteLocalAttemptAuthority,
 ): boolean {
+  if (!consumePermanentStagingProviderVariableWriteLocalReceiptAuthority(
+    value,
+    attemptAuthority,
+  )) return false;
+  if (!exactObjectKeys(value, [
+    "schemaVersion",
+    "variableName",
+    "inputCommitmentSha256",
+    "intentSha256",
+    "localAuthoritySha256",
+    "commandSha256",
+    "processAdapterAuthoritySha256",
+    "privateExecutableCopyAuthoritySha256",
+    "environmentAuthoritySha256",
+    "stdinAuthoritySha256",
+    "processGroupAuthoritySha256",
+    "processAdapterReceiptSha256",
+    "childAttempts",
+    "stdinWrites",
+    "exitCode",
+    "signal",
+    "stdoutBytesCaptured",
+    "stderrBytesCaptured",
+    "childCloseAwaited",
+    "environmentNullPrototype",
+    "stdinWriteCompleted",
+    "stdinEof",
+    "detachedProcessGroup",
+    "processGroupEmpty",
+    "closeAndErrorSettled",
+    "providerAcknowledgementInspected",
+  ])) return false;
   return value.schemaVersion
-      === "pintpath-permanent-staging-provider-variable-write-local-receipt/v1"
+      === "pintpath-permanent-staging-provider-variable-write-local-receipt/v3"
     && value.variableName === input.variableName
     && value.inputCommitmentSha256 === input.commitmentSha256
-    && sha256StringExact(value.localAuthoritySha256)
-    && sha256StringExact(value.commandSha256)
+    && value.intentSha256 === expectedIntentSha256
+    && value.localAuthoritySha256 === intent.localAuthoritySha256
+    && value.commandSha256 === intent.commandSha256
+    && value.processAdapterAuthoritySha256
+      === intent.processAdapterAuthoritySha256
+    && value.privateExecutableCopyAuthoritySha256
+      === intent.privateExecutableCopyAuthoritySha256
+    && value.environmentAuthoritySha256 === intent.environmentAuthoritySha256
+    && value.stdinAuthoritySha256 === intent.stdinAuthoritySha256
+    && value.processGroupAuthoritySha256 === intent.processGroupAuthoritySha256
+    && sha256StringExact(value.processAdapterReceiptSha256)
     && value.childAttempts === 1
     && value.stdinWrites === 1
     && value.exitCode === 0
@@ -1118,7 +1436,19 @@ function writeAcknowledgementExact(
     && value.stdoutBytesCaptured === 0
     && value.stderrBytesCaptured === 0
     && value.childCloseAwaited === true
+    && value.environmentNullPrototype === true
+    && value.stdinWriteCompleted === true
+    && value.stdinEof === true
+    && value.detachedProcessGroup === true
+    && value.processGroupEmpty === true
+    && value.closeAndErrorSettled === true
     && value.providerAcknowledgementInspected === false;
+}
+
+function writeAcknowledgementSha256(
+  value: PermanentStagingProviderVariableWriteAcknowledgement,
+): string {
+  return canonicalSha256(WRITE_ACKNOWLEDGEMENT_HASH_DOMAIN, value);
 }
 
 function cleanupAuthorityExact(
@@ -1158,6 +1488,7 @@ function durableArtifactExact(
 function makeIntent(
   operation: PermanentStagingProviderVariableWriteOperation,
   input: PermanentStagingProviderVariableInputAuthority,
+  local: PermanentStagingProviderVariableLocalAuthority,
   boundary: PermanentStagingProviderVariableBoundaryAuthority,
   target: PermanentStagingProviderVariableTargetPreflightObservation,
 ): PermanentStagingProviderVariableWriteIntent {
@@ -1174,6 +1505,14 @@ function makeIntent(
     serviceId: lock.serviceId,
     valueByteLength: input.byteLength,
     valueCommitmentSha256: input.commitmentSha256,
+    localAuthoritySha256: localAuthoritySha256(local),
+    commandSha256: commandSha256(operation, local),
+    processAdapterAuthoritySha256: local.processAdapterAuthoritySha256,
+    privateExecutableCopyAuthoritySha256:
+      local.privateExecutableCopyAuthoritySha256,
+    environmentAuthoritySha256: local.environmentAuthoritySha256,
+    stdinAuthoritySha256: local.stdinAuthoritySha256,
+    processGroupAuthoritySha256: local.processGroupAuthoritySha256,
     boundarySnapshotSha256: boundary.snapshotSha256,
     metadataInventorySha256: target.authority.metadataInventorySha256,
     deploymentInventorySha256: target.authority.deploymentInventorySha256,
@@ -1188,6 +1527,7 @@ function freshIntentAuthorityExact(
   value: PermanentStagingProviderVariableWriteIntent,
   operation: PermanentStagingProviderVariableWriteOperation,
   input: PermanentStagingProviderVariableInputAuthority,
+  local: PermanentStagingProviderVariableLocalAuthority,
   boundary: PermanentStagingProviderVariableBoundaryAuthority,
   target: ExactTargetPreflightObservation,
 ): boolean {
@@ -1204,6 +1544,15 @@ function freshIntentAuthorityExact(
     && value.serviceId === lock.serviceId
     && value.valueByteLength === input.byteLength
     && value.valueCommitmentSha256 === input.commitmentSha256
+    && value.localAuthoritySha256 === localAuthoritySha256(local)
+    && value.commandSha256 === commandSha256(operation, local)
+    && value.processAdapterAuthoritySha256
+      === local.processAdapterAuthoritySha256
+    && value.privateExecutableCopyAuthoritySha256
+      === local.privateExecutableCopyAuthoritySha256
+    && value.environmentAuthoritySha256 === local.environmentAuthoritySha256
+    && value.stdinAuthoritySha256 === local.stdinAuthoritySha256
+    && value.processGroupAuthoritySha256 === local.processGroupAuthoritySha256
     && value.boundarySnapshotSha256 === boundary.snapshotSha256
     && value.metadataInventorySha256
       === target.authority.metadataInventorySha256
@@ -1243,6 +1592,13 @@ function parseIntent(value: unknown): PermanentStagingProviderVariableWriteInten
     "serviceId",
     "valueByteLength",
     "valueCommitmentSha256",
+    "localAuthoritySha256",
+    "commandSha256",
+    "processAdapterAuthoritySha256",
+    "privateExecutableCopyAuthoritySha256",
+    "environmentAuthoritySha256",
+    "stdinAuthoritySha256",
+    "processGroupAuthoritySha256",
     "boundarySnapshotSha256",
     "metadataInventorySha256",
     "deploymentInventorySha256",
@@ -1265,6 +1621,13 @@ function parseIntent(value: unknown): PermanentStagingProviderVariableWriteInten
     || !SAFE_NUMBER_IS_SAFE_INTEGER(candidate.valueByteLength)
     || (candidate.valueByteLength ?? 0) < 1
     || !sha256StringExact(candidate.valueCommitmentSha256)
+    || !sha256StringExact(candidate.localAuthoritySha256)
+    || !sha256StringExact(candidate.commandSha256)
+    || !sha256StringExact(candidate.processAdapterAuthoritySha256)
+    || !sha256StringExact(candidate.privateExecutableCopyAuthoritySha256)
+    || !sha256StringExact(candidate.environmentAuthoritySha256)
+    || !sha256StringExact(candidate.stdinAuthoritySha256)
+    || !sha256StringExact(candidate.processGroupAuthoritySha256)
     || !sha256StringExact(candidate.boundarySnapshotSha256)
     || !sha256StringExact(candidate.metadataInventorySha256)
     || !sha256StringExact(candidate.deploymentInventorySha256)
@@ -1300,6 +1663,7 @@ function existingIntentExact(
   existing: PermanentStagingProviderVariableExistingIntent,
   operation: PermanentStagingProviderVariableWriteOperation,
   input: PermanentStagingProviderVariableInputAuthority,
+  local: PermanentStagingProviderVariableLocalAuthority,
   boundary: PermanentStagingProviderVariableBoundaryAuthority,
 ): PermanentStagingProviderVariableWriteIntent | null {
   if (!exactObjectKeys(existing, ["leaf", "canonical", "evidence"])) return null;
@@ -1320,6 +1684,15 @@ function existingIntentExact(
     || intent.serviceId !== lock.serviceId
     || intent.valueByteLength !== input.byteLength
     || intent.valueCommitmentSha256 !== input.commitmentSha256
+    || intent.localAuthoritySha256 !== localAuthoritySha256(local)
+    || intent.commandSha256 !== commandSha256(operation, local)
+    || intent.processAdapterAuthoritySha256
+      !== local.processAdapterAuthoritySha256
+    || intent.privateExecutableCopyAuthoritySha256
+      !== local.privateExecutableCopyAuthoritySha256
+    || intent.environmentAuthoritySha256 !== local.environmentAuthoritySha256
+    || intent.stdinAuthoritySha256 !== local.stdinAuthoritySha256
+    || intent.processGroupAuthoritySha256 !== local.processGroupAuthoritySha256
     || intent.boundarySnapshotSha256 !== boundary.snapshotSha256
   ) return null;
   return intent;
@@ -1373,6 +1746,7 @@ function preFinalizationReceiptExact(
     "variableName",
     "intentSha256",
     "terminalEvidenceSha256",
+    "writeAcknowledgementSha256",
     "recoveryOnly",
     "runtimeValueProof",
     "activationAuthorized",
@@ -1388,10 +1762,15 @@ function preFinalizationReceiptExact(
     && value.variableName === operation.variableName
     && value.intentSha256 === intentSha256
     && value.terminalEvidenceSha256 === null
+    && (value.writeAcknowledgementSha256 === null
+      || sha256StringExact(value.writeAcknowledgementSha256))
     && typeof value.recoveryOnly === "boolean"
     && value.runtimeValueProof === false
     && value.activationAuthorized === false
     && checksShapeExact(value.checks)
+    && (value.checks.acknowledgementExact
+      ? sha256StringExact(value.writeAcknowledgementSha256)
+      : value.writeAcknowledgementSha256 === null)
     && value.checks.frameworkEnabled === true
     && value.checks.policyExact === true
     && value.checks.terminalEvidenceExact === false
@@ -1499,10 +1878,12 @@ function makeReceipt(
   outcome: PermanentStagingProviderVariableWriteKernelOutcome,
   intentSha256: string | null,
   terminalEvidenceSha256: string | null,
+  writeAcknowledgementSha256Value: string | null,
   recoveryOnly: boolean,
   checks: PermanentStagingProviderVariableWriteKernelChecks,
 ): PermanentStagingProviderVariableWriteKernelReceipt {
-  return {
+  const publishedChecks = freezeNullRecord({ ...checks });
+  return freezeNullRecord({
     schemaVersion: PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_KERNEL_SCHEMA,
     executorState: PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_EXECUTOR_STATE,
     mode: "internal-review-only-create",
@@ -1511,11 +1892,12 @@ function makeReceipt(
     variableName: operation.variableName,
     intentSha256,
     terminalEvidenceSha256,
+    writeAcknowledgementSha256: writeAcknowledgementSha256Value,
     recoveryOnly,
     runtimeValueProof: false,
     activationAuthorized: false,
-    checks: { ...checks },
-  };
+    checks: publishedChecks,
+  });
 }
 
 async function executeEnabled(
@@ -1523,7 +1905,8 @@ async function executeEnabled(
   dependencies: PermanentStagingProviderVariableWriteKernelDependencies,
 ): Promise<PermanentStagingProviderVariableWriteKernelReceipt> {
   const operation = operationFromId(operationId);
-  if (!operation) throw new Error("operation_invalid");
+  if (!operation) throw kernelError("operation_invalid");
+  const capturedDependencies = captureKernelDependencies(dependencies);
   const checks = initialChecks();
   let input: PermanentStagingProviderVariableInputAuthority | null = null;
   let local: PermanentStagingProviderVariableLocalAuthority | null = null;
@@ -1533,6 +1916,7 @@ async function executeEnabled(
   PermanentStagingProviderVariableCreatePreflightCandidate | null = null;
   let intentSha256: string | null = null;
   let terminalEvidenceSha256: string | null = null;
+  let writeAcknowledgementSha256Value: string | null = null;
   let recoveryOnly = false;
   let terminalReplay = false;
   let writeAttempted = false;
@@ -1544,7 +1928,11 @@ async function executeEnabled(
     try {
       const observedBoundary = snapshotDependencyResult(await withDeadline(
         PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_DEADLINES.postflightMs,
-        dependencies.inspectBoundary,
+        (signal) => applyDependency(
+          capturedDependencies.inspectBoundary,
+          capturedDependencies.receiver,
+          [signal],
+        ),
       ));
       checks.boundaryPostflightExact = boundaryAuthorityExact(observedBoundary)
         && canonical(observedBoundary) === canonical(boundary);
@@ -1554,11 +1942,10 @@ async function executeEnabled(
     try {
       const observedTarget = snapshotDependencyResult(await withDeadline(
         PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_DEADLINES.postflightMs,
-        (signal) => dependencies.inspectTargetPostflight(
-          operation,
-          intent!,
-          preflightForPostflight!,
-          signal,
+        (signal) => applyDependency(
+          capturedDependencies.inspectTargetPostflight,
+          capturedDependencies.receiver,
+          [operation, intent!, preflightForPostflight!, signal],
         ),
       ));
       checks.targetPostflightExact = targetPostflightExact(
@@ -1575,7 +1962,11 @@ async function executeEnabled(
     try {
       const observedLocal = snapshotDependencyResult(await withDeadline(
         PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_DEADLINES.localAuthorityMs,
-        (signal) => dependencies.inspectLocalAuthority(operation, signal),
+        (signal) => applyDependency(
+          capturedDependencies.inspectLocalAuthority,
+          capturedDependencies.receiver,
+          [operation, signal],
+        ),
       ));
       checks.localPostflightExact = localAuthorityExact(observedLocal)
         && canonical(observedLocal) === canonical(local);
@@ -1587,7 +1978,11 @@ async function executeEnabled(
   try {
     const existingTerminal = snapshotDependencyResult(await withDeadline(
       PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_DEADLINES.evidenceMs,
-      (signal) => dependencies.inspectTerminalEvidence(operation, signal),
+      (signal) => applyDependency(
+        capturedDependencies.inspectTerminalEvidence,
+        capturedDependencies.receiver,
+        [operation, signal],
+      ),
     ));
     if (existingTerminal !== null) {
       terminalReplay = true;
@@ -1597,7 +1992,11 @@ async function executeEnabled(
       if (terminal !== null) {
         const existing = snapshotDependencyResult(await withDeadline(
           PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_DEADLINES.evidenceMs,
-          (signal) => dependencies.inspectIntent(operation, signal),
+          (signal) => applyDependency(
+            capturedDependencies.inspectIntent,
+            capturedDependencies.receiver,
+            [operation, signal],
+          ),
         ));
         if (existing !== null) {
           const matchedIntent = existingIntentForTerminalExact(
@@ -1615,6 +2014,8 @@ async function executeEnabled(
               preflightForPostflight = rebuilt.preflight;
               intentSha256 = terminal.intentSha256;
               terminalEvidenceSha256 = existingTerminal.evidence.sha256;
+              writeAcknowledgementSha256Value = terminal
+                .preFinalizationReceipt.writeAcknowledgementSha256;
               checks.durableIntentExact = true;
               checks.terminalEvidenceExact = true;
             }
@@ -1632,56 +2033,76 @@ async function executeEnabled(
     try {
     input = snapshotDependencyResult(await withDeadline(
       PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_DEADLINES.inputMs,
-      (signal) => dependencies.inspectInput(operation, signal),
+      (signal) => applyDependency(
+        capturedDependencies.inspectInput,
+        capturedDependencies.receiver,
+        [operation, signal],
+      ),
     ));
     checks.inputHeldAndBound = inputAuthorityExact(input, operation);
-    if (!checks.inputHeldAndBound) throw new Error("input_invalid");
+    if (!checks.inputHeldAndBound) throw kernelError("input_invalid");
 
     local = snapshotDependencyResult(await withDeadline(
       PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_DEADLINES.localAuthorityMs,
-      (signal) => dependencies.inspectLocalAuthority(operation, signal),
+      (signal) => applyDependency(
+        capturedDependencies.inspectLocalAuthority,
+        capturedDependencies.receiver,
+        [operation, signal],
+      ),
     ));
     checks.localAuthorityExact = localAuthorityExact(local);
-    if (!checks.localAuthorityExact) throw new Error("local_authority_invalid");
+    if (!checks.localAuthorityExact) throw kernelError("local_authority_invalid");
 
     boundary = snapshotDependencyResult(await withDeadline(
       PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_DEADLINES.boundaryMs,
-      dependencies.inspectBoundary,
+      (signal) => applyDependency(
+        capturedDependencies.inspectBoundary,
+        capturedDependencies.receiver,
+        [signal],
+      ),
     ));
     checks.boundaryPreflightExact = boundaryAuthorityExact(boundary);
-    if (!checks.boundaryPreflightExact) throw new Error("boundary_invalid");
+    if (!checks.boundaryPreflightExact) throw kernelError("boundary_invalid");
 
     const existing = snapshotDependencyResult(await withDeadline(
       PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_DEADLINES.evidenceMs,
-      (signal) => dependencies.inspectIntent(operation, signal),
+      (signal) => applyDependency(
+        capturedDependencies.inspectIntent,
+        capturedDependencies.receiver,
+        [operation, signal],
+      ),
     ));
     if (existing !== null) {
       recoveryOnly = true;
-      intent = existingIntentExact(existing, operation, input, boundary);
+      intent = existingIntentExact(existing, operation, input, local, boundary);
       checks.durableIntentExact = intent !== null;
-      if (!intent) throw new Error("intent_invalid");
+      if (!intent) throw kernelError("intent_invalid");
       const rebuilt = rebuildPreflightLineage(
         intent.preflightLineage,
         intent.variableName,
       );
-      if (rebuilt === null) throw new Error("intent_lineage_invalid");
+      if (rebuilt === null) throw kernelError("intent_lineage_invalid");
       preflightForPostflight = rebuilt.preflight;
       intentSha256 = existing.evidence.sha256;
     } else {
       const targetInput = snapshotDependencyResult(await withDeadline(
         PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_DEADLINES.targetMs,
-        (signal) => dependencies.inspectTargetPreflight(operation, signal),
+        (signal) => applyDependency(
+          capturedDependencies.inspectTargetPreflight,
+          capturedDependencies.receiver,
+          [operation, signal],
+        ),
       ));
       const target = targetPreflightObservationExact(targetInput, operation);
       checks.targetPreflightExact = target !== null;
-      if (target === null) throw new Error("target_invalid");
+      if (target === null) throw kernelError("target_invalid");
       preflightForPostflight = target.preflight;
-      const intentCandidate = makeIntent(operation, input, boundary, target);
+      const intentCandidate = makeIntent(operation, input, local, boundary, target);
       const canonicalIntent = canonical(intentCandidate);
       if (
         SAFE_BUFFER_BYTE_LENGTH(canonicalIntent, "utf8")
           > MAX_INTENT_CANONICAL_BYTES
-      ) throw new Error("intent_too_large");
+      ) throw kernelError("intent_too_large");
       const parsedIntent = parseIntent(canonicalIntent);
       if (
         parsedIntent === null
@@ -1689,57 +2110,74 @@ async function executeEnabled(
           parsedIntent,
           operation,
           input,
+          local,
           boundary,
           target,
         )
-      ) throw new Error("intent_roundtrip_invalid");
+      ) throw kernelError("intent_roundtrip_invalid");
       intent = parsedIntent;
       const expectedIntentSha256 = sha256(canonicalIntent);
       recoveryOnly = true;
       const persisted = snapshotDependencyResult(await withDeadline(
         PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_DEADLINES.evidenceMs,
-        (signal) => dependencies.persistIntent(
-          operation,
-          canonicalIntent,
-          signal,
+        (signal) => applyDependency(
+          capturedDependencies.persistIntent,
+          capturedDependencies.receiver,
+          [operation, canonicalIntent, signal],
         ),
       ));
       checks.durableIntentExact = durableArtifactExact(
         persisted,
         expectedIntentSha256,
       );
-      if (!checks.durableIntentExact) throw new Error("intent_not_durable");
+      if (!checks.durableIntentExact) throw kernelError("intent_not_durable");
       intentSha256 = persisted.sha256;
       recoveryOnly = persisted.publication === "existing-exact";
     }
 
     const reassertedInput = snapshotDependencyResult(await withDeadline(
       PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_DEADLINES.inputMs,
-      (signal) => dependencies.inspectInput(operation, signal),
+      (signal) => applyDependency(
+        capturedDependencies.inspectInput,
+        capturedDependencies.receiver,
+        [operation, signal],
+      ),
     ));
     checks.inputReasserted = sameInputAuthority(input, reassertedInput);
-    if (!checks.inputReasserted) throw new Error("input_drift");
+    if (!checks.inputReasserted) throw kernelError("input_drift");
 
     const reassertedLocal = snapshotDependencyResult(await withDeadline(
       PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_DEADLINES.localAuthorityMs,
-      (signal) => dependencies.inspectLocalAuthority(operation, signal),
+      (signal) => applyDependency(
+        capturedDependencies.inspectLocalAuthority,
+        capturedDependencies.receiver,
+        [operation, signal],
+      ),
     ));
     checks.localAuthorityReasserted = localAuthorityExact(reassertedLocal)
       && canonical(reassertedLocal) === canonical(local);
-    if (!checks.localAuthorityReasserted) throw new Error("local_drift");
+    if (!checks.localAuthorityReasserted) throw kernelError("local_drift");
 
     const reassertedBoundary = snapshotDependencyResult(await withDeadline(
       PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_DEADLINES.boundaryMs,
-      dependencies.inspectBoundary,
+      (signal) => applyDependency(
+        capturedDependencies.inspectBoundary,
+        capturedDependencies.receiver,
+        [signal],
+      ),
     ));
     checks.boundaryReasserted = boundaryAuthorityExact(reassertedBoundary)
       && canonical(reassertedBoundary) === canonical(boundary);
-    if (!checks.boundaryReasserted) throw new Error("boundary_drift");
+    if (!checks.boundaryReasserted) throw kernelError("boundary_drift");
 
     if (!recoveryOnly) {
       const reassertedTargetInput = snapshotDependencyResult(await withDeadline(
         PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_DEADLINES.targetMs,
-        (signal) => dependencies.inspectTargetPreflight(operation, signal),
+        (signal) => applyDependency(
+          capturedDependencies.inspectTargetPreflight,
+          capturedDependencies.receiver,
+          [operation, signal],
+        ),
       ));
       const reassertedTarget = targetPreflightObservationExact(
         reassertedTargetInput,
@@ -1750,23 +2188,48 @@ async function executeEnabled(
         === intent.metadataInventorySha256
         && reassertedTarget.authority.deploymentInventorySha256
           === intent.deploymentInventorySha256;
-      if (!checks.targetReasserted) throw new Error("target_drift");
+      if (!checks.targetReasserted) throw kernelError("target_drift");
 
       writeAttempted = true;
       checks.writeAttempted = true;
+      const attemptAuthority =
+        createPermanentStagingProviderVariableWriteLocalAttemptAuthority({
+          operationId: operation.operationId,
+          variableName: operation.variableName,
+          inputCommitmentSha256: input.commitmentSha256,
+          inputByteLength: input.byteLength,
+          intentSha256: intentSha256!,
+          localAuthoritySha256: intent.localAuthoritySha256,
+          commandSha256: intent.commandSha256,
+          processAdapterAuthoritySha256:
+            intent.processAdapterAuthoritySha256,
+          privateExecutableCopyAuthoritySha256:
+            intent.privateExecutableCopyAuthoritySha256,
+          environmentAuthoritySha256: intent.environmentAuthoritySha256,
+          stdinAuthoritySha256: intent.stdinAuthoritySha256,
+          processGroupAuthoritySha256: intent.processGroupAuthoritySha256,
+        });
       try {
-        const acknowledgement = snapshotDependencyResult(await withDeadline(
+        const acknowledgement = await withDeadline(
           PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_DEADLINES.writeMs,
-          (signal) => dependencies.writeExactlyOnce(
-            operation,
-            intentSha256!,
-            signal,
+          (signal) => applyDependency(
+            capturedDependencies.writeExactlyOnce,
+            capturedDependencies.receiver,
+            [operation, intentSha256!, attemptAuthority, signal],
           ),
-        ));
+        );
         checks.acknowledgementExact = writeAcknowledgementExact(
           acknowledgement,
           input,
+          intent,
+          intentSha256!,
+          attemptAuthority,
         );
+        if (checks.acknowledgementExact) {
+          writeAcknowledgementSha256Value = writeAcknowledgementSha256(
+            acknowledgement,
+          );
+        }
       } catch {
         checks.acknowledgementExact = false;
       }
@@ -1795,7 +2258,11 @@ async function executeEnabled(
   try {
     const cleanup = snapshotDependencyResult(await withDeadline(
       PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_DEADLINES.cleanupMs,
-      dependencies.cleanup,
+      (signal) => applyDependency(
+        capturedDependencies.cleanup,
+        capturedDependencies.receiver,
+        [signal],
+      ),
     ));
     checks.inputCleanupExact = cleanup.inputZeroized === true
       && cleanup.inputClosed === true;
@@ -1804,7 +2271,11 @@ async function executeEnabled(
     checks.inputCleanupExact = false;
     checks.cleanupExact = false;
   }
-  if (!checks.cleanupExact) outcome = "cleanup_failed";
+  if (!checks.cleanupExact) {
+    outcome = recoveryOnly || intent !== null || writeAttempted
+      ? "mutation_uncertain"
+      : "cleanup_failed";
+  }
 
   if (!terminalReplay && intent && intentSha256) {
     try {
@@ -1813,6 +2284,7 @@ async function executeEnabled(
         outcome,
         intentSha256,
         null,
+        writeAcknowledgementSha256Value,
         recoveryOnly,
         checks,
       );
@@ -1839,14 +2311,14 @@ async function executeEnabled(
         || canonical(parsedTerminal.preFinalizationReceipt)
           !== preFinalizationReceiptCanonical
       ) {
-        throw new Error("terminal_roundtrip_invalid");
+        throw kernelError("terminal_roundtrip_invalid");
       }
       const persisted = snapshotDependencyResult(await withDeadline(
         PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_DEADLINES.evidenceMs,
-        (signal) => dependencies.persistTerminalEvidence(
-          operation,
-          terminalCandidate,
-          signal,
+        (signal) => applyDependency(
+          capturedDependencies.persistTerminalEvidence,
+          capturedDependencies.receiver,
+          [operation, terminalCandidate, signal],
         ),
       ));
       checks.terminalEvidenceExact = durableArtifactExact(
@@ -1856,35 +2328,45 @@ async function executeEnabled(
       if (checks.terminalEvidenceExact) {
         terminalEvidenceSha256 = persisted.sha256;
       } else {
-        outcome = "cleanup_failed";
+        outcome = "mutation_uncertain";
       }
     } catch {
       checks.terminalEvidenceExact = false;
-      outcome = "cleanup_failed";
+      outcome = "mutation_uncertain";
     }
   }
 
   try {
     checks.finalizationExact = await withDeadline(
       PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_DEADLINES.finalizationMs,
-      dependencies.finalize,
+      (signal) => applyDependency(
+        capturedDependencies.finalize,
+        capturedDependencies.receiver,
+        [signal],
+      ),
     ) === true;
   } catch {
     checks.finalizationExact = false;
   }
-  if (!checks.finalizationExact) outcome = "cleanup_failed";
+  if (!checks.finalizationExact) {
+    outcome = recoveryOnly || intent !== null || writeAttempted
+      ? "mutation_uncertain"
+      : "cleanup_failed";
+  }
 
   return makeReceipt(
     operation,
     outcome,
     intentSha256,
     terminalEvidenceSha256,
+    writeAcknowledgementSha256Value,
     recoveryOnly,
     checks,
   );
 }
 
-export const permanentStagingProviderVariableWriteKernelInternals = Object.freeze({
+export const permanentStagingProviderVariableWriteKernelInternals =
+SAFE_OBJECT_FREEZE({
   durableArtifactExact,
   executeEnabled,
   snapshotDependencyResult,

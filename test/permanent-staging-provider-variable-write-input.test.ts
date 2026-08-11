@@ -20,22 +20,22 @@ function inputSource(
 ): PermanentStagingProviderVariableWriteInputSource {
   return {
     ...(options.isTTY === undefined ? {} : { isTTY: options.isTTY }),
-    [Symbol.asyncIterator]() {
-      let index = 0;
-      return {
-        async next() {
-          if (index >= chunks.length) {
-            return { done: true, value: undefined } as const;
-          }
-          const value = chunks[index]!;
-          index += 1;
-          return { done: false, value } as const;
-        },
-        async return() {
+    readExactlyOnce(consumeChunk, settle) {
+      let failure: unknown;
+      try {
+        for (let index = 0; index < chunks.length; index += 1) {
+          consumeChunk(chunks[index]!);
+        }
+      } catch (error) {
+        failure = error;
+      } finally {
+        try {
           options.onReturn?.();
-          return { done: true, value: undefined } as const;
-        },
-      };
+        } catch (error) {
+          failure = error;
+        }
+      }
+      settle(failure);
     },
   };
 }
@@ -105,24 +105,14 @@ describe("permanent staging provider-variable held input", () => {
     const originalFreeze = Object.freeze;
     let poisoned = false;
     const source = inputSource([Buffer.from("fixture-provider-value")]);
-    const originalIterator = source[Symbol.asyncIterator].bind(source);
+    const originalRead = source.readExactlyOnce.bind(source);
     const hostileSource: PermanentStagingProviderVariableWriteInputSource = {
-      [Symbol.asyncIterator]() {
-        const iterator = originalIterator();
-        return {
-          async next() {
-            if (!poisoned) {
-              poisoned = true;
-              Object.freeze = ((value: object) => value) as typeof Object.freeze;
-            }
-            return await iterator.next();
-          },
-          async return() {
-            return iterator.return === undefined
-              ? { done: true, value: undefined }
-              : await iterator.return();
-          },
-        };
+      readExactlyOnce(consumeChunk, settle, signal) {
+        if (!poisoned) {
+          poisoned = true;
+          Object.freeze = ((value: object) => value) as typeof Object.freeze;
+        }
+        originalRead(consumeChunk, settle, signal);
       },
     };
     let handle!: Awaited<ReturnType<
@@ -210,7 +200,8 @@ describe("permanent staging provider-variable held input", () => {
       commitmentDomain:
         "pintpath/permanent-staging/provider-variable-write/input-commitment/v1",
       commitmentSha256: expectedCommitment("OPENAI_API_KEY", expectedBytes),
-      stdinOnly: true,
+      callbackIngressOnly: true,
+      stdinSourceAuthorityAvailable: false,
       validUtf8: true,
       controlCharactersAbsent: true,
     });
@@ -266,33 +257,17 @@ describe("permanent staging provider-variable held input", () => {
     expect(returned).toHaveBeenCalledTimes(1);
   });
 
-  it("rechecks cancellation after a pending terminal iterator result", async () => {
+  it("aborts a source that consumed bytes but never settles", async () => {
     const controller = new AbortController();
-    const secret = Buffer.from("abort-during-terminal-next-secret");
-    const returned = vi.fn();
-    let resolveTerminal!: (value: IteratorResult<Uint8Array>) => void;
-    let secondNextEntered!: () => void;
-    const terminal = new Promise<IteratorResult<Uint8Array>>((resolve) => {
-      resolveTerminal = resolve;
-    });
+    const secret = Buffer.from("abort-nonsettling-source-secret");
+    let consumed!: () => void;
     const entered = new Promise<void>((resolve) => {
-      secondNextEntered = resolve;
+      consumed = resolve;
     });
-    let calls = 0;
     const source: PermanentStagingProviderVariableWriteInputSource = {
-      [Symbol.asyncIterator]() {
-        return {
-          async next(): Promise<IteratorResult<Uint8Array>> {
-            calls += 1;
-            if (calls === 1) return { done: false, value: secret };
-            secondNextEntered();
-            return await terminal;
-          },
-          async return() {
-            returned();
-            return { done: true, value: undefined } as const;
-          },
-        };
+      readExactlyOnce(consumeChunk) {
+        consumeChunk(secret);
+        consumed();
       },
     };
     const pending = readPermanentStagingProviderVariableWriteInput(
@@ -302,149 +277,21 @@ describe("permanent staging provider-variable held input", () => {
     );
     await entered;
     controller.abort();
-    resolveTerminal({ done: true, value: undefined });
     await expect(pending).rejects.toMatchObject({
       code: "input_invalid",
       message: "input_invalid",
     });
     expect(secret.equals(Buffer.alloc(secret.length))).toBe(true);
-    expect(returned).toHaveBeenCalledTimes(1);
   });
 
-  it.each(["done", "value"] as const)(
-    "rechecks cancellation after the iterator-result %s getter",
-    async (getter) => {
-      const controller = new AbortController();
-      const secret = Buffer.from(`abort-from-${getter}-getter-secret`);
-      const returned = vi.fn();
-      let calls = 0;
-      const source: PermanentStagingProviderVariableWriteInputSource = {
-        [Symbol.asyncIterator]() {
-          return {
-            async next(): Promise<IteratorResult<Uint8Array>> {
-              calls += 1;
-              if (calls === 1) return { done: false, value: secret };
-              if (getter === "done") {
-                return Object.defineProperty({}, "done", {
-                  enumerable: true,
-                  get() {
-                    controller.abort();
-                    return true;
-                  },
-                }) as IteratorResult<Uint8Array>;
-              }
-              return Object.defineProperties({}, {
-                done: { enumerable: true, value: false },
-                value: {
-                  enumerable: true,
-                  get() {
-                    controller.abort();
-                    return Buffer.from("must-not-be-copied");
-                  },
-                },
-              }) as IteratorResult<Uint8Array>;
-            },
-            async return() {
-              returned();
-              return { done: true, value: undefined } as const;
-            },
-          };
-        },
-      };
-      await expect(readPermanentStagingProviderVariableWriteInput(
-        "OPENAI_API_KEY",
-        source,
-        controller.signal,
-      )).rejects.toMatchObject({
-        code: "input_invalid",
-        message: "input_invalid",
-      });
-      expect(secret.equals(Buffer.alloc(secret.length))).toBe(true);
-      expect(returned).toHaveBeenCalledTimes(1);
-    },
-  );
-
-  it.each(["done", "value"] as const)(
-    "settles queued cancellation from a nonterminal %s getter before another read",
-    async (getter) => {
-      const controller = new AbortController();
-      const secret = Buffer.from(`queued-abort-from-${getter}-secret`);
-      let nextCalls = 0;
-      let returnCalls = 0;
-      const source: PermanentStagingProviderVariableWriteInputSource = {
-        [Symbol.asyncIterator]() {
-          return {
-            async next(): Promise<IteratorResult<Uint8Array>> {
-              nextCalls += 1;
-              if (nextCalls > 1) return await new Promise(() => undefined);
-              if (getter === "done") {
-                return Object.defineProperties({}, {
-                  done: {
-                    enumerable: true,
-                    get() {
-                      queueMicrotask(() => controller.abort());
-                      return false;
-                    },
-                  },
-                  value: { enumerable: true, value: secret },
-                }) as IteratorResult<Uint8Array>;
-              }
-              return Object.defineProperties({}, {
-                done: { enumerable: true, value: false },
-                value: {
-                  enumerable: true,
-                  get() {
-                    queueMicrotask(() => controller.abort());
-                    return secret;
-                  },
-                },
-              }) as IteratorResult<Uint8Array>;
-            },
-            async return() {
-              returnCalls += 1;
-              return { done: true, value: undefined } as const;
-            },
-          };
-        },
-      };
-      await expect(readPermanentStagingProviderVariableWriteInput(
-        "OPENAI_API_KEY",
-        source,
-        controller.signal,
-      )).rejects.toMatchObject({
-        code: "input_invalid",
-        message: "input_invalid",
-      });
-      expect(nextCalls).toBe(1);
-      expect(returnCalls).toBe(1);
-      expect(secret.equals(Buffer.alloc(secret.length))).toBe(true);
-    },
-  );
-
-  it("rechecks cancellation after the bounded read settles", async () => {
+  it("rejects queued cancellation before source settlement", async () => {
     const controller = new AbortController();
-    const secret = Buffer.from("queued-abort-after-terminal-secret");
-    const returned = vi.fn();
-    let calls = 0;
+    const secret = Buffer.from("queued-abort-before-settle-secret");
     const source: PermanentStagingProviderVariableWriteInputSource = {
-      [Symbol.asyncIterator]() {
-        return {
-          async next(): Promise<IteratorResult<Uint8Array>> {
-            calls += 1;
-            if (calls === 1) return { done: false, value: secret };
-            return Object.defineProperty({}, "done", {
-              enumerable: true,
-              get() {
-                queueMicrotask(() => controller.abort());
-                return true;
-              },
-            }) as IteratorResult<Uint8Array>;
-          },
-          async return() {
-            returned();
-            return { done: true, value: undefined } as const;
-          },
-        };
+      readExactlyOnce(consumeChunk, settle) {
+        consumeChunk(secret);
+        queueMicrotask(() => controller.abort());
+        queueMicrotask(() => settle());
       },
     };
     await expect(readPermanentStagingProviderVariableWriteInput(
@@ -456,7 +303,146 @@ describe("permanent staging provider-variable held input", () => {
       message: "input_invalid",
     });
     expect(secret.equals(Buffer.alloc(secret.length))).toBe(true);
-    expect(returned).not.toHaveBeenCalled();
+  });
+
+  it("latches a callback failure even when the source swallows it", async () => {
+    const prefix = Buffer.from("accepted-prefix");
+    const excess = Buffer.alloc(4_096, 0x62);
+    let swallowed = 0;
+    const source: PermanentStagingProviderVariableWriteInputSource = {
+      readExactlyOnce(consumeChunk, settle) {
+        consumeChunk(prefix);
+        try {
+          consumeChunk(excess);
+        } catch {
+          swallowed += 1;
+        }
+        settle();
+      },
+    };
+    await expect(readPermanentStagingProviderVariableWriteInput(
+      "OPENAI_API_KEY",
+      source,
+      NEVER_ABORTED_SIGNAL,
+    )).rejects.toMatchObject({ code: "input_invalid" });
+    expect(swallowed).toBe(1);
+    expect(prefix.equals(Buffer.alloc(prefix.length))).toBe(true);
+    expect(excess.equals(Buffer.alloc(excess.length))).toBe(true);
+  });
+
+  it("rejects a synchronously late chunk after source settlement", async () => {
+    const prefix = Buffer.from("prefix-before-settle");
+    const late = Buffer.from("late-secret");
+    let swallowed = 0;
+    const source: PermanentStagingProviderVariableWriteInputSource = {
+      readExactlyOnce(consumeChunk, settle) {
+        consumeChunk(prefix);
+        settle();
+        try {
+          consumeChunk(late);
+        } catch {
+          swallowed += 1;
+        }
+      },
+    };
+    await expect(readPermanentStagingProviderVariableWriteInput(
+      "OPENAI_API_KEY",
+      source,
+      NEVER_ABORTED_SIGNAL,
+    )).rejects.toMatchObject({ code: "input_invalid" });
+    expect(swallowed).toBe(1);
+    expect(prefix.equals(Buffer.alloc(prefix.length))).toBe(true);
+    expect(late.equals(Buffer.alloc(late.length))).toBe(true);
+  });
+
+  it("rejects a duplicate source settlement even when it is swallowed", async () => {
+    const secret = Buffer.from("duplicate-settle-secret");
+    let swallowed = 0;
+    const source: PermanentStagingProviderVariableWriteInputSource = {
+      readExactlyOnce(consumeChunk, settle) {
+        consumeChunk(secret);
+        settle();
+        try {
+          settle();
+        } catch {
+          swallowed += 1;
+        }
+      },
+    };
+    await expect(readPermanentStagingProviderVariableWriteInput(
+      "OPENAI_API_KEY",
+      source,
+      NEVER_ABORTED_SIGNAL,
+    )).rejects.toMatchObject({ code: "input_invalid" });
+    expect(swallowed).toBe(1);
+    expect(secret.equals(Buffer.alloc(secret.length))).toBe(true);
+  });
+
+  it("rejects when a source throws after reporting successful settlement", async () => {
+    const secret = Buffer.from("throw-after-settle-secret");
+    const source: PermanentStagingProviderVariableWriteInputSource = {
+      readExactlyOnce(consumeChunk, settle) {
+        consumeChunk(secret);
+        settle();
+        throw new Error("raw throw after settle");
+      },
+    };
+    await expect(readPermanentStagingProviderVariableWriteInput(
+      "OPENAI_API_KEY",
+      source,
+      NEVER_ABORTED_SIGNAL,
+    )).rejects.toMatchObject({ code: "input_invalid" });
+    expect(secret.equals(Buffer.alloc(secret.length))).toBe(true);
+  });
+
+  it("drains a rejected Promise returned by an invalid async source", async () => {
+    const secret = Buffer.from("invalid-async-source-secret");
+    const unhandled = vi.fn();
+    process.on("unhandledRejection", unhandled);
+    const source: PermanentStagingProviderVariableWriteInputSource = {
+      readExactlyOnce(consumeChunk, settle) {
+        consumeChunk(secret);
+        settle();
+        return Promise.reject(new Error("must be observed")) as unknown as void;
+      },
+    };
+    try {
+      await expect(readPermanentStagingProviderVariableWriteInput(
+        "OPENAI_API_KEY",
+        source,
+        NEVER_ABORTED_SIGNAL,
+      )).rejects.toMatchObject({ code: "input_invalid" });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(unhandled).not.toHaveBeenCalled();
+    } finally {
+      process.removeListener("unhandledRejection", unhandled);
+    }
+    expect(secret.equals(Buffer.alloc(secret.length))).toBe(true);
+  });
+
+  it("wipes a callback made after a successful return without reviving the handle", async () => {
+    const secret = Buffer.from("held-before-late-callback");
+    let lateConsume!: (chunk: Uint8Array) => void;
+    const source: PermanentStagingProviderVariableWriteInputSource = {
+      readExactlyOnce(consumeChunk, settle) {
+        lateConsume = consumeChunk;
+        consumeChunk(secret);
+        settle();
+      },
+    };
+    const handle = await readPermanentStagingProviderVariableWriteInput(
+      "OPENAI_API_KEY",
+      source,
+      NEVER_ABORTED_SIGNAL,
+    );
+    const before = handle.inspect();
+    const late = Buffer.from("late-callback-secret");
+    expect(() => lateConsume(late)).toThrow(expect.objectContaining({
+      code: "input_invalid",
+    }));
+    expect(late.equals(Buffer.alloc(late.length))).toBe(true);
+    expect(handle.inspect()).toBe(before);
+    handle.close();
   });
 
   it.each([
@@ -488,18 +474,18 @@ describe("permanent staging provider-variable held input", () => {
     }
   });
 
-  it("rejects TTY input before iterating and rejects unknown variable names", async () => {
-    const iterator = vi.fn();
+  it("rejects TTY input before reading and rejects unknown variable names", async () => {
+    const readExactlyOnce = vi.fn();
     const tty = {
       isTTY: true,
-      [Symbol.asyncIterator]: iterator,
+      readExactlyOnce,
     } as unknown as PermanentStagingProviderVariableWriteInputSource;
     await expect(readPermanentStagingProviderVariableWriteInput(
       "OPENAI_API_KEY",
       tty,
       NEVER_ABORTED_SIGNAL,
     )).rejects.toMatchObject({ code: "input_invalid" });
-    expect(iterator).not.toHaveBeenCalled();
+    expect(readExactlyOnce).not.toHaveBeenCalled();
 
     await expect(readPermanentStagingProviderVariableWriteInput(
       "DATABASE_URL",
@@ -566,12 +552,13 @@ describe("permanent staging provider-variable held input", () => {
     )!;
     const sourceBytes = Buffer.from("abcd\nx");
     const source: PermanentStagingProviderVariableWriteInputSource = {
-      async *[Symbol.asyncIterator]() {
-        yield sourceBytes;
+      readExactlyOnce(consumeChunk, settle) {
+        consumeChunk(sourceBytes);
         Object.defineProperty(typedArrayPrototype, "length", {
           configurable: true,
           get: () => 4,
         });
+        settle();
       },
     };
     let caught: unknown;
@@ -599,12 +586,8 @@ describe("permanent staging provider-variable held input", () => {
     );
     forged.message = "raw-source-fixture-secret";
     const source: PermanentStagingProviderVariableWriteInputSource = {
-      [Symbol.asyncIterator]() {
-        return {
-          async next(): Promise<IteratorResult<Uint8Array>> {
-            throw forged;
-          },
-        };
+      readExactlyOnce(_consumeChunk, settle) {
+        settle(forged);
       },
     };
     let caught: unknown;
@@ -664,9 +647,10 @@ describe("permanent staging provider-variable held input", () => {
     const sourceBytes = Buffer.from("iterator-poison-secret");
     const originalIterator = Array.prototype[Symbol.iterator];
     const poisonedSource: PermanentStagingProviderVariableWriteInputSource = {
-      async *[Symbol.asyncIterator]() {
-        yield sourceBytes;
+      readExactlyOnce(consumeChunk, settle) {
+        consumeChunk(sourceBytes);
         Array.prototype[Symbol.iterator] = function* () {};
+        settle();
       },
     };
     let handle: Awaited<ReturnType<
@@ -719,7 +703,7 @@ describe("permanent staging provider-variable held input", () => {
     const expected = expectedCommitment("OPENAI_API_KEY", Buffer.from(sourceBytes));
     const originalCreateHash = crypto.createHash;
     const hostileSource: PermanentStagingProviderVariableWriteInputSource = {
-      async *[Symbol.asyncIterator]() {
+      readExactlyOnce(consumeChunk, settle) {
         crypto.createHash = (() => ({
           update() {
             return this;
@@ -728,7 +712,8 @@ describe("permanent staging provider-variable held input", () => {
             return Buffer.alloc(32, 0xaa);
           },
         })) as typeof crypto.createHash;
-        yield sourceBytes;
+        consumeChunk(sourceBytes);
+        settle();
       },
     };
     let handle!: Awaited<ReturnType<
@@ -800,65 +785,90 @@ describe("permanent staging provider-variable held input", () => {
     }));
   });
 
-  it("maps a hostile iterator return getter to a fixed cleanup failure and wipes retained chunks", async () => {
+  it("does not trust a source-constructed cleanup error and wipes retained chunks", async () => {
     const first = Buffer.alloc(4_096, 0x61);
     const excess = Buffer.from("b");
-    const hostile = {
-      [Symbol.asyncIterator]() {
-        let index = 0;
-        return {
-          async next() {
-            const values = [first, excess];
-            const value = values[index];
-            index += 1;
-            return value === undefined
-              ? { done: true, value: undefined } as const
-              : { done: false, value } as const;
-          },
-          get return() {
-            throw new Error("raw iterator cleanup failure");
-          },
-        };
+    const hostile: PermanentStagingProviderVariableWriteInputSource = {
+      readExactlyOnce(consumeChunk, settle) {
+        consumeChunk(first);
+        try {
+          consumeChunk(excess);
+        } catch {
+          settle(new PermanentStagingProviderVariableWriteInputError(
+            "cleanup_failed",
+          ));
+        }
       },
-    } satisfies PermanentStagingProviderVariableWriteInputSource;
+    };
     await expect(readPermanentStagingProviderVariableWriteInput(
       "OPENAI_API_KEY",
       hostile,
       NEVER_ABORTED_SIGNAL,
     )).rejects.toMatchObject({
-      code: "cleanup_failed",
-      message: "cleanup_failed",
+      code: "input_invalid",
+      message: "input_invalid",
     });
     expect(first.equals(Buffer.alloc(first.length))).toBe(true);
     expect(excess.equals(Buffer.alloc(excess.length))).toBe(true);
   });
 
-  it("uses captured invocation for iterator cleanup instead of a forged call", async () => {
+  it("makes listener cleanup failure dominate an earlier validation failure", async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(
+      EventTarget.prototype,
+      "removeEventListener",
+    )!;
+    Object.defineProperty(EventTarget.prototype, "removeEventListener", {
+      ...descriptor,
+      value() {
+        throw new Error("raw listener cleanup failure");
+      },
+    });
+    vi.resetModules();
+    let isolated!: typeof import(
+      "../scripts/lib/permanent-staging-provider-variable-write-input.js"
+    );
+    try {
+      isolated = await import(
+        "../scripts/lib/permanent-staging-provider-variable-write-input.js"
+      );
+    } finally {
+      Object.defineProperty(
+        EventTarget.prototype,
+        "removeEventListener",
+        descriptor,
+      );
+    }
+    const prefix = Buffer.alloc(4_096, 0x61);
+    const excess = Buffer.from("b");
+    await expect(isolated.readPermanentStagingProviderVariableWriteInput(
+      "OPENAI_API_KEY",
+      inputSource([prefix, excess]),
+      NEVER_ABORTED_SIGNAL,
+    )).rejects.toMatchObject({
+      code: "cleanup_failed",
+      message: "cleanup_failed",
+    });
+    expect(prefix.equals(Buffer.alloc(prefix.length))).toBe(true);
+    expect(excess.equals(Buffer.alloc(excess.length))).toBe(true);
+  });
+
+  it("uses captured invocation for source settlement instead of a forged call", async () => {
     const first = Buffer.alloc(4_096, 0x61);
     const excess = Buffer.from("b");
-    let returned = 0;
-    const cleanup = async () => {
-      returned += 1;
-      return { done: true, value: undefined } as const;
-    };
-    Object.defineProperty(cleanup, "call", {
-      configurable: true,
-      value: () => ({ done: true, value: undefined }),
-    });
+    let settled = 0;
     const source: PermanentStagingProviderVariableWriteInputSource = {
-      [Symbol.asyncIterator]() {
-        let index = 0;
-        return {
-          async next() {
-            const values = [first, excess];
-            const value = values[index];
-            index += 1;
-            return value === undefined
-              ? { done: true, value: undefined } as const
-              : { done: false, value } as const;
-          },
-          return: cleanup,
-        };
+      readExactlyOnce(consumeChunk, settle) {
+        Object.defineProperty(settle, "call", {
+          configurable: true,
+          value: () => undefined,
+        });
+        consumeChunk(first);
+        try {
+          consumeChunk(excess);
+        } catch (error) {
+          settled += 1;
+          Reflect.apply(settle, undefined, [error]);
+        }
       },
     };
     await expect(readPermanentStagingProviderVariableWriteInput(
@@ -869,7 +879,7 @@ describe("permanent staging provider-variable held input", () => {
       code: "input_invalid",
       message: "input_invalid",
     });
-    expect(returned).toBe(1);
+    expect(settled).toBe(1);
     expect(first.equals(Buffer.alloc(first.length))).toBe(true);
     expect(excess.equals(Buffer.alloc(excess.length))).toBe(true);
   });
@@ -1024,8 +1034,8 @@ describe("permanent staging provider-variable held input", () => {
       "utf8Write",
     )!;
     const source: PermanentStagingProviderVariableWriteInputSource = {
-      async *[Symbol.asyncIterator]() {
-        yield sourceBytes;
+      readExactlyOnce(consumeChunk, settle) {
+        consumeChunk(sourceBytes);
         Object.defineProperty(Buffer.prototype, "hexSlice", {
           ...hexSlice,
           value: () => "f".repeat(64),
@@ -1037,6 +1047,7 @@ describe("permanent staging provider-variable held input", () => {
             return length;
           },
         });
+        settle();
       },
     };
     let handle: Awaited<ReturnType<

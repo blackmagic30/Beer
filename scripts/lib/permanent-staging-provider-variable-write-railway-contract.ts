@@ -1,9 +1,12 @@
 const ARRAY_IS_ARRAY_EXACT = Array.isArray;
+const ARRAY_PROTOTYPE_EXACT = Array.prototype;
 const ARRAY_EVERY_EXACT = Array.prototype.every;
 const ARRAY_INCLUDES_EXACT = Array.prototype.includes;
 const ARRAY_SOME_EXACT = Array.prototype.some;
 const ARRAY_SORT_EXACT = Array.prototype.sort;
 const BUFFER_BYTE_LENGTH_EXACT = Buffer.byteLength;
+const ERROR_EXACT = Error;
+const JSON_EXACT = JSON;
 const JSON_PARSE_EXACT = JSON.parse;
 const MAP_EXACT = Map;
 const MAP_GET_EXACT = Map.prototype.get;
@@ -16,6 +19,7 @@ const OBJECT_GET_OWN_PROPERTY_DESCRIPTORS_EXACT =
   Object.getOwnPropertyDescriptors;
 const OBJECT_GET_PROTOTYPE_OF_EXACT = Object.getPrototypeOf;
 const OBJECT_HAS_OWN_EXACT = Object.hasOwn;
+const OBJECT_PROTOTYPE_EXACT = Object.prototype;
 const REFLECT_APPLY_EXACT = Reflect.apply;
 const REFLECT_OWN_KEYS_EXACT = Reflect.ownKeys;
 const REGEXP_EXEC_EXACT = RegExp.prototype.exec;
@@ -27,6 +31,7 @@ const SET_SIZE_EXACT = Object.getOwnPropertyDescriptor(
   "size",
 )?.get;
 const STRING_INCLUDES_EXACT = String.prototype.includes;
+const STRING_CONSTRUCTOR_EXACT = String;
 const STRING_INDEX_OF_EXACT = String.prototype.indexOf;
 const STRING_LAST_INDEX_OF_EXACT = String.prototype.lastIndexOf;
 const STRING_SLICE_EXACT = String.prototype.slice;
@@ -106,14 +111,19 @@ function arrayIncludes<T>(values: readonly T[], value: T): boolean {
 
 function arrayPush<T>(values: T[], value: T): number {
   const index = values.length;
-  OBJECT_DEFINE_PROPERTY_EXACT(values, String(index), {
+  const key = REFLECT_APPLY_EXACT(
+    STRING_CONSTRUCTOR_EXACT,
+    undefined,
+    [index],
+  ) as string;
+  OBJECT_DEFINE_PROPERTY_EXACT(values, key, {
     configurable: true,
     enumerable: true,
     writable: true,
     value,
   });
   if (values.length !== index + 1 || values[index] !== value) {
-    throw new Error("array_publication_invalid");
+    throw new ERROR_EXACT("array_publication_invalid");
   }
   return values.length;
 }
@@ -292,7 +302,7 @@ function ownDataObject(
     return false;
   }
   const prototype = OBJECT_GET_PROTOTYPE_OF_EXACT(value);
-  if (prototype !== Object.prototype && prototype !== null) return false;
+  if (prototype !== OBJECT_PROTOTYPE_EXACT && prototype !== null) return false;
   const descriptors = OBJECT_GET_OWN_PROPERTY_DESCRIPTORS_EXACT(value) as unknown as Record<
     PropertyKey,
     PropertyDescriptor
@@ -304,15 +314,32 @@ function ownDataObject(
   ) return false;
   return arrayEvery(expectedKeys, (key) => {
     const descriptor = descriptors[key];
-    return descriptor !== undefined
+    return OBJECT_HAS_OWN_EXACT(descriptors, key)
+      && descriptor !== undefined
       && OBJECT_HAS_OWN_EXACT(descriptor, "value")
       && descriptor.enumerable === true;
   });
 }
 
+function exactDenseDescriptorKeys(
+  keys: readonly PropertyKey[],
+  length: number,
+): boolean {
+  if (keys.length !== length + 1) return false;
+  for (let index = 0; index < length; index += 1) {
+    const expected = REFLECT_APPLY_EXACT(
+      STRING_CONSTRUCTOR_EXACT,
+      undefined,
+      [index],
+    ) as string;
+    if (keys[index] !== expected) return false;
+  }
+  return keys[length] === "length";
+}
+
 function denseArray(value: unknown, maximum: number): value is readonly unknown[] {
   if (!ARRAY_IS_ARRAY_EXACT(value)
-    || OBJECT_GET_PROTOTYPE_OF_EXACT(value) !== Array.prototype) {
+    || OBJECT_GET_PROTOTYPE_OF_EXACT(value) !== ARRAY_PROTOTYPE_EXACT) {
     return false;
   }
   const descriptors = OBJECT_GET_OWN_PROPERTY_DESCRIPTORS_EXACT(value) as unknown as Record<
@@ -322,25 +349,29 @@ function denseArray(value: unknown, maximum: number): value is readonly unknown[
   const keys = REFLECT_OWN_KEYS_EXACT(descriptors);
   const lengthDescriptor = descriptors.length;
   if (
-    lengthDescriptor === undefined
+    !OBJECT_HAS_OWN_EXACT(descriptors, "length")
+    || lengthDescriptor === undefined
     || !OBJECT_HAS_OWN_EXACT(lengthDescriptor, "value")
     || !NUMBER_IS_SAFE_INTEGER_EXACT(lengthDescriptor.value)
     || lengthDescriptor.value < 0
     || lengthDescriptor.value > maximum
-    || keys.length !== lengthDescriptor.value + 1
+    || !exactDenseDescriptorKeys(keys, lengthDescriptor.value)
   ) return false;
   for (let index = 0; index < lengthDescriptor.value; index += 1) {
-    const descriptor = descriptors[String(index)];
+    const key = REFLECT_APPLY_EXACT(
+      STRING_CONSTRUCTOR_EXACT,
+      undefined,
+      [index],
+    ) as string;
+    const descriptor = descriptors[key];
     if (
-      descriptor === undefined
+      !OBJECT_HAS_OWN_EXACT(descriptors, key)
+      || descriptor === undefined
       || !OBJECT_HAS_OWN_EXACT(descriptor, "value")
       || descriptor.enumerable !== true
     ) return false;
   }
-  return arrayEvery(keys, (key) =>
-    key === "length"
-    || typeof key === "string"
-      && regexpTest(/^(?:0|[1-9][0-9]*)$/, key));
+  return true;
 }
 
 function ownDataReferences(
@@ -352,7 +383,7 @@ function ownDataReferences(
       return null;
     }
     const prototype = OBJECT_GET_PROTOTYPE_OF_EXACT(input);
-    if (prototype !== Object.prototype && prototype !== null) return null;
+    if (prototype !== OBJECT_PROTOTYPE_EXACT && prototype !== null) return null;
     const descriptors = OBJECT_GET_OWN_PROPERTY_DESCRIPTORS_EXACT(input) as unknown as
       Record<PropertyKey, PropertyDescriptor>;
     const keys = REFLECT_OWN_KEYS_EXACT(descriptors);
@@ -366,7 +397,8 @@ function ownDataReferences(
       if (key === undefined) return null;
       const descriptor = descriptors[key];
       if (
-        descriptor === undefined
+        !OBJECT_HAS_OWN_EXACT(descriptors, key)
+        || descriptor === undefined
         || !OBJECT_HAS_OWN_EXACT(descriptor, "value")
         || descriptor.enumerable !== true
       ) return null;
@@ -389,7 +421,7 @@ function ownArrayReferences(
 ): readonly unknown[] | null {
   try {
     if (!ARRAY_IS_ARRAY_EXACT(input)
-      || OBJECT_GET_PROTOTYPE_OF_EXACT(input) !== Array.prototype) {
+      || OBJECT_GET_PROTOTYPE_OF_EXACT(input) !== ARRAY_PROTOTYPE_EXACT) {
       return null;
     }
     const descriptors = OBJECT_GET_OWN_PROPERTY_DESCRIPTORS_EXACT(input) as unknown as
@@ -397,18 +429,25 @@ function ownArrayReferences(
     const keys = REFLECT_OWN_KEYS_EXACT(descriptors);
     const lengthDescriptor = descriptors.length;
     if (
-      lengthDescriptor === undefined
+      !OBJECT_HAS_OWN_EXACT(descriptors, "length")
+      || lengthDescriptor === undefined
       || !OBJECT_HAS_OWN_EXACT(lengthDescriptor, "value")
       || !NUMBER_IS_SAFE_INTEGER_EXACT(lengthDescriptor.value)
       || lengthDescriptor.value < 1
       || lengthDescriptor.value > maximum
-      || keys.length !== lengthDescriptor.value + 1
+      || !exactDenseDescriptorKeys(keys, lengthDescriptor.value)
     ) return null;
     const output: unknown[] = [];
     for (let index = 0; index < lengthDescriptor.value; index += 1) {
-      const descriptor = descriptors[String(index)];
+      const key = REFLECT_APPLY_EXACT(
+        STRING_CONSTRUCTOR_EXACT,
+        undefined,
+        [index],
+      ) as string;
+      const descriptor = descriptors[key];
       if (
-        descriptor === undefined
+        !OBJECT_HAS_OWN_EXACT(descriptors, key)
+        || descriptor === undefined
         || !OBJECT_HAS_OWN_EXACT(descriptor, "value")
         || descriptor.enumerable !== true
       ) return null;
@@ -437,7 +476,11 @@ function parseBoundedJson(source: unknown): unknown | null {
     || REFLECT_APPLY_EXACT(STRING_INCLUDES_EXACT, source, ["\0"])
   ) return null;
   try {
-    return REFLECT_APPLY_EXACT(JSON_PARSE_EXACT, JSON, [source]) as unknown;
+    return REFLECT_APPLY_EXACT(
+      JSON_PARSE_EXACT,
+      JSON_EXACT,
+      [source],
+    ) as unknown;
   } catch {
     return null;
   }

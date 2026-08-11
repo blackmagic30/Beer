@@ -6,32 +6,40 @@ import { TextDecoder, TextEncoder, types as utilTypes } from "node:util";
 import type { PermanentStagingProviderVariableName } from
   "./permanent-staging-provider-variable-write-executor.js";
 
+const CRYPTO_EXACT = crypto;
+const FS_EXACT = fs;
+const OBJECT_EXACT = Object;
+const PATH_EXACT = path;
+const PROCESS_EXACT = process;
+const REFLECT_EXACT = Reflect;
+const UTIL_TYPES_EXACT = utilTypes;
+
 interface PermanentStagingProviderVariableWriteEvidenceLeafPair {
   readonly intent: string;
   readonly terminalEvidence: string;
 }
 
 export const PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_EVIDENCE_LEAVES =
-  Object.freeze({
-    GOOGLE_MAPS_API_KEY: Object.freeze({
+  OBJECT_EXACT.freeze({
+    GOOGLE_MAPS_API_KEY: OBJECT_EXACT.freeze({
       intent:
         "pintpath-permanent-staging-provider-variable-google-maps-api-key-intent.json",
       terminalEvidence:
         "pintpath-permanent-staging-provider-variable-google-maps-api-key-terminal-evidence.json",
     }),
-    GOOGLE_MAPS_MAP_ID: Object.freeze({
+    GOOGLE_MAPS_MAP_ID: OBJECT_EXACT.freeze({
       intent:
         "pintpath-permanent-staging-provider-variable-google-maps-map-id-intent.json",
       terminalEvidence:
         "pintpath-permanent-staging-provider-variable-google-maps-map-id-terminal-evidence.json",
     }),
-    GOOGLE_PLACES_API_KEY: Object.freeze({
+    GOOGLE_PLACES_API_KEY: OBJECT_EXACT.freeze({
       intent:
         "pintpath-permanent-staging-provider-variable-google-places-api-key-intent.json",
       terminalEvidence:
         "pintpath-permanent-staging-provider-variable-google-places-api-key-terminal-evidence.json",
     }),
-    OPENAI_API_KEY: Object.freeze({ // security-scan allow: nonsecret fixed variable-name key
+    OPENAI_API_KEY: OBJECT_EXACT.freeze({ // security-scan allow: nonsecret fixed variable-name key
       intent:
         "pintpath-permanent-staging-provider-variable-openai-api-key-intent.json",
       terminalEvidence:
@@ -42,7 +50,7 @@ export const PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_EVIDENCE_LEAVES =
     PermanentStagingProviderVariableWriteEvidenceLeafPair
   >>);
 
-const FIXED_EVIDENCE_LEAVES = Object.freeze([
+const FIXED_EVIDENCE_LEAVES = OBJECT_EXACT.freeze([
   PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_EVIDENCE_LEAVES
     .GOOGLE_MAPS_API_KEY.intent,
   PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_EVIDENCE_LEAVES
@@ -90,7 +98,7 @@ export class PermanentStagingProviderVariableWriteEvidenceError extends Error {
 
   constructor(code: PermanentStagingProviderVariableWriteEvidenceFailureCode) {
     super(code);
-    REFLECT_APPLY(OBJECT_DEFINE_PROPERTIES, Object, [this, {
+    REFLECT_APPLY(OBJECT_DEFINE_PROPERTIES, OBJECT_EXACT, [this, {
       name: {
         configurable: true,
         enumerable: true,
@@ -119,12 +127,13 @@ const MAX_CANONICAL_DEPTH = 64;
 const MAX_CANONICAL_NODES = 131_072;
 const ALLOWED_LEAVES = new Set<string>(FIXED_EVIDENCE_LEAVES);
 const ARRAY_BUFFER_EXACT = ArrayBuffer;
-const ARRAY_BUFFER_IS_VIEW = ArrayBuffer.isView;
-const ARRAY_IS_ARRAY = Array.isArray;
-const ARRAY_PROTOTYPE = Array.prototype;
+const ARRAY_EXACT = Array;
+const ARRAY_BUFFER_IS_VIEW = ARRAY_BUFFER_EXACT.isView;
+const ARRAY_IS_ARRAY = ARRAY_EXACT.isArray;
+const ARRAY_PROTOTYPE = ARRAY_EXACT.prototype;
 const BIGINT_EXACT = BigInt;
 const ABORT_SIGNAL_PROTOTYPE = AbortSignal.prototype;
-const ABORT_SIGNAL_ABORTED_GETTER = Object.getOwnPropertyDescriptor(
+const ABORT_SIGNAL_ABORTED_GETTER = OBJECT_EXACT.getOwnPropertyDescriptor(
   ABORT_SIGNAL_PROTOTYPE,
   "aborted",
 )?.get;
@@ -134,22 +143,33 @@ const BUFFER_EQUALS = Buffer.prototype.equals;
 const BUFFER_IS_BUFFER = Buffer.isBuffer;
 const BUFFER_PROTOTYPE = Buffer.prototype;
 const BUFFER_EXACT = Buffer;
-const CRYPTO_CREATE_HASH = crypto.createHash;
-const FS_PROMISES = fs.promises;
+const CRYPTO_CREATE_HASH = CRYPTO_EXACT.createHash;
+const FS_PROMISES = FS_EXACT.promises;
+const FS_CLOSE_CALLBACK = FS_EXACT.close;
+const FS_FCHMOD_CALLBACK = FS_EXACT.fchmod;
+const FS_FSTAT_CALLBACK = FS_EXACT.fstat;
+const FS_FSYNC_CALLBACK = FS_EXACT.fsync;
+const FS_LSTAT_CALLBACK = FS_EXACT.lstat;
+const FS_OPEN_CALLBACK = FS_EXACT.open;
+const FS_READ_CALLBACK = FS_EXACT.read;
+const FS_REALPATH_CALLBACK = FS_EXACT.realpath.native;
+const FS_WRITE_CALLBACK = FS_EXACT.write;
 const FS_LSTAT = FS_PROMISES.lstat;
 const FS_OPEN = FS_PROMISES.open;
 const FS_REALPATH = FS_PROMISES.realpath;
-const FS_O_CREAT = fs.constants.O_CREAT;
-const FS_O_EXCL = fs.constants.O_EXCL;
-const FS_O_RDONLY = fs.constants.O_RDONLY;
-const FS_O_RDWR = fs.constants.O_RDWR;
-const HASH_PROTOTYPE = Object.getPrototypeOf(CRYPTO_CREATE_HASH("sha256")) as
+const FS_O_CREAT = FS_EXACT.constants.O_CREAT;
+const FS_O_EXCL = FS_EXACT.constants.O_EXCL;
+const FS_O_RDONLY = FS_EXACT.constants.O_RDONLY;
+const FS_O_RDWR = FS_EXACT.constants.O_RDWR;
+const HASH_PROTOTYPE = OBJECT_EXACT.getPrototypeOf(
+  CRYPTO_CREATE_HASH("sha256"),
+) as
   object;
-const HASH_UPDATE = Object.getOwnPropertyDescriptor(
+const HASH_UPDATE = OBJECT_EXACT.getOwnPropertyDescriptor(
   HASH_PROTOTYPE,
   "update",
 )?.value;
-const HASH_DIGEST = Object.getOwnPropertyDescriptor(
+const HASH_DIGEST = OBJECT_EXACT.getOwnPropertyDescriptor(
   HASH_PROTOTYPE,
   "digest",
 )?.value;
@@ -159,35 +179,44 @@ const JSON_EXACT = JSON;
 const NUMBER_IS_FINITE = Number.isFinite;
 const NUMBER_IS_SAFE_INTEGER = Number.isSafeInteger;
 const NUMBER_EXACT = Number;
-const OBJECT_DEFINE_PROPERTIES = Object.defineProperties;
-const OBJECT_FREEZE = Object.freeze;
-const OBJECT_GET_OWN_PROPERTY_DESCRIPTOR = Object.getOwnPropertyDescriptor;
-const OBJECT_GET_OWN_PROPERTY_DESCRIPTORS = Object.getOwnPropertyDescriptors;
-const OBJECT_GET_PROTOTYPE_OF = Object.getPrototypeOf;
-const OBJECT_HAS_OWN = Object.hasOwn;
-const OBJECT_PROTOTYPE = Object.prototype;
-const PROCESS_GETEUID = process.geteuid;
-const REFLECT_APPLY = Reflect.apply;
-const REFLECT_OWN_KEYS = Reflect.ownKeys;
+const OBJECT_CREATE = OBJECT_EXACT.create;
+const OBJECT_DEFINE_PROPERTIES = OBJECT_EXACT.defineProperties;
+const OBJECT_FREEZE = OBJECT_EXACT.freeze;
+const OBJECT_GET_OWN_PROPERTY_DESCRIPTOR =
+  OBJECT_EXACT.getOwnPropertyDescriptor;
+const OBJECT_GET_OWN_PROPERTY_DESCRIPTORS =
+  OBJECT_EXACT.getOwnPropertyDescriptors;
+const OBJECT_GET_PROTOTYPE_OF = OBJECT_EXACT.getPrototypeOf;
+const OBJECT_HAS_OWN = OBJECT_EXACT.hasOwn;
+const OBJECT_PROTOTYPE = OBJECT_EXACT.prototype;
+const OBJECT_SET_PROTOTYPE_OF = OBJECT_EXACT.setPrototypeOf;
+const PROCESS_GETEUID = PROCESS_EXACT.geteuid;
+const PROMISE_EXACT = Promise;
+const REFLECT_APPLY = REFLECT_EXACT.apply;
+const REFLECT_CONSTRUCT = REFLECT_EXACT.construct;
+const REFLECT_OWN_KEYS = REFLECT_EXACT.ownKeys;
 const REGEXP_EXEC = RegExp.prototype.exec;
 const SET_HAS = Set.prototype.has;
 const STRING_CHAR_CODE_AT = String.prototype.charCodeAt;
 const STRING_EXACT = String;
 const STRING_INCLUDES = String.prototype.includes;
-const TEXT_DECODER_DECODE = TextDecoder.prototype.decode;
+const TEXT_DECODER_EXACT = TextDecoder;
+const TEXT_DECODER_DECODE = TEXT_DECODER_EXACT.prototype.decode;
 const TEXT_ENCODER_EXACT = TextEncoder;
 const TEXT_ENCODER_ENCODE = TextEncoder.prototype.encode;
-const TYPED_ARRAY_PROTOTYPE = Object.getPrototypeOf(Uint8Array.prototype) as
+const TYPED_ARRAY_PROTOTYPE = OBJECT_EXACT.getPrototypeOf(
+  Uint8Array.prototype,
+) as
   object;
-const TYPED_ARRAY_BYTE_LENGTH_GETTER = Object.getOwnPropertyDescriptor(
+const TYPED_ARRAY_BYTE_LENGTH_GETTER = OBJECT_EXACT.getOwnPropertyDescriptor(
   TYPED_ARRAY_PROTOTYPE,
   "byteLength",
 )?.get;
 const UINT8_ARRAY_FILL = Uint8Array.prototype.fill;
 const UINT8_ARRAY_PROTOTYPE = Uint8Array.prototype;
 const UINT8_ARRAY_SET = Uint8Array.prototype.set;
-const UTIL_IS_PROMISE = utilTypes.isPromise;
-const UTIL_IS_PROXY = utilTypes.isProxy;
+const UTIL_IS_PROMISE = UTIL_TYPES_EXACT.isPromise;
+const UTIL_IS_PROXY = UTIL_TYPES_EXACT.isProxy;
 const WEAK_MAP_EXACT = WeakMap;
 const WEAK_MAP_GET = WeakMap.prototype.get;
 const WEAK_MAP_SET = WeakMap.prototype.set;
@@ -196,23 +225,298 @@ const EVIDENCE_ERROR_AUTHORITIES = new WEAK_MAP_EXACT<
   PermanentStagingProviderVariableWriteEvidenceFailureCode
 >();
 const LINE_BREAK_PATTERN = /[\r\n]/;
-const STAT_MODE_MASK = BIGINT_EXACT(fs.constants.S_IFMT);
-const STAT_MODE_DIRECTORY = BIGINT_EXACT(fs.constants.S_IFDIR);
-const STAT_MODE_REGULAR = BIGINT_EXACT(fs.constants.S_IFREG);
-const STAT_MODE_SYMLINK = BIGINT_EXACT(fs.constants.S_IFLNK);
-const PATH_BASENAME = path.basename;
-const PATH_DIRNAME = path.dirname;
-const PATH_IS_ABSOLUTE = path.isAbsolute;
-const PATH_JOIN = path.join;
-const PATH_NORMALIZE = path.normalize;
-const PATH_PARSE = path.parse;
-const PATH_RESOLVE = path.resolve;
+const STAT_MODE_MASK = BIGINT_EXACT(FS_EXACT.constants.S_IFMT);
+const STAT_MODE_DIRECTORY = BIGINT_EXACT(FS_EXACT.constants.S_IFDIR);
+const STAT_MODE_REGULAR = BIGINT_EXACT(FS_EXACT.constants.S_IFREG);
+const STAT_MODE_SYMLINK = BIGINT_EXACT(FS_EXACT.constants.S_IFLNK);
+const PATH_BASENAME = PATH_EXACT.basename;
+const PATH_DIRNAME = PATH_EXACT.dirname;
+const PATH_IS_ABSOLUTE = PATH_EXACT.isAbsolute;
+const PATH_JOIN = PATH_EXACT.join;
+const PATH_NORMALIZE = PATH_EXACT.normalize;
+const PATH_PARSE = PATH_EXACT.parse;
+const PATH_RESOLVE = PATH_EXACT.resolve;
+
+function freezeNullRecord<T extends object>(value: T): T {
+  REFLECT_APPLY(OBJECT_SET_PROTOTYPE_OF, OBJECT_EXACT, [value, null]);
+  return OBJECT_FREEZE(value);
+}
+
+function makeThenSafe<T extends object>(value: T): T {
+  OBJECT_DEFINE_PROPERTIES(value, {
+    then: {
+      configurable: false,
+      enumerable: false,
+      value: undefined,
+      writable: false,
+    },
+  });
+  return value;
+}
 
 // This layer is deliberately schema-neutral: it receives only secret-free
 // intent or terminal-evidence JSON from the kernel and never a provider value.
 // Its authority is limited to canonical bytes, fixed leaves, and durability.
 
 type FileHandle = fs.promises.FileHandle;
+
+interface DefaultNativeFileState {
+  readonly fd: number;
+  state: "open" | "closing" | "closed";
+}
+
+const DEFAULT_NATIVE_FILE_STATES = new WEAK_MAP_EXACT<
+  object,
+  DefaultNativeFileState
+>();
+
+function defaultNativeFileState(value: unknown): DefaultNativeFileState {
+  if (typeof value !== "object" || value === null) throw invalid();
+  const state = REFLECT_APPLY(
+    WEAK_MAP_GET,
+    DEFAULT_NATIVE_FILE_STATES,
+    [value],
+  ) as DefaultNativeFileState | undefined;
+  if (state === undefined || state.state !== "open") throw invalid();
+  return state;
+}
+
+function defaultNativeRead(
+  this: object,
+  buffer: Buffer,
+  offset: number,
+  length: number,
+  position: number | null,
+): Promise<{ readonly bytesRead: number; readonly buffer: Buffer }> {
+  const state = defaultNativeFileState(this);
+  return new PROMISE_EXACT((resolve, reject) => {
+    REFLECT_APPLY(FS_READ_CALLBACK, FS_EXACT, [
+      state.fd,
+      buffer,
+      offset,
+      length,
+      position,
+      (
+        error: NodeJS.ErrnoException | null,
+        bytesRead: number,
+        returnedBuffer: Buffer,
+      ): void => {
+        if (error !== null) reject(error);
+        else if (
+          returnedBuffer !== buffer
+          || !NUMBER_IS_SAFE_INTEGER(bytesRead)
+          || bytesRead < 0
+          || bytesRead > length
+        ) reject(invalid());
+        else resolve(freezeNullRecord({ bytesRead, buffer }));
+      },
+    ]);
+  });
+}
+
+function defaultNativeWrite(
+  this: object,
+  buffer: Buffer,
+  offset: number,
+  length: number,
+  position: number | null,
+): Promise<{ readonly bytesWritten: number; readonly buffer: Buffer }> {
+  const state = defaultNativeFileState(this);
+  return new PROMISE_EXACT((resolve, reject) => {
+    REFLECT_APPLY(FS_WRITE_CALLBACK, FS_EXACT, [
+      state.fd,
+      buffer,
+      offset,
+      length,
+      position,
+      (
+        error: NodeJS.ErrnoException | null,
+        bytesWritten: number,
+        returnedBuffer: Buffer,
+      ): void => {
+        if (error !== null) reject(error);
+        else if (
+          returnedBuffer !== buffer
+          || !NUMBER_IS_SAFE_INTEGER(bytesWritten)
+          || bytesWritten < 0
+          || bytesWritten > length
+        ) reject(invalid());
+        else resolve(freezeNullRecord({ bytesWritten, buffer }));
+      },
+    ]);
+  });
+}
+
+function defaultNativeStat(this: object): Promise<fs.BigIntStats> {
+  const state = defaultNativeFileState(this);
+  return new PROMISE_EXACT((resolve, reject) => {
+    REFLECT_APPLY(FS_FSTAT_CALLBACK, FS_EXACT, [
+      state.fd,
+      { bigint: true },
+      (error: NodeJS.ErrnoException | null, stat: fs.BigIntStats): void => {
+        if (error !== null) reject(error);
+        else {
+          try {
+            resolve(makeThenSafe(stat));
+          } catch (snapshotError) {
+            reject(snapshotError);
+          }
+        }
+      },
+    ]);
+  });
+}
+
+function defaultNativeChmod(this: object, mode: number): Promise<void> {
+  const state = defaultNativeFileState(this);
+  return new PROMISE_EXACT((resolve, reject) => {
+    REFLECT_APPLY(FS_FCHMOD_CALLBACK, FS_EXACT, [
+      state.fd,
+      mode,
+      (error: NodeJS.ErrnoException | null): void => {
+        if (error !== null) reject(error);
+        else resolve();
+      },
+    ]);
+  });
+}
+
+function defaultNativeSync(this: object): Promise<void> {
+  const state = defaultNativeFileState(this);
+  return new PROMISE_EXACT((resolve, reject) => {
+    REFLECT_APPLY(FS_FSYNC_CALLBACK, FS_EXACT, [
+      state.fd,
+      (error: NodeJS.ErrnoException | null): void => {
+        if (error !== null) reject(error);
+        else resolve();
+      },
+    ]);
+  });
+}
+
+function defaultNativeClose(this: object): Promise<void> {
+  const state = defaultNativeFileState(this);
+  state.state = "closing";
+  return new PROMISE_EXACT((resolve, reject) => {
+    try {
+      REFLECT_APPLY(FS_CLOSE_CALLBACK, FS_EXACT, [
+        state.fd,
+        (error: NodeJS.ErrnoException | null): void => {
+          state.state = "closed";
+          if (error !== null) reject(error);
+          else resolve();
+        },
+      ]);
+    } catch (error) {
+      state.state = "closed";
+      reject(error);
+    }
+  });
+}
+
+const DEFAULT_NATIVE_FILE_PROTOTYPE = OBJECT_CREATE(null) as object;
+OBJECT_DEFINE_PROPERTIES(DEFAULT_NATIVE_FILE_PROTOTYPE, {
+  stat: { configurable: false, enumerable: false, value: defaultNativeStat },
+  read: { configurable: false, enumerable: false, value: defaultNativeRead },
+  write: { configurable: false, enumerable: false, value: defaultNativeWrite },
+  chmod: { configurable: false, enumerable: false, value: defaultNativeChmod },
+  sync: { configurable: false, enumerable: false, value: defaultNativeSync },
+});
+OBJECT_FREEZE(DEFAULT_NATIVE_FILE_PROTOTYPE);
+
+function openDefaultNativeFile(
+  filename: string,
+  flags: number,
+  mode?: number,
+): Promise<FileHandle> {
+  return new PROMISE_EXACT((resolve, reject) => {
+    const callback = (
+      error: NodeJS.ErrnoException | null,
+      fd: number,
+    ): void => {
+      if (error !== null) {
+        reject(error);
+        return;
+      }
+      try {
+        if (!NUMBER_IS_SAFE_INTEGER(fd) || fd < 0) throw invalid();
+        const handle = OBJECT_CREATE(DEFAULT_NATIVE_FILE_PROTOTYPE) as object;
+        OBJECT_DEFINE_PROPERTIES(handle, {
+          close: {
+            configurable: false,
+            enumerable: true,
+            value: defaultNativeClose,
+            writable: false,
+          },
+        });
+        REFLECT_APPLY(WEAK_MAP_SET, DEFAULT_NATIVE_FILE_STATES, [handle, {
+          fd,
+          state: "open",
+        } satisfies DefaultNativeFileState]);
+        resolve(OBJECT_FREEZE(handle) as FileHandle);
+      } catch (failure) {
+        try {
+          REFLECT_APPLY(FS_CLOSE_CALLBACK, FS_EXACT, [fd, () => undefined]);
+        } catch {
+          // The descriptor is recovery-only if native close itself throws.
+        }
+        reject(failure);
+      }
+    };
+    if (mode === undefined) {
+      REFLECT_APPLY(FS_OPEN_CALLBACK, FS_EXACT, [filename, flags, callback]);
+    } else {
+      REFLECT_APPLY(FS_OPEN_CALLBACK, FS_EXACT, [
+        filename,
+        flags,
+        mode,
+        callback,
+      ]);
+    }
+  });
+}
+
+function defaultNativeFileHandleExact(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  const state = REFLECT_APPLY(
+    WEAK_MAP_GET,
+    DEFAULT_NATIVE_FILE_STATES,
+    [value],
+  ) as DefaultNativeFileState | undefined;
+  return state !== undefined && state.state === "open";
+}
+
+function defaultNativeLstat(filename: string): Promise<fs.BigIntStats> {
+  return new PROMISE_EXACT((resolve, reject) => {
+    REFLECT_APPLY(FS_LSTAT_CALLBACK, FS_EXACT, [
+      filename,
+      { bigint: true },
+      (error: NodeJS.ErrnoException | null, stat: fs.BigIntStats): void => {
+        if (error !== null) reject(error);
+        else {
+          try {
+            resolve(makeThenSafe(stat));
+          } catch (snapshotError) {
+            reject(snapshotError);
+          }
+        }
+      },
+    ]);
+  });
+}
+
+function defaultNativeRealpath(filename: string): Promise<string> {
+  return new PROMISE_EXACT((resolve, reject) => {
+    REFLECT_APPLY(FS_REALPATH_CALLBACK, FS_EXACT, [
+      filename,
+      (error: NodeJS.ErrnoException | null, resolvedPath: string): void => {
+        if (error !== null) reject(error);
+        else if (typeof resolvedPath !== "string") reject(invalid());
+        else resolve(resolvedPath);
+      },
+    ]);
+  });
+}
 
 export interface PermanentStagingProviderVariableWriteEvidenceDependencies {
   readonly open: (
@@ -228,21 +532,12 @@ export interface PermanentStagingProviderVariableWriteEvidenceDependencies {
 }
 
 const DEFAULT_DEPENDENCIES: PermanentStagingProviderVariableWriteEvidenceDependencies = {
-  open: (filename, flags, mode) => mode === undefined
-    ? REFLECT_APPLY(FS_OPEN, FS_PROMISES, [filename, flags])
-    : REFLECT_APPLY(FS_OPEN, FS_PROMISES, [filename, flags, mode]),
-  lstat: (filename) => REFLECT_APPLY(FS_LSTAT, FS_PROMISES, [
-    filename,
-    { bigint: true },
-  ]) as Promise<fs.BigIntStats>,
-  realpath: (filename) => REFLECT_APPLY(
-    FS_REALPATH,
-    FS_PROMISES,
-    [filename],
-  ) as Promise<string>,
+  open: openDefaultNativeFile,
+  lstat: defaultNativeLstat,
+  realpath: defaultNativeRealpath,
   effectiveUid: () => {
     if (typeof PROCESS_GETEUID !== "function") throw invalid();
-    return REFLECT_APPLY(PROCESS_GETEUID, process, []);
+    return REFLECT_APPLY(PROCESS_GETEUID, PROCESS_EXACT, []);
   },
   syncHandle: async () => {
     throw invalid();
@@ -348,11 +643,11 @@ function isProxy(value: unknown): boolean {
     !(typeof value === "object" && value !== null)
     && typeof value !== "function"
   ) return false;
-  return REFLECT_APPLY(UTIL_IS_PROXY, utilTypes, [value]) === true;
+  return REFLECT_APPLY(UTIL_IS_PROXY, UTIL_TYPES_EXACT, [value]) === true;
 }
 
 function nativePromise<T>(value: unknown): Promise<T> {
-  if (REFLECT_APPLY(UTIL_IS_PROMISE, utilTypes, [value]) !== true) {
+  if (REFLECT_APPLY(UTIL_IS_PROMISE, UTIL_TYPES_EXACT, [value]) !== true) {
     throw invalid();
   }
   return value as Promise<T>;
@@ -378,6 +673,7 @@ function captureDependencies(
   overrides: Partial<PermanentStagingProviderVariableWriteEvidenceDependencies>,
 ): {
   readonly dependencies: PermanentStagingProviderVariableWriteEvidenceDependencies;
+  readonly openOverridden: boolean;
   readonly syncOverridden: boolean;
   readonly closeOverridden: boolean;
 } {
@@ -409,7 +705,8 @@ function captureDependencies(
     if (!allowed || typeof key !== "string") throw invalid();
     const descriptor = descriptors[key];
     if (
-      descriptor === undefined
+      !OBJECT_HAS_OWN(descriptors, key)
+      || descriptor === undefined
       || !OBJECT_HAS_OWN(descriptor, "value")
       || descriptor.enumerable !== true
       || typeof descriptor.value !== "function"
@@ -419,13 +716,15 @@ function captureDependencies(
   const read = <K extends keyof PermanentStagingProviderVariableWriteEvidenceDependencies>(
     key: K,
   ): PermanentStagingProviderVariableWriteEvidenceDependencies[K] => {
-    const descriptor = descriptors[key];
+    const descriptor = OBJECT_HAS_OWN(descriptors, key)
+      ? descriptors[key]
+      : undefined;
     return (descriptor === undefined
       ? DEFAULT_DEPENDENCIES[key]
       : descriptor.value) as
       PermanentStagingProviderVariableWriteEvidenceDependencies[K];
   };
-  const dependencies = OBJECT_FREEZE({
+  const dependencies = freezeNullRecord({
     open: read("open"),
     lstat: read("lstat"),
     realpath: read("realpath"),
@@ -433,10 +732,11 @@ function captureDependencies(
     syncHandle: read("syncHandle"),
     closeHandle: read("closeHandle"),
   });
-  return OBJECT_FREEZE({
+  return freezeNullRecord({
     dependencies,
-    syncOverridden: descriptors.syncHandle !== undefined,
-    closeOverridden: descriptors.closeHandle !== undefined,
+    openOverridden: OBJECT_HAS_OWN(descriptors, "open"),
+    syncOverridden: OBJECT_HAS_OWN(descriptors, "syncHandle"),
+    closeOverridden: OBJECT_HAS_OWN(descriptors, "closeHandle"),
   });
 }
 
@@ -455,7 +755,7 @@ function captureFileHandleIntrinsics(handle: unknown): FileHandleIntrinsics {
   if (typeof close !== "function" || isProxy(close)) throw invalid();
   const closeByHandle = new WEAK_MAP_EXACT<object, Function>();
   REFLECT_APPLY(WEAK_MAP_SET, closeByHandle, [handle, close]);
-  return OBJECT_FREEZE({
+  return freezeNullRecord({
     prototype,
     closeByHandle,
     stat: method("stat"),
@@ -530,7 +830,7 @@ function snapshotStat(
     if (typeof candidate !== "bigint") throw invalid();
     return candidate;
   };
-  return OBJECT_FREEZE({
+  return freezeNullRecord({
     prototype,
     dev: bigint("dev"),
     ino: bigint("ino"),
@@ -599,8 +899,8 @@ function requiredOpenFlag(value: unknown): number {
   return value as number;
 }
 
-const O_NOFOLLOW_EXACT = requiredOpenFlag(fs.constants.O_NOFOLLOW);
-const O_DIRECTORY_EXACT = requiredOpenFlag(fs.constants.O_DIRECTORY);
+const O_NOFOLLOW_EXACT = requiredOpenFlag(FS_EXACT.constants.O_NOFOLLOW);
+const O_DIRECTORY_EXACT = requiredOpenFlag(FS_EXACT.constants.O_DIRECTORY);
 
 function checkSignal(signal: AbortSignal): void {
   if (
@@ -623,22 +923,22 @@ function errnoIs(error: unknown, code: string): boolean {
 }
 
 function directoryIdentity(stat: StableStat): DirectoryIdentity {
-  return {
+  return freezeNullRecord({
     dev: stat.dev,
     ino: stat.ino,
     uid: stat.uid,
     gid: stat.gid,
     mode: stat.mode,
-  };
+  });
 }
 
 function fileIdentity(stat: StableStat): FileIdentity {
-  return {
+  return freezeNullRecord({
     dev: stat.dev,
     ino: stat.ino,
     uid: stat.uid,
     gid: stat.gid,
-  };
+  });
 }
 
 function sameDirectoryIdentity(
@@ -835,7 +1135,10 @@ function canonicalUtf8Json(bytes: Buffer): string {
   }
   let decoded: string;
   try {
-    const decoder = new TextDecoder("utf-8", { fatal: true });
+    const decoder = REFLECT_APPLY(REFLECT_CONSTRUCT, REFLECT_EXACT, [
+      TEXT_DECODER_EXACT,
+      ["utf-8", freezeNullRecord({ fatal: true })],
+    ]) as TextDecoder;
     decoded = REFLECT_APPLY(TEXT_DECODER_DECODE, decoder, [bytes]) as string;
   } catch {
     throw invalid();
@@ -859,7 +1162,7 @@ function sha256(bytes: Buffer | string): string {
   if (typeof HASH_UPDATE !== "function" || typeof HASH_DIGEST !== "function") {
     throw invalid();
   }
-  const hash = REFLECT_APPLY(CRYPTO_CREATE_HASH, crypto, ["sha256"]);
+  const hash = REFLECT_APPLY(CRYPTO_CREATE_HASH, CRYPTO_EXACT, ["sha256"]);
   REFLECT_APPLY(HASH_UPDATE, hash, [bytes]);
   const digest = REFLECT_APPLY(HASH_DIGEST, hash, ["hex"]);
   if (typeof digest !== "string" || digest.length !== 64) throw invalid();
@@ -1019,7 +1322,10 @@ async function readCanonicalStable(
     const after = await handleStat(handle, fileHandleIntrinsics, statPrototype);
     checkSignal(signal);
     if (!sameStableFile(before, after)) throw invalid();
-    return { canonical: canonicalUtf8Json(actual), stat: after };
+    return freezeNullRecord({
+      canonical: canonicalUtf8Json(actual),
+      stat: after,
+    });
   } finally {
     wipeBuffer(actual);
   }
@@ -1029,7 +1335,7 @@ function evidence(
   publication: PermanentStagingProviderVariableWriteDurableArtifactEvidence["publication"],
   digest: string,
 ): PermanentStagingProviderVariableWriteDurableArtifactEvidence {
-  return {
+  return freezeNullRecord({
     publication,
     sha256: digest,
     canonicalPathExact: true,
@@ -1044,7 +1350,7 @@ function evidence(
     parentFsync: true,
     identityHeld: true,
     readbackExact: true,
-  };
+  });
 }
 
 export interface PermanentStagingProviderVariableWriteEvidenceStore {
@@ -1277,10 +1583,10 @@ class EvidenceStore implements PermanentStagingProviderVariableWriteEvidenceStor
         first.canonical !== final.canonical
         || !sameStableFile(first.stat, final.stat)
       ) throw invalid();
-      return {
+      return freezeNullRecord({
         canonical: final.canonical,
         evidence: evidence("existing-exact", sha256(final.canonical)),
-      };
+      });
     } catch (error) {
       failure = error;
       throw normalizeFailure(error);
@@ -1559,6 +1865,28 @@ class EvidenceStore implements PermanentStagingProviderVariableWriteEvidenceStor
   }
 }
 
+function evidenceStoreFacade(
+  store: EvidenceStore,
+): PermanentStagingProviderVariableWriteEvidenceStore {
+  return freezeNullRecord({
+    read: (
+      leaf: PermanentStagingProviderVariableWriteEvidenceLeaf,
+      signal: AbortSignal,
+    ) => store.read(leaf, signal),
+    inspect: (
+      leaf: PermanentStagingProviderVariableWriteEvidenceLeaf,
+      canonicalContent: string,
+      signal: AbortSignal,
+    ) => store.inspect(leaf, canonicalContent, signal),
+    persist: (
+      leaf: PermanentStagingProviderVariableWriteEvidenceLeaf,
+      canonicalContent: string,
+      signal: AbortSignal,
+    ) => store.persist(leaf, canonicalContent, signal),
+    close: () => store.close(),
+  });
+}
+
 export async function openPermanentStagingProviderVariableWriteEvidenceStore(
   parentDirectory: string,
   overrides: Partial<PermanentStagingProviderVariableWriteEvidenceDependencies> = {},
@@ -1585,6 +1913,10 @@ export async function openPermanentStagingProviderVariableWriteEvidenceStore(
         | O_DIRECTORY_EXACT
         | O_NOFOLLOW_EXACT,
     );
+    if (
+      !capturedDependencies.openOverridden
+      && !defaultNativeFileHandleExact(parentHandle)
+    ) throw invalid();
     fileHandleIntrinsics = captureFileHandleIntrinsics(parentHandle);
     const opened = await handleStat(
       parentHandle,
@@ -1596,7 +1928,7 @@ export async function openPermanentStagingProviderVariableWriteEvidenceStore(
     if (!sameDirectoryIdentity(identity, directoryIdentity(opened))) throw invalid();
     const capturedHandleMethods = fileHandleIntrinsics;
     const originalDependencies = dependencies;
-    dependencies = OBJECT_FREEZE({
+    dependencies = freezeNullRecord({
       open: originalDependencies.open,
       lstat: originalDependencies.lstat,
       realpath: originalDependencies.realpath,
@@ -1617,7 +1949,7 @@ export async function openPermanentStagingProviderVariableWriteEvidenceStore(
           await closeHandleExact(handle, capturedHandleMethods);
         },
     });
-    return new EvidenceStore(
+    return evidenceStoreFacade(new EvidenceStore(
       parentPath,
       parentHandle,
       fileHandleIntrinsics,
@@ -1625,7 +1957,7 @@ export async function openPermanentStagingProviderVariableWriteEvidenceStore(
       identity,
       uid,
       dependencies,
-    );
+    ));
   } catch (error) {
     failure = error;
     throw normalizeFailure(error);

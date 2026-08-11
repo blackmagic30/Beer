@@ -285,6 +285,32 @@ describe("permanent staging provider-variable durable evidence", () => {
     await expectCode(store.persist(intentLeaf, intent), "evidence_invalid");
   });
 
+  it("exposes only a frozen null-prototype store facade and no raw filesystem authority", async () => {
+    const root = privateRoot();
+    const store = await openEvidenceStore(root);
+    expect(Object.getPrototypeOf(store)).toBeNull();
+    expect(Object.isFrozen(store)).toBe(true);
+    expect(Reflect.ownKeys(store)).toEqual([
+      "read",
+      "inspect",
+      "persist",
+      "close",
+    ]);
+    expect((store as unknown as Record<string, unknown>).parentHandle)
+      .toBeUndefined();
+    expect((store as unknown as Record<string, unknown>).dependencies)
+      .toBeUndefined();
+    expect((store as unknown as Record<string, unknown>).constructor)
+      .toBeUndefined();
+    expect((store as unknown as Record<string, unknown>).open).toBeUndefined();
+    await store.close();
+    expect((store as unknown as Record<string, unknown>).open).toBeUndefined();
+    await expectCode(
+      store.read(intentLeaf, NEVER_ABORTED_SIGNAL),
+      "evidence_invalid",
+    );
+  });
+
   it("returns null for an absent inspected leaf without creating anything", async () => {
     const root = privateRoot();
     const store = await openPermanentStagingProviderVariableWriteEvidenceStore(root);
@@ -395,6 +421,10 @@ describe("permanent staging provider-variable durable evidence", () => {
     const root = privateRoot();
     const finalPath = path.join(root, intentLeaf);
     let failed = false;
+    const open: PermanentStagingProviderVariableWriteEvidenceDependencies["open"] =
+      async (filename, flags, mode) => mode === undefined
+        ? await fs.promises.open(filename, flags)
+        : await fs.promises.open(filename, flags, mode);
     const syncHandle = vi.fn(async (handle: fs.promises.FileHandle) => {
       const stat = await handle.stat();
       if (stat.isFile() && !failed) {
@@ -406,7 +436,9 @@ describe("permanent staging provider-variable durable evidence", () => {
       await handle.sync();
     });
     const store = await openPermanentStagingProviderVariableWriteEvidenceStore(root, {
+      open,
       syncHandle,
+      closeHandle: async (handle) => await handle.close(),
     });
 
     await expectCode(store.persist(intentLeaf, intent), "cleanup_failed");
@@ -637,6 +669,7 @@ describe("permanent staging provider-variable durable evidence", () => {
     const store = await openPermanentStagingProviderVariableWriteEvidenceStore(root);
     const hashPrototype = Object.getPrototypeOf(crypto.createHash("sha256"));
     const fsPromises = fs.promises;
+    const realpathExact = fs.realpath;
     const poison = (label: string): PropertyDescriptor => throwingValue(label);
     const poisons: PropertyPoison[] = [
       { target: Buffer, key: "alloc", descriptor: poison("Buffer.alloc") },
@@ -818,12 +851,19 @@ describe("permanent staging provider-variable durable evidence", () => {
       { target: path, key: "join", descriptor: poison("path.join") },
       { target: path, key: "dirname", descriptor: poison("path.dirname") },
       { target: path, key: "basename", descriptor: poison("path.basename") },
+      { target: path, key: "resolve", descriptor: poison("path.resolve") },
       { target: fsPromises, key: "open", descriptor: poison("fs.open") },
       { target: fsPromises, key: "lstat", descriptor: poison("fs.lstat") },
       {
         target: fsPromises,
         key: "realpath",
         descriptor: poison("fs.realpath"),
+      },
+      { target: fs, key: "realpath", descriptor: poison("fs.realpath callback") },
+      {
+        target: realpathExact,
+        key: "native",
+        descriptor: poison("fs.realpath.native"),
       },
     ];
 
@@ -910,6 +950,40 @@ describe("permanent staging provider-variable durable evidence", () => {
     for (const entry of poisons) {
       expect(entry.descriptor.value).not.toHaveBeenCalled();
     }
+  });
+
+  it("does not capture poisoned native FileHandle methods as default authority", async () => {
+    const root = privateRoot();
+    const probe = await fs.promises.open(root, fs.constants.O_RDONLY);
+    const prototype = Object.getPrototypeOf(probe) as object;
+    await probe.close();
+    const keys = ["stat", "read", "write", "chmod", "sync"] as const;
+    const originals = keys.map((key) =>
+      Object.getOwnPropertyDescriptor(prototype, key));
+    const poisons = keys.map((key) => vi.fn(() => {
+      throw new Error(`poisoned native FileHandle.${key}`);
+    }));
+    let store: Awaited<ReturnType<typeof openEvidenceStore>> | undefined;
+    try {
+      for (let index = 0; index < keys.length; index += 1) {
+        Object.defineProperty(prototype, keys[index], {
+          ...originals[index],
+          value: poisons[index],
+        });
+      }
+      store = await openEvidenceStore(root);
+      await store.persist(intentLeaf, intent, NEVER_ABORTED_SIGNAL);
+      await store.close();
+    } finally {
+      for (let index = 0; index < keys.length; index += 1) {
+        const descriptor = originals[index];
+        if (descriptor === undefined) Reflect.deleteProperty(prototype, keys[index]);
+        else Object.defineProperty(prototype, keys[index], descriptor);
+      }
+    }
+    await store?.close();
+    for (const poison of poisons) expect(poison).not.toHaveBeenCalled();
+    expect(fs.readFileSync(path.join(root, intentLeaf), "utf8")).toBe(intent);
   });
 
   it.each([

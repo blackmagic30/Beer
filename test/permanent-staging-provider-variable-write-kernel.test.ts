@@ -1,11 +1,30 @@
 import crypto from "node:crypto";
+import { EventEmitter } from "node:events";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import {
   PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_CANONICAL_POLICY_SOURCE,
+  PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_LOCK,
   PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_OPERATIONS,
 } from "../scripts/lib/permanent-staging-provider-variable-write-executor.js";
+import {
+  openPermanentStagingProviderVariableWriteProcessAdapter,
+  type PermanentStagingProviderVariableWriteProcessAdapterHandle,
+} from "../scripts/lib/permanent-staging-provider-variable-write-process-adapter.js";
+import {
+  createPermanentStagingProviderVariableWriteLocalAttemptAuthority,
+  openPermanentStagingProviderVariableWriteLocalAuthority,
+  type PermanentStagingProviderVariableWriteLocalAttemptAuthority,
+  type PermanentStagingProviderVariableWriteLocalAuthorityHandle,
+  type PermanentStagingProviderVariableWriteLocalReceipt,
+} from "../scripts/lib/permanent-staging-provider-variable-write-local-authority.js";
+import {
+  readPermanentStagingProviderVariableWriteInput,
+} from "../scripts/lib/permanent-staging-provider-variable-write-input.js";
 import {
   buildPermanentStagingProviderVariableTargetPostflight,
   buildPermanentStagingProviderVariableTargetPreflight,
@@ -40,7 +59,8 @@ const OPERATION = PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_OPERATIONS[0];
 const PROJECT_ID = "48d8c6cd-1c66-4148-874b-20877f48e1a5";
 const ENVIRONMENT_ID = "a4e0f507-d6d3-4df9-a818-ad92c0071a35";
 const SERVICE_ID = "6816c4a2-e392-4ee5-826f-2584cb599ec0";
-const VALUE_COMMITMENT = "a".repeat(64);
+let VALUE_BYTE_LENGTH = 17;
+let VALUE_COMMITMENT = "a".repeat(64);
 const BOUNDARY_SHA = "b".repeat(64);
 const CURRENT_METADATA_SHA = "d".repeat(64);
 const VARIABLE_INVENTORY_HASH_DOMAIN =
@@ -164,22 +184,22 @@ const DEPLOYMENT_SHA = domainSha256(
 function input(): PermanentStagingProviderVariableInputAuthority {
   return {
     schemaVersion:
-      "pintpath-permanent-staging-provider-variable-write-input/v1",
+      "pintpath-permanent-staging-provider-variable-write-input/v2",
     variableName: OPERATION.variableName,
-    byteLength: 17,
+    byteLength: VALUE_BYTE_LENGTH,
     commitmentDomain:
       "pintpath/permanent-staging/provider-variable-write/input-commitment/v1",
     commitmentSha256: VALUE_COMMITMENT,
-    stdinOnly: true,
+    callbackIngressOnly: true,
+    stdinSourceAuthorityAvailable: false,
     validUtf8: true,
     controlCharactersAbsent: true,
   };
 }
 
-function local(): PermanentStagingProviderVariableLocalAuthority {
-  return {
+let LOCAL_AUTHORITY_FIXTURE: PermanentStagingProviderVariableLocalAuthority = {
     schemaVersion:
-      "pintpath-permanent-staging-provider-variable-write-local-authority/v1",
+      "pintpath-permanent-staging-provider-variable-write-local-authority/v2",
     railwayCliVersion: "5.32.0",
     railwayCliAbsolutePath: "/opt/homebrew/Cellar/railway/5.32.0/bin/railway",
     railwayCliSha256:
@@ -194,8 +214,83 @@ function local(): PermanentStagingProviderVariableLocalAuthority {
     descriptorHeld: true,
     pathAndDescriptorIdentityExact: true,
     bytesHashedFromHeldDescriptor: true,
-    providerInvoked: false,
-  };
+    privateExecutableCopyAbsolutePath:
+      "/private/pintpath/railway-26e3e0fd2b59",
+    privateExecutableCopySha256:
+      "26e3e0fd2b59fd9f7b1e891cbc8f3ca9b0266556545f00ba4db3ce754fbc10d1",
+    privateExecutableCopyBytes: 16_696_704,
+    privateExecutableCopyIdentitySha256: "1".repeat(64),
+    privateExecutableCopyAuthoritySha256: "2".repeat(64),
+    environmentAuthoritySha256: "3".repeat(64),
+    stdinAuthoritySha256: "4".repeat(64),
+    processGroupAuthoritySha256: "5".repeat(64),
+    processAdapterAuthoritySha256: "6".repeat(64),
+    privateExecutableCopyDescriptorHeld: true,
+    privateExecutableCopyParentMode0700: true,
+    processAdapterInjectedSpawnOnly: true,
+    providerInvokedDuringInspection: false,
+};
+
+function local(): PermanentStagingProviderVariableLocalAuthority {
+  return { ...LOCAL_AUTHORITY_FIXTURE };
+}
+
+function localAuthoritySha256(): string {
+  return domainSha256(
+    "pintpath/permanent-staging/provider-variable-write/local-authority/v2\0",
+    local(),
+  );
+}
+
+function commandSha256(): string {
+  const authority = local();
+  return domainSha256(
+    "pintpath/permanent-staging/provider-variable-write/command/v2\0",
+    {
+      schemaVersion:
+        "pintpath-permanent-staging-provider-variable-write-command/v2",
+      executable: authority.privateExecutableCopyAbsolutePath,
+      executableAuthority: {
+        privateExecutableCopySha256: authority.privateExecutableCopySha256,
+        privateExecutableCopyIdentitySha256:
+          authority.privateExecutableCopyIdentitySha256,
+        privateExecutableCopyAuthoritySha256:
+          authority.privateExecutableCopyAuthoritySha256,
+        descriptorHeld: true,
+      },
+      argv: [
+        "variable",
+        "set",
+        OPERATION.variableName,
+        "--stdin",
+        "--skip-deploys",
+        "--project",
+        PROJECT_ID,
+        "--environment",
+        ENVIRONMENT_ID,
+        "--service",
+        SERVICE_ID,
+      ],
+      environment: {
+        inherit: false,
+        prototype: "null",
+        ownEnumerableDataPropertiesOnly: true,
+        exactNames: ["RAILWAY_TOKEN"],
+        valuesHandledByThisModule: false,
+      },
+      shell: false,
+      stdin: "pipe",
+      stdinWrites: 1,
+      stdinEndCalls: 1,
+      stdout: "ignore",
+      stderr: "ignore",
+      maximumCapturedStdoutBytes: 0,
+      maximumCapturedStderrBytes: 0,
+      detached: true,
+      abortSignalSequence: ["SIGTERM", "SIGKILL"],
+      processGroupEmptyBeforeSettlement: true,
+    },
+  );
 }
 
 function boundary(): PermanentStagingProviderVariableBoundaryAuthority {
@@ -262,23 +357,91 @@ function targetPostflight(): PermanentStagingProviderVariableTargetPostflight {
   };
 }
 
+let RECEIPT_FIXTURE_ROOT = "";
+let RECEIPT_FIXTURE_PRIVATE_COPY_PATH = "";
+let RECEIPT_FIXTURE_ADAPTER:
+  PermanentStagingProviderVariableWriteProcessAdapterHandle | undefined;
+let RECEIPT_FIXTURE_LOCAL:
+  PermanentStagingProviderVariableWriteLocalAuthorityHandle | undefined;
+let PREMINTED_ACKNOWLEDGEMENT:
+  PermanentStagingProviderVariableWriteLocalReceipt | undefined;
+let RECEIPT_FIXTURE_PID = 40_000;
+
 function acknowledgement(): PermanentStagingProviderVariableWriteAcknowledgement {
-  return {
-    schemaVersion:
-      "pintpath-permanent-staging-provider-variable-write-local-receipt/v1",
-    variableName: OPERATION.variableName,
-    inputCommitmentSha256: VALUE_COMMITMENT,
-    localAuthoritySha256: "7".repeat(64),
-    commandSha256: "8".repeat(64),
-    childAttempts: 1,
-    stdinWrites: 1,
-    exitCode: 0,
-    signal: null,
-    stdoutBytesCaptured: 0,
-    stderrBytesCaptured: 0,
-    childCloseAwaited: true,
-    providerAcknowledgementInspected: false,
-  };
+  const receipt = PREMINTED_ACKNOWLEDGEMENT;
+  if (receipt === undefined) {
+    throw new Error("genuine local receipt fixture unavailable");
+  }
+  return receipt;
+}
+
+async function mintAcknowledgement(
+  attemptAuthority: PermanentStagingProviderVariableWriteLocalAttemptAuthority,
+  intentSha256: string,
+): Promise<PermanentStagingProviderVariableWriteLocalReceipt> {
+  let groupEmpty = false;
+  const emitter = new EventEmitter();
+  const stdinEmitter = new EventEmitter();
+  const adapter = await openPermanentStagingProviderVariableWriteProcessAdapter({
+    privateExecutableCopyPath: RECEIPT_FIXTURE_PRIVATE_COPY_PATH,
+    expectedSourceSha256:
+      PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_LOCK.railwayCli.sha256,
+    spawn: () => ({
+      pid: RECEIPT_FIXTURE_PID++,
+      stdin: {
+        write(_value: Buffer, callback: (error?: unknown) => void) {
+          callback();
+          return true;
+        },
+        end(callback: (error?: unknown) => void) {
+          callback();
+          setImmediate(() => {
+            groupEmpty = true;
+            emitter.emit("close", 0, null);
+          });
+        },
+        once: stdinEmitter.once.bind(stdinEmitter),
+        removeListener: stdinEmitter.removeListener.bind(stdinEmitter),
+      },
+      once: emitter.once.bind(emitter),
+      removeListener: emitter.removeListener.bind(emitter),
+    }),
+    killProcessGroup: () => {
+      groupEmpty = true;
+    },
+    probeProcessGroupEmpty: () => groupEmpty,
+  });
+  let localAuthority:
+    PermanentStagingProviderVariableWriteLocalAuthorityHandle | undefined;
+  try {
+    const binding = await adapter.inspectLocalAuthorityBinding(
+      new AbortController().signal,
+    );
+    localAuthority =
+      await openPermanentStagingProviderVariableWriteLocalAuthority(binding);
+    await localAuthority.inspect(new AbortController().signal);
+    const inputHandle = await readPermanentStagingProviderVariableWriteInput(
+      OPERATION.variableName,
+      {
+        readExactlyOnce(consumeChunk, settle) {
+          consumeChunk(Buffer.from("offline-value-001", "utf8"));
+          settle();
+        },
+      },
+      new AbortController().signal,
+    );
+    return await localAuthority.writeExactlyOnceWithInjectedChild(
+      OPERATION.variableName,
+      inputHandle,
+      intentSha256,
+      attemptAuthority,
+      adapter.createLauncher("offline-kernel-token-never-sent"),
+      new AbortController().signal,
+    );
+  } finally {
+    await localAuthority?.close();
+    await adapter.close();
+  }
 }
 
 function cleanup(): PermanentStagingProviderVariableCleanupAuthority {
@@ -326,8 +489,16 @@ function canonicalIntent(): string {
     projectId: "48d8c6cd-1c66-4148-874b-20877f48e1a5",
     environmentId: "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
     serviceId: "6816c4a2-e392-4ee5-826f-2584cb599ec0",
-    valueByteLength: 17,
+    valueByteLength: VALUE_BYTE_LENGTH,
     valueCommitmentSha256: VALUE_COMMITMENT,
+    localAuthoritySha256: localAuthoritySha256(),
+    commandSha256: commandSha256(),
+    processAdapterAuthoritySha256: local().processAdapterAuthoritySha256,
+    privateExecutableCopyAuthoritySha256:
+      local().privateExecutableCopyAuthoritySha256,
+    environmentAuthoritySha256: local().environmentAuthoritySha256,
+    stdinAuthoritySha256: local().stdinAuthoritySha256,
+    processGroupAuthoritySha256: local().processGroupAuthoritySha256,
     boundarySnapshotSha256: BOUNDARY_SHA,
     metadataInventorySha256: METADATA_SHA,
     deploymentInventorySha256: DEPLOYMENT_SHA,
@@ -352,6 +523,8 @@ interface DependencyFixture {
   setPreflight(value: PermanentStagingProviderVariableTargetPreflightObservation): void;
   setPostflight(value: PermanentStagingProviderVariableTargetPostflight): void;
   setAcknowledgement(value: PermanentStagingProviderVariableWriteAcknowledgement): void;
+  getLastAcknowledgement():
+    PermanentStagingProviderVariableWriteAcknowledgement | null;
   setCleanup(value: PermanentStagingProviderVariableCleanupAuthority): void;
   setFinalize(value: boolean): void;
 }
@@ -366,7 +539,10 @@ function fixture(): DependencyFixture {
   let boundaryValue = boundary();
   let preflightValue = targetPreflightObservation();
   let postflightValue = targetPostflight();
-  let acknowledgementValue = acknowledgement();
+  let acknowledgementValue:
+    PermanentStagingProviderVariableWriteAcknowledgement | null = null;
+  let lastAcknowledgement:
+    PermanentStagingProviderVariableWriteAcknowledgement | null = null;
   let cleanupValue = cleanup();
   let finalizeValue = true;
   const dependencies: PermanentStagingProviderVariableWriteKernelDependencies = {
@@ -399,9 +575,14 @@ function fixture(): DependencyFixture {
       intentCandidates.push(canonical);
       return evidence(canonical);
     },
-    writeExactlyOnce: async () => {
+    writeExactlyOnce: async (_operation, intentSha256, attemptAuthority) => {
       calls.push("write");
-      return acknowledgementValue;
+      const observed = acknowledgementValue ?? await mintAcknowledgement(
+        attemptAuthority,
+        intentSha256,
+      );
+      lastAcknowledgement = observed;
+      return observed;
     },
     inspectTargetPostflight: async () => {
       calls.push("target-postflight");
@@ -444,6 +625,7 @@ function fixture(): DependencyFixture {
     setAcknowledgement: (value) => {
       acknowledgementValue = value;
     },
+    getLastAcknowledgement: () => lastAcknowledgement,
     setCleanup: (value) => {
       cleanupValue = value;
     },
@@ -455,7 +637,142 @@ function fixture(): DependencyFixture {
 
 const execute = permanentStagingProviderVariableWriteKernelInternals.executeEnabled;
 
+beforeAll(async () => {
+  RECEIPT_FIXTURE_ROOT = await fs.promises.realpath(await fs.promises.mkdtemp(
+    path.join(os.tmpdir(), "pintpath-kernel-local-receipt."),
+  ));
+  RECEIPT_FIXTURE_PRIVATE_COPY_PATH = path.join(
+    RECEIPT_FIXTURE_ROOT,
+    "railway-private-copy-never-executed",
+  );
+  await fs.promises.copyFile(
+    PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_LOCK.railwayCli.absolutePath,
+    RECEIPT_FIXTURE_PRIVATE_COPY_PATH,
+    fs.constants.COPYFILE_EXCL,
+  );
+  await fs.promises.chmod(RECEIPT_FIXTURE_PRIVATE_COPY_PATH, 0o500);
+  RECEIPT_FIXTURE_ADAPTER = await openPermanentStagingProviderVariableWriteProcessAdapter({
+    privateExecutableCopyPath: RECEIPT_FIXTURE_PRIVATE_COPY_PATH,
+    expectedSourceSha256:
+      PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_LOCK.railwayCli.sha256,
+    spawn: () => {
+      throw new Error("kernel fixture never creates a process");
+    },
+    killProcessGroup: () => undefined,
+    probeProcessGroupEmpty: () => true,
+  });
+  const binding = await RECEIPT_FIXTURE_ADAPTER.inspectLocalAuthorityBinding(
+    new AbortController().signal,
+  );
+  const openInput = async () => readPermanentStagingProviderVariableWriteInput(
+    OPERATION.variableName,
+    {
+      readExactlyOnce(consumeChunk, settle) {
+        consumeChunk(Buffer.from("offline-value-001", "utf8"));
+        settle();
+      },
+    },
+    new AbortController().signal,
+  );
+  RECEIPT_FIXTURE_LOCAL =
+    await openPermanentStagingProviderVariableWriteLocalAuthority(binding);
+  LOCAL_AUTHORITY_FIXTURE = await RECEIPT_FIXTURE_LOCAL.inspect(
+    new AbortController().signal,
+  );
+  const heldInput = await openInput();
+  const inputInspection = heldInput.inspect();
+  VALUE_BYTE_LENGTH = inputInspection.byteLength;
+  VALUE_COMMITMENT = inputInspection.commitmentSha256;
+  heldInput.close();
+  const expectedIntentSha256 = sha256(canonicalIntent());
+  await RECEIPT_FIXTURE_LOCAL.close();
+  RECEIPT_FIXTURE_LOCAL = undefined;
+  await RECEIPT_FIXTURE_ADAPTER.close();
+  RECEIPT_FIXTURE_ADAPTER = undefined;
+  const premintAttempt =
+    createPermanentStagingProviderVariableWriteLocalAttemptAuthority({
+      operationId: OPERATION.operationId,
+      variableName: OPERATION.variableName,
+      inputCommitmentSha256: VALUE_COMMITMENT,
+      inputByteLength: VALUE_BYTE_LENGTH,
+      intentSha256: expectedIntentSha256,
+      localAuthoritySha256: localAuthoritySha256(),
+      commandSha256: commandSha256(),
+      processAdapterAuthoritySha256:
+        LOCAL_AUTHORITY_FIXTURE.processAdapterAuthoritySha256,
+      privateExecutableCopyAuthoritySha256:
+        LOCAL_AUTHORITY_FIXTURE.privateExecutableCopyAuthoritySha256,
+      environmentAuthoritySha256:
+        LOCAL_AUTHORITY_FIXTURE.environmentAuthoritySha256,
+      stdinAuthoritySha256: LOCAL_AUTHORITY_FIXTURE.stdinAuthoritySha256,
+      processGroupAuthoritySha256:
+        LOCAL_AUTHORITY_FIXTURE.processGroupAuthoritySha256,
+    });
+  PREMINTED_ACKNOWLEDGEMENT = await mintAcknowledgement(
+    premintAttempt,
+    expectedIntentSha256,
+  );
+});
+
+afterAll(async () => {
+  await RECEIPT_FIXTURE_LOCAL?.close();
+  await RECEIPT_FIXTURE_ADAPTER?.close();
+  if (RECEIPT_FIXTURE_ROOT.length > 0) {
+    await fs.promises.rm(RECEIPT_FIXTURE_ROOT, {
+      recursive: true,
+      force: false,
+    });
+  }
+});
+
 describe("permanent staging provider-variable write kernel", () => {
+  it("snapshots exact dependency functions and preserves their receiver before the first await", async () => {
+    const state = fixture();
+    const receiver = state.dependencies as unknown as object;
+    const originalDescriptors = Object.getOwnPropertyDescriptors(receiver);
+    const dependencyNames = Reflect.ownKeys(originalDescriptors);
+    const poison = vi.fn(async () => {
+      throw new Error("mutated dependency must not be invoked");
+    });
+    let receiverExact = false;
+    Object.defineProperty(receiver, "inspectTerminalEvidence", {
+      ...originalDescriptors.inspectTerminalEvidence,
+      value: async function (this: unknown) {
+        receiverExact = this === receiver;
+        state.calls.push("terminal-inspect");
+        await Promise.resolve();
+        for (let index = 0; index < dependencyNames.length; index += 1) {
+          Object.defineProperty(receiver, dependencyNames[index]!, {
+            ...originalDescriptors[dependencyNames[index]!],
+            value: poison,
+          });
+        }
+        return null;
+      },
+    });
+    let receipt: Awaited<ReturnType<typeof execute>> | undefined;
+    try {
+      receipt = await execute(OPERATION.operationId, state.dependencies);
+    } finally {
+      for (let index = 0; index < dependencyNames.length; index += 1) {
+        Object.defineProperty(
+          receiver,
+          dependencyNames[index]!,
+          originalDescriptors[dependencyNames[index]!]!,
+        );
+      }
+    }
+    expect(receiverExact).toBe(true);
+    expect(poison).not.toHaveBeenCalled();
+    expect(receipt?.outcome).toBe("acknowledged_pending_runtime_proof");
+    expect(receipt?.checks).toMatchObject({
+      acknowledgementExact: true,
+      cleanupExact: true,
+      terminalEvidenceExact: true,
+      finalizationExact: true,
+    });
+  });
+
   it("executes one create in the exact review-only sequence", async () => {
     const state = fixture();
     const receipt = await execute(OPERATION.operationId, state.dependencies);
@@ -515,6 +832,39 @@ describe("permanent staging provider-variable write kernel", () => {
     ]);
   });
 
+  it("publishes an immutable null-prototype receipt without inherited then assimilation", async () => {
+    const state = fixture();
+    const descriptor = Object.getOwnPropertyDescriptor(Object.prototype, "then");
+    let traps = 0;
+    state.dependencies.finalize = async () => {
+      state.calls.push("finalize");
+      Object.defineProperty(Object.prototype, "then", {
+        configurable: true,
+        get() {
+          traps += 1;
+          const candidate = this as { outcome?: string };
+          candidate.outcome = "acknowledged_pending_runtime_proof";
+          return undefined;
+        },
+      });
+      return false;
+    };
+    let receipt!: Awaited<ReturnType<typeof execute>>;
+    try {
+      receipt = await execute(OPERATION.operationId, state.dependencies);
+    } finally {
+      if (descriptor === undefined) Reflect.deleteProperty(Object.prototype, "then");
+      else Object.defineProperty(Object.prototype, "then", descriptor);
+    }
+    expect(traps).toBe(0);
+    expect(receipt.outcome).toBe("mutation_uncertain");
+    expect(receipt.checks.finalizationExact).toBe(false);
+    expect(Object.getPrototypeOf(receipt)).toBeNull();
+    expect(Object.getPrototypeOf(receipt.checks)).toBeNull();
+    expect(Object.isFrozen(receipt)).toBe(true);
+    expect(Object.isFrozen(receipt.checks)).toBe(true);
+  });
+
   it("persists an explicit pre-finalization receipt binding", async () => {
     const state = fixture();
     const receipt = await execute(OPERATION.operationId, state.dependencies);
@@ -526,6 +876,16 @@ describe("permanent staging provider-variable write kernel", () => {
     expect(persistedIntent.preflightLineage).toEqual(
       targetPreflightObservation().recoveryLineage,
     );
+    expect(persistedIntent).toMatchObject({
+      localAuthoritySha256: localAuthoritySha256(),
+      commandSha256: commandSha256(),
+      processAdapterAuthoritySha256: local().processAdapterAuthoritySha256,
+      privateExecutableCopyAuthoritySha256:
+        local().privateExecutableCopyAuthoritySha256,
+      environmentAuthoritySha256: local().environmentAuthoritySha256,
+      stdinAuthoritySha256: local().stdinAuthoritySha256,
+      processGroupAuthoritySha256: local().processGroupAuthoritySha256,
+    });
 
     expect(state.terminalCandidates).toHaveLength(1);
     const terminal = JSON.parse(state.terminalCandidates[0]!) as
@@ -559,6 +919,10 @@ describe("permanent staging provider-variable write kernel", () => {
     expect(preFinalizationReceipt).toMatchObject({
       outcome: "acknowledged_pending_runtime_proof",
       terminalEvidenceSha256: null,
+      writeAcknowledgementSha256: domainSha256(
+        "pintpath/permanent-staging/provider-variable-write/write-acknowledgement/v2\0",
+        acknowledgement(),
+      ),
       runtimeValueProof: false,
       activationAuthorized: false,
       checks: {
@@ -570,9 +934,12 @@ describe("permanent staging provider-variable write kernel", () => {
     expect(terminal).not.toHaveProperty("candidateReceiptSha256");
     expect(receipt.checks.terminalEvidenceExact).toBe(true);
     expect(receipt.checks.finalizationExact).toBe(true);
+    expect(receipt.writeAcknowledgementSha256).toBe(
+      preFinalizationReceipt.writeAcknowledgementSha256,
+    );
   });
 
-  it("ignores an inherited toJSON hook and persists exact v2 evidence", async () => {
+  it("ignores an inherited toJSON hook and persists exact current evidence", async () => {
     const state = fixture();
     const previousToJSON = Object.getOwnPropertyDescriptor(
       Object.prototype,
@@ -639,9 +1006,13 @@ describe("permanent staging provider-variable write kernel", () => {
       PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_OPERATIONS[1]!.variableName;
     const previousPush = Object.getOwnPropertyDescriptor(Array.prototype, "push");
     const previousJoin = Object.getOwnPropertyDescriptor(Array.prototype, "join");
+    const previousString = Object.getOwnPropertyDescriptor(globalThis, "String");
     const pushExact = Array.prototype.push;
     const joinExact = Array.prototype.join;
     let arrayMethodsPoisoned = false;
+    const liveString = vi.fn(() => {
+      throw new Error("live String constructor must not run");
+    });
     const rewriteVariableName = (value: string): string => value.replace(
       `"variableName":"${OPERATION.variableName}"`,
       `"variableName":"${replacementVariableName}"`,
@@ -654,6 +1025,11 @@ describe("permanent staging provider-variable write kernel", () => {
       }
       if (previousJoin !== undefined) {
         Object.defineProperty(Array.prototype, "join", previousJoin);
+      }
+      if (previousString === undefined) {
+        Reflect.deleteProperty(globalThis, "String");
+      } else {
+        Object.defineProperty(globalThis, "String", previousString);
       }
     };
     let preflightReads = 0;
@@ -687,6 +1063,11 @@ describe("permanent staging provider-variable write kernel", () => {
             return rewriteVariableName(joined);
           },
         });
+        Object.defineProperty(globalThis, "String", {
+          configurable: true,
+          value: liveString,
+          writable: true,
+        });
         arrayMethodsPoisoned = true;
       }
       return stablePreflight;
@@ -712,6 +1093,7 @@ describe("permanent staging provider-variable write kernel", () => {
     });
     expect(state.intentCandidates[0]).not.toContain(replacementVariableName);
     expect(state.calls.filter((call) => call === "write")).toHaveLength(1);
+    expect(liveString).not.toHaveBeenCalled();
   });
 
   it("uses pinned regexp, hash, and digest conversion intrinsics", async () => {
@@ -1132,10 +1514,23 @@ describe("permanent staging provider-variable write kernel", () => {
       resolvePoisoned = true;
       return targetPreflightObservation();
     };
-    state.dependencies.writeExactlyOnce = async () => {
+    const originalWriteExactlyOnce = state.dependencies.writeExactlyOnce;
+    state.dependencies.writeExactlyOnce = async (
+      operation,
+      intentSha256,
+      attemptAuthority,
+      signal,
+    ) => {
       state.calls.push("write");
       restoreResolve();
-      return acknowledgement();
+      const callIndex = state.calls.lastIndexOf("write");
+      state.calls.splice(callIndex, 1);
+      return originalWriteExactlyOnce(
+        operation,
+        intentSha256,
+        attemptAuthority,
+        signal,
+      );
     };
 
     let receipt: Awaited<ReturnType<typeof execute>> | null = null;
@@ -1161,6 +1556,81 @@ describe("permanent staging provider-variable write kernel", () => {
     expect(receipt.checks.acknowledgementExact).toBe(false);
   });
 
+  it("rejects an otherwise exact unbranded local receipt after the sole write attempt", async () => {
+    const state = fixture();
+    state.setAcknowledgement({ ...acknowledgement() });
+    const receipt = await execute(OPERATION.operationId, state.dependencies);
+    expect(receipt.outcome).toBe("mutation_uncertain");
+    expect(receipt.checks.writeAttempted).toBe(true);
+    expect(receipt.checks.acknowledgementExact).toBe(false);
+    expect(receipt.writeAcknowledgementSha256).toBeNull();
+    expect(state.calls.filter((call) => call === "write")).toHaveLength(1);
+  });
+
+  it("rejects a genuine same-intent receipt minted before durable persistence", async () => {
+    const preminted = acknowledgement();
+    const state = fixture();
+    state.setAcknowledgement(preminted);
+    const receipt = await execute(OPERATION.operationId, state.dependencies);
+    expect(receipt.intentSha256).toBe(preminted.intentSha256);
+    expect(receipt.outcome).toBe("mutation_uncertain");
+    expect(receipt.checks.durableIntentExact).toBe(true);
+    expect(receipt.checks.writeAttempted).toBe(true);
+    expect(receipt.checks.acknowledgementExact).toBe(false);
+    expect(receipt.writeAcknowledgementSha256).toBeNull();
+  });
+
+  it("rejects a genuine receipt replayed against a different durable intent", async () => {
+    const replayed = acknowledgement();
+    const state = fixture();
+    state.setBoundary({ ...boundary(), snapshotSha256: "e".repeat(64) });
+    state.setAcknowledgement(replayed);
+    const receipt = await execute(OPERATION.operationId, state.dependencies);
+    expect(receipt.outcome).toBe("mutation_uncertain");
+    expect(receipt.intentSha256).not.toBe(replayed.intentSha256);
+    expect(receipt.checks.writeAttempted).toBe(true);
+    expect(receipt.checks.acknowledgementExact).toBe(false);
+    expect(receipt.writeAcknowledgementSha256).toBeNull();
+  });
+
+  it("consumes each genuine local receipt authority at most once", async () => {
+    const first = fixture();
+    const accepted = await execute(OPERATION.operationId, first.dependencies);
+    expect(accepted.outcome).toBe("acknowledged_pending_runtime_proof");
+    expect(accepted.checks.acknowledgementExact).toBe(true);
+    const oneShot = first.getLastAcknowledgement();
+    if (oneShot === null) throw new Error("missing in-call acknowledgement");
+
+    const second = fixture();
+    second.setAcknowledgement(oneShot);
+    const replayed = await execute(OPERATION.operationId, second.dependencies);
+    expect(replayed.outcome).toBe("mutation_uncertain");
+    expect(replayed.checks.writeAttempted).toBe(true);
+    expect(replayed.checks.acknowledgementExact).toBe(false);
+    expect(replayed.writeAcknowledgementSha256).toBeNull();
+  });
+
+  it("rejects valid-looking acknowledgement hashes not bound to durable intent", async () => {
+    const state = fixture();
+    state.setAcknowledgement({
+      ...acknowledgement(),
+      localAuthoritySha256: "7".repeat(64),
+      commandSha256: "8".repeat(64),
+    });
+    const receipt = await execute(OPERATION.operationId, state.dependencies);
+    expect(receipt.outcome).toBe("mutation_uncertain");
+    expect(receipt.checks.writeAttempted).toBe(true);
+    expect(receipt.checks.acknowledgementExact).toBe(false);
+    expect(receipt.writeAcknowledgementSha256).toBeNull();
+    const terminal = JSON.parse(state.terminalCandidates[0]!) as {
+      readonly preFinalizationReceipt: {
+        readonly writeAcknowledgementSha256: string | null;
+      };
+    };
+    expect(terminal.preFinalizationReceipt.writeAcknowledgementSha256)
+      .toBeNull();
+  });
+
   it.each([
     ["metadata delta", { metadataDeltaExact: false }],
     ["target metadata", { expectedMetadataExact: false }],
@@ -1177,34 +1647,34 @@ describe("permanent staging provider-variable write kernel", () => {
     expect(receipt.checks.targetPostflightExact).toBe(false);
   });
 
-  it("makes cleanup failure dominate an otherwise exact write", async () => {
+  it("preserves mutation uncertainty when cleanup fails after a write attempt", async () => {
     const state = fixture();
     state.setCleanup({ ...cleanup(), inputZeroized: false });
     const receipt = await execute(OPERATION.operationId, state.dependencies);
-    expect(receipt.outcome).toBe("cleanup_failed");
+    expect(receipt.outcome).toBe("mutation_uncertain");
     expect(receipt.checks.inputCleanupExact).toBe(false);
     expect(receipt.checks.cleanupExact).toBe(false);
     expect(state.calls).toContain("terminal-persist");
     expect(state.calls.at(-1)).toBe("finalize");
   });
 
-  it("makes terminal evidence failure dominate", async () => {
+  it("preserves mutation uncertainty when terminal evidence fails", async () => {
     const state = fixture();
     state.dependencies.persistTerminalEvidence = async (_operation, canonical) => {
       state.calls.push("terminal-persist");
       return { ...evidence(canonical), readbackExact: false };
     };
     const receipt = await execute(OPERATION.operationId, state.dependencies);
-    expect(receipt.outcome).toBe("cleanup_failed");
+    expect(receipt.outcome).toBe("mutation_uncertain");
     expect(receipt.checks.terminalEvidenceExact).toBe(false);
     expect(receipt.checks.finalizationExact).toBe(true);
   });
 
-  it("makes finalization failure dominate", async () => {
+  it("preserves mutation uncertainty when finalization fails after durable intent", async () => {
     const state = fixture();
     state.setFinalize(false);
     const receipt = await execute(OPERATION.operationId, state.dependencies);
-    expect(receipt.outcome).toBe("cleanup_failed");
+    expect(receipt.outcome).toBe("mutation_uncertain");
     expect(receipt.checks.finalizationExact).toBe(false);
   });
 
@@ -1254,7 +1724,7 @@ describe("permanent staging provider-variable write kernel", () => {
     const first = fixture();
     first.setFinalize(false);
     const failed = await execute(OPERATION.operationId, first.dependencies);
-    expect(failed.outcome).toBe("cleanup_failed");
+    expect(failed.outcome).toBe("mutation_uncertain");
     expect(failed.checks.terminalEvidenceExact).toBe(true);
     expect(failed.checks.finalizationExact).toBe(false);
     const canonical = first.intentCandidates[0]!;

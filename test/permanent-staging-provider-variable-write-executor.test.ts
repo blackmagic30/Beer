@@ -111,6 +111,46 @@ describe("permanent staging provider-variable write executor", () => {
       .toBe(true);
   });
 
+  it("parses with captured receivers after post-import global replacement", () => {
+    const ObjectExact = Object;
+    const JSONExact = JSON;
+    const ReflectExact = Reflect;
+    const keys = ["Object", "JSON", "Reflect"] as const;
+    const descriptors = keys.map((key) =>
+      ObjectExact.getOwnPropertyDescriptor(globalThis, key));
+    const values = [ObjectExact, JSONExact, ReflectExact] as const;
+    let traps = 0;
+    let parsed: ReturnType<
+      typeof parsePermanentStagingProviderVariableWritePolicy
+    >;
+    try {
+      for (let index = 0; index < keys.length; index += 1) {
+        ObjectExact.defineProperty(globalThis, keys[index], {
+          configurable: true,
+          get() {
+            traps += 1;
+            return values[index];
+          },
+        });
+      }
+      parsed = parsePermanentStagingProviderVariableWritePolicy(
+        PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_CANONICAL_POLICY_SOURCE,
+      );
+    } finally {
+      for (let index = 0; index < keys.length; index += 1) {
+        const descriptor = descriptors[index];
+        if (descriptor === undefined) {
+          ReflectExact.deleteProperty(globalThis, keys[index]);
+        } else {
+          ObjectExact.defineProperty(globalThis, keys[index], descriptor);
+        }
+      }
+    }
+    expect(traps).toBe(0);
+    expect(parsed).not.toBeNull();
+    expect(Object.isFrozen(parsed)).toBe(true);
+  });
+
   it.each([
     ["missing final newline", () =>
       PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_CANONICAL_POLICY_SOURCE
@@ -201,8 +241,12 @@ describe("permanent staging provider-variable write executor", () => {
       return true;
     });
     try {
-      await expect(runPermanentStagingProviderVariableWriteExecutor()).resolves
-        .toBe(1);
+      vi.resetModules();
+      const isolated = await import(
+        "../scripts/lib/permanent-staging-provider-variable-write-executor.js"
+      );
+      await expect(isolated.runPermanentStagingProviderVariableWriteExecutor())
+        .resolves.toBe(1);
     } finally {
       write.mockRestore();
     }
@@ -250,6 +294,10 @@ describe("permanent staging provider-variable write executor", () => {
       output.push(String(chunk));
       return true;
     });
+    vi.resetModules();
+    const isolated = await import(
+      "../scripts/lib/permanent-staging-provider-variable-write-executor.js"
+    );
     const descriptors = Object.fromEntries(
       ["argv", "stdin", "env"].map((key) => [
         key,
@@ -279,7 +327,8 @@ describe("permanent staging provider-variable write executor", () => {
       },
     });
     try {
-      const invoke = runPermanentStagingProviderVariableWriteExecutor as unknown as
+      const invoke = isolated
+        .runPermanentStagingProviderVariableWriteExecutor as unknown as
         (...inputs: readonly unknown[]) => Promise<1>;
       await expect(invoke(poison, poison, poison)).resolves.toBe(1);
     } finally {
@@ -366,7 +415,7 @@ describe("permanent staging provider-variable write executor", () => {
       expect(publicRunner).not.toContain(forbidden);
     }
     expect(core).not.toMatch(/^import\s/m);
-    expect(core.match(/process\./g)).toHaveLength(1);
+    expect(core.match(/process\./g) ?? []).toHaveLength(0);
     expect(wrapper).not.toContain("process.stdin");
     expect(wrapper).not.toContain("process.env");
     expect(wrapper).not.toContain("node:fs");

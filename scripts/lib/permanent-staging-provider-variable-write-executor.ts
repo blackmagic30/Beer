@@ -1,3 +1,13 @@
+const JSON_EXACT = JSON;
+const OBJECT_EXACT = Object;
+const PROCESS_EXACT = process;
+const REFLECT_EXACT = Reflect;
+const JSON_STRINGIFY = JSON_EXACT.stringify;
+const OBJECT_FREEZE = OBJECT_EXACT.freeze;
+const PROCESS_STDOUT = PROCESS_EXACT.stdout;
+const PROCESS_STDOUT_WRITE = PROCESS_STDOUT.write;
+const REFLECT_APPLY = REFLECT_EXACT.apply;
+
 export const PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_POLICY_SCHEMA =
   "pintpath-permanent-staging-provider-variable-write-policy/v2" as const;
 export const PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_EXECUTOR_SCHEMA =
@@ -7,7 +17,7 @@ export const PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_OPERATION =
 export const PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_EXECUTOR_STATE =
   "HARD_DISABLED_REVIEW_REQUIRED" as const;
 
-export const PERMANENT_STAGING_PROVIDER_VARIABLE_NAMES = Object.freeze([
+export const PERMANENT_STAGING_PROVIDER_VARIABLE_NAMES = OBJECT_FREEZE([
   "GOOGLE_MAPS_API_KEY",
   "GOOGLE_MAPS_MAP_ID",
   "GOOGLE_PLACES_API_KEY",
@@ -17,14 +27,14 @@ export const PERMANENT_STAGING_PROVIDER_VARIABLE_NAMES = Object.freeze([
 export type PermanentStagingProviderVariableName =
   (typeof PERMANENT_STAGING_PROVIDER_VARIABLE_NAMES)[number];
 
-const EMPTY_REFERENCES = Object.freeze([] as const);
+const EMPTY_REFERENCES = OBJECT_FREEZE([] as const);
 
 function operation(
   operationId: string,
   variableName: PermanentStagingProviderVariableName,
   evidenceSlug: string,
 ) {
-  return Object.freeze({
+  return OBJECT_FREEZE({
     operationId,
     variableName,
     intentLeaf:
@@ -35,7 +45,7 @@ function operation(
 }
 
 export const PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_OPERATIONS =
-  Object.freeze([
+  OBJECT_FREEZE([
     operation(
       "permanent-staging-provider-variable-create/google-maps-api-key",
       "GOOGLE_MAPS_API_KEY",
@@ -61,20 +71,20 @@ export const PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_OPERATIONS =
 export type PermanentStagingProviderVariableWriteOperation =
   (typeof PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_OPERATIONS)[number];
 
-export const PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_LOCK = Object.freeze({
+export const PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_LOCK = OBJECT_FREEZE({
   policyId: PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_OPERATION,
   activationState: PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_EXECUTOR_STATE,
   projectId: "48d8c6cd-1c66-4148-874b-20877f48e1a5",
   productionEnvironmentId: "13dab015-df74-45c6-b26f-69323daea99a",
   stagingEnvironmentId: "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
   serviceId: "6816c4a2-e392-4ee5-826f-2584cb599ec0",
-  railwayCli: Object.freeze({
+  railwayCli: OBJECT_FREEZE({
     version: "5.32.0",
     absolutePath: "/opt/homebrew/Cellar/railway/5.32.0/bin/railway",
     sha256:
       "26e3e0fd2b59fd9f7b1e891cbc8f3ca9b0266556545f00ba4db3ce754fbc10d1",
   }),
-  writeContract: Object.freeze({
+  writeContract: OBJECT_FREEZE({
     mode: "create-only",
     stdinOnly: true,
     skipDeploys: true,
@@ -168,7 +178,7 @@ export interface PermanentStagingProviderVariableWriteExecutorReceipt {
 
 function buildCanonicalPolicy(): PermanentStagingProviderVariableWritePolicy {
   const lock = PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_LOCK;
-  return Object.freeze({
+  return OBJECT_FREEZE({
     schemaVersion: PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_POLICY_SCHEMA,
     policyId: PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_OPERATION,
     activationState: PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_EXECUTOR_STATE,
@@ -183,7 +193,11 @@ function buildCanonicalPolicy(): PermanentStagingProviderVariableWritePolicy {
 }
 
 export const PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_CANONICAL_POLICY_SOURCE =
-  `${JSON.stringify(buildCanonicalPolicy(), null, 2)}\n`;
+  `${REFLECT_APPLY(JSON_STRINGIFY, JSON_EXACT, [
+    buildCanonicalPolicy(),
+    null,
+    2,
+  ])}\n`;
 
 export function parsePermanentStagingProviderVariableWritePolicy(
   source: unknown,
@@ -195,7 +209,7 @@ export function parsePermanentStagingProviderVariableWritePolicy(
     : null;
 }
 
-const FIXED_DISABLED_CHECKS = Object.freeze({
+const FIXED_DISABLED_CHECKS = OBJECT_FREEZE({
   frameworkEnabled: false,
   policyExact: false,
   inputHeldAndBound: false,
@@ -214,7 +228,7 @@ const FIXED_DISABLED_CHECKS = Object.freeze({
 } as const satisfies PermanentStagingProviderVariableWriteExecutorChecks);
 
 export const PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_BLOCKED_RECEIPT =
-  Object.freeze({
+  OBJECT_FREEZE({
     schemaVersion: PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_EXECUTOR_SCHEMA,
     operation: PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_OPERATION,
     executorState: PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_EXECUTOR_STATE,
@@ -227,10 +241,14 @@ export const PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_BLOCKED_RECEIPT =
   } as const satisfies PermanentStagingProviderVariableWriteExecutorReceipt);
 
 const FIXED_DISABLED_RECEIPT_LINE =
-  `${JSON.stringify(PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_BLOCKED_RECEIPT)}\n`;
+  `${REFLECT_APPLY(JSON_STRINGIFY, JSON_EXACT, [
+    PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_BLOCKED_RECEIPT,
+  ])}\n`;
 
 export async function runPermanentStagingProviderVariableWriteExecutor():
 Promise<1> {
-  process.stdout.write(FIXED_DISABLED_RECEIPT_LINE);
+  REFLECT_APPLY(PROCESS_STDOUT_WRITE, PROCESS_STDOUT, [
+    FIXED_DISABLED_RECEIPT_LINE,
+  ]);
   return 1;
 }

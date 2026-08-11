@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { types as utilTypes } from "node:util";
 
 import {
   PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_RAILWAY_CONTRACT_LOCK,
@@ -6,7 +7,7 @@ import {
 } from "./permanent-staging-provider-variable-write-railway-contract.js";
 
 export const PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_INPUT_SCHEMA =
-  "pintpath-permanent-staging-provider-variable-write-input/v1" as const;
+  "pintpath-permanent-staging-provider-variable-write-input/v2" as const;
 export const PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_INPUT_COMMITMENT_DOMAIN =
   "pintpath/permanent-staging/provider-variable-write/input-commitment/v1" as const;
 export const PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_MAXIMUM_VALUE_BYTES =
@@ -51,14 +52,19 @@ export interface PermanentStagingProviderVariableWriteInputInspection {
   readonly commitmentDomain:
     typeof PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_INPUT_COMMITMENT_DOMAIN;
   readonly commitmentSha256: string;
-  readonly stdinOnly: true;
+  readonly callbackIngressOnly: true;
+  readonly stdinSourceAuthorityAvailable: false;
   readonly validUtf8: true;
   readonly controlCharactersAbsent: true;
 }
 
-export interface PermanentStagingProviderVariableWriteInputSource
-  extends AsyncIterable<Uint8Array> {
+export interface PermanentStagingProviderVariableWriteInputSource {
   readonly isTTY?: boolean;
+  readonly readExactlyOnce: (
+    consumeChunk: (chunk: Uint8Array) => void,
+    settle: (failure?: unknown) => void,
+    signal: AbortSignal,
+  ) => void;
 }
 
 export interface PermanentStagingProviderVariableWriteInputHandle {
@@ -113,28 +119,54 @@ interface NoFailure {
 
 type FailureState = CapturedFailure | NoFailure;
 
-const ARRAY_BUFFER_IS_VIEW = ArrayBuffer.isView;
-const BUFFER_ALLOC = Buffer.alloc;
-const BUFFER_IS_BUFFER = Buffer.isBuffer;
-const BUFFER_WRITE_UINT32_BE = Buffer.prototype.writeUInt32BE;
-const CRYPTO_CREATE_HASH = crypto.createHash;
-const CRYPTO_TIMING_SAFE_EQUAL = crypto.timingSafeEqual;
-const OBJECT_DEFINE_PROPERTY = Object.defineProperty;
-const OBJECT_FREEZE = Object.freeze;
-const OBJECT_GET_OWN_PROPERTY_DESCRIPTOR = Object.getOwnPropertyDescriptor;
-const OBJECT_GET_PROTOTYPE_OF = Object.getPrototypeOf;
+const ARRAY_BUFFER_EXACT = ArrayBuffer;
+const BUFFER_EXACT = Buffer;
+const CRYPTO_EXACT = crypto;
+const OBJECT_EXACT = Object;
+const REFLECT_EXACT = Reflect;
+const STRING_EXACT = String;
+const UINT8_ARRAY_EXACT = Uint8Array;
+const UTIL_TYPES_EXACT = utilTypes;
+const ARRAY_BUFFER_IS_VIEW = ARRAY_BUFFER_EXACT.isView;
+const ARRAY_BUFFER_PROTOTYPE = ARRAY_BUFFER_EXACT.prototype;
+const BUFFER_ALLOC = BUFFER_EXACT.alloc;
+const BUFFER_IS_BUFFER = BUFFER_EXACT.isBuffer;
+const BUFFER_PROTOTYPE = BUFFER_EXACT.prototype;
+const BUFFER_WRITE_UINT32_BE = BUFFER_PROTOTYPE.writeUInt32BE;
+const CRYPTO_CREATE_HASH = CRYPTO_EXACT.createHash;
+const CRYPTO_TIMING_SAFE_EQUAL = CRYPTO_EXACT.timingSafeEqual;
+const OBJECT_DEFINE_PROPERTY = OBJECT_EXACT.defineProperty;
+const OBJECT_FREEZE = OBJECT_EXACT.freeze;
+const OBJECT_GET_OWN_PROPERTY_DESCRIPTOR =
+  OBJECT_EXACT.getOwnPropertyDescriptor;
+const OBJECT_GET_OWN_PROPERTY_DESCRIPTORS =
+  OBJECT_EXACT.getOwnPropertyDescriptors;
+const OBJECT_GET_PROTOTYPE_OF = OBJECT_EXACT.getPrototypeOf;
+const OBJECT_HAS_OWN = OBJECT_EXACT.hasOwn;
+const OBJECT_SET_PROTOTYPE_OF = OBJECT_EXACT.setPrototypeOf;
+const PROMISE_EXACT = Promise;
+const PROMISE_PROTOTYPE = PROMISE_EXACT.prototype;
+const PROMISE_THEN = PROMISE_PROTOTYPE.then;
 const NUMBER_IS_SAFE_INTEGER = Number.isSafeInteger;
-const REFLECT_APPLY = Reflect.apply;
+const REFLECT_APPLY = REFLECT_EXACT.apply;
 const SET_HAS = Set.prototype.has;
-const STRING_CHAR_CODE_AT = String.prototype.charCodeAt;
-const UINT8_ARRAY_FILL = Uint8Array.prototype.fill;
-const UINT8_ARRAY_SET = Uint8Array.prototype.set;
-const NO_FAILURE: NoFailure = OBJECT_FREEZE({ caught: false });
+const STRING_CONSTRUCTOR = STRING_EXACT;
+const STRING_CHAR_CODE_AT = STRING_EXACT.prototype.charCodeAt;
+const UINT8_ARRAY_PROTOTYPE = UINT8_ARRAY_EXACT.prototype;
+const UINT8_ARRAY_FILL = UINT8_ARRAY_PROTOTYPE.fill;
+const UINT8_ARRAY_SET = UINT8_ARRAY_PROTOTYPE.set;
+const UTIL_IS_PROXY = UTIL_TYPES_EXACT.isProxy;
+function freezeNullRecord<T extends object>(value: T): T {
+  REFLECT_APPLY(OBJECT_SET_PROTOTYPE_OF, OBJECT_EXACT, [value, null]);
+  return OBJECT_FREEZE(value);
+}
+
+const NO_FAILURE: NoFailure = freezeNullRecord({ caught: false });
 const ALLOWED_VARIABLE_NAMES = new Set<string>(
   PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_RAILWAY_CONTRACT_LOCK
     .allowedVariableNames,
 );
-const TYPED_ARRAY_PROTOTYPE = OBJECT_GET_PROTOTYPE_OF(Uint8Array.prototype) as
+const TYPED_ARRAY_PROTOTYPE = OBJECT_GET_PROTOTYPE_OF(UINT8_ARRAY_PROTOTYPE) as
   object;
 const TYPED_ARRAY_BYTE_LENGTH_GETTER = OBJECT_GET_OWN_PROPERTY_DESCRIPTOR(
   TYPED_ARRAY_PROTOTYPE,
@@ -149,15 +181,24 @@ const TYPED_ARRAY_BYTE_OFFSET_GETTER = OBJECT_GET_OWN_PROPERTY_DESCRIPTOR(
   "byteOffset",
 )?.get;
 const ARRAY_BUFFER_BYTE_LENGTH_GETTER = OBJECT_GET_OWN_PROPERTY_DESCRIPTOR(
-  ArrayBuffer.prototype,
+  ARRAY_BUFFER_PROTOTYPE,
   "byteLength",
 )?.get;
+const EVENT_TARGET_PROTOTYPE = EventTarget.prototype;
+const EVENT_TARGET_ADD_EVENT_LISTENER = OBJECT_GET_OWN_PROPERTY_DESCRIPTOR(
+  EVENT_TARGET_PROTOTYPE,
+  "addEventListener",
+)?.value;
+const EVENT_TARGET_REMOVE_EVENT_LISTENER = OBJECT_GET_OWN_PROPERTY_DESCRIPTOR(
+  EVENT_TARGET_PROTOTYPE,
+  "removeEventListener",
+)?.value;
 const ABORT_SIGNAL_PROTOTYPE = AbortSignal.prototype;
 const ABORT_SIGNAL_ABORTED_GETTER = OBJECT_GET_OWN_PROPERTY_DESCRIPTOR(
   ABORT_SIGNAL_PROTOTYPE,
   "aborted",
 )?.get;
-const HASH_PROBE = REFLECT_APPLY(CRYPTO_CREATE_HASH, crypto, ["sha256"]);
+const HASH_PROBE = REFLECT_APPLY(CRYPTO_CREATE_HASH, CRYPTO_EXACT, ["sha256"]);
 const HASH_PROTOTYPE = OBJECT_GET_PROTOTYPE_OF(HASH_PROBE) as {
   readonly update: (...args: never[]) => unknown;
   readonly digest: (...args: never[]) => unknown;
@@ -224,7 +265,7 @@ function zeroize(value: Uint8Array): void {
 function exactChunkLength(value: Uint8Array): number {
   if (typeof TYPED_ARRAY_BYTE_LENGTH_GETTER !== "function") throw invalid();
   const prototype = OBJECT_GET_PROTOTYPE_OF(value);
-  if (prototype !== Uint8Array.prototype && prototype !== Buffer.prototype) {
+  if (prototype !== UINT8_ARRAY_PROTOTYPE && prototype !== BUFFER_PROTOTYPE) {
     throw invalid();
   }
   const length = REFLECT_APPLY(TYPED_ARRAY_BYTE_LENGTH_GETTER, value, []);
@@ -237,9 +278,9 @@ function exactDedicatedBuffer(value: unknown, expectedLength: number): value is 
     typeof TYPED_ARRAY_BUFFER_GETTER !== "function"
     || typeof TYPED_ARRAY_BYTE_OFFSET_GETTER !== "function"
     || typeof ARRAY_BUFFER_BYTE_LENGTH_GETTER !== "function"
-    || !REFLECT_APPLY(BUFFER_IS_BUFFER, Buffer, [value])
-    || !REFLECT_APPLY(ARRAY_BUFFER_IS_VIEW, ArrayBuffer, [value])
-    || OBJECT_GET_PROTOTYPE_OF(value) !== Buffer.prototype
+    || !REFLECT_APPLY(BUFFER_IS_BUFFER, BUFFER_EXACT, [value])
+    || !REFLECT_APPLY(ARRAY_BUFFER_IS_VIEW, ARRAY_BUFFER_EXACT, [value])
+    || OBJECT_GET_PROTOTYPE_OF(value) !== BUFFER_PROTOTYPE
     || exactChunkLength(value as Buffer) !== expectedLength
   ) return false;
   const offset = REFLECT_APPLY(TYPED_ARRAY_BYTE_OFFSET_GETTER, value, []);
@@ -253,7 +294,7 @@ function exactDedicatedBuffer(value: unknown, expectedLength: number): value is 
 }
 
 function asciiBuffer(value: string): Buffer {
-  const output = REFLECT_APPLY(BUFFER_ALLOC, Buffer, [value.length]) as Buffer;
+  const output = REFLECT_APPLY(BUFFER_ALLOC, BUFFER_EXACT, [value.length]) as Buffer;
   if (!exactDedicatedBuffer(output, value.length)) throw invalid();
   for (let index = 0; index < value.length; index += 1) {
     const code = REFLECT_APPLY(STRING_CHAR_CODE_AT, value, [index]) as number;
@@ -396,12 +437,12 @@ function commitment(
     `${PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_INPUT_COMMITMENT_DOMAIN}\0`,
   );
   const name = asciiBuffer(variableName);
-  const nameLength = REFLECT_APPLY(BUFFER_ALLOC, Buffer, [4]) as Buffer;
-  const valueLength = REFLECT_APPLY(BUFFER_ALLOC, Buffer, [4]) as Buffer;
+  const nameLength = REFLECT_APPLY(BUFFER_ALLOC, BUFFER_EXACT, [4]) as Buffer;
+  const valueLength = REFLECT_APPLY(BUFFER_ALLOC, BUFFER_EXACT, [4]) as Buffer;
   REFLECT_APPLY(BUFFER_WRITE_UINT32_BE, nameLength, [exactChunkLength(name)]);
   REFLECT_APPLY(BUFFER_WRITE_UINT32_BE, valueLength, [exactChunkLength(value)]);
   try {
-    const hash = REFLECT_APPLY(CRYPTO_CREATE_HASH, crypto, ["sha256"]);
+    const hash = REFLECT_APPLY(CRYPTO_CREATE_HASH, CRYPTO_EXACT, ["sha256"]);
     REFLECT_APPLY(HASH_UPDATE, hash, [domain]);
     REFLECT_APPLY(HASH_UPDATE, hash, [nameLength]);
     REFLECT_APPLY(HASH_UPDATE, hash, [name]);
@@ -409,9 +450,9 @@ function commitment(
     REFLECT_APPLY(HASH_UPDATE, hash, [value]);
     const digest = REFLECT_APPLY(HASH_DIGEST, hash, []);
     if (
-      !REFLECT_APPLY(BUFFER_IS_BUFFER, Buffer, [digest])
-      || !REFLECT_APPLY(ARRAY_BUFFER_IS_VIEW, ArrayBuffer, [digest])
-      || OBJECT_GET_PROTOTYPE_OF(digest) !== Buffer.prototype
+      !REFLECT_APPLY(BUFFER_IS_BUFFER, BUFFER_EXACT, [digest])
+      || !REFLECT_APPLY(ARRAY_BUFFER_IS_VIEW, ARRAY_BUFFER_EXACT, [digest])
+      || OBJECT_GET_PROTOTYPE_OF(digest) !== BUFFER_PROTOTYPE
       || !exactDedicatedBuffer(digest, 32)
     ) throw invalid();
     return digest as Buffer;
@@ -426,40 +467,75 @@ function commitment(
 async function readBoundedValue(
   source: PermanentStagingProviderVariableWriteInputSource,
   signal: AbortSignal,
-): Promise<Buffer> {
+): Promise<{ readonly value: Buffer }> {
   if (
     typeof source !== "object"
     || source === null
-    || source.isTTY === true
-    || typeof source[Symbol.asyncIterator] !== "function"
+    || REFLECT_APPLY(UTIL_IS_PROXY, UTIL_TYPES_EXACT, [source]) === true
   ) throw invalid();
+  const sourceDescriptors = OBJECT_GET_OWN_PROPERTY_DESCRIPTORS(source) as
+    Record<PropertyKey, PropertyDescriptor>;
+  const readDescriptor = OBJECT_HAS_OWN(sourceDescriptors, "readExactlyOnce")
+    ? sourceDescriptors.readExactlyOnce
+    : undefined;
+  const ttyDescriptor = OBJECT_HAS_OWN(sourceDescriptors, "isTTY")
+    ? sourceDescriptors.isTTY
+    : undefined;
+  if (
+    readDescriptor === undefined
+    || !OBJECT_HAS_OWN(readDescriptor, "value")
+    || typeof readDescriptor.value !== "function"
+    || ttyDescriptor !== undefined
+      && (!OBJECT_HAS_OWN(ttyDescriptor, "value") || ttyDescriptor.value !== false)
+  ) throw invalid();
+  const readExactlyOnce = readDescriptor.value as
+    PermanentStagingProviderVariableWriteInputSource["readExactlyOnce"];
   checkSignal(signal);
 
   const chunks: Buffer[] = [];
   let byteLength = 0;
-  let iterator: AsyncIterator<Uint8Array> | undefined;
   let prior: FailureState = NO_FAILURE;
-  let iteratorDone = false;
-  try {
-    iterator = source[Symbol.asyncIterator]();
-    while (true) {
-      checkSignal(signal);
-      const item = await iterator.next();
-      checkSignal(signal);
-      const itemDone = item.done;
-      checkSignal(signal);
-      if (itemDone === true) {
-        iteratorDone = true;
-        break;
-      }
-      const chunk = item.value;
-      checkSignal(signal);
-      if (!REFLECT_APPLY(ARRAY_BUFFER_IS_VIEW, ArrayBuffer, [chunk])) {
+  let accepting = true;
+  let consuming = false;
+  let settled = false;
+  let abortObserved = false;
+  let completionResolved = false;
+  let listenerInstalled = false;
+  let resolveCompletion!: () => void;
+  const completion = new PROMISE_EXACT<void>((resolve) => {
+    resolveCompletion = resolve;
+  });
+  const finishCompletion = (): void => {
+    if (completionResolved) return;
+    completionResolved = true;
+    resolveCompletion();
+  };
+  const latchFailure = (error: unknown): void => {
+    const code = typeof error === "object" && error !== null
+      ? REFLECT_APPLY(WEAK_MAP_GET, INPUT_ERROR_AUTHORITIES, [error])
+      : undefined;
+    if (code === "cleanup_failed" || !prior.caught) prior = capture(error);
+  };
+  const consumeChunk = (chunk: Uint8Array): void => {
+    try {
+      if (!accepting || consuming) {
+        try {
+          if (REFLECT_APPLY(ARRAY_BUFFER_IS_VIEW, ARRAY_BUFFER_EXACT, [chunk])) {
+            zeroize(chunk);
+          }
+        } catch {
+          throw cleanupFailed();
+        }
         throw invalid();
       }
+      consuming = true;
       let owned: Buffer | undefined;
       let transferred = false;
       try {
+        checkSignal(signal);
+        if (!REFLECT_APPLY(ARRAY_BUFFER_IS_VIEW, ARRAY_BUFFER_EXACT, [chunk])) {
+          throw invalid();
+        }
         const chunkLength = exactChunkLength(chunk);
         if (chunkLength === 0) throw invalid();
         const nextLength = byteLength + chunkLength;
@@ -468,16 +544,20 @@ async function readBoundedValue(
           || nextLength
             > PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_MAXIMUM_VALUE_BYTES
         ) throw invalid();
-        try {
-          owned = REFLECT_APPLY(BUFFER_ALLOC, Buffer, [chunkLength]) as Buffer;
-          if (!exactDedicatedBuffer(owned, chunkLength)) throw invalid();
-          REFLECT_APPLY(UINT8_ARRAY_SET, owned, [chunk]);
-        } catch (error) {
-          if (owned !== undefined) zeroize(owned);
-          throw error;
-        }
+        owned = REFLECT_APPLY(
+          BUFFER_ALLOC,
+          BUFFER_EXACT,
+          [chunkLength],
+        ) as Buffer;
+        if (!exactDedicatedBuffer(owned, chunkLength)) throw invalid();
+        REFLECT_APPLY(UINT8_ARRAY_SET, owned, [chunk]);
         const chunkIndex = chunks.length;
-        OBJECT_DEFINE_PROPERTY(chunks, String(chunkIndex), {
+        const chunkKey = REFLECT_APPLY(
+          STRING_CONSTRUCTOR,
+          undefined,
+          [chunkIndex],
+        ) as string;
+        OBJECT_DEFINE_PROPERTY(chunks, chunkKey, {
           configurable: true,
           enumerable: true,
           writable: true,
@@ -499,42 +579,119 @@ async function readBoundedValue(
           }
         }
         try {
-          zeroize(chunk);
+          if (REFLECT_APPLY(ARRAY_BUFFER_IS_VIEW, ARRAY_BUFFER_EXACT, [chunk])) {
+            zeroize(chunk);
+          }
         } catch {
           cleanupExact = false;
         }
+        consuming = false;
         if (!cleanupExact) throw cleanupFailed();
       }
-      // Let cancellation queued by hostile iterator-result getters settle
-      // before another source read can retain the owned copy indefinitely.
-      await undefined;
-      checkSignal(signal);
+    } catch (error) {
+      accepting = false;
+      latchFailure(error);
+      finishCompletion();
+      throw error;
     }
+  };
+  const settle = (failure?: unknown): void => {
+    if (abortObserved) return;
+    if (settled || consuming) {
+      const error = invalid();
+      accepting = false;
+      latchFailure(error);
+      finishCompletion();
+      throw error;
+    }
+    settled = true;
+    accepting = false;
+    if (failure !== undefined) latchFailure(failure);
+    finishCompletion();
+  };
+  const onAbort = (): void => {
+    if (abortObserved) return;
+    abortObserved = true;
+    accepting = false;
+    latchFailure(invalid());
+    try {
+      if (!zeroizeChunks(chunks)) latchFailure(cleanupFailed());
+    } catch {
+      latchFailure(cleanupFailed());
+    }
+    finishCompletion();
+  };
+  try {
+    try {
+      if (
+        typeof EVENT_TARGET_ADD_EVENT_LISTENER !== "function"
+        || typeof EVENT_TARGET_REMOVE_EVENT_LISTENER !== "function"
+      ) throw invalid();
+      REFLECT_APPLY(EVENT_TARGET_ADD_EVENT_LISTENER, signal, [
+        "abort",
+        onAbort,
+        false,
+      ]);
+      listenerInstalled = true;
+      if (
+        typeof ABORT_SIGNAL_ABORTED_GETTER !== "function"
+        || REFLECT_APPLY(ABORT_SIGNAL_ABORTED_GETTER, signal, []) !== false
+      ) onAbort();
+      const returned = REFLECT_APPLY(readExactlyOnce, source, [
+        consumeChunk,
+        settle,
+        signal,
+      ]) as unknown;
+      if (returned !== undefined) {
+        if (
+          typeof returned === "object"
+          && returned !== null
+          && REFLECT_APPLY(UTIL_IS_PROXY, UTIL_TYPES_EXACT, [returned]) !== true
+          && OBJECT_GET_PROTOTYPE_OF(returned) === PROMISE_PROTOTYPE
+        ) {
+          REFLECT_APPLY(PROMISE_THEN, returned, [
+            undefined,
+            () => undefined,
+          ]);
+        }
+        accepting = false;
+        latchFailure(invalid());
+        finishCompletion();
+      }
+    } catch (error) {
+      accepting = false;
+      latchFailure(error);
+      finishCompletion();
+    }
+    await completion;
+    checkSignal(signal);
   } catch (error) {
-    prior = capture(error);
+    latchFailure(error);
+  } finally {
+    accepting = false;
+    if (listenerInstalled) {
+      try {
+        REFLECT_APPLY(EVENT_TARGET_REMOVE_EVENT_LISTENER, signal, [
+          "abort",
+          onAbort,
+          false,
+        ]);
+      } catch {
+        latchFailure(cleanupFailed());
+      }
+    }
   }
 
-  const retainedWipeExact = !prior.caught || zeroizeChunks(chunks);
-  if (!iteratorDone && iterator !== undefined) {
-    try {
-      const returnIterator = iterator.return;
-      if (returnIterator !== undefined) {
-        await REFLECT_APPLY(returnIterator, iterator, []);
-      }
-    } catch {
-      zeroizeChunks(chunks);
-      throw cleanupFailed();
-    }
-  }
-  if (prior.caught) {
-    if (!retainedWipeExact || !zeroizeChunks(chunks)) throw cleanupFailed();
-    normalizeFailure(prior.error);
+  const finalFailure = prior as FailureState;
+  if (finalFailure.caught) {
+    if (!zeroizeChunks(chunks)) throw cleanupFailed();
+    normalizeFailure(finalFailure.error);
   }
 
   if (byteLength === 0) throw invalid();
   let value: Buffer | undefined;
   try {
-    value = REFLECT_APPLY(BUFFER_ALLOC, Buffer, [byteLength]) as Buffer;
+    value = REFLECT_APPLY(BUFFER_ALLOC, BUFFER_EXACT, [byteLength]) as Buffer;
     if (!exactDedicatedBuffer(value, byteLength)) throw invalid();
     let offset = 0;
     for (let index = 0; index < chunks.length; index += 1) {
@@ -543,7 +700,7 @@ async function readBoundedValue(
       REFLECT_APPLY(UINT8_ARRAY_SET, value, [chunk, offset]);
       offset += exactChunkLength(chunk);
     }
-    return value;
+    return freezeNullRecord({ value });
   } catch (error) {
     if (value !== undefined) zeroize(value);
     throw error;
@@ -560,7 +717,7 @@ export async function readPermanentStagingProviderVariableWriteInput(
   exactVariableName(variableNameInput);
   let value: Buffer | undefined;
   try {
-    value = await readBoundedValue(source, signal);
+    value = (await readBoundedValue(source, signal)).value;
     checkSignal(signal);
     assertValidUtf8WithoutControls(value);
   } catch (error) {
@@ -579,14 +736,15 @@ export async function readPermanentStagingProviderVariableWriteInput(
   }
   let inspection: PermanentStagingProviderVariableWriteInputInspection;
   try {
-    inspection = OBJECT_FREEZE({
+    inspection = freezeNullRecord({
       schemaVersion: PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_INPUT_SCHEMA,
       variableName,
       byteLength: exactChunkLength(heldValue),
       commitmentDomain:
         PERMANENT_STAGING_PROVIDER_VARIABLE_WRITE_INPUT_COMMITMENT_DOMAIN,
       commitmentSha256: exactLowercaseHex(originalCommitment, 32),
-      stdinOnly: true,
+      callbackIngressOnly: true,
+      stdinSourceAuthorityAvailable: false,
       validUtf8: true,
       controlCharactersAbsent: true,
     } as const satisfies PermanentStagingProviderVariableWriteInputInspection);
@@ -629,7 +787,7 @@ export async function readPermanentStagingProviderVariableWriteInput(
       observed = commitment(variableName, heldValue);
       if (
         exactChunkLength(observed) !== exactChunkLength(originalCommitment)
-        || !REFLECT_APPLY(CRYPTO_TIMING_SAFE_EQUAL, crypto, [
+        || !REFLECT_APPLY(CRYPTO_TIMING_SAFE_EQUAL, CRYPTO_EXACT, [
           observed,
           originalCommitment,
         ])
@@ -663,7 +821,7 @@ export async function readPermanentStagingProviderVariableWriteInput(
     return inspection;
   };
 
-  const handle = OBJECT_FREEZE({
+  const handle = freezeNullRecord({
     inspect() {
       if (state !== "open") throw unavailable();
       return inspection;
@@ -679,13 +837,17 @@ export async function readPermanentStagingProviderVariableWriteInput(
       try {
         assertHeldCommitment();
         const heldLength = exactChunkLength(heldValue);
-        outbound = REFLECT_APPLY(BUFFER_ALLOC, Buffer, [heldLength]) as Buffer;
+        outbound = REFLECT_APPLY(
+          BUFFER_ALLOC,
+          BUFFER_EXACT,
+          [heldLength],
+        ) as Buffer;
         if (
           !exactDedicatedBuffer(outbound, heldLength)
         ) throw invalid();
         REFLECT_APPLY(UINT8_ARRAY_SET, outbound, [heldValue]);
         if (
-          !REFLECT_APPLY(CRYPTO_TIMING_SAFE_EQUAL, crypto, [
+          !REFLECT_APPLY(CRYPTO_TIMING_SAFE_EQUAL, CRYPTO_EXACT, [
             outbound,
             heldValue,
           ])

@@ -220,6 +220,169 @@ describe("permanent staging provider-variable authority bridge", () => {
     expect(getter).not.toHaveBeenCalled();
   });
 
+  it("does not let a post-import global Object prototype lookup make invalid preflight or postflight input valid", () => {
+    const beforeVariables = variableInventory();
+    const deployments = deploymentInventory();
+    const genuinePreflight =
+      evaluatePermanentStagingProviderVariableCreatePreflight({
+        variableName: "OPENAI_API_KEY",
+        variableInventory: beforeVariables,
+        deploymentInventory: deployments,
+      });
+    expect(genuinePreflight).not.toBeNull();
+    const afterVariables = variableInventory([variableRow()]);
+    const preflightInput = {
+      variableName: "ATTACKER_INVALID",
+      variableInventory: beforeVariables,
+      deploymentInventory: deployments,
+    };
+    const postflightInput = {
+      preflight: null as unknown,
+      variableInventory: afterVariables,
+      deploymentInventory: deployments,
+    };
+    const priorObject = Object.getOwnPropertyDescriptor(globalThis, "Object");
+    const defineProperty = Object.defineProperty;
+    let prototypeTraps = 0;
+    const replacement = new Proxy(Object, {
+      get(target, property, receiver) {
+        if (property === "prototype") {
+          prototypeTraps += 1;
+          preflightInput.variableName = "OPENAI_API_KEY";
+          postflightInput.preflight = genuinePreflight;
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    let preflightResult: ReturnType<
+      typeof buildPermanentStagingProviderVariableTargetPreflight
+    >;
+    let postflightResult: ReturnType<
+      typeof buildPermanentStagingProviderVariableTargetPostflight
+    >;
+    try {
+      defineProperty(globalThis, "Object", {
+        configurable: true,
+        value: replacement,
+        writable: true,
+      });
+      preflightResult = buildPermanentStagingProviderVariableTargetPreflight(
+        preflightInput,
+      );
+      postflightResult = buildPermanentStagingProviderVariableTargetPostflight(
+        postflightInput,
+      );
+    } finally {
+      if (priorObject === undefined) Reflect.deleteProperty(globalThis, "Object");
+      else defineProperty(globalThis, "Object", priorObject);
+    }
+    expect(prototypeTraps).toBe(0);
+    expect(preflightInput.variableName).toBe("ATTACKER_INVALID");
+    expect(postflightInput.preflight).toBeNull();
+    expect(preflightResult).toBeNull();
+    expect(postflightResult).toBeNull();
+  });
+
+  it("rejects a sparse canonical array with junk and an inherited descriptor", () => {
+    const values = new Array<unknown>(1);
+    Object.defineProperty(values, "junk", {
+      configurable: true,
+      enumerable: true,
+      value: "hidden-value",
+      writable: true,
+    });
+    const priorZero = Object.getOwnPropertyDescriptor(Object.prototype, "0");
+    Object.defineProperty(Object.prototype, "0", {
+      configurable: true,
+      value: {
+        enumerable: true,
+        value: "inherited-value",
+      },
+      writable: true,
+    });
+    let canonical: string | null;
+    try {
+      canonical = permanentStagingProviderVariableWriteAuthorityInternals
+        .canonicalOwnDataJson(values);
+    } finally {
+      if (priorZero === undefined) Reflect.deleteProperty(Object.prototype, "0");
+      else Object.defineProperty(Object.prototype, "0", priorZero);
+    }
+    expect(Object.hasOwn(values, "0")).toBe(false);
+    expect(Object.hasOwn(values, "junk")).toBe(true);
+    expect(canonical).toBeNull();
+  });
+
+  it("uses captured String, Buffer, ArrayBuffer, and JSON globals while hashing", () => {
+    const beforeVariables = variableInventory();
+    const deployments = deploymentInventory();
+    const contractPreflight =
+      evaluatePermanentStagingProviderVariableCreatePreflight({
+        variableName: "OPENAI_API_KEY",
+        variableInventory: beforeVariables,
+        deploymentInventory: deployments,
+      });
+    expect(contractPreflight).not.toBeNull();
+    const afterVariables = variableInventory([variableRow()]);
+    const names = ["String", "Buffer", "ArrayBuffer", "JSON"] as const;
+    const originals = names.map((name) =>
+      Object.getOwnPropertyDescriptor(globalThis, name));
+    const exact = {
+      String,
+      Buffer,
+      ArrayBuffer,
+      JSON,
+    };
+    const reads = {
+      String: 0,
+      Buffer: 0,
+      ArrayBuffer: 0,
+      JSON: 0,
+    };
+    const defineProperty = Object.defineProperty;
+    for (const name of names) {
+      defineProperty(globalThis, name, {
+        configurable: true,
+        get() {
+          reads[name] += 1;
+          return exact[name];
+        },
+      });
+    }
+    let preflight: ReturnType<
+      typeof buildPermanentStagingProviderVariableTargetPreflight
+    >;
+    let postflight: ReturnType<
+      typeof buildPermanentStagingProviderVariableTargetPostflight
+    >;
+    try {
+      preflight = buildPermanentStagingProviderVariableTargetPreflight({
+        variableName: "OPENAI_API_KEY",
+        variableInventory: beforeVariables,
+        deploymentInventory: deployments,
+      });
+      postflight = buildPermanentStagingProviderVariableTargetPostflight({
+        preflight: contractPreflight,
+        variableInventory: afterVariables,
+        deploymentInventory: deployments,
+      });
+    } finally {
+      for (let index = 0; index < names.length; index += 1) {
+        const descriptor = originals[index];
+        if (descriptor === undefined) Reflect.deleteProperty(globalThis, names[index]!);
+        else defineProperty(globalThis, names[index]!, descriptor);
+      }
+    }
+    expect(preflight).not.toBeNull();
+    expect(postflight).not.toBeNull();
+    expect(reads).toEqual({
+      String: 0,
+      Buffer: 0,
+      ArrayBuffer: 0,
+      JSON: 0,
+    });
+  });
+
   it("fails closed when Proxy descriptor enumeration is not stable", () => {
     const ownKeys = vi.fn(() => {
       throw new Error("unstable caller");

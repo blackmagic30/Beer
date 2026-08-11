@@ -699,6 +699,152 @@ describe("permanent staging provider-variable Railway contract", () => {
     })).toBeNull();
   });
 
+  it("does not let a post-import global Array prototype lookup substitute a branded page", () => {
+    const genuine = parseVariablePage({ nodes: [] });
+    const unbranded = {
+      ...genuine,
+    } as PermanentStagingProviderVariableInventoryPageCandidate;
+    const pages: PermanentStagingProviderVariableInventoryPageCandidate[] = [
+      unbranded,
+    ];
+    const priorArray = Object.getOwnPropertyDescriptor(globalThis, "Array");
+    const defineProperty = Object.defineProperty;
+    let prototypeTraps = 0;
+    const replacement = new Proxy(Array, {
+      get(target, property, receiver) {
+        if (property === "prototype") {
+          prototypeTraps += 1;
+          pages[0] = genuine;
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    let folded: PermanentStagingProviderVariableInventoryCandidate | null;
+    try {
+      defineProperty(globalThis, "Array", {
+        configurable: true,
+        value: replacement,
+        writable: true,
+      });
+      folded = foldPermanentStagingProviderVariableInventoryPages(pages);
+    } finally {
+      if (priorArray === undefined) Reflect.deleteProperty(globalThis, "Array");
+      else defineProperty(globalThis, "Array", priorArray);
+    }
+    expect(prototypeTraps).toBe(0);
+    expect(pages[0]).toBe(unbranded);
+    expect(folded).toBeNull();
+  });
+
+  it("does not let a post-import global Object prototype lookup make invalid evaluator input valid", () => {
+    const input = {
+      variableName: "ATTACKER_INVALID",
+      variableInventory: variableInventory([]),
+      deploymentInventory: deploymentInventory(),
+    };
+    const priorObject = Object.getOwnPropertyDescriptor(globalThis, "Object");
+    const defineProperty = Object.defineProperty;
+    let prototypeTraps = 0;
+    const replacement = new Proxy(Object, {
+      get(target, property, receiver) {
+        if (property === "prototype") {
+          prototypeTraps += 1;
+          input.variableName = "OPENAI_API_KEY";
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    let evaluated: PermanentStagingProviderVariableCreatePreflightCandidate
+      | null;
+    try {
+      defineProperty(globalThis, "Object", {
+        configurable: true,
+        value: replacement,
+        writable: true,
+      });
+      evaluated = evaluatePermanentStagingProviderVariableCreatePreflight(
+        input,
+      );
+    } finally {
+      if (priorObject === undefined) Reflect.deleteProperty(globalThis, "Object");
+      else defineProperty(globalThis, "Object", priorObject);
+    }
+    expect(prototypeTraps).toBe(0);
+    expect(input.variableName).toBe("ATTACKER_INVALID");
+    expect(evaluated).toBeNull();
+  });
+
+  it("does not let a live String callable hide a sparse page behind a non-index property", () => {
+    const genuine = parseVariablePage({ nodes: [] });
+    const pages = new Array<
+      PermanentStagingProviderVariableInventoryPageCandidate
+    >(1);
+    Object.defineProperty(pages, "4294967295", {
+      configurable: true,
+      enumerable: true,
+      value: genuine,
+      writable: true,
+    });
+    const priorString = Object.getOwnPropertyDescriptor(globalThis, "String");
+    const defineProperty = Object.defineProperty;
+    const exactString = String;
+    let calls = 0;
+    const replacement = (value: unknown): string => {
+      calls += 1;
+      return calls === 1
+        ? "4294967295"
+        : Reflect.apply(exactString, undefined, [value]) as string;
+    };
+    let folded: PermanentStagingProviderVariableInventoryCandidate | null;
+    try {
+      defineProperty(globalThis, "String", {
+        configurable: true,
+        value: replacement,
+        writable: true,
+      });
+      folded = foldPermanentStagingProviderVariableInventoryPages(pages);
+    } finally {
+      if (priorString === undefined) Reflect.deleteProperty(globalThis, "String");
+      else defineProperty(globalThis, "String", priorString);
+    }
+    expect(calls).toBe(0);
+    expect(Object.hasOwn(pages, "0")).toBe(false);
+    expect(Object.hasOwn(pages, "4294967295")).toBe(true);
+    expect(folded).toBeNull();
+  });
+
+  it("rejects a hole plus junk key even when Object.prototype supplies a descriptor-shaped index", () => {
+    const genuine = parseVariablePage({ nodes: [] });
+    const pages = new Array<
+      PermanentStagingProviderVariableInventoryPageCandidate
+    >(1);
+    Object.defineProperty(pages, "junk", {
+      configurable: true,
+      enumerable: true,
+      value: genuine,
+      writable: true,
+    });
+    const priorZero = Object.getOwnPropertyDescriptor(Object.prototype, "0");
+    Object.defineProperty(Object.prototype, "0", {
+      configurable: true,
+      value: {
+        enumerable: true,
+        value: genuine,
+      },
+      writable: true,
+    });
+    let folded: PermanentStagingProviderVariableInventoryCandidate | null;
+    try {
+      folded = foldPermanentStagingProviderVariableInventoryPages(pages);
+    } finally {
+      if (priorZero === undefined) Reflect.deleteProperty(Object.prototype, "0");
+      else Object.defineProperty(Object.prototype, "0", priorZero);
+    }
+    expect(Object.hasOwn(pages, "0")).toBe(false);
+    expect(Object.hasOwn(pages, "junk")).toBe(true);
+    expect(folded).toBeNull();
+  });
+
   it("does not trust a poisoned live WeakSet lineage method", () => {
     const variables = variableInventory([]);
     const deployments = deploymentInventory();
