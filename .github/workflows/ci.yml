@@ -216,6 +216,21 @@ jobs:
       - name: Run mission discovery and automation Postgres contract
         run: npx vitest run test/mission-discovery-automation.repository.integration.test.ts
 
+      - name: Run mandatory mission discovery production-scale PostgreSQL 17 gate
+        env:
+          PINTPATH_MISSION_DISCOVERY_SCALE_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+          PINTPATH_MISSION_DISCOVERY_SCALE_EVIDENCE_PATH: ${{ runner.temp }}/pintpath-mission-discovery-scale-evidence.json
+          PINTPATH_MISSION_DISCOVERY_SCALE_TEST_REQUIRED: "true"
+        run: npx vitest run --disableConsoleIntercept test/mission-discovery-automation-scale.integration.test.ts
+
+      - name: Retain mission discovery production-scale PostgreSQL 17 evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pintpath-mission-discovery-scale-evidence
+          path: ${{ runner.temp }}/pintpath-mission-discovery-scale-evidence.json
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Run venue-request Postgres contract
         run: npx vitest run test/venue-request.repository.integration.test.ts
 

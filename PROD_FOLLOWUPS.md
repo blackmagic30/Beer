@@ -253,15 +253,33 @@ production rollout so normal event writes are not blocked.
    5.7 ms versus 0.54 ms with the candidate; on the 500,000-row fixture it
    improved about 6.45 ms to 2.09 ms, so this remains optional.
 
-## P0 — prove mission-discovery plans at production-like scale
+## P0 — complete permanent-staging mission-discovery scale and load proof
 
-The asynchronous mission feed and automation authority is correctness-tested
-on restricted PostgreSQL 17, but its production-scale plans have not yet been
-measured. Before the frozen launch candidate, load representative permanent
-staging cardinalities and retain `EXPLAIN (ANALYZE, BUFFERS, SETTINGS)` output
-for public feed/search/radius sorts, venue-candidate discovery, auto-mission
-owner discovery, demo deactivation, and inactive-auto pruning. Exercise warm
-and cold-cache runs with forced RLS and the restricted runtime role.
+The repository and required PostgreSQL 17 CI job now include a production-like
+synthetic plan gate. It applies the canonical schema, uses a restricted runtime
+login with exact `pintpath_runtime` membership and forced RLS, and loads 10,000
+venues, 100,000 prices, 20,000 requests, and 15,000 missions. It captures the
+actual repository SQL and retains bounded, hash-bound
+`EXPLAIN (ANALYZE, BUFFERS, SETTINGS, FORMAT JSON)` evidence for public
+feed/search/radius sorts, venue-candidate discovery, auto-mission owner
+discovery, demo deactivation, and inactive-auto pruning. The default planner
+must preserve deterministic deep-page results, one application round trip,
+zero temporary read/write blocks, and the recorded per-path ceilings.
+Those ceilings are 1 second for feed, search, and radius; 2 seconds for venue
+candidates; 250 ms for pruning and demo deactivation; and 100 ms for owner
+discovery. Each successful CI run retains
+`pintpath-mission-discovery-scale-evidence` as a 14-day artifact attached to
+the exact workflow run and candidate SHA; the CI baseline is PostgreSQL 17.6.
+
+The local PostgreSQL 17.10 warm-cache proof measured approximately 135 ms for
+the public feed, 35 ms for address search, 72 ms for radius sort, 378 ms for
+venue candidates, and 2 ms for each maintenance/owner path, with zero temporary
+blocks. This closes the local synthetic-plan implementation proof and does not
+justify a schema/index change by itself. The fail-closed CI gate must pass at
+the exact candidate head. Before the frozen launch candidate, repeat the
+evidence on the exact permanent-staging build with representative live
+cardinalities and both warm and cold caches. That provider-scale proof, the
+two-replica load/soak exercise, and its private evidence references remain open.
 
 Review these index/projection candidates only when supported by those plans:
 
@@ -279,4 +297,6 @@ Review these index/projection candidates only when supported by those plans:
 
 Any accepted index must enter the canonical schema and migration contract and
 be rehearsed with `CREATE INDEX CONCURRENTLY`; do not add it ad hoc to the live
-database. This plan evidence is part of the P0 capacity gate.
+database. The measured candidates remain follow-ups unless permanent-staging
+evidence proves that one is required. The remaining provider-scale plan
+evidence is part of the P0 capacity gate.

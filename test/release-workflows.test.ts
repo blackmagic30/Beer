@@ -361,7 +361,7 @@ describe("release workflow contracts", () => {
       ["actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0", 12],
       ["actions/setup-node@820762786026740c76f36085b0efc47a31fe5020", 7],
       ["actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a", 1],
-      ["actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", 2],
+      ["actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", 3],
       ["android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699", 1],
       ["github/codeql-action/init@99df26d4f13ea111d4ec1a7dddef6063f76b97e9", 1],
       ["github/codeql-action/autobuild@99df26d4f13ea111d4ec1a7dddef6063f76b97e9", 1],
@@ -421,6 +421,24 @@ describe("release workflow contracts", () => {
     const migrationIntegration = repositoryFile(
       "test/postgres-migration-target.integration.test.ts",
     );
+    const missionContractStep = job.indexOf(
+      "      - name: Run mission discovery and automation Postgres contract",
+    );
+    const missionScaleStep = job.indexOf(
+      "      - name: Run mandatory mission discovery production-scale PostgreSQL 17 gate",
+    );
+    const missionScaleEvidenceStep = job.indexOf(
+      "      - name: Retain mission discovery production-scale PostgreSQL 17 evidence",
+    );
+    const venueRequestStep = job.indexOf(
+      "      - name: Run venue-request Postgres contract",
+    );
+    const missionScaleStepSource = job.slice(missionScaleStep, missionScaleEvidenceStep).trimEnd();
+    const missionScaleEvidenceStepSource = job.slice(
+      missionScaleEvidenceStep,
+      venueRequestStep,
+    ).trimEnd();
+    const jobHeader = job.slice(0, job.indexOf("    steps:"));
 
     expect(job).toContain("image: postgres:17.6-alpine");
     expect(job).toContain(
@@ -526,6 +544,42 @@ describe("release workflow contracts", () => {
     expect(job).toContain("npx vitest run test/venue-access.repository.integration.test.ts");
     expect(job).toContain("npx vitest run test/mission-lifecycle.repository.integration.test.ts");
     expect(job).toContain("npx vitest run test/mission-discovery-automation.repository.integration.test.ts");
+    expect(job).toContain(
+      "- name: Run mandatory mission discovery production-scale PostgreSQL 17 gate",
+    );
+    expect(job).toContain("PINTPATH_MISSION_DISCOVERY_SCALE_TEST_ADMIN_URL:");
+    expect(job).toContain('PINTPATH_MISSION_DISCOVERY_SCALE_TEST_REQUIRED: "true"');
+    expect(job).toContain(
+      "npx vitest run --disableConsoleIntercept test/mission-discovery-automation-scale.integration.test.ts",
+    );
+    expect(missionContractStep).toBeGreaterThan(-1);
+    expect(missionScaleStep).toBeGreaterThan(missionContractStep);
+    expect(missionScaleEvidenceStep).toBeGreaterThan(missionScaleStep);
+    expect(venueRequestStep).toBeGreaterThan(missionScaleEvidenceStep);
+    expect(job.split(
+      "      - name: Run mandatory mission discovery production-scale PostgreSQL 17 gate",
+    )).toHaveLength(2);
+    expect(job.split(
+      "      - name: Retain mission discovery production-scale PostgreSQL 17 evidence",
+    )).toHaveLength(2);
+    expect(jobHeader).not.toMatch(/^\s+(?:if|continue-on-error):/m);
+    expect(missionScaleStepSource).toBe([
+      "      - name: Run mandatory mission discovery production-scale PostgreSQL 17 gate",
+      "        env:",
+      "          PINTPATH_MISSION_DISCOVERY_SCALE_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable",
+      "          PINTPATH_MISSION_DISCOVERY_SCALE_EVIDENCE_PATH: ${{ runner.temp }}/pintpath-mission-discovery-scale-evidence.json",
+      '          PINTPATH_MISSION_DISCOVERY_SCALE_TEST_REQUIRED: "true"',
+      "        run: npx vitest run --disableConsoleIntercept test/mission-discovery-automation-scale.integration.test.ts",
+    ].join("\n"));
+    expect(missionScaleEvidenceStepSource).toBe([
+      "      - name: Retain mission discovery production-scale PostgreSQL 17 evidence",
+      "        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1",
+      "        with:",
+      "          name: pintpath-mission-discovery-scale-evidence",
+      "          path: ${{ runner.temp }}/pintpath-mission-discovery-scale-evidence.json",
+      "          if-no-files-found: error",
+      "          retention-days: 14",
+    ].join("\n"));
     expect(job).toContain("npx vitest run test/venue-request.repository.integration.test.ts");
     expect(job).toContain("npx vitest run test/venue-partner.repository.integration.test.ts");
     expect(job).toContain("npx vitest run test/admin-analytics.repository.integration.test.ts");
@@ -534,10 +588,77 @@ describe("release workflow contracts", () => {
     expect(job).not.toContain("secrets.");
     expect(job).not.toContain("supabase db push");
 
+    const scaleIntegration = repositoryFile(
+      "test/mission-discovery-automation-scale.integration.test.ts",
+    );
+    expect(scaleIntegration).toContain(
+      "`${ADMIN_URL_ENV} is mandatory when ${REQUIRED_ENV}=true.`",
+    );
+    expect(scaleIntegration).toContain(
+      "`${EVIDENCE_PATH_ENV} is mandatory when ${REQUIRED_ENV}=true.`",
+    );
+    expect(scaleIntegration).toContain("const VENUE_COUNT = 10_000;");
+    expect(scaleIntegration).toContain("const PRICE_COUNT = 100_000;");
+    expect(scaleIntegration).toContain("const REQUEST_COUNT = 20_000;");
+    expect(scaleIntegration).toContain("const MANUAL_MISSION_COUNT = 10_000;");
+    expect(scaleIntegration).toContain("const AUTO_MISSION_COUNT = 5_000;");
+    expect(scaleIntegration).toContain("publicFeed: 1_000");
+    expect(scaleIntegration).toContain("searchFeed: 1_000");
+    expect(scaleIntegration).toContain("radiusFeed: 1_000");
+    expect(scaleIntegration).toContain("candidates: 2_000");
+    expect(scaleIntegration).toContain("autoOwners: 100");
+    expect(scaleIntegration).toContain("inactiveAuto: 250");
+    expect(scaleIntegration).toContain("activeDemo: 250");
+    expect(scaleIntegration).toContain(
+      'path.resolve("src/db/postgres-schema.sql")',
+    );
+    expect(scaleIntegration).toContain("GRANT pintpath_runtime TO");
+    expect(scaleIntegration).toContain(
+      "EXPLAIN (ANALYZE, BUFFERS, SETTINGS, FORMAT JSON)",
+    );
+    expect(scaleIntegration).toContain("pg_catalog.generate_series");
+    expect(scaleIntegration).toContain("expect(facts.tempReadBlocks).toBe(0)");
+    expect(scaleIntegration).toContain("expect(facts.tempWrittenBlocks).toBe(0)");
+    expect(scaleIntegration).toContain(
+      "expect(database!.metrics().completedQueries - completedBefore).toBe(1)",
+    );
+    expect(scaleIntegration).toContain("relation.relforcerowsecurity AS forced");
+    expect(scaleIntegration).toContain("expect(summaries.map((summary) => summary.name)).toEqual([");
+    for (const name of [
+      "public-feed-deep-page",
+      "address-search",
+      "radius-sort",
+      "venue-candidates-deep-page",
+      "inactive-auto-pruning",
+      "active-demo-deactivation",
+      "auto-mission-owner-discovery",
+    ]) expect(scaleIntegration).toContain(`"${name}"`);
+    expect(scaleIntegration).toContain("writeScaleEvidence(evidence)");
+    expect(scaleIntegration).toContain("mission-discovery-scale-evidence=");
+    expect(scaleIntegration).toContain("querySha256:");
+    expect(scaleIntegration).toContain("parametersSha256:");
+    expect(scaleIntegration).toContain("planSha256:");
+    expect(scaleIntegration).toContain("sequentialScanRelations:");
+    expect(scaleIntegration).toContain(
+      "Refusing to reuse a preexisting database-scoped logical-backup role.",
+    );
+    expect(scaleIntegration).toContain("backupRoleCleanupAuthorized");
+    expect(scaleIntegration).toContain("parents: []");
+    expect(scaleIntegration).not.toContain("it.skip");
+    expect(scaleIntegration).not.toContain("SET enable_seqscan");
+
     const migrationStatus = repositoryFile("docs/postgres-migration-execution-status.md");
+    const productionFollowups = repositoryFile("PROD_FOLLOWUPS.md");
     expect(migrationStatus).toContain("idx_accounts_admin_search_trgm");
     expect(migrationStatus).toContain("CREATE INDEX CONCURRENTLY");
     expect(migrationStatus).toContain("permanent staging");
+    for (const document of [migrationStatus, productionFollowups]) {
+      expect(document).toContain("pintpath-mission-discovery-scale-evidence");
+      expect(document).toContain("PostgreSQL 17.6");
+      expect(document).toContain("2 seconds");
+      expect(document).toContain("250 ms");
+      expect(document).toContain("100 ms");
+    }
   });
 
   it("requires a pinned PG17 TLS backup-to-restore receipt in isolated CI", () => {

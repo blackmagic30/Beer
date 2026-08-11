@@ -165,6 +165,23 @@ resource pins, operator approvals, or two-person evidence.
   canonicalisation work outside database transactions, and is covered by
   SQLite plus restricted PostgreSQL 17 contention/RLS/native-type tests. The
   replaced five synchronous methods and their feed/candidate types are gone.
+  A production-scale gate is now wired fail-closed into the required PostgreSQL
+  17 integration job and passes locally. It applies the canonical schema under
+  a restricted runtime login with forced RLS, loads 10,000 venues, 100,000
+  prices, 20,000 requests, and 15,000 missions, and captures the actual
+  repository SQL for seven default-planner
+  `EXPLAIN (ANALYZE, BUFFERS, SETTINGS, FORMAT JSON)` paths. Its bounded,
+  hash-bound evidence proves deterministic deep pagination, one application
+  round trip, exact runtime membership, zero temporary blocks, and measured
+  ceilings: 1 second for feed/search/radius, 2 seconds for candidates, 250 ms
+  for prune/demo, and 100 ms for owner discovery. A successful CI run retains
+  the exact JSON receipt for 14 days as the
+  `pintpath-mission-discovery-scale-evidence` artifact on its candidate-SHA
+  workflow run; CI uses PostgreSQL 17.6. The local PostgreSQL 17.10 warm-cache
+  run measured approximately 135 ms feed, 35 ms search, 72 ms radius, 378 ms
+  candidates, and 2 ms maintenance/owner paths. No candidate index is accepted
+  from this synthetic result alone; permanent-staging warm/cold evidence and
+  two-replica load/soak remain open.
   The weighted admin list and private manager-only happy-hour intake now use
   their dedicated asynchronous authorities. The unconditional account-
   dashboard current-month contribution total uses the asynchronous Community
