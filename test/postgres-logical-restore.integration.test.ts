@@ -1292,13 +1292,20 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL logical restore rehearsal"
           PGAPPNAME: "pintpath-logical-restore-worker",
         });
         expect(typeof observedPassword).toBe("string");
-        const observedPasswordSha256 = crypto.createHash("sha256")
-          .update(observedPassword ?? "", "utf8")
-          .digest("hex");
-        const expectedPasswordSha256 = crypto.createHash("sha256")
-          .update(decodeURIComponent(targetUrl.password), "utf8")
-          .digest("hex");
-        expect(observedPasswordSha256).toBe(expectedPasswordSha256);
+        const observedPasswordBytes = Buffer.from(observedPassword ?? "", "utf8");
+        const expectedPasswordBytes = Buffer.from(
+          decodeURIComponent(targetUrl.password),
+          "utf8",
+        );
+        let passwordExact = false;
+        try {
+          passwordExact = observedPasswordBytes.length === expectedPasswordBytes.length
+            && crypto.timingSafeEqual(observedPasswordBytes, expectedPasswordBytes);
+        } finally {
+          observedPasswordBytes.fill(0);
+          expectedPasswordBytes.fill(0);
+        }
+        expect(passwordExact).toBe(true);
         mutationArchiveFileDescriptor = archiveFileDescriptor;
         expect(mutationArchiveFileDescriptor).not.toBe(listingArchiveFileDescriptor);
         expect({ dev: descriptorStat.dev, ino: descriptorStat.ino })

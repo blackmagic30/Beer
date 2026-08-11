@@ -540,11 +540,19 @@ describe.skipIf(!configuredAdminUrl)("real restricted PG17 deletion tombstone re
     });
     expect(second.semanticProjectionSha256).toBe(first.semanticProjectionSha256);
     const firstReceiptFile = path.join(root, "evidence", "replay-first.json");
-    expect(fs.statSync(firstReceiptFile).mode & 0o7777).toBe(0o600);
-    expect(JSON.parse(fs.readFileSync(
+    const firstReceiptFileDescriptor = fs.openSync(
       firstReceiptFile,
-      "utf8",
-    )).baseRestoreReceiptSha256).toBe(baseRestoreReceiptSha256);
+      fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
+    );
+    try {
+      expect(fs.fstatSync(firstReceiptFileDescriptor).mode & 0o7777).toBe(0o600);
+      expect(JSON.parse(fs.readFileSync(
+        firstReceiptFileDescriptor,
+        "utf8",
+      )).baseRestoreReceiptSha256).toBe(baseRestoreReceiptSha256);
+    } finally {
+      fs.closeSync(firstReceiptFileDescriptor);
+    }
 
     targetAdmin = new Client({ connectionString: withDatabase(adminUrl, TEST_DATABASE) });
     await targetAdmin.connect();
