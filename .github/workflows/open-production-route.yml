@@ -1,0 +1,154 @@
+name: Open Pint Path protected production route
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Exact 40-character SHA currently at main with approved post-promotion recovery proof
+        required: true
+        type: string
+      confirmation:
+        description: OPEN_PINTPATH_PRODUCTION_ROUTE
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  checks: read
+  contents: read
+
+concurrency:
+  group: pintpath-production-rollout
+  cancel-in-progress: false
+
+jobs:
+  open-production-route:
+    name: Open exact production route
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    environment: production-route-open
+
+    steps:
+      - name: Checkout the exact current main candidate without persisted credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+
+      - name: Require an original confirmed dispatch at exact current main
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          DISPATCH_REF: ${{ github.ref }}
+          DISPATCH_SHA: ${{ github.sha }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          test "$CONFIRMATION" = OPEN_PINTPATH_PRODUCTION_ROUTE
+          test "$DISPATCH_REF" = refs/heads/main
+          test "$RUN_ATTEMPT" = 1
+          test "$DISPATCH_SHA" = "$CANDIDATE_SHA"
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse refs/remotes/origin/main)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain=v2 --untracked-files=all)"
+
+      - name: Setup the repository Node runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Install immutable dependencies
+        run: npm ci
+
+      - name: Run the complete repository gate before credentials are exposed
+        run: npm run check
+
+      - name: Create private route evidence custody
+        shell: bash
+        run: |
+          mkdir -m 700 "$RUNNER_TEMP/pintpath-production-route-open-evidence"
+          mkdir -m 700 "$RUNNER_TEMP/pintpath-production-route-open-authority"
+
+      - name: Bind the exact close and promotion-recovery predecessors
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run --silent github:release-candidate:verify -- \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --phase open \
+            --output "$RUNNER_TEMP/pintpath-production-route-open-authority/github-authority.json"
+
+      - name: Materialize the exact digest-bound close and promotion-recovery receipts
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run --silent github:production-promotion-recovery:materialize -- \
+            --authority "$RUNNER_TEMP/pintpath-production-route-open-authority/github-authority.json" \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --stage close \
+            --output "$RUNNER_TEMP/pintpath-production-route-open-authority/close-receipt.json"
+          npm run --silent github:production-promotion-recovery:materialize -- \
+            --authority "$RUNNER_TEMP/pintpath-production-route-open-authority/github-authority.json" \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --stage promotion-recovery \
+            --output "$RUNNER_TEMP/pintpath-production-route-open-authority/production-promotion-recovery-receipt.json"
+
+      - name: Reassert exact current main immediately before the route write
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse refs/remotes/origin/main)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain=v2 --untracked-files=all)"
+
+      - name: Create only the exact canonical production custom domain once
+        env:
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+          PINTPATH_PRODUCTION_ROUTE_AUTHORITY_OPERATION: ${{ vars.PINTPATH_PRODUCTION_ROUTE_AUTHORITY_OPERATION }}
+          PINTPATH_PRODUCTION_ROUTE_CONFIRMATION: ${{ inputs.confirmation }}
+          PINTPATH_RAILWAY_PRODUCTION_ROUTE_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_ROUTE_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_PRODUCTION_ROUTE_MUTATION_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_ROUTE_CREATE_TOKEN }}
+          PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run --silent railway:production:route:protected -- \
+            --operation open \
+            --candidate-sha '${{ inputs.candidate_sha }}' \
+            --github-authority "$RUNNER_TEMP/pintpath-production-route-open-authority/github-authority.json" \
+            --close-receipt "$RUNNER_TEMP/pintpath-production-route-open-authority/close-receipt.json" \
+            --promotion-recovery-receipt "$RUNNER_TEMP/pintpath-production-route-open-authority/production-promotion-recovery-receipt.json" \
+            --evidence-dir "$RUNNER_TEMP/pintpath-production-route-open-evidence"
+
+      - name: Reconcile the canonical Railway mutation boundary after every attempt
+        if: always()
+        env:
+          PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
+        run: npm run readiness:railway:mutation-boundary
+
+      - name: Upload secret-free immutable open evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pintpath-production-route-open-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}/pintpath-production-route-open-evidence/
+          if-no-files-found: error
+          retention-days: 30

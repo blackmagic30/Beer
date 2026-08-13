@@ -189,6 +189,7 @@ pilots before the role and provider checks pass.
   ```
 
   Securely transfer only that sanitized JSON to the operator host as `$EVIDENCE_DIR/provider-readiness.json`, validate it again, then delete the remote temporary file. Never copy a remote `.env` or provider credential.
+
 - [ ] Before the manual release workflow, run
   `npm run --silent readiness:railway:mutation-boundary` with two distinct
   project tokens scoped to the exact production and staging environments.
@@ -202,7 +203,7 @@ pilots before the role and provider checks pass.
 - [ ] Before the manual release workflow, close permanent-staging sealing as a
   separate ordered gate. Preserve a passing deployed/one-shot pre-seal
   `readiness:launch` receipt with
-  `readinessProfile=permanent_staging_complete`; seal only the 13 populated
+  `readinessProfile=permanent_staging_complete`; seal only the 16 populated
   source/consumer rows in
   `ops/railway/permanent-staging-sealed-variable-policy.json`; then run
   `npm run --silent readiness:railway:sealed` externally with only the exact
@@ -610,6 +611,7 @@ tombstone-replay implementation exists and is part of the frozen candidate.
   This helper verifies the operational copy only. The actual disaster-recovery
   rehearsal must retrieve and verify the WORM authority through the separately
   administered reader.
+
 - [ ] Create a fresh ephemeral destructive restore environment. Record its
   Railway project/environment/service, Postgres database, Supabase project,
   private Storage, Redis namespace, temporary credentials, domain, and
@@ -786,13 +788,12 @@ manual/phased release → verify Australian storefront availability and install.
 ## 13. `permanent_staging_cost`
 
 - [ ] Keep the checked-in
-  `ops/railway/permanent-staging-cost-policy.json` and its pure evaluator
-  scaffold-only until a separately reviewed read-only provider collector and
-  receipt binder exist. The current `providerCollectorImplemented=false` and
-  `providerObservationBindingImplemented=false` values are launch stops; never
-  edit a receipt to self-declare those capabilities.
-- [ ] After the candidate is frozen and permanent-staging topology is final,
-  collect one fresh complete inventory and price-or-cap snapshot for each exact
+      `ops/railway/permanent-staging-cost-policy.json` at its reviewed v2 hash. Its
+      credential-free external-export validator and receipt binder are active; its
+      provider collector intentionally remains absent. Never treat that absence as
+      permission to invent provider facts or collect with deployment credentials.
+- [ ] After the candidate is frozen, capture fresh complete pre-deployment and
+      post-deployment inventory and price-or-cap snapshots for each exact
   provider category: `railway`, `staging-supabase`, and
   `staging-external-providers`. Bind every snapshot and catalog/cap document by
   SHA-256 to the candidate and private gate manifest.
@@ -801,21 +802,23 @@ manual/phased release → verify Australian storefront availability and install.
   resources shared with another environment, and resources with no enforceable
   recurring upper bound. Do not subtract promotional credits or negative
   amounts. Ceiling-round every line to integer USD cents before summing.
-- [ ] Require `totalUpperBoundMonthlyCents <= 5000`. Record the canonical
-  production operational-copy scope as excluded under
-  `separate-production-cost-authority` and disposable restore as excluded under
-  `separate-temporary-spend-authority`, each with separate hashed evidence.
+- [ ] Require each phase to total at most `4700` cents, leaving at least `300`
+      cents below the `5000`-cent ceiling. Enforce the separate Railway `2000`,
+      staging Supabase `2500`, and staging-external-provider `200` caps. Record the
+      canonical production operational-copy and disposable-restore scopes as
+      excluded, each with a distinct `separateAuthorityArtifactSha256`.
   They are not permanent-staging costs and cannot be used to dilute its total.
 - [ ] Independently verify the exact frozen candidate, checked-in policy hash,
   inventory completeness, prices/caps, arithmetic, scope separation, and final
-  manifest hash. Set the evidence item's `costReceipt.observedAt` to the real
-  provider observation time and verify it inside the final 24-hour launch
-  window.
+      manifest hash. Run the exact binder in
+      `docs/permanent-staging-cost-evidence.md`; preserve its `preObservedAt` and
+      `postObservedAt` values and verify both inside the final 24-hour window.
 
 **Pass:** A provider-bound receipt for the frozen candidate is less than 24
 hours old, covers exactly the three required provider categories, has complete
 inventory and upper-bound evidence, reports zero unknown/unpriced/shared/
-unbounded resources, ceiling-sums to at most `5000` integer USD cents, excludes
+unbounded resources, ceiling-sums each phase to at most `4700` integer USD
+cents with at least `300` cents headroom below the `5000` ceiling, excludes
 both non-staging scopes under their exact separate authorities, and is accepted
 by the deliberately activated reviewed policy and strict validator.
 
@@ -826,10 +829,10 @@ observation timestamp; candidate SHA; arithmetic review; and named independent
 verifier. The public release file contains the matching manifest digest and the
 sanitized `costReceipt`, never credentials, account data, or secret price terms.
 
-The approximately US$46.80/month number in historical planning is a combined
-permanent-staging plus production-operational-copy estimate. It is non-gating,
-not provider-observed, and cannot satisfy this item. No current evidence proves
-the US$50/month permanent-staging-only objective, so this item remains pending.
+Historical combined estimates are non-gating, not provider-observed, and
+cannot satisfy this item. The active binder resolves the repository-code
+blocker but does not create live evidence. Until protected pre/post exports and
+independent approval exist for the candidate, this item remains pending.
 
 ## Final closeout
 
@@ -871,16 +874,20 @@ the US$50/month permanent-staging-only objective, so this item remains pending.
   test "$(gh run view "$NATIVE_RUN_ID" --json headSha --jq .headSha)" = "$FINAL_MAIN_SHA"
   ```
 
-  Record the run ID/URL and require the `ios` and protected
-  `ios-production-configuration` jobs to pass; the Android job must be skipped
-  for this dispatch. If the run has not appeared after five seconds, retry the
-  `gh run list` lookup; never substitute a run for another SHA.
+  Record the run ID/URL and require the `iOS dispatch prerequisite` check (job
+  id `ios`) and protected `ios-production-configuration` job to pass; the
+  Android job must be skipped for this dispatch. The automatic exact-SHA `ios`
+  check remains a separate push run and must also be green. If the manual run
+  has not appeared after five seconds, retry the `gh run list` lookup; never
+  substitute a run for another SHA.
+
 - [ ] Confirm the final `main` SHA is deployed and `/ready` reports it.
 - [ ] Re-run public and strict role smoke against that final deployed SHA.
 - [ ] Manually dispatch **Pint Path Release Gate** against the production GitHub environment and bind its result to the same SHA:
 
   ```bash
-  gh workflow run pintpath-release-gate.yml --ref main
+  gh workflow run pintpath-release-gate.yml --ref main \
+    -f candidate_sha="$FINAL_MAIN_SHA"
   sleep 5
   RELEASE_GATE_RUN_ID="$(gh run list --workflow pintpath-release-gate.yml --branch main \
     --event workflow_dispatch --limit 20 --json databaseId,headSha \
@@ -890,7 +897,8 @@ the US$50/month permanent-staging-only objective, so this item remains pending.
   ```
 
   Record the run ID/URL. Retry only the lookup if Actions has not indexed the new run yet.
-- [ ] Download the `pintpath-production-release-gate` artifact and confirm its
+
+- [ ] Download the `pintpath-production-release-gate-$FINAL_MAIN_SHA` artifact and confirm its
   permanent-staging sealed-variable metadata JSON, authenticated-smoke JSON,
   strict release-evidence JSON, and tested-SHA file all match the final commit.
   Validate the separately captured production and permanent-staging

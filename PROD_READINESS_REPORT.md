@@ -1,5 +1,11 @@
 # Pint Path Production Readiness Report
 
+> Historical snapshot — superseded. This report records the repository and
+> deployed-provider state observed through 3 August 2026. Do not use its
+> commands, counts, or blocker list for a release. The controlling current
+> contract is [`docs/production-launch-runbook.md`](docs/production-launch-runbook.md),
+> with current evidence in [`docs/release-evidence.json`](docs/release-evidence.json).
+
 Date: 2026-05-25
 Latest update: 2026-08-03
 

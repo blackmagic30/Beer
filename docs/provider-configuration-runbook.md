@@ -10,16 +10,15 @@ reviewed one-operation executor owns the exact write plus its unconditional
 postflight. The standalone preflight is read-only and does not authorize a
 dashboard **Deploy**, Git autodeploy, `railway up`, `railway variable set`, or
 another ad-hoc CLI/API write. If that executor or any required authority is
-unavailable, leave Railway unchanged. Supabase provider-side key creation,
-rotation, and legacy-key disablement require a separate reviewed
-Supabase-provider operation authority; the current containment path is
-hard-disabled and is not that authority. Local non-secret configuration review
-may continue, but no provider mutation may.
+unavailable, leave Railway unchanged. Supabase key replacement and legacy-key
+disablement use their separate protected workflow authority; live approval and
+canary/old-key-denial receipts remain mandatory. Local non-secret configuration
+review may continue, but no ad-hoc provider mutation may.
 
 Any restore-staging delete, destroy, or teardown additionally requires complete
 resource/evidence reconciliation, specific authorization naming the exact
-resource IDs, and the exact reviewed teardown executor with an immediate
-mutation-boundary preflight plus unconditional postflight. Signed evidence or
+project/environment and inventory hash, and the protected project-delete
+executor plus independent absence postflight. Signed evidence or
 two-person sign-off alone is not mutation authority.
 
 Use this before a Railway production or staging deployment for the full-scale Free web-and-iOS release. The local app can run with placeholder values, but `NODE_ENV=production` now fails fast if critical provider config is missing.
@@ -139,176 +138,52 @@ It emits a fixed boolean receipt and never emits patch contents,
 deployment metadata, image tags, or token values. Both patches must be plain
 empty objects. Never auto-commit or auto-discard a nonempty production patch.
 
-The checked-in production baseline deliberately remains failed after the
-2026-08-10 incident: the reviewed deployment is no longer current and its
-source is a mutable `:17.10` tag rather than a digest-pinned reference. A gate
-failure is not an instruction to roll back or edit Railway. Re-authorizing the
-new deployment or changing the source requires separate recovery evidence,
-review, and a policy update. Even a passing receipt is only a point-in-time
-read-only preflight; it does not authorize dashboard changes or arbitrary
-Railway CLI/API commands. Until a tracked executor performs this check both
-immediately before and in a guaranteed post-mutation path, Railway writes stay
-stopped.
+The checked-in boundary policy pins the reviewed production Postgres
+deployment, snapshot, source, and image digest. Any live mismatch fails closed;
+it is not an instruction to roll back or edit Railway. Re-authorizing a changed
+deployment or source requires separate recovery evidence, review, and a policy
+update. A passing receipt is only a point-in-time preflight and authorizes no
+dashboard or ad-hoc CLI/API change. Each protected successor below runs the
+boundary immediately before its exact write and again in an unconditional
+postflight.
 
-The checked-in `npm run railway:staging:provider-variable:write` command remains
-hard-disabled and emits only a fixed blocked receipt. Do not give that public
-command a Railway token, provider value, or secret. Beneath the public stop, the
-repository carries an internal review-only create kernel, fixed per-variable
-intent/evidence leaves, bounded secret-input custody, read-only Railway metadata
-parsers, and a one-attempt local transport contract. The kernel can evaluate
-only an absent-to-present metadata transition for one exact service-scoped
-variable. It rejects overwrites, shared shadows, incomplete pagination,
-nonempty staged patches, deployment drift, and retries after any durable intent
-or ambiguous write. Its success-shaped result is explicitly
-`acknowledged_pending_runtime_proof`: value-free Railway metadata cannot prove
-the submitted value, and the CLI upsert is sequential rather than atomic.
-The injected-child transport remains unreachable from the public command. An
-offline supervisor foundation now verifies and holds a pre-existing private
-Railway executable copy under a current-user mode-`0700` parent. The copy must
-be a current-user mode-`0500`, single-link regular file whose held-descriptor
-bytes equal the pinned CLI digest. Only an explicitly injected spawn capability
-can launch it; there is no native spawn default, credential source, public
-executor import, package command, CI entry, or locked-worker import. The
-supervisor fixes `shell:false`, a null-prototype environment containing only
-`RAILWAY_TOKEN`, exactly one token-bearing launcher capability, one stdin write
-followed by EOF, discarded stdout/stderr, one detached child group,
-TERM-to-KILL abort escalation, close/error settlement,
-group-empty proof, and post-settlement private-copy reassertion. Its offline
-tests use only a local fake CLI. The local-authority, durable-intent, command,
-process-receipt, acknowledgement, kernel-receipt, and terminal-evidence hashes
-bind the private-copy, environment, stdin, and process-group authorities; an
-arbitrary well-formed digest is not accepted as acknowledgement evidence.
-The adapter's review-only claim APIs privately pair and consume an exact binding,
-one token-bearing launcher, child facade, and child result; wrappers, clones,
-cross-adapter objects, and replay fail those claim checks. In the kernel's tested
-normal sequence, it calls the local-attempt factory only after durable intent and
-binds the returned identity to the exact operation and variable, input commitment
-and byte length, intent, local-authority and command hashes, and private-copy,
-adapter, environment, stdin, and process-group authority hashes. The local writer
-checks and consumes that tuple before spawn and privately pairs its successful
-receipt with the same attempt; the kernel consumes the pair at most once.
-These public review primitives do not enforce that sequence as authorization.
-The data-only attempt factory can be called before persistence, and a returned
-token-bearing launcher can be invoked directly without the claim API, local
-writer, kernel, durable intent, or evidence store. Activation therefore requires
-a module-private locked assembly and opaque, one-use session issuer that consumes
-a genuine durable-persist authority and binds the exact store, parent directory,
-adapter, local authority, input, and credential instances before any launch.
-
-The held-input module accepts only an own-data callback ingress with synchronous
-chunk delivery and an explicit one-shot settlement callback. It latches swallowed
-callback failures, closes acceptance atomically at settlement, wipes late chunks,
-and has its own abort gate for a source that never settles. Its inspection
-truthfully records `callbackIngressOnly:true` and
-`stdinSourceAuthorityAvailable:false`: arbitrary injected callback bytes are not
-proof of stdin, Keychain, or credential provenance. A future private branded
-native/Keychain bridge must deliver the exact stdin value, prove quiescence at
-settlement, and prevent callbacks after settlement.
-
-Each offline layer snapshots an exact own-data dependency capability set before
-its first await and does not redispatch mutable dependency properties later.
-That does not protect an ordinary injected object result while its producer's
-Promise is being assimilated before the snapshot. Activation requires exact
-then-safe/null-prototype branded producers or callback bridges running in a
-locked pristine realm. Injected filesystem and Promise dependencies remain
-review-only and do not establish the native provenance of the module-private
-default callback filesystem path.
-Process-adapter bindings and local-authority objects are immutable inspection
-snapshots: `providerInvokedDuringInspection:false` and `descriptorHeld:true`
-describe that inspection, not live lifecycle facts after a launcher runs or a
-handle closes. Exact adapter/local instance and descriptor-lifetime coupling
-remain activation blockers.
-The JavaScript evidence store creates the fixed final evidence leaf directly
-with exclusive create, no-follow, and mode `0600`; it then writes, fsyncs,
-reads back through the held descriptor, validates the pathname identity, and
-fsyncs the held parent directory. It never unlinks or replaces an artifact it
-created. A failure after exclusive creation therefore leaves the final leaf as
-a fail-closed marker. Partial or otherwise inexact content blocks automatic
-replay and requires separately reviewed manual recovery of the private evidence
-directory. This removes the path-based cleanup deletion race; it does not make
-the review-only worker an operating-system sandbox against hostile same-UID
-code.
-The returned store is only a frozen null-prototype `read`/`inspect`/`persist`/
-`close` facade; its raw parent handle, generic open function, dependencies, and
-internal class are not reachable. The default path uses module-private captured
-native callback operations rather than a generic exported raw-file opener.
-Injected filesystem overrides are adversarial test seams, not activation
-authority. Durable evidence currently binds fixed leaf content and file identity
-but not an opaque exact store/parent/session identity, so persistence in a second
-otherwise-valid private directory can be semantically indistinguishable. Exact
-evidence-store and parent-directory authority is an activation blocker.
-
-This supervisor foundation is not activation-ready. It verifies a copy supplied
-by its caller, but the repository does not yet materialize that copy from the
-already-held pinned source descriptor or bind that creation provenance. Node's
-pathname-based spawn also leaves a residual hostile-same-UID replacement window
-even while a copy descriptor is held; the mode-`0700` parent narrows but does
-not eliminate that operating-system boundary. Exact group-empty probes
-immediately precede TERM and KILL, but the probe-to-signal interval retains the
-same process-group-ID reuse boundary; activation needs a reviewed native custody
-design rather than treating the JavaScript probe as atomic. The retained private
-copy must not be unlinked after a path-only revalidation; removal needs a
-separately reviewed, identity-safe cleanup design. JavaScript token strings are
-not zeroizable. The supervisor permits only one token-bearing launcher, takes
-and clears its retained token reference for the one launch, and scrubs the
-temporary environment property as soon as synchronous spawn returns, but a
-caller may still retain its own string copy. No reviewed credential-custody
-bridge supplies `RAILWAY_TOKEN`. An injected spawn capability could retain the
-environment or make its token property nonconfigurable, or create a child and
-then throw or return no owned positive process-group ID, leaving JavaScript
-without reaping authority. A future native capability must prove synchronous
-environment consumption without retention, no child creation on throw or a
-malformed return, and custody of the returned positive process-group ID. The
-current full-tuple attempt binding proves semantic equality, not the provenance
-of an exact token, adapter instance, or local-authority instance; a future
-credential bridge must bind those opaque per-instance authorities before
-activation. The same applies to the exact input and evidence-store instances;
-hash equality is not authority. The directly callable review launcher is also
-broader than the locked policy: its structural command parser accepts an
-uppercase variable name and nonempty project, environment, and service strings,
-not only the four canonical permanent-staging operations. The adapter and
-launcher must be hidden behind the private session-bound assembly or bound to the
-exact canonical command target before native spawn or token wiring. The adapter
-also accepts a caller-supplied expected executable digest; without the local
-authority's separate lock, a direct caller can authorize any matching private
-mode-`0500` binary. The future assembly must bind the exact reviewed CLI source
-and copy authority, not merely a caller-selected digest.
-After durable intent, recovery entry, or any write attempt, cleanup,
-terminal-evidence, or finalization failure remains `mutation_uncertain`; those
-failures cannot relabel a possibly mutated provider state as a mere local
-cleanup failure.
-
-No Railway write is authorized until the incident baseline above is separately
-recovered, the external Railway mutation freeze is approved, and an isolated
-disposable live fixture proves the exact CLI 5.32.0 token, stdin, output,
-`--skip-deploys`, staged-patch, deployment, acknowledgement-loss, and eventual
-metadata behavior. A later activation change must independently review and wire
-the native spawn/process-group capabilities, the credential bridge, and a
-private copy made directly from the held verified source descriptor. Its
-private branded stdin/callback source and child writer must turn abort into a
-settled read/write operation before returning and prove that settlement means no
-later callbacks. The kernel's boundary, target, and provider-metadata producers
-must publish exact then-safe branded results before any Promise assimilation.
-The adapter must preserve immediate
-boundary/target preflight, durable intent, exactly one write attempt,
-unconditional postflight, provider-value buffer/input zeroization, prompt token
-reference release, and terminal evidence. Permanent
-staging and production are not acceptable substitutes for that fixture.
+The old `railway:staging:provider-variable:legacy-fixture` command and fixed-blocked
+policy are deprecated adversarial fixtures only. Never give that command a
+Railway token or provider value. Canonical operator paths are the protected
+manual workflows in `docs/protected-provider-mutation-operations.md`: exact
+current-`main` authority, distinct target-scoped metadata/write tokens, durable
+secret-free intent, one mutation attempt with no retry, and unconditional
+read-only reconciliation. Use `Configure one Pint Path runtime variable` for an
+allowlisted staging or production value, the permanent-staging provider
+workflow for staged provider/Supabase operations, and the separate Supabase
+cutover ceremony for canary-B, legacy disablement, and old-key denial. A
+successful variable receipt still requires the same-candidate deployment and
+runtime/provider smoke; metadata alone cannot prove secret value semantics.
+The deprecated fixture's internal review kernels remain useful only as
+adversarial test material. Their native-process and credential-custody caveats
+do not apply to, authorize, or block the separately implemented protected
+successors. Do not activate the fixture or route an operator through it.
 
 The three Google/OpenAI provider categories comprise four exact Railway
-variable operations: Google Maps client configuration (`GOOGLE_MAPS_API_KEY`
-and `GOOGLE_MAPS_MAP_ID`), Google Places server access
-(`GOOGLE_PLACES_API_KEY`), and OpenAI menu OCR (`OPENAI_API_KEY`). The
-review-only path authorises none of those operations while its policy remains
-`HARD_DISABLED_REVIEW_REQUIRED`, and it does not accept or authorise
-`SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, or any `OFFSITE_BACKUP_*`
-variable. `SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY` are the two
-permanent-staging Supabase replacement-key operations under a separate
-containment path that also remains
-`HARD_DISABLED_REVIEW_REQUIRED`; it does not authorise a Railway upsert,
-Supabase key creation or rotation, legacy-key disablement, a canary deployment,
-or any provider mutation. Production operational-copy authority is outside that
-staging path and is prohibited in permanent staging.
+variables: Google Maps client configuration (`GOOGLE_MAPS_API_KEY` and
+`GOOGLE_MAPS_MAP_ID`), Google Places server access (`GOOGLE_PLACES_API_KEY`),
+and OpenAI menu OCR (`OPENAI_API_KEY`). Use only
+`permanent-staging-provider-mutation.yml`, which owns one exact upsert and its
+unconditional reconciliation. `SUPABASE_ANON_KEY` and
+`SUPABASE_SERVICE_ROLE_KEY` are supplied together by its atomic replacement
+operation. After candidate deployment and complete consumer proof, use only
+`permanent-staging-supabase-legacy-cutover.yml` for replacement canary-B, the
+single legacy-disable PUT, reconciliation, and both old-key denial checks. The
+old `HARD_DISABLED_REVIEW_REQUIRED` CLIs/policies are deprecated fixture
+kernels, not missing operator paths. For ordinary staging or production
+application variables—including `DATABASE_URL`, `DATABASE_MAINTENANCE_URL`,
+`PINTPATH_POSTGRES_ROOT_CA_PEM`, and
+`PINTPATH_POSTGRES_ROOT_CA_DER_SHA256`—use
+`configure-runtime-variable.yml` with the exact target protected environment.
+The CA variable is the exact sealed multiline PEM, not a runner or container
+pathname; its paired DER hash comes from an independent review authority.
+Production operational-copy authority remains
+outside the staging path and is prohibited in permanent staging.
 
 The read-only application-deployment attestor is documented in
 [`railway-application-deployment-attestation.md`](railway-application-deployment-attestation.md).
@@ -332,9 +207,11 @@ locked child rejects any authority or primordial drift before Keychain access.
 For PostgreSQL and Redis password incidents, follow the separate
 [permanent-staging private authentication rotation runbook](permanent-staging-private-auth-rotation.md).
 It uses isolated private-network clients with PostgreSQL 17 SCRAM enforcement,
-bounded raw Redis authentication, serialized runtime-role handoff, and exact
-old-credential rejection. A same-service database tunnel is not acceptable
-password evidence because a local HBA rule can use `trust`.
+the exact protected staging CA PEM and independently reviewed DER pin, one
+pinned `fd12` address with `localhost` TLS identity, bounded raw Redis
+authentication, serialized runtime-role handoff, and exact old-credential
+rejection. A same-service database tunnel is not acceptable password evidence
+because a local HBA rule can use `trust`.
 
 After the separate post-rotation seal ceremony, run the external metadata gate
 with a project token scoped to the exact permanent-staging environment:
@@ -371,15 +248,22 @@ PINTPATH_PERMANENT_STAGING_RAILWAY_ENVIRONMENT_ID=replace_with_reviewed_staging_
 PINTPATH_PERMANENT_STAGING_RAILWAY_SERVICE_ID=replace_with_reviewed_staging_app_service_id
 # Do not set DATABASE_PATH in the deployed service. Keep any sealed SQLite
 # migration source outside the runtime environment after reconciliation.
-DATABASE_URL=postgresql://app_user:replace_me@direct-or-session-host:5432/pintpath?uselibpqcompat=true&sslmode=require
-# The checked-in runtime also adds libpq compatibility to its private Pool URL,
-# so the flag above is explicit but not required for correct sslmode=require
-# behavior. Identity pins always hash the exact configured DATABASE_URL bytes;
-# adding, removing, or reordering a query parameter requires new reviewed pins.
-# Plain sslmode=require encrypts without certificate authentication; supplying
-# sslrootcert promotes it to CA verification as in libpq. Use verify-full where
-# the provider supports hostname verification, or verify-ca with one explicit
-# readable sslrootcert when only CA verification is possible.
+DATABASE_URL=postgresql://app_user:replace_me@postgres-staging.railway.internal:5432/pintpath?sslmode=verify-full
+DATABASE_MAINTENANCE_URL=postgresql://privacy_maintenance_login:replace_me@postgres-staging.railway.internal:5432/pintpath?sslmode=verify-full
+PINTPATH_POSTGRES_ROOT_CA_PEM=replace_with_exact_multiline_railway_root_ca
+PINTPATH_POSTGRES_ROOT_CA_DER_SHA256=replace_with_independently_reviewed_der_sha256
+# Both credentials are external LOGIN NOINHERIT principals; neither URL names
+# a shared NOLOGIN role. Use an explicit port-5432 direct/session endpoint,
+# never a transaction pooler. The two pools select pintpath_runtime and
+# pintpath_maintenance respectively in each PostgreSQL startup packet.
+# Each URL accepts only the exact lower-case private Railway authority on port
+# 5432 and the sole query `sslmode=verify-full`. The runtime validates the one
+# self-signed CA against the independent DER pin, resolves exactly one
+# canonical fd12 address, dials that address, and verifies its TLS peer as
+# localhost. `sslmode=require`, `sslmode=verify-ca`, `sslrootcert` URL paths,
+# `uselibpqcompat`, public endpoints, transaction poolers, and extra or reordered
+# query parameters are rejected. Identity pins always hash the exact configured DATABASE_URL bytes
+# bytes, so any credential or authority change requires new reviewed pins.
 # Keep at one on Railway for forwarded scheme/host handling. Client security
 # identity uses Railway's platform-provided X-Real-IP, not proxy hop count.
 TRUST_PROXY_HOPS=1
@@ -489,9 +373,10 @@ project's `sb_publishable_...` key and `SUPABASE_SERVICE_ROLE_KEY` carries that
 project's server-only `sb_secret_...` key. Canonical production separately uses
 a distinct `sb_secret_...` value in `OFFSITE_BACKUP_SERVICE_ROLE_KEY` for the
 operational restore-copy project; permanent staging must not receive it. Do not
-use legacy JWT `anon` or `service_role` keys. These requirements do not activate
-the hard-disabled replacement path or authorize provider-side creation,
-rotation, disablement, or any Railway write.
+use legacy JWT `anon` or `service_role` keys. These requirements do not
+authorize ad-hoc provider-side creation, rotation, disablement, or any Railway
+write. Use only the protected Supabase and Railway successor workflows named
+above; the hard-disabled legacy fixture remains inactive.
 
 Generate each connection digest from the exact credentialed URL only inside the
 protected environment; never print or duplicate the URL. The expected digest
@@ -519,8 +404,13 @@ lists absent.
 Bootstrap is deliberately non-launchable: `src/server.ts` refuses to import the
 application, routes, or workers; provider readiness skips Storage mutations and
 returns a distinct incomplete profile; production, restore, and deletion
-rehearsal reject the phase. The executable Postgres verifier validates this
-full environment contract before opening its one-connection pool. Once the real
+rehearsal reject the phase. From the deployed Railway service shell, run
+`npm run db:postgres:runtime:verify`; the executable verifier validates this
+full environment contract, opens the same held
+`railway-stock-localhost-ca-v1` transport as the application, selects the fixed
+`pintpath_runtime` active role, fences the transport around its one-connection
+pool/readiness probe, and closes both authorities. It does not accept
+`sslmode=require`, `verify-ca`, a public host, or ambient CA trust. Once the real
 production and restore service instances exist, atomically register their two
 identities, set `PINTPATH_IDENTITY_REGISTRY_PHASE=complete`, and rerun the full
 deploy and provider gates. Complete production/restore configurations must also

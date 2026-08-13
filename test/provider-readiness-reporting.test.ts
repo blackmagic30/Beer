@@ -5,6 +5,11 @@ import { spawnSync } from "node:child_process";
 import { describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 
+import {
+  TEST_POSTGRES_RAILWAY_ROOT_CA_DER_SHA256,
+  TEST_POSTGRES_RAILWAY_ROOT_CA_PEM,
+} from "./postgres-railway-stock-localhost-ca.fixtures.js";
+
 function sha256(value: string): string {
   return crypto.createHash("sha256").update(value, "utf8").digest("hex");
 }
@@ -15,6 +20,18 @@ interface ReadinessPayload {
   strictLaunchCheck: boolean;
   checks: Array<{ id: string; status: string; details?: string | null }>;
   summary: { blockingWarnings: number; failures: number };
+  postgresAuthority: {
+    schemaVersion: string;
+    applicationUrlSha256: string | null;
+    maintenanceUrlSha256: string | null;
+    rootCaPemSha256: string | null;
+    rootCaDerSha256: string | null;
+    applicationUrlExact: boolean;
+    maintenanceUrlExact: boolean;
+    sameDatabaseTarget: boolean;
+    distinctLoginRoles: boolean;
+    rootCaExact: boolean;
+  };
 }
 
 function providerReadinessEnvironment(
@@ -34,6 +51,9 @@ function providerReadinessEnvironment(
     RESTORE_REHEARSAL_MODE: "false",
     PINTPATH_IDENTITY_REGISTRY_PHASE: "complete",
     DATABASE_PATH: "",
+    DATABASE_MAINTENANCE_URL: "",
+    PINTPATH_POSTGRES_ROOT_CA_PEM: "",
+    PINTPATH_POSTGRES_ROOT_CA_DER_SHA256: "",
     REDIS_URL: "",
     PINTPATH_EXPECTED_DATABASE_URL_SHA256: "",
     PINTPATH_FORBIDDEN_DATABASE_URL_SHA256S: "",
@@ -103,9 +123,11 @@ function runProviderReadiness(overrides: Record<string, string> = {}): Readiness
   return JSON.parse(result.stdout) as ReadinessPayload;
 }
 
-const productionDatabaseUrl = "postgresql://app:fixture@production-db.internal:5432/pintpath?sslmode=require";
+const productionDatabaseUrl = "postgresql://app:fixture@production-postgres.railway.internal:5432/pintpath?sslmode=verify-full";
+const productionMaintenanceDatabaseUrl = "postgresql://maintenance:fixture@production-postgres.railway.internal:5432/pintpath?sslmode=verify-full";
 const productionRedisUrl = "redis://default:fixture@production-redis.internal:6379";
-const stagingDatabaseUrl = "postgresql://app:fixture@staging-db.internal:5432/pintpath?sslmode=require";
+const stagingDatabaseUrl = "postgresql://app:fixture@staging-postgres.railway.internal:5432/pintpath?sslmode=verify-full";
+const stagingMaintenanceDatabaseUrl = "postgresql://maintenance:fixture@staging-postgres.railway.internal:5432/pintpath?sslmode=verify-full";
 const stagingRedisUrl = "redis://default:fixture@staging-redis.internal:6379";
 const productionEnvironmentId = "env-production-71b26d90";
 const stagingEnvironmentId = "env-staging-40e62ca1";
@@ -123,9 +145,25 @@ const productionSupabaseOrigin = "https://auth.pintpath.au";
 const permanentStagingSupabaseOrigin = "https://bbfibbadwjxzrcdncavy.supabase.co";
 const operationalOffsiteSupabaseOrigin = "https://hfbmhdxrwtihukmixxta.supabase.co";
 
+function postgresAuthorityOverrides(input: {
+  applicationUrl: string;
+  maintenanceUrl: string;
+}): Record<string, string> {
+  return {
+    DATABASE_URL: input.applicationUrl,
+    DATABASE_MAINTENANCE_URL: input.maintenanceUrl, // security-scan allow: synthetic readiness fixture
+    PINTPATH_POSTGRES_ROOT_CA_PEM: TEST_POSTGRES_RAILWAY_ROOT_CA_PEM,
+    PINTPATH_POSTGRES_ROOT_CA_DER_SHA256:
+      TEST_POSTGRES_RAILWAY_ROOT_CA_DER_SHA256,
+  };
+}
+
 function productionIdentityOverrides(overrides: Record<string, string> = {}): Record<string, string> {
   return {
-    DATABASE_URL: productionDatabaseUrl,
+    ...postgresAuthorityOverrides({
+      applicationUrl: productionDatabaseUrl,
+      maintenanceUrl: productionMaintenanceDatabaseUrl,
+    }),
     REDIS_URL: productionRedisUrl,
     PINTPATH_IDENTITY_REGISTRY_PHASE: "complete",
     PINTPATH_EXPECTED_DATABASE_URL_SHA256: sha256(productionDatabaseUrl),
@@ -164,7 +202,10 @@ function deletionRehearsalOverrides(overrides: Record<string, string> = {}): Rec
     ACCOUNT_DELETION_REHEARSAL_REPLICA_COUNT: "2",
     RAILWAY_PUBLIC_DOMAIN: "pintpath-permanent-staging.example.test",
     PUBLIC_BASE_URL: "https://pintpath-permanent-staging.example.test",
-    DATABASE_URL: stagingDatabaseUrl,
+    ...postgresAuthorityOverrides({
+      applicationUrl: stagingDatabaseUrl,
+      maintenanceUrl: stagingMaintenanceDatabaseUrl,
+    }),
     PINTPATH_EXPECTED_DATABASE_URL_SHA256: sha256(stagingDatabaseUrl),
     PINTPATH_FORBIDDEN_DATABASE_URL_SHA256S: `${sha256(productionDatabaseUrl)},${sha256("restore-database-url")}`,
     PINTPATH_DATABASE_RESOURCE_ID: stagingDatabaseResource,
@@ -228,7 +269,10 @@ function stagingBootstrapOverrides(overrides: Record<string, string> = {}): Reco
     PINTPATH_PERMANENT_STAGING_RAILWAY_PROJECT_ID: "project-pintpath-4af98c",
     PINTPATH_PERMANENT_STAGING_RAILWAY_ENVIRONMENT_ID: stagingEnvironmentId,
     PINTPATH_PERMANENT_STAGING_RAILWAY_SERVICE_ID: "svc-pintpath-app-92d01b",
-    DATABASE_URL: stagingDatabaseUrl,
+    ...postgresAuthorityOverrides({
+      applicationUrl: stagingDatabaseUrl,
+      maintenanceUrl: stagingMaintenanceDatabaseUrl,
+    }),
     DATABASE_PATH: "",
     PINTPATH_EXPECTED_DATABASE_URL_SHA256: sha256(stagingDatabaseUrl),
     PINTPATH_FORBIDDEN_DATABASE_URL_SHA256S: "",
@@ -883,42 +927,75 @@ describe("provider readiness feature gating", () => {
     );
   });
 
-  it("requires a TLS Postgres DATABASE_URL for the full-scale production profile", () => {
+  it("requires the exact dual-login Railway verify-full and root-CA authority", () => {
     const missing = runProviderReadiness({ DATABASE_URL: "" });
     const sqlite = runProviderReadiness({ DATABASE_URL: "file:/app/data/pint-path.sqlite" });
-    const noTls = runProviderReadiness({
-      DATABASE_URL: "postgresql://app:fixture@database.internal:5432/pintpath",
-    });
-    const valid = runProviderReadiness({
-      DATABASE_URL: "postgresql://app:fixture@database.internal:5432/pintpath?sslmode=require",
-    });
+    const requireOnly = runProviderReadiness(postgresAuthorityOverrides({
+      applicationUrl:
+        "postgresql://app:fixture@production-postgres.railway.internal:5432/pintpath?sslmode=require",
+      maintenanceUrl: productionMaintenanceDatabaseUrl,
+    }));
+    const valid = runProviderReadiness(postgresAuthorityOverrides({
+      applicationUrl: productionDatabaseUrl,
+      maintenanceUrl: productionMaintenanceDatabaseUrl,
+    }));
     const sqlitePathAlsoConfigured = runProviderReadiness({
-      DATABASE_URL: "postgresql://app:fixture@database.internal:5432/pintpath?sslmode=require",
+      ...postgresAuthorityOverrides({
+        applicationUrl: productionDatabaseUrl,
+        maintenanceUrl: productionMaintenanceDatabaseUrl,
+      }),
       DATABASE_PATH: "/app/data/pint-path.sqlite",
     });
-    const fragment = runProviderReadiness({
-      DATABASE_URL: "postgresql://app:fixture@database.internal:5432/pintpath?sslmode=require#unexpected-fragment",
-    });
-    const duplicateSslMode = runProviderReadiness({
-      DATABASE_URL: "postgresql://app:fixture@database.internal:5432/pintpath?sslmode=require&sslmode=disable",
+    const sharedLogin = runProviderReadiness(postgresAuthorityOverrides({
+      applicationUrl: productionDatabaseUrl,
+      maintenanceUrl: productionDatabaseUrl,
+    }));
+    const wrongCaPin = runProviderReadiness({
+      ...postgresAuthorityOverrides({
+        applicationUrl: productionDatabaseUrl,
+        maintenanceUrl: productionMaintenanceDatabaseUrl,
+      }),
+      PINTPATH_POSTGRES_ROOT_CA_DER_SHA256: "a".repeat(64),
     });
 
     expect(checkStatuses(missing, ["PRODUCTION_POSTGRES_DATABASE_URL"]))
       .toEqual({ PRODUCTION_POSTGRES_DATABASE_URL: "fail" });
     expect(checkStatuses(sqlite, ["PRODUCTION_POSTGRES_DATABASE_URL"]))
       .toEqual({ PRODUCTION_POSTGRES_DATABASE_URL: "fail" });
-    expect(checkStatuses(noTls, ["PRODUCTION_POSTGRES_DATABASE_URL"]))
+    expect(checkStatuses(requireOnly, ["PRODUCTION_POSTGRES_DATABASE_URL"]))
       .toEqual({ PRODUCTION_POSTGRES_DATABASE_URL: "fail" });
-    expect(checkStatuses(valid, ["PRODUCTION_POSTGRES_DATABASE_URL"]))
-      .toEqual({ PRODUCTION_POSTGRES_DATABASE_URL: "pass" });
+    expect(checkStatuses(valid, [
+      "PRODUCTION_POSTGRES_DATABASE_URL",
+      "PRODUCTION_POSTGRES_MAINTENANCE_URL",
+      "PRODUCTION_POSTGRES_ROOT_CA",
+    ])).toEqual({
+      PRODUCTION_POSTGRES_DATABASE_URL: "pass",
+      PRODUCTION_POSTGRES_MAINTENANCE_URL: "pass",
+      PRODUCTION_POSTGRES_ROOT_CA: "pass",
+    });
     expect(checkStatuses(sqlitePathAlsoConfigured, ["PRODUCTION_POSTGRES_DATABASE_URL"]))
       .toEqual({ PRODUCTION_POSTGRES_DATABASE_URL: "fail" });
-    expect(checkStatuses(fragment, ["PRODUCTION_POSTGRES_DATABASE_URL"]))
-      .toEqual({ PRODUCTION_POSTGRES_DATABASE_URL: "fail" });
-    expect(checkStatuses(duplicateSslMode, ["PRODUCTION_POSTGRES_DATABASE_URL"]))
-      .toEqual({ PRODUCTION_POSTGRES_DATABASE_URL: "fail" });
+    expect(checkStatuses(sharedLogin, ["PRODUCTION_POSTGRES_MAINTENANCE_URL"]))
+      .toEqual({ PRODUCTION_POSTGRES_MAINTENANCE_URL: "fail" });
+    expect(checkStatuses(wrongCaPin, ["PRODUCTION_POSTGRES_ROOT_CA"]))
+      .toEqual({ PRODUCTION_POSTGRES_ROOT_CA: "fail" });
     expect(checkStatuses(valid, ["POSTGRES_RUNTIME_IMPLEMENTATION"]))
       .toEqual({ POSTGRES_RUNTIME_IMPLEMENTATION: "pass" });
+    expect(valid.postgresAuthority).toEqual({
+      schemaVersion: "pintpath-postgres-runtime-authority-readiness/v1",
+      applicationUrlSha256: sha256(productionDatabaseUrl),
+      maintenanceUrlSha256: sha256(productionMaintenanceDatabaseUrl),
+      rootCaPemSha256: sha256(TEST_POSTGRES_RAILWAY_ROOT_CA_PEM),
+      rootCaDerSha256: TEST_POSTGRES_RAILWAY_ROOT_CA_DER_SHA256,
+      applicationUrlExact: true,
+      maintenanceUrlExact: true,
+      sameDatabaseTarget: true,
+      distinctLoginRoles: true,
+      rootCaExact: true,
+    });
+    expect(JSON.stringify(valid)).not.toContain(productionDatabaseUrl);
+    expect(JSON.stringify(valid)).not.toContain(productionMaintenanceDatabaseUrl);
+    expect(JSON.stringify(valid)).not.toContain("BEGIN CERTIFICATE");
   });
 
   it("pins production database and Redis URLs to reviewed environment digests without emitting credentials", () => {

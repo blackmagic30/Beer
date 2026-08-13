@@ -21,7 +21,7 @@ concurrency:
 jobs:
   javascript-typescript:
     name: CodeQL JavaScript and TypeScript
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       actions: read
@@ -47,3 +47,102 @@ jobs:
         uses: github/codeql-action/analyze@5595ccaf912efad79be6eef63a5619ff05969be3 # v4.37.6
         with:
           category: /language:javascript-typescript
+
+  swift:
+    name: CodeQL Swift
+    runs-on: macos-15
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Select and verify the reviewed Xcode toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcode_app=""
+          for candidate in /Applications/Xcode_26*.app; do
+            if [ -d "$candidate" ]; then
+              xcode_app="$candidate"
+            fi
+          done
+          test -n "$xcode_app"
+          sudo xcode-select --switch "$xcode_app/Contents/Developer"
+          case "$(xcodebuild -version | awk 'NR == 1 { print $2 }')" in
+            26.*) ;;
+            *) exit 1 ;;
+          esac
+          case "$(xcrun --sdk iphoneos --show-sdk-version)" in
+            26.*) ;;
+            *) exit 1 ;;
+          esac
+
+      - name: Initialize Swift CodeQL
+        uses: github/codeql-action/init@5595ccaf912efad79be6eef63a5619ff05969be3 # v4.37.6
+        with:
+          languages: swift
+          build-mode: manual
+          queries: security-extended
+          config-file: ./.github/codeql/codeql-config.yml
+
+      - name: Build the reviewed iOS target for analysis
+        run: >-
+          xcodebuild clean build
+          -project apps/ios/BeerMap.xcodeproj
+          -scheme BeerMap
+          -configuration Debug
+          -sdk iphonesimulator
+          -destination 'generic/platform=iOS Simulator'
+          CODE_SIGNING_ALLOWED=NO
+
+      - name: Analyze Swift
+        uses: github/codeql-action/analyze@5595ccaf912efad79be6eef63a5619ff05969be3 # v4.37.6
+        with:
+          category: /language:swift
+
+  java-kotlin:
+    name: CodeQL Java and Kotlin
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup the Android Java runtime
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
+
+      - name: Initialize Java and Kotlin CodeQL
+        uses: github/codeql-action/init@5595ccaf912efad79be6eef63a5619ff05969be3 # v4.37.6
+        with:
+          languages: java-kotlin
+          build-mode: manual
+          queries: security-extended
+          config-file: ./.github/codeql/codeql-config.yml
+
+      - name: Build the Android applications for analysis
+        working-directory: apps/android
+        run: ./gradlew --no-daemon --no-build-cache assembleDebug assembleRelease
+
+      - name: Analyze Java and Kotlin
+        uses: github/codeql-action/analyze@5595ccaf912efad79be6eef63a5619ff05969be3 # v4.37.6
+        with:
+          category: /language:java-kotlin

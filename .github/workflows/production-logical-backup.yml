@@ -1,0 +1,536 @@
+name: Production PostgreSQL logical backup
+
+on:
+  schedule:
+    - cron: "15 14 * * *"
+    - cron: "45 15 1 * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Run the backup only or also prove retrieval and restore.
+        required: true
+        default: backup-only
+        type: choice
+        options:
+          - backup-only
+          - backup-and-restore-drill
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-logical-backup
+  cancel-in-progress: false
+
+jobs:
+  logical-backup:
+    name: Logical backup, operational copy, and WORM receipt
+    runs-on: [self-hosted, linux, x64, pintpath-production-backup]
+    environment: production-backup
+    timeout-minutes: 120
+    outputs:
+      manifest_sha256: ${{ steps.verify.outputs.manifest_sha256 }}
+      success_state_sha256: ${{ steps.verify.outputs.success_state_sha256 }}
+    env:
+      NODE_ENV: production
+      SUPABASE_URL: https://auth.pintpath.au
+      OFFSITE_BACKUP_SUPABASE_URL: https://hfbmhdxrwtihukmixxta.supabase.co
+      OFFSITE_BACKUP_BUCKET: pintpath-backups
+      PINTPATH_POSTGRES_LOGICAL_OFFSITE: confirmed
+      PINTPATH_POSTGRES_LOGICAL_WORM: confirmed
+      PINTPATH_POSTGRES_LOGICAL_WORM_AWS: confirmed
+      PINTPATH_POSTGRES_OCI_RUNTIME_PROFILE: pintpath-postgres-17.10-operational-oci-linux-amd64-v1
+      PINTPATH_POSTGRES_OCI_OPERATION_CLASS: backup
+      PINTPATH_POSTGRES_OCI_EGRESS_POLICY_FILE: /etc/pintpath/production-backup-postgres-egress.json
+      PINTPATH_POSTGRES_OCI_EGRESS_POLICY_SHA256: ${{ vars.PINTPATH_PRODUCTION_BACKUP_OCI_EGRESS_POLICY_SHA256 }}
+      PINTPATH_PRODUCTION_BACKUP_RUNNER_READY: ${{ vars.PINTPATH_PRODUCTION_BACKUP_RUNNER_READY }}
+      PINTPATH_PRODUCTION_BACKUP_EPHEMERAL_RUNNER_POLICY_SHA256: ${{ vars.PINTPATH_PRODUCTION_BACKUP_EPHEMERAL_RUNNER_POLICY_SHA256 }}
+      EXPECTED_SOURCE_URL_SHA256: ${{ vars.PINTPATH_PRODUCTION_BACKUP_SOURCE_URL_SHA256 }}
+      EXPECTED_ROOT_CA_DER_SHA256: ${{ vars.PINTPATH_PRODUCTION_POSTGRES_ROOT_CA_DER_SHA256 }}
+      PG_DUMP_FILE: /usr/local/bin/pg_dump
+      EXPECTED_PG_DUMP_SHA256: fb3b6f653eae3eb4709c83117355dd9e033dd96332167c4042981ce37aefa6df
+      PG_RESTORE_FILE: /usr/local/bin/pg_restore
+      EXPECTED_PG_RESTORE_SHA256: 6d408461d62238fb4bc0e92831d56bf40bcbd16f2e524addd19efe4909bda7b5
+      EXPECTED_OFFSITE_DESTINATION_ORIGIN_SHA256: ${{ vars.PINTPATH_OPERATIONAL_COPY_ORIGIN_SHA256 }}
+      EXPECTED_OFFSITE_BUCKET_NAME_SHA256: ${{ vars.PINTPATH_OPERATIONAL_COPY_BUCKET_SHA256 }}
+      WORM_BUCKET: ${{ vars.PINTPATH_PRODUCTION_WORM_BUCKET }}
+      WORM_BUCKET_SHA256: ${{ vars.PINTPATH_PRODUCTION_WORM_BUCKET_SHA256 }}
+      WORM_WRITER_PROFILE: ${{ vars.PINTPATH_PRODUCTION_WORM_WRITER_PROFILE }}
+      WORM_READER_PROFILE: ${{ vars.PINTPATH_PRODUCTION_WORM_READER_PROFILE }}
+      WORM_ACCOUNT_SHA256: ${{ vars.PINTPATH_PRODUCTION_WORM_ACCOUNT_SHA256 }}
+      WORM_WRITER_ARN_SHA256: ${{ vars.PINTPATH_PRODUCTION_WORM_WRITER_ARN_SHA256 }}
+      WORM_READER_ARN_SHA256: ${{ vars.PINTPATH_PRODUCTION_WORM_READER_ARN_SHA256 }}
+      BACKUP_OPERATOR_ID: ${{ vars.PINTPATH_PRODUCTION_BACKUP_OPERATOR_ID }}
+
+    steps:
+      - name: Checkout the protected default branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Setup pinned Node runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Fail closed before private material is written
+        shell: bash
+        env:
+          BACKUP_DATABASE_URL: ${{ secrets.PINTPATH_PRODUCTION_BACKUP_DATABASE_URL }}
+          RUNTIME_DATABASE_URL: ${{ secrets.PINTPATH_PRODUCTION_RUNTIME_DATABASE_URL }}
+          POSTGRES_ROOT_CA_PEM: ${{ secrets.PINTPATH_PRODUCTION_POSTGRES_ROOT_CA_PEM }}
+          OFFSITE_SERVICE_ROLE_KEY: ${{ secrets.PINTPATH_OPERATIONAL_COPY_SERVICE_ROLE_KEY }}
+          POSTGRES_LOGICAL_WORM_RECOVERY_ACCOUNT_ID: ${{ secrets.PINTPATH_PRODUCTION_WORM_RECOVERY_ACCOUNT_ID }}
+          POSTGRES_LOGICAL_WORM_FORBIDDEN_ACCOUNT_IDS: ${{ secrets.PINTPATH_PRODUCTION_WORM_FORBIDDEN_ACCOUNT_IDS }}
+        run: |
+          set -euo pipefail
+          set +x
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$PINTPATH_PRODUCTION_BACKUP_RUNNER_READY" = "true"
+          [[ "$PINTPATH_PRODUCTION_BACKUP_EPHEMERAL_RUNNER_POLICY_SHA256" =~ ^[a-f0-9]{64}$ ]]
+          node scripts/verify-production-backup-volatile-work-root.mjs verify \
+            --policy-sha256="$PINTPATH_PRODUCTION_BACKUP_EPHEMERAL_RUNNER_POLICY_SHA256"
+          test "$(node --version)" = "v22.23.2"
+          test "$(corepack npm --version)" = "10.9.8"
+          test -n "$BACKUP_DATABASE_URL"
+          test -n "$RUNTIME_DATABASE_URL"
+          test -n "$POSTGRES_ROOT_CA_PEM"
+          test -n "$OFFSITE_SERVICE_ROLE_KEY"
+          test -n "$POSTGRES_LOGICAL_WORM_RECOVERY_ACCOUNT_ID"
+          test -n "$POSTGRES_LOGICAL_WORM_FORBIDDEN_ACCOUNT_IDS"
+          test -n "$BACKUP_OPERATOR_ID"
+          test -n "$WORM_BUCKET"
+          test -n "$WORM_WRITER_PROFILE"
+          test -n "$WORM_READER_PROFILE"
+          test "$WORM_WRITER_PROFILE" != "$WORM_READER_PROFILE"
+          test "$PINTPATH_POSTGRES_OCI_RUNTIME_PROFILE" = "pintpath-postgres-17.10-operational-oci-linux-amd64-v1"
+          test "$PINTPATH_POSTGRES_OCI_OPERATION_CLASS" = "backup"
+          test "$PINTPATH_POSTGRES_OCI_EGRESS_POLICY_FILE" = "/etc/pintpath/production-backup-postgres-egress.json"
+          test -f "$PINTPATH_POSTGRES_OCI_EGRESS_POLICY_FILE"
+          test -x /usr/local/libexec/pintpath/docker-static-29.7.2
+          for value in \
+            "$EXPECTED_SOURCE_URL_SHA256" \
+            "$EXPECTED_ROOT_CA_DER_SHA256" \
+            "$PINTPATH_POSTGRES_OCI_EGRESS_POLICY_SHA256" \
+            "$EXPECTED_OFFSITE_DESTINATION_ORIGIN_SHA256" \
+            "$EXPECTED_OFFSITE_BUCKET_NAME_SHA256" \
+            "$WORM_BUCKET_SHA256" \
+            "$WORM_ACCOUNT_SHA256" \
+            "$WORM_WRITER_ARN_SHA256" \
+            "$WORM_READER_ARN_SHA256"; do
+            [[ "$value" =~ ^[a-f0-9]{64}$ ]]
+          done
+          [[ "$POSTGRES_LOGICAL_WORM_RECOVERY_ACCOUNT_ID" =~ ^[0-9]{12}$ ]]
+          [[ "$POSTGRES_LOGICAL_WORM_FORBIDDEN_ACCOUNT_IDS" =~ ^[0-9]{12}(,[0-9]{12})*$ ]]
+
+      - name: Install lockfile dependencies
+        run: corepack npm ci --ignore-scripts
+
+      - name: Materialize private inputs
+        shell: bash
+        env:
+          BACKUP_DATABASE_URL: ${{ secrets.PINTPATH_PRODUCTION_BACKUP_DATABASE_URL }}
+          RUNTIME_DATABASE_URL: ${{ secrets.PINTPATH_PRODUCTION_RUNTIME_DATABASE_URL }}
+          POSTGRES_ROOT_CA_PEM: ${{ secrets.PINTPATH_PRODUCTION_POSTGRES_ROOT_CA_PEM }}
+          OFFSITE_SERVICE_ROLE_KEY: ${{ secrets.PINTPATH_OPERATIONAL_COPY_SERVICE_ROLE_KEY }}
+        run: |
+          set -euo pipefail
+          set +x
+          umask 077
+          work_root="$(node scripts/verify-production-backup-volatile-work-root.mjs prepare \
+            --operation=backup \
+            --run-id="$GITHUB_RUN_ID" \
+            --run-attempt="$GITHUB_RUN_ATTEMPT" \
+            --policy-sha256="$PINTPATH_PRODUCTION_BACKUP_EPHEMERAL_RUNNER_POLICY_SHA256" \
+            --github-env="$GITHUB_ENV")"
+          test "$work_root" = "/run/pintpath-production-backup/pintpath-production-backup-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          printf '%s' "$BACKUP_DATABASE_URL" > "$work_root/postgres-backup-url"
+          printf '%s' "$RUNTIME_DATABASE_URL" > "$work_root/postgres-runtime-url"
+          printf '%s' "$POSTGRES_ROOT_CA_PEM" > "$work_root/railway-postgres-root-ca.pem"
+          printf '%s' "$OFFSITE_SERVICE_ROLE_KEY" > "$work_root/offsite-service-role.key"
+          chmod 600 "$work_root/postgres-backup-url" \
+            "$work_root/postgres-runtime-url" \
+            "$work_root/railway-postgres-root-ca.pem" \
+            "$work_root/offsite-service-role.key"
+          {
+            printf 'PINTPATH_BACKUP_DIRECTORY=%s\n' "$work_root/postgres-logical-backup"
+            printf 'PINTPATH_BACKUP_RESULT=%s\n' "$work_root/logical-backup-result.json"
+            printf 'PINTPATH_OFFSITE_RESULT=%s\n' "$work_root/logical-offsite-result.json"
+            printf 'PINTPATH_WORM_RESULT=%s\n' "$work_root/logical-worm-result.json"
+          } >> "$GITHUB_ENV"
+
+      - name: Create hardened PostgreSQL 17 logical backup
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          node --frozen-intrinsics --disable-proto=throw --import tsx \
+            scripts/backup-postgres-logical.ts \
+            --connection-file="$PINTPATH_BACKUP_WORK_ROOT/postgres-backup-url" \
+            --expected-source-url-sha256="$EXPECTED_SOURCE_URL_SHA256" \
+            --transport-profile=railway-stock-localhost-ca-v1 \
+            --root-ca-file="$PINTPATH_BACKUP_WORK_ROOT/railway-postgres-root-ca.pem" \
+            --expected-root-ca-der-sha256="$EXPECTED_ROOT_CA_DER_SHA256" \
+            --pg-dump-file="$PG_DUMP_FILE" \
+            --expected-pg-dump-sha256="$EXPECTED_PG_DUMP_SHA256" \
+            --pg-restore-file="$PG_RESTORE_FILE" \
+            --expected-pg-restore-sha256="$EXPECTED_PG_RESTORE_SHA256" \
+            --output="$PINTPATH_BACKUP_DIRECTORY" \
+            > "$PINTPATH_BACKUP_RESULT"
+          chmod 600 "$PINTPATH_BACKUP_RESULT"
+
+      - name: Upload and verify the operational restore copy
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          manifest_sha256="$(node -e 'const f=require("fs");const v=JSON.parse(f.readFileSync(process.argv[1],"utf8"));if(v.ok!==true||v.schemaVersion!==3||!/^[a-f0-9]{64}$/.test(v.manifestSha256))process.exit(1);process.stdout.write(v.manifestSha256)' "$PINTPATH_BACKUP_RESULT")"
+          corepack npm run --silent db:postgres:backup:logical:offsite -- \
+            --backup-directory="$PINTPATH_BACKUP_DIRECTORY" \
+            --backup-manifest-sha256="$manifest_sha256" \
+            --expected-destination-origin-sha256="$EXPECTED_OFFSITE_DESTINATION_ORIGIN_SHA256" \
+            --expected-bucket-name-sha256="$EXPECTED_OFFSITE_BUCKET_NAME_SHA256" \
+            --expected-runtime-root-ca-der-sha256="$EXPECTED_ROOT_CA_DER_SHA256" \
+            --runtime-database-url-file="$PINTPATH_BACKUP_WORK_ROOT/postgres-runtime-url" \
+            --runtime-root-ca-file="$PINTPATH_BACKUP_WORK_ROOT/railway-postgres-root-ca.pem" \
+            --service-role-key-file="$PINTPATH_BACKUP_WORK_ROOT/offsite-service-role.key" \
+            --operator-id="$BACKUP_OPERATOR_ID" \
+            > "$PINTPATH_OFFSITE_RESULT"
+          chmod 600 "$PINTPATH_OFFSITE_RESULT"
+
+      - name: Write and independently verify the 30-day WORM copy
+        shell: bash
+        env:
+          POSTGRES_LOGICAL_WORM_RECOVERY_ACCOUNT_ID: ${{ secrets.PINTPATH_PRODUCTION_WORM_RECOVERY_ACCOUNT_ID }}
+          POSTGRES_LOGICAL_WORM_FORBIDDEN_ACCOUNT_IDS: ${{ secrets.PINTPATH_PRODUCTION_WORM_FORBIDDEN_ACCOUNT_IDS }}
+        run: |
+          set -euo pipefail
+          set +x
+          manifest_sha256="$(node -e 'const f=require("fs");const v=JSON.parse(f.readFileSync(process.argv[1],"utf8"));if(v.ok!==true||v.schemaVersion!==3||!/^[a-f0-9]{64}$/.test(v.manifestSha256))process.exit(1);process.stdout.write(v.manifestSha256)' "$PINTPATH_BACKUP_RESULT")"
+          corepack npm run --silent db:postgres:backup:logical:worm -- \
+            --backup-directory="$PINTPATH_BACKUP_DIRECTORY" \
+            --backup-manifest-sha256="$manifest_sha256" \
+            --bucket-name="$WORM_BUCKET" \
+            --expected-bucket-name-sha256="$WORM_BUCKET_SHA256" \
+            --expected-recovery-account-id-sha256="$WORM_ACCOUNT_SHA256" \
+            --expected-writer-principal-arn-sha256="$WORM_WRITER_ARN_SHA256" \
+            --expected-reader-principal-arn-sha256="$WORM_READER_ARN_SHA256" \
+            --operator-id="$BACKUP_OPERATOR_ID" \
+            --writer-profile="$WORM_WRITER_PROFILE" \
+            --reader-profile="$WORM_READER_PROFILE" \
+            > "$PINTPATH_WORM_RESULT"
+          chmod 600 "$PINTPATH_WORM_RESULT"
+
+      - name: Verify freshness and cross-copy bindings
+        id: verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          node --input-type=module - \
+            "$PINTPATH_BACKUP_RESULT" \
+            "$PINTPATH_OFFSITE_RESULT" \
+            "$PINTPATH_WORM_RESULT" \
+            "$GITHUB_OUTPUT" <<'NODE'
+          import fs from "node:fs";
+          const [backupPath, offsitePath, wormPath, outputPath] = process.argv.slice(2);
+          const read = (filename) => JSON.parse(fs.readFileSync(filename, "utf8"));
+          const sha = (value) => typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
+          const backup = read(backupPath);
+          const offsite = read(offsitePath);
+          const worm = read(wormPath);
+          if (backup.ok !== true || backup.schemaVersion !== 3) process.exit(1);
+          if (offsite.ok !== true || offsite.schemaVersion !== 1) process.exit(1);
+          if (worm.ok !== true || worm.schemaVersion !== 1) process.exit(1);
+          if (!sha(backup.manifestSha256) || !sha(offsite.successStateSha256)) process.exit(1);
+          if (offsite.manifestSha256 !== backup.manifestSha256) process.exit(1);
+          if (worm.manifestSha256 !== backup.manifestSha256) process.exit(1);
+          if (worm.archiveSha256 !== backup.archiveSha256) process.exit(1);
+          if (worm.stateReceiptSha256 !== backup.stateReceiptSha256) process.exit(1);
+          const completedAt = Date.parse(offsite.completedAt);
+          const wormCompletedAt = Date.parse(worm.completedAt);
+          const now = Date.now();
+          if (!Number.isFinite(completedAt) || !Number.isFinite(wormCompletedAt)) process.exit(1);
+          if (completedAt > now + 300_000 || wormCompletedAt > now + 300_000) process.exit(1);
+          if (now - completedAt > 7_200_000 || now - wormCompletedAt > 7_200_000) process.exit(1);
+          const retainUntil = Date.parse(worm.minimumRetainUntil);
+          if (!Number.isFinite(retainUntil) || retainUntil - now < 29 * 86_400_000) process.exit(1);
+          fs.appendFileSync(outputPath, `manifest_sha256=${backup.manifestSha256}\n`);
+          fs.appendFileSync(outputPath, `success_state_sha256=${offsite.successStateSha256}\n`);
+          NODE
+
+      - name: Retain hash-only backup receipts for 30 days
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: production-logical-backup-receipts-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.PINTPATH_BACKUP_RESULT }}
+            ${{ env.PINTPATH_OFFSITE_RESULT }}
+            ${{ env.PINTPATH_WORM_RESULT }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Remove private runner files
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          node scripts/verify-production-backup-volatile-work-root.mjs cleanup \
+            --operation=backup \
+            --run-id="$GITHUB_RUN_ID" \
+            --run-attempt="$GITHUB_RUN_ATTEMPT" \
+            --policy-sha256="$PINTPATH_PRODUCTION_BACKUP_EPHEMERAL_RUNNER_POLICY_SHA256" \
+            --exported-work-root="${PINTPATH_BACKUP_WORK_ROOT:-}"
+
+  restore-drill:
+    name: Monthly operational-copy retrieval and disposable restore
+    needs: logical-backup
+    if: >-
+      ${{ needs.logical-backup.result == 'success' &&
+          (github.event.schedule == '45 15 1 * *' ||
+           github.event.inputs.mode == 'backup-and-restore-drill') }}
+    runs-on: [self-hosted, linux, x64, pintpath-production-backup]
+    environment: production-restore-drill
+    timeout-minutes: 120
+    env:
+      NODE_ENV: production
+      SUPABASE_URL: https://auth.pintpath.au
+      OFFSITE_BACKUP_SUPABASE_URL: https://hfbmhdxrwtihukmixxta.supabase.co
+      OFFSITE_BACKUP_BUCKET: pintpath-backups
+      PINTPATH_POSTGRES_OCI_RUNTIME_PROFILE: pintpath-postgres-17.10-operational-oci-linux-amd64-v1
+      PINTPATH_POSTGRES_OCI_OPERATION_CLASS: restore
+      PINTPATH_POSTGRES_OCI_EGRESS_POLICY_FILE: /etc/pintpath/production-restore-postgres-egress.json
+      PINTPATH_POSTGRES_OCI_EGRESS_POLICY_SHA256: ${{ vars.PINTPATH_PRODUCTION_RESTORE_OCI_EGRESS_POLICY_SHA256 }}
+      PINTPATH_POSTGRES_OCI_RESTORE_ROOT_CA_SHA256: ${{ vars.PINTPATH_PRODUCTION_RESTORE_ROOT_CA_SHA256 }}
+      PINTPATH_POSTGRES_LOGICAL_RESTORE_ROOT_CA_DER_SHA256: ${{ vars.PINTPATH_PRODUCTION_RESTORE_ROOT_CA_DER_SHA256 }}
+      EXPECTED_RUNTIME_ROOT_CA_DER_SHA256: ${{ vars.PINTPATH_PRODUCTION_POSTGRES_ROOT_CA_DER_SHA256 }}
+      PG_RESTORE_FILE: /usr/local/bin/pg_restore
+      EXPECTED_PG_RESTORE_SHA256: 6d408461d62238fb4bc0e92831d56bf40bcbd16f2e524addd19efe4909bda7b5
+      EXPECTED_OFFSITE_DESTINATION_ORIGIN_SHA256: ${{ vars.PINTPATH_OPERATIONAL_COPY_ORIGIN_SHA256 }}
+      EXPECTED_OFFSITE_BUCKET_NAME_SHA256: ${{ vars.PINTPATH_OPERATIONAL_COPY_BUCKET_SHA256 }}
+      EXPECTED_RESTORE_TARGET_URL_SHA256: ${{ vars.PINTPATH_RESTORE_TARGET_URL_SHA256 }}
+      EXPECTED_RESTORE_TARGET_IDENTITY_SHA256: ${{ vars.PINTPATH_RESTORE_TARGET_IDENTITY_SHA256 }}
+      RESTORE_TARGET_GENERATION: ${{ vars.PINTPATH_RESTORE_TARGET_GENERATION }}
+      RESTORE_TARGET_NETWORK_POLICY: ${{ vars.PINTPATH_RESTORE_TARGET_NETWORK_POLICY }}
+      PINTPATH_PRODUCTION_BACKUP_RUNNER_READY: ${{ vars.PINTPATH_PRODUCTION_BACKUP_RUNNER_READY }}
+      PINTPATH_PRODUCTION_BACKUP_EPHEMERAL_RUNNER_POLICY_SHA256: ${{ vars.PINTPATH_PRODUCTION_BACKUP_EPHEMERAL_RUNNER_POLICY_SHA256 }}
+      EXPECTED_SUCCESS_STATE_SHA256: ${{ needs.logical-backup.outputs.success_state_sha256 }}
+      EXPECTED_MANIFEST_SHA256: ${{ needs.logical-backup.outputs.manifest_sha256 }}
+      PINTPATH_POSTGRES_LOGICAL_RESTORE: confirmed
+
+    steps:
+      - name: Checkout the exact protected source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Setup pinned Node runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Fail closed on restore target identity or isolation drift
+        shell: bash
+        env:
+          RUNTIME_DATABASE_URL: ${{ secrets.PINTPATH_PRODUCTION_RUNTIME_DATABASE_URL }}
+          RUNTIME_ROOT_CA_PEM: ${{ secrets.PINTPATH_PRODUCTION_POSTGRES_ROOT_CA_PEM }}
+          OFFSITE_SERVICE_ROLE_KEY: ${{ secrets.PINTPATH_OPERATIONAL_COPY_SERVICE_ROLE_KEY }}
+          RESTORE_TARGET_DATABASE_URL: ${{ secrets.PINTPATH_DISPOSABLE_RESTORE_DATABASE_URL }}
+          RESTORE_ROOT_CA_PEM: ${{ secrets.PINTPATH_PRODUCTION_RESTORE_ROOT_CA_PEM }}
+        run: |
+          set -euo pipefail
+          set +x
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$PINTPATH_PRODUCTION_BACKUP_RUNNER_READY" = "true"
+          [[ "$PINTPATH_PRODUCTION_BACKUP_EPHEMERAL_RUNNER_POLICY_SHA256" =~ ^[a-f0-9]{64}$ ]]
+          node scripts/verify-production-backup-volatile-work-root.mjs verify \
+            --policy-sha256="$PINTPATH_PRODUCTION_BACKUP_EPHEMERAL_RUNNER_POLICY_SHA256"
+          test "$(node --version)" = "v22.23.2"
+          test "$(corepack npm --version)" = "10.9.8"
+          test "$RESTORE_TARGET_NETWORK_POLICY" = "isolated-no-production-route"
+          test "$RESTORE_TARGET_GENERATION" = "$(date -u +%Y-%m)"
+          test -n "$RUNTIME_DATABASE_URL"
+          test -n "$RUNTIME_ROOT_CA_PEM"
+          test -n "$OFFSITE_SERVICE_ROLE_KEY"
+          test -n "$RESTORE_TARGET_DATABASE_URL"
+          test -n "$RESTORE_ROOT_CA_PEM"
+          test "$PINTPATH_POSTGRES_OCI_RUNTIME_PROFILE" = "pintpath-postgres-17.10-operational-oci-linux-amd64-v1"
+          test "$PINTPATH_POSTGRES_OCI_OPERATION_CLASS" = "restore"
+          test "$PINTPATH_POSTGRES_OCI_EGRESS_POLICY_FILE" = "/etc/pintpath/production-restore-postgres-egress.json"
+          test -f "$PINTPATH_POSTGRES_OCI_EGRESS_POLICY_FILE"
+          test -x /usr/local/libexec/pintpath/docker-static-29.7.2
+          for value in \
+            "$PINTPATH_POSTGRES_OCI_EGRESS_POLICY_SHA256" \
+            "$PINTPATH_POSTGRES_OCI_RESTORE_ROOT_CA_SHA256" \
+            "$PINTPATH_POSTGRES_LOGICAL_RESTORE_ROOT_CA_DER_SHA256" \
+            "$EXPECTED_RUNTIME_ROOT_CA_DER_SHA256" \
+            "$EXPECTED_OFFSITE_DESTINATION_ORIGIN_SHA256" \
+            "$EXPECTED_OFFSITE_BUCKET_NAME_SHA256" \
+            "$EXPECTED_RESTORE_TARGET_URL_SHA256" \
+            "$EXPECTED_RESTORE_TARGET_IDENTITY_SHA256" \
+            "$EXPECTED_SUCCESS_STATE_SHA256" \
+            "$EXPECTED_MANIFEST_SHA256"; do
+            [[ "$value" =~ ^[a-f0-9]{64}$ ]]
+          done
+
+      - name: Install lockfile dependencies
+        run: corepack npm ci --ignore-scripts
+
+      - name: Materialize privilege-separated recovery inputs
+        shell: bash
+        env:
+          RUNTIME_DATABASE_URL: ${{ secrets.PINTPATH_PRODUCTION_RUNTIME_DATABASE_URL }}
+          RUNTIME_ROOT_CA_PEM: ${{ secrets.PINTPATH_PRODUCTION_POSTGRES_ROOT_CA_PEM }}
+          OFFSITE_SERVICE_ROLE_KEY: ${{ secrets.PINTPATH_OPERATIONAL_COPY_SERVICE_ROLE_KEY }}
+          RESTORE_TARGET_DATABASE_URL: ${{ secrets.PINTPATH_DISPOSABLE_RESTORE_DATABASE_URL }}
+          RESTORE_ROOT_CA_PEM: ${{ secrets.PINTPATH_PRODUCTION_RESTORE_ROOT_CA_PEM }}
+        run: |
+          set -euo pipefail
+          set +x
+          umask 077
+          work_root="$(node scripts/verify-production-backup-volatile-work-root.mjs prepare \
+            --operation=restore \
+            --run-id="$GITHUB_RUN_ID" \
+            --run-attempt="$GITHUB_RUN_ATTEMPT" \
+            --policy-sha256="$PINTPATH_PRODUCTION_BACKUP_EPHEMERAL_RUNNER_POLICY_SHA256" \
+            --github-env="$GITHUB_ENV")"
+          test "$work_root" = "/run/pintpath-production-backup/pintpath-production-restore-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          printf '%s' "$RUNTIME_DATABASE_URL" > "$work_root/postgres-runtime-url"
+          printf '%s' "$RUNTIME_ROOT_CA_PEM" > "$work_root/production-runtime-root-ca.pem"
+          printf '%s' "$OFFSITE_SERVICE_ROLE_KEY" > "$work_root/offsite-service-role.key"
+          printf '%s' "$RESTORE_TARGET_DATABASE_URL" > "$work_root/disposable-restore-url"
+          printf '%s' "$RESTORE_ROOT_CA_PEM" > "$work_root/restore-root-ca.pem"
+          chmod 600 "$work_root/postgres-runtime-url" \
+            "$work_root/production-runtime-root-ca.pem" \
+            "$work_root/offsite-service-role.key" \
+            "$work_root/disposable-restore-url" \
+            "$work_root/restore-root-ca.pem"
+          root_ca_sha256="$(sha256sum "$work_root/restore-root-ca.pem" | cut -d ' ' -f 1)"
+          test "$root_ca_sha256" = "$PINTPATH_POSTGRES_OCI_RESTORE_ROOT_CA_SHA256"
+          runtime_url_sha256="$(node -e 'const f=require("fs"),c=require("crypto");process.stdout.write(c.createHash("sha256").update(f.readFileSync(process.argv[1])).digest("hex"))' "$work_root/postgres-runtime-url")"
+          target_url_sha256="$(node -e 'const f=require("fs"),c=require("crypto");process.stdout.write(c.createHash("sha256").update(f.readFileSync(process.argv[1])).digest("hex"))' "$work_root/disposable-restore-url")"
+          test "$target_url_sha256" = "$EXPECTED_RESTORE_TARGET_URL_SHA256"
+          test "$target_url_sha256" != "$runtime_url_sha256"
+          {
+            printf 'PINTPATH_RETRIEVED_BACKUP=%s\n' "$work_root/retrieved-logical-backup"
+            printf 'PINTPATH_RETRIEVAL_RESULT=%s\n' "$work_root/retrieval-result.json"
+            printf 'PINTPATH_TARGET_INSPECTION=%s\n' "$work_root/target-inspection.json"
+            printf 'PINTPATH_RESTORE_RECEIPT=%s\n' "$work_root/restore-receipt.json"
+            printf 'PINTPATH_RESTORE_RESULT=%s\n' "$work_root/restore-result.json"
+            printf 'PINTPATH_POSTGRES_OCI_RESTORE_ROOT_CA_FILE=%s\n' "$work_root/restore-root-ca.pem"
+          } >> "$GITHUB_ENV"
+
+      - name: Retrieve the exact just-attested operational copy
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          corepack npm run --silent db:postgres:backup:logical:retrieve -- \
+            --expected-destination-origin-sha256="$EXPECTED_OFFSITE_DESTINATION_ORIGIN_SHA256" \
+            --expected-bucket-name-sha256="$EXPECTED_OFFSITE_BUCKET_NAME_SHA256" \
+            --expected-runtime-root-ca-der-sha256="$EXPECTED_RUNTIME_ROOT_CA_DER_SHA256" \
+            --expected-success-state-sha256="$EXPECTED_SUCCESS_STATE_SHA256" \
+            --output-directory="$PINTPATH_RETRIEVED_BACKUP" \
+            --runtime-database-url-file="$PINTPATH_RESTORE_WORK_ROOT/postgres-runtime-url" \
+            --runtime-root-ca-file="$PINTPATH_RESTORE_WORK_ROOT/production-runtime-root-ca.pem" \
+            --service-role-key-file="$PINTPATH_RESTORE_WORK_ROOT/offsite-service-role.key" \
+            > "$PINTPATH_RETRIEVAL_RESULT"
+          chmod 600 "$PINTPATH_RETRIEVAL_RESULT"
+
+      - name: Re-prove the empty disposable target and exact identity pin
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          node --frozen-intrinsics --disable-proto=throw --import tsx \
+            scripts/restore-postgres-logical.ts inspect-target \
+            --target-url-file="$PINTPATH_RESTORE_WORK_ROOT/disposable-restore-url" \
+            > "$PINTPATH_TARGET_INSPECTION"
+          chmod 600 "$PINTPATH_TARGET_INSPECTION"
+          node -e 'const f=require("fs");const target=JSON.parse(f.readFileSync(process.argv[1],"utf8"));const retrieval=JSON.parse(f.readFileSync(process.argv[3],"utf8"));if(target.ok!==true||target.command!=="inspect-target"||target.disposableTarget!==true||target.privateSchemasAbsent!==true||target.targetIdentitySha256!==process.argv[2]||target.targetIdentitySha256===retrieval.sourceDatabaseIdentitySha256)process.exit(1)' \
+            "$PINTPATH_TARGET_INSPECTION" "$EXPECTED_RESTORE_TARGET_IDENTITY_SHA256" "$PINTPATH_RETRIEVAL_RESULT"
+
+      - name: Restore and verify the retrieved set
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          node -e 'const f=require("fs");const v=JSON.parse(f.readFileSync(process.argv[1],"utf8"));if(v.ok!==true||v.schemaVersion!==1||v.successStateSha256!==process.argv[2]||v.manifestSha256!==process.argv[3])process.exit(1)' \
+            "$PINTPATH_RETRIEVAL_RESULT" "$EXPECTED_SUCCESS_STATE_SHA256" "$EXPECTED_MANIFEST_SHA256"
+          node --frozen-intrinsics --disable-proto=throw --import tsx \
+            scripts/restore-postgres-logical.ts restore \
+            --backup-directory="$PINTPATH_RETRIEVED_BACKUP" \
+            --backup-manifest-sha256="$EXPECTED_MANIFEST_SHA256" \
+            --pg-restore-file="$PG_RESTORE_FILE" \
+            --expected-pg-restore-sha256="$EXPECTED_PG_RESTORE_SHA256" \
+            --target-url-file="$PINTPATH_RESTORE_WORK_ROOT/disposable-restore-url" \
+            --target-identity-sha256="$EXPECTED_RESTORE_TARGET_IDENTITY_SHA256" \
+            --receipt="$PINTPATH_RESTORE_RECEIPT" \
+            > "$PINTPATH_RESTORE_RESULT"
+          chmod 600 "$PINTPATH_RESTORE_RESULT"
+          node -e 'const f=require("fs");const v=JSON.parse(f.readFileSync(process.argv[1],"utf8"));if(v.ok!==true||v.command!=="restore"||v.targetIdentitySha256!==process.argv[2]||v.backupManifestSha256!==process.argv[3]||v.sourceStateBindingStatus!=="exact-match")process.exit(1)' \
+            "$PINTPATH_RESTORE_RESULT" "$EXPECTED_RESTORE_TARGET_IDENTITY_SHA256" "$EXPECTED_MANIFEST_SHA256"
+
+      - name: Retain hash-only restore-drill receipts for 90 days
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: production-restore-drill-receipts-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.PINTPATH_RETRIEVAL_RESULT }}
+            ${{ env.PINTPATH_TARGET_INSPECTION }}
+            ${{ env.PINTPATH_RESTORE_RECEIPT }}
+            ${{ env.PINTPATH_RESTORE_RESULT }}
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Remove private runner files
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          node scripts/verify-production-backup-volatile-work-root.mjs cleanup \
+            --operation=restore \
+            --run-id="$GITHUB_RUN_ID" \
+            --run-attempt="$GITHUB_RUN_ATTEMPT" \
+            --policy-sha256="$PINTPATH_PRODUCTION_BACKUP_EPHEMERAL_RUNNER_POLICY_SHA256" \
+            --exported-work-root="${PINTPATH_RESTORE_WORK_ROOT:-}"
+
+  alert:
+    name: Page on backup or restore failure
+    needs: [logical-backup, restore-drill]
+    if: >-
+      ${{ always() &&
+          (needs.logical-backup.result != 'success' ||
+           (needs.restore-drill.result != 'success' && needs.restore-drill.result != 'skipped')) }}
+    runs-on: ubuntu-24.04
+    environment: production-backup-alerts
+    timeout-minutes: 5
+    steps:
+      - name: Send the non-secret failure signal
+        shell: bash
+        env:
+          ALERT_WEBHOOK_URL: ${{ secrets.PINTPATH_PRODUCTION_BACKUP_ALERT_WEBHOOK_URL }}
+          BACKUP_RESULT: ${{ needs.logical-backup.result }}
+          RESTORE_RESULT: ${{ needs.restore-drill.result }}
+        run: |
+          set -euo pipefail
+          set +x
+          case "$ALERT_WEBHOOK_URL" in
+            https://*) ;;
+            *) exit 1 ;;
+          esac
+          payload="$(printf '{\"event\":\"pintpath-production-logical-backup-failed\",\"repository\":\"%s\",\"runId\":\"%s\",\"backupResult\":\"%s\",\"restoreResult\":\"%s\"}' \
+            "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" "$BACKUP_RESULT" "$RESTORE_RESULT")"
+          curl --fail-with-body --silent --show-error \
+            --connect-timeout 5 --max-time 15 --retry 2 --retry-all-errors \
+            -H 'content-type: application/json' \
+            --data-binary "$payload" \
+            "$ALERT_WEBHOOK_URL" >/dev/null

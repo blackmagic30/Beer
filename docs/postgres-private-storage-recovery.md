@@ -1,10 +1,12 @@
 # PostgreSQL-native private Storage recovery-set foundation
 
-Status: implemented and verified locally with unit tests plus a restricted-login
-PostgreSQL 17 integration test. No Supabase, Railway, AWS, production, or
-permanent-staging resource was read or mutated while implementing this
-foundation. The live private-Storage capture and empty-destination restore
-launch gates remain **OPEN**.
+Status: the authenticated capture/restore implementation and protected
+promotion-recovery evidence contract are implemented and verified locally. No Supabase, Railway, AWS, production, or
+permanent-staging resource was read or
+mutated while implementing them. The live private-Storage capture and
+empty-destination restore launch gates remain **OPEN** until genuine provider
+receipts pass the protected attestation; repository code does not fabricate
+that evidence.
 
 The recovery set joins four authorities that must describe one database
 snapshot:
@@ -28,7 +30,20 @@ hashes, avoiding case-folding and path-depth ambiguity.
 
 ## Fixed safety contract
 
-- PostgreSQL is version 17, direct and non-pooler. Production URLs require TLS.
+- PostgreSQL is version 17, direct and non-pooler. Non-test URLs must be the
+  exact Railway private `*.railway.internal:5432` authority with one
+  `sslmode=verify-full` parameter. Capture and restore require a current-UID
+  mode-0600 regular single-link self-signed root CA plus its independently
+  reviewed DER SHA-256. They resolve exactly one fd12 address, dial that address
+  once, and verify/SNI `localhost` with peer-certificate DER pinning. Generic
+  host TLS, `sslmode=require`, `verify-ca`, public proxies, and URL CA paths fail
+  closed.
+- Database inspection activates `pintpath_migrator` in the PostgreSQL startup
+  packet and proves `current_user=pintpath_migrator` while `session_user` is the
+  restricted `NOINHERIT` LOGIN. It rejects runtime, maintenance, or any extra
+  role membership, database/schema creation authority, and search-path drift.
+  The transport is reasserted before and after database work and closed before
+  success output.
 - The versioned backup login is `LOGIN`, `NOINHERIT`, `NOSUPERUSER`,
   `NOCREATEDB`, `NOCREATEROLE`, `NOREPLICATION`, and `NOBYPASSRLS`; it can set
   only its matching database-OID-scoped backup group, cannot set the migrator
@@ -126,6 +141,8 @@ npm run --silent db:postgres:backup:private-storage-recovery -- \
   --backup-directory /absolute/private/release/postgres-logical \
   --backup-manifest-sha256 <logical-manifest-sha256> \
   --connection-url-file /absolute/private/source-postgres-url \
+  --root-ca-file /absolute/private/source-railway-root-ca.pem \
+  --expected-root-ca-der-sha256 <reviewed-source-root-ca-der-sha256> \
   --connection-url-sha256 <state-receipt-source-url-sha256> \
   --deletion-authority-directory /absolute/private/deletion-authority \
   --source-environment permanent-staging \
@@ -160,21 +177,54 @@ The target must retain the database-level marker
 Storage bucket in that same separately approved disposable Supabase project
 before this command; this tool never creates or reconfigures a bucket.
 
-`RESTORE_SUPABASE_URL` will be the bare default HTTPS disposable destination
+`RESTORE_SUPABASE_URL` is the bare default HTTPS disposable destination
 project-ref origin; custom domains and aliases are unsupported. No real
-disposable Supabase project is currently registered in repository-owned,
-candidate-bound release authority. Consequently, the checked-in CLI rejects
-every destination before reading the target database URL or service key. A URL
-and SHA-256 supplied by the same invocation are not independent authority.
+disposable Supabase project is checked into repository authority. The restore
+therefore requires a canonical, SHA-pinned
+`pintpath-private-storage-disposable-authority/v1` envelope signed by an
+independently protected Ed25519 key. Its payload binds the frozen candidate,
+exact destination origin/hash, target connection URL hash, target database
+identity, hashed reviewer and public key, issue time, and expiry no more than
+24 hours later. A URL and SHA supplied by the restore invocation alone are not
+independent authority.
 `--forbidden-origin-sha256s` is a comma-separated, duplicate-free set of
 reviewed production, permanent-staging, source, and other protected origin
 hashes. The destination origin must match none of them and cannot equal the
 captured source even if the list is incomplete.
 
-Do not run the restore command until a real disposable project is registered
-through an independently reviewed signed/sealed authority bound to the frozen
-candidate. The illustrative `bcdef...` project ref formerly shown here was not
-an owned project and is deliberately not accepted by the code.
+Do not run the restore command until a real disposable project has that signed
+authority. Materialize the envelope, reviewer public key, target URL, target
+root CA, and service key as separate current-user-owned mode-0600 files with
+shell tracing disabled. Then use the exact command contract:
+
+```sh
+export RESTORE_SUPABASE_URL=https://<owned-disposable-project-ref>.supabase.co
+
+PINTPATH_POSTGRES_PRIVATE_STORAGE_RESTORE=confirmed \
+npm run --silent db:postgres:restore:private-storage-recovery -- \
+  --backup-directory /absolute/private/retrieved/postgres-logical \
+  --backup-manifest-sha256 <logical-manifest-sha256> \
+  --recovery-set-directory /absolute/private/retrieved/private-storage-set \
+  --recovery-set-sha256 <recovery-set-sha256> \
+  --recovery-manifest-sha256 <recovery-manifest-sha256> \
+  --target-connection-url-file /absolute/private/disposable-postgres-url \
+  --target-connection-url-sha256 <reviewed-target-url-sha256> \
+  --target-database-identity-sha256 <reviewed-target-identity-sha256> \
+  --root-ca-file /absolute/private/disposable-railway-root-ca.pem \
+  --expected-root-ca-der-sha256 <reviewed-disposable-root-ca-der-sha256> \
+  --destination-origin-sha256 <signed-destination-origin-sha256> \
+  --destination-authority-file /absolute/private/destination-authority.json \
+  --destination-authority-sha256 <reviewed-authority-file-sha256> \
+  --destination-authority-public-key-file /absolute/private/destination-reviewer.pem \
+  --destination-authority-public-key-sha256 <protected-reviewer-key-sha256> \
+  --expected-candidate-sha <frozen-candidate-sha> \
+  --forbidden-origin-sha256s <production,staging,source-origin-sha256s> \
+  --bucket-name-sha256 <reviewed-fixed-bucket-name-sha256> \
+  --service-role-key-file /absolute/private/disposable-service-role.key
+```
+
+The illustrative `bcdef...` project ref formerly shown here was not an owned
+project and remains unauthorized.
 
 After that authority mechanism exists, require `ok=true`, exact expected
 object/byte counts, and the original recovery-set and recovery-manifest hashes.

@@ -1,0 +1,40 @@
+{
+  "schemaVersion": "pintpath-permanent-staging-variable-mutation-policy/v1",
+  "policyId": "pintpath-permanent-staging-protected-variable-mutations",
+  "activationState": "GITHUB_ENVIRONMENT_PROTECTED",
+  "projectId": "48d8c6cd-1c66-4148-874b-20877f48e1a5",
+  "productionEnvironmentId": "13dab015-df74-45c6-b26f-69323daea99a",
+  "stagingEnvironmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+  "applicationServiceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
+  "supabaseCanaryServiceId": "34a312cd-0920-4a7e-90db-8561c1e0746b",
+  "githubEnvironment": "permanent-staging-provider-mutation",
+  "requiredGitRef": "refs/heads/main",
+  "operations": {
+    "providerCreates": [
+      "GOOGLE_MAPS_API_KEY",
+      "GOOGLE_MAPS_MAP_ID",
+      "GOOGLE_PLACES_API_KEY",
+      "OPENAI_API_KEY"
+    ],
+    "supabaseAtomicReplacement": [
+      "SUPABASE_ANON_KEY",
+      "SUPABASE_SERVICE_ROLE_KEY"
+    ]
+  },
+  "mutation": {
+    "operationName": "variableCollectionUpsert",
+    "skipDeploys": true,
+    "maximumAttempts": 1,
+    "automaticRetriesAllowed": false,
+    "rerunsAllowed": false,
+    "externalMutationFreezeRequired": true,
+    "unconditionalPostflightRequired": true,
+    "ambiguousOutcomeAction": "READ_ONLY_RECONCILIATION_STOP_NO_RETRY"
+  },
+  "evidence": {
+    "durableIntentRequiredBeforeAttempt": true,
+    "terminalEvidenceRequired": true,
+    "secretMaterialAllowed": false,
+    "secretDerivedCommitmentsAllowed": false
+  }
+}

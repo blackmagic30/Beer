@@ -46,9 +46,10 @@ function otherwiseCompleteWithCostPending(): typeof source {
 }
 
 function completeCostReceipt(overrides: Record<string, unknown> = {}) {
-  const observedAt = new Date().toISOString();
+  const postObservedAt = new Date().toISOString();
+  const preObservedAt = new Date(Date.parse(postObservedAt) - 60_000).toISOString();
   return {
-    schemaVersion: "pintpath-permanent-staging-cost-receipt/v1",
+    schemaVersion: "pintpath-permanent-staging-cost-receipt/v2",
     releaseId,
     candidateSha: currentSha,
     gateId: "permanent_staging_cost",
@@ -57,62 +58,74 @@ function completeCostReceipt(overrides: Record<string, unknown> = {}) {
     currency: "USD",
     amountUnit: "integer-cents",
     lineItemRounding: "ceiling",
-    observationSource: "provider-observed",
+    observationSource: "externally-captured-provider-read-only-exports",
+    externalProviderExportValidationImplemented: true,
     providerObservationBindingImplemented: true,
     policySha256: costPolicySha256,
-    observedAt,
+    preObservationSha256: "8".repeat(64),
+    postObservationSha256: "9".repeat(64),
+    preObservedAt,
+    postObservedAt,
     privateManifestSha256: "a".repeat(64),
-    totalUpperBoundMonthlyCents: 4_800,
+    totalUpperBoundMonthlyCents: 4_700,
+    maximumObservedAcrossPhasesMonthlyCents: 4_700,
+    maximumRecurringMonthlyCents: 5_000,
+    requiredHeadroomMonthlyCents: 300,
+    observedHeadroomMonthlyCents: 300,
     providers: [
       {
         provider: "railway",
-        inventorySha256: "b".repeat(64),
-        priceOrCapEvidenceSha256: "c".repeat(64),
+        inventoryArtifactSha256: "b".repeat(64),
+        priceOrCapArtifactSha256: "c".repeat(64),
         inventoryComplete: true,
         upperBoundComplete: true,
+        scopeIsolationVerified: true,
+        hardLimitOrZeroBoundVerified: true,
         unknownResourceCount: 0,
         unpricedResourceCount: 0,
         sharedResourceCount: 0,
         unboundedResourceCount: 0,
-        upperBoundMonthlyCents: 2_900,
+        upperBoundMonthlyCents: 2_000,
       },
       {
         provider: "staging-supabase",
-        inventorySha256: "d".repeat(64),
-        priceOrCapEvidenceSha256: "e".repeat(64),
+        inventoryArtifactSha256: "d".repeat(64),
+        priceOrCapArtifactSha256: "e".repeat(64),
         inventoryComplete: true,
         upperBoundComplete: true,
+        scopeIsolationVerified: true,
+        hardLimitOrZeroBoundVerified: true,
         unknownResourceCount: 0,
         unpricedResourceCount: 0,
         sharedResourceCount: 0,
         unboundedResourceCount: 0,
-        upperBoundMonthlyCents: 1_000,
+        upperBoundMonthlyCents: 2_500,
       },
       {
         provider: "staging-external-providers",
-        inventorySha256: "f".repeat(64),
-        priceOrCapEvidenceSha256: "1".repeat(64),
+        inventoryArtifactSha256: "f".repeat(64),
+        priceOrCapArtifactSha256: "1".repeat(64),
         inventoryComplete: true,
         upperBoundComplete: true,
+        scopeIsolationVerified: true,
+        hardLimitOrZeroBoundVerified: true,
         unknownResourceCount: 0,
         unpricedResourceCount: 0,
         sharedResourceCount: 0,
         unboundedResourceCount: 0,
-        upperBoundMonthlyCents: 900,
+        upperBoundMonthlyCents: 200,
       },
     ],
     excludedScopes: [
       {
         scope: "production-operational-copy",
         includedInPermanentStagingTotal: false,
-        handling: "separate-production-cost-authority",
-        evidenceSha256: "2".repeat(64),
+        separateAuthorityArtifactSha256: "2".repeat(64),
       },
       {
         scope: "disposable-restore",
         includedInPermanentStagingTotal: false,
-        handling: "separate-temporary-spend-authority",
-        evidenceSha256: "3".repeat(64),
+        separateAuthorityArtifactSha256: "3".repeat(64),
       },
     ],
     ...overrides,
@@ -151,6 +164,8 @@ function costReceiptPolicyErrors(
   for (const provider of receipt.providers) {
     if (!provider.inventoryComplete) errors.push(`${provider.provider} inventory is incomplete`);
     if (!provider.upperBoundComplete) errors.push(`${provider.provider} upper bound is incomplete`);
+    if (!provider.scopeIsolationVerified) errors.push(`${provider.provider} scope is not isolated`);
+    if (!provider.hardLimitOrZeroBoundVerified) errors.push(`${provider.provider} hard limit is not verified`);
     if (provider.unknownResourceCount !== 0) errors.push(`${provider.provider} has unknown resources`);
     if (provider.unpricedResourceCount !== 0) errors.push(`${provider.provider} has unpriced resources`);
     if (provider.sharedResourceCount !== 0) errors.push(`${provider.provider} has shared resources`);
@@ -165,6 +180,9 @@ function costReceiptPolicyErrors(
   }
   if (receipt.totalUpperBoundMonthlyCents > 5_000) {
     errors.push("costReceipt.totalUpperBoundMonthlyCents exceeds 5000 USD cents");
+  }
+  if (receipt.maximumObservedAcrossPhasesMonthlyCents > 4_700) {
+    errors.push("costReceipt.maximumObservedAcrossPhasesMonthlyCents exceeds 4700 USD cents");
   }
   return errors;
 }
@@ -216,21 +234,18 @@ describe("release evidence validator", () => {
     expect(strict.output).toMatchObject({ valid: true, launchReady: false, strict: true });
   });
 
-  it("keeps an otherwise-complete file blocked while provider cost collection and binding are scaffold-only", () => {
+  it("accepts an otherwise-complete file with a fresh candidate-bound cost receipt", () => {
     const result = validate(otherwiseAllPassed(), true);
 
-    expect(result.status).toBe(1);
+    expect(result.status).toBe(0);
     expect(result.stderr).toBe("");
     expect(result.output).toMatchObject({
-      valid: false,
-      launchReady: false,
+      valid: true,
+      launchReady: true,
       strict: true,
       release: { id: releaseId, candidateSha: currentSha, environment: "production" },
     });
-    expect(result.output.permanentStagingCostReceiptErrors).toEqual([
-      "permanent-staging cost provider collector is not implemented by policy",
-      "permanent-staging cost provider observation binding is not implemented by policy",
-    ]);
+    expect(result.output.permanentStagingCostReceiptErrors).toEqual([]);
   });
 
   it("rejects cost proof that drifts from the candidate, policy, manifest, or fresh observation window", () => {
@@ -259,7 +274,7 @@ describe("release evidence validator", () => {
     }
 
     const stale = validate(otherwiseAllPassed(completeCostReceipt({
-      observedAt: new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString(),
+      preObservedAt: new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString(),
     })));
     expect(stale.status).toBe(1);
     expect(stale.output).toMatchObject({ evidenceCurrent: false, launchReady: false });
@@ -272,6 +287,8 @@ describe("release evidence validator", () => {
     const firstProvider = providerFailure.providers[0]!;
     firstProvider.inventoryComplete = false;
     firstProvider.upperBoundComplete = false;
+    firstProvider.scopeIsolationVerified = false;
+    firstProvider.hardLimitOrZeroBoundVerified = false;
     firstProvider.unknownResourceCount = 1;
     firstProvider.unpricedResourceCount = 1;
     firstProvider.sharedResourceCount = 1;
@@ -280,6 +297,8 @@ describe("release evidence validator", () => {
       expect.arrayContaining([
         "railway inventory is incomplete",
         "railway upper bound is incomplete",
+        "railway scope is not isolated",
+        "railway hard limit is not verified",
         "railway has unknown resources",
         "railway has unpriced resources",
         "railway has shared resources",
@@ -291,6 +310,8 @@ describe("release evidence validator", () => {
       expect.arrayContaining([
         "railway inventory is incomplete",
         "railway upper bound is incomplete",
+        "railway scope is not isolated",
+        "railway hard limit is not verified",
         "railway has unknown resources",
         "railway has unpriced resources",
         "railway has shared resources",
@@ -299,8 +320,10 @@ describe("release evidence validator", () => {
     );
 
     const overCeiling = completeCostReceipt();
-    overCeiling.providers[2]!.upperBoundMonthlyCents = 1_101;
+    overCeiling.providers[2]!.upperBoundMonthlyCents = 501;
     overCeiling.totalUpperBoundMonthlyCents = 5_001;
+    overCeiling.maximumObservedAcrossPhasesMonthlyCents = 5_001;
+    overCeiling.observedHeadroomMonthlyCents = 0;
     expect(costReceiptPolicyErrors(overCeiling)).toContain(
       "costReceipt.totalUpperBoundMonthlyCents exceeds 5000 USD cents",
     );

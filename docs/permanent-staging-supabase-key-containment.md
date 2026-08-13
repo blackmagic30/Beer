@@ -1,6 +1,8 @@
 # Permanent-staging Supabase key containment
 
-Status: offline foundation only; live activation is hard-disabled.
+Status: legacy offline foundation retained; protected replacement and
+replacement-canary/legacy-disable/old-key-denial transports are implemented but
+have not been executed.
 
 This slice adds a fail-closed contract for replacing exactly two Railway
 variables with Supabase's new key formats:
@@ -73,17 +75,37 @@ exact replacement values. Those facts still require the separately authorized
 staging canary, consumer inventory, deployment identity, and live smoke
 evidence before legacy disablement.
 
-## Hard stop
+## Deprecated offline hard stop and protected successor
 
-The checked-in Railway replacement, canary-B, and Supabase legacy-key policies
-all use `HARD_DISABLED_REVIEW_REQUIRED`. The only CLI in this slice emits one
-fixed secret-free blocked receipt and exits non-zero. It has no provider
-transport and does not read arguments, environment credentials, or stdin key
-material.
+The earlier Railway replacement, canary-B, and Supabase legacy-key policies use
+`HARD_DISABLED_REVIEW_REQUIRED`. They are retained only as adversarial fixture
+kernels and are not canonical operator paths. Their fixed blocked CLIs must not
+be invoked for a live operation.
 
 The fixture kernel under `scripts/lib` exists only to exercise the state
 machine with injected in-memory test doubles. It is not a live transport and is
 not called by the CLI.
+
+The protected successor is
+`.github/workflows/permanent-staging-provider-mutation.yml`, governed by
+`ops/railway/permanent-staging-variable-mutation-policy.json` and
+`docs/protected-provider-mutation-operations.md`. It accepts both replacement
+keys only from a protected GitHub Environment and sends them in one atomic
+`variableCollectionUpsert` with `skipDeploys=true`. It permits one original
+workflow attempt, never retries a write, runs unconditional metadata and
+production-boundary postflight, and emits no value or value-derived digest.
+The legacy local CLI and its fixture policy remain hard-disabled and deprecated.
+
+Even a successful replacement receipt is only
+`acknowledged_pending_runtime_proof`. After deploying and proving every tracked
+consumer, the protected successor for the remaining ceremony is
+`.github/workflows/permanent-staging-supabase-legacy-cutover.yml`, governed by
+`ops/supabase/protected-permanent-staging-supabase-cutover-policy.json`. It runs
+replacement-key canary-B directly against the exact staging Auth/admin/Storage
+endpoints, persists intent, issues one Management API PUT with no retry,
+unconditionally reconciles with the separately held read token, reruns canary-B,
+and proves HTTP 401 denial for both retained old keys. Neither key material nor
+key-derived commitments enter evidence.
 
 ## Locked replacement shape
 
@@ -159,11 +181,12 @@ application service, and only these read-only checks:
 The canary receives no operational-offsite reference and cannot target the
 production operational-copy project or bucket.
 
-No deployment ID, reviewed Git commit, source hashes, Railway configuration
-hash, or image digest was available offline. Those policy fields therefore
-remain `null` and explicitly review-required. The evaluator cannot return
-`passed` until exact reviewed values replace every null and the activation
-state is separately reviewed.
+The older Railway-service canary policy still lacks immutable deployment/source
+locks and remains fixture-only. The protected successor avoids claiming a
+Railway deployment identity: it performs the same three read-only checks on a
+protected runner with the exact candidate and project origin immediately before
+and after legacy disablement. Candidate-bound application deployment evidence
+remains a separate prerequisite.
 
 ## Legacy-key disable gate
 
@@ -176,10 +199,11 @@ PUT /v1/projects/{projectRef}/api-keys/legacy?enabled=false
 
 The only accepted response body is `{"enabled":false}`. Pure before/after
 fixtures require `enabled=true` before and `enabled=false` afterward for that
-project. Actual non-secret legacy anon and service-role key IDs were not
-available offline, so both IDs remain `null` and review-required. The
-evaluator is therefore unable to activate even when synthetic state fixtures
-otherwise match.
+project. The successor does not need individual key IDs because the provider
+operation disables both legacy JWT families project-wide. It instead validates
+the retained inputs' `anon` and `service_role` roles before provider access and
+binds the post-disable evidence to two exact 401 canaries. The older ID-bound
+evaluator remains fixture-only.
 
 Old-key denial is a separate read-only fixture classifier. It accepts no key
 material and has no fetch implementation. Only an exact completed read-only
@@ -189,28 +213,24 @@ timeout, transport failure, or contradictory status/decision is ambiguous and
 requires stop/no-retry. Denial evidence is ineligible until it binds to a
 reviewed legacy key ID.
 
-## Required work before any provider action
+## Required operator work before the protected cutover
 
 1. Re-review the then-current Supabase changelog, API-key migration guide, and
    Management API reference immediately before the operation. The 12 August
    2026 public-doc review above does not authorize a later provider call.
-2. Obtain provider inventory through the separately reviewed read-only path and
-   review the exact legacy key IDs, canary deployment ID, Git commit, source and
-   configuration hashes, and immutable image digest without exposing secrets.
-3. Update each JSON policy, its in-code canonical lock, and its adversarial tests
-   together; obtain independent review of the exact diff.
+2. Deploy and retain candidate-bound application evidence and prove every
+   browser, mobile, CI, scheduled, webhook, backup, and archived consumer uses
+   the replacement format.
+3. Review the protected policy/workflow/executor together and configure its
+   non-bypassable GitHub Environment with distinct secrets read/write tokens.
 4. Prove a complete Railway preflight with no shared shadows or staged patch and
    establish the external mutation freeze.
-5. Integrate the two-buffer custody with the separately reviewed locked
-   secret worker and a bounded provider transport. Do not add a generic CLI,
-   environment, npm, or direct-source secret path.
+5. Use only the protected workflow and private mode-0600 file custody; do not
+   pass keys in arguments, generic environment variables, logs, or artifacts.
 6. Persist the intent, perform at most one all-or-nothing skip-deploy merge, and
    stop without retry on any ambiguous outcome.
-7. Prove the complete postflight, then deploy the exact no-ingress canary-B
-   source and pass all three read-only checks.
-8. Only after replacement-key proof, separately approve and execute the staging
-   legacy-disable call, prove exact disabled state, and prove denial for both
-   reviewed old staging keys using read-only canaries. Production and its
+7. Prove application runtime and consumer compatibility, then approve and run
+   the protected legacy-cutover workflow exactly once. Production and its
    operational-copy project require separate, production-scoped authorities.
 
 Until every item is reviewed and evidenced, this work is a launch-safety

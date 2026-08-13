@@ -21,6 +21,18 @@ requires complete resource/evidence reconciliation, specific authorization
 naming the exact resource IDs, and the exact reviewed teardown executor; signed
 evidence or two-person sign-off alone is not mutation authority.
 
+Reviewed protected successors now exist for application source upload,
+runtime/provider variables, permanent-staging Supabase cutover and Postgres
+build-canary, bounded staging and candidate-bound production scaling,
+Postgres-HA PITR enable/verification, and exact disposable-restore teardown.
+The exact production `pintpath.au` custom-domain close/open pair also has
+separate protected one-operation executors.
+Those repository paths are implementation-complete but do not replace their
+protected-environment approvals, exact live IDs and credentials, provider
+receipts, independent verification, or the remaining recovery drill. Every
+other route/domain mutation, arbitrary service/resource/volume change, Railway-native
+redeploy/rollback, and every unlisted write remain blocked.
+
 ## P0 — implement and prove the selected production data architecture
 
 - **Repository state:** Canonical production now opens only the reviewed
@@ -63,8 +75,10 @@ evidence or two-person sign-off alone is not mutation authority.
   `GOOGLE_MAPS_MAP_ID`), Google Places server access
   (`GOOGLE_PLACES_API_KEY`), and OpenAI menu OCR (`OPENAI_API_KEY`). Separately,
   the two permanent-staging Supabase replacement-key operations
-  (`SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY`) remain
-  `HARD_DISABLED_REVIEW_REQUIRED` and unauthorized. Production operational-copy
+  (`SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY`) now use the protected
+  atomic Railway replacement followed by the protected canary-B,
+  legacy-disable, and old-key-denial ceremony. These paths still require live
+  credentials, approvals, and receipts. Production operational-copy
   credentials and bucket configuration are prohibited in permanent staging. No
   live write rehearsal may use production as a substitute.
 - **Deployment evidence foundation:** The reviewed build now emits only
@@ -74,12 +88,14 @@ evidence or two-person sign-off alone is not mutation authority.
   planner rejects free-form deployment hashes and consumes only that receipt.
   No authentic receipt exists while the staging app is undeployed; this does
   not authorize a deploy or close the provider-observed deployment blocker.
-- **Deployment mutation scaffold:** The canonical
+- **Deployment mutation path:** The canonical
   [`permanent-staging application source-upload`](docs/permanent-staging-app-deployment.md)
-  policy and zero-argument runner are `HARD_DISABLED_REVIEW_REQUIRED`. They pin
-  the intended target and fail closed with one fixed blocked receipt, but have
-  no credential, provider, network, child-process, or upload transport. The
-  scaffold does not authorize spend or change the deployment blocker.
+  policy and protected manual workflow now implement the exact current-`main`
+  source-upload path with immutable target/CLI/source pins, one write attempt,
+  read-only uncertainty reconciliation, and unconditional provider/boundary
+  postflight. It remains safely inactive without the protected GitHub
+  environment approval and target-scoped secrets. No authentic deployment
+  receipt exists yet, so the live deployment blocker remains open.
 - **Keychain custody checkpoint:** The operator terminal capture showed only
   the pinned Railway project and permanent-staging environment UUIDs; it did
   not show the token value. Read-only Keychain metadata confirms that the
@@ -95,13 +111,22 @@ evidence or two-person sign-off alone is not mutation authority.
   actual value would still require
   immediate revocation, replacement, and proof that the old token is denied.
 - **Permanent integrated staging:** Keep the recorded identities and one-replica
-  budgeted topology. Only after the document-wide Railway mutation stop is
-  closed, complete provider configuration one exact variable at a time through
-  a separately activated and reviewed provider-variable executor. Deploy the
-  exact reviewed build only through its separately reviewed one-operation
-  deployment executor. Then use the same system for two-replica concurrency,
-  Auth, deletion, data repair, DAST, load, smoke, and rollback-build proof before
-  returning to one replica.
+  budgeted topology. Complete provider configuration one exact variable at a
+  time through the protected provider/runtime-variable workflows, complete the
+  protected Supabase cutover ceremony, run the protected Postgres build canary,
+  and deploy the exact reviewed build only through the protected one-operation
+  application workflow. Then use the protected scale workflow for two-replica
+  concurrency, Auth, deletion, data repair, DAST, load, smoke, and
+  rollback-build proof before its unconditional convergence back to one.
+- **Protected production rollout chain:** Deploy, one-way convergence to exactly
+  two replicas, canonical-route close, the two-reviewer promotion/recovery
+  attestation, and canonical-route open share one non-cancelling concurrency
+  group. Close, promotion/recovery attestation, route open, and the release gate
+  consume the exact attempt-one predecessor runs and GitHub artifact
+  IDs/digests/sizes, strictly parse the applicable canonical receipts, and
+  enforce deploy→scale→close→promotion/recovery→open chronology. These paths
+  remain inactive without protected environments, real provider evidence, and
+  explicit confirmations; they make no provider call during repository checks.
 - **Ephemeral destructive restore staging:** A separate Railway Postgres/Redis
   restore project exists and its database restore plus one-tombstone replay are
   verified. It still needs isolated Supabase/Storage, PITR/WORM retrieval, full
@@ -109,8 +134,9 @@ evidence or two-person sign-off alone is not mutation authority.
   production data over production or permanent staging. Signed evidence is a
   prerequisite, not teardown authority: reconcile the complete resource and
   evidence set, obtain specific authorization for the exact recorded resource
-  IDs, and use only the reviewed teardown executor with its immediate
-  mutation-boundary preflight and unconditional postflight.
+  IDs, and use only the protected exact-inventory teardown workflow with its
+  immediate mutation-boundary preflight, one delete attempt, and independent
+  unconditional absence postflight.
 - **Required proof:** Both identity sets remain mechanically checked; the exact
   staging build returns `200` from `/health`, `/startup`, and `/ready`; the full
   destructive recovery drill passes; and the recorded disposable resources are

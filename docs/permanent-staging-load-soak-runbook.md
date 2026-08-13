@@ -12,6 +12,15 @@ logical-backup readiness, complete identity registry, and two application
 replicas are green. Never use bootstrap/inert staging, production, preview, or
 disposable restore-staging.
 
+The protected end-to-end path is
+`.github/workflows/permanent-staging-scale-evidence.yml`, governed by
+`ops/railway/permanent-staging-scale-evidence-policy.json`. It verifies the
+exact current `main` candidate at one replica, performs one non-retried scale to
+two, runs 5-minute expected peak, 5-minute 2x peak, and the minimum 60-minute
+soak, then unconditionally converges the same deployment to one replica. The
+convergence operation is idempotent and remains available on a workflow rerun;
+the scale-out operation does not. Do not cancel the workflow after scale-out.
+
 ## What the runner proves
 
 The dependency-free Node runner uses a bounded, deterministic route mix:

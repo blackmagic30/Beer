@@ -14,6 +14,16 @@ fresh structured PostgreSQL authentication error. Redis uses a bounded raw RESP
 `AUTH` plus `PING` exchange so dependency debug logging cannot print an AUTH
 argument.
 
+Every live PostgreSQL path also uses the repository's one reviewed Railway
+stock-certificate transport. Both supplied URLs must use the exact lower-case
+`postgres-staging.railway.internal:5432` authority with the sole query
+`?sslmode=verify-full`. The probe independently validates the one self-signed
+CA certificate against its reviewed DER SHA-256 pin, resolves exactly one
+canonical `fd12::/16` address, dials that address, and authenticates the TLS
+peer as `localhost`. A merely encrypted connection, a CA-only connection, a
+URL-supplied certificate pathname, or a generic node-postgres/libpq connection
+is not rotation evidence.
+
 The repository's Docker-exec PostgreSQL 17 test is only a synthetic CI
 regression for these semantics. It does not close the live Railway private-
 network gate described below.
@@ -104,6 +114,18 @@ protected provider references. Do not materialize or log resolved credentials:
   admin URL.
 - `STAGING_AUTH_PROBE_POSTGRES_RUNTIME_URL`: a reference to the predecessor or
   successor runtime URL appropriate to that deployment.
+- `STAGING_AUTH_PROBE_POSTGRES_ROOT_CA_PEM`: for both A and B, the exact
+  Railway reference expression
+  `${{Beer.PINTPATH_POSTGRES_ROOT_CA_PEM}}`, resolving from pinned Beer service
+  `6816c4a2-e392-4ee5-826f-2584cb599ec0`. It resolves to the single multiline
+  CA PEM, never a pathname. Do not copy its resolved bytes into a temporary-
+  service value.
+- `STAGING_AUTH_PROBE_POSTGRES_ROOT_CA_DER_SHA256`: for both A and B, the exact
+  Railway reference expression
+  `${{Beer.PINTPATH_POSTGRES_ROOT_CA_DER_SHA256}}`, resolving from that same
+  pinned Beer service. That stored pin must already have been captured by an
+  independent review authority; never derive it from the PEM in the probe
+  deployment.
 - `STAGING_AUTH_PROBE_REDIS_URL`: a reference to the staging Redis URL.
 - `STAGING_AUTH_PROBE_RUNTIME_IDENTITY`: `predecessor` or `candidate`, required
   by `verify-current`; mutation modes derive their phase from the reviewed mode.
@@ -122,6 +144,19 @@ Platform-provided `RAILWAY_PROJECT_ID`, `RAILWAY_ENVIRONMENT_ID`,
 Debug environment switches, inherited TLS bypasses, wrong provider resources,
 shared provider passwords, or an unexpected username fail before network
 mutation.
+
+The probe accepts no TLS downgrade toggle and no CA-file environment input. It
+materializes its protected PEM into owned mode-`0700`/mode-`0600` temporary
+authority, holds and revalidates the file descriptors and DNS address across
+the complete command, and removes the authority on every exit. PostgreSQL 17
+receives only `PGHOST=localhost`, the one pinned address in `PGHOSTADDR`,
+`PGSSLMODE=verify-full`, the held CA descriptor pathname, `PGSSLSNI=1`, and a
+TLS 1.2 minimum. The structured authentication clients and lifecycle-lock
+client share the same pinned Node TLS authority. The readiness worker opens and
+revalidates that same held authority and creates one single-connection pool
+whose startup packet fixes `role=pintpath_runtime`. Transport drift or
+incomplete cleanup makes the terminal receipt `inconclusive`; it can never
+remain green.
 
 ## Temporary-service build contract
 
@@ -142,7 +177,11 @@ Node and PostgreSQL client major/minor, then exit without network access. Verify
 that the built instances have no repository/image source, predeploy command,
 healthcheck, domain, TCP proxy, volume, or secret variable and that production
 inventory is byte-for-byte unchanged. Only then add the protected Railway
-reference expressions and phase controls with deploys skipped. Every later
+reference expressions—including both CA references above—to both temporary
+services, plus phase controls, with deploys skipped. Re-read undecrypted
+variable metadata and require the two services to carry the same exact CA
+reference expressions; a literal PEM, literal digest, local pathname, blank
+reference, or reference to any production service stops the ceremony. Every later
 execution must redeploy an exact reviewed deployment ID with
 `usePreviousImageTag: true`, retain the exact parent image digest and provenance,
 and emit no build, export, or image-push records. Never use ordinary
@@ -253,11 +292,14 @@ receipts. Railway variable sealing is a separate irreversible ceremony after
 every new value and URL pin is escrowed and proven; it is not part of this
 rotation.
 
-The standalone mutation-boundary command is not the mutation executor for this
-ceremony. Do not bridge that gap with a manual dashboard click or ad-hoc CLI
-command. The tracked rotation executor must own the preflight, one closed
-operation, and unconditional postflight before this section becomes
-executable.
+The checked-in probe is executable only inside the two bounded Railway private-
+network services; it is not a provider mutation executor. Creation/deletion of
+those services, reference updates, and provider-managed password regeneration
+remain explicit owner-controlled external activation steps. The owner must
+apply the safety-boundary preflight and unconditional postflight around each
+closed provider operation and preserve the canonical probe receipts. Do not
+replace those controls with an unbounded dashboard session or ad-hoc CLI
+experiment.
 
 ## Separate post-rotation sealing gate
 
@@ -276,7 +318,7 @@ step above.
    failures, zero blocking warnings, and a passing
    `RAILWAY_DEPLOYED_READINESS_CONTEXT`. `railway run` and a local injected
    environment are not evidence.
-3. Seal only the 13 populated source and consumer rows enumerated by
+3. Seal only the 16 populated source and consumer rows enumerated by
    `ops/railway/permanent-staging-sealed-variable-policy.json`. Do not seal
    blank/future variables or public keys, and do not treat URL hashes or
    provider-resource pins as secret rows. Verify the action started no
@@ -284,7 +326,7 @@ step above.
 4. From an external operator or release-gate process holding only a Railway
    project token scoped to the exact permanent-staging environment, load that
    token as `PINTPATH_RAILWAY_METADATA_TOKEN` and run `npm run --silent
-   readiness:railway:sealed`. Require exactly one
+readiness:railway:sealed`. Require exactly one
    `pintpath-railway-sealed-variable-readiness/v1` receipt with
    `policy=permanent-staging-post-rotation`, `mode=post-seal`, and
    `outcome=passed`, plus `checks.forbiddenVariablesAbsent=true`. The complete

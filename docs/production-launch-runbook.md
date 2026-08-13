@@ -1,7 +1,10 @@
 # Pint Path production launch runbook
 
-Last audited: 8 August 2026
+Last audited: 13 August 2026
 Scope: full public web launch plus an Australian iOS launch.
+
+Release-specific repository changes are summarized in
+[`deployment-readiness-release-notes-2026-08-13.md`](./deployment-readiness-release-notes-2026-08-13.md).
 
 ## Railway mutation boundary (document-wide stop)
 
@@ -13,6 +16,27 @@ reviewed write, and an unconditional postflight. The standalone boundary
 command is read-only, and the checked-in incident baseline intentionally fails.
 Do not use dashboard **Deploy**, Git autodeploy, an ad-hoc CLI/API command, or
 commit/discard an unrelated staged patch to bypass this stop.
+
+The active protected operation paths are the manual application-deployment,
+runtime-variable, permanent-staging provider-variable, Supabase legacy-cutover,
+Postgres build-canary, staging scale-evidence, production converge-two,
+canonical production-route close/open, promotion/recovery attestation,
+Postgres-HA PITR, and disposable-restore teardown workflows described in
+[the protected provider-operations runbook](./protected-provider-mutation-operations.md)
+and [the application-deployment runbook](./permanent-staging-app-deployment.md).
+Each is a tracked one-operation executor with a protected GitHub environment,
+the exact current `main` SHA, immutable CLI/source/target pins, one write
+attempt, read-only uncertainty reconciliation, and unconditional postflight.
+They authorize only their exact named operations. They do not authorize any
+other route, billing, arbitrary database/resource, backup, or rollback write.
+
+The scheduled logical-backup and monthly restore-drill workflow uses the
+separately reviewed digest-pinned PostgreSQL 17 OCI runtime and its protected
+self-hosted runners. It is operational only for the schema-v3 logical backup,
+operational-copy/WORM receipts, retrieval, and disposable restore ceremony in
+[`production-logical-backup-operations.md`](./production-logical-backup-operations.md).
+The logical-backup V4 modules remain passive, offline fail-closed contracts;
+neither path authorizes a Railway resource mutation.
 
 Any restore-staging delete, destroy, or teardown additionally requires complete
 resource/evidence reconciliation, specific authorization naming the exact
@@ -124,11 +148,13 @@ Redis resources are temporary evidence capacity outside that combined envelope;
 at their current caps they would add approximately US$20.13/month if retained
 for a full month.
 Both figures are historical planning estimates, not current provider-observed
-cost proof. The `permanent_staging_cost` evidence item remains pending, and the
-checked-in cost policy/evaluator is scaffold-only with no provider collector or
-observation binding. Launch therefore remains blocked until a fresh receipt for
-one frozen candidate proves the permanent-staging-only recurring upper bound is
-at most `5000` integer USD cents.
+cost proof. The `permanent_staging_cost` evidence item remains pending. The
+checked-in policy and credential-free binder actively validate canonical
+operator-supplied pre/post observations and their independently approved private
+manifest, but cannot collect or invent provider facts. Launch therefore remains
+blocked until the single combined receipt for one frozen candidate proves a
+maximum observed permanent-staging-only recurring upper bound of at most `4700`
+integer USD cents and at least `300` cents headroom below the `5000`-cent ceiling.
 Finish the remaining recovery proof before disposal, reconcile the exact
 recorded resource identities and signed evidence, and keep teardown behind the
 Railway mutation boundary rather than treating those resources as permanent
@@ -206,18 +232,25 @@ Production launch-safe values are:
 ```dotenv
 NODE_ENV=production
 PUBLIC_BASE_URL=https://pintpath.au
-DATABASE_URL=postgresql://app_user:replace_me@pooled-host:5432/pintpath?sslmode=require
+DATABASE_URL=postgresql://runtime_login:replace_me@postgres-production.railway.internal:5432/pintpath?sslmode=verify-full
+DATABASE_MAINTENANCE_URL=postgresql://privacy_maintenance_login:replace_me@postgres-production.railway.internal:5432/pintpath?sslmode=verify-full
+PINTPATH_POSTGRES_ROOT_CA_PEM=replace_with_exact_multiline_railway_root_ca
+PINTPATH_POSTGRES_ROOT_CA_DER_SHA256=replace_with_independently_reviewed_der_sha256
 PINTPATH_DATABASE_RESOURCE_ID=replace_with_live_production_database_provider_resource_id
 PINTPATH_EXPECTED_DATABASE_RESOURCE_ID=replace_with_registered_production_database_provider_resource_id
 PINTPATH_FORBIDDEN_DATABASE_RESOURCE_IDS=replace_with_permanent_staging_and_restore_database_resource_ids
+PINTPATH_PERMANENT_STAGING_DATABASE_RESOURCE_ID=replace_with_registered_permanent_staging_database_resource_id
 PINTPATH_EXPECTED_DATABASE_URL_SHA256=replace_with_exact_production_database_url_digest
 PINTPATH_FORBIDDEN_DATABASE_URL_SHA256S=replace_with_registered_staging_and_restore_database_url_digests
+PINTPATH_PERMANENT_STAGING_DATABASE_URL_SHA256=replace_with_registered_permanent_staging_database_url_digest
 REDIS_URL=redis://default:replace_me@host:6379
 PINTPATH_REDIS_RESOURCE_ID=replace_with_live_production_redis_provider_resource_id
 PINTPATH_EXPECTED_REDIS_RESOURCE_ID=replace_with_registered_production_redis_provider_resource_id
 PINTPATH_FORBIDDEN_REDIS_RESOURCE_IDS=replace_with_permanent_staging_and_restore_redis_resource_ids
+PINTPATH_PERMANENT_STAGING_REDIS_RESOURCE_ID=replace_with_registered_permanent_staging_redis_resource_id
 PINTPATH_EXPECTED_REDIS_URL_SHA256=replace_with_exact_production_redis_url_digest
 PINTPATH_FORBIDDEN_REDIS_URL_SHA256S=replace_with_registered_staging_and_restore_redis_url_digests
+PINTPATH_PERMANENT_STAGING_REDIS_URL_SHA256=replace_with_registered_permanent_staging_redis_url_digest
 FIELD_TEST_MODE=false
 DEMO_BILLING_MODE=false
 ALLOW_DEMO_BILLING_IN_PRODUCTION=false
@@ -241,6 +274,14 @@ REPORT_EMAIL_FROM=
 REPORT_EMAIL_REPLY_TO=
 REPORT_DELIVERY_SCHEDULE_ENABLED=false
 PINTPATH_REPORT_DELIVER=false
+ACCOUNT_DELETION_NOTICE_MODE=resend
+RESEND_TRANSACTIONAL_API_KEY=replace_with_sending_only_resend_key
+ACCOUNT_DELETION_NOTICE_FROM="Pint Path <account@pintpath.au>"
+ACCOUNT_DELETION_NOTICE_REPLY_TO=replace_with_monitored_privacy_inbox
+RESEND_WEBHOOK_SIGNING_SECRET=replace_with_resend_webhook_whsec_secret
+ACCOUNT_DELETION_NOTICE_ACTIVE_KEY_ID=replace_with_active_key_id
+ACCOUNT_DELETION_NOTICE_KEYRING_JSON='{"replace_with_active_key_id":"replace_with_base64_32_byte_key"}'
+ACCOUNT_DELETION_NOTICE_CHECK_INTERVAL_MINUTES=5
 POS_WEBHOOK_SIGNING_SECRET=
 STRIPE_SECRET_KEY=
 STRIPE_WEBHOOK_SECRET=
@@ -445,9 +486,10 @@ Implement and complete
 The repository now contains and tests the Free-live Postgres persistence
 adapter, migration snapshot/planner/importer, deterministic reconciliation,
 logical backup/restore and private-recovery foundations, and Postgres-compatible
-runtime contracts. The reviewed-price Postgres command remains a
-mutation-disabled version-3 planner: no apply or quarantine command is
-authorised. These repository-only results do not close the candidate-bound
+runtime contracts. Reviewed-price publication now has a no-write planner plus
+separately signed reviewer-authorize, transactional apply, reviewer-authorize
+quarantine, and transactional quarantine commands backed by database-OID-scoped
+roles and durable ledgers. These repository-only results do not close the candidate-bound
 live permanent-staging import/reconciliation, application deployment,
 two-replica, immutable cross-failure-domain retrieval, PITR, complete recovery,
 promotion, rollback, provider-evidence, or production-cutover gates. No
@@ -725,18 +767,24 @@ workflow before relying on it.
 The current discovery/review tools and `scripts/promote-reviewed-price-data.ts`
 still depend on SQLite. They are useful only to prepare and audit migration
 source data; their mutation modes are not authorised against production for
-this full-scale release. The checked-in Postgres `plan` command now produces a
-canonical, mutation-disabled version-3 candidate. It requires a canonical,
+this full-scale release. The checked-in Postgres `plan` command produces a
+canonical, mutation-disabled version-4 candidate. It requires a canonical,
 fresh Railway application-deployment attestation for the exact candidate and
 permanent-staging target, and binds both that receipt file SHA-256 and its
 checked-in policy SHA-256. It also requires the existing migration-receipt
 identity, the live restricted planner observation, and the operator-pinned
 physical-database identity to agree on the same system identifier, database
 OID/name, and PostgreSQL server version, while binding the planner login
-separately. It does not apply or quarantine rows. Before
-candidate freeze, implement and prove the exact Postgres apply and quarantine
-commands in permanent integrated staging. Do not substitute direct SQL or the
-legacy SQLite commands from an old runbook.
+separately. It does not apply or quarantine rows. Forward migration
+`20260813000000_activate_reviewed_price_promotion_kernel.sql` activates the
+separate reviewer-authorize, operator-apply, and receipt-authorized quarantine
+functions. CI runs
+`test/postgres-reviewed-price-promotion-e2e.integration.test.ts` against
+PostgreSQL 17 and must prove a signed authorization, apply, idempotent replay,
+receipt-bound quarantine, missing/invalid authorization denial, and rollback
+after a later row fails. Prove the same protected commands in permanent
+integrated staging before candidate freeze. Do not substitute direct SQL or
+the legacy SQLite commands from an old runbook.
 
 The reviewed Postgres promotion workflow must:
 
@@ -759,6 +807,92 @@ The reviewed Postgres promotion workflow must:
   and
 - pass success, duplicate, partial-failure, concurrency, restart, and rollback
   tests with at least two app/worker replicas.
+
+The database creates three database-OID-scoped `NOLOGIN NOINHERIT` execute
+roles and does not grant any login membership: reviewer, apply, and quarantine.
+Provision two distinct login principals outside the repository. Each must be
+`LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION
+NOBYPASSRLS CONNECTION LIMIT 1`, with a non-null expiry no more than 24 hours
+in the future. Grant the reviewer login only the reviewer execute role and
+grant the operator login only the apply and quarantine execute roles. Every
+membership must use PostgreSQL 17 options `ADMIN FALSE`, `INHERIT FALSE`, and
+`SET TRUE`; neither login nor execute role may have any other direct or
+transitive membership, role/database setting, child membership, ownership, or
+default privilege.
+
+Revoke target-database `CREATE` and `TEMP` from `PUBLIC`, then grant each login
+only non-grantable `CONNECT` on that database. The execute roles retain only
+their migration-created non-grantable `USAGE` on `pintpath_ops` and `EXECUTE`
+on their paired one-argument function. The login and execute roles may have no
+other database, schema, table, column, sequence, function, or type ACL in any
+database. The operator verifies the complete live PG17 role/ACL/ownership
+inventory before `SET LOCAL ROLE`, resets to the login and verifies it again
+before commit, and fails closed on any extra `SET ROLE` path or direct ACL
+dependency.
+
+Each connection URL file and every input artifact must be owner-only (`0600`),
+an ordinary file with one link, and passed by absolute path with its pinned
+SHA-256, including `--database-url-file-sha256`. The URL authority must be the
+exact lowercase Railway private
+`*.railway.internal:5432` endpoint and use only `sslmode=verify-full`. Pass the
+independently reviewed root-certificate DER SHA-256 as
+`--expected-root-ca-der-sha256`; the operator resolves exactly one `fd12::/16`
+address, dials that address, authenticates the stock certificate as
+`localhost`, and fences the held CA file, DNS result, URL authority, and TLS
+transport before connection, transaction commit, and cleanup.
+
+The shared `pintpath_runtime` role intentionally retains its existing DML on
+`venue_price_records` and `venue_beers`: venue-manager, catalog, moderation,
+support, and privacy repositories legitimately use those tables. Therefore the
+database cannot distinguish an ad hoc reviewed-price write made through that
+shared role. The controlled operator principals have no table privileges and
+can mutate only through the scoped functions, but migrating every legitimate
+runtime caller to narrower functions remains a residual least-privilege task.
+
+The credential in `DATABASE_URL` must be a separate `LOGIN NOINHERIT
+NOREPLICATION CONNECTION LIMIT 8` principal. Its sole membership is
+`pintpath_runtime` with PostgreSQL 17 options `ADMIN FALSE`, `INHERIT FALSE`,
+and `SET TRUE`; its sole direct ACL is non-grantable `CONNECT` on the target
+database. Revoke database `CREATE` and `TEMP` from `PUBLIC`. The login may have
+no other membership, role/database setting, direct ACL, default privilege, or
+ownership. Each pool activates the fixed NOLOGIN role through the PostgreSQL
+startup packet before exposing a backend, and readiness requires exact
+`session_user` login authority plus `current_user=pintpath_runtime`.
+
+Both application URLs must name the same exact lower-case Railway private
+`*.railway.internal:5432` authority and contain only `sslmode=verify-full`.
+Configure the exact stock root certificate PEM and its independently reviewed
+X.509 DER SHA-256 through `Configure one Pint Path runtime variable`; do not
+configure a filesystem path. Each process validates the one self-signed CA,
+materializes current-UID-owned mode-`700`/`600` temporary custody, resolves one
+canonical `fd12::/16` address, and makes both pools dial only that address while
+Node TLS authenticates the stock leaf as `localhost` with TLS 1.2 or newer.
+Startup and `/ready` fence the URL, DNS answer, CA descriptors/copies, and DER
+pin. Shutdown closes the maintenance pool, runtime pool, and then removes the
+transport custody. Missing/mismatched CA material, DNS drift, `sslmode=require`,
+`verify-ca`, a public endpoint, or a system-root fallback is a startup/readiness
+failure.
+
+Privacy erasure and retention are separately fenced. Migration
+`20260812235959_add_privacy_maintenance_role.sql` makes
+`security_audit_log`, `contribution_ledger`, and `pint_point_ledger`
+append-only for `pintpath_runtime`, creates the table-only
+`pintpath_maintenance` group, and grants that group exactly the reads and
+mutations exercised by `AccountPrivacyRepository` and
+`PrivacyRetentionRepository`. Provision a distinct login whose only role
+membership is `pintpath_maintenance`, put its same-database TLS URL in
+`DATABASE_MAINTENANCE_URL`, and never give it `pintpath_runtime`,
+`pintpath_migrator`, `pintpath_ops`, function, sequence, INSERT, role-creation,
+database-creation, temporary-object, superuser, replication, inheritance, role
+setting, ownership, default-privilege, or RLS-bypass authority. The login must
+be `LOGIN NOINHERIT NOREPLICATION CONNECTION LIMIT 2`; its one direct PG17
+membership is `pintpath_maintenance` with `ADMIN FALSE`, `INHERIT FALSE`, and
+`SET TRUE`, and its only permitted direct ACL dependency is the current
+database `CONNECT` grant; `CREATE` and `TEMP` on that database must both be
+false, including privileges inherited from `PUBLIC`. Startup queries the live catalogs and refuses any
+missing or excess membership, role attribute, table operation, schema,
+sequence, function, ownership, direct ACL, or default privilege before
+mounting the application routers.
 
 Run a human or authorised-venue verification sprint, clear high-severity
 wrong-price reports, and retain reviewed private source evidence. Production
@@ -931,10 +1065,12 @@ Before staging sign-off:
 Configure the completion-notice path in this exact order:
 
 Every Railway deploy, secret update, and route operation in this rehearsal is
-subject to the production-and-staging mutation boundary in Phase 16 and must be
-performed by its tracked preflight/write/finally-postflight executor. Because
-that executor is not yet implemented, the provider-writing parts of this
-sequence remain blocked even when the other prerequisites pass.
+subject to the production-and-staging mutation boundary in Phase 16. Use the
+protected application-deployment workflow for source upload and the protected
+runtime-variable workflow for an exact supported variable write; each owns its
+preflight, one write, and unconditional postflight. The protected production
+route workflows authorize only the canonical `pintpath.au` close/open state
+machine described in Phases 16.5–16.7; every other route change remains blocked.
 
 Before this rehearsal, move account-deletion requests, outbox, recipient
 secrets, webhook events, and job leases into shared Postgres. Permanent
@@ -996,6 +1132,7 @@ for shared rate limiting; it is not a substitute for transactional Postgres.
      test/account-deletion-notification.test.ts \
      test/account-deletion-notification-worker.test.ts
    ```
+
 8. Test Resend timeout, 429, bounce, invalid signature, replay, out-of-order webhook, worker overlap, process restart, 23-hour uncertain cutoff, the 60-day held-recipient cap, purge on audited terminal resolution, the 30-day post-completion hard limit, and restored-tombstone suppression.
 9. Separately create the production Resend webhook at `https://pintpath.au/api/business/account-deletion-notifications/resend-webhook` with its own production `whsec_` secret and the same six event subscriptions. Then set the production notice variables with independently generated credentials and key material. Never copy the staging signing secret or encryption keyring into production. `ACCOUNT_DELETION_REHEARSAL_ENABLED` must be `false` or absent in production. Deploy once all required values are present; canonical production intentionally fails closed if the notice path is incomplete.
 10. Confirm `/ready`, the admin deletion queue, `job:account_deletion_notifications`, Resend delivery evidence, and the zero-plaintext database check. Record the exact provider message ID and non-identifying receipt for the release evidence packet.
@@ -1142,11 +1279,8 @@ Enforce Node 22, the exact CLI version, and cleanup:
 ```bash
 set -euo pipefail
 
-case "$(node --version)" in
-  v22.*) ;;
-  *) echo "Node 22 is required for the release candidate" >&2; exit 1 ;;
-esac
-
+test "$(node --version)" = "v22.23.2"
+test "$(npm --version)" = "10.9.8"
 test "$(supabase --version)" = "2.109.1"
 npm ci
 npm run check
@@ -1154,7 +1288,7 @@ npm run security:audit
 git diff --check
 
 trap 'supabase stop --no-backup >/dev/null 2>&1 || true' EXIT
-supabase start
+supabase db start
 supabase db reset --local
 supabase db lint --local --schema public,private,pintpath_app,pintpath_ops --level warning --fail-on warning
 supabase db advisors --local --type security --level warn --fail-on warn
@@ -1224,16 +1358,37 @@ force push.
 
 Required launch checks:
 
+- `postgres-tool-runtime-closure-observation`;
+- `postgres-migration-integration`;
 - `build-test-scan`;
 - `supabase-database`;
 - `release-readiness`;
 - `CodeQL JavaScript and TypeScript`;
+- `CodeQL Swift`;
 - `ios`;
+- before production deployment: `Deploy permanent staging` and
+  `Scale 1→2, prove, and converge 2→1`, with both exact-candidate artifacts, plus
+  `iOS protected production configuration archive`;
+- after production deployment: `Deploy protected production`, then
+  `Converge exact production deployment to two replicas`, with both
+  exact-candidate artifacts;
 - no unresolved review thread;
 - branch current with `main`;
 - independent approval from someone other than the author.
 
-Android is not a release-evidence item or full-launch gate for this web+iOS release. It may remain an informational repository-health job, but neither `android_release` nor an Android store build belongs in the launch evidence.
+The release-candidate verifier resolves each required check with
+`filter=all&check_name=...`, then binds it to the workflow path, event, check
+suite, workflow run, exact `main` SHA, and repository declared in
+`.github/release-required-checks.json`. A differently triggered or differently
+owned same-name check cannot substitute for the intended check; duplicate
+successful intended checks fail closed. A manual Native Apps dispatch names its
+prerequisite `iOS dispatch prerequisite`, leaving `ios` unique to the automatic
+pull-request/main workflow while the protected archive remains gated by the
+same-run prerequisite.
+
+Android is not a required-check, release-evidence, or full-launch gate for this
+web+iOS release. It remains an informational repository-health job, but neither
+`android_release` nor an Android store build belongs in the launch evidence.
 
 After checks and approval:
 
@@ -1282,12 +1437,17 @@ disposable-restore scopes out of that total and bind each to its own separately
 hashed cost authority. The receipt observation and the live production smoke
 items expire after 24 hours.
 
-The checked-in v1 cost policy and evaluator are scaffold-only. Their provider
-collector and observation-binding flags are false, so a hand-authored receipt
-cannot pass the validator even if it has the right shape. A later reviewed
-collector and deliberate policy-version change must establish the real
-provider binding before this gate can close. The historical approximately
-US$46.80/month combined estimate is explicitly non-gating.
+The checked-in v2 cost policy and offline binder are active for protected
+external evidence. They cannot read a provider, environment credential, or
+network and therefore cannot fabricate live facts. Authorized finance/infra
+operators capture canonical pre-deployment and post-reconciliation observations
+from complete read-only provider exports; a different verifier binds their
+exact hashes through the private approval manifest into one version-2 receipt.
+It must prove at most 4700 cents observed across both phases, at least 300 cents
+headroom below the 5000-cent ceiling, and zero unknown, unpriced, shared, or
+unbounded resources. That combined receipt is a post-deployment release gate
+and `receiptMayAuthorizeDeployment=false`. Follow
+[the permanent-staging cost-evidence runbook](./permanent-staging-cost-evidence.md).
 
 Before production deployment:
 
@@ -1416,13 +1576,20 @@ auto-discard drift. Railway Git autodeploy must be disabled before Phase 16.1;
 the application predeploy hook runs too late to prevent a stale environment
 patch from creating a deployment.
 
-The current policy intentionally fails after the 2026-08-10 production
-Postgres redeploy and mutable-tag re-resolution. Do not edit it merely to make
-the gate green. Rebaseline only after the incident is explicitly accepted,
-Postgres data-level readiness and recovery authority are proven, and the
-production image source is immutable. A standalone passing preflight is not a
-mutation executor, so this phase remains non-executable until the closed
-preflight/write/postflight implementation is reviewed.
+The current boundary policy intentionally fails after the 2026-08-10
+production Postgres redeploy and mutable-tag re-resolution. Do not edit it
+merely to make the gate green. Rebaseline only after the incident is explicitly
+accepted, Postgres data-level readiness and recovery authority are proven, and
+the production image source is immutable. The protected application
+source-upload executor is implemented, but it cannot bypass that non-passing
+preflight. Protected successors also exist for the exact production canonical
+route close/open pair, reviewed runtime/provider
+variables, Supabase legacy-key cutover, the staging Postgres build canary,
+bounded staging/production scale, Postgres HA/PITR enable-and-verify, and exact
+disposable-restore teardown. Those workflows authorize only their named
+operation. Any other route/domain change, arbitrary service/resource/volume mutation,
+Railway-native restart/redeploy/rollback, and every other unlisted provider or
+database write remain blocked.
 
 ### 16.1 Merge the reviewed candidate
 
@@ -1506,7 +1673,7 @@ Confirm the monitored daily recurring job targets the same ref, has a successful
 ### 16.4 Capture and restore-test the reconciled post-import base recovery set
 
 After the import, Supabase migration, directory refresh, and every reconciliation
-pass—but before routing application traffic—create a new Postgres PITR point,
+pass—but before authorising the new application for public use—create a new Postgres PITR point,
 logical export, complete private Storage/evidence snapshot, and deletion
 ledger/tombstone export. Write the exact set to the separately administered
 object-lock/WORM destination and record its manifest hashes.
@@ -1518,19 +1685,61 @@ and deletion-tombstone checks. Measure RPO/RTO, tear down only the recorded
 disposable resources, and obtain two-person sign-off. If the post-import set
 cannot be retrieved and restored exactly, do not deploy or reopen traffic.
 This set is the rollback authority for the migrated base state, but it is not
-the final launch recovery authority: public ingress remains closed until the
-reviewed price promotion and the new post-promotion recovery set in Phase 16.6
-have also passed independent retrieval and restore proof.
+the final launch recovery authority. Production stays write-fenced and
+unmarketed while the route remains attached for the protected deploy postflight;
+the exact route is deleted immediately after deploy/smoke/scale and remains
+absent until the reviewed price promotion and new post-promotion recovery set
+in Phase 16.6 have passed independent retrieval and restore proof.
 
 ### 16.5 Deploy the exact protected `main` build with enrolment disabled
 
-Railway must deploy `deploymentSha` with the Phase 1 environment values through
-the tracked guarded executor. Ordinary `railway redeploy`, dashboard **Deploy**,
-and Git autodeploy are prohibited. The executor must prove both staged patches
-empty before the write, deploy one exact immutable image, re-query both patches
-in `finally`, and require the child deployment's resolved digest to equal the
-independently approved digest with no `patchId`. Wait for deployment completion,
-then:
+First dispatch the protected
+[`Deploy Pint Path permanent staging`](../.github/workflows/deploy-permanent-staging.yml)
+workflow from `main` with `candidate_sha=deploymentSha`. After its exact-SHA
+check and artifact pass, run the protected staging scale proof. Then dispatch the protected
+[`Deploy Pint Path protected production`](../.github/workflows/deploy-production.yml)
+workflow with the same value. For this initial launch, first prove the current
+production bootstrap topology is exactly one healthy replica; the upload
+preserves that one-replica topology and proves the candidate without scaling.
+Only after that artifact passes, dispatch the candidate-bound
+[`Converge Pint Path production to two replicas`](../.github/workflows/production-converge-two-replicas.yml)
+workflow with `candidate_sha=deploymentSha` and the exact confirmation
+`CONVERGE_PRODUCTION_TO_TWO_REPLICAS`. The workflow supplies that same
+candidate internally as the expected deployed SHA; there is no separate
+operator-controlled deployment-SHA input.
+Never scale the older production deployment first: it may still be the
+authoritative SQLite build. These exact workflow files are the only
+application-deployment operator paths; similarly named dashboard or local CLI
+operations are not substitutes. The production deploy refuses to write unless
+that exact candidate is the sole healthy permanent-staging deployment; the
+separate convergence workflow then proves and changes only the matching
+production deployment. Both
+application-deployment GitHub environments, plus the separate
+`production-topology-configuration` environment for convergence, need their
+required reviewer approval and separately scoped metadata/write secrets.
+Before production approval, capture a fresh sanitized strict
+`production_free_launch` provider-readiness result inside the current deployed
+production service and provision its candidate-bound version-2 envelope/hash
+to the protected production GitHub environment. The required envelope is now
+schema version 2; it binds only SHA-256 identities and exactness statuses for
+the application URL, distinct same-database maintenance URL, root CA PEM, and
+reviewed root CA DER. It contains no raw URL or PEM, and the verifier rejects a
+version-1 envelope. The production job verifies
+that receipt is at most 24 hours old and validates the candidate-bound
+release-evidence register in non-strict mode before it downloads the deploy CLI
+or receives the write token. It must not run `release:evidence:strict` here:
+production smoke, authenticated-role, and App Review evidence are necessarily
+post-deployment. The protected release gate applies strict validation later.
+
+Railway must deploy `deploymentSha` with the Phase 1 environment values only
+through this tracked source-upload executor. Ordinary `railway redeploy`,
+dashboard **Deploy**, Git autodeploy, and local invocation are prohibited. The
+executor proves both staged patches empty, records a durable intent, performs
+at most one exact `railway up` source upload, reconciles provider state without
+retrying an uncertain write, rechecks both patches in `finally`, and requires
+the exact SHA to be the sole healthy deployment with no `patchId`. It then
+binds `/health`, `/startup`, and `/ready` to that deployment and emits the
+SHA-bound workflow artifact. Wait for deployment completion, then:
 
 ```bash
 PINTPATH_ENFORCE_LAUNCH_FLAGS=true \
@@ -1541,17 +1750,41 @@ PINTPATH_EXPECTED_COMMIT_SHA="$deploymentSha" \
 
 Require `/health` and `/ready` to return `200`, and require the reported SHA to equal `deploymentSha`. Re-run the Phase 1 live-config assertion. Commercial enrolment, rewards, and gamification must still be false.
 
-Keep public application ingress in the signed maintenance/closed state during
-this deployment. A healthy deployment is not authority to route traffic yet.
+The canonical `pintpath.au` route must remain attached during this protected
+source upload: the executor uses it to bind `/health`, `/startup`, and `/ready`
+to `deploymentSha`, so the old live build remains publicly reachable until the
+upload switches it to the new build and route close completes. Keep this
+interval tightly scheduled, unannounced, and write-fenced. If zero public
+exposure during upload is required, use a separately reviewed application-level
+maintenance response that preserves those health endpoints; route absence is
+incompatible with deployment postflight and is not authorised here.
+
+After the deployment artifact, same-SHA public smoke, and two-replica
+convergence pass—but before any reviewed-price promotion—dispatch
+[`Close Pint Path protected production route`](../.github/workflows/close-production-route.yml)
+from exact current `main` with `candidate_sha=deploymentSha` and confirmation
+`CLOSE_PINTPATH_PRODUCTION_ROUTE`. Require its immutable receipt to prove the
+one `pintpath.au` custom domain is absent, every collateral route is unchanged,
+and exactly two replicas serve the same sole healthy deployment. Deploy, scale,
+close, promotion-recovery attestation, and open share the non-cancelling
+`pintpath-production-rollout` concurrency group. Close downloads the exact
+deployment and scale artifacts by GitHub ID/digest/size and parses their
+canonical receipts, enforcing strict deploy→scale→close chronology. Keep it absent
+through Phase 16.6. A lost acknowledgement is acceptable only when the
+unconditional read-only postflight emits the exact reconciled result; never
+retry an ambiguous write.
 
 Keep `COMMERCIAL_LAUNCH_ENABLED=false` throughout the first deployment and
 every production proof in Phases 16 and 17. No public billing management,
 Stripe lifecycle, venue-Pro, report-delivery, POS/counter, or reward entry point
 is part of this release.
 
-If application health fails, use the same guarded executor to deploy the exact
-immutable `rollbackBuildSha` image against the same Postgres schema. Never
-reopen the sealed SQLite source for writes.
+If application health fails, stop and reconcile read-only; never blindly rerun
+an uncertain upload. A separately frozen `rollbackBuildSha` may use the same
+protected source-upload ceremony only after it is the exact current `main` SHA
+and has passed the current checks and same-SHA staging proof against the same
+Postgres schema. Never use Railway-native rollback or reopen the sealed SQLite
+source for writes.
 
 ### 16.6 Promote only the reviewed Postgres price batch
 
@@ -1570,18 +1803,27 @@ In the protected production operator environment:
    independent reviewer, and signed approval.
 3. Have the independent reviewer compare every proposed venue/beer/price row,
    private source-evidence hash, target identity, and rollback/quarantine
-   authority without editing the plan.
+   authority without editing the plan. Verify the offline Ed25519 signature,
+   then register the exact approval using
+   `npm run db:postgres:reviewed-price:authorize-apply --` and the reviewer-only
+   database URL. Persist its canonical authorization receipt.
 4. Reconfirm the recovery point is within the signed freshness window and that
    its WORM copy and disposable restore proof are valid.
-5. Apply once. Require a single Postgres transaction for the authorised public
+5. Apply once with `npm run db:postgres:reviewed-price:apply --` and the
+   separate operator database URL. Require a single Postgres transaction for the authorised public
    state and evidence linkage, or a formally proven saga whose incomplete
    state cannot become public. Exit nonzero on any mismatch.
 6. Verify the secret-free receipt, before/after hashes, promoted counts,
    durable evidence links, no public `evidence_pending` row, and zero `open` or
    `in_progress` wrong-price reports for every known reason. Do not infer or
    use an unrecorded severity tier.
-7. On uncertainty or failure, do not retry blindly. Close the affected public
-   path and use only the receipt-authorised idempotent quarantine/rollback.
+7. On uncertainty or failure, do not retry blindly. Reconcile the immutable
+   operation UUID and output receipt first. A retry must use byte-identical
+   artifacts, UUID, and output path. Close the affected public path and use
+   only the receipt-authorised quarantine: create a new signed quarantine
+   approval bound to the apply receipt; run reviewer-only
+   `db:postgres:reviewed-price:authorize-quarantine`, then operator-only
+   `db:postgres:reviewed-price:quarantine`.
 8. While public ingress is still closed, create a new post-promotion Postgres
    PITR point, logical export, complete private Storage/evidence snapshot, and
    deletion-ledger/tombstone export. Write the exact set to the independent
@@ -1591,23 +1833,48 @@ In the protected production operator environment:
    down only the recorded disposable resources, and obtain two-person
    sign-off. This post-promotion set—not the Phase 15 or Phase 16.4 set—is the
    final launch recovery authority. Do not route traffic if any part fails.
+9. Dispatch `Attest Pint Path protected production promotion recovery` at the
+   exact candidate. It authenticates deploy→scale→close, replaces caller copies
+   with digest-bound artifacts, validates the apply-only promotion and complete
+   post-promotion recovery/restore/twice-replayed deletion set, requires two
+   signed reviewers, and publishes the self-hashed
+   `pintpath-production-promotion-recovery-<SHA>` receipt. Route open accepts no
+   substitute predecessor authority.
 
-The Phase 3A implementation must supply and test the exact plan/apply/
-quarantine commands. Until it does, this phase is blocked; direct Postgres SQL,
-the legacy SQLite CLI, or ad hoc scripts are forbidden.
+All four mutation-stage commands take the exact plan, private review packet,
+signed approval envelope, Ed25519 reviewer public key, root CA, database URL,
+and output-receipt paths plus corresponding `--*-sha256` pins. They also take
+the independently reviewed CA certificate DER pin as
+`--expected-root-ca-der-sha256`. Quarantine commands additionally require
+`--apply-receipt-file` and
+`--apply-receipt-file-sha256`. Run the plan command first and take the exact
+argument names from the reviewed runbook/package scripts; the operator CLI
+deliberately rejects unknown, missing, or duplicate arguments. Direct Postgres
+SQL, the legacy SQLite CLI, and ad hoc scripts remain forbidden.
 
 ### 16.7 Restore controlled observation ingress, then run strict production checks
 
 Public ingress is still closed when Phase 16.6 finishes. Before any command in
 this phase targets `https://pintpath.au`, the incident commander must:
 
-1. verify that the exact post-promotion recovery set, independent restore,
+1. verify that the exact protected promotion-recovery attestation, recovery set,
+   independent restore,
    reconciliation, deletion replay, RPO/RTO result, and two-person sign-off from
    Phase 16.6 all passed;
 2. record the exact `deploymentSha`, canonical route, start time, owner, reviewer,
    and rollback trigger for this observation window; and
-3. use the tracked guarded executor to restore only the canonical production route in tightly controlled,
-   non-marketed observation mode, with commercial flags disabled, WAF/rate
+3. dispatch
+   [`Open Pint Path protected production route`](../.github/workflows/open-production-route.yml)
+   from exact current `main` with `candidate_sha=deploymentSha` and confirmation
+   `OPEN_PINTPATH_PRODUCTION_ROUTE`. Its separate reviewer approves the one
+   exact `customDomainCreate`. It machine-verifies strict
+   deploy→scale→close→promotion-recovery chronology and materializes the exact
+   close and promotion-recovery artifacts by ID/digest/size. Require no
+   collateral drift, exactly two healthy replicas, valid public TLS,
+   and candidate-bound `/health`, `/startup`, and `/ready` before accepting
+   `opened` or `opened_reconciled_after_lost_ack`. This restores only the
+   canonical production route in tightly controlled, non-marketed observation
+   mode, with commercial flags disabled, WAF/rate
    limits and alerting active, and the maintenance/closed state ready for
    immediate restoration.
 
@@ -1715,8 +1982,23 @@ test -z "$unexpected_paths"
 
 Record `deployedMainSha` in the private release register. The tracked guarded
 executor must deploy that exact immutable image with commercial enrolment still
-disabled. Require the reported production SHA to equal `deployedMainSha` and
-repeat the Phase 1 live-config assertion.
+disabled. Because every required check and artifact is SHA-bound, repeat the
+protected Phases 16.5–16.7 chain for `deployedMainSha`: permanent-staging deploy,
+the bounded two-replica proof and convergence to one, the protected iOS
+production-configuration archive, a fresh candidate-bound production provider-
+readiness envelope, a topology-preserving production deploy, production
+convergence, canonical-route close, a new candidate-bound promotion/recovery
+attestation over genuine apply and post-promotion recovery evidence, and
+canonical-route open. At this closeout point production is already two replicas:
+the source upload must accept and preserve that exact healthy topology without
+scaling, and the convergence workflow must emit a same-SHA `already_converged`
+proof. No scale-down is required or authorised. The closeout attestation cannot
+reuse the earlier candidate's receipt: it must bind the exact `deployedMainSha`
+deployment, close receipt and terminal digest, promotion operation, recovery
+set, and two approvals. An artifact retained for the earlier `candidateSha`
+cannot satisfy this closeout commit. Require the reopened public route to report
+`deployedMainSha`, then repeat the Phase 1 live-config assertion. Do not dispatch
+the release gate while the closeout route is absent.
 
 ### 17.3 Run strict authenticated evidence through the protected environment
 
@@ -1726,7 +2008,9 @@ Create a fresh, one-use MFA/AAL2 admin smoke token only after the production-env
 gh secret set PINTPATH_SMOKE_ADMIN_TOKEN --env production
 git fetch origin main
 test "$(git rev-parse origin/main)" = "$deployedMainSha"
-gh workflow run pintpath-release-gate.yml --ref main
+gh workflow run pintpath-release-gate.yml \
+  --ref main \
+  -f candidate_sha="$deployedMainSha"
 ```
 
 Obtain the exact dispatched run ID and watch it:

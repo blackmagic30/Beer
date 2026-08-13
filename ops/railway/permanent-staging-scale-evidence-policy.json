@@ -1,0 +1,48 @@
+{
+  "schemaVersion": "pintpath-permanent-staging-scale-evidence-policy/v1",
+  "policyId": "pintpath-permanent-staging-two-to-one-scale-proof",
+  "activationState": "GITHUB_ENVIRONMENT_PROTECTED",
+  "projectId": "48d8c6cd-1c66-4148-874b-20877f48e1a5",
+  "productionEnvironmentId": "13dab015-df74-45c6-b26f-69323daea99a",
+  "stagingEnvironmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+  "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
+  "publicOrigin": "https://pintpath-staging.up.railway.app",
+  "region": "asia-southeast1-eqsg3a",
+  "githubEnvironment": "permanent-staging-scale-evidence",
+  "requiredGitRef": "refs/heads/main",
+  "railwayCli": {
+    "version": "5.32.0",
+    "releaseUrl": "https://github.com/railwayapp/cli/releases/download/v5.32.0/railway-v5.32.0-x86_64-unknown-linux-musl.tar.gz",
+    "archiveSha256": "cd69b2ecb556601751165d85ac31a5fbc38cff46397939356df28d2b96a005f5",
+    "executableSha256": "27133cfc20bffc43b2f32c1638fa3c50eefc2f9d2d80301a93de34632ccb7a43"
+  },
+  "lifecycle": {
+    "permanentReplicaCount": 1,
+    "evidenceReplicaCount": 2,
+    "scaleOutMaximumAttempts": 1,
+    "convergeOneMaximumAttempts": 1,
+    "automaticRetriesAllowed": false,
+    "unconditionalReadOnlyPostflight": true,
+    "unconditionalConvergenceToOne": true,
+    "maximumEvidenceWindowMinutes": 120,
+    "minimumSoakMinutes": 60
+  },
+  "productionConvergence": {
+    "environmentId": "13dab015-df74-45c6-b26f-69323daea99a",
+    "publicOrigin": "https://pintpath.au",
+    "githubEnvironment": "production-topology-configuration",
+    "requiredReplicaCount": 2,
+    "scaleDownAllowed": false,
+    "maximumAttempts": 1,
+    "automaticRetriesAllowed": false,
+    "unconditionalReadOnlyPostflight": true,
+    "exactExistingDeploymentShaRequired": true
+  },
+  "evidence": {
+    "durableIntentRequiredBeforeEachWrite": true,
+    "terminalEvidenceRequired": true,
+    "finalReceiptRequired": true,
+    "deploymentMustRemainUnchanged": true,
+    "candidateCommitMustRemainExact": true
+  }
+}

@@ -48,12 +48,11 @@ promote reviewed data, or announce the combined launch until every exit
 criterion below has passed in permanent integrated staging and the resulting
 implementation is part of the frozen commit.
 
-Every Railway create, configuration, scale, deploy, rollback, PITR, route,
-delete, destroy, or teardown step below is non-executable until the tracked
-`readiness:railway:mutation-boundary` executor owns its immediate preflight,
-one exact operation, and unconditional postflight. The standalone receipt is
-read-only, the checked-in incident baseline intentionally fails, and no
-dashboard, Git autodeploy, or ad-hoc CLI/API action may bridge that gap.
+Railway writes below use only the exact protected workflows documented in
+`protected-provider-mutation-operations.md`; live IDs, credentials, approvals,
+and provider receipts remain open gates. The standalone mutation-boundary
+receipt is read-only, and no dashboard, Git-autodeploy, or ad-hoc CLI/API action
+may bridge a failed preflight.
 
 ## Non-negotiable outcome
 
@@ -75,13 +74,14 @@ cutover. A one-replica SQLite launch is not an alternative for this release.
 - **Permanent integrated staging** is the stable Railway staging service with
   pinned Postgres, Supabase/Auth/private Storage, and Redis resources. Its core
   identities, synthetic import, runtime proof, and logical backup are complete;
-  three Google/OpenAI provider categories remain open, comprising four exact
-  Railway variable operations: Google Maps client configuration
+  three Google/OpenAI provider categories remain open for protected live
+  execution, comprising four exact Railway variables: Google Maps client configuration
   (`GOOGLE_MAPS_API_KEY` and `GOOGLE_MAPS_MAP_ID`), Google Places server access
   (`GOOGLE_PLACES_API_KEY`), and OpenAI menu OCR (`OPENAI_API_KEY`). Separately,
-  the two permanent-staging Supabase replacement-key operations
-  (`SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY`) remain
-  `HARD_DISABLED_REVIEW_REQUIRED` and unauthorized. Production operational-copy
+  the two permanent-staging Supabase replacement-key variables use the
+  protected atomic replacement workflow and the later protected
+  canary/legacy-disable/old-key-denial ceremony. The old hard-disabled fixtures
+  are superseded and non-authoritative. Production operational-copy
   URL, key, and bucket variables are prohibited in permanent staging. The app
   deploy and live evidence also remain open.
 - **Ephemeral destructive restore staging** currently has an isolated Railway
@@ -233,6 +233,15 @@ line, print it, or put it in Git.
    permissiveness, command, role OID array, `USING`, and `WITH CHECK` must all
    match; any arbitrary named-role policy is a hard failure.
 
+   The later additive migration
+   `20260812235959_add_privacy_maintenance_role.sql` creates the separate
+   `pintpath_maintenance` NOLOGIN/NOINHERIT group after those exact backup and
+   inert-kernel guards have passed. It extends the application-table RLS
+   allowlist, grants only the erasure/retention table operations used by the
+   two privacy repositories, and removes runtime UPDATE/DELETE from the audit
+   and two points ledgers. Do not edit the generated base DDL to introduce this
+   role earlier; migration order is part of the reviewed privilege contract.
+
    Existing databases created by the earlier bootstrap must receive the
    additive transaction in
    `20260810003612_add_pintpath_logical_backup_role.sql` before a backup login
@@ -258,6 +267,43 @@ line, print it, or put it in Git.
    is attached. The bootstrap and migration deliberately avoid broad
    `ALTER ROLE` repair. Any unsafe pre-existing state aborts with SQLSTATE
    `42501` and requires independent remediation.
+
+   The independently protected verifier trust anchor is deliberately outside
+   that 59-table archive. `pintpath_ops.migration_verifier_authority` is a
+   singleton control row, not application data: logical backup and restore must
+   never transplant it. After a clean restore or before each candidate import,
+   dispatch `.github/workflows/provision-postgres-migration-verifier-authority.yml`
+   from exact current `main`. Its target-specific protected environment holds
+   the short-lived authority login, operator/verifier identities, Ed25519 public
+   key, Railway private URL, and stock root CA; Git contains no private key.
+   The workflow uses one compare-and-swap database write with no retry and
+   emits canonical intent, terminal, and receipt evidence. The additive
+   `20260813165508_add_postgres_migration_verifier_authority.sql` installs the
+   same role/table/RLS/ACL boundary on databases that already applied the base
+   migration. The importer role can only `SELECT` the row; only the isolated
+   provisioner role can `SELECT`, `INSERT`, or `UPDATE` it, and neither role can
+   delete it.
+
+   Configure both protected environments—
+   `permanent-staging-postgres-migration-verifier-authority` and
+   `production-postgres-migration-verifier-authority`—as `main`-only, with a
+   required independent reviewer, self-review disabled, and administrator
+   bypass disabled. Each environment must define these target-specific
+   secrets: `PINTPATH_POSTGRES_MIGRATION_VERIFIER_TARGET_URL` (the exact URL
+   containing a distinct short-lived LOGIN credential whose sole membership is
+   `pintpath_migration_verifier_authority`),
+   `PINTPATH_POSTGRES_MIGRATION_VERIFIER_ROOT_CA_PEM`,
+   `PINTPATH_POSTGRES_MIGRATION_OPERATOR_ID`,
+   `PINTPATH_POSTGRES_MIGRATION_VERIFIER_ID`, and
+   `PINTPATH_POSTGRES_MIGRATION_VERIFIER_PUBLIC_KEY_PEM`. Define the protected
+   variables `PINTPATH_POSTGRES_MIGRATION_VERIFIER_TARGET_URL_SHA256`,
+   `PINTPATH_POSTGRES_MIGRATION_VERIFIER_ROOT_CA_DER_SHA256`, and
+   `PINTPATH_POSTGRES_MIGRATION_VERIFIER_TARGET_IDENTITY_SHA256`. The
+   provisioner LOGIN is separate from both the importer and verifier signing
+   principals, must be short-lived, and must be disabled, disconnected, and
+   have its membership revoked (or be dropped) after the receipt is retained.
+   Import apply/verify rejects any remaining child or parent membership on the
+   authority group, so a provisioner session cannot race an import.
 
    Every connection-URL or service-key file used by this runbook is an
    exact-byte input: one value with no leading/trailing whitespace, CR/LF, or
@@ -317,36 +363,73 @@ line, print it, or put it in Git.
 5. Apply the reviewed generated DDL to the empty target with the owner/migrator
    principal, provision a separate login that can `SET ROLE pintpath_migrator`,
    and record the generated DDL SHA-256. The runtime login is separate and must
-   not receive migrator or operations-schema privileges. Put the direct,
+   be `LOGIN NOINHERIT NOREPLICATION CONNECTION LIMIT 8`, have only direct
+   membership in `pintpath_runtime` with `ADMIN FALSE`, `INHERIT FALSE`, and
+   `SET TRUE`, and receive only non-grantable `CONNECT` on the target database.
+   Revoke database `CREATE` and `TEMP` from `PUBLIC`; the runtime login must
+   have neither, no role/database setting, no extra direct ACL or ownership,
+   and no other direct or transitive membership. The application supplies the
+   fixed PostgreSQL startup option `role=pintpath_runtime` before a pooled
+   backend is exposed. It must not receive migrator or operations-schema
+   privileges. Provision a third
+   login whose only membership is `pintpath_maintenance`; it must be `LOGIN
+   NOINHERIT NOREPLICATION CONNECTION LIMIT 2`, with PG17 membership options
+   `ADMIN FALSE`, `INHERIT FALSE`, and `SET TRUE`. It must target the same
+   database as the runtime login, receive only direct `CONNECT` on that
+   database, have no effective database `CREATE` or `TEMP` privilege (including
+   from `PUBLIC`), and receive no other direct ACL, ownership, role setting,
+   default privilege, or membership. Keep its TLS URL separately as
+   `DATABASE_MAINTENANCE_URL`. Put the direct,
    TLS-required, non-pooler migrator URL in a mode-600 file, then inspect the
    target before approval:
 
-   The URL must carry exactly one of `sslmode=require`, `sslmode=verify-ca`, or
-   `sslmode=verify-full`. The migration client applies standard libpq semantics
-   internally; callers do not need to add `uselibpqcompat=true`. Plain
-   `require` guarantees encryption but does not authenticate the server
-   certificate, so use it only through the separately authenticated, pinned
-   provider tunnel. As in libpq, adding `sslrootcert` promotes `require` to
-   CA verification.
-   `verify-ca` requires one explicit `sslrootcert` and verifies the certificate
-   chain without hostname matching. `verify-full` verifies both the certificate
-   chain and hostname and is preferred wherever the provider endpoint supports
-   it. If `uselibpqcompat=true` is already present it is accepted, while false
-   or duplicate compatibility flags fail closed. Inspection and every later
-   gate hash the exact original URL bytes—including whether that optional flag
-   is present—rather than the normalized private client copy. Do not edit the
-   URL file after its hash has been approved.
+   The deployed web, privacy-maintenance, and operator-only migrator URLs must
+   all use the same exact lower-case Railway private
+   `*.railway.internal:5432` authority shape with only
+   `sslmode=verify-full`. Configure the exact sealed root CA PEM and its
+   independently reviewed DER SHA-256 as
+   `PINTPATH_POSTGRES_ROOT_CA_PEM` and
+   `PINTPATH_POSTGRES_ROOT_CA_DER_SHA256`. Runtime startup materializes owned
+   temporary custody, pins one `fd12::/16` address, and authenticates the stock
+   leaf as `localhost` for both role-bound pools.
+
+   The migrator URL must be the exact lowercase Railway private
+   `*.railway.internal:5432` authority with the sole query
+   `sslmode=verify-full`. Keep the independently reviewed self-signed Railway
+   root certificate in a separate current-user-owned mode-600 file and retain
+   its DER SHA-256 out of band. The importer opens the same
+   `railway-stock-localhost-ca-v1` transport as the production application: it
+   resolves exactly one `fd12::/16` address, dials only that address, verifies
+   the stock leaf as `localhost` against only the held root, and rechecks the
+   URL/DNS/file authority before and after every query. `sslmode=require`,
+   `verify-ca`, public/proxy endpoints, poolers, extra URL query keys, ambient
+   roots, and alternate-address fallback are rejected. Inspection returns a
+   transport-authority hash binding the fixed profile, exact URL authority,
+   and reviewed root DER pin; approve that hash alongside the URL, target, and
+   DDL hashes. Do not edit either private file after approval.
 
    ```sh
    npm run db:postgres:migration -- inspect-target \
+     --output-target-identity /absolute/private/release-id/target-identity.json \
      --target-url-file /absolute/private/target-migrator-url.key \
+     --root-ca-file /absolute/private/railway-postgres-root-ca.pem \
+     --root-ca-der-sha256 <reviewed-64-hex-root-ca-der-sha256> \
      --target-ddl /absolute/repository/src/db/postgres-schema.sql \
      --target-ddl-sha256 <trusted-64-hex-ddl-sha256>
    ```
 
-   Register the returned target identity, URL, and DDL hashes privately. A
-   changed URL, database/cluster identity, DDL, candidate, plan, approval,
-   operator, verifier, or environment is a hard stop.
+   Register the returned target-identity file hash, identity hash, URL,
+   transport-authority, live-schema, and DDL hashes privately. The command
+   writes the canonical six-field target identity as a new mode-600 file; use
+   that exact file and hash for reviewed-price planning rather than recreating
+   it with an ad-hoc catalog query. A changed URL, CA pin, transport authority,
+   database/cluster identity, DDL, candidate, plan, approval, operator,
+   verifier authority, or environment is a hard stop. Before step 6, retain the
+   protected provisioning receipt and confirm its authority row is bound to the
+   exact candidate, environment, operator, verifier public-key hash, and pinned
+   repository policy. `apply` and `verify-target` independently load and
+   reassert that row while holding the migration advisory lock; there is no
+   caller-supplied verifier identity or verifier-key hash.
 
 6. Apply only after the independent verifier has approved every hash. This is
    both operator-guarded and separately confirmation-gated; the receipt path
@@ -363,17 +446,23 @@ line, print it, or put it in Git.
      --target-ddl-sha256 <trusted-64-hex-ddl-sha256> \
      --target-url-file /absolute/private/target-migrator-url.key \
      --target-url-sha256 <approved-64-hex-url-sha256> \
+     --root-ca-file /absolute/private/railway-postgres-root-ca.pem \
+     --root-ca-der-sha256 <reviewed-64-hex-root-ca-der-sha256> \
+     --transport-authority-sha256 <approved-64-hex-transport-authority-sha256> \
      --target-identity-sha256 <approved-64-hex-target-identity-sha256> \
      --expected-environment permanent-staging \
      --candidate-sha <frozen-40-or-64-hex-sha> \
      --approval-reference <signed-change-reference> \
-     --operator-id <private-operator-reference> \
-     --verifier-id <private-independent-verifier-reference> \
+     --operator-id <private-operator-reference-matching-the-installed-authority> \
      --output-receipt /absolute/private/release-id/apply-receipt.json
    ```
 
-7. Run the read-only verifier with the same exact inputs and a second new
-   receipt path. It rechecks the sealed SQLite/evidence/deletion authority,
+   Apply stops in `awaiting-verification`; it does not set `import_state=ready`.
+   Give the canonical apply receipt to the independent verifier, who signs the
+   exact approval payload with the separately reviewed Ed25519 key.
+
+7. Run the independently signed verifier with the same exact inputs and a
+   second new receipt path. It rechecks the sealed SQLite/evidence/deletion authority,
    every chunk/table hash, row count, state total, key range, foreign key,
    orphan check, metadata binding, target identity, and stored ready receipt.
 
@@ -387,12 +476,19 @@ line, print it, or put it in Git.
      --target-ddl-sha256 <trusted-64-hex-ddl-sha256> \
      --target-url-file /absolute/private/target-migrator-url.key \
      --target-url-sha256 <approved-64-hex-url-sha256> \
+     --root-ca-file /absolute/private/railway-postgres-root-ca.pem \
+     --root-ca-der-sha256 <reviewed-64-hex-root-ca-der-sha256> \
+     --transport-authority-sha256 <approved-64-hex-transport-authority-sha256> \
      --target-identity-sha256 <approved-64-hex-target-identity-sha256> \
      --expected-environment permanent-staging \
      --candidate-sha <frozen-40-or-64-hex-sha> \
      --approval-reference <signed-change-reference> \
-     --operator-id <private-operator-reference> \
-     --verifier-id <private-independent-verifier-reference> \
+     --operator-id <private-operator-reference-matching-the-installed-authority> \
+     --apply-receipt /absolute/private/release-id/apply-receipt.json \
+     --apply-receipt-sha256 <approved-apply-receipt-file-sha256> \
+     --verification-approval /absolute/private/release-id/verification-approval.json \
+     --verification-approval-sha256 <approved-verification-file-sha256> \
+     --verifier-public-key /absolute/private/release-id/verifier-ed25519-public.pem \
      --output-receipt /absolute/private/release-id/verify-receipt.json
    ```
 
@@ -407,9 +503,9 @@ URL file.
   Supabase/Auth/private Storage, and Redis core identities; prove they differ
   from production and the disposable restore resources.
 - [ ] Complete the three Google/OpenAI categories/four exact Railway variable
-  operations only through their reviewed authority. Keep the separate two
-  Supabase replacement-key operations hard-disabled and unauthorized until
-  their own reviewed authorities exist. Then deploy the reviewed app and verify
+  operations only through their protected authority. Run the separate atomic
+  Supabase replacement and protected canary-B/legacy-disable/old-key-denial
+  ceremony under its own approval. Then deploy the reviewed app and verify
   provider/domain/callback bindings.
 - [ ] Complete the incident-driven staging Postgres runtime/admin and Redis
   credential rotations with the isolated-client acceptance/rejection contract
@@ -444,6 +540,14 @@ URL file.
   image label. A staging-only label trial migrated the volume toward the wrong
   region and was reverted with data, backups, import, and runtime checks intact;
   require a provider-safe Singapore placement proof before retrying.
+  Dispatch the protected PITR workflow with only `permanent-staging` or
+  `production`; never supply a root UUID as operator input. Each target has a
+  separate protected GitHub environment containing its reviewed target label
+  and expected HA-root UUID. The executor maps the label to the checked-in
+  canonical environment, enumerates every live service, independently discovers
+  exactly one HA root, and fails before writing unless it equals that protected
+  authority. Preserve the intent/terminal receipts that bind the resulting
+  target-authority SHA-256.
 - [x] Create an independently verified logical PostgreSQL export from permanent
   staging with its archive, version-2 manifest, and complete state receipt.
   This describes immutable historical evidence. Version 2 remains readable for
@@ -884,12 +988,15 @@ be measured and approved.
    overlap, public data gates, and provider readiness while public ingress
    remains in the signed maintenance/closed state.
 7. Publish only the exactly reviewed launch data through the candidate's
-   authorised Postgres workflow. The current plan-v4 CLI is only an offline,
-   no-write reviewer aid: its authority bundle explicitly records absent
-   provider/cryptographic/mutation authority, its separate mode-0600 packet
-   exposes the exact proposed rows for private comparison, and all seven
-   activation blockers remain open. It has no apply or quarantine command and
-   cannot be used for this step. Then capture a new post-promotion PITR,
+   authorised Postgres workflow. Produce the no-write plan first, register the
+   independent reviewer's signed apply authorization with
+   `db:postgres:reviewed-price:authorize-apply`, and execute the exact approved
+   operation once with `db:postgres:reviewed-price:apply`. Reconcile an
+   uncertain result by operation UUID and receipt rather than retrying. If the
+   batch must be withdrawn, register the separately signed, apply-receipt-bound
+   quarantine authorization and run `db:postgres:reviewed-price:quarantine`;
+   direct SQL and the legacy SQLite mutation path remain forbidden. Then
+   capture a new post-promotion PITR,
    logical/Storage/evidence/tombstone WORM set, retrieve it with the independent
    recovery principal, restore it into fresh disposable staging, reconcile it,
    and obtain two-person RPO/RTO sign-off before routing any traffic. The

@@ -1,68 +1,96 @@
 {
-  "schemaVersion": "pintpath-permanent-staging-app-deployment-policy/v2",
+  "schemaVersion": "pintpath-railway-application-deployment-policy/v4",
   "policyId": "pintpath-permanent-staging-app-source-upload",
-  "activationState": "HARD_DISABLED_REVIEW_REQUIRED",
+  "activationState": "GITHUB_ENVIRONMENT_PROTECTED",
   "projectId": "48d8c6cd-1c66-4148-874b-20877f48e1a5",
-  "productionEnvironmentId": "13dab015-df74-45c6-b26f-69323daea99a",
-  "stagingEnvironmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
-  "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
+  "target": {
+    "name": "permanent-staging",
+    "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+    "forbiddenEnvironmentId": "13dab015-df74-45c6-b26f-69323daea99a",
+    "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
+    "publicOrigin": "https://pintpath-staging.up.railway.app",
+    "publicOriginSha256": "4532dc3b87deb570735196a86cd1b75ddc490c752dd6993e2f0d7bcb7df8161b",
+    "allowedReplicaCounts": [
+      1
+    ],
+    "githubEnvironment": "permanent-staging-deployment",
+    "requiredGitRef": "refs/heads/main"
+  },
   "railwayCli": {
     "version": "5.32.0",
-    "absolutePath": "/opt/homebrew/Cellar/railway/5.32.0/bin/railway",
-    "sha256": "26e3e0fd2b59fd9f7b1e891cbc8f3ca9b0266556545f00ba4db3ce754fbc10d1"
+    "platform": "linux",
+    "architecture": "x64",
+    "targetTriple": "x86_64-unknown-linux-musl",
+    "releaseUrl": "https://github.com/railwayapp/cli/releases/download/v5.32.0/railway-v5.32.0-x86_64-unknown-linux-musl.tar.gz",
+    "archiveSha256": "cd69b2ecb556601751165d85ac31a5fbc38cff46397939356df28d2b96a005f5",
+    "executableRelativePath": "railway",
+    "executableSha256": "27133cfc20bffc43b2f32c1638fa3c50eefc2f9d2d80301a93de34632ccb7a43"
   },
   "sourceContract": {
-    "candidateBinding": "exact-clean-committed-head",
-    "privateSnapshotRequired": true,
-    "sourceManifestRequired": true,
-    "sourceManifestAlgorithm": "sha256-json-depth-first-bytewise-siblings-path-type-mode-size-content-v1",
-    "railwayConfigPath": "/railway.toml",
+    "candidateBinding": "exact-current-main-head",
+    "cleanCommittedHeadRequired": true,
+    "privateGitArchiveSnapshotRequired": true,
+    "railwayConfigPath": "railway.toml",
     "railwayConfigSha256": "85dc659ebec2e0132092d917505d71678e92b8441b54bcefc80c6a082e3b967b",
-    "packageLockSha256": "2d916b16b3072ca5b6ede6da33752bf76654dc73e8d09b5a01351af71e33c22b"
+    "packageLockPath": "package-lock.json",
+    "packageLockSha256": "b5bfc2258853ab58dd5749b91ae55d9724620e102fe55e91de31a4599ab9f67b"
+  },
+  "mutationBoundary": {
+    "policyPath": "ops/railway/production-staging-mutation-policy.json",
+    "policySha256": "cebed5aebb1e2ada4cd247649eb418fa7d8b77b5c863ed4ecece601f492ac3c8",
+    "immediatePreflightRequired": true,
+    "unconditionalPostflightRequired": true
   },
   "writeContract": {
     "mode": "single-source-upload",
-    "transportImplemented": false,
-    "providerNetworkAllowed": false,
+    "transportImplemented": true,
+    "exactTargetTokenScopeRequired": true,
     "maximumWriteAttempts": 1,
-    "sequentialNotAtomic": true,
-    "externalMutationFreezeRequired": true,
-    "autoDeployAllowed": false,
-    "fromSourceAllowed": false,
-    "redeployAllowed": false,
-    "nativeRollbackAllowed": false,
-    "scaleAllowed": false,
-    "domainMutationAllowed": false,
-    "routeMutationAllowed": false,
-    "pitrMutationAllowed": false,
-    "deleteAllowed": false,
-    "variableMutationAllowed": false,
-    "volumeMutationAllowed": false,
-    "resourceCreationAllowed": false
+    "automaticRetryAllowed": false,
+    "acknowledgementRequiredForReconciliation": false,
+    "uncertainMutationAction": "READ_ONLY_RECONCILIATION_NO_RETRY",
+    "exactArguments": [
+      "up",
+      "<snapshot>",
+      "--path-as-root",
+      "--no-gitignore",
+      "--detach",
+      "--json",
+      "--project",
+      "<project-id>",
+      "--environment",
+      "<environment-id>",
+      "--service",
+      "<service-id>",
+      "--message",
+      "<candidate-bound-message>"
+    ],
+    "adjacentMutationAllowed": false,
+    "topologyMutationAllowed": false
   },
   "postflightContract": {
-    "expectedReplicaCount": 1,
     "expectedDeploymentStatus": "SUCCESS",
     "expectedDeploymentStopped": false,
     "deploymentPatchAllowed": false,
+    "replicaCountMustMatchPreflight": true,
     "requiredRuntimeRoutes": [
       "/health",
       "/startup",
       "/ready"
     ],
-    "applicationAttestationPolicySha256": "b056b175f981d7b51a9590943e209e82a0dfcbea650de7a4cb5ecf37a67bbdd1"
+    "maximumObservationSeconds": 900,
+    "pollIntervalSeconds": 10
   },
-  "spendContract": {
-    "currency": "USD",
-    "maximumRecurringStagingMonthlyCents": 5000,
-    "costPolicyReference": {
-      "schemaVersion": "pintpath-permanent-staging-cost-policy/v1",
-      "policyId": "pintpath-permanent-staging-recurring-cost",
-      "relativePath": "ops/railway/permanent-staging-cost-policy.json",
-      "sha256": "895d5bdcfe0fb05d17b3fa7cab6c525a80f3beacf0ff0cbd1bafdb54c979c8ca"
-    },
-    "preDeploymentCostReceiptRequired": true,
-    "postDeploymentCostReceiptRequired": true,
-    "additionalUnapprovedSpendAllowed": false
+  "prerequisite": null,
+  "providerReadinessContract": null,
+  "costContract": {
+    "required": true,
+    "policySchema": "pintpath-permanent-staging-cost-policy/v2",
+    "policyId": "pintpath-permanent-staging-recurring-cost",
+    "policyPath": "ops/railway/permanent-staging-cost-policy.json",
+    "policySha256": "57984ced59fa356baa9c19ac1e5018dad9c52829a6d7cc95a05cbd52112ddf86",
+    "deploymentMayClaimCostGatePassed": false,
+    "singleCombinedReceiptRequiredForRelease": true,
+    "receiptMayAuthorizeDeployment": false
   }
 }

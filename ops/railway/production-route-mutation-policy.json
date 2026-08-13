@@ -1,0 +1,102 @@
+{
+  "schemaVersion": "pintpath-protected-production-route-mutation-policy/v2",
+  "policyId": "pintpath-protected-production-canonical-route",
+  "activationState": "GITHUB_ENVIRONMENT_PROTECTED",
+  "projectId": "48d8c6cd-1c66-4148-874b-20877f48e1a5",
+  "target": {
+    "environmentId": "13dab015-df74-45c6-b26f-69323daea99a",
+    "forbiddenEnvironmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+    "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
+    "domainKind": "custom",
+    "domain": "pintpath.au",
+    "targetPort": null,
+    "requiredGitRef": "refs/heads/main"
+  },
+  "githubEnvironments": {
+    "close": "production-route-close",
+    "open": "production-route-open"
+  },
+  "candidateContract": {
+    "exactCurrentMainHeadRequired": true,
+    "cleanCommittedHeadRequired": true,
+    "healthySoleActiveDeploymentRequired": true,
+    "requiredReplicaCount": 2
+  },
+  "predecessorAuthorityContract": {
+    "schemaVersion": "pintpath-github-release-candidate-receipt/v3",
+    "policySha256": "b460588f0293bcc52d9a5ec1e057efab1850ebfb4c4d205dafdea34d6d2edbc3",
+    "requiredPhaseByOperation": {
+      "close": "close",
+      "open": "open"
+    },
+    "requiredStagesByOperation": {
+      "close": [
+        "deploy",
+        "scale"
+      ],
+      "open": [
+        "deploy",
+        "scale",
+        "close",
+        "promotion-recovery"
+      ]
+    },
+    "currentConsumerRunExact": true,
+    "runAttemptOneRequired": true,
+    "predecessorsCompletedBeforeConsumerStarted": true,
+    "strictChronologyRequired": true,
+    "strictCanonicalJsonRequired": true,
+    "artifactIdDigestAndSizeRequired": true,
+    "orderedProductionChainSha256Required": true,
+    "promotionRecoveryReceiptSchemaVersion": "pintpath-production-promotion-recovery-receipt/v1",
+    "promotionRecoveryPolicySha256": "d35f73daa16b62c84701a6a935d9594160bdbc7c8063529e530d9ac0e37beb5b",
+    "promotionRecoverySelfHashRequired": true,
+    "promotionRecoveryCandidateDeploymentAndCloseBindingRequired": true
+  },
+  "mutationBoundary": {
+    "policyPath": "ops/railway/production-staging-mutation-policy.json",
+    "policySha256": "cebed5aebb1e2ada4cd247649eb418fa7d8b77b5c863ed4ecece601f492ac3c8",
+    "immediatePreflightRequired": true,
+    "unconditionalPostflightRequired": true
+  },
+  "providerContract": {
+    "graphqlEndpoint": "https://backboard.railway.com/graphql/v2",
+    "railwayCliSchemaVersion": "5.32.0",
+    "railwayCliSchemaSha256": "89530486d77ed677586554085d4ff67e8ae6d3c44a6825d67c94320d4a083285",
+    "closeMutation": "customDomainDelete",
+    "openMutation": "customDomainCreate",
+    "maximumWriteAttemptsPerDispatch": 1,
+    "automaticRetriesAllowed": false,
+    "workflowRerunsAllowed": false,
+    "separateConfirmedDispatchRequiredPerOperation": true,
+    "ambiguousOutcomeAction": "READ_ONLY_RECONCILIATION_STOP_NO_RETRY"
+  },
+  "inventoryContract": {
+    "completeServicePaginationRequired": true,
+    "completeRouteInventoryRequired": true,
+    "canonicalRouteUniqueAcrossEnvironment": true,
+    "onlyCanonicalRouteMayChange": true,
+    "stagedPatchMustRemainEmpty": true,
+    "candidateDeploymentMustRemainUnchanged": true
+  },
+  "openRuntimeContract": {
+    "httpsRequired": true,
+    "validTlsRequired": true,
+    "redirectsAllowed": false,
+    "requiredRoutes": [
+      "/health",
+      "/startup",
+      "/ready"
+    ],
+    "sameCandidateAndDeploymentRequired": true,
+    "maximumObservationSeconds": 900,
+    "pollIntervalSeconds": 10
+  },
+  "evidence": {
+    "durableIntentRequiredBeforeWrite": true,
+    "terminalEvidenceRequired": true,
+    "finalReceiptEvidenceRequired": true,
+    "providerCredentialsAllowedInEvidence": false,
+    "secretDerivedCommitmentsAllowed": false
+  }
+}

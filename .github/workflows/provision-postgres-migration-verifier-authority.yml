@@ -1,0 +1,176 @@
+name: Provision Postgres migration verifier authority
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Exact 40-character SHA currently at main
+        required: true
+        type: string
+      target_environment:
+        description: Exact target for the independent verifier authority
+        required: true
+        type: choice
+        options:
+          - permanent-staging
+          - production
+      expected_previous_authority_sha256:
+        description: absent for first install, otherwise the exact current authority SHA-256
+        required: true
+        type: string
+      confirmation:
+        description: Type PROVISION_POSTGRES_MIGRATION_VERIFIER_AUTHORITY
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pintpath-postgres-migration-verifier-authority
+  cancel-in-progress: false
+
+jobs:
+  provision:
+    name: Provision exact independent verifier authority
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment: ${{ inputs.target_environment == 'production' && 'production-postgres-migration-verifier-authority' || 'permanent-staging-postgres-migration-verifier-authority' }}
+    steps:
+      - name: Checkout the exact main candidate without persisted credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+
+      - name: Require exact original-run authority
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          TARGET_ENVIRONMENT: ${{ inputs.target_environment }}
+          EXPECTED_PREVIOUS: ${{ inputs.expected_previous_authority_sha256 }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          DISPATCH_REF: ${{ github.ref }}
+          DISPATCH_SHA: ${{ github.sha }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          case "$TARGET_ENVIRONMENT" in permanent-staging|production) ;; *) exit 1 ;; esac
+          [[ "$EXPECTED_PREVIOUS" = absent || "$EXPECTED_PREVIOUS" =~ ^[a-f0-9]{64}$ ]]
+          test "$CONFIRMATION" = PROVISION_POSTGRES_MIGRATION_VERIFIER_AUTHORITY
+          test "$DISPATCH_REF" = refs/heads/main
+          test "$DISPATCH_SHA" = "$CANDIDATE_SHA"
+          test "$RUN_ATTEMPT" = 1
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse refs/remotes/origin/main)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain=v2 --untracked-files=all)"
+
+      - name: Setup the repository Node runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Install immutable dependencies
+        run: npm ci
+
+      - name: Verify the authority contract
+        run: npm run db:postgres:migration:verifier-authority:contract:check
+
+      - name: Materialize protected authority inputs
+        env:
+          TARGET_URL: ${{ secrets.PINTPATH_POSTGRES_MIGRATION_VERIFIER_TARGET_URL }}
+          ROOT_CA_PEM: ${{ secrets.PINTPATH_POSTGRES_MIGRATION_VERIFIER_ROOT_CA_PEM }}
+          OPERATOR_ID: ${{ secrets.PINTPATH_POSTGRES_MIGRATION_OPERATOR_ID }}
+          VERIFIER_ID: ${{ secrets.PINTPATH_POSTGRES_MIGRATION_VERIFIER_ID }}
+          VERIFIER_PUBLIC_KEY: ${{ secrets.PINTPATH_POSTGRES_MIGRATION_VERIFIER_PUBLIC_KEY_PEM }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          custody="$RUNNER_TEMP/pintpath-migration-verifier-authority"
+          mkdir -m 700 "$custody" "$custody/evidence"
+          printf '%s' "$TARGET_URL" > "$custody/target-url.secret"
+          printf '%s' "$ROOT_CA_PEM" > "$custody/root-ca.pem"
+          printf '%s' "$OPERATOR_ID" > "$custody/operator-id.secret"
+          printf '%s' "$VERIFIER_ID" > "$custody/verifier-id.secret"
+          printf '%s' "$VERIFIER_PUBLIC_KEY" > "$custody/verifier-public-key.pem"
+          chmod 600 \
+            "$custody/target-url.secret" \
+            "$custody/root-ca.pem" \
+            "$custody/operator-id.secret" \
+            "$custody/verifier-id.secret" \
+            "$custody/verifier-public-key.pem"
+
+      - name: Reassert exact current main immediately before the database write
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse refs/remotes/origin/main)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain=v2 --untracked-files=all)"
+
+      - name: Install or rotate the exact authority once
+        env:
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+          PINTPATH_POSTGRES_MIGRATION_VERIFIER_GITHUB_ENVIRONMENT: ${{ inputs.target_environment == 'production' && 'production-postgres-migration-verifier-authority' || 'permanent-staging-postgres-migration-verifier-authority' }}
+          TARGET_URL_SHA256: ${{ vars.PINTPATH_POSTGRES_MIGRATION_VERIFIER_TARGET_URL_SHA256 }}
+          ROOT_CA_DER_SHA256: ${{ vars.PINTPATH_POSTGRES_MIGRATION_VERIFIER_ROOT_CA_DER_SHA256 }}
+          TARGET_IDENTITY_SHA256: ${{ vars.PINTPATH_POSTGRES_MIGRATION_VERIFIER_TARGET_IDENTITY_SHA256 }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          TARGET_ENVIRONMENT: ${{ inputs.target_environment }}
+          EXPECTED_PREVIOUS_AUTHORITY_SHA256: ${{ inputs.expected_previous_authority_sha256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          custody="$RUNNER_TEMP/pintpath-migration-verifier-authority"
+          ./node_modules/.bin/tsx scripts/provision-postgres-migration-verifier-authority.ts \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --confirmation "$CONFIRMATION" \
+            --expected-environment "$TARGET_ENVIRONMENT" \
+            --expected-previous-authority-sha256 "$EXPECTED_PREVIOUS_AUTHORITY_SHA256" \
+            --operator-id-file "$custody/operator-id.secret" \
+            --output-dir "$custody/evidence" \
+            --root-ca-der-sha256 "$ROOT_CA_DER_SHA256" \
+            --root-ca-file "$custody/root-ca.pem" \
+            --target-identity-sha256 "$TARGET_IDENTITY_SHA256" \
+            --target-url-file "$custody/target-url.secret" \
+            --target-url-sha256 "$TARGET_URL_SHA256" \
+            --verifier-id-file "$custody/verifier-id.secret" \
+            --verifier-public-key "$custody/verifier-public-key.pem"
+
+      - name: Upload secret-free authority evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pintpath-postgres-migration-verifier-authority-${{ inputs.target_environment }}-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}/pintpath-migration-verifier-authority/evidence/
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Remove private authority custody
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          custody="$RUNNER_TEMP/pintpath-migration-verifier-authority"
+          rm -f \
+            "$custody/target-url.secret" \
+            "$custody/root-ca.pem" \
+            "$custody/operator-id.secret" \
+            "$custody/verifier-id.secret" \
+            "$custody/verifier-public-key.pem" \
+            "$custody/evidence/intent.json" \
+            "$custody/evidence/terminal.json" \
+            "$custody/evidence/receipt.json"
+          if [[ -d "$custody/evidence" ]]; then rmdir "$custody/evidence"; fi
+          if [[ -d "$custody" ]]; then rmdir "$custody"; fi

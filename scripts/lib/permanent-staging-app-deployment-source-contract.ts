@@ -59,7 +59,7 @@ export const PERMANENT_STAGING_APP_DEPLOYMENT_SOURCE_FIXTURE_SCHEMA =
 export const PERMANENT_STAGING_APP_DEPLOYMENT_SOURCE_CANDIDATE_SCHEMA =
   "pintpath-permanent-staging-app-source-snapshot-candidate/v1" as const;
 export const PERMANENT_STAGING_APP_DEPLOYMENT_SOURCE_CONTRACT_STATE =
-  "HARD_DISABLED_OFFLINE_STRUCTURAL_FIXTURE_ONLY" as const;
+  "SUPERSEDED_BY_PROTECTED_EXECUTOR_OFFLINE_VALIDATOR_ONLY" as const;
 export const PERMANENT_STAGING_APP_DEPLOYMENT_SOURCE_MANIFEST_ALGORITHM =
   "sha256-json-depth-first-bytewise-siblings-path-type-mode-size-content-v1" as const;
 
@@ -70,7 +70,7 @@ export const PERMANENT_STAGING_APP_DEPLOYMENT_SOURCE_CONTRACT_LOCK =
       "85dc659ebec2e0132092d917505d71678e92b8441b54bcefc80c6a082e3b967b",
     packageLockPath: "package-lock.json",
     packageLockSha256:
-      "2d916b16b3072ca5b6ede6da33752bf76654dc73e8d09b5a01351af71e33c22b",
+      "b5bfc2258853ab58dd5749b91ae55d9724620e102fe55e91de31a4599ab9f67b",
     futureUploadPathMode: "explicit-snapshot-path",
     futurePathAsRootFlag: "--path-as-root",
     futureNoGitignoreFlag: "--no-gitignore",

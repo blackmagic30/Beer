@@ -182,6 +182,7 @@ describe("Supabase key consumer compatibility inventory", () => {
       "apps/ios/BeerMap/Services/BeerMapAPI.swift",
       "scripts/deliver-monthly-reports.ts",
       "scripts/discover-menu-sources.ts",
+      "scripts/execute-protected-permanent-staging-supabase-cutover.ts",
       "scripts/import-melbourne-venues.ts",
       "scripts/production-smoke-check.mjs",
       "scripts/staging-supabase-key-canary.ts",
@@ -200,6 +201,7 @@ describe("Supabase key consumer compatibility inventory", () => {
       ".github/workflows/venue-directory-refresh.yml:bare-apikey-header-surface:2",
       "scripts/deliver-monthly-reports.ts:bare-apikey-header-surface:1",
       "scripts/discover-menu-sources.ts:bare-apikey-header-surface:1",
+      "scripts/execute-protected-permanent-staging-supabase-cutover.ts:bare-apikey-header-surface:4",
       "scripts/import-melbourne-venues.ts:bare-apikey-header-surface:3",
       "scripts/production-smoke-check.mjs:bare-apikey-header-surface:2",
       "scripts/staging-supabase-key-canary.ts:bare-apikey-header-surface:5",
@@ -217,6 +219,7 @@ describe("Supabase key consumer compatibility inventory", () => {
       ".github/workflows/venue-directory-refresh.yml",
       "scripts/deliver-monthly-reports.ts",
       "scripts/discover-menu-sources.ts",
+      "scripts/execute-protected-permanent-staging-supabase-cutover.ts",
       "scripts/import-melbourne-venues.ts",
       "scripts/production-smoke-check.mjs",
       "scripts/staging-supabase-key-canary.ts",
@@ -236,6 +239,7 @@ describe("Supabase key consumer compatibility inventory", () => {
     expect(read("apps/ios/BeerMap/Services/BeerMapAPI.swift"))
       .toContain("completionHandler(nil)");
     for (const filename of [
+      "scripts/execute-protected-permanent-staging-supabase-cutover.ts",
       "scripts/production-smoke-check.mjs",
       "scripts/staging-supabase-key-canary.ts",
       "src/lib/postgres-logical-offsite.ts",
@@ -256,6 +260,7 @@ describe("Supabase key consumer compatibility inventory", () => {
       "/graphql/v1",
     ]) expect(supabaseEndpointPattern.test(endpoint)).toBe(true);
     expect(relativePathsMatching(supabaseEndpointPattern)).toEqual([
+      ".github/workflows/production-logical-backup.yml",
       ".github/workflows/venue-directory-refresh.yml",
       "apps/android/app/src/main/java/au/pintpath/beermap/data/BeerMapApiClient.kt",
       "apps/android/app/src/main/java/au/pintpath/beermap/ui/features/BeerMapApp.kt",
@@ -264,6 +269,7 @@ describe("Supabase key consumer compatibility inventory", () => {
       "scripts/backup-data-offsite.ts",
       "scripts/check-production-deploy-guard.mjs",
       "scripts/download-offsite-backup.ts",
+      "scripts/execute-protected-permanent-staging-supabase-cutover.ts",
       "scripts/import-melbourne-venues.ts",
       "scripts/lib/permanent-staging-cost-policy.ts",
       "scripts/postgres-migration.ts",
@@ -401,10 +407,12 @@ describe("Supabase key consumer compatibility inventory", () => {
       restoreSource.indexOf("export async function runPostgresPrivateStorageRestoreCli("),
     );
     expect(restoreMain.indexOf("dependencies.assertDestinationOriginApproved("))
-      .toBeLessThan(restoreMain.indexOf("secret(dependencies,"));
+      .toBeLessThan(restoreMain.indexOf("secret(dependencies, targetConnectionUrlFile)"));
+    expect(restoreMain.indexOf("dependencies.assertDestinationOriginApproved("))
+      .toBeLessThan(restoreMain.indexOf("secret(dependencies, serviceRoleKeyFile)"));
     expect(restoreSource).not.toContain("bcdefghijklmnopqrstu");
     expect(restoreSource).toContain(
-      "No disposable restore project is currently registered in repository-owned",
+      "pintpath-private-storage-disposable-authority/v1",
     );
     const stageSource = read("scripts/stage-restored-source-evidence.ts");
     expect(stageSource).not.toContain("stageRestoredSourceEvidence");

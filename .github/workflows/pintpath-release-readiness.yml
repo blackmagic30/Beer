@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   release-readiness:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
       NODE_ENV: test
@@ -64,4 +64,4 @@ jobs:
           path: |
             docs/release-evidence.json
             release-evidence-summary.json
-          if-no-files-found: warn
+          if-no-files-found: error

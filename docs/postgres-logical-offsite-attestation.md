@@ -148,14 +148,22 @@ chmod 600 \
 test ! -e "$LOGICAL_BACKUP_DIRECTORY"
 ```
 
-The backup URL must contain exactly one `sslmode=verify-full` value. The backup
-library requires `railway-stock-localhost-ca-v1`: it holds the exact mode-600
-single-certificate CA file, pins the X.509 DER hash, resolves exactly one
-private `fd12::/16` address, authenticates the stock leaf as `localhost`, and
-uses the same address and CA for Node and libpq with TLS 1.2 or newer. `require`,
-`verify-ca`, system-root fallback, duplicate modes, and every `disable`
-value fail before tool opening or a database connection. The runtime URL retains
-its separately reviewed TLS contract. Obtain `EXPECTED_SOURCE_URL_SHA256` and
+The backup and runtime URLs must each contain exactly one
+`sslmode=verify-full` value. The backup library requires
+`railway-stock-localhost-ca-v1`: it holds the exact mode-600 single-certificate
+CA file, pins the X.509 DER hash, resolves exactly one private `fd12::/16`
+address, authenticates the stock leaf as `localhost`, and uses the same address
+and CA for Node and libpq with TLS 1.2 or newer. The offsite writer and
+retriever independently open that complete profile: each accepts only the exact
+lower-case `*.railway.internal:5432` URL authority, resolves exactly one
+canonical `fd12::/16` address, makes node-postgres dial that address, and
+authenticates the certificate with `servername=localhost`, the fixed
+`localhost` identity callback, the held CA bytes, and TLS 1.2 or newer. They
+fence the source URL authority, DNS answer, source CA descriptor, private held
+copy, and DER pin before and after every database operation, then close the
+database before destroying the transport authority. `require`, `verify-ca`,
+system-root fallback, duplicate modes, and every `disable` value fail before
+tool opening or a database connection. Obtain `EXPECTED_SOURCE_URL_SHA256` and
 `EXPECTED_ROOT_CA_DER_SHA256` from the reviewed provisioning authority, not by
 rehashing the mutable files during the ceremony. The exact URL and all supplied
 pins and paths are snapshotted before tool opening. The URL pin is checked before
@@ -266,19 +274,27 @@ operation. The dump, list, and version argument/environment/timeout surfaces are
 purpose-bound; the generic process runner and test filesystem seam are not
 exposed by the production factories.
 
-This remains review-only. Node still launches the executable by pathname, so a
-hostile same-UID actor can attempt a pathname execution ABA between preflight
-and `spawn`. Hashing the executable alone does not bind its dynamic loader or
-complete shared-library dependency tree. Activation therefore still requires
-an immutable digest-pinned runtime (or reviewed descriptor-native launcher)
-that binds those dependencies, runs the exact pre-bound process runner in a
-pristine worker with locked Promise primordials, and retains the archive's
-independently reviewed external digest guard across recovery. The process-group
-proof also cannot observe a substituted child that calls `setsid`; such a child
-could retain the credential environment or read-only archive descriptor even
-though the parent-only pipe prevents it retaining writable archive authority.
-Do not authorize a live backup ceremony until every boundary is independently
-reviewed and approved.
+The manual host-tool command above remains review-only: its pathname launch
+does not bind the dynamic loader or complete shared-library dependency tree.
+Do not use that manual path for a live ceremony. The separately protected
+schema-version-3 workflow in
+`.github/workflows/production-logical-backup.yml` closes that tool boundary with
+the operational adapter in `src/lib/postgres-oci-tool-runtime.ts`. It launches
+only the exact digest-pinned official PostgreSQL 17 `linux/amd64` image through
+a held and hashed official static Docker client, validates the daemon/image/
+network-plugin/container projections, uses a closed environment and read-only
+descriptor-backed credential mounts, retains parent FD archive custody, and
+proves one-shot container removal. Its worker starts with frozen intrinsics and
+disabled prototype mutation. Live execution is authorized only after all
+runner, Docker, network-policy, secret, environment-review, and provider
+prerequisites in `docs/production-logical-backup-operations.md` are provisioned
+and independently approved.
+
+This schema-version-3 activation does not activate the separately named V4
+design. `postgres-tool-runtime-closure-v4.ts` remains passive evidence with all
+operational capabilities false, and the V4 scratch-restore/source-authority
+contracts remain non-operational. Run their offline contract gate separately;
+never treat a V4 serialized contract as live runtime authority.
 The exact canonical state receipt and manifest are independently hashed against
 their in-memory canonical bytes and held by validated descriptors through the
 same post-cleanup revalidation; a replacement cannot become its own baseline.
@@ -336,6 +352,8 @@ OFFSITE_BACKUP_BUCKET="$OFFSITE_BACKUP_BUCKET" \
     --expected-destination-origin-sha256="$EXPECTED_OFFSITE_DESTINATION_ORIGIN_SHA256" \
     --expected-bucket-name-sha256="$EXPECTED_OFFSITE_BUCKET_NAME_SHA256" \
     --runtime-database-url-file="$RUNTIME_DATABASE_URL_FILE" \
+    --runtime-root-ca-file="$POSTGRES_ROOT_CA_FILE" \
+    --expected-runtime-root-ca-der-sha256="$EXPECTED_ROOT_CA_DER_SHA256" \
     --service-role-key-file="$OFFSITE_SERVICE_ROLE_KEY_FILE" \
     --operator-id="$OPERATOR_REFERENCE" \
   >"$OFFSITE_ATTESTATION_RESULT"
@@ -348,7 +366,8 @@ jq -e --arg manifest "$EXPECTED_MANIFEST_SHA256" \
    and (.attestationSha256 | test("^[a-f0-9]{64}$"))
    and (.latestPointerSha256 | test("^[a-f0-9]{64}$"))
    and (.remoteObjectSetSha256 | test("^[a-f0-9]{64}$"))
-   and (.backupIdSha256 | test("^[a-f0-9]{64}$"))' \
+   and (.backupIdSha256 | test("^[a-f0-9]{64}$"))
+   and (.successStateSha256 | test("^[a-f0-9]{64}$"))' \
   "$OFFSITE_ATTESTATION_RESULT"
 ```
 
@@ -360,9 +379,17 @@ The command performs this fixed sequence:
 2. verifies the source and destination Supabase origins differ, the destination
    origin and bucket match the protected reviewed hashes, and the supplied
    Storage transport is bound to that destination;
-3. hashes the exact protected runtime URL without emitting it or its digest,
-   and verifies the connected runtime PostgreSQL database identity is exactly
-   the source identity bound into the manifest, before any Storage mutation;
+3. requires the runtime URL to use exactly `sslmode=verify-full`, holds and
+   repeatedly revalidates the exact current-UID-owned mode-`600`, single-link
+   Railway root CA, checks its one self-signed CA certificate against the
+   reviewed DER SHA-256, accepts only the exact lower-case Railway private
+   authority on port 5432, resolves and continuously fences one canonical
+   `fd12::/16` address, and makes node-postgres dial only that address while
+   authenticating the stock leaf with the fixed `localhost` server name and
+   identity callback. It hashes the protected runtime URL without emitting it
+   or its digest and verifies the
+   connected runtime PostgreSQL database identity is exactly the source
+   identity bound into the manifest, before any Storage mutation;
 4. verifies the existing destination bucket is private and compatible and the
    runtime PostgreSQL role/schema/import/ACL isolation contract is healthy;
 5. acquires the fenced
@@ -383,6 +410,9 @@ The command performs this fixed sequence:
 The immutable attestation, latest pointer, and hash-only success state bind the
 runtime connection-URL SHA-256 to the same manifest, state receipt, and source
 database identity. The success output deliberately omits that URL digest. It
+includes `successStateSha256`, the SHA-256 of the exact canonical state value
+successfully persisted by compare-and-set, so a protected workflow can pin an
+immediate retrieval without reading or printing mutable state bytes. It
 contains timestamps, other non-secret evidence hashes, and schema version only;
 it contains no URL, object path, bucket name, operator reference, credential,
 database row, or customer data.
@@ -390,7 +420,9 @@ database row, or customer data.
 ## 4. Retrieve the exact operational copy
 
 Use the protected release register's independently captured SHA-256 of the
-complete canonical `job:postgres_logical_backup_success` value. Do not derive
+complete canonical `job:postgres_logical_backup_success` value. The committed
+scheduled backup/restore workflow may instead consume `successStateSha256`
+directly from its just-completed, WORM-cross-bound offsite result. Do not derive
 that expected hash, the destination-origin pin, or the bucket-name pin from the
 same mutable environment being tested. The output parent must be a physical,
 current-user-owned directory with no group/other permissions, and the requested
@@ -416,6 +448,8 @@ OFFSITE_BACKUP_BUCKET="$OFFSITE_BACKUP_BUCKET" \
     --expected-bucket-name-sha256="$EXPECTED_OFFSITE_BUCKET_NAME_SHA256" \
     --output-directory="$RETRIEVED_LOGICAL_BACKUP_DIRECTORY" \
     --runtime-database-url-file="$RUNTIME_DATABASE_URL_FILE" \
+    --runtime-root-ca-file="$POSTGRES_ROOT_CA_FILE" \
+    --expected-runtime-root-ca-der-sha256="$EXPECTED_ROOT_CA_DER_SHA256" \
     --service-role-key-file="$OFFSITE_SERVICE_ROLE_KEY_FILE" \
   >"$OFFSITE_RETRIEVAL_RESULT"
 chmod 600 "$OFFSITE_RETRIEVAL_RESULT"
@@ -435,8 +469,9 @@ jq -e --arg state "$EXPECTED_LOGICAL_SUCCESS_STATE_SHA256" \
 The retriever is read-only at the provider. It performs this fixed contract:
 
 1. checks canonical arguments, the distinct source/destination origins, both
-   reviewed destination pins, canonical runtime readiness, and the connected
-   source database identity;
+   reviewed destination pins, the exact `sslmode=verify-full` runtime URL and
+   held DER-pinned production root CA, canonical runtime readiness, and the
+   connected source database identity;
 2. reads and strictly parses the complete live success state, requires its
    canonical SHA-256 to equal the operator pin, and retains the state revision
    as the first half of an execution-wide fence;

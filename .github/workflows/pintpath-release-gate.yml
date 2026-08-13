@@ -2,8 +2,15 @@ name: Pint Path Release Gate
 
 on:
   workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Exact 40-character SHA currently at main and deployed to staging and production
+        required: true
+        type: string
 
 permissions:
+  actions: read
+  checks: read
   contents: read
 
 concurrency:
@@ -12,12 +19,12 @@ concurrency:
 
 jobs:
   production-release-gate:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     environment: production
     env:
       PINTPATH_SMOKE_BASE_URL: https://pintpath.au
-      PINTPATH_EXPECTED_COMMIT_SHA: ${{ github.sha }}
+      PINTPATH_EXPECTED_COMMIT_SHA: ${{ inputs.candidate_sha }}
       PINTPATH_ENFORCE_LAUNCH_FLAGS: "true"
       PINTPATH_EXPECTED_COMMERCIAL_LAUNCH_ENABLED: "false"
 
@@ -27,6 +34,22 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+
+      - name: Require the exact current main candidate
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          DISPATCH_SHA: ${{ github.sha }}
+          DISPATCH_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          test "$DISPATCH_REF" = "refs/heads/main"
+          test "$DISPATCH_SHA" = "$CANDIDATE_SHA"
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse refs/remotes/origin/main)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain=v2 --untracked-files=all)"
 
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -37,17 +60,34 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Prove permanent-staging cost and deployment scaffolds remain fail-closed
+      - name: Require current main checks and deployment artifacts
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -m 700 "$RUNNER_TEMP/github-release-candidate-evidence"
+          npm run --silent github:release-candidate:verify -- \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --phase release \
+            --output "$RUNNER_TEMP/github-release-candidate-evidence/required-checks.json"
+
+      - name: Validate protected deployment and cost-evidence contracts
         run: npm run permanent-staging:cost:contract:check
 
-      - name: Prove reviewed-price PostgreSQL kernel remains inert
-        run: npm run db:postgres:reviewed-price:kernel:contract:check
+      - name: Prove activated reviewed-price kernel and protected operator contracts
+        run: |
+          npm run db:postgres:reviewed-price:kernel:contract:check
+          npm run db:postgres:reviewed-price:operator:contract:check
 
       - name: Prove logical-state v2 remains additive and fail-closed
         run: npm run db:postgres:logical-state:v2:contract:check
 
-      - name: Prove logical-backup V4 remains offline and non-operational
+      - name: Prove passive logical-backup V4 contracts remain fail-closed
         run: npm run db:postgres:backup:v4:offline-contract:check
+
+      - name: Prove operational digest-pinned PostgreSQL backup and restore runtime
+        run: npm run db:postgres:backup:oci-runtime:contract:check
 
       - name: Build
         run: npm run build
@@ -128,6 +168,7 @@ jobs:
       - name: Record tested immutable commit
         run: |
           set -o pipefail
+          test "$(git rev-parse HEAD)" = '${{ inputs.candidate_sha }}'
           git rev-parse HEAD | tee tested-commit-sha.txt
 
       - name: Enforce external launch evidence
@@ -139,9 +180,10 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: pintpath-production-release-gate
+          name: pintpath-production-release-gate-${{ inputs.candidate_sha }}
           path: |
             docs/release-evidence.json
+            ${{ runner.temp }}/github-release-candidate-evidence/required-checks.json
             production-public-smoke.json
             production-data-readiness.json
             production-role-smoke.json
@@ -149,4 +191,4 @@ jobs:
             railway-mutation-boundary-readiness.json
             railway-sealed-variable-readiness.json
             tested-commit-sha.txt
-          if-no-files-found: warn
+          if-no-files-found: error

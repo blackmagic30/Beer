@@ -2,7 +2,12 @@
 
 ## Supported Beta Posture
 
-Pint Path is a Melbourne beta running on a Node.js, TypeScript, Express, SQLite, Supabase, Google Maps, OpenAI, Stripe, and Railway stack. The old phone-call automation surface has been removed from the repository and is not built or mounted.
+Pint Path's reviewed launch architecture runs Node.js, TypeScript, Express,
+PostgreSQL, Redis, Supabase Auth/private Storage, Google Maps, OpenAI, Resend,
+and Railway. SQLite is permitted only in isolated development/tests and as the
+sealed, read-only migration source; no production or permanent-staging runtime
+may open it for authoritative writes. The old phone-call automation surface
+has been removed from the repository and is not built or mounted.
 
 The beta security posture is designed to protect:
 
@@ -79,9 +84,18 @@ Run `npm run security:scan` before every deploy.
 
 ## Backup And Restore
 
-- Back up the Railway SQLite volume before production deploys or schema changes.
-- Schema changes should be additive. Avoid destructive migrations for the beta.
-- Roll back through the reviewed Railway executor to the previous immutable image and restore the pre-deploy database recovery point if a migration corrupts state.
+- Require managed PostgreSQL PITR plus a checksummed logical backup on the
+  committed protected schedule; a successful job must update the readiness
+  freshness receipt.
+- Copy logical backups and every referenced private Storage object to a
+  separately administered provider-enforced WORM/object-lock destination.
+- Rehearse restoration into the pinned disposable target and reconcile schema,
+  row counts, private objects, tombstones, and RPO/RTO before launch.
+- Roll back only through the reviewed Railway executor to a recorded immutable
+  Postgres-compatible image. Never resume writes to the sealed SQLite source.
+- Follow the controlling sequence in
+  [`docs/production-launch-runbook.md`](docs/production-launch-runbook.md); a
+  backup artifact is not release evidence until it is candidate-bound there.
 
 ## Admin MFA / Step-Up
 

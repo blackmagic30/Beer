@@ -1,10 +1,12 @@
 {
-  "schemaVersion": "pintpath-permanent-staging-cost-policy/v1",
+  "schemaVersion": "pintpath-permanent-staging-cost-policy/v2",
   "policyId": "pintpath-permanent-staging-recurring-cost",
-  "activationState": "SCAFFOLD_ONLY_PROVIDER_OBSERVATION_REQUIRED",
+  "activationState": "ACTIVE_READ_ONLY_EXTERNAL_OBSERVATION_BINDER",
   "environment": "permanent-staging",
   "currency": "USD",
   "maximumRecurringMonthlyCents": 5000,
+  "maximumObservedRecurringMonthlyCents": 4700,
+  "requiredHeadroomMonthlyCents": 300,
   "calculationContract": {
     "amountUnit": "integer-cents",
     "lineItemRounding": "ceiling",
@@ -13,7 +15,14 @@
   },
   "evidenceContract": {
     "providerCollectorImplemented": false,
-    "providerObservationBindingImplemented": false,
+    "externalProviderExportValidationImplemented": true,
+    "providerObservationBindingImplemented": true,
+    "providerNetworkAccessAllowed": false,
+    "credentialAccessAllowed": false,
+    "externallyCapturedProviderExportsRequired": true,
+    "preAndPostDeploymentObservationRequired": true,
+    "privateApprovalManifestRequired": true,
+    "observedArtifactSha256VerificationRequired": true,
     "scope": "permanent-staging-only",
     "providerInventoryRequired": true,
     "completeProviderInventoryRequired": true,
@@ -23,8 +32,38 @@
     "maximumUnpricedResourceCount": 0,
     "productionOperationalCopyExcluded": true,
     "disposableRestoreExcluded": true,
-    "preDeploymentReceiptRequired": true,
-    "postDeploymentReceiptRequired": true,
-    "receiptSchemaVersion": "pintpath-permanent-staging-cost-receipt/v1"
+    "singleCombinedReceiptRequired": true,
+    "receiptMayAuthorizeDeployment": false,
+    "receiptSchemaVersion": "pintpath-permanent-staging-cost-receipt/v2"
+  },
+  "topologyContract": {
+    "railway": {
+      "maximumRecurringMonthlyCents": 2000,
+      "dedicatedStagingOnlyWorkspaceRequired": true,
+      "exactServiceSet": [
+        "beer",
+        "postgres",
+        "redis"
+      ],
+      "maximumSharedResourceCount": 0,
+      "agentUsageMustBeDisabledOrZeroBounded": true
+    },
+    "stagingSupabase": {
+      "maximumRecurringMonthlyCents": 2500,
+      "dedicatedStagingOnlyOrganizationRequired": true,
+      "exactProjectCount": 1,
+      "exactComputeSize": "Micro",
+      "spendCapRequired": true,
+      "maximumSharedResourceCount": 0
+    },
+    "stagingExternalProviders": {
+      "maximumRecurringMonthlyCents": 200,
+      "googleMapsAndPlacesMaximumCents": 100,
+      "openAiMaximumCents": 100,
+      "resendMaximumCents": 0,
+      "unboundedSurfaceCountRequired": 0
+    },
+    "configuredMaximumRecurringMonthlyCents": 4700,
+    "explicitHeadroomMonthlyCents": 300
   }
 }

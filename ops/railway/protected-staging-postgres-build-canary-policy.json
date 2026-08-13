@@ -1,0 +1,44 @@
+{
+  "schemaVersion": "pintpath-protected-staging-postgres-build-canary-policy/v1",
+  "policyId": "pintpath-permanent-staging-postgres-build-canary",
+  "activationState": "GITHUB_ENVIRONMENT_PROTECTED",
+  "githubEnvironment": "permanent-staging-postgres-build-canary",
+  "projectId": "48d8c6cd-1c66-4148-874b-20877f48e1a5",
+  "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+  "forbiddenEnvironmentId": "13dab015-df74-45c6-b26f-69323daea99a",
+  "serviceId": "bb84fecc-a125-49ce-853f-d2f25f7019c5",
+  "serviceInstanceId": "716b4818-7695-4b9f-b5f9-35249e785a58",
+  "serviceName": "postgres-backup-canary-2d276b6",
+  "railwayConfigPath": "railway.postgres-backup-canary.toml",
+  "railwayConfigSha256": "b55463ba68f0f03661b62ad300c8569550505d7394b76d4f1f9cce60ebd20d3c",
+  "expectedVariables": [
+    "RAILPACK_PACKAGES",
+    "STAGING_POSTGRES_CA_CANARY_MODE",
+    "STAGING_POSTGRES_CA_CANARY_RAILWAY_CONFIG_PATH"
+  ],
+  "railwayCli": {
+    "version": "5.32.0",
+    "archiveSha256": "cd69b2ecb556601751165d85ac31a5fbc38cff46397939356df28d2b96a005f5",
+    "executableSha256": "27133cfc20bffc43b2f32c1638fa3c50eefc2f9d2d80301a93de34632ccb7a43"
+  },
+  "mutation": {
+    "operation": "single-source-upload",
+    "maximumAttempts": 1,
+    "automaticRetriesAllowed": false,
+    "rerunsAllowed": false,
+    "unconditionalPostflightRequired": true,
+    "ambiguousOutcomeAction": "READ_ONLY_RECONCILIATION_STOP_NO_RETRY"
+  },
+  "postflight": {
+    "expectedStatus": "SUCCESS",
+    "expectedStopped": true,
+    "canonicalBuildOnlyReceiptRequired": true,
+    "maximumObservationSeconds": 900,
+    "pollIntervalSeconds": 10
+  },
+  "evidence": {
+    "durableIntentRequiredBeforeAttempt": true,
+    "secretMaterialAllowed": false,
+    "secretDerivedCommitmentsAllowed": false
+  }
+}

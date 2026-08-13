@@ -1,179 +1,215 @@
-# Permanent-staging application source-upload scaffold
+# Protected Railway application deployment
 
-Status: **HARD_DISABLED_REVIEW_REQUIRED**. This is an offline policy and
-blocked-receipt foundation only. It cannot contact Railway, read a credential,
-upload source, deploy or redeploy an application, change replicas or routes,
-enable PITR, delete a resource, or incur provider spend.
+Status: **ACTIVE ONLY THROUGH PROTECTED GITHUB ENVIRONMENTS**.
 
-## Fixed boundary
+Pint Path has two manual, candidate-bound application source-upload paths:
 
-The canonical policy pins Railway project
-`48d8c6cd-1c66-4148-874b-20877f48e1a5`, forbidden production environment
-`13dab015-df74-45c6-b26f-69323daea99a`, permanent-staging environment
-`a4e0f507-d6d3-4df9-a818-ad92c0071a35`, and Beer service
-`6816c4a2-e392-4ee5-826f-2584cb599ec0`. It also pins the reviewed Railway CLI
-identity, committed `railway.toml` and package-lock hashes, one-replica
-postflight shape, read-only deployment-attestation policy hash, and the
-integer `5000` USD-cent permanent-staging ceiling. Its spend contract pins
-`ops/railway/permanent-staging-cost-policy.json`, which is currently
-`SCAFFOLD_ONLY_PROVIDER_OBSERVATION_REQUIRED`.
+- `.github/workflows/deploy-permanent-staging.yml` deploys one replica to the
+  pinned permanent-staging environment;
+- `.github/workflows/deploy-production.yml` preserves the pinned production
+  environment's exact healthy current topology of either one or two replicas,
+  but only after the same candidate is healthy in permanent staging. Initial
+  bootstrap is one replica; the separate protected production-convergence
+  workflow scales that deployed candidate to two only after source upload
+  succeeds.
 
-The cost policy and pure evaluator are offline scaffolding only. They have no
-provider collector or observation-binding capability, and the policy keeps
-both `providerCollectorImplemented` and
-`providerObservationBindingImplemented` false. A caller-authored inventory or
-receipt therefore cannot satisfy the deployment or release gate. The
-approximately US$46.80/month figure recorded in older planning is a historical
-combined estimate for permanent staging plus the separate production
-operational copy; it is not staging-only provider evidence and is never used as
-the gating total.
+These workflows are the only application-deployment authority. A package
+command run locally, Railway dashboard deploy, Git autodeploy, redeploy,
+rollback, or ad-hoc CLI/API call is not authorized. Missing GitHub environment
+approval or any required secret leaves the path safely inactive before a
+Railway write.
 
-The credential-free public-price planning audit reviewed on 2026-08-13 now
-establishes a stricter blocker. At Railway's published US$20/vCPU-month,
-US$10/GB-memory-month, and US$0.15/GB-volume-month rates, the documented Beer,
-Postgres, and Redis maxima plus a fully used 50 GB staging Postgres volume total
-US$26/month. Supabase's published Pro price with one Micro project, after the
-plan's standard US$10 compute entitlement, is US$25/month. The resulting
-US$51 partial configured maximum is already US$1 above the staging ceiling
-before Railway egress, non-Postgres storage/backups, Supabase add-ons, or
-Google/OpenAI/Resend. This is planning evidence only—not a live provider cost
-receipt—but it proves the current maximum configuration cannot satisfy the
-upper-bound contract. Do not activate the collector or deployment policy until
-a separately reviewed capacity/cost redesign brings the configured maximum
-below US$50 with enough headroom for every remaining bounded item.
+## Immutable boundary
 
-The public-doc remediation design narrows that redesign without authorizing
-it. A dedicated staging-only Railway Pro workspace with a US$20 compute hard
-limit and a dedicated staging-only Supabase Pro organization with exactly one
-Micro project, Spend Cap on, and no uncovered add-ons would reserve US$45 and
-leave only US$5 for every external provider. This requires provider mutations
-and may take Railway workloads offline at the hard limit; neither consequence
-is approved here. Railway Agent usage must be disabled or independently
-zero-bounded, and the present US$26 Railway resource maximum does not fit the
-US$20 target.
+Both version-4 policies pin Railway project
+`48d8c6cd-1c66-4148-874b-20877f48e1a5`, Beer service
+`6816c4a2-e392-4ee5-826f-2584cb599ec0`, exact target/forbidden environment
+IDs, origins and their hashes, allowed replica counts, the committed
+`railway.toml` and `package-lock.json` hashes, and the production/staging
+mutation-boundary policy hash. Staging is locked to one replica. Production
+accepts only an exact healthy preflight topology of one or two replicas and
+must preserve that observed count across the source upload. The source must be
+the exact clean commit currently at `main`; a private `git archive` snapshot is
+reasserted immediately before upload.
+The older capability-pure source-fixture parser is retained only as an offline
+legacy validator and is explicitly superseded by this protected executor; it
+is not a second deployment path.
 
-Resend's published Free quota is a plausible zero-dollar staging target, but
-the live plan/team/add-on state is unobserved. The source-derived Google
-inventory now covers Dynamic Maps, Directions Legacy, Geocoding, Text Search
-Pro and Enterprise, Nearby Search Enterprise, and Place Details Enterprise.
-Places API (New) and Dynamic Maps document per-minute quotas, while Geocoding
-and Directions also expose daily controls; none supplies the monthly hard
-request reservation needed for this cost envelope. Google also warns that
-quota and billing measurements can differ, so a cloud budget alert or a quota
-set exactly at a free-usage threshold is not a conservative monthly bound.
+The runner installs no mutable CLI dependency. Each workflow downloads only
+Railway CLI `5.32.0` for `x86_64-unknown-linux-musl` from the pinned GitHub
+release URL and verifies both of these hashes before execution:
 
-The two OpenAI OCR call sites now disable SDK retries, use finite `high` image
-detail, and cap every response at 8,192 output tokens. An admin submission can
-still make up to three model calls (primary, fallback, and review), discovery
-can make two per image, PDFs have no proved page/input-token ceiling, model
-environment overrides fail closed outside the reviewed `gpt-5.6-sol` and
-`gpt-4.1` allowlist. A new opt-in cost-bound path additionally pins
-`gpt-4.1-mini-2025-04-14`, forbids PDFs and standalone discovery OCR, caps
-prompt plus response-schema bytes at 49,152, and atomically reserves five
-cents in shared `system_state` before each attempt until a US$1 UTC-month
-ceiling. It is disabled and unobserved: the exact mini snapshot has not passed
-the labelled corpus, no live price/project receipt is bound, and no two-replica
-restart/denial evidence exists. OpenAI project hard-spend-limit enforcement is
-also not instantaneous and has no documented maximum overshoot. These controls
-reduce exposure but cannot yet ceiling-sum a live month. Consequently the
-remaining US$5 is not yet a proved upper bound, and no Google, OpenAI, Resend,
-Railway, or Supabase configuration change is authorized by this design. No
-provider cost-control mutation is authorized.
+- archive SHA-256:
+  `cd69b2ecb556601751165d85ac31a5fbc38cff46397939356df28d2b96a005f5`;
+- executable SHA-256:
+  `27133cfc20bffc43b2f32c1638fa3c50eefc2f9d2d80301a93de34632ccb7a43`.
 
-The policy describes only a future single source-upload operation from an
-exact clean committed head through a private, independently pinned source
-snapshot. It explicitly forbids Git autodeploy, a from-source redeploy,
-ordinary redeploy, Railway-native rollback, replica scaling, domain or route
-mutation, PITR mutation, deletion, variable or volume mutation, resource
-creation, provider network access, and additional unapproved spend.
+The one permitted Railway write is exactly one detached source upload:
 
-## Current behavior
+```text
+railway up <private-snapshot> --path-as-root --no-gitignore --detach --json \
+  --project <pinned-project> --environment <pinned-target-environment> \
+  --service <pinned-service> --message <candidate-and-intent-bound-message>
+```
 
-There is intentionally no package command or CI job that invokes the deployment
-executor, and no locked-worker mode, credential adapter, provider client,
-network callback, child process, or mutation transport for this scaffold. The
-credential-free `permanent-staging:cost:contract:check` package command and
-manual release workflow run only the offline fail-closed policy tests; they do
-not invoke the runner or observe/deploy a provider resource. The zero-argument
-runner ignores any injected arguments and ambient input. It emits one canonical JSON line with
-`mode=framework-disabled`, `outcome=blocked`, no candidate or deployment
-identity, and every check `false`, then returns exit status `1`.
+There is no automatic retry. Missing CLI acknowledgement, timeout, or nonzero
+exit triggers read-only reconciliation of the candidate; it never triggers a
+second write. An indeterminate provider result is `mutation_uncertain` and
+needs a new independently approved operator decision after read-only review.
+GitHub job reruns are rejected (`run_attempt` must equal `1`); any later action
+requires a new manual dispatch and a fresh protected-environment approval.
 
-The checked-in policy is accepted only when its bytes exactly match the
-canonical source compiled into the scaffold. Formatting changes, reordered or
-additional fields, missing final newline, and any identity, hash, operation,
-spend, or activation drift fail closed.
+## GitHub setup and invocation
 
-Running the scaffold is implementation evidence only. It cannot authorize a
-Railway write, close the application-deployment blocker, create an authentic
-deployment-attestation receipt, or satisfy a launch gate.
+Create two protected GitHub environments with required reviewers and restrict
+them to `main`:
 
-## Required work before activation
+| Workflow          | GitHub environment             | Write secret                               |
+| ----------------- | ------------------------------ | ------------------------------------------ |
+| Permanent staging | `permanent-staging-deployment` | `PINTPATH_RAILWAY_STAGING_DEPLOY_TOKEN`    |
+| Production        | `production-deployment`        | `PINTPATH_RAILWAY_PRODUCTION_DEPLOY_TOKEN` |
 
-A later, separately reviewed change must add all of the following without
-weakening this stop:
+Each environment also needs
+`PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN` and
+`PINTPATH_RAILWAY_STAGING_METADATA_TOKEN`. They must be distinct,
+environment-scoped Railway project tokens. The write secret must target only
+the named environment. Do not reuse account-wide, production, staging,
+database, or emergency authority across roles. Disable Railway Git autodeploy.
 
-1. a complete read-only live topology fixture for the exact staging service,
-   including its service instance, deployments, region, replica/resource
-   limits, variables metadata, domains, routes, volumes, triggers, and staged
-   patch;
-2. a clean committed-head source authority and private immutable source
-   snapshot whose complete manifest is reasserted immediately before upload;
-3. a durable mode-0600 intent in a current-UID mode-0700 directory before any
-   write, with recovery-only reconciliation that never repeats an uncertain
-   upload;
-4. separately locked immediate production/staging mutation-boundary preflight
-   and unconditional postflight without inheriting both authorities in an
-   ambient shell;
-5. exactly one explicitly targeted, bounded source-upload attempt, followed by
-   provider reconciliation even if acknowledgement is missing or times out;
-6. proof that project, environment, service, replicas, variables, routes,
-   volumes, resource limits, and spend authority had no collateral delta,
-   including fresh pre- and post-deployment provider-observed cost receipts for
-   the same frozen candidate;
-7. the existing read-only `/health`, `/startup`, and `/ready` deployment
-   attestation for the same candidate and sole successful deployment; and
-8. durable terminal evidence, cleanup/finalization proof, independent review,
-   and a new policy version that deliberately changes the activation state.
+The production environment additionally needs
+`PINTPATH_PRODUCTION_PROVIDER_READINESS_ENVELOPE_BASE64` and
+`PINTPATH_PRODUCTION_PROVIDER_READINESS_ENVELOPE_SHA256`. Before approval, run
+strict `readiness:launch` inside the deployed production service as described
+in the launch runbook, retain only its sanitized JSON, and have the protected
+operator bind it to the proposed candidate SHA, observation time, and observed
+production deployment SHA in the canonical version-2 envelope. Version 2 also
+binds the readiness result's sanitized `postgresAuthority`: SHA-256 identities
+for the exact application URL, distinct maintenance URL, root CA PEM bytes, and
+reviewed root CA DER plus true exactness/same-target/distinct-login statuses.
+Never put either URL or the CA PEM in any additional envelope field. Version 1
+is rejected. The observation must be no more than 24 hours old. The verifier
+requires
+`production_free_launch`, strict mode, zero warnings/failures, every check
+passing, both canonical lower-case private `:5432?sslmode=verify-full`
+Postgres login authorities, a valid PEM/DER binding, required
+Railway/Redis/Supabase/Storage/Free-scope checks, and exact envelope bytes/hash.
+The raw protected envelope is not uploaded; the workflow artifact contains
+only its hash-bound authority verification.
 
-The future read-only cost collector and receipt binder must inventory every
-permanent-staging Railway resource, the staging Supabase project, and all
-staging external-provider accounts/caps. Each provider row must have complete
-inventory and price-or-cap evidence, ceiling-rounded integer USD cents, and
-zero unknown, unpriced, shared, or unbounded resources. Their summed recurring
-upper bound must be at most `5000` cents. The production operational-copy and
-disposable-restore resources require separately hashed cost authorities and
-must not be included in the staging total.
+Dispatch the relevant workflow from `main` and enter the exact 40-character
+SHA currently at `main`. The job checks the dispatch ref/SHA, checkout,
+`origin/main`, clean worktree, repository gate, current required GitHub checks,
+and required SHA-bound artifacts before it can reach the write step. Production
+validates the candidate-bound release-evidence register in non-strict mode.
+Strict evidence is intentionally post-deployment: production public smoke,
+authenticated role proof, and final App Review evidence cannot exist before
+the candidate is deployed. Permanent staging is likewise deployable while
+external evidence is being collected.
 
-After any attempted write, never retry automatically and never perform a
-second provider mutation as cleanup. An absent acknowledgement or incomplete
-postflight is `mutation_uncertain` and requires read-only reconciliation.
+The package aliases below exist for the workflow; they are not standalone
+operator authority:
 
-## Separate operations
+```text
+npm run --silent railway:staging:app:deploy -- \
+  --candidate-sha <40hex> --evidence-dir <absolute-mode-0700-directory>
 
-Keep route creation, scale-to-two, scale-to-one, PITR enablement, and teardown
-behind their own exact policies and executors. Route mutation is unnecessary if
-complete inventory proves the expected domain already exists. Temporary
-scaling requires a separately approved bounded spend window and a reviewed
-scale-down operation. PITR remains blocked by the provider-safe image-label and
-Singapore-placement review as well as explicit spend approval. Teardown remains
-last and additionally requires complete resource/evidence reconciliation plus
-specific authorization naming every resource ID.
+npm run --silent railway:production:app:deploy -- \
+  --candidate-sha <40hex> --evidence-dir <absolute-mode-0700-directory>
+```
 
-The Postgres-compatible rollback rehearsal must deploy the separately recorded
-`rollbackBuildSha` as a new exact source upload against the current Postgres and
-provider configuration. Do not use Railway-native deployment rollback: that
-operation restores the previous deployment's custom variables and could
-reinstate superseded credentials or configuration.
+Outside exact GitHub Actions `main` context, without the protected credentials,
+or without the pinned CLI bytes, the executor fails closed.
+
+## Preflight, reconciliation, and receipts
+
+Before the upload, the executor requires the immediate read-only
+production/staging mutation-boundary receipt, empty staged patches, exact
+metadata-token scope, a separate write token whose read-only scope query matches
+the exact target project/environment, target/service/origin/replica topology, private source
+snapshot, verified CLI bytes, and a durable mode-0600 intent in a current-UID
+mode-0700 directory. Production additionally requires the same candidate to be
+the sole healthy permanent-staging deployment and to pass all three runtime
+routes.
+
+After any attempted upload—even when acknowledgement is absent—the executor
+performs read-only provider reconciliation. Success requires the exact
+candidate to be the sole active `SUCCESS` deployment, the exact preflight
+replica count and domain to remain intact, no staged patch, no collateral
+identity or domain change, and candidate/deployment-bound `200` responses from
+`/health`, `/startup`, and `/ready`. It then re-observes the provider and
+requires the deployment, snapshot, active-deployment set, replica count,
+domains, and complete collateral inventory to remain unchanged across those
+runtime probes. The mutation-boundary postflight runs unconditionally.
+
+The workflow uploads a SHA-bound artifact containing only the GitHub gate
+receipt and private execution evidence:
+
+- `pintpath-permanent-staging-deployment-<candidateSha>`;
+- `pintpath-production-deployment-<candidateSha>`.
+
+The current-main verifier also requires the exact successful base checks listed
+in `.github/release-required-checks.json`. Each check is bound to its declared
+workflow path and trigger event through the GitHub Actions run associated with
+that check; a same-name check from another workflow or trigger cannot satisfy
+the gate, and more than one successful check from the intended workflow/event
+fails closed. The verifier also requires the same-run, non-expired,
+digest-bearing base artifacts `pintpath-mission-discovery-scale-evidence`,
+`pintpath-postgres-tool-runtime-closure-v4-observation`, and
+`pintpath-automated-readiness-evidence`. Production additionally requires the
+same-SHA staging deployment and the protected two-replica scale/soak check plus
+their digest-bearing artifacts, as well as the protected iOS production
+configuration check. The post-deployment release gate requires both the
+same-SHA topology-preserving production source-upload artifact and the separate
+candidate-bound proof that that deployed candidate is exactly two replicas.
+For the initial launch this is a one-replica upload followed by convergence;
+for the evidence-closeout redeploy the upload preserves two replicas and the
+convergence workflow emits its same-SHA `already_converged` proof. Never scale
+the older production deployment before uploading the initial candidate; it may
+still be the SQLite build.
+
+Receipts hash Railway resource identities, CLI output, runtime responses, and
+pre/postflight evidence. They do not contain Railway tokens or raw provider
+responses. A failed or partial receipt is evidence of uncertainty, not
+permission to retry.
+
+## Cost evidence is a separate release gate
+
+The staging deployment policy pins the active read-only external-observation
+cost policy, schema `pintpath-permanent-staging-cost-policy/v2`, and SHA-256
+`57984ced59fa356baa9c19ac1e5018dad9c52829a6d7cc95a05cbd52112ddf86`.
+This proves policy-byte agreement only. It neither fabricates provider facts
+nor claims that the cost gate passed.
+
+An authorized finance/infra operator must capture the protected pre-deployment
+and post-reconciliation provider exports out of band. A separate verifier then
+binds both observations and the private manifest into the single combined
+version-2 cost receipt described in
+[`permanent-staging-cost-evidence.md`](./permanent-staging-cost-evidence.md).
+The receipt cannot authorize deployment; it is required later for release.
+
+## Adjacent operations require separate authority
+
+This executor cannot mutate variables, routes/domains, replicas, volumes,
+resource limits, services, databases, PITR, backups, or provider billing
+controls. It cannot use Railway redeploy/native rollback, delete resources, or
+commit/discard a staged patch. Protected successors exist for the reviewed
+runtime/provider-variable, Supabase-cutover, build-canary, scale, PITR, and
+exact disposable-restore teardown operations. Each remains behind its own
+tracked policy, protected workflow, and executor; none inherits authority from
+an application deployment receipt. Unlisted operations remain blocked under
+the document-wide mutation boundary.
+
+For application rollback, deploy a separately frozen, reviewed SHA through the
+same protected source-upload ceremony after proving it against the current
+Postgres schema. Never use Railway-native rollback because it can restore
+superseded custom variables.
 
 ## STOP conditions
 
-Stop without provider access if the policy is non-canonical, any pin differs,
-the checkout is not the reviewed clean committed head, a source snapshot or
-durable artifact is unsafe, live topology is incomplete, either environment
-has a staged patch, production authority is not exact, provider configuration
-is incomplete, the fresh candidate-bound provider cost receipt is absent, the
-scaffold-only cost policy remains inactive, the `5000`-cent ceiling cannot be
-proved, or any adjacent mutation
-would be required. Do not use the Railway dashboard, Git autodeploy, CLI, API,
-or an ad-hoc script to bridge a failed check.
+Stop before provider mutation on any policy/hash/identity/source/CLI/GitHub
+context mismatch, missing approval or secret, failed current-main check,
+missing required artifact, unsafe evidence path, nonempty staged patch,
+unexpected topology, unhealthy same-SHA staging prerequisite, failed boundary
+preflight, or adjacent-mutation requirement. After the write begins, perform
+only the built-in read-only reconciliation and unconditional postflight. Never
+rerun merely because acknowledgement or evidence is incomplete.

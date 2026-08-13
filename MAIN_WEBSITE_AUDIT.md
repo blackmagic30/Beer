@@ -1,5 +1,11 @@
 # Main Website Launch Readiness Audit
 
+> Historical snapshot — superseded. This read-only audit describes the site as
+> observed on 30 June 2026, before the current deployment-readiness work. It is
+> retained as provenance, not as an operator checklist or current blocker
+> register. Use [`docs/production-launch-runbook.md`](docs/production-launch-runbook.md)
+> and [`docs/release-readiness-checklist.md`](docs/release-readiness-checklist.md).
+
 Audit date: 2026-06-30
 
 Scope: main Pint Path / BeerMap website in `viewer/`, `src/`, `supabase/`, `scripts/`, and website-focused tests. I did not inspect or modify mobile app folders. No code fixes were implemented.

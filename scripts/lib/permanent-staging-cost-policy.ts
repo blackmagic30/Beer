@@ -1,7 +1,11 @@
 export const PERMANENT_STAGING_COST_POLICY_SCHEMA =
-  "pintpath-permanent-staging-cost-policy/v1" as const;
+  "pintpath-permanent-staging-cost-policy/v2" as const;
 export const PERMANENT_STAGING_COST_RECEIPT_SCHEMA =
-  "pintpath-permanent-staging-cost-receipt/v1" as const;
+  "pintpath-permanent-staging-cost-receipt/v2" as const;
+export const PERMANENT_STAGING_COST_OBSERVATION_SCHEMA =
+  "pintpath-permanent-staging-cost-observation/v1" as const;
+export const PERMANENT_STAGING_COST_GATE_MANIFEST_SCHEMA =
+  "pintpath-permanent-staging-cost-gate-manifest/v1" as const;
 export const PERMANENT_STAGING_COST_POLICY_ID =
   "pintpath-permanent-staging-recurring-cost" as const;
 export const PERMANENT_STAGING_COST_POLICY_PATH =
@@ -11,10 +15,12 @@ const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 
 export const PERMANENT_STAGING_COST_POLICY_LOCK = Object.freeze({
   policyId: PERMANENT_STAGING_COST_POLICY_ID,
-  activationState: "SCAFFOLD_ONLY_PROVIDER_OBSERVATION_REQUIRED",
+  activationState: "ACTIVE_READ_ONLY_EXTERNAL_OBSERVATION_BINDER",
   environment: "permanent-staging",
   currency: "USD",
   maximumRecurringMonthlyCents: 5_000,
+  maximumObservedRecurringMonthlyCents: 4_700,
+  requiredHeadroomMonthlyCents: 300,
   calculationContract: Object.freeze({
     amountUnit: "integer-cents",
     lineItemRounding: "ceiling",
@@ -23,7 +29,14 @@ export const PERMANENT_STAGING_COST_POLICY_LOCK = Object.freeze({
   }),
   evidenceContract: Object.freeze({
     providerCollectorImplemented: false,
-    providerObservationBindingImplemented: false,
+    externalProviderExportValidationImplemented: true,
+    providerObservationBindingImplemented: true,
+    providerNetworkAccessAllowed: false,
+    credentialAccessAllowed: false,
+    externallyCapturedProviderExportsRequired: true,
+    preAndPostDeploymentObservationRequired: true,
+    privateApprovalManifestRequired: true,
+    observedArtifactSha256VerificationRequired: true,
     scope: "permanent-staging-only",
     providerInventoryRequired: true,
     completeProviderInventoryRequired: true,
@@ -33,9 +46,35 @@ export const PERMANENT_STAGING_COST_POLICY_LOCK = Object.freeze({
     maximumUnpricedResourceCount: 0,
     productionOperationalCopyExcluded: true,
     disposableRestoreExcluded: true,
-    preDeploymentReceiptRequired: true,
-    postDeploymentReceiptRequired: true,
+    singleCombinedReceiptRequired: true,
+    receiptMayAuthorizeDeployment: false,
     receiptSchemaVersion: PERMANENT_STAGING_COST_RECEIPT_SCHEMA,
+  }),
+  topologyContract: Object.freeze({
+    railway: Object.freeze({
+      maximumRecurringMonthlyCents: 2_000,
+      dedicatedStagingOnlyWorkspaceRequired: true,
+      exactServiceSet: Object.freeze(["beer", "postgres", "redis"] as const),
+      maximumSharedResourceCount: 0,
+      agentUsageMustBeDisabledOrZeroBounded: true,
+    }),
+    stagingSupabase: Object.freeze({
+      maximumRecurringMonthlyCents: 2_500,
+      dedicatedStagingOnlyOrganizationRequired: true,
+      exactProjectCount: 1,
+      exactComputeSize: "Micro",
+      spendCapRequired: true,
+      maximumSharedResourceCount: 0,
+    }),
+    stagingExternalProviders: Object.freeze({
+      maximumRecurringMonthlyCents: 200,
+      googleMapsAndPlacesMaximumCents: 100,
+      openAiMaximumCents: 100,
+      resendMaximumCents: 0,
+      unboundedSurfaceCountRequired: 0,
+    }),
+    configuredMaximumRecurringMonthlyCents: 4_700,
+    explicitHeadroomMonthlyCents: 300,
   }),
 } as const);
 
@@ -46,9 +85,10 @@ export const PERMANENT_STAGING_COST_POLICY_LOCK = Object.freeze({
  *
  * The subtotal is still useful as a fail-closed design check. It applies the
  * checked-in permanent-staging maxima to the providers' published prices. A
- * complete live receipt cannot pass while this static configured subtotal is
- * already above the policy ceiling, even if every currently unknown item were
- * free.
+ * complete live receipt still requires externally captured observations and
+ * hard bounds for every unresolved category. The configured infrastructure
+ * target leaves an explicit US$2 allowance for external providers and US$3
+ * policy headroom below the US$50 ceiling.
  */
 export const PERMANENT_STAGING_COST_PUBLIC_PLANNING_REVIEW = Object.freeze({
   classification: "REVIEWED_PUBLIC_PRICING_PLANNING_ONLY",
@@ -74,22 +114,22 @@ export const PERMANENT_STAGING_COST_PUBLIC_PLANNING_REVIEW = Object.freeze({
     volumePerGbMonthCents: 15,
     egressPerGbCents: 5,
   }),
-  reviewedRailwayStagingMaxima: Object.freeze({
+  repositoryRailwayStagingTargetMaxima: Object.freeze({
     beer: Object.freeze({
       replicaCount: 1,
       cpuMilliVcpuPerReplica: 100,
-      memoryMbPerReplica: 500,
+      memoryMbPerReplica: 250,
     }),
     postgres: Object.freeze({
       replicaCount: 1,
       cpuMilliVcpuPerReplica: 100,
-      memoryMbPerReplica: 500,
-      volumeMaximumGb: 50,
+      memoryMbPerReplica: 250,
+      volumeMaximumGb: 10,
     }),
     redis: Object.freeze({
       replicaCount: 1,
-      cpuMilliVcpuPerReplica: 100,
-      memoryMbPerReplica: 250,
+      cpuMilliVcpuPerReplica: 50,
+      memoryMbPerReplica: 100,
     }),
   }),
   supabasePublishedPrices: Object.freeze({
@@ -169,7 +209,7 @@ export const PERMANENT_STAGING_COST_PUBLIC_REMEDIATION_DESIGN = Object.freeze({
         "network-egress",
       ] as const),
       agentUsageMustBeDisabledOrIndependentlyZeroBounded: true,
-      currentConfiguredResourceMaximumFitsTarget: false,
+      repositoryPlanningMaximumFitsTarget: true,
     }),
     supabase: Object.freeze({
       requiredPlan: "Pro",
@@ -195,7 +235,8 @@ export const PERMANENT_STAGING_COST_PUBLIC_REMEDIATION_DESIGN = Object.freeze({
       billingAddonInventoryPermission: "infra_add_ons_read",
     }),
     maximumMonthlyCents: 4_500,
-    remainingForAllExternalProvidersCents: 500,
+    remainingForAllExternalProvidersCents: 200,
+    requiredHeadroomMonthlyCents: 300,
   }),
   externalProviderTarget: Object.freeze({
     resend: Object.freeze({
@@ -334,7 +375,6 @@ export const PERMANENT_STAGING_COST_PUBLIC_REMEDIATION_DESIGN = Object.freeze({
   }),
   unresolvedDesignBlockers: Object.freeze([
     "railway-agent-usage-zero-bound-not-proved",
-    "current-railway-resource-maximum-exceeds-workspace-target",
     "google-live-api-sku-quota-and-monthly-billing-upper-bound-not-proved",
     "openai-cost-bound-runtime-and-provider-account-not-live-observed",
     "live-provider-plan-cap-addon-and-isolation-state-not-observed",
@@ -352,7 +392,6 @@ export interface PermanentStagingPublicPlanningAudit {
   readonly unresolvedRecurringCategories: readonly string[];
   readonly failureCodes: readonly [
     "provider_observation_not_implemented",
-    "configured_maximum_exceeds_ceiling_before_unknowns",
     "unknown_recurring_categories_present",
   ];
 }
@@ -362,14 +401,14 @@ export interface PermanentStagingPublicRemediationAudit {
   readonly authority: "design-only";
   readonly maximumRecurringMonthlyCents: 5_000;
   readonly isolatedInfrastructureTargetCents: 4_500;
-  readonly remainingForAllExternalProvidersCents: 500;
+  readonly remainingForAllExternalProvidersCents: 200;
+  readonly requiredHeadroomMonthlyCents: 300;
   readonly externalProviderUpperBoundCents: null;
   readonly unresolvedDesignBlockers: readonly string[];
   readonly failureCodes: readonly [
     "provider_observation_not_implemented",
     "provider_mutation_not_authorized",
     "external_provider_upper_bound_not_proved",
-    "current_configuration_does_not_fit_remediation_target",
   ];
 }
 
@@ -398,7 +437,7 @@ function railwayReplicaMaximumCents(input: {
 export function auditPermanentStagingPublicPlanningCost():
 PermanentStagingPublicPlanningAudit {
   const review = PERMANENT_STAGING_COST_PUBLIC_PLANNING_REVIEW;
-  const maxima = review.reviewedRailwayStagingMaxima;
+  const maxima = review.repositoryRailwayStagingTargetMaxima;
   const railwayResourceMaximumCents =
     railwayReplicaMaximumCents(maxima.beer)
     + railwayReplicaMaximumCents(maxima.postgres)
@@ -437,7 +476,6 @@ PermanentStagingPublicPlanningAudit {
       review.unresolvedRecurringCategories,
     failureCodes: Object.freeze([
       "provider_observation_not_implemented",
-      "configured_maximum_exceeds_ceiling_before_unknowns",
       "unknown_recurring_categories_present",
     ] as const),
   });
@@ -455,13 +493,14 @@ PermanentStagingPublicRemediationAudit {
       design.isolatedInfrastructureTarget.maximumMonthlyCents,
     remainingForAllExternalProvidersCents:
       design.isolatedInfrastructureTarget.remainingForAllExternalProvidersCents,
+    requiredHeadroomMonthlyCents:
+      design.isolatedInfrastructureTarget.requiredHeadroomMonthlyCents,
     externalProviderUpperBoundCents: null,
     unresolvedDesignBlockers: design.unresolvedDesignBlockers,
     failureCodes: Object.freeze([
       "provider_observation_not_implemented",
       "provider_mutation_not_authorized",
       "external_provider_upper_bound_not_proved",
-      "current_configuration_does_not_fit_remediation_target",
     ] as const),
   });
 }
@@ -475,10 +514,16 @@ export interface PermanentStagingCostPolicy {
   readonly currency: typeof PERMANENT_STAGING_COST_POLICY_LOCK.currency;
   readonly maximumRecurringMonthlyCents:
     typeof PERMANENT_STAGING_COST_POLICY_LOCK.maximumRecurringMonthlyCents;
+  readonly maximumObservedRecurringMonthlyCents:
+    typeof PERMANENT_STAGING_COST_POLICY_LOCK.maximumObservedRecurringMonthlyCents;
+  readonly requiredHeadroomMonthlyCents:
+    typeof PERMANENT_STAGING_COST_POLICY_LOCK.requiredHeadroomMonthlyCents;
   readonly calculationContract:
     typeof PERMANENT_STAGING_COST_POLICY_LOCK.calculationContract;
   readonly evidenceContract:
     typeof PERMANENT_STAGING_COST_POLICY_LOCK.evidenceContract;
+  readonly topologyContract:
+    typeof PERMANENT_STAGING_COST_POLICY_LOCK.topologyContract;
 }
 
 function buildCanonicalPolicy(): PermanentStagingCostPolicy {
@@ -490,8 +535,12 @@ function buildCanonicalPolicy(): PermanentStagingCostPolicy {
     environment: lock.environment,
     currency: lock.currency,
     maximumRecurringMonthlyCents: lock.maximumRecurringMonthlyCents,
+    maximumObservedRecurringMonthlyCents:
+      lock.maximumObservedRecurringMonthlyCents,
+    requiredHeadroomMonthlyCents: lock.requiredHeadroomMonthlyCents,
     calculationContract: lock.calculationContract,
     evidenceContract: lock.evidenceContract,
+    topologyContract: lock.topologyContract,
   });
 }
 
@@ -507,46 +556,135 @@ export function parsePermanentStagingCostPolicy(
     : null;
 }
 
-export interface PermanentStagingCostLineItem {
-  readonly resourceIdentitySha256: string;
-  readonly recurringMonthlyCents: number;
+export type PermanentStagingCostProviderName =
+  | "railway"
+  | "staging-supabase"
+  | "staging-external-providers";
+
+export interface PermanentStagingCostProviderObservation {
+  readonly provider: PermanentStagingCostProviderName;
+  readonly inventoryArtifactSha256: string;
+  readonly priceOrCapArtifactSha256: string;
+  readonly inventoryComplete: boolean;
+  readonly upperBoundComplete: boolean;
+  readonly scopeIsolationVerified: boolean;
+  readonly hardLimitOrZeroBoundVerified: boolean;
+  readonly unknownResourceCount: number;
+  readonly unpricedResourceCount: number;
+  readonly sharedResourceCount: number;
+  readonly unboundedResourceCount: number;
+  readonly upperBoundMonthlyCents: number;
+}
+
+export interface PermanentStagingExcludedCostScope {
+  readonly scope: "production-operational-copy" | "disposable-restore";
+  readonly includedInPermanentStagingTotal: false;
+  readonly separateAuthorityArtifactSha256: string;
 }
 
 export interface PermanentStagingCostObservation {
+  readonly schemaVersion: typeof PERMANENT_STAGING_COST_OBSERVATION_SCHEMA;
+  readonly releaseId: string;
+  readonly candidateSha: string;
+  readonly phase: "pre-deployment" | "post-deployment";
   readonly environment: "permanent-staging";
   readonly scope: "permanent-staging-only";
   readonly currency: "USD";
+  readonly amountUnit: "integer-cents";
   readonly lineItemRounding: "ceiling";
-  readonly providerInventorySha256: string;
-  readonly priceCatalogSha256: string;
-  readonly providerInventoryComplete: boolean;
-  readonly priceCatalogComplete: boolean;
-  readonly unknownResourceCount: number;
-  readonly unpricedResourceCount: number;
-  readonly lineItems: readonly PermanentStagingCostLineItem[];
+  readonly observationSource: "provider-read-only-export";
+  readonly observedAt: string;
+  readonly externalExportSetSha256: string;
+  readonly providers: readonly PermanentStagingCostProviderObservation[];
+  readonly excludedScopes: readonly PermanentStagingExcludedCostScope[];
 }
 
-export type PermanentStagingCostFailureCode =
-  | "observation_invalid"
-  | "provider_observation_not_implemented"
-  | "provider_inventory_incomplete"
-  | "price_catalog_incomplete"
-  | "unknown_resources_present"
-  | "unpriced_resources_present"
-  | "ceiling_exceeded";
+export interface PermanentStagingCostGateManifest {
+  readonly schemaVersion: typeof PERMANENT_STAGING_COST_GATE_MANIFEST_SCHEMA;
+  readonly releaseId: string;
+  readonly candidateSha: string;
+  readonly environment: "permanent-staging";
+  readonly gateId: "permanent_staging_cost";
+  readonly preObservationSha256: string;
+  readonly postObservationSha256: string;
+  readonly approvedAt: string;
+  readonly approvedBy: string;
+  readonly independentlyVerifiedBy: string;
+}
+
+export interface PermanentStagingCostReceipt {
+  readonly schemaVersion: typeof PERMANENT_STAGING_COST_RECEIPT_SCHEMA;
+  readonly releaseId: string;
+  readonly candidateSha: string;
+  readonly gateId: "permanent_staging_cost";
+  readonly environment: "permanent-staging";
+  readonly scope: "permanent-staging-only";
+  readonly currency: "USD";
+  readonly amountUnit: "integer-cents";
+  readonly lineItemRounding: "ceiling";
+  readonly observationSource: "externally-captured-provider-read-only-exports";
+  readonly externalProviderExportValidationImplemented: true;
+  readonly providerObservationBindingImplemented: true;
+  readonly policySha256: string;
+  readonly preObservationSha256: string;
+  readonly postObservationSha256: string;
+  readonly preObservedAt: string;
+  readonly postObservedAt: string;
+  readonly privateManifestSha256: string;
+  readonly totalUpperBoundMonthlyCents: number;
+  readonly maximumObservedAcrossPhasesMonthlyCents: number;
+  readonly maximumRecurringMonthlyCents: 5_000;
+  readonly requiredHeadroomMonthlyCents: 300;
+  readonly observedHeadroomMonthlyCents: number;
+  readonly providers: readonly PermanentStagingCostProviderObservation[];
+  readonly excludedScopes: readonly PermanentStagingExcludedCostScope[];
+}
 
 export interface PermanentStagingCostEvaluation {
-  readonly passed: false;
-  readonly evaluatorState: "scaffold-only";
+  readonly passed: boolean;
+  readonly evaluatorState: "active-read-only-external-export-validator";
   readonly currency: "USD";
   readonly maximumRecurringMonthlyCents: 5_000;
+  readonly maximumObservedRecurringMonthlyCents: 4_700;
+  readonly requiredHeadroomMonthlyCents: 300;
   readonly declaredRecurringMonthlyCents: number | null;
-  readonly failureCodes: readonly PermanentStagingCostFailureCode[];
+  readonly observedHeadroomMonthlyCents: number | null;
+  readonly failureCodes: readonly string[];
 }
 
-const OBSERVATION_INVALID_FAILURE_CODES = Object.freeze(
-  ["observation_invalid"] as PermanentStagingCostFailureCode[],
-);
+export interface BindPermanentStagingCostReceiptInput {
+  readonly policySource: string;
+  readonly policySha256: string;
+  readonly preObservationSource: string;
+  readonly preObservationSha256: string;
+  readonly postObservationSource: string;
+  readonly postObservationSha256: string;
+  readonly privateManifestSource: string;
+  readonly privateManifestSha256: string;
+  readonly now: string;
+}
+
+export interface BindPermanentStagingCostReceiptResult {
+  readonly passed: boolean;
+  readonly errors: readonly string[];
+  readonly receipt: PermanentStagingCostReceipt | null;
+}
+
+const RELEASE_ID_PATTERN = /^PP-LAUNCH-\d{4}-[A-Z0-9][A-Z0-9_-]{2,31}$/;
+const COMMIT_SHA_PATTERN = /^[a-f0-9]{40}$/;
+const CANONICAL_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+const MAX_OBSERVATION_AGE_MS = 24 * 60 * 60 * 1_000;
+const MAX_FUTURE_CLOCK_SKEW_MS = 5 * 60 * 1_000;
+const PROVIDER_NAMES = Object.freeze([
+  "railway",
+  "staging-supabase",
+  "staging-external-providers",
+] as const);
+const PROVIDER_LIMITS = Object.freeze({
+  railway: 2_000,
+  "staging-supabase": 2_500,
+  "staging-external-providers": 200,
+} as const);
 
 function exactKeys(value: object, expected: readonly string[]): boolean {
   return JSON.stringify(Object.keys(value).sort())
@@ -564,134 +702,381 @@ function safeCount(value: unknown): value is number {
   return Number.isSafeInteger(value) && Number(value) >= 0;
 }
 
-function parseObservation(value: unknown): PermanentStagingCostObservation | null {
+function canonicalTimestamp(value: unknown): value is string {
+  return typeof value === "string"
+    && CANONICAL_TIMESTAMP_PATTERN.test(value)
+    && !Number.isNaN(Date.parse(value));
+}
+
+function namedVerifier(value: unknown): value is string {
+  if (typeof value !== "string" || value.trim() !== value) return false;
+  const separator = value.indexOf(",");
+  return separator >= 2
+    && value.slice(0, separator).trim().length >= 2
+    && value.slice(separator + 1).trim().length >= 2;
+}
+
+function parseCanonicalJson(source: unknown): unknown | null {
+  if (typeof source !== "string" || source.length < 3 || source.length > 1024 * 1024) {
+    return null;
+  }
+  try {
+    const value = JSON.parse(source) as unknown;
+    return `${JSON.stringify(value, null, 2)}\n` === source ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseProviderObservation(
+  value: unknown,
+): PermanentStagingCostProviderObservation | null {
   if (
     !plainRecord(value)
     || !exactKeys(value, [
-      "environment",
-      "scope",
-      "currency",
-      "lineItemRounding",
-      "providerInventorySha256",
-      "priceCatalogSha256",
-      "providerInventoryComplete",
-      "priceCatalogComplete",
+      "provider",
+      "inventoryArtifactSha256",
+      "priceOrCapArtifactSha256",
+      "inventoryComplete",
+      "upperBoundComplete",
+      "scopeIsolationVerified",
+      "hardLimitOrZeroBoundVerified",
       "unknownResourceCount",
       "unpricedResourceCount",
-      "lineItems",
+      "sharedResourceCount",
+      "unboundedResourceCount",
+      "upperBoundMonthlyCents",
     ])
-    || value.environment !== PERMANENT_STAGING_COST_POLICY_LOCK.environment
-    || value.scope !== PERMANENT_STAGING_COST_POLICY_LOCK.evidenceContract.scope
-    || value.currency !== PERMANENT_STAGING_COST_POLICY_LOCK.currency
-    || value.lineItemRounding
-      !== PERMANENT_STAGING_COST_POLICY_LOCK.calculationContract.lineItemRounding
-    || typeof value.providerInventorySha256 !== "string"
-    || !SHA256_PATTERN.test(value.providerInventorySha256)
-    || typeof value.priceCatalogSha256 !== "string"
-    || !SHA256_PATTERN.test(value.priceCatalogSha256)
-    || typeof value.providerInventoryComplete !== "boolean"
-    || typeof value.priceCatalogComplete !== "boolean"
+    || !PROVIDER_NAMES.includes(value.provider as PermanentStagingCostProviderName)
+    || typeof value.inventoryArtifactSha256 !== "string"
+    || !SHA256_PATTERN.test(value.inventoryArtifactSha256)
+    || typeof value.priceOrCapArtifactSha256 !== "string"
+    || !SHA256_PATTERN.test(value.priceOrCapArtifactSha256)
+    || typeof value.inventoryComplete !== "boolean"
+    || typeof value.upperBoundComplete !== "boolean"
+    || typeof value.scopeIsolationVerified !== "boolean"
+    || typeof value.hardLimitOrZeroBoundVerified !== "boolean"
     || !safeCount(value.unknownResourceCount)
     || !safeCount(value.unpricedResourceCount)
-    || !Array.isArray(value.lineItems)
-    || value.lineItems.length < 1
+    || !safeCount(value.sharedResourceCount)
+    || !safeCount(value.unboundedResourceCount)
+    || !safeCount(value.upperBoundMonthlyCents)
   ) return null;
-
-  const identities = new Set<string>();
-  const lineItems: PermanentStagingCostLineItem[] = [];
-  for (const lineItem of value.lineItems) {
-    if (
-      !plainRecord(lineItem)
-      || !exactKeys(lineItem, [
-        "resourceIdentitySha256",
-        "recurringMonthlyCents",
-      ])
-      || typeof lineItem.resourceIdentitySha256 !== "string"
-      || !SHA256_PATTERN.test(lineItem.resourceIdentitySha256)
-      || identities.has(lineItem.resourceIdentitySha256)
-      || !safeCount(lineItem.recurringMonthlyCents)
-    ) return null;
-    identities.add(lineItem.resourceIdentitySha256);
-    lineItems.push(Object.freeze({
-      resourceIdentitySha256: lineItem.resourceIdentitySha256,
-      recurringMonthlyCents: lineItem.recurringMonthlyCents,
-    }));
-  }
-
   return Object.freeze({
-    environment: value.environment,
-    scope: value.scope,
-    currency: value.currency,
-    lineItemRounding: value.lineItemRounding,
-    providerInventorySha256: value.providerInventorySha256,
-    priceCatalogSha256: value.priceCatalogSha256,
-    providerInventoryComplete: value.providerInventoryComplete,
-    priceCatalogComplete: value.priceCatalogComplete,
+    provider: value.provider as PermanentStagingCostProviderName,
+    inventoryArtifactSha256: value.inventoryArtifactSha256,
+    priceOrCapArtifactSha256: value.priceOrCapArtifactSha256,
+    inventoryComplete: value.inventoryComplete,
+    upperBoundComplete: value.upperBoundComplete,
+    scopeIsolationVerified: value.scopeIsolationVerified,
+    hardLimitOrZeroBoundVerified: value.hardLimitOrZeroBoundVerified,
     unknownResourceCount: value.unknownResourceCount,
     unpricedResourceCount: value.unpricedResourceCount,
-    lineItems: Object.freeze(lineItems),
+    sharedResourceCount: value.sharedResourceCount,
+    unboundedResourceCount: value.unboundedResourceCount,
+    upperBoundMonthlyCents: value.upperBoundMonthlyCents,
   });
 }
 
+function parseExcludedScope(value: unknown): PermanentStagingExcludedCostScope | null {
+  if (
+    !plainRecord(value)
+    || !exactKeys(value, [
+      "scope",
+      "includedInPermanentStagingTotal",
+      "separateAuthorityArtifactSha256",
+    ])
+    || !["production-operational-copy", "disposable-restore"].includes(
+      String(value.scope),
+    )
+    || value.includedInPermanentStagingTotal !== false
+    || typeof value.separateAuthorityArtifactSha256 !== "string"
+    || !SHA256_PATTERN.test(value.separateAuthorityArtifactSha256)
+  ) return null;
+  return Object.freeze({
+    scope: value.scope as PermanentStagingExcludedCostScope["scope"],
+    includedInPermanentStagingTotal: false,
+    separateAuthorityArtifactSha256: value.separateAuthorityArtifactSha256,
+  });
+}
+
+export function parsePermanentStagingCostObservation(
+  source: unknown,
+): PermanentStagingCostObservation | null {
+  const value = parseCanonicalJson(source);
+  if (
+    !plainRecord(value)
+    || !exactKeys(value, [
+      "schemaVersion",
+      "releaseId",
+      "candidateSha",
+      "phase",
+      "environment",
+      "scope",
+      "currency",
+      "amountUnit",
+      "lineItemRounding",
+      "observationSource",
+      "observedAt",
+      "externalExportSetSha256",
+      "providers",
+      "excludedScopes",
+    ])
+    || value.schemaVersion !== PERMANENT_STAGING_COST_OBSERVATION_SCHEMA
+    || typeof value.releaseId !== "string"
+    || !RELEASE_ID_PATTERN.test(value.releaseId)
+    || typeof value.candidateSha !== "string"
+    || !COMMIT_SHA_PATTERN.test(value.candidateSha)
+    || !["pre-deployment", "post-deployment"].includes(String(value.phase))
+    || value.environment !== PERMANENT_STAGING_COST_POLICY_LOCK.environment
+    || value.scope !== PERMANENT_STAGING_COST_POLICY_LOCK.evidenceContract.scope
+    || value.currency !== PERMANENT_STAGING_COST_POLICY_LOCK.currency
+    || value.amountUnit !== PERMANENT_STAGING_COST_POLICY_LOCK.calculationContract.amountUnit
+    || value.lineItemRounding
+      !== PERMANENT_STAGING_COST_POLICY_LOCK.calculationContract.lineItemRounding
+    || value.observationSource !== "provider-read-only-export"
+    || !canonicalTimestamp(value.observedAt)
+    || typeof value.externalExportSetSha256 !== "string"
+    || !SHA256_PATTERN.test(value.externalExportSetSha256)
+    || !Array.isArray(value.providers)
+    || !Array.isArray(value.excludedScopes)
+  ) return null;
+  const providers = value.providers.map(parseProviderObservation);
+  const excludedScopes = value.excludedScopes.map(parseExcludedScope);
+  if (providers.some((provider) => provider === null)) return null;
+  if (excludedScopes.some((scope) => scope === null)) return null;
+  return Object.freeze({
+    schemaVersion: value.schemaVersion,
+    releaseId: value.releaseId,
+    candidateSha: value.candidateSha,
+    phase: value.phase as PermanentStagingCostObservation["phase"],
+    environment: value.environment,
+    scope: value.scope,
+    currency: value.currency,
+    amountUnit: value.amountUnit,
+    lineItemRounding: value.lineItemRounding,
+    observationSource: value.observationSource,
+    observedAt: value.observedAt,
+    externalExportSetSha256: value.externalExportSetSha256,
+    providers: Object.freeze(
+      providers as PermanentStagingCostProviderObservation[],
+    ),
+    excludedScopes: Object.freeze(
+      excludedScopes as PermanentStagingExcludedCostScope[],
+    ),
+  });
+}
+
+function parseGateManifest(source: unknown): PermanentStagingCostGateManifest | null {
+  const value = parseCanonicalJson(source);
+  if (
+    !plainRecord(value)
+    || !exactKeys(value, [
+      "schemaVersion",
+      "releaseId",
+      "candidateSha",
+      "environment",
+      "gateId",
+      "preObservationSha256",
+      "postObservationSha256",
+      "approvedAt",
+      "approvedBy",
+      "independentlyVerifiedBy",
+    ])
+    || value.schemaVersion !== PERMANENT_STAGING_COST_GATE_MANIFEST_SCHEMA
+    || typeof value.releaseId !== "string"
+    || !RELEASE_ID_PATTERN.test(value.releaseId)
+    || typeof value.candidateSha !== "string"
+    || !COMMIT_SHA_PATTERN.test(value.candidateSha)
+    || value.environment !== "permanent-staging"
+    || value.gateId !== "permanent_staging_cost"
+    || typeof value.preObservationSha256 !== "string"
+    || !SHA256_PATTERN.test(value.preObservationSha256)
+    || typeof value.postObservationSha256 !== "string"
+    || !SHA256_PATTERN.test(value.postObservationSha256)
+    || !canonicalTimestamp(value.approvedAt)
+    || !namedVerifier(value.approvedBy)
+    || !namedVerifier(value.independentlyVerifiedBy)
+    || value.approvedBy === value.independentlyVerifiedBy
+  ) return null;
+  return Object.freeze(value as unknown as PermanentStagingCostGateManifest);
+}
+
+function observationErrors(
+  observation: PermanentStagingCostObservation,
+): { readonly errors: readonly string[]; readonly total: number | null } {
+  const errors: string[] = [];
+  const names = observation.providers.map((provider) => provider.provider);
+  if (
+    names.length !== PROVIDER_NAMES.length
+    || new Set(names).size !== names.length
+    || PROVIDER_NAMES.some((name) => !names.includes(name))
+  ) errors.push("providers must contain exactly Railway, staging Supabase, and staging external providers");
+  let total = 0;
+  for (const provider of observation.providers) {
+    if (!provider.inventoryComplete) errors.push(`${provider.provider}:inventory_incomplete`);
+    if (!provider.upperBoundComplete) errors.push(`${provider.provider}:upper_bound_incomplete`);
+    if (!provider.scopeIsolationVerified) errors.push(`${provider.provider}:scope_not_isolated`);
+    if (!provider.hardLimitOrZeroBoundVerified) errors.push(`${provider.provider}:hard_limit_not_verified`);
+    if (provider.unknownResourceCount !== 0) errors.push(`${provider.provider}:unknown_resources_present`);
+    if (provider.unpricedResourceCount !== 0) errors.push(`${provider.provider}:unpriced_resources_present`);
+    if (provider.sharedResourceCount !== 0) errors.push(`${provider.provider}:shared_resources_present`);
+    if (provider.unboundedResourceCount !== 0) errors.push(`${provider.provider}:unbounded_resources_present`);
+    if (provider.upperBoundMonthlyCents > PROVIDER_LIMITS[provider.provider]) {
+      errors.push(`${provider.provider}:provider_limit_exceeded`);
+    }
+    total += provider.upperBoundMonthlyCents;
+    if (!Number.isSafeInteger(total)) return { errors: ["provider_total_overflow"], total: null };
+  }
+  const scopes = observation.excludedScopes.map((scope) => scope.scope);
+  if (
+    scopes.length !== 2
+    || new Set(scopes).size !== scopes.length
+    || !scopes.includes("production-operational-copy")
+    || !scopes.includes("disposable-restore")
+  ) errors.push("excluded scopes must contain separate production-copy and disposable-restore authorities");
+  if (
+    new Set(observation.excludedScopes.map(
+      (scope) => scope.separateAuthorityArtifactSha256,
+    )).size !== observation.excludedScopes.length
+  ) errors.push("excluded scope authorities must use distinct artifacts");
+  if (total > PERMANENT_STAGING_COST_POLICY_LOCK.maximumObservedRecurringMonthlyCents) {
+    errors.push("configured_maximum_exceeded");
+  }
+  if (
+    PERMANENT_STAGING_COST_POLICY_LOCK.maximumRecurringMonthlyCents - total
+      < PERMANENT_STAGING_COST_POLICY_LOCK.requiredHeadroomMonthlyCents
+  ) errors.push("required_headroom_not_met");
+  return { errors: Object.freeze(errors), total };
+}
+
 export function evaluatePermanentStagingCost(
-  value: unknown,
+  source: unknown,
 ): PermanentStagingCostEvaluation {
-  const observation = parseObservation(value);
+  const observation = typeof source === "string"
+    ? parsePermanentStagingCostObservation(source)
+    : null;
   if (!observation) {
     return Object.freeze({
       passed: false,
-      evaluatorState: "scaffold-only",
-      currency: PERMANENT_STAGING_COST_POLICY_LOCK.currency,
-      maximumRecurringMonthlyCents:
-        PERMANENT_STAGING_COST_POLICY_LOCK.maximumRecurringMonthlyCents,
+      evaluatorState: "active-read-only-external-export-validator",
+      currency: "USD",
+      maximumRecurringMonthlyCents: 5_000,
+      maximumObservedRecurringMonthlyCents: 4_700,
+      requiredHeadroomMonthlyCents: 300,
       declaredRecurringMonthlyCents: null,
-      failureCodes: OBSERVATION_INVALID_FAILURE_CODES,
+      observedHeadroomMonthlyCents: null,
+      failureCodes: Object.freeze(["observation_invalid"]),
     });
   }
+  const evaluation = observationErrors(observation);
+  return Object.freeze({
+    passed: evaluation.errors.length === 0,
+    evaluatorState: "active-read-only-external-export-validator",
+    currency: "USD",
+    maximumRecurringMonthlyCents: 5_000,
+    maximumObservedRecurringMonthlyCents: 4_700,
+    requiredHeadroomMonthlyCents: 300,
+    declaredRecurringMonthlyCents: evaluation.total,
+    observedHeadroomMonthlyCents: evaluation.total === null
+      ? null
+      : 5_000 - evaluation.total,
+    failureCodes: evaluation.errors,
+  });
+}
 
-  let recurringMonthlyCents = 0;
-  for (const lineItem of observation.lineItems) {
-    recurringMonthlyCents += lineItem.recurringMonthlyCents;
-    if (!Number.isSafeInteger(recurringMonthlyCents)) {
-      return Object.freeze({
-        passed: false,
-        evaluatorState: "scaffold-only",
-        currency: PERMANENT_STAGING_COST_POLICY_LOCK.currency,
-        maximumRecurringMonthlyCents:
-          PERMANENT_STAGING_COST_POLICY_LOCK.maximumRecurringMonthlyCents,
-        declaredRecurringMonthlyCents: null,
-        failureCodes: OBSERVATION_INVALID_FAILURE_CODES,
-      });
-    }
+export function bindPermanentStagingCostReceipt(
+  input: BindPermanentStagingCostReceiptInput,
+): BindPermanentStagingCostReceiptResult {
+  const errors: string[] = [];
+  if (!parsePermanentStagingCostPolicy(input.policySource)) {
+    errors.push("policy_invalid");
   }
-
-  const failureCodes: PermanentStagingCostFailureCode[] = [
-    "provider_observation_not_implemented",
-  ];
-  if (!observation.providerInventoryComplete) {
-    failureCodes.push("provider_inventory_incomplete");
+  for (const [label, digest] of [
+    ["policy", input.policySha256],
+    ["pre_observation", input.preObservationSha256],
+    ["post_observation", input.postObservationSha256],
+    ["private_manifest", input.privateManifestSha256],
+  ] as const) {
+    if (!SHA256_PATTERN.test(digest)) errors.push(`${label}_sha256_invalid`);
   }
-  if (!observation.priceCatalogComplete) {
-    failureCodes.push("price_catalog_incomplete");
+  const pre = parsePermanentStagingCostObservation(input.preObservationSource);
+  const post = parsePermanentStagingCostObservation(input.postObservationSource);
+  const manifest = parseGateManifest(input.privateManifestSource);
+  if (!pre) errors.push("pre_observation_invalid");
+  if (!post) errors.push("post_observation_invalid");
+  if (!manifest) errors.push("private_manifest_invalid");
+  if (!canonicalTimestamp(input.now)) errors.push("clock_invalid");
+  if (errors.length > 0 || !pre || !post || !manifest) {
+    return Object.freeze({ passed: false, errors: Object.freeze(errors), receipt: null });
   }
-  if (observation.unknownResourceCount !== 0) {
-    failureCodes.push("unknown_resources_present");
-  }
-  if (observation.unpricedResourceCount !== 0) {
-    failureCodes.push("unpriced_resources_present");
+  if (pre.phase !== "pre-deployment") errors.push("pre_observation_phase_invalid");
+  if (post.phase !== "post-deployment") errors.push("post_observation_phase_invalid");
+  if (pre.releaseId !== post.releaseId || pre.releaseId !== manifest.releaseId) {
+    errors.push("release_id_mismatch");
   }
   if (
-    recurringMonthlyCents
-      > PERMANENT_STAGING_COST_POLICY_LOCK.maximumRecurringMonthlyCents
-  ) failureCodes.push("ceiling_exceeded");
-
-  return Object.freeze({
-    passed: false,
-    evaluatorState: "scaffold-only",
-    currency: PERMANENT_STAGING_COST_POLICY_LOCK.currency,
-    maximumRecurringMonthlyCents:
-      PERMANENT_STAGING_COST_POLICY_LOCK.maximumRecurringMonthlyCents,
-    declaredRecurringMonthlyCents: recurringMonthlyCents,
-    failureCodes: Object.freeze(failureCodes),
+    pre.candidateSha !== post.candidateSha
+    || pre.candidateSha !== manifest.candidateSha
+  ) errors.push("candidate_sha_mismatch");
+  if (manifest.preObservationSha256 !== input.preObservationSha256) {
+    errors.push("manifest_pre_observation_sha256_mismatch");
+  }
+  if (manifest.postObservationSha256 !== input.postObservationSha256) {
+    errors.push("manifest_post_observation_sha256_mismatch");
+  }
+  const preEvaluation = observationErrors(pre);
+  const postEvaluation = observationErrors(post);
+  errors.push(...preEvaluation.errors.map((error) => `pre:${error}`));
+  errors.push(...postEvaluation.errors.map((error) => `post:${error}`));
+  const preAt = Date.parse(pre.observedAt);
+  const postAt = Date.parse(post.observedAt);
+  const approvedAt = Date.parse(manifest.approvedAt);
+  const now = Date.parse(input.now);
+  if (postAt <= preAt) errors.push("observation_order_invalid");
+  if (approvedAt < postAt) errors.push("approval_predates_post_observation");
+  if (now - preAt > MAX_OBSERVATION_AGE_MS) errors.push("pre_observation_stale");
+  if (now - postAt > MAX_OBSERVATION_AGE_MS) errors.push("post_observation_stale");
+  if (preAt - now > MAX_FUTURE_CLOCK_SKEW_MS) errors.push("pre_observation_in_future");
+  if (postAt - now > MAX_FUTURE_CLOCK_SKEW_MS) errors.push("post_observation_in_future");
+  if (approvedAt - now > MAX_FUTURE_CLOCK_SKEW_MS) errors.push("approval_in_future");
+  if (errors.length > 0 || preEvaluation.total === null || postEvaluation.total === null) {
+    return Object.freeze({ passed: false, errors: Object.freeze(errors), receipt: null });
+  }
+  const maximumObservedAcrossPhasesMonthlyCents = Math.max(
+    preEvaluation.total,
+    postEvaluation.total,
+  );
+  const receipt: PermanentStagingCostReceipt = Object.freeze({
+    schemaVersion: PERMANENT_STAGING_COST_RECEIPT_SCHEMA,
+    releaseId: manifest.releaseId,
+    candidateSha: manifest.candidateSha,
+    gateId: "permanent_staging_cost",
+    environment: "permanent-staging",
+    scope: "permanent-staging-only",
+    currency: "USD",
+    amountUnit: "integer-cents",
+    lineItemRounding: "ceiling",
+    observationSource: "externally-captured-provider-read-only-exports",
+    externalProviderExportValidationImplemented: true,
+    providerObservationBindingImplemented: true,
+    policySha256: input.policySha256,
+    preObservationSha256: input.preObservationSha256,
+    postObservationSha256: input.postObservationSha256,
+    preObservedAt: pre.observedAt,
+    postObservedAt: post.observedAt,
+    privateManifestSha256: input.privateManifestSha256,
+    totalUpperBoundMonthlyCents: postEvaluation.total,
+    maximumObservedAcrossPhasesMonthlyCents,
+    maximumRecurringMonthlyCents: 5_000,
+    requiredHeadroomMonthlyCents: 300,
+    observedHeadroomMonthlyCents: 5_000 - maximumObservedAcrossPhasesMonthlyCents,
+    providers: post.providers,
+    excludedScopes: post.excludedScopes,
   });
+  return Object.freeze({ passed: true, errors: Object.freeze([]), receipt });
+}
+
+export function canonicalPermanentStagingCostJson(value: unknown): string {
+  return `${JSON.stringify(value, null, 2)}\n`;
 }

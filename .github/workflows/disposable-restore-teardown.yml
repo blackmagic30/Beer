@@ -1,0 +1,177 @@
+name: Delete one exact disposable restore project
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Exact current main SHA authorizing teardown
+        required: true
+        type: string
+      project_id:
+        description: Exact disposable Railway project UUID
+        required: true
+        type: string
+      project_name:
+        description: Exact pintpath-disposable-restore-* project name
+        required: true
+        type: string
+      environment_id:
+        description: Exact sole ephemeral environment UUID
+        required: true
+        type: string
+      environment_name:
+        description: Exact environment name; must equal project name
+        required: true
+        type: string
+      inventory_sha256:
+        description: SHA-256 of the reviewed complete canonical project inventory
+        required: true
+        type: string
+      confirmation:
+        description: DELETE_<project UUID>
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pintpath-disposable-restore-teardown-${{ inputs.project_id }}
+  cancel-in-progress: false
+
+jobs:
+  teardown:
+    name: Delete exact reviewed disposable restore project
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    environment: disposable-restore-teardown
+    steps:
+      - name: Checkout the exact main candidate without persisted credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+
+      - name: Require exact original-run authority
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          DISPATCH_SHA: ${{ github.sha }}
+          DISPATCH_REF: ${{ github.ref }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          PROJECT_ID: ${{ inputs.project_id }}
+          PROJECT_NAME: ${{ inputs.project_name }}
+          ENVIRONMENT_ID: ${{ inputs.environment_id }}
+          ENVIRONMENT_NAME: ${{ inputs.environment_name }}
+          INVENTORY_SHA256: ${{ inputs.inventory_sha256 }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$PROJECT_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]
+          [[ "$ENVIRONMENT_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]
+          [[ "$INVENTORY_SHA256" =~ ^[a-f0-9]{64}$ ]]
+          [[ "$PROJECT_NAME" =~ ^pintpath-disposable-restore-[a-z0-9][a-z0-9-]{0,79}$ ]]
+          test "$PROJECT_NAME" = "$ENVIRONMENT_NAME"
+          test "$PROJECT_ID" != '48d8c6cd-1c66-4148-874b-20877f48e1a5'
+          test "$ENVIRONMENT_ID" != '13dab015-df74-45c6-b26f-69323daea99a'
+          test "$ENVIRONMENT_ID" != 'a4e0f507-d6d3-4df9-a818-ad92c0071a35'
+          test "$CONFIRMATION" = "DELETE_${PROJECT_ID}"
+          test "$DISPATCH_REF" = 'refs/heads/main'
+          test "$DISPATCH_SHA" = "$CANDIDATE_SHA"
+          test "$RUN_ATTEMPT" = '1'
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse refs/remotes/origin/main)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain=v2 --untracked-files=all)"
+
+      - name: Setup the repository Node runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Install immutable dependencies
+        run: npm ci
+
+      - name: Create private evidence custody
+        run: mkdir -m 700 "$RUNNER_TEMP/pintpath-restore-teardown-evidence"
+
+      - name: Verify the complete repository before the destructive write
+        run: npm run check
+
+      - name: Reassert exact current main immediately before deletion
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse refs/remotes/origin/main)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain=v2 --untracked-files=all)"
+
+      - name: Delete the one exact disposable project and reconcile absence
+        env:
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+          PINTPATH_RESTORE_TEARDOWN_CONFIRMATION: ${{ inputs.confirmation }}
+          PINTPATH_RAILWAY_RESTORE_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_RESTORE_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_RESTORE_DELETE_TOKEN: ${{ secrets.PINTPATH_RAILWAY_RESTORE_DELETE_TOKEN }}
+          PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          PROJECT_ID: ${{ inputs.project_id }}
+          PROJECT_NAME: ${{ inputs.project_name }}
+          ENVIRONMENT_ID: ${{ inputs.environment_id }}
+          ENVIRONMENT_NAME: ${{ inputs.environment_name }}
+          INVENTORY_SHA256: ${{ inputs.inventory_sha256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./node_modules/.bin/tsx scripts/execute-protected-disposable-restore-teardown.ts \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --project-id "$PROJECT_ID" \
+            --project-name "$PROJECT_NAME" \
+            --environment-id "$ENVIRONMENT_ID" \
+            --environment-name "$ENVIRONMENT_NAME" \
+            --inventory-sha256 "$INVENTORY_SHA256" \
+            --evidence-dir "$RUNNER_TEMP/pintpath-restore-teardown-evidence"
+
+      - name: Re-run exact read-only absence reconciliation after every attempt
+        if: always()
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          PROJECT_ID: ${{ inputs.project_id }}
+          PROJECT_NAME: ${{ inputs.project_name }}
+          ENVIRONMENT_ID: ${{ inputs.environment_id }}
+          ENVIRONMENT_NAME: ${{ inputs.environment_name }}
+          INVENTORY_SHA256: ${{ inputs.inventory_sha256 }}
+          PINTPATH_RAILWAY_RESTORE_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_RESTORE_METADATA_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./node_modules/.bin/tsx scripts/verify-disposable-restore-project-absent.ts \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --project-id "$PROJECT_ID" \
+            --project-name "$PROJECT_NAME" \
+            --environment-id "$ENVIRONMENT_ID" \
+            --environment-name "$ENVIRONMENT_NAME" \
+            --inventory-sha256 "$INVENTORY_SHA256"
+
+      - name: Reconcile canonical Railway production/staging boundaries after every attempt
+        if: always()
+        env:
+          PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
+        run: npm run readiness:railway:mutation-boundary
+
+      - name: Upload secret-free terminal evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pintpath-disposable-restore-teardown-${{ inputs.project_id }}-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}/pintpath-restore-teardown-evidence/
+          if-no-files-found: error
+          retention-days: 30

@@ -1,0 +1,224 @@
+name: Mutate Pint Path permanent-staging provider variables
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Exact 40-character SHA currently at main
+        required: true
+        type: string
+      operation:
+        description: One reviewed provider-variable operation
+        required: true
+        type: choice
+        options:
+          - provider-google-maps-api-key
+          - provider-google-maps-map-id
+          - provider-google-places-api-key
+          - provider-openai-api-key
+          - supabase-key-replacement
+      confirmation:
+        description: MUTATE_<UPPERCASE_OPERATION>_IN_PERMANENT_STAGING
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pintpath-permanent-staging-provider-mutation
+  cancel-in-progress: false
+
+jobs:
+  mutate:
+    name: One atomic variable mutation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    environment: permanent-staging-provider-mutation
+
+    steps:
+      - name: Checkout the exact main candidate without persisted credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+
+      - name: Require an original run at the exact current main candidate
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          DISPATCH_SHA: ${{ github.sha }}
+          DISPATCH_REF: ${{ github.ref }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          OPERATION: ${{ inputs.operation }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          test "$DISPATCH_REF" = 'refs/heads/main'
+          test "$RUN_ATTEMPT" = '1'
+          test "$DISPATCH_SHA" = "$CANDIDATE_SHA"
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse refs/remotes/origin/main)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain=v2 --untracked-files=all)"
+          expected="MUTATE_${OPERATION^^}_IN_PERMANENT_STAGING"
+          expected="${expected//-/_}"
+          test "$CONFIRMATION" = "$expected"
+
+      - name: Setup the repository Node runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Install immutable dependencies
+        run: npm ci
+
+      - name: Verify the repository before exposing protected credentials
+        run: npm run check
+
+      - name: Verify replacement-key consumer compatibility
+        if: inputs.operation == 'supabase-key-replacement'
+        run: npm run supabase:keys:consumer-compatibility:check
+
+      - name: Create private input and evidence custody directories
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          OPERATION: ${{ inputs.operation }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -m 700 "$RUNNER_TEMP/pintpath-provider-input"
+          mkdir -m 700 "$RUNNER_TEMP/pintpath-provider-evidence"
+          jq -n --arg candidateSha "$CANDIDATE_SHA" --arg operation "$OPERATION" \
+            '{schemaVersion:"pintpath-provider-mutation-dispatch/v1",candidateSha:$candidateSha,operation:$operation,secretMaterialIncluded:false}' \
+            > "$RUNNER_TEMP/pintpath-provider-evidence/dispatch.json"
+          chmod 600 "$RUNNER_TEMP/pintpath-provider-evidence/dispatch.json"
+
+      - name: Stage Google Maps API key in private custody
+        if: inputs.operation == 'provider-google-maps-api-key'
+        env:
+          PROVIDER_VALUE: ${{ secrets.PINTPATH_STAGING_GOOGLE_MAPS_API_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$PROVIDER_VALUE"
+          umask 077
+          printf '%s' "$PROVIDER_VALUE" > "$RUNNER_TEMP/pintpath-provider-input/value"
+
+      - name: Stage Google Maps map ID in private custody
+        if: inputs.operation == 'provider-google-maps-map-id'
+        env:
+          PROVIDER_VALUE: ${{ secrets.PINTPATH_STAGING_GOOGLE_MAPS_MAP_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$PROVIDER_VALUE"
+          umask 077
+          printf '%s' "$PROVIDER_VALUE" > "$RUNNER_TEMP/pintpath-provider-input/value"
+
+      - name: Stage Google Places API key in private custody
+        if: inputs.operation == 'provider-google-places-api-key'
+        env:
+          PROVIDER_VALUE: ${{ secrets.PINTPATH_STAGING_GOOGLE_PLACES_API_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$PROVIDER_VALUE"
+          umask 077
+          printf '%s' "$PROVIDER_VALUE" > "$RUNNER_TEMP/pintpath-provider-input/value"
+
+      - name: Stage OpenAI API key in private custody
+        if: inputs.operation == 'provider-openai-api-key'
+        env:
+          PROVIDER_VALUE: ${{ secrets.PINTPATH_STAGING_OPENAI_API_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$PROVIDER_VALUE"
+          umask 077
+          printf '%s' "$PROVIDER_VALUE" > "$RUNNER_TEMP/pintpath-provider-input/value"
+
+      - name: Stage the paired Supabase replacement keys in private custody
+        if: inputs.operation == 'supabase-key-replacement'
+        env:
+          PUBLISHABLE_KEY: ${{ secrets.PINTPATH_STAGING_SUPABASE_PUBLISHABLE_KEY }}
+          SECRET_KEY: ${{ secrets.PINTPATH_STAGING_SUPABASE_SECRET_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$PUBLISHABLE_KEY" =~ ^sb_publishable_[A-Za-z0-9_-]{20,220}$ ]]
+          [[ "$SECRET_KEY" =~ ^sb_secret_[A-Za-z0-9_-]{20,220}$ ]]
+          test "$PUBLISHABLE_KEY" != "$SECRET_KEY"
+          umask 077
+          printf '%s' "$PUBLISHABLE_KEY" > "$RUNNER_TEMP/pintpath-provider-input/publishable"
+          printf '%s' "$SECRET_KEY" > "$RUNNER_TEMP/pintpath-provider-input/secret"
+
+      - name: Reassert exact current main immediately before the provider write
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse refs/remotes/origin/main)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain=v2 --untracked-files=all)"
+
+      - name: Execute exactly one reviewed atomic Railway mutation
+        env:
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+          PINTPATH_MUTATION_CONFIRMATION: ${{ inputs.confirmation }}
+          PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_MUTATION_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_VARIABLE_MUTATION_TOKEN }}
+          OPERATION: ${{ inputs.operation }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          common=(
+            --operation "$OPERATION"
+            --evidence-dir "$RUNNER_TEMP/pintpath-provider-evidence"
+          )
+          if test "$OPERATION" = 'supabase-key-replacement'; then
+            ./node_modules/.bin/tsx scripts/execute-protected-permanent-staging-variable-mutation.ts \
+              "${common[@]}" \
+              --publishable-key-file "$RUNNER_TEMP/pintpath-provider-input/publishable" \
+              --secret-key-file "$RUNNER_TEMP/pintpath-provider-input/secret"
+          else
+            ./node_modules/.bin/tsx scripts/execute-protected-permanent-staging-variable-mutation.ts \
+              "${common[@]}" \
+              --value-file "$RUNNER_TEMP/pintpath-provider-input/value"
+          fi
+
+      - name: Remove private input custody
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          input_root="$RUNNER_TEMP/pintpath-provider-input"
+          if test -d "$input_root"; then
+            find "$input_root" -type f -exec shred -u -- {} + 2>/dev/null \
+              || find "$input_root" -type f -exec rm -f -- {} +
+            find "$input_root" -depth -type d -exec rmdir -- {} +
+          fi
+          test ! -e "$input_root"
+
+      - name: Reconcile the Railway mutation boundary after every attempt
+        if: always()
+        env:
+          PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
+        run: npm run readiness:railway:mutation-boundary
+
+      - name: Upload secret-free terminal evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pintpath-permanent-staging-provider-mutation-${{ inputs.operation }}-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}/pintpath-provider-evidence/
+          if-no-files-found: error
+          retention-days: 30

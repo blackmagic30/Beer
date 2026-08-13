@@ -147,12 +147,12 @@ function mutate(
 }
 
 describe("permanent staging app deployment source contract", () => {
-  it("is capability-pure, hard-disabled, and duplicates only reviewed public locks", () => {
+  it("is a capability-pure legacy validator superseded by the protected executor", () => {
     const source = fs.readFileSync(path.resolve(
       "scripts/lib/permanent-staging-app-deployment-source-contract.ts",
     ), "utf8");
     expect(PERMANENT_STAGING_APP_DEPLOYMENT_SOURCE_CONTRACT_STATE).toBe(
-      "HARD_DISABLED_OFFLINE_STRUCTURAL_FIXTURE_ONLY",
+      "SUPERSEDED_BY_PROTECTED_EXECUTOR_OFFLINE_VALIDATOR_ONLY",
     );
     expect(LOCK).toEqual({
       railwayConfigPath: "railway.toml",
@@ -160,7 +160,7 @@ describe("permanent staging app deployment source contract", () => {
         "85dc659ebec2e0132092d917505d71678e92b8441b54bcefc80c6a082e3b967b",
       packageLockPath: "package-lock.json",
       packageLockSha256:
-        "2d916b16b3072ca5b6ede6da33752bf76654dc73e8d09b5a01351af71e33c22b",
+        "b5bfc2258853ab58dd5749b91ae55d9724620e102fe55e91de31a4599ab9f67b",
       futureUploadPathMode: "explicit-snapshot-path",
       futurePathAsRootFlag: "--path-as-root",
       futureNoGitignoreFlag: "--no-gitignore",
@@ -239,7 +239,7 @@ describe("permanent staging app deployment source contract", () => {
     expect(candidate).toEqual({
       schemaVersion: "pintpath-permanent-staging-app-source-snapshot-candidate/v1",
       authority: "offline-structural-source-candidate",
-      contractState: "HARD_DISABLED_OFFLINE_STRUCTURAL_FIXTURE_ONLY",
+      contractState: "SUPERSEDED_BY_PROTECTED_EXECUTOR_OFFLINE_VALIDATOR_ONLY",
       activationAuthorized: false,
       providerCandidateBindingAvailable: false,
       candidateSha: HEAD_SHA,
