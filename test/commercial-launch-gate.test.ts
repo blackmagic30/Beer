@@ -83,6 +83,13 @@ describe("commercial launch gate", () => {
     expect(venuePortalHtml).toContain("removeDeferredCommercialSurfaces");
     expect(venuePortalHtml).toContain("new MutationObserver");
     expect(venuePortalHtml).toContain("surfaces.forEach((surface) => surface.remove())");
+    const portalInitialization = venuePortalHtml.slice(
+      venuePortalHtml.indexOf("revealEnabledCommercialSurfaces();"),
+      venuePortalHtml.indexOf('window.addEventListener("DOMContentLoaded"'),
+    );
+    expect(portalInitialization).not.toContain("removeDeferredCommercialSurfaces();");
+    expect(venuePortalHtml.indexOf("removeDeferredCommercialSurfaces();"))
+      .toBeGreaterThan(venuePortalHtml.indexOf('window.addEventListener("DOMContentLoaded"'));
     const venueUpgradeHandler = venuePortalHtml.slice(
       venuePortalHtml.indexOf("const upgradeTier = target.dataset.upgradeTier"),
       venuePortalHtml.indexOf("const happyHourId = target.dataset.editHappyHour"),

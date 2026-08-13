@@ -65,6 +65,7 @@ import {
   createSubmissionSchema,
   normalizeHappyHourTime,
   pintPointDrinkRecordSchema,
+  reviewSubmissionSchema,
 } from "../src/modules/business/business.schemas.js";
 import {
   createBusinessRouter,
@@ -4175,8 +4176,8 @@ describe("production hardening", () => {
     }))).rejects.toThrow("upload the source image directly");
   });
 
-  it("lets admins review their own submissions and returns clean errors for already-reviewed submissions", async () => {
-    const { repository } = createRepository();
+  it("requires an independent admin review and derives confidence instead of trusting the request", async () => {
+    const { database, repository } = createRepository();
     const service = createBusinessService(repository);
     const admin = createAccount(repository, "admin", "admin");
     const otherAdmin = createAccount(repository, "other-admin", "admin");
@@ -4194,12 +4195,16 @@ describe("production hardening", () => {
       status: "approved" as const,
       rejectionReason: null,
       fraudFlagged: false,
-      confidence: "photo_verified" as const,
+      confidence: "community_confirmed" as const,
     };
 
-    const ownReview = await service.reviewSubmission(admin, ownSubmission.id, approvePayload);
+    expect(reviewSubmissionSchema.parse(approvePayload)).not.toHaveProperty("confidence");
+    await expect(service.reviewSubmission(admin, ownSubmission.id, approvePayload))
+      .rejects.toThrow("Admins cannot review their own submissions");
+
+    const ownReview = await service.reviewSubmission(otherAdmin, ownSubmission.id, approvePayload);
     expect(ownReview.submission.status).toBe("approved");
-    expect(ownReview.submission.reviewedBy).toBe(admin.id);
+    expect(ownReview.submission.reviewedBy).toBe(otherAdmin.id);
 
     await service.reviewSubmission(admin, submission.id, approvePayload);
     await expect(service.reviewSubmission(otherAdmin, submission.id, approvePayload))
@@ -4212,9 +4217,12 @@ describe("production hardening", () => {
     )).toBe(true);
     expect(auditLogs.some((log) =>
       log.action === "admin_submission_review" &&
-      log.actorUserId === admin.id &&
+      log.actorUserId === otherAdmin.id &&
       log.targetId === ownSubmission.id,
     )).toBe(true);
+    expect(database.prepare(
+      "SELECT confidence FROM venue_price_records WHERE source_submission_id = ?",
+    ).get(ownSubmission.id)).toEqual({ confidence: "photo_verified" });
   });
 
   it("serializes concurrent service approvals into one public effect", async () => {
@@ -8641,6 +8649,9 @@ describe("business demo contribution model", () => {
     expect(pass.qrDataUrl).toMatch(/^data:image\/png;base64,/);
     expect(pass.redeemUrl).toContain("venue-portal.html");
     expect(pass.redeemUrl).toContain("tab=redemption");
+    const passUrl = new URL(pass.redeemUrl);
+    expect(passUrl.searchParams.get("discountCode")).toBeNull();
+    expect(new URLSearchParams(passUrl.hash.slice(1)).get("discountCode")).toBe(pass.code);
     expect(storedPass.status).toBe("active");
     expect(storedPass.code_hash).not.toBe(pass.code);
 
@@ -9105,6 +9116,9 @@ describe("business demo contribution model", () => {
     expect(reward.code).toMatch(/^[A-Z0-9]{6}$/);
     expect(reward.qrDataUrl).toMatch(/^data:image\/png;base64,/);
     expect(reward.redeemUrl).toContain("freePintCode=");
+    const rewardUrl = new URL(reward.redeemUrl);
+    expect(rewardUrl.searchParams.get("freePintCode")).toBeNull();
+    expect(new URLSearchParams(rewardUrl.hash.slice(1)).get("freePintCode")).toBe(reward.code);
     expect(reward.wallet).toEqual(expect.objectContaining({
       balance: 50,
       available: 0,
@@ -10304,7 +10318,7 @@ describe("business demo contribution model", () => {
       const publishedRecord = database
         .prepare("SELECT confidence FROM venue_price_records WHERE source_submission_id = ?")
         .get(result.submission.id) as { confidence: string } | undefined;
-      expect(publishedRecord?.confidence).toBe("admin_verified");
+      expect(publishedRecord?.confidence).toBe("community_confirmed");
     } finally {
       vi.unstubAllGlobals();
     }

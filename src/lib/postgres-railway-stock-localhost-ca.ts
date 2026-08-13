@@ -128,6 +128,16 @@ export interface OpenPostgresRailwayStockLocalhostCaTransportOptions {
   readonly sourceUrlAuthority: PostgresRailwayStockLocalhostCaSourceUrlAuthority;
 }
 
+export interface OpenPostgresRailwayStockLocalhostCaTransportFromPemOptions
+extends Omit<OpenPostgresRailwayStockLocalhostCaTransportOptions, "rootCaFile"> {
+  readonly rootCaPem: string;
+}
+
+export interface ParsedPostgresRailwayStockLocalhostCaUrl {
+  readonly connectionString: string;
+  readonly sourceUrlAuthority: Readonly<PostgresRailwayStockLocalhostCaSourceUrlAuthority>;
+}
+
 export interface PostgresRailwayStockLocalhostCaDependencies {
   readonly getUid: () => number | null;
   readonly getEuid: () => number | null;
@@ -547,6 +557,74 @@ function validateRootCa(
       < POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_MINIMUM_REMAINING_VALIDITY_MS
   ) throw new PostgresRailwayStockLocalhostCaError("root_ca_certificate_invalid");
   return { derSha256 };
+}
+
+export function assertPostgresRailwayStockLocalhostRootCaPem(
+  pem: string,
+  expectedDerSha256: string,
+  now = new Date(),
+): void {
+  if (
+    typeof pem !== "string"
+    || Buffer.byteLength(pem, "utf8") < 1
+    || Buffer.byteLength(pem, "utf8") > MAX_ROOT_CA_BYTES
+    || pem.includes("\0")
+    || typeof expectedDerSha256 !== "string"
+    || !SHA256_PATTERN.test(expectedDerSha256)
+  ) throw new PostgresRailwayStockLocalhostCaError("invalid_arguments");
+  validateRootCa(pem, expectedDerSha256, now);
+}
+
+export function parsePostgresRailwayStockLocalhostCaUrl(
+  value: string,
+): ParsedPostgresRailwayStockLocalhostCaUrl {
+  try {
+    if (
+      typeof value !== "string"
+      || value.length < 1
+      || value.length > 4_096
+      || value !== value.trim()
+      || /[\u0000\r\n]/.test(value)
+    ) throw new Error("invalid_url");
+    const parsed = new URL(value);
+    const schemeEnd = value.indexOf("://");
+    const authorityEndCandidates = ["/", "?", "#"]
+      .map((separator) => value.indexOf(separator, schemeEnd + 3))
+      .filter((index) => index >= 0);
+    const authorityEnd = authorityEndCandidates.length > 0
+      ? Math.min(...authorityEndCandidates)
+      : value.length;
+    const rawAuthority = value.slice(schemeEnd + 3, authorityEnd);
+    const rawHostPort = rawAuthority.slice(rawAuthority.lastIndexOf("@") + 1);
+    const sslModes = parsed.searchParams.getAll("sslmode");
+    if (
+      !["postgres:", "postgresql:"].includes(parsed.protocol)
+      || schemeEnd < 1
+      || !parsed.username
+      || !parsed.password
+      || !parsed.pathname.slice(1)
+      || parsed.pathname.slice(1).includes("/")
+      || !RAILWAY_PRIVATE_HOST_PATTERN.test(parsed.hostname)
+      || parsed.hostname !== parsed.hostname.toLowerCase()
+      || parsed.port !== String(POSTGRES_PORT)
+      || rawHostPort !== `${parsed.hostname}:${POSTGRES_PORT}`
+      || parsed.hash
+      || parsed.search !== "?sslmode=verify-full"
+      || sslModes.length !== 1
+      || sslModes[0] !== "verify-full"
+      || [...parsed.searchParams.keys()].some((key) => key !== "sslmode")
+    ) throw new Error("invalid_url");
+    return Object.freeze({
+      connectionString: value,
+      sourceUrlAuthority: Object.freeze({
+        hostname: parsed.hostname,
+        port: POSTGRES_PORT,
+      }),
+    });
+  } catch (error) {
+    if (error instanceof PostgresRailwayStockLocalhostCaError) throw error;
+    throw new PostgresRailwayStockLocalhostCaError("invalid_arguments");
+  }
 }
 
 function canonicalFd12Address(value: string): string | null {
@@ -1039,6 +1117,78 @@ implements PostgresRailwayStockLocalhostCaTransport {
   }
 }
 
+class OpenRailwayStockLocalhostCaEnvironmentTransport
+implements PostgresRailwayStockLocalhostCaTransport {
+  readonly profile: typeof POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE;
+  readonly rootCaDerSha256: string;
+  readonly sourceUrlAuthority: Readonly<PostgresRailwayStockLocalhostCaSourceUrlAuthority>;
+  readonly resolvedAddress: string;
+  readonly temporaryDirectory: string;
+  readonly passwordFileDirectory: string;
+  readonly passwordFileHost: typeof LOCALHOST;
+  readonly nodeConnection: Readonly<PostgresRailwayStockLocalhostCaNodeConnection>;
+  readonly libpqEnvironment: Readonly<PostgresRailwayStockLocalhostCaLibpqEnvironment>;
+
+  private state: "open" | "closing" | "closed" = "open";
+  private closePromise: Promise<void> | null = null;
+
+  constructor(
+    private readonly transport: PostgresRailwayStockLocalhostCaTransport,
+    private readonly environmentResources: OwnedTransportResources,
+    private readonly expectedUid: number,
+    private readonly pemSha256: string,
+  ) {
+    this.profile = transport.profile;
+    this.rootCaDerSha256 = transport.rootCaDerSha256;
+    this.sourceUrlAuthority = transport.sourceUrlAuthority;
+    this.resolvedAddress = transport.resolvedAddress;
+    this.temporaryDirectory = transport.temporaryDirectory;
+    this.passwordFileDirectory = transport.passwordFileDirectory;
+    this.passwordFileHost = transport.passwordFileHost;
+    this.nodeConnection = transport.nodeConnection;
+    this.libpqEnvironment = transport.libpqEnvironment;
+  }
+
+  async assertExact(): Promise<void> {
+    if (this.state !== "open") {
+      throw new PostgresRailwayStockLocalhostCaError("transport_drift");
+    }
+    const [directoryExact, rootCaExact] = await Promise.all([
+      ownedDirectoryIsExact(this.environmentResources, this.expectedUid),
+      ownedRootCaIsExact(
+        this.environmentResources,
+        this.expectedUid,
+        this.pemSha256,
+      ),
+    ]);
+    await this.transport.assertExact();
+    if (this.state !== "open" || !directoryExact || !rootCaExact) {
+      throw new PostgresRailwayStockLocalhostCaError("transport_drift");
+    }
+  }
+
+  close(): Promise<void> {
+    if (this.closePromise) return this.closePromise;
+    this.state = "closing";
+    this.closePromise = (async () => {
+      let exact = true;
+      try {
+        await this.transport.close();
+      } catch {
+        exact = false;
+      }
+      if (!await cleanupResources(this.environmentResources, this.expectedUid)) {
+        exact = false;
+      }
+      this.state = "closed";
+      if (!exact) {
+        throw new PostgresRailwayStockLocalhostCaError("cleanup_failed");
+      }
+    })();
+    return this.closePromise;
+  }
+}
+
 export async function openPostgresRailwayStockLocalhostCaTransport(
   options: OpenPostgresRailwayStockLocalhostCaTransportOptions,
   dependencyOverrides: Partial<PostgresRailwayStockLocalhostCaDependencies> = {},
@@ -1126,6 +1276,122 @@ export async function openPostgresRailwayStockLocalhostCaTransport(
   } catch (error) {
     const cleaned = await cleanupResources(resources, stableOptions.expectedUid);
     if (!cleaned) throw new PostgresRailwayStockLocalhostCaError("cleanup_failed");
+    if (error instanceof PostgresRailwayStockLocalhostCaError) throw error;
+    throw new PostgresRailwayStockLocalhostCaError("unsafe_temporary_authority");
+  }
+}
+
+export async function openPostgresRailwayStockLocalhostCaTransportFromPem(
+  options: OpenPostgresRailwayStockLocalhostCaTransportFromPemOptions,
+  dependencyOverrides: Partial<PostgresRailwayStockLocalhostCaDependencies> = {},
+): Promise<PostgresRailwayStockLocalhostCaTransport> {
+  const dependencies: PostgresRailwayStockLocalhostCaDependencies = {
+    ...DEFAULT_DEPENDENCIES,
+    ...dependencyOverrides,
+  };
+  let uid: number | null;
+  let euid: number | null;
+  let now: Date;
+  try {
+    uid = dependencies.getUid();
+    euid = dependencies.getEuid();
+    now = dependencies.now();
+  } catch {
+    throw new PostgresRailwayStockLocalhostCaError("invalid_arguments");
+  }
+  const authority = isRecord(options)
+    ? options.sourceUrlAuthority
+    : null;
+  if (
+    !isRecord(options)
+    || !exactKeys(options, [
+      "expectedRootCaDerSha256",
+      "expectedUid",
+      "profile",
+      "rootCaPem",
+      "sourceUrlAuthority",
+    ])
+    || options.profile !== POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE
+    || typeof options.rootCaPem !== "string"
+    || typeof options.expectedRootCaDerSha256 !== "string"
+    || !SHA256_PATTERN.test(options.expectedRootCaDerSha256)
+    || !Number.isSafeInteger(options.expectedUid)
+    || options.expectedUid < 0
+    || !isRecord(authority)
+    || !exactKeys(authority, ["hostname", "port"])
+    || typeof authority.hostname !== "string"
+    || !RAILWAY_PRIVATE_HOST_PATTERN.test(authority.hostname)
+    || authority.hostname !== authority.hostname.toLowerCase()
+    || authority.port !== POSTGRES_PORT
+    || !Number.isSafeInteger(uid)
+    || uid === null
+    || euid !== uid
+    || options.expectedUid !== uid
+  ) throw new PostgresRailwayStockLocalhostCaError("invalid_arguments");
+  const stableOptions = Object.freeze({
+    profile: options.profile,
+    rootCaPem: options.rootCaPem,
+    expectedRootCaDerSha256: options.expectedRootCaDerSha256,
+    expectedUid: options.expectedUid,
+    sourceUrlAuthority: Object.freeze({
+      hostname: authority.hostname,
+      port: authority.port,
+    }),
+  });
+  assertPostgresRailwayStockLocalhostRootCaPem(
+    stableOptions.rootCaPem,
+    stableOptions.expectedRootCaDerSha256,
+    now,
+  );
+  const environmentResources: OwnedTransportResources = {
+    source: null,
+    directoryPath: null,
+    directoryIdentity: null,
+    directoryHandle: null,
+    rootCaPath: null,
+    rootCaCreatedIdentity: null,
+    rootCaIdentity: null,
+    rootCaHandle: null,
+  };
+  let transport: PostgresRailwayStockLocalhostCaTransport | null = null;
+  try {
+    await createOwnedRootCaCopy(
+      environmentResources,
+      stableOptions.rootCaPem,
+      uid,
+      dependencies,
+    );
+    if (!environmentResources.rootCaPath) {
+      throw new PostgresRailwayStockLocalhostCaError("unsafe_temporary_authority");
+    }
+    transport = await openPostgresRailwayStockLocalhostCaTransport({
+      profile: stableOptions.profile,
+      rootCaFile: environmentResources.rootCaPath,
+      expectedRootCaDerSha256: stableOptions.expectedRootCaDerSha256,
+      expectedUid: uid,
+      sourceUrlAuthority: stableOptions.sourceUrlAuthority,
+    }, dependencies);
+    const wrapped = new OpenRailwayStockLocalhostCaEnvironmentTransport(
+      transport,
+      environmentResources,
+      uid,
+      crypto.createHash("sha256").update(stableOptions.rootCaPem, "utf8").digest("hex"),
+    );
+    await wrapped.assertExact();
+    return wrapped;
+  } catch (error) {
+    let cleanupExact = true;
+    if (transport) {
+      try {
+        await transport.close();
+      } catch {
+        cleanupExact = false;
+      }
+    }
+    if (!await cleanupResources(environmentResources, uid)) cleanupExact = false;
+    if (!cleanupExact) {
+      throw new PostgresRailwayStockLocalhostCaError("cleanup_failed");
+    }
     if (error instanceof PostgresRailwayStockLocalhostCaError) throw error;
     throw new PostgresRailwayStockLocalhostCaError("unsafe_temporary_authority");
   }

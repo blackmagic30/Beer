@@ -8145,14 +8145,6 @@
         syncStatusPills(filteredRows, viewState);
         renderLegend(filteredRows, viewState);
         renderVenueRail(listModeRecords, viewState);
-        window.__pintPathMapMarkerDebug = {
-          markerType: "list_fallback",
-          venueMarkerCount: 0,
-          listVenueCount: listModeRecords.length,
-          clustered: false,
-          usesAdvancedMarkerElement: false,
-        };
-
         if (initialSharedVenueId && !initialSharedVenueOpened) {
           const sharedRecord = listModeRecords.find((record) => getRecordVenueId(record) === initialSharedVenueId || record.id === initialSharedVenueId);
           if (sharedRecord) {
@@ -9423,13 +9415,6 @@
               renderer: clusterRenderer,
             });
           }
-
-          window.__pintPathMapMarkerDebug = {
-            markerType: "advanced",
-            venueMarkerCount: liveMarkers.length,
-            clustered: Boolean(markerCluster),
-            usesAdvancedMarkerElement: typeof AdvancedMarkerElement === "function",
-          };
 
           syncStatusPills(filteredRows, viewState);
           renderLegend(filteredRows, viewState);

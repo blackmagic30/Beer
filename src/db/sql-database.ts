@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import fs from "node:fs";
+import net from "node:net";
 
 import type BetterSqlite3 from "better-sqlite3";
 import {
@@ -10,6 +11,11 @@ import {
   type PoolConfig,
   type QueryResultRow,
 } from "pg";
+
+import {
+  checkPostgresRailwayStockLocalhostServerIdentity,
+  type PostgresRailwayStockLocalhostCaNodeConnection,
+} from "../lib/postgres-railway-stock-localhost-ca.js";
 
 export const POSTGRES_APPLICATION_SCHEMA = "pintpath_app";
 export const POSTGRES_OPERATIONS_SCHEMA = "pintpath_ops";
@@ -485,6 +491,12 @@ function compilePostgresQuery(sql: string, bindings: SqlBindings): CompiledPostg
 
 export interface PostgresDatabaseOptions {
   connectionString: string;
+  /**
+   * Fixed NOLOGIN application role selected for every new backend before the
+   * connection can execute repository SQL. This is intentionally not an
+   * arbitrary environment-provided role name.
+   */
+  activeRole?: "pintpath_runtime" | "pintpath_maintenance" | undefined;
   applicationName?: string | undefined;
   maxConnections?: number | undefined;
   idleTimeoutMs?: number | undefined;
@@ -492,6 +504,39 @@ export interface PostgresDatabaseOptions {
   statementTimeoutMs?: number | undefined;
   idleInTransactionTimeoutMs?: number | undefined;
   sslRootCertificatePath?: string | undefined;
+  /**
+   * Exact reviewed bridge for Railway's stock private Postgres certificate:
+   * dial one pinned fd12 address while authenticating its leaf as localhost.
+   */
+  railwayStockLocalhostCaConnection?:
+    PostgresRailwayStockLocalhostCaNodeConnection | undefined;
+}
+
+type PostgresActiveRole = NonNullable<PostgresDatabaseOptions["activeRole"]>;
+
+function assertPostgresActiveRole(value: unknown): PostgresActiveRole | undefined {
+  if (value === undefined) return undefined;
+  if (value === "pintpath_runtime" || value === "pintpath_maintenance") {
+    return value;
+  }
+  throw new Error("Postgres active role must be an exact reviewed application role.");
+}
+
+function buildPostgresStartupOptions(options: Pick<
+  PostgresDatabaseOptions,
+  | "activeRole"
+  | "statementTimeoutMs"
+  | "idleInTransactionTimeoutMs"
+>): string {
+  const activeRole = assertPostgresActiveRole(options.activeRole);
+  return [
+    activeRole ? `-c role=${activeRole}` : null,
+    `-c search_path=${POSTGRES_APPLICATION_SCHEMA},pg_catalog`,
+    `-c statement_timeout=${options.statementTimeoutMs ?? 30_000}`,
+    `-c idle_in_transaction_session_timeout=${options.idleInTransactionTimeoutMs ?? 30_000}`,
+    "-c lock_timeout=10000",
+    "-c synchronous_commit=on",
+  ].filter((entry): entry is string => entry !== null).join(" ");
 }
 
 function assertTlsPostgresUrl(connectionString: string): URL {
@@ -563,6 +608,99 @@ function normalizePostgresClientUrl(
   return parsed.toString();
 }
 
+function exactObjectKeys(value: object, expected: readonly string[]): boolean {
+  const actual = Object.keys(value).sort();
+  const wanted = [...expected].sort();
+  return actual.length === wanted.length
+    && actual.every((key, index) => key === wanted[index]);
+}
+
+function canonicalFd12Address(value: string): string | null {
+  if (
+    value !== value.trim()
+    || value.includes("%")
+    || net.isIPv6(value) !== true
+  ) return null;
+  try {
+    const bracketed = new URL(`http://[${value}]/`).hostname.toLowerCase();
+    if (!bracketed.startsWith("[") || !bracketed.endsWith("]")) return null;
+    const canonical = bracketed.slice(1, -1);
+    return canonical.split(":", 1)[0] === "fd12" ? canonical : null;
+  } catch {
+    return null;
+  }
+}
+
+function decodePostgresCredential(value: string): string | null {
+  try {
+    const decoded = decodeURIComponent(value);
+    return decoded && !decoded.includes("\0") && !/[\r\n]/.test(decoded)
+      ? decoded
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function postgresRailwayStockLocalhostPoolConnection(
+  clientUrl: string,
+  connection: PostgresRailwayStockLocalhostCaNodeConnection,
+): Pick<PoolConfig, "database" | "host" | "password" | "port" | "ssl" | "user"> {
+  const parsed = assertTlsPostgresUrl(clientUrl);
+  const entries = [...parsed.searchParams.entries()];
+  const user = decodePostgresCredential(parsed.username);
+  const password = decodePostgresCredential(parsed.password);
+  const database = decodePostgresCredential(parsed.pathname.slice(1));
+  const canonicalAddress = typeof connection?.host === "string"
+    ? canonicalFd12Address(connection.host)
+    : null;
+  const ssl = connection?.ssl;
+  if (
+    parsed.searchParams.get("sslmode")?.toLowerCase() !== "verify-full"
+    || entries.length !== 2
+    || entries.filter(([name, value]) => (
+      name === "sslmode" && value.toLowerCase() === "verify-full"
+    )).length !== 1
+    || entries.filter(([name, value]) => (
+      name === "uselibpqcompat" && value === "true"
+    )).length !== 1
+    || !user
+    || !password
+    || !database
+    || database.includes("/")
+    || !connection
+    || !exactObjectKeys(connection, ["host", "port", "ssl"])
+    || canonicalAddress === null
+    || canonicalAddress !== connection.host
+    || connection.port !== 5_432
+    || !ssl
+    || !exactObjectKeys(ssl, [
+      "ca",
+      "checkServerIdentity",
+      "minVersion",
+      "rejectUnauthorized",
+      "servername",
+    ])
+    || typeof ssl.ca !== "string"
+    || ssl.ca.length < 1
+    || ssl.ca.length > 64 * 1_024
+    || ssl.ca.includes("\0")
+    || ssl.servername !== "localhost"
+    || ssl.rejectUnauthorized !== true
+    || ssl.minVersion !== "TLSv1.2"
+    || ssl.checkServerIdentity
+      !== checkPostgresRailwayStockLocalhostServerIdentity
+  ) throw new Error("Invalid Railway stock localhost CA connection authority.");
+  return {
+    database,
+    host: canonicalAddress,
+    password,
+    port: connection.port,
+    ssl,
+    user,
+  };
+}
+
 export class PostgresDatabase implements SqlDatabase {
   readonly dialect = "postgres" as const;
   private readonly pool: Pool;
@@ -577,23 +715,41 @@ export class PostgresDatabase implements SqlDatabase {
   private closed = false;
 
   constructor(options: PostgresDatabaseOptions) {
+    if (
+      options.railwayStockLocalhostCaConnection
+      && options.sslRootCertificatePath
+    ) {
+      throw new Error(
+        "Railway stock localhost CA transport cannot be combined with a root-certificate pathname.",
+      );
+    }
     const clientUrl = normalizePostgresClientUrl(
       options.connectionString,
       options.sslRootCertificatePath,
     );
+    const poolConnection: Pick<
+      PoolConfig,
+      "connectionString" | "database" | "host" | "password" | "port" | "ssl" | "user"
+    > = options.railwayStockLocalhostCaConnection
+      ? {
+          ...postgresRailwayStockLocalhostPoolConnection(
+            clientUrl,
+            options.railwayStockLocalhostCaConnection,
+          ),
+        }
+      : { connectionString: clientUrl };
     const poolConfig: PoolConfig = {
-      connectionString: clientUrl,
+      ...poolConnection,
       application_name: options.applicationName ?? "pint-path",
       max: options.maxConnections ?? 8,
       idleTimeoutMillis: options.idleTimeoutMs ?? 30_000,
       connectionTimeoutMillis: options.connectionTimeoutMs ?? 10_000,
-      options: [
-        `-c search_path=${POSTGRES_APPLICATION_SCHEMA},pg_catalog`,
-        `-c statement_timeout=${options.statementTimeoutMs ?? 30_000}`,
-        `-c idle_in_transaction_session_timeout=${options.idleInTransactionTimeoutMs ?? 30_000}`,
-        "-c lock_timeout=10000",
-        "-c synchronous_commit=on",
-      ].join(" "),
+      // PostgreSQL processes this fixed startup option before node-postgres
+      // exposes the backend to the pool. Unlike an asynchronous Pool
+      // `connect` listener, there is no interval in which repository SQL can
+      // run as the external credential-bearing LOGIN. Direct/session pooling
+      // is required because the effective role is session state.
+      options: buildPostgresStartupOptions(options),
       types: createPostgresTypeOverrides(),
     };
     this.pool = new Pool(poolConfig);
@@ -710,6 +866,7 @@ export function createPostgresDatabase(options: PostgresDatabaseOptions): SqlDat
 }
 
 export const sqlDatabaseInternals = {
+  buildPostgresStartupOptions,
   canonicalDecimalText,
   compilePostgresQuery,
   createPostgresTypeOverrides,
@@ -718,6 +875,7 @@ export const sqlDatabaseInternals = {
   normalizePostgresLocalTime,
   normalizePostgresNumeric,
   normalizePostgresTimestamp,
+  postgresRailwayStockLocalhostPoolConnection,
   normalizePostgresCompatibilitySql,
   normalizePostgresClientUrl,
 };

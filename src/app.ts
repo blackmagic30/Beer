@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { ServerResponse } from "node:http";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { types as utilTypes } from "node:util";
 
 import compression from "compression";
@@ -48,6 +49,7 @@ type LazyRouters = {
 };
 
 let lazyRoutersPromise: Promise<LazyRouters> | undefined;
+let initializingServicesCleanup: (() => Promise<void>) | undefined;
 let verifiedRestoreRuntime: VerifiedRestoreRuntimeAttestation | undefined;
 
 export const LARGE_JSON_BODY_LIMIT_BYTES = 16 * 1024 * 1024;
@@ -581,6 +583,8 @@ async function buildLazyRouters(): Promise<LazyRouters> {
     { VenueManagerInsightsRepository },
     { AdminAccountRepository },
     { checkPostgresRuntimeReadiness },
+    { checkPostgresMaintenanceRuntimeReadiness },
+    { createPostgresDatabase },
     { createAdminRouter },
     { AdminService },
     { createBusinessRouter },
@@ -618,6 +622,8 @@ async function buildLazyRouters(): Promise<LazyRouters> {
     import("./db/venue-manager-insights.repository.js"),
     import("./db/admin-account.repository.js"),
     import("./db/postgres-runtime.js"),
+    import("./db/postgres-maintenance-runtime.js"),
+    import("./db/sql-database.js"),
     import("./modules/admin/admin.routes.js"),
     import("./modules/admin/admin.service.js"),
     import("./modules/business/business.routes.js"),
@@ -633,12 +639,96 @@ async function buildLazyRouters(): Promise<LazyRouters> {
     postgresRuntime,
     restoreRehearsalMode: env.RESTORE_REHEARSAL_MODE,
     databaseUrl: env.DATABASE_URL,
+    postgresRootCaPem: env.PINTPATH_POSTGRES_ROOT_CA_PEM,
+    expectedPostgresRootCaDerSha256:
+      env.PINTPATH_POSTGRES_ROOT_CA_DER_SHA256,
   });
   const {
     sqlDatabase,
     businessRepository,
     performAccountDeletionSecretPhysicalCheckpoint,
   } = persistence;
+  let maintenanceDatabase = sqlDatabase;
+  let postgresAuthoritiesClosed = false;
+  const closePostgresAuthorities = async (): Promise<void> => {
+    if (postgresAuthoritiesClosed) return;
+    postgresAuthoritiesClosed = true;
+    const closeFailures: unknown[] = [];
+    if (maintenanceDatabase !== sqlDatabase) {
+      try {
+        await maintenanceDatabase.close();
+      } catch (error) {
+        closeFailures.push(error);
+      }
+    }
+    try {
+      await persistence.close();
+    } catch (error) {
+      closeFailures.push(error);
+    }
+    if (closeFailures.length > 0) {
+      throw new AggregateError(
+        closeFailures,
+        "PostgreSQL runtime authorities failed to close exactly.",
+      );
+    }
+  };
+  initializingServicesCleanup = closePostgresAuthorities;
+  try {
+    if (persistence.mode === "postgres") {
+      if (!persistence.postgresTransport) {
+        throw new Error(
+          "Canonical PostgreSQL runtime transport authority is unavailable.",
+        );
+      }
+      await persistence.assertPostgresTransportExact();
+    }
+    maintenanceDatabase = persistence.mode === "postgres" && env.DATABASE_MAINTENANCE_URL
+      ? createPostgresDatabase({
+        connectionString: env.DATABASE_MAINTENANCE_URL,
+        activeRole: "pintpath_maintenance",
+        railwayStockLocalhostCaConnection:
+          persistence.postgresTransport!.nodeConnection,
+        applicationName: "pintpath-privacy-maintenance",
+        maxConnections: 2,
+        idleTimeoutMs: 30_000,
+        connectionTimeoutMs: 10_000,
+        statementTimeoutMs: 60_000,
+        idleInTransactionTimeoutMs: 60_000,
+      })
+      : sqlDatabase;
+    if (maintenanceDatabase !== sqlDatabase) {
+      await persistence.assertPostgresTransportExact();
+      let maintenanceReadiness;
+      try {
+        maintenanceReadiness = await checkPostgresMaintenanceRuntimeReadiness(
+          maintenanceDatabase,
+        );
+      } finally {
+        await persistence.assertPostgresTransportExact();
+      }
+      if (!maintenanceReadiness.ready) {
+        throw new Error(
+          `Postgres privacy-maintenance authority failed: ${maintenanceReadiness.failures.join(",") || "unknown"}.`,
+        );
+      }
+    }
+  } catch (error) {
+    let cleanupError: unknown;
+    try {
+      await closePostgresAuthorities();
+    } catch (cause) {
+      cleanupError = cause;
+    }
+    initializingServicesCleanup = undefined;
+    if (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        "PostgreSQL startup and authority cleanup failed.",
+      );
+    }
+    throw error;
+  }
   const adminIngestionQueueRepository = !env.RESTORE_REHEARSAL_MODE
     ? new AdminIngestionQueueRepository(sqlDatabase)
     : undefined;
@@ -663,8 +753,8 @@ async function buildLazyRouters(): Promise<LazyRouters> {
   const venueManagerInsightsRepository = new VenueManagerInsightsRepository(sqlDatabase);
   const adminAccountRepository = new AdminAccountRepository(sqlDatabase);
   const accountDeletionQueueRepository = new AccountDeletionQueueRepository(sqlDatabase);
-  const accountPrivacyRepository = new AccountPrivacyRepository(sqlDatabase);
-  const privacyRetentionRepository = new PrivacyRetentionRepository(sqlDatabase);
+  const accountPrivacyRepository = new AccountPrivacyRepository(maintenanceDatabase);
+  const privacyRetentionRepository = new PrivacyRetentionRepository(maintenanceDatabase);
   const communitySubmissionRepository = new CommunitySubmissionRepository(sqlDatabase);
   const venueManagerInternalSubmissionRepository = new VenueManagerInternalSubmissionRepository(sqlDatabase);
   const sourceEvidenceObjectRepository = new SourceEvidenceObjectRepository(sqlDatabase);
@@ -800,8 +890,21 @@ async function buildLazyRouters(): Promise<LazyRouters> {
     deletionNotificationCoordinator,
     sqlDatabase.dialect === "postgres"
       ? async () => {
-          const readiness = await checkPostgresRuntimeReadiness(sqlDatabase);
-          return { ok: readiness.ready, foreignKeyViolations: 0 };
+          await persistence.assertPostgresTransportExact();
+          let readiness;
+          let maintenanceReadiness;
+          try {
+            [readiness, maintenanceReadiness] = await Promise.all([
+              checkPostgresRuntimeReadiness(sqlDatabase),
+              checkPostgresMaintenanceRuntimeReadiness(maintenanceDatabase),
+            ]);
+          } finally {
+            await persistence.assertPostgresTransportExact();
+          }
+          return {
+            ok: readiness.ready && maintenanceReadiness.ready,
+            foreignKeyViolations: 0,
+          };
         }
       : async () => businessRepository.checkDatabaseHealth(),
   );
@@ -1007,7 +1110,7 @@ async function buildLazyRouters(): Promise<LazyRouters> {
       }
       const { shutdownRateLimitRedis } = await import("./middleware/rate-limit.js");
       await shutdownRateLimitRedis();
-      await sqlDatabase.close();
+      await closePostgresAuthorities();
     },
   };
 }
@@ -1235,13 +1338,32 @@ async function getLazyRouters(): Promise<LazyRouters> {
     throw new AppError("Restore rehearsal is in bootstrap phase; application data routes are unavailable.", 503);
   }
   if (!lazyRoutersPromise) {
-    lazyRoutersPromise = buildLazyRouters().catch((error) => {
-      lazyRoutersPromise = undefined;
-      logger.error("Backend initialization failed", {
-        error: error instanceof Error ? redactSecrets(error.message) : redactSecrets(String(error)),
+    lazyRoutersPromise = buildLazyRouters()
+      .then((routers) => {
+        initializingServicesCleanup = undefined;
+        return routers;
+      })
+      .catch(async (error) => {
+        const cleanup = initializingServicesCleanup;
+        initializingServicesCleanup = undefined;
+        let cleanupError: unknown;
+        try {
+          await cleanup?.();
+        } catch (cause) {
+          cleanupError = cause;
+        }
+        lazyRoutersPromise = undefined;
+        logger.error("Backend initialization failed", {
+          error: error instanceof Error ? redactSecrets(error.message) : redactSecrets(String(error)),
+        });
+        if (cleanupError) {
+          throw new AggregateError(
+            [error, cleanupError],
+            "Backend initialization and PostgreSQL authority cleanup failed.",
+          );
+        }
+        throw error;
       });
-      throw error;
-    });
   }
 
   return lazyRoutersPromise;
@@ -1319,7 +1441,15 @@ function isTrustedOrigin(req: Request, origin: string | undefined, allowedOrigin
 
 export function createApp() {
   const app = express();
-  const viewerDirectory = path.resolve(process.cwd(), "viewer");
+  // Keep the static application inside the deployable artifact. In source the
+  // module lives at src/app.ts and resolves ../viewer; after compilation it
+  // lives at dist/src/app.js and resolves dist/viewer. This deliberately does
+  // not depend on the process working directory or on a source checkout being
+  // present beside dist/.
+  const viewerDirectory = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "../viewer",
+  );
   const allowedOrigins = getAllowedOrigins();
   const restoreAccessAttemptLimiter = createRateLimiter({
     windowMs: 10 * 60 * 1000,
@@ -1423,7 +1553,7 @@ export function createApp() {
         },
       },
       ...(env.NODE_ENV === "production" ? {} : { strictTransportSecurity: false }),
-      referrerPolicy: { policy: "strict-origin-when-cross-origin" },
+      referrerPolicy: { policy: "no-referrer" },
     }),
   );
   app.use(compression({

@@ -9,6 +9,10 @@ import { isCanonicalProductionRuntime } from "../lib/deployment-environment.js";
 import { parseAccountDeletionNotificationKeyring } from "../lib/account-deletion-notification-worker.js";
 import { OPENAI_MENU_OCR_COST_BOUND_MODEL } from "../lib/external-provider-cost-budget.js";
 import {
+  assertPostgresRailwayStockLocalhostRootCaPem,
+  parsePostgresRailwayStockLocalhostCaUrl,
+} from "../lib/postgres-railway-stock-localhost-ca.js";
+import {
   hasExactLegacySupabaseRoleJwt,
   isExactSupabaseNewKey,
   resolveExactOperationalOffsiteBackupBucket,
@@ -109,6 +113,14 @@ const optionalStringFromEnv = z.preprocess((value) => {
   }
   return trimmed.length === 0 ? undefined : trimmed;
 }, z.string().min(1).optional());
+
+const optionalPostgresRootCaPemFromEnv = z.preprocess((value) => {
+  if (typeof value !== "string") return value;
+  return value.length === 0 ? undefined : value;
+}, z.string().min(1).max(64 * 1024).refine(
+  (value) => !value.includes("\0"),
+  "Postgres root CA PEM must not contain a NUL byte.",
+).optional());
 
 const optionalPositiveIntegerFromEnv = z.preprocess((value) => {
   const trimmed = sanitizeEnvString(value);
@@ -609,6 +621,9 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(3000),
   PUBLIC_BASE_URL: z.preprocess(sanitizeEnvString, z.string().url()),
   DATABASE_URL: optionalStringFromEnv,
+  DATABASE_MAINTENANCE_URL: optionalStringFromEnv,
+  PINTPATH_POSTGRES_ROOT_CA_PEM: optionalPostgresRootCaPemFromEnv,
+  PINTPATH_POSTGRES_ROOT_CA_DER_SHA256: optionalSha256FromEnv,
   PINTPATH_IDENTITY_REGISTRY_PHASE: z.enum(["staging-bootstrap", "complete"]).default("complete"),
   PINTPATH_PERMANENT_STAGING_RAILWAY_PROJECT_ID: optionalStringFromEnv,
   PINTPATH_PERMANENT_STAGING_RAILWAY_ENVIRONMENT_ID: optionalStringFromEnv,
@@ -733,6 +748,55 @@ const canonicalProductionRuntime = isCanonicalProductionRuntime({
 const postgresApplicationRuntime =
   parsedEnv.data.NODE_ENV === "production" &&
   !parsedEnv.data.RESTORE_REHEARSAL_MODE;
+
+function assertDedicatedMaintenanceConnection(
+  applicationUrl: string | undefined,
+  maintenanceUrl: string | undefined,
+): void {
+  assertTlsPostgresUrl(applicationUrl, "DATABASE_URL");
+  assertTlsPostgresUrl(maintenanceUrl, "DATABASE_MAINTENANCE_URL");
+  const application = new URL(applicationUrl!);
+  const maintenance = new URL(maintenanceUrl!);
+  if (application.port !== "5432" || maintenance.port !== "5432") {
+    throw new Error(
+      "DATABASE_URL and DATABASE_MAINTENANCE_URL must use the explicit direct/session Postgres port 5432; transaction pooling cannot preserve the pinned effective role.",
+    );
+  }
+  try {
+    parsePostgresRailwayStockLocalhostCaUrl(applicationUrl!);
+  } catch {
+    throw new Error(
+      "DATABASE_URL must be the exact lower-case Railway private :5432 URL with only sslmode=verify-full.",
+    );
+  }
+  try {
+    parsePostgresRailwayStockLocalhostCaUrl(maintenanceUrl!);
+  } catch {
+    throw new Error(
+      "DATABASE_MAINTENANCE_URL must be the exact lower-case Railway private :5432 URL with only sslmode=verify-full.",
+    );
+  }
+  const sameDatabase =
+    application.protocol === maintenance.protocol &&
+    application.hostname.toLowerCase() === maintenance.hostname.toLowerCase() &&
+    application.port === maintenance.port &&
+    application.pathname === maintenance.pathname;
+  if (!sameDatabase) {
+    throw new Error(
+      "DATABASE_MAINTENANCE_URL must target the same pinned Postgres host, port, and database as DATABASE_URL.",
+    );
+  }
+  if (
+    !application.username ||
+    !maintenance.username ||
+    decodeURIComponent(application.username) === decodeURIComponent(maintenance.username)
+  ) {
+    throw new Error(
+      "DATABASE_MAINTENANCE_URL must use a dedicated maintenance login distinct from the web runtime login.",
+    );
+  }
+}
+
 if (canonicalProductionRuntime) {
   resolveExactOperationalOffsiteBackupBucket(process.env.OFFSITE_BACKUP_BUCKET);
 }
@@ -1067,6 +1131,31 @@ if (!parsedEnv.data.RESTORE_REHEARSAL_MODE) {
   }
 }
 
+if (postgresApplicationRuntime) {
+  assertDedicatedMaintenanceConnection(
+    parsedEnv.data.DATABASE_URL,
+    parsedEnv.data.DATABASE_MAINTENANCE_URL,
+  );
+  if (
+    !parsedEnv.data.PINTPATH_POSTGRES_ROOT_CA_PEM
+    || !parsedEnv.data.PINTPATH_POSTGRES_ROOT_CA_DER_SHA256
+  ) {
+    throw new Error(
+      "Hosted PostgreSQL requires PINTPATH_POSTGRES_ROOT_CA_PEM and its independently reviewed PINTPATH_POSTGRES_ROOT_CA_DER_SHA256 pin.",
+    );
+  }
+  try {
+    assertPostgresRailwayStockLocalhostRootCaPem(
+      parsedEnv.data.PINTPATH_POSTGRES_ROOT_CA_PEM,
+      parsedEnv.data.PINTPATH_POSTGRES_ROOT_CA_DER_SHA256,
+    );
+  } catch {
+    throw new Error(
+      "PINTPATH_POSTGRES_ROOT_CA_PEM must contain the one valid self-signed Railway CA matching PINTPATH_POSTGRES_ROOT_CA_DER_SHA256.",
+    );
+  }
+}
+
 if (
   permanentStagingApplicationRuntime
   && !parsedEnv.data.ACCOUNT_DELETION_REHEARSAL_ENABLED
@@ -1295,6 +1384,20 @@ if (
 ) {
   throw new Error(
     "The future commercial launch contract currently requires a non-converting 60-day venue Pro offer: VENUE_PRO_TRIAL_DAYS=60 and VENUE_PRO_TRIAL_REQUIRE_PAYMENT_METHOD=false.",
+  );
+}
+
+if (
+  postgresApplicationRuntime &&
+  (
+    parsedEnv.data.COMMERCIAL_LAUNCH_ENABLED ||
+    parsedEnv.data.CONSUMER_PAID_ENROLLMENT_ENABLED ||
+    parsedEnv.data.PINT_POINTS_REWARDS_ENABLED ||
+    parsedEnv.data.ALCOHOL_GAMIFICATION_ENABLED
+  )
+) {
+  throw new Error(
+    "Canonical PostgreSQL currently supports the frozen Free launch only. Keep COMMERCIAL_LAUNCH_ENABLED, CONSUMER_PAID_ENROLLMENT_ENABLED, PINT_POINTS_REWARDS_ENABLED, and ALCOHOL_GAMIFICATION_ENABLED false until their Postgres repositories and concurrency contracts are implemented.",
   );
 }
 

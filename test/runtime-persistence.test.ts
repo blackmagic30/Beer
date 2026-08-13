@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import path from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -8,6 +11,17 @@ import {
   type RuntimePersistenceDependencies,
 } from "../src/db/runtime-persistence.js";
 import type { SqlDatabase, SqlPoolMetrics } from "../src/db/sql-database.js";
+import {
+  checkPostgresRailwayStockLocalhostServerIdentity,
+  POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+  type PostgresRailwayStockLocalhostCaTransport,
+} from "../src/lib/postgres-railway-stock-localhost-ca.js";
+
+const POSTGRES_URL =
+  "postgresql://runtime:secret@postgres-staging.railway.internal:5432/pintpath?sslmode=verify-full";
+const POSTGRES_ROOT_CA_PEM =
+  "-----BEGIN CERTIFICATE-----\nTEST\n-----END CERTIFICATE-----\n";
+const POSTGRES_ROOT_CA_DER_SHA256 = "a".repeat(64);
 
 function fakeDatabase(
   dialect: "sqlite" | "postgres" = "postgres",
@@ -38,12 +52,61 @@ function dependencies(
     postgres?: SqlDatabase;
     sqlite?: SqlDatabase;
     ready?: boolean;
+    assertExactFailureAt?: number;
   } = {},
-): RuntimePersistenceDependencies {
+): RuntimePersistenceDependencies & {
+  readonly runtimeTransport: PostgresRailwayStockLocalhostCaTransport;
+} {
   const postgres = input.postgres ?? fakeDatabase("postgres");
   const sqlite = input.sqlite ?? fakeDatabase("sqlite");
+  let assertExactCalls = 0;
+  const transport = {
+    profile: POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+    rootCaDerSha256: POSTGRES_ROOT_CA_DER_SHA256,
+    sourceUrlAuthority: {
+      hostname: "postgres-staging.railway.internal",
+      port: 5_432,
+    },
+    resolvedAddress: "fd12:3456:789a::10",
+    temporaryDirectory: "/private/runtime-transport",
+    passwordFileDirectory: "/private/runtime-transport",
+    passwordFileHost: "localhost",
+    nodeConnection: {
+      host: "fd12:3456:789a::10",
+      port: 5_432,
+      ssl: {
+        ca: POSTGRES_ROOT_CA_PEM,
+        servername: "localhost",
+        rejectUnauthorized: true,
+        minVersion: "TLSv1.2",
+        checkServerIdentity: checkPostgresRailwayStockLocalhostServerIdentity,
+      },
+    },
+    libpqEnvironment: {
+      PGHOST: "localhost",
+      PGHOSTADDR: "fd12:3456:789a::10",
+      PGPORT: "5432",
+      PGSSLMODE: "verify-full",
+      PGSSLROOTCERT: "/private/runtime-transport/root-ca.pem",
+      PGSSLMINPROTOCOLVERSION: "TLSv1.2",
+      PGSSLSNI: "1",
+    },
+    assertExact: vi.fn(async () => {
+      assertExactCalls += 1;
+      if (
+        input.assertExactFailureAt !== undefined
+        && assertExactCalls === input.assertExactFailureAt
+      ) {
+        throw new Error("transport_drift");
+      }
+    }),
+    close: vi.fn(async () => undefined),
+  } satisfies PostgresRailwayStockLocalhostCaTransport;
   return {
+    runtimeTransport: transport,
     createPostgresDatabase: vi.fn(() => postgres),
+    getUid: () => 501,
+    openPostgresRuntimeTransport: vi.fn(async () => transport),
     checkPostgresRuntimeReadiness: vi.fn(async () => ({
       ready: input.ready ?? true,
       failures: input.ready === false ? ["import_not_ready"] : [],
@@ -111,6 +174,12 @@ describe("runtime persistence selection", () => {
     expect(appSource).toContain(
       "inspectPostgresLogicalRuntimeDatabaseIdentity(sqlDatabase)",
     );
+    expect(appSource).toContain('activeRole: "pintpath_maintenance"');
+    expect(appSource).toContain("railwayStockLocalhostCaConnection:");
+    expect(appSource).toContain(
+      "await persistence.assertPostgresTransportExact()",
+    );
+    expect(appSource).toContain("await closePostgresAuthorities()");
     expect(appSource).toContain("probePostgresLogicalOffsiteReadiness({");
     expect(appSource).toContain("stateValue: state?.value");
     expect(appSource).toContain("runtimeDatabaseIdentitySha256");
@@ -162,8 +231,9 @@ describe("runtime persistence selection", () => {
       {
         postgresRuntime: true,
         restoreRehearsalMode: false,
-        databaseUrl:
-          "postgresql://runtime:secret@db.internal:5432/pintpath?sslmode=require",
+        databaseUrl: POSTGRES_URL,
+        postgresRootCaPem: POSTGRES_ROOT_CA_PEM,
+        expectedPostgresRootCaDerSha256: POSTGRES_ROOT_CA_DER_SHA256,
       },
       deps,
     );
@@ -172,6 +242,10 @@ describe("runtime persistence selection", () => {
     expect(deps.loadSqliteRuntime).not.toHaveBeenCalled();
     expect(deps.createPostgresDatabase).toHaveBeenCalledWith(
       expect.objectContaining({
+        activeRole: "pintpath_runtime",
+        railwayStockLocalhostCaConnection: expect.objectContaining({
+          host: "fd12:3456:789a::10",
+        }),
         applicationName: "pintpath-web",
         maxConnections: 8,
       }),
@@ -182,6 +256,21 @@ describe("runtime persistence selection", () => {
     await expect(
       runtime.performAccountDeletionSecretPhysicalCheckpoint([]),
     ).resolves.toBe(true);
+    expect(deps.runtimeTransport.assertExact).toHaveBeenCalledTimes(3);
+    await runtime.assertPostgresTransportExact();
+    expect(deps.runtimeTransport.assertExact).toHaveBeenCalledTimes(4);
+    await runtime.close();
+    expect(deps.runtimeTransport.close).toHaveBeenCalledOnce();
+    expect(deps.openPostgresRuntimeTransport).toHaveBeenCalledWith({
+      profile: POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+      rootCaPem: POSTGRES_ROOT_CA_PEM,
+      expectedRootCaDerSha256: POSTGRES_ROOT_CA_DER_SHA256,
+      expectedUid: 501,
+      sourceUrlAuthority: {
+        hostname: "postgres-staging.railway.internal",
+        port: 5_432,
+      },
+    });
   });
 
   it("closes the PostgreSQL pool when startup readiness fails", async () => {
@@ -192,14 +281,80 @@ describe("runtime persistence selection", () => {
         {
           postgresRuntime: true,
           restoreRehearsalMode: false,
-          databaseUrl:
-            "postgresql://runtime:secret@db.internal:5432/pintpath?sslmode=require",
+          databaseUrl: POSTGRES_URL,
+          postgresRootCaPem: POSTGRES_ROOT_CA_PEM,
+          expectedPostgresRootCaDerSha256: POSTGRES_ROOT_CA_DER_SHA256,
         },
         deps,
       ),
     ).rejects.toThrow("import_not_ready");
     expect(postgres.close).toHaveBeenCalledOnce();
+    expect(deps.runtimeTransport.close).toHaveBeenCalledOnce();
     expect(deps.loadSqliteRuntime).not.toHaveBeenCalled();
+  });
+
+  it("closes both authorities when the post-readiness transport fence detects drift", async () => {
+    const postgres = fakeDatabase("postgres");
+    const deps = dependencies({ postgres, assertExactFailureAt: 3 });
+    await expect(
+      createRuntimePersistence(
+        {
+          postgresRuntime: true,
+          restoreRehearsalMode: false,
+          databaseUrl: POSTGRES_URL,
+          postgresRootCaPem: POSTGRES_ROOT_CA_PEM,
+          expectedPostgresRootCaDerSha256: POSTGRES_ROOT_CA_DER_SHA256,
+        },
+        deps,
+      ),
+    ).rejects.toThrow("transport_drift");
+    expect(postgres.close).toHaveBeenCalledOnce();
+    expect(deps.runtimeTransport.close).toHaveBeenCalledOnce();
+  });
+
+  it("attempts transport cleanup and reports it when startup pool cleanup fails", async () => {
+    const postgres = fakeDatabase("postgres");
+    vi.mocked(postgres.close).mockRejectedValueOnce(new Error("pool_close_failed"));
+    const deps = dependencies({ postgres, ready: false });
+    await expect(
+      createRuntimePersistence(
+        {
+          postgresRuntime: true,
+          restoreRehearsalMode: false,
+          databaseUrl: POSTGRES_URL,
+          postgresRootCaPem: POSTGRES_ROOT_CA_PEM,
+          expectedPostgresRootCaDerSha256: POSTGRES_ROOT_CA_DER_SHA256,
+        },
+        deps,
+      ),
+    ).rejects.toMatchObject({
+      name: "AggregateError",
+      message: "Canonical PostgreSQL startup and authority cleanup failed.",
+    });
+    expect(postgres.close).toHaveBeenCalledOnce();
+    expect(deps.runtimeTransport.close).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    [
+      "sslmode=require",
+      "postgresql://runtime:secret@postgres-staging.railway.internal:5432/pintpath?sslmode=require",
+    ],
+    [
+      "non-Railway authority",
+      "postgresql://runtime:secret@db.internal:5432/pintpath?sslmode=verify-full",
+    ],
+  ])("rejects an unauthenticated production transport: %s", async (_label, databaseUrl) => {
+    const deps = dependencies();
+    await expect(createRuntimePersistence({
+      postgresRuntime: true,
+      restoreRehearsalMode: false,
+      databaseUrl,
+      postgresRootCaPem: POSTGRES_ROOT_CA_PEM,
+      expectedPostgresRootCaDerSha256: POSTGRES_ROOT_CA_DER_SHA256,
+    }, deps)).rejects.toThrow("exact Railway private");
+    expect(deps.openPostgresRuntimeTransport).not.toHaveBeenCalled();
+    expect(deps.createPostgresDatabase).not.toHaveBeenCalled();
   });
 
   it("fails closed instead of loading SQLite when a production runtime lacks DATABASE_URL", async () => {
@@ -240,5 +395,3 @@ describe("runtime persistence selection", () => {
     },
   );
 });
-import fs from "node:fs";
-import path from "node:path";

@@ -22,10 +22,36 @@ const syntheticRestoreIdentity = Object.freeze({
 const syntheticPermanentStagingSupabaseUrl = "https://bbfibbadwjxzrcdncavy.supabase.co";
 const syntheticProductionSupabaseUrl = "https://productionref0000001.supabase.co";
 const syntheticBackupSupabaseUrl = "https://hfbmhdxrwtihukmixxta.supabase.co";
-const syntheticProductionDatabaseUrl = "postgresql://ci_app:fixture-password@production-postgres.internal:5432/pintpath?sslmode=require";
+const syntheticProductionDatabaseUrl = "postgresql://ci_app:fixture-password@postgres-production.railway.internal:5432/pintpath?sslmode=verify-full";
+const syntheticProductionMaintenanceDatabaseUrl = "postgresql://ci_maintenance:fixture-password@postgres-production.railway.internal:5432/pintpath?sslmode=verify-full";
 const syntheticProductionRedisUrl = "redis://default:fixture-password@production-redis.internal:6379";
-const syntheticStagingDatabaseUrl = "postgresql://ci_app:fixture-password@staging-postgres.internal:5432/pintpath?sslmode=require";
+const syntheticStagingDatabaseUrl = "postgresql://ci_app:fixture-password@postgres-staging.railway.internal:5432/pintpath?sslmode=verify-full";
+const syntheticStagingMaintenanceDatabaseUrl = "postgresql://ci_maintenance:fixture-password@postgres-staging.railway.internal:5432/pintpath?sslmode=verify-full";
 const syntheticStagingRedisUrl = "redis://default:fixture-password@staging-redis.internal:6379";
+// Public synthetic test authority shared byte-for-byte with the focused
+// Railway stock-localhost transport fixture. Derive the pin from its X.509 DER
+// rather than maintaining a second hand-copied digest.
+const syntheticPostgresRootCaPem = `-----BEGIN CERTIFICATE-----
+MIIDUjCCAjqgAwIBAgIUYBQyRs0suyX5rXqgVNuwjILfVgwwDQYJKoZIhvcNAQEL
+BQAwLzEtMCsGA1UEAwwkUGludFBhdGggUmFpbHdheSBUcmFuc3BvcnQgVGVzdCBS
+b290MB4XDTI2MDgxMDA1MzYxM1oXDTM2MDgwNzA1MzYxM1owLzEtMCsGA1UEAwwk
+UGludFBhdGggUmFpbHdheSBUcmFuc3BvcnQgVGVzdCBSb290MIIBIjANBgkqhkiG
+9w0BAQEFAAOCAQ8AMIIBCgKCAQEAzVV9MGHj6Z6rKbzATlt6Bwkh8H5tSoG9tIlI
+nHWFdtoQgTft+jGH3gRvow+/r+4KBz+2f3d6lmIXf3Z2W32P3xPCO/A4HA5T+vHb
+enNLWRBP/IHDkdPPVCjlXKwOR+cLUczOdd+YaEnDPZeQ+CrPyKgqCLTEBZqTIBWE
+tbYwtElDdx/0f0QzbMMWOuP0LV9rnHg18M04yOdBqxGlKyi04mL2rZEoJurSsoeL
+xNfeWiVch5Ret5hof3rf088qf02UN+K3d4Uk/1J3XgCCdzoaY6R3H7SqL3FGzsih
+uIETTD7olfSz0DtgZ7RPMTEsrShAN5j8kyoR30SxnfQZRbPQdQIDAQABo2YwZDAd
+BgNVHQ4EFgQUMrvU9IxE3Rw9I2Lb8Mu8ux8Q9wswHwYDVR0jBBgwFoAUMrvU9IxE
+3Rw9I2Lb8Mu8ux8Q9wswEgYDVR0TAQH/BAgwBgEB/wIBATAOBgNVHQ8BAf8EBAMC
+AQYwDQYJKoZIhvcNAQELBQADggEBABQBrpqpxBFYyOxryIcitEuRh0DMQWTn7oRE
+jYHJJbNRKiyaFzVo5bqamf6Ft5wKXP/CNljUOTpfZa8Y+dY+TrcP197HMhcT0Zwi
+F59mL1zAGSG9V1Kj2qDvNOtOeaQavk1G23bs8HU5tx7Bhx9zsZvkI2y//fX+EjCU
+ZufpD/15KvvWwUmLXr8nUkZoLUxw1degtHWCPzNT3f+3Jjp4EYU1nQwz8yvxjL7g
+EgybrSNRwoBxVF0Dbido1byzyZCn/LSdz817nfPkGynWvl49Bxtwz9nENfOUNCA7
+kjqZ5XK0MFWChjgcl8iF0BqOJfAQTS6WltU1HpU29avHR3FEEgQ=
+-----END CERTIFICATE-----
+`;
 const syntheticProductionEnvironmentId = "env-production-71b26d90";
 const syntheticStagingEnvironmentId = "env-staging-40e62ca1";
 const syntheticRestoreEnvironmentId = "env-restore-5a821e3c";
@@ -39,6 +65,11 @@ const restoreRedisResource = `railway:${syntheticRestoreEnvironmentId}:svc-redis
 function sha256(value) {
   return crypto.createHash("sha256").update(value, "utf8").digest("hex");
 }
+
+const syntheticPostgresRootCaDerSha256 = crypto
+  .createHash("sha256")
+  .update(new crypto.X509Certificate(syntheticPostgresRootCaPem).raw)
+  .digest("hex");
 
 function legacySupabaseJwt(role, signatureByte) {
   return [
@@ -98,6 +129,9 @@ const productionFixture = {
   RAILWAY_SERVICE_ID: "svc-pintpath-app-92d01b",
   PUBLIC_BASE_URL: "https://pintpath.au",
   DATABASE_URL: syntheticProductionDatabaseUrl,
+  DATABASE_MAINTENANCE_URL: syntheticProductionMaintenanceDatabaseUrl, // security-scan allow: synthetic deploy-guard fixture
+  PINTPATH_POSTGRES_ROOT_CA_PEM: syntheticPostgresRootCaPem,
+  PINTPATH_POSTGRES_ROOT_CA_DER_SHA256: syntheticPostgresRootCaDerSha256,
   DATABASE_PATH: "",
   PINTPATH_IDENTITY_REGISTRY_PHASE: "complete",
   PINTPATH_DATABASE_RESOURCE_ID: productionDatabaseResource,
@@ -266,6 +300,44 @@ function assertExit(result, expectedSuccess, label) {
 }
 
 assertExit(runValidator(), true, "Complete production environment validation");
+for (const [variable, verifiedUrl] of [
+  ["DATABASE_URL", syntheticProductionDatabaseUrl],
+  ["DATABASE_MAINTENANCE_URL", syntheticProductionMaintenanceDatabaseUrl],
+]) {
+  const requireUrl = verifiedUrl.replace(
+    "sslmode=verify-full",
+    "sslmode=require",
+  );
+  assertExit(
+    runValidator({
+      overrides: {
+        [variable]: requireUrl,
+        ...(variable === "DATABASE_URL"
+          ? { PINTPATH_EXPECTED_DATABASE_URL_SHA256: sha256(requireUrl) }
+          : {}),
+      },
+    }),
+    false,
+    `Production validation with ${variable} sslmode=require`,
+  );
+}
+for (const variable of [
+  "PINTPATH_POSTGRES_ROOT_CA_PEM",
+  "PINTPATH_POSTGRES_ROOT_CA_DER_SHA256",
+]) {
+  assertExit(
+    runValidator({ unset: [variable] }),
+    false,
+    `Production validation without authenticated Postgres CA ${variable}`,
+  );
+}
+assertExit(
+  runValidator({
+    overrides: { PINTPATH_POSTGRES_ROOT_CA_DER_SHA256: "0".repeat(64) },
+  }),
+  false,
+  "Production validation with a mismatched Postgres root CA DER pin",
+);
 for (const candidate of [
   "https://attacker.invalid",
   "https://production-ci.supabase.co",
@@ -396,6 +468,9 @@ const ordinaryStagingFixture = {
   PINTPATH_PERMANENT_STAGING_RAILWAY_PROJECT_ID: "project-pintpath-4af98c",
   PINTPATH_PERMANENT_STAGING_RAILWAY_SERVICE_ID: "svc-pintpath-app-92d01b",
   DATABASE_URL: syntheticStagingDatabaseUrl,
+  DATABASE_MAINTENANCE_URL: syntheticStagingMaintenanceDatabaseUrl, // security-scan allow: synthetic deploy-guard fixture
+  PINTPATH_POSTGRES_ROOT_CA_PEM: syntheticPostgresRootCaPem,
+  PINTPATH_POSTGRES_ROOT_CA_DER_SHA256: syntheticPostgresRootCaDerSha256,
   DATABASE_PATH: "",
   PINTPATH_DATABASE_RESOURCE_ID: stagingDatabaseResource,
   PINTPATH_EXPECTED_DATABASE_RESOURCE_ID: stagingDatabaseResource,
@@ -427,6 +502,23 @@ assertExit(
   runValidator({ fixture: ordinaryStagingFixture }),
   true,
   "Clean operator-only staging identity bootstrap validation",
+);
+const stagingRequireUrl = syntheticStagingDatabaseUrl.replace(
+  "sslmode=verify-full",
+  "sslmode=require",
+);
+assertExit(
+  runValidator({
+    fixture: ordinaryStagingFixture,
+    overrides: {
+      DATABASE_URL: stagingRequireUrl,
+      PINTPATH_EXPECTED_DATABASE_URL_SHA256: sha256(stagingRequireUrl),
+      PINTPATH_PERMANENT_STAGING_DATABASE_URL_SHA256:
+        sha256(stagingRequireUrl),
+    },
+  }),
+  false,
+  "Staging bootstrap validation with sslmode=require",
 );
 for (const [label, overrides] of [
   ["a legacy anon key", { SUPABASE_ANON_KEY: productionLegacyAnonKey }],

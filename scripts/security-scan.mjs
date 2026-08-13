@@ -47,6 +47,8 @@ const IGNORED_LOCAL_CONFIGS_TO_SCAN = [
   "apps/ios/Config.xcconfig",
 ];
 
+const LOCAL_SECRET_CONFIGS_TO_VERIFY = [".env", ".env.local", ".npmrc"];
+
 for (const ignoredLocalConfig of IGNORED_LOCAL_CONFIGS_TO_SCAN) {
   if (!files.includes(ignoredLocalConfig)) {
     files.push(ignoredLocalConfig);
@@ -55,8 +57,8 @@ for (const ignoredLocalConfig of IGNORED_LOCAL_CONFIGS_TO_SCAN) {
 
 const SKIP_FILE = /(?:^|\/)(?:(?:package-lock\.json|pnpm-lock\.yaml|yarn\.lock)$|(?:dist|coverage|node_modules)(?:\/|$))/;
 const BINARY_FILE = /\.(?:png|jpe?g|gif|webp|heic|heif|ico|pdf|woff2?|ttf|eot|zip|gz|sqlite3?|db)$/i;
-const PLACEHOLDER = /(?:your_|example|placeholder|dummy|fake|test[_-]?fixture|xxx|xxxx|optional_|changeme|not[_-]?set|price_|pk_test_xxx|sk_test_xxx|whsec_xxx|ACXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX)/i;
-const SAFE_PRIVATE_ASSIGNMENT_REFERENCE = /^(?:SERVICE_ROLE_KEY|OPENAI_API_KEY|STRIPE_SECRET_KEY|STRIPE_WEBHOOK_SECRET)\s*:\s*(?:optionalStringFromEnv|requiredStringFromEnv|booleanFromEnv|numberFromEnv|z\.object)[,;]?$/;
+const PLACEHOLDER = /(?:your_|example|placeholder|replace|dummy|fake|fixture|[_-]test[_-]|forbidden|unrelated|inherited|dedicated[_-]?sending|xxx|xxxx|optional_|changeme|not[_-]?set|price_|pk_test_xxx|sk_test_xxx|whsec_xxx|ACXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX)/i;
+const SAFE_PRIVATE_ASSIGNMENT_REFERENCE = /^(?:AWS_SECRET_ACCESS_KEY|DATABASE_MAINTENANCE_URL|GITHUB_TOKEN|RAILWAY_TOKEN|RESEND_API_KEY|RESEND_TRANSACTIONAL_API_KEY|SERVICE_ROLE_KEY|OPENAI_API_KEY|PRIVATE_KEY|STRIPE_SECRET_KEY|STRIPE_WEBHOOK_SECRET)\s*:\s*(?:(?:optionalStringFromEnv|requiredStringFromEnv|booleanFromEnv|numberFromEnv|z\.object)|(?:(?:production|staging)(?:Maintenance)?DatabaseUrl))[,;]?$/;
 
 const patterns = [
   {
@@ -80,12 +82,32 @@ const patterns = [
     regex: /\b(?:sk|rk|sess)_[A-Za-z0-9_-]{32,}\b|\bsk-[A-Za-z0-9_-]{32,}\b/g,
   },
   {
+    name: "GitHub access token",
+    regex: /\bgh[pousr]_[A-Za-z0-9]{36,255}\b|\bgithub_pat_[A-Za-z0-9_]{50,255}\b/g,
+  },
+  {
+    name: "AWS access key ID",
+    regex: /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g,
+  },
+  {
+    name: "Resend API key",
+    regex: /\bre_[A-Za-z0-9]{32,}\b/g,
+  },
+  {
+    name: "Railway API token",
+    regex: /\brw_[A-Za-z0-9_-]{48,}\b/g,
+  },
+  {
+    name: "Private key material",
+    regex: /-----BEGIN (?:EC |OPENSSH |RSA )?PRIVATE KEY-----/g,
+  },
+  {
     name: "JWT-like token",
     regex: /[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{43,}/g,
   },
   {
     name: "Private config assignment",
-    regex: /\b(?:SERVICE_ROLE_KEY|OPENAI_API_KEY|STRIPE_SECRET_KEY|STRIPE_WEBHOOK_SECRET)\s*[:=]\s*['"]?[^'"\s#]{12,}/g,
+    regex: /\b(?:AWS_SECRET_ACCESS_KEY|DATABASE_MAINTENANCE_URL|GITHUB_TOKEN|RAILWAY_TOKEN|RESEND_API_KEY|RESEND_TRANSACTIONAL_API_KEY|SERVICE_ROLE_KEY|OPENAI_API_KEY|PRIVATE_KEY|STRIPE_SECRET_KEY|STRIPE_WEBHOOK_SECRET)\s*[:=]\s*['"]?[^'"\s#]{12,}/g,
   },
 ];
 
@@ -102,6 +124,23 @@ function addFinding(finding) {
   if (findingKeys.has(key)) return;
   findingKeys.add(key);
   findings.push(finding);
+}
+
+for (const file of LOCAL_SECRET_CONFIGS_TO_VERIFY) {
+  if (!fs.existsSync(file)) continue;
+  const indexEntry = trackedEntries.find((entry) => entry.file === file);
+  if (indexEntry) {
+    addFinding({ file, line: 1, type: "Tracked local secret config" });
+    continue;
+  }
+  const stat = fs.lstatSync(file);
+  if (!stat.isFile() || stat.isSymbolicLink()) {
+    addFinding({ file, line: 1, type: "Unsafe local secret config" });
+    continue;
+  }
+  if ((stat.mode & 0o077) !== 0) {
+    addFinding({ file, line: 1, type: "Over-permissive local secret config" });
+  }
 }
 
 function isReportableMatch(pattern, match) {
@@ -216,7 +255,10 @@ if (findings.length > 0) {
       console.error(`- Path name (${finding.type}): [REDACTED]`);
       continue;
     }
-    const safeFile = /[\u0000-\u001f\u007f]/.test(finding.file)
+    const safeFile = [...finding.file].some((character) => {
+      const codePoint = character.codePointAt(0) ?? 0;
+      return codePoint <= 0x1f || codePoint === 0x7f;
+    })
       ? JSON.stringify(finding.file)
       : finding.file;
     console.error(`- ${safeFile}:${finding.line} ${finding.type}: [REDACTED]`);

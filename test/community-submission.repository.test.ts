@@ -255,7 +255,7 @@ async function setupApprovalFixture(created: Fixture) {
     venueDecision,
     evidenceDecisions: approvalSnapshot.evidenceDecisions,
     pointsAwarded: 10,
-    confidence: "admin_verified",
+    confidence: "photo_verified",
     monthKey: "2026-08",
     premiumUntil: "2026-09-01T00:00:00.000Z",
     contributorUnlockPoints: 100,

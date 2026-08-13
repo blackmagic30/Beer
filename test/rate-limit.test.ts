@@ -2,6 +2,11 @@ import crypto from "node:crypto";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import {
+  TEST_POSTGRES_RAILWAY_ROOT_CA_DER_SHA256,
+  TEST_POSTGRES_RAILWAY_ROOT_CA_PEM,
+} from "./postgres-railway-stock-localhost-ca.fixtures.js";
+
 const RESTORE_RAILWAY_ENVIRONMENT_ID = "fixture-restore-environment";
 const RESTORE_RAILWAY_PROJECT_ID = "fixture-restore-project";
 const RESTORE_RAILWAY_APP_SERVICE_ID = "fixture-restore-app-service";
@@ -11,7 +16,9 @@ const RESTORE_SUPABASE_URL = "https://restoreref0000000001.supabase.co";
 const PRODUCTION_SUPABASE_URL = "https://productionref0000001.supabase.co";
 const BACKUP_SUPABASE_URL = "https://backupref00000000001.supabase.co";
 const RATE_LIMIT_DATABASE_URL =
-  "postgresql://pintpath_app:fixture-password@postgres.railway.internal:5432/pintpath?sslmode=require";
+  "postgresql://pintpath_app:fixture-password@postgres.railway.internal:5432/pintpath?sslmode=verify-full";
+const RATE_LIMIT_MAINTENANCE_DATABASE_URL =
+  "postgresql://pintpath_maintenance_login:fixture-password@postgres.railway.internal:5432/pintpath?sslmode=verify-full";
 const RATE_LIMIT_REDIS_URL = "redis://default:password@redis.railway.internal:6379";
 const STAGING_DATABASE_DIGEST = sha256("postgresql://staging.invalid/pintpath?sslmode=require");
 const STAGING_REDIS_DIGEST = sha256("redis://staging.invalid:6379");
@@ -165,6 +172,10 @@ function stubProductionEnv(overrides: Record<string, string> = {}) {
     NODE_ENV: "production",
     PUBLIC_BASE_URL: "https://pintpath.au",
     DATABASE_URL: RATE_LIMIT_DATABASE_URL,
+    DATABASE_MAINTENANCE_URL: RATE_LIMIT_MAINTENANCE_DATABASE_URL, // security-scan allow: synthetic production-env fixture only
+    PINTPATH_POSTGRES_ROOT_CA_PEM: TEST_POSTGRES_RAILWAY_ROOT_CA_PEM,
+    PINTPATH_POSTGRES_ROOT_CA_DER_SHA256:
+      TEST_POSTGRES_RAILWAY_ROOT_CA_DER_SHA256,
     DATABASE_PATH: "",
     PINTPATH_IDENTITY_REGISTRY_PHASE: "complete",
     PINTPATH_DATABASE_RESOURCE_ID: PRODUCTION_DATABASE_RESOURCE,

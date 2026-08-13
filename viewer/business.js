@@ -685,17 +685,21 @@ function consumeSensitiveAuthReturnPath() {
   const safePath = getSafeReturnPath(record.path);
   if (!isVenuePortalReturnPath(safePath)) return null;
   const url = new URL(safePath, window.location.origin);
-  const discountCode = url.searchParams.get("discountCode");
-  const freePintCode = url.searchParams.get("freePintCode");
+  const fragmentParams = new URLSearchParams(url.hash.replace(/^#/, ""));
+  const discountCode = url.searchParams.get("discountCode") || fragmentParams.get("discountCode");
+  const freePintCode = url.searchParams.get("freePintCode") || fragmentParams.get("freePintCode");
   if (discountCode || freePintCode) {
     window.sessionStorage.setItem(PENDING_PORTAL_REDEMPTION_KEY, JSON.stringify({
       discountCode,
       freePintCode,
-      venueId: url.searchParams.get("venueId"),
+      venueId: url.searchParams.get("venueId") || fragmentParams.get("venueId"),
       createdAt: Date.now(),
     }));
     url.searchParams.delete("discountCode");
     url.searchParams.delete("freePintCode");
+    fragmentParams.delete("discountCode");
+    fragmentParams.delete("freePintCode");
+    url.hash = fragmentParams.toString();
   }
   return `${url.pathname}${url.search}${url.hash}`;
 }

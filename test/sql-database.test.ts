@@ -9,8 +9,14 @@ import {
   PostgresDatabase,
   sqlDatabaseInternals,
 } from "../src/db/sql-database.js";
+import { checkPostgresRailwayStockLocalhostServerIdentity } from "../src/lib/postgres-railway-stock-localhost-ca.js";
 
-const { compilePostgresQuery, normalizePostgresClientUrl } = sqlDatabaseInternals;
+const {
+  buildPostgresStartupOptions,
+  compilePostgresQuery,
+  normalizePostgresClientUrl,
+  postgresRailwayStockLocalhostPoolConnection,
+} = sqlDatabaseInternals;
 
 function parsedClientSsl(clientUrl: string): Record<string, unknown> {
   const client = new Client({ connectionString: clientUrl });
@@ -115,6 +121,44 @@ WHERE id = $1 -- ? and @ignored stay comments
 });
 
 describe("Postgres connection URL validation", () => {
+  const railwayNodeConnection = {
+    host: "fd12:3456:789a::10",
+    port: 5_432 as const,
+    ssl: {
+      ca: "-----BEGIN CERTIFICATE-----\nTEST\n-----END CERTIFICATE-----\n",
+      servername: "localhost" as const,
+      rejectUnauthorized: true as const,
+      minVersion: "TLSv1.2" as const,
+      checkServerIdentity: checkPostgresRailwayStockLocalhostServerIdentity,
+    },
+  };
+
+  it("pins each application pool to one reviewed effective NOLOGIN role", () => {
+    expect(buildPostgresStartupOptions({
+      activeRole: "pintpath_runtime",
+      statementTimeoutMs: 12_000,
+      idleInTransactionTimeoutMs: 13_000,
+    })).toBe(
+      "-c role=pintpath_runtime -c search_path=pintpath_app,pg_catalog "
+      + "-c statement_timeout=12000 -c idle_in_transaction_session_timeout=13000 "
+      + "-c lock_timeout=10000 -c synchronous_commit=on",
+    );
+    expect(buildPostgresStartupOptions({
+      activeRole: "pintpath_maintenance",
+    })).toContain("-c role=pintpath_maintenance");
+  });
+
+  it("rejects an arbitrary effective role before constructing a pool", () => {
+    expect(() => buildPostgresStartupOptions({
+      activeRole: "postgres" as "pintpath_runtime",
+    })).toThrow("exact reviewed application role");
+    expect(() => new PostgresDatabase({
+      connectionString:
+        "postgresql://external:password@example.invalid/pintpath?sslmode=require",
+      activeRole: "postgres" as "pintpath_runtime",
+    })).toThrow("exact reviewed application role");
+  });
+
   it.each(["require", "verify-full"])(
     "accepts sslmode=%s without opening a connection",
     async (sslmode) => {
@@ -174,6 +218,65 @@ describe("Postgres connection URL validation", () => {
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it("projects the Railway transport address and localhost TLS identity without URL override", async () => {
+    const clientUrl = normalizePostgresClientUrl(
+      "postgresql://runtime:PRIVATE_RUNTIME_PASSWORD@postgres-production.railway.internal:5432/pintpath?sslmode=verify-full",
+    );
+    const config = postgresRailwayStockLocalhostPoolConnection(
+      clientUrl,
+      railwayNodeConnection,
+    );
+    expect(config).toEqual({
+      database: "pintpath",
+      host: "fd12:3456:789a::10",
+      password: "PRIVATE_RUNTIME_PASSWORD",
+      port: 5_432,
+      ssl: railwayNodeConnection.ssl,
+      user: "runtime",
+    });
+    expect(config).not.toHaveProperty("connectionString");
+
+    const database = new PostgresDatabase({
+      connectionString:
+        "postgresql://runtime:PRIVATE_RUNTIME_PASSWORD@postgres-production.railway.internal:5432/pintpath?sslmode=verify-full",
+      railwayStockLocalhostCaConnection: railwayNodeConnection,
+    });
+    expect(database.dialect).toBe("postgres");
+    await database.close();
+  });
+
+  it.each([
+    ["non-fd12 address", { ...railwayNodeConnection, host: "2001:db8::10" }],
+    ["wrong TLS identity", {
+      ...railwayNodeConnection,
+      ssl: { ...railwayNodeConnection.ssl, servername: "postgres-production.railway.internal" },
+    }],
+    ["unverified peer", {
+      ...railwayNodeConnection,
+      ssl: { ...railwayNodeConnection.ssl, rejectUnauthorized: false },
+    }],
+    ["foreign identity callback", {
+      ...railwayNodeConnection,
+      ssl: { ...railwayNodeConnection.ssl, checkServerIdentity: () => undefined },
+    }],
+  ])("rejects an unsafe Railway transport projection: %s", (_label, connection) => {
+    expect(() => postgresRailwayStockLocalhostPoolConnection(
+      normalizePostgresClientUrl(
+        "postgresql://runtime:password@postgres-production.railway.internal:5432/pintpath?sslmode=verify-full",
+      ),
+      connection as typeof railwayNodeConnection,
+    )).toThrow("Invalid Railway stock localhost CA connection authority");
+  });
+
+  it("rejects mixing pathname and stock-localhost trust authorities", () => {
+    expect(() => new PostgresDatabase({
+      connectionString:
+        "postgresql://runtime:password@postgres-production.railway.internal:5432/pintpath?sslmode=verify-full",
+      sslRootCertificatePath: "/private/root-ca.pem",
+      railwayStockLocalhostCaConnection: railwayNodeConnection,
+    })).toThrow("cannot be combined");
   });
 
   it.each([

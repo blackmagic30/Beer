@@ -6245,9 +6245,11 @@ export class BusinessService {
     }
 
     const redeemUrl = new URL("/venue-portal.html", this.config.PUBLIC_BASE_URL);
-    redeemUrl.searchParams.set("discountCode", code);
-    redeemUrl.searchParams.set("accountId", account.publicAccountId);
-    redeemUrl.searchParams.set("tab", "redemption");
+    redeemUrl.hash = new URLSearchParams({
+      discountCode: code,
+      accountId: account.publicAccountId,
+      tab: "redemption",
+    }).toString();
     const qrDataUrl = await QRCode.toDataURL(redeemUrl.toString(), {
       margin: 1,
       width: 240,
@@ -6954,12 +6956,15 @@ export class BusinessService {
     }
 
     const redeemUrl = new URL("/venue-portal.html", this.config.PUBLIC_BASE_URL);
-    redeemUrl.searchParams.set("freePintCode", code);
-    redeemUrl.searchParams.set("accountId", account.publicAccountId);
-    redeemUrl.searchParams.set("tab", "redemption");
+    const redemptionParams = new URLSearchParams({
+      freePintCode: code,
+      accountId: account.publicAccountId,
+      tab: "redemption",
+    });
     if (input.venueId) {
-      redeemUrl.searchParams.set("venueId", input.venueId);
+      redemptionParams.set("venueId", input.venueId);
     }
+    redeemUrl.hash = redemptionParams.toString();
 
     const qrDataUrl = await QRCode.toDataURL(redeemUrl.toString(), {
       margin: 1,
@@ -10356,11 +10361,7 @@ export class BusinessService {
       throw new AppError("Submission not found.", 404);
     }
 
-    const allowOwnReview =
-      submission.submission.userId === admin.id &&
-      this.canAdminReviewOwnSubmission(admin);
-
-    if (submission.submission.userId === admin.id && !allowOwnReview) {
+    if (submission.submission.userId === admin.id) {
       throw new AppError("Admins cannot review their own submissions.", 403);
     }
 
@@ -10383,16 +10384,22 @@ export class BusinessService {
     const reviewedAt = nowIso();
     const reportTimezone = this.config.REPORT_TIMEZONE || DEFAULT_REPORT_TIMEZONE;
     const reviewedMonthKey = getZonedMonthKey(new Date(reviewedAt), reportTimezone);
-    const reviewConfidence = input.confidence ?? "admin_verified";
     let result: { submission: BusinessSubmission; pointsAwarded: number; account: BusinessAccount };
     try {
       if (input.status === "approved") {
-        const snapshot = await this.communitySubmissionRepository.getApprovalSnapshot(submissionId);
+        const [snapshot, confirmedVerificationCount] = await Promise.all([
+          this.communitySubmissionRepository.getApprovalSnapshot(submissionId),
+          this.communitySubmissionRepository.countConfirmedVerificationsForSubmission(submissionId),
+        ]);
+        const reviewConfidence: ConfidenceLabel = snapshot.evidenceDecisions.length > 0
+          ? "photo_verified"
+          : confirmedVerificationCount >= 2
+            ? "community_confirmed"
+            : "admin_verified";
         const approved = await this.communitySubmissionRepository.approveAndPublishSubmission({
           approvalId: `submission-approval-${crypto.createHash("sha256").update(submissionId).digest("hex")}`,
           submissionId,
           reviewerId: admin.id,
-          allowOwnReview,
           catalogDecisions: snapshot.catalogDecisions,
           missionDecision: snapshot.missionDecision,
           venueDecision: snapshot.venueDecision,
@@ -10416,7 +10423,6 @@ export class BusinessService {
           fraudFlagged: input.fraudFlagged || input.status === "fraud_flagged",
           now: reviewedAt,
           monthKey: reviewedMonthKey,
-          allowOwnReview,
         });
         const account = await this.accountSessionRepository.getAccountById(reviewed.submitter.id);
         if (!account) throw new AppError("Submitter not found.", 404);
@@ -10494,10 +10500,6 @@ export class BusinessService {
       ...result,
       account: sanitizeAccount(result.account),
     };
-  }
-
-  private canAdminReviewOwnSubmission(admin: BusinessAccount): boolean {
-    return this.isAdmin(admin);
   }
 
   async calculatePoints(submission: BusinessSubmission, items: BusinessSubmissionItem[]): Promise<number> {
