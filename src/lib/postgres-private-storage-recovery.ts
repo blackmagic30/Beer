@@ -8,6 +8,10 @@ import { Client, type ClientConfig, type QueryResultRow } from "pg";
 
 import { sqlDatabaseInternals } from "../db/sql-database.js";
 import {
+  parsePostgresRailwayStockLocalhostCaUrl,
+  type PostgresRailwayStockLocalhostCaNodeConnection,
+} from "./postgres-railway-stock-localhost-ca.js";
+import {
   POSTGRES_LOGICAL_BACKUP_ARCHIVE,
   POSTGRES_LOGICAL_BACKUP_MANIFEST,
   POSTGRES_LOGICAL_BACKUP_STATE_RECEIPT,
@@ -370,12 +374,22 @@ interface SourceIdentityRow extends QueryResultRow {
   readonly serverVersionNum: string;
   readonly roleName: string;
   readonly canLogin: boolean;
+  readonly inheritsPrivileges: boolean;
   readonly superuser: boolean;
   readonly createDatabase: boolean;
   readonly createRole: boolean;
   readonly replication: boolean;
   readonly bypassRls: boolean;
+  readonly effectiveRole: string;
   readonly canSetMigrator: boolean;
+  readonly runtimeMember: boolean;
+  readonly maintenanceMember: boolean;
+  readonly unexpectedMembership: boolean;
+  readonly hasDatabaseCreatePrivilege: boolean;
+  readonly applicationSchemaCreate: boolean;
+  readonly operationsSchemaCreate: boolean;
+  readonly searchPathSchemas: string[];
+  readonly currentSchema: string;
   readonly transactionReadOnly: boolean;
   readonly inRecovery: boolean;
   readonly databaseIsTemplate: boolean;
@@ -2443,6 +2457,7 @@ function connectionUrl(input: {
   readonly environment: Readonly<Record<string, string | undefined>>;
 }): {
   readonly clientConfig: Readonly<ClientConfig>;
+  readonly insecureTest: boolean;
   readonly urlSha256: string;
 } {
   const value = input.value.trim();
@@ -2499,10 +2514,16 @@ function connectionUrl(input: {
     url.hash ||
     sslModes.length !== 1 ||
     queryEntries.some(([name]) => name !== "sslmode") ||
-    (!insecureTest &&
-      !["require", "verify-ca", "verify-full"].includes(sslMode))
+    (!insecureTest && sslMode !== "verify-full")
   )
     throw recoveryError("invalid_arguments");
+  if (!insecureTest) {
+    try {
+      parsePostgresRailwayStockLocalhostCaUrl(value);
+    } catch {
+      throw recoveryError("invalid_arguments");
+    }
+  }
   return {
     clientConfig: Object.freeze({
       host: hostname,
@@ -2510,9 +2531,10 @@ function connectionUrl(input: {
       database,
       user,
       password,
-      ssl: insecureTest ? false : { rejectUnauthorized: sslMode !== "require" },
+      ssl: insecureTest ? false : { rejectUnauthorized: true },
       connectionTimeoutMillis: 15_000,
     }),
+    insecureTest,
     urlSha256: sha256(value),
   };
 }
@@ -2546,6 +2568,8 @@ export function createPostgresPrivateStorageDatabaseInspector(input: {
     PostgresPrivateStorageSourceEnvironment | undefined;
   readonly expectedCandidateSha?: string | undefined;
   readonly allowInsecureLoopbackForTests?: boolean | undefined;
+  readonly railwayStockLocalhostCaConnection?:
+    PostgresRailwayStockLocalhostCaNodeConnection | undefined;
   readonly environment?:
     Readonly<Record<string, string | undefined>> | undefined;
 }): PostgresPrivateStorageDatabaseInspector {
@@ -2555,6 +2579,9 @@ export function createPostgresPrivateStorageDatabaseInspector(input: {
     allowInsecureLoopbackForTests: input.allowInsecureLoopbackForTests ?? false,
     environment,
   });
+  if (
+    parsed.insecureTest === Boolean(input.railwayStockLocalhostCaConnection)
+  ) throw recoveryError("invalid_arguments");
   if (
     input.expectedConnectionUrlSha256 !== undefined &&
     parsed.urlSha256 !== exactSha256(input.expectedConnectionUrlSha256)
@@ -2569,14 +2596,27 @@ export function createPostgresPrivateStorageDatabaseInspector(input: {
     ? undefined
     : exactCandidateSha(input.expectedCandidateSha);
   return async () => {
+    const connection = input.railwayStockLocalhostCaConnection
+      ? sqlDatabaseInternals.postgresRailwayStockLocalhostPoolConnection(
+          input.connectionString,
+          input.railwayStockLocalhostCaConnection,
+        )
+      : parsed.clientConfig;
     const client = new Client({
-      ...parsed.clientConfig,
+      ...connection,
       application_name: "pintpath-private-storage-recovery",
+      options: [
+        "-c role=pintpath_migrator",
+        "-c search_path=pintpath_app,pg_catalog",
+        "-c statement_timeout=120000",
+        "-c idle_in_transaction_session_timeout=600000",
+        "-c lock_timeout=30000",
+        "-c synchronous_commit=on",
+      ].join(" "),
       query_timeout: 120_000,
       types: sqlDatabaseInternals.createPostgresTypeOverrides(),
     });
     let transaction = false;
-    let roleSet = false;
     try {
       await client.connect();
       const identityResult =
@@ -2586,10 +2626,34 @@ export function createPostgresPrivateStorageDatabaseInspector(input: {
                current_database() AS "databaseName",
                current_setting('server_version_num') AS "serverVersionNum",
                login.rolname AS "roleName", login.rolcanlogin AS "canLogin",
+               login.rolinherit AS "inheritsPrivileges",
                login.rolsuper AS superuser, login.rolcreatedb AS "createDatabase",
                login.rolcreaterole AS "createRole", login.rolreplication AS replication,
                login.rolbypassrls AS "bypassRls",
+               current_user AS "effectiveRole",
                pg_has_role(session_user, 'pintpath_migrator', 'SET') AS "canSetMigrator",
+               COALESCE(pg_has_role(session_user, to_regrole('pintpath_runtime'), 'MEMBER'), false)
+                 AS "runtimeMember",
+               COALESCE(pg_has_role(session_user, to_regrole('pintpath_maintenance'), 'MEMBER'), false)
+                 AS "maintenanceMember",
+               EXISTS (
+                 SELECT 1
+                   FROM pg_catalog.pg_auth_members membership
+                   JOIN pg_catalog.pg_roles inherited_role
+                     ON inherited_role.oid = membership.roleid
+                   JOIN pg_catalog.pg_roles member_role
+                     ON member_role.oid = membership.member
+                  WHERE member_role.rolname = session_user
+                    AND inherited_role.rolname <> 'pintpath_migrator'
+               ) AS "unexpectedMembership",
+               has_database_privilege(current_user, database.oid, 'CREATE')
+                 AS "hasDatabaseCreatePrivilege",
+               has_schema_privilege(current_user, 'pintpath_app', 'CREATE')
+                 AS "applicationSchemaCreate",
+               has_schema_privilege(current_user, 'pintpath_ops', 'CREATE')
+                 AS "operationsSchemaCreate",
+               current_schemas(false)::text[] AS "searchPathSchemas",
+               current_schema() AS "currentSchema",
                current_setting('transaction_read_only')::boolean AS "transactionReadOnly",
                pg_is_in_recovery() AS "inRecovery",
                database.datistemplate AS "databaseIsTemplate",
@@ -2609,12 +2673,24 @@ export function createPostgresPrivateStorageDatabaseInspector(input: {
         !/^17\d{4}$/.test(identity.serverVersionNum) ||
         !identity.roleName ||
         identity.canLogin !== true ||
+        identity.inheritsPrivileges !== false ||
         identity.superuser !== false ||
         identity.createDatabase !== false ||
         identity.createRole !== false ||
         identity.replication !== false ||
         identity.bypassRls !== false ||
+        identity.effectiveRole !== "pintpath_migrator" ||
+        identity.roleName === identity.effectiveRole ||
         identity.canSetMigrator !== true ||
+        identity.runtimeMember !== false ||
+        identity.maintenanceMember !== false ||
+        identity.unexpectedMembership !== false ||
+        identity.hasDatabaseCreatePrivilege !== false ||
+        identity.applicationSchemaCreate !== false ||
+        identity.operationsSchemaCreate !== false ||
+        JSON.stringify(identity.searchPathSchemas) !==
+          JSON.stringify(["pintpath_app", "pg_catalog"]) ||
+        identity.currentSchema !== "pintpath_app" ||
         identity.transactionReadOnly !== false ||
         identity.inRecovery !== false ||
         identity.databaseIsTemplate !== false ||
@@ -2622,10 +2698,6 @@ export function createPostgresPrivateStorageDatabaseInspector(input: {
         ![null, "", "disposable-rehearsal"].includes(identity.targetClass)
       )
         throw new Error("unsafe_identity");
-      await client.query(
-        "/* pintpath:private-storage:set-role */ SET ROLE pintpath_migrator",
-      );
-      roleSet = true;
       await client.query(`/* pintpath:private-storage:begin */
         BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY`);
       transaction = true;
@@ -2731,10 +2803,6 @@ export function createPostgresPrivateStorageDatabaseInspector(input: {
       );
       await client.query("/* pintpath:private-storage:rollback */ ROLLBACK");
       transaction = false;
-      await client.query(
-        "/* pintpath:private-storage:reset-role */ RESET ROLE",
-      );
-      roleSet = false;
       return Object.freeze({
         connectionUrlSha256: parsed.urlSha256,
         databaseIdentitySha256: databaseIdentitySha256(identity),
@@ -2753,7 +2821,6 @@ export function createPostgresPrivateStorageDatabaseInspector(input: {
       throw recoveryError("source_database_mismatch");
     } finally {
       if (transaction) await client.query("ROLLBACK").catch(() => undefined);
-      if (roleSet) await client.query("RESET ROLE").catch(() => undefined);
       await client.end().catch(() => undefined);
     }
   };

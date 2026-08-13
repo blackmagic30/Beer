@@ -50,6 +50,7 @@ import {
 import {
   POSTGRES_LOGICAL_RESTORE_CONFIRMATION_ENV,
   POSTGRES_LOGICAL_RESTORE_CONFIRMATION_VALUE,
+  POSTGRES_LOGICAL_RESTORE_ROOT_CA_DER_SHA256_ENV,
   PostgresLogicalRestoreError,
   inspectPostgresLogicalRestoreTarget,
   parsePostgresLogicalBackupManifest,
@@ -59,6 +60,7 @@ import {
   type PostgresLogicalRestoreDependencies,
   type PostgresLogicalRestoreQueryResult,
 } from "../src/lib/postgres-logical-restore.js";
+import type { PostgresRailwayStockLocalhostCaTransport } from "../src/lib/postgres-railway-stock-localhost-ca.js";
 
 const roots: string[] = [];
 const secret = "restore-target-super-secret";
@@ -66,6 +68,28 @@ const targetUrl = `postgresql://restore_admin:${secret}@db.example.invalid:5432/
 const archiveBytes = Buffer.from("PGDMP-restore-test-archive", "utf8");
 const now = "2026-08-08T06:00:00.000Z";
 const rootCaCertificateSha256 = "f".repeat(64);
+const restoreRootCaDerSha256 =
+  "d7153a12f4eaa8518bace426aa67fe8f8e30fcef74e2f0eb5ff6169878bf7c10";
+const restoreRootCaPem = `-----BEGIN CERTIFICATE-----
+MIIDUjCCAjqgAwIBAgIUYBQyRs0suyX5rXqgVNuwjILfVgwwDQYJKoZIhvcNAQEL
+BQAwLzEtMCsGA1UEAwwkUGludFBhdGggUmFpbHdheSBUcmFuc3BvcnQgVGVzdCBS
+b290MB4XDTI2MDgxMDA1MzYxM1oXDTM2MDgwNzA1MzYxM1owLzEtMCsGA1UEAwwk
+UGludFBhdGggUmFpbHdheSBUcmFuc3BvcnQgVGVzdCBSb290MIIBIjANBgkqhkiG
+9w0BAQEFAAOCAQ8AMIIBCgKCAQEAzVV9MGHj6Z6rKbzATlt6Bwkh8H5tSoG9tIlI
+nHWFdtoQgTft+jGH3gRvow+/r+4KBz+2f3d6lmIXf3Z2W32P3xPCO/A4HA5T+vHb
+enNLWRBP/IHDkdPPVCjlXKwOR+cLUczOdd+YaEnDPZeQ+CrPyKgqCLTEBZqTIBWE
+tbYwtElDdx/0f0QzbMMWOuP0LV9rnHg18M04yOdBqxGlKyi04mL2rZEoJurSsoeL
+xNfeWiVch5Ret5hof3rf088qf02UN+K3d4Uk/1J3XgCCdzoaY6R3H7SqL3FGzsih
+uIETTD7olfSz0DtgZ7RPMTEsrShAN5j8kyoR30SxnfQZRbPQdQIDAQABo2YwZDAd
+BgNVHQ4EFgQUMrvU9IxE3Rw9I2Lb8Mu8ux8Q9wswHwYDVR0jBBgwFoAUMrvU9IxE3Rw9I2Lb8Mu8ux8Q9wswEgYDVR0TAQH/BAgwBgEB/wIBATAOBgNVHQ8BAf8EBAMC
+AQYwDQYJKoZIhvcNAQELBQADggEBABQBrpqpxBFYyOxryIcitEuRh0DMQWTn7oRE
+jYHJJbNRKiyaFzVo5bqamf6Ft5wKXP/CNljUOTpfZa8Y+dY+TrcP197HMhcT0Zwi
+F59mL1zAGSG9V1Kj2qDvNOtOeaQavk1G23bs8HU5tx7Bhx9zsZvkI2y//fX+EjCU
+ZufpD/15KvvWwUmLXr8nUkZoLUxw1degtHWCPzNT3f+3Jjp4EYU1nQwz8yvxjL7g
+EgybrSNRwoBxVF0Dbido1byzyZCn/LSdz817nfPkGynWvl49Bxtwz9nENfOUNCA7
+kjqZ5XK0MFWChjgcl8iF0BqOJfAQTS6WltU1HpU29avHR3FEEgQ=
+-----END CERTIFICATE-----
+`;
 const testPgRestoreFile = "/reviewed/postgresql/17/bin/pg_restore";
 const testPgRestoreSha256 = crypto.createHash("sha256")
   .update("reviewed-test-pg-restore", "utf8")
@@ -481,6 +505,13 @@ function writeFixture(root: string, manifestSchemaVersion: 2 | 3 = 3): {
   };
 }
 
+function writeRestoreRootCa(root: string, pem = restoreRootCaPem): string {
+  const filePath = path.join(root, "credentials", "restore-root-ca.pem");
+  fs.writeFileSync(filePath, pem, { mode: 0o600 });
+  fs.chmodSync(filePath, 0o600);
+  return filePath;
+}
+
 function writeV4Fixture(
   root: string,
   manifestBytes = canonicalPostgresLogicalBackupManifestV4(validV4Manifest()),
@@ -568,6 +599,8 @@ interface HarnessOptions {
   clientBackendCounts?: readonly string[];
   clientBackendQueryErrorAt?: number;
   connectionCloseError?: unknown;
+  transportAssertExactErrorAt?: number;
+  transportCloseError?: unknown;
 }
 
 interface ProcessArchiveInput {
@@ -663,6 +696,8 @@ function createHarness(options: HarnessOptions = {}) {
   let connectCount = 0;
   let clientBackendQueryCount = 0;
   let connectionCloseCount = 0;
+  let transportAssertExactCount = 0;
+  let transportCloseCount = 0;
   const query = async <Row extends Record<string, unknown>>(
     text: string,
   ): Promise<PostgresLogicalRestoreQueryResult<Row>> => {
@@ -939,6 +974,48 @@ function createHarness(options: HarnessOptions = {}) {
     getUid: () => process.getuid?.() ?? 0,
     now: () => new Date(now),
     openRestoreAuthority,
+    openTransport: async (transportOptions) => {
+      const transport = {
+        profile: transportOptions.profile,
+        rootCaDerSha256: transportOptions.expectedRootCaDerSha256,
+        sourceUrlAuthority: Object.freeze({ ...transportOptions.sourceUrlAuthority }),
+        resolvedAddress: "fd12::42",
+        temporaryDirectory: "/held/transport",
+        passwordFileDirectory: "/held/transport",
+        passwordFileHost: "localhost",
+        nodeConnection: Object.freeze({
+          host: "fd12::42",
+          port: 5432 as const,
+          ssl: Object.freeze({
+            ca: restoreRootCaPem,
+            servername: "localhost" as const,
+            rejectUnauthorized: true as const,
+            minVersion: "TLSv1.2" as const,
+            checkServerIdentity: () => undefined,
+          }),
+        }),
+        libpqEnvironment: Object.freeze({
+          PGHOST: "localhost" as const,
+          PGHOSTADDR: "fd12::42",
+          PGPORT: "5432" as const,
+          PGSSLMODE: "verify-full" as const,
+          PGSSLROOTCERT: "/held/transport/railway-root-ca.pem",
+          PGSSLMINPROTOCOLVERSION: "TLSv1.2" as const,
+          PGSSLSNI: "1" as const,
+        }),
+        assertExact: async () => {
+          transportAssertExactCount += 1;
+          if (options.transportAssertExactErrorAt === transportAssertExactCount) {
+            throw new Error("simulated transport drift");
+          }
+        },
+        close: async () => {
+          transportCloseCount += 1;
+          if (options.transportCloseError) throw options.transportCloseError;
+        },
+      } satisfies PostgresRailwayStockLocalhostCaTransport;
+      return Object.freeze(transport);
+    },
     connect: async (config) => {
       events.push("connected");
       connectCount += 1;
@@ -970,6 +1047,8 @@ function createHarness(options: HarnessOptions = {}) {
     get connectCount() { return connectCount; },
     get clientBackendQueryCount() { return clientBackendQueryCount; },
     get connectionCloseCount() { return connectionCloseCount; },
+    get transportAssertExactCount() { return transportAssertExactCount; },
+    get transportCloseCount() { return transportCloseCount; },
   };
 }
 
@@ -1372,6 +1451,153 @@ describe("Postgres logical restore rehearsal", () => {
     expect(harness.authorityLifecycle.opened).toBe(0);
     expect(harness.authorityOpens).toEqual([]);
     expect(harness.connectionCloseCount).toBe(1);
+  });
+
+  it("binds the exact pinned restore CA into the direct Node TLS connection", async () => {
+    const root = temporaryRoot();
+    const fixture = writeFixture(root);
+    const rootCaFile = writeRestoreRootCa(root);
+    const harness = createHarness();
+    const result = await inspectPostgresLogicalRestoreTarget(
+      { targetUrlFile: fixture.targetUrlFile },
+      {
+        ...harness.dependencies,
+        env: {
+          ...harness.dependencies.env,
+          PINTPATH_POSTGRES_OCI_RESTORE_ROOT_CA_FILE: rootCaFile,
+          PINTPATH_POSTGRES_OCI_RESTORE_ROOT_CA_SHA256: sha256(restoreRootCaPem),
+          [POSTGRES_LOGICAL_RESTORE_ROOT_CA_DER_SHA256_ENV]: restoreRootCaDerSha256,
+        },
+        now: () => new Date("2026-08-13T06:00:00.000Z"),
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(harness.connectionConfigs).toHaveLength(1);
+    expect(harness.connectionConfigs[0]).toMatchObject({
+      host: "fd12::42",
+      port: 5432,
+      ssl: {
+        rejectUnauthorized: true,
+        ca: restoreRootCaPem,
+        servername: "localhost",
+        minVersion: "TLSv1.2",
+      },
+    });
+    expect(harness.transportAssertExactCount).toBeGreaterThanOrEqual(3);
+    expect(harness.transportCloseCount).toBe(1);
+    expect(JSON.stringify(result)).not.toContain("BEGIN CERTIFICATE");
+  });
+
+  it("fails closed and closes the held target transport when an exact fence drifts", async () => {
+    const root = temporaryRoot();
+    const fixture = writeFixture(root);
+    const rootCaFile = writeRestoreRootCa(root);
+    const harness = createHarness({ transportAssertExactErrorAt: 2 });
+    const error = await inspectPostgresLogicalRestoreTarget(
+      { targetUrlFile: fixture.targetUrlFile },
+      {
+        ...harness.dependencies,
+        env: {
+          ...harness.dependencies.env,
+          PINTPATH_POSTGRES_OCI_RESTORE_ROOT_CA_FILE: rootCaFile,
+          PINTPATH_POSTGRES_OCI_RESTORE_ROOT_CA_SHA256: sha256(restoreRootCaPem),
+          [POSTGRES_LOGICAL_RESTORE_ROOT_CA_DER_SHA256_ENV]: restoreRootCaDerSha256,
+        },
+        now: () => new Date("2026-08-13T06:00:00.000Z"),
+      },
+    ).catch((caught: unknown) => caught);
+
+    expectRestoreError(error, "target_unreachable");
+    expect(harness.connectionCloseCount).toBe(1);
+    expect(harness.transportCloseCount).toBe(1);
+  });
+
+  it("rejects incomplete, mismatched, invalid, or non-verify-full restore CA authority", async () => {
+    const cases: readonly {
+      readonly name: string;
+      readonly pem?: string;
+      readonly includeFile: boolean;
+      readonly expectedSha256?: string;
+      readonly sslMode?: "require" | "verify-full";
+      readonly expectedCode: PostgresLogicalRestoreError["code"];
+    }[] = [
+      {
+        name: "missing-hash",
+        includeFile: true,
+        expectedCode: "unsafe_connection_file",
+      },
+      {
+        name: "missing-file",
+        includeFile: false,
+        expectedSha256: sha256(restoreRootCaPem),
+        expectedCode: "unsafe_connection_file",
+      },
+      {
+        name: "hash-mismatch",
+        includeFile: true,
+        expectedSha256: "0".repeat(64),
+        expectedCode: "unsafe_connection_file",
+      },
+      {
+        name: "invalid-certificate",
+        pem: "-----BEGIN CERTIFICATE-----\naW52YWxpZA==\n-----END CERTIFICATE-----\n",
+        includeFile: true,
+        expectedCode: "unsafe_connection_file",
+      },
+      {
+        name: "weak-ssl-mode",
+        includeFile: true,
+        expectedSha256: sha256(restoreRootCaPem),
+        sslMode: "require",
+        expectedCode: "unsafe_connection_url",
+      },
+    ];
+
+    for (const testCase of cases) {
+      const root = temporaryRoot();
+      const fixture = writeFixture(root);
+      const pem = testCase.pem ?? restoreRootCaPem;
+      const rootCaFile = writeRestoreRootCa(root, pem);
+      if (testCase.sslMode === "require") {
+        fs.writeFileSync(
+          fixture.targetUrlFile,
+          `${targetUrl.replace("sslmode=verify-full", "sslmode=require")}\n`,
+          { mode: 0o600 },
+        );
+      }
+      const harness = createHarness();
+      const error = await inspectPostgresLogicalRestoreTarget(
+        { targetUrlFile: fixture.targetUrlFile },
+        {
+          ...harness.dependencies,
+          env: {
+            ...harness.dependencies.env,
+            ...(testCase.includeFile
+              ? {
+                PINTPATH_POSTGRES_OCI_RESTORE_ROOT_CA_FILE: rootCaFile,
+                [POSTGRES_LOGICAL_RESTORE_ROOT_CA_DER_SHA256_ENV]:
+                  testCase.pem ? "0".repeat(64) : restoreRootCaDerSha256,
+              }
+              : {}),
+            ...(testCase.expectedSha256
+              ? {
+                PINTPATH_POSTGRES_OCI_RESTORE_ROOT_CA_SHA256:
+                  testCase.expectedSha256,
+              }
+              : testCase.pem
+                ? {
+                  PINTPATH_POSTGRES_OCI_RESTORE_ROOT_CA_SHA256: sha256(pem),
+                }
+                : {}),
+          },
+          now: () => new Date("2026-08-13T06:00:00.000Z"),
+        },
+      ).catch((caught: unknown) => caught);
+
+      expectRestoreError(error, testCase.expectedCode);
+      expect(harness.connectCount, testCase.name).toBe(0);
+    }
   });
 
   it("does not publish an inspection when its target session cannot close", async () => {

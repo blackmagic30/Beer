@@ -1,9 +1,18 @@
+import crypto from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { readPrivateSecretFile } from "../src/lib/offsite-backup-download.js";
 import { assertSupabaseServerApiKey } from "../src/lib/supabase-key-format.js";
 import { canonicalPostgresBackupJson } from "../src/lib/postgres-logical-backup.js";
+import {
+  openPostgresRailwayStockLocalhostCaTransport,
+  parsePostgresRailwayStockLocalhostCaUrl,
+  POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+  PostgresRailwayStockLocalhostCaError,
+  type OpenPostgresRailwayStockLocalhostCaTransportOptions,
+  type PostgresRailwayStockLocalhostCaTransport,
+} from "../src/lib/postgres-railway-stock-localhost-ca.js";
 import {
   POSTGRES_PRIVATE_STORAGE_BUCKET,
   POSTGRES_PRIVATE_STORAGE_RESTORE_CONFIRMATION_ENV,
@@ -23,16 +32,25 @@ const ARGUMENTS = new Set([
   "--backup-manifest-sha256",
   "--bucket-name-sha256",
   "--destination-origin-sha256",
+  "--destination-authority-file",
+  "--destination-authority-sha256",
+  "--destination-authority-public-key-file",
+  "--destination-authority-public-key-sha256",
+  "--expected-candidate-sha",
+  "--expected-root-ca-der-sha256",
   "--forbidden-origin-sha256s",
   "--recovery-manifest-sha256",
   "--recovery-set-directory",
   "--recovery-set-sha256",
+  "--root-ca-file",
   "--service-role-key-file",
   "--target-connection-url-file",
   "--target-connection-url-sha256",
   "--target-database-identity-sha256",
 ]);
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
+const CANDIDATE_PATTERN = /^[a-f0-9]{40}$/;
+const TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
 export type PostgresPrivateStorageRestoreCliFailureCode =
   | PostgresPrivateStorageRecoveryFailureCode
@@ -40,10 +58,21 @@ export type PostgresPrivateStorageRestoreCliFailureCode =
   | "confirmation_required"
   | "operator_guard_rejected"
   | "secret_file_unsafe"
+  | "database_transport_unsafe"
+  | "database_transport_drift"
+  | "database_transport_close_failed"
   | "unexpected_failure";
 
 export type PostgresPrivateStorageRestoreCliResult =
-  | RestorePostgresPrivateStorageRecoveryResult
+  | (RestorePostgresPrivateStorageRecoveryResult & {
+      readonly databaseTransportProfile:
+        typeof POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE;
+      readonly databaseTransportRootCaDerSha256: string;
+      readonly databaseEffectiveRole: "pintpath_migrator";
+      readonly destinationAuthoritySha256: string;
+      readonly destinationAuthorityPublicKeySha256: string;
+      readonly destinationAuthorityReviewerIdSha256: string;
+    })
   | {
       readonly schemaVersion: 1;
       readonly kind: "pintpath-postgres-private-storage-recovery-restore";
@@ -55,6 +84,11 @@ export type PostgresPrivateStorageRestoreCliResult =
 export interface PostgresPrivateStorageRestoreCliDependencies {
   readonly environment: Readonly<Record<string, string | undefined>>;
   readonly readSecretFile: (filePath: string) => Promise<string>;
+  readonly now: () => Date;
+  readonly getUid: () => number | null;
+  readonly openDatabaseTransport: (
+    options: OpenPostgresRailwayStockLocalhostCaTransportOptions,
+  ) => Promise<PostgresRailwayStockLocalhostCaTransport>;
   readonly assertDestinationOriginApproved: (origin: string) => void;
   readonly createInspector: typeof createPostgresPrivateStorageDatabaseInspector;
   readonly createStorage: (input: {
@@ -70,13 +104,10 @@ export interface PostgresPrivateStorageRestoreCliDependencies {
 const DEFAULT_DEPENDENCIES: PostgresPrivateStorageRestoreCliDependencies = {
   environment: process.env,
   readSecretFile: readPrivateSecretFile,
-  // No disposable restore project is currently registered in repository-owned
-  // release authority. A URL and digest supplied by the same invocation are
-  // not an independent trust anchor, so production execution remains blocked
-  // before either credential file is read.
-  assertDestinationOriginApproved: () => {
-    throw new RestoreCliError("configuration_missing_or_unsafe");
-  },
+  now: () => new Date(),
+  getUid: () => process.getuid?.() ?? null,
+  openDatabaseTransport: openPostgresRailwayStockLocalhostCaTransport,
+  assertDestinationOriginApproved: () => undefined,
   createInspector: createPostgresPrivateStorageDatabaseInspector,
   createStorage: () => {
     throw new RestoreCliError("configuration_missing_or_unsafe");
@@ -115,6 +146,108 @@ function forbiddenHashes(value: string): readonly string[] {
   return Object.freeze(hashes);
 }
 
+function exactSha256(value: string): string {
+  if (!SHA256_PATTERN.test(value)) throw new RestoreCliError("invalid_arguments");
+  return value;
+}
+
+function exactCandidateSha(value: string): string {
+  if (!CANDIDATE_PATTERN.test(value)) throw new RestoreCliError("invalid_arguments");
+  return value;
+}
+
+function canonical(value: unknown): string {
+  return canonicalPostgresBackupJson(value);
+}
+
+function exactKeys(value: object, keys: readonly string[]): boolean {
+  return JSON.stringify(Object.keys(value).sort()) === JSON.stringify([...keys].sort());
+}
+
+export function verifyPostgresPrivateStorageDestinationAuthority(input: {
+  readonly authoritySource: string;
+  readonly authoritySha256: string;
+  readonly candidateSha: string;
+  readonly destinationOrigin: string;
+  readonly destinationOriginSha256: string;
+  readonly targetConnectionUrlSha256: string;
+  readonly targetDatabaseIdentitySha256: string;
+  readonly publicKeyPem: string;
+  readonly publicKeySha256: string;
+  readonly now: Date;
+}): string {
+  const authorityBytes = Buffer.from(input.authoritySource, "utf8");
+  const publicKeyBytes = Buffer.from(input.publicKeyPem, "utf8");
+  if (
+    crypto.createHash("sha256").update(authorityBytes).digest("hex")
+      !== input.authoritySha256
+    || crypto.createHash("sha256").update(publicKeyBytes).digest("hex")
+      !== input.publicKeySha256
+  ) throw new RestoreCliError("configuration_missing_or_unsafe");
+  let value: unknown;
+  try {
+    value = JSON.parse(input.authoritySource);
+  } catch {
+    throw new RestoreCliError("configuration_missing_or_unsafe");
+  }
+  if (
+    !value || typeof value !== "object" || Array.isArray(value)
+    || !exactKeys(value, ["schemaVersion", "payload", "signatureBase64"])
+  ) throw new RestoreCliError("configuration_missing_or_unsafe");
+  const envelope = value as Record<string, unknown>;
+  const payload = envelope.payload;
+  if (
+    envelope.schemaVersion !== "pintpath-private-storage-disposable-authority/v1"
+    || !payload || typeof payload !== "object" || Array.isArray(payload)
+    || !exactKeys(payload, [
+      "schemaVersion", "candidateSha", "destinationOrigin",
+      "destinationOriginSha256", "targetConnectionUrlSha256",
+      "targetDatabaseIdentitySha256", "reviewerIdSha256",
+      "reviewerPublicKeySha256", "issuedAt", "expiresAt",
+    ])
+    || typeof envelope.signatureBase64 !== "string"
+    || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
+      envelope.signatureBase64,
+    )
+  ) throw new RestoreCliError("configuration_missing_or_unsafe");
+  const authority = payload as Record<string, unknown>;
+  const issuedAt = String(authority.issuedAt);
+  const expiresAt = String(authority.expiresAt);
+  const nowMs = input.now.getTime();
+  if (
+    authority.schemaVersion !== "pintpath-private-storage-disposable-authority-payload/v1"
+    || authority.candidateSha !== input.candidateSha
+    || authority.destinationOrigin !== input.destinationOrigin
+    || authority.destinationOriginSha256 !== input.destinationOriginSha256
+    || authority.targetConnectionUrlSha256 !== input.targetConnectionUrlSha256
+    || authority.targetDatabaseIdentitySha256 !== input.targetDatabaseIdentitySha256
+    || authority.reviewerPublicKeySha256 !== input.publicKeySha256
+    || !SHA256_PATTERN.test(String(authority.reviewerIdSha256))
+    || !TIMESTAMP_PATTERN.test(issuedAt)
+    || !TIMESTAMP_PATTERN.test(expiresAt)
+    || !Number.isFinite(nowMs)
+    || Date.parse(issuedAt) > nowMs
+    || Date.parse(expiresAt) <= nowMs
+    || Date.parse(expiresAt) - Date.parse(issuedAt) > 86_400_000
+    || canonical(value) !== input.authoritySource
+  ) throw new RestoreCliError("configuration_missing_or_unsafe");
+  try {
+    const key = crypto.createPublicKey(publicKeyBytes);
+    if (
+      key.asymmetricKeyType !== "ed25519"
+      || !crypto.verify(
+        null,
+        Buffer.from(canonical(authority), "utf8"),
+        key,
+        Buffer.from(envelope.signatureBase64, "base64"),
+      )
+    ) throw new Error("signature mismatch");
+  } catch {
+    throw new RestoreCliError("configuration_missing_or_unsafe");
+  }
+  return String(authority.reviewerIdSha256);
+}
+
 function exactSecretFilePath(value: string): string {
   if (
     !value ||
@@ -132,6 +265,13 @@ function failureCode(
 ): PostgresPrivateStorageRestoreCliFailureCode {
   if (error instanceof RestoreCliError) return error.code;
   if (error instanceof PostgresPrivateStorageRecoveryError) return error.code;
+  if (error instanceof PostgresRailwayStockLocalhostCaError) {
+    return error.code === "transport_drift"
+      ? "database_transport_drift"
+      : error.code === "cleanup_failed"
+        ? "database_transport_close_failed"
+        : "database_transport_unsafe";
+  }
   return "unexpected_failure";
 }
 
@@ -154,6 +294,8 @@ export async function runPostgresPrivateStorageRestoreCli(
     ...DEFAULT_DEPENDENCIES,
     ...overrides,
   };
+  let databaseTransport: PostgresRailwayStockLocalhostCaTransport | null = null;
+  let destinationAuthorityReviewerIdSha256 = "";
   try {
     let args: Map<string, string>;
     try {
@@ -183,10 +325,38 @@ export async function runPostgresPrivateStorageRestoreCli(
     const serviceRoleKeyFile = exactSecretFilePath(
       args.get("--service-role-key-file")!,
     );
+    const rootCaFile = exactSecretFilePath(args.get("--root-ca-file")!);
+    const authorityFile = exactSecretFilePath(args.get("--destination-authority-file")!);
+    const authorityPublicKeyFile = exactSecretFilePath(
+      args.get("--destination-authority-public-key-file")!,
+    );
     const destinationSupabaseUrl = exactEnvironment(
       dependencies.environment,
       "RESTORE_SUPABASE_URL",
     );
+    const candidateSha = exactCandidateSha(args.get("--expected-candidate-sha")!);
+    const [authoritySource, authorityPublicKey] = await Promise.all([
+      secret(dependencies, authorityFile),
+      secret(dependencies, authorityPublicKeyFile),
+    ]);
+    destinationAuthorityReviewerIdSha256 = verifyPostgresPrivateStorageDestinationAuthority({
+      authoritySource,
+      authoritySha256: exactSha256(args.get("--destination-authority-sha256")!),
+      candidateSha,
+      destinationOrigin: destinationSupabaseUrl,
+      destinationOriginSha256: exactSha256(args.get("--destination-origin-sha256")!),
+      targetConnectionUrlSha256: exactSha256(
+        args.get("--target-connection-url-sha256")!,
+      ),
+      targetDatabaseIdentitySha256: exactSha256(
+        args.get("--target-database-identity-sha256")!,
+      ),
+      publicKeyPem: authorityPublicKey,
+      publicKeySha256: exactSha256(
+        args.get("--destination-authority-public-key-sha256")!,
+      ),
+      now: dependencies.now(),
+    });
     try {
       dependencies.assertDestinationOriginApproved(destinationSupabaseUrl);
     } catch {
@@ -204,9 +374,28 @@ export async function runPostgresPrivateStorageRestoreCli(
     } catch {
       throw new RestoreCliError("secret_file_unsafe");
     }
+    let parsedConnection: ReturnType<typeof parsePostgresRailwayStockLocalhostCaUrl>;
+    try {
+      parsedConnection = parsePostgresRailwayStockLocalhostCaUrl(connectionString);
+    } catch {
+      throw new RestoreCliError("database_transport_unsafe");
+    }
+    const uid = dependencies.getUid();
+    if (!Number.isSafeInteger(uid) || Number(uid) < 0) {
+      throw new RestoreCliError("database_transport_unsafe");
+    }
+    databaseTransport = await dependencies.openDatabaseTransport({
+      profile: POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+      rootCaFile,
+      expectedRootCaDerSha256: args.get("--expected-root-ca-der-sha256")!,
+      expectedUid: uid!,
+      sourceUrlAuthority: parsedConnection.sourceUrlAuthority,
+    });
+    await databaseTransport.assertExact();
     const inspectTargetDatabase = dependencies.createInspector({
       connectionString,
       expectedConnectionUrlSha256: args.get("--target-connection-url-sha256")!,
+      railwayStockLocalhostCaConnection: databaseTransport.nodeConnection,
     });
     const destinationStorage = dependencies.createStorage({
       supabaseUrl: destinationSupabaseUrl,
@@ -235,9 +424,32 @@ export async function runPostgresPrivateStorageRestoreCli(
       inspectTargetDatabase,
       destinationStorage,
     });
-    dependencies.writeOutput(canonicalPostgresBackupJson(result));
+    await databaseTransport.assertExact();
+    const databaseTransportProfile = databaseTransport.profile;
+    const databaseTransportRootCaDerSha256 = databaseTransport.rootCaDerSha256;
+    await databaseTransport.close();
+    databaseTransport = null;
+    const authenticatedResult: PostgresPrivateStorageRestoreCliResult = {
+      ...result,
+      databaseTransportProfile,
+      databaseTransportRootCaDerSha256,
+      databaseEffectiveRole: "pintpath_migrator",
+      destinationAuthoritySha256: args.get("--destination-authority-sha256")!,
+      destinationAuthorityPublicKeySha256:
+        args.get("--destination-authority-public-key-sha256")!,
+      destinationAuthorityReviewerIdSha256,
+    };
+    dependencies.writeOutput(canonicalPostgresBackupJson(authenticatedResult));
     return 0;
   } catch (error) {
+    if (databaseTransport) {
+      try {
+        await databaseTransport.close();
+      } catch {
+        error = new RestoreCliError("database_transport_close_failed");
+      }
+      databaseTransport = null;
+    }
     const code = failureCode(error);
     const result: PostgresPrivateStorageRestoreCliResult = {
       schemaVersion: 1,

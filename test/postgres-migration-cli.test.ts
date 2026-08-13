@@ -14,6 +14,15 @@ import type {
   PostgresMigrationReceipt,
   PostgresMigrationTargetInput,
 } from "../src/db/postgres-migration-target.js";
+import {
+  POSTGRES_MIGRATION_VERIFICATION_APPROVAL_KIND,
+  POSTGRES_MIGRATION_VERIFICATION_APPROVAL_VERSION,
+  finalizePostgresMigrationApplyReceipt,
+} from "../src/db/postgres-migration-receipt.js";
+import {
+  serializeCanonicalPostgresMigrationJson,
+  sha256PostgresMigrationBytes,
+} from "../src/db/postgres-migration-schema.js";
 
 const temporaryDirectories: string[] = [];
 const sha = (character: string) => character.repeat(64);
@@ -37,24 +46,80 @@ function temporaryDirectory(): string {
 }
 
 function targetArguments(root: string, command: "apply" | "verify-target"): string[] {
+  if (command === "verify-target") writeVerificationFixtures(root);
   return [
     command,
     "--snapshot-manifest", path.join(root, "snapshot-manifest.json"),
     "--snapshot-manifest-sha256", sha("a"),
     "--plan", path.join(root, "plan.json"),
     "--plan-sha256", sha("b"),
+    "--root-ca-file", path.join(root, "railway-root-ca.pem"),
+    "--root-ca-der-sha256", sha("f"),
     "--target-ddl", path.join(root, "postgres-schema.sql"),
     "--target-ddl-sha256", sha("c"),
     "--target-url-file", path.join(root, "target-url.secret"),
     "--target-url-sha256", sha("d"),
+    "--transport-authority-sha256", sha("9"),
     "--target-identity-sha256", sha("e"),
     "--expected-environment", "permanent-staging",
     "--candidate-sha", "f".repeat(40),
     "--approval-reference", "approved-migration-change-001",
     "--operator-id", "migration-operator-001",
-    "--verifier-id", "migration-verifier-001",
     "--output-receipt", path.join(root, `${command}-receipt.json`),
+    ...(command === "verify-target" ? [
+      "--apply-receipt", path.join(root, "apply-receipt.json"),
+      "--apply-receipt-sha256", sha("8"),
+      "--verification-approval", path.join(root, "verification-approval.json"),
+      "--verification-approval-sha256", sha("9"),
+      "--verifier-public-key", path.join(root, "verifier-public-key.pem"),
+    ] : []),
   ];
+}
+
+function applyReceiptFixture() {
+  const final = receipt();
+  const {
+    applyReceiptSha256: _applyReceiptSha256,
+    receiptSha256: _receiptSha256,
+    status: _status,
+    verificationApprovalFileSha256: _verificationApprovalFileSha256,
+    verifiedAt: _verifiedAt,
+    verifierPublicKeySha256: _verifierPublicKeySha256,
+    ...common
+  } = final;
+  return finalizePostgresMigrationApplyReceipt({
+    ...common,
+    status: "awaiting-verification",
+  });
+}
+
+function writeVerificationFixtures(root: string): void {
+  const applyReceipt = applyReceiptFixture();
+  const publicKeySha256 = sha("7");
+  const payload = {
+    applyReceiptSha256: applyReceipt.receiptSha256,
+    approvedAt: "2026-08-08T00:00:00.000Z",
+    candidateSha: applyReceipt.candidateSha,
+    expectedEnvironment: applyReceipt.expectedEnvironment,
+    expiresAt: "2026-08-08T01:00:00.000Z",
+    liveSchemaSha256: applyReceipt.liveSchemaSha256,
+    targetIdentitySha256: applyReceipt.targetIdentitySha256,
+    verifierIdSha256: applyReceipt.verifierIdSha256,
+    verifierAuthoritySha256: applyReceipt.verifierAuthoritySha256,
+    verifierAuthorityPolicySha256: applyReceipt.verifierAuthorityPolicySha256,
+    verifierPublicKeySha256: publicKeySha256,
+  };
+  const approval = {
+    kind: POSTGRES_MIGRATION_VERIFICATION_APPROVAL_KIND,
+    version: POSTGRES_MIGRATION_VERIFICATION_APPROVAL_VERSION,
+    payload,
+    signatureBase64: Buffer.alloc(64, 1).toString("base64"),
+  };
+  const applyBytes = serializeCanonicalPostgresMigrationJson(applyReceipt);
+  const approvalBytes = serializeCanonicalPostgresMigrationJson(approval);
+  fs.writeFileSync(path.join(root, "apply-receipt.json"), applyBytes, { mode: 0o600 });
+  fs.writeFileSync(path.join(root, "verification-approval.json"), approvalBytes, { mode: 0o600 });
+  fs.writeFileSync(path.join(root, "verifier-public-key.pem"), "fixture-key", { mode: 0o600 });
 }
 
 function ledgerExportArguments(root: string): string[] {
@@ -77,17 +142,21 @@ function ledgerExportEnvironment(overrides: NodeJS.ProcessEnv = {}): NodeJS.Proc
 function receipt(): PostgresMigrationReceipt {
   return {
     kind: "pint-path-postgres-migration-receipt",
-    version: 1,
+    version: 3,
     status: "ready",
     expectedEnvironment: "permanent-staging",
     approvalReferenceSha256: sha("1"),
     operatorIdSha256: sha("2"),
     verifierIdSha256: sha("3"),
+    verifierAuthoritySha256: sha("4"),
+    verifierAuthorityPolicySha256: sha("5"),
     runIdSha256: sha("4"),
     runBindingSha256: sha("5"),
     targetIdentitySha256: sha("e"),
+    transportAuthoritySha256: sha("f"),
     targetUrlSha256: sha("d"),
     targetDdlSha256: sha("c"),
+    liveSchemaSha256: sha("0"),
     sourceSnapshotSha256: sha("6"),
     sourceSchemaFingerprint: sha("7"),
     contractSha256: sha("8"),
@@ -105,6 +174,10 @@ function receipt(): PostgresMigrationReceipt {
     chunkCount: 219,
     zeroRowTableCount: 8,
     foreignKeyCount: 76,
+    applyReceiptSha256: sha("4"),
+    verificationApprovalFileSha256: sha("5"),
+    verifierPublicKeySha256: sha("7"),
+    verifiedAt: "2026-08-08T00:00:00.000Z",
     receiptSha256: sha("0"),
   };
 }
@@ -147,24 +220,45 @@ describe("Postgres migration operator CLI", () => {
     const privateUrl = "postgresql://private-user:private-password@db.example.test/pintpath?sslmode=verify-full";
     const readSecretFile = vi.fn(async () => privateUrl);
     const inspectTarget = vi.fn(async () => ({
+      targetIdentity: {
+        currentUser: "pintpath_migrator",
+        databaseName: "pintpath",
+        databaseOid: "42",
+        serverVersionNum: "170010",
+        sessionUser: "migration-login",
+        systemIdentifier: "123456789",
+      },
       targetIdentitySha256: sha("1"),
       targetUrlSha256: sha("2"),
+      transportAuthoritySha256: sha("4"),
       targetDdlSha256: sha("3"),
+      liveSchemaSha256: sha("5"),
+      liveSchemaObjectCount: 1532,
       tableCount: 56,
       columnCount: 717,
       foreignKeyCount: 76,
     }));
     const output = await runPostgresMigrationSourceCli([
       "inspect-target",
+      "--output-target-identity", path.join(root, "target-identity.json"),
       "--target-ddl", path.join(root, "postgres-schema.sql"),
       "--target-ddl-sha256", sha("3"),
       "--target-url-file", path.join(root, "target-url.secret"),
+      "--root-ca-file", path.join(root, "railway-root-ca.pem"),
+      "--root-ca-der-sha256", sha("4"),
     ], {}, { readSecretFile, inspectTarget });
 
     expect(inspectTarget).toHaveBeenCalledWith(expect.objectContaining({ targetUrl: privateUrl }));
     expect(JSON.stringify(output)).not.toContain("private-user");
     expect(JSON.stringify(output)).not.toContain("private-password");
     expect(output).toMatchObject({ ok: true, command: "inspect-target", tableCount: 56 });
+    expect(output).not.toHaveProperty("targetIdentity");
+    const identityPath = path.join(root, "target-identity.json");
+    expect(fs.statSync(identityPath).mode & 0o777).toBe(0o600);
+    expect(JSON.parse(fs.readFileSync(identityPath, "utf8"))).toMatchObject({
+      currentUser: "pintpath_migrator",
+      sessionUser: "migration-login",
+    });
   });
 
   it.each([
@@ -284,6 +378,9 @@ describe("Postgres migration operator CLI", () => {
       const receiptText = fs.readFileSync(receiptPath, "utf8");
 
       expect(captured?.targetUrl).toBe(privateUrl);
+      expect(captured?.rootCaFile).toBe(path.join(root, "railway-root-ca.pem"));
+      expect(captured?.expectedRootCaDerSha256).toBe(sha("f"));
+      expect(captured?.expectedTransportAuthoritySha256).toBe(sha("9"));
       expect(captured?.expectedEnvironment).toBe("permanent-staging");
       const receiptStat = fs.statSync(receiptPath);
       expect(receiptStat.mode & 0o7777).toBe(0o600);

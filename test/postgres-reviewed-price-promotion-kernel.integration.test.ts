@@ -5,6 +5,10 @@ import path from "node:path";
 import { Client, type QueryResultRow } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import {
+  postgresReviewedPricePromotionOperatorInternals,
+} from "../scripts/postgres-reviewed-price-promotion-operator.js";
+
 const ADMIN_URL_ENV =
   "PINTPATH_POSTGRES_REVIEWED_PRICE_KERNEL_TEST_ADMIN_URL";
 const REQUIRED_ENV =
@@ -27,6 +31,312 @@ const schemaPublication = `pintpath_kernel_schema_${suffix}`;
 const schemaSql = fs.readFileSync(
   path.resolve("src/db/postgres-schema.sql"),
   "utf8",
+);
+
+describe.skipIf(!configuredAdminUrl)(
+  "reviewed-price operator login authority on real PostgreSQL 17",
+  () => {
+    const authorityDatabase = `pintpath_operator_authority_${suffix}`;
+    const operatorLogin = `pintpath_operator_login_${suffix}`;
+    const reviewerLogin = `pintpath_reviewer_login_${suffix}`;
+    const extraRole = `pintpath_operator_extra_${suffix}`;
+    let maintenance: Client;
+    let databaseAdmin: Client;
+    let operator: Client;
+    let reviewer: Client;
+    let adminRole = "";
+    let oid = "";
+    let reviewerExecute = "";
+    let applyExecute = "";
+    let quarantineExecute = "";
+
+    const verifyOperator = async (): Promise<void> => {
+      await postgresReviewedPricePromotionOperatorInternals
+        .verifyReviewedPriceLoginAuthority(operator, {
+          databaseOid: oid,
+          kind: "operator",
+          loginRole: operatorLogin,
+        });
+    };
+
+    beforeAll(async () => {
+      const adminUrl = validateAdminUrl(configuredAdminUrl);
+      maintenance = new Client({ connectionString: adminUrl.toString() });
+      await maintenance.connect();
+      await maintenance.query(
+        `DROP DATABASE IF EXISTS ${quoteIdentifier(authorityDatabase)} WITH (FORCE)`,
+      );
+      for (const role of [operatorLogin, reviewerLogin, extraRole]) {
+        await maintenance.query(`DROP ROLE IF EXISTS ${quoteIdentifier(role)}`);
+      }
+      await maintenance.query(`CREATE DATABASE ${quoteIdentifier(authorityDatabase)}`);
+      databaseAdmin = new Client({
+        connectionString: withDatabase(adminUrl, authorityDatabase),
+      });
+      await databaseAdmin.connect();
+      const version = await databaseAdmin.query<{ version: string; adminRole: string }>(
+        `SELECT current_setting('server_version_num') AS version,
+                current_user::text AS "adminRole"`,
+      );
+      if (!/^17\d{4}$/.test(version.rows[0]?.version ?? "")) {
+        throw new Error("Reviewed-price authority integration requires PostgreSQL 17.");
+      }
+      adminRole = version.rows[0]!.adminRole;
+      oid = await databaseOid(databaseAdmin);
+      reviewerExecute = `pintpath_reviewed_price_reviewer_execute_d${oid}`;
+      applyExecute = `pintpath_reviewed_price_apply_execute_d${oid}`;
+      quarantineExecute = `pintpath_reviewed_price_quarantine_execute_d${oid}`;
+      for (const role of [
+        reviewerExecute,
+        applyExecute,
+        quarantineExecute,
+        extraRole,
+      ]) {
+        await databaseAdmin.query(`CREATE ROLE ${quoteIdentifier(role)}
+          NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT
+          NOREPLICATION NOBYPASSRLS CONNECTION LIMIT -1`);
+      }
+      await databaseAdmin.query(`CREATE ROLE ${quoteIdentifier(operatorLogin)}
+        LOGIN PASSWORD 'operator-authority-test-password'
+        NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT
+        NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 1 VALID UNTIL 'tomorrow'`);
+      await databaseAdmin.query(`CREATE ROLE ${quoteIdentifier(reviewerLogin)}
+        LOGIN PASSWORD 'reviewer-authority-test-password'
+        NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT
+        NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 1 VALID UNTIL 'tomorrow'`);
+      await databaseAdmin.query("CREATE SCHEMA pintpath_ops");
+      await databaseAdmin.query(`CREATE FUNCTION
+        pintpath_ops.authorize_reviewed_price_promotion(pg_catalog.jsonb)
+        RETURNS pg_catalog.jsonb LANGUAGE sql AS 'SELECT $1'`);
+      await databaseAdmin.query(`CREATE FUNCTION
+        pintpath_ops.apply_reviewed_price_promotion(pg_catalog.jsonb)
+        RETURNS pg_catalog.jsonb LANGUAGE sql AS 'SELECT $1'`);
+      await databaseAdmin.query(`CREATE FUNCTION
+        pintpath_ops.quarantine_reviewed_price_promotion(pg_catalog.jsonb)
+        RETURNS pg_catalog.jsonb LANGUAGE sql AS 'SELECT $1'`);
+      await databaseAdmin.query(`CREATE TABLE pintpath_ops.authority_probe (
+        id pg_catalog.int4 PRIMARY KEY,
+        value pg_catalog.text NOT NULL
+      )`);
+      await databaseAdmin.query(
+        "CREATE SEQUENCE pintpath_ops.authority_probe_sequence",
+      );
+      await databaseAdmin.query(
+        "CREATE TYPE pintpath_ops.authority_probe_type AS ENUM ('probe')",
+      );
+      await databaseAdmin.query(
+        `REVOKE ALL ON DATABASE ${quoteIdentifier(authorityDatabase)} FROM PUBLIC`,
+      );
+      await databaseAdmin.query("REVOKE ALL ON SCHEMA pintpath_ops FROM PUBLIC");
+      await databaseAdmin.query(
+        "REVOKE ALL ON ALL FUNCTIONS IN SCHEMA pintpath_ops FROM PUBLIC",
+      );
+      await databaseAdmin.query(
+        "REVOKE ALL ON TYPE pintpath_ops.authority_probe_type FROM PUBLIC",
+      );
+      await databaseAdmin.query(
+        `GRANT CONNECT ON DATABASE ${quoteIdentifier(authorityDatabase)}
+          TO ${quoteIdentifier(operatorLogin)}, ${quoteIdentifier(reviewerLogin)}`,
+      );
+      await databaseAdmin.query(`GRANT ${quoteIdentifier(reviewerExecute)}
+        TO ${quoteIdentifier(reviewerLogin)}
+        WITH ADMIN FALSE, INHERIT FALSE, SET TRUE`);
+      for (const role of [applyExecute, quarantineExecute]) {
+        await databaseAdmin.query(`GRANT ${quoteIdentifier(role)}
+          TO ${quoteIdentifier(operatorLogin)}
+          WITH ADMIN FALSE, INHERIT FALSE, SET TRUE`);
+      }
+      for (const role of [reviewerExecute, applyExecute, quarantineExecute]) {
+        await databaseAdmin.query(
+          `GRANT USAGE ON SCHEMA pintpath_ops TO ${quoteIdentifier(role)}`,
+        );
+      }
+      await databaseAdmin.query(`GRANT EXECUTE ON FUNCTION
+        pintpath_ops.authorize_reviewed_price_promotion(pg_catalog.jsonb)
+        TO ${quoteIdentifier(reviewerExecute)}`);
+      await databaseAdmin.query(`GRANT EXECUTE ON FUNCTION
+        pintpath_ops.apply_reviewed_price_promotion(pg_catalog.jsonb)
+        TO ${quoteIdentifier(applyExecute)}`);
+      await databaseAdmin.query(`GRANT EXECUTE ON FUNCTION
+        pintpath_ops.quarantine_reviewed_price_promotion(pg_catalog.jsonb)
+        TO ${quoteIdentifier(quarantineExecute)}`);
+
+      const operatorUrl = new URL(withDatabase(adminUrl, authorityDatabase));
+      operatorUrl.username = operatorLogin;
+      operatorUrl.password = "operator-authority-test-password";
+      operator = new Client({ connectionString: operatorUrl.toString() });
+      await operator.connect();
+      const reviewerUrl = new URL(withDatabase(adminUrl, authorityDatabase));
+      reviewerUrl.username = reviewerLogin;
+      reviewerUrl.password = "reviewer-authority-test-password";
+      reviewer = new Client({ connectionString: reviewerUrl.toString() });
+      await reviewer.connect();
+    }, 30_000);
+
+    afterAll(async () => {
+      const failures: unknown[] = [];
+      await operator?.end().catch((error) => failures.push(error));
+      await reviewer?.end().catch((error) => failures.push(error));
+      await databaseAdmin?.end().catch((error) => failures.push(error));
+      try {
+        await maintenance?.query(
+          `DROP DATABASE IF EXISTS ${quoteIdentifier(authorityDatabase)} WITH (FORCE)`,
+        );
+        for (const role of [
+          operatorLogin,
+          reviewerLogin,
+          reviewerExecute,
+          applyExecute,
+          quarantineExecute,
+          extraRole,
+        ]) {
+          if (role) {
+            await maintenance.query(`DROP ROLE IF EXISTS ${quoteIdentifier(role)}`);
+          }
+        }
+      } catch (error) {
+        failures.push(error);
+      }
+      await maintenance?.end().catch((error) => failures.push(error));
+      if (failures.length > 0) throw failures[0];
+    }, 30_000);
+
+    it("accepts only the canonical reviewer and operator memberships", async () => {
+      await expect(verifyOperator()).resolves.toBeUndefined();
+      await expect(
+        postgresReviewedPricePromotionOperatorInternals
+          .verifyReviewedPriceLoginAuthority(reviewer, {
+            databaseOid: oid,
+            kind: "reviewer",
+            loginRole: reviewerLogin,
+          }),
+      ).resolves.toBeUndefined();
+
+      await databaseAdmin.query(`GRANT ${quoteIdentifier(applyExecute)}
+        TO ${quoteIdentifier(operatorLogin)}
+        WITH ADMIN FALSE, INHERIT TRUE, SET TRUE`);
+      await expect(verifyOperator()).rejects.toThrow("database_role_invalid");
+      await databaseAdmin.query(`GRANT ${quoteIdentifier(applyExecute)}
+        TO ${quoteIdentifier(operatorLogin)}
+        WITH ADMIN FALSE, INHERIT FALSE, SET TRUE`);
+      await expect(verifyOperator()).resolves.toBeUndefined();
+
+      await databaseAdmin.query(`GRANT ${quoteIdentifier(extraRole)}
+        TO ${quoteIdentifier(applyExecute)}
+        WITH ADMIN FALSE, INHERIT FALSE, SET TRUE`);
+      await expect(verifyOperator()).rejects.toThrow("database_role_invalid");
+      await databaseAdmin.query(
+        `REVOKE ${quoteIdentifier(extraRole)} FROM ${quoteIdentifier(applyExecute)}`,
+      );
+      await expect(verifyOperator()).resolves.toBeUndefined();
+
+      await databaseAdmin.query(`ALTER ROLE ${quoteIdentifier(operatorLogin)}
+        IN DATABASE ${quoteIdentifier(authorityDatabase)}
+        SET statement_timeout = '1s'`);
+      await expect(verifyOperator()).rejects.toThrow("database_role_invalid");
+      await databaseAdmin.query(`ALTER ROLE ${quoteIdentifier(operatorLogin)}
+        IN DATABASE ${quoteIdentifier(authorityDatabase)} RESET ALL`);
+      await expect(verifyOperator()).resolves.toBeUndefined();
+
+      await databaseAdmin.query(`ALTER DATABASE ${quoteIdentifier(authorityDatabase)}
+        SET statement_timeout = '1s'`);
+      await expect(verifyOperator()).rejects.toThrow("database_role_invalid");
+      await databaseAdmin.query(`ALTER DATABASE ${quoteIdentifier(authorityDatabase)}
+        RESET ALL`);
+      await expect(verifyOperator()).resolves.toBeUndefined();
+
+      await databaseAdmin.query(
+        `ALTER ROLE ${quoteIdentifier(operatorLogin)} INHERIT`,
+      );
+      await expect(verifyOperator()).rejects.toThrow("database_role_invalid");
+      await databaseAdmin.query(
+        `ALTER ROLE ${quoteIdentifier(operatorLogin)} NOINHERIT`,
+      );
+      await expect(verifyOperator()).resolves.toBeUndefined();
+    });
+
+    it("rejects every direct database and private-object authority addition", async () => {
+      const cases = [
+        {
+          grant: `GRANT CONNECT ON DATABASE postgres
+            TO ${quoteIdentifier(operatorLogin)}`,
+          revoke: `REVOKE CONNECT ON DATABASE postgres
+            FROM ${quoteIdentifier(operatorLogin)}`,
+        },
+        {
+          grant: `GRANT CREATE, TEMP ON DATABASE ${quoteIdentifier(authorityDatabase)}
+            TO ${quoteIdentifier(operatorLogin)}`,
+          revoke: `REVOKE CREATE, TEMP ON DATABASE ${quoteIdentifier(authorityDatabase)}
+            FROM ${quoteIdentifier(operatorLogin)}`,
+        },
+        {
+          grant: `GRANT USAGE ON SCHEMA pintpath_ops
+            TO ${quoteIdentifier(operatorLogin)}`,
+          revoke: `REVOKE USAGE ON SCHEMA pintpath_ops
+            FROM ${quoteIdentifier(operatorLogin)}`,
+        },
+        {
+          grant: `GRANT SELECT ON TABLE pintpath_ops.authority_probe
+            TO ${quoteIdentifier(operatorLogin)}`,
+          revoke: `REVOKE SELECT ON TABLE pintpath_ops.authority_probe
+            FROM ${quoteIdentifier(operatorLogin)}`,
+        },
+        {
+          grant: `GRANT SELECT ON TABLE pintpath_ops.authority_probe
+            TO ${quoteIdentifier(applyExecute)}`,
+          revoke: `REVOKE SELECT ON TABLE pintpath_ops.authority_probe
+            FROM ${quoteIdentifier(applyExecute)}`,
+        },
+        {
+          grant: `GRANT SELECT(value) ON TABLE pintpath_ops.authority_probe
+            TO ${quoteIdentifier(operatorLogin)}`,
+          revoke: `REVOKE SELECT(value) ON TABLE pintpath_ops.authority_probe
+            FROM ${quoteIdentifier(operatorLogin)}`,
+        },
+        {
+          grant: `GRANT USAGE ON SEQUENCE pintpath_ops.authority_probe_sequence
+            TO ${quoteIdentifier(operatorLogin)}`,
+          revoke: `REVOKE USAGE ON SEQUENCE pintpath_ops.authority_probe_sequence
+            FROM ${quoteIdentifier(operatorLogin)}`,
+        },
+        {
+          grant: `GRANT EXECUTE ON FUNCTION
+            pintpath_ops.authorize_reviewed_price_promotion(pg_catalog.jsonb)
+            TO ${quoteIdentifier(operatorLogin)}`,
+          revoke: `REVOKE EXECUTE ON FUNCTION
+            pintpath_ops.authorize_reviewed_price_promotion(pg_catalog.jsonb)
+            FROM ${quoteIdentifier(operatorLogin)}`,
+        },
+        {
+          grant: `GRANT USAGE ON TYPE pintpath_ops.authority_probe_type
+            TO ${quoteIdentifier(operatorLogin)}`,
+          revoke: `REVOKE USAGE ON TYPE pintpath_ops.authority_probe_type
+            FROM ${quoteIdentifier(operatorLogin)}`,
+        },
+      ];
+      for (const mutation of cases) {
+        await databaseAdmin.query(mutation.grant);
+        try {
+          await expect(verifyOperator()).rejects.toThrow("database_role_invalid");
+        } finally {
+          await databaseAdmin.query(mutation.revoke);
+        }
+        await expect(verifyOperator()).resolves.toBeUndefined();
+      }
+    });
+
+    it("rejects ownership even without an explicit grant", async () => {
+      await databaseAdmin.query(`ALTER TABLE pintpath_ops.authority_probe
+        OWNER TO ${quoteIdentifier(operatorLogin)}`);
+      try {
+        await expect(verifyOperator()).rejects.toThrow("database_role_invalid");
+      } finally {
+        await databaseAdmin.query(`ALTER TABLE pintpath_ops.authority_probe
+          OWNER TO ${quoteIdentifier(adminRole)}`);
+      }
+      await expect(verifyOperator()).resolves.toBeUndefined();
+    });
+  },
 );
 const backupSql = fs.readFileSync(
   path.resolve(
@@ -102,6 +412,10 @@ function scopedRoleNames(databaseOid: string): readonly string[] {
 }
 
 interface CatalogCountsRow extends QueryResultRow {
+  readonly authorityForceRls: boolean;
+  readonly authorityPolicyCount: string;
+  readonly authorityPublicPolicyCount: string;
+  readonly authorityRowCount: string;
   readonly forceRlsCount: string;
   readonly functionCount: string;
   readonly policyCount: string;
@@ -119,6 +433,20 @@ interface FunctionRow extends QueryResultRow {
 
 async function catalogCounts(client: Client): Promise<CatalogCountsRow> {
   const result = await client.query<CatalogCountsRow>(`SELECT
+    (SELECT relation.relrowsecurity AND relation.relforcerowsecurity
+       FROM pg_catalog.pg_class AS relation
+      WHERE relation.oid = 'pintpath_ops.migration_verifier_authority'::regclass)
+      AS "authorityForceRls",
+    (SELECT count(*)::text FROM pg_catalog.pg_policy AS policy
+      WHERE policy.polrelid =
+        'pintpath_ops.migration_verifier_authority'::regclass)
+      AS "authorityPolicyCount",
+    (SELECT count(*)::text FROM pg_catalog.pg_policy AS policy
+      WHERE policy.polrelid =
+          'pintpath_ops.migration_verifier_authority'::regclass
+        AND policy.polroles = ARRAY[0]::oid[]) AS "authorityPublicPolicyCount",
+    (SELECT count(*)::text
+       FROM pintpath_ops.migration_verifier_authority) AS "authorityRowCount",
     (SELECT count(*)::text
        FROM pg_catalog.pg_class AS relation
        JOIN pg_catalog.pg_namespace AS namespace
@@ -210,6 +538,7 @@ describe.skipIf(!configuredAdminUrl)(
     let maintenance: Client;
     let runtimeRoleExisted = false;
     let migratorRoleExisted = false;
+    let verifierAuthorityRoleExisted = false;
     const databaseOids = new Map<string, string>();
 
     async function createDatabase(
@@ -247,10 +576,17 @@ describe.skipIf(!configuredAdminUrl)(
       }
       const roles = await maintenance.query<{ rolname: string }>(
         "SELECT rolname FROM pg_catalog.pg_roles WHERE rolname = ANY($1::text[])",
-        [["pintpath_runtime", "pintpath_migrator"]],
+        [[
+          "pintpath_runtime",
+          "pintpath_migrator",
+          "pintpath_migration_verifier_authority",
+        ]],
       );
       runtimeRoleExisted = roles.rows.some((row) => row.rolname === "pintpath_runtime");
       migratorRoleExisted = roles.rows.some((row) => row.rolname === "pintpath_migrator");
+      verifierAuthorityRoleExisted = roles.rows.some(
+        (row) => row.rolname === "pintpath_migration_verifier_authority",
+      );
       for (const database of [
         superDatabase,
         siblingDatabase,
@@ -305,6 +641,11 @@ describe.skipIf(!configuredAdminUrl)(
         if (!migratorRoleExisted) {
           await maintenance.query("DROP ROLE IF EXISTS pintpath_migrator");
         }
+        if (!verifierAuthorityRoleExisted) {
+          await maintenance.query(
+            "DROP ROLE IF EXISTS pintpath_migration_verifier_authority",
+          );
+        }
       } catch (error) {
         failures.push(error);
       }
@@ -320,10 +661,14 @@ describe.skipIf(!configuredAdminUrl)(
         await client.query(kernelSql);
 
         expect(await catalogCounts(client)).toEqual({
-          forceRlsCount: "61",
+          authorityForceRls: true,
+          authorityPolicyCount: "4",
+          authorityPublicPolicyCount: "0",
+          authorityRowCount: "0",
+          forceRlsCount: "62",
           functionCount: "2",
-          policyCount: "240",
-          relationCount: "61",
+          policyCount: "244",
+          relationCount: "62",
           rowCount: "0",
           sequenceCount: "0",
         });
@@ -687,7 +1032,7 @@ describe.skipIf(!configuredAdminUrl)(
         );
         expect(legacyResidue.rows).toEqual([{
           hasSelect: false,
-          relationCount: "59",
+          relationCount: "60",
         }]);
         await client.query(
           `GRANT SELECT ON TABLE pintpath_app.accounts TO ${quoteIdentifier(backupRole)}`,
@@ -741,10 +1086,14 @@ describe.skipIf(!configuredAdminUrl)(
           await client.query("RESET ROLE");
         }
         expect(await catalogCounts(client)).toEqual({
-          forceRlsCount: "61",
+          authorityForceRls: true,
+          authorityPolicyCount: "4",
+          authorityPublicPolicyCount: "0",
+          authorityRowCount: "0",
+          forceRlsCount: "62",
           functionCount: "2",
-          policyCount: "240",
-          relationCount: "61",
+          policyCount: "244",
+          relationCount: "62",
           rowCount: "0",
           sequenceCount: "0",
         });

@@ -1,0 +1,60 @@
+{
+  "activationState": "GITHUB_ENVIRONMENT_PROTECTED",
+  "concurrency": {
+    "cancelInProgress": false,
+    "group": "pintpath-postgres-migration-verifier-authority"
+  },
+  "databaseContract": {
+    "advisoryLockKey": "721426590137322906",
+    "candidateAndEnvironmentBound": true,
+    "importerRole": "pintpath_migrator",
+    "importerSelectOnly": true,
+    "operatorAndVerifierBound": true,
+    "provisionerExactPrivileges": [
+      "INSERT",
+      "SELECT",
+      "UPDATE"
+    ],
+    "provisionerRole": "pintpath_migration_verifier_authority",
+    "schema": "pintpath_ops",
+    "singletonId": "active",
+    "table": "migration_verifier_authority"
+  },
+  "evidence": {
+    "canonicalJsonRequired": true,
+    "mode0600CurrentUidFilesRequired": true,
+    "retentionDays": 90,
+    "secretMaterialAllowedInReceipts": false
+  },
+  "githubEnvironments": {
+    "permanent-staging": "permanent-staging-postgres-migration-verifier-authority",
+    "production": "production-postgres-migration-verifier-authority"
+  },
+  "mutationContract": {
+    "automaticRetries": 0,
+    "compareAndSwapRequired": true,
+    "durableIntentRequired": true,
+    "exactPreflightRequired": true,
+    "lostAcknowledgementReadOnlyReconciliation": true,
+    "unconditionalPostflightRequired": true,
+    "writesPerDispatch": 1
+  },
+  "policyId": "pintpath-postgres-migration-independent-verifier-authority",
+  "requiredGitRef": "refs/heads/main",
+  "requiredRunAttempt": 1,
+  "requiredWorkflow": ".github/workflows/provision-postgres-migration-verifier-authority.yml",
+  "schemaVersion": "pintpath-postgres-migration-verifier-authority-policy/v1",
+  "transportContract": {
+    "port": 5432,
+    "privateRailwayHostnameRequired": true,
+    "profile": "railway-stock-localhost-ca-v1",
+    "sslMode": "verify-full",
+    "startupRoleRequired": true
+  },
+  "verifierContract": {
+    "algorithm": "Ed25519",
+    "maximumApprovalLifetimeSeconds": 86400,
+    "operatorVerifierSeparationRequired": true,
+    "publicKeyEncoding": "SPKI_PEM"
+  }
+}

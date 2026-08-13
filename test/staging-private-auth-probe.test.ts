@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   STAGING_PRIVATE_AUTH_PROBE_LOCK,
   buildPsqlEnvironment,
+  checkRuntimeReadinessInWorker,
   classifyPostgresPsqlResult,
   classifyStructuredPostgresAttempt,
   closePostgresClientBounded,
@@ -21,13 +22,23 @@ import {
   type StagingPrivateAuthProbeProgress,
   type StagingPrivateAuthProbeReceipt,
 } from "../scripts/staging-private-auth-probe.js";
+import { createPostgresDatabase } from "../src/db/sql-database.js";
+import {
+  checkPostgresRailwayStockLocalhostServerIdentity,
+  POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+  type PostgresRailwayStockLocalhostCaTransport,
+} from "../src/lib/postgres-railway-stock-localhost-ca.js";
+import {
+  TEST_POSTGRES_RAILWAY_ROOT_CA_DER_SHA256,
+  TEST_POSTGRES_RAILWAY_ROOT_CA_PEM,
+} from "./postgres-railway-stock-localhost-ca.fixtures.js";
 
 const deploymentId = "235d6994-7bd4-4a13-b1dc-f255775d5dc0";
 const probeServiceId = "848491bf-6ff5-4765-bfaa-dad75178f345";
 const adminUrl =
-  "postgresql://postgres:fixture_admin_password@postgres-staging.railway.internal:5432/railway?uselibpqcompat=true&sslmode=require";
+  "postgresql://postgres:fixture_admin_password@postgres-staging.railway.internal:5432/railway?sslmode=verify-full";
 const oldRuntimeUrl =
-  "postgresql://pintpath_staging_runtime_login:fixture_runtime_password@postgres-staging.railway.internal:5432/pintpath_staging?uselibpqcompat=true&sslmode=require";
+  "postgresql://pintpath_staging_runtime_login:fixture_runtime_password@postgres-staging.railway.internal:5432/pintpath_staging?sslmode=verify-full";
 const candidateLogin = "pintpath_staging_runtime_login_20260809a";
 const candidatePassword = "Abcdefghijklmnopqrstuvwxyz0123456789_-ABCDEFG";
 const candidateOwnerSecret =
@@ -38,6 +49,47 @@ const currentRuntimeUrl = oldRuntimeUrl.replace(
 );
 const redisUrl =
   "redis://default:fixture_redis_password@redis.railway.internal:6379";
+
+function fakePostgresTransport(
+  overrides: Partial<PostgresRailwayStockLocalhostCaTransport> = {},
+): PostgresRailwayStockLocalhostCaTransport {
+  const resolvedAddress = "fd12:3456:789a::42";
+  return {
+    profile: POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+    rootCaDerSha256: TEST_POSTGRES_RAILWAY_ROOT_CA_DER_SHA256,
+    sourceUrlAuthority: {
+      hostname: STAGING_PRIVATE_AUTH_PROBE_LOCK.postgresPrivateHost,
+      port: 5_432,
+    },
+    resolvedAddress,
+    temporaryDirectory: "/tmp/pintpath-staging-auth-probe",
+    passwordFileDirectory: "/tmp/pintpath-staging-auth-probe",
+    passwordFileHost: "localhost",
+    nodeConnection: {
+      host: resolvedAddress,
+      port: 5_432,
+      ssl: {
+        ca: TEST_POSTGRES_RAILWAY_ROOT_CA_PEM,
+        servername: "localhost",
+        rejectUnauthorized: true,
+        minVersion: "TLSv1.2",
+        checkServerIdentity: checkPostgresRailwayStockLocalhostServerIdentity,
+      },
+    },
+    libpqEnvironment: {
+      PGHOST: "localhost",
+      PGHOSTADDR: resolvedAddress,
+      PGPORT: "5432",
+      PGSSLMODE: "verify-full",
+      PGSSLROOTCERT: "/tmp/pintpath-staging-auth-probe/railway-root-ca.pem",
+      PGSSLMINPROTOCOLVERSION: "TLSv1.2",
+      PGSSLSNI: "1",
+    },
+    assertExact: vi.fn(async () => undefined),
+    close: vi.fn(async () => undefined),
+    ...overrides,
+  };
+}
 
 function validEnvironment(
   overrides: Record<string, string> = {},
@@ -54,6 +106,9 @@ function validEnvironment(
       STAGING_PRIVATE_AUTH_PROBE_LOCK.redisResourceId,
     STAGING_AUTH_PROBE_POSTGRES_ADMIN_URL: adminUrl,
     STAGING_AUTH_PROBE_POSTGRES_RUNTIME_URL: oldRuntimeUrl,
+    STAGING_AUTH_PROBE_POSTGRES_ROOT_CA_PEM: TEST_POSTGRES_RAILWAY_ROOT_CA_PEM,
+    STAGING_AUTH_PROBE_POSTGRES_ROOT_CA_DER_SHA256:
+      TEST_POSTGRES_RAILWAY_ROOT_CA_DER_SHA256,
     STAGING_AUTH_PROBE_REDIS_URL: redisUrl,
     STAGING_AUTH_PROBE_RUNTIME_CANDIDATE_LOGIN: candidateLogin,
     STAGING_AUTH_PROBE_RUNTIME_CANDIDATE_PASSWORD: candidatePassword,
@@ -77,6 +132,7 @@ interface HarnessOptions {
   lifecycleLock?: ProvisionLifecycleLock;
   retire?: StagingPrivateAuthProbeDependencies["retireRuntimeRole"];
   validatePostgresClient?: StagingPrivateAuthProbeDependencies["validatePostgresClient"];
+  postgresTransport?: PostgresRailwayStockLocalhostCaTransport;
   sleepAdvanceMs?: number;
 }
 
@@ -87,14 +143,19 @@ function createHarness(options: HarnessOptions = {}) {
     verify: vi.fn(async () => true),
     release: vi.fn(async () => undefined),
   };
+  const postgresTransport =
+    options.postgresTransport ?? fakePostgresTransport();
+  const openPostgresTransport = vi.fn(async () => postgresTransport);
   const dependencies: Partial<StagingPrivateAuthProbeDependencies> = {
     env: options.env ?? validEnvironment(),
-    now: () => new Date("2026-08-09T10:11:12.000Z"),
+    now: () => new Date("2026-08-12T10:11:12.000Z"),
     monotonicNow: () => clock,
     sleep: vi.fn(async (milliseconds: number) => {
       clock += options.sleepAdvanceMs ?? milliseconds;
     }),
     randomBytes: () => Buffer.alloc(16, 7),
+    getUid: () => 501,
+    openPostgresTransport,
     validatePostgresClient:
       options.validatePostgresClient ?? vi.fn(async () => true),
     attemptPostgres: options.postgresAttempt ?? vi.fn(async () => "accepted"),
@@ -112,7 +173,13 @@ function createHarness(options: HarnessOptions = {}) {
     retireRuntimeRole: options.retire ?? vi.fn(async () => true),
     writeOutput: (value) => output.push(value),
   };
-  return { dependencies, lifecycleLock, output };
+  return {
+    dependencies,
+    lifecycleLock,
+    openPostgresTransport,
+    output,
+    postgresTransport,
+  };
 }
 
 function onlyReceipt(output: string[]): StagingPrivateAuthProbeReceipt {
@@ -289,12 +356,14 @@ describe("staging private authentication probe", () => {
   it("requires every least-privilege login-role attribute", () => {
     const restricted = {
       canLogin: true,
-      inheritsMembership: true,
+      inheritsMembership: false,
       isSuperuser: false,
       canCreateDatabase: false,
       canCreateRole: false,
       canReplicate: false,
       canBypassRls: false,
+      connectionLimit: 8,
+      validUntilNull: true,
     };
 
     expect(
@@ -302,12 +371,14 @@ describe("staging private authentication probe", () => {
     ).toBe(true);
     for (const unsafe of [
       { canLogin: false },
-      { inheritsMembership: false },
+      { inheritsMembership: true },
       { isSuperuser: true },
       { canCreateDatabase: true },
       { canCreateRole: true },
       { canReplicate: true },
       { canBypassRls: true },
+      { connectionLimit: -1 },
+      { validUntilNull: false },
     ]) {
       expect(
         stagingPrivateAuthProbeInternals.runtimeRoleIsRestricted({
@@ -378,6 +449,7 @@ describe("staging private authentication probe", () => {
   });
 
   it("keeps the readiness URL out of child arguments and accepts only fixed worker status", async () => {
+    const postgresTransport = fakePostgresTransport();
     const runner = vi.fn(async () =>
       processResult({ exitCode: 0, stdout: "ready\n" }),
     );
@@ -386,6 +458,7 @@ describe("staging private authentication probe", () => {
       stagingPrivateAuthProbeInternals.checkRuntimeReadiness(
         oldRuntimeUrl,
         15_000,
+        postgresTransport,
         runner,
       ),
     ).resolves.toBe("ready");
@@ -394,7 +467,15 @@ describe("staging private authentication probe", () => {
       "fixture_runtime_password",
     );
     expect(request.arguments.join(" ")).not.toContain(oldRuntimeUrl);
-    expect(Object.values(request.environment)).toContain(oldRuntimeUrl);
+    const descriptor = JSON.parse(
+      request.environment.STAGING_AUTH_PROBE_INTERNAL_RUNTIME_TRANSPORT,
+    ) as Record<string, unknown>;
+    expect(descriptor).toMatchObject({
+      schemaVersion: "staging-private-auth-runtime-transport/v1",
+      connectionUrl: oldRuntimeUrl,
+      expectedRootCaDerSha256: TEST_POSTGRES_RAILWAY_ROOT_CA_DER_SHA256,
+      resolvedAddress: postgresTransport.resolvedAddress,
+    });
     expect(request.environment).not.toHaveProperty("DEBUG");
     expect(request.environment).not.toHaveProperty("NODE_OPTIONS");
 
@@ -405,6 +486,7 @@ describe("staging private authentication probe", () => {
       stagingPrivateAuthProbeInternals.checkRuntimeReadiness(
         oldRuntimeUrl,
         15_000,
+        postgresTransport,
         runner,
       ),
     ).resolves.toBe("inconclusive");
@@ -523,24 +605,197 @@ describe("staging private authentication probe", () => {
   });
 
   it("builds a narrowed PG17 libpq environment without placing credentials in arguments", () => {
-    const environment = buildPsqlEnvironment(oldRuntimeUrl, {
+    const postgresTransport = fakePostgresTransport();
+    const environment = buildPsqlEnvironment(oldRuntimeUrl, postgresTransport, {
       STAGING_AUTH_PROBE_CANDIDATE_LOGIN: candidateLogin,
     });
 
     expect(environment).toMatchObject({
-      PGHOST: STAGING_PRIVATE_AUTH_PROBE_LOCK.postgresPrivateHost,
+      PGHOST: "localhost",
+      PGHOSTADDR: postgresTransport.resolvedAddress,
       PGPORT: "5432",
       PGDATABASE: "pintpath_staging",
       PGREQUIREAUTH: "scram-sha-256",
-      PGSSLMODE: "require",
+      PGSSLMODE: "verify-full",
+      PGSSLROOTCERT: postgresTransport.libpqEnvironment.PGSSLROOTCERT,
+      PGSSLMINPROTOCOLVERSION: "TLSv1.2",
+      PGSSLSNI: "1",
       STAGING_AUTH_PROBE_CANDIDATE_LOGIN: candidateLogin,
     });
     expect(environment?.PGPASSWORD).toBe("fixture_runtime_password");
     expect(environment).not.toHaveProperty("DATABASE_URL");
     expect(environment).not.toHaveProperty("RAILWAY_PROJECT_ID");
     expect(
-      buildPsqlEnvironment(oldRuntimeUrl, { PGPASSWORD: "fixture_override" }),
+      buildPsqlEnvironment(oldRuntimeUrl, postgresTransport, {
+        PGPASSWORD: "fixture_override",
+      }),
     ).toBeNull();
+    expect(
+      buildPsqlEnvironment(
+        oldRuntimeUrl,
+        fakePostgresTransport({
+          sourceUrlAuthority: {
+            hostname: "other-staging.railway.internal",
+            port: 5_432,
+          },
+        }),
+      ),
+    ).toBeNull();
+  });
+
+  it("builds lifecycle and structured-client authority on the pinned fd12 TLS connection", () => {
+    const postgresTransport = fakePostgresTransport();
+    const lifecycleUrl =
+      stagingPrivateAuthProbeInternals.lifecycleLockConnectionUrl(adminUrl)!;
+    const lifecycle = stagingPrivateAuthProbeInternals.postgresClientOptions(
+      lifecycleUrl,
+      postgresTransport,
+      {
+        applicationName: "pintpath-staging-private-auth-probe-lifecycle-lock",
+        timeoutMs: 15_000,
+      },
+    );
+    const structured = stagingPrivateAuthProbeInternals.postgresClientOptions(
+      oldRuntimeUrl,
+      postgresTransport,
+      {
+        applicationName: "pintpath-staging-private-auth-probe",
+        timeoutMs: 7_500,
+      },
+    );
+
+    expect(lifecycle).toMatchObject({
+      application_name: "pintpath-staging-private-auth-probe-lifecycle-lock",
+      connectionTimeoutMillis: 15_000,
+      database: "pintpath_staging",
+      host: postgresTransport.resolvedAddress,
+      port: 5_432,
+      ssl: postgresTransport.nodeConnection.ssl,
+      user: "postgres",
+    });
+    expect(lifecycle).not.toHaveProperty("connectionString");
+    expect(structured).toMatchObject({
+      application_name: "pintpath-staging-private-auth-probe",
+      connectionTimeoutMillis: 7_500,
+      database: "pintpath_staging",
+      host: postgresTransport.resolvedAddress,
+      port: 5_432,
+      ssl: postgresTransport.nodeConnection.ssl,
+      user: STAGING_PRIVATE_AUTH_PROBE_LOCK.postgresPredecessorRuntimeLogin,
+    });
+    expect(structured).not.toHaveProperty("connectionString");
+    expect(
+      stagingPrivateAuthProbeInternals.postgresClientOptions(
+        oldRuntimeUrl,
+        fakePostgresTransport({ resolvedAddress: "fd13::42" }),
+        { applicationName: "refused", timeoutMs: 100 },
+      ),
+    ).toBeNull();
+  });
+
+  it("binds the readiness worker to the held URL, CA descriptor, UID, and fd12 address", () => {
+    const postgresTransport = fakePostgresTransport();
+    const serialized =
+      stagingPrivateAuthProbeInternals.runtimeReadinessTransportDescriptor(
+        oldRuntimeUrl,
+        postgresTransport,
+        501,
+      );
+    expect(serialized).not.toBeNull();
+    expect(
+      stagingPrivateAuthProbeInternals.parseRuntimeReadinessTransportDescriptor(
+        serialized!,
+      ),
+    ).toEqual({
+      schemaVersion: "staging-private-auth-runtime-transport/v1",
+      connectionUrl: oldRuntimeUrl,
+      expectedRootCaDerSha256: TEST_POSTGRES_RAILWAY_ROOT_CA_DER_SHA256,
+      expectedUid: 501,
+      resolvedAddress: postgresTransport.resolvedAddress,
+      rootCaFile: postgresTransport.libpqEnvironment.PGSSLROOTCERT,
+    });
+    const parsed = JSON.parse(serialized!) as Record<string, unknown>;
+    for (const mutation of [
+      { ...parsed, expectedRootCaDerSha256: "invalid" },
+      { ...parsed, expectedUid: -1 },
+      { ...parsed, resolvedAddress: "fd13::42" },
+      { ...parsed, rootCaFile: "relative.pem" },
+      { ...parsed, unexpected: true },
+    ]) {
+      expect(
+        stagingPrivateAuthProbeInternals.parseRuntimeReadinessTransportDescriptor(
+          JSON.stringify(mutation),
+        ),
+      ).toBeNull();
+    }
+  });
+
+  it("runs readiness on a fixed-role pool and closes both worker authorities", async () => {
+    const postgresTransport = fakePostgresTransport();
+    const descriptor =
+      stagingPrivateAuthProbeInternals.runtimeReadinessTransportDescriptor(
+        oldRuntimeUrl,
+        postgresTransport,
+        501,
+      )!;
+    const closeDatabase = vi.fn(async () => undefined);
+    const database = {
+      prepare: vi.fn(() => ({
+        get: vi.fn(async () => ({
+          canLogin: true,
+          inheritsMembership: false,
+          isSuperuser: false,
+          canCreateDatabase: false,
+          canCreateRole: false,
+          canReplicate: false,
+          canBypassRls: false,
+          connectionLimit: 8,
+          validUntilNull: true,
+        })),
+      })),
+      close: closeDatabase,
+    } as unknown as ReturnType<typeof createPostgresDatabase>;
+    const createDatabase = vi.fn(() => database);
+    const checkReadiness = vi.fn(async () => ({
+      ready: true,
+      failures: [] as string[],
+    }));
+
+    await expect(
+      checkRuntimeReadinessInWorker(descriptor, {
+        checkReadiness,
+        createDatabase,
+        getUid: () => 501,
+        openTransport: vi.fn(async () => postgresTransport),
+      }),
+    ).resolves.toBe("ready");
+    expect(createDatabase).toHaveBeenCalledWith(
+      expect.objectContaining({
+        connectionString: oldRuntimeUrl,
+        activeRole: "pintpath_runtime",
+        railwayStockLocalhostCaConnection: postgresTransport.nodeConnection,
+        maxConnections: 1,
+      }),
+    );
+    expect(checkReadiness).toHaveBeenCalledWith(database, {
+      allowSafeRotationOverlap: true,
+    });
+    expect(closeDatabase).toHaveBeenCalledTimes(1);
+    expect(postgresTransport.close).toHaveBeenCalledTimes(1);
+
+    const driftTransport = fakePostgresTransport({
+      resolvedAddress: "fd12:3456:789a::43",
+    });
+    const refusedDatabase = vi.fn(() => database);
+    await expect(
+      checkRuntimeReadinessInWorker(descriptor, {
+        createDatabase: refusedDatabase,
+        getUid: () => 501,
+        openTransport: vi.fn(async () => driftTransport),
+      }),
+    ).resolves.toBe("inconclusive");
+    expect(refusedDatabase).not.toHaveBeenCalled();
+    expect(driftTransport.close).toHaveBeenCalledTimes(1);
   });
 
   it("derives a valid SCRAM verifier locally without embedding the password", () => {
@@ -703,7 +958,10 @@ describe("staging private authentication probe", () => {
     );
     const script = stagingPrivateAuthProbeInternals.scripts.provision;
     expect(script).not.toMatch(/candidate_password/i);
-    expect(script).toContain("IN DATABASE pintpath_staging");
+    expect(script).not.toContain("ALTER ROLE");
+    expect(script).toContain("NOINHERIT");
+    expect(script).toContain("CONNECTION LIMIT 8");
+    expect(script).toContain("WITH ADMIN FALSE, INHERIT FALSE, SET TRUE");
     expect(script).not.toContain("current_database()");
     expect(script).toContain("existing-owned");
     expect(script).toContain("existing-handoff");
@@ -769,6 +1027,7 @@ describe("staging private authentication probe", () => {
   });
 
   it("allows only the two reviewed admin databases while runtime remains exact", () => {
+    const postgresTransport = fakePostgresTransport();
     const adminOnRuntimeDatabase = adminUrl.replace(
       "/railway?",
       "/pintpath_staging?",
@@ -778,20 +1037,23 @@ describe("staging private authentication probe", () => {
       "/other_database?",
     );
 
-    expect(buildPsqlEnvironment(adminUrl)).toMatchObject({
+    expect(buildPsqlEnvironment(adminUrl, postgresTransport)).toMatchObject({
       PGDATABASE: "railway",
     });
-    expect(buildPsqlEnvironment(adminOnRuntimeDatabase)).toMatchObject({
+    expect(
+      buildPsqlEnvironment(adminOnRuntimeDatabase, postgresTransport),
+    ).toMatchObject({
       PGDATABASE: "pintpath_staging",
     });
-    expect(buildPsqlEnvironment(unknownAdminDatabase)).toBeNull();
     expect(
-      stagingPrivateAuthProbeInternals.parsePostgresTarget(oldRuntimeUrl, true),
+      buildPsqlEnvironment(unknownAdminDatabase, postgresTransport),
+    ).toBeNull();
+    expect(
+      stagingPrivateAuthProbeInternals.parsePostgresTarget(oldRuntimeUrl),
     ).not.toBeNull();
     expect(
       stagingPrivateAuthProbeInternals.parsePostgresTarget(
         oldRuntimeUrl.replace("/pintpath_staging?", "/railway?"),
-        true,
       ),
     ).toBeNull();
   });
@@ -978,6 +1240,152 @@ describe("staging private authentication probe", () => {
     expect(postgresAttempt).not.toHaveBeenCalled();
     expect(redisAttempt).not.toHaveBeenCalled();
     expect(JSON.stringify(receipt)).not.toContain("public.example.invalid");
+  });
+
+  it.each([
+    [
+      "sslmode=require",
+      oldRuntimeUrl.replace("sslmode=verify-full", "sslmode=require"),
+    ],
+    [
+      "sslmode=verify-ca",
+      oldRuntimeUrl.replace("sslmode=verify-full", "sslmode=verify-ca"),
+    ],
+    ["URL root path", `${oldRuntimeUrl}&sslrootcert=/tmp/railway-root-ca.pem`],
+    ["libpq compatibility query", `${oldRuntimeUrl}&uselibpqcompat=true`],
+  ])(
+    "rejects a %s Postgres URL before transport or authentication",
+    async (_label, value) => {
+      const postgresAttempt = vi.fn(async () => "accepted" as const);
+      const harness = createHarness({
+        env: validEnvironment({
+          STAGING_AUTH_PROBE_POSTGRES_RUNTIME_URL: value,
+        }),
+        postgresAttempt,
+      });
+
+      await expect(
+        runStagingPrivateAuthProbe(
+          "verify-current",
+          "postgres-runtime",
+          harness.dependencies,
+        ),
+      ).resolves.toBe(1);
+      expect(onlyReceipt(harness.output)).toMatchObject({
+        outcome: "failed",
+        identity: { postgresRuntimeTarget: false },
+      });
+      expect(harness.openPostgresTransport).not.toHaveBeenCalled();
+      expect(postgresAttempt).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ["missing PEM", { STAGING_AUTH_PROBE_POSTGRES_ROOT_CA_PEM: "" }],
+    ["missing DER pin", { STAGING_AUTH_PROBE_POSTGRES_ROOT_CA_DER_SHA256: "" }],
+    [
+      "mismatched DER pin",
+      { STAGING_AUTH_PROBE_POSTGRES_ROOT_CA_DER_SHA256: "0".repeat(64) },
+    ],
+  ])(
+    "rejects %s before opening the Postgres transport",
+    async (_label, overrides) => {
+      const postgresAttempt = vi.fn(async () => "accepted" as const);
+      const harness = createHarness({
+        env: validEnvironment(overrides),
+        postgresAttempt,
+      });
+
+      await expect(
+        runStagingPrivateAuthProbe(
+          "verify-current",
+          "postgres-runtime",
+          harness.dependencies,
+        ),
+      ).resolves.toBe(1);
+      expect(onlyReceipt(harness.output)).toMatchObject({
+        outcome: "failed",
+        identity: { postgresRuntimeTarget: false },
+      });
+      expect(harness.openPostgresTransport).not.toHaveBeenCalled();
+      expect(postgresAttempt).not.toHaveBeenCalled();
+    },
+  );
+
+  it("opens one pinned Postgres transport and fails closed on drift or cleanup failure", async () => {
+    const exact = createHarness();
+    await expect(
+      runStagingPrivateAuthProbe(
+        "verify-current",
+        "postgres-admin",
+        exact.dependencies,
+      ),
+    ).resolves.toBe(0);
+    expect(exact.openPostgresTransport).toHaveBeenCalledTimes(1);
+    expect(exact.openPostgresTransport).toHaveBeenCalledWith({
+      profile: POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+      rootCaPem: TEST_POSTGRES_RAILWAY_ROOT_CA_PEM,
+      expectedRootCaDerSha256: TEST_POSTGRES_RAILWAY_ROOT_CA_DER_SHA256,
+      expectedUid: 501,
+      sourceUrlAuthority: {
+        hostname: STAGING_PRIVATE_AUTH_PROBE_LOCK.postgresPrivateHost,
+        port: 5_432,
+      },
+    });
+    expect(exact.postgresTransport.assertExact).toHaveBeenCalledTimes(2);
+    expect(exact.postgresTransport.close).toHaveBeenCalledTimes(1);
+
+    const driftTransport = fakePostgresTransport({
+      assertExact: vi
+        .fn()
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValueOnce(new Error("transport drift")),
+    });
+    const drift = createHarness({ postgresTransport: driftTransport });
+    await expect(
+      runStagingPrivateAuthProbe(
+        "verify-current",
+        "postgres-admin",
+        drift.dependencies,
+      ),
+    ).resolves.toBe(1);
+    expect(onlyReceipt(drift.output).outcome).toBe("inconclusive");
+    expect(driftTransport.close).toHaveBeenCalledTimes(1);
+
+    const mismatchTransport = fakePostgresTransport({
+      rootCaDerSha256: "0".repeat(64),
+    });
+    const mismatchAttempt = vi.fn(async () => "accepted" as const);
+    const mismatch = createHarness({
+      postgresAttempt: mismatchAttempt,
+      postgresTransport: mismatchTransport,
+    });
+    await expect(
+      runStagingPrivateAuthProbe(
+        "verify-current",
+        "postgres-admin",
+        mismatch.dependencies,
+      ),
+    ).resolves.toBe(1);
+    expect(onlyReceipt(mismatch.output).outcome).toBe("inconclusive");
+    expect(mismatchAttempt).not.toHaveBeenCalled();
+    expect(mismatchTransport.close).toHaveBeenCalledTimes(1);
+
+    const cleanupTransport = fakePostgresTransport({
+      close: vi.fn(async () => {
+        throw new Error("cleanup failed");
+      }),
+    });
+    const cleanup = createHarness({ postgresTransport: cleanupTransport });
+    await expect(
+      runStagingPrivateAuthProbe(
+        "verify-current",
+        "postgres-admin",
+        cleanup.dependencies,
+      ),
+    ).resolves.toBe(1);
+    expect(onlyReceipt(cleanup.output).outcome).toBe("inconclusive");
+    expect(cleanupTransport.close).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -1444,6 +1852,7 @@ describe("staging private authentication probe", () => {
     expect(readiness).toHaveBeenCalledWith(
       expect.stringContaining(candidateLogin),
       expect.any(Number),
+      harness.postgresTransport,
     );
     expect(readiness).toHaveBeenCalledTimes(2);
     expect(harness.output[0]).not.toContain(candidatePassword);
@@ -1458,7 +1867,7 @@ describe("staging private authentication probe", () => {
       stagingPrivateAuthProbeInternals.lifecycleLockConnectionUrl(adminUrl);
     expect(lockUrl).not.toBeNull();
     expect(new URL(lockUrl!).pathname).toBe("/pintpath_staging");
-    expect(new URL(lockUrl!).searchParams.get("uselibpqcompat")).toBe("true");
+    expect(new URL(lockUrl!).search).toBe("?sslmode=verify-full");
     expect(
       stagingPrivateAuthProbeInternals.queries.acquireProvisionLifecycleLock,
     ).toContain("pg_try_advisory_lock($1::integer, $2::integer)");

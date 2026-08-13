@@ -4636,8 +4636,14 @@ function assertExactPlanBindings(input: {
     sourceSnapshotSha256: migrationReceipt.sourceSnapshotSha256,
     targetDdlSha256: migrationReceipt.targetDdlSha256,
     targetIdentitySha256: migrationReceipt.targetIdentitySha256,
+    liveSchemaSha256: migrationReceipt.liveSchemaSha256,
+    transportAuthoritySha256: migrationReceipt.transportAuthoritySha256,
     targetUrlSha256: migrationReceipt.targetUrlSha256,
     verifierIdSha256: migrationReceipt.verifierIdSha256,
+    verifierAuthoritySha256: migrationReceipt.verifierAuthoritySha256,
+    verifierAuthorityPolicySha256:
+      migrationReceipt.verifierAuthorityPolicySha256,
+    verifierPublicKeySha256: migrationReceipt.verifierPublicKeySha256,
   });
   const expectedMigrationSnapshotSha256 =
     sha256PostgresReviewedPricePromotionValue({

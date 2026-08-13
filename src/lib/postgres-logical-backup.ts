@@ -44,6 +44,10 @@ import {
   type PostgresToolRawProcessResultCarrier,
   type PostgresToolProcessResultCarrier,
 } from "./postgres-tool-authority.js";
+import {
+  openPostgresOciToolAuthority,
+  postgresOciToolRuntimeRequested,
+} from "./postgres-oci-tool-runtime.js";
 
 export const POSTGRES_LOGICAL_BACKUP_SCHEMAS = Object.freeze([
   "pintpath_app",
@@ -773,14 +777,26 @@ const DEFAULT_DEPENDENCIES: PostgresLogicalBackupDependencies = {
   env: process.env,
   getUid: () => process.getuid?.() ?? null,
   now: () => new Date(),
-  openDumpAuthority: (options) => openPostgresToolAuthority(
-    { ...options, purpose: "dump" },
-    POSTGRES_TOOL_AUTHORITY_PROCESS_RUNNER,
-  ),
-  openListAuthority: (options) => openPostgresToolAuthority(
-    { ...options, purpose: "list" },
-    POSTGRES_TOOL_AUTHORITY_PROCESS_RUNNER,
-  ),
+  openDumpAuthority: (options) => postgresOciToolRuntimeRequested(process.env)
+    ? openPostgresOciToolAuthority(
+      { ...options, purpose: "dump" },
+      POSTGRES_TOOL_AUTHORITY_PROCESS_RUNNER,
+      process.env,
+    ) as Promise<PostgresDumpToolAuthority>
+    : openPostgresToolAuthority(
+      { ...options, purpose: "dump" },
+      POSTGRES_TOOL_AUTHORITY_PROCESS_RUNNER,
+    ),
+  openListAuthority: (options) => postgresOciToolRuntimeRequested(process.env)
+    ? openPostgresOciToolAuthority(
+      { ...options, purpose: "list" },
+      POSTGRES_TOOL_AUTHORITY_PROCESS_RUNNER,
+      process.env,
+    ) as Promise<PostgresListToolAuthority>
+    : openPostgresToolAuthority(
+      { ...options, purpose: "list" },
+      POSTGRES_TOOL_AUTHORITY_PROCESS_RUNNER,
+    ),
   connect: DirectBackupConnection.connect,
   computeState: computePostgresLogicalStateInventory,
   openTransport: (options) => openPostgresRailwayStockLocalhostCaTransport(options),

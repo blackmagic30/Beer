@@ -6,6 +6,14 @@ import { readPrivateSecretFile } from "../src/lib/offsite-backup-download.js";
 import { assertSupabaseServerApiKey } from "../src/lib/supabase-key-format.js";
 import { canonicalPostgresBackupJson } from "../src/lib/postgres-logical-backup.js";
 import {
+  openPostgresRailwayStockLocalhostCaTransport,
+  parsePostgresRailwayStockLocalhostCaUrl,
+  POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+  PostgresRailwayStockLocalhostCaError,
+  type OpenPostgresRailwayStockLocalhostCaTransportOptions,
+  type PostgresRailwayStockLocalhostCaTransport,
+} from "../src/lib/postgres-railway-stock-localhost-ca.js";
+import {
   POSTGRES_PRIVATE_STORAGE_BUCKET,
   PostgresPrivateStorageRecoveryError,
   capturePostgresPrivateStorageRecovery,
@@ -27,12 +35,14 @@ const ARGUMENTS = new Set([
   "--connection-url-sha256",
   "--deletion-authority-directory",
   "--expected-candidate-sha",
+  "--expected-root-ca-der-sha256",
   "--ledger-checkpoint-sha256",
   "--ledger-current-sha256",
   "--ledger-genesis-sha256",
   "--ledger-immutable-set-sha256",
   "--ledger-tombstone-count",
   "--output-directory",
+  "--root-ca-file",
   "--service-role-key-file",
   "--source-environment",
   "--source-origin-sha256",
@@ -44,10 +54,18 @@ export type PostgresPrivateStorageCaptureCliFailureCode =
   | "configuration_missing_or_unsafe"
   | "operator_guard_rejected"
   | "secret_file_unsafe"
+  | "database_transport_unsafe"
+  | "database_transport_drift"
+  | "database_transport_close_failed"
   | "unexpected_failure";
 
 export type PostgresPrivateStorageCaptureCliResult =
-  | CapturePostgresPrivateStorageRecoveryResult
+  | (CapturePostgresPrivateStorageRecoveryResult & {
+      readonly databaseTransportProfile:
+        typeof POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE;
+      readonly databaseTransportRootCaDerSha256: string;
+      readonly databaseEffectiveRole: "pintpath_migrator";
+    })
   | {
       readonly schemaVersion: 1;
       readonly kind: "pintpath-postgres-private-storage-recovery-capture";
@@ -58,6 +76,10 @@ export type PostgresPrivateStorageCaptureCliResult =
 export interface PostgresPrivateStorageCaptureCliDependencies {
   readonly environment: Readonly<Record<string, string | undefined>>;
   readonly readSecretFile: (filePath: string) => Promise<string>;
+  readonly getUid: () => number | null;
+  readonly openDatabaseTransport: (
+    options: OpenPostgresRailwayStockLocalhostCaTransportOptions,
+  ) => Promise<PostgresRailwayStockLocalhostCaTransport>;
   readonly createInspector: typeof createPostgresPrivateStorageDatabaseInspector;
   readonly createStorage: typeof createSupabasePrivateStorageRecoveryBoundary;
   readonly capture: typeof capturePostgresPrivateStorageRecovery;
@@ -68,6 +90,8 @@ export interface PostgresPrivateStorageCaptureCliDependencies {
 const DEFAULT_DEPENDENCIES: PostgresPrivateStorageCaptureCliDependencies = {
   environment: process.env,
   readSecretFile: readPrivateSecretFile,
+  getUid: () => process.getuid?.() ?? null,
+  openDatabaseTransport: openPostgresRailwayStockLocalhostCaTransport,
   createInspector: createPostgresPrivateStorageDatabaseInspector,
   createStorage: createSupabasePrivateStorageRecoveryBoundary,
   capture: capturePostgresPrivateStorageRecovery,
@@ -135,6 +159,13 @@ function failureCode(
 ): PostgresPrivateStorageCaptureCliFailureCode {
   if (error instanceof CaptureCliError) return error.code;
   if (error instanceof PostgresPrivateStorageRecoveryError) return error.code;
+  if (error instanceof PostgresRailwayStockLocalhostCaError) {
+    return error.code === "transport_drift"
+      ? "database_transport_drift"
+      : error.code === "cleanup_failed"
+        ? "database_transport_close_failed"
+        : "database_transport_unsafe";
+  }
   return "unexpected_failure";
 }
 
@@ -157,6 +188,7 @@ export async function runPostgresPrivateStorageCaptureCli(
     ...DEFAULT_DEPENDENCIES,
     ...overrides,
   };
+  let databaseTransport: PostgresRailwayStockLocalhostCaTransport | null = null;
   try {
     let args: Map<string, string>;
     try {
@@ -180,6 +212,7 @@ export async function runPostgresPrivateStorageCaptureCli(
     const serviceRoleKeyFile = exactSecretFilePath(
       args.get("--service-role-key-file")!,
     );
+    const rootCaFile = exactSecretFilePath(args.get("--root-ca-file")!);
     const sourceSupabaseUrl = exactEnvironment(
       dependencies.environment,
       "SUPABASE_URL",
@@ -215,11 +248,30 @@ export async function runPostgresPrivateStorageCaptureCli(
     } catch {
       throw new CaptureCliError("secret_file_unsafe");
     }
+    let parsedConnection: ReturnType<typeof parsePostgresRailwayStockLocalhostCaUrl>;
+    try {
+      parsedConnection = parsePostgresRailwayStockLocalhostCaUrl(connectionString);
+    } catch {
+      throw new CaptureCliError("database_transport_unsafe");
+    }
+    const uid = dependencies.getUid();
+    if (!Number.isSafeInteger(uid) || Number(uid) < 0) {
+      throw new CaptureCliError("database_transport_unsafe");
+    }
+    databaseTransport = await dependencies.openDatabaseTransport({
+      profile: POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+      rootCaFile,
+      expectedRootCaDerSha256: args.get("--expected-root-ca-der-sha256")!,
+      expectedUid: uid!,
+      sourceUrlAuthority: parsedConnection.sourceUrlAuthority,
+    });
+    await databaseTransport.assertExact();
     const inspectSourceDatabase = dependencies.createInspector({
       connectionString,
       expectedConnectionUrlSha256: args.get("--connection-url-sha256")!,
       expectedSourceEnvironment: sourceEnvironment,
       expectedCandidateSha,
+      railwayStockLocalhostCaConnection: databaseTransport.nodeConnection,
     });
     const sourceStorage = dependencies.createStorage({
       supabaseUrl: sourceSupabaseUrl,
@@ -248,9 +300,28 @@ export async function runPostgresPrivateStorageCaptureCli(
       inspectSourceDatabase,
       sourceStorage,
     });
-    dependencies.writeOutput(canonicalPostgresBackupJson(result));
+    await databaseTransport.assertExact();
+    const databaseTransportProfile = databaseTransport.profile;
+    const databaseTransportRootCaDerSha256 = databaseTransport.rootCaDerSha256;
+    await databaseTransport.close();
+    databaseTransport = null;
+    const authenticatedResult: PostgresPrivateStorageCaptureCliResult = {
+      ...result,
+      databaseTransportProfile,
+      databaseTransportRootCaDerSha256,
+      databaseEffectiveRole: "pintpath_migrator",
+    };
+    dependencies.writeOutput(canonicalPostgresBackupJson(authenticatedResult));
     return 0;
   } catch (error) {
+    if (databaseTransport) {
+      try {
+        await databaseTransport.close();
+      } catch {
+        error = new CaptureCliError("database_transport_close_failed");
+      }
+      databaseTransport = null;
+    }
     const result: PostgresPrivateStorageCaptureCliResult = {
       schemaVersion: 1,
       kind: "pintpath-postgres-private-storage-recovery-capture",

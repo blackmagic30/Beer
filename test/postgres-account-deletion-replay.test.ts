@@ -11,6 +11,10 @@ import type { AccountDeletionTombstone } from "../src/lib/data-backup.js";
 import { canonicalPostgresBackupJson } from "../src/lib/postgres-logical-backup.js";
 import type { PostgresLogicalRestoreReceipt } from "../src/lib/postgres-logical-restore.js";
 import {
+  POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+  type PostgresRailwayStockLocalhostCaTransport,
+} from "../src/lib/postgres-railway-stock-localhost-ca.js";
+import {
   POSTGRES_ACCOUNT_DELETION_REPLAY_CONFIRMATION_ENV,
   POSTGRES_ACCOUNT_DELETION_REPLAY_CONFIRMATION_VALUE,
   PostgresAccountDeletionReplayError,
@@ -312,7 +316,7 @@ function fakeDatabase(state: MutableReplayState): SqlDatabase {
           inRecovery: false,
           databaseIsTemplate: false,
           databaseAllowsConnections: true,
-          sameEffectiveRole: true,
+          effectiveRole: "pintpath_maintenance",
           roleName: "pintpath_replay_login",
           canLogin: true,
           superuser: false,
@@ -320,7 +324,8 @@ function fakeDatabase(state: MutableReplayState): SqlDatabase {
           createRole: false,
           replication: false,
           bypassRls: false,
-          runtimeMember: true,
+          replayMember: true,
+          runtimeMember: false,
           migratorMember: false,
           applicationSchemaUsage: true,
           operationsSchemaUsage: false,
@@ -515,6 +520,86 @@ describe("Postgres account-deletion tombstone replay", () => {
     expect(second.semanticProjectionSha256).toBe(first.semanticProjectionSha256);
     expect(harness.state.beginCalls).toBe(1);
     expect(harness.state.preparedSql.some((sql) => sql.includes("restore-unlock"))).toBe(false);
+  });
+
+  it("binds production replay to the stock-localhost TLS transport and maintenance startup role", async () => {
+    const harness = fixture();
+    writePrivate(
+      harness.runtimeUrlFile,
+      "postgresql://pintpath_replay_login:private-password@postgres.railway.internal:5432/pintpath_restore_test?sslmode=verify-full\n",
+    );
+    const rootCaFile = path.join(harness.root, "railway-root-ca.pem");
+    writePrivate(rootCaFile, "fixture-root-ca");
+    const rootCaDerSha256 = "7".repeat(64);
+    const assertExact = vi.fn(async () => undefined);
+    const closeTransport = vi.fn(async () => undefined);
+    const transport: PostgresRailwayStockLocalhostCaTransport = {
+      profile: POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+      rootCaDerSha256,
+      sourceUrlAuthority: { hostname: "postgres.railway.internal", port: 5432 },
+      resolvedAddress: "fd12::1",
+      temporaryDirectory: "/private/transport",
+      passwordFileDirectory: "/private/transport",
+      passwordFileHost: "localhost",
+      nodeConnection: {
+        host: "fd12::1",
+        port: 5432,
+        ssl: {
+          ca: "fixture-root-ca",
+          servername: "localhost",
+          rejectUnauthorized: true,
+          minVersion: "TLSv1.2",
+          checkServerIdentity: () => undefined,
+        },
+      },
+      libpqEnvironment: {
+        PGHOST: "localhost",
+        PGHOSTADDR: "fd12::1",
+        PGPORT: "5432",
+        PGSSLMODE: "verify-full",
+        PGSSLROOTCERT: "/private/transport/root-ca.pem",
+        PGSSLMINPROTOCOLVERSION: "TLSv1.2",
+        PGSSLSNI: "1",
+      },
+      assertExact,
+      close: closeTransport,
+    };
+    const openRuntimeTransport = vi.fn(async () => transport);
+    const createDatabase = vi.fn(() => fakeDatabase(harness.state));
+    const result = await replayPostgresAccountDeletionTombstones({
+      ...harness.options("secure-receipt.json"),
+      runtimeRootCaFile: rootCaFile,
+      expectedRuntimeRootCaDerSha256: rootCaDerSha256,
+    }, {
+      ...harness.dependencies,
+      env: { NODE_ENV: "production" },
+      allowInsecureLoopbackForTests: false,
+      openRuntimeTransport,
+      createDatabase,
+    });
+    expect(result.ok).toBe(true);
+    expect(openRuntimeTransport).toHaveBeenCalledWith(expect.objectContaining({
+      profile: POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+      rootCaFile,
+      expectedRootCaDerSha256: rootCaDerSha256,
+      sourceUrlAuthority: { hostname: "postgres.railway.internal", port: 5432 },
+    }));
+    expect(createDatabase).toHaveBeenCalledWith(expect.objectContaining({
+      activeRole: "pintpath_maintenance",
+      railwayStockLocalhostCaConnection: transport.nodeConnection,
+    }));
+    expect(assertExact.mock.calls.length).toBeGreaterThanOrEqual(3);
+    expect(closeTransport).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(fs.readFileSync(
+      harness.options("secure-receipt.json").receiptFile,
+      "utf8",
+    ))).toMatchObject({
+      version: 2,
+      replayRoleRestricted: true,
+      replayEffectiveRole: "pintpath_maintenance",
+      transportProfile: POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+      transportRootCaDerSha256: rootCaDerSha256,
+    });
   });
 
   it("rejects a world-readable authority artifact before opening a database", async () => {
@@ -815,6 +900,8 @@ describe("Postgres account-deletion tombstone replay", () => {
     const harness = fixture();
     const argv = [
       "--runtime-url-file", harness.runtimeUrlFile,
+      "--runtime-root-ca-file", harness.runtimeUrlFile,
+      "--expected-runtime-root-ca-der-sha256", "a".repeat(64),
       "--base-restore-receipt", harness.baseRestoreReceiptFile,
       "--expected-base-restore-receipt-sha256", harness.baseRestoreReceiptSha256,
       "--deletion-ledger-authority-directory", harness.authority.directory,
@@ -875,6 +962,8 @@ describe("Postgres account-deletion tombstone replay", () => {
     const harness = fixture();
     const argv = [
       "--runtime-url-file", harness.runtimeUrlFile,
+      "--runtime-root-ca-file", harness.runtimeUrlFile,
+      "--expected-runtime-root-ca-der-sha256", "a".repeat(64),
       "--base-restore-receipt", harness.baseRestoreReceiptFile,
       "--expected-base-restore-receipt-sha256", harness.baseRestoreReceiptSha256,
       "--deletion-ledger-authority-directory", harness.authority.directory,
@@ -930,6 +1019,8 @@ describe("Postgres account-deletion tombstone replay", () => {
     const harness = fixture();
     const argv = [
       "--runtime-url-file", harness.runtimeUrlFile,
+      "--runtime-root-ca-file", harness.runtimeUrlFile,
+      "--expected-runtime-root-ca-der-sha256", "a".repeat(64),
       "--base-restore-receipt", harness.baseRestoreReceiptFile,
       ...(pin === undefined
         ? []
@@ -967,6 +1058,8 @@ describe("Postgres account-deletion tombstone replay", () => {
     const outputs: string[] = [];
     expect(await runPostgresAccountDeletionReplayCli([
       "--runtime-url-file", harness.runtimeUrlFile,
+      "--runtime-root-ca-file", harness.runtimeUrlFile,
+      "--expected-runtime-root-ca-der-sha256", "a".repeat(64),
       "--base-restore-receipt", harness.baseRestoreReceiptFile,
       "--expected-base-restore-receipt-sha256", "0".repeat(64),
       "--deletion-ledger-authority-directory", harness.authority.directory,

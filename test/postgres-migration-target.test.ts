@@ -3,8 +3,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { Client } from "pg";
-import { afterEach, describe, expect, it } from "vitest";
+import type { Client, ClientConfig } from "pg";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createDatabase } from "../src/db/database.js";
 import {
@@ -22,23 +22,141 @@ import {
 } from "../src/db/postgres-migration-schema.js";
 import {
   POSTGRES_MIGRATION_SNAPSHOT_LEDGER_DIRECTORY,
+  POSTGRES_MIGRATION_SNAPSHOT_EVIDENCE_DIRECTORY,
   createPostgresMigrationPlan,
   createPostgresMigrationSnapshot,
 } from "../src/db/postgres-migration-source.js";
 import {
-  applyPostgresMigrationWithConnection,
+  applyPostgresMigrationWithConnection as applyPostgresMigrationWithConnectionCore,
   postgresMigrationTargetInternals,
   safePostgresMigrationTargetFailure,
-  verifyPostgresMigrationWithConnection,
+  verifyPostgresMigrationWithConnection as verifyPostgresMigrationWithConnectionCore,
   type PostgresMigrationReceipt,
   type PostgresMigrationTargetConnection,
   type PostgresMigrationTargetInput,
   type PostgresMigrationTargetQueryResult,
 } from "../src/db/postgres-migration-target.js";
+import {
+  POSTGRES_MIGRATION_EXPECTED_LIVE_SCHEMA_OBJECT_COUNT,
+  POSTGRES_MIGRATION_EXPECTED_LIVE_SCHEMA_SHA256,
+} from "../src/db/postgres-migration-live-schema.js";
+import {
+  POSTGRES_MIGRATION_VERIFIER_AUTHORITY_POLICY_SHA256,
+  postgresMigrationVerifierAuthoritySchema,
+  sha256PostgresMigrationAuthorityIdentity,
+  sha256PostgresMigrationVerifierAuthorityBinding,
+} from "../src/db/postgres-migration-verifier-authority.js";
+import {
+  POSTGRES_MIGRATION_VERIFICATION_APPROVAL_KIND,
+  POSTGRES_MIGRATION_VERIFICATION_APPROVAL_VERSION,
+  type PostgresMigrationApplyReceipt,
+} from "../src/db/postgres-migration-receipt.js";
+import {
+  POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+  checkPostgresRailwayStockLocalhostServerIdentity,
+  type PostgresRailwayStockLocalhostCaTransport,
+} from "../src/lib/postgres-railway-stock-localhost-ca.js";
+import {
+  TEST_POSTGRES_RAILWAY_ROOT_CA_DER_SHA256,
+  TEST_POSTGRES_RAILWAY_ROOT_CA_PEM,
+} from "./postgres-railway-stock-localhost-ca.fixtures.js";
 
 const temporaryDirectories: string[] = [];
 const NOW = "2026-08-08T00:00:00.000Z";
-const TARGET_URL = "postgresql://migration-user:migration-password@db.example.test:5432/pintpath?sslmode=verify-full";
+const TARGET_URL = "postgresql://migration-user:migration-password@migration-target.railway.internal:5432/pintpath?sslmode=verify-full";
+const VERIFIER_KEY_PAIR = crypto.generateKeyPairSync("ed25519");
+const VERIFIER_PUBLIC_KEY_BYTES = VERIFIER_KEY_PAIR.publicKey.export({
+  format: "pem",
+  type: "spki",
+});
+const VERIFIER_PUBLIC_KEY_SHA256 = sha256PostgresMigrationBytes(VERIFIER_PUBLIC_KEY_BYTES);
+const VERIFIER_AUTHORITY_BINDING = {
+  expectedEnvironment: "permanent-staging" as const,
+  candidateSha: "a".repeat(40),
+  operatorIdSha256: sha256PostgresMigrationAuthorityIdentity(
+    "migration-operator-target-test",
+    "operator-id",
+  ),
+  verifierIdSha256: sha256PostgresMigrationAuthorityIdentity(
+    "migration-verifier-target-test",
+    "verifier-id",
+  ),
+  verifierPublicKeySha256: VERIFIER_PUBLIC_KEY_SHA256,
+  authorityPolicySha256: POSTGRES_MIGRATION_VERIFIER_AUTHORITY_POLICY_SHA256,
+};
+const VERIFIER_AUTHORITY = postgresMigrationVerifierAuthoritySchema.parse({
+  ...VERIFIER_AUTHORITY_BINDING,
+  authoritySha256: sha256PostgresMigrationVerifierAuthorityBinding(
+    VERIFIER_AUTHORITY_BINDING,
+  ),
+  installedAt: NOW,
+});
+const APPLY_RECEIPTS = new WeakMap<PostgresMigrationTargetConnection, PostgresMigrationApplyReceipt>();
+const LIVE_SCHEMA_DEPENDENCIES = Object.freeze({
+  inspectLiveSchema: async () => ({
+    objectCount: POSTGRES_MIGRATION_EXPECTED_LIVE_SCHEMA_OBJECT_COUNT,
+    sha256: POSTGRES_MIGRATION_EXPECTED_LIVE_SCHEMA_SHA256,
+  }),
+});
+
+async function applyPostgresMigrationWithConnection(
+  input: PostgresMigrationTargetInput,
+  connection: PostgresMigrationTargetConnection,
+) {
+  const receipt = await applyPostgresMigrationWithConnectionCore(
+    input,
+    connection,
+    LIVE_SCHEMA_DEPENDENCIES,
+  );
+  APPLY_RECEIPTS.set(connection, receipt);
+  return receipt;
+}
+
+async function verifyPostgresMigrationWithConnection(
+  input: PostgresMigrationTargetInput,
+  connection: PostgresMigrationTargetConnection,
+) {
+  const applyReceipt = APPLY_RECEIPTS.get(connection);
+  if (!applyReceipt) throw new Error("missing apply receipt fixture");
+  const payload = {
+    applyReceiptSha256: applyReceipt.receiptSha256,
+    approvedAt: NOW,
+    candidateSha: applyReceipt.candidateSha,
+    expectedEnvironment: applyReceipt.expectedEnvironment,
+    expiresAt: "2026-08-08T00:10:00.000Z",
+    liveSchemaSha256: applyReceipt.liveSchemaSha256,
+    targetIdentitySha256: applyReceipt.targetIdentitySha256,
+    verifierIdSha256: applyReceipt.verifierIdSha256,
+    verifierAuthoritySha256: applyReceipt.verifierAuthoritySha256,
+    verifierAuthorityPolicySha256: applyReceipt.verifierAuthorityPolicySha256,
+    verifierPublicKeySha256: VERIFIER_PUBLIC_KEY_SHA256,
+  };
+  const approval = {
+    kind: POSTGRES_MIGRATION_VERIFICATION_APPROVAL_KIND,
+    version: POSTGRES_MIGRATION_VERIFICATION_APPROVAL_VERSION,
+    payload,
+    signatureBase64: crypto.sign(
+      null,
+      serializeCanonicalPostgresMigrationJson(payload),
+      VERIFIER_KEY_PAIR.privateKey,
+    ).toString("base64"),
+  };
+  const applyReceiptBytes = serializeCanonicalPostgresMigrationJson(applyReceipt);
+  const approvalBytes = serializeCanonicalPostgresMigrationJson(approval);
+  return verifyPostgresMigrationWithConnectionCore({
+    ...input,
+    verificationAuthority: {
+      applyReceipt,
+      applyReceiptFileSha256: sha256PostgresMigrationBytes(applyReceiptBytes),
+      expectedApplyReceiptFileSha256: sha256PostgresMigrationBytes(applyReceiptBytes),
+      approval,
+      approvalFileSha256: sha256PostgresMigrationBytes(approvalBytes),
+      expectedApprovalFileSha256: sha256PostgresMigrationBytes(approvalBytes),
+      verifierPublicKeyBytes: VERIFIER_PUBLIC_KEY_BYTES,
+      now: new Date("2026-08-08T00:05:00.000Z"),
+    },
+  }, connection, LIVE_SCHEMA_DEPENDENCIES);
+}
 
 function temporaryDirectory(): string {
   const result = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pint-path-postgres-apply-test-")));
@@ -157,7 +275,7 @@ class StrictFakePostgresTarget implements PostgresMigrationTargetConnection {
     databaseOid: "16422",
     databaseName: "pintpath",
     sessionUser: "migration-user",
-    currentUser: "migration-user",
+    currentUser: "pintpath_migrator",
     serverVersionNum: "170010",
   };
 
@@ -175,6 +293,7 @@ class StrictFakePostgresTarget implements PostgresMigrationTargetConnection {
     ["source_schema_version", "0"],
     ["source_snapshot_sha256", ""],
     ["target_ddl_sha256", ""],
+    ["live_schema_sha256", ""],
   ]);
 
   readonly rows = new Map<string, Map<string, unknown[]>>(
@@ -183,6 +302,7 @@ class StrictFakePostgresTarget implements PostgresMigrationTargetConnection {
 
   run: FakeRun | null = null;
   readonly chunks = new Map<string, FakeChunk>();
+  authorityRows: Record<string, unknown>[] = [{ ...VERIFIER_AUTHORITY }];
   insertChunkCalls = 0;
   interruptOnInsertCall: number | null = null;
   onInsertCall: ((call: number) => void) | null = null;
@@ -263,6 +383,26 @@ class StrictFakePostgresTarget implements PostgresMigrationTargetConnection {
         currentSuperuser: false,
         sessionBypassRls: false,
         currentBypassRls: false,
+        activeRoleExact: true,
+        loginAttributesSafe: true,
+        loginMembershipExact: true,
+        migratorRoleSafe: true,
+        migratorRoleParentsAbsent: true,
+        migratorRoleChildrenExact: true,
+        loginRoleChildrenAbsent: true,
+        roleSettingsAbsent: true,
+        databaseAuthorityExact: true,
+        migratorDatabaseAuthorityExact: true,
+        migratorSchemaAuthorityExact: true,
+        migratorTableAuthorityExact: true,
+        migratorColumnPrivilegesAbsent: true,
+        migratorRoutinePrivilegesAbsent: true,
+        migratorSequencePrivilegesAbsent: true,
+        unsafeDirectLoginAclAbsent: true,
+        unsafeDirectMigratorAclAbsent: true,
+        roleOwnershipAbsent: true,
+        defaultPrivilegesAbsent: true,
+        verifierAuthorityRoleBoundaryExact: true,
         migratorMember: true,
         runtimeMember: false,
         applicationSchemaUsage: true,
@@ -299,7 +439,11 @@ class StrictFakePostgresTarget implements PostgresMigrationTargetConnection {
         { schemaName: "pintpath_app", tableName: "schema_metadata", rlsEnabled: true, rlsForced: true },
         { schemaName: "pintpath_ops", tableName: "migration_chunks", rlsEnabled: true, rlsForced: true },
         { schemaName: "pintpath_ops", tableName: "migration_runs", rlsEnabled: true, rlsForced: true },
+        { schemaName: "pintpath_ops", tableName: "migration_verifier_authority", rlsEnabled: true, rlsForced: true },
       ]);
+    }
+    if (text.includes("pintpath:migration:load-independent-verifier-authority")) {
+      return result(this.authorityRows);
     }
     if (text.includes("pintpath:migration:lock")) {
       if (this.locked) return result([{ acquired: false }]);
@@ -428,6 +572,20 @@ class StrictFakePostgresTarget implements PostgresMigrationTargetConnection {
       return result([], 1);
     }
     if (text.includes("pintpath:migration:orphan-check")) return result([{ hasOrphan: false }]);
+    if (text.includes("pintpath:migration:write-verifying-metadata")) {
+      const key = String(values[0]);
+      if (!this.metadata.has(key)) return result([], 0);
+      this.metadata.set(key, String(values[1]));
+      return result([], 1);
+    }
+    if (text.includes("pintpath:migration:await-independent-verification")) {
+      if (!this.run || this.run.runId !== values[0]) return result([], 0);
+      this.run.status = "verifying";
+      this.run.verifierIdSha256 = String(values[1]);
+      this.run.receiptSha256 = String(values[2]);
+      this.run.failureCode = null;
+      return result([], 1);
+    }
     if (text.includes("pintpath:migration:write-ready-metadata")) {
       const key = String(values[0]);
       if (!this.metadata.has(key)) return result([], 0);
@@ -610,6 +768,8 @@ async function createInput(root: string): Promise<{
   const targetDdlPath = path.join(root, "target-ddl.sql");
   fs.writeFileSync(targetDdlPath, "-- exact native target DDL fixture\n", { mode: 0o600 });
   const targetDdlSha256 = sha256PostgresMigrationBytes(fs.readFileSync(targetDdlPath));
+  const rootCaFile = path.join(root, "railway-root-ca.pem");
+  fs.writeFileSync(rootCaFile, TEST_POSTGRES_RAILWAY_ROOT_CA_PEM, { mode: 0o600 });
   const fake = new StrictFakePostgresTarget();
   return {
     fake,
@@ -622,12 +782,18 @@ async function createInput(root: string): Promise<{
       expectedTargetDdlSha256: targetDdlSha256,
       targetUrl: TARGET_URL,
       expectedTargetUrlSha256: sha256PostgresMigrationBytes(TARGET_URL),
+      rootCaFile,
+      expectedRootCaDerSha256: TEST_POSTGRES_RAILWAY_ROOT_CA_DER_SHA256,
+      expectedTransportAuthoritySha256:
+        postgresMigrationTargetInternals.transportAuthoritySha256({
+          targetUrl: TARGET_URL,
+          expectedRootCaDerSha256: TEST_POSTGRES_RAILWAY_ROOT_CA_DER_SHA256,
+        }),
       expectedTargetIdentitySha256: fake.identitySha256,
       expectedEnvironment: "permanent-staging",
       candidateSha: "a".repeat(40),
       approvalReference: "approved-target-apply-reference",
       operatorId: "migration-operator-target-test",
-      verifierId: "migration-verifier-target-test",
     },
     secrets: [
       root,
@@ -651,60 +817,133 @@ afterEach(() => {
   }
 });
 
-function parsedClientSsl(clientUrl: string): Record<string, unknown> {
-  const client = new Client({ connectionString: clientUrl });
-  return (client as unknown as { ssl: Record<string, unknown> }).ssl;
-}
+describe("direct Postgres migration TLS authority", () => {
+  it("accepts only the exact Railway private verify-full URL and binds the CA authority", () => {
+    const validated = postgresMigrationTargetInternals.validateTargetUrl(TARGET_URL);
+    const authoritySha256 = postgresMigrationTargetInternals.transportAuthoritySha256({
+      targetUrl: TARGET_URL,
+      expectedRootCaDerSha256: TEST_POSTGRES_RAILWAY_ROOT_CA_DER_SHA256,
+    });
 
-describe("direct Postgres migration TLS normalization", () => {
-  it("uses libpq require semantics without changing the exact URL binding", () => {
-    const originalUrl = "postgresql://migration-user:PRIVATE_TLS_PASSWORD@127.0.0.1:5432/pintpath?sslmode=require";
-    const alreadyCompatibleUrl = `${originalUrl}&uselibpqcompat=true`;
-    const normalized = postgresMigrationTargetInternals.validateTargetUrl(originalUrl);
-    const alreadyCompatible = postgresMigrationTargetInternals.validateTargetUrl(alreadyCompatibleUrl);
-
-    expect(normalized.digest).toBe(sha256PostgresMigrationBytes(originalUrl));
-    expect(alreadyCompatible.digest).toBe(sha256PostgresMigrationBytes(alreadyCompatibleUrl));
-    expect(normalized.digest).not.toBe(alreadyCompatible.digest);
-    expect(new URL(normalized.clientUrl).searchParams.getAll("uselibpqcompat")).toEqual(["true"]);
-    expect(new URL(normalized.clientUrl).searchParams.get("sslmode")).toBe("require");
-    expect(parsedClientSsl(normalized.clientUrl)).toEqual({ rejectUnauthorized: false });
-    expect(parsedClientSsl(alreadyCompatible.clientUrl)).toEqual({ rejectUnauthorized: false });
+    expect(validated.digest).toBe(sha256PostgresMigrationBytes(TARGET_URL));
+    expect(validated.sourceUrlAuthority).toEqual({
+      hostname: "migration-target.railway.internal",
+      port: 5432,
+    });
+    expect(authoritySha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(postgresMigrationTargetInternals.transportAuthoritySha256({
+      targetUrl: TARGET_URL,
+      expectedRootCaDerSha256: "0".repeat(64),
+    })).not.toBe(authoritySha256);
   });
 
-  it("keeps verify-ca and verify-full certificate-verifying", () => {
-    const root = temporaryDirectory();
-    const rootCertificatePath = path.join(root, "migration-root-ca.pem");
-    fs.writeFileSync(rootCertificatePath, "PRIVATE_TEST_ROOT_CA", { mode: 0o600 });
-    const verifyCaUrl = new URL(
-      "postgresql://migration-user:PRIVATE_TLS_PASSWORD@db.example.test:5432/pintpath?sslmode=verify-ca",
-    );
-    verifyCaUrl.searchParams.set("sslrootcert", rootCertificatePath);
-    const verifyCa = postgresMigrationTargetInternals.validateTargetUrl(verifyCaUrl.toString());
-    const verifyFull = postgresMigrationTargetInternals.validateTargetUrl(
-      "postgresql://migration-user:PRIVATE_TLS_PASSWORD@db.example.test:5432/pintpath?sslmode=verify-full",
-    );
-    const verifyCaSsl = parsedClientSsl(verifyCa.clientUrl);
-    const verifyFullSsl = parsedClientSsl(verifyFull.clientUrl);
-
-    expect(verifyCaSsl.ca).toBe("PRIVATE_TEST_ROOT_CA");
-    expect(typeof verifyCaSsl.checkServerIdentity).toBe("function");
-    expect(verifyCaSsl.rejectUnauthorized).not.toBe(false);
-    expect(verifyFullSsl.rejectUnauthorized).not.toBe(false);
-    expect(verifyFullSsl.checkServerIdentity).toBeUndefined();
-  });
-
-  it("fails closed on ambiguous compatibility and verify-ca inputs", () => {
+  it("fails closed on unauthenticated, ambiguous, proxy, and non-Railway inputs", () => {
     for (const targetUrl of [
       "postgresql://user:secret@db.example.test:5432/db?sslmode=require&uselibpqcompat=false",
       "postgresql://user:secret@db.example.test:5432/db?sslmode=require&uselibpqcompat=true&uselibpqcompat=true",
       "postgresql://user:secret@db.example.test:5432/db?sslmode=verify-ca",
       "postgresql://user:secret@db.example.test:5432/db?sslmode=verify-ca&sslrootcert=",
+      "postgresql://user:secret@migration-target.railway.internal:5432/db?sslmode=require",
+      "postgresql://user:secret@migration-target.railway.internal:5432/db?sslmode=verify-ca",
+      "postgresql://user:secret@migration-target.railway.internal:5432/db?sslmode=verify-full&application_name=changed",
+      "postgresql://user%0Aadmin:secret@migration-target.railway.internal:5432/db?sslmode=verify-full",
+      "postgresql://user:secret@migration-target.railway.internal:5432/db%2Fshadow?sslmode=verify-full",
+      "postgresql://user:secret@pooler.railway.internal:6543/db?sslmode=verify-full",
+      "postgresql://user:secret@127.0.0.1:5432/db?sslmode=disable",
     ]) {
       expect(() => postgresMigrationTargetInternals.validateTargetUrl(targetUrl)).toThrowError(
         expect.objectContaining({ code: "TARGET_UNSAFE" }),
       );
     }
+  });
+
+  it("dials only the pinned fd12 address with localhost identity and fences every query", async () => {
+    const assertExact = vi.fn(async () => undefined);
+    const closeTransport = vi.fn(async () => undefined);
+    const transport: PostgresRailwayStockLocalhostCaTransport = {
+      profile: POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+      rootCaDerSha256: TEST_POSTGRES_RAILWAY_ROOT_CA_DER_SHA256,
+      sourceUrlAuthority: {
+        hostname: "migration-target.railway.internal",
+        port: 5432,
+      },
+      resolvedAddress: "fd12:3456:789a::1",
+      temporaryDirectory: "/private/tmp/pintpath-migration-transport",
+      passwordFileDirectory: "/private/tmp/pintpath-migration-transport",
+      passwordFileHost: "localhost",
+      nodeConnection: {
+        host: "fd12:3456:789a::1",
+        port: 5432,
+        ssl: {
+          ca: TEST_POSTGRES_RAILWAY_ROOT_CA_PEM,
+          servername: "localhost",
+          rejectUnauthorized: true,
+          minVersion: "TLSv1.2",
+          checkServerIdentity:
+            checkPostgresRailwayStockLocalhostServerIdentity,
+        },
+      },
+      libpqEnvironment: {
+        PGHOST: "localhost",
+        PGHOSTADDR: "fd12:3456:789a::1",
+        PGPORT: "5432",
+        PGSSLMODE: "verify-full",
+        PGSSLROOTCERT: "/private/tmp/pintpath-migration-transport/railway-root-ca.pem",
+        PGSSLMINPROTOCOLVERSION: "TLSv1.2",
+        PGSSLSNI: "1",
+      },
+      assertExact,
+      close: closeTransport,
+    };
+    const query = vi.fn(async (text: string) => ({
+      rows: text.includes("session-hardening") ? [] : [{ ok: true }],
+      rowCount: text.includes("session-hardening") ? null : 1,
+    }));
+    const client = {
+      connect: vi.fn(async () => undefined),
+      end: vi.fn(async () => undefined),
+      query,
+    } as unknown as Client;
+    const createPgClient = vi.fn((_config: ClientConfig) => client);
+    const openTransport = vi.fn(async () => transport);
+
+    const connection = await postgresMigrationTargetInternals.openDirectConnection({
+      targetUrl: TARGET_URL,
+      rootCaFile: "/private/tmp/reviewed-railway-root-ca.pem",
+      expectedRootCaDerSha256: TEST_POSTGRES_RAILWAY_ROOT_CA_DER_SHA256,
+    }, {
+      createPgClient,
+      getUid: () => 501,
+      getEuid: () => 501,
+      openTransport,
+    });
+    const result = await connection.query<{ ok: boolean }>("SELECT true AS ok");
+    await connection.close();
+
+    expect(openTransport).toHaveBeenCalledWith(expect.objectContaining({
+      profile: POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+      expectedRootCaDerSha256: TEST_POSTGRES_RAILWAY_ROOT_CA_DER_SHA256,
+      expectedUid: 501,
+      sourceUrlAuthority: {
+        hostname: "migration-target.railway.internal",
+        port: 5432,
+      },
+    }));
+    expect(createPgClient).toHaveBeenCalledWith(expect.objectContaining({
+      application_name: "pintpath-postgres-migration",
+      database: "pintpath",
+      host: "fd12:3456:789a::1",
+      options: "-c role=pintpath_migrator",
+      password: "migration-password",
+      port: 5432,
+      ssl: transport.nodeConnection.ssl,
+      user: "migration-user",
+    }));
+    expect(createPgClient.mock.calls[0]![0]).not.toHaveProperty("connectionString");
+    expect(result).toEqual({ rows: [{ ok: true }], rowCount: 1 });
+    expect(assertExact).toHaveBeenCalledTimes(6);
+    expect(client.end).toHaveBeenCalledOnce();
+    expect(closeTransport).toHaveBeenCalledOnce();
   });
 });
 
@@ -755,8 +994,8 @@ describe("resumable Postgres migration apply and reconciliation", () => {
 
     expect(receipt).toMatchObject({
       kind: "pint-path-postgres-migration-receipt",
-      version: 1,
-      status: "ready",
+      version: 3,
+      status: "awaiting-verification",
       tableCount: 56,
       columnCount: 717,
       foreignKeyCount: 76,
@@ -766,7 +1005,14 @@ describe("resumable Postgres migration apply and reconciliation", () => {
     expect(receipt.chunkCount).toBe(fake.chunks.size);
     expect(fake.run?.status).toBe("ready");
     expect(fake.metadata.get("import_state")).toBe("ready");
-    expect(verifiedReceipt).toEqual(receipt);
+    expect(verifiedReceipt.status).toBe("ready");
+    expect(verifiedReceipt.applyReceiptSha256).toBe(receipt.receiptSha256);
+    const readyReceiptSha256 = fake.run?.receiptSha256;
+    await expect(applyPostgresMigrationWithConnection(input, fake))
+      .rejects.toMatchObject({ code: "RESUME_MISMATCH" });
+    expect(fake.run?.status).toBe("ready");
+    expect(fake.run?.receiptSha256).toBe(readyReceiptSha256);
+    expect(fake.metadata.get("import_state")).toBe("ready");
     expect([...fake.rows.values()].reduce((total, rows) => total + rows.size, 0)).toBe(receipt.rowCount);
 
     const secretTable = POSTGRES_MIGRATION_CONTRACT.tables.find(
@@ -810,8 +1056,8 @@ describe("resumable Postgres migration apply and reconciliation", () => {
 
     fake.interruptOnInsertCall = null;
     const resumed = await applyPostgresMigrationWithConnection(input, fake);
-    expect(resumed.status).toBe("ready");
-    expect(fake.run?.status).toBe("ready");
+    expect(resumed.status).toBe("awaiting-verification");
+    expect(fake.run?.status).toBe("verifying");
     const checkpointCount = fake.chunks.size;
     const rowCount = resumed.rowCount;
 
@@ -851,12 +1097,36 @@ describe("resumable Postgres migration apply and reconciliation", () => {
     expect(fake.metadata.get("import_state")).toBe("failed");
   });
 
+  it("rejects copied source-evidence drift before apply and during verification", async () => {
+    const root = temporaryDirectory();
+    const first = await createInput(root);
+    const evidenceFile = path.join(
+      path.dirname(first.input.snapshotManifestPath),
+      POSTGRES_MIGRATION_SNAPSHOT_EVIDENCE_DIRECTORY,
+      "private-evidence.bin",
+    );
+    fs.appendFileSync(evidenceFile, "tampered");
+    await expect(applyPostgresMigrationWithConnection(first.input, first.fake))
+      .rejects.toMatchObject({ code: "ARTIFACT_INVALID" });
+
+    const second = await createInput(temporaryDirectory());
+    await applyPostgresMigrationWithConnection(second.input, second.fake);
+    const secondEvidence = path.join(
+      path.dirname(second.input.snapshotManifestPath),
+      POSTGRES_MIGRATION_SNAPSHOT_EVIDENCE_DIRECTORY,
+      "private-evidence.bin",
+    );
+    fs.appendFileSync(secondEvidence, "tampered-after-apply");
+    await expect(verifyPostgresMigrationWithConnection(second.input, second.fake))
+      .rejects.toMatchObject({ code: "ARTIFACT_INVALID" });
+  });
+
   it("fails closed on target URL, identity, candidate, and approval/operator binding changes", async () => {
     const root = temporaryDirectory();
     const { input, fake } = await createInput(root);
     await expect(applyPostgresMigrationWithConnection({
       ...input,
-      targetUrl: `${TARGET_URL}&application_name=changed`,
+      targetUrl: TARGET_URL.replace("migration-password", "changed-password"),
     }, fake)).rejects.toMatchObject({ code: "IDENTITY_MISMATCH" });
     await expect(applyPostgresMigrationWithConnection({
       ...input,
@@ -876,7 +1146,42 @@ describe("resumable Postgres migration apply and reconciliation", () => {
       ...input,
       approvalReference: "different-approved-reference",
     }, fake)).rejects.toMatchObject({ code: "RESUME_MISMATCH" });
-    expect(first.status).toBe("ready");
+    expect(first.status).toBe("awaiting-verification");
+  });
+
+  it("derives verifier trust only from one exact candidate-bound database authority row", async () => {
+    const missing = await createInput(temporaryDirectory());
+    missing.fake.authorityRows = [];
+    await expect(applyPostgresMigrationWithConnection(missing.input, missing.fake))
+      .rejects.toMatchObject({ code: "TARGET_UNSAFE" });
+
+    const duplicate = await createInput(temporaryDirectory());
+    duplicate.fake.authorityRows = [
+      { ...VERIFIER_AUTHORITY },
+      { ...VERIFIER_AUTHORITY },
+    ];
+    await expect(applyPostgresMigrationWithConnection(duplicate.input, duplicate.fake))
+      .rejects.toMatchObject({ code: "TARGET_UNSAFE" });
+
+    const wrongCandidate = await createInput(temporaryDirectory());
+    wrongCandidate.fake.authorityRows = [{
+      ...VERIFIER_AUTHORITY,
+      candidateSha: "b".repeat(40),
+    }];
+    await expect(applyPostgresMigrationWithConnection(
+      wrongCandidate.input,
+      wrongCandidate.fake,
+    )).rejects.toMatchObject({ code: "TARGET_UNSAFE" });
+
+    const wrongEnvironment = await createInput(temporaryDirectory());
+    wrongEnvironment.fake.authorityRows = [{
+      ...VERIFIER_AUTHORITY,
+      expectedEnvironment: "production",
+    }];
+    await expect(applyPostgresMigrationWithConnection(
+      wrongEnvironment.input,
+      wrongEnvironment.fake,
+    )).rejects.toMatchObject({ code: "TARGET_UNSAFE" });
   });
 
   it("has no dependency on the sanitized data:backup path", () => {

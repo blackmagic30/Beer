@@ -23,7 +23,12 @@ import {
   verifyPostgresMigration,
   type PostgresMigrationEnvironment,
   type PostgresMigrationTargetInput,
+  type PostgresMigrationVerifyInput,
 } from "../src/db/postgres-migration-target.js";
+import {
+  postgresMigrationApplyReceiptSchema,
+  postgresMigrationVerificationApprovalSchema,
+} from "../src/db/postgres-migration-receipt.js";
 import { readPrivateSecretFile } from "../src/lib/offsite-backup-download.js";
 import {
   assertExactSupabaseOrigin,
@@ -62,6 +67,9 @@ const OFFSITE_BACKUP_SUPABASE_ORIGIN =
   "https://hfbmhdxrwtihukmixxta.supabase.co" as const;
 
 const TARGET_INSPECT_ARGUMENTS = new Set([
+  "--output-target-identity",
+  "--root-ca-der-sha256",
+  "--root-ca-file",
   "--target-ddl",
   "--target-ddl-sha256",
   "--target-url-file",
@@ -75,6 +83,8 @@ const TARGET_EXECUTE_ARGUMENTS = new Set([
   "--output-receipt",
   "--plan",
   "--plan-sha256",
+  "--root-ca-der-sha256",
+  "--root-ca-file",
   "--snapshot-manifest",
   "--snapshot-manifest-sha256",
   "--target-ddl",
@@ -82,7 +92,16 @@ const TARGET_EXECUTE_ARGUMENTS = new Set([
   "--target-identity-sha256",
   "--target-url-file",
   "--target-url-sha256",
-  "--verifier-id",
+  "--transport-authority-sha256",
+]);
+
+const TARGET_VERIFY_ARGUMENTS = new Set([
+  ...TARGET_EXECUTE_ARGUMENTS,
+  "--apply-receipt",
+  "--apply-receipt-sha256",
+  "--verification-approval",
+  "--verification-approval-sha256",
+  "--verifier-public-key",
 ]);
 
 export const POSTGRES_MIGRATION_APPLY_CONFIRMATION_ENV = "PINTPATH_POSTGRES_MIGRATION_APPLY" as const;
@@ -171,6 +190,66 @@ function assertPrivateReceiptParent(stat: fs.BigIntStats, expectedUid: bigint): 
       "Receipt output parent must be a trusted current-user directory.",
     );
   }
+}
+
+async function readStablePrivateArtifactBytes(
+  filePathInput: string,
+  maxBytes = 1024 * 1024,
+): Promise<Buffer> {
+  const filePath = exactAbsolutePath(filePathInput);
+  if (typeof process.geteuid !== "function") {
+    throw new PostgresMigrationSourceError("ARTIFACT_INVALID", "Private artifact ownership cannot be verified.");
+  }
+  let pathStat: fs.BigIntStats;
+  try {
+    pathStat = fs.lstatSync(filePath, { bigint: true });
+    if (
+      !pathStat.isFile()
+      || pathStat.isSymbolicLink()
+      || pathStat.nlink !== 1n
+      || pathStat.uid !== BigInt(process.geteuid())
+      || Number(pathStat.mode & 0o7777n) !== 0o600
+      || pathStat.size < 1n
+      || pathStat.size > BigInt(maxBytes)
+      || fs.realpathSync(filePath) !== filePath
+    ) throw new Error("unsafe");
+  } catch {
+    throw new PostgresMigrationSourceError("ARTIFACT_INVALID", "Private artifact file is unsafe.");
+  }
+  const handle = await fs.promises.open(
+    filePath,
+    fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
+  );
+  try {
+    const before = await handle.stat({ bigint: true });
+    if (!samePrivateReceiptIdentity(pathStat, before)) {
+      throw new PostgresMigrationSourceError("SOURCE_CHANGED", "Private artifact changed before reading.");
+    }
+    const bytes = await handle.readFile();
+    const after = await handle.stat({ bigint: true });
+    if (!samePrivateReceiptIdentity(before, after) || BigInt(bytes.length) !== after.size) {
+      throw new PostgresMigrationSourceError("SOURCE_CHANGED", "Private artifact changed while reading.");
+    }
+    return bytes;
+  } finally {
+    await handle.close();
+  }
+}
+
+function parseCanonicalPrivateArtifact<T>(
+  bytes: Buffer,
+  schema: { parse(value: unknown): T },
+): T {
+  let parsed: T;
+  try {
+    parsed = schema.parse(JSON.parse(bytes.toString("utf8")));
+  } catch {
+    throw new PostgresMigrationSourceError("ARTIFACT_INVALID", "Private JSON artifact is invalid.");
+  }
+  if (!bytes.equals(serializeCanonicalPostgresMigrationJson(parsed))) {
+    throw new PostgresMigrationSourceError("ARTIFACT_INVALID", "Private JSON artifact is not canonical.");
+  }
+  return parsed;
 }
 
 async function readStablePrivateReceipt(
@@ -346,12 +425,14 @@ async function targetInputFromArguments(
       expectedTargetDdlSha256: args.get("--target-ddl-sha256")!,
       targetUrl,
       expectedTargetUrlSha256: args.get("--target-url-sha256")!,
+      rootCaFile: exactAbsolutePath(args.get("--root-ca-file")!),
+      expectedRootCaDerSha256: args.get("--root-ca-der-sha256")!,
+      expectedTransportAuthoritySha256: args.get("--transport-authority-sha256")!,
       expectedTargetIdentitySha256: args.get("--target-identity-sha256")!,
       expectedEnvironment: exactTargetEnvironment(args.get("--expected-environment")!),
       candidateSha: args.get("--candidate-sha")!,
       approvalReference: args.get("--approval-reference")!,
       operatorId: args.get("--operator-id")!,
-      verifierId: args.get("--verifier-id")!,
     },
     outputReceipt: exactAbsolutePath(args.get("--output-receipt")!),
   };
@@ -388,6 +469,7 @@ export async function runPostgresMigrationSourceCli(
   environment: NodeJS.ProcessEnv = process.env,
   dependencies: {
     readSecretFile?: typeof readPrivateSecretFile;
+    readPrivateBytes?: typeof readStablePrivateArtifactBytes;
     inspectTarget?: typeof inspectPostgresMigrationTarget;
     applyTarget?: typeof applyPostgresMigration;
     verifyTarget?: typeof verifyPostgresMigration;
@@ -407,13 +489,25 @@ export async function runPostgresMigrationSourceCli(
       targetUrl,
       targetDdlPath: exactAbsolutePath(args.get("--target-ddl")!),
       expectedTargetDdlSha256: args.get("--target-ddl-sha256")!,
+      rootCaFile: exactAbsolutePath(args.get("--root-ca-file")!),
+      expectedRootCaDerSha256: args.get("--root-ca-der-sha256")!,
     });
-    return { ok: true, command: "inspect-target", ...result };
+    const targetIdentityFileSha256 = await writePrivateReceipt(
+      exactAbsolutePath(args.get("--output-target-identity")!),
+      result.targetIdentity,
+    );
+    const { targetIdentity: _privateTargetIdentity, ...publicResult } = result;
+    return {
+      ok: true,
+      command: "inspect-target",
+      ...publicResult,
+      targetIdentityFileSha256,
+    };
   }
   if (subcommand === "apply" || subcommand === "verify-target") {
     const args = parseStrictArguments(rawArguments, {
-      allowed: TARGET_EXECUTE_ARGUMENTS,
-      required: TARGET_EXECUTE_ARGUMENTS,
+      allowed: subcommand === "apply" ? TARGET_EXECUTE_ARGUMENTS : TARGET_VERIFY_ARGUMENTS,
+      required: subcommand === "apply" ? TARGET_EXECUTE_ARGUMENTS : TARGET_VERIFY_ARGUMENTS,
     });
     if (subcommand === "apply") {
       if (
@@ -431,9 +525,44 @@ export async function runPostgresMigrationSourceCli(
       args,
       dependencies.readSecretFile ?? readPrivateSecretFile,
     );
-    const receipt = subcommand === "apply"
-      ? await (dependencies.applyTarget ?? applyPostgresMigration)(input)
-      : await (dependencies.verifyTarget ?? verifyPostgresMigration)(input);
+    let receipt;
+    if (subcommand === "apply") {
+      receipt = await (dependencies.applyTarget ?? applyPostgresMigration)(input);
+    } else {
+      const readPrivateBytes = dependencies.readPrivateBytes ?? readStablePrivateArtifactBytes;
+      const applyReceiptBytes = await readPrivateBytes(
+        exactAbsolutePath(args.get("--apply-receipt")!),
+      );
+      const approvalBytes = await readPrivateBytes(
+        exactAbsolutePath(args.get("--verification-approval")!),
+      );
+      const verifierPublicKeyBytes = await readPrivateBytes(
+        exactAbsolutePath(args.get("--verifier-public-key")!),
+        64 * 1024,
+      );
+      const applyReceiptFileSha256 = sha256PostgresMigrationBytes(applyReceiptBytes);
+      const approvalFileSha256 = sha256PostgresMigrationBytes(approvalBytes);
+      const verifyInput: PostgresMigrationVerifyInput = {
+        ...input,
+        verificationAuthority: {
+          applyReceipt: parseCanonicalPrivateArtifact(
+            applyReceiptBytes,
+            postgresMigrationApplyReceiptSchema,
+          ),
+          applyReceiptFileSha256,
+          expectedApplyReceiptFileSha256: args.get("--apply-receipt-sha256")!,
+          approval: parseCanonicalPrivateArtifact(
+            approvalBytes,
+            postgresMigrationVerificationApprovalSchema,
+          ),
+          approvalFileSha256,
+          expectedApprovalFileSha256: args.get("--verification-approval-sha256")!,
+          verifierPublicKeyBytes,
+          now: new Date(),
+        },
+      };
+      receipt = await (dependencies.verifyTarget ?? verifyPostgresMigration)(verifyInput);
+    }
     const receiptFileSha256 = await writePrivateReceipt(outputReceipt, receipt);
     return {
       ok: true,

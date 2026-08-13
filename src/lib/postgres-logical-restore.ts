@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import type { PeerCertificate } from "node:tls";
 import { TextDecoder } from "node:util";
 
 import { Client, type ClientConfig, type QueryResultRow } from "pg";
@@ -29,6 +30,9 @@ import {
 } from "./postgres-logical-state.js";
 import {
   POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+  openPostgresRailwayStockLocalhostCaTransport,
+  type OpenPostgresRailwayStockLocalhostCaTransportOptions,
+  type PostgresRailwayStockLocalhostCaTransport,
 } from "./postgres-railway-stock-localhost-ca.js";
 import {
   PostgresToolAuthorityError,
@@ -36,14 +40,17 @@ import {
   type PostgresRestoreToolAuthority,
   type PostgresToolAuthorityProcessRunner,
 } from "./postgres-tool-authority.js";
+import {
+  openPostgresOciToolAuthority,
+  POSTGRES_OCI_TOOL_RUNTIME_RESTORE_CA_SHA256_ENV,
+  postgresOciToolRuntimeRequested,
+} from "./postgres-oci-tool-runtime.js";
 
 /*
- * Review-only activation boundary: the entire restore worker must start in a
- * pristine frozen-intrinsics realm before imports or secret reads. Ordinary
- * async carriers below include connection-file bytes, parsed credentials,
- * connection capabilities, and query rows; hardening only the tool authority's
- * Promise boundary cannot make those carriers safe from inherited then
- * poisoning. The current npm/tsx launcher does not provide this containment.
+ * Operational restore starts only through the protected workflow's pristine
+ * `node --frozen-intrinsics --disable-proto=throw --import tsx` worker. The
+ * digest-pinned OCI authority below removes host PostgreSQL dependencies and
+ * binds the exact one-shot container around the existing archive guards.
  */
 
 const APPLICATION_SCHEMA = "pintpath_app";
@@ -53,6 +60,11 @@ const MIGRATOR_ROLE = "pintpath_migrator";
 const DISPOSABLE_TARGET_CLASS = "disposable-rehearsal";
 const RESTORE_LOCK_KEY = "-5884877150838658403";
 const RESTORE_WORKER_APPLICATION_NAME = "pintpath-logical-restore-worker";
+const POSTGRES_OCI_RESTORE_ROOT_CA_FILE_ENV =
+  "PINTPATH_POSTGRES_OCI_RESTORE_ROOT_CA_FILE";
+export const POSTGRES_LOGICAL_RESTORE_ROOT_CA_DER_SHA256_ENV =
+  "PINTPATH_POSTGRES_LOGICAL_RESTORE_ROOT_CA_DER_SHA256" as const;
+const MAX_RESTORE_ROOT_CA_BYTES = 64n * 1024n;
 const RECEIPT_KIND = "pintpath-postgres-logical-restore-rehearsal" as const;
 const RECEIPT_VERSION = 1 as const;
 const MAX_MANIFEST_BYTES = 256 * 1024;
@@ -190,7 +202,16 @@ export interface PostgresLogicalRestoreConnectionConfig {
   readonly database: string;
   readonly user: string;
   readonly password: string;
-  readonly ssl: false | { readonly rejectUnauthorized: boolean };
+  readonly ssl: false | {
+    readonly rejectUnauthorized: boolean;
+    readonly ca?: string;
+    readonly servername?: string;
+    readonly minVersion?: "TLSv1.2";
+    readonly checkServerIdentity?: (
+      hostname: string,
+      certificate: PeerCertificate,
+    ) => Error | undefined;
+  };
   readonly connectionTimeoutMillis: number;
   readonly query_timeout: number;
   readonly application_name: string;
@@ -207,6 +228,9 @@ export interface PostgresLogicalRestoreDependencies {
   readonly connect: (
     config: PostgresLogicalRestoreConnectionConfig,
   ) => Promise<PostgresLogicalRestoreConnection>;
+  readonly openTransport: (
+    options: OpenPostgresRailwayStockLocalhostCaTransportOptions,
+  ) => Promise<PostgresRailwayStockLocalhostCaTransport>;
   readonly computeState: (
     connection: PostgresLogicalRestoreConnection,
   ) => Promise<PostgresLogicalStateInventory>;
@@ -234,6 +258,10 @@ interface ParsedConnection {
   readonly clientConfig: PostgresLogicalRestoreConnectionConfig;
   readonly pgEnvironment: Readonly<Record<string, string>>;
   readonly urlSha256: string;
+  readonly sourceUrlAuthority: {
+    readonly hostname: string;
+    readonly port: number;
+  };
 }
 
 interface TrustedConnectionFile {
@@ -243,6 +271,12 @@ interface TrustedConnectionFile {
 
 interface ReadTrustedConnectionFile extends TrustedConnectionFile {
   readonly value: string;
+}
+
+interface TrustedRestoreRootCa {
+  readonly filePath: string;
+  readonly pem: string;
+  readonly expectedDerSha256: string;
 }
 
 interface ValidatedBackup {
@@ -452,11 +486,18 @@ const DEFAULT_DEPENDENCIES: PostgresLogicalRestoreDependencies = {
   env: process.env,
   getUid: () => process.getuid?.() ?? null,
   now: () => new Date(),
-  openRestoreAuthority: (options) => openPostgresToolAuthority(
-    { ...options, purpose: "restore" },
-    POSTGRES_RESTORE_TOOL_AUTHORITY_PROCESS_RUNNER,
-  ),
+  openRestoreAuthority: (options) => postgresOciToolRuntimeRequested(process.env)
+    ? openPostgresOciToolAuthority(
+      { ...options, purpose: "restore" },
+      POSTGRES_RESTORE_TOOL_AUTHORITY_PROCESS_RUNNER,
+      process.env,
+    ) as Promise<PostgresRestoreToolAuthority>
+    : openPostgresToolAuthority(
+      { ...options, purpose: "restore" },
+      POSTGRES_RESTORE_TOOL_AUTHORITY_PROCESS_RUNNER,
+    ),
   connect: DirectRestoreConnection.connect,
+  openTransport: (options) => openPostgresRailwayStockLocalhostCaTransport(options),
   computeState: computePostgresLogicalStateInventory,
   allowInsecureLoopbackForTests: false,
 };
@@ -1280,6 +1321,102 @@ async function assertTargetConnectionFileUnchanged(
   }
 }
 
+function isSingleRootCaCertificate(pem: string): boolean {
+  const begin = "-----BEGIN CERTIFICATE-----";
+  const end = "-----END CERTIFICATE-----";
+  const firstBegin = pem.indexOf(begin);
+  const firstEnd = pem.indexOf(end, firstBegin + begin.length);
+  if (
+    !pem
+    || pem.includes("\0")
+    || firstBegin < 0
+    || firstEnd < 0
+    || pem.indexOf(begin, firstBegin + begin.length) !== -1
+    || pem.indexOf(end, firstEnd + end.length) !== -1
+    || pem.slice(0, firstBegin).trim() !== ""
+    || pem.slice(firstEnd + end.length).trim() !== ""
+  ) return false;
+  const body = pem.slice(firstBegin + begin.length, firstEnd).replace(/\s/g, "");
+  return body.length > 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(body);
+}
+
+async function readTrustedRestoreRootCa(
+  dependencies: PostgresLogicalRestoreDependencies,
+  uid: number,
+): Promise<TrustedRestoreRootCa | null> {
+  const fileInput = dependencies.env[POSTGRES_OCI_RESTORE_ROOT_CA_FILE_ENV];
+  const expectedPemSha256 =
+    dependencies.env[POSTGRES_OCI_TOOL_RUNTIME_RESTORE_CA_SHA256_ENV];
+  const expectedDerSha256 =
+    dependencies.env[POSTGRES_LOGICAL_RESTORE_ROOT_CA_DER_SHA256_ENV];
+  if (
+    fileInput === undefined
+    && expectedPemSha256 === undefined
+    && expectedDerSha256 === undefined
+  ) return null;
+  if (
+    typeof fileInput !== "string"
+    || !path.isAbsolute(fileInput)
+    || typeof expectedPemSha256 !== "string"
+    || !SHA256_PATTERN.test(expectedPemSha256)
+    || typeof expectedDerSha256 !== "string"
+    || !SHA256_PATTERN.test(expectedDerSha256)
+  ) throw restoreError("unsafe_connection_file");
+
+  let filePath: string;
+  try {
+    filePath = canonicalAbsolutePath(fileInput);
+  } catch {
+    throw restoreError("unsafe_connection_file");
+  }
+  const snapshot = await snapshotTrustedFile({
+    filePath,
+    uid,
+    maxBytes: MAX_RESTORE_ROOT_CA_BYTES,
+    retainBytes: true,
+    invalidCode: "unsafe_connection_file",
+  });
+  if (!snapshot.bytes || snapshot.sha256 !== expectedPemSha256) {
+    snapshot.bytes?.fill(0);
+    throw restoreError("unsafe_connection_file");
+  }
+  const rootCaBytes = snapshot.bytes;
+  try {
+    const pem = new TextDecoder("utf-8", { fatal: true }).decode(rootCaBytes);
+    const certificate = isSingleRootCaCertificate(pem)
+      ? new crypto.X509Certificate(pem)
+      : null;
+    const nowMs = dependencies.now().getTime();
+    const validFromMs = certificate ? Date.parse(certificate.validFrom) : Number.NaN;
+    const validToMs = certificate ? Date.parse(certificate.validTo) : Number.NaN;
+    let selfSigned = false;
+    try {
+      selfSigned = certificate !== null
+        && certificate.subject === certificate.issuer
+        && certificate.checkIssued(certificate)
+        && certificate.verify(certificate.publicKey);
+    } catch {
+      selfSigned = false;
+    }
+    if (
+      !certificate?.ca
+      || !selfSigned
+      || sha256(certificate.raw) !== expectedDerSha256
+      || !Number.isFinite(nowMs)
+      || !Number.isFinite(validFromMs)
+      || !Number.isFinite(validToMs)
+      || nowMs < validFromMs
+      || nowMs >= validToMs
+    ) throw restoreError("unsafe_connection_file");
+    return { filePath, pem, expectedDerSha256 };
+  } catch (error) {
+    if (error instanceof PostgresLogicalRestoreError) throw error;
+    throw restoreError("unsafe_connection_file");
+  } finally {
+    rootCaBytes.fill(0);
+  }
+}
+
 function decodeUrlComponent(value: string): string | null {
   try {
     const decoded = decodeURIComponent(value);
@@ -1292,6 +1429,8 @@ function decodeUrlComponent(value: string): string | null {
 function parseSafeTargetUrl(
   value: string,
   dependencies: PostgresLogicalRestoreDependencies,
+  rootCa: TrustedRestoreRootCa | null,
+  transport: PostgresRailwayStockLocalhostCaTransport | null = null,
 ): ParsedConnection {
   let parsed: URL;
   try {
@@ -1337,13 +1476,31 @@ function parseSafeTargetUrl(
     || unsupportedQuery
     || (!testLoopback && !["require", "verify-ca", "verify-full"].includes(sslMode))
   ) throw restoreError("unsafe_connection_url");
+  if (rootCa && sslMode !== "verify-full") {
+    throw restoreError("unsafe_connection_url");
+  }
+  if ((rootCa === null) !== (transport === null)) {
+    throw restoreError("unsafe_connection_file");
+  }
+  if (
+    transport
+    && (
+      transport.profile !== POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE
+      || transport.rootCaDerSha256 !== rootCa?.expectedDerSha256
+      || transport.sourceUrlAuthority.hostname !== normalizedHost
+      || transport.sourceUrlAuthority.port !== port
+    )
+  ) throw restoreError("unsafe_connection_file");
   const ssl: PostgresLogicalRestoreConnectionConfig["ssl"] = testLoopback
     ? false
-    : { rejectUnauthorized: sslMode !== "require" };
+    : transport?.nodeConnection.ssl ?? {
+      rejectUnauthorized: sslMode !== "require",
+    };
+  const transportEnvironment = transport?.libpqEnvironment;
   return {
     clientConfig: {
-      host: normalizedHost,
-      port,
+      host: transport?.nodeConnection.host ?? normalizedHost,
+      port: transport?.nodeConnection.port ?? port,
       database,
       user,
       password,
@@ -1353,17 +1510,28 @@ function parseSafeTargetUrl(
       application_name: "pintpath-logical-restore-rehearsal",
     },
     pgEnvironment: Object.freeze({
-      PGHOST: normalizedHost,
-      PGPORT: String(port),
+      PGHOST: transportEnvironment?.PGHOST ?? normalizedHost,
+      ...(transportEnvironment?.PGHOSTADDR
+        ? { PGHOSTADDR: transportEnvironment.PGHOSTADDR }
+        : {}),
+      PGPORT: transportEnvironment?.PGPORT ?? String(port),
       PGDATABASE: database,
       PGUSER: user,
       PGPASSWORD: password,
-      PGSSLMODE: sslMode,
+      PGSSLMODE: transportEnvironment?.PGSSLMODE ?? sslMode,
       PGGSSENCMODE: "disable",
       PGCONNECT_TIMEOUT: "15",
       PGAPPNAME: RESTORE_WORKER_APPLICATION_NAME,
+      ...(transportEnvironment
+        ? {
+          PGSSLROOTCERT: transportEnvironment.PGSSLROOTCERT,
+          PGSSLMINPROTOCOLVERSION: transportEnvironment.PGSSLMINPROTOCOLVERSION,
+          PGSSLSNI: transportEnvironment.PGSSLSNI,
+        }
+        : {}),
     }),
     urlSha256: sha256(value),
+    sourceUrlAuthority: Object.freeze({ hostname: normalizedHost, port }),
   };
 }
 
@@ -1516,21 +1684,60 @@ async function connectTarget(
   connection: PostgresLogicalRestoreConnection;
   parsed: ParsedConnection;
   connectionFile: TrustedConnectionFile;
+  transport: PostgresRailwayStockLocalhostCaTransport | null;
 }> {
   const connectionFile = await readTrustedConnectionFile(targetUrlFile, uid);
-  const parsed = parseSafeTargetUrl(connectionFile.value, dependencies);
+  const rootCa = await readTrustedRestoreRootCa(dependencies, uid);
+  const preliminary = parseSafeTargetUrl(connectionFile.value, dependencies, null);
+  let transport: PostgresRailwayStockLocalhostCaTransport | null = null;
+  if (rootCa) {
+    try {
+      transport = await dependencies.openTransport({
+        profile: POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+        rootCaFile: rootCa.filePath,
+        expectedRootCaDerSha256: rootCa.expectedDerSha256,
+        expectedUid: uid,
+        sourceUrlAuthority: preliminary.sourceUrlAuthority,
+      });
+      await transport.assertExact();
+    } catch {
+      await transport?.close().catch(() => undefined);
+      throw restoreError("unsafe_connection_file");
+    }
+  }
+  let parsed: ParsedConnection;
+  try {
+    parsed = parseSafeTargetUrl(
+      connectionFile.value,
+      dependencies,
+      rootCa,
+      transport,
+    );
+  } catch (error) {
+    await transport?.close().catch(() => undefined);
+    throw error;
+  }
   const retainedConnectionFile: TrustedConnectionFile = {
     filePath: connectionFile.filePath,
     snapshot: connectionFile.snapshot,
   };
-  let connection: PostgresLogicalRestoreConnection;
+  let connection: PostgresLogicalRestoreConnection | null = null;
   try {
     connection = await dependencies.connect(parsed.clientConfig);
+    await transport?.assertExact();
   } catch (error) {
+    await connection?.close().catch(() => undefined);
+    await transport?.close().catch(() => undefined);
     if (error instanceof PostgresLogicalRestoreError) throw error;
     throw restoreError("target_unreachable");
   }
-  return { connection, parsed, connectionFile: retainedConnectionFile };
+  if (!connection) throw restoreError("target_unreachable");
+  return {
+    connection,
+    parsed,
+    connectionFile: retainedConnectionFile,
+    transport,
+  };
 }
 
 export async function inspectPostgresLogicalRestoreTarget(
@@ -1539,7 +1746,11 @@ export async function inspectPostgresLogicalRestoreTarget(
 ): Promise<PostgresLogicalRestoreTargetInspection> {
   const dependencies: PostgresLogicalRestoreDependencies = { ...DEFAULT_DEPENDENCIES, ...overrides };
   const uid = exactUid(dependencies);
-  const { connection, connectionFile } = await connectTarget(options.targetUrlFile, dependencies, uid);
+  const { connection, connectionFile, transport } = await connectTarget(
+    options.targetUrlFile,
+    dependencies,
+    uid,
+  );
   let inspection: PostgresLogicalRestoreTargetInspection | null = null;
   let inspectionFailed = false;
   let inspectionFailure: unknown;
@@ -1547,6 +1758,7 @@ export async function inspectPostgresLogicalRestoreTarget(
     const targetIdentitySha256Value = await inspectTargetIdentity(connection);
     await assertPrivateSchemasAbsent(connection);
     await assertTargetConnectionFileUnchanged(connectionFile, uid);
+    await transport?.assertExact();
     inspection = {
       schemaVersion: 1,
       ok: true,
@@ -1558,9 +1770,11 @@ export async function inspectPostgresLogicalRestoreTarget(
     inspectionFailed = true;
     inspectionFailure = error;
   }
-  try {
-    await connection.close();
-  } catch {
+  let closeFailed = false;
+  await connection.close().catch(() => { closeFailed = true; });
+  await transport?.assertExact().catch(() => { closeFailed = true; });
+  await transport?.close().catch(() => { closeFailed = true; });
+  if (closeFailed) {
     throw restoreError("target_not_disposable");
   }
   if (inspectionFailed) throw inspectionFailure;
@@ -2433,6 +2647,7 @@ export async function restorePostgresLogicalBackup(
   let restoreArchiveHandle: fs.promises.FileHandle | null = backup.restoreArchiveHandle;
   let restoreAuthority: PostgresRestoreToolAuthority | null = backup.restoreAuthority;
   let connection: PostgresLogicalRestoreConnection | null = null;
+  let targetTransport: PostgresRailwayStockLocalhostCaTransport | null = null;
   let restoreStarted = false;
   try {
     const target = await connectTarget(
@@ -2441,6 +2656,7 @@ export async function restorePostgresLogicalBackup(
       uid,
     );
     connection = target.connection;
+    targetTransport = target.transport;
     const { parsed, connectionFile } = target;
     const inspectedIdentity = await inspectTargetIdentity(connection);
     if (inspectedIdentity !== expectedTargetIdentitySha256) {
@@ -2480,6 +2696,7 @@ export async function restorePostgresLogicalBackup(
     let restored: Awaited<ReturnType<PostgresRestoreToolAuthority["restore"]>> | null = null;
     let restoreFailure: PostgresLogicalRestoreError | null = null;
     try {
+      await targetTransport?.assertExact();
       restored = await restoreAuthority.restore({
         environment: restoreEnvironment,
         archiveInputFileDescriptor: restoreArchiveHandle.fd,
@@ -2495,6 +2712,7 @@ export async function restorePostgresLogicalBackup(
     if (!restoreFailure) {
       try {
         await restoreAuthority.assertExact();
+        await targetTransport?.assertExact();
       } catch {
         postRestoreAuthorityFailure = restoreError(
           "verification_failed_target_disposal_required",
@@ -2592,6 +2810,9 @@ export async function restorePostgresLogicalBackup(
       // closes. An explicit unlock would create an avoidable cooperative race
       // before session cleanup; successful close releases the lock server-side.
       await verifiedTargetConnection.close();
+      await targetTransport?.assertExact();
+      await targetTransport?.close();
+      targetTransport = null;
     } catch {
       throw restoreError("verification_failed_target_disposal_required");
     }
@@ -2653,6 +2874,19 @@ export async function restorePostgresLogicalBackup(
       connection = null;
       try {
         await targetConnectionToClose.close();
+      } catch {
+        if (!authorityCloseFailed) {
+          failure = restoreError(restoreStarted
+            ? "verification_failed_target_disposal_required"
+            : "target_not_disposable");
+        }
+      }
+    }
+    if (targetTransport) {
+      const transportToClose = targetTransport;
+      targetTransport = null;
+      try {
+        await transportToClose.close();
       } catch {
         if (!authorityCloseFailed) {
           failure = restoreError(restoreStarted

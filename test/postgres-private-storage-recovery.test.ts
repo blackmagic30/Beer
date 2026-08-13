@@ -7,6 +7,11 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+  type OpenPostgresRailwayStockLocalhostCaTransportOptions,
+  type PostgresRailwayStockLocalhostCaTransport,
+} from "../src/lib/postgres-railway-stock-localhost-ca.js";
+import {
   POSTGRES_LOGICAL_BACKUP_STATE_RECEIPT,
   canonicalPostgresBackupJson,
 } from "../src/lib/postgres-logical-backup.js";
@@ -54,6 +59,7 @@ const MIGRATION_RUN_SHA256 = "3".repeat(64);
 const CANDIDATE_COMMIT_SHA = "c".repeat(40);
 const TARGET_DATABASE_IDENTITY_SHA256 = "f1".repeat(32);
 const TARGET_CONNECTION_URL_SHA256 = "e2".repeat(32);
+const AUTHORITY_NOW = new Date("2026-08-09T06:30:00.000Z");
 
 const roots: string[] = [];
 
@@ -65,6 +71,98 @@ afterEach(() => {
 
 function sha256(value: crypto.BinaryLike): string {
   return crypto.createHash("sha256").update(value).digest("hex");
+}
+
+function fakeDatabaseTransport(
+  options: OpenPostgresRailwayStockLocalhostCaTransportOptions,
+): PostgresRailwayStockLocalhostCaTransport {
+  return {
+    profile: POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+    rootCaDerSha256: options.expectedRootCaDerSha256,
+    sourceUrlAuthority: options.sourceUrlAuthority,
+    resolvedAddress: "fd12::1",
+    temporaryDirectory: "/private/transport",
+    passwordFileDirectory: "/private/transport",
+    passwordFileHost: "localhost",
+    nodeConnection: {
+      host: "fd12::1",
+      port: 5432,
+      ssl: {
+        ca: "fixture",
+        servername: "localhost",
+        rejectUnauthorized: true,
+        minVersion: "TLSv1.2",
+        checkServerIdentity: () => undefined,
+      },
+    },
+    libpqEnvironment: {
+      PGHOST: "localhost",
+      PGHOSTADDR: "fd12::1",
+      PGPORT: "5432",
+      PGSSLMODE: "verify-full",
+      PGSSLROOTCERT: "/private/transport/railway-root-ca.pem",
+      PGSSLMINPROTOCOLVERSION: "TLSv1.2",
+      PGSSLSNI: "1",
+    },
+    assertExact: async () => undefined,
+    close: async () => undefined,
+  };
+}
+
+function restoreCliAuthorityFixture(): {
+  readonly argv: string[];
+  readonly authoritySource: string;
+  readonly publicKeyPem: string;
+} {
+  const { publicKey, privateKey } = crypto.generateKeyPairSync("ed25519");
+  const publicKeyPem = publicKey.export({ type: "spki", format: "pem" }).toString();
+  const payload = {
+    schemaVersion: "pintpath-private-storage-disposable-authority-payload/v1",
+    candidateSha: CANDIDATE_COMMIT_SHA,
+    destinationOrigin: DESTINATION_ORIGIN,
+    destinationOriginSha256: sha256(DESTINATION_ORIGIN),
+    targetConnectionUrlSha256: TARGET_CONNECTION_URL_SHA256,
+    targetDatabaseIdentitySha256: TARGET_DATABASE_IDENTITY_SHA256,
+    reviewerIdSha256: "9".repeat(64),
+    reviewerPublicKeySha256: sha256(publicKeyPem),
+    issuedAt: "2026-08-09T06:00:00.000Z",
+    expiresAt: "2026-08-10T06:00:00.000Z",
+  };
+  const authoritySource = canonicalPostgresBackupJson({
+    schemaVersion: "pintpath-private-storage-disposable-authority/v1",
+    payload,
+    signatureBase64: crypto.sign(
+      null,
+      Buffer.from(canonicalPostgresBackupJson(payload), "utf8"),
+      privateKey,
+    ).toString("base64"),
+  });
+  const values: Readonly<Record<string, string>> = {
+    "--backup-directory": "/private/backup",
+    "--backup-manifest-sha256": "a".repeat(64),
+    "--bucket-name-sha256": "a".repeat(64),
+    "--destination-origin-sha256": sha256(DESTINATION_ORIGIN),
+    "--destination-authority-file": "/private/destination-authority.json",
+    "--destination-authority-sha256": sha256(authoritySource),
+    "--destination-authority-public-key-file": "/private/destination-authority.pem",
+    "--destination-authority-public-key-sha256": sha256(publicKeyPem),
+    "--expected-candidate-sha": CANDIDATE_COMMIT_SHA,
+    "--forbidden-origin-sha256s": "b".repeat(64),
+    "--recovery-manifest-sha256": "a".repeat(64),
+    "--recovery-set-directory": "/private/recovery-set",
+    "--recovery-set-sha256": "a".repeat(64),
+    "--service-role-key-file": "/private/service-role.key",
+    "--target-connection-url-file": "/private/connection",
+    "--root-ca-file": "/private/root-ca.pem",
+    "--expected-root-ca-der-sha256": "a".repeat(64),
+    "--target-connection-url-sha256": TARGET_CONNECTION_URL_SHA256,
+    "--target-database-identity-sha256": TARGET_DATABASE_IDENTITY_SHA256,
+  };
+  return {
+    argv: Object.entries(values).flatMap(([key, value]) => [key, value]),
+    authoritySource,
+    publicKeyPem,
+  };
 }
 
 function privateRoot(): string {
@@ -954,12 +1052,19 @@ describe("Postgres private Storage recovery restore CLI", () => {
         "--backup-manifest-sha256",
         "--bucket-name-sha256",
         "--destination-origin-sha256",
+        "--destination-authority-file",
+        "--destination-authority-sha256",
+        "--destination-authority-public-key-file",
+        "--destination-authority-public-key-sha256",
+        "--expected-candidate-sha",
         "--forbidden-origin-sha256s",
         "--recovery-manifest-sha256",
         "--recovery-set-directory",
         "--recovery-set-sha256",
         "--service-role-key-file",
         "--target-connection-url-file",
+        "--root-ca-file",
+        "--expected-root-ca-der-sha256",
         "--target-connection-url-sha256",
         "--target-database-identity-sha256",
       ],
@@ -990,18 +1095,25 @@ describe("Postgres private Storage recovery restore CLI", () => {
     );
   });
 
-  it("blocks an unregistered disposable destination before reading secrets", async () => {
+  it("blocks an unsigned disposable destination before reading database or Storage secrets", async () => {
     const names = [
       "--backup-directory",
       "--backup-manifest-sha256",
       "--bucket-name-sha256",
       "--destination-origin-sha256",
+      "--destination-authority-file",
+      "--destination-authority-sha256",
+      "--destination-authority-public-key-file",
+      "--destination-authority-public-key-sha256",
+      "--expected-candidate-sha",
       "--forbidden-origin-sha256s",
       "--recovery-manifest-sha256",
       "--recovery-set-directory",
       "--recovery-set-sha256",
       "--service-role-key-file",
       "--target-connection-url-file",
+      "--root-ca-file",
+      "--expected-root-ca-der-sha256",
       "--target-connection-url-sha256",
       "--target-database-identity-sha256",
     ];
@@ -1009,10 +1121,13 @@ describe("Postgres private Storage recovery restore CLI", () => {
       name,
       name === "--forbidden-origin-sha256s"
         ? "b".repeat(64)
+        : name === "--expected-candidate-sha"
+          ? CANDIDATE_COMMIT_SHA
         : name.includes("sha256")
           ? "a".repeat(64)
           : "/private/input",
     ]);
+    argv[argv.indexOf("--target-connection-url-file") + 1] = "/private/connection";
     const readSecretFile = vi.fn(async () => "must-not-be-read");
     let output = "";
     const exitCode = await runPostgresPrivateStorageRestoreCli(argv, {
@@ -1028,7 +1143,7 @@ describe("Postgres private Storage recovery restore CLI", () => {
       },
     });
     expect(exitCode).toBe(1);
-    expect(readSecretFile).not.toHaveBeenCalled();
+    expect(readSecretFile).toHaveBeenCalledTimes(2);
     expect(JSON.parse(output)).toMatchObject({
       failureCode: "configuration_missing_or_unsafe",
       destinationDisposalRequired: false,
@@ -1037,30 +1152,9 @@ describe("Postgres private Storage recovery restore CLI", () => {
   });
 
   it("marks every post-upload library failure as requiring destination disposal", async () => {
-    const names = [
-      "--backup-directory",
-      "--backup-manifest-sha256",
-      "--bucket-name-sha256",
-      "--destination-origin-sha256",
-      "--forbidden-origin-sha256s",
-      "--recovery-manifest-sha256",
-      "--recovery-set-directory",
-      "--recovery-set-sha256",
-      "--service-role-key-file",
-      "--target-connection-url-file",
-      "--target-connection-url-sha256",
-      "--target-database-identity-sha256",
-    ];
-    const argv = names.flatMap((name) => [
-      name,
-      name === "--forbidden-origin-sha256s"
-        ? "b".repeat(64)
-        : name.includes("sha256")
-          ? "a".repeat(64)
-          : "/private/input",
-    ]);
+    const fixture = restoreCliAuthorityFixture();
     let output = "";
-    const exitCode = await runPostgresPrivateStorageRestoreCli(argv, {
+    const exitCode = await runPostgresPrivateStorageRestoreCli(fixture.argv, {
       environment: {
         [POSTGRES_PRIVATE_STORAGE_RESTORE_CONFIRMATION_ENV]:
           POSTGRES_PRIVATE_STORAGE_RESTORE_CONFIRMATION_VALUE,
@@ -1069,10 +1163,16 @@ describe("Postgres private Storage recovery restore CLI", () => {
       assertDestinationOriginApproved: (origin) => {
         expect(origin).toBe(DESTINATION_ORIGIN);
       },
+      now: () => AUTHORITY_NOW,
       readSecretFile: async (filePath) =>
-        filePath.includes("connection")
-          ? "postgresql://backup:secret@db.example.test/pintpath?sslmode=require"
+        filePath.endsWith("destination-authority.json")
+          ? fixture.authoritySource
+          : filePath.endsWith("destination-authority.pem")
+            ? fixture.publicKeyPem
+            : filePath.includes("connection")
+          ? "postgresql://backup:secret@postgres.railway.internal:5432/pintpath?sslmode=verify-full"
           : SERVICE_ROLE_KEY,
+      openDatabaseTransport: async (options) => fakeDatabaseTransport(options),
       createInspector: () => async () => {
         throw new Error("unused");
       },
@@ -1094,6 +1194,55 @@ describe("Postgres private Storage recovery restore CLI", () => {
       destinationDisposalRequired: true,
     });
     expect(output).not.toContain(SERVICE_ROLE_KEY);
+  });
+
+  it("emits authenticated transport, migrator-role, and signed destination bindings on success", async () => {
+    const fixture = restoreCliAuthorityFixture();
+    let output = "";
+    const exitCode = await runPostgresPrivateStorageRestoreCli(fixture.argv, {
+      environment: {
+        [POSTGRES_PRIVATE_STORAGE_RESTORE_CONFIRMATION_ENV]:
+          POSTGRES_PRIVATE_STORAGE_RESTORE_CONFIRMATION_VALUE,
+        RESTORE_SUPABASE_URL: DESTINATION_ORIGIN,
+      },
+      now: () => AUTHORITY_NOW,
+      readSecretFile: async (filePath) =>
+        filePath.endsWith("destination-authority.json")
+          ? fixture.authoritySource
+          : filePath.endsWith("destination-authority.pem")
+            ? fixture.publicKeyPem
+            : filePath.includes("connection")
+              ? "postgresql://backup:secret@postgres.railway.internal:5432/pintpath?sslmode=verify-full"
+              : SERVICE_ROLE_KEY,
+      openDatabaseTransport: async (options) => fakeDatabaseTransport(options),
+      createInspector: () => async () => { throw new Error("unused"); },
+      createStorage: () => new MemoryStorage(DESTINATION_ORIGIN, {}),
+      restore: async () => ({
+        schemaVersion: 1,
+        kind: "pintpath-postgres-private-storage-recovery-restore",
+        ok: true,
+        restoredAt: RESTORED_AT,
+        targetDatabaseIdentitySha256: TARGET_DATABASE_IDENTITY_SHA256,
+        recoverySetSha256: "2".repeat(64),
+        recoveryManifestSha256: "3".repeat(64),
+        restoredObjectCount: 2,
+        restoredBytes: "42",
+        destinationObjectSetSha256: "4".repeat(64),
+        deletionAuthoritySetSha256: "5".repeat(64),
+      }),
+      assertMutationAllowed: () => undefined,
+      writeOutput: (value) => { output += value; },
+    });
+    expect(exitCode).toBe(0);
+    expect(JSON.parse(output)).toMatchObject({
+      ok: true,
+      databaseTransportProfile: POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+      databaseTransportRootCaDerSha256: "a".repeat(64),
+      databaseEffectiveRole: "pintpath_migrator",
+      destinationAuthoritySha256: sha256(fixture.authoritySource),
+      destinationAuthorityPublicKeySha256: sha256(fixture.publicKeyPem),
+      destinationAuthorityReviewerIdSha256: "9".repeat(64),
+    });
   });
 });
 
@@ -1122,6 +1271,8 @@ describe("Postgres private Storage recovery capture CLI", () => {
       "--backup-manifest-sha256",
       "--bucket-name-sha256",
       "--connection-url-file",
+      "--root-ca-file",
+      "--expected-root-ca-der-sha256",
       "--connection-url-sha256",
       "--deletion-authority-directory",
       "--expected-candidate-sha",
@@ -1175,6 +1326,8 @@ describe("Postgres private Storage recovery capture CLI", () => {
       "--backup-manifest-sha256",
       "--bucket-name-sha256",
       "--connection-url-file",
+      "--root-ca-file",
+      "--expected-root-ca-der-sha256",
       "--connection-url-sha256",
       "--deletion-authority-directory",
       "--expected-candidate-sha",
@@ -1255,6 +1408,8 @@ describe("Postgres private Storage recovery capture CLI", () => {
       "--backup-manifest-sha256",
       "--bucket-name-sha256",
       "--connection-url-file",
+      "--root-ca-file",
+      "--expected-root-ca-der-sha256",
       "--connection-url-sha256",
       "--deletion-authority-directory",
       "--expected-candidate-sha",
@@ -1313,6 +1468,8 @@ describe("Postgres private Storage recovery capture CLI", () => {
       "--backup-manifest-sha256",
       "--bucket-name-sha256",
       "--connection-url-file",
+      "--root-ca-file",
+      "--expected-root-ca-der-sha256",
       "--connection-url-sha256",
       "--deletion-authority-directory",
       "--expected-candidate-sha",
@@ -1346,7 +1503,7 @@ describe("Postgres private Storage recovery capture CLI", () => {
       environment: { SUPABASE_URL: STAGING_SOURCE_ORIGIN },
       readSecretFile: async (filePath) =>
         filePath.includes("connection")
-          ? "postgresql://backup:secret@db.example.test/pintpath?sslmode=require"
+          ? "postgresql://backup:secret@postgres.railway.internal:5432/pintpath?sslmode=verify-full"
           : key,
       createStorage,
       assertMutationAllowed: () => undefined,
@@ -1368,6 +1525,8 @@ describe("Postgres private Storage recovery capture CLI", () => {
       "--backup-manifest-sha256",
       "--bucket-name-sha256",
       "--connection-url-file",
+      "--root-ca-file",
+      "--expected-root-ca-der-sha256",
       "--connection-url-sha256",
       "--deletion-authority-directory",
       "--expected-candidate-sha",
@@ -1395,6 +1554,7 @@ describe("Postgres private Storage recovery capture CLI", () => {
           ? "a".repeat(64)
           : "/private/input",
     ]);
+    argv[argv.indexOf("--connection-url-file") + 1] = "/private/connection";
     let output = "";
     let capturedOptions: CapturePostgresPrivateStorageRecoveryOptions | null =
       null;
@@ -1402,8 +1562,9 @@ describe("Postgres private Storage recovery capture CLI", () => {
       environment: { SUPABASE_URL: STAGING_SOURCE_ORIGIN },
       readSecretFile: async (filePath) =>
         filePath.includes("connection")
-          ? "postgresql://backup:secret@db.example.test/pintpath?sslmode=require"
+          ? "postgresql://backup:secret@postgres.railway.internal:5432/pintpath?sslmode=verify-full"
           : SERVICE_ROLE_KEY,
+      openDatabaseTransport: async (options) => fakeDatabaseTransport(options),
       createInspector: (input) => {
         expect(input).toMatchObject({
           expectedSourceEnvironment: "permanent-staging",
@@ -1450,6 +1611,9 @@ describe("Postgres private Storage recovery capture CLI", () => {
       ok: true,
       recoverySetSha256: "2".repeat(64),
       recoveryManifestSha256: "3".repeat(64),
+      databaseTransportProfile: POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+      databaseTransportRootCaDerSha256: "a".repeat(64),
+      databaseEffectiveRole: "pintpath_migrator",
     });
     expect(output).not.toContain(SERVICE_ROLE_KEY);
     expect(output).not.toContain("postgresql://");
@@ -1487,12 +1651,12 @@ describe("Postgres private Storage recovery path and origin normalization", () =
     expect(
       postgresPrivateStorageRecoveryInternals.connectionUrl({
         value:
-          "postgresql://backup:sec%2Fret@db.example.test/pintpath?sslmode=verify-full",
+          "postgresql://backup:sec%2Fret@postgres.railway.internal:5432/pintpath?sslmode=verify-full",
         allowInsecureLoopbackForTests: false,
         environment: {},
       }).clientConfig,
     ).toMatchObject({
-      host: "db.example.test",
+      host: "postgres.railway.internal",
       port: 5432,
       database: "pintpath",
       user: "backup",

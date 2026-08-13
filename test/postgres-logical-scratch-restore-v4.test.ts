@@ -293,7 +293,7 @@ describe("offline PostgreSQL logical scratch-restore V4 contract", () => {
     expect(POSTGRES_LOGICAL_SCRATCH_RESTORE_V4_FOREIGN_KEY_SET_SHA256)
       .toBe(POSTGRES_LOGICAL_SCRATCH_RESTORE_V4_EXPECTED_FOREIGN_KEY_SET_SHA256);
     expect(POSTGRES_LOGICAL_SCRATCH_RESTORE_V4_FOREIGN_KEY_SET_SHA256)
-      .toBe("7af11c633683daad416eb09fc0bb65f6e78613fc2d3f0099287797541cc976e3");
+      .toBe("c66f81632116e1c76dcf81d828141206b83c34268e1bd4ff7ddc9e721e372ba9");
     expect(new Set(POSTGRES_LOGICAL_SCRATCH_RESTORE_V4_FOREIGN_KEYS.map(
       (entry) => entry.constraintName,
     )).size).toBe(79);

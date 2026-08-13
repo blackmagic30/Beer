@@ -4,7 +4,13 @@ export const POSTGRES_REVIEWED_PRICE_PROMOTION_KERNEL_MIGRATION_FILE =
   "supabase/migrations/20260812022314_add_inert_reviewed_price_promotion_kernel.sql" as const;
 
 export const POSTGRES_REVIEWED_PRICE_PROMOTION_KERNEL_MIGRATION_SHA256 =
-  "b9c3c908727967227c783c65ee53a9195f7c502ec84dfd39ac1c9091958a0949" as const;
+  "329308dda329342387db8d6ab0cabab4ba87e16a174eb843aa6b54108a995bb1" as const;
+
+export const POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_MIGRATION_FILE =
+  "supabase/migrations/20260813000000_activate_reviewed_price_promotion_kernel.sql" as const;
+
+export const POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_MIGRATION_SHA256 =
+  "6be9ac904fbd6ba3b071bd8d490143d86f544686752926a31a868ec6d866ce05" as const;
 
 export const POSTGRES_REVIEWED_PRICE_PROMOTION_KERNEL_RESTORE_SOURCE_DATABASE_OID_SETTING =
   "pintpath.restore_reviewed_price_kernel_source_database_oid" as const;

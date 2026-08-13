@@ -330,7 +330,7 @@ describe.skipIf(!configuredAdminUrl || !hasPsql17)(
       await maintenance.query(`CREATE DATABASE ${testDatabase}`);
       createdTestDatabase = true;
       await maintenance.query(
-        `REVOKE CONNECT ON DATABASE ${testDatabase} FROM PUBLIC`,
+        `REVOKE CONNECT, TEMPORARY ON DATABASE ${testDatabase} FROM PUBLIC`,
       );
       databaseAdmin = new Client({
         connectionString: withConnection(adminUrl, testDatabase),
@@ -355,10 +355,12 @@ describe.skipIf(!configuredAdminUrl || !hasPsql17)(
         throw new Error("Could not create predecessor verifier.");
       await maintenance.query(
         `CREATE ROLE ${predecessorLogin} LOGIN PASSWORD '${predecessorVerifier}'
-         NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOREPLICATION NOBYPASSRLS`,
+         NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION
+         NOBYPASSRLS CONNECTION LIMIT 8`,
       );
       createdPredecessorRole = true;
-      await maintenance.query(`GRANT pintpath_runtime TO ${predecessorLogin}`);
+      await maintenance.query(`GRANT pintpath_runtime TO ${predecessorLogin}
+        WITH ADMIN FALSE, INHERIT FALSE, SET TRUE`);
       await maintenance.query(
         `GRANT CONNECT ON DATABASE ${testDatabase} TO ${predecessorLogin}`,
       );
@@ -566,7 +568,10 @@ describe.skipIf(!configuredAdminUrl || !hasPsql17)(
 
       const accepted = await runPsql17({ connectionUrl: candidateUrl });
       expect(accepted.exitCode).toBe(0);
-      const candidate = new Client({ connectionString: candidateUrl });
+      const candidate = new Client({
+        connectionString: candidateUrl,
+        options: "-c role=pintpath_runtime -c search_path=pintpath_app,pg_catalog",
+      });
       await candidate.connect();
       const readiness = await candidate.query<{
         member: boolean;
@@ -577,6 +582,8 @@ describe.skipIf(!configuredAdminUrl || !hasPsql17)(
         canCreateRole: boolean;
         canReplicate: boolean;
         bypassRls: boolean;
+        connectionLimit: number;
+        validUntilNull: boolean;
         searchPath: string[];
         operationsAccess: boolean;
         importState: string;
@@ -589,6 +596,8 @@ describe.skipIf(!configuredAdminUrl || !hasPsql17)(
         role.rolcreaterole AS "canCreateRole",
         role.rolreplication AS "canReplicate",
         role.rolbypassrls AS "bypassRls",
+        role.rolconnlimit AS "connectionLimit",
+        role.rolvaliduntil IS NULL AS "validUntilNull",
         current_schemas(false)::text[] AS "searchPath",
         has_schema_privilege(current_user, 'pintpath_ops', 'USAGE') AS "operationsAccess",
         (SELECT value FROM pintpath_app.schema_metadata WHERE key = 'import_state') AS "importState"
@@ -597,12 +606,14 @@ describe.skipIf(!configuredAdminUrl || !hasPsql17)(
       expect(readiness.rows[0]).toEqual({
         member: true,
         canLogin: true,
-        inheritsMembership: true,
+        inheritsMembership: false,
         superuser: false,
         canCreateDatabase: false,
         canCreateRole: false,
         canReplicate: false,
         bypassRls: false,
+        connectionLimit: 8,
+        validUntilNull: true,
         searchPath: ["pintpath_app", "pg_catalog"],
         operationsAccess: false,
         importState: "ready",

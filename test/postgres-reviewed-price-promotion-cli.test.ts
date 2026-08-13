@@ -738,8 +738,13 @@ function harness(): {
     sourceSnapshotSha256: "b".repeat(64),
     targetDdlSha256: "e".repeat(64),
     targetIdentitySha256: migrationTargetIdentitySha256,
+    liveSchemaSha256: "7".repeat(64),
+    transportAuthoritySha256: "a".repeat(64),
     targetUrlSha256: "f".repeat(64),
     verifierIdSha256: "1".repeat(64),
+    verifierAuthoritySha256: "2".repeat(64),
+    verifierAuthorityPolicySha256: "3".repeat(64),
+    verifierPublicKeySha256: "8".repeat(64),
   });
   const receipt = finalizePostgresMigrationReceipt({
     approvalReferenceSha256: "1".repeat(64),
@@ -766,10 +771,18 @@ function harness(): {
     tableSetSha256: "d".repeat(64),
     targetDdlSha256: "e".repeat(64),
     targetIdentitySha256: migrationTargetIdentitySha256,
+    liveSchemaSha256: "7".repeat(64),
+    transportAuthoritySha256: "a".repeat(64),
     targetUrlSha256: "f".repeat(64),
     transformedDataSha256: HASH,
     verifierIdSha256: "1".repeat(64),
-    version: 1,
+    verifierAuthoritySha256: "2".repeat(64),
+    verifierAuthorityPolicySha256: "3".repeat(64),
+    verifierPublicKeySha256: "8".repeat(64),
+    applyReceiptSha256: "9".repeat(64),
+    verificationApprovalFileSha256: "0".repeat(64),
+    verifiedAt: "2026-08-08T00:00:00.000Z",
+    version: 3,
     zeroRowTableCount: 0,
   });
   const migrationReceiptBytes = canonicalPostgresReviewedPricePromotionJson(receipt);

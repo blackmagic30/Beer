@@ -14,6 +14,7 @@ declare
   executor_is_superuser boolean;
   runtime_role_oid oid;
   migrator_role_oid oid;
+  verifier_authority_role_oid oid;
   schema_owner_oid oid;
   backup_role_name text;
   backup_role_oid oid;
@@ -190,8 +191,9 @@ begin
   from pg_catalog.pg_roles as role
   where role.rolname = current_user;
   select pg_catalog.to_regrole('pintpath_runtime')::oid,
-         pg_catalog.to_regrole('pintpath_migrator')::oid
-    into runtime_role_oid, migrator_role_oid;
+         pg_catalog.to_regrole('pintpath_migrator')::oid,
+         pg_catalog.to_regrole('pintpath_migration_verifier_authority')::oid
+    into runtime_role_oid, migrator_role_oid, verifier_authority_role_oid;
   if runtime_role_oid is null or migrator_role_oid is null then
     raise exception using errcode = '55000',
       message = 'reviewed_price_promotion_kernel_base_role_unsafe';
@@ -229,7 +231,11 @@ begin
   from pg_catalog.pg_class as relation
   join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
   where namespace.nspname = any(array['pintpath_app', 'pintpath_ops'])
-    and relation.relkind in ('r', 'p');
+    and relation.relkind in ('r', 'p')
+    and not (
+      namespace.nspname = 'pintpath_ops'
+      and relation.relname = 'migration_verifier_authority'
+    );
 
   select count(*)::integer into private_sequence_count
   from pg_catalog.pg_class as relation
@@ -245,13 +251,21 @@ begin
   from pg_catalog.pg_policy as policy
   join pg_catalog.pg_class as relation on relation.oid = policy.polrelid
   join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
-  where namespace.nspname = any(array['pintpath_app', 'pintpath_ops']);
+  where namespace.nspname = any(array['pintpath_app', 'pintpath_ops'])
+    and not (
+      namespace.nspname = 'pintpath_ops'
+      and relation.relname = 'migration_verifier_authority'
+    );
 
   select count(*)::integer into exact_base_policy_count
   from pg_catalog.pg_policy as policy
   join pg_catalog.pg_class as relation on relation.oid = policy.polrelid
   join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
   where namespace.nspname = any(array['pintpath_app', 'pintpath_ops'])
+    and not (
+      namespace.nspname = 'pintpath_ops'
+      and relation.relname = 'migration_verifier_authority'
+    )
     and policy.polpermissive
     and (
       (
@@ -1044,7 +1058,11 @@ begin
   from pg_catalog.pg_policy as policy
   join pg_catalog.pg_class as relation on relation.oid = policy.polrelid
   join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
-  where namespace.nspname = any(array['pintpath_app', 'pintpath_ops']);
+  where namespace.nspname = any(array['pintpath_app', 'pintpath_ops'])
+    and not (
+      namespace.nspname = 'pintpath_ops'
+      and relation.relname = 'migration_verifier_authority'
+    );
   select count(*)::integer into exact_backup_policy_count
   from pg_catalog.pg_policy as policy
   join pg_catalog.pg_class as relation on relation.oid = policy.polrelid
@@ -1064,7 +1082,11 @@ begin
   from pg_catalog.pg_class as relation
   join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
   where namespace.nspname = any(array['pintpath_app', 'pintpath_ops'])
-    and relation.relkind in ('r', 'p');
+    and relation.relkind in ('r', 'p')
+    and not (
+      namespace.nspname = 'pintpath_ops'
+      and relation.relname = 'migration_verifier_authority'
+    );
   if private_relation_count <> 61
      or force_rls_relation_count <> 61
      or private_policy_count <> 240
@@ -2013,6 +2035,7 @@ begin
             else 3
               + case when backup_role_oid is null then 0 else 1 end
               + case when apply_execute_oid is null then 0 else 2 end
+              + case when verifier_authority_role_oid is null then 0 else 1 end
           end
         or exists (
           select 1
@@ -2034,6 +2057,12 @@ begin
               )
               or (
                 privilege.grantee = migrator_role_oid
+                and privilege.privilege_type = 'USAGE'
+              )
+              or (
+                namespace.nspname = 'pintpath_ops'
+                and verifier_authority_role_oid is not null
+                and privilege.grantee = verifier_authority_role_oid
                 and privilege.privilege_type = 'USAGE'
               )
               or (

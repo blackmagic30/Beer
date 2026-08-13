@@ -1,0 +1,51 @@
+{
+  "schemaVersion": "pintpath-production-promotion-recovery-policy/v1",
+  "policyId": "pintpath-production-reviewed-price-promotion-recovery",
+  "activationState": "GITHUB_ENVIRONMENT_PROTECTED",
+  "githubEnvironment": "production-promotion-recovery",
+  "requiredGitRef": "refs/heads/main",
+  "requiredWorkflow": ".github/workflows/attest-production-promotion-recovery.yml",
+  "requiredCheck": "Attest protected production promotion and recovery",
+  "artifactPrefix": "pintpath-production-promotion-recovery-",
+  "candidateContract": {
+    "exactCurrentMainRequired": true,
+    "productionDeploymentRequired": true,
+    "closedProductionRouteRequired": true,
+    "sameDeploymentRequired": true
+  },
+  "promotionContract": {
+    "reviewerAuthorizationRequired": true,
+    "operation": "apply",
+    "expectedEnvironment": "production",
+    "quarantineAllowedOnSuccessfulChain": false
+  },
+  "recoveryContract": {
+    "postPromotionPitrObservationRequired": true,
+    "logicalBackupRequired": true,
+    "operationalOffsiteCopyRequired": true,
+    "independentWormReaderProofRequired": true,
+    "privateStorageCaptureRequired": true,
+    "operationalCopyRetrievalRequired": true,
+    "disposableLogicalRestoreRequired": true,
+    "disposablePrivateStorageRestoreRequired": true,
+    "nonzeroDeletionReplayRequired": true,
+    "idempotentSecondDeletionReplayRequired": true,
+    "maximumRpoSeconds": 3600,
+    "maximumRtoSeconds": 14400
+  },
+  "reviewContract": {
+    "signedApprovalsRequired": 2,
+    "distinctReviewerIdsRequired": true,
+    "distinctEd25519KeysRequired": true,
+    "approvalsAfterRecoveryRequired": true,
+    "maximumApprovalAgeSeconds": 21600
+  },
+  "evidence": {
+    "currentUidMode0600RegularSingleLinkFilesRequired": true,
+    "canonicalJsonRequired": true,
+    "exactExternalSha256PinsRequired": true,
+    "selfHashedReceiptRequired": true,
+    "secretMaterialAllowedInReceipt": false,
+    "retentionDays": 90
+  }
+}

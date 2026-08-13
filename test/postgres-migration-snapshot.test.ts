@@ -3,14 +3,16 @@ import os from "node:os";
 import path from "node:path";
 
 import BetterSqlite3 from "better-sqlite3";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { runPostgresMigrationSourceCli } from "../scripts/postgres-migration.js";
 import { createDatabase } from "../src/db/database.js";
 import { writePostgresMigrationLedgerAuthority } from "../src/db/postgres-migration-ledger.js";
 import {
+  POSTGRES_MIGRATION_SNAPSHOT_EVIDENCE_DIRECTORY,
   PostgresMigrationSourceError,
   createPostgresMigrationSnapshot,
+  verifyPostgresMigrationSnapshotEvidence,
 } from "../src/db/postgres-migration-source.js";
 import { sha256Bytes } from "../src/lib/data-backup.js";
 import type { VerifiedAccountDeletionLedger } from "../src/lib/offsite-backup.js";
@@ -167,6 +169,22 @@ describe("sealed SQLite-to-Postgres source snapshots", () => {
     expect(fs.statSync(result.databasePath).nlink).toBe(1);
     expect(fs.existsSync(`${result.databasePath}-wal`)).toBe(false);
     expect(fs.existsSync(`${result.databasePath}-shm`)).toBe(false);
+    const copiedEvidenceDirectory = path.join(
+      outputDirectory,
+      POSTGRES_MIGRATION_SNAPSHOT_EVIDENCE_DIRECTORY,
+    );
+    const sourceEvidenceFile = path.join(source.evidencePath, "submission-proof", "private-proof.bin");
+    const copiedEvidenceFile = path.join(copiedEvidenceDirectory, "submission-proof", "private-proof.bin");
+    expect(fs.statSync(copiedEvidenceDirectory).mode & 0o777).toBe(0o700);
+    expect(fs.statSync(path.dirname(copiedEvidenceFile)).mode & 0o777).toBe(0o700);
+    expect(fs.statSync(copiedEvidenceFile).mode & 0o777).toBe(0o600);
+    expect(fs.statSync(copiedEvidenceFile).nlink).toBe(1);
+    expect(fs.statSync(copiedEvidenceFile).ino).not.toBe(fs.statSync(sourceEvidenceFile).ino);
+    expect(fs.readFileSync(copiedEvidenceFile)).toEqual(fs.readFileSync(sourceEvidenceFile));
+    await expect(verifyPostgresMigrationSnapshotEvidence(
+      outputDirectory,
+      result.manifest.evidence,
+    )).resolves.toEqual(result.manifest.evidence);
     const copiedLedgerDirectory = path.join(outputDirectory, "account-deletion-ledger-authority");
     expect(fs.statSync(copiedLedgerDirectory).mode & 0o777).toBe(0o700);
     expect(fs.readdirSync(copiedLedgerDirectory).sort()).toEqual([
@@ -203,6 +221,114 @@ describe("sealed SQLite-to-Postgres source snapshots", () => {
     expect(manifestText).not.toContain("private-user-id");
     expect(manifestText).not.toContain(source.ciphertext.toString("utf8"));
     expect(manifestText).not.toContain("PRIVATE_EVIDENCE_MARKER");
+  });
+
+  it("retains ambiguous output without deleting an untracked inode after snapshot failure", async () => {
+    const root = makeTemporaryDirectory();
+    const source = await seedMigrationSource(root);
+    const parent = path.join(root, "postgres-migration-artifacts");
+    const outputDirectory = path.join(parent, "ambiguous-cleanup");
+    const injectedPath = path.join(outputDirectory, "operator-sentinel.txt");
+    fs.mkdirSync(parent, { mode: 0o700 });
+    const chmod = fs.promises.chmod.bind(fs.promises);
+    const spy = vi.spyOn(fs.promises, "chmod").mockImplementation(async (target, mode) => {
+      if (String(target) === path.join(outputDirectory, "pint-path.sqlite") && mode === 0o600) {
+        fs.writeFileSync(injectedPath, "DO_NOT_DELETE_UNOWNED_INODE", { mode: 0o600 });
+        throw new Error("forced snapshot failure after foreign inode injection");
+      }
+      return chmod(target, mode);
+    });
+    try {
+      await expect(createPostgresMigrationSnapshot({
+        sourceSqlite: source.databasePath,
+        sourceEvidence: source.evidencePath,
+        deletionLedgerAuthorityManifest: source.ledgerAuthorityManifestPath,
+        outputDirectory,
+        candidateSha: "f".repeat(40),
+        operatorId: "migration-operator-cleanup",
+        maintenanceReference: "approved-cleanup-reference",
+        maintenanceConfirmed: true,
+        capturedAt: now,
+      })).rejects.toMatchObject({
+        code: "ARTIFACT_INVALID",
+        message: expect.stringContaining("retained for operator review"),
+      });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(fs.readFileSync(injectedPath, "utf8")).toBe("DO_NOT_DELETE_UNOWNED_INODE");
+    expect(fs.existsSync(path.join(outputDirectory, "pint-path.sqlite"))).toBe(true);
+  });
+
+  it("does not follow a replacement output pathname during failure cleanup", async () => {
+    const root = makeTemporaryDirectory();
+    const source = await seedMigrationSource(root);
+    const parent = path.join(root, "postgres-migration-artifacts");
+    const outputDirectory = path.join(parent, "replaced-cleanup");
+    const movedInvocationDirectory = `${outputDirectory}.invocation-owned`;
+    const replacementSentinel = path.join(outputDirectory, "replacement-sentinel.txt");
+    fs.mkdirSync(parent, { mode: 0o700 });
+    const chmod = fs.promises.chmod.bind(fs.promises);
+    const spy = vi.spyOn(fs.promises, "chmod").mockImplementation(async (target, mode) => {
+      if (String(target) === path.join(outputDirectory, "pint-path.sqlite") && mode === 0o600) {
+        fs.renameSync(outputDirectory, movedInvocationDirectory);
+        fs.mkdirSync(outputDirectory, { mode: 0o700 });
+        fs.writeFileSync(replacementSentinel, "REPLACEMENT_MUST_SURVIVE", { mode: 0o600 });
+        throw new Error("forced snapshot failure after output pathname replacement");
+      }
+      return chmod(target, mode);
+    });
+    try {
+      await expect(createPostgresMigrationSnapshot({
+        sourceSqlite: source.databasePath,
+        sourceEvidence: source.evidencePath,
+        deletionLedgerAuthorityManifest: source.ledgerAuthorityManifestPath,
+        outputDirectory,
+        candidateSha: "1".repeat(40),
+        operatorId: "migration-operator-replacement",
+        maintenanceReference: "approved-replacement-reference",
+        maintenanceConfirmed: true,
+        capturedAt: now,
+      })).rejects.toMatchObject({
+        code: "ARTIFACT_INVALID",
+        message: expect.stringContaining("retained for operator review"),
+      });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(fs.readFileSync(replacementSentinel, "utf8")).toBe("REPLACEMENT_MUST_SURVIVE");
+    expect(fs.existsSync(path.join(movedInvocationDirectory, "pint-path.sqlite"))).toBe(true);
+  });
+
+  it("removes only its exact tracked output after an ordinary capture failure", async () => {
+    const root = makeTemporaryDirectory();
+    const source = await seedMigrationSource(root);
+    const parent = path.join(root, "postgres-migration-artifacts");
+    const outputDirectory = path.join(parent, "exact-cleanup");
+    fs.mkdirSync(parent, { mode: 0o700 });
+    const chmod = fs.promises.chmod.bind(fs.promises);
+    const spy = vi.spyOn(fs.promises, "chmod").mockImplementation(async (target, mode) => {
+      if (String(target) === path.join(outputDirectory, "pint-path.sqlite") && mode === 0o600) {
+        throw new Error("forced failure with an exact invocation-owned inventory");
+      }
+      return chmod(target, mode);
+    });
+    try {
+      await expect(createPostgresMigrationSnapshot({
+        sourceSqlite: source.databasePath,
+        sourceEvidence: source.evidencePath,
+        deletionLedgerAuthorityManifest: source.ledgerAuthorityManifestPath,
+        outputDirectory,
+        candidateSha: "2".repeat(40),
+        operatorId: "migration-operator-exact-cleanup",
+        maintenanceReference: "approved-exact-cleanup-reference",
+        maintenanceConfirmed: true,
+        capturedAt: now,
+      })).rejects.toThrow("forced failure with an exact invocation-owned inventory");
+    } finally {
+      spy.mockRestore();
+    }
+    expect(fs.existsSync(outputDirectory)).toBe(false);
   });
 
   it("fails closed without maintenance confirmation and rejects schema drift", async () => {
