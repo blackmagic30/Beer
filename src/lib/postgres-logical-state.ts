@@ -195,6 +195,10 @@ interface UnsafeRow extends QueryResultRow {
   readonly unsafe: boolean;
 }
 
+interface RelationPresenceRow extends QueryResultRow {
+  readonly present: boolean;
+}
+
 interface ControlColumnRow extends QueryResultRow {
   readonly schemaName: string;
   readonly tableName: string;
@@ -420,6 +424,12 @@ const NON_ARCHIVED_CONTROL_CONTRACT = Object.freeze<readonly ArchivedControlCont
     ],
   },
 ]);
+
+const SOURCE_CATALOG_CONTRACT = "source" as const;
+const RESTORED_CATALOG_CONTRACT = "restored-target" as const;
+type LogicalStateCatalogContract =
+  | typeof SOURCE_CATALOG_CONTRACT
+  | typeof RESTORED_CATALOG_CONTRACT;
 
 const V2_LOCKED_RELATIONS = Object.freeze([
   ...POSTGRES_MIGRATION_CONTRACT.tables.map((table) => [APPLICATION_SCHEMA, table.name] as const),
@@ -2088,8 +2098,12 @@ async function readExactOwnRowCountV2(
 async function verifyPostgresLogicalStateContractForControls(
   connection: PostgresLogicalStateConnection,
   controls: readonly ArchivedControlContract[],
+  catalogContract: LogicalStateCatalogContract,
 ): Promise<ReturnType<typeof metadataBindings>> {
-  const catalogControls = [...controls, ...NON_ARCHIVED_CONTROL_CONTRACT]
+  const nonArchivedControls = catalogContract === SOURCE_CATALOG_CONTRACT
+    ? NON_ARCHIVED_CONTROL_CONTRACT
+    : [];
+  const catalogControls = [...controls, ...nonArchivedControls]
     .sort((left, right) => compareCatalogText(
       `${left.schemaName}.${left.table.name}`,
       `${right.schemaName}.${right.table.name}`,
@@ -2102,6 +2116,7 @@ async function verifyPostgresLogicalStateContractForControls(
   let apiExposure: PostgresLogicalStateQueryResult<UnsafeRow>;
   let controlColumns: PostgresLogicalStateQueryResult<ControlColumnRow>;
   let controlPrimaryKeys: PostgresLogicalStateQueryResult<ControlPrimaryKeyRow>;
+  let verifierAuthorityPresence: PostgresLogicalStateQueryResult<RelationPresenceRow> | null = null;
   try {
     tables = await connection.query<TableNameRow>(`/* pintpath:logical-state:table-set */
       SELECT namespace.nspname AS "schemaName", relation.relname AS "tableName"
@@ -2171,6 +2186,7 @@ async function verifyPostgresLogicalStateContractForControls(
       ],
     );
     controlColumns = controls === ARCHIVED_CONTROL_CONTRACT
+        && catalogContract === SOURCE_CATALOG_CONTRACT
       ? await connection.query<ControlColumnRow>(`/* pintpath:logical-state:control-columns */
       SELECT namespace.nspname AS "schemaName", relation.relname AS "tableName",
              attribute.attname AS "columnName",
@@ -2205,6 +2221,7 @@ async function verifyPostgresLogicalStateContractForControls(
         catalogControls.map((control) => `${control.schemaName}.${control.table.name}`),
       ]);
     controlPrimaryKeys = controls === ARCHIVED_CONTROL_CONTRACT
+        && catalogContract === SOURCE_CATALOG_CONTRACT
       ? await connection.query<ControlPrimaryKeyRow>(`/* pintpath:logical-state:control-primary-keys */
       SELECT namespace.nspname AS "schemaName", relation.relname AS "tableName",
              attribute.attname AS "columnName",
@@ -2300,6 +2317,14 @@ async function verifyPostgresLogicalStateContractForControls(
           WHERE privilege.grantee = 0
         )
       ) AS unsafe`, [[APPLICATION_SCHEMA, OPERATIONS_SCHEMA]]);
+    if (catalogContract === RESTORED_CATALOG_CONTRACT) {
+      verifierAuthorityPresence = await connection.query<RelationPresenceRow>(
+        `/* pintpath:logical-state:restored-verifier-authority-absence */
+         SELECT pg_catalog.to_regclass(
+           'pintpath_ops.migration_verifier_authority'
+         ) IS NOT NULL AS present`,
+      );
+    }
   } catch {
     throw new PostgresLogicalStateError("contract_invalid");
   }
@@ -2320,7 +2345,7 @@ async function verifyPostgresLogicalStateContractForControls(
     ...controls
       .filter((control) => control.schemaName === OPERATIONS_SCHEMA)
       .map((control) => control.table.name),
-    ...NON_ARCHIVED_CONTROL_CONTRACT
+    ...nonArchivedControls
       .filter((control) => control.schemaName === OPERATIONS_SCHEMA)
       .map((control) => control.table.name),
   ].sort();
@@ -2390,7 +2415,7 @@ async function verifyPostgresLogicalStateContractForControls(
       !== String(
         POSTGRES_MIGRATION_CONTRACT.expectedCounts.tables
         + controls.length
-        + NON_ARCHIVED_CONTROL_CONTRACT.length,
+        + nonArchivedControls.length,
       )
     || JSON.stringify(actualPrimaryKeys) !== JSON.stringify(expectedPrimaryKeys)
     || JSON.stringify(authoritativeColumns.rows) !== JSON.stringify(expectedAuthoritativeColumns)
@@ -2398,6 +2423,11 @@ async function verifyPostgresLogicalStateContractForControls(
     || JSON.stringify(controlPrimaryKeys.rows) !== JSON.stringify(expectedControlPrimaryKeys)
     || apiExposure.rows.length !== 1
     || apiExposure.rows[0]?.unsafe !== false
+    || (catalogContract === RESTORED_CATALOG_CONTRACT && (
+      verifierAuthorityPresence?.rows.length !== 1
+      || verifierAuthorityPresence?.rowCount !== 1
+      || verifierAuthorityPresence?.rows[0]?.present !== false
+    ))
   ) throw new PostgresLogicalStateError("contract_invalid");
   return metadataBindings(metadata.rows);
 }
@@ -2405,15 +2435,24 @@ async function verifyPostgresLogicalStateContractForControls(
 export async function verifyPostgresLogicalStateContract(
   connection: PostgresLogicalStateConnection,
 ): Promise<ReturnType<typeof metadataBindings>> {
-  return verifyPostgresLogicalStateContractForControls(connection, ARCHIVED_CONTROL_CONTRACT);
+  return verifyPostgresLogicalStateContractForControls(
+    connection,
+    ARCHIVED_CONTROL_CONTRACT,
+    SOURCE_CATALOG_CONTRACT,
+  );
 }
 
-export async function computePostgresLogicalStateInventory(
+async function computePostgresLogicalStateInventoryForCatalog(
   connection: PostgresLogicalStateConnection,
-  options: { readonly pageRows?: number } = {},
+  options: { readonly pageRows?: number },
+  catalogContract: LogicalStateCatalogContract,
 ): Promise<PostgresLogicalStateInventory> {
   const pageRows = normalizePageSize(options.pageRows);
-  const bindings = await verifyPostgresLogicalStateContract(connection);
+  const bindings = await verifyPostgresLogicalStateContractForControls(
+    connection,
+    ARCHIVED_CONTROL_CONTRACT,
+    catalogContract,
+  );
   const contractSha256 = bindings.migrationContractSha256;
   const tableSetHash = crypto.createHash("sha256");
   const transformedDataHash = crypto.createHash("sha256");
@@ -2612,6 +2651,34 @@ export async function computePostgresLogicalStateInventory(
       ...withoutOverall,
     }),
   };
+}
+
+export async function computePostgresLogicalStateInventory(
+  connection: PostgresLogicalStateConnection,
+  options: { readonly pageRows?: number } = {},
+): Promise<PostgresLogicalStateInventory> {
+  return computePostgresLogicalStateInventoryForCatalog(
+    connection,
+    options,
+    SOURCE_CATALOG_CONTRACT,
+  );
+}
+
+/**
+ * Recomputes the portable V1 state after restoring its exact archive into a
+ * disposable target. The verifier-authority relation is deliberately absent:
+ * it is a non-archived trust root that must be freshly provisioned only after
+ * the restore has been accepted.
+ */
+export async function computePostgresLogicalRestoredStateInventory(
+  connection: PostgresLogicalStateConnection,
+  options: { readonly pageRows?: number } = {},
+): Promise<PostgresLogicalStateInventory> {
+  return computePostgresLogicalStateInventoryForCatalog(
+    connection,
+    options,
+    RESTORED_CATALOG_CONTRACT,
+  );
 }
 
 async function captureLogicalStateTablesV2(
@@ -2882,7 +2949,7 @@ export async function capturePostgresLogicalStateV2(
     throw new PostgresLogicalStateError("contract_invalid");
   }
   const bindings = await verifyPostgresLogicalStateContractForControls(
-    connection, ARCHIVED_CONTROL_CONTRACT_V2,
+    connection, ARCHIVED_CONTROL_CONTRACT_V2, SOURCE_CATALOG_CONTRACT,
   );
   const authoritative = await captureLogicalStateTablesV2(
     connection, pageRows, bindings.migrationContractSha256, sessionBinding,

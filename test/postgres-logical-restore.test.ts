@@ -563,6 +563,7 @@ function identitySha256(): string {
 function metadataRows(): { key: string; value: string }[] {
   const values: Record<string, string> = {
     import_state: "ready",
+    live_schema_sha256: "7".repeat(64),
     migration_candidate_sha: "c".repeat(40),
     migration_contract_sha256: sha256PostgresMigrationContract(POSTGRES_MIGRATION_CONTRACT),
     migration_manifest_sha256: "1".repeat(64),
@@ -586,6 +587,7 @@ interface HarnessOptions {
   leavePartialSchemasOnFailure?: boolean;
   unsafeApiAccess?: boolean;
   wrongMetadata?: boolean;
+  invalidLiveSchemaSha256?: boolean;
   wrongState?: boolean;
   toolOpenError?: unknown;
   toolVersionError?: unknown;
@@ -782,10 +784,16 @@ function createHarness(options: HarnessOptions = {}) {
       rowCount: 1,
     };
     if (text.includes("schema-metadata")) return {
-      rows: (options.wrongMetadata
-        ? metadataRows().map((row) => row.key === "import_state" ? { ...row, value: "empty" } : row)
-        : metadataRows()) as unknown as Row[],
-      rowCount: 12,
+      rows: metadataRows().map((row) => {
+        if (options.wrongMetadata && row.key === "import_state") {
+          return { ...row, value: "empty" };
+        }
+        if (options.invalidLiveSchemaSha256 && row.key === "live_schema_sha256") {
+          return { ...row, value: "not-a-sha256" };
+        }
+        return row;
+      }) as unknown as Row[],
+      rowCount: 13,
     };
     if (text.includes("authoritative-count-inventory")) return {
       rows: POSTGRES_MIGRATION_CONTRACT.tables.map((table) => ({
@@ -2797,6 +2805,14 @@ describe("Postgres logical restore rehearsal", () => {
       verificationHarness.dependencies,
     ).catch((caught: unknown) => caught);
     expectRestoreError(verificationError, "verification_failed_target_disposal_required");
+    expect(fs.existsSync(fixture.receiptFile)).toBe(false);
+
+    const liveSchemaHarness = createHarness({ invalidLiveSchemaSha256: true });
+    const liveSchemaError = await restorePostgresLogicalBackup(
+      restoreOptions(fixture),
+      liveSchemaHarness.dependencies,
+    ).catch((caught: unknown) => caught);
+    expectRestoreError(liveSchemaError, "verification_failed_target_disposal_required");
     expect(fs.existsSync(fixture.receiptFile)).toBe(false);
 
     const stateHarness = createHarness({ wrongState: true });

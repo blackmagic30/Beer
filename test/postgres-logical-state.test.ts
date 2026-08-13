@@ -9,6 +9,7 @@ import {
   canonicalPostgresLogicalStateJson,
   capturePostgresLogicalStateV2,
   computePostgresLogicalStateInventory,
+  computePostgresLogicalRestoredStateInventory,
   computePostgresLogicalStateInventoryV2,
   exactPostgresLogicalStateMatch,
   parsePostgresLogicalSourceStateReceipt,
@@ -215,6 +216,10 @@ function fakeConnection(
     readonly currentUsers?: readonly string[];
     readonly sessionUsers?: readonly string[];
     readonly nonemptyKernel?: boolean;
+    readonly verifierAuthorityPresent?: boolean;
+    readonly missingArchivedControl?: "migration_chunks" | "migration_runs";
+    readonly extraControl?: boolean;
+    readonly controlSchemaDrift?: boolean;
     readonly ownRowCountOverride?: {
       readonly schemaName: string;
       readonly tableName: string;
@@ -262,21 +267,28 @@ function fakeConnection(
           { schemaName: "pintpath_app", tableName: "schema_metadata" },
           { schemaName: "pintpath_ops", tableName: "migration_chunks" },
           { schemaName: "pintpath_ops", tableName: "migration_runs" },
-          { schemaName: "pintpath_ops", tableName: "migration_verifier_authority" },
+          ...((controlValues.verifierAuthorityPresent ?? true) ? [
+            { schemaName: "pintpath_ops", tableName: "migration_verifier_authority" },
+          ] : []),
           ...(controlValues.successor ? [
             { schemaName: "pintpath_ops", tableName: "reviewed_price_promotion_operations" },
             { schemaName: "pintpath_ops", tableName: "reviewed_price_promotion_rows" },
           ] : []),
-        ] as unknown as Row[],
-        rowCount: POSTGRES_MIGRATION_CONTRACT.expectedCounts.tables
-          + (controlValues.successor ? 6 : 4),
+          ...(controlValues.extraControl ? [
+            { schemaName: "pintpath_ops", tableName: "unexpected_control" },
+          ] : []),
+        ].filter((row) => row.tableName !== controlValues.missingArchivedControl) as unknown as Row[],
+        rowCount: null,
       };
       if (text.includes("logical-state:catalog-counts")) return {
         rows: [{
           columnCount: String(POSTGRES_MIGRATION_CONTRACT.expectedCounts.columns),
           foreignKeyCount: String(POSTGRES_MIGRATION_CONTRACT.expectedCounts.foreignKeys),
           rowSecurityTableCount: String(POSTGRES_MIGRATION_CONTRACT.expectedCounts.tables
-            + (controlValues.successor ? 6 : 4)),
+            + (controlValues.successor ? 5 : 3)
+            + ((controlValues.verifierAuthorityPresent ?? true) ? 1 : 0)
+            + (controlValues.extraControl ? 1 : 0)
+            - (controlValues.missingArchivedControl ? 1 : 0)),
         } as unknown as Row],
         rowCount: 1,
       };
@@ -289,12 +301,27 @@ function fakeConnection(
         rowCount: authoritativeColumnRows().length,
       };
       if (text.includes("logical-state:control-columns")) return {
-        rows: (controlValues.successor ? controlColumnRowsV2() : controlColumnRows()) as unknown as Row[],
-        rowCount: (controlValues.successor ? controlColumnRowsV2() : controlColumnRows()).length,
+        rows: (controlValues.successor ? controlColumnRowsV2() : controlColumnRows())
+          .filter((row) => (
+            (controlValues.verifierAuthorityPresent ?? true)
+            || row.tableName !== "migration_verifier_authority"
+          ))
+          .filter((row) => row.tableName !== controlValues.missingArchivedControl)
+          .map((row) => controlValues.controlSchemaDrift
+              && row.tableName === "migration_chunks"
+              && row.columnName === "row_count"
+            ? { ...row, dataType: "bigint" }
+            : row) as unknown as Row[],
+        rowCount: null,
       };
       if (text.includes("logical-state:control-primary-keys")) return {
-        rows: (controlValues.successor ? controlPrimaryKeyRowsV2() : controlPrimaryKeyRows()) as unknown as Row[],
-        rowCount: (controlValues.successor ? controlPrimaryKeyRowsV2() : controlPrimaryKeyRows()).length,
+        rows: (controlValues.successor ? controlPrimaryKeyRowsV2() : controlPrimaryKeyRows())
+          .filter((row) => (
+            (controlValues.verifierAuthorityPresent ?? true)
+            || row.tableName !== "migration_verifier_authority"
+          ))
+          .filter((row) => row.tableName !== controlValues.missingArchivedControl) as unknown as Row[],
+        rowCount: null,
       };
       if (text.includes("logical-state:schema-metadata")) return {
         rows: metadataRows() as unknown as Row[],
@@ -302,6 +329,12 @@ function fakeConnection(
       };
       if (text.includes("logical-state:api-isolation")) return {
         rows: [{ unsafe: false } as unknown as Row],
+        rowCount: 1,
+      };
+      if (text.includes("logical-state:restored-verifier-authority-absence")) return {
+        rows: [{
+          present: controlValues.verifierAuthorityPresent ?? true,
+        } as unknown as Row],
         rowCount: 1,
       };
       if (text.includes("logical-state:v2:source-read-boundary")) {
@@ -511,6 +544,53 @@ describe("Postgres logical state receipts", () => {
     expect(changedMetadataTimestamp.archivedControlDataSha256)
       .not.toBe(inventory.archivedControlDataSha256);
     expect(exactPostgresLogicalStateMatch(inventory, changedMetadataTimestamp)).toBe(false);
+  });
+
+  it("keeps the non-archived verifier authority mandatory on ordinary source state", async () => {
+    await expect(computePostgresLogicalStateInventory(fakeConnection(
+      "ready",
+      () => undefined,
+      { verifierAuthorityPresent: false },
+    ))).rejects.toThrow("contract_invalid");
+  });
+
+  it("recomputes an exact portable state only when the restored authority is absent", async () => {
+    const source = await computePostgresLogicalStateInventory(fakeConnection());
+    const restoredQueries: string[] = [];
+    const restored = await computePostgresLogicalRestoredStateInventory(fakeConnection(
+      "ready",
+      () => undefined,
+      {
+        verifierAuthorityPresent: false,
+        queryObserver: (text) => restoredQueries.push(text),
+      },
+    ));
+
+    expect(restored.authoritativeTableCount).toBe(56);
+    expect(restored.archivedControlTableCount).toBe(3);
+    expect(restored.archivedControlTables).toHaveLength(3);
+    expect(exactPostgresLogicalStateMatch(source, restored)).toBe(true);
+    expect(restored.overallStateSha256).toBe(source.overallStateSha256);
+    expect(restoredQueries.find((query) => (
+      query.includes("restored-verifier-authority-absence")
+    ))).toContain("pg_catalog.to_regclass");
+
+    await expect(computePostgresLogicalRestoredStateInventory(fakeConnection()))
+      .rejects.toThrow("contract_invalid");
+  });
+
+  it("rejects every other restored catalog gap, addition, and control-schema drift", async () => {
+    for (const catalogMutation of [
+      { verifierAuthorityPresent: false, missingArchivedControl: "migration_chunks" as const },
+      { verifierAuthorityPresent: false, extraControl: true },
+      { verifierAuthorityPresent: false, controlSchemaDrift: true },
+    ]) {
+      await expect(computePostgresLogicalRestoredStateInventory(fakeConnection(
+        "ready",
+        () => undefined,
+        catalogMutation,
+      ))).rejects.toThrow("contract_invalid");
+    }
   });
 
   it("uses exact native canonical encodings without unsafe bigint or numeric coercion", () => {

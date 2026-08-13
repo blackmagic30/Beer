@@ -22,7 +22,7 @@ import {
   parsePostgresLogicalBackupManifestV4,
 } from "./postgres-logical-backup-v4.js";
 import {
-  computePostgresLogicalStateInventory,
+  computePostgresLogicalRestoredStateInventory,
   exactPostgresLogicalStateMatch,
   parsePostgresLogicalSourceStateReceipt,
   type PostgresLogicalSourceStateReceipt,
@@ -351,6 +351,7 @@ interface RoleNameRow extends QueryResultRow {
 
 const EXPECTED_METADATA_KEYS = Object.freeze([
   "import_state",
+  "live_schema_sha256",
   "migration_candidate_sha",
   "migration_contract_sha256",
   "migration_manifest_sha256",
@@ -498,7 +499,7 @@ const DEFAULT_DEPENDENCIES: PostgresLogicalRestoreDependencies = {
     ),
   connect: DirectRestoreConnection.connect,
   openTransport: (options) => openPostgresRailwayStockLocalhostCaTransport(options),
-  computeState: computePostgresLogicalStateInventory,
+  computeState: computePostgresLogicalRestoredStateInventory,
   allowInsecureLoopbackForTests: false,
 };
 
@@ -1958,6 +1959,7 @@ function assertReadyMetadata(rows: readonly MetadataRow[]): string {
   ) throw restoreError("verification_failed_target_disposal_required");
   const metadata = new Map(sorted.map((row) => [row.key, row.value]));
   const hashKeys = [
+    "live_schema_sha256",
     "migration_contract_sha256",
     "migration_manifest_sha256",
     "migration_plan_sha256",
