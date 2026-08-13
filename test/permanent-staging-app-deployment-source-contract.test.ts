@@ -160,7 +160,7 @@ describe("permanent staging app deployment source contract", () => {
         "85dc659ebec2e0132092d917505d71678e92b8441b54bcefc80c6a082e3b967b",
       packageLockPath: "package-lock.json",
       packageLockSha256:
-        "0978ac482e875707a478d0d970fbadb899b8448dc21893ddb0973b5e2f700ecf",
+        "2d916b16b3072ca5b6ede6da33752bf76654dc73e8d09b5a01351af71e33c22b",
       futureUploadPathMode: "explicit-snapshot-path",
       futurePathAsRootFlag: "--path-as-root",
       futureNoGitignoreFlag: "--no-gitignore",

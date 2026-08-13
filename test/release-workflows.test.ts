@@ -2562,7 +2562,7 @@ describe("release workflow contracts", () => {
       "@aws-sdk/client-s3",
       "@aws-sdk/client-sts",
       "@aws-sdk/credential-providers",
-    ]) expect(packageJson.dependencies?.[dependency], dependency).toBe("3.1098.0");
+    ]) expect(packageJson.dependencies?.[dependency], dependency).toBe("3.1106.0");
 
     expect(stepStart).toBeGreaterThan(-1);
     expect(gatedStep).toContain('PINTPATH_TEST_POSTGRES_LOGICAL_WORM_AWS: "disabled"');
