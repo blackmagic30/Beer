@@ -1581,7 +1581,7 @@ function expectedSourceReadBoundaryDescriptor(
     },
   ];
   const functionSource = (owner: string) => (
-    `BEGIN IF CURRENT_USER <> '${owner}' THEN RAISE EXCEPTION USING ERRCODE = '42501', MESSAGE = 'reviewed_price_promotion_kernel_owner_unsafe'; END IF; RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'reviewed_price_promotion_kernel_disabled'; END`
+    `BEGIN IF CURRENT_USER <> '${owner}' THEN RAISE EXCEPTION USING ERRCODE = '42501', MESSAGE = 'reviewed_price_promotion_kernel_owner_unsafe'; END IF; PERFORM request; RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'reviewed_price_promotion_kernel_disabled'; END`
   );
   const functions: SourceReadBoundaryKernelFunctionDescriptor[] = [
     ["apply_reviewed_price_promotion", SCOPED_ROLE_LABELS.applyOwner,
@@ -1755,8 +1755,8 @@ function normalizeSourceReadBoundaryValue(
   const sourceMap = new Map<string, string>();
   for (const [rawOwner, label] of roleMap) {
     if (!rawOwner.includes("_owner_d")) continue;
-    const rawSource = `BEGIN IF CURRENT_USER <> '${rawOwner}' THEN RAISE EXCEPTION USING ERRCODE = '42501', MESSAGE = 'reviewed_price_promotion_kernel_owner_unsafe'; END IF; RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'reviewed_price_promotion_kernel_disabled'; END`;
-    const normalizedSource = `BEGIN IF CURRENT_USER <> '${label}' THEN RAISE EXCEPTION USING ERRCODE = '42501', MESSAGE = 'reviewed_price_promotion_kernel_owner_unsafe'; END IF; RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'reviewed_price_promotion_kernel_disabled'; END`;
+    const rawSource = `BEGIN IF CURRENT_USER <> '${rawOwner}' THEN RAISE EXCEPTION USING ERRCODE = '42501', MESSAGE = 'reviewed_price_promotion_kernel_owner_unsafe'; END IF; PERFORM request; RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'reviewed_price_promotion_kernel_disabled'; END`;
+    const normalizedSource = `BEGIN IF CURRENT_USER <> '${label}' THEN RAISE EXCEPTION USING ERRCODE = '42501', MESSAGE = 'reviewed_price_promotion_kernel_owner_unsafe'; END IF; PERFORM request; RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'reviewed_price_promotion_kernel_disabled'; END`;
     sourceMap.set(rawSource, normalizedSource);
   }
   const labels = new Set(Object.values(SCOPED_ROLE_LABELS));

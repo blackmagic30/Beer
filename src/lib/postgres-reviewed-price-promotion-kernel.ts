@@ -4,7 +4,7 @@ export const POSTGRES_REVIEWED_PRICE_PROMOTION_KERNEL_MIGRATION_FILE =
   "supabase/migrations/20260812022314_add_inert_reviewed_price_promotion_kernel.sql" as const;
 
 export const POSTGRES_REVIEWED_PRICE_PROMOTION_KERNEL_MIGRATION_SHA256 =
-  "e9f045a77d5643bb0d31f2cb2bc10f55dc812d279d621dc33b6e405317fb5ce0" as const;
+  "b9c3c908727967227c783c65ee53a9195f7c502ec84dfd39ac1c9091958a0949" as const;
 
 export const POSTGRES_REVIEWED_PRICE_PROMOTION_KERNEL_RESTORE_SOURCE_DATABASE_OID_SETTING =
   "pintpath.restore_reviewed_price_kernel_source_database_oid" as const;

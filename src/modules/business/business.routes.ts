@@ -371,7 +371,7 @@ export function createBusinessRouter(businessService: BusinessService): Router {
   // authLimiter is the first route-specific handler and uses the shared,
   // production-fail-closed Redis rate-limit authority.
   // codeql[js/missing-rate-limiting]
-  router.post("/auth/logout-all", authLimiter, async (req, res, next) => {
+  router.post("/auth/logout-all", authLimiter, async (req, res, next) => { // lgtm[js/missing-rate-limiting]
     try {
       const account = await requireAccount(req, businessService);
       await businessService.requireRecentAuthentication(account, getAuthorization(req), getReauthenticationProof(req));
@@ -387,7 +387,7 @@ export function createBusinessRouter(businessService: BusinessService): Router {
   // authLimiter is the first route-specific handler and uses the shared,
   // production-fail-closed Redis rate-limit authority.
   // codeql[js/missing-rate-limiting]
-  router.get("/account/sessions", authLimiter, async (req, res) => {
+  router.get("/account/sessions", authLimiter, async (req, res) => { // lgtm[js/missing-rate-limiting]
     const account = await requireAccount(req, businessService);
     await businessService.requireRecentAuthentication(account, getAuthorization(req), getReauthenticationProof(req));
     const query = parseWithSchema(adminPaginationSchema, req.query, "Invalid session pagination");
@@ -397,7 +397,7 @@ export function createBusinessRouter(businessService: BusinessService): Router {
   // writeLimiter is the first route-specific handler and uses the shared,
   // production-fail-closed Redis rate-limit authority.
   // codeql[js/missing-rate-limiting]
-  router.delete("/account/sessions/:sessionId", writeLimiter, async (req, res) => {
+  router.delete("/account/sessions/:sessionId", writeLimiter, async (req, res) => { // lgtm[js/missing-rate-limiting]
     const account = await requireAccount(req, businessService);
     await businessService.requireRecentAuthentication(account, getAuthorization(req), getReauthenticationProof(req));
     res.json(success(await businessService.revokeAccountSession(
@@ -479,7 +479,7 @@ export function createBusinessRouter(businessService: BusinessService): Router {
   // accountExportLimiter is the first route-specific handler and uses the shared,
   // production-fail-closed Redis rate-limit authority.
   // codeql[js/missing-rate-limiting]
-  router.get("/account/export", accountExportLimiter, async (req, res) => {
+  router.get("/account/export", accountExportLimiter, async (req, res) => { // lgtm[js/missing-rate-limiting]
     const account = await requireAccount(req, businessService);
     await businessService.requireRecentAuthentication(account, getAuthorization(req), getReauthenticationProof(req));
     const encoded = JSON.stringify(success(await businessService.exportAccountData(account)));
@@ -492,7 +492,7 @@ export function createBusinessRouter(businessService: BusinessService): Router {
   // writeLimiter is the first route-specific handler and uses the shared,
   // production-fail-closed Redis rate-limit authority.
   // codeql[js/missing-rate-limiting]
-  router.post("/account/delete-request", writeLimiter, async (req, res) => {
+  router.post("/account/delete-request", writeLimiter, async (req, res) => { // lgtm[js/missing-rate-limiting]
     const account = await requireAccount(req, businessService);
     await businessService.requireRecentAuthentication(account, getAuthorization(req), getReauthenticationProof(req));
     const body = parseWithSchema(accountDeletionRequestSchema, req.body, "Invalid deletion request payload");
@@ -510,7 +510,7 @@ export function createBusinessRouter(businessService: BusinessService): Router {
   // writeLimiter is the first route-specific handler and uses the shared,
   // production-fail-closed Redis rate-limit authority.
   // codeql[js/missing-rate-limiting]
-  router.delete("/account/delete-request/:id", writeLimiter, async (req, res) => {
+  router.delete("/account/delete-request/:id", writeLimiter, async (req, res) => { // lgtm[js/missing-rate-limiting]
     const account = await requireAccount(req, businessService);
     await businessService.requireRecentAuthentication(account, getAuthorization(req), getReauthenticationProof(req));
     res.json(success(await businessService.cancelAccountDeletion(account, String(req.params.id ?? ""))));
@@ -739,7 +739,7 @@ export function createBusinessRouter(businessService: BusinessService): Router {
   // writeLimiter is the first route-specific handler and uses the shared,
   // production-fail-closed Redis rate-limit authority.
   // codeql[js/missing-rate-limiting]
-  router.post("/submissions/:id/verifications", writeLimiter, async (req, res) => {
+  router.post("/submissions/:id/verifications", writeLimiter, async (req, res) => { // lgtm[js/missing-rate-limiting]
     const account = await requireAccount(req, businessService);
     const body = parseWithSchema(verificationSchema, req.body, "Invalid verification payload");
     const submissionId = String(req.params.id ?? "");

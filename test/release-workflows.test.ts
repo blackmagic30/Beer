@@ -1693,7 +1693,16 @@ describe("release workflow contracts", () => {
       '[[ ! -e "$state_file" && ! -L "$state_file" ]]',
     );
     expect(helper).toContain("mv -f \"$sibling\" \"$hba\"");
-    expect(helper).toContain("cp -p \"$hba_path\" \"$CONTAINER_HBA_BACKUP\"");
+    expect(helper).toContain('failure_stage="baseline-copy"');
+    expect(helper).toContain('failure_stage="baseline-verify"');
+    expect(helper).toContain('failure_stage="hba-parse"');
+    expect(helper).toContain(
+      '"postgres_tool_authority_v4_hba_fixture_failed" "$failure_stage"',
+    );
+    expect(helper).toContain('cp "$source" "$destination"');
+    expect(helper).toContain('chown "$uid:$gid" "$destination"');
+    expect(helper).toContain('chmod "$mode" "$destination"');
+    expect(helper).not.toContain('cp -p "$hba_path" "$CONTAINER_HBA_BACKUP"');
     expect(helper).toContain(
       "for command_name in cat chmod chown cmp cp grep mv readlink sed sha256sum stat tail",
     );

@@ -357,7 +357,7 @@ describe.skipIf(!configuredAdminUrl)(
         );
         expect(functions.rows.every((row) =>
           row.body.includes("reviewed_price_promotion_kernel_disabled")
-          && !row.body.includes("request"),
+          && row.body.includes("PERFORM request"),
         )).toBe(true);
         expect(functions.rows.map((row) => row.acl).join("\n"))
           .not.toMatch(/(?:\{|,)=X\//);

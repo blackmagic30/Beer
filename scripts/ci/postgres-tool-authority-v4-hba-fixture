@@ -11,9 +11,13 @@ readonly ROLE_PATTERN='^pintpath_v4_backup_[a-f0-9]{12}$'
 readonly IPV4_PATTERN='^([0-9]{1,3}\.){3}[0-9]{1,3}$'
 setup_cleanup_armed="false"
 setup_container_id=""
+failure_stage="bootstrap"
 
 fail() {
-  printf '%s\n' "postgres_tool_authority_v4_hba_fixture_failed" >&2
+  # Emit only a fixed, non-secret stage identifier. Do not print paths,
+  # addresses, container IDs, hashes, database names, roles, or command output.
+  printf '%s:%s\n' \
+    "postgres_tool_authority_v4_hba_fixture_failed" "$failure_stage" >&2
   exit 1
 }
 
@@ -255,13 +259,16 @@ setup_fixture() {
   local container_id=${PINTPATH_CI_POSTGRES_CONTAINER_ID:-}
   local database=${PINTPATH_POSTGRES_TOOL_AUTHORITY_V4_TEST_DATABASE:-}
   local role=${PINTPATH_POSTGRES_TOOL_AUTHORITY_V4_TEST_ROLE:-}
+  failure_stage="host-tools"
   host_tool_paths
+  failure_stage="container-contract"
   validate_container "$container_id" || fail
   validate_database_name "$database" || fail
   validate_role_name "$role" || fail
   [[ ! -e "$state_file" && ! -L "$state_file" ]] || fail
   [[ ! -e "$state_file.next" && ! -L "$state_file.next" ]] || fail
 
+  failure_stage="hba-path"
   local hba_path
   hba_path=$(container_hba_path "$container_id") || fail
   [[ "$hba_path" == /* && "$hba_path" != *$'\n'* ]] || fail
@@ -269,6 +276,7 @@ setup_fixture() {
   [[ "$(docker_exec_root "$container_id" readlink -f "$hba_path")" == "$hba_path" ]] || fail
   docker_exec_root "$container_id" test -f "$hba_path" || fail
   docker_exec_root "$container_id" test ! -L "$hba_path" || fail
+  failure_stage="hba-baseline"
   local baseline_stat
   baseline_stat=$(container_file_stat "$container_id" "$hba_path") || fail
   local baseline_uid baseline_gid baseline_mode baseline_links baseline_size
@@ -282,6 +290,7 @@ setup_fixture() {
   [[ "$baseline_sha256" =~ ^[a-f0-9]{64}$ ]] || fail
   docker_exec_root "$container_id" test ! -e "$CONTAINER_HBA_BACKUP" || fail
   docker_exec_root "$container_id" test ! -L "$CONTAINER_HBA_BACKUP" || fail
+  failure_stage="container-tools"
   docker_exec_root "$container_id" sh -ceu '
     for command_name in cat chmod chown cmp cp grep mv readlink sed sha256sum stat tail; do
       command -v "$command_name" >/dev/null
@@ -290,6 +299,7 @@ setup_fixture() {
 
   # The service observes the host-side connection address. Obtain it directly
   # through the already authenticated service and never trust a network CIDR.
+  failure_stage="client-address"
   local client_ipv4
   client_ipv4=$(PGPASSWORD=postgres "$host_psql" -X -q -A -t \
     --host=127.0.0.1 --port=5432 --dbname=postgres --username=postgres \
@@ -300,16 +310,35 @@ setup_fixture() {
   setup_container_id=$container_id
   setup_cleanup_armed="true"
   trap cleanup_incomplete_setup EXIT
+  failure_stage="state-write"
   write_state "$container_id" "$hba_path" "$baseline_sha256" "$baseline_uid" \
     "$baseline_gid" "$baseline_mode" "$database" "$role" "$client_ipv4" || fail
-  # postgres:alpine exposes BusyBox cp. Use its portable preservation flag and
-  # independently prove every protected attribute and the exact bytes.
-  docker_exec_root "$container_id" cp -p "$hba_path" "$CONTAINER_HBA_BACKUP" || fail
+  failure_stage="baseline-copy"
+  # postgres:alpine exposes BusyBox cp. Its -p behavior is not a stable
+  # cross-version contract, so copy bytes and set the already observed numeric
+  # owner/group/mode explicitly. The checks below remain the authority.
+  docker_exec_root "$container_id" sh -ceu '
+    source=$1
+    destination=$2
+    uid=$3
+    gid=$4
+    mode=$5
+    [ -f "$source" ]
+    [ ! -L "$source" ]
+    [ ! -e "$destination" ]
+    [ ! -L "$destination" ]
+    cp "$source" "$destination"
+    chown "$uid:$gid" "$destination"
+    chmod "$mode" "$destination"
+  ' sh "$hba_path" "$CONTAINER_HBA_BACKUP" "$baseline_uid" "$baseline_gid" \
+    "$baseline_mode" || fail
+  failure_stage="baseline-verify"
   [[ "$(container_file_stat "$container_id" "$CONTAINER_HBA_BACKUP")" == "$baseline_stat" ]] || fail
   [[ "$(container_file_sha256 "$container_id" "$CONTAINER_HBA_BACKUP")" == "$baseline_sha256" ]] || fail
   load_state || fail
   baseline_matches_state "$container_id" || fail
   current_matches_baseline "$container_id" || fail
+  failure_stage="hba-parse"
   validate_hba_rules "$container_id" || fail
   setup_cleanup_armed="false"
   trap - EXIT
@@ -317,6 +346,7 @@ setup_fixture() {
 }
 
 activate_fixture() {
+  failure_stage="activate"
   load_state || fail
   local container_id=${PINTPATH_CI_POSTGRES_CONTAINER_ID:-}
   [[ "$container_id" == "$state_container_id" ]] || fail
@@ -375,6 +405,7 @@ activate_fixture() {
 }
 
 restore_fixture() {
+  failure_stage="restore"
   load_state || fail
   local container_id=${PINTPATH_CI_POSTGRES_CONTAINER_ID:-}
   [[ "$container_id" == "$state_container_id" ]] || fail
@@ -414,6 +445,7 @@ restore_fixture() {
 }
 
 cleanup_fixture() {
+  failure_stage="cleanup"
   if [[ ! -e "$state_file" && ! -L "$state_file" ]]; then
     return 0
   fi

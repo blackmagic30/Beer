@@ -51,7 +51,7 @@ describe("passive physical-schema V4 contract", () => {
     expect(Object.values(POSTGRES_LOGICAL_PHYSICAL_SCHEMA_V4_EXPECTED_CATEGORY_SHA256)
       .every((value) => /^[a-f0-9]{64}$/.test(value))).toBe(true);
     expect(POSTGRES_LOGICAL_PHYSICAL_SCHEMA_V4_PORTABLE_SCHEMA_SHA256)
-      .toBe("5378abca2da87badd455aa799728ddfb922d9689689a551c4279ca3bfd5246f2");
+      .toBe("c4661ad44e3d21f670e3bdf490638476d433923022991dc9ce3c357f58fd693e");
     expect(POSTGRES_LOGICAL_PHYSICAL_SCHEMA_V4_ROLE_SYMBOLS).toEqual({
       databaseOwner: "$database_owner",
       logicalBackup: "$pintpath_logical_backup_current_database",

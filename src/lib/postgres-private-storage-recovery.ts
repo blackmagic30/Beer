@@ -571,7 +571,7 @@ async function trustedPrivateFile(input: {
     // The O_NOFOLLOW descriptor is bound to the pre-open lstat by full file
     // identity and is revalidated after hashing the descriptor contents.
     // codeql[js/file-system-race]
-    handle = await fs.promises.open(
+    handle = await fs.promises.open( // lgtm[js/file-system-race]
       filePath,
       fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
     );

@@ -1602,7 +1602,7 @@ export function createApp() {
   app.get("/ready", (req, res, next) => {
     res.setHeader("Cache-Control", "no-store");
     readinessProbeLimiter(req, res, next);
-  }, async (_req, res, next) => {
+  }, async (_req, res, next) => { // lgtm[js/missing-rate-limiting]
     try {
       if (env.RESTORE_REHEARSAL_MODE && env.RESTORE_REHEARSAL_PHASE === "bootstrap") {
         const fs = await import("node:fs/promises");

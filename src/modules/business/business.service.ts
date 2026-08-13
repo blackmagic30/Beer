@@ -15819,7 +15819,7 @@ export class BusinessService {
     // Missing user-controlled inputs only select a fail-closed audit/error
     // path; every accepted event is still verified with the server-held secret.
     // codeql[js/user-controlled-bypass]
-    if (!rawBody || !signature) {
+    if (!rawBody || !signature) { // lgtm[js/user-controlled-bypass]
       await this.auditSecurity({
         action: "stripe_webhook_signature_failed",
         targetType: "stripe_webhook",

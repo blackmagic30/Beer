@@ -247,7 +247,7 @@ describe("offline PostgreSQL logical scratch-restore V4 contract", () => {
       postgresMajor: 17,
       tableDataSetSha256: "505d42cd7ffbe6809aea3e3ed02b33968bf625bde882cdbc0f1a3c69cc94f6d8",
       portableReadBoundarySha256:
-        "a0710c86bde835f493d189f2195ebfc07252bc8cf6ffa87d930a8201328f7abd",
+        "21ae87b71a458416f62d08749d8fc3368e9ff1621cd7f40550611291502a91ac",
     });
   });
 
@@ -293,7 +293,7 @@ describe("offline PostgreSQL logical scratch-restore V4 contract", () => {
     expect(POSTGRES_LOGICAL_SCRATCH_RESTORE_V4_FOREIGN_KEY_SET_SHA256)
       .toBe(POSTGRES_LOGICAL_SCRATCH_RESTORE_V4_EXPECTED_FOREIGN_KEY_SET_SHA256);
     expect(POSTGRES_LOGICAL_SCRATCH_RESTORE_V4_FOREIGN_KEY_SET_SHA256)
-      .toBe("20f1b960b5cbd667add7602363ceed6b89177a771d24418fc6ed60b768608349");
+      .toBe("7af11c633683daad416eb09fc0bb65f6e78613fc2d3f0099287797541cc976e3");
     expect(new Set(POSTGRES_LOGICAL_SCRATCH_RESTORE_V4_FOREIGN_KEYS.map(
       (entry) => entry.constraintName,
     )).size).toBe(79);

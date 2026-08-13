@@ -1,7 +1,7 @@
 -- Add an inert, fail-closed database foundation for a future independently
 -- authorized reviewed-price promotion kernel. This migration deliberately
 -- grants no caller membership and both SECURITY DEFINER functions always fail
--- before inspecting their request or touching a relation.
+-- before interpreting their request or touching a relation.
 
 begin;
 
@@ -206,11 +206,11 @@ begin
   apply_execute_name := 'pintpath_reviewed_price_apply_execute_d' || current_database_oid_text;
   quarantine_execute_name := 'pintpath_reviewed_price_quarantine_execute_d' || current_database_oid_text;
   apply_body := pg_catalog.format(
-    'BEGIN IF CURRENT_USER <> %L THEN RAISE EXCEPTION USING ERRCODE = ''42501'', MESSAGE = ''reviewed_price_promotion_kernel_owner_unsafe''; END IF; RAISE EXCEPTION USING ERRCODE = ''55000'', MESSAGE = ''reviewed_price_promotion_kernel_disabled''; END',
+    'BEGIN IF CURRENT_USER <> %L THEN RAISE EXCEPTION USING ERRCODE = ''42501'', MESSAGE = ''reviewed_price_promotion_kernel_owner_unsafe''; END IF; PERFORM request; RAISE EXCEPTION USING ERRCODE = ''55000'', MESSAGE = ''reviewed_price_promotion_kernel_disabled''; END',
     apply_owner_name
   );
   quarantine_body := pg_catalog.format(
-    'BEGIN IF CURRENT_USER <> %L THEN RAISE EXCEPTION USING ERRCODE = ''42501'', MESSAGE = ''reviewed_price_promotion_kernel_owner_unsafe''; END IF; RAISE EXCEPTION USING ERRCODE = ''55000'', MESSAGE = ''reviewed_price_promotion_kernel_disabled''; END',
+    'BEGIN IF CURRENT_USER <> %L THEN RAISE EXCEPTION USING ERRCODE = ''42501'', MESSAGE = ''reviewed_price_promotion_kernel_owner_unsafe''; END IF; PERFORM request; RAISE EXCEPTION USING ERRCODE = ''55000'', MESSAGE = ''reviewed_price_promotion_kernel_disabled''; END',
     quarantine_owner_name
   );
   restore_source_database_oid_text := nullif(

@@ -386,7 +386,7 @@ function sha256(value: string | Buffer): string {
   // credential flowing here is generated from 256 bits of randomness, while
   // PostgreSQL authentication relies on its separately generated SCRAM verifier.
   // codeql[js/insufficient-password-hash]
-  return crypto.createHash("sha256").update(value).digest("hex");
+  return crypto.createHash("sha256").update(value).digest("hex"); // lgtm[js/insufficient-password-hash]
 }
 
 function canonicalSha256(value: unknown): string {
@@ -511,7 +511,7 @@ async function openStablePrivateFile(
     // The O_NOFOLLOW descriptor is bound to the pre-open lstat by full file
     // identity; both the descriptor and pathname are revalidated after read.
     // codeql[js/file-system-race]
-    handle = await fs.promises.open(
+    handle = await fs.promises.open( // lgtm[js/file-system-race]
       filePath,
       fs.constants.O_RDONLY
         | (fs.constants.O_NOFOLLOW ?? 0)
@@ -1206,7 +1206,7 @@ async function openTrustedPrivateDirectory(
     // The O_NOFOLLOW directory descriptor is bound to the lstat identity and
     // remains held for every child operation using this authority.
     // codeql[js/file-system-race]
-    handle = await fs.promises.open(
+    handle = await fs.promises.open( // lgtm[js/file-system-race]
       directory,
       fs.constants.O_RDONLY
         | (fs.constants.O_DIRECTORY ?? 0)

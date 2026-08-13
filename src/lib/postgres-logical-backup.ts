@@ -831,7 +831,7 @@ async function readTrustedConnectionFile(
     // The O_NOFOLLOW descriptor is bound to the pre-open lstat by full file
     // identity; both the descriptor and pathname are revalidated after read.
     // codeql[js/file-system-race]
-    handle = await fs.promises.open(
+    handle = await fs.promises.open( // lgtm[js/file-system-race]
       filePath,
       fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
     );
@@ -1575,7 +1575,7 @@ async function createEphemeralPgpass(
       // This digest is a short-lived file-integrity binding for a private
       // ephemeral pgpass record, never a password authenticator or verifier.
       // codeql[js/insufficient-password-hash]
-      sha256: crypto.createHash("sha256").update(record).digest("hex"),
+      sha256: crypto.createHash("sha256").update(record).digest("hex"), // lgtm[js/insufficient-password-hash]
     };
     record.fill(0);
     record = null;

@@ -451,7 +451,7 @@ async function readStablePrivateFile(
   // The O_NOFOLLOW descriptor is bound to the pre-open lstat by full file
   // identity and is revalidated after the descriptor-only read.
   // codeql[js/file-system-race]
-  const handle = await fs.promises.open(filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+  const handle = await fs.promises.open(filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0)); // lgtm[js/file-system-race]
   try {
     const before = await handle.stat({ bigint: true });
     if (!sameBigIntFileIdentity(pathStat, before)) {

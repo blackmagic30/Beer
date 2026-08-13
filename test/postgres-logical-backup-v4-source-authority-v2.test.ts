@@ -631,7 +631,7 @@ describe("PostgreSQL logical-backup V4 passive source-authority V2", () => {
     expect(POSTGRES_LOGICAL_BACKUP_V4_SOURCE_AUTHORITY_V2_POLICY_SHA256)
       .toBe(POSTGRES_LOGICAL_BACKUP_V4_SOURCE_AUTHORITY_V2_EXPECTED_POLICY_SHA256);
     expect(POSTGRES_LOGICAL_BACKUP_V4_SOURCE_AUTHORITY_V2_EXPECTED_POLICY_SHA256)
-      .toBe("a1cc7679f3ae2765e0449242467c93039e88d435acb691d66e3a25d74329b282");
+      .toBe("295dd15e12df663da4d1e02d05d43f1b6854b1cb0af5f632bffac52f85cd54cd");
     expect(hash(canonicalPostgresLogicalBackupV4SourceAuthorityPolicyV2Json()))
       .toBe(POSTGRES_LOGICAL_BACKUP_V4_SOURCE_AUTHORITY_V2_POLICY_SHA256);
     expect(crypto.createHash("sha256").update(canonicalJson({
@@ -645,7 +645,7 @@ describe("PostgreSQL logical-backup V4 passive source-authority V2", () => {
         requiredEmptyKernelRelations: 2,
         totalSourceRelations: 61,
         portableReadBoundarySha256:
-          "a0710c86bde835f493d189f2195ebfc07252bc8cf6ffa87d930a8201328f7abd",
+          "21ae87b71a458416f62d08749d8fc3368e9ff1621cd7f40550611291502a91ac",
         exactArchivedRelationSelectAclCountForBackupGroup: 59,
         exactRequiredEmptyKernelRelationSelectAclCountForBackupGroup: 2,
         exactTotalRelationSelectAclCountForBackupGroup: 61,
@@ -677,7 +677,7 @@ describe("PostgreSQL logical-backup V4 passive source-authority V2", () => {
       claimedDatabaseIdentitySha256: hash("database-identity"),
       claimedSourceUrlSha256: hash("source-url"),
       portableReadBoundarySha256:
-        "a0710c86bde835f493d189f2195ebfc07252bc8cf6ffa87d930a8201328f7abd",
+        "21ae87b71a458416f62d08749d8fc3368e9ff1621cd7f40550611291502a91ac",
     });
     expect(receipt.authorityProjection.backupGroup).toMatchObject({
       roleName: "pintpath_logical_backup_d12345",
