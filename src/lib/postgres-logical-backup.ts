@@ -393,6 +393,9 @@ interface EffectiveRoleRow extends QueryResultRow {
   readonly executablePrivateFunctionCount: number;
   readonly privatePolicyCount: number;
   readonly exactBasePolicyCount: number;
+  readonly verifierAuthorityRelationCount: number;
+  readonly verifierAuthorityPolicyCount: number;
+  readonly exactVerifierAuthorityPolicyCount: number;
   readonly publicPrivatePolicyCount: number;
   readonly exactLogicalBackupSelectPolicyCount: number;
   readonly unsafePublicPrivatePolicyCount: number;
@@ -2232,14 +2235,22 @@ async function beginExportedSourceSnapshot(
               FROM pg_catalog.pg_class AS relation
               JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
               WHERE namespace.nspname = ANY(ARRAY['pintpath_app', 'pintpath_ops'])
-                AND relation.relkind IN ('r', 'p')) AS "privateRelationCount",
+                AND relation.relkind IN ('r', 'p')
+                AND NOT (
+                  namespace.nspname = 'pintpath_ops'
+                  AND relation.relname = 'migration_verifier_authority'
+                )) AS "privateRelationCount",
              (SELECT count(*)::integer
               FROM pg_catalog.pg_class AS relation
               JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
               WHERE namespace.nspname = ANY(ARRAY['pintpath_app', 'pintpath_ops'])
                 AND relation.relkind IN ('r', 'p')
                 AND relation.relrowsecurity
-                AND relation.relforcerowsecurity) AS "forceRlsRelationCount",
+                AND relation.relforcerowsecurity
+                AND NOT (
+                  namespace.nspname = 'pintpath_ops'
+                  AND relation.relname = 'migration_verifier_authority'
+                )) AS "forceRlsRelationCount",
              (SELECT count(*)::integer
               FROM pg_catalog.pg_class AS relation
               CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(
@@ -2323,7 +2334,11 @@ async function beginExportedSourceSnapshot(
               FROM pg_catalog.pg_policy AS policy
               JOIN pg_catalog.pg_class AS relation ON relation.oid = policy.polrelid
               JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
-              WHERE namespace.nspname = ANY(ARRAY['pintpath_app', 'pintpath_ops']))
+              WHERE namespace.nspname = ANY(ARRAY['pintpath_app', 'pintpath_ops'])
+                AND NOT (
+                  namespace.nspname = 'pintpath_ops'
+                  AND relation.relname = 'migration_verifier_authority'
+                ))
                AS "privatePolicyCount",
              (SELECT count(*)::integer
               FROM pg_catalog.pg_policy AS policy
@@ -2334,6 +2349,10 @@ async function beginExportedSourceSnapshot(
               WHERE runtime_role.rolname = 'pintpath_runtime'
                 AND migrator_role.rolname = 'pintpath_migrator'
                 AND namespace.nspname = ANY(ARRAY['pintpath_app', 'pintpath_ops'])
+                AND NOT (
+                  namespace.nspname = 'pintpath_ops'
+                  AND relation.relname = 'migration_verifier_authority'
+                )
                 AND policy.polpermissive
                 AND (
                   (
@@ -2443,6 +2462,72 @@ async function beginExportedSourceSnapshot(
                   )
                 )) AS "exactBasePolicyCount",
              (SELECT count(*)::integer
+              FROM pg_catalog.pg_class AS relation
+              JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+              WHERE namespace.nspname = 'pintpath_ops'
+                AND relation.relname = 'migration_verifier_authority'
+                AND relation.relkind = 'r'
+                AND relation.relrowsecurity
+                AND relation.relforcerowsecurity) AS "verifierAuthorityRelationCount",
+             (SELECT count(*)::integer
+              FROM pg_catalog.pg_policy AS policy
+              JOIN pg_catalog.pg_class AS relation ON relation.oid = policy.polrelid
+              JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+              WHERE namespace.nspname = 'pintpath_ops'
+                AND relation.relname = 'migration_verifier_authority')
+               AS "verifierAuthorityPolicyCount",
+             (SELECT count(*)::integer
+              FROM pg_catalog.pg_policy AS policy
+              JOIN pg_catalog.pg_class AS relation ON relation.oid = policy.polrelid
+              JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+              CROSS JOIN pg_catalog.pg_roles AS migrator_role
+              CROSS JOIN pg_catalog.pg_roles AS verifier_authority_role
+              WHERE migrator_role.rolname = 'pintpath_migrator'
+                AND verifier_authority_role.rolname = 'pintpath_migration_verifier_authority'
+                AND namespace.nspname = 'pintpath_ops'
+                AND relation.relname = 'migration_verifier_authority'
+                AND policy.polpermissive
+                AND (
+                  (
+                    policy.polname = 'migration_verifier_authority_migrator_select'::name
+                    AND policy.polroles = ARRAY[migrator_role.oid]::oid[]
+                    AND policy.polcmd = 'r'
+                    AND pg_catalog.pg_get_expr(
+                      policy.polqual, policy.polrelid, false
+                    ) = 'true'
+                    AND policy.polwithcheck IS NULL
+                  )
+                  OR (
+                    policy.polname = 'migration_verifier_authority_provisioner_select'::name
+                    AND policy.polroles = ARRAY[verifier_authority_role.oid]::oid[]
+                    AND policy.polcmd = 'r'
+                    AND pg_catalog.pg_get_expr(
+                      policy.polqual, policy.polrelid, false
+                    ) = 'true'
+                    AND policy.polwithcheck IS NULL
+                  )
+                  OR (
+                    policy.polname = 'migration_verifier_authority_provisioner_insert'::name
+                    AND policy.polroles = ARRAY[verifier_authority_role.oid]::oid[]
+                    AND policy.polcmd = 'a'
+                    AND policy.polqual IS NULL
+                    AND pg_catalog.pg_get_expr(
+                      policy.polwithcheck, policy.polrelid, false
+                    ) = 'true'
+                  )
+                  OR (
+                    policy.polname = 'migration_verifier_authority_provisioner_update'::name
+                    AND policy.polroles = ARRAY[verifier_authority_role.oid]::oid[]
+                    AND policy.polcmd = 'w'
+                    AND pg_catalog.pg_get_expr(
+                      policy.polqual, policy.polrelid, false
+                    ) = 'true'
+                    AND pg_catalog.pg_get_expr(
+                      policy.polwithcheck, policy.polrelid, false
+                    ) = 'true'
+                  )
+                )) AS "exactVerifierAuthorityPolicyCount",
+             (SELECT count(*)::integer
               FROM pg_catalog.pg_policy AS policy
               JOIN pg_catalog.pg_class AS relation ON relation.oid = policy.polrelid
               JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
@@ -2533,6 +2618,9 @@ async function beginExportedSourceSnapshot(
       || roleRow.executablePrivateFunctionCount !== 0
       || roleRow.privatePolicyCount !== 236
       || roleRow.exactBasePolicyCount !== 177
+      || roleRow.verifierAuthorityRelationCount !== 1
+      || roleRow.verifierAuthorityPolicyCount !== 4
+      || roleRow.exactVerifierAuthorityPolicyCount !== 4
       || roleRow.publicPrivatePolicyCount !== roleRow.privateRelationCount
       || roleRow.exactLogicalBackupSelectPolicyCount !== roleRow.privateRelationCount
       || roleRow.unsafePublicPrivatePolicyCount !== 0

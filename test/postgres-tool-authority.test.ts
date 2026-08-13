@@ -469,6 +469,7 @@ describe("postgres tool authority", () => {
         "--no-password",
         "--schema=pintpath_app",
         "--schema=pintpath_ops",
+        "--exclude-table=pintpath_ops.migration_verifier_authority",
       ],
       stdoutFileDescriptor: 41,
     });

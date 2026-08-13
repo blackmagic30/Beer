@@ -688,6 +688,7 @@ function createToolAuthorityHarness(options: ToolAuthorityHarnessOptions = {}) {
         "--no-password",
         "--schema=pintpath_app",
         "--schema=pintpath_ops",
+        "--exclude-table=pintpath_ops.migration_verifier_authority",
       ],
       env: input.environment,
       timeoutMs: 60 * 60 * 1_000,
@@ -987,6 +988,9 @@ function dependencies(
           executablePrivateFunctionCount: 0,
           privatePolicyCount: 236,
           exactBasePolicyCount: 177,
+          verifierAuthorityRelationCount: 1,
+          verifierAuthorityPolicyCount: 4,
+          exactVerifierAuthorityPolicyCount: 4,
           publicPrivatePolicyCount: 59,
           exactLogicalBackupSelectPolicyCount: 59,
           unsafePublicPrivatePolicyCount: 0,
@@ -2756,6 +2760,7 @@ describe("Postgres logical backup foundation", () => {
       "--no-password",
       "--schema=pintpath_app",
       "--schema=pintpath_ops",
+      "--exclude-table=pintpath_ops.migration_verifier_authority",
     ]);
     expect(dump.stdinFileDescriptor).toBeUndefined();
     expect(dump.stdoutFileDescriptor).toBe(
@@ -3931,6 +3936,9 @@ describe("Postgres logical backup foundation", () => {
     ["a direct column grant", { directColumnPrivilegeCount: 1 }],
     ["an extra arbitrary named-role policy", { privatePolicyCount: 237 }],
     ["a malformed canonical base policy", { exactBasePolicyCount: 176 }],
+    ["a missing verifier-authority relation", { verifierAuthorityRelationCount: 0 }],
+    ["an extra verifier-authority policy", { verifierAuthorityPolicyCount: 5 }],
+    ["a malformed verifier-authority policy", { exactVerifierAuthorityPolicyCount: 3 }],
     ["a missing RLS policy", { publicPrivatePolicyCount: 58 }],
     ["a malformed backup RLS policy", { exactLogicalBackupSelectPolicyCount: 58 }],
     ["an unsafe PUBLIC policy", { unsafePublicPrivatePolicyCount: 1 }],
