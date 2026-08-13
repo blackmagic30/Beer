@@ -433,7 +433,8 @@ describeIntegration("PostgreSQL 17 V4 authentication and raw-list behavior obser
       const expectedHbaAddress = mode === "service"
         ? run(executable(PSQL), [
           ...hbaAdminPrefix, "-X", "-q", "-A", "-t", "--no-password",
-          "--set=ON_ERROR_STOP=1", "--command=SELECT pg_catalog.inet_client_addr()::text",
+          "--set=ON_ERROR_STOP=1",
+          "--command=SELECT pg_catalog.host(pg_catalog.inet_client_addr())",
         ]).trim()
         : "127.0.0.1";
       expect(net.isIPv4(expectedHbaAddress)).toBe(true);

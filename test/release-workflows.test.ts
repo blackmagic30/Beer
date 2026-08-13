@@ -1740,6 +1740,12 @@ describe("release workflow contracts", () => {
     expect(integration).toContain("run(HBA_FIXTURE, [\"activate\"]");
     expect(integration).toContain("run(HBA_FIXTURE, [\"restore\"]");
     expect(integration).toContain(
+      'SELECT pg_catalog.host(pg_catalog.inet_client_addr())',
+    );
+    expect(integration).not.toContain(
+      'SELECT pg_catalog.inet_client_addr()::text',
+    );
+    expect(integration).toContain(
       "runReviewedDump(afterRestorePath, environment, toolEvidence)",
     );
     expect(integration).toContain("purpose: \"list-v4\"");
