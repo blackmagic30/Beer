@@ -43,10 +43,11 @@ reviewed combined recurring envelope is approximately US$46.80/month. This is
 not a staging-only cost or authority boundary.
 
 This runbook is the controlling data-architecture contract for the full public
-web and Australian iOS launch. Pint Path must not freeze a release candidate,
-promote reviewed data, or announce the combined launch until every exit
-criterion below has passed in permanent integrated staging and the resulting
-implementation is part of the frozen commit.
+web and Australian iOS launch. Before candidate freeze, every implementation
+and pre-merge validation item below must be part of the reviewed commit. After
+that candidate is merged, the exact current protected-`main` commit must pass
+every live permanent-staging exit criterion before reviewed data is promoted or
+the combined launch is announced.
 
 Railway writes below use only the exact protected workflows documented in
 `protected-provider-mutation-operations.md`; live IDs, credentials, approvals,
@@ -56,8 +57,9 @@ may bridge a failed preflight.
 
 ## Non-negotiable outcome
 
-Before candidate freeze, migrate every authoritative application record from
-the current Railway-volume SQLite database to one shared transactional
+Before candidate freeze, implement and review the path that migrates every
+authoritative application record from the current Railway-volume SQLite
+database to one shared transactional
 Postgres database. This includes account-deletion requests and outbox records,
 recipient secrets, Resend webhook correlation, idempotency keys, job leases,
 venue and price data, moderation state, contribution/evidence references, and
@@ -837,18 +839,24 @@ Each purpose-bound authority retains its exact reviewed binary descriptor and
 revalidates its hash, metadata, canonical pathname, and PostgreSQL-17 evidence
 around its permitted operation. The production factories pre-bind the exact
 process runner and do not publish a generic runner or test filesystem seam.
-That is still not activation authority. Node launches by pathname, leaving a
+That is still not activation authority for an operator-host or ordinary
+`npm`/`tsx` invocation. Node launches by pathname, leaving a
 same-UID execution ABA between preflight and `spawn`; a binary hash does not
 bind the dynamic loader or full shared-library dependency tree; the worker must
 run in a pristine realm with locked Promise primordials; and the archive needs
 an independently retained external digest guard across recovery. The
 process-group proof also cannot observe a substituted child that calls
-`setsid`. Until an immutable digest-pinned runtime or reviewed descriptor-native
-launcher binds all of those surfaces and the exact pre-bound runner, this
-review-only implementation must not authorize a live backup or restore
-ceremony. An escaped substituted tool could retain its credential environment
-or a read-only archive descriptor even though it cannot retain the parent's
-writable archive descriptor.
+`setsid`. The separately reviewed protected production logical-backup workflow
+documented in
+[`production-logical-backup-operations.md`](./production-logical-backup-operations.md)
+closes those activation gaps for only its schema-v3 OCI backup and scheduled
+monthly logical-restore jobs: it starts the worker directly in the pinned
+digest runtime with frozen intrinsics, protected environment approval, exact
+transport policy, and authenticated evidence. Outside that workflow, this
+implementation remains review-only and must not authorize a live backup or
+restore ceremony. An escaped substituted tool could retain its credential
+environment or a read-only archive descriptor even though it cannot retain the
+parent's writable archive descriptor.
 The canonical state receipt and manifest are likewise checked against their
 in-memory canonical bytes, retained by validated descriptors, and revalidated
 after database and transport cleanup before success is emitted.
@@ -910,18 +918,24 @@ guard. Authority, archive descriptor, advisory lock, and target-connection
 closure are authorization gates, not best-effort cleanup; any uncertainty after
 mutation requires disposal and prevents a receipt.
 
-These restore and deletion-replay paths remain review-only. Node still launches by pathname and does
-not bind the dynamic loader or complete shared-library closure, and a substituted
-child can escape process-group observation with `setsid`. More importantly, the
-entire restore and replay CLI/workers—not just the tool-authority module—must
-start in pristine frozen-intrinsics realms before imports or secret reads. Their
-ordinary async carriers include plaintext target URL material, parsed
-`PGPASSWORD`, connection capabilities, tombstone identifiers, and query rows;
-inherited `then` poisoning can observe them. The current `npm`/`tsx` commands
-are not activation launchers. Use neither these implementations nor these example commands for a new
-live ceremony until an immutable digest-pinned runtime or reviewed
-descriptor-native launcher, complete dependency closure, and whole-worker
-then-safety have passed independent review.
+These example restore and deletion-replay commands remain review-only when
+invoked from an operator host or through ordinary `npm`/`tsx`. Node then still
+launches by pathname and does not bind the dynamic loader or complete
+shared-library closure, and a substituted child can escape process-group
+observation with `setsid`. More importantly, the entire restore and replay
+CLI/workers—not just the tool-authority module—must start in pristine
+frozen-intrinsics realms before imports or secret reads. Their ordinary async
+carriers include plaintext target URL material, parsed `PGPASSWORD`, connection
+capabilities, tombstone identifiers, and query rows; inherited `then` poisoning
+can observe them. The protected production logical-backup workflow is the sole
+activation launcher for its exact schema-v3 backup and monthly logical restore.
+The protected promotion/recovery workflow documented in
+[`production-promotion-recovery.md`](./production-promotion-recovery.md) may
+authorize only the exact authenticated restore/replay operations and receipt
+bindings implemented in that workflow; its receipt never authorizes copying
+these commands to an operator host. No other live ceremony is authorized until an equally protected,
+digest-pinned runtime, complete dependency closure, and whole-worker then-safety
+have passed independent review.
 
 The disposable target must also be isolated, with no concurrent credential
 holder. Restore checks run before mutation, after `pg_restore`, and after final
@@ -1011,8 +1025,9 @@ be measured and approved.
 
 ## Exit criteria
 
-Candidate freeze is allowed only when all of the following are signed by the
-operator and an independent verifier:
+Production cutover is allowed only after the candidate is merged to protected
+`main` and all of the following are signed for that exact current-main SHA by
+the operator and an independent verifier:
 
 - every authoritative table and workflow is implemented on Postgres;
 - deterministic import and reconciliation pass with no unexplained mismatch;

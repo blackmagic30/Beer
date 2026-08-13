@@ -45,9 +45,11 @@ mutation-boundary preflight plus unconditional postflight. Signed evidence or
 two-person sign-off alone is not mutation authority.
 
 The availability decision is closed for this release. Before candidate freeze,
-migrate all authoritative application state—including current SQLite data,
-account-deletion outbox, webhook correlation, and job leases—to one shared
-transactional Postgres datastore. Production must run at least two application
+implement and review the path that migrates all authoritative application
+state—including current SQLite data, account-deletion outbox, webhook
+correlation, and job leases—to one shared transactional Postgres datastore.
+After the protected merge, execute and prove that migration in permanent
+staging before production cutover. Production must run at least two application
 replicas against that datastore and prove transaction, idempotency, concurrency,
 restart, deploy, and rollback correctness. SQLite may remain only as a
 checksummed, read-only migration source; it must not be authoritative or receive
@@ -89,12 +91,12 @@ This is the controlling sequence. Complete it from top to bottom. A later phase 
 Record these values in the private release register:
 
 - `releaseId`: the immutable business release identifier.
-- `candidateSha`: the 40-character PR-head commit containing all application, migration, workflow, iOS, test, and runbook implementation. It freezes only after integrated staging passes.
+- `candidateSha`: the 40-character PR-head commit containing all application, migration, workflow, iOS, test, and runbook implementation. It freezes only after the pre-merge checks and permanent-staging/rollback execution plan pass review.
 - `deploymentSha`: the protected `main` commit first deployed with commercial enrolment disabled.
 - `deployedMainSha`: the exact protected `main` commit serving production at final enablement. It may differ from `candidateSha` only by merge metadata and the evidence-only closeout change allowed by the release-evidence validator.
-- `rollbackBuildSha`: a separately recorded, deployable build proven against the candidate Postgres schema and post-migration Supabase schema without resuming SQLite writes.
+- `rollbackBuildSha`: a separately recorded, deployable build that Phase 16.5 must prove against the candidate Postgres schema and post-migration Supabase schema without resuming SQLite writes.
 
-`candidateSha` and `rollbackBuildSha` never change for a release. If any application, schema, workflow, iOS, threshold, or test file changes after `candidateSha` is recorded, discard that candidate identity and return to integrated staging. Updating only `docs/release-evidence.json` with genuine post-deployment evidence is the sole closeout exception.
+`candidateSha` and `rollbackBuildSha` never change for a release. If any application, schema, workflow, iOS, threshold, or test file changes after `candidateSha` is recorded, discard that candidate identity and return to pre-merge validation. Updating only `docs/release-evidence.json` with genuine post-deployment evidence is the sole closeout exception.
 
 ## Current verdict
 
@@ -439,7 +441,7 @@ Record the operator, UTC start/end, production commit, page counts, reconciled t
 
 ## Phase 3 — implement every launch requirement before candidate freeze
 
-All implementation and staging work occurs before `candidateSha` exists. This includes code, migration, CI, tests, policies, copy, native compile-time scope, operational scripts, and this runbook.
+All implementation and pre-merge validation occurs before `candidateSha` exists. This includes code, migration, CI, tests, policies, copy, native compile-time scope, operational scripts, and this runbook. Protected permanent-staging application deployment occurs only after the candidate is merged and the resulting exact current `main` SHA is recorded as `deploymentSha`.
 
 The candidate must contain and test:
 
@@ -459,7 +461,7 @@ The candidate must contain and test:
 - an approved manual daily deletion operation satisfying Phase 10;
 - a scope-aware release-evidence validator and workflows satisfying Phase 14;
 - protected GitHub-environment production smoke workflows satisfying Phase 17;
-- a Postgres-compatible rollback build and rehearsal satisfying Phase 12.
+- a Postgres-compatible rollback build and post-merge rehearsal plan satisfying Phase 12.
 
 Any missing item is a blocker. Do not freeze a candidate and promise to add it later.
 
@@ -490,10 +492,10 @@ runtime contracts. Reviewed-price publication now has a no-write planner plus
 separately signed reviewer-authorize, transactional apply, reviewer-authorize
 quarantine, and transactional quarantine commands backed by database-OID-scoped
 roles and durable ledgers. These repository-only results do not close the candidate-bound
-live permanent-staging import/reconciliation, application deployment,
+post-merge permanent-staging import/reconciliation, application deployment,
 two-replica, immutable cross-failure-domain retrieval, PITR, complete recovery,
 promotion, rollback, provider-evidence, or production-cutover gates. No
-candidate may freeze while any of those gates remains open.
+candidate may proceed to production while any of those gates remains open.
 
 ## Phase 4 — inspect production Supabase without changing it
 
@@ -782,9 +784,10 @@ functions. CI runs
 `test/postgres-reviewed-price-promotion-e2e.integration.test.ts` against
 PostgreSQL 17 and must prove a signed authorization, apply, idempotent replay,
 receipt-bound quarantine, missing/invalid authorization denial, and rollback
-after a later row fails. Prove the same protected commands in permanent
-integrated staging before candidate freeze. Do not substitute direct SQL or
-the legacy SQLite commands from an old runbook.
+after a later row fails. Include the exact permanent-staging execution plan
+before candidate freeze, then prove the same protected commands against the
+post-merge `deploymentSha` in Phase 16.5. Do not substitute direct SQL or the
+legacy SQLite commands from an old runbook.
 
 The reviewed Postgres promotion workflow must:
 
@@ -1189,9 +1192,14 @@ Archive inspection must prove the excluded native surfaces are absent from the s
 
 Do not begin external TestFlight or App Review until the commercial-disabled backend is deployed and proven in Phase 16.
 
-## Phase 12 — run permanent integrated staging and prove the rollback build
+## Phase 12 — prepare permanent integrated staging and the rollback build
 
-Deploy all implementation to permanent integrated staging and execute, in order:
+Before candidate freeze, review and sign the exact post-merge execution plan for
+permanent integrated staging. Do not dispatch the application-deployment
+workflow here: it accepts only the exact commit currently at protected `main`,
+so an unmerged PR-head `candidateSha` is intentionally ineligible. Phase 16.1
+must merge the reviewed candidate without tree changes; Phase 16.5 then deploys
+`deploymentSha` and executes this plan in order:
 
 1. the reviewed SQLite-to-Postgres import dry run and source manifest;
 2. the Postgres schema migration, import, and deterministic reconciliation;
@@ -1214,7 +1222,7 @@ Deploy all implementation to permanent integrated staging and execute, in order:
 13. web happy-hour-absence and native compile-scope tests;
 14. physical iOS/TestFlight internal tests.
 
-Build `rollbackBuildSha` before production:
+Build and record `rollbackBuildSha` before candidate freeze:
 
 - it must be a committed, immutable, deployable artifact;
 - it must open and operate on the candidate Postgres schema;
@@ -1222,12 +1230,10 @@ Build `rollbackBuildSha` before production:
   and evidence state and must not create duplicate external effects;
 - it must tolerate the post-migration Supabase schema;
 - it must keep all commercial and alcohol flags closed;
-- it must pass health, readiness, public reads, auth, Free-scope writes, and
-  worker overlap against the permanent-staging Postgres copy;
 - its artifact digest and deployment instructions must be recorded;
 - deploying it must not require a database downgrade or resume SQLite writes.
 
-Rehearse:
+The Phase 16.5 post-merge staging gate must then rehearse:
 
 1. deploy the staged candidate;
 2. exercise representative reads and writes;
@@ -1237,10 +1243,18 @@ Rehearse:
 6. restore the WORM-backed Postgres/Storage backup only in newly created
    ephemeral destructive restore staging and replay deletion tombstones.
 
-If the rollback build cannot run safely on the candidate Postgres schema, stop.
-An old SQLite production SHA is not a substitute.
+That rehearsal must prove the rollback build passes health, readiness, public
+reads, auth, Free-scope writes, and worker overlap against the
+permanent-staging Postgres copy.
 
-Any code, migration, workflow, native, threshold, or runbook change resulting from this phase returns to step 1 of this phase.
+If the rollback build cannot run safely on the deployed candidate tree and
+Postgres schema, stop before production deployment. An old SQLite production
+SHA is not a substitute.
+
+Any code, migration, workflow, native, threshold, or runbook change resulting
+from preparing or executing this plan invalidates the candidate and returns to
+Phase 3. Live permanent-staging proof is a post-merge, pre-production gate; it
+is not evidence that can truthfully exist before the protected merge.
 
 ## Phase 13 — create and prove the one frozen candidate
 
@@ -1356,7 +1370,7 @@ advanced the remote branch; only then replace the first command with
 `git push --force-with-lease origin "$PINTPATH_RELEASE_BRANCH"`. Never use a plain
 force push.
 
-Required launch checks:
+Required pre-merge PR checks:
 
 - `postgres-tool-runtime-closure-observation`;
 - `postgres-migration-integration`;
@@ -1366,15 +1380,20 @@ Required launch checks:
 - `CodeQL JavaScript and TypeScript`;
 - `CodeQL Swift`;
 - `ios`;
-- before production deployment: `Deploy permanent staging` and
-  `Scale 1→2, prove, and converge 2→1`, with both exact-candidate artifacts, plus
-  `iOS protected production configuration archive`;
-- after production deployment: `Deploy protected production`, then
-  `Converge exact production deployment to two replicas`, with both
-  exact-candidate artifacts;
 - no unresolved review thread;
 - branch current with `main`;
 - independent approval from someone other than the author.
+
+These later required launch gates cannot be PR checks because their protected
+workflows accept only the exact current `main` SHA:
+
+- after the protected merge and before production deployment: `Deploy
+  permanent staging` and `Scale 1→2, prove, and converge 2→1`, with both
+  exact-`deploymentSha` artifacts, plus `iOS protected production configuration
+  archive`;
+- after production deployment: `Deploy protected production`, then `Converge
+  exact production deployment to two replicas`, with both exact-`deploymentSha`
+  artifacts.
 
 The release-candidate verifier resolves each required check with
 `filter=all&check_name=...`, then binds it to the workflow path, event, check
@@ -1390,7 +1409,7 @@ Android is not a required-check, release-evidence, or full-launch gate for this
 web+iOS release. It remains an informational repository-health job, but neither
 `android_release` nor an Android store build belongs in the launch evidence.
 
-After checks and approval:
+After the pre-merge PR checks and approval:
 
 ```bash
 candidateSha="$(git rev-parse HEAD)"
@@ -1398,7 +1417,7 @@ candidateSha="$(git rev-parse HEAD)"
 printf '%s\n' "$candidateSha"
 ```
 
-Record `candidateSha`, `releaseId`, the threshold/scope hash, staging evidence hashes, and `rollbackBuildSha`. From this point, any implementation change invalidates `candidateSha`.
+Record `candidateSha`, `releaseId`, the threshold/scope hash, pre-merge gate hashes, and `rollbackBuildSha`. From this point, any implementation change invalidates `candidateSha`.
 
 With a clean checkout at exactly `candidateSha`, repeat the Xcode Release archive, **Validate App**, privacy-report generation, archive inspection, App Store Connect upload, and internal TestFlight physical-device tests from Phase 11. Record the final archive hash, processed build number, and candidate source SHA. This is the only archive that may proceed to external TestFlight and App Review.
 
@@ -1696,7 +1715,11 @@ in Phase 16.6 have passed independent retrieval and restore proof.
 First dispatch the protected
 [`Deploy Pint Path permanent staging`](../.github/workflows/deploy-permanent-staging.yml)
 workflow from `main` with `candidate_sha=deploymentSha`. After its exact-SHA
-check and artifact pass, run the protected staging scale proof. Then dispatch the protected
+check and artifact pass, execute the complete Phase 12 staging and rollback
+plan against that deployed tree, redeploy `deploymentSha`, and run the protected
+staging scale proof. All provider/Auth/Storage, data, two-replica, restart,
+rolling-deploy, iOS, and rollback evidence must bind `deploymentSha`; any
+implementation change requires a new candidate and protected merge. Only then dispatch the protected
 [`Deploy Pint Path protected production`](../.github/workflows/deploy-production.yml)
 workflow with the same value. For this initial launch, first prove the current
 production bootstrap topology is exactly one healthy replica; the upload

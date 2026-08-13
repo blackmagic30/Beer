@@ -159,21 +159,27 @@ const operationalOffsiteSupabaseOrigin = "https://hfbmhdxrwtihukmixxta.supabase.
 function assertPublicSupabaseKeySafe(input: {
   parsedValue: string | undefined;
   rawValue: string | undefined;
+  allowLegacyAnon: boolean;
 }): void {
   if (input.parsedValue === undefined) return;
   if (
     input.rawValue === input.parsedValue
     && (
       isExactSupabaseNewKey(input.parsedValue, "publishable")
-      || hasExactLegacySupabaseRoleJwt(input.parsedValue, "anon")
+      || (
+        input.allowLegacyAnon
+        && hasExactLegacySupabaseRoleJwt(input.parsedValue, "anon")
+      )
     )
   ) return;
   throw new Error(
-    "SUPABASE_ANON_KEY must be an exact sb_publishable_ key or a structurally valid legacy JWT with role=anon; refusing to expose a secret, malformed, or non-anon value through public config.",
+    input.allowLegacyAnon
+      ? "SUPABASE_ANON_KEY must be an exact sb_publishable_ key or a structurally valid legacy JWT with role=anon in local development; refusing to expose a secret, malformed, or non-anon value through public config."
+      : "SUPABASE_ANON_KEY must be an exact sb_publishable_ key in production; refusing to expose a legacy, secret, or malformed value through public config.",
   );
 }
 
-function assertCompatibleSupabaseServiceKey(input: {
+function assertExactSupabaseServiceKey(input: {
   name: "SUPABASE_SERVICE_ROLE_KEY" | "OFFSITE_BACKUP_SERVICE_ROLE_KEY";
   parsedValue: string | undefined;
   rawValue: string | undefined;
@@ -181,13 +187,10 @@ function assertCompatibleSupabaseServiceKey(input: {
   if (
     input.parsedValue !== undefined
     && input.rawValue === input.parsedValue
-    && (
-      isExactSupabaseNewKey(input.parsedValue, "secret")
-      || hasExactLegacySupabaseRoleJwt(input.parsedValue, "service_role")
-    )
+    && isExactSupabaseNewKey(input.parsedValue, "secret")
   ) return;
   throw new Error(
-    `${input.name} must be an exact sb_secret_ key or a structurally valid legacy JWT with role=service_role; no key value is emitted.`,
+    `${input.name} must be an exact sb_secret_ key in production; no key value is emitted.`,
   );
 }
 
@@ -837,10 +840,13 @@ if (
   );
 }
 
-assertPublicSupabaseKeySafe({
-  parsedValue: parsedEnv.data.SUPABASE_ANON_KEY,
-  rawValue: process.env.SUPABASE_ANON_KEY,
-});
+if (!permanentStagingApplicationRuntime) {
+  assertPublicSupabaseKeySafe({
+    parsedValue: parsedEnv.data.SUPABASE_ANON_KEY,
+    rawValue: process.env.SUPABASE_ANON_KEY,
+    allowLegacyAnon: parsedEnv.data.NODE_ENV !== "production",
+  });
+}
 
 if (parsedEnv.data.ACCOUNT_DELETION_REHEARSAL_ENABLED) {
   if (
@@ -1579,12 +1585,12 @@ if (canonicalProductionRuntime) {
       "OFFSITE_BACKUP_SUPABASE_URL must point to an origin different from SUPABASE_URL, and OFFSITE_BACKUP_SERVICE_ROLE_KEY must belong to that operational copy. This does not replace separately verified WORM disaster recovery.",
     );
   }
-  assertCompatibleSupabaseServiceKey({
+  assertExactSupabaseServiceKey({
     name: "SUPABASE_SERVICE_ROLE_KEY",
     parsedValue: parsedEnv.data.SUPABASE_SERVICE_ROLE_KEY,
     rawValue: process.env.SUPABASE_SERVICE_ROLE_KEY,
   });
-  assertCompatibleSupabaseServiceKey({
+  assertExactSupabaseServiceKey({
     name: "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
     parsedValue: parsedEnv.data.OFFSITE_BACKUP_SERVICE_ROLE_KEY,
     rawValue: process.env.OFFSITE_BACKUP_SERVICE_ROLE_KEY,
@@ -1730,7 +1736,7 @@ if (parsedEnv.data.RESTORE_REHEARSAL_MODE) {
       "Restore rehearsal requires reviewed restore, production, and operational-restore-copy Supabase URL pins so it can prove the disposable project is exact and distinct.",
     );
   }
-  assertCompatibleSupabaseServiceKey({
+  assertExactSupabaseServiceKey({
     name: "SUPABASE_SERVICE_ROLE_KEY",
     parsedValue: parsedEnv.data.SUPABASE_SERVICE_ROLE_KEY,
     rawValue: process.env.SUPABASE_SERVICE_ROLE_KEY,

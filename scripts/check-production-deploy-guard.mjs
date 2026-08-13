@@ -89,6 +89,11 @@ function legacySupabaseJwt(role, signatureByte) {
 const productionLegacyAnonKey = legacySupabaseJwt("anon", 1);
 const productionLegacyServiceRoleKey = legacySupabaseJwt("service_role", 2);
 const productionLegacyOffsiteServiceRoleKey = legacySupabaseJwt("service_role", 3);
+const productionPublishableKey = `sb_publishable_${"a".repeat(32)}`;
+const productionServiceKey = `sb_secret_${"b".repeat(32)}`;
+const productionOffsiteServiceKey = `sb_secret_${"c".repeat(32)}`;
+const restorePublishableKey = `sb_publishable_${"r".repeat(32)}`;
+const restoreServiceKey = `sb_secret_${"t".repeat(32)}`;
 const stagingPublishableKey = `sb_publishable_${"p".repeat(32)}`;
 const stagingServiceKey = `sb_secret_${"s".repeat(32)}`;
 
@@ -157,11 +162,11 @@ const productionFixture = {
   GOOGLE_PLACES_API_KEY: "ci-places-server-key",
   OPENAI_API_KEY: "ci-menu-extraction-key", // security-scan allow: synthetic deploy-guard fixture
   SUPABASE_URL: "https://auth.pintpath.au",
-  SUPABASE_ANON_KEY: productionLegacyAnonKey,
-  SUPABASE_SERVICE_ROLE_KEY: productionLegacyServiceRoleKey,
+  SUPABASE_ANON_KEY: productionPublishableKey,
+  SUPABASE_SERVICE_ROLE_KEY: productionServiceKey,
   SUPABASE_OAUTH_PROVIDERS: "google",
   OFFSITE_BACKUP_SUPABASE_URL: syntheticBackupSupabaseUrl,
-  OFFSITE_BACKUP_SERVICE_ROLE_KEY: productionLegacyOffsiteServiceRoleKey,
+  OFFSITE_BACKUP_SERVICE_ROLE_KEY: productionOffsiteServiceKey,
   SOURCE_EVIDENCE_SIGNING_SECRET: "ci-source-5cb42f19-629e-47c3-9be4-7e52127ce22d",
   POS_WEBHOOK_SIGNING_SECRET: "ci-pos-78f01954-bfd3-457e-a8cf-28c5b35cbe13",
   DEMO_BILLING_MODE: "false",
@@ -221,8 +226,8 @@ const restoreRehearsalFixture = {
   GOOGLE_PLACES_API_KEY: "",
   OPENAI_API_KEY: "",
   SUPABASE_URL: syntheticRestoreIdentity.supabaseUrl,
-  SUPABASE_ANON_KEY: legacySupabaseJwt("anon", 4),
-  SUPABASE_SERVICE_ROLE_KEY: legacySupabaseJwt("service_role", 5),
+  SUPABASE_ANON_KEY: restorePublishableKey,
+  SUPABASE_SERVICE_ROLE_KEY: restoreServiceKey,
   SUPABASE_OAUTH_PROVIDERS: "",
   OFFSITE_BACKUP_SUPABASE_URL: "",
   OFFSITE_BACKUP_SERVICE_ROLE_KEY: "",
@@ -360,6 +365,7 @@ for (const [label, candidate] of [
   ["secret-shaped public key", `sb_secret_${"x".repeat(32)}`],
   ["malformed publishable key", `sb_publishable_${"x".repeat(19)}`],
   ["arbitrary legacy-like public key", "ci-browser-safe-key"],
+  ["legacy anon key", productionLegacyAnonKey],
   ["legacy service-role key in the public slot", productionLegacyServiceRoleKey],
 ]) {
   assertExit(
@@ -374,9 +380,19 @@ assertExit(
   "Production validation with an anon JWT in the primary service slot",
 );
 assertExit(
+  runValidator({ overrides: { SUPABASE_SERVICE_ROLE_KEY: productionLegacyServiceRoleKey } }),
+  false,
+  "Production validation with a legacy service-role JWT in the primary service slot",
+);
+assertExit(
   runValidator({ overrides: { OFFSITE_BACKUP_SERVICE_ROLE_KEY: productionLegacyAnonKey } }),
   false,
   "Production validation with an anon JWT in the off-site service slot",
+);
+assertExit(
+  runValidator({ overrides: { OFFSITE_BACKUP_SERVICE_ROLE_KEY: productionLegacyOffsiteServiceRoleKey } }),
+  false,
+  "Production validation with a legacy service-role JWT in the off-site service slot",
 );
 for (const nodeEnv of ["", "development"]) {
   assertExit(
@@ -429,6 +445,22 @@ assertExit(
   runValidator({ fixture: restoreRehearsalFixture }),
   true,
   "Complete restore rehearsal environment validation",
+);
+assertExit(
+  runValidator({
+    fixture: restoreRehearsalFixture,
+    overrides: { SUPABASE_ANON_KEY: productionLegacyAnonKey },
+  }),
+  false,
+  "Restore validation with a legacy anon JWT",
+);
+assertExit(
+  runValidator({
+    fixture: restoreRehearsalFixture,
+    overrides: { SUPABASE_SERVICE_ROLE_KEY: productionLegacyServiceRoleKey },
+  }),
+  false,
+  "Restore validation with a legacy service-role JWT",
 );
 for (const variable of [
   "RESTORE_REHEARSAL_EXPECTED_RAILWAY_ENVIRONMENT_ID",

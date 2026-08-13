@@ -218,7 +218,9 @@ deployment-bound receipt consumed by route open.
 
 1. Merge and pass all required checks on the exact candidate at `main`.
 2. Run `Deploy Pint Path permanent staging` at one replica and retain its
-   candidate-bound deployment evidence.
+   candidate-bound deployment evidence. This merge-first order is mandatory:
+   the workflow and executor both reject a PR-head or any SHA other than the
+   exact commit currently at protected `main`.
 3. Run `Mutate Pint Path permanent-staging provider variables` once per absent
    Google/OpenAI variable. The confirmation is
    `MUTATE_<UPPERCASE_OPERATION_WITH_UNDERSCORES>_IN_PERMANENT_STAGING`.

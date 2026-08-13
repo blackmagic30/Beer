@@ -34,6 +34,10 @@ function legacySupabaseJwt(
 const legacyAnonKey = legacySupabaseJwt("anon", 1);
 const legacyServiceRoleKey = legacySupabaseJwt("service_role", 2);
 const legacyOffsiteServiceRoleKey = legacySupabaseJwt("service_role", 3);
+const productionPublishableKey = `sb_publishable_${"a".repeat(32)}`;
+const productionServiceKey = `sb_secret_${"b".repeat(32)}`;
+const productionOffsiteServiceKey = `sb_secret_${"c".repeat(32)}`;
+const restorePublishableKey = `sb_publishable_${"r".repeat(32)}`;
 const stagingPublishableKey = `sb_publishable_${"p".repeat(32)}`;
 const stagingServiceKey = `sb_secret_${"s".repeat(32)}`;
 const permanentStagingSupabaseOrigin = "https://bbfibbadwjxzrcdncavy.supabase.co";
@@ -82,11 +86,11 @@ const productionRequiredEnv = {
   SOURCE_EVIDENCE_SIGNING_SECRET: "test-source-evidence-signing-secret-32-bytes",
   POS_WEBHOOK_SIGNING_SECRET: "test-pos-webhook-signing-secret-32-bytes",
   SUPABASE_URL: "https://auth.pintpath.au",
-  SUPABASE_ANON_KEY: legacyAnonKey,
-  SUPABASE_SERVICE_ROLE_KEY: legacyServiceRoleKey,
+  SUPABASE_ANON_KEY: productionPublishableKey,
+  SUPABASE_SERVICE_ROLE_KEY: productionServiceKey,
   SUPABASE_OAUTH_PROVIDERS: "google",
   OFFSITE_BACKUP_SUPABASE_URL: operationalOffsiteSupabaseOrigin,
-  OFFSITE_BACKUP_SERVICE_ROLE_KEY: legacyOffsiteServiceRoleKey,
+  OFFSITE_BACKUP_SERVICE_ROLE_KEY: productionOffsiteServiceKey,
   REDIS_URL: productionRedisUrl,
   PINTPATH_REDIS_RESOURCE_ID: productionRedisResource,
   PINTPATH_EXPECTED_REDIS_RESOURCE_ID: productionRedisResource,
@@ -174,7 +178,7 @@ const restoreRehearsalRequiredEnv = {
   DATABASE_PATH: "/app/data/restore-pint-path-fixture-backup/pint-path.sqlite",
   SOURCE_EVIDENCE_STORAGE_DIR: "/app/data/restore-pint-path-fixture-backup/source-evidence",
   SUPABASE_URL: "https://restoreref0000000001.supabase.co",
-  SUPABASE_ANON_KEY: legacySupabaseJwt("anon", 4),
+  SUPABASE_ANON_KEY: restorePublishableKey,
   SUPABASE_SERVICE_ROLE_KEY: stagingServiceKey,
   SUPABASE_OAUTH_PROVIDERS: "",
   REDIS_URL: "redis://default:fixture-password@redis.railway.internal:6379",
@@ -439,8 +443,23 @@ describe("environment safety defaults", () => {
     expect(env.OPENAI_MENU_OCR_FALLBACK_MODEL).toBe("gpt-4.1-mini-2025-04-14");
   });
 
-  it("preserves structurally valid legacy anon and service-role keys in current production", async () => {
+  it("uses exact publishable and secret keys in canonical production", async () => {
     stubProductionEnv();
+
+    const { env } = await loadEnv();
+
+    expect(env.SUPABASE_ANON_KEY).toBe(productionPublishableKey);
+    expect(env.SUPABASE_SERVICE_ROLE_KEY).toBe(productionServiceKey);
+    expect(env.OFFSITE_BACKUP_SERVICE_ROLE_KEY).toBe(productionOffsiteServiceKey);
+  });
+
+  it("preserves legacy Supabase key compatibility only in local development", async () => {
+    stubProductionEnv({
+      NODE_ENV: "development",
+      SUPABASE_ANON_KEY: legacyAnonKey,
+      SUPABASE_SERVICE_ROLE_KEY: legacyServiceRoleKey,
+      OFFSITE_BACKUP_SERVICE_ROLE_KEY: legacyOffsiteServiceRoleKey,
+    });
 
     const { env } = await loadEnv();
 
@@ -477,6 +496,7 @@ describe("environment safety defaults", () => {
     ["an overlong publishable key", `sb_publishable_${"x".repeat(221)}`],
     ["an unknown sb_ key", `sb_unknown_${"x".repeat(32)}`],
     ["an arbitrary legacy-like value", "fixture-supabase-browser-key"],
+    ["a structurally valid legacy anon JWT", legacyAnonKey],
     ["a legacy service-role JWT", legacyServiceRoleKey],
     [
       "a legacy anon JWT with a non-canonical signature",
@@ -493,7 +513,7 @@ describe("environment safety defaults", () => {
 
     expect(error).toBeInstanceOf(Error);
     expect((error as Error).message).toContain(
-      "refusing to expose a secret, malformed, or non-anon value through public config",
+      "must be an exact sb_publishable_ key in production",
     );
     expect((error as Error).message).not.toContain(candidate);
   });
@@ -505,6 +525,11 @@ describe("environment safety defaults", () => {
       "SUPABASE_SERVICE_ROLE_KEY",
     ],
     [
+      "a legacy service-role JWT in the primary service slot",
+      { SUPABASE_SERVICE_ROLE_KEY: legacyServiceRoleKey },
+      "SUPABASE_SERVICE_ROLE_KEY",
+    ],
+    [
       "a publishable key in the primary service slot",
       { SUPABASE_SERVICE_ROLE_KEY: stagingPublishableKey },
       "SUPABASE_SERVICE_ROLE_KEY",
@@ -512,6 +537,11 @@ describe("environment safety defaults", () => {
     [
       "an anon JWT in the off-site service slot",
       { OFFSITE_BACKUP_SERVICE_ROLE_KEY: legacyAnonKey },
+      "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
+    ],
+    [
+      "a legacy service-role JWT in the off-site service slot",
+      { OFFSITE_BACKUP_SERVICE_ROLE_KEY: legacyOffsiteServiceRoleKey },
       "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
     ],
     [
@@ -526,7 +556,7 @@ describe("environment safety defaults", () => {
 
     expect(error).toBeInstanceOf(Error);
     expect((error as Error).message).toContain(
-      `${name} must be an exact sb_secret_ key or a structurally valid legacy JWT with role=service_role`,
+      `${name} must be an exact sb_secret_ key in production`,
     );
     expect((error as Error).message).not.toContain(Object.values(overrides)[0]!);
   });
@@ -1428,6 +1458,7 @@ describe("environment safety defaults", () => {
     for (const candidate of [
       stagingPublishableKey,
       legacyAnonKey,
+      legacyServiceRoleKey,
       ` ${stagingServiceKey}`,
       `${stagingServiceKey} `,
       `${stagingServiceKey}\nmalformed`,
@@ -1438,10 +1469,18 @@ describe("environment safety defaults", () => {
       const error = await loadEnv().catch((cause: unknown) => cause);
       expect(error).toBeInstanceOf(Error);
       expect((error as Error).message).toContain(
-        "SUPABASE_SERVICE_ROLE_KEY must be an exact sb_secret_ key or a structurally valid legacy JWT with role=service_role",
+        "SUPABASE_SERVICE_ROLE_KEY must be an exact sb_secret_ key in production",
       );
       expect((error as Error).message).not.toContain(candidate);
     }
+  });
+
+  it("rejects a legacy anon key in the hosted restore rehearsal", async () => {
+    stubRestoreRehearsalEnv({ SUPABASE_ANON_KEY: legacyAnonKey });
+
+    await expect(loadEnv()).rejects.toThrow(
+      "SUPABASE_ANON_KEY must be an exact sb_publishable_ key in production",
+    );
   });
 
   it("rejects restore mode outside the reviewed disposable Railway project and service", async () => {

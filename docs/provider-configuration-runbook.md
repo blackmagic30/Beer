@@ -248,8 +248,8 @@ PINTPATH_PERMANENT_STAGING_RAILWAY_ENVIRONMENT_ID=replace_with_reviewed_staging_
 PINTPATH_PERMANENT_STAGING_RAILWAY_SERVICE_ID=replace_with_reviewed_staging_app_service_id
 # Do not set DATABASE_PATH in the deployed service. Keep any sealed SQLite
 # migration source outside the runtime environment after reconciliation.
-DATABASE_URL=postgresql://app_user:replace_me@postgres-staging.railway.internal:5432/pintpath?sslmode=verify-full
-DATABASE_MAINTENANCE_URL=postgresql://privacy_maintenance_login:replace_me@postgres-staging.railway.internal:5432/pintpath?sslmode=verify-full
+DATABASE_URL=postgresql://app_user:replace_me@postgres-production.railway.internal:5432/pintpath?sslmode=verify-full
+DATABASE_MAINTENANCE_URL=postgresql://privacy_maintenance_login:replace_me@postgres-production.railway.internal:5432/pintpath?sslmode=verify-full
 PINTPATH_POSTGRES_ROOT_CA_PEM=replace_with_exact_multiline_railway_root_ca
 PINTPATH_POSTGRES_ROOT_CA_DER_SHA256=replace_with_independently_reviewed_der_sha256
 # Both credentials are external LOGIN NOINHERIT principals; neither URL names
@@ -376,7 +376,9 @@ operational restore-copy project; permanent staging must not receive it. Do not
 use legacy JWT `anon` or `service_role` keys. These requirements do not
 authorize ad-hoc provider-side creation, rotation, disablement, or any Railway
 write. Use only the protected Supabase and Railway successor workflows named
-above; the hard-disabled legacy fixture remains inactive.
+above; the hard-disabled legacy fixture remains inactive. The web runtime's
+legacy-JWT parser is retained only for local-development compatibility and is
+not a production, permanent-staging, or hosted-rehearsal fallback.
 
 Generate each connection digest from the exact credentialed URL only inside the
 protected environment; never print or duplicate the URL. The expected digest

@@ -34,29 +34,11 @@ function sha256(value: string): string {
   return crypto.createHash("sha256").update(value, "utf8").digest("hex");
 }
 
-function legacySupabaseJwt(
-  role: "anon" | "service_role",
-  signatureByte: number,
-): string {
-  return [
-    Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" }), "utf8")
-      .toString("base64url"),
-    Buffer.from(JSON.stringify({
-      iss: "supabase",
-      ref: `rate-limit-${signatureByte}`,
-      role,
-      iat: 1_700_000_000,
-      exp: 2_000_000_000,
-    }), "utf8").toString("base64url"),
-    Buffer.alloc(32, signatureByte).toString("base64url"),
-  ].join(".");
-}
-
-const productionLegacyAnonKey = legacySupabaseJwt("anon", 1);
-const productionLegacyServiceRoleKey = legacySupabaseJwt("service_role", 2);
-const productionLegacyOffsiteServiceRoleKey = legacySupabaseJwt("service_role", 3);
-const restoreLegacyAnonKey = legacySupabaseJwt("anon", 4);
-const restoreLegacyServiceRoleKey = legacySupabaseJwt("service_role", 5);
+const productionPublishableKey = `sb_publishable_${"a".repeat(32)}`;
+const productionServiceKey = `sb_secret_${"b".repeat(32)}`;
+const productionOffsiteServiceKey = `sb_secret_${"c".repeat(32)}`;
+const restorePublishableKey = `sb_publishable_${"r".repeat(32)}`;
+const restoreServiceKey = `sb_secret_${"s".repeat(32)}`;
 
 const redisMockState = vi.hoisted(() => ({
   instances: [] as Array<{
@@ -195,10 +177,10 @@ function stubProductionEnv(overrides: Record<string, string> = {}) {
     STRIPE_PRICE_YEARLY: "test-stripe-yearly-price",
     STRIPE_PRO_PRICE_ID: "test-stripe-pro-price",
     SUPABASE_URL: "https://test-primary.supabase.co",
-    SUPABASE_ANON_KEY: productionLegacyAnonKey,
-    SUPABASE_SERVICE_ROLE_KEY: productionLegacyServiceRoleKey,
+    SUPABASE_ANON_KEY: productionPublishableKey,
+    SUPABASE_SERVICE_ROLE_KEY: productionServiceKey,
     OFFSITE_BACKUP_SUPABASE_URL: "https://test-offsite.supabase.co",
-    OFFSITE_BACKUP_SERVICE_ROLE_KEY: productionLegacyOffsiteServiceRoleKey,
+    OFFSITE_BACKUP_SERVICE_ROLE_KEY: productionOffsiteServiceKey,
     SOURCE_EVIDENCE_SIGNING_SECRET: "test-source-evidence-signing-secret-32-bytes",
     POS_WEBHOOK_SIGNING_SECRET: "test-pos-webhook-signing-secret-32-bytes",
     DEMO_BILLING_MODE: "false",
@@ -258,8 +240,8 @@ function restoreRehearsalOverrides(namespace: string, sentinel: string): Record<
     DATABASE_PATH: "/app/data/restore-pint-path-test-backup/pint-path.sqlite",
     SOURCE_EVIDENCE_STORAGE_DIR: "/app/data/restore-pint-path-test-backup/source-evidence",
     SUPABASE_URL: RESTORE_SUPABASE_URL,
-    SUPABASE_ANON_KEY: restoreLegacyAnonKey,
-    SUPABASE_SERVICE_ROLE_KEY: restoreLegacyServiceRoleKey,
+    SUPABASE_ANON_KEY: restorePublishableKey,
+    SUPABASE_SERVICE_ROLE_KEY: restoreServiceKey,
     SUPABASE_OAUTH_PROVIDERS: "",
     GOOGLE_MAPS_API_KEY: "restore-browser-map-key",
     GOOGLE_MAPS_MAP_ID: "restore-map-id",

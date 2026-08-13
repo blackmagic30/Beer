@@ -210,7 +210,7 @@ For the Melbourne launch, exact prices must flow through the Express API, not di
 - `FIELD_TEST_MODE=true` is for private staging/field tests only; full-scale production uses `false`.
 - Run `npm run security:scan` before deploy to catch common committed secret patterns. If it flags a real key, rotate it immediately and replace it with an env placeholder.
 - Run `npm run security:audit` before deploy to catch high-severity dependency advisories.
-- Run `npm run test:release:pintpath` before a release candidate. This executes the repo-native Pint Path release-readiness suite against synthetic/local data only, plus secret and dependency checks. See `docs/release-readiness-checklist.md` for provider-only blockers that still need staging/manual verification.
+- Before a release candidate, run `npm run check`, `npm run readiness:providers`, `npm run release:evidence`, and `npm run security:audit`. These non-strict gates report genuine external items as pending. Reserve `npm run test:release:pintpath`, which includes strict evidence validation, for the final evidence gate after the protected deployments and human/provider evidence exist. See `docs/release-readiness-checklist.md`.
 - Before any Railway write, require `npm run --silent readiness:railway:mutation-boundary` and the tracked one-operation executor that repeats the boundary in an unconditional postflight. The standalone receipt is read-only; dashboard Deploy, Git autodeploy, and ordinary redeploy remain prohibited.
 - Production startup now requires an HTTPS `PUBLIC_BASE_URL`, `GOOGLE_MAPS_API_KEY`, and `GOOGLE_MAPS_MAP_ID`; admin routes stay locked until `ADMIN_EMAILS` is configured with the approved owner/admin email.
 - `/startup` is the production deploy gate: it forces database migration/open, notice-keyring validation, local storage checks, and scheduler startup without depending on fragile external canaries. `/ready` remains the deeper ongoing dependency check after `/health`.
@@ -376,8 +376,8 @@ PUBLIC_BASE_URL=https://your-ngrok-subdomain.ngrok-free.app
 DATABASE_PATH=./data/pint-path.sqlite
 TRUST_PROXY_HOPS=1
 SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_ANON_KEY=your_supabase_publishable_or_legacy_anon_key
-SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
+SUPABASE_ANON_KEY=sb_publishable_REPLACE_WITH_PROJECT_PUBLISHABLE_KEY
+SUPABASE_SERVICE_ROLE_KEY=sb_secret_REPLACE_WITH_PROJECT_SERVER_KEY
 # Configure Google OAuth in the Supabase dashboard for this launch. Keep Apple
 # disabled until authorization-token revocation is implemented and verified.
 # Web redirect URLs: http://localhost:3000/auth/callback and
@@ -446,8 +446,8 @@ What each one does:
 - `DATABASE_MAINTENANCE_URL`: same-authority port-5432 direct/session URL for a distinct external `LOGIN NOINHERIT` principal whose only membership is the NOLOGIN `pintpath_maintenance` role. Its separate pool selects and verifies that effective role before privacy repositories mount.
 - `PINTPATH_POSTGRES_ROOT_CA_PEM` / `PINTPATH_POSTGRES_ROOT_CA_DER_SHA256`: the sealed exact Railway stock Postgres root CA and its independently reviewed X.509 DER SHA-256. Startup validates the one self-signed CA, materializes owned mode-700/mode-600 temporary custody, resolves exactly one private `fd12::/16` address, makes both pools dial only that address while authenticating the stock leaf as `localhost`, fences the authority during startup/readiness, and removes it after both pools close. Configure the PEM value itself through the protected runtime-variable workflow; never configure a runner/container pathname.
 - `SUPABASE_URL`: Supabase project URL used for email/password and OAuth authentication, private evidence storage, venue imports, and reviewed map-sync writes. Canonical production requires the exact `https://auth.pintpath.au` origin.
-- `SUPABASE_ANON_KEY`: browser-safe public key used by `/account.html` for Supabase Auth. The web runtime temporarily accepts either an exact `sb_publishable_` key or a structurally valid legacy `anon` JWT for rollback compatibility. iOS Release archives and Android signed release bundles accept only an exact `sb_publishable_` key. It is mandatory in production; never use a service-role or `sb_secret_` key in a public client.
-- `SUPABASE_SERVICE_ROLE_KEY`: server-only key required in production for verified auth operations, private evidence storage, venue imports, and reviewed/admin menu-capture sync.
+- `SUPABASE_ANON_KEY`: browser-safe public key used by `/account.html` for Supabase Auth. Canonical production, permanent staging, and hosted rehearsals require an exact `sb_publishable_` key; structurally valid legacy `anon` JWTs remain compatible only in local development. iOS Release archives and Android signed release bundles also accept only an exact `sb_publishable_` key. Never use a service-role or `sb_secret_` key in a public client.
+- `SUPABASE_SERVICE_ROLE_KEY`: server-only key required in production for verified auth operations, private evidence storage, venue imports, and reviewed/admin menu-capture sync. Canonical production and hosted staging/rehearsals require an exact `sb_secret_` key.
 - `SUPABASE_OAUTH_PROVIDERS`: comma-separated provider buttons to show on `/account.html`. Use `google` for the current launch; production rejects `apple` until Apple authorization-token revocation is implemented and tested.
 - `ACCOUNT_DELETION_NOTICE_MODE`: `disabled`, test-only `mock`, or production `resend`. Canonical production requires `resend` independently of monthly reports.
 - `RESEND_TRANSACTIONAL_API_KEY`: sending-only Resend key dedicated to account-deletion completion notices.

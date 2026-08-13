@@ -24,14 +24,19 @@ Git autodeploy, `railway run`, or an ad-hoc CLI/API command.
 Run before any release candidate:
 
 ```bash
-npm run build
-npm test
+npm run check
 npm run readiness:providers
-npm run test:release:pintpath
+npm run release:evidence
+npm run security:audit
 git diff --check
 ```
 
-The `test:release:pintpath` script runs the full build/test/security gate, validates production-provider configuration, requires every external release-evidence item to be complete, and runs `npm audit --audit-level=low`. Use the ordinary `npm run check` gate during local development; the strict release command is expected to fail until provider and human sign-off evidence is genuinely complete.
+These pre-candidate commands run the build/test/security/deployment checks,
+production-provider validation, non-strict evidence report, and dependency
+audit. Pending live/provider/App Review items must remain visibly pending.
+Reserve `npm run test:release:pintpath`, which includes
+`release:evidence:strict`, for the final protected evidence gate after the exact
+deployment and every required provider and human sign-off exist.
 
 After each protected provider environment is configured, run this inside its
 deployed service or a Railway one-shot deployment:

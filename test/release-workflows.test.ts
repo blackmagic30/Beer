@@ -3155,7 +3155,7 @@ describe("release workflow contracts", () => {
       "keep teardown behind the Railway mutation boundary",
     );
     expect(normalizedLaunch).toContain(
-      "candidate-bound live permanent-staging import/reconciliation",
+      "candidate-bound post-merge permanent-staging import/reconciliation",
     );
     expect(normalizedLaunch).toContain(
       "immutable cross-failure-domain retrieval",
@@ -3348,6 +3348,93 @@ describe("release workflow contracts", () => {
       );
       expect(command).not.toContain("--schema public,private --");
     }
+  });
+
+  it("keeps candidate sequencing, protected recovery authority, and hosted Supabase keys aligned", () => {
+    const launch = releaseDocument("production-launch-runbook.md");
+    const protectedOperations = releaseDocument(
+      "protected-provider-mutation-operations.md",
+    );
+    const migration = releaseDocument(
+      "full-scale-postgres-migration-runbook.md",
+    );
+    const normalizedMigration = migration.replace(/\s+/g, " ");
+    const provider = releaseDocument("provider-configuration-runbook.md");
+    const checklist = releaseDocument("release-readiness-checklist.md");
+    const launchGates = releaseDocument("launch-9-readiness-gates.md");
+    const envExample = repositoryFile(".env.example");
+
+    const phase12 = launch.slice(
+      launch.indexOf("## Phase 12"),
+      launch.indexOf("## Phase 13"),
+    );
+    const phase16 = launch.slice(
+      launch.indexOf("## Phase 16"),
+      launch.indexOf("## Phase 17"),
+    );
+    expect(phase12).toContain(
+      "it accepts only the exact commit currently at protected `main`",
+    );
+    expect(phase12).not.toContain(
+      "Deploy all implementation to permanent integrated staging",
+    );
+    expect(phase16.indexOf("### 16.1 Merge the reviewed candidate")).toBeLessThan(
+      phase16.indexOf("### 16.5 Deploy the exact protected `main` build"),
+    );
+    expect(phase16).toContain(
+      "execute the complete Phase 12 staging and rollback",
+    );
+    expect(protectedOperations).toContain(
+      "the workflow and executor both reject a PR-head or any SHA other than the",
+    );
+
+    expect(migration).toContain(
+      "protected production logical-backup workflow",
+    );
+    expect(normalizedMigration).toContain(
+      "These example restore and deletion-replay commands remain review-only when",
+    );
+    expect(normalizedMigration).toContain(
+      "its receipt never authorizes copying these commands to an",
+    );
+
+    const productionProviderExample = provider.slice(
+      provider.indexOf("NODE_ENV=production"),
+      provider.indexOf("This block is the canonical-production profile"),
+    );
+    expect(productionProviderExample).toContain(
+      "@postgres-production.railway.internal:5432/",
+    );
+    expect(productionProviderExample).not.toContain(
+      "@postgres-staging.railway.internal:5432/",
+    );
+
+    for (const document of [checklist, launchGates]) {
+      const preCandidate = document.slice(
+        document.indexOf("## Automated"),
+        document.indexOf("After real provider configuration") > -1
+          ? document.indexOf("After real provider configuration")
+          : document.indexOf("After each protected provider environment"),
+      );
+      expect(preCandidate).toContain("npm run check");
+      expect(preCandidate).toContain("npm run readiness:providers");
+      expect(preCandidate).toContain("npm run release:evidence");
+      expect(preCandidate).toContain("npm run security:audit");
+      expect(preCandidate).not.toMatch(/^npm run test:release:pintpath$/m);
+    }
+
+    expect(envExample).toContain(
+      "SUPABASE_ANON_KEY=sb_publishable_REPLACE_WITH_PROJECT_PUBLISHABLE_KEY",
+    );
+    expect(envExample).toContain(
+      "SUPABASE_SERVICE_ROLE_KEY=sb_secret_REPLACE_WITH_PROJECT_SERVER_KEY",
+    );
+    expect(envExample).toContain(
+      "OFFSITE_BACKUP_SERVICE_ROLE_KEY=sb_secret_REPLACE_WITH_OPERATIONAL_COPY_SERVER_KEY",
+    );
+    expect(envExample).toContain(
+      "Legacy JWT keys remain accepted only for local",
+    );
   });
 
   it("keeps the AWS Object Lock implementation pinned and its live authority gate open", () => {

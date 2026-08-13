@@ -12,7 +12,10 @@ production Postgres service is provisioned but is empty, detached from the live
 Beer service, and not serving traffic. Production therefore remains on SQLite
 until the controlled cutover.
 
-Pint Path remains no-go. Before candidate freeze:
+Pint Path remains no-go. Before candidate freeze, finish and review every
+implementation and exact execution plan below. After the protected merge,
+execute the live provider and permanent-staging gates against the exact current
+`main` SHA before production deployment:
 
 Every Railway create, configuration, variable, scale, deploy, rollback, PITR,
 route, delete, destroy, or teardown operation in these gates requires a tracked
@@ -121,10 +124,11 @@ Run against the frozen release SHA before every candidate:
 
 ```bash
 npm run check
-npm run test:release:pintpath
+npm run readiness:providers
+npm run release:evidence
+npm run security:audit
 npm run ocr:benchmark
 npm run smoke:production
-npm run release:evidence
 git diff --check
 ```
 
@@ -142,7 +146,8 @@ warnings. Its Storage canaries run only after the local staging identity/config
 preflight passes. The later canonical-production invocation must instead report
 `readinessProfile=production_free_launch` with the same zero-failure contract.
 The non-strict evidence command validates the schema and lists genuinely pending
-live/App Review items. Run `npm run release:evidence:strict` only after the exact
+live/App Review items. Run `npm run test:release:pintpath` (which includes
+`release:evidence:strict`) only after the exact
 candidate is live, both production smoke gates are current, the full App Review
 approval/manual hold is recorded, and all 13 evidence items are complete.
 Record the command, frozen SHA, UTC time, environment identity, sanitized
