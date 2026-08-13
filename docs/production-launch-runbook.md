@@ -112,13 +112,23 @@ The remaining launch blockers require live/external completion:
 Repository and isolated-test results are not live provider evidence. The exact
 reviewed application remains undeployed in permanent staging, no authentic
 application-deployment attestation receipt exists, and the current
-release-evidence result remains `launchReady=false` with 0 of 12 external evidence
-items passed. All 12 items remain launch gates.
+release-evidence result remains `launchReady=false` with 0 of 13 external evidence
+items passed. All 13 items remain launch gates.
 
-The reviewed recurring permanent-staging envelope is approximately
-US$46.80/month. The retained disposable-restore Postgres and Redis resources
-are temporary evidence capacity outside that envelope; at their current caps
-they would add approximately US$20.13/month if retained for a full month.
+The reviewed recurring combined permanent-staging and separately operated
+production operational-copy envelope is approximately US$46.80/month. That
+figure is not a staging-only cost or authority boundary: it includes one
+permanent-staging Supabase project and the distinct canonical-production
+operational-copy Supabase project. The retained disposable-restore Postgres and
+Redis resources are temporary evidence capacity outside that combined envelope;
+at their current caps they would add approximately US$20.13/month if retained
+for a full month.
+Both figures are historical planning estimates, not current provider-observed
+cost proof. The `permanent_staging_cost` evidence item remains pending, and the
+checked-in cost policy/evaluator is scaffold-only with no provider collector or
+observation binding. Launch therefore remains blocked until a fresh receipt for
+one frozen candidate proves the permanent-staging-only recurring upper bound is
+at most `5000` integer USD cents.
 Finish the remaining recovery proof before disposal, reconcile the exact
 recorded resource identities and signed evidence, and keep teardown behind the
 Railway mutation boundary rather than treating those resources as permanent
@@ -779,7 +789,8 @@ Required outcomes:
 - no trusted row older than 30 days is represented as current;
 - zero malformed structured addresses;
 - zero closed, unknown, or status-expired venues are active;
-- zero unresolved high-severity wrong-price reports;
+- zero `open` or `in_progress` wrong-price reports for every known reason; the
+  release policy does not infer a severity tier;
 - every marketed venue status is under 24 hours old at the final gate;
 - because the release has zero happy-hour coverage, every consumer happy-hour UI and claim is absent and the signed waiver reference is present.
 
@@ -941,8 +952,9 @@ for shared rate limiting; it is not a substitute for transactional Postgres.
    production and ephemeral restore staging. Require the Postgres connection,
    `REQUIRE_REDIS_RATE_LIMITING=true`, and
    `ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=false`; remove production WORM
-   credentials and every `RESTORE_REHEARSAL_*` variable. Keep Stripe, report,
-   POS, and reward credentials absent. Set the staging-only deletion-notice
+   credentials, all three `OFFSITE_BACKUP_*` destination variables, and every
+   `RESTORE_REHEARSAL_*` variable. Keep Stripe, report, POS, and reward
+   credentials absent. Set the staging-only deletion-notice
    Resend values and `ACCOUNT_DELETION_REHEARSAL_ENABLED=true`. Load every
    reviewed `ACCOUNT_DELETION_REHEARSAL_EXPECTED_*` pin plus the independently
    verified replica count. Hash the exact credentialed staging `DATABASE_URL`
@@ -962,12 +974,12 @@ for shared rate limiting; it is not a substitute for transactional Postgres.
    `beermap-source-evidence` bucket identify Storage. Remove the rehearsal
    switch immediately after proof.
 6. Set `SUPABASE_OAUTH_PROVIDERS=google`. Keep Apple OAuth disabled until Apple authorization-token revocation is implemented and tested. This is separate from the proof that native social login is absent from the iOS archive.
-7. After the staging migration, run the exact notification-scoped gate below from the deployed staging Beer service. It must report `readinessProfile=account_deletion_rehearsal`; this profile never invokes the off-site backup Storage write canary. The `/ready` assertion separately proves shared Postgres, Redis, private Storage, and staging Supabase health. Then run the notification suites. Delete a sacrificial verified account only after its safety window is test-adjusted in staging; prove `held -> pending -> accepted -> delivered`, signed-webhook receipt storage, recipient-secret deletion, and audited terminal resolution of an independently verified undeliverable notice.
+7. After the staging migration, run the exact notification-scoped gate below from the deployed staging Beer service. It must report `readinessProfile=account_deletion_rehearsal`; this profile requires all operational-offsite destination variables to be absent and never constructs that Storage client. The `/ready` assertion separately proves shared Postgres, Redis, private Storage, and staging Supabase health. Then run the notification suites. Delete a sacrificial verified account only after its safety window is test-adjusted in staging; prove `held -> pending -> accepted -> delivered`, signed-webhook receipt storage, recipient-secret deletion, and audited terminal resolution of an independently verified undeliverable notice.
 
    ```bash
    set -o pipefail
    test "${ACCOUNT_DELETION_REHEARSAL_ENABLED:?}" = "true"
-   test -z "${OFFSITE_BACKUP_SUPABASE_URL:-}${OFFSITE_BACKUP_SERVICE_ROLE_KEY:-}"
+   test -z "${OFFSITE_BACKUP_SUPABASE_URL:-}${OFFSITE_BACKUP_SERVICE_ROLE_KEY:-}${OFFSITE_BACKUP_BUCKET:-}"
    test -n "${REDIS_URL:-}"
    test -n "${PINTPATH_EXPECTED_DATABASE_URL_SHA256:-}${PINTPATH_FORBIDDEN_DATABASE_URL_SHA256S:-}"
    test -n "${PINTPATH_EXPECTED_REDIS_URL_SHA256:-}${PINTPATH_FORBIDDEN_REDIS_URL_SHA256S:-}"
@@ -1253,10 +1265,29 @@ Required evidence IDs are:
 - `accessibility_devices`;
 - `legal_billing`;
 - `ios_release`;
+- `permanent_staging_cost`;
 
 The candidate's required ID set, schema tests, checklists, and strict validator must omit `android_release`. Do not mark a required Android item falsely passed or not applicable.
 
 Bind evidence to `releaseId` and `candidateSha`. `deployedMainSha` belongs in the private release register and the final workflow artifact rather than self-referencing the commit that contains `docs/release-evidence.json`.
+
+Release-evidence schema v3 gives `permanent_staging_cost` one additional
+`costReceipt` object. It must be based on a fresh read-only provider observation
+for the exact frozen candidate and contain complete, hashed Railway,
+staging-Supabase, and staging-external-provider inventory plus price-or-cap
+evidence. Each provider must report zero unknown, unpriced, shared, and
+unbounded resources. Sum ceiling-rounded integer USD cents and require
+`totalUpperBoundMonthlyCents <= 5000`. Keep the production operational-copy and
+disposable-restore scopes out of that total and bind each to its own separately
+hashed cost authority. The receipt observation and the live production smoke
+items expire after 24 hours.
+
+The checked-in v1 cost policy and evaluator are scaffold-only. Their provider
+collector and observation-binding flags are false, so a hand-authored receipt
+cannot pass the validator even if it has the right shape. A later reviewed
+collector and deliberate policy-version change must establish the real
+provider binding before this gate can close. The historical approximately
+US$46.80/month combined estimate is explicitly non-gating.
 
 Before production deployment:
 
@@ -1292,7 +1323,7 @@ test -n "${PINTPATH_FORBIDDEN_REDIS_RESOURCE_IDS:?}"
 
 supabase link --project-ref "$PINTPATH_PRODUCTION_PROJECT_REF"
 test "$(tr -d '\r\n' < supabase/.temp/project-ref)" = "$PINTPATH_PRODUCTION_PROJECT_REF"
-test "${SUPABASE_URL%/}" = "https://${PINTPATH_PRODUCTION_PROJECT_REF}.supabase.co"
+test "$SUPABASE_URL" = "https://auth.pintpath.au"
 supabase migration list --linked
 supabase db push --linked --dry-run
 ```
@@ -1435,7 +1466,7 @@ Apply the separately reviewed Supabase migration only after target pins pass:
 set -euo pipefail
 supabase link --project-ref "$PINTPATH_PRODUCTION_PROJECT_REF"
 test "$(tr -d '\r\n' < supabase/.temp/project-ref)" = "$PINTPATH_PRODUCTION_PROJECT_REF"
-test "${SUPABASE_URL%/}" = "https://${PINTPATH_PRODUCTION_PROJECT_REF}.supabase.co"
+test "$SUPABASE_URL" = "https://auth.pintpath.au"
 supabase migration list --linked
 supabase db push --linked --dry-run
 supabase db push --linked
@@ -1546,8 +1577,9 @@ In the protected production operator environment:
    state and evidence linkage, or a formally proven saga whose incomplete
    state cannot become public. Exit nonzero on any mismatch.
 6. Verify the secret-free receipt, before/after hashes, promoted counts,
-   durable evidence links, no public `evidence_pending` row, and zero
-   high-severity wrong-price reports.
+   durable evidence links, no public `evidence_pending` row, and zero `open` or
+   `in_progress` wrong-price reports for every known reason. Do not infer or
+   use an unrecorded severity tier.
 7. On uncertainty or failure, do not retry blindly. Close the affected public
    path and use only the receipt-authorised idempotent quarantine/rollback.
 8. While public ingress is still closed, create a new post-promotion Postgres
@@ -1664,7 +1696,7 @@ A material app, backend, policy, data-collection, auth, or scope change invalida
 
 ### 17.2 Close evidence without changing implementation
 
-Complete all 12 web-and-iOS evidence items from Phase 14. Update only `docs/release-evidence.json` in an evidence-closeout PR. The `candidateSha` remains the frozen PR-head SHA.
+Complete all 13 web-and-iOS evidence items from Phase 14. Update only `docs/release-evidence.json` in an evidence-closeout PR. The `candidateSha` remains the frozen PR-head SHA.
 
 After protected merge:
 
@@ -1716,9 +1748,14 @@ The **Pint Path Release Gate** must:
 - run public and authenticated user, venue, and admin smoke;
 - revoke temporary direct smoke sessions;
 - enforce the immutable strict data values;
-- enforce provider readiness;
 - execute `npm run release:evidence:strict` and enforce the web-and-iOS release evidence;
-- upload provider, data, role-smoke, evidence, and tested-SHA artifacts.
+- upload the sealed-variable/mutation-boundary, data, role-smoke, evidence, and tested-SHA artifacts.
+
+The workflow deliberately does not read application provider secrets, run the
+live provider-readiness command, or upload a provider-readiness artifact. The
+sanitized deployed and one-shot provider-readiness receipts remain separate
+required external evidence and must already be bound into the reviewed release
+evidence before `release:evidence:strict` can pass.
 
 Immediately after the run:
 
@@ -1908,6 +1945,10 @@ The release is **go** only when every item is true for the same `releaseId`, `ca
 - [ ] Apple membership, Account Holder/backup access, agreements, compliance
   review, app ownership, and crash-threshold evidence pass;
 - [ ] strict release evidence and protected authenticated smoke pass;
+- [ ] a fresh candidate-bound provider-observed permanent-staging-only cost
+  receipt proves a recurring upper bound of at most `5000` integer USD cents,
+  with complete Railway, staging Supabase, and external-provider caps and no
+  unknown, unpriced, shared, or unbounded resource;
 - [ ] live flags match the approved Free-only state before and after web/iOS release;
 - [ ] named 72-hour operator is available.
 

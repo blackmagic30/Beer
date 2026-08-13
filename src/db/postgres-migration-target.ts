@@ -371,6 +371,9 @@ async function readStableArtifact(
   }
   const maxBytes = options.maxBytes ?? MAX_ARTIFACT_BYTES;
   if (pathStat.size > BigInt(maxBytes)) throw targetError("ARTIFACT_INVALID");
+  // The O_NOFOLLOW descriptor is bound to the pre-open lstat by full file
+  // identity and is revalidated after the descriptor-only read.
+  // codeql[js/file-system-race]
   const handle = await fs.promises.open(filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
   try {
     const before = await handle.stat({ bigint: true });
@@ -445,6 +448,9 @@ async function digestStableFile(
   if (pathStat.size > BigInt(options.maxBytes ?? Number.MAX_SAFE_INTEGER)) {
     throw targetError("ARTIFACT_INVALID");
   }
+  // The O_NOFOLLOW descriptor is bound to the pre-open lstat by full file
+  // identity and is revalidated after hashing the descriptor contents.
+  // codeql[js/file-system-race]
   const handle = await fs.promises.open(filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
   try {
     const before = await handle.stat({ bigint: true });

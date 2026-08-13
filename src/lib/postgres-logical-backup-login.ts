@@ -382,6 +382,10 @@ interface HostGateResult {
 }
 
 function sha256(value: string | Buffer): string {
+  // This utility produces non-authentication equality/integrity bindings. Any
+  // credential flowing here is generated from 256 bits of randomness, while
+  // PostgreSQL authentication relies on its separately generated SCRAM verifier.
+  // codeql[js/insufficient-password-hash]
   return crypto.createHash("sha256").update(value).digest("hex");
 }
 
@@ -504,6 +508,9 @@ async function openStablePrivateFile(
   let handle: FileHandle | null = null;
   let bytes: Buffer | null = null;
   try {
+    // The O_NOFOLLOW descriptor is bound to the pre-open lstat by full file
+    // identity; both the descriptor and pathname are revalidated after read.
+    // codeql[js/file-system-race]
     handle = await fs.promises.open(
       filePath,
       fs.constants.O_RDONLY
@@ -1196,6 +1203,9 @@ async function openTrustedPrivateDirectory(
     }
     const before = await fs.promises.lstat(directory, { bigint: true });
     assertTrustedPrivateDirectory(before, BigInt(expectedUid));
+    // The O_NOFOLLOW directory descriptor is bound to the lstat identity and
+    // remains held for every child operation using this authority.
+    // codeql[js/file-system-race]
     handle = await fs.promises.open(
       directory,
       fs.constants.O_RDONLY

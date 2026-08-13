@@ -9,9 +9,22 @@ import {
   mapPlaceToVenue,
   type VenueMappingResult,
 } from "../scripts/import-melbourne-venues.js";
+import {
+  PRODUCTION_SUPABASE_ORIGIN,
+  PRODUCTION_SUPABASE_PROJECT_REF,
+  validateProductionSupabaseTransportEnvironment,
+} from "../scripts/validate-production-supabase-transport.js";
 import type { GooglePlaceCandidate } from "../src/lib/venue-directory.js";
 
 const CHECKED_AT = "2026-07-28T10:30:00.000Z";
+
+function legacyServiceRoleKey(): string {
+  return [
+    Buffer.from('  {"typ":"JWT","alg":"HS256"}').toString("base64url"),
+    Buffer.from('  {"role":"service_role"}').toString("base64url"),
+    Buffer.alloc(32, 7).toString("base64url"),
+  ].join(".");
+}
 
 function googleVenue(overrides: Partial<GooglePlaceCandidate> = {}): GooglePlaceCandidate {
   return {
@@ -42,6 +55,48 @@ function expectVenue(result: VenueMappingResult) {
 }
 
 describe("Melbourne venue importer data quality", () => {
+  it("validates the scheduled production origin, project, and server key before any request", () => {
+    const base = {
+      SUPABASE_URL: PRODUCTION_SUPABASE_ORIGIN,
+      PINTPATH_EXPECTED_SUPABASE_PROJECT_REF: PRODUCTION_SUPABASE_PROJECT_REF,
+      SUPABASE_SERVICE_ROLE_KEY: `sb_secret_${"s".repeat(32)}`,
+    };
+    expect(() => validateProductionSupabaseTransportEnvironment(base)).not.toThrow();
+    const legacyKey = legacyServiceRoleKey();
+    expect(legacyKey.startsWith("eyJ")).toBe(false);
+    expect(validateProductionSupabaseTransportEnvironment({
+      ...base,
+      SUPABASE_SERVICE_ROLE_KEY: legacyKey,
+    })).toBe("legacy_service_role");
+
+    for (const candidate of [
+      ` ${base.SUPABASE_SERVICE_ROLE_KEY}`,
+      `${base.SUPABASE_SERVICE_ROLE_KEY}\nmalformed`,
+      `sb_publishable_${"p".repeat(32)}`,
+      "arbitrary-service-key",
+    ]) {
+      let error: unknown;
+      try {
+        validateProductionSupabaseTransportEnvironment({
+          ...base,
+          SUPABASE_SERVICE_ROLE_KEY: candidate,
+        });
+      } catch (cause) {
+        error = cause;
+      }
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).not.toContain(candidate);
+    }
+    expect(() => validateProductionSupabaseTransportEnvironment({
+      ...base,
+      SUPABASE_URL: "https://attacker.invalid",
+    })).toThrow("production target mismatch");
+    expect(() => validateProductionSupabaseTransportEnvironment({
+      ...base,
+      PINTPATH_EXPECTED_SUPABASE_PROJECT_REF: ` ${PRODUCTION_SUPABASE_PROJECT_REF}`,
+    })).toThrow("production target mismatch");
+  });
+
   it("keeps scheduled status refreshes separate from partial discovery modes", () => {
     const source = fs.readFileSync(
       path.resolve(process.cwd(), "scripts/import-melbourne-venues.ts"),
@@ -54,6 +109,7 @@ describe("Melbourne venue importer data quality", () => {
     );
     expect(source).toContain('"existing-place-status-refresh"');
     expect(source).toContain('"directory-discovery-and-status-refresh"');
+    expect(source.match(/redirect: "error"/g)).toHaveLength(3);
   });
 
   it("refuses a partial refresh before directory writes begin", () => {
@@ -69,17 +125,35 @@ describe("Melbourne venue importer data quality", () => {
 
   it("requires the Supabase project reference to match the exact target", () => {
     expect(assertSupabaseProjectTarget(
-      "https://jxpubqlmqnnqwadmjgyk.supabase.co",
+      "https://auth.pintpath.au",
       "jxpubqlmqnnqwadmjgyk",
     )).toBe("jxpubqlmqnnqwadmjgyk");
+    expect(assertSupabaseProjectTarget(
+      "https://bbfibbadwjxzrcdncavy.supabase.co",
+      "bbfibbadwjxzrcdncavy",
+    )).toBe("bbfibbadwjxzrcdncavy");
     expect(() => assertSupabaseProjectTarget(
-      "https://gjjffexmflwtnewtkkiy.supabase.co",
-      "jxpubqlmqnnqwadmjgyk",
-    )).toThrow(/project target mismatch/i);
+      "https://auth.pintpath.au",
+      "gjjffexmflwtnewtkkiy",
+    )).toThrow(/target mismatch/i);
+    expect(() => assertSupabaseProjectTarget(
+      "https://abcdefghijklmnopqrst.supabase.co",
+      "abcdefghijklmnopqrst",
+    )).toThrow(/target mismatch/i);
     expect(() => assertSupabaseProjectTarget(
       "https://jxpubqlmqnnqwadmjgyk.supabase.co",
       undefined,
-    )).toThrow(/un pinned|unpinned/i);
+    )).toThrow(/importer target mismatch/i);
+    for (const candidate of [
+      " jxpubqlmqnnqwadmjgyk",
+      "jxpubqlmqnnqwadmjgyk ",
+      "JXPUBQLMQNNQWADMJGYK",
+    ]) {
+      expect(() => assertSupabaseProjectTarget(
+        "https://auth.pintpath.au",
+        candidate,
+      )).toThrow(/importer target mismatch/i);
+    }
   });
 
   it("persists contact, operational status, and check provenance", () => {

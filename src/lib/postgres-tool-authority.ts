@@ -44,6 +44,9 @@ const ARRAY_SOME = ARRAY_INTRINSIC.prototype.some;
 const ARRAY_VALUES = ARRAY_INTRINSIC.prototype.values;
 const BUFFER_ALLOC = BUFFER_INTRINSIC.alloc;
 const BUFFER_BYTE_LENGTH = BUFFER_INTRINSIC.byteLength;
+const BUFFER_IS_BUFFER = BUFFER_INTRINSIC.isBuffer;
+const BUFFER_PROTOTYPE = BUFFER_INTRINSIC.prototype;
+const BIGINT_TO_STRING = BigInt.prototype.toString;
 const CRYPTO_CREATE_HASH = CRYPTO_INTRINSIC.createHash;
 const MATH_MIN = MATH_INTRINSIC.min;
 const NUMBER_IS_SAFE_INTEGER = NUMBER_INTRINSIC.isSafeInteger;
@@ -71,9 +74,109 @@ const STRING_SLICE = STRING_INTRINSIC.prototype.slice;
 const STRING_STARTS_WITH = STRING_INTRINSIC.prototype.startsWith;
 const STRING_TRIM = STRING_INTRINSIC.prototype.trim;
 const SYMBOL_ITERATOR = SYMBOL_INTRINSIC.iterator;
+const TYPED_ARRAY_PROTOTYPE = OBJECT_GET_PROTOTYPE_OF(
+  Uint8Array.prototype,
+) as object;
+const TYPED_ARRAY_BYTE_LENGTH = OBJECT_GET_OWN_PROPERTY_DESCRIPTOR(
+  TYPED_ARRAY_PROTOTYPE,
+  "byteLength",
+)?.get;
+const TYPED_ARRAY_SET = Uint8Array.prototype.set;
 const UINT8_ARRAY_FILL = Uint8Array.prototype.fill;
 const UTIL_IS_PROMISE = UTIL_TYPES_INTRINSIC.isPromise;
 const UTIL_IS_PROXY = UTIL_TYPES_INTRINSIC.isProxy;
+const UTIL_IS_UINT8_ARRAY = UTIL_TYPES_INTRINSIC.isUint8Array;
+
+/*
+ * Keep this authority independent from the much larger passive V4 manifest
+ * dependency graph. The focused cross-contract test byte-compares this local
+ * reviewed argv prefix with POSTGRES_LOGICAL_BACKUP_V4_REQUIRED_DUMP_ARGUMENTS.
+ */
+const POSTGRES_TOOL_AUTHORITY_V4_STATIC_DUMP_ARGUMENTS = OBJECT_FREEZE([
+  "--format=custom",
+  "--data-only",
+  "--no-large-objects",
+  "--no-password",
+  "--lock-wait-timeout=30s",
+  "--no-owner",
+  "--no-acl",
+  "--enable-row-security",
+  "--strict-names",
+  "--table=pintpath_app.account_deletion_completion_outbox",
+  "--table=pintpath_app.account_deletion_notice_recipient_secrets",
+  "--table=pintpath_app.account_deletion_notification_events",
+  "--table=pintpath_app.account_deletion_requests",
+  "--table=pintpath_app.account_discount_passes",
+  "--table=pintpath_app.account_preferences",
+  "--table=pintpath_app.account_privacy_settings",
+  "--table=pintpath_app.account_reward_vouchers",
+  "--table=pintpath_app.accounts",
+  "--table=pintpath_app.admin_ingestion_queue",
+  "--table=pintpath_app.age_verifications",
+  "--table=pintpath_app.auth_sessions",
+  "--table=pintpath_app.beer_catalog_aliases",
+  "--table=pintpath_app.beer_catalog_items",
+  "--table=pintpath_app.billing_checkout_reservations",
+  "--table=pintpath_app.contribution_ledger",
+  "--table=pintpath_app.discount_redemptions",
+  "--table=pintpath_app.events",
+  "--table=pintpath_app.feedback",
+  "--table=pintpath_app.free_pint_reward_codes",
+  "--table=pintpath_app.free_pint_reward_redemptions",
+  "--table=pintpath_app.leaderboard_prize_awards",
+  "--table=pintpath_app.leaderboard_prize_campaigns",
+  "--table=pintpath_app.migration_quarantined_records",
+  "--table=pintpath_app.mission_progress",
+  "--table=pintpath_app.missions",
+  "--table=pintpath_app.pint_point_drink_records",
+  "--table=pintpath_app.pint_point_ledger",
+  "--table=pintpath_app.profiles",
+  "--table=pintpath_app.revoked_provider_sessions",
+  "--table=pintpath_app.saved_items",
+  "--table=pintpath_app.schema_metadata",
+  "--table=pintpath_app.security_audit_log",
+  "--table=pintpath_app.source_evidence_objects",
+  "--table=pintpath_app.stripe_webhook_events",
+  "--table=pintpath_app.submission_items",
+  "--table=pintpath_app.submission_source_evidence",
+  "--table=pintpath_app.submissions",
+  "--table=pintpath_app.system_state",
+  "--table=pintpath_app.user_activity_events",
+  "--table=pintpath_app.venue_analytics_events",
+  "--table=pintpath_app.venue_beers",
+  "--table=pintpath_app.venue_claim_requests",
+  "--table=pintpath_app.venue_happy_hours",
+  "--table=pintpath_app.venue_identity_aliases",
+  "--table=pintpath_app.venue_interest_requests",
+  "--table=pintpath_app.venue_location_cache",
+  "--table=pintpath_app.venue_manager_assignments",
+  "--table=pintpath_app.venue_monthly_reports",
+  "--table=pintpath_app.venue_partner_outreach",
+  "--table=pintpath_app.venue_pending_changes",
+  "--table=pintpath_app.venue_price_records",
+  "--table=pintpath_app.venue_profiles",
+  "--table=pintpath_app.venue_requests",
+  "--table=pintpath_app.venue_specials",
+  "--table=pintpath_app.verifications",
+  "--table=pintpath_app.wrong_price_reports",
+  "--table=pintpath_ops.migration_chunks",
+  "--table=pintpath_ops.migration_runs",
+] as const);
+
+/*
+ * Keep the V4 scratch-restore argv locally frozen for the same reason as the
+ * V4 dump argv above. A focused cross-contract test byte-compares this suffix
+ * with POSTGRES_LOGICAL_BACKUP_V4_REQUIRED_SCRATCH_RESTORE_OPTIONS.
+ */
+const POSTGRES_TOOL_AUTHORITY_V4_SCRATCH_RESTORE_OPTIONS = OBJECT_FREEZE([
+  "--data-only",
+  "--disable-triggers",
+  "--single-transaction",
+  "--exit-on-error",
+  "--no-password",
+  "--no-owner",
+  "--no-acl",
+] as const);
 
 const FS_LSTAT_SYNC = fs.lstatSync;
 const FS_REALPATH_SYNC_RECEIVER = fs.realpathSync;
@@ -105,8 +208,19 @@ const STAT_MODE_REGULAR = BIGINT_INTRINSIC(fs.constants.S_IFREG);
 const LOWERCASE_SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const SNAPSHOT_IDENTIFIER_PATTERN = /^[a-fA-F0-9-]{1,128}$/;
 const BACKUP_ROLE_PATTERN = /^pintpath_logical_backup_d[1-9][0-9]{0,9}$/;
+const POSTGRES_17_SNAPSHOT_IDENTIFIER_PATTERN =
+  /^[0-9A-F]{8}-[0-9A-F]{8}-([1-9][0-9]{0,9})$/;
+const POSTGRES_OID_SCOPED_BACKUP_ROLE_PATTERN =
+  /^pintpath_logical_backup_d([1-9][0-9]{0,9})$/;
 const POSTGRES_17_VERSION_PATTERN =
   /^17\.[0-9]+(?:\.[0-9]+){0,2}(?:(?:[-+._~:][a-zA-Z0-9+._~:-]{0,95})|(?: \([a-zA-Z0-9+._~: -]{1,94}\)))?$/;
+const POSTGRES_V4_UNSAFE_DATABASE_NAME_PATTERN =
+  /[=\s]|^(?:postgres|postgresql):\/\//i;
+
+const MAX_POSTGRES_OID = 4_294_967_295;
+// PostgreSQL's exported-snapshot sequence component is formatted from a
+// positive signed int; source-authority receipts freeze the same upper bound.
+const MAX_POSTGRES_SNAPSHOT_SEQUENCE = 2_147_483_647;
 
 export const POSTGRES_TOOL_AUTHORITY_MAXIMUM_BYTES = 67_108_864 as const;
 
@@ -118,14 +232,22 @@ const MAX_ARCHIVE_BYTES = 1_099_511_627_776n;
 const VERSION_TIMEOUT_MS = 15_000;
 const VERSION_OUTPUT_LIMIT = 4 * 1_024;
 const DUMP_TIMEOUT_MS = 60 * 60 * 1_000;
+const DUMP_V4_TIMEOUT_MS = 5 * 60 * 1_000;
 const DUMP_OUTPUT_LIMIT = 512 * 1_024;
 const LIST_TIMEOUT_MS = 5 * 60 * 1_000;
+export const POSTGRES_TOOL_AUTHORITY_V4_MAX_LISTING_BYTES = 65_536;
 const BACKUP_LIST_OUTPUT_LIMIT = 32 * 1_024 * 1_024;
 const RESTORE_LIST_OUTPUT_LIMIT = 64 * 1_024 * 1_024;
 const RESTORE_TIMEOUT_MS = 2 * 60 * 60 * 1_000;
 const RESTORE_OUTPUT_LIMIT = 1 * 1_024 * 1_024;
 
-export type PostgresToolAuthorityPurpose = "dump" | "list" | "restore";
+export type PostgresToolAuthorityPurpose =
+  | "dump"
+  | "dump-v4"
+  | "list"
+  | "list-v4"
+  | "restore"
+  | "restore-v4";
 
 export type PostgresToolAuthorityFailureCode =
   | "invalid_arguments"
@@ -182,6 +304,19 @@ export interface PostgresToolProcessResultCarrier extends PostgresToolProcessRes
   readonly [POSTGRES_TOOL_PROCESS_RESULT_CARRIER_BRAND]: true;
 }
 
+export interface PostgresToolRawProcessResult {
+  readonly exitCode: number;
+  readonly stdout: Buffer;
+  readonly stderr: Buffer;
+}
+
+declare const POSTGRES_TOOL_RAW_PROCESS_RESULT_CARRIER_BRAND: unique symbol;
+
+export interface PostgresToolRawProcessResultCarrier
+  extends PostgresToolRawProcessResult {
+  readonly [POSTGRES_TOOL_RAW_PROCESS_RESULT_CARRIER_BRAND]: true;
+}
+
 export interface PostgresToolAuthorityProcessInvocation {
   readonly operation: "version" | "dump" | "list" | "restore";
   readonly command: string;
@@ -194,9 +329,35 @@ export interface PostgresToolAuthorityProcessInvocation {
   readonly stdoutFileDescriptor?: number;
 }
 
+/**
+ * The discriminator is intentionally unavailable to every legacy authority
+ * path. It asks the native runner to preserve pg_restore's stdout bytes rather
+ * than decode them as UTF-8.
+ */
+export interface PostgresToolAuthorityRawProcessInvocation {
+  readonly operation: "list-v4";
+  readonly stdoutMode: "raw";
+  readonly command: string;
+  readonly args: readonly string[];
+  readonly env: Readonly<Record<string, string>>;
+  readonly timeoutMs: number;
+  readonly maxStdoutBytes: typeof POSTGRES_TOOL_AUTHORITY_V4_MAX_LISTING_BYTES;
+  readonly maxStderrBytes: typeof POSTGRES_TOOL_AUTHORITY_V4_MAX_LISTING_BYTES;
+  readonly stdinFileDescriptor: number;
+}
+
 export type PostgresToolAuthorityProcessRunner = (
   invocation: PostgresToolAuthorityProcessInvocation,
 ) => Promise<PostgresToolProcessResultCarrier>;
+
+export interface PostgresListV4ToolAuthorityProcessRunner {
+  (
+    invocation: PostgresToolAuthorityProcessInvocation,
+  ): Promise<PostgresToolProcessResultCarrier>;
+  (
+    invocation: PostgresToolAuthorityRawProcessInvocation,
+  ): Promise<PostgresToolRawProcessResultCarrier>;
+}
 
 /**
  * Test-only fault-injection seam. Passing this object replaces the captured
@@ -225,7 +386,38 @@ export interface PostgresDumpOperationInput {
   readonly archiveOutputFileDescriptor: number;
 }
 
+export interface PostgresDumpV4OperationInput {
+  /**
+   * The caller must independently authenticate both dynamic values against the
+   * source-authority receipt and bind PGUSER, database identity/OID, role, and
+   * snapshot to that receipt. This layer enforces exact PG17 argument syntax
+   * and reviewed argv position; it does not accept or verify the receipt.
+   *
+   * The numeric output descriptor is likewise not an archive-custody claim.
+   * Before activation, the emitter must retain a separately opened, empty,
+   * current-UID-owned mode-0600 regular file with one link; verify its held
+   * identity before and after this call; fsync it; and bind its exact bytes and
+   * digest into the archive evidence. This authority does none of those steps.
+   */
+  readonly snapshotIdentifier: string;
+  readonly roleName: string;
+  readonly environment: Readonly<Record<string, string>>;
+  readonly archiveOutputFileDescriptor: number;
+}
+
 export interface PostgresRestoreOperationInput {
+  readonly environment: Readonly<Record<string, string>>;
+  readonly archiveInputFileDescriptor: number;
+}
+
+export interface PostgresRestoreV4OperationInput {
+  /**
+   * This input supplies only a closed libpq environment and a separately
+   * opened archive descriptor at offset zero. It does not attest the V4
+   * manifest, a tool receipt, disposable-target identity or superuser status,
+   * TOC semantics, archive bytes/digest/custody, pre-load emptiness, or the
+   * scratch kernel. Those remain duties of the scratch-restore caller.
+   */
   readonly environment: Readonly<Record<string, string>>;
   readonly archiveInputFileDescriptor: number;
 }
@@ -240,18 +432,63 @@ export interface PostgresDumpToolAuthority extends PostgresToolAuthorityBase {
   dump(input: PostgresDumpOperationInput): Promise<PostgresToolProcessResult>;
 }
 
+export interface PostgresDumpV4ToolAuthority extends PostgresToolAuthorityBase {
+  dumpV4(input: PostgresDumpV4OperationInput): Promise<PostgresToolProcessResult>;
+}
+
 export interface PostgresListToolAuthority extends PostgresToolAuthorityBase {
   list(archiveInputFileDescriptor: number): Promise<PostgresToolProcessResult>;
+}
+
+/**
+ * A byte-preserving process observation only. It does not authenticate the
+ * archive contents or source and cannot authorize emission, restore, or any
+ * other operational action. The caller must independently parse the returned
+ * bytes and exact-match their hash and all remaining V4 evidence bindings.
+ */
+export interface PostgresV4ListingObservationOnly {
+  readonly classification: "V4_LISTING_OBSERVATION_ONLY";
+  readonly listingBytes: Buffer;
+  readonly listingByteLength: number;
+  readonly listingSha256: string;
+  readonly archiveStableIdentitySha256: string;
+  readonly pgRestoreVersion: string;
+  readonly configuredExecutableSha256: string;
+  readonly operationalAuthorityGranted: false;
+  readonly sourceAuthorityGranted: false;
+  readonly archiveContentAuthorityGranted: false;
+}
+
+export interface PostgresListV4ToolAuthority extends PostgresToolAuthorityBase {
+  listV4(
+    archiveInputFileDescriptor: number,
+  ): Promise<PostgresV4ListingObservationOnly>;
 }
 
 export interface PostgresRestoreToolAuthority extends PostgresListToolAuthority {
   restore(input: PostgresRestoreOperationInput): Promise<PostgresToolProcessResult>;
 }
 
+/**
+ * One-shot process authority only: version -> listV4 -> restoreV4. Successful
+ * listing proves pg_restore accepted a stable held inode, but this facade does
+ * not semantically parse that listing or make any of the caller-owned claims
+ * documented on PostgresRestoreV4OperationInput.
+ */
+export interface PostgresRestoreV4ToolAuthority extends PostgresToolAuthorityBase {
+  listV4(archiveInputFileDescriptor: number): Promise<PostgresToolProcessResult>;
+  restoreV4(
+    input: PostgresRestoreV4OperationInput,
+  ): Promise<PostgresToolProcessResult>;
+}
+
 export type PostgresToolAuthority =
   | PostgresDumpToolAuthority
+  | PostgresDumpV4ToolAuthority
   | PostgresListToolAuthority
-  | PostgresRestoreToolAuthority;
+  | PostgresListV4ToolAuthority
+  | PostgresRestoreToolAuthority
+  | PostgresRestoreV4ToolAuthority;
 
 interface StableIdentity {
   readonly dev: bigint;
@@ -280,6 +517,10 @@ type AuthorityState = "idle" | "operating" | "failed" | "closing" | "closed";
 
 const ERROR_AUTHORITIES = new WeakMap<object, PostgresToolAuthorityFailureCode>();
 const PROCESS_RESULT_CARRIERS = new WeakSet<object>();
+const RAW_PROCESS_RESULT_CARRIERS = new WeakMap<
+object,
+PostgresToolRawProcessResult
+>();
 const WEAK_MAP_GET = WeakMap.prototype.get;
 const WEAK_MAP_SET = WeakMap.prototype.set;
 const WEAK_SET_ADD = WeakSet.prototype.add;
@@ -417,7 +658,14 @@ function exactOptions(value: unknown): {
   const executableFile = ownValue(descriptors, "executableFile");
   const expectedSha256 = ownValue(descriptors, "expectedSha256");
   if (
-    (purpose !== "dump" && purpose !== "list" && purpose !== "restore")
+    (
+      purpose !== "dump"
+      && purpose !== "dump-v4"
+      && purpose !== "list"
+      && purpose !== "list-v4"
+      && purpose !== "restore"
+      && purpose !== "restore-v4"
+    )
     || typeof executableFile !== "string"
     || typeof expectedSha256 !== "string"
     || !regexpMatches(LOWERCASE_SHA256_PATTERN, expectedSha256)
@@ -514,7 +762,9 @@ function exactExecutablePath(
   value: string,
   purpose: PostgresToolAuthorityPurpose,
 ): string {
-  const expectedBasename = purpose === "dump" ? "pg_dump" : "pg_restore";
+  const expectedBasename = purpose === "dump" || purpose === "dump-v4"
+    ? "pg_dump"
+    : "pg_restore";
   if (
     value.length < 1
     || REFLECT_APPLY(BUFFER_BYTE_LENGTH, BUFFER_INTRINSIC, [value, "utf8"])
@@ -847,6 +1097,25 @@ const DUMP_ENVIRONMENT_KEYS = OBJECT_FREEZE([
   "PGPASSFILE",
 ] as const);
 
+// Additive V4-only contract. The legacy dump environment above must remain
+// byte-for-byte stable and intentionally does not accept this extra key.
+const DUMP_V4_ENVIRONMENT_KEYS = OBJECT_FREEZE([
+  "PGHOST",
+  "PGHOSTADDR",
+  "PGPORT",
+  "PGDATABASE",
+  "PGUSER",
+  "PGSSLMODE",
+  "PGSSLROOTCERT",
+  "PGSSLMINPROTOCOLVERSION",
+  "PGSSLSNI",
+  "PGGSSENCMODE",
+  "PGCONNECT_TIMEOUT",
+  "PGAPPNAME",
+  "PGPASSFILE",
+  "PGREQUIREAUTH",
+] as const);
+
 const RESTORE_ENVIRONMENT_KEYS = OBJECT_FREEZE([
   "PGHOST",
   "PGPORT",
@@ -923,6 +1192,53 @@ function exactDumpInput(value: unknown): {
   });
 }
 
+function exactDumpV4Input(value: unknown): {
+  readonly snapshotIdentifier: string;
+  readonly roleName: string;
+  readonly environment: Readonly<Record<string, string>>;
+  readonly archiveOutputFileDescriptor: number;
+} {
+  const descriptors = ownDataDescriptors(value, [
+    "snapshotIdentifier",
+    "roleName",
+    "environment",
+    "archiveOutputFileDescriptor",
+  ]);
+  const snapshotIdentifier = ownValue(descriptors, "snapshotIdentifier");
+  const roleName = ownValue(descriptors, "roleName");
+  const snapshotMatch = typeof snapshotIdentifier === "string"
+    ? REFLECT_APPLY(REGEXP_EXEC, POSTGRES_17_SNAPSHOT_IDENTIFIER_PATTERN, [
+      snapshotIdentifier,
+    ])
+    : null;
+  const roleMatch = typeof roleName === "string"
+    ? REFLECT_APPLY(REGEXP_EXEC, POSTGRES_OID_SCOPED_BACKUP_ROLE_PATTERN, [roleName])
+    : null;
+  const environment = closedEnvironment(
+    ownValue(descriptors, "environment"),
+    DUMP_V4_ENVIRONMENT_KEYS,
+  );
+  if (
+    snapshotMatch === null
+    || roleMatch === null
+    || NUMBER_INTRINSIC(snapshotMatch[1]) > MAX_POSTGRES_SNAPSHOT_SEQUENCE
+    || NUMBER_INTRINSIC(roleMatch[1]) > MAX_POSTGRES_OID
+    || environment.PGREQUIREAUTH !== "scram-sha-256"
+    || regexpMatches(
+      POSTGRES_V4_UNSAFE_DATABASE_NAME_PATTERN,
+      environment.PGDATABASE!,
+    )
+  ) throw internalError("invalid_arguments");
+  return freezeNullRecord({
+    snapshotIdentifier: snapshotIdentifier as string,
+    roleName: roleName as string,
+    environment,
+    archiveOutputFileDescriptor: exactFileDescriptor(
+      ownValue(descriptors, "archiveOutputFileDescriptor"),
+    ),
+  });
+}
+
 function exactRestoreInput(value: unknown): {
   readonly environment: Readonly<Record<string, string>>;
   readonly archiveInputFileDescriptor: number;
@@ -962,6 +1278,85 @@ function exactProcessResultFields(value: unknown): PostgresToolProcessResult {
   return freezeNullRecord({ exitCode, stdout, stderr });
 }
 
+function snapshotPlainBuffer(
+  value: unknown,
+  maximumBytes: number,
+): Buffer {
+  try {
+    if (
+      typeof value !== "object"
+      || value === null
+      || REFLECT_APPLY(UTIL_IS_PROXY, UTIL_TYPES_INTRINSIC, [value]) === true
+      || TYPED_ARRAY_BYTE_LENGTH === undefined
+      || REFLECT_APPLY(UTIL_IS_UINT8_ARRAY, UTIL_TYPES_INTRINSIC, [value]) !== true
+      || REFLECT_APPLY(OBJECT_GET_PROTOTYPE_OF, OBJECT_INTRINSIC, [value])
+        !== BUFFER_PROTOTYPE
+      || REFLECT_APPLY(BUFFER_IS_BUFFER, BUFFER_INTRINSIC, [value]) !== true
+    ) throw internalError("process_failed");
+    const byteLength = REFLECT_APPLY(TYPED_ARRAY_BYTE_LENGTH, value, []);
+    if (
+      typeof byteLength !== "number"
+      || !REFLECT_APPLY(NUMBER_IS_SAFE_INTEGER, NUMBER_INTRINSIC, [byteLength])
+      || byteLength < 0
+      || byteLength > maximumBytes
+    ) throw internalError("process_failed");
+    const keys = REFLECT_APPLY(REFLECT_OWN_KEYS, REFLECT_INTRINSIC, [value]);
+    const descriptors = REFLECT_APPLY(
+      OBJECT_GET_OWN_PROPERTY_DESCRIPTORS,
+      OBJECT_INTRINSIC,
+      [value],
+    ) as PropertyDescriptorMap;
+    if (
+      !REFLECT_APPLY(ARRAY_IS_ARRAY, ARRAY_INTRINSIC, [keys])
+      || keys.length !== byteLength
+    ) throw internalError("process_failed");
+    for (let index = 0; index < byteLength; index += 1) {
+      const descriptor = ownDescriptor(descriptors, STRING_INTRINSIC(index));
+      if (
+        keys[index] !== STRING_INTRINSIC(index)
+        || descriptor === null
+        || typeof descriptor.value !== "number"
+        || !REFLECT_APPLY(NUMBER_IS_SAFE_INTEGER, NUMBER_INTRINSIC, [
+          descriptor.value,
+        ])
+        || descriptor.value < 0
+        || descriptor.value > 255
+      ) throw internalError("process_failed");
+    }
+    const snapshot = REFLECT_APPLY(
+      BUFFER_ALLOC,
+      BUFFER_INTRINSIC,
+      [byteLength],
+    ) as Buffer;
+    REFLECT_APPLY(TYPED_ARRAY_SET, snapshot, [value, 0]);
+    return snapshot;
+  } catch {
+    throw internalError("process_failed");
+  }
+}
+
+function exactRawProcessResultFields(
+  value: unknown,
+): PostgresToolRawProcessResult {
+  const descriptors = ownDataDescriptors(value, ["exitCode", "stdout", "stderr"]);
+  const exitCode = ownValue(descriptors, "exitCode");
+  if (
+    typeof exitCode !== "number"
+    || !REFLECT_APPLY(NUMBER_IS_SAFE_INTEGER, NUMBER_INTRINSIC, [exitCode])
+    || exitCode < 0
+    || exitCode > 255
+  ) throw internalError("process_failed");
+  const stdout = snapshotPlainBuffer(
+    ownValue(descriptors, "stdout"),
+    POSTGRES_TOOL_AUTHORITY_V4_MAX_LISTING_BYTES,
+  );
+  const stderr = snapshotPlainBuffer(
+    ownValue(descriptors, "stderr"),
+    POSTGRES_TOOL_AUTHORITY_V4_MAX_LISTING_BYTES,
+  );
+  return freezeNullRecord({ exitCode, stdout, stderr });
+}
+
 /**
  * Builds the only process-result carrier accepted by an authority runner. It is
  * synchronously snapshotted, null-prototype, frozen, and branded before it can
@@ -975,6 +1370,41 @@ export function createPostgresToolProcessResultCarrier(
   const exact = exactProcessResultFields(value);
   REFLECT_APPLY(WEAK_SET_ADD, PROCESS_RESULT_CARRIERS, [exact]);
   return exact as PostgresToolProcessResultCarrier;
+}
+
+/**
+ * Builds the separate byte-preserving carrier accepted only by the V4 listing
+ * observation path. Private snapshots are kept apart from the public Buffer
+ * fields so later mutation of an exposed carrier cannot alter authority input.
+ */
+export function createPostgresToolRawProcessResultCarrier(
+  value: PostgresToolRawProcessResult,
+): PostgresToolRawProcessResultCarrier {
+  const exact = exactRawProcessResultFields(value);
+  const internal = freezeNullRecord({
+    exitCode: exact.exitCode,
+    stdout: snapshotPlainBuffer(
+      exact.stdout,
+      POSTGRES_TOOL_AUTHORITY_V4_MAX_LISTING_BYTES,
+    ),
+    stderr: snapshotPlainBuffer(
+      exact.stderr,
+      POSTGRES_TOOL_AUTHORITY_V4_MAX_LISTING_BYTES,
+    ),
+  });
+  const carrier = freezeNullRecord({
+    exitCode: exact.exitCode,
+    stdout: snapshotPlainBuffer(
+      exact.stdout,
+      POSTGRES_TOOL_AUTHORITY_V4_MAX_LISTING_BYTES,
+    ),
+    stderr: snapshotPlainBuffer(
+      exact.stderr,
+      POSTGRES_TOOL_AUTHORITY_V4_MAX_LISTING_BYTES,
+    ),
+  });
+  REFLECT_APPLY(WEAK_MAP_SET, RAW_PROCESS_RESULT_CARRIERS, [carrier, internal]);
+  return carrier as PostgresToolRawProcessResultCarrier;
 }
 
 async function exactProcessPromise(value: unknown): Promise<PostgresToolProcessResult> {
@@ -1010,6 +1440,54 @@ async function exactProcessPromise(value: unknown): Promise<PostgresToolProcessR
   return exactProcessResultFields(result);
 }
 
+async function exactRawProcessPromise(
+  value: unknown,
+): Promise<PostgresToolRawProcessResult> {
+  if (
+    typeof value !== "object"
+    || value === null
+    || REFLECT_APPLY(UTIL_IS_PROXY, UTIL_TYPES_INTRINSIC, [value]) === true
+    || !REFLECT_APPLY(UTIL_IS_PROMISE, UTIL_TYPES_INTRINSIC, [value])
+    || REFLECT_APPLY(OBJECT_GET_PROTOTYPE_OF, OBJECT_INTRINSIC, [value])
+      !== PROMISE_PROTOTYPE
+  ) throw internalError("process_failed");
+  const promiseKeys = REFLECT_APPLY(REFLECT_OWN_KEYS, REFLECT_INTRINSIC, [value]);
+  const promiseConstructorDescriptor = REFLECT_APPLY(
+    OBJECT_GET_OWN_PROPERTY_DESCRIPTOR,
+    OBJECT_INTRINSIC,
+    [PROMISE_PROTOTYPE, "constructor"],
+  );
+  if (
+    !REFLECT_APPLY(ARRAY_IS_ARRAY, ARRAY_INTRINSIC, [promiseKeys])
+    || promiseKeys.length !== 0
+    || promiseConstructorDescriptor === undefined
+    || !hasOwn(promiseConstructorDescriptor, "value")
+    || promiseConstructorDescriptor.value !== PROMISE_INTRINSIC
+  ) throw internalError("process_failed");
+  const result = await (value as Promise<unknown>);
+  if (
+    typeof result !== "object"
+    || result === null
+    || REFLECT_APPLY(UTIL_IS_PROXY, UTIL_TYPES_INTRINSIC, [result]) === true
+    || REFLECT_APPLY(OBJECT_GET_PROTOTYPE_OF, OBJECT_INTRINSIC, [result]) !== null
+  ) throw internalError("process_failed");
+  const internal = REFLECT_APPLY(WEAK_MAP_GET, RAW_PROCESS_RESULT_CARRIERS, [
+    result,
+  ]) as PostgresToolRawProcessResult | undefined;
+  if (internal === undefined) throw internalError("process_failed");
+  return freezeNullRecord({
+    exitCode: internal.exitCode,
+    stdout: snapshotPlainBuffer(
+      internal.stdout,
+      POSTGRES_TOOL_AUTHORITY_V4_MAX_LISTING_BYTES,
+    ),
+    stderr: snapshotPlainBuffer(
+      internal.stderr,
+      POSTGRES_TOOL_AUTHORITY_V4_MAX_LISTING_BYTES,
+    ),
+  });
+}
+
 function invocation(input: {
   readonly operation: PostgresToolAuthorityProcessInvocation["operation"];
   readonly executableFile: string;
@@ -1037,6 +1515,23 @@ function invocation(input: {
     value.stdoutFileDescriptor = input.stdoutFileDescriptor;
   }
   return freezeNullRecord(value) as unknown as PostgresToolAuthorityProcessInvocation;
+}
+
+function rawListV4Invocation(
+  executableFile: string,
+  archiveInputFileDescriptor: number,
+): PostgresToolAuthorityRawProcessInvocation {
+  return freezeNullRecord({
+    operation: "list-v4" as const,
+    stdoutMode: "raw" as const,
+    command: executableFile,
+    args: fixedArray(["--list", "--format=custom"]),
+    env: fixedEnvironment(),
+    timeoutMs: LIST_TIMEOUT_MS,
+    maxStdoutBytes: POSTGRES_TOOL_AUTHORITY_V4_MAX_LISTING_BYTES,
+    maxStderrBytes: POSTGRES_TOOL_AUTHORITY_V4_MAX_LISTING_BYTES,
+    stdinFileDescriptor: archiveInputFileDescriptor,
+  });
 }
 
 function directPromise<T>(operation: () => Promise<T>): Promise<T> {
@@ -1087,6 +1582,33 @@ function dumpInvocation(
   });
 }
 
+function dumpV4Invocation(
+  executableFile: string,
+  input: ReturnType<typeof exactDumpV4Input>,
+): PostgresToolAuthorityProcessInvocation {
+  const staticArgumentCount = POSTGRES_TOOL_AUTHORITY_V4_STATIC_DUMP_ARGUMENTS.length;
+  const args: string[] = [];
+  for (let index = 0; index < staticArgumentCount; index += 1) {
+    args[index] = POSTGRES_TOOL_AUTHORITY_V4_STATIC_DUMP_ARGUMENTS[index]!;
+  }
+  args[staticArgumentCount] = `--role=${input.roleName}`;
+  args[staticArgumentCount + 1] = `--snapshot=${input.snapshotIdentifier}`;
+  return invocation({
+    operation: "dump",
+    executableFile,
+    args,
+    env: input.environment,
+    // This upper bound matches the source-authority watchdog. The future
+    // operational caller/runner must further reduce it by ceremony time
+    // already elapsed so this invocation cannot outlive the absolute receipt
+    // deadline merely because it began late.
+    timeoutMs: DUMP_V4_TIMEOUT_MS,
+    maxStdoutBytes: DUMP_OUTPUT_LIMIT,
+    maxStderrBytes: DUMP_OUTPUT_LIMIT,
+    stdoutFileDescriptor: input.archiveOutputFileDescriptor,
+  });
+}
+
 function listInvocation(
   executableFile: string,
   archiveInputFileDescriptor: number,
@@ -1130,13 +1652,52 @@ function restoreInvocation(
   });
 }
 
-function versionAuthorizesOperation(
+function listV4Invocation(
+  executableFile: string,
+  archiveInputFileDescriptor: number,
+): PostgresToolAuthorityProcessInvocation {
+  return invocation({
+    operation: "list",
+    executableFile,
+    args: ["--list", "--format=custom"],
+    env: fixedEnvironment(),
+    timeoutMs: LIST_TIMEOUT_MS,
+    maxStdoutBytes: RESTORE_LIST_OUTPUT_LIMIT,
+    maxStderrBytes: RESTORE_OUTPUT_LIMIT,
+    stdinFileDescriptor: archiveInputFileDescriptor,
+  });
+}
+
+function restoreV4Invocation(
+  executableFile: string,
+  input: ReturnType<typeof exactRestoreInput>,
+): PostgresToolAuthorityProcessInvocation {
+  const args = ["--format=custom", "--dbname="];
+  const optionCount = POSTGRES_TOOL_AUTHORITY_V4_SCRATCH_RESTORE_OPTIONS.length;
+  for (let index = 0; index < optionCount; index += 1) {
+    args[index + 2] = POSTGRES_TOOL_AUTHORITY_V4_SCRATCH_RESTORE_OPTIONS[index]!;
+  }
+  return invocation({
+    operation: "restore",
+    executableFile,
+    args,
+    env: input.environment,
+    timeoutMs: RESTORE_TIMEOUT_MS,
+    maxStdoutBytes: RESTORE_OUTPUT_LIMIT,
+    maxStderrBytes: RESTORE_OUTPUT_LIMIT,
+    stdinFileDescriptor: input.archiveInputFileDescriptor,
+  });
+}
+
+function parsedPostgres17ToolVersion(
   result: PostgresToolProcessResult,
   purpose: PostgresToolAuthorityPurpose,
-): boolean {
-  if (result.exitCode !== 0 || result.stderr.length !== 0) return false;
+): string | null {
+  if (result.exitCode !== 0 || result.stderr.length !== 0) return null;
   const line = REFLECT_APPLY(STRING_TRIM, result.stdout, []);
-  const name = purpose === "dump" ? "pg_dump" : "pg_restore";
+  const name = purpose === "dump" || purpose === "dump-v4"
+    ? "pg_dump"
+    : "pg_restore";
   const prefix = `${name} (PostgreSQL) `;
   if (
     typeof line !== "string"
@@ -1144,10 +1705,19 @@ function versionAuthorizesOperation(
     || stringIncludes(line, "\n")
     || stringIncludes(line, "\r")
     || !REFLECT_APPLY(STRING_STARTS_WITH, line, [prefix])
-  ) return false;
+  ) return null;
   const version = REFLECT_APPLY(STRING_SLICE, line, [prefix.length]);
   return typeof version === "string"
-    && regexpMatches(POSTGRES_17_VERSION_PATTERN, version);
+    && regexpMatches(POSTGRES_17_VERSION_PATTERN, version)
+    ? version
+    : null;
+}
+
+function versionAuthorizesOperation(
+  result: PostgresToolProcessResult,
+  purpose: PostgresToolAuthorityPurpose,
+): boolean {
+  return parsedPostgres17ToolVersion(result, purpose) !== null;
 }
 
 function listAuthorizesRestore(result: PostgresToolProcessResult): boolean {
@@ -1155,6 +1725,101 @@ function listAuthorizesRestore(result: PostgresToolProcessResult): boolean {
     && result.stderr.length === 0
     && result.stdout.length > 0
     && !stringIncludes(result.stdout, "\0");
+}
+
+function dumpV4AuthorizesCompletion(result: PostgresToolProcessResult): boolean {
+  return result.exitCode === 0
+    && result.stdout.length === 0
+    && result.stderr.length === 0;
+}
+
+function restoreV4AuthorizesCompletion(result: PostgresToolProcessResult): boolean {
+  return result.exitCode === 0
+    && result.stdout.length === 0
+    && result.stderr.length === 0;
+}
+
+function rawListV4AuthorizesObservation(
+  result: PostgresToolRawProcessResult,
+): boolean {
+  const stdoutBytes = TYPED_ARRAY_BYTE_LENGTH === undefined
+    ? -1
+    : REFLECT_APPLY(TYPED_ARRAY_BYTE_LENGTH, result.stdout, []) as number;
+  const stderrBytes = TYPED_ARRAY_BYTE_LENGTH === undefined
+    ? -1
+    : REFLECT_APPLY(TYPED_ARRAY_BYTE_LENGTH, result.stderr, []) as number;
+  return result.exitCode === 0
+    && stdoutBytes > 0
+    && stdoutBytes <= POSTGRES_TOOL_AUTHORITY_V4_MAX_LISTING_BYTES
+    && stderrBytes === 0;
+}
+
+function sha256Bytes(value: Buffer | string): string {
+  const hash = REFLECT_APPLY(CRYPTO_CREATE_HASH, CRYPTO_INTRINSIC, ["sha256"]);
+  REFLECT_APPLY(HASH_UPDATE, hash, [value]);
+  const digest = REFLECT_APPLY(HASH_DIGEST, hash, ["hex"]);
+  if (typeof digest !== "string") throw internalError("process_failed");
+  return digest;
+}
+
+function decimalBigInt(value: bigint): string {
+  const encoded = REFLECT_APPLY(BIGINT_TO_STRING, value, [10]);
+  if (typeof encoded !== "string") throw internalError("archive_drift");
+  return encoded;
+}
+
+function stableArchiveIdentitySha256(identity: StableIdentity): string {
+  return sha256Bytes(
+    "pintpath-postgres-v4-held-archive-identity-v1\n"
+      + `dev=${decimalBigInt(identity.dev)}\n`
+      + `ino=${decimalBigInt(identity.ino)}\n`
+      + `uid=${decimalBigInt(identity.uid)}\n`
+      + `gid=${decimalBigInt(identity.gid)}\n`
+      + `mode=${decimalBigInt(identity.mode)}\n`
+      + `nlink=${decimalBigInt(identity.nlink)}\n`
+      + `size=${decimalBigInt(identity.size)}\n`
+      + `mtimeNs=${decimalBigInt(identity.mtimeNs)}\n`
+      + `ctimeNs=${decimalBigInt(identity.ctimeNs)}\n`,
+  );
+}
+
+function v4ListingObservation(input: {
+  readonly result: PostgresToolRawProcessResult;
+  readonly archiveIdentity: StableIdentity;
+  readonly pgRestoreVersion: string;
+  readonly configuredExecutableSha256: string;
+}): PostgresV4ListingObservationOnly {
+  const internalListingBytes = snapshotPlainBuffer(
+    input.result.stdout,
+    POSTGRES_TOOL_AUTHORITY_V4_MAX_LISTING_BYTES,
+  );
+  const listingByteLength = TYPED_ARRAY_BYTE_LENGTH === undefined
+    ? -1
+    : REFLECT_APPLY(
+      TYPED_ARRAY_BYTE_LENGTH,
+      internalListingBytes,
+      [],
+    ) as number;
+  if (listingByteLength < 1) throw internalError("process_failed");
+  const listingSha256 = sha256Bytes(internalListingBytes);
+  const exposedListingBytes = snapshotPlainBuffer(
+    internalListingBytes,
+    POSTGRES_TOOL_AUTHORITY_V4_MAX_LISTING_BYTES,
+  );
+  return freezeNullRecord({
+    classification: "V4_LISTING_OBSERVATION_ONLY" as const,
+    listingBytes: exposedListingBytes,
+    listingByteLength,
+    listingSha256,
+    archiveStableIdentitySha256: stableArchiveIdentitySha256(
+      input.archiveIdentity,
+    ),
+    pgRestoreVersion: input.pgRestoreVersion,
+    configuredExecutableSha256: input.configuredExecutableSha256,
+    operationalAuthorityGranted: false as const,
+    sourceAuthorityGranted: false as const,
+    archiveContentAuthorityGranted: false as const,
+  });
 }
 
 /**
@@ -1170,23 +1835,42 @@ export async function openPostgresToolAuthority(
   testFileSystemDependencies?: PostgresToolAuthorityTestFileSystemDependencies,
 ): Promise<PostgresDumpToolAuthority>;
 export async function openPostgresToolAuthority(
+  options: OpenPostgresToolAuthorityOptions & { readonly purpose: "dump-v4" },
+  runProcess: PostgresToolAuthorityProcessRunner,
+  testFileSystemDependencies?: PostgresToolAuthorityTestFileSystemDependencies,
+): Promise<PostgresDumpV4ToolAuthority>;
+export async function openPostgresToolAuthority(
   options: OpenPostgresToolAuthorityOptions & { readonly purpose: "list" },
   runProcess: PostgresToolAuthorityProcessRunner,
   testFileSystemDependencies?: PostgresToolAuthorityTestFileSystemDependencies,
 ): Promise<PostgresListToolAuthority>;
+export async function openPostgresToolAuthority(
+  options: OpenPostgresToolAuthorityOptions & { readonly purpose: "list-v4" },
+  runProcess: PostgresListV4ToolAuthorityProcessRunner,
+  testFileSystemDependencies?: PostgresToolAuthorityTestFileSystemDependencies,
+): Promise<PostgresListV4ToolAuthority>;
 export async function openPostgresToolAuthority(
   options: OpenPostgresToolAuthorityOptions & { readonly purpose: "restore" },
   runProcess: PostgresToolAuthorityProcessRunner,
   testFileSystemDependencies?: PostgresToolAuthorityTestFileSystemDependencies,
 ): Promise<PostgresRestoreToolAuthority>;
 export async function openPostgresToolAuthority(
-  options: OpenPostgresToolAuthorityOptions,
+  options: OpenPostgresToolAuthorityOptions & { readonly purpose: "restore-v4" },
   runProcess: PostgresToolAuthorityProcessRunner,
+  testFileSystemDependencies?: PostgresToolAuthorityTestFileSystemDependencies,
+): Promise<PostgresRestoreV4ToolAuthority>;
+export async function openPostgresToolAuthority(
+  options: OpenPostgresToolAuthorityOptions,
+  runProcess:
+    | PostgresToolAuthorityProcessRunner
+    | PostgresListV4ToolAuthorityProcessRunner,
   testFileSystemDependencies?: PostgresToolAuthorityTestFileSystemDependencies,
 ): Promise<PostgresToolAuthority>;
 export async function openPostgresToolAuthority(
   optionsInput: OpenPostgresToolAuthorityOptions,
-  runProcessInput: PostgresToolAuthorityProcessRunner,
+  runProcessInput:
+    | PostgresToolAuthorityProcessRunner
+    | PostgresListV4ToolAuthorityProcessRunner,
   testFileSystemDependenciesInput?:
   PostgresToolAuthorityTestFileSystemDependencies,
 ): Promise<PostgresToolAuthority> {
@@ -1195,7 +1879,8 @@ export async function openPostgresToolAuthority(
     typeof runProcessInput !== "function"
     || REFLECT_APPLY(UTIL_IS_PROXY, UTIL_TYPES_INTRINSIC, [runProcessInput]) === true
   ) throw internalError("invalid_arguments");
-  const runProcess = runProcessInput;
+  const runProcess = runProcessInput as PostgresToolAuthorityProcessRunner;
+  const runRawProcess = runProcessInput as PostgresListV4ToolAuthorityProcessRunner;
   const dependencies = testFileSystemDependenciesInput === undefined
     ? CAPTURED_NATIVE_DEPENDENCIES
     : exactTestDependencies(testFileSystemDependenciesInput);
@@ -1397,13 +2082,103 @@ export async function openPostgresToolAuthority(
     return result;
   };
 
-  const version = OBJECT_FREEZE((): Promise<PostgresToolProcessResult> =>
+  const executeRawListV4 = async (
+    operationInvocation: PostgresToolAuthorityRawProcessInvocation,
+    additionalPreflight: () => void,
+    additionalPostflight: () => void,
+  ): Promise<PostgresToolRawProcessResult> => {
+    if (state !== "idle" || phase !== "operation") {
+      throw internalError("invalid_arguments");
+    }
+    state = "operating";
+    let operationFailure: FailureState = NO_FAILURE;
+    let result: PostgresToolRawProcessResult | null = null;
+    try {
+      assertExactInternal();
+      additionalPreflight();
+    } catch (error) {
+      state = "failed";
+      throw internalError(
+        capturedErrorCode(error) === "archive_drift"
+          ? "archive_drift"
+          : "tool_drift",
+      );
+    }
+    try {
+      let pending: unknown;
+      try {
+        pending = REFLECT_APPLY(runRawProcess, undefined, [operationInvocation]);
+      } catch (error) {
+        operationFailure = capture(error);
+      }
+      if (!operationFailure.caught) {
+        try {
+          result = await exactRawProcessPromise(pending);
+        } catch (error) {
+          operationFailure = capture(error);
+        }
+      }
+    } finally {
+      let archivePostflightFailed = false;
+      try {
+        additionalPostflight();
+      } catch {
+        archivePostflightFailed = true;
+      }
+      let toolPostflightFailed = false;
+      try {
+        assertExactInternal();
+      } catch {
+        toolPostflightFailed = true;
+      }
+      if (archivePostflightFailed || toolPostflightFailed) {
+        state = "failed";
+        throw internalError(
+          archivePostflightFailed ? "archive_drift" : "tool_drift",
+        );
+      }
+    }
+    if (operationFailure.caught || result === null) {
+      state = "failed";
+      throw internalError("process_failed");
+    }
+    let authorized = false;
+    try {
+      authorized = rawListV4AuthorizesObservation(result);
+    } catch {
+      authorized = false;
+    }
+    if (!authorized) {
+      phase = "spent";
+      state = "failed";
+      throw internalError("process_failed");
+    }
+    phase = "spent";
+    state = "idle";
+    return result;
+  };
+
+  let v4ListingPgRestoreVersion: string | null = null;
+  const legacyVersion = OBJECT_FREEZE((): Promise<PostgresToolProcessResult> =>
     directPromise(() => execute(
       "version",
       "operation",
       versionInvocation(executableFile),
       (result) => versionAuthorizesOperation(result, options.purpose),
     )));
+  const listV4Version = OBJECT_FREEZE((): Promise<PostgresToolProcessResult> =>
+    directPromise(() => execute(
+      "version",
+      "operation",
+      versionInvocation(executableFile),
+      (result) => {
+        const parsed = parsedPostgres17ToolVersion(result, "list-v4");
+        if (parsed === null) return false;
+        v4ListingPgRestoreVersion = parsed;
+        return true;
+      },
+    )));
+  const version = options.purpose === "list-v4" ? listV4Version : legacyVersion;
   const assertExact = OBJECT_FREEZE(async (): Promise<void> => {
     if (state !== "idle") throw internalError("invalid_arguments");
     state = "operating";
@@ -1440,6 +2215,119 @@ export async function openPostgresToolAuthority(
       dumpInvocation(executableFile, exactDumpInput(input)),
     )));
     return freezeNullRecord({ version, dump, assertExact, close });
+  }
+
+  if (options.purpose === "dump-v4") {
+    const dumpV4 = OBJECT_FREEZE((
+      input: PostgresDumpV4OperationInput,
+    ): Promise<PostgresToolProcessResult> => directPromise(() => execute(
+      "operation",
+      "spent",
+      dumpV4Invocation(executableFile, exactDumpV4Input(input)),
+      dumpV4AuthorizesCompletion,
+    )));
+    return freezeNullRecord({ version, dumpV4, assertExact, close });
+  }
+
+  if (options.purpose === "list-v4") {
+    const listV4 = OBJECT_FREEZE(async (
+      archiveInputFileDescriptor: number,
+    ): Promise<PostgresV4ListingObservationOnly> => {
+      const descriptor = exactFileDescriptor(archiveInputFileDescriptor);
+      let candidate: StableIdentity | null = null;
+      const observed = await executeRawListV4(
+        rawListV4Invocation(executableFile, descriptor),
+        () => {
+          candidate = archiveIdentity(dependencies, descriptor, retainedUid);
+        },
+        () => {
+          const after = archiveIdentity(dependencies, descriptor, retainedUid);
+          if (candidate === null || !sameIdentity(candidate, after)) {
+            throw internalError("archive_drift");
+          }
+        },
+      );
+      if (candidate === null || v4ListingPgRestoreVersion === null) {
+        state = "failed";
+        throw internalError(
+          candidate === null ? "archive_drift" : "process_failed",
+        );
+      }
+      return v4ListingObservation({
+        result: observed,
+        archiveIdentity: candidate,
+        pgRestoreVersion: v4ListingPgRestoreVersion,
+        configuredExecutableSha256: options.expectedSha256,
+      });
+    });
+    return freezeNullRecord({ version, listV4, assertExact, close });
+  }
+
+  if (options.purpose === "restore-v4") {
+    const listV4 = OBJECT_FREEZE(async (
+      archiveInputFileDescriptor: number,
+    ): Promise<PostgresToolProcessResult> => {
+      const descriptor = exactFileDescriptor(archiveInputFileDescriptor);
+      let candidate: StableIdentity | null = null;
+      const observed = await execute(
+        "operation",
+        "restore",
+        listV4Invocation(executableFile, descriptor),
+        listAuthorizesRestore,
+        () => {
+          candidate = archiveIdentity(dependencies, descriptor, retainedUid);
+        },
+        () => {
+          const after = archiveIdentity(dependencies, descriptor, retainedUid);
+          if (candidate === null || !sameIdentity(candidate, after)) {
+            throw internalError("archive_drift");
+          }
+        },
+      );
+      if (candidate === null) throw internalError("archive_drift");
+      listedArchiveIdentity = candidate;
+      listedArchiveDescriptor = descriptor;
+      return observed;
+    });
+    const restoreV4 = OBJECT_FREEZE((
+      input: PostgresRestoreV4OperationInput,
+    ): Promise<PostgresToolProcessResult> => directPromise(() => {
+      const exact = exactRestoreInput(input);
+      // The caller must open a new OFD at offset zero. A distinct descriptor
+      // number rejects the common same-OFD case but cannot distinguish dup(2).
+      if (
+        listedArchiveIdentity === null
+        || listedArchiveDescriptor === null
+        || exact.archiveInputFileDescriptor === listedArchiveDescriptor
+      ) throw internalError("archive_drift");
+      return execute(
+        "restore",
+        "spent",
+        restoreV4Invocation(executableFile, exact),
+        restoreV4AuthorizesCompletion,
+        () => {
+          const before = archiveIdentity(
+            dependencies,
+            exact.archiveInputFileDescriptor,
+            retainedUid,
+          );
+          if (!sameIdentity(listedArchiveIdentity!, before)) {
+            throw internalError("archive_drift");
+          }
+        },
+        () => {
+          const after = archiveIdentity(
+            dependencies,
+            exact.archiveInputFileDescriptor,
+            retainedUid,
+          );
+          if (!sameIdentity(listedArchiveIdentity!, after)) {
+            throw internalError("archive_drift");
+          }
+        },
+      );
+    }));
+    return freezeNullRecord({ version, listV4, restoreV4, assertExact, close });
   }
 
   const listNextPhase: SequencePhase = options.purpose === "restore"

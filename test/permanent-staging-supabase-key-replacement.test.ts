@@ -30,7 +30,6 @@ function keyBuffers() {
   return {
     SUPABASE_ANON_KEY: Buffer.from(`sb_publishable_${"a".repeat(32)}`),
     SUPABASE_SERVICE_ROLE_KEY: Buffer.from(`sb_secret_${"b".repeat(32)}`),
-    OFFSITE_BACKUP_SERVICE_ROLE_KEY: Buffer.from(`sb_secret_${"c".repeat(32)}`),
   };
 }
 
@@ -89,15 +88,14 @@ function acknowledgement(
     mergedVariableNames: [
       "SUPABASE_ANON_KEY",
       "SUPABASE_SERVICE_ROLE_KEY",
-      "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
     ],
     acknowledged: true,
     ...overrides,
   });
 }
 
-describe("permanent-staging Supabase three-key replacement contract", () => {
-  it("pins a hard-disabled exact three-key, one-merge, skip-deploy policy", () => {
+describe("permanent-staging Supabase two-key replacement contract", () => {
+  it("pins a hard-disabled exact two-key, one-merge, skip-deploy policy", () => {
     const checkedIn = fs.readFileSync(
       path.resolve("ops/railway/permanent-staging-supabase-key-replacement-policy.json"),
       "utf8",
@@ -126,7 +124,6 @@ describe("permanent-staging Supabase three-key replacement contract", () => {
     )).toEqual([
       ["SUPABASE_ANON_KEY", "sb_publishable"],
       ["SUPABASE_SERVICE_ROLE_KEY", "sb_secret"],
-      ["OFFSITE_BACKUP_SERVICE_ROLE_KEY", "sb_secret"],
     ]);
     expect(parsePermanentStagingSupabaseKeyReplacementPolicy(
       checkedIn.replace("HARD_DISABLED", "ENABLED"),
@@ -210,7 +207,6 @@ describe("permanent-staging Supabase three-key replacement contract", () => {
         mergedVariableNames: [
           "SUPABASE_ANON_KEY",
           "SUPABASE_SERVICE_ROLE_KEY",
-          "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
           "EXTRA",
         ],
       }),
@@ -318,7 +314,6 @@ describe("permanent-staging Supabase three-key replacement contract", () => {
       retained = [
         request.variables.SUPABASE_ANON_KEY!,
         request.variables.SUPABASE_SERVICE_ROLE_KEY!,
-        request.variables.OFFSITE_BACKUP_SERVICE_ROLE_KEY!,
       ];
       entered();
       return transportPromise;
@@ -356,7 +351,7 @@ describe("permanent-staging Supabase three-key replacement contract", () => {
     }
   });
 
-  it("cannot revive an invalid six-row preflight through poisoned Array.prototype.every", async () => {
+  it("cannot revive an invalid four-row preflight through poisoned Array.prototype.every", async () => {
     const invalidPreflight = observation((value) => {
       value.variables[0]!.isSealed = true;
     });

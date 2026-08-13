@@ -56,6 +56,7 @@ function policyFixture(): Record<string, unknown> {
         references: [{ serviceId: SERVICE_A, name: "DERIVED_SECRET" }],
       },
     ],
+    forbiddenVariableNames: ["FORBIDDEN_SECRET"],
     forbiddenServiceIds: [FORBIDDEN_SERVICE],
   };
 }
@@ -214,6 +215,7 @@ describe("Railway sealed-variable readiness", () => {
           allSealed: true,
           exactReferences: true,
           noSharedShadows: true,
+          forbiddenVariablesAbsent: true,
           forbiddenServicesAbsent: true,
         },
       })}\n`,
@@ -312,6 +314,18 @@ describe("Railway sealed-variable readiness", () => {
         governedInventory()[2]!,
       ],
       "exactScope",
+    ],
+    [
+      "a forbidden variable name",
+      () => [
+        ...governedInventory(),
+        {
+          ...unrelatedInventory(1)[0]!,
+          id: "forbidden-variable-row",
+          name: "FORBIDDEN_SECRET",
+        },
+      ],
+      "forbiddenVariablesAbsent",
     ],
     [
       "a forbidden retired service",
@@ -844,15 +858,16 @@ describe("Railway sealed-variable readiness", () => {
         }),
         expect.objectContaining({
           serviceId: "6816c4a2-e392-4ee5-826f-2584cb599ec0",
-          name: "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
-        }),
-        expect.objectContaining({
-          serviceId: "6816c4a2-e392-4ee5-826f-2584cb599ec0",
           name: "SOURCE_EVIDENCE_SIGNING_SECRET",
         }),
       ]),
+      forbiddenVariableNames: [
+        "OFFSITE_BACKUP_SUPABASE_URL",
+        "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
+        "OFFSITE_BACKUP_BUCKET",
+      ],
     });
     const parsed = JSON.parse(source) as { variables: unknown[] };
-    expect(parsed.variables).toHaveLength(14);
+    expect(parsed.variables).toHaveLength(13);
   });
 });

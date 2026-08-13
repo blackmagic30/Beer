@@ -12,6 +12,7 @@ import { AdminIngestionQueueRepository } from "../src/db/admin-ingestion-queue.r
 import type { AdminIngestionQueueRecord } from "../src/db/models.js";
 import type { SqlDatabase } from "../src/db/sql-database.js";
 import { redactSecrets } from "../src/lib/redact.js";
+import { assertSupabaseServerApiKey } from "../src/lib/supabase-key-format.js";
 import {
   REVIEWED_PRICE_SELECTION_DEFAULT_OPTIONS,
   REVIEWED_PRICE_SELECTION_POLICY_SHA256,
@@ -31,6 +32,7 @@ const LEGACY_SQLITE_APPLY_DISABLED_ERROR =
 const LEGACY_SQLITE_QUARANTINE_DISABLED_ERROR =
   "Legacy SQLite reviewed-price quarantine is disabled; PostgreSQL quarantine is required.";
 export const PRODUCTION_SUPABASE_PROJECT_REF = "jxpubqlmqnnqwadmjgyk";
+export const PRODUCTION_SUPABASE_CUSTOM_ORIGIN = "https://auth.pintpath.au";
 const QUARANTINED_SOURCE_TYPE = "source_ingestion_quarantined";
 const MAX_ITEMS_PER_PROMOTION = 50;
 const MAX_BACKUP_AGE_MS = 30 * 60 * 1000;
@@ -388,9 +390,21 @@ export function assertExactSupabaseProjectTarget(
   supabaseUrlValue: string,
   expectedProjectRefValue: string,
 ): { origin: string; projectRef: string } {
-  const expectedProjectRef = expectedProjectRefValue.trim().toLowerCase();
+  const expectedProjectRef = expectedProjectRefValue;
   if (!/^[a-z0-9]{20}$/.test(expectedProjectRef)) {
     throw new Error("Expected Supabase project ref must be exactly 20 lowercase letters or digits.");
+  }
+
+  if (supabaseUrlValue === PRODUCTION_SUPABASE_CUSTOM_ORIGIN) {
+    if (expectedProjectRef !== PRODUCTION_SUPABASE_PROJECT_REF) {
+      throw new Error(
+        `Supabase project target mismatch. Expected ${expectedProjectRef}; the reviewed production custom origin maps only to ${PRODUCTION_SUPABASE_PROJECT_REF}.`,
+      );
+    }
+    return {
+      origin: PRODUCTION_SUPABASE_CUSTOM_ORIGIN,
+      projectRef: PRODUCTION_SUPABASE_PROJECT_REF,
+    };
   }
 
   let supabaseUrl: URL;
@@ -412,6 +426,11 @@ export function assertExactSupabaseProjectTarget(
   ) {
     throw new Error(
       "SUPABASE_URL must be the canonical HTTPS origin https://<project-ref>.supabase.co with no alias, port, path, query, or fragment.",
+    );
+  }
+  if (supabaseUrlValue !== `https://${match[1]}.supabase.co`) {
+    throw new Error(
+      "SUPABASE_URL must be the exact unnormalized canonical HTTPS origin https://<project-ref>.supabase.co.",
     );
   }
   if (match[1] !== expectedProjectRef) {
@@ -1568,9 +1587,12 @@ export async function verifyReachablePublicSource(sourceUrl: string): Promise<vo
 }
 
 function requiredEnvironment(name: "SUPABASE_URL" | "SUPABASE_SERVICE_ROLE_KEY"): string {
-  const value = process.env[name]?.trim();
+  const value = process.env[name];
   if (!value) {
     throw new Error(`${name} is required.`);
+  }
+  if (name === "SUPABASE_SERVICE_ROLE_KEY") {
+    assertSupabaseServerApiKey(value, name);
   }
   return value;
 }
@@ -1740,13 +1762,16 @@ async function runApply(argv: readonly string[]): Promise<void> {
           // Construct the mutating service only after every exact manifest item
           // and public source has passed the read-only preflight.
           if (!adminService) {
+            const serviceRoleKey = requiredEnvironment(
+              "SUPABASE_SERVICE_ROLE_KEY",
+            );
             const { AdminService: AdminServiceConstructor } = await import(
               "../src/modules/admin/admin.service.js"
             );
             adminService = new AdminServiceConstructor(
               repository,
               target.origin,
-              requiredEnvironment("SUPABASE_SERVICE_ROLE_KEY"),
+              serviceRoleKey,
               menuCaptureTable,
               undefined,
               undefined,

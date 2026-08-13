@@ -50,16 +50,23 @@ evidence or two-person sign-off alone is not mutation authority.
 - **Current state:** Permanent integrated staging now exists with pinned,
   separate Railway Postgres and Redis resources plus Supabase/Auth/private
   Storage identities. Its synthetic import, restricted runtime proof, direct
-  logical backup, and isolated operational-copy retrieval are verified. The
-  reviewed Beer build is not deployed there. Three Google/OpenAI provider
+  logical backup, historical operator-host operational-copy retrieval, and a
+  staging database-bound offsite probe are verified under the prior checked-in/
+  live contract that coupled staging to the production operational-copy URL,
+  key, and bucket. They are not current staging readiness evidence. The current
+  candidate makes all three variables prohibited in permanent staging; a fresh
+  complete Railway inventory must still prove their deletion, and no new
+  staging off-site transport is authorized. The reviewed Beer build is not
+  deployed there. Three Google/OpenAI provider
   categories remain open, comprising four exact Railway variable operations:
   Google Maps client configuration (`GOOGLE_MAPS_API_KEY` and
   `GOOGLE_MAPS_MAP_ID`), Google Places server access
   (`GOOGLE_PLACES_API_KEY`), and OpenAI menu OCR (`OPENAI_API_KEY`). Separately,
-  the three Supabase replacement-key operations (`SUPABASE_ANON_KEY`,
-  `SUPABASE_SERVICE_ROLE_KEY`, and `OFFSITE_BACKUP_SERVICE_ROLE_KEY`) remain
-  `HARD_DISABLED_REVIEW_REQUIRED` and unauthorized. No live write rehearsal
-  may use production as a substitute.
+  the two permanent-staging Supabase replacement-key operations
+  (`SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY`) remain
+  `HARD_DISABLED_REVIEW_REQUIRED` and unauthorized. Production operational-copy
+  credentials and bucket configuration are prohibited in permanent staging. No
+  live write rehearsal may use production as a substitute.
 - **Deployment evidence foundation:** The reviewed build now emits only
   domain-separated Railway identity hashes on its readiness routes, and a
   read-only attestor can bind a stable provider deployment/image observation
@@ -233,7 +240,8 @@ evidence or two-person sign-off alone is not mutation authority.
   ABN/contact, policy and App Store metadata reconciliation; named deletion,
   moderation, release, rollback, evidence, and first-72-hour on-call owners;
   physical-device keyboard/screen-reader/zoom matrix; no critical/high defects;
-  and all 12 evidence objects marked `pass` against one frozen SHA.
+  and all 13 evidence objects marked `pass` against one frozen SHA, including
+  the fresh provider-observed permanent-staging-only cost receipt.
 - **Blocks requested launch:** Yes.
 
 ## P0 — correct and verify the legacy apex redirect

@@ -26,6 +26,10 @@
     "menus:promote-reviewed": "tsx scripts/promote-reviewed-price-data.ts",
     "readiness:data": "tsx scripts/production-data-readiness.ts",
     "readiness:providers": "tsx scripts/provider-readiness-check.ts",
+    "supabase:keys:consumer-compatibility:check": "vitest run test/supabase-key-consumer-compatibility.test.ts test/browser-supabase-new-key.test.ts test/supabase-client.test.ts test/account-page.test.ts test/env-config.test.ts test/ios-launch-safety.test.ts test/native-mobile-remediation.test.ts test/production-smoke-check.test.ts test/provider-readiness-reporting.test.ts test/staging-supabase-key-canary.test.ts test/permanent-staging-supabase-key-input.test.ts test/permanent-staging-supabase-key-replacement.test.ts test/permanent-staging-supabase-key-canary-b.test.ts test/permanent-staging-supabase-legacy-key-disable.test.ts test/permanent-staging-supabase-old-key-denial.test.ts test/railway-sealed-variable-readiness.test.ts test/app-deployment-metadata.test.ts test/postgres-logical-offsite.test.ts test/postgres-logical-offsite-cli.test.ts test/postgres-logical-offsite-retrieval.test.ts test/postgres-account-deletion-recovery-fixture.test.ts test/postgres-private-storage-recovery.test.ts test/postgres-migration-cli.test.ts test/source-ingestion-map-base.test.ts test/reviewed-price-promotion.test.ts test/business-demo.test.ts test/release-workflows.test.ts test/security-scan.test.ts test/redact.test.ts test/offsite-backup.test.ts test/offsite-backup-download.test.ts test/rehearse-data-restore.test.ts test/stage-restored-source-evidence.test.ts test/restore-operator-browser-containment.test.ts test/venue-import-data-quality.test.ts --maxWorkers=1",
+    "db:postgres:reviewed-price:kernel:contract:check": "vitest run test/postgres-reviewed-price-promotion-kernel.test.ts --maxWorkers=1",
+    "db:postgres:logical-state:v2:contract:check": "vitest run test/postgres-logical-state.test.ts --maxWorkers=1",
+    "db:postgres:backup:v4:offline-contract:check": "vitest run test/postgres-logical-backup-v4.test.ts test/postgres-logical-backup-v4-source-authority.test.ts test/postgres-logical-backup-v4-source-authority-v2.test.ts test/postgres-logical-backup-v4-toc.test.ts test/postgres-logical-physical-schema-v4.test.ts test/postgres-logical-scratch-restore-v4.test.ts test/postgres-tool-runtime-closure-v4.test.ts test/postgres-tool-authority.test.ts test/postgres-logical-restore.test.ts --maxWorkers=1",
     "readiness:railway:sealed": "tsx scripts/railway-sealed-variable-readiness.ts --policy ops/railway/permanent-staging-sealed-variable-policy.json",
     "readiness:railway:mutation-boundary": "tsx scripts/check-railway-mutation-boundary.ts --policy ops/railway/production-staging-mutation-policy.json",
     "railway:staging:provider-variable:write": "tsx scripts/execute-permanent-staging-provider-variable-write.ts",
@@ -74,6 +78,7 @@
     "smoke:production:auth": "node scripts/production-smoke-check.mjs --strict-auth",
     "release:evidence": "tsx scripts/validate-release-evidence.ts",
     "release:evidence:strict": "tsx scripts/validate-release-evidence.ts --strict",
+    "permanent-staging:cost:contract:check": "vitest run test/permanent-staging-cost-policy.test.ts test/permanent-staging-app-deployment-executor.test.ts",
     "pretest": "node scripts/ensure-native-dependencies.mjs",
     "test": "vitest run test",
     "security:scan": "node scripts/security-scan.mjs",
@@ -84,20 +89,20 @@
     "@aws-sdk/client-s3": "3.1098.0",
     "@aws-sdk/client-sts": "3.1098.0",
     "@aws-sdk/credential-providers": "3.1098.0",
-    "@supabase/supabase-js": "2.103.0",
+    "@supabase/supabase-js": "2.112.3",
     "@types/qrcode": "^1.5.6",
     "better-sqlite3": "^12.8.0",
     "compression": "^1.8.1",
     "cors": "^2.8.6",
-    "dotenv": "^17.4.0",
+    "dotenv": "^17.4.2",
     "express": "^5.2.1",
-    "helmet": "^8.1.0",
+    "helmet": "^8.3.0",
     "ioredis": "^5.10.1",
     "openai": "^6.33.0",
     "parse5": "8.0.1",
     "pg": "8.22.0",
     "qrcode": "^1.5.4",
-    "zod": "^4.3.6"
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
@@ -106,9 +111,9 @@
     "@types/express": "^5.0.6",
     "@types/node": "^22.20.1",
     "@types/pg": "8.21.0",
-    "tsx": "^4.22.4",
-    "typescript": "^6.0.2",
-    "vitest": "^4.1.2"
+    "tsx": "4.23.12",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
   },
   "directories": {
     "test": "test"

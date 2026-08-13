@@ -15,6 +15,7 @@ import {
   POSTGRES_PRIVATE_STORAGE_BUCKET,
   POSTGRES_PRIVATE_STORAGE_RECOVERY_MANIFEST,
   POSTGRES_PRIVATE_STORAGE_RECOVERY_OBJECTS,
+  POSTGRES_PRIVATE_STORAGE_RECOVERY_VERSION,
   POSTGRES_PRIVATE_STORAGE_RESTORE_CONFIRMATION_ENV,
   POSTGRES_PRIVATE_STORAGE_RESTORE_CONFIRMATION_VALUE,
   PostgresPrivateStorageRecoveryError,
@@ -33,6 +34,10 @@ import {
 import { runPostgresPrivateStorageRestoreCli } from "../scripts/restore-postgres-private-storage-recovery.js";
 import { runPostgresPrivateStorageCaptureCli } from "../scripts/capture-postgres-private-storage-recovery.js";
 import {
+  PERMANENT_STAGING_SUPABASE_ORIGIN,
+  PRODUCTION_SUPABASE_STORAGE_ORIGIN,
+} from "../src/lib/supabase-key-format.js";
+import {
   LOGICAL_OFFSITE_SOURCE_DATABASE_IDENTITY_SHA256,
   sha256Fixture,
   writeLogicalOffsiteFixture,
@@ -41,8 +46,12 @@ import {
 const CAPTURED_AT = "2026-08-09T06:00:00.000Z";
 const RESTORED_AT = "2026-08-09T06:15:00.000Z";
 const COMPLETED_AT = "2026-08-09T05:00:00.000Z";
-const SOURCE_ORIGIN = "https://abcdefghijklmnopqrst.supabase.co";
+const SOURCE_ORIGIN = PRODUCTION_SUPABASE_STORAGE_ORIGIN;
+const STAGING_SOURCE_ORIGIN = PERMANENT_STAGING_SUPABASE_ORIGIN;
 const DESTINATION_ORIGIN = "https://bcdefghijklmnopqrstu.supabase.co";
+const SERVICE_ROLE_KEY = `sb_secret_${"s".repeat(32)}`; // security-scan allow: synthetic fixture
+const MIGRATION_RUN_SHA256 = "3".repeat(64);
+const CANDIDATE_COMMIT_SHA = "c".repeat(40);
 const TARGET_DATABASE_IDENTITY_SHA256 = "f1".repeat(32);
 const TARGET_CONNECTION_URL_SHA256 = "e2".repeat(32);
 
@@ -276,10 +285,18 @@ function sourceSnapshot(
       byteSize: 17,
     },
   ],
+  binding: Partial<Pick<
+    PostgresPrivateStorageDatabaseSnapshot,
+    "migrationRunSha256" | "sourceEnvironment" | "candidateSha"
+  >> = {},
 ): PostgresPrivateStorageDatabaseSnapshot {
   return {
     connectionUrlSha256: "d".repeat(64),
     databaseIdentitySha256: LOGICAL_OFFSITE_SOURCE_DATABASE_IDENTITY_SHA256,
+    migrationRunSha256:
+      binding.migrationRunSha256 ?? MIGRATION_RUN_SHA256,
+    sourceEnvironment: binding.sourceEnvironment ?? "production",
+    candidateSha: binding.candidateSha ?? CANDIDATE_COMMIT_SHA,
     targetClass: null,
     state: fixtureState(backupDirectory),
     references,
@@ -338,6 +355,8 @@ function captureHarness(
     expectedLedgerCheckpointSha256: authority.checkpointSha256,
     expectedLedgerImmutableSetSha256: authority.immutableSetSha256,
     expectedTombstoneCount: 1,
+    sourceEnvironment: "production",
+    expectedCandidateSha: CANDIDATE_COMMIT_SHA,
     sourceSupabaseUrl: SOURCE_ORIGIN,
     expectedSourceOriginSha256: sha256(SOURCE_ORIGIN),
     bucketName: POSTGRES_PRIVATE_STORAGE_BUCKET,
@@ -446,6 +465,14 @@ describe("Postgres private Storage recovery sets", () => {
       postgresPrivateStorageRecoveryInternals.parseRecoveryManifest(
         manifestBytes,
       );
+    expect(manifest).toMatchObject({
+      version: POSTGRES_PRIVATE_STORAGE_RECOVERY_VERSION,
+      logicalBackup: {
+        migrationRunSha256: MIGRATION_RUN_SHA256,
+        sourceEnvironment: "production",
+        candidateSha: CANDIDATE_COMMIT_SHA,
+      },
+    });
     expect(manifest.sourceStorage).toMatchObject({
       objectCount: 2,
       databaseReferenceCount: 1,
@@ -499,6 +526,153 @@ describe("Postgres private Storage recovery sets", () => {
     expect(listObjects).not.toHaveBeenCalled();
     expect(downloadObject).not.toHaveBeenCalled();
     expect(fs.existsSync(harness.outputDirectory)).toBe(false);
+  });
+
+  it("rejects an independently expected candidate mismatch before source Storage I/O", async () => {
+    const root = privateRoot();
+    const storage = new MemoryStorage(SOURCE_ORIGIN, sourceObjects());
+    const inspectBucket = vi.spyOn(storage, "inspectBucket");
+    const listObjects = vi.spyOn(storage, "listObjects");
+    const downloadObject = vi.spyOn(storage, "downloadObject");
+    const harness = captureHarness(root, storage);
+
+    await expect(capturePostgresPrivateStorageRecovery({
+      ...harness.options,
+      expectedCandidateSha: "d".repeat(40),
+    })).rejects.toMatchObject({ code: "source_database_mismatch" });
+    expect(inspectBucket).not.toHaveBeenCalled();
+    expect(listObjects).not.toHaveBeenCalled();
+    expect(downloadObject).not.toHaveBeenCalled();
+    expect(fs.existsSync(harness.outputDirectory)).toBe(false);
+  });
+
+  it("rejects a production database paired with permanent-staging Storage before source Storage I/O", async () => {
+    const root = privateRoot();
+    const storage = new MemoryStorage(STAGING_SOURCE_ORIGIN, sourceObjects());
+    const inspectBucket = vi.spyOn(storage, "inspectBucket");
+    const listObjects = vi.spyOn(storage, "listObjects");
+    const downloadObject = vi.spyOn(storage, "downloadObject");
+    const harness = captureHarness(root, storage);
+
+    await expect(capturePostgresPrivateStorageRecovery({
+      ...harness.options,
+      sourceEnvironment: "permanent-staging",
+      sourceSupabaseUrl: STAGING_SOURCE_ORIGIN,
+      expectedSourceOriginSha256: sha256(STAGING_SOURCE_ORIGIN),
+      sourceStorage: storage,
+    })).rejects.toMatchObject({ code: "source_database_mismatch" });
+    expect(inspectBucket).not.toHaveBeenCalled();
+    expect(listObjects).not.toHaveBeenCalled();
+    expect(downloadObject).not.toHaveBeenCalled();
+    expect(fs.existsSync(harness.outputDirectory)).toBe(false);
+  });
+
+  it.each([
+    `${SOURCE_ORIGIN}/`,
+    SOURCE_ORIGIN.toUpperCase(),
+    `${SOURCE_ORIGIN}:443`,
+  ])("rejects normalized source-origin variant %s before source Storage I/O", async (sourceSupabaseUrl) => {
+    const root = privateRoot();
+    const storage = new MemoryStorage(SOURCE_ORIGIN, sourceObjects());
+    const inspectBucket = vi.spyOn(storage, "inspectBucket");
+    const listObjects = vi.spyOn(storage, "listObjects");
+    const downloadObject = vi.spyOn(storage, "downloadObject");
+    const harness = captureHarness(root, storage);
+
+    await expect(capturePostgresPrivateStorageRecovery({
+      ...harness.options,
+      sourceSupabaseUrl,
+    })).rejects.toMatchObject({ code: "invalid_arguments" });
+    expect(inspectBucket).not.toHaveBeenCalled();
+    expect(listObjects).not.toHaveBeenCalled();
+    expect(downloadObject).not.toHaveBeenCalled();
+    expect(fs.existsSync(harness.outputDirectory)).toBe(false);
+  });
+
+  it("rejects migration-run drift between the two database inspections", async () => {
+    const root = privateRoot();
+    const storage = new MemoryStorage(SOURCE_ORIGIN, sourceObjects());
+    const listObjects = vi.spyOn(storage, "listObjects");
+    const harness = captureHarness(root, storage);
+    let inspection = 0;
+
+    await expect(capturePostgresPrivateStorageRecovery({
+      ...harness.options,
+      inspectSourceDatabase: async () => {
+        inspection += 1;
+        return sourceSnapshot(
+          harness.backup.backupDirectory,
+          undefined,
+          inspection === 1
+            ? {}
+            : { migrationRunSha256: "4".repeat(64) },
+        );
+      },
+    })).rejects.toMatchObject({ code: "source_database_mismatch" });
+    expect(listObjects).toHaveBeenCalledTimes(1);
+    expect(
+      fs.existsSync(path.join(
+        harness.outputDirectory,
+        POSTGRES_PRIVATE_STORAGE_RECOVERY_MANIFEST,
+      )),
+    ).toBe(false);
+  });
+
+  it("rejects legacy-version and authority-field manifest tampering", async () => {
+    const root = privateRoot();
+    const harness = await capturedHarness(root);
+    const manifestPath = path.join(
+      harness.outputDirectory,
+      POSTGRES_PRIVATE_STORAGE_RECOVERY_MANIFEST,
+    );
+    const manifest = postgresPrivateStorageRecoveryInternals.parseRecoveryManifest(
+      fs.readFileSync(manifestPath),
+    );
+    const { recoverySetSha256: _binding, ...withoutBinding } = manifest;
+    const legacyBinding = sha256(canonicalPostgresBackupJson({
+      bindingKind: "pintpath-postgres-private-storage-recovery-set-binding",
+      bindingVersion: 1,
+      ...withoutBinding,
+    }));
+    expect(manifest.recoverySetSha256).not.toBe(legacyBinding);
+
+    for (const tampered of [
+      { ...manifest, version: 1 },
+      {
+        ...manifest,
+        logicalBackup: {
+          ...manifest.logicalBackup,
+          sourceEnvironment: "permanent-staging",
+        },
+      },
+      {
+        ...manifest,
+        logicalBackup: {
+          ...manifest.logicalBackup,
+          candidateSha: "d".repeat(40),
+        },
+      },
+    ]) {
+      expect(() => postgresPrivateStorageRecoveryInternals.parseRecoveryManifest(
+        Buffer.from(canonicalPostgresBackupJson(tampered), "utf8"),
+      )).toThrow(expect.objectContaining({ code: "recovery_set_invalid" }));
+    }
+
+    const crossPairedWithoutBinding = {
+      ...withoutBinding,
+      logicalBackup: {
+        ...withoutBinding.logicalBackup,
+        sourceEnvironment: "permanent-staging" as const,
+      },
+    };
+    const crossPaired = {
+      ...crossPairedWithoutBinding,
+      recoverySetSha256: postgresPrivateStorageRecoveryInternals
+        .recoverySetBinding(crossPairedWithoutBinding),
+    };
+    expect(() => postgresPrivateStorageRecoveryInternals.parseRecoveryManifest(
+      Buffer.from(canonicalPostgresBackupJson(crossPaired), "utf8"),
+    )).toThrow(expect.objectContaining({ code: "recovery_set_invalid" }));
   });
 
   it("restores a frozen schema-v2 logical backup and matching historical recovery set", async () => {
@@ -816,6 +990,52 @@ describe("Postgres private Storage recovery restore CLI", () => {
     );
   });
 
+  it("blocks an unregistered disposable destination before reading secrets", async () => {
+    const names = [
+      "--backup-directory",
+      "--backup-manifest-sha256",
+      "--bucket-name-sha256",
+      "--destination-origin-sha256",
+      "--forbidden-origin-sha256s",
+      "--recovery-manifest-sha256",
+      "--recovery-set-directory",
+      "--recovery-set-sha256",
+      "--service-role-key-file",
+      "--target-connection-url-file",
+      "--target-connection-url-sha256",
+      "--target-database-identity-sha256",
+    ];
+    const argv = names.flatMap((name) => [
+      name,
+      name === "--forbidden-origin-sha256s"
+        ? "b".repeat(64)
+        : name.includes("sha256")
+          ? "a".repeat(64)
+          : "/private/input",
+    ]);
+    const readSecretFile = vi.fn(async () => "must-not-be-read");
+    let output = "";
+    const exitCode = await runPostgresPrivateStorageRestoreCli(argv, {
+      environment: {
+        [POSTGRES_PRIVATE_STORAGE_RESTORE_CONFIRMATION_ENV]:
+          POSTGRES_PRIVATE_STORAGE_RESTORE_CONFIRMATION_VALUE,
+        RESTORE_SUPABASE_URL: DESTINATION_ORIGIN,
+      },
+      readSecretFile,
+      assertMutationAllowed: () => undefined,
+      writeOutput: (value) => {
+        output += value;
+      },
+    });
+    expect(exitCode).toBe(1);
+    expect(readSecretFile).not.toHaveBeenCalled();
+    expect(JSON.parse(output)).toMatchObject({
+      failureCode: "configuration_missing_or_unsafe",
+      destinationDisposalRequired: false,
+    });
+    expect(output).not.toContain("must-not-be-read");
+  });
+
   it("marks every post-upload library failure as requiring destination disposal", async () => {
     const names = [
       "--backup-directory",
@@ -846,10 +1066,13 @@ describe("Postgres private Storage recovery restore CLI", () => {
           POSTGRES_PRIVATE_STORAGE_RESTORE_CONFIRMATION_VALUE,
         RESTORE_SUPABASE_URL: DESTINATION_ORIGIN,
       },
+      assertDestinationOriginApproved: (origin) => {
+        expect(origin).toBe(DESTINATION_ORIGIN);
+      },
       readSecretFile: async (filePath) =>
         filePath.includes("connection")
           ? "postgresql://backup:secret@db.example.test/pintpath?sslmode=require"
-          : "synthetic-service-role-key",
+          : SERVICE_ROLE_KEY,
       createInspector: () => async () => {
         throw new Error("unused");
       },
@@ -870,7 +1093,7 @@ describe("Postgres private Storage recovery restore CLI", () => {
       failureCode: "destination_verification_failed_disposal_required",
       destinationDisposalRequired: true,
     });
-    expect(output).not.toContain("synthetic-service-role-key");
+    expect(output).not.toContain(SERVICE_ROLE_KEY);
   });
 });
 
@@ -901,6 +1124,7 @@ describe("Postgres private Storage recovery capture CLI", () => {
       "--connection-url-file",
       "--connection-url-sha256",
       "--deletion-authority-directory",
+      "--expected-candidate-sha",
       "--ledger-checkpoint-sha256",
       "--ledger-current-sha256",
       "--ledger-genesis-sha256",
@@ -908,12 +1132,19 @@ describe("Postgres private Storage recovery capture CLI", () => {
       "--ledger-tombstone-count",
       "--output-directory",
       "--service-role-key-file",
+      "--source-environment",
       "--source-origin-sha256",
     ];
     const argv = names.flatMap((name) => [
       name,
       name === "--ledger-tombstone-count"
         ? "1"
+        : name === "--source-environment"
+          ? "permanent-staging"
+          : name === "--expected-candidate-sha"
+            ? CANDIDATE_COMMIT_SHA
+            : name === "--source-origin-sha256"
+              ? sha256(STAGING_SOURCE_ORIGIN)
         : name.includes("sha256")
           ? "a".repeat(64)
           : "/private/input",
@@ -946,6 +1177,7 @@ describe("Postgres private Storage recovery capture CLI", () => {
       "--connection-url-file",
       "--connection-url-sha256",
       "--deletion-authority-directory",
+      "--expected-candidate-sha",
       "--ledger-checkpoint-sha256",
       "--ledger-current-sha256",
       "--ledger-genesis-sha256",
@@ -953,6 +1185,7 @@ describe("Postgres private Storage recovery capture CLI", () => {
       "--ledger-tombstone-count",
       "--output-directory",
       "--service-role-key-file",
+      "--source-environment",
       "--source-origin-sha256",
     ];
     const argv = names.flatMap((name) => [
@@ -961,6 +1194,12 @@ describe("Postgres private Storage recovery capture CLI", () => {
         ? "1"
         : name === "--service-role-key-file"
           ? "relative.key"
+          : name === "--source-environment"
+            ? "permanent-staging"
+            : name === "--expected-candidate-sha"
+              ? CANDIDATE_COMMIT_SHA
+              : name === "--source-origin-sha256"
+                ? sha256(STAGING_SOURCE_ORIGIN)
           : name.includes("sha256")
             ? "a".repeat(64)
             : "/private/input",
@@ -982,6 +1221,147 @@ describe("Postgres private Storage recovery capture CLI", () => {
     });
   });
 
+  it.each([
+    [
+      "an unreviewed canonical source origin",
+      "permanent-staging",
+      "https://abcdefghijklmnopqrst.supabase.co",
+      CANDIDATE_COMMIT_SHA,
+      "configuration_missing_or_unsafe",
+    ],
+    [
+      "a production environment paired with permanent-staging Storage",
+      "production",
+      STAGING_SOURCE_ORIGIN,
+      CANDIDATE_COMMIT_SHA,
+      "configuration_missing_or_unsafe",
+    ],
+    [
+      "a non-canonical independently expected candidate",
+      "permanent-staging",
+      STAGING_SOURCE_ORIGIN,
+      CANDIDATE_COMMIT_SHA.toUpperCase(),
+      "invalid_arguments",
+    ],
+  ] as const)("rejects %s before reading either secret", async (
+    _label,
+    sourceEnvironment,
+    sourceOrigin,
+    candidateSha,
+    expectedFailureCode,
+  ) => {
+    const names = [
+      "--backup-directory",
+      "--backup-manifest-sha256",
+      "--bucket-name-sha256",
+      "--connection-url-file",
+      "--connection-url-sha256",
+      "--deletion-authority-directory",
+      "--expected-candidate-sha",
+      "--ledger-checkpoint-sha256",
+      "--ledger-current-sha256",
+      "--ledger-genesis-sha256",
+      "--ledger-immutable-set-sha256",
+      "--ledger-tombstone-count",
+      "--output-directory",
+      "--service-role-key-file",
+      "--source-environment",
+      "--source-origin-sha256",
+    ];
+    const argv = names.flatMap((name) => [
+      name,
+      name === "--ledger-tombstone-count"
+        ? "1"
+      : name === "--source-environment"
+          ? sourceEnvironment
+          : name === "--expected-candidate-sha"
+            ? candidateSha
+            : name === "--source-origin-sha256"
+              ? sha256(
+                  sourceEnvironment === "permanent-staging"
+                    ? STAGING_SOURCE_ORIGIN
+                    : SOURCE_ORIGIN,
+                )
+        : name.includes("sha256")
+          ? "a".repeat(64)
+          : "/private/input",
+    ]);
+    const readSecretFile = vi.fn(async () => "must-not-be-read");
+    let output = "";
+    const exitCode = await runPostgresPrivateStorageCaptureCli(argv, {
+      environment: { SUPABASE_URL: sourceOrigin },
+      readSecretFile,
+      assertMutationAllowed: () => undefined,
+      writeOutput: (value) => {
+        output += value;
+      },
+    });
+    expect(exitCode).toBe(1);
+    expect(readSecretFile).not.toHaveBeenCalled();
+    expect(JSON.parse(output)).toMatchObject({
+      failureCode: expectedFailureCode,
+    });
+  });
+
+  it.each([
+    `sb_publishable_${"p".repeat(32)}`,
+    `${SERVICE_ROLE_KEY}\n`,
+    "arbitrary-service-role-value",
+  ])("rejects an unsafe source server key before constructing Storage", async (key) => {
+    const names = [
+      "--backup-directory",
+      "--backup-manifest-sha256",
+      "--bucket-name-sha256",
+      "--connection-url-file",
+      "--connection-url-sha256",
+      "--deletion-authority-directory",
+      "--expected-candidate-sha",
+      "--ledger-checkpoint-sha256",
+      "--ledger-current-sha256",
+      "--ledger-genesis-sha256",
+      "--ledger-immutable-set-sha256",
+      "--ledger-tombstone-count",
+      "--output-directory",
+      "--service-role-key-file",
+      "--source-environment",
+      "--source-origin-sha256",
+    ];
+    const argv = names.flatMap((name) => [
+      name,
+      name === "--ledger-tombstone-count"
+        ? "1"
+        : name === "--source-environment"
+          ? "permanent-staging"
+          : name === "--expected-candidate-sha"
+            ? CANDIDATE_COMMIT_SHA
+            : name === "--source-origin-sha256"
+              ? sha256(STAGING_SOURCE_ORIGIN)
+        : name.includes("sha256")
+          ? "a".repeat(64)
+          : "/private/input",
+    ]);
+    const createStorage = vi.fn();
+    let output = "";
+    const exitCode = await runPostgresPrivateStorageCaptureCli(argv, {
+      environment: { SUPABASE_URL: STAGING_SOURCE_ORIGIN },
+      readSecretFile: async (filePath) =>
+        filePath.includes("connection")
+          ? "postgresql://backup:secret@db.example.test/pintpath?sslmode=require"
+          : key,
+      createStorage,
+      assertMutationAllowed: () => undefined,
+      writeOutput: (value) => {
+        output += value;
+      },
+    });
+    expect(exitCode).toBe(1);
+    expect(createStorage).not.toHaveBeenCalled();
+    expect(JSON.parse(output)).toMatchObject({
+      failureCode: "secret_file_unsafe",
+    });
+    expect(output).not.toContain(key);
+  });
+
   it("passes only pinned inputs to capture and emits a hash-only canonical result", async () => {
     const names = [
       "--backup-directory",
@@ -990,6 +1370,7 @@ describe("Postgres private Storage recovery capture CLI", () => {
       "--connection-url-file",
       "--connection-url-sha256",
       "--deletion-authority-directory",
+      "--expected-candidate-sha",
       "--ledger-checkpoint-sha256",
       "--ledger-current-sha256",
       "--ledger-genesis-sha256",
@@ -997,12 +1378,19 @@ describe("Postgres private Storage recovery capture CLI", () => {
       "--ledger-tombstone-count",
       "--output-directory",
       "--service-role-key-file",
+      "--source-environment",
       "--source-origin-sha256",
     ];
     const argv = names.flatMap((name) => [
       name,
       name === "--ledger-tombstone-count"
         ? "1"
+        : name === "--source-environment"
+          ? "permanent-staging"
+          : name === "--expected-candidate-sha"
+            ? CANDIDATE_COMMIT_SHA
+            : name === "--source-origin-sha256"
+              ? sha256(STAGING_SOURCE_ORIGIN)
         : name.includes("sha256")
           ? "a".repeat(64)
           : "/private/input",
@@ -1011,15 +1399,25 @@ describe("Postgres private Storage recovery capture CLI", () => {
     let capturedOptions: CapturePostgresPrivateStorageRecoveryOptions | null =
       null;
     const exitCode = await runPostgresPrivateStorageCaptureCli(argv, {
-      environment: { SUPABASE_URL: SOURCE_ORIGIN },
+      environment: { SUPABASE_URL: STAGING_SOURCE_ORIGIN },
       readSecretFile: async (filePath) =>
         filePath.includes("connection")
           ? "postgresql://backup:secret@db.example.test/pintpath?sslmode=require"
-          : "synthetic-service-role-key",
-      createInspector: () => async () => {
-        throw new Error("unused");
+          : SERVICE_ROLE_KEY,
+      createInspector: (input) => {
+        expect(input).toMatchObject({
+          expectedSourceEnvironment: "permanent-staging",
+          expectedCandidateSha: CANDIDATE_COMMIT_SHA,
+        });
+        return async () => {
+          throw new Error("unused");
+        };
       },
-      createStorage: () => new MemoryStorage(SOURCE_ORIGIN, {}),
+      createStorage: (input) => {
+        expect(input.supabaseUrl).toBe(STAGING_SOURCE_ORIGIN);
+        expect(input.sourceEnvironment).toBe("permanent-staging");
+        return new MemoryStorage(STAGING_SOURCE_ORIGIN, {});
+      },
       capture: async (options) => {
         capturedOptions = options;
         return {
@@ -1042,7 +1440,9 @@ describe("Postgres private Storage recovery capture CLI", () => {
     });
     expect(exitCode).toBe(0);
     expect(capturedOptions).toMatchObject({
-      sourceSupabaseUrl: SOURCE_ORIGIN,
+      sourceSupabaseUrl: STAGING_SOURCE_ORIGIN,
+      sourceEnvironment: "permanent-staging",
+      expectedCandidateSha: CANDIDATE_COMMIT_SHA,
       expectedTombstoneCount: 1,
       bucketName: POSTGRES_PRIVATE_STORAGE_BUCKET,
     });
@@ -1051,7 +1451,7 @@ describe("Postgres private Storage recovery capture CLI", () => {
       recoverySetSha256: "2".repeat(64),
       recoveryManifestSha256: "3".repeat(64),
     });
-    expect(output).not.toContain("synthetic-service-role-key");
+    expect(output).not.toContain(SERVICE_ROLE_KEY);
     expect(output).not.toContain("postgresql://");
   });
 });
@@ -1124,6 +1524,58 @@ describe("Postgres private Storage recovery path and origin normalization", () =
 });
 
 describe("Supabase private Storage recovery boundary", () => {
+  it("accepts the exact reviewed permanent-staging capture origin", () => {
+    const clientFactory = vi.fn(
+      () => ({ storage: {} }) as unknown as SupabaseClient,
+    );
+    const boundary = createSupabasePrivateStorageRecoveryBoundary({
+      supabaseUrl: STAGING_SOURCE_ORIGIN,
+      sourceEnvironment: "permanent-staging",
+      serviceRoleKey: SERVICE_ROLE_KEY,
+      clientFactory,
+    });
+
+    expect(boundary.origin).toBe(STAGING_SOURCE_ORIGIN);
+    expect(clientFactory).toHaveBeenCalledWith(
+      STAGING_SOURCE_ORIGIN,
+      SERVICE_ROLE_KEY,
+    );
+  });
+
+  it.each([
+    ["production environment with permanent-staging origin", {
+      supabaseUrl: STAGING_SOURCE_ORIGIN,
+      sourceEnvironment: "production" as const,
+      serviceRoleKey: SERVICE_ROLE_KEY,
+    }],
+    ["permanent-staging environment with production origin", {
+      supabaseUrl: SOURCE_ORIGIN,
+      sourceEnvironment: "permanent-staging" as const,
+      serviceRoleKey: SERVICE_ROLE_KEY,
+    }],
+    ["unreviewed source origin", {
+      supabaseUrl: "https://abcdefghijklmnopqrst.supabase.co",
+      sourceEnvironment: "permanent-staging" as const,
+      serviceRoleKey: SERVICE_ROLE_KEY,
+    }],
+    ["publishable key in the server slot", {
+      supabaseUrl: SOURCE_ORIGIN,
+      sourceEnvironment: "production" as const,
+      serviceRoleKey: `sb_publishable_${"p".repeat(32)}`,
+    }],
+  ])("rejects %s before constructing any client or request", (_label, input) => {
+    const fetchImplementation = vi.fn() as unknown as typeof globalThis.fetch;
+    const clientFactory = vi.fn(() => ({ storage: {} } as unknown as SupabaseClient));
+
+    expect(() => createSupabasePrivateStorageRecoveryBoundary({
+      ...input,
+      fetchImplementation,
+      clientFactory,
+    })).toThrow(expect.objectContaining({ code: "invalid_arguments" }));
+    expect(clientFactory).not.toHaveBeenCalled();
+    expect(fetchImplementation).not.toHaveBeenCalled();
+  });
+
   it("distinguishes folders, rechecks object identity, and bypasses download caches", async () => {
     const infoCalls: string[] = [];
     const download = vi.fn(
@@ -1195,7 +1647,8 @@ describe("Supabase private Storage recovery boundary", () => {
     } as unknown as SupabaseClient;
     const boundary = createSupabasePrivateStorageRecoveryBoundary({
       supabaseUrl: SOURCE_ORIGIN,
-      serviceRoleKey: "synthetic-service-role-key",
+      sourceEnvironment: "production",
+      serviceRoleKey: SERVICE_ROLE_KEY,
       clientFactory: () => client,
       requestTimeoutMs: 5_000,
     });
@@ -1271,7 +1724,8 @@ describe("Supabase private Storage recovery boundary", () => {
     } as unknown as SupabaseClient;
     const boundary = createSupabasePrivateStorageRecoveryBoundary({
       supabaseUrl: SOURCE_ORIGIN,
-      serviceRoleKey: "synthetic-service-role-key",
+      sourceEnvironment: "production",
+      serviceRoleKey: SERVICE_ROLE_KEY,
       clientFactory: () => client,
     });
     await expect(boundary.downloadObject("menu.pdf")).rejects.toMatchObject({
@@ -1288,7 +1742,8 @@ describe("Supabase private Storage recovery boundary", () => {
     } as unknown as SupabaseClient;
     const boundary = createSupabasePrivateStorageRecoveryBoundary({
       supabaseUrl: SOURCE_ORIGIN,
-      serviceRoleKey: "synthetic-service-role-key",
+      sourceEnvironment: "production",
+      serviceRoleKey: SERVICE_ROLE_KEY,
       clientFactory: () => client,
     });
     await expect(boundary.listObjects()).rejects.toMatchObject({

@@ -78,6 +78,11 @@ Create a fresh disposable PostgreSQL database on a non-production cluster. Befor
 ## Exact sequence
 
 Use physical canonical paths (`pwd -P`) throughout.
+Every connection-URL or service-key file in this sequence is an exact-byte
+input: it must contain one value with no leading/trailing whitespace, CR/LF, or
+NUL. With shell tracing disabled, transfer the protected value using a
+no-line-ending writer equivalent to `printf '%s' "$VALUE" > "$FILE"`; never
+use `echo` or print the value during verification.
 
 ```sh
 npm run db:postgres:restore:logical -- inspect-target \

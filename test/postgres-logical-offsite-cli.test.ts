@@ -21,12 +21,12 @@ const BACKUP_DIRECTORY = path.join(ROOT, "backup");
 const DATABASE_URL_FILE = path.join(ROOT, "runtime-database-url");
 const SERVICE_ROLE_FILE = path.join(ROOT, "offsite-service-role-key");
 const DATABASE_SECRET = "runtime-database-secret";
-const SERVICE_ROLE_SECRET = "offsite-service-role-secret";
+const SERVICE_ROLE_SECRET = `sb_secret_${"s".repeat(32)}`;
 const DATABASE_URL = `postgresql://runtime:${DATABASE_SECRET}@db.example.test:5432/pintpath?sslmode=verify-full`;
 const RUNTIME_CONNECTION_URL_SHA256 = crypto
   .createHash("sha256").update(DATABASE_URL, "utf8").digest("hex");
-const SOURCE_URL = "https://production.example.test";
-const DESTINATION_URL = "https://operational-copy.example.test";
+const SOURCE_URL = "https://auth.pintpath.au";
+const DESTINATION_URL = "https://hfbmhdxrwtihukmixxta.supabase.co";
 const HASH = "a".repeat(64);
 const DESTINATION_ORIGIN_SHA256 = crypto
   .createHash("sha256").update(DESTINATION_URL).digest("hex");
@@ -64,6 +64,7 @@ function harness(input: {
   readonly runtimeReady?: boolean;
   readonly closeFails?: boolean;
   readonly attestError?: Error;
+  readonly serviceRoleSecret?: string;
 } = {}) {
   const output: string[] = [];
   const events: string[] = [];
@@ -86,7 +87,9 @@ function harness(input: {
     assertMutationAllowed: vi.fn(() => events.push("guard")),
     readSecretFile: vi.fn(async (filename: string) => {
       events.push(`secret:${path.basename(filename)}`);
-      return filename === DATABASE_URL_FILE ? DATABASE_URL : SERVICE_ROLE_SECRET;
+      return filename === DATABASE_URL_FILE
+        ? DATABASE_URL
+        : input.serviceRoleSecret ?? SERVICE_ROLE_SECRET;
     }),
     createDatabase: vi.fn((options) => {
       events.push("database");
@@ -241,5 +244,68 @@ describe("Postgres logical off-site attestation CLI", () => {
       failureCode: "operator_guard_rejected",
     });
     expect(contained.events).toEqual([]);
+  });
+
+  it("does not accept a caller-matched digest as destination authority", async () => {
+    const fixture = harness();
+    const attackerOrigin = "https://attacker.invalid";
+    const dependencies = {
+      ...fixture.dependencies.env,
+    };
+    const attackerDependencies = {
+      ...fixture.dependencies,
+      env: {
+        ...dependencies,
+        OFFSITE_BACKUP_SUPABASE_URL: attackerOrigin,
+      },
+    };
+    const argv = [...ARGV];
+    argv[argv.indexOf(DESTINATION_ORIGIN_SHA256)] = crypto
+      .createHash("sha256")
+      .update(attackerOrigin)
+      .digest("hex");
+
+    await expect(runPostgresLogicalOffsiteCli(argv, attackerDependencies))
+      .resolves.toBe(1);
+    expect(fixture.events).toEqual(["guard"]);
+    expect(JSON.parse(fixture.output[0]!)).toMatchObject({
+      failureCode: "configuration_missing_or_unsafe",
+    });
+  });
+
+  it.each(["other-private-bucket", " pintpath-backups", "pintpath-backups "])(
+    "rejects an unreviewed offsite bucket before reading credentials: %s",
+    async (bucketName) => {
+      const fixture = harness();
+      const dependencies = {
+        ...fixture.dependencies,
+        env: { ...fixture.dependencies.env, OFFSITE_BACKUP_BUCKET: bucketName },
+      };
+      await expect(runPostgresLogicalOffsiteCli(ARGV, dependencies))
+        .resolves.toBe(1);
+      expect(fixture.events).toEqual(["guard"]);
+      expect(JSON.parse(fixture.output[0]!)).toMatchObject({
+        failureCode: "configuration_missing_or_unsafe",
+      });
+    },
+  );
+
+  it.each([
+    `sb_publishable_${"p".repeat(32)}`,
+    `${SERVICE_ROLE_SECRET}\n`,
+    "arbitrary-service-role-value",
+  ])("rejects an unsafe offsite server key before Storage construction", async (key) => {
+    const fixture = harness({ serviceRoleSecret: key });
+    await expect(runPostgresLogicalOffsiteCli(ARGV, fixture.dependencies))
+      .resolves.toBe(1);
+    expect(fixture.events).toEqual([
+      "guard",
+      "secret:runtime-database-url",
+      "secret:offsite-service-role-key",
+    ]);
+    expect(JSON.parse(fixture.output[0]!)).toMatchObject({
+      failureCode: "secret_file_unsafe",
+    });
+    expect(fixture.output[0]).not.toContain(key);
   });
 });

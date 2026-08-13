@@ -6,7 +6,7 @@
 
 The repository is **not ready for the full-scale launch yet**. The checked-in server now has a canonical `DATABASE_URL` runtime: it opens a bounded PostgreSQL pool, verifies the private imported schema before serving, uses a least-privilege runtime role, and makes the legacy SQLite repository unavailable. The deployed production environment has not been migrated and still runs the older SQLite build. Launch remains blocked until the reviewed Postgres target is provisioned, the snapshot is imported and reconciled, the SQLite source is sealed read-only, and permanent staging proves two-replica concurrency, restore, deploy, and Postgres-compatible rollback.
 
-Use two different pre-production systems: permanent integrated staging for routine migrations/auth/provider/two-replica/release proof, and a disposable restore-staging stack with different Railway, Postgres, Supabase/Auth/Storage, Redis, secrets, domain, callbacks, and volumes for destructive RPO/RTO drills. A separate Supabase bucket is only a private operational restore copy; the immutable authority must be provider-enforced object lock/WORM in a separate failure domain.
+Use two different pre-production systems: permanent integrated staging for routine migrations/auth/provider/two-replica/release proof, and a disposable restore-staging stack with different Railway, Postgres, Supabase/Auth/Storage, Redis, secrets, domain, callbacks, and volumes for destructive RPO/RTO drills. Canonical production's separate Supabase bucket is only a private operational restore copy; its URL, key, and bucket variables must be absent from permanent staging. The immutable authority must be provider-enforced object lock/WORM in a separate failure domain.
 
 ## Current Capabilities
 
@@ -239,12 +239,12 @@ DATABASE_URL=postgresql://pintpath_runtime:replace_me@direct-or-session-host:543
 # Keep at one on Railway for forwarded scheme/host handling. Client security
 # identity uses Railway's platform-provided X-Real-IP, not proxy hop count.
 TRUST_PROXY_HOPS=1
-SUPABASE_URL=https://your-production-project.supabase.co
-SUPABASE_ANON_KEY=your_supabase_publishable_or_legacy_anon_key
-SUPABASE_SERVICE_ROLE_KEY=your_server_only_service_role_key
+SUPABASE_URL=https://auth.pintpath.au
+SUPABASE_ANON_KEY=replace_with_reviewed_sb_publishable_key
+SUPABASE_SERVICE_ROLE_KEY=replace_with_reviewed_sb_secret_key
 SUPABASE_OAUTH_PROVIDERS=google
-OFFSITE_BACKUP_SUPABASE_URL=https://your-operational-backup-project.supabase.co
-OFFSITE_BACKUP_SERVICE_ROLE_KEY=your_operational_restore_copy_service_role_key
+OFFSITE_BACKUP_SUPABASE_URL=https://hfbmhdxrwtihukmixxta.supabase.co
+OFFSITE_BACKUP_SERVICE_ROLE_KEY=replace_with_reviewed_operational_sb_secret_key
 OFFSITE_BACKUP_BUCKET=pintpath-backups
 OFFSITE_BACKUP_INTERVAL_HOURS=24
 OFFSITE_BACKUP_RETENTION_DAYS=30
@@ -414,8 +414,10 @@ SOURCE_EVIDENCE_STORAGE_DIR=./data/source-evidence
 SOURCE_EVIDENCE_SIGNING_SECRET=replace_with_32_plus_random_characters
 SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS=300
 SOURCE_EVIDENCE_RETENTION_DAYS=90
-OFFSITE_BACKUP_SUPABASE_URL=https://operational-restore-copy-project.supabase.co
-OFFSITE_BACKUP_SERVICE_ROLE_KEY=replace_with_operational_restore_copy_service_role_key
+# Local-development defaults only. Permanent staging must omit all three
+# OFFSITE_BACKUP_* destination variables, including the bucket variable.
+OFFSITE_BACKUP_SUPABASE_URL=
+OFFSITE_BACKUP_SERVICE_ROLE_KEY=
 OFFSITE_BACKUP_BUCKET=pintpath-backups
 OFFSITE_BACKUP_INTERVAL_HOURS=24
 OFFSITE_BACKUP_RETENTION_DAYS=30
@@ -434,8 +436,8 @@ What each one does:
 - `HOST`: interface the Node server should bind to. Use `0.0.0.0` for Railway and other hosted deployments.
 - `DATABASE_PATH`: local-development database path and the explicit read-only restore-rehearsal path. Canonical production rejects it; keep the sealed migration source outside the web-service environment.
 - `DATABASE_URL`: canonical production Postgres connection consumed by the checked-in server. Startup creates a bounded pool and fails closed unless the dedicated least-privilege runtime role, search path, imported schema metadata, authoritative table count, RLS isolation, and operations-schema denial all pass. Migration and logical-backup tools use separate direct credentials.
-- `SUPABASE_URL`: production Supabase project URL used for email/password and OAuth authentication, private evidence storage, venue imports, and reviewed map-sync writes. It is mandatory in production.
-- `SUPABASE_ANON_KEY`: browser-safe publishable key, or legacy anon key, used by `/account.html` and native clients for Supabase Auth. It is mandatory in production; never use the service-role key in a public client.
+- `SUPABASE_URL`: Supabase project URL used for email/password and OAuth authentication, private evidence storage, venue imports, and reviewed map-sync writes. Canonical production requires the exact `https://auth.pintpath.au` origin.
+- `SUPABASE_ANON_KEY`: browser-safe public key used by `/account.html` for Supabase Auth. The web runtime temporarily accepts either an exact `sb_publishable_` key or a structurally valid legacy `anon` JWT for rollback compatibility. iOS Release archives and Android signed release bundles accept only an exact `sb_publishable_` key. It is mandatory in production; never use a service-role or `sb_secret_` key in a public client.
 - `SUPABASE_SERVICE_ROLE_KEY`: server-only key required in production for verified auth operations, private evidence storage, venue imports, and reviewed/admin menu-capture sync.
 - `SUPABASE_OAUTH_PROVIDERS`: comma-separated provider buttons to show on `/account.html`. Use `google` for the current launch; production rejects `apple` until Apple authorization-token revocation is implemented and tested.
 - `ACCOUNT_DELETION_NOTICE_MODE`: `disabled`, test-only `mock`, or production `resend`. Canonical production requires `resend` independently of monthly reports.
@@ -495,9 +497,9 @@ What each one does:
 - `SOURCE_EVIDENCE_SIGNING_SECRET`: private 32+ character server-side secret used to sign short-lived source-evidence review/download URLs. Generate it with `openssl rand -base64 32`; never commit it or expose it through `/config.js`. Production boot now fails fast without it so OCR and source-review evidence links are not silently broken.
 - `SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS`: signed evidence URL lifetime. Defaults to `300`.
 - `SOURCE_EVIDENCE_RETENTION_DAYS`: retention window for source-evidence cleanup eligibility. Defaults to `90`; completed deletion and legal/security holds still follow the dedicated retention policy.
-- `OFFSITE_BACKUP_SUPABASE_URL`: mandatory production destination URL for the separate operational restore-copy project. It must not share the production `SUPABASE_URL` origin. A second Supabase project alone is not immutable/independent disaster recovery.
-- `OFFSITE_BACKUP_SERVICE_ROLE_KEY`: server-only service-role key for that operational destination. Because it can read/list/delete/overwrite Storage, it cannot satisfy the full-scale WORM/append-only backup gate.
-- `OFFSITE_BACKUP_BUCKET`: private Storage bucket in the operational restore-copy project for verified transition database and source-evidence backups. Defaults to `pintpath-backups`.
+- `OFFSITE_BACKUP_SUPABASE_URL`: mandatory canonical-production destination URL for the separate operational restore-copy project. Canonical production requires exactly `https://hfbmhdxrwtihukmixxta.supabase.co`; local development may leave this and its key blank. Permanent staging must leave the URL, key, and bucket variables absent. The destination must not share the production `SUPABASE_URL` origin. A second Supabase project alone is not immutable/independent disaster recovery.
+- `OFFSITE_BACKUP_SERVICE_ROLE_KEY`: canonical-production-only server key for that operational destination. Because it can read/list/delete/overwrite Storage, it cannot satisfy the full-scale WORM/append-only backup gate and must never be inherited by permanent staging.
+- `OFFSITE_BACKUP_BUCKET`: canonical-production private Storage bucket in the operational restore-copy project for verified transition database and source-evidence backups. It defaults to `pintpath-backups` outside the permanent-staging contract; permanent staging must not configure the variable.
 - Provision that bucket only in the operational restore-copy project with `ops/supabase/independent-backup-project-storage.sql`; the historical path is intentionally preserved and excluded from `supabase/migrations/`.
 - `OFFSITE_BACKUP_INTERVAL_HOURS`: automatic production backup interval. Defaults to `24`.
 - `OFFSITE_BACKUP_RETENTION_DAYS`: operational off-volume copy retention. Defaults to `30`. Full-scale launch separately requires provider-enforced object lock/WORM in a different provider or region, an append/create-only application principal, and separately held restore/retention authority.

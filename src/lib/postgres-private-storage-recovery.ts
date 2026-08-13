@@ -31,10 +31,15 @@ import {
 import { postgresAccountDeletionReplayInternals } from "./postgres-account-deletion-replay.js";
 import { postgresLogicalOffsiteInternals } from "./postgres-logical-offsite.js";
 import { createServerSupabaseClient } from "./supabase-client.js";
+import {
+  PERMANENT_STAGING_SUPABASE_ORIGIN,
+  PRODUCTION_SUPABASE_STORAGE_ORIGIN,
+  assertSupabaseServerApiKey,
+} from "./supabase-key-format.js";
 
 export const POSTGRES_PRIVATE_STORAGE_RECOVERY_KIND =
   "pintpath-postgres-private-storage-recovery-set" as const;
-export const POSTGRES_PRIVATE_STORAGE_RECOVERY_VERSION = 1 as const;
+export const POSTGRES_PRIVATE_STORAGE_RECOVERY_VERSION = 2 as const;
 export const POSTGRES_PRIVATE_STORAGE_RECOVERY_MANIFEST =
   "recovery-set.json" as const;
 export const POSTGRES_PRIVATE_STORAGE_RECOVERY_OBJECTS =
@@ -77,6 +82,7 @@ const ALLOWED_MIME_TYPES = new Set([
   "image/webp",
 ]);
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
+const CANDIDATE_SHA_PATTERN = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
 const SAFE_OBJECT_PATH_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,1023}$/;
 const CANONICAL_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const MAX_LOGICAL_MANIFEST_BYTES = 256 * 1024;
@@ -121,6 +127,22 @@ export class PostgresPrivateStorageRecoveryError extends Error {
   }
 }
 
+export type PostgresPrivateStorageSourceEnvironment =
+  | "permanent-staging"
+  | "production";
+
+export function resolvePostgresPrivateStorageCaptureOrigin(
+  sourceEnvironment: PostgresPrivateStorageSourceEnvironment,
+): string {
+  if (sourceEnvironment === "permanent-staging") {
+    return PERMANENT_STAGING_SUPABASE_ORIGIN;
+  }
+  if (sourceEnvironment === "production") {
+    return PRODUCTION_SUPABASE_STORAGE_ORIGIN;
+  }
+  throw recoveryError("invalid_arguments");
+}
+
 export interface PostgresPrivateStorageReference {
   readonly objectPath: string;
   readonly mimeType: string;
@@ -130,6 +152,9 @@ export interface PostgresPrivateStorageReference {
 export interface PostgresPrivateStorageDatabaseSnapshot {
   readonly connectionUrlSha256: string;
   readonly databaseIdentitySha256: string;
+  readonly migrationRunSha256: string;
+  readonly sourceEnvironment: PostgresPrivateStorageSourceEnvironment;
+  readonly candidateSha: string;
   readonly targetClass: "disposable-rehearsal" | null;
   readonly state: PostgresLogicalStateInventory;
   readonly references: readonly PostgresPrivateStorageReference[];
@@ -194,6 +219,9 @@ export interface PostgresPrivateStorageRecoveryManifest {
     readonly stateReceiptSha256: string;
     readonly sourceDatabaseIdentitySha256: string;
     readonly sourceUrlSha256: string;
+    readonly migrationRunSha256: string;
+    readonly sourceEnvironment: PostgresPrivateStorageSourceEnvironment;
+    readonly candidateSha: string;
     readonly overallStateSha256: string;
     readonly sourceEvidenceTableSha256: string;
   };
@@ -229,6 +257,8 @@ export interface CapturePostgresPrivateStorageRecoveryOptions {
   readonly expectedLedgerCheckpointSha256: string;
   readonly expectedLedgerImmutableSetSha256: string;
   readonly expectedTombstoneCount: number;
+  readonly sourceEnvironment: PostgresPrivateStorageSourceEnvironment;
+  readonly expectedCandidateSha: string;
   readonly sourceSupabaseUrl: string;
   readonly expectedSourceOriginSha256: string;
   readonly bucketName: typeof POSTGRES_PRIVATE_STORAGE_BUCKET;
@@ -373,6 +403,16 @@ interface ReferenceRow extends QueryResultRow {
   readonly byteSize: string;
 }
 
+interface ReadyMigrationBindingRow extends QueryResultRow {
+  readonly migrationRunSha256: string;
+  readonly metadataCandidateSha: string;
+  readonly importState: string;
+  readonly candidateCommitSha: string;
+  readonly expectedEnvironment: string;
+  readonly status: string;
+  readonly readyEvidenceComplete: boolean;
+}
+
 function recoveryError(
   code: PostgresPrivateStorageRecoveryFailureCode,
 ): PostgresPrivateStorageRecoveryError {
@@ -393,6 +433,13 @@ function compareUtf8(left: string, right: string): number {
 
 function exactSha256(value: string): string {
   if (!SHA256_PATTERN.test(value)) throw recoveryError("invalid_arguments");
+  return value;
+}
+
+function exactCandidateSha(value: string): string {
+  if (!CANDIDATE_SHA_PATTERN.test(value)) {
+    throw recoveryError("invalid_arguments");
+  }
   return value;
 }
 
@@ -521,6 +568,9 @@ async function trustedPrivateFile(input: {
       fs.realpathSync(filePath) !== filePath
     )
       throw new Error("unsafe");
+    // The O_NOFOLLOW descriptor is bound to the pre-open lstat by full file
+    // identity and is revalidated after hashing the descriptor contents.
+    // codeql[js/file-system-race]
     handle = await fs.promises.open(
       filePath,
       fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
@@ -1105,13 +1155,26 @@ function validateDatabaseSnapshot(input: {
   readonly backup: ValidatedLogicalBackup;
   readonly expectedIdentitySha256: string;
   readonly expectedConnectionUrlSha256: string;
+  readonly expectedMigrationRunSha256?: string | undefined;
+  readonly expectedSourceEnvironment: PostgresPrivateStorageSourceEnvironment;
+  readonly expectedCandidateSha: string;
   readonly requireDisposable: boolean;
 }): readonly PostgresPrivateStorageReference[] {
+  resolvePostgresPrivateStorageCaptureOrigin(
+    input.expectedSourceEnvironment,
+  );
   if (
     input.snapshot.connectionUrlSha256 !==
       exactSha256(input.expectedConnectionUrlSha256) ||
     input.snapshot.databaseIdentitySha256 !==
       exactSha256(input.expectedIdentitySha256) ||
+    !SHA256_PATTERN.test(input.snapshot.migrationRunSha256) ||
+    (input.expectedMigrationRunSha256 !== undefined &&
+      input.snapshot.migrationRunSha256 !==
+        exactSha256(input.expectedMigrationRunSha256)) ||
+    input.snapshot.sourceEnvironment !== input.expectedSourceEnvironment ||
+    input.snapshot.candidateSha !==
+      exactCandidateSha(input.expectedCandidateSha) ||
     !exactPostgresLogicalStateMatch(
       input.backup.stateReceipt.state,
       input.snapshot.state,
@@ -1291,7 +1354,7 @@ function recoverySetBinding(
 ): string {
   return canonicalSha256({
     bindingKind: "pintpath-postgres-private-storage-recovery-set-binding",
-    bindingVersion: 1,
+    bindingVersion: 2,
     ...manifest,
   });
 }
@@ -1300,8 +1363,16 @@ export async function capturePostgresPrivateStorageRecovery(
   options: CapturePostgresPrivateStorageRecoveryOptions,
 ): Promise<CapturePostgresPrivateStorageRecoveryResult> {
   const uid = exactUid(options.getUid);
+  const expectedSourceOrigin = resolvePostgresPrivateStorageCaptureOrigin(
+    options.sourceEnvironment,
+  );
+  if (options.sourceSupabaseUrl !== expectedSourceOrigin) {
+    throw recoveryError("invalid_arguments");
+  }
   const sourceOrigin = canonicalOrigin(options.sourceSupabaseUrl);
+  const expectedCandidateSha = exactCandidateSha(options.expectedCandidateSha);
   if (
+    sourceOrigin !== expectedSourceOrigin ||
     sha256(sourceOrigin) !== exactSha256(options.expectedSourceOriginSha256) ||
     options.bucketName !== POSTGRES_PRIVATE_STORAGE_BUCKET ||
     sha256(options.bucketName) !== exactSha256(options.expectedBucketNameSha256)
@@ -1330,7 +1401,6 @@ export async function capturePostgresPrivateStorageRecovery(
     expectedImmutableSetSha256: options.expectedLedgerImmutableSetSha256,
     expectedTombstoneCount: options.expectedTombstoneCount,
   });
-  await ensurePrivateBucket(options.sourceStorage, "source_bucket_invalid");
   const firstDatabase = await options.inspectSourceDatabase().catch(() => {
     throw recoveryError("source_database_mismatch");
   });
@@ -1339,8 +1409,11 @@ export async function capturePostgresPrivateStorageRecovery(
     backup,
     expectedIdentitySha256: backup.stateReceipt.source.databaseIdentitySha256,
     expectedConnectionUrlSha256: backup.stateReceipt.source.urlSha256,
+    expectedSourceEnvironment: options.sourceEnvironment,
+    expectedCandidateSha,
     requireDisposable: false,
   });
+  await ensurePrivateBucket(options.sourceStorage, "source_bucket_invalid");
   let firstInventory: readonly PostgresPrivateStorageObjectInfo[];
   try {
     firstInventory = normalizeStorageInventory(
@@ -1432,6 +1505,9 @@ export async function capturePostgresPrivateStorageRecovery(
     backup,
     expectedIdentitySha256: backup.stateReceipt.source.databaseIdentitySha256,
     expectedConnectionUrlSha256: backup.stateReceipt.source.urlSha256,
+    expectedMigrationRunSha256: firstDatabase.migrationRunSha256,
+    expectedSourceEnvironment: options.sourceEnvironment,
+    expectedCandidateSha,
     requireDisposable: false,
   });
   let secondInventory: readonly PostgresPrivateStorageObjectInfo[];
@@ -1469,6 +1545,9 @@ export async function capturePostgresPrivateStorageRecovery(
       sourceDatabaseIdentitySha256:
         backup.stateReceipt.source.databaseIdentitySha256,
       sourceUrlSha256: backup.stateReceipt.source.urlSha256,
+      migrationRunSha256: firstDatabase.migrationRunSha256,
+      sourceEnvironment: options.sourceEnvironment,
+      candidateSha: expectedCandidateSha,
       overallStateSha256: backup.stateReceipt.state.overallStateSha256,
       sourceEvidenceTableSha256: sourceEvidenceTableSha256(
         backup.stateReceipt.state,
@@ -1596,6 +1675,9 @@ function parseRecoveryManifest(
       "stateReceiptSha256",
       "sourceDatabaseIdentitySha256",
       "sourceUrlSha256",
+      "migrationRunSha256",
+      "sourceEnvironment",
+      "candidateSha",
       "overallStateSha256",
       "sourceEvidenceTableSha256",
     ]) ||
@@ -1621,7 +1703,16 @@ function parseRecoveryManifest(
     ])
   )
     throw recoveryError("recovery_set_invalid");
-  const logicalHashes = Object.values(logical);
+  const logicalHashes = [
+    logical.manifestSha256,
+    logical.archiveSha256,
+    logical.stateReceiptSha256,
+    logical.sourceDatabaseIdentitySha256,
+    logical.sourceUrlSha256,
+    logical.migrationRunSha256,
+    logical.overallStateSha256,
+    logical.sourceEvidenceTableSha256,
+  ];
   const storageHashes = [
     storage.originSha256,
     storage.bucketNameSha256,
@@ -1642,6 +1733,11 @@ function parseRecoveryManifest(
       ...authorityHashes,
       value.recoverySetSha256,
     ].some((hash) => typeof hash !== "string" || !SHA256_PATTERN.test(hash)) ||
+    !["permanent-staging", "production"].includes(
+      String(logical.sourceEnvironment),
+    ) ||
+    typeof logical.candidateSha !== "string" ||
+    !CANDIDATE_SHA_PATTERN.test(logical.candidateSha) ||
     !Number.isSafeInteger(storage.objectCount) ||
     Number(storage.objectCount) < 0 ||
     Number(storage.objectCount) > MAX_OBJECT_COUNT ||
@@ -1662,6 +1758,14 @@ function parseRecoveryManifest(
         !validCanonicalTimestamp(authority.latestCompletedAt)))
   )
     throw recoveryError("recovery_set_invalid");
+  const sourceEnvironment = logical.sourceEnvironment as
+    PostgresPrivateStorageSourceEnvironment;
+  if (
+    storage.originSha256 !==
+      sha256(resolvePostgresPrivateStorageCaptureOrigin(sourceEnvironment))
+  ) {
+    throw recoveryError("recovery_set_invalid");
+  }
   const objects: PostgresPrivateStorageRecoveryObject[] = [];
   for (const raw of storage.objects) {
     if (
@@ -2051,6 +2155,12 @@ export async function restorePostgresPrivateStorageRecovery(
     backup,
     expectedIdentitySha256: options.expectedTargetDatabaseIdentitySha256,
     expectedConnectionUrlSha256: options.expectedTargetConnectionUrlSha256,
+    expectedMigrationRunSha256:
+      recoverySet.manifest.logicalBackup.migrationRunSha256,
+    expectedSourceEnvironment:
+      recoverySet.manifest.logicalBackup.sourceEnvironment,
+    expectedCandidateSha:
+      recoverySet.manifest.logicalBackup.candidateSha,
     requireDisposable: true,
   });
   if (
@@ -2226,6 +2336,12 @@ export async function restorePostgresPrivateStorageRecovery(
       backup,
       expectedIdentitySha256: options.expectedTargetDatabaseIdentitySha256,
       expectedConnectionUrlSha256: options.expectedTargetConnectionUrlSha256,
+      expectedMigrationRunSha256:
+        recoverySet.manifest.logicalBackup.migrationRunSha256,
+      expectedSourceEnvironment:
+        recoverySet.manifest.logicalBackup.sourceEnvironment,
+      expectedCandidateSha:
+        recoverySet.manifest.logicalBackup.candidateSha,
       requireDisposable: true,
     });
     if (!sameReferences(firstTargetReferences, secondReferences)) {
@@ -2426,6 +2542,9 @@ function databaseIdentitySha256(row: SourceIdentityRow): string {
 export function createPostgresPrivateStorageDatabaseInspector(input: {
   readonly connectionString: string;
   readonly expectedConnectionUrlSha256?: string | undefined;
+  readonly expectedSourceEnvironment?:
+    PostgresPrivateStorageSourceEnvironment | undefined;
+  readonly expectedCandidateSha?: string | undefined;
   readonly allowInsecureLoopbackForTests?: boolean | undefined;
   readonly environment?:
     Readonly<Record<string, string | undefined>> | undefined;
@@ -2441,6 +2560,14 @@ export function createPostgresPrivateStorageDatabaseInspector(input: {
     parsed.urlSha256 !== exactSha256(input.expectedConnectionUrlSha256)
   )
     throw recoveryError("invalid_arguments");
+  if (input.expectedSourceEnvironment !== undefined) {
+    resolvePostgresPrivateStorageCaptureOrigin(
+      input.expectedSourceEnvironment,
+    );
+  }
+  const expectedCandidateSha = input.expectedCandidateSha === undefined
+    ? undefined
+    : exactCandidateSha(input.expectedCandidateSha);
   return async () => {
     const client = new Client({
       ...parsed.clientConfig,
@@ -2546,6 +2673,48 @@ export function createPostgresPrivateStorageDatabaseInspector(input: {
         },
       };
       const state = await computePostgresLogicalStateInventory(connection);
+      const migrationBindingResult =
+        await client.query<ReadyMigrationBindingRow>(`/* pintpath:private-storage:ready-migration-binding */
+        SELECT run_binding.value AS "migrationRunSha256",
+               candidate_binding.value AS "metadataCandidateSha",
+               import_state.value AS "importState",
+               run.candidate_commit_sha AS "candidateCommitSha",
+               run.expected_environment AS "expectedEnvironment",
+               run.status,
+               (run.receipt_sha256 IS NOT NULL
+                 AND run.verifier_id_sha256 IS NOT NULL
+                 AND run.completed_at IS NOT NULL
+                 AND run.failure_code IS NULL) AS "readyEvidenceComplete"
+        FROM pintpath_app.schema_metadata AS run_binding
+        JOIN pintpath_app.schema_metadata AS candidate_binding
+          ON candidate_binding.key = 'migration_candidate_sha'
+        JOIN pintpath_app.schema_metadata AS import_state
+          ON import_state.key = 'import_state'
+        JOIN pintpath_ops.migration_runs AS run
+          ON run.run_id = run_binding.value
+        WHERE run_binding.key = 'migration_run_sha256'`);
+      const migrationBinding = migrationBindingResult.rows[0];
+      if (
+        migrationBindingResult.rows.length !== 1 ||
+        !migrationBinding ||
+        !SHA256_PATTERN.test(migrationBinding.migrationRunSha256) ||
+        !CANDIDATE_SHA_PATTERN.test(migrationBinding.candidateCommitSha) ||
+        migrationBinding.metadataCandidateSha !==
+          migrationBinding.candidateCommitSha ||
+        migrationBinding.importState !== "ready" ||
+        !["permanent-staging", "production"].includes(
+          migrationBinding.expectedEnvironment,
+        ) ||
+        (input.expectedSourceEnvironment !== undefined &&
+          migrationBinding.expectedEnvironment !==
+            input.expectedSourceEnvironment) ||
+        (expectedCandidateSha !== undefined &&
+          migrationBinding.candidateCommitSha !== expectedCandidateSha) ||
+        migrationBinding.status !== "ready" ||
+        migrationBinding.readyEvidenceComplete !== true
+      ) {
+        throw new Error("unsafe_migration_binding");
+      }
       const referenceResult =
         await client.query<ReferenceRow>(`/* pintpath:private-storage:references */
         SELECT object_path AS "objectPath", mime_type AS "mimeType",
@@ -2569,6 +2738,10 @@ export function createPostgresPrivateStorageDatabaseInspector(input: {
       return Object.freeze({
         connectionUrlSha256: parsed.urlSha256,
         databaseIdentitySha256: databaseIdentitySha256(identity),
+        migrationRunSha256: migrationBinding.migrationRunSha256,
+        sourceEnvironment: migrationBinding.expectedEnvironment as
+          PostgresPrivateStorageSourceEnvironment,
+        candidateSha: migrationBinding.candidateCommitSha,
         targetClass:
           identity.targetClass === "disposable-rehearsal"
             ? "disposable-rehearsal"
@@ -2852,6 +3025,7 @@ class SupabasePrivateStorageBoundary implements PostgresPrivateStorageBoundary {
 
 export function createSupabasePrivateStorageRecoveryBoundary(input: {
   readonly supabaseUrl: string;
+  readonly sourceEnvironment: PostgresPrivateStorageSourceEnvironment;
   readonly serviceRoleKey: string;
   readonly bucketName?: string | undefined;
   readonly requestTimeoutMs?: number | undefined;
@@ -2859,6 +3033,17 @@ export function createSupabasePrivateStorageRecoveryBoundary(input: {
     ((url: string, key: string) => SupabaseClient) | undefined;
   readonly fetchImplementation?: typeof globalThis.fetch | undefined;
 }): PostgresPrivateStorageBoundary {
+  try {
+    const expectedOrigin = resolvePostgresPrivateStorageCaptureOrigin(
+      input.sourceEnvironment,
+    );
+    if (input.supabaseUrl !== expectedOrigin) {
+      throw recoveryError("invalid_arguments");
+    }
+    assertSupabaseServerApiKey(input.serviceRoleKey, "serviceRoleKey");
+  } catch {
+    throw recoveryError("invalid_arguments");
+  }
   const bucketName = input.bucketName ?? POSTGRES_PRIVATE_STORAGE_BUCKET;
   const requestTimeoutMs = input.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   if (

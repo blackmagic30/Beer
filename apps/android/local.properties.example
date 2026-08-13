@@ -4,13 +4,20 @@
 # sdk.dir=/Users/you/Library/Android/sdk
 
 # Existing BeerMap/Pint Path backend.
-# Hosted default:
+# Hosted default and the only value accepted by bundleRelease:
 PINT_PATH_API_BASE_URL=https://pintpath.au
 # Android emulator with backend on the Mac:
 # PINT_PATH_API_BASE_URL=http://10.0.2.2:3000
 # Physical device with local backend: use an HTTPS tunnel or a LAN URL reachable from the device.
+# Debug accepts those local overrides. Release embeds them as an empty fail-closed value,
+# and bundleRelease rejects whitespace, HTTP, credentials, ports, paths, queries,
+# fragments, and other hosts without printing the configured value.
 
-# Optional public Supabase Auth config used by native email/password and Google/Apple OAuth.
-# Never put service-role keys in Android config.
+# Optional as a complete pair in debug. Both values are required by bundleRelease.
+# SUPABASE_URL must be exactly https://auth.pintpath.au. Whitespace, HTTP,
+# credentials, ports, paths, queries, fragments, and other hosts are rejected.
+# SUPABASE_ANON_KEY is the compatibility slot for an exact public
+# sb_publishable_[A-Za-z0-9_-]{20,220} value. Legacy anon JWTs, sb_secret_ keys,
+# and service-role keys fail configuration before any build and must never be bundled.
 SUPABASE_URL=
 SUPABASE_ANON_KEY=

@@ -276,7 +276,7 @@ step above.
    failures, zero blocking warnings, and a passing
    `RAILWAY_DEPLOYED_READINESS_CONTEXT`. `railway run` and a local injected
    environment are not evidence.
-3. Seal only the 14 populated source and consumer rows enumerated by
+3. Seal only the 13 populated source and consumer rows enumerated by
    `ops/railway/permanent-staging-sealed-variable-policy.json`. Do not seal
    blank/future variables or public keys, and do not treat URL hashes or
    provider-resource pins as secret rows. Verify the action started no
@@ -287,8 +287,11 @@ step above.
    readiness:railway:sealed`. Require exactly one
    `pintpath-railway-sealed-variable-readiness/v1` receipt with
    `policy=permanent-staging-post-rotation`, `mode=post-seal`, and
-   `outcome=passed`. The gate paginates the complete inventory and fails on a
-   missing/extra row, shared shadow, unsealed row, reference drift, duplicate,
+   `outcome=passed`, plus `checks.forbiddenVariablesAbsent=true`. The complete
+   inventory must have no `OFFSITE_BACKUP_SUPABASE_URL`,
+   `OFFSITE_BACKUP_SERVICE_ROLE_KEY`, or `OFFSITE_BACKUP_BUCKET` row, including
+   a blank or sealed row. The gate paginates the complete inventory and fails on
+   a missing/extra row, shared shadow, unsealed row, reference drift, duplicate,
    forbidden retired probe service, wrong environment, or malformed response.
 5. Start a fresh reviewed permanent-staging deployment or one-shot deployment
    after sealing and repeat the strict secret-aware gate from step 2. This proves

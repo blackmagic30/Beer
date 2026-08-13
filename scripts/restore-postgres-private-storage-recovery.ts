@@ -2,6 +2,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { readPrivateSecretFile } from "../src/lib/offsite-backup-download.js";
+import { assertSupabaseServerApiKey } from "../src/lib/supabase-key-format.js";
 import { canonicalPostgresBackupJson } from "../src/lib/postgres-logical-backup.js";
 import {
   POSTGRES_PRIVATE_STORAGE_BUCKET,
@@ -9,8 +10,8 @@ import {
   POSTGRES_PRIVATE_STORAGE_RESTORE_CONFIRMATION_VALUE,
   PostgresPrivateStorageRecoveryError,
   createPostgresPrivateStorageDatabaseInspector,
-  createSupabasePrivateStorageRecoveryBoundary,
   restorePostgresPrivateStorageRecovery,
+  type PostgresPrivateStorageBoundary,
   type PostgresPrivateStorageRecoveryFailureCode,
   type RestorePostgresPrivateStorageRecoveryResult,
 } from "../src/lib/postgres-private-storage-recovery.js";
@@ -54,8 +55,13 @@ export type PostgresPrivateStorageRestoreCliResult =
 export interface PostgresPrivateStorageRestoreCliDependencies {
   readonly environment: Readonly<Record<string, string | undefined>>;
   readonly readSecretFile: (filePath: string) => Promise<string>;
+  readonly assertDestinationOriginApproved: (origin: string) => void;
   readonly createInspector: typeof createPostgresPrivateStorageDatabaseInspector;
-  readonly createStorage: typeof createSupabasePrivateStorageRecoveryBoundary;
+  readonly createStorage: (input: {
+    readonly supabaseUrl: string;
+    readonly serviceRoleKey: string;
+    readonly bucketName: string;
+  }) => PostgresPrivateStorageBoundary;
   readonly restore: typeof restorePostgresPrivateStorageRecovery;
   readonly assertMutationAllowed: (operation: string) => void;
   readonly writeOutput: (value: string) => void;
@@ -64,8 +70,17 @@ export interface PostgresPrivateStorageRestoreCliDependencies {
 const DEFAULT_DEPENDENCIES: PostgresPrivateStorageRestoreCliDependencies = {
   environment: process.env,
   readSecretFile: readPrivateSecretFile,
+  // No disposable restore project is currently registered in repository-owned
+  // release authority. A URL and digest supplied by the same invocation are
+  // not an independent trust anchor, so production execution remains blocked
+  // before either credential file is read.
+  assertDestinationOriginApproved: () => {
+    throw new RestoreCliError("configuration_missing_or_unsafe");
+  },
   createInspector: createPostgresPrivateStorageDatabaseInspector,
-  createStorage: createSupabasePrivateStorageRecoveryBoundary,
+  createStorage: () => {
+    throw new RestoreCliError("configuration_missing_or_unsafe");
+  },
   restore: restorePostgresPrivateStorageRecovery,
   assertMutationAllowed: assertOperatorMutationAllowed,
   writeOutput: (value) => process.stdout.write(value),
@@ -168,14 +183,27 @@ export async function runPostgresPrivateStorageRestoreCli(
     const serviceRoleKeyFile = exactSecretFilePath(
       args.get("--service-role-key-file")!,
     );
-    const [connectionString, serviceRoleKey] = await Promise.all([
-      secret(dependencies, targetConnectionUrlFile),
-      secret(dependencies, serviceRoleKeyFile),
-    ]);
     const destinationSupabaseUrl = exactEnvironment(
       dependencies.environment,
       "RESTORE_SUPABASE_URL",
     );
+    try {
+      dependencies.assertDestinationOriginApproved(destinationSupabaseUrl);
+    } catch {
+      throw new RestoreCliError("configuration_missing_or_unsafe");
+    }
+    const [connectionString, serviceRoleKey] = await Promise.all([
+      secret(dependencies, targetConnectionUrlFile),
+      secret(dependencies, serviceRoleKeyFile),
+    ]);
+    try {
+      assertSupabaseServerApiKey(
+        serviceRoleKey,
+        "RESTORE_SUPABASE_SERVICE_ROLE_KEY",
+      );
+    } catch {
+      throw new RestoreCliError("secret_file_unsafe");
+    }
     const inspectTargetDatabase = dependencies.createInspector({
       connectionString,
       expectedConnectionUrlSha256: args.get("--target-connection-url-sha256")!,

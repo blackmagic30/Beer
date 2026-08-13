@@ -59,7 +59,11 @@ export function createBoundedSupabaseFetch(
     try {
       let request: Promise<Response>;
       try {
-        request = Promise.resolve(fetchImplementation(input, { ...init, signal }));
+        request = Promise.resolve(fetchImplementation(input, {
+          ...init,
+          redirect: "error",
+          signal,
+        }));
       } catch (error) {
         request = Promise.reject(error);
       }
@@ -87,19 +91,23 @@ export function createSupabaseApiKeyAwareFetch(
 ): typeof globalThis.fetch {
   const opaqueApiKey = NEW_SUPABASE_API_KEY_PATTERN.test(apiKey);
   return async (input, init) => {
-    if (!opaqueApiKey) return fetchImplementation(input, init);
+    if (!opaqueApiKey) {
+      return fetchImplementation(input, { ...init, redirect: "error" });
+    }
     const sourceHeaders = init?.headers ?? (
       typeof Request !== "undefined" && input instanceof Request
         ? input.headers
         : undefined
     );
-    if (!sourceHeaders) return fetchImplementation(input, init);
+    if (!sourceHeaders) {
+      return fetchImplementation(input, { ...init, redirect: "error" });
+    }
     const headers = new Headers(sourceHeaders);
     if (headers.get("authorization") !== `Bearer ${apiKey}`) {
-      return fetchImplementation(input, init);
+      return fetchImplementation(input, { ...init, redirect: "error" });
     }
     headers.delete("authorization");
-    return fetchImplementation(input, { ...init, headers });
+    return fetchImplementation(input, { ...init, headers, redirect: "error" });
   };
 }
 

@@ -19,17 +19,19 @@ PINT_PATH_API_BASE_URL = http:/$()/127.0.0.1:3000
 
 `Config.xcconfig` is loaded automatically; do not attach it to the project or
 commit it. Debug builds can omit the Supabase values when authentication is not
-being exercised.
+being exercised. Any nonblank `SUPABASE_ANON_KEY` in any build configuration
+must use the publishable-key format below; secret, legacy, or malformed values
+fail the build before they can be packaged.
 
 ## Release configuration
 
 Every Release build and archive fails before compilation unless it has the
 exact production API origin, the independently pinned Supabase custom origin
-`https://auth.pintpath.au`, and a public Supabase key. Use an
-`sb_publishable_...` key or a legacy JWT with the `anon` role. Never put an
-`sb_secret_...`, legacy `service_role`, or server credential in this app.
+`https://auth.pintpath.au`, and an `sb_publishable_...` key with a 20–220
+character URL-safe suffix. Legacy JWTs, `sb_secret_...` keys, and server
+credentials are rejected.
 
-1. Obtain the production publishable/anon key from the approved production
+1. Obtain the production publishable key from the approved production
    environment. Confirm its public origin is exactly `https://auth.pintpath.au`.
 2. Generate the ignored config without printing its values:
 

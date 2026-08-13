@@ -1,7 +1,9 @@
+import crypto from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { readPrivateSecretFile } from "../src/lib/offsite-backup-download.js";
+import { assertSupabaseServerApiKey } from "../src/lib/supabase-key-format.js";
 import { canonicalPostgresBackupJson } from "../src/lib/postgres-logical-backup.js";
 import {
   POSTGRES_PRIVATE_STORAGE_BUCKET,
@@ -9,8 +11,10 @@ import {
   capturePostgresPrivateStorageRecovery,
   createPostgresPrivateStorageDatabaseInspector,
   createSupabasePrivateStorageRecoveryBoundary,
+  resolvePostgresPrivateStorageCaptureOrigin,
   type CapturePostgresPrivateStorageRecoveryResult,
   type PostgresPrivateStorageRecoveryFailureCode,
+  type PostgresPrivateStorageSourceEnvironment,
 } from "../src/lib/postgres-private-storage-recovery.js";
 import { assertOperatorMutationAllowed } from "./lib/operator-mutation-guard.js";
 import { parseStrictArguments } from "./lib/strict-arguments.js";
@@ -22,6 +26,7 @@ const ARGUMENTS = new Set([
   "--connection-url-file",
   "--connection-url-sha256",
   "--deletion-authority-directory",
+  "--expected-candidate-sha",
   "--ledger-checkpoint-sha256",
   "--ledger-current-sha256",
   "--ledger-genesis-sha256",
@@ -29,8 +34,10 @@ const ARGUMENTS = new Set([
   "--ledger-tombstone-count",
   "--output-directory",
   "--service-role-key-file",
+  "--source-environment",
   "--source-origin-sha256",
 ]);
+const CANDIDATE_SHA_PATTERN = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
 
 export type PostgresPrivateStorageCaptureCliFailureCode =
   | PostgresPrivateStorageRecoveryFailureCode
@@ -95,6 +102,22 @@ function exactCount(value: string): number {
   return count;
 }
 
+function exactSourceEnvironment(
+  value: string,
+): PostgresPrivateStorageSourceEnvironment {
+  if (value !== "permanent-staging" && value !== "production") {
+    throw new CaptureCliError("invalid_arguments");
+  }
+  return value;
+}
+
+function exactCandidateSha(value: string): string {
+  if (!CANDIDATE_SHA_PATTERN.test(value)) {
+    throw new CaptureCliError("invalid_arguments");
+  }
+  return value;
+}
+
 function exactSecretFilePath(value: string): string {
   if (
     !value ||
@@ -157,20 +180,50 @@ export async function runPostgresPrivateStorageCaptureCli(
     const serviceRoleKeyFile = exactSecretFilePath(
       args.get("--service-role-key-file")!,
     );
-    const [connectionString, serviceRoleKey] = await Promise.all([
-      secret(dependencies, connectionUrlFile),
-      secret(dependencies, serviceRoleKeyFile),
-    ]);
     const sourceSupabaseUrl = exactEnvironment(
       dependencies.environment,
       "SUPABASE_URL",
     );
+    const sourceEnvironment = exactSourceEnvironment(
+      args.get("--source-environment")!,
+    );
+    const expectedCandidateSha = exactCandidateSha(
+      args.get("--expected-candidate-sha")!,
+    );
+    const expectedOrigin = resolvePostgresPrivateStorageCaptureOrigin(
+      sourceEnvironment,
+    );
+    const expectedSourceOriginSha256 = crypto
+      .createHash("sha256")
+      .update(expectedOrigin)
+      .digest("hex");
+    if (
+      sourceSupabaseUrl !== expectedOrigin ||
+      args.get("--source-origin-sha256") !== expectedSourceOriginSha256
+    ) {
+      throw new CaptureCliError("configuration_missing_or_unsafe");
+    }
+    const [connectionString, serviceRoleKey] = await Promise.all([
+      secret(dependencies, connectionUrlFile),
+      secret(dependencies, serviceRoleKeyFile),
+    ]);
+    try {
+      assertSupabaseServerApiKey(
+        serviceRoleKey,
+        "SUPABASE_SERVICE_ROLE_KEY",
+      );
+    } catch {
+      throw new CaptureCliError("secret_file_unsafe");
+    }
     const inspectSourceDatabase = dependencies.createInspector({
       connectionString,
       expectedConnectionUrlSha256: args.get("--connection-url-sha256")!,
+      expectedSourceEnvironment: sourceEnvironment,
+      expectedCandidateSha,
     });
     const sourceStorage = dependencies.createStorage({
       supabaseUrl: sourceSupabaseUrl,
+      sourceEnvironment,
       serviceRoleKey,
       bucketName: POSTGRES_PRIVATE_STORAGE_BUCKET,
     });
@@ -185,8 +238,10 @@ export async function runPostgresPrivateStorageCaptureCli(
         "--ledger-immutable-set-sha256",
       )!,
       expectedTombstoneCount: exactCount(args.get("--ledger-tombstone-count")!),
+      sourceEnvironment,
+      expectedCandidateSha,
       sourceSupabaseUrl,
-      expectedSourceOriginSha256: args.get("--source-origin-sha256")!,
+      expectedSourceOriginSha256,
       bucketName: POSTGRES_PRIVATE_STORAGE_BUCKET,
       expectedBucketNameSha256: args.get("--bucket-name-sha256")!,
       outputDirectory: args.get("--output-directory")!,

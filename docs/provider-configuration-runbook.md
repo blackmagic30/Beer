@@ -301,12 +301,14 @@ and `GOOGLE_MAPS_MAP_ID`), Google Places server access
 (`GOOGLE_PLACES_API_KEY`), and OpenAI menu OCR (`OPENAI_API_KEY`). The
 review-only path authorises none of those operations while its policy remains
 `HARD_DISABLED_REVIEW_REQUIRED`, and it does not accept or authorise
-`SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, or
-`OFFSITE_BACKUP_SERVICE_ROLE_KEY`. Those are the three Supabase replacement-key
-operations under a separate containment path that also remains
+`SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, or any `OFFSITE_BACKUP_*`
+variable. `SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY` are the two
+permanent-staging Supabase replacement-key operations under a separate
+containment path that also remains
 `HARD_DISABLED_REVIEW_REQUIRED`; it does not authorise a Railway upsert,
 Supabase key creation or rotation, legacy-key disablement, a canary deployment,
-or any provider mutation.
+or any provider mutation. Production operational-copy authority is outside that
+staging path and is prohibited in permanent staging.
 
 The read-only application-deployment attestor is documented in
 [`railway-application-deployment-attestation.md`](railway-application-deployment-attestation.md).
@@ -352,6 +354,11 @@ extra, shared-shadow, unsealed, reference-drifted, duplicate, or unpaginated
 inventory fails closed. Never replace this gate with `railway run` and never
 unseal a variable merely to repeat readiness.
 
+Require the receipt's `checks.forbiddenVariablesAbsent=true`. The complete
+inventory must contain no row named `OFFSITE_BACKUP_SUPABASE_URL`,
+`OFFSITE_BACKUP_SERVICE_ROLE_KEY`, or `OFFSITE_BACKUP_BUCKET`; a present blank
+or sealed row is still a failure, not an absent variable.
+
 ```dotenv
 NODE_ENV=production
 FIELD_TEST_MODE=false
@@ -383,7 +390,8 @@ OPENAI_API_KEY=your_server_openai_key_for_menu_ocr
 OPENAI_MENU_OCR_MODEL=gpt-5.6-sol
 OPENAI_MENU_OCR_FALLBACK_MODEL=gpt-4.1
 OPENAI_MENU_OCR_REVIEW_PASS=true
-SUPABASE_URL=https://your-production-project.supabase.co
+OPENAI_MENU_OCR_COST_BOUND_MODE=false
+SUPABASE_URL=https://auth.pintpath.au
 SUPABASE_ANON_KEY=REDACTED_USE_PROJECT_SB_PUBLISHABLE_KEY
 SUPABASE_SERVICE_ROLE_KEY=REDACTED_USE_PROJECT_SB_SECRET_KEY
 SUPABASE_OAUTH_PROVIDERS=google
@@ -401,6 +409,17 @@ ACCOUNT_DELETION_NOTICE_MODE=resend
 RESEND_TRANSACTIONAL_API_KEY=replace_with_sending_only_key
 ACCOUNT_DELETION_NOTICE_FROM="Pint Path <account@pintpath.au>"
 ACCOUNT_DELETION_NOTICE_REPLY_TO=admin@pintpath.au
+
+`OPENAI_MENU_OCR_COST_BOUND_MODE=false` is the safe pre-evidence default, not
+cost authority. Permanent staging may change it to `true` only after the exact
+`gpt-4.1-mini-2025-04-14` snapshot independently passes the labelled OCR
+benchmark and a current project/model price receipt is bound. In that mode both
+model variables must equal that exact snapshot, PDFs and standalone discovery
+OCR are rejected, prompt plus response-schema bytes are capped at 49,152, each
+attempt reserves five cents in the shared database before provider access, and
+the rolling 31-day ledger uses the shared database clock and stops at US$1. Do not enable the mode or change provider
+configuration through an ad-hoc command; both are reviewed Railway/provider
+mutations.
 RESEND_WEBHOOK_SIGNING_SECRET=whsec_replace_in_secret_manager
 ACCOUNT_DELETION_NOTICE_ACTIVE_KEY_ID=2026-08
 ACCOUNT_DELETION_NOTICE_KEYRING_JSON='{"2026-08":"replace_with_base64_32_byte_key"}'
@@ -444,24 +463,35 @@ STRIPE_PRICE_MONTHLY=
 STRIPE_PRICE_YEARLY=
 STRIPE_PRO_PRICE_ID=
 NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=
-OFFSITE_BACKUP_SUPABASE_URL=https://your-operational-restore-copy-project.supabase.co
+OFFSITE_BACKUP_SUPABASE_URL=https://hfbmhdxrwtihukmixxta.supabase.co
 OFFSITE_BACKUP_SERVICE_ROLE_KEY=REDACTED_USE_DISTINCT_RESTORE_SB_SECRET_KEY
 OFFSITE_BACKUP_BUCKET=pintpath-backups
 OFFSITE_BACKUP_INTERVAL_HOURS=24
 OFFSITE_BACKUP_RETENTION_DAYS=30
 ```
 
-Replace all applicable placeholders with real environment-specific values. `SOURCE_EVIDENCE_SIGNING_SECRET` is always required. Leave `POS_WEBHOOK_SIGNING_SECRET` absent: counter, reward, redemption, and POS modes are outside this release and must remain disabled. `OFFSITE_BACKUP_SUPABASE_URL` must have a different origin from `SUPABASE_URL`, but that separation alone does not make it independent or immutable. Keep field-test mode, both paid flags, rewards, and alcohol gamification `false`; keep `VENUE_PRO_TRIAL_DAYS=0`, report delivery disabled, and all Stripe values absent for this Free-only release.
+This block is the canonical-production profile. Replace all applicable
+placeholders with real production values. `SOURCE_EVIDENCE_SIGNING_SECRET` is
+always required. Leave `POS_WEBHOOK_SIGNING_SECRET` absent: counter, reward,
+redemption, and POS modes are outside this release and must remain disabled.
+`OFFSITE_BACKUP_SUPABASE_URL` must have a different origin from `SUPABASE_URL`,
+but that separation alone does not make it independent or immutable. Permanent
+staging must omit `OFFSITE_BACKUP_SUPABASE_URL`,
+`OFFSITE_BACKUP_SERVICE_ROLE_KEY`, and `OFFSITE_BACKUP_BUCKET`; do not copy the
+production values or create blank Railway rows. Keep field-test mode, both paid
+flags, rewards, and alcohol gamification `false`; keep
+`VENUE_PRO_TRIAL_DAYS=0`, report delivery disabled, and all Stripe values absent
+for this Free-only release.
 
 The variable names are retained for application compatibility, but their values
 must use current Supabase key formats: `SUPABASE_ANON_KEY` carries the target
-project's `sb_publishable_...` key, `SUPABASE_SERVICE_ROLE_KEY` carries that
-project's server-only `sb_secret_...` key, and
-`OFFSITE_BACKUP_SERVICE_ROLE_KEY` carries a distinct `sb_secret_...` key from
-the operational restore-copy project. Do not use legacy JWT `anon` or
-`service_role` keys. These requirements do not activate the hard-disabled
-replacement path or authorize provider-side creation, rotation, disablement, or
-any Railway write.
+project's `sb_publishable_...` key and `SUPABASE_SERVICE_ROLE_KEY` carries that
+project's server-only `sb_secret_...` key. Canonical production separately uses
+a distinct `sb_secret_...` value in `OFFSITE_BACKUP_SERVICE_ROLE_KEY` for the
+operational restore-copy project; permanent staging must not receive it. Do not
+use legacy JWT `anon` or `service_role` keys. These requirements do not activate
+the hard-disabled replacement path or authorize provider-side creation,
+rotation, disablement, or any Railway write.
 
 Generate each connection digest from the exact credentialed URL only inside the
 protected environment; never print or duplicate the URL. The expected digest
@@ -504,9 +534,11 @@ permanent staging. Each forbidden list must contain the two distinct production
 and restore siblings; the staging self digest/resource must never be placed in
 its own forbidden list. The gate completes every local identity and
 configuration check before constructing a Supabase client. Only a green strict
-preflight may run the bounded source-evidence and isolated operational-copy
-list/upload/download/remove canaries. A preflight failure performs no Storage
-operation and the app must remain undeployed.
+preflight may run the bounded staging source-evidence
+list/upload/download/remove canary. It must first prove that all three
+`OFFSITE_BACKUP_*` destination variables are absent. It never constructs an
+operational-copy client or targets the production project/bucket. A preflight
+failure performs no Storage operation and the app must remain undeployed.
 
 These values now select the implemented server-only `DATABASE_URL` path. The
 checked-in runtime and pinned permanent-staging proof:
@@ -547,12 +579,18 @@ Postgres holds authoritative Pint Path application state after cutover.
 
 Required checks:
 
-- `SUPABASE_URL` and an `sb_publishable_...` value in `SUPABASE_ANON_KEY` are
-  set for browser OAuth; a legacy JWT `anon` key is not accepted.
+- `npm run supabase:keys:consumer-compatibility:check` passes on the exact
+  candidate before protected values are used. This offline gate is necessary
+  but cannot bind any key to a provider project or replace the live canaries.
+- `SUPABASE_URL` is exactly `https://auth.pintpath.au` and an
+  `sb_publishable_...` value in `SUPABASE_ANON_KEY` is set for browser OAuth;
+  another origin or a legacy JWT `anon` key is not accepted.
 - `SUPABASE_SERVICE_ROLE_KEY` carries only the target project's server-side
   `sb_secret_...` key; a legacy JWT `service_role` key is not accepted.
-- `OFFSITE_BACKUP_SERVICE_ROLE_KEY` carries a distinct server-side
-  `sb_secret_...` key from the operational restore-copy project.
+- Canonical production carries a distinct server-side `sb_secret_...` value in
+  `OFFSITE_BACKUP_SERVICE_ROLE_KEY` for its operational restore-copy project.
+  Permanent staging must have that key and the corresponding URL/bucket
+  variables absent.
 - Google OAuth is configured with minimal email/profile scopes for the web app. Apple OAuth remains disabled until authorization-token revocation is implemented and tested. The first-release iOS app is email/password only.
 - Leaked password protection is enabled in Supabase Auth.
 - The hosted database is not on deprecated Postgres 14.
@@ -693,7 +731,7 @@ Run `ops/supabase/independent-backup-project-storage.sql` manually against that 
 Configure the schedule and retention with:
 
 ```dotenv
-OFFSITE_BACKUP_SUPABASE_URL=https://operational-restore-copy-project.supabase.co
+OFFSITE_BACKUP_SUPABASE_URL=https://hfbmhdxrwtihukmixxta.supabase.co
 OFFSITE_BACKUP_SERVICE_ROLE_KEY=REDACTED_USE_DISTINCT_RESTORE_SB_SECRET_KEY
 OFFSITE_BACKUP_BUCKET=pintpath-backups
 OFFSITE_BACKUP_INTERVAL_HOURS=24
@@ -742,6 +780,11 @@ npm run --silent data:backup:verify -- --backup="$LOCAL_BACKUP_PATH"
 The local command covers SQLite and legacy filesystem evidence only. It is not a complete production backup when the database contains `supabase_private` evidence references.
 
 For a legacy SQLite transition drill, create a separate temporary secret key in the operational restore-copy project, store it only in a mode-`600` regular non-symlink file, and delete that temporary key after the drill. Never reuse or revoke the long-lived Railway production restore-copy key. Take the exact `backupId` and trusted `manifestSha256` from the protected result and use the repository SDK downloader to copy only that exact prefix into a nonexistent mode-`700` destination:
+
+The key file is an exact-byte input with no leading/trailing whitespace, CR/LF,
+or NUL. With shell tracing disabled, transfer it using a no-line-ending writer
+equivalent to `printf '%s' "$VALUE" > "$OFFSITE_BACKUP_SECRET_KEY_FILE"`;
+never use `echo` or print the value during verification.
 
 ```bash
 : "${BACKUP_ID:?set from the protected production backup result}"
@@ -809,12 +852,18 @@ Once per quarter, restore the latest complete verified Postgres, Storage, ledger
 and WORM set into disposable restore-staging. Do not use permanent integrated
 staging and do not accept the SQLite-only procedure below as the final drill.
 Rows with `storage_provider='supabase_private'` cannot be tested by pointing
-`SOURCE_EVIDENCE_STORAGE_DIR` at the local restored tree. Use `npm run
-data:backup:stage-evidence -- --backup="$BACKUP_PATH"
---restore="$REHEARSAL_ROOT"` to upload the restored objects, with manifest MIME
-types and original paths, into an empty private `beermap-source-evidence` bucket
-in the disposable restore-staging Supabase project. Configure the restore-only
-app with the restored database and that project, disable external writes, then confirm
+`SOURCE_EVIDENCE_STORAGE_DIR` at the local restored tree. The reserved future
+transport is `npm run data:backup:stage-evidence -- --backup="$BACKUP_PATH"
+--restore="$REHEARSAL_ROOT"`; after authorization, it will upload the restored
+objects, with manifest MIME types and original paths, into an empty private
+`beermap-source-evidence` bucket in the disposable restore-staging Supabase
+project. Do not run it yet. The transport is currently blocked because no real
+disposable Supabase project is registered in candidate-bound, independently
+reviewed authority, so the restore app strips all Supabase values before client
+construction and `/ready` remains `503`/`required_unconfigured`. Do not supply
+or probe a restore service key until that authority exists. Once implemented
+and independently reviewed, configure the restore-only app with the restored
+database and registered project, disable external writes, then confirm
 `/ready`, login, map prices, private image/PDF review, the orphan report,
 deletion-tombstone counts, and staging restore-job state. Purge the staging
 project/object copy after sign-off.

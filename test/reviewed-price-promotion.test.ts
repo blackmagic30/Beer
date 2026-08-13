@@ -15,6 +15,7 @@ import { REVIEWED_PRICE_SELECTION_POLICY_SHA256 } from "../src/lib/reviewed-pric
 import {
   PRODUCTION_MAP_BASE_POLICY,
   PRODUCTION_SUPABASE_PROJECT_REF,
+  PRODUCTION_SUPABASE_CUSTOM_ORIGIN,
   assertExactSupabaseProjectTarget,
   assertProductionMutationTarget,
   assertReviewedManifestMutationTarget,
@@ -453,6 +454,13 @@ describe("reviewed production price promotion", () => {
       origin: `https://${PROJECT_REF}.supabase.co`,
       projectRef: PROJECT_REF,
     });
+    expect(assertExactSupabaseProjectTarget(
+      PRODUCTION_SUPABASE_CUSTOM_ORIGIN,
+      PROJECT_REF,
+    )).toEqual({
+      origin: PRODUCTION_SUPABASE_CUSTOM_ORIGIN,
+      projectRef: PROJECT_REF,
+    });
     expect(() => assertExactSupabaseProjectTarget(
       "https://bbbbbbbbbbbbbbbbbbbb.supabase.co",
       PROJECT_REF,
@@ -461,6 +469,23 @@ describe("reviewed production price promotion", () => {
       `https://${PROJECT_REF}.supabase.co/rest/v1`,
       PROJECT_REF,
     )).toThrow("canonical HTTPS origin");
+    for (const candidate of [
+      ` https://${PROJECT_REF}.supabase.co`,
+      `https://${PROJECT_REF}.supabase.co `,
+      `HTTPS://${PROJECT_REF.toUpperCase()}.SUPABASE.CO`,
+      `https://${PROJECT_REF}.supabase.co:443`,
+      `https://${PROJECT_REF}.supabase.co/`,
+    ]) {
+      expect(() => assertExactSupabaseProjectTarget(candidate, PROJECT_REF)).toThrow(
+        /exact unnormalized canonical HTTPS origin|canonical HTTPS origin/,
+      );
+    }
+    for (const candidate of [` ${PROJECT_REF}`, `${PROJECT_REF} `, PROJECT_REF.toUpperCase()]) {
+      expect(() => assertExactSupabaseProjectTarget(
+        `https://${PROJECT_REF}.supabase.co`,
+        candidate,
+      )).toThrow("exactly 20 lowercase letters or digits");
+    }
     expect(isPrivateOrReservedAddress("127.0.0.1")).toBe(true);
     expect(isPrivateOrReservedAddress("10.1.2.3")).toBe(true);
     expect(isPrivateOrReservedAddress("192.168.1.2")).toBe(true);

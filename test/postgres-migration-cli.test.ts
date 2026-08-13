@@ -17,6 +17,16 @@ import type {
 
 const temporaryDirectories: string[] = [];
 const sha = (character: string) => character.repeat(64);
+const PRODUCTION_SUPABASE_ORIGIN = "https://auth.pintpath.au";
+const OFFSITE_BACKUP_SUPABASE_ORIGIN = "https://hfbmhdxrwtihukmixxta.supabase.co";
+const SUPABASE_SECRET_KEY = `sb_secret_${"s".repeat(32)}`;
+
+function legacySupabaseJwt(role: "anon" | "service_role"): string {
+  const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
+  const payload = Buffer.from(JSON.stringify({ role })).toString("base64url");
+  const signature = Buffer.alloc(32, 0x51).toString("base64url");
+  return `${header}.${payload}.${signature}`;
+}
 
 function temporaryDirectory(): string {
   const directory = fs.realpathSync(
@@ -45,6 +55,23 @@ function targetArguments(root: string, command: "apply" | "verify-target"): stri
     "--verifier-id", "migration-verifier-001",
     "--output-receipt", path.join(root, `${command}-receipt.json`),
   ];
+}
+
+function ledgerExportArguments(root: string): string[] {
+  return [
+    "ledger-export",
+    "--output-dir", path.join(root, "ledger-authority"),
+    "--service-role-key-file", path.join(root, "service-role.secret"),
+  ];
+}
+
+function ledgerExportEnvironment(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  return {
+    SUPABASE_URL: PRODUCTION_SUPABASE_ORIGIN,
+    OFFSITE_BACKUP_SUPABASE_URL: OFFSITE_BACKUP_SUPABASE_ORIGIN,
+    OFFSITE_BACKUP_BUCKET: "pintpath-backups",
+    ...overrides,
+  };
 }
 
 function receipt(): PostgresMigrationReceipt {
@@ -138,6 +165,99 @@ describe("Postgres migration operator CLI", () => {
     expect(JSON.stringify(output)).not.toContain("private-user");
     expect(JSON.stringify(output)).not.toContain("private-password");
     expect(output).toMatchObject({ ok: true, command: "inspect-target", tableCount: 56 });
+  });
+
+  it.each([
+    ["hostile production origin", "SUPABASE_URL", "https://attacker.invalid"],
+    ["padded production origin", "SUPABASE_URL", ` ${PRODUCTION_SUPABASE_ORIGIN}`],
+    ["case-changed production origin", "SUPABASE_URL", "https://AUTH.PINTPATH.AU"],
+    ["production origin with a path", "SUPABASE_URL", `${PRODUCTION_SUPABASE_ORIGIN}/rest/v1`],
+    ["production origin with an explicit default port", "SUPABASE_URL", "https://auth.pintpath.au:443"],
+    ["hostile off-site origin", "OFFSITE_BACKUP_SUPABASE_URL", "https://attacker.invalid"],
+    ["padded off-site origin", "OFFSITE_BACKUP_SUPABASE_URL", ` ${OFFSITE_BACKUP_SUPABASE_ORIGIN}`],
+    ["case-changed off-site origin", "OFFSITE_BACKUP_SUPABASE_URL", "https://HFBMHDXRWTIHUKMIXTXA.SUPABASE.CO"],
+    ["off-site origin with a path", "OFFSITE_BACKUP_SUPABASE_URL", `${OFFSITE_BACKUP_SUPABASE_ORIGIN}/storage/v1`],
+    ["off-site origin with an explicit default port", "OFFSITE_BACKUP_SUPABASE_URL", "https://hfbmhdxrwtihukmixxta.supabase.co:443"],
+  ] as const)(
+    "rejects a %s before reading or exporting with a service credential",
+    async (_description, name, candidate) => {
+      const root = temporaryDirectory();
+      const readSecretFile = vi.fn(async () => SUPABASE_SECRET_KEY);
+      const exportLedger = vi.fn(async () => {
+        throw new Error("The ledger export transport must not be reached.");
+      });
+      let error: unknown;
+      try {
+        await runPostgresMigrationSourceCli(
+          ledgerExportArguments(root),
+          ledgerExportEnvironment({ [name]: candidate }),
+          { readSecretFile, exportLedger },
+        );
+      } catch (cause) {
+        error = cause;
+      }
+
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain("exact reviewed Supabase HTTPS origin");
+      expect((error as Error).message).not.toContain(candidate);
+      expect(readSecretFile).not.toHaveBeenCalled();
+      expect(exportLedger).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ["padded secret key", ` ${SUPABASE_SECRET_KEY}`],
+    ["multiline secret key", `${SUPABASE_SECRET_KEY}\nmalformed`],
+    ["publishable key", `sb_publishable_${"p".repeat(32)}`],
+    ["wrong-role legacy JWT", legacySupabaseJwt("anon")],
+    ["arbitrary credential", "arbitrary-service-role-key"],
+  ])("rejects a %s before the ledger export transport", async (_description, candidate) => {
+    const root = temporaryDirectory();
+    const readSecretFile = vi.fn(async () => candidate);
+    const exportLedger = vi.fn(async () => {
+      throw new Error("The ledger export transport must not be reached.");
+    });
+    let error: unknown;
+    try {
+      await runPostgresMigrationSourceCli(
+        ledgerExportArguments(root),
+        ledgerExportEnvironment(),
+        { readSecretFile, exportLedger },
+      );
+    } catch (cause) {
+      error = cause;
+    }
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("role=service_role");
+    expect((error as Error).message).not.toContain(candidate);
+    expect(readSecretFile).toHaveBeenCalledOnce();
+    expect(exportLedger).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["new secret key", SUPABASE_SECRET_KEY],
+    ["legacy service-role JWT", legacySupabaseJwt("service_role")],
+  ])("reaches the ledger export seam with a reviewed %s", async (_description, credential) => {
+    const root = temporaryDirectory();
+    const sentinel = new Error("Reviewed ledger export seam reached.");
+    const exportLedger = vi.fn(async () => {
+      throw sentinel;
+    });
+
+    await expect(runPostgresMigrationSourceCli(
+      ledgerExportArguments(root),
+      ledgerExportEnvironment(),
+      {
+        readSecretFile: async () => credential,
+        exportLedger,
+      },
+    )).rejects.toBe(sentinel);
+    expect(exportLedger).toHaveBeenCalledWith(expect.objectContaining({
+      sourceSupabaseUrl: PRODUCTION_SUPABASE_ORIGIN,
+      destinationSupabaseUrl: OFFSITE_BACKUP_SUPABASE_ORIGIN,
+      destinationServiceRoleKey: credential,
+    }));
   });
 
   it.each(["apply", "verify-target"] as const)(

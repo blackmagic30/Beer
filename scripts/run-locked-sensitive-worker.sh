@@ -18,10 +18,13 @@ if [ "$(/bin/pwd -P)" != "$locked_repo_root" ]; then
 fi
 locked_launcher="$locked_repo_root/scripts/run-locked-sensitive-worker.sh"
 locked_preload="$locked_repo_root/scripts/lib/locked-sensitive-worker-primordials.mjs"
-locked_tsx="$locked_repo_root/node_modules/.pnpm/tsx@4.23.11/node_modules/tsx/dist/loader.mjs"
+locked_tsx_package="$locked_repo_root/node_modules/tsx/package.json"
+locked_tsx="$locked_repo_root/node_modules/tsx/dist/loader.mjs"
 locked_worker="$locked_repo_root/scripts/run-locked-sensitive-worker.ts"
 locked_home=/Users/zac
 locked_node=/Users/zac/.nvm/versions/node/v22.23.2/bin/node
+locked_expected_tsx_version=4.23.12
+locked_expected_tsx_loader_sha256=49fb46730ddeb226ac4fa9fb990d3573ac8f18fa4de02f1bf723c61d715710c2
 
 if [ ! -x "$locked_node" ] \
   || [ -L "$locked_node" ] \
@@ -29,6 +32,8 @@ if [ ! -x "$locked_node" ] \
   || [ -L "$locked_launcher" ] \
   || [ ! -f "$locked_preload" ] \
   || [ -L "$locked_preload" ] \
+  || [ ! -f "$locked_tsx_package" ] \
+  || [ -L "$locked_tsx_package" ] \
   || [ ! -f "$locked_tsx" ] \
   || [ -L "$locked_tsx" ] \
   || [ ! -f "$locked_worker" ] \
@@ -40,11 +45,42 @@ locked_scripts_real=$(CDPATH= cd -P -- "$locked_repo_root/scripts" && /bin/pwd -
   || exit 69
 locked_lib_real=$(CDPATH= cd -P -- "$locked_repo_root/scripts/lib" && /bin/pwd -P) \
   || exit 69
-locked_tsx_real=$(CDPATH= cd -P -- "$locked_repo_root/node_modules/.pnpm/tsx@4.23.11/node_modules/tsx/dist" && /bin/pwd -P) \
+locked_tsx_root_real=$(CDPATH= cd -P -- "$locked_repo_root/node_modules/tsx" && /bin/pwd -P) \
+  || exit 69
+locked_tsx_real=$(CDPATH= cd -P -- "$locked_repo_root/node_modules/tsx/dist" && /bin/pwd -P) \
   || exit 69
 if [ "$locked_scripts_real" != "$locked_repo_root/scripts" ] \
   || [ "$locked_lib_real" != "$locked_repo_root/scripts/lib" ] \
-  || [ "$locked_tsx_real" != "$locked_repo_root/node_modules/.pnpm/tsx@4.23.11/node_modules/tsx/dist" ]; then
+  || [ "$locked_tsx_root_real" != "$locked_repo_root/node_modules/tsx" ] \
+  || [ "$locked_tsx_real" != "$locked_repo_root/node_modules/tsx/dist" ]; then
+  exit 69
+fi
+
+locked_actual_tsx_version=$(
+  /usr/bin/env -i \
+    HOME="$locked_home" \
+    LANG=C \
+    LOGNAME=zac \
+    PATH=/usr/bin:/bin \
+    USER=zac \
+    "$locked_node" \
+    --input-type=module \
+    --eval 'import fs from "node:fs";
+      let version = "";
+      try {
+        const parsed = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+        if (parsed && Object.getPrototypeOf(parsed) === Object.prototype
+          && typeof parsed.version === "string") version = parsed.version;
+      } catch {}
+      if (version === "") process.exitCode = 69;
+      else process.stdout.write(version);' \
+    "$locked_tsx_package"
+) || exit 69
+locked_actual_tsx_loader_sha256=$(/usr/bin/shasum -a 256 "$locked_tsx") \
+  || exit 69
+locked_actual_tsx_loader_sha256=${locked_actual_tsx_loader_sha256%% *}
+if [ "$locked_actual_tsx_version" != "$locked_expected_tsx_version" ] \
+  || [ "$locked_actual_tsx_loader_sha256" != "$locked_expected_tsx_loader_sha256" ]; then
   exit 69
 fi
 

@@ -25,6 +25,11 @@ import {
   type PostgresMigrationTargetInput,
 } from "../src/db/postgres-migration-target.js";
 import { readPrivateSecretFile } from "../src/lib/offsite-backup-download.js";
+import {
+  assertExactSupabaseOrigin,
+  assertSupabaseServerApiKey,
+  resolveExactOperationalOffsiteBackupBucket,
+} from "../src/lib/supabase-key-format.js";
 import { assertOperatorMutationAllowed } from "./lib/operator-mutation-guard.js";
 import { parseStrictArguments } from "./lib/strict-arguments.js";
 
@@ -51,6 +56,10 @@ const LEDGER_EXPORT_ARGUMENTS = new Set([
   "--output-dir",
   "--service-role-key-file",
 ]);
+
+const PRODUCTION_SUPABASE_ORIGIN = "https://auth.pintpath.au" as const;
+const OFFSITE_BACKUP_SUPABASE_ORIGIN =
+  "https://hfbmhdxrwtihukmixxta.supabase.co" as const;
 
 const TARGET_INSPECT_ARGUMENTS = new Set([
   "--target-ddl",
@@ -102,17 +111,6 @@ function exactChunkRows(value: string): number {
     );
   }
   return parsed;
-}
-
-function requiredEnvironment(
-  environment: NodeJS.ProcessEnv,
-  name: "OFFSITE_BACKUP_SUPABASE_URL" | "SUPABASE_URL",
-): string {
-  const value = environment[name]?.trim();
-  if (!value) {
-    throw new PostgresMigrationSourceError("ARGUMENT_INVALID", `${name} is required.`);
-  }
-  return value;
 }
 
 function exactTargetEnvironment(value: string): PostgresMigrationEnvironment {
@@ -458,14 +456,34 @@ export async function runPostgresMigrationSourceCli(
       allowed: LEDGER_EXPORT_ARGUMENTS,
       required: LEDGER_EXPORT_ARGUMENTS,
     });
-    const destinationServiceRoleKey = await readPrivateSecretFile(
+    const sourceSupabaseUrl = environment.SUPABASE_URL ?? "";
+    const destinationSupabaseUrl = environment.OFFSITE_BACKUP_SUPABASE_URL ?? "";
+    assertExactSupabaseOrigin(
+      sourceSupabaseUrl,
+      PRODUCTION_SUPABASE_ORIGIN,
+      "SUPABASE_URL",
+    );
+    assertExactSupabaseOrigin(
+      destinationSupabaseUrl,
+      OFFSITE_BACKUP_SUPABASE_ORIGIN,
+      "OFFSITE_BACKUP_SUPABASE_URL",
+    );
+    const destinationServiceRoleKey = await (
+      dependencies.readSecretFile ?? readPrivateSecretFile
+    )(
       exactAbsolutePath(args.get("--service-role-key-file")!),
     );
-    const result = await (dependencies.exportLedger ?? exportPostgresMigrationLedgerAuthority)({
-      sourceSupabaseUrl: requiredEnvironment(environment, "SUPABASE_URL"),
-      destinationSupabaseUrl: requiredEnvironment(environment, "OFFSITE_BACKUP_SUPABASE_URL"),
+    assertSupabaseServerApiKey(
       destinationServiceRoleKey,
-      bucketName: environment.OFFSITE_BACKUP_BUCKET?.trim() || "pintpath-backups",
+      "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
+    );
+    const result = await (dependencies.exportLedger ?? exportPostgresMigrationLedgerAuthority)({
+      sourceSupabaseUrl,
+      destinationSupabaseUrl,
+      destinationServiceRoleKey,
+      bucketName: resolveExactOperationalOffsiteBackupBucket(
+        environment.OFFSITE_BACKUP_BUCKET,
+      ),
       outputDirectory: exactAbsolutePath(args.get("--output-dir")!),
     });
     return {

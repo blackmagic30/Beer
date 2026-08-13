@@ -82,7 +82,11 @@ Do not add a second active region while the application uses one attached SQLite
 
 ### 5. Close external evidence
 
-All 12 launch evidence records remain intentionally pending: production smoke, all-role smoke, labelled OCR corpus, three venue pilots, POS/manual fallback, restore rehearsal, accessibility/devices, legal/billing, iOS release, and Android release.
+At this dated audit checkpoint, all 12 then-defined launch evidence records were
+intentionally pending. The current schema-v3 register supersedes that inventory
+with 13 required records, including the separately provider-observed
+`permanent_staging_cost` gate; use `docs/release-evidence.json`, not this
+historical list, as the live authority.
 
 Production monthly-report email delivery also remains disabled until the Resend domain, sender, sending-only API key, and dry run pass.
 
@@ -100,4 +104,6 @@ Internal candidate: **go**.
 
 Weekend field testing: **go after the candidate deploy is verified**; treat latency results as provisional until the Railway region move.
 
-Broad public launch: **no-go until all 12 external evidence items pass against one frozen candidate SHA**.
+Broad public launch: **no-go until every item in the current release-evidence
+register passes against one frozen candidate SHA**. The live schema-v3 register
+currently requires 13 items; the 12-item count above is historical.

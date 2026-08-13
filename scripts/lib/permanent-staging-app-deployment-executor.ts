@@ -1,7 +1,7 @@
 export const PERMANENT_STAGING_APP_DEPLOYMENT_POLICY_SCHEMA =
-  "pintpath-permanent-staging-app-deployment-policy/v1" as const;
+  "pintpath-permanent-staging-app-deployment-policy/v2" as const;
 export const PERMANENT_STAGING_APP_DEPLOYMENT_EXECUTOR_SCHEMA =
-  "pintpath-permanent-staging-app-deployment-executor/v1" as const;
+  "pintpath-permanent-staging-app-deployment-executor/v2" as const;
 export const PERMANENT_STAGING_APP_DEPLOYMENT_OPERATION =
   "pintpath-permanent-staging-app-source-upload" as const;
 export const PERMANENT_STAGING_APP_DEPLOYMENT_EXECUTOR_STATE =
@@ -36,7 +36,7 @@ export const PERMANENT_STAGING_APP_DEPLOYMENT_LOCK = Object.freeze({
     railwayConfigSha256:
       "85dc659ebec2e0132092d917505d71678e92b8441b54bcefc80c6a082e3b967b",
     packageLockSha256:
-      "61f07b4a529dfed6624394719327b03032d9ad34bfe162f43131b6bdfcfc60ef",
+      "0978ac482e875707a478d0d970fbadb899b8448dc21893ddb0973b5e2f700ecf",
   }),
   writeContract: Object.freeze({
     mode: "single-source-upload",
@@ -68,8 +68,17 @@ export const PERMANENT_STAGING_APP_DEPLOYMENT_LOCK = Object.freeze({
       "b056b175f981d7b51a9590943e209e82a0dfcbea650de7a4cb5ecf37a67bbdd1",
   }),
   spendContract: Object.freeze({
-    reviewedRecurringStagingMonthlyUsd: 46.8,
-    maximumStagingMonthlyUsd: 50,
+    currency: "USD",
+    maximumRecurringStagingMonthlyCents: 5_000,
+    costPolicyReference: Object.freeze({
+      schemaVersion: "pintpath-permanent-staging-cost-policy/v1",
+      policyId: "pintpath-permanent-staging-recurring-cost",
+      relativePath: "ops/railway/permanent-staging-cost-policy.json",
+      sha256:
+        "895d5bdcfe0fb05d17b3fa7cab6c525a80f3beacf0ff0cbd1bafdb54c979c8ca",
+    }),
+    preDeploymentCostReceiptRequired: true,
+    postDeploymentCostReceiptRequired: true,
     additionalUnapprovedSpendAllowed: false,
   }),
 } as const);
@@ -103,6 +112,8 @@ export interface PermanentStagingAppDeploymentExecutorChecks {
   readonly localSourceAuthorityExact: false;
   readonly boundaryPreflightExact: false;
   readonly targetPreflightExact: false;
+  readonly preDeploymentCostReceiptExact: false;
+  readonly costCeilingMaintained: false;
   readonly durableIntentExact: false;
   readonly localAuthorityReasserted: false;
   readonly boundaryReasserted: false;
@@ -111,6 +122,7 @@ export interface PermanentStagingAppDeploymentExecutorChecks {
   readonly postflightAttempted: false;
   readonly boundaryPostflightExact: false;
   readonly targetPostflightExact: false;
+  readonly postDeploymentCostReceiptExact: false;
   readonly runtimeAttestationExact: false;
   readonly collateralStateUnchanged: false;
   readonly terminalEvidenceExact: false;
@@ -171,6 +183,8 @@ const FIXED_DISABLED_CHECKS = Object.freeze({
   localSourceAuthorityExact: false,
   boundaryPreflightExact: false,
   targetPreflightExact: false,
+  preDeploymentCostReceiptExact: false,
+  costCeilingMaintained: false,
   durableIntentExact: false,
   localAuthorityReasserted: false,
   boundaryReasserted: false,
@@ -179,6 +193,7 @@ const FIXED_DISABLED_CHECKS = Object.freeze({
   postflightAttempted: false,
   boundaryPostflightExact: false,
   targetPostflightExact: false,
+  postDeploymentCostReceiptExact: false,
   runtimeAttestationExact: false,
   collateralStateUnchanged: false,
   terminalEvidenceExact: false,

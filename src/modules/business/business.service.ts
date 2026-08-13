@@ -9,6 +9,7 @@ import { CONTRIBUTION_POINTS, PREMIUM_PRICING, SUBMISSION_LIMITS } from "../../c
 import { CURRENT_LEGAL_POLICY_VERSION } from "../../config/legal.js";
 import type { Env } from "../../config/env.js";
 import { createServerSupabaseClient } from "../../lib/supabase-client.js";
+import { hasExactLegacySupabaseRoleJwt } from "../../lib/supabase-key-format.js";
 import {
   BusinessRepository,
   MissionReservationError,
@@ -515,7 +516,11 @@ async function fetchWithTimeout(url: string | URL, init: RequestInit = {}, timeo
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await fetch(url, { ...init, signal: controller.signal });
+    return await fetch(url, {
+      ...init,
+      redirect: "error",
+      signal: controller.signal,
+    });
   } finally {
     clearTimeout(timeout);
   }
@@ -526,9 +531,8 @@ function getSupabaseReadinessHeaders(key: string): Record<string, string> {
     Accept: "application/json",
     apikey: key,
   };
-  const jwtSegments = key.split(".");
-  const isLegacyJwtKey = key.startsWith("eyJ") && jwtSegments.length === 3 &&
-    jwtSegments.every((segment) => /^[A-Za-z0-9_-]+$/.test(segment));
+  const isLegacyJwtKey = hasExactLegacySupabaseRoleJwt(key, "anon")
+    || hasExactLegacySupabaseRoleJwt(key, "service_role");
   if (isLegacyJwtKey) {
     headers.Authorization = `Bearer ${key}`;
   }
@@ -2916,9 +2920,13 @@ export class BusinessService {
     this.venueDataReadRepository = this.wrapVenueDataReadRepository(venueDataReadRepository);
     this.databaseHealthProbe = databaseHealthProbe ?? (async () => this.repository.checkDatabaseHealth());
     const supabaseServerKey = config.SUPABASE_SERVICE_ROLE_KEY ?? config.SUPABASE_ANON_KEY;
-    if (supabaseClientOverride) {
+    if (supabaseClientOverride && !config.RESTORE_REHEARSAL_MODE) {
       this.supabase = supabaseClientOverride;
-    } else if (config.SUPABASE_URL && supabaseServerKey) {
+    } else if (
+      !config.RESTORE_REHEARSAL_MODE
+      && config.SUPABASE_URL
+      && supabaseServerKey
+    ) {
       this.supabase = createServerSupabaseClient(config.SUPABASE_URL, supabaseServerKey);
     }
     this.useSupabaseEvidenceStorage = Boolean(this.supabase && config.SUPABASE_SERVICE_ROLE_KEY);
@@ -10893,6 +10901,7 @@ export class BusinessService {
     try {
       const response = await fetch(url, {
         ...requestInit,
+        redirect: "error",
         signal: controller.signal,
         headers: {
           "Content-Type": "application/json",
@@ -15807,6 +15816,9 @@ export class BusinessService {
       throw new AppError("Stripe webhook secret is not configured.", 503);
     }
 
+    // Missing user-controlled inputs only select a fail-closed audit/error
+    // path; every accepted event is still verified with the server-held secret.
+    // codeql[js/user-controlled-bypass]
     if (!rawBody || !signature) {
       await this.auditSecurity({
         action: "stripe_webhook_signature_failed",
@@ -16336,7 +16348,7 @@ export class BusinessService {
     const required = this.config.NODE_ENV === "production" && (
       !this.config.FIELD_TEST_MODE || Boolean(this.config.RESTORE_REHEARSAL_MODE)
     );
-    const configured = Boolean(
+    const configured = !this.config.RESTORE_REHEARSAL_MODE && Boolean(
       this.config.SUPABASE_URL &&
       this.config.SUPABASE_ANON_KEY &&
       this.config.SUPABASE_SERVICE_ROLE_KEY,

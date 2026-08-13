@@ -162,16 +162,15 @@
     },
     {
       "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
-      "name": "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
-      "isSealed": true,
-      "references": []
-    },
-    {
-      "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
       "name": "SOURCE_EVIDENCE_SIGNING_SECRET",
       "isSealed": true,
       "references": []
     }
+  ],
+  "forbiddenVariableNames": [
+    "OFFSITE_BACKUP_SUPABASE_URL",
+    "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
+    "OFFSITE_BACKUP_BUCKET"
   ],
   "forbiddenServiceIds": [
     "9628f2ea-2630-4ae3-90db-3c83c0d5dc63",

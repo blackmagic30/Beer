@@ -67,6 +67,7 @@ interface SealedVariablePolicy {
   projectId: string;
   environmentId: string;
   variables: SealedVariableExpectation[];
+  forbiddenVariableNames: string[];
   forbiddenServiceIds: string[];
 }
 
@@ -98,6 +99,7 @@ interface ReadinessChecks {
   allSealed: boolean;
   exactReferences: boolean;
   noSharedShadows: boolean;
+  forbiddenVariablesAbsent: boolean;
   forbiddenServicesAbsent: boolean;
 }
 
@@ -137,6 +139,7 @@ function emptyChecks(): ReadinessChecks {
     allSealed: false,
     exactReferences: false,
     noSharedShadows: false,
+    forbiddenVariablesAbsent: false,
     forbiddenServicesAbsent: false,
   };
 }
@@ -268,6 +271,7 @@ function parsePolicy(source: string): SealedVariablePolicy | null {
         "projectId",
         "environmentId",
         "variables",
+        "forbiddenVariableNames",
         "forbiddenServiceIds",
       ]) ||
       parsed.schemaVersion !== RAILWAY_SEALED_VARIABLE_POLICY_SCHEMA ||
@@ -279,6 +283,8 @@ function parsePolicy(source: string): SealedVariablePolicy | null {
       !Array.isArray(parsed.variables) ||
       parsed.variables.length === 0 ||
       parsed.variables.length > 100 ||
+      !Array.isArray(parsed.forbiddenVariableNames) ||
+      parsed.forbiddenVariableNames.length > 100 ||
       !Array.isArray(parsed.forbiddenServiceIds) ||
       parsed.forbiddenServiceIds.length > 20
     ) {
@@ -317,6 +323,18 @@ function parsePolicy(source: string): SealedVariablePolicy | null {
       });
     }
 
+    const forbiddenVariableNames: string[] = [];
+    for (const candidate of parsed.forbiddenVariableNames) {
+      if (typeof candidate !== "string" || !VARIABLE_NAME_PATTERN.test(candidate)) {
+        return null;
+      }
+      forbiddenVariableNames.push(candidate);
+    }
+    if (
+      new Set(forbiddenVariableNames).size !== forbiddenVariableNames.length
+      || variables.some((variable) => forbiddenVariableNames.includes(variable.name))
+    ) return null;
+
     const forbiddenServiceIds: string[] = [];
     for (const candidate of parsed.forbiddenServiceIds) {
       if (typeof candidate !== "string" || !UUID_PATTERN.test(candidate))
@@ -338,6 +356,7 @@ function parsePolicy(source: string): SealedVariablePolicy | null {
       projectId: parsed.projectId,
       environmentId: parsed.environmentId,
       variables,
+      forbiddenVariableNames,
       forbiddenServiceIds,
     };
   } catch {
@@ -842,6 +861,9 @@ function evaluateInventory(
       }
     }
   }
+  checks.forbiddenVariablesAbsent = inventory.every(
+    (variable) => !policy.forbiddenVariableNames.includes(variable.name),
+  );
   checks.forbiddenServicesAbsent = inventory.every(
     (variable) =>
       variable.serviceId === null ||

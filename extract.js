@@ -1,38 +1,15 @@
-const OpenAI = require("openai");
+"use strict";
 
-const client = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-});
-
-async function extractData(data) {
-  const prompt = `
-You are extracting structured beer price data.
-
-Raw input:
-Carlton: ${data.carlton}
-Asahi: ${data.asahi}
-Furphy: ${data.furphy}
-Happy hour: ${data.happy}
-
-Return JSON ONLY like:
-{
-  "carlton": number|null,
-  "asahi": number|null,
-  "furphy": number|null,
-  "happy_hour": string
+/**
+ * Historical compatibility stub. The former implementation created an
+ * unbounded direct OpenAI client outside Pint Path's reviewed menu-OCR
+ * authority. Keep the export fail-closed so stale callers receive an explicit
+ * error without reading credentials or contacting a provider.
+ */
+async function extractData() {
+  throw new Error(
+    "Legacy extractData provider access is disabled; use the reviewed menu OCR service boundary.",
+  );
 }
 
-Extract numbers only (no currency symbols).
-If missing, return null.
-`;
-
-  const res = await client.chat.completions.create({
-    model: "gpt-4o-mini",
-    messages: [{ role: "user", content: prompt }],
-    temperature: 0
-  });
-
-  return JSON.parse(res.choices[0].message.content);
-}
-
-module.exports = { extractData };
+export { extractData };

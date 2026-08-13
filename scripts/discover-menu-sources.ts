@@ -18,11 +18,21 @@ import {
 import { isTimeLimitedMenuSource } from "../src/lib/menu-source-filter.js";
 import { selectLabeledPintPrice } from "../src/lib/menu-price-selection.js";
 import { createServerSupabaseClient } from "../src/lib/supabase-client.js";
+import { redactKnownSecretValues } from "../src/lib/redact.js";
+import {
+  assertExactSupabaseOrigin,
+  assertSupabasePublicApiKey,
+  assertSupabaseServerApiKey,
+} from "../src/lib/supabase-key-format.js";
 import {
   normalizeVenueKey,
   shouldImportBarOrPubPlace,
   type GooglePlaceCandidate,
 } from "../src/lib/venue-directory.js";
+import {
+  resolveMenuDiscoveryEnvironmentTarget,
+  type MenuDiscoveryEnvironmentTarget,
+} from "./lib/menu-discovery-environment-target.js";
 import { assertOperatorMutationAllowed } from "./lib/operator-mutation-guard.js";
 
 const GOOGLE_TEXT_SEARCH_API_URL = "https://places.googleapis.com/v1/places:searchText";
@@ -41,7 +51,12 @@ const GOOGLE_FIELD_MASK = [
 const MAX_HTML_BYTES = 1_500_000;
 const MAX_IMAGE_BYTES = 8_000_000;
 const MAX_PDF_BYTES = 20_000_000;
-const MENU_DISCOVERY_OCR_MODEL = process.env.OPENAI_MENU_OCR_MODEL?.trim() || "gpt-4.1";
+const MENU_DISCOVERY_OCR_ALLOWED_MODELS = new Set([
+  "gpt-5.6-sol",
+  "gpt-4.1",
+  "gpt-4.1-mini-2025-04-14",
+]);
+const MENU_DISCOVERY_OCR_MAX_OUTPUT_TOKENS = 8_192;
 const MENU_DISCOVERY_OCR_REVIEW_PASS_ENABLED =
   (process.env.OPENAI_MENU_OCR_REVIEW_PASS ?? "true").trim().toLowerCase() !== "false";
 const MAX_TEXT_EXTRACTION_CHARS = 80_000;
@@ -57,11 +72,31 @@ const MAX_SITEMAP_URLS_PER_SITE = 14;
 const MAX_SITEMAP_FILES_PER_SITE = 6;
 const MAX_ROBOTS_SITEMAPS_PER_SITE = 4;
 const DEFAULT_MAX_WORDPRESS_LINKS_PER_SITE = 8;
+
+function configuredMenuDiscoveryOcrModel(): string {
+  const costBoundMode = (process.env.OPENAI_MENU_OCR_COST_BOUND_MODE ?? "false")
+    .trim()
+    .toLowerCase();
+  if (costBoundMode !== "true" && costBoundMode !== "false") {
+    throw new Error("OPENAI_MENU_OCR_COST_BOUND_MODE must be exactly true or false.");
+  }
+  if (costBoundMode === "true") {
+    throw new Error(
+      "Standalone discovery OCR is forbidden while the service-owned monthly cost ledger is active.",
+    );
+  }
+  const model = process.env.OPENAI_MENU_OCR_MODEL?.trim() || "gpt-4.1";
+  if (!MENU_DISCOVERY_OCR_ALLOWED_MODELS.has(model)) {
+    throw new Error("OPENAI_MENU_OCR_MODEL must select a reviewed menu OCR model.");
+  }
+  return model;
+}
 const FETCH_RETRY_ATTEMPTS = 2;
 const FETCH_RETRY_DELAY_MS = 450;
 
 const textFetchCache = new Map<string, Promise<{ contentType: string; text: string }>>();
 const imageDataUrlCache = new Map<string, Promise<string>>();
+let loadedSupabaseApiKey: string | null = null;
 
 const COMMON_MENU_PATHS = [
   "/menu",
@@ -499,12 +534,43 @@ function mergeVenues(venues: VenueCandidate[]): VenueCandidate[] {
   return Array.from(merged.values()).sort((a, b) => a.name.localeCompare(b.name));
 }
 
-async function loadSupabaseVenues(limit: number): Promise<VenueCandidate[]> {
+async function loadSupabaseVenues(
+  limit: number,
+  environmentTarget: MenuDiscoveryEnvironmentTarget,
+): Promise<VenueCandidate[]> {
   const supabaseUrl = process.env.SUPABASE_URL;
-  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_ANON_KEY;
-  if (!supabaseUrl || !supabaseKey) {
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const publicKey = process.env.SUPABASE_ANON_KEY;
+  const anySupabaseInput = [supabaseUrl, serviceKey, publicKey]
+    .some((value) => value !== undefined && value !== "");
+  if (!anySupabaseInput) {
     return [];
   }
+  if (!supabaseUrl) {
+    throw new Error(
+      "Supabase venue discovery configuration is incomplete; SUPABASE_URL and one reviewed API key are required together.",
+    );
+  }
+  const supabaseKey = serviceKey || publicKey;
+  if (!supabaseKey) {
+    throw new Error(
+      "Supabase venue discovery configuration is incomplete; SUPABASE_URL and one reviewed API key are required together.",
+    );
+  }
+  if (!environmentTarget.supabaseOrigin) {
+    throw new Error(
+      "Supabase venue discovery is not permitted for the resolved environment target.",
+    );
+  }
+  // Production venue reads remain pinned to https://auth.pintpath.au by the
+  // shared target resolver; staging and loopback use their own reviewed pins.
+  assertExactSupabaseOrigin(supabaseUrl, environmentTarget.supabaseOrigin);
+  if (serviceKey) {
+    assertSupabaseServerApiKey(serviceKey, "SUPABASE_SERVICE_ROLE_KEY");
+  } else {
+    assertSupabasePublicApiKey(publicKey!, "SUPABASE_ANON_KEY");
+  }
+  loadedSupabaseApiKey = supabaseKey;
 
   const supabase = createServerSupabaseClient(supabaseUrl, supabaseKey);
   const venues: VenueCandidate[] = [];
@@ -528,7 +594,10 @@ async function loadSupabaseVenues(limit: number): Promise<VenueCandidate[]> {
     }
 
     if (error) {
-      throw new Error(`Failed to load Supabase venues: ${error.message}`);
+      throw new Error(`Failed to load Supabase venues: ${redactKnownSecretValues(
+        error.message,
+        [supabaseKey],
+      )}`);
     }
 
     const rows = (Array.isArray(data) ? data : []) as unknown[];
@@ -758,6 +827,7 @@ async function resolveWebsiteWithGooglePlaces(venue: VenueCandidate): Promise<st
           }
         : undefined,
     }),
+    redirect: "error",
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
 
@@ -2440,8 +2510,9 @@ async function requestMenuImageOcrPayload(
   prompt: string,
 ): Promise<Record<string, unknown>> {
   const response = await openai.responses.create({
-    model: MENU_DISCOVERY_OCR_MODEL,
+    model: configuredMenuDiscoveryOcrModel(),
     temperature: 0,
+    max_output_tokens: MENU_DISCOVERY_OCR_MAX_OUTPUT_TOKENS,
     input: [
       {
         role: "user",
@@ -3058,7 +3129,10 @@ async function discoverSourcesForVenue(
   return { candidates: dedupeAndRankCandidates(candidates), errors };
 }
 
-async function maybeQueueDirectImage(candidate: MenuSourceCandidate): Promise<boolean> {
+async function maybeQueueDirectImage(
+  candidate: MenuSourceCandidate,
+  environmentTarget: MenuDiscoveryEnvironmentTarget,
+): Promise<boolean> {
   if (!envFlag("MENU_DISCOVERY_QUEUE_OCR") || !envFlag("ALLOW_MENU_DISCOVERY_QUEUE")) {
     return false;
   }
@@ -3067,17 +3141,28 @@ async function maybeQueueDirectImage(candidate: MenuSourceCandidate): Promise<bo
     return false;
   }
 
-  const baseUrl = process.env.MENU_DISCOVERY_ADMIN_BASE_URL ?? process.env.PUBLIC_BASE_URL ?? "http://localhost:3000";
-  const adminBearer = process.env.MENU_DISCOVERY_ADMIN_BEARER ?? process.env.ADMIN_BEARER_TOKEN;
-  if (!adminBearer) {
+  const rawAdminBearer = process.env.MENU_DISCOVERY_ADMIN_BEARER
+    ?? process.env.ADMIN_BEARER_TOKEN;
+  if (!rawAdminBearer) {
     throw new Error("MENU_DISCOVERY_QUEUE_OCR is enabled, but MENU_DISCOVERY_ADMIN_BEARER is missing.");
   }
+  const adminBearer = rawAdminBearer.startsWith("Bearer ")
+    ? rawAdminBearer.slice("Bearer ".length)
+    : rawAdminBearer;
+  if (!/^[A-Za-z0-9._~-]{20,4096}$/.test(adminBearer)) {
+    throw new Error(
+      "MENU_DISCOVERY_ADMIN_BEARER is malformed; no credential value is emitted.",
+    );
+  }
 
-  const response = await fetch(new URL("/api/admin/ingestions/queue", baseUrl), {
+  const response = await fetch(new URL(
+    "/api/admin/ingestions/queue",
+    environmentTarget.adminOrigin,
+  ), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: adminBearer.startsWith("Bearer ") ? adminBearer : `Bearer ${adminBearer}`,
+      Authorization: `Bearer ${adminBearer}`,
     },
     body: JSON.stringify({
       venueId: candidate.venueId,
@@ -3085,6 +3170,7 @@ async function maybeQueueDirectImage(candidate: MenuSourceCandidate): Promise<bo
       sourceUrl: candidate.sourceUrl,
       note: `Menu discovery candidate from official website. Confidence ${candidate.confidence}. Signals: ${candidate.signals.join("; ")}`,
     }),
+    redirect: "error",
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
 
@@ -3100,6 +3186,12 @@ async function main(): Promise<void> {
   // Keep the entire utility outside the restore-rehearsal trust boundary.
   assertOperatorMutationAllowed("Menu source discovery and OCR");
 
+  const queueOcrEnabled = envFlag("MENU_DISCOVERY_QUEUE_OCR")
+    && envFlag("ALLOW_MENU_DISCOVERY_QUEUE");
+  const environmentTarget = resolveMenuDiscoveryEnvironmentTarget(process.env, {
+    adminTransportRequired: queueOcrEnabled,
+  });
+
   const limit = numberArg("limit", DEFAULT_LIMIT);
   const maxLinksPerVenue = numberArg("max-links-per-venue", DEFAULT_MAX_LINKS_PER_VENUE);
   const concurrency = numberArg("concurrency", Number(process.env.MENU_DISCOVERY_CONCURRENCY ?? DEFAULT_CONCURRENCY));
@@ -3111,7 +3203,7 @@ async function main(): Promise<void> {
     : null;
 
   const loadedVenues = mergeVenues([
-    ...(await loadSupabaseVenues(limit)),
+    ...(await loadSupabaseVenues(limit, environmentTarget)),
     ...loadSqliteVenues(limit),
     ...loadArtifactVenues(limit),
   ]);
@@ -3142,7 +3234,7 @@ async function main(): Promise<void> {
     safety: {
       googleReviewPhotos: "skipped",
       autoPublish: false,
-      ocrQueued: envFlag("MENU_DISCOVERY_QUEUE_OCR") && envFlag("ALLOW_MENU_DISCOVERY_QUEUE"),
+      ocrQueued: queueOcrEnabled,
       note:
         "Google review photos are not bulk-ingested. This job uses official venue websites/menu sources and writes candidates for admin review before any publish action.",
     },
@@ -3245,7 +3337,7 @@ async function main(): Promise<void> {
           report.totals.ocrBeerRowsExtracted += ocr.beers.length;
         }
         try {
-          if (await maybeQueueDirectImage(candidate)) {
+          if (await maybeQueueDirectImage(candidate, environmentTarget)) {
             report.totals.queuedForOcr += 1;
           }
         } catch (error) {
@@ -3300,6 +3392,11 @@ async function main(): Promise<void> {
 }
 
 main().catch((error) => {
-  console.error(error instanceof Error ? error.message : error);
+  console.error(redactKnownSecretValues(
+    error instanceof Error ? error.message : String(error),
+    [loadedSupabaseApiKey],
+  ));
   process.exitCode = 1;
+}).finally(() => {
+  loadedSupabaseApiKey = null;
 });

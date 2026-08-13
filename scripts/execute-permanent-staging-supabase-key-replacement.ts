@@ -15,7 +15,7 @@ export const PERMANENT_STAGING_SUPABASE_KEY_REPLACEMENT_CLI_SCHEMA =
 export const PERMANENT_STAGING_SUPABASE_KEY_REPLACEMENT_CLI_BLOCKED_RECEIPT =
   freezeExact({
     schemaVersion: PERMANENT_STAGING_SUPABASE_KEY_REPLACEMENT_CLI_SCHEMA,
-    operation: "permanent-staging-supabase-three-key-replacement",
+    operation: "permanent-staging-supabase-two-key-replacement",
     activationState: PERMANENT_STAGING_SUPABASE_KEY_REPLACEMENT_STATE,
     outcome: "blocked",
     policySha256: PERMANENT_STAGING_SUPABASE_KEY_REPLACEMENT_POLICY_SHA256,

@@ -1,11 +1,21 @@
 # PostgreSQL logical backup operational-copy attestation
 
-Status: the isolated permanent-staging upload, live database-bound readiness
-probe, and one complete byte-for-byte retrieval have passed. This remains a
-mutable same-provider operational copy, not provider-enforced WORM evidence.
+Status: a protected operator-host invocation previously uploaded an already
+created permanent-staging logical set and completed one byte-for-byte retrieval;
+a staging database-bound readiness probe also passed under the prior
+checked-in/live contract that coupled permanent staging to the production
+operational-copy URL, key, and bucket. That evidence is historical, not current
+staging readiness. The current candidate makes this CLI
+canonical-production-only and forbids all three destination variables in
+permanent staging. No provider query in this remediation proves deletion: a
+fresh complete Railway inventory must independently prove all three names are
+deleted, not blank or sealed, before remediation can pass. No new staging
+off-site transport is authorized. The copy is mutable same-provider storage,
+not provider-enforced WORM evidence.
 
-This runbook publishes an already-created, hardened PostgreSQL 17 logical
-backup to the existing private Supabase **operational restore-copy** bucket,
+This canonical-production operator runbook publishes an already-created,
+hardened PostgreSQL 17 logical backup to the existing private Supabase
+**operational restore-copy** bucket,
 verifies the remote bytes and metadata, and only then records the bounded
 hash-only `job:postgres_logical_backup_success` system-state attestation.
 
@@ -102,6 +112,12 @@ Complete these checks from a protected operator host, not a Railway web shell:
 Create four separate operator-owned paths. All secret files must be regular,
 non-symlink files readable only by the current user; the backup output must not
 exist yet.
+
+Every connection-URL or service-key file passed below is an exact-byte input:
+it must contain one value with no leading/trailing whitespace, CR/LF, or NUL.
+With shell tracing disabled, transfer the protected value using a no-line-ending
+writer equivalent to `printf '%s' "$VALUE" > "$FILE"`; never use `echo`, and
+never print the value while verifying the file.
 
 ```sh
 umask 077
@@ -483,9 +499,10 @@ size/MIME/cache/custom metadata and exact hash-only Storage `id`/`version`
 binding. Every probe also downloads and SHA-256 verifies the bounded manifest
 and state receipt, strictly parses both, and rechecks their complete binding;
 it does not re-download the archive, which may be as large as 50 GiB. It
-performs no Storage write or delete. The web `/ready` path must pass the
-complete SystemState value and a freshly computed runtime database identity to
-this probe; it must never accept `value.completedAt` by itself.
+performs no Storage write or delete. The canonical-production web `/ready` path
+must pass the complete SystemState value and a freshly computed runtime database
+identity to this probe; it must never accept `value.completedAt` by itself.
+Permanent-staging readiness must not invoke this probe.
 
 Supabase Storage `id` plus `version` detects replacement through the normal
 Storage API (`version` changes on upsert; `id` changes on delete/recreate). It

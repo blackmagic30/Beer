@@ -25,6 +25,7 @@ import {
   type PostgresLogicalBackupManifestV2,
   type PostgresLogicalBackupManifestV3,
   type ProcessInvocation,
+  type RawProcessInvocation,
 } from "../src/lib/postgres-logical-backup.js";
 import {
   PostgresToolAuthorityError,
@@ -1263,6 +1264,85 @@ describe("Postgres logical backup foundation", () => {
     expect(Object.getPrototypeOf(result)).toBeNull();
     expect(Object.isFrozen(result)).toBe(true);
     expect(Reflect.ownKeys(result)).toEqual(["exitCode", "stdout", "stderr"]);
+  });
+
+  it("preserves raw stdout/stderr bytes only for the V4 list discriminator", async () => {
+    const root = makeTemporaryDirectory();
+    const archivePath = path.join(root, "raw-list-archive.dump");
+    fs.writeFileSync(archivePath, "archive", { mode: 0o600 });
+    const stdinFileDescriptor = fs.openSync(archivePath, "r");
+    const expected = Buffer.from([0xff, 0xfe, 0x00, 0x61, 0x0a]);
+    try {
+      const result = await runPostgresBackupProcess({
+        operation: "list-v4",
+        stdoutMode: "raw",
+        command: process.execPath,
+        args: [
+          "-e",
+          "process.stdout.write(Buffer.from([255,254,0,97,10]))",
+        ],
+        env: { LC_ALL: "C" },
+        timeoutMs: 5_000,
+        maxStdoutBytes: 65_536,
+        maxStderrBytes: 65_536,
+        stdinFileDescriptor,
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toEqual(expected);
+      expect(result.stderr).toEqual(Buffer.alloc(0));
+      expect(typeof result.stdout).not.toBe("string");
+      expect(Object.getPrototypeOf(result)).toBeNull();
+      expect(Object.isFrozen(result)).toBe(true);
+      expect(Reflect.ownKeys(result)).toEqual(["exitCode", "stdout", "stderr"]);
+
+      await expect(runPostgresBackupProcess({
+        operation: "list-v4",
+        command: process.execPath,
+        args: ["-e", "process.exit(0)"],
+        env: { LC_ALL: "C" },
+        timeoutMs: 5_000,
+        maxStdoutBytes: 65_536,
+        maxStderrBytes: 65_536,
+        stdinFileDescriptor,
+      } as unknown as RawProcessInvocation)).rejects.toThrow();
+
+      await expect(runPostgresBackupProcess({
+        operation: "list-v4",
+        stdoutMode: "raw",
+        command: process.execPath,
+        args: ["-e", "process.exit(99)"],
+        env: { LC_ALL: "C" },
+        timeoutMs: 5_000,
+        maxStdoutBytes: 65_537,
+        maxStderrBytes: 65_536,
+        stdinFileDescriptor,
+      })).rejects.toThrow("invalid_process_invocation");
+    } finally {
+      fs.closeSync(stdinFileDescriptor);
+    }
+  });
+
+  it("enforces the V4 raw listing stream bound before returning a carrier", async () => {
+    const root = makeTemporaryDirectory();
+    const archivePath = path.join(root, "oversized-raw-list-archive.dump");
+    fs.writeFileSync(archivePath, "archive", { mode: 0o600 });
+    const stdinFileDescriptor = fs.openSync(archivePath, "r");
+    try {
+      await expect(runPostgresBackupProcess({
+        operation: "list-v4",
+        stdoutMode: "raw",
+        command: process.execPath,
+        args: ["-e", "process.stdout.write(Buffer.alloc(65537, 97))"],
+        env: { LC_ALL: "C" },
+        timeoutMs: 5_000,
+        maxStdoutBytes: 65_536,
+        maxStderrBytes: 65_536,
+        stdinFileDescriptor,
+      })).rejects.toThrow("process_output_limit_exceeded");
+    } finally {
+      fs.closeSync(stdinFileDescriptor);
+    }
   });
 
   it("settles the direct process carrier without consulting inherited Object.prototype.then", () => {

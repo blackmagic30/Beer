@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "release": {
     "id": null,
     "candidateSha": null,
@@ -149,6 +149,19 @@
       "evidenceSha256": null,
       "verifiedAt": null,
       "verifiedBy": null
+    },
+    {
+      "id": "permanent_staging_cost",
+      "label": "Permanent staging has a fresh provider-observed recurring upper bound at or below US$50/month",
+      "owner": "Release owner, finance owner, and independent infrastructure verifier",
+      "nextAction": "After the candidate is frozen and permanent-staging topology is final, use the separately reviewed read-only collector to capture complete Railway, permanent-staging Supabase, and external-provider inventories and price/cap evidence; prove every resource is staging-only, priced, non-shared, and bounded; ceiling-round and sum integer USD cents to no more than 5000; record production operational-copy and disposable-restore spend under separate authorities; and independently verify a fresh candidate-bound receipt. The current cost policy/evaluator is scaffold-only and cannot produce this proof.",
+      "required": true,
+      "status": "pending",
+      "evidence": null,
+      "evidenceSha256": null,
+      "verifiedAt": null,
+      "verifiedBy": null,
+      "costReceipt": null
     }
   ]
 }

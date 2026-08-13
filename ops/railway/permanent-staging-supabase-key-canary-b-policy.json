@@ -38,28 +38,12 @@
       "name": "SUPABASE_SERVICE_ROLE_KEY",
       "sourceServiceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
       "sourceVariableName": "SUPABASE_SERVICE_ROLE_KEY"
-    },
-    {
-      "name": "OFFSITE_BACKUP_SUPABASE_URL",
-      "sourceServiceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
-      "sourceVariableName": "OFFSITE_BACKUP_SUPABASE_URL"
-    },
-    {
-      "name": "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
-      "sourceServiceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
-      "sourceVariableName": "OFFSITE_BACKUP_SERVICE_ROLE_KEY"
-    },
-    {
-      "name": "OFFSITE_BACKUP_BUCKET",
-      "sourceServiceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
-      "sourceVariableName": "OFFSITE_BACKUP_BUCKET"
     }
   ],
   "readOnlyChecks": [
     "staging-auth-settings",
     "staging-auth-admin-list-limit-one",
-    "staging-private-storage-bucket",
-    "offsite-private-storage-bucket"
+    "staging-private-storage-bucket"
   ],
   "reviewLocks": {
     "deploymentId": null,

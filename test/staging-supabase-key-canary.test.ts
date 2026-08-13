@@ -15,7 +15,6 @@ const projectRoot = path.resolve(import.meta.dirname, "..");
 const deploymentId = "235d6994-7bd4-4a13-b1dc-f255775d5dc0";
 const publishableKey = `sb_publishable_${"a".repeat(32)}`;
 const stagingSecretKey = `sb_secret_${"b".repeat(32)}`;
-const offsiteSecretKey = `sb_secret_${"c".repeat(32)}`;
 const stagingAllowedMimeTypes = [
   "image/jpeg",
   "image/png",
@@ -24,17 +23,6 @@ const stagingAllowedMimeTypes = [
   "image/heif",
   "application/pdf",
 ];
-const offsiteAllowedMimeTypes = [
-  "application/json",
-  "application/octet-stream",
-  "application/pdf",
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-  "image/heic",
-  "image/heif",
-];
-
 function environment(
   overrides: Record<string, string | undefined> = {},
 ): Record<string, string | undefined> {
@@ -48,10 +36,9 @@ function environment(
     SUPABASE_URL: STAGING_SUPABASE_KEY_CANARY_LOCK.stagingOrigin,
     SUPABASE_ANON_KEY: publishableKey,
     SUPABASE_SERVICE_ROLE_KEY: stagingSecretKey,
-    OFFSITE_BACKUP_SUPABASE_URL:
-      STAGING_SUPABASE_KEY_CANARY_LOCK.offsiteOrigin,
-    OFFSITE_BACKUP_SERVICE_ROLE_KEY: offsiteSecretKey,
-    OFFSITE_BACKUP_BUCKET: STAGING_SUPABASE_KEY_CANARY_LOCK.offsiteBucketId,
+    OFFSITE_BACKUP_SUPABASE_URL: "",
+    OFFSITE_BACKUP_SERVICE_ROLE_KEY: "",
+    OFFSITE_BACKUP_BUCKET: "",
     ...overrides,
   };
 }
@@ -82,17 +69,6 @@ function stagingBucket(): Record<string, unknown> {
   };
 }
 
-function offsiteBucket(): Record<string, unknown> {
-  return {
-    id: STAGING_SUPABASE_KEY_CANARY_LOCK.offsiteBucketId,
-    name: STAGING_SUPABASE_KEY_CANARY_LOCK.offsiteBucketId,
-    public: false,
-    file_size_limit: null,
-    allowed_mime_types: offsiteAllowedMimeTypes,
-    created_at: "2026-08-09T00:00:00.000Z",
-  };
-}
-
 function successfulFetch(): typeof fetch {
   return vi.fn(async (input: string | URL | Request) => {
     const url = String(input);
@@ -102,9 +78,6 @@ function successfulFetch(): typeof fetch {
     }
     if (url.includes(STAGING_SUPABASE_KEY_CANARY_LOCK.stagingBucketId)) {
       return jsonResponse(stagingBucket());
-    }
-    if (url.includes(STAGING_SUPABASE_KEY_CANARY_LOCK.offsiteBucketId)) {
-      return jsonResponse(offsiteBucket());
     }
     return jsonResponse({ message: "unexpected" }, 404);
   }) as typeof fetch;
@@ -157,7 +130,7 @@ describe("staging Supabase replacement-key canary", () => {
     expect(application).not.toContain("staging-supabase-key-canary");
   });
 
-  it("passes only the exact locked identity and four read-only provider canaries", async () => {
+  it("passes only the exact locked identity and three staging-only read-only provider canaries", async () => {
     const output: string[] = [];
     const fetchImpl = successfulFetch();
     const exitCode = await runStagingSupabaseKeyCanary({
@@ -169,7 +142,7 @@ describe("staging Supabase replacement-key canary", () => {
     });
 
     expect(exitCode).toBe(0);
-    expect(fetchImpl).toHaveBeenCalledTimes(4);
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
     expect(fetchImpl).toHaveBeenNthCalledWith(
       1,
       `${STAGING_SUPABASE_KEY_CANARY_LOCK.stagingOrigin}/auth/v1/settings`,
@@ -190,11 +163,6 @@ describe("staging Supabase replacement-key canary", () => {
       3,
       `${STAGING_SUPABASE_KEY_CANARY_LOCK.stagingOrigin}/storage/v1/bucket/${STAGING_SUPABASE_KEY_CANARY_LOCK.stagingBucketId}`,
       expect.objectContaining({ headers: { apikey: stagingSecretKey } }),
-    );
-    expect(fetchImpl).toHaveBeenNthCalledWith(
-      4,
-      `${STAGING_SUPABASE_KEY_CANARY_LOCK.offsiteOrigin}/storage/v1/bucket/${STAGING_SUPABASE_KEY_CANARY_LOCK.offsiteBucketId}`,
-      expect.objectContaining({ headers: { apikey: offsiteSecretKey } }),
     );
     for (const call of vi.mocked(fetchImpl).mock.calls) {
       const init = call[1] as RequestInit;
@@ -221,9 +189,8 @@ describe("staging Supabase replacement-key canary", () => {
       "dedicatedRailwayConfig",
       "debugAndProxyLoggingDisabled",
       "stagingOrigin",
-      "offsiteOrigin",
-      "originsDistinct",
-      "bucketIdsExact",
+      "stagingBucketExact",
+      "offsiteConfigurationAbsent",
       "replacementKeyShapes",
       "replacementKeysDistinct",
     ]);
@@ -231,7 +198,6 @@ describe("staging Supabase replacement-key canary", () => {
       "stagingAuthSettings",
       "stagingAuthAdmin",
       "stagingPrivateStorage",
-      "offsitePrivateStorage",
     ]);
     expect(receipt).toEqual({
       schemaVersion: STAGING_SUPABASE_KEY_CANARY_SCHEMA,
@@ -246,9 +212,8 @@ describe("staging Supabase replacement-key canary", () => {
         dedicatedRailwayConfig: true,
         debugAndProxyLoggingDisabled: true,
         stagingOrigin: true,
-        offsiteOrigin: true,
-        originsDistinct: true,
-        bucketIdsExact: true,
+        stagingBucketExact: true,
+        offsiteConfigurationAbsent: true,
         replacementKeyShapes: true,
         replacementKeysDistinct: true,
       },
@@ -256,12 +221,10 @@ describe("staging Supabase replacement-key canary", () => {
         stagingAuthSettings: true,
         stagingAuthAdmin: true,
         stagingPrivateStorage: true,
-        offsitePrivateStorage: true,
       },
     });
     expect(output[0]).not.toContain(publishableKey);
     expect(output[0]).not.toContain(stagingSecretKey);
-    expect(output[0]).not.toContain(offsiteSecretKey);
     expect(output[0]).not.toContain("supabase.co");
   });
 
@@ -274,8 +237,9 @@ describe("staging Supabase replacement-key canary", () => {
     ["debug", { NODE_DEBUG: "http" }],
     ["proxy", { HTTPS_PROXY: "https://proxy.invalid" }],
     ["staging origin", { SUPABASE_URL: "https://wrong.supabase.co" }],
-    ["offsite origin", { OFFSITE_BACKUP_SUPABASE_URL: "https://wrong.supabase.co" }],
-    ["bucket", { OFFSITE_BACKUP_BUCKET: "wrong-bucket" }],
+    ["offsite origin", { OFFSITE_BACKUP_SUPABASE_URL: "https://hfbmhdxrwtihukmixxta.supabase.co" }],
+    ["offsite key", { OFFSITE_BACKUP_SERVICE_ROLE_KEY: `sb_secret_${"c".repeat(32)}` }],
+    ["offsite bucket", { OFFSITE_BACKUP_BUCKET: "pintpath-backups" }],
   ])("fails before network on %s identity drift", async (label, overrides) => {
     const output: string[] = [];
     const fetchImpl = vi.fn() as unknown as typeof fetch;
@@ -302,7 +266,6 @@ describe("staging Supabase replacement-key canary", () => {
       { argv: ["--unexpected"] },
       { overrides: { SUPABASE_ANON_KEY: "legacy-anon-jwt" } },
       { overrides: { SUPABASE_SERVICE_ROLE_KEY: "legacy-service-role-jwt" } },
-      { overrides: { OFFSITE_BACKUP_SERVICE_ROLE_KEY: stagingSecretKey } },
       { overrides: { SUPABASE_ANON_KEY: ` ${publishableKey}` } },
     ];
 
@@ -342,7 +305,6 @@ describe("staging Supabase replacement-key canary", () => {
       stagingAuthSettings: false,
       stagingAuthAdmin: false,
       stagingPrivateStorage: false,
-      offsitePrivateStorage: false,
     });
     expect(output[0]).not.toContain(rawBody);
     expect(output[0]).not.toContain("503");
@@ -395,7 +357,7 @@ describe("staging Supabase replacement-key canary", () => {
 
     expect(exitCode).toBe(1);
     expect(Date.now() - startedAt).toBeLessThan(1_000);
-    expect(fetchImpl).toHaveBeenCalledTimes(4);
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
     expect(parseOnlyReceipt(output).outcome).toBe("failed");
   });
 
@@ -419,7 +381,7 @@ describe("staging Supabase replacement-key canary", () => {
 
     expect(exitCode).toBe(1);
     expect(Date.now() - startedAt).toBeLessThan(1_000);
-    expect(fetchImpl).toHaveBeenCalledTimes(4);
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
     expect(parseOnlyReceipt(output).outcome).toBe("failed");
   });
 
@@ -428,12 +390,6 @@ describe("staging Supabase replacement-key canary", () => {
       { ...stagingBucket(), public: true },
       { ...stagingBucket(), file_size_limit: 6 * 1_024 * 1_024 },
       { ...stagingBucket(), allowed_mime_types: ["image/jpeg"] },
-      { ...offsiteBucket(), id: "lookalike" },
-      { ...offsiteBucket(), file_size_limit: 1 },
-      {
-        ...offsiteBucket(),
-        allowed_mime_types: [...offsiteAllowedMimeTypes, "text/plain"],
-      },
     ];
 
     for (const invalid of invalidFixtures) {
@@ -487,9 +443,7 @@ describe("staging Supabase replacement-key canary", () => {
     for (const forbidden of [
       publishableKey,
       stagingSecretKey,
-      offsiteSecretKey,
       STAGING_SUPABASE_KEY_CANARY_LOCK.stagingOrigin,
-      STAGING_SUPABASE_KEY_CANARY_LOCK.offsiteOrigin,
       rawError,
     ]) {
       expect(output[0]).not.toContain(forbidden);

@@ -36,10 +36,12 @@ import {
 import {
   PostgresToolAuthorityError,
   createPostgresToolProcessResultCarrier,
+  createPostgresToolRawProcessResultCarrier,
   openPostgresToolAuthority,
   type PostgresDumpToolAuthority,
   type PostgresListToolAuthority,
   type PostgresToolAuthorityProcessRunner,
+  type PostgresToolRawProcessResultCarrier,
   type PostgresToolProcessResultCarrier,
 } from "./postgres-tool-authority.js";
 
@@ -86,6 +88,18 @@ export interface ProcessInvocation {
   maxStderrBytes: number;
   readonly stdinFileDescriptor?: number;
   readonly stdoutFileDescriptor?: number;
+}
+
+export interface RawProcessInvocation {
+  readonly operation: "list-v4";
+  readonly stdoutMode: "raw";
+  readonly command: string;
+  readonly args: readonly string[];
+  readonly env: Readonly<Record<string, string>>;
+  readonly timeoutMs: number;
+  readonly maxStdoutBytes: number;
+  readonly maxStderrBytes: number;
+  readonly stdinFileDescriptor: number;
 }
 
 export interface ProcessResult {
@@ -471,12 +485,44 @@ function inheritedArchiveFileDescriptorsAreSafe(
   );
 }
 
-export const runPostgresBackupProcess = (
-  invocation: ProcessInvocation,
-): Promise<PostgresToolProcessResultCarrier> =>
-  new Promise<PostgresToolProcessResultCarrier>((resolve, reject) => {
+export interface RunPostgresBackupProcess {
+  (invocation: RawProcessInvocation): Promise<PostgresToolRawProcessResultCarrier>;
+  (invocation: ProcessInvocation): Promise<PostgresToolProcessResultCarrier>;
+}
+
+export const runPostgresBackupProcess: RunPostgresBackupProcess = ((
+  invocation: ProcessInvocation | RawProcessInvocation,
+): Promise<PostgresToolProcessResultCarrier | PostgresToolRawProcessResultCarrier> =>
+  new Promise<PostgresToolProcessResultCarrier | PostgresToolRawProcessResultCarrier>(
+    (resolve, reject) => {
+    const invocationRecord = invocation as unknown as Record<string, unknown>;
+    const hasOperation = Object.prototype.hasOwnProperty.call(
+      invocationRecord,
+      "operation",
+    );
+    const hasStdoutMode = Object.prototype.hasOwnProperty.call(
+      invocationRecord,
+      "stdoutMode",
+    );
     const stdinFileDescriptor = invocation.stdinFileDescriptor;
-    const stdoutFileDescriptor = invocation.stdoutFileDescriptor;
+    const rawStdout = hasOperation
+      && hasStdoutMode
+      && invocationRecord.operation === "list-v4"
+      && invocationRecord.stdoutMode === "raw";
+    const rawDiscriminatorInvalid = hasStdoutMode
+      ? !rawStdout
+      : invocationRecord.operation === "list-v4";
+    const rawBoundsInvalid = rawStdout && (
+      !Number.isSafeInteger(invocation.maxStdoutBytes)
+      || invocation.maxStdoutBytes < 0
+      || invocation.maxStdoutBytes > 65_536
+      || !Number.isSafeInteger(invocation.maxStderrBytes)
+      || invocation.maxStderrBytes < 0
+      || invocation.maxStderrBytes > 65_536
+    );
+    const stdoutFileDescriptor = rawStdout
+      ? undefined
+      : (invocation as ProcessInvocation).stdoutFileDescriptor;
     if (
       !invocation.command ||
       invocation.command.includes("\0") ||
@@ -484,6 +530,8 @@ export const runPostgresBackupProcess = (
       Object.entries(invocation.env).some(([key, value]) => (
         !key || key.includes("\0") || value.includes("\0")
       )) ||
+      rawDiscriminatorInvalid ||
+      rawBoundsInvalid ||
       !inheritedArchiveFileDescriptorsAreSafe(
         stdinFileDescriptor,
         stdoutFileDescriptor,
@@ -644,11 +692,19 @@ export const runPostgresBackupProcess = (
           return;
         }
         try {
-          const result = createPostgresToolProcessResultCarrier({
-            exitCode,
-            stdout: Buffer.concat(stdout, stdoutBytes).toString("utf8"),
-            stderr: Buffer.concat(stderr, stderrBytes).toString("utf8"),
-          });
+          const stdoutResult = Buffer.concat(stdout, stdoutBytes);
+          const stderrResult = Buffer.concat(stderr, stderrBytes);
+          const result = rawStdout
+            ? createPostgresToolRawProcessResultCarrier({
+              exitCode,
+              stdout: stdoutResult,
+              stderr: stderrResult,
+            })
+            : createPostgresToolProcessResultCarrier({
+              exitCode,
+              stdout: stdoutResult.toString("utf8"),
+              stderr: stderrResult.toString("utf8"),
+            });
           resolve(result);
         } catch (error) {
           reject(error);
@@ -659,7 +715,8 @@ export const runPostgresBackupProcess = (
         reject(error instanceof Error ? error : new Error("process_group_reap_failed"));
       });
     });
-  });
+  })
+) as RunPostgresBackupProcess;
 
 const POSTGRES_TOOL_AUTHORITY_PROCESS_RUNNER: PostgresToolAuthorityProcessRunner =
   runPostgresBackupProcess;
@@ -771,6 +828,9 @@ async function readTrustedConnectionFile(
 
   let handle: fs.promises.FileHandle | null = null;
   try {
+    // The O_NOFOLLOW descriptor is bound to the pre-open lstat by full file
+    // identity; both the descriptor and pathname are revalidated after read.
+    // codeql[js/file-system-race]
     handle = await fs.promises.open(
       filePath,
       fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
@@ -1512,6 +1572,9 @@ async function createEphemeralPgpass(
       size: opened.size,
       mtimeMs: opened.mtimeMs,
       ctimeMs: opened.ctimeMs,
+      // This digest is a short-lived file-integrity binding for a private
+      // ephemeral pgpass record, never a password authenticator or verifier.
+      // codeql[js/insufficient-password-hash]
       sha256: crypto.createHash("sha256").update(record).digest("hex"),
     };
     record.fill(0);

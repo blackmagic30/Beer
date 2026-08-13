@@ -17,18 +17,12 @@ export const PERMANENT_STAGING_SUPABASE_LEGACY_KEY_RESPONSE_SCHEMA =
 
 export const PERMANENT_STAGING_SUPABASE_LEGACY_KEY_DISABLE_POLICY = deepFreeze({
   schemaVersion: "pintpath-permanent-staging-supabase-legacy-key-disable-policy/v1",
-  policyId: "permanent-staging-and-offsite-legacy-api-key-disable",
+  policyId: "permanent-staging-legacy-api-key-disable",
   activationState: "HARD_DISABLED_REVIEW_REQUIRED",
   projects: [
     {
       role: "permanent-staging",
       projectRef: "bbfibbadwjxzrcdncavy",
-      legacyKeyIds: { anon: null, serviceRole: null },
-      reviewRequired: true,
-    },
-    {
-      role: "operational-offsite-copy",
-      projectRef: "hfbmhdxrwtihukmixxta",
       legacyKeyIds: { anon: null, serviceRole: null },
       reviewRequired: true,
     },
@@ -52,7 +46,7 @@ export const PERMANENT_STAGING_SUPABASE_LEGACY_KEY_DISABLE_CANONICAL_POLICY_SOUR
   `${JSON.stringify(PERMANENT_STAGING_SUPABASE_LEGACY_KEY_DISABLE_POLICY, null, 2)}\n`;
 
 interface LegacyKeyProjectState {
-  readonly role: "permanent-staging" | "operational-offsite-copy";
+  readonly role: "permanent-staging";
   readonly projectRef: string;
   readonly enabled: boolean;
 }
@@ -83,8 +77,7 @@ function exactProjectRef(value: unknown): value is string {
 
 function validProjectState(value: unknown): value is LegacyKeyProjectState {
   return exactDataRecord(value, ["role", "projectRef", "enabled"])
-    && (value.role === "permanent-staging"
-      || value.role === "operational-offsite-copy")
+    && value.role === "permanent-staging"
     && exactProjectRef(value.projectRef)
     && typeof value.enabled === "boolean";
 }
@@ -114,8 +107,8 @@ export function parsePermanentStagingSupabaseLegacyKeyStateSnapshot(
     || value.schemaVersion !== PERMANENT_STAGING_SUPABASE_LEGACY_KEY_STATE_SCHEMA
     || value.source !== "fixture-only"
     || (value.phase !== "before" && value.phase !== "after")
-    || !denseArray(value.projects, 2)
-    || value.projects.length !== 2
+    || !denseArray(value.projects, 1)
+    || value.projects.length !== 1
     || !arrayEvery(value.projects, validProjectState)
     || !uniqueStrings(arrayMap(value.projects, (project) => project.projectRef))
   ) return null;
@@ -131,8 +124,8 @@ export function parsePermanentStagingSupabaseLegacyKeyDisableResponses(
     || value.schemaVersion
       !== PERMANENT_STAGING_SUPABASE_LEGACY_KEY_RESPONSE_SCHEMA
     || value.source !== "fixture-only"
-    || !denseArray(value.responses, 2)
-    || value.responses.length !== 2
+    || !denseArray(value.responses, 1)
+    || value.responses.length !== 1
     || !arrayEvery(value.responses, validDisableResponse)
     || !uniqueStrings(arrayMap(value.responses, (response) => response.projectRef))
   ) return null;

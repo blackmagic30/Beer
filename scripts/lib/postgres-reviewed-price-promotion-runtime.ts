@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import { types as utilTypes } from "node:util";
 
-import { buildPostgresReviewedPricePromotionPlanCandidate } from
+import { buildPostgresReviewedPricePromotionPlanArtifacts } from
   "../../src/lib/postgres-reviewed-price-promotion-plan.js";
 import { STAGING_POSTGRES_BUILD_CANARY_RAILWAY_CONTRACT_LOCK } from
   "./staging-postgres-build-canary-railway-contract.js";
@@ -87,7 +87,7 @@ function assertProductionBoundary(): void {
 export const POSTGRES_REVIEWED_PRICE_PROMOTION_RUNTIME = Object.freeze({
   assertProductionBoundary,
   openDatabase: openFixedRailwayPlannerDatabase,
-  buildPlan: buildPostgresReviewedPricePromotionPlanCandidate,
+  buildPlan: buildPostgresReviewedPricePromotionPlanArtifacts,
   environment: process.env,
   expectedRootCaDerSha256:
     STAGING_POSTGRES_BUILD_CANARY_RAILWAY_CONTRACT_LOCK.rootCaDerSha256,

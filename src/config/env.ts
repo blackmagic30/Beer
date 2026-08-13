@@ -7,6 +7,12 @@ import { z } from "zod";
 
 import { isCanonicalProductionRuntime } from "../lib/deployment-environment.js";
 import { parseAccountDeletionNotificationKeyring } from "../lib/account-deletion-notification-worker.js";
+import { OPENAI_MENU_OCR_COST_BOUND_MODEL } from "../lib/external-provider-cost-budget.js";
+import {
+  hasExactLegacySupabaseRoleJwt,
+  isExactSupabaseNewKey,
+  resolveExactOperationalOffsiteBackupBucket,
+} from "../lib/supabase-key-format.js";
 
 dotenv.config({ quiet: true });
 
@@ -69,6 +75,25 @@ const booleanFromEnv = z.preprocess((value) => {
   return value;
 }, z.boolean());
 
+const exactBooleanFromEnv = z.preprocess((value) => {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const normalised = value.trim().toLowerCase();
+    if (normalised === "true") return true;
+    if (normalised === "false") return false;
+  }
+
+  return value;
+}, z.boolean());
+
+const menuOcrModelFromEnv = z.preprocess(
+  sanitizeEnvString,
+  z.enum(["gpt-5.6-sol", "gpt-4.1", OPENAI_MENU_OCR_COST_BOUND_MODEL]),
+);
+
 const demoBillingModeFromEnv = z.preprocess((value) => {
   if (value === undefined || value === null || value === "") {
     return process.env.NODE_ENV === "production" ? false : true;
@@ -109,6 +134,102 @@ const optionalSha256FromEnv = z.preprocess((value) => {
   }
   return trimmed.toLowerCase();
 }, z.string().regex(/^[a-f0-9]{64}$/).optional());
+
+type HostedSupabaseKeyValidationMode =
+  | "permanent-staging-bootstrap"
+  | "permanent-staging-complete"
+  | "account-deletion-rehearsal";
+
+const canonicalProductionSupabaseOrigin = "https://auth.pintpath.au";
+const permanentStagingSupabaseOrigin = "https://bbfibbadwjxzrcdncavy.supabase.co";
+const operationalOffsiteSupabaseOrigin = "https://hfbmhdxrwtihukmixxta.supabase.co";
+
+function assertPublicSupabaseKeySafe(input: {
+  parsedValue: string | undefined;
+  rawValue: string | undefined;
+}): void {
+  if (input.parsedValue === undefined) return;
+  if (
+    input.rawValue === input.parsedValue
+    && (
+      isExactSupabaseNewKey(input.parsedValue, "publishable")
+      || hasExactLegacySupabaseRoleJwt(input.parsedValue, "anon")
+    )
+  ) return;
+  throw new Error(
+    "SUPABASE_ANON_KEY must be an exact sb_publishable_ key or a structurally valid legacy JWT with role=anon; refusing to expose a secret, malformed, or non-anon value through public config.",
+  );
+}
+
+function assertCompatibleSupabaseServiceKey(input: {
+  name: "SUPABASE_SERVICE_ROLE_KEY" | "OFFSITE_BACKUP_SERVICE_ROLE_KEY";
+  parsedValue: string | undefined;
+  rawValue: string | undefined;
+}): void {
+  if (
+    input.parsedValue !== undefined
+    && input.rawValue === input.parsedValue
+    && (
+      isExactSupabaseNewKey(input.parsedValue, "secret")
+      || hasExactLegacySupabaseRoleJwt(input.parsedValue, "service_role")
+    )
+  ) return;
+  throw new Error(
+    `${input.name} must be an exact sb_secret_ key or a structurally valid legacy JWT with role=service_role; no key value is emitted.`,
+  );
+}
+
+function assertHostedSupabaseKeyBoundary(input: {
+  mode: HostedSupabaseKeyValidationMode;
+  primaryUrl: string | undefined;
+  rawPrimaryUrl: string | undefined;
+  anonKey: string | undefined;
+  rawAnonKey: string | undefined;
+  serviceKey: string | undefined;
+  rawServiceKey: string | undefined;
+  offsiteServiceKey: string | undefined;
+  rawOffsiteServiceKey: string | undefined;
+  offsiteUrl: string | undefined;
+  rawOffsiteUrl: string | undefined;
+  rawOffsiteBucket: string | undefined;
+}): void {
+  if (
+    input.primaryUrl !== permanentStagingSupabaseOrigin
+    || input.rawPrimaryUrl !== permanentStagingSupabaseOrigin
+  ) {
+    throw new Error(
+      `Hosted Supabase key validation (${input.mode}) requires SUPABASE_URL to be the exact reviewed permanent-staging HTTPS origin; no configured value is emitted.`,
+    );
+  }
+  const requiredKeys = [
+    ["SUPABASE_ANON_KEY", "publishable", input.anonKey, input.rawAnonKey],
+    ["SUPABASE_SERVICE_ROLE_KEY", "secret", input.serviceKey, input.rawServiceKey],
+  ] as const;
+  for (const [name, format, parsedValue, rawValue] of requiredKeys) {
+    if (
+      parsedValue === undefined
+      || rawValue !== parsedValue
+      || !isExactSupabaseNewKey(parsedValue, format)
+    ) {
+      throw new Error(
+        `Hosted Supabase key validation (${input.mode}) requires ${name} to use the exact sb_${format}_[A-Za-z0-9_-]{20,220} format; no key value is emitted.`,
+      );
+    }
+  }
+
+  const inheritedOffsiteConfiguration = [
+    input.offsiteUrl,
+    input.offsiteServiceKey,
+    input.rawOffsiteUrl,
+    input.rawOffsiteServiceKey,
+    input.rawOffsiteBucket,
+  ].some((value) => value !== undefined && value !== "");
+  if (inheritedOffsiteConfiguration) {
+    throw new Error(
+      `Hosted Supabase key validation (${input.mode}) prohibits OFFSITE_BACKUP_SUPABASE_URL, OFFSITE_BACKUP_SERVICE_ROLE_KEY, and OFFSITE_BACKUP_BUCKET. Permanent staging must not inherit production operational-backup authority; use a separately registered isolated staging destination before enabling an off-site proof. No configured value is emitted.`,
+    );
+  }
+}
 
 function canonicalSupabaseProjectRef(value: string, variableName: string): string {
   const url = new URL(value);
@@ -513,6 +634,10 @@ const envSchema = z.object({
   GOOGLE_MAPS_MAP_ID: optionalStringFromEnv,
   GOOGLE_PLACES_API_KEY: optionalStringFromEnv,
   OPENAI_API_KEY: optionalStringFromEnv,
+  OPENAI_MENU_OCR_MODEL: menuOcrModelFromEnv.default("gpt-5.6-sol"),
+  OPENAI_MENU_OCR_FALLBACK_MODEL: menuOcrModelFromEnv.default("gpt-4.1"),
+  OPENAI_MENU_OCR_REVIEW_PASS: booleanFromEnv.default(true),
+  OPENAI_MENU_OCR_COST_BOUND_MODE: exactBooleanFromEnv.default(false),
   CONTRIBUTOR_UNLOCK_POINTS: z.coerce.number().int().min(1).default(15),
   CONTRIBUTOR_UNLOCK_DAYS: z.coerce.number().int().min(1).default(30),
   SESSION_TTL_DAYS: z.coerce.number().int().min(1).max(90).default(30),
@@ -608,10 +733,33 @@ const canonicalProductionRuntime = isCanonicalProductionRuntime({
 const postgresApplicationRuntime =
   parsedEnv.data.NODE_ENV === "production" &&
   !parsedEnv.data.RESTORE_REHEARSAL_MODE;
+if (canonicalProductionRuntime) {
+  resolveExactOperationalOffsiteBackupBucket(process.env.OFFSITE_BACKUP_BUCKET);
+}
 const permanentStagingApplicationRuntime =
   postgresApplicationRuntime && railwayEnvironmentName === "staging";
 const stagingIdentityBootstrap =
   parsedEnv.data.PINTPATH_IDENTITY_REGISTRY_PHASE === "staging-bootstrap";
+
+if (parsedEnv.data.OPENAI_MENU_OCR_COST_BOUND_MODE) {
+  if (
+    !permanentStagingApplicationRuntime
+    || parsedEnv.data.ACCOUNT_DELETION_REHEARSAL_ENABLED
+    || stagingIdentityBootstrap
+  ) {
+    throw new Error(
+      "OPENAI_MENU_OCR_COST_BOUND_MODE=true is permitted only in complete ordinary permanent staging.",
+    );
+  }
+  if (
+    parsedEnv.data.OPENAI_MENU_OCR_MODEL !== OPENAI_MENU_OCR_COST_BOUND_MODEL
+    || parsedEnv.data.OPENAI_MENU_OCR_FALLBACK_MODEL !== OPENAI_MENU_OCR_COST_BOUND_MODEL
+  ) {
+    throw new Error(
+      `Cost-bound menu OCR requires both model variables to equal ${OPENAI_MENU_OCR_COST_BOUND_MODEL}.`,
+    );
+  }
+}
 
 if (
   stagingIdentityBootstrap
@@ -624,6 +772,11 @@ if (
     "PINTPATH_IDENTITY_REGISTRY_PHASE=staging-bootstrap is allowed only in ordinary permanent staging; production, restore, and account-deletion rehearsal require the complete cross-environment identity registry.",
   );
 }
+
+assertPublicSupabaseKeySafe({
+  parsedValue: parsedEnv.data.SUPABASE_ANON_KEY,
+  rawValue: process.env.SUPABASE_ANON_KEY,
+});
 
 if (parsedEnv.data.ACCOUNT_DELETION_REHEARSAL_ENABLED) {
   if (
@@ -817,6 +970,20 @@ if (parsedEnv.data.ACCOUNT_DELETION_REHEARSAL_ENABLED) {
       `Account deletion rehearsal requires the Free-only feature scope: ${unsafeAccountDeletionFeatureConfiguration.join(", ")}.`,
     );
   }
+  assertHostedSupabaseKeyBoundary({
+    mode: "account-deletion-rehearsal",
+    primaryUrl: parsedEnv.data.SUPABASE_URL,
+    rawPrimaryUrl: process.env.SUPABASE_URL,
+    anonKey: parsedEnv.data.SUPABASE_ANON_KEY,
+    rawAnonKey: process.env.SUPABASE_ANON_KEY,
+    serviceKey: parsedEnv.data.SUPABASE_SERVICE_ROLE_KEY,
+    rawServiceKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
+    offsiteServiceKey: parsedEnv.data.OFFSITE_BACKUP_SERVICE_ROLE_KEY,
+    rawOffsiteServiceKey: process.env.OFFSITE_BACKUP_SERVICE_ROLE_KEY,
+    offsiteUrl: parsedEnv.data.OFFSITE_BACKUP_SUPABASE_URL,
+    rawOffsiteUrl: process.env.OFFSITE_BACKUP_SUPABASE_URL,
+    rawOffsiteBucket: process.env.OFFSITE_BACKUP_BUCKET,
+  });
 }
 
 if (!parsedEnv.data.ACCOUNT_DELETION_REHEARSAL_ENABLED) {
@@ -908,6 +1075,22 @@ if (
     expectedProjectId: parsedEnv.data.PINTPATH_PERMANENT_STAGING_RAILWAY_PROJECT_ID,
     expectedEnvironmentId: parsedEnv.data.PINTPATH_PERMANENT_STAGING_RAILWAY_ENVIRONMENT_ID,
     expectedServiceId: parsedEnv.data.PINTPATH_PERMANENT_STAGING_RAILWAY_SERVICE_ID,
+  });
+  assertHostedSupabaseKeyBoundary({
+    mode: stagingIdentityBootstrap
+      ? "permanent-staging-bootstrap"
+      : "permanent-staging-complete",
+    primaryUrl: parsedEnv.data.SUPABASE_URL,
+    rawPrimaryUrl: process.env.SUPABASE_URL,
+    anonKey: parsedEnv.data.SUPABASE_ANON_KEY,
+    rawAnonKey: process.env.SUPABASE_ANON_KEY,
+    serviceKey: parsedEnv.data.SUPABASE_SERVICE_ROLE_KEY,
+    rawServiceKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
+    offsiteServiceKey: parsedEnv.data.OFFSITE_BACKUP_SERVICE_ROLE_KEY,
+    rawOffsiteServiceKey: process.env.OFFSITE_BACKUP_SERVICE_ROLE_KEY,
+    offsiteUrl: parsedEnv.data.OFFSITE_BACKUP_SUPABASE_URL,
+    rawOffsiteUrl: process.env.OFFSITE_BACKUP_SUPABASE_URL,
+    rawOffsiteBucket: process.env.OFFSITE_BACKUP_BUCKET,
   });
 
   const configuredDatabasePath = sanitizeEnvString(process.env.DATABASE_PATH);
@@ -1180,6 +1363,15 @@ if (
 }
 
 if (canonicalProductionRuntime) {
+  if (
+    process.env.SUPABASE_URL !== canonicalProductionSupabaseOrigin
+    || parsedEnv.data.SUPABASE_URL !== canonicalProductionSupabaseOrigin
+  ) {
+    throw new Error(
+      "Canonical production requires SUPABASE_URL to be the exact reviewed HTTPS origin https://auth.pintpath.au; no configured value is emitted.",
+    );
+  }
+
   const publicBaseUrl = new URL(parsedEnv.data.PUBLIC_BASE_URL);
   if (!parsedEnv.data.REDIS_URL || !parsedEnv.data.REQUIRE_REDIS_RATE_LIMITING) {
     throw new Error("Canonical production requires shared REDIS_URL and REQUIRE_REDIS_RATE_LIMITING=true.");
@@ -1234,7 +1426,9 @@ if (canonicalProductionRuntime) {
   }
 
   if (
-    publicBaseUrl.protocol !== "https:"
+    process.env.PUBLIC_BASE_URL !== "https://pintpath.au"
+    || parsedEnv.data.PUBLIC_BASE_URL !== "https://pintpath.au"
+    || publicBaseUrl.protocol !== "https:"
     || publicBaseUrl.hostname !== "pintpath.au"
     || publicBaseUrl.port
     || publicBaseUrl.pathname !== "/"
@@ -1243,7 +1437,7 @@ if (canonicalProductionRuntime) {
     || publicBaseUrl.username
     || publicBaseUrl.password
   ) {
-    throw new Error("PUBLIC_BASE_URL must be exactly https://pintpath.au/ in production, with no credentials, port, path, query, or fragment. Do not use Railway preview domains as the canonical public app URL.");
+    throw new Error("PUBLIC_BASE_URL must be exactly https://pintpath.au in production, with no whitespace, credentials, port, path, query, or fragment. Do not use Railway preview domains as the canonical public app URL.");
   }
 
   if (!parsedEnv.data.GOOGLE_MAPS_API_KEY) {
@@ -1280,6 +1474,33 @@ if (canonicalProductionRuntime) {
       `Production startup blocked: missing required private operational restore-copy environment ${variableLabel}: ${missingOffsiteBackupVariables.join(", ")}. ` +
       `Configure ${referenceLabel} in the production service environment and redeploy. ` +
       "OFFSITE_BACKUP_SUPABASE_URL must point to an origin different from SUPABASE_URL, and OFFSITE_BACKUP_SERVICE_ROLE_KEY must belong to that operational copy. This does not replace separately verified WORM disaster recovery.",
+    );
+  }
+  assertCompatibleSupabaseServiceKey({
+    name: "SUPABASE_SERVICE_ROLE_KEY",
+    parsedValue: parsedEnv.data.SUPABASE_SERVICE_ROLE_KEY,
+    rawValue: process.env.SUPABASE_SERVICE_ROLE_KEY,
+  });
+  assertCompatibleSupabaseServiceKey({
+    name: "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
+    parsedValue: parsedEnv.data.OFFSITE_BACKUP_SERVICE_ROLE_KEY,
+    rawValue: process.env.OFFSITE_BACKUP_SERVICE_ROLE_KEY,
+  });
+
+  if (
+    parsedEnv.data.OFFSITE_BACKUP_SUPABASE_URL !== operationalOffsiteSupabaseOrigin
+    || process.env.OFFSITE_BACKUP_SUPABASE_URL !== operationalOffsiteSupabaseOrigin
+  ) {
+    throw new Error(
+      "Canonical production requires OFFSITE_BACKUP_SUPABASE_URL to be the exact reviewed operational-copy HTTPS origin; no configured value is emitted.",
+    );
+  }
+  if (
+    parsedEnv.data.SUPABASE_SERVICE_ROLE_KEY
+    === parsedEnv.data.OFFSITE_BACKUP_SERVICE_ROLE_KEY
+  ) {
+    throw new Error(
+      "Canonical production requires distinct primary and operational-copy Supabase service keys; no key value is emitted.",
     );
   }
 
@@ -1406,6 +1627,11 @@ if (parsedEnv.data.RESTORE_REHEARSAL_MODE) {
       "Restore rehearsal requires reviewed restore, production, and operational-restore-copy Supabase URL pins so it can prove the disposable project is exact and distinct.",
     );
   }
+  assertCompatibleSupabaseServiceKey({
+    name: "SUPABASE_SERVICE_ROLE_KEY",
+    parsedValue: parsedEnv.data.SUPABASE_SERVICE_ROLE_KEY,
+    rawValue: process.env.SUPABASE_SERVICE_ROLE_KEY,
+  });
   const restoreSupabaseRef = canonicalSupabaseProjectRef(parsedEnv.data.SUPABASE_URL, "SUPABASE_URL");
   const expectedRestoreSupabaseRef = canonicalSupabaseProjectRef(
     parsedEnv.data.RESTORE_REHEARSAL_EXPECTED_SUPABASE_URL,

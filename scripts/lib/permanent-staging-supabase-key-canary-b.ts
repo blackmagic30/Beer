@@ -56,27 +56,11 @@ export const PERMANENT_STAGING_SUPABASE_KEY_CANARY_B_POLICY = deepFreeze({
       sourceServiceId: "6816c4a2-e392-4ee5-826f-2584cb599ec0",
       sourceVariableName: "SUPABASE_SERVICE_ROLE_KEY",
     },
-    {
-      name: "OFFSITE_BACKUP_SUPABASE_URL",
-      sourceServiceId: "6816c4a2-e392-4ee5-826f-2584cb599ec0",
-      sourceVariableName: "OFFSITE_BACKUP_SUPABASE_URL",
-    },
-    {
-      name: "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
-      sourceServiceId: "6816c4a2-e392-4ee5-826f-2584cb599ec0",
-      sourceVariableName: "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
-    },
-    {
-      name: "OFFSITE_BACKUP_BUCKET",
-      sourceServiceId: "6816c4a2-e392-4ee5-826f-2584cb599ec0",
-      sourceVariableName: "OFFSITE_BACKUP_BUCKET",
-    },
   ],
   readOnlyChecks: [
     "staging-auth-settings",
     "staging-auth-admin-list-limit-one",
     "staging-private-storage-bucket",
-    "offsite-private-storage-bucket",
   ],
   reviewLocks: {
     deploymentId: null,
@@ -124,7 +108,6 @@ export interface PermanentStagingSupabaseKeyCanaryBObservation {
     readonly stagingAuthSettings: boolean;
     readonly stagingAuthAdminListLimitOne: boolean;
     readonly stagingPrivateStorageBucket: boolean;
-    readonly offsitePrivateStorageBucket: boolean;
   };
 }
 
@@ -200,12 +183,10 @@ export function parsePermanentStagingSupabaseKeyCanaryBObservation(
       "stagingAuthSettings",
       "stagingAuthAdminListLimitOne",
       "stagingPrivateStorageBucket",
-      "offsitePrivateStorageBucket",
     ])
     || typeof value.checks.stagingAuthSettings !== "boolean"
     || typeof value.checks.stagingAuthAdminListLimitOne !== "boolean"
     || typeof value.checks.stagingPrivateStorageBucket !== "boolean"
-    || typeof value.checks.offsitePrivateStorageBucket !== "boolean"
   ) return null;
   return deepFreeze(value as unknown as PermanentStagingSupabaseKeyCanaryBObservation);
 }
@@ -269,8 +250,7 @@ export function evaluatePermanentStagingSupabaseKeyCanaryB(
     });
   const readOnlyChecksPassed = observation.checks.stagingAuthSettings
     && observation.checks.stagingAuthAdminListLimitOne
-    && observation.checks.stagingPrivateStorageBucket
-    && observation.checks.offsitePrivateStorageBucket;
+    && observation.checks.stagingPrivateStorageBucket;
   const policyActivated = policy.activationState === ("ENABLED_REVIEWED" as string);
   const structuralPassed = targetExact && lifecycleExact && noIngress
     && sourceExact && referencesExact && readOnlyChecksPassed;

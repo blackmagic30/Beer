@@ -1,3 +1,5 @@
+import crypto from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 import nodeProcess from "node:process";
 import { fileURLToPath } from "node:url";
@@ -8,11 +10,20 @@ import { assertLockedSensitiveWorkerFinalization } from
 export type LockedSensitiveWorkerMode = "attestor" | "planner";
 
 export const LOCKED_SENSITIVE_WORKER_NODE_VERSION = "22.23.2" as const;
+export const LOCKED_SENSITIVE_WORKER_TSX_VERSION = "4.23.12" as const;
+export const LOCKED_SENSITIVE_WORKER_TSX_LOADER_SHA256 =
+  "49fb46730ddeb226ac4fa9fb990d3573ac8f18fa4de02f1bf723c61d715710c2" as const;
 
 const ARRAY_CONSTRUCTOR = Array;
 const ARRAY_IS_ARRAY = Array.isArray;
 const ARRAY_PROTOTYPE = Array.prototype;
+const CRYPTO_HASH = crypto.hash;
+const CRYPTO_OBJECT = crypto;
 const ERROR_CONSTRUCTOR = Error;
+const FS_OBJECT = fs;
+const FS_READ_FILE_SYNC = fs.readFileSync;
+const JSON_OBJECT = JSON;
+const JSON_PARSE = JSON.parse;
 const OBJECT_CONSTRUCTOR = Object;
 const OBJECT_GET_OWN_PROPERTY_DESCRIPTOR = Object.getOwnPropertyDescriptor;
 const OBJECT_GET_PROTOTYPE_OF = Object.getPrototypeOf;
@@ -31,8 +42,12 @@ const EXPECTED_PRELOAD_PATH = fileURLToPath(new URL(
   "./locked-sensitive-worker-primordials.mjs",
   import.meta.url,
 ));
+const EXPECTED_TSX_PACKAGE_PATH = fileURLToPath(new URL(
+  "../../node_modules/tsx/package.json",
+  import.meta.url,
+));
 const EXPECTED_TSX_PATH = fileURLToPath(new URL(
-  "../../node_modules/.pnpm/tsx@4.23.11/node_modules/tsx/dist/loader.mjs",
+  "../../node_modules/tsx/dist/loader.mjs",
   import.meta.url,
 ));
 const EXPECTED_WORKER_PATH = fileURLToPath(new URL(
@@ -244,6 +259,58 @@ function exactProcessEnvironment(): boolean {
   }
   return true;
 }
+
+function exactTsxIdentity(
+  version: unknown,
+  loaderBytes: Uint8Array,
+): boolean {
+  try {
+    const digest = REFLECT_APPLY(
+      CRYPTO_HASH,
+      CRYPTO_OBJECT,
+      ["sha256", loaderBytes, "hex"],
+    ) as unknown;
+    return version === LOCKED_SENSITIVE_WORKER_TSX_VERSION
+      && digest === LOCKED_SENSITIVE_WORKER_TSX_LOADER_SHA256;
+  } catch {
+    return false;
+  }
+}
+
+function exactInstalledTsxIdentity(): boolean {
+  try {
+    const packageSource = REFLECT_APPLY(
+      FS_READ_FILE_SYNC,
+      FS_OBJECT,
+      [EXPECTED_TSX_PACKAGE_PATH, "utf8"],
+    ) as unknown;
+    if (typeof packageSource !== "string") return false;
+    const packageJson = REFLECT_APPLY(
+      JSON_PARSE,
+      JSON_OBJECT,
+      [packageSource],
+    ) as unknown;
+    if (
+      typeof packageJson !== "object"
+      || packageJson === null
+      || REFLECT_APPLY(OBJECT_GET_PROTOTYPE_OF, OBJECT_CONSTRUCTOR, [packageJson])
+        !== OBJECT_CONSTRUCTOR.prototype
+    ) return false;
+    const loaderBytes = REFLECT_APPLY(
+      FS_READ_FILE_SYNC,
+      FS_OBJECT,
+      [EXPECTED_TSX_PATH],
+    ) as unknown;
+    if (!(loaderBytes instanceof Uint8Array)) return false;
+    return exactTsxIdentity(
+      ownData(packageJson, "version"),
+      loaderBytes,
+    );
+  } catch {
+    return false;
+  }
+}
+
 const globalThisDescriptor = REFLECT_APPLY(
   OBJECT_GET_OWN_PROPERTY_DESCRIPTOR,
   OBJECT_CONSTRUCTOR,
@@ -252,6 +319,7 @@ const globalThisDescriptor = REFLECT_APPLY(
 const LOCKED_AT_MODULE_INITIALIZATION =
   nodeProcess.versions.node === LOCKED_SENSITIVE_WORKER_NODE_VERSION
   && exactStringArray(nodeProcess.execArgv, EXPECTED_EXEC_ARGV)
+  && exactInstalledTsxIdentity()
   && REFLECT_APPLY(PATH_RESOLVE, PATH_OBJECT, [nodeProcess.argv[1] ?? ""])
     === EXPECTED_WORKER_PATH
   && exactProcessEnvironment()
@@ -334,3 +402,7 @@ export function assertLockedSensitiveWorkerBoundary(
   assertCurrentLocks();
   assertNoSensitiveTokenEnvironment();
 }
+
+export const lockedSensitiveWorkerBoundaryInternals = Object.freeze({
+  exactTsxIdentity,
+});

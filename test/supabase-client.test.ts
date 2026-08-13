@@ -8,6 +8,13 @@ import {
   createServerSupabaseClient,
   createSupabaseApiKeyAwareFetch,
 } from "../src/lib/supabase-client.js";
+import {
+  assertExactSupabaseOrigin,
+  assertSupabaseServerApiKey,
+  classifySupabaseServerApiKey,
+  hasExactLegacySupabaseRoleJwt,
+  isExactSupabaseNewKey,
+} from "../src/lib/supabase-key-format.js";
 
 const secretApiKey = `sb_secret_${"s".repeat(32)}`;
 const publishableApiKey = `sb_publishable_${"p".repeat(32)}`;
@@ -17,8 +24,76 @@ const legacyApiKey = [
   "synthetic-signature",
 ].join(".");
 
+function exactLegacyKey(role: "anon" | "service_role"): string {
+  return [
+    Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url"),
+    Buffer.from(JSON.stringify({ role })).toString("base64url"),
+    Buffer.alloc(32, role === "anon" ? 1 : 2).toString("base64url"),
+  ].join(".");
+}
+
 afterEach(() => {
   vi.useRealTimers();
+});
+
+describe("Supabase API key shape authority", () => {
+  it("classifies exact new-key bounds and canonical legacy roles", () => {
+    expect(isExactSupabaseNewKey(`sb_publishable_${"p".repeat(20)}`, "publishable")).toBe(true);
+    expect(isExactSupabaseNewKey(`sb_secret_${"s".repeat(220)}`, "secret")).toBe(true);
+    expect(hasExactLegacySupabaseRoleJwt(exactLegacyKey("anon"), "anon")).toBe(true);
+    expect(classifySupabaseServerApiKey(exactLegacyKey("service_role")))
+      .toBe("legacy_service_role");
+    expect(assertSupabaseServerApiKey(secretApiKey, "SUPABASE_SERVICE_ROLE_KEY"))
+      .toBe("secret");
+  });
+
+  it("rejects wrong-role, normalized, malformed, and multiline server keys without echoing them", () => {
+    const candidates = [
+      publishableApiKey,
+      exactLegacyKey("anon"),
+      ` ${secretApiKey}`,
+      `${secretApiKey} `,
+      `${secretApiKey}\nheader-injection`,
+      `sb_secret_${"s".repeat(19)}`,
+      "arbitrary-service-key",
+    ];
+    for (const candidate of candidates) {
+      let error: unknown;
+      try {
+        assertSupabaseServerApiKey(candidate, "SUPABASE_SERVICE_ROLE_KEY");
+      } catch (cause) {
+        error = cause;
+      }
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain(
+        "SUPABASE_SERVICE_ROLE_KEY must be an exact sb_secret_ key or a structurally valid legacy JWT with role=service_role",
+      );
+      expect((error as Error).message).not.toContain(candidate);
+    }
+  });
+
+  it("requires exact unnormalized reviewed origins without echoing rejected values", () => {
+    const approved = "https://auth.pintpath.au";
+    expect(() => assertExactSupabaseOrigin(approved, approved)).not.toThrow();
+    for (const candidate of [
+      "https://attacker.invalid",
+      ` ${approved}`,
+      `${approved} `,
+      `${approved}/`,
+      "HTTPS://AUTH.PINTPATH.AU",
+      "https://auth.pintpath.au:443",
+      "https://user@auth.pintpath.au",
+    ]) {
+      let error: unknown;
+      try {
+        assertExactSupabaseOrigin(candidate, approved, "SUPABASE_URL");
+      } catch (cause) {
+        error = cause;
+      }
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).not.toContain(candidate);
+    }
+  });
 });
 
 describe("bounded Supabase fetch", () => {
@@ -32,6 +107,7 @@ describe("bounded Supabase fetch", () => {
     await expect(boundedFetch("https://project.supabase.co/storage/v1/bucket"))
       .rejects.toMatchObject({ name: "TimeoutError" });
     expect(underlyingFetch).toHaveBeenCalledTimes(1);
+    expect(underlyingFetch.mock.calls[0]?.[1]?.redirect).toBe("error");
     expect(underlyingFetch.mock.calls[0]?.[1]?.signal).toMatchObject({ aborted: true });
   });
 
@@ -39,6 +115,7 @@ describe("bounded Supabase fetch", () => {
     "removes only the duplicated opaque API-key bearer for %s",
     async (apiKey) => {
       let receivedHeaders: Headers | null = null;
+      let receivedRedirect: RequestRedirect | undefined;
       const originalHeaders = new Headers({
         apikey: apiKey,
         authorization: `Bearer ${apiKey}`,
@@ -46,6 +123,7 @@ describe("bounded Supabase fetch", () => {
       });
       const underlyingFetch = vi.fn(async (_input, init) => {
         receivedHeaders = new Headers(init?.headers);
+        receivedRedirect = init?.redirect;
         return new Response(null, { status: 204 });
       }) as typeof fetch;
       const awareFetch = createSupabaseApiKeyAwareFetch(apiKey, underlyingFetch);
@@ -57,6 +135,7 @@ describe("bounded Supabase fetch", () => {
       expect(receivedHeaders!.get("apikey")).toBe(apiKey);
       expect(receivedHeaders!.has("authorization")).toBe(false);
       expect(receivedHeaders!.get("x-request-marker")).toBe("fixture");
+      expect(receivedRedirect).toBe("error");
       expect(originalHeaders.get("authorization")).toBe(`Bearer ${apiKey}`);
     },
   );
@@ -64,8 +143,10 @@ describe("bounded Supabase fetch", () => {
   it("preserves a distinct user-session bearer for opaque API keys", async () => {
     const sessionJwt = "user-session-jwt";
     let receivedHeaders: Headers | null = null;
+    let receivedRedirect: RequestRedirect | undefined;
     const underlyingFetch = vi.fn(async (_input, init) => {
       receivedHeaders = new Headers(init?.headers);
+      receivedRedirect = init?.redirect;
       return new Response(null, { status: 204 });
     }) as typeof fetch;
     const awareFetch = createSupabaseApiKeyAwareFetch(
@@ -82,12 +163,15 @@ describe("bounded Supabase fetch", () => {
 
     expect(receivedHeaders!.get("apikey")).toBe(publishableApiKey);
     expect(receivedHeaders!.get("authorization")).toBe(`Bearer ${sessionJwt}`);
+    expect(receivedRedirect).toBe("error");
   });
 
   it("preserves legacy JWT API-key bearer behavior", async () => {
     let receivedHeaders: Headers | null = null;
+    let receivedRedirect: RequestRedirect | undefined;
     const underlyingFetch = vi.fn(async (_input, init) => {
       receivedHeaders = new Headers(init?.headers);
+      receivedRedirect = init?.redirect;
       return new Response(null, { status: 204 });
     }) as typeof fetch;
     const awareFetch = createSupabaseApiKeyAwareFetch(
@@ -106,6 +190,7 @@ describe("bounded Supabase fetch", () => {
     expect(receivedHeaders!.get("authorization")).toBe(
       `Bearer ${legacyApiKey}`,
     );
+    expect(receivedRedirect).toBe("error");
   });
 
   it("applies opaque-key stripping to Request headers without mutating the Request", async () => {
@@ -138,10 +223,10 @@ describe("bounded Supabase fetch", () => {
   });
 
   it("uses apikey-only opaque-key authentication across REST, Auth admin, and Storage", async () => {
-    const calls: Array<{ url: string; headers: Headers }> = [];
+    const calls: Array<{ url: string; headers: Headers; redirect?: RequestRedirect }> = [];
     const underlyingFetch: typeof fetch = async (input, init) => {
       const url = String(input);
-      calls.push({ url, headers: new Headers(init?.headers) });
+      calls.push({ url, headers: new Headers(init?.headers), redirect: init?.redirect });
       if (url.includes("/rest/v1/")) {
         return new Response("[]", {
           status: 200,
@@ -186,6 +271,7 @@ describe("bounded Supabase fetch", () => {
     for (const call of calls) {
       expect(call.headers.get("apikey")).toBe(secretApiKey);
       expect(call.headers.has("authorization")).toBe(false);
+      expect(call.redirect).toBe("error");
     }
   });
 

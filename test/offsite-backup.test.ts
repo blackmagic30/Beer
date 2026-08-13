@@ -17,9 +17,15 @@ import {
   scheduleOffsiteBackups,
 } from "../src/lib/offsite-backup.js";
 import {
+  OPERATIONAL_OFFSITE_BACKUP_BUCKET,
+  OPERATIONAL_OFFSITE_SUPABASE_ORIGIN,
+  PRODUCTION_SUPABASE_AUTH_ORIGIN,
+} from "../src/lib/supabase-key-format.js";
+import {
   isCanonicalProductionRuntime,
   resolveAccountDeletionLedgerRuntimeConfig,
 } from "../src/lib/deployment-environment.js";
+import { runBackupDataOffsiteCli } from "../scripts/backup-data-offsite.js";
 
 interface FakeObject {
   bytes: Buffer;
@@ -54,8 +60,8 @@ class FakeStorageProject {
               id: name,
               name,
               public: false,
-              file_size_limit: name === "pintpath-backups" ? project.backupFileSizeLimit : 8 * 1024 * 1024,
-              allowed_mime_types: name === "pintpath-backups"
+              file_size_limit: name === OPERATIONAL_OFFSITE_BACKUP_BUCKET ? project.backupFileSizeLimit : 8 * 1024 * 1024,
+              allowed_mime_types: name === OPERATIONAL_OFFSITE_BACKUP_BUCKET
                 ? [
                   "application/json", "application/octet-stream", "application/pdf",
                   "image/jpeg", "image/png", "image/webp", "image/heic", "image/heif",
@@ -152,6 +158,8 @@ class FakeStorageProject {
 }
 
 const roots: string[] = [];
+const SOURCE_SERVER_KEY = ["sb", "secret", "source_boundary_abcdefghijkl"].join("_");
+const DESTINATION_SERVER_KEY = ["sb", "secret", "destination_boundary_abcdefgh"].join("_");
 
 function immutableTombstonePath(tombstone: {
   requestId: string;
@@ -219,6 +227,33 @@ function makeFreshDatabase(root: string): string {
 }
 
 describe("off-site backup durability", () => {
+  it("never reflects a provider error or server secret through the backup CLI", async () => {
+    const sourceKey = `sb_secret_${"s".repeat(32)}`;
+    const destinationKey = `sb_secret_${"d".repeat(32)}`;
+    const output: string[] = [];
+    const runBackup = vi.fn(async () => {
+      throw new Error(`provider echoed ${destinationKey}`);
+    });
+
+    await expect(runBackupDataOffsiteCli({
+      env: {
+        DATABASE_PATH: "/private/pint-path.sqlite",
+        SUPABASE_URL: PRODUCTION_SUPABASE_AUTH_ORIGIN,
+        SUPABASE_SERVICE_ROLE_KEY: sourceKey,
+        OFFSITE_BACKUP_SUPABASE_URL: OPERATIONAL_OFFSITE_SUPABASE_ORIGIN,
+        OFFSITE_BACKUP_SERVICE_ROLE_KEY: destinationKey,
+      },
+      assertMutationAllowed: vi.fn(),
+      runBackup,
+      writeOutput: (value) => output.push(value),
+    })).resolves.toBe(1);
+
+    expect(runBackup).toHaveBeenCalledTimes(1);
+    expect(output.join(""))
+      .toBe(`${JSON.stringify({ ok: false, failureCode: "backup_failed" }, null, 2)}\n`);
+    expect(output.join("")).not.toContain(destinationKey);
+  });
+
   it("permits automatic backup writes only from the canonical Railway environment", () => {
     expect(isCanonicalProductionRuntime({
       nodeEnv: "production",
@@ -249,7 +284,7 @@ describe("off-site backup durability", () => {
       sourceSupabaseUrl: "https://production-source.supabase.co",
       destinationSupabaseUrl: "https://production-backup.supabase.co",
       destinationServiceRoleKey: "must-not-be-used-from-staging",
-      bucketName: "pintpath-backups",
+      bucketName: OPERATIONAL_OFFSITE_BACKUP_BUCKET,
       lastSuccessfulAt: null,
       maxFreshnessHours: 26,
       required: false,
@@ -265,10 +300,10 @@ describe("off-site backup durability", () => {
     const complete = {
       nodeEnv: "production",
       railwayEnvironmentName: "production",
-      sourceSupabaseUrl: "https://source.supabase.co",
-      destinationSupabaseUrl: "https://backup.supabase.co",
+      sourceSupabaseUrl: PRODUCTION_SUPABASE_AUTH_ORIGIN,
+      destinationSupabaseUrl: OPERATIONAL_OFFSITE_SUPABASE_ORIGIN,
       destinationServiceRoleKey: "fixture-destination-key",
-      bucketName: "pintpath-backups",
+      bucketName: OPERATIONAL_OFFSITE_BACKUP_BUCKET,
     };
     expect(resolveAccountDeletionLedgerRuntimeConfig(complete)).toEqual({
       sourceSupabaseUrl: complete.sourceSupabaseUrl,
@@ -290,7 +325,7 @@ describe("off-site backup durability", () => {
     })).toBeNull();
     expect(resolveAccountDeletionLedgerRuntimeConfig({
       ...complete,
-      destinationSupabaseUrl: "https://SOURCE.supabase.co/",
+      destinationSupabaseUrl: `${complete.sourceSupabaseUrl}/`,
     })).toBeNull();
     expect(resolveAccountDeletionLedgerRuntimeConfig({
       ...complete,
@@ -307,10 +342,10 @@ describe("off-site backup durability", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const readiness = await probeOffsiteBackupReadiness({
-      sourceSupabaseUrl: "https://readiness-source.supabase.co",
-      destinationSupabaseUrl: "https://readiness-timeout-destination.supabase.co",
-      destinationServiceRoleKey: "destination-key",
-      bucketName: "readiness-timeout-bucket",
+      sourceSupabaseUrl: PRODUCTION_SUPABASE_AUTH_ORIGIN,
+      destinationSupabaseUrl: OPERATIONAL_OFFSITE_SUPABASE_ORIGIN,
+      destinationServiceRoleKey: DESTINATION_SERVER_KEY,
+      bucketName: OPERATIONAL_OFFSITE_BACKUP_BUCKET,
       lastSuccessfulAt: new Date().toISOString(),
       maxFreshnessHours: 26,
       required: true,
@@ -332,10 +367,10 @@ describe("off-site backup durability", () => {
     });
 
     const readiness = await probeOffsiteBackupReadiness({
-      sourceSupabaseUrl: "https://serving-source.supabase.co",
-      destinationSupabaseUrl: "https://serving-backup.supabase.co",
-      destinationServiceRoleKey: "destination-key",
-      bucketName: "pintpath-backups",
+      sourceSupabaseUrl: PRODUCTION_SUPABASE_AUTH_ORIGIN,
+      destinationSupabaseUrl: OPERATIONAL_OFFSITE_SUPABASE_ORIGIN,
+      destinationServiceRoleKey: DESTINATION_SERVER_KEY,
+      bucketName: OPERATIONAL_OFFSITE_BACKUP_BUCKET,
       lastSuccessfulAt: new Date().toISOString(),
       maxFreshnessHours: 26,
       required: true,
@@ -353,10 +388,10 @@ describe("off-site backup durability", () => {
 
   it("still fails serving readiness when the last scheduled backup is stale", async () => {
     const readiness = await probeOffsiteBackupReadiness({
-      sourceSupabaseUrl: "https://stale-source.supabase.co",
-      destinationSupabaseUrl: "https://stale-backup.supabase.co",
-      destinationServiceRoleKey: "destination-key",
-      bucketName: "pintpath-backups",
+      sourceSupabaseUrl: PRODUCTION_SUPABASE_AUTH_ORIGIN,
+      destinationSupabaseUrl: OPERATIONAL_OFFSITE_SUPABASE_ORIGIN,
+      destinationServiceRoleKey: DESTINATION_SERVER_KEY,
+      bucketName: OPERATIONAL_OFFSITE_BACKUP_BUCKET,
       lastSuccessfulAt: new Date(Date.now() - 27 * 60 * 60 * 1000).toISOString(),
       maxFreshnessHours: 26,
       required: true,
@@ -380,11 +415,11 @@ describe("off-site backup durability", () => {
     await expect(runOffsiteBackup({
       databasePath: path.join(root, "unused.sqlite"),
       evidencePath: path.join(root, "unused-evidence"),
-      sourceSupabaseUrl: "https://backup-timeout-source.supabase.co",
-      sourceServiceRoleKey: "source-key",
-      destinationSupabaseUrl: "https://backup-timeout-destination.supabase.co",
-      destinationServiceRoleKey: "destination-key",
-      bucketName: "pintpath-backups",
+      sourceSupabaseUrl: PRODUCTION_SUPABASE_AUTH_ORIGIN,
+      sourceServiceRoleKey: SOURCE_SERVER_KEY,
+      destinationSupabaseUrl: OPERATIONAL_OFFSITE_SUPABASE_ORIGIN,
+      destinationServiceRoleKey: DESTINATION_SERVER_KEY,
+      bucketName: OPERATIONAL_OFFSITE_BACKUP_BUCKET,
       retentionDays: 30,
       requestTimeoutMs: 10,
     })).rejects.toThrow();
@@ -398,11 +433,11 @@ describe("off-site backup durability", () => {
     const scheduler = scheduleOffsiteBackups({
       databasePath: "/unused.sqlite",
       evidencePath: "/unused-evidence",
-      sourceSupabaseUrl: "https://source.supabase.co",
-      sourceServiceRoleKey: "source-key",
-      destinationSupabaseUrl: "https://backup.supabase.co",
-      destinationServiceRoleKey: "destination-key",
-      bucketName: "pintpath-backups",
+      sourceSupabaseUrl: PRODUCTION_SUPABASE_AUTH_ORIGIN,
+      sourceServiceRoleKey: SOURCE_SERVER_KEY,
+      destinationSupabaseUrl: OPERATIONAL_OFFSITE_SUPABASE_ORIGIN,
+      destinationServiceRoleKey: DESTINATION_SERVER_KEY,
+      bucketName: OPERATIONAL_OFFSITE_BACKUP_BUCKET,
       retentionDays: 30,
       intervalHours: 24,
       acquireLease: () => {
@@ -428,10 +463,10 @@ describe("off-site backup durability", () => {
       databasePath: "/unused.sqlite",
       evidencePath: "/unused-evidence",
       sourceSupabaseUrl: "https://same.supabase.co",
-      sourceServiceRoleKey: "source-key",
+      sourceServiceRoleKey: SOURCE_SERVER_KEY,
       destinationSupabaseUrl: "https://same.supabase.co",
-      destinationServiceRoleKey: "destination-key",
-      bucketName: "pintpath-backups",
+      destinationServiceRoleKey: DESTINATION_SERVER_KEY,
+      bucketName: OPERATIONAL_OFFSITE_BACKUP_BUCKET,
       retentionDays: 30,
       intervalHours: 24,
       acquireLease: () => true,
@@ -452,6 +487,42 @@ describe("off-site backup durability", () => {
     await scheduler.stop();
   });
 
+  it("exact-scrubs configured keys from adjacent provider text before status persistence or logging", async () => {
+    const statuses: Array<{ state: string; error?: string }> = [];
+    const logLines: string[] = [];
+    const errorSpy = vi.spyOn(console, "error").mockImplementation((value) => {
+      logLines.push(String(value));
+    });
+    const scheduler = scheduleOffsiteBackups({
+      databasePath: "/unused.sqlite",
+      evidencePath: "/unused-evidence",
+      sourceSupabaseUrl: PRODUCTION_SUPABASE_AUTH_ORIGIN,
+      sourceServiceRoleKey: SOURCE_SERVER_KEY,
+      destinationSupabaseUrl: OPERATIONAL_OFFSITE_SUPABASE_ORIGIN,
+      destinationServiceRoleKey: DESTINATION_SERVER_KEY,
+      bucketName: OPERATIONAL_OFFSITE_BACKUP_BUCKET,
+      retentionDays: 30,
+      intervalHours: 24,
+      clientFactory: () => {
+        throw new Error(`provider echoed prefix${DESTINATION_SERVER_KEY}suffix`);
+      },
+      onStatus: (status) => {
+        statuses.push(status);
+      },
+    });
+
+    await expect(scheduler.runNow()).resolves.toBeUndefined();
+    await scheduler.stop();
+    errorSpy.mockRestore();
+
+    expect(statuses).toHaveLength(2);
+    expect(statuses[1]).toMatchObject({
+      state: "failed",
+      error: "provider echoed prefix[REDACTED]suffix",
+    });
+    expect(JSON.stringify({ statuses, logLines })).not.toContain(DESTINATION_SERVER_KEY);
+  });
+
   it("drains an asynchronous status callback before stop resolves", async () => {
     let releaseStatus: (() => void) | undefined;
     let runningStatusStarted = false;
@@ -459,10 +530,10 @@ describe("off-site backup durability", () => {
       databasePath: "/unused.sqlite",
       evidencePath: "/unused-evidence",
       sourceSupabaseUrl: "https://same.supabase.co",
-      sourceServiceRoleKey: "source-key",
+      sourceServiceRoleKey: SOURCE_SERVER_KEY,
       destinationSupabaseUrl: "https://same.supabase.co",
-      destinationServiceRoleKey: "destination-key",
-      bucketName: "pintpath-backups",
+      destinationServiceRoleKey: DESTINATION_SERVER_KEY,
+      bucketName: OPERATIONAL_OFFSITE_BACKUP_BUCKET,
       retentionDays: 30,
       intervalHours: 24,
       acquireLease: () => true,
@@ -491,19 +562,19 @@ describe("off-site backup durability", () => {
     const source = new FakeStorageProject();
     const destination = new FakeStorageProject();
     source.bucket("beermap-source-evidence");
-    const destinationBucket = destination.bucket("pintpath-backups");
+    const destinationBucket = destination.bucket(OPERATIONAL_OFFSITE_BACKUP_BUCKET);
     const clients = new Map([
-      ["https://source.supabase.co", source.client()],
-      ["https://backup.supabase.co", destination.client()],
+      [PRODUCTION_SUPABASE_AUTH_ORIGIN, source.client()],
+      [OPERATIONAL_OFFSITE_SUPABASE_ORIGIN, destination.client()],
     ]);
     const config = {
       databasePath: makeFreshDatabase(root),
       evidencePath: path.join(root, "legacy-evidence"),
-      sourceSupabaseUrl: "https://source.supabase.co",
-      sourceServiceRoleKey: "source-key",
-      destinationSupabaseUrl: "https://backup.supabase.co",
-      destinationServiceRoleKey: "destination-key",
-      bucketName: "pintpath-backups",
+      sourceSupabaseUrl: PRODUCTION_SUPABASE_AUTH_ORIGIN,
+      sourceServiceRoleKey: SOURCE_SERVER_KEY,
+      destinationSupabaseUrl: OPERATIONAL_OFFSITE_SUPABASE_ORIGIN,
+      destinationServiceRoleKey: DESTINATION_SERVER_KEY,
+      bucketName: OPERATIONAL_OFFSITE_BACKUP_BUCKET,
       retentionDays: 30,
       clientFactory: (url: string) => clients.get(url)!,
     };
@@ -571,29 +642,29 @@ describe("off-site backup durability", () => {
     const source = new FakeStorageProject();
     const destination = new FakeStorageProject();
     source.bucket("beermap-source-evidence");
-    destination.bucket("pintpath-backups");
+    destination.bucket(OPERATIONAL_OFFSITE_BACKUP_BUCKET);
     const clients = new Map([
-      ["https://source.supabase.co", source.client()],
-      ["https://backup.supabase.co", destination.client()],
+      [PRODUCTION_SUPABASE_AUTH_ORIGIN, source.client()],
+      [OPERATIONAL_OFFSITE_SUPABASE_ORIGIN, destination.client()],
     ]);
     const config = {
       databasePath: makeFreshDatabase(root),
       evidencePath: path.join(root, "legacy-evidence"),
-      sourceSupabaseUrl: "https://source.supabase.co",
-      sourceServiceRoleKey: "source-key",
-      destinationSupabaseUrl: "https://backup.supabase.co",
-      destinationServiceRoleKey: "destination-key",
-      bucketName: "pintpath-backups",
+      sourceSupabaseUrl: PRODUCTION_SUPABASE_AUTH_ORIGIN,
+      sourceServiceRoleKey: SOURCE_SERVER_KEY,
+      destinationSupabaseUrl: OPERATIONAL_OFFSITE_SUPABASE_ORIGIN,
+      destinationServiceRoleKey: DESTINATION_SERVER_KEY,
+      bucketName: OPERATIONAL_OFFSITE_BACKUP_BUCKET,
       retentionDays: 30,
       clientFactory: (url: string) => clients.get(url)!,
     };
 
     await runOffsiteBackup(config);
     const firstCurrent = Buffer.from(
-      destination.bucket("pintpath-backups").get("_control/account-deletion-tombstones.json")!.bytes,
+      destination.bucket(OPERATIONAL_OFFSITE_BACKUP_BUCKET).get("_control/account-deletion-tombstones.json")!.bytes,
     );
     const firstCheckpoint = Buffer.from(
-      destination.bucket("pintpath-backups").get("_control/account-deletion-ledger-checkpoint.json")!.bytes,
+      destination.bucket(OPERATIONAL_OFFSITE_BACKUP_BUCKET).get("_control/account-deletion-ledger-checkpoint.json")!.bytes,
     );
     const database = createDatabase(config.databasePath);
     const repository = new BusinessRepository(database);
@@ -625,10 +696,10 @@ describe("off-site backup durability", () => {
       deletionTombstones: 1,
     });
 
-    const currentLedger = destination.bucket("pintpath-backups").get(
+    const currentLedger = destination.bucket(OPERATIONAL_OFFSITE_BACKUP_BUCKET).get(
       "_control/account-deletion-tombstones.json",
     )!.bytes;
-    const currentCheckpoint = destination.bucket("pintpath-backups").get(
+    const currentCheckpoint = destination.bucket(OPERATIONAL_OFFSITE_BACKUP_BUCKET).get(
       "_control/account-deletion-ledger-checkpoint.json",
     )!.bytes;
     expect(currentLedger).not.toEqual(firstCurrent);
@@ -659,7 +730,7 @@ describe("off-site backup durability", () => {
     const source = new FakeStorageProject();
     const destination = new FakeStorageProject();
     const sourceBucket = source.bucket("beermap-source-evidence");
-    const destinationBucket = destination.bucket("pintpath-backups");
+    const destinationBucket = destination.bucket(OPERATIONAL_OFFSITE_BACKUP_BUCKET);
     const pdfBytes = Buffer.from("%PDF-private-menu");
     sourceBucket.set("storage-owner/menu.pdf", { bytes: pdfBytes, contentType: "application/pdf" });
     source.mutateSourceOnSecondRootList = () => {
@@ -689,18 +760,18 @@ describe("off-site backup durability", () => {
     });
     const databasePath = makeDatabase(root, pdfBytes);
     const clients = new Map([
-      ["https://source.supabase.co", source.client()],
-      ["https://backup.supabase.co", destination.client()],
+      [PRODUCTION_SUPABASE_AUTH_ORIGIN, source.client()],
+      [OPERATIONAL_OFFSITE_SUPABASE_ORIGIN, destination.client()],
     ]);
 
     const result = await runOffsiteBackup({
       databasePath,
       evidencePath: path.join(root, "legacy-evidence"),
-      sourceSupabaseUrl: "https://source.supabase.co",
-      sourceServiceRoleKey: "source-key",
-      destinationSupabaseUrl: "https://backup.supabase.co",
-      destinationServiceRoleKey: "destination-key",
-      bucketName: "pintpath-backups",
+      sourceSupabaseUrl: PRODUCTION_SUPABASE_AUTH_ORIGIN,
+      sourceServiceRoleKey: SOURCE_SERVER_KEY,
+      destinationSupabaseUrl: OPERATIONAL_OFFSITE_SUPABASE_ORIGIN,
+      destinationServiceRoleKey: DESTINATION_SERVER_KEY,
+      bucketName: OPERATIONAL_OFFSITE_BACKUP_BUCKET,
       retentionDays: 30,
       clientFactory: (url) => clients.get(url)!,
     });
@@ -743,10 +814,10 @@ describe("off-site backup durability", () => {
       "storage-owner",
     ]);
     const deletionConfig = {
-      sourceSupabaseUrl: "https://source.supabase.co",
-      destinationSupabaseUrl: "https://backup.supabase.co",
-      destinationServiceRoleKey: "destination-key",
-      bucketName: "pintpath-backups",
+      sourceSupabaseUrl: PRODUCTION_SUPABASE_AUTH_ORIGIN,
+      destinationSupabaseUrl: OPERATIONAL_OFFSITE_SUPABASE_ORIGIN,
+      destinationServiceRoleKey: DESTINATION_SERVER_KEY,
+      bucketName: OPERATIONAL_OFFSITE_BACKUP_BUCKET,
       clientFactory: (url: string) => clients.get(url)!,
     };
     const tombstone = {
@@ -799,19 +870,55 @@ describe("off-site backup durability", () => {
     expect([...destinationBucket.keys()].some((key) => key.startsWith("_readiness/"))).toBe(false);
   });
 
-  it("rejects a destination in the production Supabase project", async () => {
+  it("rejects unreviewed origins before client or filesystem access", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "pint-path-offsite-test-"));
     roots.push(root);
-    await expect(runOffsiteBackup({
+    const clientFactory = vi.fn(() => {
+      throw new Error("must not create a client for an unreviewed boundary");
+    });
+    const valid = {
       databasePath: path.join(root, "unused.sqlite"),
       evidencePath: path.join(root, "evidence"),
-      sourceSupabaseUrl: "https://same-project.supabase.co/",
-      sourceServiceRoleKey: "source-key",
-      destinationSupabaseUrl: "https://SAME-PROJECT.supabase.co",
-      destinationServiceRoleKey: "destination-key",
-      bucketName: "pintpath-backups",
+      sourceSupabaseUrl: PRODUCTION_SUPABASE_AUTH_ORIGIN,
+      sourceServiceRoleKey: SOURCE_SERVER_KEY,
+      destinationSupabaseUrl: OPERATIONAL_OFFSITE_SUPABASE_ORIGIN,
+      destinationServiceRoleKey: DESTINATION_SERVER_KEY,
+      bucketName: OPERATIONAL_OFFSITE_BACKUP_BUCKET,
       retentionDays: 30,
-    })).rejects.toThrow("different Supabase project/provider");
+      clientFactory,
+    };
+    for (const candidate of [
+      { ...valid, sourceSupabaseUrl: `${PRODUCTION_SUPABASE_AUTH_ORIGIN}/` },
+      { ...valid, destinationSupabaseUrl: "https://attacker.invalid" },
+      { ...valid, sourceServiceRoleKey: "sb_publishable_wrong_slot_abcdefghij" },
+      { ...valid, destinationServiceRoleKey: `${DESTINATION_SERVER_KEY}\n` },
+      { ...valid, bucketName: ` ${OPERATIONAL_OFFSITE_BACKUP_BUCKET}` },
+      { ...valid, sourceEvidenceBucketName: "other-private-bucket" },
+    ]) {
+      await expect(runOffsiteBackup(candidate)).rejects.toThrow();
+    }
+    expect(clientFactory).not.toHaveBeenCalled();
+    expect(fs.existsSync(valid.databasePath)).toBe(false);
+  });
+
+  it("reports invalid required readiness configuration without creating a client", async () => {
+    const clientFactory = vi.fn(() => {
+      throw new Error("must not create a client for invalid readiness configuration");
+    });
+    await expect(probeOffsiteBackupReadiness({
+      sourceSupabaseUrl: PRODUCTION_SUPABASE_AUTH_ORIGIN,
+      destinationSupabaseUrl: "https://attacker.invalid",
+      destinationServiceRoleKey: DESTINATION_SERVER_KEY,
+      bucketName: OPERATIONAL_OFFSITE_BACKUP_BUCKET,
+      lastSuccessfulAt: new Date().toISOString(),
+      maxFreshnessHours: 26,
+      required: true,
+      clientFactory,
+    })).resolves.toMatchObject({
+      status: "failed",
+      error: "destination_configuration_invalid",
+    });
+    expect(clientFactory).not.toHaveBeenCalled();
   });
 
   it("rejects the legacy 100 MiB destination cap before a growing SQLite snapshot is uploaded", async () => {
@@ -820,20 +927,20 @@ describe("off-site backup durability", () => {
     const source = new FakeStorageProject();
     const destination = new FakeStorageProject();
     source.bucket("beermap-source-evidence");
-    destination.bucket("pintpath-backups");
+    destination.bucket(OPERATIONAL_OFFSITE_BACKUP_BUCKET);
     destination.backupFileSizeLimit = 100 * 1024 * 1024;
     const clients = new Map([
-      ["https://source.supabase.co", source.client()],
-      ["https://backup.supabase.co", destination.client()],
+      [PRODUCTION_SUPABASE_AUTH_ORIGIN, source.client()],
+      [OPERATIONAL_OFFSITE_SUPABASE_ORIGIN, destination.client()],
     ]);
     await expect(runOffsiteBackup({
       databasePath: path.join(root, "larger-than-100-mib.sqlite"),
       evidencePath: path.join(root, "evidence"),
-      sourceSupabaseUrl: "https://source.supabase.co",
-      sourceServiceRoleKey: "source-key",
-      destinationSupabaseUrl: "https://backup.supabase.co",
-      destinationServiceRoleKey: "destination-key",
-      bucketName: "pintpath-backups",
+      sourceSupabaseUrl: PRODUCTION_SUPABASE_AUTH_ORIGIN,
+      sourceServiceRoleKey: SOURCE_SERVER_KEY,
+      destinationSupabaseUrl: OPERATIONAL_OFFSITE_SUPABASE_ORIGIN,
+      destinationServiceRoleKey: DESTINATION_SERVER_KEY,
+      bucketName: OPERATIONAL_OFFSITE_BACKUP_BUCKET,
       retentionDays: 30,
       clientFactory: (url) => clients.get(url)!,
     })).rejects.toThrow("must not impose a bucket-level object cap");

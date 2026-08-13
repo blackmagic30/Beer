@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# The logical backup receipt is only meaningful when every archive operation is
-# performed by the reviewed PostgreSQL 17 client. The hosted runner's default
-# client can lag the service, so install one exact PGDG package through a
-# repository key whose bytes are independently pinned here.
+# The CI behavior observation must use reviewed PostgreSQL 17 executable bytes.
+# The hosted runner's default client can lag the service, so install one exact
+# PGDG package through a repository key whose bytes are independently pinned.
+# This does not verify native shared-library/runtime closure and cannot
+# establish production tool authority.
 readonly EXPECTED_KEY_SHA256="0144068502a1eddd2a0280ede10ef607d1ec592ce819940991203941564e8e76"
 readonly EXPECTED_PACKAGE_VERSION="17.10-1.pgdg24.04+1"
 readonly EXPECTED_PACKAGE_SHA256="e8806cd10a1c9ce453ef5feec242c6f9ba1229ce31ea862a6335277eae027987"
-readonly EXPECTED_TOOL_VERSION="17.10 (Ubuntu 17.10-1.pgdg24.04+1)"
+readonly EXPECTED_PG_DUMP_VERSION="17.10 (Ubuntu 17.10-1.pgdg24.04+1)"
+readonly EXPECTED_PG_RESTORE_VERSION="17.10 (Ubuntu 17.10-1.pgdg24.04+1)"
 readonly EXPECTED_PG_DUMP_SHA256="8cca9f4a2380df3cfa47704e13722059fd88291451b6c7be3642081db59d743b"
 readonly EXPECTED_PG_RESTORE_SHA256="1b58a9c383ccee5f30c8a09d48ba0d50826a6841904430955295e1a6a6e7f34d"
+readonly PG_BIN="/usr/lib/postgresql/17/bin"
 readonly PG_DUMP="/usr/lib/postgresql/17/bin/pg_dump"
 readonly PG_RESTORE="/usr/lib/postgresql/17/bin/pg_restore"
 readonly KEYRING="/usr/share/keyrings/pintpath-postgresql-archive-keyring.gpg"
@@ -121,12 +124,13 @@ sudo env DEBIAN_FRONTEND=noninteractive apt-get install -qq -y --no-install-reco
   "$package_deb"
 
 [[ "$(dpkg-query -W -f='${Version}' postgresql-client-17)" == "$EXPECTED_PACKAGE_VERSION" ]] || fail
+[[ -d "$PG_BIN" && ! -L "$PG_BIN" && "$(realpath -e "$PG_BIN")" == "$PG_BIN" ]] || fail
 [[ -x "$PG_DUMP" && ! -L "$PG_DUMP" && "$(realpath -e "$PG_DUMP")" == "$PG_DUMP" ]] || fail
 [[ -x "$PG_RESTORE" && ! -L "$PG_RESTORE" && "$(realpath -e "$PG_RESTORE")" == "$PG_RESTORE" ]] || fail
 [[ "$(stat -c '%u:%g:%a:%h' "$PG_DUMP")" == "0:0:755:1" ]] || fail
 [[ "$(stat -c '%u:%g:%a:%h' "$PG_RESTORE")" == "0:0:755:1" ]] || fail
-[[ "$($PG_DUMP --version)" == "pg_dump (PostgreSQL) $EXPECTED_TOOL_VERSION" ]] || fail
-[[ "$($PG_RESTORE --version)" == "pg_restore (PostgreSQL) $EXPECTED_TOOL_VERSION" ]] || fail
+[[ "$($PG_DUMP --version)" == "pg_dump (PostgreSQL) $EXPECTED_PG_DUMP_VERSION" ]] || fail
+[[ "$($PG_RESTORE --version)" == "pg_restore (PostgreSQL) $EXPECTED_PG_RESTORE_VERSION" ]] || fail
 package_verification=$(dpkg -V postgresql-client-17) || fail
 [[ -z "$package_verification" ]] || fail
 printf '%s  %s\n' "$EXPECTED_PG_DUMP_SHA256" "$PG_DUMP" \
@@ -141,4 +145,9 @@ printf '%s=%s\n' \
   "PINTPATH_POSTGRES_LOGICAL_RESTORE_TEST_PG_DUMP_SHA256" "$EXPECTED_PG_DUMP_SHA256" \
   "PINTPATH_POSTGRES_LOGICAL_RESTORE_TEST_PG_RESTORE" "$PG_RESTORE" \
   "PINTPATH_POSTGRES_LOGICAL_RESTORE_TEST_PG_RESTORE_SHA256" "$EXPECTED_PG_RESTORE_SHA256" \
+  "PINTPATH_POSTGRES_TOOL_AUTHORITY_V4_TEST_PG_BIN" "$PG_BIN" \
+  "PINTPATH_POSTGRES_TOOL_AUTHORITY_V4_TEST_PG_DUMP_VERSION" "$EXPECTED_PG_DUMP_VERSION" \
+  "PINTPATH_POSTGRES_TOOL_AUTHORITY_V4_TEST_PG_DUMP_SHA256" "$EXPECTED_PG_DUMP_SHA256" \
+  "PINTPATH_POSTGRES_TOOL_AUTHORITY_V4_TEST_PG_RESTORE_VERSION" "$EXPECTED_PG_RESTORE_VERSION" \
+  "PINTPATH_POSTGRES_TOOL_AUTHORITY_V4_TEST_PG_RESTORE_SHA256" "$EXPECTED_PG_RESTORE_SHA256" \
   >> "$github_env"

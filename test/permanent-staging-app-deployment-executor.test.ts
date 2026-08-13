@@ -15,6 +15,7 @@ import {
   PERMANENT_STAGING_APP_DEPLOYMENT_EXECUTOR_STATE,
   PERMANENT_STAGING_APP_DEPLOYMENT_LOCK,
   PERMANENT_STAGING_APP_DEPLOYMENT_OPERATION,
+  PERMANENT_STAGING_APP_DEPLOYMENT_POLICY_SCHEMA,
   parsePermanentStagingAppDeploymentPolicy,
   runPermanentStagingAppDeploymentExecutor,
 } from "../scripts/lib/permanent-staging-app-deployment-executor.js";
@@ -41,6 +42,12 @@ describe("permanent staging app deployment executor", () => {
     expect(PERMANENT_STAGING_APP_DEPLOYMENT_EXECUTOR_STATE).toBe(
       "HARD_DISABLED_REVIEW_REQUIRED",
     );
+    expect(PERMANENT_STAGING_APP_DEPLOYMENT_POLICY_SCHEMA).toBe(
+      "pintpath-permanent-staging-app-deployment-policy/v2",
+    );
+    expect(PERMANENT_STAGING_APP_DEPLOYMENT_EXECUTOR_SCHEMA).toBe(
+      "pintpath-permanent-staging-app-deployment-executor/v2",
+    );
     expect(lock).toMatchObject({
       projectId: "48d8c6cd-1c66-4148-874b-20877f48e1a5",
       productionEnvironmentId: "13dab015-df74-45c6-b26f-69323daea99a",
@@ -56,15 +63,24 @@ describe("permanent staging app deployment executor", () => {
         railwayConfigSha256:
           "85dc659ebec2e0132092d917505d71678e92b8441b54bcefc80c6a082e3b967b",
         packageLockSha256:
-          "61f07b4a529dfed6624394719327b03032d9ad34bfe162f43131b6bdfcfc60ef",
+          "0978ac482e875707a478d0d970fbadb899b8448dc21893ddb0973b5e2f700ecf",
       },
       postflightContract: {
         applicationAttestationPolicySha256:
           "b056b175f981d7b51a9590943e209e82a0dfcbea650de7a4cb5ecf37a67bbdd1",
       },
       spendContract: {
-        reviewedRecurringStagingMonthlyUsd: 46.8,
-        maximumStagingMonthlyUsd: 50,
+        currency: "USD",
+        maximumRecurringStagingMonthlyCents: 5_000,
+        costPolicyReference: {
+          schemaVersion: "pintpath-permanent-staging-cost-policy/v1",
+          policyId: "pintpath-permanent-staging-recurring-cost",
+          relativePath: "ops/railway/permanent-staging-cost-policy.json",
+          sha256:
+            "895d5bdcfe0fb05d17b3fa7cab6c525a80f3beacf0ff0cbd1bafdb54c979c8ca",
+        },
+        preDeploymentCostReceiptRequired: true,
+        postDeploymentCostReceiptRequired: true,
         additionalUnapprovedSpendAllowed: false,
       },
     });
@@ -95,10 +111,13 @@ describe("permanent staging app deployment executor", () => {
     expect(sha256File(
       "ops/railway/permanent-staging-app-deployment-attestation-policy.json",
     )).toBe(lock.postflightContract.applicationAttestationPolicySha256);
+    expect(sha256File(lock.spendContract.costPolicyReference.relativePath))
+      .toBe(lock.spendContract.costPolicyReference.sha256);
     expect(Object.isFrozen(lock)).toBe(true);
     expect(Object.isFrozen(lock.writeContract)).toBe(true);
     expect(Object.isFrozen(lock.postflightContract.requiredRuntimeRoutes))
       .toBe(true);
+    expect(Object.isFrozen(lock.spendContract.costPolicyReference)).toBe(true);
   });
 
   it("forbids every adjacent Railway mutation and any unapproved spend", () => {
@@ -124,9 +143,16 @@ describe("permanent staging app deployment executor", () => {
     });
     expect(PERMANENT_STAGING_APP_DEPLOYMENT_LOCK.spendContract)
       .toMatchObject({
-        maximumStagingMonthlyUsd: 50,
+        currency: "USD",
+        maximumRecurringStagingMonthlyCents: 5_000,
+        preDeploymentCostReceiptRequired: true,
+        postDeploymentCostReceiptRequired: true,
         additionalUnapprovedSpendAllowed: false,
       });
+    expect(PERMANENT_STAGING_APP_DEPLOYMENT_LOCK.spendContract)
+      .not.toHaveProperty("reviewedRecurringStagingMonthlyUsd");
+    expect(PERMANENT_STAGING_APP_DEPLOYMENT_LOCK.spendContract)
+      .not.toHaveProperty("maximumStagingMonthlyUsd");
   });
 
   it("accepts only the exact canonical checked-in policy bytes", () => {
@@ -158,6 +184,7 @@ describe("permanent staging app deployment executor", () => {
     expect(Object.isFrozen(parsed!.writeContract)).toBe(true);
     expect(Object.isFrozen(parsed!.postflightContract)).toBe(true);
     expect(Object.isFrozen(parsed!.spendContract)).toBe(true);
+    expect(Object.isFrozen(parsed!.spendContract.costPolicyReference)).toBe(true);
   });
 
   it.each([
@@ -207,9 +234,9 @@ describe("permanent staging app deployment executor", () => {
     const source = PERMANENT_STAGING_APP_DEPLOYMENT_CANONICAL_POLICY_SOURCE
       .replace(
         '  "policyId":',
-        '  "schemaVersion": "pintpath-permanent-staging-app-deployment-policy/v1",\n  "policyId":',
+        '  "schemaVersion": "pintpath-permanent-staging-app-deployment-policy/v2",\n  "policyId":',
       );
-    expect(source.match(/"schemaVersion"/g)).toHaveLength(2);
+    expect(source.match(/^  "schemaVersion"/gm)).toHaveLength(2);
     expect(parsePermanentStagingAppDeploymentPolicy(source)).toBeNull();
   });
 
@@ -262,6 +289,8 @@ describe("permanent staging app deployment executor", () => {
         localSourceAuthorityExact: false,
         boundaryPreflightExact: false,
         targetPreflightExact: false,
+        preDeploymentCostReceiptExact: false,
+        costCeilingMaintained: false,
         durableIntentExact: false,
         localAuthorityReasserted: false,
         boundaryReasserted: false,
@@ -270,6 +299,7 @@ describe("permanent staging app deployment executor", () => {
         postflightAttempted: false,
         boundaryPostflightExact: false,
         targetPostflightExact: false,
+        postDeploymentCostReceiptExact: false,
         runtimeAttestationExact: false,
         collateralStateUnchanged: false,
         terminalEvidenceExact: false,

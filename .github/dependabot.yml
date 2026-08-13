@@ -18,6 +18,13 @@ updates:
         update-types:
           - minor
           - patch
+    ignore:
+      # Production and the locked sensitive-worker boundary remain reviewed
+      # against Node 22; do not propose incompatible Node type majors until the
+      # runtime contract is intentionally upgraded with them.
+      - dependency-name: "@types/node"
+        update-types:
+          - "version-update:semver-major"
     open-pull-requests-limit: 5
 
   - package-ecosystem: gradle

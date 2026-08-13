@@ -36,7 +36,7 @@ jobs:
           fi
 
       - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -44,11 +44,16 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version-file: .node-version
           cache: npm
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Prove the locked sensitive worker under the exact reviewed Node runtime
+        env:
+          PINTPATH_LOCKED_SENSITIVE_WORKER_TEST_REQUIRED: "true"
+        run: npx vitest run test/locked-sensitive-worker-boundary.test.ts --maxWorkers=1
 
       - name: Build, test, and scan
         run: npm run check
@@ -67,11 +72,14 @@ jobs:
         run: npm run test:db:postgres:backup:logical:worm:aws
 
   postgres-migration-integration:
+    needs: postgres-tool-runtime-closure-observation
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     services:
       postgres:
-        image: postgres:17.6-alpine
+        # Docker Hub Registry v2 manifest header and exact body SHA-256 were
+        # independently matched before this reviewed multi-architecture pin.
+        image: postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
         env:
           POSTGRES_DB: postgres
           POSTGRES_INITDB_ARGS: --auth-local=trust --auth-host=scram-sha-256
@@ -89,6 +97,14 @@ jobs:
       PUBLIC_BASE_URL: http://localhost:3000
       PINTPATH_POSTGRES_MIGRATION_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
       PINTPATH_POSTGRES_MIGRATION_TEST_REQUIRED: "true"
+      PINTPATH_POSTGRES_REVIEWED_PRICE_KERNEL_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+      PINTPATH_POSTGRES_REVIEWED_PRICE_KERNEL_TEST_REQUIRED: "true"
+      PINTPATH_POSTGRES_LOGICAL_STATE_V2_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+      PINTPATH_POSTGRES_LOGICAL_STATE_V2_TEST_REQUIRED: "true"
+      PINTPATH_POSTGRES_LOGICAL_BACKUP_V4_SOURCE_AUTHORITY_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+      PINTPATH_POSTGRES_LOGICAL_BACKUP_V4_SOURCE_AUTHORITY_TEST_REQUIRED: "true"
+      PINTPATH_POSTGRES_LOGICAL_PHYSICAL_SCHEMA_V4_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+      PINTPATH_POSTGRES_LOGICAL_PHYSICAL_SCHEMA_V4_TEST_REQUIRED: "true"
       PINTPATH_ACCOUNT_SESSION_POSTGRES_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
       PINTPATH_ACCOUNT_PROFILE_PREFERENCES_POSTGRES_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
       PINTPATH_ACTIVITY_AUDIT_POSTGRES_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
@@ -105,7 +121,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -113,7 +129,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version-file: .node-version
           cache: npm
 
       - name: Install dependencies
@@ -127,6 +143,18 @@ jobs:
 
       - name: Run real PostgreSQL 17 import, reconciliation, and reviewed-price planner no-write proof
         run: npx vitest run test/postgres-migration-target.integration.test.ts
+
+      - name: Run inert reviewed-price promotion kernel PostgreSQL 17 contract
+        run: npx vitest run test/postgres-reviewed-price-promotion-kernel.integration.test.ts
+
+      - name: Run logical-state v2 PostgreSQL 17 contract
+        run: npx vitest run test/postgres-logical-state-v2.integration.test.ts
+
+      - name: Run logical-backup V4 source-authority PostgreSQL 17 contract
+        run: npx vitest run test/postgres-logical-backup-v4-source-authority.integration.test.ts
+
+      - name: Run logical-backup V4 physical-schema PostgreSQL 17 contract
+        run: npx vitest run test/postgres-logical-physical-schema-v4.integration.test.ts --maxWorkers=1
 
       - name: Run verified logical offsite retrieval contract
         run: npx vitest run test/postgres-logical-offsite-retrieval.integration.test.ts
@@ -249,6 +277,40 @@ jobs:
       - name: Install pinned PostgreSQL 17 logical-backup client
         run: bash scripts/ci/install-postgresql-client-17
 
+      - name: Run mandatory V4 cross-OID scratch-restore mechanism observation
+        # This disposable round trip proves the data-only restore mechanics.
+        # It does not establish native runtime closure or operational V4 authority.
+        env:
+          PINTPATH_POSTGRES_LOGICAL_SCRATCH_RESTORE_V4_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+          PINTPATH_POSTGRES_LOGICAL_SCRATCH_RESTORE_V4_TEST_PG_BIN: /usr/lib/postgresql/17/bin
+          PINTPATH_POSTGRES_LOGICAL_SCRATCH_RESTORE_V4_TEST_REQUIRED: "true"
+        run: npx vitest run test/postgres-logical-scratch-restore-v4.integration.test.ts --maxWorkers=1
+
+      - name: Protect PostgreSQL HBA baseline for V4 behavior observation
+        env:
+          PINTPATH_CI_POSTGRES_CONTAINER_ID: ${{ job.services.postgres.id }}
+          PINTPATH_POSTGRES_TOOL_AUTHORITY_V4_TEST_DATABASE: pintpath_v4_tool_3e7a8c19d4f2
+          PINTPATH_POSTGRES_TOOL_AUTHORITY_V4_TEST_ROLE: pintpath_v4_backup_3e7a8c19d4f2
+        run: bash scripts/ci/postgres-tool-authority-v4-hba-fixture setup
+
+      - name: Run mandatory V4 PostgreSQL 17 authentication and raw-list behavior observation
+        # This disposable gate observes PG17 behavior only. It does not verify
+        # native runtime closure or establish production tool authority.
+        env:
+          PINTPATH_CI_POSTGRES_CONTAINER_ID: ${{ job.services.postgres.id }}
+          PINTPATH_POSTGRES_TOOL_AUTHORITY_V4_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+          PINTPATH_POSTGRES_TOOL_AUTHORITY_V4_TEST_DATABASE: pintpath_v4_tool_3e7a8c19d4f2
+          PINTPATH_POSTGRES_TOOL_AUTHORITY_V4_TEST_MODE: service
+          PINTPATH_POSTGRES_TOOL_AUTHORITY_V4_TEST_REQUIRED: "true"
+          PINTPATH_POSTGRES_TOOL_AUTHORITY_V4_TEST_ROLE: pintpath_v4_backup_3e7a8c19d4f2
+        run: npx vitest run test/postgres-tool-authority-v4-pg17.integration.test.ts --maxWorkers=1
+
+      - name: Restore and remove PostgreSQL HBA baseline after V4 behavior observation
+        if: always()
+        env:
+          PINTPATH_CI_POSTGRES_CONTAINER_ID: ${{ job.services.postgres.id }}
+        run: bash scripts/ci/postgres-tool-authority-v4-hba-fixture cleanup
+
       - name: Configure disposable fd12 PostgreSQL TLS fixture
         env:
           PINTPATH_CI_POSTGRES_CONTAINER_ID: ${{ job.services.postgres.id }}
@@ -270,13 +332,13 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
 
       - name: Setup Supabase CLI
-        uses: supabase/setup-cli@3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf # v2.1.1
+        uses: supabase/setup-cli@46f7f98c7f948ad727d22c1e67fab04c223a0520 # v3.0.0
         with:
           version: 2.109.1
 
@@ -301,3 +363,43 @@ jobs:
       - name: Stop isolated Supabase database
         if: always()
         run: supabase stop --no-backup
+
+  postgres-tool-runtime-closure-observation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify passive V4 PostgreSQL tool-runtime closure contract
+        run: npx vitest run test/postgres-tool-runtime-closure-v4.test.ts test/postgres-tool-runtime-closure-v4-registry.test.ts --maxWorkers=1
+
+      - name: Run mandatory exact OCI PostgreSQL 17 runtime observation
+        # This hashes and executes one exact disposable OCI runtime. It remains
+        # observation-only and grants no source, artifact, or production authority.
+        env:
+          PINTPATH_POSTGRES_TOOL_RUNTIME_CLOSURE_V4_TEST_DOCKER: /usr/bin/docker
+          PINTPATH_POSTGRES_TOOL_RUNTIME_CLOSURE_V4_TEST_EVIDENCE_PATH: ${{ runner.temp }}/pintpath-postgres-tool-runtime-closure-v4-observation.json
+          PINTPATH_POSTGRES_TOOL_RUNTIME_CLOSURE_V4_TEST_REQUIRED: "true"
+        run: npx vitest run test/postgres-tool-runtime-closure-v4.integration.test.ts --maxWorkers=1
+
+      - name: Retain exact OCI PostgreSQL 17 runtime observation
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pintpath-postgres-tool-runtime-closure-v4-observation
+          path: ${{ runner.temp }}/pintpath-postgres-tool-runtime-closure-v4-observation.json
+          if-no-files-found: error
+          retention-days: 14

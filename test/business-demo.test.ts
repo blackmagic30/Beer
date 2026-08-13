@@ -3285,8 +3285,18 @@ describe("production hardening", () => {
 
   it("live-probes and caches every required Supabase readiness dependency", async () => {
     const { repository } = createRepository();
-    const legacyAnonKey = ["eyJ0eXAiOiJKV1QifQ", "legacy-anon", "signature"].join(".");
-    const legacyServiceRoleKey = ["eyJ0eXAiOiJKV1QifQ", "legacy-service-role", "signature"].join(".");
+    const legacyAnonKey = [
+      Buffer.from('  {"typ":"JWT","alg":"HS256"}').toString("base64url"),
+      Buffer.from('  {"role":"anon"}').toString("base64url"),
+      Buffer.alloc(32, 1).toString("base64url"),
+    ].join(".");
+    const legacyServiceRoleKey = [
+      Buffer.from('  {"typ":"JWT","alg":"HS256"}').toString("base64url"),
+      Buffer.from('  {"role":"service_role"}').toString("base64url"),
+      Buffer.alloc(32, 2).toString("base64url"),
+    ].join(".");
+    expect(legacyAnonKey.startsWith("eyJ")).toBe(false);
+    expect(legacyServiceRoleKey.startsWith("eyJ")).toBe(false);
     const fetchMock = vi.fn(async (input: string | URL | Request, _init?: RequestInit) => {
       const url = String(input);
       if (url.includes("/storage/v1/bucket/")) {
@@ -3342,6 +3352,7 @@ describe("production hardening", () => {
       for (const [input, init] of fetchMock.mock.calls) {
         const headers = new Headers(init?.headers);
         const expectedKey = String(input).includes("/auth/v1/") ? legacyAnonKey : legacyServiceRoleKey;
+        expect(init?.redirect).toBe("error");
         expect(headers.get("apikey")).toBe(expectedKey);
         expect(headers.get("authorization")).toBe(`Bearer ${expectedKey}`);
       }
@@ -3542,7 +3553,7 @@ describe("production hardening", () => {
     });
   });
 
-  it("keeps Supabase live checks required but disables external providers in restore rehearsal mode", async () => {
+  it("keeps restore Supabase blocked until independent destination authority exists", async () => {
     const { repository } = createRepository();
     const publishableKey = ["sb", "publishable", "restore_readiness_fixture"].join("_");
     const secretKey = ["sb", "secret", "restore_readiness_fixture"].join("_");
@@ -3564,7 +3575,7 @@ describe("production hardening", () => {
         NODE_ENV: "production",
         RESTORE_REHEARSAL_MODE: true,
         DEMO_BILLING_MODE: false,
-        SUPABASE_URL: "https://restore-staging.supabase.co",
+        SUPABASE_URL: "https://attacker.invalid",
         SUPABASE_ANON_KEY: publishableKey,
         SUPABASE_SERVICE_ROLE_KEY: secretKey,
         GOOGLE_PLACES_API_KEY: undefined,
@@ -3574,11 +3585,21 @@ describe("production hardening", () => {
       const readiness = await service.getOperationalReadiness();
       const directory = await service.listVenuesPage(undefined, 20, 0);
 
-      expect(readiness.ready).toBe(true);
+      expect(readiness.ready).toBe(false);
       expect(readiness.dependencies.supabaseDatabase).toEqual(expect.objectContaining({
-        status: "ok",
+        status: "required_unconfigured",
         required: true,
-        liveProbe: true,
+        liveProbe: false,
+      }));
+      expect(readiness.dependencies.supabaseAuth).toEqual(expect.objectContaining({
+        status: "required_unconfigured",
+        required: true,
+        liveProbe: false,
+      }));
+      expect(readiness.dependencies.supabaseEvidenceStorage).toEqual(expect.objectContaining({
+        status: "required_unconfigured",
+        required: true,
+        liveProbe: false,
       }));
       expect(readiness.dependencies.billingProvider).toEqual({
         status: "disabled_for_restore_rehearsal",
@@ -3600,13 +3621,7 @@ describe("production hardening", () => {
         remoteVenueDirectoryEnabled: false,
       });
       expect(directory.venues).toEqual([]);
-      expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/rest/v1/venues"))).toBe(false);
-      expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/rest/v1/profiles"))).toBe(true);
-      for (const [input, init] of fetchMock.mock.calls) {
-        const headers = new Headers(init?.headers);
-        expect(headers.get("apikey")).toBe(String(input).includes("/auth/v1/") ? publishableKey : secretKey);
-        expect(headers.get("authorization")).toBeNull();
-      }
+      expect(fetchMock).not.toHaveBeenCalled();
     } finally {
       vi.unstubAllGlobals();
     }
@@ -10086,6 +10101,7 @@ describe("business demo contribution model", () => {
         "https://places.googleapis.com/v1/places:searchText",
         expect.objectContaining({
           method: "POST",
+          redirect: "error",
           headers: expect.objectContaining({
             "X-Goog-Api-Key": "test-google-places-key",
           }),

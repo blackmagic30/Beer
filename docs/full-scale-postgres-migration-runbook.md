@@ -7,10 +7,17 @@ permanent-staging import/runtime/logical-backup and disposable database-restore
 receipt are complete; provider, app-deploy, scale, full recovery, promotion,
 and cutover evidence is not complete**.
 
-The completed staging evidence now also includes byte-for-byte retrieval from
-the isolated operational-copy bucket and substantive, idempotent replay of one
-authentic synthetic deletion tombstone. Those narrower proofs do not change
-the no-go status or close any full-recovery gate.
+The completed staging evidence now also includes historical operator-host
+byte-for-byte retrieval of its frozen logical set and a staging database-bound
+probe that ran under the prior checked-in/live contract coupling permanent
+staging to the production operational-copy URL, key, and bucket, plus
+substantive, idempotent replay of one authentic synthetic deletion tombstone.
+That historical coupling is not current readiness evidence. The candidate now
+forbids all three destination variables, but no provider query in this
+remediation proves deletion; a fresh complete Railway inventory must prove all
+three names deleted before staging can pass. No new staging off-site transport
+is authorized. Those narrower proofs do not change the no-go status or close
+any full-recovery gate.
 
 Current secret-free execution evidence and the ordered remaining work are
 tracked in [postgres-migration-execution-status.md](postgres-migration-execution-status.md).
@@ -29,9 +36,11 @@ complete restore, RPO/RTO, promotion, or production-cutover evidence box.
 Permanent staging is capped at 0.1 vCPU/0.5 GB for Beer and Postgres and
 0.1 vCPU/0.25 GB for Redis. Keep one Beer replica permanently; use a second
 only during a bounded evidence window and return to one afterward. Including
-two Supabase Micro projects and the conservative locked-baseline plus daily
-Postgres-volume snapshot allowance, the reviewed recurring envelope is
-approximately US$46.80/month.
+one permanent-staging Supabase Micro project, the separately operated
+canonical-production operational-copy Supabase Micro project, and the
+conservative locked-baseline plus daily Postgres-volume snapshot allowance, the
+reviewed combined recurring envelope is approximately US$46.80/month. This is
+not a staging-only cost or authority boundary.
 
 This runbook is the controlling data-architecture contract for the full public
 web and Australian iOS launch. Pint Path must not freeze a release candidate,
@@ -70,10 +79,11 @@ cutover. A one-replica SQLite launch is not an alternative for this release.
   Railway variable operations: Google Maps client configuration
   (`GOOGLE_MAPS_API_KEY` and `GOOGLE_MAPS_MAP_ID`), Google Places server access
   (`GOOGLE_PLACES_API_KEY`), and OpenAI menu OCR (`OPENAI_API_KEY`). Separately,
-  the three Supabase replacement-key operations (`SUPABASE_ANON_KEY`,
-  `SUPABASE_SERVICE_ROLE_KEY`, and `OFFSITE_BACKUP_SERVICE_ROLE_KEY`) remain
-  `HARD_DISABLED_REVIEW_REQUIRED` and unauthorized. The app deploy and live
-  evidence also remain open.
+  the two permanent-staging Supabase replacement-key operations
+  (`SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY`) remain
+  `HARD_DISABLED_REVIEW_REQUIRED` and unauthorized. Production operational-copy
+  URL, key, and bucket variables are prohibited in permanent staging. The app
+  deploy and live evidence also remain open.
 - **Ephemeral destructive restore staging** currently has an isolated Railway
   project, Postgres database, and Redis resource, and its logical database
   receipt, one-tombstone replay, idempotent second replay, semantic projection,
@@ -249,19 +259,31 @@ line, print it, or put it in Git.
    `ALTER ROLE` repair. Any unsafe pre-existing state aborts with SQLSTATE
    `42501` and requires independent remediation.
 
+   Every connection-URL or service-key file used by this runbook is an
+   exact-byte input: one value with no leading/trailing whitespace, CR/LF, or
+   NUL. With shell tracing disabled, transfer a protected value using a
+   no-line-ending writer equivalent to `printf '%s' "$VALUE" > "$FILE"`;
+   never use `echo` or print the value during verification.
+
 2. While production is still serving normally, prove that the independent
    deletion authority is readable and export its mutually consistent current,
    genesis, checkpoint, and immutable-set bindings into a new private
    directory:
 
    ```sh
-   SUPABASE_URL=<production-origin> \
-   OFFSITE_BACKUP_SUPABASE_URL=<independent-operational-copy-origin> \
-   OFFSITE_BACKUP_BUCKET=<private-bucket> \
+   SUPABASE_URL=https://auth.pintpath.au \
+   OFFSITE_BACKUP_SUPABASE_URL=https://hfbmhdxrwtihukmixxta.supabase.co \
+   OFFSITE_BACKUP_BUCKET=pintpath-backups \
    npm run db:postgres:migration -- ledger-export \
      --service-role-key-file /absolute/private/offsite-service-role.key \
      --output-dir /absolute/private/release-id/deletion-ledger-authority
    ```
+
+   The ledger export accepts only those exact, unnormalized origin bytes. It
+   validates the private key file as an exact server credential (a new secret
+   key or a structurally valid legacy `service_role` JWT) before starting the
+   remote export, and its validation failures never print the configured URL
+   or key value.
 
 3. Only inside the approved write-maintenance window, stop every SQLite writer
    and worker, confirm the active WAL has been checkpointed through the SQLite
@@ -385,7 +407,7 @@ URL file.
   Supabase/Auth/private Storage, and Redis core identities; prove they differ
   from production and the disposable restore resources.
 - [ ] Complete the three Google/OpenAI categories/four exact Railway variable
-  operations only through their reviewed authority. Keep the separate three
+  operations only through their reviewed authority. Keep the separate two
   Supabase replacement-key operations hard-disabled and unauthorized until
   their own reviewed authorities exist. Then deploy the reviewed app and verify
   provider/domain/callback bindings.
@@ -427,9 +449,14 @@ URL file.
   This describes immutable historical evidence. Version 2 remains readable for
   retrieval/restore but cannot authorize a new capture or close the current
   pinned-transport gate; new backups must be schema version 3.
-- [x] Upload that frozen logical set to the isolated staging-offsite Supabase
-  project, verify the complete remote object set, and pass the live
-  database-bound readiness probe.
+- [x] Historical operator-host evidence uploaded that frozen
+  permanent-staging logical set to a second Supabase project and verified the
+  complete remote object set. The associated staging database-bound readiness
+  probe ran under the prior checked-in/live contract that coupled staging to the
+  production operational-copy URL, key, and bucket. The current candidate makes
+  the CLI canonical-production-only and forbids all three variables in staging;
+  a fresh complete Railway inventory must still prove their deletion. This
+  historical set cannot authorize a new staging upload or probe.
 - [x] Retrieve the complete pre-deletion logical set from that isolated private
   bucket through the exact success-state, runtime-identity, destination-pin,
   pointer/attestation, Storage-generation, streamed-size, and SHA-256 contract.
@@ -440,8 +467,16 @@ URL file.
 - [ ] Create and verify the corresponding private application Storage snapshot.
   The canonical PostgreSQL-native capture/restore-set foundation, restricted
   PG17 integration test, and operator CLIs are implemented, but no live bucket
-  was read or copied as implementation evidence. Execute and independently
-  verify the substantive capture described in
+  was read or copied as implementation evidence. Permanent-staging Phase 5 is
+  runnable against only the exact permanent-staging project-ref origin and its
+  server key; the exact production project-ref origin is the only other capture
+  source accepted. The command requires an explicit source-environment label
+  that maps to exactly one of those origins, an independently reviewed frozen
+  candidate SHA, and a matching ready database migration-run binding on both
+  repeatable-read inspections before and after the bucket copy. The recovery
+  manifest and domain-separated set binding are version 2 for this authority
+  contract. Keep every production operational-copy variable absent from staging.
+  Execute and independently verify the substantive capture described in
   [postgres-private-storage-recovery.md](postgres-private-storage-recovery.md).
 - [x] Create and seal one authentic wholly synthetic deletion-tombstone ledger
   authority tied to the pre-deletion backup; replay it once with
@@ -466,7 +501,10 @@ URL file.
   restore command requires an empty policy-matching bucket on a distinct
   disposable origin, exact logical-state/reference equality, immutable uploads,
   full re-download verification, and sealed deletion-authority binding; the
-  live restore/application/RPO/RTO evidence remains open.
+  live restore/application/RPO/RTO evidence remains open. The restore command
+  is intentionally blocked before credential reads until a real disposable
+  Supabase origin is registered in independently reviewed candidate-bound
+  authority; invocation-supplied URL hashes are not sufficient.
 - [ ] Remove public access, revoke temporary credentials, delete only the
   recorded disposable resources, and independently verify production and
   permanent staging were unchanged.
@@ -846,7 +884,12 @@ be measured and approved.
    overlap, public data gates, and provider readiness while public ingress
    remains in the signed maintenance/closed state.
 7. Publish only the exactly reviewed launch data through the candidate's
-   authorised Postgres workflow. Then capture a new post-promotion PITR,
+   authorised Postgres workflow. The current plan-v4 CLI is only an offline,
+   no-write reviewer aid: its authority bundle explicitly records absent
+   provider/cryptographic/mutation authority, its separate mode-0600 packet
+   exposes the exact proposed rows for private comparison, and all seven
+   activation blockers remain open. It has no apply or quarantine command and
+   cannot be used for this step. Then capture a new post-promotion PITR,
    logical/Storage/evidence/tombstone WORM set, retrieve it with the independent
    recovery principal, restore it into fresh disposable staging, reconcile it,
    and obtain two-person RPO/RTO sign-off before routing any traffic. The

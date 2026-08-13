@@ -32,6 +32,11 @@ import {
   createBoundedSupabaseFetch,
   createServerSupabaseClient,
 } from "./supabase-client.js";
+import {
+  OPERATIONAL_OFFSITE_SUPABASE_ORIGIN,
+  assertExactSupabaseOrigin,
+  assertSupabaseServerApiKey,
+} from "./supabase-key-format.js";
 
 export const POSTGRES_LOGICAL_BACKUP_SUCCESS_STATE_KEY =
   "job:postgres_logical_backup_success" as const;
@@ -562,6 +567,9 @@ async function snapshotTrustedFile(input: {
       || before.size > input.maximumBytes
       || fs.realpathSync(input.filePath) !== input.filePath
     ) throw new Error("unsafe");
+    // The O_NOFOLLOW descriptor is bound to the pre-open lstat by full file
+    // identity and is revalidated after hashing the descriptor contents.
+    // codeql[js/file-system-race]
     handle = await fs.promises.open(
       input.filePath,
       fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
@@ -2328,6 +2336,19 @@ export function createSupabasePostgresLogicalOffsiteStorage(input: {
   readonly clientFactory?: ((url: string, key: string) => SupabaseClient) | undefined;
   readonly fetchImplementation?: typeof globalThis.fetch | undefined;
 }): PostgresLogicalOffsiteStorage {
+  try {
+    assertExactSupabaseOrigin(
+      input.destinationSupabaseUrl,
+      OPERATIONAL_OFFSITE_SUPABASE_ORIGIN,
+      "destinationSupabaseUrl",
+    );
+    assertSupabaseServerApiKey(
+      input.destinationServiceRoleKey,
+      "destinationServiceRoleKey",
+    );
+  } catch {
+    throw offsiteError("destination_unsafe");
+  }
   const requestTimeoutMs = input.requestTimeoutMs ?? 60_000;
   if (
     !Number.isFinite(requestTimeoutMs)

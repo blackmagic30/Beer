@@ -75,6 +75,46 @@ afterEach(async () => {
 });
 
 describe("Railway deployment identity evidence", () => {
+  it("keeps non-production readiness independent of production off-site authority", async () => {
+    const productionProbe = vi.fn(async () => ({
+      status: "required_unconfigured" as const,
+      required: true,
+      liveProbe: false,
+      lastSuccessfulAt: null,
+      ageHours: null,
+      error: "destination_unconfigured",
+    }));
+
+    await expect(
+      appDeploymentMetadataInternals.resolveOffsiteBackupReadinessForRuntime(
+        false,
+        productionProbe,
+      ),
+    ).resolves.toEqual({
+      status: "ok",
+      required: false,
+      liveProbe: false,
+      lastSuccessfulAt: null,
+      ageHours: null,
+    });
+    expect(productionProbe).not.toHaveBeenCalled();
+
+    await expect(
+      appDeploymentMetadataInternals.resolveOffsiteBackupReadinessForRuntime(
+        true,
+        productionProbe,
+      ),
+    ).resolves.toEqual({
+      status: "required_unconfigured",
+      required: true,
+      liveProbe: false,
+      lastSuccessfulAt: null,
+      ageHours: null,
+      error: "destination_unconfigured",
+    });
+    expect(productionProbe).toHaveBeenCalledTimes(1);
+  });
+
   it("single-flights concurrent readiness work and retries after completion or failure", async () => {
     const resolveReadiness =
       appDeploymentMetadataInternals.createReadinessProbeSingleFlight<{

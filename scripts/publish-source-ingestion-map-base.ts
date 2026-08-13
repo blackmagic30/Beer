@@ -10,6 +10,10 @@ import { asAsyncSqliteDatabase } from "../src/db/sql-database.js";
 import { env } from "../src/config/env.js";
 import { redactSecrets } from "../src/lib/redact.js";
 import {
+  assertExactSupabaseOrigin,
+  assertSupabaseServerApiKey,
+} from "../src/lib/supabase-key-format.js";
+import {
   REVIEWED_PRICE_SELECTION_DEFAULT_OPTIONS,
   isLikelyBaselineMenuSource,
   selectPublishableMapBaseRows,
@@ -32,6 +36,32 @@ interface ScriptOptions extends ReviewedPriceSelectionOptions {
 }
 
 const DEFAULT_OPTIONS = REVIEWED_PRICE_SELECTION_DEFAULT_OPTIONS;
+const PRODUCTION_SUPABASE_ORIGIN = "https://auth.pintpath.au";
+
+export function assertPublishMapBaseSupabaseBoundary(
+  environment: Readonly<Record<string, string | undefined>>,
+  required = true,
+): { readonly supabaseUrl: string; readonly serviceRoleKey: string } | null {
+  const supabaseUrl = environment.SUPABASE_URL;
+  const serviceRoleKey = environment.SUPABASE_SERVICE_ROLE_KEY;
+  const supabaseUrlAbsent = supabaseUrl === undefined || supabaseUrl === "";
+  const serviceRoleKeyAbsent = serviceRoleKey === undefined || serviceRoleKey === "";
+  if (!required && supabaseUrlAbsent && serviceRoleKeyAbsent) {
+    return null;
+  }
+  if (typeof supabaseUrl !== "string" || typeof serviceRoleKey !== "string") {
+    throw new Error(
+      "Map-base publication requires the exact reviewed production Supabase origin and a valid server API key; no configured value is emitted.",
+    );
+  }
+  assertExactSupabaseOrigin(
+    supabaseUrl,
+    PRODUCTION_SUPABASE_ORIGIN,
+    "SUPABASE_URL",
+  );
+  assertSupabaseServerApiKey(serviceRoleKey, "SUPABASE_SERVICE_ROLE_KEY");
+  return Object.freeze({ supabaseUrl, serviceRoleKey });
+}
 
 function getArg(name: string, fallback?: string): string | undefined {
   const prefix = `--${name}=`;
@@ -100,6 +130,10 @@ async function sourceUrlStillReachable(sourceUrl: string, timeoutMs: number): Pr
 
 async function main(): Promise<void> {
   const options = parseOptions();
+  const supabaseAuthority = assertPublishMapBaseSupabaseBoundary(
+    process.env,
+    !options.dryRun,
+  );
   if (!options.dryRun) {
     assertOperatorMutationAllowed("Menu review publication");
   }
@@ -119,16 +153,18 @@ async function main(): Promise<void> {
             .all() as Array<{ venueId: string }>
         ).map((row) => row.venueId),
       );
-  const adminService = new AdminService(
-    repository,
-    env.SUPABASE_URL,
-    env.SUPABASE_SERVICE_ROLE_KEY,
-    env.SUPABASE_MENU_CAPTURE_TABLE,
-    env.OPENAI_API_KEY,
-    env.GOOGLE_PLACES_API_KEY ?? env.GOOGLE_MAPS_API_KEY,
-    queueDatabase,
-  );
-  await adminService.initializeIngestionQueue();
+  const adminService = options.dryRun
+    ? null
+    : new AdminService(
+        repository,
+        supabaseAuthority!.supabaseUrl,
+        supabaseAuthority!.serviceRoleKey,
+        env.SUPABASE_MENU_CAPTURE_TABLE,
+        env.OPENAI_API_KEY,
+        env.GOOGLE_PLACES_API_KEY ?? env.GOOGLE_MAPS_API_KEY,
+        queueDatabase,
+      );
+  await adminService?.initializeIngestionQueue();
 
   const pending = await repository.list("pending_review", options.queueLimit, 0);
   const candidates = pending
@@ -186,7 +222,7 @@ async function main(): Promise<void> {
     }
 
     try {
-      const result = await adminService.publishQueuedIngestion(queueItem.id, {
+      const result = await adminService!.publishQueuedIngestion(queueItem.id, {
         beers: selection.beers,
         note: [
           "Bulk map-base publish.",

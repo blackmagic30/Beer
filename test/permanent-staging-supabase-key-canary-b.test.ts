@@ -41,7 +41,6 @@ function observationObject() {
       stagingAuthSettings: true,
       stagingAuthAdminListLimitOne: true,
       stagingPrivateStorageBucket: true,
-      offsitePrivateStorageBucket: true,
     },
   };
 }
@@ -125,8 +124,8 @@ describe("permanent-staging Supabase key canary-B policy", () => {
       value.references[0]!.sourceServiceId =
         "435d6994-7bd4-4a13-b1dc-f255775d5dc0";
     }, "referencesExact"],
-    ["write-shaped failed check", (value: ReturnType<typeof observationObject>) => {
-      value.checks.offsitePrivateStorageBucket = false;
+    ["failed staging Storage check", (value: ReturnType<typeof observationObject>) => {
+      value.checks.stagingPrivateStorageBucket = false;
     }, "readOnlyChecksPassed"],
   ])("fails the %s topology/source/reference check", (_label, mutate, check) => {
     const parsed = parsePermanentStagingSupabaseKeyCanaryBObservation(

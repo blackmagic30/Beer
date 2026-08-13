@@ -77,7 +77,10 @@ has restricted the token itself to read-only permissions.
 This executable invocation from the exact reviewed repository root is the only
 authoritative operator ceremony. Its environment-clearing shebang runs before
 the shell starts, and it launches only the pinned Node, primordial preload, TSX
-loader, and worker by absolute reviewed paths. Do not invoke it through
+loader, and worker by absolute reviewed paths. Before importing TSX, the
+launcher requires the exact installed TSX package version and the reviewed
+SHA-256 of the loader bytes; the in-process boundary independently repeats both
+checks before it can activate. Do not invoke it through
 `/bin/sh`, npm, `tsx`, the TypeScript source, or an inherited Node process. The
 repository deliberately exposes no npm alias: a hostile `NODE_OPTIONS` can
 execute inside npm before npm reaches the environment-clearing launcher.
@@ -137,9 +140,12 @@ independently retained file SHA-256. It rejects the former five free-form
 deployment-hash arguments, a non-canonical or stale receipt, candidate or
 environment drift, any false check, and any file outside its existing private
 artifact authority. The five deployment hashes passed to the plan builder are
-derived only from the receipt. Reviewed-price plan version 3 also retains the
-exact attestation-file and checked-in policy hashes so downstream review can
-identify the precise co-retained receipt.
+derived only from the receipt. Reviewed-price plan version 4 retains the exact
+attestation-file and checked-in policy hashes, binds them into its explicitly
+non-authorizing offline authority bundle, and emits a separate mode-0600
+row-level private review packet. The bundle is required to say that provider,
+cryptographic-approval, and mutation authority are absent; neither artifact
+closes the provider-observed deployment blocker or authorizes a write.
 
 This receipt is a point-in-time read-only observation. It does not lock a
 deployment, authorize promotion, prove provider configuration, or authorize a

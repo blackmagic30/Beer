@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "pintpath-permanent-staging-app-deployment-policy/v1",
+  "schemaVersion": "pintpath-permanent-staging-app-deployment-policy/v2",
   "policyId": "pintpath-permanent-staging-app-source-upload",
   "activationState": "HARD_DISABLED_REVIEW_REQUIRED",
   "projectId": "48d8c6cd-1c66-4148-874b-20877f48e1a5",
@@ -18,7 +18,7 @@
     "sourceManifestAlgorithm": "sha256-json-depth-first-bytewise-siblings-path-type-mode-size-content-v1",
     "railwayConfigPath": "/railway.toml",
     "railwayConfigSha256": "85dc659ebec2e0132092d917505d71678e92b8441b54bcefc80c6a082e3b967b",
-    "packageLockSha256": "61f07b4a529dfed6624394719327b03032d9ad34bfe162f43131b6bdfcfc60ef"
+    "packageLockSha256": "0978ac482e875707a478d0d970fbadb899b8448dc21893ddb0973b5e2f700ecf"
   },
   "writeContract": {
     "mode": "single-source-upload",
@@ -53,8 +53,16 @@
     "applicationAttestationPolicySha256": "b056b175f981d7b51a9590943e209e82a0dfcbea650de7a4cb5ecf37a67bbdd1"
   },
   "spendContract": {
-    "reviewedRecurringStagingMonthlyUsd": 46.8,
-    "maximumStagingMonthlyUsd": 50,
+    "currency": "USD",
+    "maximumRecurringStagingMonthlyCents": 5000,
+    "costPolicyReference": {
+      "schemaVersion": "pintpath-permanent-staging-cost-policy/v1",
+      "policyId": "pintpath-permanent-staging-recurring-cost",
+      "relativePath": "ops/railway/permanent-staging-cost-policy.json",
+      "sha256": "895d5bdcfe0fb05d17b3fa7cab6c525a80f3beacf0ff0cbd1bafdb54c979c8ca"
+    },
+    "preDeploymentCostReceiptRequired": true,
+    "postDeploymentCostReceiptRequired": true,
     "additionalUnapprovedSpendAllowed": false
   }
 }

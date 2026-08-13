@@ -37,6 +37,7 @@ import {
 
 const temporaryDirectories: string[] = [];
 const uid = process.getuid?.() ?? 501;
+const reviewedNodeVersion = "v22.23.2";
 const headSha = "a".repeat(40);
 const treeSha = "b".repeat(40);
 const databaseOid = "16655";
@@ -205,7 +206,7 @@ function provisionOptions(root: string): PostgresLogicalBackupLoginManagerOption
     expectedHeadSha: headSha,
     expectedTreeSha: treeSha,
     expectedUid: uid,
-    expectedNodeVersion: process.version,
+    expectedNodeVersion: reviewedNodeVersion,
     expectedEnvironment: POSTGRES_LOGICAL_BACKUP_LOGIN_ENVIRONMENT,
     operationId: "provision-20260810-a",
     approvalReference: "approval:backup-login:20260810",
@@ -565,7 +566,7 @@ function dependencies(
     },
     getUid: () => uid,
     getEuid: () => uid,
-    nodeVersion: process.version,
+    nodeVersion: reviewedNodeVersion,
     now: () => new Date("2026-08-10T01:02:03.004Z"),
     randomBytes: (size) => Buffer.alloc(size, size === 48 ? 0xab : 0xcd),
     repositoryRoot: process.cwd(),

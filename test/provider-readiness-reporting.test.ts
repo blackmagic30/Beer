@@ -24,6 +24,7 @@ function providerReadinessEnvironment(
     ...process.env,
     NODE_ENV: "production",
     LAUNCH_READINESS_STRICT: "true",
+    RAILWAY_ENVIRONMENT_NAME: "production",
     RAILWAY_PROJECT_ID: "deployed-project",
     RAILWAY_ENVIRONMENT_ID: "deployed-environment",
     RAILWAY_SERVICE_ID: "deployed-service",
@@ -118,6 +119,9 @@ const restoreRedisResource = `railway:${restoreEnvironmentId}:svc-redis-4ac109`;
 const supabasePublishableKey = `sb_publishable_${"p".repeat(32)}`;
 const primarySupabaseSecretKey = `sb_secret_${"s".repeat(32)}`;
 const offsiteSupabaseSecretKey = `sb_secret_${"o".repeat(32)}`;
+const productionSupabaseOrigin = "https://auth.pintpath.au";
+const permanentStagingSupabaseOrigin = "https://bbfibbadwjxzrcdncavy.supabase.co";
+const operationalOffsiteSupabaseOrigin = "https://hfbmhdxrwtihukmixxta.supabase.co";
 
 function productionIdentityOverrides(overrides: Record<string, string> = {}): Record<string, string> {
   return {
@@ -170,9 +174,9 @@ function deletionRehearsalOverrides(overrides: Record<string, string> = {}): Rec
     PINTPATH_PERMANENT_STAGING_DATABASE_RESOURCE_ID: stagingDatabaseResource,
     DATABASE_PATH: "",
     SOURCE_EVIDENCE_SIGNING_SECRET: "staging-source-evidence-signing-secret-32-bytes",
-    SUPABASE_URL: "https://fixture-staging.supabase.co",
-    ACCOUNT_DELETION_REHEARSAL_EXPECTED_SUPABASE_URL: "https://fixture-staging.supabase.co",
-    ACCOUNT_DELETION_REHEARSAL_PRODUCTION_SUPABASE_URL: "https://fixture-production.supabase.co",
+    SUPABASE_URL: permanentStagingSupabaseOrigin,
+    ACCOUNT_DELETION_REHEARSAL_EXPECTED_SUPABASE_URL: permanentStagingSupabaseOrigin,
+    ACCOUNT_DELETION_REHEARSAL_PRODUCTION_SUPABASE_URL: productionSupabaseOrigin,
     SUPABASE_ANON_KEY: supabasePublishableKey,
     SUPABASE_SERVICE_ROLE_KEY: primarySupabaseSecretKey,
     SUPABASE_OAUTH_PROVIDERS: "google",
@@ -247,8 +251,9 @@ function stagingBootstrapOverrides(overrides: Record<string, string> = {}): Reco
     ACCOUNT_DELETION_NOTICE_MODE: "disabled",
     SUPABASE_URL: "https://must-not-be-contacted.invalid",
     SUPABASE_SERVICE_ROLE_KEY: "must-not-be-used",
-    OFFSITE_BACKUP_SUPABASE_URL: "https://also-must-not-be-contacted.invalid",
-    OFFSITE_BACKUP_SERVICE_ROLE_KEY: "must-not-be-used",
+    OFFSITE_BACKUP_SUPABASE_URL: "",
+    OFFSITE_BACKUP_SERVICE_ROLE_KEY: "",
+    OFFSITE_BACKUP_BUCKET: "",
     ...overrides,
   };
 }
@@ -265,12 +270,13 @@ function stagingCompleteOverrides(overrides: Record<string, string> = {}): Recor
     GOOGLE_MAPS_MAP_ID: "fixture-staging-map-id",
     GOOGLE_PLACES_API_KEY: "fixture-staging-places-key",
     OPENAI_API_KEY: "fixture-staging-openai-key", // security-scan allow: synthetic readiness fixture
-    SUPABASE_URL: "https://fixture-staging.supabase.co",
+    SUPABASE_URL: permanentStagingSupabaseOrigin,
     SUPABASE_ANON_KEY: supabasePublishableKey,
     SUPABASE_SERVICE_ROLE_KEY: primarySupabaseSecretKey,
     SUPABASE_OAUTH_PROVIDERS: "google",
-    OFFSITE_BACKUP_SUPABASE_URL: "https://fixture-staging-backup.supabase.co",
-    OFFSITE_BACKUP_SERVICE_ROLE_KEY: offsiteSupabaseSecretKey,
+    OFFSITE_BACKUP_SUPABASE_URL: "",
+    OFFSITE_BACKUP_SERVICE_ROLE_KEY: "",
+    OFFSITE_BACKUP_BUCKET: "",
     ADMIN_EMAILS: "staging-admin@example.test",
     REQUIRE_ADMIN_MFA_IN_PRODUCTION: "true",
     ...overrides,
@@ -410,12 +416,10 @@ async function runProviderReadinessWithStorageProbe(
   const previousEnvironment = process.env;
   const logs: string[] = [];
   process.env = providerReadinessEnvironment(stagingCompleteOverrides({
-    SUPABASE_URL: "https://source-readiness.supabase.co",
+    SUPABASE_URL: permanentStagingSupabaseOrigin,
     SUPABASE_ANON_KEY: supabasePublishableKey,
     SUPABASE_SERVICE_ROLE_KEY: primarySupabaseSecretKey,
     SUPABASE_OAUTH_PROVIDERS: "google",
-    OFFSITE_BACKUP_SUPABASE_URL: "https://backup-readiness.supabase.co",
-    OFFSITE_BACKUP_SERVICE_ROLE_KEY: offsiteSupabaseSecretKey,
     RESTORE_REHEARSAL_PHASE: "",
     RESTORE_REHEARSAL_BACKUP_ID: "",
     RESTORE_REHEARSAL_SOURCE_MANIFEST_SHA256: "",
@@ -536,13 +540,11 @@ describe("provider readiness feature gating", () => {
     expect(checkStatuses(staging, [
       "SUPABASE_ANON_KEY",
       "SUPABASE_SERVICE_ROLE_KEY",
-      "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
-      "SUPABASE_SERVICE_ROLE_KEYS_DISTINCT",
+      "PERMANENT_STAGING_OFFSITE_CREDENTIALS_ABSENT",
     ])).toEqual({
       SUPABASE_ANON_KEY: "pass",
       SUPABASE_SERVICE_ROLE_KEY: "pass",
-      OFFSITE_BACKUP_SERVICE_ROLE_KEY: "pass",
-      SUPABASE_SERVICE_ROLE_KEYS_DISTINCT: "pass",
+      PERMANENT_STAGING_OFFSITE_CREDENTIALS_ABSENT: "pass",
     });
     expect(checkStatuses(deletion, [
       "SUPABASE_ANON_KEY",
@@ -595,24 +597,32 @@ describe("provider readiness feature gating", () => {
     };
     const production = runProviderReadiness(legacyKeys);
     const staging = runProviderReadiness(stagingCompleteOverrides({
-      ...legacyKeys,
+      SUPABASE_ANON_KEY: legacyKeys.SUPABASE_ANON_KEY,
+      SUPABASE_SERVICE_ROLE_KEY: legacyKeys.SUPABASE_SERVICE_ROLE_KEY,
       GOOGLE_MAPS_API_KEY: "",
     }));
     const deletion = runProviderReadiness(deletionRehearsalOverrides(legacyKeys));
 
-    for (const payload of [production, staging]) {
-      expect(checkStatuses(payload, [
-        "SUPABASE_ANON_KEY",
-        "SUPABASE_SERVICE_ROLE_KEY",
-        "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
-        "SUPABASE_SERVICE_ROLE_KEYS_DISTINCT",
-      ])).toEqual({
-        SUPABASE_ANON_KEY: "fail",
-        SUPABASE_SERVICE_ROLE_KEY: "fail",
-        OFFSITE_BACKUP_SERVICE_ROLE_KEY: "fail",
-        SUPABASE_SERVICE_ROLE_KEYS_DISTINCT: "fail",
-      });
-    }
+    expect(checkStatuses(production, [
+      "SUPABASE_ANON_KEY",
+      "SUPABASE_SERVICE_ROLE_KEY",
+      "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
+      "SUPABASE_SERVICE_ROLE_KEYS_DISTINCT",
+    ])).toEqual({
+      SUPABASE_ANON_KEY: "fail",
+      SUPABASE_SERVICE_ROLE_KEY: "fail",
+      OFFSITE_BACKUP_SERVICE_ROLE_KEY: "fail",
+      SUPABASE_SERVICE_ROLE_KEYS_DISTINCT: "fail",
+    });
+    expect(checkStatuses(staging, [
+      "SUPABASE_ANON_KEY",
+      "SUPABASE_SERVICE_ROLE_KEY",
+      "PERMANENT_STAGING_OFFSITE_CREDENTIALS_ABSENT",
+    ])).toEqual({
+      SUPABASE_ANON_KEY: "fail",
+      SUPABASE_SERVICE_ROLE_KEY: "fail",
+      PERMANENT_STAGING_OFFSITE_CREDENTIALS_ABSENT: "pass",
+    });
     expect(checkStatuses(deletion, [
       "SUPABASE_ANON_KEY",
       "SUPABASE_SERVICE_ROLE_KEY",
@@ -644,29 +654,22 @@ describe("provider readiness feature gating", () => {
     expect(JSON.stringify(payload)).not.toContain(value);
   });
 
-  it("fails when production or complete staging reuses the primary project secret for the operational copy", () => {
+  it("fails when production reuses the primary project secret for the operational copy", () => {
     const production = runProviderReadiness({
       SUPABASE_ANON_KEY: supabasePublishableKey,
       SUPABASE_SERVICE_ROLE_KEY: primarySupabaseSecretKey,
       OFFSITE_BACKUP_SERVICE_ROLE_KEY: primarySupabaseSecretKey,
     });
-    const staging = runProviderReadiness(stagingCompleteOverrides({
-      GOOGLE_MAPS_API_KEY: "",
-      OFFSITE_BACKUP_SERVICE_ROLE_KEY: primarySupabaseSecretKey,
-    }));
-
-    for (const payload of [production, staging]) {
-      expect(checkStatuses(payload, [
-        "SUPABASE_SERVICE_ROLE_KEY",
-        "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
-        "SUPABASE_SERVICE_ROLE_KEYS_DISTINCT",
-      ])).toEqual({
-        SUPABASE_SERVICE_ROLE_KEY: "pass",
-        OFFSITE_BACKUP_SERVICE_ROLE_KEY: "pass",
-        SUPABASE_SERVICE_ROLE_KEYS_DISTINCT: "fail",
-      });
-      expect(JSON.stringify(payload)).not.toContain(primarySupabaseSecretKey);
-    }
+    expect(checkStatuses(production, [
+      "SUPABASE_SERVICE_ROLE_KEY",
+      "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
+      "SUPABASE_SERVICE_ROLE_KEYS_DISTINCT",
+    ])).toEqual({
+      SUPABASE_SERVICE_ROLE_KEY: "pass",
+      OFFSITE_BACKUP_SERVICE_ROLE_KEY: "pass",
+      SUPABASE_SERVICE_ROLE_KEYS_DISTINCT: "fail",
+    });
+    expect(JSON.stringify(production)).not.toContain(primarySupabaseSecretKey);
   });
 
   it("warns rather than passing malformed or legacy Supabase keys in development", () => {
@@ -690,6 +693,17 @@ describe("provider readiness feature gating", () => {
       OFFSITE_BACKUP_SERVICE_ROLE_KEY: "warn",
       SUPABASE_SERVICE_ROLE_KEYS_DISTINCT: "warn",
     });
+  });
+
+  it("never derives or emits an OAuth callback from an unreviewed Supabase URL", () => {
+    const rejected = "https://private-user:private-password@attacker.invalid";
+    const payload = runProviderReadiness({ SUPABASE_URL: rejected });
+
+    expect(checkStatuses(payload, ["SUPABASE_PROVIDER_CALLBACK_URL"]))
+      .toEqual({ SUPABASE_PROVIDER_CALLBACK_URL: "fail" });
+    expect(JSON.stringify(payload)).not.toContain(rejected);
+    expect(JSON.stringify(payload)).not.toContain("private-password");
+    expect(JSON.stringify(payload)).not.toContain("attacker.invalid");
   });
 
   it("passes the source-evidence probe only after exact cleanup and an empty-prefix re-list", async () => {
@@ -723,7 +737,7 @@ describe("provider readiness feature gating", () => {
     },
   );
 
-  it("passes the complete permanent-staging profile with real sibling pins before running both bounded Storage canaries", async () => {
+  it("passes complete permanent staging without off-site authority and canaries only its own Storage bucket", async () => {
     const result = await runProviderReadinessWithStorageProbe("exact");
 
     expect(result.payload.readinessProfile).toBe("permanent_staging_complete");
@@ -741,8 +755,8 @@ describe("provider readiness feature gating", () => {
       "PERMANENT_STAGING_REDIS_RESOURCE_IDENTITY",
       "PERMANENT_STAGING_SERVICE_INSTANCE_IDENTITIES",
       "PERMANENT_STAGING_NAMED_SELF_PINS",
+      "PERMANENT_STAGING_OFFSITE_CREDENTIALS_ABSENT",
       "SOURCE_EVIDENCE_BUCKET",
-      "OFFSITE_BACKUP_BUCKET",
     ])).toEqual({
       PERMANENT_STAGING_RAILWAY_IDENTITY: "pass",
       PERMANENT_STAGING_POSTGRES_DATABASE_URL: "pass",
@@ -752,10 +766,13 @@ describe("provider readiness feature gating", () => {
       PERMANENT_STAGING_REDIS_RESOURCE_IDENTITY: "pass",
       PERMANENT_STAGING_SERVICE_INSTANCE_IDENTITIES: "pass",
       PERMANENT_STAGING_NAMED_SELF_PINS: "pass",
+      PERMANENT_STAGING_OFFSITE_CREDENTIALS_ABSENT: "pass",
       SOURCE_EVIDENCE_BUCKET: "pass",
-      OFFSITE_BACKUP_BUCKET: "pass",
     });
-    expect(result.clientCreations).toHaveLength(2);
+    expect(result.payload.checks.map((check) => check.id)).not.toContain(
+      "OFFSITE_BACKUP_BUCKET",
+    );
+    expect(result.clientCreations).toHaveLength(1);
   });
 
   it.each([
@@ -810,6 +827,54 @@ describe("provider readiness feature gating", () => {
     expect(result.payload.ok).toBe(false);
     expect(checkStatuses(result.payload, ["PERMANENT_STAGING_DATABASE_RESOURCE_IDENTITY"]))
       .toEqual({ PERMANENT_STAGING_DATABASE_RESOURCE_IDENTITY: "fail" });
+    expect(result.clientCreations).toEqual([]);
+    expect(result.listObservations).toEqual([]);
+    expect(result.removalObservations).toEqual([]);
+    expect(result.payload.checks.map((check) => check.id)).not.toEqual(
+      expect.arrayContaining(["SOURCE_EVIDENCE_BUCKET", "OFFSITE_BACKUP_BUCKET"]),
+    );
+  });
+
+  it.each([
+    ["primary hostile origin", { SUPABASE_URL: "https://attacker.invalid" }, "SUPABASE_URL"],
+    ["primary padded origin", { SUPABASE_URL: ` ${permanentStagingSupabaseOrigin}` }, "SUPABASE_URL"],
+    ["primary normalized origin", { SUPABASE_URL: `${permanentStagingSupabaseOrigin}/` }, "SUPABASE_URL"],
+    ["off-site hostile origin", { OFFSITE_BACKUP_SUPABASE_URL: "https://attacker.invalid" }, "PERMANENT_STAGING_OFFSITE_CREDENTIALS_ABSENT"],
+    ["off-site production origin", { OFFSITE_BACKUP_SUPABASE_URL: operationalOffsiteSupabaseOrigin }, "PERMANENT_STAGING_OFFSITE_CREDENTIALS_ABSENT"],
+    ["wrong-role primary key", { SUPABASE_SERVICE_ROLE_KEY: supabasePublishableKey }, "SUPABASE_SERVICE_ROLE_KEY"],
+    ["padded off-site key", { OFFSITE_BACKUP_SERVICE_ROLE_KEY: ` ${offsiteSupabaseSecretKey}` }, "PERMANENT_STAGING_OFFSITE_CREDENTIALS_ABSENT"],
+    ["multiline off-site key", { OFFSITE_BACKUP_SERVICE_ROLE_KEY: `${offsiteSupabaseSecretKey}\nmalformed` }, "PERMANENT_STAGING_OFFSITE_CREDENTIALS_ABSENT"],
+    ["production off-site bucket", { OFFSITE_BACKUP_BUCKET: "pintpath-backups" }, "PERMANENT_STAGING_OFFSITE_CREDENTIALS_ABSENT"],
+    ["alternate off-site bucket", { OFFSITE_BACKUP_BUCKET: "private-ledger" }, "PERMANENT_STAGING_OFFSITE_CREDENTIALS_ABSENT"],
+  ])("blocks Storage clients when %s is configured", async (_label, overrides, checkId) => {
+    const result = await runProviderReadinessWithStorageProbe("exact", overrides);
+
+    expect(result.payload.ok).toBe(false);
+    expect(checkStatuses(result.payload, [checkId])).toEqual({ [checkId]: "fail" });
+    expect(result.clientCreations).toEqual([]);
+    expect(result.listObservations).toEqual([]);
+    expect(result.removalObservations).toEqual([]);
+  });
+
+  it.each([
+    ["permanent staging has no selected identity phase", {
+      PINTPATH_IDENTITY_REGISTRY_PHASE: "",
+    }],
+    ["a Railway preview inherits otherwise complete provider values", {
+      RAILWAY_ENVIRONMENT_NAME: "preview-pr-123",
+      PINTPATH_IDENTITY_REGISTRY_PHASE: "complete",
+      SUPABASE_URL: productionSupabaseOrigin,
+      OFFSITE_BACKUP_SUPABASE_URL: operationalOffsiteSupabaseOrigin,
+      OFFSITE_BACKUP_SERVICE_ROLE_KEY: offsiteSupabaseSecretKey,
+      OFFSITE_BACKUP_BUCKET: "pintpath-backups",
+    }],
+  ])("blocks all provider clients when %s", async (_label, overrides) => {
+    const result = await runProviderReadinessWithStorageProbe("exact", overrides);
+
+    expect(result.payload.readinessProfile).toBe("unsupported_production_runtime");
+    expect(result.payload.ok).toBe(false);
+    expect(checkStatuses(result.payload, ["PROVIDER_READINESS_RUNTIME_IDENTITY"]))
+      .toEqual({ PROVIDER_READINESS_RUNTIME_IDENTITY: "fail" });
     expect(result.clientCreations).toEqual([]);
     expect(result.listObservations).toEqual([]);
     expect(result.removalObservations).toEqual([]);
@@ -1076,6 +1141,7 @@ describe("provider readiness feature gating", () => {
       "PERMANENT_STAGING_BOOTSTRAP_REDIS_RESOURCE",
       "PERMANENT_STAGING_SERVICE_INSTANCE_IDENTITIES",
       "PERMANENT_STAGING_NAMED_SELF_PINS",
+      "PERMANENT_STAGING_OFFSITE_CREDENTIALS_ABSENT",
       "PERMANENT_STAGING_BOOTSTRAP_NOT_CUTOVER_READY",
     ])).toEqual({
       PERMANENT_STAGING_RAILWAY_IDENTITY: "pass",
@@ -1085,6 +1151,7 @@ describe("provider readiness feature gating", () => {
       PERMANENT_STAGING_BOOTSTRAP_REDIS_RESOURCE: "pass",
       PERMANENT_STAGING_SERVICE_INSTANCE_IDENTITIES: "pass",
       PERMANENT_STAGING_NAMED_SELF_PINS: "pass",
+      PERMANENT_STAGING_OFFSITE_CREDENTIALS_ABSENT: "pass",
       PERMANENT_STAGING_BOOTSTRAP_NOT_CUTOVER_READY: "fail",
     });
     expect(checkIds).not.toEqual(expect.arrayContaining([
@@ -1099,6 +1166,9 @@ describe("provider readiness feature gating", () => {
     ["premature database sibling", { PINTPATH_FORBIDDEN_DATABASE_RESOURCE_IDS: productionDatabaseResource }, "PERMANENT_STAGING_BOOTSTRAP_DATABASE_RESOURCE"],
     ["placeholder database service", { PINTPATH_DATABASE_RESOURCE_ID: `railway:${stagingEnvironmentId}:fixture-postgres` }, "PERMANENT_STAGING_BOOTSTRAP_DATABASE_RESOURCE"],
     ["shared Redis service ID", { PINTPATH_REDIS_RESOURCE_ID: "svc-redis-4ac109", PINTPATH_EXPECTED_REDIS_RESOURCE_ID: "svc-redis-4ac109", PINTPATH_PERMANENT_STAGING_REDIS_RESOURCE_ID: "svc-redis-4ac109" }, "PERMANENT_STAGING_SERVICE_INSTANCE_IDENTITIES"],
+    ["an inherited off-site URL", { OFFSITE_BACKUP_SUPABASE_URL: operationalOffsiteSupabaseOrigin }, "PERMANENT_STAGING_OFFSITE_CREDENTIALS_ABSENT"],
+    ["an inherited off-site key", { OFFSITE_BACKUP_SERVICE_ROLE_KEY: offsiteSupabaseSecretKey }, "PERMANENT_STAGING_OFFSITE_CREDENTIALS_ABSENT"],
+    ["an inherited off-site bucket", { OFFSITE_BACKUP_BUCKET: "pintpath-backups" }, "PERMANENT_STAGING_OFFSITE_CREDENTIALS_ABSENT"],
   ])("fails staging bootstrap with %s", (_label, overrides, checkId) => {
     const payload = runProviderReadiness(stagingBootstrapOverrides(overrides));
 
@@ -1160,6 +1230,7 @@ describe("provider readiness feature gating", () => {
   it.each([
     ["backup URL", { OFFSITE_BACKUP_SUPABASE_URL: "https://backup.example.com" }, "ACCOUNT_DELETION_REHEARSAL_BACKUP_CREDENTIALS_ABSENT"],
     ["backup service key", { OFFSITE_BACKUP_SERVICE_ROLE_KEY: "forbidden-backup-key" }, "ACCOUNT_DELETION_REHEARSAL_BACKUP_CREDENTIALS_ABSENT"],
+    ["backup bucket", { OFFSITE_BACKUP_BUCKET: "pintpath-backups" }, "ACCOUNT_DELETION_REHEARSAL_BACKUP_CREDENTIALS_ABSENT"],
     ["missing Redis URL", { REDIS_URL: "" }, "ACCOUNT_DELETION_REHEARSAL_REDIS_ISOLATION"],
     ["production Redis namespace", { REDIS_KEY_NAMESPACE: "pintpath:production:deletion" }, "ACCOUNT_DELETION_REHEARSAL_REDIS_ISOLATION"],
   ])("fails the deletion-rehearsal isolation check when %s is inherited", (_label, overrides, checkId) => {
@@ -1178,7 +1249,7 @@ describe("provider readiness feature gating", () => {
     ["Postgres does not require TLS", { DATABASE_URL: "postgresql://app:fixture@staging-db.internal:5432/pintpath" }, "ACCOUNT_DELETION_REHEARSAL_DATABASE"],
     ["fewer than two replicas are declared", { ACCOUNT_DELETION_REHEARSAL_REPLICA_COUNT: "1" }, "ACCOUNT_DELETION_REHEARSAL_REPLICA_COUNT"],
     ["no Railway replica identity is present", { RAILWAY_REPLICA_ID: "" }, "ACCOUNT_DELETION_REHEARSAL_REPLICA_COUNT"],
-    ["staging aliases production Supabase", { ACCOUNT_DELETION_REHEARSAL_PRODUCTION_SUPABASE_URL: "https://fixture-staging.supabase.co" }, "ACCOUNT_DELETION_REHEARSAL_SUPABASE_IDENTITY"],
+    ["staging aliases production Supabase", { ACCOUNT_DELETION_REHEARSAL_PRODUCTION_SUPABASE_URL: permanentStagingSupabaseOrigin }, "ACCOUNT_DELETION_REHEARSAL_SUPABASE_IDENTITY"],
   ])("fails the permanent deletion staging profile when %s", (_label, overrides, checkId) => {
     const payload = runProviderReadiness(deletionRehearsalOverrides(overrides));
 

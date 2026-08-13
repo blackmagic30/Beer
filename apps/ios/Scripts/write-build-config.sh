@@ -1,6 +1,7 @@
 #!/bin/bash
 
 set -euo pipefail
+export LC_ALL=C
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 output_path="${1:-${script_dir}/../Config.xcconfig}"
@@ -41,8 +42,8 @@ supabase_anon_key="${SUPABASE_ANON_KEY:-}"
 require_single_line "PINT_PATH_API_BASE_URL" "$api_base_url"
 require_single_line "SUPABASE_URL" "$supabase_url"
 require_single_line "SUPABASE_ANON_KEY" "$supabase_anon_key"
-[[ "$supabase_anon_key" != *'#'* && "$supabase_anon_key" != *'//'* ]] \
-  || fail "SUPABASE_ANON_KEY contains characters that are unsafe in an xcconfig file."
+[[ "$supabase_anon_key" =~ ^sb_publishable_[A-Za-z0-9_-]{20,220}$ ]] \
+  || fail "SUPABASE_ANON_KEY must be an exact sb_publishable_ key with 20 to 220 URL-safe characters; the configured value is hidden."
 
 output_dir="$(dirname "$output_path")"
 mkdir -p "$output_dir"

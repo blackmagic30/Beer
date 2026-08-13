@@ -7,13 +7,12 @@ import {
 } from "./permanent-staging-supabase-containment-primitives.js";
 
 export const PERMANENT_STAGING_SUPABASE_KEY_INPUT_SCHEMA =
-  "pintpath-permanent-staging-supabase-three-key-input/v1" as const;
+  "pintpath-permanent-staging-supabase-two-key-input/v1" as const;
 export const PERMANENT_STAGING_SUPABASE_KEY_MAXIMUM_BYTES = 256 as const;
 
 export const PERMANENT_STAGING_SUPABASE_KEY_NAMES = freezeExact([
   "SUPABASE_ANON_KEY",
   "SUPABASE_SERVICE_ROLE_KEY",
-  "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
 ] as const);
 
 export type PermanentStagingSupabaseKeyName =
@@ -22,7 +21,6 @@ export type PermanentStagingSupabaseKeyName =
 export interface PermanentStagingSupabaseKeyBuffers {
   readonly SUPABASE_ANON_KEY: Buffer;
   readonly SUPABASE_SERVICE_ROLE_KEY: Buffer;
-  readonly OFFSITE_BACKUP_SERVICE_ROLE_KEY: Buffer;
 }
 
 export interface PermanentStagingSupabaseKeyInputInspection {
@@ -168,10 +166,9 @@ function wipe(value: Buffer | null): void {
   }
 }
 
-function wipeThree(values: PermanentStagingSupabaseKeyBuffers): void {
+function wipeKeys(values: PermanentStagingSupabaseKeyBuffers): void {
   wipe(values.SUPABASE_ANON_KEY);
   wipe(values.SUPABASE_SERVICE_ROLE_KEY);
-  wipe(values.OFFSITE_BACKUP_SERVICE_ROLE_KEY);
 }
 
 function wipeOwnBuffers(input: unknown): void {
@@ -340,15 +337,13 @@ export function createPermanentStagingSupabaseKeyCustody(
 ): PermanentStagingSupabaseKeyCustody {
   let anonCopy: Buffer | null = null;
   let serviceCopy: Buffer | null = null;
-  let offsiteCopy: Buffer | null = null;
   try {
     if (!exactDataRecord(input, PERMANENT_STAGING_SUPABASE_KEY_NAMES)) {
       throw invalid();
     }
     const anon = input.SUPABASE_ANON_KEY;
     const service = input.SUPABASE_SERVICE_ROLE_KEY;
-    const offsite = input.OFFSITE_BACKUP_SERVICE_ROLE_KEY;
-    const candidates = [anon, service, offsite];
+    const candidates = [anon, service];
     for (let index = 0; index < candidates.length; index += 1) {
       const value = candidates[index];
       if (
@@ -363,12 +358,10 @@ export function createPermanentStagingSupabaseKeyCustody(
     }
     anonCopy = BUFFER_FROM_EXACT(anon as Buffer);
     serviceCopy = BUFFER_FROM_EXACT(service as Buffer);
-    offsiteCopy = BUFFER_FROM_EXACT(offsite as Buffer);
   } catch {
     wipeOwnBuffers(input);
     wipe(anonCopy);
     wipe(serviceCopy);
-    wipe(offsiteCopy);
     throw invalid();
   }
   wipeOwnBuffers(input);
@@ -376,17 +369,13 @@ export function createPermanentStagingSupabaseKeyCustody(
   const held: PermanentStagingSupabaseKeyBuffers = {
     SUPABASE_ANON_KEY: anonCopy,
     SUPABASE_SERVICE_ROLE_KEY: serviceCopy,
-    OFFSITE_BACKUP_SERVICE_ROLE_KEY: offsiteCopy,
   };
   if (
     !hasExactKeyShape(held.SUPABASE_ANON_KEY, PUBLISHABLE_PREFIX)
     || !hasExactKeyShape(held.SUPABASE_SERVICE_ROLE_KEY, SECRET_PREFIX)
-    || !hasExactKeyShape(held.OFFSITE_BACKUP_SERVICE_ROLE_KEY, SECRET_PREFIX)
     || sameBytes(held.SUPABASE_ANON_KEY, held.SUPABASE_SERVICE_ROLE_KEY)
-    || sameBytes(held.SUPABASE_ANON_KEY, held.OFFSITE_BACKUP_SERVICE_ROLE_KEY)
-    || sameBytes(held.SUPABASE_SERVICE_ROLE_KEY, held.OFFSITE_BACKUP_SERVICE_ROLE_KEY)
   ) {
-    wipeThree(held);
+    wipeKeys(held);
     throw invalid();
   }
 
@@ -394,7 +383,7 @@ export function createPermanentStagingSupabaseKeyCustody(
   const close = (): void => {
     if (state === "closed") return;
     state = "closed";
-    wipeThree(held);
+    wipeKeys(held);
   };
   const custody: PermanentStagingSupabaseKeyCustody = {
     inspect() {
@@ -418,7 +407,6 @@ export function createPermanentStagingSupabaseKeyCustody(
       const publication = freezeExact({
         SUPABASE_ANON_KEY: held.SUPABASE_ANON_KEY,
         SUPABASE_SERVICE_ROLE_KEY: held.SUPABASE_SERVICE_ROLE_KEY,
-        OFFSITE_BACKUP_SERVICE_ROLE_KEY: held.OFFSITE_BACKUP_SERVICE_ROLE_KEY,
       });
       return runAbortableWriter({ writer, publication, signal, close });
     },

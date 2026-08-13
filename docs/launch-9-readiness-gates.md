@@ -28,12 +28,17 @@ two-person sign-off alone is not mutation authority.
    Railway variable operations: Google Maps client configuration
    (`GOOGLE_MAPS_API_KEY` and `GOOGLE_MAPS_MAP_ID`), Google Places server access
    (`GOOGLE_PLACES_API_KEY`), and OpenAI menu OCR (`OPENAI_API_KEY`). Separately,
-   the three Supabase replacement-key operations (`SUPABASE_ANON_KEY`,
-   `SUPABASE_SERVICE_ROLE_KEY`, and `OFFSITE_BACKUP_SERVICE_ROLE_KEY`) remain
+   the two permanent-staging Supabase replacement-key operations
+   (`SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY`) remain
    `HARD_DISABLED_REVIEW_REQUIRED` and unauthorized. After their separate
    reviewed authorities and all mutation stops are satisfied, deploy the exact
-   reviewed app build to permanent staging. The isolated private offsite
-   operational copy is now attested and live-probed.
+   reviewed app build to permanent staging. Historical operational-copy
+   attestation and a staging database-bound probe ran under the prior coupled
+   contract; they are not current staging readiness. The production-copy URL,
+   key, and bucket variables are prohibited in permanent staging by the current
+   candidate, and a fresh complete Railway inventory must independently prove
+   all three names deleted before remediation passes. No new staging off-site
+   transport is authorized.
 2. Pass real provider/Auth/role/private-Storage/Free-scope smoke, then scale the
    same build temporarily from one to two replicas for concurrency, queue/
    outbox, idempotency, load/soak, restart, rolling-deploy, rollback, and pool-
@@ -49,16 +54,59 @@ two-person sign-off alone is not mutation authority.
 
 Permanent staging is capped at 0.1 vCPU/0.5 GB for Beer and Postgres and
 0.1 vCPU/0.25 GB for Redis. Keep one Beer replica permanently and use the
-second only for a bounded evidence window. With two Supabase Micro projects and
-the conservative locked-baseline plus daily Postgres-volume snapshot
-allowance, the reviewed recurring envelope is approximately US$46.80/month.
+second only for a bounded evidence window. With one permanent-staging Supabase
+Micro project, the separately operated canonical-production operational-copy
+Supabase Micro project, and the conservative locked-baseline plus daily
+Postgres-volume snapshot allowance, the reviewed combined recurring envelope is
+approximately US$46.80/month. This is not a staging-only cost or authority
+boundary; it is a historical combined planning estimate and not gating
+provider evidence. The separate `permanent_staging_cost` release item remains
+pending. A fresh provider-bound receipt for one frozen candidate must inventory
+Railway, the staging Supabase project, and staging external providers/caps,
+report zero unknown/unpriced/shared/unbounded resources, ceiling-sum integer
+USD cents to at most `5000`, and keep the production operational copy plus
+disposable restore under separate cost authorities. The checked-in cost policy
+and evaluator are scaffold-only and cannot produce that proof.
+
+The 2026-08-13 credential-free public-price audit also proves the currently
+documented maxima are not capable of passing that gate: Railway compute plus a
+fully used 50 GB staging Postgres volume is US$26/month, and Supabase Pro plus
+one Micro project nets to US$25/month under its standard compute entitlement.
+That US$51 partial maximum excludes egress, other storage/backups, add-ons, and
+external providers. It is not live provider evidence, but it is a hard design
+blocker: reduce or isolate the reviewed recurring capacity before collecting a
+fresh receipt, rather than treating current low usage as a bounded maximum.
+
+The current credential-free remediation target is still design-only: isolate
+permanent staging in a US$20-hard-limited Railway Pro workspace and a separate
+US$25 Supabase Pro organization with one Micro project, Spend Cap on, and zero
+uncovered add-ons. That leaves US$5 for all external providers. It remains
+blocked because Railway Agent usage has no proved zero bound and the current
+Railway resource maximum exceeds the target. The exact source inventory spans
+Dynamic Maps, Directions Legacy, Geocoding, Text Search Pro/Enterprise, Nearby
+Search Enterprise, and Place Details Enterprise, but Google does not document
+a monthly hard quota for every surface and warns that quota and billing meters
+can differ. OpenAI OCR now uses no SDK retries, finite `high` image detail, and
+an 8,192-output-token cap, and rejects model overrides outside the reviewed
+`gpt-5.6-sol`/`gpt-4.1` allowlist; monthly call reservations, bounded PDF/input
+tokens, and a documented hard-limit overshoot maximum are still absent in the
+live environment. The disabled candidate cost-bound path instead pins
+`gpt-4.1-mini-2025-04-14`, forbids PDFs/discovery OCR, and reserves five cents
+per attempt in shared state up to US$1 in every rolling 31-day window, but it still needs the
+labelled benchmark, current price/project receipt, and two-replica
+restart/denial proof. Provider hard-limit enforcement is not instantaneous.
+Resend
+Free may be a zero-dollar target only after a dedicated
+live team, quota, and add-on inventory is observed. The remaining US$5 is not
+yet a proved upper bound. No provider move, plan, cap, quota, or credential
+mutation is authorized by this planning target.
 
 ## Environment identities
 
 - **Permanent integrated staging** is the stable pre-production system. Its core Railway service, Postgres database, Supabase project/Auth/private Storage, and Redis identities are pinned and separate; remaining provider credentials and app/live evidence are still open. Use it for migrations, replicas, auth, deletion, data repair, provider canaries, browser/device smoke, load, deploy, and rollback evidence.
 - **Disposable restore-staging** is a different one-shot system. Its separate Railway project, Postgres database, and Redis resource now exist and its logical database receipt matches. It still requires isolated Supabase/Storage, app smoke, PITR/WORM/Storage/tombstone/RPO/RTO proof and safe disposal; do not treat the database-only receipt as a complete recovery drill.
 - The disposable restore resources are temporary metered evidence capacity and
-  are excluded from the recurring staging envelope. At their current caps they
+  are excluded from the combined recurring envelope above. At their current caps they
   would add approximately US$20.13/month if left running; finish the drill and
   complete resource/evidence reconciliation promptly. Disposal then requires
   specific authorization for the exact recorded resource IDs and the reviewed
@@ -95,7 +143,7 @@ preflight passes. The later canonical-production invocation must instead report
 The non-strict evidence command validates the schema and lists genuinely pending
 live/App Review items. Run `npm run release:evidence:strict` only after the exact
 candidate is live, both production smoke gates are current, the full App Review
-approval/manual hold is recorded, and all 12 evidence items are complete.
+approval/manual hold is recorded, and all 13 evidence items are complete.
 Record the command, frozen SHA, UTC time, environment identity, sanitized
 output, evidence link, reviewer, and result.
 
@@ -179,6 +227,6 @@ Prefer measured fixes such as deferred non-critical scripts, lazy-loaded map ext
 
 ## Go / no-go
 
-Go only when every gate above has evidence for the frozen SHA, both permanent staging and disposable restore-staging are correctly separated, the 12-item release evidence pack is complete, App Review is approved, and the release owner is holding the App Store build for the coordinated manual/phased launch.
+Go only when every gate above has evidence for the frozen SHA, both permanent staging and disposable restore-staging are correctly separated, the 13-item release evidence pack is complete, the fresh permanent-staging-only cost receipt proves the `5000`-cent ceiling, App Review is approved, and the release owner is holding the App Store build for the coordinated manual/phased launch.
 
 No-go if any gate is missing, waived, or stale; production still writes authoritative SQLite; two replicas are unsafe; an ordinary user can access admin/other-venue/private evidence data; any deferred commercial or public happy-hour surface is enabled; Redis can fail open; the backup set lacks Postgres/Storage/WORM authority; staging identities overlap; or the signed iOS build is not approved and held for Australia.

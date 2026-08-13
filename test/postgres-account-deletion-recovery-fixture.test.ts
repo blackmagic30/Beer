@@ -34,6 +34,10 @@ const REQUEST_ID = `recovery-proof-delete-${FIXTURE_ID}`;
 const PREPARED_AT = "2026-08-09T01:00:00.000Z";
 const COMPLETED_AT = "2026-08-09T02:00:00.000Z";
 const DATABASE_IDENTITY = "a".repeat(64);
+const PRODUCTION_SUPABASE_ORIGIN = "https://auth.pintpath.au";
+const OFFSITE_SUPABASE_ORIGIN =
+  "https://hfbmhdxrwtihukmixxta.supabase.co";
+const OFFSITE_SERVICE_ROLE_KEY = `sb_secret_${"s".repeat(32)}`;
 
 function sha256(value: crypto.BinaryLike): string {
   return crypto.createHash("sha256").update(value).digest("hex");
@@ -215,7 +219,7 @@ function cliHarness(environment: Readonly<Record<string, string | undefined>> = 
   const dependencies: Partial<PostgresAccountDeletionRecoveryCliDependencies> = {
     env: environment,
     readSecretFile: async (filePath) => filePath.includes("service-role")
-      ? "service-role-test-secret"
+      ? OFFSITE_SERVICE_ROLE_KEY
       : "postgresql://runtime:database-secret@staging.invalid/pintpath?sslmode=require",
     createDatabase: (options) => {
       databaseOptions.push(options);
@@ -393,9 +397,9 @@ describe("Postgres account-deletion recovery proof CLI", () => {
     const harness = cliHarness({
       [POSTGRES_ACCOUNT_DELETION_RECOVERY_CONFIRMATION_ENV]:
         POSTGRES_ACCOUNT_DELETION_RECOVERY_CONFIRMATION_VALUE,
-      SUPABASE_URL: "https://source.supabase.test",
-      OFFSITE_BACKUP_SUPABASE_URL: "https://ledger.supabase.test",
-      OFFSITE_BACKUP_BUCKET: "private-ledger",
+      SUPABASE_URL: PRODUCTION_SUPABASE_ORIGIN,
+      OFFSITE_BACKUP_SUPABASE_URL: OFFSITE_SUPABASE_ORIGIN,
+      OFFSITE_BACKUP_BUCKET: "pintpath-backups",
     });
     harness.dependencies.complete = vi.fn(async () => ({
       receipt: {
@@ -436,8 +440,8 @@ describe("Postgres account-deletion recovery proof CLI", () => {
       `--expected-bucket-name-sha256=${"7".repeat(64)}`,
     ], harness.dependencies)).toBe(0);
     expect(harness.dependencies.assertDestinationPins).toHaveBeenCalledWith({
-      destinationSupabaseUrl: "https://ledger.supabase.test",
-      bucketName: "private-ledger",
+      destinationSupabaseUrl: OFFSITE_SUPABASE_ORIGIN,
+      bucketName: "pintpath-backups",
       expectedDestinationOriginSha256: "6".repeat(64),
       expectedBucketNameSha256: "7".repeat(64),
     });
@@ -450,9 +454,77 @@ describe("Postgres account-deletion recovery proof CLI", () => {
       completedStateSha256: "4".repeat(64),
       ledgerAuthoritySha256: "e".repeat(64),
     });
-    expect(harness.outputs[0]).not.toContain("service-role-test-secret");
+    expect(harness.outputs[0]).not.toContain(OFFSITE_SERVICE_ROLE_KEY);
     expect(harness.outputs[0]).not.toContain(FIXTURE_ID);
     expect(harness.database.closeCalls).toBe(1);
+  });
+
+  it("rejects a caller-matched offsite origin before reading its key", async () => {
+    const attackerOrigin = "https://attacker.invalid";
+    const harness = cliHarness({
+      [POSTGRES_ACCOUNT_DELETION_RECOVERY_CONFIRMATION_ENV]:
+        POSTGRES_ACCOUNT_DELETION_RECOVERY_CONFIRMATION_VALUE,
+      SUPABASE_URL: PRODUCTION_SUPABASE_ORIGIN,
+      OFFSITE_BACKUP_SUPABASE_URL: attackerOrigin,
+      OFFSITE_BACKUP_BUCKET: "pintpath-backups",
+    });
+    const readSecretFile = vi.fn(harness.dependencies.readSecretFile!);
+    harness.dependencies.readSecretFile = readSecretFile;
+    const exitCode = await runPostgresAccountDeletionRecoveryCli([
+      "complete",
+      `--runtime-database-url-file=${runtimeFile}`,
+      `--fixture-receipt=${fixtureFile}`,
+      `--fixture-receipt-sha256=${"b".repeat(64)}`,
+      `--logical-backup-state-receipt=${path.resolve("/private/state-receipt.json")}`,
+      `--logical-backup-state-receipt-sha256=${"c".repeat(64)}`,
+      `--ledger-authority-output=${path.resolve("/private/ledger-authority")}`,
+      `--completion-receipt=${path.resolve("/private/completion.json")}`,
+      `--completed-at=${COMPLETED_AT}`,
+      `--service-role-key-file=${path.resolve("/private/service-role.key")}`,
+      `--expected-destination-origin-sha256=${sha256(attackerOrigin)}`,
+      `--expected-bucket-name-sha256=${"7".repeat(64)}`,
+    ], harness.dependencies);
+    expect(exitCode).toBe(1);
+    expect(readSecretFile).not.toHaveBeenCalled();
+    expect(harness.databaseOptions).toEqual([]);
+    expect(JSON.parse(harness.outputs[0]!)).toMatchObject({
+      failureCode: "configuration_missing_or_unsafe",
+    });
+  });
+
+  it.each([
+    `sb_publishable_${"p".repeat(32)}`,
+    `${OFFSITE_SERVICE_ROLE_KEY}\n`,
+    "arbitrary-service-role-value",
+  ])("rejects an unsafe ledger server key before opening Postgres", async (key) => {
+    const harness = cliHarness({
+      [POSTGRES_ACCOUNT_DELETION_RECOVERY_CONFIRMATION_ENV]:
+        POSTGRES_ACCOUNT_DELETION_RECOVERY_CONFIRMATION_VALUE,
+      SUPABASE_URL: PRODUCTION_SUPABASE_ORIGIN,
+      OFFSITE_BACKUP_SUPABASE_URL: OFFSITE_SUPABASE_ORIGIN,
+      OFFSITE_BACKUP_BUCKET: "pintpath-backups",
+    });
+    harness.dependencies.readSecretFile = vi.fn(async () => key);
+    const exitCode = await runPostgresAccountDeletionRecoveryCli([
+      "complete",
+      `--runtime-database-url-file=${runtimeFile}`,
+      `--fixture-receipt=${fixtureFile}`,
+      `--fixture-receipt-sha256=${"b".repeat(64)}`,
+      `--logical-backup-state-receipt=${path.resolve("/private/state-receipt.json")}`,
+      `--logical-backup-state-receipt-sha256=${"c".repeat(64)}`,
+      `--ledger-authority-output=${path.resolve("/private/ledger-authority")}`,
+      `--completion-receipt=${path.resolve("/private/completion.json")}`,
+      `--completed-at=${COMPLETED_AT}`,
+      `--service-role-key-file=${path.resolve("/private/service-role.key")}`,
+      `--expected-destination-origin-sha256=${"6".repeat(64)}`,
+      `--expected-bucket-name-sha256=${"7".repeat(64)}`,
+    ], harness.dependencies);
+    expect(exitCode).toBe(1);
+    expect(harness.databaseOptions).toEqual([]);
+    expect(JSON.parse(harness.outputs[0]!)).toMatchObject({
+      failureCode: "secret_file_unsafe",
+    });
+    expect(harness.outputs[0]).not.toContain(key);
   });
 
   it("recognizes stable library errors without exposing their causes", () => {

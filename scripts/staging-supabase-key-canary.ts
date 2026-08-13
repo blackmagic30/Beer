@@ -7,9 +7,7 @@ export const STAGING_SUPABASE_KEY_CANARY_LOCK = Object.freeze({
   serviceId: "34a312cd-0920-4a7e-90db-8561c1e0746b",
   railwayConfigPath: "/railway.supabase-key-canary.toml",
   stagingOrigin: "https://bbfibbadwjxzrcdncavy.supabase.co",
-  offsiteOrigin: "https://hfbmhdxrwtihukmixxta.supabase.co",
   stagingBucketId: "beermap-source-evidence",
-  offsiteBucketId: "pintpath-backups",
 } as const);
 
 export const STAGING_SUPABASE_KEY_CANARY_SCHEMA =
@@ -49,17 +47,6 @@ const STAGING_ALLOWED_MIME_TYPES = [
   "image/png",
   "image/webp",
 ] as const;
-const OFFSITE_ALLOWED_MIME_TYPES = [
-  "application/json",
-  "application/octet-stream",
-  "application/pdf",
-  "image/heic",
-  "image/heif",
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-] as const;
-
 interface CanaryIdentity {
   railwayProject: boolean;
   railwayEnvironment: boolean;
@@ -68,9 +55,8 @@ interface CanaryIdentity {
   dedicatedRailwayConfig: boolean;
   debugAndProxyLoggingDisabled: boolean;
   stagingOrigin: boolean;
-  offsiteOrigin: boolean;
-  originsDistinct: boolean;
-  bucketIdsExact: boolean;
+  stagingBucketExact: boolean;
+  offsiteConfigurationAbsent: boolean;
   replacementKeyShapes: boolean;
   replacementKeysDistinct: boolean;
 }
@@ -79,7 +65,6 @@ interface CanaryChecks {
   stagingAuthSettings: boolean;
   stagingAuthAdmin: boolean;
   stagingPrivateStorage: boolean;
-  offsitePrivateStorage: boolean;
 }
 
 export interface StagingSupabaseKeyCanaryReceipt {
@@ -102,7 +87,6 @@ interface StagingSupabaseKeyCanaryDependencies {
 interface ValidConfiguration {
   stagingPublishableKey: string;
   stagingSecretKey: string;
-  offsiteSecretKey: string;
 }
 
 const DEFAULT_DEPENDENCIES: StagingSupabaseKeyCanaryDependencies = {
@@ -122,9 +106,8 @@ function emptyIdentity(): CanaryIdentity {
     dedicatedRailwayConfig: false,
     debugAndProxyLoggingDisabled: false,
     stagingOrigin: false,
-    offsiteOrigin: false,
-    originsDistinct: false,
-    bucketIdsExact: false,
+    stagingBucketExact: false,
+    offsiteConfigurationAbsent: false,
     replacementKeyShapes: false,
     replacementKeysDistinct: false,
   };
@@ -135,7 +118,6 @@ function emptyChecks(): CanaryChecks {
     stagingAuthSettings: false,
     stagingAuthAdmin: false,
     stagingPrivateStorage: false,
-    offsitePrivateStorage: false,
   };
 }
 
@@ -222,26 +204,16 @@ function configurationFromEnvironment(
   );
 
   const stagingOrigin = exactEnvironment(env, "SUPABASE_URL", 256);
-  const offsiteOrigin = exactEnvironment(
-    env,
-    "OFFSITE_BACKUP_SUPABASE_URL",
-    256,
-  );
-  const offsiteBucketId = exactEnvironment(
-    env,
-    "OFFSITE_BACKUP_BUCKET",
-    128,
-  );
   identity.stagingOrigin =
     stagingOrigin === STAGING_SUPABASE_KEY_CANARY_LOCK.stagingOrigin;
-  identity.offsiteOrigin =
-    offsiteOrigin === STAGING_SUPABASE_KEY_CANARY_LOCK.offsiteOrigin;
-  identity.originsDistinct =
-    identity.stagingOrigin && identity.offsiteOrigin && stagingOrigin !== offsiteOrigin;
-  identity.bucketIdsExact =
+  identity.stagingBucketExact =
     STAGING_SUPABASE_KEY_CANARY_LOCK.stagingBucketId ===
-      "beermap-source-evidence" &&
-    offsiteBucketId === STAGING_SUPABASE_KEY_CANARY_LOCK.offsiteBucketId;
+      "beermap-source-evidence";
+  identity.offsiteConfigurationAbsent = [
+    "OFFSITE_BACKUP_SUPABASE_URL",
+    "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
+    "OFFSITE_BACKUP_BUCKET",
+  ].every((name) => environmentDisabled(env, name));
 
   const stagingPublishableKey = exactEnvironment(
     env,
@@ -253,27 +225,19 @@ function configurationFromEnvironment(
     "SUPABASE_SERVICE_ROLE_KEY",
     256,
   );
-  const offsiteSecretKey = exactEnvironment(
-    env,
-    "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
-    256,
-  );
   identity.replacementKeyShapes =
     PUBLISHABLE_KEY_PATTERN.test(stagingPublishableKey) &&
-    SECRET_KEY_PATTERN.test(stagingSecretKey) &&
-    SECRET_KEY_PATTERN.test(offsiteSecretKey);
+    SECRET_KEY_PATTERN.test(stagingSecretKey);
   identity.replacementKeysDistinct =
     identity.replacementKeyShapes &&
-    stagingPublishableKey !== stagingSecretKey &&
-    stagingPublishableKey !== offsiteSecretKey &&
-    stagingSecretKey !== offsiteSecretKey;
+    stagingPublishableKey !== stagingSecretKey;
 
   const valid = Object.values(identity).every((value) => value === true);
   return {
     deploymentId: identity.railwayDeployment ? railwayDeploymentId : null,
     identity,
     configuration: valid
-      ? { stagingPublishableKey, stagingSecretKey, offsiteSecretKey }
+      ? { stagingPublishableKey, stagingSecretKey }
       : null,
   };
 }
@@ -435,7 +399,7 @@ async function runReadOnlyCanaries(
   configuration: ValidConfiguration,
   dependencies: StagingSupabaseKeyCanaryDependencies,
 ): Promise<CanaryChecks> {
-  const [authSettings, authAdmin, stagingBucket, offsiteBucket] = await Promise.all([
+  const [authSettings, authAdmin, stagingBucket] = await Promise.all([
     fetchJson({
       fetchImpl: dependencies.fetchImpl,
       url: `${STAGING_SUPABASE_KEY_CANARY_LOCK.stagingOrigin}/auth/v1/settings`,
@@ -454,12 +418,6 @@ async function runReadOnlyCanaries(
       apiKey: configuration.stagingSecretKey,
       timeoutMs: dependencies.requestTimeoutMs,
     }),
-    fetchJson({
-      fetchImpl: dependencies.fetchImpl,
-      url: `${STAGING_SUPABASE_KEY_CANARY_LOCK.offsiteOrigin}/storage/v1/bucket/${STAGING_SUPABASE_KEY_CANARY_LOCK.offsiteBucketId}`,
-      apiKey: configuration.offsiteSecretKey,
-      timeoutMs: dependencies.requestTimeoutMs,
-    }),
   ]);
   return {
     stagingAuthSettings: isAuthSettings(authSettings),
@@ -468,11 +426,6 @@ async function runReadOnlyCanaries(
       id: STAGING_SUPABASE_KEY_CANARY_LOCK.stagingBucketId,
       fileSizeLimit: 8 * 1_024 * 1_024,
       allowedMimeTypes: STAGING_ALLOWED_MIME_TYPES,
-    }),
-    offsitePrivateStorage: isStorageBucket(offsiteBucket, {
-      id: STAGING_SUPABASE_KEY_CANARY_LOCK.offsiteBucketId,
-      fileSizeLimit: null,
-      allowedMimeTypes: OFFSITE_ALLOWED_MIME_TYPES,
     }),
   };
 }

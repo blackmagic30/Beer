@@ -73,8 +73,13 @@ Provider-specific setup lives in [docs/provider-configuration-runbook.md](/Users
 - `DEMO_BILLING_MODE=false` unless a private beta intentionally enables demo billing with `ALLOW_DEMO_BILLING_IN_PRODUCTION=true`.
 - `ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=false`.
 - Keep `COMMERCIAL_LAUNCH_ENABLED=false` and `CONSUMER_PAID_ENROLLMENT_ENABLED=false` for this deferred-pricing launch; Stripe values may remain absent. Enabling either paid flag makes all five Stripe values mandatory at startup.
-- `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` are all required in production for provider-backed authentication and private evidence storage. The service-role key stays server-side and is never exposed in public config.
-- `OFFSITE_BACKUP_SUPABASE_URL` and `OFFSITE_BACKUP_SERVICE_ROLE_KEY` point to a separate operational-copy project, not the production Supabase origin. This is not the required immutable disaster-recovery proof; also provide a separate-provider/region WORM/object-lock copy whose application writer cannot overwrite, delete, or shorten retention.
+- `SUPABASE_URL=https://auth.pintpath.au`, an exact `sb_publishable_...` value in `SUPABASE_ANON_KEY`,
+  and an exact server-only `sb_secret_...` value in
+  `SUPABASE_SERVICE_ROLE_KEY` are all required for the launch candidate. The
+  service key stays server-side and is never exposed in public config. A valid
+  legacy JWT remains accepted only as a transition rollback input in current
+  production; it is not acceptable launch evidence for legacy-key disablement.
+- `OFFSITE_BACKUP_SUPABASE_URL=https://hfbmhdxrwtihukmixxta.supabase.co` and a distinct exact `sb_secret_...` value in `OFFSITE_BACKUP_SERVICE_ROLE_KEY` bind the reviewed operational-copy project. This is not the required immutable disaster-recovery proof; also provide a separate-provider/region WORM/object-lock copy whose application writer cannot overwrite, delete, or shorten retention.
 - `OFFSITE_BACKUP_BUCKET=pintpath-backups`, with the configured interval and retention reviewed against the release RPO.
 - Supabase Auth leaked-password protection is enabled.
 - Supabase live project is not on deprecated Postgres 14.

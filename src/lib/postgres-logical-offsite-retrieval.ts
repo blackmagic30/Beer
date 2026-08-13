@@ -31,6 +31,12 @@ import {
 } from "./postgres-logical-offsite.js";
 import { parsePostgresLogicalSourceStateReceipt } from "./postgres-logical-state.js";
 import { createServerSupabaseClient } from "./supabase-client.js";
+import {
+  OPERATIONAL_OFFSITE_SUPABASE_ORIGIN,
+  assertExactSupabaseOrigin,
+  assertSupabaseServerApiKey,
+  resolveExactOperationalOffsiteBackupBucket,
+} from "./supabase-key-format.js";
 
 const CONTRACT = "pintpath-postgres-logical-offsite-v2" as const;
 const IMMUTABLE_CACHE_CONTROL = "31536000" as const;
@@ -550,6 +556,9 @@ async function hashExactLocalFile(input: {
       || before.size !== BigInt(input.expectedBytes)
       || await fs.promises.realpath(input.filePath) !== input.filePath
     ) throw new Error("unsafe");
+    // The O_NOFOLLOW descriptor is bound to the pre-open lstat by full file
+    // identity and is revalidated after hashing the descriptor contents.
+    // codeql[js/file-system-race]
     handle = await fs.promises.open(
       input.filePath,
       fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
@@ -721,6 +730,9 @@ async function readBoundedLocalFile(
       || before.size > BigInt(maximumBytes)
       || await fs.promises.realpath(filePath) !== filePath
     ) throw new Error("unsafe");
+    // The O_NOFOLLOW descriptor is bound to the pre-open lstat by full file
+    // identity; both the descriptor and pathname are revalidated after read.
+    // codeql[js/file-system-race]
     handle = await fs.promises.open(
       filePath,
       fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
@@ -1341,6 +1353,20 @@ export function createSupabasePostgresLogicalOffsiteRetrievalStorage(input: {
     fetchImplementation: typeof globalThis.fetch,
   ) => SupabaseClient) | undefined;
 }): PostgresLogicalOffsiteRetrievalStorage {
+  try {
+    assertExactSupabaseOrigin(
+      input.destinationSupabaseUrl,
+      OPERATIONAL_OFFSITE_SUPABASE_ORIGIN,
+      "destinationSupabaseUrl",
+    );
+    assertSupabaseServerApiKey(
+      input.destinationServiceRoleKey,
+      "destinationServiceRoleKey",
+    );
+    resolveExactOperationalOffsiteBackupBucket(input.bucketName, "bucketName");
+  } catch {
+    throw retrievalError("destination_unsafe");
+  }
   const requestTimeoutMs = input.requestTimeoutMs ?? 60_000;
   const streamTimeoutMs = input.streamTimeoutMs ?? 2 * 60 * 60 * 1000;
   if (

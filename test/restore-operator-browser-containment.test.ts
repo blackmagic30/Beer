@@ -253,7 +253,7 @@ describe("restore rehearsal operator mutation guard", () => {
       'assertOperatorMutationAllowed("Provider readiness storage write probe")',
     );
     expect(source("scripts/backup-data-offsite.ts")).toContain(
-      'assertOperatorMutationAllowed("Off-site backup upload and retention")',
+      'dependencies.assertMutationAllowed("Off-site backup upload and retention")',
     );
     expect(source("scripts/production-smoke-check.mjs")).toContain(
       "Production smoke authentication is disabled while RESTORE_REHEARSAL_MODE is enabled.",
@@ -334,6 +334,26 @@ describe("restore rehearsal browser isolation", () => {
     );
     expect(viewer).toMatch(
       /function setSavedLocationPreference\(enabled\) \{[\s\S]*if \(RESTORE_REHEARSAL_MODE\) \{[\s\S]*removeItem\(LOCATION_PREFERENCE_STORAGE_KEY\);[\s\S]*return;/,
+    );
+  });
+
+  it("strips unregistered restore Supabase credentials before every service boundary", () => {
+    const app = fs.readFileSync(path.resolve(process.cwd(), "src/app.ts"), "utf8");
+    const business = fs.readFileSync(
+      path.resolve(process.cwd(), "src/modules/business/business.service.ts"),
+      "utf8",
+    );
+    expect(app).toContain(
+      "env.RESTORE_REHEARSAL_MODE ? undefined : env.SUPABASE_URL",
+    );
+    expect(app).toContain("SUPABASE_URL: undefined");
+    expect(app).toContain("SUPABASE_ANON_KEY: undefined");
+    expect(app).toContain("SUPABASE_SERVICE_ROLE_KEY: undefined");
+    expect(business).toMatch(
+      /supabaseClientOverride && !config\.RESTORE_REHEARSAL_MODE/,
+    );
+    expect(business).toMatch(
+      /const configured = !this\.config\.RESTORE_REHEARSAL_MODE && Boolean/,
     );
   });
 });

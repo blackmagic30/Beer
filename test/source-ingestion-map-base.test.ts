@@ -1,5 +1,10 @@
 import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
+import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
 
 import type {
@@ -16,6 +21,7 @@ import {
   type ReviewedPriceSelectionOptions,
 } from "../src/lib/reviewed-price-selection-policy.js";
 import {
+  assertPublishMapBaseSupabaseBoundary,
   isLikelyBaselineMenuSource as publisherIsLikelyBaselineMenuSource,
   selectPublishableMapBaseRows as publisherSelectPublishableMapBaseRows,
 } from "../scripts/publish-source-ingestion-map-base.js";
@@ -74,6 +80,83 @@ function expectSelectionParity(
 }
 
 describe("source ingestion map-base publisher selection", () => {
+  it("rejects unreviewed Supabase transports before publication setup", () => {
+    const serviceRoleKey = `sb_secret_${"s".repeat(32)}`;
+    expect(assertPublishMapBaseSupabaseBoundary({
+      SUPABASE_URL: "https://auth.pintpath.au",
+      SUPABASE_SERVICE_ROLE_KEY: serviceRoleKey,
+    })).toEqual({
+      supabaseUrl: "https://auth.pintpath.au",
+      serviceRoleKey,
+    });
+    expect(assertPublishMapBaseSupabaseBoundary({}, false)).toBeNull();
+    expect(assertPublishMapBaseSupabaseBoundary({
+      SUPABASE_URL: "",
+      SUPABASE_SERVICE_ROLE_KEY: "",
+    }, false)).toBeNull();
+    expect(() => assertPublishMapBaseSupabaseBoundary({
+      SUPABASE_URL: "https://auth.pintpath.au",
+    }, false)).toThrow(/no configured value is emitted/);
+
+    for (const environment of [
+      {
+        SUPABASE_URL: "https://attacker.invalid",
+        SUPABASE_SERVICE_ROLE_KEY: serviceRoleKey,
+      },
+      {
+        SUPABASE_URL: " https://auth.pintpath.au",
+        SUPABASE_SERVICE_ROLE_KEY: serviceRoleKey,
+      },
+      {
+        SUPABASE_URL: "https://auth.pintpath.au",
+        SUPABASE_SERVICE_ROLE_KEY: `sb_publishable_${"p".repeat(32)}`,
+      },
+      {
+        SUPABASE_URL: "https://auth.pintpath.au",
+        SUPABASE_SERVICE_ROLE_KEY: `${serviceRoleKey}\n`,
+      },
+    ]) {
+      expect(() => assertPublishMapBaseSupabaseBoundary(environment))
+        .toThrow(/no configured value is emitted|no key value is emitted/);
+    }
+  });
+
+  it("runs a local dry-run with no Supabase configuration or client", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pintpath-map-base-dry-run-"));
+    const databasePath = path.join(root, "pint-path.sqlite");
+    const database = new Database(databasePath);
+    try {
+      database.exec(fs.readFileSync(path.resolve("src/db/schema.sql"), "utf8"));
+    } finally {
+      database.close();
+    }
+    try {
+      const result = spawnSync(process.execPath, [
+        path.resolve("node_modules/tsx/dist/cli.mjs"),
+        path.resolve("scripts/publish-source-ingestion-map-base.ts"),
+        "--dry-run",
+        `--database=${databasePath}`,
+        "--skip-source-check",
+      ], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          NODE_ENV: "development",
+          SUPABASE_URL: "",
+          SUPABASE_SERVICE_ROLE_KEY: "",
+        },
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        mode: "dry-run",
+        publishedCount: 0,
+      });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("exports one immutable canonical policy with a pinned deterministic SHA-256", () => {
     expect(publisherIsLikelyBaselineMenuSource).toBe(isLikelyBaselineMenuSource);
     expect(publisherSelectPublishableMapBaseRows).toBe(selectPublishableMapBaseRows);

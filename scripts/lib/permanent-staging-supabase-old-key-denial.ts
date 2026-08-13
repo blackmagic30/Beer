@@ -22,7 +22,7 @@ export interface PermanentStagingSupabaseOldKeyDenialFixture {
   readonly schemaVersion:
     typeof PERMANENT_STAGING_SUPABASE_OLD_KEY_DENIAL_FIXTURE_SCHEMA;
   readonly source: "fixture-only";
-  readonly projectRole: "permanent-staging" | "operational-offsite-copy";
+  readonly projectRole: "permanent-staging";
   readonly projectRef: string;
   readonly keyFamily: "anon" | "serviceRole";
   readonly legacyKeyId: string | null;
@@ -31,9 +31,7 @@ export interface PermanentStagingSupabaseOldKeyDenialFixture {
     readonly readOnly: true;
     readonly canaryClass:
       | "staging-auth-settings"
-      | "staging-auth-admin-list-limit-one"
-      | "offsite-auth-settings"
-      | "offsite-private-storage-bucket";
+      | "staging-auth-admin-list-limit-one";
   };
   readonly response: {
     readonly transportCompleted: boolean;
@@ -44,7 +42,6 @@ export interface PermanentStagingSupabaseOldKeyDenialFixture {
 
 const PROJECTS = freezeExact({
   "permanent-staging": "bbfibbadwjxzrcdncavy",
-  "operational-offsite-copy": "hfbmhdxrwtihukmixxta",
 } as const);
 const NUMBER_IS_SAFE_INTEGER = Number.isSafeInteger;
 
@@ -52,14 +49,9 @@ function expectedCanaryClass(
   role: PermanentStagingSupabaseOldKeyDenialFixture["projectRole"],
   family: PermanentStagingSupabaseOldKeyDenialFixture["keyFamily"],
 ): PermanentStagingSupabaseOldKeyDenialFixture["request"]["canaryClass"] {
-  if (role === "permanent-staging") {
-    return family === "anon"
-      ? "staging-auth-settings"
-      : "staging-auth-admin-list-limit-one";
-  }
   return family === "anon"
-    ? "offsite-auth-settings"
-    : "offsite-private-storage-bucket";
+    ? "staging-auth-settings"
+    : "staging-auth-admin-list-limit-one";
 }
 
 export function parsePermanentStagingSupabaseOldKeyDenialFixture(
@@ -80,8 +72,7 @@ export function parsePermanentStagingSupabaseOldKeyDenialFixture(
     || value.schemaVersion
       !== PERMANENT_STAGING_SUPABASE_OLD_KEY_DENIAL_FIXTURE_SCHEMA
     || value.source !== "fixture-only"
-    || (value.projectRole !== "permanent-staging"
-      && value.projectRole !== "operational-offsite-copy")
+    || value.projectRole !== "permanent-staging"
     || value.projectRef !== PROJECTS[value.projectRole]
     || (value.keyFamily !== "anon" && value.keyFamily !== "serviceRole")
     || (value.legacyKeyId !== null

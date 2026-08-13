@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -185,8 +186,8 @@ describe("iOS launch safety", () => {
 
     expect(recovery).toContain('baseURL.appending(path: "auth/callback")');
     expect(recovery).not.toContain('baseURL.appending(path: "reset-password.html")');
-    expect(androidAPI).toContain('baseUrl.trimEnd(\'/\') + "/auth/callback"');
-    expect(androidAPI).not.toContain('baseUrl.trimEnd(\'/\') + "/reset-password.html"');
+    expect(androidAPI).toContain('effectiveApiBaseUrl() + "/auth/callback"');
+    expect(androidAPI).not.toContain('effectiveApiBaseUrl() + "/reset-password.html"');
     expect(callback).toContain('hash.get("type") === "recovery"');
     expect(callback).toContain('MelbBeerBusiness.markPasswordRecoverySession(result.account?.id)');
     expect(auth).toContain("Already use Google on the Pint Path website?");
@@ -268,15 +269,26 @@ describe("iOS launch safety", () => {
     expect(validator).toContain('approved_supabase_url="https://auth.pintpath.au"');
     expect(validator).toContain('[[ "$supabase_url" == "$approved_supabase_url" ]]');
     expect(validator).toContain("sb_secret_*");
-    expect(validator).toContain('[[ "$role" == "anon" ]]');
+    expect(validator).toContain('^sb_publishable_[A-Za-z0-9_-]{20,220}$');
+    expect(validator.indexOf('^sb_publishable_[A-Za-z0-9_-]{20,220}$')).toBeLessThan(
+      validator.indexOf('if [[ "${CONFIGURATION:-}" != "Release" ]]'),
+    );
+    expect(validator).not.toContain("validate_legacy_anon_jwt");
     expect(example).toContain("Release/archive builds fail closed");
     expect(example).toContain("https:/$()/auth.pintpath.au");
-    expect(example).toContain("Never use an sb_secret_ or legacy service-role key");
+    expect(example).toContain("Legacy JWT and sb_secret_ keys are rejected");
     expect(api).toContain('static let approvedSupabaseOrigin = "https://auth.pintpath.au"');
     expect(api).toContain("let supabaseURL = AppConfig.supabaseURL");
     expect(api).toContain("let key = AppConfig.supabaseAnonKey");
-    expect(api).toContain('object["role"] as? String == "anon"');
-    expect(api).toContain('^sb_publishable_[A-Za-z0-9_-]{20,}$');
+    expect(api).toContain('^sb_publishable_[A-Za-z0-9_-]{20,220}$');
+    expect(api).not.toContain('object["role"] as? String == "anon"');
+    expect(api).toContain('request.setValue(key, forHTTPHeaderField: "apikey")');
+    expect(api).toContain("if let accessToken, accessToken != key {");
+    expect(api).toContain("RedirectRejectingURLSessionDelegate");
+    expect(api).toContain("willPerformHTTPRedirection");
+    expect(api).toContain("completionHandler(nil)");
+    expect(api).toContain("delegate: RedirectRejectingURLSessionDelegate()");
+    expect(api).not.toContain('request.setValue("Bearer \\(key)"');
     expect(api).not.toContain("/api/business/auth/login");
     expect(api).not.toContain("hasSupabaseConfiguration");
     expect(gitignore).toContain("apps/ios/Config.xcconfig");
@@ -304,8 +316,20 @@ describe("iOS launch safety", () => {
     );
 
     expect(runValidator({}).status).toBe(0);
+    expect(runValidator({ SUPABASE_ANON_KEY: `sb_publishable_${"a".repeat(20)}` }).status)
+      .toBe(0);
+    expect(runValidator({ SUPABASE_ANON_KEY: `sb_publishable_${"a".repeat(220)}` }).status)
+      .toBe(0);
+    expect(runValidator({ SUPABASE_ANON_KEY: `sb_publishable_${"a".repeat(20)}__` }).status)
+      .toBe(0);
     expect(runValidator({ CONFIGURATION: "Debug", SUPABASE_URL: "", SUPABASE_ANON_KEY: "" }).status)
       .toBe(0);
+    expect(runValidator({
+      CONFIGURATION: "Debug",
+      PINT_PATH_API_BASE_URL: "",
+      SUPABASE_URL: "",
+      SUPABASE_ANON_KEY: `sb_publishable_${"d".repeat(20)}`,
+    }).status).toBe(0);
 
     const missing = runValidator({ SUPABASE_URL: "" });
     expect(missing.status).not.toBe(0);
@@ -323,7 +347,90 @@ describe("iOS launch safety", () => {
 
     const privateKey = runValidator({ SUPABASE_ANON_KEY: `sb_secret_${"0".repeat(32)}` });
     expect(privateKey.status).not.toBe(0);
-    expect(privateKey.stderr).toContain("never a service-role key");
+    expect(privateKey.stderr).toContain("never a secret or legacy service-role key");
+
+    const rejectedKeys = [
+      "eyJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoiYW5vbiJ9.signature",
+      `sb_publishable_${"a".repeat(19)}`,
+      `sb_publishable_${"a".repeat(221)}`,
+      `sb_publishable_${"a".repeat(20)}!`,
+      ` ${validReleaseEnv.SUPABASE_ANON_KEY}`,
+    ];
+    for (const rejectedKey of rejectedKeys) {
+      const rejected = runValidator({ SUPABASE_ANON_KEY: rejectedKey });
+      expect(rejected.status).not.toBe(0);
+      expect(rejected.stderr).toContain(
+        "must be an sb_publishable_ key with 20 to 220 URL-safe characters",
+      );
+      expect(`${rejected.stdout}\n${rejected.stderr}`).not.toContain(rejectedKey);
+    }
+
+    for (const rejectedKey of [
+      `sb_secret_${"s".repeat(32)}`,
+      ...rejectedKeys,
+    ]) {
+      const rejected = runValidator({
+        CONFIGURATION: "Debug",
+        PINT_PATH_API_BASE_URL: "",
+        SUPABASE_URL: "",
+        SUPABASE_ANON_KEY: rejectedKey,
+      });
+      expect(rejected.status).not.toBe(0);
+      expect(`${rejected.stdout}\n${rejected.stderr}`).not.toContain(rejectedKey);
+    }
+  });
+
+  it("refuses to persist a non-publishable key in the ignored iOS build config", () => {
+    const writerPath = path.resolve(
+      process.cwd(),
+      "apps/ios/Scripts/write-build-config.sh",
+    );
+    const temporaryDirectory = fs.mkdtempSync(
+      path.join(os.tmpdir(), "pintpath-ios-build-config-test-"),
+    );
+    const baseEnvironment: NodeJS.ProcessEnv = {
+      ...process.env,
+      PINT_PATH_API_BASE_URL: "https://pintpath.au",
+      SUPABASE_URL: "https://auth.pintpath.au",
+    };
+    const runWriter = (key: string, outputName: string) => spawnSync(
+      "/bin/bash",
+      [writerPath, path.join(temporaryDirectory, outputName)],
+      {
+        env: { ...baseEnvironment, SUPABASE_ANON_KEY: key },
+        encoding: "utf8",
+      },
+    );
+
+    try {
+      const validKey = `sb_publishable_${"p".repeat(32)}`;
+      const accepted = runWriter(validKey, "accepted.xcconfig");
+      expect(accepted.status, accepted.stderr).toBe(0);
+      expect(accepted.stdout).not.toContain(validKey);
+      expect(fs.readFileSync(
+        path.join(temporaryDirectory, "accepted.xcconfig"),
+        "utf8",
+      )).toContain(`SUPABASE_ANON_KEY = ${validKey}`);
+
+      for (const [index, rejectedKey] of [
+        `sb_secret_${"s".repeat(32)}`,
+        "eyJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoiYW5vbiJ9.signature",
+        ` ${validKey}`,
+        `sb_publishable_${"p".repeat(19)}`,
+        `sb_publishable_${"p".repeat(221)}`,
+      ].entries()) {
+        const outputName = `rejected-${index}.xcconfig`;
+        const rejected = runWriter(rejectedKey, outputName);
+        expect(rejected.status).not.toBe(0);
+        expect(rejected.stderr).toContain(
+          "SUPABASE_ANON_KEY must be an exact sb_publishable_ key",
+        );
+        expect(`${rejected.stdout}\n${rejected.stderr}`).not.toContain(rejectedKey);
+        expect(fs.readdirSync(temporaryDirectory)).not.toContain(outputName);
+      }
+    } finally {
+      fs.rmSync(temporaryDirectory, { force: true, recursive: true });
+    }
   });
 
   it("archives the pinned origin with synthetic keys on normal CI and protected keys in the manual job", () => {

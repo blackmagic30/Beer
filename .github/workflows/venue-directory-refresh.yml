@@ -21,41 +21,49 @@ jobs:
       PINTPATH_EXPECTED_SUPABASE_PROJECT_REF: jxpubqlmqnnqwadmjgyk
     steps:
       - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version-file: .node-version
           cache: npm
 
       - name: Install dependencies
         run: npm ci
 
       - name: Verify the exact production Supabase target
+        id: supabase_transport
         shell: bash
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
           set -euo pipefail
-          actualProjectRef="$(
-            node -e 'const value = new URL(process.env.SUPABASE_URL); process.stdout.write(value.hostname.replace(/\.supabase\.co$/, ""));'
-          )"
-          test "$actualProjectRef" = "$PINTPATH_EXPECTED_SUPABASE_PROJECT_REF"
+          key_kind="$(npm exec tsx -- scripts/validate-production-supabase-transport.ts --print-key-kind)"
+          case "$key_kind" in
+            secret|legacy_service_role) ;;
+            *) echo "Supabase server key classification failed." >&2; exit 1 ;;
+          esac
+          printf 'key_kind=%s\n' "$key_kind" >> "$GITHUB_OUTPUT"
 
       - name: Check whether the directory-status schema is released
         id: directory_schema
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          PINTPATH_SUPABASE_SERVER_KEY_KIND: ${{ steps.supabase_transport.outputs.key_kind }}
         shell: bash
         run: |
           set -euo pipefail
-          node <<'NODE'
+          node --input-type=module <<'NODE'
           const { appendFileSync } = await import("node:fs");
 
+          if (process.env.SUPABASE_URL !== "https://auth.pintpath.au") {
+            throw new Error("Supabase production origin mismatch.");
+          }
           const supabaseUrl = new URL(process.env.SUPABASE_URL);
           const query = new URL("/rest/v1/venues", supabaseUrl);
           query.searchParams.set("select", "business_status,last_checked_at,directory_eligible");
@@ -63,14 +71,15 @@ jobs:
 
           const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
           const headers = { apikey: serviceRoleKey };
-          const jwtSegments = serviceRoleKey.split(".");
-          const isLegacyJwtKey = serviceRoleKey.startsWith("eyJ") && jwtSegments.length === 3 &&
-            jwtSegments.every((segment) => /^[A-Za-z0-9_-]+$/.test(segment));
-          if (isLegacyJwtKey) {
+          const keyKind = process.env.PINTPATH_SUPABASE_SERVER_KEY_KIND;
+          if (!['secret', 'legacy_service_role'].includes(keyKind)) {
+            throw new Error("Supabase server key classification is unavailable.");
+          }
+          if (keyKind === "legacy_service_role") {
             headers.Authorization = `Bearer ${serviceRoleKey}`;
           }
 
-          const response = await fetch(query, { headers });
+          const response = await fetch(query, { headers, redirect: "error" });
           if (response.ok) {
             appendFileSync(process.env.GITHUB_OUTPUT, "ready=true\n");
           } else {
@@ -115,16 +124,19 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          PINTPATH_SUPABASE_SERVER_KEY_KIND: ${{ steps.supabase_transport.outputs.key_kind }}
         shell: bash
         run: |
           set -euo pipefail
-          node <<'NODE'
+          node --input-type=module <<'NODE'
           const expectedRef = process.env.PINTPATH_EXPECTED_SUPABASE_PROJECT_REF;
-          const supabaseUrl = new URL(process.env.SUPABASE_URL);
-          const actualRef = supabaseUrl.hostname.replace(/\.supabase\.co$/, "");
-          if (actualRef !== expectedRef) {
-            throw new Error(`Supabase project target mismatch: expected ${expectedRef}, received ${actualRef}.`);
+          if (
+            process.env.SUPABASE_URL !== "https://auth.pintpath.au" ||
+            expectedRef !== "jxpubqlmqnnqwadmjgyk"
+          ) {
+            throw new Error("Supabase production target mismatch.");
           }
+          const supabaseUrl = new URL(process.env.SUPABASE_URL);
 
           const query = new URL("/rest/v1/venues", supabaseUrl);
           query.searchParams.set("select", "last_checked_at");
@@ -135,14 +147,16 @@ jobs:
           const headers = {
             apikey: serviceRoleKey,
           };
-          const jwtSegments = serviceRoleKey.split(".");
-          const isLegacyJwtKey = serviceRoleKey.startsWith("eyJ") && jwtSegments.length === 3 &&
-            jwtSegments.every((segment) => /^[A-Za-z0-9_-]+$/.test(segment));
-          if (isLegacyJwtKey) {
+          const keyKind = process.env.PINTPATH_SUPABASE_SERVER_KEY_KIND;
+          if (!['secret', 'legacy_service_role'].includes(keyKind)) {
+            throw new Error("Supabase server key classification is unavailable.");
+          }
+          if (keyKind === "legacy_service_role") {
             headers.Authorization = `Bearer ${serviceRoleKey}`;
           }
           const response = await fetch(query, {
             headers,
+            redirect: "error",
           });
           if (!response.ok) {
             throw new Error(`Directory freshness query failed with HTTP ${response.status}.`);

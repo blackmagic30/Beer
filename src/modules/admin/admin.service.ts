@@ -10,6 +10,7 @@ import type { AdminIngestionQueueRepository } from "../../db/admin-ingestion-que
 import { BeerCatalogRepository, type ResolvedBeerCatalogItem } from "../../db/beer-catalog.repository.js";
 import { ACCOUNT_DATA_RETENTION_POLICY } from "../../db/privacy-retention.repository.js";
 import type { SqlDatabase } from "../../db/sql-database.js";
+import { SystemStateRepository } from "../../db/system-state.repository.js";
 import type {
   AdminIngestionBeerRecord,
   AdminIngestionCrawlerFeedback,
@@ -24,6 +25,12 @@ import {
   normalizeBeerSearchKey,
 } from "../../constants/beers.js";
 import { AppError, ExternalServiceError } from "../../lib/errors.js";
+import {
+  OPENAI_MENU_OCR_COST_BOUND_MODEL,
+  OPENAI_MENU_OCR_COST_BOUND_MAX_OUTPUT_TOKENS,
+  assertOpenAiMenuOcrCostBoundRequest,
+  reserveOpenAiMenuOcrRollingBudget,
+} from "../../lib/external-provider-cost-budget.js";
 import { logger } from "../../lib/logger.js";
 import type { MenuPhotoOcrResult } from "../../lib/menu-photo-ocr.js";
 import { selectLabeledPintPrice } from "../../lib/menu-price-selection.js";
@@ -101,11 +108,42 @@ const ADMIN_GOOGLE_VENUE_TYPES = ["bar", "pub", "restaurant", "brewery", "night_
 const ADMIN_GOOGLE_VENUE_TYPE_SET = new Set<string>(ADMIN_GOOGLE_VENUE_TYPES);
 const DEFAULT_MENU_PHOTO_OCR_MODEL = "gpt-5.6-sol";
 const DEFAULT_MENU_PHOTO_OCR_FALLBACK_MODEL = "gpt-4.1";
+const MENU_PHOTO_OCR_ALLOWED_MODELS = new Set([
+  DEFAULT_MENU_PHOTO_OCR_MODEL,
+  DEFAULT_MENU_PHOTO_OCR_FALLBACK_MODEL,
+  OPENAI_MENU_OCR_COST_BOUND_MODEL,
+]);
+
+function menuPhotoOcrCostBoundMode(): boolean {
+  const raw = process.env.OPENAI_MENU_OCR_COST_BOUND_MODE?.trim().toLowerCase();
+  if (!raw || raw === "false") return false;
+  if (raw === "true") return true;
+  throw new AppError(
+    "OPENAI_MENU_OCR_COST_BOUND_MODE must be exactly true or false.",
+    503,
+  );
+}
+
+function requireAllowedMenuPhotoOcrModel(value: string, variableName: string): string {
+  if (!MENU_PHOTO_OCR_ALLOWED_MODELS.has(value)) {
+    throw new AppError(
+      `${variableName} must select a reviewed menu OCR model.`,
+      503,
+    );
+  }
+  return value;
+}
 
 function configuredMenuPhotoOcrModels(): string[] {
   return [
-    process.env.OPENAI_MENU_OCR_MODEL?.trim() || DEFAULT_MENU_PHOTO_OCR_MODEL,
-    process.env.OPENAI_MENU_OCR_FALLBACK_MODEL?.trim() || DEFAULT_MENU_PHOTO_OCR_FALLBACK_MODEL,
+    requireAllowedMenuPhotoOcrModel(
+      process.env.OPENAI_MENU_OCR_MODEL?.trim() || DEFAULT_MENU_PHOTO_OCR_MODEL,
+      "OPENAI_MENU_OCR_MODEL",
+    ),
+    requireAllowedMenuPhotoOcrModel(
+      process.env.OPENAI_MENU_OCR_FALLBACK_MODEL?.trim() || DEFAULT_MENU_PHOTO_OCR_FALLBACK_MODEL,
+      "OPENAI_MENU_OCR_FALLBACK_MODEL",
+    ),
   ];
 }
 
@@ -118,6 +156,8 @@ const SOURCE_INGESTION_REVIEW_CLAIM_TTL_MS = 15 * 60_000;
 const SOURCE_INGESTION_ALLOWED_MIME_TYPES = SUBMISSION_LIMITS.allowedImageMimeTypes;
 const MENU_PDF_MAX_BYTES = 8 * 1024 * 1024;
 const MENU_PHOTO_OCR_TOTAL_TIMEOUT_MS = 280_000;
+const MENU_PHOTO_OCR_MAX_OUTPUT_TOKENS =
+  OPENAI_MENU_OCR_COST_BOUND_MAX_OUTPUT_TOKENS;
 
 interface MenuPhotoOcrInput {
   venueNameHint: string | null;
@@ -882,6 +922,7 @@ export class AdminService {
   private readonly supabase?: SupabaseClient;
   private readonly openai?: OpenAI;
   private readonly beerCatalogRepository?: BeerCatalogRepository;
+  private readonly systemStateRepository?: SystemStateRepository;
 
   constructor(
     private readonly ingestionQueueRepository: AdminIngestionQueueRepository | undefined,
@@ -906,6 +947,7 @@ export class AdminService {
 
     if (priceRecordDatabase) {
       this.beerCatalogRepository = new BeerCatalogRepository(priceRecordDatabase);
+      this.systemStateRepository = new SystemStateRepository(priceRecordDatabase);
     }
   }
 
@@ -992,6 +1034,7 @@ export class AdminService {
     try {
       const response = await fetch(url, {
         ...requestInit,
+        redirect: "error",
         signal: controller.signal,
         headers: {
           "Content-Type": "application/json",
@@ -1933,6 +1976,16 @@ export class AdminService {
         : configuredMenuPhotoOcrModels()
       ).filter(Boolean),
     ));
+    const costBoundMode = menuPhotoOcrCostBoundMode();
+    if (
+      costBoundMode
+      && models.some((model) => model !== OPENAI_MENU_OCR_COST_BOUND_MODEL)
+    ) {
+      throw new AppError(
+        "Cost-bound menu OCR requires the exact reviewed model snapshot.",
+        503,
+      );
+    }
     let response: Awaited<ReturnType<OpenAI["responses"]["create"]>> | null = null;
     let selectedModel = models[0] ?? DEFAULT_MENU_PHOTO_OCR_MODEL;
     let lastError: unknown = null;
@@ -1942,11 +1995,37 @@ export class AdminService {
         lastError = new Error("Menu OCR exceeded its total provider time budget");
         break;
       }
-      const supportsOriginalDetail = /^gpt-5\.(?:[4-9]|\d{2,})/i.test(model);
+      if (costBoundMode) {
+        try {
+          assertOpenAiMenuOcrCostBoundRequest({
+            model,
+            prompt: `${prompt}\n${JSON.stringify(MENU_PHOTO_OCR_RESPONSE_FORMAT)}`,
+            imageCount: input.imageDataUrls.length,
+            documentCount: input.documentDataUrls?.length ?? 0,
+          });
+          if (!this.systemStateRepository || !this.priceRecordDatabase) {
+            throw new Error("System-state persistence is unavailable.");
+          }
+          const reservation = await reserveOpenAiMenuOcrRollingBudget(
+            this.systemStateRepository,
+            this.priceRecordDatabase,
+          );
+          if (!reservation.allowed) {
+            throw new AppError("The rolling menu OCR cost budget is exhausted.", 503);
+          }
+        } catch (error) {
+          if (error instanceof AppError) throw error;
+          throw new AppError(
+            "The menu OCR cost reservation could not be proved.",
+            503,
+          );
+        }
+      }
       try {
         response = await this.openai.responses.create({
           model,
           store: false,
+          max_output_tokens: MENU_PHOTO_OCR_MAX_OUTPUT_TOKENS,
           ...(model.startsWith("gpt-5")
             ? { reasoning: { effort: reasoningEffort } }
             : { temperature: 0 }),
@@ -1962,7 +2041,7 @@ export class AdminService {
                 ...input.imageDataUrls.map((imageDataUrl) => ({
                   type: "input_image" as const,
                   image_url: imageDataUrl,
-                  detail: supportsOriginalDetail ? "original" as const : "high" as const,
+                  detail: "high" as const,
                 })),
                 ...(input.documentDataUrls ?? []).map((documentDataUrl, index) => ({
                   type: "input_file" as const,
@@ -2102,6 +2181,12 @@ export class AdminService {
     const sourceCount = input.imageDataUrls.length + documentDataUrls.length;
     if (!sourceCount || input.imageDataUrls.length > 6 || documentDataUrls.length > 1) {
       throw new AppError("Menu OCR needs up to 6 source images or one PDF menu.", 400);
+    }
+    if (menuPhotoOcrCostBoundMode() && documentDataUrls.length > 0) {
+      throw new AppError(
+        "PDF menu OCR is unavailable while the permanent-staging cost bound is active.",
+        400,
+      );
     }
 
     const safeInput = {

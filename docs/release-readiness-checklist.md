@@ -52,9 +52,12 @@ npm run --silent readiness:railway:sealed
 ```
 
 Require its one receipt to report `policy=permanent-staging-post-rotation`,
-`mode=post-seal`, and `outcome=passed`, then repeat the strict deployed
-`readiness:launch` gate from a fresh post-seal deployment created only by the
-reviewed executor. Never use
+`mode=post-seal`, `outcome=passed`, and
+`checks.forbiddenVariablesAbsent=true`. The complete inventory must have no
+`OFFSITE_BACKUP_SUPABASE_URL`, `OFFSITE_BACKUP_SERVICE_ROLE_KEY`, or
+`OFFSITE_BACKUP_BUCKET` row, even if a row is blank or sealed. Then repeat the
+strict deployed `readiness:launch` gate from a fresh post-seal deployment
+created only by the reviewed executor. Never use
 `railway run`, export resolved variables, or unseal a row for readiness.
 
 Separately, before any Railway release or recovery mutation, load two distinct
@@ -84,9 +87,18 @@ GitHub keeps these two signals deliberately separate:
 
 The informational evidence command exits successfully when the evidence file is structurally valid, but its JSON keeps `launchReady: false` until every required sign-off passes. Its `incomplete` array names the accountable owner and exact next action for every open gate. Only the strict command is a launch gate.
 
-Release-evidence schema v2 binds every completed gate to one immutable production release ID and frozen 40-character candidate SHA and requires the SHA-256 of a gate-specific private manifest. The informational command reports stale live proof and code/worktree drift with `evidenceCurrent: false`; the strict gate refuses it. Future timestamps and structurally unsupported proof are invalid in both modes. This does not make human evidence automatic; it prevents a note, old timestamp, or unrelated commit from being mistaken for durable launch proof.
+Release-evidence schema v3 binds every completed gate to one immutable production release ID and frozen 40-character candidate SHA and requires the SHA-256 of a gate-specific private manifest. The informational command reports stale live proof and code/worktree drift with `evidenceCurrent: false`; the strict gate refuses it. Future timestamps and structurally unsupported proof are invalid in both modes. This does not make human evidence automatic; it prevents a note, old timestamp, or unrelated commit from being mistaken for durable launch proof.
 
-Use the [external launch evidence checklist](external-launch-signoffs.md) for the ordered owner, command, pass/fail, stop-condition, and evidence checklist for all 12 required IDs.
+The thirteenth item, `permanent_staging_cost`, additionally requires a fresh
+provider-observed permanent-staging-only recurring upper-bound receipt for the
+same frozen candidate. It covers complete Railway, staging Supabase, and
+staging external-provider inventories/caps; uses ceiling-rounded integer USD
+cents; fails for any unknown, unpriced, shared, or unbounded resource; and must
+total at most `5000` cents. Production operational-copy and disposable-restore
+spend remain separate. The checked-in cost policy/evaluator is scaffold-only,
+so no current receipt can close this gate.
+
+Use the [external launch evidence checklist](external-launch-signoffs.md) for the ordered owner, command, pass/fail, stop-condition, and evidence checklist for all 13 required IDs.
 
 Create a canonical, protected GitHub environment named `production`, then configure these environment secrets for both hourly user/venue monitoring and the manual gate:
 
@@ -115,7 +127,15 @@ rejects identical token material before making a request.
 
 The scheduled workflow signs those dedicated verified accounts in through the public Supabase password flow, exchanges each provider session for a Pint Path session, checks the scoped endpoint, then revokes both the disposable Pint Path session and its current Supabase refresh session. Missing credentials are reported as a monitoring-configuration warning in a separate hourly job; they do not turn a passing public-health job into a false outage alert.
 
-The authenticated job also receives protected `SUPABASE_URL` and `SUPABASE_ANON_KEY` environment values. Before sending a password, it requires the live public config to match that pinned provider origin and browser-safe key; a mismatch fails closed without making a credential request.
+The authenticated job also receives protected `SUPABASE_URL` (exactly
+`https://auth.pintpath.au`) and
+`SUPABASE_ANON_KEY` environment values. The key must be the exact reviewed
+`sb_publishable_...` value; legacy JWTs, `sb_secret_...` values, malformed
+keys, and whitespace are rejected. Before sending a password, the job requires
+the live public config to match that pinned provider origin and publishable key;
+a mismatch fails closed without making a credential request. The release
+workflow first runs `npm run supabase:keys:consumer-compatibility:check` without
+secrets so a consumer or SDK drift cannot reach the authenticated steps.
 
 Immediately before manually dispatching **Pint Path Release Gate**, also set this `production` environment secret:
 
@@ -167,7 +187,7 @@ These are launch-critical but require provider/staging verification:
 
 - **Railway sealed-variable closure:** Complete private-auth rotation first,
   capture a passing deployed permanent-staging strict-readiness receipt, seal
-  only the 14 populated policy rows, capture the passing external metadata
+  only the 13 populated policy rows, capture the passing external metadata
   receipt, then capture a fresh deployed post-seal strict-readiness receipt.
   Missing/extra/shared-shadow rows, reference drift, an unsealed row, or use of
   `railway run` keeps this blocker open.
@@ -176,6 +196,12 @@ These are launch-critical but require provider/staging verification:
   authority with an independently approved immutable source, and implement the
   tracked preflight/write/finally-postflight executor. The standalone
   read-only receipt cannot close this blocker by itself.
+- **Permanent-staging cost ceiling:** Implement and independently review the
+  read-only provider collector and observation binder, deliberately version the
+  current scaffold-only cost policy, then capture a fresh candidate-bound
+  receipt proving the permanent-staging-only recurring upper bound is no more
+  than `5000` integer USD cents. Any missing Railway/Supabase/external-provider
+  row or unknown, unpriced, shared, or unbounded resource keeps launch blocked.
 - **Supabase OAuth:** Google provider credentials, web redirect URLs, the provider callback, and email-confirmation behavior must be verified. Supabase should allow `https://pintpath.au/auth/callback`; the Google console should allow the callback derived from `SUPABASE_URL`, for example `https://auth.pintpath.au/auth/v1/callback`. Set `SUPABASE_OAUTH_PROVIDERS=google` and prove Apple is disabled. The first-release iOS app is email/password only, declares no custom URL scheme, and uses the HTTPS callback for email confirmation/password recovery.
 - **Supabase Auth security:** Enable leaked-password protection before public launch.
 - **Supabase live access audit:** Apply the final Data API retirement migration, then prove live that `anon` and `authenticated` have zero privileges on public tables, sequences, RPCs, and private helpers. RLS remains defence in depth; only the Express service, using its server-only service role, may access application data. Local SQL parsing is not a substitute for live privilege and denial proof.

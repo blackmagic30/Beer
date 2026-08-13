@@ -336,9 +336,30 @@ async function awaitReadinessDependencies<A, B, C>(
   return [operationalResult.value, redisResult.value, offsiteResult.value];
 }
 
+type OffsiteBackupReadiness = Awaited<
+  ReturnType<LazyRouters["probeOffsiteBackupReadiness"]>
+>;
+
+async function resolveOffsiteBackupReadinessForRuntime(
+  canonicalProductionRuntime: boolean,
+  probeProductionBoundary: () => Promise<OffsiteBackupReadiness>,
+): Promise<OffsiteBackupReadiness> {
+  if (!canonicalProductionRuntime) {
+    return {
+      status: "ok",
+      required: false,
+      liveProbe: false,
+      lastSuccessfulAt: null,
+      ageHours: null,
+    };
+  }
+  return probeProductionBoundary();
+}
+
 export const appDeploymentMetadataInternals = APP_OBJECT_CONSTRUCTOR.freeze({
   awaitReadinessDependencies,
   createReadinessProbeSingleFlight,
+  resolveOffsiteBackupReadinessForRuntime,
   secureProbeJson,
 });
 
@@ -670,6 +691,13 @@ async function buildLazyRouters(): Promise<LazyRouters> {
         GOOGLE_PLACES_API_KEY: undefined,
         OPENAI_API_KEY: undefined,
         REPORT_DELIVERY_SCHEDULE_ENABLED: false,
+        // A restore URL plus a matching expected URL from the same runtime
+        // environment is not independent destination authority. Keep every
+        // Supabase credential out of the service/client boundary until a real
+        // disposable project is registered in reviewed release authority.
+        SUPABASE_URL: undefined,
+        SUPABASE_ANON_KEY: undefined,
+        SUPABASE_SERVICE_ROLE_KEY: undefined,
       }
     : persistence.mode === "postgres"
       ? canonicalBusinessRuntimeEnv
@@ -917,57 +945,61 @@ async function buildLazyRouters(): Promise<LazyRouters> {
     adminRouter: createAdminRouter(adminService, businessService),
     businessRouter: createBusinessRouter(businessService),
     businessService,
-    probeOffsiteBackupReadiness: async () => {
-      if (
-        persistence.mode === "postgres" &&
-        !env.ACCOUNT_DELETION_REHEARSAL_ENABLED
-      ) {
-        const state = await systemStateRepository.get<Record<string, unknown>>(
-          "job:postgres_logical_backup_success",
-        );
-        const {
-          inspectPostgresLogicalRuntimeDatabaseIdentity,
-          probePostgresLogicalOffsiteReadiness,
-        } = await import("./lib/postgres-logical-offsite.js");
-        let runtimeDatabaseIdentitySha256 = "";
-        try {
-          runtimeDatabaseIdentitySha256 =
-            await inspectPostgresLogicalRuntimeDatabaseIdentity(sqlDatabase);
-        } catch {
-          // The strict probe maps an unavailable/invalid identity to a safe
-          // binding failure without exposing database identity material.
-        }
-        return probePostgresLogicalOffsiteReadiness({
-          stateValue: state?.value,
-          runtimeDatabaseIdentitySha256,
-          sourceSupabaseUrl: env.SUPABASE_URL,
-          destinationSupabaseUrl: env.OFFSITE_BACKUP_SUPABASE_URL,
-          destinationServiceRoleKey: env.OFFSITE_BACKUP_SERVICE_ROLE_KEY,
-          bucketName: env.OFFSITE_BACKUP_BUCKET,
-          maxFreshnessHours: env.OFFSITE_BACKUP_INTERVAL_HOURS + 2,
-          requestTimeoutMs: 10_000,
-        });
-      }
-      const state = await systemStateRepository.get<{ completedAt?: unknown }>(
-        "job:offsite_backup_success",
-      );
-      const { probeOffsiteBackupReadiness } = await import(
-        "./lib/offsite-backup.js"
-      );
-      return probeOffsiteBackupReadiness({
-        sourceSupabaseUrl: env.SUPABASE_URL,
-        destinationSupabaseUrl: env.OFFSITE_BACKUP_SUPABASE_URL,
-        destinationServiceRoleKey: env.OFFSITE_BACKUP_SERVICE_ROLE_KEY,
-        bucketName: env.OFFSITE_BACKUP_BUCKET,
-        lastSuccessfulAt:
-          typeof state?.value.completedAt === "string"
-            ? state.value.completedAt
-            : null,
-        maxFreshnessHours: env.OFFSITE_BACKUP_INTERVAL_HOURS + 2,
-        required: false,
-        probeCapabilities: false,
-      });
-    },
+    probeOffsiteBackupReadiness: () =>
+      resolveOffsiteBackupReadinessForRuntime(
+        canonicalProductionRuntime,
+        async () => {
+          if (
+            persistence.mode === "postgres" &&
+            !env.ACCOUNT_DELETION_REHEARSAL_ENABLED
+          ) {
+            const state = await systemStateRepository.get<Record<string, unknown>>(
+              "job:postgres_logical_backup_success",
+            );
+            const {
+              inspectPostgresLogicalRuntimeDatabaseIdentity,
+              probePostgresLogicalOffsiteReadiness,
+            } = await import("./lib/postgres-logical-offsite.js");
+            let runtimeDatabaseIdentitySha256 = "";
+            try {
+              runtimeDatabaseIdentitySha256 =
+                await inspectPostgresLogicalRuntimeDatabaseIdentity(sqlDatabase);
+            } catch {
+              // The strict probe maps an unavailable/invalid identity to a safe
+              // binding failure without exposing database identity material.
+            }
+            return probePostgresLogicalOffsiteReadiness({
+              stateValue: state?.value,
+              runtimeDatabaseIdentitySha256,
+              sourceSupabaseUrl: env.SUPABASE_URL,
+              destinationSupabaseUrl: env.OFFSITE_BACKUP_SUPABASE_URL,
+              destinationServiceRoleKey: env.OFFSITE_BACKUP_SERVICE_ROLE_KEY,
+              bucketName: env.OFFSITE_BACKUP_BUCKET,
+              maxFreshnessHours: env.OFFSITE_BACKUP_INTERVAL_HOURS + 2,
+              requestTimeoutMs: 10_000,
+            });
+          }
+          const state = await systemStateRepository.get<{ completedAt?: unknown }>(
+            "job:offsite_backup_success",
+          );
+          const { probeOffsiteBackupReadiness } = await import(
+            "./lib/offsite-backup.js"
+          );
+          return probeOffsiteBackupReadiness({
+            sourceSupabaseUrl: env.SUPABASE_URL,
+            destinationSupabaseUrl: env.OFFSITE_BACKUP_SUPABASE_URL,
+            destinationServiceRoleKey: env.OFFSITE_BACKUP_SERVICE_ROLE_KEY,
+            bucketName: env.OFFSITE_BACKUP_BUCKET,
+            lastSuccessfulAt:
+              typeof state?.value.completedAt === "string"
+                ? state.value.completedAt
+                : null,
+            maxFreshnessHours: env.OFFSITE_BACKUP_INTERVAL_HOURS + 2,
+            required: false,
+            probeCapabilities: false,
+          });
+        },
+      ),
     shutdown: async () => {
       await Promise.allSettled(schedulerStops.splice(0).map((stop) => stop()));
       if (backgroundTasks.size > 0) {
@@ -1295,6 +1327,14 @@ export function createApp() {
     keyPrefix: "restore:access-attempt",
     keyGenerator: getRateLimitIdentity,
   });
+  const readinessProbeLimiter = createRateLimiter({
+    windowMs: 60_000,
+    max: 300,
+    keyPrefix: "public:readiness-probe",
+    // Railway requests without its trusted client-IP header share one strict
+    // bucket instead of making the public platform probe unavailable.
+    keyGenerator: (req) => getRateLimitIdentity(req) ?? "unresolved-readiness-client",
+  });
   const resolveNormalReadinessProbe = createReadinessProbeSingleFlight<{
     readonly statusCode: 200 | 503;
     readonly payload: unknown;
@@ -1349,7 +1389,7 @@ export function createApp() {
             (_req, res) => `'nonce-${String((res as Response).locals.cspNonce)}'`,
             "https://maps.googleapis.com",
             "https://maps.gstatic.com",
-            "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.103.0/dist/umd/supabase.min.js",
+            "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.3/dist/umd/supabase.min.js",
             "https://cdn.jsdelivr.net/npm/@googlemaps/markerclusterer@2.6.2/dist/index.min.js",
           ],
           "script-src-elem": [
@@ -1357,7 +1397,7 @@ export function createApp() {
             (_req, res) => `'nonce-${String((res as Response).locals.cspNonce)}'`,
             "https://maps.googleapis.com",
             "https://maps.gstatic.com",
-            "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.103.0/dist/umd/supabase.min.js",
+            "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.3/dist/umd/supabase.min.js",
             "https://cdn.jsdelivr.net/npm/@googlemaps/markerclusterer@2.6.2/dist/index.min.js",
           ],
           "script-src-attr": ["'none'"],
@@ -1556,7 +1596,13 @@ export function createApp() {
     }
   });
 
-  app.get("/ready", async (_req, res, next) => {
+  // readinessProbeLimiter is the first route-specific handler and uses the
+  // shared, production-fail-closed Redis rate-limit authority.
+  // codeql[js/missing-rate-limiting]
+  app.get("/ready", (req, res, next) => {
+    res.setHeader("Cache-Control", "no-store");
+    readinessProbeLimiter(req, res, next);
+  }, async (_req, res, next) => {
     try {
       if (env.RESTORE_REHEARSAL_MODE && env.RESTORE_REHEARSAL_PHASE === "bootstrap") {
         const fs = await import("node:fs/promises");
@@ -1655,8 +1701,8 @@ export function createApp() {
         googleMapsApiKey: env.GOOGLE_MAPS_API_KEY ?? "",
         googleMapsMapId: env.GOOGLE_MAPS_MAP_ID ?? "",
         publicBaseUrl: env.PUBLIC_BASE_URL,
-        // Restore rehearsals keep browser authentication fully disconnected.
-        // The server-only readiness probe still verifies the dedicated staging project.
+        // Restore rehearsals keep browser and server Supabase access fully
+        // disconnected until candidate-bound destination authority exists.
         supabaseUrl: env.RESTORE_REHEARSAL_MODE ? "" : env.SUPABASE_URL ?? "",
         supabaseAnonKey: env.RESTORE_REHEARSAL_MODE ? "" : env.SUPABASE_ANON_KEY ?? "",
         supabaseOauthProviders: env.RESTORE_REHEARSAL_MODE

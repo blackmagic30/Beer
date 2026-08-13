@@ -57,8 +57,8 @@ describe("website performance loading", () => {
       "viewer/stats.html",
     ].forEach((filePath) => {
       const source = readFile(filePath);
-      expect(source, filePath).toContain('src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.103.0/dist/umd/supabase.min.js"');
-      expect(source, filePath).toContain('integrity="sha384-PsnFqJ58vyp7buRfuvdS2SrjRdUYinBv6lWwJXx3xQ17hWefo/UkwXowVBT53ubG"');
+      expect(source, filePath).toContain('src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.3/dist/umd/supabase.min.js"');
+      expect(source, filePath).toContain('integrity="sha384-l8ah+VgaWtk1mvOe9VC+OirC6qHFF4yH7l7mKRidV9MSti3E9F463bMp6ZVN4kuC"');
       expect(source, filePath).toContain('crossorigin="anonymous"');
       expect(source, filePath).not.toMatch(/@supabase\/supabase-js@(?:2|latest)(?:["/])/);
     });

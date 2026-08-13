@@ -7,6 +7,11 @@ import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import {
+  LOCKED_SENSITIVE_WORKER_TSX_LOADER_SHA256,
+  LOCKED_SENSITIVE_WORKER_TSX_VERSION,
+  lockedSensitiveWorkerBoundaryInternals,
+} from "../scripts/lib/locked-sensitive-worker-boundary.js";
+import {
   LOCKED_ATTESTOR_KEYCHAIN_ACCOUNT,
   LOCKED_ATTESTOR_KEYCHAIN_PATH,
   LOCKED_ATTESTOR_KEYCHAIN_SERVICE,
@@ -17,15 +22,22 @@ import { lockedSensitiveWorkerInternals } from
   "../scripts/run-locked-sensitive-worker.js";
 
 const ROOT = path.resolve(".");
-const NODE22 = "/Users/zac/.nvm/versions/node/v22.23.2/bin/node";
+const REVIEWED_NODE_VERSION = "v22.23.2";
+const LOCAL_REVIEWED_NODE = "/Users/zac/.nvm/versions/node/v22.23.2/bin/node";
+const CURRENT_NODE_IS_REVIEWED = process.version === REVIEWED_NODE_VERSION;
+const LOCAL_REVIEWED_NODE_AVAILABLE = fs.existsSync(LOCAL_REVIEWED_NODE)
+  && childProcess.spawnSync(LOCAL_REVIEWED_NODE, ["--version"], { encoding: "utf8" })
+    .stdout.trim() === REVIEWED_NODE_VERSION;
+const NODE22 = CURRENT_NODE_IS_REVIEWED ? process.execPath : LOCAL_REVIEWED_NODE;
 const PRELOAD = path.join(
   ROOT,
   "scripts/lib/locked-sensitive-worker-primordials.mjs",
 );
 const TSX_LOADER = path.join(
   ROOT,
-  "node_modules/.pnpm/tsx@4.23.11/node_modules/tsx/dist/loader.mjs",
+  "node_modules/tsx/dist/loader.mjs",
 );
+const TSX_PACKAGE = path.join(ROOT, "node_modules/tsx/package.json");
 const FINALIZER_URL = pathToFileURL(path.join(
   ROOT,
   "scripts/lib/locked-sensitive-worker-finalizer.ts",
@@ -43,9 +55,15 @@ const KEYCHAIN_TEST_ENVIRONMENT = Object.freeze({
   LOGNAME: "zac",
   USER: "zac",
 });
-const HAS_EXACT_NODE22 = fs.existsSync(NODE22)
-  && childProcess.spawnSync(NODE22, ["--version"], { encoding: "utf8" }).stdout.trim()
-    === "v22.23.2";
+const HAS_EXACT_NODE22 = CURRENT_NODE_IS_REVIEWED || LOCAL_REVIEWED_NODE_AVAILABLE;
+const REQUIRED_ENV = "PINTPATH_LOCKED_SENSITIVE_WORKER_TEST_REQUIRED";
+const configuredRequired = process.env[REQUIRED_ENV]?.trim() ?? "";
+if (configuredRequired !== "" && configuredRequired !== "true") {
+  throw new Error(`${REQUIRED_ENV} must be true when set.`);
+}
+if (configuredRequired === "true" && !HAS_EXACT_NODE22) {
+  throw new Error(`${REQUIRED_ENV}=true requires exact Node ${REVIEWED_NODE_VERSION}.`);
+}
 
 function lockedEval(source: string) {
   return childProcess.spawnSync(NODE22, [
@@ -732,13 +750,22 @@ describe.skipIf(!HAS_EXACT_NODE22)("locked sensitive production worker", () => {
     expect(result.stdout).not.toContain("fake-planner-password-123");
   });
 
-  it("uses the trusted shell child and rejects invalid args before Keychain", () => {
+  it("pins the trusted shell child and rejects invalid args before Keychain", () => {
     const launcherSource = fs.readFileSync(
       path.join(ROOT, "scripts/run-locked-sensitive-worker.sh"),
       "utf8",
     );
     expect(launcherSource).toContain("--disable-sigusr1");
     expect(launcherSource).toContain("#!/usr/bin/env -S -i /bin/zsh -f");
+    expect(launcherSource).toContain(
+      `locked_expected_tsx_version=${LOCKED_SENSITIVE_WORKER_TSX_VERSION}`,
+    );
+    expect(launcherSource).toContain(
+      `locked_expected_tsx_loader_sha256=${LOCKED_SENSITIVE_WORKER_TSX_LOADER_SHA256}`,
+    );
+    expect(launcherSource).toContain(
+      '/usr/bin/shasum -a 256 "$locked_tsx"',
+    );
     const packageJson = JSON.parse(
       fs.readFileSync(path.join(ROOT, "package.json"), "utf8"),
     ) as { readonly scripts?: Readonly<Record<string, string>> };
@@ -750,45 +777,77 @@ describe.skipIf(!HAS_EXACT_NODE22)("locked sensitive production worker", () => {
     let keychainCalls = 0;
     if (lockedSensitiveWorkerInternals.exactAttestorArgumentShape([])) keychainCalls += 1;
     expect(keychainCalls).toBe(0);
-
-    const markerRoot = fs.mkdtempSync(
-      path.join(os.tmpdir(), "pintpath-locked-launcher-"),
-    );
-    try {
-      const cdMarker = path.join(markerRoot, "cd");
-      const testMarker = path.join(markerRoot, "test");
-      const result = childProcess.spawnSync(
-        "./scripts/run-locked-sensitive-worker.sh",
-        ["attestor", "--bogus"],
-        {
-          cwd: ROOT,
-          encoding: "utf8",
-          env: {
-            ...process.env,
-            "BASH_FUNC_cd%%": `() { /usr/bin/touch '${cdMarker}'; }`,
-            "BASH_FUNC_[%%": `() { /usr/bin/touch '${testMarker}'; }`,
-            BASH_ENV: "/definitely/not/loaded-by-zsh",
-            ENV: "/definitely/not/loaded-by-zsh",
-            NODE_OPTIONS: "--import=/definitely/not/loaded/by-the-clean-child.mjs",
-            NODE_TLS_REJECT_UNAUTHORIZED: "0",
-            PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: "must-not-cross-launcher",
-          },
-        },
-      );
-      expect(result.status).toBe(1);
-      expect(result.stderr).toBe("");
-      expect(fs.existsSync(cdMarker)).toBe(false);
-      expect(fs.existsSync(testMarker)).toBe(false);
-      expect(JSON.parse(result.stdout.trim())).toEqual({
-        command: "attest",
-        failureCode: "argument_invalid",
-        ok: false,
-      });
-
-    } finally {
-      fs.rmSync(markerRoot, { force: true, recursive: true });
-    }
   });
+
+  it("fails closed when the pinned TSX version or loader bytes are mutated", () => {
+    const repositoryPackage = JSON.parse(
+      fs.readFileSync(path.join(ROOT, "package.json"), "utf8"),
+    ) as { readonly devDependencies?: Readonly<Record<string, string>> };
+    const installedPackage = JSON.parse(
+      fs.readFileSync(TSX_PACKAGE, "utf8"),
+    ) as { readonly version?: unknown };
+    const loaderBytes = fs.readFileSync(TSX_LOADER);
+    expect(repositoryPackage.devDependencies?.tsx).toBe(
+      LOCKED_SENSITIVE_WORKER_TSX_VERSION,
+    );
+    expect(installedPackage.version).toBe(LOCKED_SENSITIVE_WORKER_TSX_VERSION);
+    expect(lockedSensitiveWorkerBoundaryInternals.exactTsxIdentity(
+      installedPackage.version,
+      loaderBytes,
+    )).toBe(true);
+
+    const mutatedLoaderBytes = Buffer.from(loaderBytes);
+    mutatedLoaderBytes[0] = mutatedLoaderBytes[0]! ^ 1;
+    expect(lockedSensitiveWorkerBoundaryInternals.exactTsxIdentity(
+      "4.23.13",
+      loaderBytes,
+    )).toBe(false);
+    expect(lockedSensitiveWorkerBoundaryInternals.exactTsxIdentity(
+      installedPackage.version,
+      mutatedLoaderBytes,
+    )).toBe(false);
+  });
+
+  if (process.platform === "darwin") {
+    it("runs the environment-clearing macOS launcher before Keychain access", () => {
+      const markerRoot = fs.mkdtempSync(
+        path.join(os.tmpdir(), "pintpath-locked-launcher-"),
+      );
+      try {
+        const cdMarker = path.join(markerRoot, "cd");
+        const testMarker = path.join(markerRoot, "test");
+        const result = childProcess.spawnSync(
+          "./scripts/run-locked-sensitive-worker.sh",
+          ["attestor", "--bogus"],
+          {
+            cwd: ROOT,
+            encoding: "utf8",
+            env: {
+              ...process.env,
+              "BASH_FUNC_cd%%": `() { /usr/bin/touch '${cdMarker}'; }`,
+              "BASH_FUNC_[%%": `() { /usr/bin/touch '${testMarker}'; }`,
+              BASH_ENV: "/definitely/not/loaded-by-zsh",
+              ENV: "/definitely/not/loaded-by-zsh",
+              NODE_OPTIONS: "--import=/definitely/not/loaded/by-the-clean-child.mjs",
+              NODE_TLS_REJECT_UNAUTHORIZED: "0",
+              PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: "must-not-cross-launcher",
+            },
+          },
+        );
+        expect(result.status).toBe(1);
+        expect(result.stderr).toBe("");
+        expect(fs.existsSync(cdMarker)).toBe(false);
+        expect(fs.existsSync(testMarker)).toBe(false);
+        expect(JSON.parse(result.stdout.trim())).toEqual({
+          command: "attest",
+          failureCode: "argument_invalid",
+          ok: false,
+        });
+      } finally {
+        fs.rmSync(markerRoot, { force: true, recursive: true });
+      }
+    });
+  }
 
   it("fails direct unsafe CLI entrypoints before private-file or token custody", () => {
     for (const entry of [

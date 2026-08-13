@@ -16,6 +16,17 @@ import {
 } from "../src/lib/data-backup.js";
 import { stageRestoredSourceEvidence } from "../src/lib/stage-restored-source-evidence.js";
 
+const BLOCKED_CLI_SERVICE_ROLE_KEY = [
+  "sb",
+  "secret",
+  "never_read_by_blocked_cli_12345",
+].join("_");
+const BLOCKED_LIBRARY_SERVICE_ROLE_KEY = [
+  "sb",
+  "secret",
+  "never_read_by_blocked_library_123",
+].join("_");
+
 interface FakeObject {
   bytes: Buffer;
   contentType: string;
@@ -498,7 +509,7 @@ describe("staging restored Supabase source evidence", () => {
     })).rejects.toThrow("Restored database is missing or unsafe");
   });
 
-  it("keeps the CLI fail-closed and machine-readable when required origins are absent", () => {
+  it("keeps the CLI blocked before credential or restore-file access without disposable-project authority", () => {
     const result = spawnSync(
       process.execPath,
       [
@@ -512,10 +523,10 @@ describe("staging restored Supabase source evidence", () => {
         encoding: "utf8",
         env: {
           ...process.env,
-          STAGING_SUPABASE_URL: "https://staging.supabase.co",
-          STAGING_SUPABASE_SERVICE_ROLE_KEY: "staging-secret-key",
-          SUPABASE_URL: "",
-          OFFSITE_BACKUP_SUPABASE_URL: "",
+          STAGING_SUPABASE_URL: "https://bbfibbadwjxzrcdncavy.supabase.co",
+          STAGING_SUPABASE_SERVICE_ROLE_KEY: BLOCKED_CLI_SERVICE_ROLE_KEY,
+          SUPABASE_URL: "https://auth.pintpath.au",
+          OFFSITE_BACKUP_SUPABASE_URL: "https://hfbmhdxrwtihukmixxta.supabase.co",
         },
       },
     );
@@ -524,8 +535,20 @@ describe("staging restored Supabase source evidence", () => {
     expect(result.stdout).toBe("");
     expect(JSON.parse(result.stderr)).toMatchObject({
       ok: false,
-      error: "SUPABASE_URL is required.",
+      error: "Restore-staging evidence transport is unavailable until a reviewed disposable-project authority is registered.",
     });
-    expect(result.stderr).not.toContain("staging-secret-key");
+    expect(result.stderr).not.toContain(BLOCKED_CLI_SERVICE_ROLE_KEY);
+  });
+
+  it("rejects the library before filesystem access when no test-only transport is injected", async () => {
+    await expect(stageRestoredSourceEvidence({
+      backupPath: "/does-not-exist/backup",
+      restorePath: "/does-not-exist/restore",
+      stagingSupabaseUrl: "https://unregistered.invalid",
+      stagingServiceRoleKey: BLOCKED_LIBRARY_SERVICE_ROLE_KEY,
+      ...independentOrigins,
+    })).rejects.toThrow(
+      "Restore-staging evidence transport is unavailable until a reviewed disposable-project authority is registered.",
+    );
   });
 });

@@ -46,7 +46,7 @@ import {
 
 const NOW = "2026-08-09T02:00:00.000Z";
 const SOURCE_URL = "https://production.example.test";
-const DESTINATION_URL = "https://operational-copy.example.test";
+const DESTINATION_URL = "https://hfbmhdxrwtihukmixxta.supabase.co";
 const BUCKET = "pintpath-backups";
 const UUID = "123e4567-e89b-42d3-a456-426614174000";
 const SOURCE_DATABASE_IDENTITY_SHA256 =
@@ -57,7 +57,7 @@ const RUNTIME_CONNECTION_URL_SHA256 = sha256Fixture(
 const LEGACY_SERVICE_ROLE_KEY = [
   Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url"),
   Buffer.from(JSON.stringify({ role: "service_role", iss: "supabase" })).toString("base64url"),
-  "synthetic-signature",
+  Buffer.alloc(32, 7).toString("base64url"),
 ].join(".");
 const SECRET_API_KEY = `sb_secret_${"s".repeat(32)}`;
 
@@ -879,8 +879,8 @@ describe("Supabase resumable logical archive transport", () => {
       },
     } as unknown as SupabaseClient;
     const storage = createSupabasePostgresLogicalOffsiteStorage({
-      destinationSupabaseUrl: "https://backup.example.test",
-      destinationServiceRoleKey: "service-role-test-secret",
+      destinationSupabaseUrl: DESTINATION_URL,
+      destinationServiceRoleKey: SECRET_API_KEY,
       clientFactory: () => client,
       fetchImplementation: async () => new Response(null, { status: 200 }),
     });
@@ -916,8 +916,8 @@ describe("Supabase resumable logical archive transport", () => {
       },
     } as unknown as SupabaseClient;
     const storage = createSupabasePostgresLogicalOffsiteStorage({
-      destinationSupabaseUrl: "https://backup.example.test",
-      destinationServiceRoleKey: "service-role-test-secret",
+      destinationSupabaseUrl: DESTINATION_URL,
+      destinationServiceRoleKey: SECRET_API_KEY,
       clientFactory: () => client,
       fetchImplementation: async () => new Response(null, { status: 200 }),
     });
@@ -979,7 +979,7 @@ describe("Supabase resumable logical archive transport", () => {
       throw new Error("unexpected request");
     };
     const storage = createSupabasePostgresLogicalOffsiteStorage({
-      destinationSupabaseUrl: "https://backup.example.test",
+      destinationSupabaseUrl: DESTINATION_URL,
       destinationServiceRoleKey: LEGACY_SERVICE_ROLE_KEY,
       requestTimeoutMs: 5_000,
       fetchImplementation,
@@ -1044,7 +1044,7 @@ describe("Supabase resumable logical archive transport", () => {
       throw new Error("unexpected request");
     };
     const storage = createSupabasePostgresLogicalOffsiteStorage({
-      destinationSupabaseUrl: "https://backup.example.test",
+      destinationSupabaseUrl: DESTINATION_URL,
       destinationServiceRoleKey: SECRET_API_KEY,
       requestTimeoutMs: 5_000,
       fetchImplementation,
@@ -1075,30 +1075,37 @@ describe("Supabase resumable logical archive transport", () => {
     fs.writeFileSync(filePath, "x", { mode: 0o600 });
     const malformedKey = "sb_secret_too-short";
     const fetchImplementation = vi.fn() as unknown as typeof globalThis.fetch;
-    const storage = createSupabasePostgresLogicalOffsiteStorage({
-      destinationSupabaseUrl: "https://backup.example.test",
-      destinationServiceRoleKey: malformedKey,
-      requestTimeoutMs: 5_000,
-      fetchImplementation,
-      clientFactory: () => ({ storage: {} } as unknown as SupabaseClient),
-    });
+    const clientFactory = vi.fn(() => ({ storage: {} } as unknown as SupabaseClient));
     let failure: unknown;
     try {
-      await storage.uploadImmutable({
-        bucketName: BUCKET,
-        objectPath: "_control/postgres-logical-backups/v2/backups/fixture/archive.dump",
-        contentType: "application/octet-stream",
-        cacheControl: "31536000",
-        metadata: { sha256: sha256Fixture("x") },
-        filePath,
-        expectedBytes: 1,
+      createSupabasePostgresLogicalOffsiteStorage({
+        destinationSupabaseUrl: DESTINATION_URL,
+        destinationServiceRoleKey: malformedKey,
+        requestTimeoutMs: 5_000,
+        fetchImplementation,
+        clientFactory,
       });
     } catch (error) {
       failure = error;
     }
 
-    expect(failure).toMatchObject({ code: "object_upload_failed" });
+    expect(failure).toMatchObject({ code: "destination_unsafe" });
     expect(JSON.stringify(failure)).not.toContain(malformedKey);
+    expect(clientFactory).not.toHaveBeenCalled();
+    expect(fetchImplementation).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unreviewed destination origin before constructing any client or request", () => {
+    const fetchImplementation = vi.fn() as unknown as typeof globalThis.fetch;
+    const clientFactory = vi.fn(() => ({ storage: {} } as unknown as SupabaseClient));
+
+    expect(() => createSupabasePostgresLogicalOffsiteStorage({
+      destinationSupabaseUrl: "https://abcdefghijklmnopqrst.supabase.co",
+      destinationServiceRoleKey: SECRET_API_KEY,
+      fetchImplementation,
+      clientFactory,
+    })).toThrow(expect.objectContaining({ code: "destination_unsafe" }));
+    expect(clientFactory).not.toHaveBeenCalled();
     expect(fetchImplementation).not.toHaveBeenCalled();
   });
 
@@ -1141,8 +1148,8 @@ describe("Supabase resumable logical archive transport", () => {
       },
     } as unknown as SupabaseClient;
     const storage = createSupabasePostgresLogicalOffsiteStorage({
-      destinationSupabaseUrl: "https://backup.example.test",
-      destinationServiceRoleKey: "service-role-test-secret",
+      destinationSupabaseUrl: DESTINATION_URL,
+      destinationServiceRoleKey: SECRET_API_KEY,
       requestTimeoutMs: 1_000,
       clientFactory: () => client,
       fetchImplementation: async () => new Response(null, { status: 200 }),
@@ -1160,8 +1167,8 @@ describe("Supabase resumable logical archive transport", () => {
 
   it("refuses any cleanup target outside its dedicated logical-backup namespace", async () => {
     const storage = createSupabasePostgresLogicalOffsiteStorage({
-      destinationSupabaseUrl: "https://backup.example.test",
-      destinationServiceRoleKey: "service-role-test-secret",
+      destinationSupabaseUrl: DESTINATION_URL,
+      destinationServiceRoleKey: SECRET_API_KEY,
       clientFactory: () => ({ storage: {} } as unknown as SupabaseClient),
       fetchImplementation: async () => new Response(null, { status: 500 }),
     });

@@ -23,10 +23,10 @@ const OUTPUT_DIRECTORY = path.join(ROOT, "retrieved-backup");
 const DATABASE_URL_FILE = path.join(ROOT, "runtime-database-url");
 const SERVICE_ROLE_FILE = path.join(ROOT, "offsite-service-role-key");
 const DATABASE_SECRET = "runtime-database-secret";
-const SERVICE_ROLE_SECRET = "offsite-service-role-secret";
+const SERVICE_ROLE_SECRET = `sb_secret_${"s".repeat(32)}`;
 const DATABASE_URL = `postgresql://runtime:${DATABASE_SECRET}@db.example.test:5432/pintpath?sslmode=verify-full`;
-const SOURCE_URL = "https://production.example.test";
-const DESTINATION_URL = "https://operational-copy.example.test";
+const SOURCE_URL = "https://auth.pintpath.au";
+const DESTINATION_URL = "https://hfbmhdxrwtihukmixxta.supabase.co";
 const BUCKET = "pintpath-backups";
 const HASH = "a".repeat(64);
 const DESTINATION_ORIGIN_SHA256 = crypto
@@ -68,6 +68,7 @@ function cliHarness(input: {
   readonly runtimeReady?: boolean;
   readonly closeFails?: boolean;
   readonly retrieveError?: Error;
+  readonly serviceRoleSecret?: string;
 } = {}) {
   const events: string[] = [];
   const output: string[] = [];
@@ -87,7 +88,9 @@ function cliHarness(input: {
     },
     readSecretFile: vi.fn(async (filename: string) => {
       events.push(`secret:${path.basename(filename)}`);
-      return filename === DATABASE_URL_FILE ? DATABASE_URL : SERVICE_ROLE_SECRET;
+      return filename === DATABASE_URL_FILE
+        ? DATABASE_URL
+        : input.serviceRoleSecret ?? SERVICE_ROLE_SECRET;
     }),
     createDatabase: vi.fn((options) => {
       events.push("database");
@@ -138,6 +141,35 @@ function cliHarness(input: {
 }
 
 describe("Postgres logical operational-copy retrieval boundaries", () => {
+  it.each([
+    ["unreviewed destination origin", {
+      destinationSupabaseUrl: "https://abcdefghijklmnopqrst.supabase.co",
+      destinationServiceRoleKey: SERVICE_ROLE_SECRET,
+      bucketName: BUCKET,
+    }],
+    ["publishable key in the server slot", {
+      destinationSupabaseUrl: DESTINATION_URL,
+      destinationServiceRoleKey: `sb_publishable_${"p".repeat(32)}`,
+      bucketName: BUCKET,
+    }],
+    ["alternate bucket", {
+      destinationSupabaseUrl: DESTINATION_URL,
+      destinationServiceRoleKey: SERVICE_ROLE_SECRET,
+      bucketName: "private-ledger",
+    }],
+  ])("rejects %s before constructing any client or request", (_label, input) => {
+    const fetchImplementation = vi.fn() as unknown as typeof globalThis.fetch;
+    const clientFactory = vi.fn(() => ({ storage: {} } as unknown as SupabaseClient));
+
+    expect(() => createSupabasePostgresLogicalOffsiteRetrievalStorage({
+      ...input,
+      fetchImplementation,
+      clientFactory,
+    })).toThrow(expect.objectContaining({ code: "destination_unsafe" }));
+    expect(clientFactory).not.toHaveBeenCalled();
+    expect(fetchImplementation).not.toHaveBeenCalled();
+  });
+
   it("allows only exact GETs for v2 immutable backup artifacts", async () => {
     const backupId = `20260809T010000000Z-${"a".repeat(64)}`;
     const objectPath = `_control/postgres-logical-backups/v2/backups/${backupId}/pintpath-postgres.dump`;
@@ -323,5 +355,64 @@ describe("Postgres logical operational-copy retrieval CLI", () => {
       failureCode: "configuration_missing_or_unsafe",
     });
     expect(relative.events).toEqual([]);
+  });
+
+  it("does not accept a caller-matched digest as destination authority", async () => {
+    const fixture = cliHarness();
+    const attackerOrigin = "https://attacker.invalid";
+    const attackerDependencies = {
+      ...fixture.dependencies,
+      env: {
+        ...fixture.dependencies.env,
+        OFFSITE_BACKUP_SUPABASE_URL: attackerOrigin,
+      },
+    };
+    const argv = [...ARGV];
+    argv[argv.indexOf(DESTINATION_ORIGIN_SHA256)] = crypto
+      .createHash("sha256")
+      .update(attackerOrigin)
+      .digest("hex");
+
+    await expect(runPostgresLogicalOffsiteRetrievalCli(argv, attackerDependencies))
+      .resolves.toBe(1);
+    expect(fixture.events).toEqual([]);
+    expect(JSON.parse(fixture.output[0]!)).toMatchObject({
+      failureCode: "configuration_missing_or_unsafe",
+    });
+  });
+
+  it.each(["other-private-bucket", " pintpath-backups", "pintpath-backups "])(
+    "rejects an unreviewed offsite bucket before reading credentials: %s",
+    async (bucketName) => {
+      const fixture = cliHarness();
+      const dependencies = {
+        ...fixture.dependencies,
+        env: { ...fixture.dependencies.env, OFFSITE_BACKUP_BUCKET: bucketName },
+      };
+      await expect(runPostgresLogicalOffsiteRetrievalCli(ARGV, dependencies))
+        .resolves.toBe(1);
+      expect(fixture.events).toEqual([]);
+      expect(JSON.parse(fixture.output[0]!)).toMatchObject({
+        failureCode: "configuration_missing_or_unsafe",
+      });
+    },
+  );
+
+  it.each([
+    `sb_publishable_${"p".repeat(32)}`,
+    `${SERVICE_ROLE_SECRET}\n`,
+    "arbitrary-service-role-value",
+  ])("rejects an unsafe offsite server key before Storage construction", async (key) => {
+    const fixture = cliHarness({ serviceRoleSecret: key });
+    await expect(runPostgresLogicalOffsiteRetrievalCli(ARGV, fixture.dependencies))
+      .resolves.toBe(1);
+    expect(fixture.events).toEqual([
+      "secret:runtime-database-url",
+      "secret:offsite-service-role-key",
+    ]);
+    expect(JSON.parse(fixture.output[0]!)).toMatchObject({
+      failureCode: "secret_file_unsafe",
+    });
+    expect(fixture.output[0]).not.toContain(key);
   });
 });

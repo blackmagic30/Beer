@@ -70,7 +70,7 @@ export const PERMANENT_STAGING_APP_DEPLOYMENT_SOURCE_CONTRACT_LOCK =
       "85dc659ebec2e0132092d917505d71678e92b8441b54bcefc80c6a082e3b967b",
     packageLockPath: "package-lock.json",
     packageLockSha256:
-      "61f07b4a529dfed6624394719327b03032d9ad34bfe162f43131b6bdfcfc60ef",
+      "0978ac482e875707a478d0d970fbadb899b8448dc21893ddb0973b5e2f700ecf",
     futureUploadPathMode: "explicit-snapshot-path",
     futurePathAsRootFlag: "--path-as-root",
     futureNoGitignoreFlag: "--no-gitignore",

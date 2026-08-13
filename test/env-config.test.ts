@@ -8,6 +8,32 @@ function sha256(value: string): string {
   return crypto.createHash("sha256").update(value, "utf8").digest("hex");
 }
 
+function legacySupabaseJwt(
+  role: "anon" | "service_role",
+  signatureByte: number,
+): string {
+  return [
+    Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" }), "utf8")
+      .toString("base64url"),
+    Buffer.from(JSON.stringify({
+      iss: "supabase",
+      ref: `fixture-${signatureByte}`,
+      role,
+      iat: 1_700_000_000,
+      exp: 2_000_000_000,
+    }), "utf8").toString("base64url"),
+    Buffer.alloc(32, signatureByte).toString("base64url"),
+  ].join(".");
+}
+
+const legacyAnonKey = legacySupabaseJwt("anon", 1);
+const legacyServiceRoleKey = legacySupabaseJwt("service_role", 2);
+const legacyOffsiteServiceRoleKey = legacySupabaseJwt("service_role", 3);
+const stagingPublishableKey = `sb_publishable_${"p".repeat(32)}`;
+const stagingServiceKey = `sb_secret_${"s".repeat(32)}`;
+const permanentStagingSupabaseOrigin = "https://bbfibbadwjxzrcdncavy.supabase.co";
+const operationalOffsiteSupabaseOrigin = "https://hfbmhdxrwtihukmixxta.supabase.co";
+
 const productionRailwayEnvironmentId = "env-production-71b26d90";
 const stagingRailwayEnvironmentId = "env-staging-40e62ca1";
 const restoreRailwayEnvironmentId = "env-restore-5a821e3c";
@@ -44,12 +70,12 @@ const productionRequiredEnv = {
   OPENAI_API_KEY: "test-fixture-not-a-real-menu-key",
   SOURCE_EVIDENCE_SIGNING_SECRET: "test-source-evidence-signing-secret-32-bytes",
   POS_WEBHOOK_SIGNING_SECRET: "test-pos-webhook-signing-secret-32-bytes",
-  SUPABASE_URL: "https://production-project.supabase.co",
-  SUPABASE_ANON_KEY: "fixture-supabase-browser-key",
-  SUPABASE_SERVICE_ROLE_KEY: "test-production-service-role",
+  SUPABASE_URL: "https://auth.pintpath.au",
+  SUPABASE_ANON_KEY: legacyAnonKey,
+  SUPABASE_SERVICE_ROLE_KEY: legacyServiceRoleKey,
   SUPABASE_OAUTH_PROVIDERS: "google",
-  OFFSITE_BACKUP_SUPABASE_URL: "https://independent-backup-project.supabase.co",
-  OFFSITE_BACKUP_SERVICE_ROLE_KEY: "test-independent-service-role",
+  OFFSITE_BACKUP_SUPABASE_URL: operationalOffsiteSupabaseOrigin,
+  OFFSITE_BACKUP_SERVICE_ROLE_KEY: legacyOffsiteServiceRoleKey,
   REDIS_URL: productionRedisUrl,
   PINTPATH_REDIS_RESOURCE_ID: productionRedisResource,
   PINTPATH_EXPECTED_REDIS_RESOURCE_ID: productionRedisResource,
@@ -136,8 +162,8 @@ const restoreRehearsalRequiredEnv = {
   DATABASE_PATH: "/app/data/restore-pint-path-fixture-backup/pint-path.sqlite",
   SOURCE_EVIDENCE_STORAGE_DIR: "/app/data/restore-pint-path-fixture-backup/source-evidence",
   SUPABASE_URL: "https://restoreref0000000001.supabase.co",
-  SUPABASE_ANON_KEY: "fixture-restore-staging-anon-key",
-  SUPABASE_SERVICE_ROLE_KEY: "fixture-restore-staging-service-key",
+  SUPABASE_ANON_KEY: legacySupabaseJwt("anon", 4),
+  SUPABASE_SERVICE_ROLE_KEY: stagingServiceKey,
   SUPABASE_OAUTH_PROVIDERS: "",
   REDIS_URL: "redis://default:fixture-password@redis.railway.internal:6379",
   REDIS_KEY_NAMESPACE: "pint-path:restore:fixture-restore-environment:pint-path-fixture-backup",
@@ -215,13 +241,13 @@ const accountDeletionRehearsalRequiredEnv = {
   PINTPATH_PERMANENT_STAGING_DATABASE_RESOURCE_ID: stagingDatabaseResource,
   PINTPATH_PERMANENT_STAGING_DATABASE_URL_SHA256: sha256(stagingDatabaseUrl),
   DATABASE_PATH: "",
-  SUPABASE_URL: "https://stagingref0000000001.supabase.co",
-  SUPABASE_ANON_KEY: "fixture-deletion-rehearsal-anon-key",
-  SUPABASE_SERVICE_ROLE_KEY: "fixture-deletion-rehearsal-service-key",
+  SUPABASE_URL: permanentStagingSupabaseOrigin,
+  SUPABASE_ANON_KEY: stagingPublishableKey,
+  SUPABASE_SERVICE_ROLE_KEY: stagingServiceKey,
   ACCOUNT_DELETION_REHEARSAL_EXPECTED_RAILWAY_ENVIRONMENT_ID: stagingRailwayEnvironmentId,
   ACCOUNT_DELETION_REHEARSAL_EXPECTED_RAILWAY_PROJECT_ID: "project-pintpath-4af98c",
   ACCOUNT_DELETION_REHEARSAL_EXPECTED_RAILWAY_SERVICE_ID: "svc-pintpath-app-92d01b",
-  ACCOUNT_DELETION_REHEARSAL_EXPECTED_SUPABASE_URL: "https://stagingref0000000001.supabase.co",
+  ACCOUNT_DELETION_REHEARSAL_EXPECTED_SUPABASE_URL: permanentStagingSupabaseOrigin,
   ACCOUNT_DELETION_REHEARSAL_PRODUCTION_SUPABASE_URL: "https://productionref0000001.supabase.co",
   ACCOUNT_DELETION_REHEARSAL_REPLICA_COUNT: "2",
   STRIPE_SECRET_KEY: "",
@@ -272,6 +298,11 @@ const stagingBootstrapRequiredEnv = {
   PINTPATH_PERMANENT_STAGING_REDIS_RESOURCE_ID: stagingRedisResource,
   PINTPATH_PERMANENT_STAGING_REDIS_URL_SHA256: sha256(stagingRedisUrl),
   REDIS_KEY_NAMESPACE: "pint-path:permanent-staging-bootstrap",
+  SUPABASE_URL: permanentStagingSupabaseOrigin,
+  SUPABASE_ANON_KEY: stagingPublishableKey,
+  SUPABASE_SERVICE_ROLE_KEY: stagingServiceKey,
+  OFFSITE_BACKUP_SUPABASE_URL: "",
+  OFFSITE_BACKUP_SERVICE_ROLE_KEY: "",
   ACCOUNT_DELETION_NOTICE_MODE: "disabled",
   RESEND_TRANSACTIONAL_API_KEY: "",
   ACCOUNT_DELETION_NOTICE_FROM: "",
@@ -279,6 +310,19 @@ const stagingBootstrapRequiredEnv = {
   RESEND_WEBHOOK_SIGNING_SECRET: "",
   ACCOUNT_DELETION_NOTICE_ACTIVE_KEY_ID: "",
   ACCOUNT_DELETION_NOTICE_KEYRING_JSON: "",
+};
+
+const stagingCompleteRequiredEnv = {
+  ...stagingBootstrapRequiredEnv,
+  PINTPATH_IDENTITY_REGISTRY_PHASE: "complete",
+  PINTPATH_FORBIDDEN_DATABASE_RESOURCE_IDS:
+    `${productionDatabaseResource},${restoreDatabaseResource}`,
+  PINTPATH_FORBIDDEN_DATABASE_URL_SHA256S:
+    `${sha256(productionDatabaseUrl)},${restoreDatabaseUrlDigest}`,
+  PINTPATH_FORBIDDEN_REDIS_RESOURCE_IDS:
+    `${productionRedisResource},${restoreRedisResource}`,
+  PINTPATH_FORBIDDEN_REDIS_URL_SHA256S:
+    `${sha256(productionRedisUrl)},${restoreRedisUrlDigest}`,
 };
 
 function stubProductionEnv(overrides: Record<string, string> = {}) {
@@ -305,6 +349,12 @@ function stubStagingBootstrapEnv(overrides: Record<string, string> = {}) {
   }
 }
 
+function stubStagingCompleteEnv(overrides: Record<string, string> = {}) {
+  for (const [key, value] of Object.entries({ ...stagingCompleteRequiredEnv, ...overrides })) {
+    vi.stubEnv(key, value);
+  }
+}
+
 async function loadEnv() {
   vi.resetModules();
   return import("../src/config/env.js");
@@ -324,6 +374,147 @@ describe("environment safety defaults", () => {
     expect(env.DEMO_BILLING_MODE).toBe(false);
     expect(env.COMMERCIAL_LAUNCH_ENABLED).toBe(false);
     expect(env.CONSUMER_PAID_ENROLLMENT_ENABLED).toBe(false);
+    expect(env.OPENAI_MENU_OCR_MODEL).toBe("gpt-5.6-sol");
+    expect(env.OPENAI_MENU_OCR_FALLBACK_MODEL).toBe("gpt-4.1");
+    expect(env.OPENAI_MENU_OCR_REVIEW_PASS).toBe(true);
+    expect(env.OPENAI_MENU_OCR_COST_BOUND_MODE).toBe(false);
+  });
+
+  it.each([
+    ["unreviewed primary model", { OPENAI_MENU_OCR_MODEL: "gpt-4o" }],
+    ["unreviewed fallback model", { OPENAI_MENU_OCR_FALLBACK_MODEL: "gpt-4o-mini" }],
+    ["ambiguous cost flag", { OPENAI_MENU_OCR_COST_BOUND_MODE: "yes" }],
+  ])("rejects %s at startup", async (_label, overrides) => {
+    stubProductionEnv(overrides);
+
+    await expect(loadEnv()).rejects.toThrow("Invalid environment configuration");
+  });
+
+  it("permits cost-bound OCR only in ordinary permanent staging with the exact snapshot", async () => {
+    const exactCostBound = {
+      OPENAI_MENU_OCR_COST_BOUND_MODE: "true",
+      OPENAI_MENU_OCR_MODEL: "gpt-4.1-mini-2025-04-14",
+      OPENAI_MENU_OCR_FALLBACK_MODEL: "gpt-4.1-mini-2025-04-14",
+    };
+
+    stubProductionEnv(exactCostBound);
+    await expect(loadEnv()).rejects.toThrow(
+      "OPENAI_MENU_OCR_COST_BOUND_MODE=true is permitted only in complete ordinary permanent staging",
+    );
+
+    vi.unstubAllEnvs();
+    stubStagingBootstrapEnv(exactCostBound);
+    await expect(loadEnv()).rejects.toThrow(
+      "OPENAI_MENU_OCR_COST_BOUND_MODE=true is permitted only in complete ordinary permanent staging",
+    );
+
+    vi.unstubAllEnvs();
+    stubStagingCompleteEnv({
+      ...exactCostBound,
+      OPENAI_MENU_OCR_FALLBACK_MODEL: "gpt-4.1",
+    });
+    await expect(loadEnv()).rejects.toThrow(
+      "Cost-bound menu OCR requires both model variables to equal gpt-4.1-mini-2025-04-14",
+    );
+
+    vi.unstubAllEnvs();
+    stubStagingCompleteEnv(exactCostBound);
+    const { env } = await loadEnv();
+    expect(env.OPENAI_MENU_OCR_COST_BOUND_MODE).toBe(true);
+    expect(env.OPENAI_MENU_OCR_MODEL).toBe("gpt-4.1-mini-2025-04-14");
+    expect(env.OPENAI_MENU_OCR_FALLBACK_MODEL).toBe("gpt-4.1-mini-2025-04-14");
+  });
+
+  it("preserves structurally valid legacy anon and service-role keys in current production", async () => {
+    stubProductionEnv();
+
+    const { env } = await loadEnv();
+
+    expect(env.SUPABASE_ANON_KEY).toBe(legacyAnonKey);
+    expect(env.SUPABASE_SERVICE_ROLE_KEY).toBe(legacyServiceRoleKey);
+    expect(env.OFFSITE_BACKUP_SERVICE_ROLE_KEY).toBe(legacyOffsiteServiceRoleKey);
+  });
+
+  it.each([
+    "https://attacker.invalid",
+    "https://production-project.supabase.co",
+    "http://auth.pintpath.au",
+    "https://auth.pintpath.au/",
+    "https://user@auth.pintpath.au",
+    "https://auth.pintpath.au:443",
+    "https://auth.pintpath.au/path",
+    "https://auth.pintpath.au?source=production",
+    "https://auth.pintpath.au#fragment",
+    " https://auth.pintpath.au",
+  ])("rejects noncanonical production Supabase origin %s", async (candidate) => {
+    stubProductionEnv({ SUPABASE_URL: candidate });
+
+    const error = await loadEnv().catch((cause: unknown) => cause);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain(
+      "Canonical production requires SUPABASE_URL to be the exact reviewed HTTPS origin",
+    );
+  });
+
+  it.each([
+    ["a secret key", `sb_secret_${"x".repeat(32)}`],
+    ["a malformed publishable key", `sb_publishable_${"x".repeat(19)}`],
+    ["an overlong publishable key", `sb_publishable_${"x".repeat(221)}`],
+    ["an unknown sb_ key", `sb_unknown_${"x".repeat(32)}`],
+    ["an arbitrary legacy-like value", "fixture-supabase-browser-key"],
+    ["a legacy service-role JWT", legacyServiceRoleKey],
+    [
+      "a legacy anon JWT with a non-canonical signature",
+      `${legacyAnonKey.split(".").slice(0, 2).join(".")}.${Buffer.alloc(31, 9).toString("base64url")}`,
+    ],
+    ["a whitespace-wrapped publishable key", ` ${stagingPublishableKey}`],
+  ])("rejects SUPABASE_ANON_KEY containing %s before it can reach public config", async (
+    _description,
+    candidate,
+  ) => {
+    stubProductionEnv({ SUPABASE_ANON_KEY: candidate });
+
+    const error = await loadEnv().catch((cause: unknown) => cause);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain(
+      "refusing to expose a secret, malformed, or non-anon value through public config",
+    );
+    expect((error as Error).message).not.toContain(candidate);
+  });
+
+  it.each([
+    [
+      "an anon JWT in the primary service slot",
+      { SUPABASE_SERVICE_ROLE_KEY: legacyAnonKey },
+      "SUPABASE_SERVICE_ROLE_KEY",
+    ],
+    [
+      "a publishable key in the primary service slot",
+      { SUPABASE_SERVICE_ROLE_KEY: stagingPublishableKey },
+      "SUPABASE_SERVICE_ROLE_KEY",
+    ],
+    [
+      "an anon JWT in the off-site service slot",
+      { OFFSITE_BACKUP_SERVICE_ROLE_KEY: legacyAnonKey },
+      "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
+    ],
+    [
+      "an arbitrary value in the off-site service slot",
+      { OFFSITE_BACKUP_SERVICE_ROLE_KEY: "fixture-offsite-service-key" },
+      "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
+    ],
+  ])("rejects current production with %s", async (_description, overrides, name) => {
+    stubProductionEnv(overrides);
+
+    const error = await loadEnv().catch((cause: unknown) => cause);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain(
+      `${name} must be an exact sb_secret_ key or a structurally valid legacy JWT with role=service_role`,
+    );
+    expect((error as Error).message).not.toContain(Object.values(overrides)[0]!);
   });
 
   it("allows canonical production to defer Stripe and POS while both paid enrollment flags are closed", async () => {
@@ -738,11 +929,11 @@ describe("environment safety defaults", () => {
 
   it("rejects an off-site backup destination that resolves to the production Supabase origin", async () => {
     stubProductionEnv({
-      OFFSITE_BACKUP_SUPABASE_URL: "HTTPS://PRODUCTION-PROJECT.SUPABASE.CO/backup/",
+      OFFSITE_BACKUP_SUPABASE_URL: "HTTPS://AUTH.PINTPATH.AU/backup/",
     });
 
     await expect(loadEnv()).rejects.toThrow(
-      "OFFSITE_BACKUP_SUPABASE_URL must identify a distinct private operational restore-copy origin",
+      "Canonical production requires OFFSITE_BACKUP_SUPABASE_URL to be the exact reviewed operational-copy HTTPS origin",
     );
   });
 
@@ -776,6 +967,10 @@ describe("environment safety defaults", () => {
   });
 
   it.each([
+    " https://pintpath.au",
+    "https://pintpath.au ",
+    "HTTPS://PINTPATH.AU",
+    "https://pintpath.au/",
     "https://beer-production-aad4.up.railway.app",
     "https://user:password@pintpath.au/",
     "https://pintpath.au:444/",
@@ -786,7 +981,7 @@ describe("environment safety defaults", () => {
     stubProductionEnv({ PUBLIC_BASE_URL: publicBaseUrl });
 
     await expect(loadEnv()).rejects.toThrow(
-      "PUBLIC_BASE_URL must be exactly https://pintpath.au/ in production",
+      "PUBLIC_BASE_URL must be exactly https://pintpath.au in production",
     );
   });
 
@@ -852,6 +1047,69 @@ describe("environment safety defaults", () => {
     );
   });
 
+  it("requires exact new publishable and primary secret keys throughout permanent-staging bootstrap", async () => {
+    for (const [overrides, expectedName] of [
+      [{ SUPABASE_ANON_KEY: legacyAnonKey }, "SUPABASE_ANON_KEY"],
+      [{ SUPABASE_SERVICE_ROLE_KEY: legacyServiceRoleKey }, "SUPABASE_SERVICE_ROLE_KEY"],
+      [{ SUPABASE_SERVICE_ROLE_KEY: `sb_secret_${"b".repeat(20)}!` }, "SUPABASE_SERVICE_ROLE_KEY"],
+    ] as const) {
+      vi.unstubAllEnvs();
+      stubStagingBootstrapEnv({ ...overrides });
+      const error = await loadEnv().catch((cause: unknown) => cause);
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain("permanent-staging-bootstrap");
+      expect((error as Error).message).toContain(expectedName);
+      expect((error as Error).message).not.toContain(Object.values(overrides)[0]);
+    }
+  });
+
+  it("prohibits production operational-backup authority throughout staging bootstrap", async () => {
+    stubStagingBootstrapEnv();
+    await expect(loadEnv()).resolves.toBeDefined();
+
+    for (const overrides of [
+      { OFFSITE_BACKUP_SUPABASE_URL: operationalOffsiteSupabaseOrigin },
+      { OFFSITE_BACKUP_SERVICE_ROLE_KEY: `sb_secret_${"o".repeat(32)}` },
+      { OFFSITE_BACKUP_BUCKET: "pintpath-backups" },
+      { OFFSITE_BACKUP_SUPABASE_URL: " " },
+      { OFFSITE_BACKUP_SERVICE_ROLE_KEY: " " },
+      { OFFSITE_BACKUP_BUCKET: " " },
+    ]) {
+      vi.unstubAllEnvs();
+      stubStagingBootstrapEnv(overrides);
+      const error = await loadEnv().catch((cause: unknown) => cause);
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain(
+        "permanent-staging-bootstrap) prohibits OFFSITE_BACKUP_SUPABASE_URL, OFFSITE_BACKUP_SERVICE_ROLE_KEY, and OFFSITE_BACKUP_BUCKET",
+      );
+      const rejectedValue = Object.values(overrides)[0];
+      if (rejectedValue.trim().length > 0) {
+        expect((error as Error).message).not.toContain(rejectedValue);
+      }
+    }
+  });
+
+  it("requires the two exact project keys and prohibits off-site authority once permanent staging is complete", async () => {
+    for (const payloadLength of [20, 220]) {
+      vi.unstubAllEnvs();
+      stubStagingCompleteEnv({
+        SUPABASE_ANON_KEY: `sb_publishable_${"a".repeat(payloadLength)}`,
+        SUPABASE_SERVICE_ROLE_KEY: `sb_secret_${"b".repeat(payloadLength)}`,
+      });
+      await expect(loadEnv()).resolves.toBeDefined();
+    }
+
+    vi.unstubAllEnvs();
+    stubStagingCompleteEnv({
+      OFFSITE_BACKUP_SUPABASE_URL: operationalOffsiteSupabaseOrigin,
+      OFFSITE_BACKUP_SERVICE_ROLE_KEY: `sb_secret_${"c".repeat(32)}`,
+      OFFSITE_BACKUP_BUCKET: "pintpath-backups",
+    });
+    await expect(loadEnv()).rejects.toThrow(
+      "permanent-staging-complete) prohibits OFFSITE_BACKUP_SUPABASE_URL, OFFSITE_BACKUP_SERVICE_ROLE_KEY, and OFFSITE_BACKUP_BUCKET",
+    );
+  });
+
   it.each([
     ["production", { RAILWAY_ENVIRONMENT_NAME: "production" }],
     ["restore", { RESTORE_REHEARSAL_MODE: "true" }],
@@ -904,13 +1162,21 @@ describe("environment safety defaults", () => {
     expect(env.ACCOUNT_DELETION_REHEARSAL_ENABLED).toBe(true);
     expect(env.PUBLIC_BASE_URL).toBe("https://permanent-staging.up.railway.app");
     expect(env.DATABASE_URL).toContain("postgresql://");
-    expect(env.SUPABASE_URL).toBe("https://stagingref0000000001.supabase.co");
+    expect(env.SUPABASE_URL).toBe(permanentStagingSupabaseOrigin);
     expect(env.OFFSITE_BACKUP_SUPABASE_URL).toBeUndefined();
     expect(env.OFFSITE_BACKUP_SERVICE_ROLE_KEY).toBeUndefined();
     expect(env.REDIS_URL).toContain("staging-redis.railway.internal");
     expect(env.REQUIRE_REDIS_RATE_LIMITING).toBe(true);
     expect(env.ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION).toBe(false);
     expect(env.ACCOUNT_DELETION_REHEARSAL_REPLICA_COUNT).toBe(2);
+  });
+
+  it("requires exact new primary Supabase roles in account-deletion rehearsal", async () => {
+    stubAccountDeletionRehearsalEnv({ SUPABASE_SERVICE_ROLE_KEY: legacyServiceRoleKey });
+
+    await expect(loadEnv()).rejects.toThrow(
+      "account-deletion-rehearsal) requires SUPABASE_SERVICE_ROLE_KEY",
+    );
   });
 
   it("rejects deletion rehearsal when permanent-staging identities or providers do not match", async () => {
@@ -1093,6 +1359,26 @@ describe("environment safety defaults", () => {
     await expect(loadEnv()).rejects.toThrow("redis.railway.internal:6379");
   });
 
+  it("rejects wrong-role or normalized restore service keys without emitting them", async () => {
+    for (const candidate of [
+      stagingPublishableKey,
+      legacyAnonKey,
+      ` ${stagingServiceKey}`,
+      `${stagingServiceKey} `,
+      `${stagingServiceKey}\nmalformed`,
+      "arbitrary-restore-service-key",
+    ]) {
+      vi.unstubAllEnvs();
+      stubRestoreRehearsalEnv({ SUPABASE_SERVICE_ROLE_KEY: candidate });
+      const error = await loadEnv().catch((cause: unknown) => cause);
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain(
+        "SUPABASE_SERVICE_ROLE_KEY must be an exact sb_secret_ key or a structurally valid legacy JWT with role=service_role",
+      );
+      expect((error as Error).message).not.toContain(candidate);
+    }
+  });
+
   it("rejects restore mode outside the reviewed disposable Railway project and service", async () => {
     stubRestoreRehearsalEnv({ RAILWAY_PROJECT_ID: "wrong-restore-project" });
     await expect(loadEnv()).rejects.toThrow("RAILWAY_PROJECT_ID");
@@ -1195,7 +1481,7 @@ describe("environment safety defaults", () => {
     expect(readinessScript).toContain('checkRequired("GOOGLE_PLACES_API_KEY"');
     expect(readinessScript).toContain('checkRequired("OPENAI_API_KEY"');
     expect(readinessScript).toContain('checkSupabaseKeyFormat("SUPABASE_SERVICE_ROLE_KEY", "secret"');
-    expect(readinessScript).toContain('checkRequired("OFFSITE_BACKUP_SUPABASE_URL"');
+    expect(readinessScript).toContain('checkExactSupabaseOrigin("OFFSITE_BACKUP_SUPABASE_URL"');
     expect(readinessScript).toContain('checkSupabaseKeyFormat("OFFSITE_BACKUP_SERVICE_ROLE_KEY", "secret"');
     expect(readinessScript).toContain("Private operational restore-copy URL");
     expect(readinessScript).toContain("separately prove WORM authority");

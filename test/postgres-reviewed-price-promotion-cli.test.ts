@@ -13,6 +13,12 @@ const cliRuntimeState = vi.hoisted(() => ({
 
 vi.mock("../scripts/lib/postgres-reviewed-price-promotion-runtime.js", () => ({
   POSTGRES_REVIEWED_PRICE_PROMOTION_RUNTIME: Object.freeze({
+    get assertPublicationBoundary() {
+      return cliRuntimeState.dependencies?.assertPublicationBoundary;
+    },
+    get releasePublishedArtifactHandle() {
+      return cliRuntimeState.dependencies?.releasePublishedArtifactHandle;
+    },
     openDatabase: (options: unknown) => {
       if (!cliRuntimeState.dependencies?.openDatabase) {
         throw new Error("test_runtime_not_configured");
@@ -54,15 +60,34 @@ import {
   type PostgresReviewedPricePromotionCliDependencies,
 } from "../scripts/postgres-reviewed-price-promotion.js";
 import {
+  derivePostgresMigrationRunId,
   finalizePostgresMigrationReceipt,
+  sha256PostgresMigrationRunBinding,
   sha256PostgresMigrationTargetIdentity,
   type PostgresMigrationTargetIdentity,
+  type PostgresMigrationReceipt,
 } from "../src/db/postgres-migration-receipt.js";
-import { sha256PostgresMigrationBytes } from
+import { POSTGRES_MIGRATION_CONTRACT } from
+  "../src/db/postgres-migration-contract.js";
+import {
+  sha256PostgresMigrationBytes,
+  sha256PostgresMigrationContract,
+} from
   "../src/db/postgres-migration-schema.js";
 import type { SqlDatabase } from "../src/db/sql-database.js";
 import { sha256PostgresDatabaseIdentity } from
   "../src/lib/postgres-database-identity.js";
+import {
+  POSTGRES_REVIEWED_PRICE_PROMOTION_AUTHORITY_BUNDLE_KIND,
+  POSTGRES_REVIEWED_PRICE_PROMOTION_AUTHORITY_BUNDLE_VERSION,
+  POSTGRES_REVIEWED_PRICE_PROMOTION_AUTHORITY_MODE,
+  POSTGRES_REVIEWED_PRICE_PROMOTION_REVIEW_MODE,
+  POSTGRES_REVIEWED_PRICE_PROMOTION_REVIEW_PACKET_KIND,
+  POSTGRES_REVIEWED_PRICE_PROMOTION_REVIEW_PACKET_VERSION,
+  finalizePostgresReviewedPricePromotionReviewPacket,
+  type PostgresReviewedPricePromotionAuthorityBundle,
+  type PostgresReviewedPricePromotionReviewPacket,
+} from "../src/lib/postgres-reviewed-price-promotion-authority.js";
 import {
   RAILWAY_APPLICATION_DEPLOYMENT_ATTESTATION_POLICY_SHA256,
   buildRailwayApplicationDeploymentAttestationReceipt,
@@ -74,11 +99,20 @@ import {
   POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_BLOCKERS,
   POSTGRES_REVIEWED_PRICE_PROMOTION_PLAN_KIND,
   POSTGRES_REVIEWED_PRICE_PROMOTION_PRIVATE_INPUT_KIND,
+  POSTGRES_REVIEWED_PRICE_PROMOTION_SOURCE_SCHEMA_SHA256,
+  POSTGRES_REVIEWED_PRICE_PROMOTION_IDENTITY_QUERY,
   PostgresReviewedPricePromotionPlanError,
   canonicalPostgresReviewedPricePromotionJson,
+  sha256PostgresReviewedPricePromotionIdentity,
   sha256PostgresReviewedPricePromotionValue,
   type PostgresReviewedPricePromotionPlanCandidate,
+  type PostgresReviewedPricePromotionPlanArtifacts,
+  type PostgresReviewedPricePromotionPrivateInput,
 } from "../src/lib/postgres-reviewed-price-promotion-plan.js";
+import { REVIEWED_PRICE_SELECTION_POLICY_SHA256 } from
+  "../src/lib/reviewed-price-selection-policy.js";
+import { REVIEWED_PRICE_WRONG_PRICE_POLICY_SHA256 } from
+  "../src/lib/reviewed-price-wrong-price-policy.js";
 
 const CANDIDATE_SHA = "c".repeat(40);
 const HASH = "a".repeat(64);
@@ -87,6 +121,7 @@ const PLANNER_PASSWORD = "PRIVATE_PLANNER_PASSWORD";
 const NOW = "2026-08-08T00:00:00.000Z";
 const ATTESTATION_STARTED_AT = "2026-08-07T23:59:59.000Z";
 const ATTESTATION_EXPIRES_AT = "2026-08-08T00:15:00.000Z";
+const AUTHORITY_EXPIRES_AT = "2026-08-08T00:10:00.000Z";
 
 const TEST_ROOT_CA_PEM = `-----BEGIN CERTIFICATE-----
 MIIDUjCCAjqgAwIBAgIUYBQyRs0suyX5rXqgVNuwjILfVgwwDQYJKoZIhvcNAQEL
@@ -242,92 +277,353 @@ function deploymentAttestation(
   });
 }
 
-function planCandidate(input: {
-  readonly deployment: {
-    readonly deploymentIdSha256: string;
-    readonly environmentIdSha256: string;
-    readonly imageDigestSha256: string;
-    readonly projectIdSha256: string;
-    readonly serviceIdSha256: string;
+function authorityBundle(input: {
+  readonly deployment: PostgresReviewedPricePromotionPlanCandidate["expectedDeployment"];
+  readonly physicalIdentitySha256: string;
+  readonly privateInputFileSha256: string;
+}): PostgresReviewedPricePromotionAuthorityBundle {
+  return {
+    authorityMode: POSTGRES_REVIEWED_PRICE_PROMOTION_AUTHORITY_MODE,
+    candidateSha: CANDIDATE_SHA,
+    evidenceReferences: {
+      privateEvidenceManifestSha256: sha256("private-evidence-manifest"),
+      restoreReceiptSha256: sha256("evidence-restore-receipt"),
+      retrievalReceiptSha256: sha256("evidence-retrieval-receipt"),
+      storageSnapshotManifestSha256: sha256("storage-snapshot-manifest"),
+      wormManifestSha256: sha256("evidence-worm-manifest"),
+    },
+    expectedEnvironment: "permanent-staging",
+    expiresAt: AUTHORITY_EXPIRES_AT,
+    generatedAt: NOW,
+    kind: POSTGRES_REVIEWED_PRICE_PROMOTION_AUTHORITY_BUNDLE_KIND,
+    mutationAuthorized: false,
+    privateInputManifestSha256: input.privateInputFileSha256,
+    providerAuthorityObserved: false,
+    recoveryReferences: {
+      accountDeletionRecoveryManifestSha256: sha256("account-deletion-recovery"),
+      logicalBackupManifestSha256: sha256("logical-backup-manifest"),
+      pitrAttestationSha256: sha256("pitr-attestation"),
+      privateStorageRecoveryManifestSha256: sha256("private-storage-recovery"),
+      restoreReceiptSha256: sha256("recovery-restore-receipt"),
+      wormManifestSha256: sha256("recovery-worm-manifest"),
+    },
+    reviewBindings: {
+      approvalArtifactSha256: sha256("approval-artifact"),
+      approvalReferenceSha256: sha256("approval-reference"),
+      cryptographicApprovalVerified: false,
+      operatorIdSha256: sha256("operator"),
+      reviewMode: POSTGRES_REVIEWED_PRICE_PROMOTION_REVIEW_MODE,
+      reviewerIdSha256: sha256("reviewer"),
+      trustRootPolicySha256: sha256("trust-root-policy"),
+    },
+    targetProfile: {
+      deploymentAttestationFileSha256: input.deployment.attestationFileSha256,
+      physicalDatabaseIdentitySha256: input.physicalIdentitySha256,
+      railwayEnvironmentIdSha256: input.deployment.environmentIdSha256,
+      railwayProjectIdSha256: input.deployment.projectIdSha256,
+      railwayServiceIdSha256: input.deployment.serviceIdSha256,
+      supabaseProjectIdentitySha256: sha256("supabase-project-identity"),
+    },
+    version: POSTGRES_REVIEWED_PRICE_PROMOTION_AUTHORITY_BUNDLE_VERSION,
   };
+}
+
+function reviewPacketCandidate(input: {
+  readonly authorityBundleSha256: string;
+  readonly physicalIdentitySha256: string;
+  readonly privateInput: PostgresReviewedPricePromotionPrivateInput;
+  readonly privateInputFileSha256: string;
+  readonly sourceSnapshotSha256: string;
+  readonly targetProfileSha256: string;
+}): PostgresReviewedPricePromotionReviewPacket {
+  return finalizePostgresReviewedPricePromotionReviewPacket({
+    authorityBundleSha256: input.authorityBundleSha256,
+    candidateSha: CANDIDATE_SHA,
+    expectedEnvironment: "permanent-staging",
+    expiresAt: AUTHORITY_EXPIRES_AT,
+    generatedAt: NOW,
+    itemCount: 1,
+    items: [{
+      evidenceContentSha256: input.privateInput.items[0]!.evidenceContentSha256,
+      evidenceReference: `source-ingestion:${INGESTION_ID}`,
+      evidenceReferenceSha256: input.privateInput.items[0]!.evidenceReferenceSha256,
+      rows: [{
+        ordinal: 0,
+        priceRecord: {
+          beerName: "Fixture Beer",
+          confidence: "admin_verified",
+          happyHourDetails: null,
+          id: `source-ingestion:${INGESTION_ID}:0`,
+          isHappyHourPrice: false,
+          isOnTap: "yes",
+          normalizedBeerId: "fixture_beer",
+          price: 13.5,
+          servingSize: "pint",
+          sourceEvidenceReference: `source-ingestion:${INGESTION_ID}`,
+          sourceIngestionId: INGESTION_ID,
+          sourceSubmissionId: null,
+          sourceType: "source_ingestion",
+          suburb: "Fitzroy",
+          venueId: "22222222-2222-4222-8222-222222222222",
+          venueName: "Fixture Hotel",
+        },
+        venueBeer: {
+          abv: "4.5",
+          beerName: "Fixture Beer",
+          brewery: "Fixture Brewery",
+          currency: "AUD",
+          id: "admin-reviewed:22222222-2222-4222-8222-222222222222:fixture-beer:pint",
+          inStock: true,
+          normalizedBeerId: "fixture_beer",
+          notes: "Published from admin source review.",
+          onTap: true,
+          price: 13.5,
+          serveSize: "pint",
+          sourceIngestionId: INGESTION_ID,
+          style: "Lager",
+          venueId: "22222222-2222-4222-8222-222222222222",
+        },
+      }],
+      sourceIngestionId: INGESTION_ID,
+      venue: {
+        address: "123 Private Street",
+        area: "inner-north",
+        id: "22222222-2222-4222-8222-222222222222",
+        name: "Fixture Hotel",
+        suburb: "Fitzroy",
+      },
+    }],
+    kind: POSTGRES_REVIEWED_PRICE_PROMOTION_REVIEW_PACKET_KIND,
+    marketedSuburb: "Fitzroy",
+    mutationEnabled: false,
+    privateInputManifestSha256: input.privateInputFileSha256,
+    rowCount: 1,
+    sourceSnapshotSha256: input.sourceSnapshotSha256,
+    targetPhysicalIdentitySha256: input.physicalIdentitySha256,
+    targetProfileSha256: input.targetProfileSha256,
+    temporalPolicy: "single-apply-transaction-timestamp",
+    version: POSTGRES_REVIEWED_PRICE_PROMOTION_REVIEW_PACKET_VERSION,
+    wrongPricePolicySha256: REVIEWED_PRICE_WRONG_PRICE_POLICY_SHA256,
+  });
+}
+
+function sourceSnapshotCandidate(
+  privateInput: PostgresReviewedPricePromotionPrivateInput,
+) {
+  const withoutCombined = {
+    items: [{
+      catalogRowsSha256: "3".repeat(64),
+      queueSnapshotSha256: "4".repeat(64),
+      selectedRowCount: 1,
+      selectedRowsSha256: "5".repeat(64),
+      sourceIngestionId: privateInput.items[0]!.sourceIngestionId,
+      venueIdSha256: privateInput.items[0]!.venueIdSha256,
+      venueProfileSha256: "7".repeat(64),
+    }],
+    publicConflicts: {
+      priceRecordCount: 0,
+      rowsSha256: sha256PostgresReviewedPricePromotionValue([]),
+      venueBeerCount: 0,
+    },
+    selectionPolicySha256: REVIEWED_PRICE_SELECTION_POLICY_SHA256,
+    wrongPriceReports: {
+      blockingCount: 0,
+      blockingStatuses: ["in_progress", "open"] as const,
+      openOrInProgressCount: 0,
+      policySha256: REVIEWED_PRICE_WRONG_PRICE_POLICY_SHA256,
+      rejectedCount: 0,
+      resolvedCount: 0,
+      rowsSha256: sha256PostgresReviewedPricePromotionValue([]),
+      totalCount: 0,
+    },
+  };
+  return {
+    ...withoutCombined,
+    combinedSha256: sha256PostgresReviewedPricePromotionValue(withoutCombined),
+  };
+}
+
+function privacyAnonymizedTerminalWrongPriceRowsSha256(): string {
+  const sanitize = (row: Readonly<Record<string, string | null>>) =>
+    Object.fromEntries(Object.entries(row).map(([key, value]) => [
+      key,
+      value === null
+        ? null
+        : sha256(`pintpath-reviewed-price-conflict-${key}-v1\0${value}`),
+    ]));
+  return sha256PostgresReviewedPricePromotionValue([
+    sanitize({
+      assignedTo: null,
+      beerName: "Fixture Beer",
+      createdAt: NOW,
+      id: "wrong-price-resolved-anonymized",
+      notes: null,
+      priceRecordId: null,
+      reason: "price_changed",
+      resolutionNote: null,
+      resolvedAt: NOW,
+      resolvedBy: null,
+      sourcePhotoUrl: null,
+      status: "resolved",
+      updatedAt: NOW,
+      venueId: "22222222-2222-4222-8222-222222222222",
+    }),
+    sanitize({
+      assignedTo: null,
+      beerName: "Fixture Beer",
+      createdAt: NOW,
+      id: "wrong-price-rejected-anonymized",
+      notes: null,
+      priceRecordId: null,
+      reason: "other",
+      resolutionNote: null,
+      resolvedAt: NOW,
+      resolvedBy: null,
+      sourcePhotoUrl: null,
+      status: "rejected",
+      updatedAt: NOW,
+      venueId: "22222222-2222-4222-8222-222222222222",
+    }),
+  ]);
+}
+
+function planCandidate(input: {
+  readonly authorityBundle: PostgresReviewedPricePromotionAuthorityBundle;
+  readonly authorityBundleSha256: string;
+  readonly deployment: PostgresReviewedPricePromotionPlanCandidate["expectedDeployment"];
   readonly migrationReceiptFileSha256: string;
+  readonly migrationReceipt: PostgresMigrationReceipt;
+  readonly migrationTargetIdentity: PostgresMigrationTargetIdentity;
+  readonly privateInput: PostgresReviewedPricePromotionPrivateInput;
   readonly privateInputFileSha256: string;
   readonly physicalIdentitySha256: string;
   readonly plannerLoginIdentitySha256: string;
+  readonly reviewPacket: PostgresReviewedPricePromotionReviewPacket;
 }): PostgresReviewedPricePromotionPlanCandidate {
+  const sourceSnapshot = sourceSnapshotCandidate(input.privateInput);
+  const migrationReceipt = input.migrationReceipt;
+  const targetIdentity = input.migrationTargetIdentity;
+  const reviewedPriceBoundTextSha256 = (label: string, value: string) => sha256(
+    `pintpath-reviewed-price-${label}-v1\0${value}`,
+  );
+  const roleSafetySha256 = sha256PostgresReviewedPricePromotionValue({
+    authorityQuerySha256: sha256(POSTGRES_REVIEWED_PRICE_PROMOTION_IDENTITY_QUERY),
+    requiredColumnCount: 84,
+    requiredRelationCount: 9,
+    roleAuthorityValid: true,
+    searchPathSchemas: ["pg_catalog"],
+    transactionIsolation: "repeatable read",
+    transactionReadOnly: true,
+  });
+  const migrationSnapshot = {
+    approvalReferenceSha256: migrationReceipt.approvalReferenceSha256,
+    candidateSha: CANDIDATE_SHA,
+    completedAt: NOW,
+    contractSha256: migrationReceipt.contractSha256,
+    expectedEnvironment: "permanent-staging" as const,
+    failureCode: null,
+    manifestSha256: migrationReceipt.manifestSha256,
+    operatorIdSha256: migrationReceipt.operatorIdSha256,
+    receiptSha256: migrationReceipt.receiptSha256,
+    runId: migrationReceipt.runIdSha256,
+    sourceSchemaFingerprint: migrationReceipt.sourceSchemaFingerprint,
+    sourceSchemaVersion: POSTGRES_MIGRATION_CONTRACT.sourceSchemaVersion,
+    sourceSnapshotSha256: migrationReceipt.sourceSnapshotSha256,
+    startedAt: NOW,
+    status: "ready" as const,
+    targetBindingSha256: migrationReceipt.runBindingSha256,
+    targetDdlSha256: migrationReceipt.targetDdlSha256,
+    verifierIdSha256: migrationReceipt.verifierIdSha256,
+  };
   const withoutHash = {
     activationBlockers: [...POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_BLOCKERS],
+    authority: {
+      authorityBundleSha256: input.authorityBundleSha256,
+      authorityMode: input.authorityBundle.authorityMode,
+      evidenceReferencesSha256:
+        sha256PostgresReviewedPricePromotionValue(input.authorityBundle.evidenceReferences),
+      expiresAt: input.authorityBundle.expiresAt,
+      generatedAt: input.authorityBundle.generatedAt,
+      mutationAuthorized: false as const,
+      providerAuthorityObserved: false as const,
+      recoveryReferencesSha256:
+        sha256PostgresReviewedPricePromotionValue(input.authorityBundle.recoveryReferences),
+      reviewBindingsSha256:
+        sha256PostgresReviewedPricePromotionValue(input.authorityBundle.reviewBindings),
+      supabaseProjectIdentitySha256:
+        input.authorityBundle.targetProfile.supabaseProjectIdentitySha256,
+      targetProfileSha256:
+        sha256PostgresReviewedPricePromotionValue(input.authorityBundle.targetProfile),
+    },
     candidateSha: CANDIDATE_SHA,
     expectedDeployment: input.deployment,
     expectedEnvironment: "permanent-staging" as const,
     kind: POSTGRES_REVIEWED_PRICE_PROMOTION_PLAN_KIND,
     migration: {
-      approvalReferenceSha256: "1".repeat(64),
+      approvalReferenceSha256: migrationReceipt.approvalReferenceSha256,
       completedAt: NOW,
-      contractSha256: "2".repeat(64),
-      manifestSha256: "3".repeat(64),
-      operatorIdSha256: "4".repeat(64),
-      planSha256: "5".repeat(64),
+      contractSha256: migrationReceipt.contractSha256,
+      manifestSha256: migrationReceipt.manifestSha256,
+      operatorIdSha256: migrationReceipt.operatorIdSha256,
+      planSha256: migrationReceipt.planSha256,
       receiptFileSha256: input.migrationReceiptFileSha256,
-      receiptSha256: "6".repeat(64),
-      runId: "7".repeat(64),
-      runSnapshotSha256: "8".repeat(64),
-      schemaMetadataSha256: "9".repeat(64),
-      sourceSchemaFingerprint: "a".repeat(64),
-      sourceSchemaSha256: "b".repeat(64),
-      sourceSchemaVersion: 16,
-      sourceSnapshotSha256: "c".repeat(64),
+      receiptSha256: migrationReceipt.receiptSha256,
+      runId: migrationReceipt.runIdSha256,
+      runSnapshotSha256:
+        sha256PostgresReviewedPricePromotionValue(migrationSnapshot),
+      schemaMetadataSha256: migrationReceipt.schemaMetadataSha256,
+      sourceSchemaFingerprint: migrationReceipt.sourceSchemaFingerprint,
+      sourceSchemaSha256: POSTGRES_REVIEWED_PRICE_PROMOTION_SOURCE_SCHEMA_SHA256,
+      sourceSchemaVersion: POSTGRES_MIGRATION_CONTRACT.sourceSchemaVersion,
+      sourceSnapshotSha256: migrationReceipt.sourceSnapshotSha256,
       startedAt: NOW,
-      targetBindingSha256: "d".repeat(64),
-      targetDdlSha256: "e".repeat(64),
-      verifierIdSha256: "f".repeat(64),
+      targetBindingSha256: migrationReceipt.runBindingSha256,
+      targetDdlSha256: migrationReceipt.targetDdlSha256,
+      verifierIdSha256: migrationReceipt.verifierIdSha256,
     },
     mutationEnabled: false as const,
     privateInput: {
-      evidenceSetSha256: "1".repeat(64),
-      itemCount: 1,
+      evidenceSetSha256:
+        sha256PostgresReviewedPricePromotionValue(input.privateInput.items),
+      itemCount: input.privateInput.itemCount,
       manifestSha256: input.privateInputFileSha256,
-      marketedSuburb: "Fitzroy",
+      marketedSuburb: input.privateInput.marketedSuburb,
     },
-    sourceSnapshot: {
-      combinedSha256: "2".repeat(64),
-      items: [{
-        catalogRowsSha256: "3".repeat(64),
-        queueSnapshotSha256: "4".repeat(64),
-        selectedRowCount: 1,
-        selectedRowsSha256: "5".repeat(64),
-        sourceIngestionId: INGESTION_ID,
-        venueIdSha256: "6".repeat(64),
-        venueProfileSha256: "7".repeat(64),
-      }],
-      publicConflicts: {
-        priceRecordCount: 0,
-        rowsSha256: "8".repeat(64),
-        venueBeerCount: 0,
-      },
-      selectionPolicySha256: "9".repeat(64),
-      wrongPriceReports: {
-        openOrInProgressCount: 0,
-        rejectedCount: 0,
-        resolvedCount: 0,
-        rowsSha256: "a".repeat(64),
-        totalCount: 0,
-      },
+    reviewPacket: {
+      itemCount: input.reviewPacket.itemCount,
+      reviewPacketCandidateSha256: input.reviewPacket.reviewPacketCandidateSha256,
+      rowCount: input.reviewPacket.rowCount,
     },
+    sourceSnapshot,
     target: {
       catalogIdentity: {
-        currentUserSha256: "b".repeat(64),
-        databaseNameSha256: "c".repeat(64),
-        databaseOidSha256: "d".repeat(64),
-        roleSafetySha256: "e".repeat(64),
-        serverVersionNum: "170010",
-        sessionUserSha256: "f".repeat(64),
-        systemIdentifierSha256: "1".repeat(64),
+        currentUserSha256: reviewedPriceBoundTextSha256(
+          "postgres-current-user",
+          "pintpath_reviewed_price_planner",
+        ),
+        databaseNameSha256: reviewedPriceBoundTextSha256(
+          "postgres-database-name",
+          targetIdentity.databaseName,
+        ),
+        databaseOidSha256: reviewedPriceBoundTextSha256(
+          "postgres-database-oid",
+          targetIdentity.databaseOid,
+        ),
+        roleSafetySha256,
+        serverVersionNum: targetIdentity.serverVersionNum,
+        sessionUserSha256: reviewedPriceBoundTextSha256(
+          "postgres-session-user",
+          "pintpath_reviewed_price_planner",
+        ),
+        systemIdentifierSha256: reviewedPriceBoundTextSha256(
+          "postgres-system-identifier",
+          targetIdentity.systemIdentifier,
+        ),
       },
       physicalIdentitySha256: input.physicalIdentitySha256,
       plannerLoginIdentitySha256: input.plannerLoginIdentitySha256,
     },
-    version: 3 as const,
+    version: 4 as const,
   };
   return {
     ...withoutHash,
@@ -335,8 +631,65 @@ function planCandidate(input: {
   } as PostgresReviewedPricePromotionPlanCandidate;
 }
 
+function rebindPlanArtifacts(input: {
+  readonly plan: PostgresReviewedPricePromotionPlanCandidate;
+  readonly reviewPacket: PostgresReviewedPricePromotionReviewPacket;
+  readonly rows?: PostgresReviewedPricePromotionReviewPacket["items"][number]["rows"];
+  readonly wrongPriceReports?: PostgresReviewedPricePromotionPlanCandidate[
+    "sourceSnapshot"
+  ]["wrongPriceReports"];
+}): PostgresReviewedPricePromotionPlanArtifacts {
+  const rows = input.rows ?? input.reviewPacket.items[0]!.rows;
+  const sourceWithoutCombined = {
+    items: [{
+      ...input.plan.sourceSnapshot.items[0]!,
+      selectedRowCount: rows.length,
+    }],
+    publicConflicts: input.plan.sourceSnapshot.publicConflicts,
+    selectionPolicySha256: input.plan.sourceSnapshot.selectionPolicySha256,
+    wrongPriceReports:
+      input.wrongPriceReports ?? input.plan.sourceSnapshot.wrongPriceReports,
+  };
+  const sourceSnapshot = {
+    ...sourceWithoutCombined,
+    combinedSha256: sha256PostgresReviewedPricePromotionValue(
+      sourceWithoutCombined,
+    ),
+  };
+  const { reviewPacketCandidateSha256: _oldPacketHash, ...oldPacket } =
+    input.reviewPacket;
+  const reviewPacket = finalizePostgresReviewedPricePromotionReviewPacket({
+    ...oldPacket,
+    items: [{
+      ...oldPacket.items[0]!,
+      rows,
+    }],
+    rowCount: rows.length,
+    sourceSnapshotSha256: sourceSnapshot.combinedSha256,
+  });
+  const { planCandidateSha256: _oldPlanHash, ...oldPlan } = input.plan;
+  const planWithoutHash = {
+    ...oldPlan,
+    reviewPacket: {
+      itemCount: reviewPacket.itemCount,
+      reviewPacketCandidateSha256: reviewPacket.reviewPacketCandidateSha256,
+      rowCount: reviewPacket.rowCount,
+    },
+    sourceSnapshot,
+  };
+  return {
+    plan: {
+      ...planWithoutHash,
+      planCandidateSha256:
+        sha256PostgresReviewedPricePromotionValue(planWithoutHash),
+    } as PostgresReviewedPricePromotionPlanCandidate,
+    reviewPacket,
+  };
+}
+
 function harness(): {
   readonly argv: readonly string[];
+  readonly authorityBundlePath: string;
   readonly buildPlan: NonNullable<
     Partial<PostgresReviewedPricePromotionCliDependencies>["buildPlan"]
   >;
@@ -348,6 +701,7 @@ function harness(): {
   readonly migrationTargetIdentityPath: string;
   readonly output: string[];
   readonly outputPlanPath: string;
+  readonly outputReviewPacketPath: string;
   readonly physicalIdentitySha256: string;
   readonly plannerLoginIdentitySha256: string;
   readonly plannerUrl: string;
@@ -365,32 +719,50 @@ function harness(): {
   const migrationReceiptPath = path.join(root, "migration-receipt.json");
   const migrationTargetIdentityPath = path.join(root, "migration-target-identity.json");
   const privateInputPath = path.join(root, "private-input.json");
+  const authorityBundlePath = path.join(root, "authority-bundle.json");
   const outputPlanPath = path.join(root, "plan-candidate.json");
+  const outputReviewPacketPath = path.join(root, "private-review-packet.json");
   const identity = historicalIdentity();
   const migrationTargetIdentityBytes = canonicalPostgresReviewedPricePromotionJson(identity);
   const migrationTargetIdentitySha256 = sha256(migrationTargetIdentityBytes);
+  const receiptRunBindingSha256 = sha256PostgresMigrationRunBinding({
+    approvalReferenceSha256: "1".repeat(64),
+    candidateSha: CANDIDATE_SHA,
+    contractSha256: sha256PostgresMigrationContract(POSTGRES_MIGRATION_CONTRACT),
+    expectedEnvironment: "permanent-staging",
+    manifestSha256: "4".repeat(64),
+    operatorIdSha256: "5".repeat(64),
+    planSha256: "6".repeat(64),
+    sourceSchemaFingerprint: POSTGRES_MIGRATION_CONTRACT.expectedSchemaFingerprint,
+    sourceSchemaVersion: POSTGRES_MIGRATION_CONTRACT.sourceSchemaVersion,
+    sourceSnapshotSha256: "b".repeat(64),
+    targetDdlSha256: "e".repeat(64),
+    targetIdentitySha256: migrationTargetIdentitySha256,
+    targetUrlSha256: "f".repeat(64),
+    verifierIdSha256: "1".repeat(64),
+  });
   const receipt = finalizePostgresMigrationReceipt({
     approvalReferenceSha256: "1".repeat(64),
     candidateSha: CANDIDATE_SHA,
     chunkCount: 1,
-    columnCount: 1,
-    contractSha256: "2".repeat(64),
+    columnCount: POSTGRES_MIGRATION_CONTRACT.expectedCounts.columns,
+    contractSha256: sha256PostgresMigrationContract(POSTGRES_MIGRATION_CONTRACT),
     expectedEnvironment: "permanent-staging",
-    foreignKeyCount: 0,
+    foreignKeyCount: POSTGRES_MIGRATION_CONTRACT.expectedCounts.foreignKeys,
     keyRangesSha256: "3".repeat(64),
     kind: "pint-path-postgres-migration-receipt",
     manifestSha256: "4".repeat(64),
     operatorIdSha256: "5".repeat(64),
     planSha256: "6".repeat(64),
     rowCount: 1,
-    runBindingSha256: "7".repeat(64),
-    runIdSha256: "8".repeat(64),
+    runBindingSha256: receiptRunBindingSha256,
+    runIdSha256: derivePostgresMigrationRunId(receiptRunBindingSha256),
     schemaMetadataSha256: "9".repeat(64),
-    sourceSchemaFingerprint: "a".repeat(64),
+    sourceSchemaFingerprint: POSTGRES_MIGRATION_CONTRACT.expectedSchemaFingerprint,
     sourceSnapshotSha256: "b".repeat(64),
     stateTotalsSha256: "c".repeat(64),
     status: "ready",
-    tableCount: 1,
+    tableCount: POSTGRES_MIGRATION_CONTRACT.expectedCounts.tables,
     tableSetSha256: "d".repeat(64),
     targetDdlSha256: "e".repeat(64),
     targetIdentitySha256: migrationTargetIdentitySha256,
@@ -401,13 +773,21 @@ function harness(): {
     zeroRowTableCount: 0,
   });
   const migrationReceiptBytes = canonicalPostgresReviewedPricePromotionJson(receipt);
-  const privateInput = {
+  const venueId = "22222222-2222-4222-8222-222222222222";
+  const evidenceReference = `source-ingestion:${INGESTION_ID}`;
+  const privateInput: PostgresReviewedPricePromotionPrivateInput = {
     itemCount: 1,
     items: [{
       evidenceContentSha256: "2".repeat(64),
-      evidenceReferenceSha256: "3".repeat(64),
+      evidenceReferenceSha256: sha256PostgresReviewedPricePromotionIdentity(
+        "evidence-reference",
+        evidenceReference,
+      ),
       sourceIngestionId: INGESTION_ID,
-      venueIdSha256: "4".repeat(64),
+      venueIdSha256: sha256PostgresReviewedPricePromotionIdentity(
+        "venue-id",
+        venueId,
+      ),
     }],
     kind: POSTGRES_REVIEWED_PRICE_PROMOTION_PRIVATE_INPUT_KIND,
     marketedSuburb: "Fitzroy",
@@ -448,18 +828,47 @@ function harness(): {
     currentUser: "pintpath_reviewed_price_planner",
     sessionUser: "pintpath_reviewed_price_planner",
   });
-  const expectedPlan = planCandidate({
+  const expectedAuthorityBundle = authorityBundle({
     deployment,
+    physicalIdentitySha256,
+    privateInputFileSha256: sha256(privateInputBytes),
+  });
+  const authorityBundleBytes = canonicalPostgresReviewedPricePromotionJson(
+    expectedAuthorityBundle,
+  );
+  writePrivate(authorityBundlePath, authorityBundleBytes);
+  const sourceSnapshot = sourceSnapshotCandidate(privateInput);
+  const expectedReviewPacket = reviewPacketCandidate({
+    authorityBundleSha256: sha256(authorityBundleBytes),
+    physicalIdentitySha256,
+    privateInput,
+    privateInputFileSha256: sha256(privateInputBytes),
+    sourceSnapshotSha256: sourceSnapshot.combinedSha256,
+    targetProfileSha256: sha256PostgresReviewedPricePromotionValue(
+      expectedAuthorityBundle.targetProfile,
+    ),
+  });
+  const expectedPlan = planCandidate({
+    authorityBundle: expectedAuthorityBundle,
+    authorityBundleSha256: sha256(authorityBundleBytes),
+    deployment,
+    migrationReceipt: receipt,
     migrationReceiptFileSha256: sha256(migrationReceiptBytes),
+    migrationTargetIdentity: identity,
+    privateInput,
     privateInputFileSha256: sha256(privateInputBytes),
     physicalIdentitySha256,
     plannerLoginIdentitySha256,
+    reviewPacket: expectedReviewPacket,
   });
   const database = { dialect: "postgres" } as SqlDatabase;
   const assertExact = vi.fn(async () => undefined);
   const release = vi.fn(async () => undefined);
   const output: string[] = [];
-  const buildPlan = vi.fn(async () => expectedPlan);
+  const buildPlan = vi.fn(async () => ({
+    plan: expectedPlan,
+    reviewPacket: expectedReviewPacket,
+  }));
   const dependencies: Partial<PostgresReviewedPricePromotionCliDependencies> = {
     openDatabase: vi.fn(async (options) => {
       expect(options).toMatchObject({
@@ -501,11 +910,15 @@ function harness(): {
     "--migration-target-identity-sha256", migrationTargetIdentitySha256,
     "--private-input", privateInputPath,
     "--private-input-sha256", sha256(privateInputBytes),
+    "--authority-bundle", authorityBundlePath,
+    "--authority-bundle-sha256", sha256(authorityBundleBytes),
     "--output-plan", outputPlanPath,
+    "--output-review-packet", outputReviewPacketPath,
   ] as const;
   cliRuntimeState.dependencies = dependencies as PostgresReviewedPricePromotionCliDependencies;
   return {
     argv,
+    authorityBundlePath,
     buildPlan,
     database,
     deployment,
@@ -515,6 +928,7 @@ function harness(): {
     migrationTargetIdentityPath,
     output,
     outputPlanPath,
+    outputReviewPacketPath,
     physicalIdentitySha256,
     plannerLoginIdentitySha256,
     plannerUrl: exactPlannerUrl,
@@ -528,7 +942,7 @@ function harness(): {
 }
 
 describe("Postgres reviewed-price promotion plan CLI", () => {
-  it("creates only a new canonical 0600 plan and emits the exact secret-free summary", async () => {
+  it("creates only canonical 0600 plan and review packet artifacts with a secret-free summary", async () => {
     const fixture = harness();
 
     await expect(runPostgresReviewedPricePromotionCli(
@@ -537,9 +951,12 @@ describe("Postgres reviewed-price promotion plan CLI", () => {
 
     expect(fixture.release).toHaveBeenCalledTimes(1);
     expect(fixture.buildPlan).toHaveBeenCalledTimes(1);
-    const plan = await fixture.buildPlan.mock.results[0]!.value;
+    const artifacts = await fixture.buildPlan.mock.results[0]!.value;
+    const plan = artifacts.plan;
+    const reviewPacket = artifacts.reviewPacket;
     expect(fixture.buildPlan).toHaveBeenCalledWith(expect.objectContaining({
       expectedDeployment: fixture.deployment,
+      expectedAuthorityBundleSha256: plan.authority.authorityBundleSha256,
       expectedPhysicalDatabaseIdentitySha256: plan.target.physicalIdentitySha256,
     }));
     expect(plan.expectedDeployment).toEqual(fixture.deployment);
@@ -548,9 +965,55 @@ describe("Postgres reviewed-price promotion plan CLI", () => {
     );
     const planBytes = fs.readFileSync(fixture.outputPlanPath);
     expect(planBytes).toEqual(canonicalPostgresReviewedPricePromotionJson(plan));
-    const stat = fs.lstatSync(fixture.outputPlanPath);
-    expect(stat.mode & 0o7777).toBe(0o600);
-    expect(stat.nlink).toBe(1);
+    const reviewPacketBytes = fs.readFileSync(fixture.outputReviewPacketPath);
+    expect(reviewPacketBytes).toEqual(
+      canonicalPostgresReviewedPricePromotionJson(reviewPacket),
+    );
+    for (const artifactPath of [
+      fixture.outputPlanPath,
+      fixture.outputReviewPacketPath,
+    ]) {
+      const stat = fs.lstatSync(artifactPath);
+      expect(stat.mode & 0o7777).toBe(0o600);
+      expect(stat.nlink).toBe(1);
+    }
+    const journalPath = postgresReviewedPricePromotionCliInternals
+      .publicationJournalPath(
+        fixture.outputPlanPath,
+        fixture.outputReviewPacketPath,
+      );
+    const journalStat = fs.lstatSync(journalPath);
+    const journal = JSON.parse(fs.readFileSync(journalPath, "utf8"));
+    expect(journalStat.mode & 0o7777).toBe(0o600);
+    expect(journalStat.nlink).toBe(1);
+    expect(journal).toMatchObject({
+      artifacts: {
+        plan: {
+          bytes: planBytes.length,
+          identity: {
+            ino: fs.lstatSync(fixture.outputPlanPath).ino.toString(),
+            nlink: "1",
+          },
+          path: fixture.outputPlanPath,
+          sha256: sha256(planBytes),
+        },
+        reviewPacket: {
+          bytes: reviewPacketBytes.length,
+          identity: {
+            ino: fs.lstatSync(fixture.outputReviewPacketPath).ino.toString(),
+            nlink: "1",
+          },
+          path: fixture.outputReviewPacketPath,
+          sha256: sha256(reviewPacketBytes),
+        },
+      },
+      outputPlan: fixture.outputPlanPath,
+      outputReviewPacket: fixture.outputReviewPacketPath,
+      processId: process.pid,
+      state: "committed",
+      summary: { ok: true },
+      version: 1,
+    });
     expect(JSON.parse(fixture.output[0]!)).toEqual({
       activationBlockerCount:
         POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_BLOCKERS.length,
@@ -564,6 +1027,9 @@ describe("Postgres reviewed-price promotion plan CLI", () => {
       planFileSha256: sha256(planBytes),
       physicalIdentitySha256: plan.target.physicalIdentitySha256,
       plannerLoginIdentitySha256: plan.target.plannerLoginIdentitySha256,
+      reviewPacketCandidateSha256: reviewPacket.reviewPacketCandidateSha256,
+      reviewPacketFileSha256: sha256(reviewPacketBytes),
+      rowCount: 1,
     });
     for (const forbidden of [
       PLANNER_PASSWORD,
@@ -572,9 +1038,90 @@ describe("Postgres reviewed-price promotion plan CLI", () => {
       fixture.deploymentAttestationPath,
       fixture.plannerUrlPath,
       fixture.privateInputPath,
+      fixture.authorityBundlePath,
     ]) {
       expect(fixture.output[0]).not.toContain(forbidden);
     }
+  });
+
+  it("replays an exact committed pair idempotently without reopening Postgres", async () => {
+    const fixture = harness();
+
+    await expect(runPostgresReviewedPricePromotionCli(fixture.argv))
+      .resolves.toBe(0);
+    const firstSummary = fixture.output[0];
+    const journalPath = postgresReviewedPricePromotionCliInternals
+      .publicationJournalPath(
+        fixture.outputPlanPath,
+        fixture.outputReviewPacketPath,
+      );
+    const journalBefore = fs.readFileSync(journalPath);
+    const planBefore = fs.readFileSync(fixture.outputPlanPath);
+    const reviewPacketBefore = fs.readFileSync(fixture.outputReviewPacketPath);
+
+    await expect(runPostgresReviewedPricePromotionCli(fixture.argv))
+      .resolves.toBe(0);
+
+    expect(fixture.buildPlan).toHaveBeenCalledTimes(1);
+    expect(fixture.release).toHaveBeenCalledTimes(1);
+    expect(fixture.output).toEqual([firstSummary, firstSummary]);
+    expect(fs.readFileSync(journalPath)).toEqual(journalBefore);
+    expect(fs.readFileSync(fixture.outputPlanPath)).toEqual(planBefore);
+    expect(fs.readFileSync(fixture.outputReviewPacketPath))
+      .toEqual(reviewPacketBefore);
+  });
+
+  it("recovers a killed prepared publication and never consumes it as committed", async () => {
+    const fixture = harness();
+    await expect(runPostgresReviewedPricePromotionCli(fixture.argv))
+      .resolves.toBe(0);
+    const journalPath = postgresReviewedPricePromotionCliInternals
+      .publicationJournalPath(
+        fixture.outputPlanPath,
+        fixture.outputReviewPacketPath,
+      );
+    const committed = JSON.parse(fs.readFileSync(journalPath, "utf8"));
+    const prepared = {
+      ...committed,
+      artifacts: {
+        plan: {
+          bytes: committed.artifacts.plan.bytes,
+          path: committed.artifacts.plan.path,
+          sha256: committed.artifacts.plan.sha256,
+          temporaryPath: committed.artifacts.plan.temporaryPath,
+        },
+        reviewPacket: {
+          bytes: committed.artifacts.reviewPacket.bytes,
+          path: committed.artifacts.reviewPacket.path,
+          sha256: committed.artifacts.reviewPacket.sha256,
+          temporaryPath: committed.artifacts.reviewPacket.temporaryPath,
+        },
+      },
+      processId: 2_147_483_647,
+      state: "prepared",
+    };
+    fs.writeFileSync(
+      journalPath,
+      canonicalPostgresReviewedPricePromotionJson(prepared),
+      { mode: 0o600 },
+    );
+    fs.unlinkSync(fixture.outputPlanPath);
+    fs.renameSync(
+      fixture.outputReviewPacketPath,
+      prepared.artifacts.reviewPacket.temporaryPath,
+    );
+
+    await expect(runPostgresReviewedPricePromotionCli(fixture.argv))
+      .resolves.toBe(0);
+
+    expect(fixture.buildPlan).toHaveBeenCalledTimes(2);
+    expect(fixture.release).toHaveBeenCalledTimes(2);
+    expect(fs.existsSync(prepared.artifacts.reviewPacket.temporaryPath))
+      .toBe(false);
+    expect(fs.existsSync(fixture.outputPlanPath)).toBe(true);
+    expect(fs.existsSync(fixture.outputReviewPacketPath)).toBe(true);
+    expect(JSON.parse(fs.readFileSync(journalPath, "utf8")).state)
+      .toBe("committed");
   });
 
   it("rejects production before any file or database capability is used", async () => {
@@ -599,8 +1146,8 @@ describe("Postgres reviewed-price promotion plan CLI", () => {
   });
 
   it("requires the command and every exact argument once", async () => {
-    expect(postgresReviewedPricePromotionCliInternals.ARGUMENT_COUNT).toBe(14);
-    expect((harness().argv.length - 1) / 2).toBe(14);
+    expect(postgresReviewedPricePromotionCliInternals.ARGUMENT_COUNT).toBe(17);
+    expect((harness().argv.length - 1) / 2).toBe(17);
     const missingCommand = harness();
     await expect(runPostgresReviewedPricePromotionCli(
       missingCommand.argv.slice(1),
@@ -748,6 +1295,67 @@ describe("Postgres reviewed-price promotion plan CLI", () => {
         failureCode: "artifact_invalid",
         ok: false,
       });
+    }
+  });
+
+  it("requires a canonical fresh offline-only authority bundle bound to the exact inputs", async () => {
+    const wrongHash = harness();
+    await expect(runPostgresReviewedPricePromotionCli(setArgument(
+      wrongHash.argv,
+      "--authority-bundle-sha256",
+      HASH,
+    ))).resolves.toBe(1);
+    expect(wrongHash.dependencies.openDatabase).not.toHaveBeenCalled();
+    expect(JSON.parse(wrongHash.output[0]!).failureCode)
+      .toBe("artifact_hash_mismatch");
+
+    const noncanonical = harness();
+    const parsed = JSON.parse(
+      fs.readFileSync(noncanonical.authorityBundlePath, "utf8"),
+    ) as unknown;
+    const compact = Buffer.from(JSON.stringify(parsed), "utf8");
+    rewritePrivate(noncanonical.authorityBundlePath, compact);
+    await expect(runPostgresReviewedPricePromotionCli(setArgument(
+      noncanonical.argv,
+      "--authority-bundle-sha256",
+      sha256(compact),
+    ))).resolves.toBe(1);
+    expect(noncanonical.dependencies.openDatabase).not.toHaveBeenCalled();
+    expect(JSON.parse(noncanonical.output[0]!).failureCode).toBe("artifact_invalid");
+
+    for (const mutate of [
+      (bundle: PostgresReviewedPricePromotionAuthorityBundle) => ({
+        ...bundle,
+        candidateSha: "d".repeat(40),
+      }),
+      (bundle: PostgresReviewedPricePromotionAuthorityBundle) => ({
+        ...bundle,
+        expiresAt: "2026-08-07T23:59:59.999Z",
+        generatedAt: "2026-08-07T23:00:00.000Z",
+      }),
+      (bundle: PostgresReviewedPricePromotionAuthorityBundle) => ({
+        ...bundle,
+        reviewBindings: {
+          ...bundle.reviewBindings,
+          cryptographicApprovalVerified: true,
+        },
+      }),
+    ]) {
+      const fixture = harness();
+      const bundle = JSON.parse(
+        fs.readFileSync(fixture.authorityBundlePath, "utf8"),
+      ) as PostgresReviewedPricePromotionAuthorityBundle;
+      const bytes = canonicalPostgresReviewedPricePromotionJson(mutate(bundle));
+      rewritePrivate(fixture.authorityBundlePath, bytes);
+      await expect(runPostgresReviewedPricePromotionCli(setArgument(
+        fixture.argv,
+        "--authority-bundle-sha256",
+        sha256(bytes),
+      ))).resolves.toBe(1);
+      expect(fixture.dependencies.openDatabase).not.toHaveBeenCalled();
+      expect(fs.existsSync(fixture.outputPlanPath)).toBe(false);
+      expect(fs.existsSync(fixture.outputReviewPacketPath)).toBe(false);
+      expect(JSON.parse(fixture.output[0]!).failureCode).toBe("artifact_invalid");
     }
   });
 
@@ -936,7 +1544,7 @@ describe("Postgres reviewed-price promotion plan CLI", () => {
     }
   });
 
-  it("requires seven distinct files under one held private parent and validates the pinned CA", async () => {
+  it("requires nine distinct input/output paths under one held private parent and validates the pinned CA", async () => {
     const permissiveParent = harness();
     fs.chmodSync(permissiveParent.root, 0o750);
     await expect(runPostgresReviewedPricePromotionCli(
@@ -1067,9 +1675,12 @@ describe("Postgres reviewed-price promotion plan CLI", () => {
     const fixture = harness();
     const valid = await fixture.buildPlan({} as never);
     fixture.dependencies.buildPlan = vi.fn(async () => ({
-      ...valid,
-      mutationEnabled: true,
-    }) as unknown as PostgresReviewedPricePromotionPlanCandidate);
+      plan: {
+        ...valid.plan,
+        mutationEnabled: true,
+      } as unknown as PostgresReviewedPricePromotionPlanCandidate,
+      reviewPacket: valid.reviewPacket,
+    }));
 
     await expect(runPostgresReviewedPricePromotionCli(
       fixture.argv,
@@ -1080,22 +1691,259 @@ describe("Postgres reviewed-price promotion plan CLI", () => {
     expect(JSON.parse(fixture.output[0]!).failureCode).toBe("plan_result_invalid");
   });
 
+  it("rejects an augmented artifact container or a review packet not bound by the plan", async () => {
+    const augmented = harness();
+    const augmentedValid = await augmented.buildPlan({} as never);
+    augmented.dependencies.buildPlan = vi.fn(async () => ({
+      plan: augmentedValid.plan,
+      reviewPacket: augmentedValid.reviewPacket,
+      unexpected: true,
+    }) as unknown as PostgresReviewedPricePromotionPlanArtifacts);
+    await expect(runPostgresReviewedPricePromotionCli(augmented.argv))
+      .resolves.toBe(1);
+    expect(JSON.parse(augmented.output[0]!).failureCode).toBe("plan_result_invalid");
+    expect(fs.existsSync(augmented.outputPlanPath)).toBe(false);
+    expect(fs.existsSync(augmented.outputReviewPacketPath)).toBe(false);
+
+    const drifted = harness();
+    const valid = await drifted.buildPlan({} as never);
+    const { reviewPacketCandidateSha256: _packetHash, ...packetWithoutHash } =
+      valid.reviewPacket;
+    const changedPacketWithoutHash = {
+      ...packetWithoutHash,
+      items: [{
+        ...packetWithoutHash.items[0]!,
+        venue: {
+          ...packetWithoutHash.items[0]!.venue,
+          address: "999 Changed Private Street",
+        },
+      }],
+    };
+    const changedPacket = {
+      ...changedPacketWithoutHash,
+      reviewPacketCandidateSha256:
+        sha256PostgresReviewedPricePromotionValue(changedPacketWithoutHash),
+    } as PostgresReviewedPricePromotionReviewPacket;
+    drifted.dependencies.buildPlan = vi.fn(async () => ({
+      plan: valid.plan,
+      reviewPacket: changedPacket,
+    }));
+    await expect(runPostgresReviewedPricePromotionCli(drifted.argv))
+      .resolves.toBe(1);
+    expect(JSON.parse(drifted.output[0]!).failureCode).toBe("plan_result_invalid");
+    expect(fs.existsSync(drifted.outputPlanPath)).toBe(false);
+    expect(fs.existsSync(drifted.outputReviewPacketPath)).toBe(false);
+  });
+
+  it("rejects self-consistently rehashed held-input and semantic rebinds", async () => {
+    const heldRebind = harness();
+    const validHeld = await heldRebind.buildPlan({} as never);
+    const replacementVenue = "33333333-3333-4333-8333-333333333333";
+    const { reviewPacketCandidateSha256: _packetHash, ...packetWithoutHash } =
+      validHeld.reviewPacket;
+    const changedItem = {
+      ...packetWithoutHash.items[0]!,
+      evidenceContentSha256: "0".repeat(64),
+      rows: packetWithoutHash.items[0]!.rows.map((row) => ({
+        ...row,
+        priceRecord: { ...row.priceRecord, venueId: replacementVenue },
+        venueBeer: { ...row.venueBeer, venueId: replacementVenue },
+      })),
+      venue: { ...packetWithoutHash.items[0]!.venue, id: replacementVenue },
+    };
+    const changedPacket = finalizePostgresReviewedPricePromotionReviewPacket({
+      ...packetWithoutHash,
+      items: [changedItem],
+    });
+    const { planCandidateSha256: _planHash, ...planWithoutHash } = validHeld.plan;
+    const reboundPlanWithoutHash = {
+      ...planWithoutHash,
+      reviewPacket: {
+        ...planWithoutHash.reviewPacket,
+        reviewPacketCandidateSha256: changedPacket.reviewPacketCandidateSha256,
+      },
+    };
+    heldRebind.dependencies.buildPlan = vi.fn(async () => ({
+      plan: {
+        ...reboundPlanWithoutHash,
+        planCandidateSha256:
+          sha256PostgresReviewedPricePromotionValue(reboundPlanWithoutHash),
+      } as PostgresReviewedPricePromotionPlanCandidate,
+      reviewPacket: changedPacket,
+    }));
+
+    await expect(runPostgresReviewedPricePromotionCli(heldRebind.argv))
+      .resolves.toBe(1);
+    expect(JSON.parse(heldRebind.output[0]!).failureCode)
+      .toBe("plan_result_invalid");
+
+    const semanticRebind = harness();
+    const validSemantic = await semanticRebind.buildPlan({} as never);
+    const rebound = rebindPlanArtifacts({
+      ...validSemantic,
+      wrongPriceReports: {
+        ...validSemantic.plan.sourceSnapshot.wrongPriceReports,
+        blockingCount: 1,
+        openOrInProgressCount: 1,
+        totalCount: 1,
+      },
+    });
+    semanticRebind.dependencies.buildPlan = vi.fn(async () => rebound);
+
+    await expect(runPostgresReviewedPricePromotionCli(semanticRebind.argv))
+      .resolves.toBe(1);
+    expect(JSON.parse(semanticRebind.output[0]!).failureCode)
+      .toBe("plan_result_invalid");
+
+    for (const drift of ["authority", "migration", "target"] as const) {
+      const fixture = harness();
+      const valid = await fixture.buildPlan({} as never);
+      const { planCandidateSha256: _hash, ...withoutHash } = valid.plan;
+      const changed = drift === "authority"
+        ? {
+            ...withoutHash,
+            authority: {
+              ...withoutHash.authority,
+              evidenceReferencesSha256: "0".repeat(64),
+            },
+          }
+        : drift === "migration"
+          ? {
+              ...withoutHash,
+              migration: {
+                ...withoutHash.migration,
+                manifestSha256: "0".repeat(64),
+              },
+            }
+          : {
+              ...withoutHash,
+              target: {
+                ...withoutHash.target,
+                catalogIdentity: {
+                  ...withoutHash.target.catalogIdentity,
+                  roleSafetySha256: "0".repeat(64),
+                },
+              },
+            };
+      fixture.dependencies.buildPlan = vi.fn(async () => ({
+        plan: {
+          ...changed,
+          planCandidateSha256: sha256PostgresReviewedPricePromotionValue(changed),
+        } as PostgresReviewedPricePromotionPlanCandidate,
+        reviewPacket: valid.reviewPacket,
+      }));
+      await expect(runPostgresReviewedPricePromotionCli(fixture.argv))
+        .resolves.toBe(1);
+      expect(JSON.parse(fixture.output[0]!).failureCode)
+        .toBe("plan_result_invalid");
+    }
+  });
+
+  it("accepts self-consistent privacy-anonymized terminal wrong-price authority", async () => {
+    const fixture = harness();
+    const valid = await fixture.buildPlan({} as never);
+    const rebound = rebindPlanArtifacts({
+      ...valid,
+      wrongPriceReports: {
+        ...valid.plan.sourceSnapshot.wrongPriceReports,
+        rejectedCount: 1,
+        resolvedCount: 1,
+        rowsSha256: privacyAnonymizedTerminalWrongPriceRowsSha256(),
+        totalCount: 2,
+      },
+    });
+    fixture.dependencies.buildPlan = vi.fn(async () => rebound);
+
+    await expect(runPostgresReviewedPricePromotionCli(fixture.argv))
+      .resolves.toBe(0);
+
+    expect(fixture.release).toHaveBeenCalledTimes(1);
+    expect(fs.existsSync(fixture.outputPlanPath)).toBe(true);
+    expect(fs.existsSync(fixture.outputReviewPacketPath)).toBe(true);
+    expect(JSON.parse(fs.readFileSync(fixture.outputPlanPath, "utf8")))
+      .toMatchObject({
+        mutationEnabled: false,
+        sourceSnapshot: {
+          wrongPriceReports: {
+            blockingCount: 0,
+            openOrInProgressCount: 0,
+            rejectedCount: 1,
+            resolvedCount: 1,
+            totalCount: 2,
+          },
+        },
+      });
+    expect(JSON.parse(fixture.output[0]!)).toMatchObject({
+      command: "plan",
+      mutationEnabled: false,
+      ok: true,
+    });
+  });
+
+  it("rejects a terminal wrong-price count/hash emptiness mismatch", async () => {
+    const cases = [
+      {
+        label: "zero-count-nonempty-hash",
+        rejectedCount: 0,
+        resolvedCount: 0,
+        rowsSha256: privacyAnonymizedTerminalWrongPriceRowsSha256(),
+        totalCount: 0,
+      },
+      {
+        label: "positive-count-empty-hash",
+        rejectedCount: 1,
+        resolvedCount: 1,
+        rowsSha256: sha256PostgresReviewedPricePromotionValue([]),
+        totalCount: 2,
+      },
+    ] as const;
+    for (const mismatch of cases) {
+      const fixture = harness();
+      const valid = await fixture.buildPlan({} as never);
+      const rebound = rebindPlanArtifacts({
+        ...valid,
+        wrongPriceReports: {
+          ...valid.plan.sourceSnapshot.wrongPriceReports,
+          rejectedCount: mismatch.rejectedCount,
+          resolvedCount: mismatch.resolvedCount,
+          rowsSha256: mismatch.rowsSha256,
+          totalCount: mismatch.totalCount,
+        },
+      });
+      fixture.dependencies.buildPlan = vi.fn(async () => rebound);
+
+      await expect(
+        runPostgresReviewedPricePromotionCli(fixture.argv),
+        mismatch.label,
+      ).resolves.toBe(1);
+
+      expect(fs.existsSync(fixture.outputPlanPath), mismatch.label).toBe(false);
+      expect(fs.existsSync(fixture.outputReviewPacketPath), mismatch.label)
+        .toBe(false);
+      expect(JSON.parse(fixture.output[0]!).failureCode, mismatch.label)
+        .toBe("plan_result_invalid");
+    }
+  });
+
   it("rejects a validly rehashed plan that drifts a receipt-derived deployment hash", async () => {
     const fixture = harness();
     const valid = await fixture.buildPlan({} as never);
-    const { planCandidateSha256: _validHash, ...validWithoutHash } = valid;
+    const { planCandidateSha256: _validHash, ...validWithoutHash } = valid.plan;
     const driftedWithoutHash = {
       ...validWithoutHash,
       expectedDeployment: {
-        ...valid.expectedDeployment,
+        ...valid.plan.expectedDeployment,
         deploymentIdSha256: "0".repeat(64),
       },
     };
     fixture.dependencies.buildPlan = vi.fn(async () => ({
-      ...driftedWithoutHash,
-      planCandidateSha256:
-        sha256PostgresReviewedPricePromotionValue(driftedWithoutHash),
-    }) as PostgresReviewedPricePromotionPlanCandidate);
+      plan: {
+        ...driftedWithoutHash,
+        planCandidateSha256:
+          sha256PostgresReviewedPricePromotionValue(driftedWithoutHash),
+      } as PostgresReviewedPricePromotionPlanCandidate,
+      reviewPacket: valid.reviewPacket,
+    }));
 
     await expect(runPostgresReviewedPricePromotionCli(fixture.argv))
       .resolves.toBe(1);
@@ -1115,18 +1963,36 @@ describe("Postgres reviewed-price promotion plan CLI", () => {
         "deploymentIdSha256",
         "0".repeat(64),
       )).toBe(false);
-      const { planCandidateSha256: _hash, ...withoutHash } = valid;
+      expect(Reflect.set(
+        input.authorityBundle.targetProfile,
+        "physicalDatabaseIdentitySha256",
+        "0".repeat(64),
+      )).toBe(false);
+      expect(Reflect.set(
+        input.privateInput.items[0]!,
+        "evidenceContentSha256",
+        "0".repeat(64),
+      )).toBe(false);
+      expect(Reflect.set(
+        input.migrationReceipt,
+        "manifestSha256",
+        "0".repeat(64),
+      )).toBe(false);
+      const { planCandidateSha256: _hash, ...withoutHash } = valid.plan;
       const drifted = {
         ...withoutHash,
         expectedDeployment: {
-          ...valid.expectedDeployment,
+          ...valid.plan.expectedDeployment,
           deploymentIdSha256: "0".repeat(64),
         },
       };
       return {
-        ...drifted,
-        planCandidateSha256: sha256PostgresReviewedPricePromotionValue(drifted),
-      } as PostgresReviewedPricePromotionPlanCandidate;
+        plan: {
+          ...drifted,
+          planCandidateSha256: sha256PostgresReviewedPricePromotionValue(drifted),
+        } as PostgresReviewedPricePromotionPlanCandidate,
+        reviewPacket: valid.reviewPacket,
+      };
     });
 
     await expect(runPostgresReviewedPricePromotionCli(fixture.argv)).resolves.toBe(1);
@@ -1449,7 +2315,7 @@ describe("Postgres reviewed-price promotion plan CLI", () => {
   });
 
   it("rechecks deployment-attestation freshness immediately around publication", async () => {
-    for (const expireOnCall of [2, 3]) {
+    for (const expireOnCall of [3, 5]) {
       const fixture = harness();
       let nowCalls = 0;
       fixture.dependencies.now = () => {
@@ -1473,19 +2339,22 @@ describe("Postgres reviewed-price promotion plan CLI", () => {
     ] as const) {
       const fixture = harness();
       const valid = await fixture.buildPlan({} as never);
-      const { planCandidateSha256: _validHash, ...validWithoutHash } = valid;
+      const { planCandidateSha256: _validHash, ...validWithoutHash } = valid.plan;
       const driftedWithoutHash = {
         ...validWithoutHash,
         target: {
-          ...valid.target,
+          ...valid.plan.target,
           [targetField]: "0".repeat(64),
         },
       };
       fixture.dependencies.buildPlan = vi.fn(async () => ({
-        ...driftedWithoutHash,
-        planCandidateSha256:
-          sha256PostgresReviewedPricePromotionValue(driftedWithoutHash),
-      }) as PostgresReviewedPricePromotionPlanCandidate);
+        plan: {
+          ...driftedWithoutHash,
+          planCandidateSha256:
+            sha256PostgresReviewedPricePromotionValue(driftedWithoutHash),
+        } as PostgresReviewedPricePromotionPlanCandidate,
+        reviewPacket: valid.reviewPacket,
+      }));
 
       await expect(runPostgresReviewedPricePromotionCli(fixture.argv))
         .resolves.toBe(1);
@@ -1498,17 +2367,22 @@ describe("Postgres reviewed-price promotion plan CLI", () => {
   });
 
   it("never overwrites an existing output artifact", async () => {
-    const fixture = harness();
-    const sentinel = Buffer.from("operator-owned\n", "utf8");
-    writePrivate(fixture.outputPlanPath, sentinel);
+    for (const outputKey of [
+      "outputPlanPath",
+      "outputReviewPacketPath",
+    ] as const) {
+      const fixture = harness();
+      const sentinel = Buffer.from("operator-owned\n", "utf8");
+      writePrivate(fixture[outputKey], sentinel);
 
-    await expect(runPostgresReviewedPricePromotionCli(
-      fixture.argv,
-    )).resolves.toBe(1);
+      await expect(runPostgresReviewedPricePromotionCli(
+        fixture.argv,
+      )).resolves.toBe(1);
 
-    expect(fixture.release).not.toHaveBeenCalled();
-    expect(fs.readFileSync(fixture.outputPlanPath)).toEqual(sentinel);
-    expect(JSON.parse(fixture.output[0]!).failureCode).toBe("output_file_unsafe");
+      expect(fixture.release).not.toHaveBeenCalled();
+      expect(fs.readFileSync(fixture[outputKey])).toEqual(sentinel);
+      expect(JSON.parse(fixture.output[0]!).failureCode).toBe("output_file_unsafe");
+    }
   });
 
   it("does not dispatch temporary publication cleanup through a replaced fs method", async () => {
@@ -1544,7 +2418,281 @@ describe("Postgres reviewed-price promotion plan CLI", () => {
     });
   });
 
-  it("rolls back the exact published inode on summary failure", async () => {
+  it("publishes the pair atomically across every release boundary", async () => {
+    for (const boundary of [
+      "review-packet-published",
+      "plan-published",
+      "plan-finalized",
+      "review-packet-finalized",
+    ] as const) {
+      const fixture = harness();
+      fixture.dependencies.assertPublicationBoundary = vi.fn((observed) => {
+        if (observed === boundary) throw new Error(`injected ${boundary}`);
+      });
+
+      await expect(runPostgresReviewedPricePromotionCli(fixture.argv))
+        .resolves.toBe(1);
+
+      expect(fs.existsSync(fixture.outputPlanPath)).toBe(false);
+      expect(fs.existsSync(fixture.outputReviewPacketPath)).toBe(false);
+      expect(fixture.output).toHaveLength(1);
+      expect(JSON.parse(fixture.output[0]!)).toEqual({
+        command: "plan",
+        failureCode: "output_file_unsafe",
+        ok: false,
+      });
+      expect(fixture.output.some((value) => value.includes('"ok": true')))
+        .toBe(false);
+    }
+  });
+
+  it("keeps inode-bound rollback custody across every precommit rename boundary", async () => {
+    const cases = [
+      ["review-packet-published", "review-packet"],
+      ["plan-published", "plan"],
+      ["plan-published", "review-packet"],
+      ["plan-finalized", "plan"],
+      ["plan-finalized", "review-packet"],
+      ["review-packet-finalized", "plan"],
+      ["review-packet-finalized", "review-packet"],
+    ] as const;
+    for (const [boundary, artifact] of cases) {
+      const fixture = harness();
+      const originalPath = artifact === "plan"
+        ? fixture.outputPlanPath
+        : fixture.outputReviewPacketPath;
+      const renamedPath = path.join(
+        fixture.root,
+        `${boundary}-${artifact}-renamed.json`,
+      );
+      fixture.dependencies.assertPublicationBoundary = vi.fn((observed) => {
+        if (observed !== boundary) return;
+        fs.renameSync(originalPath, renamedPath);
+        throw new Error(`injected rename ${boundary} ${artifact}`);
+      });
+
+      await expect(
+        runPostgresReviewedPricePromotionCli(fixture.argv),
+        `${boundary}:${artifact}`,
+      ).resolves.toBe(1);
+
+      expect(fs.existsSync(fixture.outputPlanPath), `${boundary}:${artifact}`)
+        .toBe(false);
+      expect(
+        fs.existsSync(fixture.outputReviewPacketPath),
+        `${boundary}:${artifact}`,
+      ).toBe(false);
+      expect(fs.existsSync(renamedPath), `${boundary}:${artifact}`).toBe(true);
+      expect(fs.statSync(renamedPath).size, `${boundary}:${artifact}`).toBe(0);
+      expect(fixture.output, `${boundary}:${artifact}`).toHaveLength(1);
+      expect(JSON.parse(fixture.output[0]!), `${boundary}:${artifact}`).toEqual({
+        command: "plan",
+        failureCode: "output_file_unsafe",
+        ok: false,
+      });
+      expect(
+        fixture.output.some((value) => value.includes('"ok": true')),
+        `${boundary}:${artifact}`,
+      ).toBe(false);
+    }
+  });
+
+  it("revalidates both artifacts after callbacks that rename and return normally", async () => {
+    const cases = [
+      ["review-packet-published", "review-packet"],
+      ["plan-published", "plan"],
+      ["plan-published", "review-packet"],
+      ["plan-finalized", "plan"],
+      ["plan-finalized", "review-packet"],
+      ["review-packet-finalized", "plan"],
+      ["review-packet-finalized", "review-packet"],
+    ] as const;
+    for (const [boundary, artifact] of cases) {
+      const fixture = harness();
+      const originalPath = artifact === "plan"
+        ? fixture.outputPlanPath
+        : fixture.outputReviewPacketPath;
+      const renamedPath = path.join(
+        fixture.root,
+        `${boundary}-${artifact}-normal-return.json`,
+      );
+      fixture.dependencies.assertPublicationBoundary = vi.fn((observed) => {
+        if (observed === boundary) fs.renameSync(originalPath, renamedPath);
+      });
+
+      await expect(
+        runPostgresReviewedPricePromotionCli(fixture.argv),
+        `${boundary}:${artifact}`,
+      ).resolves.toBe(1);
+
+      expect(fs.existsSync(fixture.outputPlanPath), `${boundary}:${artifact}`)
+        .toBe(false);
+      expect(
+        fs.existsSync(fixture.outputReviewPacketPath),
+        `${boundary}:${artifact}`,
+      ).toBe(false);
+      expect(fs.existsSync(renamedPath), `${boundary}:${artifact}`).toBe(true);
+      expect(fs.statSync(renamedPath).size, `${boundary}:${artifact}`).toBe(0);
+      expect(fixture.output, `${boundary}:${artifact}`).toHaveLength(1);
+      expect(JSON.parse(fixture.output[0]!), `${boundary}:${artifact}`).toEqual({
+        command: "plan",
+        failureCode: "output_file_unsafe",
+        ok: false,
+      });
+      expect(
+        fixture.output.some((value) => value.includes('"ok": true')),
+        `${boundary}:${artifact}`,
+      ).toBe(false);
+    }
+  });
+
+  it("revalidates both artifacts after final callbacks truncate and return normally", async () => {
+    const cases = [
+      ["plan-finalized", "plan"],
+      ["plan-finalized", "review-packet"],
+      ["review-packet-finalized", "plan"],
+      ["review-packet-finalized", "review-packet"],
+    ] as const;
+    for (const [boundary, artifact] of cases) {
+      const fixture = harness();
+      const artifactPath = artifact === "plan"
+        ? fixture.outputPlanPath
+        : fixture.outputReviewPacketPath;
+      fixture.dependencies.assertPublicationBoundary = vi.fn((observed) => {
+        if (observed !== boundary) return;
+        const size = fs.statSync(artifactPath).size;
+        fs.truncateSync(artifactPath, size - 1);
+      });
+
+      await expect(
+        runPostgresReviewedPricePromotionCli(fixture.argv),
+        `${boundary}:${artifact}`,
+      ).resolves.toBe(1);
+
+      expect(fs.existsSync(fixture.outputPlanPath), `${boundary}:${artifact}`)
+        .toBe(false);
+      expect(
+        fs.existsSync(fixture.outputReviewPacketPath),
+        `${boundary}:${artifact}`,
+      ).toBe(false);
+      expect(fixture.output, `${boundary}:${artifact}`).toHaveLength(1);
+      expect(JSON.parse(fixture.output[0]!), `${boundary}:${artifact}`).toEqual({
+        command: "plan",
+        failureCode: "output_file_unsafe",
+        ok: false,
+      });
+      expect(
+        fixture.output.some((value) => value.includes('"ok": true')),
+        `${boundary}:${artifact}`,
+      ).toBe(false);
+    }
+  });
+
+  it("retains the committed pair and emits no success on every close ambiguity", async () => {
+    for (const artifact of ["plan", "review-packet"] as const) {
+      for (const mode of ["reject-without-close", "close-then-reject"] as const) {
+        const fixture = harness();
+        const releases: string[] = [];
+        fixture.dependencies.releasePublishedArtifactHandle = vi.fn(
+          async (observed, close) => {
+            releases.push(observed);
+            if (observed !== artifact) {
+              await close();
+              return;
+            }
+            if (mode === "close-then-reject") await close();
+            throw new Error(`injected close ambiguity ${artifact} ${mode}`);
+          },
+        );
+
+        await expect(
+          runPostgresReviewedPricePromotionCli(fixture.argv),
+          `${artifact}:${mode}`,
+        ).resolves.toBe(1);
+
+        expect(releases, `${artifact}:${mode}`).toEqual([
+          "plan",
+          "review-packet",
+        ]);
+        for (const artifactPath of [
+          fixture.outputPlanPath,
+          fixture.outputReviewPacketPath,
+        ]) {
+          expect(fs.existsSync(artifactPath), `${artifact}:${mode}`).toBe(true);
+          expect(fs.statSync(artifactPath).size, `${artifact}:${mode}`)
+            .toBeGreaterThan(0);
+          expect(
+            () => JSON.parse(fs.readFileSync(artifactPath, "utf8")),
+            `${artifact}:${mode}`,
+          ).not.toThrow();
+        }
+        expect(fixture.output, `${artifact}:${mode}`).toHaveLength(1);
+        expect(JSON.parse(fixture.output[0]!), `${artifact}:${mode}`).toEqual({
+          command: "plan",
+          failureCode: "output_file_unsafe",
+          ok: false,
+        });
+        expect(
+          fixture.output.some((value) => value.includes('"ok": true')),
+          `${artifact}:${mode}`,
+        ).toBe(false);
+      }
+    }
+  });
+
+  it("rolls back a schema-valid packet larger than the 256 KiB plan cap", async () => {
+    const fixture = harness();
+    const valid = await fixture.buildPlan({} as never);
+    const base = valid.reviewPacket.items[0]!.rows[0]!;
+    const fill = (prefix: string, maximum: number) =>
+      prefix + "\u0001".repeat(maximum - prefix.length);
+    const rows = Array.from({ length: 100 }, (_, ordinal) => {
+      const beerName = fill(`beer-${ordinal}-`, 180);
+      const normalizedBeerId = fill(`normalized-${ordinal}-`, 180);
+      return {
+        ordinal,
+        priceRecord: {
+          ...base.priceRecord,
+          beerName,
+          id: fill(`price-${ordinal}-`, 500),
+          normalizedBeerId,
+          suburb: fill(`suburb-${ordinal}-`, 180),
+          venueName: fill(`venue-${ordinal}-`, 180),
+        },
+        venueBeer: {
+          ...base.venueBeer,
+          beerName,
+          brewery: fill(`brewery-${ordinal}-`, 180),
+          id: fill(`inventory-${ordinal}-`, 500),
+          normalizedBeerId,
+          style: fill(`style-${ordinal}-`, 180),
+        },
+      };
+    });
+    const rebound = rebindPlanArtifacts({
+      ...valid,
+      rows,
+    });
+    expect(canonicalPostgresReviewedPricePromotionJson(rebound.reviewPacket).length)
+      .toBeGreaterThan(256 * 1_024);
+    fixture.dependencies.buildPlan = vi.fn(async () => rebound);
+    fixture.dependencies.assertPublicationBoundary = vi.fn((boundary) => {
+      if (boundary === "plan-finalized") throw new Error("large packet rollback");
+    });
+
+    await expect(runPostgresReviewedPricePromotionCli(fixture.argv))
+      .resolves.toBe(1);
+
+    expect(fs.existsSync(fixture.outputPlanPath)).toBe(false);
+    expect(fs.existsSync(fixture.outputReviewPacketPath)).toBe(false);
+    expect(JSON.parse(fixture.output[0]!)).toEqual({
+      command: "plan",
+      failureCode: "output_file_unsafe",
+      ok: false,
+    });
+  });
+
+  it("retains both committed artifacts without claiming success on summary failure", async () => {
     const summaryFailure = harness();
     summaryFailure.dependencies.writeOutput = vi.fn(() => {
       throw new Error(`summary ${PLANNER_PASSWORD}`);
@@ -1552,10 +2700,24 @@ describe("Postgres reviewed-price promotion plan CLI", () => {
     await expect(runPostgresReviewedPricePromotionCli(summaryFailure.argv))
       .resolves.toBe(1);
     expect(summaryFailure.release).toHaveBeenCalledTimes(1);
-    expect(fs.existsSync(summaryFailure.outputPlanPath)).toBe(false);
+    expect(fs.existsSync(summaryFailure.outputPlanPath)).toBe(true);
+    expect(fs.existsSync(summaryFailure.outputReviewPacketPath)).toBe(true);
+    expect(summaryFailure.output).toEqual([]);
+
+    summaryFailure.dependencies.writeOutput = (value) => {
+      summaryFailure.output.push(value);
+    };
+    await expect(runPostgresReviewedPricePromotionCli(summaryFailure.argv))
+      .resolves.toBe(0);
+    expect(summaryFailure.release).toHaveBeenCalledTimes(1);
+    expect(summaryFailure.buildPlan).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(summaryFailure.output[0]!)).toMatchObject({
+      command: "plan",
+      ok: true,
+    });
   });
 
-  it("uses the captured unlink primitive when stdout fails", async () => {
+  it("does not attempt to unlink either committed artifact when stdout fails", async () => {
     const fixture = harness();
     const originalUnlink = fs.promises.unlink.bind(fs.promises);
     let replacementCalls = 0;
@@ -1577,15 +2739,16 @@ describe("Postgres reviewed-price promotion plan CLI", () => {
 
     expect(fixture.release).toHaveBeenCalledTimes(1);
     expect(replacementCalls).toBe(0);
-    expect(fs.existsSync(fixture.outputPlanPath)).toBe(false);
+    expect(fs.existsSync(fixture.outputPlanPath)).toBe(true);
+    expect(fs.existsSync(fixture.outputReviewPacketPath)).toBe(true);
     expect(JSON.parse(fixture.output[0]!)).toEqual({
       command: "plan",
-      failureCode: "unexpected_failure",
+      failureCode: "output_file_unsafe",
       ok: false,
     });
   });
 
-  it("invalidates the held plan inode when stdout renames it before failing", async () => {
+  it("never mutates a committed artifact after stdout renames it and fails", async () => {
     const fixture = harness();
     const renamedPlanPath = path.join(fixture.root, "renamed-plan.json");
     fixture.dependencies.writeOutput = vi.fn()
@@ -1600,10 +2763,11 @@ describe("Postgres reviewed-price promotion plan CLI", () => {
 
     expect(fixture.release).toHaveBeenCalledTimes(1);
     expect(fs.existsSync(fixture.outputPlanPath)).toBe(false);
+    expect(fs.existsSync(fixture.outputReviewPacketPath)).toBe(true);
     expect(fs.existsSync(renamedPlanPath)).toBe(true);
-    expect(fs.statSync(renamedPlanPath).size).toBe(0);
+    expect(fs.statSync(renamedPlanPath).size).toBeGreaterThan(0);
     expect(() => JSON.parse(fs.readFileSync(renamedPlanPath, "utf8")))
-      .toThrow();
+      .not.toThrow();
     expect(JSON.parse(fixture.output[0]!)).toEqual({
       command: "plan",
       failureCode: "output_file_unsafe",
@@ -1616,7 +2780,7 @@ describe("Postgres reviewed-price promotion plan CLI", () => {
     let nowCalls = 0;
     fixture.dependencies.now = () => {
       nowCalls += 1;
-      return new Date(nowCalls >= 3
+      return new Date(nowCalls >= 5
         ? "2026-08-08T00:15:00.001Z"
         : NOW);
     };
@@ -1633,10 +2797,11 @@ describe("Postgres reviewed-price promotion plan CLI", () => {
     await expect(runPostgresReviewedPricePromotionCli(fixture.argv))
       .resolves.toBe(1);
 
-    expect(nowCalls).toBe(3);
+    expect(nowCalls).toBe(5);
     expect(fixture.release).toHaveBeenCalledTimes(1);
     expect(replacementCalls).toBe(0);
     expect(fs.existsSync(fixture.outputPlanPath)).toBe(false);
+    expect(fs.existsSync(fixture.outputReviewPacketPath)).toBe(false);
     expect(JSON.parse(fixture.output[0]!)).toEqual({
       command: "plan",
       failureCode: "artifact_invalid",

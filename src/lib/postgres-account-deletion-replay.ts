@@ -539,6 +539,9 @@ async function readTrustedPrivateFile(input: {
       || pathStat.size > BigInt(input.maxBytes)
       || fs.realpathSync(filePath) !== filePath
     ) throw new Error("unsafe");
+    // The O_NOFOLLOW descriptor is bound to the pre-open lstat by full file
+    // identity; both the descriptor and pathname are revalidated after read.
+    // codeql[js/file-system-race]
     handle = await fs.promises.open(
       filePath,
       fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),

@@ -132,6 +132,36 @@ describe.skipIf(!configuredAdminUrl)(
         ],
       );
       await databaseAdmin.query(
+        `INSERT INTO pintpath_ops.migration_runs (
+          run_id, source_snapshot_sha256, source_schema_fingerprint,
+          contract_sha256, manifest_sha256, target_ddl_sha256,
+          source_schema_version, candidate_commit_sha, target_binding_sha256,
+          expected_environment, approval_reference_sha256,
+          operator_id_sha256, verifier_id_sha256, status, started_at,
+          completed_at, receipt_sha256, failure_code
+        ) VALUES (
+          $1, $2, $3, $4, $5, $6, $7, $8, $9,
+          'permanent-staging', $10, $11, $12, 'ready',
+          $13::timestamptz, $13::timestamptz, $14, NULL
+        )`,
+        [
+          "3".repeat(64),
+          "4".repeat(64),
+          POSTGRES_MIGRATION_CONTRACT.expectedSchemaFingerprint,
+          "78f49d0af57a19f92154f717c3b5c9c7e3bdc02bbda68809a8f2257bf7ef879d",
+          "1".repeat(64),
+          "5".repeat(64),
+          POSTGRES_MIGRATION_CONTRACT.sourceSchemaVersion,
+          "c".repeat(40),
+          "6".repeat(64),
+          "7".repeat(64),
+          "8".repeat(64),
+          "9".repeat(64),
+          CREATED_AT,
+          "a".repeat(64),
+        ],
+      );
+      await databaseAdmin.query(
         `INSERT INTO pintpath_app.accounts (
       id, public_account_id, email, password_hash, auth_provider, role,
       subscription_status, status, created_at, updated_at
@@ -197,12 +227,17 @@ describe.skipIf(!configuredAdminUrl)(
       const inspect = createPostgresPrivateStorageDatabaseInspector({
         connectionString: restrictedUrl,
         expectedConnectionUrlSha256,
+        expectedSourceEnvironment: "permanent-staging",
+        expectedCandidateSha: "c".repeat(40),
         allowInsecureLoopbackForTests: true,
         environment: { NODE_ENV: "test" },
       });
       const source = await inspect();
       expect(source).toMatchObject({
         connectionUrlSha256: expectedConnectionUrlSha256,
+        migrationRunSha256: "3".repeat(64),
+        sourceEnvironment: "permanent-staging",
+        candidateSha: "c".repeat(40),
         targetClass: null,
         references: [
           {

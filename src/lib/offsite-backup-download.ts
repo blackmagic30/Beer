@@ -13,6 +13,12 @@ import {
   verifyDataBackup,
 } from "./data-backup.js";
 import { createServerSupabaseClient } from "./supabase-client.js";
+import {
+  OPERATIONAL_OFFSITE_SUPABASE_ORIGIN,
+  assertExactSupabaseOrigin,
+  assertSupabaseServerApiKey,
+  resolveExactOperationalOffsiteBackupBucket,
+} from "./supabase-key-format.js";
 
 const BACKUP_ID_PATTERN =
   /^pint-path-(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z$/;
@@ -710,8 +716,13 @@ export async function readPrivateSecretFile(filename: string): Promise<string> {
     if (stat.size > 64 * 1024) {
       throw new Error("The service-role key file is unexpectedly large.");
     }
-    const value = (await handle.readFile({ encoding: "utf8" })).trim();
+    const value = await handle.readFile({ encoding: "utf8" });
     if (!value) throw new Error("The service-role key file is empty.");
+    if (value !== value.trim() || /[\r\n\0]/.test(value)) {
+      throw new Error(
+        "The service-role key file must contain one exact value with no whitespace or line ending.",
+      );
+    }
     return value;
   } finally {
     await handle.close();
@@ -728,6 +739,19 @@ export async function downloadOffsiteBackup(
   if (!/^[a-f0-9]{64}$/.test(expectedManifestSha256)) {
     throw new Error("A trusted production manifest SHA-256 is required.");
   }
+  assertExactSupabaseOrigin(
+    input.destinationSupabaseUrl,
+    OPERATIONAL_OFFSITE_SUPABASE_ORIGIN,
+    "destinationSupabaseUrl",
+  );
+  assertSupabaseServerApiKey(
+    input.destinationServiceRoleKey,
+    "destinationServiceRoleKey",
+  );
+  const bucketName = resolveExactOperationalOffsiteBackupBucket(
+    input.bucketName,
+    "bucketName",
+  );
   const { outputRoot, parent } = await resolveNewOutputRoot(input.outputPath);
   const pageSize = input.pageSize ?? DEFAULT_PAGE_SIZE;
   if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 1000) {
@@ -735,14 +759,8 @@ export async function downloadOffsiteBackup(
       "Backup listing page size must be an integer between 1 and 1000.",
     );
   }
-  if (
-    !input.destinationSupabaseUrl.trim() ||
-    !input.destinationServiceRoleKey.trim()
-  ) {
-    throw new Error("Off-site backup destination credentials are required.");
-  }
   const projectOrigin = assertSecureProjectOrigin(input.destinationSupabaseUrl);
-  const bucketName = assertSafeBucketName(input.bucketName);
+  assertSafeBucketName(bucketName);
 
   const client = input.clientFactory
     ? input.clientFactory(projectOrigin, input.destinationServiceRoleKey)

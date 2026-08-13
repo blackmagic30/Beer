@@ -3,11 +3,20 @@ import crypto from "node:crypto";
 import dotenv from "dotenv";
 
 import { createServerSupabaseClient } from "../src/lib/supabase-client.js";
+import { isCanonicalProductionRuntime } from "../src/lib/deployment-environment.js";
+import {
+  OPERATIONAL_OFFSITE_BACKUP_BUCKET,
+  resolveExactOperationalOffsiteBackupBucket,
+} from "../src/lib/supabase-key-format.js";
 import { parseAccountDeletionNotificationKeyring } from "../src/lib/account-deletion-notification-worker.js";
 import { inspectPostgresRuntimeImplementationContract } from "../src/db/runtime-persistence.js";
 import { assertOperatorMutationAllowed } from "./lib/operator-mutation-guard.js";
 
 dotenv.config({ quiet: true });
+
+const PRODUCTION_SUPABASE_ORIGIN = "https://auth.pintpath.au";
+const PERMANENT_STAGING_SUPABASE_ORIGIN = "https://bbfibbadwjxzrcdncavy.supabase.co";
+const OPERATIONAL_OFFSITE_SUPABASE_ORIGIN = "https://hfbmhdxrwtihukmixxta.supabase.co";
 
 type CheckStatus = "pass" | "warn" | "fail";
 
@@ -237,6 +246,24 @@ function checkRequired(name: string, label: string, action: string): ProviderChe
   };
 }
 
+function checkExactSupabaseOrigin(
+  name: "SUPABASE_URL" | "OFFSITE_BACKUP_SUPABASE_URL",
+  expectedOrigin: string,
+  label: string,
+  action: string,
+): ProviderCheck {
+  const exact = process.env[name] === expectedOrigin;
+  return {
+    id: name,
+    label,
+    status: exact ? "pass" : isProduction() ? "fail" : "warn",
+    action: exact ? null : action,
+    details: exact
+      ? "Configured URL matches the exact reviewed HTTPS origin; no URL value is emitted."
+      : "URL is absent, normalized, or differs from the reviewed origin; no URL value is emitted.",
+  };
+}
+
 type SupabaseKeyFormat = "publishable" | "secret";
 
 const SUPABASE_KEY_MAXIMUM_BYTES = 256;
@@ -418,16 +445,12 @@ function checkNoTestKeyInProduction(name: string, label: string, testPrefix: str
 }
 
 function getSupabaseProviderCallbackUrl(): string | null {
-  const supabaseUrl = getValue("SUPABASE_URL");
-  if (!supabaseUrl) {
-    return null;
-  }
-
-  try {
-    return new URL("/auth/v1/callback", supabaseUrl).toString();
-  } catch {
-    return null;
-  }
+  const supabaseUrl = process.env.SUPABASE_URL;
+  if (
+    supabaseUrl !== PRODUCTION_SUPABASE_ORIGIN
+    && supabaseUrl !== PERMANENT_STAGING_SUPABASE_ORIGIN
+  ) return null;
+  return `${supabaseUrl}/auth/v1/callback`;
 }
 
 function checkSupabaseProviderCallbackUrl(): ProviderCheck {
@@ -638,16 +661,38 @@ async function checkPrivateStorageBucket(input: {
 
 const accountDeletionRehearsalEnabled = isEnabled("ACCOUNT_DELETION_REHEARSAL_ENABLED");
 const stagingIdentityBootstrap = getValue("PINTPATH_IDENTITY_REGISTRY_PHASE") === "staging-bootstrap";
+const canonicalProductionRuntime = isCanonicalProductionRuntime({
+  nodeEnv: process.env.NODE_ENV ?? "development",
+  railwayEnvironmentName: process.env.RAILWAY_ENVIRONMENT_NAME,
+});
 const permanentStagingComplete = isProduction()
   && getValue("RAILWAY_ENVIRONMENT_NAME").toLowerCase() === "staging"
   && getValue("PINTPATH_IDENTITY_REGISTRY_PHASE") === "complete"
   && !accountDeletionRehearsalEnabled
   && !isEnabled("RESTORE_REHEARSAL_MODE");
-const offsiteBackupBucketName = getValue("OFFSITE_BACKUP_BUCKET") || "pintpath-backups";
+let offsiteBackupBucketName = OPERATIONAL_OFFSITE_BACKUP_BUCKET;
+let offsiteBackupBucketNameExact = true;
+try {
+  offsiteBackupBucketName = resolveExactOperationalOffsiteBackupBucket(
+    process.env.OFFSITE_BACKUP_BUCKET,
+  );
+} catch {
+  offsiteBackupBucketNameExact = false;
+}
+const offsiteBackupBucketNameCheck: ProviderCheck = {
+  id: "OFFSITE_BACKUP_BUCKET_NAME",
+  label: "Reviewed operational restore-copy bucket name",
+  status: offsiteBackupBucketNameExact ? "pass" : isProduction() ? "fail" : "warn",
+  action: offsiteBackupBucketNameExact
+    ? null
+    : "Set OFFSITE_BACKUP_BUCKET to the exact reviewed operational restore-copy bucket name; no configured value is emitted.",
+};
 
-async function runProviderStorageCanaries(): Promise<ProviderCheck[]> {
+async function runProviderStorageCanaries(input: {
+  includeOperationalOffsite: boolean;
+}): Promise<ProviderCheck[]> {
   assertOperatorMutationAllowed("Provider readiness storage write probe");
-  return Promise.all([
+  const canaries = [
     checkPrivateStorageBucket({
       id: "SOURCE_EVIDENCE_BUCKET",
       label: "Private source-evidence bucket",
@@ -658,7 +703,9 @@ async function runProviderStorageCanaries(): Promise<ProviderCheck[]> {
       minimumFileSizeBytes: 8 * 1024 * 1024,
       probeReadWrite: true,
     }),
-    checkPrivateStorageBucket({
+  ];
+  if (input.includeOperationalOffsite) {
+    canaries.push(checkPrivateStorageBucket({
       id: "OFFSITE_BACKUP_BUCKET",
       label: "Private operational restore-copy bucket",
       bucketName: offsiteBackupBucketName,
@@ -671,8 +718,9 @@ async function runProviderStorageCanaries(): Promise<ProviderCheck[]> {
       requireNoBucketSizeLimit: true,
       probeReadWrite: true,
       setupSqlPath: "ops/supabase/independent-backup-project-storage.sql",
-    }),
-  ]);
+    }));
+  }
+  return Promise.all(canaries);
 }
 const operationalRestoreCopyDestinationCheck: ProviderCheck = (() => {
   const source = getValue("SUPABASE_URL");
@@ -1052,6 +1100,16 @@ const stagingBootstrapChecks: ProviderCheck[] = [
   },
   checkPermanentStagingServiceInstances(),
   checkPermanentStagingSelfPins(),
+  checkAbsent(
+    [
+      "OFFSITE_BACKUP_SUPABASE_URL",
+      "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
+      "OFFSITE_BACKUP_BUCKET",
+    ],
+    "PERMANENT_STAGING_OFFSITE_CREDENTIALS_ABSENT",
+    "No production operational-backup authority in permanent staging",
+    "Remove OFFSITE_BACKUP_SUPABASE_URL, OFFSITE_BACKUP_SERVICE_ROLE_KEY, and OFFSITE_BACKUP_BUCKET before continuing staging bootstrap.",
+  ),
   checkRequiredStrongSecret(
     "SOURCE_EVIDENCE_SIGNING_SECRET",
     "Unique staging source-evidence signing secret",
@@ -1133,15 +1191,21 @@ const permanentStagingCompleteChecks: ProviderCheck[] = [
   checkRequired("GOOGLE_MAPS_MAP_ID", "Staging Google Maps vector map ID", "Set the staging JavaScript vector Map ID."),
   checkRequired("GOOGLE_PLACES_API_KEY", "Staging Google Places server API key", "Set the staging-only server Places key."),
   checkRequired("OPENAI_API_KEY", "Staging OpenAI menu OCR key", "Set the staging-only menu OCR key."),
-  checkRequired("SUPABASE_URL", "Permanent-staging Supabase project URL", "Set the reviewed permanent-staging Supabase URL."),
+  checkExactSupabaseOrigin("SUPABASE_URL", PERMANENT_STAGING_SUPABASE_ORIGIN, "Permanent-staging Supabase project URL", "Set the exact reviewed permanent-staging Supabase origin."),
   checkSupabaseKeyFormat("SUPABASE_ANON_KEY", "publishable", "Permanent-staging Supabase publishable key", "Set the staging project's exact sb_publishable_ key."),
   checkSupabaseKeyFormat("SUPABASE_SERVICE_ROLE_KEY", "secret", "Permanent-staging Supabase secret key", "Set the staging project's exact server-only sb_secret_ key."),
   checkSupabaseOauthLaunchProviders(),
   checkSupabaseProviderCallbackUrl(),
-  checkRequired("OFFSITE_BACKUP_SUPABASE_URL", "Staging operational restore-copy URL", "Set an isolated staging operational-copy origin distinct from the staging Supabase project."),
-  checkSupabaseKeyFormat("OFFSITE_BACKUP_SERVICE_ROLE_KEY", "secret", "Staging operational restore-copy secret key", "Set the isolated staging operational-copy project's exact server-only sb_secret_ key."),
-  checkDistinctSupabaseSecretKeys(),
-  operationalRestoreCopyDestinationCheck,
+  checkAbsent(
+    [
+      "OFFSITE_BACKUP_SUPABASE_URL",
+      "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
+      "OFFSITE_BACKUP_BUCKET",
+    ],
+    "PERMANENT_STAGING_OFFSITE_CREDENTIALS_ABSENT",
+    "No production operational-backup authority in permanent staging",
+    "Remove OFFSITE_BACKUP_SUPABASE_URL, OFFSITE_BACKUP_SERVICE_ROLE_KEY, and OFFSITE_BACKUP_BUCKET. Register a separate isolated staging destination before adding an off-site proof.",
+  ),
   checkRequiredStrongSecret(
     "SOURCE_EVIDENCE_SIGNING_SECRET",
     "Unique permanent-staging source-evidence signing secret",
@@ -1240,12 +1304,13 @@ const launchPreflightChecks: ProviderCheck[] = [
   checkRequired("GOOGLE_MAPS_MAP_ID", "Google Maps JavaScript vector map ID", "Create a JavaScript Map ID in Google Maps Platform and set GOOGLE_MAPS_MAP_ID."),
   checkRequired("GOOGLE_PLACES_API_KEY", "Google Places server API key", "Use the reviewed Railway mutation-boundary executor to set GOOGLE_PLACES_API_KEY on the app service for admin venue lookup and future request flows."),
   checkRequired("OPENAI_API_KEY", "OpenAI menu OCR key", "Use the reviewed Railway mutation-boundary executor to set OPENAI_API_KEY and deploy the exact reviewed image so menu photo OCR can initialise."),
-  checkRequired("SUPABASE_URL", "Supabase project URL", "Set SUPABASE_URL for OAuth and provider-backed auth."),
+  checkExactSupabaseOrigin("SUPABASE_URL", PRODUCTION_SUPABASE_ORIGIN, "Supabase project URL", "Set SUPABASE_URL to the exact reviewed production Supabase origin."),
   checkSupabaseKeyFormat("SUPABASE_ANON_KEY", "publishable", "Supabase publishable key", "Set SUPABASE_ANON_KEY to the project's exact browser-safe sb_publishable_ key."),
   checkSupabaseKeyFormat("SUPABASE_SERVICE_ROLE_KEY", "secret", "Supabase server secret key", "Set SUPABASE_SERVICE_ROLE_KEY to the project's exact server-only sb_secret_ key for private source-evidence capture history."),
   checkSupabaseOauthLaunchProviders(),
-  checkRequired("OFFSITE_BACKUP_SUPABASE_URL", "Private operational restore-copy URL", "Set OFFSITE_BACKUP_SUPABASE_URL to an operational restore-copy origin different from SUPABASE_URL; separately prove WORM authority."),
+  checkExactSupabaseOrigin("OFFSITE_BACKUP_SUPABASE_URL", OPERATIONAL_OFFSITE_SUPABASE_ORIGIN, "Private operational restore-copy URL", "Set OFFSITE_BACKUP_SUPABASE_URL to the exact reviewed operational-copy Supabase origin; separately prove WORM authority."),
   checkSupabaseKeyFormat("OFFSITE_BACKUP_SERVICE_ROLE_KEY", "secret", "Operational restore-copy secret key", "Set OFFSITE_BACKUP_SERVICE_ROLE_KEY to the operational-copy project's exact sb_secret_ key; it is not the WORM recovery credential."),
+  offsiteBackupBucketNameCheck,
   checkDistinctSupabaseSecretKeys(),
   operationalRestoreCopyDestinationCheck,
   checkSupabaseProviderCallbackUrl(),
@@ -1548,6 +1613,7 @@ const deletionRehearsalChecks: ProviderCheck[] = [
   checkPermanentStagingServiceInstances(),
   checkPermanentStagingSelfPins(),
   deletionRehearsalReplicaCheck,
+  checkExactSupabaseOrigin("SUPABASE_URL", PERMANENT_STAGING_SUPABASE_ORIGIN, "Account-deletion rehearsal Supabase origin", "Set SUPABASE_URL to the exact reviewed permanent-staging Supabase origin."),
   deletionRehearsalSupabaseIdentityCheck,
   checkSupabaseKeyFormat("SUPABASE_ANON_KEY", "publishable", "Staging Supabase publishable key", "Set the staging project's exact browser-safe sb_publishable_ key."),
   checkSupabaseKeyFormat("SUPABASE_SERVICE_ROLE_KEY", "secret", "Staging Supabase secret key", "Set the staging project's exact server-only sb_secret_ key."),
@@ -1561,10 +1627,14 @@ const deletionRehearsalChecks: ProviderCheck[] = [
   },
   deletionRehearsalScopeCheck,
   checkAbsent(
-    ["OFFSITE_BACKUP_SUPABASE_URL", "OFFSITE_BACKUP_SERVICE_ROLE_KEY"],
+    [
+      "OFFSITE_BACKUP_SUPABASE_URL",
+      "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
+      "OFFSITE_BACKUP_BUCKET",
+    ],
     "ACCOUNT_DELETION_REHEARSAL_BACKUP_CREDENTIALS_ABSENT",
-    "No off-site backup credentials in account-deletion rehearsal",
-    "Remove OFFSITE_BACKUP_SUPABASE_URL and OFFSITE_BACKUP_SERVICE_ROLE_KEY from staging before running the proof.",
+    "No off-site backup authority in account-deletion rehearsal",
+    "Remove OFFSITE_BACKUP_SUPABASE_URL, OFFSITE_BACKUP_SERVICE_ROLE_KEY, and OFFSITE_BACKUP_BUCKET from staging before running the proof.",
   ),
   deletionRehearsalRedisCheck,
   deletionRehearsalRedisIdentityCheck,
@@ -1610,7 +1680,21 @@ const deletionRehearsalChecks: ProviderCheck[] = [
 ];
 
 const strict = isStrictLaunchCheck();
-const readinessProfile = stagingIdentityBootstrap
+const unsupportedProductionRuntime = isProduction()
+  && !canonicalProductionRuntime
+  && !stagingIdentityBootstrap
+  && !accountDeletionRehearsalEnabled
+  && !permanentStagingComplete;
+const unsupportedProductionRuntimeCheck: ProviderCheck = {
+  id: "PROVIDER_READINESS_RUNTIME_IDENTITY",
+  label: "Recognized provider-readiness runtime identity",
+  status: "fail",
+  action: "Run provider readiness only in canonical production or an explicitly selected permanent-staging profile. Preview, cloned, and incomplete staging environments are fail-closed.",
+  details: "The production-like runtime is not an authorized provider-readiness profile; no environment name or provider value is emitted.",
+};
+const readinessProfile = unsupportedProductionRuntime
+  ? "unsupported_production_runtime"
+  : stagingIdentityBootstrap
   ? "permanent_staging_identity_bootstrap_incomplete"
   : accountDeletionRehearsalEnabled
     ? "account_deletion_rehearsal"
@@ -1619,7 +1703,9 @@ const readinessProfile = stagingIdentityBootstrap
       : isProduction()
         ? "production_free_launch"
         : "development_provider_preview";
-const selectedPreflightChecks = stagingIdentityBootstrap
+const selectedPreflightChecks = unsupportedProductionRuntime
+  ? [unsupportedProductionRuntimeCheck]
+  : stagingIdentityBootstrap
   ? stagingBootstrapChecks
   : accountDeletionRehearsalEnabled
     ? deletionRehearsalChecks
@@ -1633,12 +1719,14 @@ const preflightFailed = preflightChecks.filter((check) => check.status === "fail
 const preflightWarned = preflightChecks.filter((check) => check.status === "warn");
 const preflightBlocked = preflightFailed.length > 0
   || (strict && preflightWarned.length > 0);
-const storageCanariesAllowed = isProduction()
+const storageCanariesAllowed = (canonicalProductionRuntime || permanentStagingComplete)
   && !stagingIdentityBootstrap
   && !accountDeletionRehearsalEnabled
   && !isEnabled("RESTORE_REHEARSAL_MODE");
 const storageChecks = storageCanariesAllowed && !preflightBlocked
-  ? await runProviderStorageCanaries()
+  ? await runProviderStorageCanaries({
+      includeOperationalOffsite: !permanentStagingComplete,
+    })
   : [];
 const checks = [...preflightChecks, ...storageChecks];
 const failed = checks.filter((check) => check.status === "fail");

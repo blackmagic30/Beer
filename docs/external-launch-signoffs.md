@@ -1,6 +1,6 @@
 # External launch evidence checklist
 
-This is the executable checklist for the 12 required items in `docs/release-evidence.json`. Repository tests prove code and synthetic contracts; these checks prove the deployed providers, physical devices, real venue operations, legal decisions, backups, and the signed iOS build.
+This is the executable checklist for the 13 required items in `docs/release-evidence.json`. Repository tests prove code and synthetic contracts; these checks prove the deployed providers, physical devices, real venue operations, legal decisions, backups, the permanent-staging cost ceiling, and the signed iOS build.
 
 Do not mark an item `pass` because its code exists or a local test passed. Mark it `pass` only after every step and pass criterion below is satisfied.
 
@@ -25,6 +25,13 @@ private release register:
 - **Production:** never receives restore-rehearsal writes and shares no secret,
   database path, service-role key, Redis namespace, or callback with either
   environment.
+
+Cost scope follows the same separation. The permanent-staging receipt includes
+only permanent-staging Railway, staging Supabase, and staging external-provider
+resources/caps. The canonical-production operational copy uses a separate
+production cost authority. Disposable restore resources use a separate
+temporary-spend authority. Neither may be folded into the staging total or
+used to hide an unknown, unpriced, shared, or unbounded staging resource.
 
 Never restore production data into permanent integrated staging. Configure the
 reviewed `RESTORE_REHEARSAL_EXPECTED_*` identity pins only after the disposable
@@ -97,7 +104,7 @@ For a passed item, update only that matching object in `docs/release-evidence.js
 }
 ```
 
-Change only `status`, `evidence`, `evidenceSha256`, `verifiedAt`, and `verifiedBy`; preserve the existing ID, label, owner, next action, and `required: true` value. `evidence` must be exactly `<release.id>/<gate id>`, the digest must be the lowercase SHA-256 of the final private gate manifest, and `verifiedBy` must contain `Full name, role`. A pending item must keep all four proof fields `null`; a completed failed check uses `status: "fail"` with the same durable proof fields.
+Change only `status`, `evidence`, `evidenceSha256`, `verifiedAt`, and `verifiedBy`; preserve the existing ID, label, owner, next action, and `required: true` value. The sole additional field that may change is `costReceipt` on `permanent_staging_cost`: it must remain `null` while that item is pending or failed and may become only the sanitized, validator-conforming object described in section 13 when that item passes. `evidence` must be exactly `<release.id>/<gate id>`, the digest must be the lowercase SHA-256 of the final private gate manifest, and `verifiedBy` must contain `Full name, role`. A pending item must keep all four ordinary proof fields—and the cost item's `costReceipt`—`null`; a completed failed check uses `status: "fail"` with the same durable proof fields but no cost receipt.
 
 The stored `production_public_smoke` and `production_role_smoke` proofs expire after 24 hours because live providers and access can change without a code commit. Re-capture and independently verify both inside the final launch window. The informational validator reports expired proof or code/dirty-worktree drift as `evidenceCurrent: false`; the strict gate rejects it. Both modes reject future timestamps, proof collected before the frozen candidate commit, unknown/non-ancestor candidate SHAs, unexpected schema fields, and required `not_applicable` gates.
 
@@ -123,7 +130,9 @@ Keep the final evidence update as one closeout commit that changes only `docs/re
 10. Final legal and pricing-deferral approval.
 11. iOS external TestFlight/Beta App Review, full App Review approval, and
     manual-release readiness.
-12. Final evidence closeout and strict release gate.
+12. Fresh permanent-staging-only provider cost observation and independent
+    verification for the frozen candidate.
+13. Final evidence closeout and strict release gate.
 
 The OCR corpus, accessibility review, legal review, and App Review approval work
 can run in parallel after the production candidate is stable. Do not run venue
@@ -193,16 +202,19 @@ pilots before the role and provider checks pass.
 - [ ] Before the manual release workflow, close permanent-staging sealing as a
   separate ordered gate. Preserve a passing deployed/one-shot pre-seal
   `readiness:launch` receipt with
-  `readinessProfile=permanent_staging_complete`; seal only the 14 populated
+  `readinessProfile=permanent_staging_complete`; seal only the 13 populated
   source/consumer rows in
   `ops/railway/permanent-staging-sealed-variable-policy.json`; then run
   `npm run --silent readiness:railway:sealed` externally with only the exact
   environment-scoped project token loaded as
   `PINTPATH_RAILWAY_METADATA_TOKEN`. Require the one metadata receipt to report
-  `policy=permanent-staging-post-rotation`, `mode=post-seal`, and
-  `outcome=passed`. Finally, require the same strict permanent-staging profile
-  from a fresh post-seal deployment or one-shot deployment. Never export a
-  resolved row, use `railway run`, or unseal to repeat readiness.
+  `policy=permanent-staging-post-rotation`, `mode=post-seal`,
+  `outcome=passed`, and `checks.forbiddenVariablesAbsent=true`. Its complete
+  inventory must have no `OFFSITE_BACKUP_SUPABASE_URL`,
+  `OFFSITE_BACKUP_SERVICE_ROLE_KEY`, or `OFFSITE_BACKUP_BUCKET` row, including a
+  blank or sealed row. Finally, require the same strict permanent-staging
+  profile from a fresh post-seal deployment or one-shot deployment. Never
+  export a resolved row, use `railway run`, or unseal to repeat readiness.
 - [ ] In Supabase, verify the production Site URL and exact web redirect allow
   list, Google provider callback, `SUPABASE_OAUTH_PROVIDERS=google`, proof Apple
   OAuth is disabled, email confirmation, leaked-password protection, admin
@@ -274,7 +286,7 @@ Storage/RLS results, monitor test alert, timestamp, and verifier.
   Attempt the collision/duplicate path and require it to fail or link to that
   same identity; a second account is a release blocker.
 - [ ] Confirm there is no production Apple OAuth secret or enabled provider. If Apple login is proposed later, assign rotation ownership and implement, test, and evidence authorization-token revocation before enabling it.
-- [ ] Set the dedicated user and venue-manager credentials as protected `production` environment secrets for both hourly **Production Health** and **Pint Path Release Gate**. Use these exact names: `PINTPATH_SMOKE_USER_EMAIL`, `PINTPATH_SMOKE_USER_PASSWORD`, `PINTPATH_SMOKE_VENUE_EMAIL`, and `PINTPATH_SMOKE_VENUE_PASSWORD`. Keep the protected `SUPABASE_URL` and `SUPABASE_ANON_KEY` values in that environment too: the smoke script compares the live public auth config against those pins and sends no password on a mismatch. Do not configure user/venue bearer-token secrets; the workflow creates and revokes disposable sessions at runtime.
+- [ ] Set the dedicated user and venue-manager credentials as protected `production` environment secrets for both hourly **Production Health** and **Pint Path Release Gate**. Use these exact names: `PINTPATH_SMOKE_USER_EMAIL`, `PINTPATH_SMOKE_USER_PASSWORD`, `PINTPATH_SMOKE_VENUE_EMAIL`, and `PINTPATH_SMOKE_VENUE_PASSWORD`. Keep protected `SUPABASE_URL=https://auth.pintpath.au` and the exact reviewed `sb_publishable_...` value in `SUPABASE_ANON_KEY` in that environment too: the smoke script rejects another origin and any legacy, secret, malformed, or whitespace-wrapped key, compares the live public auth config against those pins, and sends no password or protected role request on a mismatch. Do not configure user/venue bearer-token secrets; the workflow creates and revokes disposable sessions at runtime.
 - [ ] Obtain one short-lived Supabase admin access token through a normal password plus MFA ceremony and confirm its JWT is AAL2. Store it temporarily in a mode-`600` file at `$EVIDENCE_DIR/supabase-admin.token`; never paste it into the checklist or shell history. Do not store the admin password or TOTP seed in GitHub Actions.
 - [ ] Exchange the AAL2 Supabase admin token for a one-use Pint Path app token without printing either token or placing it in a process argument:
 
@@ -452,6 +464,8 @@ permitted.
 
 - [ ] Confirm at least 90% overall, 95% row recall, 98% row precision, 95% canonical names, 95% prices, 95% availability, and 100% rejection of labelled non-beer candidates.
 - [ ] Record `OPENAI_MENU_OCR_MODEL` and `OPENAI_MENU_OCR_FALLBACK_MODEL` values separately without recording the API key; the benchmark report does not embed them.
+- [ ] Before using the permanent-staging cost-bound mode, rerun the complete labelled corpus with both model values set to exact `gpt-4.1-mini-2025-04-14`; preserve the fail/pass report and independent review before separately authorizing any variable change.
+- [ ] With `OPENAI_MENU_OCR_COST_BOUND_MODE=true`, prove the shared `system_state` reservation row advances by five cents before each provider attempt, never refunds failed or uncertain attempts, takes its rolling-window timestamp from the shared database clock, denies after US$1 in every rolling 31-day window, forbids PDFs and standalone discovery OCR, and remains consistent under two-replica concurrency and restart.
 - [ ] Do not lower thresholds to pass. Keep any failed source layout behind admin/manual review until fixed and rerun.
 
 **Pass:** The live report says `passed: true`, contains at least 30 unseen cases, meets every fixed threshold, and has independent label sign-off.
@@ -569,7 +583,11 @@ tombstone-replay implementation exists and is part of the frozen candidate.
   does not change the copy's weaker authority.
 - [ ] Optionally verify the operational copy with the repository SDK helper.
   Use a temporary mode-`600` key file, never secret bytes in shell history, and
-  preserve only aggregate output:
+  preserve only aggregate output. The key file is an exact-byte input with no
+  leading/trailing whitespace, CR/LF, or NUL. With tracing disabled, transfer
+  it using a no-line-ending writer equivalent to
+  `printf '%s' "$VALUE" > "$OFFSITE_BACKUP_SECRET_KEY_FILE"`; never use
+  `echo` or print the value during verification:
 
   ```bash
   OFFSITE_BACKUP_SUPABASE_URL="${OFFSITE_BACKUP_SUPABASE_URL:?}" \
@@ -597,13 +615,14 @@ tombstone-replay implementation exists and is part of the frozen candidate.
   private Storage, Redis namespace, temporary credentials, domain, and
   callbacks. Assert each differs from production and permanent integrated
   staging before any restored byte is uploaded.
-- [ ] Do not reuse a hard-coded project ref. Load every reviewed
-  `RESTORE_REHEARSAL_EXPECTED_*` pin from the private release register after the
-  newly created restore-only resources exist; require the frozen build to fail
-  closed unless all runtime Railway, Supabase, and Redis identities match those
-  protected pins and differ from production/permanent staging. Changing the
-  pins must not require or authorize an application-code change after candidate
-  freeze.
+- [ ] Implement and independently review candidate-bound signed/sealed authority
+  for the newly created restore-only Supabase origin. The current build
+  deliberately strips restore Supabase credentials before client construction
+  and keeps `/ready` failed; same-environment `SUPABASE_URL` and
+  `RESTORE_REHEARSAL_EXPECTED_SUPABASE_URL` values are not an authority. Do not
+  reuse a hard-coded/example ref or read a restore service key until the new
+  mechanism binds the real project and proves it differs from production,
+  permanent staging, and the operational copy.
 - [ ] Restore the WORM-sourced Postgres export/PITR target, private Storage,
   and tombstones using the reviewed Postgres-native tooling. Require schema,
   constraints, row counts/hashes, MIME/object references, deletion-ledger
@@ -764,9 +783,57 @@ This item passes only after App Review approval and the manual/phased hold. The
 sequence is: approved and held build → strict pre-launch evidence → coordinated
 manual/phased release → verify Australian storefront availability and install.
 
+## 13. `permanent_staging_cost`
+
+- [ ] Keep the checked-in
+  `ops/railway/permanent-staging-cost-policy.json` and its pure evaluator
+  scaffold-only until a separately reviewed read-only provider collector and
+  receipt binder exist. The current `providerCollectorImplemented=false` and
+  `providerObservationBindingImplemented=false` values are launch stops; never
+  edit a receipt to self-declare those capabilities.
+- [ ] After the candidate is frozen and permanent-staging topology is final,
+  collect one fresh complete inventory and price-or-cap snapshot for each exact
+  provider category: `railway`, `staging-supabase`, and
+  `staging-external-providers`. Bind every snapshot and catalog/cap document by
+  SHA-256 to the candidate and private gate manifest.
+- [ ] For every provider, prove inventory and recurring-upper-bound coverage is
+  complete and each count is zero: unknown resources, unpriced resources,
+  resources shared with another environment, and resources with no enforceable
+  recurring upper bound. Do not subtract promotional credits or negative
+  amounts. Ceiling-round every line to integer USD cents before summing.
+- [ ] Require `totalUpperBoundMonthlyCents <= 5000`. Record the canonical
+  production operational-copy scope as excluded under
+  `separate-production-cost-authority` and disposable restore as excluded under
+  `separate-temporary-spend-authority`, each with separate hashed evidence.
+  They are not permanent-staging costs and cannot be used to dilute its total.
+- [ ] Independently verify the exact frozen candidate, checked-in policy hash,
+  inventory completeness, prices/caps, arithmetic, scope separation, and final
+  manifest hash. Set the evidence item's `costReceipt.observedAt` to the real
+  provider observation time and verify it inside the final 24-hour launch
+  window.
+
+**Pass:** A provider-bound receipt for the frozen candidate is less than 24
+hours old, covers exactly the three required provider categories, has complete
+inventory and upper-bound evidence, reports zero unknown/unpriced/shared/
+unbounded resources, ceiling-sums to at most `5000` integer USD cents, excludes
+both non-staging scopes under their exact separate authorities, and is accepted
+by the deliberately activated reviewed policy and strict validator.
+
+**Evidence:** Gate-specific private manifest; checked-in cost-policy hash;
+provider inventory and price/cap hashes; per-provider integer-cent upper bounds;
+separate production-copy and disposable-restore cost-authority hashes;
+observation timestamp; candidate SHA; arithmetic review; and named independent
+verifier. The public release file contains the matching manifest digest and the
+sanitized `costReceipt`, never credentials, account data, or secret price terms.
+
+The approximately US$46.80/month number in historical planning is a combined
+permanent-staging plus production-operational-copy estimate. It is non-gating,
+not provider-observed, and cannot satisfy this item. No current evidence proves
+the US$50/month permanent-staging-only objective, so this item remains pending.
+
 ## Final closeout
 
-- [ ] Confirm all 12 objects in `docs/release-evidence.json` are `pass`, bound to the one frozen release ID/candidate SHA, and contain the exact gate reference, private-manifest SHA-256, ISO-8601 timestamp, and named verifier/role. Confirm the public and role proofs are less than 24 hours old.
+- [ ] Confirm all 13 objects in `docs/release-evidence.json` are `pass`, bound to the one frozen release ID/candidate SHA, and contain the exact gate reference, private-manifest SHA-256, ISO-8601 timestamp, and named verifier/role. Confirm the public, role, and permanent-staging cost proofs are less than 24 hours old.
 - [ ] Run:
 
   ```bash

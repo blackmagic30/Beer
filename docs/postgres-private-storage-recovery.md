@@ -17,12 +17,14 @@ snapshot:
   `beermap-source-evidence` bucket; and
 - the sealed account-deletion current ledger, genesis, and checkpoint.
 
-The canonical manifest binds every logical-backup hash, source identity, source
-URL hash, Storage origin and bucket hash, original object path, strict MIME,
-size, byte SHA-256, hashed Storage object ID/version, live-reference flag,
-deletion-authority hash, and an exact domain-separated recovery-set SHA-256.
-Original Storage keys remain verbatim in the manifest. Local payload filenames
-are deterministic path hashes, avoiding case-folding and path-depth ambiguity.
+The canonical version-2 manifest binds every logical-backup hash, source
+identity, ready migration-run SHA-256, source environment, independently
+expected candidate commit SHA, source URL hash, Storage origin and bucket hash,
+original object path, strict MIME, size, byte SHA-256, hashed Storage object
+ID/version, live-reference flag, deletion-authority hash, and an exact
+version-2 domain-separated recovery-set SHA-256. Original Storage keys remain
+verbatim in the manifest. Local payload filenames are deterministic path
+hashes, avoiding case-folding and path-depth ambiguity.
 
 ## Fixed safety contract
 
@@ -36,6 +38,18 @@ are deterministic path hashes, avoiding case-folding and path-depth ambiguity.
 - The Storage bucket name is exactly `beermap-source-evidence`. It must be
   private, have an exact 8 MiB file limit, and allow exactly PDF, JPEG, PNG,
   WebP, HEIC, and HEIF.
+- Capture accepts only the exact repository-owned permanent-staging or
+  production environment label and maps that label internally to its one exact
+  project-ref Storage origin. A cross-pair, a mismatched origin hash, other
+  canonical Supabase projects, custom domains, and aliases fail before either
+  credential file is read.
+- The operator supplies an independently reviewed 40- or 64-character lowercase
+  candidate commit SHA. Before any Storage request or output creation, the
+  repeatable-read database inspector requires `schema_metadata.import_state` and
+  the referenced `migration_runs` row to be `ready`, requires the run receipt,
+  verifier, and completion fields, and proves the metadata/run candidate and
+  environment match that independent authority. The same run, environment, and
+  candidate are rechecked after the object capture.
 - Object paths are canonical and bounded. Objects are non-empty and at most
   8 MiB; one recovery set supports at most 10,000 objects and 50 GiB.
 - Capture lists and inspects the complete bucket twice, performs an
@@ -78,15 +92,35 @@ deletion-authority directory must each contain exactly their canonical files,
 owned by the current user and mode 600. Put the direct PostgreSQL URL and
 source-project service-role key in separate current-user-owned mode-600 files.
 Do not place either secret in arguments, environment output, logs, or evidence.
+Both files are exact-byte inputs: they must contain one value with no
+leading/trailing whitespace, CR/LF, or NUL. With shell tracing disabled,
+transfer each protected value using a no-line-ending writer equivalent to
+`printf '%s' "$VALUE" > "$FILE"`; never use `echo` or print the value during
+verification. The same rule applies to the future restore URL/key files.
 
-`SUPABASE_URL` must be the bare default HTTPS project origin in the exact form
-`https://<20-character-project-ref>.supabase.co`. Custom domains and aliases
-fail closed. All SHA-256 values below must come from an independently reviewed
-release record or the already verified logical/deletion receipts; do not bless
-the current environment by calculating pins immediately before the command.
+`SUPABASE_URL` must be one of the two repository-owned capture-source Storage
+origins exactly: permanent staging
+`https://bbfibbadwjxzrcdncavy.supabase.co` or production
+`https://jxpubqlmqnnqwadmjgyk.supabase.co`. Permanent-staging Phase 5 must use
+the permanent-staging origin and that project's server key; a later production
+capture must use the production origin and key. The logical state, source
+origin hash, and Storage objects must all describe the same selected source.
+The Auth custom origin `https://auth.pintpath.au`, other canonical Supabase
+projects, custom domains, and aliases fail closed. All SHA-256 values below
+must come from an independently reviewed release record or the already verified
+logical/deletion receipts; do not bless the current environment by calculating
+pins immediately before the command.
+
+Pass `--source-environment permanent-staging` for Phase 5 (or `production` only
+for a separately reviewed production capture). Pass the exact candidate SHA
+from the frozen release record through `--expected-candidate-sha`; do not derive
+it from the database being tested. The CLI verifies the environment-to-origin
+mapping and the exact reviewed origin hash before reading either secret file.
 
 ```sh
-export SUPABASE_URL=https://abcdefghijklmnopqrst.supabase.co
+# Permanent-staging Phase 5 (use the production project-ref origin only for a
+# separately reviewed production capture):
+export SUPABASE_URL=https://bbfibbadwjxzrcdncavy.supabase.co
 
 npm run --silent db:postgres:backup:private-storage-recovery -- \
   --backup-directory /absolute/private/release/postgres-logical \
@@ -94,6 +128,8 @@ npm run --silent db:postgres:backup:private-storage-recovery -- \
   --connection-url-file /absolute/private/source-postgres-url \
   --connection-url-sha256 <state-receipt-source-url-sha256> \
   --deletion-authority-directory /absolute/private/deletion-authority \
+  --source-environment permanent-staging \
+  --expected-candidate-sha <reviewed-frozen-candidate-sha> \
   --ledger-current-sha256 <current-json-sha256> \
   --ledger-genesis-sha256 <genesis-json-sha256> \
   --ledger-checkpoint-sha256 <checkpoint-json-sha256> \
@@ -111,7 +147,9 @@ chmod 600 /absolute/private/release/private-storage-capture-result.json
 Require `ok=true`, the expected nonzero object/reference/tombstone counts for
 the drill, and independently retain `recoverySetSha256` plus
 `recoveryManifestSha256`. Standard output contains hashes, timestamps, and
-decimal counts only.
+decimal counts only. Its `schemaVersion=1` is intentionally the stable CLI
+result-envelope version; it is distinct from recovery-manifest version 2 and
+recovery-set binding version 2.
 
 ## Restore to an empty distinct destination
 
@@ -122,40 +160,27 @@ The target must retain the database-level marker
 Storage bucket in that same separately approved disposable Supabase project
 before this command; this tool never creates or reconfigures a bucket.
 
-`RESTORE_SUPABASE_URL` is the bare default HTTPS disposable destination
-project-ref origin; custom domains and aliases are unsupported.
+`RESTORE_SUPABASE_URL` will be the bare default HTTPS disposable destination
+project-ref origin; custom domains and aliases are unsupported. No real
+disposable Supabase project is currently registered in repository-owned,
+candidate-bound release authority. Consequently, the checked-in CLI rejects
+every destination before reading the target database URL or service key. A URL
+and SHA-256 supplied by the same invocation are not independent authority.
 `--forbidden-origin-sha256s` is a comma-separated, duplicate-free set of
 reviewed production, permanent-staging, source, and other protected origin
 hashes. The destination origin must match none of them and cannot equal the
 captured source even if the list is incomplete.
 
-```sh
-export RESTORE_SUPABASE_URL=https://bcdefghijklmnopqrstu.supabase.co
+Do not run the restore command until a real disposable project is registered
+through an independently reviewed signed/sealed authority bound to the frozen
+candidate. The illustrative `bcdef...` project ref formerly shown here was not
+an owned project and is deliberately not accepted by the code.
 
-PINTPATH_POSTGRES_PRIVATE_STORAGE_RESTORE=confirmed \
-npm run --silent db:postgres:restore:private-storage-recovery -- \
-  --backup-directory /absolute/private/release/postgres-logical \
-  --backup-manifest-sha256 <logical-manifest-sha256> \
-  --recovery-set-directory /absolute/private/release/private-storage-recovery-set \
-  --recovery-set-sha256 <trusted-recovery-set-sha256> \
-  --recovery-manifest-sha256 <trusted-recovery-manifest-sha256> \
-  --target-connection-url-file /absolute/private/restore-postgres-url \
-  --target-connection-url-sha256 <reviewed-target-url-sha256> \
-  --target-database-identity-sha256 <logical-restore-target-identity-sha256> \
-  --destination-origin-sha256 <reviewed-destination-origin-sha256> \
-  --forbidden-origin-sha256s <hash1,hash2,hash3> \
-  --bucket-name-sha256 <reviewed-fixed-bucket-name-sha256> \
-  --service-role-key-file /absolute/private/restore-service-role.key \
-  > /absolute/private/release/private-storage-restore-result.json
-
-chmod 600 /absolute/private/release/private-storage-restore-result.json
-```
-
-Require `ok=true`, exact expected object/byte counts, and the original
-recovery-set and recovery-manifest hashes. The deletion-authority-set hash is
-carried into the result, but this command does not replay tombstones; run the
-separately reviewed nonzero deletion replay and then the full recovered
-application/privacy checks.
+After that authority mechanism exists, require `ok=true`, exact expected
+object/byte counts, and the original recovery-set and recovery-manifest hashes.
+The deletion-authority-set hash is carried into the result, but this command
+does not replay tombstones; run the separately reviewed nonzero deletion replay
+and then the full recovered application/privacy checks.
 
 ## What remains open
 

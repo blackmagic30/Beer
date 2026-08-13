@@ -49,8 +49,8 @@ function responses(
   return JSON.stringify(value);
 }
 
-describe("permanent-staging/offsite Supabase legacy-key disable policy", () => {
-  it("pins both project refs, exact disable endpoint vocabulary, and null review-required key IDs", () => {
+describe("permanent-staging Supabase legacy-key disable policy", () => {
+  it("pins only the staging project, exact disable endpoint vocabulary, and null review-required key IDs", () => {
     const checkedIn = fs.readFileSync(
       path.resolve(
         "ops/supabase/permanent-staging-supabase-legacy-key-disable-policy.json",
@@ -69,12 +69,6 @@ describe("permanent-staging/offsite Supabase legacy-key disable policy", () => {
         {
           role: "permanent-staging",
           projectRef: "bbfibbadwjxzrcdncavy",
-          legacyKeyIds: { anon: null, serviceRole: null },
-          reviewRequired: true,
-        },
-        {
-          role: "operational-offsite-copy",
-          projectRef: "hfbmhdxrwtihukmixxta",
           legacyKeyIds: { anon: null, serviceRole: null },
           reviewRequired: true,
         },
@@ -111,12 +105,6 @@ describe("permanent-staging/offsite Supabase legacy-key disable policy", () => {
         maximumAttempts: 1,
         retryAllowed: false,
       },
-      {
-        method: "PUT",
-        path: "/v1/projects/hfbmhdxrwtihukmixxta/api-keys/legacy?enabled=false",
-        maximumAttempts: 1,
-        retryAllowed: false,
-      },
     ]);
   });
 
@@ -132,7 +120,7 @@ describe("permanent-staging/offsite Supabase legacy-key disable policy", () => {
     )).toBeNull();
   });
 
-  it("fails exact state checks for already-disabled before, enabled after, or swapped project targets", () => {
+  it("fails exact state checks for already-disabled before, enabled after, or a wrong project target", () => {
     const exactResponses = parsePermanentStagingSupabaseLegacyKeyDisableResponses(
       responses(),
     )!;
@@ -153,17 +141,17 @@ describe("permanent-staging/offsite Supabase legacy-key disable policy", () => {
       parsePermanentStagingSupabaseLegacyKeyStateSnapshot(state("after", true))!,
     ).afterDisabledExact).toBe(false);
 
-    const swapped = JSON.parse(state("after", false)) as {
-      projects: unknown[];
+    const wrongTarget = JSON.parse(state("after", false)) as {
+      projects: Array<{ projectRef: string }>;
     };
-    swapped.projects.reverse();
-    const parsedSwapped = parsePermanentStagingSupabaseLegacyKeyStateSnapshot(
-      JSON.stringify(swapped),
+    wrongTarget.projects[0]!.projectRef = "hfbmhdxrwtihukmixxta";
+    const parsedWrongTarget = parsePermanentStagingSupabaseLegacyKeyStateSnapshot(
+      JSON.stringify(wrongTarget),
     )!;
     expect(evaluatePermanentStagingSupabaseLegacyKeyDisable(
       exactBefore,
       exactResponses,
-      parsedSwapped,
+      parsedWrongTarget,
     ).projectsExact).toBe(false);
   });
 
@@ -239,7 +227,7 @@ describe("permanent-staging/offsite Supabase legacy-key disable policy", () => {
       disableResponsesExact: true,
       afterDisabledExact: true,
     });
-    expect(evaluation?.requests).toHaveLength(2);
+    expect(evaluation?.requests).toHaveLength(1);
     for (const poison of poisons) expect(poison).not.toHaveBeenCalled();
   });
 });

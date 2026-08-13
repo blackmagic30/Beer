@@ -448,6 +448,9 @@ async function readStablePrivateFile(
   if (fs.realpathSync(filePath) !== filePath) {
     throw authorityError(`${label} must not resolve through a symbolic link.`);
   }
+  // The O_NOFOLLOW descriptor is bound to the pre-open lstat by full file
+  // identity and is revalidated after the descriptor-only read.
+  // codeql[js/file-system-race]
   const handle = await fs.promises.open(filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
   try {
     const before = await handle.stat({ bigint: true });

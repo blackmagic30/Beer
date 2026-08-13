@@ -11,6 +11,11 @@ import {
 } from "../src/lib/offsite-backup.js";
 import { readPrivateSecretFile } from "../src/lib/offsite-backup-download.js";
 import {
+  assertExactSupabaseOrigin,
+  assertSupabaseServerApiKey,
+  resolveExactOperationalOffsiteBackupBucket,
+} from "../src/lib/supabase-key-format.js";
+import {
   assertPostgresLogicalOffsiteDestinationPins,
 } from "../src/lib/postgres-logical-offsite.js";
 import { canonicalPostgresLogicalStateJson } from "../src/lib/postgres-logical-state.js";
@@ -28,6 +33,9 @@ import { parseStrictArguments } from "./lib/strict-arguments.js";
 export const POSTGRES_ACCOUNT_DELETION_RECOVERY_CONFIRMATION_ENV =
   "PINTPATH_POSTGRES_ACCOUNT_DELETION_RECOVERY_PROOF" as const;
 export const POSTGRES_ACCOUNT_DELETION_RECOVERY_CONFIRMATION_VALUE = "confirmed" as const;
+const PRODUCTION_SUPABASE_ORIGIN = "https://auth.pintpath.au";
+const OFFSITE_BACKUP_SUPABASE_ORIGIN =
+  "https://hfbmhdxrwtihukmixxta.supabase.co";
 
 const PREPARE_ARGUMENTS = new Set([
   "--runtime-database-url-file",
@@ -313,12 +321,28 @@ async function runCommand(
         dependencies.env,
         "OFFSITE_BACKUP_SUPABASE_URL",
       );
-      const bucketName = dependencies.env.OFFSITE_BACKUP_BUCKET?.trim() || "pintpath-backups";
-      if (
-        !bucketName
-        || bucketName !== (dependencies.env.OFFSITE_BACKUP_BUCKET ?? bucketName).trim()
-        || /[\r\n\0]/.test(bucketName)
-      ) throw new CliError("configuration_missing_or_unsafe");
+      try {
+        assertExactSupabaseOrigin(
+          sourceSupabaseUrl,
+          PRODUCTION_SUPABASE_ORIGIN,
+          "SUPABASE_URL",
+        );
+        assertExactSupabaseOrigin(
+          destinationSupabaseUrl,
+          OFFSITE_BACKUP_SUPABASE_ORIGIN,
+          "OFFSITE_BACKUP_SUPABASE_URL",
+        );
+      } catch {
+        throw new CliError("configuration_missing_or_unsafe");
+      }
+      let bucketName: string;
+      try {
+        bucketName = resolveExactOperationalOffsiteBackupBucket(
+          dependencies.env.OFFSITE_BACKUP_BUCKET,
+        );
+      } catch {
+        throw new CliError("configuration_missing_or_unsafe");
+      }
       try {
         dependencies.assertDestinationPins({
           destinationSupabaseUrl,
@@ -334,7 +358,10 @@ async function runCommand(
         destinationServiceRoleKey = await dependencies.readSecretFile(
           absolutePath(args.get("--service-role-key-file")!),
         );
-        if (/[\r\n\0]/.test(destinationServiceRoleKey)) throw new Error("unsafe");
+        assertSupabaseServerApiKey(
+          destinationServiceRoleKey,
+          "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
+        );
       } catch (error) {
         if (error instanceof CliError) throw error;
         throw new CliError("secret_file_unsafe");

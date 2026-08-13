@@ -14,7 +14,13 @@ import {
   type GoogleVenueBusinessStatus,
 } from "../src/lib/venue-directory.js";
 import { createServerSupabaseClient } from "../src/lib/supabase-client.js";
+import { redactKnownSecretValues } from "../src/lib/redact.js";
+import { assertSupabaseServerApiKey } from "../src/lib/supabase-key-format.js";
 import { assertOperatorMutationAllowed } from "./lib/operator-mutation-guard.js";
+import {
+  PRODUCTION_SUPABASE_ORIGIN,
+  PRODUCTION_SUPABASE_PROJECT_REF,
+} from "./validate-production-supabase-transport.js";
 
 const GOOGLE_PLACES_API_URL = "https://places.googleapis.com/v1/places:searchNearby";
 const GOOGLE_TEXT_SEARCH_API_URL = "https://places.googleapis.com/v1/places:searchText";
@@ -32,6 +38,10 @@ const GOOGLE_FIELD_MASK = [
   "places.types",
 ].join(",");
 const GOOGLE_PLACE_DETAILS_FIELD_MASK = GOOGLE_FIELD_MASK.replaceAll("places.", "");
+const PERMANENT_STAGING_SUPABASE_ORIGIN =
+  "https://bbfibbadwjxzrcdncavy.supabase.co";
+const PERMANENT_STAGING_SUPABASE_PROJECT_REF = "bbfibbadwjxzrcdncavy";
+let loadedSupabaseServiceRoleKey: string | null = null;
 
 const DEFAULT_BOUNDS = {
   minLat: -38.20,
@@ -182,28 +192,17 @@ export function assertSupabaseProjectTarget(
   supabaseUrl: string,
   expectedProjectRef: string | undefined,
 ): string {
-  const normalizedExpected = expectedProjectRef?.trim().toLowerCase() ?? "";
-  if (!normalizedExpected) {
-    throw new Error(
-      "Missing --expected-project-ref (or PINTPATH_EXPECTED_SUPABASE_PROJECT_REF); refusing an unpinned venue-directory operation.",
-    );
+  const approved = (
+    supabaseUrl === PRODUCTION_SUPABASE_ORIGIN
+    && expectedProjectRef === PRODUCTION_SUPABASE_PROJECT_REF
+  ) || (
+    supabaseUrl === PERMANENT_STAGING_SUPABASE_ORIGIN
+    && expectedProjectRef === PERMANENT_STAGING_SUPABASE_PROJECT_REF
+  );
+  if (!approved) {
+    throw new Error("Supabase importer target mismatch; no configured value is emitted.");
   }
-
-  let actualProjectRef: string;
-  try {
-    const hostname = new URL(supabaseUrl).hostname.toLowerCase();
-    actualProjectRef = hostname.endsWith(".supabase.co")
-      ? hostname.slice(0, -".supabase.co".length)
-      : "";
-  } catch {
-    actualProjectRef = "";
-  }
-  if (!actualProjectRef || actualProjectRef !== normalizedExpected) {
-    throw new Error(
-      `Supabase project target mismatch. Expected ${normalizedExpected}; SUPABASE_URL resolves to ${actualProjectRef || "an unsupported host"}.`,
-    );
-  }
-  return actualProjectRef;
+  return expectedProjectRef;
 }
 
 interface TextSearchPage {
@@ -369,6 +368,7 @@ export function mapPlaceToVenue(
 async function searchNearbyPlaces(apiKey: string, latitude: number, longitude: number): Promise<GooglePlaceCandidate[]> {
   const response = await fetch(GOOGLE_PLACES_API_URL, {
     method: "POST",
+    redirect: "error",
     headers: {
       "Content-Type": "application/json",
       "X-Goog-Api-Key": apiKey,
@@ -408,6 +408,7 @@ async function searchTextPlaces(
 ): Promise<TextSearchPage> {
   const response = await fetch(GOOGLE_TEXT_SEARCH_API_URL, {
     method: "POST",
+    redirect: "error",
     headers: {
       "Content-Type": "application/json",
       "X-Goog-Api-Key": apiKey,
@@ -451,6 +452,7 @@ async function fetchPlaceDetails(apiKey: string, googlePlaceId: string): Promise
     `https://places.googleapis.com/v1/places/${encodeURIComponent(googlePlaceId)}`,
     {
       method: "GET",
+      redirect: "error",
       headers: {
         "X-Goog-Api-Key": apiKey,
         "X-Goog-FieldMask": GOOGLE_PLACE_DETAILS_FIELD_MASK,
@@ -505,6 +507,8 @@ async function fetchExistingVenues() {
   if (!supabaseUrl || !supabaseKey) {
     throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
   }
+  assertSupabaseServerApiKey(supabaseKey, "SUPABASE_SERVICE_ROLE_KEY");
+  loadedSupabaseServiceRoleKey = supabaseKey;
 
   const supabase = createServerSupabaseClient(supabaseUrl, supabaseKey);
 
@@ -519,7 +523,10 @@ async function fetchExistingVenues() {
       .range(from, to);
 
     if (error) {
-      throw new Error(`Failed to fetch existing venues: ${error.message}`);
+      throw new Error(`Failed to fetch existing venues: ${redactKnownSecretValues(
+        error.message,
+        [supabaseKey],
+      )}`);
     }
 
     const batch = (data ?? []) as VenueRow[];
@@ -771,7 +778,10 @@ async function main() {
         .eq("id", existing.id);
 
       if (error) {
-        console.error(`Update failed for ${venue.name}: ${error.message}`);
+        console.error(`Update failed for ${venue.name}: ${redactKnownSecretValues(
+          error.message,
+          [loadedSupabaseServiceRoleKey],
+        )}`);
         writeFailures.push(`update:${existing.id}`);
         continue;
       }
@@ -783,7 +793,10 @@ async function main() {
     const { error } = await supabase.from("venues").insert(venue);
 
     if (error) {
-      console.error(`Insert failed for ${venue.name}: ${error.message}`);
+      console.error(`Insert failed for ${venue.name}: ${redactKnownSecretValues(
+        error.message,
+        [loadedSupabaseServiceRoleKey],
+      )}`);
       writeFailures.push(`insert:${venue.google_place_id ?? venue.name}`);
       continue;
     }
@@ -809,7 +822,10 @@ async function main() {
       .update(update)
       .eq("id", existing.id);
     if (error) {
-      console.error(`Fail-closed status update failed for ${existing.name}: ${error.message}`);
+      console.error(`Fail-closed status update failed for ${existing.name}: ${redactKnownSecretValues(
+        error.message,
+        [loadedSupabaseServiceRoleKey],
+      )}`);
       writeFailures.push(`exclude:${existing.id}`);
       continue;
     }
@@ -863,7 +879,12 @@ async function main() {
 const entryPath = process.argv[1] ? path.resolve(process.argv[1]) : null;
 if (entryPath && import.meta.url === pathToFileURL(entryPath).href) {
   main().catch((error) => {
-    console.error(error instanceof Error ? error.message : error);
+    console.error(redactKnownSecretValues(
+      error instanceof Error ? error.message : String(error),
+      [loadedSupabaseServiceRoleKey],
+    ));
     process.exitCode = 1;
+  }).finally(() => {
+    loadedSupabaseServiceRoleKey = null;
   });
 }

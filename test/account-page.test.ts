@@ -4,6 +4,12 @@ import vm from "node:vm";
 
 import { describe, expect, it } from "vitest";
 
+const LEGACY_SUPABASE_ANON_KEY_FIXTURE = [
+  Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" }), "utf8").toString("base64url"),
+  Buffer.from(JSON.stringify({ role: "anon" }), "utf8").toString("base64url"),
+  Buffer.alloc(32, 1).toString("base64url"),
+].join(".");
+
 function accountHtml() {
   return fs.readFileSync(path.resolve(process.cwd(), "viewer/account.html"), "utf8");
 }
@@ -71,6 +77,70 @@ function loadBusinessHelpers() {
       consumeSensitiveAuthReturnPath: () => string | null;
     };
   }).MelbBeerBusiness;
+}
+
+function loadApiFetchRedirectHarness() {
+  const localStorage = new Map<string, string>();
+  const requests: Array<{
+    path: string;
+    options: Record<string, unknown>;
+  }> = [];
+  const context = {
+    AbortController,
+    DOMException,
+    clearTimeout,
+    setTimeout,
+    URL,
+    URLSearchParams,
+    crypto: { randomUUID: () => "test-uuid" },
+    fetch: async (input: string, options: Record<string, unknown> = {}) => {
+      requests.push({ path: String(input), options });
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ ok: true, data: {} }),
+      };
+    },
+    window: {
+      MELB_BEER_BOT_VIEWER_CONFIG: { business: { fieldTestMode: true } },
+      location: {
+        origin: "https://pintpath.au",
+        hostname: "pintpath.au",
+        pathname: "/account.html",
+        search: "",
+      },
+      localStorage: {
+        getItem: (key: string) => localStorage.get(key) || null,
+        setItem: (key: string, value: string) => localStorage.set(key, String(value)),
+        removeItem: (key: string) => localStorage.delete(key),
+        key: (index: number) => Array.from(localStorage.keys())[index] || null,
+        get length() {
+          return localStorage.size;
+        },
+      },
+      sessionStorage: {
+        getItem: () => null,
+        setItem: () => undefined,
+        removeItem: () => undefined,
+      },
+      addEventListener: () => undefined,
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(businessJs(), context);
+  return {
+    helpers: (context.window as unknown as {
+      MelbBeerBusiness: {
+        AUTH_TOKEN_KEY: string;
+        apiFetch: (
+          path: string,
+          options?: Record<string, unknown>,
+        ) => Promise<Record<string, unknown>>;
+      };
+    }).MelbBeerBusiness,
+    requests,
+    localStorage,
+  };
 }
 
 function loadBusinessAuthHarness(options: {
@@ -149,14 +219,17 @@ function loadBusinessAuthHarness(options: {
     DOMException,
     clearTimeout,
     setTimeout,
+    TextDecoder,
     URL,
     URLSearchParams,
+    atob,
+    btoa,
     crypto: { randomUUID: () => "test-uuid" },
     fetch,
     window: {
       MELB_BEER_BOT_VIEWER_CONFIG: {
-        supabaseUrl: "https://example.supabase.co",
-        supabaseAnonKey: "anon-key",
+        supabaseUrl: "https://auth.pintpath.au",
+        supabaseAnonKey: LEGACY_SUPABASE_ANON_KEY_FIXTURE,
         business: { legalPolicyVersion: "2026-07-20" },
       },
       location: {
@@ -281,6 +354,33 @@ function viewerHtmlFiles(directory = path.resolve(process.cwd(), "viewer")): str
 }
 
 describe("account page shell", () => {
+  it("rejects redirects for legacy-session migration and password-bearing API requests", async () => {
+    const harness = loadApiFetchRedirectHarness();
+    harness.localStorage.set(harness.helpers.AUTH_TOKEN_KEY, "legacy-session-token");
+
+    await expect(harness.helpers.apiFetch("/api/business/account/password", {
+      method: "POST",
+      headers: { "X-Pint-Path-Current-Password": "current-password-secret" },
+      body: JSON.stringify({ password: "new-password-secret" }),
+      redirect: "follow",
+    })).resolves.toEqual({});
+
+    expect(harness.requests).toHaveLength(2);
+    expect(harness.requests[0]).toMatchObject({
+      path: "/api/business/auth/session-cookie",
+      options: { redirect: "error" },
+    });
+    expect(harness.requests[1]).toMatchObject({
+      path: "/api/business/account/password",
+      options: {
+        redirect: "error",
+        headers: expect.objectContaining({
+          "X-Pint-Path-Current-Password": "current-password-secret",
+        }),
+      },
+    });
+  });
+
   it("installs Pint Path logo assets and favicon metadata across every viewer page", () => {
     const script = businessJs();
     const css = businessCss();

@@ -18,6 +18,9 @@ import {
   type PostgresLogicalBackupManifest,
 } from "./postgres-logical-backup.js";
 import {
+  parsePostgresLogicalBackupManifestV4,
+} from "./postgres-logical-backup-v4.js";
+import {
   computePostgresLogicalStateInventory,
   exactPostgresLogicalStateMatch,
   parsePostgresLogicalSourceStateReceipt,
@@ -73,6 +76,7 @@ export type PostgresLogicalRestoreFailureCode =
   | "unsafe_backup_directory"
   | "backup_manifest_invalid"
   | "backup_tampered"
+  | "backup_version_not_operational"
   | "tool_unavailable_or_unsupported"
   | "target_unreachable"
   | "target_not_disposable"
@@ -578,6 +582,9 @@ async function snapshotTrustedFile(input: {
       || pathStat.size > input.maxBytes
       || fs.realpathSync(input.filePath) !== input.filePath
     ) throw new Error("unsafe");
+    // The O_NOFOLLOW descriptor is bound to the pre-open lstat by full file
+    // identity and is revalidated after hashing the descriptor contents.
+    // codeql[js/file-system-race]
     handle = await fs.promises.open(
       input.filePath,
       fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
@@ -879,6 +886,24 @@ function parseManifest(bytes: Buffer): PostgresLogicalBackupManifest {
   return manifest;
 }
 
+function parseOperationalManifest(bytes: Buffer): PostgresLogicalBackupManifest {
+  let value: unknown;
+  try {
+    value = JSON.parse(safeDecodeUtf8(bytes));
+  } catch {
+    throw restoreError("backup_manifest_invalid");
+  }
+  if (isPlainObject(value) && value.schemaVersion === 4) {
+    try {
+      parsePostgresLogicalBackupManifestV4(bytes);
+    } catch {
+      throw restoreError("backup_manifest_invalid");
+    }
+    throw restoreError("backup_version_not_operational");
+  }
+  return parseManifest(bytes);
+}
+
 function parseToolMajor(stdout: string): number {
   const prefix = "pg_restore (PostgreSQL) ";
   const line = stdout.trim();
@@ -999,7 +1024,7 @@ async function validateBackupBeforeConnection(
   if (manifest.sha256 !== expectedManifestSha256 || !manifest.bytes) {
     throw restoreError("backup_tampered");
   }
-  const parsedManifest = parseManifest(manifest.bytes);
+  const parsedManifest = parseOperationalManifest(manifest.bytes);
   const archive = await snapshotTrustedFile({
     filePath: archivePath,
     uid,

@@ -22,6 +22,18 @@ import {
   type ProcessResult,
 } from "../src/lib/postgres-logical-backup.js";
 import {
+  buildPostgresLogicalBackupManifestV4,
+  canonicalPostgresLogicalBackupManifestV4,
+  POSTGRES_LOGICAL_BACKUP_V4_BASE_DDL_SHA256,
+  POSTGRES_LOGICAL_BACKUP_V4_KERNEL_CONTRACT_SHA256,
+  POSTGRES_LOGICAL_BACKUP_V4_KERNEL_MIGRATION_SHA256,
+  POSTGRES_LOGICAL_BACKUP_V4_PORTABLE_BOUNDARY_SHA256,
+  POSTGRES_LOGICAL_BACKUP_V4_TABLE_DATA_DESCRIPTORS,
+  POSTGRES_LOGICAL_BACKUP_V4_TABLE_SET_SHA256,
+  postgresLogicalBackupManifestV4BindingSha256,
+  type PostgresLogicalBackupManifestV4,
+} from "../src/lib/postgres-logical-backup-v4.js";
+import {
   PostgresToolAuthorityError,
   type PostgresRestoreOperationInput,
   type PostgresRestoreToolAuthority,
@@ -31,7 +43,9 @@ import {
   buildPostgresLogicalSourceStateReceipt,
   canonicalPostgresLogicalStateJson,
   sha256CanonicalPostgresLogicalState,
+  type PostgresLogicalStateCaptureV2,
   type PostgresLogicalStateInventory,
+  type PostgresLogicalStateTableReceipt,
 } from "../src/lib/postgres-logical-state.js";
 import {
   POSTGRES_LOGICAL_RESTORE_CONFIRMATION_ENV,
@@ -59,6 +73,198 @@ const testPgRestoreSha256 = crypto.createHash("sha256")
 
 function sha256(value: crypto.BinaryLike): string {
   return crypto.createHash("sha256").update(value).digest("hex");
+}
+
+const V4_CONTROL_CONTRACTS = [
+  ["pintpath_app.schema_metadata", ["key", "value", "updated_at"]],
+  ["pintpath_ops.migration_chunks", [
+    "run_id", "table_name", "chunk_ordinal", "row_count",
+    "source_transformed_sha256", "target_sha256", "completed_at",
+  ]],
+  ["pintpath_ops.migration_runs", [
+    "run_id", "source_snapshot_sha256", "source_schema_fingerprint", "contract_sha256",
+    "manifest_sha256", "target_ddl_sha256", "source_schema_version", "candidate_commit_sha",
+    "target_binding_sha256", "expected_environment", "approval_reference_sha256",
+    "operator_id_sha256", "verifier_id_sha256", "status", "started_at", "completed_at",
+    "receipt_sha256", "failure_code",
+  ]],
+  ["pintpath_ops.reviewed_price_promotion_operations", [
+    "operation_id", "operation_kind", "source_apply_operation_id", "candidate_sha",
+    "expected_environment", "authority_bundle_sha256", "plan_candidate_sha256",
+    "review_packet_candidate_sha256", "target_physical_identity_sha256",
+    "source_snapshot_sha256", "request_sha256", "requested_row_count", "committed_at",
+    "result_state_sha256", "receipt_sha256",
+  ]],
+  ["pintpath_ops.reviewed_price_promotion_rows", [
+    "operation_id", "row_ordinal", "source_ingestion_id", "venue_id", "price_record_id",
+    "venue_beer_id", "normalized_beer_id", "row_request_sha256", "before_state_sha256",
+    "after_state_sha256", "row_receipt_sha256",
+  ]],
+] as const;
+
+function v4UpdateLengthFramed(hash: crypto.Hash, value: string): void {
+  const bytes = Buffer.from(value, "utf8");
+  const length = Buffer.allocUnsafe(8);
+  length.writeBigUInt64BE(BigInt(bytes.length));
+  hash.update(length);
+  hash.update(bytes);
+}
+
+function v4FramedSha256(values: readonly string[]): string {
+  const hash = crypto.createHash("sha256");
+  for (const value of values) v4UpdateLengthFramed(hash, value);
+  return hash.digest("hex");
+}
+
+function v4ReceiptAggregates(
+  receipts: readonly PostgresLogicalStateTableReceipt[],
+  domains: readonly [string, string, string],
+): readonly [string, string, string] {
+  const tableSet = crypto.createHash("sha256");
+  const data = crypto.createHash("sha256");
+  const keyRanges = crypto.createHash("sha256");
+  v4UpdateLengthFramed(tableSet, domains[0]);
+  v4UpdateLengthFramed(data, domains[1]);
+  v4UpdateLengthFramed(keyRanges, domains[2]);
+  for (const receipt of receipts) {
+    v4UpdateLengthFramed(tableSet, receipt.tableName);
+    v4UpdateLengthFramed(tableSet, receipt.rowCount);
+    v4UpdateLengthFramed(data, receipt.tableName);
+    v4UpdateLengthFramed(data, receipt.transformedSha256);
+    v4UpdateLengthFramed(keyRanges, receipt.tableName);
+    v4UpdateLengthFramed(keyRanges, receipt.rowCount);
+    v4UpdateLengthFramed(keyRanges, receipt.firstPrimaryKeySha256 ?? "");
+    v4UpdateLengthFramed(keyRanges, receipt.lastPrimaryKeySha256 ?? "");
+  }
+  return [tableSet.digest("hex"), data.digest("hex"), keyRanges.digest("hex")];
+}
+
+function validV4SourceCapture(): PostgresLogicalStateCaptureV2 {
+  const migrationContractSha256 = sha256PostgresMigrationContract(POSTGRES_MIGRATION_CONTRACT);
+  const tables: PostgresLogicalStateTableReceipt[] = POSTGRES_MIGRATION_CONTRACT.tables.map(
+    (table) => ({
+      tableName: table.name,
+      columnCount: table.columns.length,
+      rowCount: "0",
+      transformedSha256: v4FramedSha256([
+        "pint-path-postgres-transformed-table-v2",
+        migrationContractSha256,
+        table.name,
+        ...table.columns.map((column) => column[0]),
+      ]),
+      firstPrimaryKeySha256: null,
+      lastPrimaryKeySha256: null,
+    }),
+  );
+  const controlTables: PostgresLogicalStateTableReceipt[] = V4_CONTROL_CONTRACTS.map(
+    ([tableName, columns], index) => index === 0
+      ? {
+        tableName,
+        columnCount: columns.length,
+        rowCount: "12",
+        transformedSha256: "a".repeat(64),
+        firstPrimaryKeySha256: v4FramedSha256([
+          "pint-path-source-primary-key-v2", "Timport_state",
+        ]),
+        lastPrimaryKeySha256: v4FramedSha256([
+          "pint-path-source-primary-key-v2", "Ttarget_ddl_sha256",
+        ]),
+      }
+      : {
+        tableName,
+        columnCount: columns.length,
+        rowCount: "0",
+        transformedSha256: v4FramedSha256([
+          "pintpath-postgres-logical-control-table-v2",
+          migrationContractSha256,
+          tableName,
+          ...columns,
+        ]),
+        firstPrimaryKeySha256: null,
+        lastPrimaryKeySha256: null,
+      },
+  );
+  const [tableSetSha256, transformedDataSha256, keyRangesSha256] = v4ReceiptAggregates(
+    tables,
+    [
+      "pint-path-postgres-table-set-v2",
+      "pint-path-postgres-transformed-data-v2",
+      "pint-path-postgres-logical-key-ranges-v2",
+    ],
+  );
+  const [controlTableSetSha256, controlDataSha256, controlKeyRangesSha256]
+    = v4ReceiptAggregates(controlTables, [
+      "pintpath-postgres-logical-control-table-set-v2",
+      "pintpath-postgres-logical-control-data-v2",
+      "pintpath-postgres-logical-control-key-ranges-v2",
+    ]);
+  const withoutOverall = {
+    authoritativeTableCount: POSTGRES_MIGRATION_CONTRACT.expectedCounts.tables,
+    authoritativeColumnCount: POSTGRES_MIGRATION_CONTRACT.expectedCounts.columns,
+    authoritativeRowCount: "0",
+    nonEmptyAuthoritativeTableCount: 0,
+    zeroRowAuthoritativeTableCount: POSTGRES_MIGRATION_CONTRACT.expectedCounts.tables,
+    migrationContractSha256,
+    sourceSchemaFingerprint: POSTGRES_MIGRATION_CONTRACT.expectedSchemaFingerprint,
+    sourceSchemaSha256: "1".repeat(64),
+    sourceSnapshotSha256: "2".repeat(64),
+    targetDdlSha256: POSTGRES_LOGICAL_BACKUP_V4_BASE_DDL_SHA256,
+    schemaMetadataSha256: "3".repeat(64),
+    tableSetSha256,
+    transformedDataSha256,
+    keyRangesSha256,
+    stateTotalsSha256: v4FramedSha256(["pint-path-postgres-state-totals-v2"]),
+    kernelContractSha256: POSTGRES_LOGICAL_BACKUP_V4_KERNEL_CONTRACT_SHA256,
+    kernelMigrationSha256: POSTGRES_LOGICAL_BACKUP_V4_KERNEL_MIGRATION_SHA256,
+    sourceReadBoundarySha256: POSTGRES_LOGICAL_BACKUP_V4_PORTABLE_BOUNDARY_SHA256,
+    controlTableCount: 5 as const,
+    controlRowCount: "12",
+    controlTableSetSha256,
+    controlDataSha256,
+    controlKeyRangesSha256,
+    tables,
+    controlTables,
+  };
+  return {
+    inventory: {
+      ...withoutOverall,
+      overallStateSha256: sha256CanonicalPostgresLogicalState({
+        kind: "pintpath-postgres-logical-state-inventory",
+        version: 2,
+        ...withoutOverall,
+      }),
+    },
+    sourceDatabaseOid: "12345",
+    sourcePhysicalReadBoundarySha256: "5".repeat(64),
+  };
+}
+
+function validV4Manifest(): PostgresLogicalBackupManifestV4 {
+  return buildPostgresLogicalBackupManifestV4({
+    createdAt: "2026-08-12T08:00:00.000Z",
+    archiveBytes: 12_345,
+    archiveSha256: "6".repeat(64),
+    archiveListingSha256: "7".repeat(64),
+    toc: {
+      tocEntries: 63,
+      listedEntries: 59,
+      tableDataEntries: 59,
+      tableDataSetSha256: POSTGRES_LOGICAL_BACKUP_V4_TABLE_SET_SHA256,
+      entries: POSTGRES_LOGICAL_BACKUP_V4_TABLE_DATA_DESCRIPTORS,
+    },
+    pgDump: {
+      name: "pg_dump", version: "17.10", major: 17, executableSha256: "8".repeat(64),
+    },
+    pgRestore: {
+      name: "pg_restore", version: "17.10", major: 17, executableSha256: "9".repeat(64),
+    },
+    rootCaCertificateSha256: "b".repeat(64),
+    databaseIdentitySha256: "c".repeat(64),
+    sourceUrlSha256: "d".repeat(64),
+    exportedSnapshotBindingSha256: "e".repeat(64),
+    sourceAuthorityReceiptSha256: "f".repeat(64),
+    sourceCapture: validV4SourceCapture(),
+  });
 }
 
 function temporaryRoot(): string {
@@ -272,6 +478,28 @@ function writeFixture(root: string, manifestSchemaVersion: 2 | 3 = 3): {
     manifestSha256: sha256(manifestBytes),
     targetUrlFile,
     receiptFile: path.join(evidenceDirectory, "restore-receipt.json"),
+  };
+}
+
+function writeV4Fixture(
+  root: string,
+  manifestBytes = canonicalPostgresLogicalBackupManifestV4(validV4Manifest()),
+): ReturnType<typeof writeFixture> {
+  const fixture = writeFixture(root);
+  fs.writeFileSync(fixture.manifestPath, manifestBytes, { mode: 0o600 });
+  fs.chmodSync(fixture.manifestPath, 0o600);
+  fs.chmodSync(
+    path.join(fixture.backupDirectory, POSTGRES_LOGICAL_BACKUP_ARCHIVE),
+    0o000,
+  );
+  fs.chmodSync(
+    path.join(fixture.backupDirectory, POSTGRES_LOGICAL_BACKUP_STATE_RECEIPT),
+    0o000,
+  );
+  fs.unlinkSync(fixture.targetUrlFile);
+  return {
+    ...fixture,
+    manifestSha256: sha256(manifestBytes),
   };
 }
 
@@ -911,6 +1139,38 @@ function failReceiptParentOperation(
   return { operationCallCount: () => operationCallCount, openedFileDescriptors };
 }
 
+function v4GateDependencies() {
+  const nowDependency = vi.fn(() => new Date(now));
+  const openRestoreAuthority = vi.fn(async () => {
+    throw new Error("V4 gate reached restore authority");
+  });
+  const connect = vi.fn(async () => {
+    throw new Error("V4 gate reached target connection");
+  });
+  const computeState = vi.fn(async () => {
+    throw new Error("V4 gate reached state computation");
+  });
+  const dependencies: Partial<PostgresLogicalRestoreDependencies> = {
+    env: { NODE_ENV: "test" },
+    getUid: () => process.getuid?.() ?? 0,
+    now: nowDependency,
+    openRestoreAuthority,
+    connect,
+    computeState,
+    allowInsecureLoopbackForTests: false,
+  };
+  return { dependencies, nowDependency, openRestoreAuthority, connect, computeState };
+}
+
+function expectV4GateDownstreamUntouched(
+  gate: ReturnType<typeof v4GateDependencies>,
+): void {
+  expect(gate.nowDependency).not.toHaveBeenCalled();
+  expect(gate.openRestoreAuthority).not.toHaveBeenCalled();
+  expect(gate.connect).not.toHaveBeenCalled();
+  expect(gate.computeState).not.toHaveBeenCalled();
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
   while (roots.length > 0) fs.rmSync(roots.pop()!, { recursive: true, force: true });
@@ -939,6 +1199,123 @@ describe("Postgres logical restore rehearsal", () => {
       },
     });
     expect(v2).not.toHaveProperty("transport");
+  });
+
+  it("authenticates canonical V4 then stops before every operational dependency", async () => {
+    const root = temporaryRoot();
+    const manifestBytes = canonicalPostgresLogicalBackupManifestV4(validV4Manifest());
+    expect(manifestBytes.length).toBeLessThanOrEqual(256 * 1024);
+    const fixture = writeV4Fixture(root, manifestBytes);
+    const gate = v4GateDependencies();
+    const originalOpen = fs.promises.open.bind(fs.promises);
+    const openedPaths: string[] = [];
+    vi.spyOn(fs.promises, "open").mockImplementation(async (...args) => {
+      openedPaths.push(path.resolve(String(args[0])));
+      return originalOpen(...args);
+    });
+
+    const error = await restorePostgresLogicalBackup(
+      restoreOptions(fixture),
+      gate.dependencies,
+    ).catch((caught: unknown) => caught);
+
+    expectRestoreError(error, "backup_version_not_operational");
+    expect(openedPaths).toEqual([fixture.manifestPath]);
+    expect(fs.existsSync(fixture.targetUrlFile)).toBe(false);
+    expect(fs.existsSync(fixture.receiptFile)).toBe(false);
+    expectV4GateDownstreamUntouched(gate);
+
+    const legacyParserError = (() => {
+      try {
+        parsePostgresLogicalBackupManifest(manifestBytes);
+        return null;
+      } catch (caught) {
+        return caught;
+      }
+    })();
+    expectRestoreError(legacyParserError, "backup_manifest_invalid");
+  });
+
+  it("keeps invalid, rebound, and SHA-mismatched V4 bytes fail-closed", async () => {
+    const valid = validV4Manifest();
+    const validBytes = canonicalPostgresLogicalBackupManifestV4(valid);
+    const reboundProvisional: PostgresLogicalBackupManifestV4 = {
+      ...valid,
+      pairing: { ...valid.pairing, archiveSha256: "0".repeat(64) },
+    };
+    const rebound: PostgresLogicalBackupManifestV4 = {
+      ...reboundProvisional,
+      manifestBindingSha256:
+        postgresLogicalBackupManifestV4BindingSha256(reboundProvisional),
+    };
+    const reboundBytes = Buffer.from(canonicalPostgresLogicalStateJson(rebound), "utf8");
+    const cases = [
+      {
+        name: "noncanonical",
+        bytes: Buffer.concat([validBytes, Buffer.from(" ", "utf8")]),
+        expectedManifestSha256: null,
+        code: "backup_manifest_invalid" as const,
+      },
+      {
+        name: "self-rebound",
+        bytes: reboundBytes,
+        expectedManifestSha256: null,
+        code: "backup_manifest_invalid" as const,
+      },
+      {
+        name: "operator SHA mismatch",
+        bytes: validBytes,
+        expectedManifestSha256: "0".repeat(64),
+        code: "backup_tampered" as const,
+      },
+    ];
+
+    for (const testCase of cases) {
+      const root = temporaryRoot();
+      const fixture = writeV4Fixture(root, testCase.bytes);
+      const gate = v4GateDependencies();
+      const options = restoreOptions(fixture);
+      const error = await restorePostgresLogicalBackup({
+        ...options,
+        expectedBackupManifestSha256:
+          testCase.expectedManifestSha256 ?? options.expectedBackupManifestSha256,
+      }, gate.dependencies).catch((caught: unknown) => caught);
+
+      expectRestoreError(error, testCase.code);
+      expectV4GateDownstreamUntouched(gate);
+      expect(fs.existsSync(fixture.targetUrlFile), testCase.name).toBe(false);
+      expect(fs.existsSync(fixture.receiptFile), testCase.name).toBe(false);
+    }
+  });
+
+  it("publishes the fixed non-operational V4 failure through the restore CLI", async () => {
+    const root = temporaryRoot();
+    const fixture = writeV4Fixture(root);
+    const gate = v4GateDependencies();
+    const output: string[] = [];
+    const exitCode = await runPostgresLogicalRestoreCli([
+      "restore",
+      "--backup-directory", fixture.backupDirectory,
+      "--backup-manifest-sha256", fixture.manifestSha256,
+      "--pg-restore-file", testPgRestoreFile,
+      "--expected-pg-restore-sha256", testPgRestoreSha256,
+      "--target-url-file", fixture.targetUrlFile,
+      "--target-identity-sha256", identitySha256(),
+      "--receipt", fixture.receiptFile,
+    ], {
+      [POSTGRES_LOGICAL_RESTORE_CONFIRMATION_ENV]:
+        POSTGRES_LOGICAL_RESTORE_CONFIRMATION_VALUE,
+    }, {
+      assertMutationAllowed: () => undefined,
+      restoreBackup: (options) => restorePostgresLogicalBackup(options, gate.dependencies),
+      writeOutput: (value) => output.push(value),
+    });
+
+    expect(exitCode).toBe(1);
+    expect(output).toEqual([
+      "{\"failureCode\":\"backup_version_not_operational\",\"ok\":false,\"schemaVersion\":1,\"targetDisposalRequired\":false}\n",
+    ]);
+    expectV4GateDownstreamUntouched(gate);
   });
 
   it("rejects mixed version/transport shapes and binds the exact v3 transport", () => {

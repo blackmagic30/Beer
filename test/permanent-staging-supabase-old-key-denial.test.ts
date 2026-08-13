@@ -127,13 +127,11 @@ describe("Supabase old-key denial fixture classifier", () => {
       (value) => { value.request.method = "POST"; },
     ))).toBeNull();
 
-    const offsiteService = fixtureObject();
-    offsiteService.projectRole = "operational-offsite-copy";
-    offsiteService.projectRef = "hfbmhdxrwtihukmixxta";
-    offsiteService.keyFamily = "serviceRole";
-    offsiteService.request.canaryClass = "offsite-private-storage-bucket";
+    const stagingService = fixtureObject();
+    stagingService.keyFamily = "serviceRole";
+    stagingService.request.canaryClass = "staging-auth-admin-list-limit-one";
     expect(parsePermanentStagingSupabaseOldKeyDenialFixture(
-      JSON.stringify(offsiteService),
+      JSON.stringify(stagingService),
     )).not.toBeNull();
   });
 

@@ -23,11 +23,20 @@ import postgresRuntime, {
 // bootstrap must finish evaluating the complete pg/SQL graph before it seals
 // module loading and before either private database input is read.
 import {
+  derivePostgresMigrationRunId,
   postgresMigrationReceiptSchema,
   postgresMigrationTargetIdentitySchema,
+  sha256PostgresMigrationRunBinding,
   sha256PostgresMigrationTargetIdentity,
+  type PostgresMigrationReceipt,
+  type PostgresMigrationTargetIdentity,
 } from "../src/db/postgres-migration-receipt.js";
-import { sha256PostgresMigrationBytes } from
+import { POSTGRES_MIGRATION_CONTRACT } from
+  "../src/db/postgres-migration-contract.js";
+import {
+  sha256PostgresMigrationBytes,
+  sha256PostgresMigrationContract,
+} from
   "../src/db/postgres-migration-schema.js";
 import { sha256PostgresDatabaseIdentity } from
   "../src/lib/postgres-database-identity.js";
@@ -39,15 +48,34 @@ import {
   type RailwayApplicationDeploymentAttestationReceipt,
 } from "../src/lib/railway-application-deployment-attestation.js";
 import {
+  POSTGRES_REVIEWED_PRICE_PROMOTION_MAX_REVIEW_PACKET_BYTES,
+  postgresReviewedPricePromotionAuthorityBundleFreshAt,
+  postgresReviewedPricePromotionAuthorityBundleSchema,
+  postgresReviewedPricePromotionReviewPacketSchema,
+  type PostgresReviewedPricePromotionAuthorityBundle,
+  type PostgresReviewedPricePromotionReviewPacket,
+} from "../src/lib/postgres-reviewed-price-promotion-authority.js";
+import {
   POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_BLOCKERS,
+  POSTGRES_REVIEWED_PRICE_PROMOTION_IDENTITY_QUERY,
+  POSTGRES_REVIEWED_PRICE_PROMOTION_SOURCE_SCHEMA_SHA256,
   canonicalPostgresReviewedPricePromotionJson,
   postgresReviewedPricePromotionPlanCandidateSchema,
   postgresReviewedPricePromotionPrivateInputSchema,
+  sha256PostgresReviewedPricePromotionIdentity,
   sha256PostgresReviewedPricePromotionValue,
   type BuildPostgresReviewedPricePromotionPlanInput,
+  type PostgresReviewedPricePromotionPlanArtifacts,
   type PostgresReviewedPricePromotionPlanCandidate,
   type PostgresReviewedPricePromotionPlanErrorCode,
+  type PostgresReviewedPricePromotionPrivateInput,
 } from "../src/lib/postgres-reviewed-price-promotion-plan.js";
+import { REVIEWED_PRICE_SELECTION_POLICY_SHA256 } from
+  "../src/lib/reviewed-price-selection-policy.js";
+import {
+  REVIEWED_PRICE_BLOCKING_WRONG_PRICE_STATUSES,
+  REVIEWED_PRICE_WRONG_PRICE_POLICY_SHA256,
+} from "../src/lib/reviewed-price-wrong-price-policy.js";
 import {
   POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
   openPostgresRailwayStockLocalhostCaTransport,
@@ -59,7 +87,7 @@ import { POSTGRES_REVIEWED_PRICE_PROMOTION_RUNTIME } from
 
 export const POSTGRES_REVIEWED_PRICE_PROMOTION_COMMAND = "plan" as const;
 
-const ARGUMENT_COUNT = 14;
+const ARGUMENT_COUNT = 17;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const CANDIDATE_PATTERN = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
 const CONTROL_CHARACTER_PATTERN = /[\r\n\0]/;
@@ -76,6 +104,7 @@ const BUFFER_FROM = Buffer.from;
 const BUFFER_IS_BUFFER = Buffer.isBuffer;
 const BUFFER_TO_STRING = Buffer.prototype.toString;
 const BIGINT_CONSTRUCTOR = BigInt;
+const BIGINT_TO_STRING = BigInt.prototype.toString;
 const CRYPTO_OBJECT = crypto;
 const CRYPTO_RANDOM_BYTES = crypto.randomBytes;
 const CRYPTO_X509_CERTIFICATE = crypto.X509Certificate;
@@ -98,6 +127,7 @@ const OBJECT_FREEZE = Object.freeze;
 const OBJECT_GET_OWN_PROPERTY_DESCRIPTOR = Object.getOwnPropertyDescriptor;
 const OBJECT_GET_PROTOTYPE_OF = Object.getPrototypeOf;
 const OBJECT_HAS_OWN = Object.hasOwn;
+const OBJECT_PROTOTYPE = Object.prototype;
 const X509_CA_GETTER = OBJECT_GET_OWN_PROPERTY_DESCRIPTOR(
   X509_CERTIFICATE_PROTOTYPE,
   "ca",
@@ -138,6 +168,8 @@ const REFLECT_DEFINE_PROPERTY = Reflect.defineProperty;
 const REFLECT_OWN_KEYS = Reflect.ownKeys;
 const REFLECT_OBJECT = Reflect;
 const REGEXP_EXEC = RegExp.prototype.exec;
+const SET_ADD = Set.prototype.add;
+const SET_DELETE = Set.prototype.delete;
 const SET_HAS = Set.prototype.has;
 const STRING_ENDS_WITH = String.prototype.endsWith;
 const STRING_CHAR_AT = String.prototype.charAt;
@@ -188,11 +220,14 @@ const UTF8_FATAL_DECODER = new TextDecoder("utf-8", { fatal: true });
 const FS_PROMISES_OBJECT = fs.promises;
 const PROCESS_OBJECT = process;
 const PROCESS_GETEUID = process.geteuid;
+const PROCESS_KILL = process.kill;
+const PROCESS_PID = process.pid;
 const PROCESS_ENVIRONMENT = process.env;
 const FS_PROMISES_LINK = fs.promises.link;
 const FS_PROMISES_LSTAT = fs.promises.lstat;
 const FS_PROMISES_OPEN = fs.promises.open;
 const FS_PROMISES_REALPATH = fs.promises.realpath;
+const FS_PROMISES_RENAME = fs.promises.rename;
 const FS_PROMISES_UNLINK = fs.promises.unlink;
 const O_CREAT = fs.constants.O_CREAT;
 const O_DIRECTORY = fs.constants.O_DIRECTORY;
@@ -242,8 +277,16 @@ const MAX_PLANNER_URL_FILE_BYTES = 4_096;
 const MAX_MIGRATION_RECEIPT_BYTES = 64 * 1_024;
 const MAX_MIGRATION_TARGET_IDENTITY_BYTES = 16 * 1_024;
 const MAX_PRIVATE_INPUT_BYTES = 256 * 1_024;
+const MAX_AUTHORITY_BUNDLE_BYTES = 64 * 1_024;
 const MAX_PLAN_BYTES = 256 * 1_024;
-const HELD_FILE_COUNT = 6;
+const MAX_PUBLICATION_JOURNAL_BYTES = 64 * 1_024;
+// Every accepted packet string is length-bounded. Budgeting the schema maxima
+// at six JSON bytes per UTF-16 code unit (the worst escaped representation),
+// plus canonical keys/indentation for 50 * 100 rows, remains below this cap.
+const MAX_REVIEW_PACKET_BYTES =
+  POSTGRES_REVIEWED_PRICE_PROMOTION_MAX_REVIEW_PACKET_BYTES;
+const HELD_FILE_COUNT = 7;
+const ACTIVE_PUBLICATION_JOURNALS = new Set<string>();
 
 export type PostgresReviewedPricePromotionCliFailureCode =
   | PostgresReviewedPricePromotionPlanErrorCode
@@ -263,6 +306,7 @@ export type PostgresReviewedPricePromotionCliFailureCode =
 
 const PLAN_FAILURE_CODES = new Set<PostgresReviewedPricePromotionPlanErrorCode>([
   "argument_invalid",
+  "authority_mismatch",
   "catalog_mismatch",
   "environment_mismatch",
   "identity_mismatch",
@@ -324,18 +368,35 @@ export interface PostgresReviewedPricePromotionPlannerDatabaseOptions {
 
 export interface PostgresReviewedPricePromotionCliDependencies {
   readonly assertProductionBoundary?: () => void;
+  readonly assertPublicationBoundary?: (
+    boundary: PostgresReviewedPricePromotionPublicationBoundary,
+  ) => void;
+  readonly releasePublishedArtifactHandle?: (
+    artifact: PostgresReviewedPricePromotionPublishedArtifact,
+    close: () => Promise<void>,
+  ) => Promise<void>;
   readonly openDatabase: (
     options: PostgresReviewedPricePromotionPlannerDatabaseOptions,
   ) => PostgresReviewedPricePromotionPlannerDatabaseHandle
     | Promise<PostgresReviewedPricePromotionPlannerDatabaseHandle>;
   readonly buildPlan: (
     input: BuildPostgresReviewedPricePromotionPlanInput,
-  ) => Promise<PostgresReviewedPricePromotionPlanCandidate>;
+  ) => Promise<PostgresReviewedPricePromotionPlanArtifacts>;
   readonly environment: Readonly<NodeJS.ProcessEnv>;
   readonly expectedRootCaDerSha256: string;
   readonly now: () => Date;
   readonly writeOutput: (value: string) => void;
 }
+
+export type PostgresReviewedPricePromotionPublicationBoundary =
+  | "review-packet-published"
+  | "plan-published"
+  | "plan-finalized"
+  | "review-packet-finalized";
+
+export type PostgresReviewedPricePromotionPublishedArtifact =
+  | "plan"
+  | "review-packet";
 
 interface CompiledPlannerQuery {
   readonly text: string;
@@ -686,6 +747,86 @@ interface StableDirectoryIdentity {
   readonly mode: bigint;
 }
 
+interface SerializedStableFileIdentity {
+  readonly ctimeNs: string;
+  readonly dev: string;
+  readonly gid: string;
+  readonly ino: string;
+  readonly mode: string;
+  readonly mtimeNs: string;
+  readonly nlink: string;
+  readonly size: string;
+  readonly uid: string;
+}
+
+interface PublicationArtifactRecord {
+  readonly bytes: number;
+  readonly path: string;
+  readonly sha256: string;
+  readonly temporaryPath: string;
+}
+
+interface CommittedPublicationArtifactRecord extends PublicationArtifactRecord {
+  readonly identity: SerializedStableFileIdentity;
+}
+
+interface PostgresReviewedPricePromotionSuccessSummary {
+  readonly activationBlockerCount: number;
+  readonly candidateSha: string;
+  readonly command: typeof POSTGRES_REVIEWED_PRICE_PROMOTION_COMMAND;
+  readonly expectedEnvironment: "permanent-staging";
+  readonly itemCount: number;
+  readonly mutationEnabled: false;
+  readonly ok: true;
+  readonly planCandidateSha256: string;
+  readonly planFileSha256: string;
+  readonly physicalIdentitySha256: string;
+  readonly plannerLoginIdentitySha256: string;
+  readonly reviewPacketCandidateSha256: string;
+  readonly reviewPacketFileSha256: string;
+  readonly rowCount: number;
+}
+
+interface PreparedPublicationJournal {
+  readonly artifacts: {
+    readonly plan: PublicationArtifactRecord;
+    readonly reviewPacket: PublicationArtifactRecord;
+  };
+  readonly invocationSha256: string;
+  readonly kind: "pintpath-postgres-reviewed-price-promotion-publication";
+  readonly outputPlan: string;
+  readonly outputReviewPacket: string;
+  readonly processId: number;
+  readonly state: "prepared";
+  readonly summary: PostgresReviewedPricePromotionSuccessSummary;
+  readonly version: 1;
+}
+
+interface CommittedPublicationJournal {
+  readonly artifacts: {
+    readonly plan: CommittedPublicationArtifactRecord;
+    readonly reviewPacket: CommittedPublicationArtifactRecord;
+  };
+  readonly invocationSha256: string;
+  readonly kind: "pintpath-postgres-reviewed-price-promotion-publication";
+  readonly outputPlan: string;
+  readonly outputReviewPacket: string;
+  readonly processId: number;
+  readonly state: "committed";
+  readonly summary: PostgresReviewedPricePromotionSuccessSummary;
+  readonly version: 1;
+}
+
+type PublicationJournal =
+  | PreparedPublicationJournal
+  | CommittedPublicationJournal;
+
+interface PublicationJournalPaths {
+  readonly commit: string;
+  readonly journal: string;
+  readonly prepare: string;
+}
+
 interface PrivateArtifact<Value> {
   readonly sha256: string;
   readonly value: Value;
@@ -725,6 +866,8 @@ const HELD_PRIVATE_FILE_STATES = new WeakMap<
 >();
 
 interface ExactCliArguments {
+  readonly authorityBundle: string;
+  readonly authorityBundleSha256: string;
   readonly candidateSha: string;
   readonly deploymentAttestation: string;
   readonly deploymentAttestationSha256: string;
@@ -735,6 +878,7 @@ interface ExactCliArguments {
   readonly migrationTargetIdentity: string;
   readonly migrationTargetIdentitySha256: string;
   readonly outputPlan: string;
+  readonly outputReviewPacket: string;
   readonly plannerUrlFile: string;
   readonly plannerUrlSha256: string;
   readonly privateInput: string;
@@ -758,7 +902,11 @@ function isProxy(value: object): boolean {
 function ownDataValue(
   value: object,
   key: string,
-  failureCode: "argument_invalid" | "artifact_file_unsafe" | "output_file_unsafe",
+  failureCode:
+    | "argument_invalid"
+    | "artifact_file_unsafe"
+    | "output_file_unsafe"
+    | "plan_result_invalid",
 ): unknown {
   const descriptor = REFLECT_APPLY(
     OBJECT_GET_OWN_PROPERTY_DESCRIPTOR,
@@ -776,7 +924,8 @@ function ownDataValue(
 function ownDependencyValue(
   value: object,
   key: string,
-  failureCode: "argument_invalid" | "database_open_failed" = "argument_invalid",
+  failureCode: "argument_invalid" | "database_open_failed" | "plan_result_invalid" =
+    "argument_invalid",
 ): unknown {
   const descriptor = REFLECT_APPLY(
     OBJECT_GET_OWN_PROPERTY_DESCRIPTOR,
@@ -808,6 +957,22 @@ function snapshotCliDependencies(
   );
   const now = ownDependencyValue(input, "now");
   const writeOutput = ownDependencyValue(input, "writeOutput");
+  const publicationBoundaryDescriptor = REFLECT_APPLY(
+    OBJECT_GET_OWN_PROPERTY_DESCRIPTOR,
+    OBJECT_CONSTRUCTOR,
+    [input, "assertPublicationBoundary"],
+  ) as PropertyDescriptor | undefined;
+  const assertPublicationBoundary = publicationBoundaryDescriptor
+    ? ownDependencyValue(input, "assertPublicationBoundary")
+    : undefined;
+  const releaseHandleDescriptor = REFLECT_APPLY(
+    OBJECT_GET_OWN_PROPERTY_DESCRIPTOR,
+    OBJECT_CONSTRUCTOR,
+    [input, "releasePublishedArtifactHandle"],
+  ) as PropertyDescriptor | undefined;
+  const releasePublishedArtifactHandle = releaseHandleDescriptor
+    ? ownDependencyValue(input, "releasePublishedArtifactHandle")
+    : undefined;
   if (
     typeof openDatabase !== "function"
     || typeof buildPlan !== "function"
@@ -817,8 +982,18 @@ function snapshotCliDependencies(
     || typeof expectedRootCaDerSha256 !== "string"
     || typeof now !== "function"
     || typeof writeOutput !== "function"
+    || assertPublicationBoundary !== undefined
+      && typeof assertPublicationBoundary !== "function"
+    || releasePublishedArtifactHandle !== undefined
+      && typeof releasePublishedArtifactHandle !== "function"
   ) fail("argument_invalid");
   return OBJECT_FREEZE({
+    ...(assertPublicationBoundary === undefined
+      ? {}
+      : { assertPublicationBoundary }),
+    ...(releasePublishedArtifactHandle === undefined
+      ? {}
+      : { releasePublishedArtifactHandle }),
     openDatabase,
     buildPlan,
     environment: environment as Readonly<NodeJS.ProcessEnv>,
@@ -898,6 +1073,9 @@ function argumentSlot(name: string): number {
     case "--planner-url-sha256": return 11;
     case "--private-input": return 12;
     case "--private-input-sha256": return 13;
+    case "--authority-bundle": return 14;
+    case "--authority-bundle-sha256": return 15;
+    case "--output-review-packet": return 16;
     default: return -1;
   }
 }
@@ -930,6 +1108,7 @@ function parseExactCliArguments(argv: readonly string[]): ExactCliArguments {
   const slots: Array<string | null> = [
     null, null, null, null, null, null, null,
     null, null, null, null, null, null, null,
+    null, null, null,
   ];
   let index = 1;
   while (index < length) {
@@ -985,6 +1164,11 @@ function parseExactCliArguments(argv: readonly string[]): ExactCliArguments {
     plannerUrlSha256: exactArrayItem(slots, 11, "argument_invalid") as string,
     privateInput: exactArrayItem(slots, 12, "argument_invalid") as string,
     privateInputSha256: exactArrayItem(slots, 13, "argument_invalid") as string,
+    authorityBundle: exactArrayItem(slots, 14, "argument_invalid") as string,
+    authorityBundleSha256:
+      exactArrayItem(slots, 15, "argument_invalid") as string,
+    outputReviewPacket:
+      exactArrayItem(slots, 16, "argument_invalid") as string,
   });
 }
 
@@ -1056,6 +1240,16 @@ async function capturedLink(
 ): Promise<void> {
   await REFLECT_APPLY(FS_PROMISES_LINK, FS_PROMISES_OBJECT, [
     existingPath,
+    newPath,
+  ]);
+}
+
+async function capturedRename(
+  oldPath: string,
+  newPath: string,
+): Promise<void> {
+  await REFLECT_APPLY(FS_PROMISES_RENAME, FS_PROMISES_OBJECT, [
+    oldPath,
     newPath,
   ]);
 }
@@ -1292,6 +1486,57 @@ function sameFileIdentity(
     && left.size === right.size
     && left.mtimeNs === right.mtimeNs
     && left.ctimeNs === right.ctimeNs;
+}
+
+function sameFileObject(
+  left: StableFileIdentity,
+  right: StableFileIdentity,
+): boolean {
+  return left.dev === right.dev
+    && left.ino === right.ino
+    && left.uid === right.uid
+    && left.gid === right.gid;
+}
+
+function serializeStableFileIdentity(
+  value: StableFileIdentity,
+): SerializedStableFileIdentity {
+  const decimal = (item: bigint): string => REFLECT_APPLY(
+    BIGINT_TO_STRING,
+    item,
+    [],
+  ) as string;
+  return OBJECT_FREEZE({
+    ctimeNs: decimal(value.ctimeNs),
+    dev: decimal(value.dev),
+    gid: decimal(value.gid),
+    ino: decimal(value.ino),
+    mode: decimal(value.mode),
+    mtimeNs: decimal(value.mtimeNs),
+    nlink: decimal(value.nlink),
+    size: decimal(value.size),
+    uid: decimal(value.uid),
+  });
+}
+
+function sameSerializedFileIdentity(
+  expected: SerializedStableFileIdentity,
+  actual: StableFileIdentity,
+): boolean {
+  const decimal = (item: bigint): string => REFLECT_APPLY(
+    BIGINT_TO_STRING,
+    item,
+    [],
+  ) as string;
+  return expected.ctimeNs === decimal(actual.ctimeNs)
+    && expected.dev === decimal(actual.dev)
+    && expected.gid === decimal(actual.gid)
+    && expected.ino === decimal(actual.ino)
+    && expected.mode === decimal(actual.mode)
+    && expected.mtimeNs === decimal(actual.mtimeNs)
+    && expected.nlink === decimal(actual.nlink)
+    && expected.size === decimal(actual.size)
+    && expected.uid === decimal(actual.uid);
 }
 
 function sameDirectoryIdentity(
@@ -1666,6 +1911,37 @@ function decodeExactUtf8(bytes: Buffer): string {
   }
 }
 
+function deepFreezeCanonicalArtifact(value: unknown): void {
+  if (value === null || typeof value !== "object") return;
+  if (isProxy(value)) fail("artifact_invalid");
+  const prototype = REFLECT_APPLY(
+    OBJECT_GET_PROTOTYPE_OF,
+    OBJECT_CONSTRUCTOR,
+    [value],
+  );
+  if (
+    prototype !== OBJECT_PROTOTYPE
+    && prototype !== null
+    && prototype !== ARRAY_PROTOTYPE
+  ) fail("artifact_invalid");
+  const keys = REFLECT_OWN_KEYS(value);
+  for (let index = 0; index < keys.length; index += 1) {
+    const key = keys[index];
+    const descriptor = REFLECT_APPLY(
+      OBJECT_GET_OWN_PROPERTY_DESCRIPTOR,
+      OBJECT_CONSTRUCTOR,
+      [value, key],
+    ) as PropertyDescriptor | undefined;
+    if (!descriptor || !REFLECT_APPLY(
+      OBJECT_HAS_OWN,
+      OBJECT_CONSTRUCTOR,
+      [descriptor, "value"],
+    )) fail("artifact_invalid");
+    deepFreezeCanonicalArtifact(descriptor.value);
+  }
+  REFLECT_APPLY(OBJECT_FREEZE, OBJECT_CONSTRUCTOR, [value]);
+}
+
 async function readCanonicalJsonArtifact<Value>(input: {
   readonly held: HeldPrivateFile;
   readonly expectedSha256: string;
@@ -1694,10 +1970,11 @@ async function readCanonicalJsonArtifact<Value>(input: {
       } finally {
         wipeBytes(canonical);
       }
-      return {
+      deepFreezeCanonicalArtifact(parsed.data);
+      return OBJECT_FREEZE({
         sha256: input.held.sha256,
         value: parsed.data,
-      };
+      });
     },
   );
 }
@@ -2056,8 +2333,7 @@ async function assertHeldAuthorityExact(input: {
   await input.authority.assertExact();
 }
 
-async function closeHeldAuthority(input: {
-  readonly authority: PrivateParentAuthority | null;
+async function closeHeldPrivateFiles(input: {
   readonly files: readonly (HeldPrivateFile | null)[];
 }): Promise<boolean> {
   let exact = true;
@@ -2066,13 +2342,6 @@ async function closeHeldAuthority(input: {
     if (!file) continue;
     try {
       await file.close();
-    } catch {
-      exact = false;
-    }
-  }
-  if (input.authority) {
-    try {
-      await input.authority.close();
     } catch {
       exact = false;
     }
@@ -2109,6 +2378,1298 @@ async function pathExists(filename: string): Promise<boolean> {
   }
 }
 
+function activePublicationJournal(filename: string): boolean {
+  return REFLECT_APPLY(
+    SET_HAS,
+    ACTIVE_PUBLICATION_JOURNALS,
+    [filename],
+  ) as boolean;
+}
+
+function registerActivePublicationJournal(filename: string): void {
+  if (activePublicationJournal(filename)) fail("output_file_unsafe");
+  REFLECT_APPLY(SET_ADD, ACTIVE_PUBLICATION_JOURNALS, [filename]);
+}
+
+function unregisterActivePublicationJournal(filename: string): void {
+  if (!activePublicationJournal(filename)) fail("output_file_unsafe");
+  const deleted = REFLECT_APPLY(
+    SET_DELETE,
+    ACTIVE_PUBLICATION_JOURNALS,
+    [filename],
+  );
+  if (deleted !== true) fail("output_file_unsafe");
+}
+
+function publicationProcessIsAlive(processId: number): boolean {
+  if (
+    !REFLECT_APPLY(NUMBER_IS_SAFE_INTEGER, NUMBER_OBJECT, [processId])
+    || processId < 1
+    || typeof PROCESS_KILL !== "function"
+  ) fail("output_file_unsafe");
+  try {
+    REFLECT_APPLY(PROCESS_KILL, PROCESS_OBJECT, [processId, 0]);
+    return true;
+  } catch (error) {
+    if (errnoIs(error, "ESRCH")) return false;
+    return fail("output_file_unsafe");
+  }
+}
+
+function assertPreparedPublicationRecoverable(
+  journal: PreparedPublicationJournal,
+  journalPath: string,
+  allowActiveProcess: boolean,
+): void {
+  if (journal.processId === PROCESS_PID) {
+    if (!allowActiveProcess && activePublicationJournal(journalPath)) {
+      fail("output_file_unsafe");
+    }
+    return;
+  }
+  if (publicationProcessIsAlive(journal.processId)) fail("output_file_unsafe");
+}
+
+function publicationJournalPaths(
+  outputPlanInput: string,
+  outputReviewPacketInput: string,
+): PublicationJournalPaths {
+  const outputPlan = exactAbsolutePath(outputPlanInput);
+  const outputReviewPacket = exactAbsolutePath(outputReviewPacketInput);
+  const parent = REFLECT_APPLY(PATH_DIRNAME, PATH_OBJECT, [outputPlan]) as string;
+  if (
+    REFLECT_APPLY(PATH_DIRNAME, PATH_OBJECT, [outputReviewPacket]) !== parent
+  ) fail("argument_invalid");
+  const publicationId = sha256PostgresReviewedPricePromotionValue({
+    outputPlan,
+    outputReviewPacket,
+  });
+  const journal = REFLECT_APPLY(PATH_JOIN, PATH_OBJECT, [
+    parent,
+    `.pintpath-postgres-reviewed-price-publication-${publicationId}.journal`,
+  ]) as string;
+  const prepare = `${journal}.prepare`;
+  const commit = `${journal}.commit`;
+  if (
+    exactAbsolutePath(journal) !== journal
+    || exactAbsolutePath(prepare) !== prepare
+    || exactAbsolutePath(commit) !== commit
+  ) fail("argument_invalid");
+  return OBJECT_FREEZE({ commit, journal, prepare });
+}
+
+function publicationInvocationSha256(input: {
+  readonly args: ExactCliArguments;
+  readonly authorityBundle: string;
+  readonly deploymentAttestation: string;
+  readonly expectedRootCaDerSha256: string;
+  readonly migrationReceipt: string;
+  readonly migrationTargetIdentity: string;
+  readonly outputPlan: string;
+  readonly outputReviewPacket: string;
+  readonly plannerUrlFile: string;
+  readonly privateInput: string;
+}): string {
+  return sha256PostgresReviewedPricePromotionValue({
+    authorityBundle: input.authorityBundle,
+    authorityBundleSha256: exactSha256(input.args.authorityBundleSha256),
+    candidateSha: exactCandidateSha(input.args.candidateSha),
+    command: POSTGRES_REVIEWED_PRICE_PROMOTION_COMMAND,
+    deploymentAttestation: input.deploymentAttestation,
+    deploymentAttestationSha256:
+      exactSha256(input.args.deploymentAttestationSha256),
+    expectedEnvironment: input.args.expectedEnvironment,
+    expectedRootCaDerSha256: exactSha256(input.expectedRootCaDerSha256),
+    expectedTargetDatabaseIdentitySha256:
+      exactSha256(input.args.expectedTargetDatabaseIdentitySha256),
+    migrationReceipt: input.migrationReceipt,
+    migrationReceiptSha256: exactSha256(input.args.migrationReceiptSha256),
+    migrationTargetIdentity: input.migrationTargetIdentity,
+    migrationTargetIdentitySha256:
+      exactSha256(input.args.migrationTargetIdentitySha256),
+    outputPlan: input.outputPlan,
+    outputReviewPacket: input.outputReviewPacket,
+    plannerUrlFile: input.plannerUrlFile,
+    plannerUrlSha256: exactSha256(input.args.plannerUrlSha256),
+    privateInput: input.privateInput,
+    privateInputSha256: exactSha256(input.args.privateInputSha256),
+    publicationVersion: 1,
+    reviewedPriceSelectionPolicySha256:
+      REVIEWED_PRICE_SELECTION_POLICY_SHA256,
+    reviewedPriceSourceSchemaSha256:
+      POSTGRES_REVIEWED_PRICE_PROMOTION_SOURCE_SCHEMA_SHA256,
+    reviewedPriceWrongPricePolicySha256:
+      REVIEWED_PRICE_WRONG_PRICE_POLICY_SHA256,
+    railwayDeploymentAttestationPolicySha256:
+      RAILWAY_APPLICATION_DEPLOYMENT_ATTESTATION_POLICY_SHA256,
+  });
+}
+
+function describePublicationArtifact(
+  filenameInput: string,
+  temporaryPathInput: string,
+  value: unknown,
+  maximumBytes: number,
+): PublicationArtifactRecord {
+  const filename = exactAbsolutePath(filenameInput);
+  const temporaryPath = exactAbsolutePath(temporaryPathInput);
+  let bytes: Buffer | null = null;
+  try {
+    bytes = canonicalPostgresReviewedPricePromotionJson(value);
+    const byteCount = exactBufferLength(bytes, "plan_result_invalid");
+    if (byteCount < 1 || byteCount > maximumBytes) fail("plan_result_invalid");
+    return OBJECT_FREEZE({
+      bytes: byteCount,
+      path: filename,
+      sha256: sha256PostgresMigrationBytes(bytes),
+      temporaryPath,
+    });
+  } finally {
+    wipeBytes(bytes);
+  }
+}
+
+function publicationTemporaryPath(
+  parent: string,
+  prefix: "plan" | "review-packet",
+): string {
+  const temporaryPath = REFLECT_APPLY(PATH_JOIN, PATH_OBJECT, [
+    parent,
+    `.pintpath-postgres-reviewed-price-${prefix}-${freshTemporarySuffix()}.tmp`,
+  ]) as string;
+  if (
+    exactAbsolutePath(temporaryPath) !== temporaryPath
+    || REFLECT_APPLY(PATH_DIRNAME, PATH_OBJECT, [temporaryPath]) !== parent
+  ) fail("output_file_unsafe");
+  return temporaryPath;
+}
+
+function exactOutputRecord(
+  value: unknown,
+  expectedKeys: readonly string[],
+): Record<string, unknown> {
+  if (
+    value === null
+    || typeof value !== "object"
+    || isProxy(value)
+    || REFLECT_APPLY(OBJECT_GET_PROTOTYPE_OF, OBJECT_CONSTRUCTOR, [value])
+      !== OBJECT_PROTOTYPE
+  ) fail("output_file_unsafe");
+  const keys = REFLECT_APPLY(REFLECT_OWN_KEYS, REFLECT_OBJECT, [value]);
+  if (!ARRAY_IS_ARRAY(keys) || keys.length !== expectedKeys.length) {
+    fail("output_file_unsafe");
+  }
+  for (let expectedIndex = 0; expectedIndex < expectedKeys.length; expectedIndex += 1) {
+    const expected = expectedKeys[expectedIndex];
+    if (typeof expected !== "string") fail("output_file_unsafe");
+    let found = false;
+    for (let actualIndex = 0; actualIndex < keys.length; actualIndex += 1) {
+      const actual = keys[actualIndex];
+      if (actual === expected) found = true;
+    }
+    if (!found) fail("output_file_unsafe");
+  }
+  return value as Record<string, unknown>;
+}
+
+function exactOutputString(
+  value: Record<string, unknown>,
+  key: string,
+): string {
+  const item = ownDataValue(value, key, "output_file_unsafe");
+  if (typeof item !== "string") fail("output_file_unsafe");
+  return item;
+}
+
+function exactOutputNonNegativeInteger(
+  value: Record<string, unknown>,
+  key: string,
+): number {
+  const item = ownDataValue(value, key, "output_file_unsafe");
+  if (
+    !REFLECT_APPLY(NUMBER_IS_SAFE_INTEGER, NUMBER_OBJECT, [item])
+    || (item as number) < 0
+  ) fail("output_file_unsafe");
+  return item as number;
+}
+
+function exactSerializedStableFileIdentity(
+  value: unknown,
+): SerializedStableFileIdentity {
+  const record = exactOutputRecord(value, [
+    "ctimeNs",
+    "dev",
+    "gid",
+    "ino",
+    "mode",
+    "mtimeNs",
+    "nlink",
+    "size",
+    "uid",
+  ]);
+  const decimal = (key: string): string => {
+    const item = exactOutputString(record, key);
+    if (!regexMatches(/^(?:0|[1-9][0-9]*)$/, item)) {
+      fail("output_file_unsafe");
+    }
+    let parsed: bigint;
+    try {
+      parsed = REFLECT_APPLY(BIGINT_CONSTRUCTOR, undefined, [item]) as bigint;
+    } catch {
+      return fail("output_file_unsafe");
+    }
+    if (
+      REFLECT_APPLY(BIGINT_TO_STRING, parsed, []) !== item
+    ) fail("output_file_unsafe");
+    return item;
+  };
+  return OBJECT_FREEZE({
+    ctimeNs: decimal("ctimeNs"),
+    dev: decimal("dev"),
+    gid: decimal("gid"),
+    ino: decimal("ino"),
+    mode: decimal("mode"),
+    mtimeNs: decimal("mtimeNs"),
+    nlink: decimal("nlink"),
+    size: decimal("size"),
+    uid: decimal("uid"),
+  });
+}
+
+function exactPublicationArtifactRecord(input: {
+  readonly committed: boolean;
+  readonly expectedPath: string;
+  readonly maximumBytes: number;
+  readonly prefix: "plan" | "review-packet";
+  readonly value: unknown;
+}): PublicationArtifactRecord | CommittedPublicationArtifactRecord {
+  const record = exactOutputRecord(input.value, input.committed
+    ? ["bytes", "identity", "path", "sha256", "temporaryPath"]
+    : ["bytes", "path", "sha256", "temporaryPath"]);
+  const bytes = exactOutputNonNegativeInteger(record, "bytes");
+  const artifactPath = exactOutputString(record, "path");
+  const sha256 = exactOutputString(record, "sha256");
+  const temporaryPath = exactOutputString(record, "temporaryPath");
+  const parent = REFLECT_APPLY(
+    PATH_DIRNAME,
+    PATH_OBJECT,
+    [input.expectedPath],
+  ) as string;
+  const temporaryPrefix = REFLECT_APPLY(PATH_JOIN, PATH_OBJECT, [
+    parent,
+    `.pintpath-postgres-reviewed-price-${input.prefix}-`,
+  ]) as string;
+  const suffix = REFLECT_APPLY(
+    STRING_SLICE,
+    temporaryPath,
+    [temporaryPrefix.length, -4],
+  ) as string;
+  if (
+    bytes < 1
+    || bytes > input.maximumBytes
+    || artifactPath !== input.expectedPath
+    || exactAbsolutePath(artifactPath) !== artifactPath
+    || exactAbsolutePath(temporaryPath) !== temporaryPath
+    || REFLECT_APPLY(PATH_DIRNAME, PATH_OBJECT, [temporaryPath]) !== parent
+    || REFLECT_APPLY(STRING_STARTS_WITH, temporaryPath, [temporaryPrefix])
+      !== true
+    || REFLECT_APPLY(STRING_ENDS_WITH, temporaryPath, [".tmp"]) !== true
+    || !regexMatches(/^[a-f0-9]{32}$/, suffix)
+    || !regexMatches(SHA256_PATTERN, sha256)
+  ) fail("output_file_unsafe");
+  if (!input.committed) {
+    return OBJECT_FREEZE({
+      bytes,
+      path: artifactPath,
+      sha256,
+      temporaryPath,
+    });
+  }
+  const identity = exactSerializedStableFileIdentity(
+    ownDataValue(record, "identity", "output_file_unsafe"),
+  );
+  if (
+    identity.nlink !== "1"
+    || identity.size !== REFLECT_APPLY(NUMBER_TO_STRING, bytes, [])
+  ) {
+    fail("output_file_unsafe");
+  }
+  return OBJECT_FREEZE({
+    bytes,
+    identity,
+    path: artifactPath,
+    sha256,
+    temporaryPath,
+  });
+}
+
+function exactPublicationSummary(input: {
+  readonly candidateSha: string;
+  readonly expectedPhysicalIdentitySha256: string;
+  readonly plan: PublicationArtifactRecord;
+  readonly reviewPacket: PublicationArtifactRecord;
+  readonly value: unknown;
+}): PostgresReviewedPricePromotionSuccessSummary {
+  const record = exactOutputRecord(input.value, [
+    "activationBlockerCount",
+    "candidateSha",
+    "command",
+    "expectedEnvironment",
+    "itemCount",
+    "mutationEnabled",
+    "ok",
+    "planCandidateSha256",
+    "planFileSha256",
+    "physicalIdentitySha256",
+    "plannerLoginIdentitySha256",
+    "reviewPacketCandidateSha256",
+    "reviewPacketFileSha256",
+    "rowCount",
+  ]);
+  const activationBlockerCount = exactOutputNonNegativeInteger(
+    record,
+    "activationBlockerCount",
+  );
+  const candidateSha = exactOutputString(record, "candidateSha");
+  const command = exactOutputString(record, "command");
+  const expectedEnvironment = exactOutputString(record, "expectedEnvironment");
+  const itemCount = exactOutputNonNegativeInteger(record, "itemCount");
+  const mutationEnabled = ownDataValue(
+    record,
+    "mutationEnabled",
+    "output_file_unsafe",
+  );
+  const ok = ownDataValue(record, "ok", "output_file_unsafe");
+  const planCandidateSha256 = exactOutputString(record, "planCandidateSha256");
+  const planFileSha256 = exactOutputString(record, "planFileSha256");
+  const physicalIdentitySha256 = exactOutputString(
+    record,
+    "physicalIdentitySha256",
+  );
+  const plannerLoginIdentitySha256 = exactOutputString(
+    record,
+    "plannerLoginIdentitySha256",
+  );
+  const reviewPacketCandidateSha256 = exactOutputString(
+    record,
+    "reviewPacketCandidateSha256",
+  );
+  const reviewPacketFileSha256 = exactOutputString(
+    record,
+    "reviewPacketFileSha256",
+  );
+  const rowCount = exactOutputNonNegativeInteger(record, "rowCount");
+  if (
+    activationBlockerCount
+      !== POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_BLOCKERS.length
+    || candidateSha !== input.candidateSha
+    || command !== POSTGRES_REVIEWED_PRICE_PROMOTION_COMMAND
+    || expectedEnvironment !== "permanent-staging"
+    || mutationEnabled !== false
+    || ok !== true
+    || !regexMatches(SHA256_PATTERN, planCandidateSha256)
+    || planFileSha256 !== input.plan.sha256
+    || physicalIdentitySha256 !== input.expectedPhysicalIdentitySha256
+    || !regexMatches(SHA256_PATTERN, plannerLoginIdentitySha256)
+    || !regexMatches(SHA256_PATTERN, reviewPacketCandidateSha256)
+    || reviewPacketFileSha256 !== input.reviewPacket.sha256
+  ) fail("output_file_unsafe");
+  return OBJECT_FREEZE({
+    activationBlockerCount,
+    candidateSha,
+    command: POSTGRES_REVIEWED_PRICE_PROMOTION_COMMAND,
+    expectedEnvironment: "permanent-staging",
+    itemCount,
+    mutationEnabled: false,
+    ok: true,
+    planCandidateSha256,
+    planFileSha256,
+    physicalIdentitySha256,
+    plannerLoginIdentitySha256,
+    reviewPacketCandidateSha256,
+    reviewPacketFileSha256,
+    rowCount,
+  });
+}
+
+function decodeExactUtf8Output(bytes: Buffer): string {
+  let roundTrip: Buffer | null = null;
+  try {
+    const value = REFLECT_APPLY(TEXT_DECODER_DECODE, UTF8_FATAL_DECODER, [bytes]);
+    if (typeof value !== "string") fail("output_file_unsafe");
+    roundTrip = REFLECT_APPLY(
+      BUFFER_FROM,
+      BUFFER_CONSTRUCTOR,
+      [value, "utf8"],
+    ) as Buffer;
+    if (!exactBytesEqual(roundTrip, bytes)) fail("output_file_unsafe");
+    return value;
+  } catch (error) {
+    if (isSafeCliError(error)) throw error;
+    return fail("output_file_unsafe");
+  } finally {
+    wipeBytes(roundTrip);
+  }
+}
+
+function parsePublicationJournal(input: {
+  readonly bytes: Buffer;
+  readonly candidateSha: string;
+  readonly expectedInvocationSha256: string;
+  readonly expectedPhysicalIdentitySha256: string;
+  readonly outputPlan: string;
+  readonly outputReviewPacket: string;
+}): PublicationJournal {
+  let raw: unknown;
+  try {
+    raw = REFLECT_APPLY(JSON_PARSE, JSON_OBJECT, [
+      decodeExactUtf8Output(input.bytes),
+    ]) as unknown;
+  } catch (error) {
+    if (isSafeCliError(error)) throw error;
+    return fail("output_file_unsafe");
+  }
+  const record = exactOutputRecord(raw, [
+    "artifacts",
+    "invocationSha256",
+    "kind",
+    "outputPlan",
+    "outputReviewPacket",
+    "processId",
+    "state",
+    "summary",
+    "version",
+  ]);
+  const kind = exactOutputString(record, "kind");
+  const invocationSha256 = exactOutputString(record, "invocationSha256");
+  const outputPlan = exactOutputString(record, "outputPlan");
+  const outputReviewPacket = exactOutputString(record, "outputReviewPacket");
+  const processId = exactOutputNonNegativeInteger(record, "processId");
+  const state = exactOutputString(record, "state");
+  const version = ownDataValue(record, "version", "output_file_unsafe");
+  if (
+    kind !== "pintpath-postgres-reviewed-price-promotion-publication"
+    || invocationSha256 !== input.expectedInvocationSha256
+    || outputPlan !== input.outputPlan
+    || outputReviewPacket !== input.outputReviewPacket
+    || processId < 1
+    || state !== "prepared" && state !== "committed"
+    || version !== 1
+  ) fail("output_file_unsafe");
+  const artifactsRecord = exactOutputRecord(
+    ownDataValue(record, "artifacts", "output_file_unsafe"),
+    ["plan", "reviewPacket"],
+  );
+  const committed = state === "committed";
+  const plan = exactPublicationArtifactRecord({
+    committed,
+    expectedPath: outputPlan,
+    maximumBytes: MAX_PLAN_BYTES,
+    prefix: "plan",
+    value: ownDataValue(artifactsRecord, "plan", "output_file_unsafe"),
+  });
+  const reviewPacket = exactPublicationArtifactRecord({
+    committed,
+    expectedPath: outputReviewPacket,
+    maximumBytes: MAX_REVIEW_PACKET_BYTES,
+    prefix: "review-packet",
+    value: ownDataValue(
+      artifactsRecord,
+      "reviewPacket",
+      "output_file_unsafe",
+    ),
+  });
+  if (!exactDistinctPaths([
+    outputPlan,
+    outputReviewPacket,
+    plan.temporaryPath,
+    reviewPacket.temporaryPath,
+  ])) fail("output_file_unsafe");
+  const summary = exactPublicationSummary({
+    candidateSha: input.candidateSha,
+    expectedPhysicalIdentitySha256: input.expectedPhysicalIdentitySha256,
+    plan,
+    reviewPacket,
+    value: ownDataValue(record, "summary", "output_file_unsafe"),
+  });
+  let canonical: Buffer | null = null;
+  try {
+    canonical = canonicalPostgresReviewedPricePromotionJson(raw);
+    if (!exactBytesEqual(canonical, input.bytes)) fail("output_file_unsafe");
+  } finally {
+    wipeBytes(canonical);
+  }
+  if (committed) {
+    return OBJECT_FREEZE({
+      artifacts: OBJECT_FREEZE({
+        plan: plan as CommittedPublicationArtifactRecord,
+        reviewPacket: reviewPacket as CommittedPublicationArtifactRecord,
+      }),
+      invocationSha256,
+      kind,
+      outputPlan,
+      outputReviewPacket,
+      processId,
+      state: "committed",
+      summary,
+      version: 1,
+    });
+  }
+  return OBJECT_FREEZE({
+    artifacts: OBJECT_FREEZE({ plan, reviewPacket }),
+    invocationSha256,
+    kind,
+    outputPlan,
+    outputReviewPacket,
+    processId,
+    state: "prepared",
+    summary,
+    version: 1,
+  });
+}
+
+function assertPrivateJournalFile(
+  stat: fs.BigIntStats,
+  uid: bigint,
+): void {
+  if (
+    (stat.mode & S_IFMT) !== S_IFREG
+    || stat.uid !== uid
+    || stat.nlink !== 1n
+    || (stat.mode & 0o7777n) !== 0o600n
+    || stat.size < 1n
+    || stat.size > REFLECT_APPLY(
+      BIGINT_CONSTRUCTOR,
+      undefined,
+      [MAX_PUBLICATION_JOURNAL_BYTES],
+    )
+  ) fail("output_file_unsafe");
+}
+
+async function readExactPrivateJournal(
+  authority: PrivateParentAuthority,
+  filenameInput: string,
+): Promise<{ readonly bytes: Buffer; readonly identity: StableFileIdentity }> {
+  const filename = exactAbsolutePath(filenameInput);
+  if (REFLECT_APPLY(PATH_DIRNAME, PATH_OBJECT, [filename]) !== authority.path) {
+    fail("output_file_unsafe");
+  }
+  let handle: fs.promises.FileHandle | null = null;
+  let bytes: Buffer | null = null;
+  try {
+    await authority.assertExact();
+    const pathBefore = await capturedLstat(filename, "output_file_unsafe");
+    const realBefore = await capturedRealpath(filename, "output_file_unsafe");
+    assertPrivateJournalFile(pathBefore, authority.uid);
+    if (realBefore !== filename) fail("output_file_unsafe");
+    handle = await capturedOpen(
+      filename,
+      O_RDONLY | O_NOFOLLOW | O_NONBLOCK,
+      undefined,
+      "output_file_unsafe",
+    );
+    const opened = await capturedHandleStat(handle, "output_file_unsafe");
+    assertPrivateJournalFile(opened, authority.uid);
+    const identity = fileIdentity(opened);
+    if (!sameFileIdentity(identity, fileIdentity(pathBefore))) {
+      fail("output_file_unsafe");
+    }
+    const size = REFLECT_APPLY(NUMBER_OBJECT, undefined, [opened.size]) as number;
+    if (
+      !REFLECT_APPLY(NUMBER_IS_SAFE_INTEGER, NUMBER_OBJECT, [size])
+      || size < 1
+    ) fail("output_file_unsafe");
+    bytes = await readExactDescriptor(handle, size, "output_file_unsafe");
+    const after = await capturedHandleStat(handle, "output_file_unsafe");
+    const pathAfter = await capturedLstat(filename, "output_file_unsafe");
+    const realAfter = await capturedRealpath(filename, "output_file_unsafe");
+    assertPrivateJournalFile(after, authority.uid);
+    assertPrivateJournalFile(pathAfter, authority.uid);
+    if (
+      realAfter !== filename
+      || !sameFileIdentity(identity, fileIdentity(after))
+      || !sameFileIdentity(identity, fileIdentity(pathAfter))
+    ) fail("output_file_unsafe");
+    await authority.assertExact();
+    const result = { bytes, identity };
+    bytes = null;
+    return result;
+  } catch (error) {
+    wipeBytes(bytes);
+    if (isSafeCliError(error)) throw error;
+    return fail("output_file_unsafe");
+  } finally {
+    if (handle) {
+      try {
+        await capturedHandleClose(handle, "output_file_unsafe");
+      } catch {
+        wipeBytes(bytes);
+        fail("output_file_unsafe");
+      }
+    }
+  }
+}
+
+async function writePrivateJournalStagingFile(
+  authority: PrivateParentAuthority,
+  filenameInput: string,
+  value: PublicationJournal,
+): Promise<void> {
+  const filename = exactAbsolutePath(filenameInput);
+  if (REFLECT_APPLY(PATH_DIRNAME, PATH_OBJECT, [filename]) !== authority.path) {
+    fail("output_file_unsafe");
+  }
+  let bytes: Buffer | null = null;
+  let handle: fs.promises.FileHandle | null = null;
+  let owned = false;
+  let ownedIdentity: StableFileIdentity | null = null;
+  try {
+    bytes = canonicalPostgresReviewedPricePromotionJson(value);
+    const byteCount = exactBufferLength(bytes, "output_file_unsafe");
+    if (byteCount < 1 || byteCount > MAX_PUBLICATION_JOURNAL_BYTES) {
+      fail("output_file_unsafe");
+    }
+    await authority.assertExact();
+    handle = await capturedOpen(
+      filename,
+      O_CREAT | O_EXCL | O_RDWR | O_NOFOLLOW,
+      0o600,
+      "output_file_unsafe",
+    );
+    owned = true;
+    ownedIdentity = fileIdentity(await capturedHandleStat(
+      handle,
+      "output_file_unsafe",
+    ));
+    await capturedHandleWriteFile(handle, bytes);
+    await capturedHandleChmod(handle, 0o600);
+    await capturedHandleSync(handle, "output_file_unsafe");
+    const written = await capturedHandleStat(handle, "output_file_unsafe");
+    assertPrivateOutputFile(written, authority.uid, byteCount);
+    const readback = await readExactDescriptor(
+      handle,
+      byteCount,
+      "output_file_unsafe",
+    );
+    try {
+      if (!exactBytesEqual(readback, bytes)) fail("output_file_unsafe");
+    } finally {
+      wipeBytes(readback);
+    }
+    await authority.assertExact();
+    await capturedHandleClose(handle, "output_file_unsafe");
+    handle = null;
+    owned = false;
+  } catch (error) {
+    if (isSafeCliError(error)) throw error;
+    return fail("output_file_unsafe");
+  } finally {
+    wipeBytes(bytes);
+    let cleanupFailed = false;
+    if (owned && handle && ownedIdentity) {
+      try {
+        await capturedHandleTruncate(handle, 0);
+        await capturedHandleSync(handle, "output_file_unsafe");
+        const atPath = await capturedLstat(filename, "output_file_unsafe");
+        const current = fileIdentity(atPath);
+        if (
+          !sameFileObject(ownedIdentity, current)
+          || current.size !== 0n
+          || current.nlink !== 1n
+        ) fail("output_file_unsafe");
+        await capturedUnlink(filename);
+        await capturedHandleSync(authority.handle, "output_file_unsafe");
+      } catch {
+        cleanupFailed = true;
+      }
+    }
+    if (handle) {
+      try {
+        await capturedHandleClose(handle, "output_file_unsafe");
+      } catch {
+        cleanupFailed = true;
+      }
+    }
+    if (cleanupFailed) fail("output_file_unsafe");
+  }
+}
+
+async function assertJournalEquals(
+  authority: PrivateParentAuthority,
+  filename: string,
+  value: PublicationJournal,
+): Promise<StableFileIdentity> {
+  const held = await readExactPrivateJournal(authority, filename);
+  let expected: Buffer | null = null;
+  try {
+    expected = canonicalPostgresReviewedPricePromotionJson(value);
+    if (!exactBytesEqual(held.bytes, expected)) fail("output_file_unsafe");
+    return held.identity;
+  } finally {
+    wipeBytes(held.bytes);
+    wipeBytes(expected);
+  }
+}
+
+async function writePreparedPublicationJournal(input: {
+  readonly authority: PrivateParentAuthority;
+  readonly journal: PreparedPublicationJournal;
+  readonly paths: PublicationJournalPaths;
+}): Promise<void> {
+  try {
+    await input.authority.assertExact();
+    if (
+      await pathExists(input.paths.journal)
+      || await pathExists(input.paths.prepare)
+      || await pathExists(input.paths.commit)
+      || await pathExists(input.journal.artifacts.plan.path)
+      || await pathExists(input.journal.artifacts.plan.temporaryPath)
+      || await pathExists(input.journal.artifacts.reviewPacket.path)
+      || await pathExists(input.journal.artifacts.reviewPacket.temporaryPath)
+    ) fail("output_file_unsafe");
+    await writePrivateJournalStagingFile(
+      input.authority,
+      input.paths.prepare,
+      input.journal,
+    );
+    await input.authority.assertExact();
+    await capturedLink(input.paths.prepare, input.paths.journal);
+    await capturedUnlink(input.paths.prepare);
+    await capturedHandleSync(input.authority.handle, "output_file_unsafe");
+    await assertJournalEquals(
+      input.authority,
+      input.paths.journal,
+      input.journal,
+    );
+  } catch (error) {
+    if (isSafeCliError(error)) throw error;
+    return fail("output_file_unsafe");
+  }
+}
+
+async function validateCommittedPublicationArtifact(
+  authority: PrivateParentAuthority,
+  artifact: CommittedPublicationArtifactRecord,
+): Promise<void> {
+  let handle: fs.promises.FileHandle | null = null;
+  let bytes: Buffer | null = null;
+  try {
+    await authority.assertExact();
+    const pathBefore = await capturedLstat(artifact.path, "output_file_unsafe");
+    const realBefore = await capturedRealpath(artifact.path, "output_file_unsafe");
+    assertPrivateOutputFile(pathBefore, authority.uid, artifact.bytes);
+    const beforeIdentity = fileIdentity(pathBefore);
+    if (
+      realBefore !== artifact.path
+      || !sameSerializedFileIdentity(artifact.identity, beforeIdentity)
+    ) fail("output_file_unsafe");
+    handle = await capturedOpen(
+      artifact.path,
+      O_RDONLY | O_NOFOLLOW | O_NONBLOCK,
+      undefined,
+      "output_file_unsafe",
+    );
+    const opened = await capturedHandleStat(handle, "output_file_unsafe");
+    assertPrivateOutputFile(opened, authority.uid, artifact.bytes);
+    if (!sameFileIdentity(beforeIdentity, fileIdentity(opened))) {
+      fail("output_file_unsafe");
+    }
+    bytes = await readExactDescriptor(
+      handle,
+      artifact.bytes,
+      "output_file_unsafe",
+    );
+    if (sha256PostgresMigrationBytes(bytes) !== artifact.sha256) {
+      fail("output_file_unsafe");
+    }
+    const after = await capturedHandleStat(handle, "output_file_unsafe");
+    const pathAfter = await capturedLstat(artifact.path, "output_file_unsafe");
+    const realAfter = await capturedRealpath(artifact.path, "output_file_unsafe");
+    assertPrivateOutputFile(after, authority.uid, artifact.bytes);
+    assertPrivateOutputFile(pathAfter, authority.uid, artifact.bytes);
+    if (
+      realAfter !== artifact.path
+      || !sameFileIdentity(beforeIdentity, fileIdentity(after))
+      || !sameFileIdentity(beforeIdentity, fileIdentity(pathAfter))
+    ) fail("output_file_unsafe");
+    await authority.assertExact();
+  } catch (error) {
+    if (isSafeCliError(error)) throw error;
+    return fail("output_file_unsafe");
+  } finally {
+    wipeBytes(bytes);
+    if (handle) {
+      try {
+        await capturedHandleClose(handle, "output_file_unsafe");
+      } catch {
+        fail("output_file_unsafe");
+      }
+    }
+  }
+}
+
+async function writeCommittedPublicationJournal(input: {
+  readonly authority: PrivateParentAuthority;
+  readonly committed: CommittedPublicationJournal;
+  readonly markCommitted: () => void;
+  readonly paths: PublicationJournalPaths;
+  readonly prepared: PreparedPublicationJournal;
+}): Promise<boolean> {
+  let renamed = false;
+  try {
+    if (
+      await pathExists(input.paths.prepare)
+      || await pathExists(input.paths.commit)
+      || await pathExists(input.prepared.artifacts.plan.temporaryPath)
+      || await pathExists(input.prepared.artifacts.reviewPacket.temporaryPath)
+    ) fail("output_file_unsafe");
+    await assertJournalEquals(
+      input.authority,
+      input.paths.journal,
+      input.prepared,
+    );
+    await validateCommittedPublicationArtifact(
+      input.authority,
+      input.committed.artifacts.plan,
+    );
+    await validateCommittedPublicationArtifact(
+      input.authority,
+      input.committed.artifacts.reviewPacket,
+    );
+    await writePrivateJournalStagingFile(
+      input.authority,
+      input.paths.commit,
+      input.committed,
+    );
+    await assertJournalEquals(
+      input.authority,
+      input.paths.journal,
+      input.prepared,
+    );
+    await validateCommittedPublicationArtifact(
+      input.authority,
+      input.committed.artifacts.plan,
+    );
+    await validateCommittedPublicationArtifact(
+      input.authority,
+      input.committed.artifacts.reviewPacket,
+    );
+    await capturedRename(input.paths.commit, input.paths.journal);
+    renamed = true;
+    // The rename is the visibility boundary. Mark both retained artifacts in
+    // the same synchronous turn so no later fsync/close ambiguity can trigger
+    // destructive rollback beneath a committed marker.
+    input.markCommitted();
+    await capturedHandleSync(input.authority.handle, "output_file_unsafe");
+    await assertJournalEquals(
+      input.authority,
+      input.paths.journal,
+      input.committed,
+    );
+    await validateCommittedPublicationArtifact(
+      input.authority,
+      input.committed.artifacts.plan,
+    );
+    await validateCommittedPublicationArtifact(
+      input.authority,
+      input.committed.artifacts.reviewPacket,
+    );
+    return true;
+  } catch (error) {
+    if (renamed) return false;
+    if (isSafeCliError(error)) throw error;
+    return fail("output_file_unsafe");
+  }
+}
+
+interface RecoverablePublicationFile {
+  readonly filename: string;
+  readonly handle: fs.promises.FileHandle;
+  readonly identity: StableFileIdentity;
+  readonly size: number;
+}
+
+async function openRecoverablePublicationFile(input: {
+  readonly allowInvalidated: boolean;
+  readonly authority: PrivateParentAuthority;
+  readonly expectedBytes: number;
+  readonly expectedSha256: string | null;
+  readonly filename: string;
+  readonly temporary: boolean;
+}): Promise<RecoverablePublicationFile | null> {
+  let handle: fs.promises.FileHandle | null = null;
+  let bytes: Buffer | null = null;
+  try {
+    let pathBefore: fs.BigIntStats;
+    try {
+      pathBefore = await capturedLstat(input.filename, "output_file_unsafe");
+    } catch (error) {
+      if (errnoIs(error, "ENOENT")) return null;
+      throw error;
+    }
+    const realBefore = await capturedRealpath(
+      input.filename,
+      "output_file_unsafe",
+    );
+    if (
+      realBefore !== input.filename
+      || (pathBefore.mode & S_IFMT) !== S_IFREG
+      || pathBefore.uid !== input.authority.uid
+      || (pathBefore.mode & 0o7777n) !== 0o600n
+      || pathBefore.nlink < 1n
+      || pathBefore.nlink > 2n
+      || pathBefore.size < 0n
+      || pathBefore.size > REFLECT_APPLY(
+        BIGINT_CONSTRUCTOR,
+        undefined,
+        [input.expectedBytes],
+      )
+    ) fail("output_file_unsafe");
+    handle = await capturedOpen(
+      input.filename,
+      O_RDWR | O_NOFOLLOW | O_NONBLOCK,
+      undefined,
+      "output_file_unsafe",
+    );
+    const opened = await capturedHandleStat(handle, "output_file_unsafe");
+    const identity = fileIdentity(opened);
+    if (!sameFileIdentity(identity, fileIdentity(pathBefore))) {
+      fail("output_file_unsafe");
+    }
+    const size = REFLECT_APPLY(NUMBER_OBJECT, undefined, [opened.size]) as number;
+    if (
+      !REFLECT_APPLY(NUMBER_IS_SAFE_INTEGER, NUMBER_OBJECT, [size])
+      || size < 0
+      || size > input.expectedBytes
+      || !input.temporary
+        && size !== input.expectedBytes
+        && !(input.allowInvalidated && size === 0)
+    ) fail("output_file_unsafe");
+    if (size === input.expectedBytes && input.expectedSha256 !== null) {
+      bytes = await readExactDescriptor(handle, size, "output_file_unsafe");
+      if (sha256PostgresMigrationBytes(bytes) !== input.expectedSha256) {
+        fail("output_file_unsafe");
+      }
+    }
+    const result = OBJECT_FREEZE({
+      filename: input.filename,
+      handle,
+      identity,
+      size,
+    });
+    handle = null;
+    return result;
+  } catch (error) {
+    if (isSafeCliError(error)) throw error;
+    return fail("output_file_unsafe");
+  } finally {
+    wipeBytes(bytes);
+    if (handle) {
+      try {
+        await capturedHandleClose(handle, "output_file_unsafe");
+      } catch {
+        fail("output_file_unsafe");
+      }
+    }
+  }
+}
+
+async function recoverPreparedPublicationArtifact(
+  authority: PrivateParentAuthority,
+  artifact: PublicationArtifactRecord,
+): Promise<void> {
+  const finalFile = await openRecoverablePublicationFile({
+    allowInvalidated: true,
+    authority,
+    expectedBytes: artifact.bytes,
+    expectedSha256: artifact.sha256,
+    filename: artifact.path,
+    temporary: false,
+  });
+  const temporaryFile = await openRecoverablePublicationFile({
+    allowInvalidated: true,
+    authority,
+    expectedBytes: artifact.bytes,
+    expectedSha256: artifact.sha256,
+    filename: artifact.temporaryPath,
+    temporary: true,
+  });
+  const files: readonly RecoverablePublicationFile[] = temporaryFile
+    ? finalFile ? [temporaryFile, finalFile] : [temporaryFile]
+    : finalFile ? [finalFile] : [];
+  let exact = true;
+  try {
+    if (finalFile && temporaryFile) {
+      const linked = sameFileObject(finalFile.identity, temporaryFile.identity);
+      if (
+        !linked
+        || finalFile.identity.nlink !== 2n
+        || temporaryFile.identity.nlink !== 2n
+        || finalFile.size !== temporaryFile.size
+      ) fail("output_file_unsafe");
+    } else if (
+      finalFile?.identity.nlink !== undefined
+        && finalFile.identity.nlink !== 1n
+      || temporaryFile?.identity.nlink !== undefined
+        && temporaryFile.identity.nlink !== 1n
+    ) fail("output_file_unsafe");
+
+    let truncatedIdentity: StableFileIdentity | null = null;
+    for (let index = 0; index < files.length; index += 1) {
+      const file = files[index];
+      if (!file) fail("output_file_unsafe");
+      if (
+        truncatedIdentity
+        && sameFileObject(truncatedIdentity, file.identity)
+      ) {
+        continue;
+      }
+      await capturedHandleTruncate(file.handle, 0);
+      await capturedHandleSync(file.handle, "output_file_unsafe");
+      truncatedIdentity = file.identity;
+    }
+    for (let index = 0; index < files.length; index += 1) {
+      const file = files[index];
+      if (!file) fail("output_file_unsafe");
+      const atPath = await capturedLstat(file.filename, "output_file_unsafe");
+      const current = fileIdentity(atPath);
+      if (
+        !sameFileObject(file.identity, current)
+        || current.size !== 0n
+        || (current.mode & 0o7777n) !== 0o600n
+      ) fail("output_file_unsafe");
+    }
+    for (let index = 0; index < files.length; index += 1) {
+      const file = files[index];
+      if (!file) fail("output_file_unsafe");
+      await capturedUnlink(file.filename);
+    }
+    if (files.length > 0) {
+      await capturedHandleSync(authority.handle, "output_file_unsafe");
+    }
+  } catch {
+    exact = false;
+  } finally {
+    for (let index = 0; index < files.length; index += 1) {
+      const file = files[index];
+      if (!file) {
+        exact = false;
+        continue;
+      }
+      try {
+        await capturedHandleClose(file.handle, "output_file_unsafe");
+      } catch {
+        exact = false;
+      }
+    }
+  }
+  if (!exact) fail("output_file_unsafe");
+}
+
+async function removeReservedPublicationStagingFile(
+  authority: PrivateParentAuthority,
+  filename: string,
+): Promise<void> {
+  const file = await openRecoverablePublicationFile({
+    allowInvalidated: true,
+    authority,
+    expectedBytes: MAX_PUBLICATION_JOURNAL_BYTES,
+    expectedSha256: null,
+    filename,
+    temporary: true,
+  });
+  if (!file) return;
+  let exact = true;
+  try {
+    if (file.identity.nlink !== 1n) fail("output_file_unsafe");
+    await capturedHandleTruncate(file.handle, 0);
+    await capturedHandleSync(file.handle, "output_file_unsafe");
+    const atPath = await capturedLstat(filename, "output_file_unsafe");
+    const current = fileIdentity(atPath);
+    if (!sameFileObject(file.identity, current) || current.size !== 0n) {
+      fail("output_file_unsafe");
+    }
+    await capturedUnlink(filename);
+    await capturedHandleSync(authority.handle, "output_file_unsafe");
+  } catch {
+    exact = false;
+  } finally {
+    try {
+      await capturedHandleClose(file.handle, "output_file_unsafe");
+    } catch {
+      exact = false;
+    }
+  }
+  if (!exact) fail("output_file_unsafe");
+}
+
+async function normalizePreparedJournalHardlink(
+  authority: PrivateParentAuthority,
+  paths: PublicationJournalPaths,
+): Promise<void> {
+  let journalStat: fs.BigIntStats;
+  try {
+    journalStat = await capturedLstat(paths.journal, "output_file_unsafe");
+  } catch (error) {
+    if (errnoIs(error, "ENOENT")) return;
+    throw error;
+  }
+  if (journalStat.nlink === 1n) {
+    if (await pathExists(paths.prepare)) fail("output_file_unsafe");
+    return;
+  }
+  if (journalStat.nlink !== 2n) fail("output_file_unsafe");
+  const prepareStat = await capturedLstat(paths.prepare, "output_file_unsafe");
+  if (
+    !sameFileIdentity(fileIdentity(journalStat), fileIdentity(prepareStat))
+    || (journalStat.mode & S_IFMT) !== S_IFREG
+    || journalStat.uid !== authority.uid
+    || (journalStat.mode & 0o7777n) !== 0o600n
+    || journalStat.size < 1n
+    || journalStat.size > REFLECT_APPLY(
+      BIGINT_CONSTRUCTOR,
+      undefined,
+      [MAX_PUBLICATION_JOURNAL_BYTES],
+    )
+  ) fail("output_file_unsafe");
+  await capturedUnlink(paths.prepare);
+  await capturedHandleSync(authority.handle, "output_file_unsafe");
+  const normalized = await capturedLstat(paths.journal, "output_file_unsafe");
+  if (
+    normalized.nlink !== 1n
+    || !sameFileObject(fileIdentity(journalStat), fileIdentity(normalized))
+  ) fail("output_file_unsafe");
+}
+
+async function removeExactPreparedJournal(
+  authority: PrivateParentAuthority,
+  filename: string,
+  expectedIdentity: StableFileIdentity,
+): Promise<void> {
+  const current = await capturedLstat(filename, "output_file_unsafe");
+  if (!sameFileIdentity(expectedIdentity, fileIdentity(current))) {
+    fail("output_file_unsafe");
+  }
+  await capturedUnlink(filename);
+  await capturedHandleSync(authority.handle, "output_file_unsafe");
+}
+
+async function reconcilePublicationJournal(input: {
+  readonly allowActiveProcess?: boolean;
+  readonly authority: PrivateParentAuthority;
+  readonly candidateSha: string;
+  readonly expectedInvocationSha256: string;
+  readonly expectedPhysicalIdentitySha256: string;
+  readonly outputPlan: string;
+  readonly outputReviewPacket: string;
+  readonly paths: PublicationJournalPaths;
+}): Promise<PostgresReviewedPricePromotionSuccessSummary | null> {
+  await input.authority.assertExact();
+  const journalExists = await pathExists(input.paths.journal);
+  if (!journalExists) {
+    if (
+      await pathExists(input.outputPlan)
+      || await pathExists(input.outputReviewPacket)
+      || await pathExists(input.paths.commit)
+    ) fail("output_file_unsafe");
+    if (await pathExists(input.paths.prepare)) {
+      const orphan = await readExactPrivateJournal(
+        input.authority,
+        input.paths.prepare,
+      );
+      let orphanJournal: PublicationJournal;
+      try {
+        orphanJournal = parsePublicationJournal({
+          bytes: orphan.bytes,
+          candidateSha: input.candidateSha,
+          expectedInvocationSha256: input.expectedInvocationSha256,
+          expectedPhysicalIdentitySha256:
+            input.expectedPhysicalIdentitySha256,
+          outputPlan: input.outputPlan,
+          outputReviewPacket: input.outputReviewPacket,
+        });
+      } finally {
+        wipeBytes(orphan.bytes);
+      }
+      if (
+        orphanJournal.state !== "prepared"
+        || await pathExists(orphanJournal.artifacts.plan.temporaryPath)
+        || await pathExists(orphanJournal.artifacts.reviewPacket.temporaryPath)
+      ) fail("output_file_unsafe");
+      assertPreparedPublicationRecoverable(
+        orphanJournal,
+        input.paths.journal,
+        input.allowActiveProcess === true,
+      );
+      await removeExactPreparedJournal(
+        input.authority,
+        input.paths.prepare,
+        orphan.identity,
+      );
+    }
+    return null;
+  }
+  await normalizePreparedJournalHardlink(input.authority, input.paths);
+  const held = await readExactPrivateJournal(
+    input.authority,
+    input.paths.journal,
+  );
+  let journal: PublicationJournal;
+  try {
+    journal = parsePublicationJournal({
+      bytes: held.bytes,
+      candidateSha: input.candidateSha,
+      expectedInvocationSha256: input.expectedInvocationSha256,
+      expectedPhysicalIdentitySha256: input.expectedPhysicalIdentitySha256,
+      outputPlan: input.outputPlan,
+      outputReviewPacket: input.outputReviewPacket,
+    });
+  } finally {
+    wipeBytes(held.bytes);
+  }
+  if (journal.state === "committed") {
+    if (
+      await pathExists(input.paths.prepare)
+      || await pathExists(input.paths.commit)
+      || await pathExists(journal.artifacts.plan.temporaryPath)
+      || await pathExists(journal.artifacts.reviewPacket.temporaryPath)
+    ) fail("output_file_unsafe");
+    await validateCommittedPublicationArtifact(
+      input.authority,
+      journal.artifacts.plan,
+    );
+    await validateCommittedPublicationArtifact(
+      input.authority,
+      journal.artifacts.reviewPacket,
+    );
+    return journal.summary;
+  }
+  assertPreparedPublicationRecoverable(
+    journal,
+    input.paths.journal,
+    input.allowActiveProcess === true,
+  );
+  await recoverPreparedPublicationArtifact(
+    input.authority,
+    journal.artifacts.plan,
+  );
+  await recoverPreparedPublicationArtifact(
+    input.authority,
+    journal.artifacts.reviewPacket,
+  );
+  await removeReservedPublicationStagingFile(
+    input.authority,
+    input.paths.commit,
+  );
+  if (await pathExists(input.paths.prepare)) fail("output_file_unsafe");
+  await removeExactPreparedJournal(
+    input.authority,
+    input.paths.journal,
+    held.identity,
+  );
+  return null;
+}
+
 async function removeTemporaryOutput(filename: string): Promise<void> {
   try {
     await capturedUnlink(filename);
@@ -2120,9 +3681,100 @@ async function removeTemporaryOutput(filename: string): Promise<void> {
 interface PublishedPrivatePlan {
   readonly sha256: string;
   readonly identity: StableFileIdentity;
+  finalizeForCommit(): Promise<void>;
+  markCommitted(): void;
   prepareForSummary(): Promise<void>;
-  release(): Promise<void>;
+  revalidateForCommit(): Promise<void>;
+  releaseCommittedHandle(
+    releaseHandle: PostgresReviewedPricePromotionCliDependencies[
+      "releasePublishedArtifactHandle"
+    ],
+  ): Promise<void>;
   rollback(): Promise<void>;
+}
+
+function assertPublicationBoundary(
+  callback: PostgresReviewedPricePromotionCliDependencies[
+    "assertPublicationBoundary"
+  ],
+  boundary: PostgresReviewedPricePromotionPublicationBoundary,
+): void {
+  if (!callback) return;
+  try {
+    callback(boundary);
+  } catch {
+    fail("output_file_unsafe");
+  }
+}
+
+async function rollbackPublishedArtifacts(
+  artifacts: readonly (PublishedPrivatePlan | null)[],
+): Promise<boolean> {
+  let exact = true;
+  for (let index = artifacts.length - 1; index >= 0; index -= 1) {
+    const artifact = artifacts[index];
+    if (!artifact) continue;
+    try {
+      await artifact.rollback();
+    } catch {
+      exact = false;
+    }
+  }
+  return exact;
+}
+
+async function commitPublishedArtifactPair(input: {
+  readonly assertPublicationBoundary: ((
+    boundary: PostgresReviewedPricePromotionPublicationBoundary,
+  ) => void) | undefined;
+  readonly commitJournal: (markCommitted: () => void) => Promise<boolean>;
+  readonly plan: PublishedPrivatePlan;
+  readonly releasePublishedArtifactHandle:
+    PostgresReviewedPricePromotionCliDependencies[
+      "releasePublishedArtifactHandle"
+    ];
+  readonly reviewPacket: PublishedPrivatePlan;
+}): Promise<boolean> {
+  let publicationExact = true;
+  try {
+    await input.plan.finalizeForCommit();
+    assertPublicationBoundary(input.assertPublicationBoundary, "plan-finalized");
+    await input.reviewPacket.finalizeForCommit();
+    assertPublicationBoundary(
+      input.assertPublicationBoundary,
+      "review-packet-finalized",
+    );
+    await input.plan.revalidateForCommit();
+    await input.reviewPacket.revalidateForCommit();
+    publicationExact = await input.commitJournal(() => {
+      // There is deliberately no await or callback between these transitions.
+      input.plan.markCommitted();
+      input.reviewPacket.markCommitted();
+    });
+  } catch {
+    const rolledBack = await rollbackPublishedArtifacts([
+      input.plan,
+      input.reviewPacket,
+    ]);
+    if (!rolledBack) fail("output_file_unsafe");
+    fail("output_file_unsafe");
+  }
+  let cleanupExact = publicationExact;
+  try {
+    await input.plan.releaseCommittedHandle(
+      input.releasePublishedArtifactHandle,
+    );
+  } catch {
+    cleanupExact = false;
+  }
+  try {
+    await input.reviewPacket.releaseCommittedHandle(
+      input.releasePublishedArtifactHandle,
+    );
+  } catch {
+    cleanupExact = false;
+  }
+  return cleanupExact;
 }
 
 function freshTemporarySuffix(): string {
@@ -2160,16 +3812,18 @@ function freshTemporarySuffix(): string {
   }
 }
 
-async function writeNewPrivateCanonicalPlan(
+async function writeNewPrivateCanonicalArtifact(
   authority: PrivateParentAuthority,
-  filenameInput: string,
-  value: PostgresReviewedPricePromotionPlanCandidate,
+  artifact: PublicationArtifactRecord,
+  value: unknown,
+  maximumBytes: number,
+  temporaryPrefix: "plan" | "review-packet",
 ): Promise<PublishedPrivatePlan> {
   assertRequiredFilesystemAuthority();
-  const filename = exactAbsolutePath(filenameInput);
+  const filename = exactAbsolutePath(artifact.path);
   const bytes = canonicalPostgresReviewedPricePromotionJson(value);
   const byteCount = exactBufferLength(bytes, "plan_result_invalid");
-  if (byteCount < 1 || byteCount > MAX_PLAN_BYTES) fail("plan_result_invalid");
+  if (byteCount < 1 || byteCount > maximumBytes) fail("plan_result_invalid");
   const parent = REFLECT_APPLY(PATH_DIRNAME, PATH_OBJECT, [filename]) as string;
   if (parent !== authority.path) fail("output_file_unsafe");
   const uid = authority.uid;
@@ -2180,13 +3834,11 @@ async function writeNewPrivateCanonicalPlan(
   let retained = false;
   let ownedTemporaryPresent = false;
   let publishedIdentity: StableFileIdentity | null = null;
-  const temporaryPath = REFLECT_APPLY(PATH_JOIN, PATH_OBJECT, [
-    parent,
-    `.pintpath-postgres-reviewed-price-plan-${freshTemporarySuffix()}.tmp`,
-  ]) as string;
+  const temporaryPath = exactAbsolutePath(artifact.temporaryPath);
   if (
-    exactAbsolutePath(temporaryPath) !== temporaryPath
-    || REFLECT_APPLY(PATH_DIRNAME, PATH_OBJECT, [temporaryPath]) !== parent
+    REFLECT_APPLY(PATH_DIRNAME, PATH_OBJECT, [temporaryPath]) !== parent
+    || artifact.bytes !== byteCount
+    || artifact.sha256 !== sha256
   ) fail("output_file_unsafe");
   try {
     await authority.assertExact();
@@ -2293,7 +3945,13 @@ async function writeNewPrivateCanonicalPlan(
 
     const retainedHandle = fileHandle;
     const retainedRollbackHandle = rollbackFileHandle;
-    let state: "open" | "prepared" | "failed" | "released" | "rolled-back" =
+    let state:
+      | "open"
+      | "prepared"
+      | "finalizing"
+      | "failed"
+      | "committed"
+      | "rolled-back" =
       "open";
     let retainedHandleClosed = false;
     let retainedRollbackHandleClosed = false;
@@ -2303,9 +3961,61 @@ async function writeNewPrivateCanonicalPlan(
       wipeBytes(bytes);
       bytesWiped = true;
     };
+    const validateExactPublishedArtifact = async (): Promise<boolean> => {
+      let exact = true;
+      let current: Buffer | null = null;
+      const assertExactMetadata = async (): Promise<void> => {
+        await authority.assertExact();
+        const descriptor = await capturedHandleStat(
+          retainedRollbackHandle,
+          "output_file_unsafe",
+        );
+        const atPath = await capturedLstat(filename, "output_file_unsafe");
+        const real = await capturedRealpath(filename, "output_file_unsafe");
+        assertPrivateOutputFile(descriptor, uid, byteCount);
+        assertPrivateOutputFile(atPath, uid, byteCount);
+        if (
+          real !== filename
+          || !sameFileIdentity(identity, fileIdentity(descriptor))
+          || !sameFileIdentity(identity, fileIdentity(atPath))
+        ) fail("output_file_unsafe");
+        await authority.assertExact();
+      };
+      try {
+        await assertExactMetadata();
+        current = await readExactDescriptor(
+          retainedRollbackHandle,
+          byteCount,
+          "output_file_unsafe",
+        );
+        if (
+          !exactBytesEqual(current, bytes)
+          || sha256PostgresMigrationBytes(current) !== sha256
+          || sha256PostgresMigrationBytes(bytes) !== sha256
+        ) exact = false;
+        await assertExactMetadata();
+      } catch {
+        exact = false;
+      } finally {
+        wipeBytes(current);
+      }
+      return exact;
+    };
     const result: PublishedPrivatePlan = {
       sha256,
       identity,
+      finalizeForCommit: async () => {
+        if (state !== "prepared") fail("output_file_unsafe");
+        const exact = await validateExactPublishedArtifact();
+        state = exact ? "finalizing" : "failed";
+        if (!exact) wipePlanBytes();
+        if (!exact) fail("output_file_unsafe");
+      },
+      markCommitted: () => {
+        if (state !== "finalizing") fail("output_file_unsafe");
+        state = "committed";
+        wipePlanBytes();
+      },
       prepareForSummary: async () => {
         if (state !== "open") fail("output_file_unsafe");
         let exact = true;
@@ -2350,27 +4060,47 @@ async function writeNewPrivateCanonicalPlan(
         }
         if (!exact) fail("output_file_unsafe");
       },
-      release: async () => {
-        if (state !== "prepared") fail("output_file_unsafe");
+      revalidateForCommit: async () => {
+        if (state !== "finalizing") fail("output_file_unsafe");
+        const exact = await validateExactPublishedArtifact();
+        if (!exact) {
+          state = "failed";
+          wipePlanBytes();
+          fail("output_file_unsafe");
+        }
+      },
+      releaseCommittedHandle: async (releaseHandle) => {
+        if (state !== "committed") fail("output_file_unsafe");
+        if (retainedRollbackHandleClosed) return;
         let exact = true;
-        try {
-          const descriptor = await capturedHandleStat(
+        let closeCallCount = 0;
+        let closeResolved = false;
+        let closeAuthorized = true;
+        const close = async (): Promise<void> => {
+          closeCallCount += 1;
+          if (!closeAuthorized || closeCallCount !== 1) {
+            fail("output_file_unsafe");
+          }
+          await capturedHandleClose(
             retainedRollbackHandle,
             "output_file_unsafe",
           );
-          const atPath = await capturedLstat(filename, "output_file_unsafe");
-          const real = await capturedRealpath(filename, "output_file_unsafe");
-          assertPrivateOutputFile(descriptor, uid, byteCount);
-          assertPrivateOutputFile(atPath, uid, byteCount);
-          if (
-            real !== filename
-            || !sameFileIdentity(identity, fileIdentity(descriptor))
-            || !sameFileIdentity(identity, fileIdentity(atPath))
-          ) exact = false;
+          closeResolved = true;
+        };
+        try {
+          if (releaseHandle) {
+            await releaseHandle(temporaryPrefix, close);
+          } else {
+            await close();
+          }
+          if (closeCallCount !== 1 || !closeResolved) exact = false;
         } catch {
           exact = false;
+        } finally {
+          closeAuthorized = false;
         }
-        if (exact) {
+        if (closeResolved) retainedRollbackHandleClosed = true;
+        if (!retainedRollbackHandleClosed) {
           try {
             await capturedHandleClose(
               retainedRollbackHandle,
@@ -2378,16 +4108,16 @@ async function writeNewPrivateCanonicalPlan(
             );
             retainedRollbackHandleClosed = true;
           } catch {
-            exact = false;
+            // The first post-commit close failure remains authoritative. The
+            // process boundary is the final best-effort release for an
+            // ambiguously open descriptor.
           }
         }
-        state = exact ? "released" : "failed";
-        wipePlanBytes();
         if (!exact) fail("output_file_unsafe");
       },
       rollback: async () => {
         if (state === "rolled-back") return;
-        if (state === "released") fail("output_file_unsafe");
+        if (state === "committed") fail("output_file_unsafe");
         let exact = true;
         let invalidationExact = false;
         const heldRollbackHandle = !retainedRollbackHandleClosed
@@ -2402,6 +4132,7 @@ async function writeNewPrivateCanonicalPlan(
             sha256,
             identity,
             byteCount,
+            maximumBytes,
             heldRollbackHandle,
           );
         } catch {
@@ -2416,6 +4147,7 @@ async function writeNewPrivateCanonicalPlan(
               sha256,
               identity,
               byteCount,
+              maximumBytes,
               null,
             );
           } catch {
@@ -2463,6 +4195,7 @@ async function writeNewPrivateCanonicalPlan(
           sha256,
           publishedIdentity,
           byteCount,
+          maximumBytes,
           fileHandle,
         )) cleanupFailed = true;
       } catch {
@@ -2495,12 +4228,41 @@ async function writeNewPrivateCanonicalPlan(
   }
 }
 
+function writeNewPrivateCanonicalPlan(
+  authority: PrivateParentAuthority,
+  artifact: PublicationArtifactRecord,
+  value: PostgresReviewedPricePromotionPlanCandidate,
+): Promise<PublishedPrivatePlan> {
+  return writeNewPrivateCanonicalArtifact(
+    authority,
+    artifact,
+    value,
+    MAX_PLAN_BYTES,
+    "plan",
+  );
+}
+
+function writeNewPrivateCanonicalReviewPacket(
+  authority: PrivateParentAuthority,
+  artifact: PublicationArtifactRecord,
+  value: PostgresReviewedPricePromotionReviewPacket,
+): Promise<PublishedPrivatePlan> {
+  return writeNewPrivateCanonicalArtifact(
+    authority,
+    artifact,
+    value,
+    MAX_REVIEW_PACKET_BYTES,
+    "review-packet",
+  );
+}
+
 async function invalidateAndRemoveExactPublishedPlan(
   authority: PrivateParentAuthority,
   filename: string,
   expectedSha256: string,
   expectedIdentity: StableFileIdentity | null,
   expectedBytes: number,
+  maximumBytes: number,
   heldHandle: fs.promises.FileHandle | null,
 ): Promise<boolean> {
   let parentHandle: fs.promises.FileHandle | null = null;
@@ -2511,7 +4273,13 @@ async function invalidateAndRemoveExactPublishedPlan(
   let removed = false;
   let descriptorBefore: fs.BigIntStats | null = null;
   try {
-    if (expectedBytes < 1 || expectedBytes > MAX_PLAN_BYTES) return false;
+    if (
+      !REFLECT_APPLY(NUMBER_IS_SAFE_INTEGER, NUMBER_OBJECT, [maximumBytes])
+      || maximumBytes < 1
+      || maximumBytes > MAX_REVIEW_PACKET_BYTES
+      || expectedBytes < 1
+      || expectedBytes > maximumBytes
+    ) return false;
 
     let targetHandle = heldHandle;
     if (!targetHandle) {
@@ -2787,20 +4555,163 @@ function activationBlockersExact(value: unknown): boolean {
   return true;
 }
 
+function reviewedPriceBoundTextSha256(label: string, value: string): string {
+  return sha256PostgresMigrationBytes(
+    `pintpath-reviewed-price-${label}-v1\0${value}`,
+  );
+}
+
 function assertExactPlanBindings(input: {
-  readonly plan: unknown;
+  readonly authorityBundle: PostgresReviewedPricePromotionAuthorityBundle;
+  readonly authorityBundleSha256: string;
+  readonly artifacts: unknown;
   readonly candidateSha: string;
   readonly deployment: BuildPostgresReviewedPricePromotionPlanInput["expectedDeployment"];
+  readonly migrationReceipt: PostgresMigrationReceipt;
   readonly migrationReceiptFileSha256: string;
+  readonly migrationTargetIdentity: PostgresMigrationTargetIdentity;
+  readonly privateInput: PostgresReviewedPricePromotionPrivateInput;
   readonly privateInputFileSha256: string;
-  readonly privateInputItemCount: number;
   readonly physicalIdentitySha256: string;
   readonly plannerLoginIdentitySha256: string;
-}): PostgresReviewedPricePromotionPlanCandidate {
-  const parsed = postgresReviewedPricePromotionPlanCandidateSchema.safeParse(input.plan);
-  if (!parsed.success) fail("plan_result_invalid");
+}): PostgresReviewedPricePromotionPlanArtifacts {
+  if (input.artifacts === null || typeof input.artifacts !== "object") {
+    fail("plan_result_invalid");
+  }
+  if (
+    isProxy(input.artifacts)
+    || REFLECT_APPLY(OBJECT_GET_PROTOTYPE_OF, OBJECT_CONSTRUCTOR, [input.artifacts])
+      !== OBJECT_PROTOTYPE
+  ) fail("plan_result_invalid");
+  const artifactKeys = REFLECT_OWN_KEYS(input.artifacts);
+  if (
+    artifactKeys.length !== 2
+    || artifactKeys[0] !== "plan"
+    || artifactKeys[1] !== "reviewPacket"
+  ) fail("plan_result_invalid");
+  const rawPlan = ownDataValue(input.artifacts, "plan", "plan_result_invalid");
+  const rawReviewPacket = ownDataValue(
+    input.artifacts,
+    "reviewPacket",
+    "plan_result_invalid",
+  );
+  const parsed = postgresReviewedPricePromotionPlanCandidateSchema.safeParse(rawPlan);
+  const parsedPacket = postgresReviewedPricePromotionReviewPacketSchema.safeParse(
+    rawReviewPacket,
+  );
+  if (!parsed.success || !parsedPacket.success) fail("plan_result_invalid");
   const plan = parsed.data;
+  const reviewPacket = parsedPacket.data;
   const expectedDeployment = input.deployment;
+  const authority = input.authorityBundle;
+  const privateInput = input.privateInput;
+  const migrationReceipt = input.migrationReceipt;
+  const evidenceSetSha256 = sha256PostgresReviewedPricePromotionValue(
+    privateInput.items,
+  );
+  const targetProfileSha256 = sha256PostgresReviewedPricePromotionValue(
+    authority.targetProfile,
+  );
+  const expectedRoleSafetySha256 = sha256PostgresReviewedPricePromotionValue({
+    authorityQuerySha256: sha256PostgresMigrationBytes(
+      POSTGRES_REVIEWED_PRICE_PROMOTION_IDENTITY_QUERY,
+    ),
+    requiredColumnCount: 84,
+    requiredRelationCount: 9,
+    roleAuthorityValid: true,
+    searchPathSchemas: ["pg_catalog"],
+    transactionIsolation: "repeatable read",
+    transactionReadOnly: true,
+  });
+  const expectedMigrationRunBindingSha256 = sha256PostgresMigrationRunBinding({
+    approvalReferenceSha256: migrationReceipt.approvalReferenceSha256,
+    candidateSha: migrationReceipt.candidateSha,
+    contractSha256: migrationReceipt.contractSha256,
+    expectedEnvironment: migrationReceipt.expectedEnvironment,
+    manifestSha256: migrationReceipt.manifestSha256,
+    operatorIdSha256: migrationReceipt.operatorIdSha256,
+    planSha256: migrationReceipt.planSha256,
+    sourceSchemaFingerprint: migrationReceipt.sourceSchemaFingerprint,
+    sourceSchemaVersion: POSTGRES_MIGRATION_CONTRACT.sourceSchemaVersion,
+    sourceSnapshotSha256: migrationReceipt.sourceSnapshotSha256,
+    targetDdlSha256: migrationReceipt.targetDdlSha256,
+    targetIdentitySha256: migrationReceipt.targetIdentitySha256,
+    targetUrlSha256: migrationReceipt.targetUrlSha256,
+    verifierIdSha256: migrationReceipt.verifierIdSha256,
+  });
+  const expectedMigrationSnapshotSha256 =
+    sha256PostgresReviewedPricePromotionValue({
+      approvalReferenceSha256: plan.migration.approvalReferenceSha256,
+      candidateSha: plan.candidateSha,
+      completedAt: plan.migration.completedAt,
+      contractSha256: plan.migration.contractSha256,
+      expectedEnvironment: plan.expectedEnvironment,
+      failureCode: null,
+      manifestSha256: plan.migration.manifestSha256,
+      operatorIdSha256: plan.migration.operatorIdSha256,
+      receiptSha256: plan.migration.receiptSha256,
+      runId: plan.migration.runId,
+      sourceSchemaFingerprint: plan.migration.sourceSchemaFingerprint,
+      sourceSchemaVersion: plan.migration.sourceSchemaVersion,
+      sourceSnapshotSha256: plan.migration.sourceSnapshotSha256,
+      startedAt: plan.migration.startedAt,
+      status: "ready",
+      targetBindingSha256: plan.migration.targetBindingSha256,
+      targetDdlSha256: plan.migration.targetDdlSha256,
+      verifierIdSha256: plan.migration.verifierIdSha256,
+    });
+  let selectedRowCount = 0;
+  let packetRowCount = 0;
+  let sourceBindingsExact = plan.sourceSnapshot.items.length === privateInput.itemCount
+    && reviewPacket.items.length === privateInput.itemCount;
+  for (let index = 0; index < privateInput.itemCount; index += 1) {
+    const privateItem = privateInput.items[index];
+    const sourceItem = plan.sourceSnapshot.items[index];
+    const packetItem = reviewPacket.items[index];
+    if (!privateItem || !sourceItem || !packetItem) {
+      sourceBindingsExact = false;
+      break;
+    }
+    selectedRowCount += sourceItem.selectedRowCount;
+    packetRowCount += packetItem.rows.length;
+    if (
+      sourceItem.sourceIngestionId !== privateItem.sourceIngestionId
+      || sourceItem.venueIdSha256 !== privateItem.venueIdSha256
+      || packetItem.sourceIngestionId !== privateItem.sourceIngestionId
+      || packetItem.evidenceContentSha256 !== privateItem.evidenceContentSha256
+      || packetItem.evidenceReferenceSha256 !== privateItem.evidenceReferenceSha256
+      || packetItem.evidenceReference
+        !== `source-ingestion:${privateItem.sourceIngestionId}`
+      || sha256PostgresReviewedPricePromotionIdentity(
+        "evidence-reference",
+        packetItem.evidenceReference,
+      ) !== privateItem.evidenceReferenceSha256
+      || sha256PostgresReviewedPricePromotionIdentity(
+        "venue-id",
+        packetItem.venue.id,
+      ) !== privateItem.venueIdSha256
+      || packetItem.rows.length !== sourceItem.selectedRowCount
+    ) sourceBindingsExact = false;
+    for (let rowIndex = 0; rowIndex < packetItem.rows.length; rowIndex += 1) {
+      const row = packetItem.rows[rowIndex];
+      if (
+        !row
+        || row.ordinal !== rowIndex
+        || row.priceRecord.sourceIngestionId !== privateItem.sourceIngestionId
+        || row.venueBeer.sourceIngestionId !== privateItem.sourceIngestionId
+        || row.priceRecord.venueId !== packetItem.venue.id
+        || row.venueBeer.venueId !== packetItem.venue.id
+      ) sourceBindingsExact = false;
+    }
+  }
+  const wrongPrices = plan.sourceSnapshot.wrongPriceReports;
+  const emptyConflictRowsSha256 = sha256PostgresReviewedPricePromotionValue([]);
+  const sourceSnapshotWithoutCombined = {
+    items: plan.sourceSnapshot.items,
+    publicConflicts: plan.sourceSnapshot.publicConflicts,
+    selectionPolicySha256: plan.sourceSnapshot.selectionPolicySha256,
+    wrongPriceReports: plan.sourceSnapshot.wrongPriceReports,
+  };
   if (
     plan.candidateSha !== input.candidateSha
     || plan.expectedEnvironment !== "permanent-staging"
@@ -2819,15 +4730,134 @@ function assertExactPlanBindings(input: {
     || plan.expectedDeployment.serviceIdSha256
       !== expectedDeployment.serviceIdSha256
     || plan.migration.receiptFileSha256 !== input.migrationReceiptFileSha256
+    || migrationReceipt.candidateSha !== input.candidateSha
+    || migrationReceipt.expectedEnvironment !== "permanent-staging"
+    || migrationReceipt.contractSha256
+      !== sha256PostgresMigrationContract(POSTGRES_MIGRATION_CONTRACT)
+    || migrationReceipt.sourceSchemaFingerprint
+      !== POSTGRES_MIGRATION_CONTRACT.expectedSchemaFingerprint
+    || migrationReceipt.tableCount !== POSTGRES_MIGRATION_CONTRACT.expectedCounts.tables
+    || migrationReceipt.columnCount !== POSTGRES_MIGRATION_CONTRACT.expectedCounts.columns
+    || migrationReceipt.foreignKeyCount
+      !== POSTGRES_MIGRATION_CONTRACT.expectedCounts.foreignKeys
+    || migrationReceipt.runBindingSha256 !== expectedMigrationRunBindingSha256
+    || migrationReceipt.runIdSha256
+      !== derivePostgresMigrationRunId(expectedMigrationRunBindingSha256)
     || plan.privateInput.manifestSha256 !== input.privateInputFileSha256
-    || plan.privateInput.itemCount !== input.privateInputItemCount
-    || plan.sourceSnapshot.items.length !== input.privateInputItemCount
+    || plan.privateInput.itemCount !== privateInput.itemCount
+    || plan.privateInput.marketedSuburb !== privateInput.marketedSuburb
+    || plan.privateInput.evidenceSetSha256 !== evidenceSetSha256
+    || !sourceBindingsExact
+    || plan.authority.authorityBundleSha256 !== input.authorityBundleSha256
+    || plan.authority.generatedAt !== input.authorityBundle.generatedAt
+    || plan.authority.expiresAt !== input.authorityBundle.expiresAt
+    || plan.authority.authorityMode !== authority.authorityMode
+    || plan.authority.mutationAuthorized !== authority.mutationAuthorized
+    || plan.authority.providerAuthorityObserved !== authority.providerAuthorityObserved
+    || plan.authority.evidenceReferencesSha256
+      !== sha256PostgresReviewedPricePromotionValue(authority.evidenceReferences)
+    || plan.authority.recoveryReferencesSha256
+      !== sha256PostgresReviewedPricePromotionValue(authority.recoveryReferences)
+    || plan.authority.reviewBindingsSha256
+      !== sha256PostgresReviewedPricePromotionValue(authority.reviewBindings)
+    || plan.authority.targetProfileSha256 !== targetProfileSha256
+    || plan.authority.supabaseProjectIdentitySha256
+      !== input.authorityBundle.targetProfile.supabaseProjectIdentitySha256
     || plan.target.physicalIdentitySha256 !== input.physicalIdentitySha256
     || plan.target.plannerLoginIdentitySha256 !== input.plannerLoginIdentitySha256
+    || plan.target.catalogIdentity.currentUserSha256
+      !== reviewedPriceBoundTextSha256("postgres-current-user", PLANNER_ROLE)
+    || plan.target.catalogIdentity.sessionUserSha256
+      !== reviewedPriceBoundTextSha256("postgres-session-user", PLANNER_ROLE)
+    || plan.target.catalogIdentity.databaseNameSha256
+      !== reviewedPriceBoundTextSha256(
+        "postgres-database-name",
+        input.migrationTargetIdentity.databaseName,
+      )
+    || plan.target.catalogIdentity.databaseOidSha256
+      !== reviewedPriceBoundTextSha256(
+        "postgres-database-oid",
+        input.migrationTargetIdentity.databaseOid,
+      )
+    || plan.target.catalogIdentity.serverVersionNum
+      !== input.migrationTargetIdentity.serverVersionNum
+    || plan.target.catalogIdentity.systemIdentifierSha256
+      !== reviewedPriceBoundTextSha256(
+        "postgres-system-identifier",
+        input.migrationTargetIdentity.systemIdentifier,
+      )
+    || plan.target.catalogIdentity.roleSafetySha256 !== expectedRoleSafetySha256
+    || plan.migration.approvalReferenceSha256
+      !== migrationReceipt.approvalReferenceSha256
+    || plan.migration.contractSha256 !== migrationReceipt.contractSha256
+    || plan.migration.manifestSha256 !== migrationReceipt.manifestSha256
+    || plan.migration.operatorIdSha256 !== migrationReceipt.operatorIdSha256
+    || plan.migration.planSha256 !== migrationReceipt.planSha256
+    || plan.migration.receiptSha256 !== migrationReceipt.receiptSha256
+    || plan.migration.runId !== migrationReceipt.runIdSha256
+    || plan.migration.schemaMetadataSha256 !== migrationReceipt.schemaMetadataSha256
+    || plan.migration.sourceSchemaFingerprint
+      !== migrationReceipt.sourceSchemaFingerprint
+    || plan.migration.sourceSchemaSha256
+      !== POSTGRES_REVIEWED_PRICE_PROMOTION_SOURCE_SCHEMA_SHA256
+    || plan.migration.sourceSchemaVersion
+      !== POSTGRES_MIGRATION_CONTRACT.sourceSchemaVersion
+    || plan.migration.sourceSnapshotSha256
+      !== migrationReceipt.sourceSnapshotSha256
+    || plan.migration.runSnapshotSha256 !== expectedMigrationSnapshotSha256
+    || plan.migration.targetBindingSha256
+      !== migrationReceipt.runBindingSha256
+    || plan.migration.targetDdlSha256 !== migrationReceipt.targetDdlSha256
+    || plan.migration.verifierIdSha256 !== migrationReceipt.verifierIdSha256
+    || sha256PostgresMigrationTargetIdentity(input.migrationTargetIdentity)
+      !== migrationReceipt.targetIdentitySha256
     || plan.mutationEnabled !== false
     || !activationBlockersExact(plan.activationBlockers)
+    || plan.sourceSnapshot.selectionPolicySha256
+      !== REVIEWED_PRICE_SELECTION_POLICY_SHA256
+    || plan.sourceSnapshot.combinedSha256
+      !== sha256PostgresReviewedPricePromotionValue(sourceSnapshotWithoutCombined)
+    || plan.sourceSnapshot.publicConflicts.priceRecordCount !== 0
+    || plan.sourceSnapshot.publicConflicts.venueBeerCount !== 0
+    || plan.sourceSnapshot.publicConflicts.rowsSha256
+      !== emptyConflictRowsSha256
+    || wrongPrices.policySha256 !== REVIEWED_PRICE_WRONG_PRICE_POLICY_SHA256
+    || wrongPrices.blockingStatuses[0]
+      !== REVIEWED_PRICE_BLOCKING_WRONG_PRICE_STATUSES[0]
+    || wrongPrices.blockingStatuses[1]
+      !== REVIEWED_PRICE_BLOCKING_WRONG_PRICE_STATUSES[1]
+    || wrongPrices.blockingCount !== 0
+    || wrongPrices.openOrInProgressCount !== 0
+    || wrongPrices.blockingCount !== wrongPrices.openOrInProgressCount
+    || (wrongPrices.totalCount === 0)
+      !== (wrongPrices.rowsSha256 === emptyConflictRowsSha256)
+    || wrongPrices.totalCount !== (
+      wrongPrices.openOrInProgressCount
+        + wrongPrices.rejectedCount
+        + wrongPrices.resolvedCount
+    )
+    || reviewPacket.authorityBundleSha256 !== input.authorityBundleSha256
+    || reviewPacket.candidateSha !== input.candidateSha
+    || reviewPacket.expectedEnvironment !== "permanent-staging"
+    || reviewPacket.privateInputManifestSha256 !== input.privateInputFileSha256
+    || reviewPacket.marketedSuburb !== privateInput.marketedSuburb
+    || reviewPacket.generatedAt !== authority.generatedAt
+    || reviewPacket.expiresAt !== authority.expiresAt
+    || reviewPacket.targetPhysicalIdentitySha256 !== input.physicalIdentitySha256
+    || reviewPacket.targetProfileSha256 !== targetProfileSha256
+    || reviewPacket.wrongPricePolicySha256
+      !== REVIEWED_PRICE_WRONG_PRICE_POLICY_SHA256
+    || reviewPacket.sourceSnapshotSha256 !== plan.sourceSnapshot.combinedSha256
+    || reviewPacket.reviewPacketCandidateSha256
+      !== plan.reviewPacket.reviewPacketCandidateSha256
+    || reviewPacket.itemCount !== plan.reviewPacket.itemCount
+    || reviewPacket.rowCount !== plan.reviewPacket.rowCount
+    || reviewPacket.itemCount !== privateInput.itemCount
+    || reviewPacket.rowCount !== packetRowCount
+    || reviewPacket.rowCount !== selectedRowCount
+    || reviewPacket.mutationEnabled !== false
   ) fail("plan_result_invalid");
-  return plan;
+  return OBJECT_FREEZE({ plan, reviewPacket });
 }
 
 function deploymentFromAttestation(
@@ -2873,6 +4903,7 @@ async function runPostgresReviewedPricePromotionCliWithDependencies(
     null,
     null,
     null,
+    null,
   ];
   let heldFileCount = 0;
   const retainHeldFile = (file: HeldPrivateFile): void => {
@@ -2891,8 +4922,17 @@ async function runPostgresReviewedPricePromotionCliWithDependencies(
   let rootCaFile: HeldPrivateFile | null = null;
   let retainedDeploymentAttestation:
     RailwayApplicationDeploymentAttestationReceipt | null = null;
+  let retainedAuthorityBundle:
+    PostgresReviewedPricePromotionAuthorityBundle | null = null;
   let plan: PostgresReviewedPricePromotionPlanCandidate | null = null;
+  let reviewPacket: PostgresReviewedPricePromotionReviewPacket | null = null;
   let outputPlan = "";
+  let outputReviewPacket = "";
+  let publicationPaths: PublicationJournalPaths | null = null;
+  let publicationInvocationBindingSha256: string | null = null;
+  let preparedPublicationJournal: PreparedPublicationJournal | null = null;
+  let publicationJournalPrepared = false;
+  let successSummary: PostgresReviewedPricePromotionSuccessSummary | null = null;
   let failureCode: PostgresReviewedPricePromotionCliFailureCode | null = null;
   let summaryInput: {
     readonly candidateSha: string;
@@ -2919,14 +4959,22 @@ async function runPostgresReviewedPricePromotionCliWithDependencies(
       args.migrationTargetIdentity,
     );
     const privateInputPath = exactAbsolutePath(args.privateInput);
+    const authorityBundlePath = exactAbsolutePath(args.authorityBundle);
     outputPlan = exactAbsolutePath(args.outputPlan);
+    outputReviewPacket = exactAbsolutePath(args.outputReviewPacket);
+    publicationPaths = publicationJournalPaths(outputPlan, outputReviewPacket);
     if (!exactDistinctPaths([
       deploymentAttestationPath,
       plannerUrlPath,
       migrationReceiptPath,
       migrationTargetIdentityPath,
       privateInputPath,
+      authorityBundlePath,
       outputPlan,
+      outputReviewPacket,
+      publicationPaths.journal,
+      publicationPaths.prepare,
+      publicationPaths.commit,
     ])) fail("argument_invalid");
     const commonParent = REFLECT_APPLY(
       PATH_DIRNAME,
@@ -2938,12 +4986,44 @@ async function runPostgresReviewedPricePromotionCliWithDependencies(
       migrationReceiptPath,
       migrationTargetIdentityPath,
       privateInputPath,
+      authorityBundlePath,
       outputPlan,
+      outputReviewPacket,
+      publicationPaths.journal,
+      publicationPaths.prepare,
+      publicationPaths.commit,
     ], commonParent)) {
       fail("artifact_file_unsafe");
     }
+    publicationInvocationBindingSha256 = publicationInvocationSha256({
+      args,
+      authorityBundle: authorityBundlePath,
+      deploymentAttestation: deploymentAttestationPath,
+      expectedRootCaDerSha256: dependencies.expectedRootCaDerSha256,
+      migrationReceipt: migrationReceiptPath,
+      migrationTargetIdentity: migrationTargetIdentityPath,
+      outputPlan,
+      outputReviewPacket,
+      plannerUrlFile: plannerUrlPath,
+      privateInput: privateInputPath,
+    });
     parentAuthority = await openPrivateParentAuthority(commonParent);
-    if (await pathExists(outputPlan)) fail("output_file_unsafe");
+    const recoveredSummary = await reconcilePublicationJournal({
+      authority: parentAuthority,
+      candidateSha,
+      expectedInvocationSha256: publicationInvocationBindingSha256,
+      expectedPhysicalIdentitySha256:
+        exactSha256(args.expectedTargetDatabaseIdentitySha256),
+      outputPlan,
+      outputReviewPacket,
+      paths: publicationPaths,
+    });
+    if (recoveredSummary) {
+      await parentAuthority.close();
+      parentAuthority = null;
+      writeSummary(dependencies, recoveredSummary);
+      return 0;
+    }
 
     const deploymentAttestationFile = await openHeldPrivateFile(
       parentAuthority,
@@ -2994,7 +5074,12 @@ async function runPostgresReviewedPricePromotionCliWithDependencies(
         migrationReceiptPath,
         migrationTargetIdentityPath,
         privateInputPath,
+        authorityBundlePath,
         outputPlan,
+        outputReviewPacket,
+        publicationPaths.journal,
+        publicationPaths.prepare,
+        publicationPaths.commit,
       ])
     ) fail("artifact_file_unsafe");
     rootCaFile = await openHeldPrivateFile(
@@ -3037,6 +5122,17 @@ async function runPostgresReviewedPricePromotionCliWithDependencies(
       expectedSha256: exactSha256(args.privateInputSha256),
       parse: (value) => postgresReviewedPricePromotionPrivateInputSchema.safeParse(value),
     });
+    const authorityBundleFile = await openHeldPrivateFile(
+      parentAuthority,
+      authorityBundlePath,
+      MAX_AUTHORITY_BUNDLE_BYTES,
+    );
+    retainHeldFile(authorityBundleFile);
+    const authorityBundle = await readCanonicalJsonArtifact({
+      held: authorityBundleFile,
+      expectedSha256: exactSha256(args.authorityBundleSha256),
+      parse: (value) => postgresReviewedPricePromotionAuthorityBundleSchema.safeParse(value),
+    });
     const expectedRootCaDerSha256 = exactSha256(
       dependencies.expectedRootCaDerSha256,
     );
@@ -3064,7 +5160,25 @@ async function runPostgresReviewedPricePromotionCliWithDependencies(
         !== migrationTargetIdentity.sha256
       || historicalPhysicalDatabaseIdentitySha256
         !== expectedPhysicalDatabaseIdentitySha256
+      || authorityBundle.value.candidateSha !== candidateSha
+      || authorityBundle.value.expectedEnvironment !== "permanent-staging"
+      || authorityBundle.value.privateInputManifestSha256 !== privateInput.sha256
+      || authorityBundle.value.targetProfile.deploymentAttestationFileSha256
+        !== deploymentAttestationFile.sha256
+      || authorityBundle.value.targetProfile.physicalDatabaseIdentitySha256
+        !== expectedPhysicalDatabaseIdentitySha256
+      || authorityBundle.value.targetProfile.railwayEnvironmentIdSha256
+        !== deployment.environmentIdSha256
+      || authorityBundle.value.targetProfile.railwayProjectIdSha256
+        !== deployment.projectIdSha256
+      || authorityBundle.value.targetProfile.railwayServiceIdSha256
+        !== deployment.serviceIdSha256
+      || !postgresReviewedPricePromotionAuthorityBundleFreshAt(
+        authorityBundle.value,
+        dependencies.now(),
+      )
     ) fail("artifact_invalid");
+    retainedAuthorityBundle = authorityBundle.value;
     const expectedPlannerLoginIdentitySha256 =
       sha256PostgresReviewedPricePromotionValue({
         currentUser: PLANNER_ROLE,
@@ -3112,11 +5226,13 @@ async function runPostgresReviewedPricePromotionCliWithDependencies(
     });
     await assertPlannerDatabaseExact(databaseHandle);
     const candidate = await dependencies.buildPlan({
+      authorityBundle: authorityBundle.value,
       candidateSha,
       database: databaseHandle.database,
       expectedDeployment: deployment,
       expectedEnvironment: "permanent-staging",
       expectedMigration: { receiptFileSha256: migrationReceipt.sha256 },
+      expectedAuthorityBundleSha256: authorityBundle.sha256,
       migrationReceipt: migrationReceipt.value,
       migrationTargetIdentity: migrationTargetIdentity.value,
       expectedPrivateInputSha256: privateInput.sha256,
@@ -3130,19 +5246,26 @@ async function runPostgresReviewedPricePromotionCliWithDependencies(
       rootCa: rootCaFile,
       expectedRootCaDerSha256,
     });
-    plan = assertExactPlanBindings({
-      plan: candidate,
+    const exactArtifacts = assertExactPlanBindings({
+      artifacts: candidate,
+      authorityBundle: authorityBundle.value,
+      authorityBundleSha256: authorityBundle.sha256,
       candidateSha,
       deployment,
+      migrationReceipt: migrationReceipt.value,
       migrationReceiptFileSha256: migrationReceipt.sha256,
+      migrationTargetIdentity: migrationTargetIdentity.value,
+      privateInput: privateInput.value,
       privateInputFileSha256: privateInput.sha256,
-      privateInputItemCount: privateInput.value.itemCount,
       physicalIdentitySha256: expectedPhysicalDatabaseIdentitySha256,
       plannerLoginIdentitySha256: expectedPlannerLoginIdentitySha256,
     });
+    plan = exactArtifacts.plan;
+    reviewPacket = exactArtifacts.reviewPacket;
   } catch (error) {
     failureCode = safeFailureCode(error);
     plan = null;
+    reviewPacket = null;
   }
 
   if (databaseHandle) {
@@ -3157,6 +5280,7 @@ async function runPostgresReviewedPricePromotionCliWithDependencies(
       } catch (error) {
         failureCode = safeFailureCode(error);
         plan = null;
+        reviewPacket = null;
       }
     }
     try {
@@ -3164,12 +5288,14 @@ async function runPostgresReviewedPricePromotionCliWithDependencies(
     } catch {
       failureCode = "database_release_failed";
       plan = null;
+      reviewPacket = null;
     }
     try {
       await databaseHandle.release();
     } catch {
       failureCode = "database_release_failed";
       plan = null;
+      reviewPacket = null;
     }
     if (parentAuthority && rootCaFile) {
       try {
@@ -3182,18 +5308,36 @@ async function runPostgresReviewedPricePromotionCliWithDependencies(
       } catch (error) {
         failureCode = safeFailureCode(error);
         plan = null;
+        reviewPacket = null;
       }
     }
   }
 
   let publishedPlan: PublishedPrivatePlan | null = null;
+  let publishedReviewPacket: PublishedPrivatePlan | null = null;
+  let artifactsCommitted = false;
   let planFileSha256: string | null = null;
-  if (plan && !failureCode && parentAuthority && rootCaFile) {
+  let reviewPacketFileSha256: string | null = null;
+  if (
+    plan
+    && reviewPacket
+    && !failureCode
+    && parentAuthority
+    && rootCaFile
+    && publicationPaths
+    && publicationInvocationBindingSha256
+    && summaryInput
+  ) {
     try {
       if (
         !retainedDeploymentAttestation
+        || !retainedAuthorityBundle
         || !railwayApplicationDeploymentAttestationReceiptFreshAt(
           retainedDeploymentAttestation,
+          dependencies.now(),
+        )
+        || !postgresReviewedPricePromotionAuthorityBundleFreshAt(
+          retainedAuthorityBundle,
           dependencies.now(),
         )
       ) fail("artifact_invalid");
@@ -3203,12 +5347,84 @@ async function runPostgresReviewedPricePromotionCliWithDependencies(
         rootCa: rootCaFile,
         expectedRootCaDerSha256: dependencies.expectedRootCaDerSha256,
       });
+      const reviewPacketArtifact = describePublicationArtifact(
+        outputReviewPacket,
+        publicationTemporaryPath(parentAuthority.path, "review-packet"),
+        reviewPacket,
+        MAX_REVIEW_PACKET_BYTES,
+      );
+      const planArtifact = describePublicationArtifact(
+        outputPlan,
+        publicationTemporaryPath(parentAuthority.path, "plan"),
+        plan,
+        MAX_PLAN_BYTES,
+      );
+      if (!exactDistinctPaths([
+        publicationPaths.journal,
+        publicationPaths.prepare,
+        publicationPaths.commit,
+        outputPlan,
+        outputReviewPacket,
+        planArtifact.temporaryPath,
+        reviewPacketArtifact.temporaryPath,
+      ])) fail("output_file_unsafe");
+      successSummary = OBJECT_FREEZE({
+        activationBlockerCount: plan.activationBlockers.length,
+        candidateSha: summaryInput.candidateSha,
+        command: POSTGRES_REVIEWED_PRICE_PROMOTION_COMMAND,
+        expectedEnvironment: summaryInput.expectedEnvironment,
+        itemCount: summaryInput.itemCount,
+        mutationEnabled: false,
+        ok: true,
+        planCandidateSha256: plan.planCandidateSha256,
+        planFileSha256: planArtifact.sha256,
+        physicalIdentitySha256: summaryInput.physicalIdentitySha256,
+        plannerLoginIdentitySha256: summaryInput.plannerLoginIdentitySha256,
+        reviewPacketCandidateSha256: reviewPacket.reviewPacketCandidateSha256,
+        reviewPacketFileSha256: reviewPacketArtifact.sha256,
+        rowCount: reviewPacket.rowCount,
+      });
+      preparedPublicationJournal = OBJECT_FREEZE({
+        artifacts: OBJECT_FREEZE({
+          plan: planArtifact,
+          reviewPacket: reviewPacketArtifact,
+        }),
+        invocationSha256: publicationInvocationBindingSha256,
+        kind: "pintpath-postgres-reviewed-price-promotion-publication",
+        outputPlan,
+        outputReviewPacket,
+        processId: PROCESS_PID,
+        state: "prepared",
+        summary: successSummary,
+        version: 1,
+      });
+      await writePreparedPublicationJournal({
+        authority: parentAuthority,
+        journal: preparedPublicationJournal,
+        paths: publicationPaths,
+      });
+      registerActivePublicationJournal(publicationPaths.journal);
+      publicationJournalPrepared = true;
+      publishedReviewPacket = await writeNewPrivateCanonicalReviewPacket(
+        parentAuthority,
+        reviewPacketArtifact,
+        reviewPacket,
+      );
+      reviewPacketFileSha256 = publishedReviewPacket.sha256;
+      assertPublicationBoundary(
+        dependencies.assertPublicationBoundary,
+        "review-packet-published",
+      );
       publishedPlan = await writeNewPrivateCanonicalPlan(
         parentAuthority,
-        outputPlan,
+        planArtifact,
         plan,
       );
       planFileSha256 = publishedPlan.sha256;
+      assertPublicationBoundary(
+        dependencies.assertPublicationBoundary,
+        "plan-published",
+      );
       await assertHeldAuthorityExact({
         authority: parentAuthority,
         files: heldFiles,
@@ -3218,31 +5434,95 @@ async function runPostgresReviewedPricePromotionCliWithDependencies(
       if (!railwayApplicationDeploymentAttestationReceiptFreshAt(
         retainedDeploymentAttestation,
         dependencies.now(),
+      ) || !postgresReviewedPricePromotionAuthorityBundleFreshAt(
+        retainedAuthorityBundle,
+        dependencies.now(),
       )) fail("artifact_invalid");
     } catch (error) {
       failureCode = safeFailureCode(error);
       plan = null;
+      reviewPacket = null;
     }
   }
 
-  const heldAuthorityClosed = await closeHeldAuthority({
-    authority: parentAuthority,
+  const heldFilesClosed = await closeHeldPrivateFiles({
     files: heldFiles,
   });
-  if (!heldAuthorityClosed) {
+  if (!heldFilesClosed) {
     failureCode = "artifact_file_unsafe";
     plan = null;
+    reviewPacket = null;
   }
 
-  if (publishedPlan && plan && !failureCode) {
+  if (publishedReviewPacket && publishedPlan && plan && reviewPacket && !failureCode) {
     try {
+      await publishedReviewPacket.prepareForSummary();
       await publishedPlan.prepareForSummary();
     } catch {
       failureCode = "output_file_unsafe";
       plan = null;
+      reviewPacket = null;
     }
   }
-  if (publishedPlan && (!plan || failureCode)) {
+  if (
+    publishedReviewPacket
+    && publishedPlan
+    && plan
+    && reviewPacket
+    && !failureCode
+    && parentAuthority
+    && preparedPublicationJournal
+    && publicationPaths
+  ) {
+    try {
+      const commitAuthority = parentAuthority;
+      const exactPreparedPublicationJournal = preparedPublicationJournal;
+      const committedPublicationJournal: CommittedPublicationJournal =
+        OBJECT_FREEZE({
+          artifacts: OBJECT_FREEZE({
+            plan: OBJECT_FREEZE({
+              ...exactPreparedPublicationJournal.artifacts.plan,
+              identity: serializeStableFileIdentity(publishedPlan.identity),
+            }),
+            reviewPacket: OBJECT_FREEZE({
+              ...exactPreparedPublicationJournal.artifacts.reviewPacket,
+              identity: serializeStableFileIdentity(
+                publishedReviewPacket.identity,
+              ),
+            }),
+          }),
+          invocationSha256: exactPreparedPublicationJournal.invocationSha256,
+          kind: exactPreparedPublicationJournal.kind,
+          outputPlan: exactPreparedPublicationJournal.outputPlan,
+          outputReviewPacket: exactPreparedPublicationJournal.outputReviewPacket,
+          processId: exactPreparedPublicationJournal.processId,
+          state: "committed",
+          summary: exactPreparedPublicationJournal.summary,
+          version: 1,
+        });
+      const committedHandleCleanupExact = await commitPublishedArtifactPair({
+        assertPublicationBoundary: dependencies.assertPublicationBoundary,
+        commitJournal: (markCommitted) => writeCommittedPublicationJournal({
+          authority: commitAuthority,
+          committed: committedPublicationJournal,
+          markCommitted,
+          paths: publicationPaths,
+          prepared: exactPreparedPublicationJournal,
+        }),
+        plan: publishedPlan,
+        releasePublishedArtifactHandle:
+          dependencies.releasePublishedArtifactHandle,
+        reviewPacket: publishedReviewPacket,
+      });
+      artifactsCommitted = true;
+      if (!committedHandleCleanupExact) failureCode = "output_file_unsafe";
+    } catch {
+      failureCode = "output_file_unsafe";
+      plan = null;
+      reviewPacket = null;
+    }
+  }
+  if (!artifactsCommitted && publishedPlan && (!plan || !reviewPacket || failureCode)) {
     try {
       await publishedPlan.rollback();
     } catch {
@@ -3251,9 +5531,84 @@ async function runPostgresReviewedPricePromotionCliWithDependencies(
     publishedPlan = null;
     planFileSha256 = null;
   }
+  if (
+    !artifactsCommitted
+    && publishedReviewPacket
+    && (!plan || !reviewPacket || failureCode)
+  ) {
+    try {
+      await publishedReviewPacket.rollback();
+    } catch {
+      failureCode = "output_file_unsafe";
+    }
+    publishedReviewPacket = null;
+    reviewPacketFileSha256 = null;
+  }
+
+  if (
+    !artifactsCommitted
+    && publicationJournalPrepared
+    && parentAuthority
+    && preparedPublicationJournal
+    && publicationPaths
+  ) {
+    try {
+      await reconcilePublicationJournal({
+        allowActiveProcess: true,
+        authority: parentAuthority,
+        candidateSha: preparedPublicationJournal.summary.candidateSha,
+        expectedInvocationSha256:
+          preparedPublicationJournal.invocationSha256,
+        expectedPhysicalIdentitySha256:
+          preparedPublicationJournal.summary.physicalIdentitySha256,
+        outputPlan,
+        outputReviewPacket,
+        paths: publicationPaths,
+      });
+      publicationJournalPrepared = false;
+      preparedPublicationJournal = null;
+      unregisterActivePublicationJournal(publicationPaths.journal);
+    } catch {
+      failureCode = "output_file_unsafe";
+    }
+  }
+
+  if (
+    artifactsCommitted
+    && publicationJournalPrepared
+    && publicationPaths
+  ) {
+    try {
+      unregisterActivePublicationJournal(publicationPaths.journal);
+      publicationJournalPrepared = false;
+      preparedPublicationJournal = null;
+    } catch {
+      failureCode = "output_file_unsafe";
+    }
+  }
+
+  if (parentAuthority) {
+    try {
+      await parentAuthority.close();
+    } catch {
+      failureCode = "artifact_file_unsafe";
+    }
+    parentAuthority = null;
+  }
 
   try {
-    if (!plan || !planFileSha256 || !summaryInput || !publishedPlan || failureCode) {
+    if (
+      !plan
+      || !reviewPacket
+      || !planFileSha256
+      || !reviewPacketFileSha256
+      || !summaryInput
+      || !successSummary
+      || !publishedPlan
+      || !publishedReviewPacket
+      || !artifactsCommitted
+      || failureCode
+    ) {
       writeSummary(dependencies, {
         command: POSTGRES_REVIEWED_PRICE_PROMOTION_COMMAND,
         failureCode: failureCode ?? "unexpected_failure",
@@ -3261,28 +5616,23 @@ async function runPostgresReviewedPricePromotionCliWithDependencies(
       });
       return 1;
     }
-    writeSummary(dependencies, {
-      activationBlockerCount: plan.activationBlockers.length,
-      candidateSha: summaryInput.candidateSha,
-      command: POSTGRES_REVIEWED_PRICE_PROMOTION_COMMAND,
-      expectedEnvironment: summaryInput.expectedEnvironment,
-      itemCount: summaryInput.itemCount,
-      mutationEnabled: false,
-      ok: true,
-      planCandidateSha256: plan.planCandidateSha256,
-      planFileSha256,
-      physicalIdentitySha256: summaryInput.physicalIdentitySha256,
-      plannerLoginIdentitySha256: summaryInput.plannerLoginIdentitySha256,
-    });
-    await publishedPlan.release();
+    writeSummary(dependencies, successSummary);
+    publishedReviewPacket = null;
     publishedPlan = null;
     return 0;
   } catch {
     let finalFailureCode: PostgresReviewedPricePromotionCliFailureCode =
-      "unexpected_failure";
-    if (publishedPlan) {
+      artifactsCommitted ? "output_file_unsafe" : "unexpected_failure";
+    if (!artifactsCommitted && publishedPlan) {
       try {
         await publishedPlan.rollback();
+      } catch {
+        finalFailureCode = "output_file_unsafe";
+      }
+    }
+    if (!artifactsCommitted && publishedReviewPacket) {
+      try {
+        await publishedReviewPacket.rollback();
       } catch {
         finalFailureCode = "output_file_unsafe";
       }
@@ -3327,4 +5677,9 @@ export const postgresReviewedPricePromotionCliInternals = Object.freeze({
   MAX_PLAN_BYTES,
   MAX_PLANNER_URL_FILE_BYTES,
   MAX_PRIVATE_INPUT_BYTES,
+  MAX_PUBLICATION_JOURNAL_BYTES,
+  publicationJournalPath: (
+    outputPlan: string,
+    outputReviewPacket: string,
+  ) => publicationJournalPaths(outputPlan, outputReviewPacket).journal,
 });

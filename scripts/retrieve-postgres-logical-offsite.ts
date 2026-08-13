@@ -24,6 +24,11 @@ import {
   type PostgresLogicalOffsiteRetrievalStorage,
 } from "../src/lib/postgres-logical-offsite-retrieval.js";
 import { readPrivateSecretFile } from "../src/lib/offsite-backup-download.js";
+import {
+  assertExactSupabaseOrigin,
+  assertSupabaseServerApiKey,
+  resolveExactOperationalOffsiteBackupBucket,
+} from "../src/lib/supabase-key-format.js";
 import { parseStrictArguments } from "./lib/strict-arguments.js";
 
 const ARGUMENTS = new Set([
@@ -123,6 +128,10 @@ function exactEnvironment(
   return value;
 }
 
+const PRODUCTION_SUPABASE_ORIGIN = "https://auth.pintpath.au";
+const OFFSITE_BACKUP_SUPABASE_ORIGIN =
+  "https://hfbmhdxrwtihukmixxta.supabase.co";
+
 function normalizeTlsPostgresUrl(value: string): string {
   try {
     if (/\u0000|\r|\n/.test(value)) throw new Error("unsafe");
@@ -195,8 +204,28 @@ export async function runPostgresLogicalOffsiteRetrievalCli(
       dependencies.env,
       "OFFSITE_BACKUP_SUPABASE_URL",
     );
-    const bucketName = dependencies.env.OFFSITE_BACKUP_BUCKET?.trim()
-      || "pintpath-backups";
+    try {
+      assertExactSupabaseOrigin(
+        sourceSupabaseUrl,
+        PRODUCTION_SUPABASE_ORIGIN,
+        "SUPABASE_URL",
+      );
+      assertExactSupabaseOrigin(
+        destinationSupabaseUrl,
+        OFFSITE_BACKUP_SUPABASE_ORIGIN,
+        "OFFSITE_BACKUP_SUPABASE_URL",
+      );
+    } catch {
+      throw new SafeCliError("configuration_missing_or_unsafe");
+    }
+    let bucketName: string;
+    try {
+      bucketName = resolveExactOperationalOffsiteBackupBucket(
+        dependencies.env.OFFSITE_BACKUP_BUCKET,
+      );
+    } catch {
+      throw new SafeCliError("configuration_missing_or_unsafe");
+    }
     try {
       assertPostgresLogicalOffsiteDestinationPins({
         destinationSupabaseUrl,
@@ -215,7 +244,10 @@ export async function runPostgresLogicalOffsiteRetrievalCli(
         dependencies.readSecretFile(runtimeDatabaseUrlFile),
         dependencies.readSecretFile(serviceRoleKeyFile),
       ]);
-      if (/\u0000|\r|\n/.test(destinationServiceRoleKey)) throw new Error("unsafe");
+      assertSupabaseServerApiKey(
+        destinationServiceRoleKey,
+        "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
+      );
     } catch {
       throw new SafeCliError("secret_file_unsafe");
     }

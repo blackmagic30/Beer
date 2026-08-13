@@ -24,6 +24,14 @@ import type {
 } from "../src/db/sql-database.js";
 import { sha256PostgresDatabaseIdentity } from "../src/lib/postgres-database-identity.js";
 import {
+  POSTGRES_REVIEWED_PRICE_PROMOTION_AUTHORITY_BUNDLE_KIND,
+  POSTGRES_REVIEWED_PRICE_PROMOTION_AUTHORITY_BUNDLE_VERSION,
+  POSTGRES_REVIEWED_PRICE_PROMOTION_AUTHORITY_MODE,
+  POSTGRES_REVIEWED_PRICE_PROMOTION_REVIEW_MODE,
+  postgresReviewedPricePromotionAuthorityBundleSchema,
+  postgresReviewedPricePromotionReviewPacketSchema,
+} from "../src/lib/postgres-reviewed-price-promotion-authority.js";
+import {
   POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_BLOCKERS,
   POSTGRES_REVIEWED_PRICE_PROMOTION_IDENTITY_QUERY,
   POSTGRES_REVIEWED_PRICE_PROMOTION_PRIVATE_INPUT_KIND,
@@ -35,6 +43,7 @@ import {
   POSTGRES_REVIEWED_PRICE_PROMOTION_SEARCH_PATH,
   POSTGRES_REVIEWED_PRICE_PROMOTION_SOURCE_SCHEMA_SHA256,
   PostgresReviewedPricePromotionPlanError,
+  buildPostgresReviewedPricePromotionPlanArtifacts,
   buildPostgresReviewedPricePromotionPlanCandidate,
   canonicalPostgresReviewedPricePromotionJson,
   postgresReviewedPricePromotionPlanCandidateSchema,
@@ -43,6 +52,10 @@ import {
   type BuildPostgresReviewedPricePromotionPlanInput,
 } from "../src/lib/postgres-reviewed-price-promotion-plan.js";
 import { REVIEWED_PRICE_SELECTION_POLICY_SHA256 } from "../src/lib/reviewed-price-selection-policy.js";
+import {
+  REVIEWED_PRICE_BLOCKING_WRONG_PRICE_STATUSES,
+  REVIEWED_PRICE_WRONG_PRICE_POLICY_SHA256,
+} from "../src/lib/reviewed-price-wrong-price-policy.js";
 
 const INGESTION_ID = "11111111-1111-4111-8111-111111111111";
 const VENUE_ID = "22222222-2222-4222-8222-222222222222";
@@ -53,6 +66,7 @@ const MANIFEST_SHA = "9".repeat(64);
 const TARGET_DDL_SHA = "a".repeat(64);
 const EVIDENCE_CONTENT_SHA = "b".repeat(64);
 const NOW = "2026-08-11T00:00:00.000Z";
+const AUTHORITY_EXPIRES_AT = "2026-08-11T01:00:00.000Z";
 const CONTRACT_SHA = sha256PostgresMigrationContract(POSTGRES_MIGRATION_CONTRACT);
 const SOURCE_SCHEMA_FINGERPRINT = POSTGRES_MIGRATION_CONTRACT.expectedSchemaFingerprint;
 const SOURCE_SCHEMA_VERSION = POSTGRES_MIGRATION_CONTRACT.sourceSchemaVersion;
@@ -554,26 +568,79 @@ function fixture(): {
     "wrong-prices": [],
   };
   const database = new FakeSqlDatabase("postgres", rows);
+  const expectedDeployment = {
+    attestationFileSha256: digest("deployment-attestation-file"),
+    attestationPolicySha256: digest("deployment-attestation-policy"),
+    deploymentIdSha256: digest("deployment"),
+    environmentIdSha256: digest("environment"),
+    imageDigestSha256: digest("image"),
+    projectIdSha256: digest("project"),
+    serviceIdSha256: digest("service"),
+  };
+  const privateInputSha256 = sha256PostgresReviewedPricePromotionValue(privateInput);
+  const expectedPhysicalDatabaseIdentitySha256 = physicalIdentitySha256(identity);
+  const authorityBundle = {
+    authorityMode: POSTGRES_REVIEWED_PRICE_PROMOTION_AUTHORITY_MODE,
+    candidateSha: CANDIDATE_SHA,
+    evidenceReferences: {
+      privateEvidenceManifestSha256: digest("private-evidence-manifest"),
+      restoreReceiptSha256: digest("evidence-restore-receipt"),
+      retrievalReceiptSha256: digest("evidence-retrieval-receipt"),
+      storageSnapshotManifestSha256: digest("storage-snapshot-manifest"),
+      wormManifestSha256: digest("evidence-worm-manifest"),
+    },
+    expectedEnvironment: "permanent-staging" as const,
+    expiresAt: AUTHORITY_EXPIRES_AT,
+    generatedAt: NOW,
+    kind: POSTGRES_REVIEWED_PRICE_PROMOTION_AUTHORITY_BUNDLE_KIND,
+    mutationAuthorized: false as const,
+    privateInputManifestSha256: privateInputSha256,
+    providerAuthorityObserved: false as const,
+    recoveryReferences: {
+      accountDeletionRecoveryManifestSha256: digest("account-deletion-recovery"),
+      logicalBackupManifestSha256: digest("logical-backup-manifest"),
+      pitrAttestationSha256: digest("pitr-attestation"),
+      privateStorageRecoveryManifestSha256: digest("private-storage-recovery"),
+      restoreReceiptSha256: digest("recovery-restore-receipt"),
+      wormManifestSha256: digest("recovery-worm-manifest"),
+    },
+    reviewBindings: {
+      approvalArtifactSha256: digest("approval-artifact"),
+      approvalReferenceSha256: digest("promotion-approval-reference"),
+      cryptographicApprovalVerified: false as const,
+      operatorIdSha256: digest("promotion-operator"),
+      reviewMode: POSTGRES_REVIEWED_PRICE_PROMOTION_REVIEW_MODE,
+      reviewerIdSha256: digest("promotion-reviewer"),
+      trustRootPolicySha256: digest("approval-trust-root-policy"),
+    },
+    targetProfile: {
+      deploymentAttestationFileSha256: expectedDeployment.attestationFileSha256,
+      physicalDatabaseIdentitySha256: expectedPhysicalDatabaseIdentitySha256,
+      railwayEnvironmentIdSha256: expectedDeployment.environmentIdSha256,
+      railwayProjectIdSha256: expectedDeployment.projectIdSha256,
+      railwayServiceIdSha256: expectedDeployment.serviceIdSha256,
+      supabaseProjectIdentitySha256: digest("supabase-project-identity"),
+    },
+    version: POSTGRES_REVIEWED_PRICE_PROMOTION_AUTHORITY_BUNDLE_VERSION,
+  };
+  expect(postgresReviewedPricePromotionAuthorityBundleSchema.safeParse(
+    authorityBundle,
+  ).success).toBe(true);
   const input: BuildPostgresReviewedPricePromotionPlanInput = {
+    authorityBundle,
     candidateSha: CANDIDATE_SHA,
     database,
-    expectedDeployment: {
-      attestationFileSha256: digest("deployment-attestation-file"),
-      attestationPolicySha256: digest("deployment-attestation-policy"),
-      deploymentIdSha256: digest("deployment"),
-      environmentIdSha256: digest("environment"),
-      imageDigestSha256: digest("image"),
-      projectIdSha256: digest("project"),
-      serviceIdSha256: digest("service"),
-    },
+    expectedDeployment,
     expectedEnvironment: "permanent-staging",
+    expectedAuthorityBundleSha256:
+      sha256PostgresReviewedPricePromotionValue(authorityBundle),
     expectedMigration: {
       receiptFileSha256: receiptFileSha256(authority.receipt),
     },
     migrationReceipt: authority.receipt,
     migrationTargetIdentity: historicalIdentity,
-    expectedPrivateInputSha256: sha256PostgresReviewedPricePromotionValue(privateInput),
-    expectedPhysicalDatabaseIdentitySha256: physicalIdentitySha256(identity),
+    expectedPrivateInputSha256: privateInputSha256,
+    expectedPhysicalDatabaseIdentitySha256,
     privateInput,
   };
   return {
@@ -606,6 +673,36 @@ function inputWithReceipt(
     ...target.input,
     expectedMigration: { receiptFileSha256: receiptFileSha256(receipt) },
     migrationReceipt: receipt,
+  };
+}
+
+function rebindAuthority(
+  input: BuildPostgresReviewedPricePromotionPlanInput,
+): BuildPostgresReviewedPricePromotionPlanInput {
+  const current = postgresReviewedPricePromotionAuthorityBundleSchema.parse(
+    input.authorityBundle,
+  );
+  const authorityBundle = {
+    ...current,
+    candidateSha: input.candidateSha,
+    expectedEnvironment: input.expectedEnvironment,
+    privateInputManifestSha256: input.expectedPrivateInputSha256,
+    targetProfile: {
+      ...current.targetProfile,
+      deploymentAttestationFileSha256:
+        input.expectedDeployment.attestationFileSha256,
+      physicalDatabaseIdentitySha256:
+        input.expectedPhysicalDatabaseIdentitySha256,
+      railwayEnvironmentIdSha256: input.expectedDeployment.environmentIdSha256,
+      railwayProjectIdSha256: input.expectedDeployment.projectIdSha256,
+      railwayServiceIdSha256: input.expectedDeployment.serviceIdSha256,
+    },
+  };
+  return {
+    ...input,
+    authorityBundle,
+    expectedAuthorityBundleSha256:
+      sha256PostgresReviewedPricePromotionValue(authorityBundle),
   };
 }
 
@@ -652,12 +749,15 @@ describe("Postgres reviewed-price no-write plan candidate", () => {
     expect(target.database.events.filter((event) => event.method === "exec")).toHaveLength(3);
     expect(plan.mutationEnabled).toBe(false);
     expect(plan.activationBlockers).toEqual(POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_BLOCKERS);
-    expect(plan.activationBlockers).toHaveLength(8);
+    expect(plan.activationBlockers).toHaveLength(7);
     expect(plan.activationBlockers).not.toContain(
       "role_neutral_migration_target_identity_authority",
     );
     expect(plan.activationBlockers).toContain(
       "dedicated_read_only_planner_role_and_complete_acl_rls_visibility",
+    );
+    expect(plan.activationBlockers).not.toContain(
+      "exact_wrong_price_severity_semantics",
     );
     expect(plan.sourceSnapshot.publicConflicts).toMatchObject({
       priceRecordCount: 0,
@@ -740,24 +840,24 @@ describe("Postgres reviewed-price no-write plan candidate", () => {
     await expectPlanError(unsafe.input, "role_unsafe");
 
     const mismatch = fixture();
-    await expectPlanError({
+    await expectPlanError(rebindAuthority({
       ...mismatch.input,
       expectedPhysicalDatabaseIdentitySha256: digest("wrong-target"),
-    }, "identity_mismatch");
+    }), "identity_mismatch");
   });
 
   it("rejects environment, candidate, ready-run, receipt, target-binding, and metadata drift", async () => {
     const environment = fixture();
-    await expectPlanError({
+    await expectPlanError(rebindAuthority({
       ...environment.input,
       expectedEnvironment: "production",
-    }, "environment_mismatch");
+    }), "environment_mismatch");
 
     const candidate = fixture();
-    await expectPlanError({
+    await expectPlanError(rebindAuthority({
       ...candidate.input,
       candidateSha: "d".repeat(40),
-    }, "migration_mismatch");
+    }), "migration_mismatch");
 
     const receipt = fixture();
     await expectPlanError({
@@ -946,11 +1046,11 @@ describe("Postgres reviewed-price no-write plan candidate", () => {
         ...target.migrationTargetIdentity,
         [field]: changedValue,
       };
-      await expectPlanError({
+      await expectPlanError(rebindAuthority({
         ...target.input,
         expectedPhysicalDatabaseIdentitySha256:
           physicalIdentitySha256(changedExpectedIdentity),
-      }, "identity_mismatch");
+      }), "identity_mismatch");
     },
   );
 
@@ -994,20 +1094,20 @@ describe("Postgres reviewed-price no-write plan candidate", () => {
 
   it("rejects noncanonical or mismatched private input before trusting source rows", async () => {
     const wrongHash = fixture();
-    await expectPlanError({
+    await expectPlanError(rebindAuthority({
       ...wrongHash.input,
       expectedPrivateInputSha256: digest("wrong-private-input"),
-    }, "private_input_mismatch");
+    }), "private_input_mismatch");
     expect(wrongHash.database.transactionCount).toBe(0);
 
     const venueMismatch = fixture();
     const privateInput = venueMismatch.privateInput;
     const items = privateInput.items as Array<Record<string, unknown>>;
     items[0]!.venueIdSha256 = digest("wrong-venue");
-    await expectPlanError({
+    await expectPlanError(rebindAuthority({
       ...venueMismatch.input,
       expectedPrivateInputSha256: sha256PostgresReviewedPricePromotionValue(privateInput),
-    }, "private_input_mismatch");
+    }), "private_input_mismatch");
   });
 
   it("rejects stale or ineligible source, venue, catalog, and public-conflict snapshots", async () => {
@@ -1026,6 +1126,24 @@ describe("Postgres reviewed-price no-write plan candidate", () => {
     const conflict = fixture();
     conflict.rows["price-conflicts"][0]!.present = true;
     await expectPlanError(conflict.input, "public_conflict");
+  });
+
+  it("bounds inspected confidence to 0..1 and catalog ABV to 0..25", async () => {
+    for (const confidence of [1.01, "1.01", `0.${"1".repeat(31)}`]) {
+      const target = fixture();
+      target.rows.queue[0]!.overallConfidence = confidence;
+      await expectPlanError(target.input, "source_mismatch");
+    }
+    for (const abv of [25.01, "25.01", "-1", `0.${"1".repeat(31)}`]) {
+      const target = fixture();
+      target.rows.catalog[0]!.abv = abv;
+      await expectPlanError(target.input, "catalog_mismatch");
+    }
+    const maximum = fixture();
+    maximum.rows.queue[0]!.overallConfidence = "1.000";
+    maximum.rows.catalog[0]!.abv = "25.000";
+    await expect(buildPostgresReviewedPricePromotionPlanCandidate(maximum.input))
+      .resolves.toBeDefined();
   });
 
   it.each(["open", "in_progress"])(
@@ -1140,7 +1258,7 @@ describe("Postgres reviewed-price no-write plan candidate", () => {
     expect(failure).toMatchObject({ code: "source_mismatch" });
   });
 
-  it("rejects unknown wrong-price states and inconsistent terminal authority", async () => {
+  it("rejects unknown wrong-price states and inconsistent terminal timestamps", async () => {
     const unknown = fixture();
     unknown.rows["wrong-prices"].push(wrongPriceRow("closed"));
     await expectPlanError(unknown.input, "inspection_invalid");
@@ -1174,6 +1292,31 @@ describe("Postgres reviewed-price no-write plan candidate", () => {
     await expectPlanError(inProgressWithOnlyResolvedBy.input, "inspection_invalid");
   });
 
+  it("accepts privacy-anonymized terminal wrong-price authority", async () => {
+    const target = fixture();
+    target.rows["wrong-prices"].push(
+      wrongPriceRow("resolved", {
+        resolutionNote: null,
+        resolvedBy: null,
+      }),
+      wrongPriceRow("rejected", {
+        id: "wrong-price-rejected-anonymized",
+        resolutionNote: null,
+        resolvedBy: null,
+      }),
+    );
+
+    const plan = await buildPostgresReviewedPricePromotionPlanCandidate(target.input);
+
+    expect(plan.sourceSnapshot.wrongPriceReports).toMatchObject({
+      blockingCount: 0,
+      openOrInProgressCount: 0,
+      rejectedCount: 1,
+      resolvedCount: 1,
+      totalCount: 2,
+    });
+  });
+
   it("counts only valid resolved and rejected wrong-price terminal records", async () => {
     const target = fixture();
     target.rows["wrong-prices"].push(
@@ -1183,7 +1326,10 @@ describe("Postgres reviewed-price no-write plan candidate", () => {
     const plan = await buildPostgresReviewedPricePromotionPlanCandidate(target.input);
 
     expect(plan.sourceSnapshot.wrongPriceReports).toMatchObject({
+      blockingCount: 0,
+      blockingStatuses: REVIEWED_PRICE_BLOCKING_WRONG_PRICE_STATUSES,
       openOrInProgressCount: 0,
+      policySha256: REVIEWED_PRICE_WRONG_PRICE_POLICY_SHA256,
       rejectedCount: 1,
       resolvedCount: 1,
       totalCount: 2,
@@ -1304,13 +1450,13 @@ describe("Postgres reviewed-price no-write plan candidate", () => {
     ] as const) {
       const first = fixture();
       const second = fixture();
-      const secondInput = {
+      const secondInput = rebindAuthority({
         ...second.input,
         expectedDeployment: {
           ...second.input.expectedDeployment,
           [field]: digest(`other-${field}`),
         },
-      };
+      });
       const firstPlan = await buildPostgresReviewedPricePromotionPlanCandidate(first.input);
       const secondPlan = await buildPostgresReviewedPricePromotionPlanCandidate(secondInput);
 
@@ -1318,6 +1464,120 @@ describe("Postgres reviewed-price no-write plan candidate", () => {
       expect(secondPlan.expectedDeployment).toEqual(secondInput.expectedDeployment);
       expect(secondPlan.planCandidateSha256).not.toBe(firstPlan.planCandidateSha256);
     }
+  });
+
+  it("requires the exact offline authority bundle without treating it as live approval", async () => {
+    const wrongHash = fixture();
+    await expectPlanError({
+      ...wrongHash.input,
+      expectedAuthorityBundleSha256: digest("wrong-authority-bundle"),
+    }, "authority_mismatch");
+    expect(wrongHash.database.transactionCount).toBe(0);
+
+    const targetDrift = fixture();
+    const authorityBundle = {
+      ...(targetDrift.input.authorityBundle as Record<string, unknown>),
+      targetProfile: {
+        ...((targetDrift.input.authorityBundle as Record<string, unknown>)
+          .targetProfile as Record<string, unknown>),
+        supabaseProjectIdentitySha256: digest("different-supabase-project"),
+      },
+    };
+    const first = await buildPostgresReviewedPricePromotionPlanCandidate(targetDrift.input);
+    const secondTarget = fixture();
+    const second = await buildPostgresReviewedPricePromotionPlanCandidate({
+      ...secondTarget.input,
+      authorityBundle,
+      expectedAuthorityBundleSha256:
+        sha256PostgresReviewedPricePromotionValue(authorityBundle),
+    });
+    expect(first.authority.authorityMode).toBe("offline-plan-bindings-only");
+    expect(first.authority.mutationAuthorized).toBe(false);
+    expect(first.authority.providerAuthorityObserved).toBe(false);
+    expect(second.authority.supabaseProjectIdentitySha256)
+      .toBe(digest("different-supabase-project"));
+    expect(second.planCandidateSha256).not.toBe(first.planCandidateSha256);
+  });
+
+  it("emits a separate exact-row private review packet and binds it into the public plan", async () => {
+    const target = fixture();
+    const { plan, reviewPacket } =
+      await buildPostgresReviewedPricePromotionPlanArtifacts(target.input);
+
+    expect(postgresReviewedPricePromotionReviewPacketSchema.safeParse(
+      reviewPacket,
+    ).success).toBe(true);
+    expect(reviewPacket).toMatchObject({
+      itemCount: 1,
+      marketedSuburb: "Fitzroy",
+      mutationEnabled: false,
+      rowCount: 1,
+      targetPhysicalIdentitySha256: plan.target.physicalIdentitySha256,
+      temporalPolicy: "single-apply-transaction-timestamp",
+      wrongPricePolicySha256: REVIEWED_PRICE_WRONG_PRICE_POLICY_SHA256,
+    });
+    expect(reviewPacket.items[0]).toMatchObject({
+      evidenceContentSha256: EVIDENCE_CONTENT_SHA,
+      evidenceReference: `source-ingestion:${INGESTION_ID}`,
+      sourceIngestionId: INGESTION_ID,
+      venue: {
+        address: "123 Private Street",
+        id: VENUE_ID,
+        name: "Fixture Hotel",
+        suburb: "Fitzroy",
+      },
+    });
+    expect(reviewPacket.items[0]!.rows[0]).toEqual({
+      ordinal: 0,
+      priceRecord: {
+        beerName: "Carlton Draught",
+        confidence: "admin_verified",
+        happyHourDetails: null,
+        id: `source-ingestion:${INGESTION_ID}:0`,
+        isHappyHourPrice: false,
+        isOnTap: "yes",
+        normalizedBeerId: "carlton_draught",
+        price: 13.5,
+        servingSize: "pint",
+        sourceEvidenceReference: `source-ingestion:${INGESTION_ID}`,
+        sourceIngestionId: INGESTION_ID,
+        sourceSubmissionId: null,
+        sourceType: "source_ingestion",
+        suburb: "Fitzroy",
+        venueId: VENUE_ID,
+        venueName: "Fixture Hotel",
+      },
+      venueBeer: {
+        abv: "4.6",
+        beerName: "Carlton Draught",
+        brewery: "Carlton & United",
+        currency: "AUD",
+        id: `admin-reviewed:${VENUE_ID}:carlton-draught:pint`,
+        inStock: true,
+        normalizedBeerId: "carlton_draught",
+        notes: "Published from admin source review.",
+        onTap: true,
+        price: 13.5,
+        serveSize: "pint",
+        sourceIngestionId: INGESTION_ID,
+        style: "Lager",
+        venueId: VENUE_ID,
+      },
+    });
+    expect(plan.reviewPacket).toEqual({
+      itemCount: 1,
+      reviewPacketCandidateSha256: reviewPacket.reviewPacketCandidateSha256,
+      rowCount: 1,
+    });
+
+    const publicPlan = canonicalPostgresReviewedPricePromotionJson(plan).toString("utf8");
+    const privatePacket = canonicalPostgresReviewedPricePromotionJson(reviewPacket)
+      .toString("utf8");
+    expect(publicPlan).not.toContain("123 Private Street");
+    expect(privatePacket).toContain("123 Private Street");
+    expect(privatePacket).toContain("Carlton Draught");
+    expect(privatePacket).not.toContain("PRIVATE_QUEUE_NOTE");
+    expect(privatePacket).not.toContain("PRIVATE_SOURCE_TOKEN");
   });
 
   it("emits a deterministic, strict, canonical candidate without raw URLs or private values", async () => {
@@ -1331,7 +1591,7 @@ describe("Postgres reviewed-price no-write plan candidate", () => {
       canonicalPostgresReviewedPricePromotionJson(secondPlan),
     );
     expect(firstPlan.version).toBe(POSTGRES_REVIEWED_PRICE_PROMOTION_PLAN_VERSION);
-    expect(firstPlan.version).toBe(3);
+    expect(firstPlan.version).toBe(4);
     expect(firstPlan.target.physicalIdentitySha256).toBe(
       physicalIdentitySha256(first.rows.identity[0]!),
     );

@@ -22,10 +22,26 @@ import { sha256PostgresMigrationContract } from "../db/postgres-migration-schema
 import type { SqlDatabase } from "../db/sql-database.js";
 import { sha256PostgresDatabaseIdentity } from "./postgres-database-identity.js";
 import {
+  POSTGRES_REVIEWED_PRICE_PROMOTION_AUTHORITY_MODE,
+  POSTGRES_REVIEWED_PRICE_PROMOTION_REVIEW_PACKET_KIND,
+  POSTGRES_REVIEWED_PRICE_PROMOTION_REVIEW_PACKET_VERSION,
+  finalizePostgresReviewedPricePromotionReviewPacket,
+  postgresReviewedPricePromotionAuthorityBundleSchema,
+  type PostgresReviewedPricePromotionAuthorityBundle,
+  type PostgresReviewedPricePromotionReviewPacket,
+} from "./postgres-reviewed-price-promotion-authority.js";
+import {
   REVIEWED_PRICE_SELECTION_DEFAULT_OPTIONS,
   REVIEWED_PRICE_SELECTION_POLICY_SHA256,
   selectPublishableMapBaseRows,
 } from "./reviewed-price-selection-policy.js";
+import {
+  REVIEWED_PRICE_BLOCKING_WRONG_PRICE_STATUSES,
+  REVIEWED_PRICE_WRONG_PRICE_POLICY_SHA256,
+  REVIEWED_PRICE_WRONG_PRICE_REASONS,
+  REVIEWED_PRICE_WRONG_PRICE_STATUSES,
+  reviewedPriceWrongPriceStatusBlocksPromotion,
+} from "./reviewed-price-wrong-price-policy.js";
 import type { AdminBeerInput } from "../modules/admin/admin.schemas.js";
 
 const ARRAY_CONSTRUCTOR = Array;
@@ -118,7 +134,7 @@ export const POSTGRES_REVIEWED_PRICE_PROMOTION_PRIVATE_INPUT_KIND =
 export const POSTGRES_REVIEWED_PRICE_PROMOTION_PLAN_KIND =
   "pintpath-postgres-reviewed-price-promotion-plan-candidate" as const;
 export const POSTGRES_REVIEWED_PRICE_PROMOTION_PRIVATE_INPUT_VERSION = 1 as const;
-export const POSTGRES_REVIEWED_PRICE_PROMOTION_PLAN_VERSION = 3 as const;
+export const POSTGRES_REVIEWED_PRICE_PROMOTION_PLAN_VERSION = 4 as const;
 export const POSTGRES_REVIEWED_PRICE_PROMOTION_SOURCE_SCHEMA_SHA256 =
   "b5a093844709f725bd71415dadb37062b75e40dbd6475082732fa28b1ef1fcc9" as const;
 
@@ -143,13 +159,6 @@ const TRUSTED_PUBLIC_CONFIDENCE = Object.freeze([
   "photo_verified",
   "community_confirmed",
 ] as const);
-const OPEN_WRONG_PRICE_STATUSES = new Set(["open", "in_progress"]);
-const WRONG_PRICE_STATUSES = Object.freeze([
-  "in_progress",
-  "open",
-  "rejected",
-  "resolved",
-] as const);
 const EXPECTED_METADATA_KEYS = Object.freeze([
   "import_state",
   "migration_candidate_sha",
@@ -173,7 +182,6 @@ export const POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_BLOCKERS = Object.free
   "dedicated_apply_quarantine_roles_and_functions",
   "durable_database_ledger_and_crash_safe_receipts",
   "atomic_apply_and_receipt_authorized_quarantine",
-  "exact_wrong_price_severity_semantics",
 ] as const);
 
 export const POSTGRES_REVIEWED_PRICE_PROMOTION_READ_ONLY_TRANSACTION =
@@ -458,6 +466,9 @@ WHERE database.datname = current_database()
 const sha256Schema = z.string().regex(SHA256_PATTERN);
 const candidateSchema = z.string().regex(CANDIDATE_PATTERN);
 const sourceIdSchema = z.string().regex(UUID_PATTERN);
+const canonicalUtcSchema = z.string().regex(
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/,
+).refine((value) => new Date(value).toISOString() === value);
 const canonicalSuburbSchema = z.string().min(1).max(120).refine(
   (value) => value === normalizeHumanText(value),
   "marketedSuburb must already be canonical",
@@ -529,11 +540,23 @@ const activationBlockersSchema = z.tuple([
   z.literal(POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_BLOCKERS[4]),
   z.literal(POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_BLOCKERS[5]),
   z.literal(POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_BLOCKERS[6]),
-  z.literal(POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_BLOCKERS[7]),
 ]);
 
 const planWithoutHashSchema = z.object({
   activationBlockers: activationBlockersSchema,
+  authority: z.object({
+    authorityBundleSha256: sha256Schema,
+    authorityMode: z.literal(POSTGRES_REVIEWED_PRICE_PROMOTION_AUTHORITY_MODE),
+    evidenceReferencesSha256: sha256Schema,
+    expiresAt: canonicalUtcSchema,
+    generatedAt: canonicalUtcSchema,
+    mutationAuthorized: z.literal(false),
+    providerAuthorityObserved: z.literal(false),
+    recoveryReferencesSha256: sha256Schema,
+    reviewBindingsSha256: sha256Schema,
+    supabaseProjectIdentitySha256: sha256Schema,
+    targetProfileSha256: sha256Schema,
+  }).strict(),
   candidateSha: candidateSchema,
   expectedEnvironment: z.enum(["permanent-staging", "production"]),
   expectedDeployment: deploymentSchema,
@@ -566,6 +589,11 @@ const planWithoutHashSchema = z.object({
     manifestSha256: sha256Schema,
     marketedSuburb: canonicalSuburbSchema,
   }).strict(),
+  reviewPacket: z.object({
+    itemCount: z.number().int().min(1).max(MAX_ITEMS),
+    reviewPacketCandidateSha256: sha256Schema,
+    rowCount: z.number().int().min(1).max(MAX_ITEMS * MAX_SOURCE_ROWS_PER_ITEM),
+  }).strict(),
   sourceSnapshot: z.object({
     combinedSha256: sha256Schema,
     items: z.array(sourceItemPlanSchema).min(1).max(MAX_ITEMS),
@@ -576,7 +604,13 @@ const planWithoutHashSchema = z.object({
       venueBeerCount: z.number().int().nonnegative(),
     }).strict(),
     wrongPriceReports: z.object({
+      blockingCount: z.number().int().nonnegative(),
+      blockingStatuses: z.tuple([
+        z.literal(REVIEWED_PRICE_BLOCKING_WRONG_PRICE_STATUSES[0]),
+        z.literal(REVIEWED_PRICE_BLOCKING_WRONG_PRICE_STATUSES[1]),
+      ]),
       openOrInProgressCount: z.number().int().nonnegative(),
+      policySha256: sha256Schema,
       rejectedCount: z.number().int().nonnegative(),
       resolvedCount: z.number().int().nonnegative(),
       rowsSha256: sha256Schema,
@@ -612,8 +646,14 @@ export type PostgresReviewedPricePromotionPlanCandidate = z.infer<
   typeof postgresReviewedPricePromotionPlanCandidateSchema
 >;
 
+export interface PostgresReviewedPricePromotionPlanArtifacts {
+  readonly plan: PostgresReviewedPricePromotionPlanCandidate;
+  readonly reviewPacket: PostgresReviewedPricePromotionReviewPacket;
+}
+
 export type PostgresReviewedPricePromotionPlanErrorCode =
   | "argument_invalid"
+  | "authority_mismatch"
   | "catalog_mismatch"
   | "environment_mismatch"
   | "identity_mismatch"
@@ -634,11 +674,13 @@ export class PostgresReviewedPricePromotionPlanError extends Error {
 }
 
 export interface BuildPostgresReviewedPricePromotionPlanInput {
+  readonly authorityBundle: unknown;
   readonly candidateSha: string;
   readonly database: SqlDatabase;
   readonly expectedDeployment: z.input<typeof deploymentSchema>;
   readonly expectedEnvironment: "permanent-staging" | "production";
   readonly expectedMigration: z.input<typeof expectedMigrationSchema>;
+  readonly expectedAuthorityBundleSha256: string;
   readonly migrationTargetIdentity: z.input<typeof postgresMigrationTargetIdentitySchema>;
   readonly migrationReceipt: unknown;
   readonly expectedPrivateInputSha256: string;
@@ -779,14 +821,11 @@ interface WrongPriceRow extends QueryResultRow {
   readonly resolvedAt: string | null;
   readonly resolvedBy: string | null;
   readonly sourcePhotoUrl: string | null;
-  readonly status: string;
+  readonly status: typeof REVIEWED_PRICE_WRONG_PRICE_STATUSES[number];
   readonly updatedAt: string;
   readonly venueId: string;
 }
 
-const canonicalUtcSchema = z.string().regex(
-  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/,
-).refine((value) => new Date(value).toISOString() === value);
 const nullableText = (maximum: number) => z.string().min(1).max(maximum).nullable();
 const METADATA_ROW_KEYS = Object.freeze(["key", "value"] as const);
 const metadataRowSchema = z.object({
@@ -856,11 +895,20 @@ const QUEUE_ROW_KEYS = Object.freeze([
   "venueName",
   "venueNameGuess",
 ] as const);
-const numericInspectionSchema = z.union([
-  z.number().finite(),
-  z.string().regex(/^-?\d+(?:\.\d+)?$/),
+const boundedNumericInspectionSchema = (maximum: number) => z.union([
+  z.number().finite().min(0).max(maximum),
+  z.string()
+    .min(1)
+    .max(32)
+    .regex(/^(?:0|[1-9]\d*)(?:\.\d+)?$/)
+    .refine((value) => {
+      const numeric = REFLECT_APPLY(NUMBER_CONSTRUCTOR, undefined, [value]) as number;
+      return NUMBER_IS_FINITE(numeric) && numeric >= 0 && numeric <= maximum;
+    }),
   z.null(),
 ]);
+const confidenceInspectionSchema = boundedNumericInspectionSchema(1);
+const catalogAbvInspectionSchema = boundedNumericInspectionSchema(25);
 const queueRowSchema = z.object({
   capturedNotes: nullableText(4_000),
   createdAt: canonicalUtcSchema,
@@ -870,7 +918,7 @@ const queueRowSchema = z.object({
   imageRedactionReason: nullableText(1_000),
   imageRetentionExpiresAt: canonicalUtcSchema.nullable(),
   note: nullableText(4_000),
-  overallConfidence: numericInspectionSchema,
+  overallConfidence: confidenceInspectionSchema,
   publishedAt: canonicalUtcSchema.nullable(),
   rejectedAt: canonicalUtcSchema.nullable(),
   reviewBeersJson: z.string().max(MAX_SOURCE_JSON_BYTES).nullable(),
@@ -915,7 +963,7 @@ const CATALOG_ROW_KEYS = Object.freeze([
   "updatedAt",
 ] as const);
 const catalogRowSchema = z.object({
-  abv: numericInspectionSchema,
+  abv: catalogAbvInspectionSchema,
   alias: z.string().min(1).max(180),
   aliasKey: z.string().min(1).max(180),
   brewery: nullableText(180),
@@ -933,25 +981,19 @@ const wrongPriceRowSchema = z.object({
   id: z.string().min(1).max(180),
   notes: nullableText(2_000),
   priceRecordId: nullableText(180),
-  reason: z.enum([
-    "price_changed",
-    "beer_not_available",
-    "happy_hour_changed",
-    "wrong_serving_size",
-    "other",
-  ]),
+  reason: z.enum(REVIEWED_PRICE_WRONG_PRICE_REASONS),
   resolutionNote: nullableText(2_000),
   resolvedAt: canonicalUtcSchema.nullable(),
   resolvedBy: nullableText(180),
   sourcePhotoUrl: nullableText(4_096),
-  status: z.enum(WRONG_PRICE_STATUSES),
+  status: z.enum(REVIEWED_PRICE_WRONG_PRICE_STATUSES),
   updatedAt: canonicalUtcSchema,
   venueId: sourceIdSchema,
 }).strict().superRefine((value, context) => {
   const terminal = value.status === "resolved" || value.status === "rejected";
   if (
     terminal
-      ? value.resolvedAt === null || value.resolvedBy === null
+      ? value.resolvedAt === null
       : value.resolvedAt !== null || value.resolvedBy !== null
   ) {
     context.addIssue({ code: "custom", message: "wrong-price terminal authority mismatch" });
@@ -1276,6 +1318,20 @@ function canonicalPrivateInput(value: unknown): PostgresReviewedPricePromotionPr
   }
 }
 
+function canonicalAuthorityBundle(
+  value: unknown,
+): PostgresReviewedPricePromotionAuthorityBundle {
+  try {
+    assertPlanIntrinsicSurfacesExact();
+    const parsed = postgresReviewedPricePromotionAuthorityBundleSchema.safeParse(value);
+    if (!parsed.success) fail("authority_mismatch");
+    return parsed.data;
+  } catch (error) {
+    if (error instanceof PostgresReviewedPricePromotionPlanError) throw error;
+    return fail("authority_mismatch");
+  }
+}
+
 function canonicalMigrationReceipt(value: unknown): PostgresMigrationReceipt {
   try {
     assertPlanIntrinsicSurfacesExact();
@@ -1304,6 +1360,24 @@ function normalizeBeerKey(value: string): string {
     separatorPending = false;
   }
   return output;
+}
+
+function recordIdSegment(value: string): string {
+  const normalized = lowercase(REFLECT_APPLY(STRING_TRIM, value, []) as string);
+  let output = "";
+  let separatorPending = false;
+  for (let index = 0; index < normalized.length; index += 1) {
+    const code = REFLECT_APPLY(STRING_CHAR_CODE_AT, normalized, [index]) as number;
+    const allowed = code >= 0x61 && code <= 0x7a || code >= 0x30 && code <= 0x39;
+    if (!allowed) {
+      separatorPending = output.length > 0;
+      continue;
+    }
+    if (separatorPending) output += "-";
+    output += normalized[index];
+    separatorPending = false;
+  }
+  return output || "beer";
 }
 
 function selectedSourceBeers(row: QueueRow): AdminBeerInput[] {
@@ -1743,9 +1817,9 @@ function exactIdentityRow(value: unknown): IdentityRow {
   }
 }
 
-export async function buildPostgresReviewedPricePromotionPlanCandidate(
+export async function buildPostgresReviewedPricePromotionPlanArtifacts(
   input: BuildPostgresReviewedPricePromotionPlanInput,
-): Promise<PostgresReviewedPricePromotionPlanCandidate> {
+): Promise<PostgresReviewedPricePromotionPlanArtifacts> {
   assertPlanIntrinsicSurfacesExact();
   let database: SqlDatabase;
   try {
@@ -1758,6 +1832,7 @@ export async function buildPostgresReviewedPricePromotionPlanCandidate(
 
   const argumentSchema = z.object({
     candidateSha: candidateSchema,
+    expectedAuthorityBundleSha256: sha256Schema,
     expectedEnvironment: z.enum(["permanent-staging", "production"]),
     expectedDeployment: deploymentSchema,
     expectedMigration: expectedMigrationSchema,
@@ -1766,12 +1841,14 @@ export async function buildPostgresReviewedPricePromotionPlanCandidate(
     expectedPrivateInputSha256: sha256Schema,
   }).strict();
   let argumentsValue: z.infer<typeof argumentSchema>;
+  let authorityBundle: PostgresReviewedPricePromotionAuthorityBundle;
   let historicalPhysicalIdentitySha256: string;
   let migrationReceipt: PostgresMigrationReceipt;
   let privateInput: PostgresReviewedPricePromotionPrivateInput;
   try {
     argumentsValue = parseOrFail(argumentSchema, {
       candidateSha: input.candidateSha,
+      expectedAuthorityBundleSha256: input.expectedAuthorityBundleSha256,
       expectedEnvironment: input.expectedEnvironment,
       expectedDeployment: input.expectedDeployment,
       expectedMigration: input.expectedMigration,
@@ -1794,12 +1871,31 @@ export async function buildPostgresReviewedPricePromotionPlanCandidate(
       sha256PostgresReviewedPricePromotionValue(privateInput)
       !== argumentsValue.expectedPrivateInputSha256
     ) fail("private_input_mismatch");
+    authorityBundle = canonicalAuthorityBundle(input.authorityBundle);
+    if (
+      sha256PostgresReviewedPricePromotionValue(authorityBundle)
+        !== argumentsValue.expectedAuthorityBundleSha256
+      || authorityBundle.candidateSha !== argumentsValue.candidateSha
+      || authorityBundle.expectedEnvironment !== argumentsValue.expectedEnvironment
+      || authorityBundle.privateInputManifestSha256
+        !== argumentsValue.expectedPrivateInputSha256
+      || authorityBundle.targetProfile.deploymentAttestationFileSha256
+        !== argumentsValue.expectedDeployment.attestationFileSha256
+      || authorityBundle.targetProfile.physicalDatabaseIdentitySha256
+        !== argumentsValue.expectedPhysicalDatabaseIdentitySha256
+      || authorityBundle.targetProfile.railwayEnvironmentIdSha256
+        !== argumentsValue.expectedDeployment.environmentIdSha256
+      || authorityBundle.targetProfile.railwayProjectIdSha256
+        !== argumentsValue.expectedDeployment.projectIdSha256
+      || authorityBundle.targetProfile.railwayServiceIdSha256
+        !== argumentsValue.expectedDeployment.serviceIdSha256
+    ) fail("authority_mismatch");
   } catch (error) {
     if (error instanceof PostgresReviewedPricePromotionPlanError) throw error;
     return fail("argument_invalid");
   }
 
-  let inspect: () => Promise<PostgresReviewedPricePromotionPlanCandidate>;
+  let inspect: () => Promise<PostgresReviewedPricePromotionPlanArtifacts>;
   try {
     inspect = database.transaction(async () => {
     assertPlanIntrinsicSurfacesExact();
@@ -2104,7 +2200,7 @@ export async function buildPostgresReviewedPricePromotionPlanCandidate(
     const wrongPrices = exactWrongPriceRows(rawWrongPrices, venueIds);
     const openWrongPriceCount = denseArrayCount(
       wrongPrices,
-      (row) => setHas(OPEN_WRONG_PRICE_STATUSES, row.status),
+      (row) => reviewedPriceWrongPriceStatusBlocksPromotion(row.status),
     );
     if (openWrongPriceCount > 0) fail("wrong_price_open");
     const resolvedCount = denseArrayCount(wrongPrices, (row) => row.status === "resolved");
@@ -2156,7 +2252,16 @@ export async function buildPostgresReviewedPricePromotionPlanCandidate(
       venueBeerCount: 0,
     };
     const wrongPriceReports = {
+      blockingCount: openWrongPriceCount,
+      blockingStatuses: denseArrayMap(
+        REVIEWED_PRICE_BLOCKING_WRONG_PRICE_STATUSES,
+        (status) => status,
+      ) as [
+        typeof REVIEWED_PRICE_BLOCKING_WRONG_PRICE_STATUSES[0],
+        typeof REVIEWED_PRICE_BLOCKING_WRONG_PRICE_STATUSES[1],
+      ],
       openOrInProgressCount: openWrongPriceCount,
+      policySha256: REVIEWED_PRICE_WRONG_PRICE_POLICY_SHA256,
       rejectedCount,
       resolvedCount,
       rowsSha256: sha256PostgresReviewedPricePromotionValue(wrongPriceSanitized),
@@ -2168,6 +2273,107 @@ export async function buildPostgresReviewedPricePromotionPlanCandidate(
       selectionPolicySha256: REVIEWED_PRICE_SELECTION_POLICY_SHA256,
       wrongPriceReports,
     };
+    const sourceSnapshotCombinedSha256 =
+      sha256PostgresReviewedPricePromotionValue(sourceSnapshotWithoutCombined);
+
+    const venueBeerIds = REFLECT_CONSTRUCT(SET_CONSTRUCTOR, []) as Set<string>;
+    let reviewRowCount = 0;
+    const reviewItems = denseArrayMap(queueRows, (queue) => {
+      const selected = mapGet(selectedById, queue.id);
+      const profile = mapGet(profileByVenue, queue.venueId);
+      const privateItem = mapGet(privateById, queue.id);
+      if (!selected || !profile || !privateItem || profile.suburb === null) {
+        fail("source_mismatch");
+      }
+      const evidenceReference = `source-ingestion:${queue.id}`;
+      const rows = denseArrayMap(selected, (beer, ordinal) => {
+        const catalog = mapGet(catalogByAlias, normalizeBeerKey(beer.name));
+        if (
+          !catalog
+          || beer.priceNumeric === null
+          || !NUMBER_IS_FINITE(beer.priceNumeric)
+        ) fail("catalog_mismatch");
+        const venueBeerId = `admin-reviewed:${queue.venueId}`
+          + `:${recordIdSegment(catalog.itemKey)}:${beer.servingSize}`;
+        if (setHas(venueBeerIds, venueBeerId)) fail("catalog_mismatch");
+        REFLECT_APPLY(SET_ADD, venueBeerIds, [venueBeerId]);
+        reviewRowCount += 1;
+        return {
+          ordinal,
+          priceRecord: {
+            beerName: catalog.itemName,
+            confidence: "admin_verified" as const,
+            happyHourDetails: null,
+            id: `source-ingestion:${queue.id}:${ordinal}`,
+            isHappyHourPrice: false as const,
+            isOnTap: "yes" as const,
+            normalizedBeerId: catalog.itemKey,
+            price: beer.priceNumeric,
+            servingSize: "pint" as const,
+            sourceEvidenceReference: evidenceReference,
+            sourceIngestionId: queue.id,
+            sourceSubmissionId: null,
+            sourceType: "source_ingestion" as const,
+            suburb: profile.suburb,
+            venueId: queue.venueId,
+            venueName: profile.name,
+          },
+          venueBeer: {
+            abv: exactNumeric(catalog.abv),
+            beerName: catalog.itemName,
+            brewery: catalog.brewery,
+            currency: "AUD" as const,
+            id: venueBeerId,
+            inStock: true as const,
+            normalizedBeerId: catalog.itemKey,
+            notes: "Published from admin source review." as const,
+            onTap: true as const,
+            price: beer.priceNumeric,
+            serveSize: "pint" as const,
+            sourceIngestionId: queue.id,
+            style: catalog.style,
+            venueId: queue.venueId,
+          },
+        };
+      });
+      return {
+        evidenceContentSha256: privateItem.evidenceContentSha256,
+        evidenceReference,
+        evidenceReferenceSha256: privateItem.evidenceReferenceSha256,
+        rows,
+        sourceIngestionId: queue.id,
+        venue: {
+          address: profile.address,
+          area: profile.area,
+          id: profile.venueId,
+          name: profile.name,
+          suburb: profile.suburb,
+        },
+      };
+    });
+    const targetProfileSha256 = sha256PostgresReviewedPricePromotionValue(
+      authorityBundle.targetProfile,
+    );
+    const reviewPacket = finalizePostgresReviewedPricePromotionReviewPacket({
+      authorityBundleSha256: argumentsValue.expectedAuthorityBundleSha256,
+      candidateSha: argumentsValue.candidateSha,
+      expectedEnvironment: argumentsValue.expectedEnvironment,
+      expiresAt: authorityBundle.expiresAt,
+      generatedAt: authorityBundle.generatedAt,
+      itemCount: privateInput.itemCount,
+      items: reviewItems,
+      kind: POSTGRES_REVIEWED_PRICE_PROMOTION_REVIEW_PACKET_KIND,
+      marketedSuburb: privateInput.marketedSuburb,
+      mutationEnabled: false,
+      privateInputManifestSha256: argumentsValue.expectedPrivateInputSha256,
+      rowCount: reviewRowCount,
+      sourceSnapshotSha256: sourceSnapshotCombinedSha256,
+      targetPhysicalIdentitySha256: physicalIdentitySha256,
+      targetProfileSha256,
+      temporalPolicy: "single-apply-transaction-timestamp",
+      version: POSTGRES_REVIEWED_PRICE_PROMOTION_REVIEW_PACKET_VERSION,
+      wrongPricePolicySha256: REVIEWED_PRICE_WRONG_PRICE_POLICY_SHA256,
+    });
 
     const roleSafety = {
       authorityQuerySha256: sha256PostgresMigrationBytes(
@@ -2198,8 +2404,27 @@ export async function buildPostgresReviewedPricePromotionPlanCandidate(
         typeof POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_BLOCKERS[4],
         typeof POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_BLOCKERS[5],
         typeof POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_BLOCKERS[6],
-        typeof POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_BLOCKERS[7],
       ],
+      authority: {
+        authorityBundleSha256: argumentsValue.expectedAuthorityBundleSha256,
+        authorityMode: authorityBundle.authorityMode,
+        evidenceReferencesSha256: sha256PostgresReviewedPricePromotionValue(
+          authorityBundle.evidenceReferences,
+        ),
+        expiresAt: authorityBundle.expiresAt,
+        generatedAt: authorityBundle.generatedAt,
+        mutationAuthorized: false as const,
+        providerAuthorityObserved: false as const,
+        recoveryReferencesSha256: sha256PostgresReviewedPricePromotionValue(
+          authorityBundle.recoveryReferences,
+        ),
+        reviewBindingsSha256: sha256PostgresReviewedPricePromotionValue(
+          authorityBundle.reviewBindings,
+        ),
+        supabaseProjectIdentitySha256:
+          authorityBundle.targetProfile.supabaseProjectIdentitySha256,
+        targetProfileSha256,
+      },
       candidateSha: argumentsValue.candidateSha,
       expectedEnvironment: argumentsValue.expectedEnvironment,
       expectedDeployment: argumentsValue.expectedDeployment,
@@ -2232,9 +2457,14 @@ export async function buildPostgresReviewedPricePromotionPlanCandidate(
         manifestSha256: argumentsValue.expectedPrivateInputSha256,
         marketedSuburb: privateInput.marketedSuburb,
       },
+      reviewPacket: {
+        itemCount: reviewPacket.itemCount,
+        reviewPacketCandidateSha256: reviewPacket.reviewPacketCandidateSha256,
+        rowCount: reviewPacket.rowCount,
+      },
       sourceSnapshot: {
         ...sourceSnapshotWithoutCombined,
-        combinedSha256: sha256PostgresReviewedPricePromotionValue(sourceSnapshotWithoutCombined),
+        combinedSha256: sourceSnapshotCombinedSha256,
       },
       target: {
         catalogIdentity: {
@@ -2260,7 +2490,7 @@ export async function buildPostgresReviewedPricePromotionPlanCandidate(
       planCandidateSha256: sha256PostgresReviewedPricePromotionValue(strictWithoutHash),
     });
     assertPlanIntrinsicSurfacesExact();
-    return candidate;
+    return OBJECT_FREEZE({ plan: candidate, reviewPacket });
     });
     assertPlanIntrinsicSurfacesExact();
   } catch (error) {
@@ -2269,11 +2499,17 @@ export async function buildPostgresReviewedPricePromotionPlanCandidate(
   }
 
   try {
-    const candidate = await inspect();
+    const artifacts = await inspect();
     assertPlanIntrinsicSurfacesExact();
-    return candidate;
+    return artifacts;
   } catch (error) {
     if (error instanceof PostgresReviewedPricePromotionPlanError) throw error;
     return fail("inspection_invalid");
   }
+}
+
+export async function buildPostgresReviewedPricePromotionPlanCandidate(
+  input: BuildPostgresReviewedPricePromotionPlanInput,
+): Promise<PostgresReviewedPricePromotionPlanCandidate> {
+  return (await buildPostgresReviewedPricePromotionPlanArtifacts(input)).plan;
 }

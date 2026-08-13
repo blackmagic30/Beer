@@ -19,9 +19,6 @@ function validBuffers(overrides: Partial<Record<
     SUPABASE_SERVICE_ROLE_KEY: Buffer.from(
       overrides.SUPABASE_SERVICE_ROLE_KEY ?? `sb_secret_${"b".repeat(32)}`,
     ),
-    OFFSITE_BACKUP_SERVICE_ROLE_KEY: Buffer.from(
-      overrides.OFFSITE_BACKUP_SERVICE_ROLE_KEY ?? `sb_secret_${"c".repeat(32)}`,
-    ),
   };
 }
 
@@ -31,7 +28,7 @@ function allZero(values: Record<string, Buffer>): boolean {
 }
 
 describe("permanent-staging Supabase replacement-key input custody", () => {
-  it("captures exactly three bounded new-format keys and publishes no secret-derived evidence", () => {
+  it("captures exactly two bounded staging-project keys and publishes no secret-derived evidence", () => {
     const input = validBuffers();
     const custody = createPermanentStagingSupabaseKeyCustody(input);
     expect(allZero(input)).toBe(true);
@@ -55,7 +52,7 @@ describe("permanent-staging Supabase replacement-key input custody", () => {
   it.each([
     ["partial input", () => {
       const input = validBuffers() as Record<string, Buffer>;
-      delete input.OFFSITE_BACKUP_SERVICE_ROLE_KEY;
+      delete input.SUPABASE_SERVICE_ROLE_KEY;
       return input;
     }],
     ["extra input", () => ({ ...validBuffers(), EXTRA_KEY: Buffer.from("extra") })],
@@ -67,10 +64,7 @@ describe("permanent-staging Supabase replacement-key input custody", () => {
       SUPABASE_SERVICE_ROLE_KEY: `sb_publishable_${"b".repeat(32)}`,
     })],
     ["whitespace", () => validBuffers({
-      OFFSITE_BACKUP_SERVICE_ROLE_KEY: `sb_secret_${"c".repeat(31)} `,
-    })],
-    ["reused secret", () => validBuffers({
-      OFFSITE_BACKUP_SERVICE_ROLE_KEY: `sb_secret_${"b".repeat(32)}`,
+      SUPABASE_SERVICE_ROLE_KEY: `sb_secret_${"c".repeat(31)} `,
     })],
     ["oversized", () => validBuffers({
       SUPABASE_SERVICE_ROLE_KEY: `sb_secret_${"b".repeat(247)}`,
@@ -100,7 +94,7 @@ describe("permanent-staging Supabase replacement-key input custody", () => {
     )).toBe(true);
   });
 
-  it("publishes the three Buffers once, then zeroizes retained views", async () => {
+  it("publishes the two Buffers once, then zeroizes retained views", async () => {
     const custody = createPermanentStagingSupabaseKeyCustody(validBuffers());
     let retained: readonly Buffer[] = [];
     const writer = vi.fn(async (keys: Record<string, Buffer>) => {
@@ -150,7 +144,6 @@ describe("permanent-staging Supabase replacement-key input custody", () => {
       retained = [
         keys.SUPABASE_ANON_KEY!,
         keys.SUPABASE_SERVICE_ROLE_KEY!,
-        keys.OFFSITE_BACKUP_SERVICE_ROLE_KEY!,
       ];
       return writerPromise;
     });
@@ -184,7 +177,7 @@ describe("permanent-staging Supabase replacement-key input custody", () => {
 
   it("uses captured cleanup, Promise, EventTarget, AbortSignal, Buffer, Array, Object, and Reflect intrinsics", async () => {
     const invalidInput = validBuffers({
-      OFFSITE_BACKUP_SERVICE_ROLE_KEY: `sb_secret_${"b".repeat(32)}`,
+      SUPABASE_SERVICE_ROLE_KEY: `sb_secret_${"b".repeat(19)}!`,
     });
     const validInput = validBuffers();
     const controller = new AbortController();
@@ -253,7 +246,6 @@ describe("permanent-staging Supabase replacement-key input custody", () => {
         retained = [
           keys.SUPABASE_ANON_KEY,
           keys.SUPABASE_SERVICE_ROLE_KEY,
-          keys.OFFSITE_BACKUP_SERVICE_ROLE_KEY,
         ];
         return resolvedWriter;
       }, controller.signal);
@@ -294,7 +286,6 @@ describe("permanent-staging Supabase replacement-key input custody", () => {
       const input = {
         SUPABASE_ANON_KEY: Buffer.from("sb_publishable_${"a".repeat(32)}"),
         SUPABASE_SERVICE_ROLE_KEY: Buffer.from("sb_secret_${"b".repeat(32)}"),
-        OFFSITE_BACKUP_SERVICE_ROLE_KEY: Buffer.from("sb_secret_${"c".repeat(32)}"),
       };
       const custody = createPermanentStagingSupabaseKeyCustody(input);
       const controller = new AbortController();
@@ -311,7 +302,7 @@ describe("permanent-staging Supabase replacement-key input custody", () => {
         Promise.prototype.then = () => { poisonCalls += 1; throw new Error("poison then"); };
         const pending = custody.useExactlyOnce((keys) => {
           writerCalls += 1;
-          retained = [keys.SUPABASE_ANON_KEY, keys.SUPABASE_SERVICE_ROLE_KEY, keys.OFFSITE_BACKUP_SERVICE_ROLE_KEY];
+          retained = [keys.SUPABASE_ANON_KEY, keys.SUPABASE_SERVICE_ROLE_KEY];
           return writerPromise;
         }, controller.signal);
         controller.abort();

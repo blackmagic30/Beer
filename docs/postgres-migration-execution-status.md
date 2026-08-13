@@ -1,6 +1,6 @@
 # Postgres migration execution status
 
-Last updated: 11 August 2026
+Last updated: 12 August 2026
 
 Overall state: **NO-GO — the Free-live PostgreSQL application implementation,
 permanent-staging database import/runtime proof, logical backup, and isolated
@@ -99,9 +99,8 @@ resource pins, operator approvals, or two-person evidence.
   identity, live restricted planner identity, and operator-pinned expected
   identity to agree on system identifier, database OID/name, and PostgreSQL
   server version. Planner-login authority remains a separate digest. This
-  closes only the role-neutral target-identity blocker: the command remains
-  mutation-disabled and still reports eight planner/provider/approval/WORM/
-  apply/quarantine/ledger/atomicity/wrong-price blockers.
+  closed only the role-neutral target-identity blocker in that plan version;
+  it did not authorize a write.
 - Added the read-only permanent-staging application-deployment attestation
   foundation. Runtime readiness responses expose only domain-separated hashes
   of Railway project, environment, service, deployment, and replica identity.
@@ -109,12 +108,25 @@ resource pins, operator approvals, or two-person evidence.
   patches, joins the sole active successful provider deployment and image to
   `/health`, `/startup`, and `/ready`, fences the provider snapshot before and
   after, and writes a short-lived canonical receipt without raw provider
-  metadata. Reviewed-price plan version 3 derives its five deployment hashes
+  metadata. Reviewed-price plan version 3 derived its five deployment hashes
   only from that receipt, retains the exact receipt-file and policy hashes, and
   rejects the former free-form hash flags. This is
   offline implementation evidence only: the Beer service remains undeployed in
   permanent staging, no authentic receipt exists, no Railway write is
   authorized, and the provider-observed deployment blocker remains open.
+- Upgraded the reviewed-price no-write plan to version 4. It now consumes a
+  canonical, at-most-24-hour `offline-plan-bindings-only` authority bundle that
+  is required to declare provider authority, cryptographic approval, and
+  mutation authority false. It also emits a separate mode-0600 private review
+  packet containing the exact proposed rows and private evidence references,
+  with self-hash, candidate, target, recovery, evidence, operator, and reviewer
+  bindings. The wrong-price policy conservatively blocks every known reason in
+  `open` or `in_progress` state without inventing a severity. This closes no
+  live authority: seven blockers remain for the dedicated planner boundary,
+  provider-observed deployment, signed approval trust root, immutable/WORM
+  evidence, apply/quarantine authorities, durable ledger/crash-safe receipts,
+  and atomic apply or receipt-authorized quarantine. The CLI has no apply or
+  quarantine command and keeps `mutationAuthorized`/`mutationEnabled` false.
 - Added the canonical
   [permanent-staging application source-upload scaffold](permanent-staging-app-deployment.md).
   It pins the target, source/config hashes, one-replica postflight contract,
@@ -536,9 +548,10 @@ resource pins, operator approvals, or two-person evidence.
   before/after identity fences into one exact restore-compatible private
   directory. Focused tests and a restricted disposable PostgreSQL 17 identity
   query pass. The provider execution recorded below proves one isolated staging
-  upload, live database-bound readiness probe, and full byte-for-byte retrieval.
-  It does not prove PITR, WORM, private Storage recovery, or a full application
-  boot.
+  upload, a database-bound readiness probe under the prior staging/production-
+  copy coupling, and full byte-for-byte retrieval. That is historical evidence,
+  not current staging readiness. It does not prove PITR, WORM, private Storage
+  recovery, or a full application boot.
 - Added a fail-closed synthetic nonzero account-deletion recovery harness and a
   separate restored-target tombstone replay authority. They bind the runtime
   database identity, pre-deletion logical-backup receipt, verified ledger
@@ -550,6 +563,18 @@ resource pins, operator approvals, or two-person evidence.
   replay passes with one authentic synthetic tombstone; the exact disposable
   replay database and its two temporary logins were removed after independent
   live-row verification.
+- Added the environment-independent Supabase replacement-key consumer gate.
+  It reproduces and prevents the pinned browser SDK's opaque publishable-key
+  bearer duplication and redirect forwarding, pins the canonical production
+  Auth origin, keeps public/server key roles separate at hosted startup,
+  requires exact publishable keys for new iOS and Android Release artifacts and
+  protected strict-auth smoke, and inventories every tracked SDK factory,
+  manual `apikey` transport, provider endpoint, browser bundle, and dependency
+  pin. The release workflow runs it before protected secrets. This is offline
+  compatibility evidence only: no key was read or changed, no provider was
+  contacted, and the two permanent-staging replacement operations plus
+  legacy-key disablement remain hard-disabled and unauthorized. Production
+  operational-copy authority is not part of the staging replacement.
 
 ## Completed against pinned provider targets
 
@@ -568,12 +593,19 @@ resource pins, operator approvals, or two-person evidence.
   pass without a SQLite fallback.
 - Created and verified the direct PostgreSQL logical backup from permanent
   staging. Its archive, version-2 manifest, and complete state receipt are the
-  source authority for the disposable logical-restore proof. Uploaded that
-  frozen set to a dedicated second Supabase Micro project and private bucket,
-  re-downloaded and verified its objects, wrote the version-2 immutable
-  attestation/latest pointer, and recorded the full hash-only success state.
-  A fresh probe bound to the connected staging database identity reports
-  `status=ok`, `required=true`, and `liveProbe=true`. Retrieved the staging
+  source authority for the disposable logical-restore proof. A protected
+  operator-host invocation uploaded that frozen set to a then-isolated second
+  Supabase Micro project and private bucket, re-downloaded and verified its
+  objects, wrote the version-2 immutable attestation/latest pointer, and recorded
+  the full hash-only success state. A staging database-bound probe reported
+  `status=ok`, `required=true`, and `liveProbe=true` under the prior checked-in/
+  live contract that coupled staging to the production operational-copy URL,
+  key, and bucket. That probe is historical and must not remain in force. The
+  current candidate makes the operational-copy CLI canonical-production-only,
+  prohibits all three destination variables in staging, and limits current
+  staging Storage readiness to its own source-evidence bucket. No provider query
+  in this remediation proves deletion; a fresh complete Railway inventory must
+  prove all three names deleted before staging can pass. Retrieved the staging
   pre-deletion set from that isolated private bucket through the exact pinned
   state/pointer/attestation/Storage-generation contract; the local archive,
   manifest, and state receipt matched their remote authorities byte-for-byte.
@@ -586,9 +618,12 @@ resource pins, operator approvals, or two-person evidence.
 - Created a locked manual Railway volume baseline for permanent-staging
   Postgres and enabled its six-day daily snapshot schedule. The recorded
   backup references 889 MB; even treating the locked baseline and every
-  retained daily snapshot as a full copy gives a conservative recurring
-  staging envelope of approximately US$46.80/month. This is a same-provider
-  snapshot layer, not PITR, an off-platform copy, or WORM.
+  retained daily snapshot as a full copy defines the conservative snapshot
+  allowance used in the combined permanent-staging and separately operated
+  production operational-copy envelope of approximately US$46.80/month. That
+  amount is not a staging-only cost or authority boundary. The volume baseline
+  itself is a same-provider snapshot layer, not PITR, an off-platform copy, or
+  WORM.
 - Provisioned an isolated disposable Railway restore project with separate
   Postgres 17 and Redis resources. Restored the permanent-staging logical
   backup into its fresh database and independently verified the resulting
@@ -607,7 +642,8 @@ resource pins, operator approvals, or two-person evidence.
   Storage recovery, PITR, provider-enforced WORM, or approved RPO/RTO. Its
   retained Postgres and Redis caps would add approximately US$20.13/month if
   left running for a full month; that temporary, prorated recovery-drill spend
-  is not part of the recurring US$46.80 staging envelope. Complete the open
+  is not part of the recurring US$46.80 combined staging-plus-production-copy
+  envelope. Complete the open
   proof and dispose the exact recorded resources promptly rather than letting
   the rehearsal become permanent infrastructure.
 - Provisioned and pinned a dedicated production PostgreSQL 17 service and
@@ -617,10 +653,12 @@ resource pins, operator approvals, or two-person evidence.
 - Applied permanent-staging Railway resource caps of 0.1 vCPU/0.5 GB to Beer,
   0.1 vCPU/0.5 GB to Postgres, and 0.1 vCPU/0.25 GB to Redis. Keep one Beer
   replica permanently; a second replica is allowed only for a bounded evidence
-  window and must be scaled back to one. With two Supabase Micro projects,
-  full 50 GB staging-Postgres volume allowance, and conservative current Redis
-  storage, the recurring staging envelope including the conservative volume-
-  snapshot allowance is approximately US$46.80/month.
+  window and must be scaled back to one. With one permanent-staging Supabase
+  Micro project, the separately operated canonical-production operational-copy
+  Supabase Micro project, the full 50 GB staging-Postgres volume allowance, and
+  conservative current Redis storage, the combined recurring envelope including
+  the conservative volume-snapshot allowance is approximately US$46.80/month.
+  This is not a staging-only cost or authority boundary.
 
 ## Live execution still required
 
@@ -639,9 +677,10 @@ is not mutation authority.
   Railway variable operations: Google Maps client configuration
   (`GOOGLE_MAPS_API_KEY` and `GOOGLE_MAPS_MAP_ID`), Google Places server access
   (`GOOGLE_PLACES_API_KEY`), and OpenAI menu OCR (`OPENAI_API_KEY`). Separately,
-  the three Supabase replacement-key operations (`SUPABASE_ANON_KEY`,
-  `SUPABASE_SERVICE_ROLE_KEY`, and `OFFSITE_BACKUP_SERVICE_ROLE_KEY`) remain
-  `HARD_DISABLED_REVIEW_REQUIRED` and unauthorized.
+  the two permanent-staging Supabase replacement-key operations
+  (`SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY`) remain
+  `HARD_DISABLED_REVIEW_REQUIRED` and unauthorized; production
+  operational-copy variables are prohibited in permanent staging.
 - Deploy the reviewed application build to permanent staging at one replica and
   pass provider, Auth, role, private Storage, and Free-scope smoke checks.
 - Temporarily run the same reviewed build with at least two application
@@ -667,14 +706,18 @@ is not mutation authority.
 
 - Permanent staging now has pinned Postgres, Supabase/Auth/private Storage, and
   Redis resources, a verified import/runtime, a verified direct logical backup,
-  and a live destination-bound operational-copy attestation. The three
+  and a historical live destination-bound operational-copy attestation. The three
   Google/OpenAI categories/four exact Railway variable operations remain open;
-  the separate three Supabase replacement-key operations remain hard-disabled
-  and unauthorized; and the staging application has not yet been deployed.
+  the separate two permanent-staging Supabase replacement-key operations remain
+  hard-disabled and unauthorized; production operational-copy variables are
+  prohibited there; and the staging application has not yet been deployed.
 - The separate offsite Supabase project, private logical-backup bucket, remote
-  re-download verification, live database-bound readiness probe, and one exact
-  full-retrieval drill all pass. It is an operational copy only and cannot
-  satisfy WORM.
+  re-download verification, historical database-bound readiness probe, and one
+  exact full-retrieval drill passed under the prior coupled contract. That probe
+  is not current staging readiness and must not remain in force. The candidate
+  permits staging to probe only its own source-evidence bucket; a fresh complete
+  Railway inventory must still prove all three operational-copy variable names
+  deleted. The operational copy cannot satisfy WORM.
 - The separately administered AWS WORM foundation is implemented and documented
   in `docs/postgres-logical-worm-attestation.md`. Its account/administrator
   approval, Melbourne bucket, distinct roles, live synthetic and staging
@@ -710,11 +753,15 @@ is not mutation authority.
 ## Exact remaining sequence
 
 1. Complete the three Google/OpenAI categories/four exact Railway variable
-   operations only after their reviewed authority exists. Keep the separate
-   three Supabase replacement-key operations hard-disabled and unauthorized
-   until their own reviewed provider and Railway authorities exist. Keep the
-   verified isolated logical operational copy and live readiness probe in force
-   without treating them as WORM.
+   operations only after their reviewed authority exists. Keep the separate two
+   permanent-staging Supabase replacement-key operations hard-disabled and
+   unauthorized until their own reviewed provider and Railway authorities
+   exist. The candidate requires production operational-copy configuration
+   absent there; a fresh complete Railway inventory must independently prove all
+   three names deleted. Retain the historical operator-host retrieval evidence,
+   but do not keep or repeat the staging offsite probe. Current staging readiness
+   probes only its own source-evidence bucket, and no new staging off-site
+   transport is authorized.
 2. Deploy the exact reviewed application build to permanent staging at one
    replica and complete provider/Auth/role/Storage/Free-scope smoke.
 3. Scale the same build temporarily to two replicas; complete overlap,

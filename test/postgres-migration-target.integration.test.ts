@@ -46,6 +46,7 @@ vi.mock("../scripts/lib/postgres-reviewed-price-promotion-runtime.js", () => ({
 }));
 
 import {
+  postgresReviewedPricePromotionCliInternals,
   runPostgresReviewedPricePromotionCli,
   type PostgresReviewedPricePromotionCliDependencies,
 } from "../scripts/postgres-reviewed-price-promotion.js";
@@ -83,6 +84,12 @@ import {
 import { sha256PostgresDatabaseIdentity } from
   "../src/lib/postgres-database-identity.js";
 import {
+  POSTGRES_REVIEWED_PRICE_PROMOTION_AUTHORITY_BUNDLE_KIND,
+  POSTGRES_REVIEWED_PRICE_PROMOTION_AUTHORITY_BUNDLE_VERSION,
+  POSTGRES_REVIEWED_PRICE_PROMOTION_AUTHORITY_MODE,
+  POSTGRES_REVIEWED_PRICE_PROMOTION_REVIEW_MODE,
+} from "../src/lib/postgres-reviewed-price-promotion-authority.js";
+import {
   RAILWAY_APPLICATION_DEPLOYMENT_ATTESTATION_POLICY_SHA256,
   buildRailwayApplicationDeploymentAttestationReceipt,
   canonicalRailwayApplicationDeploymentAttestationReceipt,
@@ -91,7 +98,7 @@ import {
 import {
   POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_BLOCKERS,
   POSTGRES_REVIEWED_PRICE_PROMOTION_PRIVATE_INPUT_KIND,
-  buildPostgresReviewedPricePromotionPlanCandidate,
+  buildPostgresReviewedPricePromotionPlanArtifacts,
   canonicalPostgresReviewedPricePromotionJson,
   sha256PostgresReviewedPricePromotionIdentity,
   sha256PostgresReviewedPricePromotionValue,
@@ -108,6 +115,7 @@ const CANDIDATE_SHA = "c".repeat(40);
 const INGESTION_ID = "11111111-1111-4111-8111-111111111111";
 const VENUE_ID = "22222222-2222-4222-8222-222222222222";
 const NOW = "2026-08-08T00:00:00.000Z";
+const AUTHORITY_EXPIRES_AT = "2026-08-08T00:10:00.000Z";
 const PLANNER_TEST_ROOT_CA_PEM = `-----BEGIN CERTIFICATE-----
 MIIDUjCCAjqgAwIBAgIUYBQyRs0suyX5rXqgVNuwjILfVgwwDQYJKoZIhvcNAQEL
 BQAwLzEtMCsGA1UEAwwkUGludFBhdGggUmFpbHdheSBUcmFuc3BvcnQgVGVzdCBS
@@ -1376,6 +1384,83 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL migration target", () => {
     );
     expect(metadata.rows).toEqual([{ value: "ready" }]);
 
+    await targetAdmin!.query(`
+      INSERT INTO pintpath_app.wrong_price_reports (
+        id,
+        user_id,
+        anonymous_session_id,
+        venue_id,
+        venue_name,
+        price_record_id,
+        beer_name,
+        reason,
+        notes,
+        source_photo_url,
+        status,
+        assigned_to,
+        resolution_note,
+        resolved_at,
+        resolved_by,
+        created_at,
+        updated_at
+      ) VALUES
+        (
+          'integration-wrong-price-resolved-anonymized',
+          NULL,
+          NULL,
+          $1,
+          'Fixture Hotel',
+          NULL,
+          'Carlton Draught',
+          'price_changed',
+          NULL,
+          NULL,
+          'resolved',
+          NULL,
+          NULL,
+          $2::timestamptz,
+          NULL,
+          '2026-08-07T23:59:00.000Z'::timestamptz,
+          $2::timestamptz
+        ),
+        (
+          'integration-wrong-price-rejected-anonymized',
+          NULL,
+          NULL,
+          $1,
+          'Fixture Hotel',
+          NULL,
+          'Carlton Draught',
+          'other',
+          NULL,
+          NULL,
+          'rejected',
+          NULL,
+          NULL,
+          $2::timestamptz,
+          NULL,
+          '2026-08-07T23:59:30.000Z'::timestamptz,
+          $2::timestamptz
+        )
+    `, [VENUE_ID, NOW]);
+    const terminalWrongPrices = await targetAdmin!.query<{
+      resolutionNote: string | null;
+      resolvedBy: string | null;
+      status: string;
+    }>(`
+      SELECT
+        resolution_note AS "resolutionNote",
+        resolved_by AS "resolvedBy",
+        status
+      FROM pintpath_app.wrong_price_reports
+      WHERE venue_id = $1
+      ORDER BY status COLLATE "C"
+    `, [VENUE_ID]);
+    expect(terminalWrongPrices.rows).toEqual([
+      { resolutionNote: null, resolvedBy: null, status: "rejected" },
+      { resolutionNote: null, resolvedBy: null, status: "resolved" },
+    ]);
+
     const historicalIdentity = await readMigrationTargetIdentity(target!);
     expect(sha256PostgresMigrationTargetIdentity(historicalIdentity)).toBe(
       receipt.targetIdentitySha256,
@@ -1491,7 +1576,9 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL migration target", () => {
         "migration-target-identity.json",
       );
       const privateInputPath = path.join(cliRoot, "private-input.json");
+      const authorityBundlePath = path.join(cliRoot, "authority-bundle.json");
       const outputPlanPath = path.join(cliRoot, "plan-candidate.json");
+      const outputReviewPacketPath = path.join(cliRoot, "private-review-packet.json");
       const plannerUrl = new URL(
         "postgresql://postgres-staging.railway.internal:5432/pintpath_staging",
       );
@@ -1550,20 +1637,88 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL migration target", () => {
       expect(expectedPhysicalDatabaseIdentitySha256).not.toBe(
         receipt.targetIdentitySha256,
       );
-      const plan = await buildPostgresReviewedPricePromotionPlanCandidate({
+      const authorityBundle = {
+        authorityMode: POSTGRES_REVIEWED_PRICE_PROMOTION_AUTHORITY_MODE,
         candidateSha: CANDIDATE_SHA,
-        database: plannerState.database!,
-        expectedDeployment,
-        expectedEnvironment: "permanent-staging",
-        expectedMigration: {
-          receiptFileSha256: migrationReceiptFileSha256,
+        evidenceReferences: {
+          privateEvidenceManifestSha256:
+            sha256PostgresReviewedPricePromotionValue("private-evidence-manifest"),
+          restoreReceiptSha256:
+            sha256PostgresReviewedPricePromotionValue("evidence-restore-receipt"),
+          retrievalReceiptSha256:
+            sha256PostgresReviewedPricePromotionValue("evidence-retrieval-receipt"),
+          storageSnapshotManifestSha256:
+            sha256PostgresReviewedPricePromotionValue("storage-snapshot-manifest"),
+          wormManifestSha256:
+            sha256PostgresReviewedPricePromotionValue("evidence-worm-manifest"),
         },
-        expectedPrivateInputSha256: privateInputFileSha256,
-        expectedPhysicalDatabaseIdentitySha256,
-        migrationReceipt: receipt,
-        migrationTargetIdentity: historicalIdentity,
-        privateInput,
-      });
+        expectedEnvironment: "permanent-staging" as const,
+        expiresAt: AUTHORITY_EXPIRES_AT,
+        generatedAt: NOW,
+        kind: POSTGRES_REVIEWED_PRICE_PROMOTION_AUTHORITY_BUNDLE_KIND,
+        mutationAuthorized: false as const,
+        privateInputManifestSha256: privateInputFileSha256,
+        providerAuthorityObserved: false as const,
+        recoveryReferences: {
+          accountDeletionRecoveryManifestSha256:
+            sha256PostgresReviewedPricePromotionValue("account-deletion-recovery"),
+          logicalBackupManifestSha256:
+            sha256PostgresReviewedPricePromotionValue("logical-backup-manifest"),
+          pitrAttestationSha256:
+            sha256PostgresReviewedPricePromotionValue("pitr-attestation"),
+          privateStorageRecoveryManifestSha256:
+            sha256PostgresReviewedPricePromotionValue("private-storage-recovery"),
+          restoreReceiptSha256:
+            sha256PostgresReviewedPricePromotionValue("recovery-restore-receipt"),
+          wormManifestSha256:
+            sha256PostgresReviewedPricePromotionValue("recovery-worm-manifest"),
+        },
+        reviewBindings: {
+          approvalArtifactSha256:
+            sha256PostgresReviewedPricePromotionValue("approval-artifact"),
+          approvalReferenceSha256:
+            sha256PostgresReviewedPricePromotionValue("approval-reference"),
+          cryptographicApprovalVerified: false as const,
+          operatorIdSha256:
+            sha256PostgresReviewedPricePromotionValue("promotion-operator"),
+          reviewMode: POSTGRES_REVIEWED_PRICE_PROMOTION_REVIEW_MODE,
+          reviewerIdSha256:
+            sha256PostgresReviewedPricePromotionValue("promotion-reviewer"),
+          trustRootPolicySha256:
+            sha256PostgresReviewedPricePromotionValue("trust-root-policy"),
+        },
+        targetProfile: {
+          deploymentAttestationFileSha256,
+          physicalDatabaseIdentitySha256: expectedPhysicalDatabaseIdentitySha256,
+          railwayEnvironmentIdSha256: expectedDeployment.environmentIdSha256,
+          railwayProjectIdSha256: expectedDeployment.projectIdSha256,
+          railwayServiceIdSha256: expectedDeployment.serviceIdSha256,
+          supabaseProjectIdentitySha256:
+            sha256PostgresReviewedPricePromotionValue("supabase-project-identity"),
+        },
+        version: POSTGRES_REVIEWED_PRICE_PROMOTION_AUTHORITY_BUNDLE_VERSION,
+      };
+      const authorityBundleFileSha256 = writePrivateFixtureFile(
+        authorityBundlePath,
+        serializeCanonicalPostgresMigrationJson(authorityBundle),
+      );
+      const { plan, reviewPacket } =
+        await buildPostgresReviewedPricePromotionPlanArtifacts({
+          authorityBundle,
+          candidateSha: CANDIDATE_SHA,
+          database: plannerState.database!,
+          expectedAuthorityBundleSha256: authorityBundleFileSha256,
+          expectedDeployment,
+          expectedEnvironment: "permanent-staging",
+          expectedMigration: {
+            receiptFileSha256: migrationReceiptFileSha256,
+          },
+          expectedPrivateInputSha256: privateInputFileSha256,
+          expectedPhysicalDatabaseIdentitySha256,
+          migrationReceipt: receipt,
+          migrationTargetIdentity: historicalIdentity,
+          privateInput,
+        });
       expect(plan).toMatchObject({
         activationBlockers: POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_BLOCKERS,
         candidateSha: CANDIDATE_SHA,
@@ -1580,7 +1735,9 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL migration target", () => {
           },
           wrongPriceReports: {
             openOrInProgressCount: 0,
-            totalCount: 0,
+            rejectedCount: 1,
+            resolvedCount: 1,
+            totalCount: 2,
           },
         },
         target: {
@@ -1600,12 +1757,35 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL migration target", () => {
       expect(plan.activationBlockers).toEqual(
         POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_BLOCKERS,
       );
+      expect(plan.sourceSnapshot.wrongPriceReports.rowsSha256).not.toBe(
+        sha256PostgresReviewedPricePromotionValue([]),
+      );
       const serializedPlan = JSON.stringify(plan);
       expect(serializedPlan).not.toContain("PRIVATE_SOURCE_TOKEN");
       expect(serializedPlan).not.toContain("PRIVATE_QUEUE_NOTE");
       expect(serializedPlan).not.toContain("binding-only-secret");
       expect(serializedPlan).not.toContain("123 Private Street");
       expect(serializedPlan).not.toContain(VENUE_ID);
+      expect(reviewPacket).toMatchObject({
+        itemCount: 1,
+        mutationEnabled: false,
+        rowCount: 1,
+        targetPhysicalIdentitySha256: expectedPhysicalDatabaseIdentitySha256,
+      });
+      expect(reviewPacket.items[0]).toMatchObject({
+        sourceIngestionId: INGESTION_ID,
+        venue: {
+          address: "123 Private Street",
+          id: VENUE_ID,
+          name: "Fixture Hotel",
+        },
+      });
+      expect(reviewPacket.items[0]!.rows[0]!.priceRecord).toMatchObject({
+        beerName: "Carlton Draught",
+        price: 13.5,
+        sourceIngestionId: INGESTION_ID,
+        venueId: VENUE_ID,
+      });
 
       const plannerClient = plannerState.database!.client;
       const forbiddenPlannerStatements = [
@@ -1651,7 +1831,7 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL migration target", () => {
             },
           };
         },
-        buildPlan: buildPostgresReviewedPricePromotionPlanCandidate,
+        buildPlan: buildPostgresReviewedPricePromotionPlanArtifacts,
         environment: {},
         expectedRootCaDerSha256: testRootCaDerSha256,
         now: () => new Date(NOW),
@@ -1675,7 +1855,10 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL migration target", () => {
         "--migration-target-identity-sha256", migrationTargetIdentityFileSha256,
         "--private-input", privateInputPath,
         "--private-input-sha256", privateInputFileSha256,
+        "--authority-bundle", authorityBundlePath,
+        "--authority-bundle-sha256", authorityBundleFileSha256,
         "--output-plan", outputPlanPath,
+        "--output-review-packet", outputReviewPacketPath,
         ]);
       } finally {
         reviewedPriceCliRuntimeState.dependencies = null;
@@ -1688,6 +1871,14 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL migration target", () => {
       const cliPlan = JSON.parse(cliPlanBytes.toString("utf8")) as unknown;
       expect(cliPlan).toEqual(plan);
       expect(cliPlanBytes).toEqual(canonicalPostgresReviewedPricePromotionJson(plan));
+      const cliReviewPacketBytes = fs.readFileSync(outputReviewPacketPath);
+      const cliReviewPacket = JSON.parse(
+        cliReviewPacketBytes.toString("utf8"),
+      ) as unknown;
+      expect(cliReviewPacket).toEqual(reviewPacket);
+      expect(cliReviewPacketBytes).toEqual(
+        canonicalPostgresReviewedPricePromotionJson(reviewPacket),
+      );
       const currentUid = process.getuid?.();
       if (currentUid === undefined) throw new Error("filesystem_uid_unavailable");
       const cliRootStat = fs.lstatSync(cliRoot);
@@ -1701,6 +1892,7 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL migration target", () => {
         migrationReceiptPath,
         migrationTargetIdentityPath,
         privateInputPath,
+        authorityBundlePath,
       ]) {
         const inputStat = fs.lstatSync(inputPath);
         expect(fs.realpathSync(inputPath)).toBe(inputPath);
@@ -1709,19 +1901,29 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL migration target", () => {
         expect(inputStat.nlink).toBe(1);
         expect(inputStat.uid).toBe(currentUid);
       }
-      const outputPlanStat = fs.lstatSync(outputPlanPath);
-      expect(fs.realpathSync(outputPlanPath)).toBe(outputPlanPath);
-      expect(outputPlanStat.isFile()).toBe(true);
-      expect(outputPlanStat.mode & 0o7777).toBe(0o600);
-      expect(outputPlanStat.nlink).toBe(1);
-      expect(outputPlanStat.uid).toBe(currentUid);
+      for (const outputPath of [outputPlanPath, outputReviewPacketPath]) {
+        const outputStat = fs.lstatSync(outputPath);
+        expect(fs.realpathSync(outputPath)).toBe(outputPath);
+        expect(outputStat.isFile()).toBe(true);
+        expect(outputStat.mode & 0o7777).toBe(0o600);
+        expect(outputStat.nlink).toBe(1);
+        expect(outputStat.uid).toBe(currentUid);
+      }
       expect(fs.readdirSync(cliRoot).sort()).toEqual([
+        path.basename(
+          postgresReviewedPricePromotionCliInternals.publicationJournalPath(
+            outputPlanPath,
+            outputReviewPacketPath,
+          ),
+        ),
+        "authority-bundle.json",
         "deployment-attestation.json",
         "migration-receipt.json",
         "migration-target-identity.json",
         "plan-candidate.json",
         "planner-url",
         "private-input.json",
+        "private-review-packet.json",
         "railway-stock-root-ca.pem",
       ]);
       expect(sha256PostgresMigrationBytes(
@@ -1740,6 +1942,8 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL migration target", () => {
       expect(sha256PostgresMigrationBytes(fs.readFileSync(privateInputPath))).toBe(
         privateInputFileSha256,
       );
+      expect(sha256PostgresMigrationBytes(fs.readFileSync(authorityBundlePath)))
+        .toBe(authorityBundleFileSha256);
       expect(JSON.parse(cliOutput[0]!)).toEqual({
         activationBlockerCount:
           POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_BLOCKERS.length,
@@ -1753,6 +1957,10 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL migration target", () => {
         planFileSha256: sha256PostgresMigrationBytes(cliPlanBytes),
         physicalIdentitySha256: plan.target.physicalIdentitySha256,
         plannerLoginIdentitySha256: plan.target.plannerLoginIdentitySha256,
+        reviewPacketCandidateSha256: reviewPacket.reviewPacketCandidateSha256,
+        reviewPacketFileSha256:
+          sha256PostgresMigrationBytes(cliReviewPacketBytes),
+        rowCount: reviewPacket.rowCount,
       });
       const cliPublishedBytes = Buffer.concat([
         Buffer.from(cliOutput[0]!, "utf8"),
@@ -1770,7 +1978,9 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL migration target", () => {
         migrationReceiptPath,
         migrationTargetIdentityPath,
         privateInputPath,
+        authorityBundlePath,
         outputPlanPath,
+        outputReviewPacketPath,
       ]) expect(cliPublishedBytes).not.toContain(forbidden);
       for (const credential of [
         plannerUrl.toString(),

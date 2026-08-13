@@ -2,6 +2,7 @@ import { Client, type QueryResultRow } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { SystemStateRepository } from "../src/db/system-state.repository.js";
+import { reserveOpenAiMenuOcrRollingBudget } from "../src/lib/external-provider-cost-budget.js";
 import type {
   SqlDatabase,
   SqlPoolMetrics,
@@ -132,7 +133,11 @@ class IntegrationPostgresDatabase implements SqlDatabase {
 describe.skipIf(!configuredAdminUrl)("system state authority on real PostgreSQL 17", () => {
   let admin: Client;
   let target: Client;
+  let targetTwo: Client;
+  let database: IntegrationPostgresDatabase;
+  let databaseTwo: IntegrationPostgresDatabase;
   let repository: SystemStateRepository;
+  let repositoryTwo: SystemStateRepository;
 
   beforeAll(async () => {
     const adminUrl = validateDisposableAdminUrl(configuredAdminUrl);
@@ -154,11 +159,17 @@ describe.skipIf(!configuredAdminUrl)("system state authority on real PostgreSQL 
         revision text NOT NULL CHECK (length(revision) > 0)
       )
     `);
-    repository = new SystemStateRepository(new IntegrationPostgresDatabase(target));
+    targetTwo = new Client({ connectionString: withDatabase(adminUrl, TEST_DATABASE) });
+    await targetTwo.connect();
+    database = new IntegrationPostgresDatabase(target);
+    databaseTwo = new IntegrationPostgresDatabase(targetTwo);
+    repository = new SystemStateRepository(database);
+    repositoryTwo = new SystemStateRepository(databaseTwo);
   }, 30_000);
 
   afterAll(async () => {
     await target?.end().catch(() => undefined);
+    await targetTwo?.end().catch(() => undefined);
     if (admin) {
       await admin.query(
         "SELECT pg_terminate_backend(pid) FROM pg_catalog.pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()",
@@ -249,5 +260,28 @@ describe.skipIf(!configuredAdminUrl)("system state authority on real PostgreSQL 
       now: LATER,
       leaseUntil: EVEN_LATER,
     })).toMatchObject({ value: { leaseToken: "expiry-two" } });
+  });
+
+  it("serializes the monthly OpenAI reservation across Postgres sessions using database time", async () => {
+    const stores = [
+      { repository, database },
+      { repository: repositoryTwo, database: databaseTwo },
+    ] as const;
+    const reservations = [];
+    for (let round = 0; round < 10; round += 1) {
+      reservations.push(...await Promise.all(stores.map((store) =>
+        reserveOpenAiMenuOcrRollingBudget(store.repository, store.database))));
+    }
+
+    expect(reservations.every((entry) => entry.allowed)).toBe(true);
+    expect(reservations.map((entry) => entry.reservedCents).sort((a, b) => a - b))
+      .toEqual(Array.from({ length: 20 }, (_, index) => (index + 1) * 5));
+    expect(new Set(reservations.map((entry) => entry.stateKey))).toHaveLength(1);
+    await expect(reserveOpenAiMenuOcrRollingBudget(repository, database)).resolves
+      .toEqual(expect.objectContaining({
+        allowed: false,
+        reservedCents: 100,
+        reservationCount: 20,
+      }));
   });
 });

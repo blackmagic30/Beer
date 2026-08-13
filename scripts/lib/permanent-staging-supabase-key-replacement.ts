@@ -39,7 +39,7 @@ export const PERMANENT_STAGING_SUPABASE_KEY_REPLACEMENT_TERMINAL_SCHEMA =
 
 export const PERMANENT_STAGING_SUPABASE_KEY_REPLACEMENT_POLICY = deepFreeze({
   schemaVersion: "pintpath-permanent-staging-supabase-key-replacement-policy/v1",
-  policyId: "permanent-staging-supabase-three-key-replacement",
+  policyId: "permanent-staging-supabase-two-key-replacement",
   activationState: PERMANENT_STAGING_SUPABASE_KEY_REPLACEMENT_STATE,
   railwayTarget: {
     projectId: "48d8c6cd-1c66-4148-874b-20877f48e1a5",
@@ -57,13 +57,6 @@ export const PERMANENT_STAGING_SUPABASE_KEY_REPLACEMENT_POLICY = deepFreeze({
     },
     {
       name: "SUPABASE_SERVICE_ROLE_KEY",
-      format: "sb_secret",
-      expectedSealed: true,
-      targetServiceId: "6816c4a2-e392-4ee5-826f-2584cb599ec0",
-      allowedReferenceServiceId: "34a312cd-0920-4a7e-90db-8561c1e0746b",
-    },
-    {
-      name: "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
       format: "sb_secret",
       expectedSealed: true,
       targetServiceId: "6816c4a2-e392-4ee5-826f-2584cb599ec0",
@@ -149,7 +142,7 @@ export interface PermanentStagingSupabaseKeyReplacementIntent {
   readonly environmentId: string;
   readonly serviceId: string;
   readonly keyNames: typeof PERMANENT_STAGING_SUPABASE_KEY_NAMES;
-  readonly keyFormats: readonly ["sb_publishable", "sb_secret", "sb_secret"];
+  readonly keyFormats: readonly ["sb_publishable", "sb_secret"];
   readonly mergeCardinality: "exactly-one-all-or-nothing";
   readonly skipDeploys: true;
   readonly attemptOrdinal: 1;
@@ -330,8 +323,8 @@ export function parsePermanentStagingSupabaseKeyReplacementAcknowledgement(
     || value.serviceId
       !== PERMANENT_STAGING_SUPABASE_KEY_REPLACEMENT_POLICY.railwayTarget.applicationServiceId
     || value.skipDeploys !== true
-    || !denseArray(value.mergedVariableNames, 3)
-    || value.mergedVariableNames.length !== 3
+    || !denseArray(value.mergedVariableNames, 2)
+    || value.mergedVariableNames.length !== 2
     || arraySome(value.mergedVariableNames, (name, index) =>
       name !== PERMANENT_STAGING_SUPABASE_KEY_NAMES[index])
     || value.acknowledged !== true
@@ -347,7 +340,7 @@ function exactKeyInventory(
       PERMANENT_STAGING_SUPABASE_KEY_NAMES as readonly string[],
       row.name,
     ));
-  if (relevant.length !== 6) return false;
+  if (relevant.length !== 4) return false;
   return arrayEvery(
     PERMANENT_STAGING_SUPABASE_KEY_REPLACEMENT_POLICY.keys,
     (key) => {
@@ -418,7 +411,7 @@ function intent(): PermanentStagingSupabaseKeyReplacementIntent {
     environmentId: target.environmentId,
     serviceId: target.applicationServiceId,
     keyNames: PERMANENT_STAGING_SUPABASE_KEY_NAMES,
-    keyFormats: ["sb_publishable", "sb_secret", "sb_secret"] as const,
+    keyFormats: ["sb_publishable", "sb_secret"] as const,
     mergeCardinality: "exactly-one-all-or-nothing",
     skipDeploys: true,
     attemptOrdinal: 1,

@@ -1,6 +1,6 @@
 {
   "schemaVersion": "pintpath-permanent-staging-supabase-key-replacement-policy/v1",
-  "policyId": "permanent-staging-supabase-three-key-replacement",
+  "policyId": "permanent-staging-supabase-two-key-replacement",
   "activationState": "HARD_DISABLED_REVIEW_REQUIRED",
   "railwayTarget": {
     "projectId": "48d8c6cd-1c66-4148-874b-20877f48e1a5",
@@ -18,13 +18,6 @@
     },
     {
       "name": "SUPABASE_SERVICE_ROLE_KEY",
-      "format": "sb_secret",
-      "expectedSealed": true,
-      "targetServiceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
-      "allowedReferenceServiceId": "34a312cd-0920-4a7e-90db-8561c1e0746b"
-    },
-    {
-      "name": "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
       "format": "sb_secret",
       "expectedSealed": true,
       "targetServiceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",

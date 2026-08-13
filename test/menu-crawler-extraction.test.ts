@@ -703,7 +703,13 @@ describe("menu crawler extraction", () => {
       expect(source).toContain("Read the whole image first");
       expect(source).toContain("Do not include standalone gin, vodka, whisky");
       expect(source).toContain("Keep a clearly labelled packaged premixed RTD");
-      expect(source).toMatch(/detail:\s*"high"|"original" as const : "high" as const/);
+      expect(source).toMatch(/detail:\s*"high"(?:\s+as const)?/);
+      expect(source).toContain("max_output_tokens:");
+      expect(source).toMatch(/MAX_OUTPUT_TOKENS\s*=\s*(?:8_192|\n?\s*OPENAI_MENU_OCR_COST_BOUND_MAX_OUTPUT_TOKENS)/);
+      expect(source).toContain('"gpt-5.6-sol"');
+      expect(source).toContain('"gpt-4.1"');
+      expect(source).toContain("must select a reviewed menu OCR model");
+      expect(source).toContain("OPENAI_MENU_OCR_COST_BOUND_MODE must be exactly true or false");
       expect(source).toContain("second-pass quality check");
       expect(source).toContain("Proposed first-pass extraction JSON");
       expect(source).toContain("temperature: 0");
