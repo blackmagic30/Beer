@@ -1697,6 +1697,12 @@ describe("release workflow contracts", () => {
     expect(helper).toContain('failure_stage="baseline-verify"');
     expect(helper).toContain('failure_stage="hba-parse"');
     expect(helper).toContain(
+      'SELECT pg_catalog.host(pg_catalog.inet_client_addr())',
+    );
+    expect(helper).not.toContain(
+      'SELECT pg_catalog.inet_client_addr()::text',
+    );
+    expect(helper).toContain(
       '"postgres_tool_authority_v4_hba_fixture_failed" "$failure_stage"',
     );
     expect(helper).toContain('cp "$source" "$destination"');

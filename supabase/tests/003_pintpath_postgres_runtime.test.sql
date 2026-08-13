@@ -23,16 +23,26 @@ select is(
   'the application schema contains 56 runtime tables plus schema metadata'
 );
 
-select is(
-  (
-    select count(*)
+select ok(
+  (select count(*)
+   from pg_class c
+   join pg_namespace n on n.oid = c.relnamespace
+   where n.nspname = 'pintpath_ops'
+     and c.relkind in ('r', 'p')) = 4
+  and not exists (
+    select 1
     from pg_class c
     join pg_namespace n on n.oid = c.relnamespace
     where n.nspname = 'pintpath_ops'
       and c.relkind in ('r', 'p')
+      and c.relname not in (
+        'migration_chunks',
+        'migration_runs',
+        'reviewed_price_promotion_operations',
+        'reviewed_price_promotion_rows'
+      )
   ),
-  2::bigint,
-  'the operations schema contains only the migration run and chunk ledgers'
+  'the operations schema contains exactly the migration and inert reviewed-price ledgers'
 );
 
 select is(
@@ -199,7 +209,7 @@ select ok(
    from pg_policy policy
    join pg_class relation on relation.oid = policy.polrelid
    join pg_namespace namespace on namespace.oid = relation.relnamespace
-   where namespace.nspname in ('pintpath_app', 'pintpath_ops')) = 236
+   where namespace.nspname in ('pintpath_app', 'pintpath_ops')) = 240
   and (select count(*)
        from pg_policy policy
        join pg_class relation on relation.oid = policy.polrelid
@@ -276,8 +286,19 @@ select ok(
                and pg_get_expr(policy.polqual, policy.polrelid, false) = 'true'
                and pg_get_expr(policy.polwithcheck, policy.polrelid, false) = 'true')
             ))
-         )) = 177,
-  'the complete 236-policy inventory contains exactly 177 canonical runtime/migrator policies and no arbitrary named-role policy'
+           or
+           (namespace.nspname = 'pintpath_ops'
+            and relation.relname in (
+              'reviewed_price_promotion_operations',
+              'reviewed_price_promotion_rows'
+            )
+            and policy.polname = (relation.relname || '_migrator_select')::name
+            and policy.polroles = array[migrator_role.oid]::oid[]
+            and policy.polcmd = 'r'
+            and pg_get_expr(policy.polqual, policy.polrelid, false) = 'true'
+            and policy.polwithcheck is null)
+         )) = 179,
+  'the complete 240-policy inventory contains exactly 179 canonical runtime/migrator policies and no arbitrary named-role policy'
 );
 
 select ok(
@@ -293,19 +314,19 @@ select ok(
      and pg_get_expr(policy.polqual, policy.polrelid, false) = $policy$(CURRENT_USER = ('pintpath_logical_backup_d'::text || ( SELECT (database.oid)::text AS oid
    FROM pg_database database
   WHERE (database.datname = current_database()))))$policy$
-     and policy.polwithcheck is null) = 59
+     and policy.polwithcheck is null) = 61
   and (select count(*)
        from pg_policy policy
        join pg_class relation on relation.oid = policy.polrelid
        join pg_namespace namespace on namespace.oid = relation.relnamespace
        where namespace.nspname in ('pintpath_app', 'pintpath_ops')
-         and 0::oid = any(policy.polroles)) = 59
+         and 0::oid = any(policy.polroles)) = 61
   and (select count(*)
        from pg_policy policy
        join pg_class relation on relation.oid = policy.polrelid
        join pg_namespace namespace on namespace.oid = relation.relnamespace
        where namespace.nspname in ('pintpath_app', 'pintpath_ops')
-         and policy.polname::text ~ '_logical_backup_select$') = 59
+         and policy.polname::text ~ '_logical_backup_select$') = 61
   and not exists (
     with scoped as (
       select to_regrole('pintpath_logical_backup_d' || database.oid::text)::oid as role_oid
@@ -320,7 +341,7 @@ select ok(
       and scoped.role_oid is not null
       and scoped.role_oid = any(policy.polroles)
   ),
-  'the exact 59 portable PUBLIC database-OID policies exist with no extra PUBLIC, reserved-name, or scoped-role policy'
+  'the exact 61 portable PUBLIC database-OID policies exist with no extra PUBLIC, reserved-name, or scoped-role policy'
 );
 
 select is(

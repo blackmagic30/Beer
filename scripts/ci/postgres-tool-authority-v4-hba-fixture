@@ -303,7 +303,8 @@ setup_fixture() {
   local client_ipv4
   client_ipv4=$(PGPASSWORD=postgres "$host_psql" -X -q -A -t \
     --host=127.0.0.1 --port=5432 --dbname=postgres --username=postgres \
-    --no-password --set=ON_ERROR_STOP=1 --command="SELECT pg_catalog.inet_client_addr()::text") || fail
+    --no-password --set=ON_ERROR_STOP=1 \
+    --command="SELECT pg_catalog.host(pg_catalog.inet_client_addr())") || fail
   validate_ipv4 "$client_ipv4" || fail
 
   umask 077
