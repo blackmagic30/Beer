@@ -562,6 +562,7 @@ describeIntegration("PostgreSQL 17 V4 cross-OID scratch restore mechanism", () =
   let maintenance: Client | null = null;
   let runtimeRoleExisted = false;
   let migratorRoleExisted = false;
+  let verifierAuthorityRoleExisted = false;
   const openClients = new Set<Client>();
   const databaseOids = new Set<string>();
   const ephemeralLoginRoleNames = new Set<string>();
@@ -617,6 +618,11 @@ describeIntegration("PostgreSQL 17 V4 cross-OID scratch restore mechanism", () =
       try {
         if (!runtimeRoleExisted) await activeMaintenance.query("DROP ROLE IF EXISTS pintpath_runtime");
         if (!migratorRoleExisted) await activeMaintenance.query("DROP ROLE IF EXISTS pintpath_migrator");
+        if (!verifierAuthorityRoleExisted) {
+          await activeMaintenance.query(
+            "DROP ROLE IF EXISTS pintpath_migration_verifier_authority",
+          );
+        }
       } catch (error) {
         failures.push(error);
       }
@@ -682,10 +688,17 @@ describeIntegration("PostgreSQL 17 V4 cross-OID scratch restore mechanism", () =
     }
     const roles = await maintenance.query<{ rolname: string }>(
       "SELECT rolname FROM pg_catalog.pg_roles WHERE rolname = ANY($1::pg_catalog.text[])",
-      [["pintpath_runtime", "pintpath_migrator"]],
+      [[
+        "pintpath_runtime",
+        "pintpath_migrator",
+        "pintpath_migration_verifier_authority",
+      ]],
     );
     runtimeRoleExisted = roles.rows.some((row) => row.rolname === "pintpath_runtime");
     migratorRoleExisted = roles.rows.some((row) => row.rolname === "pintpath_migrator");
+    verifierAuthorityRoleExisted = roles.rows.some(
+      (row) => row.rolname === "pintpath_migration_verifier_authority",
+    );
     await cleanup();
   }, 30_000);
 
@@ -997,7 +1010,7 @@ describeIntegration("PostgreSQL 17 V4 cross-OID scratch restore mechanism", () =
           relationRowsAfterSeedRemoval: relationRows,
         });
         expect(preLoadProjection).toMatchObject({
-          emptyRelationCount: 61,
+          emptyRelationCount: 62,
           totalRowsAfterSeedRemoval: "0",
           operationallyAccepted: false,
         });

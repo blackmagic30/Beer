@@ -149,14 +149,20 @@ const KERNEL_RELATION_NAMES = Object.freeze([
   "pintpath_ops.reviewed_price_promotion_rows",
 ] as const);
 
+const NON_ARCHIVED_CONTROL_RELATION_NAMES = Object.freeze([
+  "pintpath_ops.migration_verifier_authority",
+] as const);
+
 export const POSTGRES_LOGICAL_SCRATCH_RESTORE_V4_ARCHIVED_RELATIONS = ARCHIVED_RELATION_NAMES;
 export const POSTGRES_LOGICAL_SCRATCH_RESTORE_V4_ALL_RELATIONS = Object.freeze([
   ...ARCHIVED_RELATION_NAMES,
+  ...NON_ARCHIVED_CONTROL_RELATION_NAMES,
   ...KERNEL_RELATION_NAMES,
 ].sort((left, right) => compareText(left, right)));
 
 const SCHEMA_METADATA_SEED = Object.freeze([
   ["import_state", "empty"],
+  ["live_schema_sha256", ""],
   ["migration_candidate_sha", ""],
   ["migration_contract_sha256", PINNED_MIGRATION_CONTRACT_SHA256],
   ["migration_manifest_sha256", ""],
@@ -174,9 +180,9 @@ export const POSTGRES_LOGICAL_SCRATCH_RESTORE_V4_SCHEMA_METADATA_SEED =
   SCHEMA_METADATA_SEED;
 
 export const POSTGRES_LOGICAL_SCRATCH_RESTORE_V4_EXPECTED_CATALOG_COUNTS = Object.freeze({
-  privateRelations: 61,
-  privateColumns: 771,
-  privatePolicies: 240,
+  privateRelations: 62,
+  privateColumns: 780,
+  privatePolicies: 244,
   foreignKeys: 79,
   validatedForeignKeys: 79,
   deferrableForeignKeys: 0,
@@ -915,8 +921,8 @@ function assertStaticAuthority(): void {
     || AUTHORITATIVE_TABLE_COLUMNS.reduce((sum, table) => sum + table.columnCount, 0) !== 717
     || POSTGRES_LOGICAL_SCRATCH_RESTORE_V4_FOREIGN_KEY_SET_SHA256
       !== POSTGRES_LOGICAL_SCRATCH_RESTORE_V4_EXPECTED_FOREIGN_KEY_SET_SHA256
-    || POSTGRES_LOGICAL_SCRATCH_RESTORE_V4_ALL_RELATIONS.length !== 61
-    || new Set(POSTGRES_LOGICAL_SCRATCH_RESTORE_V4_ALL_RELATIONS).size !== 61
+    || POSTGRES_LOGICAL_SCRATCH_RESTORE_V4_ALL_RELATIONS.length !== 62
+    || new Set(POSTGRES_LOGICAL_SCRATCH_RESTORE_V4_ALL_RELATIONS).size !== 62
   ) fail("static_authority_drift");
 }
 
@@ -977,6 +983,7 @@ function buildContractValue() {
       expectedCounts: POSTGRES_LOGICAL_SCRATCH_RESTORE_V4_EXPECTED_CATALOG_COUNTS,
       archivedRelations: POSTGRES_LOGICAL_SCRATCH_RESTORE_V4_ARCHIVED_RELATIONS,
       authoritativeTableColumns: AUTHORITATIVE_TABLE_COLUMNS,
+      nonArchivedControlRelations: NON_ARCHIVED_CONTROL_RELATION_NAMES,
       kernelRelations: KERNEL_RELATION_NAMES,
       allRelations: POSTGRES_LOGICAL_SCRATCH_RESTORE_V4_ALL_RELATIONS,
       scopedRolePrefixes: [
@@ -991,14 +998,15 @@ function buildContractValue() {
         POSTGRES_LOGICAL_SCRATCH_RESTORE_V4_EXPECTED_FOREIGN_KEY_SET_SHA256,
     },
     preLoad: {
-      lockAll61RelationsOnlyInAccessExclusiveMode: true,
+      lockAll62RelationsOnlyInAccessExclusiveMode: true,
       schemaMetadataSeed: SCHEMA_METADATA_SEED,
-      requiredSeedRowCount: 12,
+      requiredSeedRowCount: 13,
       eachSeedUpdatedAtMustBeNonNullCanonicalUtcInstant: true,
       exactSeedRowsMustBeDeletedAndReturned: true,
-      requiredDeletedSeedRowCount: 12,
-      all61RelationsMustBeEmptyAfterSeedRemoval: true,
+      requiredDeletedSeedRowCount: 13,
+      all62RelationsMustBeEmptyAfterSeedRemoval: true,
       archivedRelationCount: 59,
+      nonArchivedControlRelationCount: 1,
       kernelRelationCount: 2,
       requiredTotalRowCountAfterSeedRemoval: "0",
       emptyStateRequiresIndependentFutureDatabaseObservation: true,
@@ -1367,10 +1375,11 @@ export interface PostgresLogicalScratchRestoreV4PreLoadProjection {
   readonly targetDatabaseOid: string;
   readonly targetPhysicalReadBoundarySha256: string;
   readonly portableReadBoundarySha256: typeof PINNED_PORTABLE_BOUNDARY_SHA256;
-  readonly seedRowCountBeforeRemoval: 12;
-  readonly deletedSeedRowCount: 12;
-  readonly emptyRelationCount: 61;
+  readonly seedRowCountBeforeRemoval: 13;
+  readonly deletedSeedRowCount: 13;
+  readonly emptyRelationCount: 62;
   readonly emptyArchivedRelationCount: 59;
+  readonly emptyNonArchivedControlRelationCount: 1;
   readonly emptyKernelRelationCount: 2;
   readonly totalRowsAfterSeedRemoval: "0";
   readonly projectionSha256: string;
@@ -1407,10 +1416,11 @@ export function validatePostgresLogicalScratchRestoreV4PreLoadObservation(
     targetDatabaseOid: snapshot.targetDatabaseOid,
     targetPhysicalReadBoundarySha256: snapshot.targetPhysicalReadBoundarySha256,
     portableReadBoundarySha256: PINNED_PORTABLE_BOUNDARY_SHA256 as typeof PINNED_PORTABLE_BOUNDARY_SHA256,
-    seedRowCountBeforeRemoval: 12 as const,
-    deletedSeedRowCount: 12 as const,
-    emptyRelationCount: 61 as const,
+    seedRowCountBeforeRemoval: 13 as const,
+    deletedSeedRowCount: 13 as const,
+    emptyRelationCount: 62 as const,
     emptyArchivedRelationCount: 59 as const,
+    emptyNonArchivedControlRelationCount: 1 as const,
     emptyKernelRelationCount: 2 as const,
     totalRowsAfterSeedRemoval: "0" as const,
     operationallyAccepted: false as const,
@@ -1519,7 +1529,7 @@ function validateV2CaptureShape(
     controlRows += exactCount(receipt.rowCount, "state_capture_invalid");
   }
   if (controlRows !== exactCount(inventory.controlRowCount, "state_capture_invalid")
-    || inventory.controlTables[0]?.rowCount !== "12"
+    || inventory.controlTables[0]?.rowCount !== "13"
     || inventory.controlTables[3]?.rowCount !== "0"
     || inventory.controlTables[4]?.rowCount !== "0") fail("state_capture_invalid");
   const { overallStateSha256: _ignored, ...withoutOverall } = inventory;
@@ -1674,6 +1684,7 @@ export function validatePostgresLogicalScratchRestoreV4PostLoadObservation(
   for (const receipt of validatedSource.inventory.controlTables.slice(0, 3)) {
     expectedCounts.set(String(receipt.tableName), String(receipt.rowCount));
   }
+  for (const relation of NON_ARCHIVED_CONTROL_RELATION_NAMES) expectedCounts.set(relation, "0");
   for (const relation of KERNEL_RELATION_NAMES) expectedCounts.set(relation, "0");
   validateRelationRows(snapshot.relationRows, expectedCounts, "post_load_evidence_invalid");
   const expectedArchiveRowCount = [...expectedCounts.entries()]

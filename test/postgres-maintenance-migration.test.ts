@@ -66,6 +66,12 @@ describe("Postgres privacy-maintenance migration", () => {
     expect(migration).toContain("revoke all on all functions in schema pintpath_app from pintpath_maintenance;");
     expect(migration).toContain("revoke all on all functions in schema pintpath_ops from pintpath_maintenance;");
     expect(migration).toContain("'pintpath_maintenance', pg_catalog.format('pintpath_app.%I', table_name), 'INSERT'");
+    expect(migration).toContain(
+      "alter policy schema_metadata_runtime_read on pintpath_app.schema_metadata\n    to pintpath_runtime, pintpath_maintenance using (true);",
+    );
+    expect(migration).toContain(
+      "'pintpath_maintenance', 'pintpath_app.schema_metadata', 'SELECT'",
+    );
     expect(migration).toContain("Privacy maintenance authority escaped its reviewed table-only boundary.");
     expect(migration).not.toMatch(/grant\s+insert\b[^;]*\bto\s+pintpath_maintenance/i);
     expect(migration).not.toMatch(/grant\s+execute\b[^;]*\bto\s+pintpath_maintenance/i);

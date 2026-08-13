@@ -146,6 +146,7 @@ declare
     'profiles',
     'revoked_provider_sessions',
     'saved_items',
+    'schema_metadata',
     'security_audit_log',
     'source_evidence_objects',
     'stripe_webhook_events',
@@ -225,7 +226,7 @@ declare
   maintenance_role_oid oid := pg_catalog.to_regrole('pintpath_maintenance')::oid;
 begin
   if cardinality(baseline_tables) <> 56
-     or cardinality(select_tables) <> 44
+     or cardinality(select_tables) <> 45
      or cardinality(update_tables) <> 25
      or cardinality(delete_tables) <> 28 then
     raise exception 'Privacy maintenance ACL inventory is not canonical.';
@@ -256,6 +257,8 @@ begin
   foreach table_name in array select_tables loop
     execute pg_catalog.format('grant select on pintpath_app.%I to pintpath_maintenance', table_name);
   end loop;
+  alter policy schema_metadata_runtime_read on pintpath_app.schema_metadata
+    to pintpath_runtime, pintpath_maintenance using (true);
   foreach table_name in array update_tables loop
     execute pg_catalog.format('grant update on pintpath_app.%I to pintpath_maintenance', table_name);
   end loop;
@@ -313,7 +316,30 @@ begin
   end loop;
 
   if pg_catalog.has_schema_privilege('pintpath_maintenance', 'pintpath_ops', 'USAGE')
-     or pg_catalog.has_table_privilege('pintpath_maintenance', 'pintpath_app.schema_metadata', 'SELECT')
+     or not pg_catalog.has_table_privilege(
+       'pintpath_maintenance', 'pintpath_app.schema_metadata', 'SELECT'
+     )
+     or pg_catalog.has_table_privilege(
+       'pintpath_maintenance', 'pintpath_app.schema_metadata', 'INSERT'
+     )
+     or pg_catalog.has_table_privilege(
+       'pintpath_maintenance', 'pintpath_app.schema_metadata', 'UPDATE'
+     )
+     or pg_catalog.has_table_privilege(
+       'pintpath_maintenance', 'pintpath_app.schema_metadata', 'DELETE'
+     )
+     or not exists (
+       select 1
+         from pg_catalog.pg_policy as policy
+        where policy.polrelid = 'pintpath_app.schema_metadata'::pg_catalog.regclass
+          and policy.polname = 'schema_metadata_runtime_read'::name
+          and policy.polroles @> array[runtime_role_oid, maintenance_role_oid]::oid[]
+          and policy.polroles <@ array[runtime_role_oid, maintenance_role_oid]::oid[]
+          and policy.polcmd = 'r'
+          and policy.polpermissive
+          and pg_catalog.pg_get_expr(policy.polqual, policy.polrelid, false) = 'true'
+          and policy.polwithcheck is null
+     )
      or exists (
        select 1
          from pg_catalog.pg_proc as routine

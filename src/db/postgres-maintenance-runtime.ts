@@ -32,6 +32,7 @@ export const POSTGRES_MAINTENANCE_SELECT_TABLES = Object.freeze([
   "profiles",
   "revoked_provider_sessions",
   "saved_items",
+  "schema_metadata",
   "security_audit_log",
   "source_evidence_objects",
   "stripe_webhook_events",

@@ -6,6 +6,7 @@ import { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { POSTGRES_MIGRATION_CONTRACT } from "../src/db/postgres-migration-contract.js";
+import { POSTGRES_MIGRATION_EXPECTED_LIVE_SCHEMA_SHA256 } from "../src/db/postgres-migration-live-schema.js";
 import { postgresAccountDeletionReplayTargetIdentitySha256 } from "../src/lib/postgres-account-deletion-replay.js";
 import {
   createPostgresPrivateStorageDatabaseInspector,
@@ -75,6 +76,8 @@ describe.skipIf(!configuredAdminUrl)(
     let restrictedUrl = "";
     let runtimeRoleExisted = false;
     let migratorRoleExisted = false;
+    let verifierAuthorityRoleExisted = false;
+    let logicalBackupRole = "";
 
     beforeAll(async () => {
       adminUrl = validateAdminUrl(configuredAdminUrl);
@@ -90,13 +93,20 @@ describe.skipIf(!configuredAdminUrl)(
       }
       const roles = await maintenance.query<{ rolname: string }>(
         "SELECT rolname FROM pg_catalog.pg_roles WHERE rolname = ANY($1::text[])",
-        [["pintpath_runtime", "pintpath_migrator"]],
+        [[
+          "pintpath_runtime",
+          "pintpath_migrator",
+          "pintpath_migration_verifier_authority",
+        ]],
       );
       runtimeRoleExisted = roles.rows.some(
         (row) => row.rolname === "pintpath_runtime",
       );
       migratorRoleExisted = roles.rows.some(
         (row) => row.rolname === "pintpath_migrator",
+      );
+      verifierAuthorityRoleExisted = roles.rows.some(
+        (row) => row.rolname === "pintpath_migration_verifier_authority",
       );
       await maintenance.query(`CREATE DATABASE ${TEST_DATABASE}`);
       databaseAdmin = new Client({
@@ -106,10 +116,17 @@ describe.skipIf(!configuredAdminUrl)(
       await databaseAdmin.query(
         fs.readFileSync(path.resolve("src/db/postgres-schema.sql"), "utf8"),
       );
+      const targetDatabaseIdentity = await databaseAdmin.query<{ databaseOid: string }>(
+        `SELECT oid::text AS "databaseOid"
+           FROM pg_catalog.pg_database
+          WHERE datname = pg_catalog.current_database()`,
+      );
+      logicalBackupRole = `pintpath_logical_backup_d${targetDatabaseIdentity.rows[0]!.databaseOid}`;
       await databaseAdmin.query(
         `UPDATE pintpath_app.schema_metadata
       SET value = CASE key
         WHEN 'import_state' THEN 'ready'
+        WHEN 'live_schema_sha256' THEN $9
         WHEN 'migration_candidate_sha' THEN $1
         WHEN 'migration_manifest_sha256' THEN $2
         WHEN 'migration_plan_sha256' THEN $3
@@ -129,6 +146,7 @@ describe.skipIf(!configuredAdminUrl)(
           String(POSTGRES_MIGRATION_CONTRACT.sourceSchemaVersion),
           "4".repeat(64),
           "5".repeat(64),
+          POSTGRES_MIGRATION_EXPECTED_LIVE_SCHEMA_SHA256,
         ],
       );
       await databaseAdmin.query(
@@ -162,6 +180,24 @@ describe.skipIf(!configuredAdminUrl)(
         ],
       );
       await databaseAdmin.query(
+        `INSERT INTO pintpath_ops.migration_verifier_authority (
+          authority_id, expected_environment, candidate_commit_sha,
+          operator_id_sha256, verifier_id_sha256, verifier_public_key_sha256,
+          authority_policy_sha256, authority_sha256, installed_at
+        ) VALUES (
+          'active', 'permanent-staging', $1, $2, $3, $4, $5, $6, $7::timestamptz
+        )`,
+        [
+          "c".repeat(40),
+          "7".repeat(64),
+          "9".repeat(64),
+          "b".repeat(64),
+          "d".repeat(64),
+          "e".repeat(64),
+          CREATED_AT,
+        ],
+      );
+      await databaseAdmin.query(
         `INSERT INTO pintpath_app.accounts (
       id, public_account_id, email, password_hash, auth_provider, role,
       subscription_status, status, created_at, updated_at
@@ -176,9 +212,10 @@ describe.skipIf(!configuredAdminUrl)(
         [`evidence-${SUFFIX}`, USER_ID, OBJECT_PATH, OBJECT_BYTES, CREATED_AT],
       );
       await maintenance.query(`CREATE ROLE ${TEST_LOGIN}
-      LOGIN PASSWORD '${TEST_PASSWORD}' INHERIT
+      LOGIN PASSWORD '${TEST_PASSWORD}' NOINHERIT
       NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`);
-      await maintenance.query(`GRANT pintpath_migrator TO ${TEST_LOGIN}`);
+      await maintenance.query(`GRANT pintpath_migrator TO ${TEST_LOGIN}
+      WITH ADMIN FALSE, INHERIT FALSE, SET TRUE`);
       await databaseAdmin.query(
         `GRANT EXECUTE ON FUNCTION pg_catalog.pg_control_system() TO ${TEST_LOGIN}`,
       );
@@ -205,6 +242,16 @@ describe.skipIf(!configuredAdminUrl)(
         await maintenance
           .query(`DROP ROLE IF EXISTS ${TEST_LOGIN}`)
           .catch(() => undefined);
+        if (logicalBackupRole) {
+          await maintenance
+            .query(`DROP ROLE IF EXISTS ${logicalBackupRole}`)
+            .catch(() => undefined);
+        }
+        if (!verifierAuthorityRoleExisted) {
+          await maintenance
+            .query("DROP ROLE IF EXISTS pintpath_migration_verifier_authority")
+            .catch(() => undefined);
+        }
         if (!runtimeRoleExisted) {
           await maintenance
             .query("DROP ROLE IF EXISTS pintpath_runtime")
