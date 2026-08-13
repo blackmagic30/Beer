@@ -10,7 +10,7 @@ export const POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_MIGRATION_FILE =
   "supabase/migrations/20260813000000_activate_reviewed_price_promotion_kernel.sql" as const;
 
 export const POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_MIGRATION_SHA256 =
-  "6be9ac904fbd6ba3b071bd8d490143d86f544686752926a31a868ec6d866ce05" as const;
+  "547c63f8864517afb84d2bf2a2a62b35fcb17aeb3051541d5c5c392930271b3d" as const;
 
 export const POSTGRES_REVIEWED_PRICE_PROMOTION_KERNEL_RESTORE_SOURCE_DATABASE_OID_SETTING =
   "pintpath.restore_reviewed_price_kernel_source_database_oid" as const;

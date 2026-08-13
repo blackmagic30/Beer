@@ -16,6 +16,10 @@ declare
   quarantine_owner text;
   quarantine_execute text;
   role_name text;
+  executor_role_oid oid;
+  executor_is_superuser boolean;
+  executor_can_create_role boolean;
+  existing_scoped_role_count integer;
 begin
   perform pg_catalog.pg_advisory_xact_lock(-1516610544307388179);
 
@@ -34,6 +38,12 @@ begin
   quarantine_execute :=
     'pintpath_reviewed_price_quarantine_execute_d' || database_oid_text;
 
+  select role.oid, role.rolsuper, role.rolcreaterole
+    into strict executor_role_oid, executor_is_superuser,
+      executor_can_create_role
+  from pg_catalog.pg_roles as role
+  where role.rolname = current_user;
+
   if pg_catalog.to_regrole('pintpath_runtime') is null
      or pg_catalog.to_regrole('pintpath_migrator') is null
      or pg_catalog.to_regclass(
@@ -48,11 +58,42 @@ begin
      or pg_catalog.to_regprocedure(
        'pintpath_ops.quarantine_reviewed_price_promotion(pg_catalog.jsonb)'
      ) is null
-     or pg_catalog.to_regprocedure('extensions.digest(bytea,text)') is null then
+     or pg_catalog.to_regprocedure('pg_catalog.sha256(bytea)') is null then
     raise exception using errcode = '55000',
       message = 'reviewed_price_promotion_activation_prerequisite_missing';
   end if;
 
+  select count(*)::integer into existing_scoped_role_count
+  from pg_catalog.pg_roles as role
+  where role.rolname = any(array[
+    apply_owner, apply_execute, quarantine_owner, quarantine_execute
+  ]);
+  if existing_scoped_role_count not in (0, 4) then
+    raise exception using errcode = '55000',
+      message = 'reviewed_price_promotion_activation_role_state_mixed';
+  end if;
+  if existing_scoped_role_count = 0 then
+    if not executor_is_superuser and (
+      not executor_can_create_role
+      or pg_catalog.current_setting('createrole_self_grant') <> ''
+    ) then
+      raise exception using errcode = '42501',
+        message = 'reviewed_price_promotion_activation_role_creator_unsafe';
+    end if;
+    foreach role_name in array array[
+      apply_owner, apply_execute, quarantine_owner, quarantine_execute
+    ] loop
+      execute pg_catalog.format(
+        'create role %I nologin nosuperuser nocreatedb nocreaterole noinherit noreplication nobypassrls connection limit -1',
+        role_name
+      );
+    end loop;
+  end if;
+
+  -- PostgreSQL 17 gives a non-superuser CREATEROLE principal one implicit
+  -- ADMIN-only membership in each role it creates. That edge has neither
+  -- INHERIT nor SET authority, so it cannot exercise the scoped role. Accept
+  -- exactly that platform edge (granted by a superuser) and nothing else.
   foreach role_name in array array[
     apply_owner, apply_execute, quarantine_owner, quarantine_execute
   ] loop
@@ -66,7 +107,31 @@ begin
           or role.rolvaliduntil is not null
           or exists (
             select 1 from pg_catalog.pg_auth_members as membership
-            where membership.member = role.oid or membership.roleid = role.oid
+            where membership.member = role.oid
+               or (
+                 membership.roleid = role.oid
+                 and not (
+                   not executor_is_superuser
+                   and membership.member = executor_role_oid
+                   and membership.admin_option
+                   and not membership.inherit_option
+                   and not membership.set_option
+                   and membership.grantor = 10::oid
+                   and exists (
+                     select 1 from pg_catalog.pg_roles as grantor
+                     where grantor.oid = membership.grantor
+                       and grantor.rolsuper
+                   )
+                 )
+               )
+          )
+          or (
+            select count(*) from pg_catalog.pg_auth_members as membership
+            where membership.roleid = role.oid
+          ) <> case when executor_is_superuser then 0 else 1 end
+          or exists (
+            select 1 from pg_catalog.pg_auth_members as membership
+            where membership.member = role.oid
           )
           or exists (
             select 1 from pg_catalog.pg_db_role_setting as setting
@@ -235,39 +300,35 @@ begin
      or approval_envelope->>'kind' <>
        'pintpath-postgres-reviewed-price-operation-signed-approval'
      or approval_envelope->>'version' <> '1'
-     or pg_catalog.encode(extensions.digest(
-       pg_catalog.convert_to(request->>'planCanonical', 'UTF8'), 'sha256'
+     or pg_catalog.encode(pg_catalog.sha256(
+       pg_catalog.convert_to(request->>'planCanonical', 'UTF8')
      ), 'hex') <> approval->>'planFileSha256'
-     or pg_catalog.encode(extensions.digest(
-       pg_catalog.convert_to(request->>'reviewPacketCanonical', 'UTF8'),
-       'sha256'
+     or pg_catalog.encode(pg_catalog.sha256(
+       pg_catalog.convert_to(request->>'reviewPacketCanonical', 'UTF8')
      ), 'hex') <> approval->>'reviewPacketFileSha256'
-     or pg_catalog.encode(extensions.digest(
-       pg_catalog.convert_to(request->>'planCandidateCanonical', 'UTF8'),
-       'sha256'
+     or pg_catalog.encode(pg_catalog.sha256(
+       pg_catalog.convert_to(request->>'planCandidateCanonical', 'UTF8')
      ), 'hex') <> plan->>'planCandidateSha256'
-     or pg_catalog.encode(extensions.digest(
+     or pg_catalog.encode(pg_catalog.sha256(
        pg_catalog.convert_to(
          request->>'reviewPacketCandidateCanonical', 'UTF8'
-       ), 'sha256'
+       )
      ), 'hex') <> packet->>'reviewPacketCandidateSha256'
-     or pg_catalog.encode(extensions.digest(
-       pg_catalog.convert_to(request->>'approvalEnvelopeCanonical', 'UTF8'),
-       'sha256'
+     or pg_catalog.encode(pg_catalog.sha256(
+       pg_catalog.convert_to(request->>'approvalEnvelopeCanonical', 'UTF8')
      ), 'hex') <> request->>'approvalFileSha256'
-     or pg_catalog.encode(extensions.digest(
-       pg_catalog.decode(approval_envelope->>'signatureBase64', 'base64'),
-       'sha256'
+     or pg_catalog.encode(pg_catalog.sha256(
+       pg_catalog.decode(approval_envelope->>'signatureBase64', 'base64')
      ), 'hex') <> request->>'approvalSignatureSha256'
      or (operation_kind_value = 'apply'
        and request->'sourceApplyReceiptCanonical' <> 'null'::jsonb)
      or (operation_kind_value = 'quarantine' and (
        pg_catalog.jsonb_typeof(request->'sourceApplyReceiptCanonical')
          <> 'string'
-       or pg_catalog.encode(extensions.digest(
+       or pg_catalog.encode(pg_catalog.sha256(
          pg_catalog.convert_to(
            request->>'sourceApplyReceiptCanonical', 'UTF8'
-         ), 'sha256'
+         )
        ), 'hex') <> approval->>'sourceApplyReceiptFileSha256'
        or source_receipt->>'receiptSha256' <>
          approval->>'sourceApplyReceiptSha256'
@@ -276,9 +337,8 @@ begin
       message = 'reviewed_price_promotion_artifact_hash_mismatch';
   end if;
 
-  approval_payload_sha := pg_catalog.encode(extensions.digest(
-    pg_catalog.convert_to(request->>'approvalPayloadCanonical', 'UTF8'),
-    'sha256'
+  approval_payload_sha := pg_catalog.encode(pg_catalog.sha256(
+    pg_catalog.convert_to(request->>'approvalPayloadCanonical', 'UTF8')
   ), 'hex');
   if approval->>'kind' <>
        'pintpath-postgres-reviewed-price-operation-approval-payload'
@@ -319,12 +379,11 @@ begin
      or approval->>'operatorIdSha256' = approval->>'reviewerIdSha256'
      or approval->>'operatorLoginSha256' = approval->>'reviewerLoginSha256'
      or approval->>'reviewerLoginSha256' <>
-       pg_catalog.encode(extensions.digest(
+       pg_catalog.encode(pg_catalog.sha256(
          pg_catalog.convert_to(
            'pintpath-reviewed-price-database-login-v1', 'UTF8'
          ) || pg_catalog.decode('00', 'hex')
-           || pg_catalog.convert_to(session_user, 'UTF8'),
-         'sha256'
+           || pg_catalog.convert_to(session_user, 'UTF8')
        ), 'hex')
      or (approval->>'issuedAt')::timestamptz >
        pg_catalog.transaction_timestamp()
@@ -349,8 +408,8 @@ begin
     || ',"systemIdentifier":'
     || pg_catalog.to_json(physical_identity_text)::text
     || ',"version":1}' || chr(10);
-  physical_identity_sha := pg_catalog.encode(extensions.digest(
-    pg_catalog.convert_to(physical_identity_text, 'UTF8'), 'sha256'
+  physical_identity_sha := pg_catalog.encode(pg_catalog.sha256(
+    pg_catalog.convert_to(physical_identity_text, 'UTF8')
   ), 'hex');
   row_count_value := (packet->>'rowCount')::integer;
   if physical_identity_sha <> approval->>'targetPhysicalIdentitySha256'
@@ -375,7 +434,7 @@ begin
       message = 'reviewed_price_promotion_target_binding_mismatch';
   end if;
 
-  authorization_request_sha := pg_catalog.encode(extensions.digest(
+  authorization_request_sha := pg_catalog.encode(pg_catalog.sha256(
     pg_catalog.convert_to(pg_catalog.concat_ws(chr(31),
       'pintpath-reviewed-price-operation-authorization-v1',
       authorization_id_value::text, operation_id_value::text,
@@ -390,7 +449,7 @@ begin
       approval->>'operatorIdSha256', approval->>'reviewerIdSha256',
       approval->>'operatorLoginSha256', approval->>'reviewerLoginSha256',
       row_count_value::text
-    ), 'UTF8'), 'sha256'), 'hex');
+    ), 'UTF8')), 'hex');
   authorized_at_value := pg_catalog.transaction_timestamp();
   authorized_at_text := pg_catalog.to_char(
     authorized_at_value at time zone 'UTC',
@@ -576,37 +635,32 @@ begin
      or approval_envelope->>'kind' <>
        'pintpath-postgres-reviewed-price-operation-signed-approval'
      or approval_envelope->>'version' <> '1'
-     or pg_catalog.encode(extensions.digest(
-       pg_catalog.convert_to(request->>'planCanonical', 'UTF8'), 'sha256'
+     or pg_catalog.encode(pg_catalog.sha256(
+       pg_catalog.convert_to(request->>'planCanonical', 'UTF8')
      ), 'hex') <> approval->>'planFileSha256'
-     or pg_catalog.encode(extensions.digest(
-       pg_catalog.convert_to(request->>'reviewPacketCanonical', 'UTF8'),
-       'sha256'
+     or pg_catalog.encode(pg_catalog.sha256(
+       pg_catalog.convert_to(request->>'reviewPacketCanonical', 'UTF8')
      ), 'hex') <> approval->>'reviewPacketFileSha256'
-     or pg_catalog.encode(extensions.digest(
-       pg_catalog.convert_to(request->>'planCandidateCanonical', 'UTF8'),
-       'sha256'
+     or pg_catalog.encode(pg_catalog.sha256(
+       pg_catalog.convert_to(request->>'planCandidateCanonical', 'UTF8')
      ), 'hex') <> plan->>'planCandidateSha256'
-     or pg_catalog.encode(extensions.digest(
+     or pg_catalog.encode(pg_catalog.sha256(
        pg_catalog.convert_to(
          request->>'reviewPacketCandidateCanonical', 'UTF8'
-       ), 'sha256'
+       )
      ), 'hex') <> packet->>'reviewPacketCandidateSha256'
-     or pg_catalog.encode(extensions.digest(
-       pg_catalog.convert_to(request->>'approvalEnvelopeCanonical', 'UTF8'),
-       'sha256'
+     or pg_catalog.encode(pg_catalog.sha256(
+       pg_catalog.convert_to(request->>'approvalEnvelopeCanonical', 'UTF8')
      ), 'hex') <> request->>'approvalFileSha256'
-     or pg_catalog.encode(extensions.digest(
-       pg_catalog.decode(approval_envelope->>'signatureBase64', 'base64'),
-       'sha256'
+     or pg_catalog.encode(pg_catalog.sha256(
+       pg_catalog.decode(approval_envelope->>'signatureBase64', 'base64')
      ), 'hex') <> request->>'approvalSignatureSha256' then
     raise exception using errcode = '22023',
       message = 'reviewed_price_promotion_artifact_hash_mismatch';
   end if;
 
-  approval_payload_sha := pg_catalog.encode(extensions.digest(
-    pg_catalog.convert_to(request->>'approvalPayloadCanonical', 'UTF8'),
-    'sha256'
+  approval_payload_sha := pg_catalog.encode(pg_catalog.sha256(
+    pg_catalog.convert_to(request->>'approvalPayloadCanonical', 'UTF8')
   ), 'hex');
   if approval->>'kind' <>
        'pintpath-postgres-reviewed-price-operation-approval-payload'
@@ -623,12 +677,11 @@ begin
      or approval->>'operatorIdSha256' = approval->>'reviewerIdSha256'
      or approval->>'operatorLoginSha256' = approval->>'reviewerLoginSha256'
      or approval->>'operatorLoginSha256' <>
-       pg_catalog.encode(extensions.digest(
+       pg_catalog.encode(pg_catalog.sha256(
          pg_catalog.convert_to(
            'pintpath-reviewed-price-database-login-v1', 'UTF8'
          ) || pg_catalog.decode('00', 'hex')
-           || pg_catalog.convert_to(session_user, 'UTF8'),
-         'sha256'
+           || pg_catalog.convert_to(session_user, 'UTF8')
        ), 'hex')
      or approval->>'candidateSha' <> plan->>'candidateSha'
      or approval->>'candidateSha' <> packet->>'candidateSha'
@@ -684,8 +737,8 @@ begin
     || ',"systemIdentifier":'
     || pg_catalog.to_json(physical_identity_text)::text
     || ',"version":1}' || chr(10);
-  physical_identity_sha := pg_catalog.encode(extensions.digest(
-    pg_catalog.convert_to(physical_identity_text, 'UTF8'), 'sha256'
+  physical_identity_sha := pg_catalog.encode(pg_catalog.sha256(
+    pg_catalog.convert_to(physical_identity_text, 'UTF8')
   ), 'hex');
   if physical_identity_sha <> approval->>'targetPhysicalIdentitySha256'
      or not exists (
@@ -745,7 +798,7 @@ begin
       message = 'reviewed_price_promotion_packet_identity_invalid';
   end if;
 
-  request_sha := pg_catalog.encode(extensions.digest(pg_catalog.convert_to(
+  request_sha := pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
     pg_catalog.concat_ws(chr(31),
       'pintpath-reviewed-price-operation-request-v1',
       'apply', operation_id_value::text, authorization_id_value::text,
@@ -755,9 +808,9 @@ begin
       request->>'approvalSignatureSha256',
       approval->>'targetPhysicalIdentitySha256',
       approval->>'sourceSnapshotSha256', row_count_value::text
-    ), 'UTF8'), 'sha256'), 'hex');
+    ), 'UTF8')), 'hex');
 
-  authorization_request_sha := pg_catalog.encode(extensions.digest(
+  authorization_request_sha := pg_catalog.encode(pg_catalog.sha256(
     pg_catalog.convert_to(pg_catalog.concat_ws(chr(31),
       'pintpath-reviewed-price-operation-authorization-v1',
       authorization_id_value::text, operation_id_value::text, 'apply',
@@ -772,7 +825,7 @@ begin
       approval->>'operatorIdSha256', approval->>'reviewerIdSha256',
       approval->>'operatorLoginSha256', approval->>'reviewerLoginSha256',
       row_count_value::text
-    ), 'UTF8'), 'sha256'), 'hex');
+    ), 'UTF8')), 'hex');
   select registered.* into registered_authorization
   from pintpath_ops.reviewed_price_promotion_operations as registered
   where registered.operation_id = authorization_id_value;
@@ -891,10 +944,10 @@ begin
     committed_at_value at time zone 'UTC',
     'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
   );
-  before_state_sha := pg_catalog.encode(extensions.digest(
+  before_state_sha := pg_catalog.encode(pg_catalog.sha256(
     pg_catalog.convert_to(
       '{"priceRecord":null,"venueBeer":null}', 'UTF8'
-    ), 'sha256'
+    )
   ), 'hex');
 
   for item_entry in
@@ -1058,18 +1111,18 @@ begin
       cross join pintpath_app.venue_beers as beer_row
       where price_row.id = price_record_json->>'id'
         and beer_row.id = venue_beer_json->>'id';
-      row_request_sha := pg_catalog.encode(extensions.digest(
-        pg_catalog.convert_to(row_entry.value::text, 'UTF8'), 'sha256'
+      row_request_sha := pg_catalog.encode(pg_catalog.sha256(
+        pg_catalog.convert_to(row_entry.value::text, 'UTF8')
       ), 'hex');
-      after_state_sha := pg_catalog.encode(extensions.digest(
-        pg_catalog.convert_to(after_state::text, 'UTF8'), 'sha256'
+      after_state_sha := pg_catalog.encode(pg_catalog.sha256(
+        pg_catalog.convert_to(after_state::text, 'UTF8')
       ), 'hex');
-      row_receipt_sha := pg_catalog.encode(extensions.digest(
+      row_receipt_sha := pg_catalog.encode(pg_catalog.sha256(
         pg_catalog.convert_to(pg_catalog.concat_ws(chr(31),
           'pintpath-reviewed-price-operation-row-v1',
           operation_id_value::text, global_ordinal::text, row_request_sha,
           before_state_sha, after_state_sha
-        ), 'UTF8'), 'sha256'
+        ), 'UTF8')
       ), 'hex');
       ledger_rows := ledger_rows || pg_catalog.jsonb_build_array(
         pg_catalog.jsonb_build_object(
@@ -1114,10 +1167,10 @@ begin
       message = 'reviewed_price_promotion_row_count_mismatch';
   end if;
 
-  result_state_sha := pg_catalog.encode(extensions.digest(
-    pg_catalog.convert_to(ledger_rows::text, 'UTF8'), 'sha256'
+  result_state_sha := pg_catalog.encode(pg_catalog.sha256(
+    pg_catalog.convert_to(ledger_rows::text, 'UTF8')
   ), 'hex');
-  receipt_sha := pg_catalog.encode(extensions.digest(pg_catalog.convert_to(
+  receipt_sha := pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
     pg_catalog.concat_ws(chr(31),
       'pintpath-reviewed-price-operation-receipt-v1', 'apply',
       authorization_id_value::text, operation_id_value::text, '',
@@ -1125,7 +1178,7 @@ begin
       committed_at_text, row_count_value::text,
       pg_catalog.array_to_string(source_ids, ','),
       request->>'approvalFileSha256'
-    ), 'UTF8'), 'sha256'), 'hex');
+    ), 'UTF8')), 'hex');
 
   insert into pintpath_ops.reviewed_price_promotion_operations (
     operation_id, operation_kind, source_apply_operation_id, candidate_sha,
@@ -1296,41 +1349,35 @@ begin
      or approval_envelope->>'kind' <>
        'pintpath-postgres-reviewed-price-operation-signed-approval'
      or approval_envelope->>'version' <> '1'
-     or pg_catalog.encode(extensions.digest(
-       pg_catalog.convert_to(request->>'planCanonical', 'UTF8'), 'sha256'
+     or pg_catalog.encode(pg_catalog.sha256(
+       pg_catalog.convert_to(request->>'planCanonical', 'UTF8')
      ), 'hex') <> approval->>'planFileSha256'
-     or pg_catalog.encode(extensions.digest(
-       pg_catalog.convert_to(request->>'reviewPacketCanonical', 'UTF8'),
-       'sha256'
+     or pg_catalog.encode(pg_catalog.sha256(
+       pg_catalog.convert_to(request->>'reviewPacketCanonical', 'UTF8')
      ), 'hex') <> approval->>'reviewPacketFileSha256'
-     or pg_catalog.encode(extensions.digest(
-       pg_catalog.convert_to(request->>'planCandidateCanonical', 'UTF8'),
-       'sha256'
+     or pg_catalog.encode(pg_catalog.sha256(
+       pg_catalog.convert_to(request->>'planCandidateCanonical', 'UTF8')
      ), 'hex') <> plan->>'planCandidateSha256'
-     or pg_catalog.encode(extensions.digest(
+     or pg_catalog.encode(pg_catalog.sha256(
        pg_catalog.convert_to(
          request->>'reviewPacketCandidateCanonical', 'UTF8'
-       ), 'sha256'
+       )
      ), 'hex') <> packet->>'reviewPacketCandidateSha256'
-     or pg_catalog.encode(extensions.digest(
-       pg_catalog.convert_to(request->>'approvalEnvelopeCanonical', 'UTF8'),
-       'sha256'
+     or pg_catalog.encode(pg_catalog.sha256(
+       pg_catalog.convert_to(request->>'approvalEnvelopeCanonical', 'UTF8')
      ), 'hex') <> request->>'approvalFileSha256'
-     or pg_catalog.encode(extensions.digest(
-       pg_catalog.decode(approval_envelope->>'signatureBase64', 'base64'),
-       'sha256'
+     or pg_catalog.encode(pg_catalog.sha256(
+       pg_catalog.decode(approval_envelope->>'signatureBase64', 'base64')
      ), 'hex') <> request->>'approvalSignatureSha256'
-     or pg_catalog.encode(extensions.digest(
-       pg_catalog.convert_to(request->>'sourceApplyReceiptCanonical', 'UTF8'),
-       'sha256'
+     or pg_catalog.encode(pg_catalog.sha256(
+       pg_catalog.convert_to(request->>'sourceApplyReceiptCanonical', 'UTF8')
      ), 'hex') <> approval->>'sourceApplyReceiptFileSha256' then
     raise exception using errcode = '22023',
       message = 'reviewed_price_promotion_artifact_hash_mismatch';
   end if;
 
-  approval_payload_sha := pg_catalog.encode(extensions.digest(
-    pg_catalog.convert_to(request->>'approvalPayloadCanonical', 'UTF8'),
-    'sha256'
+  approval_payload_sha := pg_catalog.encode(pg_catalog.sha256(
+    pg_catalog.convert_to(request->>'approvalPayloadCanonical', 'UTF8')
   ), 'hex');
   if approval->>'kind' <>
        'pintpath-postgres-reviewed-price-operation-approval-payload'
@@ -1346,12 +1393,11 @@ begin
      or approval->>'operatorIdSha256' = approval->>'reviewerIdSha256'
      or approval->>'operatorLoginSha256' = approval->>'reviewerLoginSha256'
      or approval->>'operatorLoginSha256' <>
-       pg_catalog.encode(extensions.digest(
+       pg_catalog.encode(pg_catalog.sha256(
          pg_catalog.convert_to(
            'pintpath-reviewed-price-database-login-v1', 'UTF8'
          ) || pg_catalog.decode('00', 'hex')
-           || pg_catalog.convert_to(session_user, 'UTF8'),
-         'sha256'
+           || pg_catalog.convert_to(session_user, 'UTF8')
        ), 'hex')
      or approval->>'candidateSha' <> plan->>'candidateSha'
      or approval->>'candidateSha' <> packet->>'candidateSha'
@@ -1407,8 +1453,8 @@ begin
     || ',"systemIdentifier":'
     || pg_catalog.to_json(physical_identity_text)::text
     || ',"version":1}' || chr(10);
-  physical_identity_sha := pg_catalog.encode(extensions.digest(
-    pg_catalog.convert_to(physical_identity_text, 'UTF8'), 'sha256'
+  physical_identity_sha := pg_catalog.encode(pg_catalog.sha256(
+    pg_catalog.convert_to(physical_identity_text, 'UTF8')
   ), 'hex');
   if physical_identity_sha <> approval->>'targetPhysicalIdentitySha256' then
     raise exception using errcode = '55000',
@@ -1427,7 +1473,7 @@ begin
       message = 'reviewed_price_promotion_packet_invalid';
   end if;
 
-  request_sha := pg_catalog.encode(extensions.digest(pg_catalog.convert_to(
+  request_sha := pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
     pg_catalog.concat_ws(chr(31),
       'pintpath-reviewed-price-operation-request-v1',
       'quarantine', operation_id_value::text, authorization_id_value::text,
@@ -1437,9 +1483,9 @@ begin
       request->>'approvalSignatureSha256',
       approval->>'targetPhysicalIdentitySha256',
       approval->>'sourceSnapshotSha256', row_count_value::text
-    ), 'UTF8'), 'sha256'), 'hex');
+    ), 'UTF8')), 'hex');
 
-  authorization_request_sha := pg_catalog.encode(extensions.digest(
+  authorization_request_sha := pg_catalog.encode(pg_catalog.sha256(
     pg_catalog.convert_to(pg_catalog.concat_ws(chr(31),
       'pintpath-reviewed-price-operation-authorization-v1',
       authorization_id_value::text, operation_id_value::text, 'quarantine',
@@ -1454,7 +1500,7 @@ begin
       approval->>'operatorIdSha256', approval->>'reviewerIdSha256',
       approval->>'operatorLoginSha256', approval->>'reviewerLoginSha256',
       row_count_value::text
-    ), 'UTF8'), 'sha256'), 'hex');
+    ), 'UTF8')), 'hex');
   select registered.* into registered_authorization
   from pintpath_ops.reviewed_price_promotion_operations as registered
   where registered.operation_id = authorization_id_value;
@@ -1583,8 +1629,8 @@ begin
       raise exception using errcode = '55000',
         message = 'reviewed_price_promotion_quarantine_row_missing';
     end if;
-    before_state_sha := pg_catalog.encode(extensions.digest(
-      pg_catalog.convert_to(before_state::text, 'UTF8'), 'sha256'
+    before_state_sha := pg_catalog.encode(pg_catalog.sha256(
+      pg_catalog.convert_to(before_state::text, 'UTF8')
     ), 'hex');
     if before_state_sha <> source_row.after_state_sha256 then
       raise exception using errcode = '55000',
@@ -1620,21 +1666,21 @@ begin
     cross join pintpath_app.venue_beers as beer_row
     where price_row.id = source_row.price_record_id
       and beer_row.id = source_row.venue_beer_id;
-    after_state_sha := pg_catalog.encode(extensions.digest(
-      pg_catalog.convert_to(after_state::text, 'UTF8'), 'sha256'
+    after_state_sha := pg_catalog.encode(pg_catalog.sha256(
+      pg_catalog.convert_to(after_state::text, 'UTF8')
     ), 'hex');
-    row_request_sha := pg_catalog.encode(extensions.digest(
+    row_request_sha := pg_catalog.encode(pg_catalog.sha256(
       pg_catalog.convert_to(pg_catalog.concat_ws(chr(31),
         source_row.row_request_sha256, request_sha,
         source_row.row_ordinal::text
-      ), 'UTF8'), 'sha256'
+      ), 'UTF8')
     ), 'hex');
-    row_receipt_sha := pg_catalog.encode(extensions.digest(
+    row_receipt_sha := pg_catalog.encode(pg_catalog.sha256(
       pg_catalog.convert_to(pg_catalog.concat_ws(chr(31),
         'pintpath-reviewed-price-operation-row-v1',
         operation_id_value::text, source_row.row_ordinal::text,
         row_request_sha, before_state_sha, after_state_sha
-      ), 'UTF8'), 'sha256'
+      ), 'UTF8')
     ), 'hex');
     ledger_rows := ledger_rows || pg_catalog.jsonb_build_array(
       pg_catalog.jsonb_build_object(
@@ -1656,10 +1702,10 @@ begin
       message = 'reviewed_price_promotion_source_receipt_invalid';
   end if;
 
-  result_state_sha := pg_catalog.encode(extensions.digest(
-    pg_catalog.convert_to(ledger_rows::text, 'UTF8'), 'sha256'
+  result_state_sha := pg_catalog.encode(pg_catalog.sha256(
+    pg_catalog.convert_to(ledger_rows::text, 'UTF8')
   ), 'hex');
-  receipt_sha := pg_catalog.encode(extensions.digest(pg_catalog.convert_to(
+  receipt_sha := pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
     pg_catalog.concat_ws(chr(31),
       'pintpath-reviewed-price-operation-receipt-v1', 'quarantine',
       authorization_id_value::text, operation_id_value::text,
@@ -1667,7 +1713,7 @@ begin
       request_sha, result_state_sha, committed_at_text,
       row_count_value::text, pg_catalog.array_to_string(source_ids, ','),
       request->>'approvalFileSha256'
-    ), 'UTF8'), 'sha256'), 'hex');
+    ), 'UTF8')), 'hex');
 
   insert into pintpath_ops.reviewed_price_promotion_operations (
     operation_id, operation_kind, source_apply_operation_id, candidate_sha,
@@ -1741,6 +1787,10 @@ declare
   quarantine_execute text;
   reviewer_execute text;
   relation_name text;
+  role_name text;
+  executor_name text;
+  executor_role_oid oid;
+  executor_is_superuser boolean;
 begin
   select database.oid::text into strict database_oid_text
   from pg_catalog.pg_database as database
@@ -1753,6 +1803,10 @@ begin
     'pintpath_reviewed_price_quarantine_execute_d' || database_oid_text;
   reviewer_execute :=
     'pintpath_reviewed_price_reviewer_execute_d' || database_oid_text;
+  select role.rolname, role.oid, role.rolsuper
+    into strict executor_name, executor_role_oid, executor_is_superuser
+  from pg_catalog.pg_roles as role
+  where role.rolname = current_user;
 
   if pg_catalog.to_regrole(reviewer_execute) is null then
     execute pg_catalog.format(
@@ -1770,7 +1824,31 @@ begin
         or role.rolvaliduntil is not null
         or exists (
           select 1 from pg_catalog.pg_auth_members as membership
-          where membership.member = role.oid or membership.roleid = role.oid
+          where membership.member = role.oid
+             or (
+               membership.roleid = role.oid
+               and not (
+                 not executor_is_superuser
+                 and membership.member = executor_role_oid
+                 and membership.admin_option
+                 and not membership.inherit_option
+                 and not membership.set_option
+                 and membership.grantor = 10::oid
+                 and exists (
+                   select 1 from pg_catalog.pg_roles as grantor
+                   where grantor.oid = membership.grantor
+                     and grantor.rolsuper
+                 )
+               )
+             )
+        )
+        or (
+          select count(*) from pg_catalog.pg_auth_members as membership
+          where membership.roleid = role.oid
+        ) <> case when executor_is_superuser then 0 else 1 end
+        or exists (
+          select 1 from pg_catalog.pg_auth_members as membership
+          where membership.member = role.oid
         )
         or exists (
           select 1 from pg_catalog.pg_db_role_setting as setting
@@ -1780,6 +1858,65 @@ begin
   ) then
     raise exception using errcode = '42501',
       message = 'reviewed_price_promotion_reviewer_role_unsafe';
+  end if;
+
+  if not exists (
+       select 1
+       from pg_catalog.pg_namespace as namespace
+       where namespace.nspname = 'pintpath_ops'
+         and namespace.nspowner = executor_role_oid
+     ) or exists (
+       select 1
+       from pg_catalog.pg_proc as routine
+       join pg_catalog.pg_namespace as namespace
+         on namespace.oid = routine.pronamespace
+       where namespace.nspname = 'pintpath_ops'
+         and routine.proname = any(array[
+           'authorize_reviewed_price_promotion',
+           'apply_reviewed_price_promotion',
+           'quarantine_reviewed_price_promotion'
+         ])
+         and routine.pronargs = 1
+         and routine.proargtypes[0] =
+           'pg_catalog.jsonb'::pg_catalog.regtype::oid
+         and not (
+           routine.proowner = executor_role_oid
+           or (
+             executor_is_superuser
+             and (
+               (
+                 routine.proname = any(array[
+                   'authorize_reviewed_price_promotion',
+                   'apply_reviewed_price_promotion'
+                 ])
+                 and routine.proowner = pg_catalog.to_regrole(apply_owner)
+               )
+               or (
+                 routine.proname = 'quarantine_reviewed_price_promotion'
+                 and routine.proowner = pg_catalog.to_regrole(quarantine_owner)
+               )
+             )
+           )
+         )
+     ) then
+    raise exception using errcode = '42501',
+      message = 'reviewed_price_promotion_activation_executor_ownership_unsafe';
+  end if;
+
+  -- A non-superuser CREATEROLE executor receives no SET authority from its
+  -- implicit ADMIN edge. Add a transaction-local, explicitly granted SET edge
+  -- only long enough to transfer and administer the three function owners;
+  -- the exact grantor edge is revoked and revalidated before commit.
+  if not executor_is_superuser then
+    foreach role_name in array array[apply_owner, quarantine_owner] loop
+      execute pg_catalog.format(
+        'grant %I to %I with admin false, inherit false, set true granted by %I',
+        role_name, executor_name, executor_name
+      );
+      execute pg_catalog.format(
+        'grant create on schema pintpath_ops to %I', role_name
+      );
+    end loop;
   end if;
 
   execute pg_catalog.format(
@@ -1794,6 +1931,13 @@ begin
     'alter function pintpath_ops.quarantine_reviewed_price_promotion(pg_catalog.jsonb) owner to %I',
     quarantine_owner
   );
+  if not executor_is_superuser then
+    foreach role_name in array array[apply_owner, quarantine_owner] loop
+      execute pg_catalog.format(
+        'revoke create on schema pintpath_ops from %I', role_name
+      );
+    end loop;
+  end if;
 
   -- The shared runtime role retains its existing DML because venue-manager,
   -- catalog, support, privacy, and moderation repositories legitimately write
@@ -1856,20 +2000,6 @@ begin
     'grant usage on schema pintpath_app, pintpath_ops to %I', quarantine_owner
   );
   execute pg_catalog.format(
-    'grant usage on schema extensions to %I', apply_owner
-  );
-  execute pg_catalog.format(
-    'grant usage on schema extensions to %I', quarantine_owner
-  );
-  execute pg_catalog.format(
-    'grant execute on function extensions.digest(bytea,text) to %I',
-    apply_owner
-  );
-  execute pg_catalog.format(
-    'grant execute on function extensions.digest(bytea,text) to %I',
-    quarantine_owner
-  );
-  execute pg_catalog.format(
     'grant select on table pintpath_app.schema_metadata, pintpath_app.admin_ingestion_queue, pintpath_app.beer_catalog_items, pintpath_app.venue_profiles, pintpath_app.wrong_price_reports, pintpath_app.venue_price_records, pintpath_app.venue_beers, pintpath_ops.migration_runs, pintpath_ops.reviewed_price_promotion_operations, pintpath_ops.reviewed_price_promotion_rows to %I',
     apply_owner
   );
@@ -1878,9 +2008,9 @@ begin
     apply_owner
   );
   -- PostgreSQL row-locking clauses and SHARE ROW EXCLUSIVE table locks require
-  -- UPDATE in addition to SELECT. The owner has no login or membership path;
-  -- this grant is used only while the pinned SECURITY DEFINER body holds its
-  -- source/catalog locks. Promotion ledgers remain append-only (no UPDATE).
+  -- UPDATE in addition to SELECT. The owner has no login or executable
+  -- INHERIT/SET path; this grant is used only while the pinned SECURITY DEFINER
+  -- body holds its source/catalog locks. Promotion ledgers remain append-only.
   execute pg_catalog.format(
     'grant update on table pintpath_app.beer_catalog_items, pintpath_app.venue_profiles, pintpath_app.venue_price_records, pintpath_app.venue_beers to %I',
     apply_owner
@@ -1901,19 +2031,9 @@ begin
     'grant insert on table pintpath_ops.reviewed_price_promotion_operations, pintpath_ops.reviewed_price_promotion_rows to %I',
     quarantine_owner
   );
-  execute pg_catalog.format(
-    'grant execute on function pg_catalog.pg_control_system() to %I', apply_owner
-  );
-  execute pg_catalog.format(
-    'grant execute on function pg_catalog.pg_control_system() to %I',
-    quarantine_owner
-  );
-
-  revoke all on function
-    pintpath_ops.authorize_reviewed_price_promotion(pg_catalog.jsonb),
-    pintpath_ops.apply_reviewed_price_promotion(pg_catalog.jsonb),
-    pintpath_ops.quarantine_reviewed_price_promotion(pg_catalog.jsonb)
-    from public, pintpath_runtime, pintpath_migrator;
+  -- pg_control_system() has PostgreSQL's default PUBLIC EXECUTE ACL. The owner
+  -- roles are otherwise isolated and the kernel bodies are byte-pinned, so no
+  -- cluster-owner-only GRANT is required here.
   execute pg_catalog.format(
     'grant usage on schema pintpath_ops to %I', reviewer_execute
   );
@@ -1921,37 +2041,58 @@ begin
     'grant usage on schema pintpath_ops to %I', apply_execute
   );
   execute pg_catalog.format(
+    'grant usage on schema pintpath_ops to %I', quarantine_execute
+  );
+
+  execute pg_catalog.format('set local role %I', apply_owner);
+  revoke all on function
+    pintpath_ops.authorize_reviewed_price_promotion(pg_catalog.jsonb),
+    pintpath_ops.apply_reviewed_price_promotion(pg_catalog.jsonb)
+    from public, pintpath_runtime, pintpath_migrator;
+  foreach relation_name in array array['anon','authenticated','service_role'] loop
+    if pg_catalog.to_regrole(relation_name) is not null then
+      execute pg_catalog.format(
+        'revoke all on function pintpath_ops.authorize_reviewed_price_promotion(pg_catalog.jsonb), pintpath_ops.apply_reviewed_price_promotion(pg_catalog.jsonb) from %I',
+        relation_name
+      );
+    end if;
+  end loop;
+  execute pg_catalog.format(
     'grant execute on function pintpath_ops.authorize_reviewed_price_promotion(pg_catalog.jsonb) to %I',
     reviewer_execute
-  );
-  execute pg_catalog.format(
-    'grant usage on schema pintpath_ops to %I', quarantine_execute
   );
   execute pg_catalog.format(
     'grant execute on function pintpath_ops.apply_reviewed_price_promotion(pg_catalog.jsonb) to %I',
     apply_execute
   );
-  execute pg_catalog.format(
-    'grant execute on function pintpath_ops.quarantine_reviewed_price_promotion(pg_catalog.jsonb) to %I',
-    quarantine_execute
-  );
+  execute pg_catalog.format('set local role %I', executor_name);
 
+  execute pg_catalog.format('set local role %I', quarantine_owner);
+  revoke all on function
+    pintpath_ops.quarantine_reviewed_price_promotion(pg_catalog.jsonb)
+    from public, pintpath_runtime, pintpath_migrator;
   foreach relation_name in array array['anon','authenticated','service_role'] loop
     if pg_catalog.to_regrole(relation_name) is not null then
-      execute pg_catalog.format(
-        'revoke all on function pintpath_ops.authorize_reviewed_price_promotion(pg_catalog.jsonb) from %I',
-        relation_name
-      );
-      execute pg_catalog.format(
-        'revoke all on function pintpath_ops.apply_reviewed_price_promotion(pg_catalog.jsonb) from %I',
-        relation_name
-      );
       execute pg_catalog.format(
         'revoke all on function pintpath_ops.quarantine_reviewed_price_promotion(pg_catalog.jsonb) from %I',
         relation_name
       );
     end if;
   end loop;
+  execute pg_catalog.format(
+    'grant execute on function pintpath_ops.quarantine_reviewed_price_promotion(pg_catalog.jsonb) to %I',
+    quarantine_execute
+  );
+  execute pg_catalog.format('set local role %I', executor_name);
+
+  if not executor_is_superuser then
+    foreach role_name in array array[apply_owner, quarantine_owner] loop
+      execute pg_catalog.format(
+        'revoke %I from %I granted by %I',
+        role_name, executor_name, executor_name
+      );
+    end loop;
+  end if;
 
   if not pg_catalog.has_table_privilege(
        'pintpath_runtime', 'pintpath_app.venue_price_records',
@@ -1976,10 +2117,67 @@ begin
      or pg_catalog.has_table_privilege(
        reviewer_execute, 'pintpath_ops.reviewed_price_promotion_operations',
        'SELECT,INSERT,UPDATE,DELETE'
+     )
+     or not pg_catalog.has_function_privilege(
+       apply_owner, 'pg_catalog.sha256(bytea)', 'EXECUTE'
+     )
+     or not pg_catalog.has_function_privilege(
+       quarantine_owner, 'pg_catalog.sha256(bytea)', 'EXECUTE'
+     )
+     or not pg_catalog.has_function_privilege(
+       apply_owner, 'pg_catalog.pg_control_system()', 'EXECUTE'
+     )
+     or not pg_catalog.has_function_privilege(
+       quarantine_owner, 'pg_catalog.pg_control_system()', 'EXECUTE'
+     )
+     or pg_catalog.has_schema_privilege(
+       apply_owner, 'pintpath_ops', 'CREATE'
+     )
+     or pg_catalog.has_schema_privilege(
+       quarantine_owner, 'pintpath_ops', 'CREATE'
      ) then
     raise exception using errcode = '42501',
       message = 'reviewed_price_promotion_activation_acl_postcondition_failed';
   end if;
+
+  foreach role_name in array array[
+    apply_owner, apply_execute, quarantine_owner, quarantine_execute,
+    reviewer_execute
+  ] loop
+    if exists (
+      select 1 from pg_catalog.pg_roles as role
+      where role.rolname = role_name
+        and (
+          exists (
+            select 1 from pg_catalog.pg_auth_members as membership
+            where membership.member = role.oid
+               or (
+                 membership.roleid = role.oid
+                 and not (
+                   not executor_is_superuser
+                   and membership.member = executor_role_oid
+                   and membership.admin_option
+                   and not membership.inherit_option
+                   and not membership.set_option
+                   and membership.grantor = 10::oid
+                   and exists (
+                     select 1 from pg_catalog.pg_roles as grantor
+                     where grantor.oid = membership.grantor
+                       and grantor.rolsuper
+                   )
+                 )
+               )
+          )
+          or (
+            select count(*) from pg_catalog.pg_auth_members as membership
+            where membership.roleid = role.oid
+          ) <> case when executor_is_superuser then 0 else 1 end
+        )
+    ) then
+      raise exception using errcode = '42501',
+        message = 'reviewed_price_promotion_activation_membership_postcondition_failed';
+    end if;
+  end loop;
 end
 $pintpath_activation$;
 

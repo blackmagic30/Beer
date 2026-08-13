@@ -50,11 +50,19 @@ const KERNEL_RELATIONS = Object.freeze([
   "pintpath_ops.reviewed_price_promotion_rows",
 ] as const);
 
+// This trust-root table is part of the live physical schema and must therefore
+// be catalog-attested, but it is deliberately absent from the logical backup
+// TABLE DATA boundary.
+const NON_ARCHIVED_PHYSICAL_RELATIONS = Object.freeze([
+  "pintpath_ops.migration_verifier_authority",
+] as const);
+
 export const POSTGRES_LOGICAL_PHYSICAL_SCHEMA_V4_EXPECTED_RELATIONS = Object.freeze([
   ...POSTGRES_LOGICAL_BACKUP_V4_TABLE_DATA_DESCRIPTORS.map(
     ({ schemaName, tableName }) => `${schemaName}.${tableName}`,
   ),
   ...KERNEL_RELATIONS,
+  ...NON_ARCHIVED_PHYSICAL_RELATIONS,
 ].sort(compareText));
 
 export const POSTGRES_LOGICAL_PHYSICAL_SCHEMA_V4_ROLE_SYMBOLS = Object.freeze({
@@ -102,18 +110,18 @@ export type PostgresLogicalPhysicalSchemaV4Category =
 export const POSTGRES_LOGICAL_PHYSICAL_SCHEMA_V4_EXPECTED_COUNTS = Object.freeze({
   database: 1,
   schemas: 2,
-  relations: 61,
-  columns: 771,
-  constraints: 243,
-  indexes: 270,
+  relations: 62,
+  columns: 780,
+  constraints: 252,
+  indexes: 271,
   triggers: 317,
-  policies: 240,
+  policies: 244,
   routines: 10,
   roles: 5,
-  aclEntries: 932,
+  aclEntries: 945,
   defaultAcls: 0,
-  dependencies: 1_909,
-  sharedDependencies: 377,
+  dependencies: 1_934,
+  sharedDependencies: 384,
 } satisfies Readonly<Record<PostgresLogicalPhysicalSchemaV4Category, number>>);
 
 export const POSTGRES_LOGICAL_PHYSICAL_SCHEMA_V4_CATEGORY_FIELDS = Object.freeze({
@@ -231,7 +239,7 @@ export const POSTGRES_LOGICAL_PHYSICAL_SCHEMA_V4_SESSION_CONTRACT = Object.freez
   effectiveFirstSchema: "pg_catalog",
   sameSessionRequired: true,
   privateRelationLockMode: "ACCESS SHARE",
-  expectedLockedPrivateRelationCount: 61,
+  expectedLockedPrivateRelationCount: 62,
   catalogSnapshotFreshnessRequired: true,
   maximumCaptureMilliseconds: POSTGRES_LOGICAL_PHYSICAL_SCHEMA_V4_MAX_CAPTURE_MILLISECONDS,
   serializedSessionFieldsAreUnverifiedCallerClaims: true,
@@ -539,27 +547,27 @@ function staticPolicyValue(): object {
 }
 
 export const POSTGRES_LOGICAL_PHYSICAL_SCHEMA_V4_POLICY_SHA256 =
-  "78aa7299ebeabf98075c0e075171f0193116333c7cd05eae00fb55b1e010197e" as const;
+  "8af8ccc7ba5e0a3de345e8ebacc526caa0d4d5ae78c19e59f46a8146531a9ecb" as const;
 
 export const POSTGRES_LOGICAL_PHYSICAL_SCHEMA_V4_EXPECTED_CATEGORY_SHA256 = Object.freeze({
   database: "adbacf15a9f25c46d49ae9c10fcf073388211dd5ba92f2b4d59447d8ed30d677",
   schemas: "5ed5521a115e0fe158df8613e05451484ce8c8b3b4dd138c65cef1958ad5cada",
-  relations: "4b743c4da7836321769f5df93452feb9772fc9d5b694b20778f19d3f87a29558",
-  columns: "af17a43dc89cb77df32d11bae9ef7823e242f13da13089b901bbfd10b3510427",
-  constraints: "be25b5fe0c9a9db029dabfebfcadfbc99776da7cd394cf7a3e303a107ad52cf1",
-  indexes: "031ddcae53bf142ad77b1c108aa4e7376385553c540d0c5aedf5548d8a586007",
+  relations: "fd56fd7c2975ec238e1ace66755a6143f6945a09ce8f77828833fc32df11fe0c",
+  columns: "5a908a630085fbd7eb9105930173a3a6d28b119210fe2a7b43f29d7a02217aa4",
+  constraints: "93fa40632e9ac1c50c2ecc1e0d30927601a41d18f85d1bbc78105518d1628c85",
+  indexes: "c7c62ceb448dc0e370ce0a06852e31f8da4733f7f93315ad79548eb38b8c37d7",
   triggers: "a0efdaf692dc0e1dc68ce886216e4e325bae27b12ff677740218eb715fe2125d",
-  policies: "7a116bba3b97e56a28d6abd21e8ef6ab24620c2d33465da59f875cc8b10bf160",
+  policies: "d7dd673fe4bae936265c61d505bc0a52fc7f0a32987aed40f88fcb3021473a61",
   routines: "2c98140120c7288a7796abdbb39d00d956349e2af59a8c4d8f8155f8e86afcdb",
   roles: "c66910184733a287b30abbb12c56fb59733e68856dd9e9d0be18a47bd164e089",
-  aclEntries: "33d120479b479f7ce303b887f58e4791e59100e5693579a87d9cf6419b95941a",
+  aclEntries: "a4a567b621bdf4972f9abfd12f96ca5a18e193ba154aaa12ab7df19e15119bad",
   defaultAcls: "9288051af2942af4443fbf11f35e7b03ed2442016f8b51c800a245764f1aec4e",
-  dependencies: "e339265e7334cf4804d374a872a6273c97c6bc5993b4b60481f4f76c87b83e2e",
-  sharedDependencies: "235fe24fe1d58bfa4de35384cbe896b944386ced969b41b849fcfb84c665d38d",
+  dependencies: "c1366fdd4d7f13fbb6621273ae9c1d5e4ef7d0741b17b17b7ec90c06ae32ca75",
+  sharedDependencies: "55efb8b06dcf17e843ac77ede172b2cc07c177aa6e31cb6f55cde57715cb98c8",
 } satisfies Readonly<Record<PostgresLogicalPhysicalSchemaV4Category, string>>);
 
 export const POSTGRES_LOGICAL_PHYSICAL_SCHEMA_V4_PORTABLE_SCHEMA_SHA256 =
-  "c4661ad44e3d21f670e3bdf490638476d433923022991dc9ce3c357f58fd693e" as const;
+  "b0e3adb5830091be60b3f1c5134f05bd955f5ac39ad01d0495242648d67d3237" as const;
 
 function validateRoleMapping(value: unknown): asserts value is PostgresLogicalPhysicalSchemaV4RoleMapping {
   const keys = [

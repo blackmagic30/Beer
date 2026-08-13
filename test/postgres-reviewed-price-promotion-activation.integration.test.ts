@@ -14,6 +14,7 @@ if (process.env[REQUIRED_ENV] === "true" && !configuredAdminUrl) {
 
 const suffix = crypto.randomBytes(6).toString("hex");
 const databaseName = `pintpath_activation_${suffix}`;
+const migrationLogin = `pintpath_supabase_migration_${suffix}`;
 const runtimeLogin = `pintpath_runtime_login_${suffix}`;
 const reviewerLogin = `pintpath_reviewer_login_${suffix}`;
 const operatorLogin = `pintpath_operator_login_${suffix}`;
@@ -67,6 +68,13 @@ function loginUrl(adminUrl: URL, role: string): string {
   return result.toString();
 }
 
+function databaseLoginUrl(adminUrl: URL, database: string, role: string): string {
+  const result = new URL(withDatabase(adminUrl, database));
+  result.username = role;
+  result.password = password;
+  return result.toString();
+}
+
 async function expectDenied(work: () => Promise<unknown>): Promise<void> {
   const error = await work().then(() => null, (caught: unknown) => caught);
   expect(error).toBeInstanceOf(Error);
@@ -88,6 +96,7 @@ describe.skipIf(!configuredAdminUrl)(
     let quarantineExecute = "";
     let applyOwner = "";
     let quarantineOwner = "";
+    let bootstrapMembershipEdgeCount = "";
     let ownsRoleNamespace = false;
 
     beforeAll(async () => {
@@ -113,11 +122,18 @@ describe.skipIf(!configuredAdminUrl)(
       if (existing.rowCount !== 0) throw new Error("activation_test_role_collision");
       ownsRoleNamespace = true;
       await cluster.query(`DROP DATABASE IF EXISTS ${quoteIdentifier(databaseName)} WITH (FORCE)`);
-      for (const role of [runtimeLogin, reviewerLogin, operatorLogin]) {
+      for (const role of [runtimeLogin, reviewerLogin, operatorLogin, migrationLogin]) {
         await cluster.query(`DROP ROLE IF EXISTS ${quoteIdentifier(role)}`);
       }
-      await cluster.query(`CREATE DATABASE ${quoteIdentifier(databaseName)}`);
-      database = new Client({ connectionString: withDatabase(adminUrl, databaseName) });
+      await cluster.query(`CREATE ROLE ${quoteIdentifier(migrationLogin)} LOGIN
+        PASSWORD '${password}' NOSUPERUSER CREATEDB CREATEROLE INHERIT
+        REPLICATION BYPASSRLS CONNECTION LIMIT 1`);
+      await cluster.query(
+        `CREATE DATABASE ${quoteIdentifier(databaseName)} OWNER ${quoteIdentifier(migrationLogin)}`,
+      );
+      database = new Client({
+        connectionString: databaseLoginUrl(adminUrl, databaseName, migrationLogin),
+      });
       await database.connect();
       await database.query("create schema if not exists extensions");
       await database.query("create extension if not exists pgcrypto with schema extensions");
@@ -134,6 +150,21 @@ describe.skipIf(!configuredAdminUrl)(
       quarantineExecute = `pintpath_reviewed_price_quarantine_execute_d${databaseOid}`;
       applyOwner = `pintpath_reviewed_price_apply_owner_d${databaseOid}`;
       quarantineOwner = `pintpath_reviewed_price_quarantine_owner_d${databaseOid}`;
+      const bootstrapMemberships = await database.query<{ edgeCount: string }>(
+        `select count(*)::text as "edgeCount"
+          from pg_roles role
+          join pg_auth_members membership
+            on membership.roleid = role.oid or membership.member = role.oid
+          where role.rolname = any($1::text[])`,
+        [[
+          reviewerExecute,
+          applyExecute,
+          quarantineExecute,
+          applyOwner,
+          quarantineOwner,
+        ]],
+      );
+      bootstrapMembershipEdgeCount = bootstrapMemberships.rows[0]!.edgeCount;
       for (const role of [runtimeLogin, reviewerLogin, operatorLogin]) {
         await database.query(`CREATE ROLE ${quoteIdentifier(role)} LOGIN
           PASSWORD '${password}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT
@@ -180,6 +211,7 @@ describe.skipIf(!configuredAdminUrl)(
             "pintpath_migration_verifier_authority",
             "pintpath_migrator",
             "pintpath_runtime",
+            migrationLogin,
           ]) {
             if (role) await cluster.query(`DROP ROLE IF EXISTS ${quoteIdentifier(role)}`);
           }
@@ -239,6 +271,9 @@ describe.skipIf(!configuredAdminUrl)(
         policyCount: string;
         publicPolicyCount: string;
         safeScopedRoles: string;
+        managedAdminOnlyEdges: string;
+        totalScopedMembershipEdges: string;
+        ownerExtensionsUsageCount: string;
         protectedFunctionCount: string;
       }>(`select
         (select relation.relrowsecurity and relation.relforcerowsecurity
@@ -272,6 +307,26 @@ describe.skipIf(!configuredAdminUrl)(
             and not role.rolcanlogin and not role.rolsuper and not role.rolcreatedb
             and not role.rolcreaterole and not role.rolinherit
             and not role.rolreplication and not role.rolbypassrls) as "safeScopedRoles",
+        (select count(*)::text
+          from pg_roles role
+          join pg_auth_members membership on membership.roleid = role.oid
+          join pg_roles grantor on grantor.oid = membership.grantor
+          where role.rolname = any($1::text[])
+            and membership.member = $2::regrole
+            and membership.grantor = 10::oid
+            and grantor.rolsuper
+            and membership.admin_option
+            and not membership.inherit_option
+            and not membership.set_option) as "managedAdminOnlyEdges",
+        (select count(*)::text
+          from pg_roles role
+          join pg_auth_members membership
+            on membership.roleid = role.oid or membership.member = role.oid
+          where role.rolname = any($1::text[])) as "totalScopedMembershipEdges",
+        (select count(*)::text
+          from unnest(array[$3::text, $4::text]) role_name
+          where has_schema_privilege(role_name, 'extensions', 'USAGE'))
+          as "ownerExtensionsUsageCount",
         (select count(*)::text from pg_proc routine
           join pg_namespace namespace on namespace.oid=routine.pronamespace
           where namespace.nspname='pintpath_ops'
@@ -284,7 +339,7 @@ describe.skipIf(!configuredAdminUrl)(
         quarantineExecute,
         applyOwner,
         quarantineOwner,
-      ]]);
+      ], migrationLogin, applyOwner, quarantineOwner]);
       expect(result.rows[0]).toEqual({
         authorityForceRls: true,
         authorityPolicyCount: "4",
@@ -293,8 +348,12 @@ describe.skipIf(!configuredAdminUrl)(
         policyCount: "244",
         publicPolicyCount: "71",
         safeScopedRoles: "5",
+        managedAdminOnlyEdges: "5",
+        totalScopedMembershipEdges: "8",
+        ownerExtensionsUsageCount: "0",
         protectedFunctionCount: "3",
       });
+      expect(bootstrapMembershipEdgeCount).toBe("5");
     });
   },
 );

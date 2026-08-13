@@ -1258,6 +1258,7 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL migration target", () => {
   let migratorRoleExisted = false;
   let runtimeRoleExisted = false;
   let verifierAuthorityRoleExisted = false;
+  let logicalBackupRole = "";
   const plannerState: PlannerAuthorityState = {
     backendPid: null,
     database: null,
@@ -1301,6 +1302,12 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL migration target", () => {
     targetAdmin = new Client({ connectionString: withDatabase(adminUrl, TEST_DATABASE) });
     await targetAdmin.connect();
     await targetAdmin.query(fs.readFileSync(path.resolve("src/db/postgres-schema.sql"), "utf8"));
+    const targetDatabaseIdentity = await targetAdmin.query<{ databaseOid: string }>(
+      `SELECT oid::text AS "databaseOid"
+         FROM pg_catalog.pg_database
+        WHERE datname = pg_catalog.current_database()`,
+    );
+    logicalBackupRole = `pintpath_logical_backup_d${targetDatabaseIdentity.rows[0]!.databaseOid}`;
     await targetAdmin.query(
       `INSERT INTO pintpath_ops.migration_verifier_authority (
          authority_id, expected_environment, candidate_commit_sha,
@@ -1410,6 +1417,11 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL migration target", () => {
       });
       await attempt(async () => admin.query(`REVOKE pintpath_migrator FROM ${TEST_LOGIN}`));
       await attempt(async () => admin.query(`DROP ROLE IF EXISTS ${TEST_LOGIN}`));
+      if (logicalBackupRole) {
+        await attempt(async () => admin.query(
+          `DROP ROLE IF EXISTS ${quoteIdentifier(logicalBackupRole)}`,
+        ));
+      }
       if (!migratorRoleExisted) {
         await attempt(async () => admin.query("DROP ROLE IF EXISTS pintpath_migrator"));
       }

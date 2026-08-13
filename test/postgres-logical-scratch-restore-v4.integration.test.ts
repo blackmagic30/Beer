@@ -8,6 +8,7 @@ import { Client, type QueryResultRow } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { POSTGRES_MIGRATION_CONTRACT } from "../src/db/postgres-migration-contract.js";
+import { POSTGRES_MIGRATION_EXPECTED_LIVE_SCHEMA_SHA256 } from "../src/db/postgres-migration-live-schema.js";
 import { sha256PostgresMigrationContract } from "../src/db/postgres-migration-schema.js";
 import {
   POSTGRES_LOGICAL_BACKUP_V4_REQUIRED_DUMP_ARGUMENTS,
@@ -266,6 +267,7 @@ async function captureReadOnlyV2(client: Client): Promise<PostgresLogicalStateCa
 async function configureReviewedMetadata(client: Client): Promise<void> {
   const values = {
     import_state: "ready",
+    live_schema_sha256: POSTGRES_MIGRATION_EXPECTED_LIVE_SCHEMA_SHA256,
     migration_candidate_sha: "a".repeat(40),
     migration_contract_sha256: sha256PostgresMigrationContract(POSTGRES_MIGRATION_CONTRACT),
     migration_manifest_sha256: "b".repeat(64),

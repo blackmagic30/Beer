@@ -670,8 +670,28 @@ select ok(
          and role.rolvaliduntil is null
          and not exists (
            select 1 from pg_auth_members membership
-           where membership.member = role.oid or membership.roleid = role.oid
+           where membership.member = role.oid
+              or (
+                membership.roleid = role.oid
+                and not (
+                  not (select rolsuper from pg_roles where rolname = current_user)
+                  and membership.member = current_user::regrole
+                  and membership.grantor = 10::oid
+                  and exists (
+                    select 1 from pg_roles grantor
+                    where grantor.oid = membership.grantor
+                      and grantor.rolsuper
+                  )
+                  and membership.admin_option
+                  and not membership.inherit_option
+                  and not membership.set_option
+                )
+              )
          )
+         and (select count(*) from pg_auth_members membership
+              where membership.roleid = role.oid) =
+             case when (select rolsuper from pg_roles where rolname = current_user)
+               then 0 else 1 end
          and not exists (
            select 1 from pg_db_role_setting setting
            where setting.setrole = role.oid

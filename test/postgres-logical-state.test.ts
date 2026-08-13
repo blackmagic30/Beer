@@ -27,6 +27,7 @@ function sha256(value: crypto.BinaryLike): string {
 function metadataRows(): Array<{ key: string; value: string }> {
   return Object.entries({
     import_state: "ready",
+    live_schema_sha256: "7".repeat(64),
     migration_candidate_sha: "c".repeat(40),
     migration_contract_sha256: sha256PostgresMigrationContract(POSTGRES_MIGRATION_CONTRACT),
     migration_manifest_sha256: "1".repeat(64),
@@ -104,6 +105,14 @@ function controlColumnRows() {
       ["completed_at", "timestamp with time zone", true],
       ["receipt_sha256", "text", true], ["failure_code", "text", true],
     ]],
+    ["pintpath_ops", "migration_verifier_authority", [
+      ["authority_id", "text", false], ["expected_environment", "text", false],
+      ["candidate_commit_sha", "text", false], ["operator_id_sha256", "text", false],
+      ["verifier_id_sha256", "text", false],
+      ["verifier_public_key_sha256", "text", false],
+      ["authority_policy_sha256", "text", false], ["authority_sha256", "text", false],
+      ["installed_at", "timestamp with time zone", false],
+    ]],
   ] as const;
   return definitions.flatMap(([schemaName, tableName, columns]) => columns.map(
     ([columnName, dataType, nullable], index) => ({
@@ -119,6 +128,7 @@ function controlPrimaryKeyRows() {
     { schemaName: "pintpath_ops", tableName: "migration_chunks", columnName: "table_name", primaryKeyPosition: 2 },
     { schemaName: "pintpath_ops", tableName: "migration_chunks", columnName: "chunk_ordinal", primaryKeyPosition: 3 },
     { schemaName: "pintpath_ops", tableName: "migration_runs", columnName: "run_id", primaryKeyPosition: 1 },
+    { schemaName: "pintpath_ops", tableName: "migration_verifier_authority", columnName: "authority_id", primaryKeyPosition: 1 },
   ];
 }
 
@@ -252,20 +262,21 @@ function fakeConnection(
           { schemaName: "pintpath_app", tableName: "schema_metadata" },
           { schemaName: "pintpath_ops", tableName: "migration_chunks" },
           { schemaName: "pintpath_ops", tableName: "migration_runs" },
+          { schemaName: "pintpath_ops", tableName: "migration_verifier_authority" },
           ...(controlValues.successor ? [
             { schemaName: "pintpath_ops", tableName: "reviewed_price_promotion_operations" },
             { schemaName: "pintpath_ops", tableName: "reviewed_price_promotion_rows" },
           ] : []),
         ] as unknown as Row[],
         rowCount: POSTGRES_MIGRATION_CONTRACT.expectedCounts.tables
-          + (controlValues.successor ? 5 : 3),
+          + (controlValues.successor ? 6 : 4),
       };
       if (text.includes("logical-state:catalog-counts")) return {
         rows: [{
           columnCount: String(POSTGRES_MIGRATION_CONTRACT.expectedCounts.columns),
           foreignKeyCount: String(POSTGRES_MIGRATION_CONTRACT.expectedCounts.foreignKeys),
           rowSecurityTableCount: String(POSTGRES_MIGRATION_CONTRACT.expectedCounts.tables
-            + (controlValues.successor ? 5 : 3)),
+            + (controlValues.successor ? 6 : 4)),
         } as unknown as Row],
         rowCount: 1,
       };
@@ -470,7 +481,7 @@ describe("Postgres logical state receipts", () => {
     });
     expect(pageQueries).toBe(59);
     expect(inventory.archivedControlTableCount).toBe(3);
-    expect(inventory.archivedControlRowCount).toBe("14");
+    expect(inventory.archivedControlRowCount).toBe("15");
     expect(inventory.archivedControlTables.map((table) => table.tableName)).toEqual([
       "pintpath_app.schema_metadata",
       "pintpath_ops.migration_chunks",
@@ -589,7 +600,7 @@ describe("Postgres logical state receipts", () => {
       state,
     });
     expect(sha256CanonicalPostgresLogicalState(receipt)).toBe(
-      "f984c4ab83156fa278bbe76bd3ad8e716070a79e419c8131f41c8d8aec061854",
+      "8a45547304323ed8bd36528002397f2e2488a5aa8873db1767da14f2ee18797a",
     );
     expect(parsePostgresLogicalSourceStateReceipt(
       Buffer.from(canonicalPostgresLogicalStateJson(receipt)),
@@ -613,13 +624,18 @@ describe("Postgres logical state receipts", () => {
       "pintpath_ops.reviewed_price_promotion_operations",
       "pintpath_ops.reviewed_price_promotion_rows",
     ]);
-    expect(inventory.controlRowCount).toBe("14");
+    expect(inventory.controlTables.map((table) => table.tableName))
+      .not.toContain("pintpath_ops.migration_verifier_authority");
+    expect(inventory.controlRowCount).toBe("15");
     expect(inventory.schemaMetadataSha256).not.toBe(v1.schemaMetadataSha256);
     expect(inventory.tableSetSha256).not.toBe(v1.tableSetSha256);
     expect(inventory.transformedDataSha256).not.toBe(v1.transformedDataSha256);
     expect(inventory.kernelContractSha256).toBe(POSTGRES_LOGICAL_STATE_KERNEL_CONTRACT_SHA256);
     expect(v2PageQueries.length).toBeGreaterThan(0);
     expect(v2PageQueries.every((text) => text.includes("FROM ONLY"))).toBe(true);
+    expect(v2PageQueries.some((text) => (
+      text.includes("logical-state:page:pintpath_ops:migration_verifier_authority")
+    ))).toBe(false);
     expect(await computePostgresLogicalStateInventoryV2(fakeConnection(
       "ready", () => undefined, { successor: true },
     ))).toEqual(inventory);
@@ -759,6 +775,24 @@ describe("Postgres logical state receipts", () => {
 
   it("normalizes only exact current-database scoped role identities", () => {
     const expected = postgresLogicalStateInternals.expectedSourceReadBoundaryDescriptor("zac");
+    const verifierAuthority = expected.relations.find(
+      (relation) => relation.qualifiedName === "pintpath_ops.migration_verifier_authority",
+    );
+    expect(verifierAuthority?.policies.map((policy) => policy.name)).toEqual([
+      "migration_verifier_authority_migrator_select",
+      "migration_verifier_authority_provisioner_insert",
+      "migration_verifier_authority_provisioner_select",
+      "migration_verifier_authority_provisioner_update",
+    ]);
+    expect(verifierAuthority?.acl.some((entry) => (
+      entry.grantee === "$pintpath_logical_backup_current_database"
+    ))).toBe(false);
+    const backupRole = expected.roles.find(
+      (role) => role.role === "$pintpath_logical_backup_current_database",
+    );
+    expect(backupRole?.sharedDependencies.some((dependency) => (
+      dependency.includes("migration_verifier_authority")
+    ))).toBe(false);
     const raw = structuredClone(expected) as unknown as Record<string, unknown>;
     const replace = (value: unknown): unknown => {
       if (typeof value === "string") return value

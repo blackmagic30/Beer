@@ -247,7 +247,7 @@ describe("offline PostgreSQL logical scratch-restore V4 contract", () => {
       postgresMajor: 17,
       tableDataSetSha256: "505d42cd7ffbe6809aea3e3ed02b33968bf625bde882cdbc0f1a3c69cc94f6d8",
       portableReadBoundarySha256:
-        "21ae87b71a458416f62d08749d8fc3368e9ff1621cd7f40550611291502a91ac",
+        "26b6b1346c15465ce538ac9769d435cd02c50bb138f8c73095ef5ff132506cf8",
     });
   });
 

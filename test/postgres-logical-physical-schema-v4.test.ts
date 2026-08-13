@@ -22,6 +22,9 @@ import {
   postgresLogicalPhysicalSchemaV4Internals,
   sha256PostgresLogicalPhysicalSchemaV4Policy,
 } from "../src/lib/postgres-logical-physical-schema-v4.js";
+import {
+  POSTGRES_LOGICAL_BACKUP_V4_TABLE_DATA_DESCRIPTORS,
+} from "../src/lib/postgres-logical-backup-v4-table-data-contract.js";
 import { postgresLogicalStateInternals } from "../src/lib/postgres-logical-state.js";
 
 describe("passive physical-schema V4 contract", () => {
@@ -29,21 +32,21 @@ describe("passive physical-schema V4 contract", () => {
     expect(POSTGRES_LOGICAL_PHYSICAL_SCHEMA_V4_EXPECTED_COUNTS).toEqual({
       database: 1,
       schemas: 2,
-      relations: 61,
-      columns: 771,
-      constraints: 243,
-      indexes: 270,
+      relations: 62,
+      columns: 780,
+      constraints: 252,
+      indexes: 271,
       triggers: 317,
-      policies: 240,
+      policies: 244,
       routines: 10,
       roles: 5,
-      aclEntries: 932,
+      aclEntries: 945,
       defaultAcls: 0,
-      dependencies: 1_909,
-      sharedDependencies: 377,
+      dependencies: 1_934,
+      sharedDependencies: 384,
     });
-    expect(POSTGRES_LOGICAL_PHYSICAL_SCHEMA_V4_EXPECTED_RELATIONS).toHaveLength(61);
-    expect(new Set(POSTGRES_LOGICAL_PHYSICAL_SCHEMA_V4_EXPECTED_RELATIONS).size).toBe(61);
+    expect(POSTGRES_LOGICAL_PHYSICAL_SCHEMA_V4_EXPECTED_RELATIONS).toHaveLength(62);
+    expect(new Set(POSTGRES_LOGICAL_PHYSICAL_SCHEMA_V4_EXPECTED_RELATIONS).size).toBe(62);
     expect(POSTGRES_LOGICAL_PHYSICAL_SCHEMA_V4_CATEGORY_NAMES).toHaveLength(14);
     expect(POSTGRES_LOGICAL_PHYSICAL_SCHEMA_V4_FORBIDDEN_COUNT_KEYS).toHaveLength(30);
     expect(Object.values(POSTGRES_LOGICAL_PHYSICAL_SCHEMA_V4_EXPECTED_CATEGORY_SHA256))
@@ -51,7 +54,7 @@ describe("passive physical-schema V4 contract", () => {
     expect(Object.values(POSTGRES_LOGICAL_PHYSICAL_SCHEMA_V4_EXPECTED_CATEGORY_SHA256)
       .every((value) => /^[a-f0-9]{64}$/.test(value))).toBe(true);
     expect(POSTGRES_LOGICAL_PHYSICAL_SCHEMA_V4_PORTABLE_SCHEMA_SHA256)
-      .toBe("c4661ad44e3d21f670e3bdf490638476d433923022991dc9ce3c357f58fd693e");
+      .toBe("b0e3adb5830091be60b3f1c5134f05bd955f5ac39ad01d0495242648d67d3237");
     expect(POSTGRES_LOGICAL_PHYSICAL_SCHEMA_V4_ROLE_SYMBOLS).toEqual({
       databaseOwner: "$database_owner",
       logicalBackup: "$pintpath_logical_backup_current_database",
@@ -68,7 +71,7 @@ describe("passive physical-schema V4 contract", () => {
       effectiveFirstSchema: "pg_catalog",
       sameSessionRequired: true,
       privateRelationLockMode: "ACCESS SHARE",
-      expectedLockedPrivateRelationCount: 61,
+      expectedLockedPrivateRelationCount: 62,
       catalogSnapshotFreshnessRequired: true,
       serializedSessionFieldsAreUnverifiedCallerClaims: true,
     });
@@ -97,14 +100,25 @@ describe("passive physical-schema V4 contract", () => {
       .toBe(POSTGRES_LOGICAL_PHYSICAL_SCHEMA_V4_POLICY_SHA256);
   });
 
-  it("independently agrees with the reviewed state boundary for all relations, policies, ACLs, and roles", () => {
+  it("attests the complete physical boundary while excluding verifier authority table data", () => {
     const owner = "independent_physical_v4_owner";
     const boundary = postgresLogicalStateInternals.expectedSourceReadBoundaryDescriptor(owner);
+    const verifierAuthority = boundary.relations.filter(({ qualifiedName }) => (
+      qualifiedName === "pintpath_ops.migration_verifier_authority"
+    ));
+    const nonAuthorityRelations = boundary.relations.filter(({ qualifiedName }) => (
+      qualifiedName !== "pintpath_ops.migration_verifier_authority"
+    ));
     expect(boundary.relations.map(({ qualifiedName }) => qualifiedName))
       .toEqual(POSTGRES_LOGICAL_PHYSICAL_SCHEMA_V4_EXPECTED_RELATIONS);
-    expect(boundary.relations).toHaveLength(61);
-    expect(boundary.relations.flatMap(({ policies }) => policies)).toHaveLength(240);
-    expect(boundary.relations.every((relation) => relation.kind === "r"
+    expect(boundary.relations).toHaveLength(62);
+    expect(nonAuthorityRelations).toHaveLength(61);
+    expect(verifierAuthority).toHaveLength(1);
+    expect(verifierAuthority[0]?.policies).toHaveLength(4);
+    expect(verifierAuthority[0]?.acl.some((entry) => entry.grantee
+      === POSTGRES_LOGICAL_PHYSICAL_SCHEMA_V4_ROLE_SYMBOLS.logicalBackup)).toBe(false);
+    expect(boundary.relations.flatMap(({ policies }) => policies)).toHaveLength(244);
+    expect(nonAuthorityRelations.every((relation) => relation.kind === "r"
       && relation.persistence === "p"
       && relation.rowSecurity === true
       && relation.forceRowSecurity === true
@@ -114,6 +128,11 @@ describe("passive physical-schema V4 contract", () => {
       && relation.acl.some((entry) => entry.grantee
         === POSTGRES_LOGICAL_PHYSICAL_SCHEMA_V4_ROLE_SYMBOLS.logicalBackup
         && entry.privilege === "SELECT" && entry.grantable === false))).toBe(true);
+    expect(POSTGRES_LOGICAL_BACKUP_V4_TABLE_DATA_DESCRIPTORS).toHaveLength(59);
+    expect(POSTGRES_LOGICAL_BACKUP_V4_TABLE_DATA_DESCRIPTORS.some(
+      ({ schemaName, tableName }) => `${schemaName}.${tableName}`
+        === "pintpath_ops.migration_verifier_authority",
+    )).toBe(false);
     expect(boundary.roles).toHaveLength(5);
     expect(boundary.roles.reduce((count, role) => count + role.sharedDependencies.length, 0)).toBe(69);
     expect(boundary.privateSequenceCount).toBe(0);
