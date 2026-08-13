@@ -13,6 +13,10 @@ import {
 } from "../src/lib/railway-application-deployment-attestation.js";
 import { railwayDeploymentIdentityIdSha256 } from
   "../src/lib/railway-deployment-identity.js";
+import {
+  readTrustedRegularFile,
+  writePrivateExclusiveFile,
+} from "./lib/trusted-filesystem.js";
 
 export const PROTECTED_STAGING_SCALE_SCHEMA =
   "pintpath-permanent-staging-scale-operation/v1" as const;
@@ -213,14 +217,18 @@ function parseArguments(argv: readonly string[]): {
 }
 
 function validateCli(filename: string): boolean {
+  let bytes: Buffer | null = null;
   try {
-    if (!path.isAbsolute(filename) || fs.realpathSync(filename) !== filename) return false;
-    const stat = fs.lstatSync(filename);
-    return stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 1
-      && (stat.mode & 0o111) !== 0
-      && sha256(fs.readFileSync(filename)) === CLI_SHA256;
+    bytes = readTrustedRegularFile(filename, {
+      minBytes: 1,
+      maxBytes: 128 * 1024 * 1024,
+      requireExecutable: true,
+    });
+    return sha256(bytes) === CLI_SHA256;
   } catch {
     return false;
+  } finally {
+    bytes?.fill(0);
   }
 }
 
@@ -246,21 +254,10 @@ function reassertRepositoryState(cwd: string, candidateSha: string): boolean {
 }
 
 function durableWrite(directory: string, leaf: string, source: string): string {
-  const stat = fs.lstatSync(directory);
-  if (!stat.isDirectory() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0) {
-    throw new Error("evidence_invalid");
-  }
-  const handle = fs.openSync(
-    path.join(directory, leaf),
-    fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY
-      | fs.constants.O_NOFOLLOW,
-    0o600,
-  );
   try {
-    fs.writeFileSync(handle, source, "utf8");
-    fs.fsyncSync(handle);
-  } finally {
-    fs.closeSync(handle);
+    writePrivateExclusiveFile(directory, leaf, source, { requireOwner: true });
+  } catch {
+    throw new Error("evidence_invalid");
   }
   return sha256(source);
 }

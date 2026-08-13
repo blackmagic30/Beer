@@ -114,7 +114,9 @@ function provider(): typeof fetch {
 
 describe("protected staging Postgres build canary", () => {
   it("performs one exact upload and accepts only the stopped canonical build-only receipt", async () => {
-    const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "pintpath-build-canary-test-"));
+    const temporary = fs.realpathSync(
+      fs.mkdtempSync(path.join(os.tmpdir(), "pintpath-build-canary-test-")),
+    );
     const source = path.join(temporary, "source");
     const evidence = path.join(temporary, "evidence");
     fs.mkdirSync(source, { mode: 0o700 });

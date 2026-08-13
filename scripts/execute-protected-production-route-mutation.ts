@@ -19,6 +19,10 @@ import {
   parseProductionPromotionRecoveryReceipt,
   type ProductionPromotionRecoveryReceipt,
 } from "../src/lib/production-promotion-recovery.js";
+import {
+  readTrustedRegularFile,
+  writePrivateExclusiveFile,
+} from "./lib/trusted-filesystem.js";
 
 export const PROTECTED_PRODUCTION_ROUTE_MUTATION_SCHEMA =
   "pintpath-protected-production-route-mutation/v1" as const;
@@ -463,15 +467,23 @@ function sha256Exact(value: unknown): value is string {
 
 function readCanonicalFile(filename: string): string {
   if (!path.isAbsolute(filename)) throw new Error("authority_path_invalid");
-  const stat = fs.lstatSync(filename);
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1
-    || stat.size < 2 || stat.size > MAX_RESPONSE_BYTES
-    || fs.realpathSync(filename) !== filename) throw new Error("authority_file_invalid");
-  const source = fs.readFileSync(filename, "utf8");
-  if (source.includes("\0") || Buffer.byteLength(source, "utf8") !== stat.size) {
+  let bytes: Buffer | null = null;
+  try {
+    bytes = readTrustedRegularFile(filename, {
+      minBytes: 2,
+      maxBytes: MAX_RESPONSE_BYTES,
+      requireOwner: true,
+    });
+    const source = bytes.toString("utf8");
+    if (source.includes("\0") || Buffer.byteLength(source, "utf8") !== bytes.length) {
+      throw new Error("authority_file_invalid");
+    }
+    return source;
+  } catch {
     throw new Error("authority_file_invalid");
+  } finally {
+    bytes?.fill(0);
   }
-  return source;
 }
 
 function chainArtifact(value: unknown, expectedStage: string): ProductionChainArtifact | null {
@@ -1228,26 +1240,13 @@ async function proveOpenPublicRuntime(
   return false;
 }
 function privateWrite(directory: string, leaf: string, source: string): string {
-  const stat = fs.lstatSync(directory);
-  if (!stat.isDirectory() || stat.isSymbolicLink() || (stat.mode & 0o777) !== 0o700
-    || fs.realpathSync(directory) !== path.resolve(directory)
-    || (typeof process.geteuid === "function" && stat.uid !== process.geteuid())) {
+  try {
+    writePrivateExclusiveFile(directory, leaf, source, {
+      requireExactDirectoryMode: true,
+      requireOwner: true,
+    });
+  } catch {
     throw new Error("evidence_invalid");
-  }
-  const handle = fs.openSync(path.join(directory, leaf),
-    fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY | fs.constants.O_NOFOLLOW,
-    0o600);
-  try {
-    fs.writeFileSync(handle, source, "utf8");
-    fs.fsyncSync(handle);
-  } finally {
-    fs.closeSync(handle);
-  }
-  const directoryHandle = fs.openSync(directory, "r");
-  try {
-    fs.fsyncSync(directoryHandle);
-  } finally {
-    fs.closeSync(directoryHandle);
   }
   return sha256(source);
 }

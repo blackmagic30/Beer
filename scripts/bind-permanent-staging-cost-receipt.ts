@@ -1,5 +1,4 @@
 import crypto from "node:crypto";
-import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -9,6 +8,10 @@ import {
   canonicalPermanentStagingCostJson,
 } from "./lib/permanent-staging-cost-policy.js";
 import { parseStrictArguments } from "./lib/strict-arguments.js";
+import {
+  readTrustedRegularFile,
+  writePrivateExclusiveFile,
+} from "./lib/trusted-filesystem.js";
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const RELEASE_ID_PATTERN = /^PP-LAUNCH-\d{4}-[A-Z0-9][A-Z0-9_-]{2,31}$/;
@@ -63,20 +66,12 @@ function readTrustedInput(
   const filename = exactAbsolutePath(filenameInput);
   const expected = expectedSha256(expectedDigest);
   try {
-    const stat = fs.lstatSync(filename);
-    const uid = process.getuid?.();
-    if (
-      stat.isSymbolicLink()
-      || !stat.isFile()
-      || stat.nlink !== 1
-      || fs.realpathSync(filename) !== filename
-      || !Number.isInteger(uid)
-      || stat.uid !== uid
-      || stat.size < 3
-      || stat.size > MAX_INPUT_BYTES
-      || (privateInput && (stat.mode & 0o077) !== 0)
-    ) throw new Error("unsafe");
-    const bytes = fs.readFileSync(filename);
+    const bytes = readTrustedRegularFile(filename, {
+      minBytes: 3,
+      maxBytes: MAX_INPUT_BYTES,
+      requireOwner: true,
+      requirePrivate: privateInput,
+    });
     const sha256 = crypto.createHash("sha256").update(bytes).digest("hex");
     if (sha256 !== expected) throw new SafeCliError("input_digest_mismatch");
     return Object.freeze({ source: bytes.toString("utf8"), sha256 });
@@ -86,41 +81,18 @@ function readTrustedInput(
   }
 }
 
-function reserveOutput(filenameInput: string): {
-  readonly descriptor: number;
-  readonly filename: string;
-} {
+function writeReceipt(filenameInput: string, receipt: unknown): string {
   const filename = exactAbsolutePath(filenameInput);
   const parent = path.dirname(filename);
+  const bytes = Buffer.from(canonicalPermanentStagingCostJson(receipt), "utf8");
   try {
-    const parentStat = fs.lstatSync(parent);
-    const uid = process.getuid?.();
-    if (
-      parentStat.isSymbolicLink()
-      || !parentStat.isDirectory()
-      || !Number.isInteger(uid)
-      || parentStat.uid !== uid
-      || (parentStat.mode & 0o777) !== 0o700
-      || fs.realpathSync(parent) !== parent
-    ) throw new Error("unsafe");
-    return Object.freeze({
-      descriptor: fs.openSync(filename, "wx", 0o600),
-      filename,
+    writePrivateExclusiveFile(parent, path.basename(filename), bytes, {
+      requireExactDirectoryMode: true,
+      requireOwner: true,
     });
   } catch {
     throw new SafeCliError("unsafe_output_file");
   }
-}
-
-function writeReceipt(descriptor: number, receipt: unknown): string {
-  const bytes = Buffer.from(canonicalPermanentStagingCostJson(receipt), "utf8");
-  let offset = 0;
-  while (offset < bytes.length) {
-    const written = fs.writeSync(descriptor, bytes, offset, bytes.length - offset);
-    if (written < 1) throw new SafeCliError("receipt_write_failed");
-    offset += written;
-  }
-  fs.fsyncSync(descriptor);
   return crypto.createHash("sha256").update(bytes).digest("hex");
 }
 
@@ -128,7 +100,6 @@ export function runPermanentStagingCostReceiptBinder(
   argv: readonly string[],
   now = new Date(),
 ): 0 | 1 {
-  let outputDescriptor: number | null = null;
   try {
     const args = parseStrictArguments(argv, {
       allowed: ARGUMENTS,
@@ -187,11 +158,7 @@ export function runPermanentStagingCostReceiptBinder(
       result.receipt.releaseId !== expectedReleaseId
       || result.receipt.candidateSha !== expectedCandidateSha
     ) throw new SafeCliError("expected_release_binding_mismatch");
-    const output = reserveOutput(args.get("--output")!);
-    outputDescriptor = output.descriptor;
-    const receiptSha256 = writeReceipt(outputDescriptor, result.receipt);
-    fs.closeSync(outputDescriptor);
-    outputDescriptor = null;
+    const receiptSha256 = writeReceipt(args.get("--output")!, result.receipt);
     process.stdout.write(canonicalPermanentStagingCostJson({
       schemaVersion: 1,
       ok: true,
@@ -203,13 +170,6 @@ export function runPermanentStagingCostReceiptBinder(
     }));
     return 0;
   } catch (error) {
-    if (outputDescriptor !== null) {
-      try {
-        fs.closeSync(outputDescriptor);
-      } catch {
-        // The incomplete exclusive output remains unauthorized for review.
-      }
-    }
     process.stdout.write(canonicalPermanentStagingCostJson({
       schemaVersion: 1,
       ok: false,

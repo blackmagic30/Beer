@@ -11,6 +11,10 @@ import {
   parseCanaryUploadAcknowledgement,
   parseCanonicalBuildOnlyReceipt,
 } from "./lib/staging-postgres-build-canary-railway-contract.js";
+import {
+  readTrustedRegularFile,
+  writePrivateExclusiveFile,
+} from "./lib/trusted-filesystem.js";
 
 export const PROTECTED_STAGING_POSTGRES_BUILD_CANARY_SCHEMA =
   "pintpath-protected-staging-postgres-build-canary/v1" as const;
@@ -214,24 +218,28 @@ function privateEvidence(
   leaf: string,
   source: string,
 ): string {
-  const stat = fs.lstatSync(directory);
-  if (!stat.isDirectory() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0)
-    throw new Error("evidence_invalid");
-  const handle = fs.openSync(
-    path.join(directory, leaf),
-    fs.constants.O_CREAT |
-      fs.constants.O_EXCL |
-      fs.constants.O_WRONLY |
-      fs.constants.O_NOFOLLOW,
-    0o600,
-  );
   try {
-    fs.writeFileSync(handle, source, "utf8");
-    fs.fsyncSync(handle);
-  } finally {
-    fs.closeSync(handle);
+    writePrivateExclusiveFile(directory, leaf, source, { requireOwner: true });
+  } catch {
+    throw new Error("evidence_invalid");
   }
   return sha256(source);
+}
+
+function validateCli(filename: string): boolean {
+  let bytes: Buffer | null = null;
+  try {
+    bytes = readTrustedRegularFile(filename, {
+      minBytes: 1,
+      maxBytes: 128 * 1024 * 1024,
+      requireExecutable: true,
+    });
+    return sha256(bytes) === CLI_SHA256;
+  } catch {
+    return false;
+  } finally {
+    bytes?.fill(0);
+  }
 }
 
 function command(
@@ -666,10 +674,7 @@ export async function runProtectedStagingPostgresBuildCanary(
     now: () => Date.now(),
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     runCommand: command,
-    validateCli: (filename) =>
-      path.isAbsolute(filename) &&
-      fs.statSync(filename).isFile() &&
-      sha256(fs.readFileSync(filename)) === CLI_SHA256,
+    validateCli,
     createSnapshot: sourceSnapshot,
     runBoundary: () => defaultBoundary(process.env),
     writeOutput: (source) => process.stdout.write(source),

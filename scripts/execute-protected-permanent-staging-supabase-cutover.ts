@@ -4,6 +4,11 @@ import path from "node:path";
 import { TextDecoder } from "node:util";
 import { fileURLToPath } from "node:url";
 
+import {
+  readTrustedRegularFile,
+  writePrivateExclusiveFile,
+} from "./lib/trusted-filesystem.js";
+
 export const PROTECTED_SUPABASE_CUTOVER_SCHEMA =
   "pintpath-protected-permanent-staging-supabase-cutover/v1" as const;
 export const PROTECTED_SUPABASE_CUTOVER_STATE =
@@ -184,43 +189,23 @@ function parseArguments(argv: readonly string[]): Arguments | null {
 }
 
 function privateRead(filename: string): Buffer {
-  if (!path.isAbsolute(filename)) throw new Error("input_invalid");
-  const before = fs.lstatSync(filename, { bigint: true });
-  if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n
-    || (before.mode & 0o077n) !== 0n || before.size < 1n || before.size > 4096n
-    || typeof process.geteuid === "function" && before.uid !== BigInt(process.geteuid())) {
-    throw new Error("input_invalid");
-  }
-  const handle = fs.openSync(filename,
-    fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
   try {
-    const opened = fs.fstatSync(handle, { bigint: true });
-    if (opened.dev !== before.dev || opened.ino !== before.ino
-      || opened.size !== before.size || opened.nlink !== 1n) throw new Error("input_invalid");
-    const result = Buffer.alloc(Number(opened.size));
-    if (fs.readSync(handle, result, 0, result.length, 0) !== result.length) {
-      result.fill(0);
-      throw new Error("input_invalid");
-    }
-    return result;
-  } finally {
-    fs.closeSync(handle);
+    return readTrustedRegularFile(filename, {
+      minBytes: 1,
+      maxBytes: 4096,
+      requireOwner: true,
+      requirePrivate: true,
+    });
+  } catch {
+    throw new Error("input_invalid");
   }
 }
 
 function durableWrite(directory: string, leaf: string, source: string): string {
-  const stat = fs.lstatSync(directory);
-  if (!stat.isDirectory() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0) {
-    throw new Error("evidence_invalid");
-  }
-  const handle = fs.openSync(path.join(directory, leaf),
-    fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY
-      | fs.constants.O_NOFOLLOW, 0o600);
   try {
-    fs.writeFileSync(handle, source, "utf8");
-    fs.fsyncSync(handle);
-  } finally {
-    fs.closeSync(handle);
+    writePrivateExclusiveFile(directory, leaf, source, { requireOwner: true });
+  } catch {
+    throw new Error("evidence_invalid");
   }
   return sha256(source);
 }
