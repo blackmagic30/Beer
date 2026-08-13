@@ -1,10 +1,42 @@
 # External launch evidence checklist
 
-This is the executable checklist for the 12 required items in `docs/release-evidence.json`. Repository tests prove code and synthetic contracts; these checks prove the deployed providers, physical devices, real venue operations, legal decisions, backups, and the signed iOS build.
+This is the executable checklist for the 13 required items in `docs/release-evidence.json`. Repository tests prove code and synthetic contracts; these checks prove the deployed providers, physical devices, real venue operations, legal decisions, backups, the permanent-staging cost ceiling, and the signed iOS build.
 
 Do not mark an item `pass` because its code exists or a local test passed. Mark it `pass` only after every step and pass criterion below is satisfied.
 
+This is a Free-only web and iOS launch. Pricing, paid enrolment, venue Pro,
+trials, report delivery, rewards, counter/POS tools, public happy-hour discovery,
+and Android distribution are excluded. Any evidence that enables or advertises
+one of those surfaces belongs to a different candidate and fails this release.
+
 ## Common setup for one release candidate
+
+Record and mechanically compare three non-overlapping resource sets in the
+private release register:
+
+- **Permanent integrated staging:** stable Railway staging plus staging
+  Postgres/Supabase, Auth, private Storage, Redis, provider credentials, domain,
+  and callbacks. Use it for migration, two-replica concurrency, authentication,
+  deletion, data repair, DAST, smoke, load, deploy, and rollback-build proof.
+- **Ephemeral destructive restore staging:** newly created Railway,
+  Postgres/Supabase, Storage, Redis namespace, credentials, domain, and callbacks
+  used only for PITR/WORM restoration, RPO/RTO, and tombstone replay. Destroy it
+  only after two-person evidence sign-off.
+- **Production:** never receives restore-rehearsal writes and shares no secret,
+  database path, service-role key, Redis namespace, or callback with either
+  environment.
+
+Cost scope follows the same separation. The permanent-staging receipt includes
+only permanent-staging Railway, staging Supabase, and staging external-provider
+resources/caps. The canonical-production operational copy uses a separate
+production cost authority. Disposable restore resources use a separate
+temporary-spend authority. Neither may be folded into the staging total or
+used to hide an unknown, unpriced, shared, or unbounded staging resource.
+
+Never restore production data into permanent integrated staging. Configure the
+reviewed `RESTORE_REHEARSAL_EXPECTED_*` identity pins only after the disposable
+restore resources have been created and recorded; the runtime identity must
+match every pin and remain distinct from production and permanent staging.
 
 - [ ] Name one release owner with authority to stop the launch.
 - [ ] Complete the named private role/contact register and pass the tabletop gate in `docs/data-breach-response-runbook.md`; an untested template is not production evidence.
@@ -14,18 +46,24 @@ Do not mark an item `pass` because its code exists or a local test passed. Mark 
   set -euo pipefail
   git fetch origin main
   export RELEASE_ID="${PINTPATH_RELEASE_ID:?Set an immutable ID such as PP-LAUNCH-2026-001}"
-  export RELEASE_SHA="$(git rev-parse origin/main)"
-  export EVIDENCE_DIR="${PINTPATH_EVIDENCE_DIR:-$HOME/.pintpath/launch-evidence/$RELEASE_SHA}"
+  export CANDIDATE_SHA="${PINTPATH_CANDIDATE_SHA:?Load the frozen PR-head SHA from the private release register}"
+  [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]
+  git cat-file -e "$CANDIDATE_SHA^{commit}"
+  export EVIDENCE_DIR="${PINTPATH_EVIDENCE_DIR:-$HOME/.pintpath/launch-evidence/$RELEASE_ID/$CANDIDATE_SHA}"
   umask 077
   mkdir -p "$EVIDENCE_DIR"
   chmod 700 "$EVIDENCE_DIR"
-  test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+  test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
   test "$(git status --porcelain)" = ""
   npm ci --include=dev
   ```
 
 - [ ] Confirm ordinary CI, automated readiness, and the required Native Apps `ios` check are green for that commit. Android is informational and outside this launch scope.
-- [ ] Deploy that commit and confirm `/ready` reports the same SHA.
+- [ ] Follow Phase 16 of `docs/production-launch-runbook.md`: merge the exact
+  candidate through protected `main`, verify the deployed tree differs only by
+  merge metadata, record `deploymentSha` separately, and require `/ready` to
+  report that protected-main deployment SHA. Never overwrite `candidateSha`
+  with a merge or evidence-closeout commit.
 - [ ] Create a private evidence register for the release. Do not commit tokens, customer identifiers, private menu files, POS secrets, signing keys, backup contents, or unredacted screenshots.
 - [ ] Give the release an immutable ID such as `PP-LAUNCH-2026-001`. Before recording the first completed check, set `release.id` and the full 40-character `release.candidateSha` in `docs/release-evidence.json`. Never change them to rescue stale evidence. The validator requires that SHA to exist, remain an ancestor of `HEAD`, and have no later code changes; only `docs/release-evidence.json` may differ in the evidence-closeout commit.
 - [ ] For every gate, create a gate-specific private manifest under the release register. Record the release ID, gate ID, candidate SHA, production environment, date, executor, named verifier and role, every step/result, defects/retests, and private artifact links plus their hashes. The manifest is the durable proof; the public file stores only its opaque reference and SHA-256.
@@ -40,7 +78,7 @@ Do not mark an item `pass` because its code exists or a local test passed. Mark 
   export GATE_RESULT="pass" # use fail when preserving a completed failed check
   export GATE_MANIFEST="$EVIDENCE_DIR/$GATE_ID/manifest.json"
   test -f "$GATE_MANIFEST"
-  jq -e --arg releaseId "$RELEASE_ID" --arg gateId "$GATE_ID" --arg sha "$RELEASE_SHA" --arg result "$GATE_RESULT" \
+  jq -e --arg releaseId "$RELEASE_ID" --arg gateId "$GATE_ID" --arg sha "$CANDIDATE_SHA" --arg result "$GATE_RESULT" \
     '.releaseId == $releaseId and .gateId == $gateId and .candidateSha == $sha
       and .environment == "production" and .result == $result' "$GATE_MANIFEST"
   export GATE_MANIFEST_SHA256="$(shasum -a 256 "$GATE_MANIFEST" | awk '{print $1}')"
@@ -66,7 +104,7 @@ For a passed item, update only that matching object in `docs/release-evidence.js
 }
 ```
 
-Change only `status`, `evidence`, `evidenceSha256`, `verifiedAt`, and `verifiedBy`; preserve the existing ID, label, owner, next action, and `required: true` value. `evidence` must be exactly `<release.id>/<gate id>`, the digest must be the lowercase SHA-256 of the final private gate manifest, and `verifiedBy` must contain `Full name, role`. A pending item must keep all four proof fields `null`; a completed failed check uses `status: "fail"` with the same durable proof fields.
+Change only `status`, `evidence`, `evidenceSha256`, `verifiedAt`, and `verifiedBy`; preserve the existing ID, label, owner, next action, and `required: true` value. The sole additional field that may change is `costReceipt` on `permanent_staging_cost`: it must remain `null` while that item is pending or failed and may become only the sanitized, validator-conforming object described in section 13 when that item passes. `evidence` must be exactly `<release.id>/<gate id>`, the digest must be the lowercase SHA-256 of the final private gate manifest, and `verifiedBy` must contain `Full name, role`. A pending item must keep all four ordinary proof fields—and the cost item's `costReceipt`—`null`; a completed failed check uses `status: "fail"` with the same durable proof fields but no cost receipt.
 
 The stored `production_public_smoke` and `production_role_smoke` proofs expire after 24 hours because live providers and access can change without a code commit. Re-capture and independently verify both inside the final launch window. The informational validator reports expired proof or code/dirty-worktree drift as `evidenceCurrent: false`; the strict gate rejects it. Both modes reject future timestamps, proof collected before the frozen candidate commit, unknown/non-ancestor candidate SHAs, unexpected schema fields, and required `not_applicable` gates.
 
@@ -90,10 +128,15 @@ Keep the final evidence update as one closeout commit that changes only `docs/re
 8. Backup restore rehearsal.
 9. Accessibility and physical-device matrix.
 10. Final legal and pricing-deferral approval.
-11. iOS TestFlight/App Review preparation.
-12. Final evidence closeout and strict release gate.
+11. iOS external TestFlight/Beta App Review, full App Review approval, and
+    manual-release readiness.
+12. Fresh permanent-staging-only provider cost observation and independent
+    verification for the frozen candidate.
+13. Final evidence closeout and strict release gate.
 
-The OCR corpus, accessibility review, legal review, and store preparation can run in parallel after the production candidate is stable. Do not run venue pilots before the role and provider checks pass.
+The OCR corpus, accessibility review, legal review, and App Review approval work
+can run in parallel after the production candidate is stable. Do not run venue
+pilots before the role and provider checks pass.
 
 ## 1. `production_public_smoke`
 
@@ -102,7 +145,11 @@ The OCR corpus, accessibility review, legal review, and store preparation can ru
 - [ ] Confirm the common variables point at the intended release and a private directory:
 
   ```bash
-  test "$RELEASE_SHA" = "$(git rev-parse origin/main)"
+  export DEPLOYED_MAIN_SHA="${PINTPATH_DEPLOYED_MAIN_SHA:?Load the exact serving protected-main SHA from the private release register}"
+  [[ "$DEPLOYED_MAIN_SHA" =~ ^[0-9a-f]{40}$ ]]
+  test "$(git rev-parse origin/main)" = "$DEPLOYED_MAIN_SHA"
+  git merge-base --is-ancestor "$CANDIDATE_SHA" "$DEPLOYED_MAIN_SHA"
+  test -z "$(git diff --name-only "$CANDIDATE_SHA..$DEPLOYED_MAIN_SHA" -- . ':(exclude)docs/release-evidence.json')"
   test -d "$EVIDENCE_DIR"
   ```
 
@@ -117,25 +164,57 @@ The OCR corpus, accessibility review, legal review, and store preparation can ru
     -u PINTPATH_SMOKE_VENUE_EMAIL \
     -u PINTPATH_SMOKE_VENUE_PASSWORD \
     PINTPATH_SMOKE_BASE_URL=https://pintpath.au \
-    PINTPATH_EXPECTED_COMMIT_SHA="$RELEASE_SHA" \
+    PINTPATH_EXPECTED_COMMIT_SHA="$DEPLOYED_MAIN_SHA" \
     npm run --silent smoke:production | tee "$EVIDENCE_DIR/production-public-smoke.json"
   jq -e . "$EVIDENCE_DIR/production-public-smoke.json"
   ```
 
 - [ ] Confirm `health`, `ready`, `config`, `venues`, `prices`, the map, Account, Venue Portal, Admin page, and `deployed_commit` pass.
 - [ ] Confirm the result has zero failures. The only permitted skips are `user_account`, `venue_manager_portal`, and `admin_queues`; those belong to item 2.
-- [ ] Inside a protected production service/container session, use a mode-private temporary file rather than the operator host's `$EVIDENCE_DIR`, which is not available remotely:
+- [ ] Inside the deployed production service or a Railway one-shot deployment,
+  use a mode-private temporary file rather than the operator host's
+  `$EVIDENCE_DIR`, which is not available remotely. `railway run`, a local
+  injected environment, and a generic container without Railway deployment and
+  replica identity are not evidence:
 
   ```bash
   set -euo pipefail
   umask 077
   PROD_READINESS_RESULT="$(mktemp)"
   npm run --silent readiness:launch | tee "$PROD_READINESS_RESULT"
-  jq -e '.ok == true and .summary.failures == 0 and .summary.blockingWarnings == 0' \
+  jq -e '.readinessProfile == "production_free_launch"
+    and .ok == true and .summary.failures == 0 and .summary.blockingWarnings == 0
+    and any(.checks[]; .id == "RAILWAY_DEPLOYED_READINESS_CONTEXT" and .status == "pass")' \
     "$PROD_READINESS_RESULT"
   ```
 
   Securely transfer only that sanitized JSON to the operator host as `$EVIDENCE_DIR/provider-readiness.json`, validate it again, then delete the remote temporary file. Never copy a remote `.env` or provider credential.
+- [ ] Before the manual release workflow, run
+  `npm run --silent readiness:railway:mutation-boundary` with two distinct
+  project tokens scoped to the exact production and staging environments.
+  Require the token identity checks, both undecrypted staged-patch checks, and
+  every production Postgres deployment/snapshot/source/digest check to be
+  `true`. The current incident baseline is intentionally non-passing. Do not
+  edit it to accept the 2026-08-10 redeploy, commit/discard a staged patch, or
+  use this read-only receipt as mutation authority. Railway writes remain
+  stopped until the tracked one-operation executor owns an immediate preflight
+  and unconditional postflight.
+- [ ] Before the manual release workflow, close permanent-staging sealing as a
+  separate ordered gate. Preserve a passing deployed/one-shot pre-seal
+  `readiness:launch` receipt with
+  `readinessProfile=permanent_staging_complete`; seal only the 13 populated
+  source/consumer rows in
+  `ops/railway/permanent-staging-sealed-variable-policy.json`; then run
+  `npm run --silent readiness:railway:sealed` externally with only the exact
+  environment-scoped project token loaded as
+  `PINTPATH_RAILWAY_METADATA_TOKEN`. Require the one metadata receipt to report
+  `policy=permanent-staging-post-rotation`, `mode=post-seal`,
+  `outcome=passed`, and `checks.forbiddenVariablesAbsent=true`. Its complete
+  inventory must have no `OFFSITE_BACKUP_SUPABASE_URL`,
+  `OFFSITE_BACKUP_SERVICE_ROLE_KEY`, or `OFFSITE_BACKUP_BUCKET` row, including a
+  blank or sealed row. Finally, require the same strict permanent-staging
+  profile from a fresh post-seal deployment or one-shot deployment. Never
+  export a resolved row, use `railway run`, or unseal to repeat readiness.
 - [ ] In Supabase, verify the production Site URL and exact web redirect allow
   list, Google provider callback, `SUPABASE_OAUTH_PROVIDERS=google`, proof Apple
   OAuth is disabled, email confirmation, leaked-password protection, admin
@@ -154,14 +233,30 @@ The OCR corpus, accessibility review, legal review, and store preparation can ru
   proof: item 9 must also prove an object-locked/WORM copy in a separate failure
   domain whose application writer cannot delete or shorten retention.
 - [ ] Confirm browser Maps and server Places keys have API-level restrictions, approved origin/service restrictions, quotas, and budget alerts; the production vector Map ID must render live markers. Apply equivalent least-privilege quotas/alerts to OpenAI where the provider supports them.
-- [ ] Confirm Redis is configured for normal production. In isolated staging, set `REQUIRE_REDIS_RATE_LIMITING=true`, confirm `/ready` reports `rateLimiterRedis.required=true`, and use two app instances to prove the third request against a limit of two is rejected across replicas. Then interrupt only staging Redis and prove readiness plus protected traffic return `503` rather than silently switching to process memory. Restore the exact staging Redis reference and confirm recovery; never run the outage drill against production. The Railway environment must remain named `staging`, which disables production backup/report schedulers and deletion-ledger writes; staging must not share the production backup service key or bucket.
+- [ ] Confirm Redis is configured for normal production. In permanent integrated
+  staging, set `REQUIRE_REDIS_RATE_LIMITING=true`, confirm `/ready` reports
+  `rateLimiterRedis.required=true`, and use at least two app instances to prove
+  the third request against a limit of two is rejected across replicas. Then
+  interrupt only staging Redis and prove readiness plus protected traffic return
+  `503` rather than switching to process memory. Restore the exact registered
+  staging Redis reference and confirm recovery; never run the outage drill
+  against production or restore staging. Permanent staging must not share the
+  production backup writer, bucket, database, or Redis namespace.
 - [ ] Confirm active OpenAI, Google, Supabase, backup, deletion-notice,
   webhook-signing, and recipient-encryption secrets remain server-side. Prove
   Stripe, POS, and report-email credentials are absent or inert while their
   features are disabled.
 - [ ] Confirm TLS, HSTS/security headers, secure/HttpOnly/SameSite cookies, CSP, CORS, mixed-content blocking, and public cache headers on the deployed site. Run DAST only against staging/preview, never broad production traffic, and resolve all critical/high findings.
 - [ ] Run Lighthouse or WebPageTest on `/`, `/pricing.html`, `/venue-portal.html`, and `/account.html` on mobile and desktop. Require 85+ performance on public landing/pricing, 95+ accessibility/SEO on public pages, 90+ accessibility on authenticated tools, no initial blocking console error, and no document overflow at 390px, 768px, or desktop.
-- [ ] Define the expected launch peak from a documented acquisition/traffic model, then run read-only staging peak, 2×-peak headroom, and at least 60-minute soak tests across map venues/prices/missions and authenticated admin queues. Include sustained write contention for the approved submission/moderation/deletion-job mix, near-capacity and disk-full containment, process restart, and a volume-backed deploy/recovery timing drill. Record tool/version/workload and require zero authorization/data-isolation failures, less than 1% 5xx, public API p95 below 2 seconds, admin p95 below 3 seconds, no unbounded queue/lock growth, and measured downtime inside the signed launch budget.
+- [ ] Define the expected launch peak from a documented acquisition/traffic
+  model, then run permanent-staging peak, 2×-peak headroom, and at least
+  60-minute soak tests across map venues/prices/missions and authenticated admin
+  queues. Include sustained Postgres write contention for the approved
+  submission/moderation/deletion-job mix, connection-pool saturation, lock-wait
+  and deadlock monitoring, worker overlap, process restart, rolling deploy, and
+  Postgres-compatible rollback. Require zero duplicate/lost work and
+  authorization/data-isolation failures, less than 1% 5xx, public API p95 below
+  2 seconds, admin p95 below 3 seconds, and no unbounded queue/lock growth.
 - [ ] Confirm named alerts and escalation for `/health`, `/ready`, 5xx,
   deployment failure, Redis failure, deletion-notice manual review/retention
   breach, login/rate-limit spikes, database/volume size, backup age, and enabled
@@ -171,7 +266,10 @@ The OCR corpus, accessibility review, legal review, and store preparation can ru
 
 **Pass:** The exact SHA is deployed; public smoke exits `0`; its JSON parses; provider readiness has no failures/blocking warnings; provider access, distributed limiting, private Storage, TLS/browser security, performance, load, secret exposure, monitoring, and staging DAST checks all pass with no unresolved critical/high finding.
 
-**Evidence:** Public-smoke JSON, provider-readiness JSON, deployed SHA, sanitized provider screenshots, key-restriction screenshots, Storage/RLS results, monitor test alert, timestamp, and verifier.
+**Evidence:** Public-smoke JSON, production provider-readiness JSON, permanent-
+staging pre/post-seal deployed-readiness JSON, sealed-variable metadata JSON,
+deployed SHA, sanitized provider screenshots, key-restriction screenshots,
+Storage/RLS results, monitor test alert, timestamp, and verifier.
 
 ## 2. `production_role_smoke`
 
@@ -188,7 +286,7 @@ The OCR corpus, accessibility review, legal review, and store preparation can ru
   Attempt the collision/duplicate path and require it to fail or link to that
   same identity; a second account is a release blocker.
 - [ ] Confirm there is no production Apple OAuth secret or enabled provider. If Apple login is proposed later, assign rotation ownership and implement, test, and evidence authorization-token revocation before enabling it.
-- [ ] Set the dedicated user and venue-manager credentials as protected `production` environment secrets for both hourly **Production Health** and **Pint Path Release Gate**. Use these exact names: `PINTPATH_SMOKE_USER_EMAIL`, `PINTPATH_SMOKE_USER_PASSWORD`, `PINTPATH_SMOKE_VENUE_EMAIL`, and `PINTPATH_SMOKE_VENUE_PASSWORD`. Keep the protected `SUPABASE_URL` and `SUPABASE_ANON_KEY` values in that environment too: the smoke script compares the live public auth config against those pins and sends no password on a mismatch. Do not configure user/venue bearer-token secrets; the workflow creates and revokes disposable sessions at runtime.
+- [ ] Set the dedicated user and venue-manager credentials as protected `production` environment secrets for both hourly **Production Health** and **Pint Path Release Gate**. Use these exact names: `PINTPATH_SMOKE_USER_EMAIL`, `PINTPATH_SMOKE_USER_PASSWORD`, `PINTPATH_SMOKE_VENUE_EMAIL`, and `PINTPATH_SMOKE_VENUE_PASSWORD`. Keep protected `SUPABASE_URL=https://auth.pintpath.au` and the exact reviewed `sb_publishable_...` value in `SUPABASE_ANON_KEY` in that environment too: the smoke script rejects another origin and any legacy, secret, malformed, or whitespace-wrapped key, compares the live public auth config against those pins, and sends no password or protected role request on a mismatch. Do not configure user/venue bearer-token secrets; the workflow creates and revokes disposable sessions at runtime.
 - [ ] Obtain one short-lived Supabase admin access token through a normal password plus MFA ceremony and confirm its JWT is AAL2. Store it temporarily in a mode-`600` file at `$EVIDENCE_DIR/supabase-admin.token`; never paste it into the checklist or shell history. Do not store the admin password or TOTP seed in GitHub Actions.
 - [ ] Exchange the AAL2 Supabase admin token for a one-use Pint Path app token without printing either token or placing it in a process argument:
 
@@ -233,7 +331,7 @@ The OCR corpus, accessibility review, legal review, and store preparation can ru
 
   ```bash
   PINTPATH_SMOKE_BASE_URL=https://pintpath.au \
-    PINTPATH_EXPECTED_COMMIT_SHA="$RELEASE_SHA" \
+    PINTPATH_EXPECTED_COMMIT_SHA="$DEPLOYED_MAIN_SHA" \
     npm run --silent smoke:production:auth | tee "$EVIDENCE_DIR/production-role-smoke.json"
   jq -e . "$EVIDENCE_DIR/production-role-smoke.json"
   ```
@@ -244,8 +342,14 @@ The OCR corpus, accessibility review, legal review, and store preparation can ru
   load admin/venue-private data, one manager cannot access an unauthorized
   venue, and the MFA admin can access queues. Prove counter/reward/POS and paid
   surfaces remain unavailable.
-- [ ] As a contributor, submit a price and private photo; prove the second user cannot see raw submission/evidence; approve as admin; then prove the normalized price publishes and points are awarded only after approval.
-- [ ] As the assigned manager, prove ordinary profile, beer, and happy-hour edits follow the documented direct-publish path, while restricted fields and safeguard-triggered changes remain queued for admin review.
+- [ ] As a contributor, submit a price and private photo; prove the second user
+  cannot see raw submission/evidence; approve as admin; then prove the normalized
+  price publishes while reward/points/redemption surfaces remain disabled.
+- [ ] As the assigned manager, prove ordinary profile and beer edits follow the
+  documented Free path while restricted fields and safeguard-triggered changes
+  remain queued for admin review. Save one venue-side happy-hour record only as
+  internal venue operations data and prove it creates no public record, filter,
+  mission, contribution path, SEO claim, or web/iOS surface.
 - [ ] Prove privacy-thresholded analytics suppress low-count buckets and never expose another venue or individual activity.
 - [ ] Across two devices, prove password reset, current-device logout, logout-all, session listing/revocation, export, deletion request/status/cancel, and recent-auth requirements behave as documented. Export must include retained exact location fields but no raw evidence bytes/URLs, tokens, or passwords.
 - [ ] Require zero unexpected browser console errors or failed network requests in the completed role journeys.
@@ -278,12 +382,35 @@ state, SHA, timestamp, and verifier.
 
 **Owner:** Privacy operations owner and release engineer. **Verifier:** Independent security or privacy reviewer.
 
-- [ ] Deploy schema 15 and the notification worker to isolated staging; preserve the automatic pre-migration SQLite backup.
-- [ ] Pin the production Beer service to exactly one app replica and one region. Prove no autoscaling or second SQLite writer is enabled; Railway volumes do not permit replicas and introduce brief deployment downtime. Horizontal/multi-region or highly available launch claims are a no-go until the authoritative SQLite state, deletion outbox, webhook correlation, and job leases move together to a shared transactional datastore. Otherwise preserve the signed controlled-launch capacity/downtime acceptance and migration trigger.
+- [ ] Deploy the candidate Postgres schema and notification worker to permanent
+  integrated staging. Import and reconcile the migration source, then use at
+  least two app/worker replicas to prove concurrent claims and retries cannot
+  lose or duplicate a notice. SQLite is read-only migration evidence only.
 - [ ] In Resend, verify the sender domain and create a dedicated sending-only transactional key. Create one staging-only webhook at the exact staging Railway origin and a separate production webhook at `https://pintpath.au/api/business/account-deletion-notifications/resend-webhook`; give each its own `whsec_` secret and subscribe both to `email.delivered`, `email.delivery_delayed`, `email.bounced`, `email.failed`, `email.suppressed`, and `email.complained`. Never send staging events to the production endpoint.
 - [ ] Generate an independent 32-byte recipient-encryption key. Store the active key ID, keyring JSON, Resend key, sender, monitored reply-to, and `whsec_` webhook secret only in the protected Railway/GitHub secret stores. Never paste a secret, keyring, or recipient into evidence.
 - [ ] Keep `SUPABASE_OAUTH_PROVIDERS=google`; prove production startup rejects Apple and an incomplete deletion-notice configuration.
-- [ ] Set `ACCOUNT_DELETION_REHEARSAL_ENABLED=true` only after proving the immutable staging Railway project/environment/service IDs, exact `$RAILWAY_PUBLIC_DOMAIN` origin, `/app/data` volume and data paths, staging Supabase project `ibveugyfyzjptyvautlr`, Stripe test mode or absence, and staging-only Resend webhook/key material. Remove both off-site backup credentials and every Redis reference first; use the explicit in-memory limiter override only for this single-instance proof. Run `npm run --silent readiness:providers`, require `readinessProfile=account_deletion_rehearsal`, and confirm `/ready` separately. Remove the rehearsal switch and override immediately afterward and prove both are false or absent in production.
+- [ ] Set `ACCOUNT_DELETION_REHEARSAL_ENABLED=true` only after mechanically
+  matching the privately registered permanent-staging Railway, Postgres,
+  Supabase, Storage, Redis, origin, callback, and staging-only Resend identities;
+  assert all differ from production and restore staging. Remove production WORM
+  credentials and every `RESTORE_REHEARSAL_*` variable, require shared Redis and
+  disallow the in-memory limiter. Load the reviewed permanent-staging
+  `ACCOUNT_DELETION_REHEARSAL_EXPECTED_*` pins and verified replica count; the
+  runtime must match and `DATABASE_PATH` must be absent. Hash the exact staging
+  database and Redis URLs without printing them, require the matching protected
+  `PINTPATH_EXPECTED_*_URL_SHA256` pins, and reject the registered production
+  and restore digests through `PINTPATH_FORBIDDEN_*_URL_SHA256S`. The pinned
+  live database/Redis provider resource IDs must also match their protected
+  `PINTPATH_EXPECTED_*_RESOURCE_ID` values and reject both production and
+  restore resources in `PINTPATH_FORBIDDEN_*_RESOURCE_IDS`; alternate
+  credentials for the same resource are not separation. The pinned
+  staging Supabase origin plus the fixed private `beermap-source-evidence`
+  bucket identifies Storage. Run `npm run --silent
+  readiness:launch` inside the deployed staging service or a Railway one-shot
+  deployment, require a passing `RAILWAY_DEPLOYED_READINESS_CONTEXT`, require
+  `readinessProfile=account_deletion_rehearsal`, and confirm `/ready` separately.
+  Remove the rehearsal switch immediately afterward and prove it is false or
+  absent in production.
 - [ ] Use a sacrificial verified staging account. After test-adjusting only its staging safety window, execute deletion and prove `held -> pending -> accepted -> delivered`, a verified webhook receipt, one provider message, and deletion of the encrypted recipient row.
 - [ ] Prove invalid signatures return an error, duplicate `svix-id` deliveries are idempotent, older out-of-order events cannot reverse a newer outcome, worker overlap sends once, restart resumes work, and restored tombstones never send a notice.
 - [ ] Prove timeout/429 retry backoff, bounce/failure operator attention, the 23-hour uncertain-send cutoff, recipient-ciphertext purge on verified delivery or audited terminal resolution, the 30-day post-completion hard limit, the 60-day pre-completion held cap, 400-day non-identifying webhook-receipt retention, and key rotation without removing a still-referenced key.
@@ -294,11 +421,18 @@ state, SHA, timestamp, and verifier.
   object. Record only the JWT expiry and denial matrix, then destroy the token.
   A failed refresh or deleted Auth user alone does not prove an issued JWT is
   contained.
-- [ ] Confirm `/ready`, `job:account_deletion_notifications`, and the admin deletion queue report configured/healthy state with no manual-review or overdue-retention rows. Inspect SQLite using aggregate/length checks only and prove there is no plaintext recipient in outbox/admin/log output.
+- [ ] Confirm `/ready`, `job:account_deletion_notifications`, and the admin
+  deletion queue report configured/healthy state with no manual-review or
+  overdue-retention rows. Inspect Postgres using aggregate/length checks only
+  and prove there is no plaintext recipient in outbox/admin/log output.
 
 **Pass:** One and only one completion notice reaches the staging recipient, its delivery is cryptographically linked to a verified Resend event, recipient ciphertext is purged on verified delivery, audited terminal resolution, or its applicable hard limit, all abuse/retry/restore/retention cases pass, and production readiness is fail-closed.
 
-**Evidence:** Candidate SHA, schema version and migration-backup receipt, sanitized Resend domain/webhook screenshots, provider message ID, non-identifying webhook event ID/keyed receipt HMAC, admin/job summaries, staging test matrix, timestamp, and verifier. No email address or secret is permitted.
+**Evidence:** Candidate SHA, Postgres schema/import/reconciliation receipt,
+sanitized Resend domain/webhook screenshots, provider message ID,
+non-identifying webhook event ID/keyed receipt HMAC, two-replica worker matrix,
+admin/job summaries, timestamp, and verifier. No email address or secret is
+permitted.
 
 ## 4. `ocr_labelled_corpus`
 
@@ -330,6 +464,8 @@ state, SHA, timestamp, and verifier.
 
 - [ ] Confirm at least 90% overall, 95% row recall, 98% row precision, 95% canonical names, 95% prices, 95% availability, and 100% rejection of labelled non-beer candidates.
 - [ ] Record `OPENAI_MENU_OCR_MODEL` and `OPENAI_MENU_OCR_FALLBACK_MODEL` values separately without recording the API key; the benchmark report does not embed them.
+- [ ] Before using the permanent-staging cost-bound mode, rerun the complete labelled corpus with both model values set to exact `gpt-4.1-mini-2025-04-14`; preserve the fail/pass report and independent review before separately authorizing any variable change.
+- [ ] With `OPENAI_MENU_OCR_COST_BOUND_MODE=true`, prove the shared `system_state` reservation row advances by five cents before each provider attempt, never refunds failed or uncertain attempts, takes its rolling-window timestamp from the shared database clock, denies after US$1 in every rolling 31-day window, forbids PDFs and standalone discovery OCR, and remains consistent under two-replica concurrency and restart.
 - [ ] Do not lower thresholds to pass. Keep any failed source layout behind admin/manual review until fixed and rerun.
 
 **Pass:** The live report says `passed: true`, contains at least 30 unseen cases, meets every fixed threshold, and has independent label sign-off.
@@ -422,57 +558,38 @@ primary/backup/privacy-owner approval.
 
 **Owner:** Operations/SRE lead. **Verifier:** Second operator and named incident owner.
 
-- [ ] Treat `OFFSITE_BACKUP_SUPABASE_URL` as a private operational restore copy,
-  not by itself as immutable disaster-recovery proof. Confirm it is a different
-  origin and that `pintpath-backups` has no anonymous/authenticated object
-  policies.
-- [ ] Provision a second retained copy in a different provider or region with
-  object lock/WORM retention for at least the signed backup window. The
-  production application principal may create new uniquely named objects but
-  must be unable to overwrite, delete, shorten retention, change object lock,
-  or administer the bucket. Give deletion/retention control to a separate
-  two-person operations principal. Prove those denials with harmless staging
-  objects and preserve the provider policy/versioning/retention evidence.
-- [ ] Replicate each completed schema-15 database, source-evidence set, manifest,
-  and deletion ledger/tombstones into that immutable copy; verify hashes from a
-  separately authorised reader. A service-role key that can both upload and
-  run retention deletion, or two projects in the same failure domain, fails
-  this gate.
-- [ ] Confirm Railway reports `RAILWAY_ENVIRONMENT_NAME=production` in the protected production console. Confirm every staging/preview environment has a different name and neither shares nor writes to the production backup bucket; automatic backup and deletion-ledger writes fail closed outside the canonical production runtime.
-- [ ] Provision the destination only with `ops/supabase/independent-backup-project-storage.sql`, never through the production migration chain.
-- [ ] In a protected production service/container session, prove `DATABASE_PATH` resolves inside the mounted `/app/data` volume and is the running service's readable live SQLite file. Run the backup there—not from an operator laptop or checkout—and capture its JSON without printing provider secrets:
+This gate is Postgres + private Storage + WORM. The existing SQLite volume
+backup/rehearsal/attestation scripts are legacy migration-source tools and
+cannot pass the full-scale production restore gate. Keep this item pending
+until the Postgres-native backup, WORM download, restore, reconciliation, and
+tombstone-replay implementation exists and is part of the frozen candidate.
+
+- [ ] Confirm managed Postgres PITR is enabled, the latest recovery point is
+  within the signed RPO, retention is correct, alerts are active, and a direct
+  migration/logical-backup connection can be used without exposing a password.
+- [ ] Create a checksummed logical Postgres export, private source-evidence/
+  Storage snapshot, manifest, and deletion ledger/tombstones. Record the exact
+  database schema, candidate SHA, source identities, UTC time, counts, and
+  hashes without customer data or secrets.
+- [ ] Write the complete recovery set to provider-enforced object-lock/WORM
+  storage in a separate failure domain. The application writer must be unable
+  to delete, overwrite, shorten retention, change object lock, or administer
+  the bucket. Prove those denials and give retention/deletion authority to a
+  separate two-person operations principal.
+- [ ] Treat `OFFSITE_BACKUP_SUPABASE_URL` and `pintpath-backups` only as a
+  **private operational restore copy**. It is mutable and same-provider, so it
+  is neither independent nor immutable. Provision its schema only with
+  `ops/supabase/independent-backup-project-storage.sql`; the legacy filename
+  does not change the copy's weaker authority.
+- [ ] Optionally verify the operational copy with the repository SDK helper.
+  Use a temporary mode-`600` key file, never secret bytes in shell history, and
+  preserve only aggregate output. The key file is an exact-byte input with no
+  leading/trailing whitespace, CR/LF, or NUL. With tracing disabled, transfer
+  it using a no-line-ending writer equivalent to
+  `printf '%s' "$VALUE" > "$OFFSITE_BACKUP_SECRET_KEY_FILE"`; never use
+  `echo` or print the value during verification:
 
   ```bash
-  set -euo pipefail
-  umask 077
-  test -r "${DATABASE_PATH:?}"
-  case "$(realpath "$DATABASE_PATH")" in /app/data/*) ;; *) exit 1 ;; esac
-  PROD_BACKUP_RESULT="$(mktemp)"
-  npm run --silent data:backup:offsite | tee "$PROD_BACKUP_RESULT"
-  jq -e '.ok == true
-    and (.backupId | type == "string" and length > 0)
-    and (.manifestSha256 | type == "string" and test("^[a-f0-9]{64}$"))' \
-    "$PROD_BACKUP_RESULT"
-  ```
-
-- [ ] Securely transfer only that sanitized JSON result to `$EVIDENCE_DIR/offsite-backup.json`, delete the production temporary file, and record its backup ID, trusted manifest SHA-256, database/object/evidence counts, bytes, tombstones, and pruning result. Never transfer the live database through this step.
-- [ ] In the independent backup project, create a separate temporary secret key for this rehearsal only. Never reuse or revoke the long-lived Railway production backup key. Place the temporary key in a mode-`600` regular, non-symlink file on the protected operator host; never paste it into chat, screenshots, shell history, or evidence.
-- [ ] On the protected operator host, use the repository-installed SDK downloader from the earlier secret-free `npm ci` and download exactly the new immutable prefix. The downloader accepts the temporary key file path rather than secret bytes, rejects an existing destination or unsafe object path, verifies the downloaded manifest before publishing the directory, cleans a partial download on failure, and emits aggregate JSON without object paths:
-
-  ```bash
-  export BACKUP_ID="$(jq -er '.backupId' "$EVIDENCE_DIR/offsite-backup.json")"
-  export EXPECTED_MANIFEST_SHA256="$(jq -er \
-    '.manifestSha256 | select(test("^[a-f0-9]{64}$"))' \
-    "$EVIDENCE_DIR/offsite-backup.json")"
-  export RESTORE_BASE="$EVIDENCE_DIR/backup-restore/$BACKUP_ID"
-  export BACKUP_PATH="$RESTORE_BASE/snapshot"
-  export OFFSITE_BACKUP_SECRET_KEY_FILE="${OFFSITE_BACKUP_SECRET_KEY_FILE:?}"
-  test ! -e "$BACKUP_PATH"
-  install -d -m 700 "$RESTORE_BASE"
-  test -f "$OFFSITE_BACKUP_SECRET_KEY_FILE"
-  test ! -L "$OFFSITE_BACKUP_SECRET_KEY_FILE"
-  chmod 600 "$OFFSITE_BACKUP_SECRET_KEY_FILE"
-
   OFFSITE_BACKUP_SUPABASE_URL="${OFFSITE_BACKUP_SUPABASE_URL:?}" \
   OFFSITE_BACKUP_BUCKET="${OFFSITE_BACKUP_BUCKET:-pintpath-backups}" \
     npm run --silent data:backup:download-offsite -- \
@@ -481,271 +598,61 @@ primary/backup/privacy-owner approval.
       --output="$BACKUP_PATH" \
       --service-role-key-file="$OFFSITE_BACKUP_SECRET_KEY_FILE" \
     | tee "$EVIDENCE_DIR/offsite-backup-download.json"
-
-  jq -e --arg backupId "$BACKUP_ID" \
-    --arg manifestSha256 "$EXPECTED_MANIFEST_SHA256" \
-    --arg outputPath "$BACKUP_PATH" \
-    '.ok == true
-     and .backupId == $backupId
-     and .manifestSha256 == $manifestSha256
-     and .outputPath == $outputPath
-     and (.objectCount | type == "number" and . > 0)
-     and (.bytes | type == "number" and . > 0)' \
+  jq -e --arg manifestSha256 "$EXPECTED_MANIFEST_SHA256" \
+    '.ok == true and .manifestSha256 == $manifestSha256' \
     "$EVIDENCE_DIR/offsite-backup-download.json"
   test -f "$BACKUP_PATH/manifest.json"
-  ```
-
-- [ ] The downloader uses the repository-installed Supabase SDK and emits only aggregate JSON—never Storage object paths or secret values. The downloaded `manifest.json`, followed by the independent verification command, remains the integrity authority for path sets, bytes, checksums, MIME metadata, database references, and orphan reporting. Do not retain raw object-level troubleshooting output. Hash and verify the downloaded snapshot:
-
-  ```bash
   shasum -a 256 "$BACKUP_PATH/manifest.json" \
     | awk '{print $1}' \
     | tee "$EVIDENCE_DIR/offsite-backup-manifest.sha256"
-  test "$(<"$EVIDENCE_DIR/offsite-backup-manifest.sha256")" = \
-    "$EXPECTED_MANIFEST_SHA256"
-  npm run --silent data:backup:verify -- --backup="$BACKUP_PATH" \
-    | tee "$EVIDENCE_DIR/offsite-backup-verify.json"
-  jq -e '.ok == true' "$EVIDENCE_DIR/offsite-backup-verify.json"
   ```
 
-- [ ] With production and independent-destination URLs plus the independent service key available only to the operator, rehearse into a new empty directory. Point `DATABASE_PATH` at the database that the command is about to create inside that isolated directory; this records `job:restore_rehearsal` in the restored copy, never in production:
+  This helper verifies the operational copy only. The actual disaster-recovery
+  rehearsal must retrieve and verify the WORM authority through the separately
+  administered reader.
+- [ ] Create a fresh ephemeral destructive restore environment. Record its
+  Railway project/environment/service, Postgres database, Supabase project,
+  private Storage, Redis namespace, temporary credentials, domain, and
+  callbacks. Assert each differs from production and permanent integrated
+  staging before any restored byte is uploaded.
+- [ ] Implement and independently review candidate-bound signed/sealed authority
+  for the newly created restore-only Supabase origin. The current build
+  deliberately strips restore Supabase credentials before client construction
+  and keeps `/ready` failed; same-environment `SUPABASE_URL` and
+  `RESTORE_REHEARSAL_EXPECTED_SUPABASE_URL` values are not an authority. Do not
+  reuse a hard-coded/example ref or read a restore service key until the new
+  mechanism binds the real project and proves it differs from production,
+  permanent staging, and the operational copy.
+- [ ] Restore the WORM-sourced Postgres export/PITR target, private Storage,
+  and tombstones using the reviewed Postgres-native tooling. Require schema,
+  constraints, row counts/hashes, MIME/object references, deletion-ledger
+  chain, tombstoned-data absence, and application invariants to pass.
+- [ ] Start only the candidate in restore mode. Prove public reads, role
+  isolation, `/startup`, `/ready`, Postgres connectivity, Redis namespace
+  identity, disabled external writes/jobs, and deletion-tombstone replay.
+  Never test restored customer credentials or send provider notifications.
+- [ ] Measure actual RPO/RTO against the signed targets. Independently verify
+  the restore manifest, database/Storage hashes, candidate SHA, and WORM
+  retention evidence.
+- [ ] Remove public networking and stop the disposable services. Revoke every
+  temporary key/token, remove every restore-only secret variable and provider
+  callback/webhook, delete the recorded Postgres database, Supabase project and
+  Storage, Redis namespace/service, Railway service/environment/project/volume,
+  and disposable domain, then verify the domain is unreachable and each ID can
+  no longer be selected. Delete nothing by display name or wildcard. Two people
+  must prove production and permanent staging identities, data, keys, callbacks,
+  domains, and deployments are unchanged.
 
-  ```bash
-  export REHEARSAL_ROOT="$RESTORE_BASE/rehearsal"
-  test ! -e "$REHEARSAL_ROOT"
-  SUPABASE_URL="${SUPABASE_URL:?}" \
-  OFFSITE_BACKUP_SUPABASE_URL="${OFFSITE_BACKUP_SUPABASE_URL:?}" \
-  OFFSITE_BACKUP_SERVICE_ROLE_KEY="$(<"$OFFSITE_BACKUP_SECRET_KEY_FILE")" \
-  DATABASE_PATH="$REHEARSAL_ROOT/pint-path.sqlite" \
-    npm run --silent data:backup:rehearse -- \
-      --backup="$BACKUP_PATH" \
-      --backup-id="$BACKUP_ID" \
-      --source-manifest-sha256="$EXPECTED_MANIFEST_SHA256" \
-      --output="$REHEARSAL_ROOT" \
-    | tee "$EVIDENCE_DIR/offsite-restore-rehearsal.json"
-  jq -e '.ok == true' "$EVIDENCE_DIR/offsite-restore-rehearsal.json"
-  export DELETION_LEDGER_SHA256="$(jq -er '.deletionLedgerSha256' \
-    "$EVIDENCE_DIR/offsite-restore-rehearsal.json")"
-  export DELETION_LEDGER_GENESIS_SHA256="$(jq -er '.deletionLedgerGenesisSha256' \
-    "$EVIDENCE_DIR/offsite-restore-rehearsal.json")"
-  export DELETION_LEDGER_CHECKPOINT_SHA256="$(jq -er '.deletionLedgerCheckpointSha256' \
-    "$EVIDENCE_DIR/offsite-restore-rehearsal.json")"
-  ```
+**Pass:** Current Postgres PITR plus logical/private-Storage/WORM recovery
+artifacts restore from the WORM authority into a new disposable environment;
+integrity, application, tombstone, RPO/RTO, isolation, and teardown checks all
+pass; the operational Supabase copy is not cited as immutable authority.
 
-- [ ] Confirm SQLite integrity and foreign keys, database/evidence checksums, MIME/reference reconciliation, current independent deletion-ledger authority, and tombstoned PII/evidence purge all pass.
-- [ ] Seal the exact post-rehearsal runtime directory before it leaves the operator host. The command refuses an existing attestation, symlinks, hard links, special files, unexpected sidecars, a changed SQLite file, a mismatched source manifest, failed integrity/foreign-key checks, or an incomplete `job:restore_rehearsal` state:
-
-  ```bash
-  npm run --silent data:backup:attest-restore -- \
-    --restore-root="$REHEARSAL_ROOT" \
-    --backup-id="$BACKUP_ID" \
-    --source-manifest="$BACKUP_PATH/manifest.json" \
-    --source-manifest-sha256="$EXPECTED_MANIFEST_SHA256" \
-    --deletion-ledger-sha256="$DELETION_LEDGER_SHA256" \
-    --deletion-ledger-genesis-sha256="$DELETION_LEDGER_GENESIS_SHA256" \
-    --deletion-ledger-checkpoint-sha256="$DELETION_LEDGER_CHECKPOINT_SHA256" \
-    | tee "$EVIDENCE_DIR/restore-runtime-attestation.json"
-  export RESTORE_ATTESTATION_SHA256="$(
-    jq -er '.attestationSha256' "$EVIDENCE_DIR/restore-runtime-attestation.json"
-  )"
-  ```
-
-- [ ] Create a **new, one-shot** access-restricted restore-staging Supabase project in the `Pint Path Backups` organization. Record its exact project ref and the exact ID of the temporary secret key; do not select a project by display name. The restore guard pins the permitted project refs in `src/config/env.ts`, so a new one-shot ref requires a separately reviewed code change and deployment before any restored bytes are uploaded. Unlink any previously selected project, bind the CLI to the exact new ref, verify the link file before and after both migration commands, dry-run the full migration chain, and only then apply it:
-
-  ```bash
-  export RESTORE_STAGING_PROJECT_REF='ibveugyfyzjptyvautlr'
-  test "$RESTORE_STAGING_PROJECT_REF" = 'ibveugyfyzjptyvautlr'
-  supabase unlink
-  test ! -f supabase/.temp/project-ref
-  supabase link --project-ref "$RESTORE_STAGING_PROJECT_REF"
-  test "$(tr -d '\r\n' < supabase/.temp/project-ref)" = "$RESTORE_STAGING_PROJECT_REF"
-  supabase db push --linked --dry-run
-  test "$(tr -d '\r\n' < supabase/.temp/project-ref)" = "$RESTORE_STAGING_PROJECT_REF"
-  supabase db push --linked
-  test "$(tr -d '\r\n' < supabase/.temp/project-ref)" = "$RESTORE_STAGING_PROJECT_REF"
-  ```
-
-  This literal is the reviewed one-shot ref pinned by the current build. Because that project is deleted during teardown, the runbook literal and `src/config/env.ts` pin must be changed together in a reviewed commit before another rehearsal. Confirm the exact project's empty `beermap-source-evidence` bucket is private, has no direct `anon`/`authenticated` policies, and has no pre-existing objects. Keep the exact link and canonical URL verification immediately before staging. The repository helper refuses a non-empty bucket, preserves original object paths and manifest MIME types, and redownloads every object for checksum/MIME verification:
-
-  ```bash
-  export STAGING_SUPABASE_SECRET_KEY_FILE="${STAGING_SUPABASE_SECRET_KEY_FILE:?}"
-  export STAGING_SUPABASE_URL="https://${RESTORE_STAGING_PROJECT_REF}.supabase.co"
-  test "$STAGING_SUPABASE_URL" = 'https://ibveugyfyzjptyvautlr.supabase.co'
-  test -f "$STAGING_SUPABASE_SECRET_KEY_FILE"
-  test ! -L "$STAGING_SUPABASE_SECRET_KEY_FILE"
-  chmod 600 "$STAGING_SUPABASE_SECRET_KEY_FILE"
-  SUPABASE_URL="${SUPABASE_URL:?}" \
-  OFFSITE_BACKUP_SUPABASE_URL="${OFFSITE_BACKUP_SUPABASE_URL:?}" \
-  STAGING_SUPABASE_URL="${STAGING_SUPABASE_URL:?}" \
-  STAGING_SUPABASE_SERVICE_ROLE_KEY="$(<"${STAGING_SUPABASE_SECRET_KEY_FILE:?}")" \
-    npm run --silent data:backup:stage-evidence -- \
-      --backup="$BACKUP_PATH" \
-      --restore="$REHEARSAL_ROOT" \
-    | tee "$EVIDENCE_DIR/staged-restore-evidence.json"
-  jq -e '.ok == true' "$EVIDENCE_DIR/staged-restore-evidence.json"
-  test "$(tr -d '\r\n' < supabase/.temp/project-ref)" = "$RESTORE_STAGING_PROJECT_REF"
-  ```
-
-- [ ] If the source manifest reports zero Supabase Storage evidence objects, do not manufacture or upload any: preserve the empty private bucket and record the zero count. The filesystem evidence directory and its attestation are still required.
-- [ ] Keep the Railway Beer service stopped while preparing restore staging. Select and record these immutable resources before changing anything; abort if any ID differs:
-
-  ```bash
-  export RAILWAY_PROJECT_ID='48d8c6cd-1c66-4148-874b-20877f48e1a5'
-  export STAGING_ENVIRONMENT_ID='a4e0f507-d6d3-4df9-a818-ad92c0071a35'
-  export STAGING_BEER_SERVICE_ID='6816c4a2-e392-4ee5-826f-2584cb599ec0'
-  export STAGING_REDIS_SERVICE_ID='d6351cec-fe04-4a6f-8e05-1cc164ea1e73'
-  ```
-
-  In Railway, select the exact project ID, staging environment ID, and Beer service ID—not their display names. Reduce Beer to one replica. Create a **new** staging-only Beer volume, attach it at `/app/data`, and record its exact volume ID. Never reuse, move, clone, or attach the production Beer volume. The operator-host path under `$REHEARSAL_ROOT` does not exist in Railway and must never be used as Railway's `DATABASE_PATH`.
-
-- [ ] Before starting bootstrap, deploy only a reviewed build containing the fail-closed restore guard and configure the complete staging contract below. The one-shot `SUPABASE_URL` ref must match the reviewed ref pinned in `src/config/env.ts`. Railway system identity and service references must be selected from the exact resources above, never typed imitations:
-
-  ```dotenv
-  NODE_ENV=production
-  RESTORE_REHEARSAL_MODE=true
-  RESTORE_REHEARSAL_PHASE=bootstrap
-  RESTORE_REHEARSAL_BACKUP_ID=<selected-backup-id>
-  RESTORE_REHEARSAL_SOURCE_MANIFEST_SHA256=<trusted-source-manifest-sha256>
-  RESTORE_REHEARSAL_RUNTIME_ATTESTATION_SHA256=<trusted-runtime-attestation-sha256>
-  PUBLIC_BASE_URL=https://<RAILWAY_PUBLIC_DOMAIN>
-  RESTORE_REHEARSAL_PRODUCTION_SUPABASE_URL=https://<production-project>.supabase.co
-  RESTORE_REHEARSAL_BACKUP_SUPABASE_URL=https://<independent-backup-project>.supabase.co
-  RESTORE_REHEARSAL_ACCESS_USERNAME=<staging-operator-name>
-  RESTORE_REHEARSAL_ACCESS_PASSWORD=<unique-32-plus-byte-secret>
-  SUPABASE_URL=https://<third-restore-staging-project>.supabase.co
-  SUPABASE_ANON_KEY=<restore-staging-publishable-key>
-  SUPABASE_SERVICE_ROLE_KEY=<restore-staging-secret-key>
-  SUPABASE_OAUTH_PROVIDERS=
-  REDIS_URL=${{Redis.REDIS_URL}}
-  RESTORE_REHEARSAL_REDIS_ENVIRONMENT_ID=${{Redis.RAILWAY_ENVIRONMENT_ID}}
-  RESTORE_REHEARSAL_REDIS_SERVICE_ID=${{Redis.RAILWAY_SERVICE_ID}}
-  RESTORE_REHEARSAL_REDIS_SENTINEL=${{Redis.RESTORE_REHEARSAL_IDENTITY_SENTINEL}}
-  REDIS_KEY_NAMESPACE=pint-path:restore:<staging-environment-id>:<backup-id>
-  REQUIRE_REDIS_RATE_LIMITING=true
-  GOOGLE_MAPS_API_KEY=<staging-origin-restricted-browser-key>
-  GOOGLE_MAPS_MAP_ID=<map-id>
-  SOURCE_EVIDENCE_SIGNING_SECRET=<unique-staging-32-plus-byte-secret>
-  REPORT_EMAIL_MODE=disabled
-  REPORT_DELIVERY_SCHEDULE_ENABLED=false
-  DEMO_BILLING_MODE=false
-  ALLOW_DEMO_BILLING_IN_PRODUCTION=false
-  ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=false
-  DATABASE_PATH=/app/data/bootstrap/pint-path.sqlite
-  SOURCE_EVIDENCE_STORAGE_DIR=/app/data/bootstrap/source-evidence
-  ```
-
-  Completely remove all `STRIPE_*`, Resend/report sender, Google Places, OpenAI, POS webhook, production smoke/admin bearer, shared-admin-secret, public Stripe, and offsite-backup URL/key variables. The restore guard must reject startup if any are present; if the Railway project, environment, Beer service, Redis service, or Supabase refs differ; if the authenticated Redis URL is not `redis.railway.internal:6379`; if the public origin is not the exact staging Railway domain; or if either restored path is not exact for the selected phase.
-
-- [ ] Seed a unique 32+ byte sentinel in the exact staging Redis service at `pint-path:restore:<staging-environment-id>:<backup-id>:identity`; configure `RESTORE_REHEARSAL_IDENTITY_SENTINEL` on that Redis service. In its console, bind the operation to the immutable service identity, require the private host and authenticated connection, create the identity only when absent with `SET ... NX`, and compare the stored value server-side without printing the key or secret:
-
-  ```bash
-  set -euo pipefail
-  umask 077
-  test "$RAILWAY_ENVIRONMENT_ID" = 'a4e0f507-d6d3-4df9-a818-ad92c0071a35'
-  test "$RAILWAY_SERVICE_ID" = 'd6351cec-fe04-4a6f-8e05-1cc164ea1e73'
-  test "${RAILWAY_PRIVATE_DOMAIN:?}" = 'redis.railway.internal'
-  test "${REDISHOST:?}" = 'redis.railway.internal'
-  test "${REDISPORT:?}" = '6379'
-  export BACKUP_ID='<recorded-selected-backup-id>'
-  test "$(printf '%s' "$BACKUP_ID" | wc -c | tr -d ' ')" -ge 10
-  export REDIS_KEY_NAMESPACE="pint-path:restore:${RAILWAY_ENVIRONMENT_ID}:${BACKUP_ID}"
-  export IDENTITY_KEY="${REDIS_KEY_NAMESPACE}:identity"
-  export SENTINEL="${RESTORE_REHEARSAL_IDENTITY_SENTINEL:?}"
-  test "$(printf '%s' "$SENTINEL" | wc -c | tr -d ' ')" -ge 32
-  export REDISCLI_AUTH="${REDISPASSWORD:?}"
-  test "$(redis-cli --no-auth-warning -h "$REDISHOST" -p "$REDISPORT" \
-    --user "${REDISUSER:-default}" SET "$IDENTITY_KEY" "$SENTINEL" NX)" = 'OK'
-  test "$(redis-cli --no-auth-warning -h "$REDISHOST" -p "$REDISPORT" \
-    --user "${REDISUSER:-default}" EVAL \
-    'return redis.call("GET", KEYS[1]) == ARGV[1] and 1 or 0' \
-    1 "$IDENTITY_KEY" "$SENTINEL")" = '1'
-  unset REDISCLI_AUTH SENTINEL IDENTITY_KEY
-  ```
-
-  A failed `NX`, identity mismatch, wrong service ID, or wrong host is a hard stop: never overwrite an existing identity. Configure Beer with Railway references only after this proof. The app performs the sentinel comparison and rate-limit mutation atomically on every protected Redis write. Never copy a production Redis URL or sentinel.
-
-- [ ] Start bootstrap only after the full contract above is deployed. In the Beer console, prove the container and new empty volume are the selected resources, and prove neither upload destination exists:
-
-  ```bash
-  set -euo pipefail
-  umask 077
-  export BACKUP_ID="${RESTORE_REHEARSAL_BACKUP_ID:?}"
-  export RESTORE_ATTESTATION_SHA256="${RESTORE_REHEARSAL_RUNTIME_ATTESTATION_SHA256:?}"
-  export EXPECTED_MANIFEST_SHA256="${RESTORE_REHEARSAL_SOURCE_MANIFEST_SHA256:?}"
-  test "$RAILWAY_PROJECT_ID" = '48d8c6cd-1c66-4148-874b-20877f48e1a5'
-  test "$RAILWAY_ENVIRONMENT_ID" = 'a4e0f507-d6d3-4df9-a818-ad92c0071a35'
-  test "$RAILWAY_SERVICE_ID" = '6816c4a2-e392-4ee5-826f-2584cb599ec0'
-  test "$RAILWAY_VOLUME_MOUNT_PATH" = '/app/data'
-  test "$RESTORE_REHEARSAL_REDIS_SERVICE_ID" = 'd6351cec-fe04-4a6f-8e05-1cc164ea1e73'
-  test ! -e "/app/data/incoming-$BACKUP_ID"
-  test ! -e "/app/data/restore-$BACKUP_ID"
-  ```
-
-  Bootstrap must return `200` from `/health` and `/ready`, report `backendServicesInitialized=false` and `databaseOpened=false`, and return `503` for every other route. Compare the volume ID visible in the Railway file browser with the recorded fresh volume ID before uploading. Upload the complete attested directory into exactly `/app/data/incoming-$BACKUP_ID`; never upload over an existing path and never use `--overwrite`.
-
-- [ ] Inside that exact staging Beer container, activate the uploaded directory. The command verifies the incoming directory against the trusted backup ID and both hashes, requires an unused final path on the same volume, holds an exclusive lock, atomically renames, fsyncs, and verifies the activated bytes again. Capture aggregate output and require both successful activation and clean lock removal:
-
-  ```bash
-  set -euo pipefail
-  umask 077
-  export BACKUP_ID="${RESTORE_REHEARSAL_BACKUP_ID:?}"
-  export RESTORE_ATTESTATION_SHA256="${RESTORE_REHEARSAL_RUNTIME_ATTESTATION_SHA256:?}"
-  export EXPECTED_MANIFEST_SHA256="${RESTORE_REHEARSAL_SOURCE_MANIFEST_SHA256:?}"
-  export ACTIVATION_RESULT="$(mktemp /tmp/pint-path-restore-activation.XXXXXX)"
-  trap 'rm -f "$ACTIVATION_RESULT"' EXIT HUP INT TERM
-  npm run --silent data:backup:activate-restore -- \
-    --incoming-root="/app/data/incoming-$BACKUP_ID" \
-    --final-root="/app/data/restore-$BACKUP_ID" \
-    --backup-id="$BACKUP_ID" \
-    --attestation-sha256="$RESTORE_ATTESTATION_SHA256" \
-    --source-manifest-sha256="$EXPECTED_MANIFEST_SHA256" \
-    > "$ACTIVATION_RESULT"
-  jq -e '.activated == true and .activationLockCleanupRequired == false' \
-    "$ACTIVATION_RESULT"
-  ```
-
-  Securely transfer only that aggregate JSON into the operator-host `$EVIDENCE_DIR` through the approved evidence channel, then run `rm -f "$ACTIVATION_RESULT"` before leaving the shell. The output file is opened successfully before activation starts; no `tee` or operator-host path is used inside Railway.
-
-  If the command exits nonzero, its output is lost, or `activationLockCleanupRequired` is true, stop Beer and do not rerun activation or manually remove/rename the lock. Run the read-only verifier separately against each root that exists:
-
-  ```bash
-  set -euo pipefail
-  umask 077
-  export BACKUP_ID="${RESTORE_REHEARSAL_BACKUP_ID:?}"
-  export RESTORE_ATTESTATION_SHA256="${RESTORE_REHEARSAL_RUNTIME_ATTESTATION_SHA256:?}"
-  export EXPECTED_MANIFEST_SHA256="${RESTORE_REHEARSAL_SOURCE_MANIFEST_SHA256:?}"
-  npm run --silent data:backup:verify-runtime -- \
-    --restore-root='<exact-existing-incoming-or-final-root>' \
-    --backup-id="$BACKUP_ID" \
-    --attestation-sha256="$RESTORE_ATTESTATION_SHA256" \
-    --source-manifest-sha256="$EXPECTED_MANIFEST_SHA256"
-  ```
-
-  Apply this decision tree with a second verifier: final exists + verifies and incoming is absent means the rename committed (retain the cleanup warning as evidence, do not rerun activation, and continue only after sign-off); incoming exists + verifies and final is absent means it did not commit (leave the lock untouched and repeat on a fresh volume); both, neither, or any failed verification means quarantine the volume, preserve aggregate evidence, delete that staging volume, and repeat on a fresh volume. Never start active mode from an ambiguous state.
-
-- [ ] Change the phase and both runtime paths together, then redeploy. Active startup must re-run attestation, SQLite integrity/foreign keys, evidence reconciliation, and successful rehearsal-state checks before opening the database:
-
-  ```dotenv
-  RESTORE_REHEARSAL_PHASE=active
-  DATABASE_PATH=/app/data/restore-<backup-id>/pint-path.sqlite
-  SOURCE_EVIDENCE_STORAGE_DIR=/app/data/restore-<backup-id>/source-evidence
-  ```
-- [ ] Confirm anonymous access to every restored page is denied while `/health` and `/ready` remain available to Railway. After the first valid Basic-authentication request, confirm the short-lived Secure/HttpOnly/SameSite=Strict access cookie works in Safari without repeatedly sending a Basic header. Confirm all responses carry `X-Robots-Tag: noindex, nofollow, noarchive` and `Cache-Control: no-store`.
-- [ ] Exercise only the four allowlisted read endpoints: `/api/business/config`, `/api/business/access`, `/api/business/venues`, and `/api/business/price-records`. Confirm map/list prices render from the local restored SQLite copy. Prove every other `/api` path, every mixed-case API prefix, every API `HEAD`, and every mutation returns `503`; browser Supabase configuration is blank; background retention/mission/report jobs do not start; external provider writes are disabled; and public `/ready` exposes only boolean verification state (never backup IDs, hashes, counts, object paths, or credentials) while confirming the restore-staging Supabase read probe and matching staging Redis identity. Keep the detailed backup/attestation/database hashes only in the access-restricted operator evidence. Do not test restored user credentials, admin actions, claims, reports, or private-account flows in this rehearsal.
-- [ ] Confirm Railway still shows exactly one Beer replica and capture sanitized evidence plus actual RPO/RTO. Remove staging public networking, prove the rehearsal URL is no longer reachable, and stop Beer. Keep the exact staging Redis service online only for namespace cleanup in item 1; perform all cleanup from its own console, never from an absent stopped-Beer console. Operate only against recorded IDs, in this order:
-
-  1. In the exact staging Redis service console, require `RAILWAY_ENVIRONMENT_ID=a4e0f507-d6d3-4df9-a818-ad92c0071a35`, `RAILWAY_SERVICE_ID=d6351cec-fe04-4a6f-8e05-1cc164ea1e73`, `REDISHOST=redis.railway.internal`, `REDISPORT=6379`, and authenticated `REDISPASSWORD`. Re-enter the recorded backup ID and construct only `pint-path:restore:$RAILWAY_ENVIRONMENT_ID:$BACKUP_ID`. Use `REDISCLI_AUTH="$REDISPASSWORD" redis-cli` with bounded `SCAN`; store matched names only in a mode-`600` temporary file, reject every returned name that is outside the exact prefix, issue one `UNLINK` per validated name, rescan, require aggregate zero, and delete the temporary file. Do not print names. `FLUSHALL`, `FLUSHDB`, `KEYS *`, and wildcard deletion outside this exact namespace are forbidden. If any ID, namespace, host, authentication, or prefix check differs, abort without deleting.
-  2. Remove only this reviewed staging variable/reference allowlist: `RESTORE_REHEARSAL_ACCESS_PASSWORD`, `RESTORE_REHEARSAL_ACCESS_USERNAME`, `RESTORE_REHEARSAL_PHASE`, `RESTORE_REHEARSAL_BACKUP_ID`, `RESTORE_REHEARSAL_SOURCE_MANIFEST_SHA256`, `RESTORE_REHEARSAL_RUNTIME_ATTESTATION_SHA256`, `RESTORE_REHEARSAL_PRODUCTION_SUPABASE_URL`, `RESTORE_REHEARSAL_BACKUP_SUPABASE_URL`, `RESTORE_REHEARSAL_REDIS_ENVIRONMENT_ID`, `RESTORE_REHEARSAL_REDIS_SERVICE_ID`, `RESTORE_REHEARSAL_REDIS_SENTINEL`, `RESTORE_REHEARSAL_MODE`, `REDIS_KEY_NAMESPACE`, `DATABASE_PATH`, `SOURCE_EVIDENCE_STORAGE_DIR`, `SOURCE_EVIDENCE_SIGNING_SECRET`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, and `SUPABASE_OAUTH_PROVIDERS`. Remove `RESTORE_REHEARSAL_IDENTITY_SENTINEL` from the exact staging Redis service. Do not bulk-clear either service's environment.
-  3. Revoke the exact temporary Supabase secret-key ID recorded at creation, delete its exact local key file, and delete the exact one-shot restore project ref. Project deletion is the purge boundary for its private bucket and database; verify that exact ref is no longer listed and cannot be linked. Do not delete or rotate anything in production or the independent backup project. If a project is ever retained instead, first enumerate the exact attested object set, delete only that set, verify the bucket has zero objects, revoke every restore key, and prove the project is credential-free. Regardless of deletion or retention, run `supabase unlink` and require `supabase/.temp/project-ref` to be absent before continuing.
-  4. Delete the exact recorded staging Beer volume ID, record the deletion request timestamp and Railway's scheduled-destruction timestamp, and verify the service has no volume attached. Railway may retain a recoverable deleted volume for up to 48 hours; after that window, complete a follow-up proving the exact volume can no longer be restored.
-  5. Compare the post-teardown production baseline with the pre-rehearsal evidence: exact production deployment, volume, domains, Supabase ref, independent-backup ref/key identity, and Redis service must be unchanged. These checks are read-only. Remove local restored material only under the approved retention/incident procedure.
-
-  A second verifier must review every exact ID and aggregate zero-count before signing teardown.
-- [ ] Record actual backup age/RPO, restore duration/RTO, rollback target, incident owner, escalation path, and two-person approval.
-
-**Pass:** Backup verification and restore rehearsal exit `0`; functional checks pass; deletion safety passes; production data is untouched; actual RPO/RTO are accepted by the incident owner and second verifier.
-
-**Evidence:** Backup ID; sanitized backup-creation, SDK-download, verification, and staging JSON; manifest SHA-256; restore result; staging functional sheet and job-state screenshot; purge record; measured RPO/RTO; rollback target; and two-person sign-off. Do not retain object-path listings or raw object-level debug output.
+**Evidence:** Recovery IDs and UTC times, logical/Storage/WORM manifest hashes,
+object-lock and writer-denial proof, sanitized Postgres-native restore result,
+RPO/RTO, deletion replay result, resource-identity comparison, purge record,
+rollback target, and two-person sign-off. Do not retain object paths, customer
+data, credentials, or raw debug output.
 
 ## 10. `accessibility_devices`
 
@@ -832,10 +739,17 @@ Stripe charge is evidence for this release.
 - [ ] Confirm the archive contains no Sign in with Apple entitlement, native social-login path, StoreKit code, subscription management, upgrade call-to-action, or external purchase link.
 - [ ] Validate icon and launch appearance on supported small and large physical iPhones.
 - [ ] Create a signed Release archive from the recorded SHA and run Organizer validation. Export a signed IPA with Organizer or `xcodebuild -exportArchive` using a private `ExportOptions.plist`, scan/hash that exact export, resolve all errors/material warnings, then upload the validated build. Record the archive and IPA SHA-256 values without committing signing material.
+- [ ] Prove this is the exact frozen-SHA signed build. The archive, exported IPA,
+  App Store Connect processed build, version/build number, and private release
+  register must all map to the same frozen candidate; unsigned CI or a rebuilt
+  binary cannot substitute.
 - [ ] Scan the signed archive/exported IPA for private keys, service-role secrets, signing passwords, live bearer tokens, unexpected endpoints, and debug configuration before upload; store only a sanitized result.
 - [ ] Capture every required screenshot class using synthetic or approved data.
 - [ ] Provide sanitized reviewer credentials and instructions for member, contributor, and assigned venue-Free manager paths. Do not describe counter/admin, Pro, trial, billing, or reward tooling as iOS features.
 - [ ] Install the processed TestFlight build and run email-authentication, role, permission, photo/location, accessibility, offline/interruption, export/deletion, and device checks on the minimum supported iOS 17 release and the current production iOS release.
+- [ ] Complete external TestFlight/Beta App Review for that exact processed
+  build and close every critical/high beta defect without changing the binary,
+  backend contract, privacy answers, or scope.
 - [ ] On both iOS versions, uninstall/reinstall and perform an encrypted device backup/restore or device-transfer rehearsal. Prove protected sessions/tokens are not restored into an unauthorized usable session and normal reauthentication works.
 - [ ] Before a broad/full-scale release, select a privacy-reviewed production
   crash source with dSYM symbolication and primary/backup alert delivery; tag
@@ -847,16 +761,79 @@ Stripe charge is evidence for this release.
   across seven days and 500 sessions before broad expansion; with a smaller
   sample, remain controlled. Reconcile any processor/SDK with the privacy
   manifest, App Privacy answers, public policy, retention, and provider list.
+- [ ] Select the Australia storefront, choose manual release, configure phased
+  release, submit that exact build for full App Review approval, answer review
+  follow-up without changing scope, and obtain approval (normally **Pending
+  Developer Release**). Keep the approved build held until the coordinated
+  web+iOS launch decision.
 
-**Pass:** The signed TestFlight build maps to the approved source SHA/version, validation is clear, metadata/privacy answers and screenshots are approved, the signed-device matrix passes, and no critical/high issue remains.
+**Pass:** The exact frozen-SHA signed build passes validation, external
+TestFlight/Beta App Review, device/accessibility/privacy checks, and full App
+Review approval; the Australia storefront is selected, manual release and
+phased release are configured, and the approved build held for coordinated
+launch with no critical/high issue.
 
-**Evidence:** App Store Connect build link, SHA/version mapping, artifact hashes, non-secret signing summary, validation result, privacy-answer export, screenshot inventory, TestFlight report, device matrix, and go/no-go approval.
+**Evidence:** App Store Connect build/review link, frozen-SHA/version mapping,
+archive and IPA hashes, non-secret signing summary, validation result,
+privacy-answer export, screenshot inventory, external beta report, device
+matrix, full App Review approval status, Australia storefront selection,
+manual/phased release configuration, held-state proof, and go/no-go approval.
 
-This evidence item approves a signed TestFlight candidate. It does **not** prove public App Store approval. If iOS is part of the public launch, App Review approval, release availability, storefront checks, and the selected phased/manual release state are an additional final no-go condition.
+This item passes only after App Review approval and the manual/phased hold. The
+sequence is: approved and held build → strict pre-launch evidence → coordinated
+manual/phased release → verify Australian storefront availability and install.
+
+## 13. `permanent_staging_cost`
+
+- [ ] Keep the checked-in
+  `ops/railway/permanent-staging-cost-policy.json` and its pure evaluator
+  scaffold-only until a separately reviewed read-only provider collector and
+  receipt binder exist. The current `providerCollectorImplemented=false` and
+  `providerObservationBindingImplemented=false` values are launch stops; never
+  edit a receipt to self-declare those capabilities.
+- [ ] After the candidate is frozen and permanent-staging topology is final,
+  collect one fresh complete inventory and price-or-cap snapshot for each exact
+  provider category: `railway`, `staging-supabase`, and
+  `staging-external-providers`. Bind every snapshot and catalog/cap document by
+  SHA-256 to the candidate and private gate manifest.
+- [ ] For every provider, prove inventory and recurring-upper-bound coverage is
+  complete and each count is zero: unknown resources, unpriced resources,
+  resources shared with another environment, and resources with no enforceable
+  recurring upper bound. Do not subtract promotional credits or negative
+  amounts. Ceiling-round every line to integer USD cents before summing.
+- [ ] Require `totalUpperBoundMonthlyCents <= 5000`. Record the canonical
+  production operational-copy scope as excluded under
+  `separate-production-cost-authority` and disposable restore as excluded under
+  `separate-temporary-spend-authority`, each with separate hashed evidence.
+  They are not permanent-staging costs and cannot be used to dilute its total.
+- [ ] Independently verify the exact frozen candidate, checked-in policy hash,
+  inventory completeness, prices/caps, arithmetic, scope separation, and final
+  manifest hash. Set the evidence item's `costReceipt.observedAt` to the real
+  provider observation time and verify it inside the final 24-hour launch
+  window.
+
+**Pass:** A provider-bound receipt for the frozen candidate is less than 24
+hours old, covers exactly the three required provider categories, has complete
+inventory and upper-bound evidence, reports zero unknown/unpriced/shared/
+unbounded resources, ceiling-sums to at most `5000` integer USD cents, excludes
+both non-staging scopes under their exact separate authorities, and is accepted
+by the deliberately activated reviewed policy and strict validator.
+
+**Evidence:** Gate-specific private manifest; checked-in cost-policy hash;
+provider inventory and price/cap hashes; per-provider integer-cent upper bounds;
+separate production-copy and disposable-restore cost-authority hashes;
+observation timestamp; candidate SHA; arithmetic review; and named independent
+verifier. The public release file contains the matching manifest digest and the
+sanitized `costReceipt`, never credentials, account data, or secret price terms.
+
+The approximately US$46.80/month number in historical planning is a combined
+permanent-staging plus production-operational-copy estimate. It is non-gating,
+not provider-observed, and cannot satisfy this item. No current evidence proves
+the US$50/month permanent-staging-only objective, so this item remains pending.
 
 ## Final closeout
 
-- [ ] Confirm all 12 objects in `docs/release-evidence.json` are `pass`, bound to the one frozen release ID/candidate SHA, and contain the exact gate reference, private-manifest SHA-256, ISO-8601 timestamp, and named verifier/role. Confirm the public and role proofs are less than 24 hours old.
+- [ ] Confirm all 13 objects in `docs/release-evidence.json` are `pass`, bound to the one frozen release ID/candidate SHA, and contain the exact gate reference, private-manifest SHA-256, ISO-8601 timestamp, and named verifier/role. Confirm the public, role, and permanent-staging cost proofs are less than 24 hours old.
 - [ ] Run:
 
   ```bash
@@ -870,12 +847,15 @@ This evidence item approves a signed TestFlight candidate. It does **not** prove
 
   ```bash
   git fetch origin main
-  export RELEASE_SHA="$(git rev-parse origin/main)"
-  export EVIDENCE_DIR="${PINTPATH_EVIDENCE_DIR:-$HOME/.pintpath/launch-evidence/$RELEASE_SHA}"
+  export FINAL_MAIN_SHA="$(git rev-parse origin/main)"
+  [[ "$FINAL_MAIN_SHA" =~ ^[0-9a-f]{40}$ ]]
+  git merge-base --is-ancestor "$CANDIDATE_SHA" "$FINAL_MAIN_SHA"
+  test -z "$(git diff --name-only "$CANDIDATE_SHA..$FINAL_MAIN_SHA" -- . ':(exclude)docs/release-evidence.json')"
+  export EVIDENCE_DIR="${PINTPATH_EVIDENCE_DIR:-$HOME/.pintpath/launch-evidence/$RELEASE_ID/$CANDIDATE_SHA}"
   umask 077
   mkdir -p "$EVIDENCE_DIR"
   chmod 700 "$EVIDENCE_DIR"
-  test "$RELEASE_SHA" = "$(git rev-parse HEAD)"
+  test "$FINAL_MAIN_SHA" = "$(git rev-parse HEAD)"
   test "$(git status --porcelain)" = ""
   ```
 
@@ -886,9 +866,9 @@ This evidence item approves a signed TestFlight candidate. It does **not** prove
   sleep 5
   NATIVE_RUN_ID="$(gh run list --workflow native-apps.yml --branch main \
     --event workflow_dispatch --limit 20 --json databaseId,headSha \
-    | jq -er --arg sha "$RELEASE_SHA" 'map(select(.headSha == $sha)) | first | .databaseId')"
+    | jq -er --arg sha "$FINAL_MAIN_SHA" 'map(select(.headSha == $sha)) | first | .databaseId')"
   gh run watch "$NATIVE_RUN_ID" --exit-status
-  test "$(gh run view "$NATIVE_RUN_ID" --json headSha --jq .headSha)" = "$RELEASE_SHA"
+  test "$(gh run view "$NATIVE_RUN_ID" --json headSha --jq .headSha)" = "$FINAL_MAIN_SHA"
   ```
 
   Record the run ID/URL and require the `ios` and protected
@@ -904,20 +884,35 @@ This evidence item approves a signed TestFlight candidate. It does **not** prove
   sleep 5
   RELEASE_GATE_RUN_ID="$(gh run list --workflow pintpath-release-gate.yml --branch main \
     --event workflow_dispatch --limit 20 --json databaseId,headSha \
-    | jq -er --arg sha "$RELEASE_SHA" 'map(select(.headSha == $sha)) | first | .databaseId')"
+    | jq -er --arg sha "$FINAL_MAIN_SHA" 'map(select(.headSha == $sha)) | first | .databaseId')"
   gh run watch "$RELEASE_GATE_RUN_ID" --exit-status
-  test "$(gh run view "$RELEASE_GATE_RUN_ID" --json headSha --jq .headSha)" = "$RELEASE_SHA"
+  test "$(gh run view "$RELEASE_GATE_RUN_ID" --json headSha --jq .headSha)" = "$FINAL_MAIN_SHA"
   ```
 
   Record the run ID/URL. Retry only the lookup if Actions has not indexed the new run yet.
-- [ ] Download the `pintpath-production-release-gate` artifact and confirm its provider-readiness JSON, authenticated-smoke JSON, strict release-evidence JSON, and tested-SHA file all match the final commit.
+- [ ] Download the `pintpath-production-release-gate` artifact and confirm its
+  permanent-staging sealed-variable metadata JSON, authenticated-smoke JSON,
+  strict release-evidence JSON, and tested-SHA file all match the final commit.
+  Validate the separately captured production and permanent-staging
+  deployed/one-shot provider-readiness receipts from the private evidence pack;
+  the GitHub runner must not regenerate them from duplicated application
+  secrets.
 - [ ] In the release-gate job itself, separately confirm the security-scan and dependency-audit steps passed. Those results are step logs/statuses and are not files in the artifact.
 - [ ] Record the final go/no-go decision, launch owner, rollback target, support escalation, and first-72-hour coverage in the private evidence register.
+- [ ] Only after the strict gate and two-person go/no-go pass, use App Store
+  Connect to manually release the already-approved held build with the configured
+  phased release. Do not upload or select a different binary.
+- [ ] Verify the Australian storefront shows the approved version, complete a
+  clean Australian install/open/sign-in smoke, and record the live storefront
+  URL/time. If propagation is pending, keep the launch announcement on hold;
+  this post-release check does not replace the pre-release App Review evidence.
 
 Broad launch remains **no-go** if any required item is pending/failed, the strict
 command fails, the final-SHA Native Apps dispatch or manual release gate fails,
-the immutable-backup/JWT/submission-deletion/account-bridge/Apple-account/crash gates are not
+the WORM-backup/JWT/submission-deletion/account-bridge/Apple-account/crash gates are not
 proved, a critical/high defect is open, either commercial flag is true, or the
-release owner cannot provide the evidence pack. Public native launch additionally
-remains no-go until App Store review and the intended storefront release are
-live; TestFlight evidence alone authorizes only controlled beta distribution.
+release owner cannot provide the evidence pack. Before release, full App Review
+approval and the configured manual/phased hold are mandatory; after the
+coordinated release action, the Australia storefront/install verification must
+pass before the public launch is announced. TestFlight evidence alone authorizes
+only controlled beta distribution.

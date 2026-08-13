@@ -1,0 +1,68 @@
+{
+  "schemaVersion": "pintpath-permanent-staging-app-deployment-policy/v2",
+  "policyId": "pintpath-permanent-staging-app-source-upload",
+  "activationState": "HARD_DISABLED_REVIEW_REQUIRED",
+  "projectId": "48d8c6cd-1c66-4148-874b-20877f48e1a5",
+  "productionEnvironmentId": "13dab015-df74-45c6-b26f-69323daea99a",
+  "stagingEnvironmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+  "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
+  "railwayCli": {
+    "version": "5.32.0",
+    "absolutePath": "/opt/homebrew/Cellar/railway/5.32.0/bin/railway",
+    "sha256": "26e3e0fd2b59fd9f7b1e891cbc8f3ca9b0266556545f00ba4db3ce754fbc10d1"
+  },
+  "sourceContract": {
+    "candidateBinding": "exact-clean-committed-head",
+    "privateSnapshotRequired": true,
+    "sourceManifestRequired": true,
+    "sourceManifestAlgorithm": "sha256-json-depth-first-bytewise-siblings-path-type-mode-size-content-v1",
+    "railwayConfigPath": "/railway.toml",
+    "railwayConfigSha256": "85dc659ebec2e0132092d917505d71678e92b8441b54bcefc80c6a082e3b967b",
+    "packageLockSha256": "0978ac482e875707a478d0d970fbadb899b8448dc21893ddb0973b5e2f700ecf"
+  },
+  "writeContract": {
+    "mode": "single-source-upload",
+    "transportImplemented": false,
+    "providerNetworkAllowed": false,
+    "maximumWriteAttempts": 1,
+    "sequentialNotAtomic": true,
+    "externalMutationFreezeRequired": true,
+    "autoDeployAllowed": false,
+    "fromSourceAllowed": false,
+    "redeployAllowed": false,
+    "nativeRollbackAllowed": false,
+    "scaleAllowed": false,
+    "domainMutationAllowed": false,
+    "routeMutationAllowed": false,
+    "pitrMutationAllowed": false,
+    "deleteAllowed": false,
+    "variableMutationAllowed": false,
+    "volumeMutationAllowed": false,
+    "resourceCreationAllowed": false
+  },
+  "postflightContract": {
+    "expectedReplicaCount": 1,
+    "expectedDeploymentStatus": "SUCCESS",
+    "expectedDeploymentStopped": false,
+    "deploymentPatchAllowed": false,
+    "requiredRuntimeRoutes": [
+      "/health",
+      "/startup",
+      "/ready"
+    ],
+    "applicationAttestationPolicySha256": "b056b175f981d7b51a9590943e209e82a0dfcbea650de7a4cb5ecf37a67bbdd1"
+  },
+  "spendContract": {
+    "currency": "USD",
+    "maximumRecurringStagingMonthlyCents": 5000,
+    "costPolicyReference": {
+      "schemaVersion": "pintpath-permanent-staging-cost-policy/v1",
+      "policyId": "pintpath-permanent-staging-recurring-cost",
+      "relativePath": "ops/railway/permanent-staging-cost-policy.json",
+      "sha256": "895d5bdcfe0fb05d17b3fa7cab6c525a80f3beacf0ff0cbd1bafdb54c979c8ca"
+    },
+    "preDeploymentCostReceiptRequired": true,
+    "postDeploymentCostReceiptRequired": true,
+    "additionalUnapprovedSpendAllowed": false
+  }
+}

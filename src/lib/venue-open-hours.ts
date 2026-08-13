@@ -265,6 +265,7 @@ export async function getVenueLikelyOpenMap(
           const response = await fetch(
             `${GOOGLE_PLACE_DETAILS_API_URL}/places/${encodeURIComponent(googlePlaceId)}`,
             {
+              redirect: "error",
               headers: {
                 "X-Goog-Api-Key": options.apiKey!,
                 "X-Goog-FieldMask": PLACE_DETAILS_FIELD_MASK,

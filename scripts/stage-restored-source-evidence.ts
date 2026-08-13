@@ -1,21 +1,8 @@
-import path from "node:path";
-
 function argumentValue(name: string): string | null {
   const inline = process.argv.find((value) => value.startsWith(`${name}=`));
   if (inline) return inline.slice(name.length + 1).trim() || null;
   const index = process.argv.indexOf(name);
   return index >= 0 ? process.argv[index + 1]?.trim() || null : null;
-}
-
-function requiredEnvironment(name:
-  | "STAGING_SUPABASE_URL"
-  | "STAGING_SUPABASE_SERVICE_ROLE_KEY"
-  | "SUPABASE_URL"
-  | "OFFSITE_BACKUP_SUPABASE_URL"
-): string {
-  const value = process.env[name]?.trim();
-  if (!value) throw new Error(`${name} is required.`);
-  return value;
 }
 
 async function main(): Promise<void> {
@@ -24,20 +11,14 @@ async function main(): Promise<void> {
   if (!backup || !restore) {
     throw new Error("Pass both --backup=/verified/backup and --restore=/completed/rehearsal.");
   }
-  const stagingSupabaseUrl = requiredEnvironment("STAGING_SUPABASE_URL");
-  const stagingServiceRoleKey = requiredEnvironment("STAGING_SUPABASE_SERVICE_ROLE_KEY");
-  const productionSupabaseUrl = requiredEnvironment("SUPABASE_URL");
-  const offsiteBackupSupabaseUrl = requiredEnvironment("OFFSITE_BACKUP_SUPABASE_URL");
-  const { stageRestoredSourceEvidence } = await import("../src/lib/stage-restored-source-evidence.js");
-  const result = await stageRestoredSourceEvidence({
-    backupPath: path.resolve(backup),
-    restorePath: path.resolve(restore),
-    stagingSupabaseUrl,
-    stagingServiceRoleKey,
-    productionSupabaseUrl,
-    offsiteBackupSupabaseUrl,
-  });
-  process.stdout.write(`${JSON.stringify({ ok: true, ...result }, null, 2)}\n`);
+  // A disposable restore-staging project has not yet been registered in a
+  // repository-owned, candidate-bound authority. The permanent integration
+  // staging project is not an acceptable destination for restored production
+  // evidence. Keep this command blocked before reading a credential or any
+  // backup/restore file until that independent authority exists.
+  throw new Error(
+    "Restore-staging evidence transport is unavailable until a reviewed disposable-project authority is registered.",
+  );
 }
 
 main().catch((error: unknown) => {

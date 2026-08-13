@@ -38,8 +38,16 @@ project README, but Android is not part of the current web plus iOS launch.
 Only public configuration belongs in native builds:
 
 - `PINT_PATH_API_BASE_URL`
-- `SUPABASE_URL`
-- `SUPABASE_ANON_KEY`
+- `SUPABASE_URL` containing the exact reviewed `https://auth.pintpath.au` origin
+- `SUPABASE_ANON_KEY` containing an exact
+  `sb_publishable_[A-Za-z0-9_-]{20,220}` value
+
+Both projects reject other Auth origins, legacy JWTs, `sb_secret_` values,
+malformed keys, and whitespace before configured values can be packaged. Debug
+builds may leave the Supabase fields blank. iOS Release archives and Android
+signed release bundles (`bundleRelease`) require the reviewed origin and
+publishable key; Android's unsigned maintenance `assembleRelease` build may
+leave them blank under its documented CI contract.
 
 Any future Android provider release additionally requires `pintpath://auth-callback` in the Supabase redirect allow list and valid provider-console configuration. Google may be configured for that future release; Apple remains deferred until authorization-token revocation is implemented and tested. Both native password-recovery requests return through the exact HTTPS web callback so it can verify the recovery session before opening password-update mode. The first-release iOS app uses no custom URL scheme; after email confirmation or recovery completes on the web, the user returns to the app and signs in.
 

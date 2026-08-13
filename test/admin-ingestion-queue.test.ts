@@ -3,11 +3,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AdminIngestionQueueRepository } from "../src/db/admin-ingestion-queue.repository.js";
 import { BusinessRepository } from "../src/db/business.repository.js";
+import { PublicPriceRepository } from "../src/db/public-price.repository.js";
+import { VenueInventoryRepository } from "../src/db/venue-inventory.repository.js";
 import { initializeDatabaseSchema } from "../src/db/database.js";
 import type { AdminIngestionStatus } from "../src/db/models.js";
+import { asAsyncSqliteDatabase, type SqlDatabase } from "../src/db/sql-database.js";
 import { AdminService } from "../src/modules/admin/admin.service.js";
 
 let database: BetterSqlite3.Database | null = null;
+let sqlDatabase: SqlDatabase | null = null;
 const JPEG_DATA_URL = `data:image/jpeg;base64,${Buffer.from([
   0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46,
 ]).toString("base64")}`;
@@ -16,16 +20,22 @@ afterEach(() => {
   vi.unstubAllGlobals();
   database?.close();
   database = null;
+  sqlDatabase = null;
 });
 
 function createRepository(): AdminIngestionQueueRepository {
   database = new BetterSqlite3(":memory:");
   initializeDatabaseSchema(database);
-  return new AdminIngestionQueueRepository(database);
+  sqlDatabase = asAsyncSqliteDatabase(database);
+  return new AdminIngestionQueueRepository(sqlDatabase);
 }
 
-function queueSource(repository: AdminIngestionQueueRepository, index: number, status: AdminIngestionStatus = "pending_review") {
-  const item = repository.create({
+async function queueSource(
+  repository: AdminIngestionQueueRepository,
+  index: number,
+  status: AdminIngestionStatus = "pending_review",
+) {
+  const item = await repository.create({
     venueId: `venue-${index}`,
     venueName: `Venue ${index}`,
     sourceType: "source_reference",
@@ -139,25 +149,86 @@ function attachFakeSupabase(
 }
 
 describe("AdminIngestionQueueRepository", () => {
-  it("returns paged ingestion rows with accurate status counts", () => {
+  it("maps native Postgres JSON and numeric result shapes without changing the queue contract", async () => {
+    let preparedSql = "";
+    const sqlDatabase = {
+      dialect: "postgres",
+      prepare(sql: string) {
+        preparedSql = sql;
+        return {
+          run: async () => ({ changes: 0 }),
+          get: async () => ({
+            id: "postgres-ingestion",
+            venueId: "postgres-venue",
+            venueName: "Postgres Venue",
+            sourceType: "source_reference",
+            sourceUrl: "https://example.com/postgres-menu",
+            imageDataUrl: null,
+            hasImageData: 0,
+            imageRetentionExpiresAt: null,
+            imageRedactedAt: null,
+            imageRedactionReason: null,
+            note: null,
+            status: "pending_review",
+            venueNameGuess: null,
+            capturedNotes: null,
+            overallConfidence: "0.95",
+            extractedBeersJson: [{ name: "Native JSON beer" }],
+            reviewBeersJson: null,
+            crawlerFeedbackJson: { outcome: "published", signals: [] },
+            errorMessage: null,
+            createdAt: "2026-08-08T00:00:00.000Z",
+            updatedAt: "2026-08-08T00:00:00.000Z",
+            publishedAt: null,
+            rejectedAt: null,
+          }),
+          all: async () => [],
+        };
+      },
+      exec: async () => undefined,
+      transaction: (work: () => unknown) => async () => work(),
+      close: async () => undefined,
+      metrics: () => ({
+        dialect: "postgres",
+        totalConnections: 1,
+        idleConnections: 1,
+        waitingRequests: 0,
+        completedQueries: 1,
+        failedQueries: 0,
+        transactionFailures: 0,
+        lastQueryDurationMs: 1,
+      }),
+    } as unknown as SqlDatabase;
+
+    const item = await new AdminIngestionQueueRepository(sqlDatabase).getById("postgres-ingestion");
+
+    expect(preparedSql).toContain('venue_id AS "venueId"');
+    expect(item).toEqual(expect.objectContaining({
+      overallConfidence: 0.95,
+      extractedBeers: [{ name: "Native JSON beer" }],
+      crawlerFeedback: { outcome: "published", signals: [] },
+    }));
+  });
+
+  it("returns paged ingestion rows with accurate status counts", async () => {
     const repository = createRepository();
     for (let index = 0; index < 15; index += 1) {
-      queueSource(repository, index);
+      await queueSource(repository, index);
     }
-    queueSource(repository, 99, "rejected");
+    await queueSource(repository, 99, "rejected");
 
-    expect(repository.count("pending_review")).toBe(15);
-    expect(repository.count("rejected")).toBe(1);
-    expect(repository.count()).toBe(16);
+    expect(await repository.count("pending_review")).toBe(15);
+    expect(await repository.count("rejected")).toBe(1);
+    expect(await repository.count()).toBe(16);
 
-    expect(repository.list("pending_review", 5, 0).map((item) => item.venueName)).toEqual([
+    expect((await repository.list("pending_review", 5, 0)).map((item) => item.venueName)).toEqual([
       "Venue 14",
       "Venue 13",
       "Venue 12",
       "Venue 11",
       "Venue 10",
     ]);
-    expect(repository.list("pending_review", 5, 5).map((item) => item.venueName)).toEqual([
+    expect((await repository.list("pending_review", 5, 5)).map((item) => item.venueName)).toEqual([
       "Venue 9",
       "Venue 8",
       "Venue 7",
@@ -166,22 +237,46 @@ describe("AdminIngestionQueueRepository", () => {
     ]);
   });
 
-  it("bulk rejects pending source ingestion rows for quick admin cleanup", () => {
+  it("rolls back async queue mutations when a transaction fails", async () => {
     const repository = createRepository();
-    const first = queueSource(repository, 1);
-    const second = queueSource(repository, 2);
+
+    await expect(repository.transaction(async () => {
+      await repository.create({
+        venueId: "venue-rollback",
+        venueName: "Rollback Venue",
+        sourceType: "source_reference",
+        sourceUrl: "https://example.com/rollback",
+        imageDataUrl: null,
+        note: null,
+        status: "pending_review",
+        venueNameGuess: null,
+        capturedNotes: null,
+        overallConfidence: 0.9,
+        extractedBeers: [],
+        errorMessage: null,
+      });
+      throw new Error("forced async queue rollback");
+    })).rejects.toThrow("forced async queue rollback");
+
+    expect(await repository.count()).toBe(0);
+  });
+
+  it("bulk rejects pending source ingestion rows for quick admin cleanup", async () => {
+    const repository = createRepository();
+    const first = await queueSource(repository, 1);
+    const second = await queueSource(repository, 2);
     const service = new AdminService(repository);
 
-    const result = service.rejectQueuedIngestions({
+    const result = await service.rejectQueuedIngestions({
       ids: [first.id, second.id],
       note: "Fast rejected during admin source cleanup.",
     });
 
     expect(result.rejectedCount).toBe(2);
     expect(result.queueItems.map((item) => item.status)).toEqual(["rejected", "rejected"]);
-    expect(repository.count("pending_review")).toBe(0);
-    expect(repository.count("rejected")).toBe(2);
-    expect(repository.getById(first.id)).toEqual(expect.objectContaining({
+    expect(await repository.count("pending_review")).toBe(0);
+    expect(await repository.count("rejected")).toBe(2);
+    expect(await repository.getById(first.id)).toEqual(expect.objectContaining({
       status: "rejected",
       imageDataUrl: null,
       note: "Fast rejected during admin source cleanup.",
@@ -189,25 +284,25 @@ describe("AdminIngestionQueueRepository", () => {
     }));
   });
 
-  it("prevalidates bulk rejection so a conflicting row leaves every other row untouched", () => {
+  it("prevalidates bulk rejection so a conflicting row leaves every other row untouched", async () => {
     const repository = createRepository();
-    const pending = queueSource(repository, 1);
-    const alreadyRejected = queueSource(repository, 2);
+    const pending = await queueSource(repository, 1);
+    const alreadyRejected = await queueSource(repository, 2);
     const service = new AdminService(repository);
-    service.rejectQueuedIngestion(alreadyRejected.id, { note: "Already reviewed." });
+    await service.rejectQueuedIngestion(alreadyRejected.id, { note: "Already reviewed." });
 
-    expect(() => service.rejectQueuedIngestions({
+    await expect(service.rejectQueuedIngestions({
       ids: [pending.id, alreadyRejected.id],
       note: "Must be all or nothing.",
-    })).toThrow("Every bulk-rejected source must still be pending");
-    expect(repository.getById(pending.id)?.status).toBe("pending_review");
-    expect(repository.getById(alreadyRejected.id)?.status).toBe("rejected");
+    })).rejects.toThrow("Every bulk-rejected source must still be pending");
+    expect((await repository.getById(pending.id))?.status).toBe("pending_review");
+    expect((await repository.getById(alreadyRejected.id))?.status).toBe("rejected");
   });
 
-  it("recovers expired review claims on startup but preserves fresh claims", () => {
+  it("recovers expired review claims on startup but preserves fresh claims", async () => {
     const repository = createRepository();
-    const stale = queueSource(repository, 1);
-    const fresh = queueSource(repository, 2);
+    const stale = await queueSource(repository, 1);
+    const fresh = await queueSource(repository, 2);
     database!.prepare(
       `UPDATE admin_ingestion_queue
        SET status = 'publishing', review_claim_token = 'stale-token',
@@ -221,18 +316,19 @@ describe("AdminIngestionQueueRepository", () => {
        WHERE id = ?`,
     ).run(new Date().toISOString(), fresh.id);
 
-    new AdminService(repository);
+    const service = new AdminService(repository);
+    await service.initializeIngestionQueue();
 
-    expect(repository.getById(stale.id)).toEqual(expect.objectContaining({
+    expect(await repository.getById(stale.id)).toEqual(expect.objectContaining({
       status: "pending_review",
       errorMessage: expect.stringContaining("stale review claim"),
     }));
-    expect(repository.getById(fresh.id)?.status).toBe("publishing");
+    expect((await repository.getById(fresh.id))?.status).toBe("publishing");
   });
 
-  it("redacts completed source images while keeping pending review previews", () => {
+  it("redacts completed source images while keeping pending review previews", async () => {
     const repository = createRepository();
-    const pending = repository.create({
+    const pending = await repository.create({
       venueId: "venue-pending",
       venueName: "Pending Venue",
       sourceType: "menu_photo_upload",
@@ -246,7 +342,7 @@ describe("AdminIngestionQueueRepository", () => {
       extractedBeers: [],
       errorMessage: null,
     });
-    const published = repository.create({
+    const published = await repository.create({
       venueId: "venue-published",
       venueName: "Published Venue",
       sourceType: "menu_photo_upload",
@@ -261,13 +357,13 @@ describe("AdminIngestionQueueRepository", () => {
       errorMessage: null,
     });
 
-    expect(repository.claimPendingReview(
+    expect(await repository.claimPendingReview(
       published.id,
       "publish",
       "test-publish-claim",
       "2026-06-30T00:00:00.000Z",
     )).toBe(true);
-    repository.markPublished(
+    await repository.markPublished(
       published.id,
       "test-publish-claim",
       [],
@@ -287,16 +383,16 @@ describe("AdminIngestionQueueRepository", () => {
       "2026-06-30T00:00:00.000Z",
     );
 
-    expect(repository.getById(pending.id)?.imageDataUrl).toBe(JPEG_DATA_URL);
-    expect(repository.getById(published.id)).toEqual(expect.objectContaining({
+    expect((await repository.getById(pending.id))?.imageDataUrl).toBe(JPEG_DATA_URL);
+    expect(await repository.getById(published.id)).toEqual(expect.objectContaining({
       status: "published",
       imageDataUrl: null,
     }));
   });
 
-  it("keeps image bytes out of queue pages and serves one bounded item on demand", () => {
+  it("keeps image bytes out of queue pages and serves one bounded item on demand", async () => {
     const repository = createRepository();
-    const item = repository.create({
+    const item = await repository.create({
       venueId: "venue-lazy-image",
       venueName: "Lazy Image Venue",
       sourceType: "menu_photo_upload",
@@ -312,14 +408,14 @@ describe("AdminIngestionQueueRepository", () => {
     });
     const service = new AdminService(repository);
 
-    const page = repository.list("pending_review", 12, 0);
+    const page = await repository.list("pending_review", 12, 0);
     expect(page[0]).toEqual(expect.objectContaining({
       id: item.id,
       imageDataUrl: null,
       hasImageData: true,
     }));
     expect(JSON.stringify(page)).not.toContain(JPEG_DATA_URL);
-    expect(service.getQueuedIngestionEvidence(item.id)).toEqual({
+    expect(await service.getQueuedIngestionEvidence(item.id)).toEqual({
       mimeType: "image/jpeg",
       bytes: Buffer.from(JPEG_DATA_URL.split(",")[1]!, "base64"),
     });
@@ -327,12 +423,12 @@ describe("AdminIngestionQueueRepository", () => {
     const oversized = `data:image/jpeg;base64,${Buffer.alloc((6 * 1024 * 1024) + 1).toString("base64")}`;
     database!.prepare("UPDATE admin_ingestion_queue SET image_data_url = ? WHERE id = ?")
       .run(oversized, item.id);
-    expect(() => service.getQueuedIngestionEvidence(item.id)).toThrow("6MB or smaller");
+    await expect(service.getQueuedIngestionEvidence(item.id)).rejects.toThrow("6MB or smaller");
   });
 
-  it("redacts older completed source-review images during schema initialization", () => {
+  it("redacts older completed source-review images during schema initialization", async () => {
     const repository = createRepository();
-    const item = repository.create({
+    const item = await repository.create({
       venueId: "venue-old-complete",
       venueName: "Old Complete Venue",
       sourceType: "menu_photo_upload",
@@ -347,10 +443,10 @@ describe("AdminIngestionQueueRepository", () => {
       errorMessage: null,
     });
 
-    expect(repository.getById(item.id)?.imageDataUrl).toBe(JPEG_DATA_URL);
+    expect((await repository.getById(item.id))?.imageDataUrl).toBe(JPEG_DATA_URL);
     initializeDatabaseSchema(database!);
 
-    expect(repository.getById(item.id)?.imageDataUrl).toBeNull();
+    expect((await repository.getById(item.id))?.imageDataUrl).toBeNull();
   });
 
   it("rejects unsafe admin source image URLs before fetch or OCR", async () => {
@@ -394,7 +490,8 @@ describe("AdminIngestionQueueRepository", () => {
   it("publishes approved source ingestion rows to live map records and removes them from pending review", async () => {
     const repository = createRepository();
     const businessRepository = new BusinessRepository(database!);
-    const queueItem = queueSource(repository, 1);
+    const publicPriceRepository = new PublicPriceRepository(sqlDatabase!);
+    const queueItem = await queueSource(repository, 1);
     const service = new AdminService(
       repository,
       undefined,
@@ -402,7 +499,7 @@ describe("AdminIngestionQueueRepository", () => {
       "venue_menu_captures",
       undefined,
       undefined,
-      database!,
+      sqlDatabase!,
     );
     const { insertedCaptures } = attachFakeSupabase(service, queueItem.venueId);
 
@@ -428,15 +525,15 @@ describe("AdminIngestionQueueRepository", () => {
     expect(result.mapPriceRecordCount).toBe(1);
     expect(result.inventoryBeerCount).toBe(1);
     expect(insertedCaptures).toHaveLength(1);
-    expect(repository.getById(queueItem.id)).toEqual(expect.objectContaining({
+    expect(await repository.getById(queueItem.id)).toEqual(expect.objectContaining({
       status: "published",
       publishedAt: expect.any(String),
     }));
-    expect(repository.count("pending_review")).toBe(0);
-    expect(repository.list("pending_review", 10, 0).map((item) => item.id)).not.toContain(queueItem.id);
-    expect(repository.list("published", 10, 0).map((item) => item.id)).toContain(queueItem.id);
+    expect(await repository.count("pending_review")).toBe(0);
+    expect((await repository.list("pending_review", 10, 0)).map((item) => item.id)).not.toContain(queueItem.id);
+    expect((await repository.list("published", 10, 0)).map((item) => item.id)).toContain(queueItem.id);
 
-    expect(businessRepository.listLatestPriceRecords(10, queueItem.venueId)).toEqual([
+    expect(await publicPriceRepository.listLatestPriceRecords(10, queueItem.venueId)).toEqual([
       expect.objectContaining({
         id: `source-ingestion:${queueItem.id}:0`,
         venueId: queueItem.venueId,
@@ -461,7 +558,7 @@ describe("AdminIngestionQueueRepository", () => {
       source_evidence_reference: `source-ingestion:${queueItem.id}`,
       source_evidence_verified_at: expect.any(String),
     });
-    expect(businessRepository.listBarBeers(queueItem.venueId)).toEqual([
+    expect(await new VenueInventoryRepository(sqlDatabase!).listBarBeers(queueItem.venueId)).toEqual([
       expect.objectContaining({
         id: `admin-reviewed:${queueItem.venueId}:carlton-draft:pint`,
         barId: queueItem.venueId,
@@ -477,7 +574,8 @@ describe("AdminIngestionQueueRepository", () => {
   it("keeps source ingestion pending without local rows when capture history is unavailable", async () => {
     const repository = createRepository();
     const businessRepository = new BusinessRepository(database!);
-    const queueItem = queueSource(repository, 1);
+    const publicPriceRepository = new PublicPriceRepository(sqlDatabase!);
+    const queueItem = await queueSource(repository, 1);
     const service = new AdminService(
       repository,
       undefined,
@@ -485,7 +583,7 @@ describe("AdminIngestionQueueRepository", () => {
       "venue_menu_captures",
       undefined,
       undefined,
-      database!,
+      sqlDatabase!,
     );
     const { insertedCaptures } = attachFakeSupabase(service, queueItem.venueId, {
       menuCaptureError: {
@@ -512,15 +610,15 @@ describe("AdminIngestionQueueRepository", () => {
     })).rejects.toThrow("no live venue data was published");
 
     expect(insertedCaptures).toHaveLength(0);
-    expect(repository.count("pending_review")).toBe(1);
-    expect(repository.getById(queueItem.id)?.status).toBe("pending_review");
-    expect(businessRepository.listLatestPriceRecords(10, queueItem.venueId)).toEqual([]);
-    expect(businessRepository.listBarBeers(queueItem.venueId)).toEqual([]);
+    expect(await repository.count("pending_review")).toBe(1);
+    expect((await repository.getById(queueItem.id))?.status).toBe("pending_review");
+    expect(await publicPriceRepository.listLatestPriceRecords(10, queueItem.venueId)).toEqual([]);
+    expect(await new VenueInventoryRepository(sqlDatabase!).listBarBeers(queueItem.venueId)).toEqual([]);
   });
 
   it("keeps source ingestion pending when priced rows cannot be written to the live map", async () => {
     const repository = createRepository();
-    const queueItem = queueSource(repository, 1);
+    const queueItem = await queueSource(repository, 1);
     const service = new AdminService(
       repository,
       undefined,
@@ -546,17 +644,17 @@ describe("AdminIngestionQueueRepository", () => {
       note: "Verified against source image.",
     })).rejects.toThrow("Live map price database is unavailable");
 
-    expect(repository.getById(queueItem.id)).toEqual(expect.objectContaining({
+    expect(await repository.getById(queueItem.id)).toEqual(expect.objectContaining({
       status: "pending_review",
       publishedAt: null,
       reviewBeers: null,
     }));
-    expect(repository.count("pending_review")).toBe(1);
+    expect(await repository.count("pending_review")).toBe(1);
   });
 
   it("allows only one publisher to claim a review and blocks a concurrent reject", async () => {
     const repository = createRepository();
-    const queueItem = queueSource(repository, 1);
+    const queueItem = await queueSource(repository, 1);
     const service = new AdminService(
       repository,
       undefined,
@@ -564,7 +662,7 @@ describe("AdminIngestionQueueRepository", () => {
       "venue_menu_captures",
       undefined,
       undefined,
-      database!,
+      sqlDatabase!,
     );
     attachFakeSupabase(service, queueItem.venueId);
     const input = {
@@ -582,12 +680,28 @@ describe("AdminIngestionQueueRepository", () => {
       note: "Race-safe publish.",
     };
 
+    let continueVenueLookup: (() => void) | undefined;
+    const venueLookupGate = new Promise<void>((resolve) => {
+      continueVenueLookup = resolve;
+    });
+    const serviceInternals = service as unknown as {
+      getVenueById: (venueId: string) => Promise<unknown>;
+    };
+    const getVenueById = serviceInternals.getVenueById.bind(service);
+    serviceInternals.getVenueById = async (venueId) => {
+      await venueLookupGate;
+      return getVenueById(venueId);
+    };
+
     const firstPublish = service.publishQueuedIngestion(queueItem.id, input);
-    expect(repository.getById(queueItem.id)?.status).toBe("publishing");
-    expect(() => service.rejectQueuedIngestion(queueItem.id, { note: "Losing reject." }))
-      .toThrow("no longer pending review");
+    await vi.waitFor(async () => {
+      expect((await repository.getById(queueItem.id))?.status).toBe("publishing");
+    });
+    await expect(service.rejectQueuedIngestion(queueItem.id, { note: "Losing reject." }))
+      .rejects.toThrow("no longer pending review");
     await expect(service.publishQueuedIngestion(queueItem.id, input))
       .rejects.toThrow("no longer pending review");
+    continueVenueLookup!();
     await expect(firstPublish).resolves.toEqual(expect.objectContaining({
       queueItem: expect.objectContaining({ status: "published" }),
     }));
@@ -595,12 +709,12 @@ describe("AdminIngestionQueueRepository", () => {
     expect(database!.prepare(
       "SELECT count(*) AS count FROM venue_price_records WHERE id LIKE ?",
     ).get(`source-ingestion:${queueItem.id}:%`)).toEqual({ count: 1 });
-    expect(repository.getById(queueItem.id)?.status).toBe("published");
+    expect((await repository.getById(queueItem.id))?.status).toBe("published");
   });
 
   it("keeps an idempotent private snapshot but rolls back all local rows when publishing fails", async () => {
     const repository = createRepository();
-    const queueItem = queueSource(repository, 1);
+    const queueItem = await queueSource(repository, 1);
     const service = new AdminService(
       repository,
       undefined,
@@ -608,7 +722,7 @@ describe("AdminIngestionQueueRepository", () => {
       "venue_menu_captures",
       undefined,
       undefined,
-      database!,
+      sqlDatabase!,
     );
     const { insertedCaptures } = attachFakeSupabase(service, queueItem.venueId);
     const serviceInternals = service as unknown as {
@@ -635,7 +749,7 @@ describe("AdminIngestionQueueRepository", () => {
 
     await expect(service.publishQueuedIngestion(queueItem.id, input))
       .rejects.toThrow("forced local publish failure");
-    expect(repository.getById(queueItem.id)?.status).toBe("pending_review");
+    expect((await repository.getById(queueItem.id))?.status).toBe("pending_review");
     expect(database!.prepare("SELECT count(*) AS count FROM beer_catalog_items WHERE name = ?")
       .get("Rollback Test Pale Ale")).toEqual({ count: 0 });
     expect(insertedCaptures).toHaveLength(1);
@@ -651,24 +765,24 @@ describe("AdminIngestionQueueRepository", () => {
       .get("Rollback Test Pale Ale")).toEqual({ count: 1 });
   });
 
-  it("releases a rejection claim if finalization fails", () => {
+  it("releases a rejection claim if finalization fails", async () => {
     const repository = createRepository();
-    const queueItem = queueSource(repository, 1);
+    const queueItem = await queueSource(repository, 1);
     const service = new AdminService(repository);
     const original = repository.markRejected.bind(repository);
-    repository.markRejected = (() => {
+    repository.markRejected = (async () => {
       throw new Error("forced rejection failure");
     }) as typeof repository.markRejected;
 
-    expect(() => service.rejectQueuedIngestion(queueItem.id, { note: "Failure test." }))
-      .toThrow("forced rejection failure");
-    expect(repository.getById(queueItem.id)?.status).toBe("pending_review");
+    await expect(service.rejectQueuedIngestion(queueItem.id, { note: "Failure test." }))
+      .rejects.toThrow("forced rejection failure");
+    expect((await repository.getById(queueItem.id))?.status).toBe("pending_review");
     repository.markRejected = original;
   });
 
   it("atomically replaces every live row owned by an ingestion on a shorter retry", async () => {
     const repository = createRepository();
-    const queueItem = queueSource(repository, 1);
+    const queueItem = await queueSource(repository, 1);
     const service = new AdminService(
       repository,
       undefined,
@@ -676,7 +790,7 @@ describe("AdminIngestionQueueRepository", () => {
       "venue_menu_captures",
       undefined,
       undefined,
-      database!,
+      sqlDatabase!,
     );
     attachFakeSupabase(service, queueItem.venueId);
     const beer = (name: string, price: number) => ({
@@ -717,11 +831,11 @@ describe("AdminIngestionQueueRepository", () => {
     ).all(queueItem.id)).toEqual([{ beer_name: "Carlton Draught" }]);
   });
 
-  it("hard-caps stale pending review image bytes while preserving review metadata", () => {
+  it("hard-caps stale pending review image bytes while preserving review metadata", async () => {
     const repository = createRepository();
     const staleIds: string[] = [];
     for (let index = 0; index < 125; index += 1) {
-      const item = repository.create({
+      const item = await repository.create({
         venueId: `stale-venue-${index}`,
         venueName: `Stale Venue ${index}`,
         sourceType: "menu_photo_upload",
@@ -737,7 +851,7 @@ describe("AdminIngestionQueueRepository", () => {
       });
       staleIds.push(item.id);
     }
-    const held = repository.create({
+    const held = await repository.create({
       venueId: "held-venue",
       venueName: "Held Venue",
       sourceType: "menu_photo_upload",
@@ -762,21 +876,21 @@ describe("AdminIngestionQueueRepository", () => {
       "UPDATE admin_ingestion_queue SET created_at = '2026-03-01T00:00:00.000Z' WHERE id = ?",
     ).run(held.id);
 
-    const result = serviceForRetention(repository).purgeQueuedIngestionImages("2026-07-14T00:00:00.000Z");
+    const result = await serviceForRetention(repository).purgeQueuedIngestionImages("2026-07-14T00:00:00.000Z");
 
     expect(result).toEqual(expect.objectContaining({
       purged: 125,
       heldForOpenReview: 1,
       pastHardCap: 125,
     }));
-    expect(repository.getById(staleIds[0]!)).toEqual(expect.objectContaining({
+    expect(await repository.getById(staleIds[0]!)).toEqual(expect.objectContaining({
       imageDataUrl: null,
       imageRedactionReason: "open_review_hard_cap",
       sourceUrl: "https://example.com/stale-0.jpg",
       capturedNotes: "OCR notes",
       status: "pending_review",
     }));
-    expect(repository.getById(held.id)?.imageDataUrl).toBe(JPEG_DATA_URL);
+    expect((await repository.getById(held.id))?.imageDataUrl).toBe(JPEG_DATA_URL);
     expect(result.retainedCharacters).toBe(JPEG_DATA_URL.length);
   });
 });

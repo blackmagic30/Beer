@@ -7,6 +7,13 @@ import BetterSqlite3 from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { BusinessRepository } from "../src/db/business.repository.js";
+import { AccountDeletionQueueRepository } from "../src/db/account-deletion-queue.repository.js";
+import { AccountProfilePreferencesRepository } from "../src/db/account-profile-preferences.repository.js";
+import { POSTGRES_MIGRATION_CONTRACT } from "../src/db/postgres-migration-contract.js";
+import { inspectPostgresMigrationSchema } from "../src/db/postgres-migration-schema.js";
+import { PublicVenueDirectoryRepository } from "../src/db/public-venue-directory.repository.js";
+import { PublicPriceRepository } from "../src/db/public-price.repository.js";
+import { asAsyncSqliteDatabase } from "../src/db/sql-database.js";
 import {
   createDatabase,
   CURRENT_DATABASE_SCHEMA_VERSION,
@@ -21,7 +28,7 @@ afterEach(() => {
 });
 
 describe("database schema migration safety", () => {
-  it("backs up schema 13 and adds the encrypted account-deletion completion outbox in schema 15", () => {
+  it("backs up schema 13 and adds the encrypted account-deletion completion outbox", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "pintpath-v13-notice-migration-"));
     roots.push(root);
     const databasePath = path.join(root, "pint-path.sqlite");
@@ -36,7 +43,7 @@ describe("database schema migration safety", () => {
         subscriptionStatus: "free",
         now: "2026-08-03T01:00:00.000Z",
       });
-      repository.createAccountDeletionRequest({
+      await new AccountDeletionQueueRepository(asAsyncSqliteDatabase(legacy)).createAccountDeletionRequest({
         id: "schema-13-deletion-request",
         userId: account.id,
         userMessage: "preserve this request",
@@ -55,7 +62,7 @@ describe("database schema migration safety", () => {
 
     const migrated = createDatabase(databasePath);
     try {
-      expect(migrated.pragma("user_version", { simple: true })).toBe(15);
+      expect(migrated.pragma("user_version", { simple: true })).toBe(CURRENT_DATABASE_SCHEMA_VERSION);
       expect(migrated.pragma("secure_delete", { simple: true })).toBe(1);
       for (const table of [
         "account_deletion_completion_outbox",
@@ -85,7 +92,7 @@ describe("database schema migration safety", () => {
 
     const backupDirectory = path.join(root, "migration-backups");
     const backupName = fs.readdirSync(backupDirectory)
-      .find((name) => name.startsWith("schema-13-to-15-"));
+      .find((name) => name.startsWith(`schema-13-to-${CURRENT_DATABASE_SCHEMA_VERSION}-`));
     expect(backupName).toBeTruthy();
     const backup = new BetterSqlite3(path.join(backupDirectory, backupName!));
     try {
@@ -98,7 +105,7 @@ describe("database schema migration safety", () => {
     }
   });
 
-  it("backs up and upgrades an early schema-14 outbox before adding delivery safeguards", () => {
+  it("backs up and upgrades an early schema-14 outbox before adding delivery safeguards", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "pintpath-v14-outbox-upgrade-"));
     roots.push(root);
     const databasePath = path.join(root, "pint-path.sqlite");
@@ -114,7 +121,7 @@ describe("database schema migration safety", () => {
         subscriptionStatus: "free",
         now: "2026-08-03T01:00:00.000Z",
       });
-      repository.createAccountDeletionRequest({
+      await new AccountDeletionQueueRepository(asAsyncSqliteDatabase(early)).createAccountDeletionRequest({
         id: "early-v14-notice-request",
         userId: account.id,
         userMessage: null,
@@ -169,14 +176,14 @@ describe("database schema migration safety", () => {
         .toEqual(expect.objectContaining({ name: "secret_purge_checkpoint_pending", type: "INTEGER" }));
       expect(columns.find((candidate) => candidate.name === "secret_purge_generation"))
         .toEqual(expect.objectContaining({ name: "secret_purge_generation", type: "INTEGER" }));
-      expect(repaired.pragma("user_version", { simple: true })).toBe(15);
+      expect(repaired.pragma("user_version", { simple: true })).toBe(CURRENT_DATABASE_SCHEMA_VERSION);
     } finally {
       repaired.close();
     }
 
     const backupDirectory = path.join(root, "migration-backups");
     const backupName = fs.readdirSync(backupDirectory)
-      .find((name) => name.startsWith("schema-14-to-15-"));
+      .find((name) => name.startsWith(`schema-14-to-${CURRENT_DATABASE_SCHEMA_VERSION}-`));
     expect(backupName).toBeTruthy();
     const backup = new BetterSqlite3(path.join(backupDirectory, backupName!));
     try {
@@ -197,7 +204,88 @@ describe("database schema migration safety", () => {
     expect(fs.readFileSync(path.join(backupDirectory, backupName!)).includes(backupCiphertextMarker)).toBe(false);
   });
 
-  it("preserves the policy version an account actually consented to when the database reopens", () => {
+  it("separates the deployed schema-11 delivery CAS revision from the schema-16 timestamp", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pintpath-v11-system-state-"));
+    roots.push(root);
+    const databasePath = path.join(root, "pint-path.sqlite");
+    const legacy = createDatabase(databasePath);
+    const timestamp = "2026-08-08T02:03:04.000Z";
+    const legacyRevision = `${timestamp}#123e4567-e89b-42d3-a456-426614174000`;
+    try {
+      legacy.exec("ALTER TABLE system_state DROP COLUMN revision");
+      legacy.prepare(
+        "INSERT INTO system_state (key, value_json, updated_at) VALUES (?, '{}', ?)",
+      ).run("delivery:test", legacyRevision);
+      legacy.pragma("user_version = 11");
+    } finally {
+      legacy.close();
+    }
+
+    const migrated = createDatabase(databasePath);
+    try {
+      expect(migrated.pragma("user_version", { simple: true })).toBe(16);
+      expect(migrated.prepare(
+        "SELECT value_json, updated_at, revision FROM system_state WHERE key = ?",
+      ).get("delivery:test")).toEqual({
+        value_json: "{}",
+        updated_at: timestamp,
+        revision: legacyRevision,
+      });
+      expect(inspectPostgresMigrationSchema(migrated).fingerprint)
+        .toBe(POSTGRES_MIGRATION_CONTRACT.expectedSchemaFingerprint);
+    } finally {
+      migrated.close();
+    }
+
+    const backupDirectory = path.join(root, "migration-backups");
+    const backupName = fs.readdirSync(backupDirectory)
+      .find((name) => name.startsWith("schema-11-to-16-"));
+    expect(backupName).toBeTruthy();
+    const backup = new BetterSqlite3(path.join(backupDirectory, backupName!));
+    try {
+      expect(backup.pragma("user_version", { simple: true })).toBe(11);
+      expect((backup.pragma("table_info(system_state)") as Array<{ name: string }>)
+        .some((column) => column.name === "revision")).toBe(false);
+      expect(backup.prepare(
+        "SELECT updated_at FROM system_state WHERE key = ?",
+      ).get("delivery:test")).toEqual({ updated_at: legacyRevision });
+    } finally {
+      backup.close();
+    }
+  });
+
+  it("rejects an unknown legacy system-state suffix atomically", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pintpath-v15-invalid-system-state-"));
+    roots.push(root);
+    const databasePath = path.join(root, "pint-path.sqlite");
+    const legacy = createDatabase(databasePath);
+    const invalidRevision = "2026-08-08T02:03:04.000Z#not-a-reviewed-uuid";
+    try {
+      legacy.exec("ALTER TABLE system_state DROP COLUMN revision");
+      legacy.prepare(
+        "INSERT INTO system_state (key, value_json, updated_at) VALUES (?, '{}', ?)",
+      ).run("delivery:invalid", invalidRevision);
+      legacy.pragma("user_version = 15");
+    } finally {
+      legacy.close();
+    }
+
+    expect(() => createDatabase(databasePath)).toThrow("invalid legacy delivery revision");
+
+    const unchanged = new BetterSqlite3(databasePath, { fileMustExist: true });
+    try {
+      expect(unchanged.pragma("user_version", { simple: true })).toBe(15);
+      expect((unchanged.pragma("table_info(system_state)") as Array<{ name: string }>)
+        .some((column) => column.name === "revision")).toBe(false);
+      expect(unchanged.prepare(
+        "SELECT updated_at FROM system_state WHERE key = ?",
+      ).get("delivery:invalid")).toEqual({ updated_at: invalidRevision });
+    } finally {
+      unchanged.close();
+    }
+  });
+
+  it("preserves the policy version an account actually consented to when the database reopens", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "pintpath-consent-provenance-"));
     roots.push(root);
     const databasePath = path.join(root, "pint-path.sqlite");
@@ -213,7 +301,7 @@ describe("database schema migration safety", () => {
         subscriptionStatus: "free",
         now: recordedAt,
       });
-      repository.upsertAccountPrivacySettings({
+      await new AccountProfilePreferencesRepository(asAsyncSqliteDatabase(database)).upsertAccountPrivacySettings({
         userId: account.id,
         optionalAnalyticsEnabled: false,
         venueReportInclusionEnabled: false,
@@ -221,6 +309,7 @@ describe("database schema migration safety", () => {
         emailUpdatesEnabled: false,
         consentVersion: "2026-07-12",
         now: recordedAt,
+        expectedUpdatedAt: null,
       });
     } finally {
       database.close();
@@ -240,7 +329,7 @@ describe("database schema migration safety", () => {
     }
   });
 
-  it("opens an attested restore database read-only without changing its bytes across app reads or reopen", () => {
+  it("opens an attested restore database read-only without changing its bytes across app reads or reopen", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "pintpath-read-only-restore-"));
     roots.push(root);
     const databasePath = path.join(root, "pint-path.sqlite");
@@ -262,12 +351,17 @@ describe("database schema migration safety", () => {
         expect(restored.pragma("query_only", { simple: true })).toBe(1);
         expect(restored.pragma("user_version", { simple: true })).toBe(CURRENT_DATABASE_SCHEMA_VERSION);
 
-        const repository = new BusinessRepository(restored);
-        expect(repository.listPublicVenueDirectoryPage({ limit: 20, offset: 0 })).toEqual({
+        const sqlDatabase = asAsyncSqliteDatabase(restored);
+        const publicVenueDirectoryRepository = new PublicVenueDirectoryRepository(sqlDatabase);
+        const publicPriceRepository = new PublicPriceRepository(sqlDatabase);
+        expect(await publicVenueDirectoryRepository.listPublicVenueDirectoryPage({
+          limit: 20,
+          offset: 0,
+        })).toEqual({
           venues: [],
           total: 0,
         });
-        expect(repository.listCurrentPriceRecordPage({ limit: 20 })).toEqual([]);
+        expect(await publicPriceRepository.listCurrentPriceRecordPage({ limit: 20 })).toEqual([]);
         expect(() => restored.prepare("DELETE FROM venue_profiles").run()).toThrow();
       } finally {
         restored.close();
@@ -378,8 +472,8 @@ describe("database schema migration safety", () => {
 
     const migrated = createDatabase(databasePath);
     try {
-      expect(CURRENT_DATABASE_SCHEMA_VERSION).toBe(15);
-      expect(migrated.pragma("user_version", { simple: true })).toBe(15);
+      expect(CURRENT_DATABASE_SCHEMA_VERSION).toBe(16);
+      expect(migrated.pragma("user_version", { simple: true })).toBe(CURRENT_DATABASE_SCHEMA_VERSION);
       expect((migrated.prepare("PRAGMA table_info(auth_sessions)").all() as Array<{ name: string }>)
         .map((column) => column.name)).toContain("provider_session_id_hash");
       expect((migrated.prepare("PRAGMA table_info(accounts)").all() as Array<{ name: string }>)

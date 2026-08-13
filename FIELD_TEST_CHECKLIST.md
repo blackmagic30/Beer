@@ -2,7 +2,13 @@
 
 Use this before showing the app to real Melbourne users.
 
-## 1. Local Or Staging Setup
+Provider deployment is not authorised by this checklist. Until the tracked
+`readiness:railway:mutation-boundary` preflight/write/finally-postflight
+executor exists and passes, use these steps for local testing only; do not set
+Railway variables, use dashboard **Deploy**, enable Git autodeploy, or run an
+ad-hoc Railway deployment.
+
+## 1. Local Setup (staging remains blocked)
 
 - Run `npm install` if dependencies are not installed.
 - Copy `.env.example` to `.env`.

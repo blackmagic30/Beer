@@ -28,7 +28,7 @@ The open items below require external provider work, infrastructure decisions, o
 - Priority: P1
 - Risk: In-memory rate limiting is per-process and weaker when Railway scales beyond one instance.
 - Current status: Redis-backed rate limiting is implemented and production fails closed by default when Redis is missing unless an explicit temporary override is set.
-- Remaining implementation: Provision Redis/Upstash/Railway Redis, set `REDIS_URL`, and smoke-test protected routes in staging.
+- Remaining implementation: Through the tracked Railway mutation-boundary executor, provision Redis/Upstash/Railway Redis, set `REDIS_URL`, and smoke-test protected routes in staging.
 - Why still tracked: Provider provisioning and alerting remain deployment tasks.
 
 ## Formal Supabase RLS Policy Audit

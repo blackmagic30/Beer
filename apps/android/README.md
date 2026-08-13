@@ -4,7 +4,7 @@ Native Kotlin/Jetpack Compose app for Pint Path. The package and source types re
 
 ## Run
 
-1. Install Android Studio, JDK 17, and the Android SDK.
+1. Install Android Studio, JDK 17, and Android SDK Platform 37.
 2. Open `apps/android`.
 3. Copy `local.properties.example` to the ignored `local.properties` only for local overrides.
 4. Sync Gradle and run on a phone or emulator.
@@ -14,12 +14,27 @@ PINT_PATH_API_BASE_URL=http://10.0.2.2:3000
 ```
 
 `10.0.2.2` routes the Android emulator to the host machine.
+Debug builds may use that local backend override. Release embeds a backend origin only when
+`PINT_PATH_API_BASE_URL` is exactly `https://pintpath.au`; otherwise it embeds an empty
+fail-closed value, the non-Debug client refuses requests, and `bundleRelease` rejects the
+configuration without printing it.
+
+Debug builds may leave Supabase configuration blank and use the existing Pint Path backend login.
+When configured, `SUPABASE_URL` must be exactly `https://auth.pintpath.au` and
+`SUPABASE_ANON_KEY` must be an exact `sb_publishable_` key with 20 to 220 URL-safe
+characters. Whitespace, HTTP, credentials, ports, paths, queries, fragments, legacy anon
+JWTs, `sb_secret_` keys, and service-role keys fail Gradle configuration before any build.
+The client repeats the same checks for dynamic server configuration before opening a
+Supabase Auth connection or retaining OAuth PKCE state. A present invalid or incomplete
+server pair never falls back to the embedded pair; an explicit null/empty pair keeps
+external Auth disconnected. No failure includes either value.
 
 ## Current integration
 
 - Email/password signup, login, refresh, password recovery, and logout use Supabase Auth REST endpoints. Recovery emails return through the verified HTTPS `/auth/callback` flow before the browser opens password-update mode.
 - Google and Apple provider-login code uses authorization-code PKCE and the `pintpath://auth-callback` deep link. Android is outside the current launch; launch OAuth is Google-only and Apple must remain disabled until authorization-token revocation is implemented and tested.
 - Supabase access tokens are exchanged at `POST /api/business/auth/supabase-session` for a scoped Pint Path app session.
+- Redirect responses on Pint Path API, report-export, and Supabase Auth requests are not followed, so request bodies and authorization headers are never replayed to a redirect target.
 - Sensitive session/export/deletion actions require a fresh provider sign-in token; a rejected action is never reported as complete.
 - A suspended paid account receives billing-only recovery without an app session, including personal-versus-managed-venue selection when needed.
 - App, Supabase refresh, and Supabase access tokens are AES-GCM encrypted with an Android Keystore key. Session preferences are excluded from cloud backup and device transfer.
@@ -43,7 +58,7 @@ Android currently uses a venue list plus an external Maps handoff rather than bu
 
 ## Signed release bundle
 
-Keep the Play upload keystore outside the repository and secret manager values out of shell history, Gradle properties, build logs, and screenshots. The repository ignores in-tree `.jks` and `.keystore` files as a last line of defence, but an absolute path outside the checkout is required. Use the following zsh subshell in a private terminal; no value literal appears in a command, both passwords use non-echoing prompts, and all four values are cleared on success, failure, or interruption:
+Keep the Play upload keystore outside the repository and secret manager values out of shell history, Gradle properties, build logs, and screenshots. The repository ignores in-tree `.jks` and `.keystore` files as a last line of defence, but an absolute path outside the checkout is required. In the ignored `local.properties`, keep `PINT_PATH_API_BASE_URL` at the exact production origin and place the exact public Supabase origin and publishable key pair; `bundleRelease` accepts no other values. Use the following zsh subshell in a private terminal; no secret value literal appears in a command, both passwords use non-echoing prompts, and all four signing values are cleared on success, failure, or interruption:
 
 ```zsh
 cd apps/android
@@ -86,7 +101,7 @@ The signed bundle is written to `app/build/outputs/bundle/release/app-release.aa
 )
 ```
 
-The interactive commands themselves may remain in shell history, but none contains a secret. Require `jar verified.`, inspect every warning, and confirm the signer certificate is within its validity period and uses approved algorithms. Do not use `jarsigner -strict` as a blind pass/fail gate: the intentionally self-signed Android upload certificate can produce a nonzero strict exit even when archive integrity is valid. Match the SHA-256 certificate fingerprint printed by `keytool` to the Play Console upload certificate and record the AAB SHA-256 beside the source commit. `bundleRelease` refuses before task execution when signing is absent, so it cannot create an unsigned final AAB. Supplying only some signing variables also fails with the missing variable names. The CI validation command below intentionally keeps `assembleRelease` usable without release secrets; its APK is an unsigned build artifact and must never be submitted to Play.
+The interactive commands themselves may remain in shell history, but none contains a secret. Require `jar verified.`, inspect every warning, and confirm the signer certificate is within its validity period and uses approved algorithms. Do not use `jarsigner -strict` as a blind pass/fail gate: the intentionally self-signed Android upload certificate can produce a nonzero strict exit even when archive integrity is valid. Match the SHA-256 certificate fingerprint printed by `keytool` to the Play Console upload certificate and record the AAB SHA-256 beside the source commit. `bundleRelease` refuses before task execution unless `PINT_PATH_API_BASE_URL` is exactly `https://pintpath.au`, `SUPABASE_URL` is exactly `https://auth.pintpath.au`, and `SUPABASE_ANON_KEY` contains an exact `sb_publishable_` key; no configured value is printed by the gates. It still refuses when signing is absent, so it cannot create an unsigned final AAB. Supplying only some signing variables also fails with the missing variable names. The CI validation command below intentionally keeps `assembleRelease` usable without release secrets or public Supabase configuration; its APK is an unsigned build artifact and must never be submitted to Play.
 
 ## Validation
 
@@ -95,4 +110,5 @@ cd apps/android
 ./gradlew --no-daemon lintDebug lintRelease testDebugUnitTest assembleDebug assembleRelease
 ```
 
-CI runs this gate with JDK 17 and an Android SDK.
+CI runs this gate with JDK 17 and Android SDK Platform 37. The app compiles against API 37
+for its AndroidX 1.19/2.11 dependencies and targets API 36 for the current Play requirement.

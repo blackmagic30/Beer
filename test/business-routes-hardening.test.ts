@@ -60,6 +60,19 @@ describe("business route hardening", () => {
     expect(source).toContain('router.post("/submissions/:id/verifications", writeLimiter');
   });
 
+  it("rate limits every account route that performs credential reauthentication", () => {
+    const source = routesSource();
+
+    [
+      'router.post("/auth/logout-all", authLimiter',
+      'router.get("/account/sessions", authLimiter',
+      'router.delete("/account/sessions/:sessionId", writeLimiter',
+      'router.get("/account/export", accountExportLimiter',
+      'router.post("/account/delete-request", writeLimiter',
+      'router.delete("/account/delete-request/:id", writeLimiter',
+    ].forEach((route) => expect(source).toContain(route));
+  });
+
   it("does not let caller-controlled anonymous session ids or auth headers split rate limit buckets", () => {
     const source = routesSource();
     const identityFunction = source.slice(
@@ -120,7 +133,7 @@ describe("business route hardening", () => {
     const source = adminRoutesSource();
 
     expect(source).toContain("function getRequestContext");
-    expect(source).toContain("businessService.requireAdmin(getSessionAuthorization(req), getRequestContext(req));");
+    expect(source).toContain("await businessService.requireAdmin(getSessionAuthorization(req), getRequestContext(req));");
     expect(source).toContain('import { getSessionAuthorization } from "../../lib/session-cookie.js";');
   });
 });

@@ -1,0 +1,31 @@
+{
+  "schemaVersion": "pintpath-permanent-staging-supabase-legacy-key-disable-policy/v1",
+  "policyId": "permanent-staging-legacy-api-key-disable",
+  "activationState": "HARD_DISABLED_REVIEW_REQUIRED",
+  "projects": [
+    {
+      "role": "permanent-staging",
+      "projectRef": "bbfibbadwjxzrcdncavy",
+      "legacyKeyIds": {
+        "anon": null,
+        "serviceRole": null
+      },
+      "reviewRequired": true
+    }
+  ],
+  "disableRequest": {
+    "method": "PUT",
+    "pathTemplate": "/v1/projects/{projectRef}/api-keys/legacy?enabled=false",
+    "exactResponse": {
+      "enabled": false
+    },
+    "maximumAttemptsPerProject": 1,
+    "retriesAllowed": false
+  },
+  "proof": {
+    "beforeEnabledRequired": true,
+    "afterEnabledRequired": false,
+    "oldKeyDenialRequired": true,
+    "ambiguousDenialAction": "STOP_NO_RETRY"
+  }
+}

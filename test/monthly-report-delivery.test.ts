@@ -9,6 +9,8 @@ import {
   runMonthlyReportDelivery,
   scheduleMonthlyReportDelivery,
   type ReportDeliveryRepository,
+  type ReportDeliveryAccountRepository,
+  type ReportDeliveryStateRepository,
   type ReportEmailMessage,
   type ReportEmailProvider,
 } from "../src/lib/monthly-report-delivery.js";
@@ -27,47 +29,89 @@ const baseMessage: ReportEmailMessage = {
   }],
 };
 
-function createRepository(): ReportDeliveryRepository & {
+function createRepository(): ReportDeliveryRepository & ReportDeliveryAccountRepository & {
   states: Map<string, Record<string, unknown>>;
+  stateRepository: ReportDeliveryStateRepository;
   accounts: Map<string, { id: string; email: string; emailVerifiedAt: string | null; ageConfirmedAt: string | null; role: string; status: string }>;
-  assignments: Array<{ userId: string; venueId: string; accessLevel: "manager" | "counter_staff"; status: string }>;
+  assignments: Array<{ id: string; userId: string; venueId: string; accessLevel: "manager" | "counter_staff"; status: string; updatedAt: string }>;
 } {
   const states = new Map<string, Record<string, unknown>>();
   const stateUpdatedAt = new Map<string, string>();
+  const stateRevision = new Map<string, string>();
   const accounts = new Map<string, { id: string; email: string; emailVerifiedAt: string | null; ageConfirmedAt: string | null; role: string; status: string }>([
     ["manager-1", { id: "manager-1", email: "owner@example.com", emailVerifiedAt: "2026-01-01T00:00:00.000Z", ageConfirmedAt: "2026-01-01T00:00:00.000Z", role: "venue_manager", status: "active" }],
     ["counter-1", { id: "counter-1", email: "counter@example.com", emailVerifiedAt: "2026-01-01T00:00:00.000Z", ageConfirmedAt: "2026-01-01T00:00:00.000Z", role: "venue_manager", status: "active" }],
     ["unverified-1", { id: "unverified-1", email: "unverified@example.com", emailVerifiedAt: null, ageConfirmedAt: "2026-01-01T00:00:00.000Z", role: "venue_manager", status: "active" }],
   ]);
-  const assignments: Array<{ userId: string; venueId: string; accessLevel: "manager" | "counter_staff"; status: string }> = [
-    { userId: "manager-1", venueId: "venue-1", accessLevel: "manager", status: "active" },
-    { userId: "counter-1", venueId: "venue-1", accessLevel: "counter_staff", status: "active" },
-    { userId: "unverified-1", venueId: "venue-1", accessLevel: "manager", status: "active" },
+  const assignments: Array<{ id: string; userId: string; venueId: string; accessLevel: "manager" | "counter_staff"; status: string; updatedAt: string }> = [
+    { id: "assignment-manager-1", userId: "manager-1", venueId: "venue-1", accessLevel: "manager", status: "active", updatedAt: "2026-07-02T00:00:00.000Z" },
+    { id: "assignment-counter-1", userId: "counter-1", venueId: "venue-1", accessLevel: "counter_staff", status: "active", updatedAt: "2026-07-02T00:00:00.000Z" },
+    { id: "assignment-unverified-1", userId: "unverified-1", venueId: "venue-1", accessLevel: "manager", status: "active", updatedAt: "2026-07-02T00:00:00.000Z" },
   ];
+
+  let revisionSequence = 0;
+  const nextRevision = (now: string) => `${now}#test-${++revisionSequence}`;
+  const stateRepository: ReportDeliveryStateRepository = {
+    async get<T extends object>(key: string) {
+      const value = states.get(key);
+      return value ? {
+        value: structuredClone(value) as T,
+        updatedAt: stateUpdatedAt.get(key) ?? "2026-07-02T00:00:00.000Z",
+        revision: stateRevision.get(key) ?? "legacy-revision",
+      } : null;
+    },
+    async set<T extends object>(key: string, value: T, now: string) {
+      const revision = nextRevision(now);
+      states.set(key, structuredClone(value) as Record<string, unknown>);
+      stateUpdatedAt.set(key, now);
+      stateRevision.set(key, revision);
+      return { value: structuredClone(value), updatedAt: now, revision };
+    },
+    async compareAndSet<T extends object>(key: string, expectedRevision: string | null, value: T, now: string) {
+      const currentRevision = states.has(key)
+        ? stateRevision.get(key) ?? "legacy-revision"
+        : null;
+      if (currentRevision !== expectedRevision) return null;
+      const revision = nextRevision(now);
+      states.set(key, structuredClone(value) as Record<string, unknown>);
+      stateUpdatedAt.set(key, now);
+      stateRevision.set(key, revision);
+      return { value: structuredClone(value), updatedAt: now, revision };
+    },
+    async acquireLease(input) {
+      const current = states.get(input.key);
+      const leaseUntil = typeof current?.leaseUntil === "string" ? current.leaseUntil : null;
+      if (leaseUntil && leaseUntil > input.now) return null;
+      const value = {
+        owner: input.owner,
+        leaseToken: input.leaseToken,
+        leaseUntil: input.leaseUntil,
+        acquiredAt: input.now,
+      };
+      return this.set(input.key, value, input.now);
+    },
+    async releaseLease(input) {
+      const current = states.get(input.key);
+      if (current?.owner !== input.owner || current.leaseToken !== input.leaseToken) return null;
+      return this.set(input.key, {
+        owner: input.owner,
+        leaseToken: input.leaseToken,
+        leaseUntil: input.now,
+        releasedAt: input.now,
+      }, input.now);
+    },
+  };
 
   return {
     states,
+    stateRepository,
     accounts,
     assignments,
-    listVenueManagerAssignments: (input) => assignments.filter((assignment) => !input.venueId || assignment.venueId === input.venueId),
-    getAccountById: (id) => accounts.get(id) ?? null,
-    getSystemState<T extends Record<string, unknown>>(key: string) {
-      const value = states.get(key);
-      return value ? { value: value as T, updatedAt: stateUpdatedAt.get(key) ?? "2026-07-02T00:00:00.000Z" } : null;
-    },
-    setSystemState(key, value, now) {
-      states.set(key, structuredClone(value));
-      stateUpdatedAt.set(key, now);
-    },
-    compareAndSetSystemState(key, expectedUpdatedAt, value, now) {
-      const currentUpdatedAt = states.has(key)
-        ? stateUpdatedAt.get(key) ?? "2026-07-02T00:00:00.000Z"
-        : null;
-      if (currentUpdatedAt !== expectedUpdatedAt) return false;
-      states.set(key, structuredClone(value));
-      stateUpdatedAt.set(key, now);
-      return true;
-    },
+    listVenueAssignments: async (input) => ({
+      assignments: assignments.filter((assignment) => assignment.venueId === input.venueId && assignment.status === input.status),
+      nextCursor: null,
+    }),
+    getAccountById: async (id) => accounts.get(id) ?? null,
   };
 }
 
@@ -155,8 +199,8 @@ describe("monthly report delivery job", () => {
       status: "active",
     });
     repository.assignments.push(
-      { userId: "wrong-role", venueId: "venue-1", accessLevel: "manager", status: "active" },
-      { userId: "no-age", venueId: "venue-1", accessLevel: "manager", status: "active" },
+      { id: "assignment-wrong-role", userId: "wrong-role", venueId: "venue-1", accessLevel: "manager", status: "active", updatedAt: "2026-07-02T00:00:00.000Z" },
+      { id: "assignment-no-age", userId: "no-age", venueId: "venue-1", accessLevel: "manager", status: "active", updatedAt: "2026-07-02T00:00:00.000Z" },
     );
     const send = vi.fn(async () => ({ id: "email-123" }));
     const provider: ReportEmailProvider = { mode: "resend", send };
@@ -174,6 +218,8 @@ describe("monthly report delivery job", () => {
     const first = await runMonthlyReportDelivery({
       generator,
       repository,
+      accountRepository: repository,
+      stateRepository: repository.stateRepository,
       provider,
       publicBaseUrl: "https://pintpath.au",
       from: "Pint Path <reports@pintpath.au>",
@@ -184,6 +230,8 @@ describe("monthly report delivery job", () => {
     const second = await runMonthlyReportDelivery({
       generator,
       repository,
+      accountRepository: repository,
+      stateRepository: repository.stateRepository,
       provider,
       publicBaseUrl: "https://pintpath.au",
       from: "Pint Path <reports@pintpath.au>",
@@ -226,6 +274,8 @@ describe("monthly report delivery job", () => {
         }),
       },
       repository,
+      accountRepository: repository,
+      stateRepository: repository.stateRepository,
       provider: null,
       publicBaseUrl: "https://pintpath.au",
       from: "Pint Path <reports@pintpath.au>",
@@ -240,12 +290,11 @@ describe("monthly report delivery job", () => {
 
   it("does not scrub configured recipients during a dry run", async () => {
     const repository = createRepository();
-    repository.getVenueReportDeliverySettings = vi.fn(() => ({
+    repository.states.set("venue-report-delivery:venue-1", {
       enabled: true,
       recipients: ["owner@example.com", "former-manager@example.com"],
-      configured: true,
-    }));
-    repository.setVenueReportDeliverySettings = vi.fn();
+    });
+    const stateWrite = vi.spyOn(repository.stateRepository, "set");
 
     const result = await runMonthlyReportDelivery({
       generator: {
@@ -255,6 +304,8 @@ describe("monthly report delivery job", () => {
         }),
       },
       repository,
+      accountRepository: repository,
+      stateRepository: repository.stateRepository,
       provider: null,
       publicBaseUrl: "https://pintpath.au",
       from: "Pint Path <reports@pintpath.au>",
@@ -264,8 +315,8 @@ describe("monthly report delivery job", () => {
     });
 
     expect(result).toMatchObject({ dryRun: true, eligibleRecipientCount: 1, deliveredCount: 0 });
-    expect(repository.setVenueReportDeliverySettings).not.toHaveBeenCalled();
-    expect(repository.states.size).toBe(0);
+    expect(stateWrite).not.toHaveBeenCalled();
+    expect(repository.states.size).toBe(1);
   });
 
   it("rejects invalid calendar months before generating a report", async () => {
@@ -275,6 +326,8 @@ describe("monthly report delivery job", () => {
     await expect(runMonthlyReportDelivery({
       generator,
       repository,
+      accountRepository: repository,
+      stateRepository: repository.stateRepository,
       provider: null,
       publicBaseUrl: "https://pintpath.au",
       from: "Pint Path <reports@pintpath.au>",
@@ -285,6 +338,8 @@ describe("monthly report delivery job", () => {
     await expect(runMonthlyReportDelivery({
       generator,
       repository,
+      accountRepository: repository,
+      stateRepository: repository.stateRepository,
       provider: null,
       publicBaseUrl: "https://pintpath.au",
       from: "Pint Path <reports@pintpath.au>",
@@ -313,6 +368,8 @@ describe("monthly report delivery job", () => {
         }),
       },
       repository,
+      accountRepository: repository,
+      stateRepository: repository.stateRepository,
       provider,
       publicBaseUrl: "https://pintpath.au",
       from: "Pint Path <reports@pintpath.au>",
@@ -339,7 +396,7 @@ describe("monthly report delivery job", () => {
       scope: "all",
       generatedAt: "2026-07-02T00:00:00.000Z",
       updatedAt: "2026-07-02T00:00:00.000Z",
-      completedAt: null,
+      completedAt: "2026-07-02T00:05:00.000Z",
       generatedCount: 1,
       items: {
         [actualItemKey]: {
@@ -353,6 +410,18 @@ describe("monthly report delivery job", () => {
         },
       },
     });
+    repository.states.set(
+      `delivery:venue-monthly-report:recipient:resend:2026-06:${actualItemKey}`,
+      {
+        venueId: "venue-1",
+        recipientKey: actualItemKey,
+        status: "sending",
+        startedAt: "2026-07-02T00:00:00.000Z",
+        completedAt: null,
+        providerMessageId: null,
+        error: null,
+      },
+    );
 
     const result = await runMonthlyReportDelivery({
       generator: {
@@ -362,6 +431,8 @@ describe("monthly report delivery job", () => {
         }),
       },
       repository,
+      accountRepository: repository,
+      stateRepository: repository.stateRepository,
       provider,
       publicBaseUrl: "https://pintpath.au",
       from: "Pint Path <reports@pintpath.au>",
@@ -373,6 +444,45 @@ describe("monthly report delivery job", () => {
     expect(result).toMatchObject({ uncertainCount: 1, skippedPreviouslyProcessedCount: 1 });
     expect(provider.send).not.toHaveBeenCalled();
     expect(JSON.stringify([...repository.states.values()])).toContain("reconcile it before retrying");
+  });
+
+  it("ignores a stale v3 completed summary and derives valid work from recipient ledgers", async () => {
+    const repository = createRepository();
+    repository.assignments.splice(1);
+    repository.states.set("delivery:venue-monthly-report:resend:2026-06:all", {
+      version: 3,
+      month: "2026-06",
+      providerMode: "resend",
+      scope: "all",
+      generatedAt: "2026-07-02T00:00:00.000Z",
+      updatedAt: "2026-07-02T00:00:00.000Z",
+      completedAt: "2026-07-02T00:05:00.000Z",
+      generatedCount: 1,
+      items: {},
+    });
+    const send = vi.fn(async () => ({ id: "sent-despite-stale-summary" }));
+
+    const result = await runMonthlyReportDelivery({
+      generator: {
+        generateScheduledVenueMonthlyReports: () => ({
+          generatedCount: 1,
+          reports: [{ barId: "venue-1", month: "2026-06", data: { venue: { name: "Report Hotel" } } }],
+        }),
+      },
+      repository,
+      accountRepository: repository,
+      stateRepository: repository.stateRepository,
+      provider: { mode: "resend", send },
+      publicBaseUrl: "https://pintpath.au",
+      from: "Pint Path <reports@pintpath.au>",
+      timezone: "Australia/Melbourne",
+      month: "2026-06",
+      now: new Date("2026-07-02T01:00:00.000Z"),
+    });
+
+    expect(result).toMatchObject({ deliveredCount: 1, alreadyCompleted: false });
+    expect(send).toHaveBeenCalledOnce();
+    expect(repository.states.get(result.stateKey)).toEqual(expect.objectContaining({ version: 4 }));
   });
 
   it("keeps the month incomplete until an assigned manager verifies their email", async () => {
@@ -389,6 +499,8 @@ describe("monthly report delivery job", () => {
     const common = {
       generator,
       repository,
+      accountRepository: repository,
+      stateRepository: repository.stateRepository,
       provider: { mode: "resend" as const, send },
       publicBaseUrl: "https://pintpath.au",
       from: "Pint Path <reports@pintpath.au>",
@@ -422,10 +534,12 @@ describe("monthly report delivery job", () => {
       status: "active",
     });
     repository.assignments.push({
+      id: "assignment-manager-2-venue-2",
       userId: "manager-2",
       venueId: "venue-2",
       accessLevel: "manager",
       status: "active",
+      updatedAt: "2026-07-02T00:00:00.000Z",
     });
     const generator = {
       generateScheduledVenueMonthlyReports: vi.fn(({ venueId }: { venueId: string | null }) => ({
@@ -441,6 +555,8 @@ describe("monthly report delivery job", () => {
     const common = {
       generator,
       repository,
+      accountRepository: repository,
+      stateRepository: repository.stateRepository,
       provider: { mode: "resend" as const, send },
       publicBaseUrl: "https://pintpath.au",
       from: "Pint Path <reports@pintpath.au>",
@@ -471,6 +587,8 @@ describe("monthly report delivery job", () => {
         }),
       },
       repository,
+      accountRepository: repository,
+      stateRepository: repository.stateRepository,
       provider: { mode: "resend" as const, send },
       publicBaseUrl: "https://pintpath.au",
       from: "Pint Path <reports@pintpath.au>",
@@ -492,7 +610,64 @@ describe("monthly report delivery job", () => {
     expect(send).toHaveBeenCalledTimes(1);
   });
 
-  it("removes superseded rejected recipients when a manager changes verified email", async () => {
+  it("CAS-merges summary items when overlapping workers process different recipients", async () => {
+    const repository = createRepository();
+    repository.assignments.splice(1);
+    repository.accounts.set("manager-2", {
+      id: "manager-2",
+      email: "second-owner@example.com",
+      emailVerifiedAt: "2026-01-01T00:00:00.000Z",
+      ageConfirmedAt: "2026-01-01T00:00:00.000Z",
+      role: "venue_manager",
+      status: "active",
+    });
+    repository.assignments.push({
+      id: "assignment-manager-2-venue-1",
+      userId: "manager-2",
+      venueId: "venue-1",
+      accessLevel: "manager",
+      status: "active",
+      updatedAt: "2026-07-02T00:00:00.000Z",
+    });
+    let releaseFirst!: (value: { id: string }) => void;
+    const send = vi.fn((message: ReportEmailMessage) => message.to === "owner@example.com"
+      ? new Promise<{ id: string }>((resolve) => { releaseFirst = resolve; })
+      : Promise.resolve({ id: "second-recipient-message" }));
+    const common = {
+      generator: {
+        generateScheduledVenueMonthlyReports: () => ({
+          generatedCount: 1,
+          reports: [{ barId: "venue-1", month: "2026-06", data: { venue: { name: "Report Hotel" } } }],
+        }),
+      },
+      repository,
+      accountRepository: repository,
+      stateRepository: repository.stateRepository,
+      provider: { mode: "resend" as const, send },
+      publicBaseUrl: "https://pintpath.au",
+      from: "Pint Path <reports@pintpath.au>",
+      timezone: "Australia/Melbourne",
+      month: "2026-06",
+    };
+
+    const firstWorker = runMonthlyReportDelivery(common);
+    await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+    const secondWorker = runMonthlyReportDelivery(common);
+    await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(2));
+    await expect(secondWorker).resolves.toMatchObject({ deliveredCount: 1, inProgressCount: 1 });
+    releaseFirst({ id: "first-recipient-message" });
+    await expect(firstWorker).resolves.toMatchObject({ deliveredCount: 1 });
+
+    const summary = repository.states.get("delivery:venue-monthly-report:resend:2026-06:all");
+    expect(summary).toEqual(expect.objectContaining({ version: 4 }));
+    expect(Object.values((summary?.items ?? {}) as Record<string, Record<string, unknown>>))
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({ status: "delivered", providerMessageId: "first-recipient-message" }),
+        expect.objectContaining({ status: "delivered", providerMessageId: "second-recipient-message" }),
+      ]));
+  });
+
+  it("delivers to a replacement verified address without a stale rejected summary blocking it", async () => {
     const repository = createRepository();
     repository.assignments.splice(1);
     const send = vi.fn(async (message: ReportEmailMessage) => {
@@ -509,6 +684,8 @@ describe("monthly report delivery job", () => {
         }),
       },
       repository,
+      accountRepository: repository,
+      stateRepository: repository.stateRepository,
       provider: { mode: "resend" as const, send },
       publicBaseUrl: "https://pintpath.au",
       from: "Pint Path <reports@pintpath.au>",
@@ -523,7 +700,12 @@ describe("monthly report delivery job", () => {
 
     const batchState = [...repository.states.entries()]
       .find(([key]) => key === "delivery:venue-monthly-report:resend:2026-06:all")?.[1];
-    expect(Object.values((batchState?.items ?? {}) as Record<string, unknown>)).toHaveLength(1);
+    expect(Object.values((batchState?.items ?? {}) as Record<string, unknown>)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ status: "rejected" }),
+        expect.objectContaining({ status: "delivered" }),
+      ]),
+    );
     expect(send).toHaveBeenCalledTimes(2);
   });
 
@@ -533,6 +715,8 @@ describe("monthly report delivery job", () => {
     const send = vi.fn(async () => ({ id: "must-not-send" }));
     const common = {
       repository,
+      accountRepository: repository,
+      stateRepository: repository.stateRepository,
       provider: { mode: "resend" as const, send },
       publicBaseUrl: "https://pintpath.au",
       from: "Pint Path <reports@pintpath.au>",
@@ -585,7 +769,7 @@ describe("monthly report schedule", () => {
     })).toBe(true);
   });
 
-  it("generates the previous completed Melbourne month only once after it is due", async () => {
+  it("rechecks recipient ledgers at the same scheduler millisecond while sending only once", async () => {
     const repository = createRepository();
     repository.assignments.splice(2, 1);
     const generator = {
@@ -598,6 +782,8 @@ describe("monthly report schedule", () => {
     const scheduler = scheduleMonthlyReportDelivery({
       generator,
       repository,
+      accountRepository: repository,
+      stateRepository: repository.stateRepository,
       provider: { mode: "resend", send },
       publicBaseUrl: "https://pintpath.au",
       from: "Pint Path <reports@pintpath.au>",
@@ -605,6 +791,9 @@ describe("monthly report schedule", () => {
       scheduleDay: 2,
       scheduleHour: 9,
       checkIntervalMinutes: 60,
+      leaseKey: "lease:monthly-report-test",
+      leaseOwner: "test-worker",
+      leaseDurationMs: 55 * 60 * 1_000,
       initialDelayMs: 60_000,
       now: () => new Date("2026-07-14T00:00:00.000Z"),
     });
@@ -613,7 +802,7 @@ describe("monthly report schedule", () => {
     await scheduler.runNow();
     scheduler.stop();
 
-    expect(generator.generateScheduledVenueMonthlyReports).toHaveBeenCalledTimes(1);
+    expect(generator.generateScheduledVenueMonthlyReports).toHaveBeenCalledTimes(2);
     expect(generator.generateScheduledVenueMonthlyReports).toHaveBeenCalledWith({
       month: "2026-06",
       venueId: null,
@@ -636,6 +825,8 @@ describe("monthly report schedule", () => {
     const scheduler = scheduleMonthlyReportDelivery({
       generator,
       repository,
+      accountRepository: repository,
+      stateRepository: repository.stateRepository,
       provider: { mode: "resend", send },
       publicBaseUrl: "https://pintpath.au",
       from: "Pint Path <reports@pintpath.au>",
@@ -643,6 +834,9 @@ describe("monthly report schedule", () => {
       scheduleDay: 2,
       scheduleHour: 9,
       checkIntervalMinutes: 60,
+      leaseKey: "lease:monthly-report-status-test",
+      leaseOwner: "test-worker",
+      leaseDurationMs: 55 * 60 * 1_000,
       initialDelayMs: 60_000,
       now: () => new Date("2026-07-14T00:00:00.000Z"),
       onStatus: () => {

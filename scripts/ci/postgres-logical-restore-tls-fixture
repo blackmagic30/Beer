@@ -1,0 +1,372 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Create the smallest deterministic stand-in for Railway's frozen
+# localhost-CA transport: one disposable fd12 Docker route and one private CA
+# whose server certificate authenticates the fixed TLS name "localhost".
+readonly FIXTURE_PREFIX="pintpath-postgres-logical-restore-ci"
+readonly NETWORK_PREFIX="pintpath-pg17-logical-restore"
+readonly IPV6_SUBNET="fd12:7069:6e74:7061::/64"
+readonly IPV6_ADDRESS="fd12:7069:6e74:7061::17"
+readonly CONTAINER_TLS_DIRECTORY="/var/lib/postgresql/pintpath-ci-logical-restore-tls"
+readonly CONTAINER_SERVER_CERT="$CONTAINER_TLS_DIRECTORY/server.crt"
+readonly CONTAINER_SERVER_KEY="$CONTAINER_TLS_DIRECTORY/server.key"
+readonly NETWORK_FIXTURE_LABEL="com.pintpath.ci.fixture"
+readonly NETWORK_FIXTURE_LABEL_VALUE="postgres-logical-restore-v1"
+readonly NETWORK_CONTAINER_LABEL="com.pintpath.ci.container"
+readonly BASELINE_SSL_SETTINGS="off|server.crt|server.key"
+setup_fixture_root=""
+setup_cleanup_armed="false"
+
+fail() {
+  printf '%s\n' "postgres_logical_restore_tls_fixture_failed" >&2
+  exit 1
+}
+
+validate_container_id() {
+  [[ "$1" =~ ^[0-9a-f]{12,64}$ ]]
+}
+
+validate_network_name() {
+  [[ "$1" =~ ^${NETWORK_PREFIX}-[0-9a-f]{12}$ ]]
+}
+
+validate_state_file() {
+  [[ -f "$state_file" && ! -L "$state_file" ]] || return 1
+  [[ "$(stat -c '%u:%a:%h' "$state_file")" == "$(id -u):600:1" ]] || return 1
+  local state_size
+  state_size=$(stat -c '%s' "$state_file") || return 1
+  [[ "$state_size" =~ ^[1-9][0-9]{0,3}$ ]] || return 1
+  (( state_size <= 4096 )) || return 1
+}
+
+write_state_receipt() {
+  local fixture_root=$1
+  local network_name=$2
+  local network_id=$3
+  local container_id=$4
+  local update_existing=$5
+  local next_state_file="$state_file.next"
+  [[ ! -e "$next_state_file" && ! -L "$next_state_file" ]] || return 1
+  if [[ "$update_existing" == "true" ]]; then
+    validate_state_file || return 1
+  else
+    [[ ! -e "$state_file" && ! -L "$state_file" ]] || return 1
+  fi
+  if ! (set -o noclobber; printf '%s\n%s\n%s\n%s\n' \
+    "$fixture_root" "$network_name" "$network_id" "$container_id" > "$next_state_file"); then
+    rm -f -- "$next_state_file"
+    return 1
+  fi
+  if ! chmod 0600 "$next_state_file" \
+    || [[ "$(stat -c '%u:%a:%h' "$next_state_file")" != "$(id -u):600:1" ]] \
+    || ! mv -f -- "$next_state_file" "$state_file"; then
+    rm -f -- "$next_state_file"
+    return 1
+  fi
+  validate_state_file
+}
+
+fixture_paths() {
+  runner_temp=${RUNNER_TEMP:-}
+  [[ "$runner_temp" == /* ]] || fail
+  runner_temp=$(realpath -e -- "$runner_temp")
+  [[ -d "$runner_temp" && ! -L "$runner_temp" ]] || fail
+  state_file="$runner_temp/$FIXTURE_PREFIX.state"
+}
+
+remove_container_keys() {
+  local container_id=$1
+  if ! docker inspect "$container_id" >/dev/null 2>&1; then
+    return 1
+  fi
+  docker exec --user root "$container_id" sh -c '
+    set -eu
+    directory=/var/lib/postgresql/pintpath-ci-logical-restore-tls
+    if [ -d "$directory" ]; then
+      rm -f -- "$directory/server.crt" "$directory/server.key"
+      rmdir -- "$directory"
+    fi
+  '
+}
+
+container_tls_directory_absent() {
+  local container_id=$1
+  docker exec --user root "$container_id" test ! -e "$CONTAINER_TLS_DIRECTORY"
+}
+
+network_absent() {
+  local network_name=$1
+  local network_names
+  network_names=$(docker network ls --format '{{.Name}}') || return 1
+  local candidate
+  while IFS= read -r candidate; do
+    [[ "$candidate" != "$network_name" ]] || return 1
+  done <<< "$network_names"
+  return 0
+}
+
+remove_network() {
+  local network_name=$1
+  local container_id=$2
+  local expected_network_id=${3:-}
+  if ! docker network inspect "$network_name" >/dev/null 2>&1; then
+    network_absent "$network_name"
+    return $?
+  fi
+  local fixture_label
+  local container_label
+  local configured_subnet
+  fixture_label=$(docker network inspect \
+    --format '{{index .Labels "com.pintpath.ci.fixture"}}' "$network_name") || return 1
+  container_label=$(docker network inspect \
+    --format '{{index .Labels "com.pintpath.ci.container"}}' "$network_name") || return 1
+  configured_subnet=$(docker network inspect \
+    --format '{{range .IPAM.Config}}{{if eq .Subnet "fd12:7069:6e74:7061::/64"}}{{println .Subnet}}{{end}}{{end}}' \
+    "$network_name") || return 1
+  [[ "$fixture_label" == "$NETWORK_FIXTURE_LABEL_VALUE" ]] || return 1
+  [[ "$container_label" == "$container_id" ]] || return 1
+  [[ "$configured_subnet" == "$IPV6_SUBNET" ]] || return 1
+  if [[ "$expected_network_id" != "pending" ]]; then
+    local actual_network_id
+    actual_network_id=$(docker network inspect --format '{{.Id}}' "$network_name") || return 1
+    [[ "$actual_network_id" == "$expected_network_id" ]] || return 1
+  fi
+  docker network disconnect "$network_name" "$container_id" >/dev/null 2>&1 || true
+  docker network rm "$network_name" >/dev/null || return 1
+  network_absent "$network_name"
+}
+
+read_ssl_settings() {
+  local container_id=$1
+  docker exec --user postgres "$container_id" psql \
+    -X --dbname=postgres --no-password --tuples-only --no-align --set=ON_ERROR_STOP=1 \
+    --command="SELECT current_setting('ssl') || '|' || current_setting('ssl_cert_file') || '|' || current_setting('ssl_key_file')"
+}
+
+wait_for_healthy() {
+  local container_id=$1
+  local health_status=""
+  for _ in $(seq 1 30); do
+    health_status=$(docker inspect \
+      --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}' \
+      "$container_id") || return 1
+    if [[ "$health_status" == "healthy" ]]; then return 0; fi
+    sleep 1
+  done
+  return 1
+}
+
+restore_ssl_baseline() {
+  local container_id=$1
+  docker inspect "$container_id" >/dev/null 2>&1 || return 1
+  for parameter in ssl ssl_cert_file ssl_key_file; do
+    docker exec --user postgres "$container_id" psql \
+      -X --dbname=postgres --no-password --set=ON_ERROR_STOP=1 \
+      --command="ALTER SYSTEM RESET $parameter" >/dev/null || return 1
+  done
+  docker restart "$container_id" >/dev/null || return 1
+  wait_for_healthy "$container_id" || return 1
+  [[ "$(read_ssl_settings "$container_id")" == "$BASELINE_SSL_SETTINGS" ]] || return 1
+}
+
+remove_host_fixture() {
+  local fixture_root=$1
+  [[ "$fixture_root" == "$runner_temp/$FIXTURE_PREFIX."* ]] || return 1
+  [[ "$(dirname -- "$fixture_root")" == "$runner_temp" ]] || return 1
+  [[ "$(basename -- "$fixture_root")" == "$FIXTURE_PREFIX."* ]] || return 1
+  if [[ -e "$fixture_root" ]]; then
+    [[ -d "$fixture_root" && ! -L "$fixture_root" ]] || return 1
+    [[ "$(realpath -e -- "$fixture_root")" == "$fixture_root" ]] || return 1
+    [[ "$(stat -c '%u:%a' "$fixture_root")" == "$(id -u):700" ]] || return 1
+    rm -rf -- "$fixture_root"
+  fi
+}
+
+cleanup_incomplete_setup() {
+  local setup_status=$?
+  trap - EXIT
+  if [[ "$setup_cleanup_armed" == "true" ]]; then
+    if [[ -e "$state_file" || -L "$state_file" ]]; then
+      if ! cleanup_fixture; then
+        printf '%s\n' "postgres_logical_restore_tls_cleanup_pending" >&2
+      fi
+    elif ! remove_host_fixture "$setup_fixture_root"; then
+      printf '%s\n' "postgres_logical_restore_tls_host_cleanup_failed" >&2
+    fi
+  fi
+  exit "$setup_status"
+}
+
+setup_fixture() {
+  local container_id=${PINTPATH_CI_POSTGRES_CONTAINER_ID:-}
+  local github_env=${GITHUB_ENV:-}
+  validate_container_id "$container_id" || fail
+  [[ "$github_env" == /* ]] || fail
+  [[ -f "$github_env" && ! -L "$github_env" && -w "$github_env" ]] || fail
+  [[ "$(realpath -e -- "$github_env")" == "$github_env" ]] || fail
+  [[ "$(stat -c '%u:%h' "$github_env")" == "$(id -u):1" ]] || fail
+  local github_env_mode
+  github_env_mode=$(stat -c '%a' "$github_env")
+  [[ "$github_env_mode" =~ ^[0-7]{3,4}$ ]] || fail
+  (( (8#$github_env_mode & 0022) == 0 )) || fail
+  [[ ! -e "$state_file" && ! -L "$state_file" ]] || fail
+
+  for command_name in awk docker id install mktemp mv openssl realpath seq sha256sum sleep stat; do
+    command -v "$command_name" >/dev/null 2>&1 || fail
+  done
+  docker inspect "$container_id" >/dev/null 2>&1 || fail
+  [[ "$(read_ssl_settings "$container_id")" == "$BASELINE_SSL_SETTINGS" ]] || fail
+  container_tls_directory_absent "$container_id" || fail
+
+  local network_name="$NETWORK_PREFIX-${container_id:0:12}"
+  validate_network_name "$network_name" || fail
+  if docker network inspect "$network_name" >/dev/null 2>&1; then fail; fi
+
+  local network_id="pending"
+  umask 077
+  setup_fixture_root=$(mktemp -d "$runner_temp/$FIXTURE_PREFIX.XXXXXX")
+  setup_cleanup_armed="true"
+  trap cleanup_incomplete_setup EXIT
+  local fixture_root=$setup_fixture_root
+  [[ "$(realpath -e -- "$fixture_root")" == "$fixture_root" ]] || fail
+  [[ "$(dirname -- "$fixture_root")" == "$runner_temp" ]] || fail
+  [[ "$(stat -c '%u:%a' "$fixture_root")" == "$(id -u):700" ]] || fail
+  write_state_receipt "$fixture_root" "$network_name" "$network_id" "$container_id" false \
+    || fail
+  local certificate_root="$fixture_root/certificates"
+  install -d -m 0700 "$certificate_root"
+
+  local ca_key="$certificate_root/ca.key"
+  local ca_cert="$certificate_root/ca.pem"
+  local server_key="$certificate_root/server.key"
+  local server_csr="$certificate_root/server.csr"
+  local server_cert="$certificate_root/server.crt"
+  local server_extensions="$certificate_root/server.ext"
+
+  openssl req -x509 -newkey rsa:3072 -sha256 -nodes -days 3 \
+    -keyout "$ca_key" \
+    -out "$ca_cert" \
+    -subj "/CN=PintPath CI PostgreSQL Root CA" \
+    -addext "basicConstraints=critical,CA:TRUE" \
+    -addext "keyUsage=critical,keyCertSign,cRLSign" \
+    >/dev/null 2>&1
+  openssl req -new -newkey rsa:3072 -sha256 -nodes \
+    -keyout "$server_key" \
+    -out "$server_csr" \
+    -subj "/CN=localhost" \
+    -addext "subjectAltName=DNS:localhost" \
+    >/dev/null 2>&1
+  printf '%s\n' \
+    "basicConstraints=critical,CA:FALSE" \
+    "keyUsage=critical,digitalSignature,keyEncipherment" \
+    "extendedKeyUsage=serverAuth" \
+    "subjectAltName=DNS:localhost" \
+    > "$server_extensions"
+  openssl x509 -req -sha256 -days 3 \
+    -in "$server_csr" \
+    -CA "$ca_cert" \
+    -CAkey "$ca_key" \
+    -CAcreateserial \
+    -extfile "$server_extensions" \
+    -out "$server_cert" \
+    >/dev/null 2>&1
+  chmod 0600 "$ca_key" "$ca_cert" "$server_key" "$server_csr" "$server_cert" "$server_extensions"
+  [[ "$(stat -c '%u:%a:%h' "$ca_cert")" == "$(id -u):600:1" ]] || fail
+  openssl verify -CAfile "$ca_cert" -verify_hostname localhost "$server_cert" >/dev/null 2>&1
+  openssl x509 -in "$ca_cert" -noout -checkend 172800 >/dev/null 2>&1
+
+  local ca_pin
+  ca_pin=$(openssl x509 -in "$ca_cert" -outform DER | sha256sum | awk '{print $1}')
+  [[ "$ca_pin" =~ ^[0-9a-f]{64}$ ]] || fail
+
+  network_id=$(docker network create \
+    --driver bridge \
+    --ipv6 \
+    --subnet "$IPV6_SUBNET" \
+    --label "$NETWORK_FIXTURE_LABEL=$NETWORK_FIXTURE_LABEL_VALUE" \
+    --label "$NETWORK_CONTAINER_LABEL=$container_id" \
+    "$network_name")
+  [[ "$network_id" =~ ^[0-9a-f]{12,64}$ ]] || fail
+  write_state_receipt "$fixture_root" "$network_name" "$network_id" "$container_id" true \
+    || fail
+  docker network connect --ip6 "$IPV6_ADDRESS" "$network_name" "$container_id"
+  [[ "$(docker network inspect --format '{{range .Containers}}{{println .IPv6Address}}{{end}}' "$network_name")" == "$IPV6_ADDRESS/64" ]] || fail
+
+  docker exec --user root "$container_id" sh -c '
+    set -eu
+    directory=/var/lib/postgresql/pintpath-ci-logical-restore-tls
+    [ ! -e "$directory" ]
+    mkdir "$directory"
+    chown postgres:postgres "$directory"
+    chmod 0700 "$directory"
+  '
+  docker cp "$server_cert" "$container_id:$CONTAINER_SERVER_CERT" >/dev/null
+  docker cp "$server_key" "$container_id:$CONTAINER_SERVER_KEY" >/dev/null
+  docker exec --user root "$container_id" \
+    chown postgres:postgres "$CONTAINER_SERVER_CERT" "$CONTAINER_SERVER_KEY"
+  docker exec --user root "$container_id" \
+    chmod 0600 "$CONTAINER_SERVER_CERT" "$CONTAINER_SERVER_KEY"
+
+  docker exec --user postgres "$container_id" psql \
+    -X --dbname=postgres --no-password --set=ON_ERROR_STOP=1 \
+    --command="ALTER SYSTEM SET ssl = 'on'" >/dev/null
+  docker exec --user postgres "$container_id" psql \
+    -X --dbname=postgres --no-password --set=ON_ERROR_STOP=1 \
+    --command="ALTER SYSTEM SET ssl_cert_file = '$CONTAINER_SERVER_CERT'" >/dev/null
+  docker exec --user postgres "$container_id" psql \
+    -X --dbname=postgres --no-password --set=ON_ERROR_STOP=1 \
+    --command="ALTER SYSTEM SET ssl_key_file = '$CONTAINER_SERVER_KEY'" >/dev/null
+  docker restart "$container_id" >/dev/null
+  wait_for_healthy "$container_id" || fail
+  [[ "$(read_ssl_settings "$container_id")" == "on|$CONTAINER_SERVER_CERT|$CONTAINER_SERVER_KEY" ]] \
+    || fail
+
+  printf '%s=%s\n' \
+    "PINTPATH_POSTGRES_LOGICAL_RESTORE_TEST_ROOT_CA_FILE" "$ca_cert" \
+    "PINTPATH_POSTGRES_LOGICAL_RESTORE_TEST_ROOT_CA_DER_SHA256" "$ca_pin" \
+    "PINTPATH_POSTGRES_LOGICAL_RESTORE_TEST_RESOLVED_ADDRESS" "$IPV6_ADDRESS" \
+    "PINTPATH_CI_POSTGRES_CONTAINER_ID" "$container_id" \
+    >> "$github_env"
+
+  setup_cleanup_armed="false"
+  trap - EXIT
+  setup_fixture_root=""
+}
+
+cleanup_fixture() {
+  [[ -e "$state_file" || -L "$state_file" ]] || return 0
+  validate_state_file || return 1
+
+  local -a state=()
+  mapfile -t state < "$state_file" || return 1
+  [[ "${#state[@]}" -eq 4 ]] || return 1
+  local fixture_root=${state[0]}
+  local network_name=${state[1]}
+  local network_id=${state[2]}
+  local container_id=${state[3]}
+  validate_container_id "$container_id" || return 1
+  validate_network_name "$network_name" || return 1
+  [[ "$network_id" == "pending" || "$network_id" =~ ^[0-9a-f]{12,64}$ ]] || return 1
+  [[ "$network_name" == "$NETWORK_PREFIX-${container_id:0:12}" ]] || return 1
+  [[ "$fixture_root" == "$runner_temp/$FIXTURE_PREFIX."* ]] || return 1
+
+  # Restore and prove the exact disposable-service baseline before deleting the
+  # certificate authority that the active postmaster may still depend on.
+  restore_ssl_baseline "$container_id" || return 1
+  remove_container_keys "$container_id" || return 1
+  container_tls_directory_absent "$container_id" || return 1
+  remove_network "$network_name" "$container_id" "$network_id" || return 1
+  network_absent "$network_name" || return 1
+  remove_host_fixture "$fixture_root" || return 1
+  [[ ! -e "$fixture_root" && ! -L "$fixture_root" ]] || return 1
+  rm -f -- "$state_file" || return 1
+  [[ ! -e "$state_file" && ! -L "$state_file" ]]
+}
+
+fixture_paths
+case "${1:-}" in
+  setup) setup_fixture ;;
+  cleanup) cleanup_fixture || fail ;;
+  *) fail ;;
+esac

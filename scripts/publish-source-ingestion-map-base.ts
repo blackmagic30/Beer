@@ -6,39 +6,26 @@ import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 
 import { AdminIngestionQueueRepository } from "../src/db/admin-ingestion-queue.repository.js";
-import type { AdminIngestionBeerRecord, AdminIngestionQueueRecord } from "../src/db/models.js";
+import { asAsyncSqliteDatabase } from "../src/db/sql-database.js";
 import { env } from "../src/config/env.js";
 import { redactSecrets } from "../src/lib/redact.js";
+import {
+  assertExactSupabaseOrigin,
+  assertSupabaseServerApiKey,
+} from "../src/lib/supabase-key-format.js";
+import {
+  REVIEWED_PRICE_SELECTION_DEFAULT_OPTIONS,
+  isLikelyBaselineMenuSource,
+  selectPublishableMapBaseRows,
+  type ReviewedPriceSelectionOptions,
+} from "../src/lib/reviewed-price-selection-policy.js";
 import { AdminService } from "../src/modules/admin/admin.service.js";
-import type { AdminBeerInput } from "../src/modules/admin/admin.schemas.js";
 import { assertOperatorMutationAllowed } from "./lib/operator-mutation-guard.js";
 
-const BASELINE_MENU_PATH_RE = /(?:^|[-_\s/])(?:menu|menus|drink|drinks|beverage|beverages|beer|beers)(?:[-_\s/.]|$)|\.pdf(?:$|[?#])/i;
-const HOMEPAGE_MENU_SIGNAL_RE = /\b(?:drink price text|html text rows|menu page|drinks? menu|beverage menu|beer menu)\b/i;
-const EXCLUDED_SOURCE_PATH_RE = /\b(?:cocktails?|wine-list|wine_list)\b/i;
-const EVENT_OR_SPECIAL_RE =
-  /\b(?:happy[-_\s]?hour|what'?s[-_\s]?on|events?|specials?|mates[-_\s]?rates|parma|roast|beer[-_\s]?of[-_\s]?the[-_\s]?month|drinks?[-_\s]?of[-_\s]?the[-_\s]?month|good[-_\s]?beer[-_\s]?week|big[-_\s]?bash|promo|promotion|deal|offer|blog|post|news|weekly[-_\s]?specials?)\b/i;
-const DIRECT_RASTER_IMAGE_RE = /\.(?:avif|gif|jpe?g|png|webp)(?:$|[?#])/i;
-const NOISY_BEER_NAME_RE =
-  /\b(?:cocktail|wine|spritz|margarita|negroni|espresso|martini|parma|burger|pizza|steak|wings|coffee|tea|soft drink|soda|mocktail|flight|tasting paddle|cider|ginger\s+beer|hard\s+rated|seltzer|rtd|whisk(?:e)?y|bourbon|vodka|rum|gin|tequila|mezcal)\b/i;
-const NON_BASELINE_ROW_CONTEXT_RE =
-  /\b(?:schooners?|pots?|middys?|jugs?|cans?|bottles?|stubby|stubbies|pie\s*&?\s*pint|pint\s*&?\s*pie|parma\s*&?\s*pot|pot\s*&?\s*parma|happy[-_\s]?hour|specials?|deal|offer|promo|cocktails?|gin|rum|vodka|tequila|mezcal|whisk(?:e)?y|bourbon|vermouth|liqueur|agave|yuzu|grapefruit|mint|served\s+on\s+ice|tasty\s+pale\s+ale|captain\s+sensible)\b/i;
+export { isLikelyBaselineMenuSource, selectPublishableMapBaseRows };
+export type PublishMapBaseOptions = ReviewedPriceSelectionOptions;
 
-export interface PublishMapBaseOptions {
-  minOverallConfidence: number;
-  minRowConfidence: number;
-  minPrice: number;
-  maxPrice: number;
-  allowHomepage: boolean;
-  allowSpecialSources: boolean;
-}
-
-interface SelectionResult {
-  beers: AdminBeerInput[];
-  reasons: string[];
-}
-
-interface ScriptOptions extends PublishMapBaseOptions {
+interface ScriptOptions extends ReviewedPriceSelectionOptions {
   databasePath: string;
   dryRun: boolean;
   includeCoveredVenues: boolean;
@@ -48,14 +35,33 @@ interface ScriptOptions extends PublishMapBaseOptions {
   sourceCheckTimeoutMs: number;
 }
 
-const DEFAULT_OPTIONS: PublishMapBaseOptions = {
-  minOverallConfidence: 0.72,
-  minRowConfidence: 0.82,
-  minPrice: 8,
-  maxPrice: 25,
-  allowHomepage: false,
-  allowSpecialSources: false,
-};
+const DEFAULT_OPTIONS = REVIEWED_PRICE_SELECTION_DEFAULT_OPTIONS;
+const PRODUCTION_SUPABASE_ORIGIN = "https://auth.pintpath.au";
+
+export function assertPublishMapBaseSupabaseBoundary(
+  environment: Readonly<Record<string, string | undefined>>,
+  required = true,
+): { readonly supabaseUrl: string; readonly serviceRoleKey: string } | null {
+  const supabaseUrl = environment.SUPABASE_URL;
+  const serviceRoleKey = environment.SUPABASE_SERVICE_ROLE_KEY;
+  const supabaseUrlAbsent = supabaseUrl === undefined || supabaseUrl === "";
+  const serviceRoleKeyAbsent = serviceRoleKey === undefined || serviceRoleKey === "";
+  if (!required && supabaseUrlAbsent && serviceRoleKeyAbsent) {
+    return null;
+  }
+  if (typeof supabaseUrl !== "string" || typeof serviceRoleKey !== "string") {
+    throw new Error(
+      "Map-base publication requires the exact reviewed production Supabase origin and a valid server API key; no configured value is emitted.",
+    );
+  }
+  assertExactSupabaseOrigin(
+    supabaseUrl,
+    PRODUCTION_SUPABASE_ORIGIN,
+    "SUPABASE_URL",
+  );
+  assertSupabaseServerApiKey(serviceRoleKey, "SUPABASE_SERVICE_ROLE_KEY");
+  return Object.freeze({ supabaseUrl, serviceRoleKey });
+}
 
 function getArg(name: string, fallback?: string): string | undefined {
   const prefix = `--${name}=`;
@@ -100,146 +106,6 @@ function parseOptions(): ScriptOptions {
   };
 }
 
-function sourceHaystack(queueItem: Pick<AdminIngestionQueueRecord, "sourceUrl" | "note" | "capturedNotes">): string {
-  return [queueItem.sourceUrl, queueItem.note, queueItem.capturedNotes].filter(Boolean).join("\n");
-}
-
-export function isLikelyBaselineMenuSource(
-  queueItem: Pick<AdminIngestionQueueRecord, "sourceUrl" | "note" | "capturedNotes">,
-  options: Pick<PublishMapBaseOptions, "allowHomepage" | "allowSpecialSources"> = DEFAULT_OPTIONS,
-): boolean {
-  if (!queueItem.sourceUrl) {
-    return false;
-  }
-
-  let url: URL;
-  try {
-    url = new URL(queueItem.sourceUrl);
-  } catch {
-    return false;
-  }
-
-  if (!["http:", "https:"].includes(url.protocol)) {
-    return false;
-  }
-
-  const haystack = sourceHaystack(queueItem);
-  if (!options.allowSpecialSources && EVENT_OR_SPECIAL_RE.test(haystack)) {
-    return false;
-  }
-
-  const pathname = decodeURIComponent(url.pathname).replace(/[-_]+/g, " ");
-  if (EXCLUDED_SOURCE_PATH_RE.test(pathname)) {
-    return false;
-  }
-
-  if (DIRECT_RASTER_IMAGE_RE.test(url.pathname)) {
-    return false;
-  }
-
-  if (pathname === "/" || pathname.trim() === "") {
-    return options.allowHomepage && HOMEPAGE_MENU_SIGNAL_RE.test(haystack);
-  }
-
-  return BASELINE_MENU_PATH_RE.test(pathname);
-}
-
-function isUsableBeerRow(row: AdminIngestionBeerRecord, options: PublishMapBaseOptions): boolean {
-  const name = row.name.trim();
-  const price = Number(row.priceNumeric);
-  const confidence = Number(row.confidence);
-  const context = [row.priceText, row.notes].filter(Boolean).join(" ");
-
-  return Boolean(name) &&
-    name.length >= 3 &&
-    !NOISY_BEER_NAME_RE.test(name) &&
-    !NON_BASELINE_ROW_CONTEXT_RE.test(context) &&
-    row.servingSize === "pint" &&
-    row.availabilityStatus === "on_tap" &&
-    row.availablePackageOnly !== true &&
-    row.availableOnTap !== false &&
-    Number.isFinite(price) &&
-    price >= options.minPrice &&
-    price <= options.maxPrice &&
-    Number.isFinite(confidence) &&
-    confidence >= options.minRowConfidence;
-}
-
-function beerKey(name: string): string {
-  return name.trim().replace(/\s+/g, " ").toLowerCase();
-}
-
-function dedupeAndDropAmbiguousRows(rows: AdminIngestionBeerRecord[]): AdminIngestionBeerRecord[] {
-  const grouped = new Map<string, AdminIngestionBeerRecord[]>();
-  for (const row of rows) {
-    const key = beerKey(row.name);
-    grouped.set(key, [...(grouped.get(key) ?? []), row]);
-  }
-
-  const output: AdminIngestionBeerRecord[] = [];
-  for (const groupRows of grouped.values()) {
-    const prices = new Set(groupRows.map((row) => Number(row.priceNumeric).toFixed(2)));
-    if (prices.size > 1) {
-      continue;
-    }
-    output.push(groupRows[0]!);
-  }
-
-  return output;
-}
-
-function toAdminBeerInput(row: AdminIngestionBeerRecord): AdminBeerInput {
-  return {
-    name: row.name,
-    servingSize: "pint",
-    priceNumeric: Number(row.priceNumeric),
-    priceText: row.priceText,
-    availabilityStatus: "on_tap",
-    availableOnTap: true,
-    availablePackageOnly: false,
-    unavailableReason: null,
-    needsReview: false,
-  };
-}
-
-export function selectPublishableMapBaseRows(
-  queueItem: AdminIngestionQueueRecord,
-  options: PublishMapBaseOptions = DEFAULT_OPTIONS,
-): SelectionResult {
-  const reasons: string[] = [];
-
-  if (queueItem.sourceType !== "source_reference") {
-    reasons.push("source_type_not_reference");
-  }
-
-  if (!isLikelyBaselineMenuSource(queueItem, options)) {
-    reasons.push("not_baseline_menu_source");
-  }
-
-  if ((queueItem.overallConfidence ?? 0) < options.minOverallConfidence) {
-    reasons.push("low_overall_confidence");
-  }
-
-  const usableRows = queueItem.extractedBeers.filter((row) => isUsableBeerRow(row, options));
-  if (usableRows.length === 0) {
-    reasons.push("no_usable_on_tap_pint_rows");
-  }
-
-  const dedupedRows = dedupeAndDropAmbiguousRows(usableRows);
-  if (usableRows.length > 0 && dedupedRows.length === 0) {
-    reasons.push("ambiguous_duplicate_prices");
-  }
-
-  if (reasons.length > 0) {
-    return { beers: [], reasons };
-  }
-
-  return {
-    beers: dedupedRows.map(toAdminBeerInput),
-    reasons: [],
-  };
-}
-
 async function sourceUrlStillReachable(sourceUrl: string, timeoutMs: number): Promise<boolean> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -264,11 +130,16 @@ async function sourceUrlStillReachable(sourceUrl: string, timeoutMs: number): Pr
 
 async function main(): Promise<void> {
   const options = parseOptions();
+  const supabaseAuthority = assertPublishMapBaseSupabaseBoundary(
+    process.env,
+    !options.dryRun,
+  );
   if (!options.dryRun) {
     assertOperatorMutationAllowed("Menu review publication");
   }
   const database = new Database(options.databasePath);
-  const repository = new AdminIngestionQueueRepository(database);
+  const queueDatabase = asAsyncSqliteDatabase(database);
+  const repository = new AdminIngestionQueueRepository(queueDatabase);
   const coveredVenueIds = options.includeCoveredVenues
     ? new Set<string>()
     : new Set(
@@ -282,17 +153,20 @@ async function main(): Promise<void> {
             .all() as Array<{ venueId: string }>
         ).map((row) => row.venueId),
       );
-  const adminService = new AdminService(
-    repository,
-    env.SUPABASE_URL,
-    env.SUPABASE_SERVICE_ROLE_KEY,
-    env.SUPABASE_MENU_CAPTURE_TABLE,
-    env.OPENAI_API_KEY,
-    env.GOOGLE_PLACES_API_KEY ?? env.GOOGLE_MAPS_API_KEY,
-    database,
-  );
+  const adminService = options.dryRun
+    ? null
+    : new AdminService(
+        repository,
+        supabaseAuthority!.supabaseUrl,
+        supabaseAuthority!.serviceRoleKey,
+        env.SUPABASE_MENU_CAPTURE_TABLE,
+        env.OPENAI_API_KEY,
+        env.GOOGLE_PLACES_API_KEY ?? env.GOOGLE_MAPS_API_KEY,
+        queueDatabase,
+      );
+  await adminService?.initializeIngestionQueue();
 
-  const pending = repository.list("pending_review", options.queueLimit, 0);
+  const pending = await repository.list("pending_review", options.queueLimit, 0);
   const candidates = pending
     .map((queueItem) => ({
       queueItem,
@@ -348,7 +222,7 @@ async function main(): Promise<void> {
     }
 
     try {
-      const result = await adminService.publishQueuedIngestion(queueItem.id, {
+      const result = await adminService!.publishQueuedIngestion(queueItem.id, {
         beers: selection.beers,
         note: [
           "Bulk map-base publish.",

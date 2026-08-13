@@ -1,0 +1,30 @@
+{
+  "schemaVersion": "pintpath-permanent-staging-cost-policy/v1",
+  "policyId": "pintpath-permanent-staging-recurring-cost",
+  "activationState": "SCAFFOLD_ONLY_PROVIDER_OBSERVATION_REQUIRED",
+  "environment": "permanent-staging",
+  "currency": "USD",
+  "maximumRecurringMonthlyCents": 5000,
+  "calculationContract": {
+    "amountUnit": "integer-cents",
+    "lineItemRounding": "ceiling",
+    "aggregate": "sum",
+    "creditsOrNegativeAmountsAllowed": false
+  },
+  "evidenceContract": {
+    "providerCollectorImplemented": false,
+    "providerObservationBindingImplemented": false,
+    "scope": "permanent-staging-only",
+    "providerInventoryRequired": true,
+    "completeProviderInventoryRequired": true,
+    "priceCatalogRequired": true,
+    "completePriceCatalogRequired": true,
+    "maximumUnknownResourceCount": 0,
+    "maximumUnpricedResourceCount": 0,
+    "productionOperationalCopyExcluded": true,
+    "disposableRestoreExcluded": true,
+    "preDeploymentReceiptRequired": true,
+    "postDeploymentReceiptRequired": true,
+    "receiptSchemaVersion": "pintpath-permanent-staging-cost-receipt/v1"
+  }
+}

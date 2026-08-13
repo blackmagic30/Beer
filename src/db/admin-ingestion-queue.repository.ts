@@ -1,7 +1,5 @@
 import { randomUUID } from "node:crypto";
 
-import type BetterSqlite3 from "better-sqlite3";
-
 import type {
   AdminIngestionBeerRecord,
   AdminIngestionCrawlerFeedback,
@@ -9,6 +7,7 @@ import type {
   AdminIngestionSourceType,
   AdminIngestionStatus,
 } from "./models.js";
+import type { SqlDatabase } from "./sql-database.js";
 
 interface RawAdminIngestionQueueRecord {
   id: string;
@@ -25,10 +24,10 @@ interface RawAdminIngestionQueueRecord {
   status: AdminIngestionStatus;
   venueNameGuess: string | null;
   capturedNotes: string | null;
-  overallConfidence: number | null;
-  extractedBeersJson: string;
-  reviewBeersJson: string | null;
-  crawlerFeedbackJson: string | null;
+  overallConfidence: number | string | null;
+  extractedBeersJson: unknown;
+  reviewBeersJson: unknown;
+  crawlerFeedbackJson: unknown;
   errorMessage: string | null;
   createdAt: string;
   updatedAt: string;
@@ -60,8 +59,11 @@ function defaultImageRetentionExpiry(createdAt: string): string {
   return expiry.toISOString();
 }
 
-function parseBeerRecords(value: string | null): AdminIngestionBeerRecord[] | null {
-  if (!value) {
+function parseBeerRecords(value: unknown): AdminIngestionBeerRecord[] | null {
+  if (Array.isArray(value)) {
+    return value as AdminIngestionBeerRecord[];
+  }
+  if (typeof value !== "string" || !value) {
     return null;
   }
 
@@ -73,8 +75,11 @@ function parseBeerRecords(value: string | null): AdminIngestionBeerRecord[] | nu
   }
 }
 
-function parseCrawlerFeedback(value: string | null): AdminIngestionCrawlerFeedback | null {
-  if (!value) {
+function parseCrawlerFeedback(value: unknown): AdminIngestionCrawlerFeedback | null {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as AdminIngestionCrawlerFeedback;
+  }
+  if (typeof value !== "string" || !value) {
     return null;
   }
 
@@ -90,17 +95,17 @@ function parseCrawlerFeedback(value: string | null): AdminIngestionCrawlerFeedba
 }
 
 export class AdminIngestionQueueRepository {
-  constructor(private readonly db: BetterSqlite3.Database) {}
+  constructor(private readonly db: SqlDatabase) {}
 
-  transaction<T>(work: () => T): T {
+  transaction<T>(work: () => T | Promise<T>): Promise<T> {
     return this.db.transaction(work)();
   }
 
-  create(input: CreateAdminIngestionInput): AdminIngestionQueueRecord {
+  async create(input: CreateAdminIngestionInput): Promise<AdminIngestionQueueRecord> {
     const timestamp = new Date().toISOString();
     const id = randomUUID();
 
-    this.db
+    await this.db
       .prepare(
         `INSERT INTO admin_ingestion_queue (
           id,
@@ -159,129 +164,135 @@ export class AdminIngestionQueueRepository {
         updatedAt: timestamp,
       });
 
-    return this.getById(id)!;
+    return (await this.getById(id))!;
   }
 
-  getById(id: string): AdminIngestionQueueRecord | undefined {
-    const row = this.db
+  async getById(id: string): Promise<AdminIngestionQueueRecord | undefined> {
+    const row = await this.db
       .prepare(
         `SELECT
           id,
-          venue_id AS venueId,
-          venue_name AS venueName,
-          source_type AS sourceType,
-          source_url AS sourceUrl,
-          image_data_url AS imageDataUrl,
-          CASE WHEN image_data_url IS NULL THEN 0 ELSE 1 END AS hasImageData,
-          image_retention_expires_at AS imageRetentionExpiresAt,
-          image_redacted_at AS imageRedactedAt,
-          image_redaction_reason AS imageRedactionReason,
+          venue_id AS "venueId",
+          venue_name AS "venueName",
+          source_type AS "sourceType",
+          source_url AS "sourceUrl",
+          image_data_url AS "imageDataUrl",
+          CASE WHEN image_data_url IS NULL THEN 0 ELSE 1 END AS "hasImageData",
+          image_retention_expires_at AS "imageRetentionExpiresAt",
+          image_redacted_at AS "imageRedactedAt",
+          image_redaction_reason AS "imageRedactionReason",
           note,
           status,
-          venue_name_guess AS venueNameGuess,
-          captured_notes AS capturedNotes,
-          overall_confidence AS overallConfidence,
-          extracted_beers_json AS extractedBeersJson,
-          review_beers_json AS reviewBeersJson,
-          crawler_feedback_json AS crawlerFeedbackJson,
-          error_message AS errorMessage,
-          created_at AS createdAt,
-          updated_at AS updatedAt,
-          published_at AS publishedAt,
-          rejected_at AS rejectedAt
+          venue_name_guess AS "venueNameGuess",
+          captured_notes AS "capturedNotes",
+          overall_confidence AS "overallConfidence",
+          extracted_beers_json AS "extractedBeersJson",
+          review_beers_json AS "reviewBeersJson",
+          crawler_feedback_json AS "crawlerFeedbackJson",
+          error_message AS "errorMessage",
+          created_at AS "createdAt",
+          updated_at AS "updatedAt",
+          published_at AS "publishedAt",
+          rejected_at AS "rejectedAt"
          FROM admin_ingestion_queue
          WHERE id = ?`,
       )
-      .get(id) as RawAdminIngestionQueueRecord | undefined;
+      .get<RawAdminIngestionQueueRecord>(id);
 
     return row ? this.mapRow(row) : undefined;
   }
 
-  list(status?: AdminIngestionStatus, limit = 50, offset = 0): AdminIngestionQueueRecord[] {
-    const rows = (
+  async list(
+    status?: AdminIngestionStatus,
+    limit = 50,
+    offset = 0,
+  ): Promise<AdminIngestionQueueRecord[]> {
+    const rows = await (
       status
         ? this.db
             .prepare(
               `SELECT
                 id,
-                venue_id AS venueId,
-                venue_name AS venueName,
-                source_type AS sourceType,
-                source_url AS sourceUrl,
-                NULL AS imageDataUrl,
-                CASE WHEN image_data_url IS NULL THEN 0 ELSE 1 END AS hasImageData,
-                image_retention_expires_at AS imageRetentionExpiresAt,
-                image_redacted_at AS imageRedactedAt,
-                image_redaction_reason AS imageRedactionReason,
+                venue_id AS "venueId",
+                venue_name AS "venueName",
+                source_type AS "sourceType",
+                source_url AS "sourceUrl",
+                NULL AS "imageDataUrl",
+                CASE WHEN image_data_url IS NULL THEN 0 ELSE 1 END AS "hasImageData",
+                image_retention_expires_at AS "imageRetentionExpiresAt",
+                image_redacted_at AS "imageRedactedAt",
+                image_redaction_reason AS "imageRedactionReason",
                 note,
                 status,
-                venue_name_guess AS venueNameGuess,
-                captured_notes AS capturedNotes,
-                overall_confidence AS overallConfidence,
-                extracted_beers_json AS extractedBeersJson,
-                review_beers_json AS reviewBeersJson,
-                crawler_feedback_json AS crawlerFeedbackJson,
-                error_message AS errorMessage,
-                created_at AS createdAt,
-                updated_at AS updatedAt,
-                published_at AS publishedAt,
-                rejected_at AS rejectedAt
+                venue_name_guess AS "venueNameGuess",
+                captured_notes AS "capturedNotes",
+                overall_confidence AS "overallConfidence",
+                extracted_beers_json AS "extractedBeersJson",
+                review_beers_json AS "reviewBeersJson",
+                crawler_feedback_json AS "crawlerFeedbackJson",
+                error_message AS "errorMessage",
+                created_at AS "createdAt",
+                updated_at AS "updatedAt",
+                published_at AS "publishedAt",
+                rejected_at AS "rejectedAt"
                FROM admin_ingestion_queue
                WHERE status = ?
                ORDER BY created_at DESC
                LIMIT ?
                OFFSET ?`,
             )
-            .all(status, limit, offset)
+            .all<RawAdminIngestionQueueRecord>(status, limit, offset)
         : this.db
             .prepare(
               `SELECT
                 id,
-                venue_id AS venueId,
-                venue_name AS venueName,
-                source_type AS sourceType,
-                source_url AS sourceUrl,
-                NULL AS imageDataUrl,
-                CASE WHEN image_data_url IS NULL THEN 0 ELSE 1 END AS hasImageData,
-                image_retention_expires_at AS imageRetentionExpiresAt,
-                image_redacted_at AS imageRedactedAt,
-                image_redaction_reason AS imageRedactionReason,
+                venue_id AS "venueId",
+                venue_name AS "venueName",
+                source_type AS "sourceType",
+                source_url AS "sourceUrl",
+                NULL AS "imageDataUrl",
+                CASE WHEN image_data_url IS NULL THEN 0 ELSE 1 END AS "hasImageData",
+                image_retention_expires_at AS "imageRetentionExpiresAt",
+                image_redacted_at AS "imageRedactedAt",
+                image_redaction_reason AS "imageRedactionReason",
                 note,
                 status,
-                venue_name_guess AS venueNameGuess,
-                captured_notes AS capturedNotes,
-                overall_confidence AS overallConfidence,
-                extracted_beers_json AS extractedBeersJson,
-                review_beers_json AS reviewBeersJson,
-                crawler_feedback_json AS crawlerFeedbackJson,
-                error_message AS errorMessage,
-                created_at AS createdAt,
-                updated_at AS updatedAt,
-                published_at AS publishedAt,
-                rejected_at AS rejectedAt
+                venue_name_guess AS "venueNameGuess",
+                captured_notes AS "capturedNotes",
+                overall_confidence AS "overallConfidence",
+                extracted_beers_json AS "extractedBeersJson",
+                review_beers_json AS "reviewBeersJson",
+                crawler_feedback_json AS "crawlerFeedbackJson",
+                error_message AS "errorMessage",
+                created_at AS "createdAt",
+                updated_at AS "updatedAt",
+                published_at AS "publishedAt",
+                rejected_at AS "rejectedAt"
                FROM admin_ingestion_queue
                ORDER BY created_at DESC
                LIMIT ?
                OFFSET ?`,
             )
-            .all(limit, offset)
-    ) as RawAdminIngestionQueueRecord[];
+            .all<RawAdminIngestionQueueRecord>(limit, offset)
+    );
 
     return rows.map((row) => this.mapRow(row));
   }
 
-  count(status?: AdminIngestionStatus): number {
-    const row = (
+  async count(status?: AdminIngestionStatus): Promise<number> {
+    const row = await (
       status
-        ? this.db.prepare("SELECT COUNT(*) AS total FROM admin_ingestion_queue WHERE status = ?").get(status)
-        : this.db.prepare("SELECT COUNT(*) AS total FROM admin_ingestion_queue").get()
-    ) as { total: number } | undefined;
+        ? this.db
+            .prepare("SELECT COUNT(*) AS total FROM admin_ingestion_queue WHERE status = ?")
+            .get<{ total: number }>(status)
+        : this.db.prepare("SELECT COUNT(*) AS total FROM admin_ingestion_queue").get<{ total: number }>()
+    );
 
     return Number(row?.total || 0);
   }
 
-  recoverStaleReviewClaims(input: { staleBefore: string; now: string }): number {
-    return this.db.prepare(
+  async recoverStaleReviewClaims(input: { staleBefore: string; now: string }): Promise<number> {
+    return (await this.db.prepare(
       `UPDATE admin_ingestion_queue
        SET status = 'pending_review',
            review_claim_token = NULL,
@@ -290,17 +301,17 @@ export class AdminIngestionQueueRepository {
            error_message = 'A stale review claim was recovered; review and retry.'
        WHERE status IN ('publishing', 'rejecting')
          AND (review_claimed_at IS NULL OR review_claimed_at <= @staleBefore)`,
-    ).run(input).changes;
+    ).run(input)).changes;
   }
 
-  claimPendingReview(
+  async claimPendingReview(
     id: string,
     action: "publish" | "reject",
     claimToken: string,
     claimedAt: string,
     staleBefore?: string,
-  ): boolean {
-    const result = this.db.prepare(
+  ): Promise<boolean> {
+    const result = await this.db.prepare(
       `UPDATE admin_ingestion_queue
        SET status = @status,
            review_claim_token = @claimToken,
@@ -324,8 +335,8 @@ export class AdminIngestionQueueRepository {
     return result.changes === 1;
   }
 
-  releaseReviewClaim(id: string, claimToken: string, updatedAt: string): boolean {
-    const result = this.db.prepare(
+  async releaseReviewClaim(id: string, claimToken: string, updatedAt: string): Promise<boolean> {
+    const result = await this.db.prepare(
       `UPDATE admin_ingestion_queue
        SET status = 'pending_review',
            review_claim_token = NULL,
@@ -338,15 +349,15 @@ export class AdminIngestionQueueRepository {
     return result.changes === 1;
   }
 
-  markPublished(
+  async markPublished(
     id: string,
     claimToken: string,
     reviewBeers: AdminIngestionBeerRecord[],
     note: string | null,
     crawlerFeedback: AdminIngestionCrawlerFeedback,
     updatedAt: string,
-  ): void {
-    const result = this.db
+  ): Promise<void> {
+    const result = await this.db
       .prepare(
         `UPDATE admin_ingestion_queue
          SET status = 'published',
@@ -378,14 +389,14 @@ export class AdminIngestionQueueRepository {
     }
   }
 
-  markRejected(
+  async markRejected(
     id: string,
     claimToken: string,
     note: string | null,
     crawlerFeedback: AdminIngestionCrawlerFeedback,
     updatedAt: string,
-  ): void {
-    const result = this.db
+  ): Promise<void> {
+    const result = await this.db
       .prepare(
         `UPDATE admin_ingestion_queue
          SET status = 'rejected',
@@ -415,23 +426,23 @@ export class AdminIngestionQueueRepository {
     }
   }
 
-  purgePendingReviewImages(input: { now: string; hardCutoff: string }): {
+  async purgePendingReviewImages(input: { now: string; hardCutoff: string }): Promise<{
     purged: number;
     purgedCharacters: number;
     heldForOpenReview: number;
     pastHardCap: number;
     retainedCharacters: number;
-  } {
-    const before = this.getPendingReviewImageRetentionStats(input);
-    const purge = this.db.transaction(() => {
-      const size = this.db.prepare(
+  }> {
+    const before = await this.getPendingReviewImageRetentionStats(input);
+    const purge = await this.db.transaction(async () => {
+      const size = await this.db.prepare(
         `SELECT COALESCE(sum(length(image_data_url)), 0) AS characters
          FROM admin_ingestion_queue
          WHERE status = 'pending_review'
            AND image_data_url IS NOT NULL
            AND created_at <= ?`,
-      ).get(input.hardCutoff) as { characters: number };
-      const result = this.db.prepare(
+      ).get<{ characters: number }>(input.hardCutoff);
+      const result = await this.db.prepare(
         `UPDATE admin_ingestion_queue
          SET image_data_url = NULL,
              image_redacted_at = @now,
@@ -441,9 +452,9 @@ export class AdminIngestionQueueRepository {
            AND image_data_url IS NOT NULL
            AND created_at <= @hardCutoff`,
       ).run(input);
-      return { purged: result.changes, purgedCharacters: Number(size.characters ?? 0) };
+      return { purged: result.changes, purgedCharacters: Number(size?.characters ?? 0) };
     })();
-    const after = this.getPendingReviewImageRetentionStats(input);
+    const after = await this.getPendingReviewImageRetentionStats(input);
     return {
       ...purge,
       heldForOpenReview: after.heldForOpenReview,
@@ -452,12 +463,12 @@ export class AdminIngestionQueueRepository {
     };
   }
 
-  getPendingReviewImageRetentionStats(input: { now: string; hardCutoff: string }): {
+  async getPendingReviewImageRetentionStats(input: { now: string; hardCutoff: string }): Promise<{
     heldForOpenReview: number;
     pastHardCap: number;
     retainedCharacters: number;
-  } {
-    const row = this.db.prepare(
+  }> {
+    const row = await this.db.prepare(
       `SELECT
          sum(CASE
            WHEN image_retention_expires_at IS NOT NULL
@@ -469,7 +480,7 @@ export class AdminIngestionQueueRepository {
        FROM admin_ingestion_queue
        WHERE status = 'pending_review'
          AND image_data_url IS NOT NULL`,
-    ).get(input) as { held: number | null; past_hard_cap: number | null; retained_characters: number | null };
+    ).get<{ held: number | null; past_hard_cap: number | null; retained_characters: number | null }>(input);
     return {
       heldForOpenReview: Number(row?.held ?? 0),
       pastHardCap: Number(row?.past_hard_cap ?? 0),
@@ -493,7 +504,7 @@ export class AdminIngestionQueueRepository {
       status: row.status,
       venueNameGuess: row.venueNameGuess,
       capturedNotes: row.capturedNotes,
-      overallConfidence: row.overallConfidence,
+      overallConfidence: row.overallConfidence === null ? null : Number(row.overallConfidence),
       extractedBeers: parseBeerRecords(row.extractedBeersJson) ?? [],
       reviewBeers: parseBeerRecords(row.reviewBeersJson),
       crawlerFeedback: parseCrawlerFeedback(row.crawlerFeedbackJson),

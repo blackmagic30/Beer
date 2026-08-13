@@ -7,6 +7,11 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import Database from "better-sqlite3";
 
 import { createServerSupabaseClient } from "../src/lib/supabase-client.js";
+import { redactKnownSecretValues, redactSecrets } from "../src/lib/redact.js";
+import {
+  assertExactSupabaseOrigin,
+  assertSupabaseServerApiKey,
+} from "../src/lib/supabase-key-format.js";
 import { assertOperatorMutationAllowed } from "./lib/operator-mutation-guard.js";
 
 type JsonRow = Record<string, unknown>;
@@ -165,6 +170,8 @@ const SQLITE_HANDLED_VENUE_TABLES = new Set<string>([
 ]);
 
 let backupRootForError: string | null = null;
+let loadedSupabaseServiceRoleKey: string | null = null;
+const PRODUCTION_SUPABASE_ORIGIN = "https://auth.pintpath.au";
 
 function hasFlag(name: string): boolean {
   return process.argv.slice(2).includes(`--${name}`);
@@ -187,8 +194,13 @@ function requiredExpectedPairCount(): number {
 }
 
 function requiredEnvironment(name: "SUPABASE_URL" | "SUPABASE_SERVICE_ROLE_KEY"): string {
-  const value = process.env[name]?.trim();
+  const value = process.env[name];
   if (!value) throw new Error(`Missing ${name}.`);
+  if (name === "SUPABASE_URL") {
+    assertExactSupabaseOrigin(value, PRODUCTION_SUPABASE_ORIGIN, name);
+  } else {
+    assertSupabaseServerApiKey(value, name);
+  }
   return value;
 }
 
@@ -280,7 +292,7 @@ async function fetchAllRows(
       .select(select)
       .order("id", { ascending: true })
       .range(from, from + pageSize - 1);
-    if (error) throw new Error(`Unable to read ${table}: ${error.message}`);
+    if (error) throw new Error(`Unable to read ${table}: ${redactSecrets(error.message)}`);
     const rows = (data ?? []) as unknown as JsonRow[];
     output.push(...rows);
     if (rows.length < pageSize) return output;
@@ -303,7 +315,7 @@ async function fetchRowsForIds(
       .order(reference.column, { ascending: true })
       .range(from, from + pageSize - 1);
     if (error) {
-      throw new Error(`Unable to audit ${reference.table}.${reference.column}: ${error.message}`);
+      throw new Error(`Unable to audit ${reference.table}.${reference.column}: ${redactSecrets(error.message)}`);
     }
     const rows = (data ?? []) as JsonRow[];
     output.push(...rows);
@@ -963,7 +975,7 @@ async function cleanSupabase(
         .eq(reference.column, pair.legacy.id)
         .select(reference.column);
       if (error) {
-        throw new Error(`Unable to retarget ${reference.table}.${reference.column}: ${error.message}`);
+        throw new Error(`Unable to retarget ${reference.table}.${reference.column}: ${redactSecrets(error.message)}`);
       }
       addCount(summary, `${reference.table}.${reference.column}`, data?.length ?? 0);
   });
@@ -979,7 +991,7 @@ async function cleanSupabase(
     .delete()
     .in("id", legacyIds)
     .select("id");
-  if (error) throw new Error(`Unable to delete legacy venues: ${error.message}`);
+  if (error) throw new Error(`Unable to delete legacy venues: ${redactSecrets(error.message)}`);
   const deletedIds = (data ?? []).map((row) => String((row as JsonRow).id));
   if (deletedIds.some((id) => !legacyIds.includes(id))) {
     throw new Error(`Supabase deleted an unexpected venue ID: ${JSON.stringify(deletedIds)}.`);
@@ -1064,6 +1076,7 @@ async function main(): Promise<void> {
 
   const supabaseUrl = requiredEnvironment("SUPABASE_URL");
   const supabaseServiceRoleKey = requiredEnvironment("SUPABASE_SERVICE_ROLE_KEY");
+  loadedSupabaseServiceRoleKey = supabaseServiceRoleKey;
   const client = createServerSupabaseClient(supabaseUrl, supabaseServiceRoleKey);
   const venues = (await fetchAllRows(client, "venues")).map(asVenueRow);
   const { pairs: detectedPairs, unresolved } = findDuplicatePairs(venues);
@@ -1141,7 +1154,12 @@ async function main(): Promise<void> {
 }
 
 main().catch((error: unknown) => {
-  const message = error instanceof Error ? error.message : String(error);
+  const message = redactKnownSecretValues(
+    error instanceof Error ? error.message : String(error),
+    [loadedSupabaseServiceRoleKey],
+  );
   console.error(JSON.stringify({ ok: false, error: message, backupRoot: backupRootForError }, null, 2));
   process.exitCode = 1;
+}).finally(() => {
+  loadedSupabaseServiceRoleKey = null;
 });

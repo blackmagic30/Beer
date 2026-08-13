@@ -7,6 +7,12 @@ import dotenv from "dotenv";
 
 import { rehearseDataRestore, sha256File } from "../src/lib/data-backup.js";
 import { fetchVerifiedAccountDeletionLedger } from "../src/lib/offsite-backup.js";
+import { redactKnownSecretValues } from "../src/lib/redact.js";
+import {
+  assertExactSupabaseOrigin,
+  assertSupabaseServerApiKey,
+  resolveExactOperationalOffsiteBackupBucket,
+} from "../src/lib/supabase-key-format.js";
 import { parseStrictArguments } from "./lib/strict-arguments.js";
 
 dotenv.config({ quiet: true });
@@ -38,11 +44,15 @@ function recordRestoreState(databasePath: string, value: Record<string, unknown>
       .get();
     if (!stateTable) return;
     const updatedAt = new Date().toISOString();
+    const revision = `${updatedAt}#restore-rehearsal`;
     database.prepare(
-      `INSERT INTO system_state (key, value_json, updated_at)
-       VALUES ('job:restore_rehearsal', ?, ?)
-       ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at`,
-    ).run(JSON.stringify(value), updatedAt);
+      `INSERT INTO system_state (key, value_json, updated_at, revision)
+       VALUES ('job:restore_rehearsal', ?, ?, ?)
+       ON CONFLICT(key) DO UPDATE SET
+         value_json = excluded.value_json,
+         updated_at = excluded.updated_at,
+         revision = excluded.revision`,
+    ).run(JSON.stringify(value), updatedAt, revision);
   } finally {
     database.close();
   }
@@ -86,6 +96,7 @@ const ledgerTemporaryRoot = tombstoneArgument
   : fs.mkdtempSync(path.join(os.tmpdir(), "pint-path-restore-ledger-"));
 const startedAt = new Date().toISOString();
 recordRestoreState(restoreDatabasePath, { state: "running", startedAt });
+let loadedDestinationServiceRoleKey: string | null = null;
 
 try {
   let deletionTombstonePath: string;
@@ -118,17 +129,30 @@ try {
       expectedDeletionLedgerCheckpointSha256 = checkpointShaArgument;
     }
   } else {
-    const sourceSupabaseUrl = process.env.SUPABASE_URL?.trim();
-    const destinationSupabaseUrl = process.env.OFFSITE_BACKUP_SUPABASE_URL?.trim();
-    const destinationServiceRoleKey = process.env.OFFSITE_BACKUP_SERVICE_ROLE_KEY?.trim();
+    const sourceSupabaseUrl = process.env.SUPABASE_URL;
+    const destinationSupabaseUrl = process.env.OFFSITE_BACKUP_SUPABASE_URL;
+    const destinationServiceRoleKey = process.env.OFFSITE_BACKUP_SERVICE_ROLE_KEY;
     if (!sourceSupabaseUrl || !destinationSupabaseUrl || !destinationServiceRoleKey) {
       throw new Error("Online restore requires SUPABASE_URL, OFFSITE_BACKUP_SUPABASE_URL, and OFFSITE_BACKUP_SERVICE_ROLE_KEY.");
     }
+    assertExactSupabaseOrigin(sourceSupabaseUrl, "https://auth.pintpath.au", "SUPABASE_URL");
+    assertExactSupabaseOrigin(
+      destinationSupabaseUrl,
+      "https://hfbmhdxrwtihukmixxta.supabase.co",
+      "OFFSITE_BACKUP_SUPABASE_URL",
+    );
+    assertSupabaseServerApiKey(
+      destinationServiceRoleKey,
+      "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
+    );
+    loadedDestinationServiceRoleKey = destinationServiceRoleKey;
     const verified = await fetchVerifiedAccountDeletionLedger({
       sourceSupabaseUrl,
       destinationSupabaseUrl,
       destinationServiceRoleKey,
-      bucketName: process.env.OFFSITE_BACKUP_BUCKET?.trim() || "pintpath-backups",
+      bucketName: resolveExactOperationalOffsiteBackupBucket(
+        process.env.OFFSITE_BACKUP_BUCKET,
+      ),
     });
     deletionTombstonePath = path.join(ledgerTemporaryRoot!, "account-deletion-tombstones.json");
     deletionLedgerGenesisPath = path.join(ledgerTemporaryRoot!, "account-deletion-ledger-genesis.json");
@@ -190,14 +214,22 @@ try {
   }, null, 2));
 } catch (error) {
   const completedAt = new Date().toISOString();
+  const safeError = error instanceof Error
+    ? redactKnownSecretValues(
+        error.message,
+        [loadedDestinationServiceRoleKey],
+      ).slice(0, 300)
+    : "Restore rehearsal failed";
   recordRestoreState(restoreDatabasePath, {
     state: "failed",
     startedAt,
     completedAt,
-    error: error instanceof Error ? error.message.slice(0, 300) : "Restore rehearsal failed",
+    error: safeError,
   });
-  throw error;
+  loadedDestinationServiceRoleKey = null;
+  throw new Error("Restore rehearsal failed.");
 } finally {
+  loadedDestinationServiceRoleKey = null;
   if (ledgerTemporaryRoot) {
     await fs.promises.rm(ledgerTemporaryRoot, { recursive: true, force: true });
   }

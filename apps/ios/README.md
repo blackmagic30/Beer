@@ -19,17 +19,19 @@ PINT_PATH_API_BASE_URL = http:/$()/127.0.0.1:3000
 
 `Config.xcconfig` is loaded automatically; do not attach it to the project or
 commit it. Debug builds can omit the Supabase values when authentication is not
-being exercised.
+being exercised. Any nonblank `SUPABASE_ANON_KEY` in any build configuration
+must use the publishable-key format below; secret, legacy, or malformed values
+fail the build before they can be packaged.
 
 ## Release configuration
 
 Every Release build and archive fails before compilation unless it has the
 exact production API origin, the independently pinned Supabase custom origin
-`https://auth.pintpath.au`, and a public Supabase key. Use an
-`sb_publishable_...` key or a legacy JWT with the `anon` role. Never put an
-`sb_secret_...`, legacy `service_role`, or server credential in this app.
+`https://auth.pintpath.au`, and an `sb_publishable_...` key with a 20–220
+character URL-safe suffix. Legacy JWTs, `sb_secret_...` keys, and server
+credentials are rejected.
 
-1. Obtain the production publishable/anon key from the approved production
+1. Obtain the production publishable key from the approved production
    environment. Confirm its public origin is exactly `https://auth.pintpath.au`.
 2. Generate the ignored config without printing its values:
 
@@ -60,6 +62,22 @@ additionally runs the protected
 `production` environment job using `SUPABASE_URL` and `SUPABASE_ANON_KEY`
 secrets. That unsigned CI artifact validates configuration only; it is not the
 signed App Store candidate.
+
+### App Store release evidence
+
+The `ios_release` gate passes only for one build bound to the exact frozen
+candidate SHA. The release evidence must include the source SHA, version/build,
+signed archive and exported IPA SHA-256 values, Organizer validation, and the
+signed physical-device matrix. An unsigned CI archive or an internal TestFlight
+upload is not release evidence.
+
+Distribute that same signed build to an external TestFlight group and pass Beta
+App Review before submitting it for full App Review. The final gate requires
+full App Review approval for the same build, the Australia storefront selected,
+manual release selected, and phased release configured. Keep the approved build
+held in App Store Connect until every web-and-iOS gate passes and the release
+owner authorizes the manual launch; do not replace the binary or change its
+frozen backend contract during review.
 
 ## Current integration
 

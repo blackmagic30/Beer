@@ -2,12 +2,6 @@ name: Pint Path Release Gate
 
 on:
   workflow_dispatch:
-    inputs:
-      expected_commercial_launch_enabled:
-        description: Exact expected state of the web venue-enrollment launch flag
-        required: true
-        default: false
-        type: boolean
 
 permissions:
   contents: read
@@ -25,11 +19,11 @@ jobs:
       PINTPATH_SMOKE_BASE_URL: https://pintpath.au
       PINTPATH_EXPECTED_COMMIT_SHA: ${{ github.sha }}
       PINTPATH_ENFORCE_LAUNCH_FLAGS: "true"
-      PINTPATH_EXPECTED_COMMERCIAL_LAUNCH_ENABLED: ${{ inputs.expected_commercial_launch_enabled }}
+      PINTPATH_EXPECTED_COMMERCIAL_LAUNCH_ENABLED: "false"
 
     steps:
       - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -37,14 +31,35 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version-file: .node-version
           cache: npm
 
       - name: Install dependencies
         run: npm ci
 
+      - name: Prove permanent-staging cost and deployment scaffolds remain fail-closed
+        run: npm run permanent-staging:cost:contract:check
+
+      - name: Prove reviewed-price PostgreSQL kernel remains inert
+        run: npm run db:postgres:reviewed-price:kernel:contract:check
+
+      - name: Prove logical-state v2 remains additive and fail-closed
+        run: npm run db:postgres:logical-state:v2:contract:check
+
+      - name: Prove logical-backup V4 remains offline and non-operational
+        run: npm run db:postgres:backup:v4:offline-contract:check
+
       - name: Build
         run: npm run build
+
+      - name: Prove Supabase key consumer compatibility
+        run: npm run supabase:keys:consumer-compatibility:check
+
+      - name: Prove canonical PostgreSQL runtime selection
+        run: >-
+          npx vitest run
+          test/runtime-persistence.test.ts
+          test/provider-readiness-reporting.test.ts
 
       - name: Automated release-readiness tests
         env:
@@ -58,51 +73,20 @@ jobs:
           set -o pipefail
           npm run --silent smoke:production | tee production-public-smoke.json
 
-      - name: Enforce production provider readiness
+      - name: Enforce empty Railway mutation boundary and production image authority
         env:
-          NODE_ENV: production
-          PUBLIC_BASE_URL: https://pintpath.au
-          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
-          GOOGLE_MAPS_MAP_ID: ${{ secrets.GOOGLE_MAPS_MAP_ID }}
-          GOOGLE_PLACES_API_KEY: ${{ secrets.GOOGLE_PLACES_API_KEY }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          SUPABASE_OAUTH_PROVIDERS: google
-          REDIS_URL: ${{ secrets.REDIS_URL }}
-          SOURCE_EVIDENCE_SIGNING_SECRET: ${{ secrets.SOURCE_EVIDENCE_SIGNING_SECRET }}
-          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
-          STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
-          STRIPE_PRICE_MONTHLY: ${{ secrets.STRIPE_PRICE_MONTHLY }}
-          STRIPE_PRICE_YEARLY: ${{ secrets.STRIPE_PRICE_YEARLY }}
-          STRIPE_PRO_PRICE_ID: ${{ secrets.STRIPE_PRO_PRICE_ID }}
-          NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY }}
-          POS_WEBHOOK_SIGNING_SECRET: ${{ secrets.POS_WEBHOOK_SIGNING_SECRET }}
-          ADMIN_EMAILS: ${{ secrets.ADMIN_EMAILS }}
-          REQUIRE_ADMIN_MFA_IN_PRODUCTION: "true"
-          FIELD_TEST_MODE: "false"
-          OFFSITE_BACKUP_BUCKET: ${{ secrets.OFFSITE_BACKUP_BUCKET }}
-          OFFSITE_BACKUP_SUPABASE_URL: ${{ secrets.OFFSITE_BACKUP_SUPABASE_URL }}
-          OFFSITE_BACKUP_SERVICE_ROLE_KEY: ${{ secrets.OFFSITE_BACKUP_SERVICE_ROLE_KEY }}
-          REPORT_TIMEZONE: Australia/Melbourne
-          REPORT_EMAIL_MODE: ${{ secrets.REPORT_EMAIL_MODE }}
-          REPORT_DELIVERY_SCHEDULE_ENABLED: ${{ secrets.REPORT_DELIVERY_SCHEDULE_ENABLED }}
-          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
-          REPORT_EMAIL_FROM: ${{ secrets.REPORT_EMAIL_FROM }}
-          ACCOUNT_DELETION_NOTICE_MODE: resend
-          RESEND_TRANSACTIONAL_API_KEY: ${{ secrets.RESEND_TRANSACTIONAL_API_KEY }}
-          ACCOUNT_DELETION_NOTICE_FROM: ${{ secrets.ACCOUNT_DELETION_NOTICE_FROM }}
-          ACCOUNT_DELETION_NOTICE_REPLY_TO: ${{ secrets.ACCOUNT_DELETION_NOTICE_REPLY_TO }}
-          RESEND_WEBHOOK_SIGNING_SECRET: ${{ secrets.RESEND_WEBHOOK_SIGNING_SECRET }}
-          ACCOUNT_DELETION_NOTICE_ACTIVE_KEY_ID: ${{ secrets.ACCOUNT_DELETION_NOTICE_ACTIVE_KEY_ID }}
-          ACCOUNT_DELETION_NOTICE_KEYRING_JSON: ${{ secrets.ACCOUNT_DELETION_NOTICE_KEYRING_JSON }}
-          ACCOUNT_DELETION_NOTICE_CHECK_INTERVAL_MINUTES: "5"
-          DEMO_BILLING_MODE: "false"
-          ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION: "false"
+          PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
         run: |
           set -o pipefail
-          npm run --silent readiness:launch | tee provider-readiness-summary.json
+          npm run --silent readiness:railway:mutation-boundary | tee railway-mutation-boundary-readiness.json
+
+      - name: Enforce permanent-staging sealed-variable metadata
+        env:
+          PINTPATH_RAILWAY_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_METADATA_TOKEN }}
+        run: |
+          set -o pipefail
+          npm run --silent readiness:railway:sealed | tee railway-sealed-variable-readiness.json
 
       - name: Verify authenticated production roles
         env:
@@ -162,6 +146,7 @@ jobs:
             production-data-readiness.json
             production-role-smoke.json
             release-evidence-summary.json
-            provider-readiness-summary.json
+            railway-mutation-boundary-readiness.json
+            railway-sealed-variable-readiness.json
             tested-commit-sha.txt
           if-no-files-found: warn

@@ -1,4 +1,55 @@
+import crypto from "node:crypto";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+const RESTORE_RAILWAY_ENVIRONMENT_ID = "fixture-restore-environment";
+const RESTORE_RAILWAY_PROJECT_ID = "fixture-restore-project";
+const RESTORE_RAILWAY_APP_SERVICE_ID = "fixture-restore-app-service";
+const RESTORE_RAILWAY_PUBLIC_DOMAIN = "restore-staging-fixture.up.railway.app";
+const RESTORE_REDIS_SERVICE_ID = "fixture-restore-redis-service";
+const RESTORE_SUPABASE_URL = "https://restoreref0000000001.supabase.co";
+const PRODUCTION_SUPABASE_URL = "https://productionref0000001.supabase.co";
+const BACKUP_SUPABASE_URL = "https://backupref00000000001.supabase.co";
+const RATE_LIMIT_DATABASE_URL =
+  "postgresql://pintpath_app:fixture-password@postgres.railway.internal:5432/pintpath?sslmode=require";
+const RATE_LIMIT_REDIS_URL = "redis://default:password@redis.railway.internal:6379";
+const STAGING_DATABASE_DIGEST = sha256("postgresql://staging.invalid/pintpath?sslmode=require");
+const STAGING_REDIS_DIGEST = sha256("redis://staging.invalid:6379");
+const PRODUCTION_DATABASE_RESOURCE = "provider-prod-postgres-71b26d90";
+const STAGING_DATABASE_RESOURCE = "provider-staging-postgres-40e62ca1";
+const RESTORE_DATABASE_RESOURCE = "provider-restore-postgres-5a821e3c";
+const PRODUCTION_REDIS_RESOURCE = "provider-prod-redis-71b26d90";
+const STAGING_REDIS_RESOURCE = "provider-staging-redis-40e62ca1";
+const RESTORE_REDIS_RESOURCE = "provider-restore-redis-5a821e3c";
+const RESTORE_REDIS_NAMESPACE = `pint-path:restore:${RESTORE_RAILWAY_ENVIRONMENT_ID}:pint-path-test-backup`;
+
+function sha256(value: string): string {
+  return crypto.createHash("sha256").update(value, "utf8").digest("hex");
+}
+
+function legacySupabaseJwt(
+  role: "anon" | "service_role",
+  signatureByte: number,
+): string {
+  return [
+    Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" }), "utf8")
+      .toString("base64url"),
+    Buffer.from(JSON.stringify({
+      iss: "supabase",
+      ref: `rate-limit-${signatureByte}`,
+      role,
+      iat: 1_700_000_000,
+      exp: 2_000_000_000,
+    }), "utf8").toString("base64url"),
+    Buffer.alloc(32, signatureByte).toString("base64url"),
+  ].join(".");
+}
+
+const productionLegacyAnonKey = legacySupabaseJwt("anon", 1);
+const productionLegacyServiceRoleKey = legacySupabaseJwt("service_role", 2);
+const productionLegacyOffsiteServiceRoleKey = legacySupabaseJwt("service_role", 3);
+const restoreLegacyAnonKey = legacySupabaseJwt("anon", 4);
+const restoreLegacyServiceRoleKey = legacySupabaseJwt("service_role", 5);
 
 const redisMockState = vi.hoisted(() => ({
   instances: [] as Array<{
@@ -113,6 +164,16 @@ function stubProductionEnv(overrides: Record<string, string> = {}) {
   const env = {
     NODE_ENV: "production",
     PUBLIC_BASE_URL: "https://pintpath.au",
+    DATABASE_URL: RATE_LIMIT_DATABASE_URL,
+    DATABASE_PATH: "",
+    PINTPATH_IDENTITY_REGISTRY_PHASE: "complete",
+    PINTPATH_DATABASE_RESOURCE_ID: PRODUCTION_DATABASE_RESOURCE,
+    PINTPATH_EXPECTED_DATABASE_RESOURCE_ID: PRODUCTION_DATABASE_RESOURCE,
+    PINTPATH_FORBIDDEN_DATABASE_RESOURCE_IDS: `${STAGING_DATABASE_RESOURCE},${RESTORE_DATABASE_RESOURCE}`,
+    PINTPATH_EXPECTED_DATABASE_URL_SHA256: sha256(RATE_LIMIT_DATABASE_URL),
+    PINTPATH_FORBIDDEN_DATABASE_URL_SHA256S: `${STAGING_DATABASE_DIGEST},${sha256("restore-database")}`,
+    PINTPATH_PERMANENT_STAGING_DATABASE_RESOURCE_ID: STAGING_DATABASE_RESOURCE,
+    PINTPATH_PERMANENT_STAGING_DATABASE_URL_SHA256: STAGING_DATABASE_DIGEST,
     GOOGLE_MAPS_API_KEY: "test-browser-maps-key",
     GOOGLE_MAPS_MAP_ID: "test-vector-map-id",
     GOOGLE_PLACES_API_KEY: "test-google-places-api-key",
@@ -123,16 +184,28 @@ function stubProductionEnv(overrides: Record<string, string> = {}) {
     STRIPE_PRICE_YEARLY: "test-stripe-yearly-price",
     STRIPE_PRO_PRICE_ID: "test-stripe-pro-price",
     SUPABASE_URL: "https://test-primary.supabase.co",
-    SUPABASE_ANON_KEY: "test-supabase-anon-key",
-    SUPABASE_SERVICE_ROLE_KEY: "test-supabase-service-role-key",
+    SUPABASE_ANON_KEY: productionLegacyAnonKey,
+    SUPABASE_SERVICE_ROLE_KEY: productionLegacyServiceRoleKey,
     OFFSITE_BACKUP_SUPABASE_URL: "https://test-offsite.supabase.co",
-    OFFSITE_BACKUP_SERVICE_ROLE_KEY: "test-offsite-service-role-key",
+    OFFSITE_BACKUP_SERVICE_ROLE_KEY: productionLegacyOffsiteServiceRoleKey,
     SOURCE_EVIDENCE_SIGNING_SECRET: "test-source-evidence-signing-secret-32-bytes",
     POS_WEBHOOK_SIGNING_SECRET: "test-pos-webhook-signing-secret-32-bytes",
     DEMO_BILLING_MODE: "false",
-    REDIS_URL: "redis://default:password@redis.railway.internal:6379",
+    REDIS_URL: RATE_LIMIT_REDIS_URL,
+    PINTPATH_REDIS_RESOURCE_ID: PRODUCTION_REDIS_RESOURCE,
+    PINTPATH_EXPECTED_REDIS_RESOURCE_ID: PRODUCTION_REDIS_RESOURCE,
+    PINTPATH_FORBIDDEN_REDIS_RESOURCE_IDS: `${STAGING_REDIS_RESOURCE},${RESTORE_REDIS_RESOURCE}`,
+    PINTPATH_EXPECTED_REDIS_URL_SHA256: sha256(RATE_LIMIT_REDIS_URL),
+    PINTPATH_FORBIDDEN_REDIS_URL_SHA256S: `${STAGING_REDIS_DIGEST},${sha256("restore-redis")}`,
+    PINTPATH_PERMANENT_STAGING_REDIS_RESOURCE_ID: STAGING_REDIS_RESOURCE,
+    PINTPATH_PERMANENT_STAGING_REDIS_URL_SHA256: STAGING_REDIS_DIGEST,
     REDIS_KEY_NAMESPACE: "",
     RESTORE_REHEARSAL_MODE: "false",
+    RESTORE_REHEARSAL_EXPECTED_RAILWAY_ENVIRONMENT_ID: "",
+    RESTORE_REHEARSAL_EXPECTED_RAILWAY_PROJECT_ID: "",
+    RESTORE_REHEARSAL_EXPECTED_RAILWAY_SERVICE_ID: "",
+    RESTORE_REHEARSAL_EXPECTED_SUPABASE_URL: "",
+    RESTORE_REHEARSAL_EXPECTED_REDIS_SERVICE_ID: "",
     RESTORE_REHEARSAL_REDIS_SENTINEL: "",
     REQUIRE_REDIS_RATE_LIMITING: "false",
     ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION: "false",
@@ -155,22 +228,27 @@ function restoreRehearsalOverrides(namespace: string, sentinel: string): Record<
     RESTORE_REHEARSAL_BACKUP_ID: "pint-path-test-backup",
     RESTORE_REHEARSAL_SOURCE_MANIFEST_SHA256: "a".repeat(64),
     RESTORE_REHEARSAL_RUNTIME_ATTESTATION_SHA256: "b".repeat(64),
-    RESTORE_REHEARSAL_PRODUCTION_SUPABASE_URL: "https://jxpubqlmqnnqwadmjgyk.supabase.co",
-    RESTORE_REHEARSAL_BACKUP_SUPABASE_URL: "https://gjjffexmflwtnewtkkiy.supabase.co",
+    RESTORE_REHEARSAL_EXPECTED_RAILWAY_ENVIRONMENT_ID: RESTORE_RAILWAY_ENVIRONMENT_ID,
+    RESTORE_REHEARSAL_EXPECTED_RAILWAY_PROJECT_ID: RESTORE_RAILWAY_PROJECT_ID,
+    RESTORE_REHEARSAL_EXPECTED_RAILWAY_SERVICE_ID: RESTORE_RAILWAY_APP_SERVICE_ID,
+    RESTORE_REHEARSAL_EXPECTED_SUPABASE_URL: RESTORE_SUPABASE_URL,
+    RESTORE_REHEARSAL_EXPECTED_REDIS_SERVICE_ID: RESTORE_REDIS_SERVICE_ID,
+    RESTORE_REHEARSAL_PRODUCTION_SUPABASE_URL: PRODUCTION_SUPABASE_URL,
+    RESTORE_REHEARSAL_BACKUP_SUPABASE_URL: BACKUP_SUPABASE_URL,
     RESTORE_REHEARSAL_ACCESS_USERNAME: "restore-operator",
     RESTORE_REHEARSAL_ACCESS_PASSWORD: "restore-access-password-with-enough-entropy",
-    RAILWAY_ENVIRONMENT_ID: "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+    RAILWAY_ENVIRONMENT_ID: RESTORE_RAILWAY_ENVIRONMENT_ID,
     RAILWAY_ENVIRONMENT_NAME: "staging",
-    RAILWAY_PROJECT_ID: "48d8c6cd-1c66-4148-874b-20877f48e1a5",
-    RAILWAY_SERVICE_ID: "6816c4a2-e392-4ee5-826f-2584cb599ec0",
+    RAILWAY_PROJECT_ID: RESTORE_RAILWAY_PROJECT_ID,
+    RAILWAY_SERVICE_ID: RESTORE_RAILWAY_APP_SERVICE_ID,
     RAILWAY_VOLUME_MOUNT_PATH: "/app/data",
-    RAILWAY_PUBLIC_DOMAIN: "beer-staging.up.railway.app",
-    PUBLIC_BASE_URL: "https://beer-staging.up.railway.app",
+    RAILWAY_PUBLIC_DOMAIN: RESTORE_RAILWAY_PUBLIC_DOMAIN,
+    PUBLIC_BASE_URL: `https://${RESTORE_RAILWAY_PUBLIC_DOMAIN}`,
     DATABASE_PATH: "/app/data/restore-pint-path-test-backup/pint-path.sqlite",
     SOURCE_EVIDENCE_STORAGE_DIR: "/app/data/restore-pint-path-test-backup/source-evidence",
-    SUPABASE_URL: "https://ibveugyfyzjptyvautlr.supabase.co",
-    SUPABASE_ANON_KEY: "restore-anon-key",
-    SUPABASE_SERVICE_ROLE_KEY: "restore-service-role-key",
+    SUPABASE_URL: RESTORE_SUPABASE_URL,
+    SUPABASE_ANON_KEY: restoreLegacyAnonKey,
+    SUPABASE_SERVICE_ROLE_KEY: restoreLegacyServiceRoleKey,
     SUPABASE_OAUTH_PROVIDERS: "",
     GOOGLE_MAPS_API_KEY: "restore-browser-map-key",
     GOOGLE_MAPS_MAP_ID: "restore-map-id",
@@ -196,8 +274,8 @@ function restoreRehearsalOverrides(namespace: string, sentinel: string): Record<
     NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: "",
     REQUIRE_REDIS_RATE_LIMITING: "true",
     REDIS_KEY_NAMESPACE: namespace,
-    RESTORE_REHEARSAL_REDIS_ENVIRONMENT_ID: "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
-    RESTORE_REHEARSAL_REDIS_SERVICE_ID: "d6351cec-fe04-4a6f-8e05-1cc164ea1e73",
+    RESTORE_REHEARSAL_REDIS_ENVIRONMENT_ID: RESTORE_RAILWAY_ENVIRONMENT_ID,
+    RESTORE_REHEARSAL_REDIS_SERVICE_ID: RESTORE_REDIS_SERVICE_ID,
     RESTORE_REHEARSAL_REDIS_SENTINEL: sentinel,
     REDIS_URL: "redis://default:fixture-password@redis.railway.internal:6379",
   };
@@ -294,7 +372,7 @@ describe("Redis-backed rate limiting", () => {
   });
 
   it("verifies the restore Redis identity atomically with every write", async () => {
-    const namespace = "pint-path:restore:a4e0f507-d6d3-4df9-a818-ad92c0071a35:pint-path-test-backup";
+    const namespace = RESTORE_REDIS_NAMESPACE;
     const sentinel = "restore-redis-sentinel-with-enough-entropy-2026";
     stubProductionEnv(restoreRehearsalOverrides(namespace, sentinel));
     redisMockState.strings.set(`${namespace}:identity`, sentinel);
@@ -313,7 +391,7 @@ describe("Redis-backed rate limiting", () => {
     expect(redis.eval).toHaveBeenCalledWith(
       expect.stringContaining("local identity = redis.call('GET', KEYS[2])"),
       2,
-      expect.stringMatching(/^pint-path:restore:a4e0f507-d6d3-4df9-a818-ad92c0071a35:pint-path-test-backup:restore:test:/),
+      expect.stringMatching(/^pint-path:restore:fixture-restore-environment:pint-path-test-backup:restore:test:/),
       `${namespace}:identity`,
       60_000,
       sentinel,
@@ -321,7 +399,7 @@ describe("Redis-backed rate limiting", () => {
   });
 
   it("fails closed without writing when the restore Redis identity does not match", async () => {
-    const namespace = "pint-path:restore:a4e0f507-d6d3-4df9-a818-ad92c0071a35:pint-path-test-backup";
+    const namespace = RESTORE_REDIS_NAMESPACE;
     stubProductionEnv(restoreRehearsalOverrides(
       namespace,
       "expected-restore-redis-sentinel-with-entropy",
@@ -351,7 +429,7 @@ describe("Redis-backed rate limiting", () => {
   });
 
   it("fails the next write if the staging identity sentinel changes", async () => {
-    const namespace = "pint-path:restore:a4e0f507-d6d3-4df9-a818-ad92c0071a35:pint-path-test-backup";
+    const namespace = RESTORE_REDIS_NAMESPACE;
     const sentinel = "expected-restore-redis-sentinel-with-entropy";
     stubProductionEnv(restoreRehearsalOverrides(namespace, sentinel));
     redisMockState.strings.set(`${namespace}:identity`, sentinel);
@@ -506,7 +584,7 @@ describe("Redis-backed rate limiting", () => {
   });
 
   it("reports verified restore Redis identity in readiness without exposing the sentinel", async () => {
-    const namespace = "pint-path:restore:a4e0f507-d6d3-4df9-a818-ad92c0071a35:pint-path-test-backup";
+    const namespace = RESTORE_REDIS_NAMESPACE;
     const sentinel = "restore-readiness-sentinel-with-enough-entropy";
     stubProductionEnv(restoreRehearsalOverrides(namespace, sentinel));
     redisMockState.strings.set(`${namespace}:identity`, sentinel);
@@ -525,7 +603,7 @@ describe("Redis-backed rate limiting", () => {
   });
 
   it("reports a failed restore Redis identity probe without writing or leaking sentinels", async () => {
-    const namespace = "pint-path:restore:a4e0f507-d6d3-4df9-a818-ad92c0071a35:pint-path-test-backup";
+    const namespace = RESTORE_REDIS_NAMESPACE;
     const sentinel = "expected-restore-readiness-sentinel-with-entropy";
     stubProductionEnv(restoreRehearsalOverrides(namespace, sentinel));
     redisMockState.strings.set(`${namespace}:identity`, "other-environment");

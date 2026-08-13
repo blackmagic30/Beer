@@ -9,45 +9,171 @@ import { CONTRIBUTION_POINTS, PREMIUM_PRICING, SUBMISSION_LIMITS } from "../../c
 import { CURRENT_LEGAL_POLICY_VERSION } from "../../config/legal.js";
 import type { Env } from "../../config/env.js";
 import { createServerSupabaseClient } from "../../lib/supabase-client.js";
+import { hasExactLegacySupabaseRoleJwt } from "../../lib/supabase-key-format.js";
 import {
   BusinessRepository,
-  ACCOUNT_DATA_RETENTION_POLICY,
   MissionReservationError,
   OptimisticConcurrencyError,
   type AgeVerification,
+  type AccountSession,
   type AccountRewardVoucher,
-  type AccountPreferences,
-  type BarPendingChange,
   type BarPendingChangeAction,
   type BarPendingChangeType,
   type BusinessAccount,
+  type BarBeer,
   type BarMembershipTier,
   type BarProfile,
   type BarSpecial,
   type MonthlyBarReport,
   type BusinessMission,
-  type MissionVenueCandidate,
   type BusinessSubmission,
   type BusinessSubmissionItem,
   type ConfidenceLabel,
-  type FeedbackPriority,
   type LeaderboardPrizeCampaign,
   type PendingVenueDetails,
   type PintPointDrinkRecord,
-  type VenueManagerAssignment,
+  type VenueLocationCache,
   type VenuePintPointActivity,
   type PubGolfVenueCandidate,
   type PublicVenuePriceRecord,
-  type SavedItem,
   type ServingSize,
   type SubmissionItemCaptureSource,
   type SubmissionOcrStatus,
   type SubmissionOcrSummary,
-  type SourceEvidenceObject,
   type SubscriptionStatus,
+  type UserVerification,
 } from "../../db/business.repository.js";
+import {
+  ACCOUNT_DATA_RETENTION_POLICY,
+  PrivacyRetentionRepository,
+  PrivacyRetentionRepositoryError,
+  type PrivacyRetentionMutationCounts,
+} from "../../db/privacy-retention.repository.js";
 import { BeerCatalogRepository, type BeerCatalogAdminItem, type ResolvedBeerCatalogItem } from "../../db/beer-catalog.repository.js";
-import { purgeExpiredMigrationBackups } from "../../db/database.js";
+import {
+  AccountSessionRepository,
+  AccountSessionRepositoryError,
+} from "../../db/account-session.repository.js";
+import {
+  AccountProfilePreferencesRepository,
+  AccountProfilePreferencesRepositoryError,
+  RECENT_SEARCH_UNBOUNDED_LIMIT,
+  type AccountPreferences,
+  type SavedItem,
+} from "../../db/account-profile-preferences.repository.js";
+import {
+  ActivityAuditRepository,
+  ActivityAuditRepositoryError,
+  type ActivityAuditCursor,
+  type UserActivityEventRecord,
+} from "../../db/activity-audit.repository.js";
+import {
+  BillingCheckoutRepository,
+  BillingCheckoutRepositoryError,
+} from "../../db/billing-checkout.repository.js";
+import {
+  VenueAccessRepository,
+  VenueAccessRepositoryError,
+  type VenueAccessAssignmentRecord,
+  type VenueAccessLevel,
+  type VenueAccessStatus,
+  type VenueAssignmentCursor,
+  type VenueClaimCursor,
+  type VenueClaimRecord,
+  type VenueClaimStatus,
+} from "../../db/venue-access.repository.js";
+import {
+  MissionLifecycleRepository,
+  MissionLifecycleRepositoryError,
+  type MissionLifecycleMission,
+  type MissionListCursor,
+} from "../../db/mission-lifecycle.repository.js";
+import {
+  MissionDiscoveryAutomationRepository,
+  MissionDiscoveryAutomationRepositoryError,
+  type MissionVenueCandidate,
+} from "../../db/mission-discovery-automation.repository.js";
+import {
+  StripeSubscriptionRepository,
+  StripeSubscriptionRepositoryError,
+  type StripeApplicationEffect,
+  type StripeResolvedBillingTarget,
+} from "../../db/stripe-subscription.repository.js";
+import {
+  VenueRequestRepository,
+  VenueRequestRepositoryError,
+  type VenueRequestListCursor,
+  type VenueRequestRecord,
+} from "../../db/venue-request.repository.js";
+import {
+  VenuePartnerRepository,
+  VenuePartnerRepositoryError,
+  type VenueInterestListCursor,
+  type VenueInterestRecord,
+  type VenuePartnerOutreachListCursor,
+  type VenuePartnerOutreachRecord,
+} from "../../db/venue-partner.repository.js";
+import {
+  AdminAnalyticsRepository,
+  AdminAnalyticsRepositoryError,
+} from "../../db/admin-analytics.repository.js";
+import {
+  VenueManagerInsightsRepository,
+  VenueManagerInsightsRepositoryError,
+  type VenueManagerInsights,
+} from "../../db/venue-manager-insights.repository.js";
+import {
+  AdminAccountRepository,
+  AdminAccountRepositoryError,
+} from "../../db/admin-account.repository.js";
+import {
+  SupportFeedbackRepository,
+  SupportFeedbackRepositoryError,
+  type FeedbackPriority,
+} from "../../db/support-feedback.repository.js";
+import {
+  AccountDeletionQueueRepository,
+  AccountDeletionQueueRepositoryError,
+  type AccountDeletionSecretPurgeCheckpointEntry,
+} from "../../db/account-deletion-queue.repository.js";
+import {
+  AccountPrivacyRepository,
+  AccountPrivacyRepositoryError,
+} from "../../db/account-privacy.repository.js";
+import {
+  CommunitySubmissionRepository,
+  CommunitySubmissionRepositoryError,
+  type CommunityCatalogDecision,
+  type CommunitySubmissionRecord,
+} from "../../db/community-submission.repository.js";
+import {
+  VenueManagerInternalSubmissionRepository,
+  VenueManagerInternalSubmissionRepositoryError,
+  type VenueManagerInternalMissionFence,
+} from "../../db/venue-manager-internal-submission.repository.js";
+import {
+  SourceEvidenceObjectRepository,
+  SourceEvidenceObjectRepositoryError,
+  type SourceEvidenceObject,
+} from "../../db/source-evidence-object.repository.js";
+import { SourceEvidenceRetentionRepository } from "../../db/source-evidence-retention.repository.js";
+import {
+  VenuePendingChangeRepository,
+  VenuePendingChangeRepositoryError,
+  type ResolvedVenueBeerPendingPayload,
+} from "../../db/venue-pending-change.repository.js";
+import {
+  VenueDataReadRepository,
+  VenueDataReadRepositoryError,
+} from "../../db/venue-data-read.repository.js";
+import { PublicVenueDirectoryRepository } from "../../db/public-venue-directory.repository.js";
+import { PublicPriceRepository } from "../../db/public-price.repository.js";
+import { SystemStateRepository } from "../../db/system-state.repository.js";
+import {
+  VenueIdentityRepository,
+  VenueIdentityRepositoryError,
+} from "../../db/venue-identity.repository.js";
+import { VenueInventoryRepository } from "../../db/venue-inventory.repository.js";
 import {
   SUPPORTED_BEERS,
   VIEWER_TRACKED_BEERS,
@@ -63,7 +189,9 @@ import { logger } from "../../lib/logger.js";
 import {
   createMockReportEmailProvider,
   createResendReportEmailProvider,
+  getVenueReportDeliverySettings as readVenueReportDeliverySettings,
   runMonthlyReportDelivery,
+  setVenueReportDeliverySettings as writeVenueReportDeliverySettings,
 } from "../../lib/monthly-report-delivery.js";
 import type { MenuPhotoOcrBeer, MenuPhotoOcrProcessor, MenuPhotoOcrResult } from "../../lib/menu-photo-ocr.js";
 import { redactSecrets } from "../../lib/redact.js";
@@ -256,9 +384,37 @@ type SupabaseReadinessDependencies = {
 };
 
 const AUTO_MISSION_VENUE_PAGE_SIZE = 500;
+const MAX_AUTO_MISSION_CANDIDATE_SCAN_ROWS = 5_000;
+const MAX_AUTO_MISSION_CANDIDATE_PAGES = MAX_AUTO_MISSION_CANDIDATE_SCAN_ROWS / AUTO_MISSION_VENUE_PAGE_SIZE;
+const MAX_AUTO_MISSION_DEFINITIONS = 5_000;
 const AUTO_MISSION_REFRESH_INTERVAL_MS = 30 * 60 * 1000;
 const AUTO_MISSION_REFRESH_STATE_KEY = "auto_missions_refresh";
 const MISSION_ACCEPTANCE_TTL_MS = 24 * 60 * 60 * 1000;
+const MISSION_EXPIRY_BATCH_SIZE = 500;
+const MAX_MISSION_EXPIRY_BATCHES = 20;
+const MISSION_AUTOMATION_BATCH_SIZE = 500;
+const MAX_MISSION_AUTOMATION_BATCHES = 20;
+const PRIVACY_RETENTION_BATCH_SIZE = 500;
+const MAX_PRIVACY_RETENTION_BATCHES = 20;
+const PRIVACY_RETENTION_MUTATION_KEYS = [
+  "authSessionsDeleted",
+  "providerRevocationsDeleted",
+  "stripePayloadsRedacted",
+  "stripeEnvelopesDeleted",
+  "securityFingerprintsRedacted",
+  "securityEnvelopesDeleted",
+  "reviewedLocationsPurged",
+  "migrationQuarantinePayloadsRedacted",
+  "deletionNotificationEventsDeleted",
+] as const satisfies ReadonlyArray<keyof PrivacyRetentionMutationCounts>;
+const MISSION_LOCAL_CACHE_PAGE_SIZE = 200;
+const MAX_MISSION_LOCAL_CACHE_SCAN_ROWS = 5_000;
+const VENUE_REQUEST_ADMIN_PAGE_SIZE = 100;
+const MAX_VENUE_REQUEST_ADMIN_SCAN_ROWS = 5_000;
+const VENUE_PARTNER_ADMIN_PAGE_SIZE = 100;
+// The legacy admin panel shares one offset across several datasets. Preserve
+// that UI contract without allowing an unbounded cursor-to-offset scan.
+const MAX_VENUE_PARTNER_ADMIN_SCAN_ROWS = 5_000;
 const PUBLIC_HAPPY_HOUR_DISCOVERY_ENABLED = false;
 const PUBLIC_HAPPY_HOUR_CONTRIBUTIONS_ENABLED = false;
 const PUBLIC_SPECIAL_DISCOVERY_ENABLED = false;
@@ -276,6 +432,9 @@ const USER_GOOGLE_VENUE_TYPES = ["bar", "pub", "restaurant", "brewery", "night_c
 const USER_GOOGLE_VENUE_TYPE_SET = new Set<string>(USER_GOOGLE_VENUE_TYPES);
 const REMOTE_VENUE_SCAN_PAGE_SIZE = 1000;
 const MAX_REMOTE_VENUE_SCAN_ROWS = 5000;
+const VENUE_ACCESS_PAGE_SIZE = 200;
+const VENUE_ACCESS_EXPIRY_BATCH_SIZE = 500;
+const MAX_VENUE_ACCESS_SCAN_ROWS = 20_000;
 const MAX_PUBLIC_VENUE_STATUS_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_ACTIVE_SESSIONS_PER_ACCOUNT = 10;
 const REMOTE_VENUE_PUBLIC_COLUMNS = [
@@ -312,6 +471,11 @@ interface StripeEvent {
   };
 }
 
+interface AuthoritativeStripeEvent {
+  event: StripeEvent;
+  authorityConfirmed: boolean;
+}
+
 interface StripeCheckoutSession {
   id?: string;
   url?: string | null;
@@ -334,11 +498,29 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
+function nextRevisionTimestamp(expectedUpdatedAt: string | null): string {
+  const current = nowIso();
+  if (!expectedUpdatedAt || current > expectedUpdatedAt) return current;
+  return new Date(new Date(expectedUpdatedAt).getTime() + 1).toISOString();
+}
+
+function canonicalVenueOutreachContactTimestamp(value: string | null): string | null {
+  if (value === null) return null;
+  const normalized = value.trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(normalized)
+    ? `${normalized}T00:00:00.000Z`
+    : normalized;
+}
+
 async function fetchWithTimeout(url: string | URL, init: RequestInit = {}, timeoutMs = 8_000): Promise<Response> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await fetch(url, { ...init, signal: controller.signal });
+    return await fetch(url, {
+      ...init,
+      redirect: "error",
+      signal: controller.signal,
+    });
   } finally {
     clearTimeout(timeout);
   }
@@ -349,9 +531,8 @@ function getSupabaseReadinessHeaders(key: string): Record<string, string> {
     Accept: "application/json",
     apikey: key,
   };
-  const jwtSegments = key.split(".");
-  const isLegacyJwtKey = key.startsWith("eyJ") && jwtSegments.length === 3 &&
-    jwtSegments.every((segment) => /^[A-Za-z0-9_-]+$/.test(segment));
+  const isLegacyJwtKey = hasExactLegacySupabaseRoleJwt(key, "anon")
+    || hasExactLegacySupabaseRoleJwt(key, "service_role");
   if (isLegacyJwtKey) {
     headers.Authorization = `Bearer ${key}`;
   }
@@ -669,35 +850,35 @@ function routeLegCopy(distanceMeters: number | null, requestedMode: "auto" | "wa
   return `${distanceKm.toFixed(1)} km, walkable if the group is comfortable`;
 }
 
-function startOfTodayIso(): string {
-  const date = new Date();
+function startOfTodayIso(asOf = nowIso()): string {
+  const date = new Date(asOf);
   date.setHours(0, 0, 0, 0);
   return date.toISOString();
 }
 
-function daysAgoIso(days: number): string {
-  const date = new Date();
+function daysAgoIso(days: number, asOf = nowIso()): string {
+  const date = new Date(asOf);
   date.setUTCDate(date.getUTCDate() - days);
   return date.toISOString();
 }
 
-function startOfMonthIso(): string {
-  const date = new Date();
+function startOfMonthIso(asOf = nowIso()): string {
+  const date = new Date(asOf);
   date.setDate(1);
   date.setHours(0, 0, 0, 0);
   return date.toISOString();
 }
 
-function startOfAdminRange(range: AdminDashboardQuery["range"]): string | null {
+function startOfAdminRange(range: AdminDashboardQuery["range"], asOf = nowIso()): string | null {
   switch (range) {
     case "today":
-      return startOfTodayIso();
+      return startOfTodayIso(asOf);
     case "7d":
-      return daysAgoIso(7);
+      return daysAgoIso(7, asOf);
     case "30d":
-      return daysAgoIso(30);
+      return daysAgoIso(30, asOf);
     case "month":
-      return startOfMonthIso();
+      return startOfMonthIso(asOf);
     case "all":
       return null;
   }
@@ -900,7 +1081,7 @@ function describeStripeCheckoutFailure(status: number, stripeMessage?: string | 
   }
 
   if (normalized.includes("inactive") && normalized.includes("price")) {
-    return "Stripe price is inactive. Activate the monthly/yearly Stripe Price or update Railway to use an active recurring Price ID.";
+    return "Stripe price is inactive. Activate the monthly/yearly Stripe Price or update the configured recurring Price ID through the reviewed provider-change procedure.";
   }
 
   if (
@@ -1282,6 +1463,7 @@ function buildConsumerPremiumToolkit(input: {
   discountStats?: { totalRedemptions: number; estimatedSavingsCents: number; uniqueVenues: number } | null;
 }) {
   const hasFullAccess = isFullAccess(input.account, input.currentAdmin);
+  const paidEnrollmentEnabled = input.commercialLaunchEnabled && input.consumerPaidEnrollmentEnabled;
   const savedItems = input.savedItems ?? [];
   const savedCounts = savedItems.reduce(
     (counts, item) => {
@@ -1303,7 +1485,7 @@ function buildConsumerPremiumToolkit(input: {
     (input.preferences?.preferredBeers.length ?? 0) +
     (input.preferences?.preferredUseCases.length ?? 0);
   const contributionCopy = `Earn ${input.contributorUnlockPoints} approved points this month to unlock full map access.`;
-  const upgradeCopy = input.consumerPaidEnrollmentEnabled
+  const upgradeCopy = paidEnrollmentEnabled
     ? `Upgrade for ${PREMIUM_PRICING.monthlyLabel}, ${PREMIUM_PRICING.yearlyLabel}, or ${contributionCopy.toLowerCase()}`
     : contributionCopy;
 
@@ -1315,13 +1497,13 @@ function buildConsumerPremiumToolkit(input: {
       ? input.commercialLaunchEnabled
         ? "Your full-map tools are active: exact prices, value rings, premium filters, special access, saved night shortcuts, and savings tracking."
         : "Your contributor full-map tools are active: exact prices, value rings, premium filters, and saved night shortcuts."
-      : input.consumerPaidEnrollmentEnabled
+      : paidEnrollmentEnabled
         ? `Paid or earned access includes exact prices, value rings, premium filters, and saved night shortcuts. ${upgradeCopy}`
         : `Paid enrolment is closed. ${contributionCopy}`,
     lockedCopy: hasFullAccess ? null : upgradeCopy,
     primaryAction: hasFullAccess
       ? { label: "Open value map", href: "/index.html" }
-      : input.consumerPaidEnrollmentEnabled
+      : paidEnrollmentEnabled
         ? { label: "Upgrade monthly", href: "/account.html?checkoutPlan=monthly" }
         : { label: "Upload venue data", href: "/submit.html" },
     secondaryAction: hasFullAccess
@@ -1343,16 +1525,16 @@ function buildConsumerPremiumToolkit(input: {
         id: "exact_price_mode",
         title: "Exact price and value rings",
         unlocked: hasFullAccess,
-        badge: hasFullAccess ? "Active" : input.consumerPaidEnrollmentEnabled ? "Paid or earned" : "Earned",
+        badge: hasFullAccess ? "Active" : paidEnrollmentEnabled ? "Paid or earned" : "Earned",
         copy: "See every verified beer price and the green-to-red value ring around venue pins when comparing the same beer.",
         href: "/index.html",
         ctaLabel: "Open map",
       },
       {
         id: "premium_filters",
-        title: "Cheapest-night filters",
+        title: "Map value filters",
         unlocked: hasFullAccess,
-        badge: hasFullAccess ? "Active" : input.consumerPaidEnrollmentEnabled ? "Paid or earned" : "Earned",
+        badge: hasFullAccess ? "Active" : paidEnrollmentEnabled ? "Paid or earned" : "Earned",
         copy: "Use beer search, cheapest sort, verified-only, under-A$10, nearby, and saved-area filters across the full verified-price catalogue.",
         href: "/index.html",
         ctaLabel: "Find value",
@@ -1361,7 +1543,7 @@ function buildConsumerPremiumToolkit(input: {
         id: "discount_pass",
         title: "Rotating special pass",
         unlocked: hasFullAccess,
-        badge: hasFullAccess ? "Ready" : input.consumerPaidEnrollmentEnabled ? "Paid or earned" : "Earned",
+        badge: hasFullAccess ? "Ready" : paidEnrollmentEnabled ? "Paid or earned" : "Earned",
         copy: "Generate a session-based QR/code for Pint Path specials, then track venue-confirmed savings in your account.",
         href: "/account.html",
         ctaLabel: "Open pass",
@@ -1386,7 +1568,7 @@ function buildConsumerPremiumToolkit(input: {
       },
       {
         id: "savings_tracker",
-        title: "Savings and access tracker",
+        title: input.commercialLaunchEnabled ? "Savings and access tracker" : "Access tracker",
         unlocked: hasFullAccess,
         badge: hasFullAccess ? "Dashboard" : "Preview",
         copy: input.commercialLaunchEnabled
@@ -1676,12 +1858,6 @@ function normalizeVenueOpeningHours(
   return result;
 }
 
-function stringArrayFromUnknown(value: unknown): string[] {
-  return Array.isArray(value)
-    ? cleanStringList(value.filter((item): item is string => typeof item === "string"))
-    : [];
-}
-
 function objectFromUnknown(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
@@ -1751,27 +1927,6 @@ function numberOrNull(value: unknown): number | null {
 
 function booleanFromUnknown(value: unknown, fallback: boolean): boolean {
   return typeof value === "boolean" ? value : fallback;
-}
-
-function happyHourBeersFromUnknown(value: unknown) {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value
-    .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object" && !Array.isArray(item)))
-    .map((item) => ({
-      beerId: stringOrNull(item.beerId),
-      beerName: stringOrNull(item.beerName) ?? "",
-      normalizedBeerId: stringOrNull(item.normalizedBeerId),
-      servingSize: stringOrNull(item.servingSize) as BarBeerInput["serveSize"],
-      happyHourPrice: numberOrNull(item.happyHourPrice),
-      offerText: stringOrNull(item.offerText),
-      onTap: booleanFromUnknown(item.onTap, false),
-      inStock: booleanFromUnknown(item.inStock, true),
-    }))
-    .filter((item) => item.beerName.length > 0)
-    .slice(0, 60);
 }
 
 function tierFlags(tier: BarMembershipTier) {
@@ -2156,7 +2311,7 @@ function buildPaidVenueIntelligence(input: {
   area: string | null;
   analytics: ReturnType<BusinessRepository["getVenueAreaAnalytics"]>;
   previousAnalytics: ReturnType<BusinessRepository["getVenueAreaAnalytics"]> | null;
-  inventoryBeers: ReturnType<BusinessRepository["listBarBeers"]>;
+  inventoryBeers: BarBeer[];
   purchasedBeers: ReturnType<BusinessRepository["listVenueAreaPurchasedBeers"]>;
   priceBenchmarks: ReturnType<BusinessRepository["listVenueAreaPriceBenchmarks"]>;
 }) {
@@ -2606,6 +2761,30 @@ export function getMonthlyReportFilename(input: { venueId: string; month: string
 export class BusinessService {
   private readonly supabase?: SupabaseClient;
   private readonly useSupabaseEvidenceStorage: boolean;
+  private readonly accountSessionRepository: AccountSessionRepository;
+  private readonly accountProfilePreferencesRepository: AccountProfilePreferencesRepository;
+  private readonly activityAuditRepository: ActivityAuditRepository;
+  private readonly supportFeedbackRepository: SupportFeedbackRepository;
+  private readonly adminAccountRepository: AdminAccountRepository;
+  private readonly accountDeletionQueueRepository: AccountDeletionQueueRepository;
+  private readonly accountPrivacyRepository: AccountPrivacyRepository;
+  private readonly privacyRetentionRepository: PrivacyRetentionRepository;
+  private readonly communitySubmissionRepository: CommunitySubmissionRepository;
+  private readonly venueManagerInternalSubmissionRepository: VenueManagerInternalSubmissionRepository;
+  private readonly sourceEvidenceObjectRepository: SourceEvidenceObjectRepository;
+  private readonly venueIdentityRepository: VenueIdentityRepository;
+  private readonly billingCheckoutRepository: BillingCheckoutRepository;
+  private readonly venueAccessRepository: VenueAccessRepository;
+  private readonly missionLifecycleRepository: MissionLifecycleRepository;
+  private readonly missionDiscoveryAutomationRepository: MissionDiscoveryAutomationRepository;
+  private readonly stripeSubscriptionRepository: StripeSubscriptionRepository;
+  private readonly venueRequestRepository: VenueRequestRepository;
+  private readonly venuePartnerRepository: VenuePartnerRepository;
+  private readonly adminAnalyticsRepository: AdminAnalyticsRepository;
+  private readonly venueManagerInsightsRepository: VenueManagerInsightsRepository;
+  private readonly venuePendingChangeRepository: VenuePendingChangeRepository;
+  private readonly venueDataReadRepository: VenueDataReadRepository;
+  private readonly databaseHealthProbe: () => Promise<{ ok: boolean; foreignKeyViolations: number }>;
   private supabaseReadinessCache: { expiresAt: number; value: SupabaseReadinessDependencies } | null = null;
   private supabaseReadinessInFlight: Promise<SupabaseReadinessDependencies> | null = null;
 
@@ -2666,6 +2845,37 @@ export class BusinessService {
       | "ACCOUNT_DELETION_NOTICE_CHECK_INTERVAL_MINUTES"
       | "OPENAI_API_KEY"
     >>,
+    private readonly publicVenueDirectoryRepository: PublicVenueDirectoryRepository,
+    private readonly publicPriceRepository: PublicPriceRepository,
+    private readonly systemStateRepository: SystemStateRepository,
+    activityAuditRepository: ActivityAuditRepository,
+    supportFeedbackRepository: SupportFeedbackRepository,
+    accountSessionRepository: AccountSessionRepository,
+    accountProfilePreferencesRepository: AccountProfilePreferencesRepository,
+    private readonly venueInventoryRepository: VenueInventoryRepository,
+    venueIdentityRepository: VenueIdentityRepository,
+    billingCheckoutRepository: BillingCheckoutRepository,
+    venueAccessRepository: VenueAccessRepository,
+    missionLifecycleRepository: MissionLifecycleRepository,
+    missionDiscoveryAutomationRepository: MissionDiscoveryAutomationRepository,
+    stripeSubscriptionRepository: StripeSubscriptionRepository,
+    venueRequestRepository: VenueRequestRepository,
+    venuePartnerRepository: VenuePartnerRepository,
+    adminAnalyticsRepository: AdminAnalyticsRepository,
+    venueManagerInsightsRepository: VenueManagerInsightsRepository,
+    adminAccountRepository: AdminAccountRepository,
+    accountDeletionQueueRepository: AccountDeletionQueueRepository,
+    accountPrivacyRepository: AccountPrivacyRepository,
+    privacyRetentionRepository: PrivacyRetentionRepository,
+    communitySubmissionRepository: CommunitySubmissionRepository,
+    venueManagerInternalSubmissionRepository: VenueManagerInternalSubmissionRepository,
+    sourceEvidenceObjectRepository: SourceEvidenceObjectRepository,
+    private readonly sourceEvidenceRetentionRepository: SourceEvidenceRetentionRepository,
+    venuePendingChangeRepository: VenuePendingChangeRepository,
+    venueDataReadRepository: VenueDataReadRepository,
+    private readonly performAccountDeletionSecretPhysicalCheckpoint: (
+      snapshot: readonly AccountDeletionSecretPurgeCheckpointEntry[],
+    ) => Promise<boolean>,
     private readonly beerCatalogRepository?: BeerCatalogRepository,
     private readonly menuPhotoOcr?: MenuPhotoOcrProcessor,
     supabaseClientOverride?: SupabaseClient,
@@ -2675,21 +2885,827 @@ export class BusinessService {
       completedAt: string;
     }) => Promise<void>,
     private readonly accountDeletionNotificationCoordinator?: AccountDeletionNotificationCoordinator,
+    databaseHealthProbe?: () => Promise<{ ok: boolean; foreignKeyViolations: number }>,
   ) {
+    this.activityAuditRepository = this.wrapActivityAuditRepository(activityAuditRepository);
+    this.supportFeedbackRepository = this.wrapSupportFeedbackRepository(supportFeedbackRepository);
+    this.accountSessionRepository = this.wrapAccountSessionRepository(accountSessionRepository);
+    this.accountProfilePreferencesRepository = this.wrapAccountProfilePreferencesRepository(
+      accountProfilePreferencesRepository,
+    );
+    this.venueIdentityRepository = this.wrapVenueIdentityRepository(venueIdentityRepository);
+    this.billingCheckoutRepository = this.wrapBillingCheckoutRepository(billingCheckoutRepository);
+    this.venueAccessRepository = this.wrapVenueAccessRepository(venueAccessRepository);
+    this.missionLifecycleRepository = this.wrapMissionLifecycleRepository(missionLifecycleRepository);
+    this.missionDiscoveryAutomationRepository = this.wrapMissionDiscoveryAutomationRepository(
+      missionDiscoveryAutomationRepository,
+    );
+    this.stripeSubscriptionRepository = stripeSubscriptionRepository;
+    this.venueRequestRepository = this.wrapVenueRequestRepository(venueRequestRepository);
+    this.venuePartnerRepository = this.wrapVenuePartnerRepository(venuePartnerRepository);
+    this.adminAnalyticsRepository = this.wrapAdminAnalyticsRepository(adminAnalyticsRepository);
+    this.venueManagerInsightsRepository = this.wrapVenueManagerInsightsRepository(
+      venueManagerInsightsRepository,
+    );
+    this.adminAccountRepository = this.wrapAdminAccountRepository(adminAccountRepository);
+    this.accountDeletionQueueRepository = this.wrapAccountDeletionQueueRepository(accountDeletionQueueRepository);
+    this.accountPrivacyRepository = this.wrapAccountPrivacyRepository(accountPrivacyRepository);
+    this.privacyRetentionRepository = this.wrapPrivacyRetentionRepository(privacyRetentionRepository);
+    this.communitySubmissionRepository = this.wrapCommunitySubmissionRepository(communitySubmissionRepository);
+    this.venueManagerInternalSubmissionRepository = this.wrapVenueManagerInternalSubmissionRepository(
+      venueManagerInternalSubmissionRepository,
+    );
+    this.sourceEvidenceObjectRepository = this.wrapSourceEvidenceObjectRepository(sourceEvidenceObjectRepository);
+    this.venuePendingChangeRepository = this.wrapVenuePendingChangeRepository(venuePendingChangeRepository);
+    this.venueDataReadRepository = this.wrapVenueDataReadRepository(venueDataReadRepository);
+    this.databaseHealthProbe = databaseHealthProbe ?? (async () => this.repository.checkDatabaseHealth());
     const supabaseServerKey = config.SUPABASE_SERVICE_ROLE_KEY ?? config.SUPABASE_ANON_KEY;
-    if (supabaseClientOverride) {
+    if (supabaseClientOverride && !config.RESTORE_REHEARSAL_MODE) {
       this.supabase = supabaseClientOverride;
-    } else if (config.SUPABASE_URL && supabaseServerKey) {
+    } else if (
+      !config.RESTORE_REHEARSAL_MODE
+      && config.SUPABASE_URL
+      && supabaseServerKey
+    ) {
       this.supabase = createServerSupabaseClient(config.SUPABASE_URL, supabaseServerKey);
     }
     this.useSupabaseEvidenceStorage = Boolean(this.supabase && config.SUPABASE_SERVICE_ROLE_KEY);
   }
 
-  private getTrackedBeerCatalogForViewer() {
-    return this.beerCatalogRepository?.listForViewer() ?? VIEWER_TRACKED_BEERS;
+  /** Maps stable identity/cache failures without exposing stored rows or database details. */
+  private wrapVenueIdentityRepository(repository: VenueIdentityRepository): VenueIdentityRepository {
+    return new Proxy(repository, {
+      get: (target, property, receiver) => {
+        const value = Reflect.get(target, property, receiver);
+        if (typeof value !== "function") return value;
+        return (...args: unknown[]) => Promise
+          .resolve(Reflect.apply(value, target, args))
+          .catch((error: unknown) => this.throwMappedVenueIdentityError(error));
+      },
+    });
   }
 
-  private resolveSystemBeer(input: {
+  private throwMappedVenueIdentityError(error: unknown): never {
+    if (!(error instanceof VenueIdentityRepositoryError)) throw error;
+    switch (error.code) {
+      case "invalid_input":
+        throw new AppError("Invalid venue identity or location input.", 400);
+      case "alias_version_conflict":
+      case "identity_cycle":
+      case "identity_limit_exceeded":
+      case "location_version_conflict":
+        throw new AppError("Venue identity or location changed. Refresh and try again.", 409);
+      case "malformed_record":
+      case "persistence_failure":
+        throw new AppError("Venue identity or location data could not be processed.", 500, undefined, false);
+    }
+  }
+
+  /** Maps stable checkout persistence failures without exposing durable/provider details. */
+  private wrapBillingCheckoutRepository(repository: BillingCheckoutRepository): BillingCheckoutRepository {
+    return new Proxy(repository, {
+      get: (target, property, receiver) => {
+        const value = Reflect.get(target, property, receiver);
+        if (typeof value !== "function") return value;
+        return (...args: unknown[]) => Promise
+          .resolve(Reflect.apply(value, target, args))
+          .catch((error: unknown) => this.throwMappedBillingCheckoutError(error));
+      },
+    });
+  }
+
+  private throwMappedBillingCheckoutError(error: unknown): never {
+    if (!(error instanceof BillingCheckoutRepositoryError)) throw error;
+    switch (error.code) {
+      case "invalid_input":
+        throw new AppError("Invalid billing checkout input.", 400);
+      case "account_not_found":
+      case "reservation_not_found":
+      case "venue_not_found":
+        throw new AppError("The billing account, venue, or checkout reservation was not found.", 404);
+      case "deletion_locked":
+        throw new AppError("Billing changes are unavailable while account deletion is being processed.", 409);
+      case "finalization_conflict":
+      case "intro_trial_already_claimed":
+      case "reservation_expired":
+      case "reservation_token_conflict":
+      case "stale_reservation":
+      case "venue_identity_conflict":
+        throw new AppError("Billing checkout state changed. Refresh and try again.", 409);
+      case "persistence_failure":
+        throw new AppError("Billing checkout data could not be processed.", 500, undefined, false);
+    }
+  }
+
+  /** Maps stable Stripe persistence failures without exposing stored rows or database details. */
+  private throwMappedStripeSubscriptionError(error: unknown): never {
+    if (!(error instanceof StripeSubscriptionRepositoryError)) throw error;
+    switch (error.code) {
+      case "invalid_input":
+      case "event_timestamp_required":
+        throw new AppError("Invalid Stripe webhook event payload.", 400);
+      case "account_not_found":
+      case "billing_identity_conflict":
+      case "event_claim_lost":
+      case "event_conflict":
+      case "retry_exhausted":
+      case "venue_identity_conflict":
+        throw new AppError("Stripe billing state changed. Retry the event safely.", 409);
+      case "authoritative_state_required":
+        throw new AppError("Stripe subscription authority is required before this event can be applied.", 503);
+      case "persistence_failure":
+        throw new AppError("Stripe billing data could not be processed.", 500, undefined, false);
+    }
+  }
+
+  /** Maps stable venue-access persistence failures without exposing stored rows or database details. */
+  private wrapVenueAccessRepository(repository: VenueAccessRepository): VenueAccessRepository {
+    return new Proxy(repository, {
+      get: (target, property, receiver) => {
+        const value = Reflect.get(target, property, receiver);
+        if (typeof value !== "function") return value;
+        return (...args: unknown[]) => Promise
+          .resolve(Reflect.apply(value, target, args))
+          .catch((error: unknown) => this.throwMappedVenueAccessError(error));
+      },
+    });
+  }
+
+  private throwMappedVenueAccessError(error: unknown): never {
+    if (!(error instanceof VenueAccessRepositoryError)) throw error;
+    switch (error.code) {
+      case "invalid_input":
+        throw new AppError("Invalid venue access input.", 400);
+      case "account_not_found":
+      case "assignment_not_found":
+      case "claim_not_found":
+        throw new AppError("The venue claim or assignment was not found.", 404);
+      case "invitation_not_found":
+      case "invitation_expired":
+      case "invitation_stale":
+        throw new AppError("Pending counter-staff invitation not found or it has expired.", 404);
+      case "forbidden":
+        throw new AppError("Venue access permission is required for this change.", 403);
+      case "account_not_active":
+      case "assignment_conflict":
+      case "claim_conflict":
+      case "deletion_locked":
+      case "invitation_token_conflict":
+        throw new AppError("Venue access state changed. Refresh and try again.", 409);
+      case "persistence_failure":
+        throw new AppError("Venue access data could not be processed.", 500, undefined, false);
+    }
+  }
+
+  /** Maps stable mission-authority failures without exposing stored rows or database details. */
+  private wrapMissionLifecycleRepository(repository: MissionLifecycleRepository): MissionLifecycleRepository {
+    return new Proxy(repository, {
+      get: (target, property, receiver) => {
+        const value = Reflect.get(target, property, receiver);
+        if (typeof value !== "function") return value;
+        return (...args: unknown[]) => Promise
+          .resolve(Reflect.apply(value, target, args))
+          .catch((error: unknown) => this.throwMappedMissionLifecycleError(error));
+      },
+    });
+  }
+
+  private throwMappedMissionLifecycleError(error: unknown): never {
+    if (!(error instanceof MissionLifecycleRepositoryError)) throw error;
+    switch (error.code) {
+      case "invalid_input":
+        throw new AppError("Invalid mission lifecycle input.", 400);
+      case "account_not_found":
+      case "mission_not_found":
+      case "progress_not_found":
+        throw new AppError("The mission or reservation was not found.", 404);
+      case "account_not_eligible":
+        throw new AppError("This account is not eligible to change missions.", 403);
+      case "deletion_locked":
+        throw new AppError("Mission changes are unavailable while account deletion is being processed.", 409);
+      case "mission_in_use":
+        throw new AppError("Mission has progress, submissions, or request history and can only be deactivated.", 409);
+      case "mission_inactive":
+        throw new AppError("This mission is no longer active.", 404);
+      case "mission_reserved":
+        throw new AppError(
+          "Another contributor is already working on this mission. It will reopen if they do not submit within 24 hours.",
+          409,
+        );
+      case "mission_version_conflict":
+      case "progress_not_releasable":
+      case "progress_version_conflict":
+        throw new AppError("Mission state changed. Refresh and try again.", 409);
+      case "malformed_record":
+      case "persistence_failure":
+        throw new AppError("Mission lifecycle data could not be processed.", 500, undefined, false);
+    }
+  }
+
+  /** Maps stable mission-discovery failures without exposing database details. */
+  private wrapMissionDiscoveryAutomationRepository(
+    repository: MissionDiscoveryAutomationRepository,
+  ): MissionDiscoveryAutomationRepository {
+    return new Proxy(repository, {
+      get: (target, property, receiver) => {
+        const value = Reflect.get(target, property, receiver);
+        if (typeof value !== "function") return value;
+        return (...args: unknown[]) => Promise
+          .resolve(Reflect.apply(value, target, args))
+          .catch((error: unknown) => this.throwMappedMissionDiscoveryAutomationError(error));
+      },
+    });
+  }
+
+  private throwMappedMissionDiscoveryAutomationError(error: unknown): never {
+    if (!(error instanceof MissionDiscoveryAutomationRepositoryError)) throw error;
+    switch (error.code) {
+      case "invalid_input":
+        throw new AppError("Invalid mission discovery or automation input.", 400);
+      case "owner_set_changed":
+      case "timestamp_conflict":
+        throw new AppError("Mission automation state changed. Retry the maintenance run.", 409);
+      case "owner_set_too_large":
+        throw new AppError("Mission automation exceeded its bounded owner budget.", 500, undefined, false);
+      case "malformed_record":
+      case "persistence_failure":
+        throw new AppError("Mission discovery or automation data could not be processed.", 500, undefined, false);
+    }
+  }
+
+  /** Maps stable venue-request failures without exposing stored rows or database details. */
+  private wrapVenueRequestRepository(repository: VenueRequestRepository): VenueRequestRepository {
+    return new Proxy(repository, {
+      get: (target, property, receiver) => {
+        const value = Reflect.get(target, property, receiver);
+        if (typeof value !== "function") return value;
+        return (...args: unknown[]) => Promise
+          .resolve(Reflect.apply(value, target, args))
+          .catch((error: unknown) => this.throwMappedVenueRequestError(error));
+      },
+    });
+  }
+
+  private throwMappedVenueRequestError(error: unknown): never {
+    if (!(error instanceof VenueRequestRepositoryError)) throw error;
+    switch (error.code) {
+      case "invalid_input":
+        throw new AppError("Invalid venue request input.", 400);
+      case "account_not_found":
+      case "request_not_found":
+        throw new AppError("The venue request or account was not found.", 404);
+      case "account_not_eligible":
+      case "admin_not_authorized":
+        throw new AppError("This account is not authorised to change venue requests.", 403);
+      case "deletion_locked":
+        throw new AppError("Venue-request changes are unavailable while account deletion is being processed.", 409);
+      case "mission_id_conflict":
+      case "request_id_conflict":
+      case "request_version_conflict":
+        throw new AppError("This venue request changed. Refresh and try again.", 409);
+      case "request_state_conflict":
+        throw new AppError("This request already has a mission or is no longer pending.", 409);
+      case "malformed_record":
+      case "persistence_failure":
+        throw new AppError("Venue-request data could not be processed.", 500, undefined, false);
+    }
+  }
+
+  /** Maps stable venue-partner failures without exposing stored rows or database details. */
+  private wrapVenuePartnerRepository(repository: VenuePartnerRepository): VenuePartnerRepository {
+    return new Proxy(repository, {
+      get: (target, property, receiver) => {
+        const value = Reflect.get(target, property, receiver);
+        if (typeof value !== "function") return value;
+        return (...args: unknown[]) => Promise
+          .resolve(Reflect.apply(value, target, args))
+          .catch((error: unknown) => this.throwMappedVenuePartnerError(error));
+      },
+    });
+  }
+
+  private throwMappedVenuePartnerError(error: unknown): never {
+    if (!(error instanceof VenuePartnerRepositoryError)) throw error;
+    switch (error.code) {
+      case "invalid_input":
+        throw new AppError("Invalid venue-partner input.", 400);
+      case "account_not_found":
+      case "interest_not_found":
+      case "outreach_not_found":
+        throw new AppError("The venue-partner record or account was not found.", 404);
+      case "account_not_eligible":
+      case "admin_not_authorized":
+        throw new AppError("This account is not authorised to change venue-partner records.", 403);
+      case "deletion_locked":
+        throw new AppError("Venue-partner changes are unavailable while account deletion is being processed.", 409);
+      case "interest_id_conflict":
+      case "interest_version_conflict":
+      case "outreach_id_conflict":
+      case "outreach_version_conflict":
+        throw new AppError("This venue-partner record changed. Refresh and try again.", 409);
+      case "malformed_record":
+      case "persistence_failure":
+        throw new AppError("Venue-partner data could not be processed.", 500, undefined, false);
+    }
+  }
+
+  /** Maps stable admin-analytics failures without exposing stored rows or database details. */
+  private wrapAdminAnalyticsRepository(repository: AdminAnalyticsRepository): AdminAnalyticsRepository {
+    return new Proxy(repository, {
+      get: (target, property, receiver) => {
+        const value = Reflect.get(target, property, receiver);
+        if (typeof value !== "function") return value;
+        return (...args: unknown[]) => Promise
+          .resolve(Reflect.apply(value, target, args))
+          .catch((error: unknown) => this.throwMappedAdminAnalyticsError(error));
+      },
+    });
+  }
+
+  private throwMappedAdminAnalyticsError(error: unknown): never {
+    if (!(error instanceof AdminAnalyticsRepositoryError)) throw error;
+    switch (error.code) {
+      case "invalid_input":
+        throw new AppError("Invalid admin analytics input.", 400);
+      case "malformed_record":
+      case "persistence_failure":
+        throw new AppError("Admin analytics could not be processed.", 500, undefined, false);
+    }
+  }
+
+  /** Maps stable manager-insights failures without exposing stored private detail or database errors. */
+  private wrapVenueManagerInsightsRepository(
+    repository: VenueManagerInsightsRepository,
+  ): VenueManagerInsightsRepository {
+    return new Proxy(repository, {
+      get: (target, property, receiver) => {
+        const value = Reflect.get(target, property, receiver);
+        if (typeof value !== "function") return value;
+        return (...args: unknown[]) => Promise
+          .resolve(Reflect.apply(value, target, args))
+          .catch((error: unknown) => this.throwMappedVenueManagerInsightsError(error));
+      },
+    });
+  }
+
+  private throwMappedVenueManagerInsightsError(error: unknown): never {
+    if (!(error instanceof VenueManagerInsightsRepositoryError)) throw error;
+    switch (error.code) {
+      case "invalid_input":
+        throw new AppError("Invalid venue-manager insights input.", 400);
+      case "malformed_result":
+      case "persistence_failure":
+        throw new AppError("Venue-manager insights could not be processed.", 500, undefined, false);
+    }
+  }
+
+  /** Maps stable admin-account failures without exposing account or database details. */
+  private wrapAdminAccountRepository(repository: AdminAccountRepository): AdminAccountRepository {
+    return new Proxy(repository, {
+      get: (target, property, receiver) => {
+        const value = Reflect.get(target, property, receiver);
+        if (typeof value !== "function") return value;
+        return (...args: unknown[]) => Promise
+          .resolve(Reflect.apply(value, target, args))
+          .catch((error: unknown) => this.throwMappedAdminAccountError(error));
+      },
+    });
+  }
+
+  private throwMappedAdminAccountError(error: unknown): never {
+    if (!(error instanceof AdminAccountRepositoryError)) throw error;
+    switch (error.code) {
+      case "invalid_input":
+        throw new AppError("Invalid admin account input.", 400);
+      case "actor_not_authorized":
+        throw new AppError("Admin access required.", 403);
+      case "account_not_found":
+        throw new AppError("Account not found.", 404);
+      case "account_deletion_locked":
+      case "admin_self_override":
+      case "write_conflict":
+        throw new AppError("Account state changed. Refresh and try again.", 409);
+      case "malformed_record":
+      case "persistence_failure":
+        throw new AppError("Admin account data could not be processed.", 500, undefined, false);
+    }
+  }
+
+  /** Maps stable activity/audit failures without exposing stored payloads or database details. */
+  private wrapActivityAuditRepository(repository: ActivityAuditRepository): ActivityAuditRepository {
+    return new Proxy(repository, {
+      get: (target, property, receiver) => {
+        const value = Reflect.get(target, property, receiver);
+        if (typeof value !== "function") return value;
+        return (...args: unknown[]) => Promise
+          .resolve(Reflect.apply(value, target, args))
+          .catch((error: unknown) => this.throwMappedActivityAuditError(error));
+      },
+    });
+  }
+
+  private throwMappedActivityAuditError(error: unknown): never {
+    if (!(error instanceof ActivityAuditRepositoryError)) throw error;
+    switch (error.code) {
+      case "invalid_input":
+        throw new AppError("Invalid activity or audit input.", 400);
+      case "account_not_found":
+        throw new AppError("Account not found.", 404);
+      case "activity_conflict":
+      case "audit_conflict":
+      case "event_conflict":
+        throw new AppError("Activity or audit state changed. Refresh and try again.", 409);
+      case "persistence_failure":
+      case "stored_record_invalid":
+        throw new AppError("Activity or audit data could not be processed.", 500, undefined, false);
+    }
+  }
+
+  /** Maps stable support/trust-queue failures without exposing stored data or database details. */
+  private wrapSupportFeedbackRepository(repository: SupportFeedbackRepository): SupportFeedbackRepository {
+    return new Proxy(repository, {
+      get: (target, property, receiver) => {
+        const value = Reflect.get(target, property, receiver);
+        if (typeof value !== "function") return value;
+        return (...args: unknown[]) => Promise
+          .resolve(Reflect.apply(value, target, args))
+          .catch((error: unknown) => this.throwMappedSupportFeedbackError(error));
+      },
+    });
+  }
+
+  private throwMappedSupportFeedbackError(error: unknown): never {
+    if (!(error instanceof SupportFeedbackRepositoryError)) throw error;
+    switch (error.code) {
+      case "invalid_input":
+        throw new AppError("Invalid support or wrong-price input.", 400);
+      case "account_not_found":
+      case "price_record_not_found":
+        throw new AppError("The referenced account or price record was not found.", 404);
+      case "feedback_conflict":
+      case "wrong_price_report_conflict":
+        throw new AppError("Support or wrong-price state changed. Refresh and try again.", 409);
+      case "persistence_failure":
+      case "stored_record_invalid":
+        throw new AppError("Support or wrong-price data could not be processed.", 500, undefined, false);
+    }
+  }
+
+  /** Maps stable profile/preference failures without exposing stored or database data. */
+  private wrapAccountProfilePreferencesRepository(
+    repository: AccountProfilePreferencesRepository,
+  ): AccountProfilePreferencesRepository {
+    return new Proxy(repository, {
+      get: (target, property, receiver) => {
+        const value = Reflect.get(target, property, receiver);
+        if (typeof value !== "function") return value;
+        return (...args: unknown[]) => Promise
+          .resolve(Reflect.apply(value, target, args))
+          .catch((error: unknown) => this.throwMappedAccountProfilePreferencesError(error));
+      },
+    });
+  }
+
+  private throwMappedAccountProfilePreferencesError(error: unknown): never {
+    if (!(error instanceof AccountProfilePreferencesRepositoryError)) throw error;
+    switch (error.code) {
+      case "invalid_input":
+        throw new AppError("Invalid account profile or preference input.", 400);
+      case "account_not_found":
+        throw new AppError("Account not found.", 404);
+      case "write_conflict":
+        throw new AppError("Account settings changed. Refresh and try again.", 409);
+      case "stored_data_invalid":
+      case "persistence_failed":
+        throw new AppError("Account settings could not be processed.", 500, undefined, false);
+    }
+  }
+
+  /** Maps stable moderation failures without exposing database/provider details. */
+  private wrapCommunitySubmissionRepository(
+    repository: CommunitySubmissionRepository,
+  ): CommunitySubmissionRepository {
+    return new Proxy(repository, {
+      get: (target, property, receiver) => {
+        const value = Reflect.get(target, property, receiver);
+        if (typeof value !== "function") return value;
+        return (...args: unknown[]) => Promise
+          .resolve(Reflect.apply(value, target, args))
+          .catch((error: unknown) => this.throwMappedCommunitySubmissionError(error));
+      },
+    });
+  }
+
+  private throwMappedCommunitySubmissionError(error: unknown): never {
+    if (!(error instanceof CommunitySubmissionRepositoryError)) throw error;
+    switch (error.code) {
+      case "invalid_input":
+        throw new AppError("Invalid community submission input.", 400);
+      case "account_not_found":
+      case "submission_not_found":
+      case "evidence_not_found":
+        throw new AppError("Submission or source evidence was not found.", 404);
+      case "account_not_eligible":
+      case "evidence_not_owned":
+      case "own_verification":
+      case "review_forbidden":
+        throw new AppError("This account is not allowed to perform that submission action.", 403);
+      case "approval_conflict":
+      case "catalog_conflict":
+      case "catalog_decision_stale":
+      case "catalog_not_active":
+      case "idempotency_conflict":
+      case "mission_decision_stale":
+      case "mission_reservation_invalid":
+      case "publication_conflict":
+      case "publication_required":
+      case "submission_not_reviewable":
+      case "venue_decision_stale":
+      case "verification_conflict":
+        throw new AppError("Submission state changed. Refresh and try again.", 409);
+      case "persistence_failure":
+        throw new AppError("Community submission persistence failed.", 500, undefined, false);
+    }
+  }
+
+  /** Maps internal-only venue-manager intake failures without exposing durable rows or database details. */
+  private wrapVenueManagerInternalSubmissionRepository(
+    repository: VenueManagerInternalSubmissionRepository,
+  ): VenueManagerInternalSubmissionRepository {
+    return new Proxy(repository, {
+      get: (target, property, receiver) => {
+        const value = Reflect.get(target, property, receiver);
+        if (typeof value !== "function") return value;
+        return (...args: unknown[]) => Promise
+          .resolve(Reflect.apply(value, target, args))
+          .catch((error: unknown) => this.throwMappedVenueManagerInternalSubmissionError(error));
+      },
+    });
+  }
+
+  private throwMappedVenueManagerInternalSubmissionError(error: unknown): never {
+    if (!(error instanceof VenueManagerInternalSubmissionRepositoryError)) throw error;
+    switch (error.code) {
+      case "invalid_input":
+      case "mission_not_happy_hour":
+        throw new AppError("Invalid internal venue happy-hour submission.", 400);
+      case "account_not_found":
+      case "assignment_not_found":
+      case "evidence_not_found":
+      case "mission_not_found":
+        throw new AppError("The venue assignment, mission, or source evidence was not found.", 404);
+      case "account_ineligible":
+      case "evidence_not_owned":
+      case "forbidden":
+      case "wrong_venue":
+        throw new AppError("Venue manager access is required for this internal submission.", 403);
+      case "assignment_not_active":
+      case "deletion_locked":
+      case "evidence_not_live":
+      case "mission_inactive":
+      case "mission_not_accepted":
+      case "mission_stale":
+      case "mission_wrong_venue":
+      case "submission_conflict":
+        throw new AppError("Internal venue submission state changed. Refresh and try again.", 409);
+      case "malformed_record":
+      case "persistence_failure":
+        throw new AppError("Internal venue submission data could not be processed.", 500, undefined, false);
+    }
+  }
+
+  /** Maps stable private-object failures without exposing database or object metadata. */
+  private wrapSourceEvidenceObjectRepository(
+    repository: SourceEvidenceObjectRepository,
+  ): SourceEvidenceObjectRepository {
+    return new Proxy(repository, {
+      get: (target, property, receiver) => {
+        const value = Reflect.get(target, property, receiver);
+        if (typeof value !== "function") return value;
+        return (...args: unknown[]) => Promise
+          .resolve(Reflect.apply(value, target, args))
+          .catch((error: unknown) => this.throwMappedSourceEvidenceObjectError(error));
+      },
+    });
+  }
+
+  private throwMappedSourceEvidenceObjectError(error: unknown): never {
+    if (!(error instanceof SourceEvidenceObjectRepositoryError)) throw error;
+    switch (error.code) {
+      case "invalid_input":
+        throw new AppError("Invalid source evidence input.", 400);
+      case "account_not_found":
+        throw new AppError("Source evidence owner account not found.", 404);
+      case "account_ineligible":
+      case "deletion_locked":
+        throw new AppError("This account cannot register source evidence.", 403);
+      case "evidence_conflict":
+        throw new AppError("Source evidence state changed. Refresh and try again.", 409);
+      case "malformed_record":
+      case "persistence_failure":
+        throw new AppError("Source evidence persistence failed.", 500, undefined, false);
+    }
+  }
+
+  /** Maps stable private-moderation failures without exposing persisted payload or database details. */
+  private wrapVenuePendingChangeRepository(
+    repository: VenuePendingChangeRepository,
+  ): VenuePendingChangeRepository {
+    return new Proxy(repository, {
+      get: (target, property, receiver) => {
+        const value = Reflect.get(target, property, receiver);
+        if (typeof value !== "function") return value;
+        return (...args: unknown[]) => Promise
+          .resolve(Reflect.apply(value, target, args))
+          .catch((error: unknown) => this.throwMappedVenuePendingChangeError(error));
+      },
+    });
+  }
+
+  private throwMappedVenuePendingChangeError(error: unknown): never {
+    if (!(error instanceof VenuePendingChangeRepositoryError)) throw error;
+    switch (error.code) {
+      case "invalid_input":
+        throw new AppError("Invalid pending venue change input.", 400);
+      case "pending_change_not_found":
+        throw new AppError("Pending venue change not found.", 404);
+      case "pending_change_not_reviewable":
+      case "pending_change_version_conflict":
+      case "target_not_found":
+      case "target_version_conflict":
+      case "target_venue_conflict":
+        throw new AppError(
+          "The venue data or review item changed after submission. Refresh and ask the manager to resubmit it.",
+          409,
+        );
+      case "malformed_payload":
+      case "malformed_record":
+      case "persistence_failure":
+        throw new AppError("Venue pending-change persistence failed.", 500, undefined, false);
+    }
+  }
+
+  /** Maps stable venue-data read failures without exposing stored rows or database details. */
+  private wrapVenueDataReadRepository(repository: VenueDataReadRepository): VenueDataReadRepository {
+    return new Proxy(repository, {
+      get: (target, property, receiver) => {
+        const value = Reflect.get(target, property, receiver);
+        if (typeof value !== "function") return value;
+        return (...args: unknown[]) => Promise
+          .resolve(Reflect.apply(value, target, args))
+          .catch((error: unknown) => this.throwMappedVenueDataReadError(error));
+      },
+    });
+  }
+
+  private throwMappedVenueDataReadError(error: unknown): never {
+    if (!(error instanceof VenueDataReadRepositoryError)) throw error;
+    switch (error.code) {
+      case "invalid_input":
+        throw new AppError("Invalid venue-data lookup input.", 400);
+      case "malformed_record":
+      case "persistence_failure":
+        throw new AppError("Venue data could not be processed.", 500, undefined, false);
+    }
+  }
+
+  /** Maps only stable queue failures; unknown/database failures remain internal errors. */
+  private wrapAccountDeletionQueueRepository(
+    repository: AccountDeletionQueueRepository,
+  ): AccountDeletionQueueRepository {
+    return new Proxy(repository, {
+      get: (target, property, receiver) => {
+        const value = Reflect.get(target, property, receiver);
+        if (typeof value !== "function") return value;
+        return (...args: unknown[]) => Promise
+          .resolve(Reflect.apply(value, target, args))
+          .catch((error: unknown) => this.throwMappedAccountDeletionQueueError(error));
+      },
+    });
+  }
+
+  private throwMappedAccountDeletionQueueError(error: unknown): never {
+    if (!(error instanceof AccountDeletionQueueRepositoryError)) throw error;
+    switch (error.code) {
+      case "account_not_found":
+        throw new AppError("Account not found.", 404);
+      case "invalid_input":
+        throw new AppError("Invalid account deletion input.", 400);
+      case "notification_identity_conflict":
+      case "notification_terminal":
+      case "notification_recipient_missing":
+      case "provider_event_identity_conflict":
+      case "operator_audit_conflict":
+        throw new AppError("Account deletion state changed. Refresh and try again.", 409);
+      case "numeric_range":
+        throw new AppError("Account deletion data could not be processed.", 500, undefined, false);
+    }
+  }
+
+  /** Maps only stable privacy-boundary failures and never exposes stored/provider data. */
+  private wrapAccountPrivacyRepository(repository: AccountPrivacyRepository): AccountPrivacyRepository {
+    return new Proxy(repository, {
+      get: (target, property, receiver) => {
+        const value = Reflect.get(target, property, receiver);
+        if (typeof value !== "function") return value;
+        return (...args: unknown[]) => Promise
+          .resolve(Reflect.apply(value, target, args))
+          .catch((error: unknown) => this.throwMappedAccountPrivacyError(error));
+      },
+    });
+  }
+
+  private throwMappedAccountPrivacyError(error: unknown): never {
+    if (!(error instanceof AccountPrivacyRepositoryError)) throw error;
+    switch (error.code) {
+      case "invalid_input":
+        throw new AppError("Invalid account privacy input.", 400);
+      case "account_not_found":
+        throw new AppError("Account not found.", 404);
+      case "deletion_request_not_found":
+        throw new AppError("Deletion request not found.", 404);
+      case "deletion_attempt_conflict":
+      case "completion_conflict":
+        throw new AppError("This account deletion attempt no longer owns the request.", 409);
+      case "identity_deletion_unconfirmed":
+      case "stripe_deletion_unconfirmed":
+      case "tombstone_unconfirmed":
+        throw new ExternalServiceError(
+          "Account deletion provider confirmation is incomplete; the request is saved for retry.",
+        );
+      case "notification_not_prepared":
+        throw new ExternalServiceError(
+          "Account-deletion completion notification preparation is incomplete; the request is saved for retry.",
+        );
+      case "stored_json_invalid":
+        throw new AppError("Stored account deletion state could not be processed.", 500, undefined, false);
+    }
+  }
+
+  /** Maps stable retention failures without exposing stored rows or database details. */
+  private wrapPrivacyRetentionRepository(repository: PrivacyRetentionRepository): PrivacyRetentionRepository {
+    return new Proxy(repository, {
+      get: (target, property, receiver) => {
+        const value = Reflect.get(target, property, receiver);
+        if (typeof value !== "function") return value;
+        return (...args: unknown[]) => Promise
+          .resolve(Reflect.apply(value, target, args))
+          .catch((error: unknown) => this.throwMappedPrivacyRetentionError(error));
+      },
+    });
+  }
+
+  private throwMappedPrivacyRetentionError(error: unknown): never {
+    if (!(error instanceof PrivacyRetentionRepositoryError)) throw error;
+    switch (error.code) {
+      case "invalid_input":
+        throw new AppError("Invalid privacy-retention input.", 400);
+      case "malformed_result":
+      case "persistence_failure":
+        throw new AppError("Privacy-retention persistence failed.", 500, undefined, false);
+    }
+  }
+
+  /** Maps only stable repository failures; unknown/database failures remain internal errors. */
+  private wrapAccountSessionRepository(repository: AccountSessionRepository): AccountSessionRepository {
+    return new Proxy(repository, {
+      get: (target, property, receiver) => {
+        const value = Reflect.get(target, property, receiver);
+        if (typeof value !== "function") return value;
+        return (...args: unknown[]) => Promise
+          .resolve(Reflect.apply(value, target, args))
+          .catch((error: unknown) => this.throwMappedAccountSessionError(error));
+      },
+    });
+  }
+
+  private throwMappedAccountSessionError(error: unknown): never {
+    if (!(error instanceof AccountSessionRepositoryError)) throw error;
+    switch (error.code) {
+      case "account_not_found":
+        throw new AppError("Account not found.", 404);
+      case "account_not_session_eligible":
+        throw new AppError("Account access is unavailable.", 403);
+      case "account_identity_conflict":
+        throw new AppError("This account identity is already linked to another account.", 409);
+      case "display_name_conflict":
+        throw new AppError("That display name is already taken. Choose another leaderboard name.", 409);
+      case "invalid_input":
+        throw new AppError("Invalid account or session input.", 400);
+      case "provider_session_revoked":
+        throw new AppError("This sign-in provider session was revoked. Sign in again to start a new session.", 401);
+      case "session_conflict":
+        throw new AppError("Session state changed. Sign in again.", 409);
+    }
+  }
+
+  private async getTrackedBeerCatalogForViewer() {
+    return this.beerCatalogRepository
+      ? this.beerCatalogRepository.listForViewer()
+      : VIEWER_TRACKED_BEERS;
+  }
+
+  private async resolveSystemBeer(input: {
     name: string;
     source: string;
     now: string;
@@ -2697,7 +3713,7 @@ export class BusinessService {
     matchMode?: "exact" | "ocr";
     brewery?: string | null;
     abv?: number | null;
-  }): ResolvedBeerCatalogItem {
+  }): Promise<ResolvedBeerCatalogItem> {
     if (this.beerCatalogRepository) {
       return this.beerCatalogRepository.resolveBeerName(input);
     }
@@ -2717,7 +3733,7 @@ export class BusinessService {
     };
   }
 
-  private standardizeBeerReference(input: {
+  private async standardizeBeerReference(input: {
     name: string;
     source: string;
     now: string;
@@ -2726,7 +3742,7 @@ export class BusinessService {
     matchMode?: "exact" | "ocr";
     brewery?: string | null;
     abv?: number | null;
-  }): {
+  }): Promise<{
     key: string | null;
     name: string;
     brewery: string | null;
@@ -2735,7 +3751,7 @@ export class BusinessService {
     status: "active" | "pending_review";
     created: boolean;
     matchedExisting: boolean;
-  } {
+  }> {
     const fallbackName = canonicalizeTrackedBeerName(input.name);
     if (!shouldCatalogBeerName(fallbackName, input.isHappyHour === true)) {
       return {
@@ -2769,7 +3785,7 @@ export class BusinessService {
     if (input.createIfMissing !== undefined) {
       resolveInput.createIfMissing = input.createIfMissing;
     }
-    const resolved = this.resolveSystemBeer(resolveInput);
+    const resolved = await this.resolveSystemBeer(resolveInput);
 
     return {
       key: resolved.key,
@@ -2783,8 +3799,12 @@ export class BusinessService {
     };
   }
 
-  private standardizeBarBeerInput(input: BarBeerInput, source: string, now: string): BarBeerInput & { normalizedBeerId: string | null } {
-    const resolved = this.standardizeBeerReference({
+  private async standardizeBarBeerInput(
+    input: BarBeerInput,
+    source: string,
+    now: string,
+  ): Promise<BarBeerInput & { normalizedBeerId: string | null }> {
+    const resolved = await this.standardizeBeerReference({
       name: input.beerName,
       source,
       now,
@@ -2807,13 +3827,13 @@ export class BusinessService {
     };
   }
 
-  private assertDisplayNameAvailable(displayName: string | null, currentUserId: string | null = null): string | null {
+  private async assertDisplayNameAvailable(displayName: string | null, currentUserId: string | null = null): Promise<string | null> {
     const displayNameKey = publicDisplayNameKey(displayName);
     if (!displayNameKey) {
       return null;
     }
 
-    const existing = this.repository.getAccountByDisplayNameKey(displayNameKey);
+    const existing = await this.accountSessionRepository.getAccountByDisplayNameKey(displayNameKey);
     if (existing && existing.id !== currentUserId) {
       throw new AppError("That display name is already taken. Choose another leaderboard name.", 409);
     }
@@ -2821,13 +3841,13 @@ export class BusinessService {
     return displayNameKey;
   }
 
-  private providerDisplayNameIfAvailable(displayName: string | null, currentUserId: string | null = null): { displayName: string | null; displayNameKey: string | null } {
+  private async providerDisplayNameIfAvailable(displayName: string | null, currentUserId: string | null = null): Promise<{ displayName: string | null; displayNameKey: string | null }> {
     const displayNameKey = publicDisplayNameKey(displayName);
     if (!displayName || !displayNameKey) {
       return { displayName: null, displayNameKey: null };
     }
 
-    const existing = this.repository.getAccountByDisplayNameKey(displayNameKey);
+    const existing = await this.accountSessionRepository.getAccountByDisplayNameKey(displayNameKey);
     if (existing && existing.id !== currentUserId) {
       return { displayName: null, displayNameKey: null };
     }
@@ -2835,18 +3855,18 @@ export class BusinessService {
     return { displayName, displayNameKey };
   }
 
-  private auditSecurity(input: {
+  private async auditSecurity(input: {
     actor?: BusinessAccount | null | undefined;
     action: string;
     targetType?: string | null | undefined;
     targetId?: string | null | undefined;
     metadata?: Record<string, unknown> | undefined;
     context?: SessionRequestContext | undefined;
-  }): void {
+  }): Promise<void> {
     const requestHashes = this.getRequestHashes(input.context);
 
     try {
-      this.repository.insertSecurityAuditLog({
+      await this.activityAuditRepository.insertSecurityAuditLog({
         id: crypto.randomUUID(),
         actorUserId: input.actor?.id ?? null,
         actorRole: input.actor?.role ?? null,
@@ -2866,22 +3886,22 @@ export class BusinessService {
     }
   }
 
-  private recordUserActivity(input: {
+  private async recordUserActivity(input: {
     account: BusinessAccount;
     eventType: string;
     relatedEntityType?: string | null | undefined;
     relatedEntityId?: string | null | undefined;
     metadata?: Record<string, unknown> | undefined;
-  }): void {
+  }): Promise<void> {
     try {
-      this.repository.createUserActivityEvent({
+      await this.activityAuditRepository.createUserActivityEvent({
         id: crypto.randomUUID(),
         userId: input.account.id,
         eventType: input.eventType,
         relatedEntityType: input.relatedEntityType ?? null,
         relatedEntityId: input.relatedEntityId ?? null,
         metadata: sanitizeEventMetadata(redactSecrets(input.metadata ?? {})),
-        now: nowIso(),
+        createdAt: nowIso(),
       });
     } catch (error) {
       logger.warn("User activity write failed", {
@@ -2895,10 +3915,10 @@ export class BusinessService {
     return rows.filter((row) => row.count >= this.config.ANALYTICS_MIN_BUCKET_SIZE);
   }
 
-  getPublicConfig() {
+  async getPublicConfig() {
     const externalAuthDisconnected = Boolean(this.config.RESTORE_REHEARSAL_MODE);
     const commercialLaunchEnabled = this.config.COMMERCIAL_LAUNCH_ENABLED;
-    const consumerPaidEnrollmentEnabled = this.config.CONSUMER_PAID_ENROLLMENT_ENABLED;
+    const consumerPaidEnrollmentEnabled = commercialLaunchEnabled && this.config.CONSUMER_PAID_ENROLLMENT_ENABLED;
     return {
       pricing: consumerPaidEnrollmentEnabled ? PREMIUM_PRICING : null,
       priceAccessModel: "fixed_preview" as const,
@@ -2912,27 +3932,27 @@ export class BusinessService {
       supabaseOauthProviders: externalAuthDisconnected
         ? []
         : this.config.SUPABASE_OAUTH_PROVIDERS.split(",").map((provider) => provider.trim()).filter(Boolean),
-      demoBillingMode: this.config.DEMO_BILLING_MODE,
+      demoBillingMode: commercialLaunchEnabled && this.config.DEMO_BILLING_MODE,
       commercialLaunchEnabled,
       consumerPaidEnrollmentEnabled,
       fieldTestMode: this.config.FIELD_TEST_MODE,
-      pintPointsRewardsEnabled: this.config.PINT_POINTS_REWARDS_ENABLED,
-      alcoholGamificationEnabled: this.config.ALCOHOL_GAMIFICATION_ENABLED,
+      pintPointsRewardsEnabled: commercialLaunchEnabled && this.config.PINT_POINTS_REWARDS_ENABLED,
+      alcoholGamificationEnabled: commercialLaunchEnabled && this.config.ALCOHOL_GAMIFICATION_ENABLED,
       venueProTrialDays: commercialLaunchEnabled ? this.config.VENUE_PRO_TRIAL_DAYS : 0,
       venueProTrialRequiresPaymentMethod: commercialLaunchEnabled
         ? this.config.VENUE_PRO_TRIAL_REQUIRE_PAYMENT_METHOD
         : false,
       legalPolicyVersion: CURRENT_LEGAL_POLICY_VERSION,
-      trackedBeers: this.getTrackedBeerCatalogForViewer(),
+      trackedBeers: await this.getTrackedBeerCatalogForViewer(),
     };
   }
 
-  getAdminBeerCatalog(account: BusinessAccount, query: BeerCatalogAdminQuery = { pendingLimit: 100, pendingOffset: 0, activeLimit: 100, activeOffset: 0, activeQ: "" }): {
+  async getAdminBeerCatalog(account: BusinessAccount, query: BeerCatalogAdminQuery = { pendingLimit: 100, pendingOffset: 0, activeLimit: 100, activeOffset: 0, activeQ: "" }): Promise<{
     pending: BeerCatalogAdminItem[];
     active: BeerCatalogAdminItem[];
     totals: { pending: number; active: number };
     pagination: Record<string, unknown>;
-  } {
+  }> {
     if (!this.isAdmin(account)) {
       throw new AppError("Admin access required.", 403);
     }
@@ -2940,12 +3960,13 @@ export class BusinessService {
       throw new AppError("Beer catalogue review is not configured.", 503);
     }
 
-    const pending = this.beerCatalogRepository.listForAdmin("pending_review", query.pendingLimit, query.pendingOffset);
-    const active = this.beerCatalogRepository.listForAdmin("active", query.activeLimit, query.activeOffset, query.activeQ);
-    const totals = {
-      pending: this.beerCatalogRepository.countForAdmin("pending_review"),
-      active: this.beerCatalogRepository.countForAdmin("active", query.activeQ),
-    };
+    const [pending, active, pendingTotal, activeTotal] = await Promise.all([
+      this.beerCatalogRepository.listForAdmin("pending_review", query.pendingLimit, query.pendingOffset),
+      this.beerCatalogRepository.listForAdmin("active", query.activeLimit, query.activeOffset, query.activeQ),
+      this.beerCatalogRepository.countForAdmin("pending_review"),
+      this.beerCatalogRepository.countForAdmin("active", query.activeQ),
+    ]);
+    const totals = { pending: pendingTotal, active: activeTotal };
     return {
       pending,
       active,
@@ -2957,11 +3978,11 @@ export class BusinessService {
     };
   }
 
-  approveBeerCatalogItem(
+  async approveBeerCatalogItem(
     account: BusinessAccount,
     key: string,
     input: { reviewNote?: string | null },
-  ): { beer: BeerCatalogAdminItem } {
+  ): Promise<{ beer: BeerCatalogAdminItem }> {
     if (!this.isAdmin(account)) {
       throw new AppError("Admin access required.", 403);
     }
@@ -2969,7 +3990,7 @@ export class BusinessService {
       throw new AppError("Beer catalogue review is not configured.", 503);
     }
 
-    const beer = this.beerCatalogRepository.approvePendingBeer({
+    const beer = await this.beerCatalogRepository.approvePendingBeer({
       key,
       reviewNote: input.reviewNote ?? null,
       now: nowIso(),
@@ -2978,7 +3999,7 @@ export class BusinessService {
       throw new AppError("Pending beer was not found.", 404);
     }
 
-    this.auditSecurity({
+    await this.auditSecurity({
       actor: account,
       action: "beer_catalog_item_approved",
       targetType: "beer_catalog_item",
@@ -2989,11 +4010,11 @@ export class BusinessService {
     return { beer };
   }
 
-  mergeBeerCatalogItem(
+  async mergeBeerCatalogItem(
     account: BusinessAccount,
     key: string,
     input: { targetKey: string; reviewNote?: string | null },
-  ): { source: BeerCatalogAdminItem; target: BeerCatalogAdminItem } {
+  ): Promise<{ source: BeerCatalogAdminItem; target: BeerCatalogAdminItem }> {
     if (!this.isAdmin(account)) {
       throw new AppError("Admin access required.", 403);
     }
@@ -3001,7 +4022,7 @@ export class BusinessService {
       throw new AppError("Beer catalogue review is not configured.", 503);
     }
 
-    const result = this.beerCatalogRepository.mergePendingBeer({
+    const result = await this.beerCatalogRepository.mergePendingBeer({
       sourceKey: key,
       targetKey: input.targetKey,
       reviewNote: input.reviewNote ?? null,
@@ -3011,7 +4032,7 @@ export class BusinessService {
       throw new AppError("Pending beer could not be merged into that catalogue item.", 404);
     }
 
-    this.auditSecurity({
+    await this.auditSecurity({
       actor: account,
       action: "beer_catalog_item_merged",
       targetType: "beer_catalog_item",
@@ -3022,11 +4043,11 @@ export class BusinessService {
     return result;
   }
 
-  rejectBeerCatalogItem(
+  async rejectBeerCatalogItem(
     account: BusinessAccount,
     key: string,
     input: { reviewNote?: string | null },
-  ): { beer: BeerCatalogAdminItem } {
+  ): Promise<{ beer: BeerCatalogAdminItem }> {
     if (!this.isAdmin(account)) {
       throw new AppError("Admin access required.", 403);
     }
@@ -3034,7 +4055,7 @@ export class BusinessService {
       throw new AppError("Beer catalogue review is not configured.", 503);
     }
 
-    const beer = this.beerCatalogRepository.rejectPendingBeer({
+    const beer = await this.beerCatalogRepository.rejectPendingBeer({
       key,
       reviewNote: input.reviewNote ?? null,
       now: nowIso(),
@@ -3043,7 +4064,7 @@ export class BusinessService {
       throw new AppError("Pending beer was not found.", 404);
     }
 
-    this.auditSecurity({
+    await this.auditSecurity({
       actor: account,
       action: "beer_catalog_item_rejected",
       targetType: "beer_catalog_item",
@@ -3054,10 +4075,10 @@ export class BusinessService {
     return { beer };
   }
 
-  rejectBeerCatalogItems(
+  async rejectBeerCatalogItems(
     account: BusinessAccount,
     input: { keys: string[]; reviewNote?: string | null },
-  ): { beers: BeerCatalogAdminItem[]; rejectedCount: number } {
+  ): Promise<{ beers: BeerCatalogAdminItem[]; rejectedCount: number }> {
     if (!this.isAdmin(account)) {
       throw new AppError("Admin access required.", 403);
     }
@@ -3065,8 +4086,9 @@ export class BusinessService {
       throw new AppError("Beer catalogue review is not configured.", 503);
     }
 
-    const beers = input.keys.map((key) => {
-      const beer = this.beerCatalogRepository!.rejectPendingBeer({
+    const beers: BeerCatalogAdminItem[] = [];
+    for (const key of input.keys) {
+      const beer = await this.beerCatalogRepository.rejectPendingBeer({
         key,
         reviewNote: input.reviewNote ?? null,
         now: nowIso(),
@@ -3074,10 +4096,10 @@ export class BusinessService {
       if (!beer) {
         throw new AppError("Pending beer was not found.", 404);
       }
-      return beer;
-    });
+      beers.push(beer);
+    }
 
-    this.auditSecurity({
+    await this.auditSecurity({
       actor: account,
       action: "beer_catalog_items_bulk_rejected",
       targetType: "beer_catalog_item",
@@ -3091,10 +4113,10 @@ export class BusinessService {
     };
   }
 
-  getAccountFromAuthorization(
+  async getAccountFromAuthorization(
     authorizationHeader: string | undefined,
     context?: SessionRequestContext | undefined,
-  ): BusinessAccount | null {
+  ): Promise<BusinessAccount | null> {
     if (this.config.RESTORE_REHEARSAL_MODE) {
       return null;
     }
@@ -3105,7 +4127,8 @@ export class BusinessService {
     }
 
     const tokenHash = hashToken(token);
-    const account = this.repository.getAccountBySessionTokenHash(tokenHash, nowIso());
+    const authenticatedAt = nowIso();
+    const account = await this.accountSessionRepository.getAccountBySessionTokenHash(tokenHash, authenticatedAt);
     if (!account) {
       return null;
     }
@@ -3115,20 +4138,20 @@ export class BusinessService {
     }
 
     const requestHashes = this.getRequestHashes(context);
-    this.repository.touchSession({
+    await this.accountSessionRepository.touchSession({
       tokenHash,
-      lastUsedAt: nowIso(),
+      lastUsedAt: authenticatedAt,
       lastIpHash: requestHashes.ipHash,
       userAgentHash: requestHashes.userAgentHash,
     });
     return account;
   }
 
-  requireAccount(
+  async requireAccount(
     authorizationHeader: string | undefined,
     context?: SessionRequestContext | undefined,
-  ): BusinessAccount {
-    const account = this.getAccountFromAuthorization(authorizationHeader, context);
+  ): Promise<BusinessAccount> {
+    const account = await this.getAccountFromAuthorization(authorizationHeader, context);
 
     if (!account) {
       throw new AppError("Login required.", 401);
@@ -3145,7 +4168,7 @@ export class BusinessService {
   ): Promise<void> {
     const token = getBearerToken(authorizationHeader);
     if (!token) throw new AppError("Recent sign-in required for this sensitive action.", 401);
-    const createdAt = this.repository.getActiveSessionCreatedAt({
+    const createdAt = await this.accountSessionRepository.getActiveSessionCreatedAt({
       tokenHash: hashToken(token),
       userId: account.id,
       now: nowIso(),
@@ -3209,11 +4232,11 @@ export class BusinessService {
     }
   }
 
-  requireAdmin(
+  async requireAdmin(
     authorizationHeader: string | undefined,
     context?: SessionRequestContext | undefined,
-  ): BusinessAccount {
-    const account = this.requireAccount(authorizationHeader, context);
+  ): Promise<BusinessAccount> {
+    const account = await this.requireAccount(authorizationHeader, context);
     const adminEmails = this.getAdminEmailAllowlist();
 
     if (account.role !== "admin" && account.subscriptionStatus !== "admin") {
@@ -3223,7 +4246,7 @@ export class BusinessService {
     if (this.config.NODE_ENV === "production") {
       this.requireCurrentLegalAcceptance(account);
       if (adminEmails.size === 0 || !adminEmails.has(normalizeEmail(account.email))) {
-        this.auditSecurity({
+        await this.auditSecurity({
           actor: account,
           action: "admin_allowlist_required",
           targetType: "account",
@@ -3237,7 +4260,7 @@ export class BusinessService {
       this.requireVerifiedEmail(account, "Admin email verification is required in production.");
 
       if (this.config.REQUIRE_ADMIN_MFA_IN_PRODUCTION && !this.hasFreshAdminMfa(account)) {
-        this.auditSecurity({
+        await this.auditSecurity({
           actor: account,
           action: "admin_mfa_step_up_required",
           targetType: "account",
@@ -3328,37 +4351,192 @@ export class BusinessService {
     return !this.config.REQUIRE_ADMIN_MFA_IN_PRODUCTION || this.hasFreshAdminMfa(account);
   }
 
-  private assertAdminControlPreserved(actor: BusinessAccount, target: BusinessAccount): void {
+  private async assertAdminControlPreserved(actor: BusinessAccount, target: BusinessAccount): Promise<void> {
     const targetHasAdminAuthority = target.role === "admin" || target.subscriptionStatus === "admin";
     if (!targetHasAdminAuthority) return;
     if (actor.id === target.id) {
       throw new AppError("Administrators cannot approve their own deletion or suspension.", 409);
     }
-    const remaining = this.repository.listActiveAdminAccounts(target.id).filter((candidate) => this.isAdmin(candidate));
+    const remaining = (await this.accountSessionRepository.listActiveAdminAccounts(target.id)).filter((candidate) => this.isAdmin(candidate));
     if (remaining.length === 0) {
       throw new AppError("This action would remove the last active, authorised administrator.", 409);
     }
   }
 
-  private requireAssignedVenue(
+  private toBarClaimRequest(claim: VenueClaimRecord) {
+    const { venueId, venueName, ...rest } = claim;
+    return { ...rest, barId: venueId, barName: venueName };
+  }
+
+  private async collectVenueAssignments(
+    input: {
+      userId?: string | undefined;
+      venueId?: string | undefined;
+      accessLevel?: VenueAccessLevel | undefined;
+      status?: VenueAccessStatus | undefined;
+      currentOnly?: boolean | undefined;
+    },
+    maximumRows = MAX_VENUE_ACCESS_SCAN_ROWS,
+    requireComplete = true,
+  ): Promise<VenueAccessAssignmentRecord[]> {
+    if (!Number.isSafeInteger(maximumRows) || maximumRows < 1 || maximumRows > MAX_VENUE_ACCESS_SCAN_ROWS) {
+      throw new AppError("Invalid venue access page request.", 400);
+    }
+    const assignments: VenueAccessAssignmentRecord[] = [];
+    const seenIds = new Set<string>();
+    let cursor: VenueAssignmentCursor | null = null;
+    for (;;) {
+      const remaining = maximumRows - assignments.length;
+      if (remaining === 0) {
+        if (requireComplete) {
+          throw new AppError("Venue access results exceed the safe processing limit.", 503, undefined, false);
+        }
+        return assignments;
+      }
+      const page = await this.venueAccessRepository.listVenueAssignments({
+        ...input,
+        limit: Math.min(VENUE_ACCESS_PAGE_SIZE, remaining),
+        cursor,
+      });
+      for (const assignment of page.assignments) {
+        if (seenIds.has(assignment.id)) {
+          throw new AppError("Venue access pagination could not be completed.", 500, undefined, false);
+        }
+        seenIds.add(assignment.id);
+        assignments.push(assignment);
+      }
+      if (!page.nextCursor) return assignments;
+      if (!requireComplete && assignments.length >= maximumRows) return assignments;
+      if (
+        page.assignments.length === 0
+        || (cursor?.updatedAt === page.nextCursor.updatedAt && cursor.id === page.nextCursor.id)
+      ) {
+        throw new AppError("Venue access pagination could not be completed.", 500, undefined, false);
+      }
+      cursor = page.nextCursor;
+    }
+  }
+
+  private async collectVenueClaims(
+    input: { userId?: string | undefined; status?: VenueClaimStatus | undefined },
+    maximumRows: number,
+    requireComplete: boolean,
+  ): Promise<VenueClaimRecord[]> {
+    if (!Number.isSafeInteger(maximumRows) || maximumRows < 1 || maximumRows > MAX_VENUE_ACCESS_SCAN_ROWS) {
+      throw new AppError("Invalid venue claim page request.", 400);
+    }
+    const claims: VenueClaimRecord[] = [];
+    const seenIds = new Set<string>();
+    let cursor: VenueClaimCursor | null = null;
+    for (;;) {
+      const remaining = maximumRows - claims.length;
+      if (remaining === 0) {
+        if (requireComplete) {
+          throw new AppError("Venue claim results exceed the safe processing limit.", 503, undefined, false);
+        }
+        return claims;
+      }
+      const page = await this.venueAccessRepository.listVenueClaims({
+        ...input,
+        limit: Math.min(VENUE_ACCESS_PAGE_SIZE, remaining),
+        cursor,
+      });
+      for (const claim of page.claims) {
+        if (seenIds.has(claim.id)) {
+          throw new AppError("Venue claim pagination could not be completed.", 500, undefined, false);
+        }
+        seenIds.add(claim.id);
+        claims.push(claim);
+      }
+      if (!page.nextCursor) return claims;
+      if (!requireComplete && claims.length >= maximumRows) return claims;
+      if (
+        page.claims.length === 0
+        || (cursor?.createdAt === page.nextCursor.createdAt && cursor.id === page.nextCursor.id)
+      ) {
+        throw new AppError("Venue claim pagination could not be completed.", 500, undefined, false);
+      }
+      cursor = page.nextCursor;
+    }
+  }
+
+  private async getVenueAssignmentOffsetPage(
+    input: {
+      userId?: string | undefined;
+      venueId?: string | undefined;
+      accessLevel?: VenueAccessLevel | undefined;
+      status?: VenueAccessStatus | undefined;
+      currentOnly?: boolean | undefined;
+    },
+    query: AdminPaginationInput,
+    total: number,
+  ): Promise<VenueAccessAssignmentRecord[]> {
+    if (query.offset >= total) return [];
+    const end = query.offset + query.limit;
+    if (!Number.isSafeInteger(end) || end > MAX_VENUE_ACCESS_SCAN_ROWS) {
+      throw new AppError(
+        `Venue access pagination is limited to the first ${MAX_VENUE_ACCESS_SCAN_ROWS} rows.`,
+        400,
+      );
+    }
+    return (await this.collectVenueAssignments(input, end, false)).slice(query.offset, end);
+  }
+
+  private async getVenueClaimOffsetPage(
+    input: { userId?: string | undefined; status?: VenueClaimStatus | undefined },
+    query: AdminPaginationInput,
+    total: number,
+  ): Promise<VenueClaimRecord[]> {
+    if (query.offset >= total) return [];
+    const end = query.offset + query.limit;
+    if (!Number.isSafeInteger(end) || end > MAX_VENUE_ACCESS_SCAN_ROWS) {
+      throw new AppError(
+        `Venue claim pagination is limited to the first ${MAX_VENUE_ACCESS_SCAN_ROWS} rows.`,
+        400,
+      );
+    }
+    return (await this.collectVenueClaims(input, end, false)).slice(query.offset, end);
+  }
+
+  private async expireVenueCounterStaffInvitations(asOf: string): Promise<number> {
+    const seenTokens = new Set<string>();
+    let expiredCount = 0;
+    while (expiredCount < MAX_VENUE_ACCESS_SCAN_ROWS) {
+      const result = await this.venueAccessRepository.expireCounterStaffInvitations({
+        asOf,
+        limit: VENUE_ACCESS_EXPIRY_BATCH_SIZE,
+      });
+      for (const invitationToken of result.invitationTokens) {
+        if (seenTokens.has(invitationToken)) {
+          throw new AppError("Venue invitation expiry did not make progress.", 500, undefined, false);
+        }
+        seenTokens.add(invitationToken);
+      }
+      expiredCount += result.expiredCount;
+      if (result.expiredCount < VENUE_ACCESS_EXPIRY_BATCH_SIZE) return expiredCount;
+    }
+    throw new AppError("Venue invitation expiry exceeds the safe processing limit.", 503, undefined, false);
+  }
+
+  private async requireAssignedVenue(
     account: BusinessAccount,
     venueId: string,
     requiredAccess: "manager" | "counter" = "manager",
-  ) {
+  ): Promise<VenueAccessAssignmentRecord | null> {
     if (this.isAdmin(account)) {
       return null;
     }
 
     this.requireVerifiedBarAccount(account);
 
-    const assignment = this.repository.getVenueManagerAssignment({
+    const assignment = await this.venueAccessRepository.getVenueAssignment({
       userId: account.id,
       venueId,
       activeOnly: true,
     });
 
     if (!assignment) {
-      this.auditSecurity({
+      await this.auditSecurity({
         actor: account,
         action: "venue_manager_cross_venue_blocked",
         targetType: "venue",
@@ -3369,7 +4547,7 @@ export class BusinessService {
     }
 
     if (requiredAccess === "manager" && assignment.accessLevel !== "manager") {
-      this.auditSecurity({
+      await this.auditSecurity({
         actor: account,
         action: "venue_counter_staff_privilege_blocked",
         targetType: "venue",
@@ -3384,7 +4562,7 @@ export class BusinessService {
 
   private canVoidVenuePintPointActivity(
     account: BusinessAccount,
-    assignment: VenueManagerAssignment | null,
+    assignment: VenueAccessAssignmentRecord | null,
     activity: VenuePintPointActivity,
     now = Date.now(),
   ): boolean {
@@ -3403,7 +4581,7 @@ export class BusinessService {
 
   private sanitizeVenuePintPointActivity(
     account: BusinessAccount,
-    assignment: VenueManagerAssignment | null,
+    assignment: VenueAccessAssignmentRecord | null,
     activity: VenuePintPointActivity,
   ) {
     return {
@@ -3422,19 +4600,19 @@ export class BusinessService {
     };
   }
 
-  private requireBarSpecialsTier(account: BusinessAccount, venueId: string): void {
+  private async requireBarSpecialsTier(account: BusinessAccount, venueId: string): Promise<void> {
     if (this.isAdmin(account)) {
       return;
     }
 
-    const membershipTier = this.repository.getBarProfile(venueId)?.membershipTier ?? "basic";
+    const membershipTier = (await this.venueInventoryRepository.getBarProfile(venueId))?.membershipTier ?? "basic";
     if (!getBarTierCapabilities(membershipTier).canManageSpecials) {
       throw new AppError("Pro venue tier required to manage Pint Path specials.", 403);
     }
   }
 
-  private requireFeaturedSpecialsTier(account: BusinessAccount, venueId: string): void {
-    const membershipTier = this.repository.getBarProfile(venueId)?.membershipTier ?? "basic";
+  private async requireFeaturedSpecialsTier(account: BusinessAccount, venueId: string): Promise<void> {
+    const membershipTier = (await this.venueInventoryRepository.getBarProfile(venueId))?.membershipTier ?? "basic";
     if (!getBarTierCapabilities(membershipTier).featuredSpecials) {
       throw new AppError("Pro venue tier required for premium Pint Path special treatment.", 403);
     }
@@ -3478,12 +4656,12 @@ export class BusinessService {
     };
   }
 
-  private getOrBuildBarProfile(input: { barId: string; name: string; suburb: string | null }): BarProfile {
-    return this.repository.getBarProfile(input.barId) ?? this.buildDefaultBarProfile(input);
+  private async getOrBuildBarProfile(input: { barId: string; name: string; suburb: string | null }): Promise<BarProfile> {
+    return (await this.venueInventoryRepository.getBarProfile(input.barId)) ?? this.buildDefaultBarProfile(input);
   }
 
   private sanitizeVenueManagerInsights(
-    rawInsights: ReturnType<BusinessRepository["getVenueManagerInsights"]>,
+    rawInsights: VenueManagerInsights,
     input: { includeAggregate: boolean; privacyThreshold: number },
   ) {
     const aggregateInsights = input.includeAggregate && rawInsights.aggregateInsights
@@ -3569,7 +4747,38 @@ export class BusinessService {
     });
   }
 
-  private createPendingBarChange(input: {
+  private async ensureBarProfileAsync(input: {
+    barId: string;
+    name: string;
+    suburb: string | null;
+  }): Promise<BarProfile> {
+    const existing = await this.venueInventoryRepository.getBarProfile(input.barId);
+    if (existing) {
+      return existing;
+    }
+
+    const flags = tierFlags("basic");
+    return this.venueInventoryRepository.upsertBarProfile({
+      barId: input.barId,
+      name: input.name,
+      address: null,
+      suburb: input.suburb,
+      area: input.suburb,
+      phone: null,
+      website: null,
+      instagram: null,
+      description: null,
+      openingHours: {},
+      venueTags: [],
+      membershipTier: "basic",
+      acceptsPintPathCodes: false,
+      active: true,
+      now: nowIso(),
+      ...flags,
+    });
+  }
+
+  private async createPendingBarChange(input: {
     account: BusinessAccount;
     venueId: string;
     changeType: BarPendingChangeType;
@@ -3579,7 +4788,7 @@ export class BusinessService {
     suburb?: string | null | undefined;
   }) {
     const now = nowIso();
-    const pendingChange = this.repository.createBarPendingChange({
+    const pendingChange = await this.venuePendingChangeRepository.createBarPendingChange({
       id: crypto.randomUUID(),
       barId: input.venueId,
       changeType: input.changeType,
@@ -3590,7 +4799,7 @@ export class BusinessService {
       now,
     });
 
-    this.trackEvent(input.account, {
+    await this.trackEvent(input.account, {
       anonymousSessionId: null,
       eventType: "venue_update_submitted",
       venueId: input.venueId,
@@ -3611,7 +4820,7 @@ export class BusinessService {
     };
   }
 
-  private maybeQueueVenueDeleteForReview(input: {
+  private async maybeQueueVenueDeleteForReview(input: {
     account: BusinessAccount;
     venueId: string;
     changeType: Exclude<BarPendingChangeType, "profile">;
@@ -3628,7 +4837,7 @@ export class BusinessService {
     }
 
     const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-    const recentDeletes = this.repository.countRecentVenueManagerDeletes({
+    const recentDeletes = await this.activityAuditRepository.countRecentVenueManagerDeletes({
       venueId: input.venueId,
       since: oneHourAgo,
       changeType: input.changeType,
@@ -3637,7 +4846,7 @@ export class BusinessService {
       return null;
     }
 
-    const existingPendingDelete = this.repository.getPendingBarChangeForTarget({
+    const existingPendingDelete = await this.venuePendingChangeRepository.getPendingBarChangeForTarget({
       barId: input.venueId,
       changeType: input.changeType,
       action: "delete",
@@ -3652,7 +4861,7 @@ export class BusinessService {
       };
     }
 
-    const result = this.createPendingBarChange({
+    const result = await this.createPendingBarChange({
       account: input.account,
       venueId: input.venueId,
       changeType: input.changeType,
@@ -3670,205 +4879,20 @@ export class BusinessService {
     };
   }
 
-  private applyApprovedBarChange(change: BarPendingChange, admin: BusinessAccount, now: string): void {
-    const expectedUpdatedAt = stringOrNull(change.payload.expectedUpdatedAt);
-    const requireBaseVersion = (currentUpdatedAt: string | null | undefined) => {
-      if (currentUpdatedAt && !expectedUpdatedAt) {
-        throw new AppError("This pending change predates edit protection. Ask the venue manager to submit it again.", 409);
-      }
-    };
-    if (change.action === "delete") {
-      if (!change.targetId) {
-        throw new AppError("Pending delete change is missing a target.", 409);
-      }
-
-      if (change.changeType === "beer") {
-        requireBaseVersion(this.repository.getBarBeerById(change.targetId)?.updatedAt);
-        if (!this.repository.deleteBarBeer({ id: change.targetId, barId: change.barId, expectedUpdatedAt })) {
-          throw new AppError("The beer row changed or was removed after this review item was submitted.", 409);
-        }
-        return;
-      }
-
-      if (change.changeType === "happy_hour") {
-        requireBaseVersion(this.repository.getBarHappyHourById(change.targetId)?.updatedAt);
-        if (!this.repository.deleteBarHappyHour({ id: change.targetId, barId: change.barId, expectedUpdatedAt })) {
-          throw new AppError("The happy hour changed or was removed after this review item was submitted.", 409);
-        }
-        return;
-      }
-
-      if (change.changeType === "special") {
-        const membershipTier = this.repository.getBarProfile(change.barId)?.membershipTier ?? "basic";
-        if (!getBarTierCapabilities(membershipTier).canManageSpecials) {
-          throw new AppError("Pro venue tier required to publish Pint Path specials.", 403);
-        }
-        requireBaseVersion(this.repository.getBarSpecialById(change.targetId)?.updatedAt);
-        if (!this.repository.deleteBarSpecial({ id: change.targetId, barId: change.barId, expectedUpdatedAt })) {
-          throw new AppError("The special changed or was removed after this review item was submitted.", 409);
-        }
-        return;
-      }
-
-      throw new AppError("Profile changes cannot be deleted through pending review.", 400);
-    }
-
-    if (change.changeType === "profile") {
-      const existing = this.repository.getBarProfile(change.barId);
-      requireBaseVersion(existing?.updatedAt);
-      const payload = change.payload;
-      const membershipTier = existing?.membershipTier ?? "basic";
-      const flags = tierFlags(membershipTier);
-      this.repository.upsertBarProfile({
-        barId: change.barId,
-        name: stringOrNull(payload.name) ?? existing?.name ?? change.barId,
-        address: stringOrNull(payload.address),
-        suburb: stringOrNull(payload.suburb) ?? existing?.suburb ?? null,
-        area: stringOrNull(payload.area) ?? stringOrNull(payload.suburb) ?? existing?.area ?? existing?.suburb ?? null,
-        phone: stringOrNull(payload.phone),
-        website: stringOrNull(payload.website),
-        instagram: stringOrNull(payload.instagram),
-        description: stringOrNull(payload.description),
-        openingHours: objectFromUnknown(payload.openingHours),
-        venueTags: stringArrayFromUnknown(payload.venueTags),
-        membershipTier,
-        tierManualOverride: existing?.tierManualOverride ?? false,
-        acceptsPintPathCodes: existing?.acceptsPintPathCodes ?? false,
-        active: booleanFromUnknown(payload.active, existing?.active ?? true),
-        expectedUpdatedAt,
-        now,
-        ...flags,
-      });
-      return;
-    }
-
-    if (change.changeType === "beer") {
-      const payload = change.payload;
-      const targetId = change.targetId ?? stringOrNull(payload.id) ?? crypto.randomUUID();
-      requireBaseVersion(this.repository.getBarBeerById(targetId)?.updatedAt);
-      const beerInput = this.standardizeBarBeerInput({
-        id: targetId,
-        beerName: stringOrNull(payload.beerName) ?? "Unnamed beer",
-        brewery: stringOrNull(payload.brewery),
-        style: stringOrNull(payload.style),
-        abv: numberOrNull(payload.abv),
-        serveSize: stringOrNull(payload.serveSize) as ServingSize | null,
-        price: numberOrNull(payload.price),
-        onTap: booleanFromUnknown(payload.onTap, false),
-        inStock: booleanFromUnknown(payload.inStock, true),
-        notes: stringOrNull(payload.notes),
-        priceConfirmed: booleanFromUnknown(payload.priceConfirmed, false),
-        stockConfirmed: booleanFromUnknown(payload.stockConfirmed, false),
-        expectedUpdatedAt: null,
-      }, "approved_venue_inventory_change", now);
-      this.ensureBarProfile({
-        barId: change.barId,
-        name: this.repository.getBarProfile(change.barId)?.name ?? change.barId,
-        suburb: this.repository.getBarProfile(change.barId)?.suburb ?? null,
-      });
-      this.repository.upsertBarBeer({
-        id: targetId,
-        barId: change.barId,
-        beerName: beerInput.beerName,
-        normalizedBeerId: beerInput.normalizedBeerId,
-        brewery: beerInput.brewery,
-        style: beerInput.style,
-        abv: beerInput.abv,
-        serveSize: beerInput.serveSize,
-        price: beerInput.price,
-        currency: "AUD",
-        onTap: beerInput.onTap,
-        inStock: beerInput.inStock,
-        notes: beerInput.notes,
-        expectedUpdatedAt,
-        now,
-      });
-      return;
-    }
-
-    if (change.changeType === "happy_hour") {
-      const payload = change.payload;
-      const targetId = change.targetId ?? stringOrNull(payload.id) ?? crypto.randomUUID();
-      requireBaseVersion(this.repository.getBarHappyHourById(targetId)?.updatedAt);
-      this.ensureBarProfile({
-        barId: change.barId,
-        name: this.repository.getBarProfile(change.barId)?.name ?? change.barId,
-        suburb: this.repository.getBarProfile(change.barId)?.suburb ?? null,
-      });
-      this.repository.upsertBarHappyHour({
-        id: targetId,
-        barId: change.barId,
-        title: stringOrNull(payload.title) ?? "Happy hour",
-        daysOfWeek: stringArrayFromUnknown(payload.daysOfWeek),
-        startTime: stringOrNull(payload.startTime) ?? "00:00",
-        endTime: stringOrNull(payload.endTime) ?? "00:00",
-        description: stringOrNull(payload.description) ?? "Details pending.",
-        happyHourBeers: happyHourBeersFromUnknown(payload.happyHourBeers),
-        active: booleanFromUnknown(payload.active, true),
-        expectedUpdatedAt,
-        now,
-      });
-      return;
-    }
-
-    if (change.changeType === "special") {
-      const payload = change.payload;
-      const targetId = change.targetId ?? stringOrNull(payload.id) ?? crypto.randomUUID();
-      requireBaseVersion(this.repository.getBarSpecialById(targetId)?.updatedAt);
-      const membershipTier = this.repository.getBarProfile(change.barId)?.membershipTier ?? "basic";
-      const capabilities = getBarTierCapabilities(membershipTier);
-      if (!capabilities.canManageSpecials) {
-        throw new AppError("Pro venue tier required to publish Pint Path specials.", 403);
-      }
-      this.ensureBarProfile({
-        barId: change.barId,
-        name: this.repository.getBarProfile(change.barId)?.name ?? change.barId,
-        suburb: this.repository.getBarProfile(change.barId)?.suburb ?? null,
-      });
-      this.repository.upsertBarSpecial({
-        id: targetId,
-        barId: change.barId,
-        title: stringOrNull(payload.title) ?? "Venue special",
-        description: stringOrNull(payload.description) ?? "Details pending.",
-        price: numberOrNull(payload.price),
-        discount: stringOrNull(payload.discount),
-        startsAt: stringOrNull(payload.startsAt),
-        endsAt: stringOrNull(payload.endsAt),
-        startTime: stringOrNull(payload.startTime),
-        endTime: stringOrNull(payload.endTime),
-        scheduleNote: stringOrNull(payload.scheduleNote),
-        exclusive: capabilities.featuredSpecials && booleanFromUnknown(payload.exclusive, false),
-        active: booleanFromUnknown(payload.active, true),
-        expectedUpdatedAt,
-        now,
-      });
-      return;
-    }
-
-    this.auditSecurity({
-      actor: admin,
-      action: "admin_venue_pending_change_unknown_type",
-      targetType: "venue_pending_change",
-      targetId: change.id,
-      metadata: { changeType: change.changeType },
-    });
-    throw new AppError("Unsupported pending venue change type.", 400);
-  }
-
   async signup(input: AuthSignupInput, context?: SessionRequestContext | undefined) {
     if (this.config.NODE_ENV === "production") {
       throw new AppError("Password signup is disabled. Continue with the configured secure sign-in provider.", 410);
     }
     const email = normalizeEmail(input.email);
 
-    if (this.repository.getAccountByEmail(email)) {
+    if (await this.accountSessionRepository.getAccountByEmail(email)) {
       throw new AppError("An account already exists for that email.", 409);
     }
 
     const now = nowIso();
     const displayName = validatePublicDisplayName(input.displayName);
-    const displayNameKey = this.assertDisplayNameAvailable(displayName);
-    const account = this.repository.createAccount({
+    const displayNameKey = await this.assertDisplayNameAvailable(displayName);
+    const account = await this.accountSessionRepository.createAccount({
       id: crypto.randomUUID(),
       email,
       passwordHash: await hashPassword(input.password),
@@ -3884,9 +4908,9 @@ export class BusinessService {
       privacyVersion: CURRENT_LEGAL_POLICY_VERSION,
       now,
     });
-    const confirmed = input.ageConfirmed ? this.repository.updateAgeConfirmed(account.id, now) : account;
+    const confirmed = input.ageConfirmed ? await this.accountSessionRepository.updateAgeConfirmed(account.id, now) : account;
 
-    this.trackEvent(confirmed, {
+    await this.trackEvent(confirmed, {
       anonymousSessionId: null,
       eventType: "signup_completed",
       venueId: null,
@@ -3894,7 +4918,7 @@ export class BusinessService {
       suburb: null,
       metadata: { role: confirmed.role },
     });
-    this.recordUserActivity({
+    await this.recordUserActivity({
       account: confirmed,
       eventType: "user_signup",
       relatedEntityType: "account",
@@ -3907,7 +4931,7 @@ export class BusinessService {
     });
 
     if (input.ageConfirmed) {
-      this.trackEvent(confirmed, {
+      await this.trackEvent(confirmed, {
         anonymousSessionId: null,
         eventType: "age_confirmed",
         venueId: null,
@@ -3924,14 +4948,14 @@ export class BusinessService {
     if (this.config.NODE_ENV === "production") {
       throw new AppError("Password login is disabled. Continue with the configured secure sign-in provider.", 410);
     }
-    const account = this.repository.getAccountByEmail(normalizeEmail(input.email));
+    const account = await this.accountSessionRepository.getAccountByEmail(normalizeEmail(input.email));
 
     if (!account || !await verifyPassword(input.password, account.passwordHash)) {
       throw new AppError("Invalid email or password.", 401);
     }
 
     if (account.status === "suspended") {
-      const recovery = this.getSuspendedBillingRecoveryOptions(account);
+      const recovery = await this.getSuspendedBillingRecoveryOptions(account);
       const recoveryEligible = recovery.consumer || recovery.venues.length > 0;
       throw new AppError("Account access is suspended. Billing management remains available through secure billing recovery.", 403, {
         publicCode: recoveryEligible ? "ACCOUNT_SUSPENDED_BILLING_RECOVERY" : "ACCOUNT_SUSPENDED",
@@ -3942,15 +4966,15 @@ export class BusinessService {
       });
     }
 
-    const session = this.createSessionResponse(account, context);
-    this.recordUserActivity({
+    const session = await this.createSessionResponse(account, context);
+    await this.recordUserActivity({
       account,
       eventType: "user_login",
       relatedEntityType: "account",
       relatedEntityId: account.id,
       metadata: { authProvider: account.authProvider },
     });
-    this.auditSecurity({
+    await this.auditSecurity({
       actor: account,
       action: "login_success",
       targetType: "account",
@@ -3994,8 +5018,10 @@ export class BusinessService {
     const displayName = safeProviderDisplayName(providerDisplayName);
     const avatarUrl = typeof metadata.avatar_url === "string" ? metadata.avatar_url : null;
 
-    const accountBySupabaseId = this.repository.getAccountBySupabaseUserId(supabaseUser.id);
-    const accountByEmail = this.repository.getAccountByEmail(email);
+    const [accountBySupabaseId, accountByEmail] = await Promise.all([
+      this.accountSessionRepository.getAccountBySupabaseUserId(supabaseUser.id),
+      this.accountSessionRepository.getAccountByEmail(email),
+    ]);
     if (accountBySupabaseId && accountByEmail && accountBySupabaseId.id !== accountByEmail.id) {
       throw new AppError("This provider identity conflicts with another Pint Path account. Contact support before continuing.", 409);
     }
@@ -4016,7 +5042,7 @@ export class BusinessService {
     if (!providerSessionIdHash) {
       throw new AppError("The sign-in provider session is missing its session identifier. Sign in again before continuing.", 401);
     }
-    if (this.repository.isProviderSessionRevoked({
+    if (await this.accountSessionRepository.isProviderSessionRevoked({
       userId: account?.id ?? supabaseUser.id,
       providerSessionIdHash,
     })) {
@@ -4055,8 +5081,8 @@ export class BusinessService {
 
     if (!account) {
       const adminEmails = this.getAdminEmailAllowlist();
-      const providerIdentity = this.providerDisplayNameIfAvailable(displayName);
-      account = this.repository.createAccount({
+      const providerIdentity = await this.providerDisplayNameIfAvailable(displayName);
+      account = await this.accountSessionRepository.createAccount({
         id: supabaseUser.id,
         email,
         passwordHash: "supabase-auth",
@@ -4077,9 +5103,9 @@ export class BusinessService {
         now,
       });
       if (legalAcceptance?.ageConfirmed) {
-        account = this.repository.updateAgeConfirmed(account.id, now);
+        account = await this.accountSessionRepository.updateAgeConfirmed(account.id, now);
       }
-      this.recordUserActivity({
+      await this.recordUserActivity({
         account,
         eventType: "user_signup",
         relatedEntityType: "account",
@@ -4094,8 +5120,8 @@ export class BusinessService {
         throw new AppError("Verify the changed provider email before updating your Pint Path account.", 403);
       }
       const nextDisplayName = account.displayName ?? displayName;
-      const providerIdentity = this.providerDisplayNameIfAvailable(nextDisplayName, account.id);
-      account = this.repository.linkSupabaseAccount({
+      const providerIdentity = await this.providerDisplayNameIfAvailable(nextDisplayName, account.id);
+      account = await this.accountSessionRepository.linkSupabaseAccount({
         userId: account.id,
         supabaseUserId: supabaseUser.id,
         email,
@@ -4111,21 +5137,21 @@ export class BusinessService {
     }
 
     if (legalAcceptance) {
-      account = this.repository.updateLegalAcceptance({
+      account = await this.accountSessionRepository.updateLegalAcceptance({
         userId: account.id,
         acceptedAt: now,
         termsVersion: CURRENT_LEGAL_POLICY_VERSION,
         privacyVersion: CURRENT_LEGAL_POLICY_VERSION,
       });
       if (!account.ageConfirmedAt && legalAcceptance.ageConfirmed) {
-        account = this.repository.updateAgeConfirmed(account.id, now);
+        account = await this.accountSessionRepository.updateAgeConfirmed(account.id, now);
       }
     }
 
     this.requireCurrentLegalAcceptance(account);
 
     if (account.status === "suspended") {
-      const recovery = this.getSuspendedBillingRecoveryOptions(account);
+      const recovery = await this.getSuspendedBillingRecoveryOptions(account);
       const recoveryEligible = recovery.consumer || recovery.venues.length > 0;
       throw new AppError("Account access is suspended. Billing management remains available through secure billing recovery.", 403, {
         publicCode: recoveryEligible ? "ACCOUNT_SUSPENDED_BILLING_RECOVERY" : "ACCOUNT_SUSPENDED",
@@ -4138,7 +5164,7 @@ export class BusinessService {
 
     const existingToken = getBearerToken(existingAuthorization);
     const existingExpiresAt = existingToken
-      ? this.repository.getActiveProviderSessionExpiresAt({
+      ? await this.accountSessionRepository.getActiveProviderSessionExpiresAt({
           tokenHash: hashToken(existingToken),
           userId: account.id,
           providerSessionIdHash,
@@ -4155,14 +5181,14 @@ export class BusinessService {
       };
     }
 
-    this.recordUserActivity({
+    await this.recordUserActivity({
       account,
       eventType: "user_login",
       relatedEntityType: "account",
       relatedEntityId: account.id,
       metadata: { authProvider: "supabase" },
     });
-    this.auditSecurity({
+    await this.auditSecurity({
       actor: account,
       action: "login_success",
       targetType: "account",
@@ -4194,7 +5220,7 @@ export class BusinessService {
     if (error || !data.user?.id || !data.user.email || payload?.sub !== data.user.id) {
       throw new AppError("Invalid password recovery session. Request a new password reset link.", 401);
     }
-    const account = this.repository.getAccountBySupabaseUserId(data.user.id);
+    const account = await this.accountSessionRepository.getAccountBySupabaseUserId(data.user.id);
     if (!account || normalizeEmail(account.email) !== normalizeEmail(data.user.email)) {
       throw new AppError("Invalid password recovery session. Request a new password reset link.", 401);
     }
@@ -4202,20 +5228,20 @@ export class BusinessService {
     await this.revokeProviderSessionsGlobally(account, input.accessToken, "password_reset", context, data.user.id);
 
     const completedAt = nowIso();
-    const containment = this.repository.completePasswordResetContainment({
+    const containment = await this.accountSessionRepository.completePasswordResetContainment({
       userId: account.id,
       providerSessionIdHash,
       providerTokensValidAfter: completedAt,
       revokedAt: completedAt,
     });
-    this.recordUserActivity({
+    await this.recordUserActivity({
       account,
       eventType: "password_reset_completed",
       relatedEntityType: "account",
       relatedEntityId: account.id,
       metadata: { reauthenticationRequired: true },
     });
-    this.auditSecurity({
+    await this.auditSecurity({
       actor: account,
       action: "password_reset_completed",
       targetType: "account",
@@ -4267,7 +5293,7 @@ export class BusinessService {
 
     const { error } = await this.supabase.auth.admin.signOut(accessToken, "global");
     if (error) {
-      this.auditSecurity({
+      await this.auditSecurity({
         actor: account,
         action: "provider_global_signout_failed",
         targetType: "account",
@@ -4279,10 +5305,10 @@ export class BusinessService {
     }
   }
 
-  confirmAge(account: BusinessAccount) {
+  async confirmAge(account: BusinessAccount) {
     const confirmedAt = nowIso();
-    const updated = this.repository.updateAgeConfirmed(account.id, confirmedAt);
-    this.trackEvent(updated, {
+    const updated = await this.accountSessionRepository.updateAgeConfirmed(account.id, confirmedAt);
+    await this.trackEvent(updated, {
       anonymousSessionId: null,
       eventType: "age_confirmed",
       venueId: null,
@@ -4290,7 +5316,7 @@ export class BusinessService {
       suburb: null,
       metadata: { source: "account" },
     });
-    this.recordUserActivity({
+    await this.recordUserActivity({
       account: updated,
       eventType: "age_verification_started",
       relatedEntityType: "account",
@@ -4302,7 +5328,7 @@ export class BusinessService {
     };
   }
 
-  acceptLegal(account: BusinessAccount, input: LegalAcceptanceInput) {
+  async acceptLegal(account: BusinessAccount, input: LegalAcceptanceInput) {
     if (
       input.termsVersion !== CURRENT_LEGAL_POLICY_VERSION ||
       input.privacyVersion !== CURRENT_LEGAL_POLICY_VERSION
@@ -4312,13 +5338,13 @@ export class BusinessService {
       });
     }
     const acceptedAt = nowIso();
-    const updated = this.repository.updateLegalAcceptance({
+    const updated = await this.accountSessionRepository.updateLegalAcceptance({
       userId: account.id,
       acceptedAt,
       termsVersion: input.termsVersion,
       privacyVersion: input.privacyVersion,
     });
-    this.recordUserActivity({
+    await this.recordUserActivity({
       account: updated,
       eventType: "legal_terms_accepted",
       relatedEntityType: "account",
@@ -4333,16 +5359,16 @@ export class BusinessService {
     };
   }
 
-  updateDisplayName(account: BusinessAccount, input: DisplayNameUpdateInput) {
+  async updateDisplayName(account: BusinessAccount, input: DisplayNameUpdateInput) {
     const displayName = validatePublicDisplayName(input.displayName);
-    const displayNameKey = this.assertDisplayNameAvailable(displayName, account.id);
-    const updated = this.repository.updateAccountDisplayName({
+    const displayNameKey = await this.assertDisplayNameAvailable(displayName, account.id);
+    const updated = await this.accountSessionRepository.updateAccountDisplayName({
       userId: account.id,
       displayName,
       displayNameKey,
       now: nowIso(),
     });
-    this.recordUserActivity({
+    await this.recordUserActivity({
       account: updated,
       eventType: "display_name_updated",
       relatedEntityType: "account",
@@ -4351,14 +5377,14 @@ export class BusinessService {
     });
     return {
       account: sanitizeAccount(updated),
-      profile: this.repository.getProfileById(updated.id),
+      profile: await this.accountProfilePreferencesRepository.getProfileById(updated.id),
       message: displayName
         ? "Display name saved for the contributor leaderboard."
         : "Display name cleared. Your public account ID will show on the leaderboard.",
     };
   }
 
-  private createSessionResponse(
+  private async createSessionResponse(
     account: BusinessAccount,
     context?: SessionRequestContext | undefined,
     providerSessionIdHash?: string | null,
@@ -4372,7 +5398,7 @@ export class BusinessService {
 
     const expiresAt = addDays(now, ttlDays);
     const tokenHash = hashToken(token);
-    this.repository.createSessionWithLimit({
+    await this.accountSessionRepository.createSessionWithLimit({
       tokenHash,
       userId: account.id,
       createdAt: now,
@@ -4389,29 +5415,34 @@ export class BusinessService {
       expiresAt,
       account: sanitizeAccount(account),
       access: this.getAccessState(account, null),
-      counterStaffAssignments: this.getCounterStaffAssignmentsForAccount(account.id),
+      counterStaffAssignments: await this.getCounterStaffAssignmentsForAccount(account.id),
     };
   }
 
-  getSessionExpiresAt(authorizationHeader: string | undefined): string | null {
+  async getSessionExpiresAt(authorizationHeader: string | undefined): Promise<string | null> {
     const token = getBearerToken(authorizationHeader);
-    return token ? this.repository.getSessionExpiresAt(hashToken(token), nowIso()) : null;
+    return token ? this.accountSessionRepository.getSessionExpiresAt(hashToken(token), nowIso()) : null;
   }
 
-  getAuthSession(account: BusinessAccount | null) {
+  async getAuthSession(account: BusinessAccount | null) {
     return {
       authenticated: Boolean(account),
       account: account ? sanitizeAccount(account) : null,
       access: this.getAccessState(account, null),
-      counterStaffAssignments: account ? this.getCounterStaffAssignmentsForAccount(account.id) : [],
+      counterStaffAssignments: account ? await this.getCounterStaffAssignmentsForAccount(account.id) : [],
     };
   }
 
-  private getCounterStaffAssignmentsForAccount(accountId: string) {
-    this.repository.expireVenueCounterStaffInvitations(nowIso());
-    return this.repository
-      .listVenueManagerAssignments({ userId: accountId, activeOnly: true, limit: -1 })
-      .filter((assignment) => assignment.accessLevel === "counter_staff")
+  private async getCounterStaffAssignmentsForAccount(accountId: string) {
+    if (!this.config.COMMERCIAL_LAUNCH_ENABLED) {
+      return [];
+    }
+    await this.expireVenueCounterStaffInvitations(nowIso());
+    return (await this.collectVenueAssignments({
+      userId: accountId,
+      accessLevel: "counter_staff",
+      status: "active",
+    }))
       .map((assignment) => ({
         id: assignment.id,
         venueId: assignment.venueId,
@@ -4431,24 +5462,20 @@ export class BusinessService {
       }));
   }
 
-  logout(authorizationHeader: string | undefined, context?: SessionRequestContext | undefined) {
+  async logout(authorizationHeader: string | undefined, context?: SessionRequestContext | undefined) {
     const token = getBearerToken(authorizationHeader);
     if (!token) {
       throw new AppError("Login required.", 401);
     }
 
-    const account = this.requireAccount(authorizationHeader, context);
+    const account = await this.requireAccount(authorizationHeader, context);
     const now = nowIso();
     const tokenHash = hashToken(token);
-    const revoked = this.repository.revokeSession({
+    const { revoked, revokedDiscountPasses } = await this.accountSessionRepository.revokeSessionWithSummary({
       tokenHash,
       revokedAt: now,
     });
-    const revokedDiscountPasses = this.repository.revokeDiscountPassesForSession({
-      sessionTokenHash: tokenHash,
-      revokedAt: now,
-    });
-    this.auditSecurity({
+    await this.auditSecurity({
       actor: account,
       action: "logout",
       targetType: "account",
@@ -4472,15 +5499,11 @@ export class BusinessService {
       await this.revokeProviderSessionsGlobally(account, input.accessToken, "logout_all", context);
     }
     const now = nowIso();
-    const revokedCount = this.repository.revokeUserSessions({
+    const { revokedSessions: revokedCount, revokedDiscountPasses } = await this.accountSessionRepository.revokeUserSessionsWithSummary({
       userId: account.id,
       revokedAt: now,
     });
-    const revokedDiscountPasses = this.repository.revokeDiscountPassesForUser({
-      userId: account.id,
-      revokedAt: now,
-    });
-    this.auditSecurity({
+    await this.auditSecurity({
       actor: account,
       action: "logout_all",
       targetType: "account",
@@ -4491,13 +5514,13 @@ export class BusinessService {
     return { revokedCount, revokedDiscountPasses, providerSessionsRevoked: providerLinked };
   }
 
-  listAccountSessions(account: BusinessAccount, authorizationHeader?: string, query: AdminPaginationInput = { limit: 50, offset: 0 }) {
+  async listAccountSessions(account: BusinessAccount, authorizationHeader?: string, query: AdminPaginationInput = { limit: 50, offset: 0 }) {
     const currentTokenHash = getBearerToken(authorizationHeader)
       ? hashToken(getBearerToken(authorizationHeader)!)
       : null;
     const timestamp = nowIso();
     const now = new Date(timestamp).getTime();
-    const present = (session: ReturnType<BusinessRepository["listUserSessions"]>[number]) => ({
+    const present = (session: AccountSession) => ({
       id: session.id,
       createdAt: session.createdAt,
       expiresAt: session.expiresAt,
@@ -4509,16 +5532,20 @@ export class BusinessService {
       networkFingerprint: session.lastIpHash?.slice(0, 12) ?? null,
       providerBacked: session.providerBacked,
     });
-    const sessions = this.repository.listUserSessions({ userId: account.id, now: timestamp, ...query }).map(present);
-    const total = this.repository.countUserSessions(account.id, timestamp);
     const historyLimit = Math.min(20, query.limit);
-    const history = this.repository.listUserSessionHistory({
-      userId: account.id,
-      now: timestamp,
-      limit: historyLimit,
-      offset: 0,
-    }).map(present);
-    const historyTotal = this.repository.countUserSessionHistory(account.id, timestamp);
+    const [currentRows, total, historyRows, historyTotal] = await Promise.all([
+      this.accountSessionRepository.listUserSessions({ userId: account.id, now: timestamp, ...query }),
+      this.accountSessionRepository.countUserSessions(account.id, timestamp),
+      this.accountSessionRepository.listUserSessionHistory({
+        userId: account.id,
+        now: timestamp,
+        limit: historyLimit,
+        offset: 0,
+      }),
+      this.accountSessionRepository.countUserSessionHistory(account.id, timestamp),
+    ]);
+    const sessions = currentRows.map(present);
+    const history = historyRows.map(present);
     return {
       sessions,
       total,
@@ -4529,7 +5556,7 @@ export class BusinessService {
     };
   }
 
-  revokeAccountSession(
+  async revokeAccountSession(
     actor: BusinessAccount,
     targetUserId: string,
     sessionId: string,
@@ -4545,7 +5572,7 @@ export class BusinessService {
     if (actor.id !== targetUserId && (!reason || reason.trim().length < 4)) {
       throw new AppError("A reason is required to revoke another account's session.", 400);
     }
-    const result = this.repository.revokeUserSessionById({
+    const result = await this.accountSessionRepository.revokeUserSessionById({
       userId: targetUserId,
       sessionId,
       revokedAt: nowIso(),
@@ -4553,7 +5580,7 @@ export class BusinessService {
     if (!result.revoked) {
       throw new AppError("Session not found or already revoked.", 404);
     }
-    this.auditSecurity({
+    await this.auditSecurity({
       actor,
       action: actor.id === targetUserId ? "session_revoked" : "admin_session_revoked",
       targetType: "account",
@@ -4564,26 +5591,44 @@ export class BusinessService {
     return result;
   }
 
-  listAdminAccountSessions(admin: BusinessAccount, userId: string, query: AdminPaginationInput = { limit: 50, offset: 0 }) {
+  async listAdminAccountSessions(admin: BusinessAccount, userId: string, query: AdminPaginationInput = { limit: 50, offset: 0 }) {
     if (!this.isAdmin(admin)) throw new AppError("Admin access required.", 403);
-    const account = this.repository.getAccountById(userId);
+    const account = await this.accountSessionRepository.getAccountById(userId);
     if (!account) throw new AppError("Account not found.", 404);
     return this.listAccountSessions(account, undefined, query);
   }
 
-  getAdminSecurityAuditLogs(
+  async getAdminSecurityAuditLogs(
     admin: BusinessAccount,
-    query: { limit?: number; offset?: number; action?: string | null; actorUserId?: string | null },
+    query: {
+      limit?: number;
+      offset?: number;
+      cursor?: ActivityAuditCursor | null;
+      action?: string | null;
+      actorUserId?: string | null;
+    },
   ) {
     if (!this.isAdmin(admin)) throw new AppError("Admin access required.", 403);
     const limit = Math.min(500, Math.max(1, query.limit ?? 100));
     const offset = Math.max(0, query.offset ?? 0);
     const filters = { action: query.action ?? null, actorUserId: query.actorUserId ?? null };
-    const logs = this.repository.listSecurityAuditLogs({ ...filters, limit, offset });
-    const total = this.repository.countSecurityAuditLogs(filters);
+    const [page, total] = await Promise.all([
+      this.activityAuditRepository.listSecurityAuditLogs({
+        ...filters,
+        limit,
+        cursor: query.cursor ?? null,
+      }),
+      this.activityAuditRepository.countSecurityAuditLogs(filters),
+    ]);
     return {
-      logs,
-      pagination: { total, limit, offset, hasMore: offset + logs.length < total },
+      logs: page.items,
+      pagination: {
+        total,
+        limit,
+        offset,
+        hasMore: page.nextCursor !== null,
+        nextCursor: page.nextCursor,
+      },
     };
   }
 
@@ -4613,7 +5658,7 @@ export class BusinessService {
       freePreviewScope: "Pint prices for Guinness, Carlton Draught, and Stone & Wood Pacific Ale.",
       premiumScope: this.config.COMMERCIAL_LAUNCH_ENABLED
         ? "Every verified beer price, value rings, premium filters, saved night shortcuts, discount-pass access, and venue special-discount details."
-        : "Every verified beer price, value rings, premium filters, and saved night shortcuts through earned contributor access.",
+        : "Every verified beer price, value rings, full-map filters, and saved night shortcuts through earned contributor access.",
       premiumToolkit: buildConsumerPremiumToolkit({
         account,
         currentAdmin,
@@ -4625,11 +5670,11 @@ export class BusinessService {
     };
   }
 
-  getLeaderboard(account: BusinessAccount | null, query: LeaderboardQuery) {
+  async getLeaderboard(account: BusinessAccount | null, query: LeaderboardQuery) {
     const now = nowIso();
     const timezone = this.config.REPORT_TIMEZONE || DEFAULT_REPORT_TIMEZONE;
     const monthKey = getZonedMonthKey(new Date(now), timezone);
-    if (!this.config.PINT_POINTS_REWARDS_ENABLED) {
+    if (!this.config.COMMERCIAL_LAUNCH_ENABLED || !this.config.PINT_POINTS_REWARDS_ENABLED) {
       return this.getDisabledLeaderboard(query.period, monthKey);
     }
     const campaign = this.getOrCreateLeaderboardPrizeCampaign(monthKey, now);
@@ -4642,7 +5687,7 @@ export class BusinessService {
     }));
 
     if (account) {
-      this.recordUserActivity({
+      await this.recordUserActivity({
         account,
         eventType: "leaderboard_viewed",
         relatedEntityType: "leaderboard",
@@ -4765,7 +5810,8 @@ export class BusinessService {
     };
   }
 
-  getLeaderboardPrizeAdmin(_admin: BusinessAccount) {
+  async getLeaderboardPrizeAdmin(_admin: BusinessAccount) {
+    this.assertCommercialVenueFeatureOpen();
     const now = nowIso();
     const timezone = this.config.REPORT_TIMEZONE || DEFAULT_REPORT_TIMEZONE;
     const monthKey = getZonedMonthKey(new Date(now), timezone);
@@ -4780,7 +5826,7 @@ export class BusinessService {
       };
     }
     const campaign = this.getOrCreateLeaderboardPrizeCampaign(monthKey, now);
-    const leaderboard = this.getLeaderboard(_admin, { period: "month", limit: 25 });
+    const leaderboard = await this.getLeaderboard(_admin, { period: "month", limit: 25 });
     const awards = this.repository.listLeaderboardPrizeAwards(campaign.monthKey);
     return {
       disabled: false,
@@ -4798,7 +5844,8 @@ export class BusinessService {
     };
   }
 
-  saveLeaderboardPrizeCampaign(admin: BusinessAccount, input: LeaderboardPrizeCampaignInput) {
+  async saveLeaderboardPrizeCampaign(admin: BusinessAccount, input: LeaderboardPrizeCampaignInput) {
+    this.assertCommercialVenueFeatureOpen();
     this.requirePintPointsRewardsEnabled();
     const now = nowIso();
     const range = monthKeyRange(input.monthKey, this.config.REPORT_TIMEZONE || DEFAULT_REPORT_TIMEZONE);
@@ -4814,7 +5861,7 @@ export class BusinessService {
       terms: input.terms,
       now,
     });
-    this.auditSecurity({
+    await this.auditSecurity({
       actor: admin,
       action: "leaderboard_prize_campaign_saved",
       targetType: "leaderboard_prize_campaign",
@@ -4827,11 +5874,12 @@ export class BusinessService {
     });
     return {
       campaign: this.sanitizeLeaderboardPrizeCampaign(campaign),
-      leaderboard: this.getLeaderboard(admin, { period: "month", limit: 25 }),
+      leaderboard: await this.getLeaderboard(admin, { period: "month", limit: 25 }),
     };
   }
 
-  finalizeLeaderboardPrizeCampaign(admin: BusinessAccount, input: LeaderboardPrizeFinalizeInput) {
+  async finalizeLeaderboardPrizeCampaign(admin: BusinessAccount, input: LeaderboardPrizeFinalizeInput) {
+    this.assertCommercialVenueFeatureOpen();
     this.requirePintPointsRewardsEnabled();
     const now = nowIso();
     const campaign = this.repository.getLeaderboardPrizeCampaign(input.monthKey) ??
@@ -4859,7 +5907,7 @@ export class BusinessService {
       finalizedBy: admin.id,
       now,
     });
-    this.auditSecurity({
+    await this.auditSecurity({
       actor: admin,
       action: "leaderboard_prize_campaign_finalized",
       targetType: "leaderboard_prize_campaign",
@@ -4874,7 +5922,8 @@ export class BusinessService {
     };
   }
 
-  transitionRewardVoucher(admin: BusinessAccount, voucherId: string, input: RewardVoucherTransitionInput) {
+  async transitionRewardVoucher(admin: BusinessAccount, voucherId: string, input: RewardVoucherTransitionInput) {
+    this.assertCommercialVenueFeatureOpen();
     const now = nowIso();
     const result = this.repository.transitionAccountRewardVoucher({
       id: voucherId,
@@ -4894,7 +5943,7 @@ export class BusinessService {
         409,
       );
     }
-    this.auditSecurity({
+    await this.auditSecurity({
       actor: admin,
       action: input.action === "fulfill" ? "reward_voucher_fulfilled" : "reward_voucher_voided",
       targetType: "account_reward_voucher",
@@ -4916,6 +5965,7 @@ export class BusinessService {
   }
 
   async planPubGolf(account: BusinessAccount, input: PubGolfPlanInput) {
+    this.assertCommercialVenueFeatureOpen();
     if (!this.config.ALCOHOL_GAMIFICATION_ENABLED) {
       throw new AppError(
         "Pub Golf is paused pending App Store and Victorian responsible-promotion approval.",
@@ -5011,7 +6061,7 @@ export class BusinessService {
       totalDistanceMeters += destinationLeg;
     }
 
-    this.recordUserActivity({
+    await this.recordUserActivity({
       account,
       eventType: "pub_golf_plan_generated",
       relatedEntityType: "beta_feature",
@@ -5098,7 +6148,7 @@ export class BusinessService {
       return { ...keyed, source: "area_hint" };
     }
 
-    const missionArea = this.resolveMissionAreaFromLocalCache(query);
+    const missionArea = await this.resolveMissionAreaFromLocalCache(query);
     if (missionArea) {
       return {
         latitude: missionArea.latitude,
@@ -5148,6 +6198,7 @@ export class BusinessService {
   }
 
   async getDiscountPass(account: BusinessAccount, authorizationHeader: string | undefined) {
+    this.assertCommercialVenueFeatureOpen();
     this.requireCurrentLegalAcceptance(account);
     if (!isFullAccess(account, this.isAdmin(account))) {
       throw new AppError("Discount passes are for premium or contributor accounts.", 403);
@@ -5202,7 +6253,7 @@ export class BusinessService {
       width: 240,
     });
 
-    this.recordUserActivity({
+    await this.recordUserActivity({
       account,
       eventType: "discount_pass_viewed",
       relatedEntityType: "discount_pass",
@@ -5221,16 +6272,20 @@ export class BusinessService {
     };
   }
 
-  private getDiscountVenueIdentity(
+  private async getDiscountVenueIdentity(
     venueId: string,
     assignment?: { venueName?: string | null; suburb?: string | null } | null,
     requireKnownVenue = false,
   ) {
-    const profile = this.repository.getBarProfile(venueId);
-    const location = this.repository.getVenueLocationCache(venueId);
+    const profile = await this.venueInventoryRepository.getBarProfile(venueId);
+    const location = await this.venueIdentityRepository.getVenueLocationCache(venueId);
     const activeAssignment = assignment
       ? null
-      : this.repository.listVenueManagerAssignments({ venueId, activeOnly: true, limit: 1 })[0] ?? null;
+      : (await this.venueAccessRepository.listVenueAssignments({
+          venueId,
+          status: "active",
+          limit: 1,
+        })).assignments[0] ?? null;
 
     if (requireKnownVenue && !profile && !location && !assignment && !activeAssignment) {
       throw new AppError("Venue is not configured for Pint Path POS redemptions.", 404);
@@ -5276,7 +6331,7 @@ export class BusinessService {
     return start < end ? current >= start && current < end : current >= start || current < end;
   }
 
-  private redeemDiscountPassForVenue(input: {
+  private async redeemDiscountPassForVenue(input: {
     actor: BusinessAccount | null;
     venueId: string;
     venueName: string;
@@ -5296,7 +6351,7 @@ export class BusinessService {
     context?: SessionRequestContext | undefined;
   }) {
     const now = nowIso();
-    const profile = this.repository.getBarProfile(input.venueId);
+    const profile = await this.venueInventoryRepository.getBarProfile(input.venueId);
     if (!profile?.acceptsPintPathCodes) {
       throw new AppError("This venue is not currently enabled to accept Pint Path codes.", 403);
     }
@@ -5364,7 +6419,7 @@ export class BusinessService {
       throw new AppError("Discount code expired or not found. Ask the user to refresh their Pint Path discount pass.", 404);
     }
 
-    const user = this.repository.getAccountById(pass.userId);
+    const user = await this.accountSessionRepository.getAccountById(pass.userId);
     if (!user || !isFullAccess(user, this.isAdmin(user))) {
       throw new AppError("This account does not currently have discount access.", 403);
     }
@@ -5373,7 +6428,7 @@ export class BusinessService {
     let itemName = input.itemName;
     let estimatedSavingsCents = 0;
     if (input.specialId) {
-      const special = this.repository.getBarSpecialById(input.specialId);
+      const special = await this.venueInventoryRepository.getBarSpecialById(input.specialId);
       if (!special || special.barId !== input.venueId) {
         throw new AppError("Choose an active Pint Path special from this venue.", 400);
       }
@@ -5417,7 +6472,7 @@ export class BusinessService {
       });
       return redemption;
     });
-    this.recordUserActivity({
+    await this.recordUserActivity({
       account: user,
       eventType: "discount_redeemed",
       relatedEntityType: "venue",
@@ -5431,7 +6486,7 @@ export class BusinessService {
         source: input.source,
       },
     });
-    this.auditSecurity({
+    await this.auditSecurity({
       actor: input.actor,
       action: "discount_redeemed",
       targetType: "venue",
@@ -5460,9 +6515,10 @@ export class BusinessService {
     };
   }
 
-  redeemDiscountPass(account: BusinessAccount, venueId: string, input: DiscountRedemptionInput) {
-    const assignment = this.requireAssignedVenue(account, venueId, "counter");
-    const venue = this.getDiscountVenueIdentity(venueId, assignment);
+  async redeemDiscountPass(account: BusinessAccount, venueId: string, input: DiscountRedemptionInput) {
+    this.assertCommercialVenueFeatureOpen();
+    const assignment = await this.requireAssignedVenue(account, venueId, "counter");
+    const venue = await this.getDiscountVenueIdentity(venueId, assignment);
     return this.redeemDiscountPassForVenue({
       actor: account,
       venueId,
@@ -5479,13 +6535,14 @@ export class BusinessService {
     });
   }
 
-  getVenuePosIntegration(account: BusinessAccount, venueId: string) {
-    const assignment = this.requireAssignedVenue(account, venueId);
-    const venue = this.getDiscountVenueIdentity(venueId, assignment);
+  async getVenuePosIntegration(account: BusinessAccount, venueId: string) {
+    this.assertCommercialVenueFeatureOpen();
+    const assignment = await this.requireAssignedVenue(account, venueId);
+    const venue = await this.getDiscountVenueIdentity(venueId, assignment);
     const endpoint = new URL("/api/business/pos/discount-redemptions", this.config.PUBLIC_BASE_URL).toString();
-    const membershipTier = this.repository.getBarProfile(venueId)?.membershipTier ?? "basic";
+    const profile = await this.venueInventoryRepository.getBarProfile(venueId);
+    const membershipTier = profile?.membershipTier ?? "basic";
     const tierCapabilities = getBarTierCapabilities(membershipTier);
-    const profile = this.repository.getBarProfile(venueId);
     const tokenVersion = profile?.posWebhookTokenVersion ?? 1;
     const token = this.config.POS_WEBHOOK_SIGNING_SECRET && tierCapabilities.posWebhookIntegration
       ? createPosWebhookToken(this.config.POS_WEBHOOK_SIGNING_SECRET, venueId, tokenVersion)
@@ -5535,9 +6592,10 @@ export class BusinessService {
     };
   }
 
-  rotateVenuePosIntegrationToken(account: BusinessAccount, venueId: string) {
-    this.requireAssignedVenue(account, venueId);
-    const profile = this.repository.getBarProfile(venueId);
+  async rotateVenuePosIntegrationToken(account: BusinessAccount, venueId: string) {
+    this.assertCommercialVenueFeatureOpen();
+    await this.requireAssignedVenue(account, venueId);
+    const profile = await this.venueInventoryRepository.getBarProfile(venueId);
     if (!profile) {
       throw new AppError("Venue profile not found.", 404);
     }
@@ -5547,14 +6605,14 @@ export class BusinessService {
       now,
       previousValidUntil: addMinutes(now, 10),
     });
-    this.auditSecurity({
+    await this.auditSecurity({
       actor: account,
       action: "venue_pos_token_rotated",
       targetType: "venue",
       targetId: venueId,
       metadata: { previousVersion: profile.posWebhookTokenVersion },
     });
-    const status = this.getVenuePosIntegration(account, venueId);
+    const status = await this.getVenuePosIntegration(account, venueId);
     const token = this.config.POS_WEBHOOK_SIGNING_SECRET
       ? createPosWebhookToken(this.config.POS_WEBHOOK_SIGNING_SECRET, venueId, updated.posWebhookTokenVersion)
       : null;
@@ -5566,18 +6624,19 @@ export class BusinessService {
     };
   }
 
-  redeemDiscountPassFromPos(
+  async redeemDiscountPassFromPos(
     input: PosDiscountRedemptionInput,
     token: string | undefined,
     context?: SessionRequestContext | undefined,
   ) {
+    this.assertCommercialVenueFeatureOpen();
     const secret = this.config.POS_WEBHOOK_SIGNING_SECRET;
     if (!secret) {
       throw new AppError("Pint Path POS webhooks are not configured yet.", 503);
     }
 
     const suppliedToken = token?.trim() ?? "";
-    const profile = this.repository.getBarProfile(input.venueId);
+    const profile = await this.venueInventoryRepository.getBarProfile(input.venueId);
     const expectedToken = createPosWebhookToken(secret, input.venueId, profile?.posWebhookTokenVersion ?? 1);
     const previousToken = profile?.posPreviousTokenVersion && profile.posPreviousTokenValidUntil && Date.parse(profile.posPreviousTokenValidUntil) > Date.now()
       ? createPosWebhookToken(secret, input.venueId, profile.posPreviousTokenVersion)
@@ -5587,7 +6646,7 @@ export class BusinessService {
       Boolean(previousToken && timingSafeStringEqual(previousToken, suppliedToken))
     );
     if (!tokenValid) {
-      this.auditSecurity({
+      await this.auditSecurity({
         actor: null,
         action: "pos_discount_redeem_blocked",
         targetType: "venue",
@@ -5598,14 +6657,14 @@ export class BusinessService {
       throw new AppError("Invalid POS webhook token.", 401);
     }
 
-    const venue = this.getDiscountVenueIdentity(input.venueId, null, true);
-    const membershipTier = this.repository.getBarProfile(input.venueId)?.membershipTier ?? "basic";
+    const venue = await this.getDiscountVenueIdentity(input.venueId, null, true);
+    const membershipTier = profile?.membershipTier ?? "basic";
     const capabilities = getBarTierCapabilities(membershipTier);
     if (!capabilities.posWebhookIntegration) {
       throw new AppError("Pro venue tier required for POS webhook redemptions.", 403);
     }
 
-    const result = this.redeemDiscountPassForVenue({
+    const result = await this.redeemDiscountPassForVenue({
       actor: null,
       venueId: input.venueId,
       venueName: venue.venueName,
@@ -5697,14 +6756,14 @@ export class BusinessService {
     return signPintPointCheckoutClaims(this.getPintPointCheckoutSigningSecret(), claims);
   }
 
-  private verifyPintPointCheckoutToken(input: {
+  private async verifyPintPointCheckoutToken(input: {
     token: string;
     venueId: string;
     authorizedByUserId: string;
     transactionReference: string;
     now: string;
     allowExpired?: boolean;
-  }): BusinessAccount {
+  }): Promise<BusinessAccount> {
     const [payload, signature, extra] = input.token.split(".");
     if (!payload || !signature || extra) {
       throw new AppError("Member checkout authorization is invalid. Check the member code again.", 401);
@@ -5736,14 +6795,14 @@ export class BusinessService {
     if (!input.allowExpired && Date.parse(claims.expiresAt) <= Date.parse(input.now)) {
       throw new AppError("Member checkout authorization expired. Check the member code again.", 410);
     }
-    const user = this.repository.getAccountById(claims.userId);
+    const user = await this.accountSessionRepository.getAccountById(claims.userId);
     if (!user) {
       throw new AppError("Pint Path account not found.", 404);
     }
     return user;
   }
 
-  private resolvePintPointUser(input: {
+  private async resolvePintPointUser(input: {
     code?: string | undefined;
     checkoutToken?: string | undefined;
     account: BusinessAccount;
@@ -5760,7 +6819,7 @@ export class BusinessService {
       if (!pass) {
         throw new AppError("Pint Path code expired or not found. Ask the user to refresh their code.", 404);
       }
-      const user = this.repository.getAccountById(pass.userId);
+      const user = await this.accountSessionRepository.getAccountById(pass.userId);
       if (!user) {
         throw new AppError("Pint Path account not found.", 404);
       }
@@ -5783,11 +6842,12 @@ export class BusinessService {
     throw new AppError("Check the member code before recording this purchase.", 400);
   }
 
-  previewPintPointMember(account: BusinessAccount, venueId: string, input: PintPointMemberPreviewInput) {
+  async previewPintPointMember(account: BusinessAccount, venueId: string, input: PintPointMemberPreviewInput) {
+    this.assertCommercialVenueFeatureOpen();
     this.requirePintPointsRewardsEnabled();
-    const assignment = this.requireAssignedVenue(account, venueId, "counter");
-    const venue = this.getDiscountVenueIdentity(venueId, assignment);
-    const profile = this.repository.getBarProfile(venueId);
+    const assignment = await this.requireAssignedVenue(account, venueId, "counter");
+    const venue = await this.getDiscountVenueIdentity(venueId, assignment);
+    const profile = await this.venueInventoryRepository.getBarProfile(venueId);
     if (!profile?.acceptsPintPathCodes) {
       throw new AppError("This venue is not currently enabled to accept Pint Path codes.", 403);
     }
@@ -5800,7 +6860,7 @@ export class BusinessService {
     if (!pass) {
       throw new AppError("Pint Path code expired or not found. Ask the user to refresh their code.", 404);
     }
-    const user = this.repository.getAccountById(pass.userId);
+    const user = await this.accountSessionRepository.getAccountById(pass.userId);
     if (!user || !isFullAccess(user, this.isAdmin(user))) {
       throw new AppError("This Pint Path account cannot receive Pint Points right now.", 403);
     }
@@ -5842,6 +6902,7 @@ export class BusinessService {
   }
 
   async createFreePintRewardCode(account: BusinessAccount, input: FreePintRewardCodeInput) {
+    this.assertCommercialVenueFeatureOpen();
     this.requirePintPointsRewardsEnabled();
     this.requireCurrentLegalAcceptance(account);
     if (account.status !== "active") {
@@ -5905,7 +6966,7 @@ export class BusinessService {
       width: 240,
     });
 
-    this.recordUserActivity({
+    await this.recordUserActivity({
       account,
       eventType: "free_pint_reward_code_created",
       relatedEntityType: "free_pint_reward",
@@ -5927,18 +6988,19 @@ export class BusinessService {
     };
   }
 
-  recordPintPointDrink(account: BusinessAccount, venueId: string, input: PintPointDrinkRecordInput) {
+  async recordPintPointDrink(account: BusinessAccount, venueId: string, input: PintPointDrinkRecordInput) {
+    this.assertCommercialVenueFeatureOpen();
     this.requirePintPointsRewardsEnabled();
-    const assignment = this.requireAssignedVenue(account, venueId, "counter");
-    const venue = this.getDiscountVenueIdentity(venueId, assignment);
-    const profile = this.repository.getBarProfile(venueId);
+    const assignment = await this.requireAssignedVenue(account, venueId, "counter");
+    const venue = await this.getDiscountVenueIdentity(venueId, assignment);
+    const profile = await this.venueInventoryRepository.getBarProfile(venueId);
     if (!profile?.acceptsPintPathCodes) {
       throw new AppError("This venue is not currently enabled to accept Pint Path codes.", 403);
     }
     const now = nowIso();
     const idempotencyKey = `manual:${normalizePintPointTransactionReference(input.transactionReference)}`;
     const existingRecord = this.repository.getPintPointDrinkRecordByIdempotencyKey({ venueId, idempotencyKey });
-    const user = this.resolvePintPointUser({
+    const user = await this.resolvePintPointUser({
       code: input.code,
       checkoutToken: input.checkoutToken,
       account,
@@ -6006,7 +7068,7 @@ export class BusinessService {
     const pointsEarned = record.pointsAwarded;
 
     const wallet = this.getPintPointWalletForAccount(user, now);
-    this.recordUserActivity({
+    await this.recordUserActivity({
       account: user,
       eventType: "pint_point_drink_recorded",
       relatedEntityType: "venue",
@@ -6019,7 +7081,7 @@ export class BusinessService {
         pointsEarned,
       },
     });
-    this.auditSecurity({
+    await this.auditSecurity({
       actor: account,
       action: "pint_point_drink_recorded",
       targetType: "venue",
@@ -6049,14 +7111,15 @@ export class BusinessService {
     };
   }
 
-  voidPintPointDrink(
+  async voidPintPointDrink(
     account: BusinessAccount,
     venueId: string,
     recordId: string,
     input: PintPointDrinkVoidInput,
   ) {
+    this.assertCommercialVenueFeatureOpen();
     this.requirePintPointsRewardsEnabled();
-    const assignment = this.requireAssignedVenue(account, venueId, "counter");
+    const assignment = await this.requireAssignedVenue(account, venueId, "counter");
     const record = this.repository.getPintPointDrinkRecordById(recordId);
     if (!record || record.venueId !== venueId) {
       throw new AppError("Pint Points purchase record not found for this venue.", 404);
@@ -6090,11 +7153,11 @@ export class BusinessService {
       throw new AppError("Pint Points purchase record not found for this venue.", 404);
     }
 
-    const member = this.repository.getAccountById(result.record.userId);
+    const member = await this.accountSessionRepository.getAccountById(result.record.userId);
     const wallet = member ? this.getPintPointWalletForAccount(member, now) : null;
     if (!result.idempotentReplay) {
       if (member) {
-        this.recordUserActivity({
+        await this.recordUserActivity({
           account: member,
           eventType: "pint_point_drink_voided",
           relatedEntityType: "venue",
@@ -6105,7 +7168,7 @@ export class BusinessService {
           },
         });
       }
-      this.auditSecurity({
+      await this.auditSecurity({
         actor: account,
         action: "pint_point_drink_voided",
         targetType: "pint_point_drink_record",
@@ -6131,11 +7194,12 @@ export class BusinessService {
     };
   }
 
-  handleFreePintRewardCode(account: BusinessAccount, venueId: string, input: FreePintRewardDecisionInput) {
+  async handleFreePintRewardCode(account: BusinessAccount, venueId: string, input: FreePintRewardDecisionInput) {
+    this.assertCommercialVenueFeatureOpen();
     this.requirePintPointsRewardsEnabled();
-    const assignment = this.requireAssignedVenue(account, venueId, "counter");
-    const venue = this.getDiscountVenueIdentity(venueId, assignment);
-    const profile = this.repository.getBarProfile(venueId);
+    const assignment = await this.requireAssignedVenue(account, venueId, "counter");
+    const venue = await this.getDiscountVenueIdentity(venueId, assignment);
+    const profile = await this.venueInventoryRepository.getBarProfile(venueId);
     const tier = profile?.membershipTier ?? "basic";
     const capabilities = getBarTierCapabilities(tier, this.isAdmin(account));
 
@@ -6159,7 +7223,7 @@ export class BusinessService {
       throw new AppError(`Free Pint Reward code is already ${code.status}.`, 409);
     }
 
-    const user = this.repository.getAccountById(code.userId);
+    const user = await this.accountSessionRepository.getAccountById(code.userId);
     if (!user || user.status !== "active") {
       throw new AppError("This Pint Path account cannot redeem rewards right now.", 403);
     }
@@ -6210,7 +7274,7 @@ export class BusinessService {
       throw new AppError("Free Pint Reward could not be redeemed. Refresh and try again.", 409);
     }
 
-    this.recordUserActivity({
+    await this.recordUserActivity({
       account: user,
       eventType: "free_pint_reward_redeemed",
       relatedEntityType: "venue",
@@ -6221,7 +7285,7 @@ export class BusinessService {
         rewardCodeId: code.id,
       },
     });
-    this.auditSecurity({
+    await this.auditSecurity({
       actor: account,
       action: "free_pint_reward_redeemed",
       targetType: "venue",
@@ -6290,28 +7354,34 @@ export class BusinessService {
     };
   }
 
-  getAccountDashboard(account: BusinessAccount) {
+  async getAccountDashboard(account: BusinessAccount) {
     const dashboardNow = nowIso();
-    this.repository.expireVenueCounterStaffInvitations(dashboardNow);
-    const preferences = this.repository.getAccountPreferences(account.id);
-    const privacySettings =
-      this.repository.getAccountPrivacySettings(account.id) ??
-      this.repository.getDefaultAccountPrivacySettings(account.id);
-    const savedItems = this.repository.listSavedItems(account.id);
+    const commercialLaunchEnabled = this.config.COMMERCIAL_LAUNCH_ENABLED;
+    if (commercialLaunchEnabled) {
+      await this.expireVenueCounterStaffInvitations(dashboardNow);
+    }
+    const [preferences, storedPrivacySettings, savedItems, profile, recentSearches] = await Promise.all([
+      this.accountProfilePreferencesRepository.getAccountPreferences(account.id),
+      this.accountProfilePreferencesRepository.getAccountPrivacySettings(account.id),
+      this.accountProfilePreferencesRepository.listSavedItems(account.id),
+      this.accountProfilePreferencesRepository.getProfileById(account.id),
+      this.accountProfilePreferencesRepository.listRecentSearches(account.id, 10),
+    ]);
+    const privacySettings = storedPrivacySettings ??
+      await this.accountProfilePreferencesRepository.getDefaultAccountPrivacySettings(account.id, dashboardNow);
     const savedSuburbs = savedItems
       .filter((item) => item.itemType === "suburb")
       .map((item) => item.label);
     const suggestedSuburb = savedSuburbs[0] ?? preferences?.preferredSuburbs[0];
-    const suggestedMissions = this.listMissions({ suburb: suggestedSuburb, sort: "saved", limit: 6 }, account);
-    const latestAgeVerification = this.repository.getLatestAgeVerification(account.id);
+    const suggestedMissions = await this.listMissions({ suburb: suggestedSuburb, sort: "saved", limit: 6 }, account);
+    const latestAgeVerification = await this.accountSessionRepository.getLatestAgeVerification(account.id);
     const submissionHistoryLimit = 12;
-    const rawSubmissions = this.repository.listSubmissions({
+    const rawSubmissionRecords = await this.communitySubmissionRepository.listSubmissions({
       userId: account.id,
       limit: submissionHistoryLimit,
       offset: 0,
     });
-    const submissionHistory = rawSubmissions.map((submission) => {
-      const detail = this.repository.getSubmissionById(submission.id);
+    const submissionHistory = rawSubmissionRecords.map(({ submission, items }) => {
       return {
         id: submission.id,
         venueId: submission.venueId,
@@ -6332,7 +7402,7 @@ export class BusinessService {
           : submission.status === "needs_more_evidence"
             ? "needs more info"
             : submission.status,
-        items: (detail?.items ?? []).map((item) => ({
+        items: items.map((item) => ({
           id: item.id,
           beerName: item.beerName,
           servingSize: item.servingSize,
@@ -6344,21 +7414,22 @@ export class BusinessService {
       };
     });
     const recentSubmissions = submissionHistory;
-    const totalSubmissionCount = this.repository.countSubmissions({ userId: account.id });
-    const pendingCount = this.repository.countSubmissions({ userId: account.id, status: "pending" });
-    const needsMoreInfoCount = this.repository.countSubmissions({ userId: account.id, status: "needs_more_evidence" });
-    const verifiedCount = this.repository.countSubmissions({ userId: account.id, status: "approved" });
-    const rejectedCount = ["rejected", "disputed", "fraud_flagged"].reduce(
-      (total, status) => total + this.repository.countSubmissions({ userId: account.id, status: status as never }),
-      0,
-    );
+    const [totalSubmissionCount, pendingCount, needsMoreInfoCount, verifiedCount, ...rejectedCounts] = await Promise.all([
+      this.communitySubmissionRepository.countSubmissions({ userId: account.id }),
+      this.communitySubmissionRepository.countSubmissions({ userId: account.id, status: "pending" }),
+      this.communitySubmissionRepository.countSubmissions({ userId: account.id, status: "needs_more_evidence" }),
+      this.communitySubmissionRepository.countSubmissions({ userId: account.id, status: "approved" }),
+      ...(["rejected", "disputed", "fraud_flagged"] as const).map((status) =>
+        this.communitySubmissionRepository.countSubmissions({ userId: account.id, status })),
+    ]);
+    const rejectedCount = rejectedCounts.reduce((total, count) => total + count, 0);
     const timezone = this.config.REPORT_TIMEZONE || DEFAULT_REPORT_TIMEZONE;
     const monthKey = getZonedMonthKey(new Date(dashboardNow), timezone);
-    const currentMonthPoints = this.repository.getContributionPointsForMonth(account.id, monthKey);
+    const currentMonthPoints = await this.communitySubmissionRepository.getContributionPointsForMonth(account.id, monthKey);
     const dashboardAccount = currentMonthPoints === account.contributionPointsCurrentMonth
       ? account
       : { ...account, contributionPointsCurrentMonth: currentMonthPoints };
-    const leaderboardEnabled = this.config.PINT_POINTS_REWARDS_ENABLED;
+    const leaderboardEnabled = commercialLaunchEnabled && this.config.PINT_POINTS_REWARDS_ENABLED;
     const campaign = leaderboardEnabled
       ? this.getOrCreateLeaderboardPrizeCampaign(monthKey, dashboardNow)
       : null;
@@ -6376,15 +7447,25 @@ export class BusinessService {
         }))
       : [];
     const disabledLeaderboard = this.getDisabledLeaderboard("month", monthKey);
-    const discountStats = this.repository.getDiscountRedemptionStats(account.id);
-    const recentDiscountRedemptions = this.repository.listDiscountRedemptionsForUser(account.id, 10);
-    const rewardVouchers = this.repository.listAccountRewardVouchers(account.id, 10);
-    const pintPointsWallet = this.config.PINT_POINTS_REWARDS_ENABLED
+    const discountStats = commercialLaunchEnabled
+      ? this.repository.getDiscountRedemptionStats(account.id)
+      : { totalRedemptions: 0, estimatedSavingsCents: 0, uniqueVenues: 0 };
+    const recentDiscountRedemptions = commercialLaunchEnabled
+      ? this.repository.listDiscountRedemptionsForUser(account.id, 10)
+      : [];
+    const rewardVouchers = commercialLaunchEnabled
+      ? this.repository.listAccountRewardVouchers(account.id, 10)
+      : [];
+    const pintPointsWallet = commercialLaunchEnabled && this.config.PINT_POINTS_REWARDS_ENABLED
       ? this.getPintPointWalletForAccount(account, dashboardNow)
       : null;
-    const counterStaffAssignmentRows = this.repository
-      .listVenueManagerAssignments({ userId: account.id, activeOnly: false, limit: -1 })
-      .filter((assignment) => assignment.accessLevel === "counter_staff");
+    const counterStaffAssignmentRows = commercialLaunchEnabled
+      ? await this.collectVenueAssignments({
+          userId: account.id,
+          accessLevel: "counter_staff",
+          currentOnly: true,
+        })
+      : [];
     const counterStaffInvitations = counterStaffAssignmentRows
       .filter((assignment) => assignment.accessLevel === "counter_staff" && assignment.status === "pending")
       .map((assignment) => ({
@@ -6395,11 +7476,15 @@ export class BusinessService {
         invitedAt: assignment.updatedAt,
         expiresAt: assignment.expiresAt,
       }));
-    const counterStaffAssignments = this.getCounterStaffAssignmentsForAccount(account.id);
+    const counterStaffAssignments = await this.getCounterStaffAssignmentsForAccount(account.id);
     const currentAdmin = this.isAdmin(dashboardAccount);
     const hasFullAccess = isFullAccess(dashboardAccount, currentAdmin);
-    const missionHistory = this.repository.listMissionProgressForUser(account.id, 12).map((progress) => {
-      const mission = this.repository.getMissionById(progress.missionId);
+    const missionHistoryPage = await this.missionLifecycleRepository.listMissionProgressForUser({
+      userId: account.id,
+      limit: 12,
+    });
+    const missionHistory = await Promise.all(missionHistoryPage.progress.map(async (progress) => {
+      const mission = await this.missionLifecycleRepository.getMissionById(progress.missionId);
       return {
         id: progress.id,
         missionId: progress.missionId,
@@ -6416,19 +7501,21 @@ export class BusinessService {
         points: mission?.points ?? null,
         multiplier: mission?.multiplier ?? null,
       };
-    });
+    }));
 
     return {
       account: sanitizeAccount(dashboardAccount),
-      billing: {
-        mode: this.config.DEMO_BILLING_MODE
-          ? "demo"
-          : dashboardAccount.stripeCustomerId
-            ? "stripe"
-            : "unlinked",
-        managementAvailable: this.config.DEMO_BILLING_MODE || Boolean(dashboardAccount.stripeCustomerId),
-      },
-      profile: this.repository.getProfileById(account.id),
+      billing: commercialLaunchEnabled
+        ? {
+            mode: this.config.DEMO_BILLING_MODE
+              ? "demo"
+              : dashboardAccount.stripeCustomerId
+                ? "stripe"
+                : "unlinked",
+            managementAvailable: this.config.DEMO_BILLING_MODE || Boolean(dashboardAccount.stripeCustomerId),
+          }
+        : null,
+      profile,
       access: this.getAccessState(account, null),
       submissions: submissionHistory,
       submissionHistory,
@@ -6450,8 +7537,14 @@ export class BusinessService {
         pointsThisMonth: currentMonthPoints,
         trustScore: account.trustScore,
       },
-      verifications: this.repository.listVerificationsForUser(account.id, 100),
-      activity: this.repository.listUserActivityEvents(account.id, 25),
+      verifications: await this.communitySubmissionRepository.listVerificationsForUser({
+        verifierUserId: account.id,
+        limit: 100,
+      }),
+      activity: (await this.activityAuditRepository.listUserActivityEvents({
+        userId: account.id,
+        limit: 25,
+      })).items,
       preferences: preferences ?? {
         userId: account.id,
         preferredSuburbs: [],
@@ -6463,7 +7556,7 @@ export class BusinessService {
       },
       privacySettings,
       savedItems,
-      recentSearches: this.repository.listRecentSearches(account.id, 10),
+      recentSearches,
       suggestedMissions,
       missionHistory,
       premiumMemberToolkit: buildConsumerPremiumToolkit({
@@ -6480,7 +7573,9 @@ export class BusinessService {
         pointsThisMonth: roundPoints(currentMonthPoints),
         unlockThreshold: this.config.CONTRIBUTOR_UNLOCK_POINTS,
         pointsNeeded: roundPoints(Math.max(0, this.config.CONTRIBUTOR_UNLOCK_POINTS - currentMonthPoints)),
-        unlockCopy: "Earn 15 approved points in a month to unlock premium until the end of that month.",
+        unlockCopy: commercialLaunchEnabled
+          ? "Earn 15 approved points in a month to unlock premium until the end of that month."
+          : "Earn 15 approved points in a month to unlock full-map access until the end of that month.",
       },
       leaderboard: leaderboardEnabled && campaign
         ? {
@@ -6499,13 +7594,13 @@ export class BusinessService {
             monthRank: null,
           },
       discounts: {
-        eligible: hasFullAccess && this.config.COMMERCIAL_LAUNCH_ENABLED,
+        eligible: hasFullAccess && commercialLaunchEnabled,
         totalRedemptions: discountStats.totalRedemptions,
         estimatedSavingsCents: discountStats.estimatedSavingsCents,
         estimatedSavingsDollars: Number((discountStats.estimatedSavingsCents / 100).toFixed(2)),
         uniqueVenues: discountStats.uniqueVenues,
         recentRedemptions: recentDiscountRedemptions,
-        copy: this.config.COMMERCIAL_LAUNCH_ENABLED
+        copy: commercialLaunchEnabled
           ? "Discount redemptions are logged only when you show your rotating code or QR at a venue."
           : "Venue discount and redemption tools are not available in this release.",
       },
@@ -6513,20 +7608,26 @@ export class BusinessService {
       counterStaffInvitations,
       counterStaffAssignments,
       rewards: {
-        status: rewardVouchers.length
+        status: !commercialLaunchEnabled
+          ? "paused"
+          : rewardVouchers.length
           ? "active"
           : leaderboardEnabled
             ? "leaderboard_monthly"
             : "paused",
-        eligiblePlaceholder: canAccessAgeGatedRewards({ account, latestAgeVerification }),
-        ageGatedEligible: canAccessAgeGatedRewards({ account, latestAgeVerification }),
+        eligiblePlaceholder: commercialLaunchEnabled
+          && canAccessAgeGatedRewards({ account, latestAgeVerification }),
+        ageGatedEligible: commercialLaunchEnabled
+          && canAccessAgeGatedRewards({ account, latestAgeVerification }),
         ageThreshold: 18,
-        fulfillmentCopy: "Rewards are fulfilled manually. Contact Pint Path support with the claim reference before the expiry date; your status updates after an admin verifies fulfillment.",
+        fulfillmentCopy: commercialLaunchEnabled
+          ? "Rewards are fulfilled manually. Contact Pint Path support with the claim reference before the expiry date; your status updates after an admin verifies fulfillment."
+          : "Rewards are not included in the current Free release.",
         vouchers: rewardVouchers.map((voucher) => this.sanitizeRewardVoucher(voucher)),
       },
       betaTesting: {
-        enabled: hasFullAccess,
-        label: hasFullAccess ? "Beta tools unlocked" : "Premium feature",
+        enabled: commercialLaunchEnabled && hasFullAccess,
+        label: commercialLaunchEnabled && hasFullAccess ? "Beta tools unlocked" : "Not included in the Free release",
         leaderboard: leaderboardEnabled && campaign
           ? {
               disabled: false,
@@ -6538,34 +7639,55 @@ export class BusinessService {
             }
           : disabledLeaderboard,
         pubGolf: {
-          enabled: hasFullAccess && this.config.ALCOHOL_GAMIFICATION_ENABLED,
-          defaultDrinks: PUB_GOLF_DEFAULT_DRINKS,
-          copy: this.config.ALCOHOL_GAMIFICATION_ENABLED
+          enabled: commercialLaunchEnabled && hasFullAccess && this.config.ALCOHOL_GAMIFICATION_ENABLED,
+          defaultDrinks: commercialLaunchEnabled ? PUB_GOLF_DEFAULT_DRINKS : [],
+          copy: !commercialLaunchEnabled
+            ? "Pub Golf is not included in the current Free release."
+            : this.config.ALCOHOL_GAMIFICATION_ENABLED
             ? "Build a nine-stop Pub Golf route from real venue drink data. Beta routing uses Pint Path venue coordinates with walking/transit hints."
             : "Pub Golf is paused pending App Store and Victorian responsible-promotion approval.",
         },
         canIDrive: {
-          enabled: hasFullAccess,
-          sourceDrinkLimit: 25,
-          copy: "Review standard drinks only when exact ABV and serving volume are available. Pint Path does not estimate BAC or provide driving clearance.",
+          enabled: commercialLaunchEnabled && hasFullAccess,
+          sourceDrinkLimit: commercialLaunchEnabled ? 25 : 0,
+          copy: commercialLaunchEnabled
+            ? "Review standard drinks only when exact ABV and serving volume are available. Pint Path does not estimate BAC or provide driving clearance."
+            : "This beta tool is not included in the current Free release.",
         },
       },
       ageVerification: {
         latest: latestAgeVerification,
         status: account.ageVerificationStatus,
         isOver18Verified: account.isOver18Verified,
-        copy: "18+ confirmation is required for protected contribution and reward features. Pint Path does not store raw ID documents.",
+        copy: commercialLaunchEnabled
+          ? "18+ confirmation is required for protected contribution and reward features. Pint Path does not store raw ID documents."
+          : "18+ confirmation is required for protected contribution features. Pint Path does not store raw ID documents.",
       },
     };
   }
 
-  exportAccountData(account: BusinessAccount) {
-    const preferences = this.repository.getAccountPreferences(account.id);
-    const privacySettings =
-      this.repository.getAccountPrivacySettings(account.id) ??
-      this.repository.getDefaultAccountPrivacySettings(account.id);
-    const submissions = this.repository.listSubmissions({ userId: account.id, limit: -1 }).map((submission) => {
-      const detail = this.repository.getSubmissionById(submission.id);
+  async exportAccountData(account: BusinessAccount) {
+    const exportStartedAt = nowIso();
+    const [preferences, storedPrivacySettings, profile, savedItems, recentSearches] = await Promise.all([
+      this.accountProfilePreferencesRepository.getAccountPreferences(account.id),
+      this.accountProfilePreferencesRepository.getAccountPrivacySettings(account.id),
+      this.accountProfilePreferencesRepository.getProfileById(account.id),
+      this.accountProfilePreferencesRepository.listSavedItems(account.id),
+      this.accountProfilePreferencesRepository.listRecentSearches(account.id, RECENT_SEARCH_UNBOUNDED_LIMIT),
+    ]);
+    const privacySettings = storedPrivacySettings ??
+      await this.accountProfilePreferencesRepository.getDefaultAccountPrivacySettings(account.id, exportStartedAt);
+    const submissionRecords: CommunitySubmissionRecord[] = [];
+    for (let offset = 0; ; offset += 100) {
+      const page = await this.communitySubmissionRepository.listSubmissions({
+        userId: account.id,
+        limit: 100,
+        offset,
+      });
+      submissionRecords.push(...page);
+      if (page.length < 100) break;
+    }
+    const submissions = submissionRecords.map(({ submission, items }) => {
       return {
         id: submission.id,
         venueId: submission.venueId,
@@ -6589,7 +7711,7 @@ export class BusinessService {
         fraudFlagged: submission.fraudFlagged,
         createdAt: submission.createdAt,
         updatedAt: submission.updatedAt,
-        items: (detail?.items ?? []).map((item) => ({
+        items: items.map((item) => ({
           id: item.id,
           beerName: item.beerName,
           servingSize: item.servingSize,
@@ -6603,49 +7725,86 @@ export class BusinessService {
       };
     });
 
-    this.recordUserActivity({
+    await this.recordUserActivity({
       account,
       eventType: "account_data_exported",
       relatedEntityType: "account",
       relatedEntityId: account.id,
       metadata: { format: "json", submissionCount: submissions.length },
     });
-    this.auditSecurity({
+    await this.auditSecurity({
       actor: account,
       action: "account_data_exported",
       targetType: "account",
       targetId: account.id,
       metadata: { submissionCount: submissions.length },
     });
+    const relatedData = await this.accountPrivacyRepository.exportAccountRelatedData({
+      userId: account.id,
+    });
 
     return {
-      exportedAt: nowIso(),
+      exportedAt: exportStartedAt,
       exportFormat: "pint_path_account_export_v1",
       note: "Private evidence file bytes, raw photo data, raw tokens, and passwords are excluded. Exact stored upload coordinates and capture times are included until their post-review retention period ends.",
       account: sanitizeAccount(account),
-      profile: this.repository.getProfileById(account.id),
+      profile,
       privacySettings,
       preferences: preferences ?? null,
-      savedItems: this.repository.listSavedItems(account.id),
-      recentSearches: this.repository.listRecentSearches(account.id, -1),
+      savedItems,
+      recentSearches,
       submissions,
-      verifications: this.repository.listVerificationsForUser(account.id, -1),
-      activity: this.repository.listUserActivityEvents(account.id, -1),
+      verifications: await this.listAllCommunityVerifications(account.id),
+      activity: await this.listAllUserActivityEvents(account.id),
       ageVerification: {
-        latest: this.repository.getLatestAgeVerification(account.id),
+        latest: await this.accountSessionRepository.getLatestAgeVerification(account.id),
         status: account.ageVerificationStatus,
         isOver18Verified: account.isOver18Verified,
       },
-      relatedData: this.repository.exportAccountRelatedData({
-        userId: account.id,
-        email: account.email,
-        stripeCustomerId: account.stripeCustomerId,
-      }),
+      relatedData,
       retentionPolicy: ACCOUNT_DATA_RETENTION_POLICY,
     };
   }
 
-  private getSubmissionLocationEligibility(input: CreateSubmissionInput): {
+  private async listAllCommunityVerifications(userId: string) {
+    const verifications: UserVerification[] = [];
+    for (let offset = 0; ; offset += 100) {
+      const page = await this.communitySubmissionRepository.listVerificationsForUser({
+        verifierUserId: userId,
+        limit: 100,
+        offset,
+      });
+      verifications.push(...page);
+      if (page.length < 100) return verifications;
+    }
+  }
+
+  private async listAllUserActivityEvents(userId: string): Promise<UserActivityEventRecord[]> {
+    const activity: UserActivityEventRecord[] = [];
+    const seenIds = new Set<string>();
+    let cursor: ActivityAuditCursor | null = null;
+    for (;;) {
+      const page = await this.activityAuditRepository.listUserActivityEvents({
+        userId,
+        limit: 200,
+        cursor,
+      });
+      for (const event of page.items) {
+        if (seenIds.has(event.id)) {
+          throw new AppError("Account activity export could not be completed.", 500, undefined, false);
+        }
+        seenIds.add(event.id);
+        activity.push(event);
+      }
+      if (!page.nextCursor) return activity;
+      if (cursor?.createdAt === page.nextCursor.createdAt && cursor.id === page.nextCursor.id) {
+        throw new AppError("Account activity export could not be completed.", 500, undefined, false);
+      }
+      cursor = page.nextCursor;
+    }
+  }
+
+  private async getSubmissionLocationEligibility(input: CreateSubmissionInput): Promise<{
     uploadLatitude: number | null;
     uploadLongitude: number | null;
     uploadAccuracyMeters: number | null;
@@ -6653,7 +7812,7 @@ export class BusinessService {
     distanceToVenueMeters: number | null;
     pointsEligibleByLocation: boolean;
     pointsEligibilityReason: string;
-  } {
+  }> {
     if (!input.uploadLocation) {
       return {
         uploadLatitude: null,
@@ -6672,7 +7831,7 @@ export class BusinessService {
           latitude: pendingVenue.latitude,
           longitude: pendingVenue.longitude,
         }
-      : this.repository.getVenueLocationCache(input.venueId);
+      : await this.venueIdentityRepository.getVenueLocationCache(input.venueId);
     const uploadLatitude = input.uploadLocation.latitude;
     const uploadLongitude = input.uploadLocation.longitude;
     const uploadAccuracyMeters = input.uploadLocation.accuracyMeters;
@@ -6771,12 +7930,12 @@ export class BusinessService {
     };
   }
 
-  private assertPendingVenueIsNotKnownDuplicate(pendingVenue: PendingVenueDetails | null): void {
+  private async assertPendingVenueIsNotKnownDuplicate(pendingVenue: PendingVenueDetails | null): Promise<void> {
     if (!pendingVenue) {
       return;
     }
 
-    const duplicate = this.repository.findLikelyVenueDuplicate({
+    const duplicate = await this.venueDataReadRepository.findLikelyVenueDuplicate({
       name: pendingVenue.name,
       suburb: pendingVenue.suburb,
     });
@@ -6929,10 +8088,6 @@ export class BusinessService {
     };
   }
 
-  private shouldPublishSubmittedVenueImmediately(pendingVenue: PendingVenueDetails | null): boolean {
-    return Boolean(pendingVenue?.googlePlaceId);
-  }
-
   private validatedSubmissionImageDataUrls(input: CreateSubmissionInput): string[] {
     const candidates = [input.sourcePhotoDataUrl, ...(input.sourcePhotoDataUrls ?? [])].filter(
       (value): value is string => Boolean(value),
@@ -6995,7 +8150,7 @@ export class BusinessService {
 
     try {
       const startedAt = nowIso();
-      this.repository.setSystemState("job:menu_ocr", { state: "running", startedAt }, startedAt);
+      await this.systemStateRepository.set("job:menu_ocr", { state: "running", startedAt }, startedAt);
       const result: MenuPhotoOcrResult = await this.menuPhotoOcr.extract({
         venueNameHint: input.newVenue?.name ?? input.venueName,
         imageDataUrls,
@@ -7009,7 +8164,7 @@ export class BusinessService {
         item,
       ])).values()).slice(0, 60);
       const completedAt = nowIso();
-      this.repository.setSystemState("job:menu_ocr", {
+      await this.systemStateRepository.set("job:menu_ocr", {
         state: "succeeded",
         startedAt,
         completedAt,
@@ -7034,7 +8189,7 @@ export class BusinessService {
       };
     } catch (error) {
       const completedAt = nowIso();
-      this.repository.setSystemState("job:menu_ocr", {
+      await this.systemStateRepository.set("job:menu_ocr", {
         state: "failed",
         completedAt,
         sourceCount,
@@ -7091,7 +8246,10 @@ export class BusinessService {
     this.assertAccountCanSubmit(account);
     this.assertPublicHappyHourContributionAllowed(account, input);
     if (input.clientSubmissionId) {
-      const existing = this.repository.getSubmissionByClientSubmissionId(account.id, input.clientSubmissionId);
+      const existing = await this.communitySubmissionRepository.getSubmissionByClientSubmissionId(
+        account.id,
+        input.clientSubmissionId,
+      );
       if (existing) {
         return {
           submission: existing.submission,
@@ -7124,7 +8282,7 @@ export class BusinessService {
         verifiedInput,
         (ref) => createdEvidenceRefs.push(ref),
       );
-      const result = this.createSubmission(account, verifiedInput, { photoOcr, sourcePhotoRefs });
+      const result = await this.createSubmission(account, verifiedInput, { photoOcr, sourcePhotoRefs });
       if (result.idempotentReplay) {
         await this.compensateUnlinkedSourceEvidence(createdEvidenceRefs);
       }
@@ -7135,11 +8293,12 @@ export class BusinessService {
     }
   }
 
-  createSubmission(
+  async createSubmission(
     account: BusinessAccount,
     input: CreateSubmissionInput,
     options: {
       allowVenueManager?: boolean;
+      managerAssignmentId?: string;
       rewardEligible?: boolean;
       photoOcr?: PreparedPhotoOcr | null;
       sourcePhotoRefs?: string[];
@@ -7147,10 +8306,20 @@ export class BusinessService {
   ) {
     this.assertAccountCanSubmit(account, { allowVenueManager: options.allowVenueManager === true });
     this.assertPublicHappyHourContributionAllowed(account, input, options);
+    const containsDeferredHappyHourData = input.submissionType === "happy_hour_update"
+      || input.items.some((item) => item.isHappyHourPrice || Boolean(item.happyHourDetails?.trim()))
+      || Boolean(options.photoOcr?.items.some((item) => item.isHappyHourPrice || Boolean(item.happyHourDetails?.trim())));
+    const isInternalVenueManagerHappyHour = options.allowVenueManager === true && containsDeferredHappyHourData;
+    if (containsDeferredHappyHourData && !isInternalVenueManagerHappyHour) {
+      throw new AppError("Happy-hour and special publication is not available during the current Free launch.", 403);
+    }
     const rewardEligible = options.rewardEligible ?? true;
 
-    if (input.clientSubmissionId) {
-      const existingSubmission = this.repository.getSubmissionByClientSubmissionId(account.id, input.clientSubmissionId);
+    if (input.clientSubmissionId && !isInternalVenueManagerHappyHour) {
+      const existingSubmission = await this.communitySubmissionRepository.getSubmissionByClientSubmissionId(
+        account.id,
+        input.clientSubmissionId,
+      );
       if (existingSubmission) {
         return {
           submission: existingSubmission.submission,
@@ -7162,6 +8331,12 @@ export class BusinessService {
     }
 
     const now = nowIso();
+    const submissionId = input.clientSubmissionId
+      ? `community-${crypto.createHash("sha256")
+          .update(`${account.id}\0${input.clientSubmissionId}`)
+          .digest("hex")}`
+      : crypto.randomUUID();
+    const clientSubmissionId = input.clientSubmissionId ?? submissionId;
     const observedAtMs = Date.parse(input.observedAt);
     const nowMs = Date.parse(now);
     if (observedAtMs > nowMs + (15 * 60_000)) {
@@ -7179,9 +8354,10 @@ export class BusinessService {
         throw new AppError("Upload location must have been captured within the last 12 hours and not in the future.", 400);
       }
     }
+    let internalMissionFence: VenueManagerInternalMissionFence | null = null;
     if (input.missionId) {
-      this.runMissionMaintenance();
-      const mission = this.repository.getMissionById(input.missionId);
+      await this.runMissionMaintenance();
+      const mission = await this.missionLifecycleRepository.getMissionById(input.missionId);
       if (!mission || !mission.active) {
         throw new AppError("This mission is no longer active. Refresh Missions and choose a current task.", 409);
       }
@@ -7191,19 +8367,34 @@ export class BusinessService {
       if (mission.venueId !== input.venueId) {
         throw new AppError("The selected venue does not match this mission.", 400);
       }
-      const progress = this.repository.getMissionProgress({ missionId: mission.id, userId: account.id });
+      const progress = await this.missionLifecycleRepository.getMissionProgress({
+        missionId: mission.id,
+        userId: account.id,
+      });
       if (progress?.status === "completed") {
         throw new AppError("You have already completed this mission.", 409);
       }
-      if (progress?.status !== "accepted") {
+      const isExactInternalMissionReplay = isInternalVenueManagerHappyHour
+        && progress?.status === "submitted"
+        && progress.submissionId === submissionId;
+      if (progress?.status !== "accepted" && !isExactInternalMissionReplay) {
         throw new AppError("Accept this mission before submitting it, or accept it again if your 24-hour reservation expired.", 409);
+      }
+      if (isInternalVenueManagerHappyHour && progress) {
+        internalMissionFence = {
+          id: mission.id,
+          progressId: progress.id,
+          expectedMissionUpdatedAt: mission.updatedAt,
+          expectedProgressUpdatedAt: progress.updatedAt,
+          acceptedAfter: missionAcceptanceCutoff(now),
+        };
       }
     }
     const pendingVenue = this.normalizePendingVenue(input);
-    this.assertPendingVenueIsNotKnownDuplicate(pendingVenue);
-    const sourcePhotoRefs = options.sourcePhotoRefs ?? this.resolveInlineSubmissionSourcePhotos(account, input);
+    await this.assertPendingVenueIsNotKnownDuplicate(pendingVenue);
+    const sourcePhotoRefs = options.sourcePhotoRefs ?? await this.resolveInlineSubmissionSourcePhotos(account, input);
     const sourcePhotoUrl = sourcePhotoRefs[0] ?? null;
-    const rawLocationEligibility = this.getSubmissionLocationEligibility(input);
+    const rawLocationEligibility = await this.getSubmissionLocationEligibility(input);
     const locationEligibility = rewardEligible
       ? rawLocationEligibility
       : {
@@ -7222,9 +8413,114 @@ export class BusinessService {
       })),
       ...(options.photoOcr?.items ?? []),
     ];
-    const standardizedCandidates = preparedItems.map((item) => {
+    // Free launch retains venue-manager happy-hour collection only as an
+    // internal, non-public moderation row. Its dedicated PostgreSQL transaction
+    // rejects publication and reward effects; Community approval also rejects
+    // this submission type, so no public price or contributor reward can result.
+    if (isInternalVenueManagerHappyHour) {
+      if (!options.managerAssignmentId) {
+        throw new AppError("Venue manager access is required for this internal submission.", 403);
+      }
+      const created = await this.venueManagerInternalSubmissionRepository.createInternalHappyHourSubmission({
+        id: submissionId,
+        clientSubmissionId,
+        managerAccountId: account.id,
+        managerAssignmentId: options.managerAssignmentId,
+        venueId: input.venueId,
+        venueName: pendingVenue?.name ?? input.venueName,
+        suburb: pendingVenue?.suburb ?? input.suburb,
+        submissionType: "happy_hour_update",
+        observedAt: new Date(input.observedAt).toISOString(),
+        evidenceIds: sourcePhotoRefs
+          .map(getPrivateEvidenceId)
+          .filter((id): id is string => Boolean(id)),
+        ocrStatus: options.photoOcr?.status ?? "not_requested",
+        ocrSummary: options.photoOcr?.summary ?? null,
+        notes: input.notes,
+        location: input.uploadLocation
+          ? {
+              latitude: rawLocationEligibility.uploadLatitude!,
+              longitude: rawLocationEligibility.uploadLongitude!,
+              accuracyMeters: rawLocationEligibility.uploadAccuracyMeters,
+              capturedAt: new Date(input.uploadLocation.capturedAt).toISOString(),
+              distanceToVenueMeters: rawLocationEligibility.distanceToVenueMeters,
+            }
+          : null,
+        mission: internalMissionFence,
+        safety: {
+          internalOnly: true,
+          publicationEligible: false,
+          rewardEligible: false,
+          pointsAwarded: 0,
+        },
+        now,
+        pendingVenue,
+        items: preparedItems.map((item, index) => {
+          const beerName = canonicalizeTrackedBeerName(item.beerName);
+          return {
+            id: `${submissionId}:item:${index}`,
+            beerName,
+            normalizedBeerId: findTrackedBeerByName(beerName)?.key ?? null,
+            servingSize: item.servingSize,
+            price: item.price,
+            isHappyHourPrice: item.isHappyHourPrice,
+            happyHourDetails: item.happyHourDetails,
+            isOnTap: item.isOnTap,
+            confidence: item.confidence,
+            captureSource: item.captureSource,
+            sourceText: item.sourceText,
+            requiresCatalogApproval: false,
+          };
+        }),
+      });
+      const submission = created.record.submission;
+      if (created.outcome === "created") {
+        await this.trackEvent(account, {
+          anonymousSessionId: null,
+          eventType: "submission_completed",
+          venueId: submission.venueId,
+          beerId: preparedItems[0]?.beerName ? normalizeTrackedBeerId(preparedItems[0].beerName) : null,
+          suburb: submission.suburb,
+          metadata: {
+            submissionId: submission.id,
+            submissionType: submission.submissionType,
+            itemCount: preparedItems.length,
+            hasSourcePhoto: Boolean(sourcePhotoUrl),
+            rewardEligible: false,
+            internalOnly: true,
+          },
+        });
+        await this.recordUserActivity({
+          account,
+          eventType: "data_upload_created",
+          relatedEntityType: "submission",
+          relatedEntityId: submission.id,
+          metadata: {
+            submissionType: submission.submissionType,
+            venueId: submission.venueId,
+            itemCount: preparedItems.length,
+            rewardEligible: false,
+            internalOnly: true,
+          },
+        });
+      }
+      return {
+        submission,
+        statusCopy: "Venue happy-hour update saved for internal review. It is not eligible for public Free-launch publication.",
+        ocrStatus: submission.ocrStatus,
+        linkedVenueRequestCount: 0,
+        ...(created.outcome === "replayed" ? { idempotentReplay: true } : {}),
+      };
+    }
+    const standardizedCandidates: Array<PreparedSubmissionItem & {
+      beerName: string;
+      normalizedBeerId: string | null;
+      requiresCatalogApproval: boolean;
+      catalog: CommunityCatalogDecision;
+    }> = [];
+    for (const item of preparedItems) {
       const isPhotoOcr = item.captureSource === "photo_ocr";
-      const beer = this.standardizeBeerReference({
+      const beer = await this.standardizeBeerReference({
         name: item.beerName,
         source: isPhotoOcr
           ? "user_photo_ocr"
@@ -7232,18 +8528,56 @@ export class BusinessService {
             ? "happy_hour_submission"
             : "user_submission",
         now,
+        createIfMissing: false,
         isHappyHour: item.isHappyHourPrice,
         matchMode: isPhotoOcr ? "ocr" : "exact",
         brewery: item.catalogBrewery,
         abv: item.catalogAbv,
       });
-      return {
+      if (!beer.key) {
+        throw new AppError("Enter a recognised beer name for the current Free launch.", 400);
+      }
+      const persistedCatalog = this.beerCatalogRepository
+        ? await this.beerCatalogRepository.getAdminItem(beer.key)
+        : null;
+      const catalogSource = isPhotoOcr ? "user_photo_ocr" : "user_submission";
+      const alias = canonicalizeTrackedBeerName(item.beerName);
+      const aliasKey = normalizeBeerSearchKey(alias);
+      if (!aliasKey) {
+        throw new AppError("Enter a recognised beer name for the current Free launch.", 400);
+      }
+      standardizedCandidates.push({
         ...item,
         beerName: beer.name,
         normalizedBeerId: beer.key,
         requiresCatalogApproval: beer.status !== "active",
-      };
-    });
+        catalog: beer.status === "active" && persistedCatalog?.status === "active"
+          ? { kind: "active_existing" as const, key: beer.key }
+          : beer.status === "active"
+            ? {
+                kind: "active_create" as const,
+                key: beer.key,
+                canonicalName: beer.name,
+                aliasKey,
+                alias,
+                source: catalogSource,
+                brewery: item.catalogBrewery ?? beer.brewery,
+                style: beer.style,
+                abv: item.catalogAbv ?? beer.abv,
+              }
+          : {
+              kind: "pending_create" as const,
+              key: beer.key,
+              canonicalName: beer.name,
+              aliasKey,
+              alias,
+              source: catalogSource,
+              brewery: item.catalogBrewery ?? beer.brewery,
+              style: beer.style,
+              abv: item.catalogAbv ?? beer.abv,
+            },
+      });
+    }
     const standardizedItems = Array.from(standardizedCandidates.reduce((byKey, item) => {
       const key = [
         item.normalizedBeerId ?? normalizeBeerSearchKey(item.beerName),
@@ -7271,20 +8605,20 @@ export class BusinessService {
         }
       : null;
     let submission: BusinessSubmission;
+    let idempotentReplay = false;
     try {
-      submission = this.repository.createSubmission({
-        id: crypto.randomUUID(),
-        clientSubmissionId: input.clientSubmissionId,
+      const created = await this.communitySubmissionRepository.createSubmission({
+        id: submissionId,
+        clientSubmissionId,
         missionId: input.missionId,
         ...(input.missionId ? { missionAcceptedAfter: missionAcceptanceCutoff(now) } : {}),
         userId: account.id,
         venueId: input.venueId,
         venueName: pendingVenue?.name ?? input.venueName,
         suburb: pendingVenue?.suburb ?? input.suburb,
-        submissionType: input.submissionType,
+        submissionType: input.submissionType as Exclude<typeof input.submissionType, "happy_hour_update">,
         observedAt: input.observedAt,
-        sourcePhotoUrl,
-        sourceEvidenceIds: sourcePhotoRefs
+        evidenceIds: sourcePhotoRefs
           .map(getPrivateEvidenceId)
           .filter((id): id is string => Boolean(id)),
         ocrStatus: options.photoOcr?.status ?? "not_requested",
@@ -7293,10 +8627,9 @@ export class BusinessService {
         now,
         ...locationEligibility,
         pendingVenue,
-        items: standardizedItems.map((item) => ({
-          id: crypto.randomUUID(),
-          beerName: item.beerName,
-          normalizedBeerId: item.normalizedBeerId,
+        items: standardizedItems.map((item, index) => ({
+          id: `${submissionId}:item:${index}`,
+          catalog: item.catalog,
           servingSize: item.servingSize,
           price: item.price,
           isHappyHourPrice: item.isHappyHourPrice,
@@ -7305,40 +8638,21 @@ export class BusinessService {
           confidence: item.confidence,
           captureSource: item.captureSource,
           sourceText: item.sourceText,
-          requiresCatalogApproval: item.requiresCatalogApproval,
         })),
       });
+      submission = created.record.submission;
+      idempotentReplay = created.replayed;
     } catch (error) {
       if (error instanceof MissionReservationError) {
         throw new AppError(error.message, 409);
       }
       throw error;
     }
-    const publishedVenueImmediately = this.shouldPublishSubmittedVenueImmediately(pendingVenue);
-
-    let linkedVenueRequestCount = 0;
-    if (publishedVenueImmediately) {
-      this.repository.runInTransaction(() => {
-        this.repository.publishPendingVenue({
-          venueId: submission.venueId,
-          venueName: submission.venueName,
-          suburb: submission.suburb,
-          pendingVenue,
-          now,
-        });
-        if (pendingVenue?.googlePlaceId) {
-          linkedVenueRequestCount = this.repository.resolveGoogleVenueRequestsForSubmission({
-            googlePlaceId: pendingVenue.googlePlaceId,
-            venueId: submission.venueId,
-            submissionId: submission.id,
-            now,
-          }).length;
-        }
-      });
-    }
+    const publishedVenueImmediately = false;
+    const linkedVenueRequestCount = 0;
 
     const firstItem = standardizedItems[0] ?? null;
-    this.trackEvent(account, {
+    await this.trackEvent(account, {
       anonymousSessionId: null,
       eventType: "submission_completed",
       venueId: submission.venueId,
@@ -7358,7 +8672,7 @@ export class BusinessService {
         linkedVenueRequestCount,
       },
     });
-    this.recordUserActivity({
+    await this.recordUserActivity({
       account,
       eventType: "data_upload_created",
       relatedEntityType: "submission",
@@ -7408,6 +8722,7 @@ export class BusinessService {
         : "Submitted for review. Points need a saved upload location within 200m of the venue.",
       ocrStatus: submission.ocrStatus,
       linkedVenueRequestCount,
+      ...(idempotentReplay ? { idempotentReplay: true } : {}),
     };
   }
 
@@ -7449,19 +8764,82 @@ export class BusinessService {
     return refs;
   }
 
+  /**
+   * Reuses only byte-for-byte identical evidence on an internal-manager retry.
+   * Provider reads happen before the repository transaction; the repository
+   * still locks and revalidates each durable evidence row before commit.
+   */
+  private async resolveExistingInternalManagerEvidenceRefs(
+    account: Pick<BusinessAccount, "id">,
+    input: CreateSubmissionInput,
+  ): Promise<string[] | null> {
+    if (!input.clientSubmissionId) return null;
+    const existing = await this.communitySubmissionRepository.getSubmissionByClientSubmissionId(
+      account.id,
+      input.clientSubmissionId,
+    );
+    if (!existing) return null;
+    if (
+      existing.submission.userId !== account.id
+      || existing.submission.submissionType !== "happy_hour_update"
+      || existing.submission.status !== "pending"
+    ) {
+      throw new AppError("Internal venue submission state changed. Refresh and try again.", 409);
+    }
+    if (input.sourcePhotoUrl) {
+      parseSafeImageSourceUrl(input.sourcePhotoUrl, "Source photo URL");
+      throw new AppError("For reviewer safety, upload the source image directly instead of linking to an external site.", 400);
+    }
+
+    const inputDataUrls = Array.from(new Set([
+      input.sourcePhotoDataUrl,
+      ...(input.sourcePhotoDataUrls ?? []),
+      input.sourceDocumentDataUrl,
+    ].filter((value): value is string => Boolean(value))));
+    const evidence = [...existing.evidence].sort((left, right) => left.sortOrder - right.sortOrder);
+    if (inputDataUrls.length !== evidence.length) {
+      throw new AppError("Internal venue submission state changed. Refresh and try again.", 409);
+    }
+
+    for (const [index, dataUrl] of inputDataUrls.entries()) {
+      const linked = evidence[index]?.object;
+      if (!linked || linked.ownerUserId !== account.id) {
+        throw new AppError("Internal venue submission state changed. Refresh and try again.", 409);
+      }
+      const { mimeType, bytes } = validateSubmissionEvidenceDataUrl(dataUrl);
+      const durable = await this.sourceEvidenceObjectRepository.getSourceEvidenceObject(linked.id);
+      if (!durable || durable.ownerUserId !== account.id || durable.mimeType !== mimeType || durable.byteSize !== bytes.length) {
+        throw new AppError("Internal venue submission state changed. Refresh and try again.", 409);
+      }
+      const delivery = await this.getSourceEvidenceDelivery(durable);
+      if (!delivery || delivery.mimeType !== mimeType || !delivery.bytes.equals(bytes)) {
+        throw new AppError("Internal venue submission state changed. Refresh and try again.", 409);
+      }
+    }
+
+    return evidence.map(({ object }) => privateEvidenceRef(object.id));
+  }
+
   private async compensateUnlinkedSourceEvidence(refs: string[]): Promise<void> {
     for (const ref of [...refs].reverse()) {
       const evidenceId = getPrivateEvidenceId(ref);
-      if (!evidenceId || this.repository.isSourceEvidenceLinked(evidenceId)) continue;
-      const evidence = this.repository.getSourceEvidenceObject(evidenceId);
-      if (!evidence) continue;
+      if (!evidenceId || await this.sourceEvidenceRetentionRepository.isSourceEvidenceLinked(evidenceId)) continue;
+      const evidence = await this.sourceEvidenceObjectRepository.getSourceEvidenceObject(evidenceId);
+      if (!evidence?.ownerUserId) continue;
       try {
         if (evidence.storageProvider === FILESYSTEM_EVIDENCE_PROVIDER) {
           await fs.promises.rm(this.getSourceEvidenceFilePath(evidence.objectPath), { force: true });
         } else if (evidence.storageProvider === SUPABASE_EVIDENCE_PROVIDER) {
           await this.removeSupabaseSourceEvidence(evidence.objectPath);
         }
-        this.repository.deleteUnlinkedSourceEvidenceObject(evidenceId);
+        const deleted = await this.communitySubmissionRepository.deleteUnlinkedSourceEvidence({
+          id: evidenceId,
+          ownerUserId: evidence.ownerUserId,
+          deletedAt: nowIso(),
+        });
+        if (!deleted) {
+          throw new Error("Source evidence became linked or changed before compensation completed.");
+        }
       } catch (error) {
         logger.error("Failed to compensate unlinked source evidence", {
           evidenceId,
@@ -7472,10 +8850,10 @@ export class BusinessService {
     }
   }
 
-  private resolveInlineSubmissionSourcePhotos(
+  private async resolveInlineSubmissionSourcePhotos(
     account: Pick<BusinessAccount, "id">,
     input: CreateSubmissionInput,
-  ): string[] {
+  ): Promise<string[]> {
     const refs: string[] = [];
     const dataUrls = Array.from(new Set([
       input.sourcePhotoDataUrl,
@@ -7488,7 +8866,7 @@ export class BusinessService {
         throw new AppError("Production evidence uploads must use the asynchronous submission endpoint.", 500, undefined, false);
       }
       const createdAt = nowIso();
-      const evidence = this.repository.createSourceEvidenceObject({
+      const { object: evidence } = await this.sourceEvidenceObjectRepository.registerSourceEvidenceObject({
         id: crypto.randomUUID(),
         ownerUserId: account.id,
         storageProvider: "sqlite_private",
@@ -7529,7 +8907,7 @@ export class BusinessService {
       }
 
       const createdAt = nowIso();
-      const evidence = this.repository.createSourceEvidenceObject({
+      const { object: evidence } = await this.sourceEvidenceObjectRepository.registerSourceEvidenceObject({
         id: crypto.randomUUID(),
         ownerUserId: account?.id ?? null,
         storageProvider: "sqlite_private",
@@ -7594,7 +8972,7 @@ export class BusinessService {
 
     const createdAt = nowIso();
     try {
-      return this.repository.createSourceEvidenceObject({
+      const { object } = await this.sourceEvidenceObjectRepository.registerSourceEvidenceObject({
         id,
         ownerUserId: account?.id ?? null,
         storageProvider: FILESYSTEM_EVIDENCE_PROVIDER,
@@ -7606,6 +8984,7 @@ export class BusinessService {
         retentionExpiresAt: addDays(createdAt, this.config.SOURCE_EVIDENCE_RETENTION_DAYS ?? 90),
         createdAt,
       });
+      return object;
     } catch (error) {
       try {
         await fs.promises.rm(filePath, { force: true });
@@ -7646,7 +9025,7 @@ export class BusinessService {
 
     const createdAt = nowIso();
     try {
-      return this.repository.createSourceEvidenceObject({
+      const { object } = await this.sourceEvidenceObjectRepository.registerSourceEvidenceObject({
         id,
         ownerUserId: account?.id ?? null,
         storageProvider: SUPABASE_EVIDENCE_PROVIDER,
@@ -7658,6 +9037,7 @@ export class BusinessService {
         retentionExpiresAt: addDays(createdAt, this.config.SOURCE_EVIDENCE_RETENTION_DAYS ?? 90),
         createdAt,
       });
+      return object;
     } catch (error) {
       await this.supabase.storage.from(SUPABASE_EVIDENCE_BUCKET).remove([objectPath]).catch(() => null);
       throw error;
@@ -7754,8 +9134,8 @@ export class BusinessService {
       .digest("hex");
   }
 
-  getSubmissionSourceEvidenceUrl(account: BusinessAccount, submissionId: string) {
-    const submission = this.repository.getSubmissionById(submissionId);
+  async getSubmissionSourceEvidenceUrl(account: BusinessAccount, submissionId: string) {
+    const submission = await this.communitySubmissionRepository.getSubmissionById(submissionId);
     if (!submission) {
       throw new AppError("Submission not found.", 404);
     }
@@ -7764,7 +9144,10 @@ export class BusinessService {
       throw new AppError("You can only access your own source evidence.", 403);
     }
 
-    const linkedEvidenceIds = this.repository.listSubmissionSourceEvidenceIds(submissionId);
+    const linkedEvidenceIds = await this.sourceEvidenceRetentionRepository.listSubmissionSourceEvidenceIds({
+      submissionId,
+      limit: 1_000,
+    });
     const legacyEvidenceId = getPrivateEvidenceId(submission.submission.sourcePhotoUrl);
     const evidenceIds = linkedEvidenceIds.length
       ? linkedEvidenceIds
@@ -7776,8 +9159,9 @@ export class BusinessService {
     }
 
     const expiresAt = Math.floor(Date.now() / 1000) + this.config.SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS;
-    const signedEvidence = evidenceIds.map((evidenceId) => {
-      const evidence = this.repository.getSourceEvidenceObject(evidenceId);
+    const signedEvidence: Array<{ url: string; mimeType: string | null }> = [];
+    for (const evidenceId of evidenceIds) {
+      const evidence = await this.sourceEvidenceObjectRepository.getSourceEvidenceObject(evidenceId);
       if (!evidence) {
         throw new AppError("Source evidence not found.", 404);
       }
@@ -7786,15 +9170,15 @@ export class BusinessService {
       signedUrl.searchParams.set("expires", String(expiresAt));
       signedUrl.searchParams.set("signature", signature);
 
-      this.auditSecurity({
+      await this.auditSecurity({
         actor: account,
         action: "source_evidence_signed_url_created",
         targetType: "source_evidence",
         targetId: evidence.id,
         metadata: { submissionId },
       });
-      return { url: signedUrl.toString(), mimeType: evidence.mimeType };
-    });
+      signedEvidence.push({ url: signedUrl.toString(), mimeType: evidence.mimeType });
+    }
     const signedUrls = signedEvidence.map((item) => item.url);
 
     return {
@@ -7805,11 +9189,11 @@ export class BusinessService {
     };
   }
 
-  getSourceEvidenceForSignedRequest(input: {
+  async getSourceEvidenceForSignedRequest(input: {
     evidenceId: string;
     expires: string | undefined;
     signature: string | undefined;
-  }): SourceEvidenceObject {
+  }): Promise<SourceEvidenceObject> {
     const expiresAt = Number(input.expires);
     if (!Number.isInteger(expiresAt) || expiresAt <= Math.floor(Date.now() / 1000)) {
       throw new AppError("Source evidence link has expired.", 403);
@@ -7824,7 +9208,7 @@ export class BusinessService {
       throw new AppError("Invalid source evidence signature.", 403);
     }
 
-    const evidence = this.repository.getSourceEvidenceObject(input.evidenceId);
+    const evidence = await this.sourceEvidenceObjectRepository.getSourceEvidenceObject(input.evidenceId);
     if (!evidence) {
       throw new AppError("Source evidence not found.", 404);
     }
@@ -7832,24 +9216,25 @@ export class BusinessService {
     return evidence;
   }
 
-  savePreferences(account: BusinessAccount, input: AccountPreferencesInput) {
-    const now = nowIso();
-    const preferences = this.repository.upsertAccountPreferences({
+  async savePreferences(account: BusinessAccount, input: AccountPreferencesInput) {
+    const now = nextRevisionTimestamp(input.expectedUpdatedAt);
+    const preferences = await this.accountProfilePreferencesRepository.upsertAccountPreferences({
       userId: account.id,
       preferredSuburbs: cleanStringList(input.preferredSuburbs),
       preferredBeers: cleanStringList(input.preferredBeers),
-      preferredUseCases: cleanStringList(input.preferredUseCases),
+      preferredUseCases: cleanStringList(input.preferredUseCases) as AccountPreferences["preferredUseCases"],
       onboardingCompletedAt: input.onboardingCompleted ? now : null,
       now,
+      expectedUpdatedAt: input.expectedUpdatedAt,
     });
 
     return { preferences };
   }
 
-  savePrivacySettings(account: BusinessAccount, input: AccountPrivacySettingsInput) {
-    const now = nowIso();
+  async savePrivacySettings(account: BusinessAccount, input: AccountPrivacySettingsInput) {
+    const now = nextRevisionTimestamp(input.expectedUpdatedAt);
     const optionalAnalyticsEnabled = input.optionalAnalyticsEnabled;
-    const privacySettings = this.repository.upsertAccountPrivacySettings({
+    const privacySettings = await this.accountProfilePreferencesRepository.upsertAccountPrivacySettings({
       userId: account.id,
       optionalAnalyticsEnabled,
       venueReportInclusionEnabled: optionalAnalyticsEnabled && input.venueReportInclusionEnabled,
@@ -7859,13 +9244,9 @@ export class BusinessService {
       emailUpdatesEnabled: false,
       consentVersion: CURRENT_LEGAL_POLICY_VERSION,
       now,
+      expectedUpdatedAt: input.expectedUpdatedAt,
     });
-    if (!privacySettings.optionalAnalyticsEnabled) {
-      this.repository.deleteUserEventsByPrivacyScopes(account.id, ["optional_analytics", "venue_insight"]);
-    } else if (!privacySettings.venueReportInclusionEnabled) {
-      this.repository.deleteUserEventsByPrivacyScopes(account.id, ["venue_insight"]);
-    }
-    this.recordUserActivity({
+    await this.recordUserActivity({
       account,
       eventType: "account_privacy_settings_updated",
       relatedEntityType: "account",
@@ -7881,9 +9262,9 @@ export class BusinessService {
     return { privacySettings };
   }
 
-  saveItem(account: BusinessAccount, input: SaveItemInput) {
+  async saveItem(account: BusinessAccount, input: SaveItemInput) {
     const now = nowIso();
-    const savedItem = this.repository.saveItem({
+    const savedItem = await this.accountProfilePreferencesRepository.saveItem({
       id: crypto.randomUUID(),
       userId: account.id,
       itemType: input.itemType,
@@ -7900,7 +9281,7 @@ export class BusinessService {
       night_plan: "saved_night_plan_added",
     };
 
-    this.trackEvent(account, {
+    await this.trackEvent(account, {
       anonymousSessionId: null,
       eventType: eventTypeByItem[input.itemType],
       venueId: input.itemType === "venue" ? input.itemId : null,
@@ -7916,8 +9297,8 @@ export class BusinessService {
     return { savedItem };
   }
 
-  removeSavedItem(account: BusinessAccount, input: RemoveSavedItemInput) {
-    const removed = this.repository.removeSavedItem({
+  async removeSavedItem(account: BusinessAccount, input: RemoveSavedItemInput) {
+    const removed = await this.accountProfilePreferencesRepository.removeSavedItem({
       userId: account.id,
       itemType: input.itemType,
       itemId: input.itemId,
@@ -7930,7 +9311,7 @@ export class BusinessService {
     };
 
     if (removed) {
-      this.trackEvent(account, {
+      await this.trackEvent(account, {
         anonymousSessionId: null,
         eventType: eventTypeByItem[input.itemType],
         venueId: input.itemType === "venue" ? input.itemId : null,
@@ -7982,10 +9363,10 @@ export class BusinessService {
     }
   }
 
-  submitFeedback(account: BusinessAccount | null, input: FeedbackInput) {
+  async submitFeedback(account: BusinessAccount | null, input: FeedbackInput) {
     const now = nowIso();
     const triage = this.classifyFeedback(input);
-    const feedback = this.repository.createFeedback({
+    const feedback = await this.supportFeedbackRepository.createFeedback({
       id: crypto.randomUUID(),
       userId: account?.id ?? null,
       anonymousSessionId: input.anonymousSessionId,
@@ -7999,7 +9380,7 @@ export class BusinessService {
       now,
     });
 
-    this.trackEvent(account, {
+    await this.trackEvent(account, {
       anonymousSessionId: input.anonymousSessionId,
       eventType: "feedback_submitted",
       venueId: input.venueId,
@@ -8009,7 +9390,7 @@ export class BusinessService {
     });
 
     if (["security_report", "privacy_request", "data_export_request", "account_deletion_request"].includes(input.feedbackType)) {
-      this.auditSecurity({
+      await this.auditSecurity({
         actor: account,
         action: `feedback_${input.feedbackType}`,
         targetType: "feedback",
@@ -8030,9 +9411,9 @@ export class BusinessService {
     };
   }
 
-  requestAccountDeletion(account: BusinessAccount, input: { message?: string | null | undefined }) {
+  async requestAccountDeletion(account: BusinessAccount, input: { message?: string | null | undefined }) {
     const requestedAt = nowIso();
-    const request = this.repository.createAccountDeletionRequest({
+    const request = await this.accountDeletionQueueRepository.createAccountDeletionRequest({
       id: crypto.randomUUID(),
       userId: account.id,
       userMessage: input.message ?? null,
@@ -8040,14 +9421,14 @@ export class BusinessService {
       executeAfter: addDays(requestedAt, 7),
     });
 
-    this.recordUserActivity({
+    await this.recordUserActivity({
       account,
       eventType: "account_deletion_requested",
       relatedEntityType: "account_deletion_request",
       relatedEntityId: String(request.id),
       metadata: { requestType: "account_deletion_request" },
     });
-    this.auditSecurity({
+    await this.auditSecurity({
       actor: account,
       action: "account_deletion_requested",
       targetType: "account_deletion_request",
@@ -8061,20 +9442,26 @@ export class BusinessService {
     };
   }
 
-  getAccountDeletionStatus(account: BusinessAccount) {
-    return { request: this.repository.getAccountDeletionRequestForUser(account.id) };
+  async getAccountDeletionStatus(account: BusinessAccount) {
+    return { request: await this.accountDeletionQueueRepository.getAccountDeletionRequestForUser(account.id) };
   }
 
-  cancelAccountDeletion(account: BusinessAccount, requestId: string) {
-    const request = this.repository.getAccountDeletionRequestById(requestId);
+  async cancelAccountDeletion(account: BusinessAccount, requestId: string) {
+    const request = await this.accountDeletionQueueRepository.getAccountDeletionRequestById(requestId);
     if (!request || String(request.user_id) !== account.id) {
       throw new AppError("Deletion request not found.", 404);
     }
-    if (!this.repository.cancelAccountDeletion({ requestId, userId: account.id, now: nowIso() })) {
+    if (!await this.accountDeletionQueueRepository.cancelAccountDeletion({
+      requestId,
+      userId: account.id,
+      now: nowIso(),
+    })) {
       throw new AppError("This deletion request can no longer be cancelled.", 409);
     }
-    this.repository.checkpointAccountDeletionNotificationSecrets();
-    this.auditSecurity({
+    await this.accountDeletionQueueRepository.checkpointAccountDeletionNotificationSecrets(
+      this.performAccountDeletionSecretPhysicalCheckpoint,
+    );
+    await this.auditSecurity({
       actor: account,
       action: "account_deletion_cancelled",
       targetType: "account_deletion_request",
@@ -8097,17 +9484,21 @@ export class BusinessService {
     const purgeNow = nowIso();
     const hardCutoff = daysAgoIso(ACCOUNT_DATA_RETENTION_POLICY.pendingEvidenceHardCap.daysAfterCreation);
     const limit = Math.max(1, Math.min(500, Math.floor(pageSize)));
-    const backlogBefore = this.repository.countExpiredSourceEvidence(purgeNow, hardCutoff);
-    const heldBefore = this.repository.countOverdueHeldSourceEvidence(purgeNow, hardCutoff);
+    const backlogBefore = await this.sourceEvidenceRetentionRepository.countExpiredSourceEvidence(purgeNow, hardCutoff);
+    const heldBefore = await this.sourceEvidenceRetentionRepository.countOverdueHeldSourceEvidence(purgeNow, hardCutoff);
     let purged = 0;
     let passes = 0;
-    let stalled = false;
     const failedEvidenceIds = new Set<string>();
+    let cursor: { retentionExpiresAt: string; createdAt: string; id: string } | null = null;
     while (true) {
-      const expired = this.repository.listExpiredSourceEvidence({ now: purgeNow, hardCutoff, limit });
+      const expired = await this.sourceEvidenceRetentionRepository.listExpiredSourceEvidence({
+        now: purgeNow,
+        hardCutoff,
+        limit,
+        cursor,
+      });
       if (!expired.length) break;
       passes += 1;
-      let passPurged = 0;
       for (const evidence of expired) {
         try {
           if (evidence.storageProvider === FILESYSTEM_EVIDENCE_PROVIDER) {
@@ -8115,9 +9506,14 @@ export class BusinessService {
           } else if (evidence.storageProvider === SUPABASE_EVIDENCE_PROVIDER) {
             await this.removeSupabaseSourceEvidence(evidence.objectPath);
           }
-          this.repository.markSourceEvidenceDeleted({ id: evidence.id, deletedAt: nowIso() });
+          await this.sourceEvidenceRetentionRepository.markSourceEvidenceDeleted({
+            id: evidence.id,
+            deletionToken: evidence.deletionToken,
+            now: purgeNow,
+            hardCutoff,
+            deletedAt: nowIso(),
+          });
           purged += 1;
-          passPurged += 1;
           failedEvidenceIds.delete(evidence.id);
         } catch (error) {
           failedEvidenceIds.add(evidence.id);
@@ -8127,13 +9523,17 @@ export class BusinessService {
           });
         }
       }
-      if (passPurged === 0) {
-        stalled = true;
-        break;
-      }
+      const last = expired[expired.length - 1]!;
+      cursor = {
+        retentionExpiresAt: last.retentionExpiresAt,
+        createdAt: last.createdAt,
+        id: last.id,
+      };
+      if (expired.length < limit) break;
     }
-    const remaining = this.repository.countExpiredSourceEvidence(purgeNow, hardCutoff);
-    const heldAfter = this.repository.countOverdueHeldSourceEvidence(purgeNow, hardCutoff);
+    const remaining = await this.sourceEvidenceRetentionRepository.countExpiredSourceEvidence(purgeNow, hardCutoff);
+    const heldAfter = await this.sourceEvidenceRetentionRepository.countOverdueHeldSourceEvidence(purgeNow, hardCutoff);
+    const stalled = remaining > 0 && purged === 0;
     return {
       purged,
       failed: failedEvidenceIds.size,
@@ -8147,47 +9547,164 @@ export class BusinessService {
     };
   }
 
-  runPrivacyRetention() {
-    const now = nowIso();
+  async runPrivacyRetention() {
+    const asOf = nowIso();
+    const sessionLimitEnforcement = await this.accountSessionRepository.revokeExcessActiveSessions({
+      now: asOf,
+      maxActiveSessions: MAX_ACTIVE_SESSIONS_PER_ACCOUNT,
+    });
+    const cutoffs = {
+      authSessionCutoff: daysAgoIso(
+        ACCOUNT_DATA_RETENTION_POLICY.authSessions.daysAfterExpiryOrRevocation,
+        asOf,
+      ),
+      providerRevocationCutoff: daysAgoIso(
+        ACCOUNT_DATA_RETENTION_POLICY.revokedProviderSessions.globallyRevokedRowsDaysAfterRevocation,
+        asOf,
+      ),
+      stripePayloadCutoff: daysAgoIso(
+        ACCOUNT_DATA_RETENTION_POLICY.stripeWebhookPayloads.daysAfterReceipt,
+        asOf,
+      ),
+      stripeEnvelopeCutoff: daysAgoIso(
+        ACCOUNT_DATA_RETENTION_POLICY.stripeWebhookEventEnvelope.daysAfterReceipt,
+        asOf,
+      ),
+      securityFingerprintCutoff: daysAgoIso(
+        ACCOUNT_DATA_RETENTION_POLICY.securityRequestFingerprints.daysAfterCreation,
+        asOf,
+      ),
+      securityEnvelopeCutoff: daysAgoIso(
+        ACCOUNT_DATA_RETENTION_POLICY.securityAuditEnvelope.daysAfterCreation,
+        asOf,
+      ),
+      reviewedLocationCutoff: daysAgoIso(
+        ACCOUNT_DATA_RETENTION_POLICY.reviewedSubmissionExactLocation.daysAfterReview,
+        asOf,
+      ),
+      migrationQuarantineCutoff: daysAgoIso(
+        ACCOUNT_DATA_RETENTION_POLICY.migrationQuarantinePayload.daysAfterQuarantine,
+        asOf,
+      ),
+      deletionNotificationEventCutoff: daysAgoIso(
+        ACCOUNT_DATA_RETENTION_POLICY.accountDeletion.completionNotification.nonIdentifyingWebhookReceiptDays,
+        asOf,
+      ),
+    };
+    const totals: PrivacyRetentionMutationCounts = {
+      authSessionsDeleted: 0,
+      providerRevocationsDeleted: 0,
+      stripePayloadsRedacted: 0,
+      stripeEnvelopesDeleted: 0,
+      securityFingerprintsRedacted: 0,
+      securityEnvelopesDeleted: 0,
+      reviewedLocationsPurged: 0,
+      migrationQuarantinePayloadsRedacted: 0,
+      deletionNotificationEventsDeleted: 0,
+    };
+    const seenBatchObjects = new WeakSet<object>();
+    let batches = 0;
+    let processedCount = 0;
+    let hasMore = false;
+    let hasActionableMore = false;
+    let stalled = false;
+    let batchBudgetExhausted = false;
+    let stripeEnvelopeDeletionDeferred = true;
+    let stripeEnvelopesAwaitingTombstoneInBatch = 0;
+    let stopReason:
+      | "complete"
+      | "deferred_stripe_envelopes"
+      | "actionable_stall"
+      | "duplicate_batch"
+      | "batch_budget_exhausted" = "complete";
+
+    for (let batch = 0; batch < MAX_PRIVACY_RETENTION_BATCHES; batch += 1) {
+      const result = await this.privacyRetentionRepository.prunePrivacyRetention({
+        asOf,
+        ...cutoffs,
+        batchLimit: PRIVACY_RETENTION_BATCH_SIZE,
+      });
+      if (seenBatchObjects.has(result)) {
+        stalled = true;
+        stopReason = "duplicate_batch";
+        break;
+      }
+      seenBatchObjects.add(result);
+
+      const batchMutationCount = PRIVACY_RETENTION_MUTATION_KEYS.reduce(
+        (total, key) => total + result[key],
+        0,
+      );
+      if (
+        batchMutationCount !== result.processedCount
+        || result.progressed !== (result.processedCount > 0)
+      ) {
+        throw new AppError("Privacy-retention progress was inconsistent.", 500, undefined, false);
+      }
+
+      batches += 1;
+      processedCount += result.processedCount;
+      for (const key of PRIVACY_RETENTION_MUTATION_KEYS) totals[key] += result[key];
+      hasMore = result.hasMore;
+      hasActionableMore = result.hasActionableMore;
+      stalled = result.stalled;
+      stripeEnvelopeDeletionDeferred = result.stripeEnvelopeDeletionDeferred;
+      stripeEnvelopesAwaitingTombstoneInBatch = result.stripeEnvelopesAwaitingTombstoneInBatch;
+
+      if (!result.hasActionableMore) {
+        stopReason = result.hasMore ? "deferred_stripe_envelopes" : "complete";
+        break;
+      }
+      if (!result.progressed) {
+        stalled = true;
+        stopReason = "actionable_stall";
+        break;
+      }
+      if (batch === MAX_PRIVACY_RETENTION_BATCHES - 1) {
+        batchBudgetExhausted = true;
+        stopReason = "batch_budget_exhausted";
+      }
+    }
+
     return {
+      asOf,
       policyVersion: ACCOUNT_DATA_RETENTION_POLICY.version,
-      sessionLimitEnforcement: this.repository.revokeExcessActiveSessions({
-        now,
-        maxActiveSessions: MAX_ACTIVE_SESSIONS_PER_ACCOUNT,
-      }),
-      ...this.repository.prunePrivacyRetention({
-        authSessionCutoff: daysAgoIso(ACCOUNT_DATA_RETENTION_POLICY.authSessions.daysAfterExpiryOrRevocation),
-        providerRevocationCutoff: daysAgoIso(
-          ACCOUNT_DATA_RETENTION_POLICY.revokedProviderSessions.globallyRevokedRowsDaysAfterRevocation,
-        ),
-        stripePayloadCutoff: daysAgoIso(ACCOUNT_DATA_RETENTION_POLICY.stripeWebhookPayloads.daysAfterReceipt),
-        stripeEnvelopeCutoff: daysAgoIso(ACCOUNT_DATA_RETENTION_POLICY.stripeWebhookEventEnvelope.daysAfterReceipt),
-        securityFingerprintCutoff: daysAgoIso(ACCOUNT_DATA_RETENTION_POLICY.securityRequestFingerprints.daysAfterCreation),
-        securityEnvelopeCutoff: daysAgoIso(ACCOUNT_DATA_RETENTION_POLICY.securityAuditEnvelope.daysAfterCreation),
-        reviewedLocationCutoff: daysAgoIso(ACCOUNT_DATA_RETENTION_POLICY.reviewedSubmissionExactLocation.daysAfterReview),
-        migrationQuarantineCutoff: daysAgoIso(ACCOUNT_DATA_RETENTION_POLICY.migrationQuarantinePayload.daysAfterQuarantine),
-        deletionNotificationEventCutoff: daysAgoIso(
-          ACCOUNT_DATA_RETENTION_POLICY.accountDeletion.completionNotification.nonIdentifyingWebhookReceiptDays,
-        ),
-      }),
+      sessionLimitEnforcement,
+      ...totals,
+      processedCount,
+      progressed: processedCount > 0,
+      hasMore,
+      hasActionableMore,
+      stalled,
+      stopReason,
+      batches,
+      batchSize: PRIVACY_RETENTION_BATCH_SIZE,
+      batchBudget: MAX_PRIVACY_RETENTION_BATCHES,
+      batchBudgetExhausted,
+      stripeEnvelopeDeletionDeferred,
+      stripeEnvelopesAwaitingTombstoneInBatch,
       migrationBackupsDeleted: this.config.DATABASE_PATH
-        ? purgeExpiredMigrationBackups(this.config.DATABASE_PATH)
+        ? (await import("../../db/database.js")).purgeExpiredMigrationBackups(this.config.DATABASE_PATH)
         : 0,
     };
   }
 
-  listAccountDeletionRequests(admin: BusinessAccount, query: AdminPaginationInput = { limit: 50, offset: 0 }) {
+  async listAccountDeletionRequests(admin: BusinessAccount, query: AdminPaginationInput = { limit: 50, offset: 0 }) {
     if (!this.isAdmin(admin)) throw new AppError("Admin access required.", 403);
     const asOf = nowIso();
-    const requests = this.repository.listAccountDeletionRequests({ ...query, asOf });
-    const total = this.repository.countAccountDeletionRequests();
+    const [requests, total, queueSummary, notificationSummary] = await Promise.all([
+      this.accountDeletionQueueRepository.listAccountDeletionRequests({ ...query, asOf }),
+      this.accountDeletionQueueRepository.countAccountDeletionRequests(),
+      this.accountDeletionQueueRepository.getAccountDeletionQueueSummary(asOf),
+      this.accountDeletionQueueRepository.getAccountDeletionNotificationQueueSummary(asOf),
+    ]);
     return {
       requests,
       total,
       summary: {
         asOf,
-        ...this.repository.getAccountDeletionQueueSummary(asOf),
-        notifications: this.repository.getAccountDeletionNotificationQueueSummary(asOf),
+        ...queueSummary,
+        notifications: notificationSummary,
       },
       pagination: { ...query, hasMore: query.offset + requests.length < total },
     };
@@ -8195,7 +9712,7 @@ export class BusinessService {
 
   async executeAccountDeletion(admin: BusinessAccount, requestId: string, reason: string) {
     if (!this.isAdmin(admin)) throw new AppError("Admin access required.", 403);
-    const request = this.repository.getAccountDeletionRequestById(requestId);
+    const request = await this.accountDeletionQueueRepository.getAccountDeletionRequestById(requestId);
     if (!request) throw new AppError("Deletion request not found.", 404);
     if (!['pending_review', 'approved', 'failed', 'processing'].includes(String(request.status))) {
       throw new AppError("This account deletion request has already been processed.", 409);
@@ -8203,22 +9720,28 @@ export class BusinessService {
     if (new Date(String(request.execute_after)).getTime() > Date.now()) {
       throw new AppError("The seven-day account deletion safety window has not finished yet.", 409);
     }
-    const account = this.repository.getAccountById(String(request.user_id));
+    const account = await this.accountSessionRepository.getAccountById(String(request.user_id));
     if (!account) throw new AppError("Account not found.", 404);
-    this.assertAdminControlPreserved(admin, account);
+    await this.assertAdminControlPreserved(admin, account);
+    const canonicalProductionRuntime = isCanonicalProductionRuntime({
+      nodeEnv: this.config.NODE_ENV,
+      railwayEnvironmentName: process.env.RAILWAY_ENVIRONMENT_NAME,
+    });
+    const providerRehearsal = Boolean(this.config.ACCOUNT_DELETION_REHEARSAL_ENABLED);
+    const strictProductionProviderPolicy = canonicalProductionRuntime && !providerRehearsal;
     // Production deletion is irreversible across auth, billing, and evidence
     // providers. Refuse before acquiring the job or making any mutation when
     // this runtime cannot durably record the independent deletion tombstone.
     if (
-      this.config.NODE_ENV === "production" &&
+      canonicalProductionRuntime &&
       !this.accountDeletionTombstoneWriter &&
-      !this.config.ACCOUNT_DELETION_REHEARSAL_ENABLED
+      !providerRehearsal
     ) {
       throw new ExternalServiceError(
         "Independent account-deletion ledger is not configured; the request is saved for retry.",
       );
     }
-    if (this.config.NODE_ENV === "production" && !this.accountDeletionNotificationCoordinator) {
+    if (canonicalProductionRuntime && !providerRehearsal && !this.accountDeletionNotificationCoordinator) {
       throw new ExternalServiceError(
         "Account-deletion completion notifications are not configured; the request is saved for retry.",
       );
@@ -8231,14 +9754,14 @@ export class BusinessService {
       staleBefore: new Date(Date.now() - 10 * 60_000).toISOString(),
     };
     const processing = this.accountDeletionNotificationCoordinator
-      ? this.accountDeletionNotificationCoordinator.beginDeletionWithPreparedNotification({
+      ? await this.accountDeletionNotificationCoordinator.beginDeletionWithPreparedNotification({
           ...deletionClaim,
           destination: account.email,
         })
-      : this.repository.beginAccountDeletion(deletionClaim);
+      : await this.accountDeletionQueueRepository.beginAccountDeletion(deletionClaim);
     if (!processing) throw new AppError("This deletion request is already being processed.", 409);
-    this.repository.revokeUserSessions({ userId: account.id, revokedAt: startedAt });
-    this.repository.revokeDiscountPassesForUser({ userId: account.id, revokedAt: startedAt });
+    const attemptCount = processing.attempt_count;
+    await this.accountSessionRepository.revokeUserSessionsWithSummary({ userId: account.id, revokedAt: startedAt });
 
     try {
       const deletedStripeCustomerSnapshot = typeof processing.stripe_customer_id_snapshot === "string"
@@ -8267,12 +9790,16 @@ export class BusinessService {
             message: redactSecrets(payload?.error?.message ?? "unknown"),
           });
         }
-        this.repository.markAccountDeletionStripeCustomerDeleted({
+        const receiptRecorded = await this.accountDeletionQueueRepository.markAccountDeletionStripeCustomerDeleted({
           requestId,
           userId: account.id,
           stripeCustomerId: account.stripeCustomerId,
+          attemptCount,
           now: nowIso(),
         });
+        if (!receiptRecorded) {
+          throw new AppError("This account deletion attempt no longer owns the request.", 409);
+        }
       }
 
       if (account.supabaseUserId && !processing.identity_deleted_at && !this.supabase) {
@@ -8286,16 +9813,34 @@ export class BusinessService {
             message: redactSecrets(error.message),
           });
         }
-        this.repository.markAccountDeletionIdentityDeleted({ requestId, now: nowIso() });
+        const receiptRecorded = await this.accountDeletionQueueRepository.markAccountDeletionIdentityDeleted({
+          requestId,
+          attemptCount,
+          now: nowIso(),
+        });
+        if (!receiptRecorded) {
+          throw new AppError("This account deletion attempt no longer owns the request.", 409);
+        }
       }
 
-      const evidence = this.repository.listSourceEvidenceForOwner(account.id);
-      for (const item of evidence) {
-        if (item.storageProvider === FILESYSTEM_EVIDENCE_PROVIDER) {
-          await fs.promises.rm(this.getSourceEvidenceFilePath(item.objectPath), { force: true });
-        } else if (item.storageProvider === SUPABASE_EVIDENCE_PROVIDER) {
-          await this.removeSupabaseSourceEvidence(item.objectPath);
+      const evidencePageSize = 500;
+      let evidenceCursor: { createdAt: string; id: string } | null = null;
+      while (true) {
+        const evidence = await this.sourceEvidenceRetentionRepository.listSourceEvidenceForOwner({
+          ownerUserId: account.id,
+          limit: evidencePageSize,
+          cursor: evidenceCursor,
+        });
+        for (const item of evidence) {
+          if (item.storageProvider === FILESYSTEM_EVIDENCE_PROVIDER) {
+            await fs.promises.rm(this.getSourceEvidenceFilePath(item.objectPath), { force: true });
+          } else if (item.storageProvider === SUPABASE_EVIDENCE_PROVIDER) {
+            await this.removeSupabaseSourceEvidence(item.objectPath);
+          }
         }
+        if (evidence.length < evidencePageSize) break;
+        const last = evidence[evidence.length - 1]!;
+        evidenceCursor = { createdAt: last.createdAt, id: last.id };
       }
       if (!processing.deletion_tombstone_recorded_at) {
         if (this.accountDeletionTombstoneWriter) {
@@ -8305,16 +9850,21 @@ export class BusinessService {
             userId: account.id,
             completedAt: tombstoneRecordedAt,
           });
-          this.repository.markAccountDeletionTombstoneRecorded({
+          const receiptRecorded = await this.accountDeletionQueueRepository.markAccountDeletionTombstoneRecorded({
             requestId,
+            attemptCount,
             recordedAt: tombstoneRecordedAt,
             now: nowIso(),
           });
+          if (!receiptRecorded) {
+            throw new AppError("This account deletion attempt no longer owns the request.", 409);
+          }
         }
       }
       const completedAt = nowIso();
-      const summary = this.repository.executeAccountAnonymisation({
+      const summary = await this.accountPrivacyRepository.executeAccountAnonymisation({
         requestId,
+        attemptCount,
         reviewedBy: admin.id,
         now: completedAt,
         completionNotificationDisposition: this.accountDeletionNotificationCoordinator ? "enqueue_live" : "none",
@@ -8324,22 +9874,13 @@ export class BusinessService {
                 this.accountDeletionNotificationCoordinator.completionRetentionExpiresAt(completedAt),
             }
           : {}),
+        providerPolicy: {
+          requireTombstoneReceipt: strictProductionProviderPolicy,
+          allowUnconfirmedStripeDeletion: !strictProductionProviderPolicy
+            && (this.config.DEMO_BILLING_MODE || providerRehearsal),
+        },
       });
-      for (const evidenceId of (summary.evidenceIds as string[] | undefined) ?? []) {
-        try {
-          // The anonymisation transaction has already scrubbed and tombstoned
-          // the local row. Keep this idempotent cleanup for compatibility, but
-          // never turn a committed deletion into a false failure if it cannot
-          // be repeated after the commit.
-          this.repository.markSourceEvidenceDeleted({ id: evidenceId, deletedAt: completedAt });
-        } catch (error) {
-          logger.warn("Post-commit source-evidence tombstone refresh failed", {
-            evidenceId,
-            error: error instanceof Error ? redactSecrets(error.message) : "unknown",
-          });
-        }
-      }
-      this.auditSecurity({
+      await this.auditSecurity({
         actor: admin,
         action: "account_deletion_executed",
         targetType: "account_deletion_request",
@@ -8357,14 +9898,22 @@ export class BusinessService {
       };
     } catch (error) {
       const message = error instanceof Error ? redactSecrets(error.message) : "Account deletion failed";
-      this.repository.failAccountDeletion({ requestId, error: message, now: nowIso() });
-      this.auditSecurity({
+      const failurePersisted = await this.accountDeletionQueueRepository.failAccountDeletion({
+        requestId,
+        attemptCount,
+        error: message,
+        now: nowIso(),
+      });
+      await this.auditSecurity({
         actor: admin,
         action: "account_deletion_failed",
         targetType: "account_deletion_request",
         targetId: requestId,
-        metadata: { reason, error: message },
+        metadata: { reason, error: message, failurePersisted },
       });
+      if (!failurePersisted) {
+        throw new AppError("This account deletion attempt no longer owns the request.", 409);
+      }
       throw error;
     }
   }
@@ -8389,7 +9938,7 @@ export class BusinessService {
     };
   }
 
-  retryFailedAccountDeletionCompletionNotification(
+  async retryFailedAccountDeletionCompletionNotification(
     admin: BusinessAccount,
     requestId: string,
     reason: string,
@@ -8398,9 +9947,9 @@ export class BusinessService {
     if (!this.accountDeletionNotificationCoordinator) {
       throw new AppError("Account deletion notifications are not configured.", 503);
     }
-    const notice = this.repository.getAccountDeletionCompletionOutbox(requestId);
+    const notice = await this.accountDeletionQueueRepository.getAccountDeletionCompletionOutbox(requestId);
     if (!notice) throw new AppError("Account deletion completion notice not found.", 404);
-    const retried = this.repository.retryFailedAccountDeletionNotification({
+    const retried = await this.accountDeletionQueueRepository.retryFailedAccountDeletionNotification({
       requestId,
       now: nowIso(),
       audit: {
@@ -8423,17 +9972,17 @@ export class BusinessService {
     };
   }
 
-  resolveAccountDeletionCompletionNotification(
+  async resolveAccountDeletionCompletionNotification(
     admin: BusinessAccount,
     requestId: string,
     resolution: "verified_delivered" | "undeliverable",
     reason: string,
   ) {
     if (!this.isAdmin(admin)) throw new AppError("Admin access required.", 403);
-    const notice = this.repository.getAccountDeletionCompletionOutbox(requestId);
+    const notice = await this.accountDeletionQueueRepository.getAccountDeletionCompletionOutbox(requestId);
     if (!notice) throw new AppError("Account deletion completion notice not found.", 404);
     const resolvedAt = nowIso();
-    const resolved = this.repository.resolveAccountDeletionNotificationManualReview({
+    const resolved = await this.accountDeletionQueueRepository.resolveAccountDeletionNotificationManualReview({
       requestId,
       resolution,
       now: resolvedAt,
@@ -8450,8 +9999,8 @@ export class BusinessService {
         409,
       );
     }
-    const securePurgeCheckpointSucceeded = this.repository
-      .checkpointAccountDeletionNotificationSecrets();
+    const securePurgeCheckpointSucceeded = await this.accountDeletionQueueRepository
+      .checkpointAccountDeletionNotificationSecrets(this.performAccountDeletionSecretPhysicalCheckpoint);
     return {
       requestId,
       status: resolved.status,
@@ -8461,12 +10010,12 @@ export class BusinessService {
     };
   }
 
-  handleResendAccountDeletionWebhook(input: {
+  async handleResendAccountDeletionWebhook(input: {
     rawBody: Buffer;
     id: string | undefined;
     timestamp: string | undefined;
     signature: string | undefined;
-  }): { received: true; duplicate: boolean; matched: boolean } {
+  }): Promise<{ received: true; duplicate: boolean; matched: boolean }> {
     if (!this.accountDeletionNotificationCoordinator || !this.config.RESEND_WEBHOOK_SIGNING_SECRET) {
       throw new AppError("Account deletion notification webhook is not configured.", 503);
     }
@@ -8489,7 +10038,7 @@ export class BusinessService {
     let venueName = input.venueName;
     let beerName = input.beerName;
     if (input.priceRecordId) {
-      const record = this.repository.getPriceRecordById(input.priceRecordId);
+      const record = await this.publicPriceRepository.getPriceRecordById(input.priceRecordId);
       if (!record) {
         throw new AppError("That price record no longer exists. Refresh the venue before reporting it.", 404);
       }
@@ -8500,7 +10049,7 @@ export class BusinessService {
       beerName = record.beerName;
     }
     const sourcePhotoUrl = await this.resolveSourcePhoto(account, input);
-    const result = this.repository.createWrongPriceReport({
+    const result = await this.supportFeedbackRepository.createWrongPriceReport({
       id: crypto.randomUUID(),
       userId: account?.id ?? null,
       anonymousSessionId: input.anonymousSessionId,
@@ -8514,7 +10063,7 @@ export class BusinessService {
       now,
     });
 
-    this.trackEvent(account, {
+    await this.trackEvent(account, {
       anonymousSessionId: input.anonymousSessionId,
       eventType: "wrong_price_reported",
       venueId: input.venueId,
@@ -8538,12 +10087,12 @@ export class BusinessService {
     };
   }
 
-  createVenueRequest(account: BusinessAccount | null, input: VenueRequestInput) {
+  async createVenueRequest(account: BusinessAccount | null, input: VenueRequestInput) {
     const now = nowIso();
     const googlePlaceId = input.googlePlaceId ?? input.notes
       ?.match(/^Google Place ID:\s*([^\r\n]{1,255})$/im)?.[1]
       ?.trim() ?? null;
-    const result = this.repository.createOrGetVenueRequest({
+    const result = await this.venueRequestRepository.createOrGetVenueRequest({
       id: crypto.randomUUID(),
       userId: account?.id ?? null,
       anonymousSessionId: input.anonymousSessionId,
@@ -8560,7 +10109,7 @@ export class BusinessService {
     const isBeerRequest = input.requestType === "missing_beer" || input.requestType === "verify_beer_at_venue";
 
     if (!result.duplicate) {
-      this.trackEvent(account, {
+      await this.trackEvent(account, {
         anonymousSessionId: input.anonymousSessionId,
         eventType: isBeerRequest ? "beer_requested" : "venue_requested",
         venueId: input.venueId,
@@ -8588,9 +10137,9 @@ export class BusinessService {
     };
   }
 
-  createVenueInterest(account: BusinessAccount | null, input: VenueInterestInput) {
+  async createVenueInterest(account: BusinessAccount | null, input: VenueInterestInput) {
     const now = nowIso();
-    const interest = this.repository.createVenueInterestRequest({
+    const interest = await this.venuePartnerRepository.createVenueInterest({
       id: crypto.randomUUID(),
       userId: account?.id ?? null,
       venueId: input.venueId,
@@ -8603,7 +10152,7 @@ export class BusinessService {
       now,
     });
 
-    this.trackEvent(account, {
+    await this.trackEvent(account, {
       anonymousSessionId: input.anonymousSessionId,
       eventType: input.claimListing ? "venue_claim_requested" : "venue_interest_submitted",
       venueId: input.venueId,
@@ -8623,40 +10172,33 @@ export class BusinessService {
     };
   }
 
-  listSubmissions(account: BusinessAccount | null, input: { status?: string | undefined; mine: boolean; limit: number; offset?: number; includeReviewData?: boolean | undefined }) {
+  async listSubmissions(account: BusinessAccount | null, input: { status?: string | undefined; mine: boolean; limit: number; offset?: number; includeReviewData?: boolean | undefined }) {
     if (!account) {
       throw new AppError("Login required.", 401);
     }
 
     const isAdmin = this.isAdmin(account);
-    const listMethod = input.includeReviewData && (isAdmin || input.mine)
-      ? this.repository.listSubmissionsWithItems.bind(this.repository)
-      : this.repository.listSubmissions.bind(this.repository);
-    if (input.mine || !isAdmin) {
-      return listMethod({
-        userId: account.id,
-        status: input.status as never,
-        limit: input.limit,
-        offset: input.offset ?? 0,
-      });
-    }
-
-    return listMethod({
-      status: input.status as never,
+    const records = await this.communitySubmissionRepository.listSubmissions({
+      ...(input.mine || !isAdmin ? { userId: account.id } : {}),
+      ...(input.status ? { status: input.status as BusinessSubmission["status"] } : {}),
       limit: input.limit,
       offset: input.offset ?? 0,
     });
+    const includeReviewData = input.includeReviewData && (isAdmin || input.mine);
+    return records.map((record) => includeReviewData
+      ? { ...record.submission, items: record.items }
+      : record.submission);
   }
 
-  getSubmissionsPage(account: BusinessAccount | null, input: { status?: string | undefined; mine: boolean; limit: number; offset: number; includeReviewData?: boolean | undefined }) {
-    const submissions = this.listSubmissions(account, input);
+  async getSubmissionsPage(account: BusinessAccount | null, input: { status?: string | undefined; mine: boolean; limit: number; offset: number; includeReviewData?: boolean | undefined }) {
+    const submissions = await this.listSubmissions(account, input);
     if (!account) throw new AppError("Login required.", 401);
     const isAdmin = this.isAdmin(account);
     const filters = {
       ...(input.mine || !isAdmin ? { userId: account.id } : {}),
       ...(input.status ? { status: input.status as never } : {}),
     };
-    const total = this.repository.countSubmissions(filters);
+    const total = await this.communitySubmissionRepository.countSubmissions(filters);
     return {
       submissions,
       pagination: { total, limit: input.limit, offset: input.offset, hasMore: input.offset + submissions.length < total },
@@ -8667,12 +10209,20 @@ export class BusinessService {
     account: BusinessAccount,
     input: { limit: number; offset: number },
   ) {
+    return this.getCommunityVerificationCandidatesAsync(account, input);
+  }
+
+  private async getCommunityVerificationCandidatesAsync(
+    account: BusinessAccount,
+    input: { limit: number; offset: number },
+  ) {
     this.assertCanCommunityVerify(account);
-    const candidates = this.repository.listCommunityVerificationCandidates({
+    const rawCandidates = await this.communitySubmissionRepository.listCommunityVerificationCandidates({
       verifierUserId: account.id,
       limit: input.limit,
       offset: input.offset,
-    }).map((submission) => ({
+    });
+    const candidates = await Promise.all(rawCandidates.map(async (submission) => ({
       id: submission.id,
       venueId: submission.venueId,
       venueName: submission.venueName,
@@ -8681,8 +10231,8 @@ export class BusinessService {
       status: submission.status,
       observedAt: submission.observedAt,
       createdAt: submission.createdAt,
-      hasSourceEvidence: Boolean(submission.sourcePhotoUrl),
-      confirmationCount: this.repository.countConfirmedVerificationsForSubmission(submission.id),
+      hasSourceEvidence: submission.hasSourceEvidence,
+      confirmationCount: await this.communitySubmissionRepository.countConfirmedVerificationsForSubmission(submission.id),
       items: submission.items.map((item) => ({
         beerName: item.beerName,
         servingSize: item.servingSize,
@@ -8692,8 +10242,8 @@ export class BusinessService {
         isOnTap: item.isOnTap,
       })),
       verificationPath: `/api/business/submissions/${encodeURIComponent(submission.id)}/verifications`,
-    }));
-    const total = this.repository.countCommunityVerificationCandidates(account.id);
+    })));
+    const total = await this.communitySubmissionRepository.countCommunityVerificationCandidates(account.id);
     return {
       candidates,
       pagination: {
@@ -8717,16 +10267,22 @@ export class BusinessService {
     }
   }
 
-  private hasUnapprovedCatalogItems(items: BusinessSubmissionItem[]): boolean {
-    return items.some(
-      (item) => item.requiresCatalogApproval && !this.beerCatalogRepository?.isActiveBeer(item.normalizedBeerId),
-    );
+  private async hasUnapprovedCatalogItems(items: BusinessSubmissionItem[]): Promise<boolean> {
+    for (const item of items) {
+      if (
+        item.requiresCatalogApproval
+        && !(this.beerCatalogRepository && await this.beerCatalogRepository.isActiveBeer(item.normalizedBeerId))
+      ) {
+        return true;
+      }
+    }
+    return false;
   }
 
-  verifySubmission(account: BusinessAccount, submissionId: string, input: VerificationInput) {
+  async verifySubmission(account: BusinessAccount, submissionId: string, input: VerificationInput) {
     this.assertCanCommunityVerify(account);
 
-    const submission = this.repository.getSubmissionById(submissionId);
+    const submission = await this.communitySubmissionRepository.getSubmissionById(submissionId);
     if (!submission) {
       throw new AppError("Submission not found.", 404);
     }
@@ -8739,22 +10295,23 @@ export class BusinessService {
       throw new AppError("Only pending submissions can be community verified.", 409);
     }
 
-    if (this.repository.getVerificationByUserAndUpload({ verifierUserId: account.id, uploadId: submissionId })) {
+    if (await this.communitySubmissionRepository.getVerificationByUserAndSubmission({
+      verifierUserId: account.id,
+      submissionId,
+    })) {
       throw new AppError("You have already verified this upload.", 409);
     }
 
-    const verification = this.repository.createVerification({
+    const verification = await this.communitySubmissionRepository.createVerification({
       id: crypto.randomUUID(),
       verifierUserId: account.id,
-      uploadId: submissionId,
-      targetEntityType: "submission",
-      targetEntityId: submissionId,
+      submissionId,
       result: input.result,
       notes: input.notes,
       now: nowIso(),
     });
 
-    this.trackEvent(account, {
+    await this.trackEvent(account, {
       anonymousSessionId: null,
       eventType: "data_verified",
       venueId: submission.submission.venueId,
@@ -8766,7 +10323,7 @@ export class BusinessService {
         result: input.result,
       },
     });
-    this.recordUserActivity({
+    await this.recordUserActivity({
       account,
       eventType: "data_verified",
       relatedEntityType: "submission",
@@ -8779,7 +10336,7 @@ export class BusinessService {
     });
 
     const confirmedCount = input.result === "confirmed"
-      ? this.repository.countConfirmedVerificationsForSubmission(submissionId)
+      ? await this.communitySubmissionRepository.countConfirmedVerificationsForSubmission(submissionId)
       : 0;
 
     return {
@@ -8792,8 +10349,8 @@ export class BusinessService {
     };
   }
 
-  reviewSubmission(admin: BusinessAccount, submissionId: string, input: ReviewSubmissionInput) {
-    const submission = this.repository.getSubmissionById(submissionId);
+  async reviewSubmission(admin: BusinessAccount, submissionId: string, input: ReviewSubmissionInput) {
+    const submission = await this.communitySubmissionRepository.getSubmissionById(submissionId);
 
     if (!submission) {
       throw new AppError("Submission not found.", 404);
@@ -8811,14 +10368,14 @@ export class BusinessService {
       throw new AppError("Submission has already been reviewed.", 409);
     }
 
-    if (input.status === "approved" && this.hasUnapprovedCatalogItems(submission.items)) {
+    if (input.status === "approved" && await this.hasUnapprovedCatalogItems(submission.items)) {
       throw new AppError(
         "Approve, merge, or reject every new beer name in the catalogue before publishing this submission.",
         409,
       );
     }
 
-    const suggestedPoints = this.calculatePoints(submission.submission, submission.items);
+    const suggestedPoints = await this.calculatePoints(submission.submission, submission.items);
     const requestedPoints = input.pointsAwarded ?? suggestedPoints;
     const points = submission.submission.pointsEligibleByLocation
       ? roundPoints(Math.min(requestedPoints, suggestedPoints))
@@ -8827,29 +10384,51 @@ export class BusinessService {
     const reportTimezone = this.config.REPORT_TIMEZONE || DEFAULT_REPORT_TIMEZONE;
     const reviewedMonthKey = getZonedMonthKey(new Date(reviewedAt), reportTimezone);
     const reviewConfidence = input.confidence ?? "admin_verified";
-    let result: ReturnType<BusinessRepository["reviewSubmission"]>;
+    let result: { submission: BusinessSubmission; pointsAwarded: number; account: BusinessAccount };
     try {
-      result = this.repository.reviewSubmission({
-        submissionId,
-        reviewerId: admin.id,
-        status: input.status,
-        rejectionReason: input.rejectionReason,
-        fraudFlagged: input.fraudFlagged || input.status === "fraud_flagged",
-        pointsAwarded: input.status === "approved" ? points : 0,
-        confidence: reviewConfidence,
-        now: reviewedAt,
-        monthKey: reviewedMonthKey,
-        premiumUntil: getZonedMonthRangeIso(reviewedMonthKey, reportTimezone).endIso,
-        contributorUnlockPoints: this.config.CONTRIBUTOR_UNLOCK_POINTS,
-        allowOwnReview,
-      });
+      if (input.status === "approved") {
+        const snapshot = await this.communitySubmissionRepository.getApprovalSnapshot(submissionId);
+        const approved = await this.communitySubmissionRepository.approveAndPublishSubmission({
+          approvalId: `submission-approval-${crypto.createHash("sha256").update(submissionId).digest("hex")}`,
+          submissionId,
+          reviewerId: admin.id,
+          allowOwnReview,
+          catalogDecisions: snapshot.catalogDecisions,
+          missionDecision: snapshot.missionDecision,
+          venueDecision: snapshot.venueDecision,
+          evidenceDecisions: snapshot.evidenceDecisions,
+          pointsAwarded: points,
+          confidence: reviewConfidence,
+          now: reviewedAt,
+          monthKey: reviewedMonthKey,
+          premiumUntil: getZonedMonthRangeIso(reviewedMonthKey, reportTimezone).endIso,
+          contributorUnlockPoints: this.config.CONTRIBUTOR_UNLOCK_POINTS,
+        });
+        const account = await this.accountSessionRepository.getAccountById(approved.submitter.id);
+        if (!account) throw new AppError("Submitter not found.", 404);
+        result = { submission: approved.submission, pointsAwarded: approved.pointsAwarded, account };
+      } else {
+        const reviewed = await this.communitySubmissionRepository.reviewSubmission({
+          submissionId,
+          reviewerId: admin.id,
+          status: input.status,
+          rejectionReason: input.rejectionReason,
+          fraudFlagged: input.fraudFlagged || input.status === "fraud_flagged",
+          now: reviewedAt,
+          monthKey: reviewedMonthKey,
+          allowOwnReview,
+        });
+        const account = await this.accountSessionRepository.getAccountById(reviewed.submitter.id);
+        if (!account) throw new AppError("Submitter not found.", 404);
+        result = { submission: reviewed.submission, pointsAwarded: 0, account };
+      }
     } catch (error) {
       if (error instanceof MissionReservationError) {
         throw new AppError(error.message, 409);
       }
       throw error;
     }
-    this.auditSecurity({
+    await this.auditSecurity({
       actor: admin,
       action: "admin_submission_review",
       targetType: "submission",
@@ -8867,7 +10446,7 @@ export class BusinessService {
     if (input.status !== "needs_more_evidence") {
       const eventType: EventTrackInput["eventType"] =
         input.status === "approved" ? "submission_approved" : "submission_rejected";
-      this.trackEvent(result.account, {
+      await this.trackEvent(result.account, {
         anonymousSessionId: null,
         eventType,
         venueId: result.submission.venueId,
@@ -8886,7 +10465,7 @@ export class BusinessService {
     }
 
     if (result.account.subscriptionStatus === "contributor_unlocked" && result.pointsAwarded > 0) {
-      this.trackEvent(result.account, {
+      await this.trackEvent(result.account, {
         anonymousSessionId: null,
         eventType: "contributor_access_unlocked",
         venueId: result.submission.venueId,
@@ -8901,7 +10480,7 @@ export class BusinessService {
 
     if (input.status === "approved" && submission.submission.missionId) {
       try {
-        this.runMissionMaintenance({ forceRefresh: true });
+        await this.runMissionMaintenance({ forceRefresh: true });
       } catch (error) {
         logger.error("Mission maintenance failed after an approved submission", {
           submissionId,
@@ -8921,13 +10500,17 @@ export class BusinessService {
     return this.isAdmin(admin);
   }
 
-  calculatePoints(submission: BusinessSubmission, items: BusinessSubmissionItem[]): number {
-    const freshnessPoints = this.calculateFreshnessPoints(this.repository.getLatestVenueDataTimestamp(submission.venueId));
-    const includesNewDrink = items.some((item) => !this.repository.venueHasPublishedBeerRecord({
-      venueId: submission.venueId,
-      beerName: item.beerName,
-      normalizedBeerId: item.normalizedBeerId,
-    }));
+  async calculatePoints(submission: BusinessSubmission, items: BusinessSubmissionItem[]): Promise<number> {
+    const [lastVerifiedAt, publishedFlags] = await Promise.all([
+      this.venueDataReadRepository.getLatestVenueDataTimestamp(submission.venueId),
+      Promise.all(items.map((item) => this.venueDataReadRepository.venueHasPublishedBeerRecord({
+        venueId: submission.venueId,
+        beerName: item.beerName,
+        normalizedBeerId: item.normalizedBeerId,
+      }))),
+    ]);
+    const freshnessPoints = this.calculateFreshnessPoints(lastVerifiedAt);
+    const includesNewDrink = publishedFlags.some((published) => !published);
 
     return includesNewDrink ? Math.max(freshnessPoints, CONTRIBUTION_POINTS.newVenue) : freshnessPoints;
   }
@@ -8959,11 +10542,11 @@ export class BusinessService {
     return (await this.listVenuesPage(query, limit, 0, account)).venues;
   }
 
-  private attachVenueBeerKeys(venues: VenueRow[], hasFullAccess: boolean): VenueRow[] {
+  private async attachVenueBeerKeys(venues: VenueRow[], hasFullAccess: boolean): Promise<VenueRow[]> {
     if (venues.length === 0) {
       return venues;
     }
-    const beerKeysByVenue = this.repository.listPublicVenueBeerKeys(
+    const beerKeysByVenue = await this.publicVenueDirectoryRepository.listPublicVenueBeerKeys(
       venues.map((venue) => venue.id),
     );
     return venues.map((venue) => ({
@@ -8986,8 +10569,11 @@ export class BusinessService {
     const hasFullAccess = isFullAccess(account, account ? this.isAdmin(account) : false);
     const normalizedLimit = Math.min(1000, Math.max(1, limit));
     const normalizedOffset = Math.max(0, offset);
-    const deduplicateLocalVenues = (venues: VenueRow[]) => this.mergeVenueRows(
-      venues.map((venue) => ({ ...venue, ...this.getPublicVenueTierMetadata(venue.id) })),
+    const deduplicateLocalVenues = async (venues: VenueRow[]) => this.mergeVenueRows(
+      await Promise.all(venues.map(async (venue) => ({
+        ...venue,
+        ...await this.getPublicVenueTierMetadata(venue.id),
+      }))),
       [],
       venues.length,
       false,
@@ -8996,15 +10582,15 @@ export class BusinessService {
       const rawQuery = query?.trim();
       const labelStem = rawQuery?.split("·")[0] ?? "";
       const normalizedQuery = (labelStem.split(",")[0] ?? "").trim();
-      const rawDirectory = this.repository.listPublicVenueDirectoryPage({
+      const rawDirectory = await this.publicVenueDirectoryRepository.listPublicVenueDirectoryPage({
         query: normalizedQuery,
         limit: -1,
         offset: 0,
       });
-      const directory = deduplicateLocalVenues(rawDirectory.venues);
+      const directory = await deduplicateLocalVenues(rawDirectory.venues);
       const venues = directory.slice(normalizedOffset, normalizedOffset + normalizedLimit);
       return {
-        venues: this.attachVenueBeerKeys(venues, hasFullAccess),
+        venues: await this.attachVenueBeerKeys(venues, hasFullAccess),
         pagination: {
           total: directory.length,
           limit: normalizedLimit,
@@ -9017,15 +10603,18 @@ export class BusinessService {
     const normalizedSearch = query?.trim() ?? "";
     const labelStem = normalizedSearch.split("·")[0] ?? "";
     const localSearch = (labelStem.split(",")[0] ?? "").trim();
-    const rawLocalDirectory = this.repository.listPublicVenueDirectoryPage({
+    const rawLocalDirectory = await this.publicVenueDirectoryRepository.listPublicVenueDirectoryPage({
       query: localSearch,
       limit: -1,
       offset: 0,
     });
-    let localDirectory = deduplicateLocalVenues(rawLocalDirectory.venues);
+    let localDirectory = await deduplicateLocalVenues(rawLocalDirectory.venues);
     let localPage = localDirectory.slice(normalizedOffset, normalizedOffset + normalizedLimit);
     const allLocalVenues = localSearch
-      ? this.repository.listPublicVenueDirectoryPage({ limit: -1, offset: 0 }).venues
+      ? (await this.publicVenueDirectoryRepository.listPublicVenueDirectoryPage({
+          limit: -1,
+          offset: 0,
+        })).venues
       : rawLocalDirectory.venues;
     let remoteOffset = Math.max(0, normalizedOffset - localDirectory.length);
     let remoteSlots = Math.max(0, normalizedLimit - localPage.length);
@@ -9186,16 +10775,20 @@ export class BusinessService {
       remoteRows = uniqueRemoteRows.slice(remoteOffset, remoteOffset + remoteSlots);
       estimatedRemoteTotal = uniqueRemoteRows.length;
     }
+    const remoteRowsWithMetadata = await Promise.all(remoteRows.map(async (venue) => ({
+      ...venue,
+      ...await this.getPublicVenueTierMetadata(venue.id),
+    })));
     const page = this.mergeVenueRows(
       localPage,
-      remoteRows.map((venue) => ({ ...venue, ...this.getPublicVenueTierMetadata(venue.id) })),
+      remoteRowsWithMetadata,
       normalizedLimit,
       false,
     );
     const estimatedTotal = localDirectory.length + estimatedRemoteTotal;
     const hasMore = normalizedOffset + page.length < estimatedTotal;
     return {
-      venues: this.attachVenueBeerKeys(page, hasFullAccess),
+      venues: await this.attachVenueBeerKeys(page, hasFullAccess),
       pagination: {
         total: estimatedTotal,
         limit: normalizedLimit,
@@ -9206,12 +10799,13 @@ export class BusinessService {
   }
 
   async getPublicVenueById(venueId: string): Promise<VenueRow | null> {
-    const normalizedVenueId = this.repository.getCanonicalVenueId(venueId.trim());
+    const normalizedVenueId = await this.venueIdentityRepository.getCanonicalVenueId(venueId.trim());
     if (!normalizedVenueId) {
       return null;
     }
 
-    const localVenue = this.getLocalPublicVenueById(normalizedVenueId);
+    const cachedLocation = await this.venueIdentityRepository.getVenueLocationCache(normalizedVenueId);
+    const localVenue = await this.getLocalPublicVenueById(normalizedVenueId, cachedLocation);
     if (!this.supabase || this.config.RESTORE_REHEARSAL_MODE) return localVenue;
     if (!isPostgresUuid(normalizedVenueId)) {
       if (!localVenue) return null;
@@ -9250,24 +10844,27 @@ export class BusinessService {
       return null;
     }
     const now = nowIso();
-    this.repository.upsertVenueLocationCache({
+    await this.venueIdentityRepository.upsertVenueLocationCache({
       venueId: venue.id,
       venueName: venue.name,
       suburb: venue.suburb,
       latitude: venue.latitude,
       longitude: venue.longitude,
+      expectedUpdatedAt: cachedLocation?.updatedAt ?? null,
       now,
     });
 
-    const remoteVenue = { ...venue, ...this.getPublicVenueTierMetadata(venue.id) };
+    const remoteVenue = { ...venue, ...await this.getPublicVenueTierMetadata(venue.id) };
     return localVenue
       ? this.mergeVenueRows([localVenue], [remoteVenue], 1, false)[0] ?? localVenue
       : remoteVenue;
   }
 
-  private getLocalPublicVenueById(venueId: string): VenueRow | null {
-    const profile = this.repository.getBarProfile(venueId);
-    const location = this.repository.getVenueLocationCache(venueId);
+  private async getLocalPublicVenueById(
+    venueId: string,
+    location: VenueLocationCache | null,
+  ): Promise<VenueRow | null> {
+    const profile = await this.venueInventoryRepository.getBarProfile(venueId);
     if (!profile && !location) return null;
     return {
       id: venueId,
@@ -9285,7 +10882,7 @@ export class BusinessService {
       openingHours: profile?.openingHours ?? {},
       venueTags: profile?.venueTags ?? [],
       isUserSubmittedVenue: profile?.venueTags.includes("user submitted") ?? false,
-      ...this.getPublicVenueTierMetadata(venueId),
+      ...await this.getPublicVenueTierMetadata(venueId),
     };
   }
 
@@ -9304,6 +10901,7 @@ export class BusinessService {
     try {
       const response = await fetch(url, {
         ...requestInit,
+        redirect: "error",
         signal: controller.signal,
         headers: {
           "Content-Type": "application/json",
@@ -9383,7 +10981,7 @@ export class BusinessService {
       getGoogleVenueAddressComponent(place.addressComponents, "sublocality") ??
       getGoogleVenueAddressComponent(place.addressComponents, "sublocality_level_1") ??
       getGoogleVenueAddressComponent(place.addressComponents, "neighborhood");
-    const duplicate = this.repository.findLikelyVenueDuplicate({ name, suburb });
+    const duplicate = await this.venueDataReadRepository.findLikelyVenueDuplicate({ name, suburb });
     return duplicate
       ? {
           id: duplicate.venueId,
@@ -9565,13 +11163,13 @@ export class BusinessService {
     };
   }
 
-  private getPublicVenueTierMetadata(venueId: string): Pick<
+  private async getPublicVenueTierMetadata(venueId: string): Promise<Pick<
     VenueRow,
     "membershipTier" | "highlightedName" | "premiumBadge" | "promoted" | "featuredSpecialEligible" | "acceptsPintPathCodes"
-  > {
-    const profile = this.repository.getBarProfile(venueId);
+  >> {
+    const profile = await this.venueInventoryRepository.getBarProfile(venueId);
 
-    if (!profile?.active) {
+    if (!this.config.COMMERCIAL_LAUNCH_ENABLED || !profile?.active) {
       return {
         membershipTier: "basic",
         highlightedName: false,
@@ -9593,11 +11191,11 @@ export class BusinessService {
     };
   }
 
-  seedDemoMissions() {
+  async seedDemoMissions() {
     if (this.config.NODE_ENV === "production") {
       throw new AppError("Demo missions are disabled in production.", 403);
     }
-    if (this.repository.countMissions() > 0) {
+    if (await this.missionLifecycleRepository.countMissions({ activeOnly: false }) > 0) {
       return { created: 0 };
     }
 
@@ -9609,8 +11207,8 @@ export class BusinessService {
       ["mission:brighton-pub", "demo:brighton-pub", "Brighton Pub", "Brighton", "outside dense CBD cluster", 5, 1.5],
     ] as const;
 
-    missions.forEach(([id, venueId, venueName, suburb, reason, points, multiplier]) => {
-      this.repository.createMission({
+    for (const [id, venueId, venueName, suburb, reason, points, multiplier] of missions) {
+      await this.missionLifecycleRepository.createMission({
         id,
         venueId,
         venueName,
@@ -9623,7 +11221,7 @@ export class BusinessService {
         createdAt: now,
         updatedAt: now,
       });
-    });
+    }
 
     return { created: missions.length };
   }
@@ -9690,10 +11288,10 @@ export class BusinessService {
     return `Stale ${scope} - update with current venue data`;
   }
 
-  private buildAutoMissionsForVenue(
+  private async buildAutoMissionsForVenue(
     candidate: MissionVenueCandidate,
     now: string,
-  ): Array<Omit<BusinessMission, "active" | "sponsorFlag"> & { active?: boolean; sponsorFlag?: boolean }> {
+  ): Promise<Array<Omit<BusinessMission, "active" | "sponsorFlag"> & { active?: boolean; sponsorFlag?: boolean }>> {
     const cycleSuffix = (lastVerifiedAt: string | null) => lastVerifiedAt
       ? `:${lastVerifiedAt.replace(/[^0-9]/g, "").slice(0, 14)}`
       : "";
@@ -9741,9 +11339,9 @@ export class BusinessService {
     ];
 
     for (const beer of AUTO_MISSION_TARGET_BEERS) {
-      const lastVerifiedAt = this.repository.getLatestVenueBeerTimestamp({
+      const lastVerifiedAt = await this.venueInventoryRepository.getLatestVenueBeerTimestamp({
         venueId: candidate.venueId,
-        venueIds: this.repository.listVenueIdentityIds(candidate.venueId),
+        venueIds: await this.venueIdentityRepository.listVenueIdentityIds(candidate.venueId),
         normalizedBeerId: beer.key,
         beerNames: [beer.name, ...beer.aliases],
       });
@@ -9771,28 +11369,51 @@ export class BusinessService {
     return missions;
   }
 
-  private refreshAutoMissions(force = false): { candidates: number; generated: number; refreshed: boolean } {
-    const state = this.repository.getSystemState<{ refreshedAt?: string }>(AUTO_MISSION_REFRESH_STATE_KEY);
+  private async refreshAutoMissions(force = false): Promise<{ candidates: number; generated: number; refreshed: boolean }> {
+    const state = await this.systemStateRepository.get<{ refreshedAt?: string }>(AUTO_MISSION_REFRESH_STATE_KEY);
     const lastRefreshMs = state?.value.refreshedAt ? new Date(state.value.refreshedAt).getTime() : 0;
     if (!force && Number.isFinite(lastRefreshMs) && Date.now() - lastRefreshMs < AUTO_MISSION_REFRESH_INTERVAL_MS) {
-      return { candidates: this.repository.countMissions(), generated: 0, refreshed: false };
+      return {
+        candidates: await this.missionLifecycleRepository.countMissions({ activeOnly: false }),
+        generated: 0,
+        refreshed: false,
+      };
     }
     const rawCandidates: MissionVenueCandidate[] = [];
+    const seenRawCandidateIds = new Set<string>();
     let candidateOffset = 0;
-    let priorPageSignature: string | null = null;
-    while (true) {
-      const page = this.repository.listMissionVenueCandidates(AUTO_MISSION_VENUE_PAGE_SIZE, candidateOffset);
-      if (!page.length) break;
-      const pageSignature = `${page[0]?.venueId ?? ""}:${page.at(-1)?.venueId ?? ""}:${page.length}`;
-      if (pageSignature === priorPageSignature) {
-        logger.error("Auto-mission candidate pagination stopped making progress", { candidateOffset });
+    let candidateScanComplete = false;
+    for (let pageNumber = 0; pageNumber < MAX_AUTO_MISSION_CANDIDATE_PAGES; pageNumber += 1) {
+      const page = await this.missionDiscoveryAutomationRepository.listMissionVenueCandidates({
+        limit: AUTO_MISSION_VENUE_PAGE_SIZE,
+        offset: candidateOffset,
+      });
+      if (page.length === 0) {
+        candidateScanComplete = true;
         break;
       }
+      if (page.length > AUTO_MISSION_VENUE_PAGE_SIZE) {
+        throw new AppError("Auto-mission candidate pagination returned an oversized page.", 500, undefined, false);
+      }
+      for (const candidate of page) {
+        if (seenRawCandidateIds.has(candidate.venueId)) {
+          throw new AppError("Auto-mission candidate pagination returned a duplicate venue.", 500, undefined, false);
+        }
+        seenRawCandidateIds.add(candidate.venueId);
+      }
       rawCandidates.push(...page);
-      priorPageSignature = pageSignature;
       const nextOffset = candidateOffset + page.length;
-      if (nextOffset <= candidateOffset || page.length < AUTO_MISSION_VENUE_PAGE_SIZE) break;
+      if (nextOffset <= candidateOffset || nextOffset > MAX_AUTO_MISSION_CANDIDATE_SCAN_ROWS) {
+        throw new AppError("Auto-mission candidate pagination did not make progress.", 500, undefined, false);
+      }
+      if (page.length < AUTO_MISSION_VENUE_PAGE_SIZE) {
+        candidateScanComplete = true;
+        break;
+      }
       candidateOffset = nextOffset;
+    }
+    if (!candidateScanComplete) {
+      throw new AppError("Auto-mission candidate lookup exceeded its bounded scan budget.", 500, undefined, false);
     }
     const candidateByVenue = new Map<string, MissionVenueCandidate>();
     const newestIso = (left: string | null, right: string | null) => {
@@ -9804,7 +11425,7 @@ export class BusinessService {
       if (this.config.NODE_ENV === "production" && candidate.venueId.trim().toLowerCase().startsWith("demo:")) {
         continue;
       }
-      const venueId = this.repository.getCanonicalVenueId(candidate.venueId);
+      const venueId = await this.venueIdentityRepository.getCanonicalVenueId(candidate.venueId);
       const existing = candidateByVenue.get(venueId);
       if (!existing) {
         candidateByVenue.set(venueId, { ...candidate, venueId });
@@ -9825,11 +11446,15 @@ export class BusinessService {
     }
 
     const now = nowIso();
-    const missions = candidates
-      .flatMap((candidate) => this.buildAutoMissionsForVenue(candidate, now))
+    const missions = (await Promise.all(candidates
+      .map((candidate) => this.buildAutoMissionsForVenue(candidate, now))))
+      .flat()
       .filter((mission) => mission.points > CONTRIBUTION_POINTS.veryFreshUpdate);
-    const generated = this.repository.replaceAutoMissions(missions, now);
-    this.repository.setSystemState(AUTO_MISSION_REFRESH_STATE_KEY, {
+    if (missions.length > MAX_AUTO_MISSION_DEFINITIONS) {
+      throw new AppError("Auto-mission generation exceeded its bounded replacement budget.", 500, undefined, false);
+    }
+    const generated = await this.missionDiscoveryAutomationRepository.replaceAutoMissions({ missions, now });
+    await this.systemStateRepository.set(AUTO_MISSION_REFRESH_STATE_KEY, {
       refreshedAt: now,
       candidates: candidates.length,
       generated,
@@ -9841,23 +11466,67 @@ export class BusinessService {
     };
   }
 
-  runMissionMaintenance(input: { forceRefresh?: boolean } = {}): {
+  private async runMissionAutomationBatches(
+    label: string,
+    work: () => Promise<{ changed: number; hasMore: boolean }>,
+  ): Promise<number> {
+    let changed = 0;
+    for (let batch = 0; batch < MAX_MISSION_AUTOMATION_BATCHES; batch += 1) {
+      const result = await work();
+      changed += result.changed;
+      if (!result.hasMore) return changed;
+      if (result.changed === 0) {
+        throw new AppError(`${label} did not make progress after an empty or locked batch.`, 500, undefined, false);
+      }
+    }
+    throw new AppError(`${label} exceeded its bounded maintenance budget.`, 500, undefined, false);
+  }
+
+  async runMissionMaintenance(input: { forceRefresh?: boolean } = {}): Promise<{
     expiredAcceptances: number;
     candidates: number;
     generated: number;
     pruned: number;
     refreshed: boolean;
-  } {
+  }> {
     const now = nowIso();
     if (this.config.NODE_ENV === "production") {
-      this.repository.deactivateDemoMissions(now);
+      await this.runMissionAutomationBatches(
+        "Demo mission deactivation",
+        () => this.missionDiscoveryAutomationRepository.deactivateDemoMissions({
+          now,
+          limit: MISSION_AUTOMATION_BATCH_SIZE,
+        }),
+      );
     }
-    const expiredAcceptances = this.repository.expireAcceptedMissionProgress({
-      acceptedBefore: missionAcceptanceCutoff(now),
-      now,
-    });
-    const refreshed = this.refreshAutoMissions(Boolean(input.forceRefresh));
-    const pruned = this.repository.pruneInactiveAutoMissions();
+    const acceptedBefore = missionAcceptanceCutoff(now);
+    let expiredAcceptances = 0;
+    let expiryComplete = false;
+    for (let batch = 0; batch < MAX_MISSION_EXPIRY_BATCHES; batch += 1) {
+      const result = await this.missionLifecycleRepository.expireAcceptedMissionProgress({
+        acceptedBefore,
+        now,
+        limit: MISSION_EXPIRY_BATCH_SIZE,
+      });
+      expiredAcceptances += result.expired;
+      if (!result.hasMore) {
+        expiryComplete = true;
+        break;
+      }
+      if (result.expired === 0) {
+        throw new AppError("Mission expiry did not make progress.", 500, undefined, false);
+      }
+    }
+    if (!expiryComplete) {
+      throw new AppError("Mission expiry exceeded its bounded maintenance budget.", 500, undefined, false);
+    }
+    const refreshed = await this.refreshAutoMissions(Boolean(input.forceRefresh));
+    const pruned = await this.runMissionAutomationBatches(
+      "Inactive auto-mission pruning",
+      () => this.missionDiscoveryAutomationRepository.pruneInactiveAutoMissions({
+        limit: MISSION_AUTOMATION_BATCH_SIZE,
+      }),
+    );
     return {
       expiredAcceptances,
       ...refreshed,
@@ -9882,7 +11551,7 @@ export class BusinessService {
       };
     }
 
-    const cachedLocation = this.resolveMissionAreaFromLocalCache(normalizedQuery);
+    const cachedLocation = await this.resolveMissionAreaFromLocalCache(normalizedQuery);
     if (cachedLocation) {
       return {
         location: cachedLocation,
@@ -9958,7 +11627,7 @@ export class BusinessService {
     }
   }
 
-  private resolveMissionAreaFromLocalCache(query: string): MissionAreaLookup | null {
+  private async resolveMissionAreaFromLocalCache(query: string): Promise<MissionAreaLookup | null> {
     const terms = query
       .toLowerCase()
       .split(/\s+/)
@@ -9968,11 +11637,10 @@ export class BusinessService {
       return null;
     }
 
-    const matches = this.repository
-      .listMissions({ activeOnly: true, suburb: undefined, limit: -1 })
-      .map((mission) => {
-        const profile = this.repository.getBarProfile(mission.venueId);
-        const location = this.repository.getVenueLocationCache(mission.venueId);
+    const matches = (await Promise.all((await this.listActiveMissionsForLocalAreaLookup())
+      .map(async (mission) => {
+        const profile = await this.venueInventoryRepository.getBarProfile(mission.venueId);
+        const location = await this.venueIdentityRepository.getVenueLocationCache(mission.venueId);
         return {
           mission,
           profile,
@@ -9982,7 +11650,7 @@ export class BusinessService {
             .join(" ")
             .toLowerCase(),
         };
-      })
+      })))
       .filter((entry) =>
         typeof entry.location?.latitude === "number" &&
         typeof entry.location?.longitude === "number" &&
@@ -10015,10 +11683,53 @@ export class BusinessService {
     };
   }
 
-  private buildMissionResults(query: MissionListQuery, account: BusinessAccount | null): {
+  private async listActiveMissionsForLocalAreaLookup(): Promise<MissionLifecycleMission[]> {
+    const missions: MissionLifecycleMission[] = [];
+    const seenMissionIds = new Set<string>();
+    const seenCursors = new Set<string>();
+    let cursor: MissionListCursor | null = null;
+    while (missions.length < MAX_MISSION_LOCAL_CACHE_SCAN_ROWS) {
+      const page = await this.missionLifecycleRepository.listMissions({
+        activeOnly: true,
+        limit: Math.min(
+          MISSION_LOCAL_CACHE_PAGE_SIZE,
+          MAX_MISSION_LOCAL_CACHE_SCAN_ROWS - missions.length,
+        ),
+        cursor,
+      });
+      for (const mission of page.missions) {
+        if (seenMissionIds.has(mission.id)) {
+          throw new AppError("Mission pagination returned a duplicate record.", 500, undefined, false);
+        }
+        seenMissionIds.add(mission.id);
+        missions.push(mission);
+      }
+      if (!page.nextCursor) return missions;
+      if (page.missions.length === 0) {
+        throw new AppError("Mission pagination did not make progress.", 500, undefined, false);
+      }
+      const cursorKey = `${page.nextCursor.updatedAt}\0${page.nextCursor.id}`;
+      if (seenCursors.has(cursorKey)) {
+        throw new AppError("Mission pagination repeated a cursor.", 500, undefined, false);
+      }
+      const last = page.missions.at(-1);
+      if (
+        !last
+        || last.updatedAt !== page.nextCursor.updatedAt
+        || last.id !== page.nextCursor.id
+      ) {
+        throw new AppError("Mission pagination returned an invalid cursor.", 500, undefined, false);
+      }
+      seenCursors.add(cursorKey);
+      cursor = page.nextCursor;
+    }
+    throw new AppError("Mission lookup exceeded its bounded scan budget.", 500, undefined, false);
+  }
+
+  private async buildMissionResults(query: MissionListQuery, account: BusinessAccount | null): Promise<{
     missions: BusinessMission[];
     total: number;
-  } {
+  }> {
     const radiusMeters = Math.max(100, Math.min(50_000, Number(query.radiusKm || 5) * 1000));
     const searchTerms = String(query.q || "")
       .toLowerCase()
@@ -10027,15 +11738,15 @@ export class BusinessService {
       .filter(Boolean);
     const savedSuburbs = query.sort === "saved" && account
       ? [
-          ...this.repository.listSavedItems(account.id)
+          ...(await this.accountProfilePreferencesRepository.listSavedItems(account.id))
             .filter((item) => item.itemType === "suburb")
             .map((item) => item.label.trim().toLowerCase()),
-          ...(this.repository.getAccountPreferences(account.id)?.preferredSuburbs ?? [])
+          ...((await this.accountProfilePreferencesRepository.getAccountPreferences(account.id))?.preferredSuburbs ?? [])
             .map((suburb) => suburb.trim().toLowerCase()),
         ].filter(Boolean)
       : [];
     const now = new Date();
-    const page = this.repository.listMissionFeedPage({
+    const page = await this.missionDiscoveryAutomationRepository.listMissionFeedPage({
       userId: account?.id ?? null,
       suburb: query.suburb,
       searchTerms,
@@ -10068,12 +11779,12 @@ export class BusinessService {
     };
   }
 
-  listMissions(query: MissionListQuery, account: BusinessAccount | null = null): BusinessMission[] {
-    return this.buildMissionResults(query, account).missions;
+  async listMissions(query: MissionListQuery, account: BusinessAccount | null = null): Promise<BusinessMission[]> {
+    return (await this.buildMissionResults(query, account)).missions;
   }
 
-  getMissionsPage(query: MissionListQuery, account: BusinessAccount | null = null) {
-    const result = this.buildMissionResults(query, account);
+  async getMissionsPage(query: MissionListQuery, account: BusinessAccount | null = null) {
+    const result = await this.buildMissionResults(query, account);
     const offset = Math.max(0, query.offset ?? 0);
     const limit = Math.max(1, query.limit);
     return {
@@ -10087,7 +11798,7 @@ export class BusinessService {
     };
   }
 
-  createMission(input: {
+  async createMission(input: {
     venueId: string;
     venueName: string;
     suburb: string | null;
@@ -10098,7 +11809,7 @@ export class BusinessService {
     active: boolean;
   }) {
     const now = nowIso();
-    return this.repository.createMission({
+    return this.missionLifecycleRepository.createMission({
       id: crypto.randomUUID(),
       venueId: input.venueId,
       venueName: input.venueName,
@@ -10114,33 +11825,23 @@ export class BusinessService {
     });
   }
 
-  acceptMission(account: BusinessAccount, missionId: string) {
+  async acceptMission(account: BusinessAccount, missionId: string) {
     this.assertAccountCanSubmit(account);
-    this.runMissionMaintenance();
+    await this.runMissionMaintenance();
     const acceptedAt = nowIso();
-    const mission = this.repository.getMissionById(missionId);
+    const mission = await this.missionLifecycleRepository.getMissionById(missionId);
     if (!mission || !mission.active) {
       throw new AppError("This mission is no longer active.", 404);
     }
     if (!PUBLIC_HAPPY_HOUR_MISSIONS_ENABLED && isHappyHourMission(mission)) {
       throw new AppError("This happy-hour mission is not available during the current public launch.", 404);
     }
-    const progress = this.repository.acceptMission({
+    const progress = await this.missionLifecycleRepository.acceptMission({
       missionId,
       userId: account.id,
       now: acceptedAt,
       acceptedAfter: missionAcceptanceCutoff(acceptedAt),
     });
-    if (!progress) {
-      const currentMission = this.repository.getMissionById(missionId);
-      if (!currentMission?.active) {
-        throw new AppError("This mission is no longer active.", 404);
-      }
-      throw new AppError(
-        "Another contributor is already working on this mission. It will reopen if they do not submit within 24 hours.",
-        409,
-      );
-    }
     if (progress.status === "completed") {
       throw new AppError("You have already completed this mission.", 409);
     }
@@ -10169,25 +11870,30 @@ export class BusinessService {
     };
   }
 
-  releaseMission(account: BusinessAccount, missionId: string) {
+  async releaseMission(account: BusinessAccount, missionId: string) {
     this.assertAccountCanSubmit(account);
-    const progress = this.repository.getMissionProgress({ missionId, userId: account.id });
+    const progress = await this.missionLifecycleRepository.getMissionProgress({ missionId, userId: account.id });
     if (!progress) throw new AppError("Mission reservation not found.", 404);
     if (progress.status !== "accepted") {
       throw new AppError("Only an accepted mission can be released before submission.", 409);
     }
-    const released = this.repository.releaseAcceptedMission({ missionId, userId: account.id, now: nowIso() });
-    if (!released) throw new AppError("Mission reservation was already released.", 409);
+    const released = await this.missionLifecycleRepository.releaseAcceptedMission({
+      missionId,
+      userId: account.id,
+      expectedAcceptedAt: progress.acceptedAt,
+      expectedUpdatedAt: progress.updatedAt,
+      now: nowIso(),
+    });
     return { missionId, progress: released, released: true };
   }
 
-  listAdminMissions(admin: BusinessAccount, input: number | AdminPaginationInput = 500) {
+  async listAdminMissions(admin: BusinessAccount, input: number | AdminPaginationInput = 500) {
     if (!this.isAdmin(admin)) throw new AppError("Admin access required.", 403);
     const query = typeof input === "number"
       ? { limit: Math.min(1000, Math.max(1, input)), offset: 0 }
       : input;
-    const missions = this.repository.listMissions({ activeOnly: false, limit: query.limit, offset: query.offset });
-    const total = this.repository.countMissions();
+    const missions = await this.missionLifecycleRepository.listAdminMissions(query);
+    const total = await this.missionLifecycleRepository.countMissions({ activeOnly: false });
     return {
       missions,
       total,
@@ -10195,37 +11901,46 @@ export class BusinessService {
     };
   }
 
-  updateAdminMission(admin: BusinessAccount, missionId: string, input: { active: boolean; reason: string }) {
+  async updateAdminMission(admin: BusinessAccount, missionId: string, input: { active: boolean; reason: string }) {
     if (!this.isAdmin(admin)) throw new AppError("Admin access required.", 403);
-    if (!this.repository.setMissionActive({ missionId, active: input.active, now: nowIso() })) {
-      throw new AppError("Mission not found.", 404);
-    }
-    const mission = this.repository.getMissionById(missionId)!;
-    this.auditSecurity({ actor: admin, action: "admin_mission_lifecycle_updated", targetType: "mission", targetId: missionId, metadata: input });
+    const current = await this.missionLifecycleRepository.getMissionById(missionId);
+    if (!current) throw new AppError("Mission not found.", 404);
+    const mission = await this.missionLifecycleRepository.setMissionActive({
+      missionId,
+      active: input.active,
+      expectedUpdatedAt: current.updatedAt,
+      now: nowIso(),
+    });
+    await this.auditSecurity({ actor: admin, action: "admin_mission_lifecycle_updated", targetType: "mission", targetId: missionId, metadata: input });
     return { mission };
   }
 
-  deleteAdminMission(admin: BusinessAccount, missionId: string, reason: string) {
+  async deleteAdminMission(admin: BusinessAccount, missionId: string, reason: string) {
     if (!this.isAdmin(admin)) throw new AppError("Admin access required.", 403);
-    const mission = this.repository.getMissionById(missionId);
+    const mission = await this.missionLifecycleRepository.getMissionById(missionId);
     if (!mission) throw new AppError("Mission not found.", 404);
-    if (!this.repository.deleteMissionIfUnused(missionId)) {
-      throw new AppError("Mission has progress, submissions, or request history and can only be deactivated.", 409);
-    }
-    this.auditSecurity({ actor: admin, action: "admin_mission_deleted", targetType: "mission", targetId: missionId, metadata: { venueId: mission.venueId, reason } });
+    await this.missionLifecycleRepository.deleteMissionIfUnused({
+      missionId,
+      expectedUpdatedAt: mission.updatedAt,
+    });
+    await this.auditSecurity({ actor: admin, action: "admin_mission_deleted", targetType: "mission", targetId: missionId, metadata: { venueId: mission.venueId, reason } });
     return { missionId, deleted: true };
   }
 
-  listPriceRecords(
+  async listPriceRecords(
     account: BusinessAccount | null,
     input: PriceRecordsQuery & { clientIp?: string | undefined },
   ) {
     const anonymousSessionId = input.anonymousSessionId
       || (account ? null : hashAnonymousFallback(input.clientIp || "unknown-client"));
-    const requestedVenueId = input.venueId ? this.repository.getCanonicalVenueId(input.venueId) : null;
-    const identityVenueIds = requestedVenueId ? this.repository.listVenueIdentityIds(requestedVenueId) : [];
-    const canonicalizeRecord = (record: PublicVenuePriceRecord): PublicVenuePriceRecord => {
-      const canonicalVenueId = this.repository.getCanonicalVenueId(record.venueId);
+    const requestedVenueId = input.venueId
+      ? await this.venueIdentityRepository.getCanonicalVenueId(input.venueId)
+      : null;
+    const identityVenueIds = requestedVenueId
+      ? await this.venueIdentityRepository.listVenueIdentityIds(requestedVenueId)
+      : [];
+    const canonicalizeRecord = async (record: PublicVenuePriceRecord): Promise<PublicVenuePriceRecord> => {
+      const canonicalVenueId = await this.venueIdentityRepository.getCanonicalVenueId(record.venueId);
       return canonicalVenueId === record.venueId ? record : { ...record, venueId: canonicalVenueId };
     };
     const cursor = decodePriceCursor(input.cursor);
@@ -10238,13 +11953,13 @@ export class BusinessService {
     let scanHasMore = false;
     let records: PublicVenuePriceRecord[] = [];
     for (let batch = 0; batch < maxBatches; batch += 1) {
-      const currentBatch = this.repository.listCurrentPriceRecordPage({
+      const currentBatch = await this.publicPriceRepository.listCurrentPriceRecordPage({
         venueIds: identityVenueIds,
         limit: batchSize,
         before: scanCursor,
       });
-      const managerBatches = managerVenueIds.map((venueId) =>
-        this.repository.listVenueManagerPriceRecords(batchSize, venueId, scanCursor));
+      const managerBatches = await Promise.all(managerVenueIds.map((venueId) =>
+        this.publicPriceRepository.listVenueManagerPriceRecords(batchSize, venueId, scanCursor)));
       const candidates = [...currentBatch, ...managerBatches.flat()]
         .sort((left, right) => {
           const timestampDifference = Date.parse(right.lastVerifiedAt) - Date.parse(left.lastVerifiedAt);
@@ -10260,13 +11975,23 @@ export class BusinessService {
       scanHasMore = candidates.length > batchSize || currentBatch.length === batchSize ||
         managerBatches.some((managerBatch) => managerBatch.length === batchSize);
 
-      const visibleBatch = globalBatch
-        .map(canonicalizeRecord)
+      const canonicalBatch = await Promise.all(globalBatch.map(canonicalizeRecord));
+      const specialRecords = canonicalBatch.filter((record) =>
+        isPublicLaunchPriceRecord(record) &&
+        record.displayKind === "special" &&
+        record.id.startsWith("venue_special:"),
+      );
+      const activeSpecialIds = new Set((await Promise.all(specialRecords.map(async (record) => {
+        const special = await this.venueInventoryRepository.getBarSpecialById(
+          record.id.slice("venue_special:".length),
+        );
+        return special && this.isBarSpecialActiveNow(special, new Date()) ? record.id : null;
+      }))).filter((id): id is string => Boolean(id)));
+      const visibleBatch = canonicalBatch
         .filter(isPublicLaunchPriceRecord)
         .filter((record) => {
           if (record.displayKind !== "special" || !record.id.startsWith("venue_special:")) return true;
-          const special = this.repository.getBarSpecialById(record.id.slice("venue_special:".length));
-          return special ? this.isBarSpecialActiveNow(special, new Date()) : false;
+          return activeSpecialIds.has(record.id);
         })
         .filter(shouldExposePriceRecord)
         .filter((record) =>
@@ -10287,28 +12012,26 @@ export class BusinessService {
       VenueRow,
       "membershipTier" | "highlightedName" | "premiumBadge" | "promoted" | "featuredSpecialEligible" | "acceptsPintPathCodes"
     >>();
-    const getCachedVenueMetadata = (venueId: string) => {
-      const cached = publicVenueMetadata.get(venueId);
-      if (cached) {
-        return cached;
-      }
-      const metadata = this.getPublicVenueTierMetadata(venueId);
-      publicVenueMetadata.set(venueId, metadata);
-      return metadata;
-    };
+    await Promise.all([...new Set(records.map((record) => record.venueId))].map(async (venueId) => {
+      publicVenueMetadata.set(venueId, await this.getPublicVenueTierMetadata(venueId));
+    }));
     const submissionEvidencePresence = new Map<string, boolean>();
+    await Promise.all([...new Set(records
+      .map((record) => record.sourceSubmissionId)
+      .filter((submissionId): submissionId is string => Boolean(submissionId)))].map(async (submissionId) => {
+      const evidenceIds = await this.sourceEvidenceRetentionRepository.listSubmissionSourceEvidenceIds({
+        submissionId,
+        limit: 1,
+      });
+      submissionEvidencePresence.set(submissionId, evidenceIds.length > 0);
+    }));
     const hasSubmissionEvidence = (submissionId: string) => {
       const cached = submissionEvidencePresence.get(submissionId);
-      if (cached !== undefined) {
-        return cached;
-      }
-      const present = this.repository.listSubmissionSourceEvidenceIds(submissionId).length > 0;
-      submissionEvidencePresence.set(submissionId, present);
-      return present;
+      return cached ?? false;
     };
     const addVenueMetadata = (record: PublicVenuePriceRecord): PublicVenuePriceRecord => ({
       ...record,
-      ...getCachedVenueMetadata(record.venueId),
+      ...publicVenueMetadata.get(record.venueId),
       hasSourceLinkage: record.hasSourceLinkage || Boolean(record.sourceSubmissionId),
       hasSourceEvidence: record.sourceSubmissionId
         ? hasSubmissionEvidence(record.sourceSubmissionId)
@@ -10350,26 +12073,26 @@ export class BusinessService {
     };
   }
 
-  trackEvent(account: BusinessAccount | null, input: EventTrackInput): void {
+  async trackEvent(account: BusinessAccount | null, input: EventTrackInput): Promise<void> {
     try {
       const privacyScope = serverEventPrivacyScope(input);
       if (account && privacyScope === "optional_analytics") {
-        const settings = this.repository.getAccountPrivacySettings(account.id) ??
-          this.repository.getDefaultAccountPrivacySettings(account.id);
+        const settings = await this.accountProfilePreferencesRepository.getAccountPrivacySettings(account.id) ??
+          await this.accountProfilePreferencesRepository.getDefaultAccountPrivacySettings(account.id);
         if (!settings.optionalAnalyticsEnabled) {
           return;
         }
       }
       if (account && privacyScope === "venue_insight") {
-        const settings = this.repository.getAccountPrivacySettings(account.id) ??
-          this.repository.getDefaultAccountPrivacySettings(account.id);
+        const settings = await this.accountProfilePreferencesRepository.getAccountPrivacySettings(account.id) ??
+          await this.accountProfilePreferencesRepository.getDefaultAccountPrivacySettings(account.id);
         if (!settings.optionalAnalyticsEnabled || !settings.venueReportInclusionEnabled) {
           return;
         }
       }
       const metadata = { ...input.metadata };
       delete metadata.privacyScope;
-      this.repository.recordEvent({
+      await this.activityAuditRepository.recordEvent({
         id: crypto.randomUUID(),
         userId: account?.id ?? null,
         anonymousSessionId: input.anonymousSessionId,
@@ -10391,15 +12114,15 @@ export class BusinessService {
     }
   }
 
-  trackClientEvent(
+  async trackClientEvent(
     account: BusinessAccount | null,
     input: EventTrackInput,
     context?: SessionRequestContext | undefined,
-  ): void {
+  ): Promise<void> {
     // trackEvent always classifies privacy from server-parsed fields and event
     // semantics. Keeping a separate client entry point makes that trust
     // boundary explicit at the route.
-    this.trackEvent(account, {
+    await this.trackEvent(account, {
       ...input,
       anonymousSessionId: account
         ? null
@@ -10407,12 +12130,12 @@ export class BusinessService {
     });
   }
 
-  getAnalyticsPreview(admin: BusinessAccount) {
+  async getAnalyticsPreview(admin: BusinessAccount) {
     if (!this.isAdmin(admin)) {
       throw new AppError("Admin access required.", 403);
     }
 
-    const preview = this.repository.getAnalyticsPreview();
+    const preview = await this.adminAnalyticsRepository.getAnalyticsPreview();
     return {
       ...preview,
       topSearchedBeers: this.applyAnalyticsThreshold(preview.topSearchedBeers),
@@ -10533,7 +12256,7 @@ export class BusinessService {
     }) as Record<string, unknown>;
   }
 
-  private generateVenueMonthlyReportsInternal(
+  private async generateVenueMonthlyReportsInternal(
     input: MonthlyReportGenerateInput,
     options: { reuseCurrentReports?: boolean } = {},
   ) {
@@ -10542,7 +12265,7 @@ export class BusinessService {
       throw new AppError("Report month must use a valid YYYY-MM value.", 400);
     }
     this.requireCompletedReportMonth(month);
-    const venues = this.repository.listReportableBarProfiles({
+    const venues = await this.venueInventoryRepository.listReportableBarProfiles({
       venueId: input.venueId,
       limit: input.venueId ? 1 : 1000,
     });
@@ -10590,13 +12313,14 @@ export class BusinessService {
     };
   }
 
-  generateVenueMonthlyReports(admin: BusinessAccount, input: MonthlyReportGenerateInput) {
+  async generateVenueMonthlyReports(admin: BusinessAccount, input: MonthlyReportGenerateInput) {
+    this.assertCommercialVenueFeatureOpen();
     if (!this.isAdmin(admin)) {
       throw new AppError("Admin access required.", 403);
     }
 
-    const result = this.generateVenueMonthlyReportsInternal(input);
-    this.auditSecurity({
+    const result = await this.generateVenueMonthlyReportsInternal(input);
+    await this.auditSecurity({
       actor: admin,
       action: "venue_monthly_reports_generated",
       targetType: input.venueId ? "venue" : "venue_monthly_reports",
@@ -10610,9 +12334,10 @@ export class BusinessService {
     return result;
   }
 
-  generateScheduledVenueMonthlyReports(input: MonthlyReportGenerateInput) {
-    const result = this.generateVenueMonthlyReportsInternal(input, { reuseCurrentReports: true });
-    this.auditSecurity({
+  async generateScheduledVenueMonthlyReports(input: MonthlyReportGenerateInput) {
+    this.assertCommercialVenueFeatureOpen();
+    const result = await this.generateVenueMonthlyReportsInternal(input, { reuseCurrentReports: true });
+    await this.auditSecurity({
       actor: null,
       action: "venue_monthly_reports_generated",
       targetType: input.venueId ? "venue" : "venue_monthly_reports",
@@ -10627,12 +12352,13 @@ export class BusinessService {
     return result;
   }
 
-  getVenueReportDeliverySettings(account: BusinessAccount, venueId: string) {
+  async getVenueReportDeliverySettings(account: BusinessAccount, venueId: string) {
+    this.assertCommercialVenueFeatureOpen();
     this.requireVerifiedBarAccount(account);
-    this.requireAssignedVenue(account, venueId);
-    const settings = this.repository.getVenueReportDeliverySettings(venueId);
-    const effectiveRecipients = this.getVenueReportRecipients(venueId).map((recipient) => recipient.email);
-    const deliveryJob = this.repository.getSystemState<Record<string, unknown>>("job:monthly_report_delivery");
+    await this.requireAssignedVenue(account, venueId);
+    const settings = await readVenueReportDeliverySettings(this.systemStateRepository, venueId);
+    const effectiveRecipients = (await this.getVenueReportRecipients(venueId)).map((recipient) => recipient.email);
+    const deliveryJob = await this.systemStateRepository.get<Record<string, unknown>>("job:monthly_report_delivery");
     return {
       ...settings,
       effectiveRecipients,
@@ -10649,13 +12375,14 @@ export class BusinessService {
     };
   }
 
-  getVenueReconciliation(
+  async getVenueReconciliation(
     account: BusinessAccount,
     venueId: string,
     query: VenueReconciliationQuery,
   ) {
+    this.assertCommercialVenueFeatureOpen();
     this.requireVerifiedBarAccount(account);
-    const assignment = this.requireAssignedVenue(account, venueId);
+    const assignment = await this.requireAssignedVenue(account, venueId);
     const discountTotal = this.repository.countDiscountRedemptionsForVenue(venueId);
     const pintPointTotal = this.repository.countPintPointDrinkRecordsForVenue(venueId);
     const discountRedemptions = this.repository
@@ -10695,14 +12422,15 @@ export class BusinessService {
     };
   }
 
-  updateVenueReportDeliverySettings(
+  async updateVenueReportDeliverySettings(
     account: BusinessAccount,
     venueId: string,
     input: VenueReportDeliverySettingsInput,
   ) {
+    this.assertCommercialVenueFeatureOpen();
     this.requireVerifiedBarAccount(account);
-    this.requireAssignedVenue(account, venueId);
-    const allowedRecipients = new Set(this.getVerifiedVenueReportManagerEmails(venueId));
+    await this.requireAssignedVenue(account, venueId);
+    const allowedRecipients = new Set(await this.getVerifiedVenueReportManagerEmails(venueId));
     const invalidRecipientCount = input.recipients.filter(
       (email) => !allowedRecipients.has(email.trim().toLowerCase()),
     ).length;
@@ -10713,14 +12441,14 @@ export class BusinessService {
       );
     }
     const now = nowIso();
-    this.repository.setVenueReportDeliverySettings({
+    await writeVenueReportDeliverySettings(this.systemStateRepository, {
       venueId,
       enabled: input.enabled,
       recipients: input.recipients,
       updatedBy: account.id,
       now,
     });
-    this.auditSecurity({
+    await this.auditSecurity({
       actor: account,
       action: "venue_report_delivery_settings_updated",
       targetType: "venue",
@@ -10734,11 +12462,16 @@ export class BusinessService {
     return this.getVenueReportDeliverySettings(account, venueId);
   }
 
-  private getVerifiedVenueReportManagerEmails(venueId: string): string[] {
-    return this.repository
-      .listVenueManagerAssignments({ venueId, activeOnly: true, limit: -1 })
-      .filter((assignment) => assignment.accessLevel === "manager")
-      .map((assignment) => this.repository.getAccountById(assignment.userId))
+  private async getVerifiedVenueReportManagerEmails(venueId: string): Promise<string[]> {
+    const assignments = await this.collectVenueAssignments({
+      venueId,
+      accessLevel: "manager",
+      status: "active",
+    });
+    const accounts = await Promise.all(
+      assignments.map((assignment) => this.accountSessionRepository.getAccountById(assignment.userId)),
+    );
+    return accounts
       .filter((account): account is BusinessAccount => Boolean(
         account &&
         account.role === "venue_manager" &&
@@ -10750,14 +12483,14 @@ export class BusinessService {
       .map((recipient) => recipient.email.trim().toLowerCase());
   }
 
-  private getVenueReportRecipients(venueId: string): Array<{ email: string }> {
-    const settings = this.repository.getVenueReportDeliverySettings(venueId);
+  private async getVenueReportRecipients(venueId: string): Promise<Array<{ email: string }>> {
+    const settings = await readVenueReportDeliverySettings(this.systemStateRepository, venueId);
     if (!settings.enabled) return [];
-    const verified = new Set(this.getVerifiedVenueReportManagerEmails(venueId));
+    const verified = new Set(await this.getVerifiedVenueReportManagerEmails(venueId));
     if (settings.recipients.length > 0) {
       const valid = settings.recipients.filter((email) => verified.has(email.trim().toLowerCase()));
       if (valid.length !== settings.recipients.length) {
-        this.repository.setVenueReportDeliverySettings({
+        await writeVenueReportDeliverySettings(this.systemStateRepository, {
           venueId,
           enabled: valid.length > 0,
           recipients: valid,
@@ -10771,6 +12504,7 @@ export class BusinessService {
   }
 
   async deliverVenueMonthlyReports(admin: BusinessAccount, input: MonthlyReportDeliveryInput) {
+    this.assertCommercialVenueFeatureOpen();
     if (!this.isAdmin(admin)) {
       throw new AppError("Admin access required.", 403);
     }
@@ -10790,7 +12524,9 @@ export class BusinessService {
     }
     const result = await runMonthlyReportDelivery({
       generator: this,
-      repository: this.repository,
+      repository: this.venueAccessRepository,
+      accountRepository: this.accountSessionRepository,
+      stateRepository: this.systemStateRepository,
       provider,
       publicBaseUrl: this.config.PUBLIC_BASE_URL,
       from: this.config.REPORT_EMAIL_FROM ?? "reports@mock.pintpath.local",
@@ -10800,7 +12536,7 @@ export class BusinessService {
       venueId: input.venueId,
       dryRun,
     });
-    this.auditSecurity({
+    await this.auditSecurity({
       actor: admin,
       action: dryRun ? "venue_monthly_report_delivery_previewed" : "venue_monthly_report_delivery_run",
       targetType: input.venueId ? "venue" : "venue_monthly_reports",
@@ -10826,21 +12562,24 @@ export class BusinessService {
     };
   }
 
-  deliverScheduledVenueMonthlyReports(input: MonthlyReportDeliveryInput) {
-    const generated = this.generateScheduledVenueMonthlyReports(input);
-    const deliveries = generated.reports.flatMap((report) => {
+  async deliverScheduledVenueMonthlyReports(input: MonthlyReportDeliveryInput) {
+    this.assertCommercialVenueFeatureOpen();
+    const generated = await this.generateScheduledVenueMonthlyReports(input);
+    const deliveries: Array<Record<string, unknown>> = [];
+    for (const report of generated.reports) {
       const monthlyReport = report as MonthlyBarReport;
-      const recipients = this.getVenueReportRecipients(monthlyReport.barId);
+      const recipients = await this.getVenueReportRecipients(monthlyReport.barId);
       if (recipients.length === 0) {
-        return [{
+        deliveries.push({
           venueId: monthlyReport.barId,
           month: monthlyReport.month,
           status: "skipped_no_recipients",
           recipientCount: 0,
-        }];
+        });
+        continue;
       }
 
-      return recipients.map((recipient) => {
+      for (const recipient of recipients) {
         const status = input.dryRun || !input.deliver
           ? "dry_run"
           : this.config.REPORT_EMAIL_MODE === "mock"
@@ -10848,7 +12587,7 @@ export class BusinessService {
             : "skipped_email_disabled";
 
         if (status === "mocked") {
-          this.auditSecurity({
+          await this.auditSecurity({
             actor: null,
             action: "venue_monthly_report_delivery_mocked",
             targetType: "venue",
@@ -10862,7 +12601,7 @@ export class BusinessService {
           });
         }
 
-        return {
+        deliveries.push({
           venueId: monthlyReport.barId,
           month: monthlyReport.month,
           status,
@@ -10873,9 +12612,9 @@ export class BusinessService {
             month: monthlyReport.month,
             format: "json",
           }),
-        };
-      });
-    });
+        });
+      }
+    }
 
     return {
       ...generated,
@@ -10884,9 +12623,10 @@ export class BusinessService {
     };
   }
 
-  getVenueMonthlyReport(account: BusinessAccount, venueId: string, month: string) {
+  async getVenueMonthlyReport(account: BusinessAccount, venueId: string, month: string) {
+    this.assertCommercialVenueFeatureOpen();
     this.requireVerifiedBarAccount(account);
-    this.requireAssignedVenue(account, venueId);
+    await this.requireAssignedVenue(account, venueId);
     if (!isValidMonthlyReportMonth(month)) {
       throw new AppError("Report month must use a valid YYYY-MM value.", 400);
     }
@@ -10895,7 +12635,7 @@ export class BusinessService {
       throw new AppError("Future monthly reports are not available.", 400);
     }
 
-    const profile = this.repository.getBarProfile(venueId);
+    const profile = await this.venueInventoryRepository.getBarProfile(venueId);
     const capabilities = getBarTierCapabilities(profile?.membershipTier ?? "basic", this.isAdmin(account));
     if (!capabilities.monthlyReports) {
       throw new AppError("Pro venue tier required to view monthly reports.", 403);
@@ -10906,7 +12646,7 @@ export class BusinessService {
       return sanitizeMonthlyReport(stored)!;
     }
 
-    const reportProfile = profile ?? this.getOrBuildBarProfile({ barId: venueId, name: venueId, suburb: null });
+    const reportProfile = profile ?? await this.getOrBuildBarProfile({ barId: venueId, name: venueId, suburb: null });
     return {
       id: null,
       barId: venueId,
@@ -10920,14 +12660,15 @@ export class BusinessService {
     };
   }
 
-  exportVenueMonthlyReport(account: BusinessAccount, venueId: string, month: string, query: MonthlyReportExportQuery) {
+  async exportVenueMonthlyReport(account: BusinessAccount, venueId: string, month: string, query: MonthlyReportExportQuery) {
+    this.assertCommercialVenueFeatureOpen();
     this.requireVerifiedBarAccount(account);
-    this.requireAssignedVenue(account, venueId);
+    await this.requireAssignedVenue(account, venueId);
     if (!isValidMonthlyReportMonth(month)) {
       throw new AppError("Report month must use a valid YYYY-MM value.", 400);
     }
 
-    const profile = this.repository.getBarProfile(venueId);
+    const profile = await this.venueInventoryRepository.getBarProfile(venueId);
     const capabilities = getBarTierCapabilities(profile?.membershipTier ?? "basic", this.isAdmin(account));
     if (!capabilities.monthlyReports) {
       throw new AppError("Pro venue tier required to export monthly reports.", 403);
@@ -10935,6 +12676,7 @@ export class BusinessService {
     this.requireCompletedReportMonth(month);
 
     const stored = this.repository.getVenueMonthlyReport({ venueId, month });
+    const reportProfile = profile ?? await this.getOrBuildBarProfile({ barId: venueId, name: venueId, suburb: null });
     const report = sanitizeMonthlyReport(
       isCompletedMonthlyReportSnapshot(stored)
         ? stored
@@ -10942,10 +12684,7 @@ export class BusinessService {
           id: crypto.randomUUID(),
           venueId,
           month,
-          data: this.buildVenueMonthlyReportData(
-            profile ?? this.getOrBuildBarProfile({ barId: venueId, name: venueId, suburb: null }),
-            month,
-          ),
+          data: this.buildVenueMonthlyReportData(reportProfile, month),
           createdAt: nowIso(),
         }),
     );
@@ -10969,52 +12708,61 @@ export class BusinessService {
     };
   }
 
-  getVenuePortal(account: BusinessAccount, query: VenuePortalQuery) {
+  async getVenuePortal(account: BusinessAccount, query: VenuePortalQuery) {
     this.requireVerifiedBarAccount(account);
-    this.repository.expireVenueCounterStaffInvitations(nowIso());
     const isAdmin = this.isAdmin(account);
-    const managerAssignments = this.repository.listVenueManagerAssignments({
+    const commercialLaunchEnabled = this.config.COMMERCIAL_LAUNCH_ENABLED;
+    if (commercialLaunchEnabled) {
+      await this.expireVenueCounterStaffInvitations(nowIso());
+    }
+    const managerAssignments = await this.collectVenueAssignments({
       ...(isAdmin ? {} : { userId: account.id }),
-      activeOnly: true,
-      limit: -1,
+      ...(!commercialLaunchEnabled ? { accessLevel: "manager" as const } : {}),
+      status: "active",
     });
-    const assignments: VenueManagerAssignment[] = isAdmin
-      ? (() => {
-          const loadedAt = nowIso();
-          const venues = new Map<string, { venueId: string; venueName: string; suburb: string | null }>();
-          this.repository.listPublicVenueDirectoryPage({ limit: -1, offset: 0 }).venues.forEach((venue) => {
-            venues.set(venue.id, { venueId: venue.id, venueName: venue.name, suburb: venue.suburb });
+    let assignments: VenueAccessAssignmentRecord[];
+    if (isAdmin) {
+      const loadedAt = nowIso();
+      const venues = new Map<string, { venueId: string; venueName: string; suburb: string | null }>();
+      const publicDirectory = await this.publicVenueDirectoryRepository.listPublicVenueDirectoryPage({
+        limit: -1,
+        offset: 0,
+      });
+      publicDirectory.venues.forEach((venue) => {
+        venues.set(venue.id, { venueId: venue.id, venueName: venue.name, suburb: venue.suburb });
+      });
+      managerAssignments.forEach((assignment) => {
+        if (!venues.has(assignment.venueId)) {
+          venues.set(assignment.venueId, {
+            venueId: assignment.venueId,
+            venueName: assignment.venueName,
+            suburb: assignment.suburb,
           });
-          managerAssignments.forEach((assignment) => {
-            if (!venues.has(assignment.venueId)) {
-              venues.set(assignment.venueId, {
-                venueId: assignment.venueId,
-                venueName: assignment.venueName,
-                suburb: assignment.suburb,
-              });
-            }
-          });
-          return [...venues.values()]
-            .sort((left, right) => left.venueName.localeCompare(right.venueName) || left.venueId.localeCompare(right.venueId))
-            .map((venue) => ({
-              id: `admin-venue:${venue.venueId}`,
-              userId: account.id,
-              venueId: venue.venueId,
-              venueName: venue.venueName,
-              suburb: venue.suburb,
-              accessLevel: "manager",
-              status: "active",
-              approvedBy: account.id,
-              expiresAt: null,
-              createdAt: loadedAt,
-              updatedAt: loadedAt,
-            }));
-        })()
-      : managerAssignments;
+        }
+      });
+      assignments = [...venues.values()]
+        .sort((left, right) => left.venueName.localeCompare(right.venueName) || left.venueId.localeCompare(right.venueId))
+        .map((venue) => ({
+          id: `admin-venue:${venue.venueId}`,
+          userId: account.id,
+          venueId: venue.venueId,
+          venueName: venue.venueName,
+          suburb: venue.suburb,
+          accessLevel: "manager",
+          status: "active",
+          approvedBy: account.id,
+          expiresAt: null,
+          createdAt: loadedAt,
+          updatedAt: loadedAt,
+        }));
+    } else {
+      assignments = managerAssignments;
+    }
 
     if (!isAdmin && assignments.length === 0) {
-      const claimRequests = this.repository
-        .listBarClaimRequests({ userId: account.id, limit: 20 })
+      const claimRequests = (await this.venueAccessRepository
+        .listVenueClaims({ userId: account.id, limit: 20 })).claims
+        .map((record) => this.toBarClaimRequest(record))
         .map((claim) => ({
           id: claim.id,
           barId: claim.barId,
@@ -11051,7 +12799,11 @@ export class BusinessService {
       };
     }
 
-    const selectedVenueId = query.venueId
+    if (!isAdmin && query.venueId && !assignments.some((item) => item.venueId === query.venueId)) {
+      throw new AppError("You can only access assigned venues.", 403);
+    }
+    const requestedVenueId = query.venueId ?? null;
+    const selectedVenueId = requestedVenueId
       ?? assignments.find((item) => item.accessLevel === "manager")?.venueId
       ?? assignments[0]?.venueId;
     if (!selectedVenueId) {
@@ -11072,7 +12824,7 @@ export class BusinessService {
 
     const assignment = isAdmin
       ? assignments.find((item) => item.venueId === selectedVenueId) ?? null
-      : this.requireAssignedVenue(account, selectedVenueId, "counter");
+      : await this.requireAssignedVenue(account, selectedVenueId, "counter");
     if (!isAdmin && !assignment) {
       throw new AppError("You can only access assigned venues.", 403);
     }
@@ -11080,16 +12832,36 @@ export class BusinessService {
     const venueName = assignment?.venueName ?? selectedVenueId;
     const suburb = assignment?.suburb ?? null;
     const accessLevel = isAdmin ? "manager" : assignment?.accessLevel ?? "counter_staff";
-    const profile = this.getOrBuildBarProfile({ barId: selectedVenueId, name: venueName, suburb });
+    const profile = await this.getOrBuildBarProfile({ barId: selectedVenueId, name: venueName, suburb });
+    const portalProfile = commercialLaunchEnabled
+      ? profile
+      : {
+          ...profile,
+          membershipTier: "basic" as const,
+          highlightedName: false,
+          premiumBadge: null,
+          promoted: false,
+          featuredSpecialEligible: false,
+          stripeCustomerId: null,
+          stripeSubscriptionId: null,
+          subscriptionStatus: null,
+          subscriptionCurrentPeriodEnd: null,
+          stripePaidMembershipTier: null,
+          tierManualOverride: false,
+          acceptsPintPathCodes: false,
+          posLastSuccessAt: null,
+          posLastTerminalId: null,
+        };
 
     if (accessLevel === "counter_staff") {
+      this.assertCommercialVenueFeatureOpen();
       const recentActivity = this.config.PINT_POINTS_REWARDS_ENABLED
         ? this.repository
             .listPintPointDrinkRecordsForVenue(selectedVenueId, 12)
             .map((activity) => this.sanitizeVenuePintPointActivity(account, assignment, activity))
         : [];
-      const counterBeers = this.repository
-        .listBarBeers(selectedVenueId)
+      const counterBeers = (await this.venueInventoryRepository
+        .listBarBeers(selectedVenueId))
         .filter((beer) => beer.inStock)
         .map((beer) => ({
           id: beer.id,
@@ -11099,12 +12871,12 @@ export class BusinessService {
           onTap: beer.onTap,
           inStock: beer.inStock,
         }));
-      const counterSpecials = this.repository
-        .listBarSpecials(selectedVenueId)
+      const counterSpecials = (await this.venueInventoryRepository
+        .listBarSpecials(selectedVenueId))
         .filter((special) => special.active !== false)
         .map((special) => ({ id: special.id, title: special.title }));
 
-      this.trackEvent(account, {
+      await this.trackEvent(account, {
         anonymousSessionId: null,
         eventType: "venue_portal_viewed",
         venueId: selectedVenueId,
@@ -11159,13 +12931,24 @@ export class BusinessService {
       };
     }
 
-    const rawInsights = this.repository.getVenueManagerInsights({
+    const insightPriceRecords = await this.publicPriceRepository.listLatestPriceRecords(
+      100,
+      selectedVenueId,
+    );
+    const rawInsights = await this.venueManagerInsightsRepository.getVenueManagerInsights({
       venueId: selectedVenueId,
       suburb,
       staleBefore: daysAgoIso(30),
+      priceRecords: insightPriceRecords,
     });
     const venueArea = profile.suburb ?? suburb ?? profile.area ?? null;
-    const capabilities = getBarTierCapabilities(profile.membershipTier, isAdmin);
+    const capabilities = getBarTierCapabilities(
+      commercialLaunchEnabled ? profile.membershipTier : "basic",
+      commercialLaunchEnabled && isAdmin,
+    );
+    if (!commercialLaunchEnabled) {
+      capabilities.upgradeCopy = null;
+    }
     const venueInsightPrivacyThreshold = Math.max(10, this.config.ANALYTICS_MIN_BUCKET_SIZE);
     const reportTimezone = this.getReportTimezone();
     const analyticsMonth = getZonedMonthKey(new Date(), reportTimezone);
@@ -11203,9 +12986,11 @@ export class BusinessService {
           privacyThreshold: venueInsightPrivacyThreshold,
         })
       : null;
-    const inventoryBeers = this.repository.listBarBeers(selectedVenueId);
-    const inventoryHappyHours = this.repository.listBarHappyHours(selectedVenueId);
-    const inventorySpecials = capabilities.canManageSpecials ? this.repository.listBarSpecials(selectedVenueId) : [];
+    const inventoryBeers = await this.venueInventoryRepository.listBarBeers(selectedVenueId);
+    const inventoryHappyHours = await this.venueInventoryRepository.listBarHappyHours(selectedVenueId);
+    const inventorySpecials = commercialLaunchEnabled && capabilities.canManageSpecials
+      ? await this.venueInventoryRepository.listBarSpecials(selectedVenueId)
+      : [];
     const areaPurchasedBeers = capabilities.analytics
       ? this.repository.listVenueAreaPurchasedBeers({
           area: venueArea,
@@ -11222,10 +13007,24 @@ export class BusinessService {
           limit: 8,
         })
       : [];
-    const insights = this.sanitizeVenueManagerInsights(rawInsights, {
+    const sanitizedInsights = this.sanitizeVenueManagerInsights(rawInsights, {
       includeAggregate: capabilities.analytics,
       privacyThreshold: venueInsightPrivacyThreshold,
     });
+    const insights = commercialLaunchEnabled
+      ? sanitizedInsights
+      : {
+          ...sanitizedInsights,
+          listingQuality: {
+            ...sanitizedInsights.listingQuality,
+            checklist: sanitizedInsights.listingQuality.checklist.map((item) => ({
+              ...item,
+              label: item.label === "Happy hour listed"
+                ? "Internal happy-hour record saved"
+                : item.label,
+            })),
+          },
+        };
     const storedMonthlyReport = capabilities.monthlyReports
       ? this.repository.getVenueMonthlyReport({ venueId: selectedVenueId, month: monthlyReportMonth })
       : null;
@@ -11281,46 +13080,54 @@ export class BusinessService {
           activeSpecialCount: inventorySpecials.filter((special) => special.active !== false).length,
         })
       : null;
-    const discountSummary = this.getVenueDiscountSummary({
-      venueId: selectedVenueId,
-      includeRecent: true,
-      recentLimit: 10,
-    });
-    const pintPointTodayStats = this.config.PINT_POINTS_REWARDS_ENABLED
+    const discountSummary = commercialLaunchEnabled
+      ? this.getVenueDiscountSummary({
+          venueId: selectedVenueId,
+          includeRecent: true,
+          recentLimit: 10,
+        })
+      : null;
+    const pintPointTodayStats = commercialLaunchEnabled && this.config.PINT_POINTS_REWARDS_ENABLED
       ? this.repository.getPintPointStatsForVenue({
           venueId: selectedVenueId,
           startIso: todayRange.startIso,
           endIso: todayRange.endIso,
         })
       : null;
-    const pintPointMonthStats = this.config.PINT_POINTS_REWARDS_ENABLED
+    const pintPointMonthStats = commercialLaunchEnabled && this.config.PINT_POINTS_REWARDS_ENABLED
       ? this.repository.getPintPointStatsForVenue({
           venueId: selectedVenueId,
           startIso: analyticsMonthRange.startsAt,
           endIso: analyticsMonthRange.endsAt,
         })
       : null;
-    const recentPintPointActivity = this.config.PINT_POINTS_REWARDS_ENABLED
+    const recentPintPointActivity = commercialLaunchEnabled && this.config.PINT_POINTS_REWARDS_ENABLED
       ? this.repository
           .listPintPointDrinkRecordsForVenue(selectedVenueId, 12)
           .map((activity) => this.sanitizeVenuePintPointActivity(account, assignment, activity))
       : [];
-    const staffAssignments = this.repository
-      .listVenueManagerAssignments({ venueId: selectedVenueId, activeOnly: false, limit: -1 })
-      .filter((item) => item.accessLevel === "counter_staff" && ["active", "pending"].includes(item.status))
-      .map((item) => {
-        const staffAccount = this.repository.getAccountById(item.userId);
-        return {
-          id: item.id,
-          publicAccountId: staffAccount?.publicAccountId ?? null,
-          displayName: staffAccount?.displayName ?? null,
-          accessLevel: item.accessLevel,
-          status: item.status,
-          expiresAt: item.expiresAt,
-          createdAt: item.createdAt,
-        };
-      });
-    const posIntegration = this.getVenuePosIntegration(account, selectedVenueId);
+    const staffAssignmentRows = commercialLaunchEnabled
+      ? await this.collectVenueAssignments({
+          venueId: selectedVenueId,
+          accessLevel: "counter_staff",
+          currentOnly: true,
+        })
+      : [];
+    const staffAssignments = await Promise.all(staffAssignmentRows.map(async (item) => {
+      const staffAccount = await this.accountSessionRepository.getAccountById(item.userId);
+      return {
+        id: item.id,
+        publicAccountId: staffAccount?.publicAccountId ?? null,
+        displayName: staffAccount?.displayName ?? null,
+        accessLevel: item.accessLevel,
+        status: item.status,
+        expiresAt: item.expiresAt,
+        createdAt: item.createdAt,
+      };
+    }));
+    const posIntegration = commercialLaunchEnabled
+      ? await this.getVenuePosIntegration(account, selectedVenueId)
+      : null;
     const monthlyReport = capabilities.monthlyReports
       ? savedMonthlyReport ?? {
           id: null,
@@ -11336,7 +13143,7 @@ export class BusinessService {
       : null;
     const updateLink = `/submit.html?venueId=${encodeURIComponent(selectedVenueId)}&venueName=${encodeURIComponent(venueName)}${suburb ? `&suburb=${encodeURIComponent(suburb)}` : ""}`;
 
-    this.trackEvent(account, {
+    await this.trackEvent(account, {
       anonymousSessionId: null,
       eventType: "venue_portal_viewed",
       venueId: selectedVenueId,
@@ -11344,7 +13151,7 @@ export class BusinessService {
       suburb,
       metadata: { assignmentCount: assignments.length },
     });
-    this.trackEvent(account, {
+    await this.trackEvent(account, {
       anonymousSessionId: null,
       eventType: "venue_insights_viewed",
       venueId: selectedVenueId,
@@ -11357,21 +13164,23 @@ export class BusinessService {
       account: sanitizeAccount(account),
       isAdmin,
       accessLevel,
-      billing: {
-        mode: this.config.DEMO_BILLING_MODE
-          ? "demo"
-          : profile.stripeCustomerId
-            ? "stripe"
-            : "unlinked",
-        managementAvailable: this.config.DEMO_BILLING_MODE || Boolean(profile.stripeCustomerId),
-      },
+      billing: commercialLaunchEnabled
+        ? {
+            mode: this.config.DEMO_BILLING_MODE
+              ? "demo"
+              : profile.stripeCustomerId
+                ? "stripe"
+                : "unlinked",
+            managementAvailable: this.config.DEMO_BILLING_MODE || Boolean(profile.stripeCustomerId),
+          }
+        : null,
       assignments,
       selectedVenue: {
         venueId: selectedVenueId,
         venueName,
         suburb,
       },
-      profile,
+      profile: portalProfile,
       tier: {
         ...capabilities,
         analyticsLocked: !capabilities.analytics,
@@ -11381,14 +13190,16 @@ export class BusinessService {
         happyHours: inventoryHappyHours,
         specials: inventorySpecials,
       },
-      pendingChanges: this.repository.listBarPendingChanges({ barId: selectedVenueId, status: "pending", limit: -1 }),
+      pendingChanges: (await this.venuePendingChangeRepository
+        .listBarPendingChanges({ barId: selectedVenueId, status: "pending", limit: 200 }))
+        .filter((change) => commercialLaunchEnabled || change.changeType !== "special"),
       insights,
       analytics,
       demandDashboard,
       paidVenueIntelligence,
       dailySpecialsPlanner,
       discounts: discountSummary,
-      pintPoints: this.config.PINT_POINTS_REWARDS_ENABLED
+      pintPoints: commercialLaunchEnabled && this.config.PINT_POINTS_REWARDS_ENABLED
         ? {
             today: pintPointTodayStats,
             month: pintPointMonthStats,
@@ -11406,28 +13217,33 @@ export class BusinessService {
         hasMore: false,
       },
       monthlyReport,
-      businessToolkit: {
-        demandSnapshot,
-        proGrowthPlan,
-        demandDashboard,
-        paidVenueIntelligence,
-        dailySpecialsPlanner,
-        updateLink,
-        qrCopy: "Copy this update link or turn it into a QR code for your venue/tap-list area.",
-      },
+      businessToolkit: commercialLaunchEnabled
+        ? {
+            demandSnapshot,
+            proGrowthPlan,
+            demandDashboard,
+            paidVenueIntelligence,
+            dailySpecialsPlanner,
+            updateLink,
+            qrCopy: "Copy this update link or turn it into a QR code for your venue/tap-list area.",
+          }
+        : null,
       updateLink,
       qrCopy: "Copy this update link or turn it into a QR code for your venue/tap-list area.",
-      privacyCopy: "Venue insights are aggregated and privacy-safe. Individual user clickstream and exact location are never shown.",
+      privacyCopy: commercialLaunchEnabled
+        ? "Venue insights are aggregated and privacy-safe. Individual user clickstream and exact location are never shown."
+        : "The Free portal returns only assigned-venue operational data; paid analytics and reports are not included.",
     };
   }
 
-  assignVenueCounterStaff(
+  async assignVenueCounterStaff(
     account: BusinessAccount,
     venueId: string,
     input: VenueCounterStaffAssignmentInput,
   ) {
-    const managerAssignment = this.requireAssignedVenue(account, venueId);
-    const staffAccount = this.repository.getAccountByPublicAccountId(input.accountId);
+    this.assertCommercialVenueFeatureOpen();
+    const managerAssignment = await this.requireAssignedVenue(account, venueId);
+    const staffAccount = await this.accountSessionRepository.getAccountByPublicAccountId(input.accountId);
     if (!staffAccount) {
       throw new AppError("Pint Path account ID not found.", 404);
     }
@@ -11435,21 +13251,22 @@ export class BusinessService {
       throw new AppError("Your manager assignment already includes counter access.", 409);
     }
     this.requireVerifiedBarAccount(staffAccount);
-    this.requireCounterStaffInvitationAvailable(staffAccount.id, venueId);
+    await this.requireCounterStaffInvitationAvailable(staffAccount.id, venueId);
 
     const invitedAt = nowIso();
-    const assignment = this.repository.inviteVenueCounterStaff({
-      id: crypto.randomUUID(),
+    const profile = await this.venueInventoryRepository.getBarProfile(venueId);
+    const { assignment } = await this.venueAccessRepository.inviteCounterStaff({
+      invitationToken: crypto.randomUUID(),
+      inviterAccountId: account.id,
       userId: staffAccount.id,
       venueId,
-      venueName: managerAssignment?.venueName ?? this.repository.getBarProfile(venueId)?.name ?? venueId,
-      suburb: managerAssignment?.suburb ?? this.repository.getBarProfile(venueId)?.suburb ?? null,
-      approvedBy: account.id,
+      venueName: managerAssignment?.venueName ?? profile?.name ?? venueId,
+      suburb: managerAssignment?.suburb ?? profile?.suburb ?? null,
       now: invitedAt,
       expiresAt: addMinutes(invitedAt, COUNTER_STAFF_INVITATION_TTL_MINUTES),
     });
 
-    this.auditSecurity({
+    await this.auditSecurity({
       actor: account,
       action: "venue_counter_staff_invited",
       targetType: "venue_manager_assignment",
@@ -11471,9 +13288,9 @@ export class BusinessService {
     };
   }
 
-  private requireCounterStaffInvitationAvailable(userId: string, venueId: string): void {
-    this.repository.expireVenueCounterStaffInvitations(nowIso());
-    const existing = this.repository.getVenueManagerAssignment({
+  private async requireCounterStaffInvitationAvailable(userId: string, venueId: string): Promise<void> {
+    await this.expireVenueCounterStaffInvitations(nowIso());
+    const existing = await this.venueAccessRepository.getVenueAssignment({
       userId,
       venueId,
       activeOnly: false,
@@ -11488,25 +13305,23 @@ export class BusinessService {
     throw new AppError("That account already has a pending counter-staff invitation.", 409);
   }
 
-  respondToVenueCounterStaffInvitation(
+  async respondToVenueCounterStaffInvitation(
     account: BusinessAccount,
     assignmentId: string,
     input: VenueCounterStaffInvitationResponseInput,
   ) {
+    this.assertCommercialVenueFeatureOpen();
     this.requireVerifiedBarAccount(account);
     const respondedAt = nowIso();
-    this.repository.expireVenueCounterStaffInvitations(respondedAt);
-    const assignment = this.repository.respondVenueCounterStaffInvitation({
-      id: assignmentId,
+    await this.expireVenueCounterStaffInvitations(respondedAt);
+    const { assignment } = await this.venueAccessRepository.respondToCounterStaffInvitation({
+      invitationToken: assignmentId,
       userId: account.id,
       decision: input.decision,
       now: respondedAt,
     });
-    if (!assignment) {
-      throw new AppError("Pending counter-staff invitation not found or it has expired.", 404);
-    }
 
-    this.auditSecurity({
+    await this.auditSecurity({
       actor: account,
       action: input.decision === "accept" ? "venue_counter_staff_invitation_accepted" : "venue_counter_staff_invitation_declined",
       targetType: "venue_manager_assignment",
@@ -11515,7 +13330,7 @@ export class BusinessService {
     });
 
     return {
-      account: sanitizeAccount(this.repository.getAccountById(account.id) ?? account),
+      account: sanitizeAccount(await this.accountSessionRepository.getAccountById(account.id) ?? account),
       assignment: {
         id: assignment.id,
         venueId: assignment.venueId,
@@ -11531,17 +13346,18 @@ export class BusinessService {
     };
   }
 
-  revokeVenueCounterStaff(
+  async revokeVenueCounterStaff(
     account: BusinessAccount,
     venueId: string,
     input: VenueCounterStaffAssignmentInput,
   ) {
-    this.requireAssignedVenue(account, venueId);
-    const staffAccount = this.repository.getAccountByPublicAccountId(input.accountId);
+    this.assertCommercialVenueFeatureOpen();
+    await this.requireAssignedVenue(account, venueId);
+    const staffAccount = await this.accountSessionRepository.getAccountByPublicAccountId(input.accountId);
     if (!staffAccount) {
       throw new AppError("Pint Path account ID not found.", 404);
     }
-    const existing = this.repository.getVenueManagerAssignment({
+    const existing = await this.venueAccessRepository.getVenueAssignment({
       userId: staffAccount.id,
       venueId,
       activeOnly: false,
@@ -11549,16 +13365,19 @@ export class BusinessService {
     if (!existing || existing.accessLevel !== "counter_staff" || !["active", "pending"].includes(existing.status)) {
       throw new AppError("Counter-staff assignment or invitation not found.", 404);
     }
-    const assignment = this.repository.revokeVenueManager({
+    const result = await this.venueAccessRepository.revokeVenueAssignment({
+      actorAccountId: account.id,
       userId: staffAccount.id,
       venueId,
+      expectedAccessLevel: "counter_staff",
       now: nowIso(),
     });
-    if (!assignment) {
+    if (result.outcome === "duplicate") {
       throw new AppError("Counter-staff assignment not found.", 404);
     }
+    const assignment = result.assignment;
 
-    this.auditSecurity({
+    await this.auditSecurity({
       actor: account,
       action: "venue_counter_staff_revoked",
       targetType: "venue_manager_assignment",
@@ -11579,7 +13398,7 @@ export class BusinessService {
     };
   }
 
-  createBarClaimRequest(account: BusinessAccount, input: BarClaimRequestInput) {
+  async createBarClaimRequest(account: BusinessAccount, input: BarClaimRequestInput) {
     this.requireVerifiedBarAccount(account);
     const barId = input.barId?.trim();
     if (!barId) {
@@ -11591,28 +13410,19 @@ export class BusinessService {
       throw new AppError("Use the verified email address for your signed-in Pint Path account.", 400);
     }
 
-    const profile = this.repository.getBarProfile(barId);
-    const location = this.repository.getVenueLocationCache(barId);
-    const priceRecord = this.repository.listLatestPriceRecords(1, barId)[0] ?? null;
+    const profile = await this.venueInventoryRepository.getBarProfile(barId);
+    const location = await this.venueIdentityRepository.getVenueLocationCache(barId);
+    const priceRecord = (await this.publicPriceRepository.listLatestPriceRecords(1, barId))[0] ?? null;
     if (!profile && !location && !priceRecord) {
       throw new AppError("That venue is not in Pint Path yet. Submit it as a missing venue before claiming it.", 404);
     }
 
-    const existingClaim = this.repository.getPendingBarClaimRequest({ userId: account.id, barId });
-    if (existingClaim) {
-      return {
-        claim: existingClaim,
-        duplicate: true,
-        message: "This venue claim is already waiting for manual verification.",
-      };
-    }
-
     const now = nowIso();
-    const claim = this.repository.createBarClaimRequest({
+    const result = await this.venueAccessRepository.createVenueClaim({
       id: crypto.randomUUID(),
       userId: account.id,
-      barId,
-      barName: profile?.name ?? location?.venueName ?? priceRecord?.venueName ?? input.barName,
+      venueId: barId,
+      venueName: profile?.name ?? location?.venueName ?? priceRecord?.venueName ?? input.barName,
       address: profile?.address ?? input.address,
       suburb: profile?.suburb ?? location?.suburb ?? priceRecord?.suburb ?? input.suburb,
       requesterName: input.requesterName,
@@ -11622,8 +13432,16 @@ export class BusinessService {
       message: input.message,
       now,
     });
+    const claim = this.toBarClaimRequest(result.claim);
+    if (result.outcome === "existing") {
+      return {
+        claim,
+        duplicate: true,
+        message: "This venue claim is already waiting for manual verification.",
+      };
+    }
 
-    this.trackEvent(account, {
+    await this.trackEvent(account, {
       anonymousSessionId: null,
       eventType: "venue_claim_requested",
       venueId: claim.barId,
@@ -11646,21 +13464,22 @@ export class BusinessService {
     return this.createBarClaimRequest(account, input);
   }
 
-  reviewVenueClaimRequest(admin: BusinessAccount, claimId: string, input: VenueClaimReviewInput) {
+  async reviewVenueClaimRequest(admin: BusinessAccount, claimId: string, input: VenueClaimReviewInput) {
     if (!this.isAdmin(admin)) {
       throw new AppError("Admin access required.", 403);
     }
 
-    const claim = this.repository.getBarClaimRequestById(claimId);
-    if (!claim) {
+    const claimRecord = await this.venueAccessRepository.getVenueClaim(claimId);
+    if (!claimRecord) {
       throw new AppError("Venue claim not found.", 404);
     }
+    const claim = this.toBarClaimRequest(claimRecord);
     if (claim.status !== "pending") {
       if (claim.status === input.status) {
         return {
           claim,
           assignment: claim.status === "approved" && claim.barId
-            ? this.repository.getVenueManagerAssignment({ userId: claim.userId, venueId: claim.barId })
+            ? await this.venueAccessRepository.getVenueAssignment({ userId: claim.userId, venueId: claim.barId })
             : null,
           duplicate: true,
           message: `This venue claim was already ${claim.status}.`,
@@ -11669,7 +13488,7 @@ export class BusinessService {
       throw new AppError(`This venue claim was already ${claim.status}.`, 409);
     }
 
-    const claimant = this.repository.getAccountById(claim.userId);
+    const claimant = await this.accountSessionRepository.getAccountById(claim.userId);
     if (!claimant || claimant.status !== "active") {
       throw new AppError("The claimant account is no longer active.", 409);
     }
@@ -11678,33 +13497,17 @@ export class BusinessService {
     }
 
     const reviewedAt = nowIso();
-    const result = this.repository.runInTransaction(() => {
-      const reviewed = this.repository.reviewBarClaimRequest({
-        id: claim.id,
-        status: input.status,
-        reviewNote: input.reviewNote,
-        reviewedBy: admin.id,
-        reviewedAt,
-      });
-      if (!reviewed) {
-        throw new AppError("This venue claim was reviewed by another request. Refresh before trying again.", 409);
-      }
-      const assignment = input.status === "approved" && claim.barId
-        ? this.repository.assignVenueManager({
-            id: crypto.randomUUID(),
-            userId: claim.userId,
-            venueId: claim.barId,
-            venueName: claim.barName,
-            suburb: claim.suburb,
-            accessLevel: "manager",
-            approvedBy: admin.id,
-            now: reviewedAt,
-          })
-        : null;
-      return { claim: reviewed, assignment };
+    const reviewResult = await this.venueAccessRepository.reviewVenueClaimAndAssignManager({
+      claimId: claim.id,
+      reviewerAccountId: admin.id,
+      decision: input.status,
+      reviewNote: input.reviewNote,
+      expectedUpdatedAt: claim.updatedAt,
+      assignmentId: input.status === "approved" ? crypto.randomUUID() : null,
+      now: reviewedAt,
     });
 
-    this.auditSecurity({
+    await this.auditSecurity({
       actor: admin,
       action: "admin_venue_claim_review",
       targetType: "venue_claim_request",
@@ -11717,40 +13520,83 @@ export class BusinessService {
     });
 
     return {
-      ...result,
-      message: input.status === "approved"
-        ? "Venue claim approved and manager access assigned."
-        : "Venue claim rejected without granting venue access.",
+      claim: this.toBarClaimRequest(reviewResult.claim),
+      assignment: reviewResult.assignment,
+      ...(reviewResult.outcome === "duplicate" ? { duplicate: true } : {}),
+      message: reviewResult.outcome === "duplicate"
+        ? `This venue claim was already ${reviewResult.claim.status}.`
+        : input.status === "approved"
+          ? "Venue claim approved and manager access assigned."
+          : "Venue claim rejected without granting venue access.",
     };
   }
 
   async createVenueManagerSubmission(account: BusinessAccount, venueId: string, input: CreateSubmissionInput) {
-    const assignment = this.requireAssignedVenue(account, venueId);
+    const assignment = await this.requireAssignedVenue(account, venueId);
+    if (!assignment || assignment.accessLevel !== "manager") {
+      throw new AppError("Venue manager access is required for this internal submission.", 403);
+    }
 
     if (input.venueId !== venueId) {
       throw new AppError("Venue update must match the assigned venue.", 403);
     }
 
-    const sourcePhotoRefs = await this.resolveSubmissionSourcePhotos(account, input);
-    const result = this.createSubmission(account, {
-      ...input,
-      notes: [
-        input.notes,
-        "Venue manager submitted update. Keep pending for admin/data-quality review unless manually approved.",
-      ].filter(Boolean).join(" "),
-    }, { allowVenueManager: true, rewardEligible: false, sourcePhotoRefs });
+    const createdEvidenceRefs: string[] = [];
+    let result: Awaited<ReturnType<BusinessService["createSubmission"]>>;
+    try {
+      const normalizedInput = {
+        ...input,
+        notes: [
+          input.notes,
+          "Venue manager submitted update. Keep pending for admin/data-quality review unless manually approved.",
+        ].filter(Boolean).join(" "),
+      };
+      const submitWithEvidence = (sourcePhotoRefs: string[]) => this.createSubmission(account, normalizedInput, {
+          allowVenueManager: true,
+          managerAssignmentId: assignment.id,
+          rewardEligible: false,
+          sourcePhotoRefs,
+        });
+      const existingRefs = await this.resolveExistingInternalManagerEvidenceRefs(account, input);
+      const sourcePhotoRefs = existingRefs ?? await this.resolveSubmissionSourcePhotos(
+          account,
+          input,
+          (ref) => createdEvidenceRefs.push(ref),
+        );
+      try {
+        result = await submitWithEvidence(sourcePhotoRefs);
+      } catch (error) {
+        const concurrentReplayRefs = error instanceof AppError
+          && error.statusCode === 409
+          && createdEvidenceRefs.length > 0
+          ? await this.resolveExistingInternalManagerEvidenceRefs(account, input)
+          : null;
+        if (!concurrentReplayRefs) throw error;
+        await this.compensateUnlinkedSourceEvidence(createdEvidenceRefs);
+        createdEvidenceRefs.length = 0;
+        result = await submitWithEvidence(concurrentReplayRefs);
+      }
+      if (result.idempotentReplay) {
+        await this.compensateUnlinkedSourceEvidence(createdEvidenceRefs);
+      }
+    } catch (error) {
+      await this.compensateUnlinkedSourceEvidence(createdEvidenceRefs);
+      throw error;
+    }
 
-    this.trackEvent(account, {
-      anonymousSessionId: null,
-      eventType: "venue_update_submitted",
-      venueId,
-      beerId: input.items[0]?.beerName ? normalizeTrackedBeerId(input.items[0].beerName) : null,
-      suburb: assignment?.suburb ?? input.suburb,
-      metadata: {
-        submissionId: result.submission.id,
-        submissionType: input.submissionType,
-      },
-    });
+    if (!result.idempotentReplay) {
+      await this.trackEvent(account, {
+        anonymousSessionId: null,
+        eventType: "venue_update_submitted",
+        venueId,
+        beerId: input.items[0]?.beerName ? normalizeTrackedBeerId(input.items[0].beerName) : null,
+        suburb: assignment.suburb ?? input.suburb,
+        metadata: {
+          submissionId: result.submission.id,
+          submissionType: input.submissionType,
+        },
+      });
+    }
 
     return {
       ...result,
@@ -11758,9 +13604,9 @@ export class BusinessService {
     };
   }
 
-  upsertBarProfile(account: BusinessAccount, venueId: string, input: BarProfileInput) {
-    const assignment = this.requireAssignedVenue(account, venueId);
-    const existing = this.repository.getBarProfile(venueId);
+  async upsertBarProfile(account: BusinessAccount, venueId: string, input: BarProfileInput) {
+    const assignment = await this.requireAssignedVenue(account, venueId);
+    const existing = await this.venueInventoryRepository.getBarProfile(venueId);
     if (existing && !input.expectedUpdatedAt) {
       throw new AppError("Refresh this venue profile before saving so a teammate's edits are not overwritten.", 409, {
         currentUpdatedAt: existing.updatedAt,
@@ -11771,16 +13617,26 @@ export class BusinessService {
         currentUpdatedAt: existing.updatedAt,
       });
     }
-    const existingTier = existing?.membershipTier ?? "basic";
-    const membershipTier = this.isAdmin(account) ? input.membershipTier ?? existingTier : existingTier;
-    const acceptsPintPathCodes = this.isAdmin(account)
+    if (
+      !this.config.COMMERCIAL_LAUNCH_ENABLED &&
+      (input.membershipTier === "pro" || input.acceptsPintPathCodes === true)
+    ) {
+      this.assertCommercialVenueFeatureOpen();
+    }
+    const existingTier = this.config.COMMERCIAL_LAUNCH_ENABLED
+      ? existing?.membershipTier ?? "basic"
+      : "basic";
+    const membershipTier = this.config.COMMERCIAL_LAUNCH_ENABLED && this.isAdmin(account)
+      ? input.membershipTier ?? existingTier
+      : existingTier;
+    const acceptsPintPathCodes = this.config.COMMERCIAL_LAUNCH_ENABLED && this.isAdmin(account)
       ? input.acceptsPintPathCodes ?? existing?.acceptsPintPathCodes ?? false
-      : existing?.acceptsPintPathCodes ?? false;
+      : false;
     const flags = tierFlags(membershipTier);
     const now = nowIso();
     let profile;
     try {
-      profile = this.repository.upsertBarProfile({
+      profile = await this.venueInventoryRepository.upsertBarProfile({
       barId: venueId,
       name: input.name,
       address: input.address,
@@ -11796,7 +13652,11 @@ export class BusinessService {
       acceptsPintPathCodes,
       active: this.isAdmin(account) ? input.active : existing?.active ?? true,
       expectedUpdatedAt: input.expectedUpdatedAt,
-      tierManualOverride: this.isAdmin(account) && input.membershipTier !== undefined ? true : existing?.tierManualOverride ?? false,
+      tierManualOverride: this.config.COMMERCIAL_LAUNCH_ENABLED && this.isAdmin(account) && input.membershipTier !== undefined
+        ? true
+        : this.config.COMMERCIAL_LAUNCH_ENABLED
+          ? existing?.tierManualOverride ?? false
+          : false,
       now,
       ...flags,
       });
@@ -11807,7 +13667,7 @@ export class BusinessService {
       throw error;
     }
 
-    this.trackEvent(account, {
+    await this.trackEvent(account, {
       anonymousSessionId: null,
       eventType: "venue_update_submitted",
       venueId,
@@ -11823,9 +13683,9 @@ export class BusinessService {
     };
   }
 
-  upsertBarBeer(account: BusinessAccount, venueId: string, input: BarBeerInput) {
-    const assignment = this.requireAssignedVenue(account, venueId);
-    const existing = input.id ? this.repository.getBarBeerById(input.id) : null;
+  private async assertBarBeerWriteReady(account: BusinessAccount, venueId: string, input: BarBeerInput): Promise<void> {
+    await this.requireAssignedVenue(account, venueId);
+    const existing = input.id ? await this.venueInventoryRepository.getBarBeerById(input.id) : null;
     if (existing && existing.barId !== venueId) {
       throw new AppError("Beer row belongs to another venue.", 403);
     }
@@ -11839,18 +13699,34 @@ export class BusinessService {
         currentUpdatedAt: existing.updatedAt,
       });
     }
+  }
 
+  async upsertBarBeer(account: BusinessAccount, venueId: string, input: BarBeerInput) {
+    await this.assertBarBeerWriteReady(account, venueId, input);
     const now = nowIso();
-    const beerInput = this.standardizeBarBeerInput(
+    const beerInput = await this.standardizeBarBeerInput(
       input,
       this.isAdmin(account) ? "venue_inventory_admin" : "venue_inventory_manager",
       now,
     );
+    return this.persistBarBeer(account, venueId, input, beerInput, now);
+  }
 
-    const profile = this.ensureBarProfile({
+  private async persistBarBeer(
+    account: BusinessAccount,
+    venueId: string,
+    input: BarBeerInput,
+    beerInput: BarBeerInput & { normalizedBeerId: string | null },
+    now: string,
+  ) {
+    await this.assertBarBeerWriteReady(account, venueId, input);
+    const assignment = await this.requireAssignedVenue(account, venueId);
+    const existing = input.id ? await this.venueInventoryRepository.getBarBeerById(input.id) : null;
+    const currentProfile = await this.venueInventoryRepository.getBarProfile(venueId);
+    const profile = await this.ensureBarProfileAsync({
       barId: venueId,
-      name: assignment?.venueName ?? this.repository.getBarProfile(venueId)?.name ?? venueId,
-      suburb: assignment?.suburb ?? this.repository.getBarProfile(venueId)?.suburb ?? null,
+      name: assignment?.venueName ?? currentProfile?.name ?? venueId,
+      suburb: assignment?.suburb ?? currentProfile?.suburb ?? null,
     });
     const priceChanged = Boolean(existing) && existing?.price !== beerInput.price;
     const stockChanged = Boolean(existing) && (
@@ -11858,7 +13734,7 @@ export class BusinessService {
     );
     let beer;
     try {
-      beer = this.repository.upsertBarBeer({
+      beer = await this.venueInventoryRepository.upsertBarBeer({
       id: beerInput.id ?? crypto.randomUUID(),
       barId: venueId,
       beerName: beerInput.beerName,
@@ -11892,7 +13768,7 @@ export class BusinessService {
       throw error;
     }
 
-    this.trackEvent(account, {
+    await this.trackEvent(account, {
       anonymousSessionId: null,
       eventType: "venue_update_submitted",
       venueId,
@@ -11904,15 +13780,39 @@ export class BusinessService {
     return { beer, message: "Beer row saved." };
   }
 
-  bulkUpsertBarBeers(account: BusinessAccount, venueId: string, input: BarBeerBulkInput) {
-    this.requireAssignedVenue(account, venueId);
+  async bulkUpsertBarBeers(account: BusinessAccount, venueId: string, input: BarBeerBulkInput) {
+    await this.requireAssignedVenue(account, venueId);
     const ids = input.items.map((item) => item.id).filter((id): id is string => Boolean(id));
     if (new Set(ids).size !== ids.length) {
       throw new AppError("Each beer row can appear only once in a bulk update.", 400);
     }
-    const results = this.repository.runInTransaction(() =>
-      input.items.map((item) => this.upsertBarBeer(account, venueId, item).beer),
-    );
+    for (const item of input.items) {
+      await this.assertBarBeerWriteReady(account, venueId, item);
+    }
+    const standardized: Array<{
+      input: BarBeerInput;
+      beerInput: BarBeerInput & { normalizedBeerId: string | null };
+      now: string;
+    }> = [];
+    for (const item of input.items) {
+      const now = nowIso();
+      standardized.push({
+        input: item,
+        beerInput: await this.standardizeBarBeerInput(
+          item,
+          this.isAdmin(account) ? "venue_inventory_admin" : "venue_inventory_manager",
+          now,
+        ),
+        now,
+      });
+    }
+    const results = await this.venueInventoryRepository.transaction(async () => {
+      const beers = [];
+      for (const { input: item, beerInput, now } of standardized) {
+        beers.push((await this.persistBarBeer(account, venueId, item, beerInput, now)).beer);
+      }
+      return beers;
+    });
     return {
       beers: results,
       total: results.length,
@@ -11922,9 +13822,9 @@ export class BusinessService {
     };
   }
 
-  deleteBarBeer(account: BusinessAccount, venueId: string, beerId: string, expectedUpdatedAt: string) {
-    const assignment = this.requireAssignedVenue(account, venueId);
-    const existing = this.repository.getBarBeerById(beerId);
+  async deleteBarBeer(account: BusinessAccount, venueId: string, beerId: string, expectedUpdatedAt: string) {
+    const assignment = await this.requireAssignedVenue(account, venueId);
+    const existing = await this.venueInventoryRepository.getBarBeerById(beerId);
     if (!existing || existing.barId !== venueId) {
       throw new AppError("Beer row not found for this venue.", 404);
     }
@@ -11934,7 +13834,7 @@ export class BusinessService {
       });
     }
 
-    const queuedDelete = this.maybeQueueVenueDeleteForReview({
+    const queuedDelete = await this.maybeQueueVenueDeleteForReview({
       account,
       venueId,
       changeType: "beer",
@@ -11954,7 +13854,7 @@ export class BusinessService {
 
     let deleted: boolean;
     try {
-      deleted = this.repository.deleteBarBeer({ id: beerId, barId: venueId, expectedUpdatedAt });
+      deleted = await this.venueInventoryRepository.deleteBarBeer({ id: beerId, barId: venueId, expectedUpdatedAt });
     } catch (error) {
       if (error instanceof OptimisticConcurrencyError) {
         throw new AppError("This beer row changed in another session. Refresh before deleting it.", 409);
@@ -11966,7 +13866,7 @@ export class BusinessService {
     }
 
     if (!this.isAdmin(account)) {
-      this.auditSecurity({
+      await this.auditSecurity({
         actor: account,
         action: "venue_manager_delete",
         targetType: "venue_beer",
@@ -11975,7 +13875,7 @@ export class BusinessService {
       });
     }
 
-    this.trackEvent(account, {
+    await this.trackEvent(account, {
       anonymousSessionId: null,
       eventType: "venue_update_submitted",
       venueId,
@@ -11987,9 +13887,9 @@ export class BusinessService {
     return { deleted: true, message: "Beer row removed." };
   }
 
-  upsertBarHappyHour(account: BusinessAccount, venueId: string, input: BarHappyHourInput) {
-    const assignment = this.requireAssignedVenue(account, venueId);
-    const existing = input.id ? this.repository.getBarHappyHourById(input.id) : null;
+  async upsertBarHappyHour(account: BusinessAccount, venueId: string, input: BarHappyHourInput) {
+    const assignment = await this.requireAssignedVenue(account, venueId);
+    const existing = input.id ? await this.venueInventoryRepository.getBarHappyHourById(input.id) : null;
     if (existing && existing.barId !== venueId) {
       throw new AppError("Happy-hour row belongs to another venue.", 403);
     }
@@ -12004,14 +13904,15 @@ export class BusinessService {
       });
     }
 
-    const profile = this.ensureBarProfile({
+    const currentProfile = await this.venueInventoryRepository.getBarProfile(venueId);
+    const profile = await this.ensureBarProfileAsync({
       barId: venueId,
-      name: assignment?.venueName ?? this.repository.getBarProfile(venueId)?.name ?? venueId,
-      suburb: assignment?.suburb ?? this.repository.getBarProfile(venueId)?.suburb ?? null,
+      name: assignment?.venueName ?? currentProfile?.name ?? venueId,
+      suburb: assignment?.suburb ?? currentProfile?.suburb ?? null,
     });
     let happyHour;
     try {
-      happyHour = this.repository.upsertBarHappyHour({
+      happyHour = await this.venueInventoryRepository.upsertBarHappyHour({
       id: input.id ?? crypto.randomUUID(),
       barId: venueId,
       title: input.title,
@@ -12019,7 +13920,7 @@ export class BusinessService {
       startTime: input.startTime,
       endTime: input.endTime,
       description: input.description,
-      happyHourBeers: input.happyHourBeers,
+      happyHourBeers: input.happyHourBeers ?? [],
       active: input.active,
       expectedUpdatedAt: input.expectedUpdatedAt,
       now: nowIso(),
@@ -12031,7 +13932,7 @@ export class BusinessService {
       throw error;
     }
 
-    this.trackEvent(account, {
+    await this.trackEvent(account, {
       anonymousSessionId: null,
       eventType: "venue_update_submitted",
       venueId,
@@ -12043,9 +13944,9 @@ export class BusinessService {
     return { happyHour, message: "Happy hour saved." };
   }
 
-  deleteBarHappyHour(account: BusinessAccount, venueId: string, happyHourId: string, expectedUpdatedAt: string) {
-    const assignment = this.requireAssignedVenue(account, venueId);
-    const existing = this.repository.getBarHappyHourById(happyHourId);
+  async deleteBarHappyHour(account: BusinessAccount, venueId: string, happyHourId: string, expectedUpdatedAt: string) {
+    const assignment = await this.requireAssignedVenue(account, venueId);
+    const existing = await this.venueInventoryRepository.getBarHappyHourById(happyHourId);
     if (!existing || existing.barId !== venueId) {
       throw new AppError("Happy hour not found for this venue.", 404);
     }
@@ -12055,7 +13956,7 @@ export class BusinessService {
       });
     }
 
-    const queuedDelete = this.maybeQueueVenueDeleteForReview({
+    const queuedDelete = await this.maybeQueueVenueDeleteForReview({
       account,
       venueId,
       changeType: "happy_hour",
@@ -12076,7 +13977,7 @@ export class BusinessService {
 
     let deleted: boolean;
     try {
-      deleted = this.repository.deleteBarHappyHour({ id: happyHourId, barId: venueId, expectedUpdatedAt });
+      deleted = await this.venueInventoryRepository.deleteBarHappyHour({ id: happyHourId, barId: venueId, expectedUpdatedAt });
     } catch (error) {
       if (error instanceof OptimisticConcurrencyError) {
         throw new AppError("This happy hour changed in another session. Refresh before deleting it.", 409);
@@ -12087,7 +13988,7 @@ export class BusinessService {
       throw new AppError("Happy hour not found for this venue.", 404);
     }
 
-    this.trackEvent(account, {
+    await this.trackEvent(account, {
       anonymousSessionId: null,
       eventType: "venue_update_submitted",
       venueId,
@@ -12099,13 +14000,14 @@ export class BusinessService {
     return { deleted: true, message: "Happy hour removed." };
   }
 
-  upsertBarSpecial(account: BusinessAccount, venueId: string, input: BarSpecialInput) {
-    const assignment = this.requireAssignedVenue(account, venueId);
-    this.requireBarSpecialsTier(account, venueId);
+  async upsertBarSpecial(account: BusinessAccount, venueId: string, input: BarSpecialInput) {
+    this.assertCommercialVenueFeatureOpen();
+    const assignment = await this.requireAssignedVenue(account, venueId);
+    await this.requireBarSpecialsTier(account, venueId);
     if (input.exclusive) {
-      this.requireFeaturedSpecialsTier(account, venueId);
+      await this.requireFeaturedSpecialsTier(account, venueId);
     }
-    const existing = input.id ? this.repository.getBarSpecialById(input.id) : null;
+    const existing = input.id ? await this.venueInventoryRepository.getBarSpecialById(input.id) : null;
     if (existing && existing.barId !== venueId) {
       throw new AppError("Special belongs to another venue.", 403);
     }
@@ -12120,10 +14022,11 @@ export class BusinessService {
       });
     }
 
-    const profile = this.ensureBarProfile({
+    const currentProfile = await this.venueInventoryRepository.getBarProfile(venueId);
+    const profile = await this.ensureBarProfileAsync({
       barId: venueId,
-      name: assignment?.venueName ?? this.repository.getBarProfile(venueId)?.name ?? venueId,
-      suburb: assignment?.suburb ?? this.repository.getBarProfile(venueId)?.suburb ?? null,
+      name: assignment?.venueName ?? currentProfile?.name ?? venueId,
+      suburb: assignment?.suburb ?? currentProfile?.suburb ?? null,
     });
     const recurrence = input.recurrence ?? {
       frequency: "none" as const,
@@ -12132,7 +14035,7 @@ export class BusinessService {
     };
     let special;
     try {
-      special = this.repository.upsertBarSpecial({
+      special = await this.venueInventoryRepository.upsertBarSpecial({
       id: input.id ?? crypto.randomUUID(),
       barId: venueId,
       title: input.title,
@@ -12160,7 +14063,7 @@ export class BusinessService {
       throw error;
     }
 
-    this.trackEvent(account, {
+    await this.trackEvent(account, {
       anonymousSessionId: null,
       eventType: "venue_update_submitted",
       venueId,
@@ -12172,10 +14075,11 @@ export class BusinessService {
     return { special, message: "Pint Path special saved." };
   }
 
-  deleteBarSpecial(account: BusinessAccount, venueId: string, specialId: string, expectedUpdatedAt: string) {
-    const assignment = this.requireAssignedVenue(account, venueId);
-    this.requireBarSpecialsTier(account, venueId);
-    const existing = this.repository.getBarSpecialById(specialId);
+  async deleteBarSpecial(account: BusinessAccount, venueId: string, specialId: string, expectedUpdatedAt: string) {
+    this.assertCommercialVenueFeatureOpen();
+    const assignment = await this.requireAssignedVenue(account, venueId);
+    await this.requireBarSpecialsTier(account, venueId);
+    const existing = await this.venueInventoryRepository.getBarSpecialById(specialId);
     if (!existing || existing.barId !== venueId) {
       throw new AppError("Special not found for this venue.", 404);
     }
@@ -12185,7 +14089,7 @@ export class BusinessService {
       });
     }
 
-    const queuedDelete = this.maybeQueueVenueDeleteForReview({
+    const queuedDelete = await this.maybeQueueVenueDeleteForReview({
       account,
       venueId,
       changeType: "special",
@@ -12204,7 +14108,7 @@ export class BusinessService {
 
     let deleted: boolean;
     try {
-      deleted = this.repository.deleteBarSpecial({ id: specialId, barId: venueId, expectedUpdatedAt });
+      deleted = await this.venueInventoryRepository.deleteBarSpecial({ id: specialId, barId: venueId, expectedUpdatedAt });
     } catch (error) {
       if (error instanceof OptimisticConcurrencyError) {
         throw new AppError("This special changed in another session. Refresh before deleting it.", 409);
@@ -12215,7 +14119,7 @@ export class BusinessService {
       throw new AppError("Special not found for this venue.", 404);
     }
 
-    this.trackEvent(account, {
+    await this.trackEvent(account, {
       anonymousSessionId: null,
       eventType: "venue_update_submitted",
       venueId,
@@ -12227,108 +14131,136 @@ export class BusinessService {
     return { deleted: true, message: "Pint Path special removed." };
   }
 
-  reviewBarPendingChange(admin: BusinessAccount, changeId: string, input: BarPendingChangeReviewInput) {
+  async reviewBarPendingChange(admin: BusinessAccount, changeId: string, input: BarPendingChangeReviewInput) {
     if (!this.isAdmin(admin)) {
       throw new AppError("Admin access required.", 403);
     }
 
     const now = nowIso();
-    const result = this.repository.runInTransaction(() => {
-      const change = this.repository.getBarPendingChangeById(changeId);
-      if (!change) {
-        throw new AppError("Pending venue change not found.", 404);
+    const pendingChange = await this.venuePendingChangeRepository.getBarPendingChangeById(changeId);
+    if (!pendingChange) {
+      throw new AppError("Pending venue change not found.", 404);
+    }
+    if (pendingChange.status !== "pending") {
+      throw new AppError("Pending venue change has already been reviewed.", 409);
+    }
+    if (pendingChange.changeType === "special" && input.status === "approved") {
+      this.assertCommercialVenueFeatureOpen();
+      const profile = await this.venueInventoryRepository.getBarProfile(pendingChange.barId);
+      if (!getBarTierCapabilities(profile?.membershipTier ?? "basic").canManageSpecials) {
+        throw new AppError("Pro venue tier required to publish Pint Path specials.", 403);
       }
-      if (change.status !== "pending") {
-        throw new AppError("Pending venue change has already been reviewed.", 409);
-      }
+    }
 
-      // Own the pending row before publishing. If publishing fails, the
-      // surrounding transaction rolls this state change back with it.
-      const reviewed = this.repository.reviewBarPendingChange({
-        id: change.id,
-        status: input.status,
-        reviewedBy: admin.id,
-        reviewedAt: now,
-        rejectionReason: input.status === "rejected" ? input.rejectionReason ?? "Rejected by admin review." : input.rejectionReason,
-      });
-      if (!reviewed) {
-        throw new AppError("Pending venue change has already been reviewed.", 409);
-      }
-
-      if (input.status === "approved") {
-        try {
-          this.applyApprovedBarChange(change, admin, now);
-        } catch (error) {
-          if (error instanceof OptimisticConcurrencyError) {
-            throw new AppError("The venue data changed after this review item was submitted. Refresh and ask the manager to resubmit it.", 409);
-          }
-          throw error;
-        }
-      }
-
-      return { change, reviewed };
+    let resolvedBeerPayload: ResolvedVenueBeerPendingPayload | undefined;
+    if (
+      pendingChange.changeType === "beer"
+      && pendingChange.action !== "delete"
+      && input.status === "approved"
+    ) {
+      const payload = pendingChange.payload;
+      const resolvedBeerInput = await this.standardizeBarBeerInput({
+        id: pendingChange.targetId ?? stringOrNull(payload.id) ?? crypto.randomUUID(),
+        beerName: stringOrNull(payload.beerName) ?? "Unnamed beer",
+        brewery: stringOrNull(payload.brewery),
+        style: stringOrNull(payload.style),
+        abv: numberOrNull(payload.abv),
+        serveSize: stringOrNull(payload.serveSize) as ServingSize | null,
+        price: numberOrNull(payload.price),
+        onTap: booleanFromUnknown(payload.onTap, false),
+        inStock: booleanFromUnknown(payload.inStock, true),
+        notes: stringOrNull(payload.notes),
+        priceConfirmed: booleanFromUnknown(payload.priceConfirmed, false),
+        stockConfirmed: booleanFromUnknown(payload.stockConfirmed, false),
+        expectedUpdatedAt: null,
+      }, "approved_venue_inventory_change", now);
+      resolvedBeerPayload = {
+        beerName: resolvedBeerInput.beerName,
+        normalizedBeerId: resolvedBeerInput.normalizedBeerId,
+        brewery: resolvedBeerInput.brewery,
+        style: resolvedBeerInput.style,
+        abv: resolvedBeerInput.abv,
+        serveSize: resolvedBeerInput.serveSize,
+        price: resolvedBeerInput.price,
+        onTap: resolvedBeerInput.onTap,
+        inStock: resolvedBeerInput.inStock,
+        notes: resolvedBeerInput.notes,
+        priceConfirmed: resolvedBeerInput.priceConfirmed,
+        stockConfirmed: resolvedBeerInput.stockConfirmed,
+      };
+    }
+    const result = await this.venuePendingChangeRepository.reviewBarPendingChange({
+      id: pendingChange.id,
+      status: input.status,
+      reviewedBy: admin.id,
+      expectedUpdatedAt: pendingChange.updatedAt,
+      reviewedAt: now,
+      rejectionReason: input.status === "rejected"
+        ? input.rejectionReason ?? "Rejected by admin review."
+        : null,
+      ...(resolvedBeerPayload ? { resolvedBeerPayload } : {}),
     });
 
-    this.auditSecurity({
+    await this.auditSecurity({
       actor: admin,
       action: "admin_venue_pending_change_review",
       targetType: "venue_pending_change",
-      targetId: result.change.id,
+      targetId: pendingChange.id,
       metadata: {
-        venueId: result.change.barId,
-        changeType: result.change.changeType,
-        action: result.change.action,
+        venueId: pendingChange.barId,
+        changeType: pendingChange.changeType,
+        action: pendingChange.action,
         status: input.status,
       },
     });
 
     return {
-      pendingChange: result.reviewed,
+      pendingChange: result.pendingChange,
       message: input.status === "approved" ? "Venue change approved and published." : "Venue change rejected. Public data was not changed.",
     };
   }
 
-  reviewVenuePendingChange(admin: BusinessAccount, changeId: string, input: BarPendingChangeReviewInput) {
+  async reviewVenuePendingChange(admin: BusinessAccount, changeId: string, input: BarPendingChangeReviewInput) {
     return this.reviewBarPendingChange(admin, changeId, input);
   }
 
-  assignVenueManager(admin: BusinessAccount, input: VenueManagerAssignmentInput) {
+  async assignVenueManager(admin: BusinessAccount, input: VenueManagerAssignmentInput) {
     if (!this.isAdmin(admin)) {
       throw new AppError("Admin access required.", 403);
     }
 
-    const user = this.repository.getAccountById(input.userId);
+    const user = await this.accountSessionRepository.getAccountById(input.userId);
     if (!user) {
       throw new AppError("User account not found.", 404);
     }
 
     const accessLevel = input.accessLevel ?? "manager";
     if (accessLevel === "counter_staff") {
-      this.requireCounterStaffInvitationAvailable(user.id, input.venueId);
+      this.assertCommercialVenueFeatureOpen();
+      await this.requireCounterStaffInvitationAvailable(user.id, input.venueId);
     }
     const assignedAt = nowIso();
     const assignment = accessLevel === "counter_staff"
-      ? this.repository.inviteVenueCounterStaff({
-          id: crypto.randomUUID(),
+      ? (await this.venueAccessRepository.inviteCounterStaff({
+          invitationToken: crypto.randomUUID(),
+          inviterAccountId: admin.id,
           userId: user.id,
           venueId: input.venueId,
           venueName: input.venueName,
           suburb: input.suburb,
-          approvedBy: admin.id,
           now: assignedAt,
           expiresAt: addMinutes(assignedAt, COUNTER_STAFF_INVITATION_TTL_MINUTES),
-        })
-      : this.repository.assignVenueManager({
-          id: crypto.randomUUID(),
+        })).assignment
+      : await this.venueAccessRepository.assignVenueManager({
+          assignmentId: crypto.randomUUID(),
+          adminAccountId: admin.id,
           userId: user.id,
           venueId: input.venueId,
           venueName: input.venueName,
           suburb: input.suburb,
-          accessLevel,
-          approvedBy: admin.id,
           now: assignedAt,
         });
-    this.auditSecurity({
+    await this.auditSecurity({
       actor: admin,
       action: accessLevel === "counter_staff" ? "admin_venue_counter_staff_invited" : "admin_venue_manager_assignment",
       targetType: "venue_manager_assignment",
@@ -12341,7 +14273,7 @@ export class BusinessService {
       },
     });
 
-    this.trackEvent(admin, {
+    await this.trackEvent(admin, {
       anonymousSessionId: null,
       eventType: "venue_manager_assigned",
       venueId: assignment.venueId,
@@ -12362,24 +14294,34 @@ export class BusinessService {
     };
   }
 
-  revokeVenueManager(admin: BusinessAccount, input: VenueManagerRevokeInput) {
+  async revokeVenueManager(admin: BusinessAccount, input: VenueManagerRevokeInput) {
     if (!this.isAdmin(admin)) {
       throw new AppError("Admin access required.", 403);
     }
 
-    const assignment = this.repository.revokeVenueManager({
+    const existing = await this.venueAccessRepository.getVenueAssignment({
       userId: input.userId,
       venueId: input.venueId,
-      now: nowIso(),
+      activeOnly: false,
     });
-
-    if (!assignment) {
+    if (!existing || existing.status === "revoked") {
       throw new AppError("Venue manager assignment not found.", 404);
     }
+    const revokeResult = await this.venueAccessRepository.revokeVenueAssignment({
+      actorAccountId: admin.id,
+      userId: input.userId,
+      venueId: input.venueId,
+      expectedAccessLevel: existing.accessLevel,
+      now: nowIso(),
+    });
+    if (revokeResult.outcome === "duplicate") {
+      throw new AppError("Venue manager assignment not found.", 404);
+    }
+    const assignment = revokeResult.assignment;
     // Re-evaluate and persist delivery recipients immediately so a revoked
     // manager cannot remain in a custom scheduled-report recipient list.
-    this.getVenueReportRecipients(assignment.venueId);
-    this.auditSecurity({
+    await this.getVenueReportRecipients(assignment.venueId);
+    await this.auditSecurity({
       actor: admin,
       action: "admin_venue_manager_revoke",
       targetType: "venue_manager_assignment",
@@ -12391,7 +14333,7 @@ export class BusinessService {
       },
     });
 
-    this.trackEvent(admin, {
+    await this.trackEvent(admin, {
       anonymousSessionId: null,
       eventType: "venue_manager_revoked",
       venueId: assignment.venueId,
@@ -12406,33 +14348,182 @@ export class BusinessService {
     };
   }
 
-  getVenuePartnerAdmin(admin: BusinessAccount, query: AdminPaginationInput = { limit: 100, offset: 0 }) {
+  private async listVenueInterestOffsetPage(
+    query: AdminPaginationInput,
+    total: number,
+  ): Promise<VenueInterestRecord[]> {
+    const targetCount = query.offset + query.limit;
+    if (!Number.isSafeInteger(targetCount) || targetCount > MAX_VENUE_PARTNER_ADMIN_SCAN_ROWS) {
+      throw new AppError(
+        `Venue-partner pagination is limited to the first ${MAX_VENUE_PARTNER_ADMIN_SCAN_ROWS} records.`,
+        400,
+      );
+    }
+    if (query.offset >= total) return [];
+
+    const records: VenueInterestRecord[] = [];
+    const seenIds = new Set<string>();
+    const seenCursors = new Set<string>();
+    let cursor: VenueInterestListCursor | null = null;
+    while (records.length < targetCount) {
+      const pageLimit = Math.min(VENUE_PARTNER_ADMIN_PAGE_SIZE, targetCount - records.length);
+      const page = await this.venuePartnerRepository.listVenueInterests({ limit: pageLimit, cursor });
+      if (page.interests.length > pageLimit) {
+        throw new AppError("Venue-interest pagination exceeded its requested page size.", 500, undefined, false);
+      }
+      for (const interest of page.interests) {
+        if (seenIds.has(interest.id)) {
+          throw new AppError("Venue-interest pagination returned a duplicate record.", 500, undefined, false);
+        }
+        seenIds.add(interest.id);
+        records.push(interest);
+      }
+      if (!page.nextCursor) {
+        if (records.length < Math.min(targetCount, total)) {
+          throw new AppError("Venue-interest pagination ended before its counted result set.", 500, undefined, false);
+        }
+        break;
+      }
+      if (page.interests.length === 0) {
+        throw new AppError("Venue-interest pagination did not make progress.", 500, undefined, false);
+      }
+      const cursorKey = `${page.nextCursor.createdAt}\0${page.nextCursor.id}`;
+      const last = page.interests.at(-1);
+      if (
+        seenCursors.has(cursorKey)
+        || !last
+        || last.createdAt !== page.nextCursor.createdAt
+        || last.id !== page.nextCursor.id
+      ) {
+        throw new AppError("Venue-interest pagination returned an invalid cursor.", 500, undefined, false);
+      }
+      seenCursors.add(cursorKey);
+      cursor = page.nextCursor;
+    }
+    return records.slice(query.offset, targetCount);
+  }
+
+  private async listVenuePartnerOutreachOffsetPage(
+    query: AdminPaginationInput,
+    total: number,
+  ): Promise<VenuePartnerOutreachRecord[]> {
+    const targetCount = query.offset + query.limit;
+    if (!Number.isSafeInteger(targetCount) || targetCount > MAX_VENUE_PARTNER_ADMIN_SCAN_ROWS) {
+      throw new AppError(
+        `Venue-partner pagination is limited to the first ${MAX_VENUE_PARTNER_ADMIN_SCAN_ROWS} records.`,
+        400,
+      );
+    }
+    if (query.offset >= total) return [];
+
+    const records: VenuePartnerOutreachRecord[] = [];
+    const seenIds = new Set<string>();
+    const seenCursors = new Set<string>();
+    let cursor: VenuePartnerOutreachListCursor | null = null;
+    while (records.length < targetCount) {
+      const pageLimit = Math.min(VENUE_PARTNER_ADMIN_PAGE_SIZE, targetCount - records.length);
+      const page = await this.venuePartnerRepository.listVenuePartnerOutreach({ limit: pageLimit, cursor });
+      if (page.outreach.length > pageLimit) {
+        throw new AppError("Venue-outreach pagination exceeded its requested page size.", 500, undefined, false);
+      }
+      for (const outreach of page.outreach) {
+        if (seenIds.has(outreach.id)) {
+          throw new AppError("Venue-outreach pagination returned a duplicate record.", 500, undefined, false);
+        }
+        seenIds.add(outreach.id);
+        records.push(outreach);
+      }
+      if (!page.nextCursor) {
+        if (records.length < Math.min(targetCount, total)) {
+          throw new AppError("Venue-outreach pagination ended before its counted result set.", 500, undefined, false);
+        }
+        break;
+      }
+      if (page.outreach.length === 0) {
+        throw new AppError("Venue-outreach pagination did not make progress.", 500, undefined, false);
+      }
+      const cursorKey = `${page.nextCursor.updatedAt}\0${page.nextCursor.venueId}`;
+      const last = page.outreach.at(-1);
+      if (
+        seenCursors.has(cursorKey)
+        || !last
+        || last.updatedAt !== page.nextCursor.updatedAt
+        || last.venueId !== page.nextCursor.venueId
+      ) {
+        throw new AppError("Venue-outreach pagination returned an invalid cursor.", 500, undefined, false);
+      }
+      seenCursors.add(cursorKey);
+      cursor = page.nextCursor;
+    }
+    return records.slice(query.offset, targetCount);
+  }
+
+  async getVenuePartnerAdmin(admin: BusinessAccount, query: AdminPaginationInput = { limit: 100, offset: 0 }) {
     if (!this.isAdmin(admin)) {
       throw new AppError("Admin access required.", 403);
     }
 
-    const assignments = this.repository.listVenueManagerAssignments({ ...query, currentOnly: true }).map((assignment) => {
-      const manager = this.repository.getAccountById(assignment.userId);
+    const [
+      claimRequestsTotal,
+      assignmentsTotal,
+      pendingChangesTotal,
+      interestTotal,
+      outreachTotal,
+      closedOutreach,
+      notInterestedOutreach,
+    ] = await Promise.all([
+      this.venueAccessRepository.countVenueClaims(),
+      this.venueAccessRepository.countVenueAssignments({ currentOnly: true }),
+      this.venuePendingChangeRepository.countBarPendingChanges({ status: "pending" }),
+      this.venuePartnerRepository.countVenueInterests(),
+      this.venuePartnerRepository.countVenuePartnerOutreach(),
+      this.venuePartnerRepository.countVenuePartnerOutreach({ status: "closed" }),
+      this.venuePartnerRepository.countVenuePartnerOutreach({ status: "not_interested" }),
+    ]);
+    const totals = {
+      claimRequests: claimRequestsTotal,
+      assignments: assignmentsTotal,
+      pendingChanges: pendingChangesTotal,
+      interests: interestTotal,
+      outreach: outreachTotal,
+      openOutreach: Math.max(0, outreachTotal - closedOutreach - notInterestedOutreach),
+    };
+    const [assignmentPage, interests, claimPage, pendingChanges, outreach] = await Promise.all([
+      this.getVenueAssignmentOffsetPage({ currentOnly: true }, query, totals.assignments),
+      this.listVenueInterestOffsetPage(query, totals.interests),
+      this.getVenueClaimOffsetPage({}, query, totals.claimRequests),
+      this.venuePendingChangeRepository.listBarPendingChanges({ status: "pending", ...query }),
+      this.listVenuePartnerOutreachOffsetPage(query, totals.outreach),
+    ]);
+    const assignments = await Promise.all(assignmentPage.map(async (assignment) => {
+      const manager = await this.accountSessionRepository.getAccountById(assignment.userId);
       return {
         ...assignment,
         managerEmail: manager?.email ?? null,
         managerDisplayName: manager?.displayName ?? null,
         managerPublicAccountId: manager?.publicAccountId ?? null,
       };
-    });
+    }));
 
-    const interests = this.repository.listVenueInterestRequests(query.limit, query.offset);
-    const claimRequests = this.repository.listBarClaimRequests(query);
-    const pendingChanges = this.repository.listBarPendingChanges({ status: "pending", ...query });
-    const outreach = this.repository.listVenuePartnerOutreach(query.limit, query.offset);
-    const totals = this.repository.getVenuePartnerAdminCounts();
-    const leads = this.repository.getPotentialPartnerLeads({
-      staleBefore: daysAgoIso(90),
+    const claimRequests = claimPage.map((claim) => this.toBarClaimRequest(claim));
+    const leadAsOf = nowIso();
+    const leads = await this.adminAnalyticsRepository.getPotentialPartnerLeads({
+      staleBefore: daysAgoIso(90, leadAsOf),
       limit: 25,
     });
-    const leadRelationshipContext = this.repository.getVenuePartnerLeadContext(
-      leads.map((lead) => lead.venueId),
-    );
+    const leadVenueIds = leads.map((lead) => lead.venueId);
+    // These are bounded, independently current table-owner reads. They are not
+    // presented as a cross-repository transactional snapshot.
+    const [assignedVenueIds, leadOutreach] = await Promise.all([
+      this.venueAccessRepository.listActiveAssignedVenueIds({ venueIds: leadVenueIds }),
+      this.venuePartnerRepository.listVenuePartnerOutreachByVenueIds({ venueIds: leadVenueIds }),
+    ]);
+    const leadRelationshipContext = {
+      assignedVenueIds,
+      outreachByVenueId: Object.fromEntries(
+        leadOutreach.map((outreach) => [outreach.venueId, outreach]),
+      ),
+    };
     return {
       interests,
       claimRequests,
@@ -12455,34 +14546,39 @@ export class BusinessService {
     };
   }
 
-  searchAccountsForAdmin(admin: BusinessAccount, query: AdminAccountSearchInput) {
+  async searchAccountsForAdmin(admin: BusinessAccount, query: AdminAccountSearchInput) {
     if (!this.isAdmin(admin)) {
       throw new AppError("Admin access required.", 403);
     }
 
     return {
-      accounts: this.repository.searchAccountsForAdmin({
+      accounts: await this.adminAccountRepository.searchAccountsForAdmin({
+        actorAccountId: admin.id,
         query: query.q,
         limit: query.limit,
       }),
     };
   }
 
-  updateVenueInterestStatus(admin: BusinessAccount, interestId: string, input: VenueInterestStatusInput) {
+  async updateVenueInterestStatus(admin: BusinessAccount, interestId: string, input: VenueInterestStatusInput) {
     if (!this.isAdmin(admin)) {
       throw new AppError("Admin access required.", 403);
     }
 
-    const interest = this.repository.updateVenueInterestStatus({
-      id: interestId,
-      status: input.status,
-      now: nowIso(),
-    });
-
-    if (!interest) {
+    const existing = await this.venuePartnerRepository.getVenueInterestById(interestId);
+    if (!existing) {
       throw new AppError("Venue interest request not found.", 404);
     }
-    this.auditSecurity({
+    const interest = await this.venuePartnerRepository.updateVenueInterestWorkflow({
+      actorAccountId: admin.id,
+      interestId,
+      status: input.status,
+      assignedTo: existing.assignedTo,
+      resolutionNote: existing.resolutionNote,
+      expectedUpdatedAt: input.expectedUpdatedAt,
+      now: nowIso(),
+    });
+    await this.auditSecurity({
       actor: admin,
       action: "admin_venue_interest_status_update",
       targetType: "venue_interest",
@@ -12490,7 +14586,7 @@ export class BusinessService {
       metadata: { status: interest.status, venueId: interest.venueId, venueName: interest.venueName },
     });
 
-    this.trackEvent(admin, {
+    await this.trackEvent(admin, {
       anonymousSessionId: null,
       eventType: "outreach_status_updated",
       venueId: interest.venueId,
@@ -12502,56 +14598,68 @@ export class BusinessService {
     return { interest };
   }
 
-  upsertVenueOutreach(admin: BusinessAccount, input: VenueOutreachInput) {
+  async upsertVenueOutreach(admin: BusinessAccount, input: VenueOutreachInput) {
     if (!this.isAdmin(admin)) {
       throw new AppError("Admin access required.", 403);
     }
 
-    const outreach = this.repository.upsertVenuePartnerOutreach({
-      id: crypto.randomUUID(),
+    const existing = await this.venuePartnerRepository.getVenuePartnerOutreachByVenueId(input.venueId);
+    const result = await this.venuePartnerRepository.upsertVenuePartnerOutreach({
+      actorAccountId: admin.id,
+      id: existing?.id ?? crypto.randomUUID(),
       venueId: input.venueId,
       venueName: input.venueName,
       suburb: input.suburb,
       status: input.status,
       tierFit: input.tierFit,
       nextAction: input.nextAction,
-      lastContactedAt: input.lastContactedAt,
+      // The admin form historically submits a date-only value. Keep that API
+      // compatibility at the service boundary while persistence remains strict.
+      lastContactedAt: canonicalVenueOutreachContactTimestamp(input.lastContactedAt),
       contactName: input.contactName,
       notes: input.notes,
-      updatedBy: admin.id,
+      expectedUpdatedAt: input.expectedUpdatedAt ?? null,
       now: nowIso(),
     });
-    this.auditSecurity({
-      actor: admin,
-      action: "admin_venue_outreach_update",
-      targetType: "venue",
-      targetId: outreach.venueId,
-      metadata: { status: outreach.status, venueName: outreach.venueName },
-    });
+    const { outreach } = result;
+    if (!result.replayed) {
+      await this.auditSecurity({
+        actor: admin,
+        action: "admin_venue_outreach_update",
+        targetType: "venue",
+        targetId: outreach.venueId,
+        metadata: { status: outreach.status, venueName: outreach.venueName },
+      });
 
-    this.trackEvent(admin, {
-      anonymousSessionId: null,
-      eventType: "outreach_status_updated",
-      venueId: outreach.venueId,
-      beerId: null,
-      suburb: outreach.suburb,
-      metadata: { status: outreach.status },
-    });
+      await this.trackEvent(admin, {
+        anonymousSessionId: null,
+        eventType: "outreach_status_updated",
+        venueId: outreach.venueId,
+        beerId: null,
+        suburb: outreach.suburb,
+        metadata: { status: outreach.status },
+      });
+    }
 
-    return { outreach };
+    return { outreach, replayed: result.replayed };
   }
 
-  getAdminKpis(admin: BusinessAccount, query: AdminDashboardQuery) {
+  async getAdminKpis(admin: BusinessAccount, query: AdminDashboardQuery) {
     if (!this.isAdmin(admin)) {
       throw new AppError("Admin access required.", 403);
     }
 
-    const totalVenues = Math.max(this.repository.countKnownVenues(), this.repository.countMissions());
-    const dashboard = this.repository.getAdminKpiDashboard({
-      since: startOfAdminRange(query.range),
-      sevenDaysAgo: daysAgoIso(7),
-      thirtyDaysAgo: daysAgoIso(30),
-      staleBefore: daysAgoIso(90),
+    const asOf = nowIso();
+    const [knownVenues, missionCount] = await Promise.all([
+      this.adminAnalyticsRepository.countKnownVenues(),
+      this.missionLifecycleRepository.countMissions({ activeOnly: false }),
+    ]);
+    const totalVenues = Math.max(knownVenues, missionCount);
+    const dashboard = await this.adminAnalyticsRepository.getAdminKpiDashboard({
+      since: startOfAdminRange(query.range, asOf),
+      sevenDaysAgo: daysAgoIso(7, asOf),
+      thirtyDaysAgo: daysAgoIso(30, asOf),
+      staleBefore: daysAgoIso(90, asOf),
       totalVenues,
     });
     return {
@@ -12566,54 +14674,119 @@ export class BusinessService {
     };
   }
 
-  getRetentionCohorts(admin: BusinessAccount, query: RetentionQuery) {
+  async getRetentionCohorts(admin: BusinessAccount, query: RetentionQuery) {
     if (!this.isAdmin(admin)) {
       throw new AppError("Admin access required.", 403);
     }
 
     return {
       groupBy: query.groupBy,
-      cohorts: this.repository.getRetentionCohorts(query),
+      cohorts: await this.adminAnalyticsRepository.getRetentionCohorts(query),
     };
   }
 
-  getCoverageDashboard(admin: BusinessAccount) {
+  async getCoverageDashboard(admin: BusinessAccount) {
     if (!this.isAdmin(admin)) {
       throw new AppError("Admin access required.", 403);
     }
 
-    const totalVenues = Math.max(this.repository.countKnownVenues(), this.repository.countMissions());
-    return this.repository.getCoverageDashboard({
-      staleBefore: daysAgoIso(90),
+    const asOf = nowIso();
+    const [knownVenues, missionCount] = await Promise.all([
+      this.adminAnalyticsRepository.countKnownVenues(),
+      this.missionLifecycleRepository.countMissions({ activeOnly: false }),
+    ]);
+    const totalVenues = Math.max(knownVenues, missionCount);
+    return this.adminAnalyticsRepository.getCoverageDashboard({
+      staleBefore: daysAgoIso(90, asOf),
+      asOf,
       totalVenues,
     });
   }
 
-  getPotentialPartnerLeads(admin: BusinessAccount) {
+  async getPotentialPartnerLeads(admin: BusinessAccount) {
     if (!this.isAdmin(admin)) {
       throw new AppError("Admin access required.", 403);
     }
 
     return {
-      leads: this.repository.getPotentialPartnerLeads({
-        staleBefore: daysAgoIso(90),
+      leads: await this.adminAnalyticsRepository.getPotentialPartnerLeads({
+        staleBefore: daysAgoIso(90, nowIso()),
         limit: 20,
       }),
     };
   }
 
-  getAdminQueues(admin: BusinessAccount, query: AdminPaginationInput = { limit: 50, offset: 0 }) {
+  private async listVenueRequestOffsetPage(query: AdminPaginationInput): Promise<VenueRequestRecord[]> {
+    const targetCount = query.offset + query.limit;
+    if (!Number.isSafeInteger(targetCount) || targetCount > MAX_VENUE_REQUEST_ADMIN_SCAN_ROWS) {
+      throw new AppError(
+        `Venue-request pagination is limited to the first ${MAX_VENUE_REQUEST_ADMIN_SCAN_ROWS} records.`,
+        400,
+      );
+    }
+
+    const records: VenueRequestRecord[] = [];
+    const seenRequestIds = new Set<string>();
+    const seenCursors = new Set<string>();
+    let cursor: VenueRequestListCursor | null = null;
+    while (records.length < targetCount) {
+      const page = await this.venueRequestRepository.listVenueRequests({
+        limit: Math.min(VENUE_REQUEST_ADMIN_PAGE_SIZE, targetCount - records.length),
+        cursor,
+      });
+      for (const request of page.requests) {
+        if (seenRequestIds.has(request.id)) {
+          throw new AppError("Venue-request pagination returned a duplicate record.", 500, undefined, false);
+        }
+        seenRequestIds.add(request.id);
+        records.push(request);
+      }
+      if (!page.nextCursor) break;
+      if (page.requests.length === 0) {
+        throw new AppError("Venue-request pagination did not make progress.", 500, undefined, false);
+      }
+      const cursorKey = `${page.nextCursor.createdAt}\0${page.nextCursor.id}`;
+      if (seenCursors.has(cursorKey)) {
+        throw new AppError("Venue-request pagination repeated a cursor.", 500, undefined, false);
+      }
+      const last = page.requests.at(-1);
+      if (
+        !last
+        || last.createdAt !== page.nextCursor.createdAt
+        || last.id !== page.nextCursor.id
+      ) {
+        throw new AppError("Venue-request pagination returned an invalid cursor.", 500, undefined, false);
+      }
+      seenCursors.add(cursorKey);
+      cursor = page.nextCursor;
+    }
+    return records.slice(query.offset, targetCount);
+  }
+
+  async getAdminQueues(admin: BusinessAccount, query: AdminPaginationInput = { limit: 50, offset: 0 }) {
     if (!this.isAdmin(admin)) {
       throw new AppError("Admin access required.", 403);
     }
 
-    const feedback = this.repository.listFeedback(query.limit, query.offset);
-    const wrongPriceReports = this.repository.listWrongPriceReports(query.limit, query.offset);
-    const venueRequests = this.repository.listVenueRequests(query.limit, query.offset);
+    const [
+      feedback,
+      wrongPriceReports,
+      venueRequests,
+      feedbackTotal,
+      wrongPriceReportTotal,
+      venueRequestTotal,
+    ] = await Promise.all([
+      this.supportFeedbackRepository.listFeedback(query),
+      this.supportFeedbackRepository.listWrongPriceReports(query),
+      this.listVenueRequestOffsetPage(query),
+      this.supportFeedbackRepository.countFeedback(),
+      this.supportFeedbackRepository.countWrongPriceReports(),
+      this.venueRequestRepository.countVenueRequests(),
+    ]);
     const totals = {
-      feedback: this.repository.countFeedback(),
-      wrongPriceReports: this.repository.countWrongPriceReports(),
-      venueRequests: this.repository.countVenueRequests(),
+      feedback: feedbackTotal,
+      wrongPriceReports: wrongPriceReportTotal,
+      venueRequests: venueRequestTotal,
     };
     return {
       feedback,
@@ -12632,7 +14805,7 @@ export class BusinessService {
     };
   }
 
-  getOperationalHealth(admin: BusinessAccount) {
+  async getOperationalHealth(admin: BusinessAccount) {
     if (!this.isAdmin(admin)) {
       throw new AppError("Admin access required.", 403);
     }
@@ -12645,20 +14818,21 @@ export class BusinessService {
       "job:account_deletion_notifications",
       AUTO_MISSION_REFRESH_STATE_KEY,
     ];
+    const jobs = await Promise.all(keys.map(async (key) => {
+      const state = await this.systemStateRepository.get<Record<string, unknown>>(key);
+      return {
+        key,
+        state: state?.value ?? { state: "not_run" },
+        updatedAt: state?.updatedAt ?? null,
+      };
+    }));
     return {
       checkedAt: nowIso(),
-      jobs: keys.map((key) => {
-        const state = this.repository.getSystemState<Record<string, unknown>>(key);
-        return {
-          key,
-          state: state?.value ?? { state: "not_run" },
-          updatedAt: state?.updatedAt ?? null,
-        };
-      }),
+      jobs,
     };
   }
 
-  updateTrustQueueItem(
+  async updateTrustQueueItem(
     admin: BusinessAccount,
     kind: "feedback" | "wrong_price" | "venue_request",
     id: string,
@@ -12671,8 +14845,8 @@ export class BusinessService {
     if (input.assignedTo) {
       const assignee = input.assignedTo === "self"
         ? admin
-        : this.repository.getAccountById(input.assignedTo)
-          ?? this.repository.getAccountByPublicAccountId(input.assignedTo);
+        : await this.accountSessionRepository.getAccountById(input.assignedTo)
+          ?? await this.accountSessionRepository.getAccountByPublicAccountId(input.assignedTo);
       if (!assignee || assignee.status !== "active" || !this.isAdmin(assignee)) {
         throw new AppError("Trust queue assignee must be an active, authorised administrator.", 400);
       }
@@ -12682,8 +14856,7 @@ export class BusinessService {
       Date.now(),
       new Date(input.expectedUpdatedAt).getTime() + 1,
     )).toISOString();
-    const result = this.repository.updateTrustWorkflow({
-      kind,
+    const workflowInput = {
       id,
       status: input.status,
       assignedTo,
@@ -12691,15 +14864,31 @@ export class BusinessService {
       resolvedBy: admin.id,
       expectedUpdatedAt: input.expectedUpdatedAt,
       now: trustUpdatedAt,
-    });
-    if (result.state === "not_found") {
-      throw new AppError("Trust queue item not found.", 404);
+    };
+    let item: unknown;
+    if (kind === "venue_request") {
+      item = await this.venueRequestRepository.updateTrustWorkflow({
+        actorAccountId: admin.id,
+        requestId: id,
+        status: input.status,
+        assignedTo,
+        resolutionNote: input.resolutionNote,
+        expectedUpdatedAt: input.expectedUpdatedAt,
+        now: trustUpdatedAt,
+      });
+    } else {
+      const result = kind === "feedback"
+        ? await this.supportFeedbackRepository.updateFeedbackWorkflow(workflowInput)
+        : await this.supportFeedbackRepository.updateWrongPriceWorkflow(workflowInput);
+      if (result.state === "not_found") {
+        throw new AppError("Trust queue item not found.", 404);
+      }
+      if (result.state === "conflict") {
+        throw new AppError("This trust queue item changed. Refresh it before saving.", 409);
+      }
+      item = result.item;
     }
-    if (result.state === "conflict") {
-      throw new AppError("This trust queue item changed. Refresh it before saving.", 409);
-    }
-    const item = result.item;
-    this.auditSecurity({
+    await this.auditSecurity({
       actor: admin,
       action: "admin_trust_queue_update",
       targetType: kind,
@@ -12713,25 +14902,23 @@ export class BusinessService {
     return { item };
   }
 
-  createMissionFromRequest(admin: BusinessAccount, requestId: string) {
+  async createMissionFromRequest(admin: BusinessAccount, requestId: string) {
     if (!this.isAdmin(admin)) {
       throw new AppError("Admin access required.", 403);
     }
 
-    const result = this.repository.createMissionFromVenueRequest({
+    const currentRequest = await this.venueRequestRepository.getVenueRequestById(requestId);
+    if (!currentRequest) throw new AppError("Request not found.", 404);
+    const result = await this.venueRequestRepository.createMissionFromVenueRequest({
+      actorAccountId: admin.id,
       requestId,
       missionId: crypto.randomUUID(),
+      expectedRequestUpdatedAt: currentRequest.updatedAt,
       now: nowIso(),
     });
-    if (result.state === "not_found") {
-      throw new AppError("Request not found.", 404);
-    }
-    if (result.state === "conflict") {
-      throw new AppError("This request already has a mission or is no longer pending.", 409);
-    }
     const { mission, request } = result;
 
-    this.trackEvent(admin, {
+    await this.trackEvent(admin, {
       anonymousSessionId: null,
       eventType: "mission_created_from_request",
       venueId: mission.venueId,
@@ -12746,9 +14933,19 @@ export class BusinessService {
   private assertCommercialEnrollmentOpen(): void {
     if (!this.config.COMMERCIAL_LAUNCH_ENABLED) {
       throw new AppError(
-        "New paid and introductory-trial enrollment is not open yet. Existing subscriptions and billing management remain available.",
+        "Paid and introductory-trial venue enrollment is not available in the current Free release.",
         503,
         { publicCode: "COMMERCIAL_LAUNCH_DISABLED" },
+      );
+    }
+  }
+
+  assertCommercialVenueFeatureOpen(): void {
+    if (!this.config.COMMERCIAL_LAUNCH_ENABLED) {
+      throw new AppError(
+        "This venue feature is not available in the current Free release.",
+        404,
+        { publicCode: "COMMERCIAL_VENUE_FEATURE_DISABLED" },
       );
     }
   }
@@ -12756,7 +14953,7 @@ export class BusinessService {
   private assertConsumerPaidEnrollmentOpen(): void {
     if (!this.config.CONSUMER_PAID_ENROLLMENT_ENABLED) {
       throw new AppError(
-        "New consumer paid enrollment is not included in this release. Existing subscriptions and billing management remain available.",
+        "Consumer paid enrollment is not available in the current Free release.",
         503,
         { publicCode: "CONSUMER_PAID_ENROLLMENT_DISABLED" },
       );
@@ -12764,8 +14961,9 @@ export class BusinessService {
   }
 
   async createCheckout(account: BusinessAccount, input: CheckoutInput) {
+    this.assertCommercialVenueFeatureOpen();
     this.requireCurrentLegalAcceptance(account);
-    if (this.repository.hasDeletionLock(account.id)) {
+    if (await this.accountSessionRepository.hasDeletionLock(account.id)) {
       throw new AppError("Billing changes are unavailable while account deletion is being processed.", 409);
     }
     if (!account.ageConfirmedAt) {
@@ -12797,7 +14995,7 @@ export class BusinessService {
       ? this.config.STRIPE_PRICE_MONTHLY
       : this.config.STRIPE_PRICE_YEARLY;
 
-    this.trackEvent(account, {
+    await this.trackEvent(account, {
       anonymousSessionId: null,
       eventType: "checkout_started",
       venueId: null,
@@ -12819,7 +15017,8 @@ export class BusinessService {
     }
 
     const reservationNow = nowIso();
-    const reservation = this.repository.claimBillingCheckoutReservation({
+    const reservation = await this.billingCheckoutRepository.claimBillingCheckoutReservation({
+      actorAccountId: account.id,
       subjectType: "consumer",
       subjectId: account.id,
       productKey: `consumer:${input.plan}`,
@@ -12890,7 +15089,8 @@ export class BusinessService {
       });
     }
 
-    const finalizedReservation = this.repository.finalizeBillingCheckoutReservation({
+    const finalizedReservation = await this.billingCheckoutRepository.finalizeBillingCheckoutReservation({
+      actorAccountId: account.id,
       subjectType: "consumer",
       subjectId: account.id,
       reservationToken: reservation.reservationToken,
@@ -12955,8 +15155,9 @@ export class BusinessService {
   }
 
   async createBillingPortal(account: BusinessAccount) {
+    this.assertCommercialVenueFeatureOpen();
     const result = await this.createStripeBillingPortalSession(account.stripeCustomerId ?? "", "/account.html?billing=returned");
-    this.auditSecurity({
+    await this.auditSecurity({
       actor: account,
       action: "stripe_billing_portal_opened",
       targetType: "account",
@@ -12966,20 +15167,23 @@ export class BusinessService {
     return result;
   }
 
-  private getSuspendedBillingRecoveryOptions(account: BusinessAccount) {
-    const venues = this.repository
-      .listVenueManagerAssignments({ userId: account.id, activeOnly: true, limit: -1 })
-      .filter((assignment) => assignment.accessLevel === "manager")
-      .flatMap((assignment) => {
-        const profile = this.repository.getBarProfile(assignment.venueId);
+  private async getSuspendedBillingRecoveryOptions(account: BusinessAccount) {
+    const assignments = await this.collectVenueAssignments({
+      userId: account.id,
+      accessLevel: "manager",
+      status: "active",
+    });
+    const venues = (await Promise.all(assignments.map(async (assignment) => {
+        const profile = await this.venueInventoryRepository.getBarProfile(assignment.venueId);
         return profile?.stripeCustomerId
           ? [{ venueId: assignment.venueId, venueName: assignment.venueName }]
           : [];
-      });
+      }))).flat();
     return { consumer: Boolean(account.stripeCustomerId), venues };
   }
 
   async createSuspendedAccountBillingPortal(input: BillingRecoveryPortalInput, context?: SessionRequestContext | undefined) {
+    this.assertCommercialVenueFeatureOpen();
     let account: BusinessAccount | null = null;
     if (input.accessToken) {
       if (!this.supabase) {
@@ -12989,8 +15193,10 @@ export class BusinessService {
       if (error || !data.user?.id || !data.user.email) {
         throw new AppError("Invalid billing recovery credentials.", 401);
       }
-      const byProviderId = this.repository.getAccountBySupabaseUserId(data.user.id);
-      const byEmail = this.repository.getAccountByEmail(normalizeEmail(data.user.email));
+      const [byProviderId, byEmail] = await Promise.all([
+        this.accountSessionRepository.getAccountBySupabaseUserId(data.user.id),
+        this.accountSessionRepository.getAccountByEmail(normalizeEmail(data.user.email)),
+      ]);
       if (byProviderId && byEmail && byProviderId.id !== byEmail.id) {
         throw new AppError("This provider identity conflicts with another Pint Path account. Contact support.", 409);
       }
@@ -13005,7 +15211,7 @@ export class BusinessService {
         }
       }
     } else if (input.email && input.password) {
-      const candidate = this.repository.getAccountByEmail(normalizeEmail(input.email));
+      const candidate = await this.accountSessionRepository.getAccountByEmail(normalizeEmail(input.email));
       if (!candidate || candidate.authProvider !== "local" || !await verifyPassword(input.password, candidate.passwordHash)) {
         throw new AppError("Invalid billing recovery credentials.", 401);
       }
@@ -13015,10 +15221,10 @@ export class BusinessService {
     if (!account || account.status !== "suspended") {
       throw new AppError("Billing recovery is only available for suspended accounts. Sign in normally to manage billing.", 403);
     }
-    if (account.authProvider === "deleted" || this.repository.hasDeletionLock(account.id)) {
+    if (account.authProvider === "deleted" || await this.accountSessionRepository.hasDeletionLock(account.id)) {
       throw new AppError("Deleted accounts cannot open billing recovery.", 410);
     }
-    const recoveryOptions = this.getSuspendedBillingRecoveryOptions(account);
+    const recoveryOptions = await this.getSuspendedBillingRecoveryOptions(account);
     let billingContext: "consumer" | "venue" = "consumer";
     let venueId: string | null = null;
     let customerId = account.stripeCustomerId;
@@ -13029,11 +15235,11 @@ export class BusinessService {
       }
       billingContext = "venue";
       venueId = requestedVenue.venueId;
-      customerId = this.repository.getBarProfile(requestedVenue.venueId)?.stripeCustomerId ?? null;
+      customerId = (await this.venueInventoryRepository.getBarProfile(requestedVenue.venueId))?.stripeCustomerId ?? null;
     } else if (!customerId && recoveryOptions.venues.length === 1) {
       billingContext = "venue";
       venueId = recoveryOptions.venues[0]!.venueId;
-      customerId = this.repository.getBarProfile(venueId)?.stripeCustomerId ?? null;
+      customerId = (await this.venueInventoryRepository.getBarProfile(venueId))?.stripeCustomerId ?? null;
     } else if (!customerId && recoveryOptions.venues.length > 1) {
       throw new AppError("Choose which managed venue billing profile to recover.", 409, {
         publicCode: "BILLING_RECOVERY_VENUE_SELECTION_REQUIRED",
@@ -13046,7 +15252,7 @@ export class BusinessService {
       customerId ?? "",
       "/pricing.html?billing=recovery-returned",
     );
-    this.auditSecurity({
+    await this.auditSecurity({
       actor: account,
       action: "suspended_account_billing_portal_opened",
       targetType: billingContext === "venue" ? "venue" : "account",
@@ -13064,9 +15270,10 @@ export class BusinessService {
   }
 
   async createBarBillingPortal(account: BusinessAccount, venueId: string) {
+    this.assertCommercialVenueFeatureOpen();
     this.requireVerifiedBarAccount(account);
-    this.requireAssignedVenue(account, venueId);
-    const profile = this.repository.getBarProfile(venueId);
+    await this.requireAssignedVenue(account, venueId);
+    const profile = await this.venueInventoryRepository.getBarProfile(venueId);
     if (!profile) {
       throw new AppError("This venue does not have a billing profile.", 409);
     }
@@ -13074,7 +15281,7 @@ export class BusinessService {
       profile.stripeCustomerId ?? "",
       `/venue-portal.html?venueId=${encodeURIComponent(venueId)}&billing=returned`,
     );
-    this.auditSecurity({
+    await this.auditSecurity({
       actor: account,
       action: "stripe_billing_portal_opened",
       targetType: "venue",
@@ -13085,7 +15292,8 @@ export class BusinessService {
   }
 
   async reconcileCheckoutSession(account: BusinessAccount, input: CheckoutSessionInput) {
-    if (account.authProvider === "deleted" || this.repository.hasDeletionLock(account.id)) {
+    this.assertCommercialVenueFeatureOpen();
+    if (account.authProvider === "deleted" || await this.accountSessionRepository.hasDeletionLock(account.id)) {
       throw new AppError("Deleted accounts cannot restore billing access.", 410);
     }
     if (this.config.DEMO_BILLING_MODE) {
@@ -13120,7 +15328,7 @@ export class BusinessService {
 
     const metadata = payload.metadata ?? {};
     if (metadata.user_id !== account.id) {
-      this.auditSecurity({
+      await this.auditSecurity({
         actor: account,
         action: "stripe_checkout_session_mismatch",
         targetType: "account",
@@ -13177,7 +15385,7 @@ export class BusinessService {
     if (updated.subscriptionStatus !== subscriptionStatus) {
       throw new AppError("Billing changed while checkout was being confirmed. Refresh Account to see the current Stripe status.", 409);
     }
-    this.trackEvent(updated, {
+    await this.trackEvent(updated, {
       anonymousSessionId: null,
       eventType: "subscription_created",
       venueId: null,
@@ -13185,7 +15393,7 @@ export class BusinessService {
       suburb: null,
       metadata: { mode: "stripe", source: "checkout_return", subscriptionStatus },
     });
-    this.auditSecurity({
+    await this.auditSecurity({
       actor: updated,
       action: "stripe_subscription_update",
       targetType: "account",
@@ -13201,8 +15409,9 @@ export class BusinessService {
   }
 
   async createBarTierCheckout(account: BusinessAccount, venueId: string, input: BarTierCheckoutInput) {
+    this.assertCommercialVenueFeatureOpen();
     this.requireVerifiedBarAccount(account);
-    const assignment = this.requireAssignedVenue(account, venueId);
+    const assignment = await this.requireAssignedVenue(account, venueId);
     let profile = this.ensureBarProfile({
       barId: venueId,
       name: assignment?.venueName ?? this.repository.getBarProfile(venueId)?.name ?? venueId,
@@ -13211,12 +15420,17 @@ export class BusinessService {
 
     this.assertCommercialEnrollmentOpen();
 
-    const billingSubjectVenueId = this.repository.getCanonicalVenueId(venueId);
-    let venueTrialEverClaimed = this.repository.hasVenueIntroTrialEverClaimed(venueId);
-    const priorReservation = this.repository.getBillingCheckoutReservation(
-      "venue",
-      billingSubjectVenueId,
-    );
+    const checkoutReadAt = nowIso();
+    const billingSubjectVenueId = await this.venueIdentityRepository.getCanonicalVenueId(venueId);
+    let venueTrialEverClaimed = await this.billingCheckoutRepository.hasVenueIntroTrialEverClaimed({
+      venueId,
+      asOf: checkoutReadAt,
+    });
+    const priorReservation = await this.billingCheckoutRepository.getBillingCheckoutReservation({
+      subjectType: "venue",
+      subjectId: billingSubjectVenueId,
+      asOf: checkoutReadAt,
+    });
     if (
       !venueTrialEverClaimed &&
       priorReservation &&
@@ -13263,9 +15477,9 @@ export class BusinessService {
       if (
         (priorBillingContext !== "venue" && priorBillingContext !== "bar") ||
         !priorVenueId ||
-        this.repository.getCanonicalVenueId(priorVenueId) !== billingSubjectVenueId
+        await this.venueIdentityRepository.getCanonicalVenueId(priorVenueId) !== billingSubjectVenueId
       ) {
-        this.auditSecurity({
+        await this.auditSecurity({
           actor: account,
           action: "stripe_venue_trial_reconciliation_mismatch",
           targetType: "venue",
@@ -13301,7 +15515,11 @@ export class BusinessService {
 
       if (priorPayload.status === "complete") {
         const reconciledAt = nowIso();
-        this.repository.markVenueIntroTrialEverClaimed(priorVenueId, reconciledAt);
+        await this.billingCheckoutRepository.markVenueIntroTrialEverClaimed({
+          actorAccountId: account.id,
+          venueId: priorVenueId,
+          now: reconciledAt,
+        });
         venueTrialEverClaimed = true;
 
         const priorSubscription = objectFromUnknown(priorPayload.subscription);
@@ -13347,7 +15565,7 @@ export class BusinessService {
             { publicCode: "VENUE_TRIAL_RECONCILIATION_CHANGED" },
           );
         }
-        this.auditSecurity({
+        await this.auditSecurity({
           actor: account,
           action: "stripe_venue_trial_reconciled",
           targetType: "venue",
@@ -13411,7 +15629,7 @@ export class BusinessService {
         ? 0
         : this.config.VENUE_PRO_TRIAL_DAYS;
 
-    this.trackEvent(account, {
+    await this.trackEvent(account, {
       anonymousSessionId: null,
       eventType: "checkout_started",
       venueId,
@@ -13429,7 +15647,7 @@ export class BusinessService {
         now: nowIso(),
         ...flags,
       });
-      this.auditSecurity({
+      await this.auditSecurity({
         actor: account,
         action: "demo_subscription_grant",
         targetType: "venue",
@@ -13454,12 +15672,15 @@ export class BusinessService {
     }
 
     const reservationNow = nowIso();
-    const reservation = this.repository.claimBillingCheckoutReservation({
+    const reservation = await this.billingCheckoutRepository.claimBillingCheckoutReservation({
+      actorAccountId: account.id,
       subjectType: "venue",
       subjectId: billingSubjectVenueId,
-      productKey: introductoryTrialDays > 0
-        ? `venue:pro:trial:${introductoryTrialDays}`
-        : "venue:pro:paid",
+      productKey: introductoryTrialDays === 30
+        ? "venue:pro:trial:30"
+        : introductoryTrialDays === 60
+          ? "venue:pro:trial:60"
+          : "venue:pro:paid",
       reservationToken: crypto.randomUUID(),
       expiresAt: new Date(Date.parse(reservationNow) + STRIPE_CHECKOUT_RESERVATION_TTL_MS).toISOString(),
       now: reservationNow,
@@ -13537,7 +15758,8 @@ export class BusinessService {
       });
     }
 
-    const finalizedReservation = this.repository.finalizeBillingCheckoutReservation({
+    const finalizedReservation = await this.billingCheckoutRepository.finalizeBillingCheckoutReservation({
+      actorAccountId: account.id,
       subjectType: "venue",
       subjectId: billingSubjectVenueId,
       reservationToken: reservation.reservationToken,
@@ -13554,7 +15776,8 @@ export class BusinessService {
     };
   }
 
-  handleDemoSubscription(account: BusinessAccount, plan: "monthly" | "yearly") {
+  async handleDemoSubscription(account: BusinessAccount, plan: "monthly" | "yearly") {
+    this.assertCommercialVenueFeatureOpen();
     if (!this.config.DEMO_BILLING_MODE) {
       throw new AppError("Demo billing is not enabled.", 503);
     }
@@ -13569,14 +15792,14 @@ export class BusinessService {
       premiumUntil: null,
       now,
     });
-    this.auditSecurity({
+    await this.auditSecurity({
       actor: updated,
       action: "demo_subscription_grant",
       targetType: "account",
       targetId: updated.id,
       metadata: { plan, mode: "demo", subscriptionStatus: status },
     });
-    this.trackEvent(updated, {
+    await this.trackEvent(updated, {
       anonymousSessionId: null,
       eventType: "subscription_created",
       venueId: null,
@@ -13588,12 +15811,16 @@ export class BusinessService {
   }
 
   async handleStripeWebhook(rawBody: Buffer | undefined, signature: string | undefined): Promise<{ received: true }> {
+    this.assertCommercialVenueFeatureOpen();
     if (!this.config.STRIPE_WEBHOOK_SECRET) {
       throw new AppError("Stripe webhook secret is not configured.", 503);
     }
 
-    if (!rawBody || !signature) {
-      this.auditSecurity({
+    // Missing user-controlled inputs only select a fail-closed audit/error
+    // path; every accepted event is still verified with the server-held secret.
+    // codeql[js/user-controlled-bypass]
+    if (!rawBody || !signature) { // lgtm[js/user-controlled-bypass]
+      await this.auditSecurity({
         action: "stripe_webhook_signature_failed",
         targetType: "stripe_webhook",
         metadata: { reason: !rawBody ? "missing_raw_body" : "missing_signature" },
@@ -13605,7 +15832,7 @@ export class BusinessService {
     try {
       event = this.verifyStripeWebhook(rawBody, signature);
     } catch (error) {
-      this.auditSecurity({
+      await this.auditSecurity({
         action: "stripe_webhook_signature_failed",
         targetType: "stripe_webhook",
         metadata: { reason: error instanceof Error ? error.message : "invalid_signature" },
@@ -13616,19 +15843,29 @@ export class BusinessService {
       throw new AppError("Invalid Stripe webhook event.", 400);
     }
     const receivedAt = nowIso();
-    const eventCreatedAt = Number.isSafeInteger(event.created)
-      ? new Date(Number(event.created) * 1000).toISOString()
-      : null;
-    const processingClaim = this.repository.beginStripeEvent({
-      id: event.id,
-      eventType: event.type,
-      eventCreatedAt,
-      payload: event as unknown as Record<string, unknown>,
-      receivedAt,
-    });
+    let eventCreatedAt: string | null = null;
+    if (Number.isSafeInteger(event.created)) {
+      try {
+        eventCreatedAt = new Date(Number(event.created) * 1000).toISOString();
+      } catch {
+        eventCreatedAt = null;
+      }
+    }
+    let processingClaim;
+    try {
+      processingClaim = await this.stripeSubscriptionRepository.claimWebhookEvent({
+        id: event.id,
+        eventType: event.type,
+        eventCreatedAt,
+        payload: event as unknown as Record<string, unknown>,
+        receivedAt,
+      });
+    } catch (error) {
+      this.throwMappedStripeSubscriptionError(error);
+    }
 
     if (processingClaim.state === "applied") {
-      this.repository.setSystemState("job:stripe_webhook", {
+      await this.systemStateRepository.set("job:stripe_webhook", {
         state: "succeeded",
         completedAt: receivedAt,
         eventType: event.type,
@@ -13642,31 +15879,65 @@ export class BusinessService {
     const processingToken = processingClaim.processingToken;
 
     try {
-      event = await this.resolveAuthoritativeStripeEvent(event, eventCreatedAt);
-      this.repository.runInTransaction(() => {
-        this.applyStripeEvent(event, eventCreatedAt);
-        if (!this.repository.markStripeEventApplied({ id: event.id, processingToken, appliedAt: nowIso() })) {
-          throw new AppError("Stripe event processing ownership was lost; retrying safely.", 409);
+      let authoritative = await this.resolveAuthoritativeStripeEvent(event, eventCreatedAt);
+      let effect = await this.buildStripeApplicationEffect(
+        authoritative.event,
+        authoritative.authorityConfirmed,
+      );
+      try {
+        await this.stripeSubscriptionRepository.applyClaimedEvent({
+          id: event.id,
+          processingToken,
+          appliedAt: nowIso(),
+          effect,
+        });
+      } catch (error) {
+        if (
+          error instanceof StripeSubscriptionRepositoryError
+          && error.code === "authoritative_state_required"
+          && !authoritative.authorityConfirmed
+        ) {
+          authoritative = await this.resolveAuthoritativeStripeEvent(event, eventCreatedAt, true);
+          effect = await this.buildStripeApplicationEffect(
+            authoritative.event,
+            authoritative.authorityConfirmed,
+          );
+          await this.stripeSubscriptionRepository.applyClaimedEvent({
+            id: event.id,
+            processingToken,
+            appliedAt: nowIso(),
+            effect,
+          });
+        } else {
+          throw error;
         }
-      });
+      }
     } catch (error) {
-      this.repository.markStripeEventFailed({
-        id: event.id,
-        processingToken,
-        failedAt: nowIso(),
-        error: error instanceof Error ? redactSecrets(error.message) : "Stripe event application failed",
-      });
       const failedAt = nowIso();
-      this.repository.setSystemState("job:stripe_webhook", {
+      let markedFailed: boolean;
+      try {
+        markedFailed = await this.stripeSubscriptionRepository.markWebhookEventFailed({
+          id: event.id,
+          processingToken,
+          failedAt,
+          error: error instanceof Error ? redactSecrets(error.message) : "Stripe event application failed",
+        });
+      } catch (markError) {
+        this.throwMappedStripeSubscriptionError(markError);
+      }
+      if (!markedFailed) {
+        throw new AppError("Stripe event processing ownership was lost; retrying safely.", 409);
+      }
+      await this.systemStateRepository.set("job:stripe_webhook", {
         state: "failed",
         completedAt: failedAt,
         eventType: event.type,
         error: error instanceof Error ? redactSecrets(error.message).slice(0, 300) : "Stripe event application failed",
       }, failedAt);
-      throw error;
+      this.throwMappedStripeSubscriptionError(error);
     }
     const completedAt = nowIso();
-    this.repository.setSystemState("job:stripe_webhook", {
+    await this.systemStateRepository.set("job:stripe_webhook", {
       state: "succeeded",
       completedAt,
       eventType: event.type,
@@ -13675,38 +15946,70 @@ export class BusinessService {
     return { received: true };
   }
 
-  private async resolveAuthoritativeStripeEvent(event: StripeEvent, eventCreatedAt: string | null): Promise<StripeEvent> {
+  private async resolveAuthoritativeStripeEvent(
+    event: StripeEvent,
+    eventCreatedAt: string | null,
+    forceAuthority = false,
+  ): Promise<AuthoritativeStripeEvent> {
     const object = event.data?.object;
-    if (!object || !eventCreatedAt) return event;
+    if (!object || !eventCreatedAt) return { event, authorityConfirmed: false };
     if (![
       "customer.subscription.updated",
       "customer.subscription.deleted",
       "invoice.payment_failed",
       "checkout.session.completed",
       "checkout.session.async_payment_succeeded",
-    ].includes(event.type)) return event;
+    ].includes(event.type)) return { event, authorityConfirmed: false };
 
     const subscriptionId = event.type.startsWith("customer.subscription.")
       ? stripeObjectId(object.id)
       : stripeObjectId(object.subscription);
-    if (!subscriptionId) return event;
+    if (!subscriptionId) return { event, authorityConfirmed: false };
     const customer = stripeObjectId(object.customer);
-    const profile = this.repository.getBarProfileByStripeSubscriptionId(subscriptionId);
-    const account = customer ? this.repository.getAccountByStripeCustomerId(customer) : null;
-    if (
-      (profile?.stripeEventCreatedAt && profile.stripeEventCreatedAt > eventCreatedAt) ||
-      (account?.stripeEventCreatedAt && account.stripeEventCreatedAt > eventCreatedAt)
-    ) {
-      return event;
+    let target: StripeResolvedBillingTarget | null = null;
+    if (event.type.startsWith("checkout.session.")) {
+      const metadata = objectFromUnknown(object.metadata);
+      const billingContext = stringOrNull(metadata.billing_context);
+      const venueId = stringOrNull(metadata.venue_id);
+      const accountId = stringOrNull(metadata.user_id);
+      if ((billingContext === "venue" || billingContext === "bar") && venueId) {
+        target = await this.stripeSubscriptionRepository.resolveVenueBillingTarget(venueId);
+      } else if (accountId) {
+        target = await this.stripeSubscriptionRepository.resolveAccountBillingTarget(accountId);
+      } else if (customer) {
+        target = await this.stripeSubscriptionRepository.resolveBillingTarget({
+          stripeCustomerId: customer,
+          stripeSubscriptionId: subscriptionId,
+        });
+      }
+    } else {
+      target = await this.stripeSubscriptionRepository.resolveBillingTarget({
+        stripeCustomerId: customer,
+        stripeSubscriptionId: subscriptionId,
+      });
+    }
+    const targetEventCreatedAt = target?.account?.stripeEventCreatedAt ?? target?.venue?.stripeEventCreatedAt ?? null;
+    if (targetEventCreatedAt && targetEventCreatedAt > eventCreatedAt) {
+      return { event, authorityConfirmed: false };
     }
     const isAmbiguousSameSecond =
-      profile?.stripeEventCreatedAt === eventCreatedAt || account?.stripeEventCreatedAt === eventCreatedAt;
+      targetEventCreatedAt === eventCreatedAt;
     const isCheckoutGrantEvent = event.type === "checkout.session.completed" ||
       event.type === "checkout.session.async_payment_succeeded";
-    if (!isAmbiguousSameSecond && event.type !== "invoice.payment_failed" && !isCheckoutGrantEvent) return event;
+    if (
+      !forceAuthority
+      && !isAmbiguousSameSecond
+      && event.type !== "invoice.payment_failed"
+      && !isCheckoutGrantEvent
+    ) return { event, authorityConfirmed: false };
     if (!this.config.STRIPE_SECRET_KEY) {
-      if (isCheckoutGrantEvent && this.config.NODE_ENV !== "production" && !isAmbiguousSameSecond) {
-        return event;
+      if (
+        !forceAuthority
+        && isCheckoutGrantEvent
+        && this.config.NODE_ENV !== "production"
+        && !isAmbiguousSameSecond
+      ) {
+        return { event, authorityConfirmed: false };
       }
       throw new AppError("Stripe subscription authority is unavailable for an ambiguous billing event.", 503);
     }
@@ -13718,11 +16021,14 @@ export class BusinessService {
     if (response.status === 404) {
       const missingSubscription = { id: subscriptionId, status: "canceled" };
       return {
-        ...event,
-        data: {
-          object: event.type.startsWith("checkout.session.")
-            ? { ...object, subscription: missingSubscription }
-            : { ...object, ...missingSubscription },
+        authorityConfirmed: true,
+        event: {
+          ...event,
+          data: {
+            object: event.type.startsWith("checkout.session.")
+              ? { ...object, subscription: missingSubscription }
+              : { ...object, ...missingSubscription },
+          },
         },
       };
     }
@@ -13748,9 +16054,12 @@ export class BusinessService {
           customer: authoritative.customer ?? object.customer,
         };
     return {
-      ...event,
-      data: {
-        object: resolvedObject,
+      authorityConfirmed: true,
+      event: {
+        ...event,
+        data: {
+          object: resolvedObject,
+        },
       },
     };
   }
@@ -13798,13 +16107,32 @@ export class BusinessService {
       throw new AppError("Invalid Stripe webhook signature.", 401);
     }
 
-    return JSON.parse(rawBody.toString("utf8")) as StripeEvent;
+    try {
+      const parsed = JSON.parse(rawBody.toString("utf8")) as unknown;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error("invalid_object");
+      }
+      return parsed as StripeEvent;
+    } catch {
+      throw new AppError("Invalid Stripe webhook event.", 400);
+    }
   }
 
-  private applyStripeEvent(event: StripeEvent, eventCreatedAt: string | null): void {
+  private async buildStripeApplicationEffect(
+    event: StripeEvent,
+    authorityConfirmed: boolean,
+  ): Promise<StripeApplicationEffect> {
     const object = event.data?.object;
     if (!object) {
-      return;
+      return { kind: "acknowledge", reason: "unsupported_or_noop" };
+    }
+
+    if (event.type === "checkout.session.async_payment_failed") {
+      return {
+        kind: "acknowledge",
+        reason: "checkout_async_payment_failed",
+        targetId: stripeObjectId(object.id),
+      };
     }
 
     if (["checkout.session.completed", "checkout.session.async_payment_succeeded"].includes(event.type)) {
@@ -13813,133 +16141,101 @@ export class BusinessService {
         (this.config.STRIPE_SECRET_KEY && !isStripeGrantEligibleStatus(authoritativeStatus)) ||
         (typeof authoritativeStatus === "string" && !isStripeGrantEligibleStatus(authoritativeStatus))
       ) {
-        this.auditSecurity({
-          action: "stripe_checkout_authority_rejected",
-          targetType: "stripe_checkout",
+        return {
+          kind: "acknowledge",
+          reason: "checkout_authority_rejected",
           targetId: stripeObjectId(object.id),
           metadata: {
             eventType: event.type,
             subscriptionStatus: typeof authoritativeStatus === "string" ? authoritativeStatus : "missing",
           },
-        });
-        return;
+        };
       }
       if (!isStripeCheckoutSettled(object)) {
-        this.auditSecurity({
-          action: "stripe_checkout_unsettled",
-          targetType: "stripe_checkout",
+        return {
+          kind: "acknowledge",
+          reason: "checkout_unsettled",
           targetId: stripeObjectId(object.id),
           metadata: {
             eventType: event.type,
             paymentStatus: object.payment_status ?? null,
             subscriptionStatus: typeof authoritativeStatus === "string" ? authoritativeStatus : null,
           },
-        });
-        return;
+        };
       }
-      const metadata = object.metadata as Record<string, string> | undefined;
-      const billingContext = metadata?.billing_context;
-      const barId = metadata?.venue_id;
-      const rawBarMembershipTier = metadata?.venue_membership_tier;
-      const barMembershipTier: BarMembershipTier | null = rawBarMembershipTier === "pro" || rawBarMembershipTier === "plus"
-        ? "pro"
-        : null;
+      const metadata = objectFromUnknown(object.metadata);
+      const billingContext = stringOrNull(metadata.billing_context);
+      const barId = stringOrNull(metadata.venue_id);
+      const rawBarMembershipTier = stringOrNull(metadata.venue_membership_tier);
+      const barMembershipTier = rawBarMembershipTier === "pro" || rawBarMembershipTier === "plus" ? "pro" : null;
       const subscriptionId = stripeObjectId(object.subscription);
-      const userId = metadata?.user_id;
-      const subscriptionStatus = metadata?.subscription_status as SubscriptionStatus | undefined;
-      const customer = typeof object.customer === "string" ? object.customer : null;
+      const userId = stringOrNull(metadata.user_id);
+      const rawSubscriptionStatus = stringOrNull(metadata.subscription_status);
+      const subscriptionStatus = rawSubscriptionStatus === "premium_monthly" || rawSubscriptionStatus === "premium_yearly"
+        ? rawSubscriptionStatus
+        : null;
+      const customer = stripeObjectId(object.customer);
+      const providerStatus = isStripeGrantEligibleStatus(authoritativeStatus) ? authoritativeStatus : "active";
+      const subscriptionCurrentPeriodEnd = stripePeriodEndIso(object.subscription);
 
-      if ((billingContext === "venue" || billingContext === "bar") && barId && barMembershipTier) {
-        const currentProfile = this.repository.getBarProfile(barId);
-        if (eventCreatedAt && currentProfile?.stripeEventCreatedAt && currentProfile.stripeEventCreatedAt > eventCreatedAt) {
-          return;
-        }
-        const flags = tierFlags(barMembershipTier);
-        const resolvedSubscriptionStatus = isStripeGrantEligibleStatus(authoritativeStatus)
-          ? authoritativeStatus
-          : "active";
-        this.repository.updateBarSubscription({
-          barId,
-          membershipTier: barMembershipTier,
-          stripePaidMembershipTier: barMembershipTier,
+      if (this.config.STRIPE_SECRET_KEY && !subscriptionId) {
+        return {
+          kind: "acknowledge",
+          reason: "checkout_authority_rejected",
+          targetId: stripeObjectId(object.id),
+          metadata: { eventType: event.type, reason: "missing_subscription_identity" },
+        };
+      }
+
+      if (
+        (billingContext === "venue" || billingContext === "bar")
+        && barId
+        && barMembershipTier
+        && subscriptionId
+      ) {
+        const target = await this.stripeSubscriptionRepository.resolveVenueBillingTarget(barId);
+        return {
+          kind: "checkout_grant",
+          expectedTargetKind: "venue",
+          expectedAccountId: null,
+          expectedCanonicalVenueId: target.expectedCanonicalVenueId,
+          billingProfileVenueId: target.billingProfileVenueId,
+          authorityConfirmed,
           stripeCustomerId: customer,
           stripeSubscriptionId: subscriptionId,
-          subscriptionStatus: resolvedSubscriptionStatus,
-          subscriptionCurrentPeriodEnd: stripePeriodEndIso(object.subscription),
-          now: nowIso(),
-          stripeEventCreatedAt: eventCreatedAt,
-          ...flags,
-        });
-        this.trackEvent(null, {
-          anonymousSessionId: null,
-          eventType: "subscription_created",
-          venueId: barId,
-          beerId: null,
-          suburb: null,
-          metadata: { mode: "stripe", billingContext: "venue", tier: barMembershipTier },
-        });
-        this.auditSecurity({
-          action: "stripe_subscription_update",
-          targetType: "venue",
-          targetId: barId,
-          metadata: { eventType: event.type, tier: barMembershipTier, status: resolvedSubscriptionStatus },
-        });
-        return;
+          providerStatus,
+          subscriptionCurrentPeriodEnd,
+          target: { kind: "venue", venueId: target.billingProfileVenueId, paidTier: "pro" },
+        };
       }
 
-      if (userId && subscriptionStatus) {
-        const currentAccount = this.repository.getAccountById(userId);
-        if (!currentAccount) {
-          throw new AppError("Stripe checkout referenced an unknown account.", 409);
-        }
-        if (currentAccount.authProvider === "deleted" || this.repository.hasDeletionLock(userId)) {
-          this.auditSecurity({
-            action: "stripe_event_ignored_deleted_account",
-            targetType: "account_tombstone",
-            targetId: userId,
-            metadata: { eventType: event.type },
-          });
-          return;
-        }
-        if (eventCreatedAt && currentAccount?.stripeEventCreatedAt && currentAccount.stripeEventCreatedAt > eventCreatedAt) {
-          return;
-        }
-        const updated = this.repository.updateSubscription({
-          userId,
-          subscriptionStatus,
-          stripePaidSubscriptionStatus: subscriptionStatus === "premium_monthly" || subscriptionStatus === "premium_yearly"
-            ? subscriptionStatus
-            : null,
+      if (userId && subscriptionStatus && customer) {
+        const target = await this.stripeSubscriptionRepository.resolveAccountBillingTarget(userId);
+        return {
+          kind: "checkout_grant",
+          expectedTargetKind: "account",
+          expectedAccountId: target.expectedAccountId,
+          expectedCanonicalVenueId: null,
+          billingProfileVenueId: null,
+          authorityConfirmed,
           stripeCustomerId: customer,
-          premiumUntil: null,
-          now: nowIso(),
-          stripeEventCreatedAt: eventCreatedAt,
-        });
-        this.trackEvent(updated, {
-          anonymousSessionId: null,
-          eventType: "subscription_created",
-          venueId: null,
-          beerId: null,
-          suburb: null,
-          metadata: { mode: "stripe", subscriptionStatus },
-        });
-        this.auditSecurity({
-          actor: updated,
-          action: "stripe_subscription_update",
-          targetType: "account",
-          targetId: updated.id,
-          metadata: { eventType: event.type, subscriptionStatus },
-        });
+          stripeSubscriptionId: subscriptionId,
+          providerStatus,
+          subscriptionCurrentPeriodEnd,
+          target: { kind: "account", userId: target.expectedAccountId, paidStatus: subscriptionStatus },
+        };
       }
-    }
 
-    if (event.type === "checkout.session.async_payment_failed") {
-      this.auditSecurity({
-        action: "stripe_checkout_async_payment_failed",
-        targetType: "stripe_checkout",
+      return {
+        kind: "acknowledge",
+        reason: "checkout_authority_rejected",
         targetId: stripeObjectId(object.id),
-      });
-      return;
+        metadata: {
+          eventType: event.type,
+          reason: "invalid_or_untrusted_billing_target",
+          billingContext,
+        },
+      };
     }
 
     if (
@@ -13947,139 +16243,101 @@ export class BusinessService {
       event.type === "customer.subscription.updated" ||
       event.type === "invoice.payment_failed"
     ) {
-      const customer = typeof object.customer === "string" ? object.customer : null;
-      const subscriptionId = typeof object.subscription === "string"
-        ? object.subscription
-        : typeof object.id === "string"
-          ? object.id
-          : null;
-      const stripeStatus = typeof object.status === "string" ? object.status : null;
+      const customer = stripeObjectId(object.customer);
+      const subscriptionId = event.type.startsWith("customer.subscription.")
+        ? stripeObjectId(object.id)
+        : stripeObjectId(object.subscription);
+      if (!customer && !subscriptionId) {
+        return { kind: "acknowledge", reason: "unsupported_or_noop" };
+      }
+      const target = await this.stripeSubscriptionRepository.resolveBillingTarget({
+        stripeCustomerId: customer,
+        stripeSubscriptionId: subscriptionId,
+      });
+      const stripeStatus = stringOrNull(object.status);
       const grantEligible = event.type === "customer.subscription.updated" && isStripeGrantEligibleStatus(stripeStatus);
-      const shouldDowngrade = !grantEligible;
-      const premiumUntil = stripePeriodEndIso(object);
       const subscriptionMetadata = objectFromUnknown(object.metadata);
       const subscriptionPriceIds = stripePriceIds(object);
-      const barProfile = subscriptionId ? this.repository.getBarProfileByStripeSubscriptionId(subscriptionId) : null;
-      if (barProfile) {
-        if (eventCreatedAt && barProfile.stripeEventCreatedAt && barProfile.stripeEventCreatedAt > eventCreatedAt) {
-          return;
-        }
-        const metadataTier = subscriptionMetadata.venue_membership_tier;
-        const intendedTier: BarMembershipTier | null =
-          metadataTier === "pro" || metadataTier === "plus"
+      let intendedAccountPaidStatus: "premium_monthly" | "premium_yearly" | null = null;
+      let intendedVenuePaidTier: "pro" | null = null;
+
+      if (target.kind === "account") {
+        const metadataStatus = stringOrNull(subscriptionMetadata.subscription_status);
+        intendedAccountPaidStatus = metadataStatus === "premium_monthly" || metadataStatus === "premium_yearly"
+          ? metadataStatus
+          : this.config.STRIPE_PRICE_MONTHLY && subscriptionPriceIds.has(this.config.STRIPE_PRICE_MONTHLY)
+            ? "premium_monthly"
+            : this.config.STRIPE_PRICE_YEARLY && subscriptionPriceIds.has(this.config.STRIPE_PRICE_YEARLY)
+              ? "premium_yearly"
+              : target.account.stripePaidSubscriptionStatus
+                ?? (target.account.subscriptionStatus === "premium_monthly" || target.account.subscriptionStatus === "premium_yearly"
+                  ? target.account.subscriptionStatus
+                  : null);
+      } else if (target.kind === "venue") {
+        const metadataTier = stringOrNull(subscriptionMetadata.venue_membership_tier);
+        intendedVenuePaidTier = metadataTier === "pro" || metadataTier === "plus"
+          ? "pro"
+          : this.config.STRIPE_PRO_PRICE_ID && subscriptionPriceIds.has(this.config.STRIPE_PRO_PRICE_ID)
             ? "pro"
-            : this.config.STRIPE_PRO_PRICE_ID && subscriptionPriceIds.has(this.config.STRIPE_PRO_PRICE_ID)
-              ? "pro"
-              : barProfile.stripePaidMembershipTier ?? (barProfile.membershipTier === "pro" ? "pro" : null);
-        const nextTier = shouldDowngrade ? "basic" : intendedTier ?? barProfile.membershipTier;
-        const flags = tierFlags(nextTier);
-        this.repository.updateBarSubscription({
-          barId: barProfile.barId,
-          membershipTier: nextTier,
-          stripePaidMembershipTier: intendedTier,
-          stripeCustomerId: customer,
-          stripeSubscriptionId: subscriptionId,
-          subscriptionStatus: shouldDowngrade ? stripeStatus ?? "inactive_or_unknown" : stripeStatus,
-          subscriptionCurrentPeriodEnd: shouldDowngrade ? null : premiumUntil,
-          now: nowIso(),
-          stripeEventCreatedAt: eventCreatedAt,
-          ...flags,
-        });
-        if (shouldDowngrade) {
-          this.trackEvent(null, {
-            anonymousSessionId: null,
-            eventType: "subscription_cancelled",
-            venueId: barProfile.barId,
-            beerId: null,
-            suburb: barProfile.suburb,
-            metadata: { mode: "stripe", billingContext: "venue" },
-          });
-        }
-        this.auditSecurity({
-          action: shouldDowngrade ? "stripe_subscription_downgrade" : "stripe_subscription_update",
-          targetType: "venue",
-          targetId: barProfile.barId,
-          metadata: { eventType: event.type, stripeStatus, shouldDowngrade, intendedTier },
-        });
-        return;
+            : target.venue.stripePaidMembershipTier ?? (target.venue.membershipTier === "pro" ? "pro" : null);
       }
 
-      const account = customer ? this.repository.getAccountByStripeCustomerId(customer) : null;
-
-      if (account) {
-        if (eventCreatedAt && account.stripeEventCreatedAt && account.stripeEventCreatedAt > eventCreatedAt) {
-          return;
-        }
-        const metadataStatus = subscriptionMetadata.subscription_status;
-        const intendedStatus =
-          metadataStatus === "premium_monthly" || metadataStatus === "premium_yearly"
-            ? metadataStatus
-            : this.config.STRIPE_PRICE_MONTHLY && subscriptionPriceIds.has(this.config.STRIPE_PRICE_MONTHLY)
-              ? "premium_monthly"
-              : this.config.STRIPE_PRICE_YEARLY && subscriptionPriceIds.has(this.config.STRIPE_PRICE_YEARLY)
-                ? "premium_yearly"
-                : account.stripePaidSubscriptionStatus ??
-                  (account.subscriptionStatus === "premium_monthly" || account.subscriptionStatus === "premium_yearly"
-                    ? account.subscriptionStatus
-                    : null);
-        const updated = this.repository.updateSubscription({
-          userId: account.id,
-          subscriptionStatus: shouldDowngrade ? "free" : intendedStatus ?? account.subscriptionStatus,
-          stripePaidSubscriptionStatus: intendedStatus,
-          premiumUntil,
-          now: nowIso(),
-          stripeEventCreatedAt: eventCreatedAt,
-        });
-        if (shouldDowngrade) {
-          this.trackEvent(updated, {
-            anonymousSessionId: null,
-            eventType: "subscription_cancelled",
-            venueId: null,
-            beerId: null,
-            suburb: null,
-            metadata: { mode: "stripe" },
-          });
-        }
-        this.auditSecurity({
-          actor: updated,
-          action: shouldDowngrade ? "stripe_subscription_downgrade" : "stripe_subscription_update",
-          targetType: "account",
-          targetId: updated.id,
-          metadata: { eventType: event.type, stripeStatus, shouldDowngrade, intendedStatus },
-        });
-      }
+      return {
+        kind: "subscription_state",
+        expectedTargetKind: target.expectedTargetKind,
+        expectedAccountId: target.expectedAccountId,
+        expectedCanonicalVenueId: target.expectedCanonicalVenueId,
+        billingProfileVenueId: target.billingProfileVenueId,
+        authorityConfirmed,
+        stripeCustomerId: customer,
+        stripeSubscriptionId: subscriptionId,
+        providerStatus: stripeStatus,
+        grantEligible,
+        intendedAccountPaidStatus,
+        intendedVenuePaidTier,
+        subscriptionCurrentPeriodEnd: stripePeriodEndIso(object),
+      };
     }
+
+    return { kind: "acknowledge", reason: "unsupported_or_noop" };
   }
 
-  adminOverrideUser(admin: BusinessAccount, userId: string, input: { status: "active" | "warned" | "suspended"; trustScore?: number | undefined; fraudStrikeCount?: number | undefined; reason: string }) {
+  async adminOverrideUser(admin: BusinessAccount, userId: string, input: { status: "active" | "warned" | "suspended"; trustScore?: number | undefined; fraudStrikeCount?: number | undefined; reason: string }) {
     if (!this.isAdmin(admin)) {
       throw new AppError("Admin access required.", 403);
     }
 
-    const target = this.repository.getAccountById(userId);
+    const target = await this.accountSessionRepository.getAccountById(userId);
     if (!target) throw new AppError("Account not found.", 404);
     if (target.role === "admin" || target.subscriptionStatus === "admin") {
-      this.assertAdminControlPreserved(admin, target);
+      await this.assertAdminControlPreserved(admin, target);
     }
-    const account = this.repository.overrideUserStatus({
+    const requestedAt = nowIso();
+    const overrideNow = Date.parse(requestedAt) > Date.parse(target.updatedAt)
+      ? requestedAt
+      : new Date(Date.parse(target.updatedAt) + 1).toISOString();
+    const override = await this.adminAccountRepository.overrideUserStatus({
+      actorAccountId: admin.id,
       userId,
       status: input.status,
       trustScore: input.trustScore,
       fraudStrikeCount: input.fraudStrikeCount,
-      now: nowIso(),
+      expectedUpdatedAt: target.updatedAt,
+      now: overrideNow,
     });
-    const revokedSessions = input.status === "suspended"
-      ? this.repository.revokeUserSessions({ userId, revokedAt: nowIso() })
-      : 0;
-    const revokedDiscountPasses = input.status === "suspended"
-      ? this.repository.revokeDiscountPassesForUser({ userId, revokedAt: nowIso() })
-      : 0;
-    this.auditSecurity({
+    const { account, revokedSessions, revokedDiscountPasses } = override;
+    await this.auditSecurity({
       actor: admin,
       action: "admin_user_status_override",
       targetType: "account",
       targetId: userId,
-      metadata: { status: input.status, fraudStrikeCount: input.fraudStrikeCount, reason: input.reason, revokedSessions, revokedDiscountPasses },
+      metadata: {
+        status: input.status,
+        ...(input.fraudStrikeCount === undefined ? {} : { fraudStrikeCount: input.fraudStrikeCount }),
+        reason: input.reason,
+        revokedSessions,
+        revokedDiscountPasses,
+      },
     });
     return {
       account: sanitizeAccount(account),
@@ -14090,7 +16348,7 @@ export class BusinessService {
     const required = this.config.NODE_ENV === "production" && (
       !this.config.FIELD_TEST_MODE || Boolean(this.config.RESTORE_REHEARSAL_MODE)
     );
-    const configured = Boolean(
+    const configured = !this.config.RESTORE_REHEARSAL_MODE && Boolean(
       this.config.SUPABASE_URL &&
       this.config.SUPABASE_ANON_KEY &&
       this.config.SUPABASE_SERVICE_ROLE_KEY,
@@ -14207,7 +16465,7 @@ export class BusinessService {
   async getOperationalReadiness() {
     let database: { status: "ok" | "failed"; foreignKeyViolations: number; error?: string };
     try {
-      const health = this.repository.checkDatabaseHealth();
+      const health = await this.databaseHealthProbe();
       database = {
         status: health.ok ? "ok" : "failed",
         foreignKeyViolations: health.foreignKeyViolations,
@@ -14222,15 +16480,17 @@ export class BusinessService {
 
     let evidenceStorage: { status: "ok" | "failed"; error?: string };
     try {
-      if (!this.config.RESTORE_REHEARSAL_MODE) {
-        fs.mkdirSync(this.config.SOURCE_EVIDENCE_STORAGE_DIR, { recursive: true, mode: 0o700 });
+      if (!this.useSupabaseEvidenceStorage || this.config.RESTORE_REHEARSAL_MODE) {
+        if (!this.config.RESTORE_REHEARSAL_MODE) {
+          fs.mkdirSync(this.config.SOURCE_EVIDENCE_STORAGE_DIR, { recursive: true, mode: 0o700 });
+        }
+        fs.accessSync(
+          this.config.SOURCE_EVIDENCE_STORAGE_DIR,
+          this.config.RESTORE_REHEARSAL_MODE
+            ? fs.constants.R_OK
+            : fs.constants.R_OK | fs.constants.W_OK,
+        );
       }
-      fs.accessSync(
-        this.config.SOURCE_EVIDENCE_STORAGE_DIR,
-        this.config.RESTORE_REHEARSAL_MODE
-          ? fs.constants.R_OK
-          : fs.constants.R_OK | fs.constants.W_OK,
-      );
       evidenceStorage = { status: "ok" };
     } catch (error) {
       evidenceStorage = {
@@ -14265,10 +16525,10 @@ export class BusinessService {
       (this.config.ACCOUNT_DELETION_NOTICE_MODE !== "resend" || this.config.RESEND_WEBHOOK_SIGNING_SECRET),
     );
     const readinessCheckedAt = nowIso();
-    const deletionNotificationQueue = this.repository
+    const deletionNotificationQueue = await this.accountDeletionQueueRepository
       .getAccountDeletionNotificationQueueSummary(readinessCheckedAt);
-    const deletionNotificationJob = this.repository
-      .getSystemState<Record<string, unknown>>("job:account_deletion_notifications");
+    const deletionNotificationJob = await this.systemStateRepository
+      .get<Record<string, unknown>>("job:account_deletion_notifications");
     const deletionNotificationJobState = typeof deletionNotificationJob?.value?.state === "string"
       ? deletionNotificationJob.value.state
       : "not_run";
@@ -14414,10 +16674,10 @@ export class BusinessService {
     };
   }
 
-  getLocalStartupReadiness() {
+  async getLocalStartupReadiness() {
     let database: { status: "ok" | "failed"; foreignKeyViolations: number; error?: string };
     try {
-      const health = this.repository.checkDatabaseHealth();
+      const health = await this.databaseHealthProbe();
       database = {
         status: health.ok ? "ok" : "failed",
         foreignKeyViolations: health.foreignKeyViolations,
@@ -14434,15 +16694,17 @@ export class BusinessService {
 
     let evidenceStorage: { status: "ok" | "failed"; error?: string };
     try {
-      if (!this.config.RESTORE_REHEARSAL_MODE) {
-        fs.mkdirSync(this.config.SOURCE_EVIDENCE_STORAGE_DIR, { recursive: true, mode: 0o700 });
+      if (!this.useSupabaseEvidenceStorage || this.config.RESTORE_REHEARSAL_MODE) {
+        if (!this.config.RESTORE_REHEARSAL_MODE) {
+          fs.mkdirSync(this.config.SOURCE_EVIDENCE_STORAGE_DIR, { recursive: true, mode: 0o700 });
+        }
+        fs.accessSync(
+          this.config.SOURCE_EVIDENCE_STORAGE_DIR,
+          this.config.RESTORE_REHEARSAL_MODE
+            ? fs.constants.R_OK
+            : fs.constants.R_OK | fs.constants.W_OK,
+        );
       }
-      fs.accessSync(
-        this.config.SOURCE_EVIDENCE_STORAGE_DIR,
-        this.config.RESTORE_REHEARSAL_MODE
-          ? fs.constants.R_OK
-          : fs.constants.R_OK | fs.constants.W_OK,
-      );
       evidenceStorage = { status: "ok" };
     } catch (error) {
       evidenceStorage = {
@@ -14460,8 +16722,8 @@ export class BusinessService {
       && this.config.ACCOUNT_DELETION_NOTICE_MODE === "resend"
       && this.config.RESEND_WEBHOOK_SIGNING_SECRET,
     );
-    const deletionJob = this.repository
-      .getSystemState<Record<string, unknown>>("job:account_deletion_notifications");
+    const deletionJob = await this.systemStateRepository
+      .get<Record<string, unknown>>("job:account_deletion_notifications");
     const deletionSchedulerState = typeof deletionJob?.value?.state === "string"
       ? deletionJob.value.state
       : "not_run";

@@ -1,0 +1,11 @@
+[build]
+builder = "RAILPACK"
+buildCommand = "npm run build"
+
+[deploy]
+startCommand = "node dist/scripts/staging-supabase-key-canary.js"
+restartPolicyType = "NEVER"
+# Railway validates this field as >= 1 even though NEVER disables restarts.
+restartPolicyMaxRetries = 1
+overlapSeconds = 0
+drainingSeconds = 0

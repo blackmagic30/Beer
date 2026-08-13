@@ -3,7 +3,8 @@
 //
 // Release/archive builds fail closed until all three values below are valid.
 // Debug builds may leave the Supabase values blank while working on screens
-// that do not need native authentication.
+// that do not need native authentication. Any nonblank key in any build must
+// use the exact publishable-key format documented below.
 
 PRODUCT_BUNDLE_IDENTIFIER = au.pintpath.app
 
@@ -15,9 +16,9 @@ PINT_PATH_API_BASE_URL = https:/$()/pintpath.au
 
 // Required public Supabase Auth configuration for Release email/password auth.
 // SUPABASE_URL must be the independently approved production custom domain
-// https:/$()/auth.pintpath.au with no path. Use either a modern
-// sb_publishable_ key or a legacy JWT whose role is anon.
-// Never use an sb_secret_ or legacy service-role key here. Public client keys
+// https:/$()/auth.pintpath.au with no path. Use an sb_publishable_ key whose
+// suffix contains 20 to 220 URL-safe letters, digits, underscores, or hyphens.
+// Legacy JWT and sb_secret_ keys are rejected. Public client keys
 // are bundled in Info.plist by design; private/service-role keys remain server-only.
 SUPABASE_URL = https:/$()/auth.pintpath.au
 SUPABASE_ANON_KEY =

@@ -16,7 +16,7 @@ enum AppConfig {
     }
 
     static var supabaseURL: URL? {
-        guard readString("SUPABASE_URL") == approvedSupabaseOrigin else {
+        guard readExactString("SUPABASE_URL") == approvedSupabaseOrigin else {
             return nil
         }
         return URL(string: approvedSupabaseOrigin)
@@ -24,41 +24,15 @@ enum AppConfig {
 
     static var supabaseAnonKey: String? {
         guard
-            let key = readString("SUPABASE_ANON_KEY"),
-            isPublicSupabaseKey(key)
+            let key = readExactString("SUPABASE_ANON_KEY"),
+            key.range(
+                of: #"^sb_publishable_[A-Za-z0-9_-]{20,220}$"#,
+                options: .regularExpression
+            ) != nil
         else {
             return nil
         }
         return key
-    }
-
-    private static func isPublicSupabaseKey(_ key: String) -> Bool {
-        if key.range(
-            of: #"^sb_publishable_[A-Za-z0-9_-]{20,}$"#,
-            options: .regularExpression
-        ) != nil {
-            return true
-        }
-
-        let segments = key.split(separator: ".", omittingEmptySubsequences: false)
-        guard segments.count == 3 else {
-            return false
-        }
-        var payload = String(segments[1])
-            .replacingOccurrences(of: "-", with: "+")
-            .replacingOccurrences(of: "_", with: "/")
-        let padding = payload.count % 4
-        if padding != 0 {
-            payload += String(repeating: "=", count: 4 - padding)
-        }
-        guard
-            let data = Data(base64Encoded: payload),
-            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            object["role"] as? String == "anon"
-        else {
-            return false
-        }
-        return true
     }
 
     private static func legalURL(path: String) -> URL {
@@ -79,6 +53,20 @@ enum AppConfig {
             return nil
         }
         return trimmed
+    }
+
+    private static func readExactString(_ key: String) -> String? {
+        guard let value = Bundle.main.object(forInfoDictionaryKey: key) as? String else {
+            return nil
+        }
+        guard
+            !value.isEmpty,
+            value == value.trimmingCharacters(in: .whitespacesAndNewlines),
+            !value.contains("$(")
+        else {
+            return nil
+        }
+        return value
     }
 
     private static func readURL(_ key: String) -> URL? {
@@ -136,6 +124,18 @@ enum BeerMapAPIError: LocalizedError {
 
 }
 
+private final class RedirectRejectingURLSessionDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping @Sendable (URLRequest?) -> Void
+    ) {
+        completionHandler(nil)
+    }
+}
+
 struct BeerMapAPI {
     let baseURL: URL
     private let encoder: JSONEncoder
@@ -156,7 +156,11 @@ struct BeerMapAPI {
         configuration.timeoutIntervalForResource = 330
         configuration.waitsForConnectivity = true
         configuration.httpMaximumConnectionsPerHost = 6
-        return URLSession(configuration: configuration)
+        return URLSession(
+            configuration: configuration,
+            delegate: RedirectRejectingURLSessionDelegate(),
+            delegateQueue: nil
+        )
     }
 
     func getConfig(forceRefresh: Bool = false) async throws -> PublicConfig {
@@ -768,7 +772,7 @@ struct BeerMapAPI {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(key, forHTTPHeaderField: "apikey")
-        if let accessToken {
+        if let accessToken, accessToken != key {
             request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         }
         request.httpBody = try encoder.encode(body)

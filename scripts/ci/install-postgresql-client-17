@@ -1,0 +1,153 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# The CI behavior observation must use reviewed PostgreSQL 17 executable bytes.
+# The hosted runner's default client can lag the service, so install one exact
+# PGDG package through a repository key whose bytes are independently pinned.
+# This does not verify native shared-library/runtime closure and cannot
+# establish production tool authority.
+readonly EXPECTED_KEY_SHA256="0144068502a1eddd2a0280ede10ef607d1ec592ce819940991203941564e8e76"
+readonly EXPECTED_PACKAGE_VERSION="17.10-1.pgdg24.04+1"
+readonly EXPECTED_PACKAGE_SHA256="e8806cd10a1c9ce453ef5feec242c6f9ba1229ce31ea862a6335277eae027987"
+readonly EXPECTED_PG_DUMP_VERSION="17.10 (Ubuntu 17.10-1.pgdg24.04+1)"
+readonly EXPECTED_PG_RESTORE_VERSION="17.10 (Ubuntu 17.10-1.pgdg24.04+1)"
+readonly EXPECTED_PG_DUMP_SHA256="8cca9f4a2380df3cfa47704e13722059fd88291451b6c7be3642081db59d743b"
+readonly EXPECTED_PG_RESTORE_SHA256="1b58a9c383ccee5f30c8a09d48ba0d50826a6841904430955295e1a6a6e7f34d"
+readonly PG_BIN="/usr/lib/postgresql/17/bin"
+readonly PG_DUMP="/usr/lib/postgresql/17/bin/pg_dump"
+readonly PG_RESTORE="/usr/lib/postgresql/17/bin/pg_restore"
+readonly KEYRING="/usr/share/keyrings/pintpath-postgresql-archive-keyring.gpg"
+readonly SOURCE_LIST="/etc/apt/sources.list.d/pintpath-postgresql-client-17.list"
+
+fail() {
+  printf '%s\n' "postgresql_client_17_install_failed" >&2
+  exit 1
+}
+
+for command_name in apt-cache apt-get awk curl dpkg dpkg-deb dpkg-query gpg id install mktemp realpath sha256sum stat sudo tee; do
+  command -v "$command_name" >/dev/null 2>&1 || fail
+done
+
+[[ -r /etc/os-release ]] || fail
+# shellcheck disable=SC1091
+. /etc/os-release
+[[ "${ID:-}" == "ubuntu" ]] || fail
+[[ "${VERSION_CODENAME:-}" == "noble" ]] || fail
+[[ "$(dpkg --print-architecture)" == "amd64" ]] || fail
+
+runner_temp=${RUNNER_TEMP:-}
+github_env=${GITHUB_ENV:-}
+[[ "$runner_temp" == /* && "$github_env" == /* ]] || fail
+runner_temp=$(realpath -e -- "$runner_temp")
+[[ -d "$runner_temp" && ! -L "$runner_temp" ]] || fail
+[[ -f "$github_env" && ! -L "$github_env" && -w "$github_env" ]] || fail
+[[ "$(realpath -e -- "$github_env")" == "$github_env" ]] || fail
+[[ "$(stat -c '%u:%h' "$github_env")" == "$(id -u):1" ]] || fail
+github_env_mode=$(stat -c '%a' "$github_env")
+[[ "$github_env_mode" =~ ^[0-7]{3,4}$ ]] || fail
+(( (8#$github_env_mode & 0022) == 0 )) || fail
+
+umask 077
+download_root=$(mktemp -d "$runner_temp/pintpath-pgdg-client-17.XXXXXX")
+readonly download_root
+readonly key_ascii="$download_root/ACCC4CF8.asc"
+readonly key_binary="$download_root/postgresql-archive-keyring.gpg"
+package_deb=""
+
+cleanup_download() {
+  local downloaded_package
+  rm -f -- "$key_ascii" "$key_binary"
+  for downloaded_package in "$download_root"/*.deb; do
+    [[ -e "$downloaded_package" || -L "$downloaded_package" ]] || continue
+    rm -f -- "$downloaded_package"
+  done
+  rmdir -- "$download_root" 2>/dev/null || true
+}
+trap cleanup_download EXIT
+[[ "$(realpath -e -- "$download_root")" == "$download_root" ]] || fail
+[[ "$(dirname -- "$download_root")" == "$runner_temp" ]] || fail
+[[ "$(basename -- "$download_root")" == pintpath-pgdg-client-17.* ]] || fail
+
+curl \
+  --proto '=https' \
+  --tlsv1.2 \
+  --fail \
+  --location \
+  --connect-timeout 15 \
+  --max-time 60 \
+  --silent \
+  --show-error \
+  --output "$key_ascii" \
+  "https://www.postgresql.org/media/keys/ACCC4CF8.asc"
+[[ "$(sha256sum "$key_ascii" | awk '{print $1}')" == "$EXPECTED_KEY_SHA256" ]] || fail
+
+gpg --batch --yes --dearmor --output "$key_binary" "$key_ascii" >/dev/null 2>&1
+sudo install -o root -g root -m 0644 "$key_binary" "$KEYRING"
+printf '%s\n' \
+  "deb [arch=amd64 signed-by=$KEYRING] https://apt.postgresql.org/pub/repos/apt noble-pgdg main" \
+  | sudo tee "$SOURCE_LIST" >/dev/null
+
+sudo apt-get update -qq
+apt-cache madison postgresql-client-17 \
+  | awk -v expected="$EXPECTED_PACKAGE_VERSION" '$3 == expected { found = 1 } END { exit found ? 0 : 1 }' \
+  || fail
+
+(
+  cd -- "$download_root"
+  apt-get download "postgresql-client-17=$EXPECTED_PACKAGE_VERSION"
+) || fail
+
+downloaded_packages=()
+for downloaded_package in "$download_root"/*.deb; do
+  [[ -e "$downloaded_package" || -L "$downloaded_package" ]] || continue
+  downloaded_packages+=("$downloaded_package")
+done
+[[ "${#downloaded_packages[@]}" -eq 1 ]] || fail
+package_deb=${downloaded_packages[0]}
+readonly package_deb
+[[ -f "$package_deb" && ! -L "$package_deb" ]] || fail
+[[ "$(realpath -e -- "$package_deb")" == "$package_deb" ]] || fail
+[[ "$(stat -c '%u:%g:%h' "$package_deb")" == "$(id -u):$(id -g):1" ]] || fail
+package_mode=$(stat -c '%a' "$package_deb")
+[[ "$package_mode" =~ ^[0-7]{3,4}$ ]] || fail
+(( (8#$package_mode & 0022) == 0 )) || fail
+printf '%s  %s\n' "$EXPECTED_PACKAGE_SHA256" "$package_deb" \
+  | sha256sum --check --status - \
+  || fail
+[[ "$(dpkg-deb --field "$package_deb" Package)" == "postgresql-client-17" ]] || fail
+[[ "$(dpkg-deb --field "$package_deb" Version)" == "$EXPECTED_PACKAGE_VERSION" ]] || fail
+[[ "$(dpkg-deb --field "$package_deb" Architecture)" == "amd64" ]] || fail
+
+# Installing the verified local archive keeps that package exact while apt
+# resolves its required dependencies from the signed PGDG repository.
+sudo env DEBIAN_FRONTEND=noninteractive apt-get install -qq -y --no-install-recommends \
+  "$package_deb"
+
+[[ "$(dpkg-query -W -f='${Version}' postgresql-client-17)" == "$EXPECTED_PACKAGE_VERSION" ]] || fail
+[[ -d "$PG_BIN" && ! -L "$PG_BIN" && "$(realpath -e "$PG_BIN")" == "$PG_BIN" ]] || fail
+[[ -x "$PG_DUMP" && ! -L "$PG_DUMP" && "$(realpath -e "$PG_DUMP")" == "$PG_DUMP" ]] || fail
+[[ -x "$PG_RESTORE" && ! -L "$PG_RESTORE" && "$(realpath -e "$PG_RESTORE")" == "$PG_RESTORE" ]] || fail
+[[ "$(stat -c '%u:%g:%a:%h' "$PG_DUMP")" == "0:0:755:1" ]] || fail
+[[ "$(stat -c '%u:%g:%a:%h' "$PG_RESTORE")" == "0:0:755:1" ]] || fail
+[[ "$($PG_DUMP --version)" == "pg_dump (PostgreSQL) $EXPECTED_PG_DUMP_VERSION" ]] || fail
+[[ "$($PG_RESTORE --version)" == "pg_restore (PostgreSQL) $EXPECTED_PG_RESTORE_VERSION" ]] || fail
+package_verification=$(dpkg -V postgresql-client-17) || fail
+[[ -z "$package_verification" ]] || fail
+printf '%s  %s\n' "$EXPECTED_PG_DUMP_SHA256" "$PG_DUMP" \
+  | sha256sum --check --status - \
+  || fail
+printf '%s  %s\n' "$EXPECTED_PG_RESTORE_SHA256" "$PG_RESTORE" \
+  | sha256sum --check --status - \
+  || fail
+
+printf '%s=%s\n' \
+  "PINTPATH_POSTGRES_LOGICAL_RESTORE_TEST_PG_DUMP" "$PG_DUMP" \
+  "PINTPATH_POSTGRES_LOGICAL_RESTORE_TEST_PG_DUMP_SHA256" "$EXPECTED_PG_DUMP_SHA256" \
+  "PINTPATH_POSTGRES_LOGICAL_RESTORE_TEST_PG_RESTORE" "$PG_RESTORE" \
+  "PINTPATH_POSTGRES_LOGICAL_RESTORE_TEST_PG_RESTORE_SHA256" "$EXPECTED_PG_RESTORE_SHA256" \
+  "PINTPATH_POSTGRES_TOOL_AUTHORITY_V4_TEST_PG_BIN" "$PG_BIN" \
+  "PINTPATH_POSTGRES_TOOL_AUTHORITY_V4_TEST_PG_DUMP_VERSION" "$EXPECTED_PG_DUMP_VERSION" \
+  "PINTPATH_POSTGRES_TOOL_AUTHORITY_V4_TEST_PG_DUMP_SHA256" "$EXPECTED_PG_DUMP_SHA256" \
+  "PINTPATH_POSTGRES_TOOL_AUTHORITY_V4_TEST_PG_RESTORE_VERSION" "$EXPECTED_PG_RESTORE_VERSION" \
+  "PINTPATH_POSTGRES_TOOL_AUTHORITY_V4_TEST_PG_RESTORE_SHA256" "$EXPECTED_PG_RESTORE_SHA256" \
+  >> "$github_env"

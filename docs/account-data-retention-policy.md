@@ -1,7 +1,7 @@
 # Account data export, erasure, and retention policy
 
 Policy version: `2026-08-03`. The executable source of truth is
-`ACCOUNT_DATA_RETENTION_POLICY` in `src/db/business.repository.ts`.
+`ACCOUNT_DATA_RETENTION_POLICY` in `src/db/privacy-retention.repository.ts`.
 
 ## Self-service export
 
@@ -52,8 +52,11 @@ metadata is included.
   denylist until account deletion, because a provider refresh session can outlive
   a short fixed window. Rows made redundant by a verified provider-global logout
   or password reset are deleted after 90 days.
-- Successfully applied Stripe webhook payloads: redact after 30 days; delete the
-  event envelope after 400 days.
+- Successfully applied Stripe webhook payloads and stored processing errors:
+  redact after 30 days. The event ID is the current replay/idempotency authority,
+  so the envelope is not deleted at 400 days until a separately reviewed durable
+  tombstone authority has been migrated and verified. Pending, processing, and
+  retryable/failed events are never rewritten by scheduled retention.
 - Security audit IP/user-agent hashes: redact after 30 days; delete the remaining
   audit envelope after 400 days.
 - Pending source-ingestion images: mark overdue after 90 days and irreversibly
@@ -71,9 +74,15 @@ metadata is included.
   missing. Never store key material in SQLite, logs, release evidence, or source
   control.
 
-The leased hourly evidence-retention job runs these database retention actions,
-records source-evidence and pending-ingestion held/overdue counts plus purged
-volume in its operational result, and is awaited during shutdown.
+The leased hourly evidence-retention job runs these database retention actions.
+Each database transaction handles at most 500 mutations, and one hourly run is
+limited to 20 batches (10,000 mutations). Every batch uses the same canonical
+`asOf` timestamp. The run stops immediately when no actionable backlog remains,
+even when `hasMore` continues to report Stripe envelopes awaiting the durable
+tombstone authority. It separately reports actionable stalls, duplicate/replayed
+batch results, and batch-budget exhaustion instead of looping indefinitely. The
+operational result also records source-evidence and pending-ingestion
+held/overdue counts plus purged volume, and is awaited during shutdown.
 
 ## Backups and deletion suppression
 
@@ -82,12 +91,17 @@ volume in its operational result, and is awaited during shutdown.
   or shorten retention; deletion/retention authority is separately controlled.
   The private Supabase backup project remains an operational restore copy and
   does not satisfy this requirement by itself. Copies are retained for at most
-  30 days unless a documented legal hold applies. A snapshot may physically contain pre-deletion
-  PII only until that snapshot reaches the retention limit. This general backup
-  lag does not apply to the separate completion-notice destination: every backup
-  and automatic pre-migration copy removes the recipient-secret rows, securely
-  compacts the copied SQLite artifact, and keeps only suppression/retry-safe
-  outbox metadata before the artifact can be retained or uploaded.
+  30 days unless a documented legal hold applies. A snapshot may physically
+  contain pre-deletion PII only until that snapshot reaches the retention limit.
+  SQLite privacy backups remove completion-notice recipient secrets and compact
+  the copied artifact. PostgreSQL recovery copies instead preserve an exact,
+  encrypted database snapshot so replay/idempotency state remains coherent;
+  therefore an older protected copy can retain already-purged recipient
+  ciphertext until that copy expires. The live PostgreSQL purge is acknowledged
+  only after a synchronous commit and a bounded absence proof. Restore remains
+  isolated until the latest deletion authority and retention policy have been
+  reapplied. This is a managed-backup retention obligation, not a claim of
+  immediate byte erasure from WAL or historical snapshots.
 - Before an account-deletion request can become `completed`, its minimal
   tombstone must be written to and verified from the independent append-only
   ledger. A failed ledger write leaves deletion failed/retryable; there is no

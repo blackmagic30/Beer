@@ -560,6 +560,7 @@
           </form>
           <form id="outreachForm" class="panel form">
             <h2>Partner outreach note</h2>
+            <input name="expectedUpdatedAt" type="hidden" value="" />
             <label class="field">Venue ID
               <input name="venueId" required placeholder="venue id" />
             </label>
@@ -879,6 +880,9 @@
     let securityAuditOffset = 0;
     let securityAuditTotal = 0;
     let securityAuditRequestId = 0;
+    let securityAuditCursor = null;
+    let securityAuditNextCursor = null;
+    let securityAuditCursorStack = [];
     const ACCOUNT_DELETION_PAGE_SIZE = 25;
     let accountDeletionOffset = 0;
     let accountDeletionTotal = 0;
@@ -1318,6 +1322,7 @@
         `data-last-contacted-at="${escapeHtml(item.lastContactedAt || "")}"`,
         `data-contact-name="${escapeHtml(item.contactName || "")}"`,
         `data-notes="${escapeHtml(item.notes || "")}"`,
+        `data-expected-updated-at="${escapeHtml(item.updatedAt || item.expectedUpdatedAt || "")}"`,
       ].join(" ");
     }
 
@@ -1489,10 +1494,13 @@
       outreachForm.elements.suburb.value = item.suburb || "";
       outreachForm.elements.status.value = item.status || "lead";
       outreachForm.elements.tierFit.value = item.tierFit || "";
-      outreachForm.elements.lastContactedAt.value = item.lastContactedAt || "";
+      outreachForm.elements.lastContactedAt.value = item.lastContactedAt
+        ? String(item.lastContactedAt).slice(0, 10)
+        : "";
       outreachForm.elements.nextAction.value = item.nextAction || "";
       outreachForm.elements.contactName.value = item.contactName || "";
       outreachForm.elements.notes.value = item.notes || "";
+      outreachForm.elements.expectedUpdatedAt.value = item.expectedUpdatedAt || item.updatedAt || "";
       adminJumpTo("partners", "#outreachForm");
       MelbBeerBusiness.setStatus(statusEl, "Outreach note loaded into the form.");
     }
@@ -1510,6 +1518,7 @@
         lastContactedAt: touchDate ? todayDateInputValue() : item.lastContactedAt || null,
         contactName: item.contactName || null,
         notes: item.notes || null,
+        expectedUpdatedAt: item.expectedUpdatedAt || item.updatedAt || null,
       };
 
       try {
@@ -2328,6 +2337,7 @@
       outreachForm.elements.nextAction.value = lead.nextAction || "";
       outreachForm.elements.contactName.value = "";
       outreachForm.elements.notes.value = lead.notes || "";
+      outreachForm.elements.expectedUpdatedAt.value = "";
       adminJumpTo("partners", "#outreachForm");
       MelbBeerBusiness.setStatus(statusEl, "Partner lead copied into the outreach form.");
     }
@@ -2738,9 +2748,13 @@
       }
     }
 
-    function securityAuditRequestParams(offset = securityAuditOffset) {
+    function securityAuditRequestParams(offset = securityAuditOffset, cursor = securityAuditCursor) {
       const form = document.getElementById("securityAuditFilterForm");
       const params = new URLSearchParams({ limit: String(SECURITY_AUDIT_PAGE_SIZE), offset: String(offset) });
+      if (cursor?.createdAt && cursor?.id) {
+        params.set("cursorCreatedAt", cursor.createdAt);
+        params.set("cursorId", cursor.id);
+      }
       if (form instanceof HTMLFormElement) {
         const action = String(form.elements.namedItem("action")?.value || "").trim();
         const actorUserId = String(form.elements.namedItem("actorUserId")?.value || "").trim();
@@ -2751,12 +2765,18 @@
     }
 
     async function loadSecurityAudit(options = {}) {
-      if (options.resetPage) securityAuditOffset = 0;
+      if (options.resetPage) {
+        securityAuditOffset = 0;
+        securityAuditCursor = null;
+        securityAuditNextCursor = null;
+        securityAuditCursorStack = [];
+      }
       const requestId = ++securityAuditRequestId;
       const requestedOffset = securityAuditOffset;
+      const requestedCursor = securityAuditCursor;
       const status = document.getElementById("securityAuditStatus");
       const list = document.getElementById("securityAuditList");
-      const params = securityAuditRequestParams(requestedOffset);
+      const params = securityAuditRequestParams(requestedOffset, requestedCursor);
       const requestedQuery = params.toString();
       const refreshButton = document.getElementById("refreshSecurityAuditButton");
       if (refreshButton instanceof HTMLButtonElement) refreshButton.disabled = true;
@@ -2766,13 +2786,16 @@
       try {
         const result = await MelbBeerBusiness.apiFetch(`/api/business/admin/security-audit?${params.toString()}`);
         if (requestId !== securityAuditRequestId || requestedOffset !== securityAuditOffset) return;
-        if (requestedQuery !== securityAuditRequestParams(requestedOffset).toString()) {
+        if (requestedQuery !== securityAuditRequestParams(requestedOffset, securityAuditCursor).toString()) {
           MelbBeerBusiness.setStatus(status, "Filters changed. Apply them to load matching audit events.");
           return;
         }
         const logs = Array.isArray(result.logs) ? result.logs : [];
         const pagination = result.pagination || {};
         securityAuditTotal = Number(pagination.total || logs.length);
+        securityAuditNextCursor = pagination.nextCursor?.createdAt && pagination.nextCursor?.id
+          ? { createdAt: String(pagination.nextCursor.createdAt), id: String(pagination.nextCursor.id) }
+          : null;
         list.innerHTML = logs.length ? logs.map((log) => `
           <article class="listItem dataRow">
             <div>
@@ -2786,8 +2809,8 @@
         const start = logs.length ? requestedOffset + 1 : 0;
         const end = requestedOffset + logs.length;
         document.getElementById("securityAuditPage").textContent = `${start}-${end} of ${securityAuditTotal}`;
-        document.getElementById("securityAuditPrev").disabled = requestedOffset === 0;
-        document.getElementById("securityAuditNext").disabled = end >= securityAuditTotal;
+        document.getElementById("securityAuditPrev").disabled = securityAuditCursorStack.length === 0;
+        document.getElementById("securityAuditNext").disabled = !securityAuditNextCursor;
         MelbBeerBusiness.setStatus(status, `Loaded ${logs.length} audited event${logs.length === 1 ? "" : "s"}.`);
       } catch (error) {
         if (requestId !== securityAuditRequestId || requestedOffset !== securityAuditOffset) return;
@@ -4974,13 +4997,17 @@
             <div class="muted">${escapeHtml(interest.managerName)} · ${escapeHtml(interest.role)} · ${escapeHtml(interest.email)}${interest.phone ? ` · ${escapeHtml(interest.phone)}` : ""}</div>
             <div class="muted">${escapeHtml(interest.notes || "No notes supplied")}</div>
             <div class="actionRow">
-              ${statuses.map((status) => `<button class="button button--small" type="button" data-interest-id="${escapeHtml(interest.id)}" data-interest-status="${status}">${status.replace("_", " ")}</button>`).join("")}
+              ${statuses.map((status) => `<button class="button button--small" type="button" data-interest-id="${escapeHtml(interest.id)}" data-interest-status="${status}" data-interest-updated-at="${escapeHtml(interest.updatedAt)}">${status.replace("_", " ")}</button>`).join("")}
             </div>
           </article>
         `).join("")
         : '<div class="listItem muted">No venue interest requests on this page.</div>';
       venueInterestRequests.querySelectorAll("[data-interest-id]").forEach((button) => {
-        button.addEventListener("click", () => updateVenueInterestStatus(button.dataset.interestId, button.dataset.interestStatus));
+        button.addEventListener("click", () => updateVenueInterestStatus(
+          button.dataset.interestId,
+          button.dataset.interestStatus,
+          button.dataset.interestUpdatedAt,
+        ));
       });
 
       const claimRequests = data.claimRequests || [];
@@ -5196,12 +5223,12 @@
       }
     }
 
-    async function updateVenueInterestStatus(id, status) {
-      if (!id || !status) return;
+    async function updateVenueInterestStatus(id, status, expectedUpdatedAt) {
+      if (!id || !status || !expectedUpdatedAt) return;
       try {
         await MelbBeerBusiness.apiFetch(`/api/business/admin/venue-interest/${encodeURIComponent(id)}/status`, {
           method: "POST",
-          body: JSON.stringify({ status }),
+          body: JSON.stringify({ status, expectedUpdatedAt }),
         });
         MelbBeerBusiness.setStatus(statusEl, "Venue interest status updated.");
         await loadAdmin();
@@ -5286,6 +5313,7 @@
       const formElement = event.currentTarget;
       const form = new FormData(formElement);
       const body = Object.fromEntries(form.entries());
+      body.expectedUpdatedAt = body.expectedUpdatedAt || null;
       try {
         await MelbBeerBusiness.apiFetch("/api/business/admin/venue-outreach", {
           method: "POST",
@@ -5611,11 +5639,17 @@
       });
       document.getElementById("refreshSecurityAuditButton")?.addEventListener("click", () => void loadSecurityAudit());
       document.getElementById("securityAuditPrev")?.addEventListener("click", () => {
+        if (!securityAuditCursorStack.length) return;
+        securityAuditCursor = securityAuditCursorStack.pop() || null;
+        securityAuditNextCursor = null;
         securityAuditOffset = Math.max(0, securityAuditOffset - SECURITY_AUDIT_PAGE_SIZE);
         void loadSecurityAudit();
       });
       document.getElementById("securityAuditNext")?.addEventListener("click", () => {
-        if (securityAuditOffset + SECURITY_AUDIT_PAGE_SIZE >= securityAuditTotal) return;
+        if (!securityAuditNextCursor) return;
+        securityAuditCursorStack.push(securityAuditCursor);
+        securityAuditCursor = securityAuditNextCursor;
+        securityAuditNextCursor = null;
         securityAuditOffset += SECURITY_AUDIT_PAGE_SIZE;
         void loadSecurityAudit();
       });

@@ -118,6 +118,7 @@ import au.pintpath.beermap.data.PriceRecordsResult
 import au.pintpath.beermap.data.PrivacySettings
 import au.pintpath.beermap.data.RotatingCodeResult
 import au.pintpath.beermap.data.SessionStore
+import au.pintpath.beermap.data.SupabasePublicAuthConfigurationResolver
 import au.pintpath.beermap.data.UploadLocation
 import au.pintpath.beermap.data.Venue
 import au.pintpath.beermap.data.stringOrNull
@@ -321,22 +322,22 @@ class BeerMapState(context: Context) {
     fun beginOAuth(provider: String): Uri {
         val normalizedProvider = provider.lowercase().takeIf { it == "google" || it == "apple" }
             ?: error("Unsupported sign-in provider.")
-        val supabaseUrl = config.stringOrNull("supabaseUrl")?.trimEnd('/')
-            ?: BuildConfig.SUPABASE_URL.trimEnd('/').takeIf { it.isNotBlank() }
-            ?: error("Secure provider sign-in is temporarily unavailable.")
+        val publicConfiguration = SupabasePublicAuthConfigurationResolver.resolve(config)
+            ?: SupabasePublicAuthConfigurationResolver.unavailable()
         val verifierBytes = ByteArray(32).also { SecureRandom().nextBytes(it) }
         val codeVerifier = Base64.encodeToString(verifierBytes, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
         val codeChallenge = Base64.encodeToString(
             MessageDigest.getInstance("SHA-256").digest(codeVerifier.toByteArray(Charsets.US_ASCII)),
             Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING
         )
-        sessions.savePendingOAuth(PendingOAuthState(codeVerifier))
-        return Uri.parse("$supabaseUrl/auth/v1/authorize").buildUpon()
+        val authorizationUrl = Uri.parse("${publicConfiguration.origin}/auth/v1/authorize").buildUpon()
             .appendQueryParameter("provider", normalizedProvider)
             .appendQueryParameter("redirect_to", "pintpath://auth-callback")
             .appendQueryParameter("code_challenge", codeChallenge)
             .appendQueryParameter("code_challenge_method", "s256")
             .build()
+        sessions.savePendingOAuth(PendingOAuthState(codeVerifier))
+        return authorizationUrl
     }
 
     suspend fun completeOAuthCallback(uri: Uri) = mutate {
@@ -2988,11 +2989,9 @@ private fun SettingsScreen(state: BeerMapState, scope: CoroutineScope) {
     var support by remember { mutableStateOf("") }
     val uriHandler = LocalUriHandler.current
     val publicBaseUrl = BuildConfig.PINT_PATH_API_BASE_URL.trimEnd('/')
-    val hasServerSupabaseConfig =
-        !state.config.stringOrNull("supabaseUrl").isNullOrBlank() &&
-            !state.config.stringOrNull("supabaseAnonKey").isNullOrBlank()
-    val hasEmbeddedSupabaseConfig =
-        BuildConfig.SUPABASE_URL.isNotBlank() && BuildConfig.SUPABASE_ANON_KEY.isNotBlank()
+    val hasEffectiveSupabaseConfig = runCatching {
+        SupabasePublicAuthConfigurationResolver.resolve(state.config) != null
+    }.getOrDefault(false)
     Column(
         Modifier
             .fillMaxSize()
@@ -3005,7 +3004,7 @@ private fun SettingsScreen(state: BeerMapState, scope: CoroutineScope) {
                 SectionHeader("Configuration", "Backend connection", "Debug-only connection details.", Icons.Filled.Settings)
                 Text("API base URL: ${BuildConfig.PINT_PATH_API_BASE_URL}", style = MaterialTheme.typography.bodyMedium)
                 Text(
-                    "Supabase native OAuth: ${if (hasServerSupabaseConfig || hasEmbeddedSupabaseConfig) "Public config present" else "Not configured"}",
+                    "Supabase native OAuth: ${if (hasEffectiveSupabaseConfig) "Public config present" else "Not configured"}",
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Text("Field-test mode: ${if (state.config.optBoolean("fieldTestMode", false)) "On" else "Off"}", style = MaterialTheme.typography.bodyMedium)

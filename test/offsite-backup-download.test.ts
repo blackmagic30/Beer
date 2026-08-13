@@ -17,6 +17,10 @@ import {
   downloadOffsiteBackup,
   readPrivateSecretFile,
 } from "../src/lib/offsite-backup-download.js";
+import {
+  OPERATIONAL_OFFSITE_BACKUP_BUCKET,
+  OPERATIONAL_OFFSITE_SUPABASE_ORIGIN,
+} from "../src/lib/supabase-key-format.js";
 
 interface StoredObject {
   bytes: Buffer;
@@ -218,9 +222,9 @@ async function populateValidBackup(
 
 function downloadInput(storage: FakeBackupStorage, outputPath: string) {
   return {
-    destinationSupabaseUrl: "https://independent-backup.supabase.co",
-    destinationServiceRoleKey: "test-service-role-key",
-    bucketName: "pintpath-backups",
+    destinationSupabaseUrl: OPERATIONAL_OFFSITE_SUPABASE_ORIGIN,
+    destinationServiceRoleKey: ["sb", "secret", "download_boundary_abcdefghijk"].join("_"),
+    bucketName: OPERATIONAL_OFFSITE_BACKUP_BUCKET,
     backupId,
     expectedManifestSha256: storage.objects.has(`${backupId}/manifest.json`)
       ? sha256Bytes(storage.objects.get(`${backupId}/manifest.json`)!.bytes)
@@ -349,6 +353,26 @@ describe("off-site backup SDK downloader", () => {
     ).toThrow("invalid timestamp");
   });
 
+  it("rejects unreviewed destination credentials before output or client access", async () => {
+    const root = temporaryRoot();
+    const storage = new FakeBackupStorage();
+    const outputPath = path.join(root, "blocked-output");
+    const clientFactory = vi.fn(() => storage.client());
+    const valid = {
+      ...downloadInput(storage, outputPath),
+      clientFactory,
+    };
+    for (const candidate of [
+      { ...valid, destinationSupabaseUrl: "https://attacker.invalid" },
+      { ...valid, destinationServiceRoleKey: "sb_publishable_wrong_slot_abcdefghij" },
+      { ...valid, bucketName: ` ${OPERATIONAL_OFFSITE_BACKUP_BUCKET}` },
+    ]) {
+      await expect(downloadOffsiteBackup(candidate)).rejects.toThrow();
+    }
+    expect(clientFactory).not.toHaveBeenCalled();
+    expect(fs.existsSync(outputPath)).toBe(false);
+  });
+
   it("rejects traversal components and leaves no partial output", async () => {
     const root = temporaryRoot();
     const storage = new FakeBackupStorage();
@@ -472,8 +496,14 @@ describe("off-site backup SDK downloader", () => {
   it("accepts only private regular secret-key files", async () => {
     const root = temporaryRoot();
     const secretPath = path.join(root, "backup.secret");
-    fs.writeFileSync(secretPath, "service-role-secret\n", { mode: 0o600 });
+    fs.writeFileSync(secretPath, "service-role-secret", { mode: 0o600 });
     expect(await readPrivateSecretFile(secretPath)).toBe("service-role-secret");
+
+    fs.writeFileSync(secretPath, "service-role-secret\n", { mode: 0o600 });
+    await expect(readPrivateSecretFile(secretPath)).rejects.toThrow(
+      "no whitespace or line ending",
+    );
+    fs.writeFileSync(secretPath, "service-role-secret", { mode: 0o600 });
 
     fs.chmodSync(secretPath, 0o644);
     await expect(readPrivateSecretFile(secretPath)).rejects.toThrow(

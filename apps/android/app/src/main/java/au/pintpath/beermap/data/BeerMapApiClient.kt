@@ -26,9 +26,82 @@ class ApiException(
     val legalAcceptanceRefreshToken: String? = null
 ) : IOException(message)
 
+internal data class SupabasePublicAuthConfiguration(
+    val origin: String,
+    val publishableKey: String
+)
+
+internal object SupabasePublicAuthConfigurationResolver {
+    const val APPROVED_ORIGIN = "https://auth.pintpath.au"
+    const val UNAVAILABLE_MESSAGE =
+        "Secure account sign-in is temporarily unavailable. Update the app or contact support."
+    private val publishableKeyPattern = Regex("^sb_publishable_[A-Za-z0-9_-]{20,220}$")
+
+    fun resolve(config: JSONObject): SupabasePublicAuthConfiguration? = resolveValues(
+        configuredOriginPublished = config.has("supabaseUrl"),
+        configuredOrigin = exactOptionalString(config, "supabaseUrl"),
+        configuredKeyPublished = config.has("supabaseAnonKey"),
+        configuredKey = exactOptionalString(config, "supabaseAnonKey"),
+        embeddedOrigin = BuildConfig.SUPABASE_URL,
+        embeddedKey = BuildConfig.SUPABASE_ANON_KEY
+    )
+
+    internal fun resolveValues(
+        configuredOriginPublished: Boolean,
+        configuredOrigin: String?,
+        configuredKeyPublished: Boolean,
+        configuredKey: String?,
+        embeddedOrigin: String?,
+        embeddedKey: String?
+    ): SupabasePublicAuthConfiguration? {
+        if (configuredOriginPublished != configuredKeyPublished) unavailable()
+
+        val selectedConfiguredOrigin = configuredOrigin?.takeIf { it.isNotEmpty() }
+        val selectedConfiguredKey = configuredKey?.takeIf { it.isNotEmpty() }
+        if (configuredOriginPublished) {
+            if (selectedConfiguredOrigin == null && selectedConfiguredKey == null) return null
+            return requirePair(selectedConfiguredOrigin, selectedConfiguredKey)
+        }
+
+        val selectedEmbeddedOrigin = embeddedOrigin?.takeIf { it.isNotEmpty() }
+        val selectedEmbeddedKey = embeddedKey?.takeIf { it.isNotEmpty() }
+        if (selectedEmbeddedOrigin != null || selectedEmbeddedKey != null) {
+            return requirePair(selectedEmbeddedOrigin, selectedEmbeddedKey)
+        }
+        return null
+    }
+
+    private fun requirePair(origin: String?, key: String?): SupabasePublicAuthConfiguration {
+        if (origin != APPROVED_ORIGIN || key == null || !publishableKeyPattern.matches(key)) {
+            unavailable()
+        }
+        return SupabasePublicAuthConfiguration(origin, key)
+    }
+
+    private fun exactOptionalString(config: JSONObject, name: String): String? {
+        if (!config.has(name) || config.isNull(name)) return null
+        val value = config.opt(name)
+        if (value !is String) unavailable()
+        return value.takeIf { it.isNotEmpty() }
+    }
+
+    fun unavailable(): Nothing = throw IOException(UNAVAILABLE_MESSAGE)
+}
+
+internal fun openNonRedirectingHttpConnection(url: URL): HttpURLConnection =
+    (url.openConnection() as HttpURLConnection).apply {
+        instanceFollowRedirects = false
+    }
+
 class BeerMapApiClient(
     private val baseUrl: String = BuildConfig.PINT_PATH_API_BASE_URL
 ) {
+    private companion object {
+        const val APPROVED_PRODUCTION_API_BASE_URL = "https://pintpath.au"
+        const val API_CONFIGURATION_UNAVAILABLE =
+            "The secure Pint Path service is unavailable. Update the app or contact support."
+    }
+
     suspend fun config(): JSONObject = request("/api/business/config")
 
     suspend fun login(email: String, password: String, config: JSONObject): NativeAuthOutcome {
@@ -187,7 +260,7 @@ class BeerMapApiClient(
             path = "/auth/v1/recover",
             body = JSONObject()
                 .put("email", email)
-                .put("redirect_to", baseUrl.trimEnd('/') + "/auth/callback"),
+                .put("redirect_to", effectiveApiBaseUrl() + "/auth/callback"),
             config = config
         )
     }
@@ -713,7 +786,7 @@ class BeerMapApiClient(
 
     suspend fun exportVenueMonthlyReport(venueId: String, month: String, format: String, token: String): String = withContext(Dispatchers.IO) {
         val path = "/api/business/venue-portal/${encode(venueId)}/reports/${encode(month)}/export?format=${encode(format)}"
-        val connection = (URL(baseUrl.trimEnd('/') + path).openConnection() as HttpURLConnection).apply {
+        val connection = openNonRedirectingHttpConnection(URL(effectiveApiBaseUrl() + path)).apply {
             requestMethod = "GET"
             connectTimeout = 15_000
             readTimeout = 20_000
@@ -770,8 +843,8 @@ class BeerMapApiClient(
         reauthenticationToken: String? = null,
         readTimeoutMs: Int = 20_000
     ): JSONObject = withContext(Dispatchers.IO) {
-        val url = URL(baseUrl.trimEnd('/') + path)
-        val connection = (url.openConnection() as HttpURLConnection).apply {
+        val url = URL(effectiveApiBaseUrl() + path)
+        val connection = openNonRedirectingHttpConnection(url).apply {
             requestMethod = method
             connectTimeout = 15_000
             readTimeout = readTimeoutMs
@@ -853,11 +926,14 @@ class BeerMapApiClient(
     }
 
     private fun hasSupabaseConfiguration(config: JSONObject): Boolean {
-        val url = config.stringOrNull("supabaseUrl")
-            ?: BuildConfig.SUPABASE_URL.takeIf { it.isNotBlank() }
-        val key = config.stringOrNull("supabaseAnonKey")
-            ?: BuildConfig.SUPABASE_ANON_KEY.takeIf { it.isNotBlank() }
-        return !url.isNullOrBlank() && !key.isNullOrBlank()
+        return SupabasePublicAuthConfigurationResolver.resolve(config) != null
+    }
+
+    private fun effectiveApiBaseUrl(): String {
+        if (!BuildConfig.DEBUG && baseUrl != APPROVED_PRODUCTION_API_BASE_URL) {
+            throw IOException(API_CONFIGURATION_UNAVAILABLE)
+        }
+        return baseUrl.trimEnd('/')
     }
 
     private fun requiredLegalPolicyVersion(config: JSONObject): String =
@@ -872,21 +948,19 @@ class BeerMapApiClient(
         config: JSONObject,
         accessToken: String? = null
     ): JSONObject = withContext(Dispatchers.IO) {
-        val supabaseUrl = config.stringOrNull("supabaseUrl")?.trimEnd('/')
-            ?: BuildConfig.SUPABASE_URL.trimEnd('/').takeIf { it.isNotBlank() }
-            ?: throw IOException("Secure account sign-in is temporarily unavailable.")
-        val anonKey = config.stringOrNull("supabaseAnonKey")
-            ?: BuildConfig.SUPABASE_ANON_KEY.takeIf { it.isNotBlank() }
-            ?: throw IOException("Secure account sign-in is temporarily unavailable.")
-        val connection = (URL(supabaseUrl + path).openConnection() as HttpURLConnection).apply {
+        val publicConfiguration = SupabasePublicAuthConfigurationResolver.resolve(config)
+            ?: SupabasePublicAuthConfigurationResolver.unavailable()
+        val connection = openNonRedirectingHttpConnection(URL(publicConfiguration.origin + path)).apply {
             requestMethod = "POST"
             connectTimeout = 15_000
             readTimeout = 20_000
             doOutput = true
             setRequestProperty("Accept", "application/json")
             setRequestProperty("Content-Type", "application/json")
-            setRequestProperty("apikey", anonKey)
-            if (!accessToken.isNullOrBlank()) setRequestProperty("Authorization", "Bearer $accessToken")
+            setRequestProperty("apikey", publicConfiguration.publishableKey)
+            if (!accessToken.isNullOrBlank() && accessToken != publicConfiguration.publishableKey) {
+                setRequestProperty("Authorization", "Bearer $accessToken")
+            }
             outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
         }
         val status = connection.responseCode

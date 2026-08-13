@@ -7,7 +7,11 @@ import BetterSqlite3 from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { BusinessRepository } from "../src/db/business.repository.js";
+import { AccountDeletionQueueRepository } from "../src/db/account-deletion-queue.repository.js";
+import { AccountPrivacyRepository } from "../src/db/account-privacy.repository.js";
+import { ActivityAuditRepository } from "../src/db/activity-audit.repository.js";
 import { initializeDatabaseSchema } from "../src/db/database.js";
+import { asAsyncSqliteDatabase } from "../src/db/sql-database.js";
 import {
   AccountDeletionNotificationError,
   type AccountDeletionNotificationMessage,
@@ -21,6 +25,7 @@ import {
   AccountDeletionNotificationCoordinator,
   parseAccountDeletionNotificationKeyring,
 } from "../src/lib/account-deletion-notification-worker.js";
+import { createSqliteAccountDeletionSecretPhysicalCheckpoint } from "../src/lib/account-deletion-secret-checkpoint.js";
 
 const NOW = "2026-08-03T10:00:00.000Z";
 const ACTIVE_KEY_ID = "deletion-key-2026-08";
@@ -65,21 +70,27 @@ function createHarness(provider: AccountDeletionNotificationProvider = defaultPr
   initializeDatabaseSchema(database);
   openDatabases.push(database);
   const repository = new BusinessRepository(database);
-  const coordinator = new AccountDeletionNotificationCoordinator(repository, {
+  const sqlDatabase = asAsyncSqliteDatabase(database);
+  const queueRepository = new AccountDeletionQueueRepository(sqlDatabase);
+  const privacyRepository = new AccountPrivacyRepository(sqlDatabase);
+  const activityAuditRepository = new ActivityAuditRepository(sqlDatabase);
+  const coordinator = new AccountDeletionNotificationCoordinator(queueRepository, {
     provider,
     keyring: parseAccountDeletionNotificationKeyring({
       activeKeyId: ACTIVE_KEY_ID,
       keyringJson: validKeyringJson(),
     }),
+    performRecipientSecretPhysicalCheckpoint:
+      createSqliteAccountDeletionSecretPhysicalCheckpoint(database),
     publicBaseUrl: "https://pintpath.au",
     from: "Pint Path <account@pintpath.au>",
     replyTo: "admin@pintpath.au",
     supportEmail: "admin@pintpath.au",
   });
-  return { database, repository, coordinator, provider };
+  return { database, repository, queueRepository, privacyRepository, activityAuditRepository, coordinator, provider };
 }
 
-function createDeletionFixture(
+async function createDeletionFixture(
   harness: ReturnType<typeof createHarness>,
   suffix: string,
 ) {
@@ -99,7 +110,7 @@ function createDeletionFixture(
     subscriptionStatus: "admin",
     now: NOW,
   });
-  const request = harness.repository.createAccountDeletionRequest({
+  const request = await harness.queueRepository.createAccountDeletionRequest({
     id: `delete-request-${suffix}`,
     userId: user.id,
     userMessage: "Delete this account.",
@@ -110,7 +121,7 @@ function createDeletionFixture(
 }
 
 function operatorAudit(
-  fixture: ReturnType<typeof createDeletionFixture>,
+  fixture: Awaited<ReturnType<typeof createDeletionFixture>>,
   id: string,
   reason = "Operator verified the provider outcome.",
 ) {
@@ -122,9 +133,9 @@ function operatorAudit(
   };
 }
 
-function prepareHeldNotification(
+async function prepareHeldNotification(
   harness: ReturnType<typeof createHarness>,
-  fixture: ReturnType<typeof createDeletionFixture>,
+  fixture: Awaited<ReturnType<typeof createDeletionFixture>>,
   now = NOW,
 ) {
   return harness.coordinator.beginDeletionWithPreparedNotification({
@@ -136,24 +147,29 @@ function prepareHeldNotification(
   });
 }
 
-function activateNotification(
+async function activateNotification(
   harness: ReturnType<typeof createHarness>,
-  fixture: ReturnType<typeof createDeletionFixture>,
+  fixture: Awaited<ReturnType<typeof createDeletionFixture>>,
   completedAt = NOW,
 ) {
-  const processing = prepareHeldNotification(harness, fixture, completedAt);
+  const processing = await prepareHeldNotification(harness, fixture, completedAt);
   expect(processing).toEqual(expect.objectContaining({ status: "processing" }));
-  harness.repository.executeAccountAnonymisation({
+  await harness.privacyRepository.executeAccountAnonymisation({
     requestId: fixture.requestId,
+    attemptCount: processing!.attempt_count,
     reviewedBy: fixture.admin.id,
     now: completedAt,
     completionNotificationDisposition: "enqueue_live",
     completionNotificationRetentionExpiresAt:
       harness.coordinator.completionRetentionExpiresAt(completedAt),
+    providerPolicy: {
+      requireTombstoneReceipt: false,
+      allowUnconfirmedStripeDeletion: false,
+    },
   });
 }
 
-function acceptedNotificationHarness() {
+async function acceptedNotificationHarness() {
   const send = vi.fn(async () => ({ id: "resend-webhook-message" }));
   const getStatus = vi.fn(async (providerId: string) => ({
     providerId,
@@ -162,8 +178,8 @@ function acceptedNotificationHarness() {
   }));
   const provider: AccountDeletionNotificationProvider = { mode: "resend", send, getStatus };
   const harness = createHarness(provider);
-  const fixture = createDeletionFixture(harness, "webhook");
-  activateNotification(harness, fixture);
+  const fixture = await createDeletionFixture(harness, "webhook");
+  await activateNotification(harness, fixture);
   return { ...harness, fixture, send, getStatus };
 }
 
@@ -229,15 +245,15 @@ describe("account deletion notification keyring", () => {
 });
 
 describe("account deletion notification preparation and activation", () => {
-  it("atomically claims deletion with a held encrypted secret and stores no plaintext destination in notification rows", () => {
+  it("atomically claims deletion with a held encrypted secret and stores no plaintext destination in notification rows", async () => {
     const harness = createHarness();
-    const fixture = createDeletionFixture(harness, "held");
+    const fixture = await createDeletionFixture(harness, "held");
 
-    const processing = prepareHeldNotification(harness, fixture);
+    const processing = await prepareHeldNotification(harness, fixture);
 
     expect(processing).toEqual(expect.objectContaining({ status: "processing" }));
-    const outbox = harness.repository.getAccountDeletionCompletionOutbox(fixture.requestId);
-    const recipient = harness.repository.getAccountDeletionNoticeRecipientSecret(fixture.requestId);
+    const outbox = await harness.queueRepository.getAccountDeletionCompletionOutbox(fixture.requestId);
+    const recipient = await harness.queueRepository.getAccountDeletionNoticeRecipientSecret(fixture.requestId);
     expect(outbox).toEqual(expect.objectContaining({
       request_id: fixture.requestId,
       status: "held",
@@ -263,7 +279,7 @@ describe("account deletion notification preparation and activation", () => {
       },
     });
     expect(notificationStorage).not.toContain(RECIPIENT);
-    expect(prepareHeldNotification(harness, fixture)).toBeNull();
+    expect(await prepareHeldNotification(harness, fixture)).toBeNull();
     expect(harness.database.prepare(
       "SELECT count(*) AS count FROM account_deletion_completion_outbox WHERE request_id = ?",
     ).get(fixture.requestId)).toEqual({ count: 1 });
@@ -274,43 +290,55 @@ describe("account deletion notification preparation and activation", () => {
 
   it("keeps held work unclaimable and requires durable preparation inside the anonymisation transaction", async () => {
     const missing = createHarness();
-    const missingFixture = createDeletionFixture(missing, "missing-activation");
-    expect(missing.repository.beginAccountDeletion({
+    const missingFixture = await createDeletionFixture(missing, "missing-activation");
+    const missingProcessing = await missing.queueRepository.beginAccountDeletion({
       requestId: missingFixture.requestId,
       reviewedBy: missingFixture.admin.id,
       now: NOW,
       staleBefore: isoAfterMinutes(NOW, -10),
-    })).toBeTruthy();
+    });
+    expect(missingProcessing).toBeTruthy();
 
-    expect(() => missing.repository.executeAccountAnonymisation({
+    await expect(missing.privacyRepository.executeAccountAnonymisation({
       requestId: missingFixture.requestId,
+      attemptCount: missingProcessing!.attempt_count,
       reviewedBy: missingFixture.admin.id,
       now: NOW,
       completionNotificationDisposition: "enqueue_live",
       completionNotificationRetentionExpiresAt:
         missing.coordinator.completionRetentionExpiresAt(NOW),
-    })).toThrow("was not durably prepared before anonymisation");
+      providerPolicy: {
+        requireTombstoneReceipt: false,
+        allowUnconfirmedStripeDeletion: false,
+      },
+    })).rejects.toThrow("not durably prepared");
     expect(missing.repository.getAccountById(missingFixture.user.id)).toEqual(expect.objectContaining({
       email: RECIPIENT,
       status: "active",
     }));
-    expect(missing.repository.getAccountDeletionRequestById(missingFixture.requestId)).toEqual(
+    expect(await missing.queueRepository.getAccountDeletionRequestById(missingFixture.requestId)).toEqual(
       expect.objectContaining({ status: "processing" }),
     );
 
     const held = createHarness();
-    const heldFixture = createDeletionFixture(held, "held-activation");
-    expect(prepareHeldNotification(held, heldFixture)).toBeTruthy();
+    const heldFixture = await createDeletionFixture(held, "held-activation");
+    const heldProcessing = await prepareHeldNotification(held, heldFixture);
+    expect(heldProcessing).toBeTruthy();
     await expect(held.coordinator.processDue({ now: new Date(NOW) })).resolves.toMatchObject({ claimed: 0 });
 
-    held.repository.executeAccountAnonymisation({
+    await held.privacyRepository.executeAccountAnonymisation({
       requestId: heldFixture.requestId,
+      attemptCount: heldProcessing!.attempt_count,
       reviewedBy: heldFixture.admin.id,
       now: NOW,
       completionNotificationDisposition: "enqueue_live",
       completionNotificationRetentionExpiresAt: held.coordinator.completionRetentionExpiresAt(NOW),
+      providerPolicy: {
+        requireTombstoneReceipt: false,
+        allowUnconfirmedStripeDeletion: false,
+      },
     });
-    expect(held.repository.getAccountDeletionCompletionOutbox(heldFixture.requestId)).toEqual(
+    expect(await held.queueRepository.getAccountDeletionCompletionOutbox(heldFixture.requestId)).toEqual(
       expect.objectContaining({
         status: "pending",
         completed_at: NOW,
@@ -327,10 +355,10 @@ describe("account deletion completion notification worker", () => {
       id: "resend-template-v1-message",
     }));
     const harness = createHarness({ mode: "resend", send });
-    const fixture = createDeletionFixture(harness, "template-v1");
-    activateNotification(harness, fixture);
+    const fixture = await createDeletionFixture(harness, "template-v1");
+    await activateNotification(harness, fixture);
 
-    expect(harness.repository.getAccountDeletionCompletionOutbox(fixture.requestId))
+    expect(await harness.queueRepository.getAccountDeletionCompletionOutbox(fixture.requestId))
       .toEqual(expect.objectContaining({ template_version: ACCOUNT_DELETION_NOTICE_TEMPLATE_V1 }));
     await expect(harness.coordinator.processDue({ now: new Date(NOW) }))
       .resolves.toMatchObject({ accepted: 1 });
@@ -393,7 +421,7 @@ describe("account deletion completion notification worker", () => {
       '"tags":[{"name":"message_type","value":"account_deletion_completion"}]}',
     ].join("");
     expect(serializeResendAccountDeletionRequest(message)).toBe(expectedProviderBody);
-    expect(harness.repository.getAccountDeletionCompletionOutbox(fixture.requestId))
+    expect(await harness.queueRepository.getAccountDeletionCompletionOutbox(fixture.requestId))
       .toEqual(expect.objectContaining({
         template_version: "account-deletion-complete-v1",
         idempotency_key: "pintpath-account-deletion/delete-request-template-v1",
@@ -406,8 +434,8 @@ describe("account deletion completion notification worker", () => {
       id: "must-not-send-unsupported-template",
     }));
     const harness = createHarness({ mode: "resend", send });
-    const fixture = createDeletionFixture(harness, "unsupported-template");
-    activateNotification(harness, fixture);
+    const fixture = await createDeletionFixture(harness, "unsupported-template");
+    await activateNotification(harness, fixture);
     harness.database.prepare(`
       UPDATE account_deletion_completion_outbox
          SET template_version = ?
@@ -420,13 +448,13 @@ describe("account deletion completion notification worker", () => {
       manualReview: 1,
     });
     expect(send).not.toHaveBeenCalled();
-    expect(harness.repository.getAccountDeletionCompletionOutbox(fixture.requestId))
+    expect(await harness.queueRepository.getAccountDeletionCompletionOutbox(fixture.requestId))
       .toEqual(expect.objectContaining({
         status: "manual_review",
         payload_fingerprint: null,
         last_error: "Unsupported account deletion notification template: account-deletion-complete-v2",
       }));
-    expect(harness.repository.getAccountDeletionNoticeRecipientSecret(fixture.requestId)).not.toBeNull();
+    expect(await harness.queueRepository.getAccountDeletionNoticeRecipientSecret(fixture.requestId)).not.toBeNull();
   });
 
   it("sends once, records provider acceptance, polls delivery, and purges the encrypted destination", async () => {
@@ -437,8 +465,8 @@ describe("account deletion completion notification worker", () => {
       deliveryStatus: "delivered" as const,
     }));
     const harness = createHarness({ mode: "resend", send, getStatus });
-    const fixture = createDeletionFixture(harness, "delivery");
-    activateNotification(harness, fixture);
+    const fixture = await createDeletionFixture(harness, "delivery");
+    await activateNotification(harness, fixture);
 
     await expect(harness.coordinator.processDue({ now: new Date(NOW) })).resolves.toEqual({
       claimed: 1,
@@ -456,7 +484,7 @@ describe("account deletion completion notification worker", () => {
       to: RECIPIENT,
       subject: expect.stringContaining("deletion is complete"),
     }));
-    expect(harness.repository.getAccountDeletionCompletionOutbox(fixture.requestId)).toEqual(
+    expect(await harness.queueRepository.getAccountDeletionCompletionOutbox(fixture.requestId)).toEqual(
       expect.objectContaining({
         status: "accepted",
         provider_message_id: "resend-delivery-accepted",
@@ -465,7 +493,7 @@ describe("account deletion completion notification worker", () => {
         next_attempt_at: isoAfterMinutes(NOW, 15),
       }),
     );
-    expect(harness.repository.getAccountDeletionNoticeRecipientSecret(fixture.requestId)).not.toBeNull();
+    expect(await harness.queueRepository.getAccountDeletionNoticeRecipientSecret(fixture.requestId)).not.toBeNull();
 
     const pollAt = isoAfterMinutes(NOW, 15);
     await expect(harness.coordinator.processDue({ now: new Date(pollAt) })).resolves.toMatchObject({
@@ -476,7 +504,7 @@ describe("account deletion completion notification worker", () => {
     expect(send).toHaveBeenCalledTimes(1);
     expect(getStatus).toHaveBeenCalledTimes(1);
     expect(getStatus).toHaveBeenCalledWith("resend-delivery-accepted");
-    expect(harness.repository.getAccountDeletionCompletionOutbox(fixture.requestId)).toEqual(
+    expect(await harness.queueRepository.getAccountDeletionCompletionOutbox(fixture.requestId)).toEqual(
       expect.objectContaining({
         status: "delivered",
         provider_last_event: "delivered",
@@ -485,7 +513,7 @@ describe("account deletion completion notification worker", () => {
         next_attempt_at: null,
       }),
     );
-    expect(harness.repository.getAccountDeletionNoticeRecipientSecret(fixture.requestId)).toBeNull();
+    expect(await harness.queueRepository.getAccountDeletionNoticeRecipientSecret(fixture.requestId)).toBeNull();
   });
 
   it("allows only one overlapping worker to claim and send a notification", async () => {
@@ -501,8 +529,8 @@ describe("account deletion completion notification worker", () => {
       })),
     };
     const harness = createHarness(provider);
-    const fixture = createDeletionFixture(harness, "overlap");
-    activateNotification(harness, fixture);
+    const fixture = await createDeletionFixture(harness, "overlap");
+    await activateNotification(harness, fixture);
 
     const firstWorker = harness.coordinator.processDue({ now: new Date(NOW) });
     await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1));
@@ -518,14 +546,14 @@ describe("account deletion completion notification worker", () => {
   it("uses a sending-only provider and waits for a signed webhook instead of polling", async () => {
     const send = vi.fn(async () => ({ id: "resend-webhook-only-message" }));
     const harness = createHarness({ mode: "resend", send });
-    const fixture = createDeletionFixture(harness, "webhook-only");
-    activateNotification(harness, fixture);
+    const fixture = await createDeletionFixture(harness, "webhook-only");
+    await activateNotification(harness, fixture);
 
     await expect(harness.coordinator.processDue({ now: new Date(NOW) })).resolves.toMatchObject({
       accepted: 1,
       delivered: 0,
     });
-    expect(harness.repository.getAccountDeletionCompletionOutbox(fixture.requestId)).toEqual(
+    expect(await harness.queueRepository.getAccountDeletionCompletionOutbox(fixture.requestId)).toEqual(
       expect.objectContaining({
         status: "accepted",
         next_attempt_at: isoAfterMinutes(NOW, ACCOUNT_DELETION_NOTICE_WEBHOOK_GRACE_HOURS * 60),
@@ -533,7 +561,7 @@ describe("account deletion completion notification worker", () => {
     );
 
     const deliveredAt = isoAfterMinutes(NOW, 2);
-    const result = harness.coordinator.handleVerifiedWebhook(signedWebhook({
+    const result = await harness.coordinator.handleVerifiedWebhook(signedWebhook({
       eventId: "webhook-only-delivered",
       type: "email.delivered",
       createdAt: deliveredAt,
@@ -541,7 +569,7 @@ describe("account deletion completion notification worker", () => {
       receivedAt: deliveredAt,
     }));
     expect(result).toEqual({ received: true, duplicate: false, matched: true });
-    expect(harness.repository.getAccountDeletionNoticeRecipientSecret(fixture.requestId)).toBeNull();
+    expect(await harness.queueRepository.getAccountDeletionNoticeRecipientSecret(fixture.requestId)).toBeNull();
   });
 
   it("retains the encrypted recipient for review when no signed delivery webhook arrives", async () => {
@@ -549,18 +577,18 @@ describe("account deletion completion notification worker", () => {
       mode: "resend",
       send: vi.fn(async () => ({ id: "resend-no-webhook-message" })),
     });
-    const fixture = createDeletionFixture(harness, "no-webhook");
-    activateNotification(harness, fixture);
+    const fixture = await createDeletionFixture(harness, "no-webhook");
+    await activateNotification(harness, fixture);
     await harness.coordinator.processDue({ now: new Date(NOW) });
 
     const reviewAt = isoAfterMinutes(NOW, ACCOUNT_DELETION_NOTICE_WEBHOOK_GRACE_HOURS * 60);
     await expect(harness.coordinator.processDue({ now: new Date(reviewAt) })).resolves.toMatchObject({
       manualReview: 1,
     });
-    expect(harness.repository.getAccountDeletionCompletionOutbox(fixture.requestId)).toEqual(
+    expect(await harness.queueRepository.getAccountDeletionCompletionOutbox(fixture.requestId)).toEqual(
       expect.objectContaining({ status: "manual_review", next_attempt_at: null }),
     );
-    expect(harness.repository.getAccountDeletionNoticeRecipientSecret(fixture.requestId)).not.toBeNull();
+    expect(await harness.queueRepository.getAccountDeletionNoticeRecipientSecret(fixture.requestId)).not.toBeNull();
   });
 
   it("retains and permits an audited-safe reset after a confirmed pre-acceptance failure", async () => {
@@ -570,19 +598,20 @@ describe("account deletion completion notification worker", () => {
         throw new AccountDeletionNotificationError("Provider rejected the request.", "permanent", 422);
       }),
     });
-    const fixture = createDeletionFixture(harness, "confirmed-failure");
-    activateNotification(harness, fixture);
+    const fixture = await createDeletionFixture(harness, "confirmed-failure");
+    await activateNotification(harness, fixture);
 
     await expect(harness.coordinator.processDue({ now: new Date(NOW) })).resolves.toMatchObject({ failed: 1 });
-    expect(harness.repository.getAccountDeletionNoticeRecipientSecret(fixture.requestId)).not.toBeNull();
-    expect(harness.repository.retryFailedAccountDeletionNotification({
+    expect(await harness.queueRepository.getAccountDeletionNoticeRecipientSecret(fixture.requestId)).not.toBeNull();
+    expect(await harness.queueRepository.retryFailedAccountDeletionNotification({
       requestId: fixture.requestId,
       now: isoAfterMinutes(NOW, 1),
       audit: operatorAudit(fixture, "audit-confirmed-failure-retry", "Provider configuration was corrected."),
     })).toEqual(expect.objectContaining({ status: "pending", first_attempt_at: null }));
-    expect(harness.repository.listSecurityAuditLogs({
+    expect((await harness.activityAuditRepository.listSecurityAuditLogs({
       action: "account_deletion_notification_retry_authorized",
-    })).toEqual([
+      limit: 100,
+    })).items).toEqual([
       expect.objectContaining({
         id: "audit-confirmed-failure-retry",
         actorUserId: fixture.admin.id,
@@ -599,12 +628,12 @@ describe("account deletion completion notification worker", () => {
         throw new AccountDeletionNotificationError("Provider rejected the request.", "permanent", 422);
       }),
     });
-    const fixture = createDeletionFixture(harness, "retry-audit-rollback");
-    activateNotification(harness, fixture);
+    const fixture = await createDeletionFixture(harness, "retry-audit-rollback");
+    await activateNotification(harness, fixture);
     await harness.coordinator.processDue({ now: new Date(NOW) });
-    const before = harness.repository.getAccountDeletionCompletionOutbox(fixture.requestId);
+    const before = await harness.queueRepository.getAccountDeletionCompletionOutbox(fixture.requestId);
     const duplicateAuditId = "duplicate-retry-audit-id";
-    harness.repository.insertSecurityAuditLog({
+    await harness.activityAuditRepository.insertSecurityAuditLog({
       id: duplicateAuditId,
       actorUserId: fixture.admin.id,
       actorRole: fixture.admin.role,
@@ -617,14 +646,14 @@ describe("account deletion completion notification worker", () => {
       createdAt: NOW,
     });
 
-    expect(() => harness.repository.retryFailedAccountDeletionNotification({
+    await expect(harness.queueRepository.retryFailedAccountDeletionNotification({
       requestId: fixture.requestId,
       now: isoAfterMinutes(NOW, 1),
       audit: operatorAudit(fixture, duplicateAuditId, "Provider configuration was corrected."),
-    })).toThrow();
-    expect(harness.repository.getAccountDeletionCompletionOutbox(fixture.requestId)).toEqual(before);
-    expect(harness.repository.getAccountDeletionNoticeRecipientSecret(fixture.requestId)).not.toBeNull();
-    expect(harness.repository.countSecurityAuditLogs({
+    })).rejects.toThrow();
+    expect(await harness.queueRepository.getAccountDeletionCompletionOutbox(fixture.requestId)).toEqual(before);
+    expect(await harness.queueRepository.getAccountDeletionNoticeRecipientSecret(fixture.requestId)).not.toBeNull();
+    expect(await harness.activityAuditRepository.countSecurityAuditLogs({
       action: "account_deletion_notification_retry_authorized",
     })).toBe(0);
   });
@@ -640,19 +669,19 @@ describe("account deletion completion notification worker", () => {
         );
       }),
     });
-    const fixture = createDeletionFixture(harness, "idempotency-conflict");
-    activateNotification(harness, fixture);
+    const fixture = await createDeletionFixture(harness, "idempotency-conflict");
+    await activateNotification(harness, fixture);
 
     await expect(harness.coordinator.processDue({ now: new Date(NOW) }))
       .resolves.toMatchObject({ failed: 0, manualReview: 1 });
-    expect(harness.repository.getAccountDeletionCompletionOutbox(fixture.requestId))
+    expect(await harness.queueRepository.getAccountDeletionCompletionOutbox(fixture.requestId))
       .toEqual(expect.objectContaining({
         status: "manual_review",
         provider_last_event: "invalid_idempotent_request",
         payload_fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
       }));
-    expect(harness.repository.getAccountDeletionNoticeRecipientSecret(fixture.requestId)).not.toBeNull();
-    expect(harness.repository.retryFailedAccountDeletionNotification({
+    expect(await harness.queueRepository.getAccountDeletionNoticeRecipientSecret(fixture.requestId)).not.toBeNull();
+    expect(await harness.queueRepository.retryFailedAccountDeletionNotification({
       requestId: fixture.requestId,
       now: isoAfterMinutes(NOW, 1),
       audit: operatorAudit(fixture, "audit-blocked-idempotency-retry"),
@@ -664,23 +693,25 @@ describe("account deletion completion notification worker", () => {
       throw new AccountDeletionNotificationError("Provider outcome unknown.", "uncertain");
     });
     const harness = createHarness({ mode: "resend", send: firstSend });
-    const fixture = createDeletionFixture(harness, "payload-drift");
-    activateNotification(harness, fixture);
+    const fixture = await createDeletionFixture(harness, "payload-drift");
+    await activateNotification(harness, fixture);
 
     await expect(harness.coordinator.processDue({ now: new Date(NOW) })).resolves.toMatchObject({
       deferred: 1,
     });
-    const lockedFingerprint = harness.repository
-      .getAccountDeletionCompletionOutbox(fixture.requestId)?.payload_fingerprint;
+    const lockedFingerprint = (await harness.queueRepository
+      .getAccountDeletionCompletionOutbox(fixture.requestId))?.payload_fingerprint;
     expect(lockedFingerprint).toMatch(/^[a-f0-9]{64}$/);
 
     const secondSend = vi.fn(async () => ({ id: "must-not-send-after-drift" }));
-    const changedCoordinator = new AccountDeletionNotificationCoordinator(harness.repository, {
+    const changedCoordinator = new AccountDeletionNotificationCoordinator(harness.queueRepository, {
       provider: { mode: "resend", send: secondSend },
       keyring: parseAccountDeletionNotificationKeyring({
         activeKeyId: ACTIVE_KEY_ID,
         keyringJson: validKeyringJson(),
       }),
+      performRecipientSecretPhysicalCheckpoint:
+        createSqliteAccountDeletionSecretPhysicalCheckpoint(harness.database),
       publicBaseUrl: "https://pintpath.au",
       from: "Pint Path <changed-account@pintpath.au>",
       replyTo: "admin@pintpath.au",
@@ -689,7 +720,7 @@ describe("account deletion completion notification worker", () => {
     await expect(changedCoordinator.processDue({ now: new Date(isoAfterMinutes(NOW, 5)) }))
       .resolves.toMatchObject({ manualReview: 1 });
     expect(secondSend).not.toHaveBeenCalled();
-    expect(harness.repository.getAccountDeletionCompletionOutbox(fixture.requestId)).toEqual(
+    expect(await harness.queueRepository.getAccountDeletionCompletionOutbox(fixture.requestId)).toEqual(
       expect.objectContaining({
         status: "manual_review",
         payload_fingerprint: lockedFingerprint,
@@ -698,26 +729,28 @@ describe("account deletion completion notification worker", () => {
     );
   });
 
-  it("re-prepares a held destination purged before an interrupted deletion completed", () => {
+  it("re-prepares a held destination purged before an interrupted deletion completed", async () => {
     const harness = createHarness();
-    const fixture = createDeletionFixture(harness, "held-purge-retry");
-    expect(prepareHeldNotification(harness, fixture)).toBeTruthy();
+    const fixture = await createDeletionFixture(harness, "held-purge-retry");
+    const firstProcessing = await prepareHeldNotification(harness, fixture);
+    expect(firstProcessing).toBeTruthy();
     const retryAt = isoAfterMinutes(NOW, 61 * 24 * 60);
-    expect(harness.repository.purgeExpiredAccountDeletionNotificationRecipients(retryAt)).toBe(1);
-    harness.repository.failAccountDeletion({
+    expect(await harness.queueRepository.purgeExpiredAccountDeletionNotificationRecipients(retryAt)).toBe(1);
+    await harness.queueRepository.failAccountDeletion({
       requestId: fixture.requestId,
+      attemptCount: firstProcessing!.attempt_count,
       error: "Interrupted before anonymisation.",
       now: retryAt,
     });
 
-    expect(prepareHeldNotification(harness, fixture, isoAfterMinutes(retryAt, 1)))
+    expect(await prepareHeldNotification(harness, fixture, isoAfterMinutes(retryAt, 1)))
       .toEqual(expect.objectContaining({ status: "processing" }));
-    expect(harness.repository.getAccountDeletionCompletionOutbox(fixture.requestId))
+    expect(await harness.queueRepository.getAccountDeletionCompletionOutbox(fixture.requestId))
       .toEqual(expect.objectContaining({ status: "held", completed_at: null }));
-    expect(harness.repository.getAccountDeletionNoticeRecipientSecret(fixture.requestId)).not.toBeNull();
+    expect(await harness.queueRepository.getAccountDeletionNoticeRecipientSecret(fixture.requestId)).not.toBeNull();
   });
 
-  it("does not clear a newer purge generation created by another database connection", () => {
+  it("does not clear a newer purge generation created by another database connection", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "pintpath-deletion-checkpoint-race-"));
     temporaryRoots.push(root);
     const databasePath = path.join(root, "pint-path.sqlite");
@@ -729,52 +762,62 @@ describe("account deletion completion notification worker", () => {
     secondDatabase.pragma("secure_delete = ON");
     openDatabases.push(database, secondDatabase);
     const repository = new BusinessRepository(database);
-    const secondRepository = new BusinessRepository(secondDatabase);
-    const coordinator = new AccountDeletionNotificationCoordinator(repository, {
+    const sqlDatabase = asAsyncSqliteDatabase(database);
+    const secondSqlDatabase = asAsyncSqliteDatabase(secondDatabase);
+    const queueRepository = new AccountDeletionQueueRepository(sqlDatabase);
+    const secondQueueRepository = new AccountDeletionQueueRepository(secondSqlDatabase);
+    const privacyRepository = new AccountPrivacyRepository(sqlDatabase);
+    const coordinator = new AccountDeletionNotificationCoordinator(queueRepository, {
       provider: defaultProvider(),
       keyring: parseAccountDeletionNotificationKeyring({
         activeKeyId: ACTIVE_KEY_ID,
         keyringJson: validKeyringJson(),
       }),
+      performRecipientSecretPhysicalCheckpoint:
+        createSqliteAccountDeletionSecretPhysicalCheckpoint(database),
       publicBaseUrl: "https://pintpath.au",
       from: "Pint Path <account@pintpath.au>",
       replyTo: "admin@pintpath.au",
       supportEmail: "admin@pintpath.au",
     });
-    const harness = { database, repository, coordinator, provider: defaultProvider() };
-    const fixture = createDeletionFixture(harness, "checkpoint-race");
-    expect(prepareHeldNotification(harness, fixture)).toBeTruthy();
+    const harness = {
+      database,
+      repository,
+      queueRepository,
+      privacyRepository,
+      coordinator,
+      provider: defaultProvider(),
+    };
+    const fixture = await createDeletionFixture(harness, "checkpoint-race");
+    const firstProcessing = await prepareHeldNotification(harness, fixture);
+    expect(firstProcessing).toBeTruthy();
     const firstPurgeAt = isoAfterMinutes(NOW, 61 * 24 * 60);
-    expect(repository.purgeExpiredAccountDeletionNotificationRecipients(firstPurgeAt)).toBe(1);
-    repository.failAccountDeletion({
+    expect(await queueRepository.purgeExpiredAccountDeletionNotificationRecipients(firstPurgeAt)).toBe(1);
+    await queueRepository.failAccountDeletion({
       requestId: fixture.requestId,
+      attemptCount: firstProcessing!.attempt_count,
       error: "Interrupted before anonymisation.",
       now: firstPurgeAt,
     });
-    expect(prepareHeldNotification(harness, fixture, isoAfterMinutes(firstPurgeAt, 1))).toBeTruthy();
-    expect(repository.getAccountDeletionCompletionOutbox(fixture.requestId))
+    expect(await prepareHeldNotification(harness, fixture, isoAfterMinutes(firstPurgeAt, 1))).toBeTruthy();
+    expect(await queueRepository.getAccountDeletionCompletionOutbox(fixture.requestId))
       .toEqual(expect.objectContaining({
-        secret_purge_checkpoint_pending: 1,
-        secret_purge_generation: 1,
-      }));
-
-    const originalPragma = database.pragma.bind(database);
-    const secondPurgeAt = isoAfterMinutes(NOW, 122 * 24 * 60);
-    const pragmaSpy = vi.spyOn(database, "pragma").mockImplementation(((source: string) => {
-      const result = originalPragma(source);
-      expect(secondRepository.purgeExpiredAccountDeletionNotificationRecipients(secondPurgeAt)).toBe(1);
-      return result;
-    }) as typeof database.pragma);
-
-    expect(repository.checkpointAccountDeletionNotificationSecrets()).toBe(true);
-    expect(repository.getAccountDeletionCompletionOutbox(fixture.requestId))
-      .toEqual(expect.objectContaining({
-        secret_purge_checkpoint_pending: 1,
+        secret_purge_checkpoint_pending: true,
         secret_purge_generation: 2,
       }));
-    pragmaSpy.mockRestore();
-    expect(repository.checkpointAccountDeletionNotificationSecrets()).toBe(true);
-    expect(repository.getAccountDeletionNotificationQueueSummary(secondPurgeAt)
+
+    const secondPurgeAt = isoAfterMinutes(NOW, 122 * 24 * 60);
+    expect(await queueRepository.checkpointAccountDeletionNotificationSecrets(async () => {
+      expect(await secondQueueRepository.purgeExpiredAccountDeletionNotificationRecipients(secondPurgeAt)).toBe(1);
+      return true;
+    })).toBe(false);
+    expect(await queueRepository.getAccountDeletionCompletionOutbox(fixture.requestId))
+      .toEqual(expect.objectContaining({
+        secret_purge_checkpoint_pending: true,
+        secret_purge_generation: 3,
+      }));
+    expect(await queueRepository.checkpointAccountDeletionNotificationSecrets(async () => true)).toBe(true);
+    expect((await queueRepository.getAccountDeletionNotificationQueueSummary(secondPurgeAt))
       .securePurgeCheckpointPendingCount).toBe(0);
   });
 
@@ -786,8 +829,8 @@ describe("account deletion completion notification worker", () => {
       getStatus: vi.fn(),
     };
     const harness = createHarness(provider);
-    const fixture = createDeletionFixture(harness, "stale-uncertain");
-    activateNotification(harness, fixture);
+    const fixture = await createDeletionFixture(harness, "stale-uncertain");
+    await activateNotification(harness, fixture);
     const staleAt = isoAfterMinutes(
       NOW,
       -(ACCOUNT_DELETION_NOTICE_IDEMPOTENCY_WINDOW_HOURS * 60 + 1),
@@ -806,7 +849,7 @@ describe("account deletion completion notification worker", () => {
       manualReview: 1,
     });
     expect(send).not.toHaveBeenCalled();
-    expect(harness.repository.getAccountDeletionCompletionOutbox(fixture.requestId)).toEqual(
+    expect(await harness.queueRepository.getAccountDeletionCompletionOutbox(fixture.requestId)).toEqual(
       expect.objectContaining({
         status: "manual_review",
         next_attempt_at: null,
@@ -824,10 +867,10 @@ describe("account deletion completion notification worker", () => {
       getStatus: vi.fn(),
     };
     const harness = createHarness(provider);
-    const fixture = createDeletionFixture(harness, "retention");
-    activateNotification(harness, fixture);
+    const fixture = await createDeletionFixture(harness, "retention");
+    await activateNotification(harness, fixture);
     const purgeAt = harness.coordinator.completionRetentionExpiresAt(NOW);
-    expect(harness.repository.getAccountDeletionNotificationQueueSummary(purgeAt)
+    expect((await harness.queueRepository.getAccountDeletionNotificationQueueSummary(purgeAt))
       .overdueRetentionCount).toBe(1);
 
     await expect(harness.coordinator.processDue({ now: new Date(purgeAt) })).resolves.toMatchObject({
@@ -835,8 +878,8 @@ describe("account deletion completion notification worker", () => {
       recipientsPurged: 1,
     });
     expect(send).not.toHaveBeenCalled();
-    expect(harness.repository.getAccountDeletionNoticeRecipientSecret(fixture.requestId)).toBeNull();
-    expect(harness.repository.getAccountDeletionCompletionOutbox(fixture.requestId)).toEqual(
+    expect(await harness.queueRepository.getAccountDeletionNoticeRecipientSecret(fixture.requestId)).toBeNull();
+    expect(await harness.queueRepository.getAccountDeletionCompletionOutbox(fixture.requestId)).toEqual(
       expect.objectContaining({
         status: "purged",
         terminal_at: purgeAt,
@@ -844,15 +887,15 @@ describe("account deletion completion notification worker", () => {
         last_error: expect.stringContaining("retention limit"),
       }),
     );
-    expect(harness.repository.getAccountDeletionNotificationQueueSummary(purgeAt)
+    expect((await harness.queueRepository.getAccountDeletionNotificationQueueSummary(purgeAt))
       .overdueRetentionCount).toBe(0);
-    expect(harness.repository.resolveAccountDeletionNotificationManualReview({
+    expect(await harness.queueRepository.resolveAccountDeletionNotificationManualReview({
       requestId: fixture.requestId,
       resolution: "verified_delivered",
       now: isoAfterMinutes(purgeAt, 1),
       audit: operatorAudit(fixture, "audit-retention-delivered-resolution"),
     })).toBeNull();
-    expect(harness.repository.resolveAccountDeletionNotificationManualReview({
+    expect(await harness.queueRepository.resolveAccountDeletionNotificationManualReview({
       requestId: fixture.requestId,
       resolution: "undeliverable",
       now: isoAfterMinutes(purgeAt, 2),
@@ -861,7 +904,7 @@ describe("account deletion completion notification worker", () => {
       status: "failed",
       provider_last_event: "operator_resolved_undeliverable",
     }));
-    expect(harness.repository.getAccountDeletionNotificationQueueSummary(isoAfterMinutes(purgeAt, 2))
+    expect((await harness.queueRepository.getAccountDeletionNotificationQueueSummary(isoAfterMinutes(purgeAt, 2)))
       .manualReviewCount).toBe(0);
   });
 
@@ -872,19 +915,19 @@ describe("account deletion completion notification worker", () => {
         throw new AccountDeletionNotificationError("Provider rejected the request.", "permanent", 422);
       }),
     });
-    const fixture = createDeletionFixture(harness, "failed-retention-resolution");
-    activateNotification(harness, fixture);
+    const fixture = await createDeletionFixture(harness, "failed-retention-resolution");
+    await activateNotification(harness, fixture);
     await harness.coordinator.processDue({ now: new Date(NOW) });
     const purgeAt = harness.coordinator.completionRetentionExpiresAt(NOW);
-    expect(harness.repository.getAccountDeletionNotificationQueueSummary(purgeAt)
+    expect((await harness.queueRepository.getAccountDeletionNotificationQueueSummary(purgeAt))
       .overdueRetentionCount).toBe(1);
-    expect(harness.repository.purgeExpiredAccountDeletionNotificationRecipients(purgeAt)).toBe(1);
-    expect(harness.repository.getAccountDeletionNotificationQueueSummary(purgeAt)
+    expect(await harness.queueRepository.purgeExpiredAccountDeletionNotificationRecipients(purgeAt)).toBe(1);
+    expect((await harness.queueRepository.getAccountDeletionNotificationQueueSummary(purgeAt))
       .overdueRetentionCount).toBe(0);
-    expect(harness.repository.getAccountDeletionCompletionOutbox(fixture.requestId))
+    expect(await harness.queueRepository.getAccountDeletionCompletionOutbox(fixture.requestId))
       .toEqual(expect.objectContaining({ status: "failed", provider_message_id: null }));
 
-    expect(harness.repository.resolveAccountDeletionNotificationManualReview({
+    expect(await harness.queueRepository.resolveAccountDeletionNotificationManualReview({
       requestId: fixture.requestId,
       resolution: "undeliverable",
       now: isoAfterMinutes(purgeAt, 1),
@@ -893,28 +936,28 @@ describe("account deletion completion notification worker", () => {
       status: "failed",
       provider_last_event: "operator_resolved_undeliverable",
     }));
-    expect(harness.repository.getAccountDeletionNotificationQueueSummary(isoAfterMinutes(purgeAt, 1))
+    expect((await harness.queueRepository.getAccountDeletionNotificationQueueSummary(isoAfterMinutes(purgeAt, 1)))
       .manualReviewCount).toBe(0);
   });
 });
 
 describe("account deletion completion Resend webhooks", () => {
-  it("rejects a signed event with an invalid provider timestamp as a bad request", () => {
+  it("rejects a signed event with an invalid provider timestamp as a bad request", async () => {
     const harness = createHarness();
-    expect(() => harness.coordinator.handleVerifiedWebhook(signedWebhook({
+    await expect(harness.coordinator.handleVerifiedWebhook(signedWebhook({
       eventId: "webhook-invalid-created-at",
       type: "email.delivered",
       createdAt: "not-an-iso-timestamp",
       providerMessageId: "resend-webhook-message",
       receivedAt: NOW,
-    }))).toThrow(expect.objectContaining({
+    }))).rejects.toEqual(expect.objectContaining({
       message: "Invalid Resend webhook event.",
       statusCode: 400,
     }));
   });
 
   it("accepts a valid signed event, rejects invalid signatures, and deduplicates replay", async () => {
-    const harness = acceptedNotificationHarness();
+    const harness = await acceptedNotificationHarness();
     await expect(harness.coordinator.processDue({ now: new Date(NOW) })).resolves.toMatchObject({ accepted: 1 });
     const deliveredAt = isoAfterMinutes(NOW, 2);
     const webhook = signedWebhook({
@@ -925,20 +968,20 @@ describe("account deletion completion Resend webhooks", () => {
       receivedAt: deliveredAt,
     });
 
-    expect(() => harness.coordinator.handleVerifiedWebhook({
+    await expect(harness.coordinator.handleVerifiedWebhook({
       ...webhook,
       headers: { ...webhook.headers, signature: `v1,${Buffer.alloc(32).toString("base64")}` },
-    })).toThrow("signature is invalid");
+    })).rejects.toThrow("signature is invalid");
     expect(harness.database.prepare(
       "SELECT count(*) AS count FROM account_deletion_notification_events",
     ).get()).toEqual({ count: 0 });
 
-    expect(harness.coordinator.handleVerifiedWebhook(webhook)).toEqual({
+    expect(await harness.coordinator.handleVerifiedWebhook(webhook)).toEqual({
       received: true,
       duplicate: false,
       matched: true,
     });
-    expect(harness.repository.getAccountDeletionCompletionOutbox(harness.fixture.requestId)).toEqual(
+    expect(await harness.queueRepository.getAccountDeletionCompletionOutbox(harness.fixture.requestId)).toEqual(
       expect.objectContaining({
         status: "delivered",
         provider_last_event: "email.delivered",
@@ -946,9 +989,9 @@ describe("account deletion completion Resend webhooks", () => {
         delivered_at: deliveredAt,
       }),
     );
-    expect(harness.repository.getAccountDeletionNoticeRecipientSecret(harness.fixture.requestId)).toBeNull();
+    expect(await harness.queueRepository.getAccountDeletionNoticeRecipientSecret(harness.fixture.requestId)).toBeNull();
 
-    expect(harness.coordinator.handleVerifiedWebhook(webhook)).toEqual({
+    expect(await harness.coordinator.handleVerifiedWebhook(webhook)).toEqual({
       received: true,
       duplicate: true,
       matched: true,
@@ -959,10 +1002,10 @@ describe("account deletion completion Resend webhooks", () => {
   });
 
   it("records but ignores an older failure event after a newer delivered event", async () => {
-    const harness = acceptedNotificationHarness();
+    const harness = await acceptedNotificationHarness();
     await harness.coordinator.processDue({ now: new Date(NOW) });
     const deliveredAt = isoAfterMinutes(NOW, 3);
-    harness.coordinator.handleVerifiedWebhook(signedWebhook({
+    await harness.coordinator.handleVerifiedWebhook(signedWebhook({
       eventId: "webhook-newer-delivered",
       type: "email.delivered",
       createdAt: deliveredAt,
@@ -970,7 +1013,7 @@ describe("account deletion completion Resend webhooks", () => {
       receivedAt: deliveredAt,
     }));
     const olderFailedAt = isoAfterMinutes(NOW, 1);
-    const olderResult = harness.coordinator.handleVerifiedWebhook(signedWebhook({
+    const olderResult = await harness.coordinator.handleVerifiedWebhook(signedWebhook({
       eventId: "webhook-older-bounced",
       type: "email.bounced",
       createdAt: olderFailedAt,
@@ -979,7 +1022,7 @@ describe("account deletion completion Resend webhooks", () => {
     }));
 
     expect(olderResult).toEqual({ received: true, duplicate: false, matched: true });
-    expect(harness.repository.getAccountDeletionCompletionOutbox(harness.fixture.requestId)).toEqual(
+    expect(await harness.queueRepository.getAccountDeletionCompletionOutbox(harness.fixture.requestId)).toEqual(
       expect.objectContaining({
         status: "delivered",
         provider_last_event: "email.delivered",
@@ -992,17 +1035,17 @@ describe("account deletion completion Resend webhooks", () => {
   });
 
   it("accepts a terminal event at the same provider timestamp as an earlier pending event", async () => {
-    const harness = acceptedNotificationHarness();
+    const harness = await acceptedNotificationHarness();
     await harness.coordinator.processDue({ now: new Date(NOW) });
     const eventAt = isoAfterMinutes(NOW, 2);
-    harness.coordinator.handleVerifiedWebhook(signedWebhook({
+    await harness.coordinator.handleVerifiedWebhook(signedWebhook({
       eventId: "webhook-same-time-sent",
       type: "email.sent",
       createdAt: eventAt,
       providerMessageId: "resend-webhook-message",
       receivedAt: eventAt,
     }));
-    harness.coordinator.handleVerifiedWebhook(signedWebhook({
+    await harness.coordinator.handleVerifiedWebhook(signedWebhook({
       eventId: "webhook-same-time-delivered",
       type: "email.delivered",
       createdAt: eventAt,
@@ -1010,37 +1053,37 @@ describe("account deletion completion Resend webhooks", () => {
       receivedAt: isoAfterMinutes(NOW, 3),
     }));
 
-    expect(harness.repository.getAccountDeletionCompletionOutbox(harness.fixture.requestId))
+    expect(await harness.queueRepository.getAccountDeletionCompletionOutbox(harness.fixture.requestId))
       .toEqual(expect.objectContaining({ status: "delivered", provider_last_event: "email.delivered" }));
-    expect(harness.repository.getAccountDeletionNoticeRecipientSecret(harness.fixture.requestId)).toBeNull();
+    expect(await harness.queueRepository.getAccountDeletionNoticeRecipientSecret(harness.fixture.requestId)).toBeNull();
   });
 
   it("reconciles a delayed signed delivery after the completed recipient reached its retention limit", async () => {
-    const harness = acceptedNotificationHarness();
+    const harness = await acceptedNotificationHarness();
     await harness.coordinator.processDue({ now: new Date(NOW) });
     const purgeAt = harness.coordinator.completionRetentionExpiresAt(NOW);
     await expect(harness.coordinator.processDue({ now: new Date(purgeAt) })).resolves.toMatchObject({
       recipientsPurged: 1,
     });
-    expect(harness.repository.getAccountDeletionCompletionOutbox(harness.fixture.requestId)).toEqual(
+    expect(await harness.queueRepository.getAccountDeletionCompletionOutbox(harness.fixture.requestId)).toEqual(
       expect.objectContaining({
         status: "purged",
         provider_message_id: "resend-webhook-message",
         completed_at: NOW,
       }),
     );
-    expect(harness.repository.getAccountDeletionNoticeRecipientSecret(harness.fixture.requestId)).toBeNull();
+    expect(await harness.queueRepository.getAccountDeletionNoticeRecipientSecret(harness.fixture.requestId)).toBeNull();
 
     const deliveredAt = isoAfterMinutes(purgeAt, -1);
     const receivedAt = isoAfterMinutes(purgeAt, 1);
-    expect(harness.coordinator.handleVerifiedWebhook(signedWebhook({
+    expect(await harness.coordinator.handleVerifiedWebhook(signedWebhook({
       eventId: "webhook-delivered-after-retention-purge",
       type: "email.delivered",
       createdAt: deliveredAt,
       providerMessageId: "resend-webhook-message",
       receivedAt,
     }))).toEqual({ received: true, duplicate: false, matched: true });
-    expect(harness.repository.getAccountDeletionCompletionOutbox(harness.fixture.requestId)).toEqual(
+    expect(await harness.queueRepository.getAccountDeletionCompletionOutbox(harness.fixture.requestId)).toEqual(
       expect.objectContaining({
         status: "delivered",
         provider_last_event: "email.delivered",
@@ -1048,16 +1091,16 @@ describe("account deletion completion Resend webhooks", () => {
         delivered_at: deliveredAt,
       }),
     );
-    expect(harness.repository.getAccountDeletionNoticeRecipientSecret(harness.fixture.requestId)).toBeNull();
-    expect(harness.repository.getAccountDeletionNotificationQueueSummary(receivedAt)).toEqual(
+    expect(await harness.queueRepository.getAccountDeletionNoticeRecipientSecret(harness.fixture.requestId)).toBeNull();
+    expect(await harness.queueRepository.getAccountDeletionNotificationQueueSummary(receivedAt)).toEqual(
       expect.objectContaining({ manualReviewCount: 0, overdueRetentionCount: 0 }),
     );
   });
 
-  it("ignores unrelated signed events but asks Resend to retry a relevant unmatched event", () => {
+  it("ignores unrelated signed events but asks Resend to retry a relevant unmatched event", async () => {
     const harness = createHarness();
     const eventAt = isoAfterMinutes(NOW, 1);
-    expect(harness.coordinator.handleVerifiedWebhook(signedWebhook({
+    expect(await harness.coordinator.handleVerifiedWebhook(signedWebhook({
       eventId: "unrelated-report-email",
       type: "email.delivered",
       createdAt: eventAt,
@@ -1065,20 +1108,20 @@ describe("account deletion completion Resend webhooks", () => {
       receivedAt: eventAt,
       messageType: "monthly_report",
     }))).toEqual({ received: true, duplicate: false, matched: false });
-    expect(() => harness.coordinator.handleVerifiedWebhook(signedWebhook({
+    await expect(harness.coordinator.handleVerifiedWebhook(signedWebhook({
       eventId: "relevant-not-yet-registered",
       type: "email.delivered",
       createdAt: eventAt,
       providerMessageId: "pending-provider-race",
       receivedAt: eventAt,
-    }))).toThrow("not registered yet");
+    }))).rejects.toThrow("not registered yet");
     expect(harness.database.prepare(
       "SELECT count(*) AS count FROM account_deletion_notification_events",
     ).get()).toEqual({ count: 0 });
   });
 
   it("persists a secure-purge checkpoint retry when WAL truncation is temporarily busy", async () => {
-    const harness = acceptedNotificationHarness();
+    const harness = await acceptedNotificationHarness();
     await harness.coordinator.processDue({ now: new Date(NOW) });
     const deliveredAt = isoAfterMinutes(NOW, 2);
     const webhook = signedWebhook({
@@ -1088,41 +1131,42 @@ describe("account deletion completion Resend webhooks", () => {
       providerMessageId: "resend-webhook-message",
       receivedAt: deliveredAt,
     });
-    const checkpoint = vi.spyOn(harness.repository, "checkpointAccountDeletionNotificationSecrets")
-      .mockReturnValueOnce(false);
+    const checkpoint = vi.spyOn(harness.coordinator, "checkpointRecipientSecrets")
+      .mockResolvedValueOnce(false);
 
-    expect(() => harness.coordinator.handleVerifiedWebhook(webhook)).toThrow("checkpoint is temporarily busy");
-    expect(harness.repository.getAccountDeletionNoticeRecipientSecret(harness.fixture.requestId)).toBeNull();
-    expect(harness.repository.getAccountDeletionNotificationQueueSummary(deliveredAt)
+    await expect(harness.coordinator.handleVerifiedWebhook(webhook))
+      .rejects.toThrow("checkpoint is temporarily busy");
+    expect(await harness.queueRepository.getAccountDeletionNoticeRecipientSecret(harness.fixture.requestId)).toBeNull();
+    expect((await harness.queueRepository.getAccountDeletionNotificationQueueSummary(deliveredAt))
       .securePurgeCheckpointPendingCount).toBe(1);
 
     checkpoint.mockRestore();
-    expect(harness.coordinator.handleVerifiedWebhook(webhook)).toEqual({
+    expect(await harness.coordinator.handleVerifiedWebhook(webhook)).toEqual({
       received: true,
       duplicate: true,
       matched: true,
     });
-    expect(harness.repository.getAccountDeletionNotificationQueueSummary(deliveredAt)
+    expect((await harness.queueRepository.getAccountDeletionNotificationQueueSummary(deliveredAt))
       .securePurgeCheckpointPendingCount).toBe(0);
   });
 
   it("allows an operator to resolve manual review and securely purge the destination", async () => {
-    const harness = acceptedNotificationHarness();
+    const harness = await acceptedNotificationHarness();
     await harness.coordinator.processDue({ now: new Date(NOW) });
     const bouncedAt = isoAfterMinutes(NOW, 2);
-    harness.coordinator.handleVerifiedWebhook(signedWebhook({
+    await harness.coordinator.handleVerifiedWebhook(signedWebhook({
       eventId: "webhook-manual-resolution-bounce",
       type: "email.bounced",
       createdAt: bouncedAt,
       providerMessageId: "resend-webhook-message",
       receivedAt: bouncedAt,
     }));
-    expect(harness.repository.getAccountDeletionCompletionOutbox(harness.fixture.requestId))
+    expect(await harness.queueRepository.getAccountDeletionCompletionOutbox(harness.fixture.requestId))
       .toEqual(expect.objectContaining({ status: "manual_review" }));
-    expect(harness.repository.getAccountDeletionNoticeRecipientSecret(harness.fixture.requestId)).not.toBeNull();
+    expect(await harness.queueRepository.getAccountDeletionNoticeRecipientSecret(harness.fixture.requestId)).not.toBeNull();
 
     const resolvedAt = isoAfterMinutes(NOW, 3);
-    expect(harness.repository.resolveAccountDeletionNotificationManualReview({
+    expect(await harness.queueRepository.resolveAccountDeletionNotificationManualReview({
       requestId: harness.fixture.requestId,
       resolution: "undeliverable",
       now: resolvedAt,
@@ -1135,12 +1179,13 @@ describe("account deletion completion Resend webhooks", () => {
       status: "failed",
       provider_last_event: "operator_resolved_undeliverable",
       provider_event_at: bouncedAt,
-      secret_purge_checkpoint_pending: 1,
+      secret_purge_checkpoint_pending: true,
     }));
-    expect(harness.repository.getAccountDeletionNoticeRecipientSecret(harness.fixture.requestId)).toBeNull();
-    expect(harness.repository.listSecurityAuditLogs({
+    expect(await harness.queueRepository.getAccountDeletionNoticeRecipientSecret(harness.fixture.requestId)).toBeNull();
+    expect((await harness.activityAuditRepository.listSecurityAuditLogs({
       action: "account_deletion_notification_manually_resolved",
-    })).toEqual([
+      limit: 100,
+    })).items).toEqual([
       expect.objectContaining({
         id: "audit-manual-undeliverable-resolution",
         actorUserId: harness.fixture.admin.id,
@@ -1151,22 +1196,22 @@ describe("account deletion completion Resend webhooks", () => {
         },
       }),
     ]);
-    expect(harness.repository.retryFailedAccountDeletionNotification({
+    expect(await harness.queueRepository.retryFailedAccountDeletionNotification({
       requestId: harness.fixture.requestId,
       now: isoAfterMinutes(NOW, 4),
       audit: operatorAudit(harness.fixture, "audit-blocked-operator-retry"),
     })).toBeNull();
-    expect(harness.repository.checkpointAccountDeletionNotificationSecrets()).toBe(true);
+    expect(await harness.coordinator.checkpointRecipientSecrets()).toBe(true);
 
     const delayedFailedAt = isoAfterMinutes(NOW, 2.25);
-    expect(harness.coordinator.handleVerifiedWebhook(signedWebhook({
+    expect(await harness.coordinator.handleVerifiedWebhook(signedWebhook({
       eventId: "webhook-failed-before-operator-resolution",
       type: "email.failed",
       createdAt: delayedFailedAt,
       providerMessageId: "resend-webhook-message",
       receivedAt: isoAfterMinutes(NOW, 3.5),
     }))).toEqual({ received: true, duplicate: false, matched: true });
-    expect(harness.repository.getAccountDeletionCompletionOutbox(harness.fixture.requestId)).toEqual(
+    expect(await harness.queueRepository.getAccountDeletionCompletionOutbox(harness.fixture.requestId)).toEqual(
       expect.objectContaining({
         status: "failed",
         provider_last_event: "operator_resolved_undeliverable",
@@ -1175,14 +1220,14 @@ describe("account deletion completion Resend webhooks", () => {
     );
 
     const delayedDeliveredAt = isoAfterMinutes(NOW, 2.5);
-    expect(harness.coordinator.handleVerifiedWebhook(signedWebhook({
+    expect(await harness.coordinator.handleVerifiedWebhook(signedWebhook({
       eventId: "webhook-delivered-before-operator-resolution",
       type: "email.delivered",
       createdAt: delayedDeliveredAt,
       providerMessageId: "resend-webhook-message",
       receivedAt: isoAfterMinutes(NOW, 4),
     }))).toEqual({ received: true, duplicate: false, matched: true });
-    expect(harness.repository.getAccountDeletionCompletionOutbox(harness.fixture.requestId)).toEqual(
+    expect(await harness.queueRepository.getAccountDeletionCompletionOutbox(harness.fixture.requestId)).toEqual(
       expect.objectContaining({
         status: "delivered",
         provider_last_event: "email.delivered",
@@ -1190,23 +1235,23 @@ describe("account deletion completion Resend webhooks", () => {
         delivered_at: delayedDeliveredAt,
       }),
     );
-    expect(harness.repository.getAccountDeletionNoticeRecipientSecret(harness.fixture.requestId)).toBeNull();
+    expect(await harness.queueRepository.getAccountDeletionNoticeRecipientSecret(harness.fixture.requestId)).toBeNull();
   });
 
   it("rolls back terminal resolution and recipient purge when its audit row cannot be written", async () => {
-    const harness = acceptedNotificationHarness();
+    const harness = await acceptedNotificationHarness();
     await harness.coordinator.processDue({ now: new Date(NOW) });
     const bouncedAt = isoAfterMinutes(NOW, 2);
-    harness.coordinator.handleVerifiedWebhook(signedWebhook({
+    await harness.coordinator.handleVerifiedWebhook(signedWebhook({
       eventId: "webhook-resolution-audit-rollback-bounce",
       type: "email.bounced",
       createdAt: bouncedAt,
       providerMessageId: "resend-webhook-message",
       receivedAt: bouncedAt,
     }));
-    const before = harness.repository.getAccountDeletionCompletionOutbox(harness.fixture.requestId);
+    const before = await harness.queueRepository.getAccountDeletionCompletionOutbox(harness.fixture.requestId);
     const duplicateAuditId = "duplicate-resolution-audit-id";
-    harness.repository.insertSecurityAuditLog({
+    await harness.activityAuditRepository.insertSecurityAuditLog({
       id: duplicateAuditId,
       actorUserId: harness.fixture.admin.id,
       actorRole: harness.fixture.admin.role,
@@ -1219,7 +1264,7 @@ describe("account deletion completion Resend webhooks", () => {
       createdAt: bouncedAt,
     });
 
-    expect(() => harness.repository.resolveAccountDeletionNotificationManualReview({
+    await expect(harness.queueRepository.resolveAccountDeletionNotificationManualReview({
       requestId: harness.fixture.requestId,
       resolution: "undeliverable",
       now: isoAfterMinutes(NOW, 3),
@@ -1228,10 +1273,10 @@ describe("account deletion completion Resend webhooks", () => {
         duplicateAuditId,
         "Resend showed an independently verified terminal bounce.",
       ),
-    })).toThrow();
-    expect(harness.repository.getAccountDeletionCompletionOutbox(harness.fixture.requestId)).toEqual(before);
-    expect(harness.repository.getAccountDeletionNoticeRecipientSecret(harness.fixture.requestId)).not.toBeNull();
-    expect(harness.repository.countSecurityAuditLogs({
+    })).rejects.toThrow();
+    expect(await harness.queueRepository.getAccountDeletionCompletionOutbox(harness.fixture.requestId)).toEqual(before);
+    expect(await harness.queueRepository.getAccountDeletionNoticeRecipientSecret(harness.fixture.requestId)).not.toBeNull();
+    expect(await harness.activityAuditRepository.countSecurityAuditLogs({
       action: "account_deletion_notification_manually_resolved",
     })).toBe(0);
   });
@@ -1246,17 +1291,23 @@ describe("account deletion notification restore suppression", () => {
       getStatus: vi.fn(),
     };
     const harness = createHarness(provider);
-    const fixture = createDeletionFixture(harness, "restore");
-    expect(prepareHeldNotification(harness, fixture)).toBeTruthy();
+    const fixture = await createDeletionFixture(harness, "restore");
+    const processing = await prepareHeldNotification(harness, fixture);
+    expect(processing).toBeTruthy();
 
-    harness.repository.executeAccountAnonymisation({
+    await harness.privacyRepository.executeAccountAnonymisation({
       requestId: fixture.requestId,
+      attemptCount: processing!.attempt_count,
       reviewedBy: fixture.admin.id,
       now: NOW,
       completionNotificationDisposition: "suppress_restore",
+      providerPolicy: {
+        requireTombstoneReceipt: false,
+        allowUnconfirmedStripeDeletion: false,
+      },
     });
 
-    expect(harness.repository.getAccountDeletionCompletionOutbox(fixture.requestId)).toEqual(
+    expect(await harness.queueRepository.getAccountDeletionCompletionOutbox(fixture.requestId)).toEqual(
       expect.objectContaining({
         status: "suppressed_restore",
         next_attempt_at: null,
@@ -1264,7 +1315,7 @@ describe("account deletion notification restore suppression", () => {
         last_error: expect.stringContaining("suppressed during deletion-tombstone restore"),
       }),
     );
-    expect(harness.repository.getAccountDeletionNoticeRecipientSecret(fixture.requestId)).toBeNull();
+    expect(await harness.queueRepository.getAccountDeletionNoticeRecipientSecret(fixture.requestId)).toBeNull();
     await expect(harness.coordinator.processDue({ now: new Date(isoAfterMinutes(NOW, 24 * 60)) }))
       .resolves.toMatchObject({ claimed: 0 });
     expect(send).not.toHaveBeenCalled();

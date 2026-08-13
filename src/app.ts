@@ -1,5 +1,7 @@
 import crypto from "node:crypto";
+import { ServerResponse } from "node:http";
 import path from "node:path";
+import { types as utilTypes } from "node:util";
 
 import compression from "compression";
 import express from "express";
@@ -18,6 +20,7 @@ import {
   isCanonicalProductionRuntime,
   resolveAccountDeletionLedgerRuntimeConfig,
 } from "./lib/deployment-environment.js";
+import { railwayDeploymentIdentityHashes } from "./lib/railway-deployment-identity.js";
 import { success } from "./lib/http.js";
 import { logger } from "./lib/logger.js";
 import { redactSecrets } from "./lib/redact.js";
@@ -33,7 +36,14 @@ type LazyRouters = {
   adminRouter: RequestHandler;
   businessRouter: RequestHandler;
   businessService: BusinessService;
-  getOffsiteBackupLastSuccess: () => string | null;
+  probeOffsiteBackupReadiness: () => Promise<{
+    status: "ok" | "failed" | "required_unconfigured";
+    required: boolean;
+    liveProbe: boolean;
+    lastSuccessfulAt: string | null;
+    ageHours: number | null;
+    error?: string | undefined;
+  }>;
   shutdown: () => Promise<void>;
 };
 
@@ -55,6 +65,303 @@ const RESTORE_REHEARSAL_ALLOWED_API_READS = new Set([
   "/api/business/price-records",
 ]);
 const TIMING_SAFE_COMPARISON_MAX_BYTES = 1024;
+const APP_ARRAY_IS_ARRAY = Array.isArray;
+const APP_BUFFER_CONSTRUCTOR = Buffer;
+const APP_BUFFER_BYTE_LENGTH = APP_BUFFER_CONSTRUCTOR.byteLength;
+const APP_JSON_OBJECT = JSON;
+const APP_JSON_STRINGIFY = APP_JSON_OBJECT.stringify;
+const APP_NUMBER_CONSTRUCTOR = Number;
+const APP_NUMBER_IS_FINITE = APP_NUMBER_CONSTRUCTOR.isFinite;
+const APP_OBJECT_CONSTRUCTOR = Object;
+const APP_OBJECT_GET_OWN_PROPERTY_DESCRIPTOR =
+  APP_OBJECT_CONSTRUCTOR.getOwnPropertyDescriptor;
+const APP_OBJECT_GET_PROTOTYPE_OF = APP_OBJECT_CONSTRUCTOR.getPrototypeOf;
+const APP_OBJECT_HAS_OWN = APP_OBJECT_CONSTRUCTOR.hasOwn;
+const APP_OBJECT_KEYS = APP_OBJECT_CONSTRUCTOR.keys;
+const APP_OBJECT_PROTOTYPE = APP_OBJECT_CONSTRUCTOR.prototype;
+const APP_REFLECT_OBJECT = Reflect;
+const APP_REFLECT_APPLY = APP_REFLECT_OBJECT.apply;
+const APP_REFLECT_DEFINE_PROPERTY = APP_REFLECT_OBJECT.defineProperty;
+const APP_REGEXP_EXEC = RegExp.prototype.exec;
+const APP_RESPONSE_END = ServerResponse.prototype.end;
+const APP_RESPONSE_SET_HEADER = ServerResponse.prototype.setHeader;
+const APP_SET_CONSTRUCTOR = Set;
+const APP_SET_ADD = APP_SET_CONSTRUCTOR.prototype.add;
+const APP_SET_DELETE = APP_SET_CONSTRUCTOR.prototype.delete;
+const APP_SET_HAS = APP_SET_CONSTRUCTOR.prototype.has;
+const APP_PROCESS_ENV = process.env;
+const APP_UTIL_IS_PROXY = utilTypes.isProxy;
+const APP_COMMIT_PATTERN = /^[a-f0-9]{7,64}$/i;
+const APP_VERSION_PATTERN = /^[a-z0-9._-]{1,80}$/i;
+const APP_PROBE_MAX_JSON_BYTES = 1_048_576;
+const APP_PROBE_MAX_JSON_DEPTH = 32;
+const APP_PROBE_MAX_JSON_NODES = 20_000;
+
+function ownProcessEnvironmentString(name: string): string | undefined {
+  if (APP_REFLECT_APPLY(APP_UTIL_IS_PROXY, utilTypes, [APP_PROCESS_ENV]) === true) {
+    return undefined;
+  }
+  const descriptor = APP_REFLECT_APPLY(
+    APP_OBJECT_GET_OWN_PROPERTY_DESCRIPTOR,
+    APP_OBJECT_CONSTRUCTOR,
+    [APP_PROCESS_ENV, name],
+  ) as PropertyDescriptor | undefined;
+  if (
+    descriptor === undefined
+    || descriptor.enumerable !== true
+    || APP_REFLECT_APPLY(
+      APP_OBJECT_HAS_OWN,
+      APP_OBJECT_CONSTRUCTOR,
+      [descriptor, "value"],
+    )
+      !== true
+    || typeof descriptor.value !== "string"
+  ) return undefined;
+  return descriptor.value;
+}
+
+function secureProbeJson(value: unknown): string {
+  const ancestors = new APP_SET_CONSTRUCTOR<object>();
+  let nodes = 0;
+
+  const encode = (candidate: unknown, depth: number): string => {
+    nodes += 1;
+    if (nodes > APP_PROBE_MAX_JSON_NODES || depth > APP_PROBE_MAX_JSON_DEPTH) {
+      throw new Error("probe_json_invalid");
+    }
+    if (candidate === null) return "null";
+    if (typeof candidate === "string") {
+      const encoded = APP_REFLECT_APPLY(
+        APP_JSON_STRINGIFY,
+        APP_JSON_OBJECT,
+        [candidate],
+      ) as unknown;
+      if (typeof encoded !== "string") throw new Error("probe_json_invalid");
+      return encoded;
+    }
+    if (typeof candidate === "boolean") return candidate ? "true" : "false";
+    if (typeof candidate === "number") {
+      if (APP_REFLECT_APPLY(
+        APP_NUMBER_IS_FINITE,
+        APP_NUMBER_CONSTRUCTOR,
+        [candidate],
+      ) !== true) return "null";
+      const encoded = APP_REFLECT_APPLY(
+        APP_JSON_STRINGIFY,
+        APP_JSON_OBJECT,
+        [candidate],
+      ) as unknown;
+      if (typeof encoded !== "string") throw new Error("probe_json_invalid");
+      return encoded;
+    }
+    if (typeof candidate !== "object" || candidate === null) {
+      throw new Error("probe_json_invalid");
+    }
+    if (APP_REFLECT_APPLY(APP_UTIL_IS_PROXY, utilTypes, [candidate]) === true) {
+      throw new Error("probe_json_invalid");
+    }
+    if (APP_REFLECT_APPLY(APP_SET_HAS, ancestors, [candidate]) === true) {
+      throw new Error("probe_json_invalid");
+    }
+    APP_REFLECT_APPLY(APP_SET_ADD, ancestors, [candidate]);
+    try {
+      if (APP_ARRAY_IS_ARRAY(candidate)) {
+        let result = "[";
+        for (let index = 0; index < candidate.length; index += 1) {
+          if (index > 0) result += ",";
+          const descriptor = APP_REFLECT_APPLY(
+            APP_OBJECT_GET_OWN_PROPERTY_DESCRIPTOR,
+            APP_OBJECT_CONSTRUCTOR,
+            [candidate, `${index}`],
+          ) as PropertyDescriptor | undefined;
+          if (
+            descriptor === undefined
+            || descriptor.enumerable !== true
+            || APP_REFLECT_APPLY(
+              APP_OBJECT_HAS_OWN,
+              APP_OBJECT_CONSTRUCTOR,
+              [descriptor, "value"],
+            ) !== true
+          ) throw new Error("probe_json_invalid");
+          result += encode(descriptor.value, depth + 1);
+        }
+        return `${result}]`;
+      }
+      const prototype = APP_REFLECT_APPLY(
+        APP_OBJECT_GET_PROTOTYPE_OF,
+        APP_OBJECT_CONSTRUCTOR,
+        [candidate],
+      );
+      if (prototype !== APP_OBJECT_PROTOTYPE && prototype !== null) {
+        throw new Error("probe_json_invalid");
+      }
+      const keys = APP_REFLECT_APPLY(
+        APP_OBJECT_KEYS,
+        APP_OBJECT_CONSTRUCTOR,
+        [candidate],
+      ) as string[];
+      let result = "{";
+      for (let index = 0; index < keys.length; index += 1) {
+        const key = keys[index];
+        if (typeof key !== "string") throw new Error("probe_json_invalid");
+        const descriptor = APP_REFLECT_APPLY(
+          APP_OBJECT_GET_OWN_PROPERTY_DESCRIPTOR,
+          APP_OBJECT_CONSTRUCTOR,
+          [candidate, key],
+        ) as PropertyDescriptor | undefined;
+        if (
+          descriptor === undefined
+          || descriptor.enumerable !== true
+          || APP_REFLECT_APPLY(
+            APP_OBJECT_HAS_OWN,
+            APP_OBJECT_CONSTRUCTOR,
+            [descriptor, "value"],
+          ) !== true
+        ) throw new Error("probe_json_invalid");
+        if (index > 0) result += ",";
+        result += `${encode(key, depth + 1)}:${encode(descriptor.value, depth + 1)}`;
+      }
+      return `${result}}`;
+    } finally {
+      APP_REFLECT_APPLY(APP_SET_DELETE, ancestors, [candidate]);
+    }
+  };
+
+  const result = encode(value, 0);
+  const byteLength = APP_REFLECT_APPLY(
+    APP_BUFFER_BYTE_LENGTH,
+    APP_BUFFER_CONSTRUCTOR,
+    [result, "utf8"],
+  ) as number;
+  if (byteLength < 1 || byteLength > APP_PROBE_MAX_JSON_BYTES) {
+    throw new Error("probe_json_invalid");
+  }
+  return result;
+}
+
+function sendSecureProbeJson(
+  response: Response,
+  statusCode: number,
+  value: unknown,
+): void {
+  const body = secureProbeJson(value);
+  const byteLength = APP_REFLECT_APPLY(
+    APP_BUFFER_BYTE_LENGTH,
+    APP_BUFFER_CONSTRUCTOR,
+    [body, "utf8"],
+  ) as number;
+  const statusDefined = APP_REFLECT_APPLY(
+    APP_REFLECT_DEFINE_PROPERTY,
+    APP_REFLECT_OBJECT,
+    [response, "statusCode", {
+      configurable: true,
+      enumerable: true,
+      writable: true,
+      value: statusCode,
+    }],
+  );
+  if (statusDefined !== true || response.statusCode !== statusCode) {
+    throw new Error("probe_response_invalid");
+  }
+  APP_REFLECT_APPLY(APP_RESPONSE_SET_HEADER, response, [
+    "Cache-Control",
+    "no-store",
+  ]);
+  APP_REFLECT_APPLY(APP_RESPONSE_SET_HEADER, response, [
+    "Content-Type",
+    "application/json; charset=utf-8",
+  ]);
+  APP_REFLECT_APPLY(APP_RESPONSE_SET_HEADER, response, [
+    "Content-Length",
+    `${byteLength}`,
+  ]);
+  const endDescriptor = APP_REFLECT_APPLY(
+    APP_OBJECT_GET_OWN_PROPERTY_DESCRIPTOR,
+    APP_OBJECT_CONSTRUCTOR,
+    [response, "end"],
+  ) as PropertyDescriptor | undefined;
+  const end = endDescriptor !== undefined
+    && APP_REFLECT_APPLY(
+      APP_OBJECT_HAS_OWN,
+      APP_OBJECT_CONSTRUCTOR,
+      [endDescriptor, "value"],
+    ) === true
+    && typeof endDescriptor.value === "function"
+    ? endDescriptor.value as typeof APP_RESPONSE_END
+    : APP_RESPONSE_END;
+  APP_REFLECT_APPLY(end, response, [body]);
+}
+
+function createReadinessProbeSingleFlight<T>(): (
+  load: () => Promise<T>,
+) => Promise<T> {
+  let active: Promise<T> | undefined;
+  let activeMarker: object | undefined;
+  return (load) => {
+    if (active) return active;
+
+    const marker = {};
+    const operation = (async () => {
+      // Publish the shared promise before a synchronously throwing loader can
+      // enter the cleanup path.
+      await 0;
+      try {
+        return await load();
+      } finally {
+        if (activeMarker === marker) {
+          active = undefined;
+          activeMarker = undefined;
+        }
+      }
+    })();
+    activeMarker = marker;
+    active = operation;
+    return operation;
+  };
+}
+
+async function awaitReadinessDependencies<A, B, C>(
+  operational: Promise<A>,
+  redis: Promise<B>,
+  offsite: Promise<C>,
+): Promise<readonly [A, B, C]> {
+  const [operationalResult, redisResult, offsiteResult] = await Promise.allSettled([
+    operational,
+    redis,
+    offsite,
+  ]);
+  if (operationalResult.status === "rejected") throw operationalResult.reason;
+  if (redisResult.status === "rejected") throw redisResult.reason;
+  if (offsiteResult.status === "rejected") throw offsiteResult.reason;
+  return [operationalResult.value, redisResult.value, offsiteResult.value];
+}
+
+type OffsiteBackupReadiness = Awaited<
+  ReturnType<LazyRouters["probeOffsiteBackupReadiness"]>
+>;
+
+async function resolveOffsiteBackupReadinessForRuntime(
+  canonicalProductionRuntime: boolean,
+  probeProductionBoundary: () => Promise<OffsiteBackupReadiness>,
+): Promise<OffsiteBackupReadiness> {
+  if (!canonicalProductionRuntime) {
+    return {
+      status: "ok",
+      required: false,
+      liveProbe: false,
+      lastSuccessfulAt: null,
+      ageHours: null,
+    };
+  }
+  return probeProductionBoundary();
+}
+
+export const appDeploymentMetadataInternals = APP_OBJECT_CONSTRUCTOR.freeze({
+  awaitReadinessDependencies,
+  createReadinessProbeSingleFlight,
+  resolveOffsiteBackupReadinessForRuntime,
+  secureProbeJson,
+});
 
 function timingSafeStringEqual(left: string, right: string): boolean {
   const leftBytes = Buffer.from(left, "utf8");
@@ -194,18 +501,33 @@ function hasSyntacticallyValidSession(req: Request): boolean {
   return Boolean(authorization && /^Bearer\s+\S{20,}$/i.test(authorization));
 }
 
+export { replicaIdSha256 } from "./lib/railway-deployment-identity.js";
+
 function deploymentMetadata() {
-  const rawCommit = process.env.RAILWAY_GIT_COMMIT_SHA ?? process.env.GITHUB_SHA ?? process.env.VERCEL_GIT_COMMIT_SHA ?? "unknown";
-  const rawVersion = process.env.PINT_PATH_VERSION ?? process.env.npm_package_version ?? "0.1.0";
+  const rawCommit = ownProcessEnvironmentString("RAILWAY_GIT_COMMIT_SHA")
+    ?? ownProcessEnvironmentString("GITHUB_SHA")
+    ?? ownProcessEnvironmentString("VERCEL_GIT_COMMIT_SHA")
+    ?? "unknown";
+  const rawVersion = ownProcessEnvironmentString("PINT_PATH_VERSION")
+    ?? ownProcessEnvironmentString("npm_package_version")
+    ?? "0.1.0";
   return {
-    version: /^[a-z0-9._-]{1,80}$/i.test(rawVersion) ? rawVersion : "unknown",
-    commitSha: /^[a-f0-9]{7,64}$/i.test(rawCommit) ? rawCommit : "unknown",
+    version: APP_REFLECT_APPLY(APP_REGEXP_EXEC, APP_VERSION_PATTERN, [rawVersion])
+      !== null ? rawVersion : "unknown",
+    commitSha: APP_REFLECT_APPLY(APP_REGEXP_EXEC, APP_COMMIT_PATTERN, [rawCommit])
+      !== null ? rawCommit : "unknown",
     environment: env.NODE_ENV,
+    ...railwayDeploymentIdentityHashes(APP_PROCESS_ENV),
   };
 }
 
 async function buildLazyRouters(): Promise<LazyRouters> {
   console.info("Initializing backend services...");
+
+  const canonicalProductionRuntime = isCanonicalProductionRuntime({
+    nodeEnv: env.NODE_ENV,
+    railwayEnvironmentName: process.env.RAILWAY_ENVIRONMENT_NAME,
+  });
 
   if (env.RESTORE_REHEARSAL_MODE) {
     if (env.RESTORE_REHEARSAL_PHASE !== "active") {
@@ -227,33 +549,128 @@ async function buildLazyRouters(): Promise<LazyRouters> {
   }
 
   const [
-    { createDatabase, openReadOnlyDatabase },
+    { createRuntimePersistence, shouldUsePostgresRuntime },
     { AdminIngestionQueueRepository },
+    { AccountSessionRepository },
+    { AccountProfilePreferencesRepository },
+    { AccountDeletionQueueRepository },
+    { AccountPrivacyRepository },
+    { PrivacyRetentionRepository },
+    { CommunitySubmissionRepository },
+    { VenueManagerInternalSubmissionRepository },
+    { SourceEvidenceObjectRepository },
+    { SourceEvidenceRetentionRepository },
+    { VenuePendingChangeRepository },
+    { VenueDataReadRepository },
     { BeerCatalogRepository },
-    { BusinessRepository },
+    { PublicPriceRepository },
+    { PublicVenueDirectoryRepository },
+    { SystemStateRepository },
+    { ActivityAuditRepository },
+    { SupportFeedbackRepository },
+    { VenueInventoryRepository },
+    { VenueIdentityRepository },
+    { BillingCheckoutRepository },
+    { VenueAccessRepository },
+    { MissionLifecycleRepository },
+    { MissionDiscoveryAutomationRepository },
+    { StripeSubscriptionRepository },
+    { VenueRequestRepository },
+    { VenuePartnerRepository },
+    { AdminAnalyticsRepository },
+    { VenueManagerInsightsRepository },
+    { AdminAccountRepository },
+    { checkPostgresRuntimeReadiness },
     { createAdminRouter },
     { AdminService },
     { createBusinessRouter },
     { BusinessService },
   ] = await Promise.all([
-    import("./db/database.js"),
+    import("./db/runtime-persistence.js"),
     import("./db/admin-ingestion-queue.repository.js"),
+    import("./db/account-session.repository.js"),
+    import("./db/account-profile-preferences.repository.js"),
+    import("./db/account-deletion-queue.repository.js"),
+    import("./db/account-privacy.repository.js"),
+    import("./db/privacy-retention.repository.js"),
+    import("./db/community-submission.repository.js"),
+    import("./db/venue-manager-internal-submission.repository.js"),
+    import("./db/source-evidence-object.repository.js"),
+    import("./db/source-evidence-retention.repository.js"),
+    import("./db/venue-pending-change.repository.js"),
+    import("./db/venue-data-read.repository.js"),
     import("./db/beer-catalog.repository.js"),
-    import("./db/business.repository.js"),
+    import("./db/public-price.repository.js"),
+    import("./db/public-venue-directory.repository.js"),
+    import("./db/system-state.repository.js"),
+    import("./db/activity-audit.repository.js"),
+    import("./db/support-feedback.repository.js"),
+    import("./db/venue-inventory.repository.js"),
+    import("./db/venue-identity.repository.js"),
+    import("./db/billing-checkout.repository.js"),
+    import("./db/venue-access.repository.js"),
+    import("./db/mission-lifecycle.repository.js"),
+    import("./db/mission-discovery-automation.repository.js"),
+    import("./db/stripe-subscription.repository.js"),
+    import("./db/venue-request.repository.js"),
+    import("./db/venue-partner.repository.js"),
+    import("./db/admin-analytics.repository.js"),
+    import("./db/venue-manager-insights.repository.js"),
+    import("./db/admin-account.repository.js"),
+    import("./db/postgres-runtime.js"),
     import("./modules/admin/admin.routes.js"),
     import("./modules/admin/admin.service.js"),
     import("./modules/business/business.routes.js"),
     import("./modules/business/business.service.js"),
   ]);
 
-  const database = env.RESTORE_REHEARSAL_MODE
-    ? openReadOnlyDatabase()
-    : createDatabase();
-  const adminIngestionQueueRepository = env.RESTORE_REHEARSAL_MODE
-    ? undefined
-    : new AdminIngestionQueueRepository(database);
-  const beerCatalogRepository = new BeerCatalogRepository(database);
-  const businessRepository = new BusinessRepository(database);
+  const postgresRuntime = shouldUsePostgresRuntime({
+    nodeEnv: env.NODE_ENV,
+    restoreRehearsalMode: env.RESTORE_REHEARSAL_MODE,
+    databaseUrl: env.DATABASE_URL,
+  });
+  const persistence = await createRuntimePersistence({
+    postgresRuntime,
+    restoreRehearsalMode: env.RESTORE_REHEARSAL_MODE,
+    databaseUrl: env.DATABASE_URL,
+  });
+  const {
+    sqlDatabase,
+    businessRepository,
+    performAccountDeletionSecretPhysicalCheckpoint,
+  } = persistence;
+  const adminIngestionQueueRepository = !env.RESTORE_REHEARSAL_MODE
+    ? new AdminIngestionQueueRepository(sqlDatabase)
+    : undefined;
+  const beerCatalogRepository = new BeerCatalogRepository(sqlDatabase);
+  const publicPriceRepository = new PublicPriceRepository(sqlDatabase);
+  const publicVenueDirectoryRepository = new PublicVenueDirectoryRepository(sqlDatabase);
+  const systemStateRepository = new SystemStateRepository(sqlDatabase);
+  const activityAuditRepository = new ActivityAuditRepository(sqlDatabase);
+  const supportFeedbackRepository = new SupportFeedbackRepository(sqlDatabase);
+  const accountSessionRepository = new AccountSessionRepository(sqlDatabase);
+  const accountProfilePreferencesRepository = new AccountProfilePreferencesRepository(sqlDatabase);
+  const venueInventoryRepository = new VenueInventoryRepository(sqlDatabase);
+  const venueIdentityRepository = new VenueIdentityRepository(sqlDatabase);
+  const billingCheckoutRepository = new BillingCheckoutRepository(sqlDatabase);
+  const venueAccessRepository = new VenueAccessRepository(sqlDatabase);
+  const missionLifecycleRepository = new MissionLifecycleRepository(sqlDatabase);
+  const missionDiscoveryAutomationRepository = new MissionDiscoveryAutomationRepository(sqlDatabase);
+  const stripeSubscriptionRepository = new StripeSubscriptionRepository(sqlDatabase);
+  const venueRequestRepository = new VenueRequestRepository(sqlDatabase);
+  const venuePartnerRepository = new VenuePartnerRepository(sqlDatabase);
+  const adminAnalyticsRepository = new AdminAnalyticsRepository(sqlDatabase);
+  const venueManagerInsightsRepository = new VenueManagerInsightsRepository(sqlDatabase);
+  const adminAccountRepository = new AdminAccountRepository(sqlDatabase);
+  const accountDeletionQueueRepository = new AccountDeletionQueueRepository(sqlDatabase);
+  const accountPrivacyRepository = new AccountPrivacyRepository(sqlDatabase);
+  const privacyRetentionRepository = new PrivacyRetentionRepository(sqlDatabase);
+  const communitySubmissionRepository = new CommunitySubmissionRepository(sqlDatabase);
+  const venueManagerInternalSubmissionRepository = new VenueManagerInternalSubmissionRepository(sqlDatabase);
+  const sourceEvidenceObjectRepository = new SourceEvidenceObjectRepository(sqlDatabase);
+  const sourceEvidenceRetentionRepository = new SourceEvidenceRetentionRepository(sqlDatabase);
+  const venuePendingChangeRepository = new VenuePendingChangeRepository(sqlDatabase);
+  const venueDataReadRepository = new VenueDataReadRepository(sqlDatabase);
   const adminService = new AdminService(
     adminIngestionQueueRepository,
     env.RESTORE_REHEARSAL_MODE ? undefined : env.SUPABASE_URL,
@@ -261,12 +678,12 @@ async function buildLazyRouters(): Promise<LazyRouters> {
     env.SUPABASE_MENU_CAPTURE_TABLE,
     env.RESTORE_REHEARSAL_MODE ? undefined : env.OPENAI_API_KEY,
     env.RESTORE_REHEARSAL_MODE ? undefined : env.GOOGLE_PLACES_API_KEY ?? env.GOOGLE_MAPS_API_KEY,
-    env.RESTORE_REHEARSAL_MODE ? undefined : database,
+    env.RESTORE_REHEARSAL_MODE ? undefined : sqlDatabase,
   );
-  const canonicalProductionRuntime = isCanonicalProductionRuntime({
-    nodeEnv: env.NODE_ENV,
-    railwayEnvironmentName: process.env.RAILWAY_ENVIRONMENT_NAME,
-  });
+  await adminService.initializeIngestionQueue();
+  const canonicalBusinessRuntimeEnv: Omit<typeof env, "DATABASE_PATH"> &
+    Partial<Pick<typeof env, "DATABASE_PATH">> = { ...env };
+  delete canonicalBusinessRuntimeEnv.DATABASE_PATH;
   const businessRuntimeEnv = env.RESTORE_REHEARSAL_MODE
     ? {
         ...env,
@@ -274,9 +691,16 @@ async function buildLazyRouters(): Promise<LazyRouters> {
         GOOGLE_PLACES_API_KEY: undefined,
         OPENAI_API_KEY: undefined,
         REPORT_DELIVERY_SCHEDULE_ENABLED: false,
+        // A restore URL plus a matching expected URL from the same runtime
+        // environment is not independent destination authority. Keep every
+        // Supabase credential out of the service/client boundary until a real
+        // disposable project is registered in reviewed release authority.
+        SUPABASE_URL: undefined,
+        SUPABASE_ANON_KEY: undefined,
+        SUPABASE_SERVICE_ROLE_KEY: undefined,
       }
-    : canonicalProductionRuntime
-      ? env
+    : persistence.mode === "postgres"
+      ? canonicalBusinessRuntimeEnv
       : { ...env, REPORT_DELIVERY_SCHEDULE_ENABLED: false };
   const deletionLedgerRuntimeConfig = resolveAccountDeletionLedgerRuntimeConfig({
     nodeEnv: env.NODE_ENV,
@@ -309,8 +733,8 @@ async function buildLazyRouters(): Promise<LazyRouters> {
       activeKeyId: env.ACCOUNT_DELETION_NOTICE_ACTIVE_KEY_ID!,
       keyringJson: env.ACCOUNT_DELETION_NOTICE_KEYRING_JSON!,
     });
-    const missingReferencedKeys = businessRepository
-      .listReferencedAccountDeletionNoticeKeyIds()
+    const missingReferencedKeys = (await accountDeletionQueueRepository
+      .listReferencedAccountDeletionNoticeKeyIds())
       .filter((keyId) => !keyring.keys.has(keyId));
     if (missingReferencedKeys.length > 0) {
       throw new Error(
@@ -323,10 +747,11 @@ async function buildLazyRouters(): Promise<LazyRouters> {
           apiKey: env.RESEND_TRANSACTIONAL_API_KEY!,
         });
     deletionNotificationCoordinator = new workerModule.AccountDeletionNotificationCoordinator(
-      businessRepository,
+      accountDeletionQueueRepository,
       {
         provider,
         keyring,
+        performRecipientSecretPhysicalCheckpoint: performAccountDeletionSecretPhysicalCheckpoint,
         publicBaseUrl: env.PUBLIC_BASE_URL,
         from: env.ACCOUNT_DELETION_NOTICE_FROM ?? "account@mock.pintpath.local",
         ...(env.ACCOUNT_DELETION_NOTICE_REPLY_TO
@@ -339,11 +764,46 @@ async function buildLazyRouters(): Promise<LazyRouters> {
   const businessService = new BusinessService(
     businessRepository,
     businessRuntimeEnv,
+    publicVenueDirectoryRepository,
+    publicPriceRepository,
+    systemStateRepository,
+    activityAuditRepository,
+    supportFeedbackRepository,
+    accountSessionRepository,
+    accountProfilePreferencesRepository,
+    venueInventoryRepository,
+    venueIdentityRepository,
+    billingCheckoutRepository,
+    venueAccessRepository,
+    missionLifecycleRepository,
+    missionDiscoveryAutomationRepository,
+    stripeSubscriptionRepository,
+    venueRequestRepository,
+    venuePartnerRepository,
+    adminAnalyticsRepository,
+    venueManagerInsightsRepository,
+    adminAccountRepository,
+    accountDeletionQueueRepository,
+    accountPrivacyRepository,
+    privacyRetentionRepository,
+    communitySubmissionRepository,
+    venueManagerInternalSubmissionRepository,
+    sourceEvidenceObjectRepository,
+    sourceEvidenceRetentionRepository,
+    venuePendingChangeRepository,
+    venueDataReadRepository,
+    performAccountDeletionSecretPhysicalCheckpoint,
     beerCatalogRepository,
     env.RESTORE_REHEARSAL_MODE ? undefined : { extract: (input) => adminService.ocrMenuPhotos(input) },
     undefined,
     deletionTombstoneWriter,
     deletionNotificationCoordinator,
+    sqlDatabase.dialect === "postgres"
+      ? async () => {
+          const readiness = await checkPostgresRuntimeReadiness(sqlDatabase);
+          return { ok: readiness.ready, foreignKeyViolations: 0 };
+        }
+      : async () => businessRepository.checkDatabaseHealth(),
   );
   const schedulerStops: Array<() => Promise<void>> = [];
   const schedulerOwner = `${process.pid}:${crypto.randomUUID()}`;
@@ -353,39 +813,59 @@ async function buildLazyRouters(): Promise<LazyRouters> {
     void task.finally(() => backgroundTasks.delete(task));
   };
   businessService.logStartupSummary();
-  const recordOperationalState = (key: string, value: Record<string, unknown>) => {
+  const recordOperationalState = async (key: string, value: Record<string, unknown>) => {
     const recordedAt = new Date().toISOString();
-    businessRepository.setSystemState(`job:${key}`, { ...value, recordedAt }, recordedAt);
+    await systemStateRepository.set(`job:${key}`, { ...value, recordedAt }, recordedAt);
   };
-  const runEvidenceRetention = async () => {
+  const withSystemLease = async <T>(input: {
+    key: string;
+    durationMs: number;
+    run: () => T | Promise<T>;
+  }): Promise<T | { skipped: true; reason: "lease_held_by_another_instance" }> => {
     const now = new Date();
-    const leaseKey = "lease:evidence_retention";
-    const acquired = businessRepository.acquireSystemLease({
-      key: leaseKey,
+    const leaseToken = crypto.randomUUID();
+    const acquired = await systemStateRepository.acquireLease({
+      key: input.key,
       owner: schedulerOwner,
+      leaseToken,
       now: now.toISOString(),
-      leaseUntil: new Date(now.getTime() + 55 * 60 * 1000).toISOString(),
+      leaseUntil: new Date(now.getTime() + input.durationMs).toISOString(),
     });
     if (!acquired) return { skipped: true, reason: "lease_held_by_another_instance" };
     try {
-      const evidence = await businessService.purgeExpiredSourceEvidence(100);
-      const ingestionImages = adminService.purgeQueuedIngestionImages(now.toISOString());
-      const privacyRetention = businessService.runPrivacyRetention();
-      return { ...evidence, ingestionImages, privacyRetention };
+      return await input.run();
     } finally {
-      businessRepository.releaseSystemLease({ key: leaseKey, owner: schedulerOwner, now: new Date().toISOString() });
+      await systemStateRepository.releaseLease({
+        key: input.key,
+        owner: schedulerOwner,
+        leaseToken,
+        now: new Date().toISOString(),
+      });
     }
   };
+  const runEvidenceRetention = async () => {
+    return withSystemLease({
+      key: "lease:evidence_retention",
+      durationMs: 55 * 60 * 1_000,
+      run: async () => {
+        const now = new Date();
+      const evidence = await businessService.purgeExpiredSourceEvidence(100);
+      const ingestionImages = await adminService.purgeQueuedIngestionImages(now.toISOString());
+      const privacyRetention = await businessService.runPrivacyRetention();
+      return { ...evidence, ingestionImages, privacyRetention };
+      },
+    });
+  };
   if (env.NODE_ENV === "test") {
-    trackBackgroundTask(runEvidenceRetention().then((result) => {
-      recordOperationalState("evidence_retention", {
+    trackBackgroundTask(runEvidenceRetention().then(async (result) => {
+      await recordOperationalState("evidence_retention", {
         state: "succeeded",
         trigger: "startup",
         completedAt: new Date().toISOString(),
         ...result,
       });
-    }).catch((error) => {
-      recordOperationalState("evidence_retention", {
+    }).catch(async (error) => {
+      await recordOperationalState("evidence_retention", {
         state: "failed",
         trigger: "startup",
         completedAt: new Date().toISOString(),
@@ -404,65 +884,13 @@ async function buildLazyRouters(): Promise<LazyRouters> {
     });
     schedulerStops.push(evidenceScheduler.stop);
     const scheduler = scheduleMissionMaintenance({
-      run: async () => {
-        const now = new Date();
-        const leaseKey = "lease:mission_maintenance";
-        const acquired = businessRepository.acquireSystemLease({
-          key: leaseKey,
-          owner: schedulerOwner,
-          now: now.toISOString(),
-          leaseUntil: new Date(now.getTime() + 25 * 60 * 1000).toISOString(),
-        });
-        if (!acquired) return { skipped: true, reason: "lease_held_by_another_instance" };
-        try {
-          return businessService.runMissionMaintenance();
-        } finally {
-          businessRepository.releaseSystemLease({ key: leaseKey, owner: schedulerOwner, now: new Date().toISOString() });
-        }
-      },
+      run: () => withSystemLease({
+        key: "lease:mission_maintenance",
+        durationMs: 25 * 60 * 1_000,
+        run: () => businessService.runMissionMaintenance(),
+      }),
       intervalMinutes: 30,
       onStatus: (status) => recordOperationalState("mission_maintenance", { ...status }),
-    });
-    schedulerStops.push(scheduler.stop);
-  }
-  if (
-    canonicalProductionRuntime &&
-    env.SUPABASE_URL &&
-    env.SUPABASE_SERVICE_ROLE_KEY &&
-    env.OFFSITE_BACKUP_SUPABASE_URL &&
-    env.OFFSITE_BACKUP_SERVICE_ROLE_KEY
-  ) {
-    const { scheduleOffsiteBackups } = await import("./lib/offsite-backup.js");
-    const scheduler = scheduleOffsiteBackups({
-      databasePath: env.DATABASE_PATH,
-      evidencePath: env.SOURCE_EVIDENCE_STORAGE_DIR,
-      sourceSupabaseUrl: env.SUPABASE_URL,
-      sourceServiceRoleKey: env.SUPABASE_SERVICE_ROLE_KEY,
-      destinationSupabaseUrl: env.OFFSITE_BACKUP_SUPABASE_URL,
-      destinationServiceRoleKey: env.OFFSITE_BACKUP_SERVICE_ROLE_KEY,
-      bucketName: env.OFFSITE_BACKUP_BUCKET,
-      intervalHours: env.OFFSITE_BACKUP_INTERVAL_HOURS,
-      retentionDays: env.OFFSITE_BACKUP_RETENTION_DAYS,
-      acquireLease: () => {
-        const now = new Date();
-        return businessRepository.acquireSystemLease({
-          key: "lease:offsite_backup",
-          owner: schedulerOwner,
-          now: now.toISOString(),
-          leaseUntil: new Date(now.getTime() + 2 * 60 * 60 * 1000).toISOString(),
-        });
-      },
-      releaseLease: () => {
-        businessRepository.releaseSystemLease({
-          key: "lease:offsite_backup",
-          owner: schedulerOwner,
-          now: new Date().toISOString(),
-        });
-      },
-      onStatus: (status) => {
-        recordOperationalState("offsite_backup", status);
-        if (status.state === "succeeded") recordOperationalState("offsite_backup_success", status);
-      },
     });
     schedulerStops.push(scheduler.stop);
   }
@@ -476,7 +904,9 @@ async function buildLazyRouters(): Promise<LazyRouters> {
     }
     const scheduler = scheduleMonthlyReportDelivery({
       generator: businessService,
-      repository: businessRepository,
+      repository: venueAccessRepository,
+      accountRepository: accountSessionRepository,
+      stateRepository: systemStateRepository,
       provider: createResendReportEmailProvider({ apiKey: env.RESEND_API_KEY }),
       publicBaseUrl: env.PUBLIC_BASE_URL,
       from: env.REPORT_EMAIL_FROM,
@@ -485,6 +915,9 @@ async function buildLazyRouters(): Promise<LazyRouters> {
       scheduleDay: env.REPORT_DELIVERY_DAY,
       scheduleHour: env.REPORT_DELIVERY_HOUR,
       checkIntervalMinutes: env.REPORT_DELIVERY_CHECK_INTERVAL_MINUTES,
+      leaseKey: "lease:monthly_report_delivery",
+      leaseOwner: schedulerOwner,
+      leaseDurationMs: 55 * 60 * 1_000,
       onStatus: (status) => recordOperationalState("monthly_report_delivery", status),
     });
     schedulerStops.push(scheduler.stop);
@@ -492,26 +925,11 @@ async function buildLazyRouters(): Promise<LazyRouters> {
   if ((canonicalProductionRuntime || env.ACCOUNT_DELETION_REHEARSAL_ENABLED) && deletionNotificationCoordinator) {
     const { scheduleMissionMaintenance } = await import("./lib/mission-maintenance.js");
     const scheduler = scheduleMissionMaintenance({
-      run: async () => {
-        const now = new Date();
-        const leaseKey = "lease:account_deletion_notifications";
-        const acquired = businessRepository.acquireSystemLease({
-          key: leaseKey,
-          owner: schedulerOwner,
-          now: now.toISOString(),
-          leaseUntil: new Date(now.getTime() + 4 * 60 * 1000).toISOString(),
-        });
-        if (!acquired) return { skipped: true, reason: "lease_held_by_another_instance" };
-        try {
-          return businessService.processAccountDeletionCompletionNotifications(20);
-        } finally {
-          businessRepository.releaseSystemLease({
-            key: leaseKey,
-            owner: schedulerOwner,
-            now: new Date().toISOString(),
-          });
-        }
-      },
+      run: () => withSystemLease({
+        key: "lease:account_deletion_notifications",
+        durationMs: 4 * 60 * 1_000,
+        run: () => businessService.processAccountDeletionCompletionNotifications(20),
+      }),
       intervalMinutes: env.ACCOUNT_DELETION_NOTICE_CHECK_INTERVAL_MINUTES,
       onStatus: (status) => recordOperationalState("account_deletion_notifications", {
         ...status,
@@ -527,10 +945,61 @@ async function buildLazyRouters(): Promise<LazyRouters> {
     adminRouter: createAdminRouter(adminService, businessService),
     businessRouter: createBusinessRouter(businessService),
     businessService,
-    getOffsiteBackupLastSuccess: () => {
-      const state = businessRepository.getSystemState<{ completedAt?: unknown }>("job:offsite_backup_success");
-      return typeof state?.value.completedAt === "string" ? state.value.completedAt : null;
-    },
+    probeOffsiteBackupReadiness: () =>
+      resolveOffsiteBackupReadinessForRuntime(
+        canonicalProductionRuntime,
+        async () => {
+          if (
+            persistence.mode === "postgres" &&
+            !env.ACCOUNT_DELETION_REHEARSAL_ENABLED
+          ) {
+            const state = await systemStateRepository.get<Record<string, unknown>>(
+              "job:postgres_logical_backup_success",
+            );
+            const {
+              inspectPostgresLogicalRuntimeDatabaseIdentity,
+              probePostgresLogicalOffsiteReadiness,
+            } = await import("./lib/postgres-logical-offsite.js");
+            let runtimeDatabaseIdentitySha256 = "";
+            try {
+              runtimeDatabaseIdentitySha256 =
+                await inspectPostgresLogicalRuntimeDatabaseIdentity(sqlDatabase);
+            } catch {
+              // The strict probe maps an unavailable/invalid identity to a safe
+              // binding failure without exposing database identity material.
+            }
+            return probePostgresLogicalOffsiteReadiness({
+              stateValue: state?.value,
+              runtimeDatabaseIdentitySha256,
+              sourceSupabaseUrl: env.SUPABASE_URL,
+              destinationSupabaseUrl: env.OFFSITE_BACKUP_SUPABASE_URL,
+              destinationServiceRoleKey: env.OFFSITE_BACKUP_SERVICE_ROLE_KEY,
+              bucketName: env.OFFSITE_BACKUP_BUCKET,
+              maxFreshnessHours: env.OFFSITE_BACKUP_INTERVAL_HOURS + 2,
+              requestTimeoutMs: 10_000,
+            });
+          }
+          const state = await systemStateRepository.get<{ completedAt?: unknown }>(
+            "job:offsite_backup_success",
+          );
+          const { probeOffsiteBackupReadiness } = await import(
+            "./lib/offsite-backup.js"
+          );
+          return probeOffsiteBackupReadiness({
+            sourceSupabaseUrl: env.SUPABASE_URL,
+            destinationSupabaseUrl: env.OFFSITE_BACKUP_SUPABASE_URL,
+            destinationServiceRoleKey: env.OFFSITE_BACKUP_SERVICE_ROLE_KEY,
+            bucketName: env.OFFSITE_BACKUP_BUCKET,
+            lastSuccessfulAt:
+              typeof state?.value.completedAt === "string"
+                ? state.value.completedAt
+                : null,
+            maxFreshnessHours: env.OFFSITE_BACKUP_INTERVAL_HOURS + 2,
+            required: false,
+            probeCapabilities: false,
+          });
+        },
+      ),
     shutdown: async () => {
       await Promise.allSettled(schedulerStops.splice(0).map((stop) => stop()));
       if (backgroundTasks.size > 0) {
@@ -538,7 +1007,7 @@ async function buildLazyRouters(): Promise<LazyRouters> {
       }
       const { shutdownRateLimitRedis } = await import("./middleware/rate-limit.js");
       await shutdownRateLimitRedis();
-      database.close();
+      await sqlDatabase.close();
     },
   };
 }
@@ -737,6 +1206,30 @@ function renderPublicVenuePage(
 </html>`;
 }
 
+export function createPublicVenuePageHandler(
+  getBusinessService: () => Promise<Pick<BusinessService, "getPublicVenueById">>,
+): RequestHandler {
+  return async (req, res, next) => {
+    try {
+      const businessService = await getBusinessService();
+      const venueId = req.params.venueId;
+      if (typeof venueId !== "string") {
+        throw new AppError("Venue not found.", 404);
+      }
+      const venue = await businessService.getPublicVenueById(venueId);
+      res
+        .type("html")
+        .setHeader(
+          "Cache-Control",
+          env.NODE_ENV === "production" && !env.RESTORE_REHEARSAL_MODE ? "public, max-age=300" : "no-store",
+        )
+        .send(renderPublicVenuePage(venue, String(res.locals["cspNonce"])));
+    } catch (error) {
+      next(error);
+    }
+  };
+}
+
 async function getLazyRouters(): Promise<LazyRouters> {
   if (env.RESTORE_REHEARSAL_MODE && env.RESTORE_REHEARSAL_PHASE === "bootstrap") {
     throw new AppError("Restore rehearsal is in bootstrap phase; application data routes are unavailable.", 503);
@@ -834,6 +1327,18 @@ export function createApp() {
     keyPrefix: "restore:access-attempt",
     keyGenerator: getRateLimitIdentity,
   });
+  const readinessProbeLimiter = createRateLimiter({
+    windowMs: 60_000,
+    max: 300,
+    keyPrefix: "public:readiness-probe",
+    // Railway requests without its trusted client-IP header share one strict
+    // bucket instead of making the public platform probe unavailable.
+    keyGenerator: (req) => getRateLimitIdentity(req) ?? "unresolved-readiness-client",
+  });
+  const resolveNormalReadinessProbe = createReadinessProbeSingleFlight<{
+    readonly statusCode: 200 | 503;
+    readonly payload: unknown;
+  }>();
   const cspConnectSources = [
     "'self'",
     "https://maps.googleapis.com",
@@ -884,7 +1389,7 @@ export function createApp() {
             (_req, res) => `'nonce-${String((res as Response).locals.cspNonce)}'`,
             "https://maps.googleapis.com",
             "https://maps.gstatic.com",
-            "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.103.0/dist/umd/supabase.min.js",
+            "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.3/dist/umd/supabase.min.js",
             "https://cdn.jsdelivr.net/npm/@googlemaps/markerclusterer@2.6.2/dist/index.min.js",
           ],
           "script-src-elem": [
@@ -892,7 +1397,7 @@ export function createApp() {
             (_req, res) => `'nonce-${String((res as Response).locals.cspNonce)}'`,
             "https://maps.googleapis.com",
             "https://maps.gstatic.com",
-            "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.103.0/dist/umd/supabase.min.js",
+            "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.3/dist/umd/supabase.min.js",
             "https://cdn.jsdelivr.net/npm/@googlemaps/markerclusterer@2.6.2/dist/index.min.js",
           ],
           "script-src-attr": ["'none'"],
@@ -1061,26 +1566,26 @@ export function createApp() {
   });
   app.use(express.urlencoded({ extended: true, limit: "1mb", verify: captureRawBody }));
 
-  app.get("/health", (_req, res) => {
-    res.setHeader("Cache-Control", "no-store");
-    res.json(
-      success({
+  app.get("/health", (_req, res, next) => {
+    try {
+      sendSecureProbeJson(res, 200, success({
         service: "pint-path",
         status: "ok",
         deployment: deploymentMetadata(),
         ...(env.RESTORE_REHEARSAL_MODE
           ? { restoreRehearsal: { phase: env.RESTORE_REHEARSAL_PHASE } }
           : {}),
-      }),
-    );
+      }));
+    } catch (error) {
+      next(error);
+    }
   });
 
   app.get("/startup", async (_req, res, next) => {
     try {
-      res.setHeader("Cache-Control", "no-store");
       const { businessService } = await getLazyRouters();
-      const startup = businessService.getLocalStartupReadiness();
-      res.status(startup.ready ? 200 : 503).json(success({
+      const startup = await businessService.getLocalStartupReadiness();
+      sendSecureProbeJson(res, startup.ready ? 200 : 503, success({
         service: "pint-path",
         status: startup.ready ? "startup_ready" : "startup_not_ready",
         deployment: deploymentMetadata(),
@@ -1091,9 +1596,14 @@ export function createApp() {
     }
   });
 
-  app.get("/ready", async (_req, res, next) => {
+  // readinessProbeLimiter is the first route-specific handler and uses the
+  // shared, production-fail-closed Redis rate-limit authority.
+  // codeql[js/missing-rate-limiting]
+  app.get("/ready", (req, res, next) => {
+    res.setHeader("Cache-Control", "no-store");
+    readinessProbeLimiter(req, res, next);
+  }, async (_req, res, next) => { // lgtm[js/missing-rate-limiting]
     try {
-      res.setHeader("Cache-Control", "no-store");
       if (env.RESTORE_REHEARSAL_MODE && env.RESTORE_REHEARSAL_PHASE === "bootstrap") {
         const fs = await import("node:fs/promises");
         let volumeReady = false;
@@ -1106,7 +1616,7 @@ export function createApp() {
         } catch {
           volumeReady = false;
         }
-        res.status(volumeReady ? 200 : 503).json(success({
+        sendSecureProbeJson(res, volumeReady ? 200 : 503, success({
           service: "pint-path",
           status: volumeReady ? "bootstrap_ready" : "bootstrap_not_ready",
           deployment: deploymentMetadata(),
@@ -1119,76 +1629,63 @@ export function createApp() {
         }));
         return;
       }
-      const { businessService, getOffsiteBackupLastSuccess } = await getLazyRouters();
-      const [readiness, rateLimiterRedis, offsiteBackup] = await Promise.all([
-        businessService.getOperationalReadiness(),
-        import("./middleware/rate-limit.js").then(({ probeRateLimitRedis }) => probeRateLimitRedis()),
-        import("./lib/offsite-backup.js").then(({ probeOffsiteBackupReadiness }) => (
-          probeOffsiteBackupReadiness({
-            sourceSupabaseUrl: env.SUPABASE_URL,
-            destinationSupabaseUrl: env.OFFSITE_BACKUP_SUPABASE_URL,
-            destinationServiceRoleKey: env.OFFSITE_BACKUP_SERVICE_ROLE_KEY,
-            bucketName: env.OFFSITE_BACKUP_BUCKET,
-            lastSuccessfulAt: getOffsiteBackupLastSuccess(),
-            maxFreshnessHours: env.OFFSITE_BACKUP_INTERVAL_HOURS + 2,
-            required: isCanonicalProductionRuntime({
-              nodeEnv: env.NODE_ENV,
-              railwayEnvironmentName: process.env.RAILWAY_ENVIRONMENT_NAME,
-            }),
-            // A recent successful scheduled backup is the serving-readiness
-            // signal. Privileged write/list/download/delete canaries belong in
-            // provider/release checks, not in a public GET or deploy gate.
-            probeCapabilities: false,
-          })
-        )),
-      ]);
-      const restoreRuntimeReady = !env.RESTORE_REHEARSAL_MODE || Boolean(verifiedRestoreRuntime);
-      const ready = readiness.ready && rateLimiterRedis.ready && offsiteBackup.status === "ok" && restoreRuntimeReady;
-      if (!ready) {
-        const safeDependencyFields = [
-          "status",
-          "required",
-          "ready",
-          "liveProbe",
-          "error",
-          "foreignKeyViolations",
-          "lastSuccessfulAt",
-          "ageHours",
-        ];
-        const dependencies = {
-          ...readiness.dependencies,
-          rateLimiterRedis,
-          offsiteBackup,
-        };
-        logger.warn("Operational readiness check failed", {
-          dependencies: Object.fromEntries(Object.entries(dependencies).map(([name, value]) => [
-            name,
-            Object.fromEntries(safeDependencyFields.flatMap((field) => (
-              Object.prototype.hasOwnProperty.call(value, field)
-                ? [[field, (value as Record<string, unknown>)[field]]]
-                : []
-            ))),
-          ])),
-          restoreRuntimeReady,
-        });
-      }
-      res.status(ready ? 200 : 503).json(
-        success({
-          service: "pint-path",
-          status: ready ? "ready" : "not_ready",
-          deployment: deploymentMetadata(),
-          dependencies: {
+      const result = await resolveNormalReadinessProbe(async () => {
+        const { businessService, probeOffsiteBackupReadiness } = await getLazyRouters();
+        const [readiness, rateLimiterRedis, offsiteBackup] = await awaitReadinessDependencies(
+          businessService.getOperationalReadiness(),
+          import("./middleware/rate-limit.js").then(({ probeRateLimitRedis }) => probeRateLimitRedis()),
+          probeOffsiteBackupReadiness(),
+        );
+        const restoreRuntimeReady = !env.RESTORE_REHEARSAL_MODE || Boolean(verifiedRestoreRuntime);
+        const ready = readiness.ready && rateLimiterRedis.ready && offsiteBackup.status === "ok" && restoreRuntimeReady;
+        if (!ready) {
+          const safeDependencyFields = [
+            "status",
+            "required",
+            "ready",
+            "liveProbe",
+            "error",
+            "foreignKeyViolations",
+            "lastSuccessfulAt",
+            "ageHours",
+          ];
+          const dependencies = {
             ...readiness.dependencies,
             rateLimiterRedis,
             offsiteBackup,
-            ...(env.RESTORE_REHEARSAL_MODE
-              ? {
-                  restoreRuntime: getPublicRestoreRuntimeReadiness(Boolean(verifiedRestoreRuntime)),
-                }
-              : {}),
-          },
-        }),
-      );
+          };
+          logger.warn("Operational readiness check failed", {
+            dependencies: Object.fromEntries(Object.entries(dependencies).map(([name, value]) => [
+              name,
+              Object.fromEntries(safeDependencyFields.flatMap((field) => (
+                Object.prototype.hasOwnProperty.call(value, field)
+                  ? [[field, (value as Record<string, unknown>)[field]]]
+                  : []
+              ))),
+            ])),
+            restoreRuntimeReady,
+          });
+        }
+        return {
+          statusCode: ready ? 200 as const : 503 as const,
+          payload: success({
+            service: "pint-path",
+            status: ready ? "ready" : "not_ready",
+            deployment: deploymentMetadata(),
+            dependencies: {
+              ...readiness.dependencies,
+              rateLimiterRedis,
+              offsiteBackup,
+              ...(env.RESTORE_REHEARSAL_MODE
+                ? {
+                    restoreRuntime: getPublicRestoreRuntimeReadiness(Boolean(verifiedRestoreRuntime)),
+                  }
+                : {}),
+            },
+          }),
+        };
+      });
+      sendSecureProbeJson(res, result.statusCode, result.payload);
     } catch (error) {
       next(error);
     }
@@ -1197,15 +1694,15 @@ export function createApp() {
   app.get("/config.js", async (_req, res, next) => {
     try {
       const { businessService } = await getLazyRouters();
-      const publicConfig = businessService.getPublicConfig();
+      const publicConfig = await businessService.getPublicConfig();
       const viewerConfig = {
         // The public viewer uses server-gated API routes for venue and price data.
         // Supabase anon config is exposed only for OAuth login; exact price access stays server-gated.
         googleMapsApiKey: env.GOOGLE_MAPS_API_KEY ?? "",
         googleMapsMapId: env.GOOGLE_MAPS_MAP_ID ?? "",
         publicBaseUrl: env.PUBLIC_BASE_URL,
-        // Restore rehearsals keep browser authentication fully disconnected.
-        // The server-only readiness probe still verifies the dedicated staging project.
+        // Restore rehearsals keep browser and server Supabase access fully
+        // disconnected until candidate-bound destination authority exists.
         supabaseUrl: env.RESTORE_REHEARSAL_MODE ? "" : env.SUPABASE_URL ?? "",
         supabaseAnonKey: env.RESTORE_REHEARSAL_MODE ? "" : env.SUPABASE_ANON_KEY ?? "",
         supabaseOauthProviders: env.RESTORE_REHEARSAL_MODE
@@ -1256,21 +1753,10 @@ export function createApp() {
   app.get("/for-bars.html", (_req, res) => {
     res.redirect(302, "/venue-portal");
   });
-  app.get("/venues/:venueId", async (req, res, next) => {
-    try {
-      const { businessService } = await getLazyRouters();
-      const venue = await businessService.getPublicVenueById(req.params.venueId);
-      res
-        .type("html")
-        .setHeader(
-          "Cache-Control",
-          env.NODE_ENV === "production" && !env.RESTORE_REHEARSAL_MODE ? "public, max-age=300" : "no-store",
-        )
-        .send(renderPublicVenuePage(venue, String(res.locals.cspNonce)));
-    } catch (error) {
-      next(error);
-    }
-  });
+  app.get(
+    "/venues/:venueId",
+    createPublicVenuePageHandler(async () => (await getLazyRouters()).businessService),
+  );
   app.use(async (req, res, next) => {
     if (!['GET', 'HEAD'].includes(req.method)) {
       next();

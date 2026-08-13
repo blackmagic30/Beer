@@ -1,10 +1,122 @@
-# Pint Path 9/10 Launch Readiness Gates
+# Pint Path Full-Scale Launch Readiness Gates
 
-This is the evidence pack needed to move Pint Path from a strong beta to a true public-launch posture. Keep these checks against local, staging, or production-preview data unless a step explicitly says it must be verified in the live provider dashboard.
+This is the evidence pack for the first full-scale public web and iOS release. The release is Free-only: pricing, paid enrolment, trials, Pro features, rewards, counter/redemption/POS flows, public happy-hour discovery, monthly-report delivery, and Android are deferred. There is no beta exception or owner acceptance path around a failed gate.
 
-## Automated Gates
+## Current hard blockers
 
-Run before every release candidate:
+The Free-live PostgreSQL implementation is complete. Permanent staging now has
+pinned Postgres, Supabase/Auth/private Storage, and Redis resources; its
+synthetic import, restricted runtime proof, direct logical backup, and the
+matching disposable-database restore receipt are verified. A dedicated
+production Postgres service is provisioned but is empty, detached from the live
+Beer service, and not serving traffic. Production therefore remains on SQLite
+until the controlled cutover.
+
+Pint Path remains no-go. Before candidate freeze:
+
+Every Railway create, configuration, variable, scale, deploy, rollback, PITR,
+route, delete, destroy, or teardown operation in these gates is non-executable
+until the tracked `readiness:railway:mutation-boundary` executor owns the
+immediate preflight, one exact reviewed operation, and unconditional postflight.
+Its standalone receipt is read-only; the current incident baseline
+intentionally fails. Restore-staging teardown additionally requires complete
+resource/evidence reconciliation, specific authorization naming the exact
+resource IDs, and the exact reviewed teardown executor. Signed evidence or
+two-person sign-off alone is not mutation authority.
+
+1. Complete the three Google/OpenAI provider categories, comprising four exact
+   Railway variable operations: Google Maps client configuration
+   (`GOOGLE_MAPS_API_KEY` and `GOOGLE_MAPS_MAP_ID`), Google Places server access
+   (`GOOGLE_PLACES_API_KEY`), and OpenAI menu OCR (`OPENAI_API_KEY`). Separately,
+   the two permanent-staging Supabase replacement-key operations
+   (`SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY`) remain
+   `HARD_DISABLED_REVIEW_REQUIRED` and unauthorized. After their separate
+   reviewed authorities and all mutation stops are satisfied, deploy the exact
+   reviewed app build to permanent staging. Historical operational-copy
+   attestation and a staging database-bound probe ran under the prior coupled
+   contract; they are not current staging readiness. The production-copy URL,
+   key, and bucket variables are prohibited in permanent staging by the current
+   candidate, and a fresh complete Railway inventory must independently prove
+   all three names deleted before remediation passes. No new staging off-site
+   transport is authorized.
+2. Pass real provider/Auth/role/private-Storage/Free-scope smoke, then scale the
+   same build temporarily from one to two replicas for concurrency, queue/
+   outbox, idempotency, load/soak, restart, rolling-deploy, rollback, and pool-
+   headroom proof; return staging to one replica afterward.
+3. Enable and test PITR; have the independent recovery administrator provision
+   and exercise the implemented AWS S3 Object Lock WORM authority; and extend
+   the existing disposable database restore through later WORM retrieval,
+   Storage/tombstones, application smoke, deletion replay, signed RPO/RTO, and
+   safe teardown. The code and offline tests do not close this live gate.
+4. Complete reviewed-data promotion, production snapshot/import/reconciliation,
+   post-import and post-promotion recovery sets, monitored Postgres cutover, and
+   the coordinated web/iOS release sequence.
+
+Permanent staging is capped at 0.1 vCPU/0.5 GB for Beer and Postgres and
+0.1 vCPU/0.25 GB for Redis. Keep one Beer replica permanently and use the
+second only for a bounded evidence window. With one permanent-staging Supabase
+Micro project, the separately operated canonical-production operational-copy
+Supabase Micro project, and the conservative locked-baseline plus daily
+Postgres-volume snapshot allowance, the reviewed combined recurring envelope is
+approximately US$46.80/month. This is not a staging-only cost or authority
+boundary; it is a historical combined planning estimate and not gating
+provider evidence. The separate `permanent_staging_cost` release item remains
+pending. A fresh provider-bound receipt for one frozen candidate must inventory
+Railway, the staging Supabase project, and staging external providers/caps,
+report zero unknown/unpriced/shared/unbounded resources, ceiling-sum integer
+USD cents to at most `5000`, and keep the production operational copy plus
+disposable restore under separate cost authorities. The checked-in cost policy
+and evaluator are scaffold-only and cannot produce that proof.
+
+The 2026-08-13 credential-free public-price audit also proves the currently
+documented maxima are not capable of passing that gate: Railway compute plus a
+fully used 50 GB staging Postgres volume is US$26/month, and Supabase Pro plus
+one Micro project nets to US$25/month under its standard compute entitlement.
+That US$51 partial maximum excludes egress, other storage/backups, add-ons, and
+external providers. It is not live provider evidence, but it is a hard design
+blocker: reduce or isolate the reviewed recurring capacity before collecting a
+fresh receipt, rather than treating current low usage as a bounded maximum.
+
+The current credential-free remediation target is still design-only: isolate
+permanent staging in a US$20-hard-limited Railway Pro workspace and a separate
+US$25 Supabase Pro organization with one Micro project, Spend Cap on, and zero
+uncovered add-ons. That leaves US$5 for all external providers. It remains
+blocked because Railway Agent usage has no proved zero bound and the current
+Railway resource maximum exceeds the target. The exact source inventory spans
+Dynamic Maps, Directions Legacy, Geocoding, Text Search Pro/Enterprise, Nearby
+Search Enterprise, and Place Details Enterprise, but Google does not document
+a monthly hard quota for every surface and warns that quota and billing meters
+can differ. OpenAI OCR now uses no SDK retries, finite `high` image detail, and
+an 8,192-output-token cap, and rejects model overrides outside the reviewed
+`gpt-5.6-sol`/`gpt-4.1` allowlist; monthly call reservations, bounded PDF/input
+tokens, and a documented hard-limit overshoot maximum are still absent in the
+live environment. The disabled candidate cost-bound path instead pins
+`gpt-4.1-mini-2025-04-14`, forbids PDFs/discovery OCR, and reserves five cents
+per attempt in shared state up to US$1 in every rolling 31-day window, but it still needs the
+labelled benchmark, current price/project receipt, and two-replica
+restart/denial proof. Provider hard-limit enforcement is not instantaneous.
+Resend
+Free may be a zero-dollar target only after a dedicated
+live team, quota, and add-on inventory is observed. The remaining US$5 is not
+yet a proved upper bound. No provider move, plan, cap, quota, or credential
+mutation is authorized by this planning target.
+
+## Environment identities
+
+- **Permanent integrated staging** is the stable pre-production system. Its core Railway service, Postgres database, Supabase project/Auth/private Storage, and Redis identities are pinned and separate; remaining provider credentials and app/live evidence are still open. Use it for migrations, replicas, auth, deletion, data repair, provider canaries, browser/device smoke, load, deploy, and rollback evidence.
+- **Disposable restore-staging** is a different one-shot system. Its separate Railway project, Postgres database, and Redis resource now exist and its logical database receipt matches. It still requires isolated Supabase/Storage, app smoke, PITR/WORM/Storage/tombstone/RPO/RTO proof and safe disposal; do not treat the database-only receipt as a complete recovery drill.
+- The disposable restore resources are temporary metered evidence capacity and
+  are excluded from the combined recurring envelope above. At their current caps they
+  would add approximately US$20.13/month if left running; finish the drill and
+  complete resource/evidence reconciliation promptly. Disposal then requires
+  specific authorization for the exact recorded resource IDs and the reviewed
+  teardown executor's immediate mutation-boundary preflight and unconditional
+  postflight.
+- Production, permanent staging, restore-staging, and the private operational restore-copy project must never share credentials or mutable resources. After each disposable restore system is created, load its reviewed `RESTORE_REHEARSAL_EXPECTED_*` values through protected environment configuration and require the runtime identities to match; never hard-code or repurpose permanent staging.
+
+## Automated gates
+
+Run against the frozen release SHA before every candidate:
 
 ```bash
 npm run check
@@ -15,102 +127,106 @@ npm run release:evidence
 git diff --check
 ```
 
-Run after real production provider env is configured:
+After real provider configuration is installed in permanent staging:
 
 ```bash
 npm run readiness:launch
 npm run smoke:production:auth
-npm run release:evidence:strict
+npm run release:evidence
 ```
 
-`readiness:launch` runs the provider check with production semantics and treats warnings as launch-blocking. It should return zero failures and zero blocking warnings before broad public traffic.
+In permanent staging, `readiness:launch` must report
+`readinessProfile=permanent_staging_complete`, zero failures, and zero blocking
+warnings. Its Storage canaries run only after the local staging identity/config
+preflight passes. The later canonical-production invocation must instead report
+`readinessProfile=production_free_launch` with the same zero-failure contract.
+The non-strict evidence command validates the schema and lists genuinely pending
+live/App Review items. Run `npm run release:evidence:strict` only after the exact
+candidate is live, both production smoke gates are current, the full App Review
+approval/manual hold is recorded, and all 13 evidence items are complete.
+Record the command, frozen SHA, UTC time, environment identity, sanitized
+output, evidence link, reviewer, and result.
 
-## Manual Provider Proof
+## Provider and security proof
 
-- Supabase Auth redirects include `https://pintpath.au/auth/callback` and local web callback URLs. Include native `pintpath://auth-callback` only for an Android release that enables native OAuth; the first-release iOS archive has no custom URL scheme and uses the HTTPS callback for email confirmation/password recovery.
-- The Supabase Google provider callback URL derived from `SUPABASE_URL` is present in the Google console, `SUPABASE_OAUTH_PROVIDERS=google`, and Apple OAuth is disabled.
-- Supabase leaked-password protection is enabled for public signup.
-- Supabase admin MFA/AAL2 is configured and an admin staging login proves `aal2` before admin actions.
-- Supabase live project is not on deprecated Postgres 14. Supabase support for Postgres 14 ends on 2026-07-01.
-- Supabase RLS and table grants are checked in the dashboard or RLS Tester after migrations are applied. Do not rely only on SQL text tests.
-- Supabase Storage bucket `beermap-source-evidence` is private, has no direct `anon`/`authenticated` object policies, and is reachable only through the authorized server API/admin signed-URL path.
-- Google Maps browser key is restricted to approved referrers and `GOOGLE_MAPS_MAP_ID` renders AdvancedMarkerElement markers on staging.
-- Keep `COMMERCIAL_LAUNCH_ENABLED=false` and `CONSUMER_PAID_ENROLLMENT_ENABLED=false` for the current deploy. Stripe test-mode Checkout and signed webhooks prove subscription create/update/cancel, failed invoice handling, and replay idempotency; the smallest-value controlled live checkout/webhook/portal/cancel/refund reconciliation in `external-launch-signoffs.md` must also pass before the controlling runbook may authorise any public paid entry point.
-- Redis is provisioned through `REDIS_URL`; production does not rely on the in-memory rate-limit override for broad traffic.
-- OpenAI and Google Places keys are server-side, restricted where possible, and absent from `/config.js`.
-- Resend has a dedicated sending-only key and verified deletion-notice sender. The signed webhook targets `/api/business/account-deletion-notifications/resend-webhook` and handles `email.delivered`, `email.delivery_delayed`, `email.bounced`, `email.failed`, `email.suppressed`, and `email.complained`. A sacrificial deletion runs only with `ACCOUNT_DELETION_REHEARSAL_ENABLED=true` in isolated Railway staging; production proves the variable is `false` or absent. Evidence covers `held -> pending -> accepted -> delivered`, purge on verified delivery and audited terminal resolution, the 30-day post-completion limit, the 60-day held cap, invalid signatures, replay, out-of-order events, bounce, timeout, restart, and restore suppression.
+- Supabase Auth redirects include `https://pintpath.au/auth/callback` and the local web callback. `pintpath://auth-callback` remains Android-only; the first iOS archive uses email/password and HTTPS confirmation/recovery links.
+- The Google provider callback derived from `SUPABASE_URL` is allowlisted, `SUPABASE_OAUTH_PROVIDERS=google`, and Apple OAuth remains disabled until token revocation is implemented and tested.
+- Supabase leaked-password protection is enabled; admin MFA/AAL2 is proved with a real staging admin.
+- The managed Postgres version is supported. App tables are in a non-exposed schema, the runtime role is least-privileged, and dashboard/RLS checks prove no direct `anon`/`authenticated` app-data access.
+- `beermap-source-evidence` is private, has no direct browser object policies, and is reachable only through authorized server APIs and short-lived admin review URLs. Canonical PostgreSQL-bound capture and empty-distinct-destination restore tooling is implemented and locally tested; the substantive live capture, restore, full-application, deletion, and RPO/RTO evidence remains open.
+- Google Maps keys are restricted to approved referrers; `GOOGLE_MAPS_MAP_ID` renders advanced markers on permanent staging. Google Places and OpenAI keys remain server-only and absent from `/config.js`.
+- `REDIS_URL` is configured, `REQUIRE_REDIS_RATE_LIMITING=true`, and `ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=false`. A two-replica staging outage test proves protected traffic and readiness fail closed, then recover.
+- `COMMERCIAL_LAUNCH_ENABLED=false`, `CONSUMER_PAID_ENROLLMENT_ENABLED=false`, `VENUE_PRO_TRIAL_DAYS=0`, `VENUE_PRO_TRIAL_REQUIRE_PAYMENT_METHOD=false`, `DEMO_BILLING_MODE=false`, `ALLOW_DEMO_BILLING_IN_PRODUCTION=false`, `REPORT_EMAIL_MODE=disabled`, `REPORT_DELIVERY_SCHEDULE_ENABLED=false`, and `PINTPATH_REPORT_DELIVER=false`; `POS_WEBHOOK_SIGNING_SECRET` and all Stripe values are absent. Stripe is not a current launch gate because no payment surface is authorised.
+- Resend uses a dedicated sending-only key and verified account-deletion sender. The signed webhook covers accepted/delivered/delayed/bounced/failed/suppressed/complained, replay, out-of-order delivery, timeout, restart, purge, retention, and restore suppression in permanent staging.
 
-## Authenticated Owner Journey
+## Free venue and contributor journeys
 
-Use a fresh staging owner account and record pass/fail evidence:
+Record real browser/auth/provider evidence in permanent staging:
 
-1. Create account or OAuth login.
-2. Confirm email/verified account state.
-3. Admin assigns venue-manager access.
-4. Owner opens `/venue-portal.html`.
-5. Owner submits profile update.
-6. Owner adds beer/stock row.
-7. Owner adds happy-hour row.
-8. Pro owner adds special/deal.
-9. Owner opens support from the portal.
-10. Owner views report/analytics gate appropriate to Free/Pro tier.
-11. Another owner is blocked from that venue.
-12. Owner confirms ordinary assigned-venue profile, beer, and happy-hour edits publish directly. Admin then verifies that restricted fields and safeguard-triggered changes stay queued until review.
+1. Create and verify a fresh venue-manager account.
+2. Submit a claim; prove it grants no access before independent admin verification and approval.
+3. Assign one venue and prove the manager cannot read or mutate another venue.
+4. Update the assigned venue profile and opening hours.
+5. Add and edit at least three beer, stock/on-tap, and price rows; prove safeguard-triggered changes queue for admin review.
+6. Submit a separate community contribution with private source evidence; prove the uploader and authorized admin can review it while other users cannot.
+7. Exercise wrong-price reporting, support, network interruption, retry/idempotency, session expiry, and manager revocation.
+8. Prove happy-hour data, if collected internally, has zero public web or iOS surface.
+9. Prove Pro, paid, trial, reward, counter/redemption/POS, special, report, and public happy-hour surfaces stay disabled.
 
-The local release suite now covers this path synthetically, but staging still needs real browser/auth/provider confirmation.
+The local suite covers synthetic boundaries; it never replaces this real-provider proof.
 
-## Monitoring And Operations
+## iOS release proof
 
-- External uptime checks hit both `/health` and `/ready`.
-- 5xx, deploy failure, Redis failure, Stripe webhook failure, and login/rate-limit spikes alert a named owner.
-- Railway volume/database backup is automated and backup age is monitored.
-- One staging restore drill is completed and dated.
-- Incident owner, escalation path, RPO, RTO, and rollback target are recorded before public launch.
-- `/status.html`, `/security.html`, and `/.well-known/security.txt` point users to private support/security reporting paths.
+The native release gate is complete only when all of the following refer to the frozen web/API-compatible SHA and intended version/build:
 
-## Performance Budget
+- protected native workflow passes and produces a signed release archive with the approved bundle ID, team, entitlements, privacy manifest, icons, screenshots, metadata, support/privacy URLs, and production API origin;
+- physical-device web/API compatibility, email confirmation/recovery, sign-in/out, account deletion, map, venue details, private contribution upload, network loss, and accessibility smoke pass;
+- external TestFlight distribution and Beta App Review pass;
+- the same build receives full App Review approval;
+- App Store Connect availability includes the Australia storefront; and
+- automatic release is off, manual release is held by the named release owner, and phased release is configured before the coordinated web/iOS launch.
 
-Run Lighthouse or WebPageTest against staging on mobile and desktop for:
+TestFlight alone is not approval to launch.
 
-- `/`
-- `/pricing.html`
-- `/venue-portal.html`
-- `/account.html`
+## Monitoring, backup, restore, and rollback
 
-Target before a 9/10 launch:
+- External uptime checks hit both `/health` and `/ready`; alerts cover 5xx, deploy failure, Postgres availability/pool saturation, Redis failure, authentication/rate-limit spikes, deletion-notice failure, backup age, and WORM replication failure.
+- A named incident owner, deputy, escalation path, severity model, RPO, RTO, status-page path, support path, and Postgres-compatible rollback target are recorded.
+- Managed Postgres PITR is enabled and tested. A separate checksummed logical Postgres export and complete private Storage inventory are produced on schedule.
+- A separate Supabase project may be used as a **private operational restore copy**. Because its service-role principal can list/delete/overwrite, it is not independent or immutable.
+- A separately administered provider/region stores the complete database, Storage, manifest, and deletion-ledger set under provider-enforced object lock/WORM. The application writer cannot delete, overwrite, shorten retention, or read with the separately held recovery principal.
+- A dated destructive drill restores PITR/logical Postgres, Storage, and the deletion ledger from the operational and WORM authorities into disposable restore-staging, meets RPO/RTO, and proves reconciliation and key journeys. It does not itself authorize destruction; the exact-resource teardown contract above still applies.
+- Existing SQLite backup/restore commands are one-time cutover/legacy evidence only and cannot satisfy this gate.
 
-- Performance: 85+ on public landing/pricing pages.
-- Accessibility: 95+ on public pages and 90+ on authenticated tool pages.
+## Performance budget
+
+Run Lighthouse or WebPageTest against permanent staging on mobile and desktop for `/`, `/account.html`, `/submit.html`, and `/venue-portal.html`. Also confirm `/pricing.html` exposes no checkout or approved price.
+
+- Performance: 85+ on public landing/map pages.
+- Accessibility: 95+ on public pages and 90+ on authenticated tools.
 - SEO: 95+ on public pages.
 - No document-level horizontal overflow at 390px, 768px, and desktop widths.
 - No blocking console errors on initial page load.
+- Load and soak evidence remains inside the documented Postgres, Redis, Railway, Supabase, OpenAI, Google, and Resend budgets with two replicas.
 
-Do not chase risky bundle rewrites before launch. Prefer measured fixes: defer non-critical scripts, lazy-load map extras, compress/cache static assets, and keep authenticated pages from doing unnecessary signed-out work.
+Prefer measured fixes such as deferred non-critical scripts, lazy-loaded map extras, compressed/cacheable static assets, and avoiding unnecessary signed-out work.
 
-## Accessibility And Device Proof
+## Accessibility and device proof
 
-- Keyboard-only pass: landing, pricing, account auth, submit, venue portal tabs/forms, modals/dialogs.
-- Screen reader smoke: headings, form labels, error announcements, dashboard empty states, and destructive confirmations.
-- Real mobile pass: iPhone Safari and Android Chrome at large text/default zoom.
-- Touch targets: primary controls should be at least 44px where practical; dense nav/footer links should not drop below 40px.
-- Focus indicators remain visible on dark backgrounds.
+- Keyboard-only pass: landing/map, account auth, submit, venue portal tabs/forms, modals/dialogs, and account deletion.
+- Screen-reader pass: headings, form labels, errors, map alternatives, empty states, and destructive confirmations.
+- Real iPhone/iPad Safari plus the signed native iOS build pass at default and large text. Android Chrome remains a web-compatibility check, not an Android app release.
+- Primary touch targets are at least 44px where practical; focus remains visible on dark backgrounds.
 
-## Legal And Trust Proof
+## Legal and trust proof
 
-- Owner/legal review of Privacy, Terms, account deletion/export wording, analytics/cookie consent, and alcohol/responsible-service language.
-- Final owner contact/support details are published.
-- Billing/refund/cancellation process is approved before paid launch.
-- Any screenshots, sample reports, or case-study copy use synthetic or owner-approved data only.
+- Owner/legal review covers Privacy, Terms, account deletion/export, analytics/cookie consent, App Store privacy disclosures, location, private evidence, user-generated content/moderation, alcohol/responsible-service wording, and support/security reporting.
+- Final business identity, owner contact, privacy contact, and monitored support/security details are published.
+- Pricing, billing, refund, trial, and Pro terms are explicitly deferred and no dormant amount or offer appears as current.
+- Screenshots and case-study/sample copy use synthetic or explicitly approved data.
 
-## Go / No-Go
+## Go / no-go
 
-Go only when:
+Go only when every gate above has evidence for the frozen SHA, both permanent staging and disposable restore-staging are correctly separated, the 13-item release evidence pack is complete, the fresh permanent-staging-only cost receipt proves the `5000`-cent ceiling, App Review is approved, and the release owner is holding the App Store build for the coordinated manual/phased launch.
 
-- Automated gates pass.
-- `npm run readiness:launch` passes with zero blocking warnings.
-- Provider proof is complete or explicitly accepted by the owner for a limited beta.
-- Owner journey passes in staging with real auth.
-- Monitoring, backup, and rollback evidence exists.
-- Legal/support placeholders have been reviewed and replaced or accepted for beta.
-
-No-go if any normal user can access admin data, any owner can access another venue, any source evidence is public, Stripe accepts unsigned webhooks, production runs broad traffic without Redis, or the app has no monitored backup/incident path.
+No-go if any gate is missing, waived, or stale; production still writes authoritative SQLite; two replicas are unsafe; an ordinary user can access admin/other-venue/private evidence data; any deferred commercial or public happy-hour surface is enabled; Redis can fail open; the backup set lacks Postgres/Storage/WORM authority; staging identities overlap; or the signed iOS build is not approved and held for Australia.

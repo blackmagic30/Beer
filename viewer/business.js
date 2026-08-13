@@ -29,6 +29,10 @@ const PASSWORD_RECOVERY_MAX_AGE_MS = 20 * 60 * 1000;
 const API_REQUEST_TIMEOUT_MS = 20 * 1000;
 const LEGACY_SESSION_MIGRATION_TIMEOUT_MS = 8 * 1000;
 const MAX_API_REQUEST_TIMEOUT_MS = 5 * 60 * 1000;
+const PRODUCTION_VIEWER_ORIGIN = "https://pintpath.au";
+const PRODUCTION_SUPABASE_ORIGIN = "https://auth.pintpath.au";
+const SUPABASE_PUBLISHABLE_KEY_PATTERN = /^sb_publishable_[A-Za-z0-9_-]{20,220}$/;
+const SUPABASE_LEGACY_JWT_SEGMENT_PATTERN = /^[A-Za-z0-9_-]{2,4096}$/;
 const RESTORE_REHEARSAL_LOCAL_STORAGE_KEYS = new Set([
   AUTH_TOKEN_KEY,
   ACCOUNT_CONTEXT_KEY,
@@ -494,32 +498,130 @@ function getBusinessConfig() {
   return getViewerConfig().business || {};
 }
 
-function isLocalOrigin(origin = window.location.origin) {
+function decodeCanonicalBase64Url(value) {
+  if (
+    !SUPABASE_LEGACY_JWT_SEGMENT_PATTERN.test(value)
+    || value.length % 4 === 1
+    || typeof atob !== "function"
+    || typeof btoa !== "function"
+  ) return null;
   try {
-    const hostname = new URL(origin).hostname;
-    return ["localhost", "127.0.0.1", "::1"].includes(hostname);
+    const paddedValue = value
+      .replaceAll("-", "+")
+      .replaceAll("_", "/")
+      .padEnd(value.length + ((4 - (value.length % 4)) % 4), "=");
+    const decoded = atob(paddedValue);
+    const canonical = btoa(decoded).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+    if (!decoded || canonical !== value) return null;
+    return Uint8Array.from(decoded, (character) => character.charCodeAt(0));
+  } catch {
+    return null;
+  }
+}
+
+function isPlainJsonObject(value) {
+  return value !== null
+    && typeof value === "object"
+    && !Array.isArray(value)
+    && Object.getPrototypeOf(value) === Object.prototype;
+}
+
+function isLegacySupabaseAnonKey(value) {
+  if (typeof value !== "string" || typeof TextDecoder !== "function") return false;
+  const segments = value.split(".");
+  if (segments.length !== 3) return false;
+  const headerBytes = decodeCanonicalBase64Url(segments[0]);
+  const payloadBytes = decodeCanonicalBase64Url(segments[1]);
+  const signatureBytes = decodeCanonicalBase64Url(segments[2]);
+  if (!headerBytes || !payloadBytes || signatureBytes?.byteLength !== 32) return false;
+
+  try {
+    const decoder = new TextDecoder();
+    const header = JSON.parse(decoder.decode(headerBytes));
+    const payload = JSON.parse(decoder.decode(payloadBytes));
+    return isPlainJsonObject(header)
+      && header.alg === "HS256"
+      && header.typ === "JWT"
+      && isPlainJsonObject(payload)
+      && payload.role === "anon";
   } catch {
     return false;
   }
 }
 
-function getConfiguredPublicBaseUrl() {
+function isSupportedBrowserSupabaseKey(value) {
+  return typeof value === "string"
+    && (SUPABASE_PUBLISHABLE_KEY_PATTERN.test(value) || isLegacySupabaseAnonKey(value));
+}
+
+function isSupportedBrowserSupabaseOrigin(value) {
+  if (typeof value !== "string" || !value || value !== value.trim()) return false;
+  if (window.location.origin === PRODUCTION_VIEWER_ORIGIN) {
+    return value === PRODUCTION_SUPABASE_ORIGIN;
+  }
+  try {
+    const candidate = new URL(value);
+    if (candidate.origin !== value) return false;
+    return candidate.protocol === "https:" || (
+      candidate.protocol === "http:"
+      && isLocalOrigin()
+      && isLocalOrigin(candidate.origin)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function supabaseConfigSource() {
   const config = getViewerConfig();
   const business = getBusinessConfig();
-  return business.publicBaseUrl || config.publicBaseUrl || null;
+  const businessDefinesSupabase = Object.prototype.hasOwnProperty.call(business, "supabaseUrl")
+    || Object.prototype.hasOwnProperty.call(business, "supabaseAnonKey");
+  return businessDefinesSupabase ? business : config;
+}
+
+function createBrowserSupabaseFetch(apiKey) {
+  const usesPublishableKey = SUPABASE_PUBLISHABLE_KEY_PATTERN.test(apiKey);
+  return async (input, init) => {
+    if (!usesPublishableKey) {
+      return fetch(input, { ...init, redirect: "error" });
+    }
+    const sourceHeaders = init?.headers || (
+      typeof Request !== "undefined" && input instanceof Request
+        ? input.headers
+        : null
+    );
+    if (!sourceHeaders) {
+      return fetch(input, { ...init, redirect: "error" });
+    }
+    const headers = new Headers(sourceHeaders);
+    if (
+      headers.get("apikey") !== apiKey
+      || headers.get("authorization") !== `Bearer ${apiKey}`
+    ) {
+      return fetch(input, { ...init, redirect: "error" });
+    }
+    headers.delete("authorization");
+    return fetch(input, { ...init, headers, redirect: "error" });
+  };
+}
+
+function isLocalOrigin(origin = window.location.origin) {
+  try {
+    const hostname = new URL(origin).hostname;
+    return ["localhost", "127.0.0.1", "[::1]"].includes(hostname);
+  } catch {
+    return false;
+  }
 }
 
 function getCanonicalBaseUrl() {
-  const configured = getConfiguredPublicBaseUrl();
-
-  if (configured && !isLocalOrigin()) {
-    try {
-      return new URL(configured).origin;
-    } catch {
-      return window.location.origin;
-    }
+  if (window.location.origin === PRODUCTION_VIEWER_ORIGIN) {
+    return PRODUCTION_VIEWER_ORIGIN;
   }
-
+  // OAuth, signup, and recovery callbacks are credentials. Bind every
+  // non-production callback to the viewer that initiated the flow rather than
+  // trusting mutable public configuration to nominate another origin.
   return window.location.origin;
 }
 
@@ -855,11 +957,18 @@ function getSupabaseConfig() {
   if (isRestoreRehearsalMode()) {
     return { url: null, anonKey: null };
   }
-  const config = getViewerConfig();
-  const business = getBusinessConfig();
+  const source = supabaseConfigSource();
+  const configuredUrl = source.supabaseUrl;
+  const configuredKey = source.supabaseAnonKey;
+  if (
+    !isSupportedBrowserSupabaseOrigin(configuredUrl)
+    || !isSupportedBrowserSupabaseKey(configuredKey)
+  ) {
+    return { url: null, anonKey: null };
+  }
   return {
-    url: business.supabaseUrl || config.supabaseUrl || null,
-    anonKey: business.supabaseAnonKey || config.supabaseAnonKey || null,
+    url: configuredUrl,
+    anonKey: configuredKey,
   };
 }
 
@@ -891,6 +1000,9 @@ function getSupabaseClient() {
         persistSession: true,
         autoRefreshToken: true,
         detectSessionInUrl: false,
+      },
+      global: {
+        fetch: createBrowserSupabaseFetch(config.anonKey),
       },
     });
 
@@ -924,6 +1036,9 @@ function getSupabaseOAuthClient() {
         autoRefreshToken: false,
         detectSessionInUrl: false,
         storageKey: OAUTH_PKCE_STORAGE_KEY,
+      },
+      global: {
+        fetch: createBrowserSupabaseFetch(config.anonKey),
       },
     });
   }
@@ -960,6 +1075,7 @@ async function apiFetch(path, options = {}) {
       headers,
       credentials: "same-origin",
       signal: deadline.signal,
+      redirect: "error",
     });
     payload = await response.json().catch((error) => {
       if (deadline.timedOut()) throw error;
@@ -1100,6 +1216,7 @@ async function migrateLegacySessionCookie(path = "") {
       credentials: "same-origin",
       body: "{}",
       signal: deadline.signal,
+      redirect: "error",
     }).then((response) => {
       if (response.ok) window.localStorage.removeItem(AUTH_TOKEN_KEY);
     }).catch(() => null).finally(() => deadline.clear());

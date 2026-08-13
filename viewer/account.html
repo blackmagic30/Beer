@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Account | Pint Path</title>
   <meta name="robots" content="noindex,follow" />
-  <meta name="description" content="Sign in to manage your Pint Path account, submissions, privacy settings, discounts, and contributor progress." />
+  <meta name="description" content="Sign in to manage your Pint Path account, submissions, privacy settings, and contributor progress." />
   <link rel="icon" href="/favicon.ico" sizes="any" />
   <link rel="icon" type="image/png" sizes="48x48" href="/favicon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="/assets/pint-path-icon-192.png" />
@@ -16,7 +16,7 @@
   <meta property="og:image" content="https://pintpath.au/assets/pint-path-logo.png" />
   <link rel="stylesheet" href="./business.css" />
   <script src="./config.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.103.0/dist/umd/supabase.min.js" integrity="sha384-PsnFqJ58vyp7buRfuvdS2SrjRdUYinBv6lWwJXx3xQ17hWefo/UkwXowVBT53ubG" crossorigin="anonymous" referrerpolicy="no-referrer" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.3/dist/umd/supabase.min.js" integrity="sha384-l8ah+VgaWtk1mvOe9VC+OirC6qHFF4yH7l7mKRidV9MSti3E9F463bMp6ZVN4kuC" crossorigin="anonymous" referrerpolicy="no-referrer" defer></script>
   <script src="./business.js" defer></script>
 </head>
 <body>
@@ -27,7 +27,7 @@
       <div class="authIntro panel">
         <div class="eyebrow">Pint Path account</div>
         <h1>Sign in to Pint Path</h1>
-        <p class="lead">Save venues and night plans, manage premium access, or contribute current Melbourne beer data.</p>
+        <p class="lead">Save venues and night plans, manage your account, or contribute current Melbourne beer data.</p>
         <div class="authTrustGrid">
           <div>
             <strong>Private evidence</strong>
@@ -68,7 +68,7 @@
             <div id="webEmailLoginActions" class="actionRow authActions" data-local-email-auth hidden>
               <button class="button button--primary" type="submit">Sign in</button>
             </div>
-            <div id="billingRecoveryPanel" class="notice billingRecoveryPanel" role="status" aria-live="polite" hidden>
+            <div id="billingRecoveryPanel" class="notice billingRecoveryPanel" role="status" aria-live="polite" data-commercial-surface hidden>
               <div>
                 <strong>Billing-only access is available</strong>
                 <span>Your Pint Path access remains suspended, but you can securely manage or cancel an existing subscription without entering the app.</span>
@@ -195,7 +195,7 @@
         </div>
       </section>
 
-      <section id="counterStaffInvitations" class="panel" aria-labelledby="counterStaffInvitationsTitle" hidden>
+      <section id="counterStaffInvitations" class="panel" aria-labelledby="counterStaffInvitationsTitle" data-commercial-surface hidden>
         <div class="sectionHeader">
           <div>
             <div class="eyebrow">Venue access</div>
@@ -206,7 +206,7 @@
         <div id="counterStaffInvitationList" class="list"></div>
       </section>
 
-      <section id="counterStaffAccess" class="panel" aria-labelledby="counterStaffAccessTitle" hidden>
+      <section id="counterStaffAccess" class="panel" aria-labelledby="counterStaffAccessTitle" data-commercial-surface hidden>
         <div class="sectionHeader">
           <div>
             <div class="eyebrow">Active venue access</div>
@@ -226,7 +226,7 @@
           <button id="settingsPrivacyTab" class="settingsNavButton" type="button" role="tab" data-settings-target="privacy" aria-controls="settingsPrivacyPanel" aria-selected="false">Privacy</button>
           <button id="settingsSupportTab" class="settingsNavButton" type="button" role="tab" data-settings-target="support" aria-controls="settingsSupportPanel" aria-selected="false">Support</button>
           <button id="settingsSecurityTab" class="settingsNavButton" type="button" role="tab" data-settings-target="security" aria-controls="settingsSecurityPanel" aria-selected="false">Security</button>
-          <button id="betaTestingNavButton" class="settingsNavButton settingsNavButton--beta" type="button" role="tab" data-settings-target="beta-testing" aria-controls="settingsBetaTestingPanel" aria-selected="false" hidden>Beta tools</button>
+          <button id="betaTestingNavButton" class="settingsNavButton settingsNavButton--beta" type="button" role="tab" data-settings-target="beta-testing" aria-controls="settingsBetaTestingPanel" aria-selected="false" data-commercial-surface hidden>Beta tools</button>
         </nav>
 
         <article id="settingsEmptyPanel" class="panel settingsEmptyPanel">
@@ -283,14 +283,14 @@
               </div>
             </div>
             <section class="accountHighlightsGrid" aria-label="Account highlights">
-              <article class="metricCard accountHeroMetric accountHeroMetric--savings">
+              <article class="metricCard accountHeroMetric accountHeroMetric--savings" data-commercial-surface hidden>
                 <div class="eyebrow">Total saved</div>
                 <div id="savingsMetric" class="metricValue">A$0</div>
                 <p class="helperCopy">Estimated from Pint Path special redemptions logged by venues.</p>
               </article>
 
               <div class="accountSpecialIdentityGrid">
-                <article class="panel discountPassPanel accountDiscountFeature accountHeroMetric accountHeroMetric--special">
+                <article class="panel discountPassPanel accountDiscountFeature accountHeroMetric accountHeroMetric--special" data-commercial-surface hidden>
                   <div class="sectionHeader">
                     <div>
                       <div class="eyebrow">Member special</div>
@@ -356,7 +356,7 @@
           </form>
         </div>
 
-        <div id="settingsBetaTestingPanel" class="settingsPanel" data-settings-panel="beta-testing" role="tabpanel" aria-labelledby="betaTestingNavButton" hidden>
+        <div id="settingsBetaTestingPanel" class="settingsPanel" data-settings-panel="beta-testing" role="tabpanel" aria-labelledby="betaTestingNavButton" data-commercial-surface hidden>
           <section class="panel betaTestingPanel betaTestingShell">
             <div class="betaTestingHeader">
               <div>
@@ -436,7 +436,7 @@
               <div id="rewardVoucherList" class="rewardVoucherList"></div>
             </section>
 
-            <section id="betaFeaturePintPoints" class="betaFeaturePanel" data-beta-feature-panel="pint-points" data-pint-points-feature hidden>
+            <section id="betaFeaturePintPoints" class="betaFeaturePanel" data-beta-feature-panel="pint-points" data-pint-points-feature data-commercial-surface hidden>
               <article class="panel discountPassPanel accountHeroMetric accountHeroMetric--points">
                 <div class="sectionHeader">
                   <div>
@@ -633,7 +633,7 @@
 
     </section>
 
-    <div id="discountPassModal" class="discountPassModal" role="dialog" aria-modal="true" aria-labelledby="discountPassModalTitle" hidden>
+    <div id="discountPassModal" class="discountPassModal" role="dialog" aria-modal="true" aria-labelledby="discountPassModalTitle" data-commercial-surface hidden>
       <button class="discountPassModalBackdrop" type="button" data-close-discount-pass-modal aria-label="Close Pint Path special code"></button>
       <section class="discountPassModalPanel" aria-describedby="discountPassModalDescription">
         <button id="discountPassModalClose" class="discountPassModalClose" type="button" aria-label="Close Pint Path special code" data-close-discount-pass-modal>X</button>
@@ -658,11 +658,13 @@
   </main>
 
   <script>
-    const PINT_POINTS_REWARDS_ENABLED =
+    const COMMERCIAL_LAUNCH_ENABLED =
+      window.MELB_BEER_BOT_VIEWER_CONFIG?.business?.commercialLaunchEnabled === true;
+    const PINT_POINTS_REWARDS_ENABLED = COMMERCIAL_LAUNCH_ENABLED &&
       window.MELB_BEER_BOT_VIEWER_CONFIG?.business?.pintPointsRewardsEnabled === true;
-    const ALCOHOL_GAMIFICATION_ENABLED =
+    const ALCOHOL_GAMIFICATION_ENABLED = COMMERCIAL_LAUNCH_ENABLED &&
       window.MELB_BEER_BOT_VIEWER_CONFIG?.business?.alcoholGamificationEnabled === true;
-    const CONSUMER_PAID_ENROLLMENT_ENABLED =
+    const CONSUMER_PAID_ENROLLMENT_ENABLED = COMMERCIAL_LAUNCH_ENABLED &&
       window.MELB_BEER_BOT_VIEWER_CONFIG?.business?.consumerPaidEnrollmentEnabled === true;
     const WEB_EMAIL_AUTH_ENABLED = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(window.location.hostname);
 
@@ -1310,6 +1312,10 @@
 
     function showBillingRecovery({ providerMode = false, recovery = null } = {}) {
       const panel = $("billingRecoveryPanel");
+      if (!COMMERCIAL_LAUNCH_ENABLED) {
+        panel.hidden = true;
+        return;
+      }
       panel.dataset.providerMode = providerMode ? "true" : "false";
       if (recovery) setBillingRecoveryTargets(recovery);
       panel.hidden = false;
@@ -2192,15 +2198,22 @@
       const ageCopy = result.ageVerification?.copy || "18+ confirmation is required for protected contribution and reward features.";
       const progressPercent = Math.min(100, Math.round((points / threshold) * 100));
       const unlockReached = pointsNeeded <= 0;
-      const isPaidMember = ["premium_monthly", "premium_yearly"].includes(String(account.subscriptionStatus || ""));
+      const isPaidMember = COMMERCIAL_LAUNCH_ENABLED &&
+        ["premium_monthly", "premium_yearly"].includes(String(account.subscriptionStatus || ""));
       const billing = result.billing || {};
       const billingManagementAvailable = billing.managementAvailable === true;
       const billingMode = String(billing.mode || "unlinked");
       const unlockCopy = unlockReached
-        ? "Contributor access is unlocked for this month. You get the same premium map access as a paid user."
-        : `${formatPoints(pointsNeeded)} more approved points unlock the same premium map access as a paid user until month end.`;
+        ? COMMERCIAL_LAUNCH_ENABLED
+          ? "Contributor access is unlocked for this month. You get the same premium map access as a paid user."
+          : "Contributor full-map access is unlocked for this month."
+        : COMMERCIAL_LAUNCH_ENABLED
+          ? `${formatPoints(pointsNeeded)} more approved points unlock the same premium map access as a paid user until month end.`
+          : `${formatPoints(pointsNeeded)} more approved points unlock full-map access until month end.`;
       const metrics = [
-        { label: "Total saved", value: savings, helper: "Estimated from Pint Path discount redemptions logged by venues.", tone: "premium" },
+        ...(COMMERCIAL_LAUNCH_ENABLED
+          ? [{ label: "Total saved", value: savings, helper: "Estimated from Pint Path discount redemptions logged by venues.", tone: "premium" }]
+          : []),
         ...(PINT_POINTS_REWARDS_ENABLED && pintPoints
           ? [{ label: "Pint Points", value: `${pintPoints.available ?? 0}/${pintPoints.threshold ?? 50}`, helper: "Paid alcoholic drinks earn 1 point each. Free pints do not earn points.", tone: "premium" }]
           : []),
@@ -2209,8 +2222,10 @@
         { label: "Pending review", value: pendingCount, helper: "Waiting for reviewer checks before they can affect the public map.", tone: "pending" },
         { label: "Rejected", value: rejectedCount, helper: "Rejected uploads stay private and can guide better future submissions.", tone: "warning" },
         { label: "Trust score", value: `${trustScore}%`, helper: "A working reliability signal for future contributor moderation.", tone: "info" },
-        { label: "Reward eligibility", value: account.ageConfirmedAt ? "18+ confirmed" : "Confirm 18+", helper: ageCopy, tone: account.ageConfirmedAt ? "success" : "pending" },
-        { label: "Account ID", value: accountId, helper: "Your public contributor ID for leaderboard ranking and discount lookup.", tone: "id" },
+        ...(COMMERCIAL_LAUNCH_ENABLED
+          ? [{ label: "Reward eligibility", value: account.ageConfirmedAt ? "18+ confirmed" : "Confirm 18+", helper: ageCopy, tone: account.ageConfirmedAt ? "success" : "pending" }]
+          : []),
+        { label: "Account ID", value: accountId, helper: "Your public contributor ID for approved contribution records.", tone: "id" },
       ];
 
       grid.innerHTML = `
@@ -2238,9 +2253,9 @@
           <div class="accountStatsCardHeader">
             <div>
               <div class="metricLabel">Contributor unlock</div>
-              <h3>Earn premium access</h3>
+              <h3>${COMMERCIAL_LAUNCH_ENABLED ? "Earn premium access" : "Earn full-map access"}</h3>
             </div>
-            <span class="tierBadge ${unlockReached ? "tierBadge--pro" : "tierBadge--plus"}">${unlockReached ? "Unlocked" : "Freemium"}</span>
+            <span class="tierBadge ${unlockReached ? "tierBadge--pro" : "tierBadge--plus"}">${unlockReached ? "Unlocked" : COMMERCIAL_LAUNCH_ENABLED ? "Freemium" : "Free"}</span>
           </div>
           <div class="accountStatsProgressValue">
             <strong>${escapeHtml(formatPoints(points))}</strong>
@@ -3295,6 +3310,11 @@
     function renderCounterStaffInvitations(invitations) {
       const section = $("counterStaffInvitations");
       const list = $("counterStaffInvitationList");
+      if (!COMMERCIAL_LAUNCH_ENABLED) {
+        section.hidden = true;
+        list.innerHTML = "";
+        return;
+      }
       const items = Array.isArray(invitations) ? invitations : [];
       section.hidden = items.length === 0;
       list.innerHTML = items.map((invitation) => `
@@ -3338,6 +3358,11 @@
     function renderCounterStaffAssignments(assignments) {
       const section = $("counterStaffAccess");
       const list = $("counterStaffAccessList");
+      if (!COMMERCIAL_LAUNCH_ENABLED) {
+        section.hidden = true;
+        list.innerHTML = "";
+        return;
+      }
       const items = Array.isArray(assignments)
         ? assignments.filter((assignment) => assignment?.capabilities?.openCounter === true)
         : [];
@@ -3378,7 +3403,9 @@
       syncLegalAcceptanceGate(account);
       renderAccountEmail(account);
       syncAccountDashboardVisualState(result);
-      const planBadge = subscriptionBadge(account);
+      const planBadge = COMMERCIAL_LAUNCH_ENABLED
+        ? subscriptionBadge(account)
+        : { label: "Free account", tone: "free" };
       $("accessBadgeRow").innerHTML = [
         accessBadge(planBadge.label, planBadge.tone),
         result.access.hasFullAccess
@@ -3467,7 +3494,7 @@
         state.checkoutResumeStarted = true;
         MelbBeerBusiness.setStatus(
           $("dashboardStatus"),
-          "New paid subscriptions are not open yet. Existing subscriptions can still be managed or cancelled from Account.",
+          "Paid subscriptions are not available in the current Free release.",
           true,
         );
         return;
@@ -3834,6 +3861,13 @@
 
     window.addEventListener("DOMContentLoaded", async () => {
       $("nav").innerHTML = MelbBeerBusiness.renderNav("account");
+      if (!COMMERCIAL_LAUNCH_ENABLED) {
+        document.querySelectorAll("[data-commercial-surface]").forEach((element) => {
+          element.hidden = true;
+          element.setAttribute("aria-hidden", "true");
+          element.inert = true;
+        });
+      }
       if (WEB_EMAIL_AUTH_ENABLED) {
         document.querySelectorAll("[data-local-email-auth]").forEach((element) => {
           element.hidden = false;
@@ -3993,7 +4027,7 @@
           if (isAccountUiContextCurrent(requestedContext)) setLoading(button, false);
         }
       });
-      $("refreshDiscountPassButton").addEventListener("click", async () => {
+      if (COMMERCIAL_LAUNCH_ENABLED) $("refreshDiscountPassButton").addEventListener("click", async () => {
         const button = $("refreshDiscountPassButton");
         const requestedContext = captureAccountUiContext();
         try {
@@ -4104,6 +4138,9 @@
           productResearchEnabled: false,
           emailUpdatesEnabled: false,
           consentVersion: MelbBeerBusiness.LEGAL_POLICY_VERSION,
+          expectedUpdatedAt: state.accountData?.privacySettings?.consentedAt
+            ? state.accountData.privacySettings.updatedAt || null
+            : null,
         };
         const requestedContext = captureAccountUiContext();
         try {
@@ -4112,6 +4149,7 @@
             body: JSON.stringify(settings),
           });
           if (!isAccountUiContextCurrent(requestedContext)) return;
+          if (state.accountData) state.accountData.privacySettings = result.privacySettings || settings;
           MelbBeerBusiness.setPrivacyPreferenceCache(result.privacySettings || settings);
           MelbBeerBusiness.setStatus($("dashboardStatus"), "Privacy settings saved.");
           await refreshAccount();
@@ -4161,9 +4199,11 @@
               preferredBeers: splitPreferenceList(form.preferredBeers.value),
               preferredUseCases: Array.from(form.querySelectorAll('input[name="preferredUseCases"]:checked')).map((input) => input.value),
               onboardingCompleted: true,
+              expectedUpdatedAt: state.accountData?.preferences?.updatedAt || null,
             }),
           });
           if (!isAccountUiContextCurrent(requestedContext)) return;
+          if (state.accountData) state.accountData.preferences = result.preferences || {};
           renderAccountPreferences(result.preferences || {});
           MelbBeerBusiness.setStatus($("dashboardStatus"), "Discovery preferences saved.");
         } catch (error) {

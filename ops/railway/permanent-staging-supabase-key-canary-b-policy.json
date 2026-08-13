@@ -1,0 +1,55 @@
+{
+  "schemaVersion": "pintpath-permanent-staging-supabase-key-canary-b-policy/v1",
+  "policyId": "permanent-staging-supabase-replacement-key-canary-b",
+  "activationState": "HARD_DISABLED_REVIEW_REQUIRED",
+  "railwayTarget": {
+    "projectId": "48d8c6cd-1c66-4148-874b-20877f48e1a5",
+    "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+    "applicationServiceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
+    "canaryServiceId": "34a312cd-0920-4a7e-90db-8561c1e0746b",
+    "railwayConfigPath": "/railway.supabase-key-canary.toml"
+  },
+  "lifecycle": {
+    "startCommand": "node dist/scripts/staging-supabase-key-canary.js",
+    "restartPolicyType": "NEVER",
+    "publicDomains": [],
+    "tcpProxyPorts": []
+  },
+  "sourceReview": {
+    "entrypointPath": "scripts/staging-supabase-key-canary.ts",
+    "gitCommitSha": null,
+    "entrypointSha256": null,
+    "railwayConfigSha256": null,
+    "imageDigest": null,
+    "reviewRequired": true
+  },
+  "requiredReferences": [
+    {
+      "name": "SUPABASE_URL",
+      "sourceServiceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
+      "sourceVariableName": "SUPABASE_URL"
+    },
+    {
+      "name": "SUPABASE_ANON_KEY",
+      "sourceServiceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
+      "sourceVariableName": "SUPABASE_ANON_KEY"
+    },
+    {
+      "name": "SUPABASE_SERVICE_ROLE_KEY",
+      "sourceServiceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
+      "sourceVariableName": "SUPABASE_SERVICE_ROLE_KEY"
+    }
+  ],
+  "readOnlyChecks": [
+    "staging-auth-settings",
+    "staging-auth-admin-list-limit-one",
+    "staging-private-storage-bucket"
+  ],
+  "reviewLocks": {
+    "deploymentId": null,
+    "gitCommitSha": null,
+    "entrypointSha256": null,
+    "railwayConfigSha256": null,
+    "imageDigest": null
+  }
+}

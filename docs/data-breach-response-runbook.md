@@ -73,6 +73,15 @@ close the incident, and only after the completion checks below.
    revoke the exposed credential/session, block an abusive principal, make a
    bucket private, or roll back to a proven build. Do not wipe a volume, delete
    provider events, rotate unrelated keys, or destroy forensic evidence.
+   A Railway configuration, route, restart, or deployment containment action
+   is permitted only through the tracked mutation-boundary executor after its
+   production-and-staging preflight passes. If that executor is unavailable or
+   the baseline fails, do not use dashboard **Deploy**, Git autodeploy, ordinary
+   redeploy, or commit/discard a staged patch. Contain outside Railway instead:
+   revoke the affected upstream credential/session, disable the affected
+   payment/provider entry point, make the affected bucket/account private, or
+   use an already-approved DNS/WAF kill switch; preserve Railway state and
+   escalate for a reviewed recovery action.
 6. If active exploitation continues, prefer fail-closed maintenance/route
    isolation over continued availability. Keep `/health` and a public status
    message only when that does not expose data or impede containment.
@@ -81,9 +90,14 @@ close the incident, and only after the completion checks below.
 
 ## Provider-specific containment checklist
 
-- **Railway/application:** identify exact project/environment/service/deployment,
-  disable the narrow route or deploy the proven rollback, preserve logs and
-  volume identity, and do not wipe or detach the production volume.
+- **Railway/application:** identify the exact project/environment/service/
+  deployment plus Postgres, private Storage, and Redis identities; preserve
+  logs, then disable the narrow route or deploy the Postgres-compatible
+  rollback only through the tracked mutation-boundary executor. If it cannot
+  pass, use the non-Railway containment controls above and leave Railway
+  unchanged.
+  Do not delete the production database/Storage, detach the sealed migration-
+  source volume, or destroy forensic evidence.
 - **Supabase Auth/Database/Storage:** revoke affected refresh sessions, rotate an
   exposed key using a staged replacement, tighten grants/RLS/bucket policies,
   preserve audit evidence, and test old access JWTs until their expiry. Deleting

@@ -1,12 +1,16 @@
 import crypto from "node:crypto";
 
+import type { SystemStateRecord, SystemStateRepository } from "../db/system-state.repository.js";
 import { logger } from "./logger.js";
 import { redactSecrets } from "./redact.js";
 import { getPreviousZonedMonthKey } from "./time.js";
 
 const RESEND_EMAIL_ENDPOINT = "https://api.resend.com/emails";
-const DELIVERY_STATE_VERSION = 3;
+const DELIVERY_STATE_VERSION = 4;
 const DELIVERY_SEND_LEASE_MS = 15 * 60 * 1000;
+const DELIVERY_SUMMARY_CAS_ATTEMPTS = 8;
+const REPORT_ASSIGNMENT_PAGE_SIZE = 200;
+const MAX_REPORT_ASSIGNMENT_SCAN_ROWS = 10_000;
 
 export type ReportEmailMode = "disabled" | "mock" | "resend";
 export type ReportDeliveryItemStatus = "sending" | "delivered" | "mocked" | "rejected" | "uncertain";
@@ -45,44 +49,45 @@ export class ReportEmailDeliveryError extends Error {
 }
 
 export interface ReportDeliveryRepository {
-  getVenueReportDeliverySettings?(venueId: string): {
-    enabled: boolean;
-    recipients: string[];
-    configured: boolean;
-  };
-  setVenueReportDeliverySettings?(input: {
+  listVenueAssignments(input: {
     venueId: string;
-    enabled: boolean;
-    recipients: string[];
-    updatedBy: string;
-    now: string;
-  }): void;
-  listVenueManagerAssignments(input: {
-    venueId?: string | undefined;
-    activeOnly?: boolean | undefined;
+    status: "active";
     limit: number;
-  }): Array<{
-    userId: string;
-    venueId: string;
-    accessLevel: "manager" | "counter_staff";
-    status: string;
+    cursor: { updatedAt: string; id: string } | null;
+  }): Promise<{
+    assignments: Array<{
+      id: string;
+      userId: string;
+      venueId: string;
+      accessLevel: "manager" | "counter_staff";
+      status: string;
+      updatedAt: string;
+    }>;
+    nextCursor: { updatedAt: string; id: string } | null;
   }>;
-  getAccountById(id: string): {
+}
+
+export interface ReportDeliveryAccountRepository {
+  getAccountById(id: string): Promise<{
     id: string;
     email: string;
     emailVerifiedAt: string | null;
     ageConfirmedAt: string | null;
     role: string;
     status: string;
-  } | null;
-  getSystemState<T extends Record<string, unknown>>(key: string): { value: T; updatedAt: string } | null;
-  setSystemState(key: string, value: Record<string, unknown>, now: string): void;
-  compareAndSetSystemState(
-    key: string,
-    expectedUpdatedAt: string | null,
-    value: Record<string, unknown>,
-    now: string,
-  ): boolean;
+  } | null>;
+}
+
+export type ReportDeliveryStateRepository = Pick<
+  SystemStateRepository,
+  "get" | "set" | "compareAndSet" | "acquireLease" | "releaseLease"
+>;
+
+export interface VenueReportDeliverySettings {
+  enabled: boolean;
+  recipients: string[];
+  updatedAt: string | null;
+  configured: boolean;
 }
 
 export interface ScheduledReportGenerator {
@@ -90,7 +95,7 @@ export interface ScheduledReportGenerator {
     month: string;
     venueId: string | null;
     dryRun: boolean;
-  }): unknown;
+  }): unknown | Promise<unknown>;
 }
 
 interface GeneratedMonthlyReport {
@@ -142,6 +147,8 @@ export interface MonthlyReportDeliveryResult {
 export interface RunMonthlyReportDeliveryInput {
   generator: ScheduledReportGenerator;
   repository: ReportDeliveryRepository;
+  accountRepository: ReportDeliveryAccountRepository;
+  stateRepository: ReportDeliveryStateRepository;
   provider: ReportEmailProvider | null;
   publicBaseUrl: string;
   from: string;
@@ -158,6 +165,9 @@ export interface MonthlyReportSchedulerConfig extends Omit<RunMonthlyReportDeliv
   scheduleDay: number;
   scheduleHour: number;
   checkIntervalMinutes: number;
+  leaseKey: string;
+  leaseOwner: string;
+  leaseDurationMs: number;
   initialDelayMs?: number | undefined;
   now?: (() => Date) | undefined;
   onStatus?: ((status: Record<string, unknown>) => void | Promise<void>) | undefined;
@@ -214,6 +224,51 @@ function deliveryStateKey(month: string, providerMode: ReportEmailMode | "dry-ru
   return `delivery:venue-monthly-report:${providerMode}:${month}:${deliveryScope(venueId)}`;
 }
 
+function venueReportDeliverySettingsKey(venueId: string): string {
+  return `venue-report-delivery:${venueId}`;
+}
+
+export async function getVenueReportDeliverySettings(
+  repository: ReportDeliveryStateRepository,
+  venueId: string,
+): Promise<VenueReportDeliverySettings> {
+  const stored = await repository.get<{ enabled?: unknown; recipients?: unknown }>(
+    venueReportDeliverySettingsKey(venueId),
+  );
+  if (!stored) {
+    return { enabled: true, recipients: [], updatedAt: null, configured: false };
+  }
+  return {
+    enabled: stored.value.enabled !== false,
+    recipients: Array.isArray(stored.value.recipients)
+      ? stored.value.recipients
+          .filter((value): value is string => typeof value === "string")
+          .map((value) => value.trim().toLowerCase())
+          .filter(Boolean)
+          .slice(0, 10)
+      : [],
+    updatedAt: stored.updatedAt,
+    configured: true,
+  };
+}
+
+export async function setVenueReportDeliverySettings(
+  repository: ReportDeliveryStateRepository,
+  input: {
+    venueId: string;
+    enabled: boolean;
+    recipients: string[];
+    updatedBy: string;
+    now: string;
+  },
+): Promise<SystemStateRecord<Record<string, unknown>>> {
+  return repository.set(venueReportDeliverySettingsKey(input.venueId), {
+    enabled: input.enabled,
+    recipients: input.recipients.slice(0, 10),
+    updatedBy: input.updatedBy,
+  }, input.now);
+}
+
 function recipientDeliveryStateKey(
   month: string,
   providerMode: ReportEmailMode | "dry-run",
@@ -222,22 +277,18 @@ function recipientDeliveryStateKey(
   return `delivery:venue-monthly-report:recipient:${providerMode}:${month}:${itemKey}`;
 }
 
-function deliveryLedgerRevision(timestamp: string): string {
-  return `${timestamp}#${crypto.randomUUID()}`;
-}
-
-function getRecipientDeliveryState(
-  repository: ReportDeliveryRepository,
+async function getRecipientDeliveryState(
+  repository: ReportDeliveryStateRepository,
   month: string,
   providerMode: ReportEmailMode | "dry-run",
   itemKey: string,
-): { item: ReportDeliveryStateItem; updatedAt: string } | null {
-  const stored = repository.getSystemState<ReportDeliveryStateItem>(
+): Promise<{ item: ReportDeliveryStateItem; updatedAt: string; revision: string } | null> {
+  const stored = await repository.get<ReportDeliveryStateItem>(
     recipientDeliveryStateKey(month, providerMode, itemKey),
   );
   const value = stored?.value;
   if (!value || value.recipientKey !== itemKey || typeof value.status !== "string") return null;
-  return { item: value, updatedAt: stored.updatedAt };
+  return { item: value, updatedAt: stored.updatedAt, revision: stored.revision };
 }
 
 function normalizeGeneratedReports(value: unknown): { generatedCount: number; reports: GeneratedMonthlyReport[] } {
@@ -258,16 +309,22 @@ function normalizeGeneratedReports(value: unknown): { generatedCount: number; re
   };
 }
 
-function getOrCreateDeliveryState(
-  repository: ReportDeliveryRepository,
+async function getDeliveryState(
+  repository: ReportDeliveryStateRepository,
   month: string,
   providerMode: ReportEmailMode | "dry-run",
   venueId: string | null | undefined,
   now: string,
-): { key: string; state: ReportDeliveryState } {
+): Promise<{
+  key: string;
+  state: ReportDeliveryState;
+  revision: string | null;
+  recordUpdatedAt: string | null;
+}> {
   const scope = deliveryScope(venueId);
   const key = deliveryStateKey(month, providerMode, venueId);
-  const stored = repository.getSystemState<ReportDeliveryState>(key)?.value;
+  const record = await repository.get<ReportDeliveryState>(key);
+  const stored = record?.value;
   if (
     stored &&
     stored.version === DELIVERY_STATE_VERSION &&
@@ -276,11 +333,18 @@ function getOrCreateDeliveryState(
     stored.scope === scope &&
     isRecord(stored.items)
   ) {
-    return { key, state: stored };
+    return {
+      key,
+      state: structuredClone(stored),
+      revision: record.revision,
+      recordUpdatedAt: record.updatedAt,
+    };
   }
 
   return {
     key,
+    revision: record?.revision ?? null,
+    recordUpdatedAt: record?.updatedAt ?? null,
     state: {
       version: DELIVERY_STATE_VERSION,
       month,
@@ -295,9 +359,51 @@ function getOrCreateDeliveryState(
   };
 }
 
-function persistDeliveryState(repository: ReportDeliveryRepository, key: string, state: ReportDeliveryState, now: string): void {
-  state.updatedAt = now;
-  repository.setSystemState(key, state, now);
+async function mergeDeliverySummary(input: {
+  repository: ReportDeliveryStateRepository;
+  key: string;
+  month: string;
+  providerMode: ReportEmailMode | "dry-run";
+  venueId: string | null | undefined;
+  generatedCount: number;
+  observedItems: ReadonlyMap<string, ReportDeliveryStateItem>;
+  completedAt: string | null;
+  now: string;
+}): Promise<ReportDeliveryState> {
+  for (let attempt = 0; attempt < DELIVERY_SUMMARY_CAS_ATTEMPTS; attempt += 1) {
+    const current = await getDeliveryState(
+      input.repository,
+      input.month,
+      input.providerMode,
+      input.venueId,
+      input.now,
+    );
+    const mergedAt = current.recordUpdatedAt && current.recordUpdatedAt > input.now
+      ? current.recordUpdatedAt
+      : input.now;
+    const merged: ReportDeliveryState = {
+      ...current.state,
+      version: DELIVERY_STATE_VERSION,
+      month: input.month,
+      providerMode: input.providerMode,
+      scope: deliveryScope(input.venueId),
+      generatedCount: Math.max(current.state.generatedCount, input.generatedCount),
+      updatedAt: mergedAt,
+      completedAt: input.completedAt,
+      items: {
+        ...current.state.items,
+        ...Object.fromEntries(input.observedItems),
+      },
+    };
+    const persisted = await input.repository.compareAndSet(
+      input.key,
+      current.revision,
+      merged,
+      mergedAt,
+    );
+    if (persisted) return persisted.value;
+  }
+  throw new Error("Monthly report delivery summary changed too often to merge safely.");
 }
 
 function buildPortalUrl(publicBaseUrl: string, report: GeneratedMonthlyReport): string {
@@ -483,6 +589,39 @@ export function createMockReportEmailProvider(): ReportEmailProvider {
   };
 }
 
+async function listActiveReportAssignments(
+  repository: ReportDeliveryRepository,
+  venueId: string,
+): Promise<Awaited<ReturnType<ReportDeliveryRepository["listVenueAssignments"]>>["assignments"]> {
+  const assignments: Awaited<ReturnType<ReportDeliveryRepository["listVenueAssignments"]>>["assignments"] = [];
+  const seenIds = new Set<string>();
+  let cursor: { updatedAt: string; id: string } | null = null;
+  while (assignments.length < MAX_REPORT_ASSIGNMENT_SCAN_ROWS) {
+    const page = await repository.listVenueAssignments({
+      venueId,
+      status: "active",
+      limit: Math.min(REPORT_ASSIGNMENT_PAGE_SIZE, MAX_REPORT_ASSIGNMENT_SCAN_ROWS - assignments.length),
+      cursor,
+    });
+    for (const assignment of page.assignments) {
+      if (seenIds.has(assignment.id)) {
+        throw new Error("Venue report assignment pagination returned a duplicate row.");
+      }
+      seenIds.add(assignment.id);
+      assignments.push(assignment);
+    }
+    if (!page.nextCursor) return assignments;
+    if (
+      page.assignments.length === 0
+      || (cursor?.updatedAt === page.nextCursor.updatedAt && cursor.id === page.nextCursor.id)
+    ) {
+      throw new Error("Venue report assignment pagination did not make progress.");
+    }
+    cursor = page.nextCursor;
+  }
+  throw new Error(`Venue report assignments exceed the safe ${MAX_REPORT_ASSIGNMENT_SCAN_ROWS}-row limit.`);
+}
+
 export async function runMonthlyReportDelivery(input: RunMonthlyReportDeliveryInput): Promise<MonthlyReportDeliveryResult> {
   const nowDate = input.now ?? new Date();
   const now = nowDate.toISOString();
@@ -498,7 +637,13 @@ export async function runMonthlyReportDelivery(input: RunMonthlyReportDeliveryIn
   }
 
   const providerMode = input.provider?.mode ?? (dryRun ? "dry-run" : "disabled");
-  const { key, state } = getOrCreateDeliveryState(input.repository, month, providerMode, input.venueId, now);
+  const { key, state } = await getDeliveryState(
+    input.stateRepository,
+    month,
+    providerMode,
+    input.venueId,
+    now,
+  );
   const result: MonthlyReportDeliveryResult = {
     month,
     dryRun,
@@ -516,15 +661,7 @@ export async function runMonthlyReportDelivery(input: RunMonthlyReportDeliveryIn
     alreadyCompleted: false,
     stateKey: key,
   };
-  if (!dryRun && !input.venueId && !input.retryRejected && state.completedAt) {
-    return {
-      ...result,
-      alreadyCompleted: true,
-      skippedPreviouslyProcessedCount: Object.keys(state.items).length,
-    };
-  }
-
-  const generated = normalizeGeneratedReports(input.generator.generateScheduledVenueMonthlyReports({
+  const generated = normalizeGeneratedReports(await input.generator.generateScheduledVenueMonthlyReports({
     month,
     venueId: input.venueId ?? null,
     dryRun,
@@ -538,21 +675,18 @@ export async function runMonthlyReportDelivery(input: RunMonthlyReportDeliveryIn
   result.generatedCount = generated.generatedCount;
 
   const currentRecipientKeys = new Set<string>();
+  const observedItems = new Map<string, ReportDeliveryStateItem>();
   for (const report of generated.reports) {
     const eligible = new Map<string, { email: string }>();
-    const deliverySettings = input.repository.getVenueReportDeliverySettings?.(report.barId);
+    const deliverySettings = await getVenueReportDeliverySettings(input.stateRepository, report.barId);
     const verifiedManagers = new Map<string, { email: string }>();
-    const assignments = input.repository.listVenueManagerAssignments({
-      venueId: report.barId,
-      activeOnly: true,
-      limit: -1,
-    });
+    const assignments = await listActiveReportAssignments(input.repository, report.barId);
     for (const assignment of assignments) {
       if (assignment.accessLevel !== "manager") {
         result.skippedCounterStaffCount += 1;
         continue;
       }
-      const account = input.repository.getAccountById(assignment.userId);
+      const account = await input.accountRepository.getAccountById(assignment.userId);
       if (!account || account.status !== "active") continue;
       if (
         account.role !== "venue_manager" ||
@@ -574,22 +708,13 @@ export async function runMonthlyReportDelivery(input: RunMonthlyReportDeliveryIn
         if (verified) eligible.set(normalizedEmail, verified);
       }
       if (!dryRun && eligible.size !== deliverySettings.recipients.length) {
-        if (input.repository.setVenueReportDeliverySettings) {
-          input.repository.setVenueReportDeliverySettings({
-            venueId: report.barId,
-            enabled: eligible.size > 0,
-            recipients: [...eligible.keys()],
-            updatedBy: "system:recipient-validation",
-            now,
-          });
-        } else {
-          input.repository.setSystemState(`venue-report-delivery:${report.barId}`, {
-            enabled: eligible.size > 0,
-            recipients: [...eligible.keys()],
-            updatedBy: "system:recipient-validation",
-            scrubbedReason: "recipient_no_longer_active_verified_manager",
-          }, now);
-        }
+        await setVenueReportDeliverySettings(input.stateRepository, {
+          venueId: report.barId,
+          enabled: eligible.size > 0,
+          recipients: [...eligible.keys()],
+          updatedBy: "system:recipient-validation",
+          now,
+        });
       }
     } else if (deliverySettings?.enabled !== false) {
       for (const [email, recipient] of verifiedManagers) eligible.set(email, recipient);
@@ -604,9 +729,14 @@ export async function runMonthlyReportDelivery(input: RunMonthlyReportDeliveryIn
       result.eligibleRecipientCount += 1;
       const itemKey = recipientKey(report.barId, recipient.email);
       currentRecipientKeys.add(itemKey);
-      let storedRecipient = getRecipientDeliveryState(input.repository, month, providerMode, itemKey);
-      let existing = storedRecipient?.item ?? state.items[itemKey];
-      if (existing) state.items[itemKey] = existing;
+      let storedRecipient = await getRecipientDeliveryState(
+        input.stateRepository,
+        month,
+        providerMode,
+        itemKey,
+      );
+      let existing = storedRecipient?.item;
+      if (existing) observedItems.set(itemKey, existing);
       if (existing?.status === "sending") {
         const startedAt = Date.parse(existing.startedAt);
         const leaseIsFresh = Number.isFinite(startedAt) && nowDate.getTime() - startedAt < DELIVERY_SEND_LEASE_MS;
@@ -621,26 +751,33 @@ export async function runMonthlyReportDelivery(input: RunMonthlyReportDeliveryIn
           completedAt: now,
           error: "A previous send lease expired without a provider result; reconcile it before retrying.",
         };
-        const uncertainRevision = deliveryLedgerRevision(now);
-        const transitioned = input.repository.compareAndSetSystemState(
+        const transitioned = await input.stateRepository.compareAndSet(
           recipientDeliveryStateKey(month, providerMode, itemKey),
-          storedRecipient?.updatedAt ?? null,
+          storedRecipient?.revision ?? null,
           uncertainItem,
-          uncertainRevision,
+          now,
         );
         if (!transitioned) {
-          storedRecipient = getRecipientDeliveryState(input.repository, month, providerMode, itemKey);
+          storedRecipient = await getRecipientDeliveryState(
+            input.stateRepository,
+            month,
+            providerMode,
+            itemKey,
+          );
           existing = storedRecipient?.item ?? existing;
-          state.items[itemKey] = existing;
+          observedItems.set(itemKey, existing);
           result.inProgressCount += existing.status === "sending" ? 1 : 0;
           result.uncertainCount += existing.status === "uncertain" ? 1 : 0;
           result.skippedPreviouslyProcessedCount += 1;
           continue;
         }
-        existing = uncertainItem;
-        storedRecipient = { item: uncertainItem, updatedAt: uncertainRevision };
-        state.items[itemKey] = uncertainItem;
-        persistDeliveryState(input.repository, key, state, now);
+        existing = transitioned.value;
+        storedRecipient = {
+          item: transitioned.value,
+          updatedAt: transitioned.updatedAt,
+          revision: transitioned.revision,
+        };
+        observedItems.set(itemKey, transitioned.value);
       }
       const canRetry = input.retryRejected && existing?.status === "rejected";
       if (existing && !canRetry) {
@@ -669,100 +806,142 @@ export async function runMonthlyReportDelivery(input: RunMonthlyReportDeliveryIn
         providerMessageId: null,
         error: null,
       };
-      const claimRevision = deliveryLedgerRevision(startedAt);
-      const claimed = input.repository.compareAndSetSystemState(
+      const claimed = await input.stateRepository.compareAndSet(
         recipientDeliveryStateKey(month, providerMode, itemKey),
-        storedRecipient?.updatedAt ?? null,
+        storedRecipient?.revision ?? null,
         sendingItem,
-        claimRevision,
+        startedAt,
       );
       if (!claimed) {
-        const claimedByOther = getRecipientDeliveryState(input.repository, month, providerMode, itemKey)?.item;
-        if (claimedByOther) state.items[itemKey] = claimedByOther;
+        const claimedByOther = (await getRecipientDeliveryState(
+          input.stateRepository,
+          month,
+          providerMode,
+          itemKey,
+        ))?.item;
+        if (claimedByOther) observedItems.set(itemKey, claimedByOther);
         result.inProgressCount += claimedByOther?.status === "sending" ? 1 : 0;
         result.rejectedCount += claimedByOther?.status === "rejected" ? 1 : 0;
         result.uncertainCount += claimedByOther?.status === "uncertain" ? 1 : 0;
         result.skippedPreviouslyProcessedCount += 1;
         continue;
       }
-      state.items[itemKey] = sendingItem;
-      persistDeliveryState(input.repository, key, state, startedAt);
+      observedItems.set(itemKey, claimed.value);
 
       try {
         const delivered = await input.provider!.send(message);
         const completedAt = new Date().toISOString();
         const status = input.provider!.mode === "mock" ? "mocked" : "delivered";
-        state.items[itemKey] = {
-          ...state.items[itemKey]!,
+        const completedItem: ReportDeliveryStateItem = {
+          ...claimed.value,
           status,
           completedAt,
           providerMessageId: delivered.id,
           error: null,
         };
-        const recorded = input.repository.compareAndSetSystemState(
+        const recorded = await input.stateRepository.compareAndSet(
           recipientDeliveryStateKey(month, providerMode, itemKey),
-          claimRevision,
-          state.items[itemKey]!,
-          deliveryLedgerRevision(completedAt),
+          claimed.revision,
+          completedItem,
+          completedAt,
         );
         if (!recorded) {
-          state.items[itemKey] = getRecipientDeliveryState(input.repository, month, providerMode, itemKey)?.item ?? {
-            ...state.items[itemKey]!,
+          const current = await getRecipientDeliveryState(
+            input.stateRepository,
+            month,
+            providerMode,
+            itemKey,
+          );
+          observedItems.set(itemKey, current?.item ?? {
+            ...completedItem,
             status: "uncertain",
             providerMessageId: null,
             error: "Provider responded, but the atomic delivery ledger could not record the result.",
-          };
+          });
           result.uncertainCount += 1;
-          persistDeliveryState(input.repository, key, state, completedAt);
           continue;
         }
-        persistDeliveryState(input.repository, key, state, completedAt);
+        observedItems.set(itemKey, recorded.value);
         if (status === "mocked") result.mockedCount += 1;
         else result.deliveredCount += 1;
       } catch (error) {
         const completedAt = new Date().toISOString();
         const status = error instanceof ReportEmailDeliveryError ? error.outcome : "uncertain";
-        state.items[itemKey] = {
-          ...state.items[itemKey]!,
+        const failedItem: ReportDeliveryStateItem = {
+          ...claimed.value,
           status,
           completedAt,
           providerMessageId: null,
           error: safeErrorMessage(error),
         };
-        const recorded = input.repository.compareAndSetSystemState(
+        const recorded = await input.stateRepository.compareAndSet(
           recipientDeliveryStateKey(month, providerMode, itemKey),
-          claimRevision,
-          state.items[itemKey]!,
-          deliveryLedgerRevision(completedAt),
+          claimed.revision,
+          failedItem,
+          completedAt,
         );
         if (!recorded) {
-          state.items[itemKey] = getRecipientDeliveryState(input.repository, month, providerMode, itemKey)?.item ?? {
-            ...state.items[itemKey]!,
+          const current = await getRecipientDeliveryState(
+            input.stateRepository,
+            month,
+            providerMode,
+            itemKey,
+          );
+          observedItems.set(itemKey, current?.item ?? {
+            ...failedItem,
             status: "uncertain",
             error: "The atomic delivery ledger changed before the provider failure could be recorded.",
-          };
+          });
+        } else {
+          observedItems.set(itemKey, recorded.value);
         }
-        persistDeliveryState(input.repository, key, state, completedAt);
-        if (state.items[itemKey]!.status === "rejected") result.rejectedCount += 1;
+        if (observedItems.get(itemKey)?.status === "rejected") result.rejectedCount += 1;
         else result.uncertainCount += 1;
       }
     }
   }
 
-  for (const itemKey of Object.keys(state.items)) {
-    if (!currentRecipientKeys.has(itemKey)) delete state.items[itemKey];
-  }
-
   if (!dryRun) {
-    state.generatedCount = generated.generatedCount;
-    const hasUnresolvedItems = Object.values(state.items)
+    await Promise.all([...currentRecipientKeys].map(async (itemKey) => {
+      const current = await getRecipientDeliveryState(
+        input.stateRepository,
+        month,
+        providerMode,
+        itemKey,
+      );
+      if (current) observedItems.set(itemKey, current.item);
+    }));
+    const currentItems = [...currentRecipientKeys]
+      .map((itemKey) => observedItems.get(itemKey))
+      .filter((item): item is ReportDeliveryStateItem => Boolean(item));
+    const hasUnresolvedItems = currentItems
       .some((item) => ["sending", "rejected", "uncertain"].includes(item.status));
     const hasPendingEligibility = generated.generatedCount === 0 ||
       result.skippedNoEligibleRecipientCount > 0 ||
       result.skippedUnverifiedAccountCount > 0;
     const hasActiveSend = result.inProgressCount > 0;
-    state.completedAt = hasUnresolvedItems || hasPendingEligibility || hasActiveSend ? null : new Date().toISOString();
-    persistDeliveryState(input.repository, key, state, state.completedAt ?? new Date().toISOString());
+    const allCurrentRecipientsSucceeded = currentRecipientKeys.size > 0
+      && currentItems.length === currentRecipientKeys.size
+      && currentItems.every((item) => item.status === "delivered" || item.status === "mocked");
+    const completedAt = hasUnresolvedItems || hasPendingEligibility || hasActiveSend || !allCurrentRecipientsSucceeded
+      ? null
+      : new Date().toISOString();
+    const summaryNow = completedAt ?? new Date().toISOString();
+    await mergeDeliverySummary({
+      repository: input.stateRepository,
+      key,
+      month,
+      providerMode,
+      venueId: input.venueId,
+      generatedCount: generated.generatedCount,
+      observedItems,
+      completedAt,
+      now: summaryNow,
+    });
+    result.alreadyCompleted = allCurrentRecipientsSucceeded
+      && result.deliveredCount === 0
+      && result.mockedCount === 0
+      && result.skippedPreviouslyProcessedCount >= currentRecipientKeys.size;
   }
 
   return result;
@@ -791,6 +970,7 @@ export function isMonthlyReportDeliveryDue(input: {
 export function scheduleMonthlyReportDelivery(config: MonthlyReportSchedulerConfig): { stop: () => Promise<void>; runNow: () => Promise<void> } {
   let activeRun: Promise<void> | null = null;
   let stopped = false;
+  const schedulerNow = () => config.now?.() ?? new Date();
   const reportStatus = async (status: Record<string, unknown>): Promise<void> => {
     try {
       await config.onStatus?.(status);
@@ -805,7 +985,7 @@ export function scheduleMonthlyReportDelivery(config: MonthlyReportSchedulerConf
     if (stopped) return Promise.resolve();
     if (activeRun) return activeRun;
     const pending = (async () => {
-      const now = config.now?.() ?? new Date();
+      const now = schedulerNow();
       if (!isMonthlyReportDeliveryDue({
         now,
         timezone: config.timezone,
@@ -814,45 +994,65 @@ export function scheduleMonthlyReportDelivery(config: MonthlyReportSchedulerConf
       })) return;
 
       const startedAt = now.toISOString();
-      await reportStatus({ state: "running", startedAt, completedAt: null });
+      const leaseToken = crypto.randomUUID();
+      const acquired = await config.stateRepository.acquireLease({
+        key: config.leaseKey,
+        owner: config.leaseOwner,
+        leaseToken,
+        now: startedAt,
+        leaseUntil: new Date(now.getTime() + config.leaseDurationMs).toISOString(),
+      });
+      if (!acquired) return;
       try {
-        const result = await runMonthlyReportDelivery({
-          generator: config.generator,
-          repository: config.repository,
-          provider: config.provider,
-          publicBaseUrl: config.publicBaseUrl,
-          from: config.from,
-          ...(config.replyTo ? { replyTo: config.replyTo } : {}),
-          timezone: config.timezone,
-          now,
-        });
-        const failed = result.rejectedCount + result.uncertainCount > 0;
-        const pendingRecipients = result.generatedCount === 0 ||
-          result.skippedNoEligibleRecipientCount > 0 ||
-          result.skippedUnverifiedAccountCount > 0 ||
-          result.inProgressCount > 0;
-        await reportStatus({
-          state: failed ? "failed" : pendingRecipients ? "waiting_for_recipients" : "succeeded",
-          startedAt,
-          completedAt: new Date().toISOString(),
-          ...result,
-        });
-        if (failed) {
-          logger.error("Monthly venue report delivery completed with failures", { ...result });
-        } else if (pendingRecipients) {
-          logger.warn("Monthly venue report delivery is waiting for eligible recipients", { ...result });
-        } else if (result.deliveredCount > 0 || result.mockedCount > 0) {
-          logger.info("Monthly venue report delivery completed", { ...result });
+        await reportStatus({ state: "running", startedAt, completedAt: null });
+        try {
+          const result = await runMonthlyReportDelivery({
+            generator: config.generator,
+            repository: config.repository,
+            accountRepository: config.accountRepository,
+            stateRepository: config.stateRepository,
+            provider: config.provider,
+            publicBaseUrl: config.publicBaseUrl,
+            from: config.from,
+            ...(config.replyTo ? { replyTo: config.replyTo } : {}),
+            timezone: config.timezone,
+            now,
+          });
+          const failed = result.rejectedCount + result.uncertainCount > 0;
+          const pendingRecipients = result.generatedCount === 0 ||
+            result.skippedNoEligibleRecipientCount > 0 ||
+            result.skippedUnverifiedAccountCount > 0 ||
+            result.inProgressCount > 0;
+          await reportStatus({
+            state: failed ? "failed" : pendingRecipients ? "waiting_for_recipients" : "succeeded",
+            startedAt,
+            completedAt: schedulerNow().toISOString(),
+            ...result,
+          });
+          if (failed) {
+            logger.error("Monthly venue report delivery completed with failures", { ...result });
+          } else if (pendingRecipients) {
+            logger.warn("Monthly venue report delivery is waiting for eligible recipients", { ...result });
+          } else if (result.deliveredCount > 0 || result.mockedCount > 0) {
+            logger.info("Monthly venue report delivery completed", { ...result });
+          }
+        } catch (error) {
+          const failure = {
+            state: "failed",
+            startedAt,
+            completedAt: schedulerNow().toISOString(),
+            error: safeErrorMessage(error),
+          };
+          await reportStatus(failure);
+          logger.error("Monthly venue report delivery failed", failure);
         }
-      } catch (error) {
-        const failure = {
-          state: "failed",
-          startedAt,
-          completedAt: new Date().toISOString(),
-          error: safeErrorMessage(error),
-        };
-        await reportStatus(failure);
-        logger.error("Monthly venue report delivery failed", failure);
+      } finally {
+        await config.stateRepository.releaseLease({
+          key: config.leaseKey,
+          owner: config.leaseOwner,
+          leaseToken,
+          now: schedulerNow().toISOString(),
+        });
       }
     })();
     activeRun = pending

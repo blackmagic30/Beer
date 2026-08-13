@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import path from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import { isVenueLikelyOpenAt } from "../src/lib/venue-open-hours.js";
@@ -59,5 +62,15 @@ describe("isVenueLikelyOpenAt", () => {
 
   it("returns null when no opening-hours data exists", () => {
     expect(isVenueLikelyOpenAt(null, new Date("2026-04-27T09:00:00.000Z"), timezone)).toBeNull();
+  });
+
+  it("rejects redirects before sending the Google Places API key", () => {
+    const source = fs.readFileSync(
+      path.resolve(process.cwd(), "src/lib/venue-open-hours.ts"),
+      "utf8",
+    );
+    const credentialedFetch = source.slice(source.indexOf("const response = await fetch("));
+    expect(credentialedFetch.indexOf('redirect: "error"'))
+      .toBeLessThan(credentialedFetch.indexOf('"X-Goog-Api-Key"'));
   });
 });

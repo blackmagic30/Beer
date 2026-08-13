@@ -7,11 +7,15 @@ import BetterSqlite3 from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AdminIngestionQueueRepository } from "../src/db/admin-ingestion-queue.repository.js";
-import { BusinessRepository } from "../src/db/business.repository.js";
 import { initializeDatabaseSchema } from "../src/db/database.js";
+import { PublicPriceRepository } from "../src/db/public-price.repository.js";
+import { PublicVenueDirectoryRepository } from "../src/db/public-venue-directory.repository.js";
+import { asAsyncSqliteDatabase } from "../src/db/sql-database.js";
+import { REVIEWED_PRICE_SELECTION_POLICY_SHA256 } from "../src/lib/reviewed-price-selection-policy.js";
 import {
   PRODUCTION_MAP_BASE_POLICY,
   PRODUCTION_SUPABASE_PROJECT_REF,
+  PRODUCTION_SUPABASE_CUSTOM_ORIGIN,
   assertExactSupabaseProjectTarget,
   assertProductionMutationTarget,
   assertReviewedManifestMutationTarget,
@@ -57,19 +61,19 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function createFixture(): {
+async function createFixture(): Promise<{
   database: BetterSqlite3.Database;
   databasePath: string;
   repository: AdminIngestionQueueRepository;
-} {
+}> {
   temporaryRoot = fs.realpathSync(
     fs.mkdtempSync(path.join(os.tmpdir(), "pintpath-price-promotion-")),
   );
   const databasePath = path.join(temporaryRoot, "pint-path.sqlite");
   database = new BetterSqlite3(databasePath);
   initializeDatabaseSchema(database);
-  const repository = new AdminIngestionQueueRepository(database);
-  const created = repository.create({
+  const repository = new AdminIngestionQueueRepository(asAsyncSqliteDatabase(database));
+  const created = await repository.create({
     capturedNotes: "Public regular drinks menu.",
     errorMessage: null,
     extractedBeers: [
@@ -111,7 +115,7 @@ function createFixture(): {
 }
 
 async function createManifest(): Promise<ReviewedPricePromotionManifest> {
-  const fixture = createFixture();
+  const fixture = await createFixture();
   return buildReviewedPricePromotionManifest({
     candidateSha: CANDIDATE_SHA,
     database: fixture.database,
@@ -124,8 +128,8 @@ async function createManifest(): Promise<ReviewedPricePromotionManifest> {
 }
 
 async function createTwoItemManifest(): Promise<ReviewedPricePromotionManifest> {
-  const fixture = createFixture();
-  const created = fixture.repository.create({
+  const fixture = await createFixture();
+  const created = await fixture.repository.create({
     capturedNotes: "Second public regular drinks menu.",
     errorMessage: null,
     extractedBeers: [
@@ -311,8 +315,102 @@ describe("reviewed production price promotion", () => {
     expect(invoked.stderr).toContain("Choose exactly one mode");
   });
 
+  it("hard-disables legacy SQLite mutation modes before parsing poison inputs or touching paths", () => {
+    temporaryRoot = fs.realpathSync(
+      fs.mkdtempSync(path.join(os.tmpdir(), "pintpath-disabled-price-promotion-")),
+    );
+    const databasePath = path.join(temporaryRoot, "poison.sqlite");
+    const manifestPath = path.join(temporaryRoot, "poison-manifest.json");
+    const promotionReceiptPath = path.join(temporaryRoot, "poison-promotion-receipt.json");
+    const dotenvPath = path.join(temporaryRoot, ".env");
+    const applyReceiptPath = path.join(temporaryRoot, "must-not-create-apply-receipt.json");
+    const quarantineReceiptPath = path.join(temporaryRoot, "must-not-create-quarantine-receipt.json");
+    const sentinels = new Map([
+      [databasePath, Buffer.from("database sentinel: do not open or replace\n")],
+      [manifestPath, Buffer.from("manifest sentinel: deliberately invalid JSON\n")],
+      [promotionReceiptPath, Buffer.from("receipt sentinel: deliberately invalid JSON\n")],
+      [dotenvPath, Buffer.from("RESTORE_REHEARSAL_MODE=true\nSUPABASE_URL=poison://dotenv.invalid\n")],
+    ]);
+    for (const [sentinelPath, contents] of sentinels) {
+      fs.writeFileSync(sentinelPath, contents, { mode: 0o600 });
+    }
+    const sentinelMtimes = new Map(
+      [...sentinels].map(([sentinelPath]) => [sentinelPath, fs.statSync(sentinelPath).mtimeMs]),
+    );
+    const poisonEnvironment = {
+      ...process.env,
+      DOTENV_CONFIG_DEBUG: "true",
+      DOTENV_CONFIG_PATH: dotenvPath,
+      NODE_ENV: "test",
+      NODE_PG_FORCE_NATIVE: "true",
+      RESTORE_REHEARSAL_BACKUP_ID: "poison-restore-marker",
+      RESTORE_REHEARSAL_MODE: "true",
+      SUPABASE_MENU_CAPTURE_TABLE: "poison_table",
+      SUPABASE_SERVICE_ROLE_KEY: "poison-not-a-credential",
+      SUPABASE_URL: "poison://must-not-parse.invalid",
+    };
+    const cliPrefix = [
+      path.join(process.cwd(), "node_modules/tsx/dist/cli.mjs"),
+      path.join(process.cwd(), "scripts/promote-reviewed-price-data.ts"),
+    ];
+    const cases = [
+      {
+        args: [
+          "--poison-unsupported-switch",
+          "must-not-parse",
+          "--database",
+          databasePath,
+          "--manifest",
+          manifestPath,
+          "--receipt",
+          applyReceiptPath,
+        ],
+        message: "Legacy SQLite reviewed-price apply is disabled; PostgreSQL promotion is required.",
+        mode: "apply",
+        outputPath: applyReceiptPath,
+      },
+      {
+        args: [
+          "--poison-unsupported-switch",
+          "must-not-parse",
+          "--database",
+          databasePath,
+          "--manifest",
+          manifestPath,
+          "--promotion-receipt",
+          promotionReceiptPath,
+          "--quarantine-receipt",
+          quarantineReceiptPath,
+        ],
+        message: "Legacy SQLite reviewed-price quarantine is disabled; PostgreSQL quarantine is required.",
+        mode: "quarantine",
+        outputPath: quarantineReceiptPath,
+      },
+    ] as const;
+
+    for (const testCase of cases) {
+      const invoked = spawnSync(
+        process.execPath,
+        [...cliPrefix, testCase.mode, ...testCase.args],
+        {
+          cwd: temporaryRoot,
+          encoding: "utf8",
+          env: poisonEnvironment,
+        },
+      );
+      expect(invoked.status).toBe(1);
+      expect(invoked.stdout).toBe("");
+      expect(invoked.stderr.trim()).toBe(testCase.message);
+      expect(fs.existsSync(testCase.outputPath)).toBe(false);
+      for (const [sentinelPath, contents] of sentinels) {
+        expect(fs.readFileSync(sentinelPath)).toEqual(contents);
+        expect(fs.statSync(sentinelPath).mtimeMs).toBe(sentinelMtimes.get(sentinelPath));
+      }
+    }
+  });
+
   it("builds a deterministic exact-ID manifest with the immutable conservative policy", async () => {
-    const fixture = createFixture();
+    const fixture = await createFixture();
     const sourceVerifier = vi.fn(async () => undefined);
     const input = {
       candidateSha: CANDIDATE_SHA,
@@ -329,6 +427,7 @@ describe("reviewed production price promotion", () => {
 
     expect(canonicalJson(first)).toBe(canonicalJson(second));
     expect(first.policy).toEqual(PRODUCTION_MAP_BASE_POLICY);
+    expect(first.policySha256).toBe(REVIEWED_PRICE_SELECTION_POLICY_SHA256);
     expect(first.candidateSha).toBe(CANDIDATE_SHA);
     expect(first.items).toEqual([
       expect.objectContaining({
@@ -355,6 +454,13 @@ describe("reviewed production price promotion", () => {
       origin: `https://${PROJECT_REF}.supabase.co`,
       projectRef: PROJECT_REF,
     });
+    expect(assertExactSupabaseProjectTarget(
+      PRODUCTION_SUPABASE_CUSTOM_ORIGIN,
+      PROJECT_REF,
+    )).toEqual({
+      origin: PRODUCTION_SUPABASE_CUSTOM_ORIGIN,
+      projectRef: PROJECT_REF,
+    });
     expect(() => assertExactSupabaseProjectTarget(
       "https://bbbbbbbbbbbbbbbbbbbb.supabase.co",
       PROJECT_REF,
@@ -363,6 +469,23 @@ describe("reviewed production price promotion", () => {
       `https://${PROJECT_REF}.supabase.co/rest/v1`,
       PROJECT_REF,
     )).toThrow("canonical HTTPS origin");
+    for (const candidate of [
+      ` https://${PROJECT_REF}.supabase.co`,
+      `https://${PROJECT_REF}.supabase.co `,
+      `HTTPS://${PROJECT_REF.toUpperCase()}.SUPABASE.CO`,
+      `https://${PROJECT_REF}.supabase.co:443`,
+      `https://${PROJECT_REF}.supabase.co/`,
+    ]) {
+      expect(() => assertExactSupabaseProjectTarget(candidate, PROJECT_REF)).toThrow(
+        /exact unnormalized canonical HTTPS origin|canonical HTTPS origin/,
+      );
+    }
+    for (const candidate of [` ${PROJECT_REF}`, `${PROJECT_REF} `, PROJECT_REF.toUpperCase()]) {
+      expect(() => assertExactSupabaseProjectTarget(
+        `https://${PROJECT_REF}.supabase.co`,
+        candidate,
+      )).toThrow("exactly 20 lowercase letters or digits");
+    }
     expect(isPrivateOrReservedAddress("127.0.0.1")).toBe(true);
     expect(isPrivateOrReservedAddress("10.1.2.3")).toBe(true);
     expect(isPrivateOrReservedAddress("192.168.1.2")).toBe(true);
@@ -555,9 +678,13 @@ describe("reviewed production price promotion", () => {
       SAVED_AT,
       SAVED_AT,
     );
-    const publicRepository = new BusinessRepository(database!);
-    expect(publicRepository.listVenueManagerPriceRecords(10, VENUE_ID)).toHaveLength(1);
-    expect(publicRepository.listPublicVenueBeerKeys([VENUE_ID]).get(VENUE_ID)).toEqual([
+    const sqlDatabase = asAsyncSqliteDatabase(database!);
+    const publicRepository = new PublicPriceRepository(sqlDatabase);
+    const publicVenueDirectoryRepository = new PublicVenueDirectoryRepository(
+      sqlDatabase,
+    );
+    expect(await publicRepository.listVenueManagerPriceRecords(10, VENUE_ID)).toHaveLength(1);
+    expect((await publicVenueDirectoryRepository.listPublicVenueBeerKeys([VENUE_ID])).get(VENUE_ID)).toEqual([
       "carlton_draft",
     ]);
     const queueBefore = database!.prepare(
@@ -589,9 +716,9 @@ describe("reviewed production price promotion", () => {
     expect(database!.prepare(
       "SELECT * FROM admin_ingestion_queue WHERE id = ?",
     ).get(INGESTION_ID)).toEqual(queueBefore);
-    expect(publicRepository.listLatestPriceRecords(10, VENUE_ID)).toEqual([]);
-    expect(publicRepository.listVenueManagerPriceRecords(10, VENUE_ID)).toEqual([]);
-    expect(publicRepository.listPublicVenueBeerKeys([VENUE_ID]).get(VENUE_ID)).toEqual([]);
+    expect(await publicRepository.listLatestPriceRecords(10, VENUE_ID)).toEqual([]);
+    expect(await publicRepository.listVenueManagerPriceRecords(10, VENUE_ID)).toEqual([]);
+    expect((await publicVenueDirectoryRepository.listPublicVenueBeerKeys([VENUE_ID])).get(VENUE_ID)).toEqual([]);
     expect(database!.prepare(
       `SELECT count(*) AS total
          FROM venue_price_records
@@ -818,8 +945,8 @@ describe("reviewed production price promotion", () => {
   });
 
   it("fails the entire quarantine preflight when one receipt-listed row is incomplete, without partially hiding valid rows", async () => {
-    const fixture = createFixture();
-    const queue = fixture.repository.getById(INGESTION_ID)!;
+    const fixture = await createFixture();
+    const queue = (await fixture.repository.getById(INGESTION_ID))!;
     fixture.database.prepare(
       `UPDATE admin_ingestion_queue
           SET extracted_beers_json = ?,

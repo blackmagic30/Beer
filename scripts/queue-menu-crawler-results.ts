@@ -6,7 +6,9 @@ import { randomUUID } from "node:crypto";
 
 import Database from "better-sqlite3";
 
-import { BeerCatalogRepository } from "../src/db/beer-catalog.repository.js";
+import {
+  resolveBeerNameForSqliteBootstrap,
+} from "../src/db/beer-catalog.repository.js";
 import type {
   AdminIngestionBeerRecord,
   AdminIngestionCrawlerFeedback,
@@ -161,7 +163,7 @@ function mapAvailability(row: ExtractedBeerRow): Pick<
 
 function mapBeerRow(input: {
   row: ExtractedBeerRow;
-  beerCatalogRepository: BeerCatalogRepository | null;
+  beerCatalogDatabase: Database.Database | null;
   now: string;
 }): AdminIngestionBeerRecord {
   const row = input.row;
@@ -170,12 +172,13 @@ function mapBeerRow(input: {
   const priceNumeric = labeledPintPrice?.priceNumeric ?? (Number.isFinite(row.priceNumeric ?? Number.NaN) ? Number(row.priceNumeric) : null);
   const availability = mapAvailability(row);
   const rawName = cleanText(row.name, 120) ?? "Unknown beer";
-  const resolvedBeer = input.beerCatalogRepository?.resolveBeerName({
-    name: rawName,
-    source: "menu_crawler_import",
-    now: input.now,
-    createIfMissing: true,
-  });
+  const resolvedBeer = input.beerCatalogDatabase
+    ? resolveBeerNameForSqliteBootstrap(input.beerCatalogDatabase, {
+        name: rawName,
+        source: "menu_crawler_import",
+        now: input.now,
+      })
+    : null;
   const systemNote =
     resolvedBeer?.created
       ? `Added to system beer catalog as pending review: ${resolvedBeer.name}.`
@@ -382,7 +385,7 @@ ensureQueueTable(db);
 ensureBeerCatalogTables(db);
 const crawlerFeedbackScores = loadCrawlerFeedbackScores(db);
 const importStartedAt = new Date().toISOString();
-const beerCatalogRepository = dryRun ? null : new BeerCatalogRepository(db);
+const beerCatalogDatabase = dryRun ? null : db;
 
 const duplicateQuery = db.prepare(
   `SELECT id
@@ -462,7 +465,7 @@ const queueCandidates = candidates
     const rows = dedupeRows(
       sourceRows(candidate)
         .filter((row) => isUsableRow(row, includePackageOnly, maxPrice))
-        .map((row) => mapBeerRow({ row, beerCatalogRepository, now: importStartedAt })),
+        .map((row) => mapBeerRow({ row, beerCatalogDatabase, now: importStartedAt })),
     );
     return { candidate, rows };
   })

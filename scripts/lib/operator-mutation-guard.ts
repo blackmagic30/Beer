@@ -1,13 +1,15 @@
 const ENABLED_VALUES = new Set(["1", "true", "yes", "on"]);
 const DISABLED_VALUES = new Set(["0", "false", "no", "off"]);
-const RESTORE_RAILWAY_PROJECT_ID = "48d8c6cd-1c66-4148-874b-20877f48e1a5";
-const RESTORE_RAILWAY_ENVIRONMENT_ID = "a4e0f507-d6d3-4df9-a818-ad92c0071a35";
-const RESTORE_SUPABASE_REF = "ibveugyfyzjptyvautlr";
 const RESTORE_MARKER_NAMES = [
   "RESTORE_REHEARSAL_PHASE",
   "RESTORE_REHEARSAL_BACKUP_ID",
   "RESTORE_REHEARSAL_SOURCE_MANIFEST_SHA256",
   "RESTORE_REHEARSAL_RUNTIME_ATTESTATION_SHA256",
+  "RESTORE_REHEARSAL_EXPECTED_RAILWAY_ENVIRONMENT_ID",
+  "RESTORE_REHEARSAL_EXPECTED_RAILWAY_PROJECT_ID",
+  "RESTORE_REHEARSAL_EXPECTED_RAILWAY_SERVICE_ID",
+  "RESTORE_REHEARSAL_EXPECTED_SUPABASE_URL",
+  "RESTORE_REHEARSAL_EXPECTED_REDIS_SERVICE_ID",
   "RESTORE_REHEARSAL_PRODUCTION_SUPABASE_URL",
   "RESTORE_REHEARSAL_BACKUP_SUPABASE_URL",
   "RESTORE_REHEARSAL_REDIS_ENVIRONMENT_ID",
@@ -17,23 +19,63 @@ const RESTORE_MARKER_NAMES = [
   "RESTORE_REHEARSAL_ACCESS_PASSWORD",
 ] as const;
 
+function exactEnvironmentMatch(
+  environment: NodeJS.ProcessEnv,
+  actualName: string,
+  expectedName: string,
+): boolean {
+  const expected = environment[expectedName]?.trim();
+  return Boolean(expected) && environment[actualName]?.trim() === expected;
+}
+
+function exactHttpOriginMatch(actualValue: string | undefined, expectedValue: string | undefined): boolean {
+  const expected = expectedValue?.trim();
+  if (!actualValue?.trim() || !expected) return false;
+
+  try {
+    return new URL(actualValue).origin.toLowerCase() === new URL(expected).origin.toLowerCase();
+  } catch {
+    return false;
+  }
+}
+
 function hasRestoreRehearsalMarkers(environment: NodeJS.ProcessEnv): boolean {
   if (
-    environment.RAILWAY_ENVIRONMENT_ID?.trim() === RESTORE_RAILWAY_ENVIRONMENT_ID ||
-    (
-      environment.RAILWAY_PROJECT_ID?.trim() === RESTORE_RAILWAY_PROJECT_ID &&
-      environment.RAILWAY_ENVIRONMENT_NAME?.trim().toLowerCase() === "staging"
+    exactEnvironmentMatch(
+      environment,
+      "RAILWAY_ENVIRONMENT_ID",
+      "RESTORE_REHEARSAL_EXPECTED_RAILWAY_ENVIRONMENT_ID",
+    ) ||
+    exactEnvironmentMatch(
+      environment,
+      "RAILWAY_PROJECT_ID",
+      "RESTORE_REHEARSAL_EXPECTED_RAILWAY_PROJECT_ID",
+    ) ||
+    exactEnvironmentMatch(
+      environment,
+      "RAILWAY_SERVICE_ID",
+      "RESTORE_REHEARSAL_EXPECTED_RAILWAY_SERVICE_ID",
+    ) ||
+    exactEnvironmentMatch(
+      environment,
+      "RESTORE_REHEARSAL_REDIS_SERVICE_ID",
+      "RESTORE_REHEARSAL_EXPECTED_REDIS_SERVICE_ID",
+    ) ||
+    exactHttpOriginMatch(
+      environment.SUPABASE_URL,
+      environment.RESTORE_REHEARSAL_EXPECTED_SUPABASE_URL,
     )
   ) {
     return true;
   }
+
+  // Any configured restore pin or marker keeps containment enabled even when
+  // the current identity is missing or mismatched. The startup validator owns
+  // the exact-match diagnostics; operator scripts must fail closed first.
   if (RESTORE_MARKER_NAMES.some((name) => Boolean(environment[name]?.trim()))) {
     return true;
   }
   if (environment.REDIS_KEY_NAMESPACE?.trim().startsWith("pint-path:restore:")) {
-    return true;
-  }
-  if (environment.SUPABASE_URL?.trim().toLowerCase().includes(`${RESTORE_SUPABASE_REF}.supabase.co`)) {
     return true;
   }
   return [environment.DATABASE_PATH, environment.SOURCE_EVIDENCE_STORAGE_DIR]

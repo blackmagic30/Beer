@@ -3,6 +3,9 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { BusinessRepository } from "../src/db/business.repository.js";
 import { initializeDatabaseSchema } from "../src/db/database.js";
+import { PublicPriceRepository } from "../src/db/public-price.repository.js";
+import { asAsyncSqliteDatabase } from "../src/db/sql-database.js";
+import { VenueInventoryRepository } from "../src/db/venue-inventory.repository.js";
 import {
   buildManualBeerEntry,
   buildManualVenueCaptureRow,
@@ -247,6 +250,8 @@ describe("manual capture helpers", () => {
     database = new BetterSqlite3(":memory:");
     initializeDatabaseSchema(database);
     const repository = new BusinessRepository(database);
+    const sqlDatabase = asAsyncSqliteDatabase(database);
+    const publicPriceRepository = new PublicPriceRepository(sqlDatabase);
     const service = new AdminService(
       undefined,
       undefined,
@@ -254,7 +259,7 @@ describe("manual capture helpers", () => {
       "venue_menu_captures",
       undefined,
       undefined,
-      database,
+      sqlDatabase,
     );
     const { insertedCaptures, venue } = attachManualCaptureSupabase(service);
 
@@ -282,7 +287,7 @@ describe("manual capture helpers", () => {
     expect(result.inventoryBeerCount).toBe(1);
     expect(result.captureSaved).toBe(true);
     expect(insertedCaptures).toHaveLength(1);
-    expect(repository.listLatestPriceRecords(10, venue.id)).toEqual([
+    expect(await publicPriceRepository.listLatestPriceRecords(10, venue.id)).toEqual([
       expect.objectContaining({
         id: `admin-capture:${venue.id}:carlton-draft:pint`,
         venueId: venue.id,
@@ -304,7 +309,7 @@ describe("manual capture helpers", () => {
       source_evidence_reference: expect.stringMatching(/^manual-capture:/),
       source_evidence_verified_at: expect.any(String),
     });
-    expect(repository.listBarBeers(venue.id)).toEqual([
+    expect(await new VenueInventoryRepository(asAsyncSqliteDatabase(database)).listBarBeers(venue.id)).toEqual([
       expect.objectContaining({
         id: `admin-reviewed:${venue.id}:carlton-draft:pint`,
         barId: venue.id,
@@ -320,6 +325,8 @@ describe("manual capture helpers", () => {
     database = new BetterSqlite3(":memory:");
     initializeDatabaseSchema(database);
     const repository = new BusinessRepository(database);
+    const sqlDatabase = asAsyncSqliteDatabase(database);
+    const publicPriceRepository = new PublicPriceRepository(sqlDatabase);
     const service = new AdminService(
       undefined,
       undefined,
@@ -327,7 +334,7 @@ describe("manual capture helpers", () => {
       "venue_menu_captures",
       undefined,
       undefined,
-      database,
+      sqlDatabase,
     );
     const { insertedCaptures, venue } = attachManualCaptureSupabase(service, {
       menuCaptureError: {
@@ -356,8 +363,8 @@ describe("manual capture helpers", () => {
     })).rejects.toThrow("no live venue data was published");
 
     expect(insertedCaptures).toHaveLength(0);
-    expect(repository.listLatestPriceRecords(10, venue.id)).toEqual([]);
-    expect(repository.listBarBeers(venue.id)).toEqual([]);
+    expect(await publicPriceRepository.listLatestPriceRecords(10, venue.id)).toEqual([]);
+    expect(await new VenueInventoryRepository(asAsyncSqliteDatabase(database)).listBarBeers(venue.id)).toEqual([]);
   });
 
   it("registers private evidence before publishing local rows and leaves no live row on local failure", async () => {
@@ -370,7 +377,7 @@ describe("manual capture helpers", () => {
       "venue_menu_captures",
       undefined,
       undefined,
-      database,
+      asAsyncSqliteDatabase(database),
     );
     const { insertedCaptures, venue } = attachManualCaptureSupabase(service);
     const internals = service as unknown as {

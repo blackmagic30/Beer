@@ -28,7 +28,7 @@ export type MissionMaintenanceStatus<TResult> =
 export interface MissionMaintenanceSchedulerConfig<TResult> {
   run: () => TResult | Promise<TResult>;
   intervalMinutes: number;
-  onStatus?: ((status: MissionMaintenanceStatus<TResult>) => void) | undefined;
+  onStatus?: ((status: MissionMaintenanceStatus<TResult>) => void | Promise<void>) | undefined;
   now?: (() => Date) | undefined;
 }
 
@@ -52,9 +52,9 @@ export function scheduleMissionMaintenance<TResult>(
   let stopped = false;
   let activeRun: Promise<void> | null = null;
   const now = () => config.now?.() ?? new Date();
-  const report = (status: MissionMaintenanceStatus<TResult>) => {
+  const report = async (status: MissionMaintenanceStatus<TResult>): Promise<void> => {
     try {
-      config.onStatus?.(status);
+      await config.onStatus?.(status);
     } catch (error) {
       logger.warn("Mission maintenance status callback failed", {
         error: safeErrorMessage(error),
@@ -69,12 +69,12 @@ export function scheduleMissionMaintenance<TResult>(
 
     const pending = (async () => {
       const startedAt = now().toISOString();
-      report({ state: "running", trigger, startedAt, completedAt: null });
+      await report({ state: "running", trigger, startedAt, completedAt: null });
 
       try {
         const result = await config.run();
         const completedAt = now().toISOString();
-        report({ state: "succeeded", trigger, startedAt, completedAt, result });
+        await report({ state: "succeeded", trigger, startedAt, completedAt, result });
         logger.info("Mission maintenance completed", { trigger, startedAt, completedAt });
       } catch (error) {
         const failure = {
@@ -84,7 +84,7 @@ export function scheduleMissionMaintenance<TResult>(
           completedAt: now().toISOString(),
           error: safeErrorMessage(error),
         };
-        report(failure);
+        await report(failure);
         logger.error("Mission maintenance failed", failure);
       }
     })();

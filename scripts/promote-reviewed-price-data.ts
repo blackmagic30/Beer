@@ -1,5 +1,3 @@
-import "dotenv/config";
-
 import crypto from "node:crypto";
 import dns from "node:dns/promises";
 import fs from "node:fs";
@@ -12,20 +10,29 @@ import { z } from "zod";
 
 import { AdminIngestionQueueRepository } from "../src/db/admin-ingestion-queue.repository.js";
 import type { AdminIngestionQueueRecord } from "../src/db/models.js";
+import type { SqlDatabase } from "../src/db/sql-database.js";
 import { redactSecrets } from "../src/lib/redact.js";
-import { AdminService } from "../src/modules/admin/admin.service.js";
+import { assertSupabaseServerApiKey } from "../src/lib/supabase-key-format.js";
+import {
+  REVIEWED_PRICE_SELECTION_DEFAULT_OPTIONS,
+  REVIEWED_PRICE_SELECTION_POLICY_SHA256,
+  selectPublishableMapBaseRows,
+  type ReviewedPriceSelectionOptions,
+} from "../src/lib/reviewed-price-selection-policy.js";
+import type { AdminService } from "../src/modules/admin/admin.service.js";
 import type { AdminBeerInput } from "../src/modules/admin/admin.schemas.js";
 import { assertOperatorMutationAllowed } from "./lib/operator-mutation-guard.js";
 import { parseStrictArguments } from "./lib/strict-arguments.js";
-import {
-  selectPublishableMapBaseRows,
-  type PublishMapBaseOptions,
-} from "./publish-source-ingestion-map-base.js";
 
 const MANIFEST_KIND = "pintpath-reviewed-price-promotion-manifest";
 const RECEIPT_KIND = "pintpath-reviewed-price-promotion-receipt";
 const QUARANTINE_RECEIPT_KIND = "pintpath-reviewed-price-quarantine-receipt";
+const LEGACY_SQLITE_APPLY_DISABLED_ERROR =
+  "Legacy SQLite reviewed-price apply is disabled; PostgreSQL promotion is required.";
+const LEGACY_SQLITE_QUARANTINE_DISABLED_ERROR =
+  "Legacy SQLite reviewed-price quarantine is disabled; PostgreSQL quarantine is required.";
 export const PRODUCTION_SUPABASE_PROJECT_REF = "jxpubqlmqnnqwadmjgyk";
+export const PRODUCTION_SUPABASE_CUSTOM_ORIGIN = "https://auth.pintpath.au";
 const QUARANTINED_SOURCE_TYPE = "source_ingestion_quarantined";
 const MAX_ITEMS_PER_PROMOTION = 50;
 const MAX_BACKUP_AGE_MS = 30 * 60 * 1000;
@@ -38,14 +45,15 @@ const TRUSTED_PUBLIC_CONFIDENCE = [
   "community_confirmed",
 ] as const;
 
-export const PRODUCTION_MAP_BASE_POLICY: Readonly<PublishMapBaseOptions> = Object.freeze({
-  minOverallConfidence: 0.72,
-  minRowConfidence: 0.82,
-  minPrice: 8,
-  maxPrice: 25,
-  allowHomepage: false,
-  allowSpecialSources: false,
-});
+async function createLegacyQueueDatabase(
+  database: Database.Database,
+): Promise<SqlDatabase> {
+  const { asAsyncSqliteDatabase } = await import("../src/db/sql-database.js");
+  return asAsyncSqliteDatabase(database);
+}
+
+export const PRODUCTION_MAP_BASE_POLICY: Readonly<ReviewedPriceSelectionOptions> =
+  REVIEWED_PRICE_SELECTION_DEFAULT_OPTIONS;
 
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
 const beerSchema = z.object({
@@ -382,9 +390,21 @@ export function assertExactSupabaseProjectTarget(
   supabaseUrlValue: string,
   expectedProjectRefValue: string,
 ): { origin: string; projectRef: string } {
-  const expectedProjectRef = expectedProjectRefValue.trim().toLowerCase();
+  const expectedProjectRef = expectedProjectRefValue;
   if (!/^[a-z0-9]{20}$/.test(expectedProjectRef)) {
     throw new Error("Expected Supabase project ref must be exactly 20 lowercase letters or digits.");
+  }
+
+  if (supabaseUrlValue === PRODUCTION_SUPABASE_CUSTOM_ORIGIN) {
+    if (expectedProjectRef !== PRODUCTION_SUPABASE_PROJECT_REF) {
+      throw new Error(
+        `Supabase project target mismatch. Expected ${expectedProjectRef}; the reviewed production custom origin maps only to ${PRODUCTION_SUPABASE_PROJECT_REF}.`,
+      );
+    }
+    return {
+      origin: PRODUCTION_SUPABASE_CUSTOM_ORIGIN,
+      projectRef: PRODUCTION_SUPABASE_PROJECT_REF,
+    };
   }
 
   let supabaseUrl: URL;
@@ -406,6 +426,11 @@ export function assertExactSupabaseProjectTarget(
   ) {
     throw new Error(
       "SUPABASE_URL must be the canonical HTTPS origin https://<project-ref>.supabase.co with no alias, port, path, query, or fragment.",
+    );
+  }
+  if (supabaseUrlValue !== `https://${match[1]}.supabase.co`) {
+    throw new Error(
+      "SUPABASE_URL must be the exact unnormalized canonical HTTPS origin https://<project-ref>.supabase.co.",
     );
   }
   if (match[1] !== expectedProjectRef) {
@@ -568,11 +593,13 @@ export async function buildReviewedPricePromotionManifest(input: {
 }): Promise<ReviewedPricePromotionManifest> {
   const candidateSha = z.string().regex(/^[a-f0-9]{40}$/).parse(input.candidateSha);
   const ids = assertExactUniqueIds(input.ids);
-  const repository = new AdminIngestionQueueRepository(input.database);
+  const repository = new AdminIngestionQueueRepository(
+    await createLegacyQueueDatabase(input.database),
+  );
   const items: ReviewedPricePromotionManifest["items"] = [];
 
   for (const id of ids) {
-    const queueItem = repository.getById(id);
+    const queueItem = await repository.getById(id);
     if (!queueItem) {
       throw new Error(`Source-ingestion item ${id} was not found.`);
     }
@@ -580,7 +607,10 @@ export async function buildReviewedPricePromotionManifest(input: {
       throw new Error(`Source-ingestion item ${id} is ${queueItem.status}, not pending_review.`);
     }
     assertVenueHasNoTrustedPublicRows(input.database, queueItem.venueId);
-    const selection = selectPublishableMapBaseRows(queueItem, PRODUCTION_MAP_BASE_POLICY);
+    const selection = selectPublishableMapBaseRows(
+      queueItem,
+      PRODUCTION_MAP_BASE_POLICY,
+    );
     if (selection.reasons.length > 0 || selection.beers.length === 0) {
       throw new Error(
         `Source-ingestion item ${id} failed immutable map-base policy: ${selection.reasons.join(", ") || "no rows"}.`,
@@ -614,7 +644,7 @@ export async function buildReviewedPricePromotionManifest(input: {
     items,
     kind: MANIFEST_KIND,
     policy: { ...PRODUCTION_MAP_BASE_POLICY },
-    policySha256: sha256Json(PRODUCTION_MAP_BASE_POLICY),
+    policySha256: REVIEWED_PRICE_SELECTION_POLICY_SHA256,
     rowCount: items.reduce((total, item) => total + item.rowCount, 0),
     sourceSnapshotSha256: sha256Json(items.map(manifestItemAuthority)),
     supabaseOrigin: input.supabaseOrigin,
@@ -632,7 +662,7 @@ export function validateManifestIntegrity(value: unknown): ReviewedPricePromotio
   if (manifest.rowCount !== manifest.items.reduce((total, item) => total + item.rowCount, 0)) {
     throw new Error("Manifest row count does not match its exact item rows.");
   }
-  if (manifest.policySha256 !== sha256Json(PRODUCTION_MAP_BASE_POLICY)) {
+  if (manifest.policySha256 !== REVIEWED_PRICE_SELECTION_POLICY_SHA256) {
     throw new Error("Manifest policy hash does not match the immutable production policy.");
   }
   const ids = manifest.items.map((item) => item.id);
@@ -807,12 +837,12 @@ function verifyPublishedRows(
   });
 }
 
-function preflightManifestItem(
+async function preflightManifestItem(
   database: Database.Database,
   repository: AdminIngestionQueueRepository,
   item: ReviewedPricePromotionManifest["items"][number],
-): AdminIngestionQueueRecord {
-  const queueItem = repository.getById(item.id);
+): Promise<AdminIngestionQueueRecord> {
+  const queueItem = await repository.getById(item.id);
   if (!queueItem) {
     throw new Error("Source-ingestion item no longer exists.");
   }
@@ -831,7 +861,10 @@ function preflightManifestItem(
     throw new Error("Source-ingestion queue item changed after the reviewed manifest was created.");
   }
   assertVenueHasNoTrustedPublicRows(database, queueItem.venueId);
-  const selection = selectPublishableMapBaseRows(queueItem, PRODUCTION_MAP_BASE_POLICY);
+  const selection = selectPublishableMapBaseRows(
+    queueItem,
+    PRODUCTION_MAP_BASE_POLICY,
+  );
   if (
     selection.reasons.length > 0 ||
     selection.beers.length !== item.rows.length ||
@@ -847,16 +880,19 @@ export async function executeReviewedPricePromotion(input: {
   database: Database.Database;
   manifest: ReviewedPricePromotionManifest;
   publisher: PromotionPublisher;
+  queueDatabase?: SqlDatabase;
   sourceVerifier: ReachableSourceVerifier;
 }): Promise<PromotionExecutionResult> {
-  const repository = new AdminIngestionQueueRepository(input.database);
+  const repository = new AdminIngestionQueueRepository(
+    input.queueDatabase ?? await createLegacyQueueDatabase(input.database),
+  );
   const ids = input.manifest.items.map((item) => item.id);
   const beforePublicRows = listPublicRowsForIngestionIds(input.database, ids);
   const failed: PromotionFailure[] = [];
 
   for (const item of input.manifest.items) {
     try {
-      preflightManifestItem(input.database, repository, item);
+      await preflightManifestItem(input.database, repository, item);
       await input.sourceVerifier(item.sourceUrl);
     } catch (error) {
       failed.push({
@@ -883,7 +919,7 @@ export async function executeReviewedPricePromotion(input: {
     try {
       // Repeat the local authority check immediately before this exact write so
       // a concurrent local change after the all-item preflight cannot pass.
-      preflightManifestItem(input.database, repository, item);
+      await preflightManifestItem(input.database, repository, item);
       result = await input.publisher(
         item.id,
         item.rows,
@@ -1551,9 +1587,12 @@ export async function verifyReachablePublicSource(sourceUrl: string): Promise<vo
 }
 
 function requiredEnvironment(name: "SUPABASE_URL" | "SUPABASE_SERVICE_ROLE_KEY"): string {
-  const value = process.env[name]?.trim();
+  const value = process.env[name];
   if (!value) {
     throw new Error(`${name} is required.`);
+  }
+  if (name === "SUPABASE_SERVICE_ROLE_KEY") {
+    assertSupabaseServerApiKey(value, name);
   }
   return value;
 }
@@ -1604,6 +1643,7 @@ const QUARANTINE_ARGUMENTS = new Set([
 ]);
 
 async function runPlan(argv: readonly string[]): Promise<void> {
+  await import("dotenv/config");
   const args = parseStrictArguments(argv, { allowed: PLAN_ARGUMENTS, required: PLAN_ARGUMENTS });
   const databasePath = assertCanonicalAbsoluteFile(args.get("--database")!, "Database path");
   const manifestPath = assertNewCanonicalAbsoluteFile(args.get("--manifest")!, "Manifest path");
@@ -1710,24 +1750,34 @@ async function runApply(argv: readonly string[]): Promise<void> {
         afterPublicRows: emergencyBeforeRows,
         beforePublicRows: emergencyBeforeRows,
       };
-      const repository = new AdminIngestionQueueRepository(database);
+      const queueDatabase = await createLegacyQueueDatabase(database);
+      const repository = new AdminIngestionQueueRepository(queueDatabase);
       let adminService: AdminService | null = null;
       execution = await executeReviewedPricePromotion({
         controls,
         database,
         manifest: loaded.manifest,
+        queueDatabase,
         publisher: async (id, rows, note) => {
           // Construct the mutating service only after every exact manifest item
           // and public source has passed the read-only preflight.
-          adminService ??= new AdminService(
-            repository,
-            target.origin,
-            requiredEnvironment("SUPABASE_SERVICE_ROLE_KEY"),
-            menuCaptureTable,
-            undefined,
-            undefined,
-            database!,
-          );
+          if (!adminService) {
+            const serviceRoleKey = requiredEnvironment(
+              "SUPABASE_SERVICE_ROLE_KEY",
+            );
+            const { AdminService: AdminServiceConstructor } = await import(
+              "../src/modules/admin/admin.service.js"
+            );
+            adminService = new AdminServiceConstructor(
+              repository,
+              target.origin,
+              serviceRoleKey,
+              menuCaptureTable,
+              undefined,
+              undefined,
+              queueDatabase,
+            );
+          }
           const result = await adminService.publishQueuedIngestion(id, { beers: rows, note });
           return { mapPriceRecordCount: result.mapPriceRecordCount, savedAt: result.savedAt };
         },
@@ -1915,17 +1965,15 @@ async function runQuarantine(argv: readonly string[]): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  const [mode, ...argv] = process.argv.slice(2);
-  if (mode === "plan") {
-    await runPlan(argv);
-    return;
-  }
+  const mode = process.argv[2];
   if (mode === "apply") {
-    await runApply(argv);
-    return;
+    throw new Error(LEGACY_SQLITE_APPLY_DISABLED_ERROR);
   }
   if (mode === "quarantine") {
-    await runQuarantine(argv);
+    throw new Error(LEGACY_SQLITE_QUARANTINE_DISABLED_ERROR);
+  }
+  if (mode === "plan") {
+    await runPlan(process.argv.slice(3));
     return;
   }
   throw new Error("Choose exactly one mode: plan, apply, or quarantine.");

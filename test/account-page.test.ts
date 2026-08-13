@@ -4,6 +4,12 @@ import vm from "node:vm";
 
 import { describe, expect, it } from "vitest";
 
+const LEGACY_SUPABASE_ANON_KEY_FIXTURE = [
+  Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" }), "utf8").toString("base64url"),
+  Buffer.from(JSON.stringify({ role: "anon" }), "utf8").toString("base64url"),
+  Buffer.alloc(32, 1).toString("base64url"),
+].join(".");
+
 function accountHtml() {
   return fs.readFileSync(path.resolve(process.cwd(), "viewer/account.html"), "utf8");
 }
@@ -71,6 +77,70 @@ function loadBusinessHelpers() {
       consumeSensitiveAuthReturnPath: () => string | null;
     };
   }).MelbBeerBusiness;
+}
+
+function loadApiFetchRedirectHarness() {
+  const localStorage = new Map<string, string>();
+  const requests: Array<{
+    path: string;
+    options: Record<string, unknown>;
+  }> = [];
+  const context = {
+    AbortController,
+    DOMException,
+    clearTimeout,
+    setTimeout,
+    URL,
+    URLSearchParams,
+    crypto: { randomUUID: () => "test-uuid" },
+    fetch: async (input: string, options: Record<string, unknown> = {}) => {
+      requests.push({ path: String(input), options });
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ ok: true, data: {} }),
+      };
+    },
+    window: {
+      MELB_BEER_BOT_VIEWER_CONFIG: { business: { fieldTestMode: true } },
+      location: {
+        origin: "https://pintpath.au",
+        hostname: "pintpath.au",
+        pathname: "/account.html",
+        search: "",
+      },
+      localStorage: {
+        getItem: (key: string) => localStorage.get(key) || null,
+        setItem: (key: string, value: string) => localStorage.set(key, String(value)),
+        removeItem: (key: string) => localStorage.delete(key),
+        key: (index: number) => Array.from(localStorage.keys())[index] || null,
+        get length() {
+          return localStorage.size;
+        },
+      },
+      sessionStorage: {
+        getItem: () => null,
+        setItem: () => undefined,
+        removeItem: () => undefined,
+      },
+      addEventListener: () => undefined,
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(businessJs(), context);
+  return {
+    helpers: (context.window as unknown as {
+      MelbBeerBusiness: {
+        AUTH_TOKEN_KEY: string;
+        apiFetch: (
+          path: string,
+          options?: Record<string, unknown>,
+        ) => Promise<Record<string, unknown>>;
+      };
+    }).MelbBeerBusiness,
+    requests,
+    localStorage,
+  };
 }
 
 function loadBusinessAuthHarness(options: {
@@ -149,14 +219,17 @@ function loadBusinessAuthHarness(options: {
     DOMException,
     clearTimeout,
     setTimeout,
+    TextDecoder,
     URL,
     URLSearchParams,
+    atob,
+    btoa,
     crypto: { randomUUID: () => "test-uuid" },
     fetch,
     window: {
       MELB_BEER_BOT_VIEWER_CONFIG: {
-        supabaseUrl: "https://example.supabase.co",
-        supabaseAnonKey: "anon-key",
+        supabaseUrl: "https://auth.pintpath.au",
+        supabaseAnonKey: LEGACY_SUPABASE_ANON_KEY_FIXTURE,
         business: { legalPolicyVersion: "2026-07-20" },
       },
       location: {
@@ -281,6 +354,33 @@ function viewerHtmlFiles(directory = path.resolve(process.cwd(), "viewer")): str
 }
 
 describe("account page shell", () => {
+  it("rejects redirects for legacy-session migration and password-bearing API requests", async () => {
+    const harness = loadApiFetchRedirectHarness();
+    harness.localStorage.set(harness.helpers.AUTH_TOKEN_KEY, "legacy-session-token");
+
+    await expect(harness.helpers.apiFetch("/api/business/account/password", {
+      method: "POST",
+      headers: { "X-Pint-Path-Current-Password": "current-password-secret" },
+      body: JSON.stringify({ password: "new-password-secret" }),
+      redirect: "follow",
+    })).resolves.toEqual({});
+
+    expect(harness.requests).toHaveLength(2);
+    expect(harness.requests[0]).toMatchObject({
+      path: "/api/business/auth/session-cookie",
+      options: { redirect: "error" },
+    });
+    expect(harness.requests[1]).toMatchObject({
+      path: "/api/business/account/password",
+      options: {
+        redirect: "error",
+        headers: expect.objectContaining({
+          "X-Pint-Path-Current-Password": "current-password-secret",
+        }),
+      },
+    });
+  });
+
   it("installs Pint Path logo assets and favicon metadata across every viewer page", () => {
     const script = businessJs();
     const css = businessCss();
@@ -469,7 +569,8 @@ describe("account page shell", () => {
     expect(html).toContain("async function resumeCheckoutIfRequested");
     expect(html).toContain("async function reconcileCheckoutReturnIfNeeded");
     expect(html).toContain("if (!CONSUMER_PAID_ENROLLMENT_ENABLED)");
-    expect(html).toContain("Existing subscriptions can still be managed or cancelled from Account.");
+    expect(html).toContain("Paid subscriptions are not available in the current Free release.");
+    expect(html).not.toContain("Existing subscriptions can still be managed or cancelled from Account.");
     expect(html).toContain('MelbBeerBusiness.apiFetch("/api/business/billing/checkout"');
     expect(html).toContain('MelbBeerBusiness.apiFetch("/api/business/billing/checkout/reconcile"');
     expect(html).toContain("Confirm you are 18+ on this account before starting checkout.");
@@ -708,7 +809,7 @@ describe("account page shell", () => {
     expect(html).toContain('id="betaTestingNavButton"');
     expect(html).toContain('data-settings-target="beta-testing"');
     expect(html).toContain('aria-controls="settingsBetaTestingPanel"');
-    expect(html).toContain('data-settings-panel="beta-testing" role="tabpanel" aria-labelledby="betaTestingNavButton" hidden');
+    expect(html).toContain('data-settings-panel="beta-testing" role="tabpanel" aria-labelledby="betaTestingNavButton" data-commercial-surface hidden');
     expect(html).toContain("function showAccountSettingsPanel");
     expect(html).toContain('document.querySelectorAll("[data-settings-target]")');
     expect(html).toContain("showAccountSettingsPanel(button.dataset.settingsTarget)");
@@ -1902,6 +2003,10 @@ describe("account page shell", () => {
     expect(html).toContain("await MelbBeerBusiness.syncSupabaseSession()");
     expect(html).toContain("/api/business/account/privacy-settings");
     expect(html).toContain("consentVersion: MelbBeerBusiness.LEGAL_POLICY_VERSION");
+    expect(html).toContain("expectedUpdatedAt: state.accountData?.privacySettings?.consentedAt");
+    expect(html).toContain("state.accountData.privacySettings = result.privacySettings || settings");
+    expect(html).toContain("expectedUpdatedAt: state.accountData?.preferences?.updatedAt || null");
+    expect(html).toContain("state.accountData.preferences = result.preferences || {}");
     expect(html).toContain("/api/business/auth/logout-all");
     expect(html).toContain("await supabaseClient.auth.getSession()");
     expect(html).toContain("JSON.stringify(accessToken ? { accessToken } : {})");

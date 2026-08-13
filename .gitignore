@@ -19,10 +19,20 @@ viewer/config.js
 exports/
 reports/
 backups/
+postgres-migration-artifacts/
 uploads/
 transcripts/
 call-review/
 *.log
+*.key
+*.pem
+*.p12
+*.pfx
+*.crash
+*.dmp
+*.core
+core
+core.*
 
 # Mobile local build/config/signing files
 apps/android/local.properties

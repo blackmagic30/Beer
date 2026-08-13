@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import crypto from "node:crypto";
 import path from "node:path";
 
 import dotenv from "dotenv";
@@ -6,6 +7,12 @@ import { z } from "zod";
 
 import { isCanonicalProductionRuntime } from "../lib/deployment-environment.js";
 import { parseAccountDeletionNotificationKeyring } from "../lib/account-deletion-notification-worker.js";
+import { OPENAI_MENU_OCR_COST_BOUND_MODEL } from "../lib/external-provider-cost-budget.js";
+import {
+  hasExactLegacySupabaseRoleJwt,
+  isExactSupabaseNewKey,
+  resolveExactOperationalOffsiteBackupBucket,
+} from "../lib/supabase-key-format.js";
 
 dotenv.config({ quiet: true });
 
@@ -68,6 +75,25 @@ const booleanFromEnv = z.preprocess((value) => {
   return value;
 }, z.boolean());
 
+const exactBooleanFromEnv = z.preprocess((value) => {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const normalised = value.trim().toLowerCase();
+    if (normalised === "true") return true;
+    if (normalised === "false") return false;
+  }
+
+  return value;
+}, z.boolean());
+
+const menuOcrModelFromEnv = z.preprocess(
+  sanitizeEnvString,
+  z.enum(["gpt-5.6-sol", "gpt-4.1", OPENAI_MENU_OCR_COST_BOUND_MODEL]),
+);
+
 const demoBillingModeFromEnv = z.preprocess((value) => {
   if (value === undefined || value === null || value === "") {
     return process.env.NODE_ENV === "production" ? false : true;
@@ -83,6 +109,14 @@ const optionalStringFromEnv = z.preprocess((value) => {
   }
   return trimmed.length === 0 ? undefined : trimmed;
 }, z.string().min(1).optional());
+
+const optionalPositiveIntegerFromEnv = z.preprocess((value) => {
+  const trimmed = sanitizeEnvString(value);
+  if (typeof trimmed === "string" && trimmed.length === 0) {
+    return undefined;
+  }
+  return trimmed;
+}, z.coerce.number().int().min(1).optional());
 
 const optionalHttpUrlFromEnv = z.preprocess((value) => {
   const normalised = normalizeHttpUrlString(value);
@@ -101,17 +135,101 @@ const optionalSha256FromEnv = z.preprocess((value) => {
   return trimmed.toLowerCase();
 }, z.string().regex(/^[a-f0-9]{64}$/).optional());
 
-const RESTORE_REHEARSAL_RAILWAY_ENVIRONMENT_ID = "a4e0f507-d6d3-4df9-a818-ad92c0071a35";
-const RESTORE_REHEARSAL_RAILWAY_PROJECT_ID = "48d8c6cd-1c66-4148-874b-20877f48e1a5";
-const RESTORE_REHEARSAL_BEER_SERVICE_ID = "6816c4a2-e392-4ee5-826f-2584cb599ec0";
-const RESTORE_REHEARSAL_REDIS_SERVICE_ID = "d6351cec-fe04-4a6f-8e05-1cc164ea1e73";
-const RESTORE_REHEARSAL_PRODUCTION_SUPABASE_REF = "jxpubqlmqnnqwadmjgyk";
-const RESTORE_REHEARSAL_BACKUP_SUPABASE_REF = "gjjffexmflwtnewtkkiy";
-const RESTORE_REHEARSAL_SUPABASE_REF = "ibveugyfyzjptyvautlr";
-const ACCOUNT_DELETION_REHEARSAL_RAILWAY_ENVIRONMENT_ID = RESTORE_REHEARSAL_RAILWAY_ENVIRONMENT_ID;
-const ACCOUNT_DELETION_REHEARSAL_RAILWAY_PROJECT_ID = RESTORE_REHEARSAL_RAILWAY_PROJECT_ID;
-const ACCOUNT_DELETION_REHEARSAL_BEER_SERVICE_ID = RESTORE_REHEARSAL_BEER_SERVICE_ID;
-const ACCOUNT_DELETION_REHEARSAL_SUPABASE_REF = RESTORE_REHEARSAL_SUPABASE_REF;
+type HostedSupabaseKeyValidationMode =
+  | "permanent-staging-bootstrap"
+  | "permanent-staging-complete"
+  | "account-deletion-rehearsal";
+
+const canonicalProductionSupabaseOrigin = "https://auth.pintpath.au";
+const permanentStagingSupabaseOrigin = "https://bbfibbadwjxzrcdncavy.supabase.co";
+const operationalOffsiteSupabaseOrigin = "https://hfbmhdxrwtihukmixxta.supabase.co";
+
+function assertPublicSupabaseKeySafe(input: {
+  parsedValue: string | undefined;
+  rawValue: string | undefined;
+}): void {
+  if (input.parsedValue === undefined) return;
+  if (
+    input.rawValue === input.parsedValue
+    && (
+      isExactSupabaseNewKey(input.parsedValue, "publishable")
+      || hasExactLegacySupabaseRoleJwt(input.parsedValue, "anon")
+    )
+  ) return;
+  throw new Error(
+    "SUPABASE_ANON_KEY must be an exact sb_publishable_ key or a structurally valid legacy JWT with role=anon; refusing to expose a secret, malformed, or non-anon value through public config.",
+  );
+}
+
+function assertCompatibleSupabaseServiceKey(input: {
+  name: "SUPABASE_SERVICE_ROLE_KEY" | "OFFSITE_BACKUP_SERVICE_ROLE_KEY";
+  parsedValue: string | undefined;
+  rawValue: string | undefined;
+}): void {
+  if (
+    input.parsedValue !== undefined
+    && input.rawValue === input.parsedValue
+    && (
+      isExactSupabaseNewKey(input.parsedValue, "secret")
+      || hasExactLegacySupabaseRoleJwt(input.parsedValue, "service_role")
+    )
+  ) return;
+  throw new Error(
+    `${input.name} must be an exact sb_secret_ key or a structurally valid legacy JWT with role=service_role; no key value is emitted.`,
+  );
+}
+
+function assertHostedSupabaseKeyBoundary(input: {
+  mode: HostedSupabaseKeyValidationMode;
+  primaryUrl: string | undefined;
+  rawPrimaryUrl: string | undefined;
+  anonKey: string | undefined;
+  rawAnonKey: string | undefined;
+  serviceKey: string | undefined;
+  rawServiceKey: string | undefined;
+  offsiteServiceKey: string | undefined;
+  rawOffsiteServiceKey: string | undefined;
+  offsiteUrl: string | undefined;
+  rawOffsiteUrl: string | undefined;
+  rawOffsiteBucket: string | undefined;
+}): void {
+  if (
+    input.primaryUrl !== permanentStagingSupabaseOrigin
+    || input.rawPrimaryUrl !== permanentStagingSupabaseOrigin
+  ) {
+    throw new Error(
+      `Hosted Supabase key validation (${input.mode}) requires SUPABASE_URL to be the exact reviewed permanent-staging HTTPS origin; no configured value is emitted.`,
+    );
+  }
+  const requiredKeys = [
+    ["SUPABASE_ANON_KEY", "publishable", input.anonKey, input.rawAnonKey],
+    ["SUPABASE_SERVICE_ROLE_KEY", "secret", input.serviceKey, input.rawServiceKey],
+  ] as const;
+  for (const [name, format, parsedValue, rawValue] of requiredKeys) {
+    if (
+      parsedValue === undefined
+      || rawValue !== parsedValue
+      || !isExactSupabaseNewKey(parsedValue, format)
+    ) {
+      throw new Error(
+        `Hosted Supabase key validation (${input.mode}) requires ${name} to use the exact sb_${format}_[A-Za-z0-9_-]{20,220} format; no key value is emitted.`,
+      );
+    }
+  }
+
+  const inheritedOffsiteConfiguration = [
+    input.offsiteUrl,
+    input.offsiteServiceKey,
+    input.rawOffsiteUrl,
+    input.rawOffsiteServiceKey,
+    input.rawOffsiteBucket,
+  ].some((value) => value !== undefined && value !== "");
+  if (inheritedOffsiteConfiguration) {
+    throw new Error(
+      `Hosted Supabase key validation (${input.mode}) prohibits OFFSITE_BACKUP_SUPABASE_URL, OFFSITE_BACKUP_SERVICE_ROLE_KEY, and OFFSITE_BACKUP_BUCKET. Permanent staging must not inherit production operational-backup authority; use a separately registered isolated staging destination before enabling an off-site proof. No configured value is emitted.`,
+    );
+  }
+}
 
 function canonicalSupabaseProjectRef(value: string, variableName: string): string {
   const url = new URL(value);
@@ -132,6 +250,281 @@ function canonicalSupabaseProjectRef(value: string, variableName: string): strin
     );
   }
   return match[1]!;
+}
+
+function assertTlsPostgresUrl(value: string | undefined, variableName: string): void {
+  let url: URL;
+  try {
+    url = new URL(value ?? "");
+  } catch {
+    throw new Error(`${variableName} must be a valid TLS Postgres connection URL.`);
+  }
+
+  const sslModes = url.searchParams
+    .getAll("sslmode")
+    .map((sslMode) => sslMode.toLowerCase());
+  if (
+    !["postgres:", "postgresql:"].includes(url.protocol)
+    || !url.hostname
+    || !url.username
+    || !url.pathname
+    || url.pathname === "/"
+    || sslModes.length !== 1
+    || !["require", "verify-ca", "verify-full"].includes(sslModes[0] ?? "")
+    || url.hash
+  ) {
+    throw new Error(
+      `${variableName} must use postgres:// or postgresql:// with a host, application user, database, and sslmode=require, verify-ca, or verify-full.`,
+    );
+  }
+}
+
+function connectionUrlSha256(value: string): string {
+  return crypto.createHash("sha256").update(value, "utf8").digest("hex");
+}
+
+function parseConnectionDigestList(
+  value: string | undefined,
+  variableName: string,
+  minimumCount = 2,
+): string[] {
+  const digests = (value ?? "")
+    .split(",")
+    .map((digest) => digest.trim().toLowerCase())
+    .filter(Boolean);
+  const uniqueDigests = [...new Set(digests)];
+  if (
+    digests.length < minimumCount
+    || uniqueDigests.length !== digests.length
+    || digests.some((digest) => !/^[a-f0-9]{64}$/.test(digest))
+  ) {
+    const minimumLabel = minimumCount === 2 ? "two" : String(minimumCount);
+    throw new Error(
+      `${variableName} must contain at least ${minimumLabel} distinct comma-separated SHA-256 digests for the other registered environments.`,
+    );
+  }
+  return uniqueDigests;
+}
+
+function assertPinnedConnectionIdentity(input: {
+  connectionUrl: string | undefined;
+  expectedDigest: string | undefined;
+  forbiddenDigests: string | undefined;
+  label: string;
+  minimumForbidden?: number;
+}): void {
+  if (!input.connectionUrl || !input.expectedDigest) {
+    throw new Error(
+      `${input.label} requires its live connection URL and protected expected SHA-256 identity pin.`,
+    );
+  }
+  const forbidden = parseConnectionDigestList(
+    input.forbiddenDigests,
+    `PINTPATH_FORBIDDEN_${input.label.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_URL_SHA256S`,
+    input.minimumForbidden ?? 2,
+  );
+  const actual = connectionUrlSha256(input.connectionUrl);
+  if (actual !== input.expectedDigest || forbidden.includes(actual) || forbidden.includes(input.expectedDigest)) {
+    throw new Error(
+      `${input.label} does not match its reviewed environment identity or aliases a forbidden environment.`,
+    );
+  }
+}
+
+const resourceIdentityPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/;
+const unsafeResourceIdentityPattern = /(?:^|[._:-])(?:change[-_]?me|dummy|example|fake|fixture|placeholder|replace(?:[-_]?with)?|test)(?:$|[._:-])/i;
+
+function isReviewedResourceIdentity(value: string): boolean {
+  return resourceIdentityPattern.test(value) && !unsafeResourceIdentityPattern.test(value);
+}
+
+function parseResourceIdentityList(
+  value: string | undefined,
+  variableName: string,
+  minimumCount = 2,
+): string[] {
+  const identities = (value ?? "")
+    .split(",")
+    .map((identity) => identity.trim())
+    .filter(Boolean);
+  const uniqueIdentities = [...new Set(identities)];
+  if (
+    identities.length < minimumCount
+    || uniqueIdentities.length !== identities.length
+    || identities.some((identity) => !isReviewedResourceIdentity(identity))
+  ) {
+    const minimumLabel = minimumCount === 2 ? "two" : String(minimumCount);
+    throw new Error(
+      `${variableName} must contain at least ${minimumLabel} distinct reviewed provider service-instance IDs without fake or placeholder values.`,
+    );
+  }
+  return uniqueIdentities;
+}
+
+function assertPinnedResourceIdentity(input: {
+  actual: string | undefined;
+  expected: string | undefined;
+  forbidden: string | undefined;
+  label: string;
+  minimumForbidden?: number;
+}): void {
+  if (
+    !input.actual
+    || !input.expected
+    || !isReviewedResourceIdentity(input.actual)
+    || !isReviewedResourceIdentity(input.expected)
+  ) {
+    throw new Error(`${input.label} requires valid live and protected expected provider resource IDs.`);
+  }
+  const forbidden = parseResourceIdentityList(
+    input.forbidden,
+    `PINTPATH_FORBIDDEN_${input.label.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_RESOURCE_IDS`,
+    input.minimumForbidden ?? 2,
+  );
+  if (input.actual !== input.expected || forbidden.includes(input.actual) || forbidden.includes(input.expected)) {
+    throw new Error(`${input.label} does not match its reviewed provider resource or aliases a forbidden environment.`);
+  }
+}
+
+function assertForbiddenIdentityPinsAbsent(input: {
+  databaseDigests: string | undefined;
+  databaseResources: string | undefined;
+  redisDigests: string | undefined;
+  redisResources: string | undefined;
+}): void {
+  const configured = [
+    ["PINTPATH_FORBIDDEN_DATABASE_URL_SHA256S", input.databaseDigests],
+    ["PINTPATH_FORBIDDEN_DATABASE_RESOURCE_IDS", input.databaseResources],
+    ["PINTPATH_FORBIDDEN_REDIS_URL_SHA256S", input.redisDigests],
+    ["PINTPATH_FORBIDDEN_REDIS_RESOURCE_IDS", input.redisResources],
+  ].filter(([, value]) => value !== undefined);
+  if (configured.length > 0) {
+    throw new Error(
+      `Permanent-staging identity bootstrap requires sibling identity lists to remain absent until real production and restore service instances exist: ${configured.map(([name]) => name).join(", ")}.`,
+    );
+  }
+}
+
+function assertPermanentStagingSelfPins(input: {
+  databaseExpectedDigest: string | undefined;
+  databaseExpectedResource: string | undefined;
+  databaseStagingDigest: string | undefined;
+  databaseStagingResource: string | undefined;
+  redisExpectedDigest: string | undefined;
+  redisExpectedResource: string | undefined;
+  redisStagingDigest: string | undefined;
+  redisStagingResource: string | undefined;
+}): void {
+  if (
+    !input.databaseExpectedDigest
+    || input.databaseStagingDigest !== input.databaseExpectedDigest
+    || !input.redisExpectedDigest
+    || input.redisStagingDigest !== input.redisExpectedDigest
+    || !input.databaseExpectedResource
+    || input.databaseStagingResource !== input.databaseExpectedResource
+    || !input.redisExpectedResource
+    || input.redisStagingResource !== input.redisExpectedResource
+    || !isReviewedResourceIdentity(input.databaseStagingResource)
+    || !isReviewedResourceIdentity(input.redisStagingResource)
+  ) {
+    throw new Error(
+      "Permanent staging requires its named database and Redis URL/resource pins to exactly match the reviewed live staging service-instance identities.",
+    );
+  }
+}
+
+function assertPermanentStagingExcluded(input: {
+  databaseForbiddenDigests: string | undefined;
+  databaseForbiddenResources: string | undefined;
+  databaseStagingDigest: string | undefined;
+  databaseStagingResource: string | undefined;
+  redisForbiddenDigests: string | undefined;
+  redisForbiddenResources: string | undefined;
+  redisStagingDigest: string | undefined;
+  redisStagingResource: string | undefined;
+}): void {
+  const databaseDigests = parseConnectionDigestList(
+    input.databaseForbiddenDigests,
+    "PINTPATH_FORBIDDEN_DATABASE_URL_SHA256S",
+  );
+  const databaseResources = parseResourceIdentityList(
+    input.databaseForbiddenResources,
+    "PINTPATH_FORBIDDEN_DATABASE_RESOURCE_IDS",
+  );
+  const redisDigests = parseConnectionDigestList(
+    input.redisForbiddenDigests,
+    "PINTPATH_FORBIDDEN_REDIS_URL_SHA256S",
+  );
+  const redisResources = parseResourceIdentityList(
+    input.redisForbiddenResources,
+    "PINTPATH_FORBIDDEN_REDIS_RESOURCE_IDS",
+  );
+  if (
+    !input.databaseStagingDigest
+    || !databaseDigests.includes(input.databaseStagingDigest)
+    || !input.redisStagingDigest
+    || !redisDigests.includes(input.redisStagingDigest)
+    || !input.databaseStagingResource
+    || !isReviewedResourceIdentity(input.databaseStagingResource)
+    || !databaseResources.includes(input.databaseStagingResource)
+    || !input.redisStagingResource
+    || !isReviewedResourceIdentity(input.redisStagingResource)
+    || !redisResources.includes(input.redisStagingResource)
+  ) {
+    throw new Error(
+      "Complete production/restore identity configuration must include the named permanent-staging database and Redis URL/resource pins in its forbidden environment lists.",
+    );
+  }
+}
+
+function assertPermanentStagingRailwayIdentity(input: {
+  expectedProjectId: string | undefined;
+  expectedEnvironmentId: string | undefined;
+  expectedServiceId: string | undefined;
+}): void {
+  const actualProjectId = process.env.RAILWAY_PROJECT_ID?.trim();
+  const actualEnvironmentId = process.env.RAILWAY_ENVIRONMENT_ID?.trim();
+  const actualServiceId = process.env.RAILWAY_SERVICE_ID?.trim();
+  if (
+    !input.expectedProjectId
+    || !input.expectedEnvironmentId
+    || !input.expectedServiceId
+    || !isReviewedResourceIdentity(input.expectedProjectId)
+    || !isReviewedResourceIdentity(input.expectedEnvironmentId)
+    || !isReviewedResourceIdentity(input.expectedServiceId)
+    || !actualProjectId
+    || !isReviewedResourceIdentity(actualProjectId)
+    || !actualEnvironmentId
+    || !isReviewedResourceIdentity(actualEnvironmentId)
+    || !actualServiceId
+    || !isReviewedResourceIdentity(actualServiceId)
+    || actualProjectId !== input.expectedProjectId
+    || actualEnvironmentId !== input.expectedEnvironmentId
+    || actualServiceId !== input.expectedServiceId
+  ) {
+    throw new Error(
+      "Permanent staging must exactly match its protected Railway project/environment/service identity tuple.",
+    );
+  }
+}
+
+function assertRailwayServiceInstanceIdentity(
+  value: string | undefined,
+  railwayEnvironmentId: string | undefined,
+  label: string,
+): void {
+  const parts = value?.split(":") ?? [];
+  if (
+    !railwayEnvironmentId
+    || parts.length !== 3
+    || parts[0] !== "railway"
+    || parts[1] !== railwayEnvironmentId
+    || !isReviewedResourceIdentity(parts[2] ?? "")
+  ) {
+    throw new Error(
+      `${label} must use the environment-specific Railway service-instance identity railway:<environment-id>:<service-id>, not a shared top-level service ID.`,
+    );
+  }
 }
 
 function assertCanonicalRestoreRedisUrl(value: string): void {
@@ -192,6 +585,11 @@ const envSchema = z.object({
   RESTORE_REHEARSAL_BACKUP_ID: optionalStringFromEnv,
   RESTORE_REHEARSAL_SOURCE_MANIFEST_SHA256: optionalSha256FromEnv,
   RESTORE_REHEARSAL_RUNTIME_ATTESTATION_SHA256: optionalSha256FromEnv,
+  RESTORE_REHEARSAL_EXPECTED_RAILWAY_ENVIRONMENT_ID: optionalStringFromEnv,
+  RESTORE_REHEARSAL_EXPECTED_RAILWAY_PROJECT_ID: optionalStringFromEnv,
+  RESTORE_REHEARSAL_EXPECTED_RAILWAY_SERVICE_ID: optionalStringFromEnv,
+  RESTORE_REHEARSAL_EXPECTED_SUPABASE_URL: optionalHttpUrlFromEnv,
+  RESTORE_REHEARSAL_EXPECTED_REDIS_SERVICE_ID: optionalStringFromEnv,
   RESTORE_REHEARSAL_PRODUCTION_SUPABASE_URL: optionalHttpUrlFromEnv,
   RESTORE_REHEARSAL_BACKUP_SUPABASE_URL: optionalHttpUrlFromEnv,
   RESTORE_REHEARSAL_REDIS_ENVIRONMENT_ID: optionalStringFromEnv,
@@ -210,6 +608,18 @@ const envSchema = z.object({
   }, z.string().min(1).optional()),
   PORT: z.coerce.number().int().positive().default(3000),
   PUBLIC_BASE_URL: z.preprocess(sanitizeEnvString, z.string().url()),
+  DATABASE_URL: optionalStringFromEnv,
+  PINTPATH_IDENTITY_REGISTRY_PHASE: z.enum(["staging-bootstrap", "complete"]).default("complete"),
+  PINTPATH_PERMANENT_STAGING_RAILWAY_PROJECT_ID: optionalStringFromEnv,
+  PINTPATH_PERMANENT_STAGING_RAILWAY_ENVIRONMENT_ID: optionalStringFromEnv,
+  PINTPATH_PERMANENT_STAGING_RAILWAY_SERVICE_ID: optionalStringFromEnv,
+  PINTPATH_DATABASE_RESOURCE_ID: optionalStringFromEnv,
+  PINTPATH_EXPECTED_DATABASE_RESOURCE_ID: optionalStringFromEnv,
+  PINTPATH_FORBIDDEN_DATABASE_RESOURCE_IDS: optionalStringFromEnv,
+  PINTPATH_EXPECTED_DATABASE_URL_SHA256: optionalSha256FromEnv,
+  PINTPATH_FORBIDDEN_DATABASE_URL_SHA256S: optionalStringFromEnv,
+  PINTPATH_PERMANENT_STAGING_DATABASE_RESOURCE_ID: optionalStringFromEnv,
+  PINTPATH_PERMANENT_STAGING_DATABASE_URL_SHA256: optionalSha256FromEnv,
   DATABASE_PATH: z.preprocess(sanitizeEnvString, z.string()).default("./data/pint-path.sqlite"),
   TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(4).default(1),
   SUPABASE_URL: optionalHttpUrlFromEnv,
@@ -224,6 +634,10 @@ const envSchema = z.object({
   GOOGLE_MAPS_MAP_ID: optionalStringFromEnv,
   GOOGLE_PLACES_API_KEY: optionalStringFromEnv,
   OPENAI_API_KEY: optionalStringFromEnv,
+  OPENAI_MENU_OCR_MODEL: menuOcrModelFromEnv.default("gpt-5.6-sol"),
+  OPENAI_MENU_OCR_FALLBACK_MODEL: menuOcrModelFromEnv.default("gpt-4.1"),
+  OPENAI_MENU_OCR_REVIEW_PASS: booleanFromEnv.default(true),
+  OPENAI_MENU_OCR_COST_BOUND_MODE: exactBooleanFromEnv.default(false),
   CONTRIBUTOR_UNLOCK_POINTS: z.coerce.number().int().min(1).default(15),
   CONTRIBUTOR_UNLOCK_DAYS: z.coerce.number().int().min(1).default(30),
   SESSION_TTL_DAYS: z.coerce.number().int().min(1).max(90).default(30),
@@ -250,7 +664,20 @@ const envSchema = z.object({
   ACCOUNT_DELETION_NOTICE_KEYRING_JSON: optionalStringFromEnv,
   ACCOUNT_DELETION_NOTICE_CHECK_INTERVAL_MINUTES: z.coerce.number().int().min(5).max(60).default(5),
   ACCOUNT_DELETION_REHEARSAL_ENABLED: booleanFromEnv.default(false),
+  ACCOUNT_DELETION_REHEARSAL_EXPECTED_RAILWAY_ENVIRONMENT_ID: optionalStringFromEnv,
+  ACCOUNT_DELETION_REHEARSAL_EXPECTED_RAILWAY_PROJECT_ID: optionalStringFromEnv,
+  ACCOUNT_DELETION_REHEARSAL_EXPECTED_RAILWAY_SERVICE_ID: optionalStringFromEnv,
+  ACCOUNT_DELETION_REHEARSAL_EXPECTED_SUPABASE_URL: optionalHttpUrlFromEnv,
+  ACCOUNT_DELETION_REHEARSAL_PRODUCTION_SUPABASE_URL: optionalHttpUrlFromEnv,
+  ACCOUNT_DELETION_REHEARSAL_REPLICA_COUNT: optionalPositiveIntegerFromEnv,
   REDIS_URL: optionalStringFromEnv,
+  PINTPATH_REDIS_RESOURCE_ID: optionalStringFromEnv,
+  PINTPATH_EXPECTED_REDIS_RESOURCE_ID: optionalStringFromEnv,
+  PINTPATH_FORBIDDEN_REDIS_RESOURCE_IDS: optionalStringFromEnv,
+  PINTPATH_EXPECTED_REDIS_URL_SHA256: optionalSha256FromEnv,
+  PINTPATH_FORBIDDEN_REDIS_URL_SHA256S: optionalStringFromEnv,
+  PINTPATH_PERMANENT_STAGING_REDIS_RESOURCE_ID: optionalStringFromEnv,
+  PINTPATH_PERMANENT_STAGING_REDIS_URL_SHA256: optionalSha256FromEnv,
   REDIS_KEY_NAMESPACE: optionalStringFromEnv,
   REQUIRE_REDIS_RATE_LIMITING: booleanFromEnv.default(false),
   ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION: booleanFromEnv.default(false),
@@ -290,9 +717,65 @@ if (!parsedEnv.success) {
 }
 
 const railwayEnvironmentName = process.env.RAILWAY_ENVIRONMENT_NAME?.trim().toLowerCase();
+if (
+  (railwayEnvironmentName === "production" ||
+    railwayEnvironmentName === "staging") &&
+  parsedEnv.data.NODE_ENV !== "production"
+) {
+  throw new Error(
+    "Hosted Railway production and staging application runtimes require NODE_ENV=production; refusing a development-mode persistence fallback.",
+  );
+}
 const canonicalProductionRuntime = isCanonicalProductionRuntime({
   nodeEnv: parsedEnv.data.NODE_ENV,
   railwayEnvironmentName: process.env.RAILWAY_ENVIRONMENT_NAME,
+});
+const postgresApplicationRuntime =
+  parsedEnv.data.NODE_ENV === "production" &&
+  !parsedEnv.data.RESTORE_REHEARSAL_MODE;
+if (canonicalProductionRuntime) {
+  resolveExactOperationalOffsiteBackupBucket(process.env.OFFSITE_BACKUP_BUCKET);
+}
+const permanentStagingApplicationRuntime =
+  postgresApplicationRuntime && railwayEnvironmentName === "staging";
+const stagingIdentityBootstrap =
+  parsedEnv.data.PINTPATH_IDENTITY_REGISTRY_PHASE === "staging-bootstrap";
+
+if (parsedEnv.data.OPENAI_MENU_OCR_COST_BOUND_MODE) {
+  if (
+    !permanentStagingApplicationRuntime
+    || parsedEnv.data.ACCOUNT_DELETION_REHEARSAL_ENABLED
+    || stagingIdentityBootstrap
+  ) {
+    throw new Error(
+      "OPENAI_MENU_OCR_COST_BOUND_MODE=true is permitted only in complete ordinary permanent staging.",
+    );
+  }
+  if (
+    parsedEnv.data.OPENAI_MENU_OCR_MODEL !== OPENAI_MENU_OCR_COST_BOUND_MODEL
+    || parsedEnv.data.OPENAI_MENU_OCR_FALLBACK_MODEL !== OPENAI_MENU_OCR_COST_BOUND_MODEL
+  ) {
+    throw new Error(
+      `Cost-bound menu OCR requires both model variables to equal ${OPENAI_MENU_OCR_COST_BOUND_MODEL}.`,
+    );
+  }
+}
+
+if (
+  stagingIdentityBootstrap
+  && (
+    !permanentStagingApplicationRuntime
+    || parsedEnv.data.ACCOUNT_DELETION_REHEARSAL_ENABLED
+  )
+) {
+  throw new Error(
+    "PINTPATH_IDENTITY_REGISTRY_PHASE=staging-bootstrap is allowed only in ordinary permanent staging; production, restore, and account-deletion rehearsal require the complete cross-environment identity registry.",
+  );
+}
+
+assertPublicSupabaseKeySafe({
+  parsedValue: parsedEnv.data.SUPABASE_ANON_KEY,
+  rawValue: process.env.SUPABASE_ANON_KEY,
 });
 
 if (parsedEnv.data.ACCOUNT_DELETION_REHEARSAL_ENABLED) {
@@ -308,18 +791,50 @@ if (parsedEnv.data.ACCOUNT_DELETION_REHEARSAL_ENABLED) {
   if (parsedEnv.data.ACCOUNT_DELETION_NOTICE_MODE !== "resend") {
     throw new Error("Account deletion rehearsal requires ACCOUNT_DELETION_NOTICE_MODE=resend.");
   }
-  if (
-    process.env.RAILWAY_PROJECT_ID?.trim() !== ACCOUNT_DELETION_REHEARSAL_RAILWAY_PROJECT_ID
-    || process.env.RAILWAY_ENVIRONMENT_ID?.trim() !== ACCOUNT_DELETION_REHEARSAL_RAILWAY_ENVIRONMENT_ID
-    || process.env.RAILWAY_SERVICE_ID?.trim() !== ACCOUNT_DELETION_REHEARSAL_BEER_SERVICE_ID
-  ) {
+
+  const accountDeletionRailwayPins = [
+    ["ACCOUNT_DELETION_REHEARSAL_EXPECTED_RAILWAY_PROJECT_ID", parsedEnv.data.ACCOUNT_DELETION_REHEARSAL_EXPECTED_RAILWAY_PROJECT_ID],
+    ["ACCOUNT_DELETION_REHEARSAL_EXPECTED_RAILWAY_ENVIRONMENT_ID", parsedEnv.data.ACCOUNT_DELETION_REHEARSAL_EXPECTED_RAILWAY_ENVIRONMENT_ID],
+    ["ACCOUNT_DELETION_REHEARSAL_EXPECTED_RAILWAY_SERVICE_ID", parsedEnv.data.ACCOUNT_DELETION_REHEARSAL_EXPECTED_RAILWAY_SERVICE_ID],
+  ] as const;
+  const missingAccountDeletionRailwayPins = accountDeletionRailwayPins
+    .filter(([, value]) => !value)
+    .map(([name]) => name);
+  if (missingAccountDeletionRailwayPins.length > 0) {
     throw new Error(
-      "Account deletion rehearsal is bound to the immutable Pint Path staging Railway project, environment, and Beer service IDs.",
+      `Account deletion rehearsal requires reviewed permanent-staging Railway identity pins: ${missingAccountDeletionRailwayPins.join(", ")}.`,
     );
   }
-  if (process.env.RAILWAY_VOLUME_MOUNT_PATH?.trim() !== "/app/data") {
-    throw new Error("Account deletion rehearsal requires the dedicated staging volume at RAILWAY_VOLUME_MOUNT_PATH=/app/data.");
+  const mismatchedAccountDeletionRailwayPins = [
+    process.env.RAILWAY_PROJECT_ID?.trim() === parsedEnv.data.ACCOUNT_DELETION_REHEARSAL_EXPECTED_RAILWAY_PROJECT_ID
+      ? null
+      : "RAILWAY_PROJECT_ID",
+    process.env.RAILWAY_ENVIRONMENT_ID?.trim() === parsedEnv.data.ACCOUNT_DELETION_REHEARSAL_EXPECTED_RAILWAY_ENVIRONMENT_ID
+      ? null
+      : "RAILWAY_ENVIRONMENT_ID",
+    process.env.RAILWAY_SERVICE_ID?.trim() === parsedEnv.data.ACCOUNT_DELETION_REHEARSAL_EXPECTED_RAILWAY_SERVICE_ID
+      ? null
+      : "RAILWAY_SERVICE_ID",
+  ].filter((name): name is string => name !== null);
+  if (mismatchedAccountDeletionRailwayPins.length > 0) {
+    throw new Error(
+      `Account deletion rehearsal runtime does not match the reviewed permanent-staging Railway pins: ${mismatchedAccountDeletionRailwayPins.join(", ")}.`,
+    );
   }
+  assertPermanentStagingRailwayIdentity({
+    expectedProjectId: parsedEnv.data.PINTPATH_PERMANENT_STAGING_RAILWAY_PROJECT_ID,
+    expectedEnvironmentId: parsedEnv.data.PINTPATH_PERMANENT_STAGING_RAILWAY_ENVIRONMENT_ID,
+    expectedServiceId: parsedEnv.data.PINTPATH_PERMANENT_STAGING_RAILWAY_SERVICE_ID,
+  });
+  if (
+    !process.env.RAILWAY_REPLICA_ID?.trim()
+    || (parsedEnv.data.ACCOUNT_DELETION_REHEARSAL_REPLICA_COUNT ?? 0) < 2
+  ) {
+    throw new Error(
+      "Account deletion rehearsal requires RAILWAY_REPLICA_ID and ACCOUNT_DELETION_REHEARSAL_REPLICA_COUNT>=2.",
+    );
+  }
+
   const railwayPublicDomain = process.env.RAILWAY_PUBLIC_DOMAIN?.trim().toLowerCase();
   const publicBaseUrl = new URL(parsedEnv.data.PUBLIC_BASE_URL);
   if (
@@ -337,27 +852,58 @@ if (parsedEnv.data.ACCOUNT_DELETION_REHEARSAL_ENABLED) {
       "Account deletion rehearsal PUBLIC_BASE_URL must be the exact isolated staging HTTPS origin from RAILWAY_PUBLIC_DOMAIN.",
     );
   }
-  if (
-    path.normalize(parsedEnv.data.DATABASE_PATH) !== "/app/data/pint-path.sqlite"
-    || path.normalize(parsedEnv.data.SOURCE_EVIDENCE_STORAGE_DIR) !== "/app/data/source-evidence"
-  ) {
+
+  const configuredDatabasePath = sanitizeEnvString(process.env.DATABASE_PATH);
+  if (typeof configuredDatabasePath === "string" && configuredDatabasePath.length > 0) {
     throw new Error(
-      "Account deletion rehearsal must use only the dedicated staging SQLite and evidence paths under /app/data.",
+      "Account deletion rehearsal must not configure DATABASE_PATH; authoritative rehearsal state must use shared Postgres through DATABASE_URL.",
     );
   }
-  if (
-    !parsedEnv.data.SUPABASE_URL
-    || canonicalSupabaseProjectRef(parsedEnv.data.SUPABASE_URL, "SUPABASE_URL")
-      !== ACCOUNT_DELETION_REHEARSAL_SUPABASE_REF
-  ) {
-    throw new Error("Account deletion rehearsal is bound to the dedicated non-production Supabase project.");
+  assertTlsPostgresUrl(parsedEnv.data.DATABASE_URL, "DATABASE_URL");
+  assertPinnedConnectionIdentity({
+    connectionUrl: parsedEnv.data.DATABASE_URL,
+    expectedDigest: parsedEnv.data.PINTPATH_EXPECTED_DATABASE_URL_SHA256,
+    forbiddenDigests: parsedEnv.data.PINTPATH_FORBIDDEN_DATABASE_URL_SHA256S,
+    label: "database",
+  });
+  assertPinnedResourceIdentity({
+    actual: parsedEnv.data.PINTPATH_DATABASE_RESOURCE_ID,
+    expected: parsedEnv.data.PINTPATH_EXPECTED_DATABASE_RESOURCE_ID,
+    forbidden: parsedEnv.data.PINTPATH_FORBIDDEN_DATABASE_RESOURCE_IDS,
+    label: "database",
+  });
+  assertRailwayServiceInstanceIdentity(
+    parsedEnv.data.PINTPATH_DATABASE_RESOURCE_ID,
+    process.env.RAILWAY_ENVIRONMENT_ID?.trim(),
+    "PINTPATH_DATABASE_RESOURCE_ID",
+  );
+
+  if (!parsedEnv.data.SUPABASE_URL || !parsedEnv.data.ACCOUNT_DELETION_REHEARSAL_EXPECTED_SUPABASE_URL) {
+    throw new Error(
+      "Account deletion rehearsal requires SUPABASE_URL and ACCOUNT_DELETION_REHEARSAL_EXPECTED_SUPABASE_URL for the reviewed permanent-staging project.",
+    );
   }
-  if (
-    parsedEnv.data.STRIPE_SECRET_KEY
-    && !/^(?:sk|rk)_test_/.test(parsedEnv.data.STRIPE_SECRET_KEY)
-  ) {
-    throw new Error("Account deletion rehearsal may use only a Stripe test-mode secret or no Stripe secret.");
+  if (!parsedEnv.data.ACCOUNT_DELETION_REHEARSAL_PRODUCTION_SUPABASE_URL) {
+    throw new Error(
+      "Account deletion rehearsal requires ACCOUNT_DELETION_REHEARSAL_PRODUCTION_SUPABASE_URL as a comparison-only production identity.",
+    );
   }
+  const accountDeletionSupabaseRef = canonicalSupabaseProjectRef(parsedEnv.data.SUPABASE_URL, "SUPABASE_URL");
+  const expectedAccountDeletionSupabaseRef = canonicalSupabaseProjectRef(
+    parsedEnv.data.ACCOUNT_DELETION_REHEARSAL_EXPECTED_SUPABASE_URL,
+    "ACCOUNT_DELETION_REHEARSAL_EXPECTED_SUPABASE_URL",
+  );
+  const productionAccountDeletionSupabaseRef = canonicalSupabaseProjectRef(
+    parsedEnv.data.ACCOUNT_DELETION_REHEARSAL_PRODUCTION_SUPABASE_URL,
+    "ACCOUNT_DELETION_REHEARSAL_PRODUCTION_SUPABASE_URL",
+  );
+  if (accountDeletionSupabaseRef !== expectedAccountDeletionSupabaseRef) {
+    throw new Error("Account deletion rehearsal SUPABASE_URL does not match the reviewed permanent-staging Supabase pin.");
+  }
+  if (accountDeletionSupabaseRef === productionAccountDeletionSupabaseRef) {
+    throw new Error("Account deletion rehearsal Supabase must be distinct from the comparison-only production project.");
+  }
+
   const prohibitedBackupCredentials = [
     ["OFFSITE_BACKUP_SUPABASE_URL", parsedEnv.data.OFFSITE_BACKUP_SUPABASE_URL],
     ["OFFSITE_BACKUP_SERVICE_ROLE_KEY", parsedEnv.data.OFFSITE_BACKUP_SERVICE_ROLE_KEY],
@@ -369,31 +915,91 @@ if (parsedEnv.data.ACCOUNT_DELETION_REHEARSAL_ENABLED) {
         .join(", ")}.`,
     );
   }
-  const prohibitedRedisVariables = [
-    ["REDIS_URL", parsedEnv.data.REDIS_URL],
-    ["REDIS_KEY_NAMESPACE", parsedEnv.data.REDIS_KEY_NAMESPACE],
-    ["RESTORE_REHEARSAL_REDIS_ENVIRONMENT_ID", parsedEnv.data.RESTORE_REHEARSAL_REDIS_ENVIRONMENT_ID],
-    ["RESTORE_REHEARSAL_REDIS_SERVICE_ID", parsedEnv.data.RESTORE_REHEARSAL_REDIS_SERVICE_ID],
-    ["RESTORE_REHEARSAL_REDIS_SENTINEL", parsedEnv.data.RESTORE_REHEARSAL_REDIS_SENTINEL],
-  ].filter(([, value]) => value !== undefined);
-  if (prohibitedRedisVariables.length > 0 || parsedEnv.data.REQUIRE_REDIS_RATE_LIMITING) {
+  if (!parsedEnv.data.REDIS_URL || !parsedEnv.data.REQUIRE_REDIS_RATE_LIMITING) {
     throw new Error(
-      "Account deletion rehearsal prohibits Redis configuration; remove all Redis references and keep REQUIRE_REDIS_RATE_LIMITING=false.",
+      "Account deletion rehearsal requires its dedicated shared REDIS_URL and REQUIRE_REDIS_RATE_LIMITING=true.",
     );
   }
-  if (!parsedEnv.data.ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION) {
+  assertPinnedConnectionIdentity({
+    connectionUrl: parsedEnv.data.REDIS_URL,
+    expectedDigest: parsedEnv.data.PINTPATH_EXPECTED_REDIS_URL_SHA256,
+    forbiddenDigests: parsedEnv.data.PINTPATH_FORBIDDEN_REDIS_URL_SHA256S,
+    label: "redis",
+  });
+  assertPinnedResourceIdentity({
+    actual: parsedEnv.data.PINTPATH_REDIS_RESOURCE_ID,
+    expected: parsedEnv.data.PINTPATH_EXPECTED_REDIS_RESOURCE_ID,
+    forbidden: parsedEnv.data.PINTPATH_FORBIDDEN_REDIS_RESOURCE_IDS,
+    label: "redis",
+  });
+  assertRailwayServiceInstanceIdentity(
+    parsedEnv.data.PINTPATH_REDIS_RESOURCE_ID,
+    process.env.RAILWAY_ENVIRONMENT_ID?.trim(),
+    "PINTPATH_REDIS_RESOURCE_ID",
+  );
+  assertPermanentStagingSelfPins({
+    databaseExpectedDigest: parsedEnv.data.PINTPATH_EXPECTED_DATABASE_URL_SHA256,
+    databaseExpectedResource: parsedEnv.data.PINTPATH_EXPECTED_DATABASE_RESOURCE_ID,
+    databaseStagingDigest: parsedEnv.data.PINTPATH_PERMANENT_STAGING_DATABASE_URL_SHA256,
+    databaseStagingResource: parsedEnv.data.PINTPATH_PERMANENT_STAGING_DATABASE_RESOURCE_ID,
+    redisExpectedDigest: parsedEnv.data.PINTPATH_EXPECTED_REDIS_URL_SHA256,
+    redisExpectedResource: parsedEnv.data.PINTPATH_EXPECTED_REDIS_RESOURCE_ID,
+    redisStagingDigest: parsedEnv.data.PINTPATH_PERMANENT_STAGING_REDIS_URL_SHA256,
+    redisStagingResource: parsedEnv.data.PINTPATH_PERMANENT_STAGING_REDIS_RESOURCE_ID,
+  });
+  if (parsedEnv.data.ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION) {
     throw new Error(
-      "Account deletion rehearsal requires ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=true for its isolated single-instance staging proof.",
+      "Account deletion rehearsal requires ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=false so every replica fails closed through shared Redis.",
     );
   }
-  if (
-    parsedEnv.data.COMMERCIAL_LAUNCH_ENABLED
-    || parsedEnv.data.CONSUMER_PAID_ENROLLMENT_ENABLED
-    || parsedEnv.data.REPORT_EMAIL_MODE !== "disabled"
-    || parsedEnv.data.REPORT_DELIVERY_SCHEDULE_ENABLED
-  ) {
+
+  const unsafeAccountDeletionFeatureConfiguration = [
+    parsedEnv.data.COMMERCIAL_LAUNCH_ENABLED ? "COMMERCIAL_LAUNCH_ENABLED" : null,
+    parsedEnv.data.CONSUMER_PAID_ENROLLMENT_ENABLED ? "CONSUMER_PAID_ENROLLMENT_ENABLED" : null,
+    parsedEnv.data.DEMO_BILLING_MODE ? "DEMO_BILLING_MODE" : null,
+    parsedEnv.data.PINT_POINTS_REWARDS_ENABLED ? "PINT_POINTS_REWARDS_ENABLED" : null,
+    parsedEnv.data.ALCOHOL_GAMIFICATION_ENABLED ? "ALCOHOL_GAMIFICATION_ENABLED" : null,
+    parsedEnv.data.REPORT_EMAIL_MODE !== "disabled" ? "REPORT_EMAIL_MODE" : null,
+    parsedEnv.data.REPORT_DELIVERY_SCHEDULE_ENABLED ? "REPORT_DELIVERY_SCHEDULE_ENABLED" : null,
+    parsedEnv.data.VENUE_PRO_TRIAL_DAYS !== 0 ? "VENUE_PRO_TRIAL_DAYS" : null,
+    parsedEnv.data.VENUE_PRO_TRIAL_REQUIRE_PAYMENT_METHOD ? "VENUE_PRO_TRIAL_REQUIRE_PAYMENT_METHOD" : null,
+    parsedEnv.data.FIELD_TEST_MODE ? "FIELD_TEST_MODE" : null,
+  ].filter((name): name is string => name !== null);
+  if (unsafeAccountDeletionFeatureConfiguration.length > 0) {
     throw new Error(
-      "Account deletion rehearsal requires paid enrollment and report delivery to remain disabled.",
+      `Account deletion rehearsal requires the Free-only feature scope: ${unsafeAccountDeletionFeatureConfiguration.join(", ")}.`,
+    );
+  }
+  assertHostedSupabaseKeyBoundary({
+    mode: "account-deletion-rehearsal",
+    primaryUrl: parsedEnv.data.SUPABASE_URL,
+    rawPrimaryUrl: process.env.SUPABASE_URL,
+    anonKey: parsedEnv.data.SUPABASE_ANON_KEY,
+    rawAnonKey: process.env.SUPABASE_ANON_KEY,
+    serviceKey: parsedEnv.data.SUPABASE_SERVICE_ROLE_KEY,
+    rawServiceKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
+    offsiteServiceKey: parsedEnv.data.OFFSITE_BACKUP_SERVICE_ROLE_KEY,
+    rawOffsiteServiceKey: process.env.OFFSITE_BACKUP_SERVICE_ROLE_KEY,
+    offsiteUrl: parsedEnv.data.OFFSITE_BACKUP_SUPABASE_URL,
+    rawOffsiteUrl: process.env.OFFSITE_BACKUP_SUPABASE_URL,
+    rawOffsiteBucket: process.env.OFFSITE_BACKUP_BUCKET,
+  });
+}
+
+if (!parsedEnv.data.ACCOUNT_DELETION_REHEARSAL_ENABLED) {
+  const accountDeletionRehearsalMarkers = [
+    ["ACCOUNT_DELETION_REHEARSAL_EXPECTED_RAILWAY_ENVIRONMENT_ID", parsedEnv.data.ACCOUNT_DELETION_REHEARSAL_EXPECTED_RAILWAY_ENVIRONMENT_ID],
+    ["ACCOUNT_DELETION_REHEARSAL_EXPECTED_RAILWAY_PROJECT_ID", parsedEnv.data.ACCOUNT_DELETION_REHEARSAL_EXPECTED_RAILWAY_PROJECT_ID],
+    ["ACCOUNT_DELETION_REHEARSAL_EXPECTED_RAILWAY_SERVICE_ID", parsedEnv.data.ACCOUNT_DELETION_REHEARSAL_EXPECTED_RAILWAY_SERVICE_ID],
+    ["ACCOUNT_DELETION_REHEARSAL_EXPECTED_SUPABASE_URL", parsedEnv.data.ACCOUNT_DELETION_REHEARSAL_EXPECTED_SUPABASE_URL],
+    ["ACCOUNT_DELETION_REHEARSAL_PRODUCTION_SUPABASE_URL", parsedEnv.data.ACCOUNT_DELETION_REHEARSAL_PRODUCTION_SUPABASE_URL],
+    ["ACCOUNT_DELETION_REHEARSAL_REPLICA_COUNT", parsedEnv.data.ACCOUNT_DELETION_REHEARSAL_REPLICA_COUNT],
+  ]
+    .filter((entry) => entry[1] !== undefined)
+    .map(([name]) => name as string);
+  if (accountDeletionRehearsalMarkers.length > 0) {
+    throw new Error(
+      `Account-deletion rehearsal identity/configuration requires ACCOUNT_DELETION_REHEARSAL_ENABLED=true: ${accountDeletionRehearsalMarkers.join(", ")}.`,
     );
   }
 }
@@ -413,6 +1019,11 @@ if (!parsedEnv.data.RESTORE_REHEARSAL_MODE) {
     ["RESTORE_REHEARSAL_BACKUP_ID", parsedEnv.data.RESTORE_REHEARSAL_BACKUP_ID],
     ["RESTORE_REHEARSAL_SOURCE_MANIFEST_SHA256", parsedEnv.data.RESTORE_REHEARSAL_SOURCE_MANIFEST_SHA256],
     ["RESTORE_REHEARSAL_RUNTIME_ATTESTATION_SHA256", parsedEnv.data.RESTORE_REHEARSAL_RUNTIME_ATTESTATION_SHA256],
+    ["RESTORE_REHEARSAL_EXPECTED_RAILWAY_ENVIRONMENT_ID", parsedEnv.data.RESTORE_REHEARSAL_EXPECTED_RAILWAY_ENVIRONMENT_ID],
+    ["RESTORE_REHEARSAL_EXPECTED_RAILWAY_PROJECT_ID", parsedEnv.data.RESTORE_REHEARSAL_EXPECTED_RAILWAY_PROJECT_ID],
+    ["RESTORE_REHEARSAL_EXPECTED_RAILWAY_SERVICE_ID", parsedEnv.data.RESTORE_REHEARSAL_EXPECTED_RAILWAY_SERVICE_ID],
+    ["RESTORE_REHEARSAL_EXPECTED_SUPABASE_URL", parsedEnv.data.RESTORE_REHEARSAL_EXPECTED_SUPABASE_URL],
+    ["RESTORE_REHEARSAL_EXPECTED_REDIS_SERVICE_ID", parsedEnv.data.RESTORE_REHEARSAL_EXPECTED_REDIS_SERVICE_ID],
     ["RESTORE_REHEARSAL_PRODUCTION_SUPABASE_URL", parsedEnv.data.RESTORE_REHEARSAL_PRODUCTION_SUPABASE_URL],
     ["RESTORE_REHEARSAL_BACKUP_SUPABASE_URL", parsedEnv.data.RESTORE_REHEARSAL_BACKUP_SUPABASE_URL],
     ["RESTORE_REHEARSAL_REDIS_ENVIRONMENT_ID", parsedEnv.data.RESTORE_REHEARSAL_REDIS_ENVIRONMENT_ID],
@@ -434,13 +1045,6 @@ if (!parsedEnv.data.RESTORE_REHEARSAL_MODE) {
   if (parsedEnv.data.REDIS_KEY_NAMESPACE?.startsWith("pint-path:restore:")) {
     restoreMarkers.push("REDIS_KEY_NAMESPACE");
   }
-  if (
-    !parsedEnv.data.ACCOUNT_DELETION_REHEARSAL_ENABLED
-    && parsedEnv.data.SUPABASE_URL?.toLowerCase().includes(`${RESTORE_REHEARSAL_SUPABASE_REF}.supabase.co`)
-  ) {
-    restoreMarkers.push("SUPABASE_URL");
-  }
-
   if (process.env.RAILWAY_VOLUME_MOUNT_PATH?.trim() === "/app/data") {
     try {
       const restoreEntries = fs.readdirSync("/app/data", { withFileTypes: true })
@@ -464,11 +1068,132 @@ if (!parsedEnv.data.RESTORE_REHEARSAL_MODE) {
 }
 
 if (
-  parsedEnv.data.NODE_ENV === "production" &&
-  parsedEnv.data.DEMO_BILLING_MODE &&
-  !parsedEnv.data.ALLOW_DEMO_BILLING_IN_PRODUCTION
+  permanentStagingApplicationRuntime
+  && !parsedEnv.data.ACCOUNT_DELETION_REHEARSAL_ENABLED
 ) {
-  throw new Error("DEMO_BILLING_MODE cannot be true in production unless ALLOW_DEMO_BILLING_IN_PRODUCTION=true.");
+  assertPermanentStagingRailwayIdentity({
+    expectedProjectId: parsedEnv.data.PINTPATH_PERMANENT_STAGING_RAILWAY_PROJECT_ID,
+    expectedEnvironmentId: parsedEnv.data.PINTPATH_PERMANENT_STAGING_RAILWAY_ENVIRONMENT_ID,
+    expectedServiceId: parsedEnv.data.PINTPATH_PERMANENT_STAGING_RAILWAY_SERVICE_ID,
+  });
+  assertHostedSupabaseKeyBoundary({
+    mode: stagingIdentityBootstrap
+      ? "permanent-staging-bootstrap"
+      : "permanent-staging-complete",
+    primaryUrl: parsedEnv.data.SUPABASE_URL,
+    rawPrimaryUrl: process.env.SUPABASE_URL,
+    anonKey: parsedEnv.data.SUPABASE_ANON_KEY,
+    rawAnonKey: process.env.SUPABASE_ANON_KEY,
+    serviceKey: parsedEnv.data.SUPABASE_SERVICE_ROLE_KEY,
+    rawServiceKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
+    offsiteServiceKey: parsedEnv.data.OFFSITE_BACKUP_SERVICE_ROLE_KEY,
+    rawOffsiteServiceKey: process.env.OFFSITE_BACKUP_SERVICE_ROLE_KEY,
+    offsiteUrl: parsedEnv.data.OFFSITE_BACKUP_SUPABASE_URL,
+    rawOffsiteUrl: process.env.OFFSITE_BACKUP_SUPABASE_URL,
+    rawOffsiteBucket: process.env.OFFSITE_BACKUP_BUCKET,
+  });
+
+  const configuredDatabasePath = sanitizeEnvString(process.env.DATABASE_PATH);
+  if (typeof configuredDatabasePath === "string" && configuredDatabasePath.length > 0) {
+    throw new Error(
+      "Permanent staging must not configure DATABASE_PATH; its authoritative runtime uses only its reviewed PostgreSQL service instance.",
+    );
+  }
+  assertTlsPostgresUrl(parsedEnv.data.DATABASE_URL, "DATABASE_URL");
+  if (
+    !parsedEnv.data.REDIS_URL
+    || !parsedEnv.data.REQUIRE_REDIS_RATE_LIMITING
+    || parsedEnv.data.ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION
+  ) {
+    throw new Error(
+      "Permanent staging requires shared Redis, REQUIRE_REDIS_RATE_LIMITING=true, and ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=false.",
+    );
+  }
+
+  if (stagingIdentityBootstrap) {
+    assertForbiddenIdentityPinsAbsent({
+      databaseDigests: parsedEnv.data.PINTPATH_FORBIDDEN_DATABASE_URL_SHA256S,
+      databaseResources: parsedEnv.data.PINTPATH_FORBIDDEN_DATABASE_RESOURCE_IDS,
+      redisDigests: parsedEnv.data.PINTPATH_FORBIDDEN_REDIS_URL_SHA256S,
+      redisResources: parsedEnv.data.PINTPATH_FORBIDDEN_REDIS_RESOURCE_IDS,
+    });
+    const unsafeBootstrapFeatures = [
+      parsedEnv.data.COMMERCIAL_LAUNCH_ENABLED ? "COMMERCIAL_LAUNCH_ENABLED" : null,
+      parsedEnv.data.CONSUMER_PAID_ENROLLMENT_ENABLED ? "CONSUMER_PAID_ENROLLMENT_ENABLED" : null,
+      parsedEnv.data.DEMO_BILLING_MODE ? "DEMO_BILLING_MODE" : null,
+      parsedEnv.data.PINT_POINTS_REWARDS_ENABLED ? "PINT_POINTS_REWARDS_ENABLED" : null,
+      parsedEnv.data.ALCOHOL_GAMIFICATION_ENABLED ? "ALCOHOL_GAMIFICATION_ENABLED" : null,
+      parsedEnv.data.REPORT_EMAIL_MODE !== "disabled" ? "REPORT_EMAIL_MODE" : null,
+      parsedEnv.data.REPORT_DELIVERY_SCHEDULE_ENABLED ? "REPORT_DELIVERY_SCHEDULE_ENABLED" : null,
+      parsedEnv.data.ACCOUNT_DELETION_NOTICE_MODE !== "disabled" ? "ACCOUNT_DELETION_NOTICE_MODE" : null,
+      parsedEnv.data.FIELD_TEST_MODE ? "FIELD_TEST_MODE" : null,
+      booleanFromEnv.safeParse(process.env.MENU_DISCOVERY_QUEUE_OCR).data ? "MENU_DISCOVERY_QUEUE_OCR" : null,
+      booleanFromEnv.safeParse(process.env.ALLOW_MENU_DISCOVERY_QUEUE).data ? "ALLOW_MENU_DISCOVERY_QUEUE" : null,
+      booleanFromEnv.safeParse(process.env.PINTPATH_REPORT_DELIVER).data ? "PINTPATH_REPORT_DELIVER" : null,
+    ].filter((name): name is string => name !== null);
+    if (unsafeBootstrapFeatures.length > 0) {
+      throw new Error(
+        `Permanent-staging identity bootstrap requires the inert Free scope with scheduled/provider writes disabled: ${unsafeBootstrapFeatures.join(", ")}.`,
+      );
+    }
+  }
+
+  const minimumForbidden = stagingIdentityBootstrap ? 0 : 2;
+  assertPinnedConnectionIdentity({
+    connectionUrl: parsedEnv.data.DATABASE_URL,
+    expectedDigest: parsedEnv.data.PINTPATH_EXPECTED_DATABASE_URL_SHA256,
+    forbiddenDigests: parsedEnv.data.PINTPATH_FORBIDDEN_DATABASE_URL_SHA256S,
+    label: "database",
+    minimumForbidden,
+  });
+  assertPinnedResourceIdentity({
+    actual: parsedEnv.data.PINTPATH_DATABASE_RESOURCE_ID,
+    expected: parsedEnv.data.PINTPATH_EXPECTED_DATABASE_RESOURCE_ID,
+    forbidden: parsedEnv.data.PINTPATH_FORBIDDEN_DATABASE_RESOURCE_IDS,
+    label: "database",
+    minimumForbidden,
+  });
+  assertRailwayServiceInstanceIdentity(
+    parsedEnv.data.PINTPATH_DATABASE_RESOURCE_ID,
+    process.env.RAILWAY_ENVIRONMENT_ID?.trim(),
+    "PINTPATH_DATABASE_RESOURCE_ID",
+  );
+  assertPinnedConnectionIdentity({
+    connectionUrl: parsedEnv.data.REDIS_URL,
+    expectedDigest: parsedEnv.data.PINTPATH_EXPECTED_REDIS_URL_SHA256,
+    forbiddenDigests: parsedEnv.data.PINTPATH_FORBIDDEN_REDIS_URL_SHA256S,
+    label: "redis",
+    minimumForbidden,
+  });
+  assertPinnedResourceIdentity({
+    actual: parsedEnv.data.PINTPATH_REDIS_RESOURCE_ID,
+    expected: parsedEnv.data.PINTPATH_EXPECTED_REDIS_RESOURCE_ID,
+    forbidden: parsedEnv.data.PINTPATH_FORBIDDEN_REDIS_RESOURCE_IDS,
+    label: "redis",
+    minimumForbidden,
+  });
+  assertRailwayServiceInstanceIdentity(
+    parsedEnv.data.PINTPATH_REDIS_RESOURCE_ID,
+    process.env.RAILWAY_ENVIRONMENT_ID?.trim(),
+    "PINTPATH_REDIS_RESOURCE_ID",
+  );
+  assertPermanentStagingSelfPins({
+    databaseExpectedDigest: parsedEnv.data.PINTPATH_EXPECTED_DATABASE_URL_SHA256,
+    databaseExpectedResource: parsedEnv.data.PINTPATH_EXPECTED_DATABASE_RESOURCE_ID,
+    databaseStagingDigest: parsedEnv.data.PINTPATH_PERMANENT_STAGING_DATABASE_URL_SHA256,
+    databaseStagingResource: parsedEnv.data.PINTPATH_PERMANENT_STAGING_DATABASE_RESOURCE_ID,
+    redisExpectedDigest: parsedEnv.data.PINTPATH_EXPECTED_REDIS_URL_SHA256,
+    redisExpectedResource: parsedEnv.data.PINTPATH_EXPECTED_REDIS_RESOURCE_ID,
+    redisStagingDigest: parsedEnv.data.PINTPATH_PERMANENT_STAGING_REDIS_URL_SHA256,
+    redisStagingResource: parsedEnv.data.PINTPATH_PERMANENT_STAGING_REDIS_RESOURCE_ID,
+  });
+}
+
+if (
+  parsedEnv.data.NODE_ENV === "production" &&
+  (parsedEnv.data.DEMO_BILLING_MODE || parsedEnv.data.ALLOW_DEMO_BILLING_IN_PRODUCTION)
+) {
+  throw new Error("Production requires DEMO_BILLING_MODE=false and ALLOW_DEMO_BILLING_IN_PRODUCTION=false.");
 }
 
 if (parsedEnv.data.NODE_ENV === "production" && parsedEnv.data.REPORT_EMAIL_MODE === "mock") {
@@ -603,8 +1328,86 @@ if (parsedEnv.data.NODE_ENV === "production") {
   }
 }
 
+if (
+  postgresApplicationRuntime &&
+  !permanentStagingApplicationRuntime &&
+  !parsedEnv.data.ACCOUNT_DELETION_REHEARSAL_ENABLED
+) {
+  const configuredDatabasePath = sanitizeEnvString(process.env.DATABASE_PATH);
+  if (typeof configuredDatabasePath === "string" && configuredDatabasePath.length > 0) {
+    throw new Error(
+      "Production application runtimes must not configure DATABASE_PATH; the web runtime uses only the reviewed PostgreSQL DATABASE_URL.",
+    );
+  }
+
+  assertTlsPostgresUrl(parsedEnv.data.DATABASE_URL, "DATABASE_URL");
+  assertPinnedConnectionIdentity({
+    connectionUrl: parsedEnv.data.DATABASE_URL,
+    expectedDigest: parsedEnv.data.PINTPATH_EXPECTED_DATABASE_URL_SHA256,
+    forbiddenDigests: parsedEnv.data.PINTPATH_FORBIDDEN_DATABASE_URL_SHA256S,
+    label: "database",
+  });
+  assertPinnedResourceIdentity({
+    actual: parsedEnv.data.PINTPATH_DATABASE_RESOURCE_ID,
+    expected: parsedEnv.data.PINTPATH_EXPECTED_DATABASE_RESOURCE_ID,
+    forbidden: parsedEnv.data.PINTPATH_FORBIDDEN_DATABASE_RESOURCE_IDS,
+    label: "database",
+  });
+  if (railwayEnvironmentName === "production") {
+    assertRailwayServiceInstanceIdentity(
+      parsedEnv.data.PINTPATH_DATABASE_RESOURCE_ID,
+      process.env.RAILWAY_ENVIRONMENT_ID?.trim(),
+      "PINTPATH_DATABASE_RESOURCE_ID",
+    );
+  }
+}
+
 if (canonicalProductionRuntime) {
+  if (
+    process.env.SUPABASE_URL !== canonicalProductionSupabaseOrigin
+    || parsedEnv.data.SUPABASE_URL !== canonicalProductionSupabaseOrigin
+  ) {
+    throw new Error(
+      "Canonical production requires SUPABASE_URL to be the exact reviewed HTTPS origin https://auth.pintpath.au; no configured value is emitted.",
+    );
+  }
+
   const publicBaseUrl = new URL(parsedEnv.data.PUBLIC_BASE_URL);
+  if (!parsedEnv.data.REDIS_URL || !parsedEnv.data.REQUIRE_REDIS_RATE_LIMITING) {
+    throw new Error("Canonical production requires shared REDIS_URL and REQUIRE_REDIS_RATE_LIMITING=true.");
+  }
+  if (parsedEnv.data.ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION) {
+    throw new Error("Canonical production requires ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=false.");
+  }
+  assertPinnedConnectionIdentity({
+    connectionUrl: parsedEnv.data.REDIS_URL,
+    expectedDigest: parsedEnv.data.PINTPATH_EXPECTED_REDIS_URL_SHA256,
+    forbiddenDigests: parsedEnv.data.PINTPATH_FORBIDDEN_REDIS_URL_SHA256S,
+    label: "redis",
+  });
+  assertPinnedResourceIdentity({
+    actual: parsedEnv.data.PINTPATH_REDIS_RESOURCE_ID,
+    expected: parsedEnv.data.PINTPATH_EXPECTED_REDIS_RESOURCE_ID,
+    forbidden: parsedEnv.data.PINTPATH_FORBIDDEN_REDIS_RESOURCE_IDS,
+    label: "redis",
+  });
+  if (railwayEnvironmentName === "production") {
+    assertRailwayServiceInstanceIdentity(
+      parsedEnv.data.PINTPATH_REDIS_RESOURCE_ID,
+      process.env.RAILWAY_ENVIRONMENT_ID?.trim(),
+      "PINTPATH_REDIS_RESOURCE_ID",
+    );
+  }
+  assertPermanentStagingExcluded({
+    databaseForbiddenDigests: parsedEnv.data.PINTPATH_FORBIDDEN_DATABASE_URL_SHA256S,
+    databaseForbiddenResources: parsedEnv.data.PINTPATH_FORBIDDEN_DATABASE_RESOURCE_IDS,
+    databaseStagingDigest: parsedEnv.data.PINTPATH_PERMANENT_STAGING_DATABASE_URL_SHA256,
+    databaseStagingResource: parsedEnv.data.PINTPATH_PERMANENT_STAGING_DATABASE_RESOURCE_ID,
+    redisForbiddenDigests: parsedEnv.data.PINTPATH_FORBIDDEN_REDIS_URL_SHA256S,
+    redisForbiddenResources: parsedEnv.data.PINTPATH_FORBIDDEN_REDIS_RESOURCE_IDS,
+    redisStagingDigest: parsedEnv.data.PINTPATH_PERMANENT_STAGING_REDIS_URL_SHA256,
+    redisStagingResource: parsedEnv.data.PINTPATH_PERMANENT_STAGING_REDIS_RESOURCE_ID,
+  });
 
   if (parsedEnv.data.ACCOUNT_DELETION_NOTICE_MODE !== "resend") {
     throw new Error(
@@ -623,7 +1426,9 @@ if (canonicalProductionRuntime) {
   }
 
   if (
-    publicBaseUrl.protocol !== "https:"
+    process.env.PUBLIC_BASE_URL !== "https://pintpath.au"
+    || parsedEnv.data.PUBLIC_BASE_URL !== "https://pintpath.au"
+    || publicBaseUrl.protocol !== "https:"
     || publicBaseUrl.hostname !== "pintpath.au"
     || publicBaseUrl.port
     || publicBaseUrl.pathname !== "/"
@@ -632,7 +1437,7 @@ if (canonicalProductionRuntime) {
     || publicBaseUrl.username
     || publicBaseUrl.password
   ) {
-    throw new Error("PUBLIC_BASE_URL must be exactly https://pintpath.au/ in production, with no credentials, port, path, query, or fragment. Do not use Railway preview domains as the canonical public app URL.");
+    throw new Error("PUBLIC_BASE_URL must be exactly https://pintpath.au in production, with no whitespace, credentials, port, path, query, or fragment. Do not use Railway preview domains as the canonical public app URL.");
   }
 
   if (!parsedEnv.data.GOOGLE_MAPS_API_KEY) {
@@ -666,9 +1471,36 @@ if (canonicalProductionRuntime) {
     const variableLabel = missingOffsiteBackupVariables.length === 1 ? "variable" : "variables";
     const referenceLabel = missingOffsiteBackupVariables.length === 1 ? "it" : "them";
     throw new Error(
-      `Production startup blocked: missing required independent off-site backup environment ${variableLabel}: ${missingOffsiteBackupVariables.join(", ")}. ` +
+      `Production startup blocked: missing required private operational restore-copy environment ${variableLabel}: ${missingOffsiteBackupVariables.join(", ")}. ` +
       `Configure ${referenceLabel} in the production service environment and redeploy. ` +
-      "OFFSITE_BACKUP_SUPABASE_URL must point to a different project/provider than SUPABASE_URL, and OFFSITE_BACKUP_SERVICE_ROLE_KEY must belong to that backup destination.",
+      "OFFSITE_BACKUP_SUPABASE_URL must point to an origin different from SUPABASE_URL, and OFFSITE_BACKUP_SERVICE_ROLE_KEY must belong to that operational copy. This does not replace separately verified WORM disaster recovery.",
+    );
+  }
+  assertCompatibleSupabaseServiceKey({
+    name: "SUPABASE_SERVICE_ROLE_KEY",
+    parsedValue: parsedEnv.data.SUPABASE_SERVICE_ROLE_KEY,
+    rawValue: process.env.SUPABASE_SERVICE_ROLE_KEY,
+  });
+  assertCompatibleSupabaseServiceKey({
+    name: "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
+    parsedValue: parsedEnv.data.OFFSITE_BACKUP_SERVICE_ROLE_KEY,
+    rawValue: process.env.OFFSITE_BACKUP_SERVICE_ROLE_KEY,
+  });
+
+  if (
+    parsedEnv.data.OFFSITE_BACKUP_SUPABASE_URL !== operationalOffsiteSupabaseOrigin
+    || process.env.OFFSITE_BACKUP_SUPABASE_URL !== operationalOffsiteSupabaseOrigin
+  ) {
+    throw new Error(
+      "Canonical production requires OFFSITE_BACKUP_SUPABASE_URL to be the exact reviewed operational-copy HTTPS origin; no configured value is emitted.",
+    );
+  }
+  if (
+    parsedEnv.data.SUPABASE_SERVICE_ROLE_KEY
+    === parsedEnv.data.OFFSITE_BACKUP_SERVICE_ROLE_KEY
+  ) {
+    throw new Error(
+      "Canonical production requires distinct primary and operational-copy Supabase service keys; no key value is emitted.",
     );
   }
 
@@ -676,7 +1508,7 @@ if (canonicalProductionRuntime) {
     new URL(parsedEnv.data.SUPABASE_URL).origin.toLowerCase() ===
     new URL(parsedEnv.data.OFFSITE_BACKUP_SUPABASE_URL!).origin.toLowerCase()
   ) {
-    throw new Error("OFFSITE_BACKUP_SUPABASE_URL must identify an independent project/provider, not the production Supabase project.");
+    throw new Error("OFFSITE_BACKUP_SUPABASE_URL must identify a distinct private operational restore-copy origin, not the production Supabase project. A distinct origin alone is not WORM disaster recovery.");
   }
 
 }
@@ -687,16 +1519,45 @@ if (parsedEnv.data.RESTORE_REHEARSAL_MODE) {
       "RESTORE_REHEARSAL_MODE is allowed only with NODE_ENV=production in the Railway environment named exactly staging.",
     );
   }
+  assertPermanentStagingExcluded({
+    databaseForbiddenDigests: parsedEnv.data.PINTPATH_FORBIDDEN_DATABASE_URL_SHA256S,
+    databaseForbiddenResources: parsedEnv.data.PINTPATH_FORBIDDEN_DATABASE_RESOURCE_IDS,
+    databaseStagingDigest: parsedEnv.data.PINTPATH_PERMANENT_STAGING_DATABASE_URL_SHA256,
+    databaseStagingResource: parsedEnv.data.PINTPATH_PERMANENT_STAGING_DATABASE_RESOURCE_ID,
+    redisForbiddenDigests: parsedEnv.data.PINTPATH_FORBIDDEN_REDIS_URL_SHA256S,
+    redisForbiddenResources: parsedEnv.data.PINTPATH_FORBIDDEN_REDIS_RESOURCE_IDS,
+    redisStagingDigest: parsedEnv.data.PINTPATH_PERMANENT_STAGING_REDIS_URL_SHA256,
+    redisStagingResource: parsedEnv.data.PINTPATH_PERMANENT_STAGING_REDIS_RESOURCE_ID,
+  });
+
+  const restoreRailwayPins = [
+    ["RESTORE_REHEARSAL_EXPECTED_RAILWAY_ENVIRONMENT_ID", parsedEnv.data.RESTORE_REHEARSAL_EXPECTED_RAILWAY_ENVIRONMENT_ID],
+    ["RESTORE_REHEARSAL_EXPECTED_RAILWAY_PROJECT_ID", parsedEnv.data.RESTORE_REHEARSAL_EXPECTED_RAILWAY_PROJECT_ID],
+    ["RESTORE_REHEARSAL_EXPECTED_RAILWAY_SERVICE_ID", parsedEnv.data.RESTORE_REHEARSAL_EXPECTED_RAILWAY_SERVICE_ID],
+  ] as const;
+  const missingRestoreRailwayPins = restoreRailwayPins
+    .filter(([, value]) => !value)
+    .map(([name]) => name);
+  if (missingRestoreRailwayPins.length > 0) {
+    throw new Error(`Restore rehearsal requires reviewed Railway identity pins: ${missingRestoreRailwayPins.join(", ")}.`);
+  }
 
   const railwayEnvironmentId = process.env.RAILWAY_ENVIRONMENT_ID?.trim();
-  if (railwayEnvironmentId !== RESTORE_REHEARSAL_RAILWAY_ENVIRONMENT_ID) {
-    throw new Error("Restore rehearsal is bound to the dedicated Railway staging environment ID.");
-  }
-  if (process.env.RAILWAY_PROJECT_ID?.trim() !== RESTORE_REHEARSAL_RAILWAY_PROJECT_ID) {
-    throw new Error("Restore rehearsal is bound to the immutable Pint Path Railway project ID.");
-  }
-  if (process.env.RAILWAY_SERVICE_ID?.trim() !== RESTORE_REHEARSAL_BEER_SERVICE_ID) {
-    throw new Error("Restore rehearsal is bound to the immutable staging Beer Railway service ID.");
+  const mismatchedRestoreRailwayPins = [
+    railwayEnvironmentId === parsedEnv.data.RESTORE_REHEARSAL_EXPECTED_RAILWAY_ENVIRONMENT_ID
+      ? null
+      : "RAILWAY_ENVIRONMENT_ID",
+    process.env.RAILWAY_PROJECT_ID?.trim() === parsedEnv.data.RESTORE_REHEARSAL_EXPECTED_RAILWAY_PROJECT_ID
+      ? null
+      : "RAILWAY_PROJECT_ID",
+    process.env.RAILWAY_SERVICE_ID?.trim() === parsedEnv.data.RESTORE_REHEARSAL_EXPECTED_RAILWAY_SERVICE_ID
+      ? null
+      : "RAILWAY_SERVICE_ID",
+  ].filter((name): name is string => name !== null);
+  if (mismatchedRestoreRailwayPins.length > 0) {
+    throw new Error(
+      `Restore rehearsal runtime does not match the reviewed disposable Railway pins: ${mismatchedRestoreRailwayPins.join(", ")}.`,
+    );
   }
   if (process.env.RAILWAY_VOLUME_MOUNT_PATH?.trim() !== "/app/data") {
     throw new Error("Restore rehearsal requires RAILWAY_VOLUME_MOUNT_PATH=/app/data.");
@@ -758,14 +1619,24 @@ if (parsedEnv.data.RESTORE_REHEARSAL_MODE) {
     );
   }
   if (
+    !parsedEnv.data.RESTORE_REHEARSAL_EXPECTED_SUPABASE_URL ||
     !parsedEnv.data.RESTORE_REHEARSAL_PRODUCTION_SUPABASE_URL ||
     !parsedEnv.data.RESTORE_REHEARSAL_BACKUP_SUPABASE_URL
   ) {
     throw new Error(
-      "Restore rehearsal requires the production and independent-backup Supabase URLs so it can prove the staging project is distinct.",
+      "Restore rehearsal requires reviewed restore, production, and operational-restore-copy Supabase URL pins so it can prove the disposable project is exact and distinct.",
     );
   }
+  assertCompatibleSupabaseServiceKey({
+    name: "SUPABASE_SERVICE_ROLE_KEY",
+    parsedValue: parsedEnv.data.SUPABASE_SERVICE_ROLE_KEY,
+    rawValue: process.env.SUPABASE_SERVICE_ROLE_KEY,
+  });
   const restoreSupabaseRef = canonicalSupabaseProjectRef(parsedEnv.data.SUPABASE_URL, "SUPABASE_URL");
+  const expectedRestoreSupabaseRef = canonicalSupabaseProjectRef(
+    parsedEnv.data.RESTORE_REHEARSAL_EXPECTED_SUPABASE_URL,
+    "RESTORE_REHEARSAL_EXPECTED_SUPABASE_URL",
+  );
   const productionSupabaseRef = canonicalSupabaseProjectRef(
     parsedEnv.data.RESTORE_REHEARSAL_PRODUCTION_SUPABASE_URL,
     "RESTORE_REHEARSAL_PRODUCTION_SUPABASE_URL",
@@ -775,13 +1646,11 @@ if (parsedEnv.data.RESTORE_REHEARSAL_MODE) {
     "RESTORE_REHEARSAL_BACKUP_SUPABASE_URL",
   );
   if (
-    restoreSupabaseRef !== RESTORE_REHEARSAL_SUPABASE_REF ||
-    productionSupabaseRef !== RESTORE_REHEARSAL_PRODUCTION_SUPABASE_REF ||
-    backupSupabaseRef !== RESTORE_REHEARSAL_BACKUP_SUPABASE_REF ||
+    restoreSupabaseRef !== expectedRestoreSupabaseRef ||
     new Set([restoreSupabaseRef, productionSupabaseRef, backupSupabaseRef]).size !== 3
   ) {
     throw new Error(
-      "Restore rehearsal Supabase identities must exactly match the dedicated restore, production, and independent-backup project refs.",
+      "Restore rehearsal Supabase identities must match the reviewed disposable restore pin and remain distinct from production and the operational restore copy.",
     );
   }
 
@@ -792,8 +1661,11 @@ if (parsedEnv.data.RESTORE_REHEARSAL_MODE) {
   if (parsedEnv.data.RESTORE_REHEARSAL_REDIS_ENVIRONMENT_ID !== railwayEnvironmentId) {
     throw new Error("RESTORE_REHEARSAL_REDIS_ENVIRONMENT_ID must be a Railway reference to the current staging environment ID.");
   }
-  if (parsedEnv.data.RESTORE_REHEARSAL_REDIS_SERVICE_ID !== RESTORE_REHEARSAL_REDIS_SERVICE_ID) {
-    throw new Error("RESTORE_REHEARSAL_REDIS_SERVICE_ID must be the immutable staging Redis Railway service ID.");
+  if (
+    !parsedEnv.data.RESTORE_REHEARSAL_EXPECTED_REDIS_SERVICE_ID
+    || parsedEnv.data.RESTORE_REHEARSAL_REDIS_SERVICE_ID !== parsedEnv.data.RESTORE_REHEARSAL_EXPECTED_REDIS_SERVICE_ID
+  ) {
+    throw new Error("RESTORE_REHEARSAL_REDIS_SERVICE_ID must match the reviewed disposable Redis service pin.");
   }
   const expectedRedisNamespace = `pint-path:restore:${railwayEnvironmentId}:${backupId}`;
   if (parsedEnv.data.REDIS_KEY_NAMESPACE !== expectedRedisNamespace) {
@@ -916,3 +1788,13 @@ export const env = {
 };
 
 export type Env = typeof env;
+
+export function assertApplicationServerStartAllowed(
+  identityRegistryPhase = env.PINTPATH_IDENTITY_REGISTRY_PHASE,
+): void {
+  if (identityRegistryPhase === "staging-bootstrap") {
+    throw new Error(
+      "Permanent-staging identity bootstrap is operator-only: run configuration and PostgreSQL runtime verification, then complete the cross-environment identity registry before starting the web server, routes, or workers.",
+    );
+  }
+}

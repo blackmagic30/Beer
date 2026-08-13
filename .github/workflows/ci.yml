@@ -15,6 +15,8 @@ concurrency:
 
 jobs:
   build-test-scan:
+    needs: postgres-migration-integration
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -24,8 +26,17 @@ jobs:
       OUTBOUND_CALLS_ENABLED: "false"
 
     steps:
+      - name: Require PostgreSQL migration integration success
+        env:
+          POSTGRES_MIGRATION_INTEGRATION_RESULT: ${{ needs.postgres-migration-integration.result }}
+        run: |
+          if [ "$POSTGRES_MIGRATION_INTEGRATION_RESULT" != "success" ]; then
+            echo "::error::postgres-migration-integration did not succeed"
+            exit 1
+          fi
+
       - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -33,11 +44,16 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version-file: .node-version
           cache: npm
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Prove the locked sensitive worker under the exact reviewed Node runtime
+        env:
+          PINTPATH_LOCKED_SENSITIVE_WORKER_TEST_REQUIRED: "true"
+        run: npx vitest run test/locked-sensitive-worker-boundary.test.ts --maxWorkers=1
 
       - name: Build, test, and scan
         run: npm run check
@@ -48,19 +64,281 @@ jobs:
       - name: Dependency audit
         run: npm run security:audit
 
+      - name: Assert live AWS WORM integration remains explicitly gated
+        env:
+          PINTPATH_TEST_POSTGRES_LOGICAL_WORM_AWS: "disabled"
+          PINTPATH_POSTGRES_LOGICAL_WORM: "disabled"
+          PINTPATH_POSTGRES_LOGICAL_WORM_AWS: "disabled"
+        run: npm run test:db:postgres:backup:logical:worm:aws
+
+  postgres-migration-integration:
+    needs: postgres-tool-runtime-closure-observation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        # Docker Hub Registry v2 manifest header and exact body SHA-256 were
+        # independently matched before this reviewed multi-architecture pin.
+        image: postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
+        env:
+          POSTGRES_DB: postgres
+          POSTGRES_INITDB_ARGS: --auth-local=trust --auth-host=scram-sha-256
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      NODE_ENV: test
+      PUBLIC_BASE_URL: http://localhost:3000
+      PINTPATH_POSTGRES_MIGRATION_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+      PINTPATH_POSTGRES_MIGRATION_TEST_REQUIRED: "true"
+      PINTPATH_POSTGRES_REVIEWED_PRICE_KERNEL_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+      PINTPATH_POSTGRES_REVIEWED_PRICE_KERNEL_TEST_REQUIRED: "true"
+      PINTPATH_POSTGRES_LOGICAL_STATE_V2_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+      PINTPATH_POSTGRES_LOGICAL_STATE_V2_TEST_REQUIRED: "true"
+      PINTPATH_POSTGRES_LOGICAL_BACKUP_V4_SOURCE_AUTHORITY_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+      PINTPATH_POSTGRES_LOGICAL_BACKUP_V4_SOURCE_AUTHORITY_TEST_REQUIRED: "true"
+      PINTPATH_POSTGRES_LOGICAL_PHYSICAL_SCHEMA_V4_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+      PINTPATH_POSTGRES_LOGICAL_PHYSICAL_SCHEMA_V4_TEST_REQUIRED: "true"
+      PINTPATH_ACCOUNT_SESSION_POSTGRES_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+      PINTPATH_ACCOUNT_PROFILE_PREFERENCES_POSTGRES_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+      PINTPATH_ACTIVITY_AUDIT_POSTGRES_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+      PINTPATH_ACCOUNT_DELETION_QUEUE_POSTGRES_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+      PINTPATH_ACCOUNT_PRIVACY_POSTGRES_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+      PINTPATH_ACCOUNT_DELETION_RECOVERY_POSTGRES_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+      PINTPATH_POSTGRES_ACCOUNT_DELETION_REPLAY_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+      PINTPATH_POSTGRES_PRIVATE_STORAGE_RECOVERY_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+      PINTPATH_BILLING_CHECKOUT_POSTGRES_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+      PINTPATH_SUPPORT_FEEDBACK_POSTGRES_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+      PINTPATH_VENUE_ACCESS_POSTGRES_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+      PINTPATH_SOURCE_EVIDENCE_OBJECT_POSTGRES_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+      PINTPATH_VENUE_MANAGER_INTERNAL_SUBMISSION_POSTGRES_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify generated Postgres schema
+        run: npm run db:postgres:schema:check
+
+      - name: Verify frozen SQLite migration contract
+        run: npm run db:postgres:migration:contract:check
+
+      - name: Run real PostgreSQL 17 import, reconciliation, and reviewed-price planner no-write proof
+        run: npx vitest run test/postgres-migration-target.integration.test.ts
+
+      - name: Run inert reviewed-price promotion kernel PostgreSQL 17 contract
+        run: npx vitest run test/postgres-reviewed-price-promotion-kernel.integration.test.ts
+
+      - name: Run logical-state v2 PostgreSQL 17 contract
+        run: npx vitest run test/postgres-logical-state-v2.integration.test.ts
+
+      - name: Run logical-backup V4 source-authority PostgreSQL 17 contract
+        run: npx vitest run test/postgres-logical-backup-v4-source-authority.integration.test.ts
+
+      - name: Run logical-backup V4 physical-schema PostgreSQL 17 contract
+        run: npx vitest run test/postgres-logical-physical-schema-v4.integration.test.ts --maxWorkers=1
+
+      - name: Run verified logical offsite retrieval contract
+        run: npx vitest run test/postgres-logical-offsite-retrieval.integration.test.ts
+
+      - name: Run public venue-directory Postgres contract
+        run: npx vitest run test/public-venue-directory.repository.integration.test.ts
+
+      - name: Run venue identity Postgres contract
+        run: npx vitest run test/venue-identity.repository.integration.test.ts
+
+      - name: Run system-state Postgres authority contract
+        run: npx vitest run test/system-state.repository.integration.test.ts
+
+      - name: Run account and session Postgres contract
+        run: npx vitest run test/account-session.repository.integration.test.ts
+
+      - name: Run account profile and preferences Postgres contract
+        run: npx vitest run test/account-profile-preferences.repository.integration.test.ts
+
+      - name: Run activity and audit Postgres contract
+        run: npx vitest run test/activity-audit.repository.integration.test.ts
+
+      - name: Run account-deletion queue Postgres contract
+        run: npx vitest run test/account-deletion-queue.repository.integration.test.ts
+
+      - name: Run account privacy Postgres contract
+        run: npx vitest run test/account-privacy.repository.integration.test.ts
+
+      - name: Run account-deletion recovery fixture Postgres contract
+        run: npx vitest run test/postgres-account-deletion-recovery-fixture.integration.test.ts
+
+      - name: Run account-deletion tombstone replay Postgres contract
+        run: npx vitest run test/postgres-account-deletion-replay.integration.test.ts
+
+      - name: Run private Storage recovery Postgres contract
+        run: npx vitest run test/postgres-private-storage-recovery.integration.test.ts
+
+      - name: Run staging private-auth probe Postgres 17 contract
+        env:
+          PINTPATH_CI_POSTGRES_CONTAINER_ID: ${{ job.services.postgres.id }}
+          PINTPATH_STAGING_AUTH_PROBE_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+          PINTPATH_STAGING_AUTH_PROBE_TEST_REQUIRED: "true"
+        run: PATH="$GITHUB_WORKSPACE/scripts/ci:$PATH" npm run test:staging:auth:probe:pg17
+
+      - name: Run privacy-retention Postgres contract
+        run: npx vitest run test/privacy-retention.repository.integration.test.ts
+
+      - name: Run Stripe subscription Postgres contract
+        run: npx vitest run test/stripe-subscription.repository.integration.test.ts
+
+      - name: Run billing checkout Postgres contract
+        run: npx vitest run test/billing-checkout.repository.integration.test.ts
+
+      - name: Run public-price Postgres contract
+        run: npx vitest run test/public-price.repository.integration.test.ts
+
+      - name: Run community-submission Postgres contract
+        run: npx vitest run test/community-submission.repository.integration.test.ts
+
+      - name: Run source-evidence object Postgres contract
+        run: npx vitest run test/source-evidence-object.repository.integration.test.ts
+
+      - name: Run source-evidence retention Postgres contract
+        run: npx vitest run test/source-evidence-retention.repository.integration.test.ts
+
+      - name: Run internal venue-manager submission Postgres contract
+        run: npx vitest run test/venue-manager-internal-submission.repository.integration.test.ts
+
+      - name: Run venue-inventory Postgres contract
+        run: npx vitest run test/venue-inventory.repository.integration.test.ts
+
+      - name: Run venue pending-change Postgres contract
+        run: npx vitest run test/venue-pending-change.repository.integration.test.ts
+
+      - name: Run venue data read Postgres contract
+        run: npx vitest run test/venue-data-read.repository.integration.test.ts
+
+      - name: Run support and wrong-price Postgres contract
+        run: npx vitest run test/support-feedback.repository.integration.test.ts
+
+      - name: Run venue access Postgres contract
+        run: npx vitest run test/venue-access.repository.integration.test.ts
+
+      - name: Run mission lifecycle Postgres contract
+        run: npx vitest run test/mission-lifecycle.repository.integration.test.ts
+
+      - name: Run mission discovery and automation Postgres contract
+        run: npx vitest run test/mission-discovery-automation.repository.integration.test.ts
+
+      - name: Run mandatory mission discovery production-scale PostgreSQL 17 gate
+        env:
+          PINTPATH_MISSION_DISCOVERY_SCALE_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+          PINTPATH_MISSION_DISCOVERY_SCALE_EVIDENCE_PATH: ${{ runner.temp }}/pintpath-mission-discovery-scale-evidence.json
+          PINTPATH_MISSION_DISCOVERY_SCALE_TEST_REQUIRED: "true"
+        run: npx vitest run --disableConsoleIntercept test/mission-discovery-automation-scale.integration.test.ts
+
+      - name: Retain mission discovery production-scale PostgreSQL 17 evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pintpath-mission-discovery-scale-evidence
+          path: ${{ runner.temp }}/pintpath-mission-discovery-scale-evidence.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Run venue-request Postgres contract
+        run: npx vitest run test/venue-request.repository.integration.test.ts
+
+      - name: Run venue-partner Postgres contract
+        run: npx vitest run test/venue-partner.repository.integration.test.ts
+
+      - name: Run admin analytics Postgres contract
+        run: npx vitest run test/admin-analytics.repository.integration.test.ts
+
+      - name: Run venue-manager insights Postgres contract
+        run: npx vitest run test/venue-manager-insights.repository.integration.test.ts
+
+      - name: Run admin account Postgres contract
+        run: npx vitest run test/admin-account.repository.integration.test.ts
+
+      - name: Install pinned PostgreSQL 17 logical-backup client
+        run: bash scripts/ci/install-postgresql-client-17
+
+      - name: Run mandatory V4 cross-OID scratch-restore mechanism observation
+        # This disposable round trip proves the data-only restore mechanics.
+        # It does not establish native runtime closure or operational V4 authority.
+        env:
+          PINTPATH_POSTGRES_LOGICAL_SCRATCH_RESTORE_V4_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+          PINTPATH_POSTGRES_LOGICAL_SCRATCH_RESTORE_V4_TEST_PG_BIN: /usr/lib/postgresql/17/bin
+          PINTPATH_POSTGRES_LOGICAL_SCRATCH_RESTORE_V4_TEST_REQUIRED: "true"
+        run: npx vitest run test/postgres-logical-scratch-restore-v4.integration.test.ts --maxWorkers=1
+
+      - name: Protect PostgreSQL HBA baseline for V4 behavior observation
+        env:
+          PINTPATH_CI_POSTGRES_CONTAINER_ID: ${{ job.services.postgres.id }}
+          PINTPATH_POSTGRES_TOOL_AUTHORITY_V4_TEST_DATABASE: pintpath_v4_tool_3e7a8c19d4f2
+          PINTPATH_POSTGRES_TOOL_AUTHORITY_V4_TEST_ROLE: pintpath_v4_backup_3e7a8c19d4f2
+        run: bash scripts/ci/postgres-tool-authority-v4-hba-fixture setup
+
+      - name: Run mandatory V4 PostgreSQL 17 authentication and raw-list behavior observation
+        # This disposable gate observes PG17 behavior only. It does not verify
+        # native runtime closure or establish production tool authority.
+        env:
+          PINTPATH_CI_POSTGRES_CONTAINER_ID: ${{ job.services.postgres.id }}
+          PINTPATH_POSTGRES_TOOL_AUTHORITY_V4_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+          PINTPATH_POSTGRES_TOOL_AUTHORITY_V4_TEST_DATABASE: pintpath_v4_tool_3e7a8c19d4f2
+          PINTPATH_POSTGRES_TOOL_AUTHORITY_V4_TEST_MODE: service
+          PINTPATH_POSTGRES_TOOL_AUTHORITY_V4_TEST_REQUIRED: "true"
+          PINTPATH_POSTGRES_TOOL_AUTHORITY_V4_TEST_ROLE: pintpath_v4_backup_3e7a8c19d4f2
+        run: npx vitest run test/postgres-tool-authority-v4-pg17.integration.test.ts --maxWorkers=1
+
+      - name: Restore and remove PostgreSQL HBA baseline after V4 behavior observation
+        if: always()
+        env:
+          PINTPATH_CI_POSTGRES_CONTAINER_ID: ${{ job.services.postgres.id }}
+        run: bash scripts/ci/postgres-tool-authority-v4-hba-fixture cleanup
+
+      - name: Configure disposable fd12 PostgreSQL TLS fixture
+        env:
+          PINTPATH_CI_POSTGRES_CONTAINER_ID: ${{ job.services.postgres.id }}
+        run: bash scripts/ci/postgres-logical-restore-tls-fixture setup
+
+      - name: Run mandatory PostgreSQL 17 TLS logical backup and restore
+        env:
+          PINTPATH_POSTGRES_LOGICAL_RESTORE_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+          PINTPATH_POSTGRES_LOGICAL_RESTORE_TEST_REQUIRED: "true"
+        run: npx vitest run test/postgres-logical-restore.integration.test.ts
+
+      - name: Remove disposable PostgreSQL TLS fixture
+        if: always()
+        run: bash scripts/ci/postgres-logical-restore-tls-fixture cleanup
+
   supabase-database:
     runs-on: ubuntu-latest
     timeout-minutes: 25
 
     steps:
       - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
 
       - name: Setup Supabase CLI
-        uses: supabase/setup-cli@3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf # v2.1.1
+        uses: supabase/setup-cli@46f7f98c7f948ad727d22c1e67fab04c223a0520 # v3.0.0
         with:
           version: 2.109.1
 
@@ -71,7 +349,7 @@ jobs:
         run: supabase db reset --local
 
       - name: Lint database schemas
-        run: supabase db lint --local --schema public,private --level warning --fail-on warning
+        run: supabase db lint --local --schema public,private,pintpath_app,pintpath_ops --level warning --fail-on warning
 
       - name: Run security advisors
         run: supabase db advisors --local --type security --level warn --fail-on warn
@@ -85,3 +363,43 @@ jobs:
       - name: Stop isolated Supabase database
         if: always()
         run: supabase stop --no-backup
+
+  postgres-tool-runtime-closure-observation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify passive V4 PostgreSQL tool-runtime closure contract
+        run: npx vitest run test/postgres-tool-runtime-closure-v4.test.ts test/postgres-tool-runtime-closure-v4-registry.test.ts --maxWorkers=1
+
+      - name: Run mandatory exact OCI PostgreSQL 17 runtime observation
+        # This hashes and executes one exact disposable OCI runtime. It remains
+        # observation-only and grants no source, artifact, or production authority.
+        env:
+          PINTPATH_POSTGRES_TOOL_RUNTIME_CLOSURE_V4_TEST_DOCKER: /usr/bin/docker
+          PINTPATH_POSTGRES_TOOL_RUNTIME_CLOSURE_V4_TEST_EVIDENCE_PATH: ${{ runner.temp }}/pintpath-postgres-tool-runtime-closure-v4-observation.json
+          PINTPATH_POSTGRES_TOOL_RUNTIME_CLOSURE_V4_TEST_REQUIRED: "true"
+        run: npx vitest run test/postgres-tool-runtime-closure-v4.integration.test.ts --maxWorkers=1
+
+      - name: Retain exact OCI PostgreSQL 17 runtime observation
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pintpath-postgres-tool-runtime-closure-v4-observation
+          path: ${{ runner.temp }}/pintpath-postgres-tool-runtime-closure-v4-observation.json
+          if-no-files-found: error
+          retention-days: 14

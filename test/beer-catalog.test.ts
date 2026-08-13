@@ -3,6 +3,7 @@ import BetterSqlite3 from "better-sqlite3";
 
 import { BeerCatalogRepository } from "../src/db/beer-catalog.repository.js";
 import { initializeDatabaseSchema } from "../src/db/database.js";
+import { asAsyncSqliteDatabase } from "../src/db/sql-database.js";
 import {
   VIEWER_TRACKED_BEERS,
   canonicalizeTrackedBeerName,
@@ -103,13 +104,13 @@ describe("Pint Path beer catalogue", () => {
     expect(isLikelyBeerName("Venom Cherry Sour")).toBe(true);
   });
 
-  it("seeds the system beer registry and resolves static aliases", () => {
+  it("seeds the system beer registry and resolves static aliases", async () => {
     const database = new BetterSqlite3(":memory:");
     try {
       initializeDatabaseSchema(database);
-      const repository = new BeerCatalogRepository(database);
+      const repository = new BeerCatalogRepository(asAsyncSqliteDatabase(database));
 
-      expect(repository.resolveBeerName({
+      expect(await repository.resolveBeerName({
         name: "Carlton Draft",
         source: "test",
         now: "2026-06-30T00:00:00.000Z",
@@ -120,7 +121,7 @@ describe("Pint Path beer catalogue", () => {
         created: false,
         matchedExisting: true,
       }));
-      expect(repository.resolveBeerName({
+      expect(await repository.resolveBeerName({
         name: "Guinness Stout",
         source: "manual_test",
         now: "2026-06-30T00:00:00.000Z",
@@ -130,7 +131,7 @@ describe("Pint Path beer catalogue", () => {
         status: "pending_review",
         matchedExisting: false,
       }));
-      expect(repository.resolveBeerName({
+      expect(await repository.resolveBeerName({
         name: "Guinness Stout",
         source: "photo_ocr_test",
         now: "2026-06-30T00:00:00.000Z",
@@ -147,7 +148,7 @@ describe("Pint Path beer catalogue", () => {
     }
   });
 
-  it("keeps active catalogue entries beyond row 500 available to viewer and OCR callers", () => {
+  it("keeps active catalogue entries beyond row 500 available to viewer and OCR callers", async () => {
     const database = new BetterSqlite3(":memory:");
     try {
       initializeDatabaseSchema(database);
@@ -162,30 +163,30 @@ describe("Pint Path beer catalogue", () => {
           insert.run(`reachability_beer_${suffix}`, `ZZZ Reachability Beer ${suffix}`, "2026-07-14T00:00:00.000Z", "2026-07-14T00:00:00.000Z");
         }
       })();
-      const repository = new BeerCatalogRepository(database);
+      const repository = new BeerCatalogRepository(asAsyncSqliteDatabase(database));
 
-      expect(repository.listForViewer()).toContainEqual(expect.objectContaining({
+      expect(await repository.listForViewer()).toContainEqual(expect.objectContaining({
         key: "reachability_beer_509",
         name: "ZZZ Reachability Beer 509",
       }));
-      expect(repository.listForViewer(500)).not.toContainEqual(expect.objectContaining({ key: "reachability_beer_509" }));
+      expect(await repository.listForViewer(500)).not.toContainEqual(expect.objectContaining({ key: "reachability_beer_509" }));
     } finally {
       database.close();
     }
   });
 
-  it("adds unknown crawler beers as pending system beer candidates", () => {
+  it("adds unknown crawler beers as pending system beer candidates", async () => {
     const database = new BetterSqlite3(":memory:");
     try {
       initializeDatabaseSchema(database);
-      const repository = new BeerCatalogRepository(database);
+      const repository = new BeerCatalogRepository(asAsyncSqliteDatabase(database));
 
-      const created = repository.resolveBeerName({
+      const created = await repository.resolveBeerName({
         name: "Very Local Hazy Pint",
         source: "menu_crawler_import",
         now: "2026-06-30T00:00:00.000Z",
       });
-      const matched = repository.resolveBeerName({
+      const matched = await repository.resolveBeerName({
         name: "very local hazy pint",
         source: "source_ingestion_review",
         now: "2026-06-30T00:10:00.000Z",
@@ -204,32 +205,55 @@ describe("Pint Path beer catalogue", () => {
         created: false,
         matchedExisting: true,
       }));
-      expect(repository.listForViewer()).not.toContainEqual(expect.objectContaining({
+      expect(await repository.listForViewer()).not.toContainEqual(expect.objectContaining({
         key: "very_local_hazy_pint",
       }));
-      expect(repository.listForAdmin("pending_review", 20)).toContainEqual(expect.objectContaining({
+      expect(await repository.listForAdmin("pending_review", 20)).toContainEqual(expect.objectContaining({
         key: "very_local_hazy_pint",
         name: "Very Local Hazy Pint",
         aliases: expect.arrayContaining(["Very Local Hazy Pint"]),
       }));
+      expect(await repository.listForAdmin("pending_review", 20, 0, "%")).toEqual([]);
+      expect(await repository.countForAdmin("pending_review", "_")).toBe(0);
     } finally {
       database.close();
     }
   });
 
-  it("lets admins reject pending catalogue names without deleting active beers", () => {
+  it("serializes concurrent resolution through the shared SQLite adapter", async () => {
     const database = new BetterSqlite3(":memory:");
     try {
       initializeDatabaseSchema(database);
-      const repository = new BeerCatalogRepository(database);
+      const repository = new BeerCatalogRepository(asAsyncSqliteDatabase(database));
 
-      repository.resolveBeerName({
+      const resolved = await Promise.all(Array.from({ length: 8 }, (_, index) => repository.resolveBeerName({
+        name: index % 2 === 0 ? "Parallel Test Lager" : "parallel test lager",
+        source: "concurrency_test",
+        now: "2026-08-08T00:00:00.000Z",
+      })));
+
+      expect(resolved.map((beer) => beer.key)).toEqual(Array(8).fill("parallel_test_lager"));
+      expect(resolved.filter((beer) => beer.created)).toHaveLength(1);
+      expect(database.prepare("SELECT count(*) AS count FROM beer_catalog_items WHERE key = ?")
+        .get("parallel_test_lager")).toEqual({ count: 1 });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("lets admins reject pending catalogue names without deleting active beers", async () => {
+    const database = new BetterSqlite3(":memory:");
+    try {
+      initializeDatabaseSchema(database);
+      const repository = new BeerCatalogRepository(asAsyncSqliteDatabase(database));
+
+      await repository.resolveBeerName({
         name: "Very Local Hazy Pint",
         source: "menu_crawler_import",
         now: "2026-06-30T00:00:00.000Z",
       });
 
-      const rejected = repository.rejectPendingBeer({
+      const rejected = await repository.rejectPendingBeer({
         key: "very_local_hazy_pint",
         reviewNote: "OCR website copy noise.",
         now: "2026-06-30T00:15:00.000Z",
@@ -240,18 +264,18 @@ describe("Pint Path beer catalogue", () => {
         name: "Very Local Hazy Pint",
         reviewNote: "OCR website copy noise.",
       }));
-      expect(repository.listForAdmin("pending_review", 20)).not.toContainEqual(expect.objectContaining({
+      expect(await repository.listForAdmin("pending_review", 20)).not.toContainEqual(expect.objectContaining({
         key: "very_local_hazy_pint",
       }));
       expect(database.prepare("SELECT count(*) AS count FROM beer_catalog_aliases WHERE beer_key = ?").get("very_local_hazy_pint")).toEqual({
         count: 0,
       });
-      expect(repository.rejectPendingBeer({
+      expect(await repository.rejectPendingBeer({
         key: "carlton_draft",
         reviewNote: "Should not remove active beers.",
         now: "2026-06-30T00:20:00.000Z",
       })).toBeNull();
-      expect(repository.listForViewer()).toContainEqual(expect.objectContaining({
+      expect(await repository.listForViewer()).toContainEqual(expect.objectContaining({
         key: "carlton_draft",
         name: "Carlton Draught",
       }));
@@ -260,13 +284,13 @@ describe("Pint Path beer catalogue", () => {
     }
   });
 
-  it("does not create pending catalogue entries for obvious OCR noise", () => {
+  it("does not create pending catalogue entries for obvious OCR noise", async () => {
     const database = new BetterSqlite3(":memory:");
     try {
       initializeDatabaseSchema(database);
-      const repository = new BeerCatalogRepository(database);
+      const repository = new BeerCatalogRepository(asAsyncSqliteDatabase(database));
 
-      const rejected = repository.resolveBeerName({
+      const rejected = await repository.resolveBeerName({
         name: "INCLUDED YOU'LL FIND *",
         source: "menu_crawler_import",
         now: "2026-06-30T00:00:00.000Z",
@@ -279,7 +303,7 @@ describe("Pint Path beer catalogue", () => {
         created: false,
         matchedExisting: false,
       }));
-      expect(repository.listForAdmin("pending_review", 20)).not.toContainEqual(expect.objectContaining({
+      expect(await repository.listForAdmin("pending_review", 20)).not.toContainEqual(expect.objectContaining({
         name: "INCLUDED YOU'LL FIND *",
       }));
     } finally {
@@ -287,7 +311,7 @@ describe("Pint Path beer catalogue", () => {
     }
   });
 
-  it("cleans old pending crawler noise from the beer catalogue on startup", () => {
+  it("cleans old pending crawler noise from the beer catalogue on startup", async () => {
     const database = new BetterSqlite3(":memory:");
     try {
       initializeDatabaseSchema(database);
@@ -307,9 +331,9 @@ describe("Pint Path beer catalogue", () => {
         .run("included_you_ll_find", "included_you_ll_find", "INCLUDED YOU'LL FIND *", "2026-06-30T00:00:00.000Z");
 
       initializeDatabaseSchema(database);
-      const repository = new BeerCatalogRepository(database);
+      const repository = new BeerCatalogRepository(asAsyncSqliteDatabase(database));
 
-      expect(repository.listForAdmin("pending_review", 20)).not.toContainEqual(expect.objectContaining({
+      expect(await repository.listForAdmin("pending_review", 20)).not.toContainEqual(expect.objectContaining({
         key: "included_you_ll_find",
       }));
     } finally {

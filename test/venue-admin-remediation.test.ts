@@ -118,6 +118,8 @@ describe("venue and admin remediation", () => {
   it("commits only the latest admin loader page and query", () => {
     expect(admin).toContain("let accountDeletionRequestId = 0");
     expect(admin).toContain("let securityAuditRequestId = 0");
+    expect(admin).toContain("let securityAuditCursor = null");
+    expect(admin).toContain("let securityAuditCursorStack = []");
     expect(admin).toContain("let adminMissionRequestId = 0");
     expect(admin).toContain("let adminBeerCatalogReviewRequestId = 0");
     expect(admin).toContain("let venuePartnerRequestId = 0");
@@ -126,7 +128,10 @@ describe("venue and admin remediation", () => {
     expect(admin).toContain("let adminDataToolsRequestId = 0");
     expect(admin).toContain("requestedOffset !== accountDeletionOffset");
     expect(admin).toContain("requestedOffset !== securityAuditOffset");
-    expect(admin).toContain("requestedQuery !== securityAuditRequestParams(requestedOffset).toString()");
+    expect(admin).toContain("requestedQuery !== securityAuditRequestParams(requestedOffset, securityAuditCursor).toString()");
+    expect(admin).toContain('params.set("cursorCreatedAt", cursor.createdAt)');
+    expect(admin).toContain('params.set("cursorId", cursor.id)');
+    expect(admin).toContain("securityAuditCursorStack.push(securityAuditCursor)");
     expect(admin).toContain("requestedOffset !== adminMissionOffset");
     expect(admin).toContain("requestedOffset !== adminBeerCatalogOffset");
     expect(admin).toContain("function hasActiveBeerCatalogMergeDraft()");
@@ -226,6 +231,15 @@ describe("venue and admin remediation", () => {
     expect(admin).toContain("/api/business/admin/queues?limit=${ADMIN_REVIEW_QUEUE_PAGE_SIZE}&offset=${adminReviewQueueOffset}");
     expect(admin).toContain("pagination.hasMore || {}");
     expect(admin).toContain("adminReviewQueueOffset += ADMIN_REVIEW_QUEUE_PAGE_SIZE");
+  });
+
+  it("carries venue-partner OCC tokens through every admin edit control", () => {
+    expect(admin).toContain('name="expectedUpdatedAt" type="hidden"');
+    expect(admin).toContain('data-interest-updated-at="${escapeHtml(interest.updatedAt)}"');
+    expect(admin).toContain("body: JSON.stringify({ status, expectedUpdatedAt })");
+    expect(admin).toContain('data-expected-updated-at="${escapeHtml(item.updatedAt || item.expectedUpdatedAt || "")}"');
+    expect(admin).toContain("expectedUpdatedAt: item.expectedUpdatedAt || item.updatedAt || null");
+    expect(admin).toContain("body.expectedUpdatedAt = body.expectedUpdatedAt || null;");
   });
 
   it("does not expose dead private-evidence links while authenticated previews load or fail", () => {

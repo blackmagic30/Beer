@@ -1,0 +1,55 @@
+{
+  "schemaVersion": "pintpath-permanent-staging-provider-variable-write-policy/v2",
+  "policyId": "permanent-staging-provider-variable-single-write",
+  "activationState": "HARD_DISABLED_REVIEW_REQUIRED",
+  "projectId": "48d8c6cd-1c66-4148-874b-20877f48e1a5",
+  "productionEnvironmentId": "13dab015-df74-45c6-b26f-69323daea99a",
+  "stagingEnvironmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+  "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
+  "operations": [
+    {
+      "operationId": "permanent-staging-provider-variable-create/google-maps-api-key",
+      "variableName": "GOOGLE_MAPS_API_KEY",
+      "intentLeaf": "pintpath-permanent-staging-provider-variable-google-maps-api-key-intent.json",
+      "terminalEvidenceLeaf": "pintpath-permanent-staging-provider-variable-google-maps-api-key-terminal-evidence.json"
+    },
+    {
+      "operationId": "permanent-staging-provider-variable-create/google-maps-map-id",
+      "variableName": "GOOGLE_MAPS_MAP_ID",
+      "intentLeaf": "pintpath-permanent-staging-provider-variable-google-maps-map-id-intent.json",
+      "terminalEvidenceLeaf": "pintpath-permanent-staging-provider-variable-google-maps-map-id-terminal-evidence.json"
+    },
+    {
+      "operationId": "permanent-staging-provider-variable-create/google-places-api-key",
+      "variableName": "GOOGLE_PLACES_API_KEY",
+      "intentLeaf": "pintpath-permanent-staging-provider-variable-google-places-api-key-intent.json",
+      "terminalEvidenceLeaf": "pintpath-permanent-staging-provider-variable-google-places-api-key-terminal-evidence.json"
+    },
+    {
+      "operationId": "permanent-staging-provider-variable-create/openai-api-key",
+      "variableName": "OPENAI_API_KEY",
+      "intentLeaf": "pintpath-permanent-staging-provider-variable-openai-api-key-intent.json",
+      "terminalEvidenceLeaf": "pintpath-permanent-staging-provider-variable-openai-api-key-terminal-evidence.json"
+    }
+  ],
+  "railwayCli": {
+    "version": "5.32.0",
+    "absolutePath": "/opt/homebrew/Cellar/railway/5.32.0/bin/railway",
+    "sha256": "26e3e0fd2b59fd9f7b1e891cbc8f3ca9b0266556545f00ba4db3ce754fbc10d1"
+  },
+  "writeContract": {
+    "mode": "create-only",
+    "stdinOnly": true,
+    "skipDeploys": true,
+    "jsonOutput": false,
+    "maximumValueBytes": 4096,
+    "expectedBefore": "absent",
+    "expectedIsSealed": false,
+    "expectedReferences": [],
+    "sequentialNotAtomic": true,
+    "externalMutationFreezeRequired": true,
+    "stdoutHandling": "discard",
+    "stderrHandling": "discard",
+    "deploymentDeltaAllowed": false
+  }
+}

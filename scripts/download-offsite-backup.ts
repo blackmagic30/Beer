@@ -1,6 +1,11 @@
 import path from "node:path";
 
 import { redactSecrets } from "../src/lib/redact.js";
+import {
+  assertExactSupabaseOrigin,
+  assertSupabaseServerApiKey,
+  resolveExactOperationalOffsiteBackupBucket,
+} from "../src/lib/supabase-key-format.js";
 
 let loadedCredential: string | null = null;
 
@@ -36,8 +41,13 @@ function argumentValue(name: string): string | null {
 }
 
 function requiredEnvironment(name: "OFFSITE_BACKUP_SUPABASE_URL"): string {
-  const value = process.env[name]?.trim();
+  const value = process.env[name];
   if (!value) throw new Error(`${name} is required.`);
+  assertExactSupabaseOrigin(
+    value,
+    "https://hfbmhdxrwtihukmixxta.supabase.co",
+    name,
+  );
   return value;
 }
 
@@ -51,6 +61,12 @@ async function main(): Promise<void> {
       "Pass --backup-id, --expected-manifest-sha256, and --output exactly once.",
     );
   }
+  const destinationSupabaseUrl = requiredEnvironment(
+    "OFFSITE_BACKUP_SUPABASE_URL",
+  );
+  const bucketName = resolveExactOperationalOffsiteBackupBucket(
+    process.env.OFFSITE_BACKUP_BUCKET,
+  );
 
   const {
     downloadOffsiteBackup,
@@ -61,6 +77,10 @@ async function main(): Promise<void> {
   }
   const destinationServiceRoleKey = await readPrivateSecretFile(serviceRoleKeyFile);
   loadedCredential = destinationServiceRoleKey;
+  assertSupabaseServerApiKey(
+    destinationServiceRoleKey,
+    "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
+  );
 
   const controller = new AbortController();
   const abort = () => controller.abort(new Error("Off-site backup download was interrupted."));
@@ -68,9 +88,9 @@ async function main(): Promise<void> {
   process.once("SIGTERM", abort);
   try {
     const result = await downloadOffsiteBackup({
-      destinationSupabaseUrl: requiredEnvironment("OFFSITE_BACKUP_SUPABASE_URL"),
+      destinationSupabaseUrl,
       destinationServiceRoleKey,
-      bucketName: process.env.OFFSITE_BACKUP_BUCKET?.trim() || "pintpath-backups",
+      bucketName,
       backupId,
       expectedManifestSha256,
       outputPath: path.resolve(output),

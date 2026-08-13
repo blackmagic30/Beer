@@ -33,11 +33,17 @@ Rotate a provider key immediately if it was committed, exposed through `/config.
 
 Rotation checklist:
 
-- Supabase service role: rotate in Supabase, update Railway/local env, restart the service, verify server sync only.
+Any Railway environment update, restart, route change, or redeploy below remains
+blocked until `readiness:railway:mutation-boundary` passes and the tracked
+one-operation executor owns both the immediate preflight and unconditional
+postflight. Never use a dashboard **Deploy**, Git autodeploy, or an ad-hoc CLI
+command to bridge that gap; never commit or discard unrelated staged changes.
+
+- Supabase service role: rotate in Supabase, update local configuration, then use the guarded Railway executor for the remote update/restart and verify server sync only.
 - Google Maps browser key: rotate in Google Cloud, restrict HTTP referrers to `https://pintpath.au/*`, `http://localhost:3000/*`, and `http://127.0.0.1:3000/*`.
 - Google Places server key: rotate and restrict by API/IP where possible.
-- Stripe secret/webhook keys: rotate in Stripe, update Railway env, replay a signed test webhook.
-- OpenAI keys: rotate with OpenAI, update Railway env, verify no raw payloads are logged.
+- Stripe secret/webhook keys: rotate in Stripe, use the guarded Railway executor for the remote update, and replay a signed test webhook.
+- OpenAI keys: rotate with OpenAI, use the guarded Railway executor for the remote update, and verify no raw payloads are logged.
 - Retired phone-call provider keys: remove them from Railway/local env. If phone automation ever returns, rebuild it behind a fresh security review and rotate any old provider credentials first.
 
 Run `npm run security:scan` before every deploy.
@@ -50,7 +56,7 @@ Run `npm run security:scan` before every deploy.
 4. Revoke impacted sessions with logout-all/admin database action.
 5. Review `security_audit_log` for admin, payment, session, and venue-manager actions.
 6. Preserve relevant Railway logs and database backups.
-7. Patch, test with `npm run check` and `npm run security:scan`, then redeploy.
+7. Patch and test with `npm run check` and `npm run security:scan`; then use only the reviewed Railway executor to redeploy the exact immutable image.
 8. Notify affected testers/users if account, phone, payment, or source evidence data may have been exposed.
 
 ## Payment Security Notes
@@ -75,7 +81,7 @@ Run `npm run security:scan` before every deploy.
 
 - Back up the Railway SQLite volume before production deploys or schema changes.
 - Schema changes should be additive. Avoid destructive migrations for the beta.
-- Roll back by redeploying the previous commit and restoring the pre-deploy SQLite backup if a migration corrupts state.
+- Roll back through the reviewed Railway executor to the previous immutable image and restore the pre-deploy database recovery point if a migration corrupts state.
 
 ## Admin MFA / Step-Up
 

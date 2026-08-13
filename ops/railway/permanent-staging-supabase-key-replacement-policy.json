@@ -1,0 +1,45 @@
+{
+  "schemaVersion": "pintpath-permanent-staging-supabase-key-replacement-policy/v1",
+  "policyId": "permanent-staging-supabase-two-key-replacement",
+  "activationState": "HARD_DISABLED_REVIEW_REQUIRED",
+  "railwayTarget": {
+    "projectId": "48d8c6cd-1c66-4148-874b-20877f48e1a5",
+    "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+    "applicationServiceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
+    "canaryServiceId": "34a312cd-0920-4a7e-90db-8561c1e0746b"
+  },
+  "keys": [
+    {
+      "name": "SUPABASE_ANON_KEY",
+      "format": "sb_publishable",
+      "expectedSealed": false,
+      "targetServiceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
+      "allowedReferenceServiceId": "34a312cd-0920-4a7e-90db-8561c1e0746b"
+    },
+    {
+      "name": "SUPABASE_SERVICE_ROLE_KEY",
+      "format": "sb_secret",
+      "expectedSealed": true,
+      "targetServiceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
+      "allowedReferenceServiceId": "34a312cd-0920-4a7e-90db-8561c1e0746b"
+    }
+  ],
+  "mutation": {
+    "operationName": "variableCollectionUpsert",
+    "mergeCardinality": "exactly-one-all-or-nothing",
+    "skipDeploys": true,
+    "maximumAttempts": 1,
+    "retriesAllowed": false,
+    "sharedEnvironmentTargetAllowed": false,
+    "stagedPatchAllowed": false,
+    "deploymentDeltaAllowed": false,
+    "externalMutationFreezeRequired": true
+  },
+  "evidence": {
+    "secretMaterialAllowed": false,
+    "secretDerivedCommitmentsAllowed": false,
+    "durableIntentRequiredBeforeAttempt": true,
+    "terminalEvidenceRequired": true,
+    "ambiguousOutcomeAction": "STOP_NO_RETRY"
+  }
+}

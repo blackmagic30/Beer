@@ -10,7 +10,6 @@ import {
   sha256File,
   verifyDataBackup,
 } from "./data-backup.js";
-import { createServerSupabaseClient } from "./supabase-client.js";
 
 const STAGING_EVIDENCE_BUCKET = "beermap-source-evidence";
 const RESTORED_STORAGE_DIRECTORY = "supabase-source-evidence";
@@ -34,6 +33,10 @@ export interface StageRestoredSourceEvidenceInput {
   stagingServiceRoleKey: string;
   productionSupabaseUrl: string;
   offsiteBackupSupabaseUrl: string;
+  /**
+   * Test-only transport seam. Production activation is intentionally absent
+   * until a candidate-bound disposable restore-project authority exists.
+   */
   clientFactory?: ((url: string, serviceRoleKey: string) => SupabaseClient) | undefined;
 }
 
@@ -302,6 +305,11 @@ function objectSetSha256(files: BackupStorageFile[]): string {
 export async function stageRestoredSourceEvidence(
   input: StageRestoredSourceEvidenceInput,
 ): Promise<StageRestoredSourceEvidenceResult> {
+  if (!input.clientFactory) {
+    throw new Error(
+      "Restore-staging evidence transport is unavailable until a reviewed disposable-project authority is registered.",
+    );
+  }
   const serviceRoleKey = input.stagingServiceRoleKey.trim();
   if (!serviceRoleKey) throw new Error("STAGING_SUPABASE_SERVICE_ROLE_KEY is required.");
   const stagingUrl = input.stagingSupabaseUrl.trim();
@@ -341,9 +349,7 @@ export async function stageRestoredSourceEvidence(
   let client: SupabaseClient | null = null;
 
   try {
-    client = input.clientFactory
-      ? input.clientFactory(stagingOrigin, serviceRoleKey)
-      : createServerSupabaseClient(stagingOrigin, serviceRoleKey, { timeoutMs: 120_000 });
+    client = input.clientFactory(stagingOrigin, serviceRoleKey);
     const { data: bucket, error: bucketError } = await client.storage.getBucket(STAGING_EVIDENCE_BUCKET);
     if (bucketError || !bucket) throw bucketError ?? new Error("The staging evidence bucket is unavailable.");
     if (bucket.public !== false) throw new Error("The staging evidence bucket must be private.");

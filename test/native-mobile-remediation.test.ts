@@ -38,6 +38,12 @@ describe("native mobile remediation guardrails", () => {
   const androidSessions = read("apps/android/app/src/main/java/au/pintpath/beermap/data/SessionStore.kt");
   const androidComponents = read("apps/android/app/src/main/java/au/pintpath/beermap/ui/components/Components.kt");
   const androidBuild = read("apps/android/app/build.gradle.kts");
+  const androidSupabaseResolverTests = read(
+    "apps/android/app/src/test/java/au/pintpath/beermap/data/SupabasePublicAuthConfigurationResolverTest.kt",
+  );
+  const androidTransportTests = read(
+    "apps/android/app/src/test/java/au/pintpath/beermap/data/BeerMapApiTransportTest.kt",
+  );
 
   it("ships the Pint Path display brand on both platforms", () => {
     const info = read("apps/ios/BeerMap/Info.plist");
@@ -92,9 +98,9 @@ describe("native mobile remediation guardrails", () => {
     expect(iosSettings).toContain("AppConfig.supabaseAnonKey != nil");
     expect(iosSettings).not.toContain("model.config?.supabaseUrl");
     expect(iosSettings).not.toContain("model.config?.supabaseAnonKey");
-    expect(androidApp).toContain('state.config.stringOrNull("supabaseUrl")');
-    expect(androidApp).toContain('state.config.stringOrNull("supabaseAnonKey")');
-    expect(androidApp).toContain("hasServerSupabaseConfig || hasEmbeddedSupabaseConfig");
+    expect(androidApp).toContain("SupabasePublicAuthConfigurationResolver.resolve(state.config)");
+    expect(androidApp).toContain("hasEffectiveSupabaseConfig");
+    expect(androidApp).not.toContain("hasServerSupabaseConfig || hasEmbeddedSupabaseConfig");
   });
 
   it("matches the production public-config and venue discovery response shapes", () => {
@@ -769,6 +775,306 @@ describe("native mobile remediation guardrails", () => {
     expect(androidReadme).toContain("keytool -printcert -jarfile");
     expect(androidReadme).toContain("shasum -a 256");
     expect(androidReadme).toContain("unsigned build artifact and must never be submitted to Play");
+  });
+
+  it("pins the Android Release backend without blocking Debug local servers", () => {
+    const approvedApiBaseUrl = "https://pintpath.au";
+    const androidReadme = read("apps/android/README.md");
+    const androidLocalProperties = read("apps/android/local.properties.example");
+    const configuredApiBase = sourceSection(
+      androidBuild,
+      `val approvedProductionApiBaseUrl = "${approvedApiBaseUrl}"`,
+      "val approvedSupabaseOrigin =",
+    );
+    const defaultConfig = sourceSection(androidBuild, "defaultConfig {", "signingConfigs {");
+    const releaseBuildType = sourceSection(androidBuild, "buildTypes {", "buildFeatures {");
+    const releaseGuard = sourceSection(androidBuild, "gradle.taskGraph.whenReady", "dependencies {");
+    const runtimeApiBaseGuard = sourceSection(
+      androidAPI,
+      "private fun effectiveApiBaseUrl()",
+      "private fun requiredLegalPolicyVersion(",
+    );
+
+    expect(configuredApiBase).toContain(
+      'configuredAndroidProperty("PINT_PATH_API_BASE_URL")',
+    );
+    expect(configuredApiBase).toContain("?: approvedProductionApiBaseUrl");
+    expect(configuredApiBase).toContain(
+      ".takeIf { it == approvedProductionApiBaseUrl }",
+    );
+    expect(configuredApiBase).not.toContain("throw GradleException(");
+    expect(defaultConfig).toContain("configuredApiBaseUrl.toBuildConfigString()");
+    expect(releaseBuildType).toContain('getByName("release")');
+    expect(releaseBuildType).toContain("embeddedReleaseApiBaseUrl.toBuildConfigString()");
+    expect(releaseBuildType).not.toContain("configuredApiBaseUrl.toBuildConfigString()");
+    expect(releaseGuard).toContain(
+      "configuredApiBaseUrl != approvedProductionApiBaseUrl",
+    );
+    expect(releaseGuard).toContain(
+      "bundleRelease requires PINT_PATH_API_BASE_URL to be the exact approved HTTPS",
+    );
+    expect(releaseGuard).toContain("the configured value is hidden");
+    expect(releaseGuard).not.toContain("$configuredApiBaseUrl");
+    expect(androidAPI).toContain(
+      `const val APPROVED_PRODUCTION_API_BASE_URL = "${approvedApiBaseUrl}"`,
+    );
+    expect(runtimeApiBaseGuard).toContain(
+      "!BuildConfig.DEBUG && baseUrl != APPROVED_PRODUCTION_API_BASE_URL",
+    );
+    expect(runtimeApiBaseGuard).toContain("throw IOException(API_CONFIGURATION_UNAVAILABLE)");
+    expect(runtimeApiBaseGuard).not.toMatch(/throw IOException\([^)]*baseUrl/);
+    expect(androidAPI).not.toContain("URL(baseUrl.trimEnd('/')");
+    expect(androidAPI).toContain('put("redirect_to", effectiveApiBaseUrl() + "/auth/callback")');
+    expect(androidAPI).toContain("URL(effectiveApiBaseUrl() + path)");
+
+    const rejectedReleaseApiBases = [
+      ` ${approvedApiBaseUrl}`,
+      `${approvedApiBaseUrl} `,
+      "http://pintpath.au",
+      "https://other.pintpath.au",
+      `${approvedApiBaseUrl}/`,
+      `${approvedApiBaseUrl}/api`,
+      `${approvedApiBaseUrl}?source=android`,
+      `${approvedApiBaseUrl}#fragment`,
+      "https://user@pintpath.au",
+      `${approvedApiBaseUrl}:443`,
+    ];
+    expect("http://10.0.2.2:3000" === approvedApiBaseUrl).toBe(false);
+    expect(approvedApiBaseUrl === "https://pintpath.au").toBe(true);
+    for (const rejectedApiBase of rejectedReleaseApiBases) {
+      expect(rejectedApiBase === approvedApiBaseUrl).toBe(false);
+    }
+
+    for (const documentation of [androidReadme, androidLocalProperties]) {
+      expect(documentation).toContain(approvedApiBaseUrl);
+      expect(documentation).toContain("PINT_PATH_API_BASE_URL");
+      expect(documentation).toMatch(/Debug/i);
+      expect(documentation).toMatch(/bundleRelease/);
+      expect(documentation).toMatch(/empty\s+fail-closed/i);
+    }
+  });
+
+  it("pins Android Supabase Auth to one exact public origin and publishable-key pair", () => {
+    const approvedOrigin = "https://auth.pintpath.au";
+    const androidKeyPattern = "^sb_publishable_[A-Za-z0-9_-]{20,220}$";
+    const publishableKey = new RegExp(androidKeyPattern);
+    const androidReadme = read("apps/android/README.md");
+    const androidLocalProperties = read("apps/android/local.properties.example");
+    const configuredSupabaseGuard = sourceSection(
+      androidBuild,
+      `val approvedSupabaseOrigin = "${approvedOrigin}"`,
+      "android {",
+    );
+    const releaseGuard = sourceSection(androidBuild, "gradle.taskGraph.whenReady", "dependencies {");
+    const runtimeResolver = sourceSection(
+      androidAPI,
+      "internal object SupabasePublicAuthConfigurationResolver",
+      "class BeerMapApiClient(",
+    );
+    const supabaseRequest = sourceSection(
+      androidAPI,
+      "private suspend fun supabaseRequest(",
+      "private fun encode(",
+    );
+    const beginOAuth = sourceSection(
+      androidApp,
+      "fun beginOAuth(provider: String): Uri",
+      "suspend fun completeOAuthCallback(",
+    );
+
+    expect(androidBuild).toContain(`val approvedSupabaseOrigin = "${approvedOrigin}"`);
+    expect(androidBuild).toContain('configuredAndroidProperty("SUPABASE_URL")');
+    expect(configuredSupabaseGuard).toContain("configuredSupabaseOrigin.isNotEmpty()");
+    expect(configuredSupabaseGuard).toContain(
+      "configuredSupabaseOrigin != approvedSupabaseOrigin",
+    );
+    expect(configuredSupabaseGuard).toContain(
+      ".takeIf { it == approvedSupabaseOrigin }",
+    );
+    expect(configuredSupabaseGuard).toContain("the configured value is hidden");
+    expect(configuredSupabaseGuard).not.toContain("$configuredSupabaseOrigin");
+    expect(androidBuild).toContain("embeddedSupabaseOrigin.toBuildConfigString()");
+    expect(androidBuild).not.toContain("configuredSupabaseOrigin.toBuildConfigString()");
+    expect(androidBuild).toContain(`Regex("${androidKeyPattern}")`);
+    expect(androidBuild).toContain('configuredAndroidProperty("SUPABASE_ANON_KEY")');
+    expect(androidBuild).toContain(
+      ".takeIf { supabasePublishableKeyPattern.matches(it) }",
+    );
+    expect(androidBuild).toContain("embeddedSupabasePublishableKey.toBuildConfigString()");
+    expect(androidBuild).not.toContain("configuredSupabasePublishableKey.toBuildConfigString()");
+    expect(configuredSupabaseGuard).toContain("configuredSupabasePublishableKey.isNotEmpty()");
+    expect(configuredSupabaseGuard).toContain(
+      "!supabasePublishableKeyPattern.matches(configuredSupabasePublishableKey)",
+    );
+    expect(configuredSupabaseGuard).toContain("Legacy JWTs and secret keys are not accepted");
+    expect(configuredSupabaseGuard).toContain("throw GradleException(");
+    expect(configuredSupabaseGuard).not.toContain("$configuredSupabasePublishableKey");
+    expect(releaseGuard).toContain("configuredSupabaseOrigin != approvedSupabaseOrigin");
+    expect(releaseGuard).toContain(
+      "!supabasePublishableKeyPattern.matches(configuredSupabasePublishableKey)",
+    );
+    expect(releaseGuard).toContain("bundleRelease requires SUPABASE_URL");
+    expect(releaseGuard).toContain("bundleRelease requires a nonblank SUPABASE_ANON_KEY");
+    expect(releaseGuard).not.toContain("$configuredSupabaseOrigin");
+    expect(releaseGuard).not.toContain("$configuredSupabasePublishableKey");
+
+    const rejectedOrigins = [
+      ` ${approvedOrigin}`,
+      `${approvedOrigin} `,
+      "http://auth.pintpath.au",
+      "https://evil.pintpath.au",
+      `${approvedOrigin}/`,
+      `${approvedOrigin}/auth/v1`,
+      `${approvedOrigin}?source=android`,
+      `${approvedOrigin}#fragment`,
+      "https://user@auth.pintpath.au",
+      `${approvedOrigin}:443`,
+    ];
+    expect(approvedOrigin === "https://auth.pintpath.au").toBe(true);
+    for (const rejectedOrigin of rejectedOrigins) {
+      expect(rejectedOrigin === approvedOrigin).toBe(false);
+    }
+
+    expect(publishableKey.test(`sb_publishable_${"a".repeat(20)}`)).toBe(true);
+    expect(publishableKey.test(`sb_publishable_${"a".repeat(220)}`)).toBe(true);
+    for (const rejectedKey of [
+      "",
+      `sb_publishable_${"a".repeat(19)}`,
+      `sb_publishable_${"a".repeat(221)}`,
+      ` sb_publishable_${"a".repeat(20)}`,
+      `sb_publishable_${"a".repeat(20)} `,
+      `sb_secret_${"a".repeat(32)}`,
+      "eyJhbGciOiJIUzI1NiJ9.legacy.anon",
+    ]) {
+      expect(publishableKey.test(rejectedKey)).toBe(false);
+    }
+
+    expect(runtimeResolver).toContain(`const val APPROVED_ORIGIN = "${approvedOrigin}"`);
+    expect(runtimeResolver).toContain(`Regex("${androidKeyPattern}")`);
+    expect(runtimeResolver).toContain('configuredOriginPublished = config.has("supabaseUrl")');
+    expect(runtimeResolver).toContain('configuredKeyPublished = config.has("supabaseAnonKey")');
+    expect(runtimeResolver).toContain('exactOptionalString(config, "supabaseUrl")');
+    expect(runtimeResolver).toContain('exactOptionalString(config, "supabaseAnonKey")');
+    expect(runtimeResolver).toContain("configuredOrigin?.takeIf { it.isNotEmpty() }");
+    expect(runtimeResolver).toContain("configuredKey?.takeIf { it.isNotEmpty() }");
+    expect(runtimeResolver).toContain(
+      "configuredOriginPublished != configuredKeyPublished",
+    );
+    expect(runtimeResolver).toContain("if (configuredOriginPublished)");
+    expect(runtimeResolver).toContain(
+      "selectedConfiguredOrigin == null && selectedConfiguredKey == null",
+    );
+    expect(runtimeResolver.indexOf("return requirePair(selectedConfiguredOrigin")).toBeLessThan(
+      runtimeResolver.indexOf("selectedEmbeddedOrigin"),
+    );
+    expect(runtimeResolver).toContain("origin != APPROVED_ORIGIN");
+    expect(runtimeResolver).toContain("!publishableKeyPattern.matches(key)");
+    expect(runtimeResolver).toContain("throw IOException(UNAVAILABLE_MESSAGE)");
+    expect(runtimeResolver).not.toMatch(/trim(?:End|Start)?\s*\(/);
+    expect(runtimeResolver).not.toMatch(/throw IOException\([^)]*(?:origin|key)/);
+
+    expect(supabaseRequest).toContain(
+      "SupabasePublicAuthConfigurationResolver.resolve(config)",
+    );
+    expect(supabaseRequest).toContain(
+      "openNonRedirectingHttpConnection(URL(publicConfiguration.origin + path))",
+    );
+    expect(supabaseRequest).not.toContain('config.stringOrNull("supabaseUrl")');
+    expect(supabaseRequest).not.toContain("BuildConfig.SUPABASE_URL");
+    expect(supabaseRequest).toContain(
+      'setRequestProperty("apikey", publicConfiguration.publishableKey)',
+    );
+    expect(supabaseRequest).toContain("accessToken != publicConfiguration.publishableKey");
+    expect(supabaseRequest).not.toContain(
+      'setRequestProperty("Authorization", "Bearer ${publicConfiguration.publishableKey}")',
+    );
+
+    expect(beginOAuth).toContain("SupabasePublicAuthConfigurationResolver.resolve(config)");
+    expect(beginOAuth).toContain(
+      'Uri.parse("${publicConfiguration.origin}/auth/v1/authorize")',
+    );
+    expect(beginOAuth).not.toContain('config.stringOrNull("supabaseUrl")');
+    expect(beginOAuth).not.toContain("BuildConfig.SUPABASE_URL");
+    expect(beginOAuth).not.toContain("trimEnd");
+    expect(beginOAuth.indexOf("SupabasePublicAuthConfigurationResolver.resolve(config)")).toBeLessThan(
+      beginOAuth.indexOf("sessions.savePendingOAuth"),
+    );
+    expect(beginOAuth.indexOf("val authorizationUrl = Uri.parse")).toBeLessThan(
+      beginOAuth.indexOf("sessions.savePendingOAuth"),
+    );
+
+    for (const rejectedOrigin of rejectedOrigins) {
+      expect(androidSupabaseResolverTests).toContain(rejectedOrigin);
+    }
+    expect(androidSupabaseResolverTests).toContain(
+      "uses a complete configured pair ahead of a complete embedded pair",
+    );
+    expect(androidSupabaseResolverTests).toContain(
+      "rejects every noncanonical configured origin without embedded fallback",
+    );
+    expect(androidSupabaseResolverTests).toContain(
+      "honors an explicit disconnected configured pair without embedded fallback",
+    );
+    expect(androidSupabaseResolverTests).toContain(
+      "rejects one-sided configured fields without embedded fallback",
+    );
+    expect(androidSupabaseResolverTests).toContain(
+      "assertEquals(SupabasePublicAuthConfigurationResolver.UNAVAILABLE_MESSAGE, error.message)",
+    );
+
+    for (const documentation of [androidReadme, androidLocalProperties]) {
+      expect(documentation).toContain(approvedOrigin);
+      expect(documentation).toContain("SUPABASE_URL");
+      expect(documentation).toContain("sb_publishable_");
+      expect(documentation).toContain("SUPABASE_ANON_KEY");
+      expect(documentation).toMatch(/legacy anon\s+JWTs/i);
+      expect(documentation).toMatch(/secret|service-role/i);
+    }
+  });
+
+  it("disables automatic redirects on every Android credential-bearing HTTP path", () => {
+    const androidReadme = read("apps/android/README.md");
+    const connectionFactory = sourceSection(
+      androidAPI,
+      "internal fun openNonRedirectingHttpConnection(",
+      "class BeerMapApiClient(",
+    );
+    const reportExport = sourceSection(
+      androidAPI,
+      "suspend fun exportVenueMonthlyReport(",
+      "suspend fun feedback(",
+    );
+    const genericRequest = sourceSection(
+      androidAPI,
+      "private suspend fun request(",
+      "private fun hasSupabaseConfiguration(",
+    );
+    const supabaseRequest = sourceSection(
+      androidAPI,
+      "private suspend fun supabaseRequest(",
+      "private fun encode(",
+    );
+
+    expect(connectionFactory).toContain("url.openConnection() as HttpURLConnection");
+    expect(connectionFactory).toContain("instanceFollowRedirects = false");
+    expect(connectionFactory).not.toContain("instanceFollowRedirects = true");
+    for (const requestPath of [reportExport, genericRequest, supabaseRequest]) {
+      expect(requestPath).toContain("openNonRedirectingHttpConnection(");
+      expect(requestPath).not.toContain(".openConnection()");
+      expect(requestPath).not.toContain("instanceFollowRedirects = true");
+    }
+    expect(androidAPI.match(/openNonRedirectingHttpConnection\(/g)).toHaveLength(4);
+    expect(androidAPI.match(/\.openConnection\(\)/g)).toHaveLength(1);
+
+    expect(androidTransportTests).toContain("it.instanceFollowRedirects = true");
+    expect(androidTransportTests).toContain("openNonRedirectingHttpConnection(url)");
+    expect(androidTransportTests).toContain(
+      "assertFalse(connection.instanceFollowRedirects)",
+    );
+    expect(androidTransportTests).toContain("StubHttpURLConnection");
+    expect(androidTransportTests).not.toContain("responseCode");
+    expect(androidReadme).toMatch(/redirect responses/i);
+    expect(androidReadme).toMatch(/not followed/i);
   });
 
   it("keeps Android compilation free of resolved deprecation and nullability warnings", () => {

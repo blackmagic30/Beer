@@ -6,9 +6,62 @@ if (restoreRehearsalValue && !["0", "false", "no", "off"].includes(restoreRehear
   );
 }
 
-const baseUrl = (process.env.PINTPATH_SMOKE_BASE_URL || "https://pintpath.au").replace(/\/$/, "");
+const canonicalProductionSupabaseOrigin = "https://auth.pintpath.au";
+const canonicalProductionBaseOrigin = "https://pintpath.au";
+const loopbackHostnames = new Set(["localhost", "127.0.0.1", "[::1]"]);
+const rawBaseUrl = process.env.PINTPATH_SMOKE_BASE_URL
+  ?? canonicalProductionBaseOrigin;
+const loopbackTestAuthority = process.env.NODE_ENV === "test"
+  && process.env.PINTPATH_SMOKE_ALLOW_LOOPBACK_FOR_TESTS === "true";
+
+function approvedSmokeBaseUrl(value) {
+  let candidate;
+  try {
+    candidate = new URL(value);
+  } catch {
+    throw new Error("PINTPATH_SMOKE_BASE_URL must be an exact approved origin; no configured value is emitted.");
+  }
+  const isExactLoopback = loopbackTestAuthority
+    && loopbackHostnames.has(candidate.hostname)
+    && value === candidate.origin
+    && (candidate.protocol === "http:" || candidate.protocol === "https:")
+    && !candidate.username
+    && !candidate.password
+    && !candidate.search
+    && !candidate.hash
+    && (candidate.pathname === "/" || candidate.pathname === "");
+  if (value === canonicalProductionBaseOrigin || isExactLoopback) {
+    return value;
+  }
+  throw new Error(
+    "PINTPATH_SMOKE_BASE_URL must be the exact production origin or an exact loopback test origin; no configured value is emitted.",
+  );
+}
+
+const baseUrl = approvedSmokeBaseUrl(rawBaseUrl);
 const strictAuth = process.argv.includes("--strict-auth");
 const authOnly = process.argv.includes("--auth-only");
+const supabasePublishableKeyPattern = /^sb_publishable_[A-Za-z0-9_-]{20,220}$/;
+
+function readProtectedSupabasePublishableKey() {
+  const key = process.env.SUPABASE_ANON_KEY || "";
+  if (!supabasePublishableKeyPattern.test(key)) {
+    throw new Error(
+      "Protected SUPABASE_ANON_KEY must be an sb_publishable_ key with 20 to 220 URL-safe characters.",
+    );
+  }
+  return key;
+}
+
+let strictAuthConfigError = null;
+if (strictAuth) {
+  try {
+    readProtectedSupabasePublishableKey();
+  } catch (error) {
+    strictAuthConfigError = error;
+  }
+}
+
 const expectedCommitSha = process.env.PINTPATH_EXPECTED_COMMIT_SHA?.trim() || null;
 if (expectedCommitSha && !/^[0-9a-f]{40}$/.test(expectedCommitSha)) {
   throw new Error("PINTPATH_EXPECTED_COMMIT_SHA must be the exact 40-character lowercase commit SHA.");
@@ -72,6 +125,57 @@ async function checkJson(id, pathname, assertion, token) {
   }
 }
 
+async function checkProductionReadiness() {
+  try {
+    const response = await fetch(`${baseUrl}/ready`, {
+      redirect: "error",
+      signal: AbortSignal.timeout(20_000),
+    });
+    const payload = await parseJson(response, "ready");
+    const data = nestedData(payload);
+    const rateLimiterRedis = data.dependencies?.rateLimiterRedis;
+    const offsiteBackup = data.dependencies?.offsiteBackup;
+    const readyPassed = response.ok
+      && data.status === "ready"
+      && rateLimiterRedis?.required === true
+      && rateLimiterRedis?.configured === true
+      && rateLimiterRedis?.ready === true;
+    const logicalBackupPassed = response.ok
+      && offsiteBackup?.status === "ok"
+      && offsiteBackup?.required === true
+      && offsiteBackup?.liveProbe === true
+      && typeof offsiteBackup?.lastSuccessfulAt === "string"
+      && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(
+        offsiteBackup.lastSuccessfulAt,
+      )
+      && typeof offsiteBackup?.ageHours === "number"
+      && Number.isFinite(offsiteBackup.ageHours)
+      && offsiteBackup.ageHours >= 0;
+    results.push({
+      id: "ready",
+      status: readyPassed ? "pass" : "fail",
+      detail: readyPassed
+        ? `HTTP ${response.status}`
+        : `Unexpected HTTP ${response.status} response`,
+    });
+    results.push({
+      id: "postgres_logical_backup_attestation",
+      status: logicalBackupPassed ? "pass" : "fail",
+      detail: logicalBackupPassed
+        ? "Fresh live-bound remote attestation"
+        : "Postgres logical-backup attestation is absent, stale, unbound, or unreachable",
+    });
+  } catch (error) {
+    const detail = detailFromError(error, "Request failed");
+    results.push({ id: "ready", status: "fail", detail });
+    results.push({
+      id: "postgres_logical_backup_attestation",
+      status: "fail",
+      detail,
+    });
+  }
+}
+
 async function checkHtml(id, pathname, requiredText) {
   try {
     const response = await fetch(`${baseUrl}${pathname}`, { redirect: "error", signal: AbortSignal.timeout(20_000) });
@@ -92,12 +196,25 @@ function nestedData(value) {
 async function getPublicAuthConfig() {
   if (!publicConfigPromise) {
     publicConfigPromise = (async () => {
-      const pinnedUrlText = process.env.SUPABASE_URL?.trim() || "";
-      const pinnedAnonKey = process.env.SUPABASE_ANON_KEY?.trim() || "";
-      if (!pinnedUrlText || !pinnedAnonKey) {
-        throw new Error("Set protected SUPABASE_URL and SUPABASE_ANON_KEY values for smoke authentication");
+      const pinnedUrlText = process.env.SUPABASE_URL || "";
+      if (!pinnedUrlText) {
+        throw new Error("Set protected SUPABASE_URL for smoke authentication");
       }
+      const pinnedAnonKey = readProtectedSupabasePublishableKey();
       const pinnedUrl = new URL(pinnedUrlText);
+      const smokeTarget = new URL(baseUrl);
+      const localSmokeTarget = loopbackHostnames.has(smokeTarget.hostname);
+      if (
+        localSmokeTarget
+          ? pinnedUrlText !== pinnedUrl.origin
+          : pinnedUrlText !== canonicalProductionSupabaseOrigin
+      ) {
+        throw new Error(
+          localSmokeTarget
+            ? "Protected SUPABASE_URL must be an exact unnormalized provider origin for local smoke authentication"
+            : "Protected SUPABASE_URL must be the exact reviewed production provider origin",
+        );
+      }
       if (
         (pinnedUrl.protocol !== "https:" && pinnedUrl.protocol !== "http:")
         || pinnedUrl.username
@@ -108,11 +225,6 @@ async function getPublicAuthConfig() {
       ) {
         throw new Error("Protected SUPABASE_URL is not a valid provider origin");
       }
-      const smokeTarget = new URL(baseUrl);
-      const localSmokeTarget = ["localhost", "127.0.0.1", "::1"].includes(smokeTarget.hostname);
-      if (!localSmokeTarget && pinnedUrl.protocol !== "https:") {
-        throw new Error("Protected SUPABASE_URL must use HTTPS for production smoke authentication");
-      }
 
       const response = await fetch(`${baseUrl}/api/business/config`, {
         headers: { Accept: "application/json" },
@@ -121,8 +233,8 @@ async function getPublicAuthConfig() {
       });
       const payload = await parseJson(response, "Public auth configuration");
       const data = nestedData(payload);
-      const publicUrlText = typeof data.supabaseUrl === "string" ? data.supabaseUrl.trim() : "";
-      const publicAnonKey = typeof data.supabaseAnonKey === "string" ? data.supabaseAnonKey.trim() : "";
+      const publicUrlText = typeof data.supabaseUrl === "string" ? data.supabaseUrl : "";
+      const publicAnonKey = typeof data.supabaseAnonKey === "string" ? data.supabaseAnonKey : "";
       if (!response.ok || !publicUrlText || !publicAnonKey) {
         throw new Error(`Public auth configuration is unavailable (HTTP ${response.status})`);
       }
@@ -130,13 +242,13 @@ async function getPublicAuthConfig() {
       if (publicUrl.protocol !== "https:" && publicUrl.protocol !== "http:") {
         throw new Error("Public auth configuration returned an unsupported URL");
       }
-      if (publicUrl.origin !== pinnedUrl.origin) {
+      if (publicUrlText !== pinnedUrlText || publicUrl.origin !== pinnedUrl.origin) {
         throw new Error("Public Supabase URL does not match protected SUPABASE_URL");
       }
       if (publicAnonKey !== pinnedAnonKey) {
         throw new Error("Public Supabase key does not match protected SUPABASE_ANON_KEY");
       }
-      return { supabaseUrl: pinnedUrl.origin, supabaseAnonKey: pinnedAnonKey };
+      return { supabaseUrl: pinnedUrlText, supabaseAnonKey: pinnedAnonKey };
     })();
   }
   return publicConfigPromise;
@@ -266,7 +378,7 @@ function revokeProviderSession(providerSession) {
 if (!authOnly) {
   await Promise.all([
     checkJson("health", "/health", (payload) => nestedData(payload).status === "ok"),
-    checkJson("ready", "/ready", (payload) => nestedData(payload).status === "ready"),
+    checkProductionReadiness(),
     checkJson("config", "/api/business/config", (payload) => nestedData(payload).priceAccessModel === "fixed_preview"),
     checkJson("venues", "/api/business/venues?limit=3", (payload) => Array.isArray(nestedData(payload).venues)),
     checkJson("prices", "/api/business/price-records?limit=3", (payload) => Array.isArray(nestedData(payload).records)),
@@ -335,9 +447,18 @@ const authChecks = [
   },
 ];
 
+if (strictAuth) {
+  try {
+    await getPublicAuthConfig();
+  } catch (error) {
+    strictAuthConfigError = error;
+  }
+}
+
 for (const role of authChecks.filter((check) => selectedRoles.has(check.role))) {
   let session = null;
   try {
+    if (strictAuthConfigError) throw strictAuthConfigError;
     session = await resolveRoleSession(role);
     await checkJson(role.id, role.path, role.assert, session.token);
   } catch (error) {

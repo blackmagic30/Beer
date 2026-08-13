@@ -3,6 +3,9 @@ import BetterSqlite3 from "better-sqlite3";
 
 import { BeerCatalogRepository } from "../src/db/beer-catalog.repository.js";
 import { initializeDatabaseSchema } from "../src/db/database.js";
+import { asAsyncSqliteDatabase } from "../src/db/sql-database.js";
+import { SystemStateRepository } from "../src/db/system-state.repository.js";
+import { externalProviderCostBudgetInternals } from "../src/lib/external-provider-cost-budget.js";
 import { AdminService } from "../src/modules/admin/admin.service.js";
 
 const JPEG_DATA_URL = `data:image/jpeg;base64,${Buffer.from([
@@ -16,6 +19,7 @@ const PDF_DATA_URL = `data:application/pdf;base64,${Buffer.from(
 describe("admin Google Places venue lookup", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
   });
 
   it("reports Google venue add as ready when a server key is configured", () => {
@@ -137,6 +141,7 @@ describe("admin Google Places venue lookup", () => {
       "https://places.googleapis.com/v1/places/ChIJ123",
       expect.objectContaining({
         method: "GET",
+        redirect: "error",
         headers: expect.objectContaining({
           "X-Goog-Api-Key": "test-google-places-key",
           "X-Goog-FieldMask": expect.stringContaining("internationalPhoneNumber"),
@@ -197,13 +202,14 @@ describe("admin Google Places venue lookup", () => {
 
     try {
       initializeDatabaseSchema(database);
-      const beerCatalog = new BeerCatalogRepository(database);
-      beerCatalog.resolveBeerName({
+      const sqlDatabase = asAsyncSqliteDatabase(database);
+      const beerCatalog = new BeerCatalogRepository(sqlDatabase);
+      await beerCatalog.resolveBeerName({
         name: "Very Local Hazy Pint",
         source: "test_dynamic_catalog",
         now: "2026-06-30T00:00:00.000Z",
       });
-      beerCatalog.approvePendingBeer({
+      await beerCatalog.approvePendingBeer({
         key: "very_local_hazy_pint",
         now: "2026-06-30T00:01:00.000Z",
       });
@@ -215,7 +221,7 @@ describe("admin Google Places venue lookup", () => {
         "venue_menu_captures",
         "test-openai-key",
         undefined,
-        database,
+        sqlDatabase,
       );
       const prompts: string[] = [];
       const create = vi.fn(async (request: {
@@ -257,6 +263,7 @@ describe("admin Google Places venue lookup", () => {
       expect(create).toHaveBeenCalledWith(expect.objectContaining({
         model: "gpt-5.6-sol",
         store: false,
+        max_output_tokens: 8_192,
         reasoning: { effort: "low" },
         text: expect.objectContaining({
           format: expect.objectContaining({ type: "json_schema", strict: true }),
@@ -264,7 +271,7 @@ describe("admin Google Places venue lookup", () => {
         input: expect.arrayContaining([
           expect.objectContaining({
             content: expect.arrayContaining([
-              expect.objectContaining({ type: "input_image", detail: "original" }),
+              expect.objectContaining({ type: "input_image", detail: "high" }),
               expect.objectContaining({ type: "input_file", detail: "high" }),
             ]),
           }),
@@ -340,6 +347,163 @@ describe("admin Google Places venue lookup", () => {
 
     expect(result.model).toBe("gpt-4.1");
     expect(attemptedModels).toEqual(["gpt-5.6-sol", "gpt-4.1", "gpt-4.1"]);
+  });
+
+  it("rejects an unreviewed environment-selected OCR model before provider access", async () => {
+    vi.stubEnv("OPENAI_MENU_OCR_MODEL", "unreviewed-expensive-model");
+    const service = new AdminService(
+      undefined,
+      undefined,
+      undefined,
+      "venue_menu_captures",
+      "test-openai-key",
+      undefined,
+    );
+    const create = vi.fn();
+    (service as unknown as {
+      openai: { responses: { create: typeof create } };
+    }).openai = {
+      responses: { create },
+    };
+
+    await expect(service.ocrMenuPhoto({
+      venueNameHint: "Test Venue",
+      imageDataUrl: JPEG_DATA_URL,
+    })).rejects.toMatchObject({
+      statusCode: 503,
+      message: "OPENAI_MENU_OCR_MODEL must select a reviewed menu OCR model.",
+    });
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("reserves the permanent-staging rolling budget before cost-bound OCR", async () => {
+    vi.stubEnv("OPENAI_MENU_OCR_COST_BOUND_MODE", "true");
+    vi.stubEnv("OPENAI_MENU_OCR_MODEL", "gpt-4.1-mini-2025-04-14");
+    vi.stubEnv("OPENAI_MENU_OCR_FALLBACK_MODEL", "gpt-4.1-mini-2025-04-14");
+    vi.stubEnv("OPENAI_MENU_OCR_REVIEW_PASS", "false");
+    const database = new BetterSqlite3(":memory:");
+
+    try {
+      initializeDatabaseSchema(database);
+      const sqlDatabase = asAsyncSqliteDatabase(database);
+      const service = new AdminService(
+        undefined,
+        undefined,
+        undefined,
+        "venue_menu_captures",
+        "test-openai-key",
+        undefined,
+        sqlDatabase,
+      );
+      const create = vi.fn(async () => ({
+        output_text: JSON.stringify({
+          venue_name_guess: "Test Venue",
+          captured_notes: null,
+          overall_confidence: 0.9,
+          beers: [],
+          rejected_candidates: [],
+        }),
+      }));
+      (service as unknown as {
+        openai: { responses: { create: typeof create } };
+      }).openai = { responses: { create } };
+
+      await service.ocrMenuPhoto({
+        venueNameHint: "Test Venue",
+        imageDataUrl: JPEG_DATA_URL,
+      });
+
+      expect(create).toHaveBeenCalledTimes(1);
+      expect(create).toHaveBeenCalledWith(expect.objectContaining({
+        model: "gpt-4.1-mini-2025-04-14",
+        max_output_tokens: 8_192,
+      }), expect.any(Object));
+      const state = await new SystemStateRepository(sqlDatabase).get<{
+        reservationTimestamps: string[];
+      }>("external-provider-budget:permanent-staging:openai-menu-ocr:rolling-31-day");
+      expect(state?.value).toEqual(expect.objectContaining({
+        reservationTimestamps: [expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/)],
+      }));
+    } finally {
+      database.close();
+    }
+  });
+
+  it("fails before provider access when cost-bound persistence or PDF bounds are absent", async () => {
+    vi.stubEnv("OPENAI_MENU_OCR_COST_BOUND_MODE", "true");
+    vi.stubEnv("OPENAI_MENU_OCR_MODEL", "gpt-4.1-mini-2025-04-14");
+    vi.stubEnv("OPENAI_MENU_OCR_FALLBACK_MODEL", "gpt-4.1-mini-2025-04-14");
+    const service = new AdminService(
+      undefined,
+      undefined,
+      undefined,
+      "venue_menu_captures",
+      "test-openai-key",
+      undefined,
+    );
+    const create = vi.fn();
+    (service as unknown as {
+      openai: { responses: { create: typeof create } };
+    }).openai = { responses: { create } };
+
+    await expect(service.ocrMenuPhoto({
+      venueNameHint: "Test Venue",
+      imageDataUrl: JPEG_DATA_URL,
+    })).rejects.toMatchObject({
+      statusCode: 503,
+      message: "The menu OCR cost reservation could not be proved.",
+    });
+    await expect(service.ocrMenuPhotos({
+      venueNameHint: "Test Venue",
+      imageDataUrls: [],
+      documentDataUrls: [PDF_DATA_URL],
+    })).rejects.toMatchObject({
+      statusCode: 400,
+      message: "PDF menu OCR is unavailable while the permanent-staging cost bound is active.",
+    });
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("denies an exhausted rolling budget before provider access", async () => {
+    vi.stubEnv("OPENAI_MENU_OCR_COST_BOUND_MODE", "true");
+    vi.stubEnv("OPENAI_MENU_OCR_MODEL", "gpt-4.1-mini-2025-04-14");
+    vi.stubEnv("OPENAI_MENU_OCR_FALLBACK_MODEL", "gpt-4.1-mini-2025-04-14");
+    const database = new BetterSqlite3(":memory:");
+    try {
+      initializeDatabaseSchema(database);
+      const sqlDatabase = asAsyncSqliteDatabase(database);
+      const repository = new SystemStateRepository(sqlDatabase);
+      for (let index = 0; index < 20; index += 1) {
+        await externalProviderCostBudgetInternals.reserveOpenAiMenuOcrRollingBudgetAt(
+          repository,
+          new Date().toISOString(),
+        );
+      }
+      const service = new AdminService(
+        undefined,
+        undefined,
+        undefined,
+        "venue_menu_captures",
+        "test-openai-key",
+        undefined,
+        sqlDatabase,
+      );
+      const create = vi.fn();
+      (service as unknown as {
+        openai: { responses: { create: typeof create } };
+      }).openai = { responses: { create } };
+
+      await expect(service.ocrMenuPhoto({
+        venueNameHint: "Test Venue",
+        imageDataUrl: JPEG_DATA_URL,
+      })).rejects.toMatchObject({
+        statusCode: 503,
+        message: "The rolling menu OCR cost budget is exhausted.",
+      });
+      expect(create).not.toHaveBeenCalled();
+    } finally {
+      database.close();
+    }
   });
 
   it("does not send non-retryable provider authentication failures to a fallback model", async () => {

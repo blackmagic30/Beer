@@ -19,8 +19,15 @@ import {
   verifyDataBackup,
 } from "./data-backup.js";
 import { logger } from "./logger.js";
-import { redactSecrets } from "./redact.js";
+import { redactKnownSecretValues } from "./redact.js";
 import { createServerSupabaseClient } from "./supabase-client.js";
+import {
+  OPERATIONAL_OFFSITE_SUPABASE_ORIGIN,
+  PRODUCTION_SUPABASE_AUTH_ORIGIN,
+  assertExactSupabaseOrigin,
+  assertSupabaseServerApiKey,
+  resolveExactOperationalOffsiteBackupBucket,
+} from "./supabase-key-format.js";
 
 export interface OffsiteBackupConfig {
   databasePath: string;
@@ -132,6 +139,54 @@ function assertIndependentDestination(config: OffsiteBackupConfig): void {
   if (normalizedProjectOrigin(config.sourceSupabaseUrl) === normalizedProjectOrigin(config.destinationSupabaseUrl)) {
     throw new Error("Off-site backup destination must be a different Supabase project/provider from production.");
   }
+}
+
+function assertExactOffsiteBackupBoundary(config: OffsiteBackupConfig): void {
+  assertExactSupabaseOrigin(
+    config.sourceSupabaseUrl,
+    PRODUCTION_SUPABASE_AUTH_ORIGIN,
+    "sourceSupabaseUrl",
+  );
+  assertSupabaseServerApiKey(config.sourceServiceRoleKey, "sourceServiceRoleKey");
+  assertExactSupabaseOrigin(
+    config.destinationSupabaseUrl,
+    OPERATIONAL_OFFSITE_SUPABASE_ORIGIN,
+    "destinationSupabaseUrl",
+  );
+  assertSupabaseServerApiKey(
+    config.destinationServiceRoleKey,
+    "destinationServiceRoleKey",
+  );
+  resolveExactOperationalOffsiteBackupBucket(config.bucketName, "bucketName");
+  if (
+    config.sourceEvidenceBucketName !== undefined
+    && config.sourceEvidenceBucketName !== ""
+    && config.sourceEvidenceBucketName !== DEFAULT_SOURCE_EVIDENCE_BUCKET
+  ) {
+    throw new Error(
+      "sourceEvidenceBucketName must be the exact reviewed private evidence bucket; no configured value is emitted.",
+    );
+  }
+}
+
+function assertExactAccountDeletionLedgerBoundary(
+  config: AccountDeletionLedgerConfig,
+): void {
+  assertExactSupabaseOrigin(
+    config.sourceSupabaseUrl,
+    PRODUCTION_SUPABASE_AUTH_ORIGIN,
+    "sourceSupabaseUrl",
+  );
+  assertExactSupabaseOrigin(
+    config.destinationSupabaseUrl,
+    OPERATIONAL_OFFSITE_SUPABASE_ORIGIN,
+    "destinationSupabaseUrl",
+  );
+  assertSupabaseServerApiKey(
+    config.destinationServiceRoleKey,
+    "destinationServiceRoleKey",
+  );
+  resolveExactOperationalOffsiteBackupBucket(config.bucketName, "bucketName");
 }
 
 function resolveContainedPath(root: string, relativePath: string): string {
@@ -282,13 +337,38 @@ export async function probeOffsiteBackupReadiness(input: {
     };
   }
   let capabilityError: string | null = null;
+  try {
+    assertExactSupabaseOrigin(
+      input.sourceSupabaseUrl,
+      PRODUCTION_SUPABASE_AUTH_ORIGIN,
+      "sourceSupabaseUrl",
+    );
+    assertExactSupabaseOrigin(
+      input.destinationSupabaseUrl,
+      OPERATIONAL_OFFSITE_SUPABASE_ORIGIN,
+      "destinationSupabaseUrl",
+    );
+    assertSupabaseServerApiKey(
+      input.destinationServiceRoleKey,
+      "destinationServiceRoleKey",
+    );
+    resolveExactOperationalOffsiteBackupBucket(input.bucketName, "bucketName");
+  } catch {
+    capabilityError = "destination_configuration_invalid";
+  }
   const sourceOrigin = normalizedProjectOrigin(input.sourceSupabaseUrl);
   const destinationOrigin = normalizedProjectOrigin(input.destinationSupabaseUrl);
-  if (sourceOrigin === destinationOrigin) {
+  if (capabilityError) {
+    // Exact boundary validation deliberately runs before any client creation.
+  } else if (sourceOrigin === destinationOrigin) {
     capabilityError = "destination_not_independent";
   } else if (input.probeCapabilities !== false) {
     const cacheKey = `${destinationOrigin}:${input.bucketName}`;
-    if (destinationCapabilityCache?.key === cacheKey && destinationCapabilityCache.expiresAt > Date.now()) {
+    if (
+      !input.clientFactory
+      && destinationCapabilityCache?.key === cacheKey
+      && destinationCapabilityCache.expiresAt > Date.now()
+    ) {
       capabilityError = destinationCapabilityCache.error;
     } else {
       try {
@@ -310,7 +390,9 @@ export async function probeOffsiteBackupReadiness(input: {
               ? "bucket_object_cap_present"
               : "bucket_canary_failed";
       }
-      destinationCapabilityCache = { key: cacheKey, expiresAt: Date.now() + 60_000, error: capabilityError };
+      if (!input.clientFactory) {
+        destinationCapabilityCache = { key: cacheKey, expiresAt: Date.now() + 60_000, error: capabilityError };
+      }
     }
   }
   const freshnessError = ageHours === null
@@ -683,6 +765,7 @@ export async function appendAccountDeletionTombstone(
   config: AccountDeletionLedgerConfig,
   tombstone: AccountDeletionTombstone,
 ): Promise<{ ledgerCount: number; currentLedgerPath: string }> {
+  assertExactAccountDeletionLedgerBoundary(config);
   if (normalizedProjectOrigin(config.sourceSupabaseUrl) === normalizedProjectOrigin(config.destinationSupabaseUrl)) {
     throw new Error("Account-deletion ledger destination must be independent from the production Supabase project.");
   }
@@ -743,6 +826,7 @@ function parseLedgerCheckpoint(bytes: Buffer): AccountDeletionLedgerCheckpoint {
 export async function fetchVerifiedAccountDeletionLedger(
   config: AccountDeletionLedgerConfig,
 ): Promise<VerifiedAccountDeletionLedger> {
+  assertExactAccountDeletionLedgerBoundary(config);
   if (normalizedProjectOrigin(config.sourceSupabaseUrl) === normalizedProjectOrigin(config.destinationSupabaseUrl)) {
     throw new Error("Account-deletion ledger destination must be independent from the production Supabase project.");
   }
@@ -921,7 +1005,12 @@ export async function runOffsiteBackup(config: OffsiteBackupConfig): Promise<{
   prunedBackups: number;
   manifestSha256: string;
 }> {
+  assertExactOffsiteBackupBoundary(config);
   assertIndependentDestination(config);
+  const safeErrorMessage = (error: unknown): string => redactKnownSecretValues(
+    error instanceof Error ? error.message : String(error),
+    [config.sourceServiceRoleKey, config.destinationServiceRoleKey],
+  );
   if (!Number.isInteger(config.retentionDays) || config.retentionDays < 7 || config.retentionDays > 30) {
     throw new Error("Off-site backup retention must be between 7 and 30 days.");
   }
@@ -1067,7 +1156,7 @@ export async function runOffsiteBackup(config: OffsiteBackupConfig): Promise<{
       } catch (cleanupError) {
         logger.warn("Could not fully remove a partial off-site backup", {
           backupId,
-          error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+          error: safeErrorMessage(cleanupError),
         });
       }
     }
@@ -1078,7 +1167,7 @@ export async function runOffsiteBackup(config: OffsiteBackupConfig): Promise<{
     } catch (error) {
       logger.warn("Could not remove a temporary off-site backup directory", {
         backupId,
-        error: error instanceof Error ? error.message : String(error),
+        error: safeErrorMessage(error),
       });
     }
   }
@@ -1090,6 +1179,10 @@ export function scheduleOffsiteBackups(
   let stopped = false;
   let activeRun: Promise<void> | null = null;
   let retryTimer: NodeJS.Timeout | null = null;
+  const safeErrorMessage = (error: unknown): string => redactKnownSecretValues(
+    error instanceof Error ? error.message : String(error),
+    [config.sourceServiceRoleKey, config.destinationServiceRoleKey],
+  );
   const retryDelayMs = Math.min(config.intervalHours * 60 * 60 * 1000, 15 * 60 * 1000);
   const clearRetry = () => {
     if (!retryTimer) return;
@@ -1112,7 +1205,7 @@ export function scheduleOffsiteBackups(
     } catch (error) {
       logger.error("Could not persist off-site backup status", {
         state: status.state,
-        error: error instanceof Error ? error.message : String(error),
+        error: safeErrorMessage(error),
       });
     }
   };
@@ -1144,10 +1237,10 @@ export function scheduleOffsiteBackups(
           state: "failed",
           startedAt,
           completedAt: new Date().toISOString(),
-          error: error instanceof Error ? redactSecrets(error.message).slice(0, 300) : "Off-site backup failed",
+          error: error instanceof Error ? safeErrorMessage(error).slice(0, 300) : "Off-site backup failed",
         });
         logger.error("Off-site production backup failed", {
-          error: error instanceof Error ? error.message : String(error),
+          error: safeErrorMessage(error),
         });
       } finally {
         if (leaseAcquired) {
@@ -1156,7 +1249,7 @@ export function scheduleOffsiteBackups(
           } catch (error) {
             scheduleRetry();
             logger.error("Could not release the off-site backup lease", {
-              error: error instanceof Error ? error.message : String(error),
+              error: safeErrorMessage(error),
             });
           }
         }

@@ -1,11 +1,24 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 
-import BetterSqlite3 from "better-sqlite3";
+import type BetterSqlite3 from "better-sqlite3";
 
-import { BusinessRepository } from "../db/business.repository.js";
+import { AccountDeletionQueueRepository } from "../db/account-deletion-queue.repository.js";
+import { AccountPrivacyRepository } from "../db/account-privacy.repository.js";
+import { asAsyncSqliteDatabase } from "../db/sql-database.js";
 import { sanitizeAccountDeletionRecipientSecretsInBackup } from "../db/backup-privacy.js";
+import { createSqliteAccountDeletionSecretPhysicalCheckpoint } from "./account-deletion-secret-checkpoint.js";
+
+type BetterSqlite3Constructor = typeof import("better-sqlite3");
+const require = createRequire(import.meta.url);
+let betterSqlite3Constructor: BetterSqlite3Constructor | undefined;
+
+function loadBetterSqlite3(): BetterSqlite3Constructor {
+  betterSqlite3Constructor ??= require("better-sqlite3") as BetterSqlite3Constructor;
+  return betterSqlite3Constructor;
+}
 
 export interface BackupFile {
   path: string;
@@ -220,7 +233,8 @@ export function normalizeTombstones(tombstones: AccountDeletionTombstone[]): Acc
 }
 
 export function listSupabaseEvidenceReferences(databasePath: string): SupabaseEvidenceReference[] {
-  const database = new BetterSqlite3(databasePath, { readonly: true, fileMustExist: true });
+  const Database = loadBetterSqlite3();
+  const database = new Database(databasePath, { readonly: true, fileMustExist: true });
   try {
     if (!tableExists(database, "source_evidence_objects")) return [];
     return database.prepare(
@@ -235,7 +249,8 @@ export function listSupabaseEvidenceReferences(databasePath: string): SupabaseEv
 }
 
 export function listFilesystemEvidenceReferences(databasePath: string): FilesystemEvidenceReference[] {
-  const database = new BetterSqlite3(databasePath, { readonly: true, fileMustExist: true });
+  const Database = loadBetterSqlite3();
+  const database = new Database(databasePath, { readonly: true, fileMustExist: true });
   try {
     if (!tableExists(database, "source_evidence_objects")) return [];
     return database.prepare(
@@ -250,7 +265,8 @@ export function listFilesystemEvidenceReferences(databasePath: string): Filesyst
 }
 
 export function listAccountDeletionTombstones(databasePath: string): AccountDeletionTombstone[] {
-  const database = new BetterSqlite3(databasePath, { readonly: true, fileMustExist: true });
+  const Database = loadBetterSqlite3();
+  const database = new Database(databasePath, { readonly: true, fileMustExist: true });
   try {
     if (!tableExists(database, "account_deletion_requests")) return [];
     const rows = database.prepare(
@@ -426,7 +442,8 @@ export async function createDataBackup(input: {
   }
 
   await fs.promises.mkdir(backupRoot, { recursive: true, mode: 0o700 });
-  const database = new BetterSqlite3(sourceDatabase, { readonly: true, fileMustExist: true });
+  const Database = loadBetterSqlite3();
+  const database = new Database(sourceDatabase, { readonly: true, fileMustExist: true });
   try {
     await database.backup(backupDatabase);
   } finally {
@@ -435,7 +452,7 @@ export async function createDataBackup(input: {
   // The live database runs in WAL mode. Normalize the self-contained backup
   // copy before any verification opens it so SQLite does not create untracked
   // `-wal`/`-shm` files beside the manifest-authoritative database object.
-  const normalizedBackup = new BetterSqlite3(backupDatabase, { fileMustExist: true });
+  const normalizedBackup = new Database(backupDatabase, { fileMustExist: true });
   try {
     sanitizeAccountDeletionRecipientSecretsInBackup(normalizedBackup);
     const journalMode = normalizedBackup.pragma("journal_mode = DELETE", { simple: true });
@@ -514,7 +531,8 @@ async function assertBackupFile(root: string, expected: BackupFile): Promise<voi
 }
 
 function assertSqliteIntegrity(databasePath: string): void {
-  const database = new BetterSqlite3(databasePath, { readonly: true, fileMustExist: true });
+  const Database = loadBetterSqlite3();
+  const database = new Database(databasePath, { readonly: true, fileMustExist: true });
   try {
     const integrity = database.pragma("integrity_check") as Array<{ integrity_check: string }>;
     const foreignKeys = database.pragma("foreign_key_check") as unknown[];
@@ -695,7 +713,8 @@ async function applyAccountDeletionTombstones(input: {
       evidencePurgedPathSha256s: [],
     };
   }
-  const database = new BetterSqlite3(input.databasePath);
+  const Database = loadBetterSqlite3();
+  const database = new Database(input.databasePath);
   let tombstonesApplied = 0;
   let evidenceFilesPurged = 0;
   const evidencePurgedPathSha256s = new Set<string>();
@@ -703,9 +722,17 @@ async function applyAccountDeletionTombstones(input: {
     if (!tableExists(database, "accounts") || !tableExists(database, "account_deletion_requests")) {
       throw new Error("Restored database cannot apply account-deletion tombstones.");
     }
-    const repository = new BusinessRepository(database);
+    const sqlDatabase = asAsyncSqliteDatabase(database);
+    const queueRepository = new AccountDeletionQueueRepository(sqlDatabase);
+    const privacyRepository = new AccountPrivacyRepository(sqlDatabase);
     for (const tombstone of normalizeTombstones(input.tombstones)) {
-      const account = database.prepare("SELECT id FROM accounts WHERE id = ? LIMIT 1").get(tombstone.userId);
+      const account = database.prepare(
+        "SELECT id, supabase_user_id, stripe_customer_id FROM accounts WHERE id = ? LIMIT 1",
+      ).get(tombstone.userId) as {
+        id: string;
+        supabase_user_id: string | null;
+        stripe_customer_id: string | null;
+      } | undefined;
       if (!account) continue;
       const evidenceRows = tableExists(database, "source_evidence_objects")
         ? database.prepare(
@@ -723,9 +750,25 @@ async function applyAccountDeletionTombstones(input: {
         database.prepare(
           `UPDATE account_deletion_requests
               SET status = 'processing', reviewed_by = NULL, reviewed_at = NULL,
-                  completed_at = NULL, last_error = NULL, updated_at = ?
+                  completed_at = NULL, processing_started_at = ?,
+                  identity_deleted_at = CASE WHEN ? IS NULL THEN identity_deleted_at ELSE ? END,
+                  stripe_customer_deleted_at = CASE WHEN ? IS NULL THEN stripe_customer_deleted_at ELSE ? END,
+                  stripe_customer_id_snapshot = COALESCE(stripe_customer_id_snapshot, ?),
+                  deletion_tombstone_recorded_at = COALESCE(deletion_tombstone_recorded_at, ?),
+                  last_error = NULL, result_summary_json = NULL,
+                  attempt_count = attempt_count + 1, updated_at = ?
             WHERE id = ?`,
-        ).run(tombstone.completedAt, requestId);
+        ).run(
+          tombstone.completedAt,
+          account.supabase_user_id,
+          tombstone.completedAt,
+          account.stripe_customer_id,
+          tombstone.completedAt,
+          account.stripe_customer_id,
+          tombstone.completedAt,
+          tombstone.completedAt,
+          requestId,
+        );
       } else {
         database.prepare(
           `INSERT INTO account_deletion_requests (
@@ -740,17 +783,41 @@ async function applyAccountDeletionTombstones(input: {
           tombstone.completedAt,
           tombstone.completedAt,
         );
+        database.prepare(
+          `UPDATE account_deletion_requests
+              SET processing_started_at = ?,
+                  identity_deleted_at = CASE WHEN ? IS NULL THEN NULL ELSE ? END,
+                  stripe_customer_deleted_at = CASE WHEN ? IS NULL THEN NULL ELSE ? END,
+                  stripe_customer_id_snapshot = ?, deletion_tombstone_recorded_at = ?,
+                  attempt_count = 1, updated_at = ?
+            WHERE id = ?`,
+        ).run(
+          tombstone.completedAt,
+          account.supabase_user_id,
+          tombstone.completedAt,
+          account.stripe_customer_id,
+          tombstone.completedAt,
+          account.stripe_customer_id,
+          tombstone.completedAt,
+          tombstone.completedAt,
+          requestId,
+        );
       }
 
-      const summary = repository.executeAccountAnonymisation({
+      const attempt = database.prepare(
+        "SELECT attempt_count FROM account_deletion_requests WHERE id = ?",
+      ).get(requestId) as { attempt_count: number };
+      await privacyRepository.executeAccountAnonymisation({
         requestId,
+        attemptCount: attempt.attempt_count,
         reviewedBy: tombstone.userId,
         now: tombstone.completedAt,
         completionNotificationDisposition: "suppress_restore",
+        providerPolicy: {
+          requireTombstoneReceipt: true,
+          allowUnconfirmedStripeDeletion: false,
+        },
       });
-      for (const evidenceId of (summary.evidenceIds as string[] | undefined) ?? []) {
-        repository.markSourceEvidenceDeleted({ id: evidenceId, deletedAt: tombstone.completedAt });
-      }
       for (const evidence of evidenceRows) {
         const root = evidence.storageProvider === "filesystem_private"
           ? input.evidencePath
@@ -770,7 +837,9 @@ async function applyAccountDeletionTombstones(input: {
       }
       tombstonesApplied += 1;
     }
-    if (!repository.checkpointAccountDeletionNotificationSecrets()) {
+    if (!await queueRepository.checkpointAccountDeletionNotificationSecrets(
+      createSqliteAccountDeletionSecretPhysicalCheckpoint(database),
+    )) {
       throw new Error("Restored deletion-notice recipient purge could not securely checkpoint the SQLite WAL.");
     }
   } finally {

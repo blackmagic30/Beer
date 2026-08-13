@@ -27,7 +27,7 @@ From the repository root:
 ```sh
 supabase db start
 supabase db reset --local
-supabase db lint --local --schema public,private --level warning --fail-on warning
+supabase db lint --local --schema public,private,pintpath_app,pintpath_ops --level warning --fail-on warning
 supabase db advisors --local --type security --level warn --fail-on warn
 supabase db advisors --local --type performance --level warn --fail-on error
 supabase test db --local supabase/tests

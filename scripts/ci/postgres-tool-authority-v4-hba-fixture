@@ -1,0 +1,489 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Recoverable, narrowly scoped authentication downgrade used only to observe
+# that PGREQUIREAUTH=scram-sha-256 makes the reviewed pg_dump fail closed.
+readonly FIXTURE_PREFIX="pintpath-postgres-tool-authority-v4-hba"
+readonly STATE_VERSION="pintpath-postgres-tool-authority-v4-hba-v1"
+readonly CONTAINER_HBA_BACKUP="/var/lib/postgresql/.pintpath-ci-v4-pg-hba.baseline"
+readonly DATABASE_PATTERN='^pintpath_v4_tool_[a-f0-9]{12}$'
+readonly ROLE_PATTERN='^pintpath_v4_backup_[a-f0-9]{12}$'
+readonly IPV4_PATTERN='^([0-9]{1,3}\.){3}[0-9]{1,3}$'
+setup_cleanup_armed="false"
+setup_container_id=""
+failure_stage="bootstrap"
+
+fail() {
+  # Emit only a fixed, non-secret stage identifier. Do not print paths,
+  # addresses, container IDs, hashes, database names, roles, or command output.
+  printf '%s:%s\n' \
+    "postgres_tool_authority_v4_hba_fixture_failed" "$failure_stage" >&2
+  exit 1
+}
+
+validate_container_id() {
+  [[ "$1" =~ ^[0-9a-f]{12,64}$ ]]
+}
+
+validate_database_name() {
+  [[ "$1" =~ $DATABASE_PATTERN ]]
+}
+
+validate_role_name() {
+  [[ "$1" =~ $ROLE_PATTERN ]]
+}
+
+validate_ipv4() {
+  [[ "$1" =~ $IPV4_PATTERN ]] || return 1
+  local octet
+  local -a octets
+  IFS=. read -r -a octets <<< "$1"
+  [[ "${#octets[@]}" -eq 4 ]] || return 1
+  for octet in "${octets[@]}"; do
+    [[ "$octet" =~ ^(0|[1-9][0-9]{0,2})$ ]] || return 1
+    (( 10#$octet <= 255 )) || return 1
+  done
+}
+
+fixture_paths() {
+  runner_temp=${RUNNER_TEMP:-}
+  [[ "$runner_temp" == /* ]] || fail
+  runner_temp=$(realpath -e -- "$runner_temp")
+  [[ -d "$runner_temp" && ! -L "$runner_temp" ]] || fail
+  state_file="$runner_temp/$FIXTURE_PREFIX.state"
+}
+
+host_tool_paths() {
+  pg_bin=${PINTPATH_POSTGRES_TOOL_AUTHORITY_V4_TEST_PG_BIN:-}
+  [[ "$pg_bin" == /* ]] || fail
+  pg_bin=$(realpath -e -- "$pg_bin")
+  [[ -d "$pg_bin" && ! -L "$pg_bin" ]] || fail
+  host_psql="$pg_bin/psql"
+  [[ -x "$host_psql" && ! -L "$host_psql" ]] || fail
+  [[ "$(realpath -e -- "$host_psql")" == "$host_psql" ]] || fail
+}
+
+validate_state_file() {
+  [[ -f "$state_file" && ! -L "$state_file" ]] || return 1
+  [[ "$(realpath -e -- "$state_file")" == "$state_file" ]] || return 1
+  [[ "$(stat -c '%u:%a:%h' "$state_file")" == "$(id -u):600:1" ]] || return 1
+  local state_size
+  state_size=$(stat -c '%s' "$state_file") || return 1
+  [[ "$state_size" =~ ^[1-9][0-9]{0,3}$ ]] || return 1
+  (( state_size <= 4096 )) || return 1
+}
+
+load_state() {
+  validate_state_file || return 1
+  local -a values
+  mapfile -t values < "$state_file"
+  [[ "${#values[@]}" -eq 10 ]] || return 1
+  state_version=${values[0]}
+  state_container_id=${values[1]}
+  state_hba_path=${values[2]}
+  state_baseline_sha256=${values[3]}
+  state_baseline_uid=${values[4]}
+  state_baseline_gid=${values[5]}
+  state_baseline_mode=${values[6]}
+  state_database=${values[7]}
+  state_role=${values[8]}
+  state_client_ipv4=${values[9]}
+  [[ "$state_version" == "$STATE_VERSION" ]] || return 1
+  validate_container_id "$state_container_id" || return 1
+  [[ "$state_hba_path" == /* && "$state_hba_path" != *$'\n'* ]] || return 1
+  [[ "$state_baseline_sha256" =~ ^[a-f0-9]{64}$ ]] || return 1
+  [[ "$state_baseline_uid" =~ ^[0-9]+$ ]] || return 1
+  [[ "$state_baseline_gid" =~ ^[0-9]+$ ]] || return 1
+  [[ "$state_baseline_mode" =~ ^[0-7]{3,4}$ ]] || return 1
+  validate_database_name "$state_database" || return 1
+  validate_role_name "$state_role" || return 1
+  validate_ipv4 "$state_client_ipv4" || return 1
+}
+
+write_state() {
+  local container_id=$1
+  local hba_path=$2
+  local baseline_sha256=$3
+  local baseline_uid=$4
+  local baseline_gid=$5
+  local baseline_mode=$6
+  local database=$7
+  local role=$8
+  local client_ipv4=$9
+  local next_state="$state_file.next"
+  [[ ! -e "$state_file" && ! -L "$state_file" ]] || return 1
+  [[ ! -e "$next_state" && ! -L "$next_state" ]] || return 1
+  if ! (set -o noclobber; printf '%s\n' \
+    "$STATE_VERSION" "$container_id" "$hba_path" "$baseline_sha256" \
+    "$baseline_uid" "$baseline_gid" "$baseline_mode" "$database" "$role" \
+    "$client_ipv4" > "$next_state"); then
+    rm -f -- "$next_state"
+    return 1
+  fi
+  if ! chmod 0600 "$next_state" \
+    || [[ "$(stat -c '%u:%a:%h' "$next_state")" != "$(id -u):600:1" ]] \
+    || ! mv -f -- "$next_state" "$state_file"; then
+    rm -f -- "$next_state"
+    return 1
+  fi
+  validate_state_file
+}
+
+cleanup_incomplete_setup() {
+  local setup_status=$?
+  trap - EXIT
+  if [[ "$setup_cleanup_armed" == "true" ]]; then
+    local container_cleanup_complete="false"
+    if validate_container "$setup_container_id"; then
+      if load_state \
+        && validate_state_target "$setup_container_id" \
+        && baseline_matches_state "$setup_container_id" \
+        && current_matches_baseline "$setup_container_id" \
+        && docker_exec_root "$setup_container_id" rm -f "$CONTAINER_HBA_BACKUP" \
+        >/dev/null 2>&1 \
+        && docker_exec_root "$setup_container_id" test ! -e "$CONTAINER_HBA_BACKUP" \
+        && docker_exec_root "$setup_container_id" test ! -L "$CONTAINER_HBA_BACKUP"; then
+        container_cleanup_complete="true"
+      fi
+    fi
+    if [[ -e "$state_file.next" || -L "$state_file.next" ]]; then
+      [[ -f "$state_file.next" && ! -L "$state_file.next" ]] \
+        && [[ "$(stat -c '%u:%h' "$state_file.next")" == "$(id -u):1" ]] \
+        && rm -f -- "$state_file.next"
+    fi
+    if [[ "$container_cleanup_complete" == "true" ]]; then
+      rm -f -- "$state_file"
+    else
+      printf '%s\n' "postgres_tool_authority_v4_hba_setup_cleanup_pending" >&2
+    fi
+  fi
+  exit "$setup_status"
+}
+
+docker_exec_root() {
+  docker exec --user root "$1" "${@:2}"
+}
+
+docker_exec_postgres() {
+  docker exec --user postgres "$1" "${@:2}"
+}
+
+container_hba_path() {
+  docker_exec_postgres "$1" psql -X -q -A -t --dbname=postgres --no-password \
+    --set=ON_ERROR_STOP=1 --command="SHOW hba_file"
+}
+
+container_file_stat() {
+  docker_exec_root "$1" test -f "$2" || return 1
+  docker_exec_root "$1" test ! -L "$2" || return 1
+  docker_exec_root "$1" stat -c '%u:%g:%a:%h:%s' "$2"
+}
+
+container_file_sha256() {
+  docker_exec_root "$1" test -f "$2" || return 1
+  docker_exec_root "$1" test ! -L "$2" || return 1
+  docker_exec_root "$1" sha256sum "$2" | awk '{print $1}'
+}
+
+validate_container() {
+  local container_id=$1
+  validate_container_id "$container_id" || return 1
+  [[ "$(docker inspect --format '{{.Id}}' "$container_id")" == "$container_id" ]] || return 1
+  [[ "$(docker inspect --format '{{.State.Running}}' "$container_id")" == "true" ]] || return 1
+  [[ "$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}' "$container_id")" == "healthy" ]] || return 1
+}
+
+validate_state_target() {
+  local container_id=$1
+  local configured_hba
+  configured_hba=$(container_hba_path "$container_id") || return 1
+  [[ "$configured_hba" == "$state_hba_path" ]] || return 1
+  [[ "$(docker_exec_root "$container_id" readlink -f "$state_hba_path")" == "$state_hba_path" ]] || return 1
+  docker_exec_root "$container_id" test -f "$state_hba_path" || return 1
+  docker_exec_root "$container_id" test ! -L "$state_hba_path"
+}
+
+validate_hba_rules() {
+  local container_id=$1
+  docker_exec_postgres "$container_id" psql -X -q -A -t --dbname=postgres \
+    --no-password --set=ON_ERROR_STOP=1 --command="SELECT pg_catalog.count(*) FROM pg_catalog.pg_hba_file_rules WHERE error IS NOT NULL" \
+    | awk '$0 == "0" { valid = 1 } END { exit valid ? 0 : 1 }'
+}
+
+reload_hba() {
+  local container_id=$1
+  docker_exec_postgres "$container_id" psql -X -q -A -t --dbname=postgres \
+    --no-password --set=ON_ERROR_STOP=1 --command="SELECT pg_catalog.pg_reload_conf()" \
+    | awk '$0 == "t" { valid = 1 } END { exit valid ? 0 : 1 }'
+}
+
+expected_rule() {
+  printf '%s\n' "hostnossl $state_database $state_role $state_client_ipv4/32 trust"
+}
+
+baseline_matches_state() {
+  local container_id=$1
+  local backup_stat
+  backup_stat=$(container_file_stat "$container_id" "$CONTAINER_HBA_BACKUP") || return 1
+  [[ "$backup_stat" == "$state_baseline_uid:$state_baseline_gid:$state_baseline_mode:1:"* ]] || return 1
+  [[ "$(container_file_sha256 "$container_id" "$CONTAINER_HBA_BACKUP")" == "$state_baseline_sha256" ]]
+}
+
+current_matches_baseline() {
+  local container_id=$1
+  local current_stat
+  current_stat=$(container_file_stat "$container_id" "$state_hba_path") || return 1
+  [[ "$current_stat" == "$state_baseline_uid:$state_baseline_gid:$state_baseline_mode:1:"* ]] || return 1
+  [[ "$(container_file_sha256 "$container_id" "$state_hba_path")" == "$state_baseline_sha256" ]]
+}
+
+current_matches_fixture() {
+  local container_id=$1
+  local first_line
+  first_line=$(docker_exec_root "$container_id" sed -n '1p' "$state_hba_path") || return 1
+  [[ "$first_line" == "$(expected_rule)" ]] || return 1
+  local current_stat
+  current_stat=$(container_file_stat "$container_id" "$state_hba_path") || return 1
+  [[ "$current_stat" == "$state_baseline_uid:$state_baseline_gid:$state_baseline_mode:1:"* ]] || return 1
+  docker_exec_root "$container_id" sh -ceu '
+    hba=$1
+    baseline=$2
+    expected=$3
+    tail -n +2 "$hba" | cmp -s - "$baseline"
+    count=$(grep -Fxc "$expected" "$hba")
+    [ "$count" = 1 ]
+  ' sh "$state_hba_path" "$CONTAINER_HBA_BACKUP" "$(expected_rule)"
+}
+
+setup_fixture() {
+  local container_id=${PINTPATH_CI_POSTGRES_CONTAINER_ID:-}
+  local database=${PINTPATH_POSTGRES_TOOL_AUTHORITY_V4_TEST_DATABASE:-}
+  local role=${PINTPATH_POSTGRES_TOOL_AUTHORITY_V4_TEST_ROLE:-}
+  failure_stage="host-tools"
+  host_tool_paths
+  failure_stage="container-contract"
+  validate_container "$container_id" || fail
+  validate_database_name "$database" || fail
+  validate_role_name "$role" || fail
+  [[ ! -e "$state_file" && ! -L "$state_file" ]] || fail
+  [[ ! -e "$state_file.next" && ! -L "$state_file.next" ]] || fail
+
+  failure_stage="hba-path"
+  local hba_path
+  hba_path=$(container_hba_path "$container_id") || fail
+  [[ "$hba_path" == /* && "$hba_path" != *$'\n'* ]] || fail
+  [[ "$hba_path" != */../* && "$hba_path" != */./* ]] || fail
+  [[ "$(docker_exec_root "$container_id" readlink -f "$hba_path")" == "$hba_path" ]] || fail
+  docker_exec_root "$container_id" test -f "$hba_path" || fail
+  docker_exec_root "$container_id" test ! -L "$hba_path" || fail
+  failure_stage="hba-baseline"
+  local baseline_stat
+  baseline_stat=$(container_file_stat "$container_id" "$hba_path") || fail
+  local baseline_uid baseline_gid baseline_mode baseline_links baseline_size
+  IFS=: read -r baseline_uid baseline_gid baseline_mode baseline_links baseline_size <<< "$baseline_stat"
+  [[ "$baseline_uid" =~ ^[0-9]+$ && "$baseline_gid" =~ ^[0-9]+$ ]] || fail
+  [[ "$baseline_mode" =~ ^[0-7]{3,4}$ && "$baseline_links" == 1 ]] || fail
+  [[ "$baseline_size" =~ ^[1-9][0-9]{0,6}$ && "$baseline_size" -le 1048576 ]] || fail
+  (( (8#$baseline_mode & 0077) == 0 )) || fail
+  local baseline_sha256
+  baseline_sha256=$(container_file_sha256 "$container_id" "$hba_path") || fail
+  [[ "$baseline_sha256" =~ ^[a-f0-9]{64}$ ]] || fail
+  docker_exec_root "$container_id" test ! -e "$CONTAINER_HBA_BACKUP" || fail
+  docker_exec_root "$container_id" test ! -L "$CONTAINER_HBA_BACKUP" || fail
+  failure_stage="container-tools"
+  docker_exec_root "$container_id" sh -ceu '
+    for command_name in cat chmod chown cmp cp grep mv readlink sed sha256sum stat tail; do
+      command -v "$command_name" >/dev/null
+    done
+  ' || fail
+
+  # The service observes the host-side connection address. Obtain it directly
+  # through the already authenticated service and never trust a network CIDR.
+  failure_stage="client-address"
+  local client_ipv4
+  client_ipv4=$(PGPASSWORD=postgres "$host_psql" -X -q -A -t \
+    --host=127.0.0.1 --port=5432 --dbname=postgres --username=postgres \
+    --no-password --set=ON_ERROR_STOP=1 \
+    --command="SELECT pg_catalog.host(pg_catalog.inet_client_addr())") || fail
+  validate_ipv4 "$client_ipv4" || fail
+
+  umask 077
+  setup_container_id=$container_id
+  setup_cleanup_armed="true"
+  trap cleanup_incomplete_setup EXIT
+  failure_stage="state-write"
+  write_state "$container_id" "$hba_path" "$baseline_sha256" "$baseline_uid" \
+    "$baseline_gid" "$baseline_mode" "$database" "$role" "$client_ipv4" || fail
+  failure_stage="baseline-copy"
+  # postgres:alpine exposes BusyBox cp. Its -p behavior is not a stable
+  # cross-version contract, so copy bytes and set the already observed numeric
+  # owner/group/mode explicitly. The checks below remain the authority.
+  docker_exec_root "$container_id" sh -ceu '
+    source=$1
+    destination=$2
+    uid=$3
+    gid=$4
+    mode=$5
+    [ -f "$source" ]
+    [ ! -L "$source" ]
+    [ ! -e "$destination" ]
+    [ ! -L "$destination" ]
+    cp "$source" "$destination"
+    chown "$uid:$gid" "$destination"
+    chmod "$mode" "$destination"
+  ' sh "$hba_path" "$CONTAINER_HBA_BACKUP" "$baseline_uid" "$baseline_gid" \
+    "$baseline_mode" || fail
+  failure_stage="baseline-verify"
+  [[ "$(container_file_stat "$container_id" "$CONTAINER_HBA_BACKUP")" == "$baseline_stat" ]] || fail
+  [[ "$(container_file_sha256 "$container_id" "$CONTAINER_HBA_BACKUP")" == "$baseline_sha256" ]] || fail
+  load_state || fail
+  baseline_matches_state "$container_id" || fail
+  current_matches_baseline "$container_id" || fail
+  failure_stage="hba-parse"
+  validate_hba_rules "$container_id" || fail
+  setup_cleanup_armed="false"
+  trap - EXIT
+  setup_container_id=""
+}
+
+activate_fixture() {
+  failure_stage="activate"
+  load_state || fail
+  local container_id=${PINTPATH_CI_POSTGRES_CONTAINER_ID:-}
+  [[ "$container_id" == "$state_container_id" ]] || fail
+  validate_container "$container_id" || fail
+  validate_state_target "$container_id" || fail
+  baseline_matches_state "$container_id" || fail
+  current_matches_baseline "$container_id" || fail
+  local rule
+  rule=$(expected_rule)
+  [[ "$rule" == "hostnossl $state_database $state_role $state_client_ipv4/32 trust" ]] || fail
+  [[ "$state_database" != "all" && "$state_role" != "all" ]] || fail
+  docker_exec_root "$container_id" sh -ceu '
+    hba=$1
+    baseline=$2
+    rule=$3
+    uid=$4
+    gid=$5
+    mode=$6
+    sibling="${hba}.pintpath-v4-next"
+    [ ! -e "$sibling" ]
+    [ ! -L "$sibling" ]
+    trap '\''rm -f "$sibling"'\'' EXIT
+    [ -f "$hba" ]
+    [ ! -L "$hba" ]
+    [ -f "$baseline" ]
+    [ ! -L "$baseline" ]
+    { printf "%s\n" "$rule"; cat "$baseline"; } > "$sibling"
+    chown "$uid:$gid" "$sibling"
+    chmod "$mode" "$sibling"
+    mv -f "$sibling" "$hba"
+    trap - EXIT
+  ' sh "$state_hba_path" "$CONTAINER_HBA_BACKUP" "$rule" \
+    "$state_baseline_uid" "$state_baseline_gid" "$state_baseline_mode" || fail
+  local activation_valid="true"
+  if ! current_matches_fixture "$container_id" \
+    || ! validate_hba_rules "$container_id" \
+    || ! reload_hba "$container_id" \
+    || ! current_matches_fixture "$container_id" \
+    || ! validate_hba_rules "$container_id"; then
+    activation_valid="false"
+  fi
+  if [[ "$activation_valid" == "true" ]]; then
+    docker_exec_postgres "$container_id" psql -X -q -A -t --dbname=postgres \
+    --no-password --set=ON_ERROR_STOP=1 --command="SELECT type, database[1], user_name[1], address, netmask, auth_method FROM pg_catalog.pg_hba_file_rules WHERE line_number = 1" \
+    | awk -F '|' -v database="$state_database" -v role="$state_role" \
+      -v address="$state_client_ipv4" -v netmask="255.255.255.255" \
+      '$1 == "hostnossl" && $2 == database && $3 == role && $4 == address && $5 == netmask && $6 == "trust" { valid = 1 } END { exit valid ? 0 : 1 }' \
+      || activation_valid="false"
+  fi
+  if [[ "$activation_valid" != "true" ]]; then
+    if ! restore_fixture; then
+      printf '%s\n' "postgres_tool_authority_v4_hba_activation_recovery_pending" >&2
+    fi
+    fail
+  fi
+}
+
+restore_fixture() {
+  failure_stage="restore"
+  load_state || fail
+  local container_id=${PINTPATH_CI_POSTGRES_CONTAINER_ID:-}
+  [[ "$container_id" == "$state_container_id" ]] || fail
+  validate_container "$container_id" || fail
+  validate_state_target "$container_id" || fail
+  baseline_matches_state "$container_id" || fail
+  if ! current_matches_baseline "$container_id" && ! current_matches_fixture "$container_id"; then
+    printf '%s\n' "postgres_tool_authority_v4_hba_drift_detected" >&2
+    fail
+  fi
+  docker_exec_root "$container_id" sh -ceu '
+    hba=$1
+    baseline=$2
+    uid=$3
+    gid=$4
+    mode=$5
+    sibling="${hba}.pintpath-v4-restore"
+    [ ! -e "$sibling" ]
+    [ ! -L "$sibling" ]
+    trap '\''rm -f "$sibling"'\'' EXIT
+    [ -f "$hba" ]
+    [ ! -L "$hba" ]
+    [ -f "$baseline" ]
+    [ ! -L "$baseline" ]
+    cp "$baseline" "$sibling"
+    chown "$uid:$gid" "$sibling"
+    chmod "$mode" "$sibling"
+    mv -f "$sibling" "$hba"
+    trap - EXIT
+  ' sh "$state_hba_path" "$CONTAINER_HBA_BACKUP" "$state_baseline_uid" \
+    "$state_baseline_gid" "$state_baseline_mode" || fail
+  current_matches_baseline "$container_id" || fail
+  validate_hba_rules "$container_id" || fail
+  reload_hba "$container_id" || fail
+  current_matches_baseline "$container_id" || fail
+  validate_hba_rules "$container_id" || fail
+}
+
+cleanup_fixture() {
+  failure_stage="cleanup"
+  if [[ ! -e "$state_file" && ! -L "$state_file" ]]; then
+    return 0
+  fi
+  load_state || return 1
+  local requested_container=${PINTPATH_CI_POSTGRES_CONTAINER_ID:-}
+  validate_container_id "$requested_container" || return 1
+  [[ "$requested_container" == "$state_container_id" ]] || return 1
+  validate_container "$state_container_id" || return 1
+  validate_state_target "$state_container_id" || return 1
+  if docker_exec_root "$state_container_id" test ! -e "$CONTAINER_HBA_BACKUP" \
+    && docker_exec_root "$state_container_id" test ! -L "$CONTAINER_HBA_BACKUP"; then
+    # A setup failure can leave only the protected receipt. Since setup never
+    # mutates HBA, exact baseline identity proves there is nothing to restore.
+    current_matches_baseline "$state_container_id" || return 1
+    validate_hba_rules "$state_container_id" || return 1
+    reload_hba "$state_container_id" || return 1
+    rm -f -- "$state_file" || return 1
+    [[ ! -e "$state_file" && ! -L "$state_file" ]]
+    return $?
+  fi
+  restore_fixture || return 1
+  baseline_matches_state "$state_container_id" || return 1
+  docker_exec_root "$state_container_id" rm -f "$CONTAINER_HBA_BACKUP" || return 1
+  docker_exec_root "$state_container_id" test ! -e "$CONTAINER_HBA_BACKUP" || return 1
+  docker_exec_root "$state_container_id" test ! -L "$CONTAINER_HBA_BACKUP" || return 1
+  rm -f -- "$state_file" || return 1
+  [[ ! -e "$state_file" && ! -L "$state_file" ]]
+}
+
+for command_name in awk docker id mapfile mv realpath stat; do
+  command -v "$command_name" >/dev/null 2>&1 || fail
+done
+fixture_paths
+case "${1:-}" in
+  setup) [[ "$#" -eq 1 ]] || fail; setup_fixture ;;
+  activate) [[ "$#" -eq 1 ]] || fail; activate_fixture ;;
+  restore) [[ "$#" -eq 1 ]] || fail; restore_fixture ;;
+  cleanup) [[ "$#" -eq 1 ]] || fail; cleanup_fixture ;;
+  *) fail ;;
+esac

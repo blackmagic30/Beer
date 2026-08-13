@@ -1,4 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -12,6 +13,9 @@ const oldestSha = execFileSync("git", ["rev-list", "--max-parents=0", "HEAD"], {
   .trim()
   .split("\n")[0]!;
 const releaseId = "PP-LAUNCH-2026-TEST1";
+const costPolicySha256 = crypto.createHash("sha256").update(fs.readFileSync(
+  path.resolve(root, "ops/railway/permanent-staging-cost-policy.json"),
+)).digest("hex");
 const source = JSON.parse(fs.readFileSync(path.resolve(root, "docs/release-evidence.json"), "utf8")) as {
   version: number;
   release: { id: string | null; candidateSha: string | null; environment: string };
@@ -23,18 +27,146 @@ function clone<T>(value: T): T {
   return structuredClone(value);
 }
 
-function allPassed(): typeof source {
+function otherwiseCompleteWithCostPending(): typeof source {
   const value = clone(source);
   value.release = { id: releaseId, candidateSha: currentSha, environment: "production" };
   value.items = value.items.map((item) => ({
     ...item,
-    status: "pass",
-    evidence: `${releaseId}/${String(item.id)}`,
-    evidenceSha256: "a".repeat(64),
-    verifiedAt: new Date().toISOString(),
-    verifiedBy: "Release Owner, independent verifier",
+    ...(item.id === "permanent_staging_cost"
+      ? {}
+      : {
+          status: "pass",
+          evidence: `${releaseId}/${String(item.id)}`,
+          evidenceSha256: "a".repeat(64),
+          verifiedAt: new Date().toISOString(),
+          verifiedBy: "Release Owner, independent verifier",
+        }),
   }));
   return value;
+}
+
+function completeCostReceipt(overrides: Record<string, unknown> = {}) {
+  const observedAt = new Date().toISOString();
+  return {
+    schemaVersion: "pintpath-permanent-staging-cost-receipt/v1",
+    releaseId,
+    candidateSha: currentSha,
+    gateId: "permanent_staging_cost",
+    environment: "permanent-staging",
+    scope: "permanent-staging-only",
+    currency: "USD",
+    amountUnit: "integer-cents",
+    lineItemRounding: "ceiling",
+    observationSource: "provider-observed",
+    providerObservationBindingImplemented: true,
+    policySha256: costPolicySha256,
+    observedAt,
+    privateManifestSha256: "a".repeat(64),
+    totalUpperBoundMonthlyCents: 4_800,
+    providers: [
+      {
+        provider: "railway",
+        inventorySha256: "b".repeat(64),
+        priceOrCapEvidenceSha256: "c".repeat(64),
+        inventoryComplete: true,
+        upperBoundComplete: true,
+        unknownResourceCount: 0,
+        unpricedResourceCount: 0,
+        sharedResourceCount: 0,
+        unboundedResourceCount: 0,
+        upperBoundMonthlyCents: 2_900,
+      },
+      {
+        provider: "staging-supabase",
+        inventorySha256: "d".repeat(64),
+        priceOrCapEvidenceSha256: "e".repeat(64),
+        inventoryComplete: true,
+        upperBoundComplete: true,
+        unknownResourceCount: 0,
+        unpricedResourceCount: 0,
+        sharedResourceCount: 0,
+        unboundedResourceCount: 0,
+        upperBoundMonthlyCents: 1_000,
+      },
+      {
+        provider: "staging-external-providers",
+        inventorySha256: "f".repeat(64),
+        priceOrCapEvidenceSha256: "1".repeat(64),
+        inventoryComplete: true,
+        upperBoundComplete: true,
+        unknownResourceCount: 0,
+        unpricedResourceCount: 0,
+        sharedResourceCount: 0,
+        unboundedResourceCount: 0,
+        upperBoundMonthlyCents: 900,
+      },
+    ],
+    excludedScopes: [
+      {
+        scope: "production-operational-copy",
+        includedInPermanentStagingTotal: false,
+        handling: "separate-production-cost-authority",
+        evidenceSha256: "2".repeat(64),
+      },
+      {
+        scope: "disposable-restore",
+        includedInPermanentStagingTotal: false,
+        handling: "separate-temporary-spend-authority",
+        evidenceSha256: "3".repeat(64),
+      },
+    ],
+    ...overrides,
+  };
+}
+
+function otherwiseAllPassed(costReceipt = completeCostReceipt()): typeof source {
+  const value = otherwiseCompleteWithCostPending();
+  const item = value.items.find((candidate) => candidate.id === "permanent_staging_cost")!;
+  Object.assign(item, {
+    status: "pass",
+    evidence: `${releaseId}/permanent_staging_cost`,
+    evidenceSha256: "a".repeat(64),
+    verifiedAt: new Date().toISOString(),
+    verifiedBy: "Finance Owner, independent infrastructure verifier",
+    costReceipt,
+  });
+  return value;
+}
+
+function costReceiptPolicyErrors(
+  receipt: ReturnType<typeof completeCostReceipt>,
+): string[] {
+  const errors: string[] = [];
+  const requiredProviders = [
+    "railway",
+    "staging-supabase",
+    "staging-external-providers",
+  ];
+  const providerNames = receipt.providers.map((provider) => provider.provider);
+  if (
+    providerNames.length !== requiredProviders.length
+    || new Set(providerNames).size !== providerNames.length
+    || requiredProviders.some((provider) => !providerNames.includes(provider))
+  ) errors.push("costReceipt.providers must contain exactly Railway, staging Supabase, and staging external providers");
+  for (const provider of receipt.providers) {
+    if (!provider.inventoryComplete) errors.push(`${provider.provider} inventory is incomplete`);
+    if (!provider.upperBoundComplete) errors.push(`${provider.provider} upper bound is incomplete`);
+    if (provider.unknownResourceCount !== 0) errors.push(`${provider.provider} has unknown resources`);
+    if (provider.unpricedResourceCount !== 0) errors.push(`${provider.provider} has unpriced resources`);
+    if (provider.sharedResourceCount !== 0) errors.push(`${provider.provider} has shared resources`);
+    if (provider.unboundedResourceCount !== 0) errors.push(`${provider.provider} has unbounded resources`);
+  }
+  const summedUpperBound = receipt.providers.reduce(
+    (sum, provider) => sum + provider.upperBoundMonthlyCents,
+    0,
+  );
+  if (receipt.totalUpperBoundMonthlyCents !== summedUpperBound) {
+    errors.push("costReceipt.totalUpperBoundMonthlyCents must equal the provider sum");
+  }
+  if (receipt.totalUpperBoundMonthlyCents > 5_000) {
+    errors.push("costReceipt.totalUpperBoundMonthlyCents exceeds 5000 USD cents");
+  }
+  return errors;
 }
 
 function validate(value: unknown, strict = false): { status: number | null; output: Record<string, any>; stderr: string } {
@@ -44,7 +176,9 @@ function validate(value: unknown, strict = false): { status: number | null; outp
   fs.writeFileSync(filename, `${JSON.stringify(value)}\n`);
   const result = spawnSync(
     process.execPath,
-    ["--import=tsx", validator, ...(strict ? ["--strict"] : [])],
+    // The supported Node 22 runtime strips these erasable TypeScript annotations
+    // itself. Avoid starting a separate tsx loader for every CLI fixture.
+    [validator, ...(strict ? ["--strict"] : [])],
     {
       cwd: root,
       encoding: "utf8",
@@ -71,7 +205,7 @@ describe("release evidence validator", () => {
 
     expect(normal.status).toBe(0);
     expect(normal.output).toMatchObject({ valid: true, launchReady: false, strict: false });
-    expect(normal.output.incomplete).toHaveLength(12);
+    expect(normal.output.incomplete).toHaveLength(13);
     expect(normal.output.incomplete.map((item: { id: string }) => item.id)).not.toContain("android_release");
     expect(normal.output.incomplete[0]).toMatchObject({
       id: "production_public_smoke",
@@ -82,27 +216,157 @@ describe("release evidence validator", () => {
     expect(strict.output).toMatchObject({ valid: true, launchReady: false, strict: true });
   });
 
-  it("accepts a complete file only when every item is bound to one frozen commit and hashed proof", () => {
-    const result = validate(allPassed(), true);
+  it("keeps an otherwise-complete file blocked while provider cost collection and binding are scaffold-only", () => {
+    const result = validate(otherwiseAllPassed(), true);
 
-    expect(result.status).toBe(0);
+    expect(result.status).toBe(1);
     expect(result.stderr).toBe("");
     expect(result.output).toMatchObject({
-      valid: true,
-      launchReady: true,
+      valid: false,
+      launchReady: false,
       strict: true,
       release: { id: releaseId, candidateSha: currentSha, environment: "production" },
     });
+    expect(result.output.permanentStagingCostReceiptErrors).toEqual([
+      "permanent-staging cost provider collector is not implemented by policy",
+      "permanent-staging cost provider observation binding is not implemented by policy",
+    ]);
+  });
+
+  it("rejects cost proof that drifts from the candidate, policy, manifest, or fresh observation window", () => {
+    const fixtures: Array<[string, Record<string, unknown>, string]> = [
+      [
+        "candidate",
+        { candidateSha: "f".repeat(40) },
+        "costReceipt.candidateSha must match release.candidateSha",
+      ],
+      [
+        "policy",
+        { policySha256: "4".repeat(64) },
+        "costReceipt.policySha256 must match the checked-in cost policy",
+      ],
+      [
+        "manifest",
+        { privateManifestSha256: "5".repeat(64) },
+        "costReceipt.privateManifestSha256 must match evidenceSha256",
+      ],
+    ];
+    for (const [label, override, expectedError] of fixtures) {
+      const result = validate(otherwiseAllPassed(completeCostReceipt(override)), true);
+      expect(result.status, label).toBe(1);
+      expect(result.output.permanentStagingCostReceiptErrors, label)
+        .toContain(expectedError);
+    }
+
+    const stale = validate(otherwiseAllPassed(completeCostReceipt({
+      observedAt: new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString(),
+    })));
+    expect(stale.status).toBe(1);
+    expect(stale.output).toMatchObject({ evidenceCurrent: false, launchReady: false });
+    expect(stale.output.stalePermanentStagingCostReceipt)
+      .toEqual(["permanent_staging_cost"]);
+  });
+
+  it("rejects incomplete, unknown, unpriced, shared, unbounded, or over-ceiling provider rows", () => {
+    const providerFailure = completeCostReceipt();
+    const firstProvider = providerFailure.providers[0]!;
+    firstProvider.inventoryComplete = false;
+    firstProvider.upperBoundComplete = false;
+    firstProvider.unknownResourceCount = 1;
+    firstProvider.unpricedResourceCount = 1;
+    firstProvider.sharedResourceCount = 1;
+    firstProvider.unboundedResourceCount = 1;
+    expect(costReceiptPolicyErrors(providerFailure)).toEqual(
+      expect.arrayContaining([
+        "railway inventory is incomplete",
+        "railway upper bound is incomplete",
+        "railway has unknown resources",
+        "railway has unpriced resources",
+        "railway has shared resources",
+        "railway has unbounded resources",
+      ]),
+    );
+    const failedProvider = validate(otherwiseAllPassed(providerFailure), true);
+    expect(failedProvider.output.permanentStagingCostReceiptErrors).toEqual(
+      expect.arrayContaining([
+        "railway inventory is incomplete",
+        "railway upper bound is incomplete",
+        "railway has unknown resources",
+        "railway has unpriced resources",
+        "railway has shared resources",
+        "railway has unbounded resources",
+      ]),
+    );
+
+    const overCeiling = completeCostReceipt();
+    overCeiling.providers[2]!.upperBoundMonthlyCents = 1_101;
+    overCeiling.totalUpperBoundMonthlyCents = 5_001;
+    expect(costReceiptPolicyErrors(overCeiling)).toContain(
+      "costReceipt.totalUpperBoundMonthlyCents exceeds 5000 USD cents",
+    );
+    const overCeilingResult = validate(otherwiseAllPassed(overCeiling), true);
+    expect(overCeilingResult.output.permanentStagingCostReceiptErrors)
+      .toContain("costReceipt.totalUpperBoundMonthlyCents exceeds 5000 USD cents");
+
+    const missingProvider = completeCostReceipt({
+      providers: completeCostReceipt().providers.slice(0, 2),
+      totalUpperBoundMonthlyCents: 3_900,
+    });
+    expect(costReceiptPolicyErrors(missingProvider)).toContain(
+      "costReceipt.providers must contain exactly Railway, staging Supabase, and staging external providers",
+    );
+    const missingProviderResult = validate(otherwiseAllPassed(missingProvider), true);
+    expect(missingProviderResult.output.permanentStagingCostReceiptErrors).toContain(
+      "costReceipt.providers must contain exactly Railway, staging Supabase, and staging external providers",
+    );
+  });
+
+  it("keeps production operational-copy and disposable-restore spend under separate exact authorities", () => {
+    const includedProductionCopy = completeCostReceipt();
+    includedProductionCopy.excludedScopes[0]!.includedInPermanentStagingTotal = true;
+    const includedResult = validate(otherwiseAllPassed(includedProductionCopy), true);
+    expect(includedResult.output.permanentStagingCostReceiptErrors).toContain(
+      "production-operational-copy must be excluded under its exact separate cost authority",
+    );
+
+    const missingRestore = completeCostReceipt({
+      excludedScopes: completeCostReceipt().excludedScopes.slice(0, 1),
+    });
+    const missingResult = validate(otherwiseAllPassed(missingRestore), true);
+    expect(missingResult.output.permanentStagingCostReceiptErrors).toEqual(
+      expect.arrayContaining([
+        "costReceipt.excludedScopes must contain exactly two separate cost authorities",
+        "costReceipt.excludedScopes is missing disposable-restore",
+      ]),
+    );
   });
 
   it("keeps a supported failed gate launch-blocking and rejects not-applicable required gates", () => {
-    const failed = allPassed();
+    const failed = otherwiseCompleteWithCostPending();
     failed.items[0] = { ...failed.items[0], status: "fail" };
     const failedResult = validate(failed, true);
     expect(failedResult.status).toBe(1);
     expect(failedResult.output).toMatchObject({ valid: true, launchReady: false });
 
-    const notApplicable = allPassed();
+    const failedCostWithUncheckedReceipt = otherwiseCompleteWithCostPending();
+    const failedCostItem = failedCostWithUncheckedReceipt.items.find(
+      (item) => item.id === "permanent_staging_cost",
+    )!;
+    Object.assign(failedCostItem, {
+      status: "fail",
+      evidence: `${releaseId}/permanent_staging_cost`,
+      evidenceSha256: "a".repeat(64),
+      verifiedAt: new Date().toISOString(),
+      verifiedBy: "Finance Owner, independent infrastructure verifier",
+      costReceipt: { unchecked: true },
+    });
+    const failedCostResult = validate(failedCostWithUncheckedReceipt, true);
+    expect(failedCostResult.status).toBe(1);
+    expect(failedCostResult.output.schemaErrors).toContain(
+      `items[${failedCostWithUncheckedReceipt.items.indexOf(failedCostItem)}].costReceipt must be null unless status is pass`,
+    );
+
+    const notApplicable = otherwiseCompleteWithCostPending();
     notApplicable.items[0] = {
       ...notApplicable.items[0],
       status: "not_applicable",
@@ -118,18 +382,18 @@ describe("release evidence validator", () => {
   });
 
   it("rejects unbound, unhashed, anonymous, future, and stale live proof", () => {
-    const wrongReference = allPassed();
+    const wrongReference = otherwiseCompleteWithCostPending();
     wrongReference.items[0] = { ...wrongReference.items[0], evidence: "some note" };
-    const missingDigest = allPassed();
+    const missingDigest = otherwiseCompleteWithCostPending();
     missingDigest.items[0] = { ...missingDigest.items[0], evidenceSha256: null };
-    const anonymous = allPassed();
+    const anonymous = otherwiseCompleteWithCostPending();
     anonymous.items[0] = { ...anonymous.items[0], verifiedBy: "someone" };
-    const future = allPassed();
+    const future = otherwiseCompleteWithCostPending();
     future.items[0] = {
       ...future.items[0],
       verifiedAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
     };
-    const stale = allPassed();
+    const stale = otherwiseCompleteWithCostPending();
     stale.release.candidateSha = oldestSha;
     stale.items[0] = {
       ...stale.items[0],
@@ -158,7 +422,7 @@ describe("release evidence validator", () => {
   });
 
   it("rejects proof for an unknown candidate commit and pending items that retain old proof", () => {
-    const unknownCandidate = allPassed();
+    const unknownCandidate = otherwiseCompleteWithCostPending();
     unknownCandidate.release.candidateSha = "f".repeat(40);
     const unknownResult = validate(unknownCandidate, true);
     expect(unknownResult.status).toBe(1);
@@ -199,7 +463,7 @@ describe("release evidence validator", () => {
     });
     const notRequired = clone(source);
     notRequired.items[0] = { ...notRequired.items[0], required: false };
-    const impossibleDate = allPassed();
+    const impossibleDate = otherwiseCompleteWithCostPending();
     impossibleDate.items[0] = { ...impossibleDate.items[0], verifiedAt: "2026-02-30T10:00:00.000Z" };
     const extraField = clone(source);
     extraField.items[0] = { ...extraField.items[0], signedOff: true };
