@@ -278,6 +278,7 @@ describe.skipIf(!configuredAdminUrl)("real PG17 account-deletion recovery fixtur
     await targetAdmin.query(
       `UPDATE pintpath_app.schema_metadata SET value = CASE key
         WHEN 'import_state' THEN 'ready'
+        WHEN 'live_schema_sha256' THEN $9
         WHEN 'migration_candidate_sha' THEN $1
         WHEN 'migration_manifest_sha256' THEN $2
         WHEN 'migration_plan_sha256' THEN $3
@@ -291,7 +292,7 @@ describe.skipIf(!configuredAdminUrl)("real PG17 account-deletion recovery fixtur
         "c".repeat(40), "1".repeat(64), "2".repeat(64), "3".repeat(64),
         POSTGRES_MIGRATION_CONTRACT.expectedSchemaFingerprint,
         String(POSTGRES_MIGRATION_CONTRACT.sourceSchemaVersion),
-        "4".repeat(64), "5".repeat(64),
+        "4".repeat(64), "5".repeat(64), "6".repeat(64),
       ],
     );
     await admin.query(

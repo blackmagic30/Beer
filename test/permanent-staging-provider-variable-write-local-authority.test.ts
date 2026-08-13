@@ -1373,51 +1373,58 @@ describe("permanent staging provider-variable local authority", () => {
 
   it("uses the captured Object prototype after global Object replacement", async () => {
     const authority = await freshAuthority();
-    await authority.inspect(NEVER_ABORTED_SIGNAL);
-    const input = await freshInput();
-    const result = childResult();
-    const child: PermanentStagingProviderVariableWriteInjectedChild = {
-      async writeStdin() {},
-      abort: vi.fn(),
-      closed: Promise.resolve(result),
-    };
-    const priorObject = Object.getOwnPropertyDescriptor(globalThis, "Object");
-    const defineProperty = Object.defineProperty;
-    const prototypeGetter = vi.fn(() => {
-      throw new Error("live Object.prototype must not be reached");
-    });
-    const replacement = Object.create(null) as Record<PropertyKey, unknown>;
-    defineProperty(replacement, "prototype", {
-      configurable: true,
-      get: prototypeGetter,
-    });
-    let receipt: unknown;
-    let failure: unknown;
     try {
-      receipt = await authority.writeExactlyOnceWithInjectedChild(
+      await authority.inspect(NEVER_ABORTED_SIGNAL);
+      const input = await freshInput();
+      const attemptBinding = await freshAttemptBinding(authority, input);
+      const priorObject = Object.getOwnPropertyDescriptor(globalThis, "Object");
+      const defineProperty = Object.defineProperty;
+      let prototypeGetterCalls = 0;
+      const prototypeGetter = () => {
+        prototypeGetterCalls += 1;
+        throw new Error("live Object.prototype must not be reached");
+      };
+      const replacement = Object.create(null) as Record<PropertyKey, unknown>;
+      defineProperty(replacement, "prototype", {
+        configurable: true,
+        get: prototypeGetter,
+      });
+      let attempt: ReturnType<
+        LocalAuthorityModule[
+          "createPermanentStagingProviderVariableWriteLocalAttemptAuthority"
+        ]
+      >;
+      try {
+        Reflect.defineProperty(globalThis, "Object", {
+          configurable: true,
+          value: replacement,
+          writable: true,
+        });
+        attempt = authorityModule
+          .createPermanentStagingProviderVariableWriteLocalAttemptAuthority(
+            attemptBinding,
+          );
+      } finally {
+        if (priorObject === undefined) {
+          Reflect.deleteProperty(globalThis, "Object");
+        } else {
+          Reflect.defineProperty(globalThis, "Object", priorObject);
+        }
+      }
+      expect(prototypeGetterCalls).toBe(0);
+
+      const receipt = await authority.writeExactlyOnceWithInjectedChild(
         "OPENAI_API_KEY",
         input,
         TEST_INTENT_SHA256,
-        await freshAttempt(authority, input),
-        genuineLauncher(authority, child, () => {
-          Reflect.defineProperty(globalThis, "Object", {
-            configurable: true,
-            value: replacement,
-            writable: true,
-          });
-        }),
+        attempt,
+        genuineLauncher(authority, fakeChild().child),
         NEVER_ABORTED_SIGNAL,
       );
-    } catch (error) {
-      failure = error;
+      expect(receipt).toMatchObject({ childCloseAwaited: true });
     } finally {
-      if (priorObject === undefined) Reflect.deleteProperty(globalThis, "Object");
-      else Reflect.defineProperty(globalThis, "Object", priorObject);
       await authority.close();
     }
-    expect(failure).toBeUndefined();
-    expect(receipt).toMatchObject({ childCloseAwaited: true });
-    expect(prototypeGetter).not.toHaveBeenCalled();
   });
 
   it("makes genuine branded input cleanup failure dominate child success", async () => {

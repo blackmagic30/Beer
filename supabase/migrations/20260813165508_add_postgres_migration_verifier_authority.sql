@@ -12,11 +12,18 @@ declare
   verifier_role_oid oid;
   migrator_role_oid oid;
   authority_relation_oid oid;
+  executor_role_oid oid;
+  executor_is_superuser boolean;
   relation_exists boolean;
   role_exists boolean;
   exact_policy_count integer;
 begin
   perform pg_catalog.pg_advisory_xact_lock(721426590137322906);
+
+  select role.oid, role.rolsuper
+    into strict executor_role_oid, executor_is_superuser
+  from pg_catalog.pg_roles as role
+  where role.rolname = current_user;
 
   if pg_catalog.to_regnamespace('pintpath_ops') is null
      or pg_catalog.to_regrole('pintpath_migrator') is null
@@ -146,8 +153,33 @@ begin
          or role.rolvaliduntil is not null
        )
      )
-     or exists (select 1 from pg_catalog.pg_auth_members
-                where member = verifier_role_oid or roleid = verifier_role_oid)
+     -- PostgreSQL 17 gives a non-superuser CREATEROLE principal one implicit
+     -- ADMIN-only membership in each role it creates. That edge has neither
+     -- INHERIT nor SET authority, so it cannot exercise the verifier role.
+     -- Accept zero edges or exactly that bootstrap-superuser-granted platform
+     -- edge to the current executor, while rejecting every other membership.
+     or exists (
+       select 1 from pg_catalog.pg_auth_members as membership
+       where membership.member = verifier_role_oid
+          or (
+            membership.roleid = verifier_role_oid
+            and not (
+              not executor_is_superuser
+              and membership.member = executor_role_oid
+              and membership.admin_option
+              and not membership.inherit_option
+              and not membership.set_option
+              and membership.grantor = 10::oid
+              and exists (
+                select 1 from pg_catalog.pg_roles as grantor
+                where grantor.oid = membership.grantor
+                  and grantor.rolsuper
+              )
+            )
+          )
+     )
+     or (select count(*) from pg_catalog.pg_auth_members as membership
+         where membership.roleid = verifier_role_oid) > 1
      or exists (select 1 from pg_catalog.pg_db_role_setting
                 where setrole = verifier_role_oid)
      or exists (select 1 from pg_catalog.pg_default_acl

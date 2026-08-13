@@ -18,13 +18,18 @@ const migrationLogin = `pintpath_supabase_migration_${suffix}`;
 const runtimeLogin = `pintpath_runtime_login_${suffix}`;
 const reviewerLogin = `pintpath_reviewer_login_${suffix}`;
 const operatorLogin = `pintpath_operator_login_${suffix}`;
+const verifierMembershipProbe = `pintpath_verifier_membership_probe_${suffix}`;
 const password = `PintpathActivation-${suffix}-Test`;
+const verifierAuthorityMigrationPath = path.resolve(
+  "supabase/migrations/20260813165508_add_postgres_migration_verifier_authority.sql",
+);
 const sqlFiles = [
   "src/db/postgres-schema.sql",
   "supabase/migrations/20260810003612_add_pintpath_logical_backup_role.sql",
   "supabase/migrations/20260812022314_add_inert_reviewed_price_promotion_kernel.sql",
   "supabase/migrations/20260812235959_add_privacy_maintenance_role.sql",
   "supabase/migrations/20260813000000_activate_reviewed_price_promotion_kernel.sql",
+  "supabase/migrations/20260813165508_add_postgres_migration_verifier_authority.sql",
 ] as const;
 
 function quoteIdentifier(value: string): string {
@@ -208,6 +213,7 @@ describe.skipIf(!configuredAdminUrl)(
             quarantineOwner,
             backupRole,
             "pintpath_maintenance",
+            verifierMembershipProbe,
             "pintpath_migration_verifier_authority",
             "pintpath_migrator",
             "pintpath_runtime",
@@ -268,6 +274,8 @@ describe.skipIf(!configuredAdminUrl)(
         authorityPolicyCount: string;
         authorityPublicPolicyCount: string;
         authorityRowCount: string;
+        authorityManagedAdminOnlyEdges: string;
+        authorityTotalMembershipEdges: string;
         policyCount: string;
         publicPolicyCount: string;
         safeScopedRoles: string;
@@ -293,6 +301,25 @@ describe.skipIf(!configuredAdminUrl)(
         (select count(*)::text
           from pintpath_ops.migration_verifier_authority)
           as "authorityRowCount",
+        (select count(*)::text
+          from pg_auth_members membership
+          join pg_roles grantor on grantor.oid = membership.grantor
+          where membership.roleid =
+              'pintpath_migration_verifier_authority'::regrole
+            and membership.member = $2::regrole
+            and membership.grantor = 10::oid
+            and grantor.rolsuper
+            and membership.admin_option
+            and not membership.inherit_option
+            and not membership.set_option)
+          as "authorityManagedAdminOnlyEdges",
+        (select count(*)::text
+          from pg_auth_members membership
+          where membership.roleid =
+                'pintpath_migration_verifier_authority'::regrole
+             or membership.member =
+                'pintpath_migration_verifier_authority'::regrole)
+          as "authorityTotalMembershipEdges",
         (select count(*)::text from pg_policy policy
           join pg_class relation on relation.oid=policy.polrelid
           join pg_namespace namespace on namespace.oid=relation.relnamespace
@@ -345,6 +372,8 @@ describe.skipIf(!configuredAdminUrl)(
         authorityPolicyCount: "4",
         authorityPublicPolicyCount: "0",
         authorityRowCount: "0",
+        authorityManagedAdminOnlyEdges: "1",
+        authorityTotalMembershipEdges: "1",
         policyCount: "244",
         publicPolicyCount: "71",
         safeScopedRoles: "5",
@@ -354,6 +383,30 @@ describe.skipIf(!configuredAdminUrl)(
         protectedFunctionCount: "3",
       });
       expect(bootstrapMembershipEdgeCount).toBe("5");
+    });
+
+    it("rejects every additional verifier-authority membership edge", async () => {
+      await database.query(`CREATE ROLE ${quoteIdentifier(verifierMembershipProbe)}
+        NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT
+        NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 1`);
+      try {
+        await database.query(`GRANT pintpath_migration_verifier_authority
+          TO ${quoteIdentifier(verifierMembershipProbe)}
+          WITH ADMIN FALSE, INHERIT FALSE, SET TRUE`);
+        const migrationError = await database.query(
+          fs.readFileSync(verifierAuthorityMigrationPath, "utf8"),
+        ).then(() => null, (error: unknown) => error);
+        expect(migrationError).toBeInstanceOf(Error);
+        expect(migrationError).toMatchObject({
+          code: "42501",
+          message: "postgres_migration_verifier_authority_boundary_invalid",
+        });
+      } finally {
+        await database.query("rollback");
+        await database.query(`REVOKE pintpath_migration_verifier_authority
+          FROM ${quoteIdentifier(verifierMembershipProbe)}`);
+        await database.query(`DROP ROLE ${quoteIdentifier(verifierMembershipProbe)}`);
+      }
     });
   },
 );

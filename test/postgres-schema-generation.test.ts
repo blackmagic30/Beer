@@ -404,6 +404,14 @@ describe("Postgres schema generation", () => {
     expect(migration).toContain(
       "exists (select 1 from pintpath_ops.migration_verifier_authority)",
     );
+    expect(migration).toContain("membership.member = verifier_role_oid");
+    expect(migration).toContain("membership.member = executor_role_oid");
+    expect(migration).toContain("membership.admin_option");
+    expect(migration).toContain("not membership.inherit_option");
+    expect(migration).toContain("not membership.set_option");
+    expect(migration).toContain("membership.grantor = 10::oid");
+    expect(migration).toContain("and grantor.rolsuper");
+    expect(migration).toContain("where membership.roleid = verifier_role_oid) > 1");
   });
 
   it("orders every source table after all of its non-self foreign-key dependencies", () => {
