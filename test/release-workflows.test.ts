@@ -2071,24 +2071,24 @@ describe("release workflow contracts", () => {
     expect(workflow("ci.yml")).toContain("npm run security:audit");
   });
 
-  it("pins the audited Gradle 9.6.1 wrapper distribution and generated launchers", () => {
+  it("pins the audited Gradle 9.7.0 wrapper distribution and generated launchers", () => {
     const wrapper = repositoryFile("apps/android/gradle/wrapper/gradle-wrapper.properties");
 
-    expect(wrapper).toContain("distributionUrl=https\\://services.gradle.org/distributions/gradle-9.6.1-bin.zip");
+    expect(wrapper).toContain("distributionUrl=https\\://services.gradle.org/distributions/gradle-9.7.0-bin.zip");
     expect(wrapper).toContain(
-      "distributionSha256Sum=9c0f7faeeb306cb14e4279a3e084ca6b596894089a0638e68a07c945a32c9e14",
+      "distributionSha256Sum=84fbba45c7f4c64abc77460e1c00f541e9f960e3c7ed2538f1ede19eacd873ae",
     );
     expect(repositoryFileSha256("apps/android/gradlew")).toBe(
       "a5a5c199ba02189ae8c46a334223371a20599d9c298ef65e7540ede4a3f72d59",
     );
     expect(repositoryFileSha256("apps/android/gradlew.bat")).toBe(
-      "59328c7a17f673b1a63040bfb380a0c749e5d6df3406f7f18641060314cd9aa1",
+      "d539676c48b596afda64c963ec8f7ee56c7b3fe7e3b81d1dbe2d1a1e3dd9e9f8",
     );
     expect(repositoryFileSha256("apps/android/gradle/wrapper/gradle-wrapper.jar")).toBe(
-      "497c8c2a7e5031f6aa847f88104aa80a93532ec32ee17bdb8d1d2f67a194a9c7",
+      "7a9ce74cff467ca1bf60a4fcd9f05185acceda4d0f382434d393e17864262c5d",
     );
     expect(repositoryFileSha256("apps/android/gradle/wrapper/gradle-wrapper.properties")).toBe(
-      "ef9f8775fd21a165a249ded98afc533818d3f6ac050f0f2f437d5285576b2257",
+      "dfe4f5a7c503ce4c2e29e020a1614c7ce5e40d5529e6c2ae59016094497d768c",
     );
   });
 
@@ -2098,7 +2098,7 @@ describe("release workflow contracts", () => {
     const gradleProperties = repositoryFile("apps/android/gradle.properties");
 
     expect(rootBuild).toContain(
-      'id("com.android.application") version "9.3.0" apply false',
+      'id("com.android.application") version "9.3.1" apply false',
     );
     expect(rootBuild).toContain(
       'id("org.jetbrains.kotlin.plugin.compose") version "2.4.10" apply false',
