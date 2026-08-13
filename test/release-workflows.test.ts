@@ -3427,10 +3427,10 @@ describe("release workflow contracts", () => {
       "SUPABASE_ANON_KEY=sb_publishable_REPLACE_WITH_PROJECT_PUBLISHABLE_KEY",
     );
     expect(envExample).toContain(
-      "SUPABASE_SERVICE_ROLE_KEY=sb_secret_REPLACE_WITH_PROJECT_SERVER_KEY",
+      "SUPABASE_SERVICE_ROLE_KEY=replace_with_exact_project_server_key",
     );
     expect(envExample).toContain(
-      "OFFSITE_BACKUP_SERVICE_ROLE_KEY=sb_secret_REPLACE_WITH_OPERATIONAL_COPY_SERVER_KEY",
+      "OFFSITE_BACKUP_SERVICE_ROLE_KEY=replace_with_exact_operational_copy_server_key",
     );
     expect(envExample).toContain(
       "Legacy JWT keys remain accepted only for local",

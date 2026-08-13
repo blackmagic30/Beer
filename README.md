@@ -377,7 +377,7 @@ DATABASE_PATH=./data/pint-path.sqlite
 TRUST_PROXY_HOPS=1
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_ANON_KEY=sb_publishable_REPLACE_WITH_PROJECT_PUBLISHABLE_KEY
-SUPABASE_SERVICE_ROLE_KEY=sb_secret_REPLACE_WITH_PROJECT_SERVER_KEY
+SUPABASE_SERVICE_ROLE_KEY=replace_with_exact_project_server_key
 # Configure Google OAuth in the Supabase dashboard for this launch. Keep Apple
 # disabled until authorization-token revocation is implemented and verified.
 # Web redirect URLs: http://localhost:3000/auth/callback and
