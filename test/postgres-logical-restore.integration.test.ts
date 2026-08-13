@@ -8,6 +8,7 @@ import { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { POSTGRES_MIGRATION_CONTRACT } from "../src/db/postgres-migration-contract.js";
+import { POSTGRES_MIGRATION_EXPECTED_LIVE_SCHEMA_SHA256 } from "../src/db/postgres-migration-live-schema.js";
 import {
   POSTGRES_LOGICAL_BACKUP_ARCHIVE,
   POSTGRES_LOGICAL_BACKUP_MANIFEST,
@@ -744,6 +745,7 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL logical restore rehearsal"
       await source.query(`UPDATE pintpath_app.schema_metadata
         SET value = CASE key
           WHEN 'import_state' THEN 'ready'
+          WHEN 'live_schema_sha256' THEN $9
           WHEN 'migration_candidate_sha' THEN $1
           WHEN 'migration_manifest_sha256' THEN $2
           WHEN 'migration_plan_sha256' THEN $3
@@ -758,6 +760,22 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL logical restore rehearsal"
         POSTGRES_MIGRATION_CONTRACT.expectedSchemaFingerprint,
         String(POSTGRES_MIGRATION_CONTRACT.sourceSchemaVersion),
         "4".repeat(64), "5".repeat(64),
+        POSTGRES_MIGRATION_EXPECTED_LIVE_SCHEMA_SHA256,
+      ]);
+      await source.query(`INSERT INTO pintpath_ops.migration_verifier_authority (
+        authority_id, expected_environment, candidate_commit_sha,
+        operator_id_sha256, verifier_id_sha256, verifier_public_key_sha256,
+        authority_policy_sha256, authority_sha256, installed_at
+      ) VALUES (
+        'active', 'permanent-staging', $1, $2, $3, $4, $5, $6,
+        clock_timestamp()
+      )`, [
+        "c".repeat(40),
+        "6".repeat(64),
+        "7".repeat(64),
+        "8".repeat(64),
+        "9".repeat(64),
+        "a".repeat(64),
       ]);
       await source.query(`INSERT INTO pintpath_app.system_state
         (key, value_json, revision, updated_at)
@@ -1123,6 +1141,7 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL logical restore rehearsal"
         pgDump: { name: string; major: number; version: string };
         pgRestore: { name: string; major: number; version: string };
       };
+      state: { archivedControlTableCount: number };
       transport: { profile: string; rootCaCertificateSha256: string };
     };
     expect(manifest.schemaVersion).toBe(3);
@@ -1134,6 +1153,7 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL logical restore rehearsal"
     expect(manifest.tools.pgRestore.name).toBe("pg_restore");
     expect(manifest.tools.pgRestore.major).toBe(17);
     expect(manifest.tools.pgRestore.version).toBe(EXPECTED_POSTGRES_TOOL_VERSION);
+    expect(manifest.state.archivedControlTableCount).toBe(3);
     if (
       manifestBytes.includes(BACKUP_SOURCE_HOSTNAME)
       || manifestBytes.includes(BACKUP_PASSWORD)
