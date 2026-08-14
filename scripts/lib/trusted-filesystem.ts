@@ -14,6 +14,21 @@ interface PrivateWriteOptions {
   readonly requireOwner?: boolean;
 }
 
+export interface HeldPrivateDirectoryIdentity {
+  readonly path: string;
+  readonly identity: PrivateDirectoryIdentity;
+  assertExact(): void;
+  close(): void;
+}
+
+export interface PrivateDirectoryIdentity {
+  readonly dev: bigint;
+  readonly ino: bigint;
+  readonly mode: bigint;
+  readonly uid: bigint;
+  readonly gid: bigint;
+}
+
 type BigIntStats = fs.BigIntStats;
 
 function requiredFlag(value: number | undefined): number {
@@ -64,6 +79,63 @@ function pathMatchesDescriptor(filename: string, descriptorStat: BigIntStats): b
     && pathnameStat.dev === descriptorStat.dev
     && pathnameStat.ino === descriptorStat.ino
     && fs.realpathSync(filename) === filename;
+}
+
+/**
+ * Holds a private directory inode across a multi-step sensitive operation. The
+ * caller can reassert that its canonical pathname still names the held inode
+ * immediately before and after each irreversible action.
+ */
+export function holdPrivateDirectoryIdentity(
+  directory: string,
+  options: PrivateWriteOptions = {},
+): HeldPrivateDirectoryIdentity {
+  if (!exactAbsolutePath(directory)) throw new Error("private_directory_invalid");
+  let descriptor: number | null = null;
+  try {
+    descriptor = fs.openSync(directory, fs.constants.O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
+    const initial = fs.fstatSync(descriptor, { bigint: true });
+    const uid = currentUid();
+    const permissionBits = initial.mode & 0o777n;
+    if (!initial.isDirectory()
+      || (permissionBits & 0o077n) !== 0n
+      || options.requireExactDirectoryMode && permissionBits !== 0o700n
+      || options.requireOwner && (uid === null || initial.uid !== uid)
+      || !pathMatchesDescriptor(directory, initial)) {
+      throw new Error("private_directory_invalid");
+    }
+    let closed = false;
+    const heldDescriptor = descriptor;
+    descriptor = null;
+    return {
+      path: directory,
+      identity: Object.freeze({
+        dev: initial.dev, ino: initial.ino, mode: initial.mode,
+        uid: initial.uid, gid: initial.gid,
+      }),
+      assertExact(): void {
+        if (closed) throw new Error("private_directory_invalid");
+        try {
+          const current = fs.fstatSync(heldDescriptor, { bigint: true });
+          if (!sameDirectoryIdentity(initial, current)
+            || !pathMatchesDescriptor(directory, current)) {
+            throw new Error("private_directory_invalid");
+          }
+        } catch {
+          throw new Error("private_directory_invalid");
+        }
+      },
+      close(): void {
+        if (closed) return;
+        closed = true;
+        fs.closeSync(heldDescriptor);
+      },
+    };
+  } catch {
+    throw new Error("private_directory_invalid");
+  } finally {
+    if (descriptor !== null) fs.closeSync(descriptor);
+  }
 }
 
 /**
@@ -127,7 +199,9 @@ export function writePrivateExclusiveFile(
   directory: string,
   leaf: string,
   source: string | Buffer,
-  options: PrivateWriteOptions = {},
+  options: PrivateWriteOptions & {
+    readonly expectedDirectoryIdentity?: PrivateDirectoryIdentity;
+  } = {},
 ): void {
   if (!exactAbsolutePath(directory) || path.basename(leaf) !== leaf
     || leaf === "." || leaf === ".." || leaf.includes("\0")) {
@@ -148,6 +222,12 @@ export function writePrivateExclusiveFile(
       || (permissionBits & 0o077n) !== 0n
       || options.requireExactDirectoryMode && permissionBits !== 0o700n
       || options.requireOwner && (uid === null || directoryBefore.uid !== uid)) {
+      throw new Error("private_output_invalid");
+    }
+    const expected = options.expectedDirectoryIdentity;
+    if (expected && (directoryBefore.dev !== expected.dev
+      || directoryBefore.ino !== expected.ino || directoryBefore.mode !== expected.mode
+      || directoryBefore.uid !== expected.uid || directoryBefore.gid !== expected.gid)) {
       throw new Error("private_output_invalid");
     }
 

@@ -40,7 +40,7 @@ function artifact(name: string, runId: number) {
 
 function harness(
   options: {
-    phase?: "staging" | "production" | "close" | "promotion-recovery" | "open" | "release";
+    phase?: "staging" | "production" | "close" | "activation" | "promotion-recovery" | "open" | "release";
     omitCheck?: string;
     omitArtifact?: string;
     duplicateCheck?: string;
@@ -83,9 +83,10 @@ function harness(
     staging: 0,
     production: 0,
     close: 2,
-    "promotion-recovery": 3,
-    open: 4,
-    release: 5,
+    activation: 3,
+    "promotion-recovery": 4,
+    open: 5,
+    release: 6,
   };
   requiredChecks.push(...policy.requiredChecks.production.slice(0, stageCounts[phase]));
   artifactRequirements.push(
@@ -265,6 +266,7 @@ describe("GitHub release-candidate verifier", () => {
       "staging",
       "production",
       "close",
+      "activation",
       "promotion-recovery",
       "open",
       "release",

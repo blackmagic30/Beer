@@ -19,6 +19,7 @@ import {
   POSTGRES_PRIVATE_STORAGE_RESTORE_CONFIRMATION_VALUE,
   PostgresPrivateStorageRecoveryError,
   createPostgresPrivateStorageDatabaseInspector,
+  createSupabasePrivateStorageRestoreBoundary,
   restorePostgresPrivateStorageRecovery,
   type PostgresPrivateStorageBoundary,
   type PostgresPrivateStorageRecoveryFailureCode,
@@ -47,6 +48,8 @@ const ARGUMENTS = new Set([
   "--target-connection-url-file",
   "--target-connection-url-sha256",
   "--target-database-identity-sha256",
+  "--target-railway-project-id",
+  "--target-railway-environment-id",
 ]);
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const CANDIDATE_PATTERN = /^[a-f0-9]{40}$/;
@@ -69,9 +72,15 @@ export type PostgresPrivateStorageRestoreCliResult =
         typeof POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE;
       readonly databaseTransportRootCaDerSha256: string;
       readonly databaseEffectiveRole: "pintpath_migrator";
+      readonly candidateSha: string;
+      readonly destinationConnectionUrlSha256: string;
+      readonly destinationOriginSha256: string;
+      readonly destinationBucketNameSha256: string;
       readonly destinationAuthoritySha256: string;
       readonly destinationAuthorityPublicKeySha256: string;
       readonly destinationAuthorityReviewerIdSha256: string;
+      readonly destinationRailwayProjectIdSha256: string;
+      readonly destinationRailwayEnvironmentIdSha256: string;
     })
   | {
       readonly schemaVersion: 1;
@@ -109,9 +118,7 @@ const DEFAULT_DEPENDENCIES: PostgresPrivateStorageRestoreCliDependencies = {
   openDatabaseTransport: openPostgresRailwayStockLocalhostCaTransport,
   assertDestinationOriginApproved: () => undefined,
   createInspector: createPostgresPrivateStorageDatabaseInspector,
-  createStorage: () => {
-    throw new RestoreCliError("configuration_missing_or_unsafe");
-  },
+  createStorage: createSupabasePrivateStorageRestoreBoundary,
   restore: restorePostgresPrivateStorageRecovery,
   assertMutationAllowed: assertOperatorMutationAllowed,
   writeOutput: (value) => process.stdout.write(value),
@@ -172,6 +179,8 @@ export function verifyPostgresPrivateStorageDestinationAuthority(input: {
   readonly destinationOriginSha256: string;
   readonly targetConnectionUrlSha256: string;
   readonly targetDatabaseIdentitySha256: string;
+  readonly targetRailwayProjectId: string;
+  readonly targetRailwayEnvironmentId: string;
   readonly publicKeyPem: string;
   readonly publicKeySha256: string;
   readonly now: Date;
@@ -203,6 +212,7 @@ export function verifyPostgresPrivateStorageDestinationAuthority(input: {
       "schemaVersion", "candidateSha", "destinationOrigin",
       "destinationOriginSha256", "targetConnectionUrlSha256",
       "targetDatabaseIdentitySha256", "reviewerIdSha256",
+      "targetRailwayProjectId", "targetRailwayEnvironmentId",
       "reviewerPublicKeySha256", "issuedAt", "expiresAt",
     ])
     || typeof envelope.signatureBase64 !== "string"
@@ -221,6 +231,8 @@ export function verifyPostgresPrivateStorageDestinationAuthority(input: {
     || authority.destinationOriginSha256 !== input.destinationOriginSha256
     || authority.targetConnectionUrlSha256 !== input.targetConnectionUrlSha256
     || authority.targetDatabaseIdentitySha256 !== input.targetDatabaseIdentitySha256
+    || authority.targetRailwayProjectId !== input.targetRailwayProjectId
+    || authority.targetRailwayEnvironmentId !== input.targetRailwayEnvironmentId
     || authority.reviewerPublicKeySha256 !== input.publicKeySha256
     || !SHA256_PATTERN.test(String(authority.reviewerIdSha256))
     || !TIMESTAMP_PATTERN.test(issuedAt)
@@ -246,6 +258,12 @@ export function verifyPostgresPrivateStorageDestinationAuthority(input: {
     throw new RestoreCliError("configuration_missing_or_unsafe");
   }
   return String(authority.reviewerIdSha256);
+}
+
+export interface VerifiedPostgresPrivateStorageDestinationAuthority {
+  readonly reviewerIdSha256: string;
+  readonly targetRailwayProjectId: string;
+  readonly targetRailwayEnvironmentId: string;
 }
 
 function exactSecretFilePath(value: string): string {
@@ -335,6 +353,14 @@ export async function runPostgresPrivateStorageRestoreCli(
       "RESTORE_SUPABASE_URL",
     );
     const candidateSha = exactCandidateSha(args.get("--expected-candidate-sha")!);
+    const targetRailwayProjectId = args.get("--target-railway-project-id")!;
+    const targetRailwayEnvironmentId = args.get("--target-railway-environment-id")!;
+    if (
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+        .test(targetRailwayProjectId)
+      || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+        .test(targetRailwayEnvironmentId)
+    ) throw new RestoreCliError("invalid_arguments");
     const [authoritySource, authorityPublicKey] = await Promise.all([
       secret(dependencies, authorityFile),
       secret(dependencies, authorityPublicKeyFile),
@@ -351,6 +377,8 @@ export async function runPostgresPrivateStorageRestoreCli(
       targetDatabaseIdentitySha256: exactSha256(
         args.get("--target-database-identity-sha256")!,
       ),
+      targetRailwayProjectId,
+      targetRailwayEnvironmentId,
       publicKeyPem: authorityPublicKey,
       publicKeySha256: exactSha256(
         args.get("--destination-authority-public-key-sha256")!,
@@ -434,10 +462,18 @@ export async function runPostgresPrivateStorageRestoreCli(
       databaseTransportProfile,
       databaseTransportRootCaDerSha256,
       databaseEffectiveRole: "pintpath_migrator",
+      candidateSha: args.get("--expected-candidate-sha")!,
+      destinationConnectionUrlSha256: args.get("--target-connection-url-sha256")!,
+      destinationOriginSha256: args.get("--destination-origin-sha256")!,
+      destinationBucketNameSha256: args.get("--bucket-name-sha256")!,
       destinationAuthoritySha256: args.get("--destination-authority-sha256")!,
       destinationAuthorityPublicKeySha256:
         args.get("--destination-authority-public-key-sha256")!,
       destinationAuthorityReviewerIdSha256,
+      destinationRailwayProjectIdSha256: crypto.createHash("sha256")
+        .update(targetRailwayProjectId).digest("hex"),
+      destinationRailwayEnvironmentIdSha256: crypto.createHash("sha256")
+        .update(targetRailwayEnvironmentId).digest("hex"),
     };
     dependencies.writeOutput(canonicalPostgresBackupJson(authenticatedResult));
     return 0;

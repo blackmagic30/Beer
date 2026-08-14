@@ -9,15 +9,23 @@ const files = execFileSync("git", ["ls-files", "-z", "--cached", "--others", "--
   .filter((file) => file && sourceExtension.test(file));
 const decoder = new TextDecoder("utf-8", { fatal: true });
 const failures = [];
+let checkedFileCount = 0;
 
 for (const file of files) {
+  // A tracked file may be intentionally deleted in the candidate worktree. Git
+  // still lists it under --cached, but there are no source bytes to validate.
+  if (!fs.existsSync(file)) continue;
   let content;
   try {
     content = decoder.decode(fs.readFileSync(file));
-  } catch {
+  } catch (error) {
+    if (error && typeof error === "object" && error.code === "ENOENT" && !fs.existsSync(file)) {
+      continue;
+    }
     failures.push(`${file}: is not valid UTF-8 text`);
     continue;
   }
+  checkedFileCount += 1;
   if (content.startsWith("\uFEFF")) failures.push(`${file}: contains a UTF-8 BOM`);
   if (content.includes("\r")) failures.push(`${file}: contains CR/CRLF line endings`);
   if (/(?:[ \t]+)$/m.test(content)) failures.push(`${file}: contains trailing whitespace`);
@@ -30,4 +38,4 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-console.log(`Source-format check passed (${files.length} tracked text files).`);
+console.log(`Source-format check passed (${checkedFileCount} tracked text files).`);

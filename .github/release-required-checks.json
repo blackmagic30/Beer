@@ -15,6 +15,10 @@
       "workflowPath": ".github/workflows/close-production-route.yml",
       "event": "workflow_dispatch"
     },
+    "activation": {
+      "workflowPath": ".github/workflows/activate-production-promotion-recovery.yml",
+      "event": "workflow_dispatch"
+    },
     "promotion-recovery": {
       "workflowPath": ".github/workflows/attest-production-promotion-recovery.yml",
       "event": "workflow_dispatch"
@@ -108,6 +112,12 @@
         "event": "workflow_dispatch"
       },
       {
+        "stage": "activation",
+        "name": "Activate exact production promotion recovery",
+        "workflowPath": ".github/workflows/activate-production-promotion-recovery.yml",
+        "event": "workflow_dispatch"
+      },
+      {
         "stage": "promotion-recovery",
         "name": "Attest protected production promotion and recovery",
         "workflowPath": ".github/workflows/attest-production-promotion-recovery.yml",
@@ -161,6 +171,11 @@
         "stage": "close",
         "name": "pintpath-production-route-close-{candidateSha}",
         "producerCheck": "Close exact production route"
+      },
+      {
+        "stage": "activation",
+        "name": "pintpath-production-promotion-recovery-activation-{candidateSha}",
+        "producerCheck": "Activate exact production promotion recovery"
       },
       {
         "stage": "promotion-recovery",

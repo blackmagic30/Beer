@@ -81,24 +81,24 @@ class SafeCliError extends Error {
   }
 }
 
-interface RuntimeAwsClient extends AwsSdkV3WormClient {
+export interface RuntimeAwsClient extends AwsSdkV3WormClient {
   destroy?: () => void;
 }
 
-interface RuntimeAwsClientConstructor {
+export interface RuntimeAwsClientConstructor {
   new(config: Readonly<Record<string, unknown>>): RuntimeAwsClient;
 }
 
-type RuntimeFromIni = (input: { readonly profile: string }) => unknown;
+export type RuntimeFromIni = (input: { readonly profile: string }) => unknown;
 
-function runtimeRecord(value: unknown): Record<string, unknown> {
+export function runtimeRecord(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new SafeCliError("aws_sdk_unavailable");
   }
   return value as Record<string, unknown>;
 }
 
-function runtimeConstructor<T>(
+export function runtimeConstructor<T>(
   source: Record<string, unknown>,
   name: string,
 ): T {

@@ -21,6 +21,7 @@ const PHASES = Object.freeze([
   "staging",
   "production",
   "close",
+  "activation",
   "promotion-recovery",
   "open",
   "release",
@@ -29,6 +30,7 @@ const PRODUCTION_STAGES = Object.freeze([
   "deploy",
   "scale",
   "close",
+  "activation",
   "promotion-recovery",
   "open",
 ]);
@@ -36,9 +38,10 @@ const PHASE_STAGE_COUNTS = Object.freeze({
   staging: 0,
   production: 0,
   close: 2,
-  "promotion-recovery": 3,
-  open: 4,
-  release: 5,
+  activation: 3,
+  "promotion-recovery": 4,
+  open: 5,
+  release: 6,
 });
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 

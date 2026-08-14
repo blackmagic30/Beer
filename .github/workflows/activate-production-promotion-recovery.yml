@@ -1,0 +1,1461 @@
+name: Activate protected production promotion recovery
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Exact current main SHA whose recovery is being activated
+        required: true
+        type: string
+      project_id:
+        description: Exact disposable Railway project UUID
+        required: true
+        type: string
+      project_name:
+        description: Exact disposable restore project name
+        required: true
+        type: string
+      environment_id:
+        description: Exact sole disposable Railway environment UUID
+        required: true
+        type: string
+      environment_name:
+        description: Exact disposable environment name
+        required: true
+        type: string
+      supabase_project_ref:
+        description: Exact disposable Supabase project ref
+        required: true
+        type: string
+      supabase_project_name:
+        description: Exact disposable Supabase project name
+        required: true
+        type: string
+      inventory_sha256:
+        description: SHA-256 of the complete reviewed disposable project inventory
+        required: true
+        type: string
+      workspace_id:
+        description: Exact Railway workspace UUID containing the disposable project
+        required: true
+        type: string
+      workspace_name:
+        description: Exact reviewed Railway workspace name
+        required: true
+        type: string
+      workspace_project_inventory_sha256:
+        description: SHA-256 of the complete signed Railway workspace project inventory
+        required: true
+        type: string
+      confirmation:
+        description: Type ACTIVATE_PRODUCTION_PROMOTION_RECOVERY
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: pintpath-production-rollout
+  cancel-in-progress: false
+
+jobs:
+  production-capture:
+    name: Capture production recovery authorities into immutable WORM
+    runs-on: [self-hosted, linux, x64, pintpath-production-backup]
+    timeout-minutes: 180
+    environment: production-promotion-recovery-activation
+    env:
+      NODE_ENV: production
+      SUPABASE_URL: https://auth.pintpath.au
+      OFFSITE_BACKUP_SUPABASE_URL: https://hfbmhdxrwtihukmixxta.supabase.co
+      OFFSITE_BACKUP_BUCKET: pintpath-backups
+      PINTPATH_POSTGRES_LOGICAL_OFFSITE: confirmed
+      PINTPATH_POSTGRES_LOGICAL_WORM: confirmed
+      PINTPATH_POSTGRES_LOGICAL_WORM_AWS: confirmed
+      PINTPATH_POSTGRES_RECOVERY_BUNDLE_WORM: confirmed
+      PINTPATH_POSTGRES_RECOVERY_BUNDLE_WORM_AWS: confirmed
+      PINTPATH_PRODUCTION_BACKUP_RUNNER_READY: ${{ vars.PINTPATH_PRODUCTION_BACKUP_RUNNER_READY }}
+      PINTPATH_PRODUCTION_BACKUP_EPHEMERAL_RUNNER_POLICY_SHA256: ${{ vars.PINTPATH_PRODUCTION_BACKUP_EPHEMERAL_RUNNER_POLICY_SHA256 }}
+      EXPECTED_SOURCE_URL_SHA256: ${{ vars.PINTPATH_PRODUCTION_BACKUP_SOURCE_URL_SHA256 }}
+      EXPECTED_CAPTURE_URL_SHA256: ${{ vars.PINTPATH_PRODUCTION_CAPTURE_DATABASE_URL_SHA256 }}
+      EXPECTED_SOURCE_IDENTITY_SHA256: ${{ vars.PINTPATH_PRODUCTION_DATABASE_IDENTITY_SHA256 }}
+      EXPECTED_PRODUCTION_STORAGE_ORIGIN_SHA256: ${{ vars.PINTPATH_PRODUCTION_STORAGE_ORIGIN_SHA256 }}
+      EXPECTED_PRODUCTION_ROOT_CA_DER_SHA256: ${{ vars.PINTPATH_PRODUCTION_POSTGRES_ROOT_CA_DER_SHA256 }}
+      EXPECTED_STORAGE_BUCKET_SHA256: ${{ vars.PINTPATH_PRIVATE_STORAGE_BUCKET_SHA256 }}
+      EXPECTED_OFFSITE_DESTINATION_ORIGIN_SHA256: ${{ vars.PINTPATH_OPERATIONAL_COPY_ORIGIN_SHA256 }}
+      EXPECTED_OFFSITE_BUCKET_NAME_SHA256: ${{ vars.PINTPATH_OPERATIONAL_COPY_BUCKET_SHA256 }}
+      EXPECTED_LEDGER_CURRENT_SHA256: ${{ vars.PINTPATH_DELETION_LEDGER_CURRENT_SHA256 }}
+      EXPECTED_LEDGER_GENESIS_SHA256: ${{ vars.PINTPATH_DELETION_LEDGER_GENESIS_SHA256 }}
+      EXPECTED_LEDGER_CHECKPOINT_SHA256: ${{ vars.PINTPATH_DELETION_LEDGER_CHECKPOINT_SHA256 }}
+      EXPECTED_LEDGER_IMMUTABLE_SET_SHA256: ${{ vars.PINTPATH_DELETION_LEDGER_IMMUTABLE_SET_SHA256 }}
+      EXPECTED_LEDGER_TOMBSTONE_COUNT: ${{ vars.PINTPATH_DELETION_LEDGER_TOMBSTONE_COUNT }}
+      WORM_BUCKET: ${{ vars.PINTPATH_PRODUCTION_WORM_BUCKET }}
+      WORM_BUCKET_SHA256: ${{ vars.PINTPATH_PRODUCTION_WORM_BUCKET_SHA256 }}
+      WORM_WRITER_PROFILE: ${{ vars.PINTPATH_PRODUCTION_WORM_WRITER_PROFILE }}
+      WORM_READER_PROFILE: ${{ vars.PINTPATH_PRODUCTION_WORM_READER_PROFILE }}
+      WORM_ACCOUNT_SHA256: ${{ vars.PINTPATH_PRODUCTION_WORM_ACCOUNT_SHA256 }}
+      WORM_WRITER_ARN_SHA256: ${{ vars.PINTPATH_PRODUCTION_WORM_WRITER_ARN_SHA256 }}
+      WORM_READER_ARN_SHA256: ${{ vars.PINTPATH_PRODUCTION_WORM_READER_ARN_SHA256 }}
+      BACKUP_OPERATOR_ID: ${{ vars.PINTPATH_PRODUCTION_BACKUP_OPERATOR_ID }}
+      PG_DUMP_FILE: /usr/local/bin/pg_dump
+      EXPECTED_PG_DUMP_SHA256: fb3b6f653eae3eb4709c83117355dd9e033dd96332167c4042981ce37aefa6df
+      PG_RESTORE_FILE: /usr/local/bin/pg_restore
+      EXPECTED_PG_RESTORE_SHA256: 6d408461d62238fb4bc0e92831d56bf40bcbd16f2e524addd19efe4909bda7b5
+
+    steps:
+      - name: Checkout the exact candidate without persisted credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+
+      - name: Validate exact protected dispatch authority
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          PROJECT_ID: ${{ inputs.project_id }}
+          PROJECT_NAME: ${{ inputs.project_name }}
+          ENVIRONMENT_ID: ${{ inputs.environment_id }}
+          ENVIRONMENT_NAME: ${{ inputs.environment_name }}
+          SUPABASE_PROJECT_REF: ${{ inputs.supabase_project_ref }}
+          SUPABASE_PROJECT_NAME: ${{ inputs.supabase_project_name }}
+          INVENTORY_SHA256: ${{ inputs.inventory_sha256 }}
+          WORKSPACE_ID: ${{ inputs.workspace_id }}
+          WORKSPACE_NAME: ${{ inputs.workspace_name }}
+          WORKSPACE_PROJECT_INVENTORY_SHA256: ${{ inputs.workspace_project_inventory_sha256 }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          DISPATCH_REF: ${{ github.ref }}
+          DISPATCH_SHA: ${{ github.sha }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$PROJECT_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]
+          [[ "$ENVIRONMENT_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]
+          [[ "$SUPABASE_PROJECT_REF" =~ ^[a-z0-9]{20}$ ]]
+          [[ "$INVENTORY_SHA256" =~ ^[a-f0-9]{64}$ ]]
+          [[ "$WORKSPACE_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]
+          [[ "$WORKSPACE_PROJECT_INVENTORY_SHA256" =~ ^[a-f0-9]{64}$ ]]
+          test -n "$WORKSPACE_NAME"
+          test "$WORKSPACE_NAME" = "$(printf '%s' "$WORKSPACE_NAME" | tr -d '\r\n')"
+          [[ "$PROJECT_NAME" =~ ^pintpath-disposable-restore-[a-z0-9][a-z0-9-]{0,79}$ ]]
+          test "$ENVIRONMENT_NAME" = "$PROJECT_NAME"
+          test "$SUPABASE_PROJECT_NAME" = "$PROJECT_NAME"
+          test "$PROJECT_ID" != '48d8c6cd-1c66-4148-874b-20877f48e1a5'
+          test "$ENVIRONMENT_ID" != '13dab015-df74-45c6-b26f-69323daea99a'
+          test "$ENVIRONMENT_ID" != 'a4e0f507-d6d3-4df9-a818-ad92c0071a35'
+          test "$SUPABASE_PROJECT_REF" != 'bbfibbadwjxzrcdncavy'
+          test "$SUPABASE_PROJECT_REF" != 'hfbmhdxrwtihukmixxta'
+          test "$SUPABASE_PROJECT_REF" != 'jxpubqlmqnnqwadmjgyk'
+          test "$CONFIRMATION" = 'ACTIVATE_PRODUCTION_PROMOTION_RECOVERY'
+          test "$DISPATCH_REF" = 'refs/heads/main'
+          test "$DISPATCH_SHA" = "$CANDIDATE_SHA"
+          test "$RUN_ATTEMPT" = '1'
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse refs/remotes/origin/main)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain=v2 --untracked-files=all)"
+
+      - name: Setup the pinned Node runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Install immutable dependencies
+        run: corepack npm ci --ignore-scripts
+
+      - name: Require the exact durable emergency cleanup arm before capture
+        env:
+          PINTPATH_RECOVERY_EMERGENCY_CLEANUP_STATE_REQUIRED: "true"
+          PINTPATH_RECOVERY_EMERGENCY_CLEANUP_ARM_AUTHORITY_SHA256: ${{ vars.PINTPATH_RECOVERY_EMERGENCY_CLEANUP_ARM_AUTHORITY_SHA256 }}
+          ARM_AUTHORITY_BASE64: ${{ secrets.PINTPATH_RECOVERY_EMERGENCY_CLEANUP_ARM_AUTHORITY_BASE64 }}
+          ARM_AUTHORITY_PUBLIC_KEY_BASE64: ${{ secrets.PINTPATH_RECOVERY_EMERGENCY_CLEANUP_ARM_AUTHORITY_PUBLIC_KEY_BASE64 }}
+          STATE_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          umask 077
+          arm_root="$RUNNER_TEMP/pintpath-recovery-cleanup-arm-$GITHUB_RUN_ID"
+          test ! -e "$arm_root"
+          mkdir -m 700 "$arm_root"
+          printf '%s' "$ARM_AUTHORITY_BASE64" | base64 --decode > "$arm_root/authority.json"
+          printf '%s' "$ARM_AUTHORITY_PUBLIC_KEY_BASE64" | base64 --decode > "$arm_root/authority-public-key.pem"
+          chmod 600 "$arm_root"/*
+          basic="$(printf 'x-access-token:%s' "$STATE_TOKEN" | base64 | tr -d '\n')"
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $basic"
+          state_ref=refs/heads/pintpath-production-promotion-recovery-emergency-cleanup-state
+          git fetch --no-tags origin "+$state_ref:refs/remotes/origin/pintpath-emergency-cleanup-state"
+          state_head="$(git rev-parse refs/remotes/origin/pintpath-emergency-cleanup-state)"
+          git show "$state_head:.pintpath/emergency-cleanup/state.json" > "$arm_root/state.json"
+          chmod 600 "$arm_root/state.json"
+          npm run --silent production:promotion-recovery:emergency-cleanup:arm:verify -- \
+            --mode activation --candidate-sha "${{ inputs.candidate_sha }}" \
+            --activation-run-id "$GITHUB_RUN_ID" \
+            --project-id "${{ inputs.project_id }}" --project-name "${{ inputs.project_name }}" \
+            --environment-id "${{ inputs.environment_id }}" --environment-name "${{ inputs.environment_name }}" \
+            --inventory-sha256 "${{ inputs.inventory_sha256 }}" \
+            --workspace-id "${{ inputs.workspace_id }}" --workspace-name "${{ inputs.workspace_name }}" \
+            --workspace-project-inventory-sha256 "${{ inputs.workspace_project_inventory_sha256 }}" \
+            --supabase-project-ref "${{ inputs.supabase_project_ref }}" \
+            --supabase-project-name "${{ inputs.supabase_project_name }}" \
+            --organization-slug-sha256 "${{ vars.PINTPATH_RECOVERY_SUPABASE_ORGANIZATION_SLUG_SHA256 }}" \
+            --destination-origin-sha256 "${{ vars.PINTPATH_RECOVERY_TARGET_SUPABASE_ORIGIN_SHA256 }}" \
+            --destination-restore-authority-sha256 "${{ vars.PINTPATH_RECOVERY_DESTINATION_RESTORE_AUTHORITY_SHA256 }}" \
+            --authority-file "$arm_root/authority.json" \
+            --authority-sha256 "$PINTPATH_RECOVERY_EMERGENCY_CLEANUP_ARM_AUTHORITY_SHA256" \
+            --authority-public-key-file "$arm_root/authority-public-key.pem" \
+            --authority-public-key-sha256 "${{ vars.PINTPATH_RECOVERY_EMERGENCY_CLEANUP_ARM_AUTHORITY_PUBLIC_KEY_SHA256 }}" \
+            > "$arm_root/result.json"
+          npm run --silent production:promotion-recovery:emergency-cleanup:state:transition -- \
+            --operation verify --state-file "$arm_root/state.json" \
+            --arm-result-file "$arm_root/result.json" \
+            --railway-terminal-file none --supabase-terminal-file none \
+            --observed-cleanup-run-id "$GITHUB_RUN_ID" --output none --github-env none \
+            > "$arm_root/state-result.json"
+          find "$arm_root" -depth -mindepth 1 -delete
+          rmdir "$arm_root"
+
+      - name: Require deploy, scale, and close before production capture
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          authority_root="$RUNNER_TEMP/pintpath-production-recovery-chain"
+          test ! -e "$authority_root"
+          mkdir -m 700 "$authority_root"
+          npm run --silent github:release-candidate:verify -- \
+            --candidate-sha "$CANDIDATE_SHA" --phase activation \
+            --output "$authority_root/required-chain.json"
+          npm run --silent github:production-promotion-recovery:materialize -- \
+            --authority "$authority_root/required-chain.json" \
+            --candidate-sha "$CANDIDATE_SHA" --stage deploy \
+            --output "$authority_root/production-deployment-receipt.json"
+          chmod 600 "$authority_root"/*.json
+
+      - name: Verify the production-capture JIT runner and prepare tmpfs custody
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(node --version)" = "v22.23.2"
+          test "$(corepack npm --version)" = "10.9.8"
+          test "$PINTPATH_PRODUCTION_BACKUP_RUNNER_READY" = "true"
+          [[ "$PINTPATH_PRODUCTION_BACKUP_EPHEMERAL_RUNNER_POLICY_SHA256" =~ ^[a-f0-9]{64}$ ]]
+          node scripts/verify-production-backup-volatile-work-root.mjs verify \
+            --policy-sha256="$PINTPATH_PRODUCTION_BACKUP_EPHEMERAL_RUNNER_POLICY_SHA256"
+          test -x "$PG_DUMP_FILE"
+          test -x "$PG_RESTORE_FILE"
+          test -f /etc/pintpath/production-backup-postgres-egress.json
+          work_root="$(node scripts/verify-production-backup-volatile-work-root.mjs prepare \
+            --operation=backup --run-id="$GITHUB_RUN_ID" \
+            --run-attempt="$GITHUB_RUN_ATTEMPT" \
+            --policy-sha256="$PINTPATH_PRODUCTION_BACKUP_EPHEMERAL_RUNNER_POLICY_SHA256" \
+            --github-env="$GITHUB_ENV")"
+          test "$work_root" = "/run/pintpath-production-backup/pintpath-production-backup-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          mkdir -m 700 "$work_root/deletion-authority"
+          printf 'PINTPATH_LOGICAL_BACKUP=%s\n' "$work_root/logical-backup" >> "$GITHUB_ENV"
+          printf 'PINTPATH_OPERATIONAL_RETRIEVAL=%s\n' "$work_root/operational-retrieval" >> "$GITHUB_ENV"
+          printf 'PINTPATH_CAPTURED_RECOVERY_SET=%s\n' "$work_root/captured-recovery-set" >> "$GITHUB_ENV"
+
+      - name: Materialize only production-network secrets
+        env:
+          PRODUCTION_DATABASE_URL: ${{ secrets.PINTPATH_PRODUCTION_BACKUP_DATABASE_URL }}
+          PRODUCTION_CAPTURE_DATABASE_URL: ${{ secrets.PINTPATH_PRODUCTION_CAPTURE_DATABASE_URL }}
+          PRODUCTION_RUNTIME_DATABASE_URL: ${{ secrets.PINTPATH_PRODUCTION_RUNTIME_DATABASE_URL }}
+          PRODUCTION_ROOT_CA_PEM: ${{ secrets.PINTPATH_PRODUCTION_POSTGRES_ROOT_CA_PEM }}
+          PRODUCTION_STORAGE_KEY: ${{ secrets.PINTPATH_PRODUCTION_STORAGE_SERVICE_ROLE_KEY }}
+          OPERATIONAL_COPY_WRITER_KEY: ${{ secrets.PINTPATH_OPERATIONAL_COPY_SERVICE_ROLE_KEY }}
+          OPERATIONAL_COPY_READER_KEY: ${{ secrets.PINTPATH_OPERATIONAL_COPY_RECOVERY_SERVICE_ROLE_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          umask 077
+          root="$PINTPATH_BACKUP_WORK_ROOT"
+          printf '%s' "$PRODUCTION_DATABASE_URL" > "$root/production-database-url"
+          printf '%s' "$PRODUCTION_CAPTURE_DATABASE_URL" > "$root/production-capture-database-url"
+          printf '%s' "$PRODUCTION_RUNTIME_DATABASE_URL" > "$root/production-runtime-url"
+          printf '%s' "$PRODUCTION_ROOT_CA_PEM" > "$root/production-root-ca.pem"
+          printf '%s' "$PRODUCTION_STORAGE_KEY" > "$root/production-storage.key"
+          printf '%s' "$OPERATIONAL_COPY_WRITER_KEY" > "$root/operational-writer.key"
+          printf '%s' "$OPERATIONAL_COPY_READER_KEY" > "$root/operational-reader.key"
+          chmod 600 "$root"/*
+          for input in production-database-url production-capture-database-url \
+            production-runtime-url production-root-ca.pem production-storage.key \
+            operational-writer.key operational-reader.key; do
+            test -s "$root/$input"
+          done
+          ! cmp -s "$root/production-database-url" "$root/production-capture-database-url"
+          ! cmp -s "$root/operational-writer.key" "$root/operational-reader.key"
+          for value in "$EXPECTED_SOURCE_URL_SHA256" "$EXPECTED_CAPTURE_URL_SHA256" \
+            "$EXPECTED_SOURCE_IDENTITY_SHA256" "$EXPECTED_PRODUCTION_STORAGE_ORIGIN_SHA256" \
+            "$EXPECTED_PRODUCTION_ROOT_CA_DER_SHA256" "$EXPECTED_STORAGE_BUCKET_SHA256" \
+            "$EXPECTED_OFFSITE_DESTINATION_ORIGIN_SHA256" "$EXPECTED_OFFSITE_BUCKET_NAME_SHA256" \
+            "$EXPECTED_LEDGER_CURRENT_SHA256" "$EXPECTED_LEDGER_GENESIS_SHA256" \
+            "$EXPECTED_LEDGER_CHECKPOINT_SHA256" "$EXPECTED_LEDGER_IMMUTABLE_SET_SHA256" \
+            "$WORM_BUCKET_SHA256" "$WORM_ACCOUNT_SHA256" "$WORM_WRITER_ARN_SHA256" \
+            "$WORM_READER_ARN_SHA256" \
+            "${{ vars.PINTPATH_PRODUCTION_BACKUP_OCI_EGRESS_POLICY_SHA256 }}"; do
+            [[ "$value" =~ ^[a-f0-9]{64}$ ]]
+          done
+          [[ "$EXPECTED_LEDGER_TOMBSTONE_COUNT" =~ ^[1-9][0-9]*$ ]]
+          test "$EXPECTED_SOURCE_URL_SHA256" != "$EXPECTED_CAPTURE_URL_SHA256"
+          test "$WORM_WRITER_PROFILE" != "$WORM_READER_PROFILE"
+
+      - name: Create candidate-bound logical backup and observe PITR
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          PINTPATH_POSTGRES_OCI_RUNTIME_PROFILE: pintpath-postgres-17.10-operational-oci-linux-amd64-v1
+          PINTPATH_POSTGRES_OCI_OPERATION_CLASS: backup
+          PINTPATH_POSTGRES_OCI_EGRESS_POLICY_FILE: /etc/pintpath/production-backup-postgres-egress.json
+          PINTPATH_POSTGRES_OCI_EGRESS_POLICY_SHA256: ${{ vars.PINTPATH_PRODUCTION_BACKUP_OCI_EGRESS_POLICY_SHA256 }}
+          PINTPATH_PRODUCTION_PROMOTION_RECOVERY_CONFIRMATION: ATTEST_PRODUCTION_PROMOTION_RECOVERY
+          PINTPATH_RAILWAY_PITR_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PITR_METADATA_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --frozen-intrinsics --disable-proto=throw --import tsx scripts/backup-postgres-logical.ts \
+            --connection-file="$PINTPATH_BACKUP_WORK_ROOT/production-database-url" \
+            --expected-source-url-sha256="$EXPECTED_SOURCE_URL_SHA256" \
+            --transport-profile=railway-stock-localhost-ca-v1 \
+            --root-ca-file="$PINTPATH_BACKUP_WORK_ROOT/production-root-ca.pem" \
+            --expected-root-ca-der-sha256="$EXPECTED_PRODUCTION_ROOT_CA_DER_SHA256" \
+            --pg-dump-file="$PG_DUMP_FILE" --expected-pg-dump-sha256="$EXPECTED_PG_DUMP_SHA256" \
+            --pg-restore-file="$PG_RESTORE_FILE" --expected-pg-restore-sha256="$EXPECTED_PG_RESTORE_SHA256" \
+            --output="$PINTPATH_LOGICAL_BACKUP" > "$PINTPATH_BACKUP_WORK_ROOT/logical-backup-result.json"
+          cp "$PINTPATH_LOGICAL_BACKUP/manifest.json" "$PINTPATH_BACKUP_WORK_ROOT/logical-backup-manifest.json"
+          chmod 600 "$PINTPATH_BACKUP_WORK_ROOT"/*.json
+          manifest_sha256="$(sha256sum "$PINTPATH_BACKUP_WORK_ROOT/logical-backup-manifest.json" | cut -d ' ' -f 1)"
+          printf 'PINTPATH_LOGICAL_MANIFEST_SHA256=%s\n' "$manifest_sha256" >> "$GITHUB_ENV"
+          npm run --silent production:promotion-recovery:pitr:observe -- \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --production-deployment-receipt "$RUNNER_TEMP/pintpath-production-recovery-chain/production-deployment-receipt.json" \
+            --logical-backup-manifest "$PINTPATH_BACKUP_WORK_ROOT/logical-backup-manifest.json" \
+            --output "$PINTPATH_BACKUP_WORK_ROOT/pitr-receipt.json"
+          chmod 600 "$PINTPATH_BACKUP_WORK_ROOT/pitr-receipt.json"
+
+      - name: Retrieve deletion authority and capture private Storage
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          SUPABASE_URL: https://jxpubqlmqnnqwadmjgyk.supabase.co
+          PINTPATH_POSTGRES_OCI_RUNTIME_PROFILE: pintpath-postgres-17.10-operational-oci-linux-amd64-v1
+          PINTPATH_POSTGRES_OCI_OPERATION_CLASS: backup
+          PINTPATH_POSTGRES_OCI_EGRESS_POLICY_FILE: /etc/pintpath/production-backup-postgres-egress.json
+          PINTPATH_POSTGRES_OCI_EGRESS_POLICY_SHA256: ${{ vars.PINTPATH_PRODUCTION_BACKUP_OCI_EGRESS_POLICY_SHA256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run --silent db:postgres:deletion:authority:retrieve -- \
+            --service-role-key-file "$PINTPATH_BACKUP_WORK_ROOT/operational-reader.key" \
+            --output-directory "$PINTPATH_BACKUP_WORK_ROOT/deletion-authority" \
+            --expected-current-sha256 "$EXPECTED_LEDGER_CURRENT_SHA256" \
+            --expected-genesis-sha256 "$EXPECTED_LEDGER_GENESIS_SHA256" \
+            --expected-checkpoint-sha256 "$EXPECTED_LEDGER_CHECKPOINT_SHA256" \
+            --expected-immutable-set-sha256 "$EXPECTED_LEDGER_IMMUTABLE_SET_SHA256" \
+            --expected-tombstone-count "$EXPECTED_LEDGER_TOMBSTONE_COUNT" \
+            > "$PINTPATH_BACKUP_WORK_ROOT/deletion-authority-retrieval-result.json"
+          npm run --silent db:postgres:backup:private-storage-recovery -- \
+            --backup-directory "$PINTPATH_LOGICAL_BACKUP" \
+            --backup-manifest-sha256 "$PINTPATH_LOGICAL_MANIFEST_SHA256" \
+            --bucket-name-sha256 "$EXPECTED_STORAGE_BUCKET_SHA256" \
+            --connection-url-file "$PINTPATH_BACKUP_WORK_ROOT/production-capture-database-url" \
+            --connection-url-sha256 "$EXPECTED_CAPTURE_URL_SHA256" \
+            --deletion-authority-directory "$PINTPATH_BACKUP_WORK_ROOT/deletion-authority" \
+            --expected-candidate-sha "$CANDIDATE_SHA" \
+            --expected-root-ca-der-sha256 "$EXPECTED_PRODUCTION_ROOT_CA_DER_SHA256" \
+            --ledger-current-sha256 "$EXPECTED_LEDGER_CURRENT_SHA256" \
+            --ledger-genesis-sha256 "$EXPECTED_LEDGER_GENESIS_SHA256" \
+            --ledger-checkpoint-sha256 "$EXPECTED_LEDGER_CHECKPOINT_SHA256" \
+            --ledger-immutable-set-sha256 "$EXPECTED_LEDGER_IMMUTABLE_SET_SHA256" \
+            --ledger-tombstone-count "$EXPECTED_LEDGER_TOMBSTONE_COUNT" \
+            --output-directory "$PINTPATH_CAPTURED_RECOVERY_SET" \
+            --root-ca-file "$PINTPATH_BACKUP_WORK_ROOT/production-root-ca.pem" \
+            --service-role-key-file "$PINTPATH_BACKUP_WORK_ROOT/production-storage.key" \
+            --source-environment production \
+            --source-origin-sha256 "$EXPECTED_PRODUCTION_STORAGE_ORIGIN_SHA256" \
+            > "$PINTPATH_BACKUP_WORK_ROOT/private-storage-capture-receipt.json"
+          cp "$PINTPATH_CAPTURED_RECOVERY_SET/recovery-set.json" \
+            "$PINTPATH_BACKUP_WORK_ROOT/private-storage-recovery-manifest.json"
+          chmod 600 "$PINTPATH_BACKUP_WORK_ROOT"/*.json
+          node --input-type=module - "$PINTPATH_BACKUP_WORK_ROOT/private-storage-capture-receipt.json" "$GITHUB_ENV" <<'NODE'
+          import fs from "node:fs";
+          const [file, out] = process.argv.slice(2);
+          const value = JSON.parse(fs.readFileSync(file, "utf8"));
+          if (value.ok !== true || !/^[a-f0-9]{64}$/.test(value.recoverySetSha256)
+            || !/^[a-f0-9]{64}$/.test(value.recoveryManifestSha256)) process.exit(1);
+          fs.appendFileSync(out, `PINTPATH_RECOVERY_SET_SHA256=${value.recoverySetSha256}\nPINTPATH_RECOVERY_MANIFEST_SHA256=${value.recoveryManifestSha256}\n`);
+          NODE
+
+      - name: Seal logical and private recovery bytes into independent WORM
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          PINTPATH_POSTGRES_OCI_RUNTIME_PROFILE: pintpath-postgres-17.10-operational-oci-linux-amd64-v1
+          PINTPATH_POSTGRES_OCI_OPERATION_CLASS: backup
+          PINTPATH_POSTGRES_OCI_EGRESS_POLICY_FILE: /etc/pintpath/production-backup-postgres-egress.json
+          PINTPATH_POSTGRES_OCI_EGRESS_POLICY_SHA256: ${{ vars.PINTPATH_PRODUCTION_BACKUP_OCI_EGRESS_POLICY_SHA256 }}
+          POSTGRES_LOGICAL_WORM_RECOVERY_ACCOUNT_ID: ${{ secrets.PINTPATH_PRODUCTION_WORM_RECOVERY_ACCOUNT_ID }}
+          POSTGRES_LOGICAL_WORM_FORBIDDEN_ACCOUNT_IDS: ${{ secrets.PINTPATH_PRODUCTION_WORM_FORBIDDEN_ACCOUNT_IDS }}
+          POSTGRES_RECOVERY_BUNDLE_WORM_RECOVERY_ACCOUNT_ID: ${{ secrets.PINTPATH_PRODUCTION_WORM_RECOVERY_ACCOUNT_ID }}
+          POSTGRES_RECOVERY_BUNDLE_WORM_FORBIDDEN_ACCOUNT_IDS: ${{ secrets.PINTPATH_PRODUCTION_WORM_FORBIDDEN_ACCOUNT_IDS }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run --silent db:postgres:backup:logical:offsite -- \
+            --backup-directory="$PINTPATH_LOGICAL_BACKUP" \
+            --backup-manifest-sha256="$PINTPATH_LOGICAL_MANIFEST_SHA256" \
+            --expected-destination-origin-sha256="$EXPECTED_OFFSITE_DESTINATION_ORIGIN_SHA256" \
+            --expected-bucket-name-sha256="$EXPECTED_OFFSITE_BUCKET_NAME_SHA256" \
+            --expected-runtime-root-ca-der-sha256="$EXPECTED_PRODUCTION_ROOT_CA_DER_SHA256" \
+            --runtime-database-url-file="$PINTPATH_BACKUP_WORK_ROOT/production-runtime-url" \
+            --runtime-root-ca-file="$PINTPATH_BACKUP_WORK_ROOT/production-root-ca.pem" \
+            --service-role-key-file="$PINTPATH_BACKUP_WORK_ROOT/operational-writer.key" \
+            --operator-id="$BACKUP_OPERATOR_ID" > "$PINTPATH_BACKUP_WORK_ROOT/logical-offsite-result.json"
+          npm run --silent db:postgres:backup:logical:worm -- \
+            --backup-directory="$PINTPATH_LOGICAL_BACKUP" \
+            --backup-manifest-sha256="$PINTPATH_LOGICAL_MANIFEST_SHA256" \
+            --bucket-name="$WORM_BUCKET" --expected-bucket-name-sha256="$WORM_BUCKET_SHA256" \
+            --expected-recovery-account-id-sha256="$WORM_ACCOUNT_SHA256" \
+            --expected-writer-principal-arn-sha256="$WORM_WRITER_ARN_SHA256" \
+            --expected-reader-principal-arn-sha256="$WORM_READER_ARN_SHA256" \
+            --operator-id="$BACKUP_OPERATOR_ID" --writer-profile="$WORM_WRITER_PROFILE" \
+            --reader-profile="$WORM_READER_PROFILE" > "$PINTPATH_BACKUP_WORK_ROOT/logical-worm-result.json"
+          npm run --silent db:postgres:recovery-bundle:worm:seal -- \
+            --recovery-set-directory "$PINTPATH_CAPTURED_RECOVERY_SET" \
+            --expected-recovery-set-sha256 "$PINTPATH_RECOVERY_SET_SHA256" \
+            --expected-recovery-manifest-sha256 "$PINTPATH_RECOVERY_MANIFEST_SHA256" \
+            --candidate-sha "$CANDIDATE_SHA" --bucket-name "$WORM_BUCKET" \
+            --expected-bucket-name-sha256 "$WORM_BUCKET_SHA256" \
+            --expected-recovery-account-id-sha256 "$WORM_ACCOUNT_SHA256" \
+            --expected-writer-principal-arn-sha256 "$WORM_WRITER_ARN_SHA256" \
+            --expected-reader-principal-arn-sha256 "$WORM_READER_ARN_SHA256" \
+            --operator-id "$BACKUP_OPERATOR_ID" --writer-profile "$WORM_WRITER_PROFILE" \
+            --reader-profile "$WORM_READER_PROFILE" \
+            > "$PINTPATH_BACKUP_WORK_ROOT/private-storage-worm-receipt.json"
+          chmod 600 "$PINTPATH_BACKUP_WORK_ROOT"/*.json
+
+      - name: Independently prove the operational logical copy is retrievable
+        env:
+          PINTPATH_POSTGRES_OCI_RUNTIME_PROFILE: pintpath-postgres-17.10-operational-oci-linux-amd64-v1
+          PINTPATH_POSTGRES_OCI_OPERATION_CLASS: backup
+          PINTPATH_POSTGRES_OCI_EGRESS_POLICY_FILE: /etc/pintpath/production-backup-postgres-egress.json
+          PINTPATH_POSTGRES_OCI_EGRESS_POLICY_SHA256: ${{ vars.PINTPATH_PRODUCTION_BACKUP_OCI_EGRESS_POLICY_SHA256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          success_state="$(node -e 'const v=require(process.argv[1]);if(v.ok!==true)process.exit(1);process.stdout.write(v.successStateSha256)' "$PINTPATH_BACKUP_WORK_ROOT/logical-offsite-result.json")"
+          npm run --silent db:postgres:backup:logical:retrieve -- \
+            --expected-destination-origin-sha256="$EXPECTED_OFFSITE_DESTINATION_ORIGIN_SHA256" \
+            --expected-bucket-name-sha256="$EXPECTED_OFFSITE_BUCKET_NAME_SHA256" \
+            --expected-runtime-root-ca-der-sha256="$EXPECTED_PRODUCTION_ROOT_CA_DER_SHA256" \
+            --expected-success-state-sha256="$success_state" \
+            --output-directory="$PINTPATH_OPERATIONAL_RETRIEVAL" \
+            --runtime-database-url-file="$PINTPATH_BACKUP_WORK_ROOT/production-runtime-url" \
+            --runtime-root-ca-file="$PINTPATH_BACKUP_WORK_ROOT/production-root-ca.pem" \
+            --service-role-key-file="$PINTPATH_BACKUP_WORK_ROOT/operational-reader.key" \
+            > "$PINTPATH_BACKUP_WORK_ROOT/offsite-retrieval-receipt.json"
+          chmod 600 "$PINTPATH_BACKUP_WORK_ROOT/offsite-retrieval-receipt.json"
+
+      - name: Upload receipt-only capture authority
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pintpath-production-promotion-recovery-capture-${{ inputs.candidate_sha }}
+          path: |
+            ${{ env.PINTPATH_BACKUP_WORK_ROOT }}/logical-backup-manifest.json
+            ${{ env.PINTPATH_BACKUP_WORK_ROOT }}/logical-offsite-result.json
+            ${{ env.PINTPATH_BACKUP_WORK_ROOT }}/logical-worm-result.json
+            ${{ env.PINTPATH_BACKUP_WORK_ROOT }}/offsite-retrieval-receipt.json
+            ${{ env.PINTPATH_BACKUP_WORK_ROOT }}/pitr-receipt.json
+            ${{ env.PINTPATH_BACKUP_WORK_ROOT }}/private-storage-capture-receipt.json
+            ${{ env.PINTPATH_BACKUP_WORK_ROOT }}/private-storage-recovery-manifest.json
+            ${{ env.PINTPATH_BACKUP_WORK_ROOT }}/private-storage-worm-receipt.json
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Remove all production-capture volatile custody
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/verify-production-backup-volatile-work-root.mjs cleanup \
+            --operation=backup --run-id="$GITHUB_RUN_ID" \
+            --run-attempt="$GITHUB_RUN_ATTEMPT" \
+            --policy-sha256="$PINTPATH_PRODUCTION_BACKUP_EPHEMERAL_RUNNER_POLICY_SHA256" \
+            --exported-work-root="${PINTPATH_BACKUP_WORK_ROOT:-}"
+
+  disposable-recover:
+    name: Recover and prove exact disposable application
+    needs: production-capture
+    runs-on: [self-hosted, linux, x64, pintpath-disposable-recovery]
+    timeout-minutes: 180
+    environment: production-promotion-recovery-activation
+    env:
+      NODE_ENV: production
+      RESTORE_SUPABASE_URL: ${{ vars.PINTPATH_DISPOSABLE_RESTORE_SUPABASE_URL }}
+      PINTPATH_POSTGRES_LOGICAL_WORM_RETRIEVAL: confirmed
+      PINTPATH_POSTGRES_LOGICAL_WORM_RETRIEVAL_AWS: confirmed
+      PINTPATH_POSTGRES_RECOVERY_BUNDLE_WORM: confirmed
+      PINTPATH_POSTGRES_RECOVERY_BUNDLE_WORM_AWS: confirmed
+      PINTPATH_POSTGRES_LOGICAL_RESTORE: confirmed
+      PINTPATH_POSTGRES_PRIVATE_STORAGE_RESTORE: confirmed
+      PINTPATH_POSTGRES_ACCOUNT_DELETION_REPLAY: confirmed
+      PINTPATH_DISPOSABLE_RECOVERY_RUNNER_READY: ${{ vars.PINTPATH_DISPOSABLE_RECOVERY_RUNNER_READY }}
+      PINTPATH_DISPOSABLE_RECOVERY_EPHEMERAL_RUNNER_POLICY_SHA256: ${{ vars.PINTPATH_DISPOSABLE_RECOVERY_EPHEMERAL_RUNNER_POLICY_SHA256 }}
+      EXPECTED_SOURCE_IDENTITY_SHA256: ${{ vars.PINTPATH_PRODUCTION_DATABASE_IDENTITY_SHA256 }}
+      EXPECTED_RESTORE_ROOT_CA_DER_SHA256: ${{ vars.PINTPATH_PRODUCTION_RESTORE_ROOT_CA_DER_SHA256 }}
+      EXPECTED_RESTORE_ROOT_CA_SHA256: ${{ vars.PINTPATH_PRODUCTION_RESTORE_ROOT_CA_SHA256 }}
+      EXPECTED_RESTORE_TARGET_URL_SHA256: ${{ vars.PINTPATH_RECOVERY_TARGET_RESTORE_DATABASE_URL_SHA256 }}
+      EXPECTED_RESTORE_MIGRATOR_URL_SHA256: ${{ vars.PINTPATH_RECOVERY_TARGET_MIGRATOR_DATABASE_URL_SHA256 }}
+      EXPECTED_RESTORE_MAINTENANCE_URL_SHA256: ${{ vars.PINTPATH_RECOVERY_TARGET_MAINTENANCE_DATABASE_URL_SHA256 }}
+      EXPECTED_RESTORE_RUNTIME_URL_SHA256: ${{ vars.PINTPATH_RECOVERY_TARGET_RUNTIME_DATABASE_URL_SHA256 }}
+      EXPECTED_RESTORE_TARGET_IDENTITY_SHA256: ${{ vars.PINTPATH_RESTORE_TARGET_IDENTITY_SHA256 }}
+      EXPECTED_RESTORE_DESTINATION_ORIGIN_SHA256: ${{ vars.PINTPATH_RECOVERY_TARGET_SUPABASE_ORIGIN_SHA256 }}
+      FORBIDDEN_RESTORE_ORIGIN_SHA256S: ${{ vars.PINTPATH_FORBIDDEN_RESTORE_ORIGIN_SHA256S }}
+      EXPECTED_STORAGE_BUCKET_SHA256: ${{ vars.PINTPATH_PRIVATE_STORAGE_BUCKET_SHA256 }}
+      EXPECTED_LEDGER_CURRENT_SHA256: ${{ vars.PINTPATH_DELETION_LEDGER_CURRENT_SHA256 }}
+      EXPECTED_LEDGER_GENESIS_SHA256: ${{ vars.PINTPATH_DELETION_LEDGER_GENESIS_SHA256 }}
+      EXPECTED_LEDGER_CHECKPOINT_SHA256: ${{ vars.PINTPATH_DELETION_LEDGER_CHECKPOINT_SHA256 }}
+      EXPECTED_LEDGER_IMMUTABLE_SET_SHA256: ${{ vars.PINTPATH_DELETION_LEDGER_IMMUTABLE_SET_SHA256 }}
+      EXPECTED_LEDGER_TOMBSTONE_COUNT: ${{ vars.PINTPATH_DELETION_LEDGER_TOMBSTONE_COUNT }}
+      WORM_BUCKET: ${{ vars.PINTPATH_PRODUCTION_WORM_BUCKET }}
+      WORM_BUCKET_SHA256: ${{ vars.PINTPATH_PRODUCTION_WORM_BUCKET_SHA256 }}
+      WORM_READER_PROFILE: ${{ vars.PINTPATH_PRODUCTION_WORM_READER_PROFILE }}
+      WORM_ACCOUNT_SHA256: ${{ vars.PINTPATH_PRODUCTION_WORM_ACCOUNT_SHA256 }}
+      WORM_READER_ARN_SHA256: ${{ vars.PINTPATH_PRODUCTION_WORM_READER_ARN_SHA256 }}
+      PG_RESTORE_FILE: /usr/local/bin/pg_restore
+      EXPECTED_PG_RESTORE_SHA256: 6d408461d62238fb4bc0e92831d56bf40bcbd16f2e524addd19efe4909bda7b5
+
+    steps:
+      - name: Checkout the exact candidate without persisted credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+
+      - name: Validate disposable-recovery dispatch authority
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          DISPATCH_REF: ${{ github.ref }}
+          DISPATCH_SHA: ${{ github.sha }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          test "$DISPATCH_REF" = 'refs/heads/main'
+          test "$DISPATCH_SHA" = "$CANDIDATE_SHA"
+          test "$RUN_ATTEMPT" = '1'
+          test "${{ inputs.confirmation }}" = 'ACTIVATE_PRODUCTION_PROMOTION_RECOVERY'
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse refs/remotes/origin/main)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain=v2 --untracked-files=all)"
+
+      - name: Setup the pinned Node runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Install immutable dependencies and build the exact candidate
+        run: |
+          set -euo pipefail
+          corepack npm ci --ignore-scripts
+          npm run --silent build
+
+      - name: Verify the disposable-recovery JIT runner and prepare tmpfs custody
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(node --version)" = "v22.23.2"
+          test "$(corepack npm --version)" = "10.9.8"
+          test "$PINTPATH_DISPOSABLE_RECOVERY_RUNNER_READY" = "true"
+          [[ "$PINTPATH_DISPOSABLE_RECOVERY_EPHEMERAL_RUNNER_POLICY_SHA256" =~ ^[a-f0-9]{64}$ ]]
+          node scripts/verify-production-backup-volatile-work-root.mjs verify \
+            --policy-sha256="$PINTPATH_DISPOSABLE_RECOVERY_EPHEMERAL_RUNNER_POLICY_SHA256"
+          test -x "$PG_RESTORE_FILE"
+          test -f /etc/pintpath/production-restore-postgres-egress.json
+          work_root="$(node scripts/verify-production-backup-volatile-work-root.mjs prepare \
+            --operation=recovery --run-id="$GITHUB_RUN_ID" \
+            --run-attempt="$GITHUB_RUN_ATTEMPT" \
+            --policy-sha256="$PINTPATH_DISPOSABLE_RECOVERY_EPHEMERAL_RUNNER_POLICY_SHA256" \
+            --github-env="$GITHUB_ENV")"
+          test "$work_root" = "/run/pintpath-production-backup/pintpath-production-recovery-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          mkdir -m 700 "$work_root/capture-evidence" "$work_root/final-evidence"
+          printf 'PINTPATH_RETRIEVED_LOGICAL_BACKUP=%s\n' "$work_root/retrieved-logical-backup" >> "$GITHUB_ENV"
+          printf 'PINTPATH_RETRIEVED_RECOVERY_SET=%s\n' "$work_root/retrieved-recovery-set" >> "$GITHUB_ENV"
+
+      - name: Download only capture receipts and immutable content addresses
+        uses: actions/download-artifact@b7c52a5f7a25fce4c22e476a93420dd79a061a70 # v8.0.1
+        with:
+          name: pintpath-production-promotion-recovery-capture-${{ inputs.candidate_sha }}
+          path: /run/pintpath-production-backup/pintpath-production-recovery-${{ github.run_id }}-${{ github.run_attempt }}/capture-evidence
+
+      - name: Materialize only disposable-network secrets
+        env:
+          RESTORE_DATABASE_URL: ${{ secrets.PINTPATH_RECOVERY_TARGET_RESTORE_DATABASE_URL }}
+          RESTORE_MIGRATOR_DATABASE_URL: ${{ secrets.PINTPATH_RECOVERY_TARGET_MIGRATOR_DATABASE_URL }}
+          RESTORE_MAINTENANCE_DATABASE_URL: ${{ secrets.PINTPATH_RECOVERY_TARGET_MAINTENANCE_DATABASE_URL }}
+          RESTORE_RUNTIME_DATABASE_URL: ${{ secrets.PINTPATH_RECOVERY_TARGET_RUNTIME_DATABASE_URL }}
+          RESTORE_ROOT_CA_PEM: ${{ secrets.PINTPATH_PRODUCTION_RESTORE_ROOT_CA_PEM }}
+          RESTORE_STORAGE_KEY: ${{ secrets.PINTPATH_DISPOSABLE_RESTORE_STORAGE_SERVICE_ROLE_KEY }}
+          DESTINATION_AUTHORITY_BASE64: ${{ secrets.PINTPATH_PRIVATE_STORAGE_DESTINATION_AUTHORITY_BASE64 }}
+          DESTINATION_AUTHORITY_PUBLIC_KEY_BASE64: ${{ secrets.PINTPATH_PRIVATE_STORAGE_DESTINATION_AUTHORITY_PUBLIC_KEY_BASE64 }}
+          REDIS_URL: ${{ secrets.PINTPATH_RECOVERY_TARGET_REDIS_URL }}
+          REDIS_SENTINEL: ${{ secrets.PINTPATH_RECOVERY_TARGET_REDIS_SENTINEL }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.PINTPATH_RECOVERY_SUPABASE_PUBLISHABLE_KEY }}
+          AUTH_EMAIL: ${{ secrets.PINTPATH_RECOVERY_SUPABASE_TEST_USER_EMAIL }}
+          AUTH_PASSWORD: ${{ secrets.PINTPATH_RECOVERY_SUPABASE_TEST_USER_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          umask 077
+          root="$PINTPATH_RECOVERY_WORK_ROOT"
+          printf '%s' "$RESTORE_DATABASE_URL" > "$root/restore-database-url"
+          printf '%s' "$RESTORE_MIGRATOR_DATABASE_URL" > "$root/restore-migrator-database-url"
+          printf '%s' "$RESTORE_MAINTENANCE_DATABASE_URL" > "$root/restore-maintenance-database-url"
+          printf '%s' "$RESTORE_RUNTIME_DATABASE_URL" > "$root/restore-runtime-database-url"
+          printf '%s' "$RESTORE_ROOT_CA_PEM" > "$root/restore-root-ca.pem"
+          printf '%s' "$RESTORE_STORAGE_KEY" > "$root/restore-storage.key"
+          printf '%s' "$DESTINATION_AUTHORITY_BASE64" | base64 --decode > "$root/destination-authority.json"
+          printf '%s' "$DESTINATION_AUTHORITY_PUBLIC_KEY_BASE64" | base64 --decode > "$root/destination-authority-public-key.pem"
+          printf '%s' "$REDIS_URL" > "$root/recovered-redis.url"
+          printf '%s' "$REDIS_SENTINEL" > "$root/recovered-redis.sentinel"
+          printf '%s' "$SUPABASE_PUBLISHABLE_KEY" > "$root/recovered-supabase.publishable"
+          printf '%s' "$AUTH_EMAIL" > "$root/recovered-auth.email"
+          printf '%s' "$AUTH_PASSWORD" > "$root/recovered-auth.password"
+          node -e 'const f=require("fs"),c=require("crypto");f.writeFileSync(process.argv[1],c.randomBytes(48),{mode:0o600,flag:"wx"})' \
+            "$root/recovered-source-evidence.secret"
+          chmod 600 "$root"/* "$root/capture-evidence"/*
+          for binding in \
+            "restore-database-url:$EXPECTED_RESTORE_TARGET_URL_SHA256" \
+            "restore-migrator-database-url:$EXPECTED_RESTORE_MIGRATOR_URL_SHA256" \
+            "restore-maintenance-database-url:$EXPECTED_RESTORE_MAINTENANCE_URL_SHA256" \
+            "restore-runtime-database-url:$EXPECTED_RESTORE_RUNTIME_URL_SHA256" \
+            "restore-root-ca.pem:$EXPECTED_RESTORE_ROOT_CA_SHA256" \
+            "recovered-redis.url:${{ vars.PINTPATH_RECOVERY_TARGET_REDIS_URL_SHA256 }}" \
+            "recovered-supabase.publishable:${{ vars.PINTPATH_RECOVERY_TARGET_SUPABASE_PUBLISHABLE_KEY_SHA256 }}"; do
+            filename="${binding%%:*}"
+            expected="${binding#*:}"
+            [[ "$expected" =~ ^[a-f0-9]{64}$ ]]
+            test "$(sha256sum "$root/$filename" | cut -d ' ' -f 1)" = "$expected"
+          done
+          target_origin="https://${{ inputs.supabase_project_ref }}.supabase.co"
+          test "$RESTORE_SUPABASE_URL" = "$target_origin"
+          test "$(printf '%s' "$target_origin" | sha256sum | cut -d ' ' -f 1)" = "$EXPECTED_RESTORE_DESTINATION_ORIGIN_SHA256"
+          restore_files=(restore-database-url restore-migrator-database-url restore-maintenance-database-url restore-runtime-database-url)
+          for ((left=0; left<${#restore_files[@]}; left++)); do
+            for ((right=left+1; right<${#restore_files[@]}; right++)); do
+              ! cmp -s "$root/${restore_files[$left]}" "$root/${restore_files[$right]}"
+            done
+          done
+          manifest_sha="$(sha256sum "$root/capture-evidence/logical-backup-manifest.json" | cut -d ' ' -f 1)"
+          printf 'PINTPATH_LOGICAL_MANIFEST_SHA256=%s\n' "$manifest_sha" >> "$GITHUB_ENV"
+          printf 'PINTPATH_POSTGRES_OCI_RESTORE_ROOT_CA_FILE=%s\n' \
+            "$root/restore-root-ca.pem" >> "$GITHUB_ENV"
+          node --input-type=module - "$root/capture-evidence/private-storage-worm-receipt.json" "$GITHUB_ENV" <<'NODE'
+          import fs from "node:fs";
+          const [file, out] = process.argv.slice(2);
+          const value = JSON.parse(fs.readFileSync(file, "utf8"));
+          for (const key of ["recoverySetSha256", "recoveryManifestSha256", "bundleManifestSha256"])
+            if (!/^[a-f0-9]{64}$/.test(value[key])) process.exit(1);
+          fs.appendFileSync(out, `PINTPATH_RECOVERY_SET_SHA256=${value.recoverySetSha256}\nPINTPATH_RECOVERY_MANIFEST_SHA256=${value.recoveryManifestSha256}\nPINTPATH_BUNDLE_MANIFEST_SHA256=${value.bundleManifestSha256}\n`);
+          NODE
+
+      - name: Prove the disposable target is empty and identity-pinned
+        env:
+          PINTPATH_POSTGRES_OCI_RUNTIME_PROFILE: pintpath-postgres-17.10-operational-oci-linux-amd64-v1
+          PINTPATH_POSTGRES_OCI_OPERATION_CLASS: restore
+          PINTPATH_POSTGRES_OCI_EGRESS_POLICY_FILE: /etc/pintpath/production-restore-postgres-egress.json
+          PINTPATH_POSTGRES_OCI_EGRESS_POLICY_SHA256: ${{ vars.PINTPATH_PRODUCTION_RESTORE_OCI_EGRESS_POLICY_SHA256 }}
+          PINTPATH_POSTGRES_OCI_RESTORE_ROOT_CA_SHA256: ${{ vars.PINTPATH_PRODUCTION_RESTORE_ROOT_CA_SHA256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run --silent db:postgres:restore:logical -- inspect-target \
+            --target-url-file="$PINTPATH_RECOVERY_WORK_ROOT/restore-database-url" \
+            > "$PINTPATH_RECOVERY_WORK_ROOT/target-inspection-before.json"
+          chmod 600 "$PINTPATH_RECOVERY_WORK_ROOT/target-inspection-before.json"
+          node -e 'const f=require("fs"),v=JSON.parse(f.readFileSync(process.argv[1]));if(v.ok!==true||v.command!=="inspect-target"||v.disposableTarget!==true||v.privateSchemasAbsent!==true||v.targetIdentitySha256!==process.argv[2]||v.targetIdentitySha256===process.argv[3])process.exit(1)' \
+            "$PINTPATH_RECOVERY_WORK_ROOT/target-inspection-before.json" \
+            "$EXPECTED_RESTORE_TARGET_IDENTITY_SHA256" "$EXPECTED_SOURCE_IDENTITY_SHA256"
+
+      - name: Independently retrieve both WORM authorities into disposable tmpfs
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          POSTGRES_LOGICAL_WORM_RECOVERY_ACCOUNT_ID: ${{ secrets.PINTPATH_PRODUCTION_WORM_RECOVERY_ACCOUNT_ID }}
+          POSTGRES_RECOVERY_BUNDLE_WORM_RECOVERY_ACCOUNT_ID: ${{ secrets.PINTPATH_PRODUCTION_WORM_RECOVERY_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          logical_worm_result="$PINTPATH_RECOVERY_WORK_ROOT/capture-evidence/logical-worm-result.json"
+          logical_worm_sha="$(sha256sum "$logical_worm_result" | cut -d ' ' -f 1)"
+          npm run --silent db:postgres:backup:logical:worm:retrieve -- \
+            --worm-result-file "$logical_worm_result" \
+            --worm-result-sha256 "$logical_worm_sha" \
+            --output-directory "$PINTPATH_RETRIEVED_LOGICAL_BACKUP" \
+            --receipt-file "$PINTPATH_RECOVERY_WORK_ROOT/logical-worm-retrieval-receipt.json" \
+            --bucket-name "$WORM_BUCKET" --expected-bucket-name-sha256 "$WORM_BUCKET_SHA256" \
+            --expected-recovery-account-id-sha256 "$WORM_ACCOUNT_SHA256" \
+            --expected-reader-principal-arn-sha256 "$WORM_READER_ARN_SHA256" \
+            --reader-profile "$WORM_READER_PROFILE" \
+            > "$PINTPATH_RECOVERY_WORK_ROOT/logical-worm-retrieval-result.json"
+          npm run --silent db:postgres:recovery-bundle:worm:retrieve -- \
+            --output-directory "$PINTPATH_RETRIEVED_RECOVERY_SET" \
+            --worm-result-file "$PINTPATH_RECOVERY_WORK_ROOT/capture-evidence/private-storage-worm-receipt.json" \
+            --worm-result-sha256 "$(sha256sum "$PINTPATH_RECOVERY_WORK_ROOT/capture-evidence/private-storage-worm-receipt.json" | cut -d ' ' -f 1)" \
+            --expected-candidate-sha "$CANDIDATE_SHA" \
+            --expected-recovery-set-sha256 "$PINTPATH_RECOVERY_SET_SHA256" \
+            --expected-recovery-manifest-sha256 "$PINTPATH_RECOVERY_MANIFEST_SHA256" \
+            --expected-bundle-manifest-sha256 "$PINTPATH_BUNDLE_MANIFEST_SHA256" \
+            --bucket-name "$WORM_BUCKET" --expected-bucket-name-sha256 "$WORM_BUCKET_SHA256" \
+            --expected-recovery-account-id-sha256 "$WORM_ACCOUNT_SHA256" \
+            --expected-reader-principal-arn-sha256 "$WORM_READER_ARN_SHA256" \
+            --reader-profile "$WORM_READER_PROFILE" \
+            > "$PINTPATH_RECOVERY_WORK_ROOT/private-storage-worm-retrieval-receipt.json"
+          chmod 600 "$PINTPATH_RECOVERY_WORK_ROOT"/*worm-retrieval*.json
+          test "$(sha256sum "$PINTPATH_RETRIEVED_LOGICAL_BACKUP/manifest.json" | cut -d ' ' -f 1)" = "$PINTPATH_LOGICAL_MANIFEST_SHA256"
+
+      - name: Restore logical database and private Storage from WORM bytes
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          PINTPATH_POSTGRES_OCI_RUNTIME_PROFILE: pintpath-postgres-17.10-operational-oci-linux-amd64-v1
+          PINTPATH_POSTGRES_OCI_OPERATION_CLASS: restore
+          PINTPATH_POSTGRES_OCI_EGRESS_POLICY_FILE: /etc/pintpath/production-restore-postgres-egress.json
+          PINTPATH_POSTGRES_OCI_EGRESS_POLICY_SHA256: ${{ vars.PINTPATH_PRODUCTION_RESTORE_OCI_EGRESS_POLICY_SHA256 }}
+          PINTPATH_POSTGRES_OCI_RESTORE_ROOT_CA_SHA256: ${{ vars.PINTPATH_PRODUCTION_RESTORE_ROOT_CA_SHA256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run --silent db:postgres:restore:logical -- restore \
+            --backup-directory="$PINTPATH_RETRIEVED_LOGICAL_BACKUP" \
+            --backup-manifest-sha256="$PINTPATH_LOGICAL_MANIFEST_SHA256" \
+            --pg-restore-file="$PG_RESTORE_FILE" --expected-pg-restore-sha256="$EXPECTED_PG_RESTORE_SHA256" \
+            --target-url-file="$PINTPATH_RECOVERY_WORK_ROOT/restore-database-url" \
+            --target-identity-sha256="$EXPECTED_RESTORE_TARGET_IDENTITY_SHA256" \
+            --receipt="$PINTPATH_RECOVERY_WORK_ROOT/logical-restore-receipt.json" \
+            > "$PINTPATH_RECOVERY_WORK_ROOT/logical-restore-result.json"
+          authority_sha="$(sha256sum "$PINTPATH_RECOVERY_WORK_ROOT/destination-authority.json" | cut -d ' ' -f 1)"
+          authority_key_sha="$(sha256sum "$PINTPATH_RECOVERY_WORK_ROOT/destination-authority-public-key.pem" | cut -d ' ' -f 1)"
+          npm run --silent db:postgres:restore:private-storage-recovery -- \
+            --backup-directory "$PINTPATH_RETRIEVED_LOGICAL_BACKUP" \
+            --backup-manifest-sha256 "$PINTPATH_LOGICAL_MANIFEST_SHA256" \
+            --bucket-name-sha256 "$EXPECTED_STORAGE_BUCKET_SHA256" \
+            --destination-origin-sha256 "$EXPECTED_RESTORE_DESTINATION_ORIGIN_SHA256" \
+            --destination-authority-file "$PINTPATH_RECOVERY_WORK_ROOT/destination-authority.json" \
+            --destination-authority-sha256 "$authority_sha" \
+            --destination-authority-public-key-file "$PINTPATH_RECOVERY_WORK_ROOT/destination-authority-public-key.pem" \
+            --destination-authority-public-key-sha256 "$authority_key_sha" \
+            --expected-candidate-sha "$CANDIDATE_SHA" \
+            --expected-root-ca-der-sha256 "$EXPECTED_RESTORE_ROOT_CA_DER_SHA256" \
+            --forbidden-origin-sha256s "$FORBIDDEN_RESTORE_ORIGIN_SHA256S" \
+            --recovery-manifest-sha256 "$PINTPATH_RECOVERY_MANIFEST_SHA256" \
+            --recovery-set-directory "$PINTPATH_RETRIEVED_RECOVERY_SET" \
+            --recovery-set-sha256 "$PINTPATH_RECOVERY_SET_SHA256" \
+            --root-ca-file "$PINTPATH_RECOVERY_WORK_ROOT/restore-root-ca.pem" \
+            --service-role-key-file "$PINTPATH_RECOVERY_WORK_ROOT/restore-storage.key" \
+            --target-connection-url-file "$PINTPATH_RECOVERY_WORK_ROOT/restore-migrator-database-url" \
+            --target-connection-url-sha256 "$EXPECTED_RESTORE_MIGRATOR_URL_SHA256" \
+            --target-database-identity-sha256 "$EXPECTED_RESTORE_TARGET_IDENTITY_SHA256" \
+            --target-railway-project-id "${{ inputs.project_id }}" \
+            --target-railway-environment-id "${{ inputs.environment_id }}" \
+            > "$PINTPATH_RECOVERY_WORK_ROOT/private-storage-restore-receipt.json"
+          chmod 600 "$PINTPATH_RECOVERY_WORK_ROOT/logical-restore-receipt.json" \
+            "$PINTPATH_RECOVERY_WORK_ROOT/private-storage-restore-receipt.json"
+
+      - name: Replay deletion tombstones twice and prove idempotency
+        env:
+          PINTPATH_POSTGRES_OCI_RUNTIME_PROFILE: pintpath-postgres-17.10-operational-oci-linux-amd64-v1
+          PINTPATH_POSTGRES_OCI_OPERATION_CLASS: restore
+          PINTPATH_POSTGRES_OCI_EGRESS_POLICY_FILE: /etc/pintpath/production-restore-postgres-egress.json
+          PINTPATH_POSTGRES_OCI_EGRESS_POLICY_SHA256: ${{ vars.PINTPATH_PRODUCTION_RESTORE_OCI_EGRESS_POLICY_SHA256 }}
+          PINTPATH_POSTGRES_OCI_RESTORE_ROOT_CA_SHA256: ${{ vars.PINTPATH_PRODUCTION_RESTORE_ROOT_CA_SHA256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          restore_sha="$(sha256sum "$PINTPATH_RECOVERY_WORK_ROOT/logical-restore-receipt.json" | cut -d ' ' -f 1)"
+          for pass in first second; do
+            npm run --silent db:postgres:deletion:replay -- \
+              --base-restore-receipt "$PINTPATH_RECOVERY_WORK_ROOT/logical-restore-receipt.json" \
+              --expected-base-restore-receipt-sha256 "$restore_sha" \
+              --deletion-ledger-authority-directory "$PINTPATH_RETRIEVED_RECOVERY_SET/deletion-authority" \
+              --expected-ledger-current-sha256 "$EXPECTED_LEDGER_CURRENT_SHA256" \
+              --expected-ledger-genesis-sha256 "$EXPECTED_LEDGER_GENESIS_SHA256" \
+              --expected-ledger-checkpoint-sha256 "$EXPECTED_LEDGER_CHECKPOINT_SHA256" \
+              --expected-ledger-immutable-set-sha256 "$EXPECTED_LEDGER_IMMUTABLE_SET_SHA256" \
+              --expected-runtime-root-ca-der-sha256 "$EXPECTED_RESTORE_ROOT_CA_DER_SHA256" \
+              --expected-target-identity-sha256 "$EXPECTED_RESTORE_TARGET_IDENTITY_SHA256" \
+              --expected-tombstone-count "$EXPECTED_LEDGER_TOMBSTONE_COUNT" \
+              --receipt "$PINTPATH_RECOVERY_WORK_ROOT/deletion-replay-$pass-receipt.json" \
+              --runtime-root-ca-file "$PINTPATH_RECOVERY_WORK_ROOT/restore-root-ca.pem" \
+              --runtime-url-file "$PINTPATH_RECOVERY_WORK_ROOT/restore-maintenance-database-url" \
+              > "$PINTPATH_RECOVERY_WORK_ROOT/deletion-replay-$pass-result.json"
+            chmod 600 "$PINTPATH_RECOVERY_WORK_ROOT/deletion-replay-$pass-receipt.json"
+          done
+
+      - name: Verify the real recovered app and Redis boundary
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          TARGET_APP_SERVICE_ID: ${{ vars.PINTPATH_RECOVERY_TARGET_APP_SERVICE_ID }}
+          TARGET_DATABASE_RESOURCE_ID: ${{ vars.PINTPATH_RECOVERY_TARGET_DATABASE_RESOURCE_ID }}
+          TARGET_REDIS_RESOURCE_ID: ${{ vars.PINTPATH_RECOVERY_TARGET_REDIS_RESOURCE_ID }}
+          TARGET_REDIS_URL_SHA256: ${{ vars.PINTPATH_RECOVERY_TARGET_REDIS_URL_SHA256 }}
+          TARGET_SUPABASE_ORIGIN_SHA256: ${{ vars.PINTPATH_RECOVERY_TARGET_SUPABASE_ORIGIN_SHA256 }}
+          TARGET_SUPABASE_PUBLISHABLE_KEY_SHA256: ${{ vars.PINTPATH_RECOVERY_TARGET_SUPABASE_PUBLISHABLE_KEY_SHA256 }}
+          TARGET_AUTH_EMAIL_SHA256: ${{ vars.PINTPATH_RECOVERY_TARGET_AUTH_EMAIL_SHA256 }}
+          TARGET_AUTH_SUBJECT_SHA256: ${{ vars.PINTPATH_RECOVERY_TARGET_AUTH_SUBJECT_SHA256 }}
+          PRODUCTION_RAILWAY_PROJECT_ID: ${{ vars.PINTPATH_PRODUCTION_RAILWAY_PROJECT_ID }}
+          PRODUCTION_RAILWAY_ENVIRONMENT_ID: ${{ vars.PINTPATH_PRODUCTION_RAILWAY_ENVIRONMENT_ID }}
+          PRODUCTION_RAILWAY_APP_SERVICE_ID: ${{ vars.PINTPATH_PRODUCTION_RAILWAY_APP_SERVICE_ID }}
+          PRODUCTION_DATABASE_RESOURCE_ID: ${{ vars.PINTPATH_PRODUCTION_DATABASE_RESOURCE_ID }}
+          PRODUCTION_DATABASE_URL_SHA256: ${{ vars.PINTPATH_PRODUCTION_RUNTIME_DATABASE_URL_SHA256 }}
+          PRODUCTION_REDIS_RESOURCE_ID: ${{ vars.PINTPATH_PRODUCTION_REDIS_RESOURCE_ID }}
+          PRODUCTION_REDIS_URL_SHA256: ${{ vars.PINTPATH_PRODUCTION_REDIS_URL_SHA256 }}
+          PRODUCTION_SUPABASE_PUBLISHABLE_KEY_SHA256: ${{ vars.PINTPATH_PRODUCTION_SUPABASE_PUBLISHABLE_KEY_SHA256 }}
+          STAGING_RAILWAY_PROJECT_ID: ${{ vars.PINTPATH_PERMANENT_STAGING_RAILWAY_PROJECT_ID }}
+          STAGING_RAILWAY_ENVIRONMENT_ID: ${{ vars.PINTPATH_PERMANENT_STAGING_RAILWAY_ENVIRONMENT_ID }}
+          STAGING_RAILWAY_APP_SERVICE_ID: ${{ vars.PINTPATH_PERMANENT_STAGING_RAILWAY_APP_SERVICE_ID }}
+          STAGING_DATABASE_RESOURCE_ID: ${{ vars.PINTPATH_PERMANENT_STAGING_DATABASE_RESOURCE_ID }}
+          STAGING_DATABASE_URL_SHA256: ${{ vars.PINTPATH_PERMANENT_STAGING_DATABASE_URL_SHA256 }}
+          STAGING_REDIS_RESOURCE_ID: ${{ vars.PINTPATH_PERMANENT_STAGING_REDIS_RESOURCE_ID }}
+          STAGING_REDIS_URL_SHA256: ${{ vars.PINTPATH_PERMANENT_STAGING_REDIS_URL_SHA256 }}
+          STAGING_SUPABASE_PUBLISHABLE_KEY_SHA256: ${{ vars.PINTPATH_PERMANENT_STAGING_SUPABASE_PUBLISHABLE_KEY_SHA256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          dist_root="$(realpath "$GITHUB_WORKSPACE/dist")"
+          compiled_artifact_sha="$(node --frozen-intrinsics --disable-proto=throw --import tsx --input-type=module - "$dist_root" <<'NODE'
+          import { hashCompiledApplicationArtifact } from "./scripts/verify-recovered-postgres-application.ts";
+          process.stdout.write(hashCompiledApplicationArtifact(process.argv[2]));
+          NODE
+          )"
+          compiled_entrypoint_sha="$(sha256sum "$dist_root/src/server.js" | cut -d ' ' -f 1)"
+          runtime_dependency_artifact_sha="$(node --frozen-intrinsics --disable-proto=throw --import tsx --input-type=module - "$dist_root" <<'NODE'
+          import { hashRuntimeDependencyArtifact } from "./scripts/verify-recovered-postgres-application.ts";
+          process.stdout.write(hashRuntimeDependencyArtifact(process.argv[2]));
+          NODE
+          )"
+          npm run --silent production:promotion-recovery:recovered-smoke -- \
+            --app-port 43117 \
+            --auth-email-file "$PINTPATH_RECOVERY_WORK_ROOT/recovered-auth.email" \
+            --auth-password-file "$PINTPATH_RECOVERY_WORK_ROOT/recovered-auth.password" \
+            --candidate-sha "$CANDIDATE_SHA" --close-timeout-ms 5000 \
+            --compiled-artifact-root "$dist_root" \
+            --database-resource-id "$TARGET_DATABASE_RESOURCE_ID" \
+            --expected-auth-email-sha256 "$TARGET_AUTH_EMAIL_SHA256" \
+            --expected-auth-subject-sha256 "$TARGET_AUTH_SUBJECT_SHA256" \
+            --expected-compiled-artifact-sha256 "$compiled_artifact_sha" \
+            --expected-compiled-entrypoint-sha256 "$compiled_entrypoint_sha" \
+            --expected-runtime-dependency-artifact-sha256 "$runtime_dependency_artifact_sha" \
+            --expected-maintenance-url-sha256 "$EXPECTED_RESTORE_MAINTENANCE_URL_SHA256" \
+            --expected-redis-url-sha256 "$TARGET_REDIS_URL_SHA256" \
+            --expected-root-ca-der-sha256 "$EXPECTED_RESTORE_ROOT_CA_DER_SHA256" \
+            --expected-runtime-url-sha256 "$EXPECTED_RESTORE_RUNTIME_URL_SHA256" \
+            --expected-supabase-origin-sha256 "$TARGET_SUPABASE_ORIGIN_SHA256" \
+            --expected-supabase-publishable-key-sha256 "$TARGET_SUPABASE_PUBLISHABLE_KEY_SHA256" \
+            --expected-target-identity-sha256 "$EXPECTED_RESTORE_TARGET_IDENTITY_SHA256" \
+            --first-replay-receipt "$PINTPATH_RECOVERY_WORK_ROOT/deletion-replay-first-receipt.json" \
+            --maintenance-url-file "$PINTPATH_RECOVERY_WORK_ROOT/restore-maintenance-database-url" \
+            --output-limit-bytes 65536 \
+            --permanent-staging-database-resource-id "$STAGING_DATABASE_RESOURCE_ID" \
+            --permanent-staging-database-url-sha256 "$STAGING_DATABASE_URL_SHA256" \
+            --permanent-staging-railway-environment-id "$STAGING_RAILWAY_ENVIRONMENT_ID" \
+            --permanent-staging-railway-project-id "$STAGING_RAILWAY_PROJECT_ID" \
+            --permanent-staging-railway-service-id "$STAGING_RAILWAY_APP_SERVICE_ID" \
+            --permanent-staging-redis-resource-id "$STAGING_REDIS_RESOURCE_ID" \
+            --permanent-staging-redis-url-sha256 "$STAGING_REDIS_URL_SHA256" \
+            --permanent-staging-supabase-publishable-key-sha256 "$STAGING_SUPABASE_PUBLISHABLE_KEY_SHA256" \
+            --production-database-resource-id "$PRODUCTION_DATABASE_RESOURCE_ID" \
+            --production-database-url-sha256 "$PRODUCTION_DATABASE_URL_SHA256" \
+            --production-railway-environment-id "$PRODUCTION_RAILWAY_ENVIRONMENT_ID" \
+            --production-railway-project-id "$PRODUCTION_RAILWAY_PROJECT_ID" \
+            --production-railway-service-id "$PRODUCTION_RAILWAY_APP_SERVICE_ID" \
+            --production-redis-resource-id "$PRODUCTION_REDIS_RESOURCE_ID" \
+            --production-redis-url-sha256 "$PRODUCTION_REDIS_URL_SHA256" \
+            --production-supabase-publishable-key-sha256 "$PRODUCTION_SUPABASE_PUBLISHABLE_KEY_SHA256" \
+            --railway-environment-id "${{ inputs.environment_id }}" \
+            --railway-project-id "${{ inputs.project_id }}" \
+            --railway-service-id "$TARGET_APP_SERVICE_ID" \
+            --redis-resource-id "$TARGET_REDIS_RESOURCE_ID" \
+            --redis-sentinel-file "$PINTPATH_RECOVERY_WORK_ROOT/recovered-redis.sentinel" \
+            --redis-url-file "$PINTPATH_RECOVERY_WORK_ROOT/recovered-redis.url" \
+            --request-timeout-ms 5000 \
+            --runtime-stage-root "$PINTPATH_RECOVERY_WORK_ROOT" \
+            --root-ca-file "$PINTPATH_RECOVERY_WORK_ROOT/restore-root-ca.pem" \
+            --runtime-url-file "$PINTPATH_RECOVERY_WORK_ROOT/restore-runtime-database-url" \
+            --second-replay-receipt "$PINTPATH_RECOVERY_WORK_ROOT/deletion-replay-second-receipt.json" \
+            --shutdown-timeout-ms 15000 \
+            --source-evidence-signing-secret-file "$PINTPATH_RECOVERY_WORK_ROOT/recovered-source-evidence.secret" \
+            --startup-timeout-ms 120000 \
+            --supabase-publishable-key-file "$PINTPATH_RECOVERY_WORK_ROOT/recovered-supabase.publishable" \
+            --supabase-url "$RESTORE_SUPABASE_URL" \
+            > "$PINTPATH_RECOVERY_WORK_ROOT/recovered-smoke-receipt.json"
+          chmod 600 "$PINTPATH_RECOVERY_WORK_ROOT/recovered-smoke-receipt.json"
+
+      - name: Purge only the restored private Storage object set
+        env:
+          PINTPATH_POSTGRES_PRIVATE_STORAGE_PURGE: confirmed
+          PURGE_AUTHORITY_BASE64: ${{ secrets.PINTPATH_PRIVATE_STORAGE_PURGE_AUTHORITY_BASE64 }}
+          PURGE_AUTHORITY_PUBLIC_KEY_BASE64: ${{ secrets.PINTPATH_PRIVATE_STORAGE_PURGE_AUTHORITY_PUBLIC_KEY_BASE64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          printf '%s' "$PURGE_AUTHORITY_BASE64" | base64 --decode > "$PINTPATH_RECOVERY_WORK_ROOT/purge-authority.json"
+          printf '%s' "$PURGE_AUTHORITY_PUBLIC_KEY_BASE64" | base64 --decode > "$PINTPATH_RECOVERY_WORK_ROOT/purge-authority-public-key.pem"
+          chmod 600 "$PINTPATH_RECOVERY_WORK_ROOT"/purge-*
+          authority_sha="$(sha256sum "$PINTPATH_RECOVERY_WORK_ROOT/destination-authority.json" | cut -d ' ' -f 1)"
+          manifest_file="$PINTPATH_RECOVERY_WORK_ROOT/capture-evidence/private-storage-recovery-manifest.json"
+          restore_file="$PINTPATH_RECOVERY_WORK_ROOT/private-storage-restore-receipt.json"
+          npm run --silent db:postgres:restore:private-storage-purge -- \
+            --purge-authority-file "$PINTPATH_RECOVERY_WORK_ROOT/purge-authority.json" \
+            --purge-authority-sha256 "$(sha256sum "$PINTPATH_RECOVERY_WORK_ROOT/purge-authority.json" | cut -d ' ' -f 1)" \
+            --purge-authority-public-key-file "$PINTPATH_RECOVERY_WORK_ROOT/purge-authority-public-key.pem" \
+            --purge-authority-public-key-sha256 "$(sha256sum "$PINTPATH_RECOVERY_WORK_ROOT/purge-authority-public-key.pem" | cut -d ' ' -f 1)" \
+            --recovery-manifest-file "$manifest_file" \
+            --recovery-manifest-sha256 "$(sha256sum "$manifest_file" | cut -d ' ' -f 1)" \
+            --restore-receipt-file "$restore_file" \
+            --restore-receipt-sha256 "$(sha256sum "$restore_file" | cut -d ' ' -f 1)" \
+            --destination-restore-authority-sha256 "$authority_sha" \
+            --expected-root-ca-der-sha256 "$EXPECTED_RESTORE_ROOT_CA_DER_SHA256" \
+            --destination-origin-sha256 "$EXPECTED_RESTORE_DESTINATION_ORIGIN_SHA256" \
+            --destination-project-ref "${{ inputs.supabase_project_ref }}" \
+            --expected-candidate-sha "${{ inputs.candidate_sha }}" \
+            --forbidden-origin-sha256s "$FORBIDDEN_RESTORE_ORIGIN_SHA256S" \
+            --service-role-key-file "$PINTPATH_RECOVERY_WORK_ROOT/restore-storage.key" \
+            --target-connection-url-sha256 "$EXPECTED_RESTORE_MIGRATOR_URL_SHA256" \
+            --target-database-identity-sha256 "$EXPECTED_RESTORE_TARGET_IDENTITY_SHA256" \
+            --target-railway-project-id "${{ inputs.project_id }}" \
+            --target-railway-environment-id "${{ inputs.environment_id }}" \
+            --output "$PINTPATH_RECOVERY_WORK_ROOT/storage-purge-receipt.json"
+
+      - name: Stage exact receipt-only recovery evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$PINTPATH_RECOVERY_WORK_ROOT/final-evidence"
+          for leaf in logical-backup-manifest.json logical-offsite-result.json \
+            logical-worm-result.json offsite-retrieval-receipt.json pitr-receipt.json \
+            private-storage-capture-receipt.json private-storage-recovery-manifest.json \
+            private-storage-worm-receipt.json; do
+            cp "$PINTPATH_RECOVERY_WORK_ROOT/capture-evidence/$leaf" "$evidence/$leaf"
+          done
+          for leaf in logical-worm-retrieval-receipt.json logical-restore-receipt.json \
+            private-storage-worm-retrieval-receipt.json private-storage-restore-receipt.json \
+            deletion-replay-first-receipt.json deletion-replay-second-receipt.json \
+            recovered-smoke-receipt.json storage-purge-receipt.json; do
+            cp "$PINTPATH_RECOVERY_WORK_ROOT/$leaf" "$evidence/$leaf"
+          done
+          chmod 600 "$evidence"/*
+          test "$(find "$evidence" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d ' ')" = '16'
+
+      - name: Upload precleanup receipt set
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pintpath-production-promotion-recovery-precleanup-${{ inputs.candidate_sha }}
+          path: ${{ env.PINTPATH_RECOVERY_WORK_ROOT }}/final-evidence
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Remove all disposable-recovery volatile custody
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/verify-production-backup-volatile-work-root.mjs cleanup \
+            --operation=recovery --run-id="$GITHUB_RUN_ID" \
+            --run-attempt="$GITHUB_RUN_ATTEMPT" \
+            --policy-sha256="$PINTPATH_DISPOSABLE_RECOVERY_EPHEMERAL_RUNNER_POLICY_SHA256" \
+            --exported-work-root="${PINTPATH_RECOVERY_WORK_ROOT:-}"
+
+  cleanup:
+    name: Independently reconcile exact disposable target absence
+    needs: [production-capture, disposable-recover]
+    if: ${{ always() }}
+    permissions:
+      actions: read
+      contents: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    environment: production-promotion-recovery-cleanup
+
+    steps:
+      - name: Checkout the exact candidate without persisted credentials
+        if: ${{ always() }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+
+      - name: Setup the pinned Node runtime
+        if: ${{ always() }}
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Install immutable dependencies and prepare cleanup custody
+        if: ${{ always() }}
+        env:
+          PINTPATH_CHECKED_OUT_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack npm ci --ignore-scripts
+          test "${{ github.ref }}" = 'refs/heads/main'
+          test "${{ github.sha }}" = "${{ inputs.candidate_sha }}"
+          test "${{ github.run_attempt }}" = '1'
+          root="$RUNNER_TEMP/pintpath-production-promotion-recovery-cleanup-$GITHUB_RUN_ID"
+          test ! -e "$root"
+          mkdir -m 700 "$root" "$root/precleanup" "$root/evidence"
+          printf 'PINTPATH_CLEANUP_ROOT=%s\n' "$root" >> "$GITHUB_ENV"
+          printf 'PINTPATH_CHECKED_OUT_CANDIDATE_SHA=%s\n' "$PINTPATH_CHECKED_OUT_CANDIDATE_SHA" >> "$GITHUB_ENV"
+
+      - name: Materialize and verify the current durable cleanup arm state
+        env:
+          STATE_TOKEN: ${{ github.token }}
+          PINTPATH_RECOVERY_EMERGENCY_CLEANUP_STATE_REQUIRED: "true"
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          umask 077
+          basic="$(printf 'x-access-token:%s' "$STATE_TOKEN" | base64 | tr -d '\n')"
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $basic"
+          state_ref=refs/heads/pintpath-production-promotion-recovery-emergency-cleanup-state
+          git fetch --no-tags origin "+$state_ref:refs/remotes/origin/pintpath-emergency-cleanup-state"
+          state_head="$(git rev-parse refs/remotes/origin/pintpath-emergency-cleanup-state)"
+          git show "$state_head:.pintpath/emergency-cleanup/state.json" > "$PINTPATH_CLEANUP_ROOT/state.json"
+          git show "$state_head:.pintpath/emergency-cleanup/arm-authority.json" > "$PINTPATH_CLEANUP_ROOT/arm-authority.json"
+          git show "$state_head:.pintpath/emergency-cleanup/arm-authority-public-key.pem" > "$PINTPATH_CLEANUP_ROOT/arm-authority-public-key.pem"
+          chmod 600 "$PINTPATH_CLEANUP_ROOT"/*
+          arm_sha="$(jq -er '.currentArmAuthoritySha256' "$PINTPATH_CLEANUP_ROOT/state.json")"
+          public_key_sha="$(jq -er '.currentArmAuthorityPublicKeySha256' "$PINTPATH_CLEANUP_ROOT/state.json")"
+          PINTPATH_RECOVERY_EMERGENCY_CLEANUP_ARM_AUTHORITY_SHA256="$arm_sha" \
+          npm run --silent production:promotion-recovery:emergency-cleanup:arm:verify -- \
+            --mode activation --candidate-sha "${{ inputs.candidate_sha }}" --activation-run-id "$GITHUB_RUN_ID" \
+            --project-id "${{ inputs.project_id }}" --project-name "${{ inputs.project_name }}" \
+            --environment-id "${{ inputs.environment_id }}" --environment-name "${{ inputs.environment_name }}" \
+            --inventory-sha256 "${{ inputs.inventory_sha256 }}" \
+            --workspace-id "${{ inputs.workspace_id }}" --workspace-name "${{ inputs.workspace_name }}" \
+            --workspace-project-inventory-sha256 "${{ inputs.workspace_project_inventory_sha256 }}" \
+            --supabase-project-ref "${{ inputs.supabase_project_ref }}" --supabase-project-name "${{ inputs.supabase_project_name }}" \
+            --organization-slug-sha256 "${{ vars.PINTPATH_RECOVERY_SUPABASE_ORGANIZATION_SLUG_SHA256 }}" \
+            --destination-origin-sha256 "${{ vars.PINTPATH_RECOVERY_TARGET_SUPABASE_ORIGIN_SHA256 }}" \
+            --destination-restore-authority-sha256 "${{ vars.PINTPATH_RECOVERY_DESTINATION_RESTORE_AUTHORITY_SHA256 }}" \
+            --authority-file "$PINTPATH_CLEANUP_ROOT/arm-authority.json" --authority-sha256 "$arm_sha" \
+            --authority-public-key-file "$PINTPATH_CLEANUP_ROOT/arm-authority-public-key.pem" \
+            --authority-public-key-sha256 "$public_key_sha" > "$PINTPATH_CLEANUP_ROOT/arm-result.json"
+          npm run --silent production:promotion-recovery:emergency-cleanup:state:transition -- \
+            --operation verify --state-file "$PINTPATH_CLEANUP_ROOT/state.json" \
+            --arm-result-file "$PINTPATH_CLEANUP_ROOT/arm-result.json" \
+            --railway-terminal-file none --supabase-terminal-file none \
+            --observed-cleanup-run-id "$GITHUB_RUN_ID" --output none --github-env none \
+            > "$PINTPATH_CLEANUP_ROOT/state-verification-result.json"
+          printf 'PINTPATH_ACTIVATION_CLEANUP_STATE_HEAD=%s\n' "$state_head" >> "$GITHUB_ENV"
+
+      - name: Download orderly purge receipt when recovery reached purge
+        if: ${{ always() }}
+        id: precleanup
+        continue-on-error: true
+        uses: actions/download-artifact@b7c52a5f7a25fce4c22e476a93420dd79a061a70 # v8.0.1
+        with:
+          name: pintpath-production-promotion-recovery-precleanup-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}/pintpath-production-promotion-recovery-cleanup-${{ github.run_id }}/precleanup
+
+      - name: Materialize exact per-run cleanup authorities and separated credentials
+        if: ${{ always() }}
+        env:
+          RAILWAY_AUTHORITY_BASE64: ${{ secrets.PINTPATH_RECOVERY_RAILWAY_TEARDOWN_AUTHORITY_BASE64 }}
+          RAILWAY_AUTHORITY_PUBLIC_KEY_BASE64: ${{ secrets.PINTPATH_RECOVERY_RAILWAY_TEARDOWN_AUTHORITY_PUBLIC_KEY_BASE64 }}
+          RAILWAY_READ_TOKEN: ${{ secrets.PINTPATH_RECOVERY_RAILWAY_READ_TOKEN }}
+          RAILWAY_DELETE_TOKEN: ${{ secrets.PINTPATH_RECOVERY_RAILWAY_DELETE_TOKEN }}
+          SUPABASE_AUTHORITY_BASE64: ${{ secrets.PINTPATH_RECOVERY_SUPABASE_TEARDOWN_AUTHORITY_BASE64 }}
+          SUPABASE_AUTHORITY_PUBLIC_KEY_BASE64: ${{ secrets.PINTPATH_RECOVERY_SUPABASE_TEARDOWN_AUTHORITY_PUBLIC_KEY_BASE64 }}
+          SUPABASE_READ_TOKEN: ${{ secrets.PINTPATH_RECOVERY_SUPABASE_READ_TOKEN }}
+          SUPABASE_DELETE_TOKEN: ${{ secrets.PINTPATH_RECOVERY_SUPABASE_DELETE_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          umask 077
+          printf '%s' "$RAILWAY_AUTHORITY_BASE64" | base64 --decode > "$PINTPATH_CLEANUP_ROOT/railway-authority.json"
+          printf '%s' "$RAILWAY_AUTHORITY_PUBLIC_KEY_BASE64" | base64 --decode > "$PINTPATH_CLEANUP_ROOT/railway-authority-public-key.pem"
+          printf '%s' "$RAILWAY_READ_TOKEN" > "$PINTPATH_CLEANUP_ROOT/railway-read-token"
+          printf '%s' "$RAILWAY_DELETE_TOKEN" > "$PINTPATH_CLEANUP_ROOT/railway-delete-token"
+          printf '%s' "$SUPABASE_AUTHORITY_BASE64" | base64 --decode > "$PINTPATH_CLEANUP_ROOT/supabase-authority.json"
+          printf '%s' "$SUPABASE_AUTHORITY_PUBLIC_KEY_BASE64" | base64 --decode > "$PINTPATH_CLEANUP_ROOT/supabase-authority-public-key.pem"
+          printf '%s' "$SUPABASE_READ_TOKEN" > "$PINTPATH_CLEANUP_ROOT/supabase-read-token"
+          printf '%s' "$SUPABASE_DELETE_TOKEN" > "$PINTPATH_CLEANUP_ROOT/supabase-delete-token"
+          chmod 600 "$PINTPATH_CLEANUP_ROOT"/*
+          ! cmp -s "$PINTPATH_CLEANUP_ROOT/railway-read-token" "$PINTPATH_CLEANUP_ROOT/railway-delete-token"
+          ! cmp -s "$PINTPATH_CLEANUP_ROOT/supabase-read-token" "$PINTPATH_CLEANUP_ROOT/supabase-delete-token"
+
+      - name: Reconcile exact Railway project absence
+        id: railway
+        if: ${{ always() }}
+        env:
+          PINTPATH_RAILWAY_RECOVERY_TEARDOWN_CONFIRMATION: DELETE_${{ inputs.project_id }}
+          PINTPATH_RECOVERY_EMERGENCY_CLEANUP_ARM_AUTHORITY_SHA256: ${{ vars.PINTPATH_RECOVERY_EMERGENCY_CLEANUP_ARM_AUTHORITY_SHA256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run --silent railway:promotion-recovery:teardown:protected -- \
+            --candidate-sha "${{ inputs.candidate_sha }}" \
+            --activation-run-id "$GITHUB_RUN_ID" \
+            --project-id "${{ inputs.project_id }}" --project-name "${{ inputs.project_name }}" \
+            --environment-id "${{ inputs.environment_id }}" --environment-name "${{ inputs.environment_name }}" \
+            --inventory-sha256 "${{ inputs.inventory_sha256 }}" \
+            --workspace-id "${{ inputs.workspace_id }}" --workspace-name "${{ inputs.workspace_name }}" \
+            --workspace-project-inventory-sha256 "${{ inputs.workspace_project_inventory_sha256 }}" \
+            --emergency-cleanup-arm-authority-sha256 "$PINTPATH_RECOVERY_EMERGENCY_CLEANUP_ARM_AUTHORITY_SHA256" \
+            --emergency-cleanup-state-file none --emergency-cleanup-state-sha256 none \
+            --teardown-authority-file "$PINTPATH_CLEANUP_ROOT/railway-authority.json" \
+            --teardown-authority-sha256 "${{ vars.PINTPATH_RECOVERY_RAILWAY_TEARDOWN_AUTHORITY_SHA256 }}" \
+            --teardown-authority-public-key-file "$PINTPATH_CLEANUP_ROOT/railway-authority-public-key.pem" \
+            --teardown-authority-public-key-sha256 "${{ vars.PINTPATH_RECOVERY_RAILWAY_TEARDOWN_AUTHORITY_PUBLIC_KEY_SHA256 }}" \
+            --read-token-file "$PINTPATH_CLEANUP_ROOT/railway-read-token" \
+            --delete-token-file "$PINTPATH_CLEANUP_ROOT/railway-delete-token" \
+            --evidence-dir "$PINTPATH_CLEANUP_ROOT/evidence" \
+            --output "$PINTPATH_CLEANUP_ROOT/evidence/railway-teardown-terminal.json" \
+            > "$PINTPATH_CLEANUP_ROOT/railway-result.json"
+
+      - name: Stage exact Railway delete acknowledgement before Supabase mutation
+        id: railway-ack
+        if: ${{ always() && steps.railway.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          terminal="$PINTPATH_CLEANUP_ROOT/evidence/railway-teardown-terminal.json"
+          jq -e '.receipt.ok == true and .receipt.outcome == "deleted" and .receipt.deleteAttempts == 1 and .receipt.observedCleanupRunId == env.GITHUB_RUN_ID' "$terminal" >/dev/null
+          directory="$PINTPATH_CLEANUP_ROOT/railway-ack-upload"
+          mkdir -m 700 "$directory"
+          cp "$terminal" "$directory/railway-teardown-terminal.json"
+          chmod 600 "$directory/railway-teardown-terminal.json"
+
+      - name: Publish exact Railway delete acknowledgement before Supabase mutation
+        id: railway-ack-upload
+        if: ${{ always() && steps.railway-ack.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pintpath-production-promotion-recovery-emergency-cleanup-${{ github.run_id }}-railway-delete-ack
+          path: ${{ env.PINTPATH_CLEANUP_ROOT }}/railway-ack-upload
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Reconcile exact Supabase project absence
+        id: supabase
+        if: ${{ always() }}
+        env:
+          PINTPATH_SUPABASE_PROJECT_TEARDOWN_CONFIRMATION: DELETE_${{ inputs.supabase_project_ref }}
+          PINTPATH_RECOVERY_EMERGENCY_CLEANUP_ARM_AUTHORITY_SHA256: ${{ vars.PINTPATH_RECOVERY_EMERGENCY_CLEANUP_ARM_AUTHORITY_SHA256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          purge_file=none
+          purge_sha=none
+          cleanup_mode=emergency
+          if [ -f "$PINTPATH_CLEANUP_ROOT/precleanup/storage-purge-receipt.json" ]; then
+            purge_file="$PINTPATH_CLEANUP_ROOT/precleanup/storage-purge-receipt.json"
+            purge_sha="$(sha256sum "$purge_file" | cut -d ' ' -f 1)"
+            cleanup_mode=orderly
+          fi
+          npm run --silent supabase:restore:teardown:protected -- \
+            --candidate-sha "${{ inputs.candidate_sha }}" \
+            --activation-run-id "$GITHUB_RUN_ID" \
+            --project-ref "${{ inputs.supabase_project_ref }}" \
+            --project-name "${{ inputs.supabase_project_name }}" \
+            --organization-slug "${{ vars.PINTPATH_RECOVERY_SUPABASE_ORGANIZATION_SLUG }}" \
+            --organization-slug-sha256 "${{ vars.PINTPATH_RECOVERY_SUPABASE_ORGANIZATION_SLUG_SHA256 }}" \
+            --destination-origin-sha256 "${{ vars.PINTPATH_RECOVERY_TARGET_SUPABASE_ORIGIN_SHA256 }}" \
+            --target-railway-project-id "${{ inputs.project_id }}" \
+            --target-railway-environment-id "${{ inputs.environment_id }}" \
+            --cleanup-mode "$cleanup_mode" \
+            --destination-restore-authority-sha256 "${{ vars.PINTPATH_RECOVERY_DESTINATION_RESTORE_AUTHORITY_SHA256 }}" \
+            --emergency-cleanup-arm-authority-sha256 "$PINTPATH_RECOVERY_EMERGENCY_CLEANUP_ARM_AUTHORITY_SHA256" \
+            --emergency-cleanup-state-file none --emergency-cleanup-state-sha256 none \
+            --purge-receipt-file "$purge_file" --purge-receipt-sha256 "$purge_sha" \
+            --teardown-authority-file "$PINTPATH_CLEANUP_ROOT/supabase-authority.json" \
+            --teardown-authority-sha256 "${{ vars.PINTPATH_RECOVERY_SUPABASE_TEARDOWN_AUTHORITY_SHA256 }}" \
+            --teardown-authority-public-key-file "$PINTPATH_CLEANUP_ROOT/supabase-authority-public-key.pem" \
+            --teardown-authority-public-key-sha256 "${{ vars.PINTPATH_RECOVERY_SUPABASE_TEARDOWN_AUTHORITY_PUBLIC_KEY_SHA256 }}" \
+            --read-token-file "$PINTPATH_CLEANUP_ROOT/supabase-read-token" \
+            --delete-token-file "$PINTPATH_CLEANUP_ROOT/supabase-delete-token" \
+            --evidence-dir "$PINTPATH_CLEANUP_ROOT/evidence" \
+            --output "$PINTPATH_CLEANUP_ROOT/evidence/supabase-teardown-terminal.json" \
+            > "$PINTPATH_CLEANUP_ROOT/supabase-result.json"
+
+      - name: Stage exact Supabase delete acknowledgement before state persistence
+        id: supabase-ack
+        if: ${{ always() && steps.supabase.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          terminal="$PINTPATH_CLEANUP_ROOT/evidence/supabase-teardown-terminal.json"
+          jq -e '.receipt.ok == true and .receipt.outcome == "deleted" and .receipt.deleteAttempts == 1 and .receipt.observedCleanupRunId == env.GITHUB_RUN_ID' "$terminal" >/dev/null
+          directory="$PINTPATH_CLEANUP_ROOT/supabase-ack-upload"
+          mkdir -m 700 "$directory"
+          cp "$terminal" "$directory/supabase-teardown-terminal.json"
+          chmod 600 "$directory/supabase-teardown-terminal.json"
+
+      - name: Publish exact Supabase delete acknowledgement before state persistence
+        id: supabase-ack-upload
+        if: ${{ always() && steps.supabase-ack.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pintpath-production-promotion-recovery-emergency-cleanup-${{ github.run_id }}-supabase-delete-ack
+          path: ${{ env.PINTPATH_CLEANUP_ROOT }}/supabase-ack-upload
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload both independent cleanup terminals
+        id: cleanup-artifact
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pintpath-production-promotion-recovery-cleanup-${{ inputs.candidate_sha }}
+          path: |
+            ${{ env.PINTPATH_CLEANUP_ROOT }}/evidence/railway-teardown-terminal.json
+            ${{ env.PINTPATH_CLEANUP_ROOT }}/evidence/supabase-teardown-terminal.json
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Validate orderly terminals and create the durable disarm transition
+        id: durable-state
+        if: ${{ always() && steps.railway.outcome == 'success' && steps.supabase.outcome == 'success' && steps.railway-ack-upload.outcome == 'success' && steps.supabase-ack-upload.outcome == 'success' && steps.cleanup-artifact.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run --silent production:promotion-recovery:emergency-cleanup:state:transition -- \
+            --operation reconcile --state-file "$PINTPATH_CLEANUP_ROOT/state.json" \
+            --arm-result-file "$PINTPATH_CLEANUP_ROOT/arm-result.json" \
+            --railway-terminal-file "$PINTPATH_CLEANUP_ROOT/evidence/railway-teardown-terminal.json" \
+            --supabase-terminal-file "$PINTPATH_CLEANUP_ROOT/evidence/supabase-teardown-terminal.json" \
+            --observed-cleanup-run-id "$GITHUB_RUN_ID" \
+            --output "$PINTPATH_CLEANUP_ROOT/next-state.json" --github-env none \
+            > "$PINTPATH_CLEANUP_ROOT/state-transition-result.json"
+          jq -e '.status == "disarmed" and .disarmTerminal.observedCleanupRunId == env.GITHUB_RUN_ID' "$PINTPATH_CLEANUP_ROOT/next-state.json" >/dev/null
+
+      - name: Persist exact orderly acknowledgements and DISARMED state with renewal-safe CAS
+        id: state-persistence
+        if: ${{ always() && steps.durable-state.outcome == 'success' }}
+        env:
+          STATE_TOKEN: ${{ github.token }}
+          PINTPATH_RECOVERY_EMERGENCY_CLEANUP_STATE_REQUIRED: "true"
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          ref=refs/heads/pintpath-production-promotion-recovery-emergency-cleanup-state
+          export GIT_AUTHOR_NAME='PintPath cleanup state controller'
+          export GIT_AUTHOR_EMAIL='cleanup-state@pintpath.invalid'
+          export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME"
+          export GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
+          basic="$(printf 'x-access-token:%s' "$STATE_TOKEN" | base64 | tr -d '\n')"
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $basic"
+          current_head="$PINTPATH_ACTIVATION_CLEANUP_STATE_HEAD"
+          current_state="$PINTPATH_CLEANUP_ROOT/state.json"
+          current_arm="$PINTPATH_CLEANUP_ROOT/arm-result.json"
+          next_state="$PINTPATH_CLEANUP_ROOT/next-state.json"
+          persisted=false
+          for attempt in 1 2 3 4; do
+            export GIT_INDEX_FILE="$PINTPATH_CLEANUP_ROOT/activation-state-$attempt.index"
+            git read-tree "$current_head^{tree}"
+            state_blob="$(git hash-object -w "$next_state")"
+            git update-index --add --cacheinfo "100644,$state_blob,.pintpath/emergency-cleanup/state.json"
+            for provider in railway supabase; do
+              file="$PINTPATH_CLEANUP_ROOT/evidence/$provider-teardown-terminal.json"
+              jq -e '.receipt.ok == true and .receipt.outcome == "deleted" and .receipt.deleteAttempts == 1' "$file" >/dev/null
+              leaf=".pintpath/emergency-cleanup/$provider-delete-ack-terminal-$GITHUB_RUN_ID.json"
+              blob="$(git hash-object -w "$file")"
+              git update-index --add --cacheinfo "100644,$blob,$leaf"
+            done
+            tree="$(git write-tree)"
+            commit="$(printf 'Persist exact orderly cleanup disarm\n' | git commit-tree "$tree" -p "$current_head")"
+            if git push origin "$commit:$ref"; then persisted=true; break; fi
+            git fetch --no-tags origin "+$ref:refs/remotes/origin/pintpath-emergency-cleanup-state"
+            latest_head="$(git rev-parse refs/remotes/origin/pintpath-emergency-cleanup-state)"
+            latest_state="$PINTPATH_CLEANUP_ROOT/activation-rebase-latest-$attempt.json"
+            git show "$latest_head:.pintpath/emergency-cleanup/state.json" > "$latest_state"
+            chmod 600 "$latest_state"
+            if cmp -s "$latest_state" "$next_state"; then next_state="$latest_state"; persisted=true; break; fi
+            if [ "$latest_head" = "$current_head" ]; then continue; fi
+            git merge-base --is-ancestor "$current_head" "$latest_head"
+            mapfile -t renewal_commits < <(git rev-list --reverse --ancestry-path "$current_head..$latest_head")
+            test "${#renewal_commits[@]}" -ge 1
+            test "${#renewal_commits[@]}" -le 4
+            previous_head="$current_head"
+            previous_state="$current_state"
+            renewal_index=0
+            for renewal_commit in "${renewal_commits[@]}"; do
+              renewal_index=$((renewal_index + 1))
+              read -r commit_id parent extra < <(git rev-list --parents -n 1 "$renewal_commit")
+              test "$commit_id" = "$renewal_commit"
+              test "$parent" = "$previous_head"
+              test -z "${extra:-}"
+              changed="$(git diff-tree --no-commit-id --name-only -r "$renewal_commit" | sort)"
+              test "$changed" = $'.pintpath/emergency-cleanup/arm-authority-public-key.pem\n.pintpath/emergency-cleanup/arm-authority.json\n.pintpath/emergency-cleanup/state.json'
+              prefix="$PINTPATH_CLEANUP_ROOT/activation-renewal-$attempt-$renewal_index"
+              git show "$renewal_commit:.pintpath/emergency-cleanup/state.json" > "$prefix-state.json"
+              git show "$renewal_commit:.pintpath/emergency-cleanup/arm-authority.json" > "$prefix-authority.json"
+              git show "$renewal_commit:.pintpath/emergency-cleanup/arm-authority-public-key.pem" > "$prefix-authority-public-key.pem"
+              chmod 600 "$prefix"-*
+              arm_sha="$(jq -er '.currentArmAuthoritySha256' "$prefix-state.json")"
+              public_key_sha="$(jq -er '.currentArmAuthorityPublicKeySha256' "$prefix-state.json")"
+              PINTPATH_RECOVERY_EMERGENCY_CLEANUP_ARM_AUTHORITY_SHA256="$arm_sha" \
+              npm run --silent production:promotion-recovery:emergency-cleanup:arm:verify -- \
+                --mode activation --candidate-sha "$(jq -er '.candidateSha' "$prefix-state.json")" \
+                --activation-run-id "$(jq -er '.activationRunId' "$prefix-state.json")" \
+                --project-id "$(jq -er '.projectId' "$prefix-state.json")" --project-name "$(jq -er '.projectName' "$prefix-state.json")" \
+                --environment-id "$(jq -er '.environmentId' "$prefix-state.json")" --environment-name "$(jq -er '.environmentName' "$prefix-state.json")" \
+                --inventory-sha256 "$(jq -er '.inventorySha256' "$prefix-state.json")" \
+                --workspace-id "$(jq -er '.workspaceId' "$prefix-state.json")" --workspace-name "$(jq -er '.workspaceName' "$prefix-state.json")" \
+                --workspace-project-inventory-sha256 "$(jq -er '.workspaceProjectInventorySha256' "$prefix-state.json")" \
+                --supabase-project-ref "$(jq -er '.supabaseProjectRef' "$prefix-state.json")" --supabase-project-name "$(jq -er '.supabaseProjectName' "$prefix-state.json")" \
+                --organization-slug-sha256 "$(jq -er '.organizationSlugSha256' "$prefix-state.json")" \
+                --destination-origin-sha256 "$(jq -er '.destinationOriginSha256' "$prefix-state.json")" \
+                --destination-restore-authority-sha256 "$(jq -er '.destinationRestoreAuthoritySha256' "$prefix-state.json")" \
+                --authority-file "$prefix-authority.json" --authority-sha256 "$arm_sha" \
+                --authority-public-key-file "$prefix-authority-public-key.pem" \
+                --authority-public-key-sha256 "$public_key_sha" > "$prefix-arm-result.json"
+              npm run --silent production:promotion-recovery:emergency-cleanup:state:transition -- \
+                --operation verify --state-file "$prefix-state.json" --base-state-file "$previous_state" \
+                --arm-result-file "$prefix-arm-result.json" --railway-terminal-file none --supabase-terminal-file none \
+                --observed-cleanup-run-id "$GITHUB_RUN_ID" --output none --github-env none \
+                > "$prefix-renewal-result.json"
+              previous_head="$renewal_commit"
+              previous_state="$prefix-state.json"
+              current_arm="$prefix-arm-result.json"
+            done
+            test "$previous_head" = "$latest_head"
+            current_head="$latest_head"
+            current_state="$previous_state"
+            next_state="$PINTPATH_CLEANUP_ROOT/activation-rebased-next-state-$attempt.json"
+            npm run --silent production:promotion-recovery:emergency-cleanup:state:transition -- \
+              --operation reconcile --state-file "$current_state" --arm-result-file "$current_arm" \
+              --railway-terminal-file "$PINTPATH_CLEANUP_ROOT/evidence/railway-teardown-terminal.json" \
+              --supabase-terminal-file "$PINTPATH_CLEANUP_ROOT/evidence/supabase-teardown-terminal.json" \
+              --observed-cleanup-run-id "$GITHUB_RUN_ID" --output "$next_state" --github-env none \
+              > "$PINTPATH_CLEANUP_ROOT/activation-rebased-transition-$attempt.json"
+          done
+          test "$persisted" = true
+          jq -e '.status == "disarmed" and .disarmTerminal.observedCleanupRunId == env.GITHUB_RUN_ID' "$next_state" >/dev/null
+
+      - name: Remove cleanup credentials and nonterminal evidence
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="${PINTPATH_CLEANUP_ROOT:-$RUNNER_TEMP/pintpath-production-promotion-recovery-cleanup-$GITHUB_RUN_ID}"
+          if [ -d "$root" ] && [ ! -L "$root" ]; then
+            find "$root" -depth -mindepth 1 -delete
+            rmdir "$root"
+          elif [ -e "$root" ] || [ -L "$root" ]; then
+            exit 1
+          fi
+
+  finalize:
+    name: Finalize exact activation evidence
+    needs: [production-capture, disposable-recover, cleanup]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Require successful capture, recovery, and both cleanup terminals
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${{ needs.production-capture.result }}" = success
+          test "${{ needs.disposable-recover.result }}" = success
+          test "${{ needs.cleanup.result }}" = success
+          test "${{ github.ref }}" = 'refs/heads/main'
+          test "${{ github.sha }}" = "${{ inputs.candidate_sha }}"
+          test "${{ github.run_attempt }}" = '1'
+
+      - name: Checkout the exact candidate without persisted credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+
+      - name: Setup the pinned Node runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Install immutable dependencies and prepare final evidence custody
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack npm ci --ignore-scripts
+          root="$RUNNER_TEMP/pintpath-production-promotion-recovery-final-$GITHUB_RUN_ID"
+          test ! -e "$root"
+          mkdir -m 700 "$root" "$root/precleanup" "$root/cleanup" "$root/activation"
+          printf 'PINTPATH_FINAL_ROOT=%s\n' "$root" >> "$GITHUB_ENV"
+
+      - name: Download the exact precleanup receipt set
+        uses: actions/download-artifact@b7c52a5f7a25fce4c22e476a93420dd79a061a70 # v8.0.1
+        with:
+          name: pintpath-production-promotion-recovery-precleanup-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}/pintpath-production-promotion-recovery-final-${{ github.run_id }}/precleanup
+
+      - name: Download the exact independent cleanup terminals
+        uses: actions/download-artifact@b7c52a5f7a25fce4c22e476a93420dd79a061a70 # v8.0.1
+        with:
+          name: pintpath-production-promotion-recovery-cleanup-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}/pintpath-production-promotion-recovery-final-${{ github.run_id }}/cleanup
+
+      - name: Create and verify the exact activation receipt
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          TARGET_DATABASE_IDENTITY_SHA256: ${{ vars.PINTPATH_RESTORE_TARGET_IDENTITY_SHA256 }}
+          TARGET_SUPABASE_ORIGIN_SHA256: ${{ vars.PINTPATH_RECOVERY_TARGET_SUPABASE_ORIGIN_SHA256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$PINTPATH_FINAL_ROOT/activation"
+          cp "$PINTPATH_FINAL_ROOT/precleanup"/* "$evidence/"
+          cp "$PINTPATH_FINAL_ROOT/cleanup"/* "$evidence/"
+          chmod 600 "$evidence"/*
+          node --frozen-intrinsics --disable-proto=throw --import tsx \
+            scripts/create-production-promotion-recovery-activation-receipt.mjs \
+            --directory "$evidence" --candidate-sha "$CANDIDATE_SHA" \
+            --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --target-project-id "${{ inputs.project_id }}" \
+            --target-environment-id "${{ inputs.environment_id }}" \
+            --target-database-identity-sha256 "$TARGET_DATABASE_IDENTITY_SHA256" \
+            --target-supabase-origin-sha256 "$TARGET_SUPABASE_ORIGIN_SHA256" \
+            --output "$evidence/activation-receipt.json"
+          printf '%s\n' "$CANDIDATE_SHA" > "$evidence/tested-commit-sha.txt"
+          chmod 600 "$evidence/activation-receipt.json" "$evidence/tested-commit-sha.txt"
+          expected_count="$(node --frozen-intrinsics --disable-proto=throw --import tsx --input-type=module - <<'NODE'
+          import { PRODUCTION_PROMOTION_RECOVERY_ACTIVATION_FILES } from "./scripts/verify-production-promotion-recovery-activation.mjs";
+          process.stdout.write(String(PRODUCTION_PROMOTION_RECOVERY_ACTIVATION_FILES.length));
+          NODE
+          )"
+          test "$(find "$evidence" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d ' ')" = "$expected_count"
+
+      - name: Upload exact production promotion-recovery activation
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pintpath-production-promotion-recovery-activation-${{ inputs.candidate_sha }}
+          path: ${{ env.PINTPATH_FINAL_ROOT }}/activation
+          if-no-files-found: error
+          retention-days: 7

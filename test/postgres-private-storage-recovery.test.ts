@@ -123,6 +123,8 @@ function restoreCliAuthorityFixture(): {
     destinationOriginSha256: sha256(DESTINATION_ORIGIN),
     targetConnectionUrlSha256: TARGET_CONNECTION_URL_SHA256,
     targetDatabaseIdentitySha256: TARGET_DATABASE_IDENTITY_SHA256,
+    targetRailwayProjectId: "11111111-1111-4111-8111-111111111111",
+    targetRailwayEnvironmentId: "22222222-2222-4222-8222-222222222222",
     reviewerIdSha256: "9".repeat(64),
     reviewerPublicKeySha256: sha256(publicKeyPem),
     issuedAt: "2026-08-09T06:00:00.000Z",
@@ -157,6 +159,8 @@ function restoreCliAuthorityFixture(): {
     "--expected-root-ca-der-sha256": "a".repeat(64),
     "--target-connection-url-sha256": TARGET_CONNECTION_URL_SHA256,
     "--target-database-identity-sha256": TARGET_DATABASE_IDENTITY_SHA256,
+    "--target-railway-project-id": "11111111-1111-4111-8111-111111111111",
+    "--target-railway-environment-id": "22222222-2222-4222-8222-222222222222",
   };
   return {
     argv: Object.entries(values).flatMap(([key, value]) => [key, value]),
@@ -455,6 +459,7 @@ function captureHarness(
     expectedTombstoneCount: 1,
     sourceEnvironment: "production",
     expectedCandidateSha: CANDIDATE_COMMIT_SHA,
+    expectedCaptureConnectionUrlSha256: "d".repeat(64),
     sourceSupabaseUrl: SOURCE_ORIGIN,
     expectedSourceOriginSha256: sha256(SOURCE_ORIGIN),
     bucketName: POSTGRES_PRIVATE_STORAGE_BUCKET,
@@ -641,6 +646,20 @@ describe("Postgres private Storage recovery sets", () => {
     expect(inspectBucket).not.toHaveBeenCalled();
     expect(listObjects).not.toHaveBeenCalled();
     expect(downloadObject).not.toHaveBeenCalled();
+    expect(fs.existsSync(harness.outputDirectory)).toBe(false);
+  });
+
+  it("rejects a capture credential pinned to a different physical database before Storage I/O", async () => {
+    const root = privateRoot();
+    const storage = new MemoryStorage(SOURCE_ORIGIN, sourceObjects());
+    const listObjects = vi.spyOn(storage, "listObjects");
+    const harness = captureHarness(root, storage);
+
+    await expect(capturePostgresPrivateStorageRecovery({
+      ...harness.options,
+      expectedCaptureConnectionUrlSha256: "e".repeat(64),
+    })).rejects.toMatchObject({ code: "source_database_mismatch" });
+    expect(listObjects).not.toHaveBeenCalled();
     expect(fs.existsSync(harness.outputDirectory)).toBe(false);
   });
 
@@ -1067,10 +1086,17 @@ describe("Postgres private Storage recovery restore CLI", () => {
         "--expected-root-ca-der-sha256",
         "--target-connection-url-sha256",
         "--target-database-identity-sha256",
+        "--target-railway-project-id",
+        "--target-railway-environment-id",
       ],
     ].flatMap((name) => [
       name,
-      name.includes("sha256") ? "a".repeat(64) : "/private/input",
+      name.includes("sha256") ? "a".repeat(64)
+        : name === "--target-railway-project-id"
+            ? "11111111-1111-4111-8111-111111111111"
+            : name === "--target-railway-environment-id"
+              ? "22222222-2222-4222-8222-222222222222"
+              : "/private/input",
     ]);
     let output = "";
     const exitCode = await runPostgresPrivateStorageRestoreCli(
@@ -1116,6 +1142,8 @@ describe("Postgres private Storage recovery restore CLI", () => {
       "--expected-root-ca-der-sha256",
       "--target-connection-url-sha256",
       "--target-database-identity-sha256",
+      "--target-railway-project-id",
+      "--target-railway-environment-id",
     ];
     const argv = names.flatMap((name) => [
       name,
@@ -1123,6 +1151,10 @@ describe("Postgres private Storage recovery restore CLI", () => {
         ? "b".repeat(64)
         : name === "--expected-candidate-sha"
           ? CANDIDATE_COMMIT_SHA
+        : name === "--target-railway-project-id"
+          ? "11111111-1111-4111-8111-111111111111"
+        : name === "--target-railway-environment-id"
+          ? "22222222-2222-4222-8222-222222222222"
         : name.includes("sha256")
           ? "a".repeat(64)
           : "/private/input",
@@ -1592,6 +1624,7 @@ describe("Postgres private Storage recovery capture CLI", () => {
           deletionTombstoneCount: 1,
           recoverySetSha256: "2".repeat(64),
           recoveryManifestSha256: "3".repeat(64),
+          databaseConnectionUrlSha256: "a".repeat(64),
         };
       },
       assertMutationAllowed: () => undefined,
@@ -1604,6 +1637,7 @@ describe("Postgres private Storage recovery capture CLI", () => {
       sourceSupabaseUrl: STAGING_SOURCE_ORIGIN,
       sourceEnvironment: "permanent-staging",
       expectedCandidateSha: CANDIDATE_COMMIT_SHA,
+      expectedCaptureConnectionUrlSha256: "a".repeat(64),
       expectedTombstoneCount: 1,
       bucketName: POSTGRES_PRIVATE_STORAGE_BUCKET,
     });

@@ -108,7 +108,7 @@ function readPinnedPolicy(expectedSha256) {
 }
 
 export function expectedWorkRoot(operation, runId, runAttempt) {
-  if (!new Set(["backup", "restore"]).has(operation)) fail("operation_invalid");
+  if (!new Set(["backup", "restore", "recovery"]).has(operation)) fail("operation_invalid");
   if (!/^[1-9][0-9]{0,19}$/.test(runId) || !/^[1-9][0-9]{0,9}$/.test(runAttempt)) {
     fail("run_identity_invalid");
   }
@@ -164,7 +164,11 @@ export function prepareWorkRoot({ operation, runId, runAttempt, policySha256, gi
   assertCanonicalPrivateDirectory(target, baseDevice);
   appendEnvironment(
     githubEnv,
-    operation === "backup" ? "PINTPATH_BACKUP_WORK_ROOT" : "PINTPATH_RESTORE_WORK_ROOT",
+    operation === "backup"
+      ? "PINTPATH_BACKUP_WORK_ROOT"
+      : operation === "restore"
+        ? "PINTPATH_RESTORE_WORK_ROOT"
+        : "PINTPATH_RECOVERY_WORK_ROOT",
     target,
   );
   return target;

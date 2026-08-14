@@ -103,7 +103,7 @@ describe("release workflow contracts", () => {
       "vitest run test/permanent-staging-cost-policy.test.ts test/permanent-staging-app-deployment-executor.test.ts",
     );
     for (const policy of [stagingPolicy, productionPolicy]) {
-    expect(policy).toContain(
+      expect(policy).toContain(
         '"activationState": "GITHUB_ENVIRONMENT_PROTECTED"',
       );
       expect(policy).toContain('"transportImplemented": true');
@@ -156,7 +156,7 @@ describe("release workflow contracts", () => {
       ).toHaveLength(2);
       expect(source).toContain(
         'test "$(git rev-parse refs/remotes/origin/main)" = "$CANDIDATE_SHA"',
-    );
+      );
       expect(source).toContain("npm run check");
       expect(source).toContain("github:release-candidate:verify");
       expect(source).toContain(
@@ -225,6 +225,9 @@ describe("release workflow contracts", () => {
     );
     expect(requiredChecks).toContain("Close exact production route");
     expect(requiredChecks).toContain(
+      "Activate exact production promotion recovery",
+    );
+    expect(requiredChecks).toContain(
       "Attest protected production promotion and recovery",
     );
     expect(requiredChecks).toContain("Open exact production route");
@@ -248,6 +251,9 @@ describe("release workflow contracts", () => {
       "pintpath-production-route-close-{candidateSha}",
     );
     expect(requiredChecks).toContain(
+      "pintpath-production-promotion-recovery-activation-{candidateSha}",
+    );
+    expect(requiredChecks).toContain(
       "pintpath-production-route-open-{candidateSha}",
     );
     expect(requiredChecks).toContain(
@@ -259,30 +265,53 @@ describe("release workflow contracts", () => {
     expect(
       requiredChecksPolicy.requiredChecks.staging.map((check) => check.name),
     ).not.toContain("Converge exact production deployment to two replicas");
-    expect(requiredChecksPolicy.requiredArtifacts.staging.map(
-      (artifact) => artifact.name,
-    )).not.toContain(
-      "pintpath-production-scale-evidence-{candidateSha}",
-    );
+    expect(
+      requiredChecksPolicy.requiredArtifacts.staging.map(
+        (artifact) => artifact.name,
+      ),
+    ).not.toContain("pintpath-production-scale-evidence-{candidateSha}");
     expect(
       requiredChecksPolicy.requiredChecks.production.map((check) => check.name),
     ).toContain("Converge exact production deployment to two replicas");
-    expect(requiredChecksPolicy.requiredArtifacts.production.map(
-      (artifact) => artifact.name,
-    )).toContain(
-      "pintpath-production-scale-evidence-{candidateSha}",
-    );
-    expect(requiredChecksPolicy.requiredChecks.production.map(
-      (check) => check.stage,
-    )).toEqual(["deploy", "scale", "close", "promotion-recovery", "open"]);
-    expect(requiredChecksPolicy.requiredArtifacts.production.map(
-      (artifact) => artifact.stage,
-    )).toEqual(["deploy", "scale", "close", "promotion-recovery", "open"]);
+    expect(
+      requiredChecksPolicy.requiredArtifacts.production.map(
+        (artifact) => artifact.name,
+      ),
+    ).toContain("pintpath-production-scale-evidence-{candidateSha}");
+    expect(
+      requiredChecksPolicy.requiredChecks.production.map(
+        (check) => check.stage,
+      ),
+    ).toEqual([
+      "deploy",
+      "scale",
+      "close",
+      "activation",
+      "promotion-recovery",
+      "open",
+    ]);
+    expect(
+      requiredChecksPolicy.requiredArtifacts.production.map(
+        (artifact) => artifact.stage,
+      ),
+    ).toEqual([
+      "deploy",
+      "scale",
+      "close",
+      "activation",
+      "promotion-recovery",
+      "open",
+    ]);
     expect(requiredChecksPolicy.phaseConsumers).toMatchObject({
       production: { workflowPath: ".github/workflows/deploy-production.yml" },
       close: { workflowPath: ".github/workflows/close-production-route.yml" },
+      activation: {
+        workflowPath:
+          ".github/workflows/activate-production-promotion-recovery.yml",
+      },
       "promotion-recovery": {
-        workflowPath: ".github/workflows/attest-production-promotion-recovery.yml",
+        workflowPath:
+          ".github/workflows/attest-production-promotion-recovery.yml",
       },
       open: { workflowPath: ".github/workflows/open-production-route.yml" },
       release: { workflowPath: ".github/workflows/pintpath-release-gate.yml" },
@@ -418,7 +447,7 @@ describe("release workflow contracts", () => {
     const kernelContractStep =
       source.match(
         /- name: Prove activated reviewed-price kernel and protected operator contracts[\s\S]*?(?=\n\s{6}- name:)/,
-    )?.[0] || "";
+      )?.[0] || "";
     expect(kernelContractStep).toContain(
       "npm run db:postgres:reviewed-price:kernel:contract:check",
     );
@@ -430,8 +459,8 @@ describe("release workflow contracts", () => {
     expect(kernelContractStep).not.toContain("continue-on-error:");
     const logicalStateV2ContractStep =
       source.match(
-      /- name: Prove logical-state v2 remains additive and fail-closed[\s\S]*?(?=\n\s{6}- name:)/,
-    )?.[0] || "";
+        /- name: Prove logical-state v2 remains additive and fail-closed[\s\S]*?(?=\n\s{6}- name:)/,
+      )?.[0] || "";
     expect(logicalStateV2ContractStep).toContain(
       "npm run db:postgres:logical-state:v2:contract:check",
     );
@@ -440,13 +469,13 @@ describe("release workflow contracts", () => {
     expect(logicalStateV2ContractStep).not.toContain("continue-on-error:");
     expect(
       source.match(
-      /- name: Prove logical-state v2 remains additive and fail-closed/g,
+        /- name: Prove logical-state v2 remains additive and fail-closed/g,
       ),
     ).toHaveLength(1);
     const logicalBackupV4ContractStep =
       source.match(
         /- name: Prove passive logical-backup V4 contracts remain fail-closed[\s\S]*?(?=\n\s{6}- name:)/,
-    )?.[0] || "";
+      )?.[0] || "";
     expect(logicalBackupV4ContractStep).toContain(
       "npm run db:postgres:backup:v4:offline-contract:check",
     );
@@ -479,8 +508,8 @@ describe("release workflow contracts", () => {
     ).toBeLessThan(source.indexOf("${{ secrets."));
     const supabaseCompatibilityStep =
       source.match(
-      /- name: Prove Supabase key consumer compatibility[\s\S]*?(?=\n\s{6}- name:)/,
-    )?.[0] || "";
+        /- name: Prove Supabase key consumer compatibility[\s\S]*?(?=\n\s{6}- name:)/,
+      )?.[0] || "";
     expect(supabaseCompatibilityStep).toContain(
       "npm run supabase:keys:consumer-compatibility:check",
     );
@@ -502,8 +531,8 @@ describe("release workflow contracts", () => {
     ).toBeLessThan(source.indexOf("${{ secrets."));
     const postgresRuntimeStep =
       source.match(
-      /- name: Prove canonical PostgreSQL runtime selection[\s\S]*?(?=\n\s{6}- name:)/,
-    )?.[0] || "";
+        /- name: Prove canonical PostgreSQL runtime selection[\s\S]*?(?=\n\s{6}- name:)/,
+      )?.[0] || "";
     expect(postgresRuntimeStep).toContain("test/runtime-persistence.test.ts");
     expect(postgresRuntimeStep).toContain(
       "test/provider-readiness-reporting.test.ts",
@@ -868,11 +897,12 @@ describe("release workflow contracts", () => {
   it("pins every workflow action to an audited immutable release", () => {
     const source = allWorkflows().map(workflow).join("\n");
     const expectedPins = new Map([
-      ["actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", 32],
-      ["actions/setup-node@820762786026740c76f36085b0efc47a31fe5020", 25],
+      ["actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", 38],
+      ["actions/setup-node@820762786026740c76f36085b0efc47a31fe5020", 30],
       ["actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961", 2],
-      ["actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", 21],
-      ["actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3", 2],
+      ["actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", 29],
+      ["actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3", 1],
+      ["actions/download-artifact@b7c52a5f7a25fce4c22e476a93420dd79a061a70", 7],
       [
         "android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699",
         2,
@@ -920,7 +950,7 @@ describe("release workflow contracts", () => {
         line.includes("uses: actions/checkout@") ? index : -1,
       )
       .filter((index) => index >= 0);
-    expect(checkoutIndexes).toHaveLength(32);
+    expect(checkoutIndexes).toHaveLength(38);
     for (const index of checkoutIndexes) {
       expect(lines.slice(index, index + 4).join("\n")).toContain(
         "persist-credentials: false",
@@ -1056,12 +1086,12 @@ describe("release workflow contracts", () => {
     );
     expect(
       job.match(
-      /PINTPATH_POSTGRES_LOGICAL_BACKUP_V4_SOURCE_AUTHORITY_TEST_ADMIN_URL:/g,
+        /PINTPATH_POSTGRES_LOGICAL_BACKUP_V4_SOURCE_AUTHORITY_TEST_ADMIN_URL:/g,
       ),
     ).toHaveLength(1);
     expect(
       job.match(
-      /PINTPATH_POSTGRES_LOGICAL_BACKUP_V4_SOURCE_AUTHORITY_TEST_REQUIRED:/g,
+        /PINTPATH_POSTGRES_LOGICAL_BACKUP_V4_SOURCE_AUTHORITY_TEST_REQUIRED:/g,
       ),
     ).toHaveLength(1);
     expect(job).toContain(
@@ -1072,7 +1102,7 @@ describe("release workflow contracts", () => {
     );
     expect(
       job.match(
-      /PINTPATH_POSTGRES_LOGICAL_PHYSICAL_SCHEMA_V4_TEST_ADMIN_URL:/g,
+        /PINTPATH_POSTGRES_LOGICAL_PHYSICAL_SCHEMA_V4_TEST_ADMIN_URL:/g,
       ),
     ).toHaveLength(1);
     expect(
@@ -1143,9 +1173,7 @@ describe("release workflow contracts", () => {
     expect(kernelIntegrationStep).toContain(
       "test/postgres-reviewed-price-promotion-e2e.integration.test.ts",
     );
-    expect(kernelIntegrationStep).toContain(
-      "--maxWorkers=1",
-    );
+    expect(kernelIntegrationStep).toContain("--maxWorkers=1");
     expect(kernelIntegrationStep).not.toContain("\n        if:");
     expect(kernelIntegrationStep).not.toContain("continue-on-error:");
     expect(kernelIntegration).toContain(
@@ -1181,8 +1209,8 @@ describe("release workflow contracts", () => {
     ).toHaveLength(1);
     const logicalStateV2IntegrationStep =
       job.match(
-      /- name: Run logical-state v2 PostgreSQL 17 contract[\s\S]*?(?=\n\s{6}- name:)/,
-    )?.[0] || "";
+        /- name: Run logical-state v2 PostgreSQL 17 contract[\s\S]*?(?=\n\s{6}- name:)/,
+      )?.[0] || "";
     expect(logicalStateV2IntegrationStep).toContain(
       "run: npx vitest run test/postgres-logical-state-v2.integration.test.ts",
     );
@@ -1210,19 +1238,19 @@ describe("release workflow contracts", () => {
     expect(logicalStateV2Integration).toContain("autocommitQueries");
     expect(
       job.match(
-      /- name: Run logical-backup V4 source-authority PostgreSQL 17 contract/g,
+        /- name: Run logical-backup V4 source-authority PostgreSQL 17 contract/g,
       ),
     ).toHaveLength(1);
     const logicalBackupV4SourceAuthorityIntegrationStep =
       job
         .match(
-      /- name: Run logical-backup V4 source-authority PostgreSQL 17 contract[\s\S]*?(?=\n\s{6}- name:)/,
+          /- name: Run logical-backup V4 source-authority PostgreSQL 17 contract[\s\S]*?(?=\n\s{6}- name:)/,
         )?.[0]
         .trimEnd() || "";
     expect(logicalBackupV4SourceAuthorityIntegrationStep).toBe(
       [
-      "- name: Run logical-backup V4 source-authority PostgreSQL 17 contract",
-      "        run: npx vitest run test/postgres-logical-backup-v4-source-authority.integration.test.ts",
+        "- name: Run logical-backup V4 source-authority PostgreSQL 17 contract",
+        "        run: npx vitest run test/postgres-logical-backup-v4-source-authority.integration.test.ts",
       ].join("\n"),
     );
     expect(logicalBackupV4SourceAuthorityIntegrationStep).not.toContain(
@@ -1240,11 +1268,11 @@ describe("release workflow contracts", () => {
     );
     expect(job).toContain(
       [
-      "      - name: Run logical-state v2 PostgreSQL 17 contract",
-      "        run: npx vitest run test/postgres-logical-state-v2.integration.test.ts",
-      "",
-      "      - name: Run logical-backup V4 source-authority PostgreSQL 17 contract",
-      "        run: npx vitest run test/postgres-logical-backup-v4-source-authority.integration.test.ts",
+        "      - name: Run logical-state v2 PostgreSQL 17 contract",
+        "        run: npx vitest run test/postgres-logical-state-v2.integration.test.ts",
+        "",
+        "      - name: Run logical-backup V4 source-authority PostgreSQL 17 contract",
+        "        run: npx vitest run test/postgres-logical-backup-v4-source-authority.integration.test.ts",
       ].join("\n"),
     );
     expect(logicalBackupV4SourceAuthorityIntegration).toContain(
@@ -1264,19 +1292,19 @@ describe("release workflow contracts", () => {
     );
     expect(
       job.match(
-      /- name: Run logical-backup V4 physical-schema PostgreSQL 17 contract/g,
+        /- name: Run logical-backup V4 physical-schema PostgreSQL 17 contract/g,
       ),
     ).toHaveLength(1);
     const logicalBackupV4PhysicalSchemaIntegrationStep =
       job
         .match(
-      /- name: Run logical-backup V4 physical-schema PostgreSQL 17 contract[\s\S]*?(?=\n\s{6}- name:)/,
+          /- name: Run logical-backup V4 physical-schema PostgreSQL 17 contract[\s\S]*?(?=\n\s{6}- name:)/,
         )?.[0]
         .trimEnd() || "";
     expect(logicalBackupV4PhysicalSchemaIntegrationStep).toBe(
       [
-      "- name: Run logical-backup V4 physical-schema PostgreSQL 17 contract",
-      "        run: npx vitest run test/postgres-logical-physical-schema-v4.integration.test.ts --maxWorkers=1",
+        "- name: Run logical-backup V4 physical-schema PostgreSQL 17 contract",
+        "        run: npx vitest run test/postgres-logical-physical-schema-v4.integration.test.ts --maxWorkers=1",
       ].join("\n"),
     );
     expect(logicalBackupV4PhysicalSchemaIntegrationStep).not.toContain(
@@ -1296,11 +1324,11 @@ describe("release workflow contracts", () => {
     );
     expect(job).toContain(
       [
-      "      - name: Run logical-backup V4 source-authority PostgreSQL 17 contract",
-      "        run: npx vitest run test/postgres-logical-backup-v4-source-authority.integration.test.ts",
-      "",
-      "      - name: Run logical-backup V4 physical-schema PostgreSQL 17 contract",
-      "        run: npx vitest run test/postgres-logical-physical-schema-v4.integration.test.ts --maxWorkers=1",
+        "      - name: Run logical-backup V4 source-authority PostgreSQL 17 contract",
+        "        run: npx vitest run test/postgres-logical-backup-v4-source-authority.integration.test.ts",
+        "",
+        "      - name: Run logical-backup V4 physical-schema PostgreSQL 17 contract",
+        "        run: npx vitest run test/postgres-logical-physical-schema-v4.integration.test.ts --maxWorkers=1",
       ].join("\n"),
     );
     expect(logicalBackupV4PhysicalSchemaIntegration).toContain(
@@ -1345,16 +1373,16 @@ describe("release workflow contracts", () => {
     expect(
       packageJson.scripts?.["db:postgres:reviewed-price:kernel:contract:check"],
     ).toBe(
-        "vitest run test/postgres-reviewed-price-promotion-kernel.test.ts --maxWorkers=1",
-      );
+      "vitest run test/postgres-reviewed-price-promotion-kernel.test.ts --maxWorkers=1",
+    );
     expect(
       packageJson.scripts?.["db:postgres:logical-state:v2:contract:check"],
     ).toBe("vitest run test/postgres-logical-state.test.ts --maxWorkers=1");
     expect(
       packageJson.scripts?.["db:postgres:backup:v4:offline-contract:check"],
     ).toBe(
-        "vitest run test/postgres-logical-backup-v4.test.ts test/postgres-logical-backup-v4-source-authority.test.ts test/postgres-logical-backup-v4-source-authority-v2.test.ts test/postgres-logical-backup-v4-toc.test.ts test/postgres-logical-physical-schema-v4.test.ts test/postgres-logical-scratch-restore-v4.test.ts test/postgres-tool-runtime-closure-v4.test.ts test/postgres-tool-authority.test.ts test/postgres-logical-restore.test.ts --maxWorkers=1",
-      );
+      "vitest run test/postgres-logical-backup-v4.test.ts test/postgres-logical-backup-v4-source-authority.test.ts test/postgres-logical-backup-v4-source-authority-v2.test.ts test/postgres-logical-backup-v4-toc.test.ts test/postgres-logical-physical-schema-v4.test.ts test/postgres-logical-scratch-restore-v4.test.ts test/postgres-tool-runtime-closure-v4.test.ts test/postgres-tool-authority.test.ts test/postgres-logical-restore.test.ts --maxWorkers=1",
+    );
     expect(
       packageJson.scripts?.["db:postgres:backup:v4:offline-contract:check"],
     ).not.toContain(
@@ -1526,34 +1554,34 @@ describe("release workflow contracts", () => {
     expect(venueRequestStep).toBeGreaterThan(missionScaleEvidenceStep);
     expect(
       job.split(
-      "      - name: Run mandatory mission discovery production-scale PostgreSQL 17 gate",
+        "      - name: Run mandatory mission discovery production-scale PostgreSQL 17 gate",
       ),
     ).toHaveLength(2);
     expect(
       job.split(
-      "      - name: Retain mission discovery production-scale PostgreSQL 17 evidence",
+        "      - name: Retain mission discovery production-scale PostgreSQL 17 evidence",
       ),
     ).toHaveLength(2);
     expect(jobHeader).not.toMatch(/^\s+(?:if|continue-on-error):/m);
     expect(missionScaleStepSource).toBe(
       [
-      "      - name: Run mandatory mission discovery production-scale PostgreSQL 17 gate",
-      "        env:",
-      "          PINTPATH_MISSION_DISCOVERY_SCALE_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable",
-      "          PINTPATH_MISSION_DISCOVERY_SCALE_EVIDENCE_PATH: ${{ runner.temp }}/pintpath-mission-discovery-scale-evidence.json",
-      '          PINTPATH_MISSION_DISCOVERY_SCALE_TEST_REQUIRED: "true"',
-      "        run: npx vitest run --disableConsoleIntercept test/mission-discovery-automation-scale.integration.test.ts",
+        "      - name: Run mandatory mission discovery production-scale PostgreSQL 17 gate",
+        "        env:",
+        "          PINTPATH_MISSION_DISCOVERY_SCALE_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable",
+        "          PINTPATH_MISSION_DISCOVERY_SCALE_EVIDENCE_PATH: ${{ runner.temp }}/pintpath-mission-discovery-scale-evidence.json",
+        '          PINTPATH_MISSION_DISCOVERY_SCALE_TEST_REQUIRED: "true"',
+        "        run: npx vitest run --disableConsoleIntercept test/mission-discovery-automation-scale.integration.test.ts",
       ].join("\n"),
     );
     expect(missionScaleEvidenceStepSource).toBe(
       [
-      "      - name: Retain mission discovery production-scale PostgreSQL 17 evidence",
-      "        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1",
-      "        with:",
-      "          name: pintpath-mission-discovery-scale-evidence",
-      "          path: ${{ runner.temp }}/pintpath-mission-discovery-scale-evidence.json",
-      "          if-no-files-found: error",
-      "          retention-days: 14",
+        "      - name: Retain mission discovery production-scale PostgreSQL 17 evidence",
+        "        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1",
+        "        with:",
+        "          name: pintpath-mission-discovery-scale-evidence",
+        "          path: ${{ runner.temp }}/pintpath-mission-discovery-scale-evidence.json",
+        "          if-no-files-found: error",
+        "          retention-days: 14",
       ].join("\n"),
     );
     expect(job).toContain(
@@ -1956,19 +1984,19 @@ describe("release workflow contracts", () => {
     expect(hbaSetupStep).toBeGreaterThan(scratchStep);
     expect(
       job.match(
-      /- name: Run mandatory V4 cross-OID scratch-restore mechanism observation/g,
+        /- name: Run mandatory V4 cross-OID scratch-restore mechanism observation/g,
       ),
     ).toHaveLength(1);
     expect(scratchSource).toBe(
       [
-      "      - name: Run mandatory V4 cross-OID scratch-restore mechanism observation",
-      "        # This disposable round trip proves the data-only restore mechanics.",
-      "        # It does not establish native runtime closure or operational V4 authority.",
-      "        env:",
-      "          PINTPATH_POSTGRES_LOGICAL_SCRATCH_RESTORE_V4_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable",
-      "          PINTPATH_POSTGRES_LOGICAL_SCRATCH_RESTORE_V4_TEST_PG_BIN: /usr/lib/postgresql/17/bin",
-      '          PINTPATH_POSTGRES_LOGICAL_SCRATCH_RESTORE_V4_TEST_REQUIRED: "true"',
-      "        run: npx vitest run test/postgres-logical-scratch-restore-v4.integration.test.ts --maxWorkers=1",
+        "      - name: Run mandatory V4 cross-OID scratch-restore mechanism observation",
+        "        # This disposable round trip proves the data-only restore mechanics.",
+        "        # It does not establish native runtime closure or operational V4 authority.",
+        "        env:",
+        "          PINTPATH_POSTGRES_LOGICAL_SCRATCH_RESTORE_V4_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable",
+        "          PINTPATH_POSTGRES_LOGICAL_SCRATCH_RESTORE_V4_TEST_PG_BIN: /usr/lib/postgresql/17/bin",
+        '          PINTPATH_POSTGRES_LOGICAL_SCRATCH_RESTORE_V4_TEST_REQUIRED: "true"',
+        "        run: npx vitest run test/postgres-logical-scratch-restore-v4.integration.test.ts --maxWorkers=1",
       ].join("\n"),
     );
     expect(scratchSource).not.toContain("\n        if:");
@@ -2061,17 +2089,17 @@ describe("release workflow contracts", () => {
     ]).toEqual(
       [
         ...[
-      loginCreate,
-      sourceSetRole,
-      detachedRevoke,
-      sourceBegin,
-      sourceCapture,
-      snapshotExport,
-      dumpRegrant,
-      dumpSpawn,
-      loginDisabled,
-      backendTermination,
-      loginDrop,
+          loginCreate,
+          sourceSetRole,
+          detachedRevoke,
+          sourceBegin,
+          sourceCapture,
+          snapshotExport,
+          dumpRegrant,
+          dumpSpawn,
+          loginDisabled,
+          backendTermination,
+          loginDrop,
         ],
       ].sort((left, right) => left - right),
     );
@@ -2141,36 +2169,36 @@ describe("release workflow contracts", () => {
     expect(tlsSetupStep).toBeGreaterThan(hbaCleanupStep);
     expect(setupSource).toBe(
       [
-      "      - name: Protect PostgreSQL HBA baseline for V4 behavior observation",
-      "        env:",
-      "          PINTPATH_CI_POSTGRES_CONTAINER_ID: ${{ job.services.postgres.id }}",
-      "          PINTPATH_POSTGRES_TOOL_AUTHORITY_V4_TEST_DATABASE: pintpath_v4_tool_3e7a8c19d4f2",
-      "          PINTPATH_POSTGRES_TOOL_AUTHORITY_V4_TEST_ROLE: pintpath_v4_backup_3e7a8c19d4f2",
-      "        run: bash scripts/ci/postgres-tool-authority-v4-hba-fixture setup",
+        "      - name: Protect PostgreSQL HBA baseline for V4 behavior observation",
+        "        env:",
+        "          PINTPATH_CI_POSTGRES_CONTAINER_ID: ${{ job.services.postgres.id }}",
+        "          PINTPATH_POSTGRES_TOOL_AUTHORITY_V4_TEST_DATABASE: pintpath_v4_tool_3e7a8c19d4f2",
+        "          PINTPATH_POSTGRES_TOOL_AUTHORITY_V4_TEST_ROLE: pintpath_v4_backup_3e7a8c19d4f2",
+        "        run: bash scripts/ci/postgres-tool-authority-v4-hba-fixture setup",
       ].join("\n"),
     );
     expect(testSource).toBe(
       [
-      "      - name: Run mandatory V4 PostgreSQL 17 authentication and raw-list behavior observation",
-      "        # This disposable gate observes PG17 behavior only. It does not verify",
-      "        # native runtime closure or establish production tool authority.",
-      "        env:",
-      "          PINTPATH_CI_POSTGRES_CONTAINER_ID: ${{ job.services.postgres.id }}",
-      "          PINTPATH_POSTGRES_TOOL_AUTHORITY_V4_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable",
-      "          PINTPATH_POSTGRES_TOOL_AUTHORITY_V4_TEST_DATABASE: pintpath_v4_tool_3e7a8c19d4f2",
-      "          PINTPATH_POSTGRES_TOOL_AUTHORITY_V4_TEST_MODE: service",
-      '          PINTPATH_POSTGRES_TOOL_AUTHORITY_V4_TEST_REQUIRED: "true"',
-      "          PINTPATH_POSTGRES_TOOL_AUTHORITY_V4_TEST_ROLE: pintpath_v4_backup_3e7a8c19d4f2",
-      "        run: npx vitest run test/postgres-tool-authority-v4-pg17.integration.test.ts --maxWorkers=1",
+        "      - name: Run mandatory V4 PostgreSQL 17 authentication and raw-list behavior observation",
+        "        # This disposable gate observes PG17 behavior only. It does not verify",
+        "        # native runtime closure or establish production tool authority.",
+        "        env:",
+        "          PINTPATH_CI_POSTGRES_CONTAINER_ID: ${{ job.services.postgres.id }}",
+        "          PINTPATH_POSTGRES_TOOL_AUTHORITY_V4_TEST_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable",
+        "          PINTPATH_POSTGRES_TOOL_AUTHORITY_V4_TEST_DATABASE: pintpath_v4_tool_3e7a8c19d4f2",
+        "          PINTPATH_POSTGRES_TOOL_AUTHORITY_V4_TEST_MODE: service",
+        '          PINTPATH_POSTGRES_TOOL_AUTHORITY_V4_TEST_REQUIRED: "true"',
+        "          PINTPATH_POSTGRES_TOOL_AUTHORITY_V4_TEST_ROLE: pintpath_v4_backup_3e7a8c19d4f2",
+        "        run: npx vitest run test/postgres-tool-authority-v4-pg17.integration.test.ts --maxWorkers=1",
       ].join("\n"),
     );
     expect(cleanupSource).toBe(
       [
-      "      - name: Restore and remove PostgreSQL HBA baseline after V4 behavior observation",
-      "        if: always()",
-      "        env:",
-      "          PINTPATH_CI_POSTGRES_CONTAINER_ID: ${{ job.services.postgres.id }}",
-      "        run: bash scripts/ci/postgres-tool-authority-v4-hba-fixture cleanup",
+        "      - name: Restore and remove PostgreSQL HBA baseline after V4 behavior observation",
+        "        if: always()",
+        "        env:",
+        "          PINTPATH_CI_POSTGRES_CONTAINER_ID: ${{ job.services.postgres.id }}",
+        "        run: bash scripts/ci/postgres-tool-authority-v4-hba-fixture cleanup",
       ].join("\n"),
     );
     expect(setupSource).not.toContain("\n        if:");
@@ -2242,12 +2270,12 @@ describe("release workflow contracts", () => {
     );
     expect(v4DumpHashExport).toBeGreaterThan(
       installer.indexOf(
-      'printf \'%s  %s\\n\' "$EXPECTED_PG_DUMP_SHA256" "$PG_DUMP"',
+        'printf \'%s  %s\\n\' "$EXPECTED_PG_DUMP_SHA256" "$PG_DUMP"',
       ),
     );
     expect(v4RestoreHashExport).toBeGreaterThan(
       installer.indexOf(
-      'printf \'%s  %s\\n\' "$EXPECTED_PG_RESTORE_SHA256" "$PG_RESTORE"',
+        'printf \'%s  %s\\n\' "$EXPECTED_PG_RESTORE_SHA256" "$PG_RESTORE"',
       ),
     );
     expect(installer).not.toMatch(
@@ -2257,8 +2285,8 @@ describe("release workflow contracts", () => {
     expect(
       fs.statSync(
         path.resolve(
-      process.cwd(),
-      "scripts/ci/postgres-tool-authority-v4-hba-fixture",
+          process.cwd(),
+          "scripts/ci/postgres-tool-authority-v4-hba-fixture",
         ),
       ).mode & 0o777,
     ).toBe(0o755);
@@ -2356,21 +2384,21 @@ describe("release workflow contracts", () => {
     );
     expect(
       cleanupFunction.indexOf(
-      'baseline_matches_state "$state_container_id" || return 1',
+        'baseline_matches_state "$state_container_id" || return 1',
       ),
     ).toBeLessThan(
       cleanupFunction.indexOf(
-      'docker_exec_root "$state_container_id" rm -f "$CONTAINER_HBA_BACKUP"',
+        'docker_exec_root "$state_container_id" rm -f "$CONTAINER_HBA_BACKUP"',
       ),
     );
     expect(
       cleanupFunction.indexOf(
-      'docker_exec_root "$state_container_id" test ! -e "$CONTAINER_HBA_BACKUP"',
+        'docker_exec_root "$state_container_id" test ! -e "$CONTAINER_HBA_BACKUP"',
       ),
     ).toBeLessThan(cleanupFunction.lastIndexOf('rm -f -- "$state_file"'));
     expect(
       cleanupFunction.lastIndexOf(
-      'docker_exec_root "$state_container_id" test ! -L "$CONTAINER_HBA_BACKUP"',
+        'docker_exec_root "$state_container_id" test ! -L "$CONTAINER_HBA_BACKUP"',
       ),
     ).toBeLessThan(cleanupFunction.lastIndexOf('rm -f -- "$state_file"'));
     expect(cleanupFunction).toContain(
@@ -2627,15 +2655,23 @@ describe("release workflow contracts", () => {
 
     expect(
       packageJson.scripts?.["db:postgres:backup:private-storage-recovery"],
-    ).toBe("tsx scripts/capture-postgres-private-storage-recovery.ts");
+    ).toBe(
+      "node --frozen-intrinsics --disable-proto=throw --import tsx " +
+        "scripts/capture-postgres-private-storage-recovery.ts",
+    );
     expect(
       packageJson.scripts?.["db:postgres:restore:private-storage-recovery"],
-    ).toBe("tsx scripts/restore-postgres-private-storage-recovery.ts");
+    ).toBe(
+      "node --frozen-intrinsics --disable-proto=throw --import tsx " +
+        "scripts/restore-postgres-private-storage-recovery.ts",
+    );
     expect(runbook).toContain("launch gates remain **OPEN**");
     expect(runbook).toContain("No Supabase, Railway, AWS, production, or");
     expect(runbook).toContain("retry with a fresh");
     expect(runbook).toContain("destinationDisposalRequired=true");
-    expect(runbook).toContain("This foundation is not live recovery evidence");
+    expect(runbook).toContain(
+      "The integration above is checked-in capability, not live recovery evidence.",
+    );
   });
 
   it("pins development to the reviewed Node 22 runtime baseline", () => {
@@ -2723,7 +2759,7 @@ describe("release workflow contracts", () => {
     expect(source).not.toMatch(/^[ \t]+node <<'NODE'$/m);
     const inlineModuleBodies = [
       ...source.matchAll(
-      /^[ \t]+node --input-type=module <<'NODE'\n([\s\S]*?)^[ \t]+NODE$/gm,
+        /^[ \t]+node --input-type=module <<'NODE'\n([\s\S]*?)^[ \t]+NODE$/gm,
       ),
     ].map((match) => match[1]!);
     expect(inlineModuleBodies).toHaveLength(2);
@@ -3279,7 +3315,7 @@ describe("release workflow contracts", () => {
     );
     expect(
       provider.match(
-      /OFFSITE_BACKUP_SERVICE_ROLE_KEY=REDACTED_USE_DISTINCT_RESTORE_SB_SECRET_KEY/g,
+        /OFFSITE_BACKUP_SERVICE_ROLE_KEY=REDACTED_USE_DISTINCT_RESTORE_SB_SECRET_KEY/g,
       ),
     ).toHaveLength(2);
     expect(normalizedProvider).toContain(
@@ -3378,7 +3414,9 @@ describe("release workflow contracts", () => {
     expect(phase12).not.toContain(
       "Deploy all implementation to permanent integrated staging",
     );
-    expect(phase16.indexOf("### 16.1 Merge the reviewed candidate")).toBeLessThan(
+    expect(
+      phase16.indexOf("### 16.1 Merge the reviewed candidate"),
+    ).toBeLessThan(
       phase16.indexOf("### 16.5 Deploy the exact protected `main` build"),
     );
     expect(phase16).toContain(
@@ -3388,9 +3426,7 @@ describe("release workflow contracts", () => {
       "the workflow and executor both reject a PR-head or any SHA other than the",
     );
 
-    expect(migration).toContain(
-      "protected production logical-backup workflow",
-    );
+    expect(migration).toContain("protected production logical-backup workflow");
     expect(normalizedMigration).toContain(
       "These example restore and deletion-replay commands remain review-only when",
     );
@@ -3581,7 +3617,7 @@ describe("release workflow contracts", () => {
     expect(validator).toContain("stalePermanentStagingCostReceipt");
     expect(packageJson.scripts?.["permanent-staging:cost:receipt:bind"]).toBe(
       "tsx scripts/bind-permanent-staging-cost-receipt.ts",
-      );
+    );
     expect(costRunbook).toContain("validator and candidate binder implemented");
     expect(costRunbook).toContain(
       "57984ced59fa356baa9c19ac1e5018dad9c52829a6d7cc95a05cbd52112ddf86",
@@ -3731,8 +3767,8 @@ describe("release workflow contracts", () => {
     expect(observationStart).toBeGreaterThan(-1);
     expect(
       ci.indexOf(
-      "  postgres-tool-runtime-closure-observation:",
-      observationStart + 1,
+        "  postgres-tool-runtime-closure-observation:",
+        observationStart + 1,
       ),
     ).toBe(-1);
     expect(migrationJob).toContain(

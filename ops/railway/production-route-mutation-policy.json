@@ -24,7 +24,7 @@
   },
   "predecessorAuthorityContract": {
     "schemaVersion": "pintpath-github-release-candidate-receipt/v3",
-    "policySha256": "b460588f0293bcc52d9a5ec1e057efab1850ebfb4c4d205dafdea34d6d2edbc3",
+    "policySha256": "b47f562d94b462ed7d2b1d9df317ac239a607d517bb487c109585e09213ba4fd",
     "requiredPhaseByOperation": {
       "close": "close",
       "open": "open"
@@ -38,6 +38,7 @@
         "deploy",
         "scale",
         "close",
+        "activation",
         "promotion-recovery"
       ]
     },
@@ -49,7 +50,7 @@
     "artifactIdDigestAndSizeRequired": true,
     "orderedProductionChainSha256Required": true,
     "promotionRecoveryReceiptSchemaVersion": "pintpath-production-promotion-recovery-receipt/v1",
-    "promotionRecoveryPolicySha256": "d35f73daa16b62c84701a6a935d9594160bdbc7c8063529e530d9ac0e37beb5b",
+    "promotionRecoveryPolicySha256": "57f66c1c9dde912586ec510e37c28cc3dfea2c098e67c78edbea189c7dcc9988",
     "promotionRecoverySelfHashRequired": true,
     "promotionRecoveryCandidateDeploymentAndCloseBindingRequired": true
   },

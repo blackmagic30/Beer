@@ -29,11 +29,11 @@ const CUSTOM_ROUTE = "44444444-4444-4444-8444-444444444444";
 const OTHER_ROUTE = "55555555-5555-4555-8555-555555555555";
 const temporaryRoots: string[] = [];
 const RELEASE_POLICY_SHA256 =
-  "b460588f0293bcc52d9a5ec1e057efab1850ebfb4c4d205dafdea34d6d2edbc3";
+  "b47f562d94b462ed7d2b1d9df317ac239a607d517bb487c109585e09213ba4fd";
 const ROUTE_POLICY_SHA256 =
-  "02904bf67c4a96c1c5b883a7adf97f85fbc06a08592db7f47381cf380553e2c5";
+  "e746c63eaf1ce64ea83ff81798a77e41221a97b31054be1b684df64160095851";
 const PROMOTION_RECOVERY_POLICY_SHA256 =
-  "d35f73daa16b62c84701a6a935d9594160bdbc7c8063529e530d9ac0e37beb5b";
+  "57f66c1c9dde912586ec510e37c28cc3dfea2c098e67c78edbea189c7dcc9988";
 
 afterEach(() => {
   for (const root of temporaryRoots.splice(0)) {
@@ -197,7 +197,7 @@ function writePredecessorAuthority(
     requiredChecks: Record<string, CheckPolicy[]>;
     requiredArtifacts: Record<string, ArtifactPolicy[]>;
   };
-  const stageCount = operation === "close" ? 2 : 4;
+  const stageCount = operation === "close" ? 2 : 5;
   const checkPolicies = [
     ...policy.requiredChecks.base,
     ...policy.requiredChecks.staging,
@@ -233,7 +233,9 @@ function writePredecessorAuthority(
       producerCheck: item.producerCheck,
     };
   });
-  const productionChain = ["deploy", "scale", "close", "promotion-recovery"]
+  const productionChain = [
+    "deploy", "scale", "close", "activation", "promotion-recovery",
+  ]
     .slice(0, stageCount)
     .map((stage) => ({
       ...checks.find((check) => check.stage === stage)!,
@@ -443,6 +445,34 @@ function writePredecessorAuthority(
     githubEnvironment: "production-promotion-recovery",
     policySha256: PROMOTION_RECOVERY_POLICY_SHA256,
     authorityManifestSha256: "2".repeat(64),
+    activationReceiptSha256: "3".repeat(64),
+    activationGithubAuthoritySha256: "4".repeat(64),
+    activationProducerWorkflow: "activate-production-promotion-recovery.yml",
+    activationProducerRunId: String(
+      productionChain.find((stage) => stage.stage === "activation")!.runId,
+    ),
+    activationProducerRunAttempt: 1,
+    activationRepository: "blackmagic30/Beer",
+    activationArtifactName:
+      productionChain.find((stage) => stage.stage === "activation")!.artifact.name,
+    activationArtifactId: String(
+      productionChain.find((stage) => stage.stage === "activation")!.artifact.artifactId,
+    ),
+    activationArtifactDigest:
+      productionChain.find((stage) => stage.stage === "activation")!.artifact.digest,
+    activationArtifactSizeBytes:
+      productionChain.find((stage) => stage.stage === "activation")!.artifact.sizeBytes,
+    activationTargetProjectIdSha256: "5".repeat(64),
+    activationTargetEnvironmentIdSha256: "6".repeat(64),
+    activationTargetSupabaseOriginSha256: "7".repeat(64),
+    privateStorageWormReceiptSha256: "8".repeat(64),
+    privateStorageWormRetrievalReceiptSha256: "9".repeat(64),
+    recoveredApplicationReceiptSha256: "a".repeat(64),
+    storagePurgeReceiptSha256: "b".repeat(64),
+    railwayTeardownTerminalSha256: "c".repeat(64),
+    supabaseTeardownTerminalSha256: "d".repeat(64),
+    activationEvidenceAggregateSha256: "e".repeat(64),
+    cleanupEvidenceAggregateSha256: "f".repeat(64),
     productionDeploymentReceiptSha256: sha256(canonical(deploymentValue)),
     productionDeploymentIdSha256: deploymentIdSha256,
     productionScaleReceiptSha256: sha256(canonical(scaleValue)),
@@ -461,6 +491,8 @@ function writePredecessorAuthority(
     offsiteCompletedAt: "1970-01-01T00:12:03.000Z",
     wormReceiptSha256: "b".repeat(64),
     wormCompletedAt: "1970-01-01T00:12:04.000Z",
+    logicalWormRetrievalReceiptSha256: "7".repeat(64),
+    logicalWormRetrievedAt: "1970-01-01T00:12:06.500Z",
     privateStorageCaptureReceiptSha256: "c".repeat(64),
     privateStorageCapturedAt: "1970-01-01T00:12:05.000Z",
     offsiteRetrievalReceiptSha256: "d".repeat(64),
@@ -472,13 +504,19 @@ function writePredecessorAuthority(
     deletionReplayFirstReceiptSha256: "0".repeat(64),
     deletionReplaySecondReceiptSha256: "1".repeat(64),
     deletionReplayCompletedAt: "1970-01-01T00:12:09.000Z",
+    recoveryStartedAt: "1970-01-01T00:12:06.000Z",
+    applicationReadyAt: "1970-01-01T00:12:10.000Z",
+    recoveredApplicationCompletedAt: "1970-01-01T00:12:11.000Z",
+    cleanupStartedAt: "1970-01-01T00:12:11.000Z",
+    cleanupCompletedAt: "1970-01-01T00:12:12.000Z",
     recoveryTargetIdentitySha256: "2".repeat(64),
     recoveryPointAt: "1970-01-01T00:12:00.000Z",
     rpoSeconds: 1,
     rtoSeconds: 1,
+    cleanupSeconds: 1,
     reviewerApprovalSetSha256: "3".repeat(64),
     reviewerIdSha256s: ["4".repeat(64), "5".repeat(64)],
-    attestedAt: "1970-01-01T00:14:15.000Z",
+    attestedAt: "1970-01-01T00:15:15.000Z",
     chronologySha256: "6".repeat(64),
     checks: {
       authorityExact: true,
@@ -501,6 +539,9 @@ function writePredecessorAuthority(
       deletionReplayIdempotentExact: true,
       transportAndRoleExact: true,
       recoveryStateBindingsExact: true,
+      activationProducerExact: true,
+      recoveredApplicationExact: true,
+      teardownAbsentExact: true,
       rpoRtoExact: true,
       twoPersonApprovalExact: true,
       chronologyExact: true,

@@ -292,6 +292,7 @@ export async function runPostgresPrivateStorageCaptureCli(
       expectedTombstoneCount: exactCount(args.get("--ledger-tombstone-count")!),
       sourceEnvironment,
       expectedCandidateSha,
+      expectedCaptureConnectionUrlSha256: args.get("--connection-url-sha256")!,
       sourceSupabaseUrl,
       expectedSourceOriginSha256,
       bucketName: POSTGRES_PRIVATE_STORAGE_BUCKET,

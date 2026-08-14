@@ -31,7 +31,7 @@ export const PROTECTED_PRODUCTION_ROUTE_MUTATION_STATE =
 
 const POLICY_PATH = "ops/railway/production-route-mutation-policy.json";
 const POLICY_SHA256 =
-  "02904bf67c4a96c1c5b883a7adf97f85fbc06a08592db7f47381cf380553e2c5";
+  "e746c63eaf1ce64ea83ff81798a77e41221a97b31054be1b684df64160095851";
 const BOUNDARY_POLICY_PATH =
   "ops/railway/production-staging-mutation-policy.json";
 const BOUNDARY_POLICY_SHA256 =
@@ -53,9 +53,9 @@ const ISO_TIMESTAMP =
 const TOKEN = /^[^\r\n\0]{16,4096}$/;
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const RELEASE_POLICY_SHA256 =
-  "b460588f0293bcc52d9a5ec1e057efab1850ebfb4c4d205dafdea34d6d2edbc3";
+  "b47f562d94b462ed7d2b1d9df317ac239a607d517bb487c109585e09213ba4fd";
 const PROMOTION_RECOVERY_POLICY_SHA256 =
-  "d35f73daa16b62c84701a6a935d9594160bdbc7c8063529e530d9ac0e37beb5b";
+  "57f66c1c9dde912586ec510e37c28cc3dfea2c098e67c78edbea189c7dcc9988";
 const PRODUCTION_STAGE_CONTRACTS = Object.freeze({
   deploy: Object.freeze({
     name: "Deploy protected production",
@@ -71,6 +71,11 @@ const PRODUCTION_STAGE_CONTRACTS = Object.freeze({
     name: "Close exact production route",
     workflowPath: ".github/workflows/close-production-route.yml",
     artifactPrefix: "pintpath-production-route-close-",
+  }),
+  activation: Object.freeze({
+    name: "Activate exact production promotion recovery",
+    workflowPath: ".github/workflows/activate-production-promotion-recovery.yml",
+    artifactPrefix: "pintpath-production-promotion-recovery-activation-",
   }),
   "promotion-recovery": Object.freeze({
     name: "Attest protected production promotion and recovery",
@@ -376,7 +381,7 @@ function policyExact(cwd: string): boolean {
       && JSON.stringify(value.predecessorAuthorityContract.requiredStagesByOperation.close)
         === '["deploy","scale"]'
       && JSON.stringify(value.predecessorAuthorityContract.requiredStagesByOperation.open)
-        === '["deploy","scale","close","promotion-recovery"]'
+        === '["deploy","scale","close","activation","promotion-recovery"]'
       && value.predecessorAuthorityContract.currentConsumerRunExact === true
       && value.predecessorAuthorityContract.runAttemptOneRequired === true
       && value.predecessorAuthorityContract.predecessorsCompletedBeforeConsumerStarted === true
@@ -541,7 +546,9 @@ function genericCheckExact(value: unknown): boolean {
         "runAttempt", "startedAt", "completedAt",
       ];
   if (!exact(value, keys)
-    || (hasStage && !["deploy", "scale", "close", "promotion-recovery", "open"]
+    || (hasStage && ![
+      "deploy", "scale", "close", "activation", "promotion-recovery", "open",
+    ]
       .includes(String(value.stage)))
     || !safeString(value.name, 160)
     || !positiveInteger(value.runId)
@@ -563,7 +570,9 @@ function genericArtifactExact(value: unknown): boolean {
     ? ["stage", "artifactId", "name", "digest", "sizeBytes", "runId", "producerCheck"]
     : ["artifactId", "name", "digest", "sizeBytes", "runId", "producerCheck"];
   return exact(value, keys)
-    && (!hasStage || ["deploy", "scale", "close", "promotion-recovery", "open"]
+    && (!hasStage || [
+      "deploy", "scale", "close", "activation", "promotion-recovery", "open",
+    ]
       .includes(String(value.stage)))
     && positiveInteger(value.artifactId)
     && safeString(value.name, 160)
@@ -610,8 +619,8 @@ function parseGithubPredecessorAuthority(
       || consumerStartedAt === null
       || env.GITHUB_RUN_ID !== String(value.consumer.runId)
       || env.GITHUB_WORKFLOW_REF !== expectedWorkflowRef) return null;
-    const expectedCheckCount = args.operation === "close" ? 13 : 15;
-    const expectedArtifactCount = args.operation === "close" ? 7 : 9;
+    const expectedCheckCount = args.operation === "close" ? 13 : 16;
+    const expectedArtifactCount = args.operation === "close" ? 7 : 10;
     if (!Array.isArray(value.checks) || value.checks.length !== expectedCheckCount
       || value.checks.some((item) => !genericCheckExact(item))
       || new Set(value.checks.map((item) => (item as { name: string }).name)).size
@@ -629,7 +638,7 @@ function parseGithubPredecessorAuthority(
     }
     const expectedStages: Array<keyof typeof PRODUCTION_STAGE_CONTRACTS> = args.operation === "close"
       ? ["deploy", "scale"]
-      : ["deploy", "scale", "close", "promotion-recovery"];
+      : ["deploy", "scale", "close", "activation", "promotion-recovery"];
     if (value.productionChain.length !== expectedStages.length) return null;
     const stages: ProductionChainStage[] = [];
     for (let index = 0; index < expectedStages.length; index += 1) {

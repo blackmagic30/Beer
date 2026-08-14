@@ -5,6 +5,10 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const root = process.cwd();
+const retiredStandalonePitrWorkflow =
+  ".github/workflows/observe-production-post-promotion-pitr.yml";
+const integratedRecoveryActivationWorkflow =
+  ".github/workflows/activate-production-promotion-recovery.yml";
 const executableExtensions = new Set([
   ".cjs",
   ".cts",
@@ -56,22 +60,24 @@ const transitiveSupabaseCredentialBoundaryPattern =
 
 const trackedExecutableSources = execFileSync(
   "git",
-  [
-    "ls-files",
-    "-z",
-    "--cached",
-    "--others",
-    "--exclude-standard",
-  ],
+  ["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
   { cwd: root },
 )
   .toString("utf8")
   .split("\0")
   .filter(Boolean)
   .filter((filename) => executableExtensions.has(path.extname(filename)))
-  .filter((filename) => !filename.split("/").some((segment) => ignoredPathSegments.has(segment)))
+  .filter((filename) => filename !== retiredStandalonePitrWorkflow)
+  .filter(
+    (filename) =>
+      !filename.split("/").some((segment) => ignoredPathSegments.has(segment)),
+  )
   .filter((filename) => !filename.startsWith("test/"))
-  .filter((filename) => !filename.includes("/src/test/") && !filename.includes("/src/androidTest/"))
+  .filter(
+    (filename) =>
+      !filename.includes("/src/test/") &&
+      !filename.includes("/src/androidTest/"),
+  )
   .sort();
 
 function relativePathsMatching(pattern: RegExp): string[] {
@@ -81,14 +87,18 @@ function relativePathsMatching(pattern: RegExp): string[] {
 }
 
 function hasManualApiKeyHeader(source: string): boolean {
-  return quotedApiKeyHeaderPattern.test(source) || bareApiKeyHeaderPattern.test(source);
+  return (
+    quotedApiKeyHeaderPattern.test(source) ||
+    bareApiKeyHeaderPattern.test(source)
+  );
 }
 
 function bareApiKeySurfaceCounts(): string[] {
   const counts: string[] = [];
   for (const filename of trackedExecutableSources) {
     const count = read(filename).match(/\bapikey\s*:/gi)?.length ?? 0;
-    if (count > 0) counts.push(`${filename}:bare-apikey-header-surface:${count}`);
+    if (count > 0)
+      counts.push(`${filename}:bare-apikey-header-surface:${count}`);
   }
   return counts.sort();
 }
@@ -98,24 +108,48 @@ function read(relativePath: string): string {
 }
 
 describe("Supabase key consumer compatibility inventory", () => {
+  it("tracks PITR and recovery Supabase surfaces in the integrated activation workflow", () => {
+    expect(fs.existsSync(path.join(root, retiredStandalonePitrWorkflow))).toBe(
+      false,
+    );
+    expect(trackedExecutableSources).not.toContain(
+      retiredStandalonePitrWorkflow,
+    );
+    expect(trackedExecutableSources).toContain(
+      integratedRecoveryActivationWorkflow,
+    );
+    const activation = read(integratedRecoveryActivationWorkflow);
+    expect(activation).toContain("production:promotion-recovery:pitr:observe");
+    expect(activation).toContain(
+      '--output "$PINTPATH_BACKUP_WORK_ROOT/pitr-receipt.json"',
+    );
+  });
+
   it("keeps every direct SDK client creation on the two reviewed factories", () => {
-    expect(supabaseSdkImportPattern.test('import("@supabase/supabase-js")')).toBe(true);
+    expect(
+      supabaseSdkImportPattern.test('import("@supabase/supabase-js")'),
+    ).toBe(true);
     const mixedTypeAndRuntimeImport = [
       'import type { SupabaseClient } from "@supabase/supabase-js";',
       'const { createClient: makeClient } = await import("@supabase/supabase-js");',
       'makeClient("https://example.invalid", "key");',
     ].join("\n");
-    expect(mixedTypeAndRuntimeImport.replace(
-      /^import type \{ SupabaseClient \} from "@supabase\/supabase-js";\s*$/gm,
-      "",
-    )).toMatch(supabaseSdkImportPattern);
+    expect(
+      mixedTypeAndRuntimeImport.replace(
+        /^import type \{ SupabaseClient \} from "@supabase\/supabase-js";\s*$/gm,
+        "",
+      ),
+    ).toMatch(supabaseSdkImportPattern);
     for (const expression of [
       'window["supabase"]["createClient"]("url", "key")',
       "globalThis?.['supabase']?.['createClient']('url', 'key')",
-    ]) expect(supabaseBrowserGlobalPattern.test(expression)).toBe(true);
-    expect(bracketedSupabaseCreateClientPattern.test(
-      'supabase["createClient"]("url", "key")',
-    )).toBe(true);
+    ])
+      expect(supabaseBrowserGlobalPattern.test(expression)).toBe(true);
+    expect(
+      bracketedSupabaseCreateClientPattern.test(
+        'supabase["createClient"]("url", "key")',
+      ),
+    ).toBe(true);
     expect(relativePathsMatching(/\bcreateClient\s*\(/)).toEqual([
       "src/lib/supabase-client.ts",
       "viewer/business.js",
@@ -124,7 +158,9 @@ describe("Supabase key consumer compatibility inventory", () => {
     expect(relativePathsMatching(supabaseBrowserGlobalPattern)).toEqual([
       "viewer/business.js",
     ]);
-    expect(relativePathsMatching(bracketedSupabaseCreateClientPattern)).toEqual([]);
+    expect(relativePathsMatching(bracketedSupabaseCreateClientPattern)).toEqual(
+      [],
+    );
 
     expect(relativePathsMatching(supabaseSdkImportPattern)).toEqual([
       "scripts/cleanup-duplicate-venues.ts",
@@ -141,8 +177,9 @@ describe("Supabase key consumer compatibility inventory", () => {
     expect(read("src/lib/supabase-client.ts")).toContain(
       'import { createClient, type SupabaseClient } from "@supabase/supabase-js";',
     );
-    for (const filename of relativePathsMatching(supabaseSdkImportPattern)
-      .filter((filename) => filename !== "src/lib/supabase-client.ts")) {
+    for (const filename of relativePathsMatching(
+      supabaseSdkImportPattern,
+    ).filter((filename) => filename !== "src/lib/supabase-client.ts")) {
       const source = read(filename);
       expect(source).toMatch(
         /^import type \{ SupabaseClient \} from "@supabase\/supabase-js";/m,
@@ -151,7 +188,9 @@ describe("Supabase key consumer compatibility inventory", () => {
         /^import type \{ SupabaseClient \} from "@supabase\/supabase-js";\s*$/gm,
         "",
       );
-      expect(withoutReviewedTypeImport, filename).not.toMatch(supabaseSdkImportPattern);
+      expect(withoutReviewedTypeImport, filename).not.toMatch(
+        supabaseSdkImportPattern,
+      );
     }
     expect(relativePathsMatching(/@supabase\/ssr/)).toEqual([]);
 
@@ -171,12 +210,20 @@ describe("Supabase key consumer compatibility inventory", () => {
   });
 
   it("fails closed when a new manual apikey transport appears outside the reviewed set", () => {
-    for (const spelling of ['"apikey"', '"ApiKey"', "apikey:", "ApiKey:", "APIKEY:"]) {
+    for (const spelling of [
+      '"apikey"',
+      '"ApiKey"',
+      "apikey:",
+      "ApiKey:",
+      "APIKEY:",
+    ]) {
       expect(hasManualApiKeyHeader(spelling)).toBe(true);
     }
-    expect(trackedExecutableSources
-      .filter((filename) => hasManualApiKeyHeader(read(filename)))
-      .sort()).toEqual([
+    expect(
+      trackedExecutableSources
+        .filter((filename) => hasManualApiKeyHeader(read(filename)))
+        .sort(),
+    ).toEqual([
       ".github/workflows/venue-directory-refresh.yml",
       "apps/android/app/src/main/java/au/pintpath/beermap/data/BeerMapApiClient.kt",
       "apps/ios/BeerMap/Services/BeerMapAPI.swift",
@@ -186,6 +233,7 @@ describe("Supabase key consumer compatibility inventory", () => {
       "scripts/import-melbourne-venues.ts",
       "scripts/production-smoke-check.mjs",
       "scripts/staging-supabase-key-canary.ts",
+      "scripts/verify-recovered-postgres-application.ts",
       "src/app.ts",
       "src/lib/account-deletion-notification.ts",
       "src/lib/monthly-report-delivery.ts",
@@ -205,6 +253,7 @@ describe("Supabase key consumer compatibility inventory", () => {
       "scripts/import-melbourne-venues.ts:bare-apikey-header-surface:3",
       "scripts/production-smoke-check.mjs:bare-apikey-header-surface:2",
       "scripts/staging-supabase-key-canary.ts:bare-apikey-header-surface:5",
+      "scripts/verify-recovered-postgres-application.ts:bare-apikey-header-surface:2",
       "src/app.ts:bare-apikey-header-surface:2",
       "src/lib/account-deletion-notification.ts:bare-apikey-header-surface:1",
       "src/lib/monthly-report-delivery.ts:bare-apikey-header-surface:1",
@@ -215,7 +264,9 @@ describe("Supabase key consumer compatibility inventory", () => {
     ]);
 
     expect(caseInsensitiveBareApiKeySurfacePattern.test("APIKEY:")).toBe(true);
-    expect(relativePathsMatching(caseInsensitiveBareApiKeySurfacePattern)).toEqual([
+    expect(
+      relativePathsMatching(caseInsensitiveBareApiKeySurfacePattern),
+    ).toEqual([
       ".github/workflows/venue-directory-refresh.yml",
       "scripts/deliver-monthly-reports.ts",
       "scripts/discover-menu-sources.ts",
@@ -223,6 +274,7 @@ describe("Supabase key consumer compatibility inventory", () => {
       "scripts/import-melbourne-venues.ts",
       "scripts/production-smoke-check.mjs",
       "scripts/staging-supabase-key-canary.ts",
+      "scripts/verify-recovered-postgres-application.ts",
       "src/app.ts",
       "src/lib/account-deletion-notification.ts",
       "src/lib/monthly-report-delivery.ts",
@@ -232,16 +284,24 @@ describe("Supabase key consumer compatibility inventory", () => {
       "src/modules/business/business.service.ts",
     ]);
 
-    expect(read(".github/workflows/venue-directory-refresh.yml").match(/redirect: "error"/g))
-      .toHaveLength(2);
-    expect(read("apps/android/app/src/main/java/au/pintpath/beermap/data/BeerMapApiClient.kt"))
-      .toContain("instanceFollowRedirects = false");
-    expect(read("apps/ios/BeerMap/Services/BeerMapAPI.swift"))
-      .toContain("completionHandler(nil)");
+    expect(
+      read(".github/workflows/venue-directory-refresh.yml").match(
+        /redirect: "error"/g,
+      ),
+    ).toHaveLength(2);
+    expect(
+      read(
+        "apps/android/app/src/main/java/au/pintpath/beermap/data/BeerMapApiClient.kt",
+      ),
+    ).toContain("instanceFollowRedirects = false");
+    expect(read("apps/ios/BeerMap/Services/BeerMapAPI.swift")).toContain(
+      "completionHandler(nil)",
+    );
     for (const filename of [
       "scripts/execute-protected-permanent-staging-supabase-cutover.ts",
       "scripts/production-smoke-check.mjs",
       "scripts/staging-supabase-key-canary.ts",
+      "scripts/verify-recovered-postgres-application.ts",
       "src/lib/postgres-logical-offsite.ts",
       "src/modules/business/business.service.ts",
       "viewer/business.js",
@@ -258,17 +318,22 @@ describe("Supabase key consumer compatibility inventory", () => {
       "/functions/v1",
       "/realtime/v1",
       "/graphql/v1",
-    ]) expect(supabaseEndpointPattern.test(endpoint)).toBe(true);
+    ])
+      expect(supabaseEndpointPattern.test(endpoint)).toBe(true);
     expect(relativePathsMatching(supabaseEndpointPattern)).toEqual([
+      ".github/workflows/activate-production-promotion-recovery.yml",
       ".github/workflows/production-logical-backup.yml",
       ".github/workflows/venue-directory-refresh.yml",
       "apps/android/app/src/main/java/au/pintpath/beermap/data/BeerMapApiClient.kt",
       "apps/android/app/src/main/java/au/pintpath/beermap/ui/features/BeerMapApp.kt",
       "apps/ios/BeerMap/Services/BeerMapAPI.swift",
       "scripts/attest-postgres-logical-backup-offsite.ts",
+      "scripts/attest-production-promotion-recovery.ts",
       "scripts/backup-data-offsite.ts",
       "scripts/check-production-deploy-guard.mjs",
+      "scripts/create-production-promotion-recovery-activation-receipt.mjs",
       "scripts/download-offsite-backup.ts",
+      "scripts/execute-protected-disposable-supabase-project-teardown.ts",
       "scripts/execute-protected-permanent-staging-supabase-cutover.ts",
       "scripts/import-melbourne-venues.ts",
       "scripts/lib/permanent-staging-cost-policy.ts",
@@ -277,9 +342,11 @@ describe("Supabase key consumer compatibility inventory", () => {
       "scripts/promote-reviewed-price-data.ts",
       "scripts/prove-postgres-account-deletion-recovery.ts",
       "scripts/provider-readiness-check.ts",
+      "scripts/purge-postgres-private-storage-recovery-target.ts",
       "scripts/rehearse-data-restore.ts",
       "scripts/retrieve-postgres-logical-offsite.ts",
       "scripts/staging-supabase-key-canary.ts",
+      "scripts/verify-recovered-postgres-application.ts",
       "src/app.ts",
       "src/config/env.ts",
       "src/lib/offsite-backup-download.ts",
@@ -292,7 +359,9 @@ describe("Supabase key consumer compatibility inventory", () => {
   });
 
   it("pins transitive credential-bearing operator entrypoints before library transport", () => {
-    expect(relativePathsMatching(transitiveSupabaseCredentialBoundaryPattern)).toEqual([
+    expect(
+      relativePathsMatching(transitiveSupabaseCredentialBoundaryPattern),
+    ).toEqual([
       "scripts/attest-postgres-logical-backup-offsite.ts",
       "scripts/benchmark-menu-ocr.ts",
       "scripts/capture-postgres-private-storage-recovery.ts",
@@ -311,14 +380,17 @@ describe("Supabase key consumer compatibility inventory", () => {
       "src/lib/postgres-logical-offsite.ts",
       "src/lib/postgres-private-storage-recovery.ts",
     ]);
-    expect(relativePathsMatching(
-      /\b(?:runOffsiteBackup|runBackup|scheduleOffsiteBackups|downloadOffsiteBackup|fetchVerifiedAccountDeletionLedger|stageRestoredSourceEvidence|exportPostgresMigrationLedgerAuthority|probePostgresLogicalOffsiteReadiness)\s*[()]/,
-    )).toEqual([
+    expect(
+      relativePathsMatching(
+        /\b(?:runOffsiteBackup|runBackup|scheduleOffsiteBackups|downloadOffsiteBackup|fetchVerifiedAccountDeletionLedger|stageRestoredSourceEvidence|exportPostgresMigrationLedgerAuthority|probePostgresLogicalOffsiteReadiness)\s*[()]/,
+      ),
+    ).toEqual([
       "scripts/backup-data-offsite.ts",
       "scripts/download-offsite-backup.ts",
       "scripts/postgres-migration.ts",
       "scripts/prove-postgres-account-deletion-recovery.ts",
       "scripts/rehearse-data-restore.ts",
+      "scripts/retrieve-postgres-account-deletion-authority.ts",
       "src/app.ts",
       "src/db/postgres-migration-ledger.ts",
       "src/lib/offsite-backup-download.ts",
@@ -350,24 +422,58 @@ describe("Supabase key consumer compatibility inventory", () => {
         /assertSupabase(?:Server|Public)ApiKey\(|assertExactSupabaseOrigin\(/,
       );
     }
-    expect(read("scripts/prove-postgres-account-deletion-recovery.ts"))
-      .toContain("assertPostgresLogicalOffsiteDestinationPins");
+    expect(
+      read("scripts/prove-postgres-account-deletion-recovery.ts"),
+    ).toContain("assertPostgresLogicalOffsiteDestinationPins");
 
     for (const [filename, transportNeedle] of [
-      ["scripts/attest-postgres-logical-backup-offsite.ts", "dependencies.createStorage({"],
+      [
+        "scripts/attest-postgres-logical-backup-offsite.ts",
+        "dependencies.createStorage({",
+      ],
       ["scripts/backup-data-offsite.ts", "await dependencies.runBackup({"],
-      ["scripts/capture-postgres-private-storage-recovery.ts", "dependencies.createStorage({"],
-      ["scripts/cleanup-duplicate-venues.ts", "const client = createServerSupabaseClient("],
-      ["scripts/discover-menu-sources.ts", "const supabase = createServerSupabaseClient("],
+      [
+        "scripts/capture-postgres-private-storage-recovery.ts",
+        "dependencies.createStorage({",
+      ],
+      [
+        "scripts/cleanup-duplicate-venues.ts",
+        "const client = createServerSupabaseClient(",
+      ],
+      [
+        "scripts/discover-menu-sources.ts",
+        "const supabase = createServerSupabaseClient(",
+      ],
       ["scripts/download-offsite-backup.ts", "await downloadOffsiteBackup({"],
-      ["scripts/import-melbourne-venues.ts", "const supabase = createServerSupabaseClient("],
-      ["scripts/postgres-migration.ts", "dependencies.exportLedger ?? exportPostgresMigrationLedgerAuthority"],
-      ["scripts/promote-reviewed-price-data.ts", "new AdminServiceConstructor("],
-      ["scripts/prove-postgres-account-deletion-recovery.ts", "dependencies.appendAndFetchVerifiedLedger("],
+      [
+        "scripts/import-melbourne-venues.ts",
+        "const supabase = createServerSupabaseClient(",
+      ],
+      [
+        "scripts/postgres-migration.ts",
+        "dependencies.exportLedger ?? exportPostgresMigrationLedgerAuthority",
+      ],
+      [
+        "scripts/promote-reviewed-price-data.ts",
+        "new AdminServiceConstructor(",
+      ],
+      [
+        "scripts/prove-postgres-account-deletion-recovery.ts",
+        "dependencies.appendAndFetchVerifiedLedger(",
+      ],
       ["scripts/publish-source-ingestion-map-base.ts", "new AdminService("],
-      ["scripts/rehearse-data-restore.ts", "await fetchVerifiedAccountDeletionLedger({"],
-      ["scripts/restore-postgres-private-storage-recovery.ts", "dependencies.createStorage({"],
-      ["scripts/retrieve-postgres-logical-offsite.ts", "dependencies.createStorage({"],
+      [
+        "scripts/rehearse-data-restore.ts",
+        "await fetchVerifiedAccountDeletionLedger({",
+      ],
+      [
+        "scripts/restore-postgres-private-storage-recovery.ts",
+        "dependencies.createStorage({",
+      ],
+      [
+        "scripts/retrieve-postgres-logical-offsite.ts",
+        "dependencies.createStorage({",
+      ],
     ] as const) {
       const source = read(filename);
       const validationIndex = Math.max(
@@ -375,21 +481,31 @@ describe("Supabase key consumer compatibility inventory", () => {
         source.lastIndexOf("assertSupabasePublicApiKey("),
       );
       expect(validationIndex, filename).toBeGreaterThan(-1);
-      expect(validationIndex, filename).toBeLessThan(source.indexOf(transportNeedle));
+      expect(validationIndex, filename).toBeLessThan(
+        source.indexOf(transportNeedle),
+      );
       if (
-        filename !== "scripts/capture-postgres-private-storage-recovery.ts"
-        && filename !== "scripts/import-melbourne-venues.ts"
-        && filename !== "scripts/promote-reviewed-price-data.ts"
-        && filename !== "scripts/restore-postgres-private-storage-recovery.ts"
+        filename !== "scripts/capture-postgres-private-storage-recovery.ts" &&
+        filename !== "scripts/import-melbourne-venues.ts" &&
+        filename !== "scripts/promote-reviewed-price-data.ts" &&
+        filename !== "scripts/restore-postgres-private-storage-recovery.ts"
       ) {
-        const originValidationIndex = source.lastIndexOf("assertExactSupabaseOrigin(");
+        const originValidationIndex = source.lastIndexOf(
+          "assertExactSupabaseOrigin(",
+        );
         expect(originValidationIndex, filename).toBeGreaterThan(-1);
-        expect(originValidationIndex, filename).toBeLessThan(source.indexOf(transportNeedle));
+        expect(originValidationIndex, filename).toBeLessThan(
+          source.indexOf(transportNeedle),
+        );
       }
     }
-    const captureSource = read("scripts/capture-postgres-private-storage-recovery.ts");
+    const captureSource = read(
+      "scripts/capture-postgres-private-storage-recovery.ts",
+    );
     const captureMain = captureSource.slice(
-      captureSource.indexOf("export async function runPostgresPrivateStorageCaptureCli("),
+      captureSource.indexOf(
+        "export async function runPostgresPrivateStorageCaptureCli(",
+      ),
     );
     const captureOriginIndex = captureMain.indexOf(
       "resolvePostgresPrivateStorageCaptureOrigin(",
@@ -402,14 +518,24 @@ describe("Supabase key consumer compatibility inventory", () => {
     expect(captureOriginIndex).toBeLessThan(
       captureMain.indexOf("dependencies.createStorage({"),
     );
-    const restoreSource = read("scripts/restore-postgres-private-storage-recovery.ts");
-    const restoreMain = restoreSource.slice(
-      restoreSource.indexOf("export async function runPostgresPrivateStorageRestoreCli("),
+    const restoreSource = read(
+      "scripts/restore-postgres-private-storage-recovery.ts",
     );
-    expect(restoreMain.indexOf("dependencies.assertDestinationOriginApproved("))
-      .toBeLessThan(restoreMain.indexOf("secret(dependencies, targetConnectionUrlFile)"));
-    expect(restoreMain.indexOf("dependencies.assertDestinationOriginApproved("))
-      .toBeLessThan(restoreMain.indexOf("secret(dependencies, serviceRoleKeyFile)"));
+    const restoreMain = restoreSource.slice(
+      restoreSource.indexOf(
+        "export async function runPostgresPrivateStorageRestoreCli(",
+      ),
+    );
+    expect(
+      restoreMain.indexOf("dependencies.assertDestinationOriginApproved("),
+    ).toBeLessThan(
+      restoreMain.indexOf("secret(dependencies, targetConnectionUrlFile)"),
+    );
+    expect(
+      restoreMain.indexOf("dependencies.assertDestinationOriginApproved("),
+    ).toBeLessThan(
+      restoreMain.indexOf("secret(dependencies, serviceRoleKeyFile)"),
+    );
     expect(restoreSource).not.toContain("bcdefghijklmnopqrstu");
     expect(restoreSource).toContain(
       "pintpath-private-storage-disposable-authority/v1",
@@ -420,7 +546,9 @@ describe("Supabase key consumer compatibility inventory", () => {
     expect(stageSource).toContain(
       "Restore-staging evidence transport is unavailable until a reviewed disposable-project authority is registered.",
     );
-    const publisherSource = read("scripts/publish-source-ingestion-map-base.ts");
+    const publisherSource = read(
+      "scripts/publish-source-ingestion-map-base.ts",
+    );
     const publisherMain = publisherSource.slice(
       publisherSource.indexOf("async function main()"),
     );
@@ -430,13 +558,17 @@ describe("Supabase key consumer compatibility inventory", () => {
     expect(publisherMain).toMatch(
       /const adminService = options\.dryRun\s*\? null\s*: new AdminService\(/,
     );
-    expect(publisherMain.indexOf("assertPublishMapBaseSupabaseBoundary("))
-      .toBeLessThan(publisherMain.indexOf("new AdminService("));
+    expect(
+      publisherMain.indexOf("assertPublishMapBaseSupabaseBoundary("),
+    ).toBeLessThan(publisherMain.indexOf("new AdminService("));
     const importerMain = read("scripts/import-melbourne-venues.ts").slice(
-      read("scripts/import-melbourne-venues.ts").indexOf("async function main()"),
+      read("scripts/import-melbourne-venues.ts").indexOf(
+        "async function main()",
+      ),
     );
-    expect(importerMain.indexOf("assertSupabaseProjectTarget("))
-      .toBeLessThan(importerMain.indexOf("fetchExistingVenues()"));
+    expect(importerMain.indexOf("assertSupabaseProjectTarget(")).toBeLessThan(
+      importerMain.indexOf("fetchExistingVenues()"),
+    );
     const cleanupSource = read("scripts/cleanup-duplicate-venues.ts");
     const cleanupEnvironmentBoundary = cleanupSource.slice(
       cleanupSource.indexOf("function requiredEnvironment("),
@@ -563,20 +695,29 @@ describe("Supabase key consumer compatibility inventory", () => {
       dependencies?: Record<string, string>;
     };
     const packageLock = JSON.parse(read("package-lock.json")) as {
-      packages?: Record<string, { dependencies?: Record<string, string>; version?: string }>;
+      packages?: Record<
+        string,
+        { dependencies?: Record<string, string>; version?: string }
+      >;
     };
     expect(packageJson.dependencies?.["@supabase/supabase-js"]).toBe("2.112.3");
-    expect(packageLock.packages?.[""]?.dependencies?.["@supabase/supabase-js"])
-      .toBe("2.112.3");
-    expect(packageLock.packages?.["node_modules/@supabase/supabase-js"]?.version)
-      .toBe("2.112.3");
+    expect(
+      packageLock.packages?.[""]?.dependencies?.["@supabase/supabase-js"],
+    ).toBe("2.112.3");
+    expect(
+      packageLock.packages?.["node_modules/@supabase/supabase-js"]?.version,
+    ).toBe("2.112.3");
 
     const browserSdkUrl =
       "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.3/dist/umd/supabase.min.js";
     const browserSdkIntegrity =
       "sha384-l8ah+VgaWtk1mvOe9VC+OirC6qHFF4yH7l7mKRidV9MSti3E9F463bMp6ZVN4kuC";
-    const browserPages = relativePathsMatching(/@supabase\/supabase-js@2\.112\.3\/dist\/umd\/supabase\.min\.js/)
-      .filter((filename) => filename.startsWith("viewer/") && filename.endsWith(".html"));
+    const browserPages = relativePathsMatching(
+      /@supabase\/supabase-js@2\.112\.3\/dist\/umd\/supabase\.min\.js/,
+    ).filter(
+      (filename) =>
+        filename.startsWith("viewer/") && filename.endsWith(".html"),
+    );
     expect(browserPages).toEqual([
       "viewer/account.html",
       "viewer/auth/callback.html",
@@ -593,7 +734,10 @@ describe("Supabase key consumer compatibility inventory", () => {
     }
 
     const appSource = read("src/app.ts");
-    expect(appSource.match(new RegExp(browserSdkUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g")))
-      .toHaveLength(2);
+    expect(
+      appSource.match(
+        new RegExp(browserSdkUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"),
+      ),
+    ).toHaveLength(2);
   });
 });

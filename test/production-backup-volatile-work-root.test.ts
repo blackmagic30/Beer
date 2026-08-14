@@ -23,6 +23,9 @@ describe("production backup volatile work-root authority", () => {
     expect(expectedWorkRoot("restore", "123", "2")).toBe(
       "/run/pintpath-production-backup/pintpath-production-restore-123-2",
     );
+    expect(expectedWorkRoot("recovery", "123", "2")).toBe(
+      "/run/pintpath-production-backup/pintpath-production-recovery-123-2",
+    );
     expect(() => expectedWorkRoot("other", "123", "2")).toThrow(
       /operation_invalid/,
     );

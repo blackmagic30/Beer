@@ -16,6 +16,8 @@ import {
 import {
   parsePostgresAccountDeletionReplayReceipt,
 } from "../src/lib/postgres-account-deletion-replay.js";
+import { postgresPrivateStorageRecoveryInternals } from
+  "../src/lib/postgres-private-storage-recovery.js";
 import {
   canonicalPostgresBackupJson,
 } from "../src/lib/postgres-logical-backup.js";
@@ -24,6 +26,20 @@ import {
 } from "../src/lib/postgres-logical-restore.js";
 import {
   buildProductionPromotionRecoveryReceipt,
+  productionRecoveryLogicalWormResultSchema,
+  productionRecoveryLogicalWormRetrievalSchema,
+  productionRecoveryLogicalOffsiteResultSchema,
+  productionRecoveryLogicalOffsiteRetrievalSchema,
+  productionRecoveryLogicalRestoreReceiptSchema,
+  productionRecoveryPitrReceiptSchema,
+  productionRecoveryPrivateCaptureSchema,
+  productionRecoveryPrivateRestoreSchema,
+  productionRecoveryRecoveredApplicationSchema,
+  productionRecoveryPrivateWormResultSchema,
+  productionRecoveryPrivateWormRetrievalSchema,
+  productionRecoveryRailwayTeardownTerminalSchema,
+  productionRecoveryStoragePurgeReceiptSchema,
+  productionRecoverySupabaseTeardownTerminalSchema,
   productionPromotionRecoveryAuthoritySchema,
   sha256ProductionPromotionRecoveryBytes,
   sha256ProductionPromotionRecoveryValue,
@@ -33,7 +49,7 @@ import {
 import { parseStrictArguments } from "./lib/strict-arguments.js";
 
 export const PRODUCTION_PROMOTION_RECOVERY_POLICY_SHA256 =
-  "d35f73daa16b62c84701a6a935d9594160bdbc7c8063529e530d9ac0e37beb5b" as const;
+  "57f66c1c9dde912586ec510e37c28cc3dfea2c098e67c78edbea189c7dcc9988" as const;
 const POLICY_PATH = "ops/railway/production-promotion-recovery-policy.json";
 const ROUTE_SCHEMA = "pintpath-protected-production-route-mutation/v1";
 const PICTURE_PITR_SCHEMA = "pintpath-production-post-promotion-pitr-observation/v1";
@@ -46,14 +62,19 @@ const MAX_APPROVAL_AGE_MS = 21_600_000;
 
 const ARGUMENTS = new Set([
   "--authority", "--authority-sha256", "--production-deployment-receipt",
+  "--activation-receipt", "--activation-github-authority",
   "--production-scale-receipt",
   "--closed-route-receipt", "--closed-route-terminal",
   "--apply-authorization-receipt", "--apply-operation-receipt", "--pitr-receipt",
   "--logical-backup-manifest", "--logical-offsite-result", "--logical-worm-result",
+  "--logical-worm-retrieval-receipt",
   "--private-storage-capture-receipt", "--private-storage-recovery-manifest",
   "--offsite-retrieval-receipt", "--logical-restore-receipt",
   "--private-storage-restore-receipt", "--deletion-replay-first-receipt",
   "--deletion-replay-second-receipt", "--approval-one", "--approval-one-public-key",
+  "--private-storage-worm-receipt", "--private-storage-worm-retrieval-receipt",
+  "--recovered-smoke-receipt", "--storage-purge-receipt",
+  "--railway-teardown-terminal", "--supabase-teardown-terminal",
   "--approval-two", "--approval-two-public-key", "--candidate-sha", "--output",
   "--expected-reviewer-one-public-key-sha256",
   "--expected-reviewer-two-public-key-sha256",
@@ -112,6 +133,20 @@ function exactTimestamp(value: unknown): string {
 function exactSha(value: unknown): string {
   if (typeof value !== "string" || !SHA256.test(value)) fail("evidence_invalid");
   return value;
+}
+
+function selfHashedReceiptExact(value: Json): boolean {
+  const { receiptSha256, ...withoutHash } = value;
+  return typeof receiptSha256 === "string" && SHA256.test(receiptSha256)
+    && receiptSha256 === sha256ProductionPromotionRecoveryValue(withoutHash);
+}
+
+function parseExactEvidence<T>(schema: { safeParse: (value: unknown) => {
+  success: boolean; data?: T;
+} }, value: unknown, code: string): T {
+  const parsed = schema.safeParse(value);
+  if (!parsed.success) fail(code);
+  return parsed.data as T;
 }
 
 function exactCandidate(value: unknown): string {
@@ -185,12 +220,50 @@ function verifyPolicy(cwd: string): void {
   if (sha256(source) !== PRODUCTION_PROMOTION_RECOVERY_POLICY_SHA256) fail("policy_invalid");
   const value = JSON.parse(source.toString("utf8")) as Json;
   if (
-    value.schemaVersion !== "pintpath-production-promotion-recovery-policy/v1"
+    value.schemaVersion !== "pintpath-production-promotion-recovery-policy/v2"
     || value.activationState !== "GITHUB_ENVIRONMENT_PROTECTED"
     || value.githubEnvironment !== "production-promotion-recovery"
+    || value.requiredWorkflow !== ".github/workflows/attest-production-promotion-recovery.yml"
+    || !isObject(value.activationContract)
+    || value.activationContract.requiredWorkflow
+      !== ".github/workflows/activate-production-promotion-recovery.yml"
+    || value.activationContract.requiredCheck
+      !== "Activate exact production promotion recovery"
+    || value.activationContract.exactRunIdAndFirstAttemptRequired !== true
+    || value.activationContract.immutableWorkflowRunStartedAtRequired !== true
+    || value.activationContract.exactArtifactAuthorityRequired !== true
+    || JSON.stringify(value.activationContract.jobsInOrder)
+      !== JSON.stringify(["production-capture", "disposable-recover", "cleanup", "finalize"])
+    || value.activationContract.productionCaptureRunnerLabel
+      !== "pintpath-production-backup"
+    || value.activationContract.disposableRecoveryRunnerLabel
+      !== "pintpath-disposable-recovery"
+    || value.activationContract.crossProjectPrivateNetworkSplitRequired !== true
+    || value.activationContract.rawRecoveryBytesInGithubArtifactsAllowed !== false
+    || value.activationContract.evidenceLeafCount !== 18
+    || value.activationContract.finalArtifactFileCount !== 20
     || !isObject(value.recoveryContract)
+    || value.recoveryContract.independentLogicalWormRetrievalRequired !== true
+    || value.recoveryContract.independentPrivateRecoveryBundleWormRetrievalRequired
+      !== true
+    || value.recoveryContract.compiledApplicationSmokeRequired !== true
+    || value.recoveryContract.exactRestoredStoragePurgeRequired !== true
     || value.recoveryContract.maximumRpoSeconds !== 3_600
     || value.recoveryContract.maximumRtoSeconds !== 14_400
+    || !isObject(value.cleanupContract)
+    || value.cleanupContract.separateNoninteractiveEnvironment
+      !== "production-promotion-recovery-cleanup"
+    || value.cleanupContract.signedAuthoritiesBindExactGithubRunId !== true
+    || value.cleanupContract.railwayAndSupabaseStepsIndependentAlways !== true
+    || value.cleanupContract.railwayTargetAbsenceRequired !== true
+    || value.cleanupContract.supabaseTargetAbsenceRequired !== true
+    || value.cleanupContract.orderlySupabaseCleanupRequiredForGreen !== true
+    || value.cleanupContract.emergencyCleanupMayFinalizeGreen !== false
+    || value.cleanupContract.forceCancelAllowedBeforeIndependentAbsence !== false
+    || !isObject(value.reviewContract)
+    || value.reviewContract.authorityVersion !== 2
+    || value.reviewContract.approvalsAfterFinalActivationRequired !== true
+    || value.reviewContract.activationReceiptBindingRequired !== true
   ) fail("policy_invalid");
 }
 
@@ -368,6 +441,488 @@ function verifyPitr(
   };
 }
 
+const ACTIVATION_EVIDENCE = Object.freeze([
+  "deletion-replay-first-receipt.json",
+  "deletion-replay-second-receipt.json",
+  "logical-backup-manifest.json",
+  "logical-offsite-result.json",
+  "logical-restore-receipt.json",
+  "logical-worm-result.json",
+  "logical-worm-retrieval-receipt.json",
+  "offsite-retrieval-receipt.json",
+  "pitr-receipt.json",
+  "private-storage-capture-receipt.json",
+  "private-storage-recovery-manifest.json",
+  "private-storage-restore-receipt.json",
+  "private-storage-worm-receipt.json",
+  "private-storage-worm-retrieval-receipt.json",
+  "recovered-smoke-receipt.json",
+  "storage-purge-receipt.json",
+  "railway-teardown-terminal.json",
+  "supabase-teardown-terminal.json",
+]);
+
+const EXACT_SCHEMA_ACTIVATION_EVIDENCE = Object.freeze([
+  "deletion-replay-first-receipt.json", "deletion-replay-second-receipt.json",
+  "logical-backup-manifest.json", "logical-offsite-result.json",
+  "logical-restore-receipt.json", "logical-worm-result.json",
+  "logical-worm-retrieval-receipt.json", "offsite-retrieval-receipt.json",
+  "pitr-receipt.json", "private-storage-capture-receipt.json",
+  "private-storage-recovery-manifest.json", "private-storage-restore-receipt.json",
+  "private-storage-worm-receipt.json", "private-storage-worm-retrieval-receipt.json",
+  "recovered-smoke-receipt.json", "storage-purge-receipt.json",
+  "railway-teardown-terminal.json", "supabase-teardown-terminal.json",
+]);
+
+interface VerifiedActivation {
+  readonly receipt: Json;
+  readonly github: Json;
+  readonly smoke: Json;
+  readonly storagePurge: Json;
+  readonly railwayTeardown: Json;
+  readonly supabaseTeardown: Json;
+  readonly privateWorm: Json;
+  readonly privateWormRetrieval: Json;
+  readonly logicalWormRetrieval: Json;
+}
+
+function verifyActivation(
+  files: ReadonlyMap<string, HeldFile>,
+  json: (name: string) => Json,
+  candidateSha: string,
+  repository: string | undefined,
+): VerifiedActivation {
+  if (sha256ProductionPromotionRecoveryValue(ACTIVATION_EVIDENCE)
+    !== sha256ProductionPromotionRecoveryValue(EXACT_SCHEMA_ACTIVATION_EVIDENCE)) {
+    fail("activation_schema_coverage_invalid");
+  }
+  const receipt = json("activation-receipt");
+  const github = json("activation-github-authority");
+  const { receiptSha256, ...receiptWithoutHash } = receipt;
+  const evidenceByLeaf = new Map<string, string>();
+  if (Array.isArray(receipt.evidence)) {
+    for (const value of receipt.evidence) {
+      if (!isObject(value) || typeof value.leaf !== "string"
+        || typeof value.sha256 !== "string" || !SHA256.test(value.sha256)
+        || evidenceByLeaf.has(value.leaf)) fail("activation_receipt_invalid");
+      evidenceByLeaf.set(value.leaf, value.sha256);
+    }
+  }
+  const fileByLeaf = new Map<string, string>([
+    ["deletion-replay-first-receipt.json", "deletion-replay-first-receipt"],
+    ["deletion-replay-second-receipt.json", "deletion-replay-second-receipt"],
+    ["logical-backup-manifest.json", "logical-backup-manifest"],
+    ["logical-offsite-result.json", "logical-offsite-result"],
+    ["logical-restore-receipt.json", "logical-restore-receipt"],
+    ["logical-worm-result.json", "logical-worm-result"],
+    ["logical-worm-retrieval-receipt.json", "logical-worm-retrieval-receipt"],
+    ["offsite-retrieval-receipt.json", "offsite-retrieval-receipt"],
+    ["pitr-receipt.json", "pitr-receipt"],
+    ["private-storage-capture-receipt.json", "private-storage-capture-receipt"],
+    ["private-storage-recovery-manifest.json", "private-storage-recovery-manifest"],
+    ["private-storage-restore-receipt.json", "private-storage-restore-receipt"],
+    ["private-storage-worm-receipt.json", "private-storage-worm-receipt"],
+    ["private-storage-worm-retrieval-receipt.json", "private-storage-worm-retrieval-receipt"],
+    ["recovered-smoke-receipt.json", "recovered-smoke-receipt"],
+    ["storage-purge-receipt.json", "storage-purge-receipt"],
+    ["railway-teardown-terminal.json", "railway-teardown-terminal"],
+    ["supabase-teardown-terminal.json", "supabase-teardown-terminal"],
+  ]);
+  if (
+    !exactKeys(receipt, [
+      "schemaVersion", "kind", "candidateSha", "producerWorkflow",
+      "producerRunId", "producerRunAttempt", "completedAt",
+      "targetProjectIdSha256", "targetEnvironmentIdSha256",
+      "targetDatabaseIdentitySha256", "targetSupabaseOriginSha256",
+      "evidence", "evidenceAggregateSha256", "cleanupEvidenceAggregateSha256",
+      "allOperationsExact", "targetAbsent", "receiptSha256",
+    ])
+    || receipt.schemaVersion !== 1
+    || receipt.kind !== "pintpath-production-promotion-recovery-activation"
+    || receipt.candidateSha !== candidateSha
+    || receipt.producerWorkflow !== "activate-production-promotion-recovery.yml"
+    || typeof receipt.producerRunId !== "string"
+    || !/^[1-9][0-9]{0,19}$/.test(receipt.producerRunId)
+    || receipt.producerRunAttempt !== "1"
+    || receipt.allOperationsExact !== true || receipt.targetAbsent !== true
+    || ACTIVATION_EVIDENCE.length !== evidenceByLeaf.size
+    || ACTIVATION_EVIDENCE.some((leaf) => !evidenceByLeaf.has(leaf))
+    || [receipt.targetProjectIdSha256, receipt.targetEnvironmentIdSha256,
+      receipt.targetDatabaseIdentitySha256, receipt.targetSupabaseOriginSha256]
+      .some((value) => typeof value !== "string" || !SHA256.test(value))
+    || receipt.evidenceAggregateSha256 !== sha256ProductionPromotionRecoveryValue(
+      ACTIVATION_EVIDENCE.map((leaf) => ({ leaf, sha256: evidenceByLeaf.get(leaf) })),
+    )
+    || receipt.cleanupEvidenceAggregateSha256 !== sha256ProductionPromotionRecoveryValue([
+      { leaf: "railway-teardown-terminal.json",
+        sha256: evidenceByLeaf.get("railway-teardown-terminal.json") },
+      { leaf: "storage-purge-receipt.json",
+        sha256: evidenceByLeaf.get("storage-purge-receipt.json") },
+      { leaf: "supabase-teardown-terminal.json",
+        sha256: evidenceByLeaf.get("supabase-teardown-terminal.json") },
+    ])
+    || receiptSha256 !== sha256ProductionPromotionRecoveryValue(receiptWithoutHash)
+  ) fail("activation_receipt_invalid");
+  exactTimestamp(receipt.completedAt);
+  for (const [leaf, name] of fileByLeaf) {
+    if (evidenceByLeaf.get(leaf) !== files.get(name)!.sha256) {
+      fail("activation_evidence_mismatch");
+    }
+  }
+  if (
+    !exactKeys(github, [
+      "schemaVersion", "kind", "repository", "candidateSha", "workflowPath",
+      "workflowRunId", "workflowRunAttempt", "workflowRunStartedAt", "workflowEvent",
+      "workflowConclusion", "artifactName", "artifactId", "artifactDigest",
+      "artifactSizeBytes", "artifactExpired",
+    ])
+    || github.schemaVersion !== 1
+    || github.kind !== "pintpath-production-promotion-recovery-activation-github-authority"
+    || github.repository !== repository || github.candidateSha !== candidateSha
+    || github.workflowPath !== ".github/workflows/activate-production-promotion-recovery.yml"
+    || github.workflowRunId !== receipt.producerRunId
+    || github.workflowRunAttempt !== 1 || github.workflowEvent !== "workflow_dispatch"
+    || github.workflowConclusion !== "success" || github.artifactExpired !== false
+    || github.artifactName !== `pintpath-production-promotion-recovery-activation-${candidateSha}`
+    || typeof github.artifactId !== "string" || !/^[1-9][0-9]{0,19}$/.test(github.artifactId)
+    || typeof github.artifactDigest !== "string"
+    || !/^sha256:[a-f0-9]{64}$/.test(github.artifactDigest)
+    || !Number.isSafeInteger(github.artifactSizeBytes) || Number(github.artifactSizeBytes) < 1
+  ) fail("activation_github_authority_invalid");
+  const workflowRunStartedAt = exactTimestamp(github.workflowRunStartedAt);
+  if (Date.parse(workflowRunStartedAt) > Date.parse(String(receipt.completedAt))) {
+    fail("activation_github_authority_invalid");
+  }
+  const privateWorm = parseExactEvidence(productionRecoveryPrivateWormResultSchema,
+    json("private-storage-worm-receipt"), "private_storage_worm_invalid");
+  const privateWormRetrieval = parseExactEvidence(
+    productionRecoveryPrivateWormRetrievalSchema,
+    json("private-storage-worm-retrieval-receipt"), "private_storage_worm_invalid",
+  );
+  let logicalManifest: ReturnType<typeof parsePostgresLogicalBackupManifest>;
+  let recoveryManifest: ReturnType<
+    typeof postgresPrivateStorageRecoveryInternals.parseRecoveryManifest
+  >;
+  try {
+    logicalManifest = parsePostgresLogicalBackupManifest(
+      files.get("logical-backup-manifest")!.source,
+    );
+    recoveryManifest = postgresPrivateStorageRecoveryInternals.parseRecoveryManifest(
+      files.get("private-storage-recovery-manifest")!.source,
+    );
+  } catch {
+    fail("recovery_manifest_invalid");
+  }
+  const logicalArchive = isObject(logicalManifest.archive) ? logicalManifest.archive : null;
+  const logicalState = isObject(logicalManifest.state) ? logicalManifest.state : null;
+  const logicalWorm = parseExactEvidence(productionRecoveryLogicalWormResultSchema,
+    json("logical-worm-result"), "logical_worm_invalid");
+  const logicalWormRetrieval = parseExactEvidence(productionRecoveryLogicalWormRetrievalSchema,
+    json("logical-worm-retrieval-receipt"), "logical_worm_retrieval_invalid");
+  const logicalRestore = parseExactEvidence(productionRecoveryLogicalRestoreReceiptSchema,
+    json("logical-restore-receipt"), "logical_restore_invalid");
+  const capture = parseExactEvidence(productionRecoveryPrivateCaptureSchema,
+    json("private-storage-capture-receipt"), "private_storage_capture_invalid");
+  const storageRestore = parseExactEvidence(productionRecoveryPrivateRestoreSchema,
+    json("private-storage-restore-receipt"), "private_storage_restore_invalid");
+  const offsite = parseExactEvidence(productionRecoveryLogicalOffsiteResultSchema,
+    json("logical-offsite-result"), "logical_offsite_invalid");
+  const offsiteRetrieval = parseExactEvidence(productionRecoveryLogicalOffsiteRetrievalSchema,
+    json("offsite-retrieval-receipt"), "offsite_retrieval_invalid");
+  const expectedBackupIdSha256 = sha256ProductionPromotionRecoveryBytes(
+    `${logicalManifest.createdAt.replace(/[-:.]/g, "")}-${
+      files.get("logical-backup-manifest")!.sha256}`,
+  );
+  const offsiteLocalArtifacts = [
+    { filename: "manifest.json", bytes: offsiteRetrieval.manifestBytes,
+      sha256: offsiteRetrieval.manifestSha256, mode: "0600" },
+    { filename: "pintpath-postgres.dump", bytes: offsiteRetrieval.archiveBytes,
+      sha256: offsiteRetrieval.archiveSha256, mode: "0600" },
+    { filename: "state-receipt.json", bytes: offsiteRetrieval.stateReceiptBytes,
+      sha256: offsiteRetrieval.stateReceiptSha256, mode: "0600" },
+  ];
+  if (offsite.backupCreatedAt !== logicalManifest.createdAt
+    || offsite.archiveSha256 !== logicalManifest.archive.sha256
+    || offsite.manifestSha256 !== files.get("logical-backup-manifest")!.sha256
+    || offsite.stateReceiptSha256 !== logicalManifest.state.receiptSha256
+    || offsite.sourceDatabaseIdentitySha256
+      !== logicalManifest.state.sourceDatabaseIdentitySha256
+    || offsite.overallStateSha256 !== logicalManifest.state.overallStateSha256
+    || offsite.backupIdSha256 !== expectedBackupIdSha256
+    || Date.parse(offsiteRetrieval.retrievedAt) < Date.parse(offsite.completedAt)
+    || offsiteRetrieval.successStateSha256 !== offsite.successStateSha256
+    || offsiteRetrieval.backupCreatedAt !== offsite.backupCreatedAt
+    || offsiteRetrieval.backupIdSha256 !== offsite.backupIdSha256
+    || offsiteRetrieval.latestPointerSha256 !== offsite.latestPointerSha256
+    || offsiteRetrieval.attestationSha256 !== offsite.attestationSha256
+    || offsiteRetrieval.remoteObjectSetSha256 !== offsite.remoteObjectSetSha256
+    || offsiteRetrieval.archiveSha256 !== offsite.archiveSha256
+    || offsiteRetrieval.manifestSha256 !== offsite.manifestSha256
+    || offsiteRetrieval.stateReceiptSha256 !== offsite.stateReceiptSha256
+    || offsiteRetrieval.sourceDatabaseIdentitySha256 !== offsite.sourceDatabaseIdentitySha256
+    || offsiteRetrieval.overallStateSha256 !== offsite.overallStateSha256
+    || offsiteRetrieval.archiveBytes !== logicalManifest.archive.bytes
+    || offsiteRetrieval.manifestBytes !== files.get("logical-backup-manifest")!.source.length
+    || offsiteRetrieval.localArtifactSetSha256
+      !== sha256ProductionPromotionRecoveryValue(offsiteLocalArtifacts)) {
+    fail("offsite_retrieval_invalid");
+  }
+  const privateWormCompletedAt = exactTimestamp(privateWorm.completedAt);
+  const privateWormMinimumRetainUntil = exactTimestamp(privateWorm.minimumRetainUntil);
+  const privateWormRetrievedAt = exactTimestamp(privateWormRetrieval.recoveredAt);
+  const logicalWormCompletedAt = exactTimestamp(logicalWorm.completedAt);
+  const logicalWormRetrievedAt = exactTimestamp(logicalWormRetrieval.retrievedAt);
+  const logicalRestoreAt = exactTimestamp(logicalRestore.restoredAt);
+  if (!logicalArchive || !logicalState
+    || logicalWorm.backupCreatedAt !== logicalManifest.createdAt
+    || logicalWorm.archiveSha256 !== logicalArchive.sha256
+    || logicalWorm.manifestSha256 !== files.get("logical-backup-manifest")!.sha256
+    || logicalWorm.stateReceiptSha256 !== logicalState.receiptSha256
+    || logicalWorm.overallStateSha256 !== logicalState.overallStateSha256
+    || logicalWorm.backupIdSha256
+      !== sha256ProductionPromotionRecoveryBytes(
+        `${String(logicalManifest.createdAt).replace(/[-:.]/g, "")}-${
+          files.get("logical-backup-manifest")!.sha256}`,
+      )
+    || logicalWormRetrieval.backupCreatedAt !== logicalManifest.createdAt
+    || logicalWormRetrieval.archiveSha256 !== logicalArchive.sha256
+    || logicalWormRetrieval.manifestSha256 !== files.get("logical-backup-manifest")!.sha256
+    || logicalWormRetrieval.stateReceiptSha256 !== logicalState.receiptSha256
+    || logicalWormRetrieval.sourceDatabaseIdentitySha256
+      !== logicalState.sourceDatabaseIdentitySha256
+    || logicalWormRetrieval.overallStateSha256 !== logicalState.overallStateSha256
+    || logicalWormRetrieval.wormResultSha256 !== files.get("logical-worm-result")!.sha256
+    || logicalWormRetrieval.wormReceiptSha256 !== logicalWorm.receiptSha256
+    || logicalWormRetrieval.immutableObjectSetSha256
+      !== logicalWorm.immutableObjectSetSha256
+    || logicalWormRetrieval.backupIdSha256 !== logicalWorm.backupIdSha256
+    || logicalWormRetrieval.recoveryAccountIdSha256
+      !== logicalWorm.recoveryAccountIdSha256
+    || logicalWormRetrieval.bucketNameSha256 !== logicalWorm.bucketNameSha256
+    || logicalWormRetrieval.readerPrincipalArnSha256
+      !== logicalWorm.readerPrincipalArnSha256
+    || logicalWormRetrieval.minimumRetainUntil !== logicalWorm.minimumRetainUntil
+    || !Number.isSafeInteger(logicalWormRetrieval.archiveBytes)
+    || logicalWormRetrieval.archiveBytes !== logicalArchive.bytes
+    || !Number.isSafeInteger(logicalWormRetrieval.manifestBytes)
+    || logicalWormRetrieval.manifestBytes !== files.get("logical-backup-manifest")!.source.length
+    || !Number.isSafeInteger(logicalWormRetrieval.stateReceiptBytes)
+    || Number(logicalWormRetrieval.stateReceiptBytes) < 1
+    || logicalWormRetrieval.localArtifactSetSha256
+      !== sha256ProductionPromotionRecoveryValue([
+        { filename: logicalArchive.file, bytes: logicalWormRetrieval.archiveBytes,
+          sha256: logicalWormRetrieval.archiveSha256 },
+        { filename: "manifest.json", bytes: logicalWormRetrieval.manifestBytes,
+          sha256: logicalWormRetrieval.manifestSha256 },
+        { filename: logicalState.receiptFile, bytes: logicalWormRetrieval.stateReceiptBytes,
+          sha256: logicalWormRetrieval.stateReceiptSha256 },
+      ])
+    || logicalRestore.backupManifestSha256 !== logicalWormRetrieval.manifestSha256
+    || logicalRestore.backupArchiveSha256 !== logicalWormRetrieval.archiveSha256
+    || logicalRestore.targetIdentitySha256 !== storageRestore.targetDatabaseIdentitySha256
+    || logicalRestore.targetUrlSha256 !== storageRestore.destinationConnectionUrlSha256
+    || logicalRestore.authoritativeTableCount !== logicalState.authoritativeTableCount
+    || logicalRestore.authoritativeRowCount !== logicalState.authoritativeRowCount
+    || logicalRestore.schemaMetadataSha256 !== logicalState.schemaMetadataSha256
+    || logicalRestore.expectedSourceStateReceiptSha256
+      !== logicalWormRetrieval.stateReceiptSha256
+    || logicalRestore.sourceSnapshotBindingSha256 !== logicalState.snapshotBindingSha256
+    || logicalRestore.expectedSourceTableSetSha256 !== logicalState.tableSetSha256
+    || logicalRestore.expectedSourceDataSha256 !== logicalState.transformedDataSha256
+    || logicalRestore.expectedSourceStateTotalsSha256 !== logicalState.stateTotalsSha256
+    || logicalRestore.expectedSourceKeyRangesSha256 !== logicalState.keyRangesSha256
+    || logicalRestore.expectedArchivedControlTableSetSha256
+      !== logicalState.archivedControlTableSetSha256
+    || logicalRestore.expectedArchivedControlDataSha256
+      !== logicalState.archivedControlDataSha256
+    || logicalRestore.expectedArchivedControlKeyRangesSha256
+      !== logicalState.archivedControlKeyRangesSha256
+    || logicalRestore.expectedSourceOverallStateSha256
+      !== logicalWormRetrieval.overallStateSha256
+    || Date.parse(logicalWormRetrievedAt) < Date.parse(logicalWormCompletedAt)
+    || Date.parse(logicalRestoreAt) < Date.parse(logicalWormRetrievedAt)) {
+    fail("logical_worm_retrieval_invalid");
+  }
+  if (logicalManifest.schemaVersion !== 3
+    || privateWorm.candidateSha !== candidateSha
+    || recoveryManifest.logicalBackup.candidateSha !== candidateSha
+    || recoveryManifest.logicalBackup.sourceEnvironment !== "production"
+    || recoveryManifest.capturedAt !== capture.capturedAt
+    || recoveryManifest.logicalBackup.archiveSha256 !== logicalManifest.archive.sha256
+    || recoveryManifest.logicalBackup.stateReceiptSha256 !== logicalManifest.state.receiptSha256
+    || recoveryManifest.logicalBackup.sourceDatabaseIdentitySha256
+      !== logicalManifest.state.sourceDatabaseIdentitySha256
+    || recoveryManifest.logicalBackup.sourceUrlSha256 !== logicalManifest.state.sourceUrlSha256
+    || recoveryManifest.logicalBackup.overallStateSha256
+      !== logicalManifest.state.overallStateSha256
+    || capture.logicalBackupManifestSha256 !== files.get("logical-backup-manifest")!.sha256
+    || capture.recoverySetSha256 !== recoveryManifest.recoverySetSha256
+    || capture.recoveryManifestSha256
+      !== files.get("private-storage-recovery-manifest")!.sha256
+    || capture.storageObjectCount !== recoveryManifest.sourceStorage.objectCount
+    || capture.databaseReferenceCount !== recoveryManifest.sourceStorage.databaseReferenceCount
+    || capture.deletionTombstoneCount !== recoveryManifest.deletionAuthority.tombstoneCount
+    || capture.databaseConnectionUrlSha256 !== recoveryManifest.logicalBackup.captureUrlSha256
+    || capture.databaseTransportRootCaDerSha256
+      !== logicalManifest.transport.rootCaCertificateSha256
+    || storageRestore.candidateSha !== candidateSha
+    || storageRestore.targetDatabaseIdentitySha256 !== receipt.targetDatabaseIdentitySha256
+    || storageRestore.recoverySetSha256 !== recoveryManifest.recoverySetSha256
+    || storageRestore.recoveryManifestSha256
+      !== files.get("private-storage-recovery-manifest")!.sha256
+    || storageRestore.restoredObjectCount !== recoveryManifest.sourceStorage.objectCount
+    || storageRestore.restoredBytes !== recoveryManifest.sourceStorage.totalBytes
+    || storageRestore.destinationObjectSetSha256 !== recoveryManifest.sourceStorage.objectSetSha256
+    || storageRestore.deletionAuthoritySetSha256
+      !== recoveryManifest.deletionAuthority.authoritySetSha256
+    || storageRestore.destinationOriginSha256 !== receipt.targetSupabaseOriginSha256
+    || storageRestore.destinationBucketNameSha256 !== recoveryManifest.sourceStorage.bucketNameSha256
+    || storageRestore.databaseTransportRootCaDerSha256
+      !== logicalManifest.transport.rootCaCertificateSha256
+    || storageRestore.destinationConnectionUrlSha256 === capture.databaseConnectionUrlSha256
+    || storageRestore.destinationRailwayProjectIdSha256 !== receipt.targetProjectIdSha256
+    || storageRestore.destinationRailwayEnvironmentIdSha256 !== receipt.targetEnvironmentIdSha256
+    || privateWorm.recoverySetSha256 !== capture.recoverySetSha256
+    || privateWorm.recoverySetSha256 !== storageRestore.recoverySetSha256
+    || privateWorm.recoveryManifestSha256
+      !== files.get("private-storage-recovery-manifest")!.sha256
+    || privateWorm.recoveryManifestSha256 !== capture.recoveryManifestSha256
+    || privateWorm.recoveryManifestSha256 !== storageRestore.recoveryManifestSha256
+    || privateWorm.logicalBackupManifestSha256
+      !== files.get("logical-backup-manifest")!.sha256
+    || Date.parse(privateWormMinimumRetainUntil) <= Date.parse(privateWormCompletedAt)
+    || privateWormRetrieval.candidateSha !== candidateSha
+    || privateWormRetrieval.recoverySetSha256 !== privateWorm.recoverySetSha256
+    || privateWormRetrieval.recoveryManifestSha256 !== privateWorm.recoveryManifestSha256
+    || privateWormRetrieval.bundleManifestSha256 !== privateWorm.bundleManifestSha256
+    || privateWormRetrieval.logicalBackupManifestSha256
+      !== privateWorm.logicalBackupManifestSha256
+    || privateWormRetrieval.wormResultSha256
+      !== files.get("private-storage-worm-receipt")!.sha256
+    || privateWormRetrieval.wormReceiptSha256 !== privateWorm.receiptSha256
+    || privateWormRetrieval.immutableObjectSetSha256
+      !== privateWorm.immutableObjectSetSha256
+    || privateWormRetrieval.recoveryAccountIdSha256
+      !== privateWorm.recoveryAccountIdSha256
+    || privateWormRetrieval.bucketNameSha256 !== privateWorm.bucketNameSha256
+    || privateWormRetrieval.readerPrincipalArnSha256 !== privateWorm.readerPrincipalArnSha256
+    || privateWormRetrieval.minimumRetainUntil !== privateWorm.minimumRetainUntil
+    || Date.parse(privateWormRetrievedAt) < Date.parse(privateWormCompletedAt)
+    || privateWormRetrieval.recoveredEntryCount
+      !== Number(storageRestore.restoredObjectCount) + 4) {
+    fail("private_storage_worm_invalid");
+  }
+  const pitr = parseExactEvidence(productionRecoveryPitrReceiptSchema,
+    json("pitr-receipt"), "pitr_invalid");
+  let firstReplay, secondReplay;
+  try {
+    firstReplay = parsePostgresAccountDeletionReplayReceipt(
+      json("deletion-replay-first-receipt"),
+    );
+    secondReplay = parsePostgresAccountDeletionReplayReceipt(
+      json("deletion-replay-second-receipt"),
+    );
+  } catch {
+    fail("deletion_replay_invalid");
+  }
+  const smoke = parseExactEvidence(productionRecoveryRecoveredApplicationSchema,
+    json("recovered-smoke-receipt"), "recovered_application_invalid");
+  if (pitr.candidateSha !== candidateSha || pitr.recoveryPointAt !== logicalManifest.createdAt
+    || smoke.candidateSha !== candidateSha
+    || smoke.targetIdentitySha256 !== receipt.targetDatabaseIdentitySha256
+    || smoke.runtimeRoleExact !== true || smoke.maintenanceRoleRestricted !== true
+    || smoke.applicationStateReady !== true || smoke.deletionPrivacyReconciled !== true
+    || smoke.compiledArtifactExact !== true || smoke.compiledApplicationStarted !== true
+    || smoke.startupProbeExact !== true || smoke.startupRouteReady !== true
+    || smoke.readyProbeExact !== true || smoke.readyRouteReady !== true
+    || smoke.authenticatedBoundaryExact !== true || smoke.authenticatedRuntimeExact !== true
+    || smoke.restoredAuthAccountPreexistingExact !== true
+    || smoke.noAdminOrVenueElevationExact !== true || smoke.noPrivateDataLeakageExact !== true
+    || smoke.crossProjectTokenParserRejectedLocallyExact !== true
+    || smoke.appSessionRevokedExact !== true || smoke.providerSessionLogoutExact !== true
+    || smoke.automaticMaintenanceWorkersExternalWritesDisabledExact !== true
+    || smoke.runtimeDependencyBoundaryExact !== true
+    || smoke.childOutputBoundedRedactedExact !== true || smoke.childTerminatedExact !== true
+    || smoke.applicationChildTerminated !== true
+    || smoke.databaseAuthoritiesClosedExact !== true || smoke.transportClosedExact !== true
+    || smoke.supabaseOriginSha256 !== receipt.targetSupabaseOriginSha256
+    || smoke.firstReplayReceiptSha256 !== files.get("deletion-replay-first-receipt")!.sha256
+    || smoke.secondReplayReceiptSha256 !== files.get("deletion-replay-second-receipt")!.sha256
+    || smoke.semanticProjectionSha256 !== firstReplay.semanticProjectionSha256
+    || smoke.semanticProjectionSha256 !== secondReplay.semanticProjectionSha256
+    || smoke.tombstoneCount !== firstReplay.ledgerTombstoneCount
+    || smoke.tombstoneCount !== secondReplay.ledgerTombstoneCount
+    || !SHA256.test(String(smoke.compiledArtifactSha256))
+    || !SHA256.test(String(smoke.compiledEntrypointSha256))
+    || !SHA256.test(String(smoke.authSubjectSha256))
+    || !SHA256.test(String(smoke.authEmailSha256))
+    || !SHA256.test(String(smoke.supabasePublishableKeySha256))
+    || !SHA256.test(String(smoke.runtimeDatabaseUrlSha256))
+    || !SHA256.test(String(smoke.maintenanceDatabaseUrlSha256))
+    || smoke.runtimeDatabaseUrlSha256 === smoke.maintenanceDatabaseUrlSha256
+    || smoke.maintenanceDatabaseUrlSha256 !== storageRestore.destinationConnectionUrlSha256
+    || !SHA256.test(String(smoke.redisUrlSha256))
+    || smoke.transportProfile !== STOCK_LOCALHOST_PROFILE
+    || smoke.transportRootCaDerSha256 !== storageRestore.databaseTransportRootCaDerSha256
+    || smoke.transportRootCaDerSha256 !== firstReplay.transportRootCaDerSha256
+    || smoke.transportRootCaDerSha256 !== secondReplay.transportRootCaDerSha256) {
+    fail("recovered_application_invalid");
+  }
+  const storagePurge = parseExactEvidence(productionRecoveryStoragePurgeReceiptSchema,
+    json("storage-purge-receipt"), "storage_purge_invalid");
+  if (storagePurge.candidateSha !== candidateSha
+    || storagePurge.destinationOriginSha256 !== receipt.targetSupabaseOriginSha256
+    || storagePurge.targetRailwayProjectIdSha256 !== receipt.targetProjectIdSha256
+    || storagePurge.targetRailwayEnvironmentIdSha256 !== receipt.targetEnvironmentIdSha256
+    || storagePurge.targetDatabaseIdentitySha256 !== receipt.targetDatabaseIdentitySha256
+    || storagePurge.bucketNameSha256
+      !== sha256ProductionPromotionRecoveryBytes("beermap-source-evidence")
+    || storagePurge.destinationRestoreAuthoritySha256
+      !== storageRestore.destinationAuthoritySha256
+    || storagePurge.recoverySetSha256 !== recoveryManifest.recoverySetSha256
+    || storagePurge.recoveryManifestSha256
+      !== files.get("private-storage-recovery-manifest")!.sha256
+    || storagePurge.restoreReceiptSha256
+      !== files.get("private-storage-restore-receipt")!.sha256
+    || storagePurge.restoredObjectSetSha256 !== storageRestore.destinationObjectSetSha256
+    || storagePurge.removedObjectCount !== storageRestore.restoredObjectCount) {
+    fail("storage_purge_invalid");
+  }
+  const railwayTeardown = parseExactEvidence(productionRecoveryRailwayTeardownTerminalSchema,
+    json("railway-teardown-terminal"), "railway_teardown_invalid");
+  const railwayReceipt = railwayTeardown.receipt;
+  if (railwayReceipt.candidateSha !== candidateSha
+    || railwayReceipt.observedCleanupRunId !== receipt.producerRunId
+    || railwayReceipt.signedActivationRunId !== receipt.producerRunId
+    || sha256ProductionPromotionRecoveryBytes(String(railwayReceipt.projectId))
+      !== receipt.targetProjectIdSha256
+    || sha256ProductionPromotionRecoveryBytes(String(railwayReceipt.environmentId))
+      !== receipt.targetEnvironmentIdSha256) fail("railway_teardown_invalid");
+  const supabaseTeardown = parseExactEvidence(productionRecoverySupabaseTeardownTerminalSchema,
+    json("supabase-teardown-terminal"), "supabase_teardown_invalid");
+  const supabaseReceipt = supabaseTeardown.receipt;
+  if (supabaseReceipt.candidateSha !== candidateSha
+    || supabaseReceipt.observedCleanupRunId !== receipt.producerRunId
+    || supabaseReceipt.signedActivationRunId !== receipt.producerRunId
+    || supabaseReceipt.purgeReceiptSha256 !== files.get("storage-purge-receipt")!.sha256
+    || supabaseReceipt.destinationOriginSha256 !== receipt.targetSupabaseOriginSha256
+    || supabaseReceipt.destinationOriginSha256 !== sha256ProductionPromotionRecoveryBytes(
+      `https://${supabaseReceipt.projectRef}.supabase.co`,
+    )
+    || storagePurge.destinationProjectRefSha256
+      !== sha256ProductionPromotionRecoveryBytes(supabaseReceipt.projectRef)
+    || supabaseReceipt.destinationRestoreAuthoritySha256
+      !== storageRestore.destinationAuthoritySha256
+    || sha256ProductionPromotionRecoveryBytes(supabaseReceipt.targetRailwayProjectId)
+      !== receipt.targetProjectIdSha256
+    || sha256ProductionPromotionRecoveryBytes(supabaseReceipt.targetRailwayEnvironmentId)
+      !== receipt.targetEnvironmentIdSha256) {
+    fail("supabase_teardown_invalid");
+  }
+  return { receipt, github, smoke, storagePurge, railwayTeardown, supabaseTeardown,
+    privateWorm, privateWormRetrieval, logicalWormRetrieval };
+}
+
 function writeReceipt(filename: string, uid: number, receipt: ProductionPromotionRecoveryReceipt): void {
   const target = absolutePath(filename);
   const parent = path.dirname(target);
@@ -424,13 +979,18 @@ export async function attestProductionPromotionRecovery(
 
   const names = [
     "authority", "production-deployment-receipt", "production-scale-receipt",
+    "activation-receipt", "activation-github-authority",
     "closed-route-receipt",
     "closed-route-terminal", "apply-authorization-receipt", "apply-operation-receipt",
     "pitr-receipt", "logical-backup-manifest", "logical-offsite-result",
-    "logical-worm-result", "private-storage-capture-receipt",
+    "logical-worm-result", "logical-worm-retrieval-receipt",
+    "private-storage-capture-receipt",
     "private-storage-recovery-manifest", "offsite-retrieval-receipt",
     "logical-restore-receipt", "private-storage-restore-receipt",
     "deletion-replay-first-receipt", "deletion-replay-second-receipt",
+    "private-storage-worm-receipt", "private-storage-worm-retrieval-receipt",
+    "recovered-smoke-receipt", "storage-purge-receipt",
+    "railway-teardown-terminal", "supabase-teardown-terminal",
     "approval-one", "approval-one-public-key", "approval-two", "approval-two-public-key",
   ] as const;
   const files = new Map<string, HeldFile>();
@@ -459,12 +1019,56 @@ export async function attestProductionPromotionRecovery(
   exactFile("logical-backup-manifest", authority.logicalBackupManifestSha256);
   exactFile("logical-offsite-result", authority.logicalOffsiteResultSha256);
   exactFile("logical-worm-result", authority.logicalWormResultSha256);
+  exactFile("logical-worm-retrieval-receipt",
+    authority.logicalWormRetrievalReceiptSha256);
   exactFile("private-storage-capture-receipt", authority.privateStorageCaptureReceiptSha256);
   exactFile("offsite-retrieval-receipt", authority.offsiteRetrievalReceiptSha256);
   exactFile("logical-restore-receipt", authority.logicalRestoreReceiptSha256);
   exactFile("private-storage-restore-receipt", authority.privateStorageRestoreReceiptSha256);
   exactFile("deletion-replay-first-receipt", authority.deletionReplayFirstReceiptSha256);
   exactFile("deletion-replay-second-receipt", authority.deletionReplaySecondReceiptSha256);
+  exactFile("activation-receipt", authority.activationReceiptSha256);
+  exactFile("activation-github-authority", authority.activationGithubAuthoritySha256);
+  exactFile("private-storage-worm-receipt", authority.privateStorageWormReceiptSha256);
+  exactFile("private-storage-worm-retrieval-receipt",
+    authority.privateStorageWormRetrievalReceiptSha256);
+  exactFile("recovered-smoke-receipt", authority.recoveredApplicationReceiptSha256);
+  exactFile("storage-purge-receipt", authority.storagePurgeReceiptSha256);
+  exactFile("railway-teardown-terminal", authority.railwayTeardownTerminalSha256);
+  exactFile("supabase-teardown-terminal", authority.supabaseTeardownTerminalSha256);
+
+  const activation = verifyActivation(
+    files,
+    json,
+    candidateSha,
+    dependencies.env.GITHUB_REPOSITORY,
+  );
+  const activationEvidenceAggregateSha256 = sha256ProductionPromotionRecoveryValue(
+    ACTIVATION_EVIDENCE.map((leaf) => {
+      const entry = (activation.receipt.evidence as Json[]).find((value) => value.leaf === leaf);
+      return { leaf, sha256: entry?.sha256 };
+    }),
+  );
+  const cleanupEvidenceAggregateSha256 = sha256ProductionPromotionRecoveryValue([
+    { leaf: "railway-teardown-terminal.json",
+      sha256: files.get("railway-teardown-terminal")!.sha256 },
+    { leaf: "storage-purge-receipt.json", sha256: files.get("storage-purge-receipt")!.sha256 },
+    { leaf: "supabase-teardown-terminal.json",
+      sha256: files.get("supabase-teardown-terminal")!.sha256 },
+  ]);
+  if (authority.activationProducerRepository !== activation.github.repository
+    || authority.activationProducerWorkflowPath !== activation.github.workflowPath
+    || authority.activationProducerRunId !== activation.github.workflowRunId
+    || authority.activationProducerRunAttempt !== activation.github.workflowRunAttempt
+    || authority.recoveryStartedAt !== activation.github.workflowRunStartedAt
+    || authority.activationArtifactName !== activation.github.artifactName
+    || authority.activationArtifactId !== activation.github.artifactId
+    || authority.activationArtifactDigest !== activation.github.artifactDigest
+    || authority.activationArtifactSizeBytes !== activation.github.artifactSizeBytes
+    || authority.activationEvidenceAggregateSha256 !== activationEvidenceAggregateSha256
+    || authority.cleanupEvidenceAggregateSha256 !== cleanupEvidenceAggregateSha256) {
+    fail("activation_authority_binding_invalid");
+  }
 
   const deployment = verifyDeployment(json("production-deployment-receipt"), candidateSha);
   if (deployment.deploymentIdSha256 !== authority.productionDeploymentIdSha256) {
@@ -508,6 +1112,7 @@ export async function attestProductionPromotionRecovery(
   ) fail("logical_backup_invalid");
   const offsite = json("logical-offsite-result");
   const worm = json("logical-worm-result");
+  const wormRetrieval = json("logical-worm-retrieval-receipt");
   const capture = json("private-storage-capture-receipt");
   const recoveryManifest = json("private-storage-recovery-manifest");
   const retrieval = json("offsite-retrieval-receipt");
@@ -530,11 +1135,25 @@ export async function attestProductionPromotionRecovery(
     || !SHA256.test(String(worm.receiptSha256))
   ) fail("logical_worm_invalid");
   if (
+    wormRetrieval.schemaVersion !== 1
+    || wormRetrieval.kind !== "pintpath-postgres-logical-worm-retrieval"
+    || wormRetrieval.ok !== true
+    || wormRetrieval.wormResultSha256 !== files.get("logical-worm-result")!.sha256
+    || wormRetrieval.wormReceiptSha256 !== worm.receiptSha256
+    || wormRetrieval.manifestSha256 !== files.get("logical-backup-manifest")!.sha256
+    || wormRetrieval.archiveSha256 !== manifest.archive.sha256
+    || wormRetrieval.stateReceiptSha256 !== manifest.state.receiptSha256
+    || wormRetrieval.sourceDatabaseIdentitySha256
+      !== manifest.state.sourceDatabaseIdentitySha256
+    || wormRetrieval.overallStateSha256 !== manifest.state.overallStateSha256
+  ) fail("logical_worm_retrieval_invalid");
+  if (
     capture.schemaVersion !== 1
     || capture.kind !== "pintpath-postgres-private-storage-recovery-capture"
     || capture.ok !== true
     || capture.databaseTransportProfile !== STOCK_LOCALHOST_PROFILE
     || capture.databaseEffectiveRole !== "pintpath_migrator"
+    || !SHA256.test(String(capture.databaseConnectionUrlSha256))
     || !SHA256.test(String(capture.databaseTransportRootCaDerSha256))
     || capture.logicalBackupManifestSha256 !== files.get("logical-backup-manifest")!.sha256
     || capture.databaseTransportRootCaDerSha256 !== manifest.transport.rootCaCertificateSha256
@@ -554,6 +1173,13 @@ export async function attestProductionPromotionRecovery(
     || recoveryManifest.logicalBackup.sourceEnvironment !== "production"
     || recoveryManifest.logicalBackup.manifestSha256
       !== files.get("logical-backup-manifest")!.sha256
+    || recoveryManifest.logicalBackup.sourceDatabaseIdentitySha256
+      !== manifest.state.sourceDatabaseIdentitySha256
+    || recoveryManifest.logicalBackup.sourceUrlSha256 !== manifest.state.sourceUrlSha256
+    || recoveryManifest.logicalBackup.captureUrlSha256
+      !== capture.databaseConnectionUrlSha256
+    || recoveryManifest.logicalBackup.captureUrlSha256
+      === recoveryManifest.logicalBackup.sourceUrlSha256
     || !isObject(recoveryManifest.deletionAuthority)
     || Number(recoveryManifest.deletionAuthority.tombstoneCount) < 1
     || recoveryManifest.recoverySetSha256 !== capture.recoverySetSha256
@@ -604,10 +1230,30 @@ export async function attestProductionPromotionRecovery(
     || replayTwo.targetIdentitySha256 !== targetIdentity
     || replayOne.baseRestoreReceiptSha256 !== files.get("logical-restore-receipt")!.sha256
     || replayTwo.baseRestoreReceiptSha256 !== files.get("logical-restore-receipt")!.sha256
+    || replayOne.backupManifestSha256 !== files.get("logical-backup-manifest")!.sha256
+    || replayTwo.backupManifestSha256 !== files.get("logical-backup-manifest")!.sha256
+    || replayOne.backupArchiveSha256 !== manifest.archive.sha256
+    || replayTwo.backupArchiveSha256 !== manifest.archive.sha256
+    || replayOne.sourceStateReceiptSha256 !== manifest.state.receiptSha256
+    || replayTwo.sourceStateReceiptSha256 !== manifest.state.receiptSha256
+    || replayOne.sourceSnapshotBindingSha256 !== manifest.state.snapshotBindingSha256
+    || replayTwo.sourceSnapshotBindingSha256 !== manifest.state.snapshotBindingSha256
+    || replayOne.expectedSourceOverallStateSha256 !== manifest.state.overallStateSha256
+    || replayTwo.expectedSourceOverallStateSha256 !== manifest.state.overallStateSha256
+    || replayOne.restoredOverallStateSha256 !== restore.restoredOverallStateSha256
+    || replayTwo.restoredOverallStateSha256 !== restore.restoredOverallStateSha256
+    || replayOne.migrationRunSha256 !== recoveryManifest.logicalBackup.migrationRunSha256
+    || replayTwo.migrationRunSha256 !== recoveryManifest.logicalBackup.migrationRunSha256
     || replayOne.migrationCandidateSha !== candidateSha
     || replayTwo.migrationCandidateSha !== candidateSha
     || replayOne.ledgerCurrentSha256 !== recoveryManifest.deletionAuthority.currentSha256
     || replayTwo.ledgerCurrentSha256 !== recoveryManifest.deletionAuthority.currentSha256
+    || replayOne.ledgerGenesisSha256 !== recoveryManifest.deletionAuthority.genesisSha256
+    || replayTwo.ledgerGenesisSha256 !== recoveryManifest.deletionAuthority.genesisSha256
+    || replayOne.ledgerCheckpointSha256 !== recoveryManifest.deletionAuthority.checkpointSha256
+    || replayTwo.ledgerCheckpointSha256 !== recoveryManifest.deletionAuthority.checkpointSha256
+    || replayOne.ledgerImmutableSetSha256 !== recoveryManifest.deletionAuthority.immutableSetSha256
+    || replayTwo.ledgerImmutableSetSha256 !== recoveryManifest.deletionAuthority.immutableSetSha256
     || replayOne.ledgerTombstoneCount !== recoveryManifest.deletionAuthority.tombstoneCount
     || replayOne.counts.seen < 1 || replayOne.counts.newlyApplied !== replayOne.counts.seen
     || replayOne.counts.alreadyApplied !== 0
@@ -623,6 +1269,25 @@ export async function attestProductionPromotionRecovery(
     || replayOne.transportRootCaDerSha256
       !== storageRestore.databaseTransportRootCaDerSha256
   ) fail("deletion_replay_invalid");
+  if (
+    activation.receipt.targetDatabaseIdentitySha256 !== targetIdentity
+    || activation.receipt.targetDatabaseIdentitySha256
+      !== activation.smoke.targetIdentitySha256
+    || activation.privateWorm.recoverySetSha256 !== recoveryManifest.recoverySetSha256
+    || activation.privateWorm.recoveryManifestSha256
+      !== files.get("private-storage-recovery-manifest")!.sha256
+    || activation.privateWormRetrieval.recoverySetSha256
+      !== recoveryManifest.recoverySetSha256
+    || activation.logicalWormRetrieval.wormResultSha256
+      !== files.get("logical-worm-result")!.sha256
+    || activation.logicalWormRetrieval.manifestSha256
+      !== files.get("logical-backup-manifest")!.sha256
+    || activation.smoke.firstReplayReceiptSha256
+      !== files.get("deletion-replay-first-receipt")!.sha256
+    || activation.smoke.secondReplayReceiptSha256
+      !== files.get("deletion-replay-second-receipt")!.sha256
+    || activation.smoke.semanticProjectionSha256 !== replayTwo.semanticProjectionSha256
+  ) fail("activation_state_binding_invalid");
 
   const approvalOne = verifyProductionPromotionRecoveryApproval({
     approval: json("approval-one"), authorityManifestSha256: authorityFile.sha256,
@@ -656,16 +1321,33 @@ export async function attestProductionPromotionRecovery(
     pitr: pitr.observedAt, backup: exactTimestamp(manifest.createdAt),
     privateCapture: exactTimestamp(capture.capturedAt), offsite: exactTimestamp(offsite.completedAt),
     worm: exactTimestamp(worm.completedAt), retrieval: exactTimestamp(retrieval.retrievedAt),
+    logicalWormRetrieval: exactTimestamp(wormRetrieval.retrievedAt),
     logicalRestore: exactTimestamp(restore.restoredAt),
     privateRestore: exactTimestamp(storageRestore.restoredAt),
     replayOne: exactTimestamp(replayOne.replayedAt), replayTwo: exactTimestamp(replayTwo.replayedAt),
+    privateWormSeal: exactTimestamp(activation.privateWorm.completedAt),
+    privateWormRetrieval: exactTimestamp(activation.privateWormRetrieval.recoveredAt),
+    applicationReady: exactTimestamp(activation.smoke.applicationReadyAt),
+    applicationCompleted: exactTimestamp(activation.smoke.completedAt),
+    purgeCompleted: exactTimestamp(activation.storagePurge.completedAt),
+    railwayCleanupCompleted: exactTimestamp(
+      (activation.railwayTeardown.receipt as Json).completedAt,
+    ),
+    supabaseCleanupCompleted: exactTimestamp(
+      (activation.supabaseTeardown.receipt as Json).completedAt,
+    ),
+    activationCompleted: exactTimestamp(activation.receipt.completedAt),
     reviewerOne: approvalOne.payload.approvedAt, reviewerTwo: approvalTwo.payload.approvedAt,
   };
   const time = (name: keyof typeof times) => Date.parse(times[name]);
   const recoveryStartedAt = Date.parse(authority.recoveryStartedAt);
+  const applicationReadyAt = Date.parse(authority.applicationReadyAt);
   const recoveryCompletedAt = Date.parse(authority.recoveryCompletedAt);
+  const cleanupStartedAt = Date.parse(authority.cleanupStartedAt);
+  const cleanupCompletedAt = Date.parse(authority.cleanupCompletedAt);
   const rpo = Math.floor((time("backup") - time("apply")) / 1_000);
-  const rto = Math.floor((recoveryCompletedAt - recoveryStartedAt) / 1_000);
+  const rto = Math.floor((applicationReadyAt - recoveryStartedAt) / 1_000);
+  const cleanupSeconds = Math.floor((cleanupCompletedAt - cleanupStartedAt) / 1_000);
   const approvalsAfterRecovery = Math.min(time("reviewerOne"), time("reviewerTwo"));
   const now = dependencies.now();
   const nowMs = now.getTime();
@@ -676,18 +1358,40 @@ export async function attestProductionPromotionRecovery(
     || [time("pitr"), time("backup"), time("privateCapture"), time("offsite"), time("worm")]
       .some((entry) => entry <= time("apply"))
     || time("retrieval") < Math.max(time("offsite"), time("worm"), time("privateCapture"))
-    || time("logicalRestore") < time("retrieval")
+    || time("logicalWormRetrieval") < time("worm")
+    || time("logicalRestore") < Math.max(time("retrieval"), time("logicalWormRetrieval"))
     || time("privateRestore") < time("logicalRestore")
     || time("replayOne") < time("privateRestore") || time("replayTwo") <= time("replayOne")
-    || approvalsAfterRecovery < time("replayTwo")
+    || time("privateWormSeal") < time("privateCapture")
+    || time("privateWormRetrieval") < time("privateWormSeal")
+    || time("logicalRestore") < time("privateWormRetrieval")
+    || time("applicationReady") < time("replayTwo")
+    || time("applicationCompleted") < time("applicationReady")
+    || time("purgeCompleted") < time("applicationCompleted")
+    || time("railwayCleanupCompleted") < time("purgeCompleted")
+    || time("supabaseCleanupCompleted") < time("purgeCompleted")
+    || time("activationCompleted") < Math.max(
+      time("railwayCleanupCompleted"), time("supabaseCleanupCompleted"),
+    )
+    || approvalsAfterRecovery < time("activationCompleted")
     || !Number.isFinite(nowMs) || nowMs < Math.max(time("reviewerOne"), time("reviewerTwo"))
+    || Object.keys(times).some((name) => time(name as keyof typeof times) > nowMs)
     || nowMs - Math.min(time("reviewerOne"), time("reviewerTwo")) > MAX_APPROVAL_AGE_MS
     || authority.recoveryPointAt !== times.backup || pitr.recoveryPointAt !== times.backup
     || authority.pitrObservedAt !== times.pitr
-    || authority.recoveryCompletedAt !== times.replayTwo
-    || recoveryStartedAt <= time("apply") || recoveryStartedAt > time("retrieval")
+    || authority.logicalWormRetrievedAt !== times.logicalWormRetrieval
+    || authority.applicationReadyAt !== times.applicationReady
+    || authority.recoveryCompletedAt !== times.applicationCompleted
+    || authority.cleanupStartedAt !== times.applicationCompleted
+    || authority.cleanupCompletedAt !== times.activationCompleted
+    || authority.recoveryStartedAt !== activation.github.workflowRunStartedAt
+    || recoveryStartedAt <= time("apply")
+    || recoveryStartedAt > Math.min(time("retrieval"), time("logicalWormRetrieval"))
+    || cleanupStartedAt < recoveryCompletedAt || cleanupCompletedAt < cleanupStartedAt
     || authority.rpoSeconds !== rpo || authority.rtoSeconds !== rto
+    || authority.cleanupSeconds !== cleanupSeconds
     || rpo < 0 || rpo > 3_600 || rto < 1 || rto > 14_400
+    || cleanupSeconds < 0 || cleanupSeconds > 3_600
   ) fail("chronology_invalid");
 
   const chronology = Object.entries(times).map(([stage, at]) => ({ stage, at })).sort(
@@ -702,6 +1406,32 @@ export async function attestProductionPromotionRecovery(
     outcome: "verified", candidateSha, githubEnvironment: "production-promotion-recovery",
     policySha256: PRODUCTION_PROMOTION_RECOVERY_POLICY_SHA256,
     authorityManifestSha256: authorityFile.sha256,
+    activationReceiptSha256: files.get("activation-receipt")!.sha256,
+    activationGithubAuthoritySha256: files.get("activation-github-authority")!.sha256,
+    activationProducerWorkflow: "activate-production-promotion-recovery.yml",
+    activationProducerRunId: String(activation.receipt.producerRunId),
+    activationProducerRunAttempt: 1,
+    activationRepository: String(activation.github.repository),
+    activationArtifactName: String(activation.github.artifactName),
+    activationArtifactId: String(activation.github.artifactId),
+    activationArtifactDigest: String(activation.github.artifactDigest),
+    activationArtifactSizeBytes: Number(activation.github.artifactSizeBytes),
+    activationTargetProjectIdSha256: exactSha(activation.receipt.targetProjectIdSha256),
+    activationTargetEnvironmentIdSha256: exactSha(
+      activation.receipt.targetEnvironmentIdSha256,
+    ),
+    activationTargetSupabaseOriginSha256: exactSha(
+      activation.receipt.targetSupabaseOriginSha256,
+    ),
+    privateStorageWormReceiptSha256: files.get("private-storage-worm-receipt")!.sha256,
+    privateStorageWormRetrievalReceiptSha256:
+      files.get("private-storage-worm-retrieval-receipt")!.sha256,
+    recoveredApplicationReceiptSha256: files.get("recovered-smoke-receipt")!.sha256,
+    storagePurgeReceiptSha256: files.get("storage-purge-receipt")!.sha256,
+    railwayTeardownTerminalSha256: files.get("railway-teardown-terminal")!.sha256,
+    supabaseTeardownTerminalSha256: files.get("supabase-teardown-terminal")!.sha256,
+    activationEvidenceAggregateSha256,
+    cleanupEvidenceAggregateSha256,
     productionDeploymentReceiptSha256: authority.productionDeploymentReceiptSha256,
     productionDeploymentIdSha256: deployment.deploymentIdSha256,
     productionScaleReceiptSha256: authority.productionScaleReceiptSha256,
@@ -715,6 +1445,9 @@ export async function attestProductionPromotionRecovery(
     logicalBackupCreatedAt: times.backup, offsiteSuccessStateSha256: exactSha(offsite.successStateSha256),
     offsiteCompletedAt: times.offsite, wormReceiptSha256: exactSha(worm.receiptSha256),
     wormCompletedAt: times.worm,
+    logicalWormRetrievalReceiptSha256:
+      authority.logicalWormRetrievalReceiptSha256,
+    logicalWormRetrievedAt: times.logicalWormRetrieval,
     privateStorageCaptureReceiptSha256: authority.privateStorageCaptureReceiptSha256,
     privateStorageCapturedAt: times.privateCapture,
     offsiteRetrievalReceiptSha256: authority.offsiteRetrievalReceiptSha256,
@@ -725,8 +1458,14 @@ export async function attestProductionPromotionRecovery(
     privateStorageRestoredAt: times.privateRestore,
     deletionReplayFirstReceiptSha256: authority.deletionReplayFirstReceiptSha256,
     deletionReplaySecondReceiptSha256: authority.deletionReplaySecondReceiptSha256,
-    deletionReplayCompletedAt: times.replayTwo, recoveryTargetIdentitySha256: targetIdentity,
-    recoveryPointAt: times.backup, rpoSeconds: rpo, rtoSeconds: rto,
+    deletionReplayCompletedAt: times.replayTwo,
+    recoveryStartedAt: authority.recoveryStartedAt,
+    recoveryTargetIdentitySha256: targetIdentity,
+    applicationReadyAt: times.applicationReady,
+    recoveredApplicationCompletedAt: times.applicationCompleted,
+    cleanupStartedAt: times.applicationCompleted,
+    cleanupCompletedAt: times.activationCompleted,
+    recoveryPointAt: times.backup, rpoSeconds: rpo, rtoSeconds: rto, cleanupSeconds,
     reviewerApprovalSetSha256, reviewerIdSha256s: reviewerIds,
     attestedAt: now.toISOString(), chronologySha256: sha256ProductionPromotionRecoveryValue(chronology),
     checks: {
@@ -739,6 +1478,8 @@ export async function attestProductionPromotionRecovery(
       disposableLogicalRestoreExact: true, disposablePrivateStorageRestoreExact: true,
       deletionReplayAppliedExact: true, deletionReplayIdempotentExact: true,
       transportAndRoleExact: true, recoveryStateBindingsExact: true, rpoRtoExact: true,
+      activationProducerExact: true, recoveredApplicationExact: true,
+      teardownAbsentExact: true,
       twoPersonApprovalExact: true, chronologyExact: true,
     },
   });

@@ -201,6 +201,7 @@ export interface PostgresPrivateStorageBoundary {
     readonly bytes: Buffer;
     readonly contentType: string;
   }): Promise<void>;
+  removeObjects?(objectPaths: readonly string[]): Promise<void>;
 }
 
 export interface PostgresPrivateStorageRecoveryObject {
@@ -223,6 +224,7 @@ export interface PostgresPrivateStorageRecoveryManifest {
     readonly stateReceiptSha256: string;
     readonly sourceDatabaseIdentitySha256: string;
     readonly sourceUrlSha256: string;
+    readonly captureUrlSha256: string;
     readonly migrationRunSha256: string;
     readonly sourceEnvironment: PostgresPrivateStorageSourceEnvironment;
     readonly candidateSha: string;
@@ -263,6 +265,7 @@ export interface CapturePostgresPrivateStorageRecoveryOptions {
   readonly expectedTombstoneCount: number;
   readonly sourceEnvironment: PostgresPrivateStorageSourceEnvironment;
   readonly expectedCandidateSha: string;
+  readonly expectedCaptureConnectionUrlSha256: string;
   readonly sourceSupabaseUrl: string;
   readonly expectedSourceOriginSha256: string;
   readonly bucketName: typeof POSTGRES_PRIVATE_STORAGE_BUCKET;
@@ -285,6 +288,7 @@ export interface CapturePostgresPrivateStorageRecoveryResult {
   readonly deletionTombstoneCount: number;
   readonly recoverySetSha256: string;
   readonly recoveryManifestSha256: string;
+  readonly databaseConnectionUrlSha256: string;
 }
 
 export interface RestorePostgresPrivateStorageRecoveryOptions {
@@ -1422,7 +1426,7 @@ export async function capturePostgresPrivateStorageRecovery(
     snapshot: firstDatabase,
     backup,
     expectedIdentitySha256: backup.stateReceipt.source.databaseIdentitySha256,
-    expectedConnectionUrlSha256: backup.stateReceipt.source.urlSha256,
+    expectedConnectionUrlSha256: options.expectedCaptureConnectionUrlSha256,
     expectedSourceEnvironment: options.sourceEnvironment,
     expectedCandidateSha,
     requireDisposable: false,
@@ -1518,7 +1522,7 @@ export async function capturePostgresPrivateStorageRecovery(
     snapshot: secondDatabase,
     backup,
     expectedIdentitySha256: backup.stateReceipt.source.databaseIdentitySha256,
-    expectedConnectionUrlSha256: backup.stateReceipt.source.urlSha256,
+    expectedConnectionUrlSha256: options.expectedCaptureConnectionUrlSha256,
     expectedMigrationRunSha256: firstDatabase.migrationRunSha256,
     expectedSourceEnvironment: options.sourceEnvironment,
     expectedCandidateSha,
@@ -1559,6 +1563,7 @@ export async function capturePostgresPrivateStorageRecovery(
       sourceDatabaseIdentitySha256:
         backup.stateReceipt.source.databaseIdentitySha256,
       sourceUrlSha256: backup.stateReceipt.source.urlSha256,
+      captureUrlSha256: firstDatabase.connectionUrlSha256,
       migrationRunSha256: firstDatabase.migrationRunSha256,
       sourceEnvironment: options.sourceEnvironment,
       candidateSha: expectedCandidateSha,
@@ -1634,6 +1639,7 @@ export async function capturePostgresPrivateStorageRecovery(
     deletionTombstoneCount: authority.tombstoneCount,
     recoverySetSha256,
     recoveryManifestSha256: sha256(manifestBytes),
+    databaseConnectionUrlSha256: firstDatabase.connectionUrlSha256,
   });
 }
 
@@ -1689,6 +1695,7 @@ function parseRecoveryManifest(
       "stateReceiptSha256",
       "sourceDatabaseIdentitySha256",
       "sourceUrlSha256",
+      "captureUrlSha256",
       "migrationRunSha256",
       "sourceEnvironment",
       "candidateSha",
@@ -1723,6 +1730,7 @@ function parseRecoveryManifest(
     logical.stateReceiptSha256,
     logical.sourceDatabaseIdentitySha256,
     logical.sourceUrlSha256,
+    logical.captureUrlSha256,
     logical.migrationRunSha256,
     logical.overallStateSha256,
     logical.sourceEvidenceTableSha256,
@@ -3088,6 +3096,30 @@ class SupabasePrivateStorageBoundary implements PostgresPrivateStorageBoundary {
       throw recoveryError("destination_upload_failed_disposal_required");
     }
   }
+
+  async removeObjects(objectPaths: readonly string[]): Promise<void> {
+    const paths = [...objectPaths].map(safeObjectPath).sort(compareUtf8);
+    if (paths.length < 1 || paths.length > MAX_OBJECT_COUNT
+      || new Set(paths).size !== paths.length) {
+      throw recoveryError("invalid_arguments");
+    }
+    for (let index = 0; index < paths.length; index += 100) {
+      const { data, error } = await this.boundedOperation(() =>
+        this.client.storage.from(this.bucketName).remove(paths.slice(index, index + 100)),
+      );
+      if (error || !Array.isArray(data)) {
+        throw recoveryError("destination_verification_failed_disposal_required");
+      }
+      const removed = data.map((entry) => {
+        const raw = entry as { readonly name?: unknown };
+        return typeof raw.name === "string" ? safeObjectPath(raw.name) : "";
+      }).sort(compareUtf8);
+      const expected = paths.slice(index, index + 100);
+      if (canonicalPostgresBackupJson(removed) !== canonicalPostgresBackupJson(expected)) {
+        throw recoveryError("destination_verification_failed_disposal_required");
+      }
+    }
+  }
 }
 
 export function createSupabasePrivateStorageRecoveryBoundary(input: {
@@ -3122,6 +3154,46 @@ export function createSupabasePrivateStorageRecoveryBoundary(input: {
     throw recoveryError("invalid_arguments");
   return new SupabasePrivateStorageBoundary(
     input.supabaseUrl,
+    input.serviceRoleKey,
+    bucketName,
+    requestTimeoutMs,
+    input.clientFactory,
+    input.fetchImplementation,
+  );
+}
+
+/**
+ * Creates the authenticated Storage boundary for an already reviewed,
+ * disposable restore origin. The CLI separately verifies the signed
+ * candidate/origin/database authority before this boundary is constructed.
+ */
+export function createSupabasePrivateStorageRestoreBoundary(input: {
+  readonly supabaseUrl: string;
+  readonly serviceRoleKey: string;
+  readonly bucketName?: string | undefined;
+  readonly requestTimeoutMs?: number | undefined;
+  readonly clientFactory?:
+    ((url: string, key: string) => SupabaseClient) | undefined;
+  readonly fetchImplementation?: typeof globalThis.fetch | undefined;
+}): PostgresPrivateStorageBoundary {
+  let origin: string;
+  try {
+    origin = canonicalOrigin(input.supabaseUrl);
+    if (origin !== input.supabaseUrl) throw recoveryError("invalid_arguments");
+    assertSupabaseServerApiKey(input.serviceRoleKey, "serviceRoleKey");
+  } catch {
+    throw recoveryError("invalid_arguments");
+  }
+  const bucketName = input.bucketName ?? POSTGRES_PRIVATE_STORAGE_BUCKET;
+  const requestTimeoutMs = input.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+  if (
+    bucketName !== POSTGRES_PRIVATE_STORAGE_BUCKET ||
+    !Number.isFinite(requestTimeoutMs) ||
+    requestTimeoutMs < 1_000 ||
+    requestTimeoutMs > MAX_REQUEST_TIMEOUT_MS
+  ) throw recoveryError("invalid_arguments");
+  return new SupabasePrivateStorageBoundary(
+    origin,
     input.serviceRoleKey,
     bucketName,
     requestTimeoutMs,

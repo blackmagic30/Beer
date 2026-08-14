@@ -1,0 +1,690 @@
+name: Reconcile protected production promotion recovery emergency cleanup
+
+on:
+  workflow_run:
+    workflows: ["Activate protected production promotion recovery"]
+    types: [completed]
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pintpath-production-promotion-recovery-emergency-cleanup-watchdog
+  cancel-in-progress: false
+
+jobs:
+  resolve-arm:
+    name: Resolve the exact durable cleanup state head
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      status: ${{ steps.state.outputs.status }}
+      candidate_sha: ${{ steps.state.outputs.candidate_sha }}
+      state_head: ${{ steps.state.outputs.state_head }}
+    steps:
+      - name: Checkout trusted main without persisted credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: main
+
+      - name: Resolve only the durable state ref
+        id: state
+        env:
+          STATE_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          basic="$(printf 'x-access-token:%s' "$STATE_TOKEN" | base64 | tr -d '\n')"
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $basic"
+          ref=refs/heads/pintpath-production-promotion-recovery-emergency-cleanup-state
+          if ! git fetch --no-tags origin "+$ref:refs/remotes/origin/pintpath-emergency-cleanup-state"; then
+            printf 'status=absent\ncandidate_sha=none\nstate_head=none\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          head="$(git rev-parse refs/remotes/origin/pintpath-emergency-cleanup-state)"
+          state="$RUNNER_TEMP/pintpath-emergency-cleanup-state.json"
+          git show "$head:.pintpath/emergency-cleanup/state.json" > "$state"
+          status="$(jq -er '.status' "$state")"
+          candidate="$(jq -er '.candidateSha' "$state")"
+          [[ "$head" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$candidate" =~ ^[a-f0-9]{40}$ ]]
+          test "$status" = open -o "$status" = disarmed
+          printf 'status=%s\ncandidate_sha=%s\nstate_head=%s\n' "$status" "$candidate" "$head" >> "$GITHUB_OUTPUT"
+
+  reconcile:
+    name: Retry exact armed provider absence reconciliation
+    needs: resolve-arm
+    if: ${{ needs.resolve-arm.outputs.status == 'open' }}
+    permissions:
+      contents: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    environment: production-promotion-recovery-cleanup
+
+    steps:
+      - name: Checkout the exact armed candidate without persisted credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ needs.resolve-arm.outputs.candidate_sha }}
+
+      - name: Setup the pinned Node runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Install exact candidate and prepare private custody
+        env:
+          CANDIDATE_SHA: ${{ needs.resolve-arm.outputs.candidate_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          test "$GITHUB_REF" = refs/heads/main
+          test "$GITHUB_RUN_ATTEMPT" = 1
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain=v2 --untracked-files=all)"
+          corepack npm ci --ignore-scripts
+          root="$RUNNER_TEMP/pintpath-emergency-cleanup-$GITHUB_RUN_ID"
+          test ! -e "$root"
+          mkdir -m 700 "$root" "$root/evidence"
+          printf 'PINTPATH_CLEANUP_ROOT=%s\n' "$root" >> "$GITHUB_ENV"
+          printf 'PINTPATH_CHECKED_OUT_CANDIDATE_SHA=%s\n' "$CANDIDATE_SHA" >> "$GITHUB_ENV"
+
+      - name: Materialize and inspect the exact compare-and-swap state head
+        env:
+          STATE_TOKEN: ${{ github.token }}
+          EXPECTED_STATE_HEAD: ${{ needs.resolve-arm.outputs.state_head }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          umask 077
+          basic="$(printf 'x-access-token:%s' "$STATE_TOKEN" | base64 | tr -d '\n')"
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $basic"
+          ref=refs/heads/pintpath-production-promotion-recovery-emergency-cleanup-state
+          git fetch --no-tags origin "+$ref:refs/remotes/origin/pintpath-emergency-cleanup-state"
+          state_head="$(git rev-parse refs/remotes/origin/pintpath-emergency-cleanup-state)"
+          test "$state_head" = "$EXPECTED_STATE_HEAD"
+          git show "$state_head:.pintpath/emergency-cleanup/state.json" > "$PINTPATH_CLEANUP_ROOT/state.json"
+          git show "$state_head:.pintpath/emergency-cleanup/arm-authority.json" > "$PINTPATH_CLEANUP_ROOT/arm-authority.json"
+          git show "$state_head:.pintpath/emergency-cleanup/arm-authority-public-key.pem" > "$PINTPATH_CLEANUP_ROOT/arm-authority-public-key.pem"
+          activation_run_id="$(jq -er '.activationRunId' "$PINTPATH_CLEANUP_ROOT/state.json")"
+          [[ "$activation_run_id" =~ ^[1-9][0-9]{0,19}$ ]]
+          railway_leaf=".pintpath/emergency-cleanup/railway-delete-ack-terminal-$activation_run_id.json"
+          supabase_leaf=".pintpath/emergency-cleanup/supabase-delete-ack-terminal-$activation_run_id.json"
+          railway_file=none
+          supabase_file=none
+          if git cat-file -e "$state_head:$railway_leaf" 2>/dev/null; then
+            railway_file="$PINTPATH_CLEANUP_ROOT/railway-prior-delete-ack-terminal.json"
+            git show "$state_head:$railway_leaf" > "$railway_file"
+          fi
+          if git cat-file -e "$state_head:$supabase_leaf" 2>/dev/null; then
+            supabase_file="$PINTPATH_CLEANUP_ROOT/supabase-prior-delete-ack-terminal.json"
+            git show "$state_head:$supabase_leaf" > "$supabase_file"
+          fi
+          chmod 600 "$PINTPATH_CLEANUP_ROOT"/*
+          npm run --silent production:promotion-recovery:emergency-cleanup:state:transition -- \
+            --operation inspect --state-file "$PINTPATH_CLEANUP_ROOT/state.json" \
+            --arm-result-file none --railway-terminal-file "$railway_file" \
+            --supabase-terminal-file "$supabase_file" \
+            --observed-cleanup-run-id "$GITHUB_RUN_ID" --output none \
+            --github-env "$GITHUB_ENV" > "$PINTPATH_CLEANUP_ROOT/inspect-result.json"
+          state_file_sha256="$(sha256sum "$PINTPATH_CLEANUP_ROOT/state.json" | cut -d ' ' -f 1)"
+          printf 'PINTPATH_RECOVERY_EMERGENCY_CLEANUP_STATE_FILE_SHA256=%s\n' "$state_file_sha256" >> "$GITHUB_ENV"
+          printf 'PINTPATH_RECOVERY_EMERGENCY_CLEANUP_STATE_HEAD=%s\n' "$state_head" >> "$GITHUB_ENV"
+
+      - name: Verify the current signed arm and exact trigger binding
+        id: arm
+        env:
+          PINTPATH_TRIGGERED_ACTIVATION_RUN_ID: ${{ github.event.workflow_run.id }}
+          PINTPATH_TRIGGERED_ACTIVATION_CANDIDATE_SHA: ${{ github.event.workflow_run.head_sha }}
+          TRIGGERED_WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
+          TRIGGERED_WORKFLOW_PATH: ${{ github.event.workflow_run.path }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = workflow_run ]; then
+            test "$TRIGGERED_WORKFLOW_NAME" = 'Activate protected production promotion recovery'
+            test "$TRIGGERED_WORKFLOW_PATH" = '.github/workflows/activate-production-promotion-recovery.yml'
+          fi
+          npm run --silent production:promotion-recovery:emergency-cleanup:arm:verify -- \
+            --mode watchdog --candidate-sha "$PINTPATH_RECOVERY_EMERGENCY_CANDIDATE_SHA" \
+            --activation-run-id "$PINTPATH_RECOVERY_EMERGENCY_ACTIVATION_RUN_ID" \
+            --project-id "$PINTPATH_RECOVERY_EMERGENCY_RAILWAY_PROJECT_ID" \
+            --project-name "$PINTPATH_RECOVERY_EMERGENCY_PROJECT_NAME" \
+            --environment-id "$PINTPATH_RECOVERY_EMERGENCY_RAILWAY_ENVIRONMENT_ID" \
+            --environment-name "$PINTPATH_RECOVERY_EMERGENCY_PROJECT_NAME" \
+            --inventory-sha256 "$PINTPATH_RECOVERY_EMERGENCY_RAILWAY_INVENTORY_SHA256" \
+            --workspace-id "$PINTPATH_RECOVERY_EMERGENCY_RAILWAY_WORKSPACE_ID" \
+            --workspace-name "$PINTPATH_RECOVERY_EMERGENCY_RAILWAY_WORKSPACE_NAME" \
+            --workspace-project-inventory-sha256 "$PINTPATH_RECOVERY_EMERGENCY_RAILWAY_WORKSPACE_PROJECT_INVENTORY_SHA256" \
+            --supabase-project-ref "$PINTPATH_RECOVERY_EMERGENCY_SUPABASE_PROJECT_REF" \
+            --supabase-project-name "$PINTPATH_RECOVERY_EMERGENCY_PROJECT_NAME" \
+            --organization-slug-sha256 "$PINTPATH_RECOVERY_SUPABASE_ORGANIZATION_SLUG_SHA256" \
+            --destination-origin-sha256 "$PINTPATH_RECOVERY_TARGET_SUPABASE_ORIGIN_SHA256" \
+            --destination-restore-authority-sha256 "$PINTPATH_RECOVERY_DESTINATION_RESTORE_AUTHORITY_SHA256" \
+            --authority-file "$PINTPATH_CLEANUP_ROOT/arm-authority.json" \
+            --authority-sha256 "$PINTPATH_RECOVERY_EMERGENCY_CLEANUP_ARM_AUTHORITY_SHA256" \
+            --authority-public-key-file "$PINTPATH_CLEANUP_ROOT/arm-authority-public-key.pem" \
+            --authority-public-key-sha256 "$PINTPATH_RECOVERY_EMERGENCY_CLEANUP_ARM_AUTHORITY_PUBLIC_KEY_SHA256" \
+            > "$PINTPATH_CLEANUP_ROOT/arm-result.json"
+          npm run --silent production:promotion-recovery:emergency-cleanup:state:transition -- \
+            --operation verify --state-file "$PINTPATH_CLEANUP_ROOT/state.json" \
+            --arm-result-file "$PINTPATH_CLEANUP_ROOT/arm-result.json" \
+            --railway-terminal-file none --supabase-terminal-file none \
+            --observed-cleanup-run-id "$GITHUB_RUN_ID" --output none --github-env none \
+            > "$PINTPATH_CLEANUP_ROOT/state-verification-result.json"
+
+      - name: Recover exact same-run activation cleanup acknowledgements when not yet persisted
+        id: activation-acks
+        if: ${{ env.PINTPATH_RECOVERY_EMERGENCY_RAILWAY_PRIOR_ACK == 'none' || env.PINTPATH_RECOVERY_EMERGENCY_SUPABASE_PRIOR_ACK == 'none' }}
+        continue-on-error: true
+        uses: actions/download-artifact@b7c52a5f7a25fce4c22e476a93420dd79a061a70 # v8.0.1
+        with:
+          name: pintpath-production-promotion-recovery-cleanup-${{ env.PINTPATH_RECOVERY_EMERGENCY_CANDIDATE_SHA }}
+          path: ${{ env.PINTPATH_CLEANUP_ROOT }}/recovered-activation-acks
+          github-token: ${{ github.token }}
+          repository: blackmagic30/Beer
+          run-id: ${{ env.PINTPATH_RECOVERY_EMERGENCY_ACTIVATION_RUN_ID }}
+
+      - name: Classify only an exact complete activation acknowledgement inventory
+        id: activation-ack-inventory
+        if: ${{ always() && steps.activation-acks.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          directory="$PINTPATH_CLEANUP_ROOT/recovered-activation-acks"
+          complete=false
+          if [ -d "$directory" ] && [ ! -L "$directory" ] && \
+            [ "$(find "$directory" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d ' ')" = 2 ] && \
+            [ -f "$directory/railway-teardown-terminal.json" ] && \
+            [ -f "$directory/supabase-teardown-terminal.json" ]; then
+            complete=true
+          fi
+          printf 'complete=%s\n' "$complete" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve exact prior watchdog acknowledgement artifacts
+        id: ack-artifacts
+        if: ${{ always() && steps.arm.outcome == 'success' && steps.activation-ack-inventory.outputs.complete != 'true' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          for provider in railway supabase; do
+            prior_variable="PINTPATH_RECOVERY_EMERGENCY_${provider^^}_PRIOR_ACK"
+            if [ "${!prior_variable}" = present ]; then
+              printf '%s_found=false\n%s_run_id=none\n' "$provider" "$provider" >> "$GITHUB_OUTPUT"
+              continue
+            fi
+            output="$PINTPATH_CLEANUP_ROOT/emergency-cleanup-$provider-ack-artifact.json"
+            node --frozen-intrinsics --disable-proto=throw \
+              scripts/resolve-github-production-promotion-recovery-emergency-cleanup-ack.mjs \
+              --candidate-sha "$PINTPATH_RECOVERY_EMERGENCY_CANDIDATE_SHA" \
+              --activation-run-id "$PINTPATH_RECOVERY_EMERGENCY_ACTIVATION_RUN_ID" \
+              --provider "$provider" --output "$output"
+            found="$(jq -er '.found' "$output")"
+            run_id="$(jq -r '.cleanupRunId // "none"' "$output")"
+            test "$found" = true -o "$found" = false
+            if [ "$found" = true ]; then [[ "$run_id" =~ ^[1-9][0-9]{0,19}$ ]]; else test "$run_id" = none; fi
+            printf '%s_found=%s\n%s_run_id=%s\n' "$provider" "$found" "$provider" "$run_id" >> "$GITHUB_OUTPUT"
+          done
+
+      - name: Download exact prior Railway delete acknowledgement
+        id: railway-prior-ack
+        if: ${{ steps.ack-artifacts.outputs.railway_found == 'true' }}
+        uses: actions/download-artifact@b7c52a5f7a25fce4c22e476a93420dd79a061a70 # v8.0.1
+        with:
+          name: pintpath-production-promotion-recovery-emergency-cleanup-${{ env.PINTPATH_RECOVERY_EMERGENCY_ACTIVATION_RUN_ID }}-railway-delete-ack
+          path: ${{ env.PINTPATH_CLEANUP_ROOT }}/recovered-railway-ack
+          github-token: ${{ github.token }}
+          repository: blackmagic30/Beer
+          run-id: ${{ steps.ack-artifacts.outputs.railway_run_id }}
+
+      - name: Download exact prior Supabase delete acknowledgement
+        id: supabase-prior-ack
+        if: ${{ steps.ack-artifacts.outputs.supabase_found == 'true' }}
+        uses: actions/download-artifact@b7c52a5f7a25fce4c22e476a93420dd79a061a70 # v8.0.1
+        with:
+          name: pintpath-production-promotion-recovery-emergency-cleanup-${{ env.PINTPATH_RECOVERY_EMERGENCY_ACTIVATION_RUN_ID }}-supabase-delete-ack
+          path: ${{ env.PINTPATH_CLEANUP_ROOT }}/recovered-supabase-ack
+          github-token: ${{ github.token }}
+          repository: blackmagic30/Beer
+          run-id: ${{ steps.ack-artifacts.outputs.supabase_run_id }}
+
+      - name: Strictly import only exact recoverable delete acknowledgements
+        if: ${{ always() && steps.arm.outcome == 'success' }}
+        env:
+          ACTIVATION_ACK_OUTCOME: ${{ steps.activation-acks.outcome }}
+          ACTIVATION_ACK_COMPLETE: ${{ steps.activation-ack-inventory.outputs.complete }}
+          RAILWAY_ARTIFACT_OUTCOME: ${{ steps.railway-prior-ack.outcome }}
+          SUPABASE_ARTIFACT_OUTCOME: ${{ steps.supabase-prior-ack.outcome }}
+          RAILWAY_ARTIFACT_RUN_ID: ${{ steps.ack-artifacts.outputs.railway_run_id }}
+          SUPABASE_ARTIFACT_RUN_ID: ${{ steps.ack-artifacts.outputs.supabase_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          railway=none
+          railway_run=none
+          supabase=none
+          supabase_run=none
+          if [ "$ACTIVATION_ACK_COMPLETE" = true ]; then
+            test "$ACTIVATION_ACK_OUTCOME" = success
+            directory="$PINTPATH_CLEANUP_ROOT/recovered-activation-acks"
+            test "$(find "$directory" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d ' ')" = 2
+            test -f "$directory/railway-teardown-terminal.json"
+            test -f "$directory/supabase-teardown-terminal.json"
+            if [ "$PINTPATH_RECOVERY_EMERGENCY_RAILWAY_PRIOR_ACK" = none ]; then
+              railway="$directory/railway-teardown-terminal.json"
+              railway_run="$PINTPATH_RECOVERY_EMERGENCY_ACTIVATION_RUN_ID"
+            fi
+            if [ "$PINTPATH_RECOVERY_EMERGENCY_SUPABASE_PRIOR_ACK" = none ]; then
+              supabase="$directory/supabase-teardown-terminal.json"
+              supabase_run="$PINTPATH_RECOVERY_EMERGENCY_ACTIVATION_RUN_ID"
+            fi
+          fi
+          if [ "$RAILWAY_ARTIFACT_OUTCOME" = success ]; then
+            test "$railway" = none
+            railway="$PINTPATH_CLEANUP_ROOT/recovered-railway-ack/railway-teardown-terminal.json"
+            test "$(find "$(dirname "$railway")" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d ' ')" = 1
+            railway_run="$RAILWAY_ARTIFACT_RUN_ID"
+          fi
+          if [ "$SUPABASE_ARTIFACT_OUTCOME" = success ]; then
+            test "$supabase" = none
+            supabase="$PINTPATH_CLEANUP_ROOT/recovered-supabase-ack/supabase-teardown-terminal.json"
+            test "$(find "$(dirname "$supabase")" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d ' ')" = 1
+            supabase_run="$SUPABASE_ARTIFACT_RUN_ID"
+          fi
+          for file in "$railway" "$supabase"; do if [ "$file" != none ]; then chmod 600 "$file"; fi; done
+          provider_state="$PINTPATH_CLEANUP_ROOT/provider-state.json"
+          if [ "$railway" = none ] && [ "$supabase" = none ]; then
+            cp "$PINTPATH_CLEANUP_ROOT/state.json" "$provider_state"
+          else
+            npm run --silent production:promotion-recovery:emergency-cleanup:state:transition -- \
+              --operation recover --state-file "$PINTPATH_CLEANUP_ROOT/state.json" \
+              --arm-result-file "$PINTPATH_CLEANUP_ROOT/arm-result.json" \
+              --railway-terminal-file none --supabase-terminal-file none \
+              --prior-railway-terminal-file "$railway" --prior-railway-cleanup-run-id "$railway_run" \
+              --prior-supabase-terminal-file "$supabase" --prior-supabase-cleanup-run-id "$supabase_run" \
+              --observed-cleanup-run-id "$GITHUB_RUN_ID" --output "$provider_state" --github-env none \
+              > "$PINTPATH_CLEANUP_ROOT/ack-recovery-result.json"
+          fi
+          chmod 600 "$provider_state"
+          printf 'PINTPATH_PROVIDER_STATE_FILE=%s\n' "$provider_state" >> "$GITHUB_ENV"
+          printf 'PINTPATH_PROVIDER_STATE_SHA256=%s\n' "$(sha256sum "$provider_state" | cut -d ' ' -f 1)" >> "$GITHUB_ENV"
+          printf 'PINTPATH_RECOVERED_RAILWAY_ACK_FILE=%s\nPINTPATH_RECOVERED_RAILWAY_ACK_RUN_ID=%s\n' "$railway" "$railway_run" >> "$GITHUB_ENV"
+          printf 'PINTPATH_RECOVERED_SUPABASE_ACK_FILE=%s\nPINTPATH_RECOVERED_SUPABASE_ACK_RUN_ID=%s\n' "$supabase" "$supabase_run" >> "$GITHUB_ENV"
+
+      - name: Materialize separated emergency cleanup authorities and credentials
+        if: ${{ always() && steps.arm.outcome == 'success' }}
+        env:
+          RAILWAY_AUTHORITY_BASE64: ${{ secrets.PINTPATH_RECOVERY_RAILWAY_TEARDOWN_AUTHORITY_BASE64 }}
+          RAILWAY_AUTHORITY_PUBLIC_KEY_BASE64: ${{ secrets.PINTPATH_RECOVERY_RAILWAY_TEARDOWN_AUTHORITY_PUBLIC_KEY_BASE64 }}
+          RAILWAY_READ_TOKEN: ${{ secrets.PINTPATH_RECOVERY_RAILWAY_READ_TOKEN }}
+          RAILWAY_DELETE_TOKEN: ${{ secrets.PINTPATH_RECOVERY_RAILWAY_DELETE_TOKEN }}
+          SUPABASE_AUTHORITY_BASE64: ${{ secrets.PINTPATH_RECOVERY_SUPABASE_TEARDOWN_AUTHORITY_BASE64 }}
+          SUPABASE_AUTHORITY_PUBLIC_KEY_BASE64: ${{ secrets.PINTPATH_RECOVERY_SUPABASE_TEARDOWN_AUTHORITY_PUBLIC_KEY_BASE64 }}
+          SUPABASE_READ_TOKEN: ${{ secrets.PINTPATH_RECOVERY_SUPABASE_READ_TOKEN }}
+          SUPABASE_DELETE_TOKEN: ${{ secrets.PINTPATH_RECOVERY_SUPABASE_DELETE_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          umask 077
+          printf '%s' "$RAILWAY_AUTHORITY_BASE64" | base64 --decode > "$PINTPATH_CLEANUP_ROOT/railway-authority.json"
+          printf '%s' "$RAILWAY_AUTHORITY_PUBLIC_KEY_BASE64" | base64 --decode > "$PINTPATH_CLEANUP_ROOT/railway-authority-public-key.pem"
+          printf '%s' "$RAILWAY_READ_TOKEN" > "$PINTPATH_CLEANUP_ROOT/railway-read-token"
+          printf '%s' "$RAILWAY_DELETE_TOKEN" > "$PINTPATH_CLEANUP_ROOT/railway-delete-token"
+          printf '%s' "$SUPABASE_AUTHORITY_BASE64" | base64 --decode > "$PINTPATH_CLEANUP_ROOT/supabase-authority.json"
+          printf '%s' "$SUPABASE_AUTHORITY_PUBLIC_KEY_BASE64" | base64 --decode > "$PINTPATH_CLEANUP_ROOT/supabase-authority-public-key.pem"
+          printf '%s' "$SUPABASE_READ_TOKEN" > "$PINTPATH_CLEANUP_ROOT/supabase-read-token"
+          printf '%s' "$SUPABASE_DELETE_TOKEN" > "$PINTPATH_CLEANUP_ROOT/supabase-delete-token"
+          chmod 600 "$PINTPATH_CLEANUP_ROOT"/*
+          ! cmp -s "$PINTPATH_CLEANUP_ROOT/railway-read-token" "$PINTPATH_CLEANUP_ROOT/railway-delete-token"
+          ! cmp -s "$PINTPATH_CLEANUP_ROOT/supabase-read-token" "$PINTPATH_CLEANUP_ROOT/supabase-delete-token"
+
+      - name: Reconcile exact Railway project absence under the durable state
+        id: railway
+        if: ${{ always() && steps.arm.outcome == 'success' }}
+        env:
+          PINTPATH_RAILWAY_RECOVERY_TEARDOWN_CONFIRMATION: DELETE_${{ env.PINTPATH_RECOVERY_EMERGENCY_RAILWAY_PROJECT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run --silent railway:promotion-recovery:teardown:protected -- \
+            --candidate-sha "$PINTPATH_CHECKED_OUT_CANDIDATE_SHA" \
+            --activation-run-id "$PINTPATH_RECOVERY_EMERGENCY_ACTIVATION_RUN_ID" \
+            --project-id "$PINTPATH_RECOVERY_EMERGENCY_RAILWAY_PROJECT_ID" \
+            --project-name "$PINTPATH_RECOVERY_EMERGENCY_PROJECT_NAME" \
+            --environment-id "$PINTPATH_RECOVERY_EMERGENCY_RAILWAY_ENVIRONMENT_ID" \
+            --environment-name "$PINTPATH_RECOVERY_EMERGENCY_PROJECT_NAME" \
+            --inventory-sha256 "$PINTPATH_RECOVERY_EMERGENCY_RAILWAY_INVENTORY_SHA256" \
+            --workspace-id "$PINTPATH_RECOVERY_EMERGENCY_RAILWAY_WORKSPACE_ID" \
+            --workspace-name "$PINTPATH_RECOVERY_EMERGENCY_RAILWAY_WORKSPACE_NAME" \
+            --workspace-project-inventory-sha256 "$PINTPATH_RECOVERY_EMERGENCY_RAILWAY_WORKSPACE_PROJECT_INVENTORY_SHA256" \
+            --emergency-cleanup-arm-authority-sha256 "$PINTPATH_RECOVERY_EMERGENCY_CLEANUP_ARM_AUTHORITY_SHA256" \
+            --emergency-cleanup-state-file "$PINTPATH_PROVIDER_STATE_FILE" \
+            --emergency-cleanup-state-sha256 "$PINTPATH_PROVIDER_STATE_SHA256" \
+            --teardown-authority-file "$PINTPATH_CLEANUP_ROOT/railway-authority.json" \
+            --teardown-authority-sha256 "${{ vars.PINTPATH_RECOVERY_RAILWAY_TEARDOWN_AUTHORITY_SHA256 }}" \
+            --teardown-authority-public-key-file "$PINTPATH_CLEANUP_ROOT/railway-authority-public-key.pem" \
+            --teardown-authority-public-key-sha256 "${{ vars.PINTPATH_RECOVERY_RAILWAY_TEARDOWN_AUTHORITY_PUBLIC_KEY_SHA256 }}" \
+            --read-token-file "$PINTPATH_CLEANUP_ROOT/railway-read-token" \
+            --delete-token-file "$PINTPATH_CLEANUP_ROOT/railway-delete-token" \
+            --evidence-dir "$PINTPATH_CLEANUP_ROOT/evidence" \
+            --output "$PINTPATH_CLEANUP_ROOT/evidence/railway-teardown-terminal.json" \
+            > "$PINTPATH_CLEANUP_ROOT/railway-result.json"
+
+      - name: Stage an exact Railway delete acknowledgement for crash recovery
+        id: railway-ack
+        if: ${{ always() && steps.railway.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          terminal="$PINTPATH_CLEANUP_ROOT/evidence/railway-teardown-terminal.json"
+          if jq -e '.receipt.ok == true and .receipt.outcome == "deleted" and .receipt.deleteAttempts == 1 and .receipt.observedCleanupRunId == env.GITHUB_RUN_ID' "$terminal" >/dev/null; then
+            directory="$PINTPATH_CLEANUP_ROOT/railway-ack-upload"
+            mkdir -m 700 "$directory"
+            cp "$terminal" "$directory/railway-teardown-terminal.json"
+            chmod 600 "$directory/railway-teardown-terminal.json"
+            printf 'publish=true\n' >> "$GITHUB_OUTPUT"
+          else
+            printf 'publish=false\n' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish the exact Railway delete acknowledgement before further mutation
+        id: railway-ack-upload
+        if: ${{ always() && steps.railway-ack.outputs.publish == 'true' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pintpath-production-promotion-recovery-emergency-cleanup-${{ env.PINTPATH_RECOVERY_EMERGENCY_ACTIVATION_RUN_ID }}-railway-delete-ack
+          path: ${{ env.PINTPATH_CLEANUP_ROOT }}/railway-ack-upload
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Reconcile exact Supabase project absence in emergency mode
+        id: supabase
+        if: ${{ always() && steps.arm.outcome == 'success' }}
+        env:
+          PINTPATH_SUPABASE_PROJECT_TEARDOWN_CONFIRMATION: DELETE_${{ env.PINTPATH_RECOVERY_EMERGENCY_SUPABASE_PROJECT_REF }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run --silent supabase:restore:teardown:protected -- \
+            --candidate-sha "$PINTPATH_CHECKED_OUT_CANDIDATE_SHA" \
+            --activation-run-id "$PINTPATH_RECOVERY_EMERGENCY_ACTIVATION_RUN_ID" \
+            --project-ref "$PINTPATH_RECOVERY_EMERGENCY_SUPABASE_PROJECT_REF" \
+            --project-name "$PINTPATH_RECOVERY_EMERGENCY_PROJECT_NAME" \
+            --organization-slug "${{ vars.PINTPATH_RECOVERY_SUPABASE_ORGANIZATION_SLUG }}" \
+            --organization-slug-sha256 "$PINTPATH_RECOVERY_SUPABASE_ORGANIZATION_SLUG_SHA256" \
+            --destination-origin-sha256 "$PINTPATH_RECOVERY_TARGET_SUPABASE_ORIGIN_SHA256" \
+            --target-railway-project-id "$PINTPATH_RECOVERY_EMERGENCY_RAILWAY_PROJECT_ID" \
+            --target-railway-environment-id "$PINTPATH_RECOVERY_EMERGENCY_RAILWAY_ENVIRONMENT_ID" \
+            --cleanup-mode emergency \
+            --destination-restore-authority-sha256 "$PINTPATH_RECOVERY_DESTINATION_RESTORE_AUTHORITY_SHA256" \
+            --emergency-cleanup-arm-authority-sha256 "$PINTPATH_RECOVERY_EMERGENCY_CLEANUP_ARM_AUTHORITY_SHA256" \
+            --emergency-cleanup-state-file "$PINTPATH_PROVIDER_STATE_FILE" \
+            --emergency-cleanup-state-sha256 "$PINTPATH_PROVIDER_STATE_SHA256" \
+            --purge-receipt-file none --purge-receipt-sha256 none \
+            --teardown-authority-file "$PINTPATH_CLEANUP_ROOT/supabase-authority.json" \
+            --teardown-authority-sha256 "${{ vars.PINTPATH_RECOVERY_SUPABASE_TEARDOWN_AUTHORITY_SHA256 }}" \
+            --teardown-authority-public-key-file "$PINTPATH_CLEANUP_ROOT/supabase-authority-public-key.pem" \
+            --teardown-authority-public-key-sha256 "${{ vars.PINTPATH_RECOVERY_SUPABASE_TEARDOWN_AUTHORITY_PUBLIC_KEY_SHA256 }}" \
+            --read-token-file "$PINTPATH_CLEANUP_ROOT/supabase-read-token" \
+            --delete-token-file "$PINTPATH_CLEANUP_ROOT/supabase-delete-token" \
+            --evidence-dir "$PINTPATH_CLEANUP_ROOT/evidence" \
+            --output "$PINTPATH_CLEANUP_ROOT/evidence/supabase-teardown-terminal.json" \
+            > "$PINTPATH_CLEANUP_ROOT/supabase-result.json"
+
+      - name: Stage an exact Supabase delete acknowledgement for crash recovery
+        id: supabase-ack
+        if: ${{ always() && steps.supabase.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          terminal="$PINTPATH_CLEANUP_ROOT/evidence/supabase-teardown-terminal.json"
+          if jq -e '.receipt.ok == true and .receipt.outcome == "deleted" and .receipt.deleteAttempts == 1 and .receipt.observedCleanupRunId == env.GITHUB_RUN_ID' "$terminal" >/dev/null; then
+            directory="$PINTPATH_CLEANUP_ROOT/supabase-ack-upload"
+            mkdir -m 700 "$directory"
+            cp "$terminal" "$directory/supabase-teardown-terminal.json"
+            chmod 600 "$directory/supabase-teardown-terminal.json"
+            printf 'publish=true\n' >> "$GITHUB_OUTPUT"
+          else
+            printf 'publish=false\n' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish the exact Supabase delete acknowledgement before state persistence
+        id: supabase-ack-upload
+        if: ${{ always() && steps.supabase-ack.outputs.publish == 'true' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pintpath-production-promotion-recovery-emergency-cleanup-${{ env.PINTPATH_RECOVERY_EMERGENCY_ACTIVATION_RUN_ID }}-supabase-delete-ack
+          path: ${{ env.PINTPATH_CLEANUP_ROOT }}/supabase-ack-upload
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload non-green emergency reconciliation terminals before state persistence
+        if: ${{ always() && steps.arm.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pintpath-production-promotion-recovery-emergency-cleanup-${{ env.PINTPATH_RECOVERY_EMERGENCY_ACTIVATION_RUN_ID }}-${{ github.run_id }}
+          path: |
+            ${{ env.PINTPATH_CLEANUP_ROOT }}/evidence/railway-teardown-terminal.json
+            ${{ env.PINTPATH_CLEANUP_ROOT }}/evidence/supabase-teardown-terminal.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Require artifact durability for every new raw delete acknowledgement
+        id: ack-durability
+        if: ${{ always() && steps.arm.outcome == 'success' }}
+        env:
+          RAILWAY_ACK_REQUIRED: ${{ steps.railway-ack.outputs.publish }}
+          RAILWAY_UPLOAD_OUTCOME: ${{ steps.railway-ack-upload.outcome }}
+          SUPABASE_ACK_REQUIRED: ${{ steps.supabase-ack.outputs.publish }}
+          SUPABASE_UPLOAD_OUTCOME: ${{ steps.supabase-ack-upload.outcome }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$RAILWAY_ACK_REQUIRED" = true ]; then test "$RAILWAY_UPLOAD_OUTCOME" = success; fi
+          if [ "$SUPABASE_ACK_REQUIRED" = true ]; then test "$SUPABASE_UPLOAD_OUTCOME" = success; fi
+
+      - name: Validate current terminals and advance the durable state
+        id: state
+        if: ${{ always() && steps.arm.outcome == 'success' && steps.ack-durability.outcome == 'success' }}
+        env:
+          RAILWAY_STEP_OUTCOME: ${{ steps.railway.outcome }}
+          SUPABASE_STEP_OUTCOME: ${{ steps.supabase.outcome }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          railway=none
+          supabase=none
+          if [ "$RAILWAY_STEP_OUTCOME" = success ]; then
+            railway="$PINTPATH_CLEANUP_ROOT/evidence/railway-teardown-terminal.json"
+          fi
+          if [ "$SUPABASE_STEP_OUTCOME" = success ]; then
+            supabase="$PINTPATH_CLEANUP_ROOT/evidence/supabase-teardown-terminal.json"
+          fi
+          npm run --silent production:promotion-recovery:emergency-cleanup:state:transition -- \
+            --operation reconcile --state-file "$PINTPATH_CLEANUP_ROOT/state.json" \
+            --arm-result-file "$PINTPATH_CLEANUP_ROOT/arm-result.json" \
+            --prior-railway-terminal-file "$PINTPATH_RECOVERED_RAILWAY_ACK_FILE" \
+            --prior-railway-cleanup-run-id "$PINTPATH_RECOVERED_RAILWAY_ACK_RUN_ID" \
+            --prior-supabase-terminal-file "$PINTPATH_RECOVERED_SUPABASE_ACK_FILE" \
+            --prior-supabase-cleanup-run-id "$PINTPATH_RECOVERED_SUPABASE_ACK_RUN_ID" \
+            --railway-terminal-file "$railway" --supabase-terminal-file "$supabase" \
+            --observed-cleanup-run-id "$GITHUB_RUN_ID" \
+            --output "$PINTPATH_CLEANUP_ROOT/next-state.json" --github-env none \
+            > "$PINTPATH_CLEANUP_ROOT/state-transition-result.json"
+
+      - name: Compare-and-swap persisted acknowledgements and state
+        id: persistence
+        if: ${{ always() && steps.state.outcome == 'success' }}
+        env:
+          STATE_TOKEN: ${{ github.token }}
+          RAILWAY_STEP_OUTCOME: ${{ steps.railway.outcome }}
+          SUPABASE_STEP_OUTCOME: ${{ steps.supabase.outcome }}
+          PINTPATH_TRIGGERED_ACTIVATION_RUN_ID: ${{ github.event.workflow_run.id }}
+          PINTPATH_TRIGGERED_ACTIVATION_CANDIDATE_SHA: ${{ github.event.workflow_run.head_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          ref=refs/heads/pintpath-production-promotion-recovery-emergency-cleanup-state
+          export GIT_AUTHOR_NAME='PintPath cleanup state controller'
+          export GIT_AUTHOR_EMAIL='cleanup-state@pintpath.invalid'
+          export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME"
+          export GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
+          basic="$(printf 'x-access-token:%s' "$STATE_TOKEN" | base64 | tr -d '\n')"
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $basic"
+          current_head="$PINTPATH_RECOVERY_EMERGENCY_CLEANUP_STATE_HEAD"
+          current_state="$PINTPATH_CLEANUP_ROOT/state.json"
+          current_arm="$PINTPATH_CLEANUP_ROOT/arm-result.json"
+          next_state="$PINTPATH_CLEANUP_ROOT/next-state.json"
+          railway=none
+          supabase=none
+          if [ "$RAILWAY_STEP_OUTCOME" = success ]; then railway="$PINTPATH_CLEANUP_ROOT/evidence/railway-teardown-terminal.json"; fi
+          if [ "$SUPABASE_STEP_OUTCOME" = success ]; then supabase="$PINTPATH_CLEANUP_ROOT/evidence/supabase-teardown-terminal.json"; fi
+          persisted=false
+          for attempt in 1 2 3 4; do
+            index="$PINTPATH_CLEANUP_ROOT/state-$attempt.index"
+            export GIT_INDEX_FILE="$index"
+            git read-tree "$current_head^{tree}"
+            state_blob="$(git hash-object -w "$next_state")"
+            git update-index --add --cacheinfo "100644,$state_blob,.pintpath/emergency-cleanup/state.json"
+            for provider in railway supabase; do
+              eval "current_file=\$$provider"
+              eval "recovered_file=\$PINTPATH_RECOVERED_${provider^^}_ACK_FILE"
+              ack_file=none
+              if [ "$current_file" != none ] && jq -e '.receipt.ok == true and .receipt.outcome == "deleted"' "$current_file" >/dev/null; then
+                ack_file="$current_file"
+              elif [ "$recovered_file" != none ]; then
+                ack_file="$recovered_file"
+              fi
+              if [ "$ack_file" != none ]; then
+                leaf=".pintpath/emergency-cleanup/$provider-delete-ack-terminal-$PINTPATH_RECOVERY_EMERGENCY_ACTIVATION_RUN_ID.json"
+                blob="$(git hash-object -w "$ack_file")"
+                git update-index --add --cacheinfo "100644,$blob,$leaf"
+              fi
+            done
+            tree="$(git write-tree)"
+            commit="$(printf 'Persist exact provider cleanup reconciliation\n' | git commit-tree "$tree" -p "$current_head")"
+            if git push origin "$commit:$ref"; then
+              persisted=true
+              break
+            fi
+            git fetch --no-tags origin "+$ref:refs/remotes/origin/pintpath-emergency-cleanup-state"
+            latest_head="$(git rev-parse refs/remotes/origin/pintpath-emergency-cleanup-state)"
+            latest_state="$PINTPATH_CLEANUP_ROOT/rebase-latest-$attempt.json"
+            git show "$latest_head:.pintpath/emergency-cleanup/state.json" > "$latest_state"
+            chmod 600 "$latest_state"
+            if cmp -s "$latest_state" "$next_state"; then
+              next_state="$latest_state"
+              persisted=true
+              break
+            fi
+            if [ "$latest_head" = "$current_head" ]; then
+              continue
+            fi
+            git merge-base --is-ancestor "$current_head" "$latest_head"
+            mapfile -t renewal_commits < <(git rev-list --reverse --ancestry-path "$current_head..$latest_head")
+            test "${#renewal_commits[@]}" -ge 1
+            test "${#renewal_commits[@]}" -le 4
+            previous_head="$current_head"
+            previous_state="$current_state"
+            renewal_index=0
+            for renewal_commit in "${renewal_commits[@]}"; do
+              renewal_index=$((renewal_index + 1))
+              read -r commit_id parent extra < <(git rev-list --parents -n 1 "$renewal_commit")
+              test "$commit_id" = "$renewal_commit"
+              test "$parent" = "$previous_head"
+              test -z "${extra:-}"
+              changed="$(git diff-tree --no-commit-id --name-only -r "$renewal_commit" | sort)"
+              test "$changed" = $'.pintpath/emergency-cleanup/arm-authority-public-key.pem\n.pintpath/emergency-cleanup/arm-authority.json\n.pintpath/emergency-cleanup/state.json'
+              prefix="$PINTPATH_CLEANUP_ROOT/renewal-$attempt-$renewal_index"
+              git show "$renewal_commit:.pintpath/emergency-cleanup/state.json" > "$prefix-state.json"
+              git show "$renewal_commit:.pintpath/emergency-cleanup/arm-authority.json" > "$prefix-authority.json"
+              git show "$renewal_commit:.pintpath/emergency-cleanup/arm-authority-public-key.pem" > "$prefix-authority-public-key.pem"
+              chmod 600 "$prefix"-*
+              arm_sha="$(jq -er '.currentArmAuthoritySha256' "$prefix-state.json")"
+              public_key_sha="$(jq -er '.currentArmAuthorityPublicKeySha256' "$prefix-state.json")"
+              PINTPATH_RECOVERY_EMERGENCY_CLEANUP_ARMED=true \
+              PINTPATH_RECOVERY_EMERGENCY_CLEANUP_ARM_AUTHORITY_SHA256="$arm_sha" \
+              npm run --silent production:promotion-recovery:emergency-cleanup:arm:verify -- \
+                --mode watchdog --candidate-sha "$(jq -er '.candidateSha' "$prefix-state.json")" \
+                --activation-run-id "$(jq -er '.activationRunId' "$prefix-state.json")" \
+                --project-id "$(jq -er '.projectId' "$prefix-state.json")" --project-name "$(jq -er '.projectName' "$prefix-state.json")" \
+                --environment-id "$(jq -er '.environmentId' "$prefix-state.json")" --environment-name "$(jq -er '.environmentName' "$prefix-state.json")" \
+                --inventory-sha256 "$(jq -er '.inventorySha256' "$prefix-state.json")" \
+                --workspace-id "$(jq -er '.workspaceId' "$prefix-state.json")" --workspace-name "$(jq -er '.workspaceName' "$prefix-state.json")" \
+                --workspace-project-inventory-sha256 "$(jq -er '.workspaceProjectInventorySha256' "$prefix-state.json")" \
+                --supabase-project-ref "$(jq -er '.supabaseProjectRef' "$prefix-state.json")" \
+                --supabase-project-name "$(jq -er '.supabaseProjectName' "$prefix-state.json")" \
+                --organization-slug-sha256 "$(jq -er '.organizationSlugSha256' "$prefix-state.json")" \
+                --destination-origin-sha256 "$(jq -er '.destinationOriginSha256' "$prefix-state.json")" \
+                --destination-restore-authority-sha256 "$(jq -er '.destinationRestoreAuthoritySha256' "$prefix-state.json")" \
+                --authority-file "$prefix-authority.json" --authority-sha256 "$arm_sha" \
+                --authority-public-key-file "$prefix-authority-public-key.pem" \
+                --authority-public-key-sha256 "$public_key_sha" > "$prefix-arm-result.json"
+              npm run --silent production:promotion-recovery:emergency-cleanup:state:transition -- \
+                --operation verify --state-file "$prefix-state.json" --base-state-file "$previous_state" \
+                --arm-result-file "$prefix-arm-result.json" --railway-terminal-file none --supabase-terminal-file none \
+                --observed-cleanup-run-id "$GITHUB_RUN_ID" --output none --github-env none \
+                > "$prefix-renewal-result.json"
+              previous_head="$renewal_commit"
+              previous_state="$prefix-state.json"
+              current_arm="$prefix-arm-result.json"
+            done
+            test "$previous_head" = "$latest_head"
+            current_head="$latest_head"
+            current_state="$previous_state"
+            next_state="$PINTPATH_CLEANUP_ROOT/rebased-next-state-$attempt.json"
+            npm run --silent production:promotion-recovery:emergency-cleanup:state:transition -- \
+              --operation reconcile --state-file "$current_state" --arm-result-file "$current_arm" \
+              --prior-railway-terminal-file "$PINTPATH_RECOVERED_RAILWAY_ACK_FILE" \
+              --prior-railway-cleanup-run-id "$PINTPATH_RECOVERED_RAILWAY_ACK_RUN_ID" \
+              --prior-supabase-terminal-file "$PINTPATH_RECOVERED_SUPABASE_ACK_FILE" \
+              --prior-supabase-cleanup-run-id "$PINTPATH_RECOVERED_SUPABASE_ACK_RUN_ID" \
+              --railway-terminal-file "$railway" --supabase-terminal-file "$supabase" \
+              --observed-cleanup-run-id "$GITHUB_RUN_ID" --output "$next_state" --github-env none \
+              > "$PINTPATH_CLEANUP_ROOT/rebased-transition-$attempt.json"
+          done
+          test "$persisted" = true
+          cp "$next_state" "$PINTPATH_CLEANUP_ROOT/persisted-state.json"
+          chmod 600 "$PINTPATH_CLEANUP_ROOT/persisted-state.json"
+
+      - name: Require exact disarm terminal after both fresh absence proofs
+        if: ${{ always() && steps.persistence.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq -e '.status == "disarmed" and .disarmTerminal.observedCleanupRunId == env.GITHUB_RUN_ID' "$PINTPATH_CLEANUP_ROOT/persisted-state.json" >/dev/null
+
+      - name: Remove all controller credentials and local evidence
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="${PINTPATH_CLEANUP_ROOT:-$RUNNER_TEMP/pintpath-emergency-cleanup-$GITHUB_RUN_ID}"
+          if [ -d "$root" ] && [ ! -L "$root" ]; then
+            find "$root" -depth -mindepth 1 -delete
+            rmdir "$root"
+          elif [ -e "$root" ] || [ -L "$root" ]; then
+            exit 1
+          fi

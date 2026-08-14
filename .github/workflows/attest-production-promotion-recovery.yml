@@ -7,8 +7,8 @@ on:
         description: Exact current 40-character main SHA promoted while ingress was closed
         required: true
         type: string
-      evidence_run_id:
-        description: Run ID containing the twice-reviewed hash-pinned input artifact
+      activation_run_id:
+        description: Exact successful protected activation workflow run ID
         required: true
         type: string
       confirmation:
@@ -42,7 +42,7 @@ jobs:
       - name: Require exact current main and one-shot protected authority
         env:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
-          EVIDENCE_RUN_ID: ${{ inputs.evidence_run_id }}
+          ACTIVATION_RUN_ID: ${{ inputs.activation_run_id }}
           CONFIRMATION: ${{ inputs.confirmation }}
           DISPATCH_SHA: ${{ github.sha }}
           DISPATCH_REF: ${{ github.ref }}
@@ -51,7 +51,7 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ ]]
-          [[ "$EVIDENCE_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+          [[ "$ACTIVATION_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
           test "$CONFIRMATION" = 'ATTEST_PRODUCTION_PROMOTION_RECOVERY'
           test "$DISPATCH_REF" = 'refs/heads/main'
           test "$DISPATCH_SHA" = "$CANDIDATE_SHA"
@@ -73,7 +73,7 @@ jobs:
       - name: Run the promotion-recovery implementation contract
         run: npm run production:promotion-recovery:contract:check
 
-      - name: Require the exact deploy-scale-close GitHub chain
+      - name: Require the exact deploy-scale-close-activation GitHub chain
         env:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           GITHUB_TOKEN: ${{ github.token }}
@@ -92,42 +92,73 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -m 700 "$RUNNER_TEMP/pintpath-production-promotion-recovery-input"
+          mkdir -m 700 "$RUNNER_TEMP/pintpath-production-promotion-recovery-activation-input"
+          mkdir -m 700 "$RUNNER_TEMP/pintpath-production-promotion-recovery-activation-authority"
           mkdir -m 700 "$RUNNER_TEMP/pintpath-production-promotion-recovery-output"
 
-      - name: Download the exact named reviewed input artifact
+      - name: Independently bind the successful activation run and artifact
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          ACTIVATION_RUN_ID: ${{ inputs.activation_run_id }}
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          activation_authority="$RUNNER_TEMP/pintpath-production-promotion-recovery-activation-authority"
+          node --frozen-intrinsics --disable-proto=throw --import tsx \
+            scripts/verify-github-production-promotion-recovery-activation.mjs \
+            --candidate-sha "$CANDIDATE_SHA" --run-id "$ACTIVATION_RUN_ID" \
+            --output "$activation_authority/activation-github-authority.json"
+
+      - name: Download the exact named activation artifact
         uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
-          run-id: ${{ inputs.evidence_run_id }}
-          name: pintpath-production-promotion-recovery-input-${{ inputs.candidate_sha }}
-          path: ${{ runner.temp }}/pintpath-production-promotion-recovery-input
+          run-id: ${{ inputs.activation_run_id }}
+          name: pintpath-production-promotion-recovery-activation-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}/pintpath-production-promotion-recovery-activation-input
 
-      - name: Require the exact secret-free evidence inventory
+      - name: Verify exact activation receipt inventory and producer binding
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          ACTIVATION_RUN_ID: ${{ inputs.activation_run_id }}
         shell: bash
         run: |
           set -euo pipefail
+          activation_input="$RUNNER_TEMP/pintpath-production-promotion-recovery-activation-input"
+          activation_authority="$RUNNER_TEMP/pintpath-production-promotion-recovery-activation-authority"
+          chmod 600 "$activation_input"/*
+          node --frozen-intrinsics --disable-proto=throw --import tsx \
+            scripts/verify-production-promotion-recovery-activation.mjs \
+            --directory "$activation_input" --candidate-sha "$CANDIDATE_SHA" \
+            --run-id "$ACTIVATION_RUN_ID" \
+            --github-authority "$activation_authority/activation-github-authority.json"
+
+      - name: Materialize exact protected reviewer and database evidence
+        env:
+          APPLY_AUTHORIZATION_RECEIPT_BASE64: ${{ secrets.PINTPATH_PROMOTION_RECOVERY_APPLY_AUTHORIZATION_RECEIPT_BASE64 }}
+          APPLY_OPERATION_RECEIPT_BASE64: ${{ secrets.PINTPATH_PROMOTION_RECOVERY_APPLY_OPERATION_RECEIPT_BASE64 }}
+          AUTHORITY_BASE64: ${{ secrets.PINTPATH_PROMOTION_RECOVERY_AUTHORITY_BASE64 }}
+          APPROVAL_ONE_BASE64: ${{ secrets.PINTPATH_PROMOTION_RECOVERY_APPROVAL_ONE_BASE64 }}
+          APPROVAL_TWO_BASE64: ${{ secrets.PINTPATH_PROMOTION_RECOVERY_APPROVAL_TWO_BASE64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          umask 077
           input="$RUNNER_TEMP/pintpath-production-promotion-recovery-input"
-          test "$(find "$input" -mindepth 1 -type l -print -quit)" = ''
-          mapfile -t observed < <(find "$input" -mindepth 1 -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort)
-          expected=(
-            apply-authorization-receipt.json apply-operation-receipt.json
-            approval-one.json approval-two.json authority.json
-            closed-route-terminal.json
-            deletion-replay-first-receipt.json deletion-replay-second-receipt.json
-            logical-backup-manifest.json logical-offsite-result.json
-            logical-restore-receipt.json logical-worm-result.json
-            offsite-retrieval-receipt.json pitr-receipt.json
-            private-storage-capture-receipt.json
-            private-storage-recovery-manifest.json
-            private-storage-restore-receipt.json
-          )
-          test "${#observed[@]}" -eq "${#expected[@]}"
-          for index in "${!expected[@]}"; do
-            test "${observed[$index]}" = "${expected[$index]}"
+          printf '%s' "$APPLY_AUTHORIZATION_RECEIPT_BASE64" | base64 --decode > "$input/apply-authorization-receipt.json"
+          printf '%s' "$APPLY_OPERATION_RECEIPT_BASE64" | base64 --decode > "$input/apply-operation-receipt.json"
+          printf '%s' "$AUTHORITY_BASE64" | base64 --decode > "$input/authority.json"
+          printf '%s' "$APPROVAL_ONE_BASE64" | base64 --decode > "$input/approval-one.json"
+          printf '%s' "$APPROVAL_TWO_BASE64" | base64 --decode > "$input/approval-two.json"
+          chmod 600 "$input"/*.json
+          for file in apply-authorization-receipt.json apply-operation-receipt.json \
+            authority.json approval-one.json approval-two.json; do
+            test -s "$input/$file"
+            test "$(stat -c '%a' "$input/$file")" = '600'
           done
-          test "$(find "$input" -mindepth 1 -maxdepth 1 ! -type f -print -quit)" = ''
-          chmod 600 "$input"/*
 
       - name: Materialize the two independently protected reviewer public keys
         env:
@@ -142,7 +173,7 @@ jobs:
           printf '%s' "$REVIEWER_TWO_PUBLIC_KEY_BASE64" | base64 --decode > "$input/reviewer-two.pem"
           chmod 600 "$input/reviewer-one.pem" "$input/reviewer-two.pem"
 
-      - name: Materialize exact GitHub deploy, scale, and route-close receipts
+      - name: Materialize exact GitHub deploy, scale, route-close, and terminal receipts
         env:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           GITHUB_TOKEN: ${{ github.token }}
@@ -160,8 +191,12 @@ jobs:
           npm run --silent github:production-promotion-recovery:materialize -- \
             --authority "$chain" --candidate-sha "$CANDIDATE_SHA" \
             --stage close --output "$input/closed-route-receipt.json"
+          npm run --silent github:production-promotion-recovery:materialize -- \
+            --authority "$chain" --candidate-sha "$CANDIDATE_SHA" \
+            --stage close-terminal --output "$input/closed-route-terminal.json"
           chmod 600 "$input/production-deployment-receipt.json" \
-            "$input/production-scale-receipt.json" "$input/closed-route-receipt.json"
+            "$input/production-scale-receipt.json" "$input/closed-route-receipt.json" \
+            "$input/closed-route-terminal.json"
 
       - name: Cryptographically attest the exact promotion and recovery chain
         env:
@@ -177,6 +212,8 @@ jobs:
           set -euo pipefail
           set +x
           input="$RUNNER_TEMP/pintpath-production-promotion-recovery-input"
+          activation_input="$RUNNER_TEMP/pintpath-production-promotion-recovery-activation-input"
+          activation_authority="$RUNNER_TEMP/pintpath-production-promotion-recovery-activation-authority"
           output="$RUNNER_TEMP/pintpath-production-promotion-recovery-output"
           authority_sha256="$(sha256sum "$input/authority.json" | cut -d ' ' -f 1)"
           npm run --silent production:promotion-recovery:attest -- \
@@ -188,17 +225,26 @@ jobs:
             --closed-route-terminal "$input/closed-route-terminal.json" \
             --apply-authorization-receipt "$input/apply-authorization-receipt.json" \
             --apply-operation-receipt "$input/apply-operation-receipt.json" \
-            --pitr-receipt "$input/pitr-receipt.json" \
-            --logical-backup-manifest "$input/logical-backup-manifest.json" \
-            --logical-offsite-result "$input/logical-offsite-result.json" \
-            --logical-worm-result "$input/logical-worm-result.json" \
-            --private-storage-capture-receipt "$input/private-storage-capture-receipt.json" \
-            --private-storage-recovery-manifest "$input/private-storage-recovery-manifest.json" \
-            --offsite-retrieval-receipt "$input/offsite-retrieval-receipt.json" \
-            --logical-restore-receipt "$input/logical-restore-receipt.json" \
-            --private-storage-restore-receipt "$input/private-storage-restore-receipt.json" \
-            --deletion-replay-first-receipt "$input/deletion-replay-first-receipt.json" \
-            --deletion-replay-second-receipt "$input/deletion-replay-second-receipt.json" \
+            --pitr-receipt "$activation_input/pitr-receipt.json" \
+            --activation-receipt "$activation_input/activation-receipt.json" \
+            --activation-github-authority "$activation_authority/activation-github-authority.json" \
+            --logical-backup-manifest "$activation_input/logical-backup-manifest.json" \
+            --logical-offsite-result "$activation_input/logical-offsite-result.json" \
+            --logical-worm-result "$activation_input/logical-worm-result.json" \
+            --logical-worm-retrieval-receipt "$activation_input/logical-worm-retrieval-receipt.json" \
+            --private-storage-capture-receipt "$activation_input/private-storage-capture-receipt.json" \
+            --private-storage-recovery-manifest "$activation_input/private-storage-recovery-manifest.json" \
+            --offsite-retrieval-receipt "$activation_input/offsite-retrieval-receipt.json" \
+            --logical-restore-receipt "$activation_input/logical-restore-receipt.json" \
+            --private-storage-restore-receipt "$activation_input/private-storage-restore-receipt.json" \
+            --deletion-replay-first-receipt "$activation_input/deletion-replay-first-receipt.json" \
+            --deletion-replay-second-receipt "$activation_input/deletion-replay-second-receipt.json" \
+            --private-storage-worm-receipt "$activation_input/private-storage-worm-receipt.json" \
+            --private-storage-worm-retrieval-receipt "$activation_input/private-storage-worm-retrieval-receipt.json" \
+            --recovered-smoke-receipt "$activation_input/recovered-smoke-receipt.json" \
+            --storage-purge-receipt "$activation_input/storage-purge-receipt.json" \
+            --railway-teardown-terminal "$activation_input/railway-teardown-terminal.json" \
+            --supabase-teardown-terminal "$activation_input/supabase-teardown-terminal.json" \
             --approval-one "$input/approval-one.json" \
             --approval-one-public-key "$input/reviewer-one.pem" \
             --approval-two "$input/approval-two.json" \
@@ -246,3 +292,11 @@ jobs:
             find "$github" -depth -mindepth 1 -delete
             rmdir "$github"
           fi
+          for custody in \
+            "$RUNNER_TEMP/pintpath-production-promotion-recovery-activation-input" \
+            "$RUNNER_TEMP/pintpath-production-promotion-recovery-activation-authority"; do
+            if [ -d "$custody" ] && [ ! -L "$custody" ]; then
+              find "$custody" -depth -mindepth 1 -delete
+              rmdir "$custody"
+            fi
+          done
