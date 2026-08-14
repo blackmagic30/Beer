@@ -14,6 +14,8 @@ const POLICY_PATH = path.resolve(
 );
 const SHA = /^[a-f0-9]{40}$/;
 const MAX_EVIDENCE_BYTES = 1024 * 1024;
+const O_NOFOLLOW = fs.constants.O_NOFOLLOW;
+const O_NONBLOCK = fs.constants.O_NONBLOCK;
 
 function fail() {
   throw new Error("reviewed_pr_head_fetch_invalid");
@@ -41,21 +43,85 @@ function parseArguments(argv) {
 }
 
 function readReleaseIdentity(filename) {
-  const stat = fs.lstatSync(filename);
-  if (
-    !stat.isFile() ||
-    stat.isSymbolicLink() ||
-    stat.size < 1 ||
-    stat.size > MAX_EVIDENCE_BYTES ||
-    fs.realpathSync(filename) !== filename
-  ) fail();
-  const source = fs.readFileSync(filename, "utf8");
-  if (source.includes("\0") || Buffer.byteLength(source, "utf8") !== stat.size) fail();
+  let descriptor = null;
+  let bytes = null;
   let value;
   try {
+    if (
+      !Number.isSafeInteger(O_NOFOLLOW) ||
+      O_NOFOLLOW <= 0 ||
+      !Number.isSafeInteger(O_NONBLOCK) ||
+      O_NONBLOCK <= 0
+    ) fail();
+    descriptor = fs.openSync(
+      filename,
+      fs.constants.O_RDONLY | O_NOFOLLOW | O_NONBLOCK,
+    );
+    const before = fs.fstatSync(descriptor, { bigint: true });
+    const beforePath = fs.lstatSync(filename, { bigint: true });
+    if (
+      !before.isFile() ||
+      !beforePath.isFile() ||
+      beforePath.isSymbolicLink() ||
+      before.size < 1n ||
+      before.size > BigInt(MAX_EVIDENCE_BYTES) ||
+      before.dev !== beforePath.dev ||
+      before.ino !== beforePath.ino ||
+      before.mode !== beforePath.mode ||
+      before.nlink !== 1n ||
+      beforePath.nlink !== 1n ||
+      before.uid !== beforePath.uid ||
+      before.gid !== beforePath.gid ||
+      fs.realpathSync(filename) !== filename
+    ) fail();
+
+    bytes = Buffer.alloc(Number(before.size));
+    let offset = 0;
+    while (offset < bytes.length) {
+      const count = fs.readSync(
+        descriptor,
+        bytes,
+        offset,
+        bytes.length - offset,
+        offset,
+      );
+      if (count < 1) fail();
+      offset += count;
+    }
+    const after = fs.fstatSync(descriptor, { bigint: true });
+    const afterPath = fs.lstatSync(filename, { bigint: true });
+    if (
+      after.dev !== before.dev ||
+      after.ino !== before.ino ||
+      after.size !== before.size ||
+      after.mode !== before.mode ||
+      after.nlink !== before.nlink ||
+      after.uid !== before.uid ||
+      after.gid !== before.gid ||
+      after.mtimeNs !== before.mtimeNs ||
+      after.ctimeNs !== before.ctimeNs ||
+      afterPath.dev !== before.dev ||
+      afterPath.ino !== before.ino ||
+      afterPath.size !== before.size ||
+      afterPath.mode !== before.mode ||
+      afterPath.nlink !== before.nlink ||
+      afterPath.uid !== before.uid ||
+      afterPath.gid !== before.gid ||
+      afterPath.mtimeNs !== before.mtimeNs ||
+      afterPath.ctimeNs !== before.ctimeNs ||
+      fs.realpathSync(filename) !== filename
+    ) fail();
+
+    const source = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    if (source.includes("\0") || Buffer.byteLength(source, "utf8") !== bytes.length) {
+      fail();
+    }
     value = JSON.parse(source);
   } catch {
     fail();
+  } finally {
+    bytes?.fill(0);
+    if (descriptor !== null) fs.closeSync(descriptor);
   }
   if (
     !exactKeys(value, ["version", "release", "items"]) ||

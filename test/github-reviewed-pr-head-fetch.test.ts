@@ -155,6 +155,7 @@ function fixture() {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const directory of temporaryDirectories.splice(0)) {
     fs.rmSync(directory, { recursive: true, force: true });
   }
@@ -163,6 +164,8 @@ afterEach(() => {
 describe("authenticated reviewed PR-head fetch", () => {
   it("hydrates a deleted-branch squash head into a candidate-only clone", async () => {
     const value = fixture();
+    const pathnameRead = vi.spyOn(fs, "readFileSync");
+    const descriptorRead = vi.spyOn(fs, "readSync");
     expect(spawnSync(
       "git",
       ["cat-file", "-e", `${value.reviewedPrHeadSha}^{commit}`],
@@ -193,6 +196,11 @@ describe("authenticated reviewed PR-head fetch", () => {
       },
     )).resolves.toBe(0);
 
+    expect(
+      pathnameRead.mock.calls.some(([filename]) => filename === value.evidencePath),
+    ).toBe(false);
+    expect(descriptorRead).toHaveBeenCalled();
+
     expect(JSON.parse(summary)).toMatchObject({
       ok: true,
       skipped: false,
@@ -213,5 +221,97 @@ describe("authenticated reviewed PR-head fetch", () => {
         env: { ...process.env, RELEASE_EVIDENCE_PATH: value.evidencePath },
       },
     ).status).toBe(0);
+  });
+
+  it("rejects a pathname replacement after opening the evidence descriptor", async () => {
+    const value = fixture();
+    const displaced = `${value.evidencePath}.held`;
+    const replacementSource = fs.readFileSync(value.evidencePath);
+    const originalRealpath = fs.realpathSync.bind(fs);
+    const originalFstat = fs.fstatSync.bind(fs);
+    const close = vi.spyOn(fs, "closeSync");
+    let evidenceDescriptor: number | undefined;
+    vi.spyOn(fs, "fstatSync").mockImplementation(((descriptor, options) => {
+      evidenceDescriptor ??= descriptor;
+      return originalFstat(descriptor, options as never);
+    }) as typeof fs.fstatSync);
+    let replaced = false;
+    vi.spyOn(fs, "realpathSync").mockImplementation(((filename, options) => {
+      const result = originalRealpath(filename, options as never);
+      if (filename === value.evidencePath && !replaced) {
+        replaced = true;
+        fs.renameSync(value.evidencePath, displaced);
+        fs.writeFileSync(value.evidencePath, replacementSource);
+      }
+      return result;
+    }) as typeof fs.realpathSync);
+
+    await expect(runGithubReviewedPrHeadFetch(
+      ["--evidence", value.evidencePath],
+      {
+        cwd: value.clone,
+        remote: value.remote,
+        env: {
+          GITHUB_ACTIONS: "true",
+          GITHUB_REPOSITORY: REPOSITORY,
+          GITHUB_TOKEN: "github-token-long-enough", // security-scan allow: synthetic no-call fixture
+        },
+        fetchImpl: value.fetchImpl,
+        writeOutput: () => undefined,
+      },
+    )).rejects.toThrow("reviewed_pr_head_fetch_invalid");
+    expect(value.fetchImpl).not.toHaveBeenCalled();
+    expect(evidenceDescriptor).toBeDefined();
+    expect(close.mock.calls.filter(([descriptor]) => descriptor === evidenceDescriptor)).toHaveLength(1);
+  });
+
+  it("rejects in-place evidence drift after its descriptor read", async () => {
+    const value = fixture();
+    const originalFstat = fs.fstatSync.bind(fs);
+    let calls = 0;
+    vi.spyOn(fs, "fstatSync").mockImplementation(((descriptor, options) => {
+      calls += 1;
+      if (calls === 2) fs.appendFileSync(value.evidencePath, " ");
+      return originalFstat(descriptor, options as never);
+    }) as typeof fs.fstatSync);
+
+    await expect(runGithubReviewedPrHeadFetch(
+      ["--evidence", value.evidencePath],
+      {
+        cwd: value.clone,
+        remote: value.remote,
+        env: {
+          GITHUB_ACTIONS: "true",
+          GITHUB_REPOSITORY: REPOSITORY,
+          GITHUB_TOKEN: "github-token-long-enough", // security-scan allow: synthetic no-call fixture
+        },
+        fetchImpl: value.fetchImpl,
+        writeOutput: () => undefined,
+      },
+    )).rejects.toThrow("reviewed_pr_head_fetch_invalid");
+    expect(value.fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("rejects a symlinked evidence leaf without querying GitHub", async () => {
+    const value = fixture();
+    const original = `${value.evidencePath}.original`;
+    fs.renameSync(value.evidencePath, original);
+    fs.symlinkSync(original, value.evidencePath);
+
+    await expect(runGithubReviewedPrHeadFetch(
+      ["--evidence", value.evidencePath],
+      {
+        cwd: value.clone,
+        remote: value.remote,
+        env: {
+          GITHUB_ACTIONS: "true",
+          GITHUB_REPOSITORY: REPOSITORY,
+          GITHUB_TOKEN: "github-token-long-enough", // security-scan allow: synthetic no-call fixture
+        },
+        fetchImpl: value.fetchImpl,
+        writeOutput: () => undefined,
+      },
+    )).rejects.toThrow("reviewed_pr_head_fetch_invalid");
+    expect(value.fetchImpl).not.toHaveBeenCalled();
   });
 });
