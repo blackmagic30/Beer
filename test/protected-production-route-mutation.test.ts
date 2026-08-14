@@ -31,7 +31,7 @@ const temporaryRoots: string[] = [];
 const RELEASE_POLICY_SHA256 =
   "b47f562d94b462ed7d2b1d9df317ac239a607d517bb487c109585e09213ba4fd";
 const ROUTE_POLICY_SHA256 =
-  "e746c63eaf1ce64ea83ff81798a77e41221a97b31054be1b684df64160095851";
+  "fc3fba0dc43f82b0fb14d5fbc48bf4ceac98f6d19a73d97504665a5d7bb13ff4";
 const PROMOTION_RECOVERY_POLICY_SHA256 =
   "57f66c1c9dde912586ec510e37c28cc3dfea2c098e67c78edbea189c7dcc9988";
 
@@ -242,11 +242,26 @@ function writePredecessorAuthority(
       artifact: artifacts.find((artifact) => artifact.stage === stage)!,
     }));
   const authority = {
-    schemaVersion: "pintpath-github-release-candidate-receipt/v3",
+    schemaVersion: "pintpath-github-release-candidate-receipt/v4",
     repository: "blackmagic30/Beer",
     branch: "main",
     phase: operation,
     candidateSha: CANDIDATE,
+    reviewedPullRequest: {
+      number: 24,
+      reviewedPrHeadSha: "e".repeat(40),
+      mergeCommitSha: CANDIDATE,
+      treeSha: "f".repeat(40),
+      mergedAt: "1970-01-01T00:00:00.000Z",
+      authorId: 1,
+      mergedById: 2,
+      approvingReviewIds: [3],
+      approvingReviewerIds: [3],
+      githubMergeExact: true,
+      reviewedTreeExact: true,
+      independentApprovalExact: true,
+      linearHistoryExact: true,
+    },
     policySha256: RELEASE_POLICY_SHA256,
     consumer: {
       runId: 9_999,
@@ -567,6 +582,7 @@ function harness(operation: "close" | "open", options: {
   providerPrewriteDrift?: boolean;
   providerReplicas?: 1 | 2;
   authorityExtraKey?: boolean;
+  reviewedPullRequestDrift?: boolean;
   duplicateAuthorityStage?: boolean;
   promotionReceiptDrift?: boolean;
   promotionPolicyDrift?: boolean;
@@ -582,6 +598,11 @@ function harness(operation: "close" | "open", options: {
   if (options.authorityExtraKey) {
     const value = JSON.parse(fs.readFileSync(authority.githubAuthority, "utf8"));
     value.untrusted = true;
+    fs.writeFileSync(authority.githubAuthority, canonical(value));
+  }
+  if (options.reviewedPullRequestDrift) {
+    const value = JSON.parse(fs.readFileSync(authority.githubAuthority, "utf8"));
+    value.reviewedPullRequest.reviewedTreeExact = false;
     fs.writeFileSync(authority.githubAuthority, canonical(value));
   }
   if (options.duplicateAuthorityStage) {
@@ -933,6 +954,7 @@ describe("protected production canonical-route executor", () => {
       harness("close", { providerReplicas: 1 }),
       harness("open", { providerReplicas: 1 }),
       harness("close", { authorityExtraKey: true }),
+      harness("close", { reviewedPullRequestDrift: true }),
       harness("close", { duplicateAuthorityStage: true }),
       harness("open", { promotionReceiptDrift: true }),
       harness("open", { promotionPolicyDrift: true }),

@@ -1,7 +1,8 @@
 {
-  "version": 3,
+  "version": 4,
   "release": {
     "id": null,
+    "reviewedPrHeadSha": null,
     "candidateSha": null,
     "environment": "production"
   },

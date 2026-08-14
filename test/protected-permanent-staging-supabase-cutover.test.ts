@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   PROTECTED_SUPABASE_CUTOVER_SCHEMA,
+  protectedPermanentStagingSupabaseCutoverInternals,
   runProtectedPermanentStagingSupabaseCutover,
 } from "../scripts/execute-protected-permanent-staging-supabase-cutover.js";
 
@@ -65,12 +66,32 @@ function json(value: unknown, status = 200): Response {
   });
 }
 
-function provider(options: { ambiguousWrite?: boolean } = {}): {
+type LegacyKeyFamily = "anon" | "service_role";
+
+interface ProviderOptions {
+  ambiguousWrite?: boolean;
+  alreadyRejected?: LegacyKeyFamily;
+  invalidPostDisableRejection?: {
+    family: LegacyKeyFamily;
+    status: number;
+    value: unknown;
+  };
+}
+
+function provider(options: ProviderOptions = {}): {
   fetchImpl: typeof fetch;
   putCount: () => number;
+  oldProbeCount: (family: LegacyKeyFamily) => number;
 } {
   let enabled = true;
   let puts = 0;
+  const oldProbes: Record<LegacyKeyFamily, number> = { anon: 0, service_role: 0 };
+  const rejection = (family: LegacyKeyFamily): Response => {
+    const invalid = options.invalidPostDisableRejection;
+    return invalid?.family === family
+      ? json(invalid.value, invalid.status)
+      : json({ message: "Invalid API key" }, 401);
+  };
   const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
     const headers = init?.headers as Record<string, string> | undefined;
@@ -86,15 +107,31 @@ function provider(options: { ambiguousWrite?: boolean } = {}): {
       return json({ enabled });
     }
     const apiKey = headers?.apikey;
-    if (!enabled && (apiKey === oldAnon || apiKey === oldServiceRole)) {
-      return json({ message: "Invalid API key" }, 401);
-    }
     if (url.endsWith("/auth/v1/settings")) {
+      if (apiKey === oldAnon) {
+        oldProbes.anon += 1;
+        expect(headers).toEqual({ apikey: oldAnon });
+        if (!enabled || options.alreadyRejected === "anon") return rejection("anon");
+        return json({ disable_signup: false, external: { google: true } });
+      }
       expect(apiKey).toBe(publishableKey);
+      expect(headers).toEqual({ apikey: publishableKey });
       return json({ disable_signup: false, external: { google: true } });
     }
     if (url.includes("/auth/v1/admin/users")) {
+      if (apiKey === oldServiceRole) {
+        oldProbes.service_role += 1;
+        expect(headers).toEqual({
+          apikey: oldServiceRole,
+          authorization: `Bearer ${oldServiceRole}`,
+        });
+        if (!enabled || options.alreadyRejected === "service_role") {
+          return rejection("service_role");
+        }
+        return json({ users: [] });
+      }
       expect(apiKey).toBe(secretKey);
+      expect(headers).toEqual({ apikey: secretKey });
       return json({ users: [] });
     }
     if (url.includes("/storage/v1/bucket/")) {
@@ -109,7 +146,11 @@ function provider(options: { ambiguousWrite?: boolean } = {}): {
     }
     return json({ message: "unexpected" }, 404);
   }) as typeof fetch;
-  return { fetchImpl, putCount: () => puts };
+  return {
+    fetchImpl,
+    putCount: () => puts,
+    oldProbeCount: (family) => oldProbes[family],
+  };
 }
 
 function readSecret(filename: string): Buffer {
@@ -146,6 +187,8 @@ describe("protected permanent-staging Supabase cutover", () => {
 
     expect(exitCode).toBe(0);
     expect(live.putCount()).toBe(1);
+    expect(live.oldProbeCount("anon")).toBe(2);
+    expect(live.oldProbeCount("service_role")).toBe(2);
     expect(output).toHaveLength(1);
     const receipt = JSON.parse(output[0]!) as Record<string, unknown>;
     expect(receipt.schemaVersion).toBe(PROTECTED_SUPABASE_CUTOVER_SCHEMA);
@@ -155,6 +198,8 @@ describe("protected permanent-staging Supabase cutover", () => {
     expect(receipt.checks).toEqual(expect.objectContaining({
       canaryBBeforeExact: true,
       legacyPreflightEnabledExact: true,
+      oldAnonAcceptedBeforeExact: true,
+      oldServiceRoleAcceptedBeforeExact: true,
       disableAcknowledgementExact: true,
       postflightAttempted: true,
       legacyPostflightDisabledExact: true,
@@ -165,6 +210,10 @@ describe("protected permanent-staging Supabase cutover", () => {
       terminalEvidenceExact: true,
     }));
     expect([...evidence.keys()]).toEqual(["intent.json", "terminal.json"]);
+    expect(JSON.parse(evidence.get("intent.json")!)).toEqual(expect.objectContaining({
+      oldAnonAcceptedBeforeDisable: true,
+      oldServiceRoleAcceptedBeforeDisable: true,
+    }));
     const allDurable = `${output.join("")}\n${[...evidence.values()].join("\n")}`;
     for (const secret of [readToken, writeToken, publishableKey, secretKey,
       oldAnon, oldServiceRole]) expect(allDurable).not.toContain(secret);
@@ -189,6 +238,83 @@ describe("protected permanent-staging Supabase cutover", () => {
     }));
   });
 
+  it.each(["anon", "service_role"] as const)(
+    "rejects an already-disabled well-formed %s input before intent or PUT",
+    async (family) => {
+      const output: string[] = [];
+      const evidence = new Map<string, string>();
+      const live = provider({ alreadyRejected: family });
+      const exitCode = await runProtectedPermanentStagingSupabaseCutover({
+        argv: argv(), env: environment(), cwd: projectRoot, fetchImpl: live.fetchImpl,
+        readSecret, writeDurable: durable(evidence), writeOutput: (value) => output.push(value),
+      });
+
+      expect(exitCode).toBe(1);
+      expect(live.putCount()).toBe(0);
+      expect(evidence.size).toBe(0);
+      const receipt = JSON.parse(output[0]!) as {
+        outcome: string;
+        attempts: number;
+        intentSha256: string | null;
+        checks: Record<string, boolean>;
+      };
+      expect(receipt).toMatchObject({
+        outcome: "failed_before_attempt",
+        attempts: 0,
+        intentSha256: null,
+      });
+      expect(receipt.checks.oldAnonAcceptedBeforeExact).toBe(family !== "anon");
+      expect(receipt.checks.oldServiceRoleAcceptedBeforeExact)
+        .toBe(family !== "service_role");
+    },
+  );
+
+  it("treats a non-exact post-disable 401 body as mutation-uncertain", async () => {
+    const output: string[] = [];
+    const live = provider({
+      invalidPostDisableRejection: {
+        family: "service_role",
+        status: 401,
+        value: { message: "Invalid API key", code: 401 },
+      },
+    });
+    const exitCode = await runProtectedPermanentStagingSupabaseCutover({
+      argv: argv(), env: environment(), cwd: projectRoot, fetchImpl: live.fetchImpl,
+      readSecret, writeDurable: durable(new Map()), writeOutput: (value) => output.push(value),
+    });
+
+    expect(exitCode).toBe(1);
+    expect(live.putCount()).toBe(1);
+    expect(JSON.parse(output[0]!)).toMatchObject({
+      outcome: "mutation_uncertain",
+      attempts: 1,
+      checks: {
+        oldAnonDeniedExact: true,
+        oldServiceRoleDeniedExact: false,
+      },
+    });
+  });
+
+  it("accepts only the exact legacy-key gateway rejection shape", () => {
+    const { rejectionExact } = protectedPermanentStagingSupabaseCutoverInternals;
+    expect(rejectionExact({
+      status: 401,
+      value: { message: "Invalid API key" },
+    })).toBe(true);
+    expect(rejectionExact({
+      status: 401,
+      value: { message: "Invalid API key", code: 401 },
+    })).toBe(false);
+    expect(rejectionExact({
+      status: 401,
+      value: { error: "Invalid API key" },
+    })).toBe(false);
+    expect(rejectionExact({
+      status: 403,
+      value: { message: "Invalid API key" },
+    })).toBe(false);
+  });
+
   it("blocks reruns before secret custody or provider access", async () => {
     const fetchImpl = vi.fn() as unknown as typeof fetch;
     const read = vi.fn() as unknown as typeof readSecret;
@@ -209,11 +335,28 @@ describe("protected permanent-staging Supabase cutover", () => {
       ".github/workflows/permanent-staging-supabase-legacy-cutover.yml"), "utf8");
     expect(workflow).toContain("workflow_dispatch:");
     expect(workflow).toContain("environment: permanent-staging-supabase-legacy-disable");
+    expect(workflow).toContain("actions: read");
+    expect(workflow).toContain("replacement_run_id:");
+    expect(workflow).toContain("deployment_run_id:");
     expect(workflow).toContain("test \"$RUN_ATTEMPT\" = 1");
+    expect(workflow).toContain(
+      "scripts/verify-github-permanent-staging-deployment.mjs",
+    );
+    expect(workflow).toContain("--replacement-run-id \"$REPLACEMENT_RUN_ID\"");
+    expect(workflow).toContain("--deployment-run-id \"$DEPLOYMENT_RUN_ID\"");
     expect(workflow).toContain("--management-write-token-file");
     expect(workflow).toContain("if: always()\n        shell: bash\n        run: |");
     expect(workflow).toContain("shred -u");
     expect(workflow).not.toContain("npm install --global");
     expect(workflow).not.toMatch(/continue-on-error|retry/i);
+
+    const authorityIndex = workflow.indexOf(
+      "scripts/verify-github-permanent-staging-deployment.mjs",
+    );
+    const secretCustodyIndex = workflow.indexOf(
+      "PINTPATH_SUPABASE_STAGING_SECRETS_READ_TOKEN",
+    );
+    expect(authorityIndex).toBeGreaterThan(0);
+    expect(secretCustodyIndex).toBeGreaterThan(authorityIndex);
   });
 });

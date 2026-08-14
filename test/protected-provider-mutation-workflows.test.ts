@@ -29,6 +29,17 @@ describe("protected provider mutation workflows", () => {
     expect(workflow).toContain("test \"$DISPATCH_REF\" = 'refs/heads/main'");
     expect(workflow).toContain("test \"$RUN_ATTEMPT\" = '1'");
     expect(workflow).toContain("supabase:keys:consumer-compatibility:check");
+    expect(workflow).toContain("actions: read");
+    expect(workflow).toContain("pull-requests: read");
+    expect(workflow).toContain(
+      "run-name: Permanent staging provider mutation | ${{ inputs.operation }} | ${{ inputs.candidate_sha }}",
+    );
+    const authority = workflow.indexOf(
+      "github:reviewed-candidate-authority:verify",
+    );
+    expect(authority).toBeGreaterThan(-1);
+    expect(authority).toBeLessThan(workflow.indexOf("${{ secrets."));
+    expect(workflow.slice(0, authority)).not.toContain("${{ secrets.");
     expect(workflow).toContain(
       "if: always()\n        env:\n          PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN",
     );
@@ -53,6 +64,56 @@ describe("protected provider mutation workflows", () => {
     ).toHaveLength(2);
     expect(executor).toContain("checks.postflightAttempted = true");
     expect(executor).toContain("retryAllowed: false");
+  });
+
+  it("authenticates cutover and runtime-variable callers before secret custody", () => {
+    const packageJson = JSON.parse(read("package.json")) as {
+      scripts?: Record<string, string>;
+    };
+    expect(
+      packageJson.scripts?.["github:reviewed-candidate-authority:verify"],
+    ).toBe(
+      "node --frozen-intrinsics --disable-proto=throw scripts/verify-github-reviewed-candidate-authority.mjs",
+    );
+    const cutover = read(
+      ".github/workflows/permanent-staging-supabase-legacy-cutover.yml",
+    );
+    const worker = read(".github/workflows/runtime-variable-worker.yml");
+    const dispatcher = read(".github/workflows/configure-runtime-variable.yml");
+    for (const [name, source] of [
+      ["cutover", cutover],
+      ["runtime worker", worker],
+    ] as const) {
+      const authority = source.indexOf(
+        "github:reviewed-candidate-authority:verify",
+      );
+      const firstSecret = source.search(/\$\{\{\s*secrets(?:\.|\[)/);
+      expect(authority, name).toBeGreaterThan(-1);
+      expect(firstSecret, name).toBeGreaterThan(-1);
+      expect(authority, name).toBeLessThan(firstSecret);
+      expect(source.slice(0, authority), name).not.toMatch(
+        /\$\{\{\s*secrets(?:\.|\[)/,
+      );
+      const permissions = source.match(
+        /^permissions:\n(?<body>(?:  [^\n]+\n)+)/m,
+      )?.groups?.body ?? "";
+      expect(permissions, name).toContain("actions: read");
+      expect(permissions, name).toContain("contents: read");
+      expect(permissions, name).toContain("pull-requests: read");
+    }
+    expect(cutover).toContain('--replacement-run-id "$REPLACEMENT_RUN_ID"');
+    expect(cutover).toContain('--deployment-run-id "$DEPLOYMENT_RUN_ID"');
+    expect(worker).toContain("--operation runtime-variable");
+    expect(worker).toContain('--target "$TARGET"');
+    expect(worker).toContain('--variable-name "$VARIABLE_NAME"');
+    expect(dispatcher).toContain(
+      "run-name: Configure runtime variable | ${{ inputs.target }} | ${{ inputs.variable_name }} | ${{ inputs.candidate_sha }}",
+    );
+    const dispatcherPermissions = dispatcher.match(
+      /^permissions:\n(?<body>(?:  [^\n]+\n)+)/m,
+    )?.groups?.body ?? "";
+    expect(dispatcherPermissions).toContain("actions: read");
+    expect(dispatcherPermissions).toContain("pull-requests: read");
   });
 
   it("always converges the two-replica evidence window back to one", () => {

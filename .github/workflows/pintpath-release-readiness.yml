@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 concurrency:
   group: pintpath-readiness-${{ github.workflow }}-${{ github.ref }}
@@ -38,6 +39,13 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Fetch the authenticated reviewed PR head for release evidence
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          npm run --silent github:release-reviewed-head:fetch --
+          --evidence "$GITHUB_WORKSPACE/docs/release-evidence.json"
 
       - name: Build
         run: npm run build

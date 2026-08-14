@@ -20,6 +20,23 @@ remain non-executable. If the matching executor or any required authority is
 unavailable, leave Railway unchanged; never substitute dashboard **Deploy**,
 Git autodeploy, `railway run`, or an ad-hoc CLI/API command.
 
+Permanent-staging provider mutation, application deployment, legacy-key
+cutover, and general permanent-staging runtime-variable writes share one
+`pintpath-permanent-staging-key-rollout` group with `queue: max` and
+`cancel-in-progress: false`, retaining and fully serializing every queued run.
+Provider mutation is history-guarded by exact candidate+operation and cutover by
+exact candidate through `github:reviewed-candidate-authority:verify`. Complete
+authenticated history must span the associated PR's `merged_at` through the
+authenticated current `run_started_at`, not its `created_at`, because retained
+queued runs can start out of creation order. That `run_started_at` must be no
+more than 168 hours after `merged_at`. Beyond seven days or with incomplete
+history, create a newly reviewed and merged candidate. After matching prior
+runs, a fresh dispatch requires every exact write step to be authenticated with
+conclusion `skipped`; this is the only `skipped-before-write` retry case. General
+runtime-variable writes use the same
+authority keyed by candidate+target+variable and allow no prior matching run,
+including one skipped before write.
+
 ## Automated Local Gates
 
 Run before any release candidate:
@@ -99,6 +116,12 @@ GitHub keeps these two signals deliberately separate:
 
 The informational evidence command exits successfully when the evidence file is structurally valid, but its JSON keeps `launchReady: false` until every required sign-off passes. Its `incomplete` array names the accountable owner and exact next action for every open gate. Only the strict command is a launch gate.
 
+Permanent-staging rollout requires exactly two successful workflow-dispatch
+deployments of the same current protected-main candidate: the initial deployment
+and the post-plan closeout redeploy. Both complete before the scale run starts;
+the verifier selects the second deployment and rejects any other count or
+ambiguous completion order.
+
 Production rollout evidence is ordered rather than a set of same-SHA names.
 The verifier binds exact successful attempt-one workflow runs,
 start/completion timestamps, artifact IDs, immutable GitHub SHA-256 digests,
@@ -140,7 +163,18 @@ Create the version-2 authority and both distinct approvals only after final
 activation. Its `recoveryStartedAt` is immutably copied from the GitHub
 activation workflow's `run_started_at`, never a reviewer-selected timestamp.
 
-Release-evidence schema v3 binds every completed gate to one immutable production release ID and frozen 40-character candidate SHA and requires the SHA-256 of a gate-specific private manifest. The informational command reports stale live proof and code/worktree drift with `evidenceCurrent: false`; the strict gate refuses it. Future timestamps and structurally unsupported proof are invalid in both modes. This does not make human evidence automatic; it prevents a note, old timestamp, or unrelated commit from being mistaken for durable launch proof.
+Release-evidence schema v4 binds every completed gate to one immutable
+production release ID, the separately fetched and independently reviewed PR-head
+SHA, and the exact current protected-main merge candidate SHA. For each eligible
+reviewer, only their latest effective exact-head review counts; at least one
+non-author collaborator/member/owner approver must still have `write`,
+`maintain`, or `admin`. The two commits may be non-ancestral after a squash/rebase
+merge, but their Git trees must match exactly; only the protected-main candidate
+anchors the later evidence-only closeout lineage. Each gate also requires the
+SHA-256 of its private manifest. The informational command
+reports stale live proof and code/worktree drift with `evidenceCurrent: false`;
+the strict gate refuses it. Future timestamps and structurally unsupported proof
+are invalid in both modes.
 
 The thirteenth item, `permanent_staging_cost`, additionally requires the active
 v2 binder's fresh combined receipt for the same frozen candidate. It binds

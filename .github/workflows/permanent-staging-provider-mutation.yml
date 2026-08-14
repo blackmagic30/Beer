@@ -1,4 +1,5 @@
 name: Mutate Pint Path permanent-staging provider variables
+run-name: Permanent staging provider mutation | ${{ inputs.operation }} | ${{ inputs.candidate_sha }}
 
 on:
   workflow_dispatch:
@@ -23,10 +24,13 @@ on:
         type: string
 
 permissions:
+  actions: read
   contents: read
+  pull-requests: read
 
 concurrency:
-  group: pintpath-permanent-staging-provider-mutation
+  group: pintpath-permanent-staging-key-rollout
+  queue: max
   cancel-in-progress: false
 
 jobs:
@@ -77,6 +81,16 @@ jobs:
 
       - name: Verify the repository before exposing protected credentials
         run: npm run check
+
+      - name: Authenticate the reviewed candidate and fresh operation dispatch
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+          OPERATION: ${{ inputs.operation }}
+        run: |
+          npm run --silent github:reviewed-candidate-authority:verify -- \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --operation "$OPERATION"
 
       - name: Verify replacement-key consumer compatibility
         if: inputs.operation == 'supabase-key-replacement'

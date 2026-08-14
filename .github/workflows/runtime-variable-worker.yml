@@ -23,7 +23,9 @@ on:
         type: string
 
 permissions:
+  actions: read
   contents: read
+  pull-requests: read
 
 jobs:
   configure:
@@ -82,6 +84,19 @@ jobs:
 
       - name: Verify the complete repository before protected input
         run: npm run check
+
+      - name: Authenticate the reviewed candidate and fresh variable dispatch
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+          TARGET: ${{ inputs.target }}
+          VARIABLE_NAME: ${{ inputs.variable_name }}
+        run: |
+          npm run --silent github:reviewed-candidate-authority:verify -- \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --operation runtime-variable \
+            --target "$TARGET" \
+            --variable-name "$VARIABLE_NAME"
 
       - name: Create private input and evidence custody
         env:

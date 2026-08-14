@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 
 const SHA = /^[a-f0-9]{40}$/;
 const DIGEST = /^sha256:[a-f0-9]{64}$/;
+const ISO_TIMESTAMP =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
 const MAX_ARTIFACT_BYTES = 32 * 1024 * 1024;
 const MAX_RECEIPT_BYTES = 2 * 1024 * 1024;
 const RELEASE_POLICY_SHA256 =
@@ -70,6 +72,51 @@ function canonical(value) {
   return `${JSON.stringify(value, null, 2)}\n`;
 }
 
+function positiveInteger(value) {
+  return Number.isSafeInteger(value) && value > 0;
+}
+
+function reviewedPullRequestExact(value, candidateSha) {
+  return exact(value, [
+    "number",
+    "reviewedPrHeadSha",
+    "mergeCommitSha",
+    "treeSha",
+    "mergedAt",
+    "authorId",
+    "mergedById",
+    "approvingReviewIds",
+    "approvingReviewerIds",
+    "githubMergeExact",
+    "reviewedTreeExact",
+    "independentApprovalExact",
+    "linearHistoryExact",
+  ]) && positiveInteger(value.number)
+    && SHA.test(value.reviewedPrHeadSha)
+    && value.mergeCommitSha === candidateSha
+    && SHA.test(value.treeSha)
+    && typeof value.mergedAt === "string"
+    && ISO_TIMESTAMP.test(value.mergedAt)
+    && Number.isFinite(Date.parse(value.mergedAt))
+    && positiveInteger(value.authorId)
+    && positiveInteger(value.mergedById)
+    && Array.isArray(value.approvingReviewIds)
+    && value.approvingReviewIds.length > 0
+    && value.approvingReviewIds.every(positiveInteger)
+    && new Set(value.approvingReviewIds).size === value.approvingReviewIds.length
+    && value.approvingReviewIds.every((item, index, items) => index === 0 || items[index - 1] < item)
+    && Array.isArray(value.approvingReviewerIds)
+    && value.approvingReviewerIds.length > 0
+    && value.approvingReviewerIds.every(positiveInteger)
+    && new Set(value.approvingReviewerIds).size === value.approvingReviewerIds.length
+    && value.approvingReviewerIds.every((item, index, items) => index === 0 || items[index - 1] < item)
+    && !value.approvingReviewerIds.includes(value.authorId)
+    && value.githubMergeExact === true
+    && value.reviewedTreeExact === true
+    && value.independentApprovalExact === true
+    && value.linearHistoryExact === true;
+}
+
 function parseArguments(argv) {
   if (!Array.isArray(argv) || argv.length !== 8)
     throw new Error("argument_invalid");
@@ -126,6 +173,7 @@ function readAuthority(filename, candidateSha, stage) {
       "branch",
       "phase",
       "candidateSha",
+      "reviewedPullRequest",
       "policySha256",
       "consumer",
       "checks",
@@ -137,11 +185,12 @@ function readAuthority(filename, candidateSha, stage) {
       "chronologyExact",
       "currentConsumerExact",
     ]) ||
-    value.schemaVersion !== "pintpath-github-release-candidate-receipt/v3" ||
+    value.schemaVersion !== "pintpath-github-release-candidate-receipt/v4" ||
     value.repository !== "blackmagic30/Beer" ||
     value.branch !== "main" ||
     !contract.phases.includes(value.phase) ||
     value.candidateSha !== candidateSha ||
+    !reviewedPullRequestExact(value.reviewedPullRequest, candidateSha) ||
     value.policySha256 !== RELEASE_POLICY_SHA256 ||
     value.requiredChecksExact !== true ||
     value.requiredArtifactsExact !== true ||

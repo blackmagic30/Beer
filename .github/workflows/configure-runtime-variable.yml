@@ -1,4 +1,5 @@
 name: Configure one Pint Path runtime variable
+run-name: Configure runtime variable | ${{ inputs.target }} | ${{ inputs.variable_name }} | ${{ inputs.candidate_sha }}
 
 on:
   workflow_dispatch:
@@ -41,15 +42,28 @@ on:
         type: string
 
 permissions:
+  actions: read
   contents: read
+  pull-requests: read
 
 concurrency:
-  group: pintpath-runtime-variable-${{ inputs.target }}-${{ inputs.variable_name }}
+  group: ${{ inputs.target == 'permanent-staging' && 'pintpath-permanent-staging-key-rollout' || format('pintpath-runtime-variable-{0}-{1}', inputs.target, inputs.variable_name) }}
+  queue: max
   cancel-in-progress: false
 
 jobs:
+  reject-permanent-staging-supabase-key-bypass:
+    if: inputs.target == 'permanent-staging' && (inputs.variable_name == 'SUPABASE_ANON_KEY' || inputs.variable_name == 'SUPABASE_SERVICE_ROLE_KEY')
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require the atomic paired replacement workflow
+        shell: bash
+        run: |
+          echo 'Permanent-staging Supabase keys require the protected atomic paired replacement workflow.' >&2
+          exit 1
+
   configure-staging:
-    if: inputs.target == 'permanent-staging'
+    if: inputs.target == 'permanent-staging' && inputs.variable_name != 'SUPABASE_ANON_KEY' && inputs.variable_name != 'SUPABASE_SERVICE_ROLE_KEY'
     name: Configure permanent staging
     uses: ./.github/workflows/runtime-variable-worker.yml
     with:

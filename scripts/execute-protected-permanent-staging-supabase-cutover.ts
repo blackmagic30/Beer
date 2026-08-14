@@ -102,6 +102,8 @@ interface Checks {
   inputShapesExact: boolean;
   canaryBBeforeExact: boolean;
   legacyPreflightEnabledExact: boolean;
+  oldAnonAcceptedBeforeExact: boolean;
+  oldServiceRoleAcceptedBeforeExact: boolean;
   durableIntentExact: boolean;
   writeAttemptedAtMostOnce: boolean;
   disableAcknowledgementExact: boolean;
@@ -117,6 +119,14 @@ interface Checks {
 interface HttpResult {
   readonly status: number;
   readonly value: unknown;
+}
+
+type LegacyKeyFamily = "anon" | "service_role";
+
+interface LegacyKeyProbe {
+  readonly family: LegacyKeyFamily;
+  readonly url: string;
+  readonly headers: Readonly<Record<string, string>>;
 }
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -146,6 +156,8 @@ function emptyChecks(): Checks {
     inputShapesExact: false,
     canaryBBeforeExact: false,
     legacyPreflightEnabledExact: false,
+    oldAnonAcceptedBeforeExact: false,
+    oldServiceRoleAcceptedBeforeExact: false,
     durableIntentExact: false,
     writeAttemptedAtMostOnce: true,
     disableAcknowledgementExact: false,
@@ -352,22 +364,52 @@ async function disableLegacy(fetchImpl: typeof fetch, token: string): Promise<Ht
 }
 
 function rejectionExact(result: HttpResult | null): boolean {
-  return result?.status === 401 && record(result.value)
-    && [result.value.message, result.value.msg, result.value.error]
-      .some((value) => typeof value === "string" && value.length >= 1 && value.length <= 1024);
+  return result?.status === 401
+    && exactKeys(result.value, ["message"])
+    && result.value.message === "Invalid API key";
+}
+
+function legacyKeyProbe(key: string, family: LegacyKeyFamily): LegacyKeyProbe {
+  return family === "anon"
+    ? {
+        family,
+        url: `${ORIGIN}/auth/v1/settings`,
+        headers: Object.freeze({ apikey: key }),
+      }
+    : {
+        family,
+        url: `${ORIGIN}/auth/v1/admin/users?page=1&per_page=1`,
+        headers: Object.freeze({
+          apikey: key,
+          authorization: `Bearer ${key}`,
+        }),
+      };
+}
+
+async function probeLegacyKey(
+  fetchImpl: typeof fetch,
+  probe: LegacyKeyProbe,
+): Promise<HttpResult | null> {
+  return requestJson(fetchImpl, probe.url, {
+    method: "GET",
+    headers: probe.headers,
+  });
+}
+
+function legacyKeyAcceptedExact(
+  result: HttpResult | null,
+  family: LegacyKeyFamily,
+): boolean {
+  return result?.status === 200 && (family === "anon"
+    ? authSettingsExact(result.value)
+    : adminPageExact(result.value));
 }
 
 async function oldKeyDenied(
   fetchImpl: typeof fetch,
-  key: string,
-  family: "anon" | "service_role",
+  probe: LegacyKeyProbe,
 ): Promise<boolean> {
-  const path = family === "anon"
-    ? "/auth/v1/settings"
-    : "/auth/v1/admin/users?page=1&per_page=1";
-  return rejectionExact(await requestJson(fetchImpl, `${ORIGIN}${path}`, {
-    method: "GET", headers: { apikey: key },
-  }));
+  return rejectionExact(await probeLegacyKey(fetchImpl, probe));
 }
 
 function receipt(
@@ -416,6 +458,8 @@ export async function runProtectedPermanentStagingSupabaseCutover(
   let newSecret = "";
   let oldAnon = "";
   let oldServiceRole = "";
+  let oldAnonProbe: LegacyKeyProbe | null = null;
+  let oldServiceRoleProbe: LegacyKeyProbe | null = null;
   try {
     checks.policyExact = policyExact(dependencies.cwd);
     checks.githubAuthorityExact = args !== null
@@ -444,11 +488,25 @@ export async function runProtectedPermanentStagingSupabaseCutover(
     for (const buffer of buffers) buffer.fill(0);
     checks.inputZeroized = buffers.every((buffer) => buffer.every((byte) => byte === 0));
     if (!checks.inputShapesExact || !checks.inputZeroized) throw new Error("input_invalid");
-    checks.canaryBBeforeExact = await replacementCanary(
-      dependencies.fetchImpl, newPublishable, newSecret);
-    checks.legacyPreflightEnabledExact = legacyStateExact(
-      await legacyState(dependencies.fetchImpl, readToken), true);
-    if (!checks.canaryBBeforeExact || !checks.legacyPreflightEnabledExact) {
+    oldAnonProbe = legacyKeyProbe(oldAnon, "anon");
+    oldServiceRoleProbe = legacyKeyProbe(oldServiceRole, "service_role");
+    const [canaryBefore, legacyPreflight, oldAnonBefore, oldServiceRoleBefore] =
+      await Promise.all([
+        replacementCanary(dependencies.fetchImpl, newPublishable, newSecret),
+        legacyState(dependencies.fetchImpl, readToken),
+        probeLegacyKey(dependencies.fetchImpl, oldAnonProbe),
+        probeLegacyKey(dependencies.fetchImpl, oldServiceRoleProbe),
+      ]);
+    checks.canaryBBeforeExact = canaryBefore;
+    checks.legacyPreflightEnabledExact = legacyStateExact(legacyPreflight, true);
+    checks.oldAnonAcceptedBeforeExact = legacyKeyAcceptedExact(oldAnonBefore, "anon");
+    checks.oldServiceRoleAcceptedBeforeExact = legacyKeyAcceptedExact(
+      oldServiceRoleBefore,
+      "service_role",
+    );
+    if (!checks.canaryBBeforeExact || !checks.legacyPreflightEnabledExact
+      || !checks.oldAnonAcceptedBeforeExact
+      || !checks.oldServiceRoleAcceptedBeforeExact) {
       throw new Error("preflight_invalid");
     }
     const intent = canonical({
@@ -461,6 +519,8 @@ export async function runProtectedPermanentStagingSupabaseCutover(
       retryAllowed: false,
       replacementCanaryBeforePassed: true,
       legacyPreflightEnabled: true,
+      oldAnonAcceptedBeforeDisable: true,
+      oldServiceRoleAcceptedBeforeDisable: true,
       secretMaterialIncluded: false,
       secretDerivedCommitmentsIncluded: false,
     });
@@ -480,11 +540,11 @@ export async function runProtectedPermanentStagingSupabaseCutover(
       checks.postflightAttempted = true;
       checks.legacyPostflightDisabledExact = legacyStateExact(
         await legacyState(dependencies.fetchImpl, readToken), false);
-      if (checks.legacyPostflightDisabledExact) {
+      if (checks.legacyPostflightDisabledExact && oldAnonProbe && oldServiceRoleProbe) {
         const [canaryAfter, anonDenied, serviceRoleDenied] = await Promise.all([
           replacementCanary(dependencies.fetchImpl, newPublishable, newSecret),
-          oldKeyDenied(dependencies.fetchImpl, oldAnon, "anon"),
-          oldKeyDenied(dependencies.fetchImpl, oldServiceRole, "service_role"),
+          oldKeyDenied(dependencies.fetchImpl, oldAnonProbe),
+          oldKeyDenied(dependencies.fetchImpl, oldServiceRoleProbe),
         ]);
         checks.canaryBAfterExact = canaryAfter;
         checks.oldAnonDeniedExact = anonDenied;
@@ -522,6 +582,8 @@ export const protectedPermanentStagingSupabaseCutoverInternals = {
   legacyJwtRole,
   legacyStateExact,
   rejectionExact,
+  legacyKeyProbe,
+  legacyKeyAcceptedExact,
   authSettingsExact,
   adminPageExact,
   privateBucketExact,

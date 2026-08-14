@@ -38,26 +38,61 @@ to Railway:
   for valid public TLS, and binds `/health`, `/startup`, and `/ready` to the
   same healthy candidate. Close and open are separate confirmed dispatches.
 
-All provider-mutation workflows are `workflow_dispatch` only, require the exact current `main`
-SHA, use a non-cancelling concurrency group, and bind their provider write job
-to a dedicated GitHub Environment. They run the production/staging Railway
-mutation boundary immediately before and after writes. Every write has a
-durable secret-free intent, a maximum of one attempt, no automatic retry, an
-unconditional read-only reconciliation, and secret-free terminal evidence.
-An ambiguous write exits non-zero and must not be retried unless the executor
-can prove the one exact before→after transition with no collateral change. The
-route close/open executor records that exceptional case as the explicit
-`*_reconciled_after_lost_ack` success outcome; it never treats desired state
-alone, a pre-existing state, or an incomplete inventory as success.
+All provider-mutation workflows are `workflow_dispatch` only, require the exact
+commit currently at protected `main`, use a non-cancelling concurrency group,
+and bind their provider write job to a dedicated GitHub Environment. The
+permanent-staging provider mutation, application deployment, Supabase legacy
+cutover, and general permanent-staging runtime-variable paths all use
+`pintpath-permanent-staging-key-rollout` with `queue: max` and
+`cancel-in-progress: false`. This retains every waiting run and fully serializes
+the group; a newer dispatch cannot replace or cancel an older one.
+
+Before protected credentials, provider mutation, legacy cutover, and the general
+runtime-variable worker call `github:reviewed-candidate-authority:verify`. The
+provider guard's exact run title is
+`Permanent staging provider mutation | <operation> | <candidate>` and keys
+history by candidate+operation. The legacy guard's exact title is
+`Permanent staging Supabase legacy cutover | <candidate>` and keys history by
+candidate. Runtime-variable history is keyed by candidate+target+variable
+through `Configure runtime variable | <target> | <variable> | <candidate>`.
+Every guard requires a complete authenticated Actions history from the
+associated PR's `merged_at` through the authenticated current `run_started_at`,
+not its `created_at`, because retained queued runs can start out of creation
+order. That `run_started_at` must be no more than 168 hours after `merged_at`.
+An older candidate or incomplete history fails closed and requires a newly
+reviewed and merged candidate, not a waiver or longer lookup window.
+
+A first dispatch is eligible only when there is no prior matching run. A fresh
+dispatch after prior matches is eligible only when every prior run is an
+original completed failure/cancellation/timeout whose exact named provider write
+step has conclusion `skipped`. That GitHub run/job proof is the only accepted
+`skipped-before-write` case. Success, any reached/ambiguous write step, a rerun,
+or incomplete history blocks the key. For cutover, the same finite history must
+also contain the selected successful replacement run and no other replacement
+run except ones proven skipped before write. Queueing is not retry authority,
+and job reruns are never a substitute for a new guarded dispatch. The general
+runtime-variable guard is stricter: any prior run for the exact
+candidate+target+variable blocks redispatch, even if its write step was skipped;
+use a newly reviewed candidate instead.
+
+The executors run the production/staging Railway mutation boundary immediately
+before and after writes. Every write has a durable secret-free intent, a maximum
+of one attempt, no automatic retry, unconditional read-only reconciliation, and
+secret-free terminal evidence. An ambiguous provider-variable or legacy-cutover
+write is terminal and cannot be retried. The route close/open executor has a
+different, explicitly bounded lost-ack rule: it records the one exact
+before→after transition with no collateral change as
+`*_reconciled_after_lost_ack`; it never treats desired state alone, a
+pre-existing state, or an incomplete inventory as success.
 
 The paired Supabase operation is one Railway `variableCollectionUpsert` with
 `skipDeploys=true`; it is not two CLI writes. The operation and response shape
 were verified against the pinned Railway CLI 5.32.0 source. It never includes
 the key values or a value-derived digest in evidence. A successful mutation is
 reported as `acknowledged_pending_runtime_proof`, not as a completed rotation:
-the same candidate must subsequently be deployed to permanent staging and pass
-the Auth, Storage, browser, server, mobile, and sealed-variable gates before a
-legacy key can be disabled.
+the same candidate's second, closeout permanent-staging deployment must then
+pass the Auth, Storage, browser, server, mobile, and sealed-variable gates before
+a legacy key can be disabled.
 
 ## One-time GitHub setup
 
@@ -331,25 +366,59 @@ route open. The controlling policy is schema v2 at SHA-256
 
 ## Exact execution order
 
-1. Merge and pass all required checks on the exact candidate at `main`.
-2. Run `Deploy Pint Path permanent staging` at one replica and retain its
-   candidate-bound deployment evidence. This merge-first order is mandatory:
-   the workflow and executor both reject a PR-head or any SHA other than the
-   exact commit currently at protected `main`.
+1. Freeze `reviewedPrHeadSha` and merge it through protected linear `main`.
+   Record the resulting current protected-main merge commit as `candidateSha`;
+   fetch the associated PR head separately and require exact tree equality, not
+   ancestry. For each eligible non-author reviewer, GitHub uses only the latest
+   effective review on that exact head; require at least one resulting approval
+   from a collaborator/member/owner who currently has `write`, `maintain`, or
+   `admin` permission. Pass all required checks on the exact candidate.
+2. Run `Deploy Pint Path permanent staging` for `candidateSha` at one replica
+   and retain this first successful candidate-bound deployment artifact. This is
+   the initial deployment, not the later release-gate selection.
 3. Run `Mutate Pint Path permanent-staging provider variables` once per absent
    Google/OpenAI variable. The confirmation is
-   `MUTATE_<UPPERCASE_OPERATION_WITH_UNDERSCORES>_IN_PERMANENT_STAGING`.
+   `MUTATE_<UPPERCASE_OPERATION_WITH_UNDERSCORES>_IN_PERMANENT_STAGING`. The run
+   guard reserves the exact candidate+operation; redispatch only when every
+   prior matching run's exact write step is authenticated as skipped.
 4. If rotating Supabase keys, run the same workflow with
-   `supabase-key-replacement`. Both keys are supplied to one atomic mutation.
-5. Re-run the permanent-staging application deployment for the same candidate,
-   then run the provider, Auth, Storage, consumer-compatibility, and sealed
-   variable gates. A mutation receipt alone is not runtime proof.
-6. Run `Permanent staging Supabase legacy-key cutover` only after every tracked
-   consumer has moved. A 404, ambiguous acknowledgement, non-401 old-key
-   response, or failed replacement-key canary is a hard stop with no retry.
+   `supabase-key-replacement`. Supply both publishable and secret keys to one
+   atomic `skipDeploys=true` mutation. Its receipt is not runtime proof.
+5. Run any general runtime-variable operation at most once for its exact
+   candidate+target+variable guard; even a skipped prior run requires a new
+   reviewed candidate. After every reviewed provider/runtime operation and the
+   complete staging and rollback plan, run `Deploy Pint Path permanent staging`
+   once more at one replica for the exact same candidate. Retain this second
+   successful candidate-bound artifact as the closeout redeploy. Prove every tracked
+   server, browser, mobile, CI, scheduled, webhook, backup, and archived
+   consumer plus Auth, admin, role, private Storage, provider, and Free-scope
+   behavior uses the final configuration.
+   The workflow rejects a PR head or any SHA other than protected `main`; its
+   GitHub receipt separately authenticates
+   the reviewed PR head, current review authority, merge commit, linear history,
+   and exact tree equality.
+6. Only then run `Permanent staging Supabase legacy-key cutover`, supplying the
+   exact replacement and later deployment run IDs. Its verifier authenticates
+   both same-candidate attempt-one artifacts and their chronology before secret
+   custody. Its candidate-keyed guard permits a later fresh dispatch only when
+   every prior matching cutover run's exact write step is authenticated as
+   skipped, and the replacement history has exactly the selected success plus
+   only safely skipped earlier attempts. It also rejects any same-candidate
+   provider mutation or permanent-staging runtime-variable run whose
+   `updated_at` is at or after the selected closeout deployment's
+   `run_started_at`; no configuration write may make that deployment stale. The
+   shared `queue: max` group serializes replacement, deployment, cutover, and
+   general permanent-staging runtime writes without dropping a queued run. The
+   general single-variable workflow hard-fails permanent-staging Supabase key
+   writes. A 404, ambiguous acknowledgement, non-401 old-key response, or failed
+   replacement-key canary is a hard stop with no write retry.
 7. Run `Permanent staging Postgres build canary` and retain its candidate-bound
    stopped build receipt before accepting the pinned PG17 build/tool chain.
-8. Run `Prove Pint Path permanent-staging two-replica scale` with confirmation
+8. Require exactly the two successful same-candidate staging deployment runs
+   from steps 2 and 5. Both must have completed before scale starts; the release
+   verifier selects the second closeout run and rejects zero, one, more than two,
+   or ambiguous same-candidate successes. Then run `Prove Pint Path
+   permanent-staging two-replica scale` with confirmation
    `SCALE_PERMANENT_STAGING_TO_TWO_FOR_EVIDENCE`. Do not cancel it. The final
    protected step converges the service to one replica even after an earlier
    failure. A workflow rerun cannot scale out again but may perform convergence.

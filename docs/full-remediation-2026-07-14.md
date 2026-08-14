@@ -377,7 +377,7 @@ The final result came from several independent passes:
 - Rendered browser smoke: **public desktop, public 390 x 844, signed-in Security, explicit reauthentication, persistent logout, and shared-device logout passed without horizontal overflow, stale private UI, or an unexpected 5xx**
 - Local API route sweep: **all checked public/authenticated routes and all 20 HTML pages returned their expected status classes; 36 referenced local routes/assets resolved**
 - Provider-readiness diagnostics in development: **18 passed, 14 external-configuration warnings, 0 blocking warnings, 0 failures**
-- Release-evidence schema at this dated checkpoint: **valid; 0/12 then-defined external evidence gates complete; strict mode correctly exited non-zero**. The current schema-v3 register supersedes this historical count with 13 required gates, including `permanent_staging_cost`.
+- Release-evidence schema at this dated checkpoint: **valid; 0/12 then-defined external evidence gates complete; strict mode correctly exited non-zero**. The current schema-v4 register supersedes this historical count with 13 required gates, including `permanent_staging_cost`.
 - Native static regression suite: **28/28 passed**
 - Swift parser: **passed**
 - iOS plist/privacy manifest lint: **passed**

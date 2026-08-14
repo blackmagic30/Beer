@@ -12,15 +12,55 @@ const currentSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encod
 const oldestSha = execFileSync("git", ["rev-list", "--max-parents=0", "HEAD"], { cwd: root, encoding: "utf8" })
   .trim()
   .split("\n")[0]!;
+const sameTreeNonAncestorSha = execFileSync(
+  "git",
+  ["commit-tree", `${currentSha}^{tree}`],
+  {
+    cwd: root,
+    encoding: "utf8",
+    input: "Synthetic reviewed PR head for squash-merge validation\n",
+    env: {
+      ...process.env,
+      GIT_AUTHOR_NAME: "Pint Path Test",
+      GIT_AUTHOR_EMAIL: "test@pintpath.invalid",
+      GIT_COMMITTER_NAME: "Pint Path Test",
+      GIT_COMMITTER_EMAIL: "test@pintpath.invalid",
+    },
+  },
+).trim();
 const releaseId = "PP-LAUNCH-2026-TEST1";
 const costPolicySha256 = crypto.createHash("sha256").update(fs.readFileSync(
   path.resolve(root, "ops/railway/permanent-staging-cost-policy.json"),
 )).digest("hex");
-const source = JSON.parse(fs.readFileSync(path.resolve(root, "docs/release-evidence.json"), "utf8")) as {
+const checkedInSource = JSON.parse(fs.readFileSync(
+  path.resolve(root, "docs/release-evidence.json"),
+  "utf8",
+)) as {
   version: number;
-  release: { id: string | null; candidateSha: string | null; environment: string };
+  release: {
+    id: string | null;
+    reviewedPrHeadSha: string | null;
+    candidateSha: string | null;
+    environment: string;
+  };
   items: Array<Record<string, unknown>>;
 };
+const source = structuredClone(checkedInSource);
+source.release = {
+  id: null,
+  reviewedPrHeadSha: null,
+  candidateSha: null,
+  environment: "production",
+};
+source.items = source.items.map((item) => ({
+  ...item,
+  status: "pending",
+  evidence: null,
+  evidenceSha256: null,
+  verifiedAt: null,
+  verifiedBy: null,
+  ...(item.id === "permanent_staging_cost" ? { costReceipt: null } : {}),
+}));
 const temporaryDirectories: string[] = [];
 
 function clone<T>(value: T): T {
@@ -29,7 +69,12 @@ function clone<T>(value: T): T {
 
 function otherwiseCompleteWithCostPending(): typeof source {
   const value = clone(source);
-  value.release = { id: releaseId, candidateSha: currentSha, environment: "production" };
+  value.release = {
+    id: releaseId,
+    reviewedPrHeadSha: currentSha,
+    candidateSha: currentSha,
+    environment: "production",
+  };
   value.items = value.items.map((item) => ({
     ...item,
     ...(item.id === "permanent_staging_cost"
@@ -243,7 +288,12 @@ describe("release evidence validator", () => {
       valid: true,
       launchReady: true,
       strict: true,
-      release: { id: releaseId, candidateSha: currentSha, environment: "production" },
+      release: {
+        id: releaseId,
+        reviewedPrHeadSha: currentSha,
+        candidateSha: currentSha,
+        environment: "production",
+      },
     });
     expect(result.output.permanentStagingCostReceiptErrors).toEqual([]);
   });
@@ -417,6 +467,7 @@ describe("release evidence validator", () => {
       verifiedAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
     };
     const stale = otherwiseCompleteWithCostPending();
+    stale.release.reviewedPrHeadSha = oldestSha;
     stale.release.candidateSha = oldestSha;
     stale.items[0] = {
       ...stale.items[0],
@@ -466,6 +517,39 @@ describe("release evidence validator", () => {
     expect(retainedResult.output.pendingWithProof).toContain("production_public_smoke");
   });
 
+  it("accepts a same-tree squash merge without requiring reviewed PR-head ancestry", () => {
+    const squash = otherwiseAllPassed();
+    squash.release.reviewedPrHeadSha = sameTreeNonAncestorSha;
+    const ancestry = spawnSync(
+      "git",
+      ["merge-base", "--is-ancestor", sameTreeNonAncestorSha, currentSha],
+      { cwd: root },
+    );
+    expect(ancestry.status).not.toBe(0);
+
+    const result = validate(squash, true);
+    expect(result.status).toBe(0);
+    expect(result.output.repositoryBindingErrors).toEqual([]);
+  });
+
+  it("rejects an unknown reviewed PR head or a reviewed tree that differs from candidate", () => {
+    const unknown = otherwiseAllPassed();
+    unknown.release.reviewedPrHeadSha = "f".repeat(40);
+    const unknownResult = validate(unknown, true);
+    expect(unknownResult.status).toBe(1);
+    expect(unknownResult.output.repositoryBindingErrors).toContain(
+      "release.reviewedPrHeadSha is not a commit in this repository",
+    );
+
+    const drifted = otherwiseAllPassed();
+    drifted.release.reviewedPrHeadSha = oldestSha;
+    const driftedResult = validate(drifted, true);
+    expect(driftedResult.status).toBe(1);
+    expect(driftedResult.output.repositoryBindingErrors).toContain(
+      "release.reviewedPrHeadSha tree does not match release.candidateSha tree",
+    );
+  });
+
   it("rejects malformed schemas, gate drift, and impossible timestamps in both modes", () => {
     const missing = clone(source);
     missing.items = missing.items.slice(1);
@@ -510,5 +594,20 @@ describe("release evidence validator", () => {
         expect(result.output).toMatchObject({ valid: false, launchReady: false, strict });
       }
     }
+  });
+
+  it("requires the release ID, reviewed head, and protected-main candidate as one identity", () => {
+    const partial = clone(source);
+    partial.release = {
+      id: releaseId,
+      reviewedPrHeadSha: null,
+      candidateSha: currentSha,
+      environment: "production",
+    };
+    const result = validate(partial);
+    expect(result.status).toBe(1);
+    expect(result.output.releaseMetadataErrors).toContain(
+      "release.id, release.reviewedPrHeadSha, and release.candidateSha must all be null or all be set",
+    );
   });
 });

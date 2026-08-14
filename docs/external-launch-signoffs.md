@@ -40,32 +40,71 @@ match every pin and remain distinct from production and permanent staging.
 
 - [ ] Name one release owner with authority to stop the launch.
 - [ ] Complete the named private role/contact register and pass the tabletop gate in `docs/data-breach-response-runbook.md`; an untested template is not production evidence.
-- [ ] Freeze the candidate commit, then initialise one private working directory in every new operator shell:
+- [ ] Freeze the reviewed PR head, record it as `reviewedPrHeadSha`, and confirm
+  ordinary CI, automated readiness, and the required Native Apps `ios` check are
+  green for that exact commit. Android is informational and outside this launch scope.
+- [ ] Follow Phase 16 of `docs/production-launch-runbook.md`: merge that exact
+  head through protected `main`, authenticate the associated merged PR, and use
+  only each eligible reviewer's latest effective exact-head review. Require a
+  non-author approval from a collaborator/member/owner who still has `write`,
+  `maintain`, or `admin`, require the GitHub merge commit and separately fetched
+  reviewed-head trees to be identical, and record the current protected-main
+  merge commit as both `candidateSha` and `deploymentSha`. A squash/rebase result
+  need not descend from the PR head.
+- [ ] Initialise one private working directory in every new operator shell:
 
   ```bash
   set -euo pipefail
-  git fetch origin main
   export RELEASE_ID="${PINTPATH_RELEASE_ID:?Set an immutable ID such as PP-LAUNCH-2026-001}"
-  export CANDIDATE_SHA="${PINTPATH_CANDIDATE_SHA:?Load the frozen PR-head SHA from the private release register}"
+  export RELEASE_PR_NUMBER="${PINTPATH_RELEASE_PR_NUMBER:?Load the associated merged PR number from the private release register}"
+  export REVIEWED_PR_HEAD_SHA="${PINTPATH_REVIEWED_PR_HEAD_SHA:?Load the reviewed PR-head SHA from the private release register}"
+  export CANDIDATE_SHA="${PINTPATH_CANDIDATE_SHA:?Load the protected-main candidate SHA from the private release register}"
+  [[ "$RELEASE_PR_NUMBER" =~ ^[1-9][0-9]*$ ]]
+  [[ "$REVIEWED_PR_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
   [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]
+  export REVIEWED_PR_HEAD_REF="refs/pintpath/reviewed-pr-head/$CANDIDATE_SHA"
+  git fetch --no-tags --no-recurse-submodules --force origin \
+    +refs/heads/main:refs/remotes/origin/main \
+    "+refs/pull/$RELEASE_PR_NUMBER/head:$REVIEWED_PR_HEAD_REF"
+  test "$(gh pr view "$RELEASE_PR_NUMBER" --json state --jq .state)" = "MERGED"
+  test "$(gh pr view "$RELEASE_PR_NUMBER" --json mergeCommit --jq .mergeCommit.oid)" = "$CANDIDATE_SHA"
+  test "$(git rev-parse origin/main)" = "$CANDIDATE_SHA"
+  test "$(git rev-parse "$REVIEWED_PR_HEAD_REF^{commit}")" = "$REVIEWED_PR_HEAD_SHA"
   git cat-file -e "$CANDIDATE_SHA^{commit}"
   export EVIDENCE_DIR="${PINTPATH_EVIDENCE_DIR:-$HOME/.pintpath/launch-evidence/$RELEASE_ID/$CANDIDATE_SHA}"
   umask 077
   mkdir -p "$EVIDENCE_DIR"
   chmod 700 "$EVIDENCE_DIR"
   test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+  test "$(git rev-parse "$REVIEWED_PR_HEAD_REF^{tree}")" = "$(git rev-parse "$CANDIDATE_SHA^{tree}")"
   test "$(git status --porcelain)" = ""
   npm ci --include=dev
   ```
 
-- [ ] Confirm ordinary CI, automated readiness, and the required Native Apps `ios` check are green for that commit. Android is informational and outside this launch scope.
-- [ ] Follow Phase 16 of `docs/production-launch-runbook.md`: merge the exact
-  candidate through protected `main`, verify the deployed tree differs only by
-  merge metadata, record `deploymentSha` separately, and require `/ready` to
-  report that protected-main deployment SHA. Never overwrite `candidateSha`
-  with a merge or evidence-closeout commit.
+- [ ] Before permanent-staging scale starts, require exactly two successful
+  deployment runs for the same candidate: the initial deployment and the
+  post-plan closeout redeploy. Require both complete and select the second run
+  and artifact; zero, one, more than two, or ambiguous completion order fails.
+- [ ] Start each guarded permanent-staging provider mutation, legacy cutover,
+  and runtime-variable run through `github:reviewed-candidate-authority:verify`.
+  Require complete authenticated history from the associated PR's `merged_at`
+  through the authenticated current `run_started_at`, not its `created_at`,
+  because retained queued runs can start out of creation order. That
+  `run_started_at` must be no more than 168 hours after `merged_at`. Beyond seven
+  days or with incomplete history, stop and create a newly reviewed and merged
+  candidate. Provider/cutover redispatch is allowed only when every prior
+  matching run's exact write step is authenticated with conclusion `skipped`. A general
+  runtime-variable write is keyed by candidate+target+variable and permits no
+  matching prior run, even one skipped before write.
+
 - [ ] Create a private evidence register for the release. Do not commit tokens, customer identifiers, private menu files, POS secrets, signing keys, backup contents, or unredacted screenshots.
-- [ ] Give the release an immutable ID such as `PP-LAUNCH-2026-001`. Before recording the first completed check, set `release.id` and the full 40-character `release.candidateSha` in `docs/release-evidence.json`. Never change them to rescue stale evidence. The validator requires that SHA to exist, remain an ancestor of `HEAD`, and have no later code changes; only `docs/release-evidence.json` may differ in the evidence-closeout commit.
+- [ ] Give the release an immutable ID such as `PP-LAUNCH-2026-001`. Before
+  recording the first completed check, set `release.id`,
+  `release.reviewedPrHeadSha`, and `release.candidateSha` in
+  `docs/release-evidence.json`. Never change them to rescue stale evidence. The
+  validator requires both commits to exist, their trees to match exactly, the
+  protected-main candidate to remain an ancestor of `HEAD`, and only
+  `docs/release-evidence.json` to differ in the evidence-closeout commit.
 - [ ] For every gate, create a gate-specific private manifest under the release register. Record the release ID, gate ID, candidate SHA, production environment, date, executor, named verifier and role, every step/result, defects/retests, and private artifact links plus their hashes. The manifest is the durable proof; the public file stores only its opaque reference and SHA-256.
 - [ ] Use dedicated synthetic smoke accounts and redact transaction references before storing evidence.
 - [ ] Before sending any unpublished menu to OpenAI or collecting real-shift evidence, obtain written owner/legal approval for the data-processing purpose, venue/menu permission or lawful basis, privacy notice, retention, redaction, and participant handling. This is the preliminary part of `legal_billing`; keep that item pending until its final review is complete.
@@ -106,7 +145,15 @@ For a passed item, update only that matching object in `docs/release-evidence.js
 
 Change only `status`, `evidence`, `evidenceSha256`, `verifiedAt`, and `verifiedBy`; preserve the existing ID, label, owner, next action, and `required: true` value. The sole additional field that may change is `costReceipt` on `permanent_staging_cost`: it must remain `null` while that item is pending or failed and may become only the sanitized, validator-conforming object described in section 13 when that item passes. `evidence` must be exactly `<release.id>/<gate id>`, the digest must be the lowercase SHA-256 of the final private gate manifest, and `verifiedBy` must contain `Full name, role`. A pending item must keep all four ordinary proof fields—and the cost item's `costReceipt`—`null`; a completed failed check uses `status: "fail"` with the same durable proof fields but no cost receipt.
 
-The stored `production_public_smoke` and `production_role_smoke` proofs expire after 24 hours because live providers and access can change without a code commit. Re-capture and independently verify both inside the final launch window. The informational validator reports expired proof or code/dirty-worktree drift as `evidenceCurrent: false`; the strict gate rejects it. Both modes reject future timestamps, proof collected before the frozen candidate commit, unknown/non-ancestor candidate SHAs, unexpected schema fields, and required `not_applicable` gates.
+The stored `production_public_smoke` and `production_role_smoke` proofs expire
+after 24 hours because live providers and access can change without a code
+commit. Re-capture and independently verify both inside the final launch window.
+The informational validator reports expired proof or code/dirty-worktree drift
+as `evidenceCurrent: false`; the strict gate rejects it. Both modes reject future
+timestamps, proof collected before the protected-main candidate commit,
+unknown/non-ancestor protected-main candidates, reviewed-head tree mismatch,
+unexpected schema fields, and required `not_applicable` gates. They deliberately
+do not require `reviewedPrHeadSha` to be an ancestor of a squash/rebase candidate.
 
 After each update, run:
 
@@ -149,6 +196,7 @@ pilots before the role and provider checks pass.
   [[ "$DEPLOYED_MAIN_SHA" =~ ^[0-9a-f]{40}$ ]]
   test "$(git rev-parse origin/main)" = "$DEPLOYED_MAIN_SHA"
   git merge-base --is-ancestor "$CANDIDATE_SHA" "$DEPLOYED_MAIN_SHA"
+  test "$(git rev-parse "$REVIEWED_PR_HEAD_SHA^{tree}")" = "$(git rev-parse "$CANDIDATE_SHA^{tree}")"
   test -z "$(git diff --name-only "$CANDIDATE_SHA..$DEPLOYED_MAIN_SHA" -- . ':(exclude)docs/release-evidence.json')"
   test -d "$EVIDENCE_DIR"
   ```
@@ -836,7 +884,11 @@ independent approval exist for the candidate, this item remains pending.
 
 ## Final closeout
 
-- [ ] Confirm all 13 objects in `docs/release-evidence.json` are `pass`, bound to the one frozen release ID/candidate SHA, and contain the exact gate reference, private-manifest SHA-256, ISO-8601 timestamp, and named verifier/role. Confirm the public, role, and permanent-staging cost proofs are less than 24 hours old.
+- [ ] Confirm all 13 objects in `docs/release-evidence.json` are `pass`, bound to
+  the one frozen release ID, reviewed PR-head SHA, and protected-main candidate
+  SHA, and contain the exact gate reference, private-manifest SHA-256, ISO-8601
+  timestamp, and named verifier/role. Confirm the public, role, and
+  permanent-staging cost proofs are less than 24 hours old.
 - [ ] Run:
 
   ```bash

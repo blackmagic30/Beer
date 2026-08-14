@@ -83,7 +83,7 @@ Do not add a second active region while the application uses one attached SQLite
 ### 5. Close external evidence
 
 At this dated audit checkpoint, all 12 then-defined launch evidence records were
-intentionally pending. The current schema-v3 register supersedes that inventory
+intentionally pending. The current schema-v4 register supersedes that inventory
 with 13 required records, including the separately provider-observed
 `permanent_staging_cost` gate; use `docs/release-evidence.json`, not this
 historical list, as the live authority.
@@ -105,5 +105,5 @@ Internal candidate: **go**.
 Weekend field testing: **go after the candidate deploy is verified**; treat latency results as provisional until the Railway region move.
 
 Broad public launch: **no-go until every item in the current release-evidence
-register passes against one frozen candidate SHA**. The live schema-v3 register
+register passes against one frozen candidate SHA**. The live schema-v4 register
 currently requires 13 items; the 12-item count above is historical.

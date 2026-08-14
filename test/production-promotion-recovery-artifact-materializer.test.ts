@@ -100,11 +100,26 @@ function fixture(
     producerCheck: contract.producerCheck,
   };
   const authority = {
-    schemaVersion: "pintpath-github-release-candidate-receipt/v3",
+    schemaVersion: "pintpath-github-release-candidate-receipt/v4",
     repository: "blackmagic30/Beer",
     branch: "main",
     phase: contract.phase,
     candidateSha: CANDIDATE,
+    reviewedPullRequest: {
+      number: 24,
+      reviewedPrHeadSha: "e".repeat(40),
+      mergeCommitSha: CANDIDATE,
+      treeSha: "f".repeat(40),
+      mergedAt: "1970-01-01T00:00:00.000Z",
+      authorId: 1,
+      mergedById: 2,
+      approvingReviewIds: [3],
+      approvingReviewerIds: [3],
+      githubMergeExact: true,
+      reviewedTreeExact: true,
+      independentApprovalExact: true,
+      linearHistoryExact: true,
+    },
     policySha256:
       "b47f562d94b462ed7d2b1d9df317ac239a607d517bb487c109585e09213ba4fd",
     consumer: {},
@@ -230,5 +245,39 @@ describe("production promotion-recovery artifact materializer", () => {
     expect(code).toBe(1);
     expect(value.fetchImpl).toHaveBeenCalledOnce();
     expect(fs.existsSync(value.output)).toBe(false);
+  });
+
+  it("rejects a predecessor authority whose reviewed PR no longer binds the candidate", async () => {
+    const value = fixture();
+    const authority = JSON.parse(fs.readFileSync(value.authorityPath, "utf8"));
+    authority.reviewedPullRequest.mergeCommitSha = "0".repeat(40);
+    fs.writeFileSync(value.authorityPath, canonical(authority), { mode: 0o600 });
+
+    const code = await runProductionPromotionRecoveryArtifactMaterializer(
+      [
+        "--authority",
+        value.authorityPath,
+        "--candidate-sha",
+        CANDIDATE,
+        "--stage",
+        value.stage,
+        "--output",
+        value.output,
+      ],
+      {
+        env: {
+          GITHUB_ACTIONS: "true",
+          GITHUB_REPOSITORY: "blackmagic30/Beer",
+          GITHUB_SHA: CANDIDATE,
+          GITHUB_RUN_ATTEMPT: "1",
+          GITHUB_TOKEN: "g".repeat(32),
+        },
+        fetchImpl: value.fetchImpl,
+        extractEntry: vi.fn(),
+        writeOutput: () => undefined,
+      },
+    );
+    expect(code).toBe(1);
+    expect(value.fetchImpl).not.toHaveBeenCalled();
   });
 });

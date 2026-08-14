@@ -43,9 +43,14 @@ reviewed combined recurring envelope is approximately US$46.80/month. This is
 not a staging-only cost or authority boundary.
 
 This runbook is the controlling data-architecture contract for the full public
-web and Australian iOS launch. Before candidate freeze, every implementation
-and pre-merge validation item below must be part of the reviewed commit. After
-that candidate is merged, the exact current protected-`main` commit must pass
+web and Australian iOS launch. Before merge, every implementation and pre-merge
+validation item below must be part of `reviewedPrHeadSha`. After GitHub merges
+that exact head, the resulting current protected-main merge `candidateSha` must
+have the same Git tree. Fetch the reviewed PR head separately to prove equality;
+a linear squash/rebase commit need not descend from it. GitHub must reduce each
+eligible reviewer's exact-head reviews to their latest effective state and find
+at least one non-author approval from a collaborator/member/owner who currently
+has `write`, `maintain`, or `admin`. That exact candidate must pass
 every live permanent-staging exit criterion before reviewed data is promoted or
 the combined launch is announced.
 
@@ -54,6 +59,24 @@ Railway writes below use only the exact protected workflows documented in
 and provider receipts remain open gates. The standalone mutation-boundary
 receipt is read-only, and no dashboard, Git-autodeploy, or ad-hoc CLI/API action
 may bridge a failed preflight.
+
+Permanent-staging provider mutation, application deployment, Supabase legacy
+cutover, and general permanent-staging runtime-variable writes share
+`pintpath-permanent-staging-key-rollout` with `queue: max` and
+`cancel-in-progress: false`; all queued runs are retained and fully serialized.
+Provider mutation history is guarded by exact candidate+operation and legacy
+cutover history by exact candidate through
+`github:reviewed-candidate-authority:verify`. It requires complete authenticated
+history from the associated PR's `merged_at` through the authenticated current
+`run_started_at`, not its `created_at`, because retained queued runs can start
+out of creation order. That `run_started_at` must be no more than 168 hours after
+`merged_at`. Beyond seven days or with incomplete history, create a newly
+reviewed and merged candidate. A fresh dispatch after matching prior runs is
+permitted only when every exact write step is authenticated with conclusion
+`skipped`; that is the sole
+`skipped-before-write` retry case. General runtime-variable writes use the same
+reviewed authority keyed by exact candidate+target+variable, but permit no prior
+matching run at all, even one skipped before write.
 
 ## Non-negotiable outcome
 
@@ -81,11 +104,15 @@ cutover. A one-replica SQLite launch is not an alternative for this release.
   (`GOOGLE_MAPS_API_KEY` and `GOOGLE_MAPS_MAP_ID`), Google Places server access
   (`GOOGLE_PLACES_API_KEY`), and OpenAI menu OCR (`OPENAI_API_KEY`). Separately,
   the two permanent-staging Supabase replacement-key variables use the
-  protected atomic replacement workflow and the later protected
-  canary/legacy-disable/old-key-denial ceremony. The old hard-disabled fixtures
-  are superseded and non-authoritative. Production operational-copy
-  URL, key, and bucket variables are prohibited in permanent staging. The app
-  deploy and live evidence also remain open.
+  protected atomic replacement workflow between the initial and closeout
+  deployments. Exactly two successful deployments of the same current-`main`
+  candidate must complete before scale, and the second closeout run is selected.
+  Complete consumer/Auth/Storage proof follows the replacement and closeout
+  deployment before the protected canary/legacy-disable/old-key-denial ceremony;
+  cutover requires both exact run IDs. The old hard-disabled fixtures
+  are superseded and non-authoritative. Production operational-copy URL, key,
+  and bucket variables are prohibited in permanent staging. The app deploy and
+  live evidence also remain open.
 - **Ephemeral destructive restore staging** currently has an isolated Railway
   project, Postgres database, and Redis resource, and its logical database
   receipt, one-tombstone replay, idempotent second replay, semantic projection,
@@ -504,10 +531,16 @@ URL file.
       Supabase/Auth/private Storage, and Redis core identities; prove they differ
       from production and the disposable restore resources.
 - [ ] Complete the three Google/OpenAI categories/four exact Railway variable
-      operations only through their protected authority. Run the separate atomic
-      Supabase replacement and protected canary-B/legacy-disable/old-key-denial
-      ceremony under its own approval. Then deploy the reviewed app and verify
-      provider/domain/callback bindings.
+      operations only through their protected authority after the first
+      successful deployment of the exact protected-main candidate. Run the
+      separate atomic Supabase publishable/secret-key replacement under its own
+      approval. After every planned provider/runtime operation, deploy the exact
+      same candidate once more and retain that second, closeout artifact; prove
+      all server, browser, mobile, CI, scheduled,
+      webhook, backup, and archived consumers plus Auth, admin, role, private
+      Storage, provider, and Free-scope behavior. Only then run protected
+      canary-B/legacy-disable/old-key-denial with the exact replacement and later
+      deployment run IDs and verify both old keys are rejected.
 - [ ] Complete the incident-driven staging Postgres runtime/admin and Redis
       credential rotations with the isolated-client acceptance/rejection contract
       in
@@ -517,6 +550,9 @@ URL file.
       tool and independently verify its complete receipt. No live production
       credential or unredacted production data was used.
 - [ ] Run at least two application replicas and overlapping worker instances.
+      Before this scale proof starts, require exactly the initial and closeout
+      successful staging deployments for the candidate and select the second;
+      any other same-candidate success count is a hard stop.
 - [ ] Pass public, member, contributor, assigned venue-Free manager, and MFA
       admin smoke tests; role isolation, revoked-session, deletion, moderation,
       retained internal happy-hour collection, and public happy-hour absence tests;
@@ -1060,8 +1096,12 @@ be measured and approved.
 
 ## Exit criteria
 
-Production cutover is allowed only after the candidate is merged to protected
-`main` and all of the following are signed for that exact current-main SHA by
+Production cutover is allowed only after GitHub authenticates the merged PR,
+the separately fetched `reviewedPrHeadSha`, a latest-effective non-author
+approval whose reviewer still has `write`, `maintain`, or `admin`, the current
+protected-main `candidateSha=merge_commit_sha`, and exact equality of their Git
+trees without requiring ancestry. All of the following must then be signed for
+that exact candidate by
 the operator and an independent verifier:
 
 - every authoritative table and workflow is implemented on Postgres;

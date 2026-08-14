@@ -102,9 +102,14 @@ consumer, the protected successor for the remaining ceremony is
 `.github/workflows/permanent-staging-supabase-legacy-cutover.yml`, governed by
 `ops/supabase/protected-permanent-staging-supabase-cutover-policy.json`. It runs
 replacement-key canary-B directly against the exact staging Auth/admin/Storage
-endpoints, persists intent, issues one Management API PUT with no retry,
-unconditionally reconciles with the separately held read token, reruns canary-B,
-and proves HTTP 401 denial for both retained old keys. Neither key material nor
+endpoints. Before it persists intent, the retained old `anon` key must return the
+pinned Auth-settings HTTP 200 shape using `apikey`, and the retained old
+`service_role` key must return the pinned admin-list HTTP 200 shape using the
+same key in both `apikey` and `Authorization: Bearer`. It then issues one
+Management API PUT with no retry, unconditionally reconciles with the separately
+held read token, reruns canary-B, and reuses those exact old-key requests to
+require the exact HTTP 401 `{"message":"Invalid API key"}` response. An already
+rejected old input stops before intent and PUT. Neither key material nor
 key-derived commitments enter evidence.
 
 ## Locked replacement shape
@@ -201,9 +206,10 @@ The only accepted response body is `{"enabled":false}`. Pure before/after
 fixtures require `enabled=true` before and `enabled=false` afterward for that
 project. The successor does not need individual key IDs because the provider
 operation disables both legacy JWT families project-wide. It instead validates
-the retained inputs' `anon` and `service_role` roles before provider access and
-binds the post-disable evidence to two exact 401 canaries. The older ID-bound
-evaluator remains fixture-only.
+the retained inputs' `anon` and `service_role` roles before provider access,
+proves both exact retained inputs are accepted by their pinned target endpoints
+before intent, and binds the post-disable evidence to the same requests returning
+the exact gateway 401 shape. The older ID-bound evaluator remains fixture-only.
 
 Old-key denial is a separate read-only fixture classifier. It accepts no key
 material and has no fetch implementation. Only an exact completed read-only
@@ -218,20 +224,36 @@ reviewed legacy key ID.
 1. Re-review the then-current Supabase changelog, API-key migration guide, and
    Management API reference immediately before the operation. The 12 August
    2026 public-doc review above does not authorize a later provider call.
-2. Deploy and retain candidate-bound application evidence and prove every
-   browser, mobile, CI, scheduled, webhook, backup, and archived consumer uses
-   the replacement format.
-3. Review the protected policy/workflow/executor together and configure its
-   non-bypassable GitHub Environment with distinct secrets read/write tokens.
-4. Prove a complete Railway preflight with no shared shadows or staged patch and
+2. Review the protected replacement and cutover policies, workflows, and
+   executors together and configure their non-bypassable GitHub Environments
+   with distinct secrets read/write tokens.
+3. Prove a complete Railway preflight with no shared shadows or staged patch and
    establish the external mutation freeze.
-5. Use only the protected workflow and private mode-0600 file custody; do not
-   pass keys in arguments, generic environment variables, logs, or artifacts.
-6. Persist the intent, perform at most one all-or-nothing skip-deploy merge, and
-   stop without retry on any ambiguous outcome.
-7. Prove application runtime and consumer compatibility, then approve and run
-   the protected legacy-cutover workflow exactly once. Production and its
-   operational-copy project require separate, production-scoped authorities.
+4. Use only the protected replacement workflow and private mode-0600 file
+   custody. Persist the intent and perform at most one all-or-nothing
+   publishable/secret-key `skipDeploys=true` merge; stop without retry on any
+   ambiguous outcome. Never pass keys in arguments, generic environment
+   variables, logs, or artifacts.
+5. After that exact atomic replacement completes, deploy the exact same
+   current-`main` candidate through `Deploy Pint Path permanent staging` and
+   retain its successful candidate-bound artifact. Prove every server, browser,
+   mobile, CI, scheduled, webhook, backup, and archived consumer uses the
+   replacement format, and complete the live Auth, admin, role, private-Storage,
+   provider, and Free-scope checks.
+6. Only then approve the protected legacy-cutover workflow exactly once. Supply
+   the exact atomic-replacement and later deployment run IDs. Before any
+   provider-secret custody, its GitHub verifier requires the exact successful
+   same-candidate attempt-one artifacts and proves replacement completion
+   precedes deployment start and deployment completion precedes cutover start.
+   Replacement, permanent-staging deployment, cutover, and every general
+   permanent-staging runtime-variable write share one non-cancelling rollout
+   concurrency group. The general workflow hard-fails either Supabase key so it
+   cannot bypass the paired replacement path; exact-name artifact uniqueness
+   rejects a second same-candidate replacement or deployment.
+7. Run the direct replacement-key Auth/admin/Storage canary, the single
+   legacy-disable write, postflight reconciliation, and both old-key 401 denial
+   proofs. Production and its operational-copy project require separate,
+   production-scoped authorities.
 
 Until every item is reviewed and evidenced, this work is a launch-safety
 foundation, not permission to mutate a provider.
