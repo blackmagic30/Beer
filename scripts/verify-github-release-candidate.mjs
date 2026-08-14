@@ -46,35 +46,10 @@ const PHASE_STAGE_COUNTS = Object.freeze({
 });
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const MAX_ASSOCIATED_PULL_PAGES = 10;
-const MAX_REVIEW_PAGES = 10;
 const MAX_MUTATION_HISTORY_PAGES = 10;
 const MAX_STAGING_MUTATION_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 const STAGING_DEPLOYMENT_CHECK = "Deploy permanent staging";
 const STAGING_SCALE_CHECK = "Scale 1→2, prove, and converge 2→1";
-const EFFECTIVE_REVIEW_STATES = new Set([
-  "APPROVED",
-  "CHANGES_REQUESTED",
-  "DISMISSED",
-]);
-const REVIEW_AUTHORITY_ASSOCIATIONS = new Set([
-  "COLLABORATOR",
-  "MEMBER",
-  "OWNER",
-]);
-const REVIEW_AUTHORITY_PERMISSIONS = new Set([
-  "write",
-  "maintain",
-  "admin",
-]);
-const REPOSITORY_PERMISSIONS = new Set([
-  "none",
-  "read",
-  "triage",
-  "write",
-  "maintain",
-  "admin",
-]);
-const GITHUB_LOGIN_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
 const PROVIDER_MUTATION_WORKFLOW_PATH =
   ".github/workflows/permanent-staging-provider-mutation.yml";
 const PROVIDER_MUTATION_WORKFLOW_ID =
@@ -209,7 +184,6 @@ export async function verifyReviewedPullRequest(
     policy.repository,
     `/pulls/${summary.number}`,
   );
-  const mergedAtMs = timestamp(pull?.merged_at);
   if (
     pull?.number !== summary.number ||
     pull?.state !== "closed" ||
@@ -223,82 +197,10 @@ export async function verifyReviewedPullRequest(
     !SHA_PATTERN.test(pull.head.sha) ||
     !positiveInteger(pull?.user?.id) ||
     !positiveInteger(pull?.merged_by?.id) ||
-    mergedAtMs === null
+    timestamp(pull?.merged_at) === null
   ) throw new Error("reviewed_pull_request_invalid");
 
   const reviewedPrHeadSha = pull.head.sha;
-  const reviews = [];
-  let reviewListingComplete = false;
-  for (let page = 1; page <= MAX_REVIEW_PAGES; page += 1) {
-    const batch = await githubGet(
-      fetchImpl,
-      token,
-      policy.repository,
-      `/pulls/${pull.number}/reviews?per_page=100&page=${page}`,
-    );
-    if (!Array.isArray(batch) || batch.length > 100) {
-      throw new Error("reviewed_pull_request_invalid");
-    }
-    reviews.push(...batch);
-    if (batch.length < 100) {
-      reviewListingComplete = true;
-      break;
-    }
-  }
-  if (!reviewListingComplete || reviews.length === 0) {
-    throw new Error("reviewed_pull_request_invalid");
-  }
-  const effectiveByReviewer = new Map();
-  for (const review of reviews) {
-    if (
-      review?.commit_id !== reviewedPrHeadSha ||
-      !EFFECTIVE_REVIEW_STATES.has(review?.state)
-    ) continue;
-    if (!REVIEW_AUTHORITY_ASSOCIATIONS.has(review?.author_association)) continue;
-    const submittedAtMs = timestamp(review?.submitted_at);
-    if (
-      !positiveInteger(review?.id) ||
-      !positiveInteger(review?.user?.id) ||
-      typeof review?.user?.login !== "string" ||
-      !GITHUB_LOGIN_PATTERN.test(review.user.login) ||
-      submittedAtMs === null ||
-      submittedAtMs > mergedAtMs
-    ) throw new Error("reviewed_pull_request_invalid");
-    const previous = effectiveByReviewer.get(review.user.id);
-    if (
-      previous === undefined ||
-      submittedAtMs > previous.submittedAtMs ||
-      (submittedAtMs === previous.submittedAtMs && review.id > previous.review.id)
-    ) effectiveByReviewer.set(review.user.id, { review, submittedAtMs });
-  }
-  const effectiveApprovals = [...effectiveByReviewer.values()]
-    .map((value) => value.review)
-    .filter((review) =>
-      review.state === "APPROVED" && review.user.id !== pull.user.id);
-  if (effectiveApprovals.length === 0) {
-    throw new Error("reviewed_pull_request_invalid");
-  }
-  const approvals = [];
-  for (const approval of effectiveApprovals) {
-    const authority = await githubGet(
-      fetchImpl,
-      token,
-      policy.repository,
-      `/collaborators/${encodeURIComponent(approval.user.login)}/permission`,
-      { allowNotFound: true },
-    );
-    if (authority === null) continue;
-    if (
-      !REPOSITORY_PERMISSIONS.has(authority?.permission) ||
-      authority?.user?.id !== approval.user.id ||
-      authority?.user?.login !== approval.user.login
-    ) throw new Error("reviewed_pull_request_invalid");
-    if (REVIEW_AUTHORITY_PERMISSIONS.has(authority.permission)) {
-      approvals.push(approval);
-    }
-  }
-  if (approvals.length === 0) throw new Error("reviewed_pull_request_invalid");
-
   const candidateCommit = validateGitCommit(
     await githubGet(
       fetchImpl,
@@ -323,10 +225,6 @@ export async function verifyReviewedPullRequest(
     throw new Error("reviewed_pull_request_invalid");
   }
 
-  const approvingReviewIds = [...new Set(approvals.map((review) => review.id))]
-    .sort((left, right) => left - right);
-  const approvingReviewerIds = [...new Set(approvals.map((review) => review.user.id))]
-    .sort((left, right) => left - right);
   return Object.freeze({
     number: pull.number,
     reviewedPrHeadSha,
@@ -335,11 +233,10 @@ export async function verifyReviewedPullRequest(
     mergedAt: pull.merged_at,
     authorId: pull.user.id,
     mergedById: pull.merged_by.id,
-    approvingReviewIds,
-    approvingReviewerIds,
     githubMergeExact: true,
     reviewedTreeExact: true,
-    independentApprovalExact: true,
+    pullRequestApprovalRequirement: "not_required",
+    pullRequestApprovalRequirementExact: true,
     linearHistoryExact: true,
   });
 }
@@ -543,7 +440,7 @@ export async function githubGet(
       headers: {
         Accept: "application/vnd.github+json",
         Authorization: `Bearer ${token}`,
-        "User-Agent": "pintpath-release-candidate-verifier/3",
+        "User-Agent": "pintpath-release-candidate-verifier/5",
         "X-GitHub-Api-Version": "2022-11-28",
       },
       cache: "no-store",
@@ -1111,7 +1008,7 @@ export async function runGithubReleaseCandidateVerification(argv, dependencies =
     }
     const orderedProductionChainSha256 = sha256(canonicalJson(productionChain));
     const receipt = Object.freeze({
-      schemaVersion: "pintpath-github-release-candidate-receipt/v4",
+      schemaVersion: "pintpath-github-release-candidate-receipt/v5",
       repository: policy.repository,
       branch: policy.branch,
       phase: args.phase,

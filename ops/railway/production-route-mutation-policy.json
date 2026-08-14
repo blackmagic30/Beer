@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "pintpath-protected-production-route-mutation-policy/v2",
+  "schemaVersion": "pintpath-protected-production-route-mutation-policy/v3",
   "policyId": "pintpath-protected-production-canonical-route",
   "activationState": "GITHUB_ENVIRONMENT_PROTECTED",
   "projectId": "48d8c6cd-1c66-4148-874b-20877f48e1a5",
@@ -23,7 +23,7 @@
     "requiredReplicaCount": 2
   },
   "predecessorAuthorityContract": {
-    "schemaVersion": "pintpath-github-release-candidate-receipt/v4",
+    "schemaVersion": "pintpath-github-release-candidate-receipt/v5",
     "policySha256": "b47f562d94b462ed7d2b1d9df317ac239a607d517bb487c109585e09213ba4fd",
     "requiredPhaseByOperation": {
       "close": "close",
@@ -52,7 +52,7 @@
     "githubAuthenticatedPullRequestRequired": true,
     "reviewedPrHeadTreeEqualityRequired": true,
     "linearHistoryRequired": true,
-    "independentApprovalRequired": true,
+    "pullRequestApprovalRequirement": "not_required",
     "promotionRecoveryReceiptSchemaVersion": "pintpath-production-promotion-recovery-receipt/v1",
     "promotionRecoveryPolicySha256": "57f66c1c9dde912586ec510e37c28cc3dfea2c098e67c78edbea189c7dcc9988",
     "promotionRecoverySelfHashRequired": true,

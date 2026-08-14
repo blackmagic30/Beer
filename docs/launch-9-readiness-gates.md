@@ -17,9 +17,9 @@ implementation and exact execution plan below. After the protected merge,
 execute the live provider and permanent-staging gates against the exact current
 protected-`main` merge SHA, recorded as `candidateSha`, before production
 deployment. Separately fetch the associated `reviewedPrHeadSha`, require exact
-tree equality without ancestry, and accept only a latest-effective non-author
-approval from a collaborator/member/owner who currently has `write`, `maintain`,
-or `admin`:
+tree equality without ancestry, and authenticate the unique merged, non-draft,
+same-repository PR plus its exact protected-`main` merge commit and linear
+history. Human PR approval is not required by the solo-owner branch policy:
 
 Every Railway create, configuration, variable, scale, deploy, rollback, PITR,
 route, delete, destroy, or teardown operation in these gates requires a tracked

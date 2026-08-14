@@ -369,10 +369,9 @@ route open. The controlling policy is schema v2 at SHA-256
 1. Freeze `reviewedPrHeadSha` and merge it through protected linear `main`.
    Record the resulting current protected-main merge commit as `candidateSha`;
    fetch the associated PR head separately and require exact tree equality, not
-   ancestry. For each eligible non-author reviewer, GitHub uses only the latest
-   effective review on that exact head; require at least one resulting approval
-   from a collaborator/member/owner who currently has `write`, `maintain`, or
-   `admin` permission. Pass all required checks on the exact candidate.
+   ancestry. Human PR approval is not required in this solo-owner repository;
+   require the exact merged non-draft same-repository PR and pass all required
+   checks on the exact candidate.
 2. Run `Deploy Pint Path permanent staging` for `candidateSha` at one replica
    and retain this first successful candidate-bound deployment artifact. This is
    the initial deployment, not the later release-gate selection.
@@ -395,8 +394,9 @@ route open. The controlling policy is schema v2 at SHA-256
    behavior uses the final configuration.
    The workflow rejects a PR head or any SHA other than protected `main`; its
    GitHub receipt separately authenticates
-   the reviewed PR head, current review authority, merge commit, linear history,
-   and exact tree equality.
+   the reviewed PR head, the unique merged non-draft same-repository PR, the
+   not-required human-approval policy, merge commit, linear history, and exact
+   tree equality.
 6. Only then run `Permanent staging Supabase legacy-key cutover`, supplying the
    exact replacement and later deployment run IDs. Its verifier authenticates
    both same-candidate attempt-one artifacts and their chronology before secret

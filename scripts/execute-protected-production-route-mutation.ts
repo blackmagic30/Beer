@@ -31,7 +31,7 @@ export const PROTECTED_PRODUCTION_ROUTE_MUTATION_STATE =
 
 const POLICY_PATH = "ops/railway/production-route-mutation-policy.json";
 const POLICY_SHA256 =
-  "fc3fba0dc43f82b0fb14d5fbc48bf4ceac98f6d19a73d97504665a5d7bb13ff4";
+  "44b904f53d8941a02a9cf7a6eb4819573b6b258b593710be0717369d9bf14d9d";
 const BOUNDARY_POLICY_PATH =
   "ops/railway/production-staging-mutation-policy.json";
 const BOUNDARY_POLICY_SHA256 =
@@ -335,7 +335,7 @@ function policyExact(cwd: string): boolean {
         "githubEnvironments", "candidateContract", "predecessorAuthorityContract", "mutationBoundary",
         "providerContract", "inventoryContract", "openRuntimeContract", "evidence",
       ])
-      && value.schemaVersion === "pintpath-protected-production-route-mutation-policy/v2"
+      && value.schemaVersion === "pintpath-protected-production-route-mutation-policy/v3"
       && value.policyId === "pintpath-protected-production-canonical-route"
       && value.activationState === PROTECTED_PRODUCTION_ROUTE_MUTATION_STATE
       && value.projectId === PROJECT_ID
@@ -368,13 +368,13 @@ function policyExact(cwd: string): boolean {
         "strictChronologyRequired", "strictCanonicalJsonRequired",
         "artifactIdDigestAndSizeRequired", "orderedProductionChainSha256Required",
         "githubAuthenticatedPullRequestRequired", "reviewedPrHeadTreeEqualityRequired",
-        "linearHistoryRequired", "independentApprovalRequired",
+        "linearHistoryRequired", "pullRequestApprovalRequirement",
         "promotionRecoveryReceiptSchemaVersion", "promotionRecoveryPolicySha256",
         "promotionRecoverySelfHashRequired",
         "promotionRecoveryCandidateDeploymentAndCloseBindingRequired",
       ])
       && value.predecessorAuthorityContract.schemaVersion
-        === "pintpath-github-release-candidate-receipt/v4"
+        === "pintpath-github-release-candidate-receipt/v5"
       && value.predecessorAuthorityContract.policySha256 === RELEASE_POLICY_SHA256
       && exact(value.predecessorAuthorityContract.requiredPhaseByOperation, ["close", "open"])
       && value.predecessorAuthorityContract.requiredPhaseByOperation.close === "close"
@@ -394,7 +394,7 @@ function policyExact(cwd: string): boolean {
       && value.predecessorAuthorityContract.githubAuthenticatedPullRequestRequired === true
       && value.predecessorAuthorityContract.reviewedPrHeadTreeEqualityRequired === true
       && value.predecessorAuthorityContract.linearHistoryRequired === true
-      && value.predecessorAuthorityContract.independentApprovalRequired === true
+      && value.predecessorAuthorityContract.pullRequestApprovalRequirement === "not_required"
       && value.predecessorAuthorityContract.promotionRecoveryReceiptSchemaVersion
         === "pintpath-production-promotion-recovery-receipt/v1"
       && value.predecessorAuthorityContract.promotionRecoveryPolicySha256
@@ -591,12 +591,10 @@ function genericArtifactExact(value: unknown): boolean {
 function reviewedPullRequestExact(value: unknown, candidateSha: string): boolean {
   if (!record(value) || !exact(value, [
     "number", "reviewedPrHeadSha", "mergeCommitSha", "treeSha", "mergedAt",
-    "authorId", "mergedById", "approvingReviewIds", "approvingReviewerIds",
-    "githubMergeExact", "reviewedTreeExact", "independentApprovalExact",
+    "authorId", "mergedById", "githubMergeExact", "reviewedTreeExact",
+    "pullRequestApprovalRequirement", "pullRequestApprovalRequirementExact",
     "linearHistoryExact",
   ])) return false;
-  const reviewIds = value.approvingReviewIds;
-  const reviewerIds = value.approvingReviewerIds;
   return positiveInteger(value.number)
     && typeof value.reviewedPrHeadSha === "string" && SHA.test(value.reviewedPrHeadSha)
     && value.mergeCommitSha === candidateSha
@@ -604,18 +602,10 @@ function reviewedPullRequestExact(value: unknown, candidateSha: string): boolean
     && timestampMilliseconds(value.mergedAt) !== null
     && positiveInteger(value.authorId)
     && positiveInteger(value.mergedById)
-    && Array.isArray(reviewIds) && reviewIds.length > 0
-    && reviewIds.every(positiveInteger)
-    && new Set(reviewIds).size === reviewIds.length
-    && reviewIds.every((item, index) => index === 0 || reviewIds[index - 1]! < item)
-    && Array.isArray(reviewerIds) && reviewerIds.length > 0
-    && reviewerIds.every(positiveInteger)
-    && new Set(reviewerIds).size === reviewerIds.length
-    && reviewerIds.every((item, index) => index === 0 || reviewerIds[index - 1]! < item)
-    && !reviewerIds.includes(value.authorId)
     && value.githubMergeExact === true
     && value.reviewedTreeExact === true
-    && value.independentApprovalExact === true
+    && value.pullRequestApprovalRequirement === "not_required"
+    && value.pullRequestApprovalRequirementExact === true
     && value.linearHistoryExact === true;
 }
 
@@ -633,7 +623,7 @@ function parseGithubPredecessorAuthority(
       "orderedProductionChainSha256", "requiredChecksExact", "requiredArtifactsExact",
       "chronologyExact", "currentConsumerExact",
     ])
-      || value.schemaVersion !== "pintpath-github-release-candidate-receipt/v4"
+      || value.schemaVersion !== "pintpath-github-release-candidate-receipt/v5"
       || value.repository !== "blackmagic30/Beer"
       || value.branch !== "main"
       || value.phase !== args.operation

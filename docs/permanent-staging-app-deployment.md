@@ -174,12 +174,9 @@ receipt and private execution evidence:
 
 The current-main verifier first requires the exact associated merged PR,
 `merge_commit_sha=candidateSha`, one-parent linear history, and exact
-reviewed/candidate tree equality. For each eligible non-author reviewer it uses
-only that reviewer's latest effective `APPROVED`, `CHANGES_REQUESTED`, or
-`DISMISSED` review on `reviewedPrHeadSha`; at least one resulting approval must
-belong to a collaborator/member/owner who still has repository `write`,
-`maintain`, or `admin` permission. An earlier approval superseded by that
-reviewer's later effective review is not authority. It then requires the exact
+reviewed/candidate tree equality. Human PR approval is deliberately not release
+authority in this solo-owner repository; draft, fork, direct-push, ambiguous
+associated-PR, merge-commit, and tree substitutions still fail closed. It then requires the exact
 successful base checks listed
 in `.github/release-required-checks.json`. Each check is bound to its declared
 workflow path and trigger event through the GitHub Actions run associated with

@@ -180,7 +180,8 @@ The remaining launch blockers require live/external completion:
 - enable PITR, prove a usable recovery point, and restrict production database network access;
 - configure and dispatch the protected daily status workflow, then connect its failure threshold to the real on-call page;
 - build and rehearse the immutable Postgres-compatible rollback artifact;
-- a clean candidate commit, current remote CI/CodeQL, independent approval, and required branch protections;
+- a clean candidate commit, current remote CI/CodeQL, an authenticated merged
+  PR with exact reviewed/candidate tree equality, and required branch protections;
 - provision the implemented immutable backup authority in a separate failure
   domain, then independently retrieve and restore it with an identity that
   cannot write, shorten retention, or delete prior copies;
@@ -1483,11 +1484,12 @@ Required pre-merge PR checks:
 - `CodeQL Swift`;
 - `ios`;
 - no unresolved review thread;
-- branch current with `main`;
-- for each collaborator/member/owner reviewer, use only their latest effective
-  `APPROVED`, `CHANGES_REQUESTED`, or `DISMISSED` review on the exact
-  `reviewedPrHeadSha`; require at least one resulting non-author approval whose
-  reviewer still has repository `write`, `maintain`, or `admin` permission.
+- branch current with `main`.
+
+Human PR approval is not required for this solo-owner repository. GitHub must
+still merge the exact non-draft same-repository PR through protected linear
+`main`; direct-push, fork, draft, mismatched-tree, and ambiguous associated-PR
+candidates remain invalid.
 
 These later required launch gates cannot be PR checks because their protected
 workflows accept only the exact current `main` SHA:
@@ -1514,10 +1516,8 @@ same-run prerequisite.
 
 Before accepting those current-main checks, the verifier also authenticates the
 one associated merged GitHub PR, its exact merge commit, and one-parent linear
-history. It reduces each eligible reviewer's exact-head reviews to that
-reviewer's latest effective state and requires at least one non-author approval
-whose collaborator/member/owner still has `write`, `maintain`, or `admin`
-permission. It separately proves exact Git-tree equality between
+history. It does not query or treat human reviews as release authority. It
+separately proves exact Git-tree equality between
 `reviewedPrHeadSha` and `candidateSha`; it does not require the reviewed PR head
 to be an ancestor of a squash/rebase result. For the staging deployment check it
 requires exactly two successful same-candidate workflow runs, both completed
@@ -1775,8 +1775,7 @@ test "$(git rev-list --parents -n 1 "$candidateSha" | wc -w | tr -d ' ')" = "2"
 deploymentSha="$candidateSha"
 ```
 
-Require the authenticated merged PR, independent approval on the exact
-`reviewedPrHeadSha` under the latest-effective/current-permission rule, exact
+Require the authenticated merged, non-draft, same-repository PR, exact
 `mergeCommit.oid`, a one-parent protected-main commit, the separately fetched
 reviewed head, and identical reviewed/candidate Git trees. Record `candidateSha`
 and the equal `deploymentSha`. Squash/rebase means `reviewedPrHeadSha` need not
@@ -2401,16 +2400,17 @@ The release is **go** only when every item is true for the same `releaseId`,
 `reviewedPrHeadSha`, `candidateSha`, `deployedMainSha`, and `rollbackBuildSha`:
 
 - [ ] launch contract and marketed scope signed;
-- [ ] GitHub authenticates the separately fetched `reviewedPrHeadSha`, applies
-      the latest-effective review rule, and confirms a non-author approver still
-      has `write`, `maintain`, or `admin`; its tree exactly matches the current
-      protected-main merge `candidateSha` without an ancestry requirement, and
-      that candidate matches `deployedMainSha` except the permitted evidence-only
-      closeout;
+- [ ] GitHub authenticates the separately fetched `reviewedPrHeadSha`, the
+      unique merged non-draft same-repository PR, its exact protected-main merge
+      `candidateSha`, and one-parent linear history; the reviewed and candidate
+      trees match without an ancestry requirement, human PR approval is not
+      required by the solo-owner branch policy, and that candidate matches
+      `deployedMainSha` except the permitted evidence-only closeout;
 - [ ] exactly two successful same-candidate permanent-staging deployments—the
       initial and closeout runs—complete before scale, and the gate selects the
       second run and its artifact;
-- [ ] required web/iOS CI, CodeQL, review, and branch protections pass;
+- [ ] required web/iOS CI, CodeQL, conversation-resolution, and branch
+      protections pass;
 - [ ] Android is absent from required release evidence;
 - [ ] authoritative Postgres migration/import/reconciliation and at least two
       production replicas pass; SQLite is sealed read-only migration evidence;

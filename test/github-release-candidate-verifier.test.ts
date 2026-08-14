@@ -90,39 +90,21 @@ function harness(
     pullMergeCommitSha?: string;
     pullHeadSha?: string;
     pullMerged?: boolean;
+    pullDraft?: boolean;
+    pullBaseRef?: string;
+    pullBaseRepository?: string;
+    pullHeadRepository?: string;
+    pullAuthorId?: number;
+    pullMergedById?: number;
     candidateTreeSha?: string;
     reviewedTreeSha?: string;
     candidateParentCount?: number;
-    reviewState?: string;
-    reviewCommitSha?: string;
-    reviewUserId?: number;
-    reviewPermission?: string;
-    reviewPermissions?: Record<string, string | null | "malformed" | "error">;
-    reviewAuthorAssociation?: string;
     additionalStagingDeployments?: Array<{
       runId: number;
       startedAt: string;
       completedAt: string;
       runStartedAt: string;
     }>;
-    reviews?: Array<{
-      id: number;
-      userId: number;
-      login: string;
-      state: string;
-      commitSha?: string;
-      submittedAt: string;
-      authorAssociation?: string;
-    }>;
-    reviewPages?: Array<Array<{
-      id: number;
-      userId: number;
-      login: string;
-      state: string;
-      commitSha?: string;
-      submittedAt: string;
-      authorAssociation?: string;
-    }>>;
     providerMutationRuns?: Array<Record<string, unknown>>;
     runtimeMutationRuns?: Array<Record<string, unknown>>;
     mutationJobs?: Record<number, unknown>;
@@ -268,8 +250,17 @@ function harness(
         number: 24,
         state: "closed",
         merge_commit_sha: options.pullMergeCommitSha ?? CANDIDATE,
-        base: { ref: "main", repo: { full_name: "blackmagic30/Beer" } },
-        head: { repo: { full_name: "blackmagic30/Beer" } },
+        base: {
+          ref: options.pullBaseRef ?? "main",
+          repo: {
+            full_name: options.pullBaseRepository ?? "blackmagic30/Beer",
+          },
+        },
+        head: {
+          repo: {
+            full_name: options.pullHeadRepository ?? "blackmagic30/Beer",
+          },
+        },
       };
       return jsonResponse(options.associatedPullPages?.[page - 1] ??
         (page === 1
@@ -284,64 +275,23 @@ function harness(
         number: 24,
         state: "closed",
         merged: options.pullMerged ?? true,
-        draft: false,
+        draft: options.pullDraft ?? false,
         merge_commit_sha: options.pullMergeCommitSha ?? CANDIDATE,
         merged_at: "2026-08-14T01:00:00.000Z",
-        user: { id: 101 },
-        merged_by: { id: 202 },
-        base: { ref: "main", repo: { full_name: "blackmagic30/Beer" } },
+        user: { id: options.pullAuthorId ?? 101 },
+        merged_by: { id: options.pullMergedById ?? 202 },
+        base: {
+          ref: options.pullBaseRef ?? "main",
+          repo: {
+            full_name: options.pullBaseRepository ?? "blackmagic30/Beer",
+          },
+        },
         head: {
           sha: options.pullHeadSha ?? REVIEWED_PR_HEAD,
-          repo: { full_name: "blackmagic30/Beer" },
+          repo: {
+            full_name: options.pullHeadRepository ?? "blackmagic30/Beer",
+          },
         },
-      });
-    }
-    if (url.includes("/pulls/24/reviews?")) {
-      const page = Number(new URL(url).searchParams.get("page") ?? "1");
-      const reviews = options.reviewPages?.[page - 1] ??
-        (page === 1 ? options.reviews : []);
-      return jsonResponse(reviews?.map((review) => ({
-        id: review.id,
-        user: { id: review.userId, login: review.login },
-        state: review.state,
-        commit_id: review.commitSha ?? REVIEWED_PR_HEAD,
-        submitted_at: review.submittedAt,
-        author_association: review.authorAssociation ?? "MEMBER",
-      })) ?? [{
-        id: 303,
-        user: { id: options.reviewUserId ?? 303, login: "trusted-reviewer" },
-        state: options.reviewState ?? "APPROVED",
-        commit_id: options.reviewCommitSha ?? REVIEWED_PR_HEAD,
-        submitted_at: "2026-08-14T00:30:00.000Z",
-        author_association: options.reviewAuthorAssociation ?? "MEMBER",
-      }]);
-    }
-    const permissionMatch = /\/collaborators\/([^/]+)\/permission$/.exec(url);
-    if (permissionMatch) {
-      const login = decodeURIComponent(permissionMatch[1]!);
-      const configured = options.reviewPermissions?.[login];
-      if (configured === null) {
-        return new Response(JSON.stringify({ message: "Not Found" }), {
-          status: 404,
-          headers: { "content-type": "application/json" },
-        });
-      }
-      if (configured === "error") {
-        return new Response(JSON.stringify({ message: "Unavailable" }), {
-          status: 503,
-          headers: { "content-type": "application/json" },
-        });
-      }
-      if (configured === "malformed") return jsonResponse({ permission: "write" });
-      const identities: Record<string, number> = {
-        "trusted-reviewer": options.reviewUserId ?? 303,
-        "reviewer-two": 304,
-        "former-reviewer": 305,
-      };
-      return jsonResponse({
-        permission: configured ?? options.reviewPermission ??
-          (login === "reviewer-two" ? "maintain" : "write"),
-        user: { id: identities[login] ?? 999, login },
       });
     }
     if (url.endsWith(`/git/commits/${CANDIDATE}`)) {
@@ -523,7 +473,7 @@ describe("GitHub release-candidate verifier", () => {
         fs.readFileSync(path.join(fixture.directory, "receipt.json"), "utf8"),
       );
       expect(receipt).toMatchObject({
-        schemaVersion: "pintpath-github-release-candidate-receipt/v4",
+        schemaVersion: "pintpath-github-release-candidate-receipt/v5",
         phase,
         candidateSha: CANDIDATE,
         reviewedPullRequest: {
@@ -531,11 +481,10 @@ describe("GitHub release-candidate verifier", () => {
           reviewedPrHeadSha: REVIEWED_PR_HEAD,
           mergeCommitSha: CANDIDATE,
           treeSha: REVIEWED_TREE,
-          approvingReviewIds: [303],
-          approvingReviewerIds: [303],
           githubMergeExact: true,
           reviewedTreeExact: true,
-          independentApprovalExact: true,
+          pullRequestApprovalRequirement: "not_required",
+          pullRequestApprovalRequirementExact: true,
           linearHistoryExact: true,
         },
         consumer: {
@@ -548,6 +497,20 @@ describe("GitHub release-candidate verifier", () => {
         chronologyExact: true,
         currentConsumerExact: true,
       });
+      expect(Object.keys(receipt.reviewedPullRequest)).toEqual([
+        "number",
+        "reviewedPrHeadSha",
+        "mergeCommitSha",
+        "treeSha",
+        "mergedAt",
+        "authorId",
+        "mergedById",
+        "githubMergeExact",
+        "reviewedTreeExact",
+        "pullRequestApprovalRequirement",
+        "pullRequestApprovalRequirementExact",
+        "linearHistoryExact",
+      ]);
       expect(receipt.checks).toContainEqual(
         expect.objectContaining({
           name: "ios",
@@ -848,16 +811,18 @@ describe("GitHub release-candidate verifier", () => {
     })).resolves.toBe(0);
   });
 
-  it("rejects a merge without exact GitHub PR, review, linear-history, and tree binding", async () => {
+  it("rejects a merge without exact GitHub PR, linear-history, tree, and identity binding", async () => {
     for (const fixture of [
       harness({ associatedPullCount: 0 }),
       harness({ pullMergeCommitSha: "e".repeat(40) }),
       harness({ pullMerged: false }),
-      harness({ reviewState: "COMMENTED" }),
-      harness({ reviewCommitSha: "e".repeat(40) }),
-      harness({ reviewUserId: 101 }),
-      harness({ reviewPermission: "read" }),
-      harness({ reviewAuthorAssociation: "NONE" }),
+      harness({ pullDraft: true }),
+      harness({ pullBaseRef: "develop" }),
+      harness({ pullBaseRepository: "other/Beer" }),
+      harness({ pullHeadRepository: "fork/Beer" }),
+      harness({ pullHeadSha: "invalid" }),
+      harness({ pullAuthorId: 0 }),
+      harness({ pullMergedById: 0 }),
       harness({ candidateParentCount: 2 }),
       harness({ reviewedTreeSha: "e".repeat(40) }),
     ]) {
@@ -883,214 +848,8 @@ describe("GitHub release-candidate verifier", () => {
     }
   });
 
-  it("uses only each reviewer's latest effective exact-head review", async () => {
-    for (const state of ["CHANGES_REQUESTED", "DISMISSED"]) {
-      const fixture = harness({
-        reviews: [
-          {
-            id: 303,
-            userId: 303,
-            login: "trusted-reviewer",
-            state: "APPROVED",
-            submittedAt: "2026-08-14T00:20:00.000Z",
-          },
-          {
-            id: 304,
-            userId: 303,
-            login: "trusted-reviewer",
-            state,
-            submittedAt: "2026-08-14T00:40:00.000Z",
-          },
-        ],
-      });
-      let summary = "";
-      const code = await runGithubReleaseCandidateVerification(fixture.argv, {
-        env: {
-          GITHUB_ACTIONS: "true",
-          GITHUB_REF: "refs/heads/main",
-          GITHUB_SHA: CANDIDATE,
-          GITHUB_REPOSITORY: "blackmagic30/Beer",
-          GITHUB_RUN_ATTEMPT: "1",
-          GITHUB_RUN_ID: "9999",
-          GITHUB_TOKEN: "g".repeat(32),
-        },
-        fetchImpl: fixture.fetchImpl,
-        writeOutput: (value: string) => { summary += value; },
-      });
-      expect(code, state).toBe(1);
-      expect(JSON.parse(summary)).toMatchObject({
-        ok: false,
-        failureCode: "reviewed_pull_request_invalid",
-      });
-    }
-
-    const restored = harness({
-      reviews: [
-        {
-          id: 303,
-          userId: 303,
-          login: "trusted-reviewer",
-          state: "CHANGES_REQUESTED",
-          submittedAt: "2026-08-14T00:20:00.000Z",
-        },
-        {
-          id: 304,
-          userId: 303,
-          login: "trusted-reviewer",
-          state: "APPROVED",
-          submittedAt: "2026-08-14T00:40:00.000Z",
-        },
-      ],
-    });
-    const code = await runGithubReleaseCandidateVerification(restored.argv, {
-      env: {
-        GITHUB_ACTIONS: "true",
-        GITHUB_REF: "refs/heads/main",
-        GITHUB_SHA: CANDIDATE,
-        GITHUB_REPOSITORY: "blackmagic30/Beer",
-        GITHUB_RUN_ATTEMPT: "1",
-        GITHUB_RUN_ID: "9999",
-        GITHUB_TOKEN: "g".repeat(32),
-      },
-      fetchImpl: restored.fetchImpl,
-      writeOutput: () => undefined,
-    });
-    expect(code).toBe(0);
-  });
-
-  it("ignores outsider reviews without letting them invalidate an authorized approval", async () => {
-    for (const outsiderState of ["APPROVED", "DISMISSED"]) {
-      const fixture = harness({
-        reviews: [
-          {
-            id: 302,
-            userId: 999,
-            login: "outside-reviewer",
-            state: outsiderState,
-            submittedAt: "2026-08-14T00:25:00.000Z",
-            authorAssociation: "NONE",
-          },
-          {
-            id: 303,
-            userId: 303,
-            login: "trusted-reviewer",
-            state: "APPROVED",
-            submittedAt: "2026-08-14T00:30:00.000Z",
-          },
-        ],
-      });
-      const code = await runGithubReleaseCandidateVerification(fixture.argv, {
-        env: {
-          GITHUB_ACTIONS: "true",
-          GITHUB_REF: "refs/heads/main",
-          GITHUB_SHA: CANDIDATE,
-          GITHUB_REPOSITORY: "blackmagic30/Beer",
-          GITHUB_RUN_ATTEMPT: "1",
-          GITHUB_RUN_ID: "9999",
-          GITHUB_TOKEN: "g".repeat(32),
-        },
-        fetchImpl: fixture.fetchImpl,
-        writeOutput: () => undefined,
-      });
-      expect(code, outsiderState).toBe(0);
-      expect(fixture.fetchImpl).not.toHaveBeenCalledWith(
-        expect.stringContaining("/collaborators/outside-reviewer/permission"),
-        expect.anything(),
-      );
-    }
-  });
-
-  it("counts current review authority without letting a former collaborator block it", async () => {
-    const reviews = [
-      {
-        id: 305,
-        userId: 305,
-        login: "former-reviewer",
-        state: "APPROVED",
-        submittedAt: "2026-08-14T00:20:00.000Z",
-        authorAssociation: "COLLABORATOR",
-      },
-      {
-        id: 303,
-        userId: 303,
-        login: "trusted-reviewer",
-        state: "APPROVED",
-        submittedAt: "2026-08-14T00:30:00.000Z",
-      },
-    ];
-    const run = async (fixture: ReturnType<typeof harness>) => {
-      let summary = "";
-      const code = await runGithubReleaseCandidateVerification(fixture.argv, {
-        env: {
-          GITHUB_ACTIONS: "true",
-          GITHUB_REF: "refs/heads/main",
-          GITHUB_SHA: CANDIDATE,
-          GITHUB_REPOSITORY: "blackmagic30/Beer",
-          GITHUB_RUN_ATTEMPT: "1",
-          GITHUB_RUN_ID: "9999",
-          GITHUB_TOKEN: "g".repeat(32),
-        },
-        fetchImpl: fixture.fetchImpl,
-        writeOutput: (value: string) => { summary += value; },
-      });
-      return { code, summary };
-    };
-
-    await expect(run(harness({
-      reviews,
-      reviewPermissions: { "former-reviewer": "read" },
-    }))).resolves.toMatchObject({ code: 0 });
-    await expect(run(harness({
-      reviews,
-      reviewPermissions: { "former-reviewer": null },
-    }))).resolves.toMatchObject({ code: 0 });
-
-    for (const formerPermission of ["read", null] as const) {
-      const result = await run(harness({
-        reviews: [reviews[0]!],
-        reviewPermissions: { "former-reviewer": formerPermission },
-      }));
-      expect(result.code).toBe(1);
-      expect(JSON.parse(result.summary)).toMatchObject({
-        failureCode: "reviewed_pull_request_invalid",
-      });
-    }
-
-    for (const formerPermission of ["malformed", "error"] as const) {
-      const result = await run(harness({
-        reviews,
-        reviewPermissions: { "former-reviewer": formerPermission },
-      }));
-      expect(result.code).toBe(1);
-      expect(JSON.parse(result.summary)).toMatchObject({
-        failureCode: formerPermission === "error"
-          ? "github_query_failed"
-          : "reviewed_pull_request_invalid",
-      });
-    }
-  });
-
-  it("paginates outsider comment spam and still reduces authorized review history", async () => {
-    const outsiderComments = Array.from({ length: 100 }, (_, index) => ({
-      id: index + 1,
-      userId: 1_000 + index,
-      login: `outsider-${index}`,
-      state: "COMMENTED",
-      submittedAt: "2026-08-14T00:10:00.000Z",
-      authorAssociation: "NONE",
-    }));
-    const fixture = harness({
-      reviewPages: [
-        outsiderComments,
-        [{
-          id: 303,
-          userId: 303,
-          login: "trusted-reviewer",
-          state: "APPROVED",
-          submittedAt: "2026-08-14T00:30:00.000Z",
-        }],
-      ],
-    });
+  it("accepts a merged solo-owner PR without querying reviews or collaborators", async () => {
+    const fixture = harness();
     const code = await runGithubReleaseCandidateVerification(fixture.argv, {
       env: {
         GITHUB_ACTIONS: "true",
@@ -1105,48 +864,9 @@ describe("GitHub release-candidate verifier", () => {
       writeOutput: () => undefined,
     });
     expect(code).toBe(0);
-    expect(fixture.fetchImpl).toHaveBeenCalledWith(
-      expect.stringContaining("/pulls/24/reviews?per_page=100&page=2"),
-      expect.anything(),
-    );
-
-    const revoked = harness({
-      reviewPages: [
-        Array.from({ length: 100 }, (_, index) => ({
-          id: index + 1,
-          userId: 303,
-          login: "trusted-reviewer",
-          state: "APPROVED",
-          submittedAt: `2026-08-14T00:${String(10 + Math.floor(index / 60)).padStart(2, "0")}:${String(index % 60).padStart(2, "0")}.000Z`,
-        })),
-        [{
-          id: 101,
-          userId: 303,
-          login: "trusted-reviewer",
-          state: "CHANGES_REQUESTED",
-          submittedAt: "2026-08-14T00:40:00.000Z",
-        }],
-      ],
-    });
-    let summary = "";
-    const revokedCode = await runGithubReleaseCandidateVerification(revoked.argv, {
-      env: {
-        GITHUB_ACTIONS: "true",
-        GITHUB_REF: "refs/heads/main",
-        GITHUB_SHA: CANDIDATE,
-        GITHUB_REPOSITORY: "blackmagic30/Beer",
-        GITHUB_RUN_ATTEMPT: "1",
-        GITHUB_RUN_ID: "9999",
-        GITHUB_TOKEN: "g".repeat(32),
-      },
-      fetchImpl: revoked.fetchImpl,
-      writeOutput: (value: string) => { summary += value; },
-    });
-    expect(revokedCode).toBe(1);
-    expect(JSON.parse(summary)).toMatchObject({
-      ok: false,
-      failureCode: "reviewed_pull_request_invalid",
-    });
+    const requestedUrls = fixture.fetchImpl.mock.calls.map(([url]) => String(url));
+    expect(requestedUrls.some((url) => url.includes("/reviews"))).toBe(false);
+    expect(requestedUrls.some((url) => url.includes("/collaborators/"))).toBe(false);
   });
 
   it("selects only the check from the policy-bound workflow and event", async () => {
