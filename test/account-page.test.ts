@@ -1675,9 +1675,9 @@ describe("account page shell", () => {
   it("canonicalises the www host before origin-bound PKCE state can be created", () => {
     const source = appSource();
 
-    expect(source).toContain("shouldRedirectToCanonicalHost(canonicalHost, requestHost)");
-    expect(source).toContain("buildCanonicalHostRedirectUrl(publicBaseUrl.origin, req.originalUrl)");
-    expect(source.indexOf("shouldRedirectToCanonicalHost(canonicalHost, requestHost)")).toBeLessThan(
+    expect(source).toContain("createCanonicalProductionHostGuard({");
+    expect(source).toContain("shouldEnforceCanonicalProductionHost({");
+    expect(source.indexOf("createCanonicalProductionHostGuard({")).toBeLessThan(
       source.indexOf("res.locals.cspNonce"),
     );
   });

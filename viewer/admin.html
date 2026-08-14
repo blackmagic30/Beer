@@ -191,7 +191,7 @@
               </div>
               <button id="refreshSecurityAuditButton" class="button button--small" type="button">Refresh</button>
             </div>
-            <form id="securityAuditFilterForm" class="form">
+            <form id="securityAuditFilterForm" class="form" method="post" action="/form-submission-unavailable" accept-charset="UTF-8" data-sensitive-native-fallback="non-mutating">
               <div class="grid grid--two">
                 <label class="field">Action
                   <input name="action" maxlength="120" placeholder="e.g. admin_session_revoked" />
@@ -214,7 +214,7 @@
           <section class="panel" aria-labelledby="adminAccountContainmentHeading">
             <div class="eyebrow">Incident containment</div>
             <h2 id="adminAccountContainmentHeading">Account sessions and status</h2>
-            <form id="adminAccountContainmentForm" class="form">
+            <form id="adminAccountContainmentForm" class="form" method="post" action="/form-submission-unavailable" accept-charset="UTF-8" data-sensitive-native-fallback="non-mutating">
               <label class="field">Account ID
                 <input name="userId" maxlength="180" required placeholder="Paste the exact account ID" />
               </label>
@@ -272,7 +272,7 @@
           <div class="eyebrow">Report operations</div>
           <h2 id="adminReportOpsHeading">Generate and deliver monthly reports</h2>
           <p class="muted">Run a dry preview first. Delivery uses each venue's configured report recipients and the production delivery provider.</p>
-          <form id="adminReportOpsForm" class="form">
+          <form id="adminReportOpsForm" class="form" method="post" action="/form-submission-unavailable" accept-charset="UTF-8" data-sensitive-native-fallback="non-mutating">
             <div class="grid grid--two">
               <label class="field">Month
                 <input name="month" type="month" required />
@@ -413,7 +413,7 @@
             <div id="adminCaptureStatus" class="notice">Choose a venue and add at least one pint row.</div>
           </div>
 
-          <form id="adminCreateVenueForm" class="panel form">
+          <form id="adminCreateVenueForm" class="panel form" method="post" action="/form-submission-unavailable" accept-charset="UTF-8" data-sensitive-native-fallback="non-mutating">
             <h2>Add new pub or bar</h2>
             <p class="muted">Search Google Maps first. Details auto-fill, then the venue is selected for beer capture.</p>
             <label class="field">Find on Google Maps
@@ -465,7 +465,7 @@
         </div>
 
         <div class="adminGrid adminGrid--sourceReview">
-          <form id="adminSourceQueueForm" class="panel form adminSourceQueuePanel">
+          <form id="adminSourceQueueForm" class="panel form adminSourceQueuePanel" method="post" action="/form-submission-unavailable" accept-charset="UTF-8" data-sensitive-native-fallback="non-mutating">
             <h2>Queue source ingestion</h2>
             <p class="muted">Queue a selected venue source for OCR and admin review before publishing.</p>
             <label class="field">Source type
@@ -531,7 +531,7 @@
         </div>
 
         <div class="adminGrid adminGrid--two">
-          <form id="managerAssignForm" class="panel form">
+          <form id="managerAssignForm" class="panel form" method="post" action="/form-submission-unavailable" accept-charset="UTF-8" data-sensitive-native-fallback="non-mutating">
             <h2>Assign venue access</h2>
             <label class="field">Staff account
               <input id="managerUserSearch" type="search" placeholder="Search email, name, or public account ID" autocomplete="off" />
@@ -558,7 +558,7 @@
             <div id="managerAssignPreview" class="notice">Pick a staff account and a venue. Pint Path fills the IDs automatically.</div>
             <button class="button button--primary" type="submit">Assign access</button>
           </form>
-          <form id="outreachForm" class="panel form">
+          <form id="outreachForm" class="panel form" method="post" action="/form-submission-unavailable" accept-charset="UTF-8" data-sensitive-native-fallback="non-mutating">
             <h2>Partner outreach note</h2>
             <input name="expectedUpdatedAt" type="hidden" value="" />
             <label class="field">Venue ID
@@ -629,7 +629,7 @@
         </div>
 
         <div class="adminGrid adminGrid--two">
-          <form id="leaderboardPrizeForm" class="panel form">
+          <form id="leaderboardPrizeForm" class="panel form" method="post" action="/form-submission-unavailable" accept-charset="UTF-8" data-sensitive-native-fallback="non-mutating">
             <h2>Prize settings</h2>
             <label class="field">Month
               <input name="monthKey" required pattern="\d{4}-\d{2}" placeholder="2026-06" />

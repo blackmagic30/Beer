@@ -50,7 +50,7 @@
           <button id="showSignupButton" class="authTab" type="button" role="tab" aria-selected="false" aria-controls="signupForm">Create account</button>
         </div>
 
-        <form id="loginForm" class="form authForm" role="tabpanel" aria-labelledby="showLoginButton loginHeading">
+        <form id="loginForm" class="form authForm" method="post" action="/form-submission-unavailable" accept-charset="UTF-8" data-sensitive-native-fallback="non-mutating" role="tabpanel" aria-labelledby="showLoginButton loginHeading">
           <div id="loginPanel" class="authPanelStack">
             <h2 id="loginHeading">Continue with Google</h2>
             <p id="loginLead" class="muted">Google securely verifies your web account. Email/password access is reserved for the first iOS release.</p>
@@ -100,7 +100,7 @@
           </div>
         </form>
 
-        <form id="signupForm" class="form authForm is-hidden" role="tabpanel" aria-labelledby="showSignupButton signupHeading" hidden>
+        <form id="signupForm" class="form authForm is-hidden" method="post" action="/form-submission-unavailable" accept-charset="UTF-8" data-sensitive-native-fallback="non-mutating" role="tabpanel" aria-labelledby="showSignupButton signupHeading" hidden>
           <div id="signupPanel" class="authPanelStack">
             <h2 id="signupHeading">Create your contributor account</h2>
             <p class="muted">Use a real email so review notes and future contributor access can stay attached to you.</p>
@@ -137,7 +137,7 @@
           </div>
         </form>
 
-        <form id="returningLegalAcceptanceForm" class="form authForm" aria-labelledby="returningLegalAcceptanceTitle" aria-describedby="returningLegalAcceptanceHelp" hidden>
+        <form id="returningLegalAcceptanceForm" class="form authForm" method="post" action="/form-submission-unavailable" accept-charset="UTF-8" data-sensitive-native-fallback="non-mutating" aria-labelledby="returningLegalAcceptanceTitle" aria-describedby="returningLegalAcceptanceHelp" hidden>
           <div class="authPanelStack">
             <h2 id="returningLegalAcceptanceTitle">Review updated account terms</h2>
             <p class="muted">Your password was accepted, but Pint Path needs your explicit acceptance of the current policies before creating an app session.</p>
@@ -332,7 +332,7 @@
         </div>
 
         <div id="settingsPreferencesPanel" class="settingsPanel" data-settings-panel="preferences" role="tabpanel" aria-labelledby="settingsPreferencesTab" hidden>
-          <form id="accountPreferencesForm" class="panel form">
+          <form id="accountPreferencesForm" class="panel form" method="post" action="/form-submission-unavailable" accept-charset="UTF-8" data-sensitive-native-fallback="non-mutating">
             <div class="sectionHeader">
               <div>
                 <h2>Discovery preferences</h2>
@@ -391,7 +391,7 @@
                 <strong>This is a route planner, not a drinking challenge.</strong>
                 <span>You never need to buy or finish alcohol. Skip rounds, choose water or food, follow every venue's RSA decisions, and never drive after drinking.</span>
               </div>
-              <form id="pubGolfForm" class="form">
+              <form id="pubGolfForm" class="form" method="post" action="/form-submission-unavailable" accept-charset="UTF-8" data-sensitive-native-fallback="non-mutating">
                 <div class="grid grid--two">
                   <label class="field">Start
                     <input name="startLocation" maxlength="160" placeholder="Start address, station, or venue" autocomplete="off" data-pub-golf-location="start" required />
@@ -424,7 +424,7 @@
                 </div>
                 <span id="betaCampaignBadge" class="pill pill--premium">Monthly</span>
               </div>
-              <form id="displayNameForm" class="displayNameForm">
+              <form id="displayNameForm" class="displayNameForm" method="post" action="/form-submission-unavailable" accept-charset="UTF-8" data-sensitive-native-fallback="non-mutating">
                 <label class="field">Leaderboard display name
                   <input name="displayName" maxlength="28" placeholder="Pick a public name" autocomplete="nickname" />
                   <span class="nameRuleHint"><span class="nameRuleIcon" aria-hidden="true">!</span> Must be unique. No disrespectful, racist, hateful, rude, URL, or impersonation names.</span>
@@ -471,7 +471,7 @@
               <div class="canIDriveWarningStack" role="note" aria-label="Standard drink log warning">
                 <div class="notice notice--warning">This is not a BAC estimate, breath test, driving clearance, legal advice, or medical advice. Do not drive after drinking.</div>
               </div>
-              <form id="canIDriveForm" class="form canIDriveForm">
+              <form id="canIDriveForm" class="form canIDriveForm" method="post" action="/form-submission-unavailable" accept-charset="UTF-8" data-sensitive-native-fallback="non-mutating">
                 <div class="grid grid--two">
                   <label class="field">Logged drink window
                     <select name="windowHours">
@@ -502,7 +502,7 @@
         </div>
 
         <div id="settingsPrivacyPanel" class="settingsPanel" data-settings-panel="privacy" role="tabpanel" aria-labelledby="settingsPrivacyTab" hidden>
-          <form id="privacySettingsForm" class="panel form">
+          <form id="privacySettingsForm" class="panel form" method="post" action="/form-submission-unavailable" accept-charset="UTF-8" data-sensitive-native-fallback="non-mutating">
             <div class="sectionHeader">
               <div>
                 <h2>Privacy settings</h2>
@@ -524,7 +524,7 @@
 
         <div id="settingsSupportPanel" class="settingsPanel" data-settings-panel="support" role="tabpanel" aria-labelledby="settingsSupportTab" hidden>
           <div class="grid grid--two accountSupportGrid">
-            <form id="dataRequestForm" class="panel form accountSupportPanel">
+            <form id="dataRequestForm" class="panel form accountSupportPanel" method="post" action="/form-submission-unavailable" accept-charset="UTF-8" data-sensitive-native-fallback="non-mutating">
               <div class="accountSupportIntro">
                 <div>
                   <h2>Privacy, support, and appeals</h2>
