@@ -28,6 +28,7 @@ const MAX_EVIDENCE = 10;
 const MAX_LIST_LIMIT = 100;
 const MAX_JSON_BYTES = 32 * 1024;
 const MAX_MISSION_AUTHORITY_OWNERS = 1_000;
+const COMMUNITY_CONFIDENCE_CONFIRMATION_THRESHOLD = 2;
 
 export type CommunitySubmissionRepositoryErrorCode =
   | "account_not_eligible"
@@ -1665,13 +1666,11 @@ export class CommunitySubmissionRepository {
     status: Extract<SubmissionStatus, "approved" | "rejected" | "needs_more_evidence" | "fraud_flagged" | "disputed">;
     rejectionReason: string | null;
     fraudFlagged?: boolean | undefined;
-    allowOwnReview?: boolean | undefined;
     monthKey: string;
     now: string;
   }): Promise<CommunityReviewResult> {
     const submissionId = requiredText(input.submissionId);
     const reviewerId = requiredText(input.reviewerId);
-    const allowOwnReview = input.allowOwnReview === true;
     const allowed = ["approved", "rejected", "needs_more_evidence", "fraud_flagged", "disputed"];
     if (!allowed.includes(input.status)) return fail("invalid_input");
     // No transaction starts and no state changes occur for the deliberately
@@ -1699,7 +1698,7 @@ export class CommunitySubmissionRepository {
         return fail("submission_not_reviewable");
       }
       if (!["pending", "needs_more_evidence"].includes(current.status)) return fail("submission_not_reviewable");
-      if (current.userId === reviewerId && !allowOwnReview) return fail("review_forbidden");
+      if (current.userId === reviewerId) return fail("review_forbidden");
       const reviewer = accounts.find((account) => account.id === reviewerId);
       const submitter = accounts.find((account) => account.id === current.userId);
       if (!reviewer || !submitter) return fail("account_not_found");
@@ -1793,7 +1792,6 @@ export class CommunitySubmissionRepository {
     approvalId: string;
     submissionId: string;
     reviewerId: string;
-    allowOwnReview?: boolean | undefined;
     catalogDecisions: CommunityApprovalCatalogDecision[];
     missionDecision: CommunityApprovalMissionDecision | null;
     venueDecision: CommunityApprovalVenueDecision | null;
@@ -1809,7 +1807,6 @@ export class CommunitySubmissionRepository {
     const approvalId = requiredText(input.approvalId, 160);
     const submissionId = requiredText(input.submissionId);
     const reviewerId = requiredText(input.reviewerId);
-    const allowOwnReview = input.allowOwnReview === true;
     const pointsAwarded = finiteNumber(input.pointsAwarded, 0, 25);
     const contributorUnlockPoints = finiteNumber(input.contributorUnlockPoints, 1, 1_000_000);
     const monthKey = requiredText(input.monthKey, 7);
@@ -1818,7 +1815,7 @@ export class CommunitySubmissionRepository {
     const now = canonicalUtc(input.now);
     if (premiumUntil <= now) return fail("invalid_input");
     const allowedConfidence: ConfidenceLabel[] = [
-      "admin_verified", "venue_confirmed", "photo_verified", "community_confirmed",
+      "admin_verified", "photo_verified", "community_confirmed",
     ];
     if (!allowedConfidence.includes(input.confidence)) return fail("invalid_input");
     const confidence = input.confidence;
@@ -1902,7 +1899,6 @@ export class CommunitySubmissionRepository {
       approvalId,
       submissionId,
       reviewerId,
-      allowOwnReview,
       catalogDecisions,
       missionDecision,
       venueDecision,
@@ -2012,7 +2008,7 @@ export class CommunitySubmissionRepository {
         if (current.userId !== initial.userId || current.venueId !== initial.venueId) {
           return fail("submission_not_reviewable");
         }
-        if (current.userId === reviewerId && !allowOwnReview) return fail("review_forbidden");
+        if (current.userId === reviewerId) return fail("review_forbidden");
         if (reviewer.deletionLocked || reviewer.authProvider === "deleted"
             || !["active", "warned"].includes(reviewer.status)
             || (reviewer.role !== "admin" && reviewer.subscriptionStatus !== "admin")) {
@@ -2142,6 +2138,20 @@ export class CommunitySubmissionRepository {
             return fail("evidence_not_found");
           }
         }
+        const verificationCountRow = await this.database.prepare(
+          `SELECT count(DISTINCT verification.verifier_user_id) AS "count"
+             FROM verifications verification
+            WHERE verification.upload_id = ? AND verification.result = 'confirmed'`,
+        ).get<{ count: number | string }>(submissionId);
+        const confirmedVerificationCount = verificationCountRow
+          ? safeInteger(verificationCountRow.count)
+          : 0;
+        const derivedConfidence: ConfidenceLabel = evidenceRows.length > 0
+          ? "photo_verified"
+          : confirmedVerificationCount >= COMMUNITY_CONFIDENCE_CONFIRMATION_THRESHOLD
+            ? "community_confirmed"
+            : "admin_verified";
+        if (confidence !== derivedConfidence) return fail("publication_conflict");
         const expectedPrivateSource = evidenceRows[0] ? `private:evidence:${evidenceRows[0].id}` : null;
         if (current.sourcePhotoUrl !== expectedPrivateSource) return fail("evidence_not_found");
         const priceRecordIds = items.map((item) => `${submissionId}:${item.id}`);

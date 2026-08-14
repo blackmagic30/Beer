@@ -16,6 +16,7 @@ import {
 } from "../db/account-privacy.repository.js";
 import {
   createPostgresDatabase,
+  type PostgresDatabaseOptions,
   type SqlDatabase,
 } from "../db/sql-database.js";
 import {
@@ -25,15 +26,23 @@ import {
 import { createPostgresAccountDeletionSecretPhysicalCheckpoint } from "./account-deletion-secret-checkpoint.js";
 import { canonicalPostgresBackupJson } from "./postgres-logical-backup.js";
 import type { PostgresLogicalRestoreReceipt } from "./postgres-logical-restore.js";
+import {
+  openPostgresRailwayStockLocalhostCaTransport,
+  parsePostgresRailwayStockLocalhostCaUrl,
+  POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+  type OpenPostgresRailwayStockLocalhostCaTransportOptions,
+  type PostgresRailwayStockLocalhostCaTransport,
+} from "./postgres-railway-stock-localhost-ca.js";
 
 const APPLICATION_SCHEMA = "pintpath_app";
 const OPERATIONS_SCHEMA = "pintpath_ops";
+const REPLAY_ROLE = "pintpath_maintenance";
 const RUNTIME_ROLE = "pintpath_runtime";
 const MIGRATOR_ROLE = "pintpath_migrator";
 const RESTORE_LOCK_KEY = "-5884877150838658403";
 const DISPOSABLE_TARGET_CLASS = "disposable-rehearsal";
 const RECEIPT_KIND = "pintpath-postgres-account-deletion-tombstone-replay" as const;
-const RECEIPT_VERSION = 1 as const;
+const RECEIPT_VERSION = 2 as const;
 const AUTHORITY_CURRENT_FILE = "current.json";
 const AUTHORITY_GENESIS_FILE = "genesis.json";
 const AUTHORITY_CHECKPOINT_FILE = "checkpoint.json";
@@ -58,6 +67,9 @@ export type PostgresAccountDeletionReplayFailureCode =
   | "operator_guard_rejected"
   | "unsafe_connection_file"
   | "unsafe_connection_url"
+  | "runtime_root_ca_unsafe"
+  | "runtime_transport_drift"
+  | "runtime_transport_close_failed"
   | "unsafe_authority_directory"
   | "authority_invalid"
   | "authority_tampered"
@@ -78,6 +90,9 @@ const FAILURE_MESSAGES: Readonly<Record<PostgresAccountDeletionReplayFailureCode
   operator_guard_rejected: "operator_guard_rejected",
   unsafe_connection_file: "unsafe_connection_file",
   unsafe_connection_url: "unsafe_connection_url",
+  runtime_root_ca_unsafe: "runtime_root_ca_unsafe",
+  runtime_transport_drift: "runtime_transport_drift",
+  runtime_transport_close_failed: "runtime_transport_close_failed",
   unsafe_authority_directory: "unsafe_authority_directory",
   authority_invalid: "authority_invalid",
   authority_tampered: "authority_tampered",
@@ -103,6 +118,10 @@ export class PostgresAccountDeletionReplayError extends Error {
 
 export interface ReplayPostgresAccountDeletionTombstonesOptions {
   readonly runtimeUrlFile: string;
+  /** Required outside the exact injected loopback test seam. */
+  readonly runtimeRootCaFile?: string | undefined;
+  /** DER SHA-256 of the one reviewed self-signed Railway root. */
+  readonly expectedRuntimeRootCaDerSha256?: string | undefined;
   readonly baseRestoreReceiptFile: string;
   readonly expectedBaseRestoreReceiptSha256: string;
   readonly deletionLedgerAuthorityDirectory: string;
@@ -132,7 +151,10 @@ export interface PostgresAccountDeletionReplayReceipt {
   readonly targetIdentitySha256: string;
   readonly targetClass: typeof DISPOSABLE_TARGET_CLASS;
   readonly serverVersionNum: string;
-  readonly runtimeRoleRestricted: true;
+  readonly replayRoleRestricted: true;
+  readonly replayEffectiveRole: typeof REPLAY_ROLE;
+  readonly transportProfile: typeof POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE;
+  readonly transportRootCaDerSha256: string;
   readonly restoreLockKeySha256: string;
   readonly baseRestoreReceiptSha256: string;
   readonly migrationCandidateSha: string;
@@ -205,7 +227,10 @@ export interface PostgresAccountDeletionReplayDependencies {
   readonly env: Readonly<Record<string, string | undefined>>;
   readonly getUid: () => number | null;
   readonly now: () => Date;
-  readonly createDatabase: (connectionString: string) => SqlDatabase;
+  readonly openRuntimeTransport: (
+    options: OpenPostgresRailwayStockLocalhostCaTransportOptions,
+  ) => Promise<PostgresRailwayStockLocalhostCaTransport>;
+  readonly createDatabase: (options: PostgresDatabaseOptions) => SqlDatabase;
   readonly createQueue: (database: SqlDatabase) => AccountDeletionReplayQueueBoundary;
   readonly createPrivacy: (database: SqlDatabase) => AccountDeletionReplayPrivacyBoundary;
   readonly createPhysicalCheckpoint: (
@@ -275,7 +300,7 @@ interface TargetInspectionRow extends QueryResultRow {
   readonly inRecovery: boolean;
   readonly databaseIsTemplate: boolean;
   readonly databaseAllowsConnections: boolean;
-  readonly sameEffectiveRole: boolean;
+  readonly effectiveRole: string;
   readonly roleName: string;
   readonly canLogin: boolean;
   readonly superuser: boolean;
@@ -283,6 +308,7 @@ interface TargetInspectionRow extends QueryResultRow {
   readonly createRole: boolean;
   readonly replication: boolean;
   readonly bypassRls: boolean;
+  readonly replayMember: boolean;
   readonly runtimeMember: boolean;
   readonly migratorMember: boolean;
   readonly applicationSchemaUsage: boolean;
@@ -417,8 +443,9 @@ const DEFAULT_DEPENDENCIES: PostgresAccountDeletionReplayDependencies = {
   env: process.env,
   getUid: () => process.getuid?.() ?? null,
   now: () => new Date(),
-  createDatabase: (connectionString) => createPostgresDatabase({
-    connectionString,
+  openRuntimeTransport: openPostgresRailwayStockLocalhostCaTransport,
+  createDatabase: (options) => createPostgresDatabase({
+    ...options,
     applicationName: "pintpath-account-deletion-tombstone-replay",
     maxConnections: 1,
     // The session-level advisory lock is an authorization boundary. Do not let
@@ -904,7 +931,14 @@ function parseBaseRestoreReceipt(
 function parseRuntimeUrl(
   bytes: Buffer,
   dependencies: PostgresAccountDeletionReplayDependencies,
-): string {
+): {
+  readonly connectionString: string;
+  readonly sourceUrlAuthority: {
+    readonly hostname: string;
+    readonly port: number;
+  } | null;
+  readonly insecureTest: boolean;
+} {
   const value = safeUtf8(bytes, "unsafe_connection_file").trim();
   if (!value || /[\r\n\0]/.test(value)) throw replayError("unsafe_connection_file");
   let parsed: URL;
@@ -951,9 +985,21 @@ function parseRuntimeUrl(
     || parsed.hash
     || sslModes.length !== 1
     || [...parsed.searchParams.keys()].some((key) => key !== "sslmode")
-    || (!testLoopback && sslMode !== "require")
+    || (!testLoopback && sslMode !== "verify-full")
   ) throw replayError("unsafe_connection_url");
-  return value;
+  if (testLoopback) {
+    return { connectionString: value, sourceUrlAuthority: null, insecureTest: true };
+  }
+  try {
+    const parsedAuthority = parsePostgresRailwayStockLocalhostCaUrl(value);
+    return {
+      connectionString: parsedAuthority.connectionString,
+      sourceUrlAuthority: parsedAuthority.sourceUrlAuthority,
+      insecureTest: false,
+    };
+  } catch {
+    throw replayError("unsafe_connection_url");
+  }
 }
 
 export function postgresAccountDeletionReplayTargetIdentitySha256(input: {
@@ -974,6 +1020,53 @@ export function postgresAccountDeletionReplayTargetIdentitySha256(input: {
   });
 }
 
+export function parsePostgresAccountDeletionReplayReceipt(
+  value: unknown,
+): PostgresAccountDeletionReplayReceipt {
+  if (!isObject(value) || !exactKeys(value, [
+    "kind", "version", "status", "replayedAt", "targetIdentitySha256",
+    "targetClass", "serverVersionNum", "replayRoleRestricted",
+    "replayEffectiveRole", "transportProfile", "transportRootCaDerSha256",
+    "restoreLockKeySha256", "baseRestoreReceiptSha256", "migrationCandidateSha",
+    "migrationManifestSha256", "migrationRunSha256", "sourceSnapshotSha256",
+    "backupManifestSha256", "backupArchiveSha256", "sourceStateReceiptSha256",
+    "sourceSnapshotBindingSha256", "expectedSourceOverallStateSha256",
+    "restoredOverallStateSha256", "ledgerCurrentSha256", "ledgerGenesisSha256",
+    "ledgerCheckpointSha256", "ledgerImmutableSetSha256", "ledgerTombstoneCount",
+    "counts", "recipientSecretPhysicalCheckpointVerified",
+    "semanticProjectionSha256", "idempotency",
+  ])) throw replayError("base_restore_receipt_invalid");
+  const counts = value.counts;
+  if (
+    value.kind !== RECEIPT_KIND
+    || value.version !== RECEIPT_VERSION
+    || value.status !== "verified"
+    || canonicalUtc(value.replayedAt, "base_restore_receipt_invalid") !== value.replayedAt
+    || !SHA256_PATTERN.test(String(value.targetIdentitySha256))
+    || value.targetClass !== DISPOSABLE_TARGET_CLASS
+    || !/^17\d{4}$/.test(String(value.serverVersionNum))
+    || value.replayRoleRestricted !== true
+    || value.replayEffectiveRole !== REPLAY_ROLE
+    || value.transportProfile !== POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE
+    || !SHA256_PATTERN.test(String(value.transportRootCaDerSha256))
+    || !isObject(counts)
+    || !exactKeys(counts, ["seen", "newlyApplied", "alreadyApplied", "missing", "failed"])
+    || Object.values(counts).some((count) => !Number.isSafeInteger(count) || Number(count) < 0)
+    || Number(counts.newlyApplied) + Number(counts.alreadyApplied) !== Number(counts.seen)
+    || Number(counts.missing) !== 0
+    || Number(counts.failed) !== 0
+    || value.recipientSecretPhysicalCheckpointVerified !== true
+    || value.idempotency !== "exact-semantic-projection"
+    || !CANDIDATE_SHA_PATTERN.test(String(value.migrationCandidateSha))
+  ) throw replayError("base_restore_receipt_invalid");
+  for (const [key, entry] of Object.entries(value)) {
+    if (key.endsWith("Sha256") && !SHA256_PATTERN.test(String(entry))) {
+      throw replayError("base_restore_receipt_invalid");
+    }
+  }
+  return value as unknown as PostgresAccountDeletionReplayReceipt;
+}
+
 async function inspectTarget(database: SqlDatabase): Promise<TargetInspection> {
   let row: TargetInspectionRow | undefined;
   try {
@@ -988,7 +1081,7 @@ async function inspectTarget(database: SqlDatabase): Promise<TargetInspection> {
         pg_is_in_recovery() AS "inRecovery",
         target_database.datistemplate AS "databaseIsTemplate",
         target_database.datallowconn AS "databaseAllowsConnections",
-        session_user = current_user AS "sameEffectiveRole",
+        current_user AS "effectiveRole",
         login_role.rolname AS "roleName",
         login_role.rolcanlogin AS "canLogin",
         login_role.rolsuper AS "superuser",
@@ -996,6 +1089,8 @@ async function inspectTarget(database: SqlDatabase): Promise<TargetInspection> {
         login_role.rolcreaterole AS "createRole",
         login_role.rolreplication AS "replication",
         login_role.rolbypassrls AS "bypassRls",
+        COALESCE(pg_has_role(session_user, to_regrole('${REPLAY_ROLE}'), 'MEMBER'), false)
+          AS "replayMember",
         COALESCE(pg_has_role(session_user, to_regrole('${RUNTIME_ROLE}'), 'MEMBER'), false)
           AS "runtimeMember",
         COALESCE(pg_has_role(session_user, to_regrole('${MIGRATOR_ROLE}'), 'MEMBER'), false)
@@ -1016,7 +1111,7 @@ async function inspectTarget(database: SqlDatabase): Promise<TargetInspection> {
             JOIN pg_catalog.pg_roles inherited_role ON inherited_role.oid = membership.roleid
             JOIN pg_catalog.pg_roles member_role ON member_role.oid = membership.member
            WHERE member_role.rolname = session_user
-             AND inherited_role.rolname <> '${RUNTIME_ROLE}'
+             AND inherited_role.rolname <> '${REPLAY_ROLE}'
         ) AS "unexpectedMembership"
       FROM pg_catalog.pg_database AS target_database
       CROSS JOIN pg_catalog.pg_control_system() AS control
@@ -1036,7 +1131,8 @@ async function inspectTarget(database: SqlDatabase): Promise<TargetInspection> {
     || row.inRecovery
     || row.databaseIsTemplate
     || !row.databaseAllowsConnections
-    || !row.sameEffectiveRole
+    || row.effectiveRole !== REPLAY_ROLE
+    || row.roleName === row.effectiveRole
   ) throw replayError("target_not_disposable");
   if (
     !row.roleName
@@ -1046,7 +1142,8 @@ async function inspectTarget(database: SqlDatabase): Promise<TargetInspection> {
     || row.createRole
     || row.replication
     || row.bypassRls
-    || !row.runtimeMember
+    || !row.replayMember
+    || row.runtimeMember
     || row.migratorMember
     || !row.applicationSchemaUsage
     || row.operationsSchemaUsage
@@ -1590,27 +1687,94 @@ export async function replayPostgresAccountDeletionTombstones(
     maxBytes: MAX_CONNECTION_FILE_BYTES,
     invalidCode: "unsafe_connection_file",
   });
-  let connectionString = "";
+  let parsedConnection: ReturnType<typeof parseRuntimeUrl>;
   const connectionFile = retainTrustedFileIdentity(connectionSnapshot);
   try {
-    connectionString = parseRuntimeUrl(connectionSnapshot.bytes, dependencies);
+    parsedConnection = parseRuntimeUrl(connectionSnapshot.bytes, dependencies);
   } finally {
     connectionSnapshot.bytes.fill(0);
   }
 
+  let transport: PostgresRailwayStockLocalhostCaTransport | null = null;
+  let transportRootCaDerSha256 = "0".repeat(64);
+  if (!parsedConnection.insecureTest) {
+    const runtimeRootCaFile = options.runtimeRootCaFile;
+    const expectedRuntimeRootCaDerSha256 = options.expectedRuntimeRootCaDerSha256;
+    if (!runtimeRootCaFile || !expectedRuntimeRootCaDerSha256) {
+      throw replayError("runtime_root_ca_unsafe");
+    }
+    let rootCaPath: string;
+    try {
+      rootCaPath = canonicalAbsolutePath(runtimeRootCaFile);
+      transportRootCaDerSha256 = exactSha256(expectedRuntimeRootCaDerSha256);
+    } catch {
+      throw replayError("runtime_root_ca_unsafe");
+    }
+    try {
+      transport = await dependencies.openRuntimeTransport({
+        profile: POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+        rootCaFile: rootCaPath,
+        expectedRootCaDerSha256: transportRootCaDerSha256,
+        expectedUid: uid,
+        sourceUrlAuthority: parsedConnection.sourceUrlAuthority!,
+      });
+      await transport.assertExact();
+      if (
+        transport.profile !== POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE
+        || transport.rootCaDerSha256 !== transportRootCaDerSha256
+      ) throw new Error("transport-binding-mismatch");
+    } catch {
+      if (transport) await transport.close().catch(() => undefined);
+      throw replayError("runtime_root_ca_unsafe");
+    }
+  }
+
   let database: SqlDatabase;
   try {
-    database = dependencies.createDatabase(connectionString);
+    database = dependencies.createDatabase({
+      connectionString: parsedConnection.connectionString,
+      activeRole: "pintpath_maintenance",
+      applicationName: "pintpath-account-deletion-tombstone-replay",
+      maxConnections: 1,
+      idleTimeoutMs: 0,
+      statementTimeoutMs: 30_000,
+      idleInTransactionTimeoutMs: 30_000,
+      ...(transport
+        ? { railwayStockLocalhostCaConnection: transport.nodeConnection }
+        : {}),
+    });
   } catch {
+    await transport?.close().catch(() => undefined);
     throw replayError("target_unreachable");
-  } finally {
-    // Strings cannot be reliably wiped in JavaScript, but do not retain this
-    // redundant local copy after the database boundary has consumed it.
-    connectionString = "";
   }
   let mutationStarted = false;
   let databaseCloseAttempted = false;
   let databaseCloseFailed = false;
+  let transportCloseAttempted = false;
+  let transportCloseFailed = false;
+  const assertTransportExact = async (): Promise<void> => {
+    if (!transport) return;
+    try {
+      await transport.assertExact();
+    } catch {
+      throw replayError("runtime_transport_drift");
+    }
+  };
+  const closeTransportOnce = async (): Promise<void> => {
+    if (!transport || transportCloseAttempted) {
+      if (transportCloseFailed) throw new Error("transport-close-unverified");
+      return;
+    }
+    transportCloseAttempted = true;
+    try {
+      await transport.assertExact();
+      await transport.close();
+      transport = null;
+    } catch {
+      transportCloseFailed = true;
+      throw new Error("transport-close-unverified");
+    }
+  };
   const closeDatabaseOnce = async (): Promise<void> => {
     if (databaseCloseAttempted) {
       if (databaseCloseFailed) throw new Error("database-close-unverified");
@@ -1655,6 +1819,7 @@ export async function replayPostgresAccountDeletionTombstones(
     }
   };
   try {
+    await assertTransportExact();
     const initialInspection = await inspectTarget(database);
     if (initialInspection.targetIdentitySha256 !== expectedTargetIdentitySha256) {
       throw replayError("target_identity_mismatch");
@@ -1670,6 +1835,7 @@ export async function replayPostgresAccountDeletionTombstones(
     await assertAuthorityUnchanged(authority, uid);
     await assertTrustedFileUnchanged(connectionFile, uid, "unsafe_connection_file");
     await assertTrustedFileUnchanged(baseReceiptFile, uid, "base_restore_receipt_invalid");
+    await assertTransportExact();
 
     const queue = dependencies.createQueue(database);
     const privacy = dependencies.createPrivacy(database);
@@ -1760,7 +1926,10 @@ export async function replayPostgresAccountDeletionTombstones(
       targetIdentitySha256: expectedTargetIdentitySha256,
       targetClass: DISPOSABLE_TARGET_CLASS,
       serverVersionNum: finalInspection.serverVersionNum,
-      runtimeRoleRestricted: true,
+      replayRoleRestricted: true,
+      replayEffectiveRole: REPLAY_ROLE,
+      transportProfile: POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+      transportRootCaDerSha256,
       restoreLockKeySha256: sha256(RESTORE_LOCK_KEY),
       baseRestoreReceiptSha256: baseReceiptFile.sha256,
       migrationCandidateSha: metadata.migrationCandidateSha,
@@ -1791,7 +1960,9 @@ export async function replayPostgresAccountDeletionTombstones(
       "verification_failed_target_disposal_required",
     );
     await assertRestoreLockHeld(database, backendPid);
+    await assertTransportExact();
     await closeDatabaseOnce();
+    await closeTransportOnce();
     // Database close is an injected asynchronous boundary and may itself run
     // adversarial cleanup. Reassert every source after it settles and before a
     // receipt can be created.
@@ -1813,10 +1984,15 @@ export async function replayPostgresAccountDeletionTombstones(
     if (!databaseCloseAttempted) {
       await closeDatabaseOnce().catch(() => undefined);
     }
-    if (databaseCloseFailed) {
+    if (!transportCloseAttempted) {
+      await closeTransportOnce().catch(() => undefined);
+    }
+    if (databaseCloseFailed || transportCloseFailed) {
       throw replayError(mutationStarted
         ? "verification_failed_target_disposal_required"
-        : "target_not_disposable");
+        : transportCloseFailed
+          ? "runtime_transport_close_failed"
+          : "target_not_disposable");
     }
     if (error instanceof PostgresAccountDeletionReplayError) {
       if (mutationStarted && !error.code.endsWith("_target_disposal_required")) {
@@ -1835,5 +2011,6 @@ export const postgresAccountDeletionReplayInternals = {
   parseCanonicalGenesis,
   parseCanonicalTombstones,
   parseBaseRestoreReceipt,
+  parseRuntimeUrl,
   completedProjection,
 };

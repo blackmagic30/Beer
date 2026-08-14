@@ -43,22 +43,23 @@ reviewed combined recurring envelope is approximately US$46.80/month. This is
 not a staging-only cost or authority boundary.
 
 This runbook is the controlling data-architecture contract for the full public
-web and Australian iOS launch. Pint Path must not freeze a release candidate,
-promote reviewed data, or announce the combined launch until every exit
-criterion below has passed in permanent integrated staging and the resulting
-implementation is part of the frozen commit.
+web and Australian iOS launch. Before candidate freeze, every implementation
+and pre-merge validation item below must be part of the reviewed commit. After
+that candidate is merged, the exact current protected-`main` commit must pass
+every live permanent-staging exit criterion before reviewed data is promoted or
+the combined launch is announced.
 
-Every Railway create, configuration, scale, deploy, rollback, PITR, route,
-delete, destroy, or teardown step below is non-executable until the tracked
-`readiness:railway:mutation-boundary` executor owns its immediate preflight,
-one exact operation, and unconditional postflight. The standalone receipt is
-read-only, the checked-in incident baseline intentionally fails, and no
-dashboard, Git autodeploy, or ad-hoc CLI/API action may bridge that gap.
+Railway writes below use only the exact protected workflows documented in
+`protected-provider-mutation-operations.md`; live IDs, credentials, approvals,
+and provider receipts remain open gates. The standalone mutation-boundary
+receipt is read-only, and no dashboard, Git-autodeploy, or ad-hoc CLI/API action
+may bridge a failed preflight.
 
 ## Non-negotiable outcome
 
-Before candidate freeze, migrate every authoritative application record from
-the current Railway-volume SQLite database to one shared transactional
+Before candidate freeze, implement and review the path that migrates every
+authoritative application record from the current Railway-volume SQLite
+database to one shared transactional
 Postgres database. This includes account-deletion requests and outbox records,
 recipient secrets, Resend webhook correlation, idempotency keys, job leases,
 venue and price data, moderation state, contribution/evidence references, and
@@ -75,13 +76,14 @@ cutover. A one-replica SQLite launch is not an alternative for this release.
 - **Permanent integrated staging** is the stable Railway staging service with
   pinned Postgres, Supabase/Auth/private Storage, and Redis resources. Its core
   identities, synthetic import, runtime proof, and logical backup are complete;
-  three Google/OpenAI provider categories remain open, comprising four exact
-  Railway variable operations: Google Maps client configuration
+  three Google/OpenAI provider categories remain open for protected live
+  execution, comprising four exact Railway variables: Google Maps client configuration
   (`GOOGLE_MAPS_API_KEY` and `GOOGLE_MAPS_MAP_ID`), Google Places server access
   (`GOOGLE_PLACES_API_KEY`), and OpenAI menu OCR (`OPENAI_API_KEY`). Separately,
-  the two permanent-staging Supabase replacement-key operations
-  (`SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY`) remain
-  `HARD_DISABLED_REVIEW_REQUIRED` and unauthorized. Production operational-copy
+  the two permanent-staging Supabase replacement-key variables use the
+  protected atomic replacement workflow and the later protected
+  canary/legacy-disable/old-key-denial ceremony. The old hard-disabled fixtures
+  are superseded and non-authoritative. Production operational-copy
   URL, key, and bucket variables are prohibited in permanent staging. The app
   deploy and live evidence also remain open.
 - **Ephemeral destructive restore staging** currently has an isolated Railway
@@ -106,72 +108,72 @@ customer data in Git or public evidence.
 ## 1. Implement the Postgres persistence layer
 
 - [x] Inventory every SQLite table, index, constraint, trigger, migration,
-  writer, reader, background worker, and administrative script. Classify every
-  row set as migrate, deliberately transform, or delete under an approved data
-  contract; no table may be silently omitted.
+      writer, reader, background worker, and administrative script. Classify every
+      row set as migrate, deliberately transform, or delete under an approved data
+      contract; no table may be silently omitted.
 - [x] Replace mandatory Free-live synchronous SQLite-specific persistence with
-  an asynchronous
-  Postgres repository/transaction boundary. HTTP handlers, workers, CLI tools,
-  tests, backup code, and readiness checks use the same contract. Deferred
-  commercial/reward/POS/report features are gated before database access and
-  the canonical runtime's legacy repository proxy fails closed.
+      an asynchronous
+      Postgres repository/transaction boundary. HTTP handlers, workers, CLI tools,
+      tests, backup code, and readiness checks use the same contract. Deferred
+      commercial/reward/POS/report features are gated before database access and
+      the canonical runtime's legacy repository proxy fails closed.
 - [x] Create a non-exposed server-only application schema outside the Supabase
-  Data API. Use a dedicated least-privilege runtime role. Do not grant
-  `anon` or `authenticated` direct table, sequence, function, or helper access;
-  retain row-level security as defence in depth wherever an exposed schema is
-  unavoidable.
+      Data API. Use a dedicated least-privilege runtime role. Do not grant
+      `anon` or `authenticated` direct table, sequence, function, or helper access;
+      retain row-level security as defence in depth wherever an exposed schema is
+      unavoidable.
 - [x] Encode primary keys, foreign keys, uniqueness, non-null requirements,
-  state checks, timestamp rules, and the measured Free-live query/worker
-  indexes in Postgres.
+      state checks, timestamp rules, and the measured Free-live query/worker
+      indexes in Postgres.
 - [ ] Verify every staged candidate query plan under representative permanent-
-  staging volume, including the documented follow-up index candidates.
+      staging volume, including the documented follow-up index candidates.
 - [x] Implement SSL-required pooled connections with bounded timeouts, a direct
-  migration/logical-backup path, and safe persistent-session semantics.
+      migration/logical-backup path, and safe persistent-session semantics.
 - [ ] Approve and prove the explicit connection budget for at least two
-  replicas, overlapping workers, migrations, monitoring, and operator access
-  against the pinned provider/pooler topology; prove driver and prepared-
-  statement compatibility before any transaction-pooler use.
+      replicas, overlapping workers, migrations, monitoring, and operator access
+      against the pinned provider/pooler topology; prove driver and prepared-
+      statement compatibility before any transaction-pooler use.
 - [x] Expose safe readiness metrics for pool saturation, checkout latency,
-  transaction failures, deadlocks, lock waits, and database availability. Do
-  not expose connection strings or customer data.
+      transaction failures, deadlocks, lock waits, and database availability. Do
+      not expose connection strings or customer data.
 
 ## 2. Make workers and retries replica-safe
 
 - [x] Claim Free-live queued work in short transactions using row locks and
-  `FOR UPDATE SKIP LOCKED`, with a lease/attempt/next-attempt model that can be
-  recovered after a process dies.
+      `FOR UPDATE SKIP LOCKED`, with a lease/attempt/next-attempt model that can be
+      recovered after a process dies.
 - [x] Commit the claim before any external provider call. Perform network I/O
-  outside the transaction, then record the provider result idempotently in a
-  new short transaction.
+      outside the transaction, then record the provider result idempotently in a
+      new short transaction.
 - [x] Give every externally visible mutation enabled for the Free launch a
-  stable idempotency or correlation key. Duplicate requests, duplicate
-  webhooks, reordered webhooks, overlapping workers, retries, and deploy
-  interruption must not create duplicate notices, prices, contributions,
-  subscriptions, or deletion effects. Deferred commercial mutation gates run
-  before database access and remain disabled.
+      stable idempotency or correlation key. Duplicate requests, duplicate
+      webhooks, reordered webhooks, overlapping workers, retries, and deploy
+      interruption must not create duplicate notices, prices, contributions,
+      subscriptions, or deletion effects. Deferred commercial mutation gates run
+      before database access and remain disabled.
 - [ ] Prove account deletion, deletion notices, moderation, status refresh,
-  evidence capture, backup ledger/tombstones, and every scheduled job continue
-  correctly when two replicas and overlapping workers run together.
+      evidence capture, backup ledger/tombstones, and every scheduled job continue
+      correctly when two replicas and overlapping workers run together.
 
 ## 3. Build a deterministic SQLite-to-Postgres importer
 
 - [x] Quiesce a copied SQLite source, run integrity and foreign-key checks, and
-  create a SHA-256 manifest of the database plus private evidence directory.
+      create a SHA-256 manifest of the database plus private evidence directory.
 - [x] Export in a stable order with explicit type, null, boolean, JSON, binary,
-  timezone, and timestamp conversions. Preserve stable IDs and provider
-  correlation identifiers unless a signed transform map says otherwise.
+      timezone, and timestamp conversions. Preserve stable IDs and provider
+      correlation identifiers unless a signed transform map says otherwise.
 - [x] Import into an empty candidate schema in one controlled operation or a
-  restartable sequence with an explicit checkpoint ledger. Re-running the same
-  import must be idempotent.
+      restartable sequence with an explicit checkpoint ledger. Re-running the same
+      import must be idempotent.
 - [x] Reconcile per-table counts, key ranges, foreign keys, unique constraints,
-  deterministic hashes, orphan checks, state totals, and application-level
-  invariants. Independently sample sensitive and high-value paths without
-  copying personal data into evidence.
+      deterministic hashes, orphan checks, state totals, and application-level
+      invariants. Independently sample sensitive and high-value paths without
+      copying personal data into evidence.
 - [x] Produce a machine-readable, secret-free migration receipt containing the
-  source hash, schema version, counts/hashes, start/end times, candidate commit,
-  operator, verifier, and result.
+      source hash, schema version, counts/hashes, start/end times, candidate commit,
+      operator, verifier, and result.
 - [x] Make the app refuse startup if an unsupported schema, partial import, or
-  SQLite production-write configuration is detected.
+      SQLite production-write configuration is detected.
 
 The deterministic importer and fail-closed startup contract are implemented.
 The first five boxes are closed by the isolated permanent-staging synthetic
@@ -224,7 +226,7 @@ line, print it, or put it in Git.
    has zero sequences and grants no private-function execution. Every reviewed
    table instead has a portable, permissive, SELECT-only policy targeted to
    `PUBLIC` whose predicate admits only `current_user =
-   'pintpath_logical_backup_d' || <live-current-database-oid>`. The policy
+'pintpath_logical_backup_d' || <live-current-database-oid>`. The policy
    carries no object grant, names no role, and produces no role dependency; a
    source-database scoped role therefore cannot read a sibling or restored
    target even if someone grants it target table `SELECT` by mistake. The
@@ -232,6 +234,15 @@ line, print it, or put it in Git.
    in the pre-upgrade state and 236 after adding the 59 backup policies. Name,
    permissiveness, command, role OID array, `USING`, and `WITH CHECK` must all
    match; any arbitrary named-role policy is a hard failure.
+
+   The later additive migration
+   `20260812235959_add_privacy_maintenance_role.sql` creates the separate
+   `pintpath_maintenance` NOLOGIN/NOINHERIT group after those exact backup and
+   inert-kernel guards have passed. It extends the application-table RLS
+   allowlist, grants only the erasure/retention table operations used by the
+   two privacy repositories, and removes runtime UPDATE/DELETE from the audit
+   and two points ledgers. Do not edit the generated base DDL to introduce this
+   role earlier; migration order is part of the reviewed privilege contract.
 
    Existing databases created by the earlier bootstrap must receive the
    additive transaction in
@@ -258,6 +269,43 @@ line, print it, or put it in Git.
    is attached. The bootstrap and migration deliberately avoid broad
    `ALTER ROLE` repair. Any unsafe pre-existing state aborts with SQLSTATE
    `42501` and requires independent remediation.
+
+   The independently protected verifier trust anchor is deliberately outside
+   that 59-table archive. `pintpath_ops.migration_verifier_authority` is a
+   singleton control row, not application data: logical backup and restore must
+   never transplant it. After a clean restore or before each candidate import,
+   dispatch `.github/workflows/provision-postgres-migration-verifier-authority.yml`
+   from exact current `main`. Its target-specific protected environment holds
+   the short-lived authority login, operator/verifier identities, Ed25519 public
+   key, Railway private URL, and stock root CA; Git contains no private key.
+   The workflow uses one compare-and-swap database write with no retry and
+   emits canonical intent, terminal, and receipt evidence. The additive
+   `20260813165508_add_postgres_migration_verifier_authority.sql` installs the
+   same role/table/RLS/ACL boundary on databases that already applied the base
+   migration. The importer role can only `SELECT` the row; only the isolated
+   provisioner role can `SELECT`, `INSERT`, or `UPDATE` it, and neither role can
+   delete it.
+
+   Configure both protected environments—
+   `permanent-staging-postgres-migration-verifier-authority` and
+   `production-postgres-migration-verifier-authority`—as `main`-only, with a
+   required independent reviewer, self-review disabled, and administrator
+   bypass disabled. Each environment must define these target-specific
+   secrets: `PINTPATH_POSTGRES_MIGRATION_VERIFIER_TARGET_URL` (the exact URL
+   containing a distinct short-lived LOGIN credential whose sole membership is
+   `pintpath_migration_verifier_authority`),
+   `PINTPATH_POSTGRES_MIGRATION_VERIFIER_ROOT_CA_PEM`,
+   `PINTPATH_POSTGRES_MIGRATION_OPERATOR_ID`,
+   `PINTPATH_POSTGRES_MIGRATION_VERIFIER_ID`, and
+   `PINTPATH_POSTGRES_MIGRATION_VERIFIER_PUBLIC_KEY_PEM`. Define the protected
+   variables `PINTPATH_POSTGRES_MIGRATION_VERIFIER_TARGET_URL_SHA256`,
+   `PINTPATH_POSTGRES_MIGRATION_VERIFIER_ROOT_CA_DER_SHA256`, and
+   `PINTPATH_POSTGRES_MIGRATION_VERIFIER_TARGET_IDENTITY_SHA256`. The
+   provisioner LOGIN is separate from both the importer and verifier signing
+   principals, must be short-lived, and must be disabled, disconnected, and
+   have its membership revoked (or be dropped) after the receipt is retained.
+   Import apply/verify rejects any remaining child or parent membership on the
+   authority group, so a provisioner session cannot race an import.
 
    Every connection-URL or service-key file used by this runbook is an
    exact-byte input: one value with no leading/trailing whitespace, CR/LF, or
@@ -303,8 +351,7 @@ line, print it, or put it in Git.
      --maintenance-reference <signed-change-reference>
    ```
 
-4. Create the deterministic plan from the exact manifest hash printed by step
-   3. The output must not already exist.
+4. Create the deterministic plan from the exact manifest hash printed by step 3. The output must not already exist.
 
    ```sh
    npm run db:postgres:migration -- plan \
@@ -317,36 +364,73 @@ line, print it, or put it in Git.
 5. Apply the reviewed generated DDL to the empty target with the owner/migrator
    principal, provision a separate login that can `SET ROLE pintpath_migrator`,
    and record the generated DDL SHA-256. The runtime login is separate and must
-   not receive migrator or operations-schema privileges. Put the direct,
+   be `LOGIN NOINHERIT NOREPLICATION CONNECTION LIMIT 8`, have only direct
+   membership in `pintpath_runtime` with `ADMIN FALSE`, `INHERIT FALSE`, and
+   `SET TRUE`, and receive only non-grantable `CONNECT` on the target database.
+   Revoke database `CREATE` and `TEMP` from `PUBLIC`; the runtime login must
+   have neither, no role/database setting, no extra direct ACL or ownership,
+   and no other direct or transitive membership. The application supplies the
+   fixed PostgreSQL startup option `role=pintpath_runtime` before a pooled
+   backend is exposed. It must not receive migrator or operations-schema
+   privileges. Provision a third
+   login whose only membership is `pintpath_maintenance`; it must be `LOGIN
+NOINHERIT NOREPLICATION CONNECTION LIMIT 2`, with PG17 membership options
+   `ADMIN FALSE`, `INHERIT FALSE`, and `SET TRUE`. It must target the same
+   database as the runtime login, receive only direct `CONNECT` on that
+   database, have no effective database `CREATE` or `TEMP` privilege (including
+   from `PUBLIC`), and receive no other direct ACL, ownership, role setting,
+   default privilege, or membership. Keep its TLS URL separately as
+   `DATABASE_MAINTENANCE_URL`. Put the direct,
    TLS-required, non-pooler migrator URL in a mode-600 file, then inspect the
    target before approval:
 
-   The URL must carry exactly one of `sslmode=require`, `sslmode=verify-ca`, or
-   `sslmode=verify-full`. The migration client applies standard libpq semantics
-   internally; callers do not need to add `uselibpqcompat=true`. Plain
-   `require` guarantees encryption but does not authenticate the server
-   certificate, so use it only through the separately authenticated, pinned
-   provider tunnel. As in libpq, adding `sslrootcert` promotes `require` to
-   CA verification.
-   `verify-ca` requires one explicit `sslrootcert` and verifies the certificate
-   chain without hostname matching. `verify-full` verifies both the certificate
-   chain and hostname and is preferred wherever the provider endpoint supports
-   it. If `uselibpqcompat=true` is already present it is accepted, while false
-   or duplicate compatibility flags fail closed. Inspection and every later
-   gate hash the exact original URL bytes—including whether that optional flag
-   is present—rather than the normalized private client copy. Do not edit the
-   URL file after its hash has been approved.
+   The deployed web, privacy-maintenance, and operator-only migrator URLs must
+   all use the same exact lower-case Railway private
+   `*.railway.internal:5432` authority shape with only
+   `sslmode=verify-full`. Configure the exact sealed root CA PEM and its
+   independently reviewed DER SHA-256 as
+   `PINTPATH_POSTGRES_ROOT_CA_PEM` and
+   `PINTPATH_POSTGRES_ROOT_CA_DER_SHA256`. Runtime startup materializes owned
+   temporary custody, pins one `fd12::/16` address, and authenticates the stock
+   leaf as `localhost` for both role-bound pools.
+
+   The migrator URL must be the exact lowercase Railway private
+   `*.railway.internal:5432` authority with the sole query
+   `sslmode=verify-full`. Keep the independently reviewed self-signed Railway
+   root certificate in a separate current-user-owned mode-600 file and retain
+   its DER SHA-256 out of band. The importer opens the same
+   `railway-stock-localhost-ca-v1` transport as the production application: it
+   resolves exactly one `fd12::/16` address, dials only that address, verifies
+   the stock leaf as `localhost` against only the held root, and rechecks the
+   URL/DNS/file authority before and after every query. `sslmode=require`,
+   `verify-ca`, public/proxy endpoints, poolers, extra URL query keys, ambient
+   roots, and alternate-address fallback are rejected. Inspection returns a
+   transport-authority hash binding the fixed profile, exact URL authority,
+   and reviewed root DER pin; approve that hash alongside the URL, target, and
+   DDL hashes. Do not edit either private file after approval.
 
    ```sh
    npm run db:postgres:migration -- inspect-target \
+     --output-target-identity /absolute/private/release-id/target-identity.json \
      --target-url-file /absolute/private/target-migrator-url.key \
+     --root-ca-file /absolute/private/railway-postgres-root-ca.pem \
+     --root-ca-der-sha256 <reviewed-64-hex-root-ca-der-sha256> \
      --target-ddl /absolute/repository/src/db/postgres-schema.sql \
      --target-ddl-sha256 <trusted-64-hex-ddl-sha256>
    ```
 
-   Register the returned target identity, URL, and DDL hashes privately. A
-   changed URL, database/cluster identity, DDL, candidate, plan, approval,
-   operator, verifier, or environment is a hard stop.
+   Register the returned target-identity file hash, identity hash, URL,
+   transport-authority, live-schema, and DDL hashes privately. The command
+   writes the canonical six-field target identity as a new mode-600 file; use
+   that exact file and hash for reviewed-price planning rather than recreating
+   it with an ad-hoc catalog query. A changed URL, CA pin, transport authority,
+   database/cluster identity, DDL, candidate, plan, approval, operator,
+   verifier authority, or environment is a hard stop. Before step 6, retain the
+   protected provisioning receipt and confirm its authority row is bound to the
+   exact candidate, environment, operator, verifier public-key hash, and pinned
+   repository policy. `apply` and `verify-target` independently load and
+   reassert that row while holding the migration advisory lock; there is no
+   caller-supplied verifier identity or verifier-key hash.
 
 6. Apply only after the independent verifier has approved every hash. This is
    both operator-guarded and separately confirmation-gated; the receipt path
@@ -363,17 +447,23 @@ line, print it, or put it in Git.
      --target-ddl-sha256 <trusted-64-hex-ddl-sha256> \
      --target-url-file /absolute/private/target-migrator-url.key \
      --target-url-sha256 <approved-64-hex-url-sha256> \
+     --root-ca-file /absolute/private/railway-postgres-root-ca.pem \
+     --root-ca-der-sha256 <reviewed-64-hex-root-ca-der-sha256> \
+     --transport-authority-sha256 <approved-64-hex-transport-authority-sha256> \
      --target-identity-sha256 <approved-64-hex-target-identity-sha256> \
      --expected-environment permanent-staging \
      --candidate-sha <frozen-40-or-64-hex-sha> \
      --approval-reference <signed-change-reference> \
-     --operator-id <private-operator-reference> \
-     --verifier-id <private-independent-verifier-reference> \
+     --operator-id <private-operator-reference-matching-the-installed-authority> \
      --output-receipt /absolute/private/release-id/apply-receipt.json
    ```
 
-7. Run the read-only verifier with the same exact inputs and a second new
-   receipt path. It rechecks the sealed SQLite/evidence/deletion authority,
+   Apply stops in `awaiting-verification`; it does not set `import_state=ready`.
+   Give the canonical apply receipt to the independent verifier, who signs the
+   exact approval payload with the separately reviewed Ed25519 key.
+
+7. Run the independently signed verifier with the same exact inputs and a
+   second new receipt path. It rechecks the sealed SQLite/evidence/deletion authority,
    every chunk/table hash, row count, state total, key range, foreign key,
    orphan check, metadata binding, target identity, and stored ready receipt.
 
@@ -387,12 +477,19 @@ line, print it, or put it in Git.
      --target-ddl-sha256 <trusted-64-hex-ddl-sha256> \
      --target-url-file /absolute/private/target-migrator-url.key \
      --target-url-sha256 <approved-64-hex-url-sha256> \
+     --root-ca-file /absolute/private/railway-postgres-root-ca.pem \
+     --root-ca-der-sha256 <reviewed-64-hex-root-ca-der-sha256> \
+     --transport-authority-sha256 <approved-64-hex-transport-authority-sha256> \
      --target-identity-sha256 <approved-64-hex-target-identity-sha256> \
      --expected-environment permanent-staging \
      --candidate-sha <frozen-40-or-64-hex-sha> \
      --approval-reference <signed-change-reference> \
-     --operator-id <private-operator-reference> \
-     --verifier-id <private-independent-verifier-reference> \
+     --operator-id <private-operator-reference-matching-the-installed-authority> \
+     --apply-receipt /absolute/private/release-id/apply-receipt.json \
+     --apply-receipt-sha256 <approved-apply-receipt-file-sha256> \
+     --verification-approval /absolute/private/release-id/verification-approval.json \
+     --verification-approval-sha256 <approved-verification-file-sha256> \
+     --verifier-public-key /absolute/private/release-id/verifier-ed25519-public.pem \
      --output-receipt /absolute/private/release-id/verify-receipt.json
    ```
 
@@ -404,110 +501,118 @@ URL file.
 ## 4. Prove permanent integrated staging
 
 - [x] Create and pin the permanent-staging Railway app service, Postgres,
-  Supabase/Auth/private Storage, and Redis core identities; prove they differ
-  from production and the disposable restore resources.
+      Supabase/Auth/private Storage, and Redis core identities; prove they differ
+      from production and the disposable restore resources.
 - [ ] Complete the three Google/OpenAI categories/four exact Railway variable
-  operations only through their reviewed authority. Keep the separate two
-  Supabase replacement-key operations hard-disabled and unauthorized until
-  their own reviewed authorities exist. Then deploy the reviewed app and verify
-  provider/domain/callback bindings.
+      operations only through their protected authority. Run the separate atomic
+      Supabase replacement and protected canary-B/legacy-disable/old-key-denial
+      ceremony under its own approval. Then deploy the reviewed app and verify
+      provider/domain/callback bindings.
 - [ ] Complete the incident-driven staging Postgres runtime/admin and Redis
-  credential rotations with the isolated-client acceptance/rejection contract
-  in
-  [permanent-staging-private-auth-rotation.md](permanent-staging-private-auth-rotation.md),
-  then refresh the exact URL pins and recovery evidence.
+      credential rotations with the isolated-client acceptance/rejection contract
+      in
+      [permanent-staging-private-auth-rotation.md](permanent-staging-private-auth-rotation.md),
+      then refresh the exact URL pins and recovery evidence.
 - [x] Import the approved checksummed synthetic SQLite source with the reviewed
-  tool and independently verify its complete receipt. No live production
-  credential or unredacted production data was used.
+      tool and independently verify its complete receipt. No live production
+      credential or unredacted production data was used.
 - [ ] Run at least two application replicas and overlapping worker instances.
 - [ ] Pass public, member, contributor, assigned venue-Free manager, and MFA
-  admin smoke tests; role isolation, revoked-session, deletion, moderation,
-  retained internal happy-hour collection, and public happy-hour absence tests;
-  and provider failure/recovery tests.
+      admin smoke tests; role isolation, revoked-session, deletion, moderation,
+      retained internal happy-hour collection, and public happy-hour absence tests;
+      and provider failure/recovery tests.
 - [ ] Run expected peak, 2x-peak headroom, sustained-write, connection-pool,
-  deadlock/lock-wait, restart, rolling-deploy, and at least 60-minute soak tests.
-  Require zero duplicate or lost work, zero cross-role/venue leakage, less than
-  1% 5xx, public API p95 below two seconds, and admin p95 below three seconds.
-  Follow
-  [permanent-staging-load-soak-runbook.md](permanent-staging-load-soak-runbook.md).
+      deadlock/lock-wait, restart, rolling-deploy, and at least 60-minute soak tests.
+      Require zero duplicate or lost work, zero cross-role/venue leakage, less than
+      1% 5xx, public API p95 below two seconds, and admin p95 below three seconds.
+      Follow
+      [permanent-staging-load-soak-runbook.md](permanent-staging-load-soak-runbook.md).
 - [ ] Deploy the recorded rollback build against the new Postgres schema and
-  prove health, reads, authentication, writes allowed by the Free scope, and
-  worker correctness. The rollback build must never resume SQLite writes.
+      prove health, reads, authentication, writes allowed by the Free scope, and
+      worker correctness. The rollback build must never resume SQLite writes.
 
 ## 5. Prove backup and restore before cutover
 
 - [x] Create and lock a permanent-staging Postgres volume baseline and enable
-  its six-day daily snapshot schedule. Treat this only as a same-provider
-  rollback layer; it is neither PITR nor WORM.
+      its six-day daily snapshot schedule. Treat this only as a same-provider
+      rollback layer; it is neither PITR nor WORM.
 - [ ] Enable managed Postgres PITR and monitor recovery-point age.
-  The current Railway PITR contract requires the major `postgres-ssl:17`
-  image label. A staging-only label trial migrated the volume toward the wrong
-  region and was reverted with data, backups, import, and runtime checks intact;
-  require a provider-safe Singapore placement proof before retrying.
+      The current Railway PITR contract requires the major `postgres-ssl:17`
+      image label. A staging-only label trial migrated the volume toward the wrong
+      region and was reverted with data, backups, import, and runtime checks intact;
+      require a provider-safe Singapore placement proof before retrying.
+      Dispatch the protected PITR workflow with only `permanent-staging` or
+      `production`; never supply a root UUID as operator input. Each target has a
+      separate protected GitHub environment containing its reviewed target label
+      and expected HA-root UUID. The executor maps the label to the checked-in
+      canonical environment, enumerates every live service, independently discovers
+      exactly one HA root, and fails before writing unless it equals that protected
+      authority. Preserve the intent/terminal receipts that bind the resulting
+      target-authority SHA-256.
 - [x] Create an independently verified logical PostgreSQL export from permanent
-  staging with its archive, version-2 manifest, and complete state receipt.
-  This describes immutable historical evidence. Version 2 remains readable for
-  retrieval/restore but cannot authorize a new capture or close the current
-  pinned-transport gate; new backups must be schema version 3.
+      staging with its archive, version-2 manifest, and complete state receipt.
+      This describes immutable historical evidence. Version 2 remains readable for
+      retrieval/restore but cannot authorize a new capture or close the current
+      pinned-transport gate; new backups must be schema version 3.
 - [x] Historical operator-host evidence uploaded that frozen
-  permanent-staging logical set to a second Supabase project and verified the
-  complete remote object set. The associated staging database-bound readiness
-  probe ran under the prior checked-in/live contract that coupled staging to the
-  production operational-copy URL, key, and bucket. The current candidate makes
-  the CLI canonical-production-only and forbids all three variables in staging;
-  a fresh complete Railway inventory must still prove their deletion. This
-  historical set cannot authorize a new staging upload or probe.
+      permanent-staging logical set to a second Supabase project and verified the
+      complete remote object set. The associated staging database-bound readiness
+      probe ran under the prior checked-in/live contract that coupled staging to the
+      production operational-copy URL, key, and bucket. The current candidate makes
+      the CLI canonical-production-only and forbids all three variables in staging;
+      a fresh complete Railway inventory must still prove their deletion. This
+      historical set cannot authorize a new staging upload or probe.
 - [x] Retrieve the complete pre-deletion logical set from that isolated private
-  bucket through the exact success-state, runtime-identity, destination-pin,
-  pointer/attestation, Storage-generation, streamed-size, and SHA-256 contract.
-  The resulting mode-700 directory contains exactly the three mode-600 restore
-  artifacts and matched the remote authorities byte-for-byte. Follow section 4
-  of
-  [postgres-logical-offsite-attestation.md](postgres-logical-offsite-attestation.md).
+      bucket through the exact success-state, runtime-identity, destination-pin,
+      pointer/attestation, Storage-generation, streamed-size, and SHA-256 contract.
+      The resulting mode-700 directory contains exactly the three mode-600 restore
+      artifacts and matched the remote authorities byte-for-byte. Follow section 4
+      of
+      [postgres-logical-offsite-attestation.md](postgres-logical-offsite-attestation.md).
 - [ ] Create and verify the corresponding private application Storage snapshot.
-  The canonical PostgreSQL-native capture/restore-set foundation, restricted
-  PG17 integration test, and operator CLIs are implemented, but no live bucket
-  was read or copied as implementation evidence. Permanent-staging Phase 5 is
-  runnable against only the exact permanent-staging project-ref origin and its
-  server key; the exact production project-ref origin is the only other capture
-  source accepted. The command requires an explicit source-environment label
-  that maps to exactly one of those origins, an independently reviewed frozen
-  candidate SHA, and a matching ready database migration-run binding on both
-  repeatable-read inspections before and after the bucket copy. The recovery
-  manifest and domain-separated set binding are version 2 for this authority
-  contract. Keep every production operational-copy variable absent from staging.
-  Execute and independently verify the substantive capture described in
-  [postgres-private-storage-recovery.md](postgres-private-storage-recovery.md).
+      The canonical PostgreSQL-native capture/restore-set foundation, restricted
+      PG17 integration test, and operator CLIs are implemented, but no live bucket
+      was read or copied as implementation evidence. Permanent-staging Phase 5 is
+      runnable against only the exact permanent-staging project-ref origin and its
+      server key; the exact production project-ref origin is the only other capture
+      source accepted. The command requires an explicit source-environment label
+      that maps to exactly one of those origins, an independently reviewed frozen
+      candidate SHA, and a matching ready database migration-run binding on both
+      repeatable-read inspections before and after the bucket copy. The recovery
+      manifest and domain-separated set binding are version 2 for this authority
+      contract. Keep every production operational-copy variable absent from staging.
+      Execute and independently verify the substantive capture described in
+      [postgres-private-storage-recovery.md](postgres-private-storage-recovery.md).
 - [x] Create and seal one authentic wholly synthetic deletion-tombstone ledger
-  authority tied to the pre-deletion backup; replay it once with
-  `newlyApplied=1` and again with `alreadyApplied=1`, require the same semantic
-  projection on both passes, and keep restricted runtime readiness green.
+      authority tied to the pre-deletion backup; replay it once with
+      `newlyApplied=1` and again with `alreadyApplied=1`, require the same semantic
+      projection on both passes, and keep restricted runtime readiness green.
 - [ ] Write a copy to provider-enforced object-lock/WORM storage in a separate
-  failure domain. The application writer must be unable to delete, overwrite,
-  or shorten retention. A second Supabase project controlled by a service-role
-  key is only a private operational restore copy, not immutable DR proof. The
-  pinned AWS S3 Object Lock attestor, Put-only/read-only role policies, offline
-  tests, and triple-gated live integration are implemented; the separately
-  administered recovery account, bucket, roles, live write, later retrieval,
-  and restore evidence remain open. Follow
-  [postgres-logical-worm-attestation.md](postgres-logical-worm-attestation.md).
+      failure domain. The application writer must be unable to delete, overwrite,
+      or shorten retention. A second Supabase project controlled by a service-role
+      key is only a private operational restore copy, not immutable DR proof. The
+      pinned AWS S3 Object Lock attestor, Put-only/read-only role policies, offline
+      tests, and triple-gated live integration are implemented; the separately
+      administered recovery account, bucket, roles, live write, later retrieval,
+      and restore evidence remain open. Follow
+      [postgres-logical-worm-attestation.md](postgres-logical-worm-attestation.md).
 - [x] Restore the retrieved logical Postgres set into the independently pinned
-  disposable PG17 database and verify exact source/target receipt equality.
-  Follow
-  [postgres-logical-restore-rehearsal.md](postgres-logical-restore-rehearsal.md).
+      disposable PG17 database and verify exact source/target receipt equality.
+      Follow
+      [postgres-logical-restore-rehearsal.md](postgres-logical-restore-rehearsal.md).
 - [ ] Restore private Storage, exercise the complete application, test
-  PITR/WORM retrieval, measure and approve RPO/RTO, and prove the combined
-  recovered system contains no prohibited tombstoned data. The implemented
-  restore command requires an empty policy-matching bucket on a distinct
-  disposable origin, exact logical-state/reference equality, immutable uploads,
-  full re-download verification, and sealed deletion-authority binding; the
-  live restore/application/RPO/RTO evidence remains open. The restore command
-  is intentionally blocked before credential reads until a real disposable
-  Supabase origin is registered in independently reviewed candidate-bound
-  authority; invocation-supplied URL hashes are not sufficient.
+      PITR/WORM retrieval, measure and approve RPO/RTO, and prove the combined
+      recovered system contains no prohibited tombstoned data. The implemented
+      restore command requires an empty policy-matching bucket on a distinct
+      disposable origin, exact logical-state/reference equality, immutable uploads,
+      full re-download verification, and sealed deletion-authority binding; the
+      live restore/application/RPO/RTO evidence remains open. The restore command
+      is intentionally blocked before credential reads until a real disposable
+      Supabase origin is registered in independently reviewed candidate-bound
+      authority; invocation-supplied URL hashes are not sufficient.
 - [ ] Remove public access, revoke temporary credentials, delete only the
-  recorded disposable resources, and independently verify production and
-  permanent staging were unchanged.
+      recorded disposable resources, and independently verify production and
+      permanent staging were unchanged.
 
 The logical-export, operational-copy upload/verify/attestation, database-aware
 `/ready` probe, read-only retriever, disposable restore, and tombstone-replay
@@ -733,18 +838,24 @@ Each purpose-bound authority retains its exact reviewed binary descriptor and
 revalidates its hash, metadata, canonical pathname, and PostgreSQL-17 evidence
 around its permitted operation. The production factories pre-bind the exact
 process runner and do not publish a generic runner or test filesystem seam.
-That is still not activation authority. Node launches by pathname, leaving a
+That is still not activation authority for an operator-host or ordinary
+`npm`/`tsx` invocation. Node launches by pathname, leaving a
 same-UID execution ABA between preflight and `spawn`; a binary hash does not
 bind the dynamic loader or full shared-library dependency tree; the worker must
 run in a pristine realm with locked Promise primordials; and the archive needs
 an independently retained external digest guard across recovery. The
 process-group proof also cannot observe a substituted child that calls
-`setsid`. Until an immutable digest-pinned runtime or reviewed descriptor-native
-launcher binds all of those surfaces and the exact pre-bound runner, this
-review-only implementation must not authorize a live backup or restore
-ceremony. An escaped substituted tool could retain its credential environment
-or a read-only archive descriptor even though it cannot retain the parent's
-writable archive descriptor.
+`setsid`. The separately reviewed protected production logical-backup workflow
+documented in
+[`production-logical-backup-operations.md`](./production-logical-backup-operations.md)
+closes those activation gaps for only its schema-v3 OCI backup and scheduled
+monthly logical-restore jobs: it starts the worker directly in the pinned
+digest runtime with frozen intrinsics, protected environment approval, exact
+transport policy, and authenticated evidence. Outside that workflow, this
+implementation remains review-only and must not authorize a live backup or
+restore ceremony. An escaped substituted tool could retain its credential
+environment or a read-only archive descriptor even though it cannot retain the
+parent's writable archive descriptor.
 The canonical state receipt and manifest are likewise checked against their
 in-memory canonical bytes, retained by validated descriptors, and revalidated
 after database and transport cleanup before success is emitted.
@@ -806,18 +917,43 @@ guard. Authority, archive descriptor, advisory lock, and target-connection
 closure are authorization gates, not best-effort cleanup; any uncertainty after
 mutation requires disposal and prevents a receipt.
 
-These restore and deletion-replay paths remain review-only. Node still launches by pathname and does
-not bind the dynamic loader or complete shared-library closure, and a substituted
-child can escape process-group observation with `setsid`. More importantly, the
-entire restore and replay CLI/workers—not just the tool-authority module—must
-start in pristine frozen-intrinsics realms before imports or secret reads. Their
-ordinary async carriers include plaintext target URL material, parsed
-`PGPASSWORD`, connection capabilities, tombstone identifiers, and query rows;
-inherited `then` poisoning can observe them. The current `npm`/`tsx` commands
-are not activation launchers. Use neither these implementations nor these example commands for a new
-live ceremony until an immutable digest-pinned runtime or reviewed
-descriptor-native launcher, complete dependency closure, and whole-worker
+These example restore and deletion-replay commands remain review-only when
+invoked from an operator host or through ordinary `npm`/`tsx`. Node then still
+launches by pathname and does not bind the dynamic loader or complete
+shared-library closure, and a substituted child can escape process-group
+observation with `setsid`. More importantly, the entire restore and replay
+CLI/workers—not just the tool-authority module—must start in pristine
+frozen-intrinsics realms before imports or secret reads. Their ordinary async
+carriers include plaintext target URL material, parsed `PGPASSWORD`, connection
+capabilities, tombstone identifiers, and query rows; inherited `then` poisoning
+can observe them. The protected production logical-backup workflow is the sole
+activation launcher for its daily/monthly schema-v3 operations. The
+post-promotion release ceremony has its own frozen four-job launcher in
+[`production-promotion-recovery.md`](./production-promotion-recovery.md):
+production capture on the JIT `pintpath-production-backup` runner, separate
+logical/private WORM reads and full recovery on the JIT
+`pintpath-disposable-recovery` runner, independent always-run provider cleanup,
+then finalization. It authorizes only the exact authenticated operations and
+receipt bindings implemented in that workflow; its receipt never authorizes
+copying these commands to an operator host. Raw recovery bytes never cross a
+GitHub artifact. No other live ceremony is authorized until an equally
+protected, digest-pinned runtime, complete dependency closure, and whole-worker
 then-safety have passed independent review.
+The launcher/attestor are pinned by policy v2 SHA-256
+`57f66c1c9dde912586ec510e37c28cc3dfea2c098e67c78edbea189c7dcc9988`.
+
+Before capture, sign the exact activation run, candidate, targets, complete
+Railway workspace inventory, and both cleanup-policy hashes into the singleton
+emergency arm and publish it with the protected manager's compare-and-swap to
+the dedicated cleanup-state ref. Do not dispatch/arm a second run while its
+state is OPEN; only exact same-target linked renewal is permitted. A separate
+completion/15-minute/manual watchdog retries emergency cleanup outside the
+activation cancellation domain and never produces green activation evidence.
+It persists exact delete acknowledgements across partial runs, requires fresh
+absence before reuse, and reaches DISARMED only after both current provider
+terminals. Railway workspace absence
+without exact `projectDelete: true` is transfer-ambiguous and requires
+provider-global reconciliation.
 
 The disposable target must also be isolated, with no concurrent credential
 holder. Restore checks run before mutation, after `pg_restore`, and after final
@@ -879,33 +1015,54 @@ be measured and approved.
    reconciliation/deletion replay, and sign RPO/RTO before traffic is routed.
    The pre-import SQLite/Postgres snapshot is not rollback authority for the
    migrated state.
-6. Deploy the exact candidate with the Postgres connection and at least two
-   replicas. Prove `/startup`, `/ready`, role smoke, Free-scope writes, worker
-   overlap, public data gates, and provider readiness while public ingress
-   remains in the signed maintenance/closed state.
+6. Deploy the exact current-`main` candidate with the Postgres connection,
+   converge it to exactly two replicas, prove `/startup`, `/ready`, role smoke,
+   Free-scope writes, worker overlap, public data gates, and provider readiness,
+   then close only the canonical route. The release chronology is fixed as
+   `deploy→scale→close→activation→promotion-recovery→open`.
 7. Publish only the exactly reviewed launch data through the candidate's
-   authorised Postgres workflow. The current plan-v4 CLI is only an offline,
-   no-write reviewer aid: its authority bundle explicitly records absent
-   provider/cryptographic/mutation authority, its separate mode-0600 packet
-   exposes the exact proposed rows for private comparison, and all seven
-   activation blockers remain open. It has no apply or quarantine command and
-   cannot be used for this step. Then capture a new post-promotion PITR,
-   logical/Storage/evidence/tombstone WORM set, retrieve it with the independent
-   recovery principal, restore it into fresh disposable staging, reconcile it,
-   and obtain two-person RPO/RTO sign-off before routing any traffic. The
-   earlier pre-import and post-import sets are not the final authority for the
-   published launch state.
-8. Keep the sealed SQLite source read-only. Monitor error rate, latency, pool
+   authorised Postgres workflow. Produce the no-write plan first, register the
+   independent reviewer's signed apply authorization with
+   `db:postgres:reviewed-price:authorize-apply`, and execute the exact approved
+   operation once with `db:postgres:reviewed-price:apply`. Reconcile an
+   uncertain result by operation UUID and receipt rather than retrying. If the
+   batch must be withdrawn, register the separately signed, apply-receipt-bound
+   quarantine authorization and run `db:postgres:reviewed-price:quarantine`;
+   direct SQL and the legacy SQLite mutation path remain forbidden. Then leave
+   ingress closed. Dispatch the four-job activation only after GitHub has
+   assigned its exact `GITHUB_RUN_ID` and the two signed, per-run teardown
+   authorities are installed in the non-interactive cleanup environment. The
+   activation observes PITR during production capture, creates separate logical
+   and private-bundle WORM authorities, independently retrieves both on the
+   disposable-network runner, restores Postgres and private Storage, replays
+   deletion twice, starts the compiled candidate locally against the
+   disposable Postgres/Redis/Supabase network, purges restored Storage, and
+   independently proves Railway and Supabase absent. The earlier pre-import
+   and post-import sets are not the final authority for the published launch
+   state. Only orderly, purge-bound Supabase cleanup can produce green;
+   emergency cleanup never can.
+8. Require the activation artifact's exact 18 evidence leaves plus
+   `activation-receipt.json` and `tested-commit-sha.txt` (20 files total). Build
+   the `pintpath-production-promotion-recovery-authority/v2` manifest and obtain
+   two distinct Ed25519 approvals only after final activation. Dispatch the
+   protected attestation with the exact activation run ID, and open the route
+   only after that six-stage GitHub chain passes. Standard cancel may be used;
+   force-cancel is forbidden until independent observations prove both
+   disposable providers absent. The authority's `recoveryStartedAt` must equal
+   the immutable GitHub activation workflow `run_started_at`; it is not a
+   reviewer-selected RTO origin.
+9. Keep the sealed SQLite source read-only. Monitor error rate, latency, pool
    saturation, locks, queues, provider correlation, and deletion state through
    the signed observation window.
-9. If rollback is required, deploy the recorded Postgres-compatible rollback
-   build against the same Postgres database. Never roll back by reopening the
-   SQLite source for writes.
+10. If rollback is required, deploy the recorded Postgres-compatible rollback
+    build against the same Postgres database. Never roll back by reopening the
+    SQLite source for writes.
 
 ## Exit criteria
 
-Candidate freeze is allowed only when all of the following are signed by the
-operator and an independent verifier:
+Production cutover is allowed only after the candidate is merged to protected
+`main` and all of the following are signed for that exact current-main SHA by
+the operator and an independent verifier:
 
 - every authoritative table and workflow is implemented on Postgres;
 - deterministic import and reconciliation pass with no unexplained mismatch;
@@ -913,7 +1070,9 @@ operator and an independent verifier:
   Postgres-compatible rollback proof;
 - `anon`/`authenticated` cannot access the private application schema and the
   runtime role has only required privileges;
-- PITR, logical/private Storage backup, WORM copy, and disposable restore pass;
+- PITR, logical/private Storage backup, separate logical/private WORM reads,
+  disposable restore, compiled recovered-application smoke, orderly purge,
+  and both provider-absence terminals pass;
 - production and permanent staging identities cannot be selected by destructive
   restore tooling;
 - runtime configuration cannot make SQLite authoritative or writable; and
@@ -921,3 +1080,5 @@ operator and an independent verifier:
   runbook are included in the candidate commit.
 
 Until every box passes, Pint Path remains **no-go for full-scale production**.
+The four-job activation and version-2 policy are checked-in capability only;
+no live provider execution or candidate-bound activation evidence is claimed.

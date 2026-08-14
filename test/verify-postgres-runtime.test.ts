@@ -14,9 +14,34 @@ import type {
   SqlPoolMetrics,
   SqlStatement,
 } from "../src/db/sql-database.js";
+import type {
+  OpenPostgresRailwayStockLocalhostCaTransportFromPemOptions,
+  PostgresRailwayStockLocalhostCaNodeConnection,
+  PostgresRailwayStockLocalhostCaTransport,
+} from "../src/lib/postgres-railway-stock-localhost-ca.js";
+import {
+  TEST_POSTGRES_RAILWAY_ROOT_CA_DER_SHA256,
+  TEST_POSTGRES_RAILWAY_ROOT_CA_PEM,
+} from "./postgres-railway-stock-localhost-ca.fixtures.js";
 
-const tlsDatabaseUrl = "postgresql://runtime:do-not-print@database.invalid/pintpath?sslmode=require";
-const normalizedTlsDatabaseUrl = `${tlsDatabaseUrl}&uselibpqcompat=true`;
+const tlsDatabaseUrl = "postgresql://runtime:do-not-print@pintpath-postgres.railway.internal:5432/pintpath?sslmode=verify-full";
+const fakeNodeConnection = Object.freeze({
+  host: "fd12::1",
+  port: 5_432,
+  ssl: Object.freeze({}),
+}) as unknown as PostgresRailwayStockLocalhostCaNodeConnection;
+
+function runtimeEnv(
+  overrides: Readonly<Record<string, string | undefined>> = {},
+): Readonly<Record<string, string | undefined>> {
+  return {
+    DATABASE_URL: tlsDatabaseUrl,
+    PINTPATH_POSTGRES_ROOT_CA_PEM: TEST_POSTGRES_RAILWAY_ROOT_CA_PEM,
+    PINTPATH_POSTGRES_ROOT_CA_DER_SHA256:
+      TEST_POSTGRES_RAILWAY_ROOT_CA_DER_SHA256,
+    ...overrides,
+  };
+}
 
 function healthyReadiness(): PostgresRuntimeReadiness {
   return {
@@ -77,20 +102,55 @@ class FakeDatabase implements SqlDatabase {
   }
 }
 
+class FakeTransport {
+  assertCalls = 0;
+  closeCalls = 0;
+  readonly nodeConnection = fakeNodeConnection;
+
+  constructor(
+    private readonly failingAssertCall?: number,
+    private readonly closeError?: Error,
+  ) {}
+
+  async assertExact(): Promise<void> {
+    this.assertCalls += 1;
+    if (this.assertCalls === this.failingAssertCall) {
+      throw new Error("transport drift contains private authority");
+    }
+  }
+
+  async close(): Promise<void> {
+    this.closeCalls += 1;
+    if (this.closeError) throw this.closeError;
+  }
+}
+
 interface HarnessOptions {
   database?: FakeDatabase;
   readiness?: PostgresRuntimeReadiness;
   checkError?: Error;
   createError?: Error;
+  openError?: Error;
+  transport?: FakeTransport;
+  uid?: number | null;
   env?: Readonly<Record<string, string | undefined>>;
 }
 
 function createHarness(options: HarnessOptions = {}) {
   const database = options.database ?? new FakeDatabase();
+  const transport = options.transport ?? new FakeTransport();
   const output: string[] = [];
   const createdWith: PostgresDatabaseOptions[] = [];
+  const openedWith: OpenPostgresRailwayStockLocalhostCaTransportFromPemOptions[] = [];
   const dependencies: Partial<PostgresRuntimeVerifierDependencies> = {
-    env: options.env ?? { DATABASE_URL: tlsDatabaseUrl },
+    env: options.env ?? runtimeEnv(),
+    getUid: () => options.uid === undefined ? 501 : options.uid,
+    now: () => new Date("2026-08-14T00:00:00.000Z"),
+    openPostgresRuntimeTransport: async (transportOptions) => {
+      openedWith.push(transportOptions);
+      if (options.openError) throw options.openError;
+      return transport as unknown as PostgresRailwayStockLocalhostCaTransport;
+    },
     createDatabase: (databaseOptions) => {
       createdWith.push(databaseOptions);
       if (options.createError) throw options.createError;
@@ -102,7 +162,7 @@ function createHarness(options: HarnessOptions = {}) {
     },
     writeOutput: (value) => output.push(value),
   };
-  return { database, output, createdWith, dependencies };
+  return { database, transport, output, createdWith, openedWith, dependencies };
 }
 
 function parseOnlyReport(output: string[]): PostgresRuntimeVerifierReport {
@@ -135,8 +195,20 @@ describe("Postgres runtime verifier", () => {
       readiness: healthyReadiness(),
     });
     expect(harness.createdWith).toEqual([{
-      connectionString: normalizedTlsDatabaseUrl,
+      connectionString: tlsDatabaseUrl,
+      activeRole: "pintpath_runtime",
+      railwayStockLocalhostCaConnection: fakeNodeConnection,
       ...POSTGRES_RUNTIME_VERIFIER_POOL_OPTIONS,
+    }]);
+    expect(harness.openedWith).toEqual([{
+      profile: "railway-stock-localhost-ca-v1",
+      rootCaPem: TEST_POSTGRES_RAILWAY_ROOT_CA_PEM,
+      expectedRootCaDerSha256: TEST_POSTGRES_RAILWAY_ROOT_CA_DER_SHA256,
+      expectedUid: 501,
+      sourceUrlAuthority: {
+        hostname: "pintpath-postgres.railway.internal",
+        port: 5_432,
+      },
     }]);
     expect(POSTGRES_RUNTIME_VERIFIER_POOL_OPTIONS).toEqual({
       applicationName: "pintpath-runtime-verifier",
@@ -147,6 +219,8 @@ describe("Postgres runtime verifier", () => {
       idleInTransactionTimeoutMs: 10_000,
     });
     expect(harness.database.closeCalls).toBe(1);
+    expect(harness.transport.assertCalls).toBe(5);
+    expect(harness.transport.closeCalls).toBe(1);
     expect(harness.output[0]).not.toContain("do-not-print");
     expect(harness.output[0]).not.toContain("database.invalid");
     expect(harness.output[0]).not.toContain("pintpath_app");
@@ -159,10 +233,11 @@ describe("Postgres runtime verifier", () => {
     "not-a-url",
     "http://runtime:private@example.invalid/pintpath?sslmode=require",
     "postgresql://runtime:private@example.invalid/pintpath",
-    "postgresql://runtime:private@example.invalid/pintpath?sslmode=disable",
-    "postgresql://runtime:private@example.invalid/pintpath?sslmode=require#fragment",
-  ])("rejects a missing or unsafe DATABASE_URL without constructing an adapter: %s", async (value) => {
-    const harness = createHarness({ env: { DATABASE_URL: value } });
+    "postgresql://runtime:private@pintpath-postgres.railway.internal:5432/pintpath?sslmode=require",
+    "postgresql://runtime:private@pintpath-postgres.railway.internal:5432/pintpath?sslmode=verify-ca",
+    "postgresql://runtime:private@pintpath-postgres.railway.internal:5432/pintpath?sslmode=verify-full#fragment",
+  ])("rejects a missing or unsafe DATABASE_URL without opening transport: %s", async (value) => {
+    const harness = createHarness({ env: runtimeEnv({ DATABASE_URL: value }) });
 
     const exitCode = await runPostgresRuntimeVerifier(harness.dependencies);
     const result = parseOnlyReport(harness.output);
@@ -171,13 +246,29 @@ describe("Postgres runtime verifier", () => {
     expect(result).toEqual({
       schemaVersion: 1,
       ready: false,
-      failureCode: "database_url_missing_or_unsafe",
+      failureCode: "database_authority_missing_or_unsafe",
       readiness: null,
     });
     expect(harness.createdWith).toEqual([]);
+    expect(harness.openedWith).toEqual([]);
     expect(harness.database.closeCalls).toBe(0);
+    expect(harness.transport.closeCalls).toBe(0);
     expect(harness.output[0]).not.toContain("private");
     expect(harness.output[0]).not.toContain("example.invalid");
+  });
+
+  it.each([
+    ["missing PEM", { PINTPATH_POSTGRES_ROOT_CA_PEM: "" }],
+    ["wrong DER pin", { PINTPATH_POSTGRES_ROOT_CA_DER_SHA256: "a".repeat(64) }],
+  ])("rejects %s before opening transport", async (_label, overrides) => {
+    const harness = createHarness({ env: runtimeEnv(overrides) });
+    const exitCode = await runPostgresRuntimeVerifier(harness.dependencies);
+    expect(exitCode).toBe(1);
+    expect(parseOnlyReport(harness.output).failureCode).toBe(
+      "database_authority_missing_or_unsafe",
+    );
+    expect(harness.openedWith).toEqual([]);
+    expect(harness.output[0]).not.toContain("BEGIN CERTIFICATE");
   });
 
   it("closes and exits nonzero when runtime readiness fails", async () => {
@@ -218,6 +309,38 @@ describe("Postgres runtime verifier", () => {
     expect(harness.output[0]).not.toContain("private.internal");
   });
 
+  it("fails closed when the stock-localhost transport cannot open", async () => {
+    const harness = createHarness({
+      openError: new Error(`transport rejected ${tlsDatabaseUrl}`),
+    });
+
+    const exitCode = await runPostgresRuntimeVerifier(harness.dependencies);
+    const result = parseOnlyReport(harness.output);
+
+    expect(exitCode).toBe(1);
+    expect(result.failureCode).toBe("transport_initialization_failed");
+    expect(harness.openedWith).toHaveLength(1);
+    expect(harness.createdWith).toEqual([]);
+    expect(harness.transport.closeCalls).toBe(0);
+    expect(harness.output[0]).not.toContain("do-not-print");
+  });
+
+  it("fences the adapter and closes both authorities on transport drift", async () => {
+    const transport = new FakeTransport(2);
+    const harness = createHarness({ transport });
+
+    const exitCode = await runPostgresRuntimeVerifier(harness.dependencies);
+    const result = parseOnlyReport(harness.output);
+
+    expect(exitCode).toBe(1);
+    expect(result.failureCode).toBe("transport_verification_failed");
+    expect(harness.createdWith).toHaveLength(1);
+    expect(harness.database.closeCalls).toBe(1);
+    expect(transport.assertCalls).toBe(4);
+    expect(transport.closeCalls).toBe(1);
+    expect(harness.output[0]).not.toContain("private authority");
+  });
+
   it("reports close failure without exposing its raw error", async () => {
     const database = new FakeDatabase(new Error("close failed for user secret-operator"));
     const harness = createHarness({ database });
@@ -230,7 +353,26 @@ describe("Postgres runtime verifier", () => {
     expect(result.failureCode).toBe("close_failed");
     expect(result.readiness?.ready).toBe(true);
     expect(database.closeCalls).toBe(1);
+    expect(harness.transport.closeCalls).toBe(1);
     expect(harness.output[0]).not.toContain("secret-operator");
+  });
+
+  it("reports transport cleanup failure without exposing its raw error", async () => {
+    const transport = new FakeTransport(
+      undefined,
+      new Error("cleanup failed for private transport"),
+    );
+    const harness = createHarness({ transport });
+
+    const exitCode = await runPostgresRuntimeVerifier(harness.dependencies);
+    const result = parseOnlyReport(harness.output);
+
+    expect(exitCode).toBe(1);
+    expect(result.failureCode).toBe("close_failed");
+    expect(result.readiness?.ready).toBe(true);
+    expect(harness.database.closeCalls).toBe(1);
+    expect(transport.closeCalls).toBe(1);
+    expect(harness.output[0]).not.toContain("private transport");
   });
 
   it("redacts adapter construction failures", async () => {
@@ -245,6 +387,7 @@ describe("Postgres runtime verifier", () => {
     expect(result.failureCode).toBe("adapter_initialization_failed");
     expect(result.readiness).toBeNull();
     expect(harness.database.closeCalls).toBe(0);
+    expect(harness.transport.closeCalls).toBe(1);
     expect(harness.output[0]).not.toContain("do-not-print");
   });
 

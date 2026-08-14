@@ -8,6 +8,7 @@ import { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { POSTGRES_MIGRATION_CONTRACT } from "../src/db/postgres-migration-contract.js";
+import { POSTGRES_MIGRATION_EXPECTED_LIVE_SCHEMA_SHA256 } from "../src/db/postgres-migration-live-schema.js";
 import {
   POSTGRES_LOGICAL_BACKUP_ARCHIVE,
   POSTGRES_LOGICAL_BACKUP_MANIFEST,
@@ -649,6 +650,7 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL logical restore rehearsal"
   let rolesInspected = false;
   let runtimeRoleExisted = false;
   let migratorRoleExisted = false;
+  let verifierAuthorityRoleExisted = false;
   let sourceDatabaseOid = "";
   let siblingDatabaseOid = "";
   let targetDatabaseOid = "";
@@ -673,11 +675,18 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL logical restore rehearsal"
     }
     const roles = await admin.query<{ rolname: string }>(
       "SELECT rolname FROM pg_catalog.pg_roles WHERE rolname = ANY($1::text[])",
-      [["pintpath_runtime", "pintpath_migrator"]],
+      [[
+        "pintpath_runtime",
+        "pintpath_migrator",
+        "pintpath_migration_verifier_authority",
+      ]],
     );
     rolesInspected = true;
     runtimeRoleExisted = roles.rows.some((row) => row.rolname === "pintpath_runtime");
     migratorRoleExisted = roles.rows.some((row) => row.rolname === "pintpath_migrator");
+    verifierAuthorityRoleExisted = roles.rows.some(
+      (row) => row.rolname === "pintpath_migration_verifier_authority",
+    );
 
     for (const database of [SOURCE_DATABASE, SIBLING_DATABASE]) {
       await admin.query(`CREATE DATABASE ${database}`);
@@ -736,6 +745,7 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL logical restore rehearsal"
       await source.query(`UPDATE pintpath_app.schema_metadata
         SET value = CASE key
           WHEN 'import_state' THEN 'ready'
+          WHEN 'live_schema_sha256' THEN $9
           WHEN 'migration_candidate_sha' THEN $1
           WHEN 'migration_manifest_sha256' THEN $2
           WHEN 'migration_plan_sha256' THEN $3
@@ -750,6 +760,22 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL logical restore rehearsal"
         POSTGRES_MIGRATION_CONTRACT.expectedSchemaFingerprint,
         String(POSTGRES_MIGRATION_CONTRACT.sourceSchemaVersion),
         "4".repeat(64), "5".repeat(64),
+        POSTGRES_MIGRATION_EXPECTED_LIVE_SCHEMA_SHA256,
+      ]);
+      await source.query(`INSERT INTO pintpath_ops.migration_verifier_authority (
+        authority_id, expected_environment, candidate_commit_sha,
+        operator_id_sha256, verifier_id_sha256, verifier_public_key_sha256,
+        authority_policy_sha256, authority_sha256, installed_at
+      ) VALUES (
+        'active', 'permanent-staging', $1, $2, $3, $4, $5, $6,
+        clock_timestamp()
+      )`, [
+        "c".repeat(40),
+        "6".repeat(64),
+        "7".repeat(64),
+        "8".repeat(64),
+        "9".repeat(64),
+        "a".repeat(64),
       ]);
       await source.query(`INSERT INTO pintpath_app.system_state
         (key, value_json, revision, updated_at)
@@ -811,6 +837,10 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL logical restore rehearsal"
         NON_SUPERUSER_ROLE,
       ]) {
         if (role) await admin.query(`DROP ROLE IF EXISTS ${role}`).catch(() => undefined);
+      }
+      if (rolesInspected && !verifierAuthorityRoleExisted) {
+        await admin.query("DROP ROLE IF EXISTS pintpath_migration_verifier_authority")
+          .catch(() => undefined);
       }
       if (rolesInspected && !runtimeRoleExisted) {
         await admin.query("DROP ROLE IF EXISTS pintpath_runtime").catch(() => undefined);
@@ -902,17 +932,28 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL logical restore rehearsal"
       const absentUpgradeState = await probe.query<{
         groupPresent: boolean;
         privatePolicyCount: number;
+        verifierAuthorityPolicyCount: number;
       }>(`SELECT
         pg_catalog.to_regrole($1) IS NOT NULL AS "groupPresent",
         (SELECT count(*)::integer
          FROM pg_catalog.pg_policy AS policy
          JOIN pg_catalog.pg_class AS relation ON relation.oid = policy.polrelid
          JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
-         WHERE namespace.nspname = ANY(ARRAY['pintpath_app', 'pintpath_ops']))
-          AS "privatePolicyCount"`, [nonSuperuserBackupRole]);
+         WHERE namespace.nspname = ANY(ARRAY['pintpath_app', 'pintpath_ops'])
+           AND NOT (
+             namespace.nspname = 'pintpath_ops'
+             AND relation.relname = 'migration_verifier_authority'
+           ))
+          AS "privatePolicyCount",
+        (SELECT count(*)::integer
+         FROM pg_catalog.pg_policy AS policy
+         WHERE policy.polrelid =
+           'pintpath_ops.migration_verifier_authority'::pg_catalog.regclass)
+          AS "verifierAuthorityPolicyCount"`, [nonSuperuserBackupRole]);
       expect(absentUpgradeState.rows).toEqual([{
         groupPresent: false,
         privatePolicyCount: 177,
+        verifierAuthorityPolicyCount: 4,
       }]);
 
       const forwardMigrationSql = fs.readFileSync(FORWARD_MIGRATION_PATH, "utf8");
@@ -922,6 +963,7 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL logical restore rehearsal"
         groupPresent: boolean;
         reservedLoginCount: number;
         privatePolicyCount: number;
+        verifierAuthorityPolicyCount: number;
         exactPolicyCount: number;
       }>(`SELECT
         pg_catalog.to_regrole($1) IS NOT NULL AS "groupPresent",
@@ -931,8 +973,17 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL logical restore rehearsal"
          FROM pg_catalog.pg_policy AS policy
          JOIN pg_catalog.pg_class AS relation ON relation.oid = policy.polrelid
          JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
-         WHERE namespace.nspname = ANY(ARRAY['pintpath_app', 'pintpath_ops']))
+         WHERE namespace.nspname = ANY(ARRAY['pintpath_app', 'pintpath_ops'])
+           AND NOT (
+             namespace.nspname = 'pintpath_ops'
+             AND relation.relname = 'migration_verifier_authority'
+           ))
           AS "privatePolicyCount",
+        (SELECT count(*)::integer
+         FROM pg_catalog.pg_policy AS policy
+         WHERE policy.polrelid =
+           'pintpath_ops.migration_verifier_authority'::pg_catalog.regclass)
+          AS "verifierAuthorityPolicyCount",
         (SELECT count(*)::integer
          FROM pg_catalog.pg_policy AS policy
          JOIN pg_catalog.pg_class AS relation ON relation.oid = policy.polrelid
@@ -951,6 +1002,7 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL logical restore rehearsal"
         groupPresent: false,
         reservedLoginCount: 0,
         privatePolicyCount: 236,
+        verifierAuthorityPolicyCount: 4,
         exactPolicyCount: 59,
       }]);
       await expectSqlState(probe, `SET ROLE ${nonSuperuserBackupRole}`, "22023");
@@ -1089,6 +1141,7 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL logical restore rehearsal"
         pgDump: { name: string; major: number; version: string };
         pgRestore: { name: string; major: number; version: string };
       };
+      state: { archivedControlTableCount: number };
       transport: { profile: string; rootCaCertificateSha256: string };
     };
     expect(manifest.schemaVersion).toBe(3);
@@ -1100,6 +1153,7 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL logical restore rehearsal"
     expect(manifest.tools.pgRestore.name).toBe("pg_restore");
     expect(manifest.tools.pgRestore.major).toBe(17);
     expect(manifest.tools.pgRestore.version).toBe(EXPECTED_POSTGRES_TOOL_VERSION);
+    expect(manifest.state.archivedControlTableCount).toBe(3);
     if (
       manifestBytes.includes(BACKUP_SOURCE_HOSTNAME)
       || manifestBytes.includes(BACKUP_PASSWORD)
@@ -1121,6 +1175,7 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL logical restore rehearsal"
     expect(renderedArchive).toContain("pintpath_logical_backup_d'::text");
     expect(renderedArchive).toContain("current_database()");
     expect(renderedArchive).not.toContain(sourceBackupRole);
+    expect(renderedArchive).not.toContain("migration_verifier_authority");
 
     const source = new Client({ connectionString: sourceAdminUrl.toString() });
     await source.connect();
@@ -1390,6 +1445,7 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL logical restore rehearsal"
 
       const policyOnly = await target.query<{
         groupPresent: boolean;
+        verifierAuthorityPresent: boolean;
         reservedLoginCount: number;
         privatePolicyCount: number;
         exactPolicyCount: number;
@@ -1398,6 +1454,8 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL logical restore rehearsal"
         unsafePublicPolicyCount: number;
       }>(`SELECT
         pg_catalog.to_regrole($1) IS NOT NULL AS "groupPresent",
+        pg_catalog.to_regclass('pintpath_ops.migration_verifier_authority') IS NOT NULL
+          AS "verifierAuthorityPresent",
         (SELECT count(*)::integer
          FROM pg_catalog.pg_roles AS role
          WHERE role.rolname LIKE ($1 || '\\_v%') ESCAPE '\\') AS "reservedLoginCount",
@@ -1449,6 +1507,7 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL logical restore rehearsal"
       ]);
       expect(policyOnly.rows).toEqual([{
         groupPresent: false,
+        verifierAuthorityPresent: false,
         reservedLoginCount: 0,
         privatePolicyCount: 236,
         exactPolicyCount: 59,

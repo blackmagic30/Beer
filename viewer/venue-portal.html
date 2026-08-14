@@ -900,7 +900,6 @@
         });
       });
     }).observe(document.body, { childList: true, subtree: true });
-    removeDeferredCommercialSurfaces();
 
     function money(value) {
       return value == null ? "No verified price" : new Intl.NumberFormat("en-AU", { style: "currency", currency: "AUD" }).format(value);
@@ -3258,8 +3257,9 @@
       let freePintCode = "";
       try {
         const url = new URL(raw);
-        discountCode = normalizeMemberCode(url.searchParams.get("discountCode"));
-        freePintCode = normalizeMemberCode(url.searchParams.get("freePintCode"));
+        const fragmentParams = new URLSearchParams(url.hash.replace(/^#/, ""));
+        discountCode = normalizeMemberCode(url.searchParams.get("discountCode") || fragmentParams.get("discountCode"));
+        freePintCode = normalizeMemberCode(url.searchParams.get("freePintCode") || fragmentParams.get("freePintCode"));
       } catch {
         discountCode = normalizeMemberCode(raw);
       }
@@ -4906,18 +4906,21 @@
 
     function scrubRedemptionCodesFromUrl() {
       const url = new URL(window.location.href);
+      const fragmentParams = new URLSearchParams(url.hash.replace(/^#/, ""));
       const removableKeys = [
         "discountCode",
         "freePintCode",
         ...(!COMMERCIAL_LAUNCH_ENABLED ? ["checkout", "billing"] : []),
       ];
-      if (!removableKeys.some((key) => url.searchParams.has(key))) return;
+      if (!removableKeys.some((key) => url.searchParams.has(key) || fragmentParams.has(key))) return;
       url.searchParams.delete("discountCode");
       url.searchParams.delete("freePintCode");
       if (!COMMERCIAL_LAUNCH_ENABLED) {
         url.searchParams.delete("checkout");
         url.searchParams.delete("billing");
       }
+      for (const key of removableKeys) fragmentParams.delete(key);
+      url.hash = fragmentParams.toString();
       window.history.replaceState(window.history.state || {}, "", url);
     }
 
@@ -4993,7 +4996,16 @@
         if (!(button instanceof HTMLButtonElement) || button.disabled) return;
         void loadVenueReconciliation(Number(button.dataset.reconciliationOffset || 0));
       });
-      const urlParams = new URLSearchParams(window.location.search);
+      const initialRedemptionUrl = new URL(window.location.href);
+      const fragmentParams = new URLSearchParams(initialRedemptionUrl.hash.replace(/^#/, ""));
+      const urlParams = new URLSearchParams(initialRedemptionUrl.search);
+      for (const [key, value] of fragmentParams) {
+        if (!urlParams.has(key)) urlParams.set(key, value);
+      }
+      const sensitiveRedemptionReturnPath = urlParams.has("discountCode") || urlParams.has("freePintCode")
+        ? `${initialRedemptionUrl.pathname}${initialRedemptionUrl.search}${initialRedemptionUrl.hash}`
+        : null;
+      scrubRedemptionCodesFromUrl();
       const pendingPortalRedemption = MelbBeerBusiness.consumePendingPortalRedemption();
       const selectedPortalVenueId = urlParams.get("venueId");
       const pendingRedemptionMatchesVenue = !pendingPortalRedemption?.venueId || pendingPortalRedemption.venueId === selectedPortalVenueId;
@@ -5095,7 +5107,6 @@
       try {
         MelbBeerBusiness.setStatus(portalAccess, "Loading your venue dashboard...");
         await loadPortal(urlParams.get("venueId"));
-        scrubRedemptionCodesFromUrl();
         const checkoutState = urlParams.get("checkout");
         const billingState = urlParams.get("billing");
         if (COMMERCIAL_LAUNCH_ENABLED && checkoutState === "success") {
@@ -5121,11 +5132,8 @@
         MelbBeerBusiness.setStatus(portalAccess, message, true);
         if (loginRequired) {
           const returnUrl = new URL(window.location.href);
-          const hasSensitiveRedemption = returnUrl.searchParams.has("discountCode") || returnUrl.searchParams.has("freePintCode");
-          if (hasSensitiveRedemption) {
-            MelbBeerBusiness.storeSensitiveAuthReturnPath(`${returnUrl.pathname}${returnUrl.search}${returnUrl.hash}`);
-            returnUrl.searchParams.delete("discountCode");
-            returnUrl.searchParams.delete("freePintCode");
+          if (sensitiveRedemptionReturnPath) {
+            MelbBeerBusiness.storeSensitiveAuthReturnPath(sensitiveRedemptionReturnPath);
           }
           const returnPath = `${returnUrl.pathname}${returnUrl.search}${returnUrl.hash}`;
           const loginLink = document.getElementById("venuePortalLoginLink");

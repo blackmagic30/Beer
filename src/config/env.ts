@@ -9,6 +9,10 @@ import { isCanonicalProductionRuntime } from "../lib/deployment-environment.js";
 import { parseAccountDeletionNotificationKeyring } from "../lib/account-deletion-notification-worker.js";
 import { OPENAI_MENU_OCR_COST_BOUND_MODEL } from "../lib/external-provider-cost-budget.js";
 import {
+  assertPostgresRailwayStockLocalhostRootCaPem,
+  parsePostgresRailwayStockLocalhostCaUrl,
+} from "../lib/postgres-railway-stock-localhost-ca.js";
+import {
   hasExactLegacySupabaseRoleJwt,
   isExactSupabaseNewKey,
   resolveExactOperationalOffsiteBackupBucket,
@@ -110,6 +114,14 @@ const optionalStringFromEnv = z.preprocess((value) => {
   return trimmed.length === 0 ? undefined : trimmed;
 }, z.string().min(1).optional());
 
+const optionalPostgresRootCaPemFromEnv = z.preprocess((value) => {
+  if (typeof value !== "string") return value;
+  return value.length === 0 ? undefined : value;
+}, z.string().min(1).max(64 * 1024).refine(
+  (value) => !value.includes("\0"),
+  "Postgres root CA PEM must not contain a NUL byte.",
+).optional());
+
 const optionalPositiveIntegerFromEnv = z.preprocess((value) => {
   const trimmed = sanitizeEnvString(value);
   if (typeof trimmed === "string" && trimmed.length === 0) {
@@ -147,21 +159,27 @@ const operationalOffsiteSupabaseOrigin = "https://hfbmhdxrwtihukmixxta.supabase.
 function assertPublicSupabaseKeySafe(input: {
   parsedValue: string | undefined;
   rawValue: string | undefined;
+  allowLegacyAnon: boolean;
 }): void {
   if (input.parsedValue === undefined) return;
   if (
     input.rawValue === input.parsedValue
     && (
       isExactSupabaseNewKey(input.parsedValue, "publishable")
-      || hasExactLegacySupabaseRoleJwt(input.parsedValue, "anon")
+      || (
+        input.allowLegacyAnon
+        && hasExactLegacySupabaseRoleJwt(input.parsedValue, "anon")
+      )
     )
   ) return;
   throw new Error(
-    "SUPABASE_ANON_KEY must be an exact sb_publishable_ key or a structurally valid legacy JWT with role=anon; refusing to expose a secret, malformed, or non-anon value through public config.",
+    input.allowLegacyAnon
+      ? "SUPABASE_ANON_KEY must be an exact sb_publishable_ key or a structurally valid legacy JWT with role=anon in local development; refusing to expose a secret, malformed, or non-anon value through public config."
+      : "SUPABASE_ANON_KEY must be an exact sb_publishable_ key in production; refusing to expose a legacy, secret, or malformed value through public config.",
   );
 }
 
-function assertCompatibleSupabaseServiceKey(input: {
+function assertExactSupabaseServiceKey(input: {
   name: "SUPABASE_SERVICE_ROLE_KEY" | "OFFSITE_BACKUP_SERVICE_ROLE_KEY";
   parsedValue: string | undefined;
   rawValue: string | undefined;
@@ -169,13 +187,10 @@ function assertCompatibleSupabaseServiceKey(input: {
   if (
     input.parsedValue !== undefined
     && input.rawValue === input.parsedValue
-    && (
-      isExactSupabaseNewKey(input.parsedValue, "secret")
-      || hasExactLegacySupabaseRoleJwt(input.parsedValue, "service_role")
-    )
+    && isExactSupabaseNewKey(input.parsedValue, "secret")
   ) return;
   throw new Error(
-    `${input.name} must be an exact sb_secret_ key or a structurally valid legacy JWT with role=service_role; no key value is emitted.`,
+    `${input.name} must be an exact sb_secret_ key in production; no key value is emitted.`,
   );
 }
 
@@ -581,6 +596,27 @@ function isValidResendWebhookSigningSecret(value: string | undefined): boolean {
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   RESTORE_REHEARSAL_MODE: booleanFromEnv.default(false),
+  POSTGRES_RECOVERY_REHEARSAL_MODE: exactBooleanFromEnv.default(false),
+  POSTGRES_RECOVERY_CANDIDATE_SHA: z.preprocess(
+    sanitizeEnvString,
+    z.string().regex(/^[a-f0-9]{40}$/).optional(),
+  ),
+  POSTGRES_RECOVERY_EXPECTED_RAILWAY_PROJECT_ID: optionalStringFromEnv,
+  POSTGRES_RECOVERY_EXPECTED_RAILWAY_ENVIRONMENT_ID: optionalStringFromEnv,
+  POSTGRES_RECOVERY_EXPECTED_RAILWAY_SERVICE_ID: optionalStringFromEnv,
+  POSTGRES_RECOVERY_PRODUCTION_RAILWAY_PROJECT_ID: optionalStringFromEnv,
+  POSTGRES_RECOVERY_PRODUCTION_RAILWAY_ENVIRONMENT_ID: optionalStringFromEnv,
+  POSTGRES_RECOVERY_PRODUCTION_RAILWAY_SERVICE_ID: optionalStringFromEnv,
+  POSTGRES_RECOVERY_EXPECTED_SUPABASE_URL: optionalHttpUrlFromEnv,
+  POSTGRES_RECOVERY_EXPECTED_SUPABASE_PUBLISHABLE_KEY_SHA256: optionalSha256FromEnv,
+  POSTGRES_RECOVERY_PRODUCTION_SUPABASE_PUBLISHABLE_KEY_SHA256: optionalSha256FromEnv,
+  POSTGRES_RECOVERY_PERMANENT_STAGING_SUPABASE_PUBLISHABLE_KEY_SHA256: optionalSha256FromEnv,
+  POSTGRES_RECOVERY_EXPECTED_MAINTENANCE_URL_SHA256: optionalSha256FromEnv,
+  POSTGRES_RECOVERY_REDIS_SENTINEL: optionalStringFromEnv,
+  POSTGRES_RECOVERY_PRODUCTION_DATABASE_RESOURCE_ID: optionalStringFromEnv,
+  POSTGRES_RECOVERY_PRODUCTION_DATABASE_URL_SHA256: optionalSha256FromEnv,
+  POSTGRES_RECOVERY_PRODUCTION_REDIS_RESOURCE_ID: optionalStringFromEnv,
+  POSTGRES_RECOVERY_PRODUCTION_REDIS_URL_SHA256: optionalSha256FromEnv,
   RESTORE_REHEARSAL_PHASE: z.enum(["bootstrap", "active"]).optional(),
   RESTORE_REHEARSAL_BACKUP_ID: optionalStringFromEnv,
   RESTORE_REHEARSAL_SOURCE_MANIFEST_SHA256: optionalSha256FromEnv,
@@ -609,6 +645,9 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(3000),
   PUBLIC_BASE_URL: z.preprocess(sanitizeEnvString, z.string().url()),
   DATABASE_URL: optionalStringFromEnv,
+  DATABASE_MAINTENANCE_URL: optionalStringFromEnv,
+  PINTPATH_POSTGRES_ROOT_CA_PEM: optionalPostgresRootCaPemFromEnv,
+  PINTPATH_POSTGRES_ROOT_CA_DER_SHA256: optionalSha256FromEnv,
   PINTPATH_IDENTITY_REGISTRY_PHASE: z.enum(["staging-bootstrap", "complete"]).default("complete"),
   PINTPATH_PERMANENT_STAGING_RAILWAY_PROJECT_ID: optionalStringFromEnv,
   PINTPATH_PERMANENT_STAGING_RAILWAY_ENVIRONMENT_ID: optionalStringFromEnv,
@@ -729,10 +768,59 @@ if (
 const canonicalProductionRuntime = isCanonicalProductionRuntime({
   nodeEnv: parsedEnv.data.NODE_ENV,
   railwayEnvironmentName: process.env.RAILWAY_ENVIRONMENT_NAME,
-});
+}) && !parsedEnv.data.POSTGRES_RECOVERY_REHEARSAL_MODE;
 const postgresApplicationRuntime =
   parsedEnv.data.NODE_ENV === "production" &&
   !parsedEnv.data.RESTORE_REHEARSAL_MODE;
+
+function assertDedicatedMaintenanceConnection(
+  applicationUrl: string | undefined,
+  maintenanceUrl: string | undefined,
+): void {
+  assertTlsPostgresUrl(applicationUrl, "DATABASE_URL");
+  assertTlsPostgresUrl(maintenanceUrl, "DATABASE_MAINTENANCE_URL");
+  const application = new URL(applicationUrl!);
+  const maintenance = new URL(maintenanceUrl!);
+  if (application.port !== "5432" || maintenance.port !== "5432") {
+    throw new Error(
+      "DATABASE_URL and DATABASE_MAINTENANCE_URL must use the explicit direct/session Postgres port 5432; transaction pooling cannot preserve the pinned effective role.",
+    );
+  }
+  try {
+    parsePostgresRailwayStockLocalhostCaUrl(applicationUrl!);
+  } catch {
+    throw new Error(
+      "DATABASE_URL must be the exact lower-case Railway private :5432 URL with only sslmode=verify-full.",
+    );
+  }
+  try {
+    parsePostgresRailwayStockLocalhostCaUrl(maintenanceUrl!);
+  } catch {
+    throw new Error(
+      "DATABASE_MAINTENANCE_URL must be the exact lower-case Railway private :5432 URL with only sslmode=verify-full.",
+    );
+  }
+  const sameDatabase =
+    application.protocol === maintenance.protocol &&
+    application.hostname.toLowerCase() === maintenance.hostname.toLowerCase() &&
+    application.port === maintenance.port &&
+    application.pathname === maintenance.pathname;
+  if (!sameDatabase) {
+    throw new Error(
+      "DATABASE_MAINTENANCE_URL must target the same pinned Postgres host, port, and database as DATABASE_URL.",
+    );
+  }
+  if (
+    !application.username ||
+    !maintenance.username ||
+    decodeURIComponent(application.username) === decodeURIComponent(maintenance.username)
+  ) {
+    throw new Error(
+      "DATABASE_MAINTENANCE_URL must use a dedicated maintenance login distinct from the web runtime login.",
+    );
+  }
+}
+
 if (canonicalProductionRuntime) {
   resolveExactOperationalOffsiteBackupBucket(process.env.OFFSITE_BACKUP_BUCKET);
 }
@@ -773,10 +861,13 @@ if (
   );
 }
 
-assertPublicSupabaseKeySafe({
-  parsedValue: parsedEnv.data.SUPABASE_ANON_KEY,
-  rawValue: process.env.SUPABASE_ANON_KEY,
-});
+if (!permanentStagingApplicationRuntime) {
+  assertPublicSupabaseKeySafe({
+    parsedValue: parsedEnv.data.SUPABASE_ANON_KEY,
+    rawValue: process.env.SUPABASE_ANON_KEY,
+    allowLegacyAnon: parsedEnv.data.NODE_ENV !== "production",
+  });
+}
 
 if (parsedEnv.data.ACCOUNT_DELETION_REHEARSAL_ENABLED) {
   if (
@@ -1004,6 +1095,35 @@ if (!parsedEnv.data.ACCOUNT_DELETION_REHEARSAL_ENABLED) {
   }
 }
 
+if (!parsedEnv.data.POSTGRES_RECOVERY_REHEARSAL_MODE) {
+  const postgresRecoveryMarkers = [
+    ["POSTGRES_RECOVERY_CANDIDATE_SHA", parsedEnv.data.POSTGRES_RECOVERY_CANDIDATE_SHA],
+    ["POSTGRES_RECOVERY_EXPECTED_RAILWAY_PROJECT_ID", parsedEnv.data.POSTGRES_RECOVERY_EXPECTED_RAILWAY_PROJECT_ID],
+    ["POSTGRES_RECOVERY_EXPECTED_RAILWAY_ENVIRONMENT_ID", parsedEnv.data.POSTGRES_RECOVERY_EXPECTED_RAILWAY_ENVIRONMENT_ID],
+    ["POSTGRES_RECOVERY_EXPECTED_RAILWAY_SERVICE_ID", parsedEnv.data.POSTGRES_RECOVERY_EXPECTED_RAILWAY_SERVICE_ID],
+    ["POSTGRES_RECOVERY_PRODUCTION_RAILWAY_PROJECT_ID", parsedEnv.data.POSTGRES_RECOVERY_PRODUCTION_RAILWAY_PROJECT_ID],
+    ["POSTGRES_RECOVERY_PRODUCTION_RAILWAY_ENVIRONMENT_ID", parsedEnv.data.POSTGRES_RECOVERY_PRODUCTION_RAILWAY_ENVIRONMENT_ID],
+    ["POSTGRES_RECOVERY_PRODUCTION_RAILWAY_SERVICE_ID", parsedEnv.data.POSTGRES_RECOVERY_PRODUCTION_RAILWAY_SERVICE_ID],
+    ["POSTGRES_RECOVERY_EXPECTED_SUPABASE_URL", parsedEnv.data.POSTGRES_RECOVERY_EXPECTED_SUPABASE_URL],
+    ["POSTGRES_RECOVERY_EXPECTED_SUPABASE_PUBLISHABLE_KEY_SHA256", parsedEnv.data.POSTGRES_RECOVERY_EXPECTED_SUPABASE_PUBLISHABLE_KEY_SHA256],
+    ["POSTGRES_RECOVERY_PRODUCTION_SUPABASE_PUBLISHABLE_KEY_SHA256", parsedEnv.data.POSTGRES_RECOVERY_PRODUCTION_SUPABASE_PUBLISHABLE_KEY_SHA256],
+    ["POSTGRES_RECOVERY_PERMANENT_STAGING_SUPABASE_PUBLISHABLE_KEY_SHA256", parsedEnv.data.POSTGRES_RECOVERY_PERMANENT_STAGING_SUPABASE_PUBLISHABLE_KEY_SHA256],
+    ["POSTGRES_RECOVERY_EXPECTED_MAINTENANCE_URL_SHA256", parsedEnv.data.POSTGRES_RECOVERY_EXPECTED_MAINTENANCE_URL_SHA256],
+    ["POSTGRES_RECOVERY_REDIS_SENTINEL", parsedEnv.data.POSTGRES_RECOVERY_REDIS_SENTINEL],
+    ["POSTGRES_RECOVERY_PRODUCTION_DATABASE_RESOURCE_ID", parsedEnv.data.POSTGRES_RECOVERY_PRODUCTION_DATABASE_RESOURCE_ID],
+    ["POSTGRES_RECOVERY_PRODUCTION_DATABASE_URL_SHA256", parsedEnv.data.POSTGRES_RECOVERY_PRODUCTION_DATABASE_URL_SHA256],
+    ["POSTGRES_RECOVERY_PRODUCTION_REDIS_RESOURCE_ID", parsedEnv.data.POSTGRES_RECOVERY_PRODUCTION_REDIS_RESOURCE_ID],
+    ["POSTGRES_RECOVERY_PRODUCTION_REDIS_URL_SHA256", parsedEnv.data.POSTGRES_RECOVERY_PRODUCTION_REDIS_URL_SHA256],
+  ]
+    .filter((entry) => entry[1] !== undefined)
+    .map(([name]) => name as string);
+  if (postgresRecoveryMarkers.length > 0) {
+    throw new Error(
+      `PostgreSQL recovery rehearsal identity/configuration requires POSTGRES_RECOVERY_REHEARSAL_MODE=true: ${postgresRecoveryMarkers.join(", ")}.`,
+    );
+  }
+}
+
 const requireStrongSecret = (name: string, value: string | undefined) => {
   const normalized = value?.trim() ?? "";
   const documentedPlaceholder = /(?:replace[_ -]?with|change[_ -]?me|placeholder|your[_ -].*secret)/i.test(normalized);
@@ -1063,6 +1183,349 @@ if (!parsedEnv.data.RESTORE_REHEARSAL_MODE) {
   if (restoreMarkers.length > 0) {
     throw new Error(
       `Restore-shaped configuration or volume contents require RESTORE_REHEARSAL_MODE=true: ${[...new Set(restoreMarkers)].join(", ")}.`,
+    );
+  }
+}
+
+if (postgresApplicationRuntime) {
+  assertDedicatedMaintenanceConnection(
+    parsedEnv.data.DATABASE_URL,
+    parsedEnv.data.DATABASE_MAINTENANCE_URL,
+  );
+  if (
+    !parsedEnv.data.PINTPATH_POSTGRES_ROOT_CA_PEM
+    || !parsedEnv.data.PINTPATH_POSTGRES_ROOT_CA_DER_SHA256
+  ) {
+    throw new Error(
+      "Hosted PostgreSQL requires PINTPATH_POSTGRES_ROOT_CA_PEM and its independently reviewed PINTPATH_POSTGRES_ROOT_CA_DER_SHA256 pin.",
+    );
+  }
+  try {
+    assertPostgresRailwayStockLocalhostRootCaPem(
+      parsedEnv.data.PINTPATH_POSTGRES_ROOT_CA_PEM,
+      parsedEnv.data.PINTPATH_POSTGRES_ROOT_CA_DER_SHA256,
+    );
+  } catch {
+    throw new Error(
+      "PINTPATH_POSTGRES_ROOT_CA_PEM must contain the one valid self-signed Railway CA matching PINTPATH_POSTGRES_ROOT_CA_DER_SHA256.",
+    );
+  }
+}
+
+if (parsedEnv.data.POSTGRES_RECOVERY_REHEARSAL_MODE) {
+  if (
+    parsedEnv.data.NODE_ENV !== "production"
+    || parsedEnv.data.RESTORE_REHEARSAL_MODE
+    || parsedEnv.data.ACCOUNT_DELETION_REHEARSAL_ENABLED
+  ) {
+    throw new Error(
+      "POSTGRES_RECOVERY_REHEARSAL_MODE requires NODE_ENV=production and is mutually exclusive with every other rehearsal mode.",
+    );
+  }
+  if (
+    process.env.RAILWAY_ENVIRONMENT_NAME !== undefined
+    || process.env.RAILWAY_PUBLIC_DOMAIN !== undefined
+    || process.env.RAILWAY_VOLUME_MOUNT_PATH !== undefined
+  ) {
+    throw new Error(
+      "PostgreSQL recovery rehearsal is a loopback-only child process and must not inherit Railway routing or volume variables.",
+    );
+  }
+  const candidateSha = parsedEnv.data.POSTGRES_RECOVERY_CANDIDATE_SHA;
+  if (!candidateSha || process.env.RAILWAY_GIT_COMMIT_SHA !== candidateSha) {
+    throw new Error(
+      "PostgreSQL recovery rehearsal requires its exact candidate SHA to match RAILWAY_GIT_COMMIT_SHA.",
+    );
+  }
+  if (parsedEnv.data.HOST !== "127.0.0.1" || parsedEnv.data.TRUST_PROXY_HOPS !== 0) {
+    throw new Error(
+      "PostgreSQL recovery rehearsal requires HOST=127.0.0.1 and TRUST_PROXY_HOPS=0.",
+    );
+  }
+  const recoveryBaseUrl = new URL(parsedEnv.data.PUBLIC_BASE_URL);
+  if (
+    recoveryBaseUrl.protocol !== "http:"
+    || recoveryBaseUrl.hostname !== "127.0.0.1"
+    || recoveryBaseUrl.port !== String(parsedEnv.data.PORT)
+    || recoveryBaseUrl.pathname !== "/"
+    || recoveryBaseUrl.search
+    || recoveryBaseUrl.hash
+    || recoveryBaseUrl.username
+    || recoveryBaseUrl.password
+  ) {
+    throw new Error(
+      "PostgreSQL recovery rehearsal PUBLIC_BASE_URL must be the exact loopback origin http://127.0.0.1:<PORT>.",
+    );
+  }
+
+  const railwayPins = [
+    ["POSTGRES_RECOVERY_EXPECTED_RAILWAY_PROJECT_ID", parsedEnv.data.POSTGRES_RECOVERY_EXPECTED_RAILWAY_PROJECT_ID, process.env.RAILWAY_PROJECT_ID],
+    ["POSTGRES_RECOVERY_EXPECTED_RAILWAY_ENVIRONMENT_ID", parsedEnv.data.POSTGRES_RECOVERY_EXPECTED_RAILWAY_ENVIRONMENT_ID, process.env.RAILWAY_ENVIRONMENT_ID],
+    ["POSTGRES_RECOVERY_EXPECTED_RAILWAY_SERVICE_ID", parsedEnv.data.POSTGRES_RECOVERY_EXPECTED_RAILWAY_SERVICE_ID, process.env.RAILWAY_SERVICE_ID],
+  ] as const;
+  for (const [name, expected, actual] of railwayPins) {
+    if (!expected || !isReviewedResourceIdentity(expected) || actual !== expected) {
+      throw new Error(`${name} must exactly match the disposable child-process Railway identity.`);
+    }
+  }
+  const productionRailwayPins = [
+    parsedEnv.data.POSTGRES_RECOVERY_PRODUCTION_RAILWAY_PROJECT_ID,
+    parsedEnv.data.POSTGRES_RECOVERY_PRODUCTION_RAILWAY_ENVIRONMENT_ID,
+    parsedEnv.data.POSTGRES_RECOVERY_PRODUCTION_RAILWAY_SERVICE_ID,
+  ];
+  const disposableRailwayPins = railwayPins.map(([, expected]) => expected);
+  if (
+    productionRailwayPins.some(
+      (value) => !value || !isReviewedResourceIdentity(value),
+    )
+    || productionRailwayPins.some((value) => disposableRailwayPins.includes(value))
+  ) {
+    throw new Error(
+      "PostgreSQL recovery rehearsal requires a distinct reviewed production Railway identity tuple.",
+    );
+  }
+  if (
+    parsedEnv.data.POSTGRES_RECOVERY_EXPECTED_RAILWAY_PROJECT_ID
+      === "48d8c6cd-1c66-4148-874b-20877f48e1a5"
+    || parsedEnv.data.POSTGRES_RECOVERY_EXPECTED_RAILWAY_ENVIRONMENT_ID
+      === "13dab015-df74-45c6-b26f-69323daea99a"
+    || parsedEnv.data.POSTGRES_RECOVERY_EXPECTED_RAILWAY_ENVIRONMENT_ID
+      === "a4e0f507-d6d3-4df9-a818-ad92c0071a35"
+    || parsedEnv.data.POSTGRES_RECOVERY_EXPECTED_RAILWAY_PROJECT_ID
+      === parsedEnv.data.PINTPATH_PERMANENT_STAGING_RAILWAY_PROJECT_ID
+    || parsedEnv.data.POSTGRES_RECOVERY_EXPECTED_RAILWAY_ENVIRONMENT_ID
+      === parsedEnv.data.PINTPATH_PERMANENT_STAGING_RAILWAY_ENVIRONMENT_ID
+    || parsedEnv.data.POSTGRES_RECOVERY_EXPECTED_RAILWAY_SERVICE_ID
+      === parsedEnv.data.PINTPATH_PERMANENT_STAGING_RAILWAY_SERVICE_ID
+  ) {
+    throw new Error(
+      "PostgreSQL recovery rehearsal must not reuse production or permanent-staging Railway identity.",
+    );
+  }
+
+  const configuredDatabasePath = sanitizeEnvString(process.env.DATABASE_PATH);
+  if (typeof configuredDatabasePath === "string" && configuredDatabasePath.length > 0) {
+    throw new Error(
+      "PostgreSQL recovery rehearsal must not configure DATABASE_PATH; the compiled app must select PostgreSQL.",
+    );
+  }
+  assertPinnedConnectionIdentity({
+    connectionUrl: parsedEnv.data.DATABASE_URL,
+    expectedDigest: parsedEnv.data.PINTPATH_EXPECTED_DATABASE_URL_SHA256,
+    forbiddenDigests: parsedEnv.data.PINTPATH_FORBIDDEN_DATABASE_URL_SHA256S,
+    label: "database",
+  });
+  assertPinnedResourceIdentity({
+    actual: parsedEnv.data.PINTPATH_DATABASE_RESOURCE_ID,
+    expected: parsedEnv.data.PINTPATH_EXPECTED_DATABASE_RESOURCE_ID,
+    forbidden: parsedEnv.data.PINTPATH_FORBIDDEN_DATABASE_RESOURCE_IDS,
+    label: "database",
+  });
+  assertRailwayServiceInstanceIdentity(
+    parsedEnv.data.PINTPATH_DATABASE_RESOURCE_ID,
+    parsedEnv.data.POSTGRES_RECOVERY_EXPECTED_RAILWAY_ENVIRONMENT_ID,
+    "PINTPATH_DATABASE_RESOURCE_ID",
+  );
+  if (
+    !parsedEnv.data.DATABASE_MAINTENANCE_URL
+    || connectionUrlSha256(parsedEnv.data.DATABASE_MAINTENANCE_URL)
+      !== parsedEnv.data.POSTGRES_RECOVERY_EXPECTED_MAINTENANCE_URL_SHA256
+    || parsedEnv.data.POSTGRES_RECOVERY_EXPECTED_MAINTENANCE_URL_SHA256
+      === parsedEnv.data.PINTPATH_EXPECTED_DATABASE_URL_SHA256
+  ) {
+    throw new Error(
+      "PostgreSQL recovery rehearsal requires an exact independently pinned maintenance URL distinct from the runtime URL.",
+    );
+  }
+  if (!parsedEnv.data.REDIS_URL || !parsedEnv.data.REQUIRE_REDIS_RATE_LIMITING) {
+    throw new Error(
+      "PostgreSQL recovery rehearsal requires its exact disposable Redis URL and fail-closed rate limiting.",
+    );
+  }
+  assertPinnedConnectionIdentity({
+    connectionUrl: parsedEnv.data.REDIS_URL,
+    expectedDigest: parsedEnv.data.PINTPATH_EXPECTED_REDIS_URL_SHA256,
+    forbiddenDigests: parsedEnv.data.PINTPATH_FORBIDDEN_REDIS_URL_SHA256S,
+    label: "redis",
+  });
+  assertPinnedResourceIdentity({
+    actual: parsedEnv.data.PINTPATH_REDIS_RESOURCE_ID,
+    expected: parsedEnv.data.PINTPATH_EXPECTED_REDIS_RESOURCE_ID,
+    forbidden: parsedEnv.data.PINTPATH_FORBIDDEN_REDIS_RESOURCE_IDS,
+    label: "redis",
+  });
+  assertRailwayServiceInstanceIdentity(
+    parsedEnv.data.PINTPATH_REDIS_RESOURCE_ID,
+    parsedEnv.data.POSTGRES_RECOVERY_EXPECTED_RAILWAY_ENVIRONMENT_ID,
+    "PINTPATH_REDIS_RESOURCE_ID",
+  );
+  assertPermanentStagingExcluded({
+    databaseForbiddenDigests: parsedEnv.data.PINTPATH_FORBIDDEN_DATABASE_URL_SHA256S,
+    databaseForbiddenResources: parsedEnv.data.PINTPATH_FORBIDDEN_DATABASE_RESOURCE_IDS,
+    databaseStagingDigest: parsedEnv.data.PINTPATH_PERMANENT_STAGING_DATABASE_URL_SHA256,
+    databaseStagingResource: parsedEnv.data.PINTPATH_PERMANENT_STAGING_DATABASE_RESOURCE_ID,
+    redisForbiddenDigests: parsedEnv.data.PINTPATH_FORBIDDEN_REDIS_URL_SHA256S,
+    redisForbiddenResources: parsedEnv.data.PINTPATH_FORBIDDEN_REDIS_RESOURCE_IDS,
+    redisStagingDigest: parsedEnv.data.PINTPATH_PERMANENT_STAGING_REDIS_URL_SHA256,
+    redisStagingResource: parsedEnv.data.PINTPATH_PERMANENT_STAGING_REDIS_RESOURCE_ID,
+  });
+  const forbiddenDatabaseDigests = parseConnectionDigestList(
+    parsedEnv.data.PINTPATH_FORBIDDEN_DATABASE_URL_SHA256S,
+    "PINTPATH_FORBIDDEN_DATABASE_URL_SHA256S",
+  );
+  const forbiddenDatabaseResources = parseResourceIdentityList(
+    parsedEnv.data.PINTPATH_FORBIDDEN_DATABASE_RESOURCE_IDS,
+    "PINTPATH_FORBIDDEN_DATABASE_RESOURCE_IDS",
+  );
+  const forbiddenRedisDigests = parseConnectionDigestList(
+    parsedEnv.data.PINTPATH_FORBIDDEN_REDIS_URL_SHA256S,
+    "PINTPATH_FORBIDDEN_REDIS_URL_SHA256S",
+  );
+  const forbiddenRedisResources = parseResourceIdentityList(
+    parsedEnv.data.PINTPATH_FORBIDDEN_REDIS_RESOURCE_IDS,
+    "PINTPATH_FORBIDDEN_REDIS_RESOURCE_IDS",
+  );
+  if (
+    !parsedEnv.data.POSTGRES_RECOVERY_PRODUCTION_DATABASE_URL_SHA256
+    || !forbiddenDatabaseDigests.includes(parsedEnv.data.POSTGRES_RECOVERY_PRODUCTION_DATABASE_URL_SHA256)
+    || !parsedEnv.data.POSTGRES_RECOVERY_PRODUCTION_DATABASE_RESOURCE_ID
+    || !forbiddenDatabaseResources.includes(parsedEnv.data.POSTGRES_RECOVERY_PRODUCTION_DATABASE_RESOURCE_ID)
+    || !parsedEnv.data.POSTGRES_RECOVERY_PRODUCTION_REDIS_URL_SHA256
+    || !forbiddenRedisDigests.includes(parsedEnv.data.POSTGRES_RECOVERY_PRODUCTION_REDIS_URL_SHA256)
+    || !parsedEnv.data.POSTGRES_RECOVERY_PRODUCTION_REDIS_RESOURCE_ID
+    || !forbiddenRedisResources.includes(parsedEnv.data.POSTGRES_RECOVERY_PRODUCTION_REDIS_RESOURCE_ID)
+  ) {
+    throw new Error(
+      "PostgreSQL recovery rehearsal must name production database and Redis URL/resource pins in the forbidden identity sets.",
+    );
+  }
+
+  if (
+    !parsedEnv.data.SUPABASE_URL
+    || process.env.SUPABASE_URL !== parsedEnv.data.SUPABASE_URL
+    || parsedEnv.data.SUPABASE_URL !== parsedEnv.data.POSTGRES_RECOVERY_EXPECTED_SUPABASE_URL
+  ) {
+    throw new Error(
+      "PostgreSQL recovery rehearsal SUPABASE_URL must exactly match its independently supplied disposable project origin.",
+    );
+  }
+  const recoverySupabaseRef = canonicalSupabaseProjectRef(
+    parsedEnv.data.SUPABASE_URL,
+    "SUPABASE_URL",
+  );
+  const expectedRecoverySupabaseRef = canonicalSupabaseProjectRef(
+    parsedEnv.data.POSTGRES_RECOVERY_EXPECTED_SUPABASE_URL!,
+    "POSTGRES_RECOVERY_EXPECTED_SUPABASE_URL",
+  );
+  if (
+    recoverySupabaseRef !== expectedRecoverySupabaseRef
+    || [
+      canonicalProductionSupabaseOrigin,
+      permanentStagingSupabaseOrigin,
+      operationalOffsiteSupabaseOrigin,
+    ].includes(parsedEnv.data.SUPABASE_URL)
+  ) {
+    throw new Error(
+      "PostgreSQL recovery rehearsal Supabase identity must be disposable and distinct from production, permanent staging, and the operational copy.",
+    );
+  }
+  const recoveryPublishableKeySha256 = parsedEnv.data.SUPABASE_ANON_KEY
+    ? connectionUrlSha256(parsedEnv.data.SUPABASE_ANON_KEY)
+    : "";
+  if (
+    recoveryPublishableKeySha256
+      !== parsedEnv.data.POSTGRES_RECOVERY_EXPECTED_SUPABASE_PUBLISHABLE_KEY_SHA256
+    || !parsedEnv.data.POSTGRES_RECOVERY_PRODUCTION_SUPABASE_PUBLISHABLE_KEY_SHA256
+    || !parsedEnv.data.POSTGRES_RECOVERY_PERMANENT_STAGING_SUPABASE_PUBLISHABLE_KEY_SHA256
+    || new Set([
+      recoveryPublishableKeySha256,
+      parsedEnv.data.POSTGRES_RECOVERY_PRODUCTION_SUPABASE_PUBLISHABLE_KEY_SHA256,
+      parsedEnv.data.POSTGRES_RECOVERY_PERMANENT_STAGING_SUPABASE_PUBLISHABLE_KEY_SHA256,
+    ]).size !== 3
+  ) {
+    throw new Error(
+      "PostgreSQL recovery rehearsal requires its exact disposable Supabase publishable-key pin distinct from production and permanent staging.",
+    );
+  }
+  const expectedRedisNamespace =
+    `pint-path:postgres-recovery:${parsedEnv.data.POSTGRES_RECOVERY_EXPECTED_RAILWAY_ENVIRONMENT_ID}:${candidateSha}`;
+  if (parsedEnv.data.REDIS_KEY_NAMESPACE !== expectedRedisNamespace) {
+    throw new Error(
+      "PostgreSQL recovery rehearsal REDIS_KEY_NAMESPACE must bind the exact disposable environment and candidate.",
+    );
+  }
+  requireStrongSecret(
+    "POSTGRES_RECOVERY_REDIS_SENTINEL",
+    parsedEnv.data.POSTGRES_RECOVERY_REDIS_SENTINEL,
+  );
+  if (
+    parsedEnv.data.ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION
+    || parsedEnv.data.SUPABASE_OAUTH_PROVIDERS !== ""
+    || parsedEnv.data.REPORT_EMAIL_MODE !== "disabled"
+    || parsedEnv.data.REPORT_DELIVERY_SCHEDULE_ENABLED
+    || parsedEnv.data.ACCOUNT_DELETION_NOTICE_MODE !== "disabled"
+    || parsedEnv.data.DEMO_BILLING_MODE
+    || parsedEnv.data.ALLOW_DEMO_BILLING_IN_PRODUCTION
+    || parsedEnv.data.ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION
+    || parsedEnv.data.COMMERCIAL_LAUNCH_ENABLED
+    || parsedEnv.data.CONSUMER_PAID_ENROLLMENT_ENABLED
+    || parsedEnv.data.PINT_POINTS_REWARDS_ENABLED
+    || parsedEnv.data.ALCOHOL_GAMIFICATION_ENABLED
+    || parsedEnv.data.FIELD_TEST_MODE
+    || parsedEnv.data.VENUE_PRO_TRIAL_DAYS !== 0
+    || parsedEnv.data.VENUE_PRO_TRIAL_REQUIRE_PAYMENT_METHOD
+    || !parsedEnv.data.REQUIRE_ADMIN_MFA_IN_PRODUCTION
+    || !parsedEnv.data.REQUIRE_VERIFIED_ACCOUNT_IN_PRODUCTION
+  ) {
+    throw new Error(
+      "PostgreSQL recovery rehearsal requires the inert Free feature scope, disabled schedulers/providers, and production auth safeguards.",
+    );
+  }
+  const prohibitedRecoveryCredentials = [
+    ["SUPABASE_SERVICE_ROLE_KEY", parsedEnv.data.SUPABASE_SERVICE_ROLE_KEY],
+    ["OFFSITE_BACKUP_SUPABASE_URL", parsedEnv.data.OFFSITE_BACKUP_SUPABASE_URL],
+    ["OFFSITE_BACKUP_SERVICE_ROLE_KEY", parsedEnv.data.OFFSITE_BACKUP_SERVICE_ROLE_KEY],
+    ["GOOGLE_MAPS_API_KEY", parsedEnv.data.GOOGLE_MAPS_API_KEY],
+    ["GOOGLE_MAPS_MAP_ID", parsedEnv.data.GOOGLE_MAPS_MAP_ID],
+    ["GOOGLE_PLACES_API_KEY", parsedEnv.data.GOOGLE_PLACES_API_KEY],
+    ["OPENAI_API_KEY", parsedEnv.data.OPENAI_API_KEY],
+    ["RESEND_API_KEY", parsedEnv.data.RESEND_API_KEY],
+    ["REPORT_EMAIL_FROM", parsedEnv.data.REPORT_EMAIL_FROM],
+    ["REPORT_EMAIL_REPLY_TO", parsedEnv.data.REPORT_EMAIL_REPLY_TO],
+    ["RESEND_TRANSACTIONAL_API_KEY", parsedEnv.data.RESEND_TRANSACTIONAL_API_KEY],
+    ["ACCOUNT_DELETION_NOTICE_FROM", parsedEnv.data.ACCOUNT_DELETION_NOTICE_FROM],
+    ["ACCOUNT_DELETION_NOTICE_REPLY_TO", parsedEnv.data.ACCOUNT_DELETION_NOTICE_REPLY_TO],
+    ["RESEND_WEBHOOK_SIGNING_SECRET", parsedEnv.data.RESEND_WEBHOOK_SIGNING_SECRET],
+    ["ACCOUNT_DELETION_NOTICE_ACTIVE_KEY_ID", parsedEnv.data.ACCOUNT_DELETION_NOTICE_ACTIVE_KEY_ID],
+    ["ACCOUNT_DELETION_NOTICE_KEYRING_JSON", parsedEnv.data.ACCOUNT_DELETION_NOTICE_KEYRING_JSON],
+    ["STRIPE_SECRET_KEY", parsedEnv.data.STRIPE_SECRET_KEY],
+    ["STRIPE_WEBHOOK_SECRET", parsedEnv.data.STRIPE_WEBHOOK_SECRET],
+    ["STRIPE_PRICE_MONTHLY", parsedEnv.data.STRIPE_PRICE_MONTHLY],
+    ["STRIPE_PRICE_YEARLY", parsedEnv.data.STRIPE_PRICE_YEARLY],
+    ["STRIPE_PRO_PRICE_ID", parsedEnv.data.STRIPE_PRO_PRICE_ID],
+    ["POS_WEBHOOK_SIGNING_SECRET", parsedEnv.data.POS_WEBHOOK_SIGNING_SECRET],
+    ["ADMIN_EMAILS", parsedEnv.data.ADMIN_EMAILS],
+    ["ADMIN_SHARED_SECRET", process.env.ADMIN_SHARED_SECRET],
+    ["ADMIN_BEARER_TOKEN", process.env.ADMIN_BEARER_TOKEN],
+    ["PINTPATH_SMOKE_USER_TOKEN", process.env.PINTPATH_SMOKE_USER_TOKEN],
+    ["PINTPATH_SMOKE_VENUE_TOKEN", process.env.PINTPATH_SMOKE_VENUE_TOKEN],
+    ["PINTPATH_SMOKE_ADMIN_TOKEN", process.env.PINTPATH_SMOKE_ADMIN_TOKEN],
+  ].filter(([, value]) => typeof value === "string" && value.trim().length > 0);
+  if (prohibitedRecoveryCredentials.length > 0) {
+    throw new Error(
+      `PostgreSQL recovery rehearsal prohibits external-write or elevated credentials: ${prohibitedRecoveryCredentials.map(([name]) => name).join(", ")}.`,
+    );
+  }
+  const prohibitedRecoveryFlags = [
+    ["PINTPATH_REVOKE_DIRECT_SMOKE_TOKENS", booleanFromEnv.safeParse(process.env.PINTPATH_REVOKE_DIRECT_SMOKE_TOKENS).data],
+    ["ALLOW_FAKE_SEED", booleanFromEnv.safeParse(process.env.ALLOW_FAKE_SEED).data],
+    ["MENU_DISCOVERY_QUEUE_OCR", booleanFromEnv.safeParse(process.env.MENU_DISCOVERY_QUEUE_OCR).data],
+    ["ALLOW_MENU_DISCOVERY_QUEUE", booleanFromEnv.safeParse(process.env.ALLOW_MENU_DISCOVERY_QUEUE).data],
+    ["PINTPATH_REPORT_DELIVER", booleanFromEnv.safeParse(process.env.PINTPATH_REPORT_DELIVER).data],
+  ].filter(([, enabled]) => enabled === true);
+  if (prohibitedRecoveryFlags.length > 0) {
+    throw new Error(
+      `PostgreSQL recovery rehearsal prohibits writer and scheduler flags: ${prohibitedRecoveryFlags.map(([name]) => name).join(", ")}.`,
     );
   }
 }
@@ -1298,18 +1761,40 @@ if (
   );
 }
 
+if (
+  postgresApplicationRuntime &&
+  (
+    parsedEnv.data.COMMERCIAL_LAUNCH_ENABLED ||
+    parsedEnv.data.CONSUMER_PAID_ENROLLMENT_ENABLED ||
+    parsedEnv.data.PINT_POINTS_REWARDS_ENABLED ||
+    parsedEnv.data.ALCOHOL_GAMIFICATION_ENABLED
+  )
+) {
+  throw new Error(
+    "Canonical PostgreSQL currently supports the frozen Free launch only. Keep COMMERCIAL_LAUNCH_ENABLED, CONSUMER_PAID_ENROLLMENT_ENABLED, PINT_POINTS_REWARDS_ENABLED, and ALCOHOL_GAMIFICATION_ENABLED false until their Postgres repositories and concurrency contracts are implemented.",
+  );
+}
+
 if (parsedEnv.data.NODE_ENV === "production") {
   const publicBaseUrl = new URL(parsedEnv.data.PUBLIC_BASE_URL);
-  if (publicBaseUrl.protocol !== "https:") {
+  if (
+    publicBaseUrl.protocol !== "https:"
+    && !parsedEnv.data.POSTGRES_RECOVERY_REHEARSAL_MODE
+  ) {
     throw new Error("PUBLIC_BASE_URL must use https:// in production.");
   }
 
   requireStrongSecret("SOURCE_EVIDENCE_SIGNING_SECRET", parsedEnv.data.SOURCE_EVIDENCE_SIGNING_SECRET);
-  if (!parsedEnv.data.RESTORE_REHEARSAL_MODE && parsedEnv.data.POS_WEBHOOK_SIGNING_SECRET) {
+  if (
+    !parsedEnv.data.RESTORE_REHEARSAL_MODE
+    && !parsedEnv.data.POSTGRES_RECOVERY_REHEARSAL_MODE
+    && parsedEnv.data.POS_WEBHOOK_SIGNING_SECRET
+  ) {
     requireStrongSecret("POS_WEBHOOK_SIGNING_SECRET", parsedEnv.data.POS_WEBHOOK_SIGNING_SECRET);
   }
   if (
     !parsedEnv.data.RESTORE_REHEARSAL_MODE &&
+    !parsedEnv.data.POSTGRES_RECOVERY_REHEARSAL_MODE &&
     (
       parsedEnv.data.COMMERCIAL_LAUNCH_ENABLED ||
       parsedEnv.data.CONSUMER_PAID_ENROLLMENT_ENABLED
@@ -1476,12 +1961,12 @@ if (canonicalProductionRuntime) {
       "OFFSITE_BACKUP_SUPABASE_URL must point to an origin different from SUPABASE_URL, and OFFSITE_BACKUP_SERVICE_ROLE_KEY must belong to that operational copy. This does not replace separately verified WORM disaster recovery.",
     );
   }
-  assertCompatibleSupabaseServiceKey({
+  assertExactSupabaseServiceKey({
     name: "SUPABASE_SERVICE_ROLE_KEY",
     parsedValue: parsedEnv.data.SUPABASE_SERVICE_ROLE_KEY,
     rawValue: process.env.SUPABASE_SERVICE_ROLE_KEY,
   });
-  assertCompatibleSupabaseServiceKey({
+  assertExactSupabaseServiceKey({
     name: "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
     parsedValue: parsedEnv.data.OFFSITE_BACKUP_SERVICE_ROLE_KEY,
     rawValue: process.env.OFFSITE_BACKUP_SERVICE_ROLE_KEY,
@@ -1627,7 +2112,7 @@ if (parsedEnv.data.RESTORE_REHEARSAL_MODE) {
       "Restore rehearsal requires reviewed restore, production, and operational-restore-copy Supabase URL pins so it can prove the disposable project is exact and distinct.",
     );
   }
-  assertCompatibleSupabaseServiceKey({
+  assertExactSupabaseServiceKey({
     name: "SUPABASE_SERVICE_ROLE_KEY",
     parsedValue: parsedEnv.data.SUPABASE_SERVICE_ROLE_KEY,
     rawValue: process.env.SUPABASE_SERVICE_ROLE_KEY,

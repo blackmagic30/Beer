@@ -9,6 +9,13 @@ import {
   type SqlDatabase,
 } from "./sql-database.js";
 import { checkPostgresRuntimeReadiness } from "./postgres-runtime.js";
+import {
+  openPostgresRailwayStockLocalhostCaTransportFromPem,
+  parsePostgresRailwayStockLocalhostCaUrl,
+  POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+  type OpenPostgresRailwayStockLocalhostCaTransportFromPemOptions,
+  type PostgresRailwayStockLocalhostCaTransport,
+} from "../lib/postgres-railway-stock-localhost-ca.js";
 
 export type RuntimePersistenceMode =
   "postgres" | "sqlite" | "sqlite_restore_read_only";
@@ -18,6 +25,9 @@ export interface RuntimePersistence {
   sqlDatabase: SqlDatabase;
   businessRepository: BusinessRepository;
   performAccountDeletionSecretPhysicalCheckpoint: AccountDeletionSecretPhysicalCheckpoint;
+  postgresTransport: PostgresRailwayStockLocalhostCaTransport | null;
+  assertPostgresTransportExact(): Promise<void>;
+  close(): Promise<void>;
 }
 
 interface SqliteRuntimePersistence {
@@ -28,6 +38,10 @@ interface SqliteRuntimePersistence {
 
 export interface RuntimePersistenceDependencies {
   createPostgresDatabase(options: PostgresDatabaseOptions): SqlDatabase;
+  getUid(): number | null;
+  openPostgresRuntimeTransport(
+    options: OpenPostgresRailwayStockLocalhostCaTransportFromPemOptions,
+  ): Promise<PostgresRailwayStockLocalhostCaTransport>;
   checkPostgresRuntimeReadiness(database: SqlDatabase): Promise<{
     ready: boolean;
     failures: readonly string[];
@@ -39,6 +53,10 @@ export interface RuntimePersistenceDependencies {
 
 const DEFAULT_DEPENDENCIES: RuntimePersistenceDependencies = {
   createPostgresDatabase,
+  getUid: () => process.getuid?.() ?? null,
+  openPostgresRuntimeTransport: (options) => (
+    openPostgresRailwayStockLocalhostCaTransportFromPem(options)
+  ),
   checkPostgresRuntimeReadiness,
   async loadSqliteRuntime(input) {
     const [databaseModule, sqlModule, repositoryModule, checkpointModule] =
@@ -96,8 +114,17 @@ export function createUnavailableLegacyBusinessRepository(
 export function shouldUsePostgresRuntime(input: {
   nodeEnv: string;
   restoreRehearsalMode: boolean;
+  postgresRecoveryRehearsalMode?: boolean | undefined;
   databaseUrl?: string | undefined;
 }): boolean {
+  if (input.postgresRecoveryRehearsalMode) {
+    if (input.nodeEnv !== "production" || input.restoreRehearsalMode) {
+      throw new Error(
+        "PostgreSQL recovery rehearsal cannot fall back to SQLite or a non-production runtime.",
+      );
+    }
+    return true;
+  }
   return input.nodeEnv === "production" && !input.restoreRehearsalMode;
 }
 
@@ -153,6 +180,8 @@ export async function createRuntimePersistence(
     postgresRuntime: boolean;
     restoreRehearsalMode: boolean;
     databaseUrl?: string | undefined;
+    postgresRootCaPem?: string | undefined;
+    expectedPostgresRootCaDerSha256?: string | undefined;
   },
   overrides: Partial<RuntimePersistenceDependencies> = {},
 ): Promise<RuntimePersistence> {
@@ -168,6 +197,9 @@ export async function createRuntimePersistence(
     return {
       mode: input.restoreRehearsalMode ? "sqlite_restore_read_only" : "sqlite",
       ...sqlite,
+      postgresTransport: null,
+      assertPostgresTransportExact: async () => undefined,
+      close: async () => sqlite.sqlDatabase.close(),
     };
   }
 
@@ -179,19 +211,56 @@ export async function createRuntimePersistence(
   if (!input.databaseUrl) {
     throw new Error("Canonical PostgreSQL runtime requires DATABASE_URL.");
   }
-
-  const sqlDatabase = dependencies.createPostgresDatabase({
-    connectionString: input.databaseUrl,
-    applicationName: "pintpath-web",
-    maxConnections: 8,
-    idleTimeoutMs: 30_000,
-    connectionTimeoutMs: 10_000,
-    statementTimeoutMs: 30_000,
-    idleInTransactionTimeoutMs: 30_000,
-  });
+  if (!input.postgresRootCaPem || !input.expectedPostgresRootCaDerSha256) {
+    throw new Error(
+      "Canonical PostgreSQL runtime requires the reviewed Railway root CA PEM and DER SHA-256 pin.",
+    );
+  }
+  let parsedUrl;
   try {
-    const readiness =
-      await dependencies.checkPostgresRuntimeReadiness(sqlDatabase);
+    parsedUrl = parsePostgresRailwayStockLocalhostCaUrl(input.databaseUrl);
+  } catch {
+    throw new Error(
+      "Canonical PostgreSQL runtime requires the exact Railway private :5432 URL with sslmode=verify-full.",
+    );
+  }
+  let uid: number | null;
+  try {
+    uid = dependencies.getUid();
+  } catch {
+    uid = null;
+  }
+  if (!Number.isSafeInteger(uid) || uid === null || uid < 0) {
+    throw new Error("Canonical PostgreSQL runtime requires one exact current UID.");
+  }
+  const postgresTransport = await dependencies.openPostgresRuntimeTransport({
+    profile: POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+    rootCaPem: input.postgresRootCaPem,
+    expectedRootCaDerSha256: input.expectedPostgresRootCaDerSha256,
+    expectedUid: uid,
+    sourceUrlAuthority: parsedUrl.sourceUrlAuthority,
+  });
+  let sqlDatabase: SqlDatabase | null = null;
+  try {
+    await postgresTransport.assertExact();
+    sqlDatabase = dependencies.createPostgresDatabase({
+      connectionString: parsedUrl.connectionString,
+      activeRole: "pintpath_runtime",
+      railwayStockLocalhostCaConnection: postgresTransport.nodeConnection,
+      applicationName: "pintpath-web",
+      maxConnections: 8,
+      idleTimeoutMs: 30_000,
+      connectionTimeoutMs: 10_000,
+      statementTimeoutMs: 30_000,
+      idleInTransactionTimeoutMs: 30_000,
+    });
+    await postgresTransport.assertExact();
+    let readiness;
+    try {
+      readiness = await dependencies.checkPostgresRuntimeReadiness(sqlDatabase);
+    } finally {
+      await postgresTransport.assertExact();
+    }
     if (!readiness.ready) {
       const failures = [...readiness.failures].sort().join(",") || "unknown";
       throw new Error(
@@ -199,9 +268,47 @@ export async function createRuntimePersistence(
       );
     }
   } catch (error) {
-    await sqlDatabase.close().catch(() => undefined);
+    const cleanupFailures: unknown[] = [];
+    if (sqlDatabase) {
+      try {
+        await sqlDatabase.close();
+      } catch (cleanupError) {
+        cleanupFailures.push(cleanupError);
+      }
+    }
+    try {
+      await postgresTransport.close();
+    } catch (cleanupError) {
+      cleanupFailures.push(cleanupError);
+    }
+    if (cleanupFailures.length > 0) {
+      throw new AggregateError(
+        [error, ...cleanupFailures],
+        "Canonical PostgreSQL startup and authority cleanup failed.",
+      );
+    }
     throw error;
   }
+
+  const close = async (): Promise<void> => {
+    const failures: unknown[] = [];
+    try {
+      await sqlDatabase.close();
+    } catch (error) {
+      failures.push(error);
+    }
+    try {
+      await postgresTransport.close();
+    } catch (error) {
+      failures.push(error);
+    }
+    if (failures.length > 0) {
+      throw new AggregateError(
+        failures,
+        "Canonical PostgreSQL runtime authority failed to close exactly.",
+      );
+    }
+  };
 
   return {
     mode: "postgres",
@@ -209,5 +316,8 @@ export async function createRuntimePersistence(
     businessRepository: createUnavailableLegacyBusinessRepository(),
     performAccountDeletionSecretPhysicalCheckpoint:
       createPostgresAccountDeletionSecretPhysicalCheckpoint(sqlDatabase),
+    postgresTransport,
+    assertPostgresTransportExact: () => postgresTransport.assertExact(),
+    close,
   };
 }

@@ -12,26 +12,33 @@ production Postgres service is provisioned but is empty, detached from the live
 Beer service, and not serving traffic. Production therefore remains on SQLite
 until the controlled cutover.
 
-Pint Path remains no-go. Before candidate freeze:
+Pint Path remains no-go. Before candidate freeze, finish and review every
+implementation and exact execution plan below. After the protected merge,
+execute the live provider and permanent-staging gates against the exact current
+`main` SHA before production deployment:
 
 Every Railway create, configuration, variable, scale, deploy, rollback, PITR,
-route, delete, destroy, or teardown operation in these gates is non-executable
-until the tracked `readiness:railway:mutation-boundary` executor owns the
-immediate preflight, one exact reviewed operation, and unconditional postflight.
+route, delete, destroy, or teardown operation in these gates requires a tracked
+one-operation executor that owns the
+immediate `readiness:railway:mutation-boundary` preflight, one exact reviewed
+operation, and unconditional postflight.
 Its standalone receipt is read-only; the current incident baseline
 intentionally fails. Restore-staging teardown additionally requires complete
 resource/evidence reconciliation, specific authorization naming the exact
 resource IDs, and the exact reviewed teardown executor. Signed evidence or
 two-person sign-off alone is not mutation authority.
 
-1. Complete the three Google/OpenAI provider categories, comprising four exact
+1. Execute and retain evidence from the protected workflows for the three
+   Google/OpenAI provider categories, comprising four exact
    Railway variable operations: Google Maps client configuration
    (`GOOGLE_MAPS_API_KEY` and `GOOGLE_MAPS_MAP_ID`), Google Places server access
    (`GOOGLE_PLACES_API_KEY`), and OpenAI menu OCR (`OPENAI_API_KEY`). Separately,
-   the two permanent-staging Supabase replacement-key operations
-   (`SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY`) remain
-   `HARD_DISABLED_REVIEW_REQUIRED` and unauthorized. After their separate
-   reviewed authorities and all mutation stops are satisfied, deploy the exact
+   the two permanent-staging Supabase replacement-key variables
+   (`SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY`) use one protected
+   atomic Railway upsert, followed—only after complete consumer proof—by the
+   protected replacement-canary/legacy-disable/old-key-denial workflow. The old
+   fixed-blocked CLIs and fixture policies are superseded and are not operator
+   paths. After all protected approvals and mutation stops are satisfied, deploy the exact
    reviewed app build to permanent staging. Historical operational-copy
    attestation and a staging database-bound probe ran under the prior coupled
    contract; they are not current staging readiness. The production-copy URL,
@@ -39,50 +46,47 @@ two-person sign-off alone is not mutation authority.
    candidate, and a fresh complete Railway inventory must independently prove
    all three names deleted before remediation passes. No new staging off-site
    transport is authorized.
-2. Pass real provider/Auth/role/private-Storage/Free-scope smoke, then scale the
+2. Pass real provider/Auth/role/private-Storage/Free-scope smoke, run the
+   protected Postgres build-canary workflow, then use the protected scale
+   workflow to move
    same build temporarily from one to two replicas for concurrency, queue/
    outbox, idempotency, load/soak, restart, rolling-deploy, rollback, and pool-
    headroom proof; return staging to one replica afterward.
-3. Enable and test PITR; have the independent recovery administrator provision
+3. Run the protected exact-target Railway Postgres-HA PITR enable/verification
+   workflow after its provider-safe HA placement preflight. The operator
+   selects only production or permanent staging; the corresponding protected
+   GitHub environment pins the expected HA root, which must equal the one root
+   independently discovered from the complete provider inventory before any
+   write. Then test a usable recovery point; have the independent recovery
+   administrator provision
    and exercise the implemented AWS S3 Object Lock WORM authority; and extend
    the existing disposable database restore through later WORM retrieval,
    Storage/tombstones, application smoke, deletion replay, signed RPO/RTO, and
-   safe teardown. The code and offline tests do not close this live gate.
+   safe teardown through the protected exact-inventory disposable-project
+   workflow. Executable repository paths do not replace live provider receipts,
+   restore proof, RPO/RTO approval, or external IDs.
 4. Complete reviewed-data promotion, production snapshot/import/reconciliation,
    post-import and post-promotion recovery sets, monitored Postgres cutover, and
    the coordinated web/iOS release sequence.
 
-Permanent staging is capped at 0.1 vCPU/0.5 GB for Beer and Postgres and
-0.1 vCPU/0.25 GB for Redis. Keep one Beer replica permanently and use the
-second only for a bounded evidence window. With one permanent-staging Supabase
-Micro project, the separately operated canonical-production operational-copy
-Supabase Micro project, and the conservative locked-baseline plus daily
-Postgres-volume snapshot allowance, the reviewed combined recurring envelope is
-approximately US$46.80/month. This is not a staging-only cost or authority
-boundary; it is a historical combined planning estimate and not gating
-provider evidence. The separate `permanent_staging_cost` release item remains
-pending. A fresh provider-bound receipt for one frozen candidate must inventory
-Railway, the staging Supabase project, and staging external providers/caps,
-report zero unknown/unpriced/shared/unbounded resources, ceiling-sum integer
-USD cents to at most `5000`, and keep the production operational copy plus
-disposable restore under separate cost authorities. The checked-in cost policy
-and evaluator are scaffold-only and cannot produce that proof.
+The checked-in permanent-staging target is one Beer replica at 0.1 vCPU/0.25
+GB, Postgres at 0.1 vCPU/0.25 GB with a 10 GB maximum volume, and Redis at 0.05
+vCPU/0.1 GB. It allocates at most US$20 to the isolated Railway workspace,
+US$25 to one isolated Supabase Pro/Micro project, and US$2 across staging
+external providers, leaving US$3 explicit headroom below the US$50 ceiling.
+Those are repository planning targets, not claims about live provider state.
 
-The 2026-08-13 credential-free public-price audit also proves the currently
-documented maxima are not capable of passing that gate: Railway compute plus a
-fully used 50 GB staging Postgres volume is US$26/month, and Supabase Pro plus
-one Micro project nets to US$25/month under its standard compute entitlement.
-That US$51 partial maximum excludes egress, other storage/backups, add-ons, and
-external providers. It is not live provider evidence, but it is a hard design
-blocker: reduce or isolate the reviewed recurring capacity before collecting a
-fresh receipt, rather than treating current low usage as a bounded maximum.
+The active credential-free validator binds authentic pre/post read-only export
+observations for the frozen candidate. Each must report zero unknown, unpriced,
+shared, or unbounded resources, respect every provider cap, total at most
+`4700` integer USD cents, and keep production operational-copy and disposable
+restore under separate hashed authorities. One combined v2 receipt is the
+post-deployment release gate; it cannot authorize deployment and it does not
+replace provider-owner evidence. Follow
+`permanent-staging-cost-evidence.md`. The item remains pending until that live
+evidence exists.
 
-The current credential-free remediation target is still design-only: isolate
-permanent staging in a US$20-hard-limited Railway Pro workspace and a separate
-US$25 Supabase Pro organization with one Micro project, Spend Cap on, and zero
-uncovered add-ons. That leaves US$5 for all external providers. It remains
-blocked because Railway Agent usage has no proved zero bound and the current
-Railway resource maximum exceeds the target. The exact source inventory spans
+The exact external-provider source inventory spans
 Dynamic Maps, Directions Legacy, Geocoding, Text Search Pro/Enterprise, Nearby
 Search Enterprise, and Place Details Enterprise, but Google does not document
 a monthly hard quota for every surface and warns that quota and billing meters
@@ -90,15 +94,15 @@ can differ. OpenAI OCR now uses no SDK retries, finite `high` image detail, and
 an 8,192-output-token cap, and rejects model overrides outside the reviewed
 `gpt-5.6-sol`/`gpt-4.1` allowlist; monthly call reservations, bounded PDF/input
 tokens, and a documented hard-limit overshoot maximum are still absent in the
-live environment. The disabled candidate cost-bound path instead pins
+live environment. The candidate cost-bound path pins
 `gpt-4.1-mini-2025-04-14`, forbids PDFs/discovery OCR, and reserves five cents
 per attempt in shared state up to US$1 in every rolling 31-day window, but it still needs the
 labelled benchmark, current price/project receipt, and two-replica
 restart/denial proof. Provider hard-limit enforcement is not instantaneous.
 Resend
 Free may be a zero-dollar target only after a dedicated
-live team, quota, and add-on inventory is observed. The remaining US$5 is not
-yet a proved upper bound. No provider move, plan, cap, quota, or credential
+live team, quota, and add-on inventory is observed. The US$2 external-provider
+allowance is not a proved upper bound until those exports pass. No provider move, plan, cap, quota, or credential
 mutation is authorized by this planning target.
 
 ## Environment identities
@@ -109,9 +113,9 @@ mutation is authorized by this planning target.
   are excluded from the combined recurring envelope above. At their current caps they
   would add approximately US$20.13/month if left running; finish the drill and
   complete resource/evidence reconciliation promptly. Disposal then requires
-  specific authorization for the exact recorded resource IDs and the reviewed
-  teardown executor's immediate mutation-boundary preflight and unconditional
-  postflight.
+  specific authorization for the exact recorded project/environment inventory
+  hash and the reviewed teardown executor's one delete attempt plus independent
+  unconditional absence postflight.
 - Production, permanent staging, restore-staging, and the private operational restore-copy project must never share credentials or mutable resources. After each disposable restore system is created, load its reviewed `RESTORE_REHEARSAL_EXPECTED_*` values through protected environment configuration and require the runtime identities to match; never hard-code or repurpose permanent staging.
 
 ## Automated gates
@@ -120,10 +124,11 @@ Run against the frozen release SHA before every candidate:
 
 ```bash
 npm run check
-npm run test:release:pintpath
+npm run readiness:providers
+npm run release:evidence
+npm run security:audit
 npm run ocr:benchmark
 npm run smoke:production
-npm run release:evidence
 git diff --check
 ```
 
@@ -141,7 +146,8 @@ warnings. Its Storage canaries run only after the local staging identity/config
 preflight passes. The later canonical-production invocation must instead report
 `readinessProfile=production_free_launch` with the same zero-failure contract.
 The non-strict evidence command validates the schema and lists genuinely pending
-live/App Review items. Run `npm run release:evidence:strict` only after the exact
+live/App Review items. Run `npm run test:release:pintpath` (which includes
+`release:evidence:strict`) only after the exact
 candidate is live, both production smoke gates are current, the full App Review
 approval/manual hold is recorded, and all 13 evidence items are complete.
 Record the command, frozen SHA, UTC time, environment identity, sanitized

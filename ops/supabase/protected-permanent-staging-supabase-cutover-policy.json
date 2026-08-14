@@ -1,0 +1,53 @@
+{
+  "schemaVersion": "pintpath-protected-permanent-staging-supabase-cutover-policy/v1",
+  "policyId": "pintpath-permanent-staging-supabase-legacy-cutover",
+  "activationState": "GITHUB_ENVIRONMENT_PROTECTED",
+  "githubEnvironment": "permanent-staging-supabase-legacy-disable",
+  "target": {
+    "projectRef": "bbfibbadwjxzrcdncavy",
+    "origin": "https://bbfibbadwjxzrcdncavy.supabase.co",
+    "privateStorageBucket": "beermap-source-evidence",
+    "legacyKeyFamilies": [
+      "anon",
+      "service_role"
+    ]
+  },
+  "canaryB": {
+    "transport": "protected-runner-direct-provider-read-only",
+    "beforeDisableRequired": true,
+    "afterDisableRequired": true,
+    "checks": [
+      "replacement-publishable-auth-settings",
+      "replacement-secret-admin-list-limit-one",
+      "replacement-secret-private-storage-bucket"
+    ]
+  },
+  "mutation": {
+    "method": "PUT",
+    "path": "/v1/projects/bbfibbadwjxzrcdncavy/api-keys/legacy?enabled=false",
+    "operation": "disable-all-legacy-jwt-api-keys",
+    "maximumAttempts": 1,
+    "automaticRetriesAllowed": false,
+    "rerunsAllowed": false,
+    "unconditionalPostflightRequired": true,
+    "ambiguousOutcomeAction": "READ_ONLY_RECONCILIATION_STOP_NO_RETRY"
+  },
+  "postflight": {
+    "exactLegacyState": {
+      "enabled": false
+    },
+    "oldAnonStatus": 401,
+    "oldServiceRoleStatus": 401
+  },
+  "authority": {
+    "requiredGitRef": "refs/heads/main",
+    "requiredRunAttempt": 1,
+    "confirmation": "DISABLE_PERMANENT_STAGING_SUPABASE_LEGACY_KEYS",
+    "separateReadAndWriteTokensRequired": true
+  },
+  "evidence": {
+    "durableIntentRequiredBeforeAttempt": true,
+    "secretMaterialAllowed": false,
+    "secretDerivedCommitmentsAllowed": false
+  }
+}

@@ -200,7 +200,8 @@ describe("venue and admin remediation", () => {
     expect(portal).toContain("function scrubRedemptionCodesFromUrl");
     expect(portal).toContain('url.searchParams.delete("discountCode")');
     expect(portal).toContain('url.searchParams.delete("freePintCode")');
-    expect(portal.indexOf("await loadPortal(urlParams.get(\"venueId\"));")).toBeLessThan(portal.indexOf("scrubRedemptionCodesFromUrl();"));
+    expect(portal).toContain("fragmentParams.delete(key)");
+    expect(portal.indexOf("scrubRedemptionCodesFromUrl();")).toBeLessThan(portal.indexOf("await loadPortal(urlParams.get(\"venueId\"));"));
     expect(portal.indexOf("scrubRedemptionCodesFromUrl();")).toBeLessThan(portal.indexOf("if (discountCodeFromQr) await checkMemberCode();"));
   });
 

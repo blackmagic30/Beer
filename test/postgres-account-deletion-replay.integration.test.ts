@@ -39,6 +39,9 @@ const REQUEST_ID = `replay-request-${suffix}`;
 const PROCESSING_AT = "2026-08-09T04:40:00.000Z";
 const COMPLETED_AT = "2026-08-09T04:45:00.000Z";
 const REPLAYED_AT = "2026-08-09T05:45:00.000Z";
+const MAINTENANCE_ROLE_MIGRATION = fs.readFileSync(path.resolve(
+  "supabase/migrations/20260812235959_add_privacy_maintenance_role.sql",
+), "utf8");
 
 function validateAdminUrl(value: string): URL {
   let url: URL;
@@ -107,19 +110,20 @@ class DisposableLoopbackPostgresDatabase implements SqlDatabase {
   private failedQueries = 0;
   private transactionFailures = 0;
 
-  constructor(connectionString: string) {
+  constructor(
+    connectionString: string,
+    activeRole: "pintpath_runtime" | "pintpath_maintenance",
+  ) {
     this.pool = new Pool({
       connectionString,
       max: 1,
       idleTimeoutMillis: 0,
       types: sqlDatabaseInternals.createPostgresTypeOverrides(),
-      options: [
-        "-c search_path=pintpath_app,pg_catalog",
-        "-c statement_timeout=30000",
-        "-c idle_in_transaction_session_timeout=30000",
-        "-c lock_timeout=10000",
-        "-c synchronous_commit=on",
-      ].join(" "),
+      options: sqlDatabaseInternals.buildPostgresStartupOptions({
+        activeRole,
+        statementTimeoutMs: 30_000,
+        idleInTransactionTimeoutMs: 30_000,
+      }),
     });
     this.pool.on("error", () => {
       this.failedQueries += 1;
@@ -244,6 +248,9 @@ describe.skipIf(!configuredAdminUrl)("real restricted PG17 deletion tombstone re
   };
   let runtimeRoleExisted = false;
   let migratorRoleExisted = false;
+  let verifierAuthorityRoleExisted = false;
+  let maintenanceRoleExisted = false;
+  let logicalBackupRole = "";
 
   beforeAll(async () => {
     adminUrl = validateAdminUrl(configuredAdminUrl);
@@ -257,10 +264,19 @@ describe.skipIf(!configuredAdminUrl)("real restricted PG17 deletion tombstone re
     }
     const roles = await maintenance.query<{ rolname: string }>(
       "SELECT rolname FROM pg_catalog.pg_roles WHERE rolname = ANY($1::text[])",
-      [["pintpath_runtime", "pintpath_migrator"]],
+      [[
+        "pintpath_runtime",
+        "pintpath_migrator",
+        "pintpath_migration_verifier_authority",
+        "pintpath_maintenance",
+      ]],
     );
     runtimeRoleExisted = roles.rows.some((row) => row.rolname === "pintpath_runtime");
     migratorRoleExisted = roles.rows.some((row) => row.rolname === "pintpath_migrator");
+    verifierAuthorityRoleExisted = roles.rows.some(
+      (row) => row.rolname === "pintpath_migration_verifier_authority",
+    );
+    maintenanceRoleExisted = roles.rows.some((row) => row.rolname === "pintpath_maintenance");
     await maintenance.query(`CREATE DATABASE ${TEST_DATABASE}`);
     await maintenance.query(
       `ALTER DATABASE ${TEST_DATABASE}
@@ -269,6 +285,13 @@ describe.skipIf(!configuredAdminUrl)("real restricted PG17 deletion tombstone re
     targetAdmin = new Client({ connectionString: withDatabase(adminUrl, TEST_DATABASE) });
     await targetAdmin.connect();
     await targetAdmin.query(fs.readFileSync(path.resolve("src/db/postgres-schema.sql"), "utf8"));
+    await targetAdmin.query(MAINTENANCE_ROLE_MIGRATION);
+    const targetDatabaseIdentity = await targetAdmin.query<{ databaseOid: string }>(
+      `SELECT oid::text AS "databaseOid"
+         FROM pg_catalog.pg_database
+        WHERE datname = pg_catalog.current_database()`,
+    );
+    logicalBackupRole = `pintpath_logical_backup_d${targetDatabaseIdentity.rows[0]!.databaseOid}`;
     await targetAdmin.query(`UPDATE pintpath_app.schema_metadata
       SET value = CASE key
         WHEN 'import_state' THEN 'ready'
@@ -286,15 +309,16 @@ describe.skipIf(!configuredAdminUrl)("real restricted PG17 deletion tombstone re
       "4".repeat(64), "5".repeat(64), "6".repeat(64),
     ]);
     await maintenance.query(`CREATE ROLE ${TEST_LOGIN}
-      LOGIN PASSWORD '${TEST_PASSWORD}' INHERIT
+      LOGIN PASSWORD '${TEST_PASSWORD}' NOINHERIT
       NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`);
-    await maintenance.query(`GRANT pintpath_runtime TO ${TEST_LOGIN}`);
+    await maintenance.query(`GRANT pintpath_runtime TO ${TEST_LOGIN}
+      WITH ADMIN FALSE, INHERIT FALSE, SET TRUE`);
     await targetAdmin.query(
       `GRANT EXECUTE ON FUNCTION pg_catalog.pg_control_system() TO ${TEST_LOGIN}`,
     );
     runtimeUrl = withDatabase(adminUrl, TEST_DATABASE, TEST_LOGIN, TEST_PASSWORD);
 
-    const runtimeSetup = new DisposableLoopbackPostgresDatabase(runtimeUrl);
+    const runtimeSetup = new DisposableLoopbackPostgresDatabase(runtimeUrl, "pintpath_runtime");
     try {
       await runtimeSetup.prepare(`INSERT INTO accounts (
         id, public_account_id, email, password_hash, auth_provider, role,
@@ -350,6 +374,24 @@ describe.skipIf(!configuredAdminUrl)("real restricted PG17 deletion tombstone re
       }
     } finally {
       await runtimeSetup.close();
+    }
+    await maintenance.query(`REVOKE pintpath_runtime FROM ${TEST_LOGIN}`);
+    await maintenance.query(`GRANT pintpath_maintenance TO ${TEST_LOGIN}
+      WITH ADMIN FALSE, INHERIT FALSE, SET TRUE`);
+    const maintenanceProbe = new DisposableLoopbackPostgresDatabase(
+      runtimeUrl,
+      "pintpath_maintenance",
+    );
+    try {
+      await expect(maintenanceProbe.prepare(`SELECT value FROM schema_metadata
+        WHERE key = 'schema_version'`).get()).resolves.toEqual({ value: "1" });
+      await expect(maintenanceProbe.prepare(`UPDATE schema_metadata SET value = '2'
+        WHERE key = 'schema_version'`).run()).rejects.toThrow(/permission denied/i);
+      await expect(maintenanceProbe.prepare(
+        "SELECT count(*)::text AS count FROM pintpath_ops.migration_runs",
+      ).get()).rejects.toThrow(/permission denied/i);
+    } finally {
+      await maintenanceProbe.close();
     }
 
     const identity = await targetAdmin.query<{
@@ -469,6 +511,17 @@ describe.skipIf(!configuredAdminUrl)("real restricted PG17 deletion tombstone re
       ).catch(() => undefined);
       await maintenance.query(`DROP DATABASE IF EXISTS ${TEST_DATABASE}`).catch(() => undefined);
       await maintenance.query(`DROP ROLE IF EXISTS ${TEST_LOGIN}`).catch(() => undefined);
+      if (logicalBackupRole) {
+        await maintenance.query(`DROP ROLE IF EXISTS ${logicalBackupRole}`).catch(() => undefined);
+      }
+      if (!maintenanceRoleExisted) {
+        await maintenance.query("DROP ROLE IF EXISTS pintpath_maintenance").catch(() => undefined);
+      }
+      if (!verifierAuthorityRoleExisted) {
+        await maintenance.query(
+          "DROP ROLE IF EXISTS pintpath_migration_verifier_authority",
+        ).catch(() => undefined);
+      }
       if (!runtimeRoleExisted) {
         await maintenance.query("DROP ROLE IF EXISTS pintpath_runtime").catch(() => undefined);
       }
@@ -490,7 +543,7 @@ describe.skipIf(!configuredAdminUrl)("real restricted PG17 deletion tombstone re
     if (root) fs.rmSync(root, { recursive: true, force: true });
   }, 30_000);
 
-  it("replays a nonzero tombstone under the restricted runtime role and is exactly idempotent", async () => {
+  it("replays a nonzero tombstone under the restricted maintenance role and is exactly idempotent", async () => {
     const runtimeUrlFile = path.join(root, "runtime-url");
     const baseRestoreReceiptFile = path.join(root, "base-restore-receipt.json");
     const options = (receipt: string) => ({
@@ -512,7 +565,10 @@ describe.skipIf(!configuredAdminUrl)("real restricted PG17 deletion tombstone re
       getUid: () => process.getuid?.() ?? 0,
       now: () => new Date(REPLAYED_AT),
       allowInsecureLoopbackForTests: true,
-      createDatabase: () => new DisposableLoopbackPostgresDatabase(runtimeUrl),
+      createDatabase: () => new DisposableLoopbackPostgresDatabase(
+        runtimeUrl,
+        "pintpath_maintenance",
+      ),
     };
     await targetAdmin!.end();
     targetAdmin = null;

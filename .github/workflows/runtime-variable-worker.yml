@@ -1,0 +1,167 @@
+name: Protected runtime-variable worker
+
+on:
+  workflow_call:
+    inputs:
+      candidate_sha:
+        required: true
+        type: string
+      target:
+        required: true
+        type: string
+      variable_name:
+        required: true
+        type: string
+      confirmation:
+        required: true
+        type: string
+      protected_environment:
+        required: true
+        type: string
+      value_secret_name:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  configure:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    environment: ${{ inputs.protected_environment }}
+    steps:
+      - name: Checkout the exact main candidate without persisted credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+
+      - name: Require an original run at exact current main
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          DISPATCH_SHA: ${{ github.sha }}
+          DISPATCH_REF: ${{ github.ref }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          TARGET: ${{ inputs.target }}
+          VARIABLE_NAME: ${{ inputs.variable_name }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          PROTECTED_ENVIRONMENT: ${{ inputs.protected_environment }}
+          VALUE_SECRET_NAME: ${{ inputs.value_secret_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          test "$DISPATCH_REF" = 'refs/heads/main'
+          test "$RUN_ATTEMPT" = '1'
+          test "$DISPATCH_SHA" = "$CANDIDATE_SHA"
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse refs/remotes/origin/main)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain=v2 --untracked-files=all)"
+          target_confirmation="${TARGET^^}"
+          target_confirmation="${target_confirmation//-/_}"
+          test "$CONFIRMATION" = "UPSERT_${VARIABLE_NAME}_IN_${target_confirmation}"
+          if test "$TARGET" = production; then
+            test "$PROTECTED_ENVIRONMENT" = production-runtime-configuration
+            test "$VALUE_SECRET_NAME" = "PINTPATH_PRODUCTION_${VARIABLE_NAME}"
+          else
+            test "$TARGET" = permanent-staging
+            test "$PROTECTED_ENVIRONMENT" = permanent-staging-provider-mutation
+            test "$VALUE_SECRET_NAME" = "PINTPATH_STAGING_${VARIABLE_NAME}"
+          fi
+
+      - name: Setup the repository Node runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Install immutable dependencies
+        run: npm ci
+
+      - name: Verify the complete repository before protected input
+        run: npm run check
+
+      - name: Create private input and evidence custody
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          TARGET: ${{ inputs.target }}
+          VARIABLE_NAME: ${{ inputs.variable_name }}
+          VALUE_SECRET_NAME: ${{ inputs.value_secret_name }}
+          RUNTIME_VALUE: ${{ secrets[inputs.value_secret_name] }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$RUNTIME_VALUE"
+          mkdir -m 700 "$RUNNER_TEMP/pintpath-runtime-input"
+          mkdir -m 700 "$RUNNER_TEMP/pintpath-runtime-evidence"
+          umask 077
+          printf '%s' "$RUNTIME_VALUE" > "$RUNNER_TEMP/pintpath-runtime-input/value"
+          jq -n --arg candidateSha "$CANDIDATE_SHA" --arg target "$TARGET" \
+            --arg variableName "$VARIABLE_NAME" --arg secretName "$VALUE_SECRET_NAME" \
+            '{schemaVersion:"pintpath-runtime-variable-dispatch/v1",candidateSha:$candidateSha,target:$target,variableName:$variableName,secretName:$secretName,secretMaterialIncluded:false}' \
+            > "$RUNNER_TEMP/pintpath-runtime-evidence/dispatch.json"
+
+      - name: Reassert exact current main immediately before the provider write
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse refs/remotes/origin/main)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain=v2 --untracked-files=all)"
+
+      - name: Execute one exact non-deploying variable upsert
+        env:
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+          PINTPATH_RUNTIME_VARIABLE_CONFIRMATION: ${{ inputs.confirmation }}
+          PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_TARGET_METADATA_TOKEN: ${{ inputs.target == 'production' && secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN || secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_TARGET_VARIABLE_TOKEN: ${{ inputs.target == 'production' && secrets.PINTPATH_RAILWAY_PRODUCTION_VARIABLE_TOKEN || secrets.PINTPATH_RAILWAY_STAGING_VARIABLE_MUTATION_TOKEN }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          TARGET: ${{ inputs.target }}
+          VARIABLE_NAME: ${{ inputs.variable_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./node_modules/.bin/tsx scripts/execute-protected-runtime-variable-upsert.ts \
+            --target "$TARGET" \
+            --variable "$VARIABLE_NAME" \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --value-file "$RUNNER_TEMP/pintpath-runtime-input/value" \
+            --evidence-dir "$RUNNER_TEMP/pintpath-runtime-evidence"
+
+      - name: Remove private value custody
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          input_root="$RUNNER_TEMP/pintpath-runtime-input"
+          if test -d "$input_root"; then
+            find "$input_root" -type f -exec shred -u -- {} + 2>/dev/null \
+              || find "$input_root" -type f -exec rm -f -- {} +
+            find "$input_root" -depth -type d -exec rmdir -- {} +
+          fi
+          test ! -e "$input_root"
+
+      - name: Reconcile the Railway mutation boundary after every attempt
+        if: always()
+        env:
+          PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
+        run: npm run readiness:railway:mutation-boundary
+
+      - name: Upload secret-free terminal evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pintpath-runtime-variable-${{ inputs.target }}-${{ inputs.variable_name }}-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}/pintpath-runtime-evidence/
+          if-no-files-found: error
+          retention-days: 30

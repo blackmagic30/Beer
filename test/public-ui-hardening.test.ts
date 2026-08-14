@@ -149,10 +149,12 @@ describe("public UI hardening", () => {
     expect(business).toContain('const SENSITIVE_AUTH_RETURN_KEY = "pintPathSensitiveAuthReturnTo"');
     expect(business).toContain("window.sessionStorage.setItem(SENSITIVE_AUTH_RETURN_KEY, JSON.stringify({ path: safePath, createdAt: Date.now() }))");
     expect(business).toContain("Date.now() - record.createdAt > SENSITIVE_AUTH_RETURN_MAX_AGE_MS");
-    expect(portal).toContain('returnUrl.searchParams.delete("discountCode")');
-    expect(portal).toContain('returnUrl.searchParams.delete("freePintCode")');
+    expect(portal).toContain("sensitiveRedemptionReturnPath");
+    expect(portal).toContain("MelbBeerBusiness.storeSensitiveAuthReturnPath(sensitiveRedemptionReturnPath)");
     expect(business).toContain("PENDING_PORTAL_REDEMPTION_KEY");
     expect(business).toContain('url.searchParams.delete("discountCode")');
+    expect(business).toContain('fragmentParams.delete("discountCode")');
+    expect(portal).toContain('initialRedemptionUrl.hash.replace(/^#/, "")');
     expect(portal).toContain("MelbBeerBusiness.consumePendingPortalRedemption()");
     expect(account).toContain("function authenticatedReturnDestination(account)");
     expect(callback).toContain("MelbBeerBusiness.consumeSensitiveAuthReturnPath()");

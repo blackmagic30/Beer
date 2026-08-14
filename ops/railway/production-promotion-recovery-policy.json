@@ -1,0 +1,94 @@
+{
+  "schemaVersion": "pintpath-production-promotion-recovery-policy/v2",
+  "policyId": "pintpath-production-reviewed-price-promotion-recovery",
+  "activationState": "GITHUB_ENVIRONMENT_PROTECTED",
+  "githubEnvironment": "production-promotion-recovery",
+  "requiredGitRef": "refs/heads/main",
+  "requiredWorkflow": ".github/workflows/attest-production-promotion-recovery.yml",
+  "requiredCheck": "Attest protected production promotion and recovery",
+  "artifactPrefix": "pintpath-production-promotion-recovery-",
+  "candidateContract": {
+    "exactCurrentMainRequired": true,
+    "productionDeploymentRequired": true,
+    "closedProductionRouteRequired": true,
+    "sameDeploymentRequired": true,
+    "activationStageRequired": true
+  },
+  "activationContract": {
+    "requiredWorkflow": ".github/workflows/activate-production-promotion-recovery.yml",
+    "requiredCheck": "Activate exact production promotion recovery",
+    "artifactPrefix": "pintpath-production-promotion-recovery-activation-",
+    "workflowDispatchRequired": true,
+    "exactRunIdAndFirstAttemptRequired": true,
+    "immutableWorkflowRunStartedAtRequired": true,
+    "exactArtifactAuthorityRequired": true,
+    "jobsInOrder": [
+      "production-capture",
+      "disposable-recover",
+      "cleanup",
+      "finalize"
+    ],
+    "productionCaptureRunnerLabel": "pintpath-production-backup",
+    "disposableRecoveryRunnerLabel": "pintpath-disposable-recovery",
+    "jitEphemeralRunnerRequired": true,
+    "crossProjectPrivateNetworkSplitRequired": true,
+    "receiptOnlyGithubArtifactsRequired": true,
+    "rawRecoveryBytesInGithubArtifactsAllowed": false,
+    "evidenceLeafCount": 18,
+    "finalArtifactFileCount": 20
+  },
+  "promotionContract": {
+    "reviewerAuthorizationRequired": true,
+    "operation": "apply",
+    "expectedEnvironment": "production",
+    "quarantineAllowedOnSuccessfulChain": false
+  },
+  "recoveryContract": {
+    "postPromotionPitrObservationRequired": true,
+    "logicalBackupRequired": true,
+    "operationalOffsiteCopyRequired": true,
+    "independentLogicalWormRetrievalRequired": true,
+    "independentPrivateRecoveryBundleWormRetrievalRequired": true,
+    "privateStorageCaptureRequired": true,
+    "operationalCopyRetrievalRequired": true,
+    "disposableLogicalRestoreRequired": true,
+    "disposablePrivateStorageRestoreRequired": true,
+    "candidateTargetRoleAndSourceIdentityBindingRequired": true,
+    "nonzeroDeletionReplayRequired": true,
+    "idempotentSecondDeletionReplayRequired": true,
+    "compiledApplicationSmokeRequired": true,
+    "authenticatedPrivacyBoundaryRequired": true,
+    "crossProjectTokenParserLocalProofRequired": true,
+    "exactRestoredStoragePurgeRequired": true,
+    "maximumRpoSeconds": 3600,
+    "maximumRtoSeconds": 14400
+  },
+  "cleanupContract": {
+    "separateNoninteractiveEnvironment": "production-promotion-recovery-cleanup",
+    "signedAuthoritiesBindExactGithubRunId": true,
+    "railwayAndSupabaseStepsIndependentAlways": true,
+    "railwayTargetAbsenceRequired": true,
+    "supabaseTargetAbsenceRequired": true,
+    "orderlySupabaseCleanupRequiredForGreen": true,
+    "purgeReceiptBindingRequiredForGreen": true,
+    "emergencyCleanupMayFinalizeGreen": false,
+    "forceCancelAllowedBeforeIndependentAbsence": false
+  },
+  "reviewContract": {
+    "authorityVersion": 2,
+    "signedApprovalsRequired": 2,
+    "distinctReviewerIdsRequired": true,
+    "distinctEd25519KeysRequired": true,
+    "approvalsAfterFinalActivationRequired": true,
+    "activationReceiptBindingRequired": true,
+    "maximumApprovalAgeSeconds": 21600
+  },
+  "evidence": {
+    "currentUidMode0600RegularSingleLinkFilesRequired": true,
+    "canonicalJsonRequired": true,
+    "exactExternalSha256PinsRequired": true,
+    "selfHashedReceiptRequired": true,
+    "secretMaterialAllowedInReceipt": false,
+    "retentionDays": 90
+  }
+}

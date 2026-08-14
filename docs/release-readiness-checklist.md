@@ -4,28 +4,40 @@ This checklist adapts the external Pint Path test-pack assumptions to this repos
 
 ## Railway mutation boundary (document-wide stop)
 
-Every instruction below that would create a Railway one-shot deployment,
-release, redeploy, restart, variable update, or recovery mutation remains
-non-executable until `readiness:railway:mutation-boundary` passes and the
-separately reviewed one-operation executor owns the exact write plus its
-unconditional postflight. The standalone boundary and sealed-variable checks
-are read-only evidence, not mutation authority. If the executor or any required
-authority is unavailable, leave Railway unchanged; never substitute dashboard
-**Deploy**, Git autodeploy, `railway run`, or an ad-hoc CLI/API command.
+The repository now has protected, one-operation workflows for application
+source upload, reviewed runtime/provider variables, the permanent-staging
+Supabase cutover and Postgres build canary, bounded staging/production scale,
+Postgres HA/PITR enable-and-verify, exact disposable-restore teardown, the
+four-job post-promotion recovery activation, and the one canonical production
+`pintpath.au` close/open state machine.
+Each is executable only after its own protected approval, exact current-`main`
+authority, and immediate `readiness:railway:mutation-boundary` preflight; its
+tracked executor owns one exact write and unconditional postflight. The
+standalone boundary and sealed-variable checks remain read-only evidence, not
+mutation authority. Any other route/domain mutation, arbitrary service/resource/volume
+changes, Railway-native restart/redeploy/rollback, and every unlisted mutation
+remain non-executable. If the matching executor or any required authority is
+unavailable, leave Railway unchanged; never substitute dashboard **Deploy**,
+Git autodeploy, `railway run`, or an ad-hoc CLI/API command.
 
 ## Automated Local Gates
 
 Run before any release candidate:
 
 ```bash
-npm run build
-npm test
+npm run check
 npm run readiness:providers
-npm run test:release:pintpath
+npm run release:evidence
+npm run security:audit
 git diff --check
 ```
 
-The `test:release:pintpath` script runs the full build/test/security gate, validates production-provider configuration, requires every external release-evidence item to be complete, and runs `npm audit --audit-level=high`. Use the ordinary `npm run check` gate during local development; the strict release command is expected to fail until provider and human sign-off evidence is genuinely complete.
+These pre-candidate commands run the build/test/security/deployment checks,
+production-provider validation, non-strict evidence report, and dependency
+audit. Pending live/provider/App Review items must remain visibly pending.
+Reserve `npm run test:release:pintpath`, which includes
+`release:evidence:strict`, for the final protected evidence gate after the exact
+deployment and every required provider and human sign-off exist.
 
 After each protected provider environment is configured, run this inside its
 deployed service or a Railway one-shot deployment:
@@ -87,16 +99,60 @@ GitHub keeps these two signals deliberately separate:
 
 The informational evidence command exits successfully when the evidence file is structurally valid, but its JSON keeps `launchReady: false` until every required sign-off passes. Its `incomplete` array names the accountable owner and exact next action for every open gate. Only the strict command is a launch gate.
 
+Production rollout evidence is ordered rather than a set of same-SHA names.
+The verifier binds exact successful attempt-one workflow runs,
+start/completion timestamps, artifact IDs, immutable GitHub SHA-256 digests,
+sizes, producer checks, and canonical receipts for deploy→two-replica
+convergence→route close→protected recovery activation→promotion/recovery
+attestation→route open. Each predecessor must complete before its consumer
+starts; all six rollout
+stages share `pintpath-production-rollout` with `cancel-in-progress: false`. A later
+close/open pair cannot repair an earlier out-of-order or one-replica release.
+
+The activation contract is policy v2 SHA-256
+`57f66c1c9dde912586ec510e37c28cc3dfea2c098e67c78edbea189c7dcc9988`.
+It runs `production-capture` on the JIT `pintpath-production-backup` label,
+`disposable-recover` on the separate JIT `pintpath-disposable-recovery` label,
+an independent `if: always()` cleanup job, then `finalize`. PITR is observed in
+capture. Logical and private recovery-bundle WORM objects are read separately
+on the disposable network. The exact compiled candidate runs as a local child
+there against disposable Postgres, Redis, Supabase Auth, and private Storage.
+No raw recovery byte crosses a GitHub artifact. Require exactly 18 evidence
+leaves and exactly 20 final activation files.
+
+Before approving capture, dispatch and hold the protected activation, record
+its assigned `GITHUB_RUN_ID`, then create, sign, independently verify, and
+install the singleton emergency arm plus both exact-run teardown authorities
+in the non-interactive cleanup environment, then publish the arm through the
+protected manager's dedicated-ref compare-and-swap. An OPEN state mechanically
+rejects a second run; same-target linked renewal prevents expiry from stranding
+cleanup. Both provider cleanup steps remain independent. Supabase
+`cleanupMode=orderly` must bind the exact Storage purge receipt for green;
+emergency cleanup never greens the chain. Use standard cancel only, and forbid
+force-cancel until independent observations prove Railway and Supabase absent.
+The completion/15-minute/manual watchdog retries outside the activation run
+while the state is OPEN and cannot green activation. It persists exact delete
+acknowledgements across runs but requires a fresh absence proof before
+reconciliation. Railway workspace absence without an
+exact delete acknowledgement is transfer-ambiguous; keep ARMED and reconcile
+provider-global state.
+Create the version-2 authority and both distinct approvals only after final
+activation. Its `recoveryStartedAt` is immutably copied from the GitHub
+activation workflow's `run_started_at`, never a reviewer-selected timestamp.
+
 Release-evidence schema v3 binds every completed gate to one immutable production release ID and frozen 40-character candidate SHA and requires the SHA-256 of a gate-specific private manifest. The informational command reports stale live proof and code/worktree drift with `evidenceCurrent: false`; the strict gate refuses it. Future timestamps and structurally unsupported proof are invalid in both modes. This does not make human evidence automatic; it prevents a note, old timestamp, or unrelated commit from being mistaken for durable launch proof.
 
-The thirteenth item, `permanent_staging_cost`, additionally requires a fresh
-provider-observed permanent-staging-only recurring upper-bound receipt for the
-same frozen candidate. It covers complete Railway, staging Supabase, and
-staging external-provider inventories/caps; uses ceiling-rounded integer USD
-cents; fails for any unknown, unpriced, shared, or unbounded resource; and must
-total at most `5000` cents. Production operational-copy and disposable-restore
-spend remain separate. The checked-in cost policy/evaluator is scaffold-only,
-so no current receipt can close this gate.
+The thirteenth item, `permanent_staging_cost`, additionally requires the active
+v2 binder's fresh combined receipt for the same frozen candidate. It binds
+separate pre/post read-only provider exports; covers complete Railway, staging
+Supabase, and staging external-provider inventories/caps; uses ceiling-rounded
+integer USD cents; fails for any unknown, unpriced, shared, or unbounded
+resource; and limits each phase to `4700` cents with `300` cents explicit
+headroom below the `5000`-cent ceiling. Production operational-copy and
+disposable-restore spend remain under distinct hashed authorities. The binder
+does not collect provider state or authorize deployment; follow
+`permanent-staging-cost-evidence.md` and keep this external gate pending until
+authentic observations and independent approval exist.
 
 Use the [external launch evidence checklist](external-launch-signoffs.md) for the ordered owner, command, pass/fail, stop-condition, and evidence checklist for all 13 required IDs.
 
@@ -187,21 +243,25 @@ These are launch-critical but require provider/staging verification:
 
 - **Railway sealed-variable closure:** Complete private-auth rotation first,
   capture a passing deployed permanent-staging strict-readiness receipt, seal
-  only the 13 populated policy rows, capture the passing external metadata
+  only the 16 populated policy rows, capture the passing external metadata
   receipt, then capture a fresh deployed post-seal strict-readiness receipt.
   Missing/extra/shared-shadow rows, reference drift, an unsealed row, or use of
   `railway run` keeps this blocker open.
 - **Railway mutation boundary:** Keep production and staging staged patches
   empty, disable Git autodeploy, replace mutable production database image
-  authority with an independently approved immutable source, and implement the
-  tracked preflight/write/finally-postflight executor. The standalone
-  read-only receipt cannot close this blocker by itself.
-- **Permanent-staging cost ceiling:** Implement and independently review the
-  read-only provider collector and observation binder, deliberately version the
-  current scaffold-only cost policy, then capture a fresh candidate-bound
-  receipt proving the permanent-staging-only recurring upper bound is no more
-  than `5000` integer USD cents. Any missing Railway/Supabase/external-provider
-  row or unknown, unpriced, shared, or unbounded resource keeps launch blocked.
+  authority with an independently approved immutable source, then use only the
+  exact protected workflow implemented for the requested operation. The
+  standalone read-only receipt cannot close this blocker or authorize an
+  unlisted mutation by itself.
+- **Permanent-staging cost ceiling:** Authorized finance/infra operators capture
+  complete canonical pre/post read-only provider observations out of band, and a
+  second verifier binds their exact hashes in the private manifest. Run the
+  active credential-free binder to create the single combined version-2 receipt
+  for the frozen candidate. It must prove at most `4700` integer USD cents
+  observed across both phases and at least `300` cents headroom below the
+  `5000`-cent ceiling. Any missing Railway/Supabase/external-provider row or
+  unknown, unpriced, shared, or unbounded resource keeps launch blocked. The
+  receipt is a post-deployment release gate and cannot authorize deployment.
 - **Supabase OAuth:** Google provider credentials, web redirect URLs, the provider callback, and email-confirmation behavior must be verified. Supabase should allow `https://pintpath.au/auth/callback`; the Google console should allow the callback derived from `SUPABASE_URL`, for example `https://auth.pintpath.au/auth/v1/callback`. Set `SUPABASE_OAUTH_PROVIDERS=google` and prove Apple is disabled. The first-release iOS app is email/password only, declares no custom URL scheme, and uses the HTTPS callback for email confirmation/password recovery.
 - **Supabase Auth security:** Enable leaked-password protection before public launch.
 - **Supabase live access audit:** Apply the final Data API retirement migration, then prove live that `anon` and `authenticated` have zero privileges on public tables, sequences, RPCs, and private helpers. RLS remains defence in depth; only the Express service, using its server-only service role, may access application data. Local SQL parsing is not a substitute for live privilege and denial proof.
@@ -226,10 +286,16 @@ These are launch-critical but require provider/staging verification:
 - **Redis rate limiting:** Full-scale production and permanent integrated staging must use `REDIS_URL`, a distinct environment namespace, and `REQUIRE_REDIS_RATE_LIMITING=true`; in-memory fallback is preview/local only. Run the two-replica staging outage drill so protected traffic and readiness fail closed when staging Redis is unavailable.
 - **DAST/mobile E2E:** Do not run dynamic scanners against production. Run any ZAP/Lighthouse/Playwright mobile pass only against local, preview, or staging.
 - **Backups/restore:** Before full-scale launch, capture Postgres PITR plus
-  logical, private Storage/evidence, and deletion-tombstone exports into the
-  separately administered WORM authority. Retrieve and restore the exact set
-  into newly created ephemeral destructive restore staging, prove RPO/RTO and
-  application invariants, then destroy every recorded disposable resource.
+  logical, private Storage/evidence, and deletion-tombstone exports into their
+  separately administered WORM authorities. Retrieve the logical and private
+  WORM sets independently into newly created ephemeral destructive restore
+  staging, restore them, replay deletion twice, and run the compiled candidate
+  locally on the exact disposable private network. Prove RPO from the captured
+  recovery point and RTO from immutable GitHub activation `run_started_at` to
+  application readiness. Purge restored Storage, require orderly Supabase
+  cleanup, and retain independent Railway/Supabase absence terminals before
+  finalization. The checked-in path is not live evidence; any missing authentic
+  provider receipt remains a launch no-go.
 
 ## Manual Staging Smoke
 

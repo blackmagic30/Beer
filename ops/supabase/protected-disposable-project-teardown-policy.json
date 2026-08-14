@@ -1,0 +1,65 @@
+{
+  "schemaVersion": "pintpath-protected-disposable-supabase-project-teardown-policy/v2",
+  "policyId": "pintpath-disposable-supabase-project-teardown",
+  "activationState": "GITHUB_ENVIRONMENT_PROTECTED",
+  "githubEnvironment": "production-promotion-recovery-cleanup",
+  "repository": "blackmagic30/Beer",
+  "activationWorkflowPath": ".github/workflows/activate-production-promotion-recovery.yml",
+  "emergencyCleanupWorkflowPath": ".github/workflows/reconcile-production-promotion-recovery-emergency-cleanup.yml",
+  "requiredGitRef": "refs/heads/main",
+  "requiredRunAttempt": 1,
+  "targetContract": {
+    "signedTeardownAuthorityRequired": true,
+    "restoreAuthorityAccepted": false,
+    "projectRefLength": 20,
+    "projectNamePrefix": "pintpath-disposable-restore-",
+    "organizationScopedPaginationRequired": true,
+    "signedAuthorityRepositoryWorkflowRefAttemptAndActivationRunIdRequired": true,
+    "signedEmergencyCleanupArmAuthoritySha256Required": true,
+    "forbiddenProjectRefs": [
+      "bbfibbadwjxzrcdncavy",
+      "hfbmhdxrwtihukmixxta",
+      "jxpubqlmqnnqwadmjgyk"
+    ],
+    "railwayProjectAndEnvironmentBindingRequired": true
+  },
+  "executionContract": {
+    "observedCleanupRunIdRecorded": true,
+    "activationRunCleanupRequiresSameRunId": true,
+    "emergencyControllerMayUseDistinctRunId": true,
+    "emergencyControllerRequiresArmedAuthority": true,
+    "emergencyControllerRequiresEmergencyMode": true,
+    "emergencyControllerReceiptsAcceptedForGreenActivation": false,
+    "requiredRunAttempt": 1,
+    "allowedEmergencyEvents": ["schedule", "workflow_dispatch", "workflow_run"]
+  },
+  "providerContract": {
+    "origin": "https://api.supabase.com",
+    "inventoryMethod": "GET",
+    "inventoryPath": "/v1/organizations/{slug}/projects",
+    "inventoryPageSize": 100,
+    "directProjectReadMethod": "GET",
+    "directProjectReadPath": "/v1/projects/{ref}",
+    "directProjectAbsentStatus": 404,
+    "directPreflightAndPrewriteReassertionRequired": true,
+    "consecutiveDirectPostflightAbsenceReadsRequired": 2,
+    "deleteMethod": "DELETE",
+    "deletePath": "/v1/projects/{ref}",
+    "maximumDeleteAttempts": 1,
+    "automaticRetriesAllowed": false,
+    "unconditionalReadReconciliationRequired": true,
+    "ambiguousOutcomeAction": "READ_ONLY_RECONCILIATION_STOP_NO_RETRY"
+  },
+  "credentials": {
+    "separateReadAndDeleteTokensRequired": true,
+    "exactFileMode": "0600",
+    "readPermissions": ["organization_projects_read", "project_admin_read"],
+    "deletePermission": "project_admin_write"
+  },
+  "evidence": {
+    "durableIntentRequiredBeforeDelete": true,
+    "terminalEvidenceRequired": true,
+    "providerCredentialsAllowed": false,
+    "secretDerivedCommitmentsAllowed": false
+  }
+}

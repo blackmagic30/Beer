@@ -1,0 +1,75 @@
+name: Configure one Pint Path runtime variable
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Exact 40-character SHA currently at main
+        required: true
+        type: string
+      target:
+        description: Exact protected Railway environment
+        required: true
+        type: choice
+        options:
+          - permanent-staging
+          - production
+      variable_name:
+        description: Exact reviewed runtime variable
+        required: true
+        type: choice
+        options:
+          - DATABASE_URL
+          - DATABASE_MAINTENANCE_URL
+          - PINTPATH_POSTGRES_ROOT_CA_PEM
+          - PINTPATH_POSTGRES_ROOT_CA_DER_SHA256
+          - GOOGLE_MAPS_API_KEY
+          - GOOGLE_MAPS_MAP_ID
+          - GOOGLE_PLACES_API_KEY
+          - OPENAI_API_KEY
+          - SUPABASE_URL
+          - SUPABASE_ANON_KEY
+          - SUPABASE_SERVICE_ROLE_KEY
+          - REDIS_URL
+          - RESEND_TRANSACTIONAL_API_KEY
+          - RESEND_WEBHOOK_SIGNING_SECRET
+          - SOURCE_EVIDENCE_SIGNING_SECRET
+          - ACCOUNT_DELETION_NOTICE_KEYRING_JSON
+      confirmation:
+        description: UPSERT_<VARIABLE>_IN_<TARGET_WITH_UNDERSCORES>
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pintpath-runtime-variable-${{ inputs.target }}-${{ inputs.variable_name }}
+  cancel-in-progress: false
+
+jobs:
+  configure-staging:
+    if: inputs.target == 'permanent-staging'
+    name: Configure permanent staging
+    uses: ./.github/workflows/runtime-variable-worker.yml
+    with:
+      candidate_sha: ${{ inputs.candidate_sha }}
+      target: permanent-staging
+      variable_name: ${{ inputs.variable_name }}
+      confirmation: ${{ inputs.confirmation }}
+      protected_environment: permanent-staging-provider-mutation
+      value_secret_name: ${{ format('PINTPATH_STAGING_{0}', inputs.variable_name) }}
+    secrets: inherit
+
+  configure-production:
+    if: inputs.target == 'production'
+    name: Configure production
+    uses: ./.github/workflows/runtime-variable-worker.yml
+    with:
+      candidate_sha: ${{ inputs.candidate_sha }}
+      target: production
+      variable_name: ${{ inputs.variable_name }}
+      confirmation: ${{ inputs.confirmation }}
+      protected_environment: production-runtime-configuration
+      value_secret_name: ${{ format('PINTPATH_PRODUCTION_{0}', inputs.variable_name) }}
+    secrets: inherit

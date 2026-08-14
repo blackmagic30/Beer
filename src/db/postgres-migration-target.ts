@@ -3,20 +3,46 @@ import fs from "node:fs";
 import path from "node:path";
 
 import BetterSqlite3 from "better-sqlite3";
-import { Client, type QueryResultRow } from "pg";
+import { Client, type ClientConfig, type QueryResultRow } from "pg";
 
 import { POSTGRES_MIGRATION_CONTRACT } from "./postgres-migration-contract.js";
+import {
+  POSTGRES_MIGRATION_EXPECTED_LIVE_SCHEMA_OBJECT_COUNT,
+  POSTGRES_MIGRATION_EXPECTED_LIVE_SCHEMA_SHA256,
+  inspectPostgresMigrationLiveSchema,
+  type PostgresMigrationLiveSchemaInspection,
+} from "./postgres-migration-live-schema.js";
 import { readPostgresMigrationLedgerAuthority } from "./postgres-migration-ledger.js";
 import {
   buildPostgresMigrationReadyMetadata,
   derivePostgresMigrationRunId,
+  finalizePostgresMigrationApplyReceipt,
   finalizePostgresMigrationReceipt,
   sha256PostgresMigrationRunBinding,
   sha256PostgresMigrationReadyMetadata,
   sha256PostgresMigrationTargetIdentity,
+  sha256PostgresMigrationTransportAuthority,
+  verifyPostgresMigrationVerificationApproval,
+  type PostgresMigrationApplyReceipt,
+  type PostgresMigrationVerificationApproval,
   type PostgresMigrationReadyMetadata,
+  type PostgresMigrationTargetIdentity,
   type PostgresMigrationReceipt as CanonicalPostgresMigrationReceipt,
 } from "./postgres-migration-receipt.js";
+import {
+  POSTGRES_MIGRATION_ADVISORY_LOCK_KEY,
+  POSTGRES_MIGRATION_VERIFIER_AUTHORITY_POLICY_SHA256,
+  POSTGRES_MIGRATION_VERIFIER_AUTHORITY_ROLE,
+  postgresMigrationVerifierAuthoritySchema,
+  type PostgresMigrationVerifierAuthority,
+} from "./postgres-migration-verifier-authority.js";
+import {
+  POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+  checkPostgresRailwayStockLocalhostServerIdentity,
+  openPostgresRailwayStockLocalhostCaTransport,
+  parsePostgresRailwayStockLocalhostCaUrl,
+  type PostgresRailwayStockLocalhostCaTransport,
+} from "../lib/postgres-railway-stock-localhost-ca.js";
 import {
   inspectPostgresMigrationSchema,
   serializeCanonicalPostgresMigrationJson,
@@ -32,6 +58,7 @@ import {
   POSTGRES_MIGRATION_SNAPSHOT_DATABASE_FILE,
   PostgresMigrationSourceError,
   postgresMigrationSourceInternals,
+  verifyPostgresMigrationSnapshotEvidence,
   type PostgresMigrationPlan,
   type PostgresMigrationPlanChunk,
   type PostgresMigrationPlanTable,
@@ -42,7 +69,7 @@ const APPLICATION_SCHEMA = "pintpath_app";
 const OPERATIONS_SCHEMA = "pintpath_ops";
 const MIGRATOR_ROLE = "pintpath_migrator";
 const RUNTIME_ROLE = "pintpath_runtime";
-const MIGRATION_LOCK_KEY = "721426590137322906";
+const MIGRATION_LOCK_KEY = POSTGRES_MIGRATION_ADVISORY_LOCK_KEY;
 const MAX_INSERT_PARAMETERS = 60_000;
 const MAX_KEY_PARAMETERS = 20_000;
 const MAX_ARTIFACT_BYTES = 128 * 1024 * 1024;
@@ -116,9 +143,13 @@ export function safePostgresMigrationTargetFailure(error: unknown): SafePostgres
 export type PostgresMigrationEnvironment = "permanent-staging" | "production";
 
 export interface PostgresMigrationTargetInspection {
+  readonly targetIdentity: PostgresMigrationTargetIdentity;
   readonly targetIdentitySha256: string;
   readonly targetUrlSha256: string;
+  readonly transportAuthoritySha256: string;
   readonly targetDdlSha256: string;
+  readonly liveSchemaSha256: string;
+  readonly liveSchemaObjectCount: number;
   readonly tableCount: number;
   readonly columnCount: number;
   readonly foreignKeyCount: number;
@@ -135,12 +166,29 @@ export interface PostgresMigrationTargetInput {
   readonly expectedTargetDdlSha256: string;
   readonly targetUrl: string;
   readonly expectedTargetUrlSha256: string;
+  readonly rootCaFile: string;
+  readonly expectedRootCaDerSha256: string;
+  readonly expectedTransportAuthoritySha256: string;
   readonly expectedTargetIdentitySha256: string;
   readonly expectedEnvironment: PostgresMigrationEnvironment;
   readonly candidateSha: string;
   readonly approvalReference: string;
   readonly operatorId: string;
-  readonly verifierId: string;
+}
+
+export interface PostgresMigrationVerificationAuthority {
+  readonly applyReceipt: PostgresMigrationApplyReceipt;
+  readonly applyReceiptFileSha256: string;
+  readonly expectedApplyReceiptFileSha256: string;
+  readonly approval: unknown;
+  readonly approvalFileSha256: string;
+  readonly expectedApprovalFileSha256: string;
+  readonly verifierPublicKeyBytes: Buffer;
+  readonly now: Date;
+}
+
+export interface PostgresMigrationVerifyInput extends PostgresMigrationTargetInput {
+  readonly verificationAuthority: PostgresMigrationVerificationAuthority;
 }
 
 export interface PostgresMigrationTargetQueryResult<Row extends QueryResultRow = QueryResultRow> {
@@ -153,6 +201,12 @@ export interface PostgresMigrationTargetConnection {
     text: string,
     values?: readonly unknown[],
   ): Promise<PostgresMigrationTargetQueryResult<Row>>;
+}
+
+export interface PostgresMigrationTargetDependencies {
+  readonly inspectLiveSchema?: (
+    connection: PostgresMigrationTargetConnection,
+  ) => Promise<PostgresMigrationLiveSchemaInspection>;
 }
 
 interface CloseableTargetConnection extends PostgresMigrationTargetConnection {
@@ -179,6 +233,26 @@ type TargetIdentityRow = QueryResultRow & {
   currentSuperuser: boolean;
   sessionBypassRls: boolean;
   currentBypassRls: boolean;
+  activeRoleExact: boolean;
+  loginAttributesSafe: boolean;
+  loginMembershipExact: boolean;
+  migratorRoleSafe: boolean;
+  migratorRoleParentsAbsent: boolean;
+  migratorRoleChildrenExact: boolean;
+  loginRoleChildrenAbsent: boolean;
+  roleSettingsAbsent: boolean;
+  databaseAuthorityExact: boolean;
+  migratorDatabaseAuthorityExact: boolean;
+  migratorSchemaAuthorityExact: boolean;
+  migratorTableAuthorityExact: boolean;
+  migratorColumnPrivilegesAbsent: boolean;
+  migratorRoutinePrivilegesAbsent: boolean;
+  migratorSequencePrivilegesAbsent: boolean;
+  unsafeDirectLoginAclAbsent: boolean;
+  unsafeDirectMigratorAclAbsent: boolean;
+  roleOwnershipAbsent: boolean;
+  defaultPrivilegesAbsent: boolean;
+  verifierAuthorityRoleBoundaryExact: boolean;
   migratorMember: boolean;
   runtimeMember: boolean;
   applicationSchemaUsage: boolean;
@@ -229,6 +303,16 @@ type TargetForeignKeyRow = QueryResultRow & {
 type MetadataRow = QueryResultRow & { key: string; value: string };
 type TableCountRow = QueryResultRow & { tableName: string; rowCount: string };
 type AdvisoryLockRow = QueryResultRow & { acquired: boolean };
+type VerifierAuthorityRow = QueryResultRow & {
+  expectedEnvironment: string;
+  candidateSha: string;
+  operatorIdSha256: string;
+  verifierIdSha256: string;
+  verifierPublicKeySha256: string;
+  authorityPolicySha256: string;
+  authoritySha256: string;
+  installedAt: Date | string;
+};
 
 type MigrationRunRow = QueryResultRow & {
   runId: string;
@@ -265,11 +349,16 @@ type TargetContext = {
   readonly planSha256: string;
   readonly targetDdlSha256: string;
   readonly targetUrlSha256: string;
+  readonly transportAuthoritySha256: string;
   readonly targetIdentitySha256: string;
+  readonly liveSchemaSha256: string;
   readonly contractSha256: string;
   readonly approvalReferenceSha256: string;
   readonly operatorIdSha256: string;
   readonly verifierIdSha256: string;
+  readonly verifierAuthoritySha256: string;
+  readonly verifierAuthorityPolicySha256: string;
+  readonly verifierPublicKeySha256: string;
   readonly targetBindingSha256: string;
   readonly runId: string;
   readonly expectedEnvironment: PostgresMigrationEnvironment;
@@ -321,11 +410,16 @@ function normalizeCandidateSha(value: string): string {
 }
 
 function identitySha256(value: string, label: string): string {
+  const normalized = normalizeIdentityReference(value);
+  return sha256PostgresMigrationBytes(`${label}\0${normalized}`);
+}
+
+function normalizeIdentityReference(value: string): string {
   const normalized = value.trim().replace(/\s+/g, " ");
   if (normalized.length < 3 || normalized.length > 160 || /[\r\n\0]/.test(normalized)) {
     throw targetError("ARGUMENT_INVALID");
   }
-  return sha256PostgresMigrationBytes(`${label}\0${normalized}`);
+  return normalized;
 }
 
 function assertCanonicalAbsoluteFile(filePath: string): void {
@@ -598,81 +692,167 @@ function normalizePlan(value: unknown): PostgresMigrationPlan {
   return normalized;
 }
 
-function validateTargetUrl(value: string): { readonly digest: string; readonly clientUrl: string } {
-  if (value.length < 1 || value.length > 4096 || /[\r\n\0]/.test(value)) throw targetError("ARGUMENT_INVALID");
-  let url: URL;
+function validateTargetUrl(value: string): {
+  readonly database: string;
+  readonly digest: string;
+  readonly password: string;
+  readonly sourceUrlAuthority: { readonly hostname: string; readonly port: 5432 };
+  readonly user: string;
+} {
   try {
-    url = new URL(value);
+    const validated = parsePostgresRailwayStockLocalhostCaUrl(value);
+    const parsed = new URL(validated.connectionString);
+    const user = decodeURIComponent(parsed.username);
+    const password = decodeURIComponent(parsed.password);
+    const database = decodeURIComponent(parsed.pathname.slice(1));
+    if (
+      user.length < 1
+      || user.length > 128
+      || password.length < 1
+      || password.length > 4096
+      || database.length < 1
+      || database.length > 128
+      || /[\u0000\r\n]/.test(user)
+      || /[\u0000\r\n]/.test(password)
+      || /[\u0000\r\n/]/.test(database)
+    ) throw new Error("unsafe_decoded_url");
+    return {
+      database,
+      digest: sha256PostgresMigrationBytes(value),
+      password,
+      sourceUrlAuthority: {
+        hostname: validated.sourceUrlAuthority.hostname,
+        port: 5432 as const,
+      },
+      user,
+    };
+  } catch {
+    throw targetError("TARGET_UNSAFE");
+  }
+}
+
+function transportAuthoritySha256(input: {
+  readonly targetUrl: string;
+  readonly expectedRootCaDerSha256: string;
+}): string {
+  const validated = validateTargetUrl(input.targetUrl);
+  try {
+    return sha256PostgresMigrationTransportAuthority({
+      expectedRootCaDerSha256: input.expectedRootCaDerSha256,
+      profile: POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+      sourceUrlAuthority: validated.sourceUrlAuthority,
+    });
   } catch {
     throw targetError("ARGUMENT_INVALID");
   }
-  if (
-    !["postgres:", "postgresql:"].includes(url.protocol)
-    || !url.username
-    || !url.password
-    || !url.hostname
-    || !url.pathname
-    || url.pathname === "/"
-    || url.hash
-  ) {
-    throw targetError("ARGUMENT_INVALID");
-  }
-  const sslModes = url.searchParams.getAll("sslmode");
-  if (sslModes.length !== 1 || !["require", "verify-ca", "verify-full"].includes(sslModes[0]!)) {
+}
+
+interface DirectPostgresMigrationDependencies {
+  readonly createPgClient: (config: ClientConfig) => Client;
+  readonly getUid: () => number | null;
+  readonly getEuid: () => number | null;
+  readonly openTransport: typeof openPostgresRailwayStockLocalhostCaTransport;
+}
+
+const DIRECT_POSTGRES_MIGRATION_DEPENDENCIES: DirectPostgresMigrationDependencies = {
+  createPgClient: (config) => new Client(config),
+  getUid: () => process.getuid?.() ?? null,
+  getEuid: () => process.geteuid?.() ?? null,
+  openTransport: openPostgresRailwayStockLocalhostCaTransport,
+};
+
+function currentEffectiveUid(
+  dependencies: DirectPostgresMigrationDependencies,
+): number {
+  const uid = dependencies.getUid();
+  const euid = dependencies.getEuid();
+  if (uid === null || euid === null || uid !== euid || !Number.isSafeInteger(uid) || uid < 0) {
     throw targetError("TARGET_UNSAFE");
   }
-  const libpqCompatibilityFlags = url.searchParams.getAll("uselibpqcompat");
+  return uid;
+}
+
+function assertExactTransport(
+  transport: PostgresRailwayStockLocalhostCaTransport,
+  input: {
+    readonly expectedRootCaDerSha256: string;
+    readonly sourceUrlAuthority: { readonly hostname: string; readonly port: number };
+  },
+): void {
   if (
-    libpqCompatibilityFlags.length > 1
-    || (libpqCompatibilityFlags.length === 1 && libpqCompatibilityFlags[0] !== "true")
-  ) {
-    throw targetError("TARGET_UNSAFE");
-  }
-  const sslRootCertificates = url.searchParams.getAll("sslrootcert");
-  if (
-    sslRootCertificates.length > 1
-    || (sslRootCertificates.length === 1 && !sslRootCertificates[0]!.trim())
-    || (sslModes[0] === "verify-ca" && sslRootCertificates.length !== 1)
-  ) {
-    throw targetError("TARGET_UNSAFE");
-  }
-  if (
-    url.hostname.toLowerCase().includes("pooler")
-    || url.port === "6543"
-  ) {
-    throw targetError("TARGET_UNSAFE");
-  }
-  // pg-connection-string 2.x otherwise aliases require and verify-ca to
-  // verify-full and lets the parsed URL replace an explicit Client.ssl value.
-  // Normalize only the private client copy; evidence remains bound to the
-  // exact operator-supplied bytes above.
-  url.searchParams.set("uselibpqcompat", "true");
-  return { digest: sha256PostgresMigrationBytes(value), clientUrl: url.toString() };
+    transport.profile !== POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE
+    || transport.rootCaDerSha256 !== input.expectedRootCaDerSha256
+    || transport.sourceUrlAuthority.hostname !== input.sourceUrlAuthority.hostname
+    || transport.sourceUrlAuthority.port !== input.sourceUrlAuthority.port
+    || transport.resolvedAddress !== transport.nodeConnection.host
+    || !transport.resolvedAddress.toLowerCase().startsWith("fd12:")
+    || transport.nodeConnection.port !== 5432
+    || transport.nodeConnection.ssl.servername !== "localhost"
+    || transport.nodeConnection.ssl.rejectUnauthorized !== true
+    || transport.nodeConnection.ssl.minVersion !== "TLSv1.2"
+    || transport.nodeConnection.ssl.checkServerIdentity
+      !== checkPostgresRailwayStockLocalhostServerIdentity
+  ) throw targetError("TARGET_UNSAFE");
 }
 
 class DirectPostgresMigrationConnection implements CloseableTargetConnection {
-  private constructor(private readonly client: Client) {}
+  private constructor(
+    private readonly client: Client,
+    private readonly transport: PostgresRailwayStockLocalhostCaTransport,
+  ) {}
 
-  static async connect(targetUrl: string): Promise<DirectPostgresMigrationConnection> {
-    const validated = validateTargetUrl(targetUrl);
+  static async connect(input: {
+    readonly targetUrl: string;
+    readonly rootCaFile: string;
+    readonly expectedRootCaDerSha256: string;
+  }, dependencies: DirectPostgresMigrationDependencies =
+  DIRECT_POSTGRES_MIGRATION_DEPENDENCIES): Promise<DirectPostgresMigrationConnection> {
+    const validated = validateTargetUrl(input.targetUrl);
+    const uid = currentEffectiveUid(dependencies);
+    let transport: PostgresRailwayStockLocalhostCaTransport | null = null;
     let client: Client | null = null;
     try {
-      client = new Client({
-        connectionString: validated.clientUrl,
+      transport = await dependencies.openTransport({
+        profile: POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+        rootCaFile: input.rootCaFile,
+        expectedRootCaDerSha256: input.expectedRootCaDerSha256,
+        expectedUid: uid,
+        sourceUrlAuthority: validated.sourceUrlAuthority,
+      });
+      assertExactTransport(transport, {
+        expectedRootCaDerSha256: input.expectedRootCaDerSha256,
+        sourceUrlAuthority: validated.sourceUrlAuthority,
+      });
+      await transport.assertExact();
+      const config: ClientConfig = {
         application_name: "pintpath-postgres-migration",
         connectionTimeoutMillis: 10_000,
+        database: validated.database,
+        host: transport.nodeConnection.host,
+        options: `-c role=${MIGRATOR_ROLE}`,
+        password: validated.password,
+        port: transport.nodeConnection.port,
         query_timeout: 120_000,
-      });
+        ssl: transport.nodeConnection.ssl,
+        user: validated.user,
+      };
+      if (Object.hasOwn(config, "connectionString")) throw targetError("TARGET_UNSAFE");
+      client = dependencies.createPgClient(config);
       await client.connect();
+      await transport.assertExact();
       await client.query(`/* pintpath:migration:session-hardening */
         SET statement_timeout = '120s';
         SET lock_timeout = '10s';
         SET idle_in_transaction_session_timeout = '30s';
         SET search_path = ${APPLICATION_SCHEMA}, pg_catalog`);
-      return new DirectPostgresMigrationConnection(client);
+      await transport.assertExact();
+      return new DirectPostgresMigrationConnection(client, transport);
     } catch {
       if (client) {
         try { await client.end(); } catch { /* keep the safe error */ }
+      }
+      if (transport) {
+        try { await transport.close(); } catch { /* keep the safe error */ }
       }
       throw targetError("TARGET_UNSAFE");
     }
@@ -682,12 +862,18 @@ class DirectPostgresMigrationConnection implements CloseableTargetConnection {
     text: string,
     values: readonly unknown[] = [],
   ): Promise<PostgresMigrationTargetQueryResult<Row>> {
+    await this.transport.assertExact().catch(() => { throw targetError("TARGET_UNSAFE"); });
     const result = await this.client.query<Row>(text, [...values]);
+    await this.transport.assertExact().catch(() => { throw targetError("TARGET_UNSAFE"); });
     return { rows: result.rows, rowCount: result.rowCount };
   }
 
   async close(): Promise<void> {
-    try { await this.client.end(); } catch { /* connection is already unusable */ }
+    let exact = true;
+    try { await this.transport.assertExact(); } catch { exact = false; }
+    try { await this.client.end(); } catch { exact = false; }
+    try { await this.transport.close(); } catch { exact = false; }
+    if (!exact) throw targetError("TARGET_UNSAFE");
   }
 }
 
@@ -1110,7 +1296,11 @@ function expectedPostgresType(column: PostgresMigrationColumnContract): string {
 
 async function inspectTargetIdentity(
   connection: PostgresMigrationTargetConnection,
-): Promise<{ readonly digest: string; readonly row: TargetIdentityRow }> {
+): Promise<{
+  readonly digest: string;
+  readonly identity: PostgresMigrationTargetIdentity;
+  readonly row: TargetIdentityRow;
+}> {
   const result = await connection.query<TargetIdentityRow>(`/* pintpath:migration:target-identity */
     SELECT
       control.system_identifier::text AS "systemIdentifier",
@@ -1123,6 +1313,317 @@ async function inspectTargetIdentity(
       active_role.rolsuper AS "currentSuperuser",
       login_role.rolbypassrls AS "sessionBypassRls",
       active_role.rolbypassrls AS "currentBypassRls",
+      (
+        current_user = '${MIGRATOR_ROLE}'
+        AND session_user <> current_user
+      ) AS "activeRoleExact",
+      (
+        login_role.rolcanlogin
+        AND NOT login_role.rolsuper
+        AND NOT login_role.rolcreatedb
+        AND NOT login_role.rolcreaterole
+        AND NOT login_role.rolinherit
+        AND NOT login_role.rolreplication
+        AND NOT login_role.rolbypassrls
+        AND login_role.rolconnlimit = 1
+        AND login_role.rolvaliduntil > pg_catalog.clock_timestamp()
+        AND login_role.rolvaliduntil <= pg_catalog.clock_timestamp() + interval '24 hours'
+      ) AS "loginAttributesSafe",
+      COALESCE((
+        SELECT pg_catalog.count(*) = 1
+          AND pg_catalog.bool_and(
+            granted.rolname = '${MIGRATOR_ROLE}'
+            AND NOT membership.admin_option
+            AND NOT membership.inherit_option
+            AND membership.set_option
+          )
+        FROM pg_catalog.pg_auth_members AS membership
+        JOIN pg_catalog.pg_roles AS granted ON granted.oid = membership.roleid
+        WHERE membership.member = login_role.oid
+      ), false) AS "loginMembershipExact",
+      (
+        NOT active_role.rolcanlogin
+        AND NOT active_role.rolsuper
+        AND NOT active_role.rolcreatedb
+        AND NOT active_role.rolcreaterole
+        AND active_role.rolinherit
+        AND NOT active_role.rolreplication
+        AND NOT active_role.rolbypassrls
+        AND active_role.rolconnlimit = -1
+        AND active_role.rolvaliduntil IS NULL
+      ) AS "migratorRoleSafe",
+      NOT EXISTS (
+        SELECT 1
+        FROM pg_catalog.pg_auth_members AS membership
+        WHERE membership.member = active_role.oid
+      ) AS "migratorRoleParentsAbsent",
+      COALESCE((
+        SELECT pg_catalog.count(*) = 1
+          AND pg_catalog.bool_and(
+            child.oid = login_role.oid
+            AND NOT membership.admin_option
+            AND NOT membership.inherit_option
+            AND membership.set_option
+          )
+        FROM pg_catalog.pg_auth_members AS membership
+        JOIN pg_catalog.pg_roles AS child ON child.oid = membership.member
+        WHERE membership.roleid = active_role.oid
+      ), false) AS "migratorRoleChildrenExact",
+      NOT EXISTS (
+        SELECT 1
+        FROM pg_catalog.pg_auth_members AS membership
+        WHERE membership.roleid = login_role.oid
+      ) AS "loginRoleChildrenAbsent",
+      NOT EXISTS (
+        SELECT 1
+        FROM pg_catalog.pg_db_role_setting AS setting
+        WHERE setting.setrole IN (login_role.oid, active_role.oid)
+      ) AS "roleSettingsAbsent",
+      (
+        has_database_privilege(login_role.oid, database.oid, 'CONNECT')
+        AND NOT has_database_privilege(login_role.oid, database.oid, 'CREATE')
+        AND NOT has_database_privilege(login_role.oid, database.oid, 'TEMP')
+        AND COALESCE((
+          SELECT pg_catalog.count(*) = 1
+            AND pg_catalog.bool_and(
+              privilege.privilege_type = 'CONNECT'
+              AND NOT privilege.is_grantable
+            )
+          FROM LATERAL pg_catalog.aclexplode(
+            COALESCE(database.datacl, pg_catalog.acldefault('d', database.datdba))
+          ) AS privilege
+          WHERE privilege.grantee = login_role.oid
+        ), false)
+      ) AS "databaseAuthorityExact",
+      (
+        NOT has_database_privilege(active_role.oid, database.oid, 'CREATE')
+        AND NOT has_database_privilege(active_role.oid, database.oid, 'TEMP')
+        AND NOT EXISTS (
+          SELECT 1
+          FROM LATERAL pg_catalog.aclexplode(
+            COALESCE(database.datacl, pg_catalog.acldefault('d', database.datdba))
+          ) AS privilege
+          WHERE privilege.grantee = active_role.oid
+        )
+      ) AS "migratorDatabaseAuthorityExact",
+      COALESCE((
+        SELECT pg_catalog.count(*) = 2
+          AND pg_catalog.bool_and(
+            namespace.nspname IN ('${APPLICATION_SCHEMA}', '${OPERATIONS_SCHEMA}')
+            AND privilege.privilege_type = 'USAGE'
+            AND NOT privilege.is_grantable
+          )
+        FROM pg_catalog.pg_namespace AS namespace
+        CROSS JOIN LATERAL pg_catalog.aclexplode(
+          COALESCE(namespace.nspacl, pg_catalog.acldefault('n', namespace.nspowner))
+        ) AS privilege
+        WHERE privilege.grantee = active_role.oid
+      ), false) AS "migratorSchemaAuthorityExact",
+      COALESCE((
+        SELECT pg_catalog.count(*) = ${POSTGRES_MIGRATION_CONTRACT.tables.length * 2 + 9}
+          AND pg_catalog.bool_and(
+            NOT privilege.is_grantable
+            AND (
+              (
+                namespace.nspname = '${APPLICATION_SCHEMA}'
+                AND relation.relname = ANY(ARRAY[${POSTGRES_MIGRATION_CONTRACT.tables.map((table) => `'${table.name.replaceAll("'", "''")}'`).join(", ")}])
+                AND privilege.privilege_type IN ('SELECT', 'INSERT')
+              )
+              OR (
+                namespace.nspname = '${APPLICATION_SCHEMA}'
+                AND relation.relname = 'schema_metadata'
+                AND privilege.privilege_type IN ('SELECT', 'UPDATE')
+              )
+              OR (
+                namespace.nspname = '${OPERATIONS_SCHEMA}'
+                AND relation.relname IN ('migration_runs', 'migration_chunks')
+                AND privilege.privilege_type IN ('SELECT', 'INSERT', 'UPDATE')
+              )
+              OR (
+                namespace.nspname = '${OPERATIONS_SCHEMA}'
+                AND relation.relname = 'migration_verifier_authority'
+                AND privilege.privilege_type = 'SELECT'
+              )
+            )
+          )
+        FROM pg_catalog.pg_class AS relation
+        JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+        CROSS JOIN LATERAL pg_catalog.aclexplode(
+          COALESCE(relation.relacl, pg_catalog.acldefault(
+            CASE WHEN relation.relkind = 'S' THEN 'S'::"char" ELSE 'r'::"char" END,
+            relation.relowner
+          ))
+        ) AS privilege
+        WHERE privilege.grantee = active_role.oid
+          AND relation.relkind IN ('r', 'p', 'S', 'v', 'm')
+      ), false) AS "migratorTableAuthorityExact",
+      NOT EXISTS (
+        SELECT 1
+        FROM pg_catalog.pg_attribute AS attribute
+        CROSS JOIN LATERAL pg_catalog.aclexplode(attribute.attacl) AS privilege
+        WHERE attribute.attacl IS NOT NULL
+          AND privilege.grantee = active_role.oid
+      ) AS "migratorColumnPrivilegesAbsent",
+      NOT EXISTS (
+        SELECT 1
+        FROM pg_catalog.pg_proc AS routine
+        CROSS JOIN LATERAL pg_catalog.aclexplode(
+          COALESCE(routine.proacl, pg_catalog.acldefault('f', routine.proowner))
+        ) AS privilege
+        WHERE privilege.grantee = active_role.oid
+      ) AS "migratorRoutinePrivilegesAbsent",
+      NOT EXISTS (
+        SELECT 1
+        FROM pg_catalog.pg_class AS sequence
+        CROSS JOIN LATERAL pg_catalog.aclexplode(
+          COALESCE(sequence.relacl, pg_catalog.acldefault('S', sequence.relowner))
+        ) AS privilege
+        WHERE sequence.relkind = 'S'
+          AND privilege.grantee = active_role.oid
+      ) AS "migratorSequencePrivilegesAbsent",
+      NOT EXISTS (
+        SELECT 1
+        FROM pg_catalog.pg_shdepend AS dependency
+        WHERE dependency.refclassid = 'pg_catalog.pg_authid'::pg_catalog.regclass
+          AND dependency.refobjid = login_role.oid
+          AND dependency.deptype = 'a'
+          AND NOT (
+            dependency.classid = 'pg_catalog.pg_database'::pg_catalog.regclass
+            AND dependency.objid = database.oid
+          )
+      ) AS "unsafeDirectLoginAclAbsent",
+      NOT EXISTS (
+        SELECT 1
+        FROM pg_catalog.pg_shdepend AS dependency
+        WHERE dependency.refclassid = 'pg_catalog.pg_authid'::pg_catalog.regclass
+          AND dependency.refobjid = active_role.oid
+          AND dependency.deptype = 'a'
+          AND NOT (
+            dependency.dbid = database.oid
+            AND (
+              (
+                dependency.classid = 'pg_catalog.pg_namespace'::pg_catalog.regclass
+                AND dependency.objid IN (application_namespace.oid, operations_namespace.oid)
+              )
+              OR (
+                dependency.classid = 'pg_catalog.pg_class'::pg_catalog.regclass
+                AND EXISTS (
+                  SELECT 1
+                  FROM pg_catalog.pg_class AS allowed_relation
+                  WHERE allowed_relation.oid = dependency.objid
+                    AND (
+                      (
+                        allowed_relation.relnamespace = application_namespace.oid
+                        AND (
+                          allowed_relation.relname = 'schema_metadata'
+                          OR allowed_relation.relname = ANY(ARRAY[${POSTGRES_MIGRATION_CONTRACT.tables.map((table) => `'${table.name.replaceAll("'", "''")}'`).join(", ")}])
+                        )
+                      )
+                      OR (
+                        allowed_relation.relnamespace = operations_namespace.oid
+                        AND allowed_relation.relname IN (
+                          'migration_runs',
+                          'migration_chunks',
+                          'migration_verifier_authority'
+                        )
+                      )
+                    )
+                )
+              )
+            )
+          )
+      ) AS "unsafeDirectMigratorAclAbsent",
+      NOT EXISTS (
+        SELECT 1
+        FROM pg_catalog.pg_shdepend AS dependency
+        WHERE dependency.refclassid = 'pg_catalog.pg_authid'::pg_catalog.regclass
+          AND dependency.refobjid IN (login_role.oid, active_role.oid)
+          AND dependency.deptype = 'o'
+      ) AS "roleOwnershipAbsent",
+      NOT EXISTS (
+        SELECT 1
+        FROM pg_catalog.pg_default_acl AS defaults
+        WHERE defaults.defaclrole IN (login_role.oid, active_role.oid)
+      ) AS "defaultPrivilegesAbsent",
+      (
+        NOT verifier_authority_role.rolcanlogin
+        AND NOT verifier_authority_role.rolsuper
+        AND NOT verifier_authority_role.rolcreatedb
+        AND NOT verifier_authority_role.rolcreaterole
+        AND verifier_authority_role.rolinherit
+        AND NOT verifier_authority_role.rolreplication
+        AND NOT verifier_authority_role.rolbypassrls
+        AND verifier_authority_role.rolconnlimit = -1
+        AND verifier_authority_role.rolvaliduntil IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM pg_catalog.pg_auth_members AS membership
+          WHERE membership.member = verifier_authority_role.oid
+             OR membership.roleid = verifier_authority_role.oid
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM pg_catalog.pg_db_role_setting AS setting
+          WHERE setting.setrole = verifier_authority_role.oid
+        )
+        AND NOT has_database_privilege(
+          verifier_authority_role.oid, database.oid, 'CREATE'
+        )
+        AND NOT has_database_privilege(
+          verifier_authority_role.oid, database.oid, 'TEMP'
+        )
+        AND has_schema_privilege(
+          verifier_authority_role.oid, operations_namespace.oid, 'USAGE'
+        )
+        AND NOT has_schema_privilege(
+          verifier_authority_role.oid, operations_namespace.oid, 'CREATE'
+        )
+        AND NOT has_schema_privilege(
+          verifier_authority_role.oid, application_namespace.oid, 'USAGE'
+        )
+        AND COALESCE((
+          SELECT pg_catalog.count(*) = 3
+            AND pg_catalog.bool_and(
+              relation.oid = 'pintpath_ops.migration_verifier_authority'::pg_catalog.regclass
+              AND privilege.privilege_type IN ('SELECT', 'INSERT', 'UPDATE')
+              AND NOT privilege.is_grantable
+            )
+          FROM pg_catalog.pg_class AS relation
+          CROSS JOIN LATERAL pg_catalog.aclexplode(
+            COALESCE(relation.relacl, pg_catalog.acldefault('r', relation.relowner))
+          ) AS privilege
+          WHERE privilege.grantee = verifier_authority_role.oid
+        ), false)
+        AND NOT EXISTS (
+          SELECT 1 FROM pg_catalog.pg_attribute AS attribute
+          CROSS JOIN LATERAL pg_catalog.aclexplode(attribute.attacl) AS privilege
+          WHERE attribute.attacl IS NOT NULL
+            AND privilege.grantee = verifier_authority_role.oid
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM pg_catalog.pg_proc AS routine
+          CROSS JOIN LATERAL pg_catalog.aclexplode(
+            COALESCE(routine.proacl, pg_catalog.acldefault('f', routine.proowner))
+          ) AS privilege
+          WHERE privilege.grantee = verifier_authority_role.oid
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM pg_catalog.pg_class AS sequence
+          CROSS JOIN LATERAL pg_catalog.aclexplode(
+            COALESCE(sequence.relacl, pg_catalog.acldefault('S', sequence.relowner))
+          ) AS privilege
+          WHERE sequence.relkind = 'S'
+            AND privilege.grantee = verifier_authority_role.oid
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM pg_catalog.pg_shdepend AS dependency
+          WHERE dependency.refclassid = 'pg_catalog.pg_authid'::pg_catalog.regclass
+            AND dependency.refobjid = verifier_authority_role.oid
+            AND dependency.deptype = 'o'
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM pg_catalog.pg_default_acl AS defaults
+          WHERE defaults.defaclrole = verifier_authority_role.oid
+        )
+      ) AS "verifierAuthorityRoleBoundaryExact",
       COALESCE(pg_has_role(session_user, to_regrole('${MIGRATOR_ROLE}'), 'MEMBER'), false)
         AND COALESCE(pg_has_role(current_user, to_regrole('${MIGRATOR_ROLE}'), 'USAGE'), false)
         AS "migratorMember",
@@ -1151,6 +1652,8 @@ async function inspectTargetIdentity(
     CROSS JOIN pg_catalog.pg_control_system() AS control
     JOIN pg_catalog.pg_roles AS login_role ON login_role.rolname = session_user
     JOIN pg_catalog.pg_roles AS active_role ON active_role.rolname = current_user
+    JOIN pg_catalog.pg_roles AS verifier_authority_role
+      ON verifier_authority_role.rolname = '${POSTGRES_MIGRATION_VERIFIER_AUTHORITY_ROLE}'
     JOIN pg_catalog.pg_namespace AS application_namespace ON application_namespace.nspname = '${APPLICATION_SCHEMA}'
     JOIN pg_catalog.pg_namespace AS operations_namespace ON operations_namespace.nspname = '${OPERATIONS_SCHEMA}'
     WHERE database.datname = current_database()`);
@@ -1161,6 +1664,26 @@ async function inspectTargetIdentity(
     || row.currentSuperuser
     || row.sessionBypassRls
     || row.currentBypassRls
+    || !row.activeRoleExact
+    || !row.loginAttributesSafe
+    || !row.loginMembershipExact
+    || !row.migratorRoleSafe
+    || !row.migratorRoleParentsAbsent
+    || !row.migratorRoleChildrenExact
+    || !row.loginRoleChildrenAbsent
+    || !row.roleSettingsAbsent
+    || !row.databaseAuthorityExact
+    || !row.migratorDatabaseAuthorityExact
+    || !row.migratorSchemaAuthorityExact
+    || !row.migratorTableAuthorityExact
+    || !row.migratorColumnPrivilegesAbsent
+    || !row.migratorRoutinePrivilegesAbsent
+    || !row.migratorSequencePrivilegesAbsent
+    || !row.unsafeDirectLoginAclAbsent
+    || !row.unsafeDirectMigratorAclAbsent
+    || !row.roleOwnershipAbsent
+    || !row.defaultPrivilegesAbsent
+    || !row.verifierAuthorityRoleBoundaryExact
     || !row.migratorMember
     || row.runtimeMember
     || !row.applicationSchemaUsage
@@ -1172,17 +1695,35 @@ async function inspectTargetIdentity(
   ) {
     throw targetError("TARGET_UNSAFE");
   }
-  return {
-    row,
-    digest: sha256PostgresMigrationTargetIdentity({
+  const identity = {
       databaseName: row.databaseName,
       databaseOid: row.databaseOid,
       currentUser: row.currentUser,
       serverVersionNum: row.serverVersionNum,
       sessionUser: row.sessionUser,
       systemIdentifier: row.systemIdentifier,
-    }),
-  };
+  } satisfies PostgresMigrationTargetIdentity;
+  return { digest: sha256PostgresMigrationTargetIdentity(identity), identity, row };
+}
+
+async function assertLiveSchema(
+  connection: PostgresMigrationTargetConnection,
+  inspect: NonNullable<PostgresMigrationTargetDependencies["inspectLiveSchema"]>
+    = inspectPostgresMigrationLiveSchema,
+): Promise<PostgresMigrationLiveSchemaInspection> {
+  let inspection: PostgresMigrationLiveSchemaInspection;
+  try {
+    inspection = await inspect(connection);
+  } catch {
+    throw targetError("TARGET_UNSAFE");
+  }
+  if (
+    inspection.sha256 !== POSTGRES_MIGRATION_EXPECTED_LIVE_SCHEMA_SHA256
+    || inspection.objectCount !== POSTGRES_MIGRATION_EXPECTED_LIVE_SCHEMA_OBJECT_COUNT
+  ) {
+    throw targetError("TARGET_UNSAFE");
+  }
+  return inspection;
 }
 
 async function inspectTargetSchema(
@@ -1282,12 +1823,15 @@ async function inspectTargetSchema(
     FROM pg_catalog.pg_class AS relation
     JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
     WHERE (namespace.nspname = '${APPLICATION_SCHEMA}' AND relation.relname = 'schema_metadata')
-       OR (namespace.nspname = '${OPERATIONS_SCHEMA}' AND relation.relname IN ('migration_runs', 'migration_chunks'))
+       OR (namespace.nspname = '${OPERATIONS_SCHEMA}' AND relation.relname IN (
+         'migration_runs', 'migration_chunks', 'migration_verifier_authority'
+       ))
     ORDER BY namespace.nspname, relation.relname`);
   const expectedControlTables: TargetControlTableRow[] = [
     { schemaName: APPLICATION_SCHEMA, tableName: "schema_metadata", rlsEnabled: true, rlsForced: true },
     { schemaName: OPERATIONS_SCHEMA, tableName: "migration_chunks", rlsEnabled: true, rlsForced: true },
     { schemaName: OPERATIONS_SCHEMA, tableName: "migration_runs", rlsEnabled: true, rlsForced: true },
+    { schemaName: OPERATIONS_SCHEMA, tableName: "migration_verifier_authority", rlsEnabled: true, rlsForced: true },
   ];
   if (JSON.stringify(controlTables.rows) !== JSON.stringify(expectedControlTables)) {
     throw targetError("TARGET_UNSAFE");
@@ -1383,6 +1927,70 @@ async function releaseMigrationLock(connection: PostgresMigrationTargetConnectio
     );
   } catch {
     // Closing the single connection releases the session advisory lock.
+  }
+}
+
+async function loadVerifierAuthority(
+  connection: PostgresMigrationTargetConnection,
+  expectedEnvironment: PostgresMigrationEnvironment,
+  candidateSha: string,
+): Promise<PostgresMigrationVerifierAuthority> {
+  const result = await connection.query<VerifierAuthorityRow>(
+    `/* pintpath:migration:load-independent-verifier-authority */
+     SELECT
+       expected_environment AS "expectedEnvironment",
+       candidate_commit_sha AS "candidateSha",
+       operator_id_sha256 AS "operatorIdSha256",
+       verifier_id_sha256 AS "verifierIdSha256",
+       verifier_public_key_sha256 AS "verifierPublicKeySha256",
+       authority_policy_sha256 AS "authorityPolicySha256",
+       authority_sha256 AS "authoritySha256",
+       installed_at AS "installedAt"
+     FROM ${OPERATIONS_SCHEMA}.migration_verifier_authority
+     WHERE authority_id = 'active'
+     ORDER BY authority_id`,
+  );
+  const row = result.rows[0];
+  if (!row || result.rows.length !== 1 || result.rowCount !== 1) {
+    throw targetError("TARGET_UNSAFE");
+  }
+  let authority: PostgresMigrationVerifierAuthority;
+  try {
+    authority = postgresMigrationVerifierAuthoritySchema.parse({
+      expectedEnvironment: row.expectedEnvironment,
+      candidateSha: row.candidateSha,
+      operatorIdSha256: row.operatorIdSha256,
+      verifierIdSha256: row.verifierIdSha256,
+      verifierPublicKeySha256: row.verifierPublicKeySha256,
+      authorityPolicySha256: row.authorityPolicySha256,
+      authoritySha256: row.authoritySha256,
+      installedAt: row.installedAt instanceof Date
+        ? row.installedAt.toISOString()
+        : row.installedAt,
+    });
+  } catch {
+    throw targetError("TARGET_UNSAFE");
+  }
+  if (
+    authority.expectedEnvironment !== expectedEnvironment
+    || authority.candidateSha !== candidateSha
+    || authority.authorityPolicySha256
+      !== POSTGRES_MIGRATION_VERIFIER_AUTHORITY_POLICY_SHA256
+  ) throw targetError("IDENTITY_MISMATCH");
+  return authority;
+}
+
+async function assertVerifierAuthorityUnchanged(
+  connection: PostgresMigrationTargetConnection,
+  expected: PostgresMigrationVerifierAuthority,
+): Promise<void> {
+  const observed = await loadVerifierAuthority(
+    connection,
+    expected.expectedEnvironment,
+    expected.candidateSha,
+  );
+  if (JSON.stringify(observed) !== JSON.stringify(expected)) {
+    throw targetError("TARGET_CHANGED");
   }
 }
 
@@ -1861,6 +2469,7 @@ function metadataForReady(context: TargetContext): PostgresMigrationReadyMetadat
     source_schema_version: String(context.manifest.schema.sourceVersion),
     source_snapshot_sha256: context.manifest.database.sha256,
     target_ddl_sha256: context.targetDdlSha256,
+    live_schema_sha256: context.liveSchemaSha256,
   });
 }
 
@@ -1879,6 +2488,7 @@ function assertExistingMetadataBinding(
     "source_schema_version",
     "source_snapshot_sha256",
     "target_ddl_sha256",
+    "live_schema_sha256",
   ] as const;
   const placeholders: Readonly<Record<string, string>> = {
     migration_candidate_sha: "",
@@ -1889,6 +2499,7 @@ function assertExistingMetadataBinding(
     source_schema_version: "0",
     source_snapshot_sha256: "",
     target_ddl_sha256: "",
+    live_schema_sha256: "",
   };
   const isReadyBinding = bindingKeys.every((key) => metadata.get(key) === ready[key]);
   const isPlaceholderBinding = bindingKeys.every((key) => metadata.get(key) === placeholders[key]);
@@ -1913,24 +2524,27 @@ function assertExistingMetadataBinding(
   }
 }
 
-function buildReceipt(
+function receiptCommon(
   context: TargetContext,
   summary: ReconciliationSummary,
-): CanonicalPostgresMigrationReceipt {
+): Omit<PostgresMigrationApplyReceipt, "receiptSha256" | "status"> {
   const metadataSha256 = sha256PostgresMigrationReadyMetadata(metadataForReady(context));
   const withoutReceipt = {
     kind: "pint-path-postgres-migration-receipt" as const,
-    version: 1 as const,
-    status: "ready" as const,
+    version: 3 as const,
     expectedEnvironment: context.expectedEnvironment,
     approvalReferenceSha256: context.approvalReferenceSha256,
     operatorIdSha256: context.operatorIdSha256,
     verifierIdSha256: context.verifierIdSha256,
+    verifierAuthoritySha256: context.verifierAuthoritySha256,
+    verifierAuthorityPolicySha256: context.verifierAuthorityPolicySha256,
     runIdSha256: context.runId,
     runBindingSha256: context.targetBindingSha256,
     targetIdentitySha256: context.targetIdentitySha256,
+    transportAuthoritySha256: context.transportAuthoritySha256,
     targetUrlSha256: context.targetUrlSha256,
     targetDdlSha256: context.targetDdlSha256,
+    liveSchemaSha256: context.liveSchemaSha256,
     sourceSnapshotSha256: context.manifest.database.sha256,
     sourceSchemaFingerprint: context.manifest.schema.fingerprint,
     contractSha256: context.contractSha256,
@@ -1949,7 +2563,66 @@ function buildReceipt(
     zeroRowTableCount: summary.zeroRowTableCount,
     foreignKeyCount: summary.foreignKeyCount,
   };
-  return finalizePostgresMigrationReceipt(withoutReceipt);
+  return withoutReceipt;
+}
+
+function buildApplyReceipt(
+  context: TargetContext,
+  summary: ReconciliationSummary,
+): PostgresMigrationApplyReceipt {
+  return finalizePostgresMigrationApplyReceipt({
+    ...receiptCommon(context, summary),
+    status: "awaiting-verification",
+  });
+}
+
+function buildReceipt(
+  context: TargetContext,
+  summary: ReconciliationSummary,
+  authority: {
+    readonly applyReceiptSha256: string;
+    readonly approval: PostgresMigrationVerificationApproval;
+    readonly approvalFileSha256: string;
+  },
+): CanonicalPostgresMigrationReceipt {
+  return finalizePostgresMigrationReceipt({
+    ...receiptCommon(context, summary),
+    status: "ready",
+    applyReceiptSha256: authority.applyReceiptSha256,
+    verificationApprovalFileSha256: authority.approvalFileSha256,
+    verifierPublicKeySha256: context.verifierPublicKeySha256,
+    verifiedAt: authority.approval.payload.approvedAt,
+  });
+}
+
+async function markAwaitingVerification(
+  connection: PostgresMigrationTargetConnection,
+  context: TargetContext,
+  receipt: PostgresMigrationApplyReceipt,
+): Promise<void> {
+  await inTransaction(connection, async () => {
+    const readyMetadata = metadataForReady(context);
+    for (const [key, value] of Object.entries(readyMetadata)) {
+      if (key === "import_state") continue;
+      const updated = await connection.query(
+        `/* pintpath:migration:write-verifying-metadata */
+         UPDATE ${APPLICATION_SCHEMA}.schema_metadata
+         SET value = $2, updated_at = clock_timestamp()
+         WHERE key = $1`,
+        [key, value],
+      );
+      if (updated.rowCount !== 1) throw targetError("TARGET_UNSAFE");
+    }
+    const run = await connection.query(
+      `/* pintpath:migration:await-independent-verification */
+       UPDATE ${OPERATIONS_SCHEMA}.migration_runs
+       SET status = 'verifying', verifier_id_sha256 = $2, receipt_sha256 = $3,
+           failure_code = NULL, completed_at = NULL
+       WHERE run_id = $1`,
+      [context.runId, context.verifierIdSha256, receipt.receiptSha256],
+    );
+    if (run.rowCount !== 1) throw targetError("RESUME_MISMATCH");
+  });
 }
 
 async function markReady(
@@ -1996,11 +2669,24 @@ async function markReady(
 
 async function validateSourceArtifacts(
   input: PostgresMigrationTargetInput,
-): Promise<Omit<TargetContext, "expectedEnvironment" | "targetIdentitySha256" | "targetBindingSha256" | "runId">> {
+): Promise<Omit<TargetContext,
+  | "expectedEnvironment"
+  | "targetIdentitySha256"
+  | "liveSchemaSha256"
+  | "verifierIdSha256"
+  | "verifierAuthoritySha256"
+  | "verifierAuthorityPolicySha256"
+  | "verifierPublicKeySha256"
+  | "targetBindingSha256"
+  | "runId"
+>> {
   const expectedManifestSha256 = assertSha256(input.expectedSnapshotManifestSha256);
   const expectedPlanSha256 = assertSha256(input.expectedPlanSha256);
   const expectedDdlSha256 = assertSha256(input.expectedTargetDdlSha256);
   const expectedTargetUrlSha256 = assertSha256(input.expectedTargetUrlSha256);
+  const expectedTransportAuthoritySha256 = assertSha256(
+    input.expectedTransportAuthoritySha256,
+  );
   const candidateSha = normalizeCandidateSha(input.candidateSha);
   const contractSha256 = sha256PostgresMigrationContract(POSTGRES_MIGRATION_CONTRACT);
   const manifestArtifact = await readStableArtifact(input.snapshotManifestPath, { requiredMode: 0o600, maxBytes: 1024 * 1024 });
@@ -2032,6 +2718,10 @@ async function validateSourceArtifacts(
   if (ddlArtifact.sha256 !== expectedDdlSha256) throw targetError("ARTIFACT_INVALID");
   const validatedUrl = validateTargetUrl(input.targetUrl);
   if (validatedUrl.digest !== expectedTargetUrlSha256) throw targetError("IDENTITY_MISMATCH");
+  const exactTransportAuthoritySha256 = transportAuthoritySha256(input);
+  if (exactTransportAuthoritySha256 !== expectedTransportAuthoritySha256) {
+    throw targetError("IDENTITY_MISMATCH");
+  }
   const operatorIdSha256 = identitySha256(input.operatorId, "operator-id");
   if (operatorIdSha256 !== manifest.operatorIdSha256) throw targetError("IDENTITY_MISMATCH");
   if (
@@ -2071,6 +2761,11 @@ async function validateSourceArtifacts(
     if (fs.existsSync(`${sourceDatabasePath}${suffix}`)) throw targetError("ARTIFACT_INVALID");
   }
   await assertSnapshotLedgerAuthority(snapshotDirectory, manifest, "ARTIFACT_INVALID");
+  try {
+    await verifyPostgresMigrationSnapshotEvidence(snapshotDirectory, manifest.evidence);
+  } catch {
+    throw targetError("ARTIFACT_INVALID");
+  }
   const database = new BetterSqlite3(sourceDatabasePath, { readonly: true, fileMustExist: true });
   let sourceDescriptor: PostgresMigrationSchemaDescriptor;
   try {
@@ -2097,20 +2792,39 @@ async function validateSourceArtifacts(
     planSha256: planArtifact.sha256,
     targetDdlSha256: ddlArtifact.sha256,
     targetUrlSha256: validatedUrl.digest,
+    transportAuthoritySha256: exactTransportAuthoritySha256,
     contractSha256,
     approvalReferenceSha256: identitySha256(input.approvalReference, "approval-reference"),
     operatorIdSha256,
-    verifierIdSha256: identitySha256(input.verifierId, "verifier-id"),
     sourceDatabasePath,
     sourceDescriptor,
   };
 }
 
 function bindTargetContext(
-  source: Omit<TargetContext, "expectedEnvironment" | "targetIdentitySha256" | "targetBindingSha256" | "runId">,
+  source: Omit<TargetContext,
+    | "expectedEnvironment"
+    | "targetIdentitySha256"
+    | "liveSchemaSha256"
+    | "verifierIdSha256"
+    | "verifierAuthoritySha256"
+    | "verifierAuthorityPolicySha256"
+    | "verifierPublicKeySha256"
+    | "targetBindingSha256"
+    | "runId"
+  >,
   targetIdentitySha256: string,
+  liveSchemaSha256: string,
   environment: PostgresMigrationEnvironment,
+  verifierAuthority: PostgresMigrationVerifierAuthority,
 ): TargetContext {
+  if (
+    verifierAuthority.expectedEnvironment !== environment
+    || verifierAuthority.candidateSha !== source.plan.candidateSha
+    || verifierAuthority.operatorIdSha256 !== source.operatorIdSha256
+    || verifierAuthority.authorityPolicySha256
+      !== POSTGRES_MIGRATION_VERIFIER_AUTHORITY_POLICY_SHA256
+  ) throw targetError("IDENTITY_MISMATCH");
   const targetBindingSha256 = sha256PostgresMigrationRunBinding({
     approvalReferenceSha256: source.approvalReferenceSha256,
     candidateSha: source.plan.candidateSha,
@@ -2124,13 +2838,23 @@ function bindTargetContext(
     sourceSnapshotSha256: source.manifest.database.sha256,
     targetDdlSha256: source.targetDdlSha256,
     targetIdentitySha256,
+    liveSchemaSha256,
+    transportAuthoritySha256: source.transportAuthoritySha256,
     targetUrlSha256: source.targetUrlSha256,
-    verifierIdSha256: source.verifierIdSha256,
+    verifierIdSha256: verifierAuthority.verifierIdSha256,
+    verifierAuthoritySha256: verifierAuthority.authoritySha256,
+    verifierAuthorityPolicySha256: verifierAuthority.authorityPolicySha256,
+    verifierPublicKeySha256: verifierAuthority.verifierPublicKeySha256,
   });
   return {
     ...source,
     expectedEnvironment: environment,
     targetIdentitySha256,
+    liveSchemaSha256,
+    verifierIdSha256: verifierAuthority.verifierIdSha256,
+    verifierAuthoritySha256: verifierAuthority.authoritySha256,
+    verifierAuthorityPolicySha256: verifierAuthority.authorityPolicySha256,
+    verifierPublicKeySha256: verifierAuthority.verifierPublicKeySha256,
     targetBindingSha256,
     runId: derivePostgresMigrationRunId(targetBindingSha256),
   };
@@ -2182,15 +2906,25 @@ async function assertSourceUnchanged(context: TargetContext): Promise<void> {
     context.manifest,
     "SOURCE_CHANGED",
   );
+  try {
+    await verifyPostgresMigrationSnapshotEvidence(
+      path.dirname(context.sourceDatabasePath),
+      context.manifest.evidence,
+    );
+  } catch {
+    throw targetError("SOURCE_CHANGED");
+  }
 }
 
 export async function inspectPostgresMigrationTarget(input: {
   readonly targetUrl: string;
   readonly targetDdlPath: string;
   readonly expectedTargetDdlSha256: string;
+  readonly rootCaFile: string;
+  readonly expectedRootCaDerSha256: string;
 }): Promise<PostgresMigrationTargetInspection> {
   validateTargetUrl(input.targetUrl);
-  const connection = await DirectPostgresMigrationConnection.connect(input.targetUrl);
+  const connection = await DirectPostgresMigrationConnection.connect(input);
   try {
     return await inspectPostgresMigrationTargetWithConnection(input, connection);
   } finally {
@@ -2203,8 +2937,10 @@ export async function inspectPostgresMigrationTargetWithConnection(
     readonly targetUrl: string;
     readonly targetDdlPath: string;
     readonly expectedTargetDdlSha256: string;
+    readonly expectedRootCaDerSha256: string;
   },
   connection: PostgresMigrationTargetConnection,
+  dependencies: PostgresMigrationTargetDependencies = {},
 ): Promise<PostgresMigrationTargetInspection> {
   const ddl = await readStableArtifact(input.targetDdlPath, { maxBytes: MAX_ARTIFACT_BYTES });
   if (ddl.sha256 !== assertSha256(input.expectedTargetDdlSha256)) throw targetError("ARTIFACT_INVALID");
@@ -2212,10 +2948,18 @@ export async function inspectPostgresMigrationTargetWithConnection(
   try {
     const identity = await inspectTargetIdentity(connection);
     const schema = await inspectTargetSchema(connection);
+    const liveSchema = await assertLiveSchema(
+      connection,
+      dependencies.inspectLiveSchema ?? inspectPostgresMigrationLiveSchema,
+    );
     return {
+      targetIdentity: identity.identity,
       targetIdentitySha256: identity.digest,
       targetUrlSha256: validatedUrl.digest,
+      transportAuthoritySha256: transportAuthoritySha256(input),
       targetDdlSha256: ddl.sha256,
+      liveSchemaSha256: liveSchema.sha256,
+      liveSchemaObjectCount: liveSchema.objectCount,
       ...schema,
     };
   } catch (error) {
@@ -2227,21 +2971,38 @@ export async function inspectPostgresMigrationTargetWithConnection(
 export async function applyPostgresMigrationWithConnection(
   input: PostgresMigrationTargetInput,
   connection: PostgresMigrationTargetConnection,
-): Promise<CanonicalPostgresMigrationReceipt> {
+  dependencies: PostgresMigrationTargetDependencies = {},
+): Promise<PostgresMigrationApplyReceipt> {
   const sourceContext = await validateSourceArtifacts(input);
   const expectedIdentitySha256 = assertSha256(input.expectedTargetIdentitySha256);
   const identity = await inspectTargetIdentity(connection);
   if (identity.digest !== expectedIdentitySha256) throw targetError("IDENTITY_MISMATCH");
   await inspectTargetSchema(connection);
-  const context = bindTargetContext(sourceContext, identity.digest, input.expectedEnvironment);
+  const inspectLiveSchema = dependencies.inspectLiveSchema ?? inspectPostgresMigrationLiveSchema;
+  const liveSchema = await assertLiveSchema(connection, inspectLiveSchema);
+  let context: TargetContext | null = null;
   let lockAcquired = false;
   let exactRun = false;
   try {
     await acquireMigrationLock(connection);
     lockAcquired = true;
     await inspectTargetSchema(connection);
-    await inspectTargetForeignKeys(connection, context.sourceDescriptor);
+    await assertLiveSchema(connection, inspectLiveSchema);
+    await inspectTargetForeignKeys(connection, sourceContext.sourceDescriptor);
+    const verifierAuthority = await loadVerifierAuthority(
+      connection,
+      input.expectedEnvironment,
+      sourceContext.plan.candidateSha,
+    );
+    context = bindTargetContext(
+      sourceContext,
+      identity.digest,
+      liveSchema.sha256,
+      input.expectedEnvironment,
+      verifierAuthority,
+    );
     const prepared = await prepareTargetRun(connection, context, input.expectedEnvironment);
+    if (prepared.run.status === "ready") throw targetError("RESUME_MISMATCH");
     exactRun = true;
     const completed = await loadCompletedChunks(connection, context);
     await updateRunStatus(connection, context.runId, "importing");
@@ -2253,19 +3014,21 @@ export async function applyPostgresMigrationWithConnection(
       await assertSourceUnchanged(context);
       await updateRunStatus(connection, context.runId, "verifying");
       const summary = await reconcileTarget(connection, source, context);
+      await assertLiveSchema(connection, inspectLiveSchema);
       await assertSourceUnchanged(context);
-      const receipt = buildReceipt(context, summary);
+      const receipt = buildApplyReceipt(context, summary);
       if (prepared.run.receiptSha256 !== null && prepared.run.receiptSha256 !== receipt.receiptSha256) {
         throw targetError("TARGET_CHANGED");
       }
-      await markReady(connection, context, receipt);
+      await assertVerifierAuthorityUnchanged(connection, verifierAuthority);
+      await markAwaitingVerification(connection, context, receipt);
       return receipt;
     } finally {
       source.close();
     }
   } catch (error) {
     const safe = error instanceof PostgresMigrationTargetError ? error : targetError("IMPORT_FAILED");
-    if (exactRun) await recordFailedRun(connection, context.runId, safe.code);
+    if (exactRun && context) await recordFailedRun(connection, context.runId, safe.code);
     throw safe;
   } finally {
     if (lockAcquired) await releaseMigrationLock(connection);
@@ -2274,9 +3037,9 @@ export async function applyPostgresMigrationWithConnection(
 
 export async function applyPostgresMigration(
   input: PostgresMigrationTargetInput,
-): Promise<CanonicalPostgresMigrationReceipt> {
+): Promise<PostgresMigrationApplyReceipt> {
   validateTargetUrl(input.targetUrl);
-  const connection = await DirectPostgresMigrationConnection.connect(input.targetUrl);
+  const connection = await DirectPostgresMigrationConnection.connect(input);
   try {
     return await applyPostgresMigrationWithConnection(input, connection);
   } catch (error) {
@@ -2288,26 +3051,41 @@ export async function applyPostgresMigration(
 }
 
 export async function verifyPostgresMigrationWithConnection(
-  input: PostgresMigrationTargetInput,
+  input: PostgresMigrationVerifyInput,
   connection: PostgresMigrationTargetConnection,
+  dependencies: PostgresMigrationTargetDependencies = {},
 ): Promise<CanonicalPostgresMigrationReceipt> {
   const sourceContext = await validateSourceArtifacts(input);
   const expectedIdentitySha256 = assertSha256(input.expectedTargetIdentitySha256);
   const identity = await inspectTargetIdentity(connection);
   if (identity.digest !== expectedIdentitySha256) throw targetError("IDENTITY_MISMATCH");
-  const context = bindTargetContext(sourceContext, identity.digest, input.expectedEnvironment);
+  const inspectLiveSchema = dependencies.inspectLiveSchema ?? inspectPostgresMigrationLiveSchema;
+  const liveSchema = await assertLiveSchema(connection, inspectLiveSchema);
   let lockAcquired = false;
   try {
     await acquireMigrationLock(connection);
     lockAcquired = true;
     await inspectTargetSchema(connection);
-    await inspectTargetForeignKeys(connection, context.sourceDescriptor);
+    await assertLiveSchema(connection, inspectLiveSchema);
+    await inspectTargetForeignKeys(connection, sourceContext.sourceDescriptor);
+    const verifierAuthority = await loadVerifierAuthority(
+      connection,
+      input.expectedEnvironment,
+      sourceContext.plan.candidateSha,
+    );
+    const context = bindTargetContext(
+      sourceContext,
+      identity.digest,
+      liveSchema.sha256,
+      input.expectedEnvironment,
+      verifierAuthority,
+    );
     const runs = await loadMigrationRuns(connection);
     if (runs.length !== 1 || !runs[0]) throw targetError("RESUME_MISMATCH");
     const run = runs[0];
     assertExactRun(run, context, input.expectedEnvironment);
     if (
-      run.status !== "ready"
+      !["verifying", "ready"].includes(run.status)
       || run.verifierIdSha256 !== context.verifierIdSha256
       || !run.receiptSha256
     ) {
@@ -2320,9 +3098,45 @@ export async function verifyPostgresMigrationWithConnection(
       const completed = await loadCompletedChunks(connection, context);
       await verifyCompletedChunks(connection, source, context, completed);
       const summary = await reconcileTarget(connection, source, context);
+      await assertLiveSchema(connection, inspectLiveSchema);
       await assertSourceUnchanged(context);
-      const receipt = buildReceipt(context, summary);
-      if (receipt.receiptSha256 !== run.receiptSha256) throw targetError("RECONCILIATION_FAILED");
+      const applyReceipt = buildApplyReceipt(context, summary);
+      const verification = input.verificationAuthority;
+      if (
+        verification.applyReceiptFileSha256 !== verification.expectedApplyReceiptFileSha256
+        || verification.applyReceipt.receiptSha256 !== applyReceipt.receiptSha256
+      ) throw targetError("ARTIFACT_INVALID");
+      let approval: PostgresMigrationVerificationApproval;
+      try {
+        approval = verifyPostgresMigrationVerificationApproval({
+          approval: verification.approval,
+          approvalFileSha256: verification.approvalFileSha256,
+          applyReceipt,
+          expectedApprovalFileSha256: verification.expectedApprovalFileSha256,
+          expectedVerifierAuthoritySha256: context.verifierAuthoritySha256,
+          expectedVerifierAuthorityPolicySha256:
+            context.verifierAuthorityPolicySha256,
+          expectedVerifierPublicKeySha256: context.verifierPublicKeySha256,
+          now: verification.now,
+          verifierPublicKeyBytes: verification.verifierPublicKeyBytes,
+        });
+      } catch {
+        throw targetError("ARTIFACT_INVALID");
+      }
+      const receipt = buildReceipt(context, summary, {
+        applyReceiptSha256: applyReceipt.receiptSha256,
+        approval,
+        approvalFileSha256: verification.approvalFileSha256,
+      });
+      if (run.status === "verifying") {
+        if (run.receiptSha256 !== applyReceipt.receiptSha256) {
+          throw targetError("RECONCILIATION_FAILED");
+        }
+        await assertVerifierAuthorityUnchanged(connection, verifierAuthority);
+        await markReady(connection, context, receipt);
+      } else if (run.receiptSha256 !== receipt.receiptSha256) {
+        throw targetError("RECONCILIATION_FAILED");
+      }
       const metadata = await loadMetadata(connection);
       for (const [key, value] of Object.entries(metadataForReady(context))) {
         if (metadata.get(key) !== value) throw targetError("RECONCILIATION_FAILED");
@@ -2340,10 +3154,10 @@ export async function verifyPostgresMigrationWithConnection(
 }
 
 export async function verifyPostgresMigration(
-  input: PostgresMigrationTargetInput,
+  input: PostgresMigrationVerifyInput,
 ): Promise<CanonicalPostgresMigrationReceipt> {
   validateTargetUrl(input.targetUrl);
-  const connection = await DirectPostgresMigrationConnection.connect(input.targetUrl);
+  const connection = await DirectPostgresMigrationConnection.connect(input);
   try {
     return await verifyPostgresMigrationWithConnection(input, connection);
   } catch (error) {
@@ -2364,5 +3178,7 @@ export const postgresMigrationTargetInternals = {
   targetValueToSource,
   transformSourceValue,
   transformedChunkSha256,
+  transportAuthoritySha256,
   validateTargetUrl,
+  openDirectConnection: DirectPostgresMigrationConnection.connect,
 };

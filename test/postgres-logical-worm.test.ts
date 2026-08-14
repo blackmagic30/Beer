@@ -6,6 +6,8 @@ import { Readable } from "node:stream";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { canonicalPostgresBackupJson } from "../src/lib/postgres-logical-backup.js";
+
 import {
   POSTGRES_LOGICAL_WORM_AWS_GATE_ENV,
   POSTGRES_LOGICAL_WORM_AWS_GATE_VALUE,
@@ -15,6 +17,15 @@ import {
   runPostgresLogicalWormCli,
   type PostgresLogicalWormCliDependencies,
 } from "../scripts/attest-postgres-logical-worm.js";
+import {
+  POSTGRES_LOGICAL_WORM_RETRIEVAL_ACCOUNT_ENV,
+  POSTGRES_LOGICAL_WORM_RETRIEVAL_AWS_GATE_ENV,
+  POSTGRES_LOGICAL_WORM_RETRIEVAL_AWS_GATE_VALUE,
+  POSTGRES_LOGICAL_WORM_RETRIEVAL_CONFIRMATION_ENV,
+  POSTGRES_LOGICAL_WORM_RETRIEVAL_CONFIRMATION_VALUE,
+  runPostgresLogicalWormRetrievalCli,
+  type PostgresLogicalWormRetrievalCliDependencies,
+} from "../scripts/retrieve-postgres-logical-worm.js";
 import {
   POSTGRES_LOGICAL_WORM_REGION,
   POSTGRES_LOGICAL_WORM_RETENTION_DAYS,
@@ -34,6 +45,11 @@ import {
   type PostgresLogicalWormVersionInventory,
   type PostgresLogicalWormWriterDenialAction,
 } from "../src/lib/postgres-logical-worm.js";
+import {
+  PostgresLogicalWormRetrievalError,
+  postgresLogicalWormRetrievalInternals,
+  retrievePostgresLogicalWormBackup,
+} from "../src/lib/postgres-logical-worm-retrieval.js";
 import {
   writeLogicalOffsiteFixture,
 } from "./postgres-logical-offsite.fixtures.js";
@@ -267,6 +283,25 @@ function options(
   } as const;
 }
 
+function retrievalOptions(
+  provider: MemoryWormProvider,
+  wormResult: Awaited<ReturnType<typeof attestPostgresLogicalWorm>>,
+  outputDirectory: string,
+) {
+  return {
+    outputDirectory,
+    wormResult,
+    wormResultSha256: sha256(canonicalPostgresBackupJson(wormResult)),
+    bucketName: BUCKET,
+    expectedBucketNameSha256: sha256(BUCKET),
+    recoveryAccountId: ACCOUNT_ID,
+    expectedRecoveryAccountIdSha256: sha256(ACCOUNT_ID),
+    expectedReaderPrincipalArnSha256: sha256(READER_ARN),
+    provider,
+    now: () => new Date("2026-08-10T02:00:00.000Z"),
+  } as const;
+}
+
 describe("Postgres logical WORM authority", () => {
   it("publishes exact Put-only writer and read-only verifier policy contracts", () => {
     const writer = buildPostgresLogicalWormWriterPolicy(BUCKET);
@@ -304,11 +339,13 @@ describe("Postgres logical WORM authority", () => {
     expect(provider.denialActions).toEqual([
       "get_object_version",
       "list_object_versions",
+      "delete_object_marker",
       "delete_object_version",
       "get_object_retention",
       "get_bucket_object_lock_configuration",
       "get_object_version",
       "list_object_versions",
+      "delete_object_marker",
       "delete_object_version",
       "get_object_retention",
       "get_bucket_object_lock_configuration",
@@ -341,7 +378,7 @@ describe("Postgres logical WORM authority", () => {
       readerPrincipalArnSha256: sha256(READER_ARN),
     });
     expect(parsed.objects).toHaveLength(3);
-    expect(parsed.writerDenials).toHaveLength(5);
+    expect(parsed.writerDenials).toHaveLength(6);
 
     const publicOutput = JSON.stringify(result);
     for (const forbidden of [
@@ -448,6 +485,283 @@ describe("Postgres logical WORM authority", () => {
   });
 });
 
+describe("Postgres logical WORM read-only retrieval", () => {
+  it("reconstructs the exact restore directory from independently verified immutable versions", async () => {
+    const provider = new MemoryWormProvider();
+    const backup = fixture();
+    const wormResult = await attestPostgresLogicalWorm(options(provider, backup));
+    const outputDirectory = path.join(path.dirname(backup.backupDirectory), "worm-retrieved");
+
+    const result = await retrievePostgresLogicalWormBackup(
+      retrievalOptions(provider, wormResult, outputDirectory),
+    );
+
+    expect(result).toMatchObject({
+      schemaVersion: 1,
+      kind: "pintpath-postgres-logical-worm-retrieval",
+      ok: true,
+      archiveSha256: wormResult.archiveSha256,
+      manifestSha256: wormResult.manifestSha256,
+      stateReceiptSha256: wormResult.stateReceiptSha256,
+      wormReceiptSha256: wormResult.receiptSha256,
+      wormResultSha256: sha256(canonicalPostgresBackupJson(wormResult)),
+    });
+    expect(fs.statSync(outputDirectory).mode & 0o777).toBe(0o700);
+    const filenames = fs.readdirSync(outputDirectory).sort();
+    expect(filenames).toEqual([
+      "manifest.json",
+      "pintpath-postgres.dump",
+      "state-receipt.json",
+    ]);
+    for (const filename of filenames) {
+      const restored = path.join(outputDirectory, filename);
+      expect(fs.statSync(restored).mode & 0o777).toBe(0o600);
+      expect(fs.readFileSync(restored)).toEqual(
+        fs.readFileSync(path.join(backup.backupDirectory, filename)),
+      );
+    }
+    expect(provider.puts).toHaveLength(4);
+  });
+
+  it("rejects a mismatched canonical WORM-result digest before any provider call", async () => {
+    const provider = new MemoryWormProvider();
+    const backup = fixture();
+    const wormResult = await attestPostgresLogicalWorm(options(provider, backup));
+    const inspectReader = vi.spyOn(provider, "inspectReaderIdentity");
+    inspectReader.mockClear();
+    const inspectControls = vi.spyOn(provider, "inspectBucketControls");
+    inspectControls.mockClear();
+    const listVersions = vi.spyOn(provider, "listExactVersions");
+    listVersions.mockClear();
+
+    await expect(retrievePostgresLogicalWormBackup({
+      ...retrievalOptions(
+        provider,
+        wormResult,
+        path.join(path.dirname(backup.backupDirectory), "bad-result"),
+      ),
+      wormResultSha256: "f".repeat(64),
+    })).rejects.toEqual(new PostgresLogicalWormRetrievalError("worm_result_invalid"));
+    expect(inspectReader).not.toHaveBeenCalled();
+    expect(inspectControls).not.toHaveBeenCalled();
+    expect(listVersions).not.toHaveBeenCalled();
+  });
+
+  it("rejects empty or arbitrary writer-denial evidence even when its claimed set hash agrees", async () => {
+    const provider = new MemoryWormProvider();
+    const backup = fixture();
+    const wormResult = await attestPostgresLogicalWorm(options(provider, backup));
+    const storedReceipt = [...provider.objects.values()].find((value) => (
+      value.key.includes("/receipts/")
+    ));
+    expect(storedReceipt).toBeDefined();
+    const receipt = JSON.parse(storedReceipt!.body.toString("utf8")) as Record<string, unknown>;
+    const originalDenials = receipt.writerDenials as Record<string, unknown>[];
+    const denialCases = [
+      [],
+      originalDenials.map((denial, index) => index === 0
+        ? { ...denial, action: "arbitrary_writer_action" }
+        : denial),
+    ];
+    for (const writerDenials of denialCases) {
+      const writerDenialSetSha256 = sha256(canonicalPostgresBackupJson(writerDenials));
+      const changedReceipt = {
+        ...receipt,
+        writerDenials,
+        writerDenialSetSha256,
+      };
+      expect(() => postgresLogicalWormRetrievalInternals.parseReceipt(
+        Buffer.from(canonicalPostgresBackupJson(changedReceipt)),
+        { ...wormResult, writerDenialSetSha256 },
+      )).toThrow(new PostgresLogicalWormRetrievalError("receipt_verification_failed"));
+    }
+  });
+
+  it("removes an ordinary partial output after a late exact-version collision", async () => {
+    const provider = new MemoryWormProvider();
+    const backup = fixture();
+    const wormResult = await attestPostgresLogicalWorm(options(provider, backup));
+    const outputDirectory = path.join(path.dirname(backup.backupDirectory), "late-collision");
+    const original = provider.listExactVersions.bind(provider);
+    vi.spyOn(provider, "listExactVersions").mockImplementation(async (input) => {
+      if (input.key.endsWith("/manifest.json")) {
+        return {
+          truncated: false,
+          versions: [1, 2].map((index) => ({
+            key: input.key,
+            versionId: `collision-${index}`,
+            isLatest: index === 2,
+            bytes: 1,
+            lastModified: LAST_MODIFIED,
+          })),
+          deleteMarkers: [],
+        };
+      }
+      return original(input);
+    });
+
+    await expect(retrievePostgresLogicalWormBackup(
+      retrievalOptions(provider, wormResult, outputDirectory),
+    )).rejects.toMatchObject({ code: "object_verification_failed" });
+    expect(fs.existsSync(outputDirectory)).toBe(false);
+  });
+
+  it("makes cleanup failure dominant and retains evidence when the output path is replaced or polluted", async () => {
+    const provider = new MemoryWormProvider();
+    const backup = fixture();
+    const wormResult = await attestPostgresLogicalWorm(options(provider, backup));
+    const outputDirectory = path.join(path.dirname(backup.backupDirectory), "ambiguous-output");
+    const original = provider.listExactVersions.bind(provider);
+    let injected = false;
+    vi.spyOn(provider, "listExactVersions").mockImplementation(async (input) => {
+      if (!injected && input.key.endsWith("/manifest.json")) {
+        injected = true;
+        fs.writeFileSync(path.join(outputDirectory, "unexpected"), "do-not-delete");
+      }
+      return original(input);
+    });
+
+    await expect(retrievePostgresLogicalWormBackup(
+      retrievalOptions(provider, wormResult, outputDirectory),
+    )).rejects.toEqual(new PostgresLogicalWormRetrievalError("cleanup_failed"));
+    expect(fs.readFileSync(path.join(outputDirectory, "unexpected"), "utf8"))
+      .toBe("do-not-delete");
+  });
+
+  it("rejects changed immutable bytes and removes the reserved output", async () => {
+    const provider = new MemoryWormProvider();
+    const backup = fixture();
+    const wormResult = await attestPostgresLogicalWorm(options(provider, backup));
+    const archive = [...provider.objects.values()].find((entry) => (
+      entry.key.endsWith("/pintpath-postgres.dump")
+    ));
+    expect(archive).toBeDefined();
+    archive!.body[0] = archive!.body[0]! ^ 0xff;
+    const outputDirectory = path.join(path.dirname(backup.backupDirectory), "tampered-output");
+
+    await expect(retrievePostgresLogicalWormBackup(
+      retrievalOptions(provider, wormResult, outputDirectory),
+    )).rejects.toMatchObject({ code: "object_verification_failed" });
+    expect(fs.existsSync(outputDirectory)).toBe(false);
+  });
+
+  it("fails closed on bucket-control drift before reading any object", async () => {
+    const provider = new MemoryWormProvider();
+    const backup = fixture();
+    const wormResult = await attestPostgresLogicalWorm(options(provider, backup));
+    const list = vi.spyOn(provider, "listExactVersions");
+    list.mockClear();
+    vi.spyOn(provider, "inspectBucketControls").mockResolvedValue({
+      ...CONTROLS,
+      policyIsPublic: true,
+    });
+    const outputDirectory = path.join(path.dirname(backup.backupDirectory), "control-drift");
+
+    await expect(retrievePostgresLogicalWormBackup(
+      retrievalOptions(provider, wormResult, outputDirectory),
+    )).rejects.toEqual(new PostgresLogicalWormRetrievalError("bucket_controls_invalid"));
+    expect(list).not.toHaveBeenCalled();
+    expect(fs.existsSync(outputDirectory)).toBe(false);
+  });
+
+  it.each([
+    ["metadata substitution", (stored: StoredObject) => ({
+      ...stored,
+      metadata: { ...stored.metadata, sha256: "f".repeat(64) },
+    })],
+    ["content-type substitution", (stored: StoredObject) => ({
+      ...stored,
+      contentType: "text/plain",
+    })],
+    ["expired retention", (stored: StoredObject) => ({
+      ...stored,
+      retainUntil: "2026-08-10T01:59:59.000Z",
+    })],
+  ])("rejects immutable object %s and cleans its partial output", async (_name, mutate) => {
+    const provider = new MemoryWormProvider();
+    const backup = fixture();
+    const wormResult = await attestPostgresLogicalWorm(options(provider, backup));
+    const archive = [...provider.objects.values()].find((entry) => (
+      entry.key.endsWith("/pintpath-postgres.dump")
+    ));
+    expect(archive).toBeDefined();
+    provider.objects.set(archive!.key, mutate(archive!));
+    const outputDirectory = path.join(path.dirname(backup.backupDirectory), `substitution-${_name}`);
+
+    await expect(retrievePostgresLogicalWormBackup(
+      retrievalOptions(provider, wormResult, outputDirectory),
+    )).rejects.toMatchObject({ code: "object_verification_failed" });
+    expect(fs.existsSync(outputDirectory)).toBe(false);
+  });
+
+  it("destroys a stalled remote body at the operation deadline and removes the partial output", async () => {
+    const provider = new MemoryWormProvider();
+    const backup = fixture();
+    const wormResult = await attestPostgresLogicalWorm(options(provider, backup));
+    const original = provider.readExactVersion.bind(provider);
+    let destroyed = false;
+    let rejectPending: ((error: Error) => void) | null = null;
+    vi.spyOn(provider, "readExactVersion").mockImplementation(async (input) => {
+      if (!input.key.endsWith("/pintpath-postgres.dump")) return original(input);
+      const stored = provider.objects.get(input.key)!;
+      const body = {
+        async *[Symbol.asyncIterator](): AsyncGenerator<Uint8Array> {
+          await new Promise<never>((_resolve, reject) => { rejectPending = reject; });
+        },
+        destroy(error?: Error): void {
+          destroyed = true;
+          rejectPending?.(error ?? new Error("destroyed"));
+        },
+      };
+      return {
+        key: stored.key,
+        versionId: stored.versionId,
+        bytes: stored.body.length,
+        checksumSha256Base64: stored.checksumSha256Base64,
+        contentType: stored.contentType,
+        cacheControl: stored.cacheControl,
+        metadata: stored.metadata,
+        serverSideEncryption: "AES256",
+        objectLockMode: "COMPLIANCE",
+        retainUntil: stored.retainUntil,
+        lastModified: LAST_MODIFIED,
+        body,
+      };
+    });
+    const outputDirectory = path.join(path.dirname(backup.backupDirectory), "stalled-body");
+
+    await expect(retrievePostgresLogicalWormBackup({
+      ...retrievalOptions(provider, wormResult, outputDirectory),
+      operationTimeoutMs: 1_000,
+    })).rejects.toMatchObject({ code: "deadline_exceeded" });
+    expect(destroyed).toBe(true);
+    expect(fs.existsSync(outputDirectory)).toBe(false);
+  });
+
+  it("retains the held partial inode when the output root pathname is replaced", async () => {
+    const provider = new MemoryWormProvider();
+    const backup = fixture();
+    const wormResult = await attestPostgresLogicalWorm(options(provider, backup));
+    const outputDirectory = path.join(path.dirname(backup.backupDirectory), "replaced-root");
+    const displaced = `${outputDirectory}-held`;
+    const original = provider.listExactVersions.bind(provider);
+    let replaced = false;
+    vi.spyOn(provider, "listExactVersions").mockImplementation(async (input) => {
+      if (!replaced && input.key.endsWith("/manifest.json")) {
+        replaced = true;
+        fs.renameSync(outputDirectory, displaced);
+        fs.mkdirSync(outputDirectory, { mode: 0o700 });
+      }
+      return original(input);
+    });
+
+    await expect(retrievePostgresLogicalWormBackup(
+      retrievalOptions(provider, wormResult, outputDirectory),
+    )).rejects.toEqual(new PostgresLogicalWormRetrievalError("cleanup_failed"));
+    expect(fs.existsSync(path.join(displaced, "pintpath-postgres.dump"))).toBe(true);
+  });
+});
+
 describe("AWS SDK v3 WORM adapter", () => {
   class CapturedCommand {
     constructor(readonly input: Readonly<Record<string, unknown>>) {}
@@ -536,6 +850,82 @@ describe("AWS SDK v3 WORM adapter", () => {
     expect(sent[0]!.input).not.toHaveProperty("ObjectLockMode");
     expect(sent[0]!.input).not.toHaveProperty("ObjectLockRetainUntilDate");
     expect(sent[0]!.input).not.toHaveProperty("ACL");
+  });
+});
+
+describe("Postgres logical WORM retrieval CLI", () => {
+  it("keeps credential loading behind both read-only AWS gates", async () => {
+    const loadReader = vi.fn();
+    const output: string[] = [];
+    const argv = [
+      "--bucket-name", BUCKET,
+      "--expected-bucket-name-sha256", sha256(BUCKET),
+      "--expected-reader-principal-arn-sha256", sha256(READER_ARN),
+      "--expected-recovery-account-id-sha256", sha256(ACCOUNT_ID),
+      "--output-directory", "/private/operator/logical-worm-output",
+      "--reader-profile", "logical-worm-reader",
+      "--receipt-file", "/private/operator/evidence/logical-worm-retrieval-receipt.json",
+      "--worm-result-file", "/private/operator/logical-worm-result.json",
+      "--worm-result-sha256", "a".repeat(64),
+    ];
+    const result = await runPostgresLogicalWormRetrievalCli(argv, {
+      env: {},
+      loadReader,
+      writeOutput: (value) => output.push(value),
+    });
+    expect(result).toBe(1);
+    expect(loadReader).not.toHaveBeenCalled();
+    expect(JSON.parse(output[0]!)).toMatchObject({
+      ok: false,
+      failureCode: "confirmation_required",
+    });
+  });
+
+  it("makes reader-provider close failure dominant and emits no success record", async () => {
+    const provider = new MemoryWormProvider();
+    const backup = fixture();
+    const wormResult = await attestPostgresLogicalWorm(options(provider, backup));
+    const root = path.dirname(backup.backupDirectory);
+    const wormResultFile = path.join(root, "logical-worm-result.json");
+    const wormResultBytes = canonicalPostgresBackupJson(wormResult);
+    fs.writeFileSync(wormResultFile, wormResultBytes, { mode: 0o600 });
+    fs.chmodSync(wormResultFile, 0o600);
+    const receiptDirectory = path.join(root, "evidence");
+    fs.mkdirSync(receiptDirectory, { mode: 0o700 });
+    const outputDirectory = path.join(root, "logical-from-worm");
+    const output: string[] = [];
+    const close = vi.fn(() => { throw new Error("close failed"); });
+    const dependencies: Partial<PostgresLogicalWormRetrievalCliDependencies> = {
+      env: {
+        [POSTGRES_LOGICAL_WORM_RETRIEVAL_CONFIRMATION_ENV]:
+          POSTGRES_LOGICAL_WORM_RETRIEVAL_CONFIRMATION_VALUE,
+        [POSTGRES_LOGICAL_WORM_RETRIEVAL_AWS_GATE_ENV]:
+          POSTGRES_LOGICAL_WORM_RETRIEVAL_AWS_GATE_VALUE,
+        [POSTGRES_LOGICAL_WORM_RETRIEVAL_ACCOUNT_ENV]: ACCOUNT_ID,
+      },
+      loadReader: vi.fn(() => ({ provider, close })),
+      writeOutput: (value) => output.push(value),
+    };
+    const argv = [
+      "--bucket-name", BUCKET,
+      "--expected-bucket-name-sha256", sha256(BUCKET),
+      "--expected-reader-principal-arn-sha256", sha256(READER_ARN),
+      "--expected-recovery-account-id-sha256", sha256(ACCOUNT_ID),
+      "--output-directory", outputDirectory,
+      "--reader-profile", "logical-worm-reader",
+      "--receipt-file", path.join(receiptDirectory, "logical-worm-retrieval-receipt.json"),
+      "--worm-result-file", wormResultFile,
+      "--worm-result-sha256", sha256(wormResultBytes),
+    ];
+
+    await expect(runPostgresLogicalWormRetrievalCli(argv, dependencies)).resolves.toBe(1);
+    expect(close).toHaveBeenCalledOnce();
+    expect(output).toHaveLength(1);
+    expect(JSON.parse(output[0]!)).toEqual({
+      schemaVersion: 1,
+      ok: false,
+      failureCode: "provider_close_failed",
+    });
   });
 });
 

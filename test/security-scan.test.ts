@@ -21,6 +21,15 @@ describe("security scan guardrails", () => {
     ].forEach((configPath) => expect(source).toContain(configPath));
   });
 
+  it("verifies local secret files are untracked regular files with private permissions", () => {
+    const source = securityScanSource();
+
+    expect(source).toContain("LOCAL_SECRET_CONFIGS_TO_VERIFY");
+    expect(source).toContain('[".env", ".env.local", ".npmrc"]');
+    expect(source).toContain("stat.mode & 0o077");
+    expect(source).toContain("Tracked local secret config");
+  });
+
   it("keeps private server key assignments in the scan patterns", () => {
     const source = securityScanSource();
 
@@ -29,7 +38,24 @@ describe("security scan guardrails", () => {
       "OPENAI_API_KEY",
       "STRIPE_SECRET_KEY",
       "STRIPE_WEBHOOK_SECRET",
+      "AWS_SECRET_ACCESS_KEY",
+      "DATABASE_MAINTENANCE_URL",
+      "GITHUB_TOKEN",
+      "RAILWAY_TOKEN",
+      "RESEND_TRANSACTIONAL_API_KEY",
     ].forEach((secretName) => expect(source).toContain(secretName));
+  });
+
+  it("covers GitHub, AWS, Railway, Resend, and private-key token families", () => {
+    const source = securityScanSource();
+
+    [
+      "GitHub access token",
+      "AWS access key ID",
+      "Railway API token",
+      "Resend API key",
+      "Private key material",
+    ].forEach((patternName) => expect(source).toContain(patternName));
   });
 
   it("detects a provider key beside process.env without echoing the secret", () => {

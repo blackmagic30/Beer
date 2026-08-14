@@ -8,6 +8,10 @@ import { Client, type ClientConfig, type QueryResultRow } from "pg";
 
 import { sqlDatabaseInternals } from "../db/sql-database.js";
 import {
+  parsePostgresRailwayStockLocalhostCaUrl,
+  type PostgresRailwayStockLocalhostCaNodeConnection,
+} from "./postgres-railway-stock-localhost-ca.js";
+import {
   POSTGRES_LOGICAL_BACKUP_ARCHIVE,
   POSTGRES_LOGICAL_BACKUP_MANIFEST,
   POSTGRES_LOGICAL_BACKUP_STATE_RECEIPT,
@@ -197,6 +201,7 @@ export interface PostgresPrivateStorageBoundary {
     readonly bytes: Buffer;
     readonly contentType: string;
   }): Promise<void>;
+  removeObjects?(objectPaths: readonly string[]): Promise<void>;
 }
 
 export interface PostgresPrivateStorageRecoveryObject {
@@ -219,6 +224,7 @@ export interface PostgresPrivateStorageRecoveryManifest {
     readonly stateReceiptSha256: string;
     readonly sourceDatabaseIdentitySha256: string;
     readonly sourceUrlSha256: string;
+    readonly captureUrlSha256: string;
     readonly migrationRunSha256: string;
     readonly sourceEnvironment: PostgresPrivateStorageSourceEnvironment;
     readonly candidateSha: string;
@@ -259,6 +265,7 @@ export interface CapturePostgresPrivateStorageRecoveryOptions {
   readonly expectedTombstoneCount: number;
   readonly sourceEnvironment: PostgresPrivateStorageSourceEnvironment;
   readonly expectedCandidateSha: string;
+  readonly expectedCaptureConnectionUrlSha256: string;
   readonly sourceSupabaseUrl: string;
   readonly expectedSourceOriginSha256: string;
   readonly bucketName: typeof POSTGRES_PRIVATE_STORAGE_BUCKET;
@@ -281,6 +288,7 @@ export interface CapturePostgresPrivateStorageRecoveryResult {
   readonly deletionTombstoneCount: number;
   readonly recoverySetSha256: string;
   readonly recoveryManifestSha256: string;
+  readonly databaseConnectionUrlSha256: string;
 }
 
 export interface RestorePostgresPrivateStorageRecoveryOptions {
@@ -370,12 +378,22 @@ interface SourceIdentityRow extends QueryResultRow {
   readonly serverVersionNum: string;
   readonly roleName: string;
   readonly canLogin: boolean;
+  readonly inheritsPrivileges: boolean;
   readonly superuser: boolean;
   readonly createDatabase: boolean;
   readonly createRole: boolean;
   readonly replication: boolean;
   readonly bypassRls: boolean;
+  readonly effectiveRole: string;
   readonly canSetMigrator: boolean;
+  readonly runtimeMember: boolean;
+  readonly maintenanceMember: boolean;
+  readonly unexpectedMembership: boolean;
+  readonly hasDatabaseCreatePrivilege: boolean;
+  readonly applicationSchemaCreate: boolean;
+  readonly operationsSchemaCreate: boolean;
+  readonly searchPathSchemas: string[];
+  readonly currentSchema: string;
   readonly transactionReadOnly: boolean;
   readonly inRecovery: boolean;
   readonly databaseIsTemplate: boolean;
@@ -1408,7 +1426,7 @@ export async function capturePostgresPrivateStorageRecovery(
     snapshot: firstDatabase,
     backup,
     expectedIdentitySha256: backup.stateReceipt.source.databaseIdentitySha256,
-    expectedConnectionUrlSha256: backup.stateReceipt.source.urlSha256,
+    expectedConnectionUrlSha256: options.expectedCaptureConnectionUrlSha256,
     expectedSourceEnvironment: options.sourceEnvironment,
     expectedCandidateSha,
     requireDisposable: false,
@@ -1504,7 +1522,7 @@ export async function capturePostgresPrivateStorageRecovery(
     snapshot: secondDatabase,
     backup,
     expectedIdentitySha256: backup.stateReceipt.source.databaseIdentitySha256,
-    expectedConnectionUrlSha256: backup.stateReceipt.source.urlSha256,
+    expectedConnectionUrlSha256: options.expectedCaptureConnectionUrlSha256,
     expectedMigrationRunSha256: firstDatabase.migrationRunSha256,
     expectedSourceEnvironment: options.sourceEnvironment,
     expectedCandidateSha,
@@ -1545,6 +1563,7 @@ export async function capturePostgresPrivateStorageRecovery(
       sourceDatabaseIdentitySha256:
         backup.stateReceipt.source.databaseIdentitySha256,
       sourceUrlSha256: backup.stateReceipt.source.urlSha256,
+      captureUrlSha256: firstDatabase.connectionUrlSha256,
       migrationRunSha256: firstDatabase.migrationRunSha256,
       sourceEnvironment: options.sourceEnvironment,
       candidateSha: expectedCandidateSha,
@@ -1620,6 +1639,7 @@ export async function capturePostgresPrivateStorageRecovery(
     deletionTombstoneCount: authority.tombstoneCount,
     recoverySetSha256,
     recoveryManifestSha256: sha256(manifestBytes),
+    databaseConnectionUrlSha256: firstDatabase.connectionUrlSha256,
   });
 }
 
@@ -1675,6 +1695,7 @@ function parseRecoveryManifest(
       "stateReceiptSha256",
       "sourceDatabaseIdentitySha256",
       "sourceUrlSha256",
+      "captureUrlSha256",
       "migrationRunSha256",
       "sourceEnvironment",
       "candidateSha",
@@ -1709,6 +1730,7 @@ function parseRecoveryManifest(
     logical.stateReceiptSha256,
     logical.sourceDatabaseIdentitySha256,
     logical.sourceUrlSha256,
+    logical.captureUrlSha256,
     logical.migrationRunSha256,
     logical.overallStateSha256,
     logical.sourceEvidenceTableSha256,
@@ -2443,6 +2465,7 @@ function connectionUrl(input: {
   readonly environment: Readonly<Record<string, string | undefined>>;
 }): {
   readonly clientConfig: Readonly<ClientConfig>;
+  readonly insecureTest: boolean;
   readonly urlSha256: string;
 } {
   const value = input.value.trim();
@@ -2499,10 +2522,16 @@ function connectionUrl(input: {
     url.hash ||
     sslModes.length !== 1 ||
     queryEntries.some(([name]) => name !== "sslmode") ||
-    (!insecureTest &&
-      !["require", "verify-ca", "verify-full"].includes(sslMode))
+    (!insecureTest && sslMode !== "verify-full")
   )
     throw recoveryError("invalid_arguments");
+  if (!insecureTest) {
+    try {
+      parsePostgresRailwayStockLocalhostCaUrl(value);
+    } catch {
+      throw recoveryError("invalid_arguments");
+    }
+  }
   return {
     clientConfig: Object.freeze({
       host: hostname,
@@ -2510,9 +2539,10 @@ function connectionUrl(input: {
       database,
       user,
       password,
-      ssl: insecureTest ? false : { rejectUnauthorized: sslMode !== "require" },
+      ssl: insecureTest ? false : { rejectUnauthorized: true },
       connectionTimeoutMillis: 15_000,
     }),
+    insecureTest,
     urlSha256: sha256(value),
   };
 }
@@ -2546,6 +2576,8 @@ export function createPostgresPrivateStorageDatabaseInspector(input: {
     PostgresPrivateStorageSourceEnvironment | undefined;
   readonly expectedCandidateSha?: string | undefined;
   readonly allowInsecureLoopbackForTests?: boolean | undefined;
+  readonly railwayStockLocalhostCaConnection?:
+    PostgresRailwayStockLocalhostCaNodeConnection | undefined;
   readonly environment?:
     Readonly<Record<string, string | undefined>> | undefined;
 }): PostgresPrivateStorageDatabaseInspector {
@@ -2555,6 +2587,9 @@ export function createPostgresPrivateStorageDatabaseInspector(input: {
     allowInsecureLoopbackForTests: input.allowInsecureLoopbackForTests ?? false,
     environment,
   });
+  if (
+    parsed.insecureTest === Boolean(input.railwayStockLocalhostCaConnection)
+  ) throw recoveryError("invalid_arguments");
   if (
     input.expectedConnectionUrlSha256 !== undefined &&
     parsed.urlSha256 !== exactSha256(input.expectedConnectionUrlSha256)
@@ -2569,14 +2604,27 @@ export function createPostgresPrivateStorageDatabaseInspector(input: {
     ? undefined
     : exactCandidateSha(input.expectedCandidateSha);
   return async () => {
+    const connection = input.railwayStockLocalhostCaConnection
+      ? sqlDatabaseInternals.postgresRailwayStockLocalhostPoolConnection(
+          input.connectionString,
+          input.railwayStockLocalhostCaConnection,
+        )
+      : parsed.clientConfig;
     const client = new Client({
-      ...parsed.clientConfig,
+      ...connection,
       application_name: "pintpath-private-storage-recovery",
+      options: [
+        "-c role=pintpath_migrator",
+        "-c search_path=pintpath_app,pg_catalog",
+        "-c statement_timeout=120000",
+        "-c idle_in_transaction_session_timeout=600000",
+        "-c lock_timeout=30000",
+        "-c synchronous_commit=on",
+      ].join(" "),
       query_timeout: 120_000,
       types: sqlDatabaseInternals.createPostgresTypeOverrides(),
     });
     let transaction = false;
-    let roleSet = false;
     try {
       await client.connect();
       const identityResult =
@@ -2586,10 +2634,34 @@ export function createPostgresPrivateStorageDatabaseInspector(input: {
                current_database() AS "databaseName",
                current_setting('server_version_num') AS "serverVersionNum",
                login.rolname AS "roleName", login.rolcanlogin AS "canLogin",
+               login.rolinherit AS "inheritsPrivileges",
                login.rolsuper AS superuser, login.rolcreatedb AS "createDatabase",
                login.rolcreaterole AS "createRole", login.rolreplication AS replication,
                login.rolbypassrls AS "bypassRls",
+               current_user AS "effectiveRole",
                pg_has_role(session_user, 'pintpath_migrator', 'SET') AS "canSetMigrator",
+               COALESCE(pg_has_role(session_user, to_regrole('pintpath_runtime'), 'MEMBER'), false)
+                 AS "runtimeMember",
+               COALESCE(pg_has_role(session_user, to_regrole('pintpath_maintenance'), 'MEMBER'), false)
+                 AS "maintenanceMember",
+               EXISTS (
+                 SELECT 1
+                   FROM pg_catalog.pg_auth_members membership
+                   JOIN pg_catalog.pg_roles inherited_role
+                     ON inherited_role.oid = membership.roleid
+                   JOIN pg_catalog.pg_roles member_role
+                     ON member_role.oid = membership.member
+                  WHERE member_role.rolname = session_user
+                    AND inherited_role.rolname <> 'pintpath_migrator'
+               ) AS "unexpectedMembership",
+               has_database_privilege(current_user, database.oid, 'CREATE')
+                 AS "hasDatabaseCreatePrivilege",
+               has_schema_privilege(current_user, 'pintpath_app', 'CREATE')
+                 AS "applicationSchemaCreate",
+               has_schema_privilege(current_user, 'pintpath_ops', 'CREATE')
+                 AS "operationsSchemaCreate",
+               current_schemas(false)::text[] AS "searchPathSchemas",
+               current_schema() AS "currentSchema",
                current_setting('transaction_read_only')::boolean AS "transactionReadOnly",
                pg_is_in_recovery() AS "inRecovery",
                database.datistemplate AS "databaseIsTemplate",
@@ -2609,12 +2681,24 @@ export function createPostgresPrivateStorageDatabaseInspector(input: {
         !/^17\d{4}$/.test(identity.serverVersionNum) ||
         !identity.roleName ||
         identity.canLogin !== true ||
+        identity.inheritsPrivileges !== false ||
         identity.superuser !== false ||
         identity.createDatabase !== false ||
         identity.createRole !== false ||
         identity.replication !== false ||
         identity.bypassRls !== false ||
+        identity.effectiveRole !== "pintpath_migrator" ||
+        identity.roleName === identity.effectiveRole ||
         identity.canSetMigrator !== true ||
+        identity.runtimeMember !== false ||
+        identity.maintenanceMember !== false ||
+        identity.unexpectedMembership !== false ||
+        identity.hasDatabaseCreatePrivilege !== false ||
+        identity.applicationSchemaCreate !== false ||
+        identity.operationsSchemaCreate !== false ||
+        JSON.stringify(identity.searchPathSchemas) !==
+          JSON.stringify(["pintpath_app", "pg_catalog"]) ||
+        identity.currentSchema !== "pintpath_app" ||
         identity.transactionReadOnly !== false ||
         identity.inRecovery !== false ||
         identity.databaseIsTemplate !== false ||
@@ -2622,10 +2706,6 @@ export function createPostgresPrivateStorageDatabaseInspector(input: {
         ![null, "", "disposable-rehearsal"].includes(identity.targetClass)
       )
         throw new Error("unsafe_identity");
-      await client.query(
-        "/* pintpath:private-storage:set-role */ SET ROLE pintpath_migrator",
-      );
-      roleSet = true;
       await client.query(`/* pintpath:private-storage:begin */
         BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY`);
       transaction = true;
@@ -2731,10 +2811,6 @@ export function createPostgresPrivateStorageDatabaseInspector(input: {
       );
       await client.query("/* pintpath:private-storage:rollback */ ROLLBACK");
       transaction = false;
-      await client.query(
-        "/* pintpath:private-storage:reset-role */ RESET ROLE",
-      );
-      roleSet = false;
       return Object.freeze({
         connectionUrlSha256: parsed.urlSha256,
         databaseIdentitySha256: databaseIdentitySha256(identity),
@@ -2753,7 +2829,6 @@ export function createPostgresPrivateStorageDatabaseInspector(input: {
       throw recoveryError("source_database_mismatch");
     } finally {
       if (transaction) await client.query("ROLLBACK").catch(() => undefined);
-      if (roleSet) await client.query("RESET ROLE").catch(() => undefined);
       await client.end().catch(() => undefined);
     }
   };
@@ -3021,6 +3096,30 @@ class SupabasePrivateStorageBoundary implements PostgresPrivateStorageBoundary {
       throw recoveryError("destination_upload_failed_disposal_required");
     }
   }
+
+  async removeObjects(objectPaths: readonly string[]): Promise<void> {
+    const paths = [...objectPaths].map(safeObjectPath).sort(compareUtf8);
+    if (paths.length < 1 || paths.length > MAX_OBJECT_COUNT
+      || new Set(paths).size !== paths.length) {
+      throw recoveryError("invalid_arguments");
+    }
+    for (let index = 0; index < paths.length; index += 100) {
+      const { data, error } = await this.boundedOperation(() =>
+        this.client.storage.from(this.bucketName).remove(paths.slice(index, index + 100)),
+      );
+      if (error || !Array.isArray(data)) {
+        throw recoveryError("destination_verification_failed_disposal_required");
+      }
+      const removed = data.map((entry) => {
+        const raw = entry as { readonly name?: unknown };
+        return typeof raw.name === "string" ? safeObjectPath(raw.name) : "";
+      }).sort(compareUtf8);
+      const expected = paths.slice(index, index + 100);
+      if (canonicalPostgresBackupJson(removed) !== canonicalPostgresBackupJson(expected)) {
+        throw recoveryError("destination_verification_failed_disposal_required");
+      }
+    }
+  }
 }
 
 export function createSupabasePrivateStorageRecoveryBoundary(input: {
@@ -3055,6 +3154,46 @@ export function createSupabasePrivateStorageRecoveryBoundary(input: {
     throw recoveryError("invalid_arguments");
   return new SupabasePrivateStorageBoundary(
     input.supabaseUrl,
+    input.serviceRoleKey,
+    bucketName,
+    requestTimeoutMs,
+    input.clientFactory,
+    input.fetchImplementation,
+  );
+}
+
+/**
+ * Creates the authenticated Storage boundary for an already reviewed,
+ * disposable restore origin. The CLI separately verifies the signed
+ * candidate/origin/database authority before this boundary is constructed.
+ */
+export function createSupabasePrivateStorageRestoreBoundary(input: {
+  readonly supabaseUrl: string;
+  readonly serviceRoleKey: string;
+  readonly bucketName?: string | undefined;
+  readonly requestTimeoutMs?: number | undefined;
+  readonly clientFactory?:
+    ((url: string, key: string) => SupabaseClient) | undefined;
+  readonly fetchImplementation?: typeof globalThis.fetch | undefined;
+}): PostgresPrivateStorageBoundary {
+  let origin: string;
+  try {
+    origin = canonicalOrigin(input.supabaseUrl);
+    if (origin !== input.supabaseUrl) throw recoveryError("invalid_arguments");
+    assertSupabaseServerApiKey(input.serviceRoleKey, "serviceRoleKey");
+  } catch {
+    throw recoveryError("invalid_arguments");
+  }
+  const bucketName = input.bucketName ?? POSTGRES_PRIVATE_STORAGE_BUCKET;
+  const requestTimeoutMs = input.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+  if (
+    bucketName !== POSTGRES_PRIVATE_STORAGE_BUCKET ||
+    !Number.isFinite(requestTimeoutMs) ||
+    requestTimeoutMs < 1_000 ||
+    requestTimeoutMs > MAX_REQUEST_TIMEOUT_MS
+  ) throw recoveryError("invalid_arguments");
+  return new SupabasePrivateStorageBoundary(
+    origin,
     input.serviceRoleKey,
     bucketName,
     requestTimeoutMs,

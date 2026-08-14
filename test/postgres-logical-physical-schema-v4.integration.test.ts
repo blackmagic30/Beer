@@ -32,6 +32,7 @@ const suffix = `${process.pid}_${crypto.randomBytes(5).toString("hex")}`;
 const firstDatabase = `pintpath_physical_v4_first_${suffix}`;
 const secondDatabase = `pintpath_physical_v4_second_${suffix}`;
 const secondOwner = `pintpath_physical_v4_owner_${suffix}`;
+const verifierAuthorityRole = "pintpath_migration_verifier_authority";
 const schemaSql = fs.readFileSync(path.resolve("src/db/postgres-schema.sql"), "utf8");
 const kernelSql = fs.readFileSync(path.resolve(
   "supabase/migrations/20260812022314_add_inert_reviewed_price_promotion_kernel.sql",
@@ -624,8 +625,8 @@ const FORBIDDEN_SQL = `WITH database AS (
     'unexpectedDefaultAcls',(SELECT count(*)::integer FROM pg_catalog.pg_default_acl
       WHERE defaclnamespace IN (SELECT oid FROM private_namespaces)),
     'unexpectedPrivateObjects',(
-      (SELECT pg_catalog.abs(count(*) FILTER (WHERE relkind='r') - 61)
-        + pg_catalog.abs(count(*) FILTER (WHERE relkind='i') - 270)
+      (SELECT pg_catalog.abs(count(*) FILTER (WHERE relkind='r') - 62)
+        + pg_catalog.abs(count(*) FILTER (WHERE relkind='i') - 271)
         + count(*) FILTER (WHERE relkind NOT IN ('r','i')) FROM private_objects)
       + (SELECT pg_catalog.abs(count(*) - 10) FROM pg_catalog.pg_proc
           WHERE pronamespace IN (SELECT oid FROM private_namespaces))
@@ -661,8 +662,8 @@ const FORBIDDEN_SQL = `WITH database AS (
       + (SELECT count(*) FROM pg_catalog.pg_ts_template
           WHERE tmplnamespace IN (SELECT oid FROM all_pintpath_namespaces))
     ),
-    'unexpectedPrivateDependencies',(SELECT pg_catalog.abs(count - 1909) FROM private_dependency_count),
-    'unexpectedSharedDependencies',(SELECT pg_catalog.abs(count - 377) FROM shared_dependency_count)
+    'unexpectedPrivateDependencies',(SELECT pg_catalog.abs(count - 1934) FROM private_dependency_count),
+    'unexpectedSharedDependencies',(SELECT pg_catalog.abs(count - 384) FROM shared_dependency_count)
   ) AS counts`;
 
 async function capture(client: Client): Promise<PostgresLogicalPhysicalSchemaV4Capture> {
@@ -768,6 +769,7 @@ describe.skipIf(!configuredAdminUrl)("passive physical-schema V4 against disposa
   let maintenance: Client;
   let runtimeRoleExisted = false;
   let migratorRoleExisted = false;
+  let verifierAuthorityRoleExisted = false;
   const clients = new Set<Client>();
   const databaseOids = new Set<string>();
 
@@ -801,10 +803,13 @@ describe.skipIf(!configuredAdminUrl)("passive physical-schema V4 against disposa
     }
     const roles = await maintenance.query<{ rolname: string }>(
       "SELECT rolname FROM pg_catalog.pg_roles WHERE rolname=ANY($1::text[])",
-      [["pintpath_runtime", "pintpath_migrator"]],
+      [["pintpath_runtime", "pintpath_migrator", verifierAuthorityRole]],
     );
     runtimeRoleExisted = roles.rows.some(({ rolname }) => rolname === "pintpath_runtime");
     migratorRoleExisted = roles.rows.some(({ rolname }) => rolname === "pintpath_migrator");
+    verifierAuthorityRoleExisted = roles.rows.some(({ rolname }) => (
+      rolname === verifierAuthorityRole
+    ));
     for (const database of [firstDatabase, secondDatabase]) {
       const existingOid = await databaseOidByName(database);
       if (existingOid) databaseOids.add(existingOid);
@@ -835,14 +840,30 @@ describe.skipIf(!configuredAdminUrl)("passive physical-schema V4 against disposa
       .catch((error) => failures.push(error));
     if (!migratorRoleExisted) await maintenance.query("DROP ROLE IF EXISTS pintpath_migrator")
       .catch((error) => failures.push(error));
+    if (!verifierAuthorityRoleExisted) {
+      await maintenance.query(`DROP ROLE IF EXISTS ${quoteIdentifier(verifierAuthorityRole)}`)
+        .catch((error) => failures.push(error));
+    }
     try {
-      const residue = await maintenance.query<{ databaseCount: string; ownerCount: string; scopedRoleCount: string }>(`SELECT
+      const residue = await maintenance.query<{
+        databaseCount: string;
+        ownerCount: string;
+        scopedRoleCount: string;
+        verifierAuthorityRoleCount: string;
+      }>(`SELECT
         (SELECT count(*)::text FROM pg_catalog.pg_database WHERE datname=ANY($1::text[])) AS "databaseCount",
         (SELECT count(*)::text FROM pg_catalog.pg_roles WHERE rolname=$2) AS "ownerCount",
-        (SELECT count(*)::text FROM pg_catalog.pg_roles WHERE rolname=ANY($3::text[])) AS "scopedRoleCount"`,
-      [[firstDatabase, secondDatabase], secondOwner, [...databaseOids].flatMap(scopedRoleNames)]);
+        (SELECT count(*)::text FROM pg_catalog.pg_roles WHERE rolname=ANY($3::text[])) AS "scopedRoleCount",
+        (SELECT count(*)::text FROM pg_catalog.pg_roles WHERE rolname=$4) AS "verifierAuthorityRoleCount"`,
+      [
+        [firstDatabase, secondDatabase],
+        secondOwner,
+        [...databaseOids].flatMap(scopedRoleNames),
+        verifierAuthorityRole,
+      ]);
       if (residue.rows[0]?.databaseCount !== "0" || residue.rows[0]?.ownerCount !== "0"
-        || residue.rows[0]?.scopedRoleCount !== "0") {
+        || residue.rows[0]?.scopedRoleCount !== "0"
+        || residue.rows[0]?.verifierAuthorityRoleCount !== (verifierAuthorityRoleExisted ? "1" : "0")) {
         failures.push(new Error("physical_schema_v4_test_residue_detected"));
       }
     } catch (error) {

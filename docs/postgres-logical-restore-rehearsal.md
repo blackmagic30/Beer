@@ -9,14 +9,16 @@ passed before the exact replay database and its two temporary login roles were
 removed; the broader restore project remains retained for the still-open full
 application/private-Storage recovery gates.
 
-The current pinned-binary restore and tombstone-replay implementations are
-review-only and do not authorize a new live ceremony. The historical proof
-above predates this wiring.
-Activation still requires an immutable digest-pinned executable, dynamic-loader,
-and complete shared-library closure (or a reviewed descriptor-native launcher),
-plus dedicated restore and replay workers that start with frozen intrinsics in
-pristine realms before any import or secret read. The ordinary `npm`/`tsx`
-commands below are not those workers.
+The ordinary host-tool restore and tombstone-replay commands below remain
+review-only; the historical proof above predates the current runtime wiring.
+The protected monthly schema-version-3 restore in
+`.github/workflows/production-logical-backup.yml` is the only newly operational
+path. It invokes the restore worker directly in a pristine frozen-intrinsics
+realm and uses the digest-pinned OCI adapter described in
+`docs/production-logical-backup-operations.md`. It remains fail-closed until
+that runbook's runner, Docker, egress-plugin, target, environment, secret, and
+review prerequisites are provisioned. It does not activate the passive V4
+scratch-restore design or the separate tombstone-replay ceremony.
 
 ## What this proves
 
@@ -52,7 +54,11 @@ The table, column, and foreign-key expectations are read from the generated migr
 
 Create a fresh disposable PostgreSQL database on a non-production cluster. Before using this tool:
 
-1. Provision `pintpath_runtime` and `pintpath_migrator` through the separately reviewed cluster bootstrap. The restore command will not create or alter cluster-global roles. Both roles must be `NOLOGIN`, `NOSUPERUSER`, `NOCREATEDB`, `NOCREATEROLE`, `NOREPLICATION`, `NOBYPASSRLS`, and `INHERIT`.
+1. Provision `pintpath_runtime`, `pintpath_migrator`, and
+   `pintpath_maintenance` through the separately reviewed cluster bootstrap.
+   The restore command will not create or alter cluster-global roles. Replay's
+   dedicated LOGIN may be a member only of `pintpath_maintenance`; it must not
+   inherit runtime or migrator authority.
 2. Set the database-level marker `pintpath.logical_restore_target_class` to the exact value `disposable-rehearsal` with `ALTER DATABASE` from the disposable cluster administrator.
 3. Confirm that neither `pintpath_app` nor `pintpath_ops` exists. Empty pre-created schemas are also rejected because the archive owns `CREATE SCHEMA`.
 4. Use a direct PostgreSQL endpoint. Poolers, port 6543, URL fragments, URL options, and non-TLS connections are rejected by the production API.
@@ -113,6 +119,16 @@ npm run db:postgres:restore:logical -- restore \
 
 The operator-mutation guard is separate from the exact confirmation. If restore-containment environment variables are present in the shell, the command fails closed.
 
+The archive intentionally excludes
+`pintpath_ops.migration_verifier_authority`. That row is a candidate- and
+environment-bound trust anchor, not recoverable application state. A restore
+must leave it absent; never copy it from the source or another target. After
+the restored schema and target identity are independently accepted, provision a
+fresh row only through
+`.github/workflows/provision-postgres-migration-verifier-authority.yml` and its
+target-specific protected environment before running an importer apply or
+verification ceremony.
+
 ## Nonzero account-deletion recovery proof
 
 Use only wholly synthetic staging identities with no Supabase Auth or Stripe
@@ -167,6 +183,8 @@ digest, and target identity have been independently checked:
 PINTPATH_POSTGRES_ACCOUNT_DELETION_REPLAY=confirmed \
 npm run db:postgres:deletion:replay -- \
   --runtime-url-file /absolute/private/restore-runtime-url \
+  --runtime-root-ca-file /absolute/private/disposable-railway-root-ca.pem \
+  --expected-runtime-root-ca-der-sha256 <reviewed-disposable-root-ca-der-sha256> \
   --base-restore-receipt /absolute/private/evidence/postgres-logical-restore-receipt.json \
   --expected-base-restore-receipt-sha256 <retained-success-receipt-sha256> \
   --deletion-ledger-authority-directory /absolute/private/evidence/deletion-ledger-authority \
@@ -176,10 +194,15 @@ npm run db:postgres:deletion:replay -- \
   --expected-ledger-checkpoint-sha256 <ledger-checkpoint-sha256> \
   --expected-ledger-immutable-set-sha256 <ledger-immutable-set-sha256> \
   --expected-tombstone-count 1 \
-  --receipt /absolute/private/evidence/deletion-replay.json
+  --receipt /absolute/private/evidence/deletion-replay-first.json
 ```
 
-Require the first replay to report one newly applied tombstone and the second to
+The URL must use the exact private Railway authority and
+`sslmode=verify-full`. Replay uses the stock-localhost CA transport and activates
+`pintpath_maintenance` in the startup packet; it never accepts generic TLS or
+post-connect role switching. Run the identical pinned command a second time
+with a new `--receipt .../deletion-replay-second.json`. Require the first replay
+to report one newly applied tombstone and the second to
 report one already-applied tombstone with the same semantic projection hash.
 The restored request must be completed, its outbox `suppressed_restore`, all app
 sessions and recipient secrets absent, and the physical secret checkpoint
@@ -260,15 +283,15 @@ authentic synthetic tombstone twice. Neither proof includes private Storage
 recovery, a full application boot, PITR, provider-enforced WORM, approved
 RPO/RTO objectives, or any production restore/cutover.
 
-Pinned tool custody does not yet bind the pathname Node passes to `spawn`, the
-dynamic loader, or libpq/OpenSSL/zstd and the rest of the shared-library tree. A
-same-UID pathname toggler can exploit that execution gap, and a substituted
-child can call `setsid` outside the reviewed process-group observation. The
-entire restore and replay wrappers—not only the tool-authority module—must run
-in pristine frozen-intrinsics realms. Ordinary async carriers currently include
-plaintext connection material, parsed `PGPASSWORD`, connection capabilities,
-tombstone identifiers, and query rows that inherited `then` poisoning could
-observe. The current CLIs do not provide that containment.
+The manual host-tool path does not bind the pathname passed to `spawn`, the
+dynamic loader, or libpq/OpenSSL/zstd and the rest of the shared-library tree;
+it therefore remains unsuitable for live use. The protected schema-version-3
+workflow instead starts the entire restore CLI with frozen intrinsics before
+imports or secret reads and routes `pg_restore` version/list/restore through
+the digest-pinned OCI adapter. The adapter replaces `PGPASSWORD` with a
+descriptor-backed, read-only pgpass mount and performs exact container cleanup.
+The tombstone replay wrapper is outside that workflow and retains the manual
+activation restrictions here.
 
 The restore's three and replay's two backend-quiescence checks cannot prevent a
 newly authorized client from connecting after the final observation. Replay
@@ -278,9 +301,10 @@ immediately before close; activation still requires that reviewed one-session
 dependency and exclusive credential custody. Likewise, both receipt writers
 retain and fsync the reviewed parent directory, but portable Node does not
 provide the fd-relative `openat`/`O_EXCL` operation needed to atomically bind
-the new leaf against a hostile current-UID namespace toggler. Activation
-therefore also requires exclusive target-credential custody and a protected,
-immutable filesystem namespace. These are launch blockers, not properties
-proved by the review-only implementation.
+the new leaf against a hostile current-UID namespace toggler. The protected
+workflow satisfies this operationally by using a single-purpose non-root runner
+with no concurrent same-UID workload and a new mode-`700` run directory; other
+live use still requires equivalent exclusive target-credential custody and
+filesystem-namespace isolation.
 
 The archive intentionally contains no owners or ACLs. The restore command therefore reapplies a fixed least-privilege ACL contract transactionally and records only that contract's SHA-256. Cluster-global roles, role memberships, database settings other than the disposable marker, extensions outside the two private schemas, and provider-level PITR/retention configuration are not part of this archive and must be tested separately.

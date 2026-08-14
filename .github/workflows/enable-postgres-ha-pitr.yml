@@ -1,0 +1,139 @@
+name: Enable Railway Postgres HA PITR
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Exact current main SHA authorizing PITR enablement
+        required: true
+        type: string
+      target_environment:
+        description: Protected target whose pinned HA-root authority will be used
+        required: true
+        type: choice
+        options:
+          - permanent-staging
+          - production
+      confirmation:
+        description: ENABLE_PITR_PRODUCTION or ENABLE_PITR_PERMANENT_STAGING
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pintpath-postgres-ha-pitr-${{ inputs.target_environment }}
+  cancel-in-progress: false
+
+jobs:
+  enable:
+    name: Enable and verify PITR on one exact HA root
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment: postgres-ha-pitr-${{ inputs.target_environment }}
+    steps:
+      - name: Checkout the exact main candidate without persisted credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+
+      - name: Require exact original-run authority
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          TARGET_ENVIRONMENT: ${{ inputs.target_environment }}
+          PROTECTED_AUTHORITY_TARGET: ${{ vars.PINTPATH_POSTGRES_HA_PITR_AUTHORITY_TARGET }}
+          PROTECTED_ROOT_SERVICE_ID: ${{ vars.PINTPATH_POSTGRES_HA_PITR_EXPECTED_ROOT_SERVICE_ID }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          DISPATCH_REF: ${{ github.ref }}
+          DISPATCH_SHA: ${{ github.sha }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$PROTECTED_ROOT_SERVICE_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]
+          test "$PROTECTED_AUTHORITY_TARGET" = "$TARGET_ENVIRONMENT"
+          case "$TARGET_ENVIRONMENT" in
+            production)
+              test "$CONFIRMATION" = 'ENABLE_PITR_PRODUCTION'
+              ;;
+            permanent-staging)
+              test "$CONFIRMATION" = 'ENABLE_PITR_PERMANENT_STAGING'
+              ;;
+            *)
+              exit 1
+              ;;
+          esac
+          test "$DISPATCH_REF" = 'refs/heads/main'
+          test "$DISPATCH_SHA" = "$CANDIDATE_SHA"
+          test "$RUN_ATTEMPT" = '1'
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse refs/remotes/origin/main)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain=v2 --untracked-files=all)"
+
+      - name: Setup the repository Node runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Install immutable dependencies
+        run: npm ci
+
+      - name: Create private evidence custody
+        run: mkdir -m 700 "$RUNNER_TEMP/pintpath-pitr-evidence"
+
+      - name: Verify the complete repository before the provider write
+        run: npm run check
+
+      - name: Reassert exact current main immediately before PITR enablement
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse refs/remotes/origin/main)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain=v2 --untracked-files=all)"
+
+      - name: Enable PITR once and reconcile the complete HA workflow
+        env:
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+          PINTPATH_POSTGRES_HA_PITR_CONFIRMATION: ${{ inputs.confirmation }}
+          PINTPATH_RAILWAY_PITR_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PITR_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_PITR_ENABLE_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PITR_ENABLE_TOKEN }}
+          PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
+          PINTPATH_POSTGRES_HA_PITR_AUTHORITY_TARGET: ${{ vars.PINTPATH_POSTGRES_HA_PITR_AUTHORITY_TARGET }}
+          PINTPATH_POSTGRES_HA_PITR_EXPECTED_ROOT_SERVICE_ID: ${{ vars.PINTPATH_POSTGRES_HA_PITR_EXPECTED_ROOT_SERVICE_ID }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          TARGET_ENVIRONMENT: ${{ inputs.target_environment }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./node_modules/.bin/tsx scripts/execute-protected-postgres-ha-pitr.ts \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --target-environment "$TARGET_ENVIRONMENT" \
+            --evidence-dir "$RUNNER_TEMP/pintpath-pitr-evidence"
+
+      - name: Reconcile canonical Railway production/staging boundaries after every attempt
+        if: always()
+        env:
+          PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
+        run: npm run readiness:railway:mutation-boundary
+
+      - name: Upload secret-free PITR evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pintpath-postgres-ha-pitr-${{ inputs.target_environment }}-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}/pintpath-pitr-evidence/
+          if-no-files-found: error
+          retention-days: 30

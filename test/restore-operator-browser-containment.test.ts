@@ -343,8 +343,12 @@ describe("restore rehearsal browser isolation", () => {
       path.resolve(process.cwd(), "src/modules/business/business.service.ts"),
       "utf8",
     );
+    expect(app).toMatch(
+      /const externalWriteRehearsal =\s*env\.RESTORE_REHEARSAL_MODE \|\| env\.POSTGRES_RECOVERY_REHEARSAL_MODE;/,
+    );
+    expect(app).toContain("externalWriteRehearsal ? undefined : env.SUPABASE_URL");
     expect(app).toContain(
-      "env.RESTORE_REHEARSAL_MODE ? undefined : env.SUPABASE_URL",
+      "externalWriteRehearsal ? undefined : env.SUPABASE_SERVICE_ROLE_KEY",
     );
     expect(app).toContain("SUPABASE_URL: undefined");
     expect(app).toContain("SUPABASE_ANON_KEY: undefined");

@@ -1,0 +1,68 @@
+{
+  "schemaVersion": "pintpath-protected-production-recovery-railway-cleanup-policy/v2",
+  "policyId": "pintpath-production-recovery-disposable-railway-cleanup",
+  "activationState": "GITHUB_ENVIRONMENT_PROTECTED",
+  "githubEnvironment": "production-promotion-recovery-cleanup",
+  "repository": "blackmagic30/Beer",
+  "activationWorkflowPath": ".github/workflows/activate-production-promotion-recovery.yml",
+  "emergencyCleanupWorkflowPath": ".github/workflows/reconcile-production-promotion-recovery-emergency-cleanup.yml",
+  "requiredGitRef": "refs/heads/main",
+  "requiredRunAttempt": 1,
+  "forbiddenProjectIds": ["48d8c6cd-1c66-4148-874b-20877f48e1a5"],
+  "forbiddenEnvironmentIds": [
+    "13dab015-df74-45c6-b26f-69323daea99a",
+    "a4e0f507-d6d3-4df9-a818-ad92c0071a35"
+  ],
+  "targetContract": {
+    "projectNamePrefix": "pintpath-disposable-restore-",
+    "exactlyOneEnvironmentRequired": true,
+    "ephemeralEnvironmentRequired": true,
+    "signedAuthorityRequiredActivationRunId": true,
+    "signedEmergencyCleanupArmAuthoritySha256Required": true,
+    "completeInventorySha256Required": true,
+    "signedProjectEnvironmentAndServiceInventoryRequired": true,
+    "signedWorkspaceIdentityAndCompleteProjectInventoryRequired": true,
+    "targetRequiredInSignedWorkspaceInventory": true,
+    "allConnectionPaginationMustBeComplete": true
+  },
+  "executionContract": {
+    "observedCleanupRunIdRecorded": true,
+    "activationRunCleanupRequiresSameRunId": true,
+    "emergencyControllerMayUseDistinctRunId": true,
+    "emergencyControllerRequiresArmedAuthority": true,
+    "emergencyControllerReceiptsAcceptedForGreenActivation": false,
+    "requiredRunAttempt": 1,
+    "allowedEmergencyEvents": ["schedule", "workflow_dispatch", "workflow_run"]
+  },
+  "providerContract": {
+    "graphqlEndpoint": "https://backboard.railway.com/graphql/v2",
+    "inventoryOperation": "projectsByIds",
+    "workspaceIdentityOperation": "workspace",
+    "workspaceProjectInventoryOperation": "projects(workspaceId)",
+    "workspaceProjectInventoryPageSize": 100,
+    "bothTokensMustProveSameWorkspaceAndCompleteInventory": true,
+    "alreadyAbsentMaySucceed": false,
+    "postDeleteRequiresSignedInventoryMinusTargetExact": true,
+    "deleteOperation": "projectDelete",
+    "maximumDeleteAttempts": 1,
+    "automaticRetriesAllowed": false,
+    "unconditionalReadReconciliationRequired": true,
+    "exactDeleteAcknowledgementRequiredForSuccess": true,
+    "lostAcknowledgementMaySucceed": false,
+    "workspaceScopedAbsenceIsNotGlobalDeletionProof": true
+  },
+  "credentials": {
+    "separateReadAndDeleteTokenFilesRequired": true,
+    "workspaceScopedTokensRequired": true,
+    "exactFileMode": "0600",
+    "sourceDatabaseCredentialsAllowed": false,
+    "wormCredentialsAllowed": false,
+    "supabaseCredentialsAllowed": false
+  },
+  "evidence": {
+    "durableIntentRequiredBeforeDelete": true,
+    "terminalEvidenceRequired": true,
+    "providerCredentialsAllowed": false,
+    "secretDerivedCommitmentsAllowed": false
+  }
+}

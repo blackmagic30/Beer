@@ -461,7 +461,6 @@ export const reviewSubmissionSchema = z.object({
   rejectionReason: nullableTrimmedStringSchema.default(null),
   fraudFlagged: z.boolean().default(false),
   pointsAwarded: z.coerce.number().min(0).max(25).optional(),
-  confidence: confidenceSchema.optional(),
 });
 
 export const missionsQuerySchema = z.object({

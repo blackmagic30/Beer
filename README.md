@@ -4,7 +4,7 @@
 
 ## Production architecture status
 
-The repository is **not ready for the full-scale launch yet**. The checked-in server now has a canonical `DATABASE_URL` runtime: it opens a bounded PostgreSQL pool, verifies the private imported schema before serving, uses a least-privilege runtime role, and makes the legacy SQLite repository unavailable. The deployed production environment has not been migrated and still runs the older SQLite build. Launch remains blocked until the reviewed Postgres target is provisioned, the snapshot is imported and reconciled, the SQLite source is sealed read-only, and permanent staging proves two-replica concurrency, restore, deploy, and Postgres-compatible rollback.
+The repository is **not authorization to launch yet**. Its canonical `DATABASE_URL` runtime opens bounded, role-separated PostgreSQL pools, verifies the private imported schema before serving, and makes legacy SQLite unavailable. The deployed production environment has not been migrated and still runs the older SQLite build; its pinned PostgreSQL 17 service is provisioned but remains empty and detached. Launch therefore remains blocked on owner-controlled execution and evidence: apply the reviewed schema, snapshot/import/reconcile the sealed source, keep SQLite read-only, and complete permanent-staging two-replica, recovery, deployment, and Postgres-compatible rollback proof against one frozen candidate.
 
 Use two different pre-production systems: permanent integrated staging for routine migrations/auth/provider/two-replica/release proof, and a disposable restore-staging stack with different Railway, Postgres, Supabase/Auth/Storage, Redis, secrets, domain, callbacks, and volumes for destructive RPO/RTO drills. Canonical production's separate Supabase bucket is only a private operational restore copy; its URL, key, and bucket variables must be absent from permanent staging. The immutable authority must be provider-enforced object lock/WORM in a separate failure domain.
 
@@ -210,7 +210,7 @@ For the Melbourne launch, exact prices must flow through the Express API, not di
 - `FIELD_TEST_MODE=true` is for private staging/field tests only; full-scale production uses `false`.
 - Run `npm run security:scan` before deploy to catch common committed secret patterns. If it flags a real key, rotate it immediately and replace it with an env placeholder.
 - Run `npm run security:audit` before deploy to catch high-severity dependency advisories.
-- Run `npm run test:release:pintpath` before a release candidate. This executes the repo-native Pint Path release-readiness suite against synthetic/local data only, plus secret and dependency checks. See `docs/release-readiness-checklist.md` for provider-only blockers that still need staging/manual verification.
+- Before a release candidate, run `npm run check`, `npm run readiness:providers`, `npm run release:evidence`, and `npm run security:audit`. These non-strict gates report genuine external items as pending. Reserve `npm run test:release:pintpath`, which includes strict evidence validation, for the final evidence gate after the protected deployments and human/provider evidence exist. See `docs/release-readiness-checklist.md`.
 - Before any Railway write, require `npm run --silent readiness:railway:mutation-boundary` and the tracked one-operation executor that repeats the boundary in an unconditional postflight. The standalone receipt is read-only; dashboard Deploy, Git autodeploy, and ordinary redeploy remain prohibited.
 - Production startup now requires an HTTPS `PUBLIC_BASE_URL`, `GOOGLE_MAPS_API_KEY`, and `GOOGLE_MAPS_MAP_ID`; admin routes stay locked until `ADMIN_EMAILS` is configured with the approved owner/admin email.
 - `/startup` is the production deploy gate: it forces database migration/open, notice-keyring validation, local storage checks, and scheduler startup without depending on fragile external canaries. `/ready` remains the deeper ongoing dependency check after `/health`.
@@ -235,7 +235,10 @@ PORT=8080
 PUBLIC_BASE_URL=https://pintpath.au
 # DATABASE_PATH must be absent. Keep the sealed SQLite source outside the web
 # service environment after cutover.
-DATABASE_URL=postgresql://pintpath_runtime:replace_me@direct-or-session-host:5432/pintpath?sslmode=require
+DATABASE_URL=postgresql://runtime_login:replace_me@postgres-production.railway.internal:5432/pintpath?sslmode=verify-full
+DATABASE_MAINTENANCE_URL=postgresql://privacy_maintenance_login:replace_me@postgres-production.railway.internal:5432/pintpath?sslmode=verify-full
+PINTPATH_POSTGRES_ROOT_CA_PEM=replace_with_exact_multiline_railway_root_ca
+PINTPATH_POSTGRES_ROOT_CA_DER_SHA256=replace_with_independently_reviewed_der_sha256
 # Keep at one on Railway for forwarded scheme/host handling. Client security
 # identity uses Railway's platform-provided X-Real-IP, not proxy hop count.
 TRUST_PROXY_HOPS=1
@@ -285,13 +288,17 @@ REDIS_URL=redis://default:replace_me@host:6379
 PINTPATH_DATABASE_RESOURCE_ID=replace_with_live_production_database_provider_resource_id
 PINTPATH_EXPECTED_DATABASE_RESOURCE_ID=replace_with_registered_production_database_provider_resource_id
 PINTPATH_FORBIDDEN_DATABASE_RESOURCE_IDS=replace_with_permanent_staging_and_restore_database_resource_ids
+PINTPATH_PERMANENT_STAGING_DATABASE_RESOURCE_ID=replace_with_registered_permanent_staging_database_resource_id
 PINTPATH_REDIS_RESOURCE_ID=replace_with_live_production_redis_provider_resource_id
 PINTPATH_EXPECTED_REDIS_RESOURCE_ID=replace_with_registered_production_redis_provider_resource_id
 PINTPATH_FORBIDDEN_REDIS_RESOURCE_IDS=replace_with_permanent_staging_and_restore_redis_resource_ids
+PINTPATH_PERMANENT_STAGING_REDIS_RESOURCE_ID=replace_with_registered_permanent_staging_redis_resource_id
 PINTPATH_EXPECTED_DATABASE_URL_SHA256=replace_with_exact_production_database_url_digest
 PINTPATH_FORBIDDEN_DATABASE_URL_SHA256S=replace_with_registered_staging_and_restore_database_url_digests
+PINTPATH_PERMANENT_STAGING_DATABASE_URL_SHA256=replace_with_registered_permanent_staging_database_url_digest
 PINTPATH_EXPECTED_REDIS_URL_SHA256=replace_with_exact_production_redis_url_digest
 PINTPATH_FORBIDDEN_REDIS_URL_SHA256S=replace_with_registered_staging_and_restore_redis_url_digests
+PINTPATH_PERMANENT_STAGING_REDIS_URL_SHA256=replace_with_registered_permanent_staging_redis_url_digest
 REQUIRE_REDIS_RATE_LIMITING=true
 ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=false
 ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=false
@@ -369,8 +376,8 @@ PUBLIC_BASE_URL=https://your-ngrok-subdomain.ngrok-free.app
 DATABASE_PATH=./data/pint-path.sqlite
 TRUST_PROXY_HOPS=1
 SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_ANON_KEY=your_supabase_publishable_or_legacy_anon_key
-SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
+SUPABASE_ANON_KEY=sb_publishable_REPLACE_WITH_PROJECT_PUBLISHABLE_KEY
+SUPABASE_SERVICE_ROLE_KEY=replace_with_exact_project_server_key
 # Configure Google OAuth in the Supabase dashboard for this launch. Keep Apple
 # disabled until authorization-token revocation is implemented and verified.
 # Web redirect URLs: http://localhost:3000/auth/callback and
@@ -435,10 +442,12 @@ What each one does:
 - `PUBLIC_BASE_URL`: your public HTTPS base URL. Use your ngrok URL here.
 - `HOST`: interface the Node server should bind to. Use `0.0.0.0` for Railway and other hosted deployments.
 - `DATABASE_PATH`: local-development database path and the explicit read-only restore-rehearsal path. Canonical production rejects it; keep the sealed migration source outside the web-service environment.
-- `DATABASE_URL`: canonical production Postgres connection consumed by the checked-in server. Startup creates a bounded pool and fails closed unless the dedicated least-privilege runtime role, search path, imported schema metadata, authoritative table count, RLS isolation, and operations-schema denial all pass. Migration and logical-backup tools use separate direct credentials.
+- `DATABASE_URL`: canonical production Postgres connection consumed by the checked-in server. Its credential is an external `LOGIN NOINHERIT` principal whose only membership is the NOLOGIN `pintpath_runtime` role; it is not the shared role itself. It must be the exact lower-case Railway private `*.railway.internal:5432` direct/session URL with only `sslmode=verify-full`, never a transaction pooler. Every connection selects `pintpath_runtime` in its startup packet, then readiness verifies the exact `session_user` login authority and `current_user` effective role, search path, imported schema metadata, authoritative table count, RLS isolation, and operations-schema denial. Migration and logical-backup tools use separate direct credentials.
+- `DATABASE_MAINTENANCE_URL`: same-authority port-5432 direct/session URL for a distinct external `LOGIN NOINHERIT` principal whose only membership is the NOLOGIN `pintpath_maintenance` role. Its separate pool selects and verifies that effective role before privacy repositories mount.
+- `PINTPATH_POSTGRES_ROOT_CA_PEM` / `PINTPATH_POSTGRES_ROOT_CA_DER_SHA256`: the sealed exact Railway stock Postgres root CA and its independently reviewed X.509 DER SHA-256. Startup validates the one self-signed CA, materializes owned mode-700/mode-600 temporary custody, resolves exactly one private `fd12::/16` address, makes both pools dial only that address while authenticating the stock leaf as `localhost`, fences the authority during startup/readiness, and removes it after both pools close. Configure the PEM value itself through the protected runtime-variable workflow; never configure a runner/container pathname.
 - `SUPABASE_URL`: Supabase project URL used for email/password and OAuth authentication, private evidence storage, venue imports, and reviewed map-sync writes. Canonical production requires the exact `https://auth.pintpath.au` origin.
-- `SUPABASE_ANON_KEY`: browser-safe public key used by `/account.html` for Supabase Auth. The web runtime temporarily accepts either an exact `sb_publishable_` key or a structurally valid legacy `anon` JWT for rollback compatibility. iOS Release archives and Android signed release bundles accept only an exact `sb_publishable_` key. It is mandatory in production; never use a service-role or `sb_secret_` key in a public client.
-- `SUPABASE_SERVICE_ROLE_KEY`: server-only key required in production for verified auth operations, private evidence storage, venue imports, and reviewed/admin menu-capture sync.
+- `SUPABASE_ANON_KEY`: browser-safe public key used by `/account.html` for Supabase Auth. Canonical production, permanent staging, and hosted rehearsals require an exact `sb_publishable_` key; structurally valid legacy `anon` JWTs remain compatible only in local development. iOS Release archives and Android signed release bundles also accept only an exact `sb_publishable_` key. Never use a service-role or `sb_secret_` key in a public client.
+- `SUPABASE_SERVICE_ROLE_KEY`: server-only key required in production for verified auth operations, private evidence storage, venue imports, and reviewed/admin menu-capture sync. Canonical production and hosted staging/rehearsals require an exact `sb_secret_` key.
 - `SUPABASE_OAUTH_PROVIDERS`: comma-separated provider buttons to show on `/account.html`. Use `google` for the current launch; production rejects `apple` until Apple authorization-token revocation is implemented and tested.
 - `ACCOUNT_DELETION_NOTICE_MODE`: `disabled`, test-only `mock`, or production `resend`. Canonical production requires `resend` independently of monthly reports.
 - `RESEND_TRANSACTIONAL_API_KEY`: sending-only Resend key dedicated to account-deletion completion notices.

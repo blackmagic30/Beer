@@ -9,6 +9,7 @@ import { createDatabase } from "../src/db/database.js";
 import { POSTGRES_MIGRATION_CONTRACT } from "../src/db/postgres-migration-contract.js";
 import { writePostgresMigrationLedgerAuthority } from "../src/db/postgres-migration-ledger.js";
 import {
+  POSTGRES_MIGRATION_SNAPSHOT_EVIDENCE_DIRECTORY,
   createPostgresMigrationPlan,
   createPostgresMigrationSnapshot,
 } from "../src/db/postgres-migration-source.js";
@@ -317,6 +318,25 @@ describe("deterministic SQLite-to-Postgres migration plans", () => {
       snapshotManifestPath: snapshot.manifestPath,
       expectedSnapshotManifestSha256: snapshot.manifestSha256,
       outputPlanPath: path.join(snapshot.snapshotDirectory, "tampered-ledger-plan.json"),
+      chunkRows: 500,
+    })).rejects.toMatchObject({ code: "ARTIFACT_INVALID" });
+  });
+
+  it("refuses to plan from a snapshot whose copied evidence tree changed", async () => {
+    const root = makeTemporaryDirectory();
+    const source = await createSourceFixture({ root });
+    const snapshot = await snapshotFixture(root, source);
+    const evidencePath = path.join(
+      snapshot.snapshotDirectory,
+      POSTGRES_MIGRATION_SNAPSHOT_EVIDENCE_DIRECTORY,
+      "private-evidence.txt",
+    );
+    fs.appendFileSync(evidencePath, "tampered");
+
+    await expect(createPostgresMigrationPlan({
+      snapshotManifestPath: snapshot.manifestPath,
+      expectedSnapshotManifestSha256: snapshot.manifestSha256,
+      outputPlanPath: path.join(snapshot.snapshotDirectory, "tampered-evidence-plan.json"),
       chunkRows: 500,
     })).rejects.toMatchObject({ code: "ARTIFACT_INVALID" });
   });

@@ -1,0 +1,192 @@
+{
+  "schemaVersion": "pintpath-github-release-required-checks/v3",
+  "repository": "blackmagic30/Beer",
+  "branch": "main",
+  "phaseConsumers": {
+    "staging": {
+      "workflowPath": ".github/workflows/deploy-permanent-staging.yml",
+      "event": "workflow_dispatch"
+    },
+    "production": {
+      "workflowPath": ".github/workflows/deploy-production.yml",
+      "event": "workflow_dispatch"
+    },
+    "close": {
+      "workflowPath": ".github/workflows/close-production-route.yml",
+      "event": "workflow_dispatch"
+    },
+    "activation": {
+      "workflowPath": ".github/workflows/activate-production-promotion-recovery.yml",
+      "event": "workflow_dispatch"
+    },
+    "promotion-recovery": {
+      "workflowPath": ".github/workflows/attest-production-promotion-recovery.yml",
+      "event": "workflow_dispatch"
+    },
+    "open": {
+      "workflowPath": ".github/workflows/open-production-route.yml",
+      "event": "workflow_dispatch"
+    },
+    "release": {
+      "workflowPath": ".github/workflows/pintpath-release-gate.yml",
+      "event": "workflow_dispatch"
+    }
+  },
+  "requiredChecks": {
+    "base": [
+      {
+        "name": "postgres-tool-runtime-closure-observation",
+        "workflowPath": ".github/workflows/ci.yml",
+        "event": "push"
+      },
+      {
+        "name": "postgres-migration-integration",
+        "workflowPath": ".github/workflows/ci.yml",
+        "event": "push"
+      },
+      {
+        "name": "build-test-scan",
+        "workflowPath": ".github/workflows/ci.yml",
+        "event": "push"
+      },
+      {
+        "name": "supabase-database",
+        "workflowPath": ".github/workflows/ci.yml",
+        "event": "push"
+      },
+      {
+        "name": "CodeQL JavaScript and TypeScript",
+        "workflowPath": ".github/workflows/codeql.yml",
+        "event": "push"
+      },
+      {
+        "name": "CodeQL Swift",
+        "workflowPath": ".github/workflows/codeql.yml",
+        "event": "push"
+      },
+      {
+        "name": "release-readiness",
+        "workflowPath": ".github/workflows/pintpath-release-readiness.yml",
+        "event": "push"
+      },
+      {
+        "name": "ios",
+        "workflowPath": ".github/workflows/native-apps.yml",
+        "event": "push"
+      }
+    ],
+    "staging": [
+      {
+        "name": "Deploy permanent staging",
+        "workflowPath": ".github/workflows/deploy-permanent-staging.yml",
+        "event": "workflow_dispatch"
+      },
+      {
+        "name": "Scale 1→2, prove, and converge 2→1",
+        "workflowPath": ".github/workflows/permanent-staging-scale-evidence.yml",
+        "event": "workflow_dispatch"
+      },
+      {
+        "name": "iOS protected production configuration archive",
+        "workflowPath": ".github/workflows/native-apps.yml",
+        "event": "workflow_dispatch"
+      }
+    ],
+    "production": [
+      {
+        "stage": "deploy",
+        "name": "Deploy protected production",
+        "workflowPath": ".github/workflows/deploy-production.yml",
+        "event": "workflow_dispatch"
+      },
+      {
+        "stage": "scale",
+        "name": "Converge exact production deployment to two replicas",
+        "workflowPath": ".github/workflows/production-converge-two-replicas.yml",
+        "event": "workflow_dispatch"
+      },
+      {
+        "stage": "close",
+        "name": "Close exact production route",
+        "workflowPath": ".github/workflows/close-production-route.yml",
+        "event": "workflow_dispatch"
+      },
+      {
+        "stage": "activation",
+        "name": "Activate exact production promotion recovery",
+        "workflowPath": ".github/workflows/activate-production-promotion-recovery.yml",
+        "event": "workflow_dispatch"
+      },
+      {
+        "stage": "promotion-recovery",
+        "name": "Attest protected production promotion and recovery",
+        "workflowPath": ".github/workflows/attest-production-promotion-recovery.yml",
+        "event": "workflow_dispatch"
+      },
+      {
+        "stage": "open",
+        "name": "Open exact production route",
+        "workflowPath": ".github/workflows/open-production-route.yml",
+        "event": "workflow_dispatch"
+      }
+    ]
+  },
+  "requiredArtifacts": {
+    "base": [
+      {
+        "name": "pintpath-mission-discovery-scale-evidence",
+        "producerCheck": "postgres-migration-integration"
+      },
+      {
+        "name": "pintpath-postgres-tool-runtime-closure-v4-observation",
+        "producerCheck": "postgres-tool-runtime-closure-observation"
+      },
+      {
+        "name": "pintpath-automated-readiness-evidence",
+        "producerCheck": "release-readiness"
+      }
+    ],
+    "staging": [
+      {
+        "name": "pintpath-permanent-staging-deployment-{candidateSha}",
+        "producerCheck": "Deploy permanent staging"
+      },
+      {
+        "name": "pintpath-permanent-staging-scale-evidence-{candidateSha}",
+        "producerCheck": "Scale 1→2, prove, and converge 2→1"
+      }
+    ],
+    "production": [
+      {
+        "stage": "deploy",
+        "name": "pintpath-production-deployment-{candidateSha}",
+        "producerCheck": "Deploy protected production"
+      },
+      {
+        "stage": "scale",
+        "name": "pintpath-production-scale-evidence-{candidateSha}",
+        "producerCheck": "Converge exact production deployment to two replicas"
+      },
+      {
+        "stage": "close",
+        "name": "pintpath-production-route-close-{candidateSha}",
+        "producerCheck": "Close exact production route"
+      },
+      {
+        "stage": "activation",
+        "name": "pintpath-production-promotion-recovery-activation-{candidateSha}",
+        "producerCheck": "Activate exact production promotion recovery"
+      },
+      {
+        "stage": "promotion-recovery",
+        "name": "pintpath-production-promotion-recovery-{candidateSha}",
+        "producerCheck": "Attest protected production promotion and recovery"
+      },
+      {
+        "stage": "open",
+        "name": "pintpath-production-route-open-{candidateSha}",
+        "producerCheck": "Open exact production route"
+      }
+    ]
+  }
+}

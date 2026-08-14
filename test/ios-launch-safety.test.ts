@@ -26,7 +26,8 @@ function privacyEntry(manifest: string, dataType: string): string {
   if (dataTypeIndex < 0) throw new Error(`Missing privacy entry: ${dataType}`);
   const startIndex = manifest.lastIndexOf("<dict>", dataTypeIndex);
   const endIndex = manifest.indexOf("</dict>", dataTypeIndex);
-  if (startIndex < 0 || endIndex < 0) throw new Error(`Malformed privacy entry: ${dataType}`);
+  if (startIndex < 0 || endIndex < 0)
+    throw new Error(`Malformed privacy entry: ${dataType}`);
   return manifest.slice(startIndex, endIndex + "</dict>".length);
 }
 
@@ -37,7 +38,9 @@ describe("iOS launch safety", () => {
     const account = iosSource("Features/AccountView.swift");
     const venuePortal = iosSource("Features/VenuePortalView.swift");
     const appModel = iosSource("App/BeerMapApp.swift");
-    const nativeSource = [api, models, account, venuePortal, appModel].join("\n");
+    const nativeSource = [api, models, account, venuePortal, appModel].join(
+      "\n",
+    );
 
     expect(nativeSource).not.toContain("alcoholLinkedRewards");
     expect(nativeSource).not.toContain("pintPointsRewardsEnabled");
@@ -48,7 +51,9 @@ describe("iOS launch safety", () => {
     expect(nativeSource).not.toContain("freePintReward");
     expect(nativeSource).not.toContain("discountPass");
     expect(nativeSource).not.toContain("checkoutToken");
-    expect(nativeSource).not.toMatch(/Record purchase|Free Pint Reward|Pint Points/);
+    expect(nativeSource).not.toMatch(
+      /Record purchase|Free Pint Reward|Pint Points/,
+    );
   });
 
   it("ignores web-paid consumer entitlements and paid venue placement", () => {
@@ -61,8 +66,12 @@ describe("iOS launch safety", () => {
     expect(appModel).toMatch(
       /var hasContributorAccess:[\s\S]*subscriptionStatus\?\.caseInsensitiveCompare\("contributor_unlocked"\) == \.orderedSame/,
     );
-    expect(appModel).toMatch(/func loadHome[\s\S]*withContributorAuthenticatedSession[\s\S]*api\.listVenues/);
-    expect(appModel).toMatch(/func loadPrices[\s\S]*withContributorAuthenticatedSession[\s\S]*api\.priceRecords/);
+    expect(appModel).toMatch(
+      /func loadHome[\s\S]*withContributorAuthenticatedSession[\s\S]*api\.listVenues/,
+    );
+    expect(appModel).toMatch(
+      /func loadPrices[\s\S]*withContributorAuthenticatedSession[\s\S]*api\.priceRecords/,
+    );
     const contributorSession = sourceSection(
       appModel,
       "private func withContributorAuthenticatedSession",
@@ -81,7 +90,9 @@ describe("iOS launch safety", () => {
     expect(reusableViews).not.toContain('venue.membershipTier == "pro"');
     expect(reusableViews).not.toContain('Text("Pro")');
     expect(models).toContain('return "Preview only"');
-    expect(account).toContain('model.hasContributorAccess ? "Contributor access" : "Account"');
+    expect(account).toContain(
+      'model.hasContributorAccess ? "Contributor access" : "Account"',
+    );
     expect(account).not.toContain("specialsCard");
     expect(account).not.toContain("subscriptionStatus ??");
   });
@@ -102,7 +113,9 @@ describe("iOS launch safety", () => {
     expect(nativeSource).not.toContain("exportVenueMonthlyReport");
     expect(nativeSource).not.toMatch(/\/specials|\/reports\//);
     expect(nativeSource).not.toMatch(/\bPro\b|\btrial\b/i);
-    expect(venuePortal).toContain("Venue access requests are handled by Pint Path support outside this consumer iOS release.");
+    expect(venuePortal).toContain(
+      "Venue access requests are handled by Pint Path support outside this consumer iOS release.",
+    );
   });
 
   it("does not compile happy-hour discovery, submission, or management", () => {
@@ -113,7 +126,15 @@ describe("iOS launch safety", () => {
     const venuePortal = iosSource("Features/VenuePortalView.swift");
     const discover = iosSource("Features/DiscoverView.swift");
     const root = iosSource("Features/RootView.swift");
-    const nativeSource = [api, models, appModel, contribute, venuePortal, discover, root].join("\n");
+    const nativeSource = [
+      api,
+      models,
+      appModel,
+      contribute,
+      venuePortal,
+      discover,
+      root,
+    ].join("\n");
 
     expect(nativeSource).not.toMatch(/happy.?hour/i);
     expect(nativeSource).not.toContain("BarHappyHour");
@@ -130,12 +151,22 @@ describe("iOS launch safety", () => {
     const venuePortal = iosSource("Features/VenuePortalView.swift");
     const appModel = iosSource("App/BeerMapApp.swift");
     const info = iosSource("Info.plist");
-    const project = workspaceSource("apps/ios/BeerMap.xcodeproj/project.pbxproj");
+    const project = workspaceSource(
+      "apps/ios/BeerMap.xcodeproj/project.pbxproj",
+    );
     const business = workspaceSource("viewer/business.js");
     const terms = workspaceSource("viewer/terms.html");
     const privacy = workspaceSource("viewer/privacy.html");
 
-    const nativeSource = [api, auth, root, settings, venuePortal, appModel, iosSource("Models/BeerMapModels.swift")].join("\n");
+    const nativeSource = [
+      api,
+      auth,
+      root,
+      settings,
+      venuePortal,
+      appModel,
+      iosSource("Models/BeerMapModels.swift"),
+    ].join("\n");
     expect(nativeSource).not.toMatch(/billing.?recovery/i);
     expect(nativeSource).not.toContain("completeOAuthSignIn");
     expect(nativeSource).not.toContain("exchangeSupabasePKCE");
@@ -154,7 +185,9 @@ describe("iOS launch safety", () => {
     expect(auth).not.toContain("GoogleOAuthCoordinator");
     expect(auth).not.toContain("supabaseOauthProviders");
     expect(project).not.toContain("com.apple.SignInWithApple");
-    expect(project).not.toContain("CODE_SIGN_ENTITLEMENTS = BeerMap/BeerMap.entitlements;");
+    expect(project).not.toContain(
+      "CODE_SIGN_ENTITLEMENTS = BeerMap/BeerMap.entitlements;",
+    );
     expect(info).not.toContain("<key>CFBundleURLTypes</key>");
     expect(api).toContain('URLQueryItem(name: "source", value: "ios_app")');
     const safeLegalNav = sourceSection(
@@ -185,11 +218,17 @@ describe("iOS launch safety", () => {
     const callback = workspaceSource("viewer/auth/callback.html");
 
     expect(recovery).toContain('baseURL.appending(path: "auth/callback")');
-    expect(recovery).not.toContain('baseURL.appending(path: "reset-password.html")');
+    expect(recovery).not.toContain(
+      'baseURL.appending(path: "reset-password.html")',
+    );
     expect(androidAPI).toContain('effectiveApiBaseUrl() + "/auth/callback"');
-    expect(androidAPI).not.toContain('effectiveApiBaseUrl() + "/reset-password.html"');
+    expect(androidAPI).not.toContain(
+      'effectiveApiBaseUrl() + "/reset-password.html"',
+    );
     expect(callback).toContain('hash.get("type") === "recovery"');
-    expect(callback).toContain('MelbBeerBusiness.markPasswordRecoverySession(result.account?.id)');
+    expect(callback).toContain(
+      "MelbBeerBusiness.markPasswordRecoverySession(result.account?.id)",
+    );
     expect(auth).toContain("Already use Google on the Pint Path website?");
     expect(auth).toContain("choose Forgot password");
   });
@@ -201,7 +240,9 @@ describe("iOS launch safety", () => {
     expect(account).toContain("Schedule account deletion");
     expect(account).toContain("seven-day cancellation window");
     expect(account).not.toContain("Request account deletion review");
-    expect(appModel).toContain("Self-service account deletion scheduled from the iOS app.");
+    expect(appModel).toContain(
+      "Self-service account deletion scheduled from the iOS app.",
+    );
   });
 
   it("declares native data categories and does not claim developer advertising", () => {
@@ -225,14 +266,32 @@ describe("iOS launch safety", () => {
     ]) {
       expect(manifest).toContain(`<string>${dataType}</string>`);
     }
-    const otherData = privacyEntry(manifest, "NSPrivacyCollectedDataTypeOtherDataTypes");
-    expect(otherData).toMatch(/<key>NSPrivacyCollectedDataTypeLinked<\/key>\s*<true\/>/);
-    expect(otherData).toMatch(/<key>NSPrivacyCollectedDataTypeTracking<\/key>\s*<false\/>/);
-    expect(otherData).toContain("NSPrivacyCollectedDataTypePurposeAppFunctionality");
-    const email = privacyEntry(manifest, "NSPrivacyCollectedDataTypeEmailAddress");
-    expect(email).toContain("NSPrivacyCollectedDataTypePurposeAppFunctionality");
-    expect(email).not.toContain("NSPrivacyCollectedDataTypePurposeDeveloperAdvertising");
-    expect(manifest).not.toContain("NSPrivacyCollectedDataTypePurposeDeveloperAdvertising");
+    const otherData = privacyEntry(
+      manifest,
+      "NSPrivacyCollectedDataTypeOtherDataTypes",
+    );
+    expect(otherData).toMatch(
+      /<key>NSPrivacyCollectedDataTypeLinked<\/key>\s*<true\/>/,
+    );
+    expect(otherData).toMatch(
+      /<key>NSPrivacyCollectedDataTypeTracking<\/key>\s*<false\/>/,
+    );
+    expect(otherData).toContain(
+      "NSPrivacyCollectedDataTypePurposeAppFunctionality",
+    );
+    const email = privacyEntry(
+      manifest,
+      "NSPrivacyCollectedDataTypeEmailAddress",
+    );
+    expect(email).toContain(
+      "NSPrivacyCollectedDataTypePurposeAppFunctionality",
+    );
+    expect(email).not.toContain(
+      "NSPrivacyCollectedDataTypePurposeDeveloperAdvertising",
+    );
+    expect(manifest).not.toContain(
+      "NSPrivacyCollectedDataTypePurposeDeveloperAdvertising",
+    );
     expect(manifest).toContain("<key>NSPrivacyTracking</key>\n\t<false/>");
   });
 
@@ -241,48 +300,72 @@ describe("iOS launch safety", () => {
 
     expect(workflow).toContain("runs-on: macos-15");
     expect(workflow).toContain("/Applications/Xcode_26*.app");
-    expect(workflow).toContain('sudo xcode-select --switch "$xcode_app/Contents/Developer"');
+    expect(workflow).toContain(
+      'sudo xcode-select --switch "$xcode_app/Contents/Developer"',
+    );
     expect(workflow).toContain('xcode_version="$(xcodebuild -version');
-    expect(workflow).toContain('sdk_version="$(xcrun --sdk iphoneos --show-sdk-version)"');
+    expect(workflow).toContain(
+      'sdk_version="$(xcrun --sdk iphoneos --show-sdk-version)"',
+    );
     expect(workflow).toContain("26.*) ;;");
   });
 
   it("loads ignored iOS configuration and fails Release builds closed", () => {
     const api = iosSource("Services/BeerMapAPI.swift");
-    const project = workspaceSource("apps/ios/BeerMap.xcodeproj/project.pbxproj");
+    const project = workspaceSource(
+      "apps/ios/BeerMap.xcodeproj/project.pbxproj",
+    );
     const defaults = workspaceSource("apps/ios/Config.defaults.xcconfig");
     const example = workspaceSource("apps/ios/Config.example.xcconfig");
-    const validator = workspaceSource("apps/ios/Scripts/validate-release-configuration.sh");
+    const validator = workspaceSource(
+      "apps/ios/Scripts/validate-release-configuration.sh",
+    );
     const gitignore = workspaceSource(".gitignore");
 
-    expect(defaults).toContain('PINT_PATH_API_BASE_URL = https:/$()/pintpath.au');
+    expect(defaults).toContain(
+      "PINT_PATH_API_BASE_URL = https:/$()/pintpath.au",
+    );
     expect(defaults).toContain("SUPABASE_URL =\n");
     expect(defaults).toContain("SUPABASE_ANON_KEY =\n");
     expect(defaults).toContain('#include? "Config.xcconfig"');
-    expect(project.match(/baseConfigurationReference = .*Config\.defaults\.xcconfig/g)).toHaveLength(2);
+    expect(
+      project.match(
+        /baseConfigurationReference = .*Config\.defaults\.xcconfig/g,
+      ),
+    ).toHaveLength(2);
     expect(project).toContain("Validate Release Configuration");
-    expect(project).toContain('showEnvVarsInLog = 0;');
+    expect(project).toContain("showEnvVarsInLog = 0;");
     expect(project).not.toContain('SUPABASE_URL = "";');
     expect(project).not.toContain('SUPABASE_ANON_KEY = "";');
     expect(validator).toContain('if [[ "${CONFIGURATION:-}" != "Release" ]]');
     expect(validator).toContain('fail "${name} is missing."');
-    expect(validator).toContain('approved_supabase_url="https://auth.pintpath.au"');
-    expect(validator).toContain('[[ "$supabase_url" == "$approved_supabase_url" ]]');
+    expect(validator).toContain(
+      'approved_supabase_url="https://auth.pintpath.au"',
+    );
+    expect(validator).toContain(
+      '[[ "$supabase_url" == "$approved_supabase_url" ]]',
+    );
     expect(validator).toContain("sb_secret_*");
-    expect(validator).toContain('^sb_publishable_[A-Za-z0-9_-]{20,220}$');
-    expect(validator.indexOf('^sb_publishable_[A-Za-z0-9_-]{20,220}$')).toBeLessThan(
+    expect(validator).toContain("^sb_publishable_[A-Za-z0-9_-]{20,220}$");
+    expect(
+      validator.indexOf("^sb_publishable_[A-Za-z0-9_-]{20,220}$"),
+    ).toBeLessThan(
       validator.indexOf('if [[ "${CONFIGURATION:-}" != "Release" ]]'),
     );
     expect(validator).not.toContain("validate_legacy_anon_jwt");
     expect(example).toContain("Release/archive builds fail closed");
     expect(example).toContain("https:/$()/auth.pintpath.au");
     expect(example).toContain("Legacy JWT and sb_secret_ keys are rejected");
-    expect(api).toContain('static let approvedSupabaseOrigin = "https://auth.pintpath.au"');
+    expect(api).toContain(
+      'static let approvedSupabaseOrigin = "https://auth.pintpath.au"',
+    );
     expect(api).toContain("let supabaseURL = AppConfig.supabaseURL");
     expect(api).toContain("let key = AppConfig.supabaseAnonKey");
-    expect(api).toContain('^sb_publishable_[A-Za-z0-9_-]{20,220}$');
+    expect(api).toContain("^sb_publishable_[A-Za-z0-9_-]{20,220}$");
     expect(api).not.toContain('object["role"] as? String == "anon"');
-    expect(api).toContain('request.setValue(key, forHTTPHeaderField: "apikey")');
+    expect(api).toContain(
+      'request.setValue(key, forHTTPHeaderField: "apikey")',
+    );
     expect(api).toContain("if let accessToken, accessToken != key {");
     expect(api).toContain("RedirectRejectingURLSessionDelegate");
     expect(api).toContain("willPerformHTTPRedirection");
@@ -306,48 +389,68 @@ describe("iOS launch safety", () => {
       SUPABASE_URL: "https://auth.pintpath.au",
       SUPABASE_ANON_KEY: `sb_publishable_${"0".repeat(32)}`,
     };
-    const runValidator = (overrides: NodeJS.ProcessEnv) => spawnSync(
-      "/bin/bash",
-      [validatorPath],
-      {
+    const runValidator = (overrides: NodeJS.ProcessEnv) =>
+      spawnSync("/bin/bash", [validatorPath], {
         env: { ...validReleaseEnv, ...overrides },
         encoding: "utf8",
-      },
-    );
+      });
 
     expect(runValidator({}).status).toBe(0);
-    expect(runValidator({ SUPABASE_ANON_KEY: `sb_publishable_${"a".repeat(20)}` }).status)
-      .toBe(0);
-    expect(runValidator({ SUPABASE_ANON_KEY: `sb_publishable_${"a".repeat(220)}` }).status)
-      .toBe(0);
-    expect(runValidator({ SUPABASE_ANON_KEY: `sb_publishable_${"a".repeat(20)}__` }).status)
-      .toBe(0);
-    expect(runValidator({ CONFIGURATION: "Debug", SUPABASE_URL: "", SUPABASE_ANON_KEY: "" }).status)
-      .toBe(0);
-    expect(runValidator({
+    expect(
+      runValidator({ SUPABASE_ANON_KEY: `sb_publishable_${"a".repeat(20)}` })
+        .status,
+    ).toBe(0);
+    expect(
+      runValidator({ SUPABASE_ANON_KEY: `sb_publishable_${"a".repeat(220)}` })
+        .status,
+    ).toBe(0);
+    expect(
+      runValidator({ SUPABASE_ANON_KEY: `sb_publishable_${"a".repeat(20)}__` })
+        .status,
+    ).toBe(0);
+    expect(
+      runValidator({
+        CONFIGURATION: "Debug",
+        SUPABASE_URL: "",
+        SUPABASE_ANON_KEY: "",
+      }).status,
+    ).toBe(0);
+    expect(
+      runValidator({
       CONFIGURATION: "Debug",
       PINT_PATH_API_BASE_URL: "",
       SUPABASE_URL: "",
       SUPABASE_ANON_KEY: `sb_publishable_${"d".repeat(20)}`,
-    }).status).toBe(0);
+      }).status,
+    ).toBe(0);
 
     const missing = runValidator({ SUPABASE_URL: "" });
     expect(missing.status).not.toBe(0);
     expect(missing.stderr).toContain("SUPABASE_URL is missing");
 
-    const placeholder = runValidator({ SUPABASE_URL: "https://your-project.supabase.co" });
+    const placeholder = runValidator({
+      SUPABASE_URL: "https://your-project.supabase.co",
+    });
     expect(placeholder.status).not.toBe(0);
-    expect(placeholder.stderr).toContain("SUPABASE_URL still contains a placeholder");
+    expect(placeholder.stderr).toContain(
+      "SUPABASE_URL still contains a placeholder",
+    );
 
-    const wrongProductionOrigin = runValidator({ SUPABASE_URL: "https://other-project.supabase.co" });
+    const wrongProductionOrigin = runValidator({
+      SUPABASE_URL: "https://other-project.supabase.co",
+    });
     expect(wrongProductionOrigin.status).not.toBe(0);
     expect(wrongProductionOrigin.stderr).toContain(
       "must exactly match the independently approved production origin",
     );
 
-    const privateKey = runValidator({ SUPABASE_ANON_KEY: `sb_secret_${"0".repeat(32)}` });
+    const privateKey = runValidator({
+      SUPABASE_ANON_KEY: `sb_secret_${"0".repeat(32)}`,
+    });
     expect(privateKey.status).not.toBe(0);
-    expect(privateKey.stderr).toContain("never a secret or legacy service-role key");
+    expect(privateKey.stderr).toContain(
+      "never a secret or legacy service-role key",
+    );
 
     const rejectedKeys = [
       "eyJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoiYW5vbiJ9.signature",
@@ -362,7 +465,9 @@ describe("iOS launch safety", () => {
       expect(rejected.stderr).toContain(
         "must be an sb_publishable_ key with 20 to 220 URL-safe characters",
       );
-      expect(`${rejected.stdout}\n${rejected.stderr}`).not.toContain(rejectedKey);
+      expect(`${rejected.stdout}\n${rejected.stderr}`).not.toContain(
+        rejectedKey,
+      );
     }
 
     for (const rejectedKey of [
@@ -376,7 +481,9 @@ describe("iOS launch safety", () => {
         SUPABASE_ANON_KEY: rejectedKey,
       });
       expect(rejected.status).not.toBe(0);
-      expect(`${rejected.stdout}\n${rejected.stderr}`).not.toContain(rejectedKey);
+      expect(`${rejected.stdout}\n${rejected.stderr}`).not.toContain(
+        rejectedKey,
+      );
     }
   });
 
@@ -393,7 +500,8 @@ describe("iOS launch safety", () => {
       PINT_PATH_API_BASE_URL: "https://pintpath.au",
       SUPABASE_URL: "https://auth.pintpath.au",
     };
-    const runWriter = (key: string, outputName: string) => spawnSync(
+    const runWriter = (key: string, outputName: string) =>
+      spawnSync(
       "/bin/bash",
       [writerPath, path.join(temporaryDirectory, outputName)],
       {
@@ -407,10 +515,12 @@ describe("iOS launch safety", () => {
       const accepted = runWriter(validKey, "accepted.xcconfig");
       expect(accepted.status, accepted.stderr).toBe(0);
       expect(accepted.stdout).not.toContain(validKey);
-      expect(fs.readFileSync(
+      expect(
+        fs.readFileSync(
         path.join(temporaryDirectory, "accepted.xcconfig"),
         "utf8",
-      )).toContain(`SUPABASE_ANON_KEY = ${validKey}`);
+        ),
+      ).toContain(`SUPABASE_ANON_KEY = ${validKey}`);
 
       for (const [index, rejectedKey] of [
         `sb_secret_${"s".repeat(32)}`,
@@ -425,7 +535,9 @@ describe("iOS launch safety", () => {
         expect(rejected.stderr).toContain(
           "SUPABASE_ANON_KEY must be an exact sb_publishable_ key",
         );
-        expect(`${rejected.stdout}\n${rejected.stderr}`).not.toContain(rejectedKey);
+        expect(`${rejected.stdout}\n${rejected.stderr}`).not.toContain(
+          rejectedKey,
+        );
         expect(fs.readdirSync(temporaryDirectory)).not.toContain(outputName);
       }
     } finally {
@@ -439,20 +551,34 @@ describe("iOS launch safety", () => {
       workflow.indexOf("  ios:"),
       workflow.indexOf("  ios-production-configuration:"),
     );
-    const productionJob = workflow.slice(workflow.indexOf("  ios-production-configuration:"));
+    const productionJob = workflow.slice(
+      workflow.indexOf("  ios-production-configuration:"),
+    );
 
-    expect(normalJob).toContain("Prepare synthetic public configuration for the unsigned iOS Release contract");
+    expect(normalJob).toContain(
+      "Prepare synthetic public configuration for the unsigned iOS Release contract",
+    );
+    expect(normalJob).toContain(
+      "name: ${{ github.event_name == 'workflow_dispatch' && 'iOS dispatch prerequisite' || 'ios' }}",
+    );
     expect(normalJob).toContain("SUPABASE_URL: https://auth.pintpath.au");
     expect(normalJob).toContain("inspect-release-archive.sh");
     expect(normalJob).not.toContain("secrets.SUPABASE_URL");
     expect(normalJob).not.toContain("secrets.SUPABASE_ANON_KEY");
-    expect(productionJob).toContain("if: github.event_name == 'workflow_dispatch'");
+    expect(productionJob).toContain(
+      "if: github.event_name == 'workflow_dispatch'",
+    );
     expect(productionJob).toContain("environment: production");
-    expect(productionJob).toContain("SUPABASE_URL: ${{ secrets.SUPABASE_URL }}");
-    expect(productionJob).toContain("SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}");
+    expect(productionJob).toContain(
+      "SUPABASE_URL: ${{ secrets.SUPABASE_URL }}",
+    );
+    expect(productionJob).toContain(
+      "SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}",
+    );
     expect(productionJob).toContain("inspect-release-archive.sh");
     expect(productionJob).toContain("rm -f apps/ios/Config.xcconfig");
-    expect(workspaceSource("apps/ios/Scripts/inspect-release-archive.sh"))
-      .toContain('approved_supabase_url="https://auth.pintpath.au"');
+    expect(
+      workspaceSource("apps/ios/Scripts/inspect-release-archive.sh"),
+    ).toContain('approved_supabase_url="https://auth.pintpath.au"');
   });
 });

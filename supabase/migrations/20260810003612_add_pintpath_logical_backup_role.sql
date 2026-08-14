@@ -124,7 +124,11 @@ begin
   from pg_catalog.pg_class as relation
   join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
   where namespace.nspname = any(array['pintpath_app', 'pintpath_ops'])
-    and relation.relkind in ('r', 'p');
+    and relation.relkind in ('r', 'p')
+    and not (
+      namespace.nspname = 'pintpath_ops'
+      and relation.relname = 'migration_verifier_authority'
+    );
 
   if actual_relations is distinct from expected_relations then
     raise exception using
@@ -149,13 +153,21 @@ begin
   from pg_catalog.pg_policy as policy
   join pg_catalog.pg_class as relation on relation.oid = policy.polrelid
   join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
-  where namespace.nspname = any(array['pintpath_app', 'pintpath_ops']);
+  where namespace.nspname = any(array['pintpath_app', 'pintpath_ops'])
+    and not (
+      namespace.nspname = 'pintpath_ops'
+      and relation.relname = 'migration_verifier_authority'
+    );
 
   select count(*)::integer into exact_base_policy_count
   from pg_catalog.pg_policy as policy
   join pg_catalog.pg_class as relation on relation.oid = policy.polrelid
   join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
   where namespace.nspname = any(array['pintpath_app', 'pintpath_ops'])
+    and not (
+      namespace.nspname = 'pintpath_ops'
+      and relation.relname = 'migration_verifier_authority'
+    )
     and policy.polpermissive
     and (
       (
@@ -578,13 +590,21 @@ begin
   from pg_catalog.pg_policy as policy
   join pg_catalog.pg_class as relation on relation.oid = policy.polrelid
   join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
-  where namespace.nspname = any(array['pintpath_app', 'pintpath_ops']);
+  where namespace.nspname = any(array['pintpath_app', 'pintpath_ops'])
+    and not (
+      namespace.nspname = 'pintpath_ops'
+      and relation.relname = 'migration_verifier_authority'
+    );
 
   select count(*)::integer into exact_base_policy_count
   from pg_catalog.pg_policy as policy
   join pg_catalog.pg_class as relation on relation.oid = policy.polrelid
   join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
   where namespace.nspname = any(array['pintpath_app', 'pintpath_ops'])
+    and not (
+      namespace.nspname = 'pintpath_ops'
+      and relation.relname = 'migration_verifier_authority'
+    )
     and policy.polpermissive
     and (
       (

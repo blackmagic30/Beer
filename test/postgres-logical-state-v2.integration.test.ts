@@ -6,6 +6,12 @@ import { Client, type QueryResultRow } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { POSTGRES_MIGRATION_CONTRACT } from "../src/db/postgres-migration-contract.js";
+import { POSTGRES_MIGRATION_EXPECTED_LIVE_SCHEMA_SHA256 } from "../src/db/postgres-migration-live-schema.js";
+import {
+  POSTGRES_MIGRATION_VERIFIER_AUTHORITY_ROLE,
+  POSTGRES_MIGRATION_VERIFIER_AUTHORITY_TABLE,
+  sha256PostgresMigrationVerifierAuthorityBinding,
+} from "../src/db/postgres-migration-verifier-authority.js";
 import { sha256PostgresMigrationContract } from "../src/db/postgres-migration-schema.js";
 import {
   capturePostgresLogicalStateV2,
@@ -100,6 +106,7 @@ async function databaseOid(client: Client): Promise<string> {
 async function configureReviewedMetadata(client: Client): Promise<void> {
   const values = {
     import_state: "ready",
+    live_schema_sha256: POSTGRES_MIGRATION_EXPECTED_LIVE_SCHEMA_SHA256,
     migration_candidate_sha: "a".repeat(40),
     migration_contract_sha256: sha256PostgresMigrationContract(POSTGRES_MIGRATION_CONTRACT),
     migration_manifest_sha256: "b".repeat(64),
@@ -121,6 +128,34 @@ async function configureReviewedMetadata(client: Client): Promise<void> {
     );
     if (result.rowCount !== 1) throw new Error("reviewed_metadata_update_failed");
   }
+}
+
+async function seedMigrationVerifierAuthority(client: Client): Promise<void> {
+  const binding = {
+    expectedEnvironment: "permanent-staging",
+    candidateSha: "a".repeat(40),
+    operatorIdSha256: "1".repeat(64),
+    verifierIdSha256: "2".repeat(64),
+    verifierPublicKeySha256: "3".repeat(64),
+    authorityPolicySha256: "4".repeat(64),
+  } as const;
+  const result = await client.query(`INSERT INTO
+    pintpath_ops.${POSTGRES_MIGRATION_VERIFIER_AUTHORITY_TABLE} (
+      authority_id, expected_environment, candidate_commit_sha, operator_id_sha256,
+      verifier_id_sha256, verifier_public_key_sha256, authority_policy_sha256,
+      authority_sha256, installed_at
+    ) VALUES (
+      'active', 'permanent-staging', $1, $2, $3, $4, $5, $6,
+      '2026-08-12T00:30:00.000Z'::pg_catalog.timestamptz
+    )`, [
+    binding.candidateSha,
+    binding.operatorIdSha256,
+    binding.verifierIdSha256,
+    binding.verifierPublicKeySha256,
+    binding.authorityPolicySha256,
+    sha256PostgresMigrationVerifierAuthorityBinding(binding),
+  ]);
+  if (result.rowCount !== 1) throw new Error("verifier_authority_insert_failed");
 }
 
 async function seedReviewedPriceControls(client: Client): Promise<void> {
@@ -354,6 +389,7 @@ describe.skipIf(!configuredAdminUrl)(
     let maintenance: Client;
     let runtimeRoleExisted = false;
     let migratorRoleExisted = false;
+    let verifierAuthorityRoleExisted = false;
     const databaseOids = new Map<string, string>();
     const openClients = new Set<Client>();
 
@@ -408,10 +444,17 @@ describe.skipIf(!configuredAdminUrl)(
       }
       const roles = await maintenance.query<{ rolname: string }>(
         "SELECT rolname FROM pg_catalog.pg_roles WHERE rolname = ANY($1::text[])",
-        [["pintpath_runtime", "pintpath_migrator"]],
+        [[
+          "pintpath_runtime",
+          "pintpath_migrator",
+          POSTGRES_MIGRATION_VERIFIER_AUTHORITY_ROLE,
+        ]],
       );
       runtimeRoleExisted = roles.rows.some((row) => row.rolname === "pintpath_runtime");
       migratorRoleExisted = roles.rows.some((row) => row.rolname === "pintpath_migrator");
+      verifierAuthorityRoleExisted = roles.rows.some(
+        (row) => row.rolname === POSTGRES_MIGRATION_VERIFIER_AUTHORITY_ROLE,
+      );
       for (const database of [firstDatabase, secondDatabase]) {
         await maintenance.query(
           `DROP DATABASE IF EXISTS ${quoteIdentifier(database)} WITH (FORCE)`,
@@ -448,6 +491,11 @@ describe.skipIf(!configuredAdminUrl)(
         await maintenance.query(`DROP ROLE IF EXISTS ${quoteIdentifier(secondDatabaseOwner)}`);
         if (!runtimeRoleExisted) await maintenance.query("DROP ROLE IF EXISTS pintpath_runtime");
         if (!migratorRoleExisted) await maintenance.query("DROP ROLE IF EXISTS pintpath_migrator");
+        if (!verifierAuthorityRoleExisted) {
+          await maintenance.query(
+            `DROP ROLE IF EXISTS ${POSTGRES_MIGRATION_VERIFIER_AUTHORITY_ROLE}`,
+          );
+        }
       } catch (error) {
         failures.push(error);
       }
@@ -457,6 +505,7 @@ describe.skipIf(!configuredAdminUrl)(
 
     it("binds portable and physical catalogs while rejecting catalog drift without mutation", async () => {
       const first = await createSuccessorDatabase(firstDatabase);
+      await seedMigrationVerifierAuthority(first);
       await maintenance.query(
         `CREATE ROLE ${quoteIdentifier(secondDatabaseOwner)}
          NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS`,
@@ -476,8 +525,11 @@ describe.skipIf(!configuredAdminUrl)(
           () => computePostgresLogicalStateInventory(second, { pageRows: 1 }),
         );
 
+        const emptyFirstQueries: string[] = [];
         const emptyFirst = await captureReadOnly(
-          first, (connection) => capturePostgresLogicalStateV2(connection, { pageRows: 1 }),
+          first, (connection) => capturePostgresLogicalStateV2(
+            observedV2Connection(first, emptyFirstQueries), { pageRows: 1 },
+          ),
         ) as PostgresLogicalStateCaptureV2;
         const emptySecond = await captureReadOnly(
           second, (connection) => capturePostgresLogicalStateV2(connection, { pageRows: 1 }),
@@ -489,6 +541,15 @@ describe.skipIf(!configuredAdminUrl)(
         expect(emptyFirst.sourcePhysicalReadBoundarySha256)
           .not.toBe(emptySecond.sourcePhysicalReadBoundarySha256);
         expect(emptyFirst.inventory).toEqual(emptySecond.inventory);
+        expect((await first.query<{ count: string }>(`SELECT pg_catalog.count(*)::text AS count
+          FROM pintpath_ops.${POSTGRES_MIGRATION_VERIFIER_AUTHORITY_TABLE}`)).rows[0]?.count)
+          .toBe("1");
+        expect((await second.query<{ count: string }>(`SELECT pg_catalog.count(*)::text AS count
+          FROM pintpath_ops.${POSTGRES_MIGRATION_VERIFIER_AUTHORITY_TABLE}`)).rows[0]?.count)
+          .toBe("0");
+        expect(emptyFirstQueries.some((text) => text.includes(
+          `logical-state:page:pintpath_ops:${POSTGRES_MIGRATION_VERIFIER_AUTHORITY_TABLE}`,
+        ))).toBe(false);
         expect(emptyFirst.inventory.controlTables.map((table) => table.tableName)).toEqual([
           "pintpath_app.schema_metadata",
           "pintpath_ops.migration_chunks",
@@ -496,6 +557,8 @@ describe.skipIf(!configuredAdminUrl)(
           "pintpath_ops.reviewed_price_promotion_operations",
           "pintpath_ops.reviewed_price_promotion_rows",
         ]);
+        expect(emptyFirst.inventory.controlTables.map((table) => table.tableName))
+          .not.toContain(`pintpath_ops.${POSTGRES_MIGRATION_VERIFIER_AUTHORITY_TABLE}`);
 
         const firstRoles = scopedRoleNames(firstOid!);
         const publications = [schemaPublication];

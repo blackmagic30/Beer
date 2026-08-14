@@ -1,12 +1,13 @@
 # Postgres migration execution status
 
-Last updated: 12 August 2026
+Last updated: 14 August 2026
 
-Overall state: **NO-GO — the Free-live PostgreSQL application implementation,
-permanent-staging database import/runtime proof, logical backup, and isolated
-operational-copy retrieval, Postgres restore, and substantive synthetic
-deletion replay are complete, but provider, application-deploy, scale, full
-recovery, promotion, and cutover evidence gates remain open.**
+Overall state: **NO-GO for a live release — the checked-in Free-live PostgreSQL
+runtime, migration, protected deployment, scale, promotion/quarantine, backup,
+restore, four-job post-promotion recovery activation, route, and release
+authorities are implemented; authentic
+candidate-bound provider execution, production data, recovery, signed iOS,
+legal, and owner evidence gates remain open.**
 
 This is the secret-free execution ledger for
 `docs/full-scale-postgres-migration-runbook.md`. It records what has actually
@@ -21,6 +22,19 @@ resource pins, operator approvals, or two-person evidence.
   verification, immutable receipt, offline tests, operator command, and
   triple-gated real-AWS integration test. This is implementation evidence only;
   no AWS recovery account, bucket, role, credential, or object was provisioned.
+- Implemented the policy-v2 post-promotion recovery chain at exact policy
+  SHA-256
+  `57f66c1c9dde912586ec510e37c28cc3dfea2c098e67c78edbea189c7dcc9988`.
+  Its fixed rollout order is
+  `deploy→scale→close→activation→promotion-recovery→open`. Activation
+  splits production capture and PITR observation onto the JIT
+  `pintpath-production-backup` runner, and separate logical/private WORM reads,
+  restore, twice-replayed deletion, and compiled local-child application smoke
+  onto the JIT `pintpath-disposable-recovery` runner in the disposable private
+  network. Raw recovery bytes never cross GitHub artifacts. An independent
+  always-run cleanup job reconciles Railway and Supabase absence before
+  finalization. This is checked-in/offline implementation evidence only; no
+  activation workflow or provider operation was run for this change.
 - Installed and authenticated Railway CLI, linked locally to the existing
   staging service, and confirmed that no credentials were written to Git.
 - Inventoried the authoritative SQLite schema: 56 tables, 717 columns, 76
@@ -47,8 +61,10 @@ resource pins, operator approvals, or two-person evidence.
 - Added fail-closed runtime catalog checks for the runtime role, exact search
   path, schema version, completed import state, table count, operations
   isolation, API-role isolation, and sanitized pool metrics.
-- Added a secret-free runtime verifier that uses a one-connection pool and
-  exits nonzero unless every Postgres startup/readiness contract passes.
+- Added a secret-free runtime verifier that uses the held Railway
+  stock-localhost CA transport, fixed `pintpath_runtime` active role, fenced
+  one-connection pool, and exact cleanup, and exits nonzero unless every
+  Postgres authority/startup/readiness contract passes.
 - Canonical production and permanent-staging startup now select the shared
   PostgreSQL authority without a credential or SQLite fallback. A missing
   `DATABASE_URL`, failed PostgreSQL contract check, or attempted legacy
@@ -101,40 +117,38 @@ resource pins, operator approvals, or two-person evidence.
   server version. Planner-login authority remains a separate digest. This
   closed only the role-neutral target-identity blocker in that plan version;
   it did not authorize a write.
-- Added the read-only permanent-staging application-deployment attestation
-  foundation. Runtime readiness responses expose only domain-separated hashes
-  of Railway project, environment, service, deployment, and replica identity.
-  The attestor pins the exact staging Beer target, rejects nonempty staged
-  patches, joins the sole active successful provider deployment and image to
-  `/health`, `/startup`, and `/ready`, fences the provider snapshot before and
-  after, and writes a short-lived canonical receipt without raw provider
-  metadata. Reviewed-price plan version 3 derived its five deployment hashes
-  only from that receipt, retains the exact receipt-file and policy hashes, and
-  rejects the former free-form hash flags. This is
-  offline implementation evidence only: the Beer service remains undeployed in
-  permanent staging, no authentic receipt exists, no Railway write is
-  authorized, and the provider-observed deployment blocker remains open.
-- Upgraded the reviewed-price no-write plan to version 4. It now consumes a
-  canonical, at-most-24-hour `offline-plan-bindings-only` authority bundle that
-  is required to declare provider authority, cryptographic approval, and
-  mutation authority false. It also emits a separate mode-0600 private review
-  packet containing the exact proposed rows and private evidence references,
-  with self-hash, candidate, target, recovery, evidence, operator, and reviewer
-  bindings. The wrong-price policy conservatively blocks every known reason in
-  `open` or `in_progress` state without inventing a severity. This closes no
-  live authority: seven blockers remain for the dedicated planner boundary,
-  provider-observed deployment, signed approval trust root, immutable/WORM
-  evidence, apply/quarantine authorities, durable ledger/crash-safe receipts,
-  and atomic apply or receipt-authorized quarantine. The CLI has no apply or
-  quarantine command and keeps `mutationAuthorized`/`mutationEnabled` false.
-- Added the canonical
-  [permanent-staging application source-upload scaffold](permanent-staging-app-deployment.md).
-  It pins the target, source/config hashes, one-replica postflight contract,
-  adjacent-mutation prohibitions, and staging spend ceiling, but is intentionally
-  `HARD_DISABLED_REVIEW_REQUIRED`. Its zero-argument runner emits only one fixed
-  blocked receipt and has no credential, provider, network, child-process, or
-  mutation transport. This does not deploy the Beer service, authorize spend,
-  or close any live launch gate.
+- Added the protected permanent-staging and production application-deployment
+  authorities. Runtime readiness exposes only domain-separated hashes of the
+  Railway project, environment, service, deployment, and replica identities.
+  The executors pin the exact target and current-main source, reject a staged
+  patch, allow one upload without retry, reconcile lost acknowledgements
+  read-only, preserve the observed replica topology, and bind `/health`,
+  `/startup`, and `/ready` to a canonical receipt. No live receipt exists until
+  an independently approved protected workflow actually runs.
+- Activated the reviewed-price plan, authorization, apply, and receipt-bound
+  quarantine path. The separate mode-0600 private review packet comes from a planner;
+  scoped reviewer/operator roles and signed, candidate-bound approval records
+  authorize SECURITY DEFINER PostgreSQL functions; durable append-only ledgers,
+  advisory locking, idempotent receipts, post-write reconciliation, and
+  quarantine provenance keep publication atomic and replay-safe. Real
+  PostgreSQL 17 tests exercise valid signed authorize/apply/replay/quarantine,
+  missing and expired authorization denial, and full rollback when a later row
+  fails. The commands are `db:postgres:reviewed-price:authorize-apply`,
+  `db:postgres:reviewed-price:apply`,
+  `db:postgres:reviewed-price:authorize-quarantine`, and
+  `db:postgres:reviewed-price:quarantine`; authentic production execution and
+  independent approvals remain external release evidence.
+- Activated the canonical protected
+  [permanent-staging and production application source-upload executor](permanent-staging-app-deployment.md).
+  Its manual GitHub workflows pin the exact current `main` SHA, target,
+  source/config and Railway CLI bytes; require the immediate mutation-boundary
+  preflight; permit one source upload with no automatic retry; reconcile
+  uncertainty read-only; and bind `/health`, `/startup`, and `/ready` plus the
+  unconditional postflight into SHA-bound evidence. It remains inactive
+  without protected-environment approval/secrets, does not authorize adjacent
+  Railway mutations, does not itself prove the separate combined cost gate,
+  and does not close any live launch gate until authentic provider execution
+  and independent review occur.
 - Ported the administrative ingestion queue, its HTTP/operator call sites, and
   claim/finalization flow to the shared asynchronous SQL boundary. Its related
   Free-live price, inventory, review, and publication writes now use the same
@@ -546,7 +560,16 @@ resource pins, operator approvals, or two-person evidence.
   state hash, live runtime identity, destination pins, pointer/attestation
   hashes and Storage generations, then streams all three objects through
   before/after identity fences into one exact restore-compatible private
-  directory. Focused tests and a restricted disposable PostgreSQL 17 identity
+  directory. Both commands now require `sslmode=verify-full`, hold the exact
+  current-UID-owned mode-`600` single-link production runtime root CA across
+  the operation, validate its one self-signed CA certificate against the
+  independently reviewed DER SHA-256, accept only the exact lower-case Railway
+  private authority on port 5432, resolve and fence one canonical `fd12::/16`
+  address, and make node-postgres dial only that address while authenticating
+  the stock leaf as `localhost` with the fixed identity callback. They assert
+  that complete URL/DNS/CA transport before and after database operations and
+  destroy it only after the database closes. Focused tests and a restricted disposable
+  PostgreSQL 17 identity
   query pass. The provider execution recorded below proves one isolated staging
   upload, a database-bound readiness probe under the prior staging/production-
   copy coupling, and full byte-for-byte retrieval. That is historical evidence,
@@ -572,8 +595,9 @@ resource pins, operator approvals, or two-person evidence.
   manual `apikey` transport, provider endpoint, browser bundle, and dependency
   pin. The release workflow runs it before protected secrets. This is offline
   compatibility evidence only: no key was read or changed, no provider was
-  contacted, and the two permanent-staging replacement operations plus
-  legacy-key disablement remain hard-disabled and unauthorized. Production
+  contacted. Protected permanent-staging replacement and legacy-cutover
+  transports now exist but remain unexecuted and require protected-environment
+  approval. Production
   operational-copy authority is not part of the staging replacement.
 
 ## Completed against pinned provider targets
@@ -662,24 +686,20 @@ resource pins, operator approvals, or two-person evidence.
 
 ## Live execution still required
 
-Every Railway create, configuration, scale, deploy, rollback, PITR, route,
-delete, destroy, or teardown item below remains blocked until the tracked
-`readiness:railway:mutation-boundary` executor owns its immediate preflight,
-one exact operation, and unconditional postflight. The standalone receipt is
-read-only and the checked-in incident baseline intentionally fails; do not use
-dashboard **Deploy**, Git autodeploy, or an ad-hoc CLI/API write instead.
-Restore-staging teardown additionally requires complete resource/evidence
-reconciliation, specific authorization naming the exact resource IDs, and the
-exact reviewed teardown executor. Signed evidence or two-person sign-off alone
-is not mutation authority.
+Railway writes use only the protected one-operation workflows documented in
+`docs/protected-provider-mutation-operations.md`; dashboard **Deploy**, Git
+autodeploy, and ad-hoc CLI/API writes remain prohibited. The workflows own exact
+current-`main` authority, scoped tokens, durable intent, one write/no retry, and
+unconditional reconciliation. Live credentials, immutable target IDs, provider
+receipts, smoke/load/recovery evidence, and approvals remain external gates.
 
 - Complete three Google/OpenAI provider categories comprising four exact
   Railway variable operations: Google Maps client configuration
   (`GOOGLE_MAPS_API_KEY` and `GOOGLE_MAPS_MAP_ID`), Google Places server access
   (`GOOGLE_PLACES_API_KEY`), and OpenAI menu OCR (`OPENAI_API_KEY`). Separately,
   the two permanent-staging Supabase replacement-key operations
-  (`SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY`) remain
-  `HARD_DISABLED_REVIEW_REQUIRED` and unauthorized; production
+  (`SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY`) use the protected atomic
+  replacement plus canary-B/legacy-disable/old-key-denial ceremony; production
   operational-copy variables are prohibited in permanent staging.
 - Deploy the reviewed application build to permanent staging at one replica and
   pass provider, Auth, role, private Storage, and Free-scope smoke checks.
@@ -689,15 +709,29 @@ is not mutation authority.
   expected-peak/2x-peak load, restart, rolling-deploy, rollback-build, and
   minimum 60-minute soak gates, then return permanent staging to one replica.
 - Enable and measure PITR; obtain recovery-administrator approval and provision
-  the separately controlled AWS account/bucket/roles; run the implemented WORM
-  attestor and later independent retrieval; extend disposable recovery to
-  private Storage and full application smoke; obtain approved two-person
-  RPO/RTO evidence; then reconcile the complete resource/evidence set and seek
-  specific authorization for the exact recorded disposable resource IDs. Only
-  the reviewed teardown executor may delete them, with its immediate
-  mutation-boundary preflight and unconditional postflight. The completed
-  database tombstone replay is evidence for the recorded staging set, not a
-  substitute for those remaining recovery gates.
+  the separately controlled AWS account/bucket/roles; then execute the frozen
+  four-job activation for the exact candidate. The production-network capture
+  must observe PITR and seal separate logical/private authorities; the
+  disposable-network job must independently read both WORM sets, restore them,
+  replay deletion twice, and pass the compiled local-child application smoke.
+  Dispatch while gated, record the assigned `GITHUB_RUN_ID`, sign and install
+  both per-run cleanup authorities, and only then approve capture. Require
+  orderly purge-bound Supabase cleanup and both provider-absence terminals;
+  emergency cleanup never greens the run. Standard cancel only, with
+  force-cancel forbidden until independent observations prove both providers
+  absent. A signed singleton run/candidate/target/workspace arm and a protected
+  dedicated-ref compare-and-swap gate capture. An independent
+  completion/15-minute/manual watchdog retries while that state is OPEN. It
+  persists exact provider delete acknowledgements across partial runs, requires
+  fresh absence on every reconciliation, and cannot green activation; a second
+  activation is mechanically rejected until DISARMED. Railway absence without exact
+  delete acknowledgement remains transfer-ambiguous. The final activation has
+  exactly 18 evidence leaves and 20 files.
+  Create the v2 authority and both distinct approvals afterward;
+  `recoveryStartedAt` is immutably bound to GitHub's activation
+  `run_started_at`, not selected by a reviewer. The completed database
+  tombstone replay is evidence for the recorded staging set, not a substitute
+  for those remaining recovery gates.
 - Complete the maintenance-window production snapshot/import/reconciliation,
   post-import and post-promotion recovery sets, two restore proofs, monitored
   cutover, and coordinated web/iOS launch only after every prior gate passes.
@@ -707,9 +741,10 @@ is not mutation authority.
 - Permanent staging now has pinned Postgres, Supabase/Auth/private Storage, and
   Redis resources, a verified import/runtime, a verified direct logical backup,
   and a historical live destination-bound operational-copy attestation. The three
-  Google/OpenAI categories/four exact Railway variable operations remain open;
-  the separate two permanent-staging Supabase replacement-key operations remain
-  hard-disabled and unauthorized; production operational-copy variables are
+  Google/OpenAI categories/four exact Railway variable operations remain open
+  pending protected-workflow receipts; the two permanent-staging Supabase
+  replacement/cutover operations have a protected executable path but still
+  need live canary and old-key-denial receipts; production operational-copy variables are
   prohibited there; and the staging application has not yet been deployed.
 - The separate offsite Supabase project, private logical-backup bucket, remote
   re-download verification, historical database-bound readiness probe, and one
@@ -753,10 +788,9 @@ is not mutation authority.
 ## Exact remaining sequence
 
 1. Complete the three Google/OpenAI categories/four exact Railway variable
-   operations only after their reviewed authority exists. Keep the separate two
-   permanent-staging Supabase replacement-key operations hard-disabled and
-   unauthorized until their own reviewed provider and Railway authorities
-   exist. The candidate requires production operational-copy configuration
+   operations through the protected workflow after live authority is loaded.
+   Execute the separate protected permanent-staging Supabase atomic replacement,
+   canary-B, legacy-disable, and old-key-denial sequence. The candidate requires production operational-copy configuration
    absent there; a fresh complete Railway inventory must independently prove all
    three names deleted. Retain the historical operator-host retrieval evidence,
    but do not keep or repeat the staging offsite probe. Current staging readiness
@@ -767,20 +801,27 @@ is not mutation authority.
 3. Scale the same build temporarily to two replicas; complete overlap,
    duplicate/reordered/retry, load, soak, restart, rolling-deploy, and
    Postgres-compatible rollback proof; then scale back to one.
-4. Enable/test PITR; have the independent recovery administrator provision and
+4. Run the protected exact-target Postgres-HA PITR workflow. Select only
+   production or permanent staging; the matching protected GitHub environment
+   supplies the reviewed root authority, and the executor must independently
+   discover exactly that root from the complete Railway environment inventory
+   before it writes. Prove a usable recovery point; have the independent
+   recovery administrator provision and
    exercise the implemented AWS WORM contract; then extend the existing
    disposable logical restore through WORM retrieval, private Storage and full
    application recovery and sign RPO/RTO. Then complete resource/evidence
-   reconciliation and obtain specific authorization for the exact resource IDs
-   before the reviewed teardown executor runs its mutation-boundary preflight,
-   one exact delete operation, and unconditional postflight. Retain the
+   reconciliation and obtain specific authorization for the exact inventory
+   before the reviewed teardown executor runs one exact project delete and its
+   unconditional absence postflight. Retain the
    completed operational-copy retrieval and database deletion-replay evidence
    without treating either as WORM or full recovery.
 5. Freeze the exact candidate only after every staging and recovery gate passes.
    Then run the maintenance-mode production snapshot, import,
-   reconciliation, post-import recovery set, restore proof, deployment,
-   reviewed-data promotion, final recovery set, second restore proof, and
-   coordinated web/iOS launch sequence in the controlling runbooks.
+   reconciliation, post-import recovery set, restore proof, deployment, scale,
+   route close, reviewed-data promotion, four-job final activation, v2
+   post-activation attestation, route open, and coordinated web/iOS launch
+   sequence in the controlling runbooks. No checked-in capability may be
+   recorded as live/provider evidence.
 
 ## Prohibited until the gates pass
 

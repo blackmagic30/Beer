@@ -22,9 +22,11 @@ const ARGUMENTS = new Set([
   "--expected-ledger-current-sha256",
   "--expected-ledger-genesis-sha256",
   "--expected-ledger-immutable-set-sha256",
+  "--expected-runtime-root-ca-der-sha256",
   "--expected-target-identity-sha256",
   "--expected-tombstone-count",
   "--receipt",
+  "--runtime-root-ca-file",
   "--runtime-url-file",
 ]);
 
@@ -114,6 +116,10 @@ export async function runPostgresAccountDeletionReplayCli(
     }
     const result = await dependencies.replay({
       runtimeUrlFile: exactAbsolutePath(args.get("--runtime-url-file")!),
+      runtimeRootCaFile: exactAbsolutePath(args.get("--runtime-root-ca-file")!),
+      expectedRuntimeRootCaDerSha256: exactSha256(
+        args.get("--expected-runtime-root-ca-der-sha256")!,
+      ),
       baseRestoreReceiptFile: exactAbsolutePath(args.get("--base-restore-receipt")!),
       expectedBaseRestoreReceiptSha256: exactSha256(
         args.get("--expected-base-restore-receipt-sha256")!,

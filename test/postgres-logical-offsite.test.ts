@@ -674,7 +674,7 @@ describe("Postgres logical off-site backup attestation", () => {
 
     expect(replay).toEqual(first);
     expect(storage.immutableUploads).toHaveLength(immutableCount);
-    expect(storage.mutableWrites).toHaveLength(2);
+    expect(storage.mutableWrites).toHaveLength(1);
 
     const olderRoot = temporaryRoot();
     const older = writeLogicalOffsiteFixture(olderRoot, "2026-08-08T01:00:00.000Z");

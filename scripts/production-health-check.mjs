@@ -146,7 +146,9 @@ export async function runProductionHealthCheck(options = {}) {
     "PINTPATH_HEALTH_REQUEST_TIMEOUT_MS",
   );
   const fetchImplementation = options.fetchImplementation ?? globalThis.fetch;
-  const sleep = options.sleep ?? ((delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs)));
+  const sleep = options.sleep ?? ((delayMs) => new Promise((resolve) => {
+    setTimeout(resolve, delayMs);
+  }));
   const log = options.log ?? console.log;
 
   const health = await checkEndpoint({

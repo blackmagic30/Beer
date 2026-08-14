@@ -15,19 +15,29 @@ import {
   type PostgresLogicalOffsiteResult,
   type PostgresLogicalOffsiteStorage,
 } from "../src/lib/postgres-logical-offsite.js";
+import {
+  checkPostgresRailwayStockLocalhostServerIdentity,
+  POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+  PostgresRailwayStockLocalhostCaError,
+  type PostgresRailwayStockLocalhostCaTransport,
+} from "../src/lib/postgres-railway-stock-localhost-ca.js";
 
 const ROOT = "/private/operator/logical-offsite";
 const BACKUP_DIRECTORY = path.join(ROOT, "backup");
 const DATABASE_URL_FILE = path.join(ROOT, "runtime-database-url");
+const RUNTIME_ROOT_CA_FILE = path.join(ROOT, "production-runtime-root-ca.pem");
 const SERVICE_ROLE_FILE = path.join(ROOT, "offsite-service-role-key");
 const DATABASE_SECRET = "runtime-database-secret";
 const SERVICE_ROLE_SECRET = `sb_secret_${"s".repeat(32)}`;
-const DATABASE_URL = `postgresql://runtime:${DATABASE_SECRET}@db.example.test:5432/pintpath?sslmode=verify-full`;
+const RUNTIME_HOST = "postgres-production.railway.internal";
+const RUNTIME_ADDRESS = "fd12:3456:789a::10";
+const DATABASE_URL = `postgresql://runtime:${DATABASE_SECRET}@${RUNTIME_HOST}:5432/pintpath?sslmode=verify-full`;
 const RUNTIME_CONNECTION_URL_SHA256 = crypto
   .createHash("sha256").update(DATABASE_URL, "utf8").digest("hex");
 const SOURCE_URL = "https://auth.pintpath.au";
 const DESTINATION_URL = "https://hfbmhdxrwtihukmixxta.supabase.co";
 const HASH = "a".repeat(64);
+const RUNTIME_ROOT_CA_DER_SHA256 = "b".repeat(64);
 const DESTINATION_ORIGIN_SHA256 = crypto
   .createHash("sha256").update(DESTINATION_URL).digest("hex");
 const BUCKET_NAME_SHA256 = crypto
@@ -38,8 +48,10 @@ const ARGV = [
   "--backup-manifest-sha256", HASH,
   "--expected-bucket-name-sha256", BUCKET_NAME_SHA256,
   "--expected-destination-origin-sha256", DESTINATION_ORIGIN_SHA256,
+  "--expected-runtime-root-ca-der-sha256", RUNTIME_ROOT_CA_DER_SHA256,
   "--operator-id", "operator-reference-01",
   "--runtime-database-url-file", DATABASE_URL_FILE,
+  "--runtime-root-ca-file", RUNTIME_ROOT_CA_FILE,
   "--service-role-key-file", SERVICE_ROLE_FILE,
 ] as const;
 
@@ -57,6 +69,7 @@ const RESULT: PostgresLogicalOffsiteResult = {
   attestationSha256: "6".repeat(64),
   latestPointerSha256: "7".repeat(64),
   backupIdSha256: "8".repeat(64),
+  successStateSha256: "a".repeat(64),
 };
 
 function harness(input: {
@@ -65,6 +78,10 @@ function harness(input: {
   readonly closeFails?: boolean;
   readonly attestError?: Error;
   readonly serviceRoleSecret?: string;
+  readonly runtimeUrl?: string;
+  readonly runtimeTransportOpenError?: Error;
+  readonly runtimeTransportAssertFailureAt?: number;
+  readonly runtimeTransportCloseFails?: boolean;
 } = {}) {
   const output: string[] = [];
   const events: string[] = [];
@@ -75,6 +92,46 @@ function harness(input: {
       if (input.closeFails) throw new Error(`close failed ${DATABASE_SECRET}`);
     }),
   } as unknown as SqlDatabase;
+  const nodeConnection = {
+    host: RUNTIME_ADDRESS,
+    port: 5_432 as const,
+    ssl: {
+      ca: "TEST_RUNTIME_ROOT_CA",
+      servername: "localhost" as const,
+      rejectUnauthorized: true as const,
+      minVersion: "TLSv1.2" as const,
+      checkServerIdentity: checkPostgresRailwayStockLocalhostServerIdentity,
+    },
+  };
+  let runtimeTransportAssertCalls = 0;
+  const runtimeTransport = {
+    profile: POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+    rootCaDerSha256: RUNTIME_ROOT_CA_DER_SHA256,
+    sourceUrlAuthority: { hostname: RUNTIME_HOST, port: 5_432 },
+    resolvedAddress: RUNTIME_ADDRESS,
+    temporaryDirectory: path.join(ROOT, "held-transport"),
+    passwordFileDirectory: path.join(ROOT, "held-transport"),
+    passwordFileHost: "localhost" as const,
+    nodeConnection,
+    libpqEnvironment: {
+      PGHOST: "localhost" as const,
+      PGHOSTADDR: RUNTIME_ADDRESS,
+      PGPORT: "5432" as const,
+      PGSSLMODE: "verify-full" as const,
+      PGSSLROOTCERT: path.join(ROOT, "held-transport", "root-ca.pem"),
+      PGSSLMINPROTOCOLVERSION: "TLSv1.2" as const,
+      PGSSLSNI: "1" as const,
+    },
+    assertExact: vi.fn(async () => {
+      runtimeTransportAssertCalls += 1;
+      if (input.runtimeTransportAssertFailureAt === runtimeTransportAssertCalls) {
+        throw new PostgresRailwayStockLocalhostCaError("transport_drift");
+      }
+    }),
+    close: vi.fn(async () => {
+      if (input.runtimeTransportCloseFails) throw new Error("transport close failed");
+    }),
+  } satisfies PostgresRailwayStockLocalhostCaTransport;
   const dependencies: Partial<PostgresLogicalOffsiteCliDependencies> = {
     env: {
       [POSTGRES_LOGICAL_OFFSITE_CONFIRMATION_ENV]: input.confirmed === false
@@ -88,12 +145,27 @@ function harness(input: {
     readSecretFile: vi.fn(async (filename: string) => {
       events.push(`secret:${path.basename(filename)}`);
       return filename === DATABASE_URL_FILE
-        ? DATABASE_URL
+        ? input.runtimeUrl ?? DATABASE_URL
         : input.serviceRoleSecret ?? SERVICE_ROLE_SECRET;
+    }),
+    getUid: () => 501,
+    openRuntimeTransport: vi.fn(async (options) => {
+      expect(options).toEqual({
+        profile: POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+        rootCaFile: RUNTIME_ROOT_CA_FILE,
+        expectedRootCaDerSha256: RUNTIME_ROOT_CA_DER_SHA256,
+        expectedUid: 501,
+        sourceUrlAuthority: { hostname: RUNTIME_HOST, port: 5_432 },
+      });
+      if (input.runtimeTransportOpenError) throw input.runtimeTransportOpenError;
+      return runtimeTransport;
     }),
     createDatabase: vi.fn((options) => {
       events.push("database");
       expect(options.connectionString).toContain("uselibpqcompat=true");
+      expect(options.activeRole).toBe("pintpath_runtime");
+      expect(options.sslRootCertificatePath).toBeUndefined();
+      expect(options.railwayStockLocalhostCaConnection).toBe(nodeConnection);
       return database;
     }),
     checkRuntime: vi.fn(async () => {
@@ -132,7 +204,7 @@ function harness(input: {
     }),
     writeOutput: (value) => output.push(value),
   };
-  return { dependencies, events, output, database };
+  return { dependencies, events, output, database, runtimeTransport };
 }
 
 describe("Postgres logical off-site attestation CLI", () => {
@@ -153,6 +225,8 @@ describe("Postgres logical off-site attestation CLI", () => {
       "close",
     ]);
     expect(fixture.output).toHaveLength(1);
+    expect(fixture.runtimeTransport.assertExact).toHaveBeenCalledTimes(6);
+    expect(fixture.runtimeTransport.close).toHaveBeenCalledTimes(1);
     expect(JSON.parse(fixture.output[0]!)).toEqual(RESULT);
     for (const forbidden of [
       DATABASE_SECRET,
@@ -164,9 +238,64 @@ describe("Postgres logical off-site attestation CLI", () => {
       BACKUP_DIRECTORY,
       DATABASE_URL_FILE,
       SERVICE_ROLE_FILE,
+      RUNTIME_ROOT_CA_FILE,
+      RUNTIME_ADDRESS,
       "operator-reference-01",
       "pintpath-backups",
     ]) expect(fixture.output[0]).not.toContain(forbidden);
+  });
+
+  it("requires verify-full and the exact pinned runtime CA before database use", async () => {
+    const weakTls = harness({
+      runtimeUrl: `postgresql://runtime:${DATABASE_SECRET}@${RUNTIME_HOST}:5432/pintpath?sslmode=require`,
+    });
+    await expect(runPostgresLogicalOffsiteCli(ARGV, weakTls.dependencies))
+      .resolves.toBe(1);
+    expect(JSON.parse(weakTls.output[0]!)).toMatchObject({
+      failureCode: "configuration_missing_or_unsafe",
+    });
+    expect(weakTls.dependencies.createDatabase).not.toHaveBeenCalled();
+    expect(weakTls.dependencies.openRuntimeTransport).not.toHaveBeenCalled();
+    expect(weakTls.runtimeTransport.close).not.toHaveBeenCalled();
+
+    const wrongPin = harness({
+      runtimeTransportOpenError: new PostgresRailwayStockLocalhostCaError(
+        "root_ca_pin_mismatch",
+      ),
+    });
+    await expect(runPostgresLogicalOffsiteCli(ARGV, wrongPin.dependencies))
+      .resolves.toBe(1);
+    expect(JSON.parse(wrongPin.output[0]!)).toMatchObject({
+      failureCode: "runtime_root_ca_pin_mismatch",
+    });
+    expect(wrongPin.dependencies.createDatabase).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    `postgresql://runtime:${DATABASE_SECRET}@db.example.test:5432/pintpath?sslmode=verify-full`,
+    `postgresql://runtime:${DATABASE_SECRET}@${RUNTIME_HOST}:5433/pintpath?sslmode=verify-full`,
+  ])("rejects a runtime URL outside the exact Railway private authority: %s", async (runtimeUrl) => {
+    const fixture = harness({ runtimeUrl });
+    await expect(runPostgresLogicalOffsiteCli(ARGV, fixture.dependencies))
+      .resolves.toBe(1);
+    expect(JSON.parse(fixture.output[0]!)).toMatchObject({
+      failureCode: "configuration_missing_or_unsafe",
+    });
+    expect(fixture.dependencies.openRuntimeTransport).not.toHaveBeenCalled();
+    expect(fixture.dependencies.createDatabase).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the pinned runtime transport drifts between database phases", async () => {
+    const fixture = harness({ runtimeTransportAssertFailureAt: 3 });
+    await expect(runPostgresLogicalOffsiteCli(ARGV, fixture.dependencies))
+      .resolves.toBe(1);
+    expect(JSON.parse(fixture.output[0]!)).toEqual({
+      schemaVersion: 1,
+      ok: false,
+      failureCode: "runtime_root_ca_drift",
+    });
+    expect(fixture.dependencies.inspectRuntimeIdentity).not.toHaveBeenCalled();
+    expect(fixture.runtimeTransport.close).toHaveBeenCalledTimes(1);
   });
 
   it("requires explicit confirmation before reading secrets or constructing providers", async () => {

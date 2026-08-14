@@ -60,12 +60,19 @@ import {
 import {
   applyPostgresMigrationWithConnection,
   inspectPostgresMigrationTargetWithConnection,
+  postgresMigrationTargetInternals,
   verifyPostgresMigrationWithConnection,
   type PostgresMigrationTargetConnection,
   type PostgresMigrationTargetInput,
   type PostgresMigrationTargetQueryResult,
 } from "../src/db/postgres-migration-target.js";
 import {
+  TEST_POSTGRES_RAILWAY_ROOT_CA_DER_SHA256,
+  TEST_POSTGRES_RAILWAY_ROOT_CA_PEM,
+} from "./postgres-railway-stock-localhost-ca.fixtures.js";
+import {
+  POSTGRES_MIGRATION_VERIFICATION_APPROVAL_KIND,
+  POSTGRES_MIGRATION_VERIFICATION_APPROVAL_VERSION,
   sha256PostgresMigrationTargetIdentity,
   type PostgresMigrationReceipt,
   type PostgresMigrationTargetIdentity,
@@ -74,6 +81,11 @@ import {
   serializeCanonicalPostgresMigrationJson,
   sha256PostgresMigrationBytes,
 } from "../src/db/postgres-migration-schema.js";
+import {
+  POSTGRES_MIGRATION_VERIFIER_AUTHORITY_POLICY_SHA256,
+  sha256PostgresMigrationAuthorityIdentity,
+  sha256PostgresMigrationVerifierAuthorityBinding,
+} from "../src/db/postgres-migration-verifier-authority.js";
 import {
   sqlDatabaseInternals,
   type SqlBindings,
@@ -112,6 +124,28 @@ const TEST_LOGIN = "pintpath_migration_integration_login";
 const PLANNER_ROLE = "pintpath_reviewed_price_planner";
 const PLANNER_APPLICATION_NAME = "pintpath-reviewed-price-planner-integration";
 const CANDIDATE_SHA = "c".repeat(40);
+const MIGRATION_VERIFIER_KEY_PAIR = crypto.generateKeyPairSync("ed25519");
+const MIGRATION_VERIFIER_PUBLIC_KEY_BYTES = MIGRATION_VERIFIER_KEY_PAIR.publicKey.export({
+  format: "pem",
+  type: "spki",
+});
+const MIGRATION_VERIFIER_PUBLIC_KEY_SHA256 = sha256PostgresMigrationBytes(
+  MIGRATION_VERIFIER_PUBLIC_KEY_BYTES,
+);
+const MIGRATION_VERIFIER_AUTHORITY_BINDING = {
+  expectedEnvironment: "permanent-staging" as const,
+  candidateSha: CANDIDATE_SHA,
+  operatorIdSha256: sha256PostgresMigrationAuthorityIdentity(
+    "postgres-integration-operator",
+    "operator-id",
+  ),
+  verifierIdSha256: sha256PostgresMigrationAuthorityIdentity(
+    "postgres-integration-verifier",
+    "verifier-id",
+  ),
+  verifierPublicKeySha256: MIGRATION_VERIFIER_PUBLIC_KEY_SHA256,
+  authorityPolicySha256: POSTGRES_MIGRATION_VERIFIER_AUTHORITY_POLICY_SHA256,
+};
 const INGESTION_ID = "11111111-1111-4111-8111-111111111111";
 const VENUE_ID = "22222222-2222-4222-8222-222222222222";
 const NOW = "2026-08-08T00:00:00.000Z";
@@ -477,6 +511,8 @@ async function createMigrationInput(
   });
   const targetDdlPath = path.resolve("src/db/postgres-schema.sql");
   const targetDdlSha256 = sha256PostgresMigrationBytes(fs.readFileSync(targetDdlPath));
+  const rootCaFile = path.join(root, "railway-root-ca.pem");
+  fs.writeFileSync(rootCaFile, TEST_POSTGRES_RAILWAY_ROOT_CA_PEM, { mode: 0o600 });
   return {
     snapshotManifestPath: snapshot.manifestPath,
     expectedSnapshotManifestSha256: snapshot.manifestSha256,
@@ -486,12 +522,18 @@ async function createMigrationInput(
     expectedTargetDdlSha256: targetDdlSha256,
     targetUrl,
     expectedTargetUrlSha256: sha256PostgresMigrationBytes(targetUrl),
+    rootCaFile,
+    expectedRootCaDerSha256: TEST_POSTGRES_RAILWAY_ROOT_CA_DER_SHA256,
+    expectedTransportAuthoritySha256:
+      postgresMigrationTargetInternals.transportAuthoritySha256({
+        targetUrl,
+        expectedRootCaDerSha256: TEST_POSTGRES_RAILWAY_ROOT_CA_DER_SHA256,
+      }),
     expectedTargetIdentitySha256: targetIdentitySha256,
     expectedEnvironment: "permanent-staging",
     candidateSha: CANDIDATE_SHA,
     approvalReference: "postgres-integration-approval",
     operatorId: "postgres-integration-operator",
-    verifierId: "postgres-integration-verifier",
   };
 }
 
@@ -1215,6 +1257,8 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL migration target", () => {
   let temporaryRoot = "";
   let migratorRoleExisted = false;
   let runtimeRoleExisted = false;
+  let verifierAuthorityRoleExisted = false;
+  let logicalBackupRole = "";
   const plannerState: PlannerAuthorityState = {
     backendPid: null,
     database: null,
@@ -1237,10 +1281,17 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL migration target", () => {
     await admin.connect();
     const roles = await admin.query<{ rolname: string }>(
       "SELECT rolname FROM pg_catalog.pg_roles WHERE rolname = ANY($1::text[])",
-      [["pintpath_migrator", "pintpath_runtime"]],
+      [[
+        "pintpath_migrator",
+        "pintpath_runtime",
+        "pintpath_migration_verifier_authority",
+      ]],
     );
     migratorRoleExisted = roles.rows.some((row) => row.rolname === "pintpath_migrator");
     runtimeRoleExisted = roles.rows.some((row) => row.rolname === "pintpath_runtime");
+    verifierAuthorityRoleExisted = roles.rows.some(
+      (row) => row.rolname === "pintpath_migration_verifier_authority",
+    );
     await admin.query(
       "SELECT pg_terminate_backend(pid) FROM pg_catalog.pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()",
       [TEST_DATABASE],
@@ -1251,14 +1302,46 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL migration target", () => {
     targetAdmin = new Client({ connectionString: withDatabase(adminUrl, TEST_DATABASE) });
     await targetAdmin.connect();
     await targetAdmin.query(fs.readFileSync(path.resolve("src/db/postgres-schema.sql"), "utf8"));
+    const targetDatabaseIdentity = await targetAdmin.query<{ databaseOid: string }>(
+      `SELECT oid::text AS "databaseOid"
+         FROM pg_catalog.pg_database
+        WHERE datname = pg_catalog.current_database()`,
+    );
+    logicalBackupRole = `pintpath_logical_backup_d${targetDatabaseIdentity.rows[0]!.databaseOid}`;
+    await targetAdmin.query(
+      `INSERT INTO pintpath_ops.migration_verifier_authority (
+         authority_id, expected_environment, candidate_commit_sha,
+         operator_id_sha256, verifier_id_sha256, verifier_public_key_sha256,
+         authority_policy_sha256, authority_sha256, installed_at
+       ) VALUES ('active', $1, $2, $3, $4, $5, $6, $7, $8::timestamptz)`,
+      [
+        MIGRATION_VERIFIER_AUTHORITY_BINDING.expectedEnvironment,
+        MIGRATION_VERIFIER_AUTHORITY_BINDING.candidateSha,
+        MIGRATION_VERIFIER_AUTHORITY_BINDING.operatorIdSha256,
+        MIGRATION_VERIFIER_AUTHORITY_BINDING.verifierIdSha256,
+        MIGRATION_VERIFIER_AUTHORITY_BINDING.verifierPublicKeySha256,
+        MIGRATION_VERIFIER_AUTHORITY_BINDING.authorityPolicySha256,
+        sha256PostgresMigrationVerifierAuthorityBinding(
+          MIGRATION_VERIFIER_AUTHORITY_BINDING,
+        ),
+        NOW,
+      ],
+    );
     const loginPassword = crypto.randomBytes(24).toString("hex");
     await admin.query(
       `CREATE ROLE ${TEST_LOGIN} LOGIN PASSWORD '${loginPassword}'
-       NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`,
+       NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS
+       CONNECTION LIMIT 1 VALID UNTIL '${new Date(Date.now() + 60 * 60 * 1_000).toISOString()}'`,
     );
-    await admin.query(`GRANT pintpath_migrator TO ${TEST_LOGIN}`);
+    await admin.query(`REVOKE ALL ON DATABASE ${TEST_DATABASE} FROM PUBLIC`);
+    await admin.query(`GRANT CONNECT ON DATABASE ${TEST_DATABASE} TO ${TEST_LOGIN}`);
+    await admin.query(
+      `GRANT pintpath_migrator TO ${TEST_LOGIN}
+       WITH ADMIN FALSE, INHERIT FALSE, SET TRUE`,
+    );
     target = new Client({
       connectionString: withDatabase(adminUrl, TEST_DATABASE, TEST_LOGIN, loginPassword),
+      options: "-c role=pintpath_migrator",
     });
     await target.connect();
     temporaryRoot = fs.realpathSync(
@@ -1334,11 +1417,21 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL migration target", () => {
       });
       await attempt(async () => admin.query(`REVOKE pintpath_migrator FROM ${TEST_LOGIN}`));
       await attempt(async () => admin.query(`DROP ROLE IF EXISTS ${TEST_LOGIN}`));
+      if (logicalBackupRole) {
+        await attempt(async () => admin.query(
+          `DROP ROLE IF EXISTS ${quoteIdentifier(logicalBackupRole)}`,
+        ));
+      }
       if (!migratorRoleExisted) {
         await attempt(async () => admin.query("DROP ROLE IF EXISTS pintpath_migrator"));
       }
       if (!runtimeRoleExisted) {
         await attempt(async () => admin.query("DROP ROLE IF EXISTS pintpath_runtime"));
+      }
+      if (!verifierAuthorityRoleExisted) {
+        await attempt(async () => admin.query(
+          "DROP ROLE IF EXISTS pintpath_migration_verifier_authority",
+        ));
       }
       await attempt(async () => admin.end());
     }
@@ -1351,11 +1444,12 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL migration target", () => {
     const connection = queryConnection(target!);
     const targetDdlPath = path.resolve("src/db/postgres-schema.sql");
     const targetDdlSha256 = sha256PostgresMigrationBytes(fs.readFileSync(targetDdlPath));
-    const bindingUrl = "postgresql://integration-login:binding-only-secret@127.0.0.1:5432/pintpath?sslmode=verify-full";
+    const bindingUrl = "postgresql://integration-login:binding-only-secret@migration-integration.railway.internal:5432/pintpath?sslmode=verify-full";
     const inspection = await inspectPostgresMigrationTargetWithConnection({
       targetUrl: bindingUrl,
       targetDdlPath,
       expectedTargetDdlSha256: targetDdlSha256,
+      expectedRootCaDerSha256: TEST_POSTGRES_RAILWAY_ROOT_CA_DER_SHA256,
     }, connection);
     expect(inspection).toMatchObject({
       tableCount: POSTGRES_MIGRATION_CONTRACT.expectedCounts.tables,
@@ -1364,10 +1458,55 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL migration target", () => {
     });
 
     const input = await createMigrationInput(temporaryRoot, bindingUrl, inspection.targetIdentitySha256);
-    const receipt: PostgresMigrationReceipt = await applyPostgresMigrationWithConnection(
+    const applyReceipt = await applyPostgresMigrationWithConnection(
       input,
       connection,
     );
+    expect(applyReceipt).toMatchObject({
+      status: "awaiting-verification",
+      expectedEnvironment: "permanent-staging",
+      tableCount: 56,
+      columnCount: POSTGRES_MIGRATION_CONTRACT.expectedCounts.columns,
+      foreignKeyCount: 76,
+    });
+    const verificationPayload = {
+      applyReceiptSha256: applyReceipt.receiptSha256,
+      approvedAt: "2026-08-08T00:01:00.000Z",
+      candidateSha: applyReceipt.candidateSha,
+      expectedEnvironment: applyReceipt.expectedEnvironment,
+      expiresAt: "2026-08-08T00:10:00.000Z",
+      liveSchemaSha256: applyReceipt.liveSchemaSha256,
+      targetIdentitySha256: applyReceipt.targetIdentitySha256,
+      verifierIdSha256: applyReceipt.verifierIdSha256,
+      verifierAuthoritySha256: applyReceipt.verifierAuthoritySha256,
+      verifierAuthorityPolicySha256: applyReceipt.verifierAuthorityPolicySha256,
+      verifierPublicKeySha256: MIGRATION_VERIFIER_PUBLIC_KEY_SHA256,
+    };
+    const verificationApproval = {
+      kind: POSTGRES_MIGRATION_VERIFICATION_APPROVAL_KIND,
+      version: POSTGRES_MIGRATION_VERIFICATION_APPROVAL_VERSION,
+      payload: verificationPayload,
+      signatureBase64: crypto.sign(
+        null,
+        serializeCanonicalPostgresMigrationJson(verificationPayload),
+        MIGRATION_VERIFIER_KEY_PAIR.privateKey,
+      ).toString("base64"),
+    };
+    const applyReceiptBytes = serializeCanonicalPostgresMigrationJson(applyReceipt);
+    const approvalBytes = serializeCanonicalPostgresMigrationJson(verificationApproval);
+    const receipt: PostgresMigrationReceipt = await verifyPostgresMigrationWithConnection({
+      ...input,
+      verificationAuthority: {
+        applyReceipt,
+        applyReceiptFileSha256: sha256PostgresMigrationBytes(applyReceiptBytes),
+        expectedApplyReceiptFileSha256: sha256PostgresMigrationBytes(applyReceiptBytes),
+        approval: verificationApproval,
+        approvalFileSha256: sha256PostgresMigrationBytes(approvalBytes),
+        expectedApprovalFileSha256: sha256PostgresMigrationBytes(approvalBytes),
+        verifierPublicKeyBytes: MIGRATION_VERIFIER_PUBLIC_KEY_BYTES,
+        now: new Date("2026-08-08T00:05:00.000Z"),
+      },
+    }, connection);
     expect(receipt).toMatchObject({
       status: "ready",
       expectedEnvironment: "permanent-staging",
@@ -1378,7 +1517,7 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL migration target", () => {
     expect(receipt.rowCount).toBeGreaterThan(0);
     expect(receipt.chunkCount).toBeGreaterThan(0);
     expect(receipt.zeroRowTableCount).toBeGreaterThan(0);
-    expect(await verifyPostgresMigrationWithConnection(input, connection)).toEqual(receipt);
+    expect(receipt.applyReceiptSha256).toBe(applyReceipt.receiptSha256);
     const metadata = await target!.query<{ value: string }>(
       "SELECT value FROM pintpath_app.schema_metadata WHERE key = 'import_state'",
     );
@@ -1467,7 +1606,10 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL migration target", () => {
     );
     const beforeTableHashes = await snapshotUserTableHashes(targetAdmin!);
     expect(Object.keys(beforeTableHashes)).toHaveLength(
-      POSTGRES_MIGRATION_CONTRACT.expectedCounts.tables + 3,
+      POSTGRES_MIGRATION_CONTRACT.expectedCounts.tables + 4,
+    );
+    expect(beforeTableHashes).toHaveProperty(
+      "pintpath_ops.migration_verifier_authority",
     );
 
     try {
@@ -2006,5 +2148,26 @@ describe.skipIf(!configuredAdminUrl)("real PostgreSQL migration target", () => {
     expect(plannerState.database).toBeNull();
     expect(plannerState.roleCreated).toBe(false);
     expect(await snapshotUserTableHashes(targetAdmin!)).toEqual(beforeTableHashes);
+
+    await targetAdmin!.query(
+      "DROP INDEX pintpath_app.idx_discount_redemptions_idempotency",
+    );
+    await expect(inspectPostgresMigrationTargetWithConnection({
+      targetUrl: bindingUrl,
+      targetDdlPath,
+      expectedTargetDdlSha256: targetDdlSha256,
+      expectedRootCaDerSha256: TEST_POSTGRES_RAILWAY_ROOT_CA_DER_SHA256,
+    }, connection)).rejects.toMatchObject({ code: "TARGET_UNSAFE" });
+    await targetAdmin!.query(`
+      CREATE UNIQUE INDEX idx_discount_redemptions_idempotency
+      ON pintpath_app.discount_redemptions (venue_id, idempotency_key)
+      WHERE idempotency_key IS NOT NULL
+    `);
+    expect((await inspectPostgresMigrationTargetWithConnection({
+      targetUrl: bindingUrl,
+      targetDdlPath,
+      expectedTargetDdlSha256: targetDdlSha256,
+      expectedRootCaDerSha256: TEST_POSTGRES_RAILWAY_ROOT_CA_DER_SHA256,
+    }, connection)).liveSchemaSha256).toBe(receipt.liveSchemaSha256);
   }, 60_000);
 });

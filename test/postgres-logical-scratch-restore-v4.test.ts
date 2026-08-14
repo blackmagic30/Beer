@@ -115,7 +115,7 @@ function validCapture(databaseOid: string, physicalHash: string) {
   const tables = POSTGRES_LOGICAL_SCRATCH_RESTORE_V4_CONTRACT.catalog
     .authoritativeTableColumns.map((table) => receipt(table.tableName, table.columnCount));
   const controlTables = [
-    receipt("pintpath_app.schema_metadata", 3, "12"),
+    receipt("pintpath_app.schema_metadata", 3, "13"),
     receipt("pintpath_ops.migration_chunks", 7),
     receipt("pintpath_ops.migration_runs", 18),
     receipt("pintpath_ops.reviewed_price_promotion_operations", 15),
@@ -142,7 +142,7 @@ function validCapture(databaseOid: string, physicalHash: string) {
     kernelMigrationSha256: staticAuthority.kernelMigrationSha256,
     sourceReadBoundarySha256: staticAuthority.portableReadBoundarySha256,
     controlTableCount: 5,
-    controlRowCount: "12",
+    controlRowCount: "13",
     controlTableSetSha256: H("c"),
     controlDataSha256: H("d"),
     controlKeyRangesSha256: H("e"),
@@ -247,7 +247,7 @@ describe("offline PostgreSQL logical scratch-restore V4 contract", () => {
       postgresMajor: 17,
       tableDataSetSha256: "505d42cd7ffbe6809aea3e3ed02b33968bf625bde882cdbc0f1a3c69cc94f6d8",
       portableReadBoundarySha256:
-        "21ae87b71a458416f62d08749d8fc3368e9ff1621cd7f40550611291502a91ac",
+        "26b6b1346c15465ce538ac9769d435cd02c50bb138f8c73095ef5ff132506cf8",
     });
   });
 
@@ -265,14 +265,16 @@ describe("offline PostgreSQL logical scratch-restore V4 contract", () => {
     expect(source).not.toMatch(/postgres-logical-(?:state|backup-v4-source-authority|restore)\.js/);
   });
 
-  it("freezes exact 59 archive and 61 target relations with exact catalog totals", () => {
+  it("freezes exact 59 archive and 62 target relations with exact catalog totals", () => {
     expect(POSTGRES_LOGICAL_SCRATCH_RESTORE_V4_ARCHIVED_RELATIONS).toHaveLength(59);
-    expect(POSTGRES_LOGICAL_SCRATCH_RESTORE_V4_ALL_RELATIONS).toHaveLength(61);
-    expect(new Set(POSTGRES_LOGICAL_SCRATCH_RESTORE_V4_ALL_RELATIONS).size).toBe(61);
+    expect(POSTGRES_LOGICAL_SCRATCH_RESTORE_V4_ALL_RELATIONS).toHaveLength(62);
+    expect(new Set(POSTGRES_LOGICAL_SCRATCH_RESTORE_V4_ALL_RELATIONS).size).toBe(62);
+    expect(POSTGRES_LOGICAL_SCRATCH_RESTORE_V4_ALL_RELATIONS)
+      .toContain("pintpath_ops.migration_verifier_authority");
     expect(POSTGRES_LOGICAL_SCRATCH_RESTORE_V4_ARCHIVED_RELATIONS)
       .not.toContain("pintpath_ops.reviewed_price_promotion_operations");
     expect(POSTGRES_LOGICAL_SCRATCH_RESTORE_V4_EXPECTED_CATALOG_COUNTS).toEqual({
-      privateRelations: 61, privateColumns: 771, privatePolicies: 240,
+      privateRelations: 62, privateColumns: 780, privatePolicies: 244,
       foreignKeys: 79, validatedForeignKeys: 79, deferrableForeignKeys: 0,
       initiallyDeferredForeignKeys: 0, nonSingleColumnForeignKeys: 0,
       riConstraintTriggers: 316, enabledRiConstraintTriggers: 316,
@@ -293,7 +295,7 @@ describe("offline PostgreSQL logical scratch-restore V4 contract", () => {
     expect(POSTGRES_LOGICAL_SCRATCH_RESTORE_V4_FOREIGN_KEY_SET_SHA256)
       .toBe(POSTGRES_LOGICAL_SCRATCH_RESTORE_V4_EXPECTED_FOREIGN_KEY_SET_SHA256);
     expect(POSTGRES_LOGICAL_SCRATCH_RESTORE_V4_FOREIGN_KEY_SET_SHA256)
-      .toBe("7af11c633683daad416eb09fc0bb65f6e78613fc2d3f0099287797541cc976e3");
+      .toBe("c66f81632116e1c76dcf81d828141206b83c34268e1bd4ff7ddc9e721e372ba9");
     expect(new Set(POSTGRES_LOGICAL_SCRATCH_RESTORE_V4_FOREIGN_KEYS.map(
       (entry) => entry.constraintName,
     )).size).toBe(79);
@@ -336,17 +338,18 @@ describe("offline PostgreSQL logical scratch-restore V4 contract", () => {
     }
   });
 
-  it("validates exact seed deletion and all 61 ONLY relations empty before load", () => {
+  it("validates exact seed deletion and all 62 ONLY relations empty before load", () => {
     const result = validatePostgresLogicalScratchRestoreV4PreLoadObservation(validPreLoad());
     expect(result).toMatchObject({
-      targetDatabaseOid: "22222", seedRowCountBeforeRemoval: 12,
-      deletedSeedRowCount: 12, emptyRelationCount: 61,
+      targetDatabaseOid: "22222", seedRowCountBeforeRemoval: 13,
+      deletedSeedRowCount: 13, emptyRelationCount: 62,
       emptyArchivedRelationCount: 59, emptyKernelRelationCount: 2,
+      emptyNonArchivedControlRelationCount: 1,
       totalRowsAfterSeedRemoval: "0", operationallyAccepted: false,
     });
-    expect(POSTGRES_LOGICAL_SCRATCH_RESTORE_V4_SCHEMA_METADATA_SEED).toHaveLength(12);
+    expect(POSTGRES_LOGICAL_SCRATCH_RESTORE_V4_SCHEMA_METADATA_SEED).toHaveLength(13);
     expect(POSTGRES_LOGICAL_SCRATCH_RESTORE_V4_SQL.relationLockSql.match(/ONLY /g))
-      .toHaveLength(61);
+      .toHaveLength(62);
     const hostile = validPreLoad();
     hostile.relationRowsAfterSeedRemoval[0]!.rowCount = "1";
     expectCode(() => validatePostgresLogicalScratchRestoreV4PreLoadObservation(hostile),
@@ -440,7 +443,7 @@ describe("offline PostgreSQL logical scratch-restore V4 contract", () => {
           .portableReadBoundarySha256,
       catalog: catalog(),
       relationRows: relationRows(expectedRows),
-      expectedArchiveRowCount: "12",
+      expectedArchiveRowCount: "13",
       foreignKeyViolationRows: POSTGRES_LOGICAL_SCRATCH_RESTORE_V4_FOREIGN_KEYS.map(
         ({ constraintName }) => ({ constraintName, violationRowCount: "0" }),
       ),
@@ -469,7 +472,7 @@ describe("offline PostgreSQL logical scratch-restore V4 contract", () => {
         reportedPhysicalReadBoundaryHashesEqual: true,
         physicalReadBoundaryIndependentlyVerified: false,
         completePhysicalSchemaCatalogDigestVerified: false,
-        archiveRowCount: "12", kernelRowCount: "0",
+        archiveRowCount: "13", kernelRowCount: "0",
         foreignKeyViolationRowCount: "0", applicationTriggerProofRolledBack: true,
         operationallyAccepted: false,
       });

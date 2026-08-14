@@ -5,10 +5,21 @@ import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 
-import { Client, type QueryResultRow } from "pg";
+import { Client, type ClientConfig, type QueryResultRow } from "pg";
 
 import { checkPostgresRuntimeReadiness } from "../src/db/postgres-runtime.js";
 import { createPostgresDatabase } from "../src/db/sql-database.js";
+import {
+  assertPostgresRailwayStockLocalhostRootCaPem,
+  checkPostgresRailwayStockLocalhostServerIdentity,
+  openPostgresRailwayStockLocalhostCaTransport,
+  openPostgresRailwayStockLocalhostCaTransportFromPem,
+  parsePostgresRailwayStockLocalhostCaUrl,
+  POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+  type OpenPostgresRailwayStockLocalhostCaTransportFromPemOptions,
+  type OpenPostgresRailwayStockLocalhostCaTransportOptions,
+  type PostgresRailwayStockLocalhostCaTransport,
+} from "../src/lib/postgres-railway-stock-localhost-ca.js";
 import { parseStrictArguments } from "./lib/strict-arguments.js";
 
 export const STAGING_PRIVATE_AUTH_PROBE_LOCK = Object.freeze({
@@ -41,10 +52,7 @@ export type StagingPrivateAuthProbeMode =
   | "retire-old-runtime";
 
 export type StagingPrivateAuthProbeTarget =
-  | "all"
-  | "postgres-admin"
-  | "postgres-runtime"
-  | "redis";
+  "all" | "postgres-admin" | "postgres-runtime" | "redis";
 
 type ReceiptMode = StagingPrivateAuthProbeMode | "invalid";
 type ReceiptTarget = StagingPrivateAuthProbeTarget | "invalid";
@@ -62,17 +70,9 @@ type MutationReceipt =
   | "not-run";
 type CandidateCleanupResult = "cleaned" | "absent" | "unowned" | "inconclusive";
 type CandidateOwnershipResult =
-  | "owned"
-  | "handed-off"
-  | "absent"
-  | "unowned"
-  | "inconclusive";
+  "owned" | "handed-off" | "absent" | "unowned" | "inconclusive";
 type CandidateHandoffResult =
-  | "handed-off"
-  | "absent"
-  | "unsafe"
-  | "unowned"
-  | "inconclusive";
+  "handed-off" | "absent" | "unsafe" | "unowned" | "inconclusive";
 type ProvisionRuntimeRoleResult =
   | "created"
   | "existing-owned"
@@ -139,8 +139,6 @@ interface ParsedPostgresTarget {
   hostname: string;
   port: string;
   database: string;
-  sslMode: "prefer" | "require" | "verify-ca" | "verify-full";
-  sslRootCertificate?: string;
 }
 
 interface ParsedRedisTarget {
@@ -165,6 +163,7 @@ export interface PsqlExecutionRequest {
   connectionUrl: string;
   stdin: string;
   additionalEnvironment?: Readonly<Record<string, string>>;
+  postgresTransport: PostgresRailwayStockLocalhostCaTransport;
   timeoutMs: number;
 }
 
@@ -175,6 +174,7 @@ type PsqlRunner = (
 interface RuntimeRoleMutationInput {
   adminUrl: string;
   login: string;
+  postgresTransport: PostgresRailwayStockLocalhostCaTransport;
   psqlPath: string;
   timeoutMs: number;
 }
@@ -188,8 +188,7 @@ interface CandidateRoleHandoffInput extends RuntimeRoleMutationInput {
 }
 
 interface FinalizeCandidateRoleInput
-  extends CandidateRoleMutationInput,
-    CandidateRoleHandoffInput {}
+  extends CandidateRoleMutationInput, CandidateRoleHandoffInput {}
 
 interface ProvisionRuntimeRoleInput extends FinalizeCandidateRoleInput {
   verifier: string;
@@ -202,6 +201,8 @@ interface ProbeConfiguration {
   psqlPath: string;
   postgresAdminUrl: string;
   postgresRuntimeUrl: string;
+  postgresRootCaPem: string;
+  postgresRootCaDerSha256: string;
   redisUrl: string;
   candidateLogin: string;
   candidatePassword: string;
@@ -216,6 +217,10 @@ export interface StagingPrivateAuthProbeDependencies {
   monotonicNow: () => number;
   sleep: (milliseconds: number) => Promise<void>;
   randomBytes: (size: number) => Buffer;
+  getUid: () => number | null;
+  openPostgresTransport: (
+    options: OpenPostgresRailwayStockLocalhostCaTransportFromPemOptions,
+  ) => Promise<PostgresRailwayStockLocalhostCaTransport>;
   validatePostgresClient: (
     psqlPath: string,
     timeoutMs: number,
@@ -224,6 +229,7 @@ export interface StagingPrivateAuthProbeDependencies {
     connectionUrl: string,
     psqlPath: string,
     timeoutMs: number,
+    postgresTransport: PostgresRailwayStockLocalhostCaTransport,
   ) => Promise<AuthenticationResult>;
   attemptRedis: (
     connectionUrl: string,
@@ -232,6 +238,7 @@ export interface StagingPrivateAuthProbeDependencies {
   checkRuntimeReadiness: (
     connectionUrl: string,
     timeoutMs: number,
+    postgresTransport: PostgresRailwayStockLocalhostCaTransport,
   ) => Promise<ReadinessReceipt>;
   provisionRuntimeRole: (
     input: ProvisionRuntimeRoleInput,
@@ -251,6 +258,7 @@ export interface StagingPrivateAuthProbeDependencies {
   acquireProvisionLifecycleLock: (
     adminUrl: string,
     timeoutMs: number,
+    postgresTransport: PostgresRailwayStockLocalhostCaTransport,
   ) => Promise<ProvisionLifecycleLock | null>;
   retireRuntimeRole: (input: RuntimeRoleMutationInput) => Promise<boolean>;
   writeOutput: (output: string) => void;
@@ -282,7 +290,10 @@ const VERSIONED_RUNTIME_LOGIN_PATTERN =
 const URL_SAFE_PASSWORD_PATTERN = /^[A-Za-z0-9_-]{43,128}$/;
 const SCRAM_ITERATIONS = 4_096;
 const MAX_CAPTURED_PROCESS_BYTES = 64 * 1_024;
-const INTERNAL_READINESS_URL_ENV = "STAGING_AUTH_PROBE_INTERNAL_RUNTIME_URL";
+const INTERNAL_READINESS_TRANSPORT_ENV =
+  "STAGING_AUTH_PROBE_INTERNAL_RUNTIME_TRANSPORT";
+const SHA256_PATTERN = /^[a-f0-9]{64}$/;
+const CANONICAL_FD12_ADDRESS_PATTERN = /^fd12(?::[a-f0-9]{0,4}){1,7}$/;
 const PROVISION_LIFECYCLE_LOCK_KEYS = [1_347_427_924, 1_096_110_152] as const;
 const PROVISION_LIFECYCLE_LOCK_QUERY = `/* pintpath:staging-auth-probe:lifecycle-lock */
 SELECT
@@ -309,7 +320,9 @@ SELECT
   rolcreatedb AS "canCreateDatabase",
   rolcreaterole AS "canCreateRole",
   rolreplication AS "canReplicate",
-  rolbypassrls AS "canBypassRls"
+  rolbypassrls AS "canBypassRls",
+  rolconnlimit AS "connectionLimit",
+  rolvaliduntil IS NULL AS "validUntilNull"
 FROM pg_catalog.pg_roles
 WHERE rolname = session_user`;
 const PROVISION_RUNTIME_SCRIPT = String.raw`\set ON_ERROR_STOP on
@@ -339,20 +352,19 @@ EXISTS (
 \if :candidate_absent
 SET LOCAL password_encryption = 'scram-sha-256';
 SELECT format(
-  'CREATE ROLE %I LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOREPLICATION NOBYPASSRLS',
+  'CREATE ROLE %I LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 8',
   :'candidate_login',
   :'candidate_verifier'
 ) \gexec
-SELECT format('GRANT pintpath_runtime TO %I', :'candidate_login') \gexec
+SELECT format(
+  'GRANT pintpath_runtime TO %I WITH ADMIN FALSE, INHERIT FALSE, SET TRUE',
+  :'candidate_login'
+) \gexec
 SELECT format(
   'GRANT CONNECT ON DATABASE pintpath_staging TO %I',
   :'candidate_login'
 ) \gexec
 SELECT format('COMMENT ON ROLE %I IS %L', :'candidate_login', :'candidate_owner') \gexec
-SELECT format(
-  'ALTER ROLE %I IN DATABASE pintpath_staging SET search_path = pintpath_app, pg_catalog',
-  :'candidate_login'
-) \gexec
 COMMIT;
 SELECT 'created';
 \elif :candidate_owned
@@ -426,12 +438,14 @@ EXISTS (
   WHERE candidate_role.rolname = :'candidate_login'
     AND pg_catalog.shobj_description(candidate_role.oid, 'pg_authid') = :'candidate_owner'
     AND candidate_role.rolcanlogin
-    AND candidate_role.rolinherit
+    AND NOT candidate_role.rolinherit
     AND NOT candidate_role.rolsuper
     AND NOT candidate_role.rolcreatedb
     AND NOT candidate_role.rolcreaterole
     AND NOT candidate_role.rolreplication
     AND NOT candidate_role.rolbypassrls
+    AND candidate_role.rolconnlimit = 8
+    AND candidate_role.rolvaliduntil IS NULL
     AND EXISTS (
       SELECT 1
       FROM pg_catalog.pg_auth_members AS membership
@@ -439,7 +453,24 @@ EXISTS (
         ON granted_role.oid = membership.roleid
       WHERE membership.member = candidate_role.oid
         AND granted_role.rolname = 'pintpath_runtime'
+        AND NOT membership.admin_option
+        AND NOT membership.inherit_option
+        AND membership.set_option
     )
+    AND (
+      SELECT count(*) FROM pg_catalog.pg_auth_members AS membership
+      WHERE membership.member = candidate_role.oid
+    ) = 1
+    AND NOT EXISTS (
+      SELECT 1 FROM pg_catalog.pg_db_role_setting AS setting
+      WHERE setting.setrole IN (
+        candidate_role.oid,
+        pg_catalog.to_regrole('pintpath_runtime')
+      )
+    )
+    AND has_database_privilege(candidate_role.oid, 'pintpath_staging', 'CONNECT')
+    AND NOT has_database_privilege(candidate_role.oid, 'pintpath_staging', 'CREATE')
+    AND NOT has_database_privilege(candidate_role.oid, 'pintpath_staging', 'TEMP')
     AND EXISTS (
       SELECT 1
       FROM pg_catalog.pg_database AS runtime_database
@@ -615,6 +646,15 @@ SELECT 'absent';
 \endif
 `;
 
+interface RuntimeReadinessTransportDescriptor {
+  readonly schemaVersion: "staging-private-auth-runtime-transport/v1";
+  readonly connectionUrl: string;
+  readonly expectedRootCaDerSha256: string;
+  readonly expectedUid: number;
+  readonly resolvedAddress: string;
+  readonly rootCaFile: string;
+}
+
 function emptyIdentity(): StagingPrivateAuthProbeReceipt["identity"] {
   return {
     project: false,
@@ -717,6 +757,15 @@ function trimmedEnvironmentValue(
     : "";
 }
 
+function rootCaPemEnvironmentValue(
+  env: Readonly<Record<string, string | undefined>>,
+): string {
+  const value = env.STAGING_AUTH_PROBE_POSTGRES_ROOT_CA_PEM ?? "";
+  return Buffer.byteLength(value, "utf8") <= 64 * 1_024 && !value.includes("\0")
+    ? value
+    : "";
+}
+
 function decodeUrlComponent(value: string): string | null {
   try {
     return decodeURIComponent(value);
@@ -727,21 +776,18 @@ function decodeUrlComponent(value: string): string | null {
 
 function parsePostgresTarget(
   value: string,
-  requireTls: boolean,
   allowedDatabases: readonly string[] = [
     STAGING_PRIVATE_AUTH_PROBE_LOCK.postgresDatabase,
   ],
 ): ParsedPostgresTarget | null {
-  if (!value || value.length > 4_096 || /[\r\n\0]/.test(value)) return null;
-  let parsed: URL;
+  let railwayTarget;
   try {
-    parsed = new URL(value);
+    railwayTarget = parsePostgresRailwayStockLocalhostCaUrl(value);
   } catch {
     return null;
   }
+  const parsed = new URL(railwayTarget.connectionString);
   if (
-    !["postgres:", "postgresql:"].includes(parsed.protocol) ||
-    parsed.hash ||
     parsed.hostname.toLowerCase() !==
       STAGING_PRIVATE_AUTH_PROBE_LOCK.postgresPrivateHost ||
     parsed.port !== STAGING_PRIVATE_AUTH_PROBE_LOCK.postgresPort
@@ -761,51 +807,13 @@ function parsePostgresTarget(
     return null;
   }
 
-  const allowedParameters = new Set([
-    "sslmode",
-    "sslrootcert",
-    "uselibpqcompat",
-  ]);
-  if (
-    [...parsed.searchParams.keys()].some((name) => !allowedParameters.has(name))
-  )
-    return null;
-  const sslModes = parsed.searchParams.getAll("sslmode");
-  if (sslModes.length > 1) return null;
-  const configuredSslMode = sslModes[0]?.toLowerCase();
-  if (
-    configuredSslMode !== undefined &&
-    !["require", "verify-ca", "verify-full"].includes(configuredSslMode)
-  ) {
-    return null;
-  }
-  if (requireTls && configuredSslMode === undefined) return null;
-  const compatibility = parsed.searchParams.getAll("uselibpqcompat");
-  if (
-    compatibility.length > 1 ||
-    (compatibility.length === 1 && compatibility[0] !== "true")
-  ) {
-    return null;
-  }
-  const roots = parsed.searchParams.getAll("sslrootcert");
-  if (roots.length > 1 || (roots.length === 1 && !roots[0]?.trim()))
-    return null;
-  if (
-    ["verify-ca", "verify-full"].includes(configuredSslMode ?? "") &&
-    roots.length !== 1
-  ) {
-    return null;
-  }
-
   return {
-    raw: value,
+    raw: railwayTarget.connectionString,
     username,
     password,
     hostname: parsed.hostname.toLowerCase(),
     port: parsed.port,
     database,
-    sslMode: (configuredSslMode ?? "prefer") as ParsedPostgresTarget["sslMode"],
-    ...(roots[0] ? { sslRootCertificate: roots[0] } : {}),
   };
 }
 
@@ -858,7 +866,7 @@ function replacePostgresUserInfo(
   const at = parsed.raw.lastIndexOf("@", authorityEnd);
   if (schemeEnd < 0 || authorityEnd < 0 || at < authorityStart) return null;
   const candidate = `${parsed.raw.slice(0, authorityStart)}${username}:${password}${parsed.raw.slice(at)}`;
-  return parsePostgresTarget(candidate, true) ? candidate : null;
+  return parsePostgresTarget(candidate) ? candidate : null;
 }
 
 function selectedTargets(
@@ -873,6 +881,7 @@ function configurationFromEnvironment(
   mode: StagingPrivateAuthProbeMode,
   target: StagingPrivateAuthProbeTarget,
   env: Readonly<Record<string, string | undefined>>,
+  now: () => Date = () => new Date(),
 ): ProbeConfiguration {
   const postgresAdminUrl = trimmedEnvironmentValue(
     env,
@@ -883,6 +892,12 @@ function configurationFromEnvironment(
     "STAGING_AUTH_PROBE_POSTGRES_RUNTIME_URL",
   );
   const redisUrl = trimmedEnvironmentValue(env, "STAGING_AUTH_PROBE_REDIS_URL");
+  const postgresRootCaPem = rootCaPemEnvironmentValue(env);
+  const postgresRootCaDerSha256 = trimmedEnvironmentValue(
+    env,
+    "STAGING_AUTH_PROBE_POSTGRES_ROOT_CA_DER_SHA256",
+    64,
+  );
   const candidateLogin = trimmedEnvironmentValue(
     env,
     "STAGING_AUTH_PROBE_RUNTIME_CANDIDATE_LOGIN",
@@ -902,11 +917,21 @@ function configurationFromEnvironment(
   const deploymentId = safeDeploymentId(env.RAILWAY_DEPLOYMENT_ID);
   const parsedAdmin = parsePostgresTarget(
     postgresAdminUrl,
-    true,
     STAGING_PRIVATE_AUTH_PROBE_LOCK.postgresAdminDatabases,
   );
-  const parsedRuntime = parsePostgresTarget(postgresRuntimeUrl, true);
+  const parsedRuntime = parsePostgresTarget(postgresRuntimeUrl);
   const parsedRedis = parseRedisTarget(redisUrl);
+  let postgresTrustConfigured = false;
+  try {
+    assertPostgresRailwayStockLocalhostRootCaPem(
+      postgresRootCaPem,
+      postgresRootCaDerSha256,
+      now(),
+    );
+    postgresTrustConfigured = true;
+  } catch {
+    postgresTrustConfigured = false;
+  }
   const candidateUrl = parsedRuntime
     ? replacePostgresUserInfo(parsedRuntime, candidateLogin, candidatePassword)
     : null;
@@ -926,52 +951,52 @@ function configurationFromEnvironment(
           : "invalid";
   const runtimeLoginExact = Boolean(
     parsedRuntime &&
-      (runtimeIdentityPhase === "predecessor"
-        ? parsedRuntime.username ===
-          STAGING_PRIVATE_AUTH_PROBE_LOCK.postgresPredecessorRuntimeLogin
-        : runtimeIdentityPhase === "candidate" &&
-          VERSIONED_RUNTIME_LOGIN_PATTERN.test(candidateLogin) &&
-          URL_SAFE_PASSWORD_PATTERN.test(candidatePassword) &&
-          parsedRuntime.username === candidateLogin &&
-          parsedRuntime.password === candidatePassword),
+    (runtimeIdentityPhase === "predecessor"
+      ? parsedRuntime.username ===
+        STAGING_PRIVATE_AUTH_PROBE_LOCK.postgresPredecessorRuntimeLogin
+      : runtimeIdentityPhase === "candidate" &&
+        VERSIONED_RUNTIME_LOGIN_PATTERN.test(candidateLogin) &&
+        URL_SAFE_PASSWORD_PATTERN.test(candidatePassword) &&
+        parsedRuntime.username === candidateLogin &&
+        parsedRuntime.password === candidatePassword),
   );
   const postgresCredentialsDistinct = Boolean(
     parsedAdmin &&
-      parsedRuntime &&
-      parsedAdmin.raw !== parsedRuntime.raw &&
-      parsedAdmin.username !== parsedRuntime.username &&
-      parsedAdmin.password !== parsedRuntime.password,
+    parsedRuntime &&
+    parsedAdmin.raw !== parsedRuntime.raw &&
+    parsedAdmin.username !== parsedRuntime.username &&
+    parsedAdmin.password !== parsedRuntime.password,
   );
   const candidateSecretDistinct = Boolean(
     parsedAdmin &&
-      parsedRuntime &&
-      parsedRedis &&
-      URL_SAFE_PASSWORD_PATTERN.test(candidatePassword) &&
-      candidatePassword !== parsedAdmin.password &&
-      candidatePassword !== parsedRedis.password &&
-      (runtimeIdentityPhase === "candidate"
-        ? candidatePassword === parsedRuntime.password
-        : candidatePassword !== parsedRuntime.password),
+    parsedRuntime &&
+    parsedRedis &&
+    URL_SAFE_PASSWORD_PATTERN.test(candidatePassword) &&
+    candidatePassword !== parsedAdmin.password &&
+    candidatePassword !== parsedRedis.password &&
+    (runtimeIdentityPhase === "candidate"
+      ? candidatePassword === parsedRuntime.password
+      : candidatePassword !== parsedRuntime.password),
   );
   const providerCredentialsDistinct = Boolean(
     parsedAdmin &&
-      parsedRuntime &&
-      parsedRedis &&
-      new Set([
-        parsedAdmin.password,
-        parsedRuntime.password,
-        parsedRedis.password,
-      ]).size === 3,
+    parsedRuntime &&
+    parsedRedis &&
+    new Set([
+      parsedAdmin.password,
+      parsedRuntime.password,
+      parsedRedis.password,
+    ]).size === 3,
   );
   const candidateOwnerSecretValid = Boolean(
     parsedAdmin &&
-      parsedRuntime &&
-      parsedRedis &&
-      URL_SAFE_PASSWORD_PATTERN.test(candidateOwnerSecret) &&
-      candidateOwnerSecret !== candidatePassword &&
-      candidateOwnerSecret !== parsedAdmin.password &&
-      candidateOwnerSecret !== parsedRuntime.password &&
-      candidateOwnerSecret !== parsedRedis.password,
+    parsedRuntime &&
+    parsedRedis &&
+    URL_SAFE_PASSWORD_PATTERN.test(candidateOwnerSecret) &&
+    candidateOwnerSecret !== candidatePassword &&
+    candidateOwnerSecret !== parsedAdmin.password &&
+    candidateOwnerSecret !== parsedRuntime.password &&
+    candidateOwnerSecret !== parsedRedis.password,
   );
 
   return {
@@ -981,6 +1006,8 @@ function configurationFromEnvironment(
     psqlPath,
     postgresAdminUrl,
     postgresRuntimeUrl,
+    postgresRootCaPem,
+    postgresRootCaDerSha256,
     redisUrl,
     candidateLogin,
     candidatePassword,
@@ -1029,8 +1056,8 @@ function configurationFromEnvironment(
           "STAGING_AUTH_PROBE_REDIS_RESOURCE_ID",
           256,
         ) === STAGING_PRIVATE_AUTH_PROBE_LOCK.redisResourceId,
-      postgresAdminTarget: parsedAdmin !== null,
-      postgresRuntimeTarget: parsedRuntime !== null,
+      postgresAdminTarget: parsedAdmin !== null && postgresTrustConfigured,
+      postgresRuntimeTarget: parsedRuntime !== null && postgresTrustConfigured,
       redisTarget: parsedRedis !== null,
       postgresAdminLogin:
         parsedAdmin?.username ===
@@ -1043,16 +1070,16 @@ function configurationFromEnvironment(
       postgresClient17: false,
       runtimeCandidateDistinct: Boolean(
         candidateUrl &&
-          parsedRuntime &&
-          candidateLogin !== parsedRuntime.username,
+        parsedRuntime &&
+        candidateLogin !== parsedRuntime.username,
       ),
       runtimeCandidateSecretDistinct: candidateSecretDistinct,
       runtimeCandidateOwnerSecretValid: candidateOwnerSecretValid,
       retiredRuntimeDistinct: Boolean(
         parsedRuntime &&
-          runtimeIdentityPhase === "candidate" &&
-          parsedRuntime.username !==
-            STAGING_PRIVATE_AUTH_PROBE_LOCK.postgresPredecessorRuntimeLogin,
+        runtimeIdentityPhase === "candidate" &&
+        parsedRuntime.username !==
+          STAGING_PRIVATE_AUTH_PROBE_LOCK.postgresPredecessorRuntimeLogin,
       ),
     },
   };
@@ -1267,16 +1294,70 @@ function narrowBaseProcessEnvironment(): Record<string, string> {
   };
 }
 
+function canonicalFd12Address(value: string): string | null {
+  if (
+    !CANONICAL_FD12_ADDRESS_PATTERN.test(value) ||
+    value.includes("%") ||
+    net.isIPv6(value) !== true
+  ) {
+    return null;
+  }
+  try {
+    const bracketed = new URL(`http://[${value}]/`).hostname.toLowerCase();
+    if (!bracketed.startsWith("[") || !bracketed.endsWith("]")) return null;
+    const canonical = bracketed.slice(1, -1);
+    return canonical === value && canonical.split(":", 1)[0] === "fd12"
+      ? canonical
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function transportMatchesTarget(
+  transport: PostgresRailwayStockLocalhostCaTransport,
+  target: ParsedPostgresTarget,
+): boolean {
+  const nodeConnection = transport?.nodeConnection;
+  const ssl = nodeConnection?.ssl;
+  const libpq = transport?.libpqEnvironment;
+  return Boolean(
+    transport?.profile === POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE &&
+    transport.sourceUrlAuthority?.hostname === target.hostname &&
+    transport.sourceUrlAuthority.port === Number(target.port) &&
+    transport.rootCaDerSha256 &&
+    canonicalFd12Address(transport.resolvedAddress) ===
+      transport.resolvedAddress &&
+    nodeConnection?.host === transport.resolvedAddress &&
+    nodeConnection.port === 5_432 &&
+    ssl?.servername === "localhost" &&
+    ssl.rejectUnauthorized === true &&
+    ssl.minVersion === "TLSv1.2" &&
+    ssl.checkServerIdentity ===
+      checkPostgresRailwayStockLocalhostServerIdentity &&
+    typeof ssl.ca === "string" &&
+    ssl.ca.length > 0 &&
+    libpq?.PGHOST === "localhost" &&
+    libpq.PGHOSTADDR === transport.resolvedAddress &&
+    libpq.PGPORT === "5432" &&
+    libpq.PGSSLMODE === "verify-full" &&
+    libpq.PGSSLMINPROTOCOLVERSION === "TLSv1.2" &&
+    libpq.PGSSLSNI === "1" &&
+    path.isAbsolute(libpq.PGSSLROOTCERT),
+  );
+}
+
 export function buildPsqlEnvironment(
   connectionUrl: string,
+  postgresTransport: PostgresRailwayStockLocalhostCaTransport,
   additionalEnvironment: Readonly<Record<string, string>> = {},
 ): Record<string, string> | null {
   const target = parsePostgresTarget(
     connectionUrl,
-    true,
     STAGING_PRIVATE_AUTH_PROBE_LOCK.postgresAdminDatabases,
   );
-  if (!target) return null;
+  if (!target || !transportMatchesTarget(postgresTransport, target))
+    return null;
   const allowedAdditionalNames = new Set([
     "STAGING_AUTH_PROBE_CANDIDATE_LOGIN",
     "STAGING_AUTH_PROBE_CANDIDATE_HANDOFF",
@@ -1293,18 +1374,13 @@ export function buildPsqlEnvironment(
   }
   return {
     ...narrowBaseProcessEnvironment(),
-    PGHOST: target.hostname,
-    PGPORT: target.port,
+    ...postgresTransport.libpqEnvironment,
     PGDATABASE: target.database,
     PGUSER: target.username,
     PGPASSWORD: target.password,
     PGAPPNAME: "pintpath-staging-private-auth-probe",
     PGCONNECT_TIMEOUT: "10",
     PGREQUIREAUTH: "scram-sha-256",
-    PGSSLMODE: target.sslMode,
-    ...(target.sslRootCertificate
-      ? { PGSSLROOTCERT: target.sslRootCertificate }
-      : {}),
     ...additionalEnvironment,
   };
 }
@@ -1314,6 +1390,7 @@ export async function runPsql(
 ): Promise<CapturedProcessResult> {
   const environment = buildPsqlEnvironment(
     request.connectionUrl,
+    request.postgresTransport,
     request.additionalEnvironment,
   );
   if (!environment || !safePsqlPath(request.psqlPath)) {
@@ -1326,21 +1403,35 @@ export async function runPsql(
       outputOverflow: false,
     };
   }
-  return runCapturedProcess({
-    command: request.psqlPath,
-    arguments: [
-      "-X",
-      "-q",
-      "-A",
-      "-t",
-      "--no-password",
-      "--set=ON_ERROR_STOP=1",
-      "--set=VERBOSITY=sqlstate",
-    ],
-    environment,
-    stdin: request.stdin,
-    timeoutMs: request.timeoutMs,
-  });
+  try {
+    await request.postgresTransport.assertExact();
+    const result = await runCapturedProcess({
+      command: request.psqlPath,
+      arguments: [
+        "-X",
+        "-q",
+        "-A",
+        "-t",
+        "--no-password",
+        "--set=ON_ERROR_STOP=1",
+        "--set=VERBOSITY=sqlstate",
+      ],
+      environment,
+      stdin: request.stdin,
+      timeoutMs: request.timeoutMs,
+    });
+    await request.postgresTransport.assertExact();
+    return result;
+  } catch {
+    return {
+      exitCode: null,
+      stdout: "",
+      stderr: "",
+      timedOut: false,
+      spawnFailed: true,
+      outputOverflow: false,
+    };
+  }
 }
 
 export function classifyPostgresPsqlResult(
@@ -1383,12 +1474,14 @@ async function attemptPostgres(
   connectionUrl: string,
   psqlPath: string,
   timeoutMs: number,
+  postgresTransport: PostgresRailwayStockLocalhostCaTransport,
 ): Promise<AuthenticationResult> {
   const splitTimeout = Math.max(1, Math.floor(timeoutMs / 2));
   const psqlResult = classifyPostgresPsqlResult(
     await runPsql({
       psqlPath,
       connectionUrl,
+      postgresTransport,
       stdin: "",
       timeoutMs: splitTimeout,
     }),
@@ -1397,6 +1490,7 @@ async function attemptPostgres(
   const structured = await attemptPostgresStructured(
     connectionUrl,
     splitTimeout,
+    postgresTransport,
   );
   return structured === "rejected" ? "rejected" : "inconclusive";
 }
@@ -1448,8 +1542,7 @@ export async function closePostgresClientBounded(
 }
 
 type BoundedPostgresOperation<T> =
-  | { completed: true; value: T }
-  | { completed: false };
+  { completed: true; value: T } | { completed: false };
 
 async function runPostgresOperationBounded<T>(
   client: PostgresClientShutdownSurface,
@@ -1507,11 +1600,37 @@ interface ProvisionLifecycleLockVerificationRow extends QueryResultRow {
   held: boolean;
 }
 
+function postgresClientOptions(
+  connectionUrl: string,
+  postgresTransport: PostgresRailwayStockLocalhostCaTransport,
+  input: {
+    applicationName: string;
+    timeoutMs: number;
+  },
+): ClientConfig | null {
+  const target = parsePostgresTarget(
+    connectionUrl,
+    STAGING_PRIVATE_AUTH_PROBE_LOCK.postgresAdminDatabases,
+  );
+  if (!target || !transportMatchesTarget(postgresTransport, target))
+    return null;
+  const timeoutMs = Math.max(1, Math.trunc(input.timeoutMs));
+  return {
+    application_name: input.applicationName,
+    connectionTimeoutMillis: timeoutMs,
+    database: target.database,
+    host: postgresTransport.nodeConnection.host,
+    password: target.password,
+    port: postgresTransport.nodeConnection.port,
+    ssl: postgresTransport.nodeConnection.ssl,
+    user: target.username,
+  };
+}
+
 function lifecycleLockConnectionUrl(adminUrl: string): string | null {
   if (
     !parsePostgresTarget(
       adminUrl,
-      true,
       STAGING_PRIVATE_AUTH_PROBE_LOCK.postgresAdminDatabases,
     )
   ) {
@@ -1519,23 +1638,30 @@ function lifecycleLockConnectionUrl(adminUrl: string): string | null {
   }
   const normalized = new URL(adminUrl);
   normalized.pathname = `/${STAGING_PRIVATE_AUTH_PROBE_LOCK.postgresDatabase}`;
-  normalized.searchParams.set("uselibpqcompat", "true");
   const value = normalized.toString();
-  return parsePostgresTarget(value, true) ? value : null;
+  return parsePostgresTarget(value) ? value : null;
 }
 
 export async function acquireProvisionLifecycleLock(
   adminUrl: string,
   timeoutMs: number,
+  postgresTransport: PostgresRailwayStockLocalhostCaTransport,
 ): Promise<ProvisionLifecycleLock | null> {
   const connectionString = lifecycleLockConnectionUrl(adminUrl);
   if (!connectionString || timeoutMs < 1) return null;
   const startedAt = performance.now();
   const effectiveTimeout = Math.max(1, Math.trunc(timeoutMs));
-  const client = new Client({
+  const clientConfiguration = postgresClientOptions(
     connectionString,
-    application_name: "pintpath-staging-private-auth-probe-lifecycle-lock",
-    connectionTimeoutMillis: effectiveTimeout,
+    postgresTransport,
+    {
+      applicationName: "pintpath-staging-private-auth-probe-lifecycle-lock",
+      timeoutMs: effectiveTimeout,
+    },
+  );
+  if (!clientConfiguration) return null;
+  const client = new Client({
+    ...clientConfiguration,
     query_timeout: effectiveTimeout,
     statement_timeout: effectiveTimeout,
   });
@@ -1560,12 +1686,22 @@ export async function acquireProvisionLifecycleLock(
   });
 
   const remaining = () => effectiveTimeout - (performance.now() - startedAt);
+  try {
+    await postgresTransport.assertExact();
+  } catch {
+    return null;
+  }
   const connected = await runPostgresOperationBounded(
     shutdownSurface,
     () => client.connect(),
     remaining(),
   );
   connection.off("authenticationSASL", observeSasl);
+  try {
+    await postgresTransport.assertExact();
+  } catch {
+    connectionFailed = true;
+  }
   if (!connected.completed || !saslObserved || connectionFailed) {
     await closePostgresClientBounded(shutdownSurface, remaining());
     return null;
@@ -1579,6 +1715,11 @@ export async function acquireProvisionLifecycleLock(
       ]),
     remaining(),
   );
+  try {
+    await postgresTransport.assertExact();
+  } catch {
+    connectionFailed = true;
+  }
   const row = acquired.completed ? acquired.value.rows[0] : undefined;
   if (
     connectionFailed ||
@@ -1595,6 +1736,12 @@ export async function acquireProvisionLifecycleLock(
     verify: async (verificationTimeoutMs) => {
       if (released || connectionFailed || verificationTimeoutMs < 1)
         return false;
+      try {
+        await postgresTransport.assertExact();
+      } catch {
+        connectionFailed = true;
+        return false;
+      }
       const verification = await runPostgresOperationBounded(
         shutdownSurface,
         () =>
@@ -1607,6 +1754,11 @@ export async function acquireProvisionLifecycleLock(
       const verificationRow = verification.completed
         ? verification.value.rows[0]
         : undefined;
+      try {
+        await postgresTransport.assertExact();
+      } catch {
+        connectionFailed = true;
+      }
       if (
         !verification.completed ||
         connectionFailed ||
@@ -1627,6 +1779,7 @@ export async function acquireProvisionLifecycleLock(
       if (released) return;
       released = true;
       await closePostgresClientBounded(shutdownSurface, releaseTimeoutMs);
+      await postgresTransport.assertExact();
     },
   };
 }
@@ -1634,28 +1787,24 @@ export async function acquireProvisionLifecycleLock(
 export async function attemptPostgresStructured(
   connectionUrl: string,
   timeoutMs: number,
+  postgresTransport: PostgresRailwayStockLocalhostCaTransport,
 ): Promise<AuthenticationResult> {
-  if (
-    !parsePostgresTarget(
-      connectionUrl,
-      true,
-      STAGING_PRIVATE_AUTH_PROBE_LOCK.postgresAdminDatabases,
-    )
-  )
-    return "inconclusive";
   const startedAt = performance.now();
   const effectiveTimeout = Math.max(1, Math.trunc(timeoutMs));
   const shutdownReserve = Math.min(
     250,
     Math.max(1, Math.trunc(effectiveTimeout / 10)),
   );
-  const normalizedConnectionUrl = new URL(connectionUrl);
-  normalizedConnectionUrl.searchParams.set("uselibpqcompat", "true");
-  const client = new Client({
-    connectionString: normalizedConnectionUrl.toString(),
-    connectionTimeoutMillis: Math.max(1, effectiveTimeout - shutdownReserve),
-    application_name: "pintpath-staging-private-auth-probe",
-  });
+  const clientConfiguration = postgresClientOptions(
+    connectionUrl,
+    postgresTransport,
+    {
+      applicationName: "pintpath-staging-private-auth-probe",
+      timeoutMs: Math.max(1, effectiveTimeout - shutdownReserve),
+    },
+  );
+  if (!clientConfiguration) return "inconclusive";
+  const client = new Client(clientConfiguration);
   let saslObserved = false;
   const connection = (
     client as unknown as {
@@ -1672,9 +1821,11 @@ export async function attemptPostgresStructured(
   client.on("error", () => {
     // Suppress the event surface; the structured connect result is authoritative.
   });
+  let result: AuthenticationResult = "inconclusive";
   try {
+    await postgresTransport.assertExact();
     await client.connect();
-    return classifyStructuredPostgresAttempt({
+    result = classifyStructuredPostgresAttempt({
       connected: true,
       saslObserved,
       errorCode: "",
@@ -1687,7 +1838,7 @@ export async function attemptPostgresStructured(
       typeof error.code === "string"
         ? error.code
         : "";
-    return classifyStructuredPostgresAttempt({
+    result = classifyStructuredPostgresAttempt({
       connected: false,
       saslObserved,
       errorCode: code,
@@ -1698,7 +1849,13 @@ export async function attemptPostgresStructured(
       client as unknown as PostgresClientShutdownSurface,
       effectiveTimeout - (performance.now() - startedAt),
     );
+    try {
+      await postgresTransport.assertExact();
+    } catch {
+      result = "inconclusive";
+    }
   }
+  return result;
 }
 
 export function classifyStructuredPostgresAttempt(input: {
@@ -1946,6 +2103,7 @@ async function provisionRuntimeRole(
   const result = await runner({
     psqlPath: input.psqlPath,
     connectionUrl: input.adminUrl,
+    postgresTransport: input.postgresTransport,
     stdin: PROVISION_RUNTIME_SCRIPT,
     additionalEnvironment: {
       STAGING_AUTH_PROBE_CANDIDATE_HANDOFF: input.handoffMarker,
@@ -1979,6 +2137,7 @@ async function inspectRuntimeRoleOwnership(
   const result = await runner({
     psqlPath: input.psqlPath,
     connectionUrl: input.adminUrl,
+    postgresTransport: input.postgresTransport,
     stdin: INSPECT_RUNTIME_OWNERSHIP_SCRIPT,
     additionalEnvironment: {
       STAGING_AUTH_PROBE_CANDIDATE_HANDOFF: input.handoffMarker,
@@ -2011,6 +2170,7 @@ async function finalizeRuntimeRoleOwnership(
   const result = await runner({
     psqlPath: input.psqlPath,
     connectionUrl: input.adminUrl,
+    postgresTransport: input.postgresTransport,
     stdin: FINALIZE_RUNTIME_OWNERSHIP_SCRIPT,
     additionalEnvironment: {
       STAGING_AUTH_PROBE_CANDIDATE_HANDOFF: input.handoffMarker,
@@ -2043,6 +2203,7 @@ async function inspectRuntimeRoleHandoff(
   const result = await runner({
     psqlPath: input.psqlPath,
     connectionUrl: input.adminUrl,
+    postgresTransport: input.postgresTransport,
     stdin: INSPECT_RUNTIME_HANDOFF_SCRIPT,
     additionalEnvironment: {
       STAGING_AUTH_PROBE_CANDIDATE_HANDOFF: input.handoffMarker,
@@ -2071,6 +2232,7 @@ async function cleanupRuntimeRole(
   const result = await runner({
     psqlPath: input.psqlPath,
     connectionUrl: input.adminUrl,
+    postgresTransport: input.postgresTransport,
     stdin: CLEANUP_RUNTIME_SCRIPT,
     additionalEnvironment: {
       STAGING_AUTH_PROBE_CANDIDATE_LOGIN: input.login,
@@ -2094,6 +2256,7 @@ async function retireRuntimeRole(
   const result = await runner({
     psqlPath: input.psqlPath,
     connectionUrl: input.adminUrl,
+    postgresTransport: input.postgresTransport,
     stdin: RETIRE_RUNTIME_SCRIPT,
     additionalEnvironment: {
       STAGING_AUTH_PROBE_RETIRED_LOGIN: input.login,
@@ -2117,6 +2280,8 @@ interface RuntimeRoleSafetyRow extends QueryResultRow {
   canCreateRole: boolean;
   canReplicate: boolean;
   canBypassRls: boolean;
+  connectionLimit: number;
+  validUntilNull: boolean;
 }
 
 function runtimeRoleIsRestricted(
@@ -2124,13 +2289,15 @@ function runtimeRoleIsRestricted(
 ): boolean {
   return Boolean(
     role &&
-      role.canLogin === true &&
-      role.inheritsMembership === true &&
-      role.isSuperuser === false &&
-      role.canCreateDatabase === false &&
-      role.canCreateRole === false &&
-      role.canReplicate === false &&
-      role.canBypassRls === false,
+    role.canLogin === true &&
+    role.inheritsMembership === false &&
+    role.isSuperuser === false &&
+    role.canCreateDatabase === false &&
+    role.canCreateRole === false &&
+    role.canReplicate === false &&
+    role.canBypassRls === false &&
+    role.connectionLimit === 8 &&
+    role.validUntilNull === true,
   );
 }
 
@@ -2145,19 +2312,59 @@ function classifyRuntimeReadinessResult(readiness: {
 }
 
 export async function checkRuntimeReadinessInWorker(
-  connectionUrl: string,
+  descriptorValue: string,
+  overrides: {
+    checkReadiness?: typeof checkPostgresRuntimeReadiness;
+    createDatabase?: typeof createPostgresDatabase;
+    getUid?: () => number | null;
+    openTransport?: (
+      options: OpenPostgresRailwayStockLocalhostCaTransportOptions,
+    ) => Promise<PostgresRailwayStockLocalhostCaTransport>;
+  } = {},
 ): Promise<ReadinessReceipt> {
-  if (!parsePostgresTarget(connectionUrl, true)) return "inconclusive";
-  const normalizedConnectionUrl = new URL(connectionUrl);
-  normalizedConnectionUrl.searchParams.set("uselibpqcompat", "true");
+  const descriptor = parseRuntimeReadinessTransportDescriptor(descriptorValue);
+  if (!descriptor) return "inconclusive";
+  const getUid = overrides.getUid ?? (() => process.getuid?.() ?? null);
+  const createDatabase = overrides.createDatabase ?? createPostgresDatabase;
+  const checkReadiness =
+    overrides.checkReadiness ?? checkPostgresRuntimeReadiness;
+  const openTransport =
+    overrides.openTransport ??
+    ((options) => openPostgresRailwayStockLocalhostCaTransport(options));
+  let uid: number | null;
+  try {
+    uid = getUid();
+  } catch {
+    uid = null;
+  }
+  if (uid !== descriptor.expectedUid) return "inconclusive";
+  let transport: PostgresRailwayStockLocalhostCaTransport | null = null;
   const querySlice = Math.max(
     100,
     Math.floor(STAGING_PRIVATE_AUTH_PROBE_LOCK.attemptTimeoutMs / 8),
   );
   let database: ReturnType<typeof createPostgresDatabase>;
   try {
-    database = createPostgresDatabase({
-      connectionString: normalizedConnectionUrl.toString(),
+    const parsedTarget = parsePostgresTarget(descriptor.connectionUrl);
+    if (!parsedTarget) return "inconclusive";
+    transport = await openTransport({
+      profile: POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+      rootCaFile: descriptor.rootCaFile,
+      expectedRootCaDerSha256: descriptor.expectedRootCaDerSha256,
+      expectedUid: descriptor.expectedUid,
+      sourceUrlAuthority: {
+        hostname: parsedTarget.hostname,
+        port: Number(parsedTarget.port),
+      },
+    });
+    await transport.assertExact();
+    if (transport.resolvedAddress !== descriptor.resolvedAddress) {
+      throw new Error("staging_auth_probe_transport_address_drift");
+    }
+    database = createDatabase({
+      connectionString: descriptor.connectionUrl,
+      activeRole: "pintpath_runtime",
+      railwayStockLocalhostCaConnection: transport.nodeConnection,
       applicationName: "pintpath-staging-private-auth-probe",
       maxConnections: 1,
       idleTimeoutMs: querySlice,
@@ -2166,57 +2373,163 @@ export async function checkRuntimeReadinessInWorker(
       idleInTransactionTimeoutMs: querySlice,
     });
   } catch {
+    if (transport) {
+      try {
+        await transport.close();
+      } catch {
+        // An invalid worker startup is already inconclusive.
+      }
+    }
     return "inconclusive";
   }
 
   let result: ReadinessReceipt = "inconclusive";
   try {
+    await transport.assertExact();
     const role = await database
       .prepare(RUNTIME_ROLE_SAFETY_QUERY)
       .get<RuntimeRoleSafetyRow>();
     if (!runtimeRoleIsRestricted(role)) {
       result = "not-ready";
     } else {
-      const readiness = await checkPostgresRuntimeReadiness(database);
+      const readiness = await checkReadiness(database, {
+        allowSafeRotationOverlap: true,
+      });
       result = classifyRuntimeReadinessResult(readiness);
     }
   } catch {
     result = "inconclusive";
   }
   try {
+    await transport.assertExact();
+  } catch {
+    result = "inconclusive";
+  }
+  try {
     await database.close();
   } catch {
-    return "inconclusive";
+    result = "inconclusive";
+  }
+  try {
+    await transport.close();
+  } catch {
+    result = "inconclusive";
   }
   return result;
+}
+
+function runtimeReadinessTransportDescriptor(
+  connectionUrl: string,
+  postgresTransport: PostgresRailwayStockLocalhostCaTransport,
+  expectedUid: number,
+): string | null {
+  const target = parsePostgresTarget(connectionUrl);
+  if (
+    !target ||
+    !Number.isSafeInteger(expectedUid) ||
+    expectedUid < 0 ||
+    !transportMatchesTarget(postgresTransport, target) ||
+    !SHA256_PATTERN.test(postgresTransport.rootCaDerSha256) ||
+    !path.isAbsolute(postgresTransport.libpqEnvironment.PGSSLROOTCERT)
+  ) {
+    return null;
+  }
+  return JSON.stringify({
+    schemaVersion: "staging-private-auth-runtime-transport/v1",
+    connectionUrl: target.raw,
+    expectedRootCaDerSha256: postgresTransport.rootCaDerSha256,
+    expectedUid,
+    resolvedAddress: postgresTransport.resolvedAddress,
+    rootCaFile: postgresTransport.libpqEnvironment.PGSSLROOTCERT,
+  } satisfies RuntimeReadinessTransportDescriptor);
+}
+
+function parseRuntimeReadinessTransportDescriptor(
+  value: string,
+): RuntimeReadinessTransportDescriptor | null {
+  if (!value || value.length > 8_192 || /[\r\n\0]/.test(value)) return null;
+  try {
+    const parsed = JSON.parse(
+      value,
+    ) as Partial<RuntimeReadinessTransportDescriptor>;
+    const keys = Object.keys(parsed).sort();
+    const expectedKeys = [
+      "connectionUrl",
+      "expectedRootCaDerSha256",
+      "expectedUid",
+      "resolvedAddress",
+      "rootCaFile",
+      "schemaVersion",
+    ].sort();
+    if (
+      keys.length !== expectedKeys.length ||
+      !keys.every((key, index) => key === expectedKeys[index]) ||
+      parsed.schemaVersion !== "staging-private-auth-runtime-transport/v1" ||
+      typeof parsed.connectionUrl !== "string" ||
+      !parsePostgresTarget(parsed.connectionUrl) ||
+      typeof parsed.expectedRootCaDerSha256 !== "string" ||
+      !SHA256_PATTERN.test(parsed.expectedRootCaDerSha256) ||
+      !Number.isSafeInteger(parsed.expectedUid) ||
+      parsed.expectedUid! < 0 ||
+      typeof parsed.resolvedAddress !== "string" ||
+      canonicalFd12Address(parsed.resolvedAddress) !== parsed.resolvedAddress ||
+      typeof parsed.rootCaFile !== "string" ||
+      !path.isAbsolute(parsed.rootCaFile)
+    ) {
+      return null;
+    }
+    return Object.freeze(parsed as RuntimeReadinessTransportDescriptor);
+  } catch {
+    return null;
+  }
 }
 
 async function checkRuntimeReadiness(
   connectionUrl: string,
   timeoutMs: number,
+  postgresTransport: PostgresRailwayStockLocalhostCaTransport,
   runner: typeof runCapturedProcess = runCapturedProcess,
 ): Promise<ReadinessReceipt> {
-  if (!parsePostgresTarget(connectionUrl, true) || timeoutMs < 1_000) {
+  let uid: number | null;
+  try {
+    uid = process.getuid?.() ?? null;
+  } catch {
+    uid = null;
+  }
+  const descriptor =
+    uid === null
+      ? null
+      : runtimeReadinessTransportDescriptor(
+          connectionUrl,
+          postgresTransport,
+          uid,
+        );
+  if (!descriptor || timeoutMs < 1_000) {
     return "inconclusive";
   }
-  const normalizedConnectionUrl = new URL(connectionUrl);
-  normalizedConnectionUrl.searchParams.set("uselibpqcompat", "true");
   const sourcePath = fileURLToPath(import.meta.url);
   const invocation = readinessWorkerInvocation(sourcePath);
   if (!invocation) return "inconclusive";
-  const result = await runner({
-    command: invocation.command,
-    arguments: invocation.arguments,
-    environment: {
-      ...narrowBaseProcessEnvironment(),
-      [INTERNAL_READINESS_URL_ENV]: normalizedConnectionUrl.toString(),
-    },
-    stdin: "",
-    timeoutMs: Math.min(
-      STAGING_PRIVATE_AUTH_PROBE_LOCK.attemptTimeoutMs,
-      Math.max(1, Math.trunc(timeoutMs)),
-    ),
-  });
+  let result: CapturedProcessResult;
+  try {
+    await postgresTransport.assertExact();
+    result = await runner({
+      command: invocation.command,
+      arguments: invocation.arguments,
+      environment: {
+        ...narrowBaseProcessEnvironment(),
+        [INTERNAL_READINESS_TRANSPORT_ENV]: descriptor,
+      },
+      stdin: "",
+      timeoutMs: Math.min(
+        STAGING_PRIVATE_AUTH_PROBE_LOCK.attemptTimeoutMs,
+        Math.max(1, Math.trunc(timeoutMs)),
+      ),
+    });
+    await postgresTransport.assertExact();
+  } catch {
+    return "inconclusive";
+  }
   if (
     result.exitCode !== 0 ||
     result.timedOut ||
@@ -2271,6 +2584,9 @@ const DEFAULT_DEPENDENCIES: StagingPrivateAuthProbeDependencies = {
   sleep: (milliseconds) =>
     new Promise((resolve) => setTimeout(resolve, milliseconds)),
   randomBytes: (size) => crypto.randomBytes(size),
+  getUid: () => process.getuid?.() ?? null,
+  openPostgresTransport: (options) =>
+    openPostgresRailwayStockLocalhostCaTransportFromPem(options),
   validatePostgresClient: validatePostgresClient17,
   attemptPostgres,
   attemptRedis,
@@ -2290,19 +2606,24 @@ async function attemptSelectedTarget(
   configuration: ProbeConfiguration,
   dependencies: StagingPrivateAuthProbeDependencies,
   timeoutMs: number,
+  postgresTransport: PostgresRailwayStockLocalhostCaTransport | null,
 ): Promise<AuthenticationResult> {
   if (target === "postgres-admin") {
+    if (!postgresTransport) return "inconclusive";
     return dependencies.attemptPostgres(
       configuration.postgresAdminUrl,
       configuration.psqlPath,
       timeoutMs,
+      postgresTransport,
     );
   }
   if (target === "postgres-runtime") {
+    if (!postgresTransport) return "inconclusive";
     return dependencies.attemptPostgres(
       configuration.postgresRuntimeUrl,
       configuration.psqlPath,
       timeoutMs,
+      postgresTransport,
     );
   }
   return dependencies.attemptRedis(configuration.redisUrl, timeoutMs);
@@ -2334,6 +2655,7 @@ async function watchOldRejection(
   dependencies: StagingPrivateAuthProbeDependencies,
   deadline: number,
   checks: StagingPrivateAuthProbeReceipt["checks"],
+  postgresTransport: PostgresRailwayStockLocalhostCaTransport | null,
 ): Promise<ProbeOutcome> {
   let armedProgressEmitted = false;
   const states = new Map(
@@ -2360,6 +2682,7 @@ async function watchOldRejection(
         configuration,
         dependencies,
         boundedTimeout(deadline, dependencies.monotonicNow),
+        postgresTransport,
       );
       setAuthenticationReceipt(checks, target, result);
       if (result === "accepted") state.accepted = true;
@@ -2400,6 +2723,7 @@ async function verifyCurrent(
   dependencies: StagingPrivateAuthProbeDependencies,
   deadline: number,
   checks: StagingPrivateAuthProbeReceipt["checks"],
+  postgresTransport: PostgresRailwayStockLocalhostCaTransport | null,
 ): Promise<ProbeOutcome> {
   let outcome: ProbeOutcome = "passed";
   for (const target of selectedTargets(configuration.target)) {
@@ -2410,6 +2734,7 @@ async function verifyCurrent(
       configuration,
       dependencies,
       boundedTimeout(deadline, dependencies.monotonicNow),
+      postgresTransport,
     );
     setAuthenticationReceipt(checks, target, result);
     if (result === "rejected") outcome = "failed";
@@ -2417,9 +2742,11 @@ async function verifyCurrent(
       outcome = "inconclusive";
 
     if (target === "postgres-runtime" && result === "accepted") {
+      if (!postgresTransport) return "inconclusive";
       checks.runtimeReadiness = await dependencies.checkRuntimeReadiness(
         configuration.postgresRuntimeUrl,
         boundedTimeout(deadline, dependencies.monotonicNow),
+        postgresTransport,
       );
       if (checks.runtimeReadiness === "not-ready") outcome = "failed";
       else if (
@@ -2439,11 +2766,10 @@ async function provisionRuntimeCandidate(
   dependencies: StagingPrivateAuthProbeDependencies,
   deadline: number,
   checks: StagingPrivateAuthProbeReceipt["checks"],
+  postgresTransport: PostgresRailwayStockLocalhostCaTransport | null,
 ): Promise<ProbeOutcome> {
-  const parsedRuntime = parsePostgresTarget(
-    configuration.postgresRuntimeUrl,
-    true,
-  );
+  if (!postgresTransport) return "inconclusive";
+  const parsedRuntime = parsePostgresTarget(configuration.postgresRuntimeUrl);
   const candidateUrl = parsedRuntime
     ? replacePostgresUserInfo(
         parsedRuntime,
@@ -2457,6 +2783,7 @@ async function provisionRuntimeCandidate(
     configuration.postgresAdminUrl,
     configuration.psqlPath,
     boundedTimeout(deadline, dependencies.monotonicNow),
+    postgresTransport,
   );
   if (checks.postgresAdminAuth === "rejected") return "failed";
   if (checks.postgresAdminAuth !== "accepted") return "inconclusive";
@@ -2491,6 +2818,7 @@ async function provisionRuntimeCandidate(
     lifecycleLock = await dependencies.acquireProvisionLifecycleLock(
       configuration.postgresAdminUrl,
       boundedTimeout(deadline, dependencies.monotonicNow),
+      postgresTransport,
     );
   } catch {
     lifecycleLock = null;
@@ -2514,6 +2842,7 @@ async function provisionRuntimeCandidate(
     login: configuration.candidateLogin,
     ownerMarker,
     psqlPath: configuration.psqlPath,
+    postgresTransport,
     timeoutMs: boundedTimeout(deadline, dependencies.monotonicNow),
   };
   try {
@@ -2580,11 +2909,13 @@ async function provisionRuntimeCandidate(
         candidateUrl,
         configuration.psqlPath,
         boundedTimeout(deadline, dependencies.monotonicNow),
+        postgresTransport,
       );
       if (checks.postgresRuntimeAuth === "accepted") {
         checks.runtimeReadiness = await dependencies.checkRuntimeReadiness(
           candidateUrl,
           boundedTimeout(deadline, dependencies.monotonicNow),
+          postgresTransport,
         );
       }
       if (
@@ -2651,11 +2982,13 @@ async function provisionRuntimeCandidate(
           candidateUrl,
           configuration.psqlPath,
           boundedTimeout(deadline, dependencies.monotonicNow),
+          postgresTransport,
         );
         if (checks.postgresRuntimeAuth === "accepted") {
           checks.runtimeReadiness = await dependencies.checkRuntimeReadiness(
             candidateUrl,
             boundedTimeout(deadline, dependencies.monotonicNow),
+            postgresTransport,
           );
         }
         if (
@@ -2737,11 +3070,14 @@ async function retireOldRuntime(
   dependencies: StagingPrivateAuthProbeDependencies,
   deadline: number,
   checks: StagingPrivateAuthProbeReceipt["checks"],
+  postgresTransport: PostgresRailwayStockLocalhostCaTransport | null,
 ): Promise<ProbeOutcome> {
+  if (!postgresTransport) return "inconclusive";
   checks.postgresAdminAuth = await dependencies.attemptPostgres(
     configuration.postgresAdminUrl,
     configuration.psqlPath,
     boundedTimeout(deadline, dependencies.monotonicNow),
+    postgresTransport,
   );
   if (checks.postgresAdminAuth === "rejected") return "failed";
   if (checks.postgresAdminAuth !== "accepted") return "inconclusive";
@@ -2759,6 +3095,7 @@ async function retireOldRuntime(
     lifecycleLock = await dependencies.acquireProvisionLifecycleLock(
       configuration.postgresAdminUrl,
       boundedTimeout(deadline, dependencies.monotonicNow),
+      postgresTransport,
     );
   } catch {
     lifecycleLock = null;
@@ -2782,12 +3119,14 @@ async function retireOldRuntime(
       configuration.postgresRuntimeUrl,
       configuration.psqlPath,
       boundedTimeout(deadline, dependencies.monotonicNow),
+      postgresTransport,
     );
     if (checks.postgresRuntimeAuth === "rejected") return "failed";
     if (checks.postgresRuntimeAuth !== "accepted") return "inconclusive";
     checks.runtimeReadiness = await dependencies.checkRuntimeReadiness(
       configuration.postgresRuntimeUrl,
       boundedTimeout(deadline, dependencies.monotonicNow),
+      postgresTransport,
     );
     if (checks.runtimeReadiness === "not-ready") return "failed";
     if (checks.runtimeReadiness !== "ready") return "inconclusive";
@@ -2800,6 +3139,7 @@ async function retireOldRuntime(
         login: configuration.candidateLogin,
         handoffMarker,
         psqlPath: configuration.psqlPath,
+        postgresTransport,
         timeoutMs: boundedTimeout(deadline, dependencies.monotonicNow),
       });
     } catch {
@@ -2823,6 +3163,7 @@ async function retireOldRuntime(
         adminUrl: configuration.postgresAdminUrl,
         login: STAGING_PRIVATE_AUTH_PROBE_LOCK.postgresPredecessorRuntimeLogin,
         psqlPath: configuration.psqlPath,
+        postgresTransport,
         timeoutMs: boundedTimeout(deadline, dependencies.monotonicNow),
       });
     } catch {
@@ -2836,6 +3177,7 @@ async function retireOldRuntime(
       configuration.postgresRuntimeUrl,
       configuration.psqlPath,
       boundedTimeout(deadline, dependencies.monotonicNow),
+      postgresTransport,
     );
     if (checks.postgresRuntimeAuth === "rejected") return "failed";
     if (checks.postgresRuntimeAuth !== "accepted") return "inconclusive";
@@ -2844,6 +3186,7 @@ async function retireOldRuntime(
     checks.runtimeReadiness = await dependencies.checkRuntimeReadiness(
       configuration.postgresRuntimeUrl,
       boundedTimeout(deadline, dependencies.monotonicNow),
+      postgresTransport,
     );
     if (
       !(await lockIsHeld()) ||
@@ -2880,6 +3223,7 @@ export async function runStagingPrivateAuthProbe(
     mode,
     target,
     dependencies.env,
+    dependencies.now,
   );
   const checks = emptyChecks();
   const startedAt = dependencies.monotonicNow();
@@ -2911,14 +3255,55 @@ export async function runStagingPrivateAuthProbe(
     return 1;
   }
 
-  let outcome: ProbeOutcome;
+  let outcome: ProbeOutcome = "inconclusive";
+  let postgresTransport: PostgresRailwayStockLocalhostCaTransport | null = null;
   try {
+    if (isPostgresTarget(target)) {
+      let uid: number | null;
+      try {
+        uid = dependencies.getUid();
+      } catch {
+        uid = null;
+      }
+      const sourceTarget =
+        parsePostgresTarget(
+          configuration.postgresAdminUrl,
+          STAGING_PRIVATE_AUTH_PROBE_LOCK.postgresAdminDatabases,
+        ) ?? parsePostgresTarget(configuration.postgresRuntimeUrl);
+      if (
+        !Number.isSafeInteger(uid) ||
+        uid === null ||
+        uid < 0 ||
+        !sourceTarget
+      ) {
+        throw new Error("staging_auth_probe_transport_identity_invalid");
+      }
+      postgresTransport = await dependencies.openPostgresTransport({
+        profile: POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+        rootCaPem: configuration.postgresRootCaPem,
+        expectedRootCaDerSha256: configuration.postgresRootCaDerSha256,
+        expectedUid: uid,
+        sourceUrlAuthority: {
+          hostname: sourceTarget.hostname,
+          port: Number(sourceTarget.port),
+        },
+      });
+      await postgresTransport.assertExact();
+      if (
+        postgresTransport.rootCaDerSha256 !==
+          configuration.postgresRootCaDerSha256 ||
+        !transportMatchesTarget(postgresTransport, sourceTarget)
+      ) {
+        throw new Error("staging_auth_probe_transport_identity_invalid");
+      }
+    }
     if (mode === "watch-old-rejection") {
       outcome = await watchOldRejection(
         configuration,
         dependencies,
         deadline,
         checks,
+        postgresTransport,
       );
     } else if (mode === "verify-current") {
       outcome = await verifyCurrent(
@@ -2926,6 +3311,7 @@ export async function runStagingPrivateAuthProbe(
         dependencies,
         deadline,
         checks,
+        postgresTransport,
       );
     } else if (mode === "provision-runtime-candidate") {
       outcome = await provisionRuntimeCandidate(
@@ -2933,6 +3319,7 @@ export async function runStagingPrivateAuthProbe(
         dependencies,
         deadline,
         checks,
+        postgresTransport,
       );
     } else {
       outcome = await retireOldRuntime(
@@ -2940,10 +3327,26 @@ export async function runStagingPrivateAuthProbe(
         dependencies,
         deadline,
         checks,
+        postgresTransport,
       );
     }
   } catch {
     outcome = "inconclusive";
+  } finally {
+    if (postgresTransport) {
+      let transportFinalizedExactly = true;
+      try {
+        await postgresTransport.assertExact();
+      } catch {
+        transportFinalizedExactly = false;
+      }
+      try {
+        await postgresTransport.close();
+      } catch {
+        transportFinalizedExactly = false;
+      }
+      if (!transportFinalizedExactly) outcome = "inconclusive";
+    }
   }
   if (
     outcome === "passed" &&
@@ -2982,6 +3385,10 @@ export const stagingPrivateAuthProbeInternals = {
   runCapturedProcess,
   classifyRuntimeReadinessResult,
   readinessWorkerInvocation,
+  runtimeReadinessTransportDescriptor,
+  parseRuntimeReadinessTransportDescriptor,
+  postgresClientOptions,
+  transportMatchesTarget,
   runtimeRoleIsRestricted,
   queries: {
     acquireProvisionLifecycleLock: PROVISION_LIFECYCLE_LOCK_QUERY,
@@ -3010,8 +3417,7 @@ function parseCliArguments(argv: readonly string[]): {
     });
     const mode = parsed.get("mode") as StagingPrivateAuthProbeMode | undefined;
     const target = parsed.get("--target") as
-      | StagingPrivateAuthProbeTarget
-      | undefined;
+      StagingPrivateAuthProbeTarget | undefined;
     return mode && target && PROBE_MODES.has(mode) && PROBE_TARGETS.has(target)
       ? { mode, target }
       : null;

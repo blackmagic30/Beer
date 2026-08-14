@@ -1,0 +1,227 @@
+name: Manage protected production promotion recovery emergency cleanup arm
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Initialize or renew the exact durable singleton arm
+        required: true
+        type: choice
+        options: [initial, renewal]
+      activation_run_id:
+        description: Exact pending activation workflow run ID
+        required: true
+        type: string
+      candidate_sha:
+        description: Exact current main candidate SHA
+        required: true
+        type: string
+      project_id:
+        description: Exact disposable Railway project UUID
+        required: true
+        type: string
+      project_name:
+        description: Exact disposable restore project name
+        required: true
+        type: string
+      environment_id:
+        description: Exact disposable Railway environment UUID
+        required: true
+        type: string
+      environment_name:
+        description: Exact disposable Railway environment name
+        required: true
+        type: string
+      inventory_sha256:
+        description: Exact signed Railway service inventory SHA-256
+        required: true
+        type: string
+      workspace_id:
+        description: Exact Railway workspace UUID
+        required: true
+        type: string
+      workspace_name:
+        description: Exact Railway workspace name
+        required: true
+        type: string
+      workspace_project_inventory_sha256:
+        description: Exact signed complete workspace inventory SHA-256
+        required: true
+        type: string
+      supabase_project_ref:
+        description: Exact disposable Supabase project ref
+        required: true
+        type: string
+      supabase_project_name:
+        description: Exact disposable Supabase project name
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pintpath-production-promotion-recovery-emergency-cleanup-arm-state
+  cancel-in-progress: false
+
+jobs:
+  transition:
+    name: Compare-and-swap the durable singleton arm state
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: production-promotion-recovery-cleanup
+
+    steps:
+      - name: Checkout the exact candidate without persisted credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+
+      - name: Setup the pinned Node runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Install exact candidate and private transition custody
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          test "$GITHUB_REF" = refs/heads/main
+          test "$GITHUB_RUN_ATTEMPT" = 1
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain=v2 --untracked-files=all)"
+          corepack npm ci --ignore-scripts
+          root="$RUNNER_TEMP/pintpath-emergency-cleanup-arm-state-$GITHUB_RUN_ID"
+          test ! -e "$root"
+          mkdir -m 700 "$root"
+          printf 'PINTPATH_ARM_STATE_ROOT=%s\n' "$root" >> "$GITHUB_ENV"
+
+      - name: Materialize and cryptographically verify the next signed arm
+        env:
+          PINTPATH_RECOVERY_EMERGENCY_CLEANUP_STATE_TRANSITION: "true"
+          PINTPATH_RECOVERY_EMERGENCY_CLEANUP_ARM_AUTHORITY_SHA256: ${{ vars.PINTPATH_RECOVERY_EMERGENCY_CLEANUP_ARM_AUTHORITY_SHA256 }}
+          ARM_AUTHORITY_BASE64: ${{ secrets.PINTPATH_RECOVERY_EMERGENCY_CLEANUP_ARM_AUTHORITY_BASE64 }}
+          ARM_AUTHORITY_PUBLIC_KEY_BASE64: ${{ secrets.PINTPATH_RECOVERY_EMERGENCY_CLEANUP_ARM_AUTHORITY_PUBLIC_KEY_BASE64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          umask 077
+          printf '%s' "$ARM_AUTHORITY_BASE64" | base64 --decode > "$PINTPATH_ARM_STATE_ROOT/arm-authority.json"
+          printf '%s' "$ARM_AUTHORITY_PUBLIC_KEY_BASE64" | base64 --decode > "$PINTPATH_ARM_STATE_ROOT/arm-authority-public-key.pem"
+          chmod 600 "$PINTPATH_ARM_STATE_ROOT"/*
+          npm run --silent production:promotion-recovery:emergency-cleanup:arm:verify -- \
+            --mode manager --candidate-sha "${{ inputs.candidate_sha }}" \
+            --activation-run-id "${{ inputs.activation_run_id }}" \
+            --project-id "${{ inputs.project_id }}" --project-name "${{ inputs.project_name }}" \
+            --environment-id "${{ inputs.environment_id }}" --environment-name "${{ inputs.environment_name }}" \
+            --inventory-sha256 "${{ inputs.inventory_sha256 }}" \
+            --workspace-id "${{ inputs.workspace_id }}" --workspace-name "${{ inputs.workspace_name }}" \
+            --workspace-project-inventory-sha256 "${{ inputs.workspace_project_inventory_sha256 }}" \
+            --supabase-project-ref "${{ inputs.supabase_project_ref }}" \
+            --supabase-project-name "${{ inputs.supabase_project_name }}" \
+            --organization-slug-sha256 "${{ vars.PINTPATH_RECOVERY_SUPABASE_ORGANIZATION_SLUG_SHA256 }}" \
+            --destination-origin-sha256 "${{ vars.PINTPATH_RECOVERY_TARGET_SUPABASE_ORIGIN_SHA256 }}" \
+            --destination-restore-authority-sha256 "${{ vars.PINTPATH_RECOVERY_DESTINATION_RESTORE_AUTHORITY_SHA256 }}" \
+            --authority-file "$PINTPATH_ARM_STATE_ROOT/arm-authority.json" \
+            --authority-sha256 "$PINTPATH_RECOVERY_EMERGENCY_CLEANUP_ARM_AUTHORITY_SHA256" \
+            --authority-public-key-file "$PINTPATH_ARM_STATE_ROOT/arm-authority-public-key.pem" \
+            --authority-public-key-sha256 "${{ vars.PINTPATH_RECOVERY_EMERGENCY_CLEANUP_ARM_AUTHORITY_PUBLIC_KEY_SHA256 }}" \
+            > "$PINTPATH_ARM_STATE_ROOT/arm-result.json"
+
+      - name: Fetch the durable state ref and reject an invalid transition
+        env:
+          STATE_TOKEN: ${{ github.token }}
+          OPERATION: ${{ inputs.operation }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          basic="$(printf 'x-access-token:%s' "$STATE_TOKEN" | base64 | tr -d '\n')"
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $basic"
+          state_ref=refs/heads/pintpath-production-promotion-recovery-emergency-cleanup-state
+          if git fetch --no-tags origin "+$state_ref:refs/remotes/origin/pintpath-emergency-cleanup-state"; then
+            old_head="$(git rev-parse refs/remotes/origin/pintpath-emergency-cleanup-state)"
+            git show "$old_head:.pintpath/emergency-cleanup/state.json" > "$PINTPATH_ARM_STATE_ROOT/current-state.json"
+            chmod 600 "$PINTPATH_ARM_STATE_ROOT/current-state.json"
+            current_status="$(jq -er '.status' "$PINTPATH_ARM_STATE_ROOT/current-state.json")"
+            if [ "$current_status" = open ]; then
+              test "$OPERATION" = renewal
+            elif [ "$current_status" = disarmed ]; then
+              test "$OPERATION" = initial
+            else
+              exit 1
+            fi
+            state_file="$PINTPATH_ARM_STATE_ROOT/current-state.json"
+          else
+            test "$OPERATION" = initial
+            old_head="$(git rev-parse HEAD)"
+            state_file=none
+          fi
+          printf 'PINTPATH_ARM_STATE_OLD_HEAD=%s\n' "$old_head" >> "$GITHUB_ENV"
+          if [ "$OPERATION" = initial ]; then
+            transition_operation=initialize
+          else
+            test "$OPERATION" = renewal
+            transition_operation=renew
+          fi
+          npm run --silent production:promotion-recovery:emergency-cleanup:state:transition -- \
+            --operation "$transition_operation" --state-file "$state_file" \
+            --arm-result-file "$PINTPATH_ARM_STATE_ROOT/arm-result.json" \
+            --railway-terminal-file none --supabase-terminal-file none \
+            --observed-cleanup-run-id "$GITHUB_RUN_ID" \
+            --output "$PINTPATH_ARM_STATE_ROOT/next-state.json" --github-env none \
+            > "$PINTPATH_ARM_STATE_ROOT/transition-result.json"
+
+      - name: Atomically publish the exact state transition
+        env:
+          STATE_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          state_ref=refs/heads/pintpath-production-promotion-recovery-emergency-cleanup-state
+          index="$PINTPATH_ARM_STATE_ROOT/state.index"
+          export GIT_INDEX_FILE="$index"
+          git read-tree "$PINTPATH_ARM_STATE_OLD_HEAD^{tree}"
+          for pair in \
+            ".pintpath/emergency-cleanup/state.json:$PINTPATH_ARM_STATE_ROOT/next-state.json" \
+            ".pintpath/emergency-cleanup/arm-authority.json:$PINTPATH_ARM_STATE_ROOT/arm-authority.json" \
+            ".pintpath/emergency-cleanup/arm-authority-public-key.pem:$PINTPATH_ARM_STATE_ROOT/arm-authority-public-key.pem"; do
+            leaf="${pair%%:*}"
+            file="${pair#*:}"
+            blob="$(git hash-object -w "$file")"
+            git update-index --add --cacheinfo "100644,$blob,$leaf"
+          done
+          tree="$(git write-tree)"
+          export GIT_AUTHOR_NAME='PintPath cleanup state controller'
+          export GIT_AUTHOR_EMAIL='cleanup-state@pintpath.invalid'
+          export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME"
+          export GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
+          commit="$(printf 'Advance exact production recovery cleanup arm state\n' | git commit-tree "$tree" -p "$PINTPATH_ARM_STATE_OLD_HEAD")"
+          basic="$(printf 'x-access-token:%s' "$STATE_TOKEN" | base64 | tr -d '\n')"
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $basic"
+          git push origin "$commit:$state_ref"
+
+      - name: Remove private transition custody
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="${PINTPATH_ARM_STATE_ROOT:-$RUNNER_TEMP/pintpath-emergency-cleanup-arm-state-$GITHUB_RUN_ID}"
+          if [ -d "$root" ] && [ ! -L "$root" ]; then
+            find "$root" -depth -mindepth 1 -delete
+            rmdir "$root"
+          elif [ -e "$root" ] || [ -L "$root" ]; then
+            exit 1
+          fi

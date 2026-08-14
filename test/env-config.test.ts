@@ -4,6 +4,11 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import {
+  TEST_POSTGRES_RAILWAY_ROOT_CA_DER_SHA256,
+  TEST_POSTGRES_RAILWAY_ROOT_CA_PEM,
+} from "./postgres-railway-stock-localhost-ca.fixtures.js";
+
 function sha256(value: string): string {
   return crypto.createHash("sha256").update(value, "utf8").digest("hex");
 }
@@ -29,6 +34,10 @@ function legacySupabaseJwt(
 const legacyAnonKey = legacySupabaseJwt("anon", 1);
 const legacyServiceRoleKey = legacySupabaseJwt("service_role", 2);
 const legacyOffsiteServiceRoleKey = legacySupabaseJwt("service_role", 3);
+const productionPublishableKey = `sb_publishable_${"a".repeat(32)}`;
+const productionServiceKey = `sb_secret_${"b".repeat(32)}`;
+const productionOffsiteServiceKey = `sb_secret_${"c".repeat(32)}`;
+const restorePublishableKey = `sb_publishable_${"r".repeat(32)}`;
 const stagingPublishableKey = `sb_publishable_${"p".repeat(32)}`;
 const stagingServiceKey = `sb_secret_${"s".repeat(32)}`;
 const permanentStagingSupabaseOrigin = "https://bbfibbadwjxzrcdncavy.supabase.co";
@@ -43,9 +52,11 @@ const restoreDatabaseResource = `railway:${restoreRailwayEnvironmentId}:svc-post
 const productionRedisResource = `railway:${productionRailwayEnvironmentId}:svc-redis-4ac109`;
 const stagingRedisResource = `railway:${stagingRailwayEnvironmentId}:svc-redis-4ac109`;
 const restoreRedisResource = `railway:${restoreRailwayEnvironmentId}:svc-redis-4ac109`;
-const productionDatabaseUrl = "postgresql://pintpath_app:fixture-password@production-postgres.internal:5432/pintpath?sslmode=require";
+const productionDatabaseUrl = "postgresql://pintpath_app:fixture-password@postgres-production.railway.internal:5432/pintpath?sslmode=verify-full";
+const productionMaintenanceDatabaseUrl = "postgresql://pintpath_maintenance:fixture-maintenance-password@postgres-production.railway.internal:5432/pintpath?sslmode=verify-full";
 const productionRedisUrl = "redis://localhost:6379";
-const stagingDatabaseUrl = "postgresql://pintpath_app:fixture-password@postgres.railway.internal:5432/pintpath?sslmode=require";
+const stagingDatabaseUrl = "postgresql://pintpath_app:fixture-password@postgres.railway.internal:5432/pintpath?sslmode=verify-full";
+const stagingMaintenanceDatabaseUrl = "postgresql://pintpath_maintenance:fixture-maintenance-password@postgres.railway.internal:5432/pintpath?sslmode=verify-full";
 const stagingRedisUrl = "redis://default:fixture-password@staging-redis.railway.internal:6379";
 const restoreDatabaseUrlDigest = sha256("postgresql://pintpath_restore:private@restore-postgres.internal:5432/pintpath?sslmode=require");
 const restoreRedisUrlDigest = sha256("redis://default:private@restore-redis.internal:6379");
@@ -54,6 +65,10 @@ const productionRequiredEnv = {
   NODE_ENV: "production",
   PUBLIC_BASE_URL: "https://pintpath.au",
   DATABASE_URL: productionDatabaseUrl,
+  DATABASE_MAINTENANCE_URL: productionMaintenanceDatabaseUrl,
+  PINTPATH_POSTGRES_ROOT_CA_PEM: TEST_POSTGRES_RAILWAY_ROOT_CA_PEM,
+  PINTPATH_POSTGRES_ROOT_CA_DER_SHA256:
+    TEST_POSTGRES_RAILWAY_ROOT_CA_DER_SHA256,
   DATABASE_PATH: "",
   PINTPATH_IDENTITY_REGISTRY_PHASE: "complete",
   PINTPATH_DATABASE_RESOURCE_ID: productionDatabaseResource,
@@ -71,11 +86,11 @@ const productionRequiredEnv = {
   SOURCE_EVIDENCE_SIGNING_SECRET: "test-source-evidence-signing-secret-32-bytes",
   POS_WEBHOOK_SIGNING_SECRET: "test-pos-webhook-signing-secret-32-bytes",
   SUPABASE_URL: "https://auth.pintpath.au",
-  SUPABASE_ANON_KEY: legacyAnonKey,
-  SUPABASE_SERVICE_ROLE_KEY: legacyServiceRoleKey,
+  SUPABASE_ANON_KEY: productionPublishableKey,
+  SUPABASE_SERVICE_ROLE_KEY: productionServiceKey,
   SUPABASE_OAUTH_PROVIDERS: "google",
   OFFSITE_BACKUP_SUPABASE_URL: operationalOffsiteSupabaseOrigin,
-  OFFSITE_BACKUP_SERVICE_ROLE_KEY: legacyOffsiteServiceRoleKey,
+  OFFSITE_BACKUP_SERVICE_ROLE_KEY: productionOffsiteServiceKey,
   REDIS_URL: productionRedisUrl,
   PINTPATH_REDIS_RESOURCE_ID: productionRedisResource,
   PINTPATH_EXPECTED_REDIS_RESOURCE_ID: productionRedisResource,
@@ -125,6 +140,7 @@ const productionRequiredEnv = {
 const restoreRehearsalRequiredEnv = {
   ...productionRequiredEnv,
   DATABASE_URL: "",
+  DATABASE_MAINTENANCE_URL: "",
   PINTPATH_DATABASE_RESOURCE_ID: "",
   PINTPATH_EXPECTED_DATABASE_RESOURCE_ID: "",
   PINTPATH_FORBIDDEN_DATABASE_RESOURCE_IDS: `${stagingDatabaseResource},${productionDatabaseResource}`,
@@ -162,7 +178,7 @@ const restoreRehearsalRequiredEnv = {
   DATABASE_PATH: "/app/data/restore-pint-path-fixture-backup/pint-path.sqlite",
   SOURCE_EVIDENCE_STORAGE_DIR: "/app/data/restore-pint-path-fixture-backup/source-evidence",
   SUPABASE_URL: "https://restoreref0000000001.supabase.co",
-  SUPABASE_ANON_KEY: legacySupabaseJwt("anon", 4),
+  SUPABASE_ANON_KEY: restorePublishableKey,
   SUPABASE_SERVICE_ROLE_KEY: stagingServiceKey,
   SUPABASE_OAUTH_PROVIDERS: "",
   REDIS_URL: "redis://default:fixture-password@redis.railway.internal:6379",
@@ -233,6 +249,7 @@ const accountDeletionRehearsalRequiredEnv = {
   RAILWAY_PUBLIC_DOMAIN: "permanent-staging.up.railway.app",
   PUBLIC_BASE_URL: "https://permanent-staging.up.railway.app",
   DATABASE_URL: stagingDatabaseUrl,
+  DATABASE_MAINTENANCE_URL: stagingMaintenanceDatabaseUrl,
   PINTPATH_DATABASE_RESOURCE_ID: stagingDatabaseResource,
   PINTPATH_EXPECTED_DATABASE_RESOURCE_ID: stagingDatabaseResource,
   PINTPATH_FORBIDDEN_DATABASE_RESOURCE_IDS: `${productionDatabaseResource},${restoreDatabaseResource}`,
@@ -282,6 +299,7 @@ const stagingBootstrapRequiredEnv = {
   PINTPATH_PERMANENT_STAGING_RAILWAY_PROJECT_ID: "project-pintpath-4af98c",
   PINTPATH_PERMANENT_STAGING_RAILWAY_SERVICE_ID: "svc-pintpath-app-92d01b",
   DATABASE_URL: stagingDatabaseUrl,
+  DATABASE_MAINTENANCE_URL: stagingMaintenanceDatabaseUrl,
   PINTPATH_DATABASE_RESOURCE_ID: stagingDatabaseResource,
   PINTPATH_EXPECTED_DATABASE_RESOURCE_ID: stagingDatabaseResource,
   PINTPATH_FORBIDDEN_DATABASE_RESOURCE_IDS: "",
@@ -425,8 +443,23 @@ describe("environment safety defaults", () => {
     expect(env.OPENAI_MENU_OCR_FALLBACK_MODEL).toBe("gpt-4.1-mini-2025-04-14");
   });
 
-  it("preserves structurally valid legacy anon and service-role keys in current production", async () => {
+  it("uses exact publishable and secret keys in canonical production", async () => {
     stubProductionEnv();
+
+    const { env } = await loadEnv();
+
+    expect(env.SUPABASE_ANON_KEY).toBe(productionPublishableKey);
+    expect(env.SUPABASE_SERVICE_ROLE_KEY).toBe(productionServiceKey);
+    expect(env.OFFSITE_BACKUP_SERVICE_ROLE_KEY).toBe(productionOffsiteServiceKey);
+  });
+
+  it("preserves legacy Supabase key compatibility only in local development", async () => {
+    stubProductionEnv({
+      NODE_ENV: "development",
+      SUPABASE_ANON_KEY: legacyAnonKey,
+      SUPABASE_SERVICE_ROLE_KEY: legacyServiceRoleKey,
+      OFFSITE_BACKUP_SERVICE_ROLE_KEY: legacyOffsiteServiceRoleKey,
+    });
 
     const { env } = await loadEnv();
 
@@ -463,6 +496,7 @@ describe("environment safety defaults", () => {
     ["an overlong publishable key", `sb_publishable_${"x".repeat(221)}`],
     ["an unknown sb_ key", `sb_unknown_${"x".repeat(32)}`],
     ["an arbitrary legacy-like value", "fixture-supabase-browser-key"],
+    ["a structurally valid legacy anon JWT", legacyAnonKey],
     ["a legacy service-role JWT", legacyServiceRoleKey],
     [
       "a legacy anon JWT with a non-canonical signature",
@@ -479,7 +513,7 @@ describe("environment safety defaults", () => {
 
     expect(error).toBeInstanceOf(Error);
     expect((error as Error).message).toContain(
-      "refusing to expose a secret, malformed, or non-anon value through public config",
+      "must be an exact sb_publishable_ key in production",
     );
     expect((error as Error).message).not.toContain(candidate);
   });
@@ -491,6 +525,11 @@ describe("environment safety defaults", () => {
       "SUPABASE_SERVICE_ROLE_KEY",
     ],
     [
+      "a legacy service-role JWT in the primary service slot",
+      { SUPABASE_SERVICE_ROLE_KEY: legacyServiceRoleKey },
+      "SUPABASE_SERVICE_ROLE_KEY",
+    ],
+    [
       "a publishable key in the primary service slot",
       { SUPABASE_SERVICE_ROLE_KEY: stagingPublishableKey },
       "SUPABASE_SERVICE_ROLE_KEY",
@@ -498,6 +537,11 @@ describe("environment safety defaults", () => {
     [
       "an anon JWT in the off-site service slot",
       { OFFSITE_BACKUP_SERVICE_ROLE_KEY: legacyAnonKey },
+      "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
+    ],
+    [
+      "a legacy service-role JWT in the off-site service slot",
+      { OFFSITE_BACKUP_SERVICE_ROLE_KEY: legacyOffsiteServiceRoleKey },
       "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
     ],
     [
@@ -512,7 +556,7 @@ describe("environment safety defaults", () => {
 
     expect(error).toBeInstanceOf(Error);
     expect((error as Error).message).toContain(
-      `${name} must be an exact sb_secret_ key or a structurally valid legacy JWT with role=service_role`,
+      `${name} must be an exact sb_secret_ key in production`,
     );
     expect((error as Error).message).not.toContain(Object.values(overrides)[0]!);
   });
@@ -554,9 +598,7 @@ describe("environment safety defaults", () => {
       STRIPE_PRO_PRICE_ID: "",
     });
 
-    await expect(loadEnv()).rejects.toThrow(
-      "Enabled production paid enrollment requires: STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, STRIPE_PRICE_MONTHLY, STRIPE_PRICE_YEARLY, STRIPE_PRO_PRICE_ID",
-    );
+    await expect(loadEnv()).rejects.toThrow("Canonical PostgreSQL currently supports the frozen Free launch only");
   });
 
   it("keeps paid enrollment inert while permanent staging is in identity bootstrap", async () => {
@@ -588,6 +630,66 @@ describe("environment safety defaults", () => {
       DATABASE_PATH: "/app/data/pint-path.sqlite",
     });
     await expect(loadEnv()).rejects.toThrow("must not configure DATABASE_PATH");
+  });
+
+  it("requires a distinct maintenance login on the exact application database", async () => {
+    stubProductionEnv({ DATABASE_MAINTENANCE_URL: "" });
+    await expect(loadEnv()).rejects.toThrow("DATABASE_MAINTENANCE_URL must be a valid TLS Postgres connection URL");
+
+    vi.resetModules();
+    stubProductionEnv({ DATABASE_MAINTENANCE_URL: productionDatabaseUrl });
+    await expect(loadEnv()).rejects.toThrow("dedicated maintenance login distinct from the web runtime login");
+
+    vi.resetModules();
+    stubProductionEnv({
+      DATABASE_MAINTENANCE_URL:
+        "postgresql://pintpath_maintenance:fixture@other-postgres.railway.internal:5432/pintpath?sslmode=verify-full",
+    });
+    await expect(loadEnv()).rejects.toThrow("same pinned Postgres host, port, and database");
+
+    vi.resetModules();
+    stubProductionEnv({
+      DATABASE_URL:
+        "postgresql://runtime_login:fixture@production-postgres.internal:6543/pintpath?sslmode=require",
+      DATABASE_MAINTENANCE_URL:
+        "postgresql://maintenance_login:fixture@production-postgres.internal:6543/pintpath?sslmode=require",
+    });
+    await expect(loadEnv()).rejects.toThrow(
+      "must use the explicit direct/session Postgres port 5432",
+    );
+  });
+
+  it.each([
+    ["missing PEM", { PINTPATH_POSTGRES_ROOT_CA_PEM: "" }],
+    ["missing DER pin", { PINTPATH_POSTGRES_ROOT_CA_DER_SHA256: "" }],
+  ])("rejects hosted Postgres with %s", async (_label, overrides) => {
+    stubProductionEnv(overrides);
+    await expect(loadEnv()).rejects.toThrow(
+      "requires PINTPATH_POSTGRES_ROOT_CA_PEM",
+    );
+  });
+
+  it("rejects a hosted Postgres CA that does not match the reviewed DER pin", async () => {
+    stubProductionEnv({
+      PINTPATH_POSTGRES_ROOT_CA_DER_SHA256: "0".repeat(64),
+    });
+    await expect(loadEnv()).rejects.toThrow(
+      "one valid self-signed Railway CA matching",
+    );
+  });
+
+  it("rejects sslmode=require before hosted Postgres pool construction", async () => {
+    const databaseUrl = productionDatabaseUrl.replace(
+      "sslmode=verify-full",
+      "sslmode=require",
+    );
+    stubProductionEnv({
+      DATABASE_URL: databaseUrl,
+      PINTPATH_EXPECTED_DATABASE_URL_SHA256: sha256(databaseUrl),
+    });
+    await expect(loadEnv()).rejects.toThrow(
+      "only sslmode=verify-full",
+    );
   });
 
   it.each(["production", "staging"])(
@@ -668,29 +770,23 @@ describe("environment safety defaults", () => {
     expect(env.ALCOHOL_GAMIFICATION_ENABLED).toBe(false);
   });
 
-  it("requires an explicit commercial launch opt-in before new paid or trial enrollment opens", async () => {
+  it("keeps future commercial enrollment closed until its Postgres repositories exist", async () => {
     stubProductionEnv({
       COMMERCIAL_LAUNCH_ENABLED: "true",
       VENUE_PRO_TRIAL_DAYS: "60",
     });
 
-    const { env } = await loadEnv();
-
-    expect(env.COMMERCIAL_LAUNCH_ENABLED).toBe(true);
-    expect(env.CONSUMER_PAID_ENROLLMENT_ENABLED).toBe(false);
+    await expect(loadEnv()).rejects.toThrow("Canonical PostgreSQL currently supports the frozen Free launch only");
   });
 
-  it("keeps consumer paid enrollment separate from the venue launch switch", async () => {
+  it("keeps consumer paid enrollment closed in the canonical Postgres runtime", async () => {
     stubProductionEnv({
       COMMERCIAL_LAUNCH_ENABLED: "true",
       CONSUMER_PAID_ENROLLMENT_ENABLED: "false",
       VENUE_PRO_TRIAL_DAYS: "60",
     });
 
-    const { env } = await loadEnv();
-
-    expect(env.COMMERCIAL_LAUNCH_ENABLED).toBe(true);
-    expect(env.CONSUMER_PAID_ENROLLMENT_ENABLED).toBe(false);
+    await expect(loadEnv()).rejects.toThrow("Canonical PostgreSQL currently supports the frozen Free launch only");
   });
 
   it("accepts only disabled, 30-day, or 60-day venue trial lengths", async () => {
@@ -730,14 +826,13 @@ describe("environment safety defaults", () => {
     await expect(loadEnv()).rejects.toThrow("ALCOHOL_PROMOTION_APPROVAL_REFERENCE");
   });
 
-  it("allows an explicitly recorded production approval reference", async () => {
+  it("keeps approved alcohol features closed until the Postgres implementation exists", async () => {
     stubProductionEnv({
       ALCOHOL_GAMIFICATION_ENABLED: "true",
       ALCOHOL_PROMOTION_APPROVAL_REFERENCE: "legal-and-app-review-ticket-2026-07-28",
     });
 
-    const { env } = await loadEnv();
-    expect(env.ALCOHOL_GAMIFICATION_ENABLED).toBe(true);
+    await expect(loadEnv()).rejects.toThrow("Canonical PostgreSQL currently supports the frozen Free launch only");
   });
 
   it("rejects invalid report timezones before reports or scheduler timers start", async () => {
@@ -1363,6 +1458,7 @@ describe("environment safety defaults", () => {
     for (const candidate of [
       stagingPublishableKey,
       legacyAnonKey,
+      legacyServiceRoleKey,
       ` ${stagingServiceKey}`,
       `${stagingServiceKey} `,
       `${stagingServiceKey}\nmalformed`,
@@ -1373,10 +1469,18 @@ describe("environment safety defaults", () => {
       const error = await loadEnv().catch((cause: unknown) => cause);
       expect(error).toBeInstanceOf(Error);
       expect((error as Error).message).toContain(
-        "SUPABASE_SERVICE_ROLE_KEY must be an exact sb_secret_ key or a structurally valid legacy JWT with role=service_role",
+        "SUPABASE_SERVICE_ROLE_KEY must be an exact sb_secret_ key in production",
       );
       expect((error as Error).message).not.toContain(candidate);
     }
+  });
+
+  it("rejects a legacy anon key in the hosted restore rehearsal", async () => {
+    stubRestoreRehearsalEnv({ SUPABASE_ANON_KEY: legacyAnonKey });
+
+    await expect(loadEnv()).rejects.toThrow(
+      "SUPABASE_ANON_KEY must be an exact sb_publishable_ key in production",
+    );
   });
 
   it("rejects restore mode outside the reviewed disposable Railway project and service", async () => {

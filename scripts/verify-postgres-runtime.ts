@@ -13,6 +13,14 @@ import {
   type SqlDatabase,
   type SqlPoolMetrics,
 } from "../src/db/sql-database.js";
+import {
+  assertPostgresRailwayStockLocalhostRootCaPem,
+  openPostgresRailwayStockLocalhostCaTransportFromPem,
+  parsePostgresRailwayStockLocalhostCaUrl,
+  POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+  type OpenPostgresRailwayStockLocalhostCaTransportFromPemOptions,
+  type PostgresRailwayStockLocalhostCaTransport,
+} from "../src/lib/postgres-railway-stock-localhost-ca.js";
 
 export const POSTGRES_RUNTIME_VERIFIER_POOL_OPTIONS = Object.freeze({
   applicationName: "pintpath-runtime-verifier",
@@ -24,7 +32,9 @@ export const POSTGRES_RUNTIME_VERIFIER_POOL_OPTIONS = Object.freeze({
 });
 
 export type PostgresRuntimeVerifierFailureCode =
-  | "database_url_missing_or_unsafe"
+  | "database_authority_missing_or_unsafe"
+  | "transport_initialization_failed"
+  | "transport_verification_failed"
   | "adapter_initialization_failed"
   | "verification_failed"
   | "runtime_not_ready"
@@ -39,6 +49,11 @@ export interface PostgresRuntimeVerifierReport {
 
 export interface PostgresRuntimeVerifierDependencies {
   env: Readonly<Record<string, string | undefined>>;
+  getUid: () => number | null;
+  now: () => Date;
+  openPostgresRuntimeTransport: (
+    options: OpenPostgresRailwayStockLocalhostCaTransportFromPemOptions,
+  ) => Promise<PostgresRailwayStockLocalhostCaTransport>;
   createDatabase: (options: PostgresDatabaseOptions) => SqlDatabase;
   checkReadiness: (database: SqlDatabase) => Promise<PostgresRuntimeReadiness>;
   writeOutput: (output: string) => void;
@@ -58,32 +73,15 @@ const POSTGRES_RUNTIME_FAILURE_CODES = new Set<PostgresRuntimeFailureCode>([
 
 const DEFAULT_DEPENDENCIES: PostgresRuntimeVerifierDependencies = {
   env: process.env,
+  getUid: () => process.getuid?.() ?? null,
+  now: () => new Date(),
+  openPostgresRuntimeTransport: (options) => (
+    openPostgresRailwayStockLocalhostCaTransportFromPem(options)
+  ),
   createDatabase: createPostgresDatabase,
   checkReadiness: checkPostgresRuntimeReadiness,
   writeOutput: (output) => process.stdout.write(output),
 };
-
-function normalizeTlsPostgresUrl(value: string): string | null {
-  try {
-    const parsed = new URL(value);
-    const sslModes = parsed.searchParams.getAll("sslmode");
-    const valid = ["postgres:", "postgresql:"].includes(parsed.protocol)
-      && Boolean(parsed.hostname)
-      && Boolean(parsed.pathname.replace(/^\//, ""))
-      && !parsed.hash
-      && sslModes.length === 1
-      && ["require", "verify-ca", "verify-full"].includes(sslModes[0]!.toLowerCase());
-    if (!valid) return null;
-
-    // pg 8 warns for legacy sslmode parsing unless callers explicitly select
-    // libpq-compatible semantics. Normalizing the private in-memory copy keeps
-    // CLI output JSON-only and makes TLS behaviour forward-compatible with pg 9.
-    parsed.searchParams.set("uselibpqcompat", "true");
-    return parsed.toString();
-  } catch {
-    return null;
-  }
-}
 
 function safeInteger(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0
@@ -203,44 +201,112 @@ export async function runPostgresRuntimeVerifier(
     ...DEFAULT_DEPENDENCIES,
     ...overrides,
   };
-  const configuredConnectionString = dependencies.env.DATABASE_URL?.trim() ?? "";
-  const connectionString = configuredConnectionString
-    ? normalizeTlsPostgresUrl(configuredConnectionString)
-    : null;
-  if (!connectionString) {
-    writeReport(dependencies, report(null, "database_url_missing_or_unsafe"));
+  const connectionString = dependencies.env.DATABASE_URL ?? "";
+  const rootCaPem = dependencies.env.PINTPATH_POSTGRES_ROOT_CA_PEM ?? "";
+  const rootCaDerSha256 = dependencies.env
+    .PINTPATH_POSTGRES_ROOT_CA_DER_SHA256?.trim().toLowerCase() ?? "";
+  let parsedUrl;
+  let uid: number | null;
+  try {
+    parsedUrl = parsePostgresRailwayStockLocalhostCaUrl(connectionString);
+    assertPostgresRailwayStockLocalhostRootCaPem(
+      rootCaPem,
+      rootCaDerSha256,
+      dependencies.now(),
+    );
+    uid = dependencies.getUid();
+    if (!Number.isSafeInteger(uid) || uid === null || uid < 0) {
+      throw new Error("invalid_uid");
+    }
+  } catch {
+    writeReport(
+      dependencies,
+      report(null, "database_authority_missing_or_unsafe"),
+    );
     return 1;
   }
 
   let database: SqlDatabase | null = null;
+  let transport: PostgresRailwayStockLocalhostCaTransport | null = null;
   let readiness: PostgresRuntimeReadiness | null = null;
   let failureCode: PostgresRuntimeVerifierFailureCode | null = null;
   try {
     try {
-      database = dependencies.createDatabase({
-        connectionString,
-        ...POSTGRES_RUNTIME_VERIFIER_POOL_OPTIONS,
+      transport = await dependencies.openPostgresRuntimeTransport({
+        profile: POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+        rootCaPem,
+        expectedRootCaDerSha256: rootCaDerSha256,
+        expectedUid: uid,
+        sourceUrlAuthority: parsedUrl.sourceUrlAuthority,
       });
+      await transport.assertExact();
     } catch {
-      failureCode = "adapter_initialization_failed";
+      failureCode = "transport_initialization_failed";
     }
 
-    if (database) {
+    if (transport && !failureCode) {
+      try {
+        database = dependencies.createDatabase({
+          connectionString: parsedUrl.connectionString,
+          activeRole: "pintpath_runtime",
+          railwayStockLocalhostCaConnection: transport.nodeConnection,
+          ...POSTGRES_RUNTIME_VERIFIER_POOL_OPTIONS,
+        });
+      } catch {
+        failureCode = "adapter_initialization_failed";
+      }
+    }
+
+    if (database && transport && !failureCode) {
+      try {
+        await transport.assertExact();
+      } catch {
+        failureCode = "transport_verification_failed";
+      }
+    }
+
+    if (database && transport && !failureCode) {
       try {
         readiness = sanitizeReadiness(await dependencies.checkReadiness(database));
         if (!readiness.ready) failureCode = "runtime_not_ready";
       } catch {
         failureCode = "verification_failed";
       }
+      try {
+        await transport.assertExact();
+      } catch {
+        failureCode = "transport_verification_failed";
+      }
     }
   } finally {
+    let closeFailed = false;
+    if (transport) {
+      try {
+        await transport.assertExact();
+      } catch {
+        failureCode = "transport_verification_failed";
+      }
+    }
     if (database) {
       try {
         await database.close();
       } catch {
-        failureCode = "close_failed";
+        closeFailed = true;
       }
     }
+    if (transport) {
+      try {
+        await transport.assertExact();
+      } catch {
+        failureCode = "transport_verification_failed";
+      }
+      try {
+        await transport.close();
+      } catch {
+        closeFailed = true;
+      }
+    }
+    if (closeFailed) failureCode = "close_failed";
   }
 
   const result = report(readiness, failureCode);

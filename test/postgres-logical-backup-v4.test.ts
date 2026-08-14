@@ -344,6 +344,7 @@ describe("offline PostgreSQL logical-backup V4 contract", () => {
     const names = POSTGRES_LOGICAL_BACKUP_V4_TABLE_DATA_DESCRIPTORS.map(
       (entry) => `${entry.schemaName}.${entry.tableName}`,
     );
+    expect(names).not.toContain("pintpath_ops.migration_verifier_authority");
     const expectedNames = [
       ...POSTGRES_MIGRATION_CONTRACT.tables.map((table) => `pintpath_app.${table.name}`),
       "pintpath_app.schema_metadata",

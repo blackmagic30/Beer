@@ -6,7 +6,10 @@ import { Client, type QueryResultRow } from "pg";
 import { describe, expect, it } from "vitest";
 
 import { POSTGRES_MIGRATION_CONTRACT } from "../src/db/postgres-migration-contract.js";
+import { POSTGRES_MIGRATION_EXPECTED_LIVE_SCHEMA_SHA256 } from "../src/db/postgres-migration-live-schema.js";
 import { sha256PostgresMigrationContract } from "../src/db/postgres-migration-schema.js";
+import { POSTGRES_MIGRATION_VERIFIER_AUTHORITY_ROLE } from
+  "../src/db/postgres-migration-verifier-authority.js";
 import {
   buildPostgresLogicalBackupV4SnapshotHandoffBinding,
   buildPostgresLogicalBackupV4SourceAuthorityReceipt,
@@ -158,6 +161,7 @@ function scopedRoleNames(databaseOid: string): readonly string[] {
 async function configureReviewedMetadata(client: Client): Promise<void> {
   const values = {
     import_state: "ready",
+    live_schema_sha256: POSTGRES_MIGRATION_EXPECTED_LIVE_SCHEMA_SHA256,
     migration_candidate_sha: "a".repeat(40),
     migration_contract_sha256: sha256PostgresMigrationContract(POSTGRES_MIGRATION_CONTRACT),
     migration_manifest_sha256: "b".repeat(64),
@@ -271,6 +275,7 @@ describe.skipIf(!configuredAdminUrl)(
       let backupGroupRoleName: string | null = null;
       let runtimeRoleExisted = true;
       let migratorRoleExisted = true;
+      let verifierAuthorityRoleExisted = true;
       let sourceTransactionOpen = false;
       let pgDumpTransactionOpen = false;
       let receiptBuilt = false;
@@ -290,10 +295,17 @@ describe.skipIf(!configuredAdminUrl)(
 
         const sharedRoles = await maintenance.query<{ rolname: string }>(
           "SELECT rolname FROM pg_catalog.pg_roles WHERE rolname = ANY($1::text[])",
-          [["pintpath_runtime", "pintpath_migrator"]],
+          [[
+            "pintpath_runtime",
+            "pintpath_migrator",
+            POSTGRES_MIGRATION_VERIFIER_AUTHORITY_ROLE,
+          ]],
         );
         runtimeRoleExisted = sharedRoles.rows.some((row) => row.rolname === "pintpath_runtime");
         migratorRoleExisted = sharedRoles.rows.some((row) => row.rolname === "pintpath_migrator");
+        verifierAuthorityRoleExisted = sharedRoles.rows.some(
+          (row) => row.rolname === POSTGRES_MIGRATION_VERIFIER_AUTHORITY_ROLE,
+        );
 
         await maintenance.query(`CREATE DATABASE ${quoteIdentifier(databaseName)}`);
         databaseAdmin = new Client({
@@ -859,6 +871,11 @@ describe.skipIf(!configuredAdminUrl)(
         }
         if (!migratorRoleExisted) {
           await maintenance.query("DROP ROLE IF EXISTS pintpath_migrator").catch(() => undefined);
+        }
+        if (!verifierAuthorityRoleExisted) {
+          await maintenance.query(
+            `DROP ROLE IF EXISTS ${POSTGRES_MIGRATION_VERIFIER_AUTHORITY_ROLE}`,
+          );
         }
         await maintenance.end().catch(() => undefined);
       }

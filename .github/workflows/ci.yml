@@ -17,7 +17,7 @@ jobs:
   build-test-scan:
     needs: postgres-migration-integration
     if: ${{ always() }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
       NODE_ENV: test
@@ -50,6 +50,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install pinned headless Chromium
+        run: npx --no-install playwright-core install --with-deps --only-shell chromium
+
       - name: Prove the locked sensitive worker under the exact reviewed Node runtime
         env:
           PINTPATH_LOCKED_SENSITIVE_WORKER_TEST_REQUIRED: "true"
@@ -57,6 +60,9 @@ jobs:
 
       - name: Build, test, and scan
         run: npm run check
+
+      - name: Render the production artifact in a browser
+        run: npm run smoke:artifact:browser
 
       - name: Secret scan
         run: npm run security:scan
@@ -144,8 +150,18 @@ jobs:
       - name: Run real PostgreSQL 17 import, reconciliation, and reviewed-price planner no-write proof
         run: npx vitest run test/postgres-migration-target.integration.test.ts
 
-      - name: Run inert reviewed-price promotion kernel PostgreSQL 17 contract
-        run: npx vitest run test/postgres-reviewed-price-promotion-kernel.integration.test.ts
+      - name: Run inert, activated, and end-to-end reviewed-price promotion PostgreSQL 17 contracts
+        run: >-
+          npx vitest run
+          test/postgres-reviewed-price-promotion-kernel.integration.test.ts
+          test/postgres-reviewed-price-promotion-activation.integration.test.ts
+          test/postgres-reviewed-price-promotion-e2e.integration.test.ts
+          --maxWorkers=1
+
+      - name: Run external-login PostgreSQL 17 pool role boundary
+        env:
+          PINTPATH_POSTGRES_POOL_ROLE_BOUNDARY_TEST_REQUIRED: "true"
+        run: npx vitest run test/postgres-pool-role-boundary.integration.test.ts --maxWorkers=1
 
       - name: Run logical-state v2 PostgreSQL 17 contract
         run: npx vitest run test/postgres-logical-state-v2.integration.test.ts
@@ -327,7 +343,7 @@ jobs:
         run: bash scripts/ci/postgres-logical-restore-tls-fixture cleanup
 
   supabase-database:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
 
     steps:

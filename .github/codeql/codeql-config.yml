@@ -1,4 +1,4 @@
-name: "Pint Path production JavaScript and TypeScript"
+name: "Pint Path production and operational sources"
 
 # Test fixtures intentionally exercise unsafe filesystem and credential shapes.
 # Keep CodeQL focused on code that ships or runs operationally; the test suite

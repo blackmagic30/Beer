@@ -73,6 +73,8 @@ const SOURCE_SCHEMA_VERSION = POSTGRES_MIGRATION_CONTRACT.sourceSchemaVersion;
 const APPROVAL_REFERENCE_SHA = "1".repeat(64);
 const OPERATOR_ID_SHA = "2".repeat(64);
 const VERIFIER_ID_SHA = "3".repeat(64);
+const VERIFIER_AUTHORITY_SHA = "e".repeat(64);
+const VERIFIER_AUTHORITY_POLICY_SHA = "f".repeat(64);
 const TARGET_URL_SHA = "d".repeat(64);
 const FROZEN_CONTRACT_SHA =
   "78f49d0af57a19f92154f717c3b5c9c7e3bdc02bbda68809a8f2257bf7ef879d";
@@ -85,15 +87,15 @@ const FROZEN_SELECTION_POLICY_SHA =
 const FROZEN_TARGET_IDENTITY_SHA =
   "2fd0c64c56749ae487ab0a509084b5063d8e5ba62638a2e875c1191aef395a45";
 const FROZEN_RUN_BINDING_SHA =
-  "266385249bcd07c5aae52dfad609047a698a80c232e07d1d47045d1414c5c228";
+  "03fbdaa72703644204677e36f2aaacfdb4be913cccbec8f612245bb5f99f3bb8";
 const FROZEN_RUN_ID_SHA =
-  "20c6ab718c77c529b5d27c878fc02425da929b43c507e061b147938b76363acd";
+  "05a70c823831b8236d0acb264b7d47c7210183a7b365cb414c5845e116e0dea5";
 const FROZEN_READY_METADATA_SHA =
-  "59241c4980549ee89b4064c3bb0d20667d9e4002115fcaa0fe6a8e5a622fcf9c";
+  "33f4b18f5ff02efb2517d4fbf55489acb404c31fa4fd86a82b3997064a6c13f2";
 const FROZEN_INTERNAL_RECEIPT_SHA =
-  "9d1d4f907a8106a6ec4c903c1d19df391ae7997ac48b14f65dce903975daf0b3";
+  "225d8870121cf97cfeffc622371b8f2d9cae43a46d0572006b96288e6c6ee299";
 const FROZEN_RECEIPT_FILE_SHA =
-  "b7472be77c445ddd87b37cf34abcdb0487a9612af66c5389304e9a51aed70f00";
+  "20aec9c417388909f7d1a2542736e4142a008e16dc57901e0c189b982e634177";
 const PLANNER_ROLE_OID = 16_385;
 const PHYSICAL_IDENTITY_DRIFT_CASES = [
   ["systemIdentifier", "7521976435570874595"],
@@ -289,12 +291,14 @@ function readyMetadata(
     source_schema_version: String(SOURCE_SCHEMA_VERSION),
     source_snapshot_sha256: SOURCE_SNAPSHOT_SHA,
     target_ddl_sha256: TARGET_DDL_SHA,
+    live_schema_sha256: "a".repeat(64),
   });
 }
 
 function metadataRows(ready: PostgresMigrationReadyMetadata): QueryResultRow[] {
   return [
     ["import_state", ready.import_state],
+    ["live_schema_sha256", ready.live_schema_sha256],
     ["migration_candidate_sha", ready.migration_candidate_sha],
     ["migration_contract_sha256", ready.migration_contract_sha256],
     ["migration_manifest_sha256", ready.migration_manifest_sha256],
@@ -393,8 +397,13 @@ function canonicalReceipt(
     sourceSnapshotSha256: SOURCE_SNAPSHOT_SHA,
     targetDdlSha256: TARGET_DDL_SHA,
     targetIdentitySha256,
+    liveSchemaSha256: "a".repeat(64),
+    transportAuthoritySha256: "9".repeat(64),
     targetUrlSha256: TARGET_URL_SHA,
     verifierIdSha256: VERIFIER_ID_SHA,
+    verifierAuthoritySha256: VERIFIER_AUTHORITY_SHA,
+    verifierAuthorityPolicySha256: VERIFIER_AUTHORITY_POLICY_SHA,
+    verifierPublicKeySha256: "b".repeat(64),
   });
   const runIdSha256 = derivePostgresMigrationRunId(runBindingSha256);
   const ready = readyMetadata(runIdSha256);
@@ -422,11 +431,19 @@ function canonicalReceipt(
     tableCount: POSTGRES_MIGRATION_CONTRACT.expectedCounts.tables,
     tableSetSha256: "5".repeat(64),
     targetDdlSha256: TARGET_DDL_SHA,
+    liveSchemaSha256: "a".repeat(64),
     targetIdentitySha256,
+    transportAuthoritySha256: "9".repeat(64),
     targetUrlSha256: TARGET_URL_SHA,
     transformedDataSha256: "7".repeat(64),
     verifierIdSha256: VERIFIER_ID_SHA,
-    version: 1,
+    verifierAuthoritySha256: VERIFIER_AUTHORITY_SHA,
+    verifierAuthorityPolicySha256: VERIFIER_AUTHORITY_POLICY_SHA,
+    verifierPublicKeySha256: "b".repeat(64),
+    applyReceiptSha256: "c".repeat(64),
+    verificationApprovalFileSha256: "d".repeat(64),
+    verifiedAt: "2026-08-08T00:00:00.000Z",
+    version: 3,
     zeroRowTableCount: 8,
   });
   return { ready, receipt, runBindingSha256, runIdSha256 };
@@ -880,14 +897,14 @@ describe("Postgres reviewed-price no-write plan candidate", () => {
     await expectPlanError(chronology.input, "migration_mismatch");
   });
 
-  it("hashes only the exact ten ready-metadata fields committed by the receipt", async () => {
+  it("hashes only the exact eleven ready-metadata fields committed by the receipt", async () => {
     const target = fixture();
     const fullMetadata = metadataObject(target.rows.metadata);
     const readyHash = sha256PostgresMigrationReadyMetadata(target.readyMetadata);
     const twelveRowHash = sha256PostgresReviewedPricePromotionValue(fullMetadata);
 
-    expect(Object.keys(target.readyMetadata)).toHaveLength(10);
-    expect(Object.keys(fullMetadata)).toHaveLength(12);
+    expect(Object.keys(target.readyMetadata)).toHaveLength(11);
+    expect(Object.keys(fullMetadata)).toHaveLength(13);
     expect(target.receipt.schemaMetadataSha256).toBe(readyHash);
     expect(readyHash).not.toBe(twelveRowHash);
 
@@ -952,8 +969,13 @@ describe("Postgres reviewed-price no-write plan candidate", () => {
       sourceSnapshotSha256: receipt.sourceSnapshotSha256,
       targetDdlSha256: receipt.targetDdlSha256,
       targetIdentitySha256: receipt.targetIdentitySha256,
+      liveSchemaSha256: receipt.liveSchemaSha256,
+      transportAuthoritySha256: receipt.transportAuthoritySha256,
       targetUrlSha256: receipt.targetUrlSha256,
       verifierIdSha256: receipt.verifierIdSha256,
+      verifierAuthoritySha256: receipt.verifierAuthoritySha256,
+      verifierAuthorityPolicySha256: receipt.verifierAuthorityPolicySha256,
+      verifierPublicKeySha256: receipt.verifierPublicKeySha256,
     });
     expect(receipt.runBindingSha256).toBe(expectedBinding);
     expect(receipt.runIdSha256).toBe(derivePostgresMigrationRunId(expectedBinding));
@@ -1340,7 +1362,7 @@ describe("Postgres reviewed-price no-write plan candidate", () => {
     const target = fixture();
     await buildPostgresReviewedPricePromotionPlanCandidate(target.input);
 
-    expect(eventFor(target.database, "metadata").sql).toMatch(/LIMIT 13/);
+    expect(eventFor(target.database, "metadata").sql).toMatch(/LIMIT 14/);
     expect(eventFor(target.database, "migration-run").sql).toMatch(/LIMIT 2/);
     expect(eventFor(target.database, "queue").sql).toMatch(/LIMIT 51/);
     expect(eventFor(target.database, "profiles").sql).toMatch(/LIMIT 51/);
@@ -1395,7 +1417,7 @@ describe("Postgres reviewed-price no-write plan candidate", () => {
   it("fails closed when any bounded query returns its truncation sentinel", async () => {
     const metadata = fixture();
     metadata.rows.metadata.push({ key: "unexpected_metadata", value: "unexpected" });
-    expect(metadata.rows.metadata).toHaveLength(13);
+    expect(metadata.rows.metadata).toHaveLength(14);
     await expectPlanError(metadata.input, "migration_mismatch");
 
     const migrationRuns = fixture();

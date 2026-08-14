@@ -145,6 +145,24 @@
     },
     {
       "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
+      "name": "DATABASE_MAINTENANCE_URL",
+      "isSealed": true,
+      "references": []
+    },
+    {
+      "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
+      "name": "PINTPATH_POSTGRES_ROOT_CA_PEM",
+      "isSealed": true,
+      "references": []
+    },
+    {
+      "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
+      "name": "PINTPATH_POSTGRES_ROOT_CA_DER_SHA256",
+      "isSealed": true,
+      "references": []
+    },
+    {
+      "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
       "name": "REDIS_URL",
       "isSealed": true,
       "references": [

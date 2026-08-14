@@ -14,6 +14,9 @@ import {
   PostgresRailwayStockLocalhostCaError,
   checkPostgresRailwayStockLocalhostServerIdentity,
   openPostgresRailwayStockLocalhostCaTransport,
+  openPostgresRailwayStockLocalhostCaTransportFromPem,
+  parsePostgresRailwayStockLocalhostCaUrl,
+  type OpenPostgresRailwayStockLocalhostCaTransportFromPemOptions,
   type OpenPostgresRailwayStockLocalhostCaTransportOptions,
   type PostgresRailwayStockLocalhostCaDependencies,
 } from "../src/lib/postgres-railway-stock-localhost-ca.js";
@@ -253,6 +256,88 @@ afterEach(() => {
 });
 
 describe("Railway stock localhost CA transport", () => {
+  it("parses only the exact private :5432 verify-full runtime authority", () => {
+    expect(parsePostgresRailwayStockLocalhostCaUrl(
+      "postgresql://runtime:secret@postgres-staging.railway.internal:5432/pintpath?sslmode=verify-full",
+    )).toEqual({
+      connectionString:
+        "postgresql://runtime:secret@postgres-staging.railway.internal:5432/pintpath?sslmode=verify-full",
+      sourceUrlAuthority: {
+        hostname: "postgres-staging.railway.internal",
+        port: 5_432,
+      },
+    });
+    for (const value of [
+      "postgresql://runtime:secret@postgres-staging.railway.internal:5432/pintpath?sslmode=require",
+      "postgresql://runtime:secret@postgres-staging.railway.internal/pintpath?sslmode=verify-full",
+      "postgresql://runtime:secret@POSTGRES-STAGING.railway.internal:5432/pintpath?sslmode=verify-full",
+      "postgresql://runtime:secret@postgres-staging.railway.internal:5432/pintpath?sslmode=verify-full&application_name=attacker",
+      "postgresql://runtime:secret@postgres-staging.railway.internal:5432/pintpath?sslmode=verify-full&",
+    ]) expect(() => parsePostgresRailwayStockLocalhostCaUrl(value))
+      .toThrow(PostgresRailwayStockLocalhostCaError);
+  });
+
+  it("materializes an environment PEM into owned authorities and removes both on close", async () => {
+    const root = temporaryRoot();
+    const transport = await openPostgresRailwayStockLocalhostCaTransportFromPem({
+      profile: POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+      rootCaPem: TEST_ROOT_CA_PEM,
+      expectedRootCaDerSha256: TEST_ROOT_CA_DER_SHA256,
+      expectedUid: uid,
+      sourceUrlAuthority: {
+        hostname: "postgres-staging.railway.internal",
+        port: 5_432,
+      },
+    }, dependencies(root));
+    expect(transport.nodeConnection).toMatchObject({
+      host: TEST_ADDRESS,
+      port: 5_432,
+      ssl: {
+        servername: "localhost",
+        rejectUnauthorized: true,
+        minVersion: "TLSv1.2",
+      },
+    });
+    expect(transportDirectories(root)).toHaveLength(2);
+    await expect(transport.assertExact()).resolves.toBeUndefined();
+    await expect(transport.close()).resolves.toBeUndefined();
+    expect(transportDirectories(root)).toEqual([]);
+  });
+
+  it("snapshots environment PEM authority before materialization can yield", async () => {
+    const root = temporaryRoot();
+    const supplied: OpenPostgresRailwayStockLocalhostCaTransportFromPemOptions = {
+      profile: POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE,
+      rootCaPem: TEST_ROOT_CA_PEM,
+      expectedRootCaDerSha256: TEST_ROOT_CA_DER_SHA256,
+      expectedUid: uid,
+      sourceUrlAuthority: {
+        hostname: "postgres-staging.railway.internal",
+        port: 5_432,
+      },
+    };
+    const mutableAuthority = supplied.sourceUrlAuthority as {
+      hostname: string;
+      port: number;
+    };
+    const transport = await openPostgresRailwayStockLocalhostCaTransportFromPem(
+      supplied,
+      dependencies(root, {
+        temporaryRoot: () => {
+          mutableAuthority.hostname = "changed.example.com";
+          mutableAuthority.port = 6_543;
+          return root;
+        },
+      }),
+    );
+    expect(transport.sourceUrlAuthority).toEqual({
+      hostname: "postgres-staging.railway.internal",
+      port: 5_432,
+    });
+    await transport.close();
+    expect(transportDirectories(root)).toEqual([]);
+  });
+
   it("projects one pinned fd12 authority into exact Node and libpq TLS settings", async () => {
     const root = temporaryRoot();
     const rootCaFile = writeRootCa(root);

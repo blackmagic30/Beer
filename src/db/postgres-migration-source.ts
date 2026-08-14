@@ -26,6 +26,7 @@ export const POSTGRES_MIGRATION_MAINTENANCE_ENV = "PINTPATH_SQLITE_WRITE_MAINTEN
 export const POSTGRES_MIGRATION_MAINTENANCE_VALUE = "confirmed" as const;
 export const POSTGRES_MIGRATION_SNAPSHOT_DATABASE_FILE = "pint-path.sqlite" as const;
 export const POSTGRES_MIGRATION_SNAPSHOT_MANIFEST_FILE = "snapshot-manifest.json" as const;
+export const POSTGRES_MIGRATION_SNAPSHOT_EVIDENCE_DIRECTORY = "source-evidence" as const;
 export const POSTGRES_MIGRATION_SNAPSHOT_LEDGER_DIRECTORY = "account-deletion-ledger-authority" as const;
 export const POSTGRES_MIGRATION_SNAPSHOT_KIND = "pint-path-postgres-migration-source-snapshot" as const;
 export const POSTGRES_MIGRATION_PLAN_KIND = "pint-path-postgres-migration-plan" as const;
@@ -55,13 +56,37 @@ type StableFile = {
   bytes: number;
   sha256: string;
   contents?: Buffer;
+  stat: BigIntStats;
 };
 
-type EvidenceTreeSummary = {
+export interface PostgresMigrationSnapshotEvidenceSummary {
   bytes: number;
   directories: number;
   files: number;
   treeSha256: string;
+}
+
+type EvidenceTreeSummary = PostgresMigrationSnapshotEvidenceSummary;
+
+type StableTreeEntry = {
+  absolutePath: string;
+  kind: "directory" | "file";
+  relativePath: string;
+  stat: BigIntStats;
+};
+
+type OwnedObjectIdentity = {
+  dev: bigint;
+  gid: bigint;
+  ino: bigint;
+  kind: "directory" | "file";
+  uid: bigint;
+};
+
+type TrackedSnapshotEntry = {
+  absolutePath: string;
+  identity: OwnedObjectIdentity;
+  kind: "directory" | "file";
 };
 
 export interface PostgresMigrationSnapshotManifest {
@@ -182,11 +207,74 @@ function assertCanonicalAbsolutePath(value: string, label: string): string {
 function sameFileIdentity(left: BigIntStats, right: BigIntStats): boolean {
   return left.dev === right.dev
     && left.ino === right.ino
+    && left.uid === right.uid
+    && left.gid === right.gid
     && left.mode === right.mode
     && left.nlink === right.nlink
     && left.size === right.size
     && left.mtimeNs === right.mtimeNs
     && left.ctimeNs === right.ctimeNs;
+}
+
+function objectIdentity(stat: BigIntStats): OwnedObjectIdentity {
+  if (!stat.isDirectory() && !stat.isFile()) {
+    throw sourceError("ARTIFACT_INVALID", "Snapshot custody supports only regular files and directories.");
+  }
+  return {
+    dev: stat.dev,
+    gid: stat.gid,
+    ino: stat.ino,
+    kind: stat.isDirectory() ? "directory" : "file",
+    uid: stat.uid,
+  };
+}
+
+function sameObjectIdentity(left: OwnedObjectIdentity, right: BigIntStats): boolean {
+  return left.dev === right.dev
+    && left.ino === right.ino
+    && left.uid === right.uid
+    && left.gid === right.gid
+    && (left.kind === "directory" ? right.isDirectory() : right.isFile());
+}
+
+function assertCurrentUserOwned(stat: BigIntStats, label: string): void {
+  if (typeof process.geteuid !== "function") {
+    throw sourceError("ARTIFACT_INVALID", `${label} ownership cannot be verified on this platform.`);
+  }
+  if (stat.uid !== BigInt(process.geteuid())) {
+    throw sourceError("ARTIFACT_INVALID", `${label} must be owned by the current operating-system user.`);
+  }
+}
+
+function directoryOpenFlags(): number {
+  if (
+    !Number.isInteger(fs.constants.O_DIRECTORY)
+    || fs.constants.O_DIRECTORY === 0
+    || !Number.isInteger(fs.constants.O_NOFOLLOW)
+    || fs.constants.O_NOFOLLOW === 0
+    || !Number.isInteger(fs.constants.O_NONBLOCK)
+    || fs.constants.O_NONBLOCK === 0
+  ) {
+    throw sourceError("ARTIFACT_INVALID", "Descriptor-safe directory custody is unavailable on this platform.");
+  }
+  return fs.constants.O_RDONLY
+    | fs.constants.O_DIRECTORY
+    | fs.constants.O_NOFOLLOW
+    | fs.constants.O_NONBLOCK;
+}
+
+function regularFileReadFlags(): number {
+  if (
+    !Number.isInteger(fs.constants.O_NOFOLLOW)
+    || fs.constants.O_NOFOLLOW === 0
+    || !Number.isInteger(fs.constants.O_NONBLOCK)
+    || fs.constants.O_NONBLOCK === 0
+  ) {
+    throw sourceError("ARTIFACT_INVALID", "Descriptor-safe file custody is unavailable on this platform.");
+  }
+  return fs.constants.O_RDONLY
+    | fs.constants.O_NOFOLLOW
+    | fs.constants.O_NONBLOCK;
 }
 
 function assertSafeRegularFile(filePath: string, label: string, requiredMode?: number): BigIntStats {
@@ -238,7 +326,8 @@ function assertNewCanonicalDirectory(directoryPath: string): string {
   if (fs.existsSync(directoryPath)) {
     throw sourceError("ARTIFACT_INVALID", "Snapshot output directory must not already exist.");
   }
-  assertSafeDirectory(path.dirname(directoryPath), "Snapshot output parent");
+  const parent = assertSafeDirectory(path.dirname(directoryPath), "Snapshot output parent", 0o700);
+  assertCurrentUserOwned(parent, "Snapshot output parent");
   return directoryPath;
 }
 
@@ -263,11 +352,18 @@ async function fsyncDirectory(directoryPath: string): Promise<void> {
 async function readStableRegularFile(
   filePath: string,
   label: string,
-  options: { includeContents?: boolean; maxBytes?: number; requiredMode?: number } = {},
+  options: {
+    expectedIdentity?: BigIntStats | undefined;
+    includeContents?: boolean;
+    maxBytes?: number;
+    requiredMode?: number | undefined;
+  } = {},
 ): Promise<StableFile> {
   const pathStat = assertSafeRegularFile(filePath, label, options.requiredMode);
-  const flags = fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0);
-  const handle = await fs.promises.open(filePath, flags);
+  if (options.expectedIdentity && !sameFileIdentity(options.expectedIdentity, pathStat)) {
+    throw sourceError("SOURCE_CHANGED", `${label} changed after its directory was traversed.`);
+  }
+  const handle = await fs.promises.open(filePath, regularFileReadFlags());
   try {
     const before = await handle.stat({ bigint: true });
     if (!sameFileIdentity(pathStat, before) || before.nlink !== 1n) {
@@ -295,6 +391,7 @@ async function readStableRegularFile(
     const result: StableFile = {
       bytes: position,
       sha256: hash.digest("hex"),
+      stat: after,
     };
     if (options.includeContents) result.contents = Buffer.concat(chunks, position);
     return result;
@@ -311,34 +408,139 @@ function updateLengthFramed(hash: crypto.Hash, value: string | Buffer): void {
   hash.update(bytes);
 }
 
-async function inspectEvidenceTree(root: string): Promise<EvidenceTreeSummary> {
-  assertSafeDirectory(root, "Source evidence directory");
-  const entries: Array<{ kind: "directory" | "file"; relativePath: string; absolutePath: string }> = [];
+function assertEvidenceEntryName(name: string): void {
+  if (
+    name.length === 0
+    || name === "."
+    || name === ".."
+    || name.includes("/")
+    || name.includes("\\")
+    || name.includes("\0")
+    || name.includes("\ufffd")
+  ) {
+    throw sourceError("ARTIFACT_INVALID", "Evidence contains a pathname that cannot be committed portably.");
+  }
+}
 
-  function walk(relativeDirectory: string): void {
+async function collectStableTreeEntries(
+  root: string,
+  options: {
+    label: string;
+    requiredDirectoryMode?: number | undefined;
+    requiredFileMode?: number | undefined;
+  },
+): Promise<StableTreeEntry[]> {
+  assertSafeDirectory(root, options.label, options.requiredDirectoryMode);
+  const entries: StableTreeEntry[] = [];
+
+  async function walk(relativeDirectory: string, depth: number): Promise<void> {
+    if (depth > 128) {
+      throw sourceError("ARTIFACT_INVALID", `${options.label} exceeds the supported directory depth.`);
+    }
     const absoluteDirectory = relativeDirectory ? path.join(root, relativeDirectory) : root;
-    const children = fs.readdirSync(absoluteDirectory, { withFileTypes: true })
-      .sort((left, right) => compareStrings(left.name, right.name));
-    for (const child of children) {
-      const relativePath = relativeDirectory ? path.join(relativeDirectory, child.name) : child.name;
-      const absolutePath = path.join(root, relativePath);
-      const stat = fs.lstatSync(absolutePath, { bigint: true });
-      if (stat.isSymbolicLink()) {
-        throw sourceError("ARTIFACT_INVALID", "Source evidence must not contain symbolic links.");
+    const pathBefore = assertSafeDirectory(
+      absoluteDirectory,
+      relativeDirectory ? `${options.label} child directory` : options.label,
+      options.requiredDirectoryMode,
+    );
+    const handle = await fs.promises.open(absoluteDirectory, directoryOpenFlags());
+    try {
+      const descriptorBefore = await handle.stat({ bigint: true });
+      if (!sameFileIdentity(pathBefore, descriptorBefore)) {
+        throw sourceError("SOURCE_CHANGED", `${options.label} changed while a directory was opened.`);
       }
-      if (stat.isDirectory()) {
-        entries.push({ kind: "directory", relativePath, absolutePath });
-        walk(relativePath);
-      } else if (stat.isFile() && stat.nlink === 1n) {
-        entries.push({ kind: "file", relativePath, absolutePath });
-      } else {
-        throw sourceError("ARTIFACT_INVALID", "Source evidence must contain only real directories and single-link files.");
+      const children = await fs.promises.readdir(absoluteDirectory, { withFileTypes: true });
+      children.sort((left, right) => Buffer.compare(Buffer.from(left.name), Buffer.from(right.name)));
+      for (const child of children) {
+        assertEvidenceEntryName(child.name);
+        const relativePath = relativeDirectory ? path.join(relativeDirectory, child.name) : child.name;
+        const absolutePath = path.join(root, relativePath);
+        let stat: BigIntStats;
+        try {
+          stat = fs.lstatSync(absolutePath, { bigint: true });
+        } catch {
+          throw sourceError("SOURCE_CHANGED", `${options.label} changed during directory traversal.`);
+        }
+        if (stat.isSymbolicLink()) {
+          throw sourceError("ARTIFACT_INVALID", `${options.label} must not contain symbolic links.`);
+        }
+        if (stat.isDirectory()) {
+          if (
+            options.requiredDirectoryMode !== undefined
+            && Number(stat.mode & 0o777n) !== options.requiredDirectoryMode
+          ) {
+            throw sourceError(
+              "ARTIFACT_INVALID",
+              `${options.label} directories must have mode ${options.requiredDirectoryMode.toString(8)}.`,
+            );
+          }
+          entries.push({ absolutePath, kind: "directory", relativePath, stat });
+          await walk(relativePath, depth + 1);
+        } else if (stat.isFile() && stat.nlink === 1n) {
+          if (options.requiredFileMode !== undefined && Number(stat.mode & 0o777n) !== options.requiredFileMode) {
+            throw sourceError(
+              "ARTIFACT_INVALID",
+              `${options.label} files must have mode ${options.requiredFileMode.toString(8)}.`,
+            );
+          }
+          entries.push({ absolutePath, kind: "file", relativePath, stat });
+        } else {
+          throw sourceError(
+            "ARTIFACT_INVALID",
+            `${options.label} must contain only real directories and single-link regular files.`,
+          );
+        }
+        if (entries.length > 1_000_000) {
+          throw sourceError("ARTIFACT_INVALID", `${options.label} exceeds the supported entry count.`);
+        }
       }
+      let pathAfter: BigIntStats;
+      try {
+        pathAfter = fs.lstatSync(absoluteDirectory, { bigint: true });
+      } catch {
+        throw sourceError("SOURCE_CHANGED", `${options.label} changed during directory traversal.`);
+      }
+      const descriptorAfter = await handle.stat({ bigint: true });
+      if (
+        !sameFileIdentity(descriptorBefore, descriptorAfter)
+        || !sameFileIdentity(descriptorAfter, pathAfter)
+      ) {
+        throw sourceError("SOURCE_CHANGED", `${options.label} changed during directory traversal.`);
+      }
+    } finally {
+      await handle.close();
     }
   }
 
-  walk("");
+  await walk("", 0);
   entries.sort((left, right) => Buffer.compare(Buffer.from(left.relativePath), Buffer.from(right.relativePath)));
+  return entries;
+}
+
+function sameTreeEntryInventory(left: readonly StableTreeEntry[], right: readonly StableTreeEntry[]): boolean {
+  return left.length === right.length && left.every((entry, index) => {
+    const other = right[index];
+    return other !== undefined
+      && entry.kind === other.kind
+      && entry.relativePath === other.relativePath
+      && sameFileIdentity(entry.stat, other.stat);
+  });
+}
+
+async function inspectEvidenceTree(
+  root: string,
+  options: {
+    label?: string;
+    requiredDirectoryMode?: number | undefined;
+    requiredFileMode?: number | undefined;
+  } = {},
+): Promise<EvidenceTreeSummary> {
+  const traversalOptions = {
+    label: options.label ?? "Source evidence directory",
+    requiredDirectoryMode: options.requiredDirectoryMode,
+    requiredFileMode: options.requiredFileMode,
+  };
+  const entries = await collectStableTreeEntries(root, traversalOptions);
   const treeHash = crypto.createHash("sha256");
   updateLengthFramed(treeHash, "pint-path-evidence-tree-v1");
   let bytes = 0;
@@ -348,11 +550,21 @@ async function inspectEvidenceTree(root: string): Promise<EvidenceTreeSummary> {
     updateLengthFramed(treeHash, entry.kind === "directory" ? "D" : "F");
     updateLengthFramed(treeHash, entry.relativePath.split(path.sep).join("/"));
     if (entry.kind === "directory") {
-      assertSafeDirectory(entry.absolutePath, "Source evidence child directory");
+      const stat = assertSafeDirectory(
+        entry.absolutePath,
+        `${traversalOptions.label} child directory`,
+        traversalOptions.requiredDirectoryMode,
+      );
+      if (!sameFileIdentity(entry.stat, stat)) {
+        throw sourceError("SOURCE_CHANGED", `${traversalOptions.label} changed while it was committed.`);
+      }
       directories += 1;
       continue;
     }
-    const inspected = await readStableRegularFile(entry.absolutePath, "Source evidence file");
+    const inspected = await readStableRegularFile(entry.absolutePath, `${traversalOptions.label} file`, {
+      expectedIdentity: entry.stat,
+      requiredMode: traversalOptions.requiredFileMode,
+    });
     updateLengthFramed(treeHash, inspected.sha256);
     updateLengthFramed(treeHash, String(inspected.bytes));
     files += 1;
@@ -360,6 +572,10 @@ async function inspectEvidenceTree(root: string): Promise<EvidenceTreeSummary> {
     if (!Number.isSafeInteger(bytes)) {
       throw sourceError("ARTIFACT_INVALID", "Source evidence exceeds the supported total size.");
     }
+  }
+  const entriesAfter = await collectStableTreeEntries(root, traversalOptions);
+  if (!sameTreeEntryInventory(entries, entriesAfter)) {
+    throw sourceError("SOURCE_CHANGED", `${traversalOptions.label} changed while it was committed.`);
   }
   return { bytes, directories, files, treeSha256: treeHash.digest("hex") };
 }
@@ -369,6 +585,38 @@ function sameEvidenceTree(left: EvidenceTreeSummary, right: EvidenceTreeSummary)
     && left.directories === right.directories
     && left.files === right.files
     && left.treeSha256 === right.treeSha256;
+}
+
+export async function verifyPostgresMigrationSnapshotEvidence(
+  snapshotDirectory: string,
+  expected: PostgresMigrationSnapshotEvidenceSummary,
+): Promise<PostgresMigrationSnapshotEvidenceSummary> {
+  const canonicalSnapshotDirectory = assertCanonicalAbsolutePath(snapshotDirectory, "Snapshot directory");
+  assertSafeDirectory(canonicalSnapshotDirectory, "Snapshot directory", 0o700);
+  if (
+    !Number.isSafeInteger(expected.bytes)
+    || expected.bytes < 0
+    || !Number.isSafeInteger(expected.directories)
+    || expected.directories < 0
+    || !Number.isSafeInteger(expected.files)
+    || expected.files < 0
+    || !/^[a-f0-9]{64}$/.test(expected.treeSha256)
+  ) {
+    throw sourceError("ARTIFACT_INVALID", "Snapshot evidence commitment is invalid.");
+  }
+  const evidenceDirectory = path.join(
+    canonicalSnapshotDirectory,
+    POSTGRES_MIGRATION_SNAPSHOT_EVIDENCE_DIRECTORY,
+  );
+  const actual = await inspectEvidenceTree(evidenceDirectory, {
+    label: "Snapshot evidence directory",
+    requiredDirectoryMode: 0o700,
+    requiredFileMode: 0o600,
+  });
+  if (!sameEvidenceTree(actual, expected)) {
+    throw sourceError("ARTIFACT_INVALID", "Snapshot evidence tree does not match its manifest commitment.");
+  }
+  return actual;
 }
 
 function assertSafeSqliteSidecars(databasePath: string): void {
@@ -491,17 +739,386 @@ async function writeNewCanonicalJson(filePath: string, value: unknown): Promise<
   return sha256PostgresMigrationBytes(bytes);
 }
 
-async function writeNewPrivateBytes(filePath: string, bytes: Buffer): Promise<void> {
-  assertNewCanonicalFile(filePath, "Migration private artifact");
-  const handle = await fs.promises.open(filePath, "wx", 0o600);
-  try {
-    await handle.writeFile(bytes);
-    await handle.chmod(0o600);
-    await handle.sync();
-  } finally {
-    await handle.close();
+class SnapshotOutputCustody {
+  private readonly entries = new Map<string, TrackedSnapshotEntry>();
+
+  private constructor(
+    readonly rootPath: string,
+    private readonly parentHandle: fs.promises.FileHandle,
+    private readonly parentIdentity: OwnedObjectIdentity,
+    private readonly rootHandle: fs.promises.FileHandle,
+    private readonly rootIdentity: OwnedObjectIdentity,
+  ) {}
+
+  static async create(rootPath: string): Promise<SnapshotOutputCustody> {
+    assertNewCanonicalDirectory(rootPath);
+    const parentPath = path.dirname(rootPath);
+    const parentHandle = await fs.promises.open(parentPath, directoryOpenFlags());
+    let rootHandle: fs.promises.FileHandle | undefined;
+    let createdRootIdentity: OwnedObjectIdentity | undefined;
+    try {
+      const parentDescriptor = await parentHandle.stat({ bigint: true });
+      const parentPathStat = assertSafeDirectory(parentPath, "Snapshot output parent", 0o700);
+      assertCurrentUserOwned(parentDescriptor, "Snapshot output parent");
+      if (!sameFileIdentity(parentDescriptor, parentPathStat)) {
+        throw sourceError("SOURCE_CHANGED", "Snapshot output parent changed while it was opened.");
+      }
+      await fs.promises.mkdir(rootPath, { mode: 0o700 });
+      await fs.promises.chmod(rootPath, 0o700);
+      rootHandle = await fs.promises.open(rootPath, directoryOpenFlags());
+      const rootDescriptor = await rootHandle.stat({ bigint: true });
+      const rootPathStat = assertSafeDirectory(rootPath, "Snapshot output directory", 0o700);
+      assertCurrentUserOwned(rootDescriptor, "Snapshot output directory");
+      createdRootIdentity = objectIdentity(rootDescriptor);
+      if (!sameFileIdentity(rootDescriptor, rootPathStat)) {
+        throw sourceError("SOURCE_CHANGED", "Snapshot output directory changed while it was opened.");
+      }
+      await parentHandle.sync();
+      return new SnapshotOutputCustody(
+        rootPath,
+        parentHandle,
+        objectIdentity(parentDescriptor),
+        rootHandle,
+        objectIdentity(rootDescriptor),
+      );
+    } catch (error) {
+      await rootHandle?.close().catch(() => undefined);
+      if (createdRootIdentity) {
+        try {
+          const rootPathStat = fs.lstatSync(rootPath, { bigint: true });
+          if (sameObjectIdentity(createdRootIdentity, rootPathStat) && fs.readdirSync(rootPath).length === 0) {
+            await fs.promises.rmdir(rootPath);
+            await parentHandle.sync();
+          }
+        } catch {
+          // An ambiguous or non-empty created root is retained; pathname recursion is never used.
+        }
+      }
+      await parentHandle.close().catch(() => undefined);
+      throw error;
+    }
   }
-  assertSafeRegularFile(filePath, "Migration private artifact", 0o600);
+
+  private relativePath(absolutePath: string): string {
+    assertCanonicalAbsolutePath(absolutePath, "Snapshot custody path");
+    const relativePath = path.relative(this.rootPath, absolutePath);
+    if (
+      !relativePath
+      || relativePath === ".."
+      || relativePath.startsWith(`..${path.sep}`)
+      || path.isAbsolute(relativePath)
+    ) {
+      throw sourceError("ARTIFACT_INVALID", "Snapshot custody path must be a child of its exact output directory.");
+    }
+    return relativePath;
+  }
+
+  private async assertRootAuthority(): Promise<void> {
+    const parentDescriptor = await this.parentHandle.stat({ bigint: true });
+    const rootDescriptor = await this.rootHandle.stat({ bigint: true });
+    let parentPathStat: BigIntStats;
+    let rootPathStat: BigIntStats;
+    try {
+      parentPathStat = fs.lstatSync(path.dirname(this.rootPath), { bigint: true });
+      rootPathStat = fs.lstatSync(this.rootPath, { bigint: true });
+    } catch {
+      throw sourceError("SOURCE_CHANGED", "Snapshot output custody path disappeared.");
+    }
+    if (
+      !sameObjectIdentity(this.parentIdentity, parentDescriptor)
+      || !sameObjectIdentity(this.parentIdentity, parentPathStat)
+      || !sameObjectIdentity(this.rootIdentity, rootDescriptor)
+      || !sameObjectIdentity(this.rootIdentity, rootPathStat)
+      || Number(rootPathStat.mode & 0o777n) !== 0o700
+    ) {
+      throw sourceError("SOURCE_CHANGED", "Snapshot output custody identity changed.");
+    }
+  }
+
+  private assertTrackedParents(absolutePath: string): void {
+    let current = path.dirname(absolutePath);
+    while (current !== this.rootPath) {
+      const tracked = this.entries.get(current);
+      if (!tracked || tracked.kind !== "directory") {
+        throw sourceError("ARTIFACT_INVALID", "Snapshot child parent is outside the invocation-owned custody tree.");
+      }
+      const stat = assertSafeDirectory(current, "Snapshot child parent", 0o700);
+      if (!sameObjectIdentity(tracked.identity, stat)) {
+        throw sourceError("SOURCE_CHANGED", "Snapshot child parent identity changed.");
+      }
+      current = path.dirname(current);
+    }
+  }
+
+  private record(absolutePath: string, stat: BigIntStats, kind: "directory" | "file"): void {
+    this.relativePath(absolutePath);
+    if (
+      this.entries.has(absolutePath)
+      || (kind === "directory" ? !stat.isDirectory() : !stat.isFile())
+    ) {
+      throw sourceError("ARTIFACT_INVALID", "Snapshot output object could not be uniquely recorded.");
+    }
+    assertCurrentUserOwned(stat, "Snapshot output object");
+    this.entries.set(absolutePath, { absolutePath, identity: objectIdentity(stat), kind });
+  }
+
+  async createDirectory(relativePath: string): Promise<string> {
+    const absolutePath = path.join(this.rootPath, relativePath);
+    this.relativePath(absolutePath);
+    await this.assertRootAuthority();
+    this.assertTrackedParents(absolutePath);
+    await fs.promises.mkdir(absolutePath, { mode: 0o700 });
+    await fs.promises.chmod(absolutePath, 0o700);
+    const stat = assertSafeDirectory(absolutePath, "Snapshot private directory", 0o700);
+    this.record(absolutePath, stat, "directory");
+    await this.assertRootAuthority();
+    return absolutePath;
+  }
+
+  async writeFile(relativePath: string, bytes: Buffer): Promise<string> {
+    return this.writeFileWith(relativePath, async (handle) => {
+      await handle.writeFile(bytes);
+    });
+  }
+
+  async copyStableFile(relativePath: string, source: StableTreeEntry): Promise<string> {
+    if (source.kind !== "file") {
+      throw sourceError("ARTIFACT_INVALID", "Only a stable regular evidence file can be copied.");
+    }
+    const sourcePathStat = assertSafeRegularFile(source.absolutePath, "Source evidence file");
+    if (!sameFileIdentity(source.stat, sourcePathStat)) {
+      throw sourceError("SOURCE_CHANGED", "Source evidence changed before it was copied.");
+    }
+    const sourceHandle = await fs.promises.open(source.absolutePath, regularFileReadFlags());
+    try {
+      const sourceBefore = await sourceHandle.stat({ bigint: true });
+      if (!sameFileIdentity(source.stat, sourceBefore)) {
+        throw sourceError("SOURCE_CHANGED", "Source evidence changed while it was opened for copying.");
+      }
+      const outputPath = await this.writeFileWith(relativePath, async (outputHandle) => {
+        const buffer = Buffer.allocUnsafe(1024 * 1024);
+        let position = 0;
+        while (true) {
+          const read = await sourceHandle.read(buffer, 0, buffer.length, position);
+          if (read.bytesRead === 0) break;
+          let written = 0;
+          while (written < read.bytesRead) {
+            const result = await outputHandle.write(
+              buffer,
+              written,
+              read.bytesRead - written,
+              position + written,
+            );
+            if (result.bytesWritten === 0) {
+              throw sourceError("ARTIFACT_INVALID", "Snapshot evidence copy made no forward progress.");
+            }
+            written += result.bytesWritten;
+          }
+          position += read.bytesRead;
+        }
+        if (BigInt(position) !== sourceBefore.size) {
+          throw sourceError("SOURCE_CHANGED", "Source evidence changed length while it was copied.");
+        }
+      });
+      const sourceAfter = await sourceHandle.stat({ bigint: true });
+      const sourcePathAfter = assertSafeRegularFile(source.absolutePath, "Source evidence file");
+      if (!sameFileIdentity(sourceBefore, sourceAfter) || !sameFileIdentity(sourceAfter, sourcePathAfter)) {
+        throw sourceError("SOURCE_CHANGED", "Source evidence changed while it was copied.");
+      }
+      return outputPath;
+    } finally {
+      await sourceHandle.close();
+    }
+  }
+
+  private async writeFileWith(
+    relativePath: string,
+    writer: (handle: fs.promises.FileHandle) => Promise<void>,
+  ): Promise<string> {
+    const absolutePath = path.join(this.rootPath, relativePath);
+    this.relativePath(absolutePath);
+    await this.assertRootAuthority();
+    this.assertTrackedParents(absolutePath);
+    regularFileReadFlags();
+    const flags = fs.constants.O_WRONLY
+      | fs.constants.O_CREAT
+      | fs.constants.O_EXCL
+      | fs.constants.O_NOFOLLOW;
+    const handle = await fs.promises.open(absolutePath, flags, 0o600);
+    let recorded = false;
+    try {
+      const initial = await handle.stat({ bigint: true });
+      this.record(absolutePath, initial, "file");
+      recorded = true;
+      await writer(handle);
+      await handle.chmod(0o600);
+      await handle.sync();
+      const descriptorAfter = await handle.stat({ bigint: true });
+      const pathAfter = assertSafeRegularFile(absolutePath, "Snapshot private file", 0o600);
+      const tracked = this.entries.get(absolutePath)!;
+      if (
+        !sameObjectIdentity(tracked.identity, descriptorAfter)
+        || !sameObjectIdentity(tracked.identity, pathAfter)
+        || descriptorAfter.nlink !== 1n
+      ) {
+        throw sourceError("SOURCE_CHANGED", "Snapshot private file identity changed while it was written.");
+      }
+    } finally {
+      await handle.close();
+      if (!recorded) {
+        try {
+          const stat = assertSafeRegularFile(absolutePath, "Partially-created snapshot file");
+          assertCurrentUserOwned(stat, "Partially-created snapshot file");
+          this.record(absolutePath, stat, "file");
+        } catch {
+          // Unprovable partial creation remains untracked so cleanup retains the full output.
+        }
+      }
+    }
+    await this.assertRootAuthority();
+    return absolutePath;
+  }
+
+  async adoptFile(absolutePath: string): Promise<void> {
+    this.relativePath(absolutePath);
+    await this.assertRootAuthority();
+    this.assertTrackedParents(absolutePath);
+    const stat = assertSafeRegularFile(absolutePath, "Invocation-created snapshot file");
+    this.record(absolutePath, stat, "file");
+  }
+
+  async assertTrackedFile(absolutePath: string, requiredMode = 0o600): Promise<void> {
+    const tracked = this.entries.get(absolutePath);
+    const stat = assertSafeRegularFile(absolutePath, "Invocation-created snapshot file", requiredMode);
+    if (!tracked || tracked.kind !== "file" || !sameObjectIdentity(tracked.identity, stat)) {
+      throw sourceError("SOURCE_CHANGED", "Invocation-created snapshot file identity changed.");
+    }
+  }
+
+  async removeCreatedSidecar(absolutePath: string): Promise<void> {
+    if (!fs.existsSync(absolutePath)) return;
+    await this.adoptFile(absolutePath);
+    const tracked = this.entries.get(absolutePath)!;
+    const handle = await fs.promises.open(absolutePath, regularFileReadFlags());
+    try {
+      const descriptor = await handle.stat({ bigint: true });
+      const pathStat = assertSafeRegularFile(absolutePath, "Snapshot SQLite sidecar");
+      if (
+        !sameObjectIdentity(tracked.identity, descriptor)
+        || !sameObjectIdentity(tracked.identity, pathStat)
+        || descriptor.nlink !== 1n
+      ) {
+        throw sourceError("SOURCE_CHANGED", "Snapshot SQLite sidecar identity changed before removal.");
+      }
+      await fs.promises.unlink(absolutePath);
+      if ((await handle.stat({ bigint: true })).nlink !== 0n || fs.existsSync(absolutePath)) {
+        throw sourceError("SOURCE_CHANGED", "Snapshot SQLite sidecar removal was not exact.");
+      }
+      this.entries.delete(absolutePath);
+    } finally {
+      await handle.close();
+    }
+  }
+
+  async syncDirectory(absolutePath: string): Promise<void> {
+    await this.assertRootAuthority();
+    if (absolutePath === this.rootPath) {
+      await this.rootHandle.sync();
+      return;
+    }
+    const tracked = this.entries.get(absolutePath);
+    if (!tracked || tracked.kind !== "directory") {
+      throw sourceError("ARTIFACT_INVALID", "Only an invocation-owned directory can be synchronized.");
+    }
+    const handle = await fs.promises.open(absolutePath, directoryOpenFlags());
+    try {
+      const stat = await handle.stat({ bigint: true });
+      if (!sameObjectIdentity(tracked.identity, stat)) {
+        throw sourceError("SOURCE_CHANGED", "Snapshot directory identity changed before synchronization.");
+      }
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+  }
+
+  async assertExactInventory(): Promise<void> {
+    await this.assertRootAuthority();
+    const inventory = await collectStableTreeEntries(this.rootPath, { label: "Snapshot output directory" });
+    if (
+      inventory.length !== this.entries.size
+      || inventory.some((entry) => {
+        const tracked = this.entries.get(entry.absolutePath);
+        return !tracked
+          || tracked.kind !== entry.kind
+          || !sameObjectIdentity(tracked.identity, entry.stat);
+      })
+    ) {
+      throw sourceError("SOURCE_CHANGED", "Snapshot output contains an unowned, missing, or replaced object.");
+    }
+  }
+
+  async close(): Promise<void> {
+    await this.rootHandle.close();
+    await this.parentHandle.close();
+  }
+
+  async cleanupExact(): Promise<boolean> {
+    try {
+      await this.assertExactInventory();
+      const files = [...this.entries.values()]
+        .filter((entry) => entry.kind === "file")
+        .sort((left, right) => Buffer.compare(Buffer.from(right.absolutePath), Buffer.from(left.absolutePath)));
+      for (const entry of files) {
+        const handle = await fs.promises.open(entry.absolutePath, regularFileReadFlags());
+        try {
+          const descriptor = await handle.stat({ bigint: true });
+          const pathStat = fs.lstatSync(entry.absolutePath, { bigint: true });
+          if (
+            !sameObjectIdentity(entry.identity, descriptor)
+            || !sameObjectIdentity(entry.identity, pathStat)
+            || descriptor.nlink !== 1n
+          ) return false;
+          await fs.promises.unlink(entry.absolutePath);
+          if ((await handle.stat({ bigint: true })).nlink !== 0n || fs.existsSync(entry.absolutePath)) return false;
+        } finally {
+          await handle.close();
+        }
+        this.entries.delete(entry.absolutePath);
+      }
+      const directories = [...this.entries.values()]
+        .filter((entry) => entry.kind === "directory")
+        .sort((left, right) => {
+          const depthDifference = right.absolutePath.split(path.sep).length - left.absolutePath.split(path.sep).length;
+          return depthDifference || Buffer.compare(Buffer.from(right.absolutePath), Buffer.from(left.absolutePath));
+        });
+      for (const entry of directories) {
+        const handle = await fs.promises.open(entry.absolutePath, directoryOpenFlags());
+        try {
+          const descriptor = await handle.stat({ bigint: true });
+          const pathStat = fs.lstatSync(entry.absolutePath, { bigint: true });
+          if (!sameObjectIdentity(entry.identity, descriptor) || !sameObjectIdentity(entry.identity, pathStat)) {
+            return false;
+          }
+          await fs.promises.rmdir(entry.absolutePath);
+          if (fs.existsSync(entry.absolutePath)) return false;
+        } finally {
+          await handle.close();
+        }
+        this.entries.delete(entry.absolutePath);
+      }
+      await this.assertRootAuthority();
+      await fs.promises.rmdir(this.rootPath);
+      if (fs.existsSync(this.rootPath)) return false;
+      await this.parentHandle.sync();
+      return true;
+    } catch {
+      return false;
+    } finally {
+      await this.rootHandle.close().catch(() => undefined);
+      await this.parentHandle.close().catch(() => undefined);
+    }
+  }
 }
 
 function sameLedgerAuthority(
@@ -527,22 +1144,69 @@ async function readSourceLedgerAuthority(
 
 async function copyLedgerAuthorityIntoSnapshot(
   bundle: ReadPostgresMigrationLedgerAuthorityBundle,
-  snapshotDirectory: string,
+  custody: SnapshotOutputCustody,
 ): Promise<void> {
-  const outputDirectory = path.join(snapshotDirectory, POSTGRES_MIGRATION_SNAPSHOT_LEDGER_DIRECTORY);
-  await fs.promises.mkdir(outputDirectory, { mode: 0o700 });
-  await fs.promises.chmod(outputDirectory, 0o700);
-  assertSafeDirectory(outputDirectory, "Snapshot ledger authority directory", 0o700);
+  const outputDirectory = await custody.createDirectory(POSTGRES_MIGRATION_SNAPSHOT_LEDGER_DIRECTORY);
   await Promise.all([
-    writeNewPrivateBytes(
-      path.join(outputDirectory, POSTGRES_MIGRATION_LEDGER_AUTHORITY_MANIFEST_FILE),
+    custody.writeFile(
+      path.join(POSTGRES_MIGRATION_SNAPSHOT_LEDGER_DIRECTORY, POSTGRES_MIGRATION_LEDGER_AUTHORITY_MANIFEST_FILE),
       bundle.manifestBytes,
     ),
-    writeNewPrivateBytes(path.join(outputDirectory, bundle.manifest.current.file), bundle.currentBytes),
-    writeNewPrivateBytes(path.join(outputDirectory, bundle.manifest.genesis.file), bundle.genesisBytes),
-    writeNewPrivateBytes(path.join(outputDirectory, bundle.manifest.checkpoint.file), bundle.checkpointBytes),
+    custody.writeFile(
+      path.join(POSTGRES_MIGRATION_SNAPSHOT_LEDGER_DIRECTORY, bundle.manifest.current.file),
+      bundle.currentBytes,
+    ),
+    custody.writeFile(
+      path.join(POSTGRES_MIGRATION_SNAPSHOT_LEDGER_DIRECTORY, bundle.manifest.genesis.file),
+      bundle.genesisBytes,
+    ),
+    custody.writeFile(
+      path.join(POSTGRES_MIGRATION_SNAPSHOT_LEDGER_DIRECTORY, bundle.manifest.checkpoint.file),
+      bundle.checkpointBytes,
+    ),
   ]);
-  await fsyncDirectory(outputDirectory);
+  await custody.syncDirectory(outputDirectory);
+}
+
+async function copyEvidenceTreeIntoSnapshot(
+  sourceRoot: string,
+  custody: SnapshotOutputCustody,
+  expected: EvidenceTreeSummary,
+): Promise<EvidenceTreeSummary> {
+  const sourceEntries = await collectStableTreeEntries(sourceRoot, { label: "Source evidence directory" });
+  const destinationRoot = await custody.createDirectory(POSTGRES_MIGRATION_SNAPSHOT_EVIDENCE_DIRECTORY);
+  const directories = sourceEntries
+    .filter((entry) => entry.kind === "directory")
+    .sort((left, right) => {
+      const depthDifference = left.relativePath.split(path.sep).length - right.relativePath.split(path.sep).length;
+      return depthDifference || Buffer.compare(Buffer.from(left.relativePath), Buffer.from(right.relativePath));
+    });
+  for (const entry of directories) {
+    await custody.createDirectory(path.join(POSTGRES_MIGRATION_SNAPSHOT_EVIDENCE_DIRECTORY, entry.relativePath));
+  }
+  for (const entry of sourceEntries.filter((candidate) => candidate.kind === "file")) {
+    await custody.copyStableFile(
+      path.join(POSTGRES_MIGRATION_SNAPSHOT_EVIDENCE_DIRECTORY, entry.relativePath),
+      entry,
+    );
+  }
+  const sourceAfter = await inspectEvidenceTree(sourceRoot);
+  if (!sameEvidenceTree(expected, sourceAfter)) {
+    throw sourceError("SOURCE_CHANGED", "Source evidence changed while it was copied into the snapshot.");
+  }
+  const copied = await inspectEvidenceTree(destinationRoot, {
+    label: "Snapshot evidence directory",
+    requiredDirectoryMode: 0o700,
+    requiredFileMode: 0o600,
+  });
+  if (!sameEvidenceTree(expected, copied)) {
+    throw sourceError("ARTIFACT_INVALID", "Snapshot evidence copy differs from its committed source tree.");
+  }
+  for (const entry of [...directories].reverse()) {
+    await custody.syncDirectory(path.join(destinationRoot, entry.relativePath));
+  }
+  await custody.syncDirectory(destinationRoot);
+  return copied;
 }
 
 function assertNormalizedUtcInstant(value: string, label: string): string {
@@ -605,15 +1269,11 @@ export async function createPostgresMigrationSnapshot(input: {
   const contractSha256 = sha256PostgresMigrationContract(POSTGRES_MIGRATION_CONTRACT);
   const databasePath = path.join(outputDirectory, POSTGRES_MIGRATION_SNAPSHOT_DATABASE_FILE);
   const manifestPath = path.join(outputDirectory, POSTGRES_MIGRATION_SNAPSHOT_MANIFEST_FILE);
-  let outputCreated = false;
+  let custody: SnapshotOutputCustody | undefined;
   let source: BetterSqlite3.Database | undefined;
 
   try {
-    await fs.promises.mkdir(outputDirectory, { mode: 0o700 });
-    outputCreated = true;
-    await fs.promises.chmod(outputDirectory, 0o700);
-    assertSafeDirectory(outputDirectory, "Snapshot output directory", 0o700);
-    await fsyncDirectory(path.dirname(outputDirectory));
+    custody = await SnapshotOutputCustody.create(outputDirectory);
 
     source = openValidatedReadOnlySqlite(sourceSqlite);
     const sourceDataVersionBefore = Number(source.pragma("data_version", { simple: true }));
@@ -622,8 +1282,11 @@ export async function createPostgresMigrationSnapshot(input: {
     const ledgerBefore = await readSourceLedgerAuthority(deletionLedgerAuthorityManifest);
 
     await source.backup(databasePath);
+    await custody.adoptFile(databasePath);
     await fs.promises.chmod(databasePath, 0o600);
-    await copyLedgerAuthorityIntoSnapshot(ledgerBefore, outputDirectory);
+    await custody.assertTrackedFile(databasePath);
+    const copiedEvidence = await copyEvidenceTreeIntoSnapshot(sourceEvidence, custody, evidenceBefore);
+    await copyLedgerAuthorityIntoSnapshot(ledgerBefore, custody);
 
     const sourceDataVersionAfter = Number(source.pragma("data_version", { simple: true }));
     const sourceInspectionAfter = inspectAndValidateSqlite(source);
@@ -650,11 +1313,11 @@ export async function createPostgresMigrationSnapshot(input: {
     } finally {
       normalized.close();
     }
-    await fs.promises.rm(`${databasePath}-wal`, { force: true });
-    await fs.promises.rm(`${databasePath}-shm`, { force: true });
-    await fs.promises.rm(`${databasePath}-journal`, { force: true });
+    await custody.removeCreatedSidecar(`${databasePath}-wal`);
+    await custody.removeCreatedSidecar(`${databasePath}-shm`);
+    await custody.removeCreatedSidecar(`${databasePath}-journal`);
     await fs.promises.chmod(databasePath, 0o600);
-    assertSafeRegularFile(databasePath, "Snapshot database", 0o600);
+    await custody.assertTrackedFile(databasePath);
 
     const snapshot = openValidatedReadOnlySqlite(databasePath);
     let snapshotInspection: PostgresMigrationSchemaInspection;
@@ -671,6 +1334,10 @@ export async function createPostgresMigrationSnapshot(input: {
     ));
     if (!sameLedgerAuthority(ledgerAfter, copiedLedger)) {
       throw sourceError("ARTIFACT_INVALID", "Snapshot ledger authority copy differs from its verified source.");
+    }
+    const verifiedEvidence = await verifyPostgresMigrationSnapshotEvidence(outputDirectory, copiedEvidence);
+    if (!sameEvidenceTree(evidenceAfter, verifiedEvidence)) {
+      throw sourceError("ARTIFACT_INVALID", "Snapshot evidence commitment changed before manifest sealing.");
     }
     const databaseHandle = await fs.promises.open(databasePath, fs.constants.O_RDONLY);
     try {
@@ -696,7 +1363,7 @@ export async function createPostgresMigrationSnapshot(input: {
         bytes: database.bytes,
         sha256: database.sha256,
       },
-      evidence: evidenceAfter,
+      evidence: copiedEvidence,
       deletionLedger: {
         directory: POSTGRES_MIGRATION_SNAPSHOT_LEDGER_DIRECTORY,
         authorityManifestFile: POSTGRES_MIGRATION_LEDGER_AUTHORITY_MANIFEST_FILE,
@@ -710,12 +1377,32 @@ export async function createPostgresMigrationSnapshot(input: {
         latestCompletedAt: ledgerAfter.manifest.checkpoint.latestCompletedAt,
       },
     };
-    const manifestSha256 = await writeNewCanonicalJson(manifestPath, manifest);
-    await fsyncDirectory(outputDirectory);
+    const manifestBytes = serializeCanonicalPostgresMigrationJson(manifest);
+    await custody.writeFile(POSTGRES_MIGRATION_SNAPSHOT_MANIFEST_FILE, manifestBytes);
+    const manifestSha256 = sha256PostgresMigrationBytes(manifestBytes);
+    await verifyPostgresMigrationSnapshotEvidence(outputDirectory, manifest.evidence);
+    await custody.syncDirectory(outputDirectory);
+    await custody.assertExactInventory();
+    await custody.close();
+    custody = undefined;
     return { snapshotDirectory: outputDirectory, databasePath, manifestPath, manifestSha256, manifest };
   } catch (error) {
-    source?.close();
-    if (outputCreated) await fs.promises.rm(outputDirectory, { recursive: true, force: true });
+    try {
+      source?.close();
+    } catch {
+      // The original failure remains authoritative; cleanup below still fails closed.
+    }
+    const failedCustody = custody;
+    if (failedCustody) {
+      const cleaned = await failedCustody.cleanupExact();
+      custody = undefined;
+      if (!cleaned) {
+        throw sourceError(
+          "ARTIFACT_INVALID",
+          "Snapshot failed and exact invocation-owned cleanup was ambiguous; the output was retained for operator review.",
+        );
+      }
+    }
     throw error;
   }
 }
@@ -1357,6 +2044,12 @@ export async function createPostgresMigrationPlan(input: {
   if (!manifestFile.contents.equals(serializeCanonicalPostgresMigrationJson(manifest))) {
     throw sourceError("ARTIFACT_INVALID", "Snapshot manifest is not in deterministic canonical form.");
   }
+  let evidenceBefore: PostgresMigrationSnapshotEvidenceSummary;
+  try {
+    evidenceBefore = await verifyPostgresMigrationSnapshotEvidence(snapshotDirectory, manifest.evidence);
+  } catch {
+    throw sourceError("ARTIFACT_INVALID", "Snapshot evidence tree is missing, unsafe, unstable, or does not match its manifest.");
+  }
   const ledgerBefore = await readSnapshotLedgerAuthority(snapshotDirectory, manifest.deletionLedger);
   const databasePath = path.join(snapshotDirectory, manifest.database.file);
   const databaseBefore = await readStableRegularFile(databasePath, "Snapshot database", { requiredMode: 0o600 });
@@ -1390,10 +2083,17 @@ export async function createPostgresMigrationPlan(input: {
     database.close();
   }
   const databaseAfter = await readStableRegularFile(databasePath, "Snapshot database", { requiredMode: 0o600 });
+  let evidenceAfter: PostgresMigrationSnapshotEvidenceSummary;
+  try {
+    evidenceAfter = await verifyPostgresMigrationSnapshotEvidence(snapshotDirectory, manifest.evidence);
+  } catch {
+    throw sourceError("SOURCE_CHANGED", "Snapshot evidence tree changed during the planning scan.");
+  }
   const ledgerAfter = await readSnapshotLedgerAuthority(snapshotDirectory, manifest.deletionLedger);
   if (
     databaseAfter.sha256 !== databaseBefore.sha256
     || databaseAfter.bytes !== databaseBefore.bytes
+    || !sameEvidenceTree(evidenceBefore, evidenceAfter)
     || !sameLedgerAuthority(ledgerBefore, ledgerAfter)
   ) {
     throw sourceError("SOURCE_CHANGED", "A sealed snapshot artifact changed during the planning scan.");

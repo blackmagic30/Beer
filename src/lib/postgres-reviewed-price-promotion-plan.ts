@@ -161,6 +161,7 @@ const TRUSTED_PUBLIC_CONFIDENCE = Object.freeze([
 ] as const);
 const EXPECTED_METADATA_KEYS = Object.freeze([
   "import_state",
+  "live_schema_sha256",
   "migration_candidate_sha",
   "migration_contract_sha256",
   "migration_manifest_sha256",
@@ -1528,8 +1529,13 @@ function expectedMigrationRunBinding(
     sourceSnapshotSha256: receipt.sourceSnapshotSha256,
     targetDdlSha256: receipt.targetDdlSha256,
     targetIdentitySha256: receipt.targetIdentitySha256,
+    liveSchemaSha256: receipt.liveSchemaSha256,
+    transportAuthoritySha256: receipt.transportAuthoritySha256,
     targetUrlSha256: receipt.targetUrlSha256,
     verifierIdSha256: receipt.verifierIdSha256,
+    verifierAuthoritySha256: receipt.verifierAuthoritySha256,
+    verifierAuthorityPolicySha256: receipt.verifierAuthorityPolicySha256,
+    verifierPublicKeySha256: receipt.verifierPublicKeySha256,
   });
   return {
     runBindingSha256,
@@ -1572,6 +1578,7 @@ function validateMigration(
         source_schema_version: metadata.source_schema_version!,
         source_snapshot_sha256: metadata.source_snapshot_sha256!,
         target_ddl_sha256: metadata.target_ddl_sha256!,
+        live_schema_sha256: metadata.live_schema_sha256!,
       }),
     );
   } catch {
@@ -1625,6 +1632,7 @@ function validateMigration(
     || metadata.source_schema_version !== String(row.sourceSchemaVersion)
     || metadata.source_snapshot_sha256 !== row.sourceSnapshotSha256
     || metadata.target_ddl_sha256 !== row.targetDdlSha256
+    || metadata.live_schema_sha256 !== receipt.liveSchemaSha256
     || metadata.source_schema_sha256 !== POSTGRES_REVIEWED_PRICE_PROMOTION_SOURCE_SCHEMA_SHA256
     || !regexpMatches(/^\d+$/, metadata.source_schema_version ?? "")
   ) fail("migration_mismatch");

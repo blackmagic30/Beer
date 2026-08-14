@@ -25,10 +25,12 @@ interface EvidenceItem {
 
 interface PermanentStagingCostProviderObservation {
   provider: string;
-  inventorySha256: string;
-  priceOrCapEvidenceSha256: string;
+  inventoryArtifactSha256: string;
+  priceOrCapArtifactSha256: string;
   inventoryComplete: boolean;
   upperBoundComplete: boolean;
+  scopeIsolationVerified: boolean;
+  hardLimitOrZeroBoundVerified: boolean;
   unknownResourceCount: number;
   unpricedResourceCount: number;
   sharedResourceCount: number;
@@ -39,8 +41,7 @@ interface PermanentStagingCostProviderObservation {
 interface PermanentStagingExcludedCostScope {
   scope: string;
   includedInPermanentStagingTotal: boolean;
-  handling: string;
-  evidenceSha256: string;
+  separateAuthorityArtifactSha256: string;
 }
 
 interface PermanentStagingCostReceipt {
@@ -54,11 +55,19 @@ interface PermanentStagingCostReceipt {
   amountUnit: string;
   lineItemRounding: string;
   observationSource: string;
+  externalProviderExportValidationImplemented: boolean;
   providerObservationBindingImplemented: boolean;
   policySha256: string;
-  observedAt: string;
+  preObservationSha256: string;
+  postObservationSha256: string;
+  preObservedAt: string;
+  postObservedAt: string;
   privateManifestSha256: string;
   totalUpperBoundMonthlyCents: number;
+  maximumObservedAcrossPhasesMonthlyCents: number;
+  maximumRecurringMonthlyCents: number;
+  requiredHeadroomMonthlyCents: number;
+  observedHeadroomMonthlyCents: number;
   providers: PermanentStagingCostProviderObservation[];
   excludedScopes: PermanentStagingExcludedCostScope[];
 }
@@ -106,20 +115,30 @@ const expectedCostReceiptFields = new Set([
   "amountUnit",
   "lineItemRounding",
   "observationSource",
+  "externalProviderExportValidationImplemented",
   "providerObservationBindingImplemented",
   "policySha256",
-  "observedAt",
+  "preObservationSha256",
+  "postObservationSha256",
+  "preObservedAt",
+  "postObservedAt",
   "privateManifestSha256",
   "totalUpperBoundMonthlyCents",
+  "maximumObservedAcrossPhasesMonthlyCents",
+  "maximumRecurringMonthlyCents",
+  "requiredHeadroomMonthlyCents",
+  "observedHeadroomMonthlyCents",
   "providers",
   "excludedScopes",
 ]);
 const expectedCostProviderFields = new Set([
   "provider",
-  "inventorySha256",
-  "priceOrCapEvidenceSha256",
+  "inventoryArtifactSha256",
+  "priceOrCapArtifactSha256",
   "inventoryComplete",
   "upperBoundComplete",
+  "scopeIsolationVerified",
+  "hardLimitOrZeroBoundVerified",
   "unknownResourceCount",
   "unpricedResourceCount",
   "sharedResourceCount",
@@ -129,21 +148,27 @@ const expectedCostProviderFields = new Set([
 const expectedExcludedCostScopeFields = new Set([
   "scope",
   "includedInPermanentStagingTotal",
-  "handling",
-  "evidenceSha256",
+  "separateAuthorityArtifactSha256",
 ]);
 const expectedCostProviders = ["railway", "staging-supabase", "staging-external-providers"] as const;
-const expectedExcludedCostScopes = new Map<string, string>([
-  ["production-operational-copy", "separate-production-cost-authority"],
-  ["disposable-restore", "separate-temporary-spend-authority"],
+const maximumCostByProvider = new Map<string, number>([
+  ["railway", 2_000],
+  ["staging-supabase", 2_500],
+  ["staging-external-providers", 200],
 ]);
-const permanentStagingCostReceiptSchema = "pintpath-permanent-staging-cost-receipt/v1";
+const expectedExcludedCostScopes = new Set([
+  "production-operational-copy",
+  "disposable-restore",
+]);
+const permanentStagingCostReceiptSchema = "pintpath-permanent-staging-cost-receipt/v2";
 const permanentStagingCostPolicyPath = path.resolve(
   "ops/railway/permanent-staging-cost-policy.json",
 );
 const permanentStagingCostPolicySha256 =
-  "895d5bdcfe0fb05d17b3fa7cab6c525a80f3beacf0ff0cbd1bafdb54c979c8ca";
+  "57984ced59fa356baa9c19ac1e5018dad9c52829a6d7cc95a05cbd52112ddf86";
 const maximumPermanentStagingMonthlyCents = 5_000;
+const maximumObservedPermanentStagingMonthlyCents = 4_700;
+const requiredPermanentStagingHeadroomCents = 300;
 const releaseIdPattern = /^PP-LAUNCH-\d{4}-[A-Z0-9][A-Z0-9_-]{2,31}$/;
 const commitShaPattern = /^[0-9a-f]{40}$/;
 const sha256Pattern = /^[0-9a-f]{64}$/;
@@ -218,7 +243,7 @@ function safeNonNegativeInteger(value: unknown): value is number {
 
 function inspectPermanentStagingCostPolicy(): {
   sha256: string | null;
-  collectorImplemented: boolean;
+  externalValidationImplemented: boolean;
   bindingImplemented: boolean;
   errors: string[];
 } {
@@ -229,7 +254,7 @@ function inspectPermanentStagingCostPolicy(): {
   } catch {
     return {
       sha256: null,
-      collectorImplemented: false,
+      externalValidationImplemented: false,
       bindingImplemented: false,
       errors: ["unable to read the permanent-staging cost policy"],
     };
@@ -248,15 +273,16 @@ function inspectPermanentStagingCostPolicy(): {
   const evidenceContract = record(policy) && record(policy.evidenceContract)
     ? policy.evidenceContract
     : null;
-  const collectorImplemented = evidenceContract?.providerCollectorImplemented === true;
+  const externalValidationImplemented =
+    evidenceContract?.externalProviderExportValidationImplemented === true;
   const bindingImplemented = evidenceContract?.providerObservationBindingImplemented === true;
-  if (!collectorImplemented) {
-    errors.push("permanent-staging cost provider collector is not implemented by policy");
+  if (!externalValidationImplemented) {
+    errors.push("permanent-staging external provider-export validation is not implemented by policy");
   }
   if (!bindingImplemented) {
     errors.push("permanent-staging cost provider observation binding is not implemented by policy");
   }
-  return { sha256, collectorImplemented, bindingImplemented, errors };
+  return { sha256, externalValidationImplemented, bindingImplemented, errors };
 }
 
 function parsePermanentStagingCostReceipt(
@@ -280,16 +306,30 @@ function parsePermanentStagingCostReceipt(
     "lineItemRounding",
     "observationSource",
     "policySha256",
-    "observedAt",
+    "preObservationSha256",
+    "postObservationSha256",
+    "preObservedAt",
+    "postObservedAt",
     "privateManifestSha256",
   ] as const) {
     if (typeof value[field] !== "string") errors.push(`costReceipt.${field} must be a string`);
   }
+  if (typeof value.externalProviderExportValidationImplemented !== "boolean") {
+    errors.push("costReceipt.externalProviderExportValidationImplemented must be a boolean");
+  }
   if (typeof value.providerObservationBindingImplemented !== "boolean") {
     errors.push("costReceipt.providerObservationBindingImplemented must be a boolean");
   }
-  if (!safeNonNegativeInteger(value.totalUpperBoundMonthlyCents)) {
-    errors.push("costReceipt.totalUpperBoundMonthlyCents must be non-negative integer cents");
+  for (const field of [
+    "totalUpperBoundMonthlyCents",
+    "maximumObservedAcrossPhasesMonthlyCents",
+    "maximumRecurringMonthlyCents",
+    "requiredHeadroomMonthlyCents",
+    "observedHeadroomMonthlyCents",
+  ] as const) {
+    if (!safeNonNegativeInteger(value[field])) {
+      errors.push(`costReceipt.${field} must be non-negative integer cents`);
+    }
   }
   if (!Array.isArray(value.providers)) errors.push("costReceipt.providers must be an array");
   if (!Array.isArray(value.excludedScopes)) errors.push("costReceipt.excludedScopes must be an array");
@@ -304,12 +344,17 @@ function parsePermanentStagingCostReceipt(
     }
     errors.push(...unexpectedKeys(providerValue, expectedCostProviderFields, prefix));
     if (typeof providerValue.provider !== "string") errors.push(`${prefix}.provider must be a string`);
-    for (const field of ["inventorySha256", "priceOrCapEvidenceSha256"] as const) {
+    for (const field of ["inventoryArtifactSha256", "priceOrCapArtifactSha256"] as const) {
       if (typeof providerValue[field] !== "string" || !sha256Pattern.test(providerValue[field])) {
         errors.push(`${prefix}.${field} must be a lowercase SHA-256`);
       }
     }
-    for (const field of ["inventoryComplete", "upperBoundComplete"] as const) {
+    for (const field of [
+      "inventoryComplete",
+      "upperBoundComplete",
+      "scopeIsolationVerified",
+      "hardLimitOrZeroBoundVerified",
+    ] as const) {
       if (typeof providerValue[field] !== "boolean") errors.push(`${prefix}.${field} must be a boolean`);
     }
     for (const field of [
@@ -335,16 +380,14 @@ function parsePermanentStagingCostReceipt(
       continue;
     }
     errors.push(...unexpectedKeys(excludedValue, expectedExcludedCostScopeFields, prefix));
-    for (const field of ["scope", "handling"] as const) {
-      if (typeof excludedValue[field] !== "string") errors.push(`${prefix}.${field} must be a string`);
-    }
+    if (typeof excludedValue.scope !== "string") errors.push(`${prefix}.scope must be a string`);
     if (typeof excludedValue.includedInPermanentStagingTotal !== "boolean") {
       errors.push(`${prefix}.includedInPermanentStagingTotal must be a boolean`);
     }
     if (
-      typeof excludedValue.evidenceSha256 !== "string"
-      || !sha256Pattern.test(excludedValue.evidenceSha256)
-    ) errors.push(`${prefix}.evidenceSha256 must be a lowercase SHA-256`);
+      typeof excludedValue.separateAuthorityArtifactSha256 !== "string"
+      || !sha256Pattern.test(excludedValue.separateAuthorityArtifactSha256)
+    ) errors.push(`${prefix}.separateAuthorityArtifactSha256 must be a lowercase SHA-256`);
     if (errors.some((error) => error.startsWith(prefix))) continue;
     excludedScopes.push(excludedValue as unknown as PermanentStagingExcludedCostScope);
   }
@@ -373,8 +416,11 @@ function parsePermanentStagingCostReceipt(
   if (value.lineItemRounding !== "ceiling") {
     errors.push("costReceipt.lineItemRounding must equal ceiling");
   }
-  if (value.observationSource !== "provider-observed") {
-    errors.push("costReceipt.observationSource must equal provider-observed");
+  if (value.observationSource !== "externally-captured-provider-read-only-exports") {
+    errors.push("costReceipt.observationSource must equal externally-captured-provider-read-only-exports");
+  }
+  if (value.externalProviderExportValidationImplemented !== true) {
+    errors.push("costReceipt.externalProviderExportValidationImplemented must equal true");
   }
   if (value.providerObservationBindingImplemented !== true) {
     errors.push("costReceipt.providerObservationBindingImplemented must equal true");
@@ -382,8 +428,16 @@ function parsePermanentStagingCostReceipt(
   if (!sha256Pattern.test(value.policySha256 as string)) {
     errors.push("costReceipt.policySha256 must be a lowercase SHA-256");
   }
-  if (!isoTimestamp(value.observedAt)) {
-    errors.push("costReceipt.observedAt must be a valid ISO-8601 timestamp");
+  if (!isoTimestamp(value.preObservedAt)) {
+    errors.push("costReceipt.preObservedAt must be a valid ISO-8601 timestamp");
+  }
+  if (!isoTimestamp(value.postObservedAt)) {
+    errors.push("costReceipt.postObservedAt must be a valid ISO-8601 timestamp");
+  }
+  for (const field of ["preObservationSha256", "postObservationSha256"] as const) {
+    if (!sha256Pattern.test(value[field] as string)) {
+      errors.push(`costReceipt.${field} must be a lowercase SHA-256`);
+    }
   }
   if (!sha256Pattern.test(value.privateManifestSha256 as string)) {
     errors.push("costReceipt.privateManifestSha256 must be a lowercase SHA-256");
@@ -407,10 +461,17 @@ function parsePermanentStagingCostReceipt(
   for (const provider of providers) {
     if (!provider.inventoryComplete) errors.push(`${provider.provider} inventory is incomplete`);
     if (!provider.upperBoundComplete) errors.push(`${provider.provider} upper bound is incomplete`);
+    if (!provider.scopeIsolationVerified) errors.push(`${provider.provider} scope is not isolated`);
+    if (!provider.hardLimitOrZeroBoundVerified) errors.push(`${provider.provider} hard limit is not verified`);
     if (provider.unknownResourceCount !== 0) errors.push(`${provider.provider} has unknown resources`);
     if (provider.unpricedResourceCount !== 0) errors.push(`${provider.provider} has unpriced resources`);
     if (provider.sharedResourceCount !== 0) errors.push(`${provider.provider} has shared resources`);
     if (provider.unboundedResourceCount !== 0) errors.push(`${provider.provider} has unbounded resources`);
+    const maximumForProvider = maximumCostByProvider.get(provider.provider);
+    if (
+      maximumForProvider !== undefined
+      && provider.upperBoundMonthlyCents > maximumForProvider
+    ) errors.push(`${provider.provider} exceeds its provider-specific cost bound`);
   }
   const summedUpperBound = providers.reduce(
     (sum, provider) => sum + provider.upperBoundMonthlyCents,
@@ -423,17 +484,44 @@ function parsePermanentStagingCostReceipt(
   if ((value.totalUpperBoundMonthlyCents as number) > maximumPermanentStagingMonthlyCents) {
     errors.push("costReceipt.totalUpperBoundMonthlyCents exceeds 5000 USD cents");
   }
+  if (
+    (value.maximumObservedAcrossPhasesMonthlyCents as number)
+      > maximumObservedPermanentStagingMonthlyCents
+  ) errors.push("costReceipt.maximumObservedAcrossPhasesMonthlyCents exceeds 4700 USD cents");
+  if (
+    (value.maximumObservedAcrossPhasesMonthlyCents as number)
+      < (value.totalUpperBoundMonthlyCents as number)
+  ) errors.push("costReceipt.maximumObservedAcrossPhasesMonthlyCents must cover the post-deployment total");
+  if (value.maximumRecurringMonthlyCents !== maximumPermanentStagingMonthlyCents) {
+    errors.push("costReceipt.maximumRecurringMonthlyCents must equal 5000");
+  }
+  if (value.requiredHeadroomMonthlyCents !== requiredPermanentStagingHeadroomCents) {
+    errors.push("costReceipt.requiredHeadroomMonthlyCents must equal 300");
+  }
+  if (
+    value.observedHeadroomMonthlyCents
+      !== maximumPermanentStagingMonthlyCents
+        - (value.maximumObservedAcrossPhasesMonthlyCents as number)
+  ) errors.push("costReceipt.observedHeadroomMonthlyCents is inconsistent");
+  if ((value.observedHeadroomMonthlyCents as number) < requiredPermanentStagingHeadroomCents) {
+    errors.push("costReceipt observed headroom is below 300 USD cents");
+  }
+  if (
+    isoTimestamp(value.preObservedAt)
+    && isoTimestamp(value.postObservedAt)
+    && Date.parse(value.postObservedAt) <= Date.parse(value.preObservedAt)
+  ) errors.push("costReceipt post observation must be later than its pre observation");
 
   const excludedByScope = new Map(excludedScopes.map((scope) => [scope.scope, scope]));
   if (
     excludedScopes.length !== expectedExcludedCostScopes.size
     || excludedByScope.size !== excludedScopes.length
   ) errors.push("costReceipt.excludedScopes must contain exactly two separate cost authorities");
-  for (const [scope, handling] of expectedExcludedCostScopes) {
+  for (const scope of expectedExcludedCostScopes) {
     const entry = excludedByScope.get(scope);
     if (!entry) {
       errors.push(`costReceipt.excludedScopes is missing ${scope}`);
-    } else if (entry.includedInPermanentStagingTotal || entry.handling !== handling) {
+    } else if (entry.includedInPermanentStagingTotal) {
       errors.push(`${scope} must be excluded under its exact separate cost authority`);
     }
   }
@@ -631,21 +719,21 @@ if (permanentStagingCostItem?.status === "pass") {
 }
 if (
   permanentStagingCostReceipt
-  && isoTimestamp(permanentStagingCostReceipt.observedAt)
-  && Date.parse(permanentStagingCostReceipt.observedAt) > now + futureClockSkewMs
-) permanentStagingCostReceiptErrors.push("costReceipt.observedAt is in the future");
+  && isoTimestamp(permanentStagingCostReceipt.postObservedAt)
+  && Date.parse(permanentStagingCostReceipt.postObservedAt) > now + futureClockSkewMs
+) permanentStagingCostReceiptErrors.push("costReceipt.postObservedAt is in the future");
 if (
   permanentStagingCostReceipt
-  && isoTimestamp(permanentStagingCostReceipt.observedAt)
-  && now - Date.parse(permanentStagingCostReceipt.observedAt) > liveEvidenceMaxAgeMs
+  && isoTimestamp(permanentStagingCostReceipt.preObservedAt)
+  && now - Date.parse(permanentStagingCostReceipt.preObservedAt) > liveEvidenceMaxAgeMs
 ) stalePermanentStagingCostReceipt.push("permanent_staging_cost");
 if (
   permanentStagingCostReceipt
-  && isoTimestamp(permanentStagingCostReceipt.observedAt)
+  && isoTimestamp(permanentStagingCostReceipt.postObservedAt)
   && isoTimestamp(permanentStagingCostItem?.verifiedAt)
-  && Date.parse(permanentStagingCostReceipt.observedAt)
+  && Date.parse(permanentStagingCostReceipt.postObservedAt)
     > Date.parse(permanentStagingCostItem.verifiedAt) + futureClockSkewMs
-) permanentStagingCostReceiptErrors.push("costReceipt.observedAt must not postdate verification");
+) permanentStagingCostReceiptErrors.push("costReceipt.postObservedAt must not postdate verification");
 const staleLiveEvidence = completed.filter((item) =>
   item.status === "pass"
   && (
@@ -690,9 +778,9 @@ if (release.candidateSha && commitShaPattern.test(release.candidateSha)) {
       }
       if (
         permanentStagingCostReceipt
-        && isoTimestamp(permanentStagingCostReceipt.observedAt)
-        && Date.parse(permanentStagingCostReceipt.observedAt) < candidateTimestamp
-      ) permanentStagingCostReceiptErrors.push("costReceipt.observedAt predates the frozen candidate");
+        && isoTimestamp(permanentStagingCostReceipt.preObservedAt)
+        && Date.parse(permanentStagingCostReceipt.preObservedAt) < candidateTimestamp
+      ) permanentStagingCostReceiptErrors.push("costReceipt.preObservedAt predates the frozen candidate");
     }
 
     if (validatesRepositoryFile && completed.length > 0) {

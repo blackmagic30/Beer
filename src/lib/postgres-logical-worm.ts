@@ -110,6 +110,7 @@ export interface PostgresLogicalWormVersionInventory {
 export type PostgresLogicalWormWriterDenialAction =
   | "get_object_version"
   | "list_object_versions"
+  | "delete_object_marker"
   | "delete_object_version"
   | "get_object_retention"
   | "get_bucket_object_lock_configuration";
@@ -268,9 +269,16 @@ interface TrustedBackup {
   readonly parsedReceipt: PostgresLogicalSourceStateReceipt;
 }
 
-type WormObjectKind = "archive" | "manifest" | "state-receipt" | "worm-receipt";
+export type WormObjectKind =
+  | "archive"
+  | "manifest"
+  | "state-receipt"
+  | "worm-receipt"
+  | "recovery-bundle-manifest"
+  | "recovery-bundle-data"
+  | "recovery-bundle-receipt";
 
-interface LocalObject {
+export interface PostgresLogicalWormLocalObject {
   readonly kind: WormObjectKind;
   readonly key: string;
   readonly bytes: number;
@@ -280,7 +288,7 @@ interface LocalObject {
   readonly openBody: () => Promise<Readable>;
 }
 
-interface VerifiedObjectDescriptor {
+export interface PostgresLogicalWormVerifiedObjectDescriptor {
   readonly kind: WormObjectKind;
   readonly objectKeySha256: string;
   readonly versionIdSha256: string;
@@ -313,7 +321,7 @@ interface WormReceipt {
   readonly readerPrincipalArnSha256: string;
   readonly operatorIdSha256: string;
   readonly bucketControlsSha256: string;
-  readonly objects: readonly VerifiedObjectDescriptor[];
+  readonly objects: readonly PostgresLogicalWormVerifiedObjectDescriptor[];
   readonly immutableObjectSetSha256: string;
   readonly writerDenials: readonly PostgresLogicalWormDenialEvidence[];
   readonly writerDenialSetSha256: string;
@@ -894,6 +902,7 @@ async function writerDenialProof(input: {
   const actions: readonly PostgresLogicalWormWriterDenialAction[] = [
     "get_object_version",
     "list_object_versions",
+    "delete_object_marker",
     "delete_object_version",
     "get_object_retention",
     "get_bucket_object_lock_configuration",
@@ -922,13 +931,13 @@ async function writerDenialProof(input: {
 
 async function verifyRemoteObject(input: {
   readonly provider: PostgresLogicalWormProvider;
-  readonly local: LocalObject;
+  readonly local: PostgresLogicalWormLocalObject;
   readonly versionId: string;
   readonly expectedBucketOwner: string;
   readonly earliestRetentionBaseMs: number;
   readonly operationTimeoutMs: number;
   readonly created: boolean;
-}): Promise<VerifiedObjectDescriptor> {
+}): Promise<PostgresLogicalWormVerifiedObjectDescriptor> {
   let remote: PostgresLogicalWormReadResult;
   let streamed: { readonly bytes: number; readonly sha256: string };
   try {
@@ -1000,11 +1009,14 @@ async function verifyRemoteObject(input: {
 
 async function ensureAndVerifyObject(input: {
   readonly provider: PostgresLogicalWormProvider;
-  readonly local: LocalObject;
+  readonly local: PostgresLogicalWormLocalObject;
   readonly expectedBucketOwner: string;
   readonly earliestRetentionBaseMs: number;
   readonly operationTimeoutMs: number;
-}): Promise<{ readonly descriptor: VerifiedObjectDescriptor; readonly versionId: string }> {
+}): Promise<{
+  readonly descriptor: PostgresLogicalWormVerifiedObjectDescriptor;
+  readonly versionId: string;
+}> {
   let before: PostgresLogicalWormVersionInventory;
   try {
     before = await boundedOperation(input.operationTimeoutMs, (signal) => (
@@ -1108,7 +1120,9 @@ function receiptKey(backupId: string, receiptSha256: string): string {
   return `${POSTGRES_LOGICAL_WORM_PREFIX}/receipts/${backupId}/${receiptSha256}.json`;
 }
 
-function minimumRetainUntil(objects: readonly VerifiedObjectDescriptor[]): string {
+function minimumRetainUntil(
+  objects: readonly PostgresLogicalWormVerifiedObjectDescriptor[],
+): string {
   if (objects.length < 1) throw wormError("retention_proof_failed");
   return objects.map((value) => value.retainUntil).sort()[0]!;
 }
@@ -1198,7 +1212,7 @@ export async function attestPostgresLogicalWorm(
     manifestSha256: backup.manifest.sha256,
     backupIdSha256,
   };
-  const objects: readonly LocalObject[] = [
+  const objects: readonly PostgresLogicalWormLocalObject[] = [
     {
       kind: "archive",
       key: objectKey(backupId, POSTGRES_LOGICAL_BACKUP_ARCHIVE),
@@ -1242,7 +1256,7 @@ export async function attestPostgresLogicalWorm(
       openBody: async () => Readable.from([backup.receipt.bytes]),
     },
   ];
-  const verified: VerifiedObjectDescriptor[] = [];
+  const verified: PostgresLogicalWormVerifiedObjectDescriptor[] = [];
   let archiveVersionId = "";
   for (const local of objects) {
     const remote = await ensureAndVerifyObject({
@@ -1293,7 +1307,7 @@ export async function attestPostgresLogicalWorm(
   });
   const receiptBytes = Buffer.from(canonicalPostgresBackupJson(receipt), "utf8");
   const receiptSha256 = sha256(receiptBytes);
-  const receiptObject: LocalObject = {
+  const receiptObject: PostgresLogicalWormLocalObject = {
     kind: "worm-receipt",
     key: receiptKey(backupId, receiptSha256),
     bytes: receiptBytes.length,
@@ -1307,7 +1321,7 @@ export async function attestPostgresLogicalWorm(
     openBody: async () => Readable.from([receiptBytes]),
   };
   let receiptRemote: {
-    readonly descriptor: VerifiedObjectDescriptor;
+    readonly descriptor: PostgresLogicalWormVerifiedObjectDescriptor;
     readonly versionId: string;
   };
   try {
@@ -1779,6 +1793,13 @@ export function createAwsSdkV3PostgresLogicalWormProvider(input: {
           Constructor = input.commands.DeleteObjectCommand;
           commandInput = common;
           break;
+        case "delete_object_marker":
+          Constructor = input.commands.DeleteObjectCommand;
+          commandInput = {
+            ...bucketInput(bucketName, expectedBucketOwner),
+            Key: key,
+          };
+          break;
         case "get_object_retention":
           Constructor = input.commands.GetObjectRetentionCommand;
           commandInput = common;
@@ -1812,8 +1833,22 @@ export const postgresLogicalWormInternals = {
   IMMUTABLE_CACHE_CONTROL,
   RETENTION_CLOCK_TOLERANCE_MS,
   canonicalSha256,
+  canonicalNow,
+  assertAuthority,
+  assertBucketControls,
+  assertSha256,
+  assertAccountId,
+  assertBucketName,
+  boundedOperation,
+  ensureAndVerifyObject,
   hashBoundedBody,
+  minimumRetainUntil,
   metadataFor,
+  openTrustedBody,
   receiptKey,
+  sha256,
+  snapshotTrustedFile,
+  timeoutMs,
   validateDenialEvidence,
+  writerDenialProof,
 };

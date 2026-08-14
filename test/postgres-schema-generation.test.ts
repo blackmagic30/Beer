@@ -30,6 +30,9 @@ const supabaseRuntimeMigrations = fs.readdirSync(
 const logicalBackupForwardMigrations = fs.readdirSync(
   path.resolve(process.cwd(), "supabase/migrations"),
 ).filter((fileName) => fileName.endsWith("_add_pintpath_logical_backup_role.sql"));
+const verifierAuthorityForwardMigrations = fs.readdirSync(
+  path.resolve(process.cwd(), "supabase/migrations"),
+).filter((fileName) => fileName.endsWith("_add_postgres_migration_verifier_authority.sql"));
 
 const expectedTargetTypeByConversion = {
   binary: "bytea",
@@ -62,10 +65,12 @@ const metadataTables = [
   "pintpath_app.schema_metadata",
   "pintpath_ops.migration_chunks",
   "pintpath_ops.migration_runs",
+  "pintpath_ops.migration_verifier_authority",
 ] as const;
 
 const expectedSchemaMetadata = new Map<string, string | RegExp>([
   ["import_state", "empty"],
+  ["live_schema_sha256", ""],
   ["migration_candidate_sha", ""],
   ["migration_contract_sha256", /^[a-f0-9]{64}$/],
   ["migration_manifest_sha256", ""],
@@ -278,7 +283,7 @@ describe("Postgres schema generation", () => {
     );
   });
 
-  it("contains all 56 source tables exactly once plus only the three metadata tables", () => {
+  it("contains all 56 source tables exactly once plus only the four control tables", () => {
     withInitializedDatabase((database) => {
       const sourceTables = database
         .prepare(
@@ -297,7 +302,7 @@ describe("Postgres schema generation", () => {
       expect(sourceTables).toHaveLength(56);
       expect(new Set(generatedTables.map(({ qualifiedName }) => qualifiedName)).size)
         .toBe(generatedTables.length);
-      expect(generatedTables).toHaveLength(59);
+      expect(generatedTables).toHaveLength(60);
       expect(applicationSourceTables.sort()).toEqual(sourceTables);
       expect(generatedTables
         .filter((table) => !sourceTables.includes(table.name))
@@ -319,6 +324,7 @@ describe("Postgres schema generation", () => {
     );
     const qualifiedTables = postgresTables(generateSchema())
       .map((table) => table.qualifiedName)
+      .filter((name) => name !== "pintpath_ops.migration_verifier_authority")
       .sort();
     const expectedInventory = Array.from(
       migration.matchAll(/^    '(pintpath_(?:app|ops)\.[a-z0-9_]+)'[,]?$/gm),
@@ -370,6 +376,42 @@ describe("Postgres schema generation", () => {
     expect(migration).not.toMatch(/grant\s+execute\s+on\s+function/i);
     expect(migration).not.toMatch(/alter\s+role\s+pintpath_logical_backup/i);
     expect(migration).not.toMatch(/to\s+pintpath_logical_backup(?:\s|;|$)/i);
+  });
+
+  it("keeps one post-activation additive verifier-authority migration for existing databases", () => {
+    expect(verifierAuthorityForwardMigrations).toHaveLength(1);
+    const fileName = verifierAuthorityForwardMigrations[0]!;
+    expect(fileName.localeCompare(
+      "20260813000000_activate_reviewed_price_promotion_kernel.sql",
+    )).toBeGreaterThan(0);
+    const migration = fs.readFileSync(
+      path.resolve(process.cwd(), "supabase/migrations", fileName),
+      "utf8",
+    );
+
+    expect(migration).toContain("pg_advisory_xact_lock(721426590137322906)");
+    expect(migration).toContain("create role pintpath_migration_verifier_authority");
+    expect(migration).toContain("create table pintpath_ops.migration_verifier_authority");
+    expect(migration.match(/create policy migration_verifier_authority_/g))
+      .toHaveLength(4);
+    expect(migration).toContain(
+      "grant select on pintpath_ops.migration_verifier_authority\n      to pintpath_migrator",
+    );
+    expect(migration).toContain(
+      "grant select, insert, update on pintpath_ops.migration_verifier_authority",
+    );
+    expect(migration).not.toMatch(/grant[^;]*delete/i);
+    expect(migration).toContain(
+      "exists (select 1 from pintpath_ops.migration_verifier_authority)",
+    );
+    expect(migration).toContain("membership.member = verifier_role_oid");
+    expect(migration).toContain("membership.member = executor_role_oid");
+    expect(migration).toContain("membership.admin_option");
+    expect(migration).toContain("not membership.inherit_option");
+    expect(migration).toContain("not membership.set_option");
+    expect(migration).toContain("membership.grantor = 10::oid");
+    expect(migration).toContain("and grantor.rolsuper");
+    expect(migration).toContain("where membership.roleid = verifier_role_oid) > 1");
   });
 
   it("orders every source table after all of its non-self foreign-key dependencies", () => {
@@ -622,8 +664,8 @@ describe("Postgres schema generation", () => {
     expect(generated).not.toMatch(
       /ALTER ROLE\s+pintpath_(?:runtime|migrator|logical_backup)\b/i,
     );
-    expect(generated).toContain(
-      "FOREACH role_name IN ARRAY ARRAY['pintpath_runtime', 'pintpath_migrator'] LOOP",
+    expect(generated).toMatch(
+      /FOREACH role_name IN ARRAY ARRAY\[\s*'pintpath_runtime',\s*'pintpath_migrator',\s*'pintpath_migration_verifier_authority'\s*\] LOOP/,
     );
     for (const unsafeAttributePredicate of [
       "roles.rolcanlogin",
@@ -647,8 +689,8 @@ describe("Postgres schema generation", () => {
     expect(generated).toContain("WHERE membership.roleid = role.oid");
     expect(generated).toContain("dependency.deptype = 'a'");
     expect(generated).toContain(") <> 61 OR (");
-    expect(generated).toContain("private_policy_count <> 236");
-    expect(generated).toContain("exact_base_policy_count <> 177");
+    expect(generated).toContain("private_policy_count <> 240");
+    expect(generated).toContain("exact_base_policy_count <> 181");
     expect(generated).toContain("exact_backup_policy_count <> 59");
     expect(generated).toContain("non-canonical private policy inventory");
     expect(generated).not.toMatch(/SECURITY\s+DEFINER/i);

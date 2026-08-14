@@ -501,7 +501,8 @@ GRANT SELECT, INSERT ON ${tableName} TO pintpath_migrator;`).join("\n");
 }
 
 function operationsSecurityBoundary(): string {
-  return ["migration_runs", "migration_chunks"].map((tableName) => `
+  const mutableTables = ["migration_runs", "migration_chunks"];
+  const mutablePolicies = mutableTables.map((tableName) => `
 ALTER TABLE pintpath_ops.${tableName} ENABLE ROW LEVEL SECURITY;
 ALTER TABLE pintpath_ops.${tableName} FORCE ROW LEVEL SECURITY;
 CREATE POLICY ${tableName}_migrator_select ON pintpath_ops.${tableName}
@@ -511,6 +512,25 @@ CREATE POLICY ${tableName}_migrator_insert ON pintpath_ops.${tableName}
 CREATE POLICY ${tableName}_migrator_update ON pintpath_ops.${tableName}
   FOR UPDATE TO pintpath_migrator USING (true) WITH CHECK (true);
 GRANT SELECT, INSERT, UPDATE ON pintpath_ops.${tableName} TO pintpath_migrator;`).join("\n");
+  return `${mutablePolicies}
+
+ALTER TABLE pintpath_ops.migration_verifier_authority ENABLE ROW LEVEL SECURITY;
+ALTER TABLE pintpath_ops.migration_verifier_authority FORCE ROW LEVEL SECURITY;
+CREATE POLICY migration_verifier_authority_migrator_select
+  ON pintpath_ops.migration_verifier_authority
+  FOR SELECT TO pintpath_migrator USING (true);
+CREATE POLICY migration_verifier_authority_provisioner_select
+  ON pintpath_ops.migration_verifier_authority
+  FOR SELECT TO pintpath_migration_verifier_authority USING (true);
+CREATE POLICY migration_verifier_authority_provisioner_insert
+  ON pintpath_ops.migration_verifier_authority
+  FOR INSERT TO pintpath_migration_verifier_authority WITH CHECK (true);
+CREATE POLICY migration_verifier_authority_provisioner_update
+  ON pintpath_ops.migration_verifier_authority
+  FOR UPDATE TO pintpath_migration_verifier_authority USING (true) WITH CHECK (true);
+GRANT SELECT ON pintpath_ops.migration_verifier_authority TO pintpath_migrator;
+GRANT SELECT, INSERT, UPDATE ON pintpath_ops.migration_verifier_authority
+  TO pintpath_migration_verifier_authority;`;
 }
 
 function logicalBackupSecurityBoundary(tableNames: readonly string[]): string {
@@ -542,13 +562,16 @@ CREATE POLICY ${tableName}_logical_backup_select ON ${schemaName}.${tableName}
 DECLARE
   runtime_role_oid oid;
   migrator_role_oid oid;
+  verifier_authority_role_oid oid;
   private_policy_count integer;
   exact_base_policy_count integer;
   exact_backup_policy_count integer;
 BEGIN
   SELECT pg_catalog.to_regrole('pintpath_runtime')::oid,
-         pg_catalog.to_regrole('pintpath_migrator')::oid
-    INTO STRICT runtime_role_oid, migrator_role_oid;
+         pg_catalog.to_regrole('pintpath_migrator')::oid,
+         pg_catalog.to_regrole('pintpath_migration_verifier_authority')::oid
+    INTO STRICT runtime_role_oid, migrator_role_oid,
+                verifier_authority_role_oid;
 
   SELECT count(*)::integer INTO private_policy_count
   FROM pg_catalog.pg_policy AS policy
@@ -644,6 +667,40 @@ BEGIN
           )
         )
       )
+      OR (
+        namespace.nspname = 'pintpath_ops'
+        AND relation.relname = 'migration_verifier_authority'
+        AND (
+          (
+            policy.polname = 'migration_verifier_authority_migrator_select'::name
+            AND policy.polroles = ARRAY[migrator_role_oid]::oid[]
+            AND policy.polcmd = 'r'
+            AND pg_catalog.pg_get_expr(policy.polqual, policy.polrelid, false) = 'true'
+            AND policy.polwithcheck IS NULL
+          )
+          OR (
+            policy.polname = 'migration_verifier_authority_provisioner_select'::name
+            AND policy.polroles = ARRAY[verifier_authority_role_oid]::oid[]
+            AND policy.polcmd = 'r'
+            AND pg_catalog.pg_get_expr(policy.polqual, policy.polrelid, false) = 'true'
+            AND policy.polwithcheck IS NULL
+          )
+          OR (
+            policy.polname = 'migration_verifier_authority_provisioner_insert'::name
+            AND policy.polroles = ARRAY[verifier_authority_role_oid]::oid[]
+            AND policy.polcmd = 'a'
+            AND policy.polqual IS NULL
+            AND pg_catalog.pg_get_expr(policy.polwithcheck, policy.polrelid, false) = 'true'
+          )
+          OR (
+            policy.polname = 'migration_verifier_authority_provisioner_update'::name
+            AND policy.polroles = ARRAY[verifier_authority_role_oid]::oid[]
+            AND policy.polcmd = 'w'
+            AND pg_catalog.pg_get_expr(policy.polqual, policy.polrelid, false) = 'true'
+            AND pg_catalog.pg_get_expr(policy.polwithcheck, policy.polrelid, false) = 'true'
+          )
+        )
+      )
     );
 
   SELECT count(*)::integer INTO exact_backup_policy_count
@@ -660,13 +717,13 @@ BEGIN
   WHERE (database.datname = current_database()))))$policy$
     AND policy.polwithcheck IS NULL;
 
-  IF private_policy_count <> 236
-     OR exact_base_policy_count <> 177
+  IF private_policy_count <> 240
+     OR exact_base_policy_count <> 181
      OR exact_backup_policy_count <> 59 THEN
     RAISE EXCEPTION USING
       ERRCODE = '42501',
       MESSAGE = 'Pint Path schema bootstrap produced a non-canonical private policy inventory.',
-      DETAIL = 'Required: exactly 177 runtime/migrator policies plus 59 portable logical-backup policies, with no extras or omissions.';
+      DETAIL = 'Required: exactly 181 runtime/migrator/verifier-authority policies plus 59 portable logical-backup policies, with no extras or omissions.';
   END IF;
 END
 $$;`;
@@ -968,6 +1025,7 @@ export function generatePostgresSchema(input: {
     ["source_schema_version", "0"],
     ["source_snapshot_sha256", ""],
     ["target_ddl_sha256", ""],
+    ["live_schema_sha256", ""],
   ] as const;
   if (new Set(schemaMetadataEntries.map(([key]) => key)).size !== schemaMetadataEntries.length) {
     throw new Error("Generated Postgres schema metadata contains duplicate keys.");
@@ -1002,7 +1060,18 @@ BEGIN
   ) THEN
     CREATE ROLE pintpath_migrator NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOREPLICATION NOBYPASSRLS;
   END IF;
-  FOREACH role_name IN ARRAY ARRAY['pintpath_runtime', 'pintpath_migrator'] LOOP
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_catalog.pg_roles AS roles
+    WHERE roles.rolname = 'pintpath_migration_verifier_authority'
+  ) THEN
+    CREATE ROLE pintpath_migration_verifier_authority NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOREPLICATION NOBYPASSRLS;
+  END IF;
+  FOREACH role_name IN ARRAY ARRAY[
+    'pintpath_runtime',
+    'pintpath_migrator',
+    'pintpath_migration_verifier_authority'
+  ] LOOP
     IF EXISTS (
       SELECT 1
       FROM pg_catalog.pg_roles AS roles
@@ -1038,6 +1107,7 @@ REVOKE ALL ON SCHEMA pintpath_ops FROM PUBLIC;
 GRANT USAGE ON SCHEMA pintpath_app TO pintpath_runtime;
 GRANT USAGE ON SCHEMA pintpath_app TO pintpath_migrator;
 GRANT USAGE ON SCHEMA pintpath_ops TO pintpath_migrator;
+GRANT USAGE ON SCHEMA pintpath_ops TO pintpath_migration_verifier_authority;
 ALTER DEFAULT PRIVILEGES IN SCHEMA pintpath_app REVOKE ALL ON TABLES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES IN SCHEMA pintpath_app REVOKE ALL ON SEQUENCES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES IN SCHEMA pintpath_app REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
@@ -1089,6 +1159,22 @@ CREATE TABLE pintpath_ops.migration_chunks (
   target_sha256 text NOT NULL CHECK (length(target_sha256) = 64),
   completed_at timestamptz NOT NULL,
   PRIMARY KEY (run_id, table_name, chunk_ordinal)
+);
+
+CREATE TABLE pintpath_ops.migration_verifier_authority (
+  authority_id text PRIMARY KEY CHECK (authority_id = 'active'),
+  expected_environment text NOT NULL
+    CHECK (expected_environment IN ('permanent-staging', 'production')),
+  candidate_commit_sha text NOT NULL
+    CHECK (candidate_commit_sha ~ '^(?:[0-9a-f]{40}|[0-9a-f]{64})$'),
+  operator_id_sha256 text NOT NULL CHECK (operator_id_sha256 ~ '^[0-9a-f]{64}$'),
+  verifier_id_sha256 text NOT NULL CHECK (verifier_id_sha256 ~ '^[0-9a-f]{64}$'),
+  verifier_public_key_sha256 text NOT NULL
+    CHECK (verifier_public_key_sha256 ~ '^[0-9a-f]{64}$'),
+  authority_policy_sha256 text NOT NULL
+    CHECK (authority_policy_sha256 ~ '^[0-9a-f]{64}$'),
+  authority_sha256 text NOT NULL CHECK (authority_sha256 ~ '^[0-9a-f]{64}$'),
+  installed_at timestamptz NOT NULL
 );
 
 INSERT INTO schema_metadata (key, value) VALUES

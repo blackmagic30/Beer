@@ -12,7 +12,7 @@ permissions:
 jobs:
   public-production-health:
     if: github.event_name == 'workflow_dispatch' || github.event.schedule == '*/15 * * * *'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Checkout read-only health code
@@ -58,7 +58,7 @@ jobs:
 
   authenticated-user-venue-health:
     if: github.event_name == 'workflow_dispatch' || github.event.schedule == '7 * * * *'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     environment: production
     env:
@@ -87,7 +87,7 @@ jobs:
           fi
 
           echo "configured=false" >> "$GITHUB_OUTPUT"
-          echo "::warning::Authenticated user/venue monitoring is not configured. Public production health is checked separately and this is not evidence of a public outage."
+          echo "::error::Authenticated user/venue monitoring is not configured. The protected production monitor must not report success without end-to-end credentials."
           {
             echo "## Authenticated production monitoring is not configured"
             echo
@@ -100,13 +100,9 @@ jobs:
             echo "- \`SUPABASE_URL\`"
             echo "- \`SUPABASE_ANON_KEY\`"
             echo
-            echo "The public health job remains authoritative for public availability."
+            echo "This job fails closed because public probes alone cannot observe authenticated user and venue-manager paths."
           } >> "$GITHUB_STEP_SUMMARY"
-
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
-            echo "::error::Authenticated user/venue smoke credentials are required for a manual production-health proof."
-            exit 1
-          fi
+          exit 1
 
       - name: Checkout
         if: steps.credentials.outputs.configured == 'true'

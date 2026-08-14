@@ -1,0 +1,48 @@
+{
+  "schemaVersion": "pintpath-protected-postgres-ha-pitr-policy/v2",
+  "policyId": "pintpath-protected-postgres-ha-pitr-enable",
+  "activationState": "GITHUB_ENVIRONMENT_PROTECTED",
+  "githubEnvironments": {
+    "production": "postgres-ha-pitr-production",
+    "permanentStaging": "postgres-ha-pitr-permanent-staging"
+  },
+  "requiredGitRef": "refs/heads/main",
+  "targetContract": {
+    "operatorTargetSelectorRequired": true,
+    "operatorRootServiceIdAllowed": false,
+    "protectedAuthorityTargetVariable": "PINTPATH_POSTGRES_HA_PITR_AUTHORITY_TARGET",
+    "protectedRootServiceIdVariable": "PINTPATH_POSTGRES_HA_PITR_EXPECTED_ROOT_SERVICE_ID",
+    "productionEnvironmentId": "13dab015-df74-45c6-b26f-69323daea99a",
+    "permanentStagingEnvironmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+    "providerDiscoveredRootMustMatchProtectedAuthority": true,
+    "productionAllowed": true,
+    "permanentStagingAllowed": true,
+    "otherTargetsAllowed": false,
+    "haRootRequired": true,
+    "allMembersHealthyRequired": true
+  },
+  "mutationBoundary": {
+    "policyPath": "ops/railway/production-staging-mutation-policy.json",
+    "policySha256": "cebed5aebb1e2ada4cd247649eb418fa7d8b77b5c863ed4ecece601f492ac3c8",
+    "immediatePreflightRequired": true,
+    "unconditionalPostflightRequired": true
+  },
+  "providerContract": {
+    "graphqlEndpoint": "https://backboard.railway.com/graphql/v2",
+    "railwayCliSchemaVersion": "5.32.0",
+    "railwayCliSchemaSha256": "89530486d77ed677586554085d4ff67e8ae6d3c44a6825d67c94320d4a083285",
+    "mutation": "enablePitrForHaCluster",
+    "maximumAttempts": 1,
+    "automaticRetriesAllowed": false,
+    "rerunsAllowed": false,
+    "unconditionalPostflightRequired": true,
+    "ambiguousOutcomeAction": "READ_ONLY_RECONCILIATION_STOP_NO_RETRY"
+  },
+  "evidence": {
+    "durableIntentRequiredBeforeWrite": true,
+    "terminalEvidenceRequired": true,
+    "targetAuthoritySha256Required": true,
+    "providerCredentialsAllowedInEvidence": false,
+    "secretDerivedCommitmentsAllowed": false
+  }
+}

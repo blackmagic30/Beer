@@ -1573,6 +1573,7 @@ function dumpInvocation(
       "--no-password",
       "--schema=pintpath_app",
       "--schema=pintpath_ops",
+      "--exclude-table=pintpath_ops.migration_verifier_authority",
     ],
     env: input.environment,
     timeoutMs: DUMP_TIMEOUT_MS,

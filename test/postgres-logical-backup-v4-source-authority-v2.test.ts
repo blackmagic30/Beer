@@ -631,7 +631,7 @@ describe("PostgreSQL logical-backup V4 passive source-authority V2", () => {
     expect(POSTGRES_LOGICAL_BACKUP_V4_SOURCE_AUTHORITY_V2_POLICY_SHA256)
       .toBe(POSTGRES_LOGICAL_BACKUP_V4_SOURCE_AUTHORITY_V2_EXPECTED_POLICY_SHA256);
     expect(POSTGRES_LOGICAL_BACKUP_V4_SOURCE_AUTHORITY_V2_EXPECTED_POLICY_SHA256)
-      .toBe("295dd15e12df663da4d1e02d05d43f1b6854b1cb0af5f632bffac52f85cd54cd");
+      .toBe("3e375a73225da5f8af2e0b1a968b6fd6b3af53e36d0d2ec9612812c4b8de849f");
     expect(hash(canonicalPostgresLogicalBackupV4SourceAuthorityPolicyV2Json()))
       .toBe(POSTGRES_LOGICAL_BACKUP_V4_SOURCE_AUTHORITY_V2_POLICY_SHA256);
     expect(crypto.createHash("sha256").update(canonicalJson({
@@ -645,7 +645,7 @@ describe("PostgreSQL logical-backup V4 passive source-authority V2", () => {
         requiredEmptyKernelRelations: 2,
         totalSourceRelations: 61,
         portableReadBoundarySha256:
-          "21ae87b71a458416f62d08749d8fc3368e9ff1621cd7f40550611291502a91ac",
+          "26b6b1346c15465ce538ac9769d435cd02c50bb138f8c73095ef5ff132506cf8",
         exactArchivedRelationSelectAclCountForBackupGroup: 59,
         exactRequiredEmptyKernelRelationSelectAclCountForBackupGroup: 2,
         exactTotalRelationSelectAclCountForBackupGroup: 61,
@@ -677,7 +677,7 @@ describe("PostgreSQL logical-backup V4 passive source-authority V2", () => {
       claimedDatabaseIdentitySha256: hash("database-identity"),
       claimedSourceUrlSha256: hash("source-url"),
       portableReadBoundarySha256:
-        "21ae87b71a458416f62d08749d8fc3368e9ff1621cd7f40550611291502a91ac",
+        "26b6b1346c15465ce538ac9769d435cd02c50bb138f8c73095ef5ff132506cf8",
     });
     expect(receipt.authorityProjection.backupGroup).toMatchObject({
       roleName: "pintpath_logical_backup_d12345",
@@ -1421,7 +1421,19 @@ describe("PostgreSQL logical-backup V4 passive source-authority V2", () => {
       }
       throw new Error(`unexpected independent policy expression: ${value}`);
     };
-    const independentlyProjected = boundary.relations.flatMap((relation) => {
+    const verifierAuthority = boundary.relations.find((relation) => (
+      relation.qualifiedName === "pintpath_ops.migration_verifier_authority"
+    ));
+    expect(verifierAuthority?.acl.filter((acl) => (
+      acl.grantee === "$pintpath_logical_backup_current_database"
+    ))).toEqual([]);
+    expect(verifierAuthority?.policies.some((policy) => (
+      policy.name.endsWith("_logical_backup_select")
+    ))).toBe(false);
+    const archivedRelations = boundary.relations.filter((relation) => (
+      relation.qualifiedName !== "pintpath_ops.migration_verifier_authority"
+    ));
+    const independentlyProjected = archivedRelations.flatMap((relation) => {
       expect(relation.rowSecurity).toBe(true);
       expect(relation.forceRowSecurity).toBe(true);
       expect(relation.columnAclCount).toBe(0);
@@ -1448,7 +1460,8 @@ describe("PostgreSQL logical-backup V4 passive source-authority V2", () => {
       `${left.qualifiedRelation}\u0000${left.policyName}`,
       `${right.qualifiedRelation}\u0000${right.policyName}`,
     ));
-    expect(boundary.relations).toHaveLength(61);
+    expect(boundary.relations).toHaveLength(62);
+    expect(archivedRelations).toHaveLength(61);
     expect(independentlyProjected).toHaveLength(240);
     expect(independentlyProjected).toEqual(
       POSTGRES_LOGICAL_BACKUP_V4_SOURCE_AUTHORITY_V2_POLICY_DESCRIPTORS,

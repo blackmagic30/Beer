@@ -135,6 +135,7 @@ export interface PostgresLogicalOffsiteResult {
   readonly attestationSha256: string;
   readonly latestPointerSha256: string;
   readonly backupIdSha256: string;
+  readonly successStateSha256: string;
 }
 
 export interface PostgresLogicalOffsiteReadiness {
@@ -840,6 +841,56 @@ async function verifyRemoteObject(input: {
   return { info: afterInfo, download: downloaded };
 }
 
+async function inspectExistingMutableObject(input: {
+  readonly storage: PostgresLogicalOffsiteStorage;
+  readonly upload: PostgresLogicalOffsiteUpload;
+  readonly expectedSha256: string;
+}): Promise<VerifiedRemoteObject | null> {
+  let beforeInfo: PostgresLogicalOffsiteObjectInfo | null;
+  let afterInfo: PostgresLogicalOffsiteObjectInfo | null;
+  let downloaded: PostgresLogicalOffsiteDownload;
+  try {
+    beforeInfo = await input.storage.objectInfo(
+      input.upload.bucketName,
+      input.upload.objectPath,
+    );
+    if (!beforeInfo) return null;
+    downloaded = await input.storage.downloadVerified({
+      bucketName: input.upload.bucketName,
+      objectPath: input.upload.objectPath,
+      maximumBytes: MAX_REMOTE_JSON_BYTES,
+      retainBytes: true,
+    });
+    afterInfo = await input.storage.objectInfo(
+      input.upload.bucketName,
+      input.upload.objectPath,
+    );
+  } catch {
+    throw offsiteError("object_verification_failed");
+  }
+  if (
+    !afterInfo
+    || !sameObjectInfo(beforeInfo, afterInfo)
+    || !downloaded.retainedBytes
+    || downloaded.bytes !== afterInfo.bytes
+    || downloaded.retainedBytes.length !== downloaded.bytes
+  ) throw offsiteError("object_verification_failed");
+
+  const exact = afterInfo.bytes === input.upload.expectedBytes
+    && downloaded.sha256 === input.expectedSha256
+    && afterInfo.contentType.toLowerCase() === input.upload.contentType
+    && cacheControlMatches(afterInfo.cacheControl, input.upload.cacheControl)
+    && exactMetadataSubset(afterInfo.metadata, input.upload.metadata);
+  if (exact) return { info: afterInfo, download: downloaded };
+
+  // A mutable pointer may legitimately describe an older backup, but it must
+  // still be canonical and internally valid before this process replaces it.
+  // An unreadable or malformed pointer is an uncertainty, not authorization
+  // to overwrite recovery evidence.
+  parseLatestPointer(downloaded.retainedBytes);
+  return null;
+}
+
 async function ensureImmutableObject(input: {
   readonly storage: PostgresLogicalOffsiteStorage;
   readonly upload: PostgresLogicalOffsiteUpload;
@@ -1445,21 +1496,31 @@ export async function attestPostgresLogicalBackup(
       now: canonicalNow(now),
       minimumRemainingMs: MINIMUM_POINTER_LEASE_REMAINING_MS,
     });
-    try {
-      // A transport error can arrive after Storage has committed the mutable
-      // pointer. Once mutation starts, immutable evidence must never be
-      // cleaned up because latest.json may already reference it.
-      pointerMutationAttempted = true;
-      await options.storage.replaceMutable(pointerUpload);
-    } catch {
-      throw offsiteError("object_upload_failed");
-    }
-    const pointerResult = await verifyRemoteObject({
+    const existingPointer = await inspectExistingMutableObject({
       storage: options.storage,
       upload: pointerUpload,
       expectedSha256: latestPointerSha256,
-      retainBytes: true,
     });
+    let pointerResult: VerifiedRemoteObject;
+    if (existingPointer) {
+      pointerResult = existingPointer;
+    } else {
+      try {
+        // A transport error can arrive after Storage has committed the mutable
+        // pointer. Once mutation starts, immutable evidence must never be
+        // cleaned up because latest.json may already reference it.
+        pointerMutationAttempted = true;
+        await options.storage.replaceMutable(pointerUpload);
+      } catch {
+        throw offsiteError("object_upload_failed");
+      }
+      pointerResult = await verifyRemoteObject({
+        storage: options.storage,
+        upload: pointerUpload,
+        expectedSha256: latestPointerSha256,
+        retainBytes: true,
+      });
+    }
     if (
       !pointerResult.download.retainedBytes
       || canonicalPostgresBackupJson(parseLatestPointer(
@@ -1537,6 +1598,7 @@ export async function attestPostgresLogicalBackup(
       attestationSha256: successState.attestationSha256,
       latestPointerSha256: successState.latestPointerSha256,
       backupIdSha256: successState.backupIdSha256,
+      successStateSha256: sha256(canonicalPostgresBackupJson(successState)),
     };
   } catch (error) {
     if (!pointerMutationAttempted && createdPaths.length > 0) {

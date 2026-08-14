@@ -854,6 +854,18 @@ describe("Railway sealed-variable readiness", () => {
       variables: expect.arrayContaining([
         expect.objectContaining({
           serviceId: "6816c4a2-e392-4ee5-826f-2584cb599ec0",
+          name: "DATABASE_MAINTENANCE_URL",
+        }),
+        expect.objectContaining({
+          serviceId: "6816c4a2-e392-4ee5-826f-2584cb599ec0",
+          name: "PINTPATH_POSTGRES_ROOT_CA_PEM",
+        }),
+        expect.objectContaining({
+          serviceId: "6816c4a2-e392-4ee5-826f-2584cb599ec0",
+          name: "PINTPATH_POSTGRES_ROOT_CA_DER_SHA256",
+        }),
+        expect.objectContaining({
+          serviceId: "6816c4a2-e392-4ee5-826f-2584cb599ec0",
           name: "SUPABASE_SERVICE_ROLE_KEY",
         }),
         expect.objectContaining({
@@ -868,6 +880,6 @@ describe("Railway sealed-variable readiness", () => {
       ],
     });
     const parsed = JSON.parse(source) as { variables: unknown[] };
-    expect(parsed.variables).toHaveLength(13);
+    expect(parsed.variables).toHaveLength(16);
   });
 });

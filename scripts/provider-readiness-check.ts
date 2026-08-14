@@ -10,6 +10,10 @@ import {
 } from "../src/lib/supabase-key-format.js";
 import { parseAccountDeletionNotificationKeyring } from "../src/lib/account-deletion-notification-worker.js";
 import { inspectPostgresRuntimeImplementationContract } from "../src/db/runtime-persistence.js";
+import {
+  assertPostgresRailwayStockLocalhostRootCaPem,
+  parsePostgresRailwayStockLocalhostCaUrl,
+} from "../src/lib/postgres-railway-stock-localhost-ca.js";
 import { assertOperatorMutationAllowed } from "./lib/operator-mutation-guard.js";
 
 dotenv.config({ quiet: true });
@@ -26,6 +30,19 @@ interface ProviderCheck {
   status: CheckStatus;
   action: string | null;
   details?: string | null;
+}
+
+interface PostgresRuntimeAuthorityReadiness {
+  readonly schemaVersion: "pintpath-postgres-runtime-authority-readiness/v1";
+  readonly applicationUrlSha256: string | null;
+  readonly maintenanceUrlSha256: string | null;
+  readonly rootCaPemSha256: string | null;
+  readonly rootCaDerSha256: string | null;
+  readonly applicationUrlExact: boolean;
+  readonly maintenanceUrlExact: boolean;
+  readonly sameDatabaseTarget: boolean;
+  readonly distinctLoginRoles: boolean;
+  readonly rootCaExact: boolean;
 }
 
 function hasValue(name: string): boolean {
@@ -381,45 +398,129 @@ function checkAbsent(names: string[], id: string, label: string, action: string)
   };
 }
 
-function checkTlsPostgresUrl(name: string, id: string, label: string, action: string): ProviderCheck {
-  const value = getValue(name);
-  if (!value) {
-    return {
-      id,
-      label,
-      status: isProduction() ? "fail" : "warn",
-      action,
-      details: `${name} is not configured.`,
-    };
+function optionalSha256(value: string): string | null {
+  return value.length > 0 ? connectionUrlSha256(value) : null;
+}
+
+function inspectPostgresRuntimeAuthority(): PostgresRuntimeAuthorityReadiness {
+  const applicationValue = process.env.DATABASE_URL ?? "";
+  const maintenanceValue = process.env.DATABASE_MAINTENANCE_URL ?? "";
+  const rootCaPem = process.env.PINTPATH_POSTGRES_ROOT_CA_PEM ?? "";
+  const rootCaDerSha256 = getValue(
+    "PINTPATH_POSTGRES_ROOT_CA_DER_SHA256",
+  ).toLowerCase();
+  let applicationUrlExact = false;
+  let maintenanceUrlExact = false;
+  let sameDatabaseTarget = false;
+  let distinctLoginRoles = false;
+  let rootCaExact = false;
+  let application: URL | null = null;
+  let maintenance: URL | null = null;
+
+  try {
+    parsePostgresRailwayStockLocalhostCaUrl(applicationValue);
+    application = new URL(applicationValue);
+    applicationUrlExact = true;
+  } catch {
+    application = null;
   }
   try {
-    const url = new URL(value);
-    const sslModes = url.searchParams
-      .getAll("sslmode")
-      .map((sslMode) => sslMode.toLowerCase());
-    const valid = ["postgres:", "postgresql:"].includes(url.protocol)
-      && Boolean(url.hostname)
-      && Boolean(url.username)
-      && Boolean(url.pathname.replace(/^\//, ""))
-      && sslModes.length === 1
-      && ["require", "verify-ca", "verify-full"].includes(sslModes[0] ?? "")
-      && !url.hash;
-    return {
-      id,
-      label,
-      status: valid ? "pass" : "fail",
-      action: valid ? null : action,
-      details: valid ? "Postgres connection requires TLS." : `${name} must be a Postgres URL with an explicit TLS sslmode.`,
-    };
+    parsePostgresRailwayStockLocalhostCaUrl(maintenanceValue);
+    maintenance = new URL(maintenanceValue);
+    maintenanceUrlExact = true;
   } catch {
-    return {
-      id,
-      label,
-      status: "fail",
-      action,
-      details: `${name} is not a valid URL.`,
-    };
+    maintenance = null;
   }
+  if (application && maintenance) {
+    sameDatabaseTarget = application.protocol === maintenance.protocol
+      && application.hostname === maintenance.hostname
+      && application.port === maintenance.port
+      && application.pathname === maintenance.pathname;
+    try {
+      distinctLoginRoles = Boolean(application.username)
+        && Boolean(maintenance.username)
+        && decodeURIComponent(application.username)
+          !== decodeURIComponent(maintenance.username);
+    } catch {
+      distinctLoginRoles = false;
+    }
+  }
+  try {
+    assertPostgresRailwayStockLocalhostRootCaPem(
+      rootCaPem,
+      rootCaDerSha256,
+    );
+    rootCaExact = true;
+  } catch {
+    rootCaExact = false;
+  }
+
+  return Object.freeze({
+    schemaVersion: "pintpath-postgres-runtime-authority-readiness/v1",
+    applicationUrlSha256: optionalSha256(applicationValue),
+    maintenanceUrlSha256: optionalSha256(maintenanceValue),
+    rootCaPemSha256: optionalSha256(rootCaPem),
+    rootCaDerSha256: /^[a-f0-9]{64}$/.test(rootCaDerSha256)
+      ? rootCaDerSha256
+      : null,
+    applicationUrlExact,
+    maintenanceUrlExact,
+    sameDatabaseTarget,
+    distinctLoginRoles,
+    rootCaExact,
+  });
+}
+
+const postgresRuntimeAuthority = inspectPostgresRuntimeAuthority();
+
+function postgresRuntimeAuthorityChecks(input: {
+  applicationId: string;
+  maintenanceId: string;
+  rootCaId: string;
+  labelPrefix: string;
+}): readonly [ProviderCheck, ProviderCheck, ProviderCheck] {
+  const applicationExact = postgresRuntimeAuthority.applicationUrlExact
+    && !hasValue("DATABASE_PATH");
+  const maintenanceExact = postgresRuntimeAuthority.maintenanceUrlExact
+    && postgresRuntimeAuthority.sameDatabaseTarget
+    && postgresRuntimeAuthority.distinctLoginRoles;
+  return [
+    {
+      id: input.applicationId,
+      label: `${input.labelPrefix} application Postgres authority`,
+      status: applicationExact ? "pass" : isProduction() ? "fail" : "warn",
+      action: applicationExact
+        ? null
+        : "Set DATABASE_URL to the exact lower-case Railway private :5432 application-login URL with only sslmode=verify-full, and remove DATABASE_PATH.",
+      details: applicationExact
+        ? "The application URL has the exact Railway stock-localhost CA transport shape and writable SQLite is absent."
+        : "The application Postgres authority is absent or does not match the canonical runtime contract; no URL is emitted.",
+    },
+    {
+      id: input.maintenanceId,
+      label: `${input.labelPrefix} maintenance Postgres authority`,
+      status: maintenanceExact ? "pass" : isProduction() ? "fail" : "warn",
+      action: maintenanceExact
+        ? null
+        : "Set DATABASE_MAINTENANCE_URL to the exact lower-case Railway private :5432 maintenance-login URL with only sslmode=verify-full, targeting the same database through a distinct login.",
+      details: maintenanceExact
+        ? "The maintenance URL targets the application database through a distinct exact login authority."
+        : "The maintenance Postgres authority is absent, mismatched, or not login-separated; no URL is emitted.",
+    },
+    {
+      id: input.rootCaId,
+      label: `${input.labelPrefix} Railway root CA authority`,
+      status: postgresRuntimeAuthority.rootCaExact
+        ? "pass"
+        : isProduction() ? "fail" : "warn",
+      action: postgresRuntimeAuthority.rootCaExact
+        ? null
+        : "Set PINTPATH_POSTGRES_ROOT_CA_PEM to the one valid self-signed Railway root CA and match its independently reviewed PINTPATH_POSTGRES_ROOT_CA_DER_SHA256 pin.",
+      details: postgresRuntimeAuthority.rootCaExact
+        ? "The bounded root CA PEM is valid and matches its reviewed DER SHA-256 pin."
+        : "The root CA authority is absent, invalid, expired, or mismatched; no PEM is emitted.",
+    },
+  ];
 }
 
 function checkNoTestKeyInProduction(name: string, label: string, testPrefix: string): ProviderCheck {
@@ -877,23 +978,16 @@ const freeLaunchDeferredCredentialsCheck: ProviderCheck = (() => {
   };
 })();
 
-const productionPostgresCheck: ProviderCheck = (() => {
-  const postgres = checkTlsPostgresUrl(
-    "DATABASE_URL",
-    "PRODUCTION_POSTGRES_DATABASE_URL",
-    "Shared TLS Postgres persistence",
-    "Set DATABASE_URL to the least-privilege pooled Postgres connection with sslmode=require (or stricter) before a full-scale launch.",
-  );
-  if (hasValue("DATABASE_PATH")) {
-    return {
-      ...postgres,
-      status: isProduction() ? "fail" : "warn",
-      action: "Remove DATABASE_PATH from the production service; keep any sealed SQLite migration source outside the runtime environment.",
-      details: "DATABASE_PATH is configured, so the runtime could resume local SQLite writes.",
-    };
-  }
-  return postgres;
-})();
+const [
+  productionPostgresCheck,
+  productionPostgresMaintenanceCheck,
+  productionPostgresRootCaCheck,
+] = postgresRuntimeAuthorityChecks({
+  applicationId: "PRODUCTION_POSTGRES_DATABASE_URL",
+  maintenanceId: "PRODUCTION_POSTGRES_MAINTENANCE_URL",
+  rootCaId: "PRODUCTION_POSTGRES_ROOT_CA",
+  labelPrefix: "Production",
+});
 
 const productionDatabaseIdentityCheck = checkPinnedConnectionIdentity({
   urlName: "DATABASE_URL",
@@ -935,23 +1029,16 @@ const productionRedisResourceCheck = checkPinnedResourceIdentity({
   requiredForbiddenResourceName: "PINTPATH_PERMANENT_STAGING_REDIS_RESOURCE_ID",
 });
 
-const permanentStagingPostgresCheck: ProviderCheck = (() => {
-  const postgres = checkTlsPostgresUrl(
-    "DATABASE_URL",
-    "PERMANENT_STAGING_POSTGRES_DATABASE_URL",
-    "Permanent-staging shared TLS Postgres persistence",
-    "Set DATABASE_URL to the reviewed least-privilege permanent-staging Postgres connection with sslmode=require (or stricter).",
-  );
-  if (hasValue("DATABASE_PATH")) {
-    return {
-      ...postgres,
-      status: "fail",
-      action: "Remove DATABASE_PATH from permanent staging; keep the sealed SQLite source outside the application runtime.",
-      details: "DATABASE_PATH is configured, so staging could resume local SQLite writes.",
-    };
-  }
-  return postgres;
-})();
+const [
+  permanentStagingPostgresCheck,
+  permanentStagingPostgresMaintenanceCheck,
+  permanentStagingPostgresRootCaCheck,
+] = postgresRuntimeAuthorityChecks({
+  applicationId: "PERMANENT_STAGING_POSTGRES_DATABASE_URL",
+  maintenanceId: "PERMANENT_STAGING_POSTGRES_MAINTENANCE_URL",
+  rootCaId: "PERMANENT_STAGING_POSTGRES_ROOT_CA",
+  labelPrefix: "Permanent-staging",
+});
 
 const permanentStagingDatabaseIdentityCheck = checkPinnedConnectionIdentity({
   urlName: "DATABASE_URL",
@@ -1078,7 +1165,9 @@ const stagingBootstrapInertScopeCheck: ProviderCheck = (() => {
 const stagingBootstrapChecks: ProviderCheck[] = [
   postgresRuntimeImplementationCheck,
   checkPermanentStagingRailwayIdentity(),
-  productionPostgresCheck,
+  permanentStagingPostgresCheck,
+  permanentStagingPostgresMaintenanceCheck,
+  permanentStagingPostgresRootCaCheck,
   stagingBootstrapDatabaseIdentityCheck,
   stagingBootstrapDatabaseResourceCheck,
   checkRequired("REDIS_URL", "Permanent-staging bootstrap Redis", "Configure the isolated staging Redis URL."),
@@ -1179,6 +1268,8 @@ const permanentStagingCompleteChecks: ProviderCheck[] = [
   },
   checkPermanentStagingRailwayIdentity(),
   permanentStagingPostgresCheck,
+  permanentStagingPostgresMaintenanceCheck,
+  permanentStagingPostgresRootCaCheck,
   permanentStagingDatabaseIdentityCheck,
   permanentStagingDatabaseResourceCheck,
   checkRequired("REDIS_URL", "Permanent-staging Redis", "Configure the isolated permanent-staging Redis URL."),
@@ -1315,6 +1406,8 @@ const launchPreflightChecks: ProviderCheck[] = [
   operationalRestoreCopyDestinationCheck,
   checkSupabaseProviderCallbackUrl(),
   productionPostgresCheck,
+  productionPostgresMaintenanceCheck,
+  productionPostgresRootCaCheck,
   productionDatabaseIdentityCheck,
   productionDatabaseResourceCheck,
   postgresRuntimeImplementationCheck,
@@ -1452,23 +1545,16 @@ const deletionRehearsalPublicOriginCheck: ProviderCheck = (() => {
   }
 })();
 
-const deletionRehearsalDatabaseCheck: ProviderCheck = (() => {
-  const postgres = checkTlsPostgresUrl(
-    "DATABASE_URL",
-    "ACCOUNT_DELETION_REHEARSAL_DATABASE",
-    "Permanent-staging shared Postgres",
-    "Set DATABASE_URL to the permanent-staging pooled Postgres URL with sslmode=require (or stricter), and remove DATABASE_PATH.",
-  );
-  if (hasValue("DATABASE_PATH")) {
-    return {
-      ...postgres,
-      status: "fail",
-      action: "Remove DATABASE_PATH; the full-scale deletion rehearsal must use shared Postgres, never a mounted SQLite file.",
-      details: "DATABASE_PATH is configured.",
-    };
-  }
-  return postgres;
-})();
+const [
+  deletionRehearsalDatabaseCheck,
+  deletionRehearsalMaintenanceDatabaseCheck,
+  deletionRehearsalPostgresRootCaCheck,
+] = postgresRuntimeAuthorityChecks({
+  applicationId: "ACCOUNT_DELETION_REHEARSAL_DATABASE",
+  maintenanceId: "ACCOUNT_DELETION_REHEARSAL_MAINTENANCE_DATABASE",
+  rootCaId: "ACCOUNT_DELETION_REHEARSAL_POSTGRES_ROOT_CA",
+  labelPrefix: "Account-deletion rehearsal",
+});
 
 const deletionRehearsalDatabaseIdentityCheck = checkPinnedConnectionIdentity({
   urlName: "DATABASE_URL",
@@ -1608,6 +1694,8 @@ const deletionRehearsalChecks: ProviderCheck[] = [
   deletionRehearsalRailwayIdentityCheck,
   deletionRehearsalPublicOriginCheck,
   deletionRehearsalDatabaseCheck,
+  deletionRehearsalMaintenanceDatabaseCheck,
+  deletionRehearsalPostgresRootCaCheck,
   deletionRehearsalDatabaseIdentityCheck,
   deletionRehearsalDatabaseResourceCheck,
   checkPermanentStagingServiceInstances(),
@@ -1744,6 +1832,7 @@ console.log(JSON.stringify({
     blockingWarnings: blockingWarnings.length,
     failures: failed.length,
   },
+  postgresAuthority: postgresRuntimeAuthority,
   checks,
 }, null, 2));
 

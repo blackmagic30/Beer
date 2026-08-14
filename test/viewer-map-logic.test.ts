@@ -428,7 +428,7 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain("getVisibleBeerPriceTier");
     expect(html).toContain("venueRail__card--price-");
     expect(html).toContain("green, yellow, orange, and dark-red price rings");
-    expect(html).toContain("__pintPathMapMarkerDebug");
+    expect(html).not.toContain("__pintPathMapMarkerDebug");
     expect(html).toContain('libraries: "marker"');
     expect(html).not.toContain('libraries: "marker,places"');
     expect(html).toContain('loading: "async"');
@@ -473,7 +473,7 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain("Loading venue list");
     expect(html).toContain("Map tiles are unavailable, so Pint Path is loading the venue list instead.");
     expect(html).toContain("Venue list unavailable");
-    expect(html).toContain('markerType: "list_fallback"');
+    expect(html).not.toContain("__pintPathMapMarkerDebug");
     expect(html).toContain('id="mapOverlayTabs" aria-label="Map panels" hidden');
     expect(html).not.toContain("new google.maps.Marker");
     expect(html).not.toContain("Blue markers have no captured beer prices yet.");

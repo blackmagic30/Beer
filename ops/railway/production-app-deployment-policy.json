@@ -1,0 +1,112 @@
+{
+  "schemaVersion": "pintpath-railway-application-deployment-policy/v4",
+  "policyId": "pintpath-production-app-source-upload",
+  "activationState": "GITHUB_ENVIRONMENT_PROTECTED",
+  "projectId": "48d8c6cd-1c66-4148-874b-20877f48e1a5",
+  "target": {
+    "name": "production",
+    "environmentId": "13dab015-df74-45c6-b26f-69323daea99a",
+    "forbiddenEnvironmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+    "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
+    "publicOrigin": "https://pintpath.au",
+    "publicOriginSha256": "a3a1a2e58fa4038b741e1c213af02708e09ae901005c7c31f919e0a4dea46e90",
+    "allowedReplicaCounts": [
+      1,
+      2
+    ],
+    "githubEnvironment": "production-deployment",
+    "requiredGitRef": "refs/heads/main"
+  },
+  "railwayCli": {
+    "version": "5.32.0",
+    "platform": "linux",
+    "architecture": "x64",
+    "targetTriple": "x86_64-unknown-linux-musl",
+    "releaseUrl": "https://github.com/railwayapp/cli/releases/download/v5.32.0/railway-v5.32.0-x86_64-unknown-linux-musl.tar.gz",
+    "archiveSha256": "cd69b2ecb556601751165d85ac31a5fbc38cff46397939356df28d2b96a005f5",
+    "executableRelativePath": "railway",
+    "executableSha256": "27133cfc20bffc43b2f32c1638fa3c50eefc2f9d2d80301a93de34632ccb7a43"
+  },
+  "sourceContract": {
+    "candidateBinding": "exact-current-main-head",
+    "cleanCommittedHeadRequired": true,
+    "privateGitArchiveSnapshotRequired": true,
+    "railwayConfigPath": "railway.toml",
+    "railwayConfigSha256": "85dc659ebec2e0132092d917505d71678e92b8441b54bcefc80c6a082e3b967b",
+    "packageLockPath": "package-lock.json",
+    "packageLockSha256": "b5bfc2258853ab58dd5749b91ae55d9724620e102fe55e91de31a4599ab9f67b"
+  },
+  "mutationBoundary": {
+    "policyPath": "ops/railway/production-staging-mutation-policy.json",
+    "policySha256": "cebed5aebb1e2ada4cd247649eb418fa7d8b77b5c863ed4ecece601f492ac3c8",
+    "immediatePreflightRequired": true,
+    "unconditionalPostflightRequired": true
+  },
+  "writeContract": {
+    "mode": "single-source-upload",
+    "transportImplemented": true,
+    "exactTargetTokenScopeRequired": true,
+    "maximumWriteAttempts": 1,
+    "automaticRetryAllowed": false,
+    "acknowledgementRequiredForReconciliation": false,
+    "uncertainMutationAction": "READ_ONLY_RECONCILIATION_NO_RETRY",
+    "exactArguments": [
+      "up",
+      "<snapshot>",
+      "--path-as-root",
+      "--no-gitignore",
+      "--detach",
+      "--json",
+      "--project",
+      "<project-id>",
+      "--environment",
+      "<environment-id>",
+      "--service",
+      "<service-id>",
+      "--message",
+      "<candidate-bound-message>"
+    ],
+    "adjacentMutationAllowed": false,
+    "topologyMutationAllowed": false
+  },
+  "postflightContract": {
+    "expectedDeploymentStatus": "SUCCESS",
+    "expectedDeploymentStopped": false,
+    "deploymentPatchAllowed": false,
+    "replicaCountMustMatchPreflight": true,
+    "requiredRuntimeRoutes": [
+      "/health",
+      "/startup",
+      "/ready"
+    ],
+    "maximumObservationSeconds": 900,
+    "pollIntervalSeconds": 10
+  },
+  "prerequisite": {
+    "target": "permanent-staging",
+    "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+    "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
+    "publicOrigin": "https://pintpath-staging.up.railway.app",
+    "publicOriginSha256": "4532dc3b87deb570735196a86cd1b75ddc490c752dd6993e2f0d7bcb7df8161b",
+    "expectedReplicaCount": 1,
+    "sameCandidateRequired": true
+  },
+  "providerReadinessContract": {
+    "envelopeSchema": "pintpath-production-provider-readiness-envelope/v2",
+    "verificationSchema": "pintpath-production-provider-readiness-verification/v2",
+    "readinessProfile": "production_free_launch",
+    "maximumAgeSeconds": 86400,
+    "candidateBindingRequired": true,
+    "allChecksPassRequired": true
+  },
+  "costContract": {
+    "required": false,
+    "policySchema": null,
+    "policyId": null,
+    "policyPath": null,
+    "policySha256": null,
+    "deploymentMayClaimCostGatePassed": false,
+    "singleCombinedReceiptRequiredForRelease": false,
+    "receiptMayAuthorizeDeployment": false
+  }
+}

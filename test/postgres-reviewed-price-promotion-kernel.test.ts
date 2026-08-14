@@ -4,6 +4,8 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_MIGRATION_FILE,
+  POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_MIGRATION_SHA256,
   POSTGRES_REVIEWED_PRICE_PROMOTION_KERNEL_CONTRACT,
   POSTGRES_REVIEWED_PRICE_PROMOTION_KERNEL_MIGRATION_FILE,
   POSTGRES_REVIEWED_PRICE_PROMOTION_KERNEL_MIGRATION_SHA256,
@@ -27,6 +29,15 @@ describe("inert reviewed-price promotion kernel contract", () => {
     );
     expect(POSTGRES_REVIEWED_PRICE_PROMOTION_KERNEL_CONTRACT.migrationSha256)
       .toBe(POSTGRES_REVIEWED_PRICE_PROMOTION_KERNEL_MIGRATION_SHA256);
+  });
+
+  it("pins the forward activation migration independently of the inert kernel", () => {
+    expect(POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_MIGRATION_FILE).toBe(
+      "supabase/migrations/20260813000000_activate_reviewed_price_promotion_kernel.sql",
+    );
+    expect(sha256PostgresReviewedPricePromotionKernelMigration(fs.readFileSync(
+      path.resolve(POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_MIGRATION_FILE),
+    ))).toBe(POSTGRES_REVIEWED_PRICE_PROMOTION_ACTIVATION_MIGRATION_SHA256);
   });
 
   it("declares the exact successor inventory without generating SQL", () => {
