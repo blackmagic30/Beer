@@ -56,7 +56,16 @@ path `/etc/pintpath/production-backup-ephemeral-runner.json` and pin its byte
 SHA-256 independently in both protected environments:
 
 ```json
-{"schemaVersion":1,"kind":"pintpath-production-backup-ephemeral-runner-policy","runnerMode":"jit-ephemeral-one-job","volatileWorkRoot":"/run/pintpath-production-backup","filesystemType":"tmpfs","requiredMountOptions":["nodev","noexec","nosuid","rw"],"unencryptedSwapAllowed":false,"concurrentSameUidWorkloadAllowed":false}
+{
+  "schemaVersion": 1,
+  "kind": "pintpath-production-backup-ephemeral-runner-policy",
+  "runnerMode": "jit-ephemeral-one-job",
+  "volatileWorkRoot": "/run/pintpath-production-backup",
+  "filesystemType": "tmpfs",
+  "requiredMountOptions": ["nodev", "noexec", "nosuid", "rw"],
+  "unencryptedSwapAllowed": false,
+  "concurrentSameUidWorkloadAllowed": false
+}
 ```
 
 The workflow opens and hashes that policy without following symlinks, proves
@@ -281,12 +290,62 @@ passive/offline: their capability booleans remain false, their scratch-restore
 completion remains unimplemented, and this workflow does not grant them
 runtime, source, archive, artifact, activation, or cutover authority.
 
+## Post-promotion activation integration
+
+The daily/monthly workflow above remains a separate backup operation. The
+frozen release chain additionally invokes the schema-v3 boundary from
+`.github/workflows/activate-production-promotion-recovery.yml` after route
+close and the reviewed promotion. Its controlling policy is v2 SHA-256
+`57f66c1c9dde912586ec510e37c28cc3dfea2c098e67c78edbea189c7dcc9988`.
+
+The activation has a deliberate cross-network split:
+
+- `production-capture` uses the exact JIT label
+  `[self-hosted, linux, x64, pintpath-production-backup]`. It observes PITR in
+  the capture job, creates the logical set, writes and verifies its operational
+  copy, seals the logical set into WORM, captures and separately seals the
+  private Storage/deletion bundle, and uploads receipts/content addresses only.
+- `disposable-recover` uses the different JIT label
+  `[self-hosted, linux, x64, pintpath-disposable-recovery]`. It never receives
+  the production backup login or WORM writer. Its read-only WORM authority
+  separately retrieves the logical object versions and private recovery-bundle
+  object versions into disposable tmpfs. Only those independently retrieved
+  bytes may feed logical/private restore, deletion replay, and the compiled
+  recovered-application smoke against the disposable private network.
+
+No raw logical archive, manifest payload set, private Storage object, URL, key,
+CA, or Redis secret crosses a GitHub artifact. The exact receipt-only activation
+inventory has 18 evidence leaves; `activation-receipt.json` and
+`tested-commit-sha.txt` make the final activation artifact exactly 20 files.
+The two WORM retrieval receipts are mandatory independent leaves.
+
+Cleanup is a third, GitHub-hosted `if: always()` job in the separate
+`production-promotion-recovery-cleanup` environment; finalization is the fourth
+job and requires capture, recovery, orderly purge-bound Supabase cleanup, and
+both provider-absence terminals to be green. Standard cancellation does not
+authorize skipping cleanup, and force-cancel is forbidden until independent
+read-only observations prove both disposable providers absent. The signed
+singleton run/candidate/target/workspace arm plus dedicated-ref CAS state gates
+capture; a separate completion/15-minute/manual watchdog retries emergency
+cleanup while that state is OPEN, and its artifacts never green activation.
+It persists exact delete acknowledgements across partial runs and reuses one
+only with a fresh absence proof. Do not arm or queue a second activation until
+the state is DISARMED after both
+absence terminals. Railway workspace absence without exact delete
+acknowledgement is transfer-ambiguous. The checked-in
+workflow is executable capability only: no production capture, AWS retrieval,
+restore, provider cleanup, or final activation is claimed by this document.
+For the later version-2 attestation, RTO begins at the exact immutable GitHub
+activation workflow `run_started_at`; neither operator nor reviewer supplies
+that timestamp.
+
 ## Retention, freshness, and evidence
 
 The operational command re-downloads and verifies every uploaded object. The
 WORM command independently verifies versioning, Object Lock `COMPLIANCE`,
 30-day default retention, exact object versions, and writer denial of read,
-list, delete, and retention controls. At workflow completion at least 29 days
+list, versioned deletion, unversioned delete-marker creation, and retention
+controls. At workflow completion at least 29 days
 must remain on every WORM object, allowing only the bounded upload duration
 from the provider's exact 30-day creation-time retention.
 

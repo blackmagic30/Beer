@@ -232,18 +232,69 @@ The deletion-authority-set hash is carried into the result, but this command
 does not replay tombstones; run the separately reviewed nonzero deletion replay
 and then the full recovered application/privacy checks.
 
+## Frozen production-activation integration
+
+The protected production ceremony is implemented in
+`.github/workflows/activate-production-promotion-recovery.yml` under policy v2
+SHA-256
+`57f66c1c9dde912586ec510e37c28cc3dfea2c098e67c78edbea189c7dcc9988`.
+It does not turn an operator-host example above into a live authority.
+
+`production-capture` runs only on the JIT label
+`pintpath-production-backup` inside the production private network. It captures
+this private Storage set against the exact new logical manifest and deletion
+authority, then seals the complete private recovery bundle into its WORM
+authority. PITR observation occurs in the same capture job. Its GitHub artifact
+contains only receipts and immutable content addresses, never Storage objects,
+logical archive bytes, service keys, URLs, or root CAs.
+
+`disposable-recover` runs only on the different JIT label
+`pintpath-disposable-recovery` in the exact disposable private network. It
+performs two independent reads: the logical-backup WORM reader creates
+`logical-worm-retrieval-receipt.json`, while the private recovery-bundle WORM
+reader creates `private-storage-worm-retrieval-receipt.json`. The latter
+reconstructs this recovery-set directory directly into disposable tmpfs. The
+job restores logical Postgres first, restores private Storage into the empty,
+signed destination, replays the nonzero deletion set twice, and launches the
+compiled candidate as a local child against the disposable Postgres, Redis,
+Supabase Auth, and private Storage network. It then purges exactly the restored
+Storage object set and emits `storage-purge-receipt.json`.
+
+The separate always-run cleanup job must independently prove the exact Railway
+and Supabase projects absent. A green Supabase terminal requires
+`cleanupMode=orderly` and the SHA-256 of that exact purge receipt. Emergency
+cleanup exists only for cancellation or an earlier failure and can never
+finalize a green activation. The final activation binds 18 evidence leaves;
+with `activation-receipt.json` and `tested-commit-sha.txt`, its exact artifact
+contains 20 files. Use standard cancel only, and never force-cancel before both
+provider absences are independently established. Before capture, install the
+signed singleton run/candidate/target/workspace emergency arm and publish its
+OPEN record through the protected dedicated-ref compare-and-swap manager. The
+completion/15-minute/manual watchdog retries outside the activation run and
+never supplies green activation evidence. It persists exact delete
+acknowledgements and accepts them later only with fresh absence. Never create a
+second arm before DISARMED; Railway workspace absence without an exact delete acknowledgement
+is transfer-ambiguous and remains cleanup-needed.
+
 ## What remains open
 
-This foundation is not live recovery evidence. Before launch, an authorized
-operator and independent verifier must still:
+The integration above is checked-in capability, not live recovery evidence.
+Before launch, an authorized owner and independent verifier must still:
 
 1. capture a substantive private bucket against the exact live logical backup;
-2. retrieve any required offsite/WORM authorities through their independent
-   failure-domain procedure;
+2. retrieve the logical and private-bundle WORM authorities separately through
+   their independent failure-domain readers;
 3. restore into an empty, distinct disposable destination and retain the
    hash-only success result;
 4. boot and exercise the complete recovered application;
 5. replay the nonzero sealed deletion authority and prove prohibited data is
    absent; and
-6. measure and approve explicit RPO/RTO objectives before disposing only the
-   recorded rehearsal resources.
+6. purge the restored Storage set, obtain orderly Supabase cleanup, prove both
+   disposable providers absent, and measure and approve explicit RPO/RTO
+   objectives; and
+7. create the version-2 authority and two distinct approvals only after final
+   activation, with `recoveryStartedAt` equal to immutable GitHub activation
+   `run_started_at`, then pass protected attestation before route open.
+
+Until genuine candidate-bound provider receipts satisfy every step, live
+private-Storage recovery and the overall launch remain **NO-GO**.

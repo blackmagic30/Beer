@@ -108,72 +108,72 @@ customer data in Git or public evidence.
 ## 1. Implement the Postgres persistence layer
 
 - [x] Inventory every SQLite table, index, constraint, trigger, migration,
-  writer, reader, background worker, and administrative script. Classify every
-  row set as migrate, deliberately transform, or delete under an approved data
-  contract; no table may be silently omitted.
+      writer, reader, background worker, and administrative script. Classify every
+      row set as migrate, deliberately transform, or delete under an approved data
+      contract; no table may be silently omitted.
 - [x] Replace mandatory Free-live synchronous SQLite-specific persistence with
-  an asynchronous
-  Postgres repository/transaction boundary. HTTP handlers, workers, CLI tools,
-  tests, backup code, and readiness checks use the same contract. Deferred
-  commercial/reward/POS/report features are gated before database access and
-  the canonical runtime's legacy repository proxy fails closed.
+      an asynchronous
+      Postgres repository/transaction boundary. HTTP handlers, workers, CLI tools,
+      tests, backup code, and readiness checks use the same contract. Deferred
+      commercial/reward/POS/report features are gated before database access and
+      the canonical runtime's legacy repository proxy fails closed.
 - [x] Create a non-exposed server-only application schema outside the Supabase
-  Data API. Use a dedicated least-privilege runtime role. Do not grant
-  `anon` or `authenticated` direct table, sequence, function, or helper access;
-  retain row-level security as defence in depth wherever an exposed schema is
-  unavoidable.
+      Data API. Use a dedicated least-privilege runtime role. Do not grant
+      `anon` or `authenticated` direct table, sequence, function, or helper access;
+      retain row-level security as defence in depth wherever an exposed schema is
+      unavoidable.
 - [x] Encode primary keys, foreign keys, uniqueness, non-null requirements,
-  state checks, timestamp rules, and the measured Free-live query/worker
-  indexes in Postgres.
+      state checks, timestamp rules, and the measured Free-live query/worker
+      indexes in Postgres.
 - [ ] Verify every staged candidate query plan under representative permanent-
-  staging volume, including the documented follow-up index candidates.
+      staging volume, including the documented follow-up index candidates.
 - [x] Implement SSL-required pooled connections with bounded timeouts, a direct
-  migration/logical-backup path, and safe persistent-session semantics.
+      migration/logical-backup path, and safe persistent-session semantics.
 - [ ] Approve and prove the explicit connection budget for at least two
-  replicas, overlapping workers, migrations, monitoring, and operator access
-  against the pinned provider/pooler topology; prove driver and prepared-
-  statement compatibility before any transaction-pooler use.
+      replicas, overlapping workers, migrations, monitoring, and operator access
+      against the pinned provider/pooler topology; prove driver and prepared-
+      statement compatibility before any transaction-pooler use.
 - [x] Expose safe readiness metrics for pool saturation, checkout latency,
-  transaction failures, deadlocks, lock waits, and database availability. Do
-  not expose connection strings or customer data.
+      transaction failures, deadlocks, lock waits, and database availability. Do
+      not expose connection strings or customer data.
 
 ## 2. Make workers and retries replica-safe
 
 - [x] Claim Free-live queued work in short transactions using row locks and
-  `FOR UPDATE SKIP LOCKED`, with a lease/attempt/next-attempt model that can be
-  recovered after a process dies.
+      `FOR UPDATE SKIP LOCKED`, with a lease/attempt/next-attempt model that can be
+      recovered after a process dies.
 - [x] Commit the claim before any external provider call. Perform network I/O
-  outside the transaction, then record the provider result idempotently in a
-  new short transaction.
+      outside the transaction, then record the provider result idempotently in a
+      new short transaction.
 - [x] Give every externally visible mutation enabled for the Free launch a
-  stable idempotency or correlation key. Duplicate requests, duplicate
-  webhooks, reordered webhooks, overlapping workers, retries, and deploy
-  interruption must not create duplicate notices, prices, contributions,
-  subscriptions, or deletion effects. Deferred commercial mutation gates run
-  before database access and remain disabled.
+      stable idempotency or correlation key. Duplicate requests, duplicate
+      webhooks, reordered webhooks, overlapping workers, retries, and deploy
+      interruption must not create duplicate notices, prices, contributions,
+      subscriptions, or deletion effects. Deferred commercial mutation gates run
+      before database access and remain disabled.
 - [ ] Prove account deletion, deletion notices, moderation, status refresh,
-  evidence capture, backup ledger/tombstones, and every scheduled job continue
-  correctly when two replicas and overlapping workers run together.
+      evidence capture, backup ledger/tombstones, and every scheduled job continue
+      correctly when two replicas and overlapping workers run together.
 
 ## 3. Build a deterministic SQLite-to-Postgres importer
 
 - [x] Quiesce a copied SQLite source, run integrity and foreign-key checks, and
-  create a SHA-256 manifest of the database plus private evidence directory.
+      create a SHA-256 manifest of the database plus private evidence directory.
 - [x] Export in a stable order with explicit type, null, boolean, JSON, binary,
-  timezone, and timestamp conversions. Preserve stable IDs and provider
-  correlation identifiers unless a signed transform map says otherwise.
+      timezone, and timestamp conversions. Preserve stable IDs and provider
+      correlation identifiers unless a signed transform map says otherwise.
 - [x] Import into an empty candidate schema in one controlled operation or a
-  restartable sequence with an explicit checkpoint ledger. Re-running the same
-  import must be idempotent.
+      restartable sequence with an explicit checkpoint ledger. Re-running the same
+      import must be idempotent.
 - [x] Reconcile per-table counts, key ranges, foreign keys, unique constraints,
-  deterministic hashes, orphan checks, state totals, and application-level
-  invariants. Independently sample sensitive and high-value paths without
-  copying personal data into evidence.
+      deterministic hashes, orphan checks, state totals, and application-level
+      invariants. Independently sample sensitive and high-value paths without
+      copying personal data into evidence.
 - [x] Produce a machine-readable, secret-free migration receipt containing the
-  source hash, schema version, counts/hashes, start/end times, candidate commit,
-  operator, verifier, and result.
+      source hash, schema version, counts/hashes, start/end times, candidate commit,
+      operator, verifier, and result.
 - [x] Make the app refuse startup if an unsupported schema, partial import, or
-  SQLite production-write configuration is detected.
+      SQLite production-write configuration is detected.
 
 The deterministic importer and fail-closed startup contract are implemented.
 The first five boxes are closed by the isolated permanent-staging synthetic
@@ -226,7 +226,7 @@ line, print it, or put it in Git.
    has zero sequences and grants no private-function execution. Every reviewed
    table instead has a portable, permissive, SELECT-only policy targeted to
    `PUBLIC` whose predicate admits only `current_user =
-   'pintpath_logical_backup_d' || <live-current-database-oid>`. The policy
+'pintpath_logical_backup_d' || <live-current-database-oid>`. The policy
    carries no object grant, names no role, and produces no role dependency; a
    source-database scoped role therefore cannot read a sibling or restored
    target even if someone grants it target table `SELECT` by mistake. The
@@ -351,8 +351,7 @@ line, print it, or put it in Git.
      --maintenance-reference <signed-change-reference>
    ```
 
-4. Create the deterministic plan from the exact manifest hash printed by step
-   3. The output must not already exist.
+4. Create the deterministic plan from the exact manifest hash printed by step 3. The output must not already exist.
 
    ```sh
    npm run db:postgres:migration -- plan \
@@ -375,7 +374,7 @@ line, print it, or put it in Git.
    backend is exposed. It must not receive migrator or operations-schema
    privileges. Provision a third
    login whose only membership is `pintpath_maintenance`; it must be `LOGIN
-   NOINHERIT NOREPLICATION CONNECTION LIMIT 2`, with PG17 membership options
+NOINHERIT NOREPLICATION CONNECTION LIMIT 2`, with PG17 membership options
    `ADMIN FALSE`, `INHERIT FALSE`, and `SET TRUE`. It must target the same
    database as the runtime login, receive only direct `CONNECT` on that
    database, have no effective database `CREATE` or `TEMP` privilege (including
@@ -502,118 +501,118 @@ URL file.
 ## 4. Prove permanent integrated staging
 
 - [x] Create and pin the permanent-staging Railway app service, Postgres,
-  Supabase/Auth/private Storage, and Redis core identities; prove they differ
-  from production and the disposable restore resources.
+      Supabase/Auth/private Storage, and Redis core identities; prove they differ
+      from production and the disposable restore resources.
 - [ ] Complete the three Google/OpenAI categories/four exact Railway variable
-  operations only through their protected authority. Run the separate atomic
-  Supabase replacement and protected canary-B/legacy-disable/old-key-denial
-  ceremony under its own approval. Then deploy the reviewed app and verify
-  provider/domain/callback bindings.
+      operations only through their protected authority. Run the separate atomic
+      Supabase replacement and protected canary-B/legacy-disable/old-key-denial
+      ceremony under its own approval. Then deploy the reviewed app and verify
+      provider/domain/callback bindings.
 - [ ] Complete the incident-driven staging Postgres runtime/admin and Redis
-  credential rotations with the isolated-client acceptance/rejection contract
-  in
-  [permanent-staging-private-auth-rotation.md](permanent-staging-private-auth-rotation.md),
-  then refresh the exact URL pins and recovery evidence.
+      credential rotations with the isolated-client acceptance/rejection contract
+      in
+      [permanent-staging-private-auth-rotation.md](permanent-staging-private-auth-rotation.md),
+      then refresh the exact URL pins and recovery evidence.
 - [x] Import the approved checksummed synthetic SQLite source with the reviewed
-  tool and independently verify its complete receipt. No live production
-  credential or unredacted production data was used.
+      tool and independently verify its complete receipt. No live production
+      credential or unredacted production data was used.
 - [ ] Run at least two application replicas and overlapping worker instances.
 - [ ] Pass public, member, contributor, assigned venue-Free manager, and MFA
-  admin smoke tests; role isolation, revoked-session, deletion, moderation,
-  retained internal happy-hour collection, and public happy-hour absence tests;
-  and provider failure/recovery tests.
+      admin smoke tests; role isolation, revoked-session, deletion, moderation,
+      retained internal happy-hour collection, and public happy-hour absence tests;
+      and provider failure/recovery tests.
 - [ ] Run expected peak, 2x-peak headroom, sustained-write, connection-pool,
-  deadlock/lock-wait, restart, rolling-deploy, and at least 60-minute soak tests.
-  Require zero duplicate or lost work, zero cross-role/venue leakage, less than
-  1% 5xx, public API p95 below two seconds, and admin p95 below three seconds.
-  Follow
-  [permanent-staging-load-soak-runbook.md](permanent-staging-load-soak-runbook.md).
+      deadlock/lock-wait, restart, rolling-deploy, and at least 60-minute soak tests.
+      Require zero duplicate or lost work, zero cross-role/venue leakage, less than
+      1% 5xx, public API p95 below two seconds, and admin p95 below three seconds.
+      Follow
+      [permanent-staging-load-soak-runbook.md](permanent-staging-load-soak-runbook.md).
 - [ ] Deploy the recorded rollback build against the new Postgres schema and
-  prove health, reads, authentication, writes allowed by the Free scope, and
-  worker correctness. The rollback build must never resume SQLite writes.
+      prove health, reads, authentication, writes allowed by the Free scope, and
+      worker correctness. The rollback build must never resume SQLite writes.
 
 ## 5. Prove backup and restore before cutover
 
 - [x] Create and lock a permanent-staging Postgres volume baseline and enable
-  its six-day daily snapshot schedule. Treat this only as a same-provider
-  rollback layer; it is neither PITR nor WORM.
+      its six-day daily snapshot schedule. Treat this only as a same-provider
+      rollback layer; it is neither PITR nor WORM.
 - [ ] Enable managed Postgres PITR and monitor recovery-point age.
-  The current Railway PITR contract requires the major `postgres-ssl:17`
-  image label. A staging-only label trial migrated the volume toward the wrong
-  region and was reverted with data, backups, import, and runtime checks intact;
-  require a provider-safe Singapore placement proof before retrying.
-  Dispatch the protected PITR workflow with only `permanent-staging` or
-  `production`; never supply a root UUID as operator input. Each target has a
-  separate protected GitHub environment containing its reviewed target label
-  and expected HA-root UUID. The executor maps the label to the checked-in
-  canonical environment, enumerates every live service, independently discovers
-  exactly one HA root, and fails before writing unless it equals that protected
-  authority. Preserve the intent/terminal receipts that bind the resulting
-  target-authority SHA-256.
+      The current Railway PITR contract requires the major `postgres-ssl:17`
+      image label. A staging-only label trial migrated the volume toward the wrong
+      region and was reverted with data, backups, import, and runtime checks intact;
+      require a provider-safe Singapore placement proof before retrying.
+      Dispatch the protected PITR workflow with only `permanent-staging` or
+      `production`; never supply a root UUID as operator input. Each target has a
+      separate protected GitHub environment containing its reviewed target label
+      and expected HA-root UUID. The executor maps the label to the checked-in
+      canonical environment, enumerates every live service, independently discovers
+      exactly one HA root, and fails before writing unless it equals that protected
+      authority. Preserve the intent/terminal receipts that bind the resulting
+      target-authority SHA-256.
 - [x] Create an independently verified logical PostgreSQL export from permanent
-  staging with its archive, version-2 manifest, and complete state receipt.
-  This describes immutable historical evidence. Version 2 remains readable for
-  retrieval/restore but cannot authorize a new capture or close the current
-  pinned-transport gate; new backups must be schema version 3.
+      staging with its archive, version-2 manifest, and complete state receipt.
+      This describes immutable historical evidence. Version 2 remains readable for
+      retrieval/restore but cannot authorize a new capture or close the current
+      pinned-transport gate; new backups must be schema version 3.
 - [x] Historical operator-host evidence uploaded that frozen
-  permanent-staging logical set to a second Supabase project and verified the
-  complete remote object set. The associated staging database-bound readiness
-  probe ran under the prior checked-in/live contract that coupled staging to the
-  production operational-copy URL, key, and bucket. The current candidate makes
-  the CLI canonical-production-only and forbids all three variables in staging;
-  a fresh complete Railway inventory must still prove their deletion. This
-  historical set cannot authorize a new staging upload or probe.
+      permanent-staging logical set to a second Supabase project and verified the
+      complete remote object set. The associated staging database-bound readiness
+      probe ran under the prior checked-in/live contract that coupled staging to the
+      production operational-copy URL, key, and bucket. The current candidate makes
+      the CLI canonical-production-only and forbids all three variables in staging;
+      a fresh complete Railway inventory must still prove their deletion. This
+      historical set cannot authorize a new staging upload or probe.
 - [x] Retrieve the complete pre-deletion logical set from that isolated private
-  bucket through the exact success-state, runtime-identity, destination-pin,
-  pointer/attestation, Storage-generation, streamed-size, and SHA-256 contract.
-  The resulting mode-700 directory contains exactly the three mode-600 restore
-  artifacts and matched the remote authorities byte-for-byte. Follow section 4
-  of
-  [postgres-logical-offsite-attestation.md](postgres-logical-offsite-attestation.md).
+      bucket through the exact success-state, runtime-identity, destination-pin,
+      pointer/attestation, Storage-generation, streamed-size, and SHA-256 contract.
+      The resulting mode-700 directory contains exactly the three mode-600 restore
+      artifacts and matched the remote authorities byte-for-byte. Follow section 4
+      of
+      [postgres-logical-offsite-attestation.md](postgres-logical-offsite-attestation.md).
 - [ ] Create and verify the corresponding private application Storage snapshot.
-  The canonical PostgreSQL-native capture/restore-set foundation, restricted
-  PG17 integration test, and operator CLIs are implemented, but no live bucket
-  was read or copied as implementation evidence. Permanent-staging Phase 5 is
-  runnable against only the exact permanent-staging project-ref origin and its
-  server key; the exact production project-ref origin is the only other capture
-  source accepted. The command requires an explicit source-environment label
-  that maps to exactly one of those origins, an independently reviewed frozen
-  candidate SHA, and a matching ready database migration-run binding on both
-  repeatable-read inspections before and after the bucket copy. The recovery
-  manifest and domain-separated set binding are version 2 for this authority
-  contract. Keep every production operational-copy variable absent from staging.
-  Execute and independently verify the substantive capture described in
-  [postgres-private-storage-recovery.md](postgres-private-storage-recovery.md).
+      The canonical PostgreSQL-native capture/restore-set foundation, restricted
+      PG17 integration test, and operator CLIs are implemented, but no live bucket
+      was read or copied as implementation evidence. Permanent-staging Phase 5 is
+      runnable against only the exact permanent-staging project-ref origin and its
+      server key; the exact production project-ref origin is the only other capture
+      source accepted. The command requires an explicit source-environment label
+      that maps to exactly one of those origins, an independently reviewed frozen
+      candidate SHA, and a matching ready database migration-run binding on both
+      repeatable-read inspections before and after the bucket copy. The recovery
+      manifest and domain-separated set binding are version 2 for this authority
+      contract. Keep every production operational-copy variable absent from staging.
+      Execute and independently verify the substantive capture described in
+      [postgres-private-storage-recovery.md](postgres-private-storage-recovery.md).
 - [x] Create and seal one authentic wholly synthetic deletion-tombstone ledger
-  authority tied to the pre-deletion backup; replay it once with
-  `newlyApplied=1` and again with `alreadyApplied=1`, require the same semantic
-  projection on both passes, and keep restricted runtime readiness green.
+      authority tied to the pre-deletion backup; replay it once with
+      `newlyApplied=1` and again with `alreadyApplied=1`, require the same semantic
+      projection on both passes, and keep restricted runtime readiness green.
 - [ ] Write a copy to provider-enforced object-lock/WORM storage in a separate
-  failure domain. The application writer must be unable to delete, overwrite,
-  or shorten retention. A second Supabase project controlled by a service-role
-  key is only a private operational restore copy, not immutable DR proof. The
-  pinned AWS S3 Object Lock attestor, Put-only/read-only role policies, offline
-  tests, and triple-gated live integration are implemented; the separately
-  administered recovery account, bucket, roles, live write, later retrieval,
-  and restore evidence remain open. Follow
-  [postgres-logical-worm-attestation.md](postgres-logical-worm-attestation.md).
+      failure domain. The application writer must be unable to delete, overwrite,
+      or shorten retention. A second Supabase project controlled by a service-role
+      key is only a private operational restore copy, not immutable DR proof. The
+      pinned AWS S3 Object Lock attestor, Put-only/read-only role policies, offline
+      tests, and triple-gated live integration are implemented; the separately
+      administered recovery account, bucket, roles, live write, later retrieval,
+      and restore evidence remain open. Follow
+      [postgres-logical-worm-attestation.md](postgres-logical-worm-attestation.md).
 - [x] Restore the retrieved logical Postgres set into the independently pinned
-  disposable PG17 database and verify exact source/target receipt equality.
-  Follow
-  [postgres-logical-restore-rehearsal.md](postgres-logical-restore-rehearsal.md).
+      disposable PG17 database and verify exact source/target receipt equality.
+      Follow
+      [postgres-logical-restore-rehearsal.md](postgres-logical-restore-rehearsal.md).
 - [ ] Restore private Storage, exercise the complete application, test
-  PITR/WORM retrieval, measure and approve RPO/RTO, and prove the combined
-  recovered system contains no prohibited tombstoned data. The implemented
-  restore command requires an empty policy-matching bucket on a distinct
-  disposable origin, exact logical-state/reference equality, immutable uploads,
-  full re-download verification, and sealed deletion-authority binding; the
-  live restore/application/RPO/RTO evidence remains open. The restore command
-  is intentionally blocked before credential reads until a real disposable
-  Supabase origin is registered in independently reviewed candidate-bound
-  authority; invocation-supplied URL hashes are not sufficient.
+      PITR/WORM retrieval, measure and approve RPO/RTO, and prove the combined
+      recovered system contains no prohibited tombstoned data. The implemented
+      restore command requires an empty policy-matching bucket on a distinct
+      disposable origin, exact logical-state/reference equality, immutable uploads,
+      full re-download verification, and sealed deletion-authority binding; the
+      live restore/application/RPO/RTO evidence remains open. The restore command
+      is intentionally blocked before credential reads until a real disposable
+      Supabase origin is registered in independently reviewed candidate-bound
+      authority; invocation-supplied URL hashes are not sufficient.
 - [ ] Remove public access, revoke temporary credentials, delete only the
-  recorded disposable resources, and independently verify production and
-  permanent staging were unchanged.
+      recorded disposable resources, and independently verify production and
+      permanent staging were unchanged.
 
 The logical-export, operational-copy upload/verify/attestation, database-aware
 `/ready` probe, read-only retriever, disposable restore, and tombstone-replay
@@ -928,14 +927,33 @@ frozen-intrinsics realms before imports or secret reads. Their ordinary async
 carriers include plaintext target URL material, parsed `PGPASSWORD`, connection
 capabilities, tombstone identifiers, and query rows; inherited `then` poisoning
 can observe them. The protected production logical-backup workflow is the sole
-activation launcher for its exact schema-v3 backup and monthly logical restore.
-The protected promotion/recovery workflow documented in
-[`production-promotion-recovery.md`](./production-promotion-recovery.md) may
-authorize only the exact authenticated restore/replay operations and receipt
-bindings implemented in that workflow; its receipt never authorizes copying
-these commands to an operator host. No other live ceremony is authorized until an equally protected,
-digest-pinned runtime, complete dependency closure, and whole-worker then-safety
-have passed independent review.
+activation launcher for its daily/monthly schema-v3 operations. The
+post-promotion release ceremony has its own frozen four-job launcher in
+[`production-promotion-recovery.md`](./production-promotion-recovery.md):
+production capture on the JIT `pintpath-production-backup` runner, separate
+logical/private WORM reads and full recovery on the JIT
+`pintpath-disposable-recovery` runner, independent always-run provider cleanup,
+then finalization. It authorizes only the exact authenticated operations and
+receipt bindings implemented in that workflow; its receipt never authorizes
+copying these commands to an operator host. Raw recovery bytes never cross a
+GitHub artifact. No other live ceremony is authorized until an equally
+protected, digest-pinned runtime, complete dependency closure, and whole-worker
+then-safety have passed independent review.
+The launcher/attestor are pinned by policy v2 SHA-256
+`57f66c1c9dde912586ec510e37c28cc3dfea2c098e67c78edbea189c7dcc9988`.
+
+Before capture, sign the exact activation run, candidate, targets, complete
+Railway workspace inventory, and both cleanup-policy hashes into the singleton
+emergency arm and publish it with the protected manager's compare-and-swap to
+the dedicated cleanup-state ref. Do not dispatch/arm a second run while its
+state is OPEN; only exact same-target linked renewal is permitted. A separate
+completion/15-minute/manual watchdog retries emergency cleanup outside the
+activation cancellation domain and never produces green activation evidence.
+It persists exact delete acknowledgements across partial runs, requires fresh
+absence before reuse, and reaches DISARMED only after both current provider
+terminals. Railway workspace absence
+without exact `projectDelete: true` is transfer-ambiguous and requires
+provider-global reconciliation.
 
 The disposable target must also be isolated, with no concurrent credential
 holder. Restore checks run before mutation, after `pg_restore`, and after final
@@ -997,10 +1015,11 @@ be measured and approved.
    reconciliation/deletion replay, and sign RPO/RTO before traffic is routed.
    The pre-import SQLite/Postgres snapshot is not rollback authority for the
    migrated state.
-6. Deploy the exact candidate with the Postgres connection and at least two
-   replicas. Prove `/startup`, `/ready`, role smoke, Free-scope writes, worker
-   overlap, public data gates, and provider readiness while public ingress
-   remains in the signed maintenance/closed state.
+6. Deploy the exact current-`main` candidate with the Postgres connection,
+   converge it to exactly two replicas, prove `/startup`, `/ready`, role smoke,
+   Free-scope writes, worker overlap, public data gates, and provider readiness,
+   then close only the canonical route. The release chronology is fixed as
+   `deploy→scale→close→activation→promotion-recovery→open`.
 7. Publish only the exactly reviewed launch data through the candidate's
    authorised Postgres workflow. Produce the no-write plan first, register the
    independent reviewer's signed apply authorization with
@@ -1009,19 +1028,35 @@ be measured and approved.
    uncertain result by operation UUID and receipt rather than retrying. If the
    batch must be withdrawn, register the separately signed, apply-receipt-bound
    quarantine authorization and run `db:postgres:reviewed-price:quarantine`;
-   direct SQL and the legacy SQLite mutation path remain forbidden. Then
-   capture a new post-promotion PITR,
-   logical/Storage/evidence/tombstone WORM set, retrieve it with the independent
-   recovery principal, restore it into fresh disposable staging, reconcile it,
-   and obtain two-person RPO/RTO sign-off before routing any traffic. The
-   earlier pre-import and post-import sets are not the final authority for the
-   published launch state.
-8. Keep the sealed SQLite source read-only. Monitor error rate, latency, pool
+   direct SQL and the legacy SQLite mutation path remain forbidden. Then leave
+   ingress closed. Dispatch the four-job activation only after GitHub has
+   assigned its exact `GITHUB_RUN_ID` and the two signed, per-run teardown
+   authorities are installed in the non-interactive cleanup environment. The
+   activation observes PITR during production capture, creates separate logical
+   and private-bundle WORM authorities, independently retrieves both on the
+   disposable-network runner, restores Postgres and private Storage, replays
+   deletion twice, starts the compiled candidate locally against the
+   disposable Postgres/Redis/Supabase network, purges restored Storage, and
+   independently proves Railway and Supabase absent. The earlier pre-import
+   and post-import sets are not the final authority for the published launch
+   state. Only orderly, purge-bound Supabase cleanup can produce green;
+   emergency cleanup never can.
+8. Require the activation artifact's exact 18 evidence leaves plus
+   `activation-receipt.json` and `tested-commit-sha.txt` (20 files total). Build
+   the `pintpath-production-promotion-recovery-authority/v2` manifest and obtain
+   two distinct Ed25519 approvals only after final activation. Dispatch the
+   protected attestation with the exact activation run ID, and open the route
+   only after that six-stage GitHub chain passes. Standard cancel may be used;
+   force-cancel is forbidden until independent observations prove both
+   disposable providers absent. The authority's `recoveryStartedAt` must equal
+   the immutable GitHub activation workflow `run_started_at`; it is not a
+   reviewer-selected RTO origin.
+9. Keep the sealed SQLite source read-only. Monitor error rate, latency, pool
    saturation, locks, queues, provider correlation, and deletion state through
    the signed observation window.
-9. If rollback is required, deploy the recorded Postgres-compatible rollback
-   build against the same Postgres database. Never roll back by reopening the
-   SQLite source for writes.
+10. If rollback is required, deploy the recorded Postgres-compatible rollback
+    build against the same Postgres database. Never roll back by reopening the
+    SQLite source for writes.
 
 ## Exit criteria
 
@@ -1035,7 +1070,9 @@ the operator and an independent verifier:
   Postgres-compatible rollback proof;
 - `anon`/`authenticated` cannot access the private application schema and the
   runtime role has only required privileges;
-- PITR, logical/private Storage backup, WORM copy, and disposable restore pass;
+- PITR, logical/private Storage backup, separate logical/private WORM reads,
+  disposable restore, compiled recovered-application smoke, orderly purge,
+  and both provider-absence terminals pass;
 - production and permanent staging identities cannot be selected by destructive
   restore tooling;
 - runtime configuration cannot make SQLite authoritative or writable; and
@@ -1043,3 +1080,5 @@ the operator and an independent verifier:
   runbook are included in the candidate commit.
 
 Until every box passes, Pint Path remains **no-go for full-scale production**.
+The four-job activation and version-2 policy are checked-in capability only;
+no live provider execution or candidate-bound activation evidence is claimed.

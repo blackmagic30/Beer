@@ -4,7 +4,8 @@ Last updated: 14 August 2026
 
 Overall state: **NO-GO for a live release — the checked-in Free-live PostgreSQL
 runtime, migration, protected deployment, scale, promotion/quarantine, backup,
-restore, recovery, route, and release authorities are implemented; authentic
+restore, four-job post-promotion recovery activation, route, and release
+authorities are implemented; authentic
 candidate-bound provider execution, production data, recovery, signed iOS,
 legal, and owner evidence gates remain open.**
 
@@ -21,6 +22,19 @@ resource pins, operator approvals, or two-person evidence.
   verification, immutable receipt, offline tests, operator command, and
   triple-gated real-AWS integration test. This is implementation evidence only;
   no AWS recovery account, bucket, role, credential, or object was provisioned.
+- Implemented the policy-v2 post-promotion recovery chain at exact policy
+  SHA-256
+  `57f66c1c9dde912586ec510e37c28cc3dfea2c098e67c78edbea189c7dcc9988`.
+  Its fixed rollout order is
+  `deploy→scale→close→activation→promotion-recovery→open`. Activation
+  splits production capture and PITR observation onto the JIT
+  `pintpath-production-backup` runner, and separate logical/private WORM reads,
+  restore, twice-replayed deletion, and compiled local-child application smoke
+  onto the JIT `pintpath-disposable-recovery` runner in the disposable private
+  network. Raw recovery bytes never cross GitHub artifacts. An independent
+  always-run cleanup job reconciles Railway and Supabase absence before
+  finalization. This is checked-in/offline implementation evidence only; no
+  activation workflow or provider operation was run for this change.
 - Installed and authenticated Railway CLI, linked locally to the existing
   staging service, and confirmed that no credentials were written to Git.
 - Inventoried the authoritative SQLite schema: 56 tables, 717 columns, 76
@@ -695,15 +709,29 @@ receipts, smoke/load/recovery evidence, and approvals remain external gates.
   expected-peak/2x-peak load, restart, rolling-deploy, rollback-build, and
   minimum 60-minute soak gates, then return permanent staging to one replica.
 - Enable and measure PITR; obtain recovery-administrator approval and provision
-  the separately controlled AWS account/bucket/roles; run the implemented WORM
-  attestor and later independent retrieval; extend disposable recovery to
-  private Storage and full application smoke; obtain approved two-person
-  RPO/RTO evidence; then reconcile the complete resource/evidence set and seek
-  specific authorization for the exact recorded disposable resource IDs. Only
-  the reviewed teardown executor may delete them, with two-token inventory
-  agreement, one project delete, and independent absence postflight. The completed
-  database tombstone replay is evidence for the recorded staging set, not a
-  substitute for those remaining recovery gates.
+  the separately controlled AWS account/bucket/roles; then execute the frozen
+  four-job activation for the exact candidate. The production-network capture
+  must observe PITR and seal separate logical/private authorities; the
+  disposable-network job must independently read both WORM sets, restore them,
+  replay deletion twice, and pass the compiled local-child application smoke.
+  Dispatch while gated, record the assigned `GITHUB_RUN_ID`, sign and install
+  both per-run cleanup authorities, and only then approve capture. Require
+  orderly purge-bound Supabase cleanup and both provider-absence terminals;
+  emergency cleanup never greens the run. Standard cancel only, with
+  force-cancel forbidden until independent observations prove both providers
+  absent. A signed singleton run/candidate/target/workspace arm and a protected
+  dedicated-ref compare-and-swap gate capture. An independent
+  completion/15-minute/manual watchdog retries while that state is OPEN. It
+  persists exact provider delete acknowledgements across partial runs, requires
+  fresh absence on every reconciliation, and cannot green activation; a second
+  activation is mechanically rejected until DISARMED. Railway absence without exact
+  delete acknowledgement remains transfer-ambiguous. The final activation has
+  exactly 18 evidence leaves and 20 files.
+  Create the v2 authority and both distinct approvals afterward;
+  `recoveryStartedAt` is immutably bound to GitHub's activation
+  `run_started_at`, not selected by a reviewer. The completed database
+  tombstone replay is evidence for the recorded staging set, not a substitute
+  for those remaining recovery gates.
 - Complete the maintenance-window production snapshot/import/reconciliation,
   post-import and post-promotion recovery sets, two restore proofs, monitored
   cutover, and coordinated web/iOS launch only after every prior gate passes.
@@ -789,9 +817,11 @@ receipts, smoke/load/recovery evidence, and approvals remain external gates.
    without treating either as WORM or full recovery.
 5. Freeze the exact candidate only after every staging and recovery gate passes.
    Then run the maintenance-mode production snapshot, import,
-   reconciliation, post-import recovery set, restore proof, deployment,
-   reviewed-data promotion, final recovery set, second restore proof, and
-   coordinated web/iOS launch sequence in the controlling runbooks.
+   reconciliation, post-import recovery set, restore proof, deployment, scale,
+   route close, reviewed-data promotion, four-job final activation, v2
+   post-activation attestation, route open, and coordinated web/iOS launch
+   sequence in the controlling runbooks. No checked-in capability may be
+   recorded as live/provider evidence.
 
 ## Prohibited until the gates pass
 

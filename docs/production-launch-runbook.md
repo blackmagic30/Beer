@@ -1,6 +1,6 @@
 # Pint Path production launch runbook
 
-Last audited: 13 August 2026
+Last audited: 14 August 2026
 Scope: full public web launch plus an Australian iOS launch.
 
 Release-specific repository changes are summarized in
@@ -20,7 +20,7 @@ commit/discard an unrelated staged patch to bypass this stop.
 The active protected operation paths are the manual application-deployment,
 runtime-variable, permanent-staging provider-variable, Supabase legacy-cutover,
 Postgres build-canary, staging scale-evidence, production converge-two,
-canonical production-route close/open, promotion/recovery attestation,
+canonical production-route close/open, promotion/recovery activation and attestation,
 Postgres-HA PITR, and disposable-restore teardown workflows described in
 [the protected provider-operations runbook](./protected-provider-mutation-operations.md)
 and [the application-deployment runbook](./permanent-staging-app-deployment.md).
@@ -78,6 +78,49 @@ resource/evidence reconciliation. Destruction still requires specific
 authorization for the exact resource IDs and the reviewed executor plus
 mutation-boundary preflight/postflight. It is never permanent staging and must
 never share production or permanent-staging credentials or data paths.
+
+### Frozen post-promotion recovery boundary
+
+The release chronology is exactly
+`deploy→scale→close→activation→promotion-recovery→open`. The controlling
+promotion-recovery policy is schema v2 with SHA-256
+`57f66c1c9dde912586ec510e37c28cc3dfea2c098e67c78edbea189c7dcc9988`.
+
+Activation is one four-job workflow. `production-capture` runs on the JIT
+`pintpath-production-backup` runner in the production private network and
+performs PITR observation, logical/private capture, operational-copy proof, and
+separate logical/private WORM sealing. `disposable-recover` runs on the distinct
+JIT `pintpath-disposable-recovery` runner in the disposable private network,
+separately reads both WORM authorities, restores them, replays deletion twice,
+and starts the exact compiled candidate as a local child against disposable
+Postgres, Redis, Supabase Auth, and private Storage. An `if: always()` cleanup
+job independently reconciles Railway and Supabase absence; `finalize` requires
+all three prior jobs green.
+
+Raw recovery bytes, URLs, keys, CAs, and customer data remain in tmpfs and the
+provider/WORM channels. GitHub artifacts carry only receipts and immutable
+content addresses. The activation receipt binds exactly 18 evidence leaves;
+with `activation-receipt.json` and `tested-commit-sha.txt`, the final activation
+artifact contains exactly 20 files.
+
+Teardown authorities must bind the exact activation `GITHUB_RUN_ID` and attempt
+`1`. Dispatch activation while its protected environment is gated, record the
+assigned run ID, sign and install both per-run cleanup authorities in the
+non-interactive `production-promotion-recovery-cleanup` environment, and only
+then approve capture. Supabase cleanup must be `orderly` and bind the exact
+Storage purge-receipt SHA-256 for green; emergency cleanup can establish
+absence after failure but never green. Standard cancel is permitted.
+Force-cancel is forbidden until independent read-only observations prove both
+disposable providers absent.
+
+After final activation, create the
+`pintpath-production-promotion-recovery-authority/v2` manifest and obtain two
+distinct Ed25519 approvals. RTO is not reviewer-selected:
+`recoveryStartedAt` must equal the exact GitHub activation run's
+`run_started_at`, and the attestor measures to the compiled application's
+bound `applicationReadyAt`. Only the resulting protected attestation may
+precede route open. Checked-in code is capability, not live provider evidence;
+launch remains NO-GO until a genuine candidate-bound run passes.
 
 Beta App Review or TestFlight acceptance is not full App Review approval. Do
 not announce the combined web+iOS launch until the exact frozen-SHA binary is
@@ -182,8 +225,8 @@ Store submission until the owner records:
 6. **Deletion operation:** the named primary and backup operators, the fixed daily review time, the displayed seven-day cancellation window, the guaranteed completion deadline, and the escalation contact.
 7. **Moderation operation:** the named owner, backup, response SLA, appeal path, and emergency takedown path.
 8. **Legal entity:** the same approved entity for the app, Apple developer
-    account, contracts, ABN, domains, and active provider accounts. Stripe
-    entity alignment becomes mandatory only for a future commercial candidate.
+   account, contracts, ABN, domains, and active provider accounts. Stripe
+   entity alignment becomes mandatory only for a future commercial candidate.
 9. **Data thresholds:** the exact values in Phase 8 and the exact marketed-suburb scope. These values are immutable for this release.
 10. **Named release roles:** deployer, independent reviewer, evidence verifier, rollback operator, and first-72-hours on-call operator.
 11. **Breach response:** named primary/backup incident and privacy decision owners, provider escalation contacts, and a passed tabletop using `docs/data-breach-response-runbook.md`.
@@ -544,9 +587,9 @@ Review the latest Supabase changelog before the candidate gate. Node 20 support 
 - [ ] Verify schema, RLS, Storage denial, counts, hashes, and deletion tombstones.
 - [ ] Measure RPO and RTO.
 - [ ] After evidence is signed, complete resource/evidence reconciliation and
-  obtain specific authorization naming the exact disposable resource IDs; only
-  the reviewed teardown executor may delete them, with its immediate
-  mutation-boundary preflight and unconditional postflight.
+      obtain specific authorization naming the exact disposable resource IDs; only
+      the reviewed teardown executor may delete them, with its immediate
+      mutation-boundary preflight and unconditional postflight.
 - [ ] Replace open database CIDRs only after exact Railway and emergency-operator egress addresses are proven. If stable egress is unavailable, record compensating controls instead of inventing an allowlist.
 - [ ] Recheck SSL after network changes.
 
@@ -976,19 +1019,19 @@ list, candidate freeze is blocked.
 - [ ] Email confirmation and custom SMTP tested.
 - [ ] Native Google and Apple providers absent from the first-release archive.
 - [ ] Starting with an existing Google-only web account, use the approved email
-  recovery/set-password path, then sign in on iOS and prove the same Supabase
-  user ID and Pint Path account/public ID are retained. Reject any duplicate
-  identity/account result and test an email-collision attempt explicitly.
+      recovery/set-password path, then sign in on iOS and prove the same Supabase
+      user ID and Pint Path account/public ID are retained. Reject any duplicate
+      identity/account result and test an email-collision attempt explicitly.
 - [ ] Leaked-password protection enabled.
 - [ ] Admin MFA/AAL2 enforced.
 - [ ] Every exposed table has explicit grants and RLS.
 - [ ] Storage policies deny source evidence to public clients.
 - [ ] Capture a short-lived Supabase access JWT before deleting a sacrificial
-  account. After deletion, prove the old JWT cannot exchange for a Pint Path
-  session and cannot read or mutate any Data API table, RPC, or Storage object.
-  Record the configured JWT expiry and keep it at the shortest operationally
-  acceptable value; deleting the Auth user or refresh session alone is not
-  evidence that an already-issued access JWT stopped working.
+      account. After deletion, prove the old JWT cannot exchange for a Pint Path
+      session and cannot read or mutate any Data API table, RPC, or Storage object.
+      Record the configured JWT expiry and keep it at the shortest operationally
+      acceptable value; deleting the Auth user or refresh session alone is not
+      evidence that an already-issued access JWT stopped working.
 
 ### Redis
 
@@ -1388,11 +1431,11 @@ These later required launch gates cannot be PR checks because their protected
 workflows accept only the exact current `main` SHA:
 
 - after the protected merge and before production deployment: `Deploy
-  permanent staging` and `Scale 1→2, prove, and converge 2→1`, with both
+permanent staging` and `Scale 1→2, prove, and converge 2→1`, with both
   exact-`deploymentSha` artifacts, plus `iOS protected production configuration
-  archive`;
+archive`;
 - after production deployment: `Deploy protected production`, then `Converge
-  exact production deployment to two replicas`, with both exact-`deploymentSha`
+exact production deployment to two replicas`, with both exact-`deploymentSha`
   artifacts.
 
 The release-candidate verifier resolves each required check with
@@ -1847,22 +1890,51 @@ In the protected production operator environment:
    approval bound to the apply receipt; run reviewer-only
    `db:postgres:reviewed-price:authorize-quarantine`, then operator-only
    `db:postgres:reviewed-price:quarantine`.
-8. While public ingress is still closed, create a new post-promotion Postgres
-   PITR point, logical export, complete private Storage/evidence snapshot, and
-   deletion-ledger/tombstone export. Write the exact set to the independent
-   object-lock/WORM destination, retrieve it through the separate recovery
-   principal, restore it into a fresh disposable restore environment, rerun
-   deterministic reconciliation and deletion replay, measure RPO/RTO, tear
-   down only the recorded disposable resources, and obtain two-person
-   sign-off. This post-promotion set—not the Phase 15 or Phase 16.4 set—is the
-   final launch recovery authority. Do not route traffic if any part fails.
-9. Dispatch `Attest Pint Path protected production promotion recovery` at the
-   exact candidate. It authenticates deploy→scale→close, replaces caller copies
-   with digest-bound artifacts, validates the apply-only promotion and complete
-   post-promotion recovery/restore/twice-replayed deletion set, requires two
-   signed reviewers, and publishes the self-hashed
-   `pintpath-production-promotion-recovery-<SHA>` receipt. Route open accepts no
-   substitute predecessor authority.
+8. While public ingress is still closed, dispatch `Activate protected
+production promotion recovery`. Leave its environment approval pending,
+   record the assigned `GITHUB_RUN_ID`, create and independently verify the
+   signed singleton emergency arm plus both per-run teardown authorities,
+   install them with distinct read/delete tokens in the non-interactive cleanup
+   environment, then run the protected arm manager's `initial` compare-and-swap
+   into the dedicated cleanup-state ref; only then approve
+   `production-capture`. An OPEN state mechanically rejects a second arm. Use
+   only a signed same-target, prior-authority-linked `renewal` if credentials
+   approach their 24-hour expiry. The
+   four jobs must:
+
+   - observe PITR and capture/seal the logical and private recovery authorities
+     on the production-network JIT runner;
+   - separately read both WORM authorities, restore them, replay deletion
+     twice, and smoke the compiled local child on the disposable-network JIT
+     runner;
+   - purge the restored Storage set, then independently reconcile exact Railway
+     and Supabase absence in the always-run cleanup job; and
+   - finalize exactly 18 evidence leaves and the two activation files.
+
+   The final activation artifact therefore contains exactly 20 files. Raw
+   recovery bytes must never cross a GitHub artifact. Supabase cleanup must be
+   orderly and bind the purge receipt; emergency cleanup cannot turn the run
+   green. Standard cancel only; never force-cancel until separate observations
+   prove both providers absent. The completion/15-minute/manual emergency
+   controller retries outside the activation run while the state is OPEN and
+   emits only non-green emergency artifacts. It persists exact per-activation
+   provider delete acknowledgements, reuses them only with fresh absence
+   proofs, and compare-and-swaps DISARMED only after both current terminals;
+   Railway workspace absence without exact delete acknowledgement is
+   transfer-ambiguous. This post-promotion set—not the Phase 15 or
+   Phase 16.4 set—is the final launch recovery authority.
+
+9. After final activation, create the version-2 authority and obtain two
+   distinct Ed25519 approvals. Set `recoveryStartedAt` only from the exact
+   activation GitHub run's `run_started_at`; it is not an operator/reviewer
+   choice. Dispatch `Attest Pint Path protected production promotion recovery`
+   with that exact `activation_run_id`. It authenticates
+   deploy→scale→close→activation, replaces caller predecessor copies with
+   digest-bound artifacts, validates apply-only promotion, separate
+   logical/private WORM reads, full recovery/application smoke, orderly purge,
+   both absence terminals, RPO/RTO, and the two post-activation approvals. It
+   publishes `pintpath-production-promotion-recovery-<SHA>`. Route open accepts
+   no substitute predecessor authority.
 
 All four mutation-stage commands take the exact plan, private review packet,
 signed approval envelope, Ed25519 reviewer public key, root CA, database URL,
@@ -1891,7 +1963,7 @@ this phase targets `https://pintpath.au`, the incident commander must:
    from exact current `main` with `candidate_sha=deploymentSha` and confirmation
    `OPEN_PINTPATH_PRODUCTION_ROUTE`. Its separate reviewer approves the one
    exact `customDomainCreate`. It machine-verifies strict
-   deploy→scale→close→promotion-recovery chronology and materializes the exact
+   deploy→scale→close→activation→promotion-recovery chronology and materializes the exact
    close and promotion-recovery artifacts by ID/digest/size. Require no
    collateral drift, exactly two healthy replicas, valid public TLS,
    and candidate-bound `/health`, `/startup`, and `/ready` before accepting
@@ -2220,11 +2292,13 @@ The release is **go** only when every item is true for the same `releaseId`, `ca
 - [ ] required web/iOS CI, CodeQL, review, and branch protections pass;
 - [ ] Android is absent from required release evidence;
 - [ ] authoritative Postgres migration/import/reconciliation and at least two
-  production replicas pass; SQLite is sealed read-only migration evidence;
+      production replicas pass; SQLite is sealed read-only migration evidence;
 - [ ] local, permanent-staging, and live Postgres plus Supabase
-  schema/grant/RLS/Storage checks pass;
-- [ ] fresh PITR, logical/private-Storage backup, WORM copy, and ephemeral
-  destructive restore rehearsal pass;
+      schema/grant/RLS/Storage checks pass;
+- [ ] fresh PITR, logical/private-Storage backup, separate logical/private WORM
+      reads, ephemeral destructive restore, compiled recovered-app smoke, deletion
+      replay, orderly purge-bound Supabase cleanup, and both provider-absence
+      terminals pass in the exact 18-leaf/20-file activation;
 - [ ] Postgres-compatible rollback build and rehearsal pass without SQLite writes;
 - [ ] complete Place-ID refresh, target pin, transitions, and 24-hour launch freshness pass;
 - [ ] daily monitored status refresh and five-/six-/seven-day alerts pass;
@@ -2234,28 +2308,31 @@ The release is **go** only when every item is true for the same `releaseId`, `ca
 - [ ] all consumer happy-hour UI and claims are hidden under the signed waiver;
 - [ ] Google, email Auth, Redis, Resend, and OpenAI proofs pass;
 - [ ] the complete Phase 1 Free-only environment contract is asserted; Pro,
-  commercial-plan/subscription pricing, checkout, trial, upgrade, report
-  delivery, counter/POS, reward/redemption, alcohol gamification, and public
-  happy-hour web/API/iOS surfaces are absent or denied and their credentials are
-  absent or inert;
+      commercial-plan/subscription pricing, checkout, trial, upgrade, report
+      delivery, counter/POS, reward/redemption, alcohol gamification, and public
+      happy-hour web/API/iOS surfaces are absent or denied and their credentials are
+      absent or inert;
 - [ ] the pre-deletion Supabase JWT denial matrix and Google-web-to-iOS account
-  bridge pass without duplicate identities;
+      bridge pass without duplicate identities;
 - [ ] independently administered object-lock/WORM authority and retention pass;
+- [ ] version-2 promotion/recovery authority and two distinct post-activation
+      approvals bind the exact GitHub activation `run_started_at`, artifact, and
+      six-stage release chain;
 - [ ] permanent-staging deletion proves no raw submission, item/free text, contribution
-  ledger, evidence link, or submission-derived public row remains;
+      ledger, evidence link, or submission-derived public row remains;
 - [ ] Free-release legal, privacy, liquor, marketing, moderation, and signed
-  commercial-scope deferral approvals are recorded;
+      commercial-scope deferral approvals are recorded;
 - [ ] approved manual daily deletion operation passes;
 - [ ] native social login is compile-disabled and the Sign in with Apple revocation not-applicable proof is recorded;
 - [ ] free discovery/contributor/venue-Free iOS archive, privacy report,
-  physical devices, external TestFlight, and App Review pass;
+      physical devices, external TestFlight, and App Review pass;
 - [ ] Apple membership, Account Holder/backup access, agreements, compliance
-  review, app ownership, and crash-threshold evidence pass;
+      review, app ownership, and crash-threshold evidence pass;
 - [ ] strict release evidence and protected authenticated smoke pass;
 - [ ] a fresh candidate-bound provider-observed permanent-staging-only cost
-  receipt proves a recurring upper bound of at most `5000` integer USD cents,
-  with complete Railway, staging Supabase, and external-provider caps and no
-  unknown, unpriced, shared, or unbounded resource;
+      receipt proves a recurring upper bound of at most `5000` integer USD cents,
+      with complete Railway, staging Supabase, and external-provider caps and no
+      unknown, unpriced, shared, or unbounded resource;
 - [ ] live flags match the approved Free-only state before and after web/iOS release;
 - [ ] named 72-hour operator is available.
 

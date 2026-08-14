@@ -7,8 +7,9 @@ This checklist adapts the external Pint Path test-pack assumptions to this repos
 The repository now has protected, one-operation workflows for application
 source upload, reviewed runtime/provider variables, the permanent-staging
 Supabase cutover and Postgres build canary, bounded staging/production scale,
-Postgres HA/PITR enable-and-verify, exact disposable-restore teardown, and the
-one canonical production `pintpath.au` close/open state machine.
+Postgres HA/PITR enable-and-verify, exact disposable-restore teardown, the
+four-job post-promotion recovery activation, and the one canonical production
+`pintpath.au` close/open state machine.
 Each is executable only after its own protected approval, exact current-`main`
 authority, and immediate `readiness:railway:mutation-boundary` preflight; its
 tracked executor owns one exact write and unconditional postflight. The
@@ -102,10 +103,42 @@ Production rollout evidence is ordered rather than a set of same-SHA names.
 The verifier binds exact successful attempt-one workflow runs,
 start/completion timestamps, artifact IDs, immutable GitHub SHA-256 digests,
 sizes, producer checks, and canonical receipts for deploy→two-replica
-convergence→route close→protected promotion/recovery attestation→route open.
-Each predecessor must complete before its consumer starts; all five rollout
+convergence→route close→protected recovery activation→promotion/recovery
+attestation→route open. Each predecessor must complete before its consumer
+starts; all six rollout
 stages share `pintpath-production-rollout` with `cancel-in-progress: false`. A later
 close/open pair cannot repair an earlier out-of-order or one-replica release.
+
+The activation contract is policy v2 SHA-256
+`57f66c1c9dde912586ec510e37c28cc3dfea2c098e67c78edbea189c7dcc9988`.
+It runs `production-capture` on the JIT `pintpath-production-backup` label,
+`disposable-recover` on the separate JIT `pintpath-disposable-recovery` label,
+an independent `if: always()` cleanup job, then `finalize`. PITR is observed in
+capture. Logical and private recovery-bundle WORM objects are read separately
+on the disposable network. The exact compiled candidate runs as a local child
+there against disposable Postgres, Redis, Supabase Auth, and private Storage.
+No raw recovery byte crosses a GitHub artifact. Require exactly 18 evidence
+leaves and exactly 20 final activation files.
+
+Before approving capture, dispatch and hold the protected activation, record
+its assigned `GITHUB_RUN_ID`, then create, sign, independently verify, and
+install the singleton emergency arm plus both exact-run teardown authorities
+in the non-interactive cleanup environment, then publish the arm through the
+protected manager's dedicated-ref compare-and-swap. An OPEN state mechanically
+rejects a second run; same-target linked renewal prevents expiry from stranding
+cleanup. Both provider cleanup steps remain independent. Supabase
+`cleanupMode=orderly` must bind the exact Storage purge receipt for green;
+emergency cleanup never greens the chain. Use standard cancel only, and forbid
+force-cancel until independent observations prove Railway and Supabase absent.
+The completion/15-minute/manual watchdog retries outside the activation run
+while the state is OPEN and cannot green activation. It persists exact delete
+acknowledgements across runs but requires a fresh absence proof before
+reconciliation. Railway workspace absence without an
+exact delete acknowledgement is transfer-ambiguous; keep ARMED and reconcile
+provider-global state.
+Create the version-2 authority and both distinct approvals only after final
+activation. Its `recoveryStartedAt` is immutably copied from the GitHub
+activation workflow's `run_started_at`, never a reviewer-selected timestamp.
 
 Release-evidence schema v3 binds every completed gate to one immutable production release ID and frozen 40-character candidate SHA and requires the SHA-256 of a gate-specific private manifest. The informational command reports stale live proof and code/worktree drift with `evidenceCurrent: false`; the strict gate refuses it. Future timestamps and structurally unsupported proof are invalid in both modes. This does not make human evidence automatic; it prevents a note, old timestamp, or unrelated commit from being mistaken for durable launch proof.
 
@@ -253,10 +286,16 @@ These are launch-critical but require provider/staging verification:
 - **Redis rate limiting:** Full-scale production and permanent integrated staging must use `REDIS_URL`, a distinct environment namespace, and `REQUIRE_REDIS_RATE_LIMITING=true`; in-memory fallback is preview/local only. Run the two-replica staging outage drill so protected traffic and readiness fail closed when staging Redis is unavailable.
 - **DAST/mobile E2E:** Do not run dynamic scanners against production. Run any ZAP/Lighthouse/Playwright mobile pass only against local, preview, or staging.
 - **Backups/restore:** Before full-scale launch, capture Postgres PITR plus
-  logical, private Storage/evidence, and deletion-tombstone exports into the
-  separately administered WORM authority. Retrieve and restore the exact set
-  into newly created ephemeral destructive restore staging, prove RPO/RTO and
-  application invariants, then destroy every recorded disposable resource.
+  logical, private Storage/evidence, and deletion-tombstone exports into their
+  separately administered WORM authorities. Retrieve the logical and private
+  WORM sets independently into newly created ephemeral destructive restore
+  staging, restore them, replay deletion twice, and run the compiled candidate
+  locally on the exact disposable private network. Prove RPO from the captured
+  recovery point and RTO from immutable GitHub activation `run_started_at` to
+  application readiness. Purge restored Storage, require orderly Supabase
+  cleanup, and retain independent Railway/Supabase absence terminals before
+  finalization. The checked-in path is not live evidence; any missing authentic
+  provider receipt remains a launch no-go.
 
 ## Manual Staging Smoke
 

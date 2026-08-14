@@ -119,14 +119,17 @@ redeploy/rollback, and every unlisted write remain blocked.
   concurrency, Auth, deletion, data repair, DAST, load, smoke, and
   rollback-build proof before its unconditional convergence back to one.
 - **Protected production rollout chain:** Deploy, one-way convergence to exactly
-  two replicas, canonical-route close, the two-reviewer promotion/recovery
-  attestation, and canonical-route open share one non-cancelling concurrency
-  group. Close, promotion/recovery attestation, route open, and the release gate
-  consume the exact attempt-one predecessor runs and GitHub artifact
-  IDs/digests/sizes, strictly parse the applicable canonical receipts, and
-  enforce deploy→scale→close→promotion/recovery→open chronology. These paths
-  remain inactive without protected environments, real provider evidence, and
-  explicit confirmations; they make no provider call during repository checks.
+  two replicas, canonical-route close, protected recovery activation, the
+  two-reviewer promotion/recovery attestation, and canonical-route open share
+  one non-cancelling concurrency group. Close, activation,
+  promotion/recovery attestation, route open, and the release gate consume the
+  exact attempt-one predecessor runs and GitHub artifact IDs/digests/sizes,
+  strictly parse the applicable canonical receipts, and enforce
+  deploy→scale→close→activation→promotion-recovery→open chronology. The
+  attestation consumes only the exact authenticated activation artifact. These
+  paths remain inactive without protected environments, real provider
+  evidence, and explicit confirmations; they make no provider call during
+  repository checks.
 - **Ephemeral destructive restore staging:** A separate Railway Postgres/Redis
   restore project exists and its database restore plus one-tombstone replay are
   verified. It still needs isolated Supabase/Storage, PITR/WORM retrieval, full

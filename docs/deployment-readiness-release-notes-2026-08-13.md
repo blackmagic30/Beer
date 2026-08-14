@@ -28,6 +28,18 @@ change provider infrastructure, rotate a credential, send mail, or enable billin
   quarantine, exact role boundaries, and operator receipts.
 - Added a protected daily PostgreSQL logical-backup/operational-copy/WORM
   schedule plus a monthly isolated restore drill and fail-closed alert path.
+- Activated a four-job post-promotion recovery ceremony that separately
+  captures production evidence, restores on a disposable private runner,
+  performs independently authorized provider cleanup, and finalizes only after
+  both target-absence terminals are present.
+- Added reader-only retrieval for the logical and private WORM sets, a real
+  compiled-app recovery smoke against distinct runtime and maintenance roles,
+  and strict producer-shaped validation for all 18 evidence leaves in the
+  20-file activation artifact.
+- Added orderly Railway and Supabase teardown plus a signed singleton `ARMED`
+  watchdog outside the activation cancellation domain. It fails closed on
+  target transfer, lost deletion acknowledgement, overlapping activation, or
+  incomplete provider inventory.
 - Reworked permanent-staging cost evidence into a provider-observed,
   candidate-bound receipt with a US$47 maximum and US$3 headroom under the
   approved US$50 ceiling.
