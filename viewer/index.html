@@ -41,7 +41,7 @@
       }
     }
   </script>
-  <script src="./map-logic.js?v=20260710-beer-identity-filter"></script>
+  <script src="./map-logic.js?v=20260815-current-verified-sort"></script>
   <script src="./config.js"></script>
   <script src="./business.js" defer></script>
   <link rel="stylesheet" href="./consent.css" />
@@ -3901,7 +3901,7 @@
           <div id="venueRailSubtitle" class="venueRail__subtitle">Pan or zoom the map, or use the filters above, to focus the venue list.</div>
           <div class="venueRail__sortRow">
             <span class="venueRail__sortLabel">Sort</span>
-            <button id="venueRailSortSmart" class="venueRail__sortChip is-active" type="button">Best match</button>
+            <button id="venueRailSortSmart" class="venueRail__sortChip is-active" type="button">Current verified first</button>
             <button id="venueRailSortCheapest" class="venueRail__sortChip" type="button">Cheapest first</button>
             <button id="venueRailSortNearest" class="venueRail__sortChip" type="button">Nearest</button>
           </div>
@@ -7494,6 +7494,13 @@
       const distanceLabel = distanceKm === null ? null : `${window.MelbBeerMapLogic.formatDistance(distanceKm)} away`;
       const withDistance = (parts) => [distanceLabel, ...parts].filter(Boolean).join(" · ");
       const discoveryBoost = getVenueDiscoverySortBoost(record.row);
+      const discoveryRank = window.MelbBeerMapLogic.getVenueDiscoverySortRank(
+        getBeerItems(record.row),
+        {
+          isPriceVisible: (beer) => !isBeerPriceHiddenForViewer(beer, record.id),
+          hasUsefulSignal: hasUsefulVenueSignal(record.row),
+        },
+      );
 
       if (!hasCapturedBeerData(record.row)) {
         return {
@@ -7503,6 +7510,7 @@
             : "background:#1e293b; color:#e2e8f0;",
           metaPill: happyHourDetails ? "Happy hour checked" : "Venue mapped",
           copy: withDistance([happyHourBrief || "No beer prices captured yet. Good candidate for a call, OCR source, or manual entry."]),
+          discoveryRank,
           sortWeight: discoveryBoost,
           numericPrice: null,
           priceTier: null,
@@ -7523,6 +7531,7 @@
             `${featuredBeer.label} · ${featuredBeer.availabilityLabel}`,
             happyHourBrief ? `Happy hour: ${happyHourBrief}` : null,
           ]),
+          discoveryRank,
           sortWeight: getBestMatchSortWeight(featuredBeer, distanceKm, discoveryBoost),
           numericPrice: canSortByPrice ? featuredBeer.priceNumeric : null,
           priceTier: getVisibleBeerPriceTier(featuredBeer, record.id),
@@ -7543,6 +7552,7 @@
             `${featuredBeer.availabilityLabel} · ${displayPrice}`,
             happyHourBrief ? `Happy hour: ${happyHourBrief}` : null,
           ]),
+          discoveryRank,
           sortWeight: getBestMatchSortWeight(featuredBeer, distanceKm, discoveryBoost),
           numericPrice: canSortByPrice ? featuredBeer.priceNumeric : null,
           priceTier: getVisibleBeerPriceTier(featuredBeer, record.id),
@@ -7559,6 +7569,7 @@
           : "background:#1e293b; color:#e2e8f0;",
         metaPill: happyHourDetails ? "Happy hour checked" : "Venue mapped",
         copy: withDistance([happyHourBrief || "Venue is on the map and ready for beer data."]),
+        discoveryRank,
         sortWeight: discoveryBoost,
         numericPrice: null,
         priceTier: null,
@@ -7706,6 +7717,9 @@
             venueRailSortMode === "nearest" ||
             viewState.filters.includes("nearest") ||
             viewState.filters.includes("happy_hour_near_me");
+          const shouldSortByPrice =
+            (viewState.beerQuery && venueRailSortMode === "cheapest") ||
+            viewState.filters.includes("cheapest_near_me");
 
           if (shouldSortByDistance) {
             const leftDistance = left.summary.distanceKm;
@@ -7724,7 +7738,7 @@
             }
           }
 
-          if ((viewState.beerQuery && venueRailSortMode === "cheapest") || viewState.filters.includes("cheapest_near_me")) {
+          if (shouldSortByPrice) {
             const leftPrice = left.summary.numericPrice;
             const rightPrice = right.summary.numericPrice;
 
@@ -7739,6 +7753,26 @@
             if (leftPrice == null && rightPrice != null) {
               return 1;
             }
+          }
+
+          if (
+            venueRailSortMode === "smart" &&
+            !viewState.beerQuery &&
+            !shouldSortByDistance &&
+            !shouldSortByPrice
+          ) {
+            return window.MelbBeerMapLogic.compareVenueSmartSort(
+              {
+                discoveryRank: left.summary.discoveryRank,
+                sortWeight: left.summary.sortWeight,
+                name: left.venue.name || left.row.venue_name || "",
+              },
+              {
+                discoveryRank: right.summary.discoveryRank,
+                sortWeight: right.summary.sortWeight,
+                name: right.venue.name || right.row.venue_name || "",
+              },
+            );
           }
 
           if (left.summary.sortWeight !== right.summary.sortWeight) {
@@ -7773,10 +7807,10 @@
             : viewState.beerQuery
               ? "The shortlist below follows your beer search and updates as you move around the map."
               : !mapForRail
-                ? "Map tiles are unavailable, but the real venue list still works. Tap a venue to open details."
+                ? "Map tiles are unavailable, but the venue results still work. Current verified prices appear first; venues needing data remain in the result set."
               : hasUserLocation()
-                ? "Tap a venue below to jump to its marker. Distances are approximate."
-                : "Tap a venue below to jump straight to its marker and open the venue card.";
+                ? "Current verified prices appear first in this shortlist; all visible venues remain on the map. Distances are approximate."
+                : "Current verified prices appear first in this shortlist; venues that still need data remain on the map and in the result set.";
       if (!viewState.beerQuery && venueRailSortMode !== "smart") {
         if (venueRailSortMode !== "nearest") {
           venueRailSortMode = "smart";

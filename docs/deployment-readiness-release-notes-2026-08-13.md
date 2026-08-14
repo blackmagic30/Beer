@@ -60,6 +60,16 @@ change provider infrastructure, rotate a credential, send mail, or enable billin
 - Expanded secret-pattern coverage, verified local secret-file permissions,
   removed production debug globals, and made scheduled authenticated health
   monitoring fail closed when protected configuration is absent.
+- Made every non-dialog browser form use an explicit same-origin POST contract,
+  with a bounded non-mutating fallback that prevents credentials, contact
+  details, venue operations, or admin inputs from falling back into URLs when
+  JavaScript is unavailable.
+- Enforced one canonical production origin: reviewed legacy and `www` hosts
+  permanently redirect to `https://pintpath.au` with the path and query intact,
+  while unknown production hosts fail closed and Railway probes remain healthy.
+- Corrected the default venue shortlist so current verified visible prices rank
+  ahead of stale, partial, and empty records without hiding any venue, marker,
+  coverage count, or needs-data state.
 - Fixed the venue portal's commercial-disabled initialization ordering so it
   no longer dereferences DOM removed by the launch gate.
 

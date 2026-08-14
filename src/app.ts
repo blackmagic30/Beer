@@ -14,8 +14,8 @@ import { PREMIUM_PRICING } from "./config/business-rules.js";
 import { AppError } from "./lib/errors.js";
 import { getRateLimitIdentity } from "./lib/client-ip.js";
 import {
-  buildCanonicalHostRedirectUrl,
-  shouldRedirectToCanonicalHost,
+  resolveCanonicalHostRequest,
+  shouldEnforceCanonicalProductionHost,
 } from "./lib/canonical-redirect.js";
 import {
   isCanonicalProductionRuntime,
@@ -53,6 +53,7 @@ let initializingServicesCleanup: (() => Promise<void>) | undefined;
 let verifiedRestoreRuntime: VerifiedRestoreRuntimeAttestation | undefined;
 
 export const LARGE_JSON_BODY_LIMIT_BYTES = 16 * 1024 * 1024;
+const FORM_FALLBACK_MAX_DECLARED_BODY_BYTES = 64 * 1024;
 const LARGE_JSON_UPLOAD_PATHS = new Set([
   "/api/business/submissions",
   "/api/admin/captures/menu-photo-ocr",
@@ -1496,6 +1497,41 @@ function isTrustedOrigin(req: Request, origin: string | undefined, allowedOrigin
   return origin === getRequestOrigin(req);
 }
 
+export function createCanonicalProductionHostGuard(config: {
+  enabled: boolean;
+  canonicalOrigin: string;
+}): RequestHandler {
+  return (req, res, next) => {
+    let requestHostname = "";
+    try {
+      requestHostname = req.hostname;
+    } catch {
+      // A malformed Host/X-Forwarded-Host value is rejected below without
+      // reflecting it into a response or redirect target.
+    }
+
+    const resolution = resolveCanonicalHostRequest({
+      enabled: config.enabled,
+      canonicalOrigin: config.canonicalOrigin,
+      requestHostname,
+      requestMethod: req.method,
+      requestPath: req.path,
+      requestTarget: req.originalUrl,
+    });
+    if (resolution.action === "redirect") {
+      res.redirect(308, resolution.location);
+      return;
+    }
+    if (resolution.action === "reject") {
+      res.status(421).set("Cache-Control", "no-store").type("text/plain").send(
+        "Misdirected Request",
+      );
+      return;
+    }
+    next();
+  };
+}
+
 export function createApp() {
   const app = express();
   // Keep the static application inside the deployable artifact. In source the
@@ -1522,6 +1558,12 @@ export function createApp() {
     // bucket instead of making the public platform probe unavailable.
     keyGenerator: (req) => getRateLimitIdentity(req) ?? "unresolved-readiness-client",
   });
+  const formSubmissionFallbackLimiter = createRateLimiter({
+    windowMs: 10 * 60 * 1000,
+    max: 30,
+    keyPrefix: "public:form-submission-unavailable",
+    keyGenerator: getRateLimitIdentity,
+  });
   const resolveNormalReadinessProbe = createReadinessProbeSingleFlight<{
     readonly statusCode: 200 | 503;
     readonly payload: unknown;
@@ -1542,19 +1584,20 @@ export function createApp() {
 
   app.set("trust proxy", env.TRUST_PROXY_HOPS);
   app.set("case sensitive routing", true);
-  app.use((req, res, next) => {
-    const publicBaseUrl = new URL(env.PUBLIC_BASE_URL);
-    const canonicalHost = publicBaseUrl.hostname.toLowerCase();
-    const requestHost = req.hostname.toLowerCase();
-    if (shouldRedirectToCanonicalHost(canonicalHost, requestHost)) {
-      res.redirect(
-        308,
-        buildCanonicalHostRedirectUrl(publicBaseUrl.origin, req.originalUrl),
-      );
-      return;
-    }
-    next();
-  });
+  // Express resolves req.hostname through the configured proxy boundary above.
+  // The guard accepts only fixed reviewed aliases and always constructs the
+  // Location from PUBLIC_BASE_URL, so forwarded input can never choose a
+  // redirect origin.
+  app.use(createCanonicalProductionHostGuard({
+    enabled: shouldEnforceCanonicalProductionHost({
+      nodeEnv: env.NODE_ENV,
+      railwayEnvironmentName: process.env.RAILWAY_ENVIRONMENT_NAME,
+      restoreRehearsalMode: env.RESTORE_REHEARSAL_MODE,
+      postgresRecoveryRehearsalMode: env.POSTGRES_RECOVERY_REHEARSAL_MODE,
+      accountDeletionRehearsalEnabled: env.ACCOUNT_DELETION_REHEARSAL_ENABLED,
+    }),
+    canonicalOrigin: env.PUBLIC_BASE_URL,
+  }));
   app.use((_req, res, next) => {
     res.locals.cspNonce = crypto.randomBytes(18).toString("base64");
     next();
@@ -1726,6 +1769,68 @@ export function createApp() {
 
     next();
   });
+  // Sensitive browser forms use this same-origin POST target when their
+  // JavaScript submit path is unavailable. Keep it ahead of every body parser:
+  // the fallback must never parse, persist, log, reflect, or redirect form data.
+  app.post(
+    "/form-submission-unavailable",
+    (req, res, next) => {
+      const rawContentLength = req.get("content-length");
+      if (rawContentLength != null) {
+        const contentLength = Number(rawContentLength);
+        if (
+          !Number.isSafeInteger(contentLength)
+          || contentLength < 0
+          || contentLength > FORM_FALLBACK_MAX_DECLARED_BODY_BYTES
+        ) {
+          res
+            .status(413)
+            .set({
+              "Cache-Control": "no-store, max-age=0",
+              Pragma: "no-cache",
+              "X-Robots-Tag": "noindex, nofollow, noarchive",
+            })
+            .type("text/plain")
+            .send("Form submission is too large.");
+          return;
+        }
+      }
+      next();
+    },
+    formSubmissionFallbackLimiter,
+    (_req, res) => {
+      res
+        .status(409)
+        .set({
+          "Cache-Control": "no-store, max-age=0",
+          Pragma: "no-cache",
+          "X-Robots-Tag": "noindex, nofollow, noarchive",
+        })
+        .type("html")
+        .send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Form not submitted | Pint Path</title>
+  <link rel="stylesheet" href="/business.css" />
+</head>
+<body>
+  <main class="pageShell">
+    <section class="panel" role="alert" aria-labelledby="formUnavailableTitle">
+      <div class="eyebrow">Nothing was saved</div>
+      <h1 id="formUnavailableTitle">This secure form needs JavaScript.</h1>
+      <p>Your information was not processed or saved. Return to the form, reload the page, and try again.</p>
+      <div class="actionRow">
+        <a class="button button--primary" href="/">Return to Pint Path</a>
+        <a class="button" href="/feedback.html">Contact Pint Path</a>
+      </div>
+    </section>
+  </main>
+</body>
+</html>`);
+    },
+  );
   app.use((req, _res, next) => {
     if (req.path === "/health" || req.path === "/" || req.path === "/config.js") {
       logger.info("Inbound request", {
