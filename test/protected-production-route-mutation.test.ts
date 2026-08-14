@@ -31,7 +31,7 @@ const temporaryRoots: string[] = [];
 const RELEASE_POLICY_SHA256 =
   "b47f562d94b462ed7d2b1d9df317ac239a607d517bb487c109585e09213ba4fd";
 const ROUTE_POLICY_SHA256 =
-  "fc3fba0dc43f82b0fb14d5fbc48bf4ceac98f6d19a73d97504665a5d7bb13ff4";
+  "44b904f53d8941a02a9cf7a6eb4819573b6b258b593710be0717369d9bf14d9d";
 const PROMOTION_RECOVERY_POLICY_SHA256 =
   "57f66c1c9dde912586ec510e37c28cc3dfea2c098e67c78edbea189c7dcc9988";
 
@@ -242,7 +242,7 @@ function writePredecessorAuthority(
       artifact: artifacts.find((artifact) => artifact.stage === stage)!,
     }));
   const authority = {
-    schemaVersion: "pintpath-github-release-candidate-receipt/v4",
+    schemaVersion: "pintpath-github-release-candidate-receipt/v5",
     repository: "blackmagic30/Beer",
     branch: "main",
     phase: operation,
@@ -255,11 +255,10 @@ function writePredecessorAuthority(
       mergedAt: "1970-01-01T00:00:00.000Z",
       authorId: 1,
       mergedById: 2,
-      approvingReviewIds: [3],
-      approvingReviewerIds: [3],
       githubMergeExact: true,
       reviewedTreeExact: true,
-      independentApprovalExact: true,
+      pullRequestApprovalRequirement: "not_required",
+      pullRequestApprovalRequirementExact: true,
       linearHistoryExact: true,
     },
     policySha256: RELEASE_POLICY_SHA256,
@@ -583,6 +582,12 @@ function harness(operation: "close" | "open", options: {
   providerReplicas?: 1 | 2;
   authorityExtraKey?: boolean;
   reviewedPullRequestDrift?: boolean;
+  predecessorAuthorityContractDrift?:
+    | "legacy-schema"
+    | "extra-approval-field"
+    | "omitted-approval-field"
+    | "changed-approval-field"
+    | "inexact-approval-requirement";
   duplicateAuthorityStage?: boolean;
   promotionReceiptDrift?: boolean;
   promotionPolicyDrift?: boolean;
@@ -603,6 +608,28 @@ function harness(operation: "close" | "open", options: {
   if (options.reviewedPullRequestDrift) {
     const value = JSON.parse(fs.readFileSync(authority.githubAuthority, "utf8"));
     value.reviewedPullRequest.reviewedTreeExact = false;
+    fs.writeFileSync(authority.githubAuthority, canonical(value));
+  }
+  if (options.predecessorAuthorityContractDrift) {
+    const value = JSON.parse(fs.readFileSync(authority.githubAuthority, "utf8"));
+    const reviewedPullRequest = value.reviewedPullRequest;
+    switch (options.predecessorAuthorityContractDrift) {
+      case "legacy-schema":
+        value.schemaVersion = "pintpath-github-release-candidate-receipt/v4";
+        break;
+      case "extra-approval-field":
+        reviewedPullRequest.approvingReviewerIds = [3];
+        break;
+      case "omitted-approval-field":
+        delete reviewedPullRequest.pullRequestApprovalRequirement;
+        break;
+      case "changed-approval-field":
+        reviewedPullRequest.pullRequestApprovalRequirement = "required";
+        break;
+      case "inexact-approval-requirement":
+        reviewedPullRequest.pullRequestApprovalRequirementExact = false;
+        break;
+    }
     fs.writeFileSync(authority.githubAuthority, canonical(value));
   }
   if (options.duplicateAuthorityStage) {
@@ -766,6 +793,21 @@ describe("protected production canonical-route executor", () => {
     expect(PROTECTED_PRODUCTION_ROUTE_MUTATION_STATE).toBe(
       "GITHUB_ENVIRONMENT_PROTECTED",
     );
+    const routePolicySource = fs.readFileSync(
+      path.resolve("ops/railway/production-route-mutation-policy.json"),
+      "utf8",
+    );
+    const routePolicy = JSON.parse(routePolicySource);
+    expect(sha256(routePolicySource)).toBe(ROUTE_POLICY_SHA256);
+    expect(routePolicy).toMatchObject({
+      schemaVersion: "pintpath-protected-production-route-mutation-policy/v3",
+      predecessorAuthorityContract: {
+        schemaVersion: "pintpath-github-release-candidate-receipt/v5",
+        pullRequestApprovalRequirement: "not_required",
+      },
+    });
+    expect(routePolicy.predecessorAuthorityContract)
+      .not.toHaveProperty("independentApprovalRequired");
     expect(protectedProductionRouteMutationInternals.policyExact(process.cwd())).toBe(true);
     expect(PRODUCTION_ROUTE_CLOSE_MUTATION).toContain("customDomainDelete");
     expect(PRODUCTION_ROUTE_OPEN_MUTATION).toContain("customDomainCreate");
@@ -955,6 +997,11 @@ describe("protected production canonical-route executor", () => {
       harness("open", { providerReplicas: 1 }),
       harness("close", { authorityExtraKey: true }),
       harness("close", { reviewedPullRequestDrift: true }),
+      harness("close", { predecessorAuthorityContractDrift: "legacy-schema" }),
+      harness("close", { predecessorAuthorityContractDrift: "extra-approval-field" }),
+      harness("close", { predecessorAuthorityContractDrift: "omitted-approval-field" }),
+      harness("close", { predecessorAuthorityContractDrift: "changed-approval-field" }),
+      harness("close", { predecessorAuthorityContractDrift: "inexact-approval-requirement" }),
       harness("close", { duplicateAuthorityStage: true }),
       harness("open", { promotionReceiptDrift: true }),
       harness("open", { promotionPolicyDrift: true }),

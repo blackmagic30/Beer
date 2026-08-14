@@ -17,6 +17,10 @@ change provider infrastructure, rotate a credential, send mail, or enable billin
   two-replica staging ceremonies without embedding credentials.
 - Added a candidate-aware GitHub check/artifact verifier and strengthened the
   release gate so an arbitrary ref or incomplete CI run cannot be released.
+- Aligned candidate authority with the solo-owner repository policy: a human
+  PR approval is not required, while the exact merged same-repository PR,
+  protected-main commit, one-parent history, reviewed/candidate tree equality,
+  required checks, artifacts, and chronology remain mandatory.
 
 ## Data, privacy, and recovery
 

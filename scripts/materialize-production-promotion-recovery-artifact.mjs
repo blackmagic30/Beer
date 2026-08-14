@@ -85,11 +85,10 @@ function reviewedPullRequestExact(value, candidateSha) {
     "mergedAt",
     "authorId",
     "mergedById",
-    "approvingReviewIds",
-    "approvingReviewerIds",
     "githubMergeExact",
     "reviewedTreeExact",
-    "independentApprovalExact",
+    "pullRequestApprovalRequirement",
+    "pullRequestApprovalRequirementExact",
     "linearHistoryExact",
   ]) && positiveInteger(value.number)
     && SHA.test(value.reviewedPrHeadSha)
@@ -100,20 +99,10 @@ function reviewedPullRequestExact(value, candidateSha) {
     && Number.isFinite(Date.parse(value.mergedAt))
     && positiveInteger(value.authorId)
     && positiveInteger(value.mergedById)
-    && Array.isArray(value.approvingReviewIds)
-    && value.approvingReviewIds.length > 0
-    && value.approvingReviewIds.every(positiveInteger)
-    && new Set(value.approvingReviewIds).size === value.approvingReviewIds.length
-    && value.approvingReviewIds.every((item, index, items) => index === 0 || items[index - 1] < item)
-    && Array.isArray(value.approvingReviewerIds)
-    && value.approvingReviewerIds.length > 0
-    && value.approvingReviewerIds.every(positiveInteger)
-    && new Set(value.approvingReviewerIds).size === value.approvingReviewerIds.length
-    && value.approvingReviewerIds.every((item, index, items) => index === 0 || items[index - 1] < item)
-    && !value.approvingReviewerIds.includes(value.authorId)
     && value.githubMergeExact === true
     && value.reviewedTreeExact === true
-    && value.independentApprovalExact === true
+    && value.pullRequestApprovalRequirement === "not_required"
+    && value.pullRequestApprovalRequirementExact === true
     && value.linearHistoryExact === true;
 }
 
@@ -185,7 +174,7 @@ function readAuthority(filename, candidateSha, stage) {
       "chronologyExact",
       "currentConsumerExact",
     ]) ||
-    value.schemaVersion !== "pintpath-github-release-candidate-receipt/v4" ||
+    value.schemaVersion !== "pintpath-github-release-candidate-receipt/v5" ||
     value.repository !== "blackmagic30/Beer" ||
     value.branch !== "main" ||
     !contract.phases.includes(value.phase) ||

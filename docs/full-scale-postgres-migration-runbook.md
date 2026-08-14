@@ -47,10 +47,10 @@ web and Australian iOS launch. Before merge, every implementation and pre-merge
 validation item below must be part of `reviewedPrHeadSha`. After GitHub merges
 that exact head, the resulting current protected-main merge `candidateSha` must
 have the same Git tree. Fetch the reviewed PR head separately to prove equality;
-a linear squash/rebase commit need not descend from it. GitHub must reduce each
-eligible reviewer's exact-head reviews to their latest effective state and find
-at least one non-author approval from a collaborator/member/owner who currently
-has `write`, `maintain`, or `admin`. That exact candidate must pass
+a linear squash/rebase commit need not descend from it. Human PR approval is not
+release authority in this solo-owner repository; require the exact merged,
+non-draft, same-repository PR, protected-main merge commit, and one-parent
+linear history. That exact candidate must pass
 every live permanent-staging exit criterion before reviewed data is promoted or
 the combined launch is announced.
 
@@ -1097,11 +1097,12 @@ be measured and approved.
 ## Exit criteria
 
 Production cutover is allowed only after GitHub authenticates the merged PR,
-the separately fetched `reviewedPrHeadSha`, a latest-effective non-author
-approval whose reviewer still has `write`, `maintain`, or `admin`, the current
-protected-main `candidateSha=merge_commit_sha`, and exact equality of their Git
-trees without requiring ancestry. All of the following must then be signed for
-that exact candidate by
+the separately fetched `reviewedPrHeadSha`, the unique non-draft
+same-repository PR, the current protected-main
+`candidateSha=merge_commit_sha`, its one-parent linear history, and exact
+equality of their Git trees without requiring ancestry. Human PR approval is
+not required by the solo-owner branch policy. All of the following must then
+be signed for that exact candidate by
 the operator and an independent verifier:
 
 - every authoritative table and workflow is implemented on Postgres;

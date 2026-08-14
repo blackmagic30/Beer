@@ -100,7 +100,7 @@ function fixture(
     producerCheck: contract.producerCheck,
   };
   const authority = {
-    schemaVersion: "pintpath-github-release-candidate-receipt/v4",
+    schemaVersion: "pintpath-github-release-candidate-receipt/v5",
     repository: "blackmagic30/Beer",
     branch: "main",
     phase: contract.phase,
@@ -113,11 +113,10 @@ function fixture(
       mergedAt: "1970-01-01T00:00:00.000Z",
       authorId: 1,
       mergedById: 2,
-      approvingReviewIds: [3],
-      approvingReviewerIds: [3],
       githubMergeExact: true,
       reviewedTreeExact: true,
-      independentApprovalExact: true,
+      pullRequestApprovalRequirement: "not_required",
+      pullRequestApprovalRequirementExact: true,
       linearHistoryExact: true,
     },
     policySha256:
@@ -279,5 +278,69 @@ describe("production promotion-recovery artifact materializer", () => {
     );
     expect(code).toBe(1);
     expect(value.fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("rejects v4 and extra, omitted, or changed approval authority fields", async () => {
+    type MutableAuthority = {
+      schemaVersion: string;
+      reviewedPullRequest: Record<string, unknown>;
+    };
+    const cases: ReadonlyArray<readonly [
+      string,
+      (authority: MutableAuthority) => void,
+    ]> = [
+      ["legacy schema", (authority) => {
+        authority.schemaVersion = "pintpath-github-release-candidate-receipt/v4";
+      }],
+      ["extra legacy approval field", (authority) => {
+        authority.reviewedPullRequest.approvingReviewIds = [3];
+      }],
+      ["omitted approval requirement", (authority) => {
+        delete authority.reviewedPullRequest.pullRequestApprovalRequirement;
+      }],
+      ["changed approval requirement", (authority) => {
+        authority.reviewedPullRequest.pullRequestApprovalRequirement = "required";
+      }],
+      ["inexact approval requirement", (authority) => {
+        authority.reviewedPullRequest.pullRequestApprovalRequirementExact = false;
+      }],
+    ];
+
+    for (const [label, mutate] of cases) {
+      const value = fixture();
+      const authority = JSON.parse(
+        fs.readFileSync(value.authorityPath, "utf8"),
+      ) as MutableAuthority;
+      mutate(authority);
+      fs.writeFileSync(value.authorityPath, canonical(authority), { mode: 0o600 });
+
+      const code = await runProductionPromotionRecoveryArtifactMaterializer(
+        [
+          "--authority",
+          value.authorityPath,
+          "--candidate-sha",
+          CANDIDATE,
+          "--stage",
+          value.stage,
+          "--output",
+          value.output,
+        ],
+        {
+          env: {
+            GITHUB_ACTIONS: "true",
+            GITHUB_REPOSITORY: "blackmagic30/Beer",
+            GITHUB_SHA: CANDIDATE,
+            GITHUB_RUN_ATTEMPT: "1",
+            GITHUB_TOKEN: "g".repeat(32),
+          },
+          fetchImpl: value.fetchImpl,
+          extractEntry: vi.fn(),
+          writeOutput: () => undefined,
+        },
+      );
+      expect(code, label).toBe(1);
+      expect(value.fetchImpl, label).not.toHaveBeenCalled();
+      expect(fs.existsSync(value.output), label).toBe(false);
+    }
   });
 });

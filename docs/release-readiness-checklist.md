@@ -164,13 +164,13 @@ activation. Its `recoveryStartedAt` is immutably copied from the GitHub
 activation workflow's `run_started_at`, never a reviewer-selected timestamp.
 
 Release-evidence schema v4 binds every completed gate to one immutable
-production release ID, the separately fetched and independently reviewed PR-head
-SHA, and the exact current protected-main merge candidate SHA. For each eligible
-reviewer, only their latest effective exact-head review counts; at least one
-non-author collaborator/member/owner approver must still have `write`,
-`maintain`, or `admin`. The two commits may be non-ancestral after a squash/rebase
-merge, but their Git trees must match exactly; only the protected-main candidate
-anchors the later evidence-only closeout lineage. Each gate also requires the
+production release ID, the separately fetched PR-head SHA, and the exact current
+protected-main merge candidate SHA. Human pull-request approval is not release
+authority for this solo-owner repository. The verifier instead requires one
+exact merged, non-draft, same-repository PR, its exact protected-main merge
+commit, one-parent linear history, and reviewed-head/candidate Git-tree equality.
+The two commits may be non-ancestral after a squash/rebase merge; only the
+protected-main candidate anchors the later evidence-only closeout lineage. Each gate also requires the
 SHA-256 of its private manifest. The informational command
 reports stale live proof and code/worktree drift with `evidenceCurrent: false`;
 the strict gate refuses it. Future timestamps and structurally unsupported proof

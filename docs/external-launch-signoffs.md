@@ -44,10 +44,9 @@ match every pin and remain distinct from production and permanent staging.
   ordinary CI, automated readiness, and the required Native Apps `ios` check are
   green for that exact commit. Android is informational and outside this launch scope.
 - [ ] Follow Phase 16 of `docs/production-launch-runbook.md`: merge that exact
-  head through protected `main`, authenticate the associated merged PR, and use
-  only each eligible reviewer's latest effective exact-head review. Require a
-  non-author approval from a collaborator/member/owner who still has `write`,
-  `maintain`, or `admin`, require the GitHub merge commit and separately fetched
+  head through protected `main`, authenticate the exact non-draft
+  same-repository merged PR without treating a human review as release
+  authority, require the GitHub merge commit and separately fetched
   reviewed-head trees to be identical, and record the current protected-main
   merge commit as both `candidateSha` and `deploymentSha`. A squash/rebase result
   need not descend from the PR head.
