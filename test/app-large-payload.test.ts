@@ -12,6 +12,7 @@ import {
   createRestoreRehearsalAccessGate,
   getPublicRestoreRuntimeReadiness,
   getStaticAssetCacheControl,
+  isPostgresRecoveryRehearsalMutationAllowed,
   isRestoreRehearsalMutationAllowed,
   LARGE_JSON_BODY_LIMIT_BYTES,
   shouldRunAutomaticMaintenance,
@@ -171,6 +172,23 @@ describe("restore rehearsal containment", () => {
     expect(isRestoreRehearsalMutationAllowed("GET", "/pricing.html")).toBe(true);
     expect(shouldRunAutomaticMaintenance("production", true)).toBe(false);
     expect(shouldRunAutomaticMaintenance("production", false)).toBe(true);
+    expect(shouldRunAutomaticMaintenance("production", false, true)).toBe(false);
+    expect(isPostgresRecoveryRehearsalMutationAllowed(
+      "POST",
+      "/api/business/auth/supabase-session",
+    )).toBe(true);
+    expect(isPostgresRecoveryRehearsalMutationAllowed(
+      "POST",
+      "/api/business/auth/logout",
+    )).toBe(true);
+    expect(isPostgresRecoveryRehearsalMutationAllowed(
+      "POST",
+      "/api/business/account/delete-request",
+    )).toBe(false);
+    expect(isPostgresRecoveryRehearsalMutationAllowed(
+      "POST",
+      "/api/admin/venues",
+    )).toBe(false);
   });
 
   it("keeps public restore readiness free of backup identifiers, hashes, paths, and counts", () => {
@@ -219,6 +237,12 @@ describe("static response compression", () => {
     expect(getStaticAssetCacheControl("/app/viewer/assets/logo.png", "production"))
       .toContain("max-age=86400");
     expect(getStaticAssetCacheControl("/app/viewer/assets/logo.png", "production", true)).toBe("no-store");
+    expect(getStaticAssetCacheControl(
+      "/app/viewer/assets/logo.png",
+      "production",
+      false,
+      true,
+    )).toBe("no-store");
   });
 
   it("prevents every Pint Path page from being embedded in another frame", async () => {

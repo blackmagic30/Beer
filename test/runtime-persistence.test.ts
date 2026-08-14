@@ -142,6 +142,27 @@ describe("runtime persistence selection", () => {
       shouldUsePostgresRuntime({
         nodeEnv: "production",
         restoreRehearsalMode: false,
+        postgresRecoveryRehearsalMode: true,
+      }),
+    ).toBe(true);
+    expect(() =>
+      shouldUsePostgresRuntime({
+        nodeEnv: "test",
+        restoreRehearsalMode: false,
+        postgresRecoveryRehearsalMode: true,
+      }),
+    ).toThrow("cannot fall back to SQLite");
+    expect(() =>
+      shouldUsePostgresRuntime({
+        nodeEnv: "production",
+        restoreRehearsalMode: true,
+        postgresRecoveryRehearsalMode: true,
+      }),
+    ).toThrow("cannot fall back to SQLite");
+    expect(
+      shouldUsePostgresRuntime({
+        nodeEnv: "production",
+        restoreRehearsalMode: false,
       }),
     ).toBe(true);
     expect(

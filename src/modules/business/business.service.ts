@@ -370,7 +370,14 @@ interface UserGoogleVenueLookup {
 }
 
 type RemoteReadinessDependency = {
-  status: "ok" | "failed" | "configured" | "required_unconfigured" | "optional_unconfigured" | "field_test_unconfigured";
+  status:
+    | "ok"
+    | "failed"
+    | "configured"
+    | "required_unconfigured"
+    | "optional_unconfigured"
+    | "field_test_unconfigured"
+    | "disabled_for_postgres_recovery_rehearsal";
   required: boolean;
   liveProbe: boolean;
   error?: string;
@@ -2833,6 +2840,7 @@ export class BusinessService {
     > & Partial<Pick<Env,
       | "DATABASE_PATH"
       | "RESTORE_REHEARSAL_MODE"
+      | "POSTGRES_RECOVERY_REHEARSAL_MODE"
       | "REPORT_DELIVERY_SCHEDULE_ENABLED"
       | "REPORT_DELIVERY_DAY"
       | "REPORT_DELIVERY_HOUR"
@@ -9732,7 +9740,10 @@ export class BusinessService {
       nodeEnv: this.config.NODE_ENV,
       railwayEnvironmentName: process.env.RAILWAY_ENVIRONMENT_NAME,
     });
-    const providerRehearsal = Boolean(this.config.ACCOUNT_DELETION_REHEARSAL_ENABLED);
+    const providerRehearsal = Boolean(
+      this.config.ACCOUNT_DELETION_REHEARSAL_ENABLED
+      || this.config.POSTGRES_RECOVERY_REHEARSAL_MODE,
+    );
     const strictProductionProviderPolicy = canonicalProductionRuntime && !providerRehearsal;
     // Production deletion is irreversible across auth, billing, and evidence
     // providers. Refuse before acquiring the job or making any mutation when
@@ -16347,13 +16358,16 @@ export class BusinessService {
   }
 
   private async getSupabaseOperationalReadiness(): Promise<SupabaseReadinessDependencies> {
+    const postgresRecoveryRehearsal = Boolean(
+      this.config.POSTGRES_RECOVERY_REHEARSAL_MODE,
+    );
     const required = this.config.NODE_ENV === "production" && (
       !this.config.FIELD_TEST_MODE || Boolean(this.config.RESTORE_REHEARSAL_MODE)
     );
     const configured = !this.config.RESTORE_REHEARSAL_MODE && Boolean(
       this.config.SUPABASE_URL &&
       this.config.SUPABASE_ANON_KEY &&
-      this.config.SUPABASE_SERVICE_ROLE_KEY,
+      (postgresRecoveryRehearsal || this.config.SUPABASE_SERVICE_ROLE_KEY),
     );
     const commonStatus = (): RemoteReadinessDependency => ({
       status: configured
@@ -16386,7 +16400,7 @@ export class BusinessService {
 
     const url = this.config.SUPABASE_URL!;
     const anonKey = this.config.SUPABASE_ANON_KEY!;
-    const serviceRoleKey = this.config.SUPABASE_SERVICE_ROLE_KEY!;
+    const serviceRoleKey = this.config.SUPABASE_SERVICE_ROLE_KEY;
     const probe = async (
       endpoint: string,
       key: string,
@@ -16417,13 +16431,27 @@ export class BusinessService {
       const databaseProbeEndpoint = this.config.RESTORE_REHEARSAL_MODE
         ? "rest/v1/profiles?select=id&limit=1"
         : "rest/v1/venues?select=id&limit=1";
+      if (postgresRecoveryRehearsal) {
+        const supabaseAuth = await probe("auth/v1/health", anonKey);
+        const disabled = {
+          status: "disabled_for_postgres_recovery_rehearsal",
+          required: false,
+          liveProbe: false,
+        } satisfies RemoteReadinessDependency;
+        return {
+          ready: supabaseAuth.status === "ok",
+          supabaseAuth,
+          supabaseDatabase: disabled,
+          supabaseEvidenceStorage: disabled,
+        };
+      }
       const [supabaseAuth, supabaseDatabase, supabaseEvidenceStorage] = await Promise.all([
         probe("auth/v1/health", anonKey),
         // `profiles` is created by the repository-owned migration chain. The
         // production `venues` table is managed by a separate data pipeline and
         // is intentionally not copied into an isolated restore project.
-        probe(databaseProbeEndpoint, serviceRoleKey),
-        probe(`storage/v1/bucket/${encodeURIComponent(SUPABASE_EVIDENCE_BUCKET)}`, serviceRoleKey, async (response) => {
+        probe(databaseProbeEndpoint, serviceRoleKey!),
+        probe(`storage/v1/bucket/${encodeURIComponent(SUPABASE_EVIDENCE_BUCKET)}`, serviceRoleKey!, async (response) => {
           try {
             const bucket = await response.json() as {
               public?: unknown;
@@ -16482,7 +16510,12 @@ export class BusinessService {
 
     let evidenceStorage: { status: "ok" | "failed"; error?: string };
     try {
-      if (!this.useSupabaseEvidenceStorage || this.config.RESTORE_REHEARSAL_MODE) {
+      if (this.config.POSTGRES_RECOVERY_REHEARSAL_MODE) {
+        // The protected PostgreSQL ceremony proves the restored application
+        // database and disposable Auth boundary only.  It must not create or
+        // probe a writable local evidence directory, and it is deliberately
+        // denied a Supabase service credential for remote object access.
+      } else if (!this.useSupabaseEvidenceStorage || this.config.RESTORE_REHEARSAL_MODE) {
         if (!this.config.RESTORE_REHEARSAL_MODE) {
           fs.mkdirSync(this.config.SOURCE_EVIDENCE_STORAGE_DIR, { recursive: true, mode: 0o700 });
         }
@@ -16513,7 +16546,11 @@ export class BusinessService {
       this.config.STRIPE_PRICE_YEARLY &&
       this.config.STRIPE_PRO_PRICE_ID,
     );
+    const postgresRecoveryRehearsal = Boolean(
+      this.config.POSTGRES_RECOVERY_REHEARSAL_MODE,
+    );
     const billingRequired = !this.config.RESTORE_REHEARSAL_MODE
+      && !postgresRecoveryRehearsal
       && this.config.NODE_ENV === "production"
       && paidEnrollmentRequired;
     const venueLookupConfigured = Boolean(this.config.GOOGLE_PLACES_API_KEY);
@@ -16554,10 +16591,12 @@ export class BusinessService {
               && deletionNotificationJobAgeMinutes > deletionNotificationJobMaxAgeMinutes
             ? "stale"
             : deletionNotificationJobState;
-    const fullProviderReadinessRequired = !this.config.RESTORE_REHEARSAL_MODE && isCanonicalProductionRuntime({
-      nodeEnv: this.config.NODE_ENV,
-      railwayEnvironmentName: process.env.RAILWAY_ENVIRONMENT_NAME,
-    });
+    const fullProviderReadinessRequired = !this.config.RESTORE_REHEARSAL_MODE
+      && !postgresRecoveryRehearsal
+      && isCanonicalProductionRuntime({
+        nodeEnv: this.config.NODE_ENV,
+        railwayEnvironmentName: process.env.RAILWAY_ENVIRONMENT_NAME,
+      });
     const deletionNotificationsRequired = fullProviderReadinessRequired
       || Boolean(this.config.ACCOUNT_DELETION_REHEARSAL_ENABLED);
     const oldestSecurePurgeCheckpointAtMs = deletionNotificationQueue.oldestSecurePurgeCheckpointAt
@@ -16606,7 +16645,7 @@ export class BusinessService {
         supabaseDatabase: supabase.supabaseDatabase,
         supabaseEvidenceStorage: supabase.supabaseEvidenceStorage,
         billingProvider: {
-          status: this.config.RESTORE_REHEARSAL_MODE
+          status: this.config.RESTORE_REHEARSAL_MODE || postgresRecoveryRehearsal
             ? "disabled_for_restore_rehearsal"
             : !paidEnrollmentRequired
               ? "deferred"
@@ -16616,7 +16655,7 @@ export class BusinessService {
           required: billingRequired,
         },
         venueLookupProvider: {
-          status: this.config.RESTORE_REHEARSAL_MODE
+          status: this.config.RESTORE_REHEARSAL_MODE || postgresRecoveryRehearsal
             ? "disabled_for_restore_rehearsal"
             : venueLookupConfigured
               ? "configured"
@@ -16624,7 +16663,7 @@ export class BusinessService {
           required: fullProviderReadinessRequired,
         },
         menuExtractionProvider: {
-          status: this.config.RESTORE_REHEARSAL_MODE
+          status: this.config.RESTORE_REHEARSAL_MODE || postgresRecoveryRehearsal
             ? "disabled_for_restore_rehearsal"
             : menuExtractionConfigured
               ? "configured"
@@ -16641,7 +16680,7 @@ export class BusinessService {
           required: fullProviderReadinessRequired && (this.config.REPORT_DELIVERY_SCHEDULE_ENABLED ?? false),
         },
         accountDeletionNotifications: {
-          status: this.config.RESTORE_REHEARSAL_MODE
+          status: this.config.RESTORE_REHEARSAL_MODE || postgresRecoveryRehearsal
             ? "disabled_for_restore_rehearsal"
             : deletionNotificationConfigured
               ? deletionNotificationQueue.manualReviewCount > 0
@@ -16672,6 +16711,15 @@ export class BusinessService {
             : "primary_runtime_database",
           remoteVenueDirectoryEnabled: !this.config.RESTORE_REHEARSAL_MODE,
         },
+        postgresRecoveryRehearsal: {
+          enabled: postgresRecoveryRehearsal,
+          externalWritesAllowed: false,
+          automaticMaintenanceEnabled: false,
+          providerSchedulersEnabled: false,
+          runtimeDatabase: postgresRecoveryRehearsal
+            ? "disposable_postgres_recovery_target"
+            : "not_applicable",
+        },
       },
     };
   }
@@ -16696,7 +16744,10 @@ export class BusinessService {
 
     let evidenceStorage: { status: "ok" | "failed"; error?: string };
     try {
-      if (!this.useSupabaseEvidenceStorage || this.config.RESTORE_REHEARSAL_MODE) {
+      if (this.config.POSTGRES_RECOVERY_REHEARSAL_MODE) {
+        // See getOperationalReadiness: recovery startup is intentionally
+        // incapable of touching either local or remote evidence storage.
+      } else if (!this.useSupabaseEvidenceStorage || this.config.RESTORE_REHEARSAL_MODE) {
         if (!this.config.RESTORE_REHEARSAL_MODE) {
           fs.mkdirSync(this.config.SOURCE_EVIDENCE_STORAGE_DIR, { recursive: true, mode: 0o700 });
         }
@@ -16718,7 +16769,8 @@ export class BusinessService {
     }
 
     const deletionNotificationsRequired = this.config.NODE_ENV === "production"
-      && !this.config.RESTORE_REHEARSAL_MODE;
+      && !this.config.RESTORE_REHEARSAL_MODE
+      && !this.config.POSTGRES_RECOVERY_REHEARSAL_MODE;
     const deletionNotificationsConfigured = Boolean(
       this.accountDeletionNotificationCoordinator
       && this.config.ACCOUNT_DELETION_NOTICE_MODE === "resend"

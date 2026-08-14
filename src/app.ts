@@ -476,6 +476,19 @@ export function isRestoreRehearsalMutationAllowed(method: string, requestPath: s
   return method === "GET" || method === "HEAD";
 }
 
+const POSTGRES_RECOVERY_ALLOWED_MUTATIONS = new Set([
+  "/api/business/auth/supabase-session",
+  "/api/business/auth/logout",
+]);
+
+export function isPostgresRecoveryRehearsalMutationAllowed(
+  method: string,
+  requestPath: string,
+): boolean {
+  if (method === "GET" || method === "HEAD" || method === "OPTIONS") return true;
+  return method === "POST" && POSTGRES_RECOVERY_ALLOWED_MUTATIONS.has(requestPath);
+}
+
 export function getPublicRestoreRuntimeReadiness(verified: boolean) {
   if (!verified) return { status: "not_verified" } as const;
   return {
@@ -487,6 +500,21 @@ export function getPublicRestoreRuntimeReadiness(verified: boolean) {
   } as const;
 }
 
+function postgresRecoveryRehearsalMetadata() {
+  if (!env.POSTGRES_RECOVERY_REHEARSAL_MODE) return {};
+  return {
+    postgresRecoveryRehearsal: {
+      enabled: true,
+      candidateSha: env.POSTGRES_RECOVERY_CANDIDATE_SHA,
+      loopbackOnly: true,
+      postgresRuntime: true,
+      automaticMaintenanceEnabled: false,
+      externalWritesAllowed: false,
+      providerSchedulersEnabled: false,
+    },
+  } as const;
+}
+
 function acceptsLargeJsonPayload(req: Request): boolean {
   return ["POST", "PUT", "PATCH"].includes(req.method) && LARGE_JSON_UPLOAD_PATHS.has(req.path);
 }
@@ -494,8 +522,11 @@ function acceptsLargeJsonPayload(req: Request): boolean {
 export function shouldRunAutomaticMaintenance(
   nodeEnv = env.NODE_ENV,
   restoreRehearsalMode = env.RESTORE_REHEARSAL_MODE,
+  postgresRecoveryRehearsalMode = env.POSTGRES_RECOVERY_REHEARSAL_MODE,
 ): boolean {
-  return nodeEnv !== "test" && !restoreRehearsalMode;
+  return nodeEnv !== "test"
+    && !restoreRehearsalMode
+    && !postgresRecoveryRehearsalMode;
 }
 
 function hasSyntacticallyValidSession(req: Request): boolean {
@@ -529,7 +560,9 @@ async function buildLazyRouters(): Promise<LazyRouters> {
   const canonicalProductionRuntime = isCanonicalProductionRuntime({
     nodeEnv: env.NODE_ENV,
     railwayEnvironmentName: process.env.RAILWAY_ENVIRONMENT_NAME,
-  });
+  }) && !env.POSTGRES_RECOVERY_REHEARSAL_MODE;
+  const externalWriteRehearsal =
+    env.RESTORE_REHEARSAL_MODE || env.POSTGRES_RECOVERY_REHEARSAL_MODE;
 
   if (env.RESTORE_REHEARSAL_MODE) {
     if (env.RESTORE_REHEARSAL_PHASE !== "active") {
@@ -633,6 +666,7 @@ async function buildLazyRouters(): Promise<LazyRouters> {
   const postgresRuntime = shouldUsePostgresRuntime({
     nodeEnv: env.NODE_ENV,
     restoreRehearsalMode: env.RESTORE_REHEARSAL_MODE,
+    postgresRecoveryRehearsalMode: env.POSTGRES_RECOVERY_REHEARSAL_MODE,
     databaseUrl: env.DATABASE_URL,
   });
   const persistence = await createRuntimePersistence({
@@ -729,7 +763,7 @@ async function buildLazyRouters(): Promise<LazyRouters> {
     }
     throw error;
   }
-  const adminIngestionQueueRepository = !env.RESTORE_REHEARSAL_MODE
+  const adminIngestionQueueRepository = !externalWriteRehearsal
     ? new AdminIngestionQueueRepository(sqlDatabase)
     : undefined;
   const beerCatalogRepository = new BeerCatalogRepository(sqlDatabase);
@@ -763,12 +797,12 @@ async function buildLazyRouters(): Promise<LazyRouters> {
   const venueDataReadRepository = new VenueDataReadRepository(sqlDatabase);
   const adminService = new AdminService(
     adminIngestionQueueRepository,
-    env.RESTORE_REHEARSAL_MODE ? undefined : env.SUPABASE_URL,
-    env.RESTORE_REHEARSAL_MODE ? undefined : env.SUPABASE_SERVICE_ROLE_KEY,
+    externalWriteRehearsal ? undefined : env.SUPABASE_URL,
+    externalWriteRehearsal ? undefined : env.SUPABASE_SERVICE_ROLE_KEY,
     env.SUPABASE_MENU_CAPTURE_TABLE,
-    env.RESTORE_REHEARSAL_MODE ? undefined : env.OPENAI_API_KEY,
-    env.RESTORE_REHEARSAL_MODE ? undefined : env.GOOGLE_PLACES_API_KEY ?? env.GOOGLE_MAPS_API_KEY,
-    env.RESTORE_REHEARSAL_MODE ? undefined : sqlDatabase,
+    externalWriteRehearsal ? undefined : env.OPENAI_API_KEY,
+    externalWriteRehearsal ? undefined : env.GOOGLE_PLACES_API_KEY ?? env.GOOGLE_MAPS_API_KEY,
+    externalWriteRehearsal ? undefined : sqlDatabase,
   );
   await adminService.initializeIngestionQueue();
   const canonicalBusinessRuntimeEnv: Omit<typeof env, "DATABASE_PATH"> &
@@ -789,6 +823,24 @@ async function buildLazyRouters(): Promise<LazyRouters> {
         SUPABASE_ANON_KEY: undefined,
         SUPABASE_SERVICE_ROLE_KEY: undefined,
       }
+    : env.POSTGRES_RECOVERY_REHEARSAL_MODE
+      ? {
+          ...canonicalBusinessRuntimeEnv,
+          GOOGLE_MAPS_API_KEY: undefined,
+          GOOGLE_PLACES_API_KEY: undefined,
+          OPENAI_API_KEY: undefined,
+          REPORT_DELIVERY_SCHEDULE_ENABLED: false,
+          SUPABASE_SERVICE_ROLE_KEY: undefined,
+          OFFSITE_BACKUP_SUPABASE_URL: undefined,
+          OFFSITE_BACKUP_SERVICE_ROLE_KEY: undefined,
+          STRIPE_SECRET_KEY: undefined,
+          STRIPE_WEBHOOK_SECRET: undefined,
+          STRIPE_PRICE_MONTHLY: undefined,
+          STRIPE_PRICE_YEARLY: undefined,
+          STRIPE_PRO_PRICE_ID: undefined,
+          POS_WEBHOOK_SIGNING_SECRET: undefined,
+          ADMIN_EMAILS: undefined,
+        }
     : persistence.mode === "postgres"
       ? canonicalBusinessRuntimeEnv
       : { ...env, REPORT_DELIVERY_SCHEDULE_ENABLED: false };
@@ -814,7 +866,7 @@ async function buildLazyRouters(): Promise<LazyRouters> {
   let deletionNotificationCoordinator:
     | import("./lib/account-deletion-notification-worker.js").AccountDeletionNotificationCoordinator
     | undefined;
-  if (!env.RESTORE_REHEARSAL_MODE && env.ACCOUNT_DELETION_NOTICE_MODE !== "disabled") {
+  if (!externalWriteRehearsal && env.ACCOUNT_DELETION_NOTICE_MODE !== "disabled") {
     const [notificationModule, workerModule] = await Promise.all([
       import("./lib/account-deletion-notification.js"),
       import("./lib/account-deletion-notification-worker.js"),
@@ -884,7 +936,7 @@ async function buildLazyRouters(): Promise<LazyRouters> {
     venueDataReadRepository,
     performAccountDeletionSecretPhysicalCheckpoint,
     beerCatalogRepository,
-    env.RESTORE_REHEARSAL_MODE ? undefined : { extract: (input) => adminService.ocrMenuPhotos(input) },
+    externalWriteRehearsal ? undefined : { extract: (input) => adminService.ocrMenuPhotos(input) },
     undefined,
     deletionTombstoneWriter,
     deletionNotificationCoordinator,
@@ -1136,8 +1188,9 @@ export function getStaticAssetCacheControl(
   filePath: string,
   nodeEnv = env.NODE_ENV,
   restoreRehearsalMode = env.RESTORE_REHEARSAL_MODE,
+  postgresRecoveryRehearsalMode = env.POSTGRES_RECOVERY_REHEARSAL_MODE,
 ): string {
-  if (nodeEnv !== "production" || restoreRehearsalMode) {
+  if (nodeEnv !== "production" || restoreRehearsalMode || postgresRecoveryRehearsalMode) {
     return "no-store";
   }
 
@@ -1324,7 +1377,11 @@ export function createPublicVenuePageHandler(
         .type("html")
         .setHeader(
           "Cache-Control",
-          env.NODE_ENV === "production" && !env.RESTORE_REHEARSAL_MODE ? "public, max-age=300" : "no-store",
+          env.NODE_ENV === "production"
+            && !env.RESTORE_REHEARSAL_MODE
+            && !env.POSTGRES_RECOVERY_REHEARSAL_MODE
+            ? "public, max-age=300"
+            : "no-store",
         )
         .send(renderPublicVenuePage(venue, String(res.locals["cspNonce"])));
     } catch (error) {
@@ -1549,7 +1606,10 @@ export function createApp() {
           "font-src": ["'self'", "data:", "https://fonts.gstatic.com"],
           // Safari upgrades localhost subresources when this directive is present,
           // which leaves external CSS/JS pages looking like raw HTML in local dev.
-          "upgrade-insecure-requests": env.NODE_ENV === "production" ? [] : null,
+          "upgrade-insecure-requests":
+            env.NODE_ENV === "production" && !env.POSTGRES_RECOVERY_REHEARSAL_MODE
+              ? []
+              : null,
         },
       },
       ...(env.NODE_ENV === "production" ? {} : { strictTransportSecurity: false }),
@@ -1563,11 +1623,11 @@ export function createApp() {
   app.use((_req, res, next) => {
     res.setHeader(
       "Permissions-Policy",
-      env.RESTORE_REHEARSAL_MODE
+      env.RESTORE_REHEARSAL_MODE || env.POSTGRES_RECOVERY_REHEARSAL_MODE
         ? "camera=(), geolocation=(self), microphone=(), payment=()"
         : "camera=(self), geolocation=(self), microphone=(), payment=(self)",
     );
-    if (env.RESTORE_REHEARSAL_MODE) {
+    if (env.RESTORE_REHEARSAL_MODE || env.POSTGRES_RECOVERY_REHEARSAL_MODE) {
       res.setHeader("X-Robots-Tag", "noindex, nofollow, noarchive");
       res.setHeader("Cache-Control", "no-store");
     }
@@ -1607,6 +1667,20 @@ export function createApp() {
 
     next(new AppError("Writes are disabled during the isolated restore rehearsal.", 503));
   });
+  app.use((req, _res, next) => {
+    if (
+      !env.POSTGRES_RECOVERY_REHEARSAL_MODE
+      || isPostgresRecoveryRehearsalMutationAllowed(req.method, req.path)
+    ) {
+      next();
+      return;
+    }
+
+    next(new AppError(
+      "Writes are disabled during the isolated PostgreSQL recovery rehearsal.",
+      503,
+    ));
+  });
   app.use((req, res, next) => {
     const origin = req.get("origin");
 
@@ -1615,7 +1689,11 @@ export function createApp() {
       res.setHeader("Vary", "Origin");
       res.setHeader(
         "Access-Control-Allow-Methods",
-        env.RESTORE_REHEARSAL_MODE ? "GET" : "GET,POST,PUT,PATCH,DELETE,OPTIONS",
+          env.RESTORE_REHEARSAL_MODE
+            ? "GET"
+            : env.POSTGRES_RECOVERY_REHEARSAL_MODE
+              ? "GET,POST,OPTIONS"
+              : "GET,POST,PUT,PATCH,DELETE,OPTIONS",
       );
       res.setHeader(
         "Access-Control-Allow-Headers",
@@ -1705,6 +1783,7 @@ export function createApp() {
         ...(env.RESTORE_REHEARSAL_MODE
           ? { restoreRehearsal: { phase: env.RESTORE_REHEARSAL_PHASE } }
           : {}),
+        ...postgresRecoveryRehearsalMetadata(),
       }));
     } catch (error) {
       next(error);
@@ -1720,6 +1799,7 @@ export function createApp() {
         status: startup.ready ? "startup_ready" : "startup_not_ready",
         deployment: deploymentMetadata(),
         dependencies: startup.dependencies,
+        ...postgresRecoveryRehearsalMetadata(),
       }));
     } catch (error) {
       next(error);
@@ -1802,6 +1882,7 @@ export function createApp() {
             service: "pint-path",
             status: ready ? "ready" : "not_ready",
             deployment: deploymentMetadata(),
+            ...postgresRecoveryRehearsalMetadata(),
             dependencies: {
               ...readiness.dependencies,
               rateLimiterRedis,
@@ -1935,7 +2016,11 @@ export function createApp() {
       .type("text/plain; charset=utf-8")
       .setHeader(
         "Cache-Control",
-        env.NODE_ENV === "production" && !env.RESTORE_REHEARSAL_MODE ? "public, max-age=300" : "no-store",
+        env.NODE_ENV === "production"
+          && !env.RESTORE_REHEARSAL_MODE
+          && !env.POSTGRES_RECOVERY_REHEARSAL_MODE
+          ? "public, max-age=300"
+          : "no-store",
       )
       .sendFile(path.join(viewerDirectory, "security.txt"));
   });

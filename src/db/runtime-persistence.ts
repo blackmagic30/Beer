@@ -114,8 +114,17 @@ export function createUnavailableLegacyBusinessRepository(
 export function shouldUsePostgresRuntime(input: {
   nodeEnv: string;
   restoreRehearsalMode: boolean;
+  postgresRecoveryRehearsalMode?: boolean | undefined;
   databaseUrl?: string | undefined;
 }): boolean {
+  if (input.postgresRecoveryRehearsalMode) {
+    if (input.nodeEnv !== "production" || input.restoreRehearsalMode) {
+      throw new Error(
+        "PostgreSQL recovery rehearsal cannot fall back to SQLite or a non-production runtime.",
+      );
+    }
+    return true;
+  }
   return input.nodeEnv === "production" && !input.restoreRehearsalMode;
 }
 

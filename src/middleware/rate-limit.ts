@@ -96,7 +96,7 @@ function getRedisKeyNamespace(): string | undefined {
 }
 
 function getRestoreRedisIdentitySettings(): RestoreRedisIdentitySettings | null {
-  if (!env.RESTORE_REHEARSAL_MODE) {
+  if (!env.RESTORE_REHEARSAL_MODE && !env.POSTGRES_RECOVERY_REHEARSAL_MODE) {
     return null;
   }
 
@@ -105,7 +105,11 @@ function getRestoreRedisIdentitySettings(): RestoreRedisIdentitySettings | null 
     throw new RestoreRedisIdentityError("RestoreRedisNamespaceMissing");
   }
 
-  const sentinel = process.env.RESTORE_REHEARSAL_REDIS_SENTINEL?.trim();
+  const sentinel = (
+    env.POSTGRES_RECOVERY_REHEARSAL_MODE
+      ? process.env.POSTGRES_RECOVERY_REDIS_SENTINEL
+      : process.env.RESTORE_REHEARSAL_REDIS_SENTINEL
+  )?.trim();
   if (!sentinel) {
     throw new RestoreRedisIdentityError("RestoreRedisSentinelMissing");
   }
@@ -346,7 +350,7 @@ export async function probeRateLimitRedis(): Promise<RedisReadiness> {
         configured: true,
         required,
         ready: true,
-        ...(env.RESTORE_REHEARSAL_MODE
+        ...(env.RESTORE_REHEARSAL_MODE || env.POSTGRES_RECOVERY_REHEARSAL_MODE
           ? { identity: { required: true as const, verified: true } }
           : {}),
       } satisfies RedisReadiness;
@@ -357,7 +361,7 @@ export async function probeRateLimitRedis(): Promise<RedisReadiness> {
         required,
         ready: false,
         error: redisErrorMetadata(error).errorCode ?? redisErrorMetadata(error).errorName ?? "RedisProbeFailed",
-        ...(env.RESTORE_REHEARSAL_MODE
+        ...(env.RESTORE_REHEARSAL_MODE || env.POSTGRES_RECOVERY_REHEARSAL_MODE
           ? { identity: { required: true as const, verified: false } }
           : {}),
       } satisfies RedisReadiness;
