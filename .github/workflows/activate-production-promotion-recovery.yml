@@ -55,6 +55,7 @@ on:
 permissions:
   actions: read
   contents: read
+  pull-requests: read
 
 concurrency:
   group: pintpath-production-rollout

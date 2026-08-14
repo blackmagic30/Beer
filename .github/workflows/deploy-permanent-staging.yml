@@ -12,9 +12,11 @@ permissions:
   actions: read
   checks: read
   contents: read
+  pull-requests: read
 
 concurrency:
-  group: pintpath-permanent-staging-application-deployment
+  group: pintpath-permanent-staging-key-rollout
+  queue: max
   cancel-in-progress: false
 
 jobs:

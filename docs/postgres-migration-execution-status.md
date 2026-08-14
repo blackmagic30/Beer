@@ -699,10 +699,14 @@ receipts, smoke/load/recovery evidence, and approvals remain external gates.
   (`GOOGLE_PLACES_API_KEY`), and OpenAI menu OCR (`OPENAI_API_KEY`). Separately,
   the two permanent-staging Supabase replacement-key operations
   (`SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY`) use the protected atomic
-  replacement plus canary-B/legacy-disable/old-key-denial ceremony; production
-  operational-copy variables are prohibited in permanent staging.
-- Deploy the reviewed application build to permanent staging at one replica and
-  pass provider, Auth, role, private Storage, and Free-scope smoke checks.
+  replacement. Production operational-copy variables are prohibited in
+  permanent staging.
+- After that replacement, deploy the exact current-`main` application build to
+  permanent staging at one replica and prove every tracked server/browser/
+  mobile consumer plus provider, Auth, role, private Storage, and Free-scope
+  behavior. Only after those proofs pass, run the protected canary-B/
+  legacy-disable/old-key-denial workflow with the exact replacement and later
+  deployment run IDs.
 - Temporarily run the same reviewed build with at least two application
   replicas and overlapping workers through role smoke, concurrency,
   provider-failure,
@@ -789,19 +793,28 @@ receipts, smoke/load/recovery evidence, and approvals remain external gates.
 
 1. Complete the three Google/OpenAI categories/four exact Railway variable
    operations through the protected workflow after live authority is loaded.
-   Execute the separate protected permanent-staging Supabase atomic replacement,
-   canary-B, legacy-disable, and old-key-denial sequence. The candidate requires production operational-copy configuration
+   Execute the separate protected permanent-staging Supabase atomic publishable/
+   secret-key replacement, but treat its receipt only as
+   `acknowledged_pending_runtime_proof`. The candidate requires production operational-copy configuration
    absent there; a fresh complete Railway inventory must independently prove all
    three names deleted. Retain the historical operator-host retrieval evidence,
    but do not keep or repeat the staging offsite probe. Current staging readiness
    probes only its own source-evidence bucket, and no new staging off-site
    transport is authorized.
-2. Deploy the exact reviewed application build to permanent staging at one
-   replica and complete provider/Auth/role/Storage/Free-scope smoke.
-3. Scale the same build temporarily to two replicas; complete overlap,
+2. After the atomic Supabase replacement, deploy the exact current-`main`
+   application build to permanent staging at one replica. Retain the exact
+   successful deployment artifact and prove every server, browser, mobile, CI,
+   scheduled, webhook, backup, and archived consumer plus Auth, admin, role,
+   private-Storage, provider, and Free-scope behavior uses the replacement keys.
+3. Only after those deployment and consumer proofs pass, run the protected
+   replacement-key canary-B, legacy-disable, and old-key-denial workflow. Supply
+   its exact same-candidate replacement and post-replacement deployment run IDs;
+   the workflow authenticates both successful artifacts and their chronology
+   before it creates provider-secret custody.
+4. Scale the same build temporarily to two replicas; complete overlap,
    duplicate/reordered/retry, load, soak, restart, rolling-deploy, and
    Postgres-compatible rollback proof; then scale back to one.
-4. Run the protected exact-target Postgres-HA PITR workflow. Select only
+5. Run the protected exact-target Postgres-HA PITR workflow. Select only
    production or permanent staging; the matching protected GitHub environment
    supplies the reviewed root authority, and the executor must independently
    discover exactly that root from the complete Railway environment inventory
@@ -815,7 +828,7 @@ receipts, smoke/load/recovery evidence, and approvals remain external gates.
    unconditional absence postflight. Retain the
    completed operational-copy retrieval and database deletion-replay evidence
    without treating either as WORM or full recovery.
-5. Freeze the exact candidate only after every staging and recovery gate passes.
+6. Freeze the exact candidate only after every staging and recovery gate passes.
    Then run the maintenance-mode production snapshot, import,
    reconciliation, post-import recovery set, restore proof, deployment, scale,
    route close, reviewed-data promotion, four-job final activation, v2

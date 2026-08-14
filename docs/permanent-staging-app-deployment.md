@@ -29,8 +29,14 @@ IDs, origins and their hashes, allowed replica counts, the committed
 mutation-boundary policy hash. Staging is locked to one replica. Production
 accepts only an exact healthy preflight topology of one or two replicas and
 must preserve that observed count across the source upload. The source must be
-the exact clean commit currently at `main`; a private `git archive` snapshot is
-reasserted immediately before upload.
+the exact clean commit currently at protected `main`, recorded as
+`candidateSha`; a private `git archive` snapshot is reasserted immediately
+before upload. The GitHub gate separately authenticates the associated merged
+PR and its distinct `reviewedPrHeadSha`. Candidate-only release-evidence
+checkouts fetch that exact reviewed head into a candidate-bound local ref before
+validating its tree. They never substitute an ancestry test: a linear
+squash/rebase candidate need not descend from the reviewed head, but their Git
+trees must be exactly equal.
 The older capability-pure source-fixture parser is retained only as an offline
 legacy validator and is explicitly superseded by this protected executor; it
 is not a second deployment path.
@@ -97,14 +103,33 @@ The raw protected envelope is not uploaded; the workflow artifact contains
 only its hash-bound authority verification.
 
 Dispatch the relevant workflow from `main` and enter the exact 40-character
-SHA currently at `main`. The job checks the dispatch ref/SHA, checkout,
-`origin/main`, clean worktree, repository gate, current required GitHub checks,
-and required SHA-bound artifacts before it can reach the write step. Production
+protected-main `candidateSha`. The job checks the dispatch ref/SHA, checkout,
+`origin/main`, clean worktree, GitHub-authenticated merged PR and reviewed-head
+tree, repository gate, current required GitHub checks, and required SHA-bound
+artifacts before it can reach the write step. Production
 validates the candidate-bound release-evidence register in non-strict mode.
 Strict evidence is intentionally post-deployment: production public smoke,
 authenticated role proof, and final App Review evidence cannot exist before
 the candidate is deployed. Permanent staging is likewise deployable while
 external evidence is being collected.
+
+The permanent-staging deployment joins provider mutation, legacy-key cutover,
+and general permanent-staging runtime-variable writes in the shared
+`pintpath-permanent-staging-key-rollout` concurrency group. `queue: max` with
+`cancel-in-progress: false` retains every waiting run and fully serializes them;
+no newer dispatch replaces or cancels an older one. Each run must still reassert
+the exact current protected-main candidate immediately before its write.
+Provider mutation, legacy cutover, and general runtime-variable writes
+additionally run `github:reviewed-candidate-authority:verify`, keyed by exact
+candidate+operation, exact candidate, and exact candidate+target+variable
+respectively. The guard requires complete authenticated history from the
+associated PR's `merged_at` through the authenticated current `run_started_at`,
+not its `created_at`, because retained queued runs can start out of creation
+order. That `run_started_at` must be no more than 168 hours after `merged_at`.
+Beyond seven days or with incomplete history, create a newly reviewed and merged
+candidate. Provider/cutover redispatch requires every exact prior write step
+authenticated as `skipped`; a runtime-variable write allows no prior matching
+run, even one skipped before write.
 
 The package aliases below exist for the workflow; they are not standalone
 operator authority:
@@ -147,17 +172,30 @@ receipt and private execution evidence:
 - `pintpath-permanent-staging-deployment-<candidateSha>`;
 - `pintpath-production-deployment-<candidateSha>`.
 
-The current-main verifier also requires the exact successful base checks listed
+The current-main verifier first requires the exact associated merged PR,
+`merge_commit_sha=candidateSha`, one-parent linear history, and exact
+reviewed/candidate tree equality. For each eligible non-author reviewer it uses
+only that reviewer's latest effective `APPROVED`, `CHANGES_REQUESTED`, or
+`DISMISSED` review on `reviewedPrHeadSha`; at least one resulting approval must
+belong to a collaborator/member/owner who still has repository `write`,
+`maintain`, or `admin` permission. An earlier approval superseded by that
+reviewer's later effective review is not authority. It then requires the exact
+successful base checks listed
 in `.github/release-required-checks.json`. Each check is bound to its declared
 workflow path and trigger event through the GitHub Actions run associated with
 that check; a same-name check from another workflow or trigger cannot satisfy
-the gate, and more than one successful check from the intended workflow/event
-fails closed. The verifier also requires the same-run, non-expired,
+the gate. Except for the staging deployment's exact-two rule below, more than one
+successful check from the intended workflow/event fails closed. The verifier
+also requires the same-run, non-expired,
 digest-bearing base artifacts `pintpath-mission-discovery-scale-evidence`,
 `pintpath-postgres-tool-runtime-closure-v4-observation`, and
-`pintpath-automated-readiness-evidence`. Production additionally requires the
-same-SHA staging deployment and the protected two-replica scale/soak check plus
-their digest-bearing artifacts, as well as the protected iOS production
+`pintpath-automated-readiness-evidence`. Production additionally requires
+exactly two successful workflow-dispatch deployments for the same candidate:
+the initial permanent-staging deployment and the post-plan closeout redeploy.
+Both must complete before the one protected two-replica scale/soak run starts;
+the gate selects the second deployment and rejects zero, one, more than two, or
+ambiguous completion chronology. It also requires the selected deployment and
+scale runs' digest-bearing artifacts and the protected iOS production
 configuration check. The post-deployment release gate requires both the
 same-SHA topology-preserving production source-upload artifact and the separate
 candidate-bound proof that that deployed candidate is exactly two replicas.

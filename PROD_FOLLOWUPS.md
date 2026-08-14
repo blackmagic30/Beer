@@ -76,8 +76,11 @@ redeploy/rollback, and every unlisted write remain blocked.
   (`GOOGLE_PLACES_API_KEY`), and OpenAI menu OCR (`OPENAI_API_KEY`). Separately,
   the two permanent-staging Supabase replacement-key operations
   (`SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY`) now use the protected
-  atomic Railway replacement followed by the protected canary-B,
-  legacy-disable, and old-key-denial ceremony. These paths still require live
+  atomic Railway replacement. That replacement must be followed by an exact
+  same-candidate current-`main` deployment and complete consumer/Auth/Storage
+  proof before the protected canary-B, legacy-disable, and old-key-denial
+  ceremony. The cutover workflow requires the exact replacement and later
+  deployment run IDs before secret custody. These paths still require live
   credentials, approvals, and receipts. Production operational-copy
   credentials and bucket configuration are prohibited in permanent staging. No
   live write rehearsal may use production as a substitute.
@@ -112,10 +115,15 @@ redeploy/rollback, and every unlisted write remain blocked.
   immediate revocation, replacement, and proof that the old token is denied.
 - **Permanent integrated staging:** Keep the recorded identities and one-replica
   budgeted topology. Complete provider configuration one exact variable at a
-  time through the protected provider/runtime-variable workflows, complete the
-  protected Supabase cutover ceremony, run the protected Postgres build canary,
-  and deploy the exact reviewed build only through the protected one-operation
-  application workflow. Then use the protected scale workflow for two-replica
+  time through the protected provider/runtime-variable workflows. Atomically
+  replace the Supabase publishable/secret pair, then deploy the exact same
+  current-`main` build only through the protected one-operation application
+  workflow and retain its successful artifact. Prove every tracked server,
+  browser, mobile, CI, scheduled, webhook, backup, and archived consumer plus
+  Auth/admin/role/private-Storage behavior before running the protected legacy
+  disable and old-key-denial workflow with the exact replacement and deployment
+  run IDs. Then run the protected Postgres build canary and use the protected
+  scale workflow for two-replica
   concurrency, Auth, deletion, data repair, DAST, load, smoke, and
   rollback-build proof before its unconditional convergence back to one.
 - **Protected production rollout chain:** Deploy, one-way convergence to exactly

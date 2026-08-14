@@ -1,4 +1,5 @@
 name: Permanent staging Supabase legacy-key cutover
+run-name: Permanent staging Supabase legacy cutover | ${{ inputs.candidate_sha }}
 
 on:
   workflow_dispatch:
@@ -7,20 +8,32 @@ on:
         description: Exact 40-character SHA currently at main
         required: true
         type: string
+      replacement_run_id:
+        description: Successful same-candidate atomic Supabase key-replacement run
+        required: true
+        type: string
+      deployment_run_id:
+        description: Successful same-candidate permanent-staging deployment run after atomic key replacement
+        required: true
+        type: string
       confirmation:
         description: Type DISABLE_PERMANENT_STAGING_SUPABASE_LEGACY_KEYS
         required: true
         type: string
 
 permissions:
+  actions: read
   contents: read
+  pull-requests: read
 
 concurrency:
-  group: pintpath-permanent-staging-supabase-legacy-cutover
+  group: pintpath-permanent-staging-key-rollout
+  queue: max
   cancel-in-progress: false
 
 jobs:
   cutover:
+    name: Disable exact permanent-staging legacy keys
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     environment: permanent-staging-supabase-legacy-disable
@@ -35,6 +48,8 @@ jobs:
       - name: Require an original run at exact current main
         env:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          REPLACEMENT_RUN_ID: ${{ inputs.replacement_run_id }}
+          DEPLOYMENT_RUN_ID: ${{ inputs.deployment_run_id }}
           CONFIRMATION: ${{ inputs.confirmation }}
           DISPATCH_REF: ${{ github.ref }}
           DISPATCH_SHA: ${{ github.sha }}
@@ -43,6 +58,9 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$REPLACEMENT_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+          [[ "$DEPLOYMENT_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+          test "$REPLACEMENT_RUN_ID" != "$DEPLOYMENT_RUN_ID"
           test "$DISPATCH_REF" = refs/heads/main
           test "$DISPATCH_SHA" = "$CANDIDATE_SHA"
           test "$RUN_ATTEMPT" = 1
@@ -65,9 +83,44 @@ jobs:
           npm run supabase:keys:consumer-compatibility:check
           npm run check
 
+      - name: Authenticate the reviewed candidate and fresh cutover dispatch
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          DEPLOYMENT_RUN_ID: ${{ inputs.deployment_run_id }}
+          GITHUB_TOKEN: ${{ github.token }}
+          REPLACEMENT_RUN_ID: ${{ inputs.replacement_run_id }}
+        run: |
+          npm run --silent github:reviewed-candidate-authority:verify -- \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --operation supabase-legacy-key-cutover \
+            --replacement-run-id "$REPLACEMENT_RUN_ID" \
+            --deployment-run-id "$DEPLOYMENT_RUN_ID"
+
+      - name: Create the secret-free cutover evidence directory
+        shell: bash
+        run: mkdir -m 700 "$RUNNER_TEMP/pintpath-supabase-cutover-evidence"
+
+      - name: Require the successful post-replacement staging deployment artifact
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          REPLACEMENT_RUN_ID: ${{ inputs.replacement_run_id }}
+          DEPLOYMENT_RUN_ID: ${{ inputs.deployment_run_id }}
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --frozen-intrinsics --disable-proto=throw --import tsx \
+            scripts/verify-github-permanent-staging-deployment.mjs \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --replacement-run-id "$REPLACEMENT_RUN_ID" \
+            --deployment-run-id "$DEPLOYMENT_RUN_ID" \
+            --output "$RUNNER_TEMP/pintpath-supabase-cutover-evidence/deployment-github-authority.json"
+
       - name: Create private key custody and secret-free dispatch evidence
         env:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          REPLACEMENT_RUN_ID: ${{ inputs.replacement_run_id }}
+          DEPLOYMENT_RUN_ID: ${{ inputs.deployment_run_id }}
           MANAGEMENT_READ_TOKEN: ${{ secrets.PINTPATH_SUPABASE_STAGING_SECRETS_READ_TOKEN }}
           MANAGEMENT_WRITE_TOKEN: ${{ secrets.PINTPATH_SUPABASE_STAGING_SECRETS_WRITE_TOKEN }}
           NEW_PUBLISHABLE_KEY: ${{ secrets.PINTPATH_SUPABASE_STAGING_NEW_PUBLISHABLE_KEY }}
@@ -85,7 +138,7 @@ jobs:
           test -n "$OLD_SERVICE_ROLE_KEY"
           test "$MANAGEMENT_READ_TOKEN" != "$MANAGEMENT_WRITE_TOKEN"
           mkdir -m 700 "$RUNNER_TEMP/pintpath-supabase-cutover-input"
-          mkdir -m 700 "$RUNNER_TEMP/pintpath-supabase-cutover-evidence"
+          test -f "$RUNNER_TEMP/pintpath-supabase-cutover-evidence/deployment-github-authority.json"
           umask 077
           printf '%s' "$MANAGEMENT_READ_TOKEN" > "$RUNNER_TEMP/pintpath-supabase-cutover-input/management-read-token"
           printf '%s' "$MANAGEMENT_WRITE_TOKEN" > "$RUNNER_TEMP/pintpath-supabase-cutover-input/management-write-token"
@@ -93,8 +146,8 @@ jobs:
           printf '%s' "$NEW_SECRET_KEY" > "$RUNNER_TEMP/pintpath-supabase-cutover-input/new-secret-key"
           printf '%s' "$OLD_ANON_KEY" > "$RUNNER_TEMP/pintpath-supabase-cutover-input/old-anon-key"
           printf '%s' "$OLD_SERVICE_ROLE_KEY" > "$RUNNER_TEMP/pintpath-supabase-cutover-input/old-service-role-key"
-          jq -n --arg candidateSha "$CANDIDATE_SHA" \
-            '{schemaVersion:"pintpath-protected-supabase-cutover-dispatch/v1",candidateSha:$candidateSha,projectRef:"bbfibbadwjxzrcdncavy",secretMaterialIncluded:false,secretDerivedCommitmentsIncluded:false}' \
+          jq -n --arg candidateSha "$CANDIDATE_SHA" --arg replacementRunId "$REPLACEMENT_RUN_ID" --arg deploymentRunId "$DEPLOYMENT_RUN_ID" \
+            '{schemaVersion:"pintpath-protected-supabase-cutover-dispatch/v1",candidateSha:$candidateSha,replacementRunId:$replacementRunId,deploymentRunId:$deploymentRunId,projectRef:"bbfibbadwjxzrcdncavy",secretMaterialIncluded:false,secretDerivedCommitmentsIncluded:false}' \
             > "$RUNNER_TEMP/pintpath-supabase-cutover-evidence/dispatch.json"
 
       - name: Reassert exact current main immediately before the provider write

@@ -134,12 +134,30 @@ This is the controlling sequence. Complete it from top to bottom. A later phase 
 Record these values in the private release register:
 
 - `releaseId`: the immutable business release identifier.
-- `candidateSha`: the 40-character PR-head commit containing all application, migration, workflow, iOS, test, and runbook implementation. It freezes only after the pre-merge checks and permanent-staging/rollback execution plan pass review.
-- `deploymentSha`: the protected `main` commit first deployed with commercial enrolment disabled.
-- `deployedMainSha`: the exact protected `main` commit serving production at final enablement. It may differ from `candidateSha` only by merge metadata and the evidence-only closeout change allowed by the release-evidence validator.
+- `reviewedPrHeadSha`: the 40-character PR-head commit containing all application,
+  migration, workflow, iOS, test, and runbook implementation approved before merge.
+- `candidateSha`: the GitHub-authenticated protected-`main` commit produced by
+  merging that exact reviewed head and still current at protected `main` when a
+  guarded operation begins. For the required linear history this may be a
+  squash/rebase commit and therefore need not descend from `reviewedPrHeadSha`;
+  its Git tree must be exactly equal.
+- `deploymentSha`: the operational deployment name for `candidateSha`; they must
+  be identical for the initial commercial-disabled deployment.
+- `deployedMainSha`: the exact protected `main` commit serving production at final enablement. It may differ from `candidateSha` only by the evidence-only closeout change allowed by the release-evidence validator.
 - `rollbackBuildSha`: a separately recorded, deployable build that Phase 16.5 must prove against the candidate Postgres schema and post-migration Supabase schema without resuming SQLite writes.
 
-`candidateSha` and `rollbackBuildSha` never change for a release. If any application, schema, workflow, iOS, threshold, or test file changes after `candidateSha` is recorded, discard that candidate identity and return to pre-merge validation. Updating only `docs/release-evidence.json` with genuine post-deployment evidence is the sole closeout exception.
+`reviewedPrHeadSha`, `candidateSha`, and `rollbackBuildSha` never change for a
+release. If the protected merge commit's tree differs from the reviewed PR-head
+tree, or any application, schema, workflow, iOS, threshold, or test file changes
+after merge, discard that candidate identity and return to pre-merge validation.
+Updating only `docs/release-evidence.json` with genuine post-deployment evidence
+is the sole closeout exception.
+
+A checkout containing only `candidateSha` is not evidence that the reviewed
+tree is present. Candidate-only release-evidence jobs must authenticate the
+associated merged PR, fetch its exact `reviewedPrHeadSha` into a separate
+candidate-bound local ref, and compare the two trees before validation. Never
+replace that fetch and equality proof with an ancestry check.
 
 ## Current verdict
 
@@ -484,7 +502,13 @@ Record the operator, UTC start/end, production commit, page counts, reconciled t
 
 ## Phase 3 — implement every launch requirement before candidate freeze
 
-All implementation and pre-merge validation occurs before `candidateSha` exists. This includes code, migration, CI, tests, policies, copy, native compile-time scope, operational scripts, and this runbook. Protected permanent-staging application deployment occurs only after the candidate is merged and the resulting exact current `main` SHA is recorded as `deploymentSha`.
+All implementation and pre-merge validation occurs before `candidateSha` exists.
+This includes code, migration, CI, tests, policies, copy, native compile-time
+scope, operational scripts, and this runbook. Freeze the reviewed PR commit as
+`reviewedPrHeadSha`. Protected permanent-staging application deployment occurs
+only after GitHub merges that exact reviewed head, the merge commit tree is
+proved identical, and the resulting exact current `main` SHA is recorded as both
+`candidateSha` and `deploymentSha`.
 
 The candidate must contain and test:
 
@@ -726,7 +750,13 @@ PINTPATH_EXPECTED_SUPABASE_PROJECT_REF="$PINTPATH_STAGING_PROJECT_REF" \
   | tee "$PINTPATH_EVIDENCE_DIR/staging-venue-refresh-write.log"
 ```
 
-Both commands must exit zero. Review and sign the manifest hash, input existing-row count/hash, attempted and successful Place-ID counts, failed fetch/write counts, insert/update/exclusion counts, every status/eligibility transition, quarantined counts, start/end timestamps, project ref, and `candidateSha` placeholder that will later be bound at freeze. A partial failure must still leave a recoverable failure manifest; absence of that behavior is a blocker.
+Both commands must exit zero. Review and sign the manifest hash, input
+existing-row count/hash, attempted and successful Place-ID counts, failed
+fetch/write counts, insert/update/exclusion counts, every status/eligibility
+transition, quarantined counts, start/end timestamps, project ref, and reviewed
+source placeholder that will later bind `reviewedPrHeadSha` and its tree-equal
+protected-main `candidateSha`. A partial failure must still leave a recoverable
+failure manifest; absence of that behavior is a blocker.
 
 Run:
 
@@ -1231,7 +1261,11 @@ the current workspace. Keep the clean-tree and signed-archive scans: if that fil
 or any Sign in with Apple entitlement reappears, stop and remove it from this
 candidate unless native social authentication is deliberately redesigned.
 
-Archive inspection must prove the excluded native surfaces are absent from the signed product, not just disabled by a production response. This pre-candidate archive is rehearsal evidence only. It must not be submitted to App Review; Phase 13 rebuilds and uploads the final archive from the exact frozen `candidateSha`.
+Archive inspection must prove the excluded native surfaces are absent from the
+signed product, not just disabled by a production response. This pre-candidate
+archive is rehearsal evidence only. It must not be submitted to App Review;
+Phase 13 rebuilds and uploads the final archive from the exact frozen
+`reviewedPrHeadSha`, later bound to the tree-equal protected-main `candidateSha`.
 
 Do not begin external TestFlight or App Review until the commercial-disabled backend is deployed and proven in Phase 16.
 
@@ -1240,9 +1274,34 @@ Do not begin external TestFlight or App Review until the commercial-disabled bac
 Before candidate freeze, review and sign the exact post-merge execution plan for
 permanent integrated staging. Do not dispatch the application-deployment
 workflow here: it accepts only the exact commit currently at protected `main`,
-so an unmerged PR-head `candidateSha` is intentionally ineligible. Phase 16.1
-must merge the reviewed candidate without tree changes; Phase 16.5 then deploys
-`deploymentSha` and executes this plan in order:
+so an unmerged `reviewedPrHeadSha` is intentionally ineligible. Phase 16.1 must
+merge that reviewed head without tree changes; Phase 16.5 then deploys the
+identical protected-main `candidateSha`/`deploymentSha` and executes this plan in order:
+
+Permanent-staging provider mutation, application deployment, Supabase legacy
+cutover, and general permanent-staging runtime-variable writes share
+`pintpath-permanent-staging-key-rollout` with `queue: max` and
+`cancel-in-progress: false`, so every queued run is retained and the complete
+sequence is serialized. The provider-mutation dispatch guard is keyed by exact
+candidate+operation through the run title
+`Permanent staging provider mutation | <operation> | <candidate>`; the
+legacy-cutover guard is keyed by exact candidate through
+`Permanent staging Supabase legacy cutover | <candidate>`. Both call
+`github:reviewed-candidate-authority:verify`. General runtime-variable writes use
+that verifier too and are keyed by exact candidate+target+variable through
+`Configure runtime variable | <target> | <variable> | <candidate>`. Every guard
+requires complete authenticated run/job history from the associated PR's
+`merged_at` through the authenticated current `run_started_at`, not its
+`created_at`, because retained queued runs can start out of creation order. That
+`run_started_at` must be no more than 168 hours after `merged_at`. Beyond seven
+days, or when history is incomplete, stop and create a newly reviewed and merged
+candidate. Provider mutation and cutover redispatch is allowed only when each
+prior run's exact write step is authenticated with conclusion `skipped`; this is
+the only `skipped-before-write` retry case. A
+runtime-variable write permits no matching prior run at all, even one skipped
+before write. Cutover also rejects any provider or permanent-staging
+runtime-variable run updated at or after the selected closeout deployment
+started. Anything else, including an Actions rerun, blocks redispatch.
 
 1. the reviewed SQLite-to-Postgres import dry run and source manifest;
 2. the Postgres schema migration, import, and deterministic reconciliation;
@@ -1425,28 +1484,45 @@ Required pre-merge PR checks:
 - `ios`;
 - no unresolved review thread;
 - branch current with `main`;
-- independent approval from someone other than the author.
+- for each collaborator/member/owner reviewer, use only their latest effective
+  `APPROVED`, `CHANGES_REQUESTED`, or `DISMISSED` review on the exact
+  `reviewedPrHeadSha`; require at least one resulting non-author approval whose
+  reviewer still has repository `write`, `maintain`, or `admin` permission.
 
 These later required launch gates cannot be PR checks because their protected
 workflows accept only the exact current `main` SHA:
 
-- after the protected merge and before production deployment: `Deploy
-permanent staging` and `Scale 1→2, prove, and converge 2→1`, with both
-  exact-`deploymentSha` artifacts, plus `iOS protected production configuration
-archive`;
+- after the protected merge and before production deployment: exactly two
+  successful `Deploy permanent staging` runs for `candidateSha`—the initial run
+  and closeout redeploy—followed by `Scale 1→2, prove, and converge 2→1`, with
+  the selected second deployment and scale artifacts, plus `iOS protected
+  production configuration archive`;
 - after production deployment: `Deploy protected production`, then `Converge
-exact production deployment to two replicas`, with both exact-`deploymentSha`
+  exact production deployment to two replicas`, with both exact-`candidateSha`
   artifacts.
 
 The release-candidate verifier resolves each required check with
 `filter=all&check_name=...`, then binds it to the workflow path, event, check
 suite, workflow run, exact `main` SHA, and repository declared in
 `.github/release-required-checks.json`. A differently triggered or differently
-owned same-name check cannot substitute for the intended check; duplicate
-successful intended checks fail closed. A manual Native Apps dispatch names its
+owned same-name check cannot substitute for the intended check. Except for the
+staging deployment's exact-two rule below, duplicate successful intended checks
+fail closed. A manual Native Apps dispatch names its
 prerequisite `iOS dispatch prerequisite`, leaving `ios` unique to the automatic
 pull-request/main workflow while the protected archive remains gated by the
 same-run prerequisite.
+
+Before accepting those current-main checks, the verifier also authenticates the
+one associated merged GitHub PR, its exact merge commit, and one-parent linear
+history. It reduces each eligible reviewer's exact-head reviews to that
+reviewer's latest effective state and requires at least one non-author approval
+whose collaborator/member/owner still has `write`, `maintain`, or `admin`
+permission. It separately proves exact Git-tree equality between
+`reviewedPrHeadSha` and `candidateSha`; it does not require the reviewed PR head
+to be an ancestor of a squash/rebase result. For the staging deployment check it
+requires exactly two successful same-candidate workflow runs, both completed
+before scale, and selects the second closeout run; any other count or ambiguous
+completion order fails closed.
 
 Android is not a required-check, release-evidence, or full-launch gate for this
 web+iOS release. It remains an informational repository-health job, but neither
@@ -1455,18 +1531,29 @@ web+iOS release. It remains an informational repository-health job, but neither
 After the pre-merge PR checks and approval:
 
 ```bash
-candidateSha="$(git rev-parse HEAD)"
-[[ "$candidateSha" =~ ^[0-9a-f]{40}$ ]]
-printf '%s\n' "$candidateSha"
+reviewedPrHeadSha="$(git rev-parse HEAD)"
+[[ "$reviewedPrHeadSha" =~ ^[0-9a-f]{40}$ ]]
+printf '%s\n' "$reviewedPrHeadSha"
 ```
 
-Record `candidateSha`, `releaseId`, the threshold/scope hash, pre-merge gate hashes, and `rollbackBuildSha`. From this point, any implementation change invalidates `candidateSha`.
+Record `reviewedPrHeadSha`, `releaseId`, the threshold/scope hash, pre-merge gate
+hashes, and `rollbackBuildSha`. From this point, any implementation change
+invalidates `reviewedPrHeadSha`; `candidateSha` is assigned only after the
+protected merge.
 
-With a clean checkout at exactly `candidateSha`, repeat the Xcode Release archive, **Validate App**, privacy-report generation, archive inspection, App Store Connect upload, and internal TestFlight physical-device tests from Phase 11. Record the final archive hash, processed build number, and candidate source SHA. This is the only archive that may proceed to external TestFlight and App Review.
+With a clean checkout at exactly `reviewedPrHeadSha`, repeat the Xcode Release
+archive, **Validate App**, privacy-report generation, archive inspection, App
+Store Connect upload, and internal TestFlight physical-device tests from Phase
+11. Record the final archive hash, processed build number, and reviewed source
+SHA. After merge, exact tree equality binds that archive to `candidateSha`. This
+is the only archive that may proceed to external TestFlight and App Review.
 
 ## Phase 14 — verify the candidate's web-and-iOS evidence scope
 
-Verify that `candidateSha` already contains and tests a release-evidence validator and workflows whose required scope is web plus iOS, not Android. If it does not, the candidate is invalid: return to Phase 3, implement the change, repeat staging, and freeze a new `candidateSha`.
+Verify before merge that `reviewedPrHeadSha` contains and tests a
+release-evidence validator and workflows whose required scope is web plus iOS,
+not Android. After merge, require its exact tree to be `candidateSha`. If either
+test fails, return to Phase 3 and freeze a new reviewed head.
 
 Required evidence IDs are:
 
@@ -1486,9 +1573,12 @@ Required evidence IDs are:
 
 The candidate's required ID set, schema tests, checklists, and strict validator must omit `android_release`. Do not mark a required Android item falsely passed or not applicable.
 
-Bind evidence to `releaseId` and `candidateSha`. `deployedMainSha` belongs in the private release register and the final workflow artifact rather than self-referencing the commit that contains `docs/release-evidence.json`.
+Bind evidence schema v4 to `releaseId`, `reviewedPrHeadSha`, and the protected-main
+`candidateSha`. `deployedMainSha` belongs in the private release register and the
+final workflow artifact rather than self-referencing the commit that contains
+`docs/release-evidence.json`.
 
-Release-evidence schema v3 gives `permanent_staging_cost` one additional
+Release-evidence schema v4 gives `permanent_staging_cost` one additional
 `costReceipt` object. It must be based on a fresh read-only provider observation
 for the exact frozen candidate and contain complete, hashed Railway,
 staging-Supabase, and staging-external-provider inventory plus price-or-cap
@@ -1663,8 +1753,8 @@ if [ "$(gh pr view "$PINTPATH_RELEASE_PR_NUMBER" --json isDraft --jq .isDraft)" 
   gh pr ready "$PINTPATH_RELEASE_PR_NUMBER"
 fi
 gh pr checks "$PINTPATH_RELEASE_PR_NUMBER" --watch
-test "$(gh pr view "$PINTPATH_RELEASE_PR_NUMBER" --json headRefOid --jq .headRefOid)" = "$candidateSha"
-gh pr merge "$PINTPATH_RELEASE_PR_NUMBER" --merge --match-head-commit "$candidateSha"
+test "$(gh pr view "$PINTPATH_RELEASE_PR_NUMBER" --json headRefOid --jq .headRefOid)" = "$reviewedPrHeadSha"
+gh pr merge "$PINTPATH_RELEASE_PR_NUMBER" --squash --match-head-commit "$reviewedPrHeadSha"
 ```
 
 Wait until GitHub reports the protected merge complete, then:
@@ -1672,13 +1762,26 @@ Wait until GitHub reports the protected merge complete, then:
 ```bash
 set -euo pipefail
 test "$(gh pr view "$PINTPATH_RELEASE_PR_NUMBER" --json state --jq .state)" = "MERGED"
-git fetch origin main
-deploymentSha="$(git rev-parse origin/main)"
-git merge-base --is-ancestor "$candidateSha" "$deploymentSha"
-test -z "$(git diff --name-only "$candidateSha..$deploymentSha")"
+git fetch --no-tags --no-recurse-submodules --force origin \
+  +refs/heads/main:refs/remotes/origin/main
+candidateSha="$(git rev-parse origin/main)"
+test "$(gh pr view "$PINTPATH_RELEASE_PR_NUMBER" --json mergeCommit --jq .mergeCommit.oid)" = "$candidateSha"
+reviewedPrHeadRef="refs/pintpath/reviewed-pr-head/$candidateSha"
+git fetch --no-tags --no-recurse-submodules --force origin \
+  "+refs/pull/$PINTPATH_RELEASE_PR_NUMBER/head:$reviewedPrHeadRef"
+test "$(git rev-parse "$reviewedPrHeadRef^{commit}")" = "$reviewedPrHeadSha"
+test "$(git rev-parse "$reviewedPrHeadRef^{tree}")" = "$(git rev-parse "$candidateSha^{tree}")"
+test "$(git rev-list --parents -n 1 "$candidateSha" | wc -w | tr -d ' ')" = "2"
+deploymentSha="$candidateSha"
 ```
 
-Require protected-branch merge and independent approval. Record `deploymentSha`. If `main` advanced with unrelated content, stop and restage; do not deploy an unproved tree.
+Require the authenticated merged PR, independent approval on the exact
+`reviewedPrHeadSha` under the latest-effective/current-permission rule, exact
+`mergeCommit.oid`, a one-parent protected-main commit, the separately fetched
+reviewed head, and identical reviewed/candidate Git trees. Record `candidateSha`
+and the equal `deploymentSha`. Squash/rebase means `reviewedPrHeadSha` need not
+be an ancestor. If `main` advanced, the reviewed head cannot be fetched exactly,
+or either tree differs, stop and restage; do not deploy an unproved tree.
 
 ### 16.2 Cut authoritative state over to Postgres and apply the reviewed Supabase migration
 
@@ -1757,12 +1860,17 @@ in Phase 16.6 have passed independent retrieval and restore proof.
 
 First dispatch the protected
 [`Deploy Pint Path permanent staging`](../.github/workflows/deploy-permanent-staging.yml)
-workflow from `main` with `candidate_sha=deploymentSha`. After its exact-SHA
-check and artifact pass, execute the complete Phase 12 staging and rollback
-plan against that deployed tree, redeploy `deploymentSha`, and run the protected
-staging scale proof. All provider/Auth/Storage, data, two-replica, restart,
-rolling-deploy, iOS, and rollback evidence must bind `deploymentSha`; any
-implementation change requires a new candidate and protected merge. Only then dispatch the protected
+workflow from `main` with `candidate_sha=deploymentSha`. This is the initial
+same-candidate staging deployment. After its exact-SHA check and artifact pass,
+execute the complete Phase 12 staging and rollback plan against that deployed
+tree, then dispatch the same workflow once more for `deploymentSha` as the
+closeout redeploy. There must be exactly these two successful same-candidate
+deployment runs. Both must complete before the protected staging scale proof
+starts; the release gate selects the second closeout run and rejects zero, one,
+more than two, or ambiguous same-candidate successes. All provider/Auth/Storage,
+data, two-replica, restart, rolling-deploy, iOS, and rollback evidence must bind
+`deploymentSha`; any implementation change requires a new candidate and
+protected merge. Only then dispatch the protected
 [`Deploy Pint Path protected production`](../.github/workflows/deploy-production.yml)
 workflow with the same value. For this initial launch, first prove the current
 production bootstrap topology is exactly one healthy replica; the upload
@@ -2058,7 +2166,9 @@ A material app, backend, policy, data-collection, auth, or scope change invalida
 
 ### 17.2 Close evidence without changing implementation
 
-Complete all 13 web-and-iOS evidence items from Phase 14. Update only `docs/release-evidence.json` in an evidence-closeout PR. The `candidateSha` remains the frozen PR-head SHA.
+Complete all 13 web-and-iOS evidence items from Phase 14. Update only
+`docs/release-evidence.json` in an evidence-closeout PR. `reviewedPrHeadSha` and
+the protected-main `candidateSha` both remain frozen.
 
 After protected merge:
 
@@ -2078,8 +2188,10 @@ test -z "$unexpected_paths"
 Record `deployedMainSha` in the private release register. The tracked guarded
 executor must deploy that exact immutable image with commercial enrolment still
 disabled. Because every required check and artifact is SHA-bound, repeat the
-protected Phases 16.5–16.7 chain for `deployedMainSha`: permanent-staging deploy,
-the bounded two-replica proof and convergence to one, the protected iOS
+protected Phases 16.5–16.7 chain for `deployedMainSha`: exactly two successful
+same-SHA permanent-staging runs (initial and closeout), select the second only
+after both complete, then run the bounded two-replica proof and convergence to
+one, the protected iOS
 production-configuration archive, a fresh candidate-bound production provider-
 readiness envelope, a topology-preserving production deploy, production
 convergence, canonical-route close, a new candidate-bound promotion/recovery
@@ -2285,10 +2397,19 @@ an unverified backup.
 
 ## Final go/no-go sign-off
 
-The release is **go** only when every item is true for the same `releaseId`, `candidateSha`, `deployedMainSha`, and `rollbackBuildSha`:
+The release is **go** only when every item is true for the same `releaseId`,
+`reviewedPrHeadSha`, `candidateSha`, `deployedMainSha`, and `rollbackBuildSha`:
 
 - [ ] launch contract and marketed scope signed;
-- [ ] candidate contains all implementation and its tree matches `deployedMainSha` except the permitted evidence-only closeout;
+- [ ] GitHub authenticates the separately fetched `reviewedPrHeadSha`, applies
+      the latest-effective review rule, and confirms a non-author approver still
+      has `write`, `maintain`, or `admin`; its tree exactly matches the current
+      protected-main merge `candidateSha` without an ancestry requirement, and
+      that candidate matches `deployedMainSha` except the permitted evidence-only
+      closeout;
+- [ ] exactly two successful same-candidate permanent-staging deployments—the
+      initial and closeout runs—complete before scale, and the gate selects the
+      second run and its artifact;
 - [ ] required web/iOS CI, CodeQL, review, and branch protections pass;
 - [ ] Android is absent from required release evidence;
 - [ ] authoritative Postgres migration/import/reconciliation and at least two

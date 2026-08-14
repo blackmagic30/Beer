@@ -12,6 +12,7 @@ permissions:
   actions: read
   checks: read
   contents: read
+  pull-requests: read
 
 concurrency:
   group: pintpath-production-release-gate
@@ -59,6 +60,13 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Fetch the authenticated reviewed PR head for release evidence
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          npm run --silent github:release-reviewed-head:fetch --
+          --evidence "$GITHUB_WORKSPACE/docs/release-evidence.json"
 
       - name: Require current main checks and deployment artifacts
         env:

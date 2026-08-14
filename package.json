@@ -49,6 +49,8 @@
     "readiness:railway:sealed": "tsx scripts/railway-sealed-variable-readiness.ts --policy ops/railway/permanent-staging-sealed-variable-policy.json",
     "readiness:railway:mutation-boundary": "tsx scripts/check-railway-mutation-boundary.ts --policy ops/railway/production-staging-mutation-policy.json",
     "github:release-candidate:verify": "node scripts/verify-github-release-candidate.mjs",
+    "github:release-reviewed-head:fetch": "node --frozen-intrinsics --disable-proto=throw scripts/fetch-github-reviewed-pr-head.mjs",
+    "github:reviewed-candidate-authority:verify": "node --frozen-intrinsics --disable-proto=throw scripts/verify-github-reviewed-candidate-authority.mjs",
     "github:production-promotion-recovery:materialize": "node scripts/materialize-production-promotion-recovery-artifact.mjs",
     "production:promotion-recovery:attest": "tsx scripts/attest-production-promotion-recovery.ts",
     "production:promotion-recovery:pitr:observe": "tsx scripts/observe-production-post-promotion-pitr.ts",

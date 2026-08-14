@@ -15,7 +15,11 @@ until the controlled cutover.
 Pint Path remains no-go. Before candidate freeze, finish and review every
 implementation and exact execution plan below. After the protected merge,
 execute the live provider and permanent-staging gates against the exact current
-`main` SHA before production deployment:
+protected-`main` merge SHA, recorded as `candidateSha`, before production
+deployment. Separately fetch the associated `reviewedPrHeadSha`, require exact
+tree equality without ancestry, and accept only a latest-effective non-author
+approval from a collaborator/member/owner who currently has `write`, `maintain`,
+or `admin`:
 
 Every Railway create, configuration, variable, scale, deploy, rollback, PITR,
 route, delete, destroy, or teardown operation in these gates requires a tracked
@@ -28,28 +32,55 @@ resource/evidence reconciliation, specific authorization naming the exact
 resource IDs, and the exact reviewed teardown executor. Signed evidence or
 two-person sign-off alone is not mutation authority.
 
-1. Execute and retain evidence from the protected workflows for the three
+Provider mutation, application deployment, Supabase legacy cutover, and general
+permanent-staging runtime-variable writes share
+`pintpath-permanent-staging-key-rollout` with `queue: max` and
+`cancel-in-progress: false`, retaining every queued run for full serialization.
+The provider-mutation run guard is keyed by exact candidate+operation and the
+cutover guard by exact candidate through
+`github:reviewed-candidate-authority:verify`. Require complete authenticated
+history from the associated PR's `merged_at` through the authenticated current
+`run_started_at`, not its `created_at`, because retained queued runs can start
+out of creation order. That `run_started_at` must be no more than 168 hours after
+`merged_at`. Beyond seven days or with incomplete history, create a newly
+reviewed and merged candidate. A later fresh dispatch is eligible only when each
+prior matching run's exact write step is authenticated with conclusion
+`skipped`; this is the only
+`skipped-before-write` retry case. General runtime-variable writes use the same
+reviewed authority keyed by candidate+target+variable and reject every matching
+prior run, including one skipped before write.
+
+1. First deploy the exact candidate to permanent staging and retain its initial
+   successful artifact. Then execute and retain evidence from the protected
+   workflows for the three
    Google/OpenAI provider categories, comprising four exact
    Railway variable operations: Google Maps client configuration
    (`GOOGLE_MAPS_API_KEY` and `GOOGLE_MAPS_MAP_ID`), Google Places server access
    (`GOOGLE_PLACES_API_KEY`), and OpenAI menu OCR (`OPENAI_API_KEY`). Separately,
    the two permanent-staging Supabase replacement-key variables
    (`SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY`) use one protected
-   atomic Railway upsert, followed—only after complete consumer proof—by the
-   protected replacement-canary/legacy-disable/old-key-denial workflow. The old
+   atomic Railway upsert. After every planned provider/runtime operation,
+   deploy the exact same current-`main` build once more and retain this second,
+   closeout artifact;
+   prove all server, browser, mobile, CI, scheduled, webhook, backup, and
+   archived consumers plus Auth, admin, role, private Storage, provider, and
+   Free-scope behavior. Only then run the protected replacement-canary/
+   legacy-disable/old-key-denial workflow with the exact replacement and later
+   deployment run IDs. The old
    fixed-blocked CLIs and fixture policies are superseded and are not operator
-   paths. After all protected approvals and mutation stops are satisfied, deploy the exact
-   reviewed app build to permanent staging. Historical operational-copy
+   paths. Historical operational-copy
    attestation and a staging database-bound probe ran under the prior coupled
    contract; they are not current staging readiness. The production-copy URL,
    key, and bucket variables are prohibited in permanent staging by the current
    candidate, and a fresh complete Railway inventory must independently prove
    all three names deleted before remediation passes. No new staging off-site
    transport is authorized.
-2. Pass real provider/Auth/role/private-Storage/Free-scope smoke, run the
-   protected Postgres build-canary workflow, then use the protected scale
-   workflow to move
-   same build temporarily from one to two replicas for concurrency, queue/
+2. Pass real provider/Auth/role/private-Storage/Free-scope smoke and run the
+   protected Postgres build-canary workflow. Require exactly the initial and
+   closeout successful deployment runs for the same candidate, both completed,
+   and select the second; any other count or ambiguous order is a hard stop.
+   Only then use the protected scale workflow to move the same build temporarily
+   from one to two replicas for concurrency, queue/
    outbox, idempotency, load/soak, restart, rolling-deploy, rollback, and pool-
    headroom proof; return staging to one replica afterward.
 3. Run the protected exact-target Railway Postgres-HA PITR enable/verification

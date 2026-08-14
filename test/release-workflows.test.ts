@@ -884,13 +884,59 @@ describe("release workflow contracts", () => {
     }
   });
 
-  it("fetches commit history wherever release-evidence validation runs", () => {
+  it("authenticates and fetches the distinct reviewed PR head before release-evidence validation", () => {
+    const packageJson = JSON.parse(repositoryFile("package.json")) as {
+      scripts?: Record<string, string>;
+    };
     for (const name of [
-      "ci.yml",
+      "deploy-production.yml",
       "pintpath-release-readiness.yml",
       "pintpath-release-gate.yml",
     ]) {
-      expect(workflow(name), name).toContain("fetch-depth: 0");
+      const source = workflow(name);
+      expect(source, name).toContain("fetch-depth: 0");
+      expect(source, name).toContain(
+        "npm run --silent github:release-reviewed-head:fetch --",
+      );
+      expect(source, name).toContain(
+        '--evidence "$GITHUB_WORKSPACE/docs/release-evidence.json"',
+      );
+      expect(source, name).toContain("GITHUB_TOKEN: ${{ github.token }}");
+      expect(source.indexOf("github:release-reviewed-head:fetch"), name)
+        .toBeLessThan(source.indexOf("release:evidence"));
+    }
+    expect(packageJson.scripts?.["github:release-reviewed-head:fetch"]).toBe(
+      "node --frozen-intrinsics --disable-proto=throw scripts/fetch-github-reviewed-pr-head.mjs",
+    );
+  });
+
+  it("grants pull-request read authority to every PR-aware GitHub verifier", () => {
+    const consumers = allWorkflows().filter((name) => {
+      const source = workflow(name);
+      return source.includes("github:release-candidate:verify") ||
+        source.includes("github:release-reviewed-head:fetch") ||
+        source.includes("github:reviewed-candidate-authority:verify") ||
+        name === "configure-runtime-variable.yml";
+    });
+    expect(consumers).toEqual([
+      "activate-production-promotion-recovery.yml",
+      "attest-production-promotion-recovery.yml",
+      "close-production-route.yml",
+      "configure-runtime-variable.yml",
+      "deploy-permanent-staging.yml",
+      "deploy-production.yml",
+      "open-production-route.yml",
+      "permanent-staging-provider-mutation.yml",
+      "permanent-staging-supabase-legacy-cutover.yml",
+      "pintpath-release-gate.yml",
+      "pintpath-release-readiness.yml",
+      "runtime-variable-worker.yml",
+    ]);
+    for (const name of consumers) {
+      const permissions = workflow(name).match(
+        /^permissions:\n(?<body>(?:  [^\n]+\n)+)/m,
+      )?.groups?.body ?? "";
+      expect(permissions, name).toContain("pull-requests: read");
     }
   });
 
@@ -3423,7 +3469,7 @@ describe("release workflow contracts", () => {
       "execute the complete Phase 12 staging and rollback",
     );
     expect(protectedOperations).toContain(
-      "the workflow and executor both reject a PR-head or any SHA other than the",
+      "The workflow rejects a PR head or any SHA other than protected `main`",
     );
 
     expect(migration).toContain("protected production logical-backup workflow");
@@ -3561,10 +3607,10 @@ describe("release workflow contracts", () => {
     expect(runbook).toContain('-f candidate_sha="$deployedMainSha"');
     expect(runbook).not.toContain("Complete all 12 web-and-iOS evidence items");
     expect(releaseDocument("full-remediation-2026-07-14.md")).toContain(
-      "current schema-v3 register supersedes this historical count with 13 required gates",
+      "current schema-v4 register supersedes this historical count with 13 required gates",
     );
     expect(releaseDocument("internal-readiness-audit-2026-07-15.md")).toContain(
-      "live schema-v3 register\ncurrently requires 13 items",
+      "live schema-v4 register\ncurrently requires 13 items",
     );
   });
 
@@ -3586,7 +3632,13 @@ describe("release workflow contracts", () => {
       scripts?: Record<string, string>;
     };
 
-    expect(evidence.version).toBe(3);
+    expect(evidence.version).toBe(4);
+    expect((evidence as { release?: Record<string, unknown> }).release).toMatchObject({
+      id: null,
+      reviewedPrHeadSha: null,
+      candidateSha: null,
+      environment: "production",
+    });
     expect(costItem).toMatchObject({
       required: true,
       status: "pending",

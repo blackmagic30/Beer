@@ -249,7 +249,7 @@ describe("Supabase key consumer compatibility inventory", () => {
       ".github/workflows/venue-directory-refresh.yml:bare-apikey-header-surface:2",
       "scripts/deliver-monthly-reports.ts:bare-apikey-header-surface:1",
       "scripts/discover-menu-sources.ts:bare-apikey-header-surface:1",
-      "scripts/execute-protected-permanent-staging-supabase-cutover.ts:bare-apikey-header-surface:4",
+      "scripts/execute-protected-permanent-staging-supabase-cutover.ts:bare-apikey-header-surface:5",
       "scripts/import-melbourne-venues.ts:bare-apikey-header-surface:3",
       "scripts/production-smoke-check.mjs:bare-apikey-header-surface:2",
       "scripts/staging-supabase-key-canary.ts:bare-apikey-header-surface:5",

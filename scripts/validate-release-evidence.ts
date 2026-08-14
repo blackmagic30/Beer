@@ -5,6 +5,7 @@ import path from "node:path";
 
 interface ReleaseMetadata {
   id: string | null;
+  reviewedPrHeadSha: string | null;
   candidateSha: string | null;
   environment: string;
 }
@@ -90,7 +91,12 @@ const expectedRequiredIds = [
 const expectedRequiredIdSet = new Set<string>(expectedRequiredIds);
 const allowedStatuses = new Set(["pending", "pass", "fail", "not_applicable"]);
 const expectedRootFields = new Set(["version", "release", "items"]);
-const expectedReleaseFields = new Set(["id", "candidateSha", "environment"]);
+const expectedReleaseFields = new Set([
+  "id",
+  "reviewedPrHeadSha",
+  "candidateSha",
+  "environment",
+]);
 const expectedItemFields = new Set([
   "id",
   "label",
@@ -535,15 +541,23 @@ function parsePermanentStagingCostReceipt(
 function normalizedRelease(value: unknown, schemaErrors: string[], unexpectedFields: string[]): ReleaseMetadata {
   if (!record(value)) {
     schemaErrors.push("release must be an object");
-    return { id: null, candidateSha: null, environment: "" };
+    return {
+      id: null,
+      reviewedPrHeadSha: null,
+      candidateSha: null,
+      environment: "",
+    };
   }
   unexpectedFields.push(...unexpectedKeys(value, expectedReleaseFields, "release"));
-  for (const field of ["id", "candidateSha"] as const) {
+  for (const field of ["id", "reviewedPrHeadSha", "candidateSha"] as const) {
     if (!nullableString(value[field])) schemaErrors.push(`release.${field} must be a string or null`);
   }
   if (typeof value.environment !== "string") schemaErrors.push("release.environment must be a string");
   return {
     id: nullableString(value.id) ? value.id : null,
+    reviewedPrHeadSha: nullableString(value.reviewedPrHeadSha)
+      ? value.reviewedPrHeadSha
+      : null,
     candidateSha: nullableString(value.candidateSha) ? value.candidateSha : null,
     environment: typeof value.environment === "string" ? value.environment : "",
   };
@@ -640,7 +654,7 @@ try {
 const root = record(raw) ? raw : null;
 if (!root) schemaErrors.push("Evidence root must be an object");
 if (root) unexpectedFields.push(...unexpectedKeys(root, expectedRootFields, "root"));
-if (root?.version !== 3) schemaErrors.push("Evidence version must equal 3");
+if (root?.version !== 4) schemaErrors.push("Evidence version must equal 4");
 if (!Array.isArray(root?.items)) schemaErrors.push("Evidence items must be an array");
 const release = normalizedRelease(root?.release, schemaErrors, unexpectedFields);
 const rawItems = Array.isArray(root?.items) ? root.items : [];
@@ -677,8 +691,16 @@ const unexpectedCostReceiptIds = items
 
 const releaseMetadataErrors: string[] = [];
 if (release.environment !== "production") releaseMetadataErrors.push("release.environment must equal production");
-if ((release.id === null) !== (release.candidateSha === null)) {
-  releaseMetadataErrors.push("release.id and release.candidateSha must both be null or both be set");
+const releaseIdentityFields = [
+  release.id,
+  release.reviewedPrHeadSha,
+  release.candidateSha,
+];
+if (!releaseIdentityFields.every((value) => value === null)
+  && !releaseIdentityFields.every((value) => value !== null)) {
+  releaseMetadataErrors.push(
+    "release.id, release.reviewedPrHeadSha, and release.candidateSha must all be null or all be set",
+  );
 }
 if (release.id !== null && !releaseIdPattern.test(release.id)) {
   releaseMetadataErrors.push("release.id must match PP-LAUNCH-YYYY-ID using uppercase letters, digits, underscores, or hyphens");
@@ -686,8 +708,15 @@ if (release.id !== null && !releaseIdPattern.test(release.id)) {
 if (release.candidateSha !== null && !commitShaPattern.test(release.candidateSha)) {
   releaseMetadataErrors.push("release.candidateSha must be a full lowercase 40-character Git commit SHA");
 }
-if (completed.length > 0 && (release.id === null || release.candidateSha === null)) {
-  releaseMetadataErrors.push("Completed evidence requires a release ID and frozen candidate SHA");
+if (release.reviewedPrHeadSha !== null && !commitShaPattern.test(release.reviewedPrHeadSha)) {
+  releaseMetadataErrors.push(
+    "release.reviewedPrHeadSha must be a full lowercase 40-character Git commit SHA",
+  );
+}
+if (completed.length > 0 && releaseIdentityFields.some((value) => value === null)) {
+  releaseMetadataErrors.push(
+    "Completed evidence requires a release ID, reviewed PR-head SHA, and protected-main candidate SHA",
+  );
 }
 
 const unsupportedProof = completed.filter((item) => {
@@ -797,6 +826,38 @@ if (release.candidateSha && commitShaPattern.test(release.candidateSha)) {
         }
         dirtyPaths.push(...result.output.split("\n").filter((entry) => entry && entry !== "docs/release-evidence.json"));
       }
+    }
+  }
+}
+if (
+  release.reviewedPrHeadSha
+  && commitShaPattern.test(release.reviewedPrHeadSha)
+  && release.candidateSha
+  && commitShaPattern.test(release.candidateSha)
+) {
+  const reviewedHeadExists = runGit([
+    "cat-file",
+    "-e",
+    `${release.reviewedPrHeadSha}^{commit}`,
+  ]);
+  if (!reviewedHeadExists.ok) {
+    repositoryBindingErrors.push(
+      "release.reviewedPrHeadSha is not a commit in this repository",
+    );
+  } else {
+    const reviewedTree = runGit([
+      "rev-parse",
+      `${release.reviewedPrHeadSha}^{tree}`,
+    ]);
+    const candidateTree = runGit(["rev-parse", `${release.candidateSha}^{tree}`]);
+    if (!reviewedTree.ok || !candidateTree.ok) {
+      repositoryBindingErrors.push(
+        "Unable to compare the reviewed PR head tree with the protected-main candidate tree",
+      );
+    } else if (reviewedTree.output !== candidateTree.output) {
+      repositoryBindingErrors.push(
+        "release.reviewedPrHeadSha tree does not match release.candidateSha tree",
+      );
     }
   }
 }
