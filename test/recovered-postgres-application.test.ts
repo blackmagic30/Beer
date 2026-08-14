@@ -718,9 +718,14 @@ afterEach(() => {
 
 describe("recovered PostgreSQL application verifier", () => {
   it("rejects workspace dependency fallback outside the isolated stage", () => {
+    const runtimeStageRoot = fs.realpathSync(
+      fs.mkdtempSync(path.join(os.tmpdir(), "pintpath-recovered-stage-root-")),
+    );
+    fs.chmodSync(runtimeStageRoot, 0o700);
+    roots.push(runtimeStageRoot);
     const boundary = createReviewedRuntimeStageBoundary(
       path.join(fs.realpathSync(process.cwd()), "dist"),
-      fs.realpathSync(os.tmpdir()),
+      runtimeStageRoot,
     );
     const stagedDist = path.join(boundary.directory, "dist");
     const entrypoint = path.join(stagedDist, "dependency-probe.mjs");
