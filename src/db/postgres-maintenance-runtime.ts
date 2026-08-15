@@ -1,5 +1,9 @@
 import type { QueryResultRow } from "pg";
 
+import {
+  POSTGRES_CONNECTION_BUDGET,
+  POSTGRES_LEGACY_MAINTENANCE_LOGIN_CONNECTION_LIMIT,
+} from "./postgres-connection-budget.js";
 import type { SqlDatabase } from "./sql-database.js";
 
 export const POSTGRES_MAINTENANCE_ROLE = "pintpath_maintenance";
@@ -165,6 +169,14 @@ export interface PostgresMaintenanceRuntimeReadiness {
   failures: string[];
 }
 
+export interface PostgresMaintenanceRuntimeReadinessOptions {
+  /**
+   * Temporary expand/contract bridge. Remove this option after the protected
+   * maintenance LOGIN change from 2 to 8 has been verified in every runtime.
+   */
+  readonly allowLegacyTwoConnectionLimitDuringRollout?: boolean;
+}
+
 function canonicalTableList(value: unknown): string[] | null {
   let candidate = value;
   if (typeof candidate === "string" && candidate.length <= 65_536) {
@@ -196,6 +208,7 @@ function listsMatch(value: unknown, expected: readonly string[]): boolean {
  */
 export async function checkPostgresMaintenanceRuntimeReadiness(
   database: SqlDatabase,
+  options: PostgresMaintenanceRuntimeReadinessOptions = {},
 ): Promise<PostgresMaintenanceRuntimeReadiness> {
   if (database.dialect !== "postgres") {
     return { ready: false, failures: ["not_postgres"] };
@@ -519,7 +532,13 @@ export async function checkPostgresMaintenanceRuntimeReadiness(
     row?.loginInheritsPrivileges ? "inherit_authority_present" : null,
     row?.loginCanReplicate ? "replication_authority_present" : null,
     row?.loginBypassesRls ? "rls_bypass_authority_present" : null,
-    row?.loginConnectionLimit !== 2 ? "connection_limit_invalid" : null,
+    row?.loginConnectionLimit !== POSTGRES_CONNECTION_BUDGET.maintenanceLoginConnectionLimit
+      && !(
+        options.allowLegacyTwoConnectionLimitDuringRollout === true
+        && row?.loginConnectionLimit === POSTGRES_LEGACY_MAINTENANCE_LOGIN_CONNECTION_LIMIT
+      )
+      ? "connection_limit_invalid"
+      : null,
     !row?.loginValidUntilNull ? "login_expiry_invalid" : null,
     !listsMatch(row?.loginMemberships, [POSTGRES_MAINTENANCE_ROLE])
       ? "membership_authority_invalid"

@@ -936,6 +936,16 @@ ownership. Each pool activates the fixed NOLOGIN role through the PostgreSQL
 startup packet before exposing a backend, and readiness requires exact
 `session_user` login authority plus `current_user=pintpath_runtime`.
 
+Each process may open at most two runtime sessions. The exact launch budget is
+two steady replicas times two overlapping deployment generations, or four
+processes; `4 * 2 = 8` therefore exhausts, but never exceeds, the shared runtime
+LOGIN limit. This is paired with separate one-slot maintenance work and
+readiness pools per process and a maintenance LOGIN limit of 8, for 16
+application sessions during a rolling replacement. Complete the
+expand/contract procedure and live global-capacity
+proof in [the PostgreSQL connection-budget transition](postgres-connection-budget-transition.md)
+before deploying this change or converging to two replicas.
+
 Both application URLs must name the same exact lower-case Railway private
 `*.railway.internal:5432` authority and contain only `sslmode=verify-full`.
 Configure the exact stock root certificate PEM and its independently reviewed
@@ -962,7 +972,7 @@ membership is `pintpath_maintenance`, put its same-database TLS URL in
 `pintpath_migrator`, `pintpath_ops`, function, sequence, INSERT, role-creation,
 database-creation, temporary-object, superuser, replication, inheritance, role
 setting, ownership, default-privilege, or RLS-bypass authority. The login must
-be `LOGIN NOINHERIT NOREPLICATION CONNECTION LIMIT 2`; its one direct PG17
+be `LOGIN NOINHERIT NOREPLICATION CONNECTION LIMIT 8`; its one direct PG17
 membership is `pintpath_maintenance` with `ADMIN FALSE`, `INHERIT FALSE`, and
 `SET TRUE`, and its only permitted direct ACL dependency is the current
 database `CONNECT` grant; `CREATE` and `TEMP` on that database must both be

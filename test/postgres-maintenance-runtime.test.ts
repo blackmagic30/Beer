@@ -44,7 +44,7 @@ const safeAuthority = {
   loginInheritsPrivileges: false,
   loginCanReplicate: false,
   loginBypassesRls: false,
-  loginConnectionLimit: 2,
+  loginConnectionLimit: 8,
   loginValidUntilNull: true,
   loginMemberships: ["pintpath_maintenance"],
   loginMembershipOptionsExact: true,
@@ -85,6 +85,30 @@ describe("Postgres privacy-maintenance authority", () => {
   it("accepts the exact isolated retention and erasure role shape", async () => {
     await expect(checkPostgresMaintenanceRuntimeReadiness(database(safeAuthority)))
       .resolves.toEqual({ ready: true, failures: [] });
+  });
+
+  it("accepts legacy limit 2 only through the explicit rollout bridge", async () => {
+    const legacyAuthority = { ...safeAuthority, loginConnectionLimit: 2 };
+    await expect(checkPostgresMaintenanceRuntimeReadiness(database(safeAuthority), {
+      allowLegacyTwoConnectionLimitDuringRollout: true,
+    })).resolves.toEqual({ ready: true, failures: [] });
+    await expect(checkPostgresMaintenanceRuntimeReadiness(database(legacyAuthority)))
+      .resolves.toEqual({ ready: false, failures: ["connection_limit_invalid"] });
+    await expect(checkPostgresMaintenanceRuntimeReadiness(database(legacyAuthority), {
+      allowLegacyTwoConnectionLimitDuringRollout: true,
+    })).resolves.toEqual({ ready: true, failures: [] });
+
+    for (const loginConnectionLimit of [-1, 1, 3, 4, 5, 7, 9]) {
+      await expect(checkPostgresMaintenanceRuntimeReadiness(database({
+        ...safeAuthority,
+        loginConnectionLimit,
+      }), {
+        allowLegacyTwoConnectionLimitDuringRollout: true,
+      })).resolves.toEqual({
+        ready: false,
+        failures: ["connection_limit_invalid"],
+      });
+    }
   });
 
   it("rejects role overlap, unsafe login attributes, and excess object authority", async () => {

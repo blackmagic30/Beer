@@ -306,8 +306,20 @@ These are launch-critical but require provider/staging verification:
   Postgres persistence adapter before candidate freeze. Permanent staging and
   production must use a least-privilege pooled TLS `DATABASE_URL`, at least two
   application replicas, shared Redis, migration/reconciliation proof, and a
-  Postgres-compatible rollback build. A mounted SQLite file is migration input
-  only and fails this gate.
+  Postgres-compatible rollback build. Require the strict post-transition pool
+  contract: runtime 2/process with LOGIN limit 8, separate maintenance work and
+  readiness pools of 1/process each with LOGIN limit 8, four-process rolling
+  overlap, 16 application sessions, and
+  separately measured provider/reserved/non-app headroom. Require every accepted
+  permanent-staging load report to validate the three fixed labeled pool metric
+  shapes on each `/ready` sample and in a bounded post-load sweep across every
+  exact frozen replica hash under one unchanged deployment identity, with zero
+  instantaneous waiters, zero monotonic capacity-wait
+  events/high-water/duration, and a retained minimum available-connection count
+  per label.
+  The temporary legacy maintenance-limit bridge or an incomplete protected
+  2-to-8 role transition fails this gate. A mounted SQLite file is migration
+  input only and fails this gate.
 - **Google Maps Map ID:** Create a JavaScript/vector Map ID in Google Maps Platform, set `GOOGLE_MAPS_MAP_ID`, and verify AdvancedMarkerElement markers render on staging.
 - **Stripe/pricing:** Keep `COMMERCIAL_LAUNCH_ENABLED=false` and
   `CONSUMER_PAID_ENROLLMENT_ENABLED=false` for this release. Stripe values may

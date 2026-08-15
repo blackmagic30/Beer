@@ -3,6 +3,7 @@ import {
   type AccountDeletionSecretPhysicalCheckpoint,
 } from "../lib/account-deletion-secret-checkpoint.js";
 import type { BusinessRepository } from "./business.repository.js";
+import { POSTGRES_CONNECTION_BUDGET } from "./postgres-connection-budget.js";
 import {
   createPostgresDatabase,
   type PostgresDatabaseOptions,
@@ -248,7 +249,7 @@ export async function createRuntimePersistence(
       activeRole: "pintpath_runtime",
       railwayStockLocalhostCaConnection: postgresTransport.nodeConnection,
       applicationName: "pintpath-web",
-      maxConnections: 8,
+      maxConnections: POSTGRES_CONNECTION_BUDGET.runtimePoolMaxConnectionsPerProcess,
       idleTimeoutMs: 30_000,
       connectionTimeoutMs: 10_000,
       statementTimeoutMs: 30_000,

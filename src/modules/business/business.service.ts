@@ -174,6 +174,7 @@ import {
   VenueIdentityRepositoryError,
 } from "../../db/venue-identity.repository.js";
 import { VenueInventoryRepository } from "../../db/venue-inventory.repository.js";
+import type { SafePostgresApplicationPoolMetrics } from "../../db/postgres-connection-budget.js";
 import {
   SUPPORTED_BEERS,
   VIEWER_TRACKED_BEERS,
@@ -2791,7 +2792,11 @@ export class BusinessService {
   private readonly venueManagerInsightsRepository: VenueManagerInsightsRepository;
   private readonly venuePendingChangeRepository: VenuePendingChangeRepository;
   private readonly venueDataReadRepository: VenueDataReadRepository;
-  private readonly databaseHealthProbe: () => Promise<{ ok: boolean; foreignKeyViolations: number }>;
+  private readonly databaseHealthProbe: () => Promise<{
+    ok: boolean;
+    foreignKeyViolations: number;
+    poolMetrics?: readonly SafePostgresApplicationPoolMetrics[];
+  }>;
   private supabaseReadinessCache: { expiresAt: number; value: SupabaseReadinessDependencies } | null = null;
   private supabaseReadinessInFlight: Promise<SupabaseReadinessDependencies> | null = null;
 
@@ -2893,7 +2898,11 @@ export class BusinessService {
       completedAt: string;
     }) => Promise<void>,
     private readonly accountDeletionNotificationCoordinator?: AccountDeletionNotificationCoordinator,
-    databaseHealthProbe?: () => Promise<{ ok: boolean; foreignKeyViolations: number }>,
+    databaseHealthProbe?: () => Promise<{
+      ok: boolean;
+      foreignKeyViolations: number;
+      poolMetrics?: readonly SafePostgresApplicationPoolMetrics[];
+    }>,
   ) {
     this.activityAuditRepository = this.wrapActivityAuditRepository(activityAuditRepository);
     this.supportFeedbackRepository = this.wrapSupportFeedbackRepository(supportFeedbackRepository);
@@ -16493,12 +16502,18 @@ export class BusinessService {
   }
 
   async getOperationalReadiness() {
-    let database: { status: "ok" | "failed"; foreignKeyViolations: number; error?: string };
+    let database: {
+      status: "ok" | "failed";
+      foreignKeyViolations: number;
+      poolMetrics?: readonly SafePostgresApplicationPoolMetrics[];
+      error?: string;
+    };
     try {
       const health = await this.databaseHealthProbe();
       database = {
         status: health.ok ? "ok" : "failed",
         foreignKeyViolations: health.foreignKeyViolations,
+        ...(health.poolMetrics ? { poolMetrics: health.poolMetrics } : {}),
       };
     } catch (error) {
       database = {
@@ -16725,12 +16740,18 @@ export class BusinessService {
   }
 
   async getLocalStartupReadiness() {
-    let database: { status: "ok" | "failed"; foreignKeyViolations: number; error?: string };
+    let database: {
+      status: "ok" | "failed";
+      foreignKeyViolations: number;
+      poolMetrics?: readonly SafePostgresApplicationPoolMetrics[];
+      error?: string;
+    };
     try {
       const health = await this.databaseHealthProbe();
       database = {
         status: health.ok ? "ok" : "failed",
         foreignKeyViolations: health.foreignKeyViolations,
+        ...(health.poolMetrics ? { poolMetrics: health.poolMetrics } : {}),
       };
     } catch (error) {
       database = {

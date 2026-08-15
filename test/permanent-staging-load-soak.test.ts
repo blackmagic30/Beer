@@ -271,6 +271,47 @@ const userBToken = "user-b-opaque-token-1234567890";
 const adminToken = "admin-opaque-token-12345678900";
 const replicaA = "1".repeat(64);
 const replicaB = "2".repeat(64);
+const replicaC = "3".repeat(64);
+const deploymentIdSha256 = "4".repeat(64);
+const replacementDeploymentIdSha256 = "5".repeat(64);
+const healthyPoolMetrics = [
+  {
+    label: "runtime",
+    maxConnections: 2,
+    totalConnections: 1,
+    idleConnections: 1,
+    waitingRequests: 0,
+    capacityWaitEvents: 0,
+    capacityWaitHighWater: 0,
+    capacityWaitDurationMs: 0,
+    connectionCreationHeadroom: 1,
+    availableConnections: 2,
+  },
+  {
+    label: "maintenance_work",
+    maxConnections: 1,
+    totalConnections: 1,
+    idleConnections: 1,
+    waitingRequests: 0,
+    capacityWaitEvents: 0,
+    capacityWaitHighWater: 0,
+    capacityWaitDurationMs: 0,
+    connectionCreationHeadroom: 0,
+    availableConnections: 1,
+  },
+  {
+    label: "maintenance_readiness",
+    maxConnections: 1,
+    totalConnections: 1,
+    idleConnections: 1,
+    waitingRequests: 0,
+    capacityWaitEvents: 0,
+    capacityWaitHighWater: 0,
+    capacityWaitDurationMs: 0,
+    connectionCreationHeadroom: 0,
+    availableConnections: 1,
+  },
+] as const;
 
 type DeploymentIdentityHashField =
   | "projectIdSha256"
@@ -290,10 +331,17 @@ function response(data: Record<string, unknown>, status = 200): Response {
 
 function fakeRun(input: {
   leakToUserB?: boolean;
+  durationMs?: number;
   preflightDeploymentOverrides?: Partial<
     Record<"health" | "ready", DeploymentIdentityHashOverrides>
   >;
   timedDeploymentOverrides?: DeploymentIdentityHashOverrides;
+  preflightPoolMetrics?: unknown;
+  timedPoolMetrics?: unknown;
+  timedReadyFailureProbe?: number;
+  healthReplicaSequence?: readonly string[];
+  readyReplicaSequence?: readonly string[];
+  readyDeploymentSequence?: readonly string[];
 } = {}): {
   configuration: PermanentStagingLoadConfiguration;
   secrets: PermanentStagingLoadSecrets;
@@ -303,7 +351,10 @@ function fakeRun(input: {
     validEnvironment(),
     ["--profile=expected-peak", "--duration-minutes=5"],
   );
-  const configuration: PermanentStagingLoadConfiguration = { ...parsed, durationMs: 1_000 };
+  const configuration: PermanentStagingLoadConfiguration = {
+    ...parsed,
+    durationMs: input.durationMs ?? 6_000,
+  };
   const secrets: PermanentStagingLoadSecrets = {
     userAToken,
     userBToken,
@@ -311,7 +362,8 @@ function fakeRun(input: {
     writeFixture: fixture,
   };
   const submissions: Array<Record<string, unknown>> = [];
-  let replicaProbe = 0;
+  let healthProbe = 0;
+  let readyProbe = 0;
   const fetchImplementation = (async (requestInput: URL | RequestInfo, requestInit?: RequestInit) => {
     const url = requestInput instanceof URL
       ? requestInput
@@ -319,12 +371,24 @@ function fakeRun(input: {
     const authorization = new Headers(requestInit?.headers).get("authorization") ?? "";
     const token = authorization.replace(/^Bearer\s+/i, "");
     if (url.pathname === "/health" || url.pathname === "/ready") {
-      const probeIndex = replicaProbe++;
-      const replicaIdSha256 = probeIndex % 2 === 0 ? replicaA : replicaB;
       const route = url.pathname === "/health" ? "health" : "ready";
-      const deploymentOverrides = probeIndex < 2
+      const probeIndex = route === "health" ? healthProbe++ : readyProbe++;
+      const replicaIdSha256 = (
+        route === "health" ? input.healthReplicaSequence : input.readyReplicaSequence
+      )?.[probeIndex] ?? (probeIndex % 2 === 0 ? replicaA : replicaB);
+      const preflightIdentityProbe = route === "ready"
+        ? probeIndex < configuration.expectedReplicaCount
+        : probeIndex === 0;
+      const deploymentOverrides = preflightIdentityProbe
         ? input.preflightDeploymentOverrides?.[route]
         : input.timedDeploymentOverrides;
+      const selectedPoolMetrics = probeIndex < configuration.expectedReplicaCount
+        ? input.preflightPoolMetrics
+        : input.timedPoolMetrics;
+      const responseStatus = route === "ready"
+          && input.timedReadyFailureProbe === probeIndex
+        ? 503
+        : 200;
       return response({
         service: "pint-path",
         status: url.pathname === "/health" ? "ok" : "ready",
@@ -334,10 +398,26 @@ function fakeRun(input: {
           projectIdSha256,
           environmentIdSha256,
           serviceIdSha256,
+          deploymentIdSha256: route === "ready"
+            ? input.readyDeploymentSequence?.[probeIndex] ?? deploymentIdSha256
+            : deploymentIdSha256,
           replicaIdSha256,
           ...deploymentOverrides,
         },
-      });
+        ...(route === "ready"
+          ? {
+              dependencies: {
+                database: {
+                  status: "ok",
+                  foreignKeyViolations: 0,
+                  poolMetrics: selectedPoolMetrics === undefined
+                    ? healthyPoolMetrics
+                    : selectedPoolMetrics,
+                },
+              },
+            }
+          : {}),
+      }, responseStatus);
     }
     if (url.pathname === "/api/business/config") {
       return response({
@@ -350,6 +430,15 @@ function fakeRun(input: {
         demoBillingMode: false,
         fieldTestMode: false,
       });
+    }
+    if (url.pathname === "/api/business/venues") {
+      return response({ venues: [] });
+    }
+    if (url.pathname === "/api/business/price-records") {
+      return response({ records: [] });
+    }
+    if (url.pathname === "/api/business/access") {
+      return response({ access: "public" });
     }
     if (url.pathname === "/api/admin/status") {
       return token === adminToken
@@ -400,12 +489,53 @@ describe("permanent-staging load/soak execution", () => {
     );
 
     expect(report.passed).toBe(true);
+    expect(report.schemaVersion).toBe(2);
     expect(report.failureCodes).toEqual([]);
+    expect(report.deploymentIdSha256).toBe(deploymentIdSha256);
     expect(report.replicas).toEqual({
-      expectedMinimum: 2,
+      expectedCount: 2,
       observedCount: 2,
       replicaIdSha256s: [replicaA, replicaB],
     });
+    expect(report.postgresPoolMetrics).toEqual({
+      readinessSamples: 5,
+      observedReplicaCount: 2,
+      replicaIdSha256s: [replicaA, replicaB],
+      pools: [
+        {
+          label: "runtime",
+          maxConnections: 2,
+          samples: 5,
+          maxWaitingRequests: 0,
+          minAvailableConnections: 2,
+          maxCapacityWaitEvents: 0,
+          maxCapacityWaitHighWater: 0,
+          maxCapacityWaitDurationMs: 0,
+        },
+        {
+          label: "maintenance_work",
+          maxConnections: 1,
+          samples: 5,
+          maxWaitingRequests: 0,
+          minAvailableConnections: 1,
+          maxCapacityWaitEvents: 0,
+          maxCapacityWaitHighWater: 0,
+          maxCapacityWaitDurationMs: 0,
+        },
+        {
+          label: "maintenance_readiness",
+          maxConnections: 1,
+          samples: 5,
+          maxWaitingRequests: 0,
+          minAvailableConnections: 1,
+          maxCapacityWaitEvents: 0,
+          maxCapacityWaitHighWater: 0,
+          maxCapacityWaitDurationMs: 0,
+        },
+      ],
+    });
+    expect(report.routes.find((route) => route.route === "GET /ready")?.requests)
+      .toBeLessThan(report.postgresPoolMetrics.readinessSamples);
     expect(report.journeys).toMatchObject({
       writeCyclesAttempted: 1,
       writeCyclesCompleted: 1,
@@ -428,6 +558,40 @@ describe("permanent-staging load/soak execution", () => {
     expect(serialized).not.toContain(targetOrigin);
     expect(serialized).not.toContain("user-a");
     expect(serialized).not.toContain("user-b");
+  });
+
+  it("keeps post-load replica-sweep successes out of timed traffic thresholds", async () => {
+    const execute = async (readyReplicaSequence: readonly string[]) => {
+      const harness = fakeRun({ readyReplicaSequence });
+      let monotonic = 0;
+      let wallNow = Date.parse("2026-08-09T00:00:00.000Z");
+      return runPermanentStagingLoadSoak(
+        harness.configuration,
+        harness.secrets,
+        {
+          fetch: harness.fetchImplementation,
+          wallNow: () => wallNow,
+          monotonicNow: () => monotonic += 1,
+          randomBytes: () => Buffer.from("0123456789abcdef01234567", "hex"),
+          sleep: async (milliseconds) => { wallNow += milliseconds; },
+        },
+      );
+    };
+    const baseline = await execute([replicaA, replicaB, replicaA, replicaB]);
+    const extendedSweep = await execute([
+      replicaA,
+      replicaB,
+      ...Array.from({ length: 12 }, () => replicaA),
+      replicaB,
+    ]);
+
+    expect(baseline.passed).toBe(true);
+    expect(extendedSweep.passed).toBe(true);
+    expect(extendedSweep.postgresPoolMetrics.readinessSamples)
+      .toBeGreaterThan(baseline.postgresPoolMetrics.readinessSamples);
+    expect(extendedSweep.totals).toEqual(baseline.totals);
+    expect(extendedSweep.thresholds).toEqual(baseline.thresholds);
+    expect(extendedSweep.routes).toEqual(baseline.routes);
   });
 
   it("fails closed when the second disposable user can observe the first user's write", async () => {
@@ -453,6 +617,230 @@ describe("permanent-staging load/soak execution", () => {
       "profile_incomplete",
       "write_journey_failed",
     ]));
+  });
+
+  it("fails closed and retains the worst pool sample when any readiness probe waits", async () => {
+    const harness = fakeRun({
+      timedPoolMetrics: healthyPoolMetrics.map((pool) => pool.label === "runtime"
+        ? { ...pool, waitingRequests: 1 }
+        : pool),
+    });
+    let monotonic = 0;
+    let wallNow = Date.parse("2026-08-09T00:00:00.000Z");
+    const report = await runPermanentStagingLoadSoak(
+      harness.configuration,
+      harness.secrets,
+      {
+        fetch: harness.fetchImplementation,
+        wallNow: () => wallNow,
+        monotonicNow: () => monotonic += 1,
+        randomBytes: () => Buffer.from("0123456789abcdef01234567", "hex"),
+        sleep: async (milliseconds) => { wallNow += milliseconds; },
+      },
+    );
+
+    expect(report.passed).toBe(false);
+    expect(report.failureCodes).toEqual(expect.arrayContaining([
+      "postgres_pool_evidence_failed",
+      "profile_incomplete",
+      "response_contract_failure",
+    ]));
+    expect(report.postgresPoolMetrics.pools).toContainEqual({
+      label: "runtime",
+      maxConnections: 2,
+      samples: 3,
+      maxWaitingRequests: 1,
+      minAvailableConnections: 2,
+      maxCapacityWaitEvents: 0,
+      maxCapacityWaitHighWater: 0,
+      maxCapacityWaitDurationMs: 0,
+    });
+  });
+
+  it("rejects a drained historical capacity wait that an instantaneous gauge misses", async () => {
+    const harness = fakeRun({
+      timedPoolMetrics: healthyPoolMetrics.map((pool) => pool.label === "runtime"
+        ? {
+            ...pool,
+            waitingRequests: 0,
+            capacityWaitEvents: 1,
+            capacityWaitHighWater: 1,
+            capacityWaitDurationMs: 37,
+          }
+        : pool),
+    });
+    let monotonic = 0;
+    let wallNow = Date.parse("2026-08-09T00:00:00.000Z");
+    const report = await runPermanentStagingLoadSoak(
+      harness.configuration,
+      harness.secrets,
+      {
+        fetch: harness.fetchImplementation,
+        wallNow: () => wallNow,
+        monotonicNow: () => monotonic += 1,
+        randomBytes: () => Buffer.from("0123456789abcdef01234567", "hex"),
+        sleep: async (milliseconds) => { wallNow += milliseconds; },
+      },
+    );
+
+    expect(report.passed).toBe(false);
+    expect(report.failureCodes).toContain("postgres_pool_evidence_failed");
+    expect(report.postgresPoolMetrics.pools).toContainEqual({
+      label: "runtime",
+      maxConnections: 2,
+      samples: 3,
+      maxWaitingRequests: 0,
+      minAvailableConnections: 2,
+      maxCapacityWaitEvents: 1,
+      maxCapacityWaitHighWater: 1,
+      maxCapacityWaitDurationMs: 37,
+    });
+  });
+
+  it("rejects a replica replacement before the post-load monotonic-counter sweep completes", async () => {
+    const harness = fakeRun({
+      readyReplicaSequence: [replicaA, replicaB, replicaA, replicaC],
+    });
+    let monotonic = 0;
+    let wallNow = Date.parse("2026-08-09T00:00:00.000Z");
+    const report = await runPermanentStagingLoadSoak(
+      harness.configuration,
+      harness.secrets,
+      {
+        fetch: harness.fetchImplementation,
+        wallNow: () => wallNow,
+        monotonicNow: () => monotonic += 1,
+        randomBytes: () => Buffer.from("0123456789abcdef01234567", "hex"),
+        sleep: async (milliseconds) => { wallNow += milliseconds; },
+      },
+    );
+
+    expect(report.passed).toBe(false);
+    expect(report.failureCodes).toEqual(expect.arrayContaining([
+      "profile_incomplete",
+      "target_identity_changed",
+    ]));
+  });
+
+  it("rejects a third replica observed during timed traffic", async () => {
+    const harness = fakeRun({
+      healthReplicaSequence: [replicaA, replicaA, replicaC],
+    });
+    let monotonic = 0;
+    let wallNow = Date.parse("2026-08-09T00:00:00.000Z");
+    const report = await runPermanentStagingLoadSoak(
+      harness.configuration,
+      harness.secrets,
+      {
+        fetch: harness.fetchImplementation,
+        wallNow: () => wallNow,
+        monotonicNow: () => monotonic += 1,
+        randomBytes: () => Buffer.from("0123456789abcdef01234567", "hex"),
+        sleep: async (milliseconds) => { wallNow += milliseconds; },
+      },
+    );
+
+    expect(report.passed).toBe(false);
+    expect(report.failureCodes).toEqual(expect.arrayContaining([
+      "profile_incomplete",
+      "replica_participation_failed",
+      "target_identity_changed",
+    ]));
+    expect(report.replicas.replicaIdSha256s).not.toContain(replicaC);
+  });
+
+  it("rejects a same-commit deployment replacement that resets process counters", async () => {
+    const harness = fakeRun({
+      readyDeploymentSequence: [
+        deploymentIdSha256,
+        deploymentIdSha256,
+        replacementDeploymentIdSha256,
+      ],
+    });
+    let monotonic = 0;
+    let wallNow = Date.parse("2026-08-09T00:00:00.000Z");
+    const report = await runPermanentStagingLoadSoak(
+      harness.configuration,
+      harness.secrets,
+      {
+        fetch: harness.fetchImplementation,
+        wallNow: () => wallNow,
+        monotonicNow: () => monotonic += 1,
+        randomBytes: () => Buffer.from("0123456789abcdef01234567", "hex"),
+        sleep: async (milliseconds) => { wallNow += milliseconds; },
+      },
+    );
+
+    expect(report.passed).toBe(false);
+    expect(report.failureCodes).toEqual(expect.arrayContaining([
+      "profile_incomplete",
+      "target_identity_changed",
+    ]));
+  });
+
+  it("rejects one timed readiness failure even when it is below the global 1% HTTP threshold", async () => {
+    const harness = fakeRun({
+      durationMs: 70_000,
+      timedReadyFailureProbe: 11,
+    });
+    let monotonic = 0;
+    let wallNow = Date.parse("2026-08-09T00:00:00.000Z");
+    const report = await runPermanentStagingLoadSoak(
+      harness.configuration,
+      harness.secrets,
+      {
+        fetch: harness.fetchImplementation,
+        wallNow: () => wallNow,
+        monotonicNow: () => monotonic += 1,
+        randomBytes: () => Buffer.from("0123456789abcdef01234567", "hex"),
+        sleep: async (milliseconds) => { wallNow += milliseconds; },
+      },
+    );
+
+    expect(http5xxRatioPasses(report.totals.http5xx, report.totals.requests)).toBe(true);
+    expect(report.totals.http5xx).toBe(1);
+    expect(report.passed).toBe(false);
+    expect(report.failureCodes).toEqual(expect.arrayContaining([
+      "postgres_pool_evidence_failed",
+      "profile_incomplete",
+      "response_contract_failure",
+    ]));
+  });
+
+  it("rejects impossible pool counters during preflight", async () => {
+    const harness = fakeRun({
+      preflightPoolMetrics: healthyPoolMetrics.map((pool) => pool.label === "runtime"
+        ? {
+            ...pool,
+            totalConnections: 3,
+            connectionCreationHeadroom: 0,
+            availableConnections: 1,
+          }
+        : pool),
+    });
+    let monotonic = 0;
+    let wallNow = Date.parse("2026-08-09T00:00:00.000Z");
+    const report = await runPermanentStagingLoadSoak(
+      harness.configuration,
+      harness.secrets,
+      {
+        fetch: harness.fetchImplementation,
+        wallNow: () => wallNow,
+        monotonicNow: () => monotonic += 1,
+        randomBytes: () => Buffer.from("0123456789abcdef01234567", "hex"),
+        sleep: async (milliseconds) => { wallNow += milliseconds; },
+      },
+    );
+
+    expect(report.passed).toBe(false);
+    expect(report.failureCodes).toEqual(expect.arrayContaining([
+      "target_preflight_failed",
+      "postgres_pool_evidence_failed",
+      "profile_incomplete",
+      "response_contract_failure",
+    ]));
+    expect(report.postgresPoolMetrics.readinessSamples).toBe(0);
+    expect(report.postgresPoolMetrics.pools.every((pool) => pool.samples === 0)).toBe(true);
   });
 
   const invalidIdentityHashes = ([
