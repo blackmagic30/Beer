@@ -305,6 +305,37 @@ pilots before the role and provider checks pass.
   Postgres-compatible rollback. Require zero duplicate/lost work and
   authorization/data-isolation failures, less than 1% 5xx, public API p95 below
   2 seconds, admin p95 below 3 seconds, and no unbounded queue/lock growth.
+- [ ] Configure `production-monitoring` for protected default `main` only, with
+  unattended execution and no wait timer. Store only reviewed public smoke
+  config plus dedicated low-privilege user/venue smoke credentials. Configure
+  the separate `production-monitoring-alerts` environment for protected default `main` only,
+  with unattended execution, no wait timer, and only
+  `PINTPATH_PRODUCTION_MONITOR_WEBHOOK_URL`; prove it contains no provider,
+  deployment, database, service-role, or other production secrets.
+- [ ] Confirm the external webhook receives
+  `pintpath-production-public-health-heartbeat` only for the
+  `*/15 * * * *` scheduled matrix `publicResult=success` and
+  `authenticatedResult=skipped`, and
+  `pintpath-production-authenticated-health-heartbeat` only for the
+  `7 * * * *` hourly scheduled matrix `publicResult=skipped` and
+  `authenticatedResult=success`. A manual exact-both-success run must emit
+  `pintpath-production-health-manual-check`, which is evidence only and must not
+  reset either scheduled deadman. Every other trigger/result matrix must emit
+  `pintpath-production-health-failed`, page, and leave the notifier failed after
+  delivery. Accept
+  `pintpath-venue-directory-refresh-heartbeat` only for the exact
+  `23 14 * * *` schedule after job success with `directorySchemaReady=true`.
+  A successful schema-ready `workflow_dispatch` must emit
+  `pintpath-venue-directory-refresh-manual-check` and must not reset the daily
+  deadman. Every other refresh trigger/result matrix, including deferred or
+  missing schema, must emit `pintpath-venue-directory-refresh-failed`, page, and
+  leave the notifier failed after delivery.
+- [ ] Configure the external service to page a named primary and backup for
+  failures and independently deadman-monitor the 15-minute public, hourly
+  authenticated, and daily directory-refresh heartbeat streams because GitHub
+  cannot alert if its scheduler never starts. Preserve live acknowledged
+  failure pages and controlled missed-run exercises for each deadman; missing
+  evidence remains a launch blocker.
 - [ ] Confirm named alerts and escalation for `/health`, `/ready`, 5xx,
   deployment failure, Redis failure, deletion-notice manual review/retention
   breach, login/rate-limit spikes, database/volume size, backup age, and enabled
@@ -317,7 +348,8 @@ pilots before the role and provider checks pass.
 **Evidence:** Public-smoke JSON, production provider-readiness JSON, permanent-
 staging pre/post-seal deployed-readiness JSON, sealed-variable metadata JSON,
 deployed SHA, sanitized provider screenshots, key-restriction screenshots,
-Storage/RLS results, monitor test alert, timestamp, and verifier.
+Storage/RLS results, failure-event and heartbeat receipts, live page and
+deadman acknowledgements, timestamp, and verifier.
 
 ## 2. `production_role_smoke`
 
@@ -334,7 +366,23 @@ Storage/RLS results, monitor test alert, timestamp, and verifier.
   Attempt the collision/duplicate path and require it to fail or link to that
   same identity; a second account is a release blocker.
 - [ ] Confirm there is no production Apple OAuth secret or enabled provider. If Apple login is proposed later, assign rotation ownership and implement, test, and evidence authorization-token revocation before enabling it.
-- [ ] Set the dedicated user and venue-manager credentials as protected `production` environment secrets for both hourly **Production Health** and **Pint Path Release Gate**. Use these exact names: `PINTPATH_SMOKE_USER_EMAIL`, `PINTPATH_SMOKE_USER_PASSWORD`, `PINTPATH_SMOKE_VENUE_EMAIL`, and `PINTPATH_SMOKE_VENUE_PASSWORD`. Keep protected `SUPABASE_URL=https://auth.pintpath.au` and the exact reviewed `sb_publishable_...` value in `SUPABASE_ANON_KEY` in that environment too: the smoke script rejects another origin and any legacy, secret, malformed, or whitespace-wrapped key, compares the live public auth config against those pins, and sends no password or protected role request on a mismatch. Do not configure user/venue bearer-token secrets; the workflow creates and revokes disposable sessions at runtime.
+- [ ] For scheduled **Production Health**, set the dedicated user and
+  venue-manager credentials only in `production-monitoring`. Permit protected
+  default `main` only, configure it for unattended execution, and set no wait
+  timer. Use these exact secret names: `PINTPATH_SMOKE_USER_EMAIL`,
+  `PINTPATH_SMOKE_USER_PASSWORD`, `PINTPATH_SMOKE_VENUE_EMAIL`, and
+  `PINTPATH_SMOKE_VENUE_PASSWORD`. Keep only the public Auth configuration
+  `SUPABASE_URL=https://auth.pintpath.au` and the exact reviewed
+  `sb_publishable_...` value in `SUPABASE_ANON_KEY` alongside them. Do not add
+  an admin token, service-role key, provider-write credential, deployment
+  credential, or database credential.
+- [ ] Keep a separate copy of those low-privilege credentials and public Auth
+  pins in `production` for the manual **Pint Path Release Gate** only, under its
+  existing protected policy. The smoke script rejects another origin
+  and any legacy, secret, malformed, or whitespace-wrapped key, compares the
+  live public Auth config against those pins, and sends no password or protected
+  role request on a mismatch. Do not configure user/venue bearer-token secrets;
+  both workflows create and revoke disposable sessions at runtime.
 - [ ] Obtain one short-lived Supabase admin access token through a normal password plus MFA ceremony and confirm its JWT is AAL2. Store it temporarily in a mode-`600` file at `$EVIDENCE_DIR/supabase-admin.token`; never paste it into the checklist or shell history. Do not store the admin password or TOTP seed in GitHub Actions.
 - [ ] Exchange the AAL2 Supabase admin token for a one-use Pint Path app token without printing either token or placing it in a process argument:
 
