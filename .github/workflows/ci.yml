@@ -345,6 +345,8 @@ jobs:
   supabase-database:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
+    env:
+      PINTPATH_LOCAL_SUPABASE_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres?sslmode=disable
 
     steps:
       - name: Checkout
@@ -365,16 +367,16 @@ jobs:
         run: supabase db reset --local
 
       - name: Seed adversarial direct Storage policy drift
-        run: supabase db query --local --file scripts/ci/supabase-storage-policy-drift.sql
+        run: psql "$PINTPATH_LOCAL_SUPABASE_DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=on --file scripts/ci/supabase-storage-policy-drift.sql
 
       - name: Reapply Storage posture migration against drift
-        run: supabase db query --local --file supabase/migrations/20260815120455_revoke_all_direct_storage_policies.sql
+        run: psql "$PINTPATH_LOCAL_SUPABASE_DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=on --file supabase/migrations/20260815120455_revoke_all_direct_storage_policies.sql
 
       - name: Prove Storage posture migration is idempotent
-        run: supabase db query --local --file supabase/migrations/20260815120455_revoke_all_direct_storage_policies.sql
+        run: psql "$PINTPATH_LOCAL_SUPABASE_DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=on --file supabase/migrations/20260815120455_revoke_all_direct_storage_policies.sql
 
       - name: Verify exact Storage policy and RLS posture
-        run: supabase db query --local --file scripts/ci/supabase-storage-policy-posture-verify.sql
+        run: psql "$PINTPATH_LOCAL_SUPABASE_DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=on --file scripts/ci/supabase-storage-policy-posture-verify.sql
 
       - name: Lint database schemas
         run: supabase db lint --local --schema public,private,pintpath_app,pintpath_ops --level warning --fail-on warning
