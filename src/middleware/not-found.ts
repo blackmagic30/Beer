@@ -1,17 +1,38 @@
-import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import type { Request, Response } from "express";
 
 import { failure } from "../lib/http.js";
 
-export function notFoundHandler(req: Request, res: Response): void {
-  const acceptsHtml = req.accepts?.(["html", "json"]) === "html";
-  const isHtmlPageRequest = (req.method === "GET" || req.method === "HEAD")
-    && acceptsHtml
-    && !req.path.startsWith("/api/");
+const BRANDED_NOT_FOUND_PAGE_PATH = fileURLToPath(
+  new URL("../../viewer/404.html", import.meta.url),
+);
 
-  if (isHtmlPageRequest) {
-    res.status(404).sendFile(path.resolve(process.cwd(), "viewer", "404.html"));
+function isPublicPageRequest(req: Request): boolean {
+  return (req.method === "GET" || req.method === "HEAD")
+    && !req.path.startsWith("/api/");
+}
+
+export function isHtmlPageRequest(req: Request): boolean {
+  const acceptsHtml = req.accepts?.(["html", "json"]) === "html";
+  return isPublicPageRequest(req) && acceptsHtml;
+}
+
+export function prepareNotFoundResponse(req: Request, res: Response): void {
+  res.setHeader("Cache-Control", "no-store");
+  if (isPublicPageRequest(req)) {
+    res.vary("Accept");
+  }
+}
+
+export function sendBrandedNotFoundPage(res: Response): void {
+  res.status(404).sendFile(BRANDED_NOT_FOUND_PAGE_PATH);
+}
+
+export function notFoundHandler(req: Request, res: Response): void {
+  prepareNotFoundResponse(req, res);
+  if (isHtmlPageRequest(req)) {
+    sendBrandedNotFoundPage(res);
     return;
   }
 

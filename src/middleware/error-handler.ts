@@ -4,6 +4,11 @@ import { AppError, isAppError } from "../lib/errors.js";
 import { failure } from "../lib/http.js";
 import { logger } from "../lib/logger.js";
 import { redactSecrets } from "../lib/redact.js";
+import {
+  isHtmlPageRequest,
+  prepareNotFoundResponse,
+  sendBrandedNotFoundPage,
+} from "./not-found.js";
 
 const SAFE_BILLING_ERROR_CODES = new Set([
   "BILLING_CUSTOMER_UNLINKED",
@@ -78,7 +83,15 @@ export function errorHandler(error: unknown, req: Request, res: Response, _next:
     logger.warn("Request rejected", logMeta);
   }
 
-  res.status(appError.statusCode).json(
+  if (appError.statusCode === 404) {
+    prepareNotFoundResponse(req, res);
+    if (isHtmlPageRequest(req)) {
+      sendBrandedNotFoundPage(res);
+      return;
+    }
+  }
+
+  res.status(appError.statusCode).type("json").json(
     failure(
       appError.expose ? appError.message : "Internal server error",
       isProduction ? undefined : redactSecrets(appError.details),
