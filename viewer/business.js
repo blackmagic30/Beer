@@ -12,9 +12,15 @@ const LEGAL_ACCEPTANCE_KEY = "pintPathLegalAcceptance";
 const LEGAL_POLICY_VERSION = String(
   window.MELB_BEER_BOT_VIEWER_CONFIG?.business?.legalPolicyVersion || "2026-08-03"
 );
-const OPTIONAL_ANALYTICS_KEY = "pintPathOptionalAnalyticsEnabled";
-const VENUE_REPORTS_KEY = "pintPathVenueReportsEnabled";
-const COOKIE_CONSENT_KEY = "pintPathCookieConsent";
+const LEGACY_OPTIONAL_ANALYTICS_KEY = "pintPathOptionalAnalyticsEnabled";
+const LEGACY_VENUE_REPORTS_KEY = "pintPathVenueReportsEnabled";
+const LEGACY_COOKIE_CONSENT_KEY = "pintPathCookieConsent";
+const CONSENT_STATE_STORAGE_KEY = "pintPathConsentV1";
+const CONSENT_STATE_COOKIE_NAME = "pintPathConsentV1";
+const CONSENT_STATE_ESSENTIAL = "v1.e";
+const CONSENT_STATE_OPTIONAL = "v1.o0";
+const CONSENT_STATE_OPTIONAL_WITH_VENUE_REPORTS = "v1.o1";
+const CONSENT_COOKIE_MAX_AGE_SECONDS = 180 * 24 * 60 * 60;
 const PASSWORD_RECOVERY_KEY = "pintPathPasswordRecovery";
 const SUBMISSION_DEVICE_STORAGE_KEYS = [
   "pintPathUploadLocationProof",
@@ -57,6 +63,7 @@ const RESTORE_REHEARSAL_SESSION_STORAGE_KEYS = new Set([
 ]);
 let restoreIsolationPromise = null;
 let restoreAnonymousSessionId = null;
+let pageLocalConsentDenied = false;
 
 function isRestoreRehearsalMode() {
   return window.MELB_BEER_BOT_VIEWER_CONFIG?.business?.restoreRehearsalMode === true;
@@ -447,47 +454,184 @@ function getAnonymousSessionId() {
   return value;
 }
 
-function boolStorageEnabled(key, fallback = true) {
-  const value = window.localStorage.getItem(key);
-  if (value == null) {
-    return fallback;
+function readLocalConsentState() {
+  try {
+    return window.localStorage.getItem(CONSENT_STATE_STORAGE_KEY);
+  } catch {
+    return null;
   }
-  return value !== "false";
+}
+
+function writeLocalConsentState(state) {
+  try {
+    window.localStorage.setItem(CONSENT_STATE_STORAGE_KEY, state);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function readCookieConsentState() {
+  try {
+    if (typeof document === "undefined") return null;
+    const prefix = `${CONSENT_STATE_COOKIE_NAME}=`;
+    const matches = String(document.cookie || "")
+      .split(";")
+      .map((part) => part.trim())
+      .filter((part) => part.startsWith(prefix));
+    if (matches.length !== 1) return null;
+    return matches[0].slice(prefix.length);
+  } catch {
+    return null;
+  }
+}
+
+function writeCookieConsentState(state) {
+  try {
+    if (typeof document === "undefined") return false;
+    const secure = window.location.protocol === "https:"
+      || String(window.location.origin || "").startsWith("https://");
+    document.cookie = `${CONSENT_STATE_COOKIE_NAME}=${state}; Path=/; SameSite=Lax; Max-Age=${CONSENT_COOKIE_MAX_AGE_SECONDS}${secure ? "; Secure" : ""}`;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function clearLegacyConsentPreferences() {
+  [
+    LEGACY_COOKIE_CONSENT_KEY,
+    LEGACY_OPTIONAL_ANALYTICS_KEY,
+    LEGACY_VENUE_REPORTS_KEY,
+  ].forEach((key) => {
+    try {
+      window.localStorage.removeItem(key);
+    } catch {
+      // Legacy preferences are ignored even when browser storage cannot remove them.
+    }
+  });
+}
+
+function hasLegacyEssentialConsent() {
+  try {
+    return window.localStorage.getItem(LEGACY_COOKIE_CONSENT_KEY) === "essential"
+      && window.localStorage.getItem(LEGACY_OPTIONAL_ANALYTICS_KEY) === "false"
+      && window.localStorage.getItem(LEGACY_VENUE_REPORTS_KEY) === "false";
+  } catch {
+    return false;
+  }
+}
+
+function readMirroredConsentState() {
+  const localState = readLocalConsentState();
+  const cookieState = readCookieConsentState();
+
+  if (localState === CONSENT_STATE_ESSENTIAL || cookieState === CONSENT_STATE_ESSENTIAL) {
+    return CONSENT_STATE_ESSENTIAL;
+  }
+
+  if (
+    (localState === CONSENT_STATE_OPTIONAL || localState === CONSENT_STATE_OPTIONAL_WITH_VENUE_REPORTS)
+    && localState === cookieState
+  ) {
+    return localState;
+  }
+
+  return null;
+}
+
+function persistEssentialConsent() {
+  pageLocalConsentDenied = true;
+  writeLocalConsentState(CONSENT_STATE_ESSENTIAL);
+  writeCookieConsentState(CONSENT_STATE_ESSENTIAL);
+  readLocalConsentState();
+  readCookieConsentState();
+  clearLegacyConsentPreferences();
+}
+
+function persistOptionalConsent(state) {
+  const localWriteSucceeded = writeLocalConsentState(state);
+  const cookieWriteSucceeded = writeCookieConsentState(state);
+  const localState = readLocalConsentState();
+  const cookieState = readCookieConsentState();
+
+  if (
+    localWriteSucceeded
+    && cookieWriteSucceeded
+    && localState === state
+    && cookieState === state
+  ) {
+    pageLocalConsentDenied = false;
+    clearLegacyConsentPreferences();
+    return;
+  }
+
+  persistEssentialConsent();
+}
+
+function getEffectiveConsentState() {
+  if (pageLocalConsentDenied) {
+    return CONSENT_STATE_ESSENTIAL;
+  }
+
+  const state = readMirroredConsentState();
+  if (state) return state;
+
+  if (hasLegacyEssentialConsent()) {
+    persistEssentialConsent();
+    return CONSENT_STATE_ESSENTIAL;
+  }
+
+  return null;
 }
 
 function getCookieConsentDecision() {
-  return window.localStorage.getItem(COOKIE_CONSENT_KEY);
+  const state = getEffectiveConsentState();
+  if (state === CONSENT_STATE_ESSENTIAL) return "essential";
+  if (state === CONSENT_STATE_OPTIONAL || state === CONSENT_STATE_OPTIONAL_WITH_VENUE_REPORTS) return "optional";
+  return null;
 }
 
 function hasAnalyticsConsent() {
-  const explicitOptional = window.localStorage.getItem(OPTIONAL_ANALYTICS_KEY);
-  if (explicitOptional != null) {
-    return explicitOptional !== "false";
-  }
+  const state = getEffectiveConsentState();
+  return state === CONSENT_STATE_OPTIONAL || state === CONSENT_STATE_OPTIONAL_WITH_VENUE_REPORTS;
+}
 
-  return getCookieConsentDecision() === "optional";
+function hasVenueReportConsent() {
+  return getEffectiveConsentState() === CONSENT_STATE_OPTIONAL_WITH_VENUE_REPORTS;
 }
 
 function setCookieConsentDecision(decision) {
-  const normalized = decision === "optional" ? "optional" : "essential";
-  window.localStorage.setItem(COOKIE_CONSENT_KEY, normalized);
-  if (normalized === "optional") {
-    window.localStorage.setItem(OPTIONAL_ANALYTICS_KEY, "true");
-    window.localStorage.setItem(VENUE_REPORTS_KEY, "true");
-  } else {
-    window.localStorage.setItem(OPTIONAL_ANALYTICS_KEY, "false");
-    window.localStorage.setItem(VENUE_REPORTS_KEY, "false");
+  if (decision === "optional") {
+    persistOptionalConsent(CONSENT_STATE_OPTIONAL_WITH_VENUE_REPORTS);
+    return;
   }
+  persistEssentialConsent();
 }
 
-function setPrivacyPreferenceCache(settings = {}) {
-  if ("optionalAnalyticsEnabled" in settings) {
-    window.localStorage.setItem(OPTIONAL_ANALYTICS_KEY, settings.optionalAnalyticsEnabled ? "true" : "false");
-    window.localStorage.setItem(COOKIE_CONSENT_KEY, settings.optionalAnalyticsEnabled ? "optional" : "essential");
+function setPrivacyPreferenceCache(settings = {}, options = {}) {
+  if (!settings || typeof settings !== "object" || Array.isArray(settings)) return;
+  if (!Object.prototype.hasOwnProperty.call(settings, "optionalAnalyticsEnabled")) return;
+  if (settings.optionalAnalyticsEnabled !== true) {
+    persistEssentialConsent();
+    return;
   }
-  if ("venueReportInclusionEnabled" in settings) {
-    window.localStorage.setItem(VENUE_REPORTS_KEY, settings.venueReportInclusionEnabled ? "true" : "false");
+  if (
+    settings.venueReportInclusionEnabled !== true
+    && settings.venueReportInclusionEnabled !== false
+  ) {
+    persistEssentialConsent();
+    return;
   }
+  const existingState = getEffectiveConsentState();
+  const alreadyOptional = existingState === CONSENT_STATE_OPTIONAL
+    || existingState === CONSENT_STATE_OPTIONAL_WITH_VENUE_REPORTS;
+  if (!alreadyOptional && options.allowOptionalPromotion !== true) return;
+  persistOptionalConsent(
+    settings.venueReportInclusionEnabled === true
+      ? CONSENT_STATE_OPTIONAL_WITH_VENUE_REPORTS
+      : CONSENT_STATE_OPTIONAL,
+  );
 }
 
 function getViewerConfig() {
@@ -1806,7 +1950,7 @@ function installAccessibilityChrome() {
 }
 
 function installCookieConsent() {
-  if (getCookieConsentDecision() || window.localStorage.getItem(OPTIONAL_ANALYTICS_KEY) != null || document.getElementById("cookieConsent")) {
+  if (getCookieConsentDecision() || document.getElementById("cookieConsent")) {
     return;
   }
 
@@ -1836,13 +1980,16 @@ function installCookieConsent() {
   `;
 
   const closeCookieDialog = (choice) => {
-    setCookieConsentDecision(choice);
-    inertedElements.forEach((element) => {
-      element.inert = false;
-    });
-    backdrop.remove();
-    banner.remove();
-    returnFocus?.focus?.();
+    try {
+      setCookieConsentDecision(choice);
+    } finally {
+      inertedElements.forEach((element) => {
+        element.inert = false;
+      });
+      backdrop.remove();
+      banner.remove();
+      returnFocus?.focus?.();
+    }
   };
 
   banner.querySelectorAll("[data-cookie-choice]").forEach((button) => {
@@ -1954,7 +2101,7 @@ async function trackEvent(eventType, metadata = {}) {
       Object.entries(metadata || {}).filter(([key]) => !/(latitude|longitude|\blat\b|\blng\b|coordinates?|gps|precise.?location)/i.test(key)),
     );
     const hasVenueContext = Boolean(safeMetadata.venueId);
-    if (hasVenueContext && !boolStorageEnabled(VENUE_REPORTS_KEY, true)) {
+    if (hasVenueContext && !hasVenueReportConsent()) {
       return;
     }
 

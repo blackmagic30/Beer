@@ -4150,7 +4150,10 @@
           });
           if (!isAccountUiContextCurrent(requestedContext)) return;
           if (state.accountData) state.accountData.privacySettings = result.privacySettings || settings;
-          MelbBeerBusiness.setPrivacyPreferenceCache(result.privacySettings || settings);
+          MelbBeerBusiness.setPrivacyPreferenceCache(
+            result.privacySettings || settings,
+            { allowOptionalPromotion: true },
+          );
           MelbBeerBusiness.setStatus($("dashboardStatus"), "Privacy settings saved.");
           await refreshAccount();
         } catch (error) {
