@@ -1,0 +1,141 @@
+{
+  "schemaVersion": "pintpath-protected-production-postgres-source-pin-policy/v1",
+  "policyId": "pintpath-production-postgres-immutable-source-pin",
+  "activationState": "BLOCKED_PENDING_PROVIDER_COMPATIBILITY_PROOF",
+  "githubEnvironment": "production-postgres-source-pin",
+  "requiredGitRef": "refs/heads/main",
+  "githubAuthority": {
+    "releaseCandidateReceiptSchema": "pintpath-github-release-candidate-receipt/v5",
+    "candidateBinding": "exact-current-main-merged-pr-tree",
+    "pullRequestApprovalRequirement": "not_required",
+    "protectedEnvironmentRequired": true,
+    "protectedEnvironmentApprovalRequirement": "not_required",
+    "originalRunAttemptRequired": true,
+    "priorWriteRunsAllowed": false,
+    "confirmation": "PIN_PRODUCTION_POSTGRES_SOURCE_TO_OBSERVED_DIGEST"
+  },
+  "target": {
+    "projectId": "48d8c6cd-1c66-4148-874b-20877f48e1a5",
+    "productionEnvironmentId": "13dab015-df74-45c6-b26f-69323daea99a",
+    "stagingEnvironmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+    "serviceId": "4a2334a1-71e7-4745-970a-2cd95da10169",
+    "currentDeploymentId": "c6004774-7680-41ec-a816-d872221d5890",
+    "currentSnapshotId": "3f601066-8b66-4315-8f2e-ef499d17fad8",
+    "currentSourceImage": "ghcr.io/railwayapp-templates/postgres-ssl:17.10",
+    "imageDigest": "sha256:786bb8fbbb78ba8d7f8cbef17eb1a2f15d39f118b17017bb12837345c4b16786",
+    "currentPatchId": null,
+    "targetSourceImage": "ghcr.io/railwayapp-templates/postgres-ssl:17.10@sha256:786bb8fbbb78ba8d7f8cbef17eb1a2f15d39f118b17017bb12837345c4b16786"
+  },
+  "mutationBoundary": {
+    "policyPath": "ops/railway/production-staging-mutation-policy.json",
+    "policySha256": "cebed5aebb1e2ada4cd247649eb418fa7d8b77b5c863ed4ecece601f492ac3c8",
+    "onlyAllowedFailedCheck": "sourceReferenceImmutable",
+    "allOtherChecksRequired": true,
+    "productionAndStagingPatchesMustBeEmpty": true,
+    "ordinaryBoundaryExpectedBlockedUntilRebaseline": true
+  },
+  "recoveryAuthority": {
+    "workflowPath": ".github/workflows/production-logical-backup.yml",
+    "event": "workflow_dispatch",
+    "runAttempt": 1,
+    "sameCandidateRequired": true,
+    "backupArtifactPrefix": "production-logical-backup-receipts-",
+    "restoreArtifactPrefix": "production-restore-drill-receipts-",
+    "restoreDrillRequired": true,
+    "maximumBackupAgeSeconds": 7200,
+    "minimumRemainingWormRetentionDays": 29
+  },
+  "databaseIdentityAuthority": {
+    "state": "ACTIVE_PINNED_READ_ONLY_PRE_POST_INSPECTOR",
+    "sourceIdentityContract": "pintpath-postgres-logical-source-database/v1",
+    "inspector": "inspectPostgresLogicalBackupSourceIdentity",
+    "runnerLabels": [
+      "self-hosted",
+      "linux",
+      "x64",
+      "pintpath-production-backup"
+    ],
+    "volatileWorkRootOperation": "recovery",
+    "databaseUrlSecretName": "PINTPATH_PRODUCTION_BACKUP_DATABASE_URL",
+    "databaseUrlSha256VariableName": "PINTPATH_PRODUCTION_BACKUP_SOURCE_URL_SHA256",
+    "rootCaSecretName": "PINTPATH_PRODUCTION_POSTGRES_ROOT_CA_PEM",
+    "rootCaDerSha256VariableName": "PINTPATH_PRODUCTION_POSTGRES_ROOT_CA_DER_SHA256",
+    "prewriteObservationRequired": true,
+    "postflightObservationRequired": true,
+    "exactRecoveryIdentityBindingRequired": true,
+    "nonRecoveryPrimaryRequired": true,
+    "freshTransportPerObservationRequired": true,
+    "productionMutationAllowed": true
+  },
+  "durabilityAuthority": {
+    "state": "BLOCKED_PENDING_IMMUTABLE_OFF_RUNNER_INTENT_AND_RECONCILER",
+    "schemaVersion": "pintpath-production-postgres-source-pin-durability-authority/v1",
+    "immutableOffRunnerPrewriteIntentRequired": true,
+    "cancellationIndependentReadOnlyReconcilerRequired": true,
+    "automaticRetryAllowed": false,
+    "authorityPath": "ops/railway/production-postgres-source-pin-durability-authority.json",
+    "authoritySha256": null,
+    "productionMutationAllowed": false
+  },
+  "compatibilityAuthority": {
+    "required": true,
+    "state": "UNPROVEN_BLOCKED",
+    "schemaVersion": "pintpath-railway-postgres-tag-digest-compatibility-authority/v1",
+    "authorityPath": "ops/railway/production-postgres-source-pin-compatibility-authority.json",
+    "authoritySha256": null,
+    "disposableNoDataCanaryRequired": true,
+    "exactTagDigestPreservationRequired": true,
+    "newDeploymentMetadataExactRequired": true,
+    "newDeploymentPatchIdRequired": true,
+    "environmentPatchCommitAcknowledgementOpaque": true,
+    "productionMutationAllowed": false
+  },
+  "providerContract": {
+    "graphqlEndpoint": "https://backboard.railway.com/graphql/v2",
+    "railwayCliSchemaVersion": "5.32.0",
+    "railwayCliSchemaSha256": "89530486d77ed677586554085d4ff67e8ae6d3c44a6825d67c94320d4a083285",
+    "mutation": "environmentPatchCommit",
+    "allowedPatchPaths": [
+      "services.<serviceId>.source.image",
+      "services.<serviceId>.source.autoUpdates.type"
+    ],
+    "targetAutoUpdatesType": "disabled",
+    "preflightAutoUpdatesTypesAllowed": [
+      null,
+      "disabled"
+    ],
+    "commitMessage": "Pin production Postgres source to observed digest",
+    "maximumAttempts": 1,
+    "automaticRetriesAllowed": false,
+    "rerunsAllowed": false,
+    "unconditionalPostflightRequired": true,
+    "ambiguousOutcomeAction": "READ_ONLY_RECONCILIATION_STOP_NO_RETRY"
+  },
+  "inventoryContract": {
+    "completePaginationRequired": true,
+    "undecryptedEnvironmentConfigRequired": true,
+    "serviceInventoryRequired": true,
+    "variableInventoryRequired": true,
+    "volumeInventoryRequired": true,
+    "deploymentInventoryRequired": true,
+    "imageAutoUpdatesDisabledRequired": true,
+    "collateralMutationAllowed": false
+  },
+  "postflightContract": {
+    "maximumObservationSeconds": 900,
+    "pollIntervalSeconds": 10,
+    "exactSourceRequired": true,
+    "digestUnchangedRequired": true,
+    "oneNewHealthyDeploymentRequired": true,
+    "databaseIdentityBindingRequired": true,
+    "rebaselineCandidateRequired": true
+  },
+  "evidence": {
+    "localHeldIntentCustodyRequiredBeforeWrite": true,
+    "terminalEvidenceRequired": true,
+    "receiptSchema": "pintpath-protected-production-postgres-source-pin-receipt/v1",
+    "rebaselineCandidateSchema": "pintpath-railway-production-staging-mutation-policy-rebaseline-candidate/v1",
+    "providerCredentialsAllowedInEvidence": false,
+    "secretDerivedCommitmentsAllowed": false
+  }
+}

@@ -27,6 +27,10 @@ const CUTOVER_WORKFLOW_ID = "permanent-staging-supabase-legacy-cutover.yml";
 const RUNTIME_VARIABLE_WORKFLOW_PATH =
   ".github/workflows/configure-runtime-variable.yml";
 const RUNTIME_VARIABLE_WORKFLOW_ID = "configure-runtime-variable.yml";
+const PRODUCTION_POSTGRES_SOURCE_PIN_WORKFLOW_PATH =
+  ".github/workflows/pin-production-postgres-source-image.yml";
+const PRODUCTION_POSTGRES_SOURCE_PIN_WORKFLOW_ID =
+  "pin-production-postgres-source-image.yml";
 const DEPLOYMENT_WORKFLOW_PATH =
   ".github/workflows/deploy-permanent-staging.yml";
 const DEPLOYMENT_WORKFLOW_ID = "deploy-permanent-staging.yml";
@@ -36,6 +40,10 @@ const PROVIDER_WRITE_STEP =
 const CUTOVER_JOB_NAME = "Disable exact permanent-staging legacy keys";
 const CUTOVER_WRITE_STEP =
   "Canary replacement keys, disable legacy keys once, and reconcile";
+const PRODUCTION_POSTGRES_SOURCE_PIN_JOB_NAME =
+  "Pin and reconcile exact production Postgres source";
+const PRODUCTION_POSTGRES_SOURCE_PIN_WRITE_STEP =
+  "Commit exact immutable production Postgres source once";
 const PROVIDER_OPERATIONS = new Set([
   "provider-google-maps-api-key",
   "provider-google-maps-map-id",
@@ -113,9 +121,11 @@ function parseArguments(argv) {
   const variableName = values.get("--variable-name") ?? null;
   const cutover = operation === "supabase-legacy-key-cutover";
   const runtimeVariable = operation === "runtime-variable";
+  const postgresSourcePin = operation === "production-postgres-source-pin";
   if (
     !SHA.test(candidateSha) ||
-    (!cutover && !runtimeVariable && !PROVIDER_OPERATIONS.has(operation)) ||
+    (!cutover && !runtimeVariable && !postgresSourcePin &&
+      !PROVIDER_OPERATIONS.has(operation)) ||
     (cutover
       ? !RUN_ID.test(replacementRunId ?? "") || !RUN_ID.test(deploymentRunId ?? "")
       : replacementRunId !== null || deploymentRunId !== null) ||
@@ -134,6 +144,16 @@ function parseArguments(argv) {
 }
 
 function operationConfiguration(operation, candidateSha, target, variableName) {
+  if (operation === "production-postgres-source-pin") {
+    return Object.freeze({
+      workflowPath: PRODUCTION_POSTGRES_SOURCE_PIN_WORKFLOW_PATH,
+      workflowId: PRODUCTION_POSTGRES_SOURCE_PIN_WORKFLOW_ID,
+      displayTitle: `Pin production Postgres source | ${candidateSha}`,
+      jobName: PRODUCTION_POSTGRES_SOURCE_PIN_JOB_NAME,
+      writeStep: PRODUCTION_POSTGRES_SOURCE_PIN_WRITE_STEP,
+      priorSkippedWriteAllowed: false,
+    });
+  }
   if (operation === "supabase-legacy-key-cutover") {
     return Object.freeze({
       workflowPath: CUTOVER_WORKFLOW_PATH,
@@ -168,6 +188,22 @@ function operationConfiguration(operation, candidateSha, target, variableName) {
 
 function workflowPathExact(value, expected) {
   return value === expected || value === `${expected}@main`;
+}
+
+async function verifyCurrentMainRef(input) {
+  const ref = await githubGet(
+    input.fetchImpl,
+    input.token,
+    REPOSITORY,
+    "/git/ref/heads/main",
+  );
+  if (
+    ref?.ref !== "refs/heads/main" ||
+    ref?.object?.type !== "commit" ||
+    ref?.object?.sha !== input.candidateSha ||
+    ref?.object?.url !==
+      `https://api.github.com/repos/${REPOSITORY}/git/commits/${input.candidateSha}`
+  ) fail("current_main_advanced");
 }
 
 function validateRunIdentity(value, expected) {
@@ -694,6 +730,11 @@ export async function verifyGithubReviewedCandidateAuthority(input) {
       deployment,
     );
   }
+  await verifyCurrentMainRef({
+    fetchImpl: input.fetchImpl,
+    token,
+    candidateSha: input.candidateSha,
+  });
   return Object.freeze({
     schemaVersion: 1,
     kind: "pintpath-github-reviewed-candidate-authority",
@@ -720,6 +761,7 @@ export async function verifyGithubReviewedCandidateAuthority(input) {
     ...(deploymentSequence ?? {}),
     ...(deploymentFreshness ?? {}),
     reviewedAuthorityExact: true,
+    currentMainExact: true,
     freshDispatchWriteGuardExact: true,
   });
 }

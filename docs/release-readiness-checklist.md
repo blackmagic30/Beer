@@ -286,7 +286,14 @@ These are launch-critical but require provider/staging verification:
   authority with an independently approved immutable source, then use only the
   exact protected workflow implemented for the requested operation. The
   standalone read-only receipt cannot close this blocker or authorize an
-  unlisted mutation by itself.
+  unlisted mutation by itself. The checked-in Postgres source-pin workflow is
+  explicitly non-dispatchable until both provider compatibility and
+  cancellation durability are active. A dispatch is not a dry run and consumes
+  the candidate. Complete the disposable no-data `tag@sha256` canary plus the
+  immutable off-runner CAS intent and independent read-only `workflow_run`
+  reconciler in
+  [`production-postgres-source-pin.md`](./production-postgres-source-pin.md)
+  before creating a new activation candidate.
 - **Permanent-staging cost ceiling:** Authorized finance/infra operators capture
   complete canonical pre/post read-only provider observations out of band, and a
   second verifier binds their exact hashes in the private manifest. Run the

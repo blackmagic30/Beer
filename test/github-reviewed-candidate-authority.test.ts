@@ -12,6 +12,8 @@ const PROVIDER_PATH =
 const CUTOVER_PATH =
   ".github/workflows/permanent-staging-supabase-legacy-cutover.yml";
 const RUNTIME_PATH = ".github/workflows/configure-runtime-variable.yml";
+const SOURCE_PIN_PATH =
+  ".github/workflows/pin-production-postgres-source-image.yml";
 const DEPLOYMENT_PATH = ".github/workflows/deploy-permanent-staging.yml";
 const PROVIDER_OPERATIONS = [
   "provider-google-maps-api-key",
@@ -91,6 +93,7 @@ function harness(options: {
   providerRuns?: Run[];
   cutoverRuns?: Run[];
   runtimeRuns?: Run[];
+  sourcePinRuns?: Run[];
   deploymentRuns?: Run[];
   jobEvidence?: Record<number, unknown>;
   mergedAt?: string;
@@ -99,21 +102,31 @@ function harness(options: {
   deploymentRunId?: string;
   target?: string;
   variableName?: string;
+  currentMainSha?: string;
 } = {}) {
   const operation = options.operation ?? "supabase-key-replacement";
   const cutover = operation === "supabase-legacy-key-cutover";
   const runtime = operation === "runtime-variable";
-  const currentId = cutover ? 600 : runtime ? 650 : 500;
+  const sourcePin = operation === "production-postgres-source-pin";
+  const currentId = cutover ? 600 : runtime ? 650 : sourcePin ? 675 : 500;
   const target = options.target ?? "permanent-staging";
   const variableName = options.variableName ?? "SUPABASE_URL";
   const current = {
     ...workflowRun({
       id: currentId,
-      path: cutover ? CUTOVER_PATH : runtime ? RUNTIME_PATH : PROVIDER_PATH,
+      path: cutover
+        ? CUTOVER_PATH
+        : runtime
+        ? RUNTIME_PATH
+        : sourcePin
+        ? SOURCE_PIN_PATH
+        : PROVIDER_PATH,
       displayTitle: cutover
         ? `Permanent staging Supabase legacy cutover | ${CANDIDATE}`
         : runtime
         ? `Configure runtime variable | ${target} | ${variableName} | ${CANDIDATE}`
+        : sourcePin
+        ? `Pin production Postgres source | ${CANDIDATE}`
         : title(operation),
       status: "in_progress",
       conclusion: null,
@@ -131,6 +144,7 @@ function harness(options: {
     : [current]);
   const cutoverRuns = options.cutoverRuns ?? (cutover ? [current] : []);
   const runtimeRuns = options.runtimeRuns ?? (runtime ? [current] : []);
+  const sourcePinRuns = options.sourcePinRuns ?? (sourcePin ? [current] : []);
   const deployment = options.deployment ?? workflowRun({
     id: 700,
     path: DEPLOYMENT_PATH,
@@ -204,6 +218,17 @@ function harness(options: {
         parents: [{ sha: "e".repeat(40) }],
       });
     }
+    if (url.endsWith("/git/ref/heads/main")) {
+      const sha = options.currentMainSha ?? CANDIDATE;
+      return response({
+        ref: "refs/heads/main",
+        object: {
+          type: "commit",
+          sha,
+          url: `https://api.github.com/repos/${REPOSITORY}/git/commits/${sha}`,
+        },
+      });
+    }
     if (url.endsWith(`/actions/runs/${currentId}`)) return response(current);
     if (url.endsWith(`/actions/runs/${deploymentRunId}`)) {
       return response(selectedDeployment);
@@ -224,6 +249,12 @@ function harness(options: {
       return response({
         total_count: runtimeRuns.length,
         workflow_runs: runtimeRuns,
+      });
+    }
+    if (url.includes("/actions/workflows/pin-production-postgres-source-image.yml/runs?")) {
+      return response({
+        total_count: sourcePinRuns.length,
+        workflow_runs: sourcePinRuns,
       });
     }
     if (url.includes("/actions/workflows/deploy-permanent-staging.yml/runs?")) {
@@ -437,6 +468,34 @@ describe("reviewed candidate mutation authority", () => {
     });
   });
 
+  it("binds one production Postgres source-pin run and rejects every redispatch", async () => {
+    const fresh = harness({ operation: "production-postgres-source-pin" });
+    await expect(fresh.verify()).resolves.toMatchObject({
+      operation: "production-postgres-source-pin",
+      workflowPath: SOURCE_PIN_PATH,
+      workflowRunId: "675",
+      safePriorSkippedWriteRunIds: [],
+      reviewedAuthorityExact: true,
+      freshDispatchWriteGuardExact: true,
+    });
+
+    const prior = workflowRun({
+      id: 674,
+      path: SOURCE_PIN_PATH,
+      displayTitle: `Pin production Postgres source | ${CANDIDATE}`,
+      status: "completed",
+      conclusion: "failure",
+      createdAt: "2026-08-14T01:00:00.000Z",
+    });
+    const current = fresh.current;
+    await expect(harness({
+      operation: "production-postgres-source-pin",
+      sourcePinRuns: [current, prior],
+    }).verify()).rejects.toThrow(
+      "github_reviewed_candidate_authority_prior_write_ambiguous",
+    );
+  });
+
   it("allows writes after deploy one and seals staging after deploy two", async () => {
     const first = workflowRun({
       id: 300,
@@ -571,6 +630,12 @@ describe("reviewed candidate mutation authority", () => {
       current: { path: `${CUTOVER_PATH}@main` },
     }).verify()).rejects.toThrow(
       "github_reviewed_candidate_authority_current_run_invalid",
+    );
+  });
+
+  it("rejects when live main advances after the merged candidate", async () => {
+    await expect(harness({ currentMainSha: "f".repeat(40) }).verify()).rejects.toThrow(
+      "github_reviewed_candidate_authority_current_main_advanced",
     );
   });
 });

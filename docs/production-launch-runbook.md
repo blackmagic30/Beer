@@ -17,6 +17,15 @@ command is read-only, and the checked-in incident baseline intentionally fails.
 Do not use dashboard **Deploy**, Git autodeploy, an ad-hoc CLI/API command, or
 commit/discard an unrelated staged patch to bypass this stop.
 
+The production Postgres immutable source-pin workflow is checked in as an
+explicit **DO NOT DISPATCH** boundary. Compatibility and cancellation-durability
+authorities are still blocked, and any dispatch consumes that candidate rather
+than acting as a dry run. Follow
+[`production-postgres-source-pin.md`](./production-postgres-source-pin.md) and
+activate it only in a new exact merged/current-main candidate after the disposable
+provider canary, immutable off-runner CAS intent, and independent no-mutation
+reconciler are implemented and pinned.
+
 The active protected operation paths are the manual application-deployment,
 runtime-variable, permanent-staging provider-variable, Supabase legacy-cutover,
 Postgres build-canary, staging scale-evidence, production converge-two,
@@ -1427,8 +1436,7 @@ Required result:
 Before pushing the candidate, configure **GitHub Settings → Branches → `main` protection** to:
 
 - require a pull request;
-- require at least one approval from someone other than the author;
-- dismiss stale approvals after new commits;
+- require zero human approvals for this solo-owner repository;
 - require every review conversation to be resolved;
 - require status checks and an up-to-date branch;
 - require `build-test-scan`, `supabase-database`, `release-readiness`, CodeQL, and iOS;
@@ -1444,10 +1452,9 @@ below.
 Configure **GitHub Settings → Environments → `production`** to:
 
 - allow protected branches only;
-- require a reviewer who is not the deployer;
-- prevent self-review where the plan supports it;
+- require zero human deployment reviewers for this solo-owner repository;
 - store production smoke credentials only in that environment;
-- use a review wait timer if required by the launch owner.
+- retain the exact automated candidate, evidence, and protected-branch gates.
 
 Required checks must report for every protected PR. The candidate native
 workflow is now unfiltered so its `ios` job reports on evidence-only PRs as
@@ -1528,7 +1535,7 @@ Android is not a required-check, release-evidence, or full-launch gate for this
 web+iOS release. It remains an informational repository-health job, but neither
 `android_release` nor an Android store build belongs in the launch evidence.
 
-After the pre-merge PR checks and approval:
+After the pre-merge PR checks succeed:
 
 ```bash
 reviewedPrHeadSha="$(git rev-parse HEAD)"

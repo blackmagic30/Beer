@@ -214,6 +214,19 @@ export interface CreatePostgresLogicalBackupOptions {
   expectedPgRestoreSha256: string;
 }
 
+export interface InspectPostgresLogicalBackupSourceIdentityOptions {
+  readonly connectionFile: string;
+  readonly expectedSourceUrlSha256: string;
+  readonly transportProfile: typeof POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE;
+  readonly rootCaFile: string;
+  readonly expectedRootCaDerSha256: string;
+}
+
+export interface PostgresLogicalBackupSourceIdentity {
+  readonly sourceDatabaseIdentitySha256: string;
+  readonly inRecovery: false;
+}
+
 export interface PostgresLogicalBackupToolAuthorityOptions {
   readonly executableFile: string;
   readonly expectedSha256: string;
@@ -239,6 +252,11 @@ export interface PostgresLogicalBackupDependencies {
     options: OpenPostgresRailwayStockLocalhostCaTransportOptions,
   ) => Promise<PostgresRailwayStockLocalhostCaTransport>;
 }
+
+export type PostgresLogicalBackupSourceIdentityDependencies = Pick<
+  PostgresLogicalBackupDependencies,
+  "getUid" | "connect" | "openTransport"
+>;
 
 interface StableFileSnapshot {
   dev: number;
@@ -1870,7 +1888,11 @@ function sourceIdentitySha256(row: SourceIdentityRow): string {
 
 async function inspectSafeSourceIdentity(
   connection: PostgresLogicalBackupConnection,
-): Promise<{ sourceDatabaseIdentitySha256: string; backupRoleName: string }> {
+): Promise<{
+  sourceDatabaseIdentitySha256: string;
+  backupRoleName: string;
+  inRecovery: false;
+}> {
   let result: PostgresLogicalStateQueryResult<SourceIdentityRow>;
   try {
     result = await connection.query<SourceIdentityRow>(`/* pintpath:logical-backup:source-identity */
@@ -2099,6 +2121,7 @@ async function inspectSafeSourceIdentity(
   return {
     sourceDatabaseIdentitySha256: sourceIdentitySha256(row),
     backupRoleName: expectedBackupRoleName,
+    inRecovery: row.inRecovery,
   };
 }
 
@@ -2696,7 +2719,10 @@ function pathsOverlap(first: string, second: string): boolean {
 
 function transportAuthorityIsExact(
   transport: PostgresRailwayStockLocalhostCaTransport,
-  options: CreatePostgresLogicalBackupOptions,
+  options: Pick<
+    CreatePostgresLogicalBackupOptions,
+    "transportProfile" | "expectedRootCaDerSha256"
+  >,
   connection: SafeConnection,
 ): boolean {
   try {
@@ -2727,6 +2753,116 @@ async function assertTransportExact(
   } catch (error) {
     throw asTransportFailure(error);
   }
+}
+
+export async function inspectPostgresLogicalBackupSourceIdentity(
+  options: InspectPostgresLogicalBackupSourceIdentityOptions,
+  overrides: Partial<PostgresLogicalBackupSourceIdentityDependencies> = {},
+): Promise<PostgresLogicalBackupSourceIdentity> {
+  if (
+    !options
+    || typeof options.connectionFile !== "string"
+    || typeof options.expectedSourceUrlSha256 !== "string"
+    || !SHA256_PATTERN.test(options.expectedSourceUrlSha256)
+    || options.transportProfile !== POSTGRES_RAILWAY_STOCK_LOCALHOST_CA_PROFILE
+    || typeof options.rootCaFile !== "string"
+    || typeof options.expectedRootCaDerSha256 !== "string"
+    || !SHA256_PATTERN.test(options.expectedRootCaDerSha256)
+    || !isExactAuthorityPath(options.connectionFile)
+    || !isExactAuthorityPath(options.rootCaFile)
+    || pathsOverlap(options.connectionFile, options.rootCaFile)
+  ) throw new PostgresLogicalBackupError("invalid_arguments");
+  const stableOptions: InspectPostgresLogicalBackupSourceIdentityOptions = Object.freeze({
+    connectionFile: options.connectionFile,
+    expectedSourceUrlSha256: options.expectedSourceUrlSha256,
+    transportProfile: options.transportProfile,
+    rootCaFile: options.rootCaFile,
+    expectedRootCaDerSha256: options.expectedRootCaDerSha256,
+  });
+  const dependencies: PostgresLogicalBackupSourceIdentityDependencies = {
+    getUid: DEFAULT_DEPENDENCIES.getUid,
+    connect: DEFAULT_DEPENDENCIES.connect,
+    openTransport: DEFAULT_DEPENDENCIES.openTransport,
+    ...overrides,
+  };
+  const uid = dependencies.getUid();
+  if (!Number.isInteger(uid) || uid === null || uid < 0) {
+    throw new PostgresLogicalBackupError("unsafe_connection_file");
+  }
+
+  const connectionFile = stableOptions.connectionFile;
+  const trustedConnection = await readTrustedConnectionFile(connectionFile, uid);
+  const parsedConnection = parseSafeConnectionUrl(trustedConnection.value);
+  if (parsedConnection.urlSha256 !== stableOptions.expectedSourceUrlSha256) {
+    throw new PostgresLogicalBackupError("unsafe_connection_url");
+  }
+
+  let transport: PostgresRailwayStockLocalhostCaTransport | null = null;
+  let sourceConnection: PostgresLogicalBackupConnection | null = null;
+  let completed: PostgresLogicalBackupSourceIdentity | null = null;
+  let pendingError: PostgresLogicalBackupError | null = null;
+  try {
+    try {
+      transport = await dependencies.openTransport({
+        profile: stableOptions.transportProfile,
+        rootCaFile: stableOptions.rootCaFile,
+        expectedRootCaDerSha256: stableOptions.expectedRootCaDerSha256,
+        expectedUid: uid,
+        sourceUrlAuthority: parsedConnection.sourceUrlAuthority,
+      });
+    } catch (error) {
+      throw asTransportFailure(error);
+    }
+    if (!transportAuthorityIsExact(transport, stableOptions, parsedConnection)) {
+      throw new PostgresLogicalBackupError("source_unreachable_or_unsafe");
+    }
+    await assertTransportExact(transport);
+    await assertConnectionFileUnchanged(connectionFile, uid, trustedConnection);
+    await assertTransportExact(transport);
+    try {
+      sourceConnection = await dependencies.connect(
+        transportConnectionConfig(parsedConnection, transport),
+      );
+    } catch (error) {
+      if (error instanceof PostgresLogicalBackupError) throw error;
+      throw new PostgresLogicalBackupError("source_unreachable_or_unsafe");
+    }
+    await assertTransportExact(transport);
+    const sourceIdentity = await inspectSafeSourceIdentity(sourceConnection);
+    await assertConnectionFileUnchanged(connectionFile, uid, trustedConnection);
+    await assertTransportExact(transport);
+    completed = Object.freeze({
+      sourceDatabaseIdentitySha256: sourceIdentity.sourceDatabaseIdentitySha256,
+      inRecovery: sourceIdentity.inRecovery,
+    });
+  } catch (error) {
+    pendingError = asSafeFailure(error, "source_unreachable_or_unsafe");
+  } finally {
+    let cleanupFailed = false;
+    if (sourceConnection) {
+      try {
+        await sourceConnection.close();
+      } catch {
+        cleanupFailed = true;
+      }
+      sourceConnection = null;
+    }
+    if (transport) {
+      try {
+        await transport.close();
+      } catch {
+        cleanupFailed = true;
+      }
+      transport = null;
+    }
+    if (cleanupFailed) {
+      completed = null;
+      pendingError = new PostgresLogicalBackupError("cleanup_failed");
+    }
+  }
+  if (pendingError) throw pendingError;
+  if (!completed) throw new PostgresLogicalBackupError("source_unreachable_or_unsafe");
+  return completed;
 }
 
 export async function createPostgresLogicalBackup(
