@@ -31,6 +31,7 @@ import {
   barSpecialSchema,
   barTierCheckoutSchema,
   authLoginSchema,
+  browserEmailReauthenticationStartSchema,
   billingRecoveryPortalSchema,
   authSupabaseSessionSchema,
   authSignupSchema,
@@ -109,6 +110,33 @@ const deferredCommercialVenueRoutePatterns = [
   /^\/venue-portal\/[^/]+\/(?:specials|member-preview|discount-redemptions|pint-point-drinks|counter-staff|free-pint-rewards|pos-integration|billing)(?:\/|$)/,
 ];
 
+const BROWSER_EMAIL_REAUTHENTICATION_COOKIE_NAME = "pint_path_email_reauth";
+const BROWSER_EMAIL_REAUTHENTICATION_COOKIE_PATH = "/api/business/auth/supabase-session";
+
+function exactCookieValue(req: Request, name: string): string | null {
+  const matches = String(req.header("cookie") || "")
+    .split(";")
+    .flatMap((part) => {
+      const separator = part.indexOf("=");
+      return separator >= 0 && part.slice(0, separator).trim() === name
+        ? [part.slice(separator + 1).trim()]
+        : [];
+    });
+  if (matches.length !== 1 || !matches[0]) return null;
+  try {
+    return decodeURIComponent(matches[0]);
+  } catch {
+    return null;
+  }
+}
+
+function trustedNativeSupabaseExchangeClient(req: Request): "ios-native-v1" | "android-native-v1" | null {
+  if (req.header("origin") !== undefined) return null;
+  if (Object.keys(req.headers).some((name) => name.toLowerCase().startsWith("sec-fetch-"))) return null;
+  const marker = req.header("sec-pint-path-client");
+  return marker === "ios-native-v1" || marker === "android-native-v1" ? marker : null;
+}
+
 export function isDeferredCommercialVenueRoute(pathname: string): boolean {
   const normalizedPath = pathname.toLowerCase();
   return deferredCommercialVenueRoutePatterns.some((pattern) => pattern.test(normalizedPath));
@@ -134,6 +162,25 @@ function clearSessionCookie(res: Response): void {
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
     path: "/",
+  });
+}
+
+function setBrowserEmailReauthenticationCookie(res: Response, token: string, expiresAt: string): void {
+  res.cookie(BROWSER_EMAIL_REAUTHENTICATION_COOKIE_NAME, token, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: BROWSER_EMAIL_REAUTHENTICATION_COOKIE_PATH,
+    expires: new Date(expiresAt),
+  });
+}
+
+function clearBrowserEmailReauthenticationCookie(res: Response): void {
+  res.clearCookie(BROWSER_EMAIL_REAUTHENTICATION_COOKIE_NAME, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: BROWSER_EMAIL_REAUTHENTICATION_COOKIE_PATH,
   });
 }
 
@@ -321,12 +368,53 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     }
   });
 
+  router.post("/auth/browser-email-reauthentication", authLimiter, async (req, res, next) => {
+    try {
+      const body = parseWithSchema(
+        browserEmailReauthenticationStartSchema,
+        req.body,
+        "Invalid email reauthentication request",
+      );
+      const account = await requireAccount(req, businessService);
+      const result = await businessService.beginBrowserEmailReauthentication(
+        account,
+        getAuthorization(req),
+        body.purpose,
+      );
+      setBrowserEmailReauthenticationCookie(res, result.challengeToken, result.expiresAt);
+      res.json(success({ email: result.email, expiresAt: result.expiresAt }));
+    } catch (error) {
+      next(error);
+    }
+  });
+
   router.post("/auth/supabase-session", authLimiter, async (req, res, next) => {
     try {
       const body = parseWithSchema(authSupabaseSessionSchema, req.body, "Invalid Supabase auth payload");
-      const result = await businessService.loginWithSupabaseAccessToken(body, getRequestContext(req), getAuthorization(req));
+      const browserEmailChallenge = exactCookieValue(req, BROWSER_EMAIL_REAUTHENTICATION_COOKIE_NAME);
+      const result = await businessService.loginWithSupabaseAccessToken(
+        body,
+        getRequestContext(req),
+        getAuthorization(req),
+        browserEmailChallenge ?? undefined,
+        trustedNativeSupabaseExchangeClient(req),
+      );
+      // Keep the narrow HttpOnly challenge through a possible MFA step-up and
+      // consume it only after the account-locked purpose-session rotation has
+      // committed. Invalid or abandoned challenges expire after ten minutes
+      // and a newly started ceremony atomically overwrites the cookie.
+      if (browserEmailChallenge !== null) {
+        clearBrowserEmailReauthenticationCookie(res);
+      }
       setSessionCookie(res, result.token, result.expiresAt);
-      res.json(success(result));
+      // Provider-backed app sessions are cookie-only on every client. Keeping
+      // token delivery independent of a caller-controlled body flag prevents a
+      // browser from downgrading the exchange and reading its HttpOnly session
+      // credential from JSON. Native clients consume the same Set-Cookie value
+      // through their platform-protected cookie stores.
+      const { token: _httpOnlyToken, ...cookieSessionResult } = result;
+      void _httpOnlyToken;
+      res.json(success(cookieSessionResult));
     } catch (error) {
       next(error);
     }
@@ -336,6 +424,21 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     try {
       const body = parseWithSchema(passwordResetCompleteSchema, req.body, "Invalid password reset completion payload");
       const result = await businessService.completePasswordReset(body, getRequestContext(req));
+      clearSessionCookie(res);
+      res.json(success(result));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/auth/provider-global-signout-resume", authLimiter, async (req, res, next) => {
+    try {
+      const body = parseWithSchema(
+        passwordResetCompleteSchema,
+        req.body,
+        "Invalid provider sign-out recovery payload",
+      );
+      const result = await businessService.resumeProviderGlobalRevocation(body, getRequestContext(req));
       clearSessionCookie(res);
       res.json(success(result));
     } catch (error) {
@@ -362,10 +465,19 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     res.json(success(await businessService.getAuthSession(account)));
   });
 
-  router.post("/auth/logout", authLimiter, async (req, res) => {
-    const result = await businessService.logout(getAuthorization(req), getRequestContext(req));
-    clearSessionCookie(res);
-    res.json(success(result));
+  router.post("/auth/logout", authLimiter, async (req, res, next) => {
+    try {
+      const result = await businessService.logout(getAuthorization(req), getRequestContext(req));
+      clearSessionCookie(res);
+      res.json(success(result));
+    } catch (error) {
+      if (error instanceof AppError && error.statusCode === 401) {
+        clearSessionCookie(res);
+        res.json(success({ revoked: false, revokedDiscountPasses: 0 }));
+        return;
+      }
+      next(error);
+    }
   });
 
   // authLimiter is the first route-specific handler and uses the shared,
@@ -374,7 +486,12 @@ export function createBusinessRouter(businessService: BusinessService): Router {
   router.post("/auth/logout-all", authLimiter, async (req, res, next) => { // lgtm[js/missing-rate-limiting]
     try {
       const account = await requireAccount(req, businessService);
-      await businessService.requireRecentAuthentication(account, getAuthorization(req), getReauthenticationProof(req));
+      await businessService.requireRecentAuthentication(
+        account,
+        getAuthorization(req),
+        getReauthenticationProof(req),
+        "logout_all",
+      );
       const body = parseWithSchema(logoutAllSchema, req.body ?? {}, "Invalid logout-all payload");
       const result = await businessService.logoutAll(account, body, getRequestContext(req));
       clearSessionCookie(res);
@@ -389,7 +506,12 @@ export function createBusinessRouter(businessService: BusinessService): Router {
   // codeql[js/missing-rate-limiting]
   router.get("/account/sessions", authLimiter, async (req, res) => { // lgtm[js/missing-rate-limiting]
     const account = await requireAccount(req, businessService);
-    await businessService.requireRecentAuthentication(account, getAuthorization(req), getReauthenticationProof(req));
+    await businessService.requireRecentAuthentication(
+      account,
+      getAuthorization(req),
+      getReauthenticationProof(req),
+      "session_management",
+    );
     const query = parseWithSchema(adminPaginationSchema, req.query, "Invalid session pagination");
     res.json(success(await businessService.listAccountSessions(account, getAuthorization(req), query)));
   });
@@ -399,7 +521,12 @@ export function createBusinessRouter(businessService: BusinessService): Router {
   // codeql[js/missing-rate-limiting]
   router.delete("/account/sessions/:sessionId", writeLimiter, async (req, res) => { // lgtm[js/missing-rate-limiting]
     const account = await requireAccount(req, businessService);
-    await businessService.requireRecentAuthentication(account, getAuthorization(req), getReauthenticationProof(req));
+    await businessService.requireRecentAuthentication(
+      account,
+      getAuthorization(req),
+      getReauthenticationProof(req),
+      "session_management",
+    );
     res.json(success(await businessService.revokeAccountSession(
       account,
       account.id,
@@ -481,7 +608,12 @@ export function createBusinessRouter(businessService: BusinessService): Router {
   // codeql[js/missing-rate-limiting]
   router.get("/account/export", accountExportLimiter, async (req, res) => { // lgtm[js/missing-rate-limiting]
     const account = await requireAccount(req, businessService);
-    await businessService.requireRecentAuthentication(account, getAuthorization(req), getReauthenticationProof(req));
+    await businessService.requireRecentAuthentication(
+      account,
+      getAuthorization(req),
+      getReauthenticationProof(req),
+      "account_export",
+    );
     const encoded = JSON.stringify(success(await businessService.exportAccountData(account)));
     if (Buffer.byteLength(encoded) > 25 * 1024 * 1024) {
       throw new AppError("Account export is too large for self-service delivery. Contact privacy support for a secure export.", 413);
@@ -494,7 +626,12 @@ export function createBusinessRouter(businessService: BusinessService): Router {
   // codeql[js/missing-rate-limiting]
   router.post("/account/delete-request", writeLimiter, async (req, res) => { // lgtm[js/missing-rate-limiting]
     const account = await requireAccount(req, businessService);
-    await businessService.requireRecentAuthentication(account, getAuthorization(req), getReauthenticationProof(req));
+    await businessService.requireRecentAuthentication(
+      account,
+      getAuthorization(req),
+      getReauthenticationProof(req),
+      "account_deletion",
+    );
     const body = parseWithSchema(accountDeletionRequestSchema, req.body, "Invalid deletion request payload");
     res.json(success(await businessService.requestAccountDeletion(account, body)));
   });
@@ -512,7 +649,12 @@ export function createBusinessRouter(businessService: BusinessService): Router {
   // codeql[js/missing-rate-limiting]
   router.delete("/account/delete-request/:id", writeLimiter, async (req, res) => { // lgtm[js/missing-rate-limiting]
     const account = await requireAccount(req, businessService);
-    await businessService.requireRecentAuthentication(account, getAuthorization(req), getReauthenticationProof(req));
+    await businessService.requireRecentAuthentication(
+      account,
+      getAuthorization(req),
+      getReauthenticationProof(req),
+      "account_deletion",
+    );
     res.json(success(await businessService.cancelAccountDeletion(account, String(req.params.id ?? ""))));
   });
 
@@ -1066,6 +1208,12 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     try {
       const account = await requireAccount(req, businessService);
       const venueId = String(req.params.venueId ?? "");
+      await businessService.requireRecentAuthentication(
+        account,
+        getAuthorization(req),
+        getReauthenticationProof(req),
+        "venue_billing_portal",
+      );
       res.status(201).json(success(await businessService.createBarBillingPortal(account, venueId)));
     } catch (error) {
       next(error);
@@ -1294,6 +1442,12 @@ export function createBusinessRouter(businessService: BusinessService): Router {
   router.post("/billing/portal", billingLimiter, async (req, res, next) => {
     try {
       const account = await requireAccount(req, businessService);
+      await businessService.requireRecentAuthentication(
+        account,
+        getAuthorization(req),
+        getReauthenticationProof(req),
+        "billing_portal",
+      );
       res.status(201).json(success(await businessService.createBillingPortal(account)));
     } catch (error) {
       next(error);

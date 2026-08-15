@@ -233,7 +233,7 @@ Immediately before manually dispatching **Pint Path Release Gate**, also set thi
 PINTPATH_SMOKE_ADMIN_TOKEN
 ```
 
-The admin token must be a fresh Pint Path session created from a currently MFA-verified Supabase AAL2 admin session. Do not store an admin password or TOTP seed in Actions. The release gate revokes this one-use admin session after the check. Never commit credentials or print them in logs/evidence notes.
+Despite the compatibility name, this secret must contain the raw value from one exact host-only `pint_path_session` cookie created from a currently MFA-verified Supabase AAL2 admin session. The smoke script sends it only in the `Cookie` header, never as a bearer. Do not store an admin password or TOTP seed in Actions. The release gate revokes this one-use admin session after the check. Never commit credentials or print them in logs/evidence notes.
 
 ## Synthetic Data
 
@@ -297,7 +297,7 @@ These are launch-critical but require provider/staging verification:
   unknown, unpriced, shared, or unbounded resource keeps launch blocked. The
   receipt is a post-deployment release gate and cannot authorize deployment.
 - **Supabase OAuth:** Google provider credentials, web redirect URLs, the provider callback, and email-confirmation behavior must be verified. Supabase should allow `https://pintpath.au/auth/callback`; the Google console should allow the callback derived from `SUPABASE_URL`, for example `https://auth.pintpath.au/auth/v1/callback`. Set `SUPABASE_OAUTH_PROVIDERS=google` and prove Apple is disabled. The first-release iOS app is email/password only, declares no custom URL scheme, and uses the HTTPS callback for email confirmation/password recovery.
-- **Supabase Auth security:** Enable leaked-password protection before public launch.
+- **Supabase Auth security:** Enable leaked-password protection before public launch. Prove browser access/refresh tokens never enter localStorage, sessionStorage, a fixed SDK BroadcastChannel, logs, or ordinary Pint Path requests. Exercise the server-bound sensitive-action email link for a Google-only account with exact cookie/account/purpose binding, `shouldCreateUser:false`, expiry/replay denial, MFA step-up, and no identity/provider downgrade. Prove production admin access rechecks the authoritative verified-factor list and fails closed after factor removal or provider lookup failure.
 - **Supabase live access audit:** Apply the final Data API retirement migration, then prove live that `anon` and `authenticated` have zero privileges on public tables, sequences, RPCs, and private helpers. RLS remains defence in depth; only the Express service, using its server-only service role, may access application data. Local SQL parsing is not a substitute for live privilege and denial proof.
 - **Supabase database version:** Confirm the live project is not on deprecated Postgres 14 before launch.
 - **Supabase Data API retirement:** Prove direct PostgREST/Data API reads, writes, RPCs, and storage-object access are denied to ordinary clients while the documented Express API paths still work. Future migrations must not add public grants unless a separately reviewed access contract explicitly reintroduces them.

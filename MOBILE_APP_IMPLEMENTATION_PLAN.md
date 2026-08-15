@@ -8,9 +8,9 @@ Status: **Completed and superseded as an implementation plan on 14 July 2026.** 
 - Both installed apps are branded **Pint Path**. The Xcode target and Android package/source types retain the internal `BeerMap` name for compatibility.
 - iOS is SwiftUI with `URLSession`, Keychain `WhenUnlockedThisDeviceOnly` token storage, MapKit discovery, native forms, and light/dark styling.
 - Android is Kotlin/Jetpack Compose with coroutine-backed HTTP calls, Android-Keystore AES-GCM token protection, a venue-list discovery flow, and external maps-app/browser directions.
-- Production email/password and Google/Apple sign-in use Supabase Auth. Provider authorization uses PKCE, then `POST /api/business/auth/supabase-session` issues the scoped Pint Path app session.
+- Production email/password and Google/Apple sign-in use Supabase Auth. Provider authorization uses PKCE, then `POST /api/business/auth/supabase-session` issues the scoped Pint Path app session only as one exact host-only `pint_path_session` cookie. Native clients retain that cookie in platform-protected storage and never parse an app credential from the JSON response.
 - The Express `/api/business/*` router remains authoritative for price access, submissions, accounts, venue management, billing, analytics, rewards, and reports. Native clients never read private Supabase tables or carry a service-role key.
-- The browser app session now uses an HttpOnly cookie. A local-storage bearer token is read only for one-time legacy migration; it is not the current browser session design.
+- Browser and native app sessions use the same server-issued cookie credential. Browser JavaScript cannot read the HttpOnly value; native clients import the exact `Set-Cookie` value into platform-protected storage and replay it only as `Cookie`. A local-storage bearer token is read only for one-time legacy browser migration; it is not the current session design.
 
 ## Delivered product coverage
 

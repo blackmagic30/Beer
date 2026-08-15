@@ -20,6 +20,24 @@ struct BeerMapApp: App {
     }
 }
 
+private enum PendingMFAStepUpContinuation {
+    case newSession(
+        ageConfirmed: Bool?,
+        termsAccepted: Bool?,
+        privacyAccepted: Bool?,
+        successNotice: String
+    )
+    case refresh(existingAppToken: String, fallbackRefreshToken: String)
+    case purpose(existingAppToken: String, purpose: String)
+}
+
+private struct PendingMFAStepUp {
+    let accessToken: String
+    let refreshToken: String?
+    let factors: [SupabaseMFAFactor]
+    let continuation: PendingMFAStepUpContinuation
+}
+
 @MainActor
 final class BeerMapAppModel: ObservableObject {
     private static let missionFetchLimit = 100
@@ -41,6 +59,8 @@ final class BeerMapAppModel: ObservableObject {
     @Published var reauthenticationContext: String?
     @Published private(set) var legalAcceptanceRequired = false
     @Published private(set) var legalAcceptanceVersion: String?
+    @Published private(set) var mfaStepUpRequired = false
+    @Published private(set) var mfaFactors: [SupabaseMFAFactor] = []
     @Published var optionalAnalyticsEnabled = false
     @Published var selectedTab: AppTab = .explore
     @Published private(set) var pendingContributionVenueId: String?
@@ -52,6 +72,7 @@ final class BeerMapAppModel: ObservableObject {
     private var hasStarted = false
     private var accountDashboardNeedsRefresh = false
     private var pendingLegalAcceptance: (accessToken: String, refreshToken: String?)?
+    private var pendingMFAStepUp: PendingMFAStepUp?
 
     var isSignedIn: Bool { sessionToken != nil }
     var account: Account? { accountDashboard?.account }
@@ -159,13 +180,22 @@ final class BeerMapAppModel: ObservableObject {
                 password: password,
                 config: config
             )
-            storeSession(result.authResult)
+            try storeSession(result.authResult)
             KeychainSessionStore.saveSupabaseRefreshToken(result.refreshToken)
             KeychainSessionStore.saveSupabaseAccessToken(result.accessToken)
             finishSignIn(defaultNotice: "Signed in as \(result.authResult.account.email).")
             await refreshAccount()
             await refreshVenuePortal()
         } catch let apiError as BeerMapAPIError {
+            if await presentMFAStepUp(
+                apiError,
+                continuation: .newSession(
+                    ageConfirmed: nil,
+                    termsAccepted: nil,
+                    privacyAccepted: nil,
+                    successNotice: "Signed in."
+                )
+            ) { return }
             if presentLegalAcceptance(apiError) { return }
             errorMessage = apiError.localizedDescription
         } catch {
@@ -196,7 +226,7 @@ final class BeerMapAppModel: ObservableObject {
                 privacyAccepted: privacyAccepted
             )
             if let result = outcome.authResult {
-                storeSession(result)
+                try storeSession(result)
                 KeychainSessionStore.saveSupabaseRefreshToken(outcome.refreshToken)
                 KeychainSessionStore.saveSupabaseAccessToken(outcome.accessToken)
                 finishSignIn(defaultNotice: "Account created. Welcome to Pint Path.")
@@ -204,6 +234,17 @@ final class BeerMapAppModel: ObservableObject {
             } else {
                 notice = "Check your email to verify the account, then return here to sign in."
             }
+        } catch let apiError as BeerMapAPIError {
+            if await presentMFAStepUp(
+                apiError,
+                continuation: .newSession(
+                    ageConfirmed: ageConfirmed,
+                    termsAccepted: termsAccepted,
+                    privacyAccepted: privacyAccepted,
+                    successNotice: "Account created. Welcome to Pint Path."
+                )
+            ) { return }
+            errorMessage = apiError.localizedDescription
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -235,12 +276,28 @@ final class BeerMapAppModel: ObservableObject {
             )
             let refreshToken = pendingLegalAcceptance.refreshToken
             clearLegalAcceptanceState()
-            storeSession(result)
+            try storeSession(result)
             KeychainSessionStore.saveSupabaseRefreshToken(refreshToken)
             KeychainSessionStore.saveSupabaseAccessToken(pendingLegalAcceptance.accessToken)
             finishSignIn(defaultNotice: "Current Terms and Privacy Policy accepted. Signed in as \(result.account.email).")
             await refreshAccount()
             await refreshVenuePortal()
+        } catch let apiError as BeerMapAPIError {
+            if await presentMFAStepUp(
+                apiError,
+                accessToken: pendingLegalAcceptance.accessToken,
+                refreshToken: pendingLegalAcceptance.refreshToken,
+                continuation: .newSession(
+                    ageConfirmed: true,
+                    termsAccepted: true,
+                    privacyAccepted: true,
+                    successNotice: "Current Terms and Privacy Policy accepted."
+                )
+            ) {
+                clearLegalAcceptanceState()
+                return
+            }
+            errorMessage = apiError.localizedDescription
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -250,6 +307,105 @@ final class BeerMapAppModel: ObservableObject {
         clearLegalAcceptanceState()
         errorMessage = nil
         notice = "Sign-in cancelled. No Pint Path session was created."
+    }
+
+    func cancelPendingMFAStepUp() {
+        guard pendingMFAStepUp != nil else { return }
+        clearMFAStepUpState()
+        errorMessage = nil
+        notice = isSignedIn
+            ? "Authenticator verification cancelled. Your existing Pint Path session was not upgraded."
+            : "Sign-in cancelled. No Pint Path session was created."
+    }
+
+    func completeMFAStepUp(factorId: String, code: String) async {
+        guard let pendingMFAStepUp else {
+            errorMessage = "Authenticator verification expired. Sign in again."
+            return
+        }
+        setLoading(true)
+        defer { setLoading(false) }
+        do {
+            let upgraded = try await api.challengeAndVerifySupabaseMFA(
+                accessToken: pendingMFAStepUp.accessToken,
+                refreshToken: pendingMFAStepUp.refreshToken,
+                factorId: factorId,
+                code: code
+            )
+            guard let upgradedAccessToken = upgraded.accessToken else {
+                throw BeerMapAPIError.missingData
+            }
+            let upgradedRefreshToken = upgraded.refreshToken ?? pendingMFAStepUp.refreshToken
+            let continuation = pendingMFAStepUp.continuation
+            // The AAL1 authority is discarded before the Pint Path exchange is
+            // retried. A repeated server boundary cannot recursively reopen MFA.
+            clearMFAStepUpState()
+            switch continuation {
+            case .newSession(
+                let ageConfirmed,
+                let termsAccepted,
+                let privacyAccepted,
+                let successNotice
+            ):
+                do {
+                    let result = try await api.syncSupabase(
+                        accessToken: upgradedAccessToken,
+                        config: try currentConfig(),
+                        ageConfirmed: ageConfirmed,
+                        termsAccepted: termsAccepted,
+                        privacyAccepted: privacyAccepted
+                    )
+                    try storeSession(result)
+                    KeychainSessionStore.saveSupabaseRefreshToken(upgradedRefreshToken)
+                    KeychainSessionStore.saveSupabaseAccessToken(upgradedAccessToken)
+                    finishSignIn(defaultNotice: "\(successNotice) Signed in as \(result.account.email).")
+                    await refreshAccount()
+                    await refreshVenuePortal()
+                } catch let apiError as BeerMapAPIError {
+                    if case .legalAcceptanceRequired(let message, _, _) = apiError {
+                        stageLegalAcceptance(
+                            message: message,
+                            accessToken: upgradedAccessToken,
+                            refreshToken: upgradedRefreshToken
+                        )
+                        return
+                    }
+                    throw apiError
+                }
+            case .refresh(let existingAppToken, let fallbackRefreshToken):
+                let result = try await api.syncSupabase(
+                    accessToken: upgradedAccessToken,
+                    config: try currentConfig(),
+                    ageConfirmed: nil,
+                    termsAccepted: nil,
+                    privacyAccepted: nil,
+                    existingAppToken: existingAppToken
+                )
+                try storeSession(result, resetAuthority: false)
+                KeychainSessionStore.saveSupabaseRefreshToken(upgradedRefreshToken ?? fallbackRefreshToken)
+                KeychainSessionStore.saveSupabaseAccessToken(upgradedAccessToken)
+                accountDashboardNeedsRefresh = true
+                errorMessage = nil
+                notice = "Authenticator verified. Retry the action that needed a refreshed session."
+            case .purpose(let existingAppToken, let purpose):
+                let result = try await api.syncSupabase(
+                    accessToken: upgradedAccessToken,
+                    config: try currentConfig(),
+                    ageConfirmed: nil,
+                    termsAccepted: nil,
+                    privacyAccepted: nil,
+                    existingAppToken: existingAppToken,
+                    reauthPurpose: purpose
+                )
+                try storeSession(result, resetAuthority: false)
+                KeychainSessionStore.saveSupabaseRefreshToken(upgradedRefreshToken)
+                KeychainSessionStore.saveSupabaseAccessToken(upgradedAccessToken)
+                errorMessage = nil
+                notice = "Authenticator verified. Retry the sensitive action; Pint Path has not run it automatically."
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     func requestPasswordReset(email: String) async {
@@ -289,15 +445,19 @@ final class BeerMapAppModel: ObservableObject {
         setLoading(true)
         defer { setLoading(false) }
         do {
-            _ = try await withAuthenticatedSession { token in
-                let reauthenticationToken = try self.currentReauthenticationToken()
-                _ = try await self.api.logoutAll(
-                    accessToken: reauthenticationToken,
+            let result = try await withPurposeBoundSession("logout_all") { token, accessToken in
+                try await self.api.logoutAll(
+                    accessToken: accessToken,
                     token: token
                 )
             }
             clearLocalSession()
-            notice = "Signed out on every device."
+            if result.providerSessionsRevoked {
+                notice = "Signed out on every device."
+            } else {
+                notice = nil
+                errorMessage = "Every Pint Path app session was revoked, but the sign-in provider could not finish its own global sign-out. Sign in again and retry before relying on provider-wide logout."
+            }
         } catch {
             handleSensitiveActionError(error, action: "sign out all devices")
         }
@@ -348,11 +508,8 @@ final class BeerMapAppModel: ObservableObject {
         accountSessions = []
         accountSessionsLoaded = false
         do {
-            accountSessions = try await withAuthenticatedSession { token in
-                try await self.api.accountSessions(
-                    token: token,
-                    reauthenticationToken: try self.currentReauthenticationToken()
-                ).sessions
+            accountSessions = try await withPurposeBoundSession("session_management") { token, _ in
+                try await self.api.accountSessions(token: token).sessions
             }
             accountSessionsLoaded = true
             clearReauthenticationContext(ifMatching: "review signed-in sessions")
@@ -385,11 +542,10 @@ final class BeerMapAppModel: ObservableObject {
         setLoading(true)
         defer { setLoading(false) }
         do {
-            _ = try await withAuthenticatedSession { token in
+            _ = try await withPurposeBoundSession("account_deletion") { token, _ in
                 try await self.api.requestAccountDeletion(
                     message: "Self-service account deletion scheduled from the iOS app.",
-                    token: token,
-                    reauthenticationToken: try self.currentReauthenticationToken()
+                    token: token
                 )
             }
             accountDeletionRequest = try await withAuthenticatedSession { token in
@@ -407,11 +563,10 @@ final class BeerMapAppModel: ObservableObject {
         setLoading(true)
         defer { setLoading(false) }
         do {
-            _ = try await withAuthenticatedSession { token in
+            _ = try await withPurposeBoundSession("account_deletion") { token, _ in
                 try await self.api.cancelAccountDeletion(
                     request.id,
-                    token: token,
-                    reauthenticationToken: try self.currentReauthenticationToken()
+                    token: token
                 )
             }
             accountDeletionRequest = try await withAuthenticatedSession { token in
@@ -430,11 +585,8 @@ final class BeerMapAppModel: ObservableObject {
         defer { setLoading(false) }
         accountExportURL = nil
         do {
-            let payload = try await withAuthenticatedSession { token in
-                try await self.api.exportAccount(
-                    token: token,
-                    reauthenticationToken: try self.currentReauthenticationToken()
-                )
+            let payload = try await withPurposeBoundSession("account_export") { token, _ in
+                try await self.api.exportAccount(token: token)
             }
             let data = try JSONEncoder().encode(payload)
             let url = FileManager.default.temporaryDirectory
@@ -453,21 +605,17 @@ final class BeerMapAppModel: ObservableObject {
         setLoading(true)
         defer { setLoading(false) }
         do {
-            _ = try await withAuthenticatedSession { token in
+            _ = try await withPurposeBoundSession("session_management") { token, _ in
                 try await self.api.revokeAccountSession(
                     session.id,
-                    token: token,
-                    reauthenticationToken: try self.currentReauthenticationToken()
+                    token: token
                 )
             }
             if session.current == true {
                 clearLocalSession()
             } else {
-                accountSessions = try await withAuthenticatedSession { token in
-                    try await self.api.accountSessions(
-                        token: token,
-                        reauthenticationToken: try self.currentReauthenticationToken()
-                    ).sessions
+                accountSessions = try await withPurposeBoundSession("session_management") { token, _ in
+                    try await self.api.accountSessions(token: token).sessions
                 }
                 accountSessionsLoaded = true
             }
@@ -838,10 +986,26 @@ final class BeerMapAppModel: ObservableObject {
         errorMessage = nil
     }
 
-    private func storeSession(_ result: AuthResult, resetAuthority: Bool = true) {
+    private func storeSession(_ result: AuthResult, resetAuthority: Bool = true) throws {
         clearLegalAcceptanceState()
-        KeychainSessionStore.saveToken(result.token)
-        sessionToken = result.token
+        let credential: String
+        if
+            let storedCredential = KeychainSessionStore.loadToken(),
+            KeychainSessionStore.cookieValue(from: storedCredential) != nil
+        {
+            credential = storedCredential
+        } else if let token = result.token {
+            guard
+                KeychainSessionStore.legacyBearerToken(from: token) != nil,
+                KeychainSessionStore.saveToken(token)
+            else {
+                throw BeerMapAPIError.invalidResponse
+            }
+            credential = token
+        } else {
+            throw BeerMapAPIError.invalidResponse
+        }
+        sessionToken = credential
         guard resetAuthority else { return }
         resetOptionalAnalytics()
         // Never carry venue authority across a newly authenticated account. The portal
@@ -879,20 +1043,32 @@ final class BeerMapAppModel: ObservableObject {
                 config: activeConfig,
                 existingAppToken: currentToken
             )
-            storeSession(result.authResult, resetAuthority: false)
+            try storeSession(result.authResult, resetAuthority: false)
             KeychainSessionStore.saveSupabaseRefreshToken(result.refreshToken ?? refreshToken)
             KeychainSessionStore.saveSupabaseAccessToken(result.accessToken)
-            accountDashboard = try await api.account(token: result.authResult.token)
+            guard let refreshedCredential = sessionToken else { return false }
+            accountDashboard = try await api.account(token: refreshedCredential)
             accountDashboardNeedsRefresh = false
             if accountDashboard?.access?.isAdmin != true, venuePortal?.isAdmin == true {
                 venuePortal = nil
             }
-            accountDeletionRequest = (try? await api.accountDeletionStatus(token: result.authResult.token).request) ?? nil
+            accountDeletionRequest = (try? await api.accountDeletionStatus(token: refreshedCredential).request) ?? nil
             if let settings = accountDashboard?.privacySettings {
                 optionalAnalyticsEnabled = settings.optionalAnalyticsEnabled ?? false
                 UserDefaults.standard.set(optionalAnalyticsEnabled, forKey: "au.pintpath.app.optionalAnalytics")
             }
             return true
+        } catch let apiError as BeerMapAPIError {
+            if await presentMFAStepUp(
+                apiError,
+                continuation: .refresh(
+                    existingAppToken: currentToken,
+                    fallbackRefreshToken: refreshToken
+                )
+            ) {
+                return false
+            }
+            return false
         } catch {
             return false
         }
@@ -902,6 +1078,7 @@ final class BeerMapAppModel: ObservableObject {
         KeychainSessionStore.deleteToken()
         sessionToken = nil
         clearLegalAcceptanceState()
+        clearMFAStepUpState()
         resetOptionalAnalytics()
         accountDashboard = nil
         accountDashboardNeedsRefresh = false
@@ -924,24 +1101,94 @@ final class BeerMapAppModel: ObservableObject {
         let accessToken = embeddedAccessToken else {
             return false
         }
-        // The identity has been verified, but no Pint Path authority is
-        // retained until this exact credential accepts the currently configured policy.
-        clearLocalSession()
-        pendingLegalAcceptance = (
+        stageLegalAcceptance(
+            message: message,
             accessToken: accessToken,
             refreshToken: embeddedRefreshToken
         )
+        return true
+    }
+
+    private func stageLegalAcceptance(
+        message: String,
+        accessToken: String,
+        refreshToken: String?
+    ) {
+        // The identity has been verified, but no Pint Path authority is
+        // retained until this exact credential accepts the current policy.
+        let retainedReauthenticationContext = reauthenticationContext
+        clearLocalSession()
+        reauthenticationContext = retainedReauthenticationContext
+        pendingLegalAcceptance = (accessToken: accessToken, refreshToken: refreshToken)
         legalAcceptanceRequired = true
         legalAcceptanceVersion = config?.legalPolicyVersion
         errorMessage = message
         notice = nil
-        return true
     }
 
     private func clearLegalAcceptanceState() {
         pendingLegalAcceptance = nil
         legalAcceptanceRequired = false
         legalAcceptanceVersion = nil
+    }
+
+    @discardableResult
+    private func presentMFAStepUp(
+        _ error: BeerMapAPIError,
+        accessToken explicitAccessToken: String? = nil,
+        refreshToken explicitRefreshToken: String? = nil,
+        continuation: PendingMFAStepUpContinuation
+    ) async -> Bool {
+        guard error.requiresMFAStepUp else { return false }
+        let embedded = error.mfaProviderTokens
+        guard let accessToken = explicitAccessToken ?? embedded.accessToken else {
+            errorMessage = "Authenticator verification could not retain the provider session. Sign in again."
+            return true
+        }
+        let refreshToken = explicitRefreshToken ?? embedded.refreshToken
+        let retainedReauthenticationContext = reauthenticationContext
+        switch continuation {
+        case .newSession:
+            // Any prior account cookie and long-lived provider credential are
+            // removed before the short-lived AAL1 tokens enter pending memory.
+            clearLocalSession()
+            reauthenticationContext = retainedReauthenticationContext
+        case .refresh, .purpose:
+            clearMFAStepUpState()
+        }
+        do {
+            let factors = try await api.verifiedSupabaseTotpFactors(accessToken: accessToken)
+            guard !factors.isEmpty else {
+                throw BeerMapAPIError.server("No verified authenticator is available for this account. Sign in again or contact support.")
+            }
+            pendingMFAStepUp = PendingMFAStepUp(
+                accessToken: accessToken,
+                refreshToken: refreshToken,
+                factors: factors,
+                continuation: continuation
+            )
+            mfaFactors = factors
+            mfaStepUpRequired = true
+            errorMessage = nil
+            notice = nil
+        } catch {
+            clearMFAStepUpState()
+            errorMessage = error.localizedDescription
+        }
+        return true
+    }
+
+    private func clearMFAStepUpState() {
+        pendingMFAStepUp = nil
+        mfaFactors = []
+        mfaStepUpRequired = false
+    }
+
+    private func currentConfig() throws -> PublicConfig {
+        guard let config else {
+            throw BeerMapAPIError.configuration("Account configuration is still loading. Try again in a moment.")
+        }
+        return config
     }
 
     private func currentReauthenticationToken() throws -> String {
@@ -951,7 +1198,66 @@ final class BeerMapAppModel: ObservableObject {
         return token
     }
 
+    private func withPurposeBoundSession<T: Sendable>(
+        _ purpose: String,
+        _ operation: (String, String) async throws -> T
+    ) async throws -> T {
+        guard var currentCredential = sessionToken else {
+            throw BeerMapAPIError.configuration("Sign in again to continue.")
+        }
+        guard let config else {
+            throw BeerMapAPIError.configuration("Account configuration is still loading. Try again in a moment.")
+        }
+        var accessToken = try currentReauthenticationToken()
+        func establishPurposeCookie() async throws {
+            _ = try await api.reauthenticateSupabaseSession(
+                accessToken: accessToken,
+                purpose: purpose,
+                config: config,
+                existingAppToken: currentCredential
+            )
+        }
+        do {
+            try await establishPurposeCookie()
+        } catch let apiError as BeerMapAPIError where apiError.requiresMFAStepUp {
+            _ = await presentMFAStepUp(
+                apiError,
+                accessToken: accessToken,
+                refreshToken: KeychainSessionStore.loadSupabaseRefreshToken(),
+                continuation: .purpose(existingAppToken: currentCredential, purpose: purpose)
+            )
+            throw BeerMapAPIError.mfaStepUpRequired(accessToken: nil, refreshToken: nil)
+        } catch let apiError as BeerMapAPIError where apiError.isUnauthorized {
+            // The app cookie can remain valid long after the short-lived
+            // Supabase access JWT expires. Refresh the provider session once,
+            // rotate the generic app cookie, then repeat only the credential
+            // exchange. Never retry the sensitive operation itself.
+            guard await refreshExpiredSession(), let refreshedCredential = sessionToken else {
+                if mfaStepUpRequired {
+                    throw BeerMapAPIError.mfaStepUpRequired(accessToken: nil, refreshToken: nil)
+                }
+                throw BeerMapAPIError.reauthenticationRequired
+            }
+            currentCredential = refreshedCredential
+            accessToken = try currentReauthenticationToken()
+            try await establishPurposeCookie()
+        }
+        guard
+            let rotatedCredential = KeychainSessionStore.loadToken(),
+            KeychainSessionStore.cookieValue(from: rotatedCredential) != nil
+        else {
+            throw BeerMapAPIError.invalidResponse
+        }
+        sessionToken = rotatedCredential
+        return try await operation(rotatedCredential, accessToken)
+    }
+
     private func handleSensitiveActionError(_ error: Error, action: String) {
+        if let apiError = error as? BeerMapAPIError, apiError.requiresMFAStepUp {
+            errorMessage = nil
+            notice = nil
+            return
+        }
         if let apiError = error as? BeerMapAPIError, apiError.requiresReauthentication {
             reauthenticationContext = action
             errorMessage = "For your security, sign out and sign back in to \(action). Nothing was completed; retry after signing in."
@@ -992,6 +1298,9 @@ final class BeerMapAppModel: ObservableObject {
             return try await operation(currentToken)
         } catch let apiError as BeerMapAPIError where apiError.isUnauthorized {
             guard await refreshExpiredSession(), let refreshedToken = sessionToken else {
+                if mfaStepUpRequired {
+                    throw BeerMapAPIError.mfaStepUpRequired(accessToken: nil, refreshToken: nil)
+                }
                 clearLocalSession()
                 throw BeerMapAPIError.configuration("Your session expired. Sign in again to continue.")
             }

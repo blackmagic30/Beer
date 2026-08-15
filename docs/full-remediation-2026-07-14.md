@@ -332,7 +332,7 @@ The final result came from several independent passes:
 266. Moved independent-backup-project Supabase DDL out of the production migration chain and left the old tracked migration as an intentional no-op tombstone.
 267. Added a regression that forbids the independent `pintpath-backups` bucket from appearing in primary production migrations.
 268. Removed dead daily-reveal environment/configuration fields and rewrote the related deployment, readiness, and field-test documentation around fixed preview.
-269. Reused validated Supabase provider sessions instead of creating redundant app sessions during account synchronization.
+269. Made every Supabase-to-Pint-Path exchange cookie-only and atomically rotate or create exactly one provider-family session, so a caller cannot omit a browser marker to recover the HttpOnly app token in JSON. Browser provider tokens remain memory-only; native apps persist the same cookie transport in platform-protected storage; purpose-bound sensitive actions rotate rather than accumulate app sessions.
 270. Made privacy-report scopes server-owned and enforced a minimum distinct-actor floor resistant to one actor creating many anonymous sessions.
 271. Calculated monthly boundaries in the product’s Melbourne timezone rather than UTC.
 272. Standardized uncertain moderation outcomes as neutral `needs_more_evidence` and kept fraud classification canonical rather than presentation-dependent.

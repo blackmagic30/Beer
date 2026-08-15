@@ -11,6 +11,11 @@ const SAFE_BILLING_ERROR_CODES = new Set([
   "BILLING_PORTAL_NOT_CONFIGURED",
   "BILLING_PORTAL_UNAVAILABLE",
 ]);
+const SAFE_AUTH_ERROR_CODES = new Set([
+  "PROVIDER_GLOBAL_REVOCATION_PENDING",
+  "MFA_STEP_UP_REQUIRED",
+  "EMAIL_REAUTHENTICATION_REQUIRED",
+]);
 
 function safeRequestPath(req: Request): string {
   return req.path || req.originalUrl?.split("?")[0] || "";
@@ -27,6 +32,9 @@ function safePublicErrorMetadata(details: unknown): {
 } | undefined {
   if (!details || typeof details !== "object" || Array.isArray(details)) return undefined;
   const value = details as Record<string, unknown>;
+  if (typeof value.publicCode === "string" && SAFE_AUTH_ERROR_CODES.has(value.publicCode)) {
+    return { code: value.publicCode };
+  }
   if (typeof value.publicCode === "string" && SAFE_BILLING_ERROR_CODES.has(value.publicCode)) {
     return { code: value.publicCode };
   }

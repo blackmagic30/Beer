@@ -86,10 +86,10 @@ frozen backend contract during review.
   not allowed to redirect native credentials, and there is no legacy-password
   fallback.
 - Social provider login is not compiled into the first App Store release; authentication is email/password only.
-- Supabase access tokens are exchanged at `POST /api/business/auth/supabase-session` for the scoped Pint Path app session.
+- Supabase access tokens are exchanged at `POST /api/business/auth/supabase-session`; the scoped Pint Path app credential is delivered only as the `HttpOnly` `Set-Cookie` value and is never returned in JSON.
 - Sensitive session/export/deletion actions require fresh authentication; a rejected action is never reported as complete.
 - Purchase, checkout, subscription-management, and billing-recovery code is not compiled into the iOS release.
-- App, Supabase refresh, and Supabase access tokens are stored in Keychain as `WhenUnlockedThisDeviceOnly`; a non-Keychain installation marker clears surviving Keychain sessions after reinstall.
+- The Pint Path session-cookie credential plus Supabase refresh and access tokens are stored in Keychain as `WhenUnlockedThisDeviceOnly`. Pint Path API calls send the stored app credential only as a cookie; a non-Keychain installation marker clears surviving Keychain sessions after reinstall.
 - No service-role key is bundled, and the app never reads private Supabase tables directly.
 
 ## Native coverage

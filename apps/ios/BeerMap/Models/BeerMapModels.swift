@@ -59,6 +59,7 @@ struct APIStatusEnvelope: Decodable {
 
 struct APIErrorPayload: Decodable {
     let message: String?
+    let code: String?
     let details: APIErrorDetails?
 }
 
@@ -70,6 +71,18 @@ struct EmptyResponse: Codable {}
 
 struct LogoutAllRequest: Codable {
     let accessToken: String?
+}
+
+struct LogoutAllResponse: Codable {
+    let providerSessionsRevoked: Bool
+}
+
+struct ProviderGlobalRevocationResumeResponse: Codable {
+    let providerSessionsRevoked: Bool
+}
+
+struct ProviderGlobalRevocationResumeRequest: Codable {
+    let accessToken: String
 }
 
 struct PublicConfig: Codable {
@@ -107,7 +120,7 @@ struct TrackedBeer: Codable, Identifiable, Hashable {
 }
 
 struct AuthResult: Codable {
-    let token: String
+    let token: String?
     let account: Account
 }
 
@@ -151,6 +164,8 @@ struct SupabaseRefreshRequest: Codable {
 
 struct SupabaseSessionRequest: Codable {
     let accessToken: String
+    let credentialCeremony: String?
+    let reauthPurpose: String?
     let ageConfirmed: Bool?
     let termsAccepted: Bool?
     let privacyAccepted: Bool?
@@ -168,6 +183,44 @@ struct SupabaseAuthTokens: Codable {
         case accessToken = "access_token"
         case refreshToken = "refresh_token"
         case expiresIn = "expires_in"
+    }
+}
+
+struct SupabaseMFAFactor: Codable, Identifiable, Hashable {
+    let id: String
+    let friendlyName: String?
+    let factorType: String
+    let status: String
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case friendlyName = "friendly_name"
+        case factorType = "factor_type"
+        case status
+    }
+
+    var displayName: String {
+        friendlyName?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank
+            ?? "Authenticator app"
+    }
+}
+
+struct SupabaseMFAUser: Codable {
+    let id: String
+    let factors: [SupabaseMFAFactor]?
+}
+
+struct SupabaseMFAChallenge: Codable {
+    let id: String
+}
+
+struct SupabaseMFAVerifyRequest: Codable {
+    let challengeId: String
+    let code: String
+
+    enum CodingKeys: String, CodingKey {
+        case challengeId = "challenge_id"
+        case code
     }
 }
 

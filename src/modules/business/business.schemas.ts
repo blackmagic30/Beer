@@ -194,8 +194,27 @@ const authConsentSourceSchema = z
     return "android";
   });
 
+export const browserReauthenticationPurposeSchema = z.enum([
+  "session_management",
+  "account_export",
+  "account_deletion",
+  "billing_portal",
+  "venue_billing_portal",
+  "logout_all",
+]);
+
+export const browserEmailReauthenticationStartSchema = z.object({
+  purpose: browserReauthenticationPurposeSchema,
+}).strict();
+
 export const authSupabaseSessionSchema = z.object({
   accessToken: z.string().trim().min(20),
+  credentialCeremony: z.enum([
+    "browser_memory_v1",
+    "browser_email_otp_v1",
+    "native_memory_v1",
+  ]).optional(),
+  reauthPurpose: browserReauthenticationPurposeSchema.optional(),
   ageConfirmed: z.boolean().optional(),
   termsAccepted: z.boolean().optional(),
   privacyAccepted: z.boolean().optional(),
@@ -211,6 +230,27 @@ export const authSupabaseSessionSchema = z.object({
     source: authConsentSourceSchema.default("web"),
   }).optional(),
 }).superRefine((value, ctx) => {
+  if (value.reauthPurpose !== undefined && value.credentialCeremony === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "A reauthentication purpose requires an approved credential ceremony.",
+      path: ["reauthPurpose"],
+    });
+  }
+  if (value.credentialCeremony === "browser_email_otp_v1" && value.reauthPurpose === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "The browser email ceremony requires a reauthentication purpose.",
+      path: ["reauthPurpose"],
+    });
+  }
+  if (value.credentialCeremony === "native_memory_v1" && value.reauthPurpose === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "The native memory ceremony requires a reauthentication purpose.",
+      path: ["reauthPurpose"],
+    });
+  }
   const hasTopLevelConsent = [
     value.ageConfirmed,
     value.termsAccepted,
@@ -236,6 +276,7 @@ export const authSupabaseSessionSchema = z.object({
 
 export const passwordResetCompleteSchema = z.object({
   accessToken: z.string().trim().min(20),
+  mfaAccessToken: z.string().trim().min(20).optional(),
 });
 
 export const logoutAllSchema = z.object({
@@ -1143,6 +1184,7 @@ export type AuthSignupInput = z.infer<typeof authSignupSchema>;
 export type AuthLoginInput = z.infer<typeof authLoginSchema>;
 export type BillingRecoveryPortalInput = z.infer<typeof billingRecoveryPortalSchema>;
 export type AuthSupabaseSessionInput = z.infer<typeof authSupabaseSessionSchema>;
+export type BrowserReauthenticationPurpose = z.infer<typeof browserReauthenticationPurposeSchema>;
 export type PasswordResetCompleteInput = z.infer<typeof passwordResetCompleteSchema>;
 export type LogoutAllInput = z.infer<typeof logoutAllSchema>;
 export type LegalAcceptanceInput = z.infer<typeof legalAcceptanceSchema>;
