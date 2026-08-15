@@ -78,6 +78,15 @@ interface BrowserSupabaseApi {
     provider: string,
     options?: { returnTo?: string; reauthPurpose?: string },
   ): Promise<void>;
+  signInWithOAuthPopup(
+    provider: string,
+    options?: {
+      preferTopLevel?: boolean;
+      purpose?: string;
+      requirePopup?: boolean;
+      returnTo?: string;
+    },
+  ): Promise<{ popup: boolean; redirected?: boolean }>;
   getLiveSupabaseProviderSession(
     initialSession?: { access_token: string; refresh_token: string } | null,
     client?: BrowserSupabaseClient | null,
@@ -146,6 +155,7 @@ function requestHeaders(input: URL | RequestInfo, init?: RequestInit): Headers {
 
 function loadBrowserSupabase(key: unknown, options: {
   enableBroadcastChannel?: boolean;
+  enableDocument?: boolean;
   initialLocalStorage?: Record<string, string>;
   initialSessionStorage?: Record<string, string>;
   responseForRequest?: (
@@ -154,12 +164,15 @@ function loadBrowserSupabase(key: unknown, options: {
   supabaseUrl?: unknown;
   viewerConfig?: Record<string, unknown>;
   viewerOrigin?: string;
+  locationAssign?: (url: string) => void;
+  windowOpen?: (...args: string[]) => unknown;
 } = {}) {
   const requests: CapturedRequest[] = [];
   const broadcastChannels: string[] = [];
   const broadcastMessages: CapturedBroadcastMessage[] = [];
   const clientOptions: ClientOptions[] = [];
   const viewerOrigin = options.viewerOrigin ?? "https://pintpath.au";
+  const locationAssignments: string[] = [];
   const localStorage = new BrowserStorage();
   const sessionStorage = new BrowserStorage();
   Object.entries(options.initialLocalStorage ?? {}).forEach(([storageKey, value]) => {
@@ -211,13 +224,30 @@ function loadBrowserSupabase(key: unknown, options: {
       pathname: "/account.html",
       search: "",
       hash: "",
+      href: `${viewerOrigin}/account.html`,
+      assign(url: string) {
+        const normalizedUrl = String(url);
+        locationAssignments.push(normalizedUrl);
+        options.locationAssign?.(normalizedUrl);
+      },
     },
     localStorage,
     sessionStorage,
     addEventListener: vi.fn(),
   };
+  const documentObject = {
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    visibilityState: "visible",
+  };
+  if (options.enableDocument) {
+    windowObject.document = documentObject;
+  }
   if (options.enableBroadcastChannel) {
     windowObject.BroadcastChannel = CapturingBroadcastChannel;
+  }
+  if (options.windowOpen) {
+    windowObject.open = options.windowOpen;
   }
   const browserGlobals: Record<string, unknown> = {
     AbortController,
@@ -242,6 +272,9 @@ function loadBrowserSupabase(key: unknown, options: {
     WebSocket: class {},
     window: windowObject,
   };
+  if (options.enableDocument) {
+    browserGlobals.document = documentObject;
+  }
   if (options.enableBroadcastChannel) {
     browserGlobals.BroadcastChannel = CapturingBroadcastChannel;
   }
@@ -264,6 +297,7 @@ function loadBrowserSupabase(key: unknown, options: {
     broadcastMessages,
     clientOptions,
     fetchImplementation,
+    locationAssignments,
     localStorage,
     requests,
     sessionStorage,
@@ -300,6 +334,96 @@ describe("browser Supabase publishable-key compatibility", () => {
       },
     });
     expect(JSON.stringify(signInWithOAuth.mock.calls)).not.toContain("attacker.invalid");
+  });
+
+  it("uses the top-level PKCE path for ordinary OAuth login without opening a popup channel", async () => {
+    const windowOpen = vi.fn(() => {
+      throw new Error("window.open must not be called for a preferred top-level flow");
+    });
+    const harness = loadBrowserSupabase(PUBLISHABLE_KEY, {
+      enableBroadcastChannel: true,
+      enableDocument: true,
+      windowOpen,
+    });
+
+    await expect(harness.api.signInWithOAuthPopup("google", {
+      preferTopLevel: true,
+      purpose: "login",
+      returnTo: "/account.html?from=map",
+    })).resolves.toMatchObject({
+      popup: false,
+      redirected: true,
+    });
+
+    expect(harness.locationAssignments).toHaveLength(1);
+    const authorizeUrl = new URL(harness.locationAssignments[0]!);
+    expect(`${authorizeUrl.origin}${authorizeUrl.pathname}`).toBe(`${SUPABASE_URL}/auth/v1/authorize`);
+    expect(authorizeUrl.searchParams.get("provider")).toBe("google");
+    expect(authorizeUrl.searchParams.get("scopes")).toBe("email profile");
+    expect(authorizeUrl.searchParams.get("code_challenge_method")).toBe("s256");
+    expect(authorizeUrl.searchParams.get("code_challenge")).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    const callbackUrl = new URL(authorizeUrl.searchParams.get("redirect_to")!);
+    expect(`${callbackUrl.origin}${callbackUrl.pathname}`).toBe("https://pintpath.au/auth/callback");
+    expect(callbackUrl.search).toBe("");
+    const pendingFlows = JSON.parse(
+      harness.sessionStorage.getItem("pintPathSupabaseOAuth-flows-code-verifier") || "null",
+    ) as unknown;
+    expect(pendingFlows).toEqual([expect.stringMatching(/^[A-Za-z0-9_-]{8,160}$/)]);
+    const [flowId] = pendingFlows as string[];
+    expect(flowId).toMatch(/^[A-Za-z0-9_-]{8,160}$/);
+
+    expect(harness.localStorage.getItem("pintPathAuthReturnTo")).toBe("/account.html?from=map");
+    expect(JSON.parse(harness.localStorage.getItem("pintPathAuthFlow") || "null")).toMatchObject({
+      kind: "oauth",
+      reauthPurpose: null,
+      returnTo: "/account.html?from=map",
+    });
+    const verifierKeys = Array.from(
+      { length: harness.sessionStorage.length },
+      (_, index) => harness.sessionStorage.key(index),
+    ).filter((storageKey): storageKey is string => Boolean(storageKey));
+    expect(verifierKeys).toEqual(expect.arrayContaining([
+      "pintPathSupabaseOAuth-code-verifier",
+      "pintPathSupabaseOAuth-flows-code-verifier",
+      `pintPathSupabaseOAuth-flow-${flowId}-code-verifier`,
+    ]));
+    const browserStorage = [harness.localStorage, harness.sessionStorage].flatMap((storage) =>
+      Array.from({ length: storage.length }, (_, index) => {
+        const storageKey = storage.key(index);
+        return storageKey ? storage.getItem(storageKey) : null;
+      }));
+    expect(JSON.stringify(browserStorage)).not.toMatch(/access_token|refresh_token/i);
+    expect(windowOpen).not.toHaveBeenCalled();
+    expect(harness.broadcastChannels).not.toContainEqual(
+      expect.stringMatching(/^pintpath:oauth:/),
+    );
+  });
+
+  it("keeps top-level preference fail-closed for invalid and popup-required OAuth requests", async () => {
+    const windowOpen = vi.fn();
+    const harness = loadBrowserSupabase(PUBLISHABLE_KEY, {
+      enableBroadcastChannel: true,
+      windowOpen,
+    });
+
+    await expect(harness.api.signInWithOAuthPopup("apple", {
+      preferTopLevel: true,
+      purpose: "login",
+    })).rejects.toThrow("not enabled");
+    await expect(harness.api.signInWithOAuthPopup("google", {
+      preferTopLevel: true,
+      purpose: "unsupported",
+    })).rejects.toThrow("purpose is not supported");
+    await expect(harness.api.signInWithOAuthPopup("google", {
+      preferTopLevel: true,
+      purpose: "account_export",
+      requirePopup: true,
+    })).rejects.toThrow("needs a secure sign-in popup");
+
+    expect(windowOpen).not.toHaveBeenCalled();
+    expect(harness.broadcastChannels).not.toContainEqual(
+      expect.stringMatching(/^pintpath:oauth:/),
+    );
   });
 
   it("binds permanent-staging OAuth callbacks to the viewer instead of a configured hostile origin", async () => {

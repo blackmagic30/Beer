@@ -2043,20 +2043,117 @@ describe("account page shell", () => {
     expect(script).toContain("}).catch(() => null)");
   });
 
-  it("resets OAuth loading buttons when a provider flow is cancelled", () => {
+  it("restores OAuth loading buttons after an interrupted top-level provider redirect", () => {
     const html = accountHtml();
 
     expect(html).toContain("oauthLoginOpening: false");
-    expect(html).toContain("oauthPopupActive: false");
+    expect(html).not.toContain("oauthPopupActive");
     expect(html).toContain("function setOauthButtonsLoading");
     expect(html).toContain("function resetCancelledOauth");
-    expect(html).toContain("if (!state.oauthLoginOpening || state.oauthPopupActive)");
-    expect(html).toContain("state.oauthPopupActive = true;");
-    expect(html).toContain("state.oauthPopupActive = false;");
+    expect(html).toContain("if (!state.oauthLoginOpening)");
+    expect(html).toContain("preferTopLevel: true");
     expect(html).toContain("MelbBeerBusiness.clearPendingLegalAcceptance();");
     expect(html).toContain("Secure Google login was cancelled. Try again when you are ready.");
     expect(html).toContain('window.addEventListener("pageshow", () => resetCancelledOauth())');
     expect(html).toContain('window.addEventListener("focus", () => resetCancelledOauth())');
+  });
+
+  it("behaviorally restores OAuth controls when an interrupted top-level redirect returns from BFCache", () => {
+    const html = accountHtml();
+    const recoveryStart = html.indexOf("    function setLoading(");
+    const recoveryEnd = html.indexOf("    const quietAuthMessages", recoveryStart);
+    const pageshowRegistration = html.match(
+      /window\.addEventListener\("pageshow", \(\) => resetCancelledOauth\(\)\);/,
+    )?.[0];
+    expect(recoveryStart).toBeGreaterThanOrEqual(0);
+    expect(recoveryEnd).toBeGreaterThan(recoveryStart);
+    expect(pageshowRegistration).toBeDefined();
+
+    const oauthButtons = [
+      {
+        dataset: {} as Record<string, string>,
+        disabled: false,
+        textContent: "Continue with Google",
+      },
+      {
+        dataset: {} as Record<string, string>,
+        disabled: false,
+        textContent: "Continue with Apple",
+      },
+    ];
+    const authStatus = {
+      isError: false,
+      textContent: "",
+    };
+    const state = { oauthLoginOpening: false };
+    const listeners = new Map<string, () => void>();
+    let pendingLegalAcceptance = true;
+    let pendingLegalClearCount = 0;
+    const context = {
+      WEB_EMAIL_AUTH_ENABLED: false,
+      MelbBeerBusiness: {
+        clearPendingLegalAcceptance: () => {
+          pendingLegalAcceptance = false;
+          pendingLegalClearCount += 1;
+        },
+      },
+      $: (id: string) => {
+        if (id !== "authStatus") throw new Error(`Unexpected account element: ${id}`);
+        return authStatus;
+      },
+      document: {
+        querySelectorAll: (selector: string) => {
+          if (selector !== ".oauthButton") throw new Error(`Unexpected selector: ${selector}`);
+          return oauthButtons;
+        },
+      },
+      oauthButtons,
+      setAccountStatus: (
+        element: typeof authStatus,
+        message: string,
+        isError = false,
+      ) => {
+        element.textContent = message;
+        element.isError = isError;
+      },
+      state,
+      window: {
+        addEventListener: (name: string, listener: () => void) => {
+          listeners.set(name, listener);
+        },
+      },
+    };
+    vm.createContext(context);
+    vm.runInContext([
+      html.slice(recoveryStart, recoveryEnd),
+      pageshowRegistration,
+      "setOauthButtonsLoading(true, oauthButtons[0]);",
+    ].join("\n"), context);
+
+    expect(state.oauthLoginOpening).toBe(true);
+    expect(oauthButtons.map(({ disabled, textContent }) => ({ disabled, textContent }))).toEqual([
+      { disabled: true, textContent: "Opening secure login..." },
+      { disabled: true, textContent: "Continue with Apple" },
+    ]);
+
+    const pageshow = listeners.get("pageshow");
+    expect(pageshow).toBeTypeOf("function");
+    pageshow?.();
+
+    expect(state.oauthLoginOpening).toBe(false);
+    expect(oauthButtons.map(({ disabled, textContent }) => ({ disabled, textContent }))).toEqual([
+      { disabled: false, textContent: "Continue with Google" },
+      { disabled: false, textContent: "Continue with Apple" },
+    ]);
+    expect(pendingLegalAcceptance).toBe(false);
+    expect(pendingLegalClearCount).toBe(1);
+    expect(authStatus).toEqual({
+      isError: false,
+      textContent: "Secure Google login was cancelled. Try again when you are ready.",
+    });
+
+    pageshow?.();
+    expect(pendingLegalClearCount).toBe(1);
   });
 
   it("has a dedicated Supabase auth callback that exchanges the session and redirects safely", () => {

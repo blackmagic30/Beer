@@ -2411,6 +2411,10 @@ function signInWithOAuthPopup(provider, options = {}) {
     }));
   };
 
+  if (options.preferTopLevel === true) {
+    return useTopLevelFallback();
+  }
+
   const PopupChannel = window.BroadcastChannel;
   if (typeof PopupChannel !== "function" || typeof window.open !== "function") {
     return useTopLevelFallback();

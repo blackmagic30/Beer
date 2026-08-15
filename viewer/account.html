@@ -671,7 +671,6 @@
     const state = {
       accountData: null,
       oauthLoginOpening: false,
-      oauthPopupActive: false,
       checkoutResumeStarted: false,
       checkoutReconcileStarted: false,
       mfaFactorId: null,
@@ -1144,7 +1143,7 @@
     function resetCancelledOauth(message = WEB_EMAIL_AUTH_ENABLED
       ? "Secure login was cancelled. Choose Google or local email to continue."
       : "Secure Google login was cancelled. Try again when you are ready.") {
-      if (!state.oauthLoginOpening || state.oauthPopupActive) {
+      if (!state.oauthLoginOpening) {
         return;
       }
 
@@ -3876,11 +3875,11 @@
         button.addEventListener("click", async () => {
           const provider = button.dataset.provider;
           try {
-            state.oauthPopupActive = true;
             setOauthButtonsLoading(true, button);
             const result = await MelbBeerBusiness.signInWithOAuthPopup(provider, {
               returnTo: MelbBeerBusiness.getAuthReturnPathFromLocation(),
               purpose: "login",
+              preferTopLevel: true,
             });
             if (result?.redirected) return;
             const dashboard = await refreshAccount();
@@ -3915,7 +3914,6 @@
             }
             MelbBeerBusiness.setStatus($("authStatus"), error.message, true);
           } finally {
-            state.oauthPopupActive = false;
             setOauthButtonsLoading(false);
           }
         });
