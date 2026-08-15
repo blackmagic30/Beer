@@ -19,8 +19,8 @@ The open items below require external provider work, infrastructure decisions, o
 
 - Priority: P0/P1
 - Risk: Inline source evidence is not appropriate for sensitive production uploads.
-- Current status: Public raw evidence exposure is closed in code through private evidence references and short-lived signed server URLs. Supabase migrations include a private `beermap-source-evidence` bucket posture.
-- Remaining implementation: Verify Supabase Storage/provider policies live, decide on malware/image scanning, and document retention/backup rules before large-scale uploads.
+- Current status: Public raw evidence exposure is closed in code through private evidence references and short-lived signed server URLs. A forward migration takes a bounded lock on both managed Storage tables, removes every direct object/bucket policy regardless of name or predicate, requires their provider-owned RLS flags to remain enabled, requires every bucket to remain private, and exposes a service-role-only aggregate posture. Runtime and provider readiness fail closed on policy, RLS, or public-bucket drift before privileged Storage canaries.
+- Remaining implementation: Apply the migration and verify the exact Storage posture live; prove ordinary authenticated users cannot list/read/write objects or mutate bucket visibility; decide on malware/image scanning; and document retention/backup rules before large-scale uploads.
 - Why still tracked: Provider bucket access, scanning, and retention are operational decisions that cannot be proven by local tests only.
 
 ## Redis Or Edge/WAF Distributed Rate Limiting
@@ -35,7 +35,7 @@ The open items below require external provider work, infrastructure decisions, o
 
 - Priority: P1
 - Risk: Future direct browser Supabase reads could bypass Express access controls if RLS is incomplete.
-- Current status: Migration contract tests enforce the intended local policy shape, and public exact-price reads remain server-gated through Express APIs.
+- Current status: Migration contract tests enforce the intended local policy shape, including adversarial replay of the actual Storage posture migration, and public exact-price reads remain server-gated through Express APIs.
 - Remaining implementation: Apply migrations to the live project, run Supabase Advisor/RLS Tester, confirm table grants/Data API exposure, and test anonymous/user/admin access with real staging accounts.
 - Why still tracked: Live provider state can drift from migration files and must be verified in Supabase itself.
 

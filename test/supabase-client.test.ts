@@ -32,6 +32,38 @@ function exactLegacyKey(role: "anon" | "service_role"): string {
   ].join(".");
 }
 
+function stalledJsonResponse(): Response {
+  return new Response(new ReadableStream<Uint8Array>({
+    pull: () => new Promise<void>(() => undefined),
+  }), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+function delayedStreamResponse(signal: AbortSignal): Response {
+  const chunks = ["before-", "after-deadline"];
+  let index = 0;
+  return new Response(new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      const currentIndex = index;
+      index += 1;
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, currentIndex === 0 ? 6 : 14);
+      });
+      if (signal.aborted) {
+        controller.error(signal.reason);
+        return;
+      }
+      controller.enqueue(new TextEncoder().encode(chunks[currentIndex]));
+      if (currentIndex === chunks.length - 1) controller.close();
+    },
+  }), {
+    status: 200,
+    headers: { "content-type": "application/octet-stream" },
+  });
+}
+
 afterEach(() => {
   vi.useRealTimers();
 });
@@ -98,17 +130,134 @@ describe("Supabase API key shape authority", () => {
 
 describe("bounded Supabase fetch", () => {
   it("settles on its deadline even if the underlying fetch ignores abort signals", async () => {
+    vi.useFakeTimers();
     const underlyingFetch = vi.fn(() => new Promise<Response>(() => undefined));
     const boundedFetch = createBoundedSupabaseFetch({
       timeoutMs: 10,
       fetchImplementation: underlyingFetch,
     });
 
-    await expect(boundedFetch("https://project.supabase.co/storage/v1/bucket"))
-      .rejects.toMatchObject({ name: "TimeoutError" });
+    const request = boundedFetch("https://project.supabase.co/storage/v1/bucket");
+    const assertion = expect(request).rejects.toMatchObject({ name: "TimeoutError" });
+
+    await vi.advanceTimersByTimeAsync(10);
+    await assertion;
     expect(underlyingFetch).toHaveBeenCalledTimes(1);
     expect(underlyingFetch.mock.calls[0]?.[1]?.redirect).toBe("error");
     expect(underlyingFetch.mock.calls[0]?.[1]?.signal).toMatchObject({ aborted: true });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("keeps one absolute deadline through a body that ignores abort", async () => {
+    vi.useFakeTimers();
+    let receivedSignal: AbortSignal | null = null;
+    const underlyingFetch = vi.fn(async (_input: URL | RequestInfo, init?: RequestInit) => {
+      receivedSignal = init?.signal ?? null;
+      await new Promise<void>((resolve) => setTimeout(resolve, 6));
+      return stalledJsonResponse();
+    });
+    const boundedFetch = createBoundedSupabaseFetch({
+      timeoutMs: 10,
+      fetchImplementation: underlyingFetch,
+    });
+
+    const body = boundedFetch("https://project.supabase.co/rest/v1/venues")
+      .then((response) => response.text());
+    const rejected = vi.fn();
+    void body.catch(rejected);
+    const assertion = expect(body).rejects.toMatchObject({ name: "TimeoutError" });
+
+    await vi.advanceTimersByTimeAsync(9);
+    expect(rejected).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    await assertion;
+
+    expect(underlyingFetch).toHaveBeenCalledTimes(1);
+    expect(receivedSignal).toMatchObject({
+      aborted: true,
+      reason: { name: "TimeoutError" },
+    });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("cleans the deadline after a successful body read", async () => {
+    vi.useFakeTimers();
+    let receivedSignal: AbortSignal | null = null;
+    const underlyingFetch = vi.fn(async (_input: URL | RequestInfo, init?: RequestInit) => {
+      receivedSignal = init?.signal ?? null;
+      return new Response(JSON.stringify({ ready: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    const boundedFetch = createBoundedSupabaseFetch({
+      timeoutMs: 10,
+      fetchImplementation: underlyingFetch,
+    });
+
+    const response = await boundedFetch("https://project.supabase.co/rest/v1/ready");
+    await expect(response.json()).resolves.toEqual({ ready: true });
+
+    expect(receivedSignal).toMatchObject({ aborted: false });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("hands a raw response body off without applying the parsed-body deadline", async () => {
+    vi.useFakeTimers();
+    let receivedSignal: AbortSignal | null = null;
+    const underlyingFetch = vi.fn(async (_input: URL | RequestInfo, init?: RequestInit) => {
+      receivedSignal = init?.signal ?? null;
+      return delayedStreamResponse(receivedSignal!);
+    });
+    const boundedFetch = createBoundedSupabaseFetch({
+      timeoutMs: 10,
+      fetchImplementation: underlyingFetch,
+    });
+
+    const response = await boundedFetch(
+      "https://project.supabase.co/storage/v1/object/backup/archive",
+    );
+    const stream = response.body;
+    expect(stream).not.toBeNull();
+    const content = new Response(stream).text();
+    const assertion = expect(content).resolves.toBe("before-after-deadline");
+
+    await vi.advanceTimersByTimeAsync(20);
+    await assertion;
+
+    expect(receivedSignal).toMatchObject({ aborted: false });
+    expect(underlyingFetch.mock.calls[0]?.[1]?.redirect).toBe("error");
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("keeps caller aborts authoritative after a raw response body handoff", async () => {
+    vi.useFakeTimers();
+    let receivedSignal: AbortSignal | null = null;
+    const underlyingFetch = vi.fn(async (_input: URL | RequestInfo, init?: RequestInit) => {
+      receivedSignal = init?.signal ?? null;
+      return stalledJsonResponse();
+    });
+    const boundedFetch = createBoundedSupabaseFetch({
+      timeoutMs: 30_000,
+      fetchImplementation: underlyingFetch,
+    });
+    const controller = new AbortController();
+    const callerReason = new Error("caller cancelled stream");
+
+    const response = await boundedFetch(
+      "https://project.supabase.co/storage/v1/object/backup/archive",
+      { signal: controller.signal },
+    );
+    const reader = response.body!.getReader();
+    const chunk = reader.read();
+    const assertion = expect(chunk).rejects.toBe(callerReason);
+
+    controller.abort(callerReason);
+    await assertion;
+
+    expect(receivedSignal).not.toBe(controller.signal);
+    expect(receivedSignal).toMatchObject({ aborted: true, reason: callerReason });
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it.each([secretApiKey, publishableApiKey])(
@@ -275,11 +424,12 @@ describe("bounded Supabase fetch", () => {
     }
   });
 
-  it("preserves a caller abort reason while composing it with the deadline", async () => {
+  it("preserves a caller abort reason through stalled body consumption", async () => {
+    vi.useFakeTimers();
     let receivedSignal: AbortSignal | null = null;
-    const underlyingFetch = vi.fn((_input: URL | RequestInfo, init?: RequestInit) => {
+    const underlyingFetch = vi.fn(async (_input: URL | RequestInfo, init?: RequestInit) => {
       receivedSignal = init?.signal ?? null;
-      return new Promise<Response>(() => undefined);
+      return stalledJsonResponse();
     });
     const boundedFetch = createBoundedSupabaseFetch({
       timeoutMs: 30_000,
@@ -287,16 +437,104 @@ describe("bounded Supabase fetch", () => {
     });
     const controller = new AbortController();
     const callerReason = new Error("caller cancelled request");
-    const request = boundedFetch("https://project.supabase.co/rest/v1/venues", {
+    const response = await boundedFetch("https://project.supabase.co/rest/v1/venues", {
       signal: controller.signal,
     });
-    const assertion = expect(request).rejects.toBe(callerReason);
+    const body = response.json();
+    const assertion = expect(body).rejects.toBe(callerReason);
 
     controller.abort(callerReason);
 
     await assertion;
     expect(receivedSignal).not.toBe(controller.signal);
     expect(receivedSignal).toMatchObject({ aborted: true, reason: callerReason });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("fails closed by the deadline when PostgREST stalls after headers", async () => {
+    vi.useFakeTimers();
+    const underlyingFetch = vi.fn(async () => stalledJsonResponse()) as typeof fetch;
+    const client = createServerSupabaseClient(
+      "https://project.supabase.co",
+      secretApiKey,
+      { fetchImplementation: underlyingFetch, timeoutMs: 10 },
+    );
+
+    const query = Promise.resolve(
+      client.from("venues").select("id").limit(1).retry(false).throwOnError(),
+    );
+    const assertion = expect(query).rejects.toMatchObject({ name: "TimeoutError" });
+
+    await vi.advanceTimersByTimeAsync(10);
+    await assertion;
+
+    expect(underlyingFetch).toHaveBeenCalledTimes(1);
+    expect(underlyingFetch.mock.calls[0]?.[1]?.redirect).toBe("error");
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("fails closed by the deadline when Storage stalls after headers", async () => {
+    vi.useFakeTimers();
+    const underlyingFetch = vi.fn(async () => stalledJsonResponse()) as typeof fetch;
+    const client = createServerSupabaseClient(
+      "https://project.supabase.co",
+      secretApiKey,
+      { fetchImplementation: underlyingFetch, timeoutMs: 10 },
+    );
+
+    const operation = client.storage.getBucket("fixture");
+    await vi.advanceTimersByTimeAsync(10);
+    const result = await operation;
+
+    expect(result.data).toBeNull();
+    expect(result.error).toMatchObject({
+      name: "StorageUnknownError",
+      message: "Supabase request timed out after 10ms.",
+    });
+    expect(result.error?.message).not.toContain(secretApiKey);
+    expect(underlyingFetch).toHaveBeenCalledTimes(1);
+    expect(underlyingFetch.mock.calls[0]?.[1]?.redirect).toBe("error");
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("lets pinned Storage asStream finish after the parsed-body deadline", async () => {
+    vi.useFakeTimers();
+    let receivedSignal: AbortSignal | null = null;
+    const underlyingFetch = vi.fn(async (_input: URL | RequestInfo, init?: RequestInit) => {
+      receivedSignal = init?.signal ?? null;
+      return delayedStreamResponse(receivedSignal!);
+    }) as typeof fetch;
+    const client = createServerSupabaseClient(
+      "https://project.supabase.co",
+      secretApiKey,
+      { fetchImplementation: underlyingFetch, timeoutMs: 10 },
+    );
+    const longStreamController = new AbortController();
+    const longStreamTimeout = setTimeout(() => {
+      longStreamController.abort(new Error("long stream deadline"));
+    }, 100);
+
+    const result = await client.storage
+      .from("backup")
+      .download("archive.sql.gz", {}, { signal: longStreamController.signal })
+      .asStream();
+    expect(result.error).toBeNull();
+    expect(result.data).not.toBeNull();
+    const content = new Response(result.data).text();
+    const assertion = expect(content).resolves.toBe("before-after-deadline");
+
+    await vi.advanceTimersByTimeAsync(20);
+    await assertion;
+
+    expect(longStreamController.signal.aborted).toBe(false);
+    expect(receivedSignal).toMatchObject({ aborted: false });
+    expect(underlyingFetch).toHaveBeenCalledTimes(1);
+    expect(String(underlyingFetch.mock.calls[0]?.[0])).toContain(
+      "/storage/v1/object/backup/archive.sql.gz",
+    );
+    expect(underlyingFetch.mock.calls[0]?.[1]?.redirect).toBe("error");
+    clearTimeout(longStreamTimeout);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("keeps every server-side Supabase client behind the bounded factory", () => {

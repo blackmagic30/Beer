@@ -71,6 +71,57 @@ describe("Supabase auth/upload RLS migrations", () => {
     expect(sql).not.toMatch(/\bgrant\b/i);
   });
 
+  it("removes every direct Storage policy and exposes only a service-role posture aggregate", () => {
+    const sql = migration("20260815120455_revoke_all_direct_storage_policies.sql");
+    const schemaTest = databaseTest("000_repository_schema.test.sql");
+    const privilegeTest = databaseTest("001_data_api_privileges.test.sql");
+    const driftFixture = fs.readFileSync(
+      path.resolve(process.cwd(), "scripts/ci/supabase-storage-policy-drift.sql"),
+      "utf8",
+    );
+
+    expect(sql).toMatch(
+      /lock table storage\.buckets, storage\.objects in access exclusive mode/i,
+    );
+    expect(sql).not.toMatch(/alter table storage\.(?:buckets|objects)/i);
+    expect(driftFixture).not.toMatch(/alter table storage\.(?:buckets|objects)/i);
+    expect(sql).toMatch(
+      /for storage_policy in[\s\S]*pg_catalog\.pg_policy[\s\S]*pg_catalog\.pg_class[\s\S]*pg_catalog\.pg_namespace[\s\S]*relation\.relname in \('buckets', 'objects'\)/i,
+    );
+    expect(sql).toContain("'drop policy if exists %I on storage.%I'");
+    expect(sql).toContain("storage_policy.policy_name");
+    expect(sql).toContain("storage_policy.relation_name");
+    expect(sql).toContain("Storage policy cleanup did not reach the required empty posture.");
+    expect(sql).not.toMatch(/source_evidence_owner_(?:insert|select|update|delete)/i);
+    expect(sql).not.toMatch(/\b(?:qual|with_check)\b/i);
+    expect(sql).toMatch(
+      /insert into storage\.buckets[\s\S]*'beermap-source-evidence'[\s\S]*false[\s\S]*8388608/i,
+    );
+    expect(sql).toMatch(
+      /drop view if exists public\.pintpath_storage_policy_posture;[\s\S]*create view public\.pintpath_storage_policy_posture[\s\S]*security_invoker = true/i,
+    );
+    expect(sql).not.toMatch(/create or replace view public\.pintpath_storage_policy_posture/i);
+    expect(sql).toContain("as object_policy_count");
+    expect(sql).toContain("as object_rls_enabled");
+    expect(sql).toContain("as bucket_policy_count");
+    expect(sql).toContain("as bucket_rls_enabled");
+    expect(sql).toContain("as public_bucket_count");
+    expect(sql).toMatch(
+      /revoke all privileges on table public\.pintpath_storage_policy_posture[\s\S]*from public, anon, authenticated, service_role/i,
+    );
+    expect(sql).toMatch(
+      /grant select on table public\.pintpath_storage_policy_posture to service_role/i,
+    );
+    expect(schemaTest).toContain("managed Storage tables have no direct policies regardless of name, role, predicate, or bucket filter");
+    expect(schemaTest).toContain('create policy "pintpath_test_broad_storage_policy"');
+    expect(schemaTest).toContain('create policy "pintpath_test_broad_bucket_policy"');
+    expect(schemaTest).toContain("select object_policy_count");
+    expect(schemaTest).toContain("bucket_policy_count");
+    expect(schemaTest).toContain("the Storage posture view detects a public bucket outside the source-evidence contract");
+    expect(privilegeTest).toContain("service_role can execute the invoker-rights Storage posture probe");
+    expect(privilegeTest).toContain("browser JWT roles cannot read the Storage posture view");
+  });
+
   it("lets the backend readiness probe select profiles without widening browser access", () => {
     const sql = migration("20260718234027_grant_profiles_readiness_to_service_role.sql");
 

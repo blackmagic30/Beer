@@ -348,14 +348,34 @@ interface StorageProbeRemovalObservation {
   returnedPaths: string[];
 }
 
-function createStorageProbeHarness(sourceCleanupMode: CanaryCleanupMode) {
+interface StoragePostureFixture {
+  data: unknown;
+  error: Error | null;
+}
+
+function createStorageProbeHarness(
+  sourceCleanupMode: CanaryCleanupMode,
+  storagePosture: StoragePostureFixture = {
+    data: {
+      object_policy_count: 0,
+      object_rls_enabled: true,
+      bucket_policy_count: 0,
+      bucket_rls_enabled: true,
+      public_bucket_count: 0,
+    },
+    error: null,
+  },
+) {
   const objectsByBucket = new Map<string, Map<string, {
     bytes: Buffer;
     contentType: string;
   }>>();
   const listObservations: StorageProbeListObservation[] = [];
   const removalObservations: StorageProbeRemovalObservation[] = [];
+  const storageOperations: string[] = [];
+  const postureObservations: Array<{ relation: string; columns: string }> = [];
   const clientCreations: string[] = [];
+  const clientKeys: string[] = [];
   const allowedMimeTypes = [
     "application/json",
     "application/octet-stream",
@@ -375,23 +395,35 @@ function createStorageProbeHarness(sourceCleanupMode: CanaryCleanupMode) {
   };
 
   const client = {
-    storage: {
-      getBucket: async (bucketName: string) => ({
-        data: {
-          id: bucketName,
-          name: bucketName,
-          public: false,
-          file_size_limit: null,
-          allowed_mime_types: allowedMimeTypes,
+    from: (relation: string) => ({
+      select: (columns: string) => ({
+        single: async () => {
+          postureObservations.push({ relation, columns });
+          return storagePosture;
         },
-        error: null,
       }),
+    }),
+    storage: {
+      getBucket: async (bucketName: string) => {
+        storageOperations.push(`getBucket:${bucketName}`);
+        return {
+          data: {
+            id: bucketName,
+            name: bucketName,
+            public: false,
+            file_size_limit: null,
+            allowed_mime_types: allowedMimeTypes,
+          },
+          error: null,
+        };
+      },
       from: (bucketName: string) => ({
         upload: async (
           objectPath: string,
           body: Buffer,
           options: { contentType: string },
         ) => {
+          storageOperations.push(`upload:${bucketName}`);
           bucketObjects(bucketName).set(objectPath, {
             bytes: Buffer.from(body),
             contentType: options.contentType,
@@ -399,6 +431,7 @@ function createStorageProbeHarness(sourceCleanupMode: CanaryCleanupMode) {
           return { data: { path: objectPath }, error: null };
         },
         list: async (prefix: string) => {
+          storageOperations.push(`list:${bucketName}`);
           const names = [...bucketObjects(bucketName).keys()]
             .filter((objectPath) => objectPath.startsWith(`${prefix}/`))
             .sort()
@@ -414,6 +447,7 @@ function createStorageProbeHarness(sourceCleanupMode: CanaryCleanupMode) {
           return { data: names, error: null };
         },
         download: async (objectPath: string) => {
+          storageOperations.push(`download:${bucketName}`);
           const object = bucketObjects(bucketName).get(objectPath);
           return object
             ? {
@@ -425,6 +459,7 @@ function createStorageProbeHarness(sourceCleanupMode: CanaryCleanupMode) {
             : { data: null, error: new Error("not found") };
         },
         remove: async (requestedPaths: string[]) => {
+          storageOperations.push(`remove:${bucketName}`);
           const cleanupMode = bucketName === "beermap-source-evidence"
             ? sourceCleanupMode
             : "exact";
@@ -449,14 +484,23 @@ function createStorageProbeHarness(sourceCleanupMode: CanaryCleanupMode) {
     },
   };
 
-  return { client, clientCreations, listObservations, removalObservations };
+  return {
+    client,
+    clientCreations,
+    clientKeys,
+    listObservations,
+    removalObservations,
+    postureObservations,
+    storageOperations,
+  };
 }
 
 async function runProviderReadinessWithStorageProbe(
   sourceCleanupMode: CanaryCleanupMode,
   environmentOverrides: Record<string, string> = {},
+  storagePosture?: StoragePostureFixture,
 ) {
-  const harness = createStorageProbeHarness(sourceCleanupMode);
+  const harness = createStorageProbeHarness(sourceCleanupMode, storagePosture);
   const previousEnvironment = process.env;
   const logs: string[] = [];
   process.env = providerReadinessEnvironment(stagingCompleteOverrides({
@@ -485,8 +529,9 @@ async function runProviderReadinessWithStorageProbe(
   }));
   vi.resetModules();
   vi.doMock("../src/lib/supabase-client.js", () => ({
-    createServerSupabaseClient: (url: string) => {
+    createServerSupabaseClient: (url: string, key: string) => {
       harness.clientCreations.push(url);
+      harness.clientKeys.push(key);
       return harness.client;
     },
   }));
@@ -523,9 +568,41 @@ describe("provider readiness feature gating", () => {
       /id: "SOURCE_EVIDENCE_BUCKET"[\s\S]*?\n\s*\}\);/,
     )?.[0] ?? "";
     expect(sourceEvidenceCall).toContain("probeReadWrite: true");
+    expect(sourceEvidenceCall).toContain("requireDirectStoragePosture: true");
     expect(source).toContain("requiredMimeTypes.has(canary.contentType)");
     expect(source).toContain('contentType: "application/pdf"');
     expect(source).toContain('contentType: "image/jpeg"');
+  });
+
+  it.each([
+    ["a direct object policy", { data: { object_policy_count: 1, object_rls_enabled: true, bucket_policy_count: 0, bucket_rls_enabled: true, public_bucket_count: 0 }, error: null }],
+    ["a direct bucket policy", { data: { object_policy_count: 0, object_rls_enabled: true, bucket_policy_count: 1, bucket_rls_enabled: true, public_bucket_count: 0 }, error: null }],
+    ["a public bucket", { data: { object_policy_count: 0, object_rls_enabled: true, bucket_policy_count: 0, bucket_rls_enabled: true, public_bucket_count: 1 }, error: null }],
+    ["disabled object RLS", { data: { object_policy_count: 0, object_rls_enabled: false, bucket_policy_count: 0, bucket_rls_enabled: true, public_bucket_count: 0 }, error: null }],
+    ["disabled bucket RLS", { data: { object_policy_count: 0, object_rls_enabled: true, bucket_policy_count: 0, bucket_rls_enabled: false, public_bucket_count: 0 }, error: null }],
+    ["a string policy count", { data: { object_policy_count: "0", object_rls_enabled: true, bucket_policy_count: 0, bucket_rls_enabled: true, public_bucket_count: 0 }, error: null }],
+    ["a fractional policy count", { data: { object_policy_count: 0, object_rls_enabled: true, bucket_policy_count: 0.5, bucket_rls_enabled: true, public_bucket_count: 0 }, error: null }],
+    ["a negative policy count", { data: { object_policy_count: -1, object_rls_enabled: true, bucket_policy_count: 0, bucket_rls_enabled: true, public_bucket_count: 0 }, error: null }],
+    ["an unsafe policy count", { data: { object_policy_count: Number.MAX_SAFE_INTEGER + 1, object_rls_enabled: true, bucket_policy_count: 0, bucket_rls_enabled: true, public_bucket_count: 0 }, error: null }],
+    ["a missing RLS flag", { data: { object_policy_count: 0, object_rls_enabled: true, bucket_policy_count: 0, public_bucket_count: 0 }, error: null }],
+    ["multiple rows", { data: [
+      { object_policy_count: 0, object_rls_enabled: true, bucket_policy_count: 0, bucket_rls_enabled: true, public_bucket_count: 0 },
+      { object_policy_count: 0, object_rls_enabled: true, bucket_policy_count: 0, bucket_rls_enabled: true, public_bucket_count: 0 },
+    ], error: null }],
+    ["a malformed row", { data: null, error: null }],
+    ["a query error", { data: null, error: new Error("posture unavailable") }],
+  ] as const)("fails before any privileged Storage operation when posture reports %s", async (_label, posture) => {
+    const result = await runProviderReadinessWithStorageProbe("exact", {}, posture);
+
+    expect(checkStatuses(result.payload, ["SOURCE_EVIDENCE_BUCKET"]))
+      .toEqual({ SOURCE_EVIDENCE_BUCKET: "fail" });
+    expect(result.postureObservations).toEqual([{
+      relation: "pintpath_storage_policy_posture",
+      columns: "object_policy_count,object_rls_enabled,bucket_policy_count,bucket_rls_enabled,public_bucket_count",
+    }]);
+    expect(result.storageOperations).toEqual([]);
+    expect(result.clientKeys).toEqual([primarySupabaseSecretKey]);
+    expect(JSON.stringify(result.payload)).not.toContain("posture unavailable");
   });
 
   it.each([
@@ -817,6 +894,8 @@ describe("provider readiness feature gating", () => {
       "OFFSITE_BACKUP_BUCKET",
     );
     expect(result.clientCreations).toHaveLength(1);
+    expect(result.clientKeys).toEqual([primarySupabaseSecretKey]);
+    expect(JSON.stringify(result.payload)).not.toContain(primarySupabaseSecretKey);
   });
 
   it.each([

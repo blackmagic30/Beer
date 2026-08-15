@@ -1038,6 +1038,15 @@ describe("release workflow contracts", () => {
     expect(databaseJob).toContain("supabase db start");
     expect(databaseJob).toContain("supabase db reset --local");
     expect(databaseJob).toContain(
+      "supabase db query --local --file scripts/ci/supabase-storage-policy-drift.sql",
+    );
+    expect(databaseJob.match(
+      /supabase db query --local --file supabase\/migrations\/20260815120455_revoke_all_direct_storage_policies\.sql/g,
+    )).toHaveLength(2);
+    expect(databaseJob).toContain(
+      "supabase db query --local --file scripts/ci/supabase-storage-policy-posture-verify.sql",
+    );
+    expect(databaseJob).toContain(
       "supabase db lint --local --schema public,private,pintpath_app,pintpath_ops --level warning --fail-on warning",
     );
     expect(databaseJob).toContain(

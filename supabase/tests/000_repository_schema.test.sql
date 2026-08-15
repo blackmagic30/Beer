@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = extensions, public, pg_catalog;
 
-select plan(9);
+select plan(14);
 
 select is(
   (
@@ -155,17 +155,108 @@ select ok(
 select is(
   (
     select count(*)
-    from pg_policies
+    from pg_catalog.pg_policies
     where schemaname = 'storage'
-      and tablename = 'objects'
-      and (
-        coalesce(qual, '') like '%beermap-source-evidence%'
-        or coalesce(with_check, '') like '%beermap-source-evidence%'
-      )
+      and tablename in ('buckets', 'objects')
   ),
   0::bigint,
-  'browser policies do not expose the service-role-only source-evidence bucket'
+  'managed Storage tables have no direct policies regardless of name, role, predicate, or bucket filter'
 );
+
+select ok(
+  not exists (
+    select 1
+    from pg_catalog.pg_class relation
+    where relation.oid in (
+      'storage.buckets'::pg_catalog.regclass,
+      'storage.objects'::pg_catalog.regclass
+    )
+      and not relation.relrowsecurity
+  ),
+  'managed Storage tables keep row-level security enabled'
+);
+
+select ok(
+  exists (
+    select 1
+    from pg_catalog.pg_class c
+    join pg_catalog.pg_namespace n on n.oid = c.relnamespace
+    where n.nspname = 'public'
+      and c.relname = 'pintpath_storage_policy_posture'
+      and c.relkind = 'v'
+      and coalesce(c.reloptions, '{}'::text[]) @> array['security_invoker=true']
+  ),
+  'the Storage posture view runs with invoker privileges'
+);
+
+select ok(
+  (
+    select array_agg(
+      column_name || ':' || data_type
+      order by ordinal_position
+    ) = array[
+      'object_policy_count:bigint',
+      'object_rls_enabled:boolean',
+      'bucket_policy_count:bigint',
+      'bucket_rls_enabled:boolean',
+      'public_bucket_count:bigint'
+    ]::text[]
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'pintpath_storage_policy_posture'
+  )
+    and (
+      select count(*) = 1
+        and min(object_policy_count) = 0
+        and bool_and(object_rls_enabled)
+        and min(bucket_policy_count) = 0
+        and bool_and(bucket_rls_enabled)
+        and min(public_bucket_count) = 0
+      from public.pintpath_storage_policy_posture
+    ),
+  'the Storage posture view has one exact aggregate row with zero policies, enabled RLS, and no public bucket'
+);
+
+create policy "pintpath_test_broad_storage_policy"
+  on storage.objects
+  for select
+  to authenticated
+  using (true);
+
+create policy "pintpath_test_broad_bucket_policy"
+  on storage.buckets
+  for update
+  to authenticated
+  using (true)
+  with check (true);
+
+select ok(
+  (
+    select object_policy_count = 1
+      and bucket_policy_count = 1
+    from public.pintpath_storage_policy_posture
+  ),
+  'the Storage posture view detects broad object and bucket policies without relying on names or predicate text'
+);
+
+drop policy "pintpath_test_broad_storage_policy" on storage.objects;
+drop policy "pintpath_test_broad_bucket_policy" on storage.buckets;
+
+insert into storage.buckets (id, name, public)
+values ('pintpath-test-public-drift', 'pintpath-test-public-drift', true);
+
+select is(
+  (
+    select public_bucket_count
+    from public.pintpath_storage_policy_posture
+  ),
+  1::bigint,
+  'the Storage posture view detects a public bucket outside the source-evidence contract'
+);
+
+-- Leave the fixture in this pgTAP transaction for the final ROLLBACK. The
+-- managed Storage schema rejects direct bucket DELETE statements unless its
+-- private allow_delete_query setting is enabled.
 
 select ok(
   exists (

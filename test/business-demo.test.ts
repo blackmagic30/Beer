@@ -3313,6 +3313,18 @@ describe("production hardening", () => {
           headers: { "content-type": "application/json" },
         });
       }
+      if (url.includes("/rest/v1/pintpath_storage_policy_posture")) {
+        return new Response(JSON.stringify([{
+          object_policy_count: 0,
+          object_rls_enabled: true,
+          bucket_policy_count: 0,
+          bucket_rls_enabled: true,
+          public_bucket_count: 0,
+        }]), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
       return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -3344,11 +3356,12 @@ describe("production hardening", () => {
         billingProvider: { status: "deferred", required: false },
       }));
       expect(second.dependencies).toEqual(first.dependencies);
-      expect(fetchMock).toHaveBeenCalledTimes(3);
+      expect(fetchMock).toHaveBeenCalledTimes(4);
       expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual(expect.arrayContaining([
         "https://project.supabase.co/auth/v1/health",
         "https://project.supabase.co/rest/v1/venues?select=id&limit=1",
         "https://project.supabase.co/storage/v1/bucket/beermap-source-evidence",
+        "https://project.supabase.co/rest/v1/pintpath_storage_policy_posture?select=object_policy_count,object_rls_enabled,bucket_policy_count,bucket_rls_enabled,public_bucket_count&limit=2",
       ]));
       for (const [input, init] of fetchMock.mock.calls) {
         const headers = new Headers(init?.headers);
@@ -3406,6 +3419,15 @@ describe("production hardening", () => {
     const publishableKey = ["sb", "publishable", "deletion_rehearsal_fixture"].join("_");
     const secretKey = ["sb", "secret", "deletion_rehearsal_fixture"].join("_");
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      if (String(input).includes("/rest/v1/pintpath_storage_policy_posture")) {
+        return new Response(JSON.stringify([{
+          object_policy_count: 0,
+          object_rls_enabled: true,
+          bucket_policy_count: 0,
+          bucket_rls_enabled: true,
+          public_bucket_count: 0,
+        }]), { status: 200, headers: { "content-type": "application/json" } });
+      }
       if (String(input).includes("/storage/v1/bucket/")) {
         return new Response(JSON.stringify({
           public: false,
@@ -3455,7 +3477,7 @@ describe("production hardening", () => {
       required: true,
       liveProbe: true,
     }));
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 
   it.each([
@@ -3661,10 +3683,210 @@ describe("production hardening", () => {
         required: false,
         liveProbe: true,
       }));
-      expect(fetchMock).toHaveBeenCalledTimes(3);
+      expect(fetchMock).toHaveBeenCalledTimes(4);
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+
+  it.each([
+    [
+      "an object policy",
+      JSON.stringify([{ object_policy_count: 1, object_rls_enabled: true, bucket_policy_count: 0, bucket_rls_enabled: true, public_bucket_count: 0 }]),
+      200,
+      "storage_browser_policy_present",
+    ],
+    [
+      "a bucket policy",
+      JSON.stringify([{ object_policy_count: 0, object_rls_enabled: true, bucket_policy_count: 1, bucket_rls_enabled: true, public_bucket_count: 0 }]),
+      200,
+      "storage_browser_policy_present",
+    ],
+    [
+      "disabled object RLS",
+      JSON.stringify([{ object_policy_count: 0, object_rls_enabled: false, bucket_policy_count: 0, bucket_rls_enabled: true, public_bucket_count: 0 }]),
+      200,
+      "storage_rls_disabled",
+    ],
+    [
+      "disabled bucket RLS",
+      JSON.stringify([{ object_policy_count: 0, object_rls_enabled: true, bucket_policy_count: 0, bucket_rls_enabled: false, public_bucket_count: 0 }]),
+      200,
+      "storage_rls_disabled",
+    ],
+    [
+      "a public bucket",
+      JSON.stringify([{ object_policy_count: 0, object_rls_enabled: true, bucket_policy_count: 0, bucket_rls_enabled: true, public_bucket_count: 1 }]),
+      200,
+      "storage_public_bucket_present",
+    ],
+    ["an empty result", "[]", 200, "invalid_storage_policy_posture"],
+    [
+      "multiple rows",
+      JSON.stringify([
+        { object_policy_count: 0, object_rls_enabled: true, bucket_policy_count: 0, bucket_rls_enabled: true, public_bucket_count: 0 },
+        { object_policy_count: 0, object_rls_enabled: true, bucket_policy_count: 0, bucket_rls_enabled: true, public_bucket_count: 0 },
+      ]),
+      200,
+      "invalid_storage_policy_posture",
+    ],
+    ["a null row", "[null]", 200, "invalid_storage_policy_posture"],
+    [
+      "a missing field",
+      JSON.stringify([{ object_policy_count: 0, object_rls_enabled: true, bucket_policy_count: 0, public_bucket_count: 0 }]),
+      200,
+      "invalid_storage_policy_posture",
+    ],
+    [
+      "an extra field",
+      JSON.stringify([{ object_policy_count: 0, object_rls_enabled: true, bucket_policy_count: 0, bucket_rls_enabled: true, public_bucket_count: 0, policy_name: "hidden" }]),
+      200,
+      "invalid_storage_policy_posture",
+    ],
+    [
+      "a string count",
+      JSON.stringify([{ object_policy_count: "0", object_rls_enabled: true, bucket_policy_count: 0, bucket_rls_enabled: true, public_bucket_count: 0 }]),
+      200,
+      "invalid_storage_policy_posture",
+    ],
+    [
+      "a fractional count",
+      JSON.stringify([{ object_policy_count: 0.5, object_rls_enabled: true, bucket_policy_count: 0, bucket_rls_enabled: true, public_bucket_count: 0 }]),
+      200,
+      "invalid_storage_policy_posture",
+    ],
+    [
+      "a negative count",
+      JSON.stringify([{ object_policy_count: 0, object_rls_enabled: true, bucket_policy_count: -1, bucket_rls_enabled: true, public_bucket_count: 0 }]),
+      200,
+      "invalid_storage_policy_posture",
+    ],
+    [
+      "an unsafe count",
+      JSON.stringify([{ object_policy_count: 9_007_199_254_740_992, object_rls_enabled: true, bucket_policy_count: 0, bucket_rls_enabled: true, public_bucket_count: 0 }]),
+      200,
+      "invalid_storage_policy_posture",
+    ],
+    [
+      "a non-boolean RLS flag",
+      JSON.stringify([{ object_policy_count: 0, object_rls_enabled: true, bucket_policy_count: 0, bucket_rls_enabled: "true", public_bucket_count: 0 }]),
+      200,
+      "invalid_storage_policy_posture",
+    ],
+    ["malformed JSON", "{", 200, "invalid_storage_policy_posture"],
+    ["an HTTP failure", "{}", 503, "http_503"],
+  ] as const)("fails Supabase readiness when Storage posture reports %s", async (_label, body, status, error) => {
+    const { repository } = createRepository();
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("/rest/v1/pintpath_storage_policy_posture")) {
+        return new Response(body, { status, headers: { "content-type": "application/json" } });
+      }
+      if (url.includes("/storage/v1/bucket/")) {
+        return new Response(JSON.stringify({
+          public: false,
+          file_size_limit: 8 * 1024 * 1024,
+          allowed_mime_types: [
+            "image/jpeg", "image/png", "image/webp", "image/heic", "image/heif", "application/pdf",
+          ],
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const readiness = await createBusinessService(repository, {
+      NODE_ENV: "production",
+      DEMO_BILLING_MODE: false,
+      COMMERCIAL_LAUNCH_ENABLED: false,
+      CONSUMER_PAID_ENROLLMENT_ENABLED: false,
+      SUPABASE_URL: "https://project.supabase.co",
+      SUPABASE_ANON_KEY: "supabase-anon-posture-key",
+      SUPABASE_SERVICE_ROLE_KEY: "supabase-service-posture-key",
+      SOURCE_EVIDENCE_SIGNING_SECRET: "production-readiness-source-evidence-secret-32",
+      GOOGLE_PLACES_API_KEY: "google-places-readiness-key",
+      OPENAI_API_KEY: "test-openai-api-key", // security-scan allow: synthetic readiness fixture only
+    }).getOperationalReadiness();
+
+    expect(readiness.ready).toBe(false);
+    expect(readiness.dependencies.supabaseEvidenceStorage).toEqual(expect.objectContaining({
+      status: "failed",
+      required: true,
+      liveProbe: true,
+      error,
+    }));
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(JSON.stringify(readiness)).not.toContain("hidden");
+  });
+
+  it("bounds Storage posture body parsing and retries after the failed readiness cache expires", async () => {
+    const { repository } = createRepository();
+    let stallPostureBody = true;
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/rest/v1/pintpath_storage_policy_posture")) {
+        if (!stallPostureBody) {
+          return new Response(JSON.stringify([{
+            object_policy_count: 0,
+            object_rls_enabled: true,
+            bucket_policy_count: 0,
+            bucket_rls_enabled: true,
+            public_bucket_count: 0,
+          }]), { status: 200, headers: { "content-type": "application/json" } });
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: () => new Promise((_resolve, reject) => {
+            const rejectAbort = () => {
+              const abortError = new Error("posture body timed out");
+              abortError.name = "AbortError";
+              reject(abortError);
+            };
+            if (init?.signal?.aborted) rejectAbort();
+            else init?.signal?.addEventListener("abort", rejectAbort, { once: true });
+          }),
+        } as Response;
+      }
+      if (url.includes("/storage/v1/bucket/")) {
+        return new Response(JSON.stringify({
+          public: false,
+          file_size_limit: 8 * 1024 * 1024,
+          allowed_mime_types: [
+            "image/jpeg", "image/png", "image/webp", "image/heic", "image/heif", "application/pdf",
+          ],
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const service = createBusinessService(repository, {
+      NODE_ENV: "production",
+      DEMO_BILLING_MODE: false,
+      COMMERCIAL_LAUNCH_ENABLED: false,
+      CONSUMER_PAID_ENROLLMENT_ENABLED: false,
+      SUPABASE_URL: "https://project.supabase.co",
+      SUPABASE_ANON_KEY: "supabase-anon-posture-key",
+      SUPABASE_SERVICE_ROLE_KEY: "supabase-service-posture-key",
+      SOURCE_EVIDENCE_SIGNING_SECRET: "production-readiness-source-evidence-secret-32",
+      GOOGLE_PLACES_API_KEY: "google-places-readiness-key",
+      OPENAI_API_KEY: "test-openai-api-key", // security-scan allow: synthetic readiness fixture only
+    });
+
+    const stalledReadiness = service.getOperationalReadiness();
+    await vi.advanceTimersByTimeAsync(2_501);
+    const timedOut = await stalledReadiness;
+    expect(timedOut.dependencies.supabaseEvidenceStorage).toEqual(expect.objectContaining({
+      status: "failed",
+      error: "timeout",
+    }));
+
+    stallPostureBody = false;
+    await vi.advanceTimersByTimeAsync(15_001);
+    const recovered = await service.getOperationalReadiness();
+    expect(recovered.dependencies.supabaseEvidenceStorage).toEqual(expect.objectContaining({
+      status: "ok",
+    }));
   });
 
   it("fails Supabase readiness on a public evidence bucket or a bounded probe timeout without leaking secrets", async () => {
@@ -3676,10 +3898,23 @@ describe("production hardening", () => {
       SUPABASE_SERVICE_ROLE_KEY: "supabase-service-secret-value",
       SOURCE_EVIDENCE_SIGNING_SECRET: "production-readiness-source-evidence-secret-32",
     };
-    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) =>
-      String(input).includes("/storage/v1/bucket/")
-        ? new Response(JSON.stringify({ public: true }), { status: 200 })
-        : new Response("{}", { status: 200 })));
+    const withBucketResponse = (bucket: unknown) => vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("/storage/v1/bucket/")) {
+        return new Response(JSON.stringify(bucket), { status: 200 });
+      }
+      if (url.includes("/rest/v1/pintpath_storage_policy_posture")) {
+        return new Response(JSON.stringify([{
+          object_policy_count: 0,
+          object_rls_enabled: true,
+          bucket_policy_count: 0,
+          bucket_rls_enabled: true,
+          public_bucket_count: 0,
+        }]), { status: 200 });
+      }
+      return new Response("{}", { status: 200 });
+    });
+    vi.stubGlobal("fetch", withBucketResponse({ public: true }));
     try {
       const publicBucketReadiness = await createBusinessService(repository, config).getOperationalReadiness();
       expect(publicBucketReadiness.ready).toBe(false);
@@ -3688,28 +3923,22 @@ describe("production hardening", () => {
         error: "bucket_not_private",
       }));
 
-      vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) =>
-        String(input).includes("/storage/v1/bucket/")
-          ? new Response(JSON.stringify({
-              public: false,
-              file_size_limit: 6 * 1024 * 1024,
-              allowed_mime_types: ["image/jpeg", "image/png"],
-            }), { status: 200 })
-          : new Response("{}", { status: 200 })));
+      vi.stubGlobal("fetch", withBucketResponse({
+        public: false,
+        file_size_limit: 6 * 1024 * 1024,
+        allowed_mime_types: ["image/jpeg", "image/png"],
+      }));
       const undersizedReadiness = await createBusinessService(repository, config).getOperationalReadiness();
       expect(undersizedReadiness.dependencies.supabaseEvidenceStorage).toEqual(expect.objectContaining({
         status: "failed",
         error: "bucket_size_limit_too_small",
       }));
 
-      vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) =>
-        String(input).includes("/storage/v1/bucket/")
-          ? new Response(JSON.stringify({
-              public: false,
-              file_size_limit: 8 * 1024 * 1024,
-              allowed_mime_types: ["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"],
-            }), { status: 200 })
-          : new Response("{}", { status: 200 })));
+      vi.stubGlobal("fetch", withBucketResponse({
+        public: false,
+        file_size_limit: 8 * 1024 * 1024,
+        allowed_mime_types: ["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"],
+      }));
       const missingPdfReadiness = await createBusinessService(repository, config).getOperationalReadiness();
       expect(missingPdfReadiness.dependencies.supabaseEvidenceStorage).toEqual(expect.objectContaining({
         status: "failed",
