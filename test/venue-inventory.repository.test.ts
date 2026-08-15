@@ -1,5 +1,5 @@
 import BetterSqlite3 from "better-sqlite3";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { OptimisticConcurrencyError } from "../src/db/business.repository.js";
 import { initializeDatabaseSchema } from "../src/db/database.js";
@@ -258,6 +258,50 @@ describe("VenueInventoryRepository with AsyncSqliteDatabase", () => {
       now: MINUTE_1,
     }))).rejects.toBeInstanceOf(OptimisticConcurrencyError);
     expect((await repository.getBarProfile("venue-a"))?.name).toBe("Updated venue");
+  });
+
+  it("batch-loads only public profile metadata with strict IDs and no truncation", async () => {
+    const { raw, database, repository } = fixture();
+    await repository.upsertBarProfile(profileInput("venue-pro", {
+      membershipTier: "pro",
+      highlightedName: true,
+      premiumBadge: "Partner",
+      promoted: true,
+      featuredSpecialEligible: true,
+      acceptsPintPathCodes: true,
+    }));
+    await repository.upsertBarProfile(profileInput("venue-inactive", { active: false }));
+    await repository.upsertBarProfile(profileInput("venue-1000"));
+    raw.prepare("UPDATE venue_profiles SET membership_tier = 'plus' WHERE venue_id = ?")
+      .run("venue-pro");
+
+    const metadata = await repository.listBarProfilePublicMetadata([
+      " venue-pro ",
+      "venue-inactive",
+      "venue-pro",
+      "missing-venue",
+    ]);
+    expect([...metadata.keys()]).toEqual(["venue-pro", "venue-inactive"]);
+    expect(metadata.get("venue-pro")).toEqual({
+      barId: "venue-pro",
+      membershipTier: "pro",
+      highlightedName: true,
+      premiumBadge: "Partner",
+      promoted: true,
+      featuredSpecialEligible: true,
+      acceptsPintPathCodes: true,
+      active: true,
+    });
+    expect(metadata.get("venue-inactive")?.active).toBe(false);
+    await expect(repository.listBarProfilePublicMetadata([""]))
+      .rejects.toThrow("Invalid venue inventory input: barIds[0]");
+
+    const prepare = vi.spyOn(database, "prepare");
+    const largeBatch = await repository.listBarProfilePublicMetadata(
+      Array.from({ length: 1_001 }, (_, index) => `venue-${index}`),
+    );
+    expect(largeBatch.get("venue-1000")?.barId).toBe("venue-1000");
+    expect(prepare).toHaveBeenCalledTimes(2);
   });
 
   it("atomically fences overlapping beer writers, preserves verification times, orders, and deletes", async () => {

@@ -91,6 +91,7 @@ import {
   venueReportDeliverySettingsSchema,
   venueReconciliationQuerySchema,
   venuePlaceSearchQuerySchema,
+  PUBLIC_VENUE_DIRECTORY_PAGE_LIMIT,
   venuesQuerySchema,
   wrongPriceReportSchema,
   versionedVenueDeleteSchema,
@@ -169,6 +170,13 @@ function rateLimitIdentity(req: Request): string | null {
 
 const priceReadLimiter = createRateLimiter({
   keyPrefix: "business:price-records",
+  windowMs: 60_000,
+  max: 120,
+  keyGenerator: rateLimitIdentity,
+});
+
+const venueDirectoryReadLimiter = createRateLimiter({
+  keyPrefix: "business:venue-directory",
   windowMs: 60_000,
   max: 120,
   keyGenerator: rateLimitIdentity,
@@ -618,19 +626,26 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     res.json(success(businessService.getAccessState(account, anonymousSessionId)));
   });
 
-  router.get("/venues", async (req, res, next) => {
+  router.get("/venues", venueDirectoryReadLimiter, async (req, res, next) => {
     try {
       const credentialsSupplied = hasSessionCredential(req);
+      res.vary("Origin");
+      res.vary("Authorization");
+      res.vary("Cookie");
       if (credentialsSupplied) {
         res.setHeader("Cache-Control", "private, no-store");
-        res.setHeader("Vary", "Authorization, Cookie");
       }
       const account = await getOptionalAccount(req, businessService);
       if (credentialsSupplied && !account) {
         throw new AppError("Login required.", 401);
       }
       const query = parseWithSchema(venuesQuerySchema, req.query, "Invalid venue query");
-      const result = await businessService.listVenuesPage(query.q, query.limit, query.offset, account);
+      const result = await businessService.listVenuesPage(
+        query.q,
+        Math.min(query.limit, PUBLIC_VENUE_DIRECTORY_PAGE_LIMIT),
+        query.offset,
+        account,
+      );
       if (!credentialsSupplied) {
         res.setHeader(
           "Cache-Control",

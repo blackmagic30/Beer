@@ -4501,6 +4501,59 @@ describe("production hardening", () => {
     }));
   });
 
+  it("batch-loads public venue tier metadata instead of issuing one profile read per venue", async () => {
+    const { repository } = createRepository();
+    for (const [index, venueId] of ["venue-a", "venue-b", "venue-c", "venue-d"].entries()) {
+      repository.upsertBarProfile({
+        barId: venueId,
+        name: `Venue ${String.fromCharCode(65 + index)}`,
+        address: null,
+        suburb: "Melbourne",
+        area: "Melbourne",
+        phone: null,
+        website: null,
+        instagram: null,
+        description: null,
+        openingHours: {},
+        venueTags: [],
+        membershipTier: venueId === "venue-a" ? "pro" : "basic",
+        highlightedName: venueId === "venue-a",
+        premiumBadge: null,
+        promoted: venueId === "venue-a",
+        featuredSpecialEligible: venueId === "venue-a",
+        acceptsPintPathCodes: venueId === "venue-a",
+        active: true,
+        now: NOW,
+      });
+    }
+
+    const inventory = venueInventoryRepositories.get(repository)!;
+    const batchMetadata = vi.spyOn(inventory, "listBarProfilePublicMetadata");
+    const pointMetadata = vi.spyOn(inventory, "getBarProfile");
+    const service = createBusinessService(repository);
+    const result = await service.listVenuesPage(undefined, 2, 0);
+
+    expect(result.venues).toHaveLength(2);
+    expect(result.venues[0]).toEqual(expect.objectContaining({
+      id: "venue-a",
+      membershipTier: "pro",
+      highlightedName: true,
+      promoted: true,
+      featuredSpecialEligible: true,
+      acceptsPintPathCodes: true,
+    }));
+    expect(batchMetadata).toHaveBeenCalledTimes(1);
+    expect(batchMetadata.mock.calls[0]?.[0]).toEqual(["venue-a", "venue-b", "venue-c", "venue-d"]);
+    expect(pointMetadata).not.toHaveBeenCalled();
+
+    batchMetadata.mockClear();
+    const prelaunchService = createBusinessService(repository, { COMMERCIAL_LAUNCH_ENABLED: false });
+    const prelaunchResult = await prelaunchService.listVenuesPage(undefined, 2, 0);
+    expect(prelaunchResult.venues.every((venue) => venue.membershipTier === "basic")).toBe(true);
+    expect(batchMetadata).not.toHaveBeenCalled();
+    expect(pointMetadata).not.toHaveBeenCalled();
+  });
+
   it("exposes remote contact provenance while filtering closed venues and withholding malformed postcodes", async () => {
     const { repository } = createRepository();
     const selectedColumns: string[] = [];
@@ -4770,7 +4823,7 @@ describe("production hardening", () => {
 
   it("deduplicates the complete local directory before applying page offsets", async () => {
     const { repository } = createRepository();
-    const upsertProfile = (barId: string, name: string) => repository.upsertBarProfile({
+    const upsertProfile = (barId: string, name: string, pro = false) => repository.upsertBarProfile({
       barId,
       name,
       address: null,
@@ -4782,17 +4835,18 @@ describe("production hardening", () => {
       description: null,
       openingHours: {},
       venueTags: [],
-      membershipTier: "basic",
-      highlightedName: false,
-      premiumBadge: null,
-      promoted: false,
-      featuredSpecialEligible: false,
+      membershipTier: pro ? "pro" : "basic",
+      highlightedName: pro,
+      premiumBadge: pro ? "Identity Pro" : null,
+      promoted: pro,
+      featuredSpecialEligible: pro,
+      acceptsPintPathCodes: pro,
       active: true,
       now: NOW,
     });
     const canonicalVenueId = "9102aedc-de45-4784-a2ce-f89b7d194c01";
     upsertProfile(canonicalVenueId, "Rooftop Bar");
-    upsertProfile("demo:rooftop-bar", "Rooftop Bar");
+    upsertProfile("demo:rooftop-bar", "Rooftop Bar", true);
     upsertProfile("unique-local", "Unique Local Venue");
     const service = createBusinessService(repository);
 
@@ -4800,6 +4854,14 @@ describe("production hardening", () => {
     const secondPage = await service.listVenuesPage(undefined, 1, 1);
 
     expect(firstPage.venues.map((venue) => venue.id)).toEqual([canonicalVenueId]);
+    expect(firstPage.venues[0]).toEqual(expect.objectContaining({
+      membershipTier: "pro",
+      highlightedName: true,
+      premiumBadge: "Identity Pro",
+      promoted: true,
+      featuredSpecialEligible: true,
+      acceptsPintPathCodes: true,
+    }));
     expect(firstPage.pagination).toEqual({ total: 2, limit: 1, offset: 0, hasMore: true });
     expect(secondPage.venues.map((venue) => venue.id)).toEqual(["unique-local"]);
     expect(secondPage.pagination).toEqual({ total: 2, limit: 1, offset: 1, hasMore: false });
@@ -5300,7 +5362,9 @@ describe("production hardening", () => {
       expect(anonymousResponse.headers.get("cache-control")).toBe(
         "public, max-age=30, stale-while-revalidate=120",
       );
-      expect(anonymousResponse.headers.get("vary")).toBeNull();
+      expect(anonymousResponse.headers.get("vary")).toContain("Authorization");
+      expect(anonymousResponse.headers.get("vary")).toContain("Cookie");
+      expect(anonymousResponse.headers.get("vary")).toContain("Origin");
       expect(await anonymousResponse.json()).toEqual(expect.objectContaining({
         data: expect.objectContaining({
           venues: [
@@ -5312,6 +5376,14 @@ describe("production hardening", () => {
               ],
             }),
           ],
+        }),
+      }));
+
+      const legacyPageResponse = await fetch(`${baseUrl}/api/business/venues?limit=500`);
+      expect(legacyPageResponse.status).toBe(200);
+      expect(await legacyPageResponse.json()).toEqual(expect.objectContaining({
+        data: expect.objectContaining({
+          pagination: expect.objectContaining({ limit: 250 }),
         }),
       }));
 

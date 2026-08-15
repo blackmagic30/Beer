@@ -11,7 +11,7 @@
       }
     ],
     "pagination": {
-      "limit": 500,
+      "limit": 250,
       "offset": 0,
       "total": 1,
       "hasMore": false

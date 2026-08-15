@@ -1148,7 +1148,14 @@ describe("native mobile remediation guardrails", () => {
   });
 
   it("keeps native page sizes and cursors inside the live backend contracts", () => {
-    expect(venuesQuerySchema.parse({ limit: "500", offset: "500" })).toMatchObject({ limit: 500, offset: 500 });
+    expect(venuesQuerySchema.parse({ limit: "250", offset: "500" })).toMatchObject({ limit: 250, offset: 500 });
+    expect(venuesQuerySchema.parse({ limit: "500" }).limit).toBe(500);
+    expect(venuesQuerySchema.parse({ limit: "1000" }).limit).toBe(1_000);
+    expect(() => venuesQuerySchema.parse({ limit: "1001" })).toThrow();
+    expect(venuesQuerySchema.parse({ q: "v".repeat(160) }).q).toHaveLength(160);
+    expect(() => venuesQuerySchema.parse({ q: "v".repeat(161) })).toThrow();
+    expect(iosAPI).toContain("min(250, max(1, limit))");
+    expect(androidAPI).toContain("val pageSize = 250");
     expect(missionsQuerySchema.parse({ limit: "200", offset: "200" })).toMatchObject({ limit: 200, offset: 200 });
     expect(adminPaginationSchema.parse({ limit: "100", offset: "100" })).toMatchObject({ limit: 100, offset: 100 });
     expect(priceRecordsQuerySchema.parse({ limit: "500", cursor: "opaque-page-token" })).toMatchObject({

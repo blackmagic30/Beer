@@ -173,7 +173,10 @@ import {
   VenueIdentityRepository,
   VenueIdentityRepositoryError,
 } from "../../db/venue-identity.repository.js";
-import { VenueInventoryRepository } from "../../db/venue-inventory.repository.js";
+import {
+  VenueInventoryRepository,
+  type BarProfilePublicMetadata,
+} from "../../db/venue-inventory.repository.js";
 import {
   SUPPORTED_BEERS,
   VIEWER_TRACKED_BEERS,
@@ -310,6 +313,16 @@ interface VenueRow {
   isUserSubmittedVenue?: boolean;
   beerKeys?: string[];
 }
+
+type PublicVenueTierMetadata = Required<Pick<
+  VenueRow,
+  | "membershipTier"
+  | "highlightedName"
+  | "premiumBadge"
+  | "promoted"
+  | "featuredSpecialEligible"
+  | "acceptsPintPathCodes"
+>>;
 
 interface MissionAreaLookup {
   latitude: number;
@@ -10570,6 +10583,72 @@ export class BusinessService {
     }));
   }
 
+  private defaultPublicVenueTierMetadata(): PublicVenueTierMetadata {
+    return {
+      membershipTier: "basic",
+      highlightedName: false,
+      premiumBadge: null,
+      promoted: false,
+      featuredSpecialEligible: false,
+      acceptsPintPathCodes: false,
+    };
+  }
+
+  private publicVenueTierMetadata(
+    profile: BarProfilePublicMetadata | BarProfile | null | undefined,
+  ): PublicVenueTierMetadata {
+    if (!this.config.COMMERCIAL_LAUNCH_ENABLED || !profile?.active) {
+      return this.defaultPublicVenueTierMetadata();
+    }
+
+    const flags = tierFlags(profile.membershipTier);
+    return {
+      membershipTier: profile.membershipTier,
+      highlightedName: flags.highlightedName && profile.highlightedName,
+      premiumBadge: profile.premiumBadge || flags.premiumBadge,
+      promoted: flags.promoted && profile.promoted,
+      featuredSpecialEligible: flags.featuredSpecialEligible && profile.featuredSpecialEligible,
+      acceptsPintPathCodes: profile.acceptsPintPathCodes,
+    };
+  }
+
+  private async loadPublicVenueTierMetadata(
+    venueIds: readonly string[],
+  ): Promise<Map<string, PublicVenueTierMetadata>> {
+    const uniqueVenueIds = Array.from(new Set(venueIds));
+    if (!this.config.COMMERCIAL_LAUNCH_ENABLED) {
+      return new Map(uniqueVenueIds.map((venueId) => [venueId, this.defaultPublicVenueTierMetadata()]));
+    }
+
+    const profiles = await this.venueInventoryRepository.listBarProfilePublicMetadata(uniqueVenueIds);
+    return new Map(uniqueVenueIds.map((venueId) => [
+      venueId,
+      this.publicVenueTierMetadata(profiles.get(venueId)),
+    ]));
+  }
+
+  private createPublicVenueTierMetadataAttacher(): (venues: VenueRow[]) => Promise<VenueRow[]> {
+    const metadataByVenueId = new Map<string, PublicVenueTierMetadata>();
+    return async (venues) => {
+      const missingVenueIds = Array.from(new Set(
+        venues.map((venue) => venue.id).filter((venueId) => !metadataByVenueId.has(venueId)),
+      ));
+      if (missingVenueIds.length > 0) {
+        const loaded = await this.loadPublicVenueTierMetadata(missingVenueIds);
+        for (const venueId of missingVenueIds) {
+          metadataByVenueId.set(
+            venueId,
+            loaded.get(venueId) ?? this.defaultPublicVenueTierMetadata(),
+          );
+        }
+      }
+      return venues.map((venue) => ({
+        ...venue,
+        ...metadataByVenueId.get(venue.id),
+      }));
+    };
+  }
+
   async listVenuesPage(
     query: string | undefined,
     limit: number,
@@ -10582,11 +10661,9 @@ export class BusinessService {
     const hasFullAccess = isFullAccess(account, account ? this.isAdmin(account) : false);
     const normalizedLimit = Math.min(1000, Math.max(1, limit));
     const normalizedOffset = Math.max(0, offset);
+    const attachPublicVenueTierMetadata = this.createPublicVenueTierMetadataAttacher();
     const deduplicateLocalVenues = async (venues: VenueRow[]) => this.mergeVenueRows(
-      await Promise.all(venues.map(async (venue) => ({
-        ...venue,
-        ...await this.getPublicVenueTierMetadata(venue.id),
-      }))),
+      await attachPublicVenueTierMetadata(venues),
       [],
       venues.length,
       false,
@@ -10788,10 +10865,7 @@ export class BusinessService {
       remoteRows = uniqueRemoteRows.slice(remoteOffset, remoteOffset + remoteSlots);
       estimatedRemoteTotal = uniqueRemoteRows.length;
     }
-    const remoteRowsWithMetadata = await Promise.all(remoteRows.map(async (venue) => ({
-      ...venue,
-      ...await this.getPublicVenueTierMetadata(venue.id),
-    })));
+    const remoteRowsWithMetadata = await attachPublicVenueTierMetadata(remoteRows);
     const page = this.mergeVenueRows(
       localPage,
       remoteRowsWithMetadata,
@@ -10895,7 +10969,7 @@ export class BusinessService {
       openingHours: profile?.openingHours ?? {},
       venueTags: profile?.venueTags ?? [],
       isUserSubmittedVenue: profile?.venueTags.includes("user submitted") ?? false,
-      ...await this.getPublicVenueTierMetadata(venueId),
+      ...this.publicVenueTierMetadata(profile),
     };
   }
 
@@ -11180,28 +11254,8 @@ export class BusinessService {
     VenueRow,
     "membershipTier" | "highlightedName" | "premiumBadge" | "promoted" | "featuredSpecialEligible" | "acceptsPintPathCodes"
   >> {
-    const profile = await this.venueInventoryRepository.getBarProfile(venueId);
-
-    if (!this.config.COMMERCIAL_LAUNCH_ENABLED || !profile?.active) {
-      return {
-        membershipTier: "basic",
-        highlightedName: false,
-        premiumBadge: null,
-        promoted: false,
-        featuredSpecialEligible: false,
-        acceptsPintPathCodes: false,
-      };
-    }
-
-    const flags = tierFlags(profile.membershipTier);
-    return {
-      membershipTier: profile.membershipTier,
-      highlightedName: flags.highlightedName && profile.highlightedName,
-      premiumBadge: profile.premiumBadge || flags.premiumBadge,
-      promoted: flags.promoted && profile.promoted,
-      featuredSpecialEligible: flags.featuredSpecialEligible && profile.featuredSpecialEligible,
-      acceptsPintPathCodes: profile.acceptsPintPathCodes,
-    };
+    return (await this.loadPublicVenueTierMetadata([venueId])).get(venueId)
+      ?? this.defaultPublicVenueTierMetadata();
   }
 
   async seedDemoMissions() {
@@ -12021,13 +12075,9 @@ export class BusinessService {
         break;
       }
     }
-    const publicVenueMetadata = new Map<string, Pick<
-      VenueRow,
-      "membershipTier" | "highlightedName" | "premiumBadge" | "promoted" | "featuredSpecialEligible" | "acceptsPintPathCodes"
-    >>();
-    await Promise.all([...new Set(records.map((record) => record.venueId))].map(async (venueId) => {
-      publicVenueMetadata.set(venueId, await this.getPublicVenueTierMetadata(venueId));
-    }));
+    const publicVenueMetadata = await this.loadPublicVenueTierMetadata(
+      [...new Set(records.map((record) => record.venueId))],
+    );
     const submissionEvidencePresence = new Map<string, boolean>();
     await Promise.all([...new Set(records
       .map((record) => record.sourceSubmissionId)

@@ -474,9 +474,15 @@ export const missionsQuerySchema = z.object({
   offset: z.coerce.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).default(0),
 });
 
+export const PUBLIC_VENUE_DIRECTORY_PAGE_LIMIT = 250;
+const PUBLIC_VENUE_DIRECTORY_LEGACY_REQUEST_LIMIT = 1_000;
+
 export const venuesQuerySchema = z.object({
-  q: optionalTrimmedStringSchema,
-  limit: z.coerce.number().int().min(1).max(1000).default(50),
+  q: optionalTrimmedStringSchema.refine(
+    (value) => value === undefined || value.length <= 160,
+    "Venue search must be 160 characters or fewer",
+  ),
+  limit: z.coerce.number().int().min(1).max(PUBLIC_VENUE_DIRECTORY_LEGACY_REQUEST_LIMIT).default(50),
   offset: z.coerce.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).default(0),
 });
 
