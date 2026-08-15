@@ -2,6 +2,9 @@ import Foundation
 import Security
 
 enum KeychainSessionStore {
+    private static let cookieCredentialPrefix = "cookie-v1:"
+    private static let sessionCookieValuePattern = #"^(?:[A-Za-z0-9_-]{43}|credential-v1\.(?:session_management|account_export|account_deletion|billing_portal|venue_billing_portal|logout_all)\.[1-9][0-9]{0,10}\.[A-Za-z0-9_-]{43})$"#
+    private static let legacyBearerPattern = #"^[A-Za-z0-9_-]{43}$"#
     private static let service = "au.pintpath.app.session"
     private static let account = "pint-path-bearer-token"
     private static let supabaseRefreshAccount = "supabase-refresh-token"
@@ -9,6 +12,17 @@ enum KeychainSessionStore {
 
     static func loadToken() -> String? {
         load(account: account)
+    }
+
+    static func cookieValue(from credential: String) -> String? {
+        guard credential.hasPrefix(cookieCredentialPrefix) else { return nil }
+        let value = String(credential.dropFirst(cookieCredentialPrefix.count))
+        return matches(value, pattern: sessionCookieValuePattern) ? value : nil
+    }
+
+    static func legacyBearerToken(from credential: String) -> String? {
+        guard !credential.hasPrefix(cookieCredentialPrefix) else { return nil }
+        return matches(credential, pattern: legacyBearerPattern) ? credential : nil
     }
 
     static func loadSupabaseRefreshToken() -> String? {
@@ -38,6 +52,12 @@ enum KeychainSessionStore {
     @discardableResult
     static func saveToken(_ token: String) -> Bool {
         save(token, account: account)
+    }
+
+    @discardableResult
+    static func saveSessionCookie(_ value: String) -> Bool {
+        guard matches(value, pattern: sessionCookieValuePattern) else { return false }
+        return save("\(cookieCredentialPrefix)\(value)", account: account)
     }
 
     @discardableResult
@@ -88,6 +108,10 @@ enum KeychainSessionStore {
             return SecItemUpdate(lookup as CFDictionary, update as CFDictionary) == errSecSuccess
         }
         return false
+    }
+
+    private static func matches(_ value: String, pattern: String) -> Bool {
+        value.range(of: pattern, options: .regularExpression) != nil
     }
 
     static func deleteToken() {

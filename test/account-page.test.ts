@@ -10,6 +10,14 @@ const LEGACY_SUPABASE_ANON_KEY_FIXTURE = [
   Buffer.alloc(32, 1).toString("base64url"),
 ].join(".");
 
+function unsignedAccessToken(payload: Record<string, unknown>) {
+  return [
+    Buffer.from(JSON.stringify({ alg: "none", typ: "JWT" }), "utf8").toString("base64url"),
+    Buffer.from(JSON.stringify(payload), "utf8").toString("base64url"),
+    "test-signature",
+  ].join(".");
+}
+
 function accountHtml() {
   return fs.readFileSync(path.resolve(process.cwd(), "viewer/account.html"), "utf8");
 }
@@ -20,6 +28,10 @@ function mapHtml() {
 
 function adminHtml() {
   return fs.readFileSync(path.resolve(process.cwd(), "viewer/admin.html"), "utf8");
+}
+
+function venuePortalHtml() {
+  return fs.readFileSync(path.resolve(process.cwd(), "viewer/venue-portal.html"), "utf8");
 }
 
 function businessJs() {
@@ -78,6 +90,8 @@ function loadBusinessHelpers(options: BusinessHelperOptions = {}) {
   const context = {
     AbortController,
     DOMException,
+    atob,
+    btoa,
     clearTimeout,
     setTimeout,
     URL,
@@ -118,11 +132,16 @@ function loadBusinessHelpers(options: BusinessHelperOptions = {}) {
         options?: { allowOptionalPromotion?: boolean },
       ) => void;
       trackEvent: (eventType: string, metadata?: Record<string, unknown>) => Promise<void>;
+      reauthenticationPurposeForPath: (path: string) => string;
+      browserReauthenticationExpiryForAccessToken: (token: string, now?: number) => number | null;
+      getSupabaseReauthenticationProvider: () => string | null;
     };
   }).MelbBeerBusiness;
 }
 
-function loadApiFetchRedirectHarness() {
+function loadApiFetchRedirectHarness(harnessOptions: {
+  fetchImpl?: (input: string, options: Record<string, unknown>) => Promise<unknown>;
+} = {}) {
   const localStorage = new Map<string, string>();
   const requests: Array<{
     path: string;
@@ -136,8 +155,11 @@ function loadApiFetchRedirectHarness() {
     URL,
     URLSearchParams,
     crypto: { randomUUID: () => "test-uuid" },
-    fetch: async (input: string, options: Record<string, unknown> = {}) => {
-      requests.push({ path: String(input), options });
+    fetch: async (input: string, requestOptions: Record<string, unknown> = {}) => {
+      requests.push({ path: String(input), options: requestOptions });
+      if (harnessOptions.fetchImpl) {
+        return harnessOptions.fetchImpl(String(input), requestOptions);
+      }
       return {
         ok: true,
         status: 200,
@@ -194,15 +216,20 @@ function loadBusinessAuthHarness(options: {
   verifiedProvider?: string;
   signupError?: string;
   oauthError?: string;
+  otpError?: string;
+  accessToken?: string;
+  existingAppSession?: boolean;
 } = {}) {
   const localStorage = new Map<string, string>();
   const requests: Array<{ path: string; body: Record<string, unknown> }> = [];
   const signups: Array<Record<string, unknown>> = [];
   const oauthSignIns: Array<Record<string, unknown>> = [];
+  const otpSignIns: Array<Record<string, unknown>> = [];
+  const passwordSignIns: Array<Record<string, unknown>> = [];
   const createdClientOptions: Array<Record<string, unknown>> = [];
   const sessionProvider = options.sessionProvider || "email";
   const authSession = {
-    access_token: "provider-access-token",
+    access_token: options.accessToken || "provider-access-token",
     user: {
       email: options.sessionEmail || "new@example.com",
       app_metadata: { provider: sessionProvider },
@@ -221,6 +248,14 @@ function loadBusinessAuthHarness(options: {
       oauthSignIns.push(input);
       return { data: null, error: options.oauthError ? { message: options.oauthError } : null };
     },
+    signInWithOtp: async (input: Record<string, unknown>) => {
+      otpSignIns.push(input);
+      return { data: { user: null, session: null }, error: options.otpError ? { message: options.otpError } : null };
+    },
+    signInWithPassword: async (input: Record<string, unknown>) => {
+      passwordSignIns.push(input);
+      return { data: { session: authSession }, error: null };
+    },
     getSession: async () => ({ data: { session: authSession }, error: null }),
     getUser: async () => ({
       data: {
@@ -237,6 +272,36 @@ function loadBusinessAuthHarness(options: {
   const fetch = async (path: string, request: { body?: string } = {}) => {
     const body = request.body ? JSON.parse(request.body) as Record<string, unknown> : {};
     requests.push({ path, body });
+    if (path === "/api/business/auth/session") {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ok: true,
+          data: { authenticated: options.existingAppSession !== false },
+        }),
+      };
+    }
+    if (path === "/api/business/auth/logout") {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ ok: true, data: { revoked: false } }),
+      };
+    }
+    if (path === "/api/business/auth/browser-email-reauthentication") {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ok: true,
+          data: {
+            email: options.verifiedEmail || options.sessionEmail || "new@example.com",
+            expiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
+          },
+        }),
+      };
+    }
     return {
       ok: true,
       status: 200,
@@ -246,6 +311,7 @@ function loadBusinessAuthHarness(options: {
           token: "cookie-backed",
           account: {
             id: "account-1",
+            authProvider: "supabase",
             role: "user",
             status: "active",
             termsAcceptedAt: "2026-07-14T00:00:00.000Z",
@@ -310,7 +376,21 @@ function loadBusinessAuthHarness(options: {
       MelbBeerBusiness: {
         signUpWithEmail: (...args: unknown[]) => Promise<Record<string, unknown>>;
         signInWithOAuth: (...args: unknown[]) => Promise<Record<string, unknown>>;
+        signInWithEmail: (...args: unknown[]) => Promise<Record<string, unknown>>;
         syncSupabaseSession: (options?: Record<string, unknown>) => Promise<Record<string, unknown>>;
+        beginBrowserEmailReauthentication: (
+          purpose: string,
+          options?: Record<string, unknown>,
+        ) => Promise<Record<string, unknown>>;
+        ensureSupabaseSessionForPurpose: (
+          purpose: string,
+          options?: Record<string, unknown>,
+        ) => Promise<Record<string, unknown>>;
+        setAccountContext: (
+          account: Record<string, unknown> | null,
+          access?: Record<string, unknown> | null,
+        ) => void;
+        getAccountContext: () => Record<string, unknown> | null;
         setPendingLegalAcceptance: (input: Record<string, unknown>) => void;
         setPendingLegalAcceptanceForCurrentSession: (
           input: Record<string, unknown>,
@@ -322,7 +402,113 @@ function loadBusinessAuthHarness(options: {
     requests,
     signups,
     oauthSignIns,
+    otpSignIns,
+    passwordSignIns,
     createdClientOptions,
+  };
+}
+
+class TestBroadcastChannel {
+  static readonly channels = new Map<string, Set<TestBroadcastChannel>>();
+  onmessage: ((event: { data: unknown }) => void) | null = null;
+
+  constructor(private readonly name: string) {
+    const subscribers = TestBroadcastChannel.channels.get(name) || new Set<TestBroadcastChannel>();
+    subscribers.add(this);
+    TestBroadcastChannel.channels.set(name, subscribers);
+  }
+
+  postMessage(data: unknown) {
+    TestBroadcastChannel.channels.get(this.name)?.forEach((subscriber) => {
+      if (subscriber !== this) subscriber.onmessage?.({ data });
+    });
+  }
+
+  close() {
+    TestBroadcastChannel.channels.get(this.name)?.delete(this);
+  }
+}
+
+function loadCrossTabAuthHarness(sharedLocalStorage: BrowserStorageFixture) {
+  const sessionValues = new Map<string, string>();
+  let authSession: Record<string, unknown> | null = null;
+  let authListener: ((event: string, session: Record<string, unknown> | null) => void) | null = null;
+  const signOutCalls: Array<Record<string, unknown>> = [];
+  const auth = {
+    onAuthStateChange: (listener: typeof authListener) => {
+      authListener = listener;
+      return { data: { subscription: { unsubscribe: () => undefined } } };
+    },
+    setSession: async (session: Record<string, unknown>) => {
+      authSession = { ...session, user: { id: "account-1" } };
+      authListener?.("SIGNED_IN", authSession);
+      return { data: { session: authSession }, error: null };
+    },
+    getSession: async () => ({ data: { session: authSession }, error: null }),
+    signOut: async (options: Record<string, unknown>) => {
+      signOutCalls.push(options);
+      authSession = null;
+      authListener?.("SIGNED_OUT", null);
+      return { error: null };
+    },
+  };
+  const context = {
+    AbortController,
+    DOMException,
+    TextDecoder,
+    URL,
+    URLSearchParams,
+    atob,
+    btoa,
+    clearTimeout,
+    setTimeout,
+    crypto: { randomUUID: () => "cross-tab-id" },
+    fetch: async () => ({ ok: true, status: 200, json: async () => ({ ok: true, data: {} }) }),
+    window: {
+      BroadcastChannel: TestBroadcastChannel,
+      CustomEvent: class {
+        constructor(public readonly type: string) {}
+      },
+      MELB_BEER_BOT_VIEWER_CONFIG: {
+        supabaseUrl: "https://auth.pintpath.au",
+        supabaseAnonKey: LEGACY_SUPABASE_ANON_KEY_FIXTURE,
+        business: {},
+      },
+      location: {
+        origin: "https://pintpath.au",
+        hostname: "pintpath.au",
+        pathname: "/account.html",
+        search: "",
+        hash: "",
+      },
+      localStorage: sharedLocalStorage,
+      sessionStorage: {
+        getItem: (key: string) => sessionValues.get(key) || null,
+        setItem: (key: string, value: string) => sessionValues.set(key, String(value)),
+        removeItem: (key: string) => sessionValues.delete(key),
+        key: (index: number) => Array.from(sessionValues.keys())[index] || null,
+        get length() {
+          return sessionValues.size;
+        },
+      },
+      supabase: { createClient: () => ({ auth }) },
+      addEventListener: () => undefined,
+      dispatchEvent: () => true,
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(businessJs(), context);
+  return {
+    auth,
+    helpers: (context.window as unknown as {
+      MelbBeerBusiness: {
+        broadcastAuthInvalidation: (reason: string) => unknown;
+        getAccountContext: () => Record<string, unknown> | null;
+        setAccountContext: (account: Record<string, unknown>, access?: Record<string, unknown>) => void;
+        setSupabaseMemorySession: (session: Record<string, unknown>) => Promise<unknown>;
+      };
+    }).MelbBeerBusiness,
+    signOutCalls,
   };
 }
 
@@ -424,6 +610,33 @@ describe("account page shell", () => {
     });
   });
 
+  it("drops a rejected legacy bearer and retries the requested API through the valid HttpOnly cookie", async () => {
+    const harness = loadApiFetchRedirectHarness({
+      fetchImpl: async (input) => input === "/api/business/auth/session-cookie"
+        ? {
+            ok: false,
+            status: 401,
+            json: async () => ({ ok: false, error: { message: "Legacy session expired." } }),
+          }
+        : {
+            ok: true,
+            status: 200,
+            json: async () => ({ ok: true, data: { authenticated: true } }),
+          },
+    });
+    harness.localStorage.set(harness.helpers.AUTH_TOKEN_KEY, "stale-legacy-session-token");
+
+    await expect(harness.helpers.apiFetch("/api/business/auth/session"))
+      .resolves.toEqual({ authenticated: true });
+
+    expect(harness.localStorage.has(harness.helpers.AUTH_TOKEN_KEY)).toBe(false);
+    expect(harness.requests).toHaveLength(2);
+    expect(harness.requests[0]?.path).toBe("/api/business/auth/session-cookie");
+    expect(harness.requests[1]?.path).toBe("/api/business/auth/session");
+    expect((harness.requests[1]?.options.headers as Record<string, string>).Authorization)
+      .toBeUndefined();
+  });
+
   it("installs Pint Path logo assets and favicon metadata across every viewer page", () => {
     const script = businessJs();
     const css = businessCss();
@@ -514,8 +727,12 @@ describe("account page shell", () => {
     expect(css).toContain(".reauthPasswordDialog");
     expect(callback).toContain("function needsBillingRecovery");
     expect(callback).toContain('error?.code === "ACCOUNT_SUSPENDED_BILLING_RECOVERY"');
-    expect(callback).toContain('accountUrl.searchParams.set("billingRecovery", "1")');
-    expect(callback).toContain('window.sessionStorage.setItem("pintPathBillingRecoveryOptions"');
+    expect(callback).toContain('id="callbackBillingRecoveryPanel"');
+    expect(callback).toContain("function handleCallbackBillingRecovery");
+    expect(callback).toContain('type: "pintpath:oauth-billing-recovery"');
+    expect(callback).toContain('MelbBeerBusiness.apiFetch("/api/business/billing/recovery-portal"');
+    expect(callback).not.toContain('accountUrl.searchParams.set("billingRecovery", "1")');
+    expect(callback).not.toContain('window.sessionStorage.setItem("pintPathBillingRecoveryOptions"');
     expect(html).toContain('id="pubGolfForm"');
     expect(html).toContain("This is a route planner, not a drinking challenge.");
     expect(html).toContain("You never need to buy or finish alcohol.");
@@ -904,9 +1121,21 @@ describe("account page shell", () => {
     expect(mfaLoader).toContain('!["supabase", "google", "apple"].includes(authProvider)');
     expect(mfaLoader).toContain("This password-based account confirms the current password before sensitive actions.");
     expect(mfaLoader.indexOf("await client.auth.getSession()")).toBeLessThan(mfaLoader.indexOf("client.auth.mfa.listFactors()"));
-    expect(mfaLoader).toContain("Your hosted sign-in session is no longer available.");
+    expect(mfaLoader).toContain("Reauthenticate with your sign-in provider before changing authenticator settings.");
+    expect(mfaLoader).toContain('$("startMfaButton").dataset.reauthenticate = "true"');
     expect(mfaLoader).toContain("/auth session missing|session not found|not authenticated/i.test(message)");
     expect(mfaLoader).not.toContain('setMfaStatus(error.message || "Could not read authenticator status."');
+    const firstFactorEnrollment = htmlBetween(
+      html,
+      '$("startMfaButton").addEventListener',
+      '$("replaceMfaButton").addEventListener',
+    );
+    expect(firstFactorEnrollment).toContain("requireProviderSession: true");
+    expect(firstFactorEnrollment).toContain("forceFresh: true");
+    expect(firstFactorEnrollment).toContain('continuation: "mfa_management"');
+    expect(firstFactorEnrollment.indexOf("ensureSupabaseSessionForPurpose")).toBeLessThan(
+      firstFactorEnrollment.indexOf("beginMfaEnrollment()"),
+    );
   });
 
   it("provides a privacy-safe, paginated community verification workflow", () => {
@@ -1002,7 +1231,7 @@ describe("account page shell", () => {
     expect(reset).toContain("MelbBeerBusiness.updatePassword");
     expect(reset).toContain('params.get("mode") === "update"');
     expect(reset).toContain("MelbBeerBusiness.validatePasswordRecoverySession()");
-    expect(reset).toContain("This recovery link is missing, expired, or was already used.");
+    expect(reset).toContain("This memory-only recovery session is missing, expired, refreshed, or was already used.");
     expect(reset).toContain('id="signInAfterReset"');
     expect(reset).toContain("Every session was signed out; sign in again with your new password.");
     expect(script).toContain('/api/business/auth/password-reset-complete');
@@ -1062,7 +1291,11 @@ describe("account page shell", () => {
     const script = businessJs();
 
     expect(script).toContain("function hasAuthenticatedSessionHint");
-    expect(script).toContain('"X-Pint-Path-Reauth-Token"');
+    expect(script).not.toContain('"X-Pint-Path-Reauth-Token"');
+    expect(script).toContain("const credentialCeremony = options.credentialCeremony == null");
+    expect(script).toContain('? "browser_memory_v1"');
+    expect(script).toContain("credentialCeremony,");
+    expect(script).toContain("function reauthenticationPurposeForPath");
     expect(script).toContain('"X-Pint-Path-Current-Password"');
     expect(script).toContain("requestError?.details?.reauthenticationRequired");
     expect(appSource()).toContain("X-Pint-Path-Reauth-Token,X-Pint-Path-Current-Password");
@@ -1125,6 +1358,264 @@ describe("account page shell", () => {
     expect(html).toContain("window.MelbBeerBusiness?.isVenueManagerContext?.()");
     expect(html).toContain("window.MelbBeerBusiness?.canUseVenuePortalContext?.()");
     expect(html).toContain('document.querySelectorAll("[data-auth-required]")');
+  });
+
+  it("maps every browser-sensitive endpoint to an exact purpose-bound cookie ceremony", () => {
+    const helpers = loadBusinessHelpers();
+    expect(helpers.reauthenticationPurposeForPath("/api/business/account/export")).toBe("account_export");
+    expect(helpers.reauthenticationPurposeForPath("/api/business/account/sessions?limit=25")).toBe("session_management");
+    expect(helpers.reauthenticationPurposeForPath("/api/business/account/sessions/session-1")).toBe("session_management");
+    expect(helpers.reauthenticationPurposeForPath("/api/business/account/delete-request/deletion-1")).toBe("account_deletion");
+    expect(helpers.reauthenticationPurposeForPath("/api/business/billing/portal")).toBe("billing_portal");
+    expect(helpers.reauthenticationPurposeForPath("/api/business/venue-portal/venue-1/billing/portal")).toBe("venue_billing_portal");
+    expect(helpers.reauthenticationPurposeForPath("/api/business/auth/logout-all")).toBe("logout_all");
+    expect(venuePortalHtml()).toContain(
+      "MelbBeerBusiness.sensitiveApiFetch(`/api/business/venue-portal/${encodeURIComponent(selectedVenueId())}/billing/portal`",
+    );
+    const venueLogout = htmlBetween(
+      venuePortalHtml(),
+      'venueLogoutButton.addEventListener("click"',
+      'venueSelect.addEventListener("change"',
+    );
+    expect(venueLogout.indexOf('/api/business/auth/logout')).toBeLessThan(
+      venueLogout.indexOf('broadcastAuthInvalidation("venue_logout")'),
+    );
+    expect(venueLogout).toContain('MelbBeerBusiness.broadcastAuthInvalidation("venue_logout")');
+    expect(venueLogout.indexOf('broadcastAuthInvalidation("venue_logout")')).toBeLessThan(
+      venueLogout.indexOf('window.location.assign("/account.html")'),
+    );
+    expect(venueLogout).toContain("venueLogoutButton.disabled = false");
+    expect(venueLogout).toContain("This venue session may still be active");
+    expect(venueLogout).not.toContain("finally");
+    expect(() => helpers.reauthenticationPurposeForPath("/api/business/account/preferences"))
+      .toThrow("missing an approved reauthentication purpose");
+  });
+
+  it("never substitutes an OAuth provider for remembered Supabase email reauthentication", () => {
+    const helpers = loadBusinessHelpers();
+    helpers.setAccountContext(
+      { id: "account-email", authProvider: "supabase" },
+      { authIdentityProvider: "email" },
+    );
+
+    expect(helpers.getSupabaseReauthenticationProvider()).toBe("email");
+    expect(businessJs()).toContain("const credentials = await requestProviderEmailPassword(purpose);");
+    expect(businessJs()).toContain("signInWithEmail(credentials.email, credentials.password, { reauthPurpose: purpose })");
+    expect(businessJs()).not.toContain("return enabledProviders.length === 1 ? enabledProviders[0] : null;");
+  });
+
+  it("sends provider-password reauthentication only to Supabase and purpose-syncs without the password", async () => {
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const harness = loadBusinessAuthHarness({
+      sessionEmail: "member@example.com",
+      sessionProvider: "email",
+      accessToken: unsignedAccessToken({
+        amr: [{ method: "password", timestamp: nowSeconds }],
+        auth_time: nowSeconds,
+      }),
+    });
+
+    await harness.helpers.signInWithEmail("member@example.com", "provider-only-password", {
+      reauthPurpose: "account_export",
+    });
+
+    expect(harness.passwordSignIns).toEqual([{
+      email: "member@example.com",
+      password: "provider-only-password",
+    }]);
+    expect(harness.requests.find((request) => request.path === "/api/business/auth/supabase-session")?.body)
+      .toMatchObject({
+        credentialCeremony: "browser_memory_v1",
+        reauthPurpose: "account_export",
+      });
+    expect(JSON.stringify(harness.requests)).not.toContain("provider-only-password");
+  });
+
+  it("uses a server-bound, non-signup email OTP for hosted OAuth sensitive reauthentication", async () => {
+    const harness = loadBusinessAuthHarness({
+      sessionEmail: "oauth-member@example.com",
+      sessionProvider: "google",
+    });
+    harness.helpers.setAccountContext(
+      {
+        id: "account-1",
+        email: "oauth-member@example.com",
+        authProvider: "supabase",
+        role: "user",
+        status: "active",
+      },
+      { authIdentityProvider: "google" },
+    );
+
+    await expect(harness.helpers.ensureSupabaseSessionForPurpose("account_export", {
+      forceFresh: true,
+    })).rejects.toMatchObject({
+      code: "EMAIL_REAUTHENTICATION_SENT",
+      reauthenticationPending: true,
+    });
+
+    expect(harness.requests.find((request) => (
+      request.path === "/api/business/auth/browser-email-reauthentication"
+    ))?.body).toEqual({ purpose: "account_export" });
+    expect(harness.otpSignIns).toEqual([{
+      email: "oauth-member@example.com",
+      options: {
+        emailRedirectTo: "https://pintpath.au/auth/callback",
+        shouldCreateUser: false,
+      },
+    }]);
+    expect(harness.oauthSignIns).toEqual([]);
+    expect(JSON.parse(harness.localStorage.get("pintPathAuthFlow") || "{}"))
+      .toMatchObject({
+        kind: "browser_email_reauthentication",
+        reauthPurpose: "account_export",
+        returnTo: "/account.html",
+      });
+    expect(harness.localStorage.get("pintPathAuthFlow")).not.toContain("oauth-member@example.com");
+    expect(harness.localStorage.get("pintPathAuthFlow")).not.toContain("provider-access-token");
+    expect(businessJs()).toContain("clearOAuthPopupState();\n  storeAuthFlowState({");
+  });
+
+  it("binds callback-local MFA management separately from ordinary session management", async () => {
+    const harness = loadBusinessAuthHarness({
+      sessionEmail: "oauth-member@example.com",
+      sessionProvider: "google",
+    });
+    harness.helpers.setAccountContext(
+      {
+        id: "account-1",
+        email: "oauth-member@example.com",
+        authProvider: "supabase",
+        role: "user",
+        status: "active",
+      },
+      { authIdentityProvider: "google" },
+    );
+
+    await harness.helpers.beginBrowserEmailReauthentication("session_management");
+    expect(JSON.parse(harness.localStorage.get("pintPathAuthFlow") || "{}"))
+      .toMatchObject({ reauthPurpose: "session_management", continuation: null });
+
+    await harness.helpers.beginBrowserEmailReauthentication("session_management", {
+      continuation: "mfa_management",
+    });
+    expect(JSON.parse(harness.localStorage.get("pintPathAuthFlow") || "{}"))
+      .toMatchObject({
+        reauthPurpose: "session_management",
+        continuation: "mfa_management",
+      });
+
+    await expect(harness.helpers.beginBrowserEmailReauthentication("account_export", {
+      continuation: "mfa_management",
+    })).rejects.toThrow("continuation is not supported");
+  });
+
+  it("purpose-syncs an email OTP without replacing the account's durable OAuth login method", async () => {
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const harness = loadBusinessAuthHarness({
+      sessionEmail: "oauth-member@example.com",
+      sessionProvider: "email",
+      accessToken: unsignedAccessToken({
+        sub: "provider-user-1",
+        session_id: "email-otp-session",
+        amr: [{ method: "otp", timestamp: nowSeconds }],
+        auth_time: nowSeconds,
+      }),
+    });
+    harness.helpers.setAccountContext(
+      {
+        id: "account-1",
+        email: "oauth-member@example.com",
+        authProvider: "supabase",
+        role: "user",
+        status: "active",
+      },
+      { authIdentityProvider: "google" },
+    );
+
+    await harness.helpers.syncSupabaseSession({
+      credentialCeremony: "browser_email_otp_v1",
+      reauthPurpose: "account_export",
+    });
+
+    expect(harness.requests.find((request) => request.path === "/api/business/auth/supabase-session")?.body)
+      .toMatchObject({
+        credentialCeremony: "browser_email_otp_v1",
+        reauthPurpose: "account_export",
+      });
+    expect(harness.helpers.getAccountContext()?.authIdentityProvider).toBe("google");
+    expect(harness.passwordSignIns).toEqual([]);
+    expect(harness.oauthSignIns).toEqual([]);
+
+    await harness.helpers.syncSupabaseSession({
+      reauthPurpose: "session_management",
+      preserveAuthIdentityProvider: true,
+    });
+    expect(harness.helpers.getAccountContext()?.authIdentityProvider).toBe("google");
+  });
+
+  it("clears an unauthenticated stale app cookie before normal provider sync but never before purpose sync", async () => {
+    const normalHarness = loadBusinessAuthHarness({ existingAppSession: false });
+    await normalHarness.helpers.syncSupabaseSession();
+    expect(normalHarness.requests.map((request) => request.path)).toEqual([
+      "/api/business/auth/session",
+      "/api/business/auth/logout",
+      "/api/business/auth/supabase-session",
+    ]);
+
+    const purposeHarness = loadBusinessAuthHarness({ existingAppSession: false });
+    await purposeHarness.helpers.syncSupabaseSession({ reauthPurpose: "account_export" });
+    expect(purposeHarness.requests.map((request) => request.path)).toEqual([
+      "/api/business/auth/supabase-session",
+    ]);
+  });
+
+  it("never caches a purpose-bound browser cookie beyond the provider AMR ceremony", () => {
+    const helpers = loadBusinessHelpers();
+    const now = Date.UTC(2026, 7, 15, 0, 0, 0);
+    const credentialTimeSeconds = Math.floor((now - 5 * 60_000) / 1000);
+    const token = unsignedAccessToken({
+      amr: [{ method: "password", timestamp: credentialTimeSeconds }],
+    });
+
+    expect(helpers.browserReauthenticationExpiryForAccessToken(token, now)).toBe(
+      credentialTimeSeconds * 1000 + 14 * 60_000,
+    );
+    expect(helpers.browserReauthenticationExpiryForAccessToken(unsignedAccessToken({
+      amr: ["oauth"],
+      auth_time: credentialTimeSeconds,
+    }), now)).toBe(credentialTimeSeconds * 1000 + 14 * 60_000);
+    expect(helpers.browserReauthenticationExpiryForAccessToken("not-a-jwt", now)).toBeNull();
+  });
+
+  it("invalidates memory-only provider sessions across tabs on logout generation broadcasts", async () => {
+    TestBroadcastChannel.channels.clear();
+    const values = new Map<string, string>();
+    const sharedLocalStorage: BrowserStorageFixture = {
+      getItem: (key) => values.get(key) || null,
+      setItem: (key, value) => values.set(key, String(value)),
+      removeItem: (key) => values.delete(key),
+      key: (index) => Array.from(values.keys())[index] || null,
+      get length() {
+        return values.size;
+      },
+    };
+    const firstTab = loadCrossTabAuthHarness(sharedLocalStorage);
+    const secondTab = loadCrossTabAuthHarness(sharedLocalStorage);
+    firstTab.helpers.setAccountContext({ id: "account-1", authProvider: "supabase" });
+    secondTab.helpers.setAccountContext({ id: "account-1", authProvider: "supabase" });
+    await firstTab.helpers.setSupabaseMemorySession({ access_token: "access-a", refresh_token: "refresh-a" });
+    await secondTab.helpers.setSupabaseMemorySession({ access_token: "access-b", refresh_token: "refresh-b" });
+
+    firstTab.helpers.broadcastAuthInvalidation("logout");
+
+    expect(secondTab.helpers.getAccountContext()).toBeNull();
+    expect(secondTab.signOutCalls).toContainEqual({ scope: "local" });
+    await expect(secondTab.auth.getSession()).resolves.toMatchObject({ data: { session: null } });
+    expect(JSON.parse(values.get("pintPathAuthInvalidationGeneration") || "{}")).toMatchObject({
+      id: "cross-tab-id",
+      reason: "logout",
+    });
   });
 
   it("isolates private browser storage when accounts change on a shared device", () => {
@@ -1556,8 +2047,12 @@ describe("account page shell", () => {
     const html = accountHtml();
 
     expect(html).toContain("oauthLoginOpening: false");
+    expect(html).toContain("oauthPopupActive: false");
     expect(html).toContain("function setOauthButtonsLoading");
     expect(html).toContain("function resetCancelledOauth");
+    expect(html).toContain("if (!state.oauthLoginOpening || state.oauthPopupActive)");
+    expect(html).toContain("state.oauthPopupActive = true;");
+    expect(html).toContain("state.oauthPopupActive = false;");
     expect(html).toContain("MelbBeerBusiness.clearPendingLegalAcceptance();");
     expect(html).toContain("Secure Google login was cancelled. Try again when you are ready.");
     expect(html).toContain('window.addEventListener("pageshow", () => resetCancelledOauth())');
@@ -1573,7 +2068,7 @@ describe("account page shell", () => {
     expect(html).toContain('callbackFlowState?.kind !== "oauth"');
     expect(html).toContain("callbackFlowNonce = callbackFlowState?.nonce || MelbBeerBusiness.createAuthFlowNonce()");
     expect(html).not.toContain("callbackFlowNonce = isRecoveryResult");
-    expect(html).toContain("client.auth.setSession({");
+    expect(html).toContain("MelbBeerBusiness.setSupabaseMemorySession(");
     expect(html).toContain("data.session.refresh_token");
     expect(html).toContain("authFlowNonce: callbackAuthFlowNonce()");
     expect(html).toContain("authFlowNonce,");
@@ -1585,6 +2080,9 @@ describe("account page shell", () => {
     expect(html).toContain('MelbBeerBusiness.apiFetch("/api/business/auth/logout"');
     expect(html).toContain("MelbBeerBusiness.setAccountContext(null)");
     expect(html).toContain("Sign-in cancelled. No policy choices were saved.");
+    expect(html).toContain("function showCallbackSessionClearFailure");
+    expect(html).toContain("could not confirm that the browser session cookie was cleared");
+    expect(html).not.toContain('}).catch(() => null);\n      const clients = [');
     expect(html).toContain("function needsFirstAccountAcceptance");
     expect(html).toContain("showCallbackAcceptance();");
     expect(html).toContain("MelbBeerBusiness.setPendingLegalAcceptanceForCurrentSession({");
@@ -1594,6 +2092,30 @@ describe("account page shell", () => {
     expect(html).toContain('result.account?.role === "venue_manager"');
     expect(html).toContain("MelbBeerBusiness.isVenuePortalReturnPath(venueReturnPath)");
     expect(html).toContain("MelbBeerBusiness.consumeSensitiveAuthReturnPath()");
+    expect(html).toContain("function scrubCallbackCredentials");
+    expect(html).toContain("pintpath:oauth-session");
+    expect(html).toContain('callbackFlowState?.kind === "browser_email_reauthentication"');
+    expect(html).toContain('credentialCeremony: "browser_email_otp_v1"');
+    expect(html).toContain('["magiclink", "email"].includes(callbackType)');
+    expect(html).toContain("await MelbBeerBusiness.setSupabaseMemorySession(callbackProviderSession)");
+    const liveCallbackSession = htmlBetween(
+      html,
+      "async function currentCallbackProviderSession",
+      "function setCallbackBillingRecoveryTargets",
+    );
+    expect(liveCallbackSession).toContain("MelbBeerBusiness.getLiveSupabaseProviderSession(");
+    expect(liveCallbackSession).not.toContain("return callbackProviderSession");
+    const popupCompletion = htmlBetween(
+      html,
+      "async function finishCallbackLogin",
+      'window.addEventListener("DOMContentLoaded"',
+    );
+    expect(popupCompletion).toContain("const liveProviderSession = await currentCallbackProviderSession()");
+    expect(popupCompletion).toContain("accessToken: liveProviderSession.access_token");
+    expect(popupCompletion).toContain("refreshToken: liveProviderSession.refresh_token");
+    expect(popupCompletion).not.toContain("accessToken: callbackProviderSession.access_token");
+    expect(html).toContain('id="callbackPasswordRecoveryForm"');
+    expect(html).toContain('window.history.replaceState({}, "", "/reset-password.html?mode=update")');
     expect(html).not.toContain("If this takes more than a moment");
     expect(html).not.toContain("service_role");
 
@@ -1601,7 +2123,72 @@ describe("account page shell", () => {
     expect(callbackCleanupIndex).toBeGreaterThan(
       html.indexOf('throw new Error("No secure sign-in result was returned.'),
     );
-    expect(callbackCleanupIndex).toBeLessThan(html.indexOf("await finishCallbackLogin(callbackAuthFlowNonce())"));
+    expect(callbackCleanupIndex).toBeLessThan(html.lastIndexOf("await finishCallbackLogin(callbackAuthFlowNonce())"));
+  });
+
+  it("finishes email-OTP logout-all in the callback without a redirect or provider-session leak", () => {
+    const html = callbackHtml();
+    const logoutContinuation = htmlBetween(
+      html,
+      "async function continueCallbackLogoutAll",
+      "async function confirmCallbackMfaEnrollment",
+    );
+
+    expect(logoutContinuation).toContain("const liveProviderSession = await currentCallbackProviderSession()");
+    expect(logoutContinuation).toContain('MelbBeerBusiness.apiFetch("/api/business/auth/logout-all"');
+    expect(logoutContinuation).toContain("{ accessToken: liveProviderSession.access_token }");
+    expect(logoutContinuation).not.toContain("sensitiveApiFetch");
+    expect(logoutContinuation).toContain("result?.providerSessionsRevoked === false");
+    expect(logoutContinuation).toContain("await clearCallbackProviderMemoryAfterLogout()");
+    expect(htmlBetween(
+      html,
+      "async function clearCallbackProviderMemoryAfterLogout",
+      "async function continueCallbackLogoutAll",
+    )).toContain('broadcastAuthInvalidation?.("logout_all")');
+    expect(logoutContinuation).toContain("Retry log out all sessions");
+    expect(logoutContinuation).not.toContain("replaceWithSafeReturnPath");
+    expect(logoutContinuation).not.toContain("window.location");
+    expect(html).toContain('const hasCallbackLocalContinuation = sensitiveEmailPurpose === "logout_all"');
+  });
+
+  it("keeps first-factor authenticator enrollment in the email callback and never broadcasts its provider token", () => {
+    const html = callbackHtml();
+    const sessionContinuation = htmlBetween(
+      html,
+      "async function continueCallbackSessionManagement",
+      "function showSensitiveEmailContinuationFailure",
+    );
+    const enrollmentVerification = htmlBetween(
+      html,
+      "async function confirmCallbackMfaEnrollment",
+      "async function continueCallbackSessionManagement",
+    );
+    const callbackCompletion = htmlBetween(
+      html,
+      "async function finishCallbackLogin",
+      'window.addEventListener("DOMContentLoaded"',
+    );
+
+    expect(sessionContinuation).toContain("await currentCallbackProviderSession()");
+    expect(sessionContinuation).toContain("client.auth.mfa.listFactors()");
+    expect(sessionContinuation).toContain("client.auth.mfa.unenroll({ factorId: factor.id })");
+    expect(sessionContinuation).toContain("client.auth.mfa.enroll({");
+    expect(sessionContinuation).toContain('factorType: "totp"');
+    expect(sessionContinuation).toContain("callbackMfaEnrollmentFactorId = enrollment.id");
+    expect(sessionContinuation).toContain("no authenticator change was made");
+    expect(sessionContinuation).not.toContain("replaceWithSafeReturnPath");
+    expect(enrollmentVerification).toContain("client.auth.mfa.challengeAndVerify({ factorId, code })");
+    expect(enrollmentVerification).toContain('reauthPurpose: "session_management"');
+    expect(enrollmentVerification).toContain("preserveAuthIdentityProvider: true");
+    expect(enrollmentVerification).toContain("await currentCallbackProviderSession()");
+    expect(enrollmentVerification).not.toContain("sendPopupBridgeMessage");
+    expect(enrollmentVerification).not.toContain("BroadcastChannel");
+    expect(callbackCompletion.indexOf('emailReauthenticationPurpose === "session_management"'))
+      .toBeLessThan(callbackCompletion.indexOf("if (callbackPopupState)"));
+    expect(callbackCompletion).toContain('callbackFlowState?.continuation === "mfa_management"');
+    expect(callbackCompletion).not.toContain('if (emailReauthenticationPurpose === "session_management") {');
+    expect(html).toContain('{ reauthPurpose: callbackPopupState.purpose }');
+    expect(html).toContain('callbackFlowState?.kind === "browser_email_reauthentication"\n        ? null');
   });
 
   it("keeps email signup acceptance through immediate, confirmed-email, and cross-device flows", () => {
@@ -1668,15 +2255,28 @@ describe("account page shell", () => {
         persistSession: true,
         autoRefreshToken: false,
         detectSessionInUrl: false,
-        storageKey: "pintPathSupabaseOAuth",
+        storageKey: "",
       },
     });
+    expect(harness.createdClientOptions[0]).toHaveProperty("auth.storage.getItem", expect.any(Function));
+    expect(harness.createdClientOptions[0]).toHaveProperty("auth.storage.setItem", expect.any(Function));
     expect(JSON.parse(harness.localStorage.get("pintPathAuthFlow") || "{}")).toMatchObject({
       nonce: "test-uuid",
       returnTo: "/submit.html",
       kind: "oauth",
     });
     expect(JSON.parse(harness.localStorage.get("pintPathAuthFlow") || "{}")).not.toHaveProperty("provider");
+
+    await harness.helpers.signInWithOAuth("google", {
+      returnTo: "/account.html",
+      reauthPurpose: "billing_portal",
+    });
+    expect(JSON.parse(harness.localStorage.get("pintPathAuthFlow") || "{}")).toMatchObject({
+      kind: "oauth",
+      reauthPurpose: "billing_portal",
+    });
+    expect(callbackHtml()).toContain("callbackFlowState?.reauthPurpose");
+    expect(businessJs()).toContain("!accessToken && !hasCurrentBrowserReauthenticationPurpose(purpose)");
   });
 
   it("clears consent when Supabase rejects email signup or OAuth before redirect", async () => {
@@ -1844,7 +2444,10 @@ describe("account page shell", () => {
     }));
     await returningHarness.helpers.syncSupabaseSession({ applyPendingLegalAcceptance: true });
     const syncRequest = returningHarness.requests.find((request) => request.path === "/api/business/auth/supabase-session");
-    expect(syncRequest?.body).toEqual({ accessToken: "provider-access-token" });
+    expect(syncRequest?.body).toEqual({
+      accessToken: "provider-access-token",
+      credentialCeremony: "browser_memory_v1",
+    });
     expect(returningHarness.localStorage.has("pintPathLegalAcceptance")).toBe(false);
   });
 
@@ -2052,9 +2655,17 @@ describe("account page shell", () => {
     expect(html).toContain("{ allowOptionalPromotion: true }");
     expect(html).toContain("expectedUpdatedAt: state.accountData?.preferences?.updatedAt || null");
     expect(html).toContain("state.accountData.preferences = result.preferences || {}");
-    expect(html).toContain("/api/business/auth/logout-all");
-    expect(html).toContain("await supabaseClient.auth.getSession()");
-    expect(html).toContain("JSON.stringify(accessToken ? { accessToken } : {})");
+    const logoutAllHandler = htmlBetween(
+      html,
+      '$("logoutAllButton").addEventListener',
+      '$("startMfaButton").addEventListener',
+    );
+    expect(logoutAllHandler).toContain("/api/business/auth/logout-all");
+    expect(logoutAllHandler).toContain('ensureSupabaseSessionForPurpose("logout_all"');
+    expect(logoutAllHandler).toContain("requireProviderSession: true");
+    expect(logoutAllHandler).toContain("await supabaseClient?.auth.getSession()");
+    expect(logoutAllHandler).toContain("{ accessToken: providerAccessToken }");
+    expect(logoutAllHandler).not.toContain('body: "{}"');
     expect(html).toContain('auth.signOut({ scope: "local" })');
     expect(html).toContain("/community.html");
     expect(css).toContain(".accountSecurityPanel");
@@ -2098,7 +2709,12 @@ describe("account page shell", () => {
     expect(mfaLoader).toContain("const requestedContext = captureAccountUiContext()");
     expect(mfaLoader).toContain("requestId !== mfaStateRequestId || !isAccountUiContextCurrent(requestedContext)");
     expect(accountLoader).toContain("requestId !== refreshAccountRequestId || !isAccountUiContextCurrent(requestedContext)");
-    expect(logout).toContain('showLoggedOut("Logging out securely...")');
+    expect(logout).toContain('MelbBeerBusiness.setStatus($("dashboardStatus"), "Logging out securely...")');
+    expect(logout.indexOf('/api/business/auth/logout')).toBeLessThan(
+      logout.indexOf('broadcastAuthInvalidation("logout")'),
+    );
+    expect(logout).toContain("This device may still be signed in");
+    expect(logout).toContain('$("logoutButton").disabled = false');
     expect(logout).toContain("if (!isAccountUiContextCurrent(requestedContext)) return;");
     expect(html).toContain("const authFlowId = ++state.authFlowEpoch;");
     expect(html).toContain("if (authFlowId !== state.authFlowEpoch) return;");

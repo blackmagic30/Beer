@@ -1048,13 +1048,21 @@ list, candidate freeze is blocked.
 
 - [ ] Site URL and exact HTTPS web callback for OAuth, email confirmation, and password recovery verified. The first-release iOS app has no custom URL callback; after completing an email link in the browser, the user returns to the app and signs in.
 - [ ] Email confirmation and custom SMTP tested.
+- [ ] Browser sensitive-action email reauthentication tested with the exact
+      account-derived email, `shouldCreateUser:false`, the active app cookie,
+      exact purpose, ten-minute challenge expiry, replay denial, and AAL2 when
+      any verified provider factor exists. Prove an OAuth-only account remains
+      the same Supabase user and is never silently converted into a password
+      account.
 - [ ] Native Google and Apple providers absent from the first-release archive.
 - [ ] Starting with an existing Google-only web account, use the approved email
       recovery/set-password path, then sign in on iOS and prove the same Supabase
       user ID and Pint Path account/public ID are retained. Reject any duplicate
       identity/account result and test an email-collision attempt explicitly.
 - [ ] Leaked-password protection enabled.
-- [ ] Admin MFA/AAL2 enforced.
+- [ ] Admin MFA/AAL2 enforced, including a live service-role factor-list check
+      that denies stale app-side AAL2 after the final factor is removed and
+      fails closed when Supabase factor authority is unavailable.
 - [ ] Every exposed table has explicit grants and RLS.
 - [ ] Storage policies deny source evidence to public clients.
 - [ ] Capture a short-lived Supabase access JWT before deleting a sacrificial
@@ -2208,7 +2216,7 @@ the release gate while the closeout route is absent.
 
 ### 17.3 Run strict authenticated evidence through the protected environment
 
-Create a fresh, one-use MFA/AAL2 admin smoke token only after the production-environment reviewer is ready. Enter it interactively into the protected environment; never print or pass it on a command line:
+Create a fresh, one-use MFA/AAL2 admin app-cookie credential only after the production-environment reviewer is ready, using the exact cookie-only exchange procedure in `docs/external-launch-signoffs.md`. Enter its raw cookie value interactively into the protected environment; never print or pass it on a command line. The compatibility secret name remains `PINTPATH_SMOKE_ADMIN_TOKEN`, but the smoke script transports that value only in `Cookie: pint_path_session=...`, never in `Authorization`:
 
 ```bash
 gh secret set PINTPATH_SMOKE_ADMIN_TOKEN --env production
@@ -2236,7 +2244,7 @@ The **Pint Path Release Gate** must:
 - run the public production smoke and require `/health` and `/ready`;
 - match the live deployment SHA and exact launch-flag state;
 - run public and authenticated user, venue, and admin smoke;
-- revoke temporary direct smoke sessions;
+- revoke temporary cookie-backed smoke sessions;
 - enforce the immutable strict data values;
 - execute `npm run release:evidence:strict` and enforce the web-and-iOS release evidence;
 - upload the sealed-variable/mutation-boundary, data, role-smoke, evidence, and tested-SHA artifacts.

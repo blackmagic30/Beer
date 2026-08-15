@@ -17,6 +17,15 @@ data class PendingOAuthState(
 )
 
 class SessionStore(context: Context) {
+    private companion object {
+        const val COOKIE_CREDENTIAL_PREFIX = "cookie-v1:"
+        const val LOCAL_BEARER_CREDENTIAL_PREFIX = "local-bearer-v1:"
+        val SESSION_COOKIE_VALUE_PATTERN = Regex(
+            "^(?:[A-Za-z0-9_-]{43}|credential-v1\\.(?:session_management|account_export|account_deletion|billing_portal|venue_billing_portal|logout_all)\\.[1-9][0-9]{0,10}\\.[A-Za-z0-9_-]{43})$"
+        )
+        val LEGACY_BEARER_PATTERN = Regex("^[A-Za-z0-9_-]{43}$")
+    }
+
     private val preferences = context.getSharedPreferences("beermap_session", Context.MODE_PRIVATE)
     private val keyAlias = "au.pintpath.beermap.session.aes"
 
@@ -36,6 +45,37 @@ class SessionStore(context: Context) {
         saveEncrypted("bearer_token", token)
         preferences.edit().remove("bearer_token").commit()
     }
+
+    fun saveSessionCookie(value: String): Boolean {
+        if (!SESSION_COOKIE_VALUE_PATTERN.matches(value)) return false
+        saveToken("$COOKIE_CREDENTIAL_PREFIX$value")
+        return true
+    }
+
+    fun cookieValue(credential: String): String? {
+        if (!credential.startsWith(COOKIE_CREDENTIAL_PREFIX)) return null
+        return credential.removePrefix(COOKIE_CREDENTIAL_PREFIX)
+            .takeIf(SESSION_COOKIE_VALUE_PATTERN::matches)
+    }
+
+    fun saveLocalBearerToken(value: String): Boolean {
+        if (!LEGACY_BEARER_PATTERN.matches(value)) return false
+        saveToken("$LOCAL_BEARER_CREDENTIAL_PREFIX$value")
+        return true
+    }
+
+    fun localBearerToken(credential: String): String? {
+        if (!credential.startsWith(LOCAL_BEARER_CREDENTIAL_PREFIX)) return null
+        return credential.removePrefix(LOCAL_BEARER_CREDENTIAL_PREFIX)
+            .takeIf(LEGACY_BEARER_PATTERN::matches)
+    }
+
+    fun legacyBearerToken(credential: String): String? = credential
+        .takeUnless {
+            it.startsWith(COOKIE_CREDENTIAL_PREFIX) ||
+                it.startsWith(LOCAL_BEARER_CREDENTIAL_PREFIX)
+        }
+        ?.takeIf(LEGACY_BEARER_PATTERN::matches)
 
     fun loadSupabaseRefreshToken(): String? = loadEncrypted("supabase_refresh_token")
 

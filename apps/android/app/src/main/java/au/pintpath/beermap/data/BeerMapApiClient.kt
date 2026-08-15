@@ -1,5 +1,6 @@
 package au.pintpath.beermap.data
 
+import android.util.Base64
 import au.pintpath.beermap.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -16,6 +17,7 @@ import java.util.Locale
 class ApiException(
     val status: Int,
     message: String,
+    val code: String? = null,
     val reauthenticationRequired: Boolean = false,
     val billingRecoveryEligible: Boolean = false,
     val billingRecoveryAccessToken: String? = null,
@@ -23,7 +25,10 @@ class ApiException(
     val billingRecoveryVenues: List<BillingRecoveryVenue> = emptyList(),
     val legalAcceptanceRequired: Boolean = false,
     val legalAcceptanceAccessToken: String? = null,
-    val legalAcceptanceRefreshToken: String? = null
+    val legalAcceptanceRefreshToken: String? = null,
+    val mfaStepUpRequired: Boolean = false,
+    val mfaAccessToken: String? = null,
+    val mfaRefreshToken: String? = null
 ) : IOException(message)
 
 internal data class SupabasePublicAuthConfiguration(
@@ -94,6 +99,7 @@ internal fun openNonRedirectingHttpConnection(url: URL): HttpURLConnection =
     }
 
 class BeerMapApiClient(
+    private val sessionStore: SessionStore,
     private val baseUrl: String = BuildConfig.PINT_PATH_API_BASE_URL
 ) {
     private companion object {
@@ -112,7 +118,7 @@ class BeerMapApiClient(
                 body = JSONObject().put("email", email).put("password", password)
             )
             return NativeAuthOutcome(
-                AuthResult(data.getString("token"), data.getJSONObject("account").toAccount()),
+                AuthResult(data.stringOrNull("token"), data.getJSONObject("account").toAccount()),
                 null,
                 null,
                 confirmationRequired = false
@@ -129,6 +135,15 @@ class BeerMapApiClient(
             NativeAuthOutcome(result, tokens.stringOrNull("refresh_token"), accessToken, confirmationRequired = false)
         } catch (error: ApiException) {
             when {
+                error.mfaStepUpRequired -> throw ApiException(
+                    error.status,
+                    error.message ?: "Enter the six-digit code from your authenticator app.",
+                    code = "MFA_STEP_UP_REQUIRED",
+                    reauthenticationRequired = true,
+                    mfaStepUpRequired = true,
+                    mfaAccessToken = accessToken,
+                    mfaRefreshToken = tokens.stringOrNull("refresh_token")
+                )
                 error.billingRecoveryEligible -> throw ApiException(
                     error.status,
                     error.message ?: "Account access is suspended. Billing-only recovery remains available.",
@@ -208,7 +223,20 @@ class BeerMapApiClient(
         )
         val accessToken = tokens.stringOrNull("access_token")
             ?: return NativeAuthOutcome(null, null, null, confirmationRequired = true)
-        val result = syncSupabase(accessToken, config, ageConfirmed, termsAccepted, privacyAccepted)
+        val result = try {
+            syncSupabase(accessToken, config, ageConfirmed, termsAccepted, privacyAccepted)
+        } catch (error: ApiException) {
+            if (!error.mfaStepUpRequired) throw error
+            throw ApiException(
+                error.status,
+                error.message ?: "Enter the six-digit code from your authenticator app.",
+                code = "MFA_STEP_UP_REQUIRED",
+                reauthenticationRequired = true,
+                mfaStepUpRequired = true,
+                mfaAccessToken = accessToken,
+                mfaRefreshToken = tokens.stringOrNull("refresh_token")
+            )
+        }
         return NativeAuthOutcome(result, tokens.stringOrNull("refresh_token"), accessToken, confirmationRequired = false)
     }
 
@@ -223,7 +251,20 @@ class BeerMapApiClient(
             config = config
         )
         val accessToken = tokens.stringOrNull("access_token") ?: throw IOException("Your session could not be refreshed.")
-        val result = syncSupabase(accessToken, config, null, null, null, existingAppToken)
+        val result = try {
+            syncSupabase(accessToken, config, null, null, null, existingAppToken)
+        } catch (error: ApiException) {
+            if (!error.mfaStepUpRequired) throw error
+            throw ApiException(
+                error.status,
+                error.message ?: "Enter the six-digit code from your authenticator app.",
+                code = "MFA_STEP_UP_REQUIRED",
+                reauthenticationRequired = true,
+                mfaStepUpRequired = true,
+                mfaAccessToken = accessToken,
+                mfaRefreshToken = tokens.stringOrNull("refresh_token") ?: refreshToken
+            )
+        }
         return NativeAuthOutcome(result, tokens.stringOrNull("refresh_token"), accessToken, confirmationRequired = false)
     }
 
@@ -255,6 +296,28 @@ class BeerMapApiClient(
         )
     }
 
+    suspend fun completeMfaSession(
+        accessToken: String,
+        refreshToken: String?,
+        config: JSONObject,
+        ageConfirmed: Boolean? = null,
+        termsAccepted: Boolean? = null,
+        privacyAccepted: Boolean? = null,
+        existingAppToken: String? = null,
+        reauthPurpose: String? = null
+    ): NativeAuthOutcome {
+        val result = syncSupabase(
+            accessToken,
+            config,
+            ageConfirmed,
+            termsAccepted,
+            privacyAccepted,
+            existingAppToken,
+            reauthPurpose
+        )
+        return NativeAuthOutcome(result, refreshToken, accessToken, confirmationRequired = false)
+    }
+
     suspend fun requestPasswordReset(email: String, config: JSONObject) {
         supabaseRequest(
             path = "/auth/v1/recover",
@@ -269,63 +332,171 @@ class BeerMapApiClient(
         supabaseRequest("/auth/v1/logout?scope=local", JSONObject(), config, accessToken)
     }
 
+    suspend fun verifiedSupabaseTotpFactors(
+        accessToken: String,
+        config: JSONObject
+    ): List<SupabaseMfaFactor> {
+        val binding = supabaseTokenBinding(accessToken)
+        val user = supabaseRequest(
+            path = "/auth/v1/user",
+            body = JSONObject(),
+            config = config,
+            accessToken = accessToken,
+            method = "GET"
+        )
+        if (user.stringOrNull("id") != binding.userId) {
+            throw IOException("The authenticator belongs to a different provider session. Sign in again.")
+        }
+        return user.optJSONArray("factors")?.objects().orEmpty().mapNotNull { factor ->
+            val id = factor.stringOrNull("id")
+            val type = factor.stringOrNull("factor_type")
+            val status = factor.stringOrNull("status")
+            if (id.isNullOrBlank() || type != "totp" || status != "verified") null
+            else SupabaseMfaFactor(id, factor.stringOrNull("friendly_name"))
+        }
+    }
+
+    suspend fun challengeAndVerifySupabaseMfa(
+        accessToken: String,
+        refreshToken: String?,
+        factorId: String,
+        code: String,
+        config: JSONObject
+    ): SupabaseAuthTokens {
+        val normalizedCode = code.trim()
+        require(Regex("^[0-9]{6}$").matches(normalizedCode)) {
+            "Enter the six-digit code from your authenticator app."
+        }
+        val originalBinding = supabaseTokenBinding(accessToken)
+        val verifiedFactors = verifiedSupabaseTotpFactors(accessToken, config)
+        if (!Regex("^[A-Za-z0-9_-]{1,128}$").matches(factorId) || verifiedFactors.none { it.id == factorId }) {
+            throw IOException("That verified authenticator is no longer available. Sign in again.")
+        }
+        val challenge = supabaseRequest(
+            path = "/auth/v1/factors/$factorId/challenge",
+            body = JSONObject(),
+            config = config,
+            accessToken = accessToken
+        )
+        val challengeId = challenge.stringOrNull("id")
+            ?: throw IOException("The sign-in provider did not create an authenticator challenge.")
+        val verified = supabaseRequest(
+            path = "/auth/v1/factors/$factorId/verify",
+            body = JSONObject().put("challenge_id", challengeId).put("code", normalizedCode),
+            config = config,
+            accessToken = accessToken
+        )
+        val upgradedAccessToken = verified.stringOrNull("access_token")
+            ?: throw IOException("The sign-in provider did not return an upgraded session.")
+        val upgradedBinding = supabaseTokenBinding(upgradedAccessToken)
+        if (
+            upgradedBinding.userId != originalBinding.userId ||
+            upgradedBinding.sessionId != originalBinding.sessionId ||
+            upgradedBinding.aal != "aal2"
+        ) {
+            throw IOException("Authenticator verification did not upgrade this exact provider session. Sign in again.")
+        }
+        return SupabaseAuthTokens(
+            accessToken = upgradedAccessToken,
+            refreshToken = verified.stringOrNull("refresh_token") ?: refreshToken
+        )
+    }
+
     private suspend fun syncSupabase(
         accessToken: String,
         config: JSONObject,
         ageConfirmed: Boolean?,
         termsAccepted: Boolean?,
         privacyAccepted: Boolean?,
-        existingAppToken: String? = null
+        existingAppToken: String? = null,
+        reauthPurpose: String? = null
     ): AuthResult {
         val hasCompleteConsent = ageConfirmed == true && termsAccepted == true && privacyAccepted == true
-        val data = request(
-            path = "/api/business/auth/supabase-session",
-            method = "POST",
-            body = JSONObject().apply {
-                put("accessToken", accessToken)
-                if (hasCompleteConsent) {
-                    val policyVersion = requiredLegalPolicyVersion(config)
-                    put("ageConfirmed", true)
-                    put("termsAccepted", true)
-                    put("privacyAccepted", true)
-                    put("termsVersion", policyVersion)
-                    put("privacyVersion", policyVersion)
-                    put("consentSource", "android")
-                }
-            },
-            token = existingAppToken
-        )
-        return AuthResult(data.getString("token"), data.getJSONObject("account").toAccount())
+        val body = JSONObject().apply {
+            put("accessToken", accessToken)
+            if (!reauthPurpose.isNullOrBlank()) {
+                put("credentialCeremony", "native_memory_v1")
+                put("reauthPurpose", reauthPurpose)
+            }
+            if (hasCompleteConsent) {
+                val policyVersion = requiredLegalPolicyVersion(config)
+                put("ageConfirmed", true)
+                put("termsAccepted", true)
+                put("privacyAccepted", true)
+                put("termsVersion", policyVersion)
+                put("privacyVersion", policyVersion)
+                put("consentSource", "android")
+            }
+        }
+        val data = try {
+            request(
+                path = "/api/business/auth/supabase-session",
+                method = "POST",
+                body = body,
+                token = existingAppToken,
+                nativeReauthenticationClient = !reauthPurpose.isNullOrBlank()
+            )
+        } catch (error: ApiException) {
+            if (reauthPurpose != null || error.code != "PROVIDER_GLOBAL_REVOCATION_PENDING") throw error
+            val recovery = request(
+                path = "/api/business/auth/provider-global-signout-resume",
+                method = "POST",
+                body = JSONObject().put("accessToken", accessToken)
+            )
+            if (!recovery.optBoolean("providerSessionsRevoked", false)) throw error
+            sessionStore.clearToken()
+            throw ApiException(
+                401,
+                "Security cleanup is complete. Wait one minute, then sign in again.",
+                code = "PROVIDER_GLOBAL_REVOCATION_COMPLETED"
+            )
+        }
+        // Hosted provider exchanges are cookie-only. Even if a future server
+        // regression adds a JSON token, never let that value replace the
+        // platform-protected Set-Cookie credential with a bearer credential.
+        return AuthResult(null, data.getJSONObject("account").toAccount())
     }
+
+    suspend fun reauthenticateSupabaseSession(
+        accessToken: String,
+        purpose: String,
+        config: JSONObject,
+        existingAppToken: String
+    ): AuthResult = syncSupabase(
+        accessToken,
+        config,
+        null,
+        null,
+        null,
+        existingAppToken,
+        purpose
+    )
 
     suspend fun logout(token: String) {
         request("/api/business/auth/logout", method = "POST", body = JSONObject(), token = token)
     }
 
-    suspend fun logoutAll(accessToken: String, token: String) {
+    suspend fun logoutAll(accessToken: String, token: String): Boolean =
         request(
             "/api/business/auth/logout-all",
             method = "POST",
             body = JSONObject().apply {
                 if (!accessToken.isNullOrBlank()) put("accessToken", accessToken)
             },
-            token = token,
-            reauthenticationToken = accessToken
-        )
-    }
+            token = token
+        ).optBoolean("providerSessionsRevoked", false)
 
     suspend fun account(token: String): AccountDashboard =
         request("/api/business/account", token = token).toAccountDashboard()
 
-    suspend fun accountSessions(token: String, reauthenticationToken: String): List<AccountSession> {
+    suspend fun accountSessions(token: String): List<AccountSession> {
         val pageSize = 100
         var offset = 0L
         val sessions = linkedMapOf<String, AccountSession>()
         while (true) {
             val response = request(
                 "/api/business/account/sessions?limit=$pageSize&offset=$offset",
-                token = token,
-                reauthenticationToken = reauthenticationToken
+                token = token
             )
             val page = response.optJSONArray("sessions")?.objects()?.map { it.toAccountSession() }.orEmpty()
             page.forEach { sessions.putIfAbsent(it.id, it) }
@@ -342,12 +513,12 @@ class BeerMapApiClient(
         return sessions.values.toList()
     }
 
-    suspend fun revokeAccountSession(sessionId: String, token: String, reauthenticationToken: String) {
-        request("/api/business/account/sessions/${encode(sessionId)}", method = "DELETE", body = JSONObject(), token = token, reauthenticationToken = reauthenticationToken)
+    suspend fun revokeAccountSession(sessionId: String, token: String) {
+        request("/api/business/account/sessions/${encode(sessionId)}", method = "DELETE", body = JSONObject(), token = token)
     }
 
-    suspend fun accountExport(token: String, reauthenticationToken: String): JSONObject =
-        request("/api/business/account/export", token = token, reauthenticationToken = reauthenticationToken)
+    suspend fun accountExport(token: String): JSONObject =
+        request("/api/business/account/export", token = token)
 
     suspend fun savePrivacy(settings: PrivacySettings, token: String): PrivacySettings =
         request(
@@ -368,13 +539,12 @@ class BeerMapApiClient(
             )
         }
 
-    suspend fun requestAccountDeletion(token: String, reauthenticationToken: String) {
+    suspend fun requestAccountDeletion(token: String) {
         request(
             path = "/api/business/account/delete-request",
             method = "POST",
             body = JSONObject().put("message", "Self-service deletion review requested from the Android app."),
-            token = token,
-            reauthenticationToken = reauthenticationToken
+            token = token
         )
     }
 
@@ -383,13 +553,12 @@ class BeerMapApiClient(
             .optJSONObject("request")
             ?.toAccountDeletionStatus()
 
-    suspend fun cancelAccountDeletion(requestId: String, token: String, reauthenticationToken: String) {
+    suspend fun cancelAccountDeletion(requestId: String, token: String) {
         request(
             "/api/business/account/delete-request/${encode(requestId)}",
             method = "DELETE",
             body = JSONObject(),
-            token = token,
-            reauthenticationToken = reauthenticationToken
+            token = token
         )
     }
 
@@ -791,7 +960,7 @@ class BeerMapApiClient(
             connectTimeout = 15_000
             readTimeout = 20_000
             setRequestProperty("Accept", if (format == "csv") "text/csv" else "application/json")
-            setRequestProperty("Authorization", "Bearer $token")
+            applySessionCredential(this, token, allowLegacyUpgrade = false)
         }
         val status = connection.responseCode
         val stream = if (status in 200..299) connection.inputStream else connection.errorStream
@@ -840,8 +1009,8 @@ class BeerMapApiClient(
         method: String = "GET",
         body: JSONObject? = null,
         token: String? = null,
-        reauthenticationToken: String? = null,
-        readTimeoutMs: Int = 20_000
+        readTimeoutMs: Int = 20_000,
+        nativeReauthenticationClient: Boolean = false
     ): JSONObject = withContext(Dispatchers.IO) {
         val url = URL(effectiveApiBaseUrl() + path)
         val connection = openNonRedirectingHttpConnection(url).apply {
@@ -850,9 +1019,18 @@ class BeerMapApiClient(
             readTimeout = readTimeoutMs
             setRequestProperty("Accept", "application/json")
             setRequestProperty("User-Agent", "PintPath Android/1.0.0")
-            if (!token.isNullOrBlank()) setRequestProperty("Authorization", "Bearer $token")
-            if (!reauthenticationToken.isNullOrBlank()) {
-                setRequestProperty("X-Pint-Path-Reauth-Token", reauthenticationToken)
+            if (nativeReauthenticationClient) {
+                require(path == "/api/business/auth/supabase-session") {
+                    "Native reauthentication headers are restricted to the provider exchange."
+                }
+                setRequestProperty("Sec-Pint-Path-Client", "android-native-v1")
+            }
+            if (!token.isNullOrBlank()) {
+                applySessionCredential(
+                    this,
+                    token,
+                    allowLegacyUpgrade = path == "/api/business/auth/supabase-session"
+                )
             }
             if (body != null) {
                 doOutput = true
@@ -902,17 +1080,20 @@ class BeerMapApiClient(
                     normalizedMessage.contains("fresh provider sign-in") ||
                     normalizedMessage.contains("recent sign-in")
                 )
+            val requiresMfaStepUp = recoveryCode == "MFA_STEP_UP_REQUIRED"
             val requiresLegalAcceptance = status == 403 &&
                 normalizedMessage.contains("accept the current terms") &&
                 normalizedMessage.contains("privacy policy")
             throw ApiException(
                 status,
                 message,
+                code = recoveryCode,
                 reauthenticationRequired = requiresReauthentication,
                 billingRecoveryEligible = billingRecoveryEligible,
                 billingRecoveryConsumer = recovery == null || recovery.optBoolean("consumer", false),
                 billingRecoveryVenues = recoveryVenues,
-                legalAcceptanceRequired = requiresLegalAcceptance
+                legalAcceptanceRequired = requiresLegalAcceptance,
+                mfaStepUpRequired = requiresMfaStepUp
             )
         }
         val responsePayload = payload ?: throw IOException("The server returned an unreadable response.")
@@ -922,7 +1103,60 @@ class BeerMapApiClient(
                 ?: "Request failed ($status)."
             throw ApiException(status, message)
         }
-        responsePayload.optJSONObject("data") ?: JSONObject()
+        val responseData = responsePayload.optJSONObject("data") ?: JSONObject()
+        if (path == "/api/business/auth/supabase-session") {
+            val cookieValue = sessionCookieValue(connection, url)
+                ?: throw IOException("The secure session response did not contain one valid app cookie.")
+            if (!sessionStore.saveSessionCookie(cookieValue)) {
+                throw IOException("The secure session response contained an invalid app cookie.")
+            }
+        }
+        responseData
+    }
+
+    private fun applySessionCredential(
+        connection: HttpURLConnection,
+        credential: String,
+        allowLegacyUpgrade: Boolean
+    ) {
+        sessionStore.cookieValue(credential)?.let { cookieValue ->
+            connection.setRequestProperty("Cookie", "pint_path_session=$cookieValue")
+            return
+        }
+        sessionStore.localBearerToken(credential)?.let { bearerToken ->
+            connection.setRequestProperty("Authorization", "Bearer $bearerToken")
+            return
+        }
+        if (!allowLegacyUpgrade) return
+        sessionStore.legacyBearerToken(credential)?.let { bearerToken ->
+            // A pre-cookie hosted credential is sent only to the atomic
+            // Supabase exchange that replaces it with a tagged cookie.
+            connection.setRequestProperty("Authorization", "Bearer $bearerToken")
+        }
+    }
+
+    private fun sessionCookieValue(connection: HttpURLConnection, requestUrl: URL): String? {
+        val candidates = connection.headerFields.entries
+            .filter { (name, _) -> name?.equals("Set-Cookie", ignoreCase = true) == true }
+            .flatMap { it.value.orEmpty() }
+            .mapNotNull { header ->
+                val parts = header.split(';').map { it.trim() }
+                val separator = parts.firstOrNull()?.indexOf('=') ?: -1
+                if (separator <= 0) return@mapNotNull null
+                val name = parts.first().substring(0, separator)
+                if (name != "pint_path_session") return@mapNotNull null
+                val value = parts.first().substring(separator + 1)
+                val attributes = parts.drop(1)
+                val hasHttpOnly = attributes.any { it.equals("HttpOnly", ignoreCase = true) }
+                val hasSecure = attributes.any { it.equals("Secure", ignoreCase = true) }
+                val hasRootPath = attributes.any { it.equals("Path=/", ignoreCase = true) }
+                val hasLaxSameSite = attributes.any { it.equals("SameSite=Lax", ignoreCase = true) }
+                val hasDomain = attributes.any { it.startsWith("Domain=", ignoreCase = true) }
+                if (!hasHttpOnly || !hasRootPath || !hasLaxSameSite || hasDomain) return@mapNotNull null
+                if (requestUrl.protocol.equals("https", ignoreCase = true) && !hasSecure) return@mapNotNull null
+                value
+            }
+        return candidates.singleOrNull()
     }
 
     private fun hasSupabaseConfiguration(config: JSONObject): Boolean {
@@ -946,22 +1180,25 @@ class BeerMapApiClient(
         path: String,
         body: JSONObject,
         config: JSONObject,
-        accessToken: String? = null
+        accessToken: String? = null,
+        method: String = "POST"
     ): JSONObject = withContext(Dispatchers.IO) {
         val publicConfiguration = SupabasePublicAuthConfigurationResolver.resolve(config)
             ?: SupabasePublicAuthConfigurationResolver.unavailable()
         val connection = openNonRedirectingHttpConnection(URL(publicConfiguration.origin + path)).apply {
-            requestMethod = "POST"
+            requestMethod = method
             connectTimeout = 15_000
             readTimeout = 20_000
-            doOutput = true
             setRequestProperty("Accept", "application/json")
-            setRequestProperty("Content-Type", "application/json")
             setRequestProperty("apikey", publicConfiguration.publishableKey)
             if (!accessToken.isNullOrBlank() && accessToken != publicConfiguration.publishableKey) {
                 setRequestProperty("Authorization", "Bearer $accessToken")
             }
-            outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+            if (method != "GET") {
+                doOutput = true
+                setRequestProperty("Content-Type", "application/json")
+                outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+            }
         }
         val status = connection.responseCode
         val stream = if (status in 200..299) connection.inputStream else connection.errorStream
@@ -975,6 +1212,33 @@ class BeerMapApiClient(
             throw IOException(message)
         }
         payload ?: throw IOException("The sign-in provider returned an unreadable response.")
+    }
+
+    private data class SupabaseTokenBinding(
+        val userId: String,
+        val sessionId: String,
+        val aal: String
+    )
+
+    private fun supabaseTokenBinding(accessToken: String): SupabaseTokenBinding {
+        val segments = accessToken.split('.')
+        if (segments.size != 3) throw IOException("The sign-in provider returned an invalid session token.")
+        val payload = runCatching {
+            val decoded = Base64.decode(
+                segments[1],
+                Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING
+            )
+            JSONObject(String(decoded, Charsets.UTF_8))
+        }.getOrElse {
+            throw IOException("The sign-in provider returned an invalid session token.")
+        }
+        val userId = payload.stringOrNull("sub")
+        val sessionId = payload.stringOrNull("session_id")
+        val aal = payload.stringOrNull("aal")
+        if (userId.isNullOrBlank() || sessionId.isNullOrBlank() || aal.isNullOrBlank()) {
+            throw IOException("The sign-in provider returned an invalid session token.")
+        }
+        return SupabaseTokenBinding(userId, sessionId, aal)
     }
 
     private fun encode(value: String): String = URLEncoder.encode(value, Charsets.UTF_8.name())

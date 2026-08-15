@@ -5375,12 +5375,17 @@
         venueLogoutButton.disabled = true;
         try {
           await MelbBeerBusiness.apiFetch("/api/business/auth/logout", { method: "POST", body: "{}" });
-        } catch {
-          // Local logout is still useful if the server session already expired.
-        } finally {
           await MelbBeerBusiness.getSupabaseClient()?.auth.signOut({ scope: "local" }).catch(() => null);
+          MelbBeerBusiness.broadcastAuthInvalidation("venue_logout");
           MelbBeerBusiness.setAuthToken(null);
           window.location.assign("/account.html");
+        } catch (error) {
+          venueLogoutButton.disabled = false;
+          MelbBeerBusiness.setStatus(
+            portalAccess,
+            `Logout could not be completed. This venue session may still be active; check your connection and retry.${error?.message ? ` ${error.message}` : ""}`,
+            true,
+          );
         }
       });
 
@@ -5782,7 +5787,7 @@
           target.textContent = "Opening Stripe...";
           MelbBeerBusiness.setStatus(billingStatus, "Opening secure Stripe billing management...");
           try {
-            const result = await MelbBeerBusiness.apiFetch(`/api/business/venue-portal/${encodeURIComponent(selectedVenueId())}/billing/portal`, {
+            const result = await MelbBeerBusiness.sensitiveApiFetch(`/api/business/venue-portal/${encodeURIComponent(selectedVenueId())}/billing/portal`, {
               method: "POST",
               body: "{}",
             });

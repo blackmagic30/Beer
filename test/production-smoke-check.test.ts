@@ -17,6 +17,11 @@ interface SmokeSummary {
 }
 
 const validPublishableKey = `sb_publishable_${"0".repeat(32)}`;
+const appTokens = {
+  user: "u".repeat(43),
+  venue: "v".repeat(43),
+  admin: "a".repeat(43),
+} as const;
 
 function sendJson(response: ServerResponse, status: number, payload: unknown): void {
   response.writeHead(status, { "Content-Type": "application/json" });
@@ -76,6 +81,8 @@ describe("production smoke runtime authentication", () => {
   let providerSignIns: string[] = [];
   let providerSignOuts: string[] = [];
   let revokedTokens: string[] = [];
+  let exchangeCookieOverride: string[] | null = null;
+  let exchangeIncludesJsonToken = false;
 
   const server = createServer(async (request, response) => {
     const url = new URL(request.url || "/", baseUrl);
@@ -115,11 +122,24 @@ describe("production smoke runtime authentication", () => {
       const body = await requestJson(request);
       const accessToken = String(body.accessToken || "");
       const role = accessToken.replace(/^provider-/, "");
-      if (role !== "user" && role !== "venue") {
+      if (
+        (role !== "user" && role !== "venue") ||
+        Object.prototype.hasOwnProperty.call(body, "credentialCeremony")
+      ) {
         sendJson(response, 401, { ok: false });
         return;
       }
-      sendJson(response, 200, { ok: true, data: { token: `app-${role}` } });
+      const cookieHeaders = exchangeCookieOverride ?? [
+        `pint_path_session=${appTokens[role]}; Path=/; HttpOnly; SameSite=Lax`,
+      ];
+      if (cookieHeaders.length > 0) response.setHeader("Set-Cookie", cookieHeaders);
+      sendJson(response, 200, {
+        ok: true,
+        data: {
+          account: { id: role },
+          ...(exchangeIncludesJsonToken ? { token: appTokens[role] } : {}),
+        },
+      });
       return;
     }
     if (request.method === "POST" && url.pathname === "/auth/v1/logout") {
@@ -129,18 +149,18 @@ describe("production smoke runtime authentication", () => {
       return;
     }
 
-    const authorization = request.headers.authorization || "";
-    if (request.method === "GET" && url.pathname === "/api/business/account" && authorization === "Bearer app-user") {
+    const cookie = request.headers.cookie || "";
+    if (request.method === "GET" && url.pathname === "/api/business/account" && cookie === `pint_path_session=${appTokens.user}`) {
       sendJson(response, 200, { ok: true, data: { account: { id: "user" } } });
       return;
     }
-    if (request.method === "GET" && url.pathname === "/api/business/venue-portal" && authorization === "Bearer app-venue") {
+    if (request.method === "GET" && url.pathname === "/api/business/venue-portal" && cookie === `pint_path_session=${appTokens.venue}`) {
       sendJson(response, 200, { ok: true, data: { selectedVenue: { id: "venue" } } });
       return;
     }
     if (request.method === "GET" && url.pathname === "/api/business/admin/queues") {
       adminProtectedRequests += 1;
-      if (authorization === "Bearer app-admin") {
+      if (cookie === `pint_path_session=${appTokens.admin}`) {
         sendJson(response, 200, {
           ok: true,
           data: { feedback: [], wrongPriceReports: [], venueRequests: [], pagination: {}, totals: {} },
@@ -151,7 +171,7 @@ describe("production smoke runtime authentication", () => {
       return;
     }
     if (request.method === "POST" && url.pathname === "/api/business/auth/logout") {
-      const token = authorization.replace(/^Bearer /, "");
+      const token = cookie.replace(/^pint_path_session=/, "");
       revokedTokens.push(token);
       sendJson(response, 200, { ok: true, data: { revoked: true } });
       return;
@@ -178,6 +198,8 @@ describe("production smoke runtime authentication", () => {
     adminProtectedRequests = 0;
     providerPasswordRequests = 0;
     providerPasswordAuthorizationHeaders = [];
+    exchangeCookieOverride = null;
+    exchangeIncludesJsonToken = false;
   });
 
   afterAll(async () => {
@@ -276,14 +298,68 @@ describe("production smoke runtime authentication", () => {
     expect(providerPasswordRequests).toBe(2);
     expect(providerPasswordAuthorizationHeaders).toEqual([undefined, undefined]);
     expect(providerSignOuts).toEqual(["provider-user", "provider-venue"]);
-    expect(revokedTokens).toEqual(["app-user", "app-venue"]);
+    expect(revokedTokens).toEqual([appTokens.user, appTokens.venue]);
     expect(result.stdout).not.toContain("user-secret");
     expect(result.stdout).not.toContain("venue-secret");
   });
 
+  it.each([
+    { cookieHeaders: [] as string[] },
+    { cookieHeaders: [`pint_path_session=${appTokens.user}; Path=/; SameSite=Lax`] },
+    {
+      cookieHeaders: [
+        `pint_path_session=${appTokens.user}; Domain=127.0.0.1; Path=/; HttpOnly; SameSite=Lax`,
+      ],
+    },
+    {
+      cookieHeaders: [
+        `pint_path_session=${appTokens.user}; Path=/; HttpOnly; SameSite=Lax`,
+        `pint_path_session=${"z".repeat(43)}; Path=/; HttpOnly; SameSite=Lax`,
+      ],
+    },
+  ])("fails closed when the app exchange cookie is absent or malformed", async ({ cookieHeaders }) => {
+    exchangeCookieOverride = cookieHeaders;
+    const result = await runSmoke(baseUrl, ["--strict-auth", "--auth-only", "--roles=user"], {
+      PINTPATH_SMOKE_USER_EMAIL: "user-smoke@example.test",
+      PINTPATH_SMOKE_USER_PASSWORD: "user-secret",
+    });
+
+    expect(result.code).toBe(1);
+    expect((JSON.parse(result.stdout) as SmokeSummary).checks).toEqual([
+      expect.objectContaining({
+        id: "user_account",
+        status: "fail",
+        detail: "Pint Path session exchange did not return one exact host-only app session cookie",
+      }),
+    ]);
+    expect(providerSignOuts).toEqual(["provider-user"]);
+    expect(revokedTokens).toEqual([]);
+    expect(`${result.stdout}\n${result.stderr}`).not.toContain(appTokens.user);
+  });
+
+  it("rejects a JSON session credential even when the cookie is otherwise exact", async () => {
+    exchangeIncludesJsonToken = true;
+    const result = await runSmoke(baseUrl, ["--strict-auth", "--auth-only", "--roles=user"], {
+      PINTPATH_SMOKE_USER_EMAIL: "user-smoke@example.test",
+      PINTPATH_SMOKE_USER_PASSWORD: "user-secret",
+    });
+
+    expect(result.code).toBe(1);
+    expect((JSON.parse(result.stdout) as SmokeSummary).checks).toEqual([
+      expect.objectContaining({
+        id: "user_account",
+        status: "fail",
+        detail: "User smoke account Pint Path session exchange failed (HTTP 200)",
+      }),
+    ]);
+    expect(providerSignOuts).toEqual(["provider-user"]);
+    expect(revokedTokens).toEqual([appTokens.user]);
+    expect(`${result.stdout}\n${result.stderr}`).not.toContain(appTokens.user);
+  });
+
   it("uses and revokes the manually supplied MFA admin session without automating MFA", async () => {
     const result = await runSmoke(baseUrl, ["--strict-auth", "--auth-only", "--roles=admin"], {
-      PINTPATH_SMOKE_ADMIN_TOKEN: "app-admin",
+      PINTPATH_SMOKE_ADMIN_TOKEN: appTokens.admin,
       PINTPATH_REVOKE_DIRECT_SMOKE_TOKENS: "true",
     });
 
@@ -295,8 +371,8 @@ describe("production smoke runtime authentication", () => {
     expect(providerSignIns).toEqual([]);
     expect(providerPasswordRequests).toBe(0);
     expect(providerSignOuts).toEqual([]);
-    expect(revokedTokens).toEqual(["app-admin"]);
-    expect(result.stdout).not.toContain("app-admin");
+    expect(revokedTokens).toEqual([appTokens.admin]);
+    expect(result.stdout).not.toContain(appTokens.admin);
   });
 
   it("requires a manual MFA/AAL2 admin session instead of accepting admin password automation", async () => {
@@ -311,7 +387,7 @@ describe("production smoke runtime authentication", () => {
       expect.objectContaining({
         id: "admin_queues",
         status: "fail",
-        detail: "Set PINTPATH_SMOKE_ADMIN_TOKEN to a fresh MFA/AAL2 Pint Path session",
+        detail: "Set PINTPATH_SMOKE_ADMIN_TOKEN to one fresh MFA/AAL2 Pint Path cookie value",
       }),
     ]);
     expect(providerSignIns).toEqual([]);
@@ -457,7 +533,7 @@ describe("production smoke runtime authentication", () => {
     const rejectedKey = `sb_secret_${"s".repeat(32)}`;
     const result = await runSmoke(baseUrl, ["--strict-auth", "--auth-only", "--roles=admin"], {
       SUPABASE_ANON_KEY: rejectedKey,
-      PINTPATH_SMOKE_ADMIN_TOKEN: "app-admin",
+      PINTPATH_SMOKE_ADMIN_TOKEN: appTokens.admin,
       PINTPATH_REVOKE_DIRECT_SMOKE_TOKENS: "true",
     });
 
@@ -480,7 +556,7 @@ describe("production smoke runtime authentication", () => {
     const deployedKey = `sb_publishable_${"m".repeat(32)}`;
     publishedSupabaseAnonKey = deployedKey;
     const result = await runSmoke(baseUrl, ["--strict-auth", "--auth-only", "--roles=admin"], {
-      PINTPATH_SMOKE_ADMIN_TOKEN: "app-admin",
+      PINTPATH_SMOKE_ADMIN_TOKEN: appTokens.admin,
       PINTPATH_REVOKE_DIRECT_SMOKE_TOKENS: "true",
     });
 
@@ -496,7 +572,7 @@ describe("production smoke runtime authentication", () => {
     expect(adminProtectedRequests).toBe(0);
     expect(providerPasswordRequests).toBe(0);
     expect(revokedTokens).toEqual([]);
-    expect(`${result.stdout}\n${result.stderr}`).not.toContain("app-admin");
+    expect(`${result.stdout}\n${result.stderr}`).not.toContain(appTokens.admin);
     expect(`${result.stdout}\n${result.stderr}`).not.toContain(deployedKey);
   });
 

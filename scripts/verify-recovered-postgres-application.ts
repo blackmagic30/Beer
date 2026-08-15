@@ -17,6 +17,10 @@ import {
   type PostgresRailwayStockLocalhostCaTransport,
 } from "../src/lib/postgres-railway-stock-localhost-ca.js";
 import { redactKnownSecretValues } from "../src/lib/redact.js";
+import {
+  extractExactAppSessionCookie,
+  readSetCookieHeaders,
+} from "./lib/app-session-cookie.mjs";
 import { parseStrictArguments } from "./lib/strict-arguments.js";
 import { readTrustedRegularFile } from "./lib/trusted-filesystem.js";
 
@@ -276,6 +280,7 @@ interface ParsedAccessToken {
 interface BoundedHttpResponse {
   readonly status: number;
   readonly body: Buffer;
+  readonly setCookieHeaders: readonly string[];
 }
 
 interface CeremonyArguments {
@@ -2013,6 +2018,7 @@ async function fetchBoundedly(
       ...init,
       signal: controller.signal,
     });
+    const setCookieHeaders = readSetCookieHeaders(response.headers);
     const declaredLength = Number(response.headers.get("content-length"));
     if (
       Number.isFinite(declaredLength) &&
@@ -2021,7 +2027,9 @@ async function fetchBoundedly(
       fail("response_too_large");
     }
     reader = response.body?.getReader() ?? null;
-    if (!reader) return { status: response.status, body: Buffer.alloc(0) };
+    if (!reader) {
+      return { status: response.status, body: Buffer.alloc(0), setCookieHeaders };
+    }
     let total = 0;
     try {
       while (true) {
@@ -2039,7 +2047,7 @@ async function fetchBoundedly(
       }
       if (timedOut) throw new Error("bounded_http_timeout");
       const body = Buffer.concat(chunks, total);
-      return { status: response.status, body };
+      return { status: response.status, body, setCookieHeaders };
     } finally {
       for (const chunk of chunks) chunk.fill(0);
       chunks.length = 0;
@@ -3059,6 +3067,7 @@ export async function verifyRecoveredPostgresApplication(
   let child: ManagedRecoveryChild | null = null;
   let providerAccessToken: string | null = null;
   let appSessionToken: string | null = null;
+  let appSessionCookieHeader: string | null = null;
   let providerSessionId: string | null = null;
   let authSubject: string | null = null;
   let applicationReadyAt: string | null = null;
@@ -3194,10 +3203,13 @@ export async function verifyRecoveredPostgresApplication(
     proveCrossProjectTokenRejectedLocally(args.supabaseUrl, dependencies.now());
     await restoredAccount(runtimePool, authSubject, authEmail);
 
-    const exchange = await exactJsonRequest({
-      fetch: dependencies.fetch,
-      url: `${baseUrl}/api/business/auth/supabase-session`,
-      init: {
+    const exchangeUrl = `${baseUrl}/api/business/auth/supabase-session`;
+    let exchangeResponse: BoundedHttpResponse;
+    try {
+      exchangeResponse = await fetchBoundedly(
+        dependencies.fetch,
+        exchangeUrl,
+        {
         method: "POST",
         redirect: "error",
         headers: {
@@ -3205,17 +3217,38 @@ export async function verifyRecoveredPostgresApplication(
           Origin: baseUrl,
         },
         body: JSON.stringify({ accessToken: providerAccessToken }),
-      },
-      timeoutMs: args.requestTimeoutMs,
-      allowedStatuses: [200],
-      failureCode: "app_auth_exchange_failed",
-    });
+        },
+        args.requestTimeoutMs,
+      );
+    } catch {
+      fail("app_auth_exchange_failed");
+    }
+    if (exchangeResponse.status !== 200) {
+      discardBoundedResponse(exchangeResponse);
+      fail("app_auth_exchange_failed");
+    }
+    let appSession;
+    try {
+      appSession = extractExactAppSessionCookie(
+        exchangeResponse.setCookieHeaders,
+        exchangeUrl,
+      );
+    } catch {
+      fail("app_auth_exchange_failed");
+    }
+    appSessionToken = appSession.token;
+    appSessionCookieHeader = appSession.cookieHeader;
+    let exchange: unknown;
+    try {
+      exchange = readBoundedResponse(exchangeResponse);
+    } catch {
+      fail("app_auth_exchange_failed");
+    }
     if (
       !isRecord(exchange) ||
       exchange.ok !== true ||
       !isRecord(exchange.data) ||
-      typeof exchange.data.token !== "string" ||
-      exchange.data.token.length < 32 ||
+      Object.prototype.hasOwnProperty.call(exchange.data, "token") ||
       !isRecord(exchange.data.account) ||
       exchange.data.account.id !== authSubject ||
       exchange.data.account.role !== "user" ||
@@ -3223,7 +3256,6 @@ export async function verifyRecoveredPostgresApplication(
       exchange.data.counterStaffAssignments.length !== 0
     )
       fail("app_auth_exchange_failed");
-    appSessionToken = exchange.data.token;
 
     const accountPayload = await exactJsonRequest({
       fetch: dependencies.fetch,
@@ -3231,7 +3263,7 @@ export async function verifyRecoveredPostgresApplication(
       init: {
         method: "GET",
         redirect: "error",
-        headers: { Authorization: `Bearer ${appSessionToken}` },
+        headers: { Cookie: appSessionCookieHeader },
       },
       timeoutMs: args.requestTimeoutMs,
       allowedStatuses: [200],
@@ -3262,7 +3294,7 @@ export async function verifyRecoveredPostgresApplication(
       {
         method: "GET",
         redirect: "error",
-        headers: { Authorization: `Bearer ${appSessionToken}` },
+        headers: { Cookie: appSessionCookieHeader },
       },
       args.requestTimeoutMs,
     );
@@ -3275,7 +3307,7 @@ export async function verifyRecoveredPostgresApplication(
         method: "POST",
         redirect: "error",
         headers: {
-          Authorization: `Bearer ${appSessionToken}`,
+          Cookie: appSessionCookieHeader,
           "Content-Type": "application/json",
           Origin: baseUrl,
         },
@@ -3294,6 +3326,7 @@ export async function verifyRecoveredPostgresApplication(
     const cleanupFailures: unknown[] = [];
     if (
       appSessionToken &&
+      appSessionCookieHeader &&
       child &&
       child.exitCode === null &&
       child.signalCode === null
@@ -3307,7 +3340,7 @@ export async function verifyRecoveredPostgresApplication(
             method: "POST",
             redirect: "error",
             headers: {
-              Authorization: `Bearer ${appSessionToken}`,
+              Cookie: appSessionCookieHeader,
               Origin: baseUrl,
             },
           },
@@ -3328,7 +3361,7 @@ export async function verifyRecoveredPostgresApplication(
           {
             method: "GET",
             redirect: "error",
-            headers: { Authorization: `Bearer ${appSessionToken}` },
+            headers: { Cookie: appSessionCookieHeader },
           },
           args.requestTimeoutMs,
         );
@@ -3347,7 +3380,7 @@ export async function verifyRecoveredPostgresApplication(
       } catch (error) {
         cleanupFailures.push(error);
       }
-    } else if (appSessionToken) {
+    } else if (appSessionToken || appSessionCookieHeader) {
       cleanupFailures.push(new Error("app_session_cleanup_failed"));
     }
     if (providerAccessToken) {
@@ -3412,6 +3445,7 @@ export async function verifyRecoveredPostgresApplication(
     }
     providerAccessToken = null;
     appSessionToken = null;
+    appSessionCookieHeader = null;
     rootCaPem = "";
     if (cleanupFailures.length > 0) {
       mainFailure = new Error("recovered_postgres_application_cleanup_failed");

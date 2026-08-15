@@ -336,33 +336,58 @@ Storage/RLS results, monitor test alert, timestamp, and verifier.
 - [ ] Confirm there is no production Apple OAuth secret or enabled provider. If Apple login is proposed later, assign rotation ownership and implement, test, and evidence authorization-token revocation before enabling it.
 - [ ] Set the dedicated user and venue-manager credentials as protected `production` environment secrets for both hourly **Production Health** and **Pint Path Release Gate**. Use these exact names: `PINTPATH_SMOKE_USER_EMAIL`, `PINTPATH_SMOKE_USER_PASSWORD`, `PINTPATH_SMOKE_VENUE_EMAIL`, and `PINTPATH_SMOKE_VENUE_PASSWORD`. Keep protected `SUPABASE_URL=https://auth.pintpath.au` and the exact reviewed `sb_publishable_...` value in `SUPABASE_ANON_KEY` in that environment too: the smoke script rejects another origin and any legacy, secret, malformed, or whitespace-wrapped key, compares the live public auth config against those pins, and sends no password or protected role request on a mismatch. Do not configure user/venue bearer-token secrets; the workflow creates and revokes disposable sessions at runtime.
 - [ ] Obtain one short-lived Supabase admin access token through a normal password plus MFA ceremony and confirm its JWT is AAL2. Store it temporarily in a mode-`600` file at `$EVIDENCE_DIR/supabase-admin.token`; never paste it into the checklist or shell history. Do not store the admin password or TOTP seed in GitHub Actions.
-- [ ] Exchange the AAL2 Supabase admin token for a one-use Pint Path app token without printing either token or placing it in a process argument:
+- [ ] Exchange the AAL2 Supabase admin token for a one-use Pint Path app-cookie
+  credential without printing either credential or placing it in a process
+  argument. The response body must not contain an app credential; validate the
+  one exact host-only `Set-Cookie` field before retaining only its value in the
+  protected mode-`600` file:
 
   ```bash
   (
     set -euo pipefail
+    umask 077
     ROLE=admin
     TOKEN_FILE="$EVIDENCE_DIR/supabase-$ROLE.token"
+    HEADER_FILE="$EVIDENCE_DIR/pintpath-$ROLE-exchange.headers"
     RESPONSE_FILE="$EVIDENCE_DIR/pintpath-$ROLE-exchange.json"
+    STATUS_FILE="$EVIDENCE_DIR/pintpath-$ROLE-exchange.status"
     APP_TOKEN_FILE="$EVIDENCE_DIR/pintpath-$ROLE.token"
     EXPIRES_FILE="$EVIDENCE_DIR/pintpath-$ROLE.expires-at"
-    trap 'rm -f "$RESPONSE_FILE" "$APP_TOKEN_FILE" "$EXPIRES_FILE"' EXIT INT TERM
+    trap 'rm -f "$HEADER_FILE" "$RESPONSE_FILE" "$STATUS_FILE" "$APP_TOKEN_FILE" "$EXPIRES_FILE"' EXIT INT TERM
+    test ! -e "$HEADER_FILE" && test ! -e "$RESPONSE_FILE" && test ! -e "$STATUS_FILE"
+    test ! -e "$APP_TOKEN_FILE" && test ! -e "$EXPIRES_FILE"
     jq -nc --rawfile accessToken "$TOKEN_FILE" \
       '{accessToken:($accessToken | gsub("[\\r\\n]+$"; ""))}' \
       | curl --fail-with-body --silent --show-error \
+        --proto '=https' \
+        --max-redirs 0 \
+        --dump-header "$HEADER_FILE" \
+        --output "$RESPONSE_FILE" \
+        --write-out '%{http_code}\n' \
+        -H 'Accept: application/json' \
         -H 'Content-Type: application/json' \
+        -H 'Origin: https://pintpath.au' \
         --data-binary @- \
         https://pintpath.au/api/business/auth/supabase-session \
-        > "$RESPONSE_FILE"
-    jq -er '.data.token' "$RESPONSE_FILE" > "$APP_TOKEN_FILE"
+        > "$STATUS_FILE"
+    test "$(<"$STATUS_FILE")" = 200
+    jq -e '.ok == true and (.data | type == "object") and (.data | has("token") | not)' \
+      "$RESPONSE_FILE" > /dev/null
     jq -er '.data.expiresAt' "$RESPONSE_FILE" > "$EXPIRES_FILE"
-    chmod 600 "$APP_TOKEN_FILE" "$EXPIRES_FILE"
-    rm -f "$RESPONSE_FILE"
+    node scripts/extract-production-app-session-cookie.mjs \
+      "$HEADER_FILE" "$APP_TOKEN_FILE"
+    chmod 600 "$EXPIRES_FILE"
+    rm -f "$HEADER_FILE" "$RESPONSE_FILE" "$STATUS_FILE"
     trap - EXIT INT TERM
   )
   ```
 
-- [ ] Set `PINTPATH_SMOKE_ADMIN_TOKEN` as a `production` environment secret immediately before dispatching the manual gate. For an operator-run capture, load the one-use token and prompt for the lower-privilege credentials without writing them to shell history:
+- [ ] Set `PINTPATH_SMOKE_ADMIN_TOKEN` as a `production` environment secret
+  immediately before dispatching the manual gate. Despite the compatibility
+  name, this value is the raw one-use app-cookie value; the smoke script sends
+  it only as `Cookie: pint_path_session=...`, never as a bearer. For an
+  operator-run capture, load it and prompt for the lower-privilege credentials
+  without writing them to shell history:
 
   ```bash
   export PINTPATH_SMOKE_ADMIN_TOKEN="$(<"$EVIDENCE_DIR/pintpath-admin.token")"

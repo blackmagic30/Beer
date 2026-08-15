@@ -95,6 +95,10 @@ function token(label: string): string {
   return crypto.createHash("sha256").update(label).digest("hex");
 }
 
+function claim(label: string): string {
+  return crypto.createHash("sha256").update(label).digest("base64url");
+}
+
 function normalizeBindings(bindings: unknown[]): SqlBindings {
   if (
     bindings.length === 1
@@ -405,6 +409,402 @@ describe.skipIf(!configuredAdminUrl)("real PG17 account/session repository", () 
     });
     await targetAdmin!.query("DROP TRIGGER reject_profile_update ON pintpath_app.profiles");
     await targetAdmin!.query("DROP FUNCTION pintpath_app.reject_profile_update()");
+  }, 30_000);
+
+  it("keeps provider-token epochs monotonic across PostgreSQL containment locks", async () => {
+    const create = (id: string) => repository.createAccount({
+      id,
+      email: `${id}@example.test`,
+      passwordHash: `password-${id}`,
+      displayName: `PG ${id}`,
+      displayNameKey: `pg ${id}`,
+      role: "user",
+      subscriptionStatus: "free",
+      now: NOW,
+    });
+
+    const logoutThenReset = await create("pg-epoch-logout-then-reset");
+    await repository.revokeUserSessionsWithSummary({
+      userId: logoutThenReset.id,
+      revokedAt: LATER,
+      providerTokensValidAfter: LATER,
+    });
+    await repository.completePasswordResetContainment({
+      userId: logoutThenReset.id,
+      providerSessionIdHash: token("pg-epoch-older-reset-provider"),
+      providerTokensValidAfter: NOW,
+      revokedAt: NOW,
+    });
+    expect(await repository.getAccountById(logoutThenReset.id)).toMatchObject({
+      providerTokensValidAfter: LATER,
+      updatedAt: LATER,
+    });
+
+    const resetThenLogout = await create("pg-epoch-reset-then-logout");
+    await repository.completePasswordResetContainment({
+      userId: resetThenLogout.id,
+      providerSessionIdHash: token("pg-epoch-newer-reset-provider"),
+      providerTokensValidAfter: LATER,
+      revokedAt: LATER,
+    });
+    await repository.revokeUserSessionsWithSummary({
+      userId: resetThenLogout.id,
+      revokedAt: NOW,
+      providerTokensValidAfter: NOW,
+    });
+    expect(await repository.getAccountById(resetThenLogout.id)).toMatchObject({
+      providerTokensValidAfter: LATER,
+      updatedAt: LATER,
+    });
+
+    const concurrent = await create("pg-epoch-concurrent-containment");
+    await Promise.all([
+      repository.revokeUserSessionsWithSummary({
+        userId: concurrent.id,
+        revokedAt: NOW,
+        providerTokensValidAfter: NOW,
+      }),
+      repository.completePasswordResetContainment({
+        userId: concurrent.id,
+        providerSessionIdHash: token("pg-epoch-concurrent-provider"),
+        providerTokensValidAfter: LATER,
+        revokedAt: LATER,
+      }),
+    ]);
+    expect(await repository.getAccountById(concurrent.id)).toMatchObject({
+      providerTokensValidAfter: LATER,
+      updatedAt: LATER,
+    });
+  }, 30_000);
+
+  it("serializes provider-bound token rotation and first-sync creation under the account lock", async () => {
+    const account = await repository.createAccount({
+      id: "pg-rotation-user",
+      email: "pg-rotation-user@example.test",
+      passwordHash: "pg-rotation-password",
+      displayName: "PG Rotation User",
+      displayNameKey: "pg rotation user",
+      role: "user",
+      subscriptionStatus: "free",
+      now: NOW,
+    });
+    const currentTokenHash = token("pg-rotation-current");
+    const replacements = [token("pg-rotation-first"), token("pg-rotation-second")];
+    const providerHashes = [token("pg-rotation-provider-0"), token("pg-rotation-provider-1")];
+    await repository.createSession({
+      tokenHash: currentTokenHash,
+      userId: account.id,
+      providerSessionIdHash: "pg-rotation-provider-before",
+      createdAt: NOW,
+      expiresAt: EXPIRES_AT,
+    });
+    await database!.prepare(
+      `INSERT INTO account_discount_passes (
+         id, user_id, session_token_hash, code_hash, status, created_at, expires_at
+       ) VALUES (?, ?, ?, ?, 'active', ?, ?)`,
+    ).run("pg-rotation-pass", account.id, currentTokenHash, "pg-rotation-code", NOW, EXPIRES_AT);
+
+    const results = await Promise.all(replacements.map((newTokenHash, index) => repository.rotateOrCreateSessionToken({
+      currentTokenHash,
+      newTokenHash,
+      userId: account.id,
+      providerSessionIdHash: providerHashes[index]!,
+      createdAt: LATER,
+      expiresAt: EXPIRES_AT,
+      lastUsedAt: LATER,
+      lastIpHash: `pg-rotation-ip-${index}`,
+      userAgentHash: `pg-rotation-agent-${index}`,
+      maxActiveSessions: 10,
+    })));
+    expect(results.filter((result) => result === "rotated")).toHaveLength(1);
+    expect(results.filter((result) => result === "conflict")).toHaveLength(1);
+    const winner = results.findIndex((result) => result === "rotated");
+    expect(await database!.prepare(
+      `SELECT token_hash AS "tokenHash", provider_session_id_hash AS "providerSessionIdHash",
+              created_at AS "createdAt", last_used_at AS "lastUsedAt",
+              last_ip_hash AS "lastIpHash", user_agent_hash AS "userAgentHash"
+       FROM auth_sessions WHERE user_id = ? AND revoked_at IS NULL`,
+    ).all(account.id)).toEqual([{
+      tokenHash: replacements[winner],
+      providerSessionIdHash: providerHashes[winner],
+      createdAt: LATER,
+      lastUsedAt: LATER,
+      lastIpHash: `pg-rotation-ip-${winner}`,
+      userAgentHash: `pg-rotation-agent-${winner}`,
+    }]);
+    expect(await database!.prepare(
+      `SELECT session_token_hash AS "sessionTokenHash", status, revoked_at AS "revokedAt"
+       FROM account_discount_passes WHERE id = 'pg-rotation-pass'`,
+    ).get()).toEqual({
+      sessionTokenHash: currentTokenHash,
+      status: "revoked",
+      revokedAt: LATER,
+    });
+    expect(await repository.countUserSessions(account.id, LATER)).toBe(1);
+    expect(await repository.countUserSessionHistory(account.id, LATER)).toBe(1);
+
+    const createAccount = await repository.createAccount({
+      id: "pg-rotation-create-user",
+      email: "pg-rotation-create-user@example.test",
+      passwordHash: "pg-rotation-create-password",
+      displayName: "PG Rotation Create User",
+      displayNameKey: "pg rotation create user",
+      role: "user",
+      subscriptionStatus: "free",
+      now: NOW,
+    });
+    const createTokens = [token("pg-rotation-create-first"), token("pg-rotation-create-second")];
+    const createProviderHash = token("pg-rotation-create-provider");
+    await expect(repository.rotateOrCreateSessionToken({
+      currentTokenHash: token("pg-rotation-create-pruned-cookie"),
+      newTokenHash: token("pg-rotation-create-pruned-replacement"),
+      userId: createAccount.id,
+      providerSessionIdHash: createProviderHash,
+      createdAt: LATER,
+      expiresAt: EXPIRES_AT,
+      maxActiveSessions: 10,
+    })).resolves.toBe("conflict");
+    expect(await repository.countUserSessions(createAccount.id, LATER)).toBe(0);
+    const createResults = await Promise.all(createTokens.map((newTokenHash) => repository.rotateOrCreateSessionToken({
+      currentTokenHash: null,
+      newTokenHash,
+      userId: createAccount.id,
+      providerSessionIdHash: createProviderHash,
+      createdAt: LATER,
+      expiresAt: EXPIRES_AT,
+      maxActiveSessions: 10,
+    })));
+    expect(createResults.filter((result) => result === "created")).toHaveLength(1);
+    expect(createResults.filter((result) => result === "conflict")).toHaveLength(1);
+    const createWinner = createResults.findIndex((result) => result === "created");
+    expect(await database!.prepare(
+      `SELECT token_hash AS "tokenHash", provider_session_id_hash AS "providerSessionIdHash"
+       FROM auth_sessions WHERE user_id = ? AND revoked_at IS NULL`,
+    ).all(createAccount.id)).toEqual([{
+      tokenHash: createTokens[createWinner],
+      providerSessionIdHash: createProviderHash,
+    }]);
+    expect(await repository.countUserSessions(createAccount.id, LATER)).toBe(1);
+    expect(await repository.countUserSessionHistory(createAccount.id, LATER)).toBe(0);
+  }, 30_000);
+
+  it("atomically rolls back or winner-binds Supabase account mutation with PostgreSQL session rotation", async () => {
+    const account = await repository.createAccount({
+      id: "pg-atomic-supabase-user",
+      email: "pg-atomic-supabase-user@example.test",
+      passwordHash: "pg-atomic-supabase-password",
+      displayName: "PG Atomic Original",
+      displayNameKey: "pg atomic original",
+      authProvider: "supabase",
+      supabaseUserId: "pg-atomic-supabase-provider-user",
+      mfaLevel: "aal1",
+      role: "user",
+      subscriptionStatus: "free",
+      now: NOW,
+    });
+    const currentTokenHash = token("pg-atomic-supabase-current");
+    await repository.createSession({
+      tokenHash: currentTokenHash,
+      userId: account.id,
+      providerSessionIdHash: token("pg-atomic-supabase-provider-original"),
+      createdAt: NOW,
+      expiresAt: EXPIRES_AT,
+    });
+    const collisionOwner = await repository.createAccount({
+      id: "pg-atomic-supabase-collision-owner",
+      email: "pg-atomic-supabase-collision-owner@example.test",
+      passwordHash: "pg-atomic-supabase-collision-password",
+      role: "user",
+      subscriptionStatus: "free",
+      now: NOW,
+    });
+    const collidingTokenHash = token("pg-atomic-supabase-colliding-token");
+    await repository.createSession({
+      tokenHash: collidingTokenHash,
+      userId: collisionOwner.id,
+      createdAt: NOW,
+      expiresAt: EXPIRES_AT,
+    });
+    const beforeAccount = await repository.getAccountById(account.id);
+    const beforeProfile = await database!.prepare(
+      `SELECT email, display_name AS "displayName", display_name_key AS "displayNameKey",
+              avatar_url AS "avatarUrl", updated_at AS "updatedAt"
+       FROM profiles WHERE id = ?`,
+    ).get(account.id);
+
+    await expect(repository.rotateOrCreateSessionTokenWithSupabaseAccountMutation({
+      currentTokenHash,
+      newTokenHash: collidingTokenHash,
+      userId: account.id,
+      providerSessionIdHash: token("pg-atomic-supabase-provider-conflict"),
+      providerTokenIssuedAt: LATER,
+      createdAt: LATER,
+      expiresAt: EXPIRES_AT,
+      maxActiveSessions: 10,
+      supabaseAccountMutation: {
+        authProvider: "supabase",
+        supabaseUserId: "pg-atomic-supabase-provider-changed",
+        email: "pg-atomic-supabase-changed@example.test",
+        displayName: "PG Atomic Changed",
+        displayNameKey: "pg atomic changed",
+        avatarUrl: "https://example.test/pg-atomic-changed.png",
+        emailVerifiedAt: LATER,
+        mfaLevel: "aal2",
+        mfaVerifiedAt: LATER,
+        legalAcceptance: {
+          termsVersion: "pg-terms-current",
+          privacyVersion: "pg-privacy-current",
+          ageConfirmed: true,
+        },
+      },
+    })).resolves.toEqual({ status: "conflict" });
+    expect(await repository.getAccountById(account.id)).toEqual(beforeAccount);
+    expect(await database!.prepare(
+      `SELECT email, display_name AS "displayName", display_name_key AS "displayNameKey",
+              avatar_url AS "avatarUrl", updated_at AS "updatedAt"
+       FROM profiles WHERE id = ?`,
+    ).get(account.id)).toEqual(beforeProfile);
+    expect(await repository.getAccountBySessionTokenHash(currentTokenHash, LATER)).toEqual(beforeAccount);
+
+    const replacements = [
+      token("pg-atomic-supabase-winner-first"),
+      token("pg-atomic-supabase-winner-second"),
+    ];
+    const providerHashes = [
+      token("pg-atomic-supabase-family-first"),
+      token("pg-atomic-supabase-family-second"),
+    ];
+    const results = await Promise.all(replacements.map((newTokenHash, index) =>
+      repository.rotateOrCreateSessionTokenWithSupabaseAccountMutation({
+        currentTokenHash,
+        newTokenHash,
+        userId: account.id,
+        providerSessionIdHash: providerHashes[index]!,
+        providerTokenIssuedAt: LATER,
+        createdAt: LATER,
+        expiresAt: EXPIRES_AT,
+        maxActiveSessions: 10,
+        supabaseAccountMutation: {
+          authProvider: "supabase",
+          supabaseUserId: "pg-atomic-supabase-provider-user",
+          email: `pg-atomic-supabase-winner-${index}@example.test`,
+          displayName: `PG Atomic Winner ${index}`,
+          displayNameKey: `pg atomic winner ${index}`,
+          avatarUrl: `https://example.test/pg-atomic-winner-${index}.png`,
+          emailVerifiedAt: LATER,
+          mfaLevel: index === 0 ? "aal1" : "aal2",
+          mfaVerifiedAt: index === 0 ? null : LATER,
+        },
+      })));
+    expect(results.filter((result) => result.status === "rotated")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "conflict")).toEqual([{ status: "conflict" }]);
+    const winner = results.findIndex((result) => result.status === "rotated");
+    const committedAccount = await repository.getAccountById(account.id);
+    expect(results[winner]).toEqual({ status: "rotated", account: committedAccount });
+    expect(committedAccount).toMatchObject({
+      email: `pg-atomic-supabase-winner-${winner}@example.test`,
+      displayName: `PG Atomic Winner ${winner}`,
+      displayNameKey: `pg atomic winner ${winner}`,
+      avatarUrl: `https://example.test/pg-atomic-winner-${winner}.png`,
+      mfaLevel: winner === 0 ? "aal1" : "aal2",
+      mfaVerifiedAt: winner === 0 ? null : LATER,
+    });
+    expect(await database!.prepare(
+      `SELECT email, display_name AS "displayName", avatar_url AS "avatarUrl"
+       FROM profiles WHERE id = ?`,
+    ).get(account.id)).toEqual({
+      email: `pg-atomic-supabase-winner-${winner}@example.test`,
+      displayName: `PG Atomic Winner ${winner}`,
+      avatarUrl: `https://example.test/pg-atomic-winner-${winner}.png`,
+    });
+    expect(await database!.prepare(
+      `SELECT token_hash AS "tokenHash", provider_session_id_hash AS "providerSessionIdHash"
+       FROM auth_sessions WHERE user_id = ? AND revoked_at IS NULL`,
+    ).all(account.id)).toEqual([{
+      tokenHash: replacements[winner],
+      providerSessionIdHash: providerHashes[winner],
+    }]);
+  }, 30_000);
+
+  it("single-owns and conditionally finishes provider-global revocation claims", async () => {
+    const account = await repository.createAccount({
+      id: "pg-provider-global-claim-user",
+      email: "pg-provider-global-claim-user@example.test",
+      passwordHash: "pg-provider-global-claim-password",
+      displayName: "PG Provider Global Claim User",
+      displayNameKey: "pg provider global claim user",
+      role: "user",
+      subscriptionStatus: "free",
+      now: NOW,
+    });
+    const logoutClaim = claim("pg-provider-global-logout-claim");
+    const resetClaim = claim("pg-provider-global-reset-claim");
+    const resumeClaim = claim("pg-provider-global-resume-claim");
+    await repository.createSession({
+      tokenHash: token("pg-provider-global-session"),
+      userId: account.id,
+      providerSessionIdHash: token("pg-provider-global-provider"),
+      createdAt: NOW,
+      expiresAt: EXPIRES_AT,
+    });
+
+    const starts = await Promise.allSettled([
+      repository.revokeUserSessionsWithSummary({
+        userId: account.id,
+        revokedAt: NOW,
+        providerTokensValidAfter: NOW,
+        beginProviderGlobalRevocation: { claimId: logoutClaim, operation: "logout_all" },
+      }),
+      repository.completePasswordResetContainment({
+        userId: account.id,
+        providerSessionIdHash: token("pg-provider-global-reset-provider"),
+        providerTokensValidAfter: NOW,
+        revokedAt: NOW,
+        beginProviderGlobalRevocation: { claimId: resetClaim, operation: "password_reset" },
+      }),
+    ]);
+    expect(starts.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    const rejected = starts.find((result) => result.status === "rejected");
+    expect(rejected).toMatchObject({
+      status: "rejected",
+      reason: expect.objectContaining({ code: "provider_global_revocation_pending" }),
+    });
+    const winner = starts[0]?.status === "fulfilled"
+      ? { claimId: logoutClaim, operation: "logout_all" as const }
+      : { claimId: resetClaim, operation: "password_reset" as const };
+    await expect(repository.claimProviderGlobalRevocation({
+      userId: account.id,
+      claimId: resumeClaim,
+      claimedAt: "2026-08-08T02:01:00.000Z",
+    })).resolves.toEqual({ status: "busy" });
+    await expect(repository.revokeUserSessionsWithSummary({
+      userId: account.id,
+      revokedAt: "2026-08-08T02:02:00.000Z",
+      providerTokensValidAfter: "2026-08-08T02:02:00.000Z",
+      finishProviderGlobalRevocation: { ...winner, completed: false },
+    })).resolves.toEqual(expect.objectContaining({ revokedSessions: 0 }));
+    await expect(repository.claimProviderGlobalRevocation({
+      userId: account.id,
+      claimId: resumeClaim,
+      claimedAt: "2026-08-08T02:03:00.000Z",
+    })).resolves.toEqual({ status: "claimed", operation: winner.operation });
+    await expect(repository.revokeUserSessionsWithSummary({
+      userId: account.id,
+      revokedAt: "2026-08-08T02:03:00.000Z",
+      providerTokensValidAfter: "2026-08-08T02:03:00.000Z",
+      finishProviderGlobalRevocation: { ...winner, completed: true },
+    })).rejects.toMatchObject({ code: "provider_global_revocation_pending" });
+    await expect(repository.revokeUserSessionsWithSummary({
+      userId: account.id,
+      revokedAt: "2026-08-08T02:03:00.000Z",
+      providerTokensValidAfter: "2026-08-08T02:03:00.000Z",
+      finishProviderGlobalRevocation: {
+        claimId: resumeClaim,
+        completed: true,
+        operation: winner.operation,
+      },
+    })).resolves.toEqual(expect.objectContaining({ revokedSessions: 0 }));
+    await expect(repository.hasProviderGlobalRevocationPending(account.id)).resolves.toBe(false);
   }, 30_000);
 
   it("maps an overlapping service display-name race to a stable secret-free conflict", async () => {
