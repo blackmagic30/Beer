@@ -373,6 +373,21 @@ describe.skipIf(!configuredAdminUrl)("venue inventory repository on real Postgre
       acceptsPintPathCodes: true,
       createdAt: BASE_TIME,
     });
+    expect(await repository.listBarProfilePublicMetadata(["venue-pg", "missing-venue"])).toEqual(
+      new Map([[
+        "venue-pg",
+        {
+          barId: "venue-pg",
+          membershipTier: "pro",
+          highlightedName: true,
+          premiumBadge: "Partner",
+          promoted: true,
+          featuredSpecialEligible: true,
+          acceptsPintPathCodes: true,
+          active: true,
+        },
+      ]]),
+    );
 
     const beer = await repository.upsertBarBeer({
       id: "beer-pg",

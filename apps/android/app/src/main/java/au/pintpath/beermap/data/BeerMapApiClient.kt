@@ -579,7 +579,7 @@ class BeerMapApiClient(
             .toRotatingCodeResult()
 
     suspend fun venues(query: String? = null): List<Venue> {
-        val pageSize = 500
+        val pageSize = 250
         var offset = 0L
         val venues = linkedMapOf<String, Venue>()
         while (true) {

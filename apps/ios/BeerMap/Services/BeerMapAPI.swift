@@ -560,7 +560,7 @@ struct BeerMapAPI {
         token: String? = nil
     ) async throws -> [Venue] {
         let resultLimit = min(2_000, max(1, maximumResults))
-        let pageSize = min(resultLimit, min(500, max(1, limit)))
+        let pageSize = min(resultLimit, min(250, max(1, limit)))
         let normalizedQuery = query?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank
         var offset = 0
         var venues: [Venue] = []

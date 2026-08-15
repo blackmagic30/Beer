@@ -12,6 +12,24 @@ function adminRoutesSource() {
 }
 
 describe("business route hardening", () => {
+  it("rate limits and safely cache-partitions the public venue directory", () => {
+    const source = routesSource();
+    const limiter = source.slice(
+      source.indexOf("const venueDirectoryReadLimiter"),
+      source.indexOf("const writeLimiter"),
+    );
+
+    expect(source).toContain("const venueDirectoryReadLimiter = createRateLimiter({");
+    expect(limiter).toContain('keyPrefix: "business:venue-directory"');
+    expect(limiter).toContain("windowMs: 60_000");
+    expect(limiter).toContain("max: 120");
+    expect(source).toContain('router.get("/venues", venueDirectoryReadLimiter');
+    expect(source).toContain('res.vary("Origin")');
+    expect(source).toContain('res.vary("Authorization")');
+    expect(source).toContain('res.vary("Cookie")');
+    expect(source).toContain("Math.min(query.limit, PUBLIC_VENUE_DIRECTORY_PAGE_LIMIT)");
+  });
+
   it("rate limits admin mutation routes", () => {
     const source = routesSource();
 

@@ -72,6 +72,11 @@ change provider infrastructure, rotate a credential, send mail, or enable billin
   coverage count, or needs-data state.
 - Fixed the venue portal's commercial-disabled initialization ordering so it
   no longer dereferences DOM removed by the launch gate.
+- Bounded the anonymous venue directory to 250-row pages and 160-character
+  searches, added a shared Redis/IP read limit and exact origin/auth/cookie
+  cache partitioning, kept larger legacy mobile requests backward-compatible while
+  clamping their responses, and replaced per-venue profile reads with bounded
+  batch metadata queries across the web and native pagination paths.
 
 ## Operations and documentation
 

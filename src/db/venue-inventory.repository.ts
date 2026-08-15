@@ -21,6 +21,7 @@ const MAX_VENUE_TAGS = 20;
 const MAX_VENUE_TAG_LENGTH = 80;
 const MAX_HAPPY_HOUR_BEERS = 60;
 const MAX_REPORTABLE_PROFILES = 1_000;
+const MAX_PUBLIC_PROFILE_METADATA_BATCH_SIZE = 1_000;
 const MAX_TIMESTAMP_LOOKUP_VENUES = 1_000;
 const MAX_TIMESTAMP_LOOKUP_NAMES = 200;
 const MAX_JSON_BYTES = 65_536;
@@ -124,6 +125,18 @@ const SPECIAL_COLUMNS = [
 ] as const;
 
 type RawRow = Record<string, unknown>;
+
+export type BarProfilePublicMetadata = Pick<
+  BarProfile,
+  | "barId"
+  | "membershipTier"
+  | "highlightedName"
+  | "premiumBadge"
+  | "promoted"
+  | "featuredSpecialEligible"
+  | "acceptsPintPathCodes"
+  | "active"
+>;
 
 function projection(
   columns: readonly (readonly [column: string, result: string])[],
@@ -519,6 +532,19 @@ function mapProfile(row: RawRow): BarProfile {
   };
 }
 
+function mapPublicProfileMetadata(row: RawRow): BarProfilePublicMetadata {
+  return {
+    barId: readRequiredText(row.barId, "barId", MAX_ID_LENGTH),
+    membershipTier: normalizeMembershipTier(row.membershipTier, "membershipTier"),
+    highlightedName: readBoolean(row.highlightedName, "highlightedName"),
+    premiumBadge: readOptionalText(row.premiumBadge, "premiumBadge"),
+    promoted: readBoolean(row.promoted, "promoted"),
+    featuredSpecialEligible: readBoolean(row.featuredSpecialEligible, "featuredSpecialEligible"),
+    acceptsPintPathCodes: readBoolean(row.acceptsPintPathCodes, "acceptsPintPathCodes"),
+    active: readBoolean(row.active, "active"),
+  };
+}
+
 function mapBeer(row: RawRow): BarBeer {
   return {
     id: readRequiredText(row.id, "id", MAX_ID_LENGTH),
@@ -722,6 +748,52 @@ export class VenueInventoryRepository {
 
   async getBarProfile(barId: string): Promise<BarProfile | null> {
     return this.getProfile(cleanRequiredText(barId, "barId", MAX_ID_LENGTH));
+  }
+
+  async listBarProfilePublicMetadata(
+    barIds: readonly string[],
+  ): Promise<Map<string, BarProfilePublicMetadata>> {
+    const requestedBarIds = Array.from(new Set(
+      barIds.map((barId, index) => cleanRequiredText(barId, `barIds[${index}]`, MAX_ID_LENGTH)),
+    ));
+    const requestedBarIdSet = new Set(requestedBarIds);
+    const profiles = new Map<string, BarProfilePublicMetadata>();
+
+    for (let offset = 0; offset < requestedBarIds.length; offset += MAX_PUBLIC_PROFILE_METADATA_BATCH_SIZE) {
+      const batch = requestedBarIds.slice(offset, offset + MAX_PUBLIC_PROFILE_METADATA_BATCH_SIZE);
+      const requestedValues = batch.map(() => "(?)").join(", ");
+      const rows = await this.database.prepare(
+        `WITH requested(venue_id) AS (
+           VALUES ${requestedValues}
+         )
+         SELECT
+           profile.venue_id AS "barId",
+           profile.membership_tier AS "membershipTier",
+           profile.highlighted_name AS "highlightedName",
+           profile.premium_badge AS "premiumBadge",
+           profile.promoted AS "promoted",
+           profile.featured_special_eligible AS "featuredSpecialEligible",
+           profile.accepts_pint_path_codes AS "acceptsPintPathCodes",
+           profile.active AS "active"
+         FROM requested
+         INNER JOIN venue_profiles profile ON profile.venue_id = requested.venue_id`,
+      ).all<RawRow>(...batch);
+
+      for (const row of rows) {
+        const profile = mapPublicProfileMetadata(row);
+        if (!requestedBarIdSet.has(profile.barId) || profiles.has(profile.barId)) {
+          invalidRecord("barId");
+        }
+        profiles.set(profile.barId, profile);
+      }
+    }
+
+    return new Map(
+      requestedBarIds.flatMap((barId) => {
+        const profile = profiles.get(barId);
+        return profile ? [[barId, profile] as const] : [];
+      }),
+    );
   }
 
   async listReportableBarProfiles(input: {
