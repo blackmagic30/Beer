@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import fs from "node:fs";
+import fs, { lstatSync as nativeLstatSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -372,6 +372,86 @@ describe("production Postgres source-pin recovery authority", () => {
     } finally {
       custody.close();
       fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("opens the private parent before pathname inspection with mandatory kernel flags", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pintpath-source-pin-open-first-"));
+    const output = path.join(root, "recovery-authority.json");
+    fs.chmodSync(root, 0o700);
+    const open = vi.spyOn(fs, "openSync");
+    const lstat = vi.spyOn(fs, "lstatSync");
+    let custody: ReturnType<
+      typeof productionPostgresSourcePinRecoveryInternals.holdPrivateParent
+    > | null = null;
+    try {
+      custody = productionPostgresSourcePinRecoveryInternals
+        .holdPrivateParent(output);
+      const parentOpen = open.mock.calls.findIndex(([target]) => target === root);
+      const parentLstat = lstat.mock.calls.findIndex(([target]) => target === root);
+      expect(parentOpen).toBeGreaterThanOrEqual(0);
+      expect(parentLstat).toBeGreaterThanOrEqual(0);
+      expect(open.mock.invocationCallOrder[parentOpen]).toBeLessThan(
+        lstat.mock.invocationCallOrder[parentLstat],
+      );
+      const flags = open.mock.calls[parentOpen]?.[1];
+      expect(typeof flags).toBe("number");
+      if (typeof flags !== "number") throw new Error("expected numeric open flags");
+      expect(fs.constants.O_DIRECTORY).toBeGreaterThan(0);
+      expect(fs.constants.O_NOFOLLOW).toBeGreaterThan(0);
+      expect(fs.constants.O_NONBLOCK).toBeGreaterThan(0);
+      expect(flags & fs.constants.O_DIRECTORY).toBe(fs.constants.O_DIRECTORY);
+      expect(flags & fs.constants.O_NOFOLLOW).toBe(fs.constants.O_NOFOLLOW);
+      expect(flags & fs.constants.O_NONBLOCK).toBe(fs.constants.O_NONBLOCK);
+    } finally {
+      custody?.close();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a symlinked parent without following it", () => {
+    const outer = fs.mkdtempSync(path.join(os.tmpdir(), "pintpath-source-pin-symlink-"));
+    const root = path.join(outer, "authority");
+    const alias = path.join(outer, "authority-alias");
+    fs.mkdirSync(root, { mode: 0o700 });
+    fs.symlinkSync(root, alias, "dir");
+    try {
+      expect(() =>
+        productionPostgresSourcePinRecoveryInternals.holdPrivateParent(
+          path.join(alias, "recovery-authority.json"),
+        )
+      ).toThrow("production_postgres_source_pin_recovery_output_unsafe");
+    } finally {
+      fs.rmSync(outer, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects pathname replacement between descriptor open and lstat binding", () => {
+    const outer = fs.mkdtempSync(path.join(os.tmpdir(), "pintpath-source-pin-open-race-"));
+    const root = path.join(outer, "authority");
+    const moved = path.join(outer, "authority-held");
+    fs.mkdirSync(root, { mode: 0o700 });
+    const output = path.join(root, "recovery-authority.json");
+    const open = vi.spyOn(fs, "openSync");
+    const close = vi.spyOn(fs, "closeSync");
+    let replaced = false;
+    vi.spyOn(fs, "lstatSync").mockImplementation(((target, options) => {
+      if (!replaced && target === root) {
+        expect(open).toHaveBeenCalled();
+        fs.renameSync(root, moved);
+        fs.mkdirSync(root, { mode: 0o700 });
+        replaced = true;
+      }
+      return Reflect.apply(nativeLstatSync, fs, [target, options]);
+    }) as typeof fs.lstatSync);
+    try {
+      expect(() =>
+        productionPostgresSourcePinRecoveryInternals.holdPrivateParent(output)
+      ).toThrow("production_postgres_source_pin_recovery_output_unsafe");
+      expect(replaced).toBe(true);
+      expect(close).toHaveBeenCalledTimes(1);
+    } finally {
+      fs.rmSync(outer, { recursive: true, force: true });
     }
   });
 

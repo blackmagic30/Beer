@@ -629,26 +629,34 @@ function privateFile(filename: string, maximumBytes: number): Buffer | null {
   let descriptor: number | null = null;
   let result: Buffer | null = null;
   try {
-    const before = fs.lstatSync(filename, { bigint: true });
+    const noFollow = fs.constants.O_NOFOLLOW;
+    const nonBlock = fs.constants.O_NONBLOCK;
     if (
-      !before.isFile() ||
-      before.isSymbolicLink() ||
-      before.nlink !== 1n ||
-      before.size < 2n ||
-      before.size > BigInt(maximumBytes) ||
-      Number(before.mode & 0o7777n) !== 0o600 ||
-      !canonicalAuthorityPath(filename) ||
-      (typeof process.geteuid === "function" &&
-        before.uid !== BigInt(process.geteuid()))
+      path.resolve(filename) !== filename ||
+      !Number.isInteger(noFollow) ||
+      noFollow <= 0 ||
+      !Number.isInteger(nonBlock) ||
+      nonBlock <= 0
     ) return null;
     descriptor = fs.openSync(
       filename,
-      fs.constants.O_RDONLY |
-        (fs.constants.O_NOFOLLOW ?? 0) |
-        (fs.constants.O_NONBLOCK ?? 0),
+      fs.constants.O_RDONLY | noFollow | nonBlock,
     );
     const opened = fs.fstatSync(descriptor, { bigint: true });
-    if (!opened.isFile() || !samePrivateFile(before, opened)) return null;
+    const beforePath = fs.lstatSync(filename, { bigint: true });
+    if (
+      !opened.isFile() ||
+      !beforePath.isFile() ||
+      beforePath.isSymbolicLink() ||
+      !samePrivateFile(opened, beforePath) ||
+      opened.nlink !== 1n ||
+      opened.size < 2n ||
+      opened.size > BigInt(maximumBytes) ||
+      Number(opened.mode & 0o7777n) !== 0o600 ||
+      !canonicalAuthorityPath(filename) ||
+      (typeof process.geteuid === "function" &&
+        opened.uid !== BigInt(process.geteuid()))
+    ) return null;
     const bytes = Buffer.alloc(Number(opened.size));
     let offset = 0;
     while (offset < bytes.length) {
@@ -670,8 +678,8 @@ function privateFile(filename: string, maximumBytes: number): Buffer | null {
     if (
       afterPath.isSymbolicLink() ||
       !afterPath.isFile() ||
-      !samePrivateFile(before, afterDescriptor) ||
-      !samePrivateFile(before, afterPath) ||
+      !samePrivateFile(opened, afterDescriptor) ||
+      !samePrivateFile(opened, afterPath) ||
       !canonicalAuthorityPath(filename)
     ) return null;
     result = bytes;
@@ -965,24 +973,32 @@ function openEvidenceCustody(
   }>();
   try {
     const resolved = path.resolve(directory);
-    const before = fs.lstatSync(directory, { bigint: true });
+    const directoryFlag = fs.constants.O_DIRECTORY;
+    const noFollow = fs.constants.O_NOFOLLOW;
+    const nonBlock = fs.constants.O_NONBLOCK;
     if (
       directory !== resolved ||
-      !before.isDirectory() ||
-      before.isSymbolicLink() ||
-      Number(before.mode & 0o7777n) !== 0o700 ||
-      !canonicalAuthorityPath(directory) ||
-      (typeof process.geteuid === "function" &&
-        before.uid !== BigInt(process.geteuid()))
+      !Number.isInteger(directoryFlag) ||
+      directoryFlag <= 0 ||
+      !Number.isInteger(noFollow) ||
+      noFollow <= 0 ||
+      !Number.isInteger(nonBlock) ||
+      nonBlock <= 0
     ) throw new Error("evidence_invalid");
     descriptor = fs.openSync(
       directory,
-      fs.constants.O_RDONLY |
-        (fs.constants.O_DIRECTORY ?? 0) |
-        (fs.constants.O_NOFOLLOW ?? 0),
+      fs.constants.O_RDONLY | directoryFlag | noFollow | nonBlock,
     );
     const opened = fs.fstatSync(descriptor, { bigint: true });
-    if (!sameDirectory(before, opened)) throw new Error("evidence_invalid");
+    const pathStat = fs.lstatSync(directory, { bigint: true });
+    if (
+      pathStat.isSymbolicLink() ||
+      !sameDirectory(opened, pathStat) ||
+      Number(opened.mode & 0o7777n) !== 0o700 ||
+      !canonicalAuthorityPath(directory) ||
+      (typeof process.geteuid === "function" &&
+        opened.uid !== BigInt(process.geteuid()))
+    ) throw new Error("evidence_invalid");
     const heldPath = heldDirectoryPath(descriptor, resolved);
     const assertLeaf = (
       leaf: string,
@@ -1037,8 +1053,8 @@ function openEvidenceCustody(
       const heldStat = fs.fstatSync(descriptor, { bigint: true });
       if (
         pathStat.isSymbolicLink() ||
-        !sameDirectory(before, pathStat) ||
-        !sameDirectory(before, heldStat) ||
+        !sameDirectory(opened, pathStat) ||
+        !sameDirectory(opened, heldStat) ||
         !canonicalAuthorityPath(directory) ||
         (process.platform === "linux" &&
           fs.realpathSync(heldPath) !== resolved)
@@ -1056,9 +1072,7 @@ function openEvidenceCustody(
     const dispatchPath = path.join(heldPath, "dispatch.json");
     const dispatchDescriptor = fs.openSync(
       dispatchPath,
-      fs.constants.O_RDONLY |
-        (fs.constants.O_NOFOLLOW ?? 0) |
-        (fs.constants.O_NONBLOCK ?? 0),
+      fs.constants.O_RDONLY | noFollow | nonBlock,
     );
     let dispatchBytes: Buffer;
     const openedDispatch = fs.fstatSync(dispatchDescriptor, { bigint: true });
@@ -1107,10 +1121,10 @@ function openEvidenceCustody(
         const target = path.join(heldPath, leaf);
         const handle = fs.openSync(
           target,
-            fs.constants.O_CREAT |
+          fs.constants.O_CREAT |
             fs.constants.O_EXCL |
             fs.constants.O_RDWR |
-            (fs.constants.O_NOFOLLOW ?? 0),
+            noFollow,
           0o600,
         );
         expectedEntries.add(leaf);

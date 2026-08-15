@@ -410,6 +410,35 @@ describe("protected production Postgres source pin", () => {
     );
   });
 
+  it("opens filesystem authorities before pathname metadata validation", () => {
+    const moduleSource = fs.readFileSync(
+      path.join(
+        REPOSITORY_ROOT,
+        "scripts/execute-protected-production-postgres-source-pin.ts",
+      ),
+      "utf8",
+    );
+    for (const source of [
+      moduleSource.slice(
+        moduleSource.indexOf("function privateFile("),
+        moduleSource.indexOf("function readRecoveryAuthority("),
+      ),
+      moduleSource.slice(
+        moduleSource.indexOf("function openEvidenceCustody("),
+        moduleSource.indexOf(
+          "export async function runProtectedProductionPostgresSourcePin(",
+        ),
+      ),
+    ]) {
+      expect(source.indexOf("fs.openSync(")).toBeGreaterThanOrEqual(0);
+      expect(source.indexOf("fs.openSync(")).toBeLessThan(
+        source.indexOf("fs.lstatSync("),
+      );
+      expect(source).toContain("fs.constants.O_NOFOLLOW");
+      expect(source).toContain("fs.constants.O_NONBLOCK");
+    }
+  });
+
   it("reads recovery authority through one descriptor and rejects unsafe modes", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "pintpath-source-pin-reader-"));
     const filename = path.join(root, "authority.json");

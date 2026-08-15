@@ -567,53 +567,80 @@ function validateReceipts(backupEntries, restoreEntries, now, runTimes) {
 function holdPrivateParent(filename) {
   const parent = path.dirname(filename);
   const outputLeaf = path.basename(filename);
+  const directoryFlag = fs.constants.O_DIRECTORY;
+  const noFollowFlag = fs.constants.O_NOFOLLOW;
+  const nonBlockFlag = fs.constants.O_NONBLOCK;
   if (
+    !path.isAbsolute(filename) ||
+    path.resolve(filename) !== filename ||
     outputLeaf.length < 1 ||
     outputLeaf.length > 255 ||
     outputLeaf === "." ||
     outputLeaf === ".." ||
     outputLeaf.includes("/") ||
-    outputLeaf.includes("\0")
+    outputLeaf.includes("\0") ||
+    !positiveInteger(directoryFlag) ||
+    !positiveInteger(noFollowFlag) ||
+    !positiveInteger(nonBlockFlag)
   ) fail("output_unsafe");
-  const stat = fs.lstatSync(parent, { bigint: true });
-  if (
-    !stat.isDirectory() ||
-    stat.isSymbolicLink() ||
-    Number(stat.mode & 0o7777n) !== 0o700 ||
-    !canonicalAuthorityPath(parent) ||
-    (typeof process.geteuid === "function" &&
-      stat.uid !== BigInt(process.geteuid())) ||
-    fs.readdirSync(parent).length !== 0
-  ) fail("output_unsafe");
-  const handle = fs.openSync(
-    parent,
-    fs.constants.O_RDONLY |
-      (fs.constants.O_DIRECTORY ?? 0) |
-      (fs.constants.O_NOFOLLOW ?? 0),
-  );
-  const held = fs.fstatSync(handle, { bigint: true });
-  if (
-    !held.isDirectory() ||
-    held.dev !== stat.dev ||
-    held.ino !== stat.ino ||
-    held.uid !== stat.uid ||
-    held.gid !== stat.gid ||
-    held.mode !== stat.mode
-  ) {
-    fs.closeSync(handle);
+  let handle = null;
+  try {
+    handle = fs.openSync(
+      parent,
+      fs.constants.O_RDONLY |
+        directoryFlag |
+        noFollowFlag |
+        nonBlockFlag,
+    );
+  } catch {
     fail("output_unsafe");
   }
-  const descriptorRoot = process.platform === "linux"
-    ? `/proc/self/fd/${handle}`
-    : process.env.VITEST === "true"
-      ? path.resolve(parent)
-      : null;
-  if (
-    descriptorRoot === null ||
-    (process.platform === "linux" &&
-      fs.realpathSync(descriptorRoot) !== path.resolve(parent))
-  ) {
-    fs.closeSync(handle);
+  let held;
+  let descriptorRoot;
+  try {
+    held = fs.fstatSync(handle, { bigint: true });
+    const stat = fs.lstatSync(parent, { bigint: true });
+    const canonicalParent = fs.realpathSync(parent);
+    descriptorRoot = process.platform === "linux"
+      ? `/proc/self/fd/${handle}`
+      : process.env.VITEST === "true"
+        ? parent
+        : null;
+    const descriptorCanonical = descriptorRoot === null
+      ? null
+      : fs.realpathSync(descriptorRoot);
+    const entries = descriptorRoot === null
+      ? null
+      : fs.readdirSync(descriptorRoot);
+    if (
+      !held.isDirectory() ||
+      !stat.isDirectory() ||
+      stat.isSymbolicLink() ||
+      held.dev !== stat.dev ||
+      held.ino !== stat.ino ||
+      held.uid !== stat.uid ||
+      held.gid !== stat.gid ||
+      held.mode !== stat.mode ||
+      Number(held.mode & 0o7777n) !== 0o700 ||
+      (canonicalParent !== parent &&
+        !(process.platform !== "linux" && process.env.VITEST === "true")) ||
+      descriptorRoot === null ||
+      (process.platform === "linux" && descriptorCanonical !== parent) ||
+      (typeof process.geteuid === "function" &&
+        held.uid !== BigInt(process.geteuid())) ||
+      entries === null ||
+      entries.length !== 0
+    ) fail("output_unsafe");
+  } catch (error) {
+    try {
+      fs.closeSync(handle);
+    } catch {
+      fail("output_cleanup_failed");
+    }
+    if (
+      error instanceof Error &&
+      error.message.startsWith("production_postgres_source_pin_recovery_")
+    ) throw error;
     fail("output_unsafe");
   }
   const expectedEntries = new Set();
@@ -663,7 +690,7 @@ function holdPrivateParent(filename) {
       fs.constants.O_CREAT |
         fs.constants.O_EXCL |
         fs.constants.O_WRONLY |
-        (fs.constants.O_NOFOLLOW ?? 0),
+        noFollowFlag,
       0o600,
     );
     expectedEntries.add(leaf);
@@ -697,9 +724,7 @@ function holdPrivateParent(filename) {
     const target = safeLeaf(leaf);
     const descriptor = fs.openSync(
       target,
-      fs.constants.O_RDONLY |
-        (fs.constants.O_NOFOLLOW ?? 0) |
-        (fs.constants.O_NONBLOCK ?? 0),
+      fs.constants.O_RDONLY | noFollowFlag | nonBlockFlag,
     );
     const opened = fs.fstatSync(descriptor, { bigint: true });
     const current = fs.lstatSync(target, { bigint: true });
