@@ -435,7 +435,17 @@ failure performs no Storage operation and the app must remain undeployed.
 These values now select the implemented server-only `DATABASE_URL` path. The
 checked-in runtime and pinned permanent-staging proof:
 
-- require TLS and use a bounded connection pool sized within the provider connection budget;
+- require TLS and use the exact rolling budget: two runtime, one maintenance
+  work, and one dedicated maintenance-readiness connection per process; four
+  possible processes across two replicas and two deployment generations; shared
+  LOGIN limits 8 and 8; and 16 total application sessions;
+- expose only fixed labeled total/idle/instantaneous-waiting, monotonic
+  capacity-wait event/high-water/duration, and headroom pool counters through
+  the database readiness dependency; permanent-staging load reports validate
+  every sampled shape plus a bounded post-load sweep across every expected
+  frozen replica under one unchanged deployment identity, fail on current or
+  historical contention or identity churn, and retain per-label maxima and
+  minimum available connections;
 - use a dedicated least-privilege application login, never `postgres`, `service_role`, `anon`, or `authenticated`;
 - keep Pint Path application tables in a non-exposed schema with no Data API grants to `anon` or `authenticated`;
 - use a separate direct/admin connection for migrations and logical backups, rather than giving migration ownership to the runtime role;
@@ -499,7 +509,11 @@ Required checks:
 - The `beermap-source-evidence` Storage bucket is private, has no direct `anon`/`authenticated` object policies, and is accessed only through the authorized server API/admin signed-URL path.
 - Supabase MFA is enabled for admin accounts before public launch.
 - Authoritative app tables live in a non-exposed schema and are reached only by the server's least-privilege database role. Do not grant `anon` or `authenticated` access; RLS remains defense in depth rather than the primary server boundary.
-- The application uses a TLS connection pool with a documented maximum. Migrations, schema ownership, `pg_dump`, PITR administration, and restore work use a separately held direct/admin connection.
+- The application uses the exact pool and role limits in
+  [the PostgreSQL connection-budget transition](postgres-connection-budget-transition.md).
+  The 16-session rolling application share is not server headroom. Migrations,
+  schema ownership, `pg_dump`, PITR administration, restore, monitoring, and
+  operator work use separately budgeted direct/admin connections.
 - Permanent integrated staging has its own Supabase project/database, Auth users, Storage bucket, Redis, Resend configuration, Railway environment/service, domain, and callbacks. It stays available for migrations, two-replica concurrency, auth, deletion, data repair, smoke, load, deploy, and rollback proof.
 - Disposable restore-staging has a different Railway environment/service, database, Supabase project/Auth/Storage, Redis, secrets, domain, and callbacks from permanent staging, production, and the operational restore copy. It exists only for destructive RPO/RTO proof. Signed evidence is required but is not teardown authority; delete only after complete resource/evidence reconciliation and specific authorization through the exact reviewed teardown executor and its mutation-boundary preflight/postflight.
 - Before each destructive drill, copy the disposable restore environment identities from the private release register into the protected `RESTORE_REHEARSAL_EXPECTED_*` variables and verify the runtime identities match. Never repurpose permanent staging. Changing these protected pins for a new disposable restore environment does not require a candidate code change.
@@ -770,6 +784,10 @@ Do not launch public production if any of these are true:
 - The reviewed PostgreSQL build is not deployed and proved in permanent
   staging, production still opens authoritative state through SQLite, or the
   candidate cannot run two safe replicas and a Postgres-native rollback path.
+- The PostgreSQL connection-budget transition is incomplete, the temporary
+  legacy maintenance-limit bridge is still present in the final candidate, the
+  maintenance LOGIN is not exactly 8, or live server/reserved/non-app headroom
+  and four-process rolling overlap have not been proved.
 - `GOOGLE_MAPS_MAP_ID` is missing.
 - Admin access is enabled without MFA/verified admin allowlist.
 - Any paid, trial, Pro, reward, counter, redemption, POS, public happy-hour, or report-delivery surface is enabled for this Free-only release.

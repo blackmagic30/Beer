@@ -196,6 +196,30 @@ describe("runtime persistence selection", () => {
       "inspectPostgresLogicalRuntimeDatabaseIdentity(sqlDatabase)",
     );
     expect(appSource).toContain('activeRole: "pintpath_maintenance"');
+    expect(appSource).toContain(
+      "POSTGRES_CONNECTION_BUDGET.maintenanceWorkPoolMaxConnectionsPerProcess",
+    );
+    expect(appSource).toContain(
+      "POSTGRES_CONNECTION_BUDGET.maintenanceReadinessPoolMaxConnectionsPerProcess",
+    );
+    expect(appSource).toContain("inspectPostgresApplicationPoolMetrics(");
+    expect(appSource).toContain('"runtime",');
+    expect(appSource).toContain('"maintenance_work",');
+    expect(appSource).toContain('"maintenance_readiness",');
+    expect(appSource).toContain("poolMetrics: [");
+    expect(appSource).toContain('applicationName: "pintpath-privacy-maintenance-readiness"');
+    expect(appSource).toContain("maintenanceReadinessDatabase");
+    expect(appSource).toContain(
+      "new AccountPrivacyRepository(maintenanceDatabase)",
+    );
+    expect(
+      appSource.match(
+        /checkPostgresMaintenanceRuntimeReadiness\(\s*maintenanceReadinessDatabase/g,
+      ),
+    ).toHaveLength(2);
+    expect(
+      appSource.match(/allowLegacyTwoConnectionLimitDuringRollout: true/g),
+    ).toHaveLength(2);
     expect(appSource).toContain("railwayStockLocalhostCaConnection:");
     expect(appSource).toContain(
       "await persistence.assertPostgresTransportExact()",
@@ -268,7 +292,7 @@ describe("runtime persistence selection", () => {
           host: "fd12:3456:789a::10",
         }),
         applicationName: "pintpath-web",
-        maxConnections: 8,
+        maxConnections: 2,
       }),
     );
     expect(() => runtime.businessRepository.getBarProfile("venue-1")).toThrow(

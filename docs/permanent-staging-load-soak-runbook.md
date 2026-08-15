@@ -265,15 +265,43 @@ and rerun from expected peak.
 ## Accept and retain evidence
 
 For each report require `passed=true`, an empty `failureCodes` array, the exact
-profile/duration/rate/concurrency/commit/target/identity/fixture hashes, at least
-two replica hashes, completed mutation cycles, and zero duplicate/lost/isolation
-failures. Confirm every expected route has samples and review per-route p95/p99
+profile/duration/rate/concurrency/commit/target/identity/fixture hashes, the
+exact configured replica count under one unchanged deployment identity,
+completed mutation cycles, and zero duplicate/lost/isolation failures. Confirm
+every expected route has samples and review per-route p95/p99
 and error counts, not only the aggregate thresholds.
+
+Also require `postgresPoolMetrics.observedReplicaCount` to equal the configured
+replica count, the exact expected replica hashes, and one unchanged retained
+`deploymentIdSha256`. Require the three fixed pool summaries to have the
+report's full `readinessSamples` count. The only accepted labels/maxima are `runtime=2`,
+`maintenance_work=1`, and `maintenance_readiness=1`; each must report
+`maxWaitingRequests=0`, `maxCapacityWaitEvents=0`,
+`maxCapacityWaitHighWater=0`, `maxCapacityWaitDurationMs=0`, and a non-null
+`minAvailableConnections`. The runner validates total, idle, waiting,
+monotonic wait-history, and headroom arithmetic on every sampled `/ready`
+response. After timed traffic stops it performs a bounded sweep that must
+observe every exact frozen replica hash, so a drained transient queue remains
+visible in that process's monotonic counters. A deployment change, replica
+replacement, missing/extra label, impossible counter, over-budget total, any
+current waiter, any historical capacity wait, unsuccessful readiness sample,
+or incomplete postflight replica coverage fails the run. Do not replace this
+evidence with a manual point-in-time screenshot.
 
 Correlate the report's UTC interval with sanitized Railway, Postgres, Redis,
 Supabase Auth/Storage, and alerting evidence. Record pool headroom, lock waits,
 deadlocks, queue growth, CPU/RAM, provider usage, replica/restart/deploy events,
 reviewer, and frozen SHA in the launch evidence pack.
+
+The accepted Postgres evidence must additionally prove the exact connection
+budget from `docs/postgres-connection-budget-transition.md`: four simultaneous
+process-shaped pool sets may hold 8 runtime and 8 maintenance sessions, no
+ninth LOGIN session is admitted for either authority, and a controlled old/new
+rolling replacement stays within those limits with zero pool waiters or
+role-limit errors. The report must also retain zero monotonic capacity-wait
+events/high-water/duration for every labeled pool. It proves per-process
+driver-pool history; separately record server-wide LOGIN usage and enough
+headroom for reserved and non-application sessions.
 
 Finally revoke all three sessions, complete the approved disposable-user/data
 cleanup, verify no `load-soak-*` submission can be published, and remove the

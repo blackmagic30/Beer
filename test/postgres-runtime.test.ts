@@ -316,6 +316,8 @@ describe("Postgres runtime readiness", () => {
     ["a user outside the runtime role", { session: { ...healthyState.session, isRuntimeMember: false } }, "runtime_role_unsafe"],
     ["a pool that did not activate the runtime role", { session: { ...healthyState.session, activeRoleExact: false } }, "runtime_role_unsafe"],
     ["a LOGIN that inherits role authority", { session: { ...healthyState.session, loginInheritsPrivileges: true } }, "runtime_role_unsafe"],
+    ["a runtime LOGIN below the rolling budget", { session: { ...healthyState.session, loginConnectionLimit: 7 } }, "runtime_role_unsafe"],
+    ["a runtime LOGIN above the rolling budget", { session: { ...healthyState.session, loginConnectionLimit: 9 } }, "runtime_role_unsafe"],
     ["a LOGIN with an extra latent membership", { session: { ...healthyState.session, loginMemberships: ["pintpath_runtime", "pintpath_migrator"] } }, "runtime_role_unsafe"],
     ["a LOGIN with unsafe membership options", { session: { ...healthyState.session, loginMembershipOptionsExact: false } }, "runtime_role_unsafe"],
     ["a LOGIN with a role setting", { session: { ...healthyState.session, hasRoleSettings: true } }, "runtime_role_unsafe"],

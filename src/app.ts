@@ -11,6 +11,10 @@ import type { NextFunction, Request, RequestHandler, Response } from "express";
 
 import { env } from "./config/env.js";
 import { PREMIUM_PRICING } from "./config/business-rules.js";
+import {
+  inspectPostgresApplicationPoolMetrics,
+  POSTGRES_CONNECTION_BUDGET,
+} from "./db/postgres-connection-budget.js";
 import { AppError } from "./lib/errors.js";
 import { getRateLimitIdentity } from "./lib/client-ip.js";
 import {
@@ -684,14 +688,19 @@ async function buildLazyRouters(): Promise<LazyRouters> {
     performAccountDeletionSecretPhysicalCheckpoint,
   } = persistence;
   let maintenanceDatabase = sqlDatabase;
+  let maintenanceReadinessDatabase = sqlDatabase;
   let postgresAuthoritiesClosed = false;
   const closePostgresAuthorities = async (): Promise<void> => {
     if (postgresAuthoritiesClosed) return;
     postgresAuthoritiesClosed = true;
     const closeFailures: unknown[] = [];
-    if (maintenanceDatabase !== sqlDatabase) {
+    for (const database of new Set([
+      maintenanceReadinessDatabase,
+      maintenanceDatabase,
+    ])) {
+      if (database === sqlDatabase) continue;
       try {
-        await maintenanceDatabase.close();
+        await database.close();
       } catch (error) {
         closeFailures.push(error);
       }
@@ -718,26 +727,41 @@ async function buildLazyRouters(): Promise<LazyRouters> {
       }
       await persistence.assertPostgresTransportExact();
     }
-    maintenanceDatabase = persistence.mode === "postgres" && env.DATABASE_MAINTENANCE_URL
-      ? createPostgresDatabase({
+    if (persistence.mode === "postgres" && env.DATABASE_MAINTENANCE_URL) {
+      maintenanceDatabase = createPostgresDatabase({
         connectionString: env.DATABASE_MAINTENANCE_URL,
         activeRole: "pintpath_maintenance",
         railwayStockLocalhostCaConnection:
           persistence.postgresTransport!.nodeConnection,
         applicationName: "pintpath-privacy-maintenance",
-        maxConnections: 2,
+        maxConnections:
+          POSTGRES_CONNECTION_BUDGET.maintenanceWorkPoolMaxConnectionsPerProcess,
         idleTimeoutMs: 30_000,
         connectionTimeoutMs: 10_000,
         statementTimeoutMs: 60_000,
         idleInTransactionTimeoutMs: 60_000,
-      })
-      : sqlDatabase;
-    if (maintenanceDatabase !== sqlDatabase) {
+      });
+      maintenanceReadinessDatabase = createPostgresDatabase({
+        connectionString: env.DATABASE_MAINTENANCE_URL,
+        activeRole: "pintpath_maintenance",
+        railwayStockLocalhostCaConnection:
+          persistence.postgresTransport!.nodeConnection,
+        applicationName: "pintpath-privacy-maintenance-readiness",
+        maxConnections:
+          POSTGRES_CONNECTION_BUDGET.maintenanceReadinessPoolMaxConnectionsPerProcess,
+        idleTimeoutMs: 30_000,
+        connectionTimeoutMs: 10_000,
+        statementTimeoutMs: 60_000,
+        idleInTransactionTimeoutMs: 60_000,
+      });
+    }
+    if (maintenanceReadinessDatabase !== sqlDatabase) {
       await persistence.assertPostgresTransportExact();
       let maintenanceReadiness;
       try {
         maintenanceReadiness = await checkPostgresMaintenanceRuntimeReadiness(
-          maintenanceDatabase,
+          maintenanceReadinessDatabase,
+          { allowLegacyTwoConnectionLimitDuringRollout: true },
         );
       } finally {
         await persistence.assertPostgresTransportExact();
@@ -949,7 +973,9 @@ async function buildLazyRouters(): Promise<LazyRouters> {
           try {
             [readiness, maintenanceReadiness] = await Promise.all([
               checkPostgresRuntimeReadiness(sqlDatabase),
-              checkPostgresMaintenanceRuntimeReadiness(maintenanceDatabase),
+              checkPostgresMaintenanceRuntimeReadiness(maintenanceReadinessDatabase, {
+                allowLegacyTwoConnectionLimitDuringRollout: true,
+              }),
             ]);
           } finally {
             await persistence.assertPostgresTransportExact();
@@ -957,6 +983,23 @@ async function buildLazyRouters(): Promise<LazyRouters> {
           return {
             ok: readiness.ready && maintenanceReadiness.ready,
             foreignKeyViolations: 0,
+            poolMetrics: [
+              inspectPostgresApplicationPoolMetrics(
+                sqlDatabase,
+                "runtime",
+                POSTGRES_CONNECTION_BUDGET.runtimePoolMaxConnectionsPerProcess,
+              ),
+              inspectPostgresApplicationPoolMetrics(
+                maintenanceDatabase,
+                "maintenance_work",
+                POSTGRES_CONNECTION_BUDGET.maintenanceWorkPoolMaxConnectionsPerProcess,
+              ),
+              inspectPostgresApplicationPoolMetrics(
+                maintenanceReadinessDatabase,
+                "maintenance_readiness",
+                POSTGRES_CONNECTION_BUDGET.maintenanceReadinessPoolMaxConnectionsPerProcess,
+              ),
+            ],
           };
         }
       : async () => businessRepository.checkDatabaseHealth(),
