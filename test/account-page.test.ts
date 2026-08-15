@@ -30,9 +30,51 @@ function appSource() {
   return fs.readFileSync(path.resolve(process.cwd(), "src/app.ts"), "utf8");
 }
 
-function loadBusinessHelpers() {
+interface BrowserStorageFixture {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): unknown;
+  removeItem(key: string): unknown;
+  key(index: number): string | null;
+  readonly length: number;
+}
+
+interface BusinessHelperOptions {
+  localStorage?: BrowserStorageFixture;
+  cookieJar?: Map<string, string>;
+  readCookies?: (cookieJar: Map<string, string>) => string;
+  writeCookie?: (serialized: string, cookieJar: Map<string, string>) => unknown;
+  fetchImpl?: typeof fetch;
+}
+
+function loadBusinessHelpers(options: BusinessHelperOptions = {}) {
   const localStorage = new Map<string, string>();
   const sessionStorage = new Map<string, string>();
+  const cookieJar = options.cookieJar || new Map<string, string>();
+  const localStorageFixture = options.localStorage || {
+    getItem: (key: string) => localStorage.get(key) || null,
+    setItem: (key: string, value: string) => localStorage.set(key, String(value)),
+    removeItem: (key: string) => localStorage.delete(key),
+    key: (index: number) => Array.from(localStorage.keys())[index] || null,
+    get length() {
+      return localStorage.size;
+    },
+  };
+  const documentFixture = {
+    get cookie() {
+      if (options.readCookies) return options.readCookies(cookieJar);
+      return Array.from(cookieJar, ([name, value]) => `${name}=${value}`).join("; ");
+    },
+    set cookie(serialized: string) {
+      if (options.writeCookie) {
+        options.writeCookie(serialized, cookieJar);
+        return;
+      }
+      const pair = serialized.split(";", 1)[0] || "";
+      const separator = pair.indexOf("=");
+      if (separator < 1) return;
+      cookieJar.set(pair.slice(0, separator), pair.slice(separator + 1));
+    },
+  };
   const context = {
     AbortController,
     DOMException,
@@ -41,19 +83,11 @@ function loadBusinessHelpers() {
     URL,
     URLSearchParams,
     crypto: { randomUUID: () => "test-uuid" },
-    fetch: async () => ({ ok: true, json: async () => ({}) }),
+    fetch: options.fetchImpl || (async () => ({ ok: true, json: async () => ({}) })),
     window: {
       MELB_BEER_BOT_VIEWER_CONFIG: { business: { fieldTestMode: true } },
-      location: { origin: "https://pintpath.au", search: "" },
-      localStorage: {
-        getItem: (key: string) => localStorage.get(key) || null,
-        setItem: (key: string, value: string) => localStorage.set(key, String(value)),
-        removeItem: (key: string) => localStorage.delete(key),
-        key: (index: number) => Array.from(localStorage.keys())[index] || null,
-        get length() {
-          return localStorage.size;
-        },
-      },
+      location: { origin: "https://pintpath.au", protocol: "https:", search: "" },
+      localStorage: localStorageFixture,
       sessionStorage: {
         getItem: (key: string) => sessionStorage.get(key) || null,
         setItem: (key: string, value: string) => sessionStorage.set(key, String(value)),
@@ -61,6 +95,7 @@ function loadBusinessHelpers() {
       },
       addEventListener: () => undefined,
     },
+    document: documentFixture,
   };
   vm.createContext(context);
   vm.runInContext(businessJs(), context);
@@ -75,6 +110,14 @@ function loadBusinessHelpers() {
       isVenuePortalReturnPath: (value?: string | null) => boolean;
       storeSensitiveAuthReturnPath: (value?: string | null) => string | null;
       consumeSensitiveAuthReturnPath: () => string | null;
+      getCookieConsentDecision: () => string | null;
+      setCookieConsentDecision: (decision: string) => void;
+      hasAnalyticsConsent: () => boolean;
+      setPrivacyPreferenceCache: (
+        settings: Record<string, unknown>,
+        options?: { allowOptionalPromotion?: boolean },
+      ) => void;
+      trackEvent: (eventType: string, metadata?: Record<string, unknown>) => Promise<void>;
     };
   }).MelbBeerBusiness;
 }
@@ -2005,6 +2048,8 @@ describe("account page shell", () => {
     expect(html).toContain("consentVersion: MelbBeerBusiness.LEGAL_POLICY_VERSION");
     expect(html).toContain("expectedUpdatedAt: state.accountData?.privacySettings?.consentedAt");
     expect(html).toContain("state.accountData.privacySettings = result.privacySettings || settings");
+    expect(html).toContain("MelbBeerBusiness.setPrivacyPreferenceCache(privacySettings)");
+    expect(html).toContain("{ allowOptionalPromotion: true }");
     expect(html).toContain("expectedUpdatedAt: state.accountData?.preferences?.updatedAt || null");
     expect(html).toContain("state.accountData.preferences = result.preferences || {}");
     expect(html).toContain("/api/business/auth/logout-all");
@@ -2071,16 +2116,30 @@ describe("account page shell", () => {
   it("adds cookie consent and accessibility chrome around optional analytics", () => {
     const css = businessCss();
     const script = businessJs();
+    const closeCookieDialog = htmlBetween(script, "const closeCookieDialog", "banner.querySelectorAll");
 
     expect(script).toContain("pintPathCookieConsent");
+    expect(script).toContain('const CONSENT_STATE_ESSENTIAL = "v1.e"');
+    expect(script).toContain('const CONSENT_STATE_OPTIONAL = "v1.o0"');
+    expect(script).toContain('const CONSENT_STATE_OPTIONAL_WITH_VENUE_REPORTS = "v1.o1"');
+    expect(script).toContain("Path=/; SameSite=Lax; Max-Age=");
+    expect(script).toContain('secure ? "; Secure" : ""');
+    expect(script).not.toContain("; Domain=");
     expect(script).toContain("function installCookieConsent");
     expect(script).toContain("Essentials only");
     expect(script).toContain("Accept all");
     expect(script).toContain("Manage in account");
     expect(script).toContain('/account.html?settings=privacy');
     expect(script).toContain("inertedElements");
+    expect(closeCookieDialog).toContain("try {");
+    expect(closeCookieDialog).toContain("setCookieConsentDecision(choice)");
+    expect(closeCookieDialog).toContain("} finally {");
+    expect(closeCookieDialog).toContain("element.inert = false");
+    expect(closeCookieDialog).toContain("backdrop.remove()");
+    expect(closeCookieDialog).toContain("banner.remove()");
     expect(script).toContain("function hasAnalyticsConsent");
     expect(script).toContain("if (!hasAnalyticsConsent())");
+    expect(script).toContain("if (hasVenueContext && !hasVenueReportConsent())");
     expect(script).toContain('aria-label="Primary"');
     expect(script).toContain("function installAccessibilityChrome");
     expect(script).toContain('main.id = "mainContent"');
@@ -2090,5 +2149,449 @@ describe("account page shell", () => {
     expect(css).toContain(".cookieConsent");
     expect(css).toContain(".skipLink");
     expect(css).toContain(":focus-visible");
+  });
+
+  it("keeps cookie consent preferences fail-closed when browser storage is unavailable", () => {
+    const unavailableStorage: BrowserStorageFixture = {
+      getItem: () => {
+        throw new DOMException("Storage is unavailable.", "SecurityError");
+      },
+      setItem: () => {
+        throw new DOMException("Storage quota exceeded.", "QuotaExceededError");
+      },
+      removeItem: () => {
+        throw new DOMException("Storage is unavailable.", "SecurityError");
+      },
+      key: () => null,
+      length: 0,
+    };
+    const helpers = loadBusinessHelpers({
+      localStorage: unavailableStorage,
+      readCookies: () => {
+        throw new DOMException("Cookies are unavailable.", "SecurityError");
+      },
+      writeCookie: () => {
+        throw new DOMException("Cookies are unavailable.", "SecurityError");
+      },
+    });
+
+    expect(helpers.getCookieConsentDecision()).toBeNull();
+    expect(helpers.hasAnalyticsConsent()).toBe(false);
+
+    expect(() => helpers.setCookieConsentDecision("essential")).not.toThrow();
+    expect(helpers.getCookieConsentDecision()).toBe("essential");
+    expect(helpers.hasAnalyticsConsent()).toBe(false);
+
+    expect(() => helpers.setCookieConsentDecision("optional")).not.toThrow();
+    expect(helpers.getCookieConsentDecision()).toBe("essential");
+    expect(helpers.hasAnalyticsConsent()).toBe(false);
+
+    expect(() => helpers.setPrivacyPreferenceCache({
+      optionalAnalyticsEnabled: false,
+      venueReportInclusionEnabled: false,
+    })).not.toThrow();
+    expect(helpers.getCookieConsentDecision()).toBe("essential");
+    expect(helpers.hasAnalyticsConsent()).toBe(false);
+  });
+
+  it("enables optional analytics only after exact V1 storage and host-cookie readback", async () => {
+    const persisted = new Map<string, string>([
+      ["pintPathCookieConsent", "optional"],
+      ["pintPathOptionalAnalyticsEnabled", "true"],
+      ["pintPathVenueReportsEnabled", "true"],
+    ]);
+    const cookieJar = new Map<string, string>();
+    const cookieWrites: string[] = [];
+    const eventRequests: Array<{ path: string; body: Record<string, unknown> }> = [];
+    const storage: BrowserStorageFixture = {
+      getItem: (key) => persisted.get(key) ?? null,
+      setItem: (key, value) => persisted.set(key, String(value)),
+      removeItem: (key) => persisted.delete(key),
+      key: (index) => Array.from(persisted.keys())[index] ?? null,
+      get length() {
+        return persisted.size;
+      },
+    };
+    const writeCookie = (serialized: string, jar: Map<string, string>) => {
+      cookieWrites.push(serialized);
+      const [pair = ""] = serialized.split(";", 1);
+      const separator = pair.indexOf("=");
+      jar.set(pair.slice(0, separator), pair.slice(separator + 1));
+    };
+    const helpers = loadBusinessHelpers({
+      localStorage: storage,
+      cookieJar,
+      writeCookie,
+      fetchImpl: async (input, request = {}) => {
+        eventRequests.push({
+          path: String(input),
+          body: JSON.parse(String(request.body || "{}")) as Record<string, unknown>,
+        });
+        return new Response(JSON.stringify({ ok: true, data: {} }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      },
+    });
+
+    helpers.setCookieConsentDecision("optional");
+
+    expect(persisted.get("pintPathConsentV1")).toBe("v1.o1");
+    expect(cookieJar.get("pintPathConsentV1")).toBe("v1.o1");
+    expect(helpers.getCookieConsentDecision()).toBe("optional");
+    expect(helpers.hasAnalyticsConsent()).toBe(true);
+    expect(persisted.has("pintPathCookieConsent")).toBe(false);
+    expect(persisted.has("pintPathOptionalAnalyticsEnabled")).toBe(false);
+    expect(persisted.has("pintPathVenueReportsEnabled")).toBe(false);
+    expect(cookieWrites[0]).toContain("pintPathConsentV1=v1.o1");
+    expect(cookieWrites[0]).toContain("Path=/");
+    expect(cookieWrites[0]).toContain("SameSite=Lax");
+    expect(cookieWrites[0]).toMatch(/Max-Age=\d+/);
+    expect(cookieWrites[0]).toContain("Secure");
+    expect(cookieWrites[0]).not.toContain("Domain=");
+    await helpers.trackEvent("venue_opened", { venueId: "venue-o1" });
+    expect(eventRequests).toHaveLength(1);
+    expect(eventRequests[0]).toMatchObject({
+      path: "/api/business/events",
+      body: { venueId: "venue-o1" },
+    });
+
+    helpers.setPrivacyPreferenceCache({
+      optionalAnalyticsEnabled: true,
+      venueReportInclusionEnabled: false,
+    });
+    expect(persisted.get("pintPathConsentV1")).toBe("v1.o0");
+    expect(cookieJar.get("pintPathConsentV1")).toBe("v1.o0");
+    expect(helpers.hasAnalyticsConsent()).toBe(true);
+    await helpers.trackEvent("venue_opened", { venueId: "venue-o0" });
+    expect(eventRequests).toHaveLength(1);
+    await helpers.trackEvent("map_opened");
+    expect(eventRequests).toHaveLength(2);
+
+    helpers.setPrivacyPreferenceCache({
+      optionalAnalyticsEnabled: false,
+      venueReportInclusionEnabled: false,
+    });
+    expect(persisted.get("pintPathConsentV1")).toBe("v1.e");
+    expect(cookieJar.get("pintPathConsentV1")).toBe("v1.e");
+    expect(helpers.getCookieConsentDecision()).toBe("essential");
+    expect(helpers.hasAnalyticsConsent()).toBe(false);
+  });
+
+  it("does not resurrect a stale or malformed analytics opt-in after a failed opt-out", () => {
+    const persisted = new Map<string, string>([
+      ["pintPathCookieConsent", "optional"],
+      ["pintPathOptionalAnalyticsEnabled", "true"],
+      ["pintPathVenueReportsEnabled", "true"],
+    ]);
+    const readableButUnwritableStorage: BrowserStorageFixture = {
+      getItem: (key) => persisted.get(key) ?? null,
+      setItem: () => {
+        throw new DOMException("Storage is read-only.", "SecurityError");
+      },
+      removeItem: () => {
+        throw new DOMException("Storage is read-only.", "SecurityError");
+      },
+      key: (index) => Array.from(persisted.keys())[index] ?? null,
+      get length() {
+        return persisted.size;
+      },
+    };
+    const cookieJar = new Map<string, string>();
+
+    const legacyOptionalPage = loadBusinessHelpers({
+      localStorage: readableButUnwritableStorage,
+      cookieJar,
+    });
+    expect(legacyOptionalPage.getCookieConsentDecision()).toBeNull();
+    expect(legacyOptionalPage.hasAnalyticsConsent()).toBe(false);
+
+    const currentPage = loadBusinessHelpers({
+      localStorage: readableButUnwritableStorage,
+      cookieJar,
+    });
+    currentPage.setCookieConsentDecision("essential");
+    expect(currentPage.getCookieConsentDecision()).toBe("essential");
+    expect(currentPage.hasAnalyticsConsent()).toBe(false);
+    expect(cookieJar.get("pintPathConsentV1")).toBe("v1.e");
+
+    const reloadedPage = loadBusinessHelpers({
+      localStorage: readableButUnwritableStorage,
+      cookieJar,
+    });
+    expect(reloadedPage.getCookieConsentDecision()).not.toBe("optional");
+    expect(reloadedPage.hasAnalyticsConsent()).toBe(false);
+
+    cookieJar.clear();
+    persisted.set("pintPathCookieConsent", "corrupt");
+    persisted.set("pintPathOptionalAnalyticsEnabled", "corrupt");
+    const malformedPage = loadBusinessHelpers({
+      localStorage: readableButUnwritableStorage,
+      cookieJar,
+    });
+    expect(malformedPage.getCookieConsentDecision()).toBeNull();
+    expect(malformedPage.hasAnalyticsConsent()).toBe(false);
+  });
+
+  it("denies malformed, missing, partial, or mismatched V1 consent while either essential channel dominates", () => {
+    const cases: Array<{
+      name: string;
+      local: string | null;
+      cookie: string | null;
+      cookieHeader?: string;
+      decision: string | null;
+      analytics: boolean;
+    }> = [
+      { name: "both optional analytics", local: "v1.o0", cookie: "v1.o0", decision: "optional", analytics: true },
+      { name: "both optional venue reports", local: "v1.o1", cookie: "v1.o1", decision: "optional", analytics: true },
+      { name: "missing cookie", local: "v1.o1", cookie: null, decision: null, analytics: false },
+      { name: "missing storage", local: null, cookie: "v1.o1", decision: null, analytics: false },
+      { name: "optional mismatch", local: "v1.o0", cookie: "v1.o1", decision: null, analytics: false },
+      { name: "matching corruption", local: "corrupt", cookie: "corrupt", decision: null, analytics: false },
+      {
+        name: "duplicate consent cookie",
+        local: "v1.o1",
+        cookie: "v1.o1",
+        cookieHeader: "pintPathConsentV1=v1.o1; pintPathConsentV1=v1.o1",
+        decision: null,
+        analytics: false,
+      },
+      { name: "storage essential", local: "v1.e", cookie: "v1.o1", decision: "essential", analytics: false },
+      { name: "cookie essential", local: "v1.o1", cookie: "v1.e", decision: "essential", analytics: false },
+    ];
+
+    cases.forEach((testCase) => {
+      const persisted = new Map<string, string>();
+      if (testCase.local) persisted.set("pintPathConsentV1", testCase.local);
+      const storage: BrowserStorageFixture = {
+        getItem: (key) => persisted.get(key) ?? null,
+        setItem: (key, value) => persisted.set(key, String(value)),
+        removeItem: (key) => persisted.delete(key),
+        key: (index) => Array.from(persisted.keys())[index] ?? null,
+        get length() {
+          return persisted.size;
+        },
+      };
+      const cookieJar = new Map<string, string>();
+      if (testCase.cookie) cookieJar.set("pintPathConsentV1", testCase.cookie);
+      const helpers = loadBusinessHelpers({
+        localStorage: storage,
+        cookieJar,
+        ...(testCase.cookieHeader ? { readCookies: () => testCase.cookieHeader || "" } : {}),
+      });
+
+      expect(helpers.getCookieConsentDecision(), testCase.name).toBe(testCase.decision);
+      expect(helpers.hasAnalyticsConsent(), testCase.name).toBe(testCase.analytics);
+    });
+  });
+
+  it("rolls partial, silent, and channel-specific optional-write failures back to essential", () => {
+    const scenarios = [
+      { name: "storage silent no-op", storageMode: "noop", cookieMode: "write" },
+      { name: "storage throws", storageMode: "throw", cookieMode: "write" },
+      { name: "cookie silent no-op", storageMode: "write", cookieMode: "noop" },
+      { name: "cookie throws", storageMode: "write", cookieMode: "throw" },
+    ] as const;
+
+    scenarios.forEach((scenario) => {
+      const persisted = new Map<string, string>();
+      const cookieJar = new Map<string, string>();
+      const storage: BrowserStorageFixture = {
+        getItem: (key) => persisted.get(key) ?? null,
+        setItem: (key, value) => {
+          if (scenario.storageMode === "throw") throw new DOMException("Storage write failed.", "SecurityError");
+          if (scenario.storageMode === "write") persisted.set(key, String(value));
+        },
+        removeItem: (key) => persisted.delete(key),
+        key: (index) => Array.from(persisted.keys())[index] ?? null,
+        get length() {
+          return persisted.size;
+        },
+      };
+      const helpers = loadBusinessHelpers({
+        localStorage: storage,
+        cookieJar,
+        writeCookie: (serialized, jar) => {
+          if (scenario.cookieMode === "throw") throw new DOMException("Cookie write failed.", "SecurityError");
+          if (scenario.cookieMode === "noop") return;
+          const [pair = ""] = serialized.split(";", 1);
+          const separator = pair.indexOf("=");
+          jar.set(pair.slice(0, separator), pair.slice(separator + 1));
+        },
+      });
+
+      helpers.setCookieConsentDecision("optional");
+
+      expect(helpers.getCookieConsentDecision(), scenario.name).toBe("essential");
+      expect(helpers.hasAnalyticsConsent(), scenario.name).toBe(false);
+    });
+  });
+
+  it("keeps an essential opt-out after reload when either persistence channel fails", () => {
+    const scenarios = [
+      { name: "storage silent no-op", storageMode: "noop", cookieMode: "write" },
+      { name: "storage throws", storageMode: "throw", cookieMode: "write" },
+      { name: "cookie silent no-op", storageMode: "write", cookieMode: "noop" },
+      { name: "cookie throws", storageMode: "write", cookieMode: "throw" },
+    ] as const;
+
+    scenarios.forEach((scenario) => {
+      const persisted = new Map<string, string>([["pintPathConsentV1", "v1.o1"]]);
+      const cookieJar = new Map<string, string>([["pintPathConsentV1", "v1.o1"]]);
+      const storage: BrowserStorageFixture = {
+        getItem: (key) => persisted.get(key) ?? null,
+        setItem: (key, value) => {
+          if (scenario.storageMode === "throw") throw new DOMException("Storage write failed.", "SecurityError");
+          if (scenario.storageMode === "write") persisted.set(key, String(value));
+        },
+        removeItem: (key) => persisted.delete(key),
+        key: (index) => Array.from(persisted.keys())[index] ?? null,
+        get length() {
+          return persisted.size;
+        },
+      };
+      const options: BusinessHelperOptions = {
+        localStorage: storage,
+        cookieJar,
+        writeCookie: (serialized, jar) => {
+          if (scenario.cookieMode === "throw") throw new DOMException("Cookie write failed.", "SecurityError");
+          if (scenario.cookieMode === "noop") return;
+          const [pair = ""] = serialized.split(";", 1);
+          const separator = pair.indexOf("=");
+          jar.set(pair.slice(0, separator), pair.slice(separator + 1));
+        },
+      };
+
+      const currentPage = loadBusinessHelpers(options);
+      currentPage.setCookieConsentDecision("essential");
+      expect(currentPage.getCookieConsentDecision(), `${scenario.name} current page`).toBe("essential");
+      expect(currentPage.hasAnalyticsConsent(), `${scenario.name} current page`).toBe(false);
+
+      const reloadedPage = loadBusinessHelpers(options);
+      expect(reloadedPage.getCookieConsentDecision(), `${scenario.name} reload`).toBe("essential");
+      expect(reloadedPage.hasAnalyticsConsent(), `${scenario.name} reload`).toBe(false);
+    });
+  });
+
+  it("safely migrates legacy essential consent but never legacy optional consent", () => {
+    const persisted = new Map<string, string>([
+      ["pintPathCookieConsent", "essential"],
+      ["pintPathOptionalAnalyticsEnabled", "false"],
+      ["pintPathVenueReportsEnabled", "false"],
+    ]);
+    const cookieJar = new Map<string, string>();
+    const storage: BrowserStorageFixture = {
+      getItem: (key) => persisted.get(key) ?? null,
+      setItem: (key, value) => persisted.set(key, String(value)),
+      removeItem: (key) => persisted.delete(key),
+      key: (index) => Array.from(persisted.keys())[index] ?? null,
+      get length() {
+        return persisted.size;
+      },
+    };
+    const helpers = loadBusinessHelpers({ localStorage: storage, cookieJar });
+
+    expect(helpers.getCookieConsentDecision()).toBe("essential");
+    expect(helpers.hasAnalyticsConsent()).toBe(false);
+    expect(persisted.get("pintPathConsentV1")).toBe("v1.e");
+    expect(cookieJar.get("pintPathConsentV1")).toBe("v1.e");
+    expect(persisted.has("pintPathCookieConsent")).toBe(false);
+    expect(persisted.has("pintPathOptionalAnalyticsEnabled")).toBe(false);
+    expect(persisted.has("pintPathVenueReportsEnabled")).toBe(false);
+
+    persisted.clear();
+    cookieJar.clear();
+    persisted.set("pintPathCookieConsent", "optional");
+    persisted.set("pintPathOptionalAnalyticsEnabled", "true");
+    persisted.set("pintPathVenueReportsEnabled", "true");
+    const legacyOptionalHelpers = loadBusinessHelpers({ localStorage: storage, cookieJar });
+    expect(legacyOptionalHelpers.getCookieConsentDecision()).toBeNull();
+    expect(legacyOptionalHelpers.hasAnalyticsConsent()).toBe(false);
+    expect(persisted.has("pintPathConsentV1")).toBe(false);
+    expect(cookieJar.has("pintPathConsentV1")).toBe(false);
+
+    persisted.set("pintPathCookieConsent", "essential");
+    persisted.set("pintPathOptionalAnalyticsEnabled", "false");
+    persisted.set("pintPathVenueReportsEnabled", "true");
+    const incompleteLegacyDenialHelpers = loadBusinessHelpers({ localStorage: storage, cookieJar });
+    expect(incompleteLegacyDenialHelpers.getCookieConsentDecision()).toBeNull();
+    expect(incompleteLegacyDenialHelpers.hasAnalyticsConsent()).toBe(false);
+    expect(persisted.has("pintPathConsentV1")).toBe(false);
+    expect(cookieJar.has("pintPathConsentV1")).toBe(false);
+  });
+
+  it("allows only an explicit successful privacy save to promote optional consent", () => {
+    const persisted = new Map<string, string>();
+    const cookieJar = new Map<string, string>();
+    const storage: BrowserStorageFixture = {
+      getItem: (key) => persisted.get(key) ?? null,
+      setItem: (key, value) => persisted.set(key, String(value)),
+      removeItem: (key) => persisted.delete(key),
+      key: (index) => Array.from(persisted.keys())[index] ?? null,
+      get length() {
+        return persisted.size;
+      },
+    };
+    const helpers = loadBusinessHelpers({ localStorage: storage, cookieJar });
+
+    helpers.setPrivacyPreferenceCache({ venueReportInclusionEnabled: true });
+    expect(persisted.has("pintPathConsentV1")).toBe(false);
+    expect(cookieJar.has("pintPathConsentV1")).toBe(false);
+    expect(helpers.getCookieConsentDecision()).toBeNull();
+    expect(helpers.hasAnalyticsConsent()).toBe(false);
+
+    helpers.setPrivacyPreferenceCache({
+      optionalAnalyticsEnabled: true,
+      venueReportInclusionEnabled: true,
+    });
+    expect(persisted.has("pintPathConsentV1")).toBe(false);
+    expect(cookieJar.has("pintPathConsentV1")).toBe(false);
+    expect(helpers.getCookieConsentDecision()).toBeNull();
+    expect(helpers.hasAnalyticsConsent()).toBe(false);
+
+    helpers.setPrivacyPreferenceCache({
+      optionalAnalyticsEnabled: true,
+      venueReportInclusionEnabled: false,
+    }, { allowOptionalPromotion: true });
+    expect(persisted.get("pintPathConsentV1")).toBe("v1.o0");
+    expect(cookieJar.get("pintPathConsentV1")).toBe("v1.o0");
+    expect(helpers.hasAnalyticsConsent()).toBe(true);
+
+    helpers.setPrivacyPreferenceCache({
+      optionalAnalyticsEnabled: false,
+      venueReportInclusionEnabled: false,
+    });
+    expect(persisted.get("pintPathConsentV1")).toBe("v1.e");
+    expect(cookieJar.get("pintPathConsentV1")).toBe("v1.e");
+    expect(helpers.hasAnalyticsConsent()).toBe(false);
+
+    helpers.setPrivacyPreferenceCache({
+      optionalAnalyticsEnabled: true,
+      venueReportInclusionEnabled: true,
+    });
+    expect(persisted.get("pintPathConsentV1")).toBe("v1.e");
+    expect(cookieJar.get("pintPathConsentV1")).toBe("v1.e");
+    expect(helpers.hasAnalyticsConsent()).toBe(false);
+
+    helpers.setPrivacyPreferenceCache({
+      optionalAnalyticsEnabled: true,
+      venueReportInclusionEnabled: true,
+    }, { allowOptionalPromotion: true });
+    expect(persisted.get("pintPathConsentV1")).toBe("v1.o1");
+    expect(cookieJar.get("pintPathConsentV1")).toBe("v1.o1");
+    expect(helpers.hasAnalyticsConsent()).toBe(true);
+
+    helpers.setPrivacyPreferenceCache({ optionalAnalyticsEnabled: true });
+    expect(persisted.get("pintPathConsentV1")).toBe("v1.e");
+    expect(cookieJar.get("pintPathConsentV1")).toBe("v1.e");
+    expect(helpers.hasAnalyticsConsent()).toBe(false);
+
+    helpers.setPrivacyPreferenceCache({
+      optionalAnalyticsEnabled: "true",
+      venueReportInclusionEnabled: true,
+    });
+    expect(persisted.get("pintPathConsentV1")).toBe("v1.e");
+    expect(cookieJar.get("pintPathConsentV1")).toBe("v1.e");
+    expect(helpers.hasAnalyticsConsent()).toBe(false);
   });
 });
