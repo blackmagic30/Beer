@@ -17,6 +17,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     environment: production
+    outputs:
+      directory_schema_ready: ${{ steps.directory_schema.outputs.ready }}
     env:
       PINTPATH_EXPECTED_SUPABASE_PROJECT_REF: jxpubqlmqnnqwadmjgyk
     steps:
@@ -177,3 +179,77 @@ jobs:
           }
           console.log(`Oldest eligible venue status age: ${ageHours.toFixed(1)} hours.`);
           NODE
+
+  notify-directory-refresh:
+    name: Page on failure and emit the deadman heartbeat
+    needs: [refresh-production-directory-status]
+    if: ${{ always() }}
+    permissions: {}
+    runs-on: ubuntu-24.04
+    environment: production-monitoring-alerts
+    timeout-minutes: 5
+    steps:
+      - name: Send the non-secret monitor signal
+        shell: bash
+        env:
+          MONITOR_WEBHOOK_URL: ${{ secrets.PINTPATH_PRODUCTION_MONITOR_WEBHOOK_URL }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_SCHEDULE: ${{ github.event.schedule }}
+          REFRESH_RESULT: ${{ needs.refresh-production-directory-status.result }}
+          DIRECTORY_SCHEMA_READY: ${{ needs.refresh-production-directory-status.outputs.directory_schema_ready }}
+        run: |
+          set -euo pipefail
+          set +x
+
+          case "$MONITOR_WEBHOOK_URL" in
+            https://*) ;;
+            *) echo "Production monitor webhook must use HTTPS." >&2; exit 1 ;;
+          esac
+          case "$REFRESH_RESULT" in
+            success|failure|cancelled|skipped) ;;
+            *) echo "Unexpected venue directory refresh job result." >&2; exit 1 ;;
+          esac
+
+          monitor="unknown"
+          if [[ "$EVENT_NAME" == "schedule" && "$EVENT_SCHEDULE" == "23 14 * * *" ]]; then
+            monitor="daily"
+          elif [[ "$EVENT_NAME" == "workflow_dispatch" && -z "$EVENT_SCHEDULE" ]]; then
+            monitor="manual"
+          fi
+
+          if [[ "$monitor" == "daily" \
+            && "$REFRESH_RESULT" == "success" \
+            && "$DIRECTORY_SCHEMA_READY" == "true" ]]; then
+            status="success"
+            event="pintpath-venue-directory-refresh-heartbeat"
+          elif [[ "$monitor" == "manual" \
+            && "$REFRESH_RESULT" == "success" \
+            && "$DIRECTORY_SCHEMA_READY" == "true" ]]; then
+            status="success"
+            event="pintpath-venue-directory-refresh-manual-check"
+          else
+            status="failure"
+            event="pintpath-venue-directory-refresh-failed"
+          fi
+
+          payload="$(printf '{\"schemaVersion\":1,\"event\":\"%s\",\"status\":\"%s\",\"monitor\":\"%s\",\"trigger\":\"%s\",\"schedule\":\"%s\",\"repository\":\"%s\",\"runId\":\"%s\",\"runAttempt\":\"%s\",\"refreshResult\":\"%s\",\"directorySchemaReady\":\"%s\"}' \
+            "$event" "$status" "$monitor" "$EVENT_NAME" "$EVENT_SCHEDULE" \
+            "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" \
+            "$REFRESH_RESULT" "$DIRECTORY_SCHEMA_READY")"
+          http_status="$(curl --request POST \
+            --silent --show-error --fail-with-body \
+            --proto '=https' --tlsv1.2 \
+            --connect-timeout 5 --max-time 15 \
+            --retry 2 --retry-delay 1 --retry-all-errors \
+            -H 'content-type: application/json' \
+            --data-binary "$payload" \
+            --output /dev/null --write-out '%{http_code}' \
+            "$MONITOR_WEBHOOK_URL")"
+          case "$http_status" in
+            2??) ;;
+            *) echo "Production monitor webhook returned a non-2xx response." >&2; exit 1 ;;
+          esac
+          if [[ "$status" == "failure" ]]; then
+            echo "::error::Venue directory refresh failed or remained deferred; the external failure signal was delivered."
+            exit 1
+          fi

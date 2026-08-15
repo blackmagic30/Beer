@@ -179,6 +179,9 @@ The remaining launch blockers require live/external completion:
 - correct all malformed structured addresses;
 - enable PITR, prove a usable recovery point, and restrict production database network access;
 - configure and dispatch the protected daily status workflow, then connect its failure threshold to the real on-call page;
+- configure the separated unattended Production Health/monitor-alert
+  environments, route both scheduled workflows into the external on-call
+  service, and pass the live failure-page and missing-heartbeat exercises;
 - build and rehearse the immutable Postgres-compatible rollback artifact;
 - a clean candidate commit, current remote CI/CodeQL, an authenticated merged
   PR with exact reviewed/candidate tree equality, and required branch protections;
@@ -825,8 +828,20 @@ permanent staging, and a new candidate.
    `SUPABASE_SERVICE_ROLE_KEY`, and `GOOGLE_PLACES_API_KEY`.
 2. Require a production-environment reviewer who is not the workflow
    dispatcher.
-3. Connect workflow failure to the real on-call paging integration. A GitHub
-   warning or failed check without a page is not sufficient.
+3. Connect the notifier's `pintpath-venue-directory-refresh-failed` event to the
+   real on-call page and its `pintpath-venue-directory-refresh-heartbeat` event
+   to an independent daily deadman monitor. Only the exact `23 14 * * *`
+   schedule with job success and `directorySchemaReady=true` may emit that
+   heartbeat. A successful schema-ready manual dispatch emits
+   `pintpath-venue-directory-refresh-manual-check` and must not reset the daily
+   deadman. Every other trigger/result matrix, including deferred or missing
+   schema, emits `pintpath-venue-directory-refresh-failed` and pages. A GitHub
+   warning, failed check, or blocked start without an external page is not
+   sufficient. After delivering a failure event, the notifier must exit nonzero
+   so the workflow remains failed. Keep the
+   provider/database mutation job under its existing protected policy; only its
+   provider-credential-free, webhook-only notifier uses the unattended
+   `production-monitoring-alerts` environment described in Phase 16.7.
 4. Dispatch the workflow from the exact protected `main` SHA and require both
    its dry run and write run to check every existing Place ID successfully.
 5. Preserve the Actions log containing the target-pinned transition manifest
@@ -1454,8 +1469,15 @@ Configure **GitHub Settings → Environments → `production`** to:
 - allow protected branches only;
 - require a reviewer who is not the deployer;
 - prevent self-review where the plan supports it;
-- store production smoke credentials only in that environment;
+- store the manual release gate's one-use admin token and its copy of the
+  low-privilege smoke credentials only in that environment;
 - use a review wait timer if required by the launch owner.
+
+Do not use `production` for scheduled **Production Health**. Phase 16.7
+configures separate unattended, default-branch-only monitoring and alert
+environments so scheduled probes and failure pages start without a gate or wait
+timer. This does not change the existing protected policy for release,
+deployment, provider, database, or route mutations.
 
 Required checks must report for every protected PR. The candidate native
 workflow is now unfiltered so its `ios` job reports on evidence-only PRs as
@@ -2113,7 +2135,28 @@ PINTPATH_DATA_STRICT=true \
   npm run readiness:data
 ```
 
-Dispatch **Production Health** at `deploymentSha` through the protected `production` GitHub environment. Do not run protected credentials in a local shell:
+Before dispatching **Production Health**, configure these two GitHub
+environments:
+
+1. `production-monitoring` permits only protected default `main`, is configured
+   for unattended execution with no wait timer, and contains only `SUPABASE_URL`,
+   `SUPABASE_ANON_KEY`, `PINTPATH_SMOKE_USER_EMAIL`,
+   `PINTPATH_SMOKE_USER_PASSWORD`, `PINTPATH_SMOKE_VENUE_EMAIL`, and
+   `PINTPATH_SMOKE_VENUE_PASSWORD`. The URL and publishable key are reviewed
+   public smoke configuration; the accounts are dedicated low-privilege
+   synthetic user and venue-manager accounts. Do not add admin, provider-write,
+   deployment, database, or service-role credentials.
+2. `production-monitoring-alerts` permits only protected default `main`, is
+   configured for unattended execution with no wait timer, and contains only
+   `PINTPATH_PRODUCTION_MONITOR_WEBHOOK_URL`. Do not add provider, deployment,
+   database, smoke-account, or other production secrets. This environment is
+   shared only by the provider-credential-free, webhook-only Production Health
+   and Venue Directory Status Refresh notifier jobs.
+
+Keep the `production` environment for the manual **Pint Path Release Gate** and
+mutation workflows under their existing protected policy. Dispatch
+**Production Health** at `deploymentSha` from protected default `main`; do not
+load monitoring credentials or the webhook into a local shell:
 
 ```bash
 git fetch origin main
@@ -2132,7 +2175,38 @@ test "$(
 gh run watch "$PINTPATH_PRODUCTION_HEALTH_RUN_ID" --exit-status
 ```
 
-Require public health plus configured verified user and venue-manager role smoke. The environment must require a reviewer who is not the deployer. Missing credentials or a skipped authenticated job is not a pass.
+For this manual dispatch, require public health plus configured verified user
+and venue-manager role smoke. Missing credentials or a skipped job is not a
+pass. The exact both-success matrix must deliver
+`pintpath-production-health-manual-check`; the external service records it as
+manual evidence but must not use it to reset either scheduled deadman.
+
+For scheduled runs, the workflow must deliver:
+
+- `pintpath-production-public-health-heartbeat` only for the
+  `*/15 * * * *` trigger with `publicResult=success` and
+  `authenticatedResult=skipped`;
+- `pintpath-production-authenticated-health-heartbeat` only for the
+  `7 * * * *` trigger with `publicResult=skipped` and
+  `authenticatedResult=success`; and
+- `pintpath-production-health-failed` immediately for every other
+  trigger/result matrix, followed by a nonzero notifier exit after delivery.
+
+Both monitoring environments must start unattended and without a wait timer so
+schedules and failure delivery cannot be held at an environment gate.
+
+Configure the external service to page a named primary and backup from failure
+events. Use distinct deadman monitors for the 15-minute public heartbeat and
+hourly authenticated heartbeat; never let a public or manual event check in the
+authenticated deadman, and never let an authenticated or manual event check in
+the public deadman. Keep the daily directory-refresh heartbeat on its own
+deadman, and never let a directory manual-check event reset it. GitHub cannot
+call the webhook when its scheduler never starts, so
+GitHub's failed-run status is not a substitute for these external
+missing-heartbeat alarms. Before go/no-go, preserve evidence of live pages
+acknowledged through the primary/backup escalation path and controlled
+missed-run exercises for all three deadman monitors. Any missing exercise is a
+launch blocker.
 
 Keep this ingress in non-marketed observation mode only after the strict data
 check and protected role smoke pass. If either check fails, immediately restore
@@ -2310,7 +2384,9 @@ Repeat:
   `PINTPATH_EXPECTED_COMMERCIAL_LAUNCH_ENABLED=false`, and
   `PINTPATH_EXPECTED_COMMIT_SHA="$deployedMainSha"`;
 - the strict data command from Phase 16;
-- a fresh protected Production Health dispatch;
+- a fresh unattended, default-branch **Production Health** dispatch with a
+  delivered `pintpath-production-health-manual-check` that does not reset either
+  scheduled deadman;
 - the one-use admin-token ceremony and **Pint Path Release Gate** dispatch; its
   workflow contract hard-codes the expected commercial launch state to `false`
   and exposes no operator override;
@@ -2348,7 +2424,15 @@ Release web traffic progressively and monitor:
 - backup age and next restore rehearsal;
 - unsubscribe failures, complaint rate, and support volume.
 
-Run public health continuously and strict data daily. Run the complete target-pinned venue status refresh daily; never allow more than six days between successful complete runs. Keep the named operator on call for the first 72 hours.
+Run public health continuously and strict data daily. Require every invalid
+Production Health trigger/result matrix to generate the immediate external
+failure event. Watch the separate 15-minute public and hourly authenticated
+deadmans; manual checks must reset neither. Run the complete target-pinned venue
+status refresh daily, require its failure event on any non-passing or
+schema-deferred result, and watch its independent heartbeat deadman. A manual
+directory check must not reset that deadman. Never allow more than six days
+between successful complete runs. Keep the named primary and backup operators
+on call for the first 72 hours.
 
 ## Rollback triggers and exact order
 
@@ -2430,7 +2514,9 @@ The release is **go** only when every item is true for the same `releaseId`,
       terminals pass in the exact 18-leaf/20-file activation;
 - [ ] Postgres-compatible rollback build and rehearsal pass without SQLite writes;
 - [ ] complete Place-ID refresh, target pin, transitions, and 24-hour launch freshness pass;
-- [ ] daily monitored status refresh and five-/six-/seven-day alerts pass;
+- [ ] daily monitored status refresh, exact-schedule schema-ready-only
+      heartbeat, non-heartbeating manual checks, immediate failure event,
+      deadman exercise, and five-/six-/seven-day alerts pass;
 - [ ] reviewed Postgres production price-promotion tool, dry run, publication, evidence, and rollback manifest pass;
 - [ ] every trusted public row has durable evidence;
 - [ ] strict data gate passes independently for every marketed suburb;
@@ -2457,7 +2543,11 @@ The release is **go** only when every item is true for the same `releaseId`,
       physical devices, external TestFlight, and App Review pass;
 - [ ] Apple membership, Account Holder/backup access, agreements, compliance
       review, app ownership, and crash-threshold evidence pass;
-- [ ] strict release evidence and protected authenticated smoke pass;
+- [ ] strict release evidence and protected manual authenticated smoke pass;
+- [ ] unattended scheduled Production Health, immediate failure delivery,
+      distinct public/authenticated heartbeats and deadmans, non-heartbeating
+      manual checks, named primary/backup paging, a live acknowledged page, and
+      both missing-heartbeat exercises pass;
 - [ ] a fresh candidate-bound provider-observed permanent-staging-only cost
       receipt proves a recurring upper bound of at most `5000` integer USD cents,
       with complete Railway, staging Supabase, and external-provider caps and no

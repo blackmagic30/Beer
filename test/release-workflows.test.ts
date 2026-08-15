@@ -19,6 +19,29 @@ function allWorkflows(): string[] {
     .sort();
 }
 
+function workflowJobContaining(source: string, marker: string): string {
+  const markerIndex = source.indexOf(marker);
+  const jobsIndex = source.search(/^jobs:\s*$/m);
+  if (markerIndex < 0 || jobsIndex < 0 || markerIndex <= jobsIndex) return "";
+
+  const jobStarts = [...source.matchAll(/^  [A-Za-z0-9_-]+:\s*$/gm)]
+    .map((match) => match.index ?? -1)
+    .filter((index) => index > jobsIndex);
+  const jobStart = [...jobStarts]
+    .reverse()
+    .find((index) => index < markerIndex);
+  if (jobStart === undefined) return "";
+
+  const nextJobStart = jobStarts.find((index) => index > jobStart);
+  return source.slice(jobStart, nextJobStart ?? source.length);
+}
+
+function workflowSecretNames(source: string): string[] {
+  return [...source.matchAll(/\$\{\{\s*secrets\.([A-Z0-9_]+)\s*\}\}/g)].map(
+    (match) => match[1]!,
+  );
+}
+
 function evidenceValidator(): string {
   return fs.readFileSync(
     path.resolve(process.cwd(), "scripts/validate-release-evidence.ts"),
@@ -3054,6 +3077,250 @@ describe("release workflow contracts", () => {
     expect(smoke).toContain(
       "Public Supabase key does not match protected SUPABASE_ANON_KEY",
     );
+  });
+
+  it("pages failed production monitors with provider-credential-free deadman signals", () => {
+    const health = workflow("production-health.yml");
+    const refresh = workflow("venue-directory-refresh.yml");
+    const authenticatedHealth = workflowJobContaining(
+      health,
+      "PINTPATH_SMOKE_BASE_URL",
+    );
+    const healthNotifier = workflowJobContaining(
+      health,
+      "environment: production-monitoring-alerts",
+    );
+    const refreshNotifier = workflowJobContaining(
+      refresh,
+      "environment: production-monitoring-alerts",
+    );
+
+    expect(authenticatedHealth).toMatch(
+      /^    environment:\s*production-monitoring\s*$/m,
+    );
+    expect(healthNotifier).not.toBe("");
+    expect(refreshNotifier).not.toBe("");
+
+    const assertNotifierTransport = (
+      notifier: string,
+      payloadEnvironmentNames: string[],
+    ) => {
+      expect(notifier).toMatch(
+        /^    if:\s*(?:\$\{\{\s*)?always\(\)(?:\s*\}\})?\s*$/m,
+      );
+      expect(notifier).toMatch(
+        /^    environment:\s*production-monitoring-alerts\s*$/m,
+      );
+      expect(workflowSecretNames(notifier)).toEqual([
+        "PINTPATH_PRODUCTION_MONITOR_WEBHOOK_URL",
+      ]);
+      expect(notifier).not.toContain("actions/checkout");
+      expect(notifier).not.toContain("actions/setup-node");
+      expect(notifier).not.toMatch(
+        /SUPABASE_|GOOGLE_PLACES|PINTPATH_SMOKE_|PROVIDER_/,
+      );
+
+      const payloadStart = notifier.indexOf('payload="');
+      const curlStart = notifier.indexOf("curl ", payloadStart);
+      expect(payloadStart).toBeGreaterThan(-1);
+      expect(curlStart).toBeGreaterThan(payloadStart);
+      const payloadBuilder = notifier.slice(payloadStart, curlStart);
+      const referencedPayloadEnvironmentNames = [
+        ...new Set(
+          [...payloadBuilder.matchAll(/\$([A-Z][A-Z0-9_]*)/g)].map(
+            (match) => match[1]!,
+          ),
+        ),
+      ].sort();
+      expect(referencedPayloadEnvironmentNames).toEqual(
+        [...payloadEnvironmentNames].sort(),
+      );
+      expect(payloadBuilder).not.toMatch(
+        /password|secret|credential|authorization|cookie|webhook|supabase|google[_-]?places/i,
+      );
+
+      const curlCommand = notifier.slice(curlStart);
+      expect(curlCommand).toMatch(/--proto\s+['"]?=https['"]?/);
+      expect(curlCommand).toMatch(/--tlsv1\.2\b/);
+      expect(curlCommand).toMatch(/--connect-timeout\s+[1-9][0-9]*/);
+      expect(curlCommand).toMatch(/--max-time\s+[1-9][0-9]*/);
+      expect(curlCommand).toMatch(/--retry\s+[1-9][0-9]*/);
+      expect(curlCommand).toMatch(/--retry-delay\s+1\b/);
+      expect(curlCommand).toContain('--data-binary "$payload"');
+      expect(curlCommand).toContain('"$MONITOR_WEBHOOK_URL"');
+      expect(notifier).toMatch(
+        /case\s+"\$http_status"\s+in[\s\S]*?2\?\?\)\s*;;/,
+      );
+      const deliveredFailureGuard =
+        /if\s+\[\[\s*"\$status"\s*={1,2}\s*"failure"\s*\]\];\s*then[\s\S]*?\bexit\s+1\b[\s\S]*?\bfi\b/g.exec(
+          notifier,
+        );
+      expect(deliveredFailureGuard).not.toBeNull();
+      expect(deliveredFailureGuard?.index ?? -1).toBeGreaterThan(curlStart);
+    };
+
+    expect(healthNotifier).toContain(
+      "${{ needs.public-production-health.result }}",
+    );
+    expect(healthNotifier).toContain(
+      "${{ needs.authenticated-user-venue-health.result }}",
+    );
+    expect(healthNotifier).toContain(
+      "EVENT_NAME: ${{ github.event_name }}",
+    );
+    expect(healthNotifier).toContain(
+      "EVENT_SCHEDULE: ${{ github.event.schedule }}",
+    );
+    expect(healthNotifier).toMatch(/\\"trigger\\":\\"%s\\"/);
+    expect(healthNotifier).toMatch(/\\"schedule\\":\\"%s\\"/);
+
+    const normalizedHealthNotifier = healthNotifier
+      .replace(/\\\n\s*/g, " ")
+      .replace(/\s+/g, " ");
+    expect(normalizedHealthNotifier).toContain(
+      'monitor="unknown" if [[ "$EVENT_NAME" == "schedule" && "$EVENT_SCHEDULE" == "*/15 * * * *" ]]; then monitor="public"',
+    );
+    expect(normalizedHealthNotifier).toContain(
+      'elif [[ "$EVENT_NAME" == "schedule" && "$EVENT_SCHEDULE" == "7 * * * *" ]]; then monitor="authenticated"',
+    );
+    expect(normalizedHealthNotifier).toContain(
+      'elif [[ "$EVENT_NAME" == "workflow_dispatch" && -z "$EVENT_SCHEDULE" ]]; then monitor="manual"',
+    );
+
+    const expectExactHealthSuccessBranch = (
+      event: string,
+      comparisons: string[],
+    ) => {
+      const eventAssignment = `event="${event}"`;
+      const eventIndex = healthNotifier.indexOf(eventAssignment);
+      expect(eventIndex).toBeGreaterThan(-1);
+
+      const branchPrefix = healthNotifier.slice(0, eventIndex);
+      const branches = [
+        ...branchPrefix.matchAll(
+          /(?:^|\n)\s*(?:if|elif)\s+\[\[([\s\S]*?)\]\];\s*then/g,
+        ),
+      ];
+      const branch = branches[branches.length - 1];
+      expect(branch).toBeDefined();
+      const condition = branch?.[1] ?? "";
+      const actualComparisons = [
+        ...condition.matchAll(
+          /"\$(monitor|PUBLIC_RESULT|AUTHENTICATED_RESULT)"\s*={1,2}\s*"([^"]*)"/g,
+        ),
+      ]
+        .map((match) => `${match[1]}=${match[2]}`)
+        .sort();
+      expect(actualComparisons).toEqual([...comparisons].sort());
+      expect(condition).not.toContain("||");
+      expect(condition.match(/&&/g)).toHaveLength(comparisons.length - 1);
+
+      const branchBodyStart = (branch?.index ?? 0) + (branch?.[0].length ?? 0);
+      expect(healthNotifier.slice(branchBodyStart, eventIndex)).toContain(
+        'status="success"',
+      );
+    };
+
+    expectExactHealthSuccessBranch(
+      "pintpath-production-public-health-heartbeat",
+      [
+        "monitor=public",
+        "PUBLIC_RESULT=success",
+        "AUTHENTICATED_RESULT=skipped",
+      ],
+    );
+    expectExactHealthSuccessBranch(
+      "pintpath-production-authenticated-health-heartbeat",
+      [
+        "monitor=authenticated",
+        "PUBLIC_RESULT=skipped",
+        "AUTHENTICATED_RESULT=success",
+      ],
+    );
+    expectExactHealthSuccessBranch("pintpath-production-health-manual-check", [
+      "monitor=manual",
+      "PUBLIC_RESULT=success",
+      "AUTHENTICATED_RESULT=success",
+    ]);
+    expect(healthNotifier).not.toContain(
+      'event="pintpath-production-health-heartbeat"',
+    );
+    expect(healthNotifier).toContain(
+      'event="pintpath-production-health-failed"',
+    );
+    const failureEventIndex = healthNotifier.indexOf(
+      'event="pintpath-production-health-failed"',
+    );
+    const manualEventIndex = healthNotifier.indexOf(
+      'event="pintpath-production-health-manual-check"',
+    );
+    expect(
+      healthNotifier.slice(manualEventIndex, failureEventIndex),
+    ).toMatch(/\n\s*else\s*\n\s*status="failure"\s*\n\s*$/);
+    assertNotifierTransport(healthNotifier, [
+      "AUTHENTICATED_RESULT",
+      "EVENT_NAME",
+      "EVENT_SCHEDULE",
+      "GITHUB_REPOSITORY",
+      "GITHUB_RUN_ATTEMPT",
+      "GITHUB_RUN_ID",
+      "PUBLIC_RESULT",
+    ]);
+
+    expect(refresh).toMatch(
+      /^    outputs:\s*$[\s\S]*?^      directory_schema_ready:\s*\$\{\{\s*steps\.directory_schema\.outputs\.ready\s*\}\}\s*$/m,
+    );
+    expect(refreshNotifier).toContain(
+      "${{ needs.refresh-production-directory-status.result }}",
+    );
+    expect(refreshNotifier).toContain(
+      "${{ needs.refresh-production-directory-status.outputs.directory_schema_ready }}",
+    );
+    expect(refreshNotifier).toContain(
+      "EVENT_NAME: ${{ github.event_name }}",
+    );
+    expect(refreshNotifier).toContain(
+      "EVENT_SCHEDULE: ${{ github.event.schedule }}",
+    );
+    expect(refreshNotifier).toMatch(/\\"trigger\\":\\"%s\\"/);
+    expect(refreshNotifier).toMatch(/\\"schedule\\":\\"%s\\"/);
+
+    const normalizedRefreshNotifier = refreshNotifier
+      .replace(/\\\n\s*/g, " ")
+      .replace(/\s+/g, " ");
+    expect(normalizedRefreshNotifier).toContain(
+      'monitor="unknown" if [[ "$EVENT_NAME" == "schedule" && "$EVENT_SCHEDULE" == "23 14 * * *" ]]; then monitor="daily"',
+    );
+    expect(normalizedRefreshNotifier).toContain(
+      'elif [[ "$EVENT_NAME" == "workflow_dispatch" && -z "$EVENT_SCHEDULE" ]]; then monitor="manual"',
+    );
+    expect(normalizedRefreshNotifier).toContain(
+      'if [[ "$monitor" == "daily" && "$REFRESH_RESULT" == "success" && "$DIRECTORY_SCHEMA_READY" == "true" ]]; then status="success" event="pintpath-venue-directory-refresh-heartbeat"',
+    );
+    expect(normalizedRefreshNotifier).toContain(
+      'elif [[ "$monitor" == "manual" && "$REFRESH_RESULT" == "success" && "$DIRECTORY_SCHEMA_READY" == "true" ]]; then status="success" event="pintpath-venue-directory-refresh-manual-check"',
+    );
+    expect(normalizedRefreshNotifier).toContain(
+      'else status="failure" event="pintpath-venue-directory-refresh-failed"',
+    );
+    expect(refreshNotifier).toContain(
+      'event="pintpath-venue-directory-refresh-heartbeat"',
+    );
+    expect(refreshNotifier).toContain(
+      'event="pintpath-venue-directory-refresh-manual-check"',
+    );
+    expect(refreshNotifier).toContain(
+      'event="pintpath-venue-directory-refresh-failed"',
+    );
+    assertNotifierTransport(refreshNotifier, [
+      "DIRECTORY_SCHEMA_READY",
+      "EVENT_NAME",
+      "EVENT_SCHEDULE",
+      "GITHUB_REPOSITORY",
+      "GITHUB_RUN_ATTEMPT",
+      "GITHUB_RUN_ID",
+      "REFRESH_RESULT",
+    ]);
   });
 
   it("does not mix failed retry bodies into successful production health JSON", () => {
