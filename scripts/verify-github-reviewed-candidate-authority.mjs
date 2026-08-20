@@ -17,6 +17,13 @@ const RUN_ID = /^[1-9][0-9]{0,19}$/;
 const MAX_HISTORY_PAGES = 10;
 const MAX_CANDIDATE_AGE_HOURS = 7 * 24;
 const MAX_CANDIDATE_AGE_MS = MAX_CANDIDATE_AGE_HOURS * 60 * 60 * 1000;
+const NONTERMINAL_RUN_STATUSES = new Set([
+  "in_progress",
+  "pending",
+  "queued",
+  "requested",
+  "waiting",
+]);
 const REPOSITORY = "blackmagic30/Beer";
 const PROVIDER_WORKFLOW_PATH =
   ".github/workflows/permanent-staging-provider-mutation.yml";
@@ -170,6 +177,10 @@ function workflowPathExact(value, expected) {
   return value === expected || value === `${expected}@main`;
 }
 
+function isNonterminalRun(value) {
+  return NONTERMINAL_RUN_STATUSES.has(value?.status) && value?.conclusion === null;
+}
+
 function validateRunIdentity(value, expected) {
   const createdAt = parseTimestamp(value?.created_at, expected.failureCode);
   const startedAt = parseTimestamp(value?.run_started_at, expected.failureCode);
@@ -282,8 +293,7 @@ async function verifyOperationHistory(input, configuration, currentRun) {
     ) fail("history_invalid");
     if (run.id === currentRun.id) {
       if (
-        run.status !== "in_progress" ||
-        run.conclusion !== null ||
+        !isNonterminalRun(run) ||
         run.created_at !== currentRun.created_at ||
         run.run_started_at !== currentRun.run_started_at
       ) fail("history_invalid");
@@ -633,7 +643,7 @@ export async function verifyGithubReviewedCandidateAuthority(input) {
       failureCode: "current_run_invalid",
     },
   );
-  if (currentRun.status !== "in_progress" || currentRun.conclusion !== null) {
+  if (!isNonterminalRun(currentRun)) {
     fail("current_run_invalid");
   }
   const mergedAtMs = parseTimestamp(pull.mergedAt, "reviewed_pull_request_invalid");

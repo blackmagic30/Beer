@@ -573,4 +573,27 @@ describe("reviewed candidate mutation authority", () => {
       "github_reviewed_candidate_authority_current_run_invalid",
     );
   });
+
+  it.each(["in_progress", "pending", "queued", "requested", "waiting"])(
+    "accepts the exact current run while GitHub reports the nonterminal %s state",
+    async (status) => {
+      await expect(harness({
+        current: { status, conclusion: null },
+        runtimeRuns: undefined,
+      }).verify()).resolves.toMatchObject({
+        workflowRunId: "500",
+      });
+    },
+  );
+
+  it.each(["completed", "failure", "cancelled", "timed_out"])(
+    "rejects a current run in terminal state %s",
+    async (status) => {
+      await expect(harness({
+        current: { status, conclusion: status === "completed" ? "success" : status },
+      }).verify()).rejects.toThrow(
+        "github_reviewed_candidate_authority_current_run_invalid",
+      );
+    },
+  );
 });
