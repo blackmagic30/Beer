@@ -6,7 +6,7 @@
   "productionEnvironmentId": "13dab015-df74-45c6-b26f-69323daea99a",
   "stagingEnvironmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
   "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
-  "publicOrigin": "https://pintpath-staging.up.railway.app",
+  "publicOrigin": "https://beer-staging.up.railway.app",
   "region": "asia-southeast1-eqsg3a",
   "githubEnvironment": "permanent-staging-scale-evidence",
   "requiredGitRef": "refs/heads/main",

@@ -152,8 +152,8 @@ jobs:
           {
             echo 'PINTPATH_STAGING_LOAD_MUTATION=confirmed'
             echo 'PINTPATH_STAGING_LOAD_DISPOSABLE_USERS=confirmed'
-            echo 'PINTPATH_STAGING_LOAD_BASE_URL=https://pintpath-staging.up.railway.app'
-            echo 'PINTPATH_STAGING_LOAD_EXPECTED_HOSTNAME=pintpath-staging.up.railway.app'
+            echo 'PINTPATH_STAGING_LOAD_BASE_URL=https://beer-staging.up.railway.app'
+            echo 'PINTPATH_STAGING_LOAD_EXPECTED_HOSTNAME=beer-staging.up.railway.app'
             echo 'PINTPATH_STAGING_LOAD_EXPECTED_ORIGIN_SHA256=4532dc3b87deb570735196a86cd1b75ddc490c752dd6993e2f0d7bcb7df8161b'
             echo 'PINTPATH_STAGING_LOAD_PRODUCTION_ORIGIN_SHA256=a3a1a2e58fa4038b741e1c213af02708e09ae901005c7c31f919e0a4dea46e90'
             echo 'PINTPATH_STAGING_LOAD_RESTORE_ORIGIN_SHA256=c96d015a9e8b6cd9392f8ea810ce70049607bcb9d66c250a545f8cf95b13bbbd'

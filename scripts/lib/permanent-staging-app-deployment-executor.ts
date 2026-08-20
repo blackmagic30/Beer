@@ -92,18 +92,21 @@ const RAILWAY_APPLICATION_DEPLOYMENT_COLLATERAL_QUERY =
   `query PintPathRailwayApplicationDeploymentCollateral(
   $projectId: String!
   $environmentId: String!
+  $variablesAfter: String
+  $volumeInstancesAfter: String
+  $serviceInstancesAfter: String
 ) {
   environment(id: $environmentId, projectId: $projectId) {
     id
-    variables(first: 100) {
+    variables(first: 100, after: $variablesAfter) {
       edges { node { id name environmentId serviceId isSealed references } }
       pageInfo { hasNextPage endCursor }
     }
-    volumeInstances(first: 100) {
+    volumeInstances(first: 100, after: $volumeInstancesAfter) {
       edges { node { serviceId environmentId volume { id } } }
       pageInfo { hasNextPage endCursor }
     }
-    serviceInstances(first: 100) {
+    serviceInstances(first: 100, after: $serviceInstancesAfter) {
       edges {
         node {
           id
@@ -132,9 +135,9 @@ const TARGET_LOCKS = Object.freeze({
     policyId: "pintpath-permanent-staging-app-source-upload",
     environmentId: "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
     forbiddenEnvironmentId: "13dab015-df74-45c6-b26f-69323daea99a",
-    publicOrigin: "https://pintpath-staging.up.railway.app",
+    publicOrigin: "https://beer-staging.up.railway.app",
     publicOriginSha256:
-      "4532dc3b87deb570735196a86cd1b75ddc490c752dd6993e2f0d7bcb7df8161b",
+      "fd458490dc9821b10681db486f980de7ec0d8b684f5dce4f7a5659a582df2910",
     allowedReplicaCounts: Object.freeze([1] as const),
     githubEnvironment: "permanent-staging-deployment",
   }),
@@ -863,7 +866,7 @@ async function railwayQuery(
   token: string,
   operationName: string,
   query: string,
-  variables: Readonly<Record<string, string>>,
+  variables: Readonly<Record<string, string | null>>,
 ): Promise<string> {
   const response = await fetchImpl(GRAPHQL_ENDPOINT, {
     method: "POST",
@@ -925,7 +928,7 @@ function safeProviderString(value: unknown, maximumBytes: number): value is stri
 
 function parseCompleteConnection(value: unknown): readonly unknown[] | null {
   const connection = exactRecord(value, ["edges", "pageInfo"]);
-  if (!connection || !Array.isArray(connection.edges) || connection.edges.length > 100) {
+  if (!connection || !Array.isArray(connection.edges) || connection.edges.length > 2_000) {
     return null;
   }
   const pageInfo = exactRecord(connection.pageInfo, ["hasNextPage", "endCursor"]);
@@ -936,6 +939,130 @@ function parseCompleteConnection(value: unknown): readonly unknown[] | null {
       || safeProviderString(pageInfo.endCursor, 512))
   ) return null;
   return connection.edges;
+}
+
+interface CollateralConnectionPage {
+  readonly edges: readonly unknown[];
+  readonly hasNextPage: boolean;
+  readonly endCursor: string | null;
+}
+
+function parseCollateralConnectionPage(value: unknown): CollateralConnectionPage | null {
+  const connection = exactRecord(value, ["edges", "pageInfo"]);
+  if (!connection || !Array.isArray(connection.edges) || connection.edges.length > 100) {
+    return null;
+  }
+  const pageInfo = exactRecord(connection.pageInfo, ["hasNextPage", "endCursor"]);
+  if (
+    !pageInfo
+    || typeof pageInfo.hasNextPage !== "boolean"
+    || !(pageInfo.endCursor === null
+      || safeProviderString(pageInfo.endCursor, 512))
+    || (pageInfo.hasNextPage && pageInfo.endCursor === null)
+  ) return null;
+  return {
+    edges: connection.edges,
+    hasNextPage: pageInfo.hasNextPage,
+    endCursor: pageInfo.endCursor as string | null,
+  };
+}
+
+async function queryCollateralSnapshot(
+  fetchImpl: typeof fetch,
+  token: string,
+  projectId: string,
+  environmentId: string,
+): Promise<string> {
+  const connectionNames = [
+    "variables",
+    "volumeInstances",
+    "serviceInstances",
+  ] as const;
+  const cursors: Record<typeof connectionNames[number], string | null> = {
+    variables: null,
+    volumeInstances: null,
+    serviceInstances: null,
+  };
+  const completed: Record<typeof connectionNames[number], boolean> = {
+    variables: false,
+    volumeInstances: false,
+    serviceInstances: false,
+  };
+  const edges: Record<typeof connectionNames[number], unknown[]> = {
+    variables: [],
+    volumeInstances: [],
+    serviceInstances: [],
+  };
+  const seenCursors: Record<typeof connectionNames[number], Set<string>> = {
+    variables: new Set(),
+    volumeInstances: new Set(),
+    serviceInstances: new Set(),
+  };
+
+  for (let pageNumber = 0; pageNumber < 20; pageNumber += 1) {
+    const source = await railwayQuery(
+      fetchImpl,
+      token,
+      "PintPathRailwayApplicationDeploymentCollateral",
+      RAILWAY_APPLICATION_DEPLOYMENT_COLLATERAL_QUERY,
+      {
+        projectId,
+        environmentId,
+        variablesAfter: cursors.variables,
+        volumeInstancesAfter: cursors.volumeInstances,
+        serviceInstancesAfter: cursors.serviceInstances,
+      },
+    );
+    let root: Record<string, unknown> | null = null;
+    let environment: Record<string, unknown> | null = null;
+    try {
+      root = exactRecord(JSON.parse(source), ["data"]);
+      const data = exactRecord(root?.data, ["environment"]);
+      environment = exactRecord(data?.environment, [
+        "id",
+        "variables",
+        "volumeInstances",
+        "serviceInstances",
+      ]);
+    } catch {
+      throw new Error("provider_query_failed");
+    }
+    if (!environment || environment.id !== environmentId) {
+      throw new Error("provider_query_failed");
+    }
+    for (const name of connectionNames) {
+      const page = parseCollateralConnectionPage(environment[name]);
+      if (!page) throw new Error("provider_query_failed");
+      if (completed[name]) continue;
+      if (edges[name].length + page.edges.length > 2_000) {
+        throw new Error("provider_query_failed");
+      }
+      edges[name].push(...page.edges);
+      if (!page.hasNextPage) {
+        completed[name] = true;
+        continue;
+      }
+      if (
+        page.endCursor === null
+        || seenCursors[name].has(page.endCursor)
+      ) throw new Error("provider_query_failed");
+      seenCursors[name].add(page.endCursor);
+      cursors[name] = page.endCursor;
+    }
+    if (connectionNames.every((name) => completed[name])) {
+      return JSON.stringify({
+        data: {
+          environment: {
+            id: environmentId,
+            variables: { edges: edges.variables, pageInfo: { hasNextPage: false, endCursor: null } },
+            volumeInstances: { edges: edges.volumeInstances, pageInfo: { hasNextPage: false, endCursor: null } },
+            serviceInstances: { edges: edges.serviceInstances, pageInfo: { hasNextPage: false, endCursor: null } },
+          },
+        },
+      });
+    }
+  }
+  throw new Error("provider_query_failed");
 }
 
 function parseCollateralSnapshot(
@@ -1042,9 +1169,10 @@ function parseCollateralSnapshot(
         || !UUID_PATTERN.test(node.serviceId)
         || !safeProviderString(node.serviceName, 256)
         || node.environmentId !== environmentId
-        || !Number.isSafeInteger(node.numReplicas)
-        || (node.numReplicas as number) < 0
-        || (node.numReplicas as number) > 50
+        || !(node.numReplicas === null
+          || (Number.isSafeInteger(node.numReplicas)
+            && (node.numReplicas as number) >= 0
+            && (node.numReplicas as number) <= 50))
         || (node.source !== null && !sourceValue)
         || !domains
         || !Array.isArray(domains.serviceDomains)
@@ -1168,12 +1296,11 @@ async function defaultQueryTarget(
       RAILWAY_APPLICATION_DEPLOYMENT_SNAPSHOT_QUERY,
       { environmentId, serviceId: policy.target.serviceId, deploymentId },
     ),
-    railwayQuery(
+    queryCollateralSnapshot(
       fetchImpl,
       token,
-      "PintPathRailwayApplicationDeploymentCollateral",
-      RAILWAY_APPLICATION_DEPLOYMENT_COLLATERAL_QUERY,
-      { projectId: policy.projectId, environmentId },
+      policy.projectId,
+      environmentId,
     ),
   ]);
   const snapshot =
@@ -2068,6 +2195,7 @@ export const permanentStagingAppDeploymentExecutorInternals = Object.freeze({
   deploymentHealthy,
   parseArguments,
   parseCollateralSnapshot,
+  queryCollateralSnapshot,
   parseDiscoveryDeploymentId,
   policyMatchesLock,
   providerDeploymentUnchanged,

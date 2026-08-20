@@ -86,8 +86,8 @@
     "target": "permanent-staging",
     "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
     "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
-    "publicOrigin": "https://pintpath-staging.up.railway.app",
-    "publicOriginSha256": "4532dc3b87deb570735196a86cd1b75ddc490c752dd6993e2f0d7bcb7df8161b",
+    "publicOrigin": "https://beer-staging.up.railway.app",
+    "publicOriginSha256": "fd458490dc9821b10681db486f980de7ec0d8b684f5dce4f7a5659a582df2910",
     "expectedReplicaCount": 1,
     "sameCandidateRequired": true
   },

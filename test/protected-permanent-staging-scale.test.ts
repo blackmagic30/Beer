@@ -47,7 +47,7 @@ function discovery(): Response {
 function snapshot(
   replicas: 1 | 2,
   environmentId = ENVIRONMENT_ID,
-  domain = "pintpath-staging.up.railway.app",
+  domain = "beer-staging.up.railway.app",
   deployedSha = CANDIDATE_SHA,
 ): Response {
   return response({

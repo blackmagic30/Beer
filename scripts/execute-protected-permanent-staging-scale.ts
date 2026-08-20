@@ -28,11 +28,11 @@ const PRODUCTION_ENVIRONMENT_ID = "13dab015-df74-45c6-b26f-69323daea99a";
 const STAGING_ENVIRONMENT_ID = "a4e0f507-d6d3-4df9-a818-ad92c0071a35";
 const SERVICE_ID = "6816c4a2-e392-4ee5-826f-2584cb599ec0";
 const REGION = "asia-southeast1-eqsg3a";
-const STAGING_DOMAIN = "pintpath-staging.up.railway.app";
+const STAGING_DOMAIN = "beer-staging.up.railway.app";
 const PRODUCTION_DOMAIN = "pintpath.au";
 const POLICY_PATH = "ops/railway/permanent-staging-scale-evidence-policy.json";
 const POLICY_SHA256 =
-  "970d5046b5c5b7d7cc1ddefe0649782c009d91ddb38c08c9369d81c82012b520";
+  "6a8f6578973ef8b2b2c4002ed31c0d8e763dc35d240b7babcd9b0ab6d36317c6";
 const BOUNDARY_POLICY_PATH = "ops/railway/production-staging-mutation-policy.json";
 const GRAPHQL_ENDPOINT = "https://backboard.railway.com/graphql/v2";
 const CLI_SHA256 = "27133cfc20bffc43b2f32c1638fa3c50eefc2f9d2d80301a93de34632ccb7a43";

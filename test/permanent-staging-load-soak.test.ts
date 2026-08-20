@@ -14,7 +14,7 @@ import {
 } from "../scripts/permanent-staging-load-soak.js";
 import { railwayDeploymentIdentityIdSha256 } from "../src/lib/railway-deployment-identity.js";
 
-const targetOrigin = "https://pintpath-staging.up.railway.app";
+const targetOrigin = "https://beer-staging.up.railway.app";
 const projectId = "48d8c6cd-1c66-4148-874b-20877f48e1a5";
 const environmentId = "a4e0f507-d6d3-4df9-a818-ad92c0071a35";
 const serviceId = "6816c4a2-e392-4ee5-826f-2584cb599ec0";
@@ -46,7 +46,7 @@ function validEnvironment(): Record<string, string> {
     PINTPATH_STAGING_LOAD_MUTATION: "confirmed",
     PINTPATH_STAGING_LOAD_DISPOSABLE_USERS: "confirmed",
     PINTPATH_STAGING_LOAD_BASE_URL: targetOrigin,
-    PINTPATH_STAGING_LOAD_EXPECTED_HOSTNAME: "pintpath-staging.up.railway.app",
+    PINTPATH_STAGING_LOAD_EXPECTED_HOSTNAME: "beer-staging.up.railway.app",
     PINTPATH_STAGING_LOAD_EXPECTED_ORIGIN_SHA256: sha256(targetOrigin),
     PINTPATH_STAGING_LOAD_PRODUCTION_ORIGIN_SHA256: sha256("https://pintpath.au"),
     PINTPATH_STAGING_LOAD_RESTORE_ORIGIN_SHA256: sha256("https://restore-drill.invalid"),

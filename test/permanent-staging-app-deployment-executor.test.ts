@@ -809,6 +809,18 @@ describe("Railway application deployment executor", () => {
                 cronSchedule: null,
                 startCommand: "node dist/src/server.js",
               },
+            }, {
+              node: {
+                id: "77777777-7777-4777-8777-777777777779",
+                serviceId: "88888888-8888-4888-8888-888888888889",
+                serviceName: "stopped-helper",
+                environmentId: exactPolicy.target.environmentId,
+                numReplicas: null,
+                source: null,
+                domains: { serviceDomains: [], customDomains: [] },
+                cronSchedule: null,
+                startCommand: null,
+              },
             }],
             pageInfo: { hasNextPage: false, endCursor: null },
           },
@@ -837,6 +849,109 @@ describe("Railway application deployment executor", () => {
       exactPolicy.target.environmentId,
       exactPolicy.target.serviceId,
     )).toBeNull();
+  });
+
+  it("paginates every collateral connection without dropping stopped services", async () => {
+    const exactPolicy = policy("permanent-staging");
+    const pages = [
+      {
+        variables: {
+          edges: [{ node: {
+            id: "variable-one",
+            name: "DATABASE_URL",
+            environmentId: exactPolicy.target.environmentId,
+            serviceId: exactPolicy.target.serviceId,
+            isSealed: true,
+            references: [],
+          } }],
+          pageInfo: { hasNextPage: true, endCursor: "variables-page-one" },
+        },
+        volumeInstances: {
+          edges: [],
+          pageInfo: { hasNextPage: false, endCursor: null },
+        },
+        serviceInstances: {
+          edges: [{ node: {
+            id: INSTANCE_ID,
+            serviceId: exactPolicy.target.serviceId,
+            serviceName: "Beer",
+            environmentId: exactPolicy.target.environmentId,
+            numReplicas: 1,
+            source: null,
+            domains: {
+              serviceDomains: [{
+                id: DOMAIN_ID,
+                domain: new URL(exactPolicy.target.publicOrigin).hostname,
+                targetPort: 8080,
+              }],
+              customDomains: [],
+            },
+            cronSchedule: null,
+            startCommand: "node dist/src/server.js",
+          } }, { node: {
+            id: "77777777-7777-4777-8777-777777777779",
+            serviceId: "88888888-8888-4888-8888-888888888889",
+            serviceName: "stopped-helper",
+            environmentId: exactPolicy.target.environmentId,
+            numReplicas: null,
+            source: null,
+            domains: { serviceDomains: [], customDomains: [] },
+            cronSchedule: null,
+            startCommand: null,
+          } }],
+          pageInfo: { hasNextPage: false, endCursor: null },
+        },
+      },
+      {
+        variables: {
+          edges: [{ node: {
+            id: "variable-two",
+            name: "REDIS_URL",
+            environmentId: exactPolicy.target.environmentId,
+            serviceId: exactPolicy.target.serviceId,
+            isSealed: true,
+            references: [],
+          } }],
+          pageInfo: { hasNextPage: false, endCursor: null },
+        },
+        volumeInstances: {
+          edges: [],
+          pageInfo: { hasNextPage: false, endCursor: null },
+        },
+        serviceInstances: {
+          edges: [],
+          pageInfo: { hasNextPage: false, endCursor: null },
+        },
+      },
+    ];
+    const requests: unknown[] = [];
+    const fetchImpl = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      requests.push(JSON.parse(String(init?.body)));
+      const page = pages[requests.length - 1];
+      return new Response(JSON.stringify({
+        data: {
+          environment: { id: exactPolicy.target.environmentId, ...page },
+        },
+      }), { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const source = await permanentStagingAppDeploymentExecutorInternals
+      .queryCollateralSnapshot(
+        fetchImpl,
+        "t".repeat(32),
+        exactPolicy.projectId,
+        exactPolicy.target.environmentId,
+      );
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(requests).toMatchObject([
+      { variables: { variablesAfter: null } },
+      { variables: { variablesAfter: "variables-page-one" } },
+    ]);
+    expect(permanentStagingAppDeploymentExecutorInternals.parseCollateralSnapshot(
+      source,
+      exactPolicy.target.environmentId,
+      exactPolicy.target.serviceId,
+    )).toMatchObject({ gitAutodeployAbsent: true });
   });
 
   it("accepts nested source directories and rejects multiply linked files", () => {

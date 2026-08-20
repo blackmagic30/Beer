@@ -97,7 +97,7 @@ another, and distinct from the target.
 Compute the origin hash without credentials or a trailing slash:
 
 ```sh
-printf '%s' 'https://pintpath-staging.up.railway.app' | shasum -a 256
+printf '%s' 'https://beer-staging.up.railway.app' | shasum -a 256
 ```
 
 The identity digest binds the exact protected Railway project, environment,
