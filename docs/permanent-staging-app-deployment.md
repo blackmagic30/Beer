@@ -61,14 +61,16 @@ railway up <private-snapshot> --path-as-root --no-gitignore --detach --json \
 There is no automatic retry. Missing CLI acknowledgement, timeout, or nonzero
 exit triggers read-only reconciliation of the candidate; it never triggers a
 second write. An indeterminate provider result is `mutation_uncertain` and
-needs a new independently approved operator decision after read-only review.
-GitHub job reruns are rejected (`run_attempt` must equal `1`); any later action
-requires a new manual dispatch and a fresh protected-environment approval.
+needs a new operator decision after read-only review. GitHub job reruns are
+rejected (`run_attempt` must equal `1`); any later action requires a new manual
+dispatch for a fresh reviewed candidate.
 
 ## GitHub setup and invocation
 
-Create two protected GitHub environments with required reviewers and restrict
-them to `main`:
+Create two GitHub environments restricted to `main`. Repository-owner policy
+leaves required-reviewer and self-review gates disabled; the workflows retain
+their exact-candidate, original-run, scoped-token, full-check, preflight, and
+postflight controls:
 
 | Workflow          | GitHub environment             | Write secret                               |
 | ----------------- | ------------------------------ | ------------------------------------------ |
@@ -84,7 +86,7 @@ database, or emergency authority across roles. Disable Railway Git autodeploy.
 
 The production environment additionally needs
 `PINTPATH_PRODUCTION_PROVIDER_READINESS_ENVELOPE_BASE64` and
-`PINTPATH_PRODUCTION_PROVIDER_READINESS_ENVELOPE_SHA256`. Before approval, run
+`PINTPATH_PRODUCTION_PROVIDER_READINESS_ENVELOPE_SHA256`. Before dispatch, run
 strict `readiness:launch` inside the deployed production service as described
 in the launch runbook, retain only its sanitized JSON, and have the protected
 operator bind it to the proposed candidate SHA, observation time, and observed

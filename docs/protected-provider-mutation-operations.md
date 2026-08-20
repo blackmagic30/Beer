@@ -97,8 +97,12 @@ a legacy key can be disabled.
 ## One-time GitHub setup
 
 Create these GitHub Environments and restrict deployment branches to `main`.
-Except for the cleanup environment called out below, require reviewers,
-prevent self-review, and do not allow administrators to bypass protection:
+Repository-owner policy intentionally leaves GitHub Environment required-reviewer
+and self-review gates disabled for these operator-dispatched workflows. Authority
+still requires the exact protected-main candidate, original workflow run,
+environment-scoped credentials, reviewed-candidate history, and the workflow's
+fail-closed preflight and reconciliation. Do not add an Environment approval gate
+unless the repository owner explicitly changes this policy:
 
 - `permanent-staging-provider-mutation`
 - `permanent-staging-scale-evidence`
@@ -115,11 +119,10 @@ prevent self-review, and do not allow administrators to bypass protection:
 - `production-promotion-recovery`
 - `production-route-open`
 
-`production-promotion-recovery-cleanup` is intentionally non-interactive: it
-must not require an approval that can strand disposable resources after an
-earlier failure or standard cancellation. Protect its secrets and variables,
-limit them to exact per-run teardown authority, and never use this exception to
-grant a capture, restore, promotion, or route mutation.
+`production-promotion-recovery-cleanup` remains intentionally non-interactive.
+Protect its secrets and variables, limit them to exact per-run teardown
+authority, and never use that authority to grant a capture, restore, promotion,
+or route mutation.
 
 Place only the following credentials in the environment that uses them. Values
 must never be copied into repository variables, workflow inputs, logs, or
