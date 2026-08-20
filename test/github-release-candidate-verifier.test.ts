@@ -107,6 +107,8 @@ function harness(
     }>;
     providerMutationRuns?: Array<Record<string, unknown>>;
     runtimeMutationRuns?: Array<Record<string, unknown>>;
+    workerFenceRuns?: Array<Record<string, unknown>>;
+    stagingBootstrapRuns?: Array<Record<string, unknown>>;
     mutationJobs?: Record<number, unknown>;
   } = {},
 ) {
@@ -243,6 +245,56 @@ function harness(
         `https://github.com/blackmagic30/Beer/actions/runs/${extra.runId}/job/1`,
     });
   }
+  const hasStagingChain = requiredChecks.some((item) =>
+    item.name === "Deploy permanent staging");
+  const defaultWorkerFenceRuns = hasStagingChain
+    ? [
+      mutationRun({
+        id: 710,
+        workflowPath:
+          ".github/workflows/configure-automatic-maintenance-worker-fence.yml",
+        displayTitle:
+          `Automatic maintenance worker fence | permanent-staging | prepare | ${CANDIDATE}`,
+        createdAt: "2026-08-14T01:01:00.000Z",
+        startedAt: "2026-08-14T01:01:10.000Z",
+        updatedAt: "2026-08-14T01:02:00.000Z",
+      }),
+      mutationRun({
+        id: 713,
+        workflowPath:
+          ".github/workflows/configure-automatic-maintenance-worker-fence.yml",
+        displayTitle:
+          `Automatic maintenance worker fence | permanent-staging | activate | ${CANDIDATE}`,
+        createdAt: "2026-08-14T01:08:32.000Z",
+        startedAt: "2026-08-14T01:08:33.000Z",
+        updatedAt: "2026-08-14T01:08:34.000Z",
+      }),
+    ]
+    : [];
+  const defaultStagingBootstrapRuns = hasStagingChain
+    ? [
+      mutationRun({
+        id: 711,
+        workflowPath:
+          ".github/workflows/bootstrap-permanent-staging-worker-fence.yml",
+        displayTitle:
+          `Permanent staging worker bootstrap | quiesce | ${CANDIDATE}`,
+        createdAt: "2026-08-14T01:02:05.000Z",
+        startedAt: "2026-08-14T01:02:10.000Z",
+        updatedAt: "2026-08-14T01:03:00.000Z",
+      }),
+      mutationRun({
+        id: 712,
+        workflowPath:
+          ".github/workflows/bootstrap-permanent-staging-worker-fence.yml",
+        displayTitle:
+          `Permanent staging worker bootstrap | restore | ${CANDIDATE}`,
+        createdAt: "2026-08-14T01:08:30.500Z",
+        startedAt: "2026-08-14T01:08:31.000Z",
+        updatedAt: "2026-08-14T01:08:32.000Z",
+      }),
+    ]
+    : [];
   const fetchImpl = vi.fn(async (url: string) => {
     if (url.includes(`/commits/${CANDIDATE}/pulls?`)) {
       const page = Number(new URL(url).searchParams.get("page") ?? "1");
@@ -337,6 +389,25 @@ function harness(
         workflow_runs: workflowRuns,
       });
     }
+    if (url.includes(
+      "/actions/workflows/configure-automatic-maintenance-worker-fence.yml/runs?",
+    )) {
+      const workflowRuns = options.workerFenceRuns ?? defaultWorkerFenceRuns;
+      return jsonResponse({
+        total_count: workflowRuns.length,
+        workflow_runs: workflowRuns,
+      });
+    }
+    if (url.includes(
+      "/actions/workflows/bootstrap-permanent-staging-worker-fence.yml/runs?",
+    )) {
+      const workflowRuns = options.stagingBootstrapRuns ??
+        defaultStagingBootstrapRuns;
+      return jsonResponse({
+        total_count: workflowRuns.length,
+        workflow_runs: workflowRuns,
+      });
+    }
     const jobsMatch = /\/actions\/runs\/(\d+)\/jobs\?/.exec(url);
     if (jobsMatch) {
       return jsonResponse(options.mutationJobs?.[Number(jobsMatch[1])] ?? {
@@ -384,6 +455,11 @@ function harness(
       run_attempt: options.predecessorRunAttempt ?? 1,
       run_started_at: runStartedAtById.get(runId) ??
         new Date(Date.UTC(2026, 7, 14, 1, runId - 100, 0)).toISOString(),
+      display_title: runFixture.name === "Deploy permanent staging"
+        ? runId === artifactRunByCheck.get(runFixture.name)
+          ? `Deploy permanent staging | active | ${CANDIDATE}`
+          : `Deploy permanent staging | fenced | ${CANDIDATE}`
+        : runFixture.name,
       status: "completed",
       conclusion: "success",
       repository: { full_name: "blackmagic30/Beer" },
@@ -809,6 +885,33 @@ describe("GitHub release-candidate verifier", () => {
       fetchImpl: allowed.fetchImpl,
       writeOutput: () => undefined,
     })).resolves.toBe(0);
+  });
+
+  it("requires the complete candidate-bound staging worker bootstrap history", async () => {
+    for (const fixture of [
+      harness({ workerFenceRuns: [] }),
+      harness({ stagingBootstrapRuns: [] }),
+    ]) {
+      let summary = "";
+      const code = await runGithubReleaseCandidateVerification(fixture.argv, {
+        env: {
+          GITHUB_ACTIONS: "true",
+          GITHUB_REF: "refs/heads/main",
+          GITHUB_SHA: CANDIDATE,
+          GITHUB_REPOSITORY: "blackmagic30/Beer",
+          GITHUB_RUN_ATTEMPT: "1",
+          GITHUB_RUN_ID: "9999",
+          GITHUB_TOKEN: "g".repeat(32),
+        },
+        fetchImpl: fixture.fetchImpl,
+        writeOutput: (value: string) => { summary += value; },
+      });
+      expect(code).toBe(1);
+      expect(JSON.parse(summary)).toMatchObject({
+        ok: false,
+        failureCode: "staging_bootstrap_history_invalid",
+      });
+    }
   });
 
   it("rejects a merge without exact GitHub PR, linear-history, tree, and identity binding", async () => {
