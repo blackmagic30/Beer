@@ -45,7 +45,7 @@ function discovery(): Response {
 }
 
 function snapshot(
-  replicas: 1 | 2,
+  replicas: 0 | 1 | 2,
   environmentId = ENVIRONMENT_ID,
   domain = "beer-staging.up.railway.app",
   deployedSha = CANDIDATE_SHA,
@@ -119,7 +119,7 @@ function argv(direction: "out" | "converge-one"): string[] {
   ];
 }
 
-function successfulFetch(before: 1 | 2, after?: 1 | 2) {
+function successfulFetch(before: 0 | 1 | 2, after?: 0 | 1 | 2) {
   const fetchImpl = vi.fn()
     .mockResolvedValueOnce(scope())
     .mockResolvedValueOnce(scope())
@@ -207,6 +207,122 @@ describe("protected permanent-staging scale evidence operation", () => {
         boundaryPostflightExact: true,
         terminalEvidenceExact: true,
         finalReceiptEvidenceExact: true,
+      },
+    });
+  });
+
+  it("quiesces the exact legacy staging deployment at zero without probing old runtime code", async () => {
+    const legacySha = "b".repeat(40);
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(scope())
+      .mockResolvedValueOnce(scope())
+      .mockResolvedValueOnce(discovery())
+      .mockResolvedValueOnce(snapshot(1, ENVIRONMENT_ID, "beer-staging.up.railway.app", legacySha))
+      .mockResolvedValueOnce(discovery())
+      .mockResolvedValueOnce(snapshot(0, ENVIRONMENT_ID, "beer-staging.up.railway.app", legacySha));
+    const runCommand = vi.fn().mockResolvedValue({
+      code: 0,
+      timedOut: false,
+      stdoutSha256: "c".repeat(64),
+      stderrSha256: "d".repeat(64),
+    });
+    const probeRuntime = vi.fn();
+    const output: string[] = [];
+    const result = await runProtectedPermanentStagingScale({
+      argv: [
+        "--direction", "quiesce-staging-zero",
+        "--candidate-sha", CANDIDATE_SHA,
+        "--expected-deployment-sha", legacySha,
+        "--evidence-dir", "/private/evidence",
+      ],
+      env: {
+        ...environment("out"),
+        PINTPATH_SCALE_CONFIRMATION:
+          "QUIESCE_PERMANENT_STAGING_TO_ZERO_FOR_WORKER_BOOTSTRAP",
+      },
+      cwd: process.cwd(),
+      fetchImpl,
+      now: () => 0,
+      sleep: vi.fn(),
+      boundaryCheck: vi.fn().mockResolvedValue(0),
+      reassertRepositoryState: () => true,
+      validateCli: () => true,
+      runCommand,
+      probeRuntime,
+      probeRuntimeAbsent: vi.fn().mockResolvedValue(true),
+      writeDurable: durable,
+      writeOutput: (source) => output.push(source),
+    });
+
+    expect(result).toBe(0);
+    expect(probeRuntime).not.toHaveBeenCalled();
+    expect(runCommand).toHaveBeenCalledWith(
+      "/private/railway",
+      expect.arrayContaining(["asia-southeast1-eqsg3a=0"]),
+      "scale-token-that-is-long-enough",
+    );
+    expect(JSON.parse(output[0]!)).toMatchObject({
+      direction: "quiesce-staging-zero",
+      outcome: "scaled",
+      desiredReplicas: 0,
+      checks: {
+        runtimePreflightExact: true,
+        runtimePostflightExact: true,
+        deploymentUnchanged: true,
+      },
+    });
+  });
+
+  it("restores the fenced candidate from zero to one and proves workers remain disabled", async () => {
+    const fetchImpl = successfulFetch(0, 1);
+    const runCommand = vi.fn().mockResolvedValue({
+      code: 0,
+      timedOut: false,
+      stdoutSha256: "c".repeat(64),
+      stderrSha256: "d".repeat(64),
+    });
+    const probeRuntime = vi.fn().mockResolvedValue(true);
+    const output: string[] = [];
+    const result = await runProtectedPermanentStagingScale({
+      argv: [
+        "--direction", "bootstrap-staging-one",
+        "--candidate-sha", CANDIDATE_SHA,
+        "--expected-deployment-sha", CANDIDATE_SHA,
+        "--evidence-dir", "/private/evidence",
+      ],
+      env: {
+        ...environment("out"),
+        PINTPATH_SCALE_CONFIRMATION:
+          "RESTORE_PERMANENT_STAGING_TO_ONE_FOR_WORKER_BOOTSTRAP",
+      },
+      cwd: process.cwd(),
+      fetchImpl,
+      now: () => 0,
+      sleep: vi.fn(),
+      boundaryCheck: vi.fn().mockResolvedValue(0),
+      reassertRepositoryState: () => true,
+      validateCli: () => true,
+      runCommand,
+      probeRuntime,
+      probeRuntimeAbsent: vi.fn().mockResolvedValue(true),
+      writeDurable: durable,
+      writeOutput: (source) => output.push(source),
+    });
+
+    expect(result).toBe(0);
+    expect(probeRuntime).toHaveBeenCalledWith(
+      expect.anything(),
+      CANDIDATE_SHA,
+      DEPLOYMENT_ID,
+      { enabled: false, candidateBound: true },
+    );
+    expect(JSON.parse(output[0]!)).toMatchObject({
+      direction: "bootstrap-staging-one",
+      outcome: "scaled",
+      desiredReplicas: 1,
+      checks: {
+        runtimePreflightExact: true,
+        runtimePostflightExact: true,
       },
     });
   });

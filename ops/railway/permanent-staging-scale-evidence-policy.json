@@ -38,6 +38,19 @@
     "unconditionalReadOnlyPostflight": true,
     "exactExistingDeploymentShaRequired": true
   },
+  "workerBootstrap": {
+    "quiesceDirection": "quiesce-staging-zero",
+    "bootstrapDirection": "bootstrap-staging-one",
+    "initialReplicaCount": 1,
+    "quiescedReplicaCount": 0,
+    "restoredReplicaCount": 1,
+    "maximumAttemptsPerTransition": 1,
+    "automaticRetriesAllowed": false,
+    "runtimeMustBeUnavailableWhileQuiesced": true,
+    "restoredRuntimeAutomaticMaintenanceEnabled": false,
+    "restoredRuntimeCandidateBindingRequired": true,
+    "deploymentMustRemainUnchangedPerScale": true
+  },
   "runtimeFence": {
     "requiredRoutes": [
       "/health",

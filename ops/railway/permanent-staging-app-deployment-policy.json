@@ -73,6 +73,7 @@
     "expectedDeploymentStopped": false,
     "deploymentPatchAllowed": false,
     "replicaCountMustMatchPreflight": true,
+    "runtimeProbeRequired": true,
     "requiredRuntimeRoutes": [
       "/health",
       "/startup",

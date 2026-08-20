@@ -172,14 +172,16 @@ type DeploymentTarget = "permanent-staging" | "production";
 const TARGET_LOCKS = Object.freeze({
   "permanent-staging": Object.freeze({
     policyId: "pintpath-permanent-staging-app-source-upload",
+    fencedPolicyId: "pintpath-permanent-staging-fenced-app-source-upload",
     environmentId: "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
     forbiddenEnvironmentId: "13dab015-df74-45c6-b26f-69323daea99a",
     publicOrigin: "https://beer-staging.up.railway.app",
     publicOriginSha256:
       "fd458490dc9821b10681db486f980de7ec0d8b684f5dce4f7a5659a582df2910",
     allowedReplicaCounts: Object.freeze([1] as const),
+    fencedAllowedReplicaCounts: Object.freeze([0] as const),
     githubEnvironment: "permanent-staging-deployment",
-    automaticMaintenanceEnabled: true,
+    allowedAutomaticMaintenanceStates: Object.freeze([false, true] as const),
   }),
   production: Object.freeze({
     policyId: "pintpath-production-app-source-upload",
@@ -225,6 +227,7 @@ const policySchema = z.object({
     publicOrigin: z.string().url(),
     publicOriginSha256: sha256Schema,
     allowedReplicaCounts: z.union([
+      z.tuple([z.literal(0)]),
       z.tuple([z.literal(1)]),
       z.tuple([z.literal(1), z.literal(2)]),
     ]),
@@ -290,6 +293,7 @@ const policySchema = z.object({
     expectedDeploymentStopped: z.literal(false),
     deploymentPatchAllowed: z.literal(false),
     replicaCountMustMatchPreflight: z.literal(true),
+    runtimeProbeRequired: z.boolean(),
     requiredRuntimeRoutes: z.tuple([
       z.literal("/health"),
       z.literal("/startup"),
@@ -396,7 +400,34 @@ function exactOrigin(value: string): boolean {
 
 function policyMatchesLock(policy: PermanentStagingAppDeploymentPolicy): boolean {
   const lock = TARGET_LOCKS[policy.target.name];
-  return policy.policyId === lock.policyId
+  let policyIdExact: boolean;
+  let automaticMaintenanceStateAllowed: boolean;
+  let expectedReplicaCounts: readonly number[];
+  if (policy.target.name === "permanent-staging") {
+    const stagingLock = TARGET_LOCKS["permanent-staging"];
+    policyIdExact = policy.policyId === (
+      policy.postflightContract.automaticMaintenanceEnabled
+        ? stagingLock.policyId
+        : stagingLock.fencedPolicyId
+    );
+    automaticMaintenanceStateAllowed = (
+      stagingLock.allowedAutomaticMaintenanceStates as readonly boolean[]
+    ).includes(policy.postflightContract.automaticMaintenanceEnabled);
+    if (policy.postflightContract.automaticMaintenanceEnabled
+      !== policy.postflightContract.runtimeProbeRequired) return false;
+    expectedReplicaCounts = policy.postflightContract.automaticMaintenanceEnabled
+      ? stagingLock.allowedReplicaCounts
+      : stagingLock.fencedAllowedReplicaCounts;
+  } else {
+    const productionLock = TARGET_LOCKS.production;
+    policyIdExact = policy.policyId === productionLock.policyId;
+    automaticMaintenanceStateAllowed =
+      policy.postflightContract.automaticMaintenanceEnabled
+        === productionLock.automaticMaintenanceEnabled;
+    if (!policy.postflightContract.runtimeProbeRequired) return false;
+    expectedReplicaCounts = productionLock.allowedReplicaCounts;
+  }
+  return policyIdExact
     && policy.projectId === PROJECT_ID
     && policy.target.environmentId === lock.environmentId
     && policy.target.forbiddenEnvironmentId === lock.forbiddenEnvironmentId
@@ -407,12 +438,11 @@ function policyMatchesLock(policy: PermanentStagingAppDeploymentPolicy): boolean
     && sha256(policy.target.publicOrigin) === lock.publicOriginSha256
     && exactOrigin(policy.target.publicOrigin)
     && policy.target.allowedReplicaCounts.length
-      === lock.allowedReplicaCounts.length
+      === expectedReplicaCounts.length
     && policy.target.allowedReplicaCounts.every((count, index) =>
-      count === lock.allowedReplicaCounts[index])
+      count === expectedReplicaCounts[index])
     && policy.target.githubEnvironment === lock.githubEnvironment
-    && policy.postflightContract.automaticMaintenanceEnabled
-      === lock.automaticMaintenanceEnabled
+    && automaticMaintenanceStateAllowed
     && (policy.target.name === "production") === (policy.prerequisite !== null)
     && (policy.target.name === "production")
       === (policy.providerReadinessContract !== null)
@@ -2088,13 +2118,15 @@ export async function runPermanentStagingAppDeploymentExecutor(
         candidateSha,
         preservedReplicaCount,
       );
-      runtime = await dependencies.probeRuntime(
-        policy.target.publicOrigin,
-        candidateSha,
-        policy,
-        policy.target.environmentId,
-        reconciledCandidate.snapshot.deployment.id,
-      );
+      runtime = policy.postflightContract.runtimeProbeRequired
+        ? await dependencies.probeRuntime(
+          policy.target.publicOrigin,
+          candidateSha,
+          policy,
+          policy.target.environmentId,
+          reconciledCandidate.snapshot.deployment.id,
+        )
+        : null;
       checks.runtimeHealthExact = true;
       checks.runtimeStartupExact = true;
       checks.runtimeReadinessExact = true;

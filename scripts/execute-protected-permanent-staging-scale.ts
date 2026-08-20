@@ -33,7 +33,7 @@ const STAGING_DOMAIN = "beer-staging.up.railway.app";
 const PRODUCTION_DOMAIN = "pintpath.au";
 const POLICY_PATH = "ops/railway/permanent-staging-scale-evidence-policy.json";
 const POLICY_SHA256 =
-  "f068f9c2af69300468f9504019f5460aa0d239b6621e9f20d65bbdd350903591";
+  "7182b42fd454cab030e48f279d8d49ed9dc6638e5620b91d13b9ea08451afbd6";
 const BOUNDARY_POLICY_PATH = "ops/railway/production-staging-mutation-policy.json";
 const GRAPHQL_ENDPOINT = "https://backboard.railway.com/graphql/v2";
 const CLI_SHA256 = "27133cfc20bffc43b2f32c1638fa3c50eefc2f9d2d80301a93de34632ccb7a43";
@@ -86,7 +86,19 @@ export const PROTECTED_STAGING_SCALE_SNAPSHOT_QUERY = `query PintPathProtectedSc
 export const PROTECTED_STAGING_SCALE_TOKEN_SCOPE_QUERY =
   `query PintPathProtectedScaleTokenScope { projectToken { projectId environmentId } }`;
 
-type Direction = "out" | "converge-one" | "converge-production-two";
+type Direction =
+  | "out"
+  | "converge-one"
+  | "converge-production-two"
+  | "quiesce-staging-zero"
+  | "bootstrap-staging-one";
+
+type ReplicaCount = 0 | 1 | 2;
+
+interface RuntimeMaintenanceExpectation {
+  readonly enabled: boolean;
+  readonly candidateBound: boolean;
+}
 
 interface ScaleTarget {
   readonly environmentId: string;
@@ -128,7 +140,9 @@ interface Dependencies {
     target: ScaleTarget,
     candidateSha: string,
     deploymentId: string,
+    expectation: RuntimeMaintenanceExpectation,
   ) => Promise<boolean>;
+  readonly probeRuntimeAbsent: (target: ScaleTarget) => Promise<boolean>;
   readonly writeDurable: (directory: string, leaf: string, source: string) => string;
   readonly writeOutput: (source: string) => void;
 }
@@ -146,7 +160,7 @@ interface ScaleReceipt {
   readonly candidateSha: string | null;
   readonly startedAt: string;
   readonly completedAt: string;
-  readonly desiredReplicas: 1 | 2 | null;
+  readonly desiredReplicas: ReplicaCount | null;
   readonly deploymentIdSha256: string | null;
   readonly attempts: 0 | 1;
   readonly retryAllowed: false;
@@ -216,10 +230,16 @@ function parseArguments(argv: readonly string[]): {
     return { direction, candidateSha, expectedDeploymentSha: candidateSha, evidenceDirectory };
   }
   const expectedDeploymentSha = values.get("--expected-deployment-sha") ?? "";
-  return direction === "converge-production-two" && argv.length === 8
-    && SHA_PATTERN.test(candidateSha)
-    && expectedDeploymentSha === candidateSha
-    && path.isAbsolute(evidenceDirectory)
+  if (!SHA_PATTERN.test(candidateSha) || !SHA_PATTERN.test(expectedDeploymentSha)
+    || !path.isAbsolute(evidenceDirectory)) return null;
+  if (direction === "converge-production-two"
+    || direction === "bootstrap-staging-one") {
+    return expectedDeploymentSha === candidateSha
+      ? { direction, candidateSha, expectedDeploymentSha, evidenceDirectory }
+      : null;
+  }
+  return direction === "quiesce-staging-zero"
+    && expectedDeploymentSha !== candidateSha
     ? { direction, candidateSha, expectedDeploymentSha, evidenceDirectory }
     : null;
 }
@@ -422,6 +442,7 @@ async function probeRuntime(
   target: ScaleTarget,
   candidateSha: string,
   deploymentId: string,
+  expectation: RuntimeMaintenanceExpectation,
 ): Promise<boolean> {
   for (const route of ["/health", "/startup", "/ready"] as const) {
     const response = await fetchImpl(`https://${target.domain}${route}`, {
@@ -449,9 +470,35 @@ async function probeRuntime(
         !== railwayDeploymentIdentityIdSha256("service", SERVICE_ID)
       || runtime.deployment.deploymentIdSha256
         !== railwayDeploymentIdentityIdSha256("deployment", deploymentId)
-      || runtime.automaticMaintenance.enabled !== true
-      || runtime.automaticMaintenance.candidateBound !== true
+      || runtime.automaticMaintenance.enabled !== expectation.enabled
+      || runtime.automaticMaintenance.candidateBound !== expectation.candidateBound
     ) return false;
+  }
+  return true;
+}
+
+async function probeRuntimeAbsent(
+  fetchImpl: typeof fetch,
+  target: ScaleTarget,
+  sleep: (milliseconds: number) => Promise<void>,
+): Promise<boolean> {
+  for (let round = 0; round < 3; round += 1) {
+    for (const route of ["/health", "/startup", "/ready"] as const) {
+      try {
+        const response = await fetchImpl(`https://${target.domain}${route}`, {
+          method: "GET",
+          headers: { accept: "application/json" },
+          redirect: "error",
+          cache: "no-store",
+          signal: AbortSignal.timeout(QUERY_TIMEOUT_MS),
+        });
+        if (response.ok) return false;
+        await response.body?.cancel();
+      } catch {
+        // Connection refusal and provider 5xx both confirm no healthy app route.
+      }
+    }
+    if (round < 2) await sleep(10_000);
   }
   return true;
 }
@@ -459,7 +506,7 @@ async function probeRuntime(
 function snapshotExact(
   snapshot: RailwayApplicationDeploymentAttestationProviderSnapshot,
   candidateSha: string,
-  replicas: 1 | 2,
+  replicas: ReplicaCount,
   target: ScaleTarget = STAGING_TARGET,
 ): boolean {
   return snapshot.serviceId === SERVICE_ID
@@ -473,10 +520,10 @@ function snapshotExact(
     && snapshot.deployment.serviceId === SERVICE_ID
     && snapshot.deployment.commitHash === candidateSha
     && snapshot.deployment.patchId === null
-    && snapshot.activeDeployments.some((row) =>
-      row.id === snapshot.latestDeployment.id
-      && row.status === "SUCCESS"
-      && row.deploymentStopped === false)
+    && snapshot.activeDeployments.length === 1
+    && snapshot.activeDeployments[0]?.id === snapshot.latestDeployment.id
+    && snapshot.activeDeployments[0]?.status === "SUCCESS"
+    && snapshot.activeDeployments[0]?.deploymentStopped === false
     && snapshot.domains.length === 1
     && snapshot.domains[0]?.kind === "service"
     && snapshot.domains[0].domain === target.domain
@@ -497,7 +544,7 @@ async function reconcile(
   dependencies: Dependencies,
   token: string,
   candidateSha: string,
-  replicas: 1 | 2,
+  replicas: ReplicaCount,
   target: ScaleTarget = STAGING_TARGET,
 ): Promise<RailwayApplicationDeploymentAttestationProviderSnapshot | null> {
   const deadline = dependencies.now() + RECONCILIATION_TIMEOUT_MS;
@@ -535,6 +582,7 @@ function policyExact(cwd: string): boolean {
         "railwayCli",
         "lifecycle",
         "productionConvergence",
+        "workerBootstrap",
         "runtimeFence",
         "evidence",
       ]) &&
@@ -572,6 +620,30 @@ function policyExact(cwd: string): boolean {
       value.productionConvergence.automaticRetriesAllowed === false &&
       value.productionConvergence.unconditionalReadOnlyPostflight === true &&
       value.productionConvergence.exactExistingDeploymentShaRequired === true &&
+      exactKeys(value.workerBootstrap, [
+        "quiesceDirection",
+        "bootstrapDirection",
+        "initialReplicaCount",
+        "quiescedReplicaCount",
+        "restoredReplicaCount",
+        "maximumAttemptsPerTransition",
+        "automaticRetriesAllowed",
+        "runtimeMustBeUnavailableWhileQuiesced",
+        "restoredRuntimeAutomaticMaintenanceEnabled",
+        "restoredRuntimeCandidateBindingRequired",
+        "deploymentMustRemainUnchangedPerScale",
+      ]) &&
+      value.workerBootstrap.quiesceDirection === "quiesce-staging-zero" &&
+      value.workerBootstrap.bootstrapDirection === "bootstrap-staging-one" &&
+      value.workerBootstrap.initialReplicaCount === 1 &&
+      value.workerBootstrap.quiescedReplicaCount === 0 &&
+      value.workerBootstrap.restoredReplicaCount === 1 &&
+      value.workerBootstrap.maximumAttemptsPerTransition === 1 &&
+      value.workerBootstrap.automaticRetriesAllowed === false &&
+      value.workerBootstrap.runtimeMustBeUnavailableWhileQuiesced === true &&
+      value.workerBootstrap.restoredRuntimeAutomaticMaintenanceEnabled === false &&
+      value.workerBootstrap.restoredRuntimeCandidateBindingRequired === true &&
+      value.workerBootstrap.deploymentMustRemainUnchangedPerScale === true &&
       exactKeys(value.runtimeFence, [
         "requiredRoutes",
         "automaticMaintenanceEnabled",
@@ -630,7 +702,7 @@ function receipt(
   candidateSha: string | null,
   startedAt: string,
   completedAt: string,
-  desiredReplicas: 1 | 2 | null,
+  desiredReplicas: ReplicaCount | null,
   deploymentIdSha256: string | null,
   attempts: 0 | 1,
   intentSha256: string | null,
@@ -674,11 +746,17 @@ export async function runProtectedPermanentStagingScale(
     reassertRepositoryState,
     validateCli,
     runCommand,
-    probeRuntime: (target, candidateSha, deploymentId) => probeRuntime(
+    probeRuntime: (target, candidateSha, deploymentId, expectation) => probeRuntime(
       fetch,
       target,
       candidateSha,
       deploymentId,
+      expectation,
+    ),
+    probeRuntimeAbsent: (target) => probeRuntimeAbsent(
+      fetch,
+      target,
+      (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
     ),
     writeDurable: durableWrite,
     writeOutput: (source) => process.stdout.write(source),
@@ -690,8 +768,9 @@ export async function runProtectedPermanentStagingScale(
   const checks = emptyChecks();
   const direction = args?.direction ?? null;
   const candidateSha = args?.candidateSha ?? null;
-  const desiredReplicas = direction === "converge-one" ? 1
-    : direction === "out" || direction === "converge-production-two" ? 2 : null;
+  const desiredReplicas = direction === "quiesce-staging-zero" ? 0
+    : direction === "converge-one" || direction === "bootstrap-staging-one" ? 1
+      : direction === "out" || direction === "converge-production-two" ? 2 : null;
   const target = direction === "converge-production-two" ? PRODUCTION_TARGET : STAGING_TARGET;
   let attempts: 0 | 1 = 0;
   let intentSha: string | null = null;
@@ -707,7 +786,11 @@ export async function runProtectedPermanentStagingScale(
       ? "SCALE_PERMANENT_STAGING_TO_TWO_FOR_EVIDENCE"
       : direction === "converge-one"
         ? "CONVERGE_PERMANENT_STAGING_TO_ONE"
-        : "CONVERGE_PRODUCTION_TO_TWO_REPLICAS";
+        : direction === "converge-production-two"
+          ? "CONVERGE_PRODUCTION_TO_TWO_REPLICAS"
+          : direction === "quiesce-staging-zero"
+            ? "QUIESCE_PERMANENT_STAGING_TO_ZERO_FOR_WORKER_BOOTSTRAP"
+            : "RESTORE_PERMANENT_STAGING_TO_ONE_FOR_WORKER_BOOTSTRAP";
     checks.githubAuthorityExact = args !== null
       && dependencies.env.GITHUB_REF === "refs/heads/main"
       && dependencies.env.GITHUB_SHA === args.candidateSha
@@ -746,14 +829,28 @@ export async function runProtectedPermanentStagingScale(
     const beforeReplicas = before.numReplicas;
     checks.targetPreflightExact = direction === "out"
       ? snapshotExact(before, args.expectedDeploymentSha, 1, target)
-      : (beforeReplicas === 1 || beforeReplicas === 2)
-        && snapshotExact(before, args.expectedDeploymentSha, beforeReplicas as 1 | 2, target);
+      : direction === "quiesce-staging-zero"
+        ? snapshotExact(before, args.expectedDeploymentSha, 1, target)
+        : direction === "bootstrap-staging-one"
+          ? snapshotExact(before, args.expectedDeploymentSha, 0, target)
+          : (beforeReplicas === 1 || beforeReplicas === 2)
+            && snapshotExact(
+              before,
+              args.expectedDeploymentSha,
+              beforeReplicas as 1 | 2,
+              target,
+            );
     if (!checks.targetPreflightExact) throw new Error("target_invalid");
-    checks.runtimePreflightExact = await dependencies.probeRuntime(
-      target,
-      args.expectedDeploymentSha,
-      before.deployment.id,
-    );
+    checks.runtimePreflightExact = direction === "quiesce-staging-zero"
+      ? true
+      : direction === "bootstrap-staging-one"
+        ? await dependencies.probeRuntimeAbsent(target)
+        : await dependencies.probeRuntime(
+          target,
+          args.expectedDeploymentSha,
+          before.deployment.id,
+          { enabled: true, candidateBound: true },
+        );
     if (!checks.runtimePreflightExact) throw new Error("runtime_fence_invalid");
     if ((direction === "converge-one" && beforeReplicas === 1)
       || (direction === "converge-production-two" && beforeReplicas === 2)) {
@@ -820,12 +917,18 @@ export async function runProtectedPermanentStagingScale(
         target,
       );
       checks.targetPostflightExact = after !== null;
-      checks.runtimePostflightExact = after !== null
-        && await dependencies.probeRuntime(
-          target,
-          args.expectedDeploymentSha,
-          after.deployment.id,
-        );
+      checks.runtimePostflightExact = after !== null && (
+        direction === "quiesce-staging-zero"
+          ? await dependencies.probeRuntimeAbsent(target)
+          : await dependencies.probeRuntime(
+            target,
+            args.expectedDeploymentSha,
+            after.deployment.id,
+            direction === "bootstrap-staging-one"
+              ? { enabled: false, candidateBound: true }
+              : { enabled: true, candidateBound: true },
+          )
+      );
       checks.candidateUnchanged = after?.deployment.commitHash === args.expectedDeploymentSha;
       checks.deploymentUnchanged = after !== null
         && deploymentIdentity(before) === deploymentIdentity(after);
@@ -854,12 +957,18 @@ export async function runProtectedPermanentStagingScale(
         target,
       );
       checks.targetPostflightExact = after !== null;
-      checks.runtimePostflightExact = after !== null
-        && await dependencies.probeRuntime(
-          target,
-          args.expectedDeploymentSha,
-          after.deployment.id,
-        );
+      checks.runtimePostflightExact = after !== null && (
+        direction === "quiesce-staging-zero"
+          ? await dependencies.probeRuntimeAbsent(target)
+          : await dependencies.probeRuntime(
+            target,
+            args.expectedDeploymentSha,
+            after.deployment.id,
+            direction === "bootstrap-staging-one"
+              ? { enabled: false, candidateBound: true }
+              : { enabled: true, candidateBound: true },
+          )
+      );
       checks.candidateUnchanged = after?.deployment.commitHash === args.expectedDeploymentSha;
       checks.deploymentUnchanged = before !== null && after !== null
         && deploymentIdentity(before) === deploymentIdentity(after);

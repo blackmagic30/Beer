@@ -47,6 +47,12 @@ function policySource(name: "permanent-staging" | "production"): string {
   return fs.readFileSync(path.resolve(filename), "utf8");
 }
 
+function fencedStagingPolicySource(): string {
+  return fs.readFileSync(path.resolve(
+    "ops/railway/permanent-staging-fenced-app-deployment-policy.json",
+  ), "utf8");
+}
+
 function policy(name: "permanent-staging" | "production"):
   PermanentStagingAppDeploymentPolicy {
   const value = parsePermanentStagingAppDeploymentPolicy(policySource(name));
@@ -381,8 +387,20 @@ describe("Railway application deployment executor", () => {
       },
     });
     const staging = policy("permanent-staging");
+    const fencedStaging = parsePermanentStagingAppDeploymentPolicy(
+      fencedStagingPolicySource(),
+    );
     const production = policy("production");
+    expect(fencedStaging).not.toBeNull();
+    expect(fencedStaging?.policyId).toBe(
+      "pintpath-permanent-staging-fenced-app-source-upload",
+    );
+    expect(fencedStaging?.postflightContract.automaticMaintenanceEnabled).toBe(false);
+    expect(fencedStaging?.postflightContract.runtimeProbeRequired).toBe(false);
+    expect(fencedStaging?.target.allowedReplicaCounts).toEqual([0]);
     expect(staging.target.name).toBe("permanent-staging");
+    expect(staging.postflightContract.automaticMaintenanceEnabled).toBe(true);
+    expect(staging.postflightContract.runtimeProbeRequired).toBe(true);
     expect(staging.target.allowedReplicaCounts).toEqual([1]);
     expect(staging.postflightContract.replicaCountMustMatchPreflight).toBe(true);
     expect(staging.writeContract.topologyMutationAllowed).toBe(false);
@@ -417,6 +435,9 @@ describe("Railway application deployment executor", () => {
     expect(parsePermanentStagingAppDeploymentPolicy(source)).not.toBeNull();
     expect(parsePermanentStagingAppDeploymentPolicy(source.trimEnd())).toBeNull();
     expect(parsePermanentStagingAppDeploymentPolicy(`${source}\n`)).toBeNull();
+    expect(parsePermanentStagingAppDeploymentPolicy(
+      fencedStagingPolicySource(),
+    )).not.toBeNull();
     const value = JSON.parse(source) as Record<string, unknown>;
     const reordered = source.replace(
       /^\{\n  "schemaVersion": ([^\n]+),\n  "policyId": ([^\n]+),/,
@@ -427,6 +448,22 @@ describe("Railway application deployment executor", () => {
     expect(parsePermanentStagingAppDeploymentPolicy(`${JSON.stringify({
       ...value,
       unknown: true,
+    }, null, 2)}\n`)).toBeNull();
+    expect(parsePermanentStagingAppDeploymentPolicy(`${JSON.stringify({
+      ...value,
+      postflightContract: {
+        ...(value.postflightContract as Record<string, unknown>),
+        automaticMaintenanceEnabled: false,
+      },
+    }, null, 2)}\n`)).toBeNull();
+    const fencedValue = JSON.parse(fencedStagingPolicySource()) as
+      Record<string, unknown>;
+    expect(parsePermanentStagingAppDeploymentPolicy(`${JSON.stringify({
+      ...fencedValue,
+      postflightContract: {
+        ...(fencedValue.postflightContract as Record<string, unknown>),
+        automaticMaintenanceEnabled: true,
+      },
     }, null, 2)}\n`)).toBeNull();
     const target = value.target as Record<string, unknown>;
     expect(parsePermanentStagingAppDeploymentPolicy(`${JSON.stringify({
@@ -517,6 +554,46 @@ describe("Railway application deployment executor", () => {
       "railway-boundary-postflight.json",
       "railway-boundary-preflight.json",
     ]);
+  });
+
+  it("uploads the fenced candidate at zero replicas without claiming runtime evidence", async () => {
+    const exactPolicy = parsePermanentStagingAppDeploymentPolicy(
+      fencedStagingPolicySource(),
+    );
+    if (!exactPolicy) throw new Error("fenced_fixture_policy_invalid");
+    const fixture = harness(exactPolicy);
+    const code = await runPermanentStagingAppDeploymentExecutor([
+      "--policy", "ops/railway/permanent-staging-fenced-app-deployment-policy.json",
+      "--candidate-sha", CANDIDATE_SHA,
+      "--evidence-dir", fixture.evidenceDir,
+    ], fixture.overrides);
+
+    expect(code).toBe(0);
+    expect(fixture.runCommand).toHaveBeenCalledTimes(1);
+    expect(fixture.overrides.probeRuntime).not.toHaveBeenCalled();
+    const receipt = JSON.parse(fs.readFileSync(
+      path.join(fixture.evidenceDir, "deployment-receipt.json"),
+      "utf8",
+    ));
+    expect(receipt).toMatchObject({
+      target: "permanent-staging",
+      outcome: "deployed",
+      candidateSha: CANDIDATE_SHA,
+      replicaCounts: { before: 0, after: 0 },
+      runtimeResponseSha256s: {
+        health: null,
+        startup: null,
+        ready: null,
+      },
+      checks: {
+        topologyPreserved: true,
+        deploymentExact: true,
+        runtimeHealthExact: true,
+        runtimeStartupExact: true,
+        runtimeReadinessExact: true,
+        terminalEvidenceExact: true,
+      },
+    });
   });
 
   it.each([
