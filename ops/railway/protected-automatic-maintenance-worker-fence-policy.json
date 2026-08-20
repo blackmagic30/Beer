@@ -1,0 +1,103 @@
+{
+  "schemaVersion": "pintpath-protected-automatic-maintenance-worker-fence-policy/v1",
+  "policyId": "pintpath-protected-automatic-maintenance-worker-fence",
+  "activationState": "GITHUB_ENVIRONMENT_PROTECTED",
+  "repository": "blackmagic30/Beer",
+  "branch": "main",
+  "projectId": "48d8c6cd-1c66-4148-874b-20877f48e1a5",
+  "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
+  "targets": {
+    "permanent-staging": {
+      "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+      "forbiddenEnvironmentId": "13dab015-df74-45c6-b26f-69323daea99a",
+      "publicOrigin": "https://beer-staging.up.railway.app",
+      "githubEnvironment": "permanent-staging-provider-mutation"
+    },
+    "production": {
+      "environmentId": "13dab015-df74-45c6-b26f-69323daea99a",
+      "forbiddenEnvironmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+      "publicOrigin": "https://pintpath.au",
+      "githubEnvironment": "production-runtime-configuration"
+    }
+  },
+  "variables": [
+    "PINTPATH_AUTOMATIC_MAINTENANCE_ENABLED",
+    "PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA"
+  ],
+  "operations": {
+    "prepare": {
+      "allowedTargets": [
+        "permanent-staging"
+      ],
+      "enabledValue": "false",
+      "skipDeploys": true,
+      "deploymentMustRemainUnchanged": true,
+      "runtimeProofRequired": false,
+      "legacySourceRuntimeFenceClaimAllowed": false,
+      "nextRequiredProof": "EXACT_SCALE_1_TO_0_QUIESCENCE_PROOF"
+    },
+    "fence": {
+      "allowedTargets": [
+        "production"
+      ],
+      "enabledValue": "false",
+      "skipDeploys": true,
+      "soleHealthyCandidateRequiredBeforeWrite": false,
+      "soleHealthyCandidateRequiredAfterWrite": false,
+      "deploymentMustRemainUnchanged": true,
+      "runtimeProofRequired": false,
+      "oldRuntimeSafetyPrerequisite": "EXTERNAL_SQLITE_DETACHED_FROM_POSTGRES_PROOF"
+    },
+    "activate": {
+      "allowedTargets": [
+        "permanent-staging",
+        "production"
+      ],
+      "enabledValue": "true",
+      "skipDeploys": false,
+      "soleHealthyCandidateRequiredBeforeWrite": true,
+      "soleHealthyCandidateRequiredAfterWrite": true,
+      "deploymentMustRemainUnchanged": false,
+      "runtimeAutomaticMaintenanceEnabled": true,
+      "runtimeAutomaticMaintenanceCandidateBound": true,
+      "runtimeProofRequired": true
+    }
+  },
+  "mutationBoundary": {
+    "policyPath": "ops/railway/production-staging-mutation-policy.json",
+    "policySha256": "9392f0c605dec43657d4d3a5a6ce40d57fe9beb70fce5ff496bb1a5f2fed3fed",
+    "immediatePreflightRequired": true,
+    "unconditionalPostflightRequired": true
+  },
+  "mutation": {
+    "operationName": "variableCollectionUpsert",
+    "exactlyTwoVariables": true,
+    "atomicSingleCallRequired": true,
+    "maximumAttempts": 1,
+    "automaticRetriesAllowed": false,
+    "rerunsAllowed": false,
+    "unconditionalReadOnlyReconciliationRequired": true,
+    "ambiguousOutcomeAction": "READ_ONLY_RECONCILIATION_STOP_NO_RETRY",
+    "otherProviderChangesAllowed": false
+  },
+  "runtimeProof": {
+    "routes": [
+      "/health",
+      "/startup",
+      "/ready"
+    ],
+    "maximumObservationSeconds": 900,
+    "pollIntervalSeconds": 10,
+    "sameCandidateRequired": true,
+    "automaticMaintenanceEnabledRequired": true,
+    "automaticMaintenanceCandidateBoundRequired": true
+  },
+  "evidence": {
+    "durableSecretFreeIntentRequiredBeforeWrite": true,
+    "terminalReceiptRequired": true,
+    "terminalReceiptCandidateTargetOperationBound": true,
+    "fenceReceiptConsumableByProductionDeployment": true,
+    "secretMaterialAllowed": false,
+    "secretDerivedCommitmentsAllowed": false
+  }
+}

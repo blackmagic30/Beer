@@ -1,0 +1,211 @@
+name: Configure candidate-bound automatic-maintenance worker fence
+run-name: Automatic maintenance worker fence | ${{ inputs.target }} | ${{ inputs.operation }} | ${{ inputs.candidate_sha }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Exact reviewed 40-character SHA currently at main
+        required: true
+        type: string
+      target:
+        description: Exact protected Railway application environment
+        required: true
+        type: choice
+        options:
+          - permanent-staging
+          - production
+      operation:
+        description: Prepare staging, fence production, or activate a healthy candidate
+        required: true
+        type: choice
+        options:
+          - prepare
+          - fence
+          - activate
+      confirmation:
+        description: <PREPARE|FENCE|ACTIVATE>_AUTOMATIC_MAINTENANCE_IN_<TARGET>_FOR_<SHA>
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ${{ inputs.target == 'production' && 'pintpath-production-rollout' || 'pintpath-permanent-staging-key-rollout' }}
+  queue: max
+  cancel-in-progress: false
+
+jobs:
+  configure:
+    name: One candidate-bound automatic-maintenance transition
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment:
+      name: ${{ inputs.target == 'production' && 'production-runtime-configuration' || 'permanent-staging-provider-mutation' }}
+    steps:
+      - name: Checkout the exact main candidate without persisted credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+
+      - name: Require exact original manual authority
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          DISPATCH_REF: ${{ github.ref }}
+          DISPATCH_SHA: ${{ github.sha }}
+          OPERATION: ${{ inputs.operation }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          TARGET: ${{ inputs.target }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          test "$DISPATCH_REF" = 'refs/heads/main'
+          test "$DISPATCH_SHA" = "$CANDIDATE_SHA"
+          test "$RUN_ATTEMPT" = '1'
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse refs/remotes/origin/main)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain=v2 --untracked-files=all)"
+          case "$TARGET" in
+            permanent-staging|production) ;;
+            *) exit 1 ;;
+          esac
+          case "$OPERATION" in
+            prepare|fence|activate) ;;
+            *) exit 1 ;;
+          esac
+          if test "$OPERATION" = prepare; then
+            test "$TARGET" = permanent-staging
+          fi
+          if test "$OPERATION" = fence; then
+            test "$TARGET" = production
+          fi
+          target_confirmation="${TARGET^^}"
+          target_confirmation="${target_confirmation//-/_}"
+          operation_confirmation="${OPERATION^^}"
+          test "$CONFIRMATION" = "${operation_confirmation}_AUTOMATIC_MAINTENANCE_IN_${target_confirmation}_FOR_${CANDIDATE_SHA}"
+
+      - name: Setup the repository Node runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Install immutable dependencies
+        run: npm ci
+
+      - name: Verify the complete repository before provider-token custody
+        env:
+          NODE_ENV: test
+          PUBLIC_BASE_URL: http://localhost:3000
+          DATABASE_PATH: ./data/ci-automatic-maintenance-worker-fence.sqlite
+          OUTBOUND_CALLS_ENABLED: false
+        run: npm run check
+
+      - name: Create private secret-free evidence custody
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          OPERATION: ${{ inputs.operation }}
+          TARGET: ${{ inputs.target }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -d -m 700 "$RUNNER_TEMP/pintpath-automatic-maintenance-worker-fence-evidence"
+          umask 077
+          jq -n \
+            --arg candidateSha "$CANDIDATE_SHA" \
+            --arg operation "$OPERATION" \
+            --arg target "$TARGET" \
+            '{schemaVersion:"pintpath-automatic-maintenance-worker-fence-dispatch/v1",candidateSha:$candidateSha,target:$target,operation:$operation,secretMaterialIncluded:false}' \
+            > "$RUNNER_TEMP/pintpath-automatic-maintenance-worker-fence-evidence/dispatch.json"
+
+      - name: Materialize reviewed-candidate authority before provider-token custody
+        env:
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PINTPATH_AUTOMATIC_MAINTENANCE_CONFIRMATION: ${{ inputs.confirmation }}
+          PINTPATH_PROTECTED_ENVIRONMENT: ${{ inputs.target == 'production' && 'production-runtime-configuration' || 'permanent-staging-provider-mutation' }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          OPERATION: ${{ inputs.operation }}
+          TARGET: ${{ inputs.target }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./node_modules/.bin/tsx scripts/execute-protected-automatic-maintenance-worker-fence.ts \
+            --mode authority \
+            --target "$TARGET" \
+            --operation "$OPERATION" \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --evidence-dir "$RUNNER_TEMP/pintpath-automatic-maintenance-worker-fence-evidence"
+
+      - name: Reassert exact current main immediately before provider-token custody
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags https://github.com/blackmagic30/Beer.git \
+            +refs/heads/main:refs/remotes/origin/main
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse refs/remotes/origin/main)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain=v2 --untracked-files=all)"
+
+      - name: Execute at most one exact atomic Railway variable upsert
+        env:
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_SHA: ${{ github.sha }}
+          PINTPATH_AUTOMATIC_MAINTENANCE_CONFIRMATION: ${{ inputs.confirmation }}
+          PINTPATH_PROTECTED_ENVIRONMENT: ${{ inputs.target == 'production' && 'production-runtime-configuration' || 'permanent-staging-provider-mutation' }}
+          PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_TARGET_METADATA_TOKEN: ${{ inputs.target == 'production' && secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN || secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_TARGET_VARIABLE_TOKEN: ${{ inputs.target == 'production' && secrets.PINTPATH_RAILWAY_PRODUCTION_VARIABLE_TOKEN || secrets.PINTPATH_RAILWAY_STAGING_VARIABLE_MUTATION_TOKEN }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          OPERATION: ${{ inputs.operation }}
+          TARGET: ${{ inputs.target }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN"
+          test -n "$PINTPATH_RAILWAY_STAGING_METADATA_TOKEN"
+          test -n "$PINTPATH_RAILWAY_TARGET_METADATA_TOKEN"
+          test -n "$PINTPATH_RAILWAY_TARGET_VARIABLE_TOKEN"
+          test "$PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN" != "$PINTPATH_RAILWAY_STAGING_METADATA_TOKEN"
+          test "$PINTPATH_RAILWAY_TARGET_VARIABLE_TOKEN" != "$PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN"
+          test "$PINTPATH_RAILWAY_TARGET_VARIABLE_TOKEN" != "$PINTPATH_RAILWAY_STAGING_METADATA_TOKEN"
+          ./node_modules/.bin/tsx scripts/execute-protected-automatic-maintenance-worker-fence.ts \
+            --mode mutate \
+            --target "$TARGET" \
+            --operation "$OPERATION" \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --evidence-dir "$RUNNER_TEMP/pintpath-automatic-maintenance-worker-fence-evidence" \
+            --authority-file "$RUNNER_TEMP/pintpath-automatic-maintenance-worker-fence-evidence/authority.json"
+
+      - name: Reconcile the Railway production-staging mutation boundary
+        if: always()
+        env:
+          PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
+        run: npm run readiness:railway:mutation-boundary
+
+      - name: Upload bounded secret-free terminal evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pintpath-automatic-maintenance-worker-fence-${{ inputs.target }}-${{ inputs.operation }}-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}/pintpath-automatic-maintenance-worker-fence-evidence/
+          if-no-files-found: error
+          retention-days: 30
