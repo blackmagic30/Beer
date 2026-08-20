@@ -615,6 +615,7 @@ async function checkPrivateStorageBucket(input: {
   minimumFileSizeBytes?: number;
   requireNoBucketSizeLimit?: boolean;
   probeReadWrite?: boolean;
+  requireDirectStoragePosture?: boolean;
   setupSqlPath?: string;
 }): Promise<ProviderCheck> {
   const setupHint = input.setupSqlPath ? ` Run ${input.setupSqlPath} against that project.` : "";
@@ -635,6 +636,41 @@ async function checkPrivateStorageBucket(input: {
 
   try {
     const client = createServerSupabaseClient(supabaseUrl, serviceRoleKey, { timeoutMs: 15_000 });
+    if (input.requireDirectStoragePosture) {
+      const { data: posture, error: postureError } = await client
+        .from("pintpath_storage_policy_posture")
+        .select("object_policy_count,object_rls_enabled,bucket_policy_count,bucket_rls_enabled,public_bucket_count")
+        .single();
+      const storagePosture = posture as {
+        object_policy_count?: unknown;
+        object_rls_enabled?: unknown;
+        bucket_policy_count?: unknown;
+        bucket_rls_enabled?: unknown;
+        public_bucket_count?: unknown;
+      } | null;
+      const counts = [
+        storagePosture?.object_policy_count,
+        storagePosture?.bucket_policy_count,
+        storagePosture?.public_bucket_count,
+      ];
+      const rlsFlags = [
+        storagePosture?.object_rls_enabled,
+        storagePosture?.bucket_rls_enabled,
+      ];
+      if (postureError
+        || !posture
+        || counts.some((count) => typeof count !== "number"
+          || !Number.isSafeInteger(count)
+          || count !== 0)
+        || rlsFlags.some((enabled) => enabled !== true)) {
+        return {
+          id: input.id,
+          label: input.label,
+          status: "fail",
+          action: "Apply the reviewed Supabase migrations and prove managed Storage tables have RLS enabled with no direct policies and no public bucket before running privileged Storage canaries.",
+        };
+      }
+    }
     const { data, error } = await client.storage.getBucket(input.bucketName);
     const privateBucket = !error && data && data.public === false;
     if (!privateBucket) {
@@ -803,6 +839,7 @@ async function runProviderStorageCanaries(input: {
       requiredMimeTypes: ["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif", "application/pdf"],
       minimumFileSizeBytes: 8 * 1024 * 1024,
       probeReadWrite: true,
+      requireDirectStoragePosture: true,
     }),
   ];
   if (input.includeOperationalOffsite) {

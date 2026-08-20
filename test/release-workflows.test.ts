@@ -1038,6 +1038,19 @@ describe("release workflow contracts", () => {
     expect(databaseJob).toContain("supabase db start");
     expect(databaseJob).toContain("supabase db reset --local");
     expect(databaseJob).toContain(
+      "PINTPATH_LOCAL_SUPABASE_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres?sslmode=disable",
+    );
+    expect(databaseJob).toContain(
+      'psql "$PINTPATH_LOCAL_SUPABASE_DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=on --file scripts/ci/supabase-storage-policy-drift.sql',
+    );
+    expect(databaseJob.match(
+      /psql "\$PINTPATH_LOCAL_SUPABASE_DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=on --file supabase\/migrations\/20260815120455_revoke_all_direct_storage_policies\.sql/g,
+    )).toHaveLength(2);
+    expect(databaseJob).toContain(
+      'psql "$PINTPATH_LOCAL_SUPABASE_DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=on --file scripts/ci/supabase-storage-policy-posture-verify.sql',
+    );
+    expect(databaseJob).not.toContain("supabase db query --local --file");
+    expect(databaseJob).toContain(
       "supabase db lint --local --schema public,private,pintpath_app,pintpath_ops --level warning --fail-on warning",
     );
     expect(databaseJob).toContain(

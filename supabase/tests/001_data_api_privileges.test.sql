@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = extensions, public, pg_catalog;
 
-select plan(8);
+select plan(11);
 
 select ok(
   not exists (
@@ -60,6 +60,59 @@ select ok(
   has_table_privilege('service_role', 'public.profiles', 'SELECT'),
   'service_role can run the isolated restore readiness probe'
 );
+
+select ok(
+  has_table_privilege(
+    'service_role',
+    'public.pintpath_storage_policy_posture',
+    'SELECT'
+  )
+    and not has_table_privilege(
+      'service_role',
+      'public.pintpath_storage_policy_posture',
+      'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER'
+    )
+    and not exists (
+      select 1
+      from pg_catalog.pg_class relation
+      cross join lateral pg_catalog.aclexplode(
+        coalesce(relation.relacl, pg_catalog.acldefault('r', relation.relowner))
+      ) acl
+      where relation.oid = 'public.pintpath_storage_policy_posture'::pg_catalog.regclass
+        and acl.grantee = 0
+    ),
+  'service_role has only SELECT and PUBLIC has no ACL on the aggregate Storage posture'
+);
+
+select ok(
+  not has_table_privilege(
+    'anon',
+    'public.pintpath_storage_policy_posture',
+    'SELECT'
+  )
+    and not has_table_privilege(
+      'authenticated',
+      'public.pintpath_storage_policy_posture',
+      'SELECT'
+    ),
+  'browser JWT roles cannot read the Storage posture view'
+);
+
+set local role service_role;
+
+select ok(
+  (
+    select object_policy_count = 0
+      and object_rls_enabled is true
+      and bucket_policy_count = 0
+      and bucket_rls_enabled is true
+      and public_bucket_count = 0
+    from public.pintpath_storage_policy_posture
+  ),
+  'service_role can execute the invoker-rights Storage posture probe'
+);
+
+reset role;
 
 select ok(
   not has_schema_privilege('authenticated', 'private', 'USAGE')

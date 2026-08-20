@@ -1273,6 +1273,8 @@ const FILESYSTEM_EVIDENCE_PROVIDER = "filesystem_private";
 const SUPABASE_EVIDENCE_PROVIDER = "supabase_private";
 const SUPABASE_EVIDENCE_BUCKET = "beermap-source-evidence";
 const SUPABASE_EVIDENCE_BUCKET_MIN_BYTES = 8 * 1024 * 1024;
+const SUPABASE_STORAGE_POLICY_POSTURE_ENDPOINT =
+  "rest/v1/pintpath_storage_policy_posture?select=object_policy_count,object_rls_enabled,bucket_policy_count,bucket_rls_enabled,public_bucket_count&limit=2";
 const SUPABASE_EVIDENCE_MIME_TYPES = [
   "image/jpeg",
   "image/png",
@@ -16406,10 +16408,14 @@ export class BusinessService {
       key: string,
       validate?: (response: Response) => Promise<string | null>,
     ): Promise<RemoteReadinessDependency> => {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 2_500);
       try {
-        const response = await fetchWithTimeout(new URL(endpoint, `${url.replace(/\/$/, "")}/`), {
+        const response = await fetch(new URL(endpoint, `${url.replace(/\/$/, "")}/`), {
           headers: getSupabaseReadinessHeaders(key),
-        }, 2_500);
+          redirect: "error",
+          signal: controller.signal,
+        });
         if (!response.ok) {
           return { status: "failed", required, liveProbe: true, error: `http_${response.status}` };
         }
@@ -16424,6 +16430,8 @@ export class BusinessService {
           liveProbe: true,
           error: error instanceof Error && error.name === "AbortError" ? "timeout" : "request_failed",
         };
+      } finally {
+        clearTimeout(timeout);
       }
     };
 
@@ -16445,7 +16453,12 @@ export class BusinessService {
           supabaseEvidenceStorage: disabled,
         };
       }
-      const [supabaseAuth, supabaseDatabase, supabaseEvidenceStorage] = await Promise.all([
+      const [
+        supabaseAuth,
+        supabaseDatabase,
+        supabaseEvidenceBucket,
+        supabaseStoragePolicyPosture,
+      ] = await Promise.all([
         probe("auth/v1/health", anonKey),
         // `profiles` is created by the repository-owned migration chain. The
         // production `venues` table is managed by a separate data pipeline and
@@ -16469,11 +16482,63 @@ export class BusinessService {
             return SUPABASE_EVIDENCE_MIME_TYPES.every((mimeType) => mimeTypes.has(mimeType))
               ? null
               : "bucket_mime_types_incomplete";
-          } catch {
+          } catch (error) {
+            if (error instanceof Error && error.name === "AbortError") throw error;
             return "invalid_bucket_response";
           }
         }),
+        probe(SUPABASE_STORAGE_POLICY_POSTURE_ENDPOINT, serviceRoleKey!, async (response) => {
+          try {
+            const rows = await response.json() as unknown;
+            if (!Array.isArray(rows) || rows.length !== 1) {
+              return "invalid_storage_policy_posture";
+            }
+            const row = rows[0];
+            if (!row || typeof row !== "object" || Array.isArray(row)) {
+              return "invalid_storage_policy_posture";
+            }
+            const keys = Object.keys(row).sort();
+            if (keys.length !== 5
+              || keys[0] !== "bucket_policy_count"
+              || keys[1] !== "bucket_rls_enabled"
+              || keys[2] !== "object_policy_count"
+              || keys[3] !== "object_rls_enabled"
+              || keys[4] !== "public_bucket_count") {
+              return "invalid_storage_policy_posture";
+            }
+            const posture = row as {
+              object_policy_count?: unknown;
+              object_rls_enabled?: unknown;
+              bucket_policy_count?: unknown;
+              bucket_rls_enabled?: unknown;
+              public_bucket_count?: unknown;
+            };
+            const counts = [
+              posture.object_policy_count,
+              posture.bucket_policy_count,
+              posture.public_bucket_count,
+            ];
+            const rlsFlags = [posture.object_rls_enabled, posture.bucket_rls_enabled];
+            if (counts.some((count) => typeof count !== "number"
+              || !Number.isSafeInteger(count)
+              || count < 0)
+              || rlsFlags.some((enabled) => typeof enabled !== "boolean")) {
+              return "invalid_storage_policy_posture";
+            }
+            if (rlsFlags.some((enabled) => !enabled)) return "storage_rls_disabled";
+            if (posture.public_bucket_count !== 0) return "storage_public_bucket_present";
+            return posture.object_policy_count === 0 && posture.bucket_policy_count === 0
+              ? null
+              : "storage_browser_policy_present";
+          } catch (error) {
+            if (error instanceof Error && error.name === "AbortError") throw error;
+            return "invalid_storage_policy_posture";
+          }
+        }),
       ]);
+      const supabaseEvidenceStorage = supabaseEvidenceBucket.status === "ok"
+        ? supabaseStoragePolicyPosture
+        : supabaseEvidenceBucket;
       return {
         ready: [supabaseAuth, supabaseDatabase, supabaseEvidenceStorage]
           .every((dependency) => dependency.status === "ok"),
