@@ -99,6 +99,7 @@ describe("release workflow contracts", () => {
     expect(packageJson.scripts?.["railway:production:app:deploy"]).toBe(
       "tsx scripts/execute-permanent-staging-app-deployment.ts --policy ops/railway/production-app-deployment-policy.json",
     );
+    expect(packageJson.scripts?.test).toBe("vitest run test --maxWorkers=1");
     expect(packageJson.scripts?.["permanent-staging:cost:contract:check"]).toBe(
       "vitest run test/permanent-staging-cost-policy.test.ts test/permanent-staging-app-deployment-executor.test.ts",
     );
