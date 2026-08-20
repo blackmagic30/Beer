@@ -106,6 +106,29 @@ describe("protected provider mutation workflows", () => {
     expect(worker).toContain("--operation runtime-variable");
     expect(worker).toContain('--target "$TARGET"');
     expect(worker).toContain('--variable-name "$VARIABLE_NAME"');
+    expect(worker).toContain(
+      "PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN:\n        required: false",
+    );
+    expect(worker).toContain(
+      "PINTPATH_RAILWAY_STAGING_VARIABLE_MUTATION_TOKEN:\n        required: false",
+    );
+    expect(worker).toContain(
+      "PINTPATH_PRODUCTION_SUPABASE_ANON_KEY:\n        required: false",
+    );
+    expect(worker).toContain(
+      "PINTPATH_STAGING_SOURCE_EVIDENCE_SIGNING_SECRET:\n        required: false",
+    );
+    const repositoryGate = worker.match(
+      /- name: Verify the complete repository before protected input(?<body>[\s\S]*?)\n      - name:/,
+    )?.groups?.body ?? "";
+    expect(repositoryGate).toContain("NODE_ENV: test");
+    expect(repositoryGate).toContain(
+      "PUBLIC_BASE_URL: http://localhost:3000",
+    );
+    expect(repositoryGate).toContain(
+      "DATABASE_PATH: ./data/ci-runtime-variable.sqlite",
+    );
+    expect(repositoryGate).toContain("OUTBOUND_CALLS_ENABLED: false");
     expect(dispatcher).toContain(
       "run-name: Configure runtime variable | ${{ inputs.target }} | ${{ inputs.variable_name }} | ${{ inputs.candidate_sha }}",
     );
@@ -186,6 +209,20 @@ describe("protected provider mutation workflows", () => {
   it("maps every runtime variable bijectively to the same-named protected secret", () => {
     const dispatcher = read(".github/workflows/configure-runtime-variable.yml");
     const worker = read(".github/workflows/runtime-variable-worker.yml");
+    const variableOptions = dispatcher.match(
+      /variable_name:\n(?<body>[\s\S]*?)\n      confirmation:/,
+    )?.groups?.body ?? "";
+    const variableNames = [...variableOptions.matchAll(/^          - ([A-Z0-9_]+)$/gm)]
+      .map((match) => match[1]!);
+    expect(variableNames).toHaveLength(16);
+    for (const variableName of variableNames) {
+      expect(worker).toContain(
+        `PINTPATH_PRODUCTION_${variableName}:\n        required: false`,
+      );
+      expect(worker).toContain(
+        `PINTPATH_STAGING_${variableName}:\n        required: false`,
+      );
+    }
     expect(dispatcher).toContain(
       "value_secret_name: ${{ format('PINTPATH_STAGING_{0}', inputs.variable_name) }}",
     );
