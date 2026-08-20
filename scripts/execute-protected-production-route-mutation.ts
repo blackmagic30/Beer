@@ -31,11 +31,11 @@ export const PROTECTED_PRODUCTION_ROUTE_MUTATION_STATE =
 
 const POLICY_PATH = "ops/railway/production-route-mutation-policy.json";
 const POLICY_SHA256 =
-  "44b904f53d8941a02a9cf7a6eb4819573b6b258b593710be0717369d9bf14d9d";
+  "79639878b7938386421fdfb0258aec732f93fadd1e2823b697882de568076d0a";
 const BOUNDARY_POLICY_PATH =
   "ops/railway/production-staging-mutation-policy.json";
 const BOUNDARY_POLICY_SHA256 =
-  "cebed5aebb1e2ada4cd247649eb418fa7d8b77b5c863ed4ecece601f492ac3c8";
+  "9392f0c605dec43657d4d3a5a6ce40d57fe9beb70fce5ff496bb1a5f2fed3fed";
 const ENDPOINT = "https://backboard.railway.com/graphql/v2";
 const PROJECT_ID = "48d8c6cd-1c66-4148-874b-20877f48e1a5";
 const PRODUCTION_ENVIRONMENT_ID = "13dab015-df74-45c6-b26f-69323daea99a";

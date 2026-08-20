@@ -15,7 +15,7 @@ const POLICY_PATH =
 const BOUNDARY_POLICY_PATH =
   "ops/railway/production-staging-mutation-policy.json";
 const POLICY_SHA256 =
-  "0c883d0930cf99a1a232a8341b8170d12e4c11271af958e13f77d46e536f609c";
+  "63503f6672b847549e5599f853ad6f749631529e48191a6d3a8816b3a97c5209";
 const ENDPOINT = "https://backboard.railway.com/graphql/v2";
 const FORBIDDEN_PROJECT_ID = "48d8c6cd-1c66-4148-874b-20877f48e1a5";
 const FORBIDDEN_ENVIRONMENT_IDS = new Set([
@@ -214,7 +214,7 @@ function policyExact(cwd: string): boolean {
       ]) &&
       value.mutationBoundary.policyPath === BOUNDARY_POLICY_PATH &&
       value.mutationBoundary.policySha256 ===
-        "cebed5aebb1e2ada4cd247649eb418fa7d8b77b5c863ed4ecece601f492ac3c8" &&
+        "9392f0c605dec43657d4d3a5a6ce40d57fe9beb70fce5ff496bb1a5f2fed3fed" &&
       value.mutationBoundary.immediatePreflightRequired === true &&
       value.mutationBoundary.unconditionalPostflightRequired === true &&
       exact(value.providerContract, [

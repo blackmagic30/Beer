@@ -498,7 +498,7 @@ describe("Railway mutation boundary guard", () => {
     });
   });
 
-  it("keeps the checked-in incident baseline explicit and blocked until immutable-source reauthorization", () => {
+  it("keeps the checked-in production Postgres pin exact and immutable", () => {
     const source = fs.readFileSync(
       path.resolve("ops/railway/production-staging-mutation-policy.json"),
       "utf8",
@@ -508,16 +508,16 @@ describe("Railway mutation boundary guard", () => {
     expect(policy).toMatchObject({
       projectId: "48d8c6cd-1c66-4148-874b-20877f48e1a5",
       productionPostgres: {
-        deploymentId: "c6004774-7680-41ec-a816-d872221d5890",
-        snapshotId: "3f601066-8b66-4315-8f2e-ef499d17fad8",
-        imageDigest: "sha256:786bb8fbbb78ba8d7f8cbef17eb1a2f15d39f118b17017bb12837345c4b16786",
+        deploymentId: "ccb513ee-c850-49a1-a205-9ab8ab7534cc",
+        snapshotId: "f2a08518-2336-4837-a77b-11852cf2a8ab",
+        imageDigest: "sha256:6008e0827c45d3fa6e6eba2140a8932598fe10cea7f0fafafc4af9ab1715e8ad",
         requireImmutableSource: true,
       },
     });
     expect(sourceReferencePinsDigest(
       policy!.productionPostgres.sourceImage,
       policy!.productionPostgres.imageDigest,
-    )).toBe(false);
+    )).toBe(true);
   });
 
   it("preserves fixed failure output on malformed policy before any query", async () => {
