@@ -21,6 +21,79 @@ on:
       value_secret_name:
         required: true
         type: string
+    secrets:
+      PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN:
+        required: false
+      PINTPATH_RAILWAY_STAGING_METADATA_TOKEN:
+        required: false
+      PINTPATH_RAILWAY_PRODUCTION_VARIABLE_TOKEN:
+        required: false
+      PINTPATH_RAILWAY_STAGING_VARIABLE_MUTATION_TOKEN:
+        required: false
+      PINTPATH_PRODUCTION_DATABASE_URL:
+        required: false
+      PINTPATH_PRODUCTION_DATABASE_MAINTENANCE_URL:
+        required: false
+      PINTPATH_PRODUCTION_PINTPATH_POSTGRES_ROOT_CA_PEM:
+        required: false
+      PINTPATH_PRODUCTION_PINTPATH_POSTGRES_ROOT_CA_DER_SHA256:
+        required: false
+      PINTPATH_PRODUCTION_GOOGLE_MAPS_API_KEY:
+        required: false
+      PINTPATH_PRODUCTION_GOOGLE_MAPS_MAP_ID:
+        required: false
+      PINTPATH_PRODUCTION_GOOGLE_PLACES_API_KEY:
+        required: false
+      PINTPATH_PRODUCTION_OPENAI_API_KEY:
+        required: false
+      PINTPATH_PRODUCTION_SUPABASE_URL:
+        required: false
+      PINTPATH_PRODUCTION_SUPABASE_ANON_KEY:
+        required: false
+      PINTPATH_PRODUCTION_SUPABASE_SERVICE_ROLE_KEY:
+        required: false
+      PINTPATH_PRODUCTION_REDIS_URL:
+        required: false
+      PINTPATH_PRODUCTION_RESEND_TRANSACTIONAL_API_KEY:
+        required: false
+      PINTPATH_PRODUCTION_RESEND_WEBHOOK_SIGNING_SECRET:
+        required: false
+      PINTPATH_PRODUCTION_SOURCE_EVIDENCE_SIGNING_SECRET:
+        required: false
+      PINTPATH_PRODUCTION_ACCOUNT_DELETION_NOTICE_KEYRING_JSON:
+        required: false
+      PINTPATH_STAGING_DATABASE_URL:
+        required: false
+      PINTPATH_STAGING_DATABASE_MAINTENANCE_URL:
+        required: false
+      PINTPATH_STAGING_PINTPATH_POSTGRES_ROOT_CA_PEM:
+        required: false
+      PINTPATH_STAGING_PINTPATH_POSTGRES_ROOT_CA_DER_SHA256:
+        required: false
+      PINTPATH_STAGING_GOOGLE_MAPS_API_KEY:
+        required: false
+      PINTPATH_STAGING_GOOGLE_MAPS_MAP_ID:
+        required: false
+      PINTPATH_STAGING_GOOGLE_PLACES_API_KEY:
+        required: false
+      PINTPATH_STAGING_OPENAI_API_KEY:
+        required: false
+      PINTPATH_STAGING_SUPABASE_URL:
+        required: false
+      PINTPATH_STAGING_SUPABASE_ANON_KEY:
+        required: false
+      PINTPATH_STAGING_SUPABASE_SERVICE_ROLE_KEY:
+        required: false
+      PINTPATH_STAGING_REDIS_URL:
+        required: false
+      PINTPATH_STAGING_RESEND_TRANSACTIONAL_API_KEY:
+        required: false
+      PINTPATH_STAGING_RESEND_WEBHOOK_SIGNING_SECRET:
+        required: false
+      PINTPATH_STAGING_SOURCE_EVIDENCE_SIGNING_SECRET:
+        required: false
+      PINTPATH_STAGING_ACCOUNT_DELETION_NOTICE_KEYRING_JSON:
+        required: false
 
 permissions:
   actions: read
@@ -83,6 +156,11 @@ jobs:
         run: npm ci
 
       - name: Verify the complete repository before protected input
+        env:
+          NODE_ENV: test
+          PUBLIC_BASE_URL: http://localhost:3000
+          DATABASE_PATH: ./data/ci-runtime-variable.sqlite
+          OUTBOUND_CALLS_ENABLED: false
         run: npm run check
 
       - name: Authenticate the reviewed candidate and fresh variable dispatch
