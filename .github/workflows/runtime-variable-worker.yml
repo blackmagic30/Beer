@@ -176,6 +176,21 @@ jobs:
             --target "$TARGET" \
             --variable-name "$VARIABLE_NAME"
 
+      - name: Require protected Railway token configuration
+        env:
+          PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
+          STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
+          TARGET_METADATA_TOKEN: ${{ inputs.target == 'production' && secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN || secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
+          TARGET_VARIABLE_TOKEN: ${{ inputs.target == 'production' && secrets.PINTPATH_RAILWAY_PRODUCTION_VARIABLE_TOKEN || secrets.PINTPATH_RAILWAY_STAGING_VARIABLE_MUTATION_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$PRODUCTION_METADATA_TOKEN"
+          test -n "$STAGING_METADATA_TOKEN"
+          test -n "$TARGET_METADATA_TOKEN"
+          test -n "$TARGET_VARIABLE_TOKEN"
+          test "$TARGET_METADATA_TOKEN" != "$TARGET_VARIABLE_TOKEN"
+
       - name: Create private input and evidence custody
         env:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}

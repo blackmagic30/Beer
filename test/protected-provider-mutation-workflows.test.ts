@@ -118,6 +118,27 @@ describe("protected provider mutation workflows", () => {
     expect(worker).toContain(
       "PINTPATH_STAGING_SOURCE_EVIDENCE_SIGNING_SECRET:\n        required: false",
     );
+    const tokenConfiguration = worker.match(
+      /- name: Require protected Railway token configuration(?<body>[\s\S]*?)\n      - name:/,
+    )?.groups?.body ?? "";
+    expect(tokenConfiguration).toContain(
+      "PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}",
+    );
+    expect(tokenConfiguration).toContain(
+      "STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}",
+    );
+    expect(tokenConfiguration).toContain('test -n "$TARGET_METADATA_TOKEN"');
+    expect(tokenConfiguration).toContain('test -n "$TARGET_VARIABLE_TOKEN"');
+    expect(tokenConfiguration).toContain(
+      'test "$TARGET_METADATA_TOKEN" != "$TARGET_VARIABLE_TOKEN"',
+    );
+    expect(tokenConfiguration).not.toMatch(/echo|printf/);
+    expect(worker.indexOf("github:reviewed-candidate-authority:verify")).toBeLessThan(
+      worker.indexOf("Require protected Railway token configuration"),
+    );
+    expect(worker.indexOf("Require protected Railway token configuration")).toBeLessThan(
+      worker.indexOf("Create private input and evidence custody"),
+    );
     const repositoryGate = worker.match(
       /- name: Verify the complete repository before protected input(?<body>[\s\S]*?)\n      - name:/,
     )?.groups?.body ?? "";
