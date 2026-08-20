@@ -66,6 +66,10 @@ jobs:
       - name: Run the complete repository gate
         run: npm run check
 
+      - name: Create the private deployment evidence directory
+        shell: bash
+        run: mkdir -m 700 "$RUNNER_TEMP/pintpath-staging-deployment-evidence"
+
       - name: Require current main checks and artifacts
         env:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
@@ -104,10 +108,6 @@ jobs:
             echo "PINTPATH_RAILWAY_CLI_PATH=$cli_path"
             echo "PINTPATH_RAILWAY_CLI_ARCHIVE=$cli_archive"
           } >> "$GITHUB_ENV"
-
-      - name: Create the private deployment evidence directory
-        shell: bash
-        run: mkdir -m 700 "$RUNNER_TEMP/pintpath-staging-deployment-evidence"
 
       - name: Reassert current main immediately before the provider write
         env:
