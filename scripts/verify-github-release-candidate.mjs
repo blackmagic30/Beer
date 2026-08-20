@@ -754,7 +754,11 @@ async function verifyStagingMutationClosure(input) {
       WORKER_FENCE_WORKFLOW_PATH,
       observed.display_title,
     );
-    if (run.conclusion !== "success") {
+    if (
+      run.conclusion !== "success" ||
+      run.createdAtMs < mergedAtMs ||
+      run.createdAtMs > consumerStartedAtMs
+    ) {
       throw new Error("staging_bootstrap_history_invalid");
     }
     stagingWorkers.push(Object.freeze({ operation, run }));
@@ -783,7 +787,11 @@ async function verifyStagingMutationClosure(input) {
       STAGING_BOOTSTRAP_WORKFLOW_PATH,
       observed.display_title,
     );
-    if (run.conclusion !== "success") {
+    if (
+      run.conclusion !== "success" ||
+      run.createdAtMs < mergedAtMs ||
+      run.createdAtMs > consumerStartedAtMs
+    ) {
       throw new Error("staging_bootstrap_history_invalid");
     }
     stagingBootstrap.push(Object.freeze({ operation, run }));
