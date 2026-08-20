@@ -25,6 +25,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     environment: permanent-staging-deployment
+    env:
+      PUBLIC_BASE_URL: ${{ vars.PUBLIC_BASE_URL }}
 
     steps:
       - name: Checkout the exact candidate without persisted credentials

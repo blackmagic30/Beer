@@ -158,6 +158,7 @@ describe("release workflow contracts", () => {
         'test "$(git rev-parse refs/remotes/origin/main)" = "$CANDIDATE_SHA"',
       );
       expect(source).toContain("npm run check");
+      expect(source).toContain("PUBLIC_BASE_URL: ${{ vars.PUBLIC_BASE_URL }}");
       expect(source).toContain("github:release-candidate:verify");
       expect(source).toContain(
         "railway-v5.32.0-x86_64-unknown-linux-musl.tar.gz",
