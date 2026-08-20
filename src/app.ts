@@ -1114,10 +1114,12 @@ async function buildLazyRouters(): Promise<LazyRouters> {
       durationMs: 55 * 60 * 1_000,
       run: async () => {
         const now = new Date();
-      const evidence = await businessService.purgeExpiredSourceEvidence(100);
-      const ingestionImages = await adminService.purgeQueuedIngestionImages(now.toISOString());
-      const privacyRetention = await businessService.runPrivacyRetention();
-      return { ...evidence, ingestionImages, privacyRetention };
+        const evidence = await businessService.purgeExpiredSourceEvidence(100);
+        const ingestionImages = await adminService.purgeQueuedIngestionImages(
+          now.toISOString(),
+        );
+        const privacyRetention = await businessService.runPrivacyRetention();
+        return { ...evidence, ingestionImages, privacyRetention };
       },
     });
   };
@@ -1141,11 +1143,7 @@ async function buildLazyRouters(): Promise<LazyRouters> {
   if (automaticMaintenanceEnabled) {
     const { scheduleMissionMaintenance } = await import("./lib/mission-maintenance.js");
     const evidenceScheduler = scheduleMissionMaintenance({
-      run: () => withSystemLease({
-        key: "lease:evidence_retention",
-        durationMs: 25 * 60 * 1_000,
-        run: runEvidenceRetention,
-      }),
+      run: runEvidenceRetention,
       intervalMinutes: 60,
       onStatus: (status) => recordOperationalState("evidence_retention", status.state === "succeeded"
         ? { ...status, ...status.result }

@@ -99,6 +99,16 @@ describe("large JSON upload pre-parser containment", () => {
 });
 
 describe("restore rehearsal containment", () => {
+  it("runs scheduled evidence retention through exactly one renewable global lease", () => {
+    const source = fs.readFileSync(path.resolve(process.cwd(), "src/app.ts"), "utf8");
+    expect(source).toContain(
+      'const evidenceScheduler = scheduleMissionMaintenance({\n      run: runEvidenceRetention,',
+    );
+    expect(source).not.toMatch(
+      /key: "lease:evidence_retention",[\s\S]{0,180}run: runEvidenceRetention/,
+    );
+  });
+
   it("keeps credential checks constant-time without request-path password stretching", () => {
     const source = fs.readFileSync(path.resolve(process.cwd(), "src/app.ts"), "utf8");
     expect(source).toContain("TIMING_SAFE_COMPARISON_MAX_BYTES");
