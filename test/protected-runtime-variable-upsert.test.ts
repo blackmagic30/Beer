@@ -182,6 +182,13 @@ describe("protected runtime-variable upsert", () => {
         ),
       ),
     ).toHaveLength(1);
+    for (const [, init] of fetchImpl.mock.calls) {
+      const headers = new Headers((init as RequestInit).headers);
+      expect(headers.get("Project-Access-Token")).toMatch(
+        /^runtime-(?:metadata|write)-token-long-enough$/,
+      );
+      expect(headers.has("Authorization")).toBe(false);
+    }
     expect([...held]).toEqual(new Array(held.length).fill(0));
     expect(writes.map(({ leaf }) => leaf).sort()).toEqual([
       "intent.json",
