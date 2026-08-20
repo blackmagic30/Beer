@@ -157,7 +157,7 @@ const RAILWAY_CONFIG_SHA256 =
 const PACKAGE_LOCK_SHA256 =
   "b5bfc2258853ab58dd5749b91ae55d9724620e102fe55e91de31a4599ab9f67b" as const;
 const MUTATION_BOUNDARY_POLICY_SHA256 =
-  "cebed5aebb1e2ada4cd247649eb418fa7d8b77b5c863ed4ecece601f492ac3c8" as const;
+  "9392f0c605dec43657d4d3a5a6ce40d57fe9beb70fce5ff496bb1a5f2fed3fed" as const;
 const RAILWAY_CLI_VERSION = "5.32.0" as const;
 const RAILWAY_CLI_ARCHIVE_SHA256 =
   "cd69b2ecb556601751165d85ac31a5fbc38cff46397939356df28d2b96a005f5" as const;

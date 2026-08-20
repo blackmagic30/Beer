@@ -15,10 +15,10 @@
   "productionPostgres": {
     "environmentId": "13dab015-df74-45c6-b26f-69323daea99a",
     "serviceId": "4a2334a1-71e7-4745-970a-2cd95da10169",
-    "deploymentId": "c6004774-7680-41ec-a816-d872221d5890",
-    "snapshotId": "3f601066-8b66-4315-8f2e-ef499d17fad8",
-    "sourceImage": "ghcr.io/railwayapp-templates/postgres-ssl:17.10",
-    "imageDigest": "sha256:786bb8fbbb78ba8d7f8cbef17eb1a2f15d39f118b17017bb12837345c4b16786",
+    "deploymentId": "ccb513ee-c850-49a1-a205-9ab8ab7534cc",
+    "snapshotId": "f2a08518-2336-4837-a77b-11852cf2a8ab",
+    "sourceImage": "ghcr.io/railwayapp-templates/postgres-ssl@sha256:6008e0827c45d3fa6e6eba2140a8932598fe10cea7f0fafafc4af9ab1715e8ad",
+    "imageDigest": "sha256:6008e0827c45d3fa6e6eba2140a8932598fe10cea7f0fafafc4af9ab1715e8ad",
     "requireImmutableSource": true
   }
 }

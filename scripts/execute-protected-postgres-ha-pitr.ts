@@ -13,7 +13,7 @@ const POLICY_PATH = "ops/railway/protected-postgres-ha-pitr-policy.json";
 const BOUNDARY_POLICY_PATH =
   "ops/railway/production-staging-mutation-policy.json";
 const POLICY_SHA256 =
-  "ecb41eeac7279c4d434ade0d5e1f74476ef0e58e9c9bf5a2a015f29802b2b187";
+  "1379db72116ad71ccb12df55cc504294f0e2c9fd2296d88e54f583451455d10c";
 const ENDPOINT = "https://backboard.railway.com/graphql/v2";
 const PROJECT = "48d8c6cd-1c66-4148-874b-20877f48e1a5";
 const TARGETS = {
@@ -219,7 +219,7 @@ function policy(cwd: string): boolean {
       ]) &&
       value.mutationBoundary.policyPath === BOUNDARY_POLICY_PATH &&
       value.mutationBoundary.policySha256 ===
-        "cebed5aebb1e2ada4cd247649eb418fa7d8b77b5c863ed4ecece601f492ac3c8" &&
+        "9392f0c605dec43657d4d3a5a6ce40d57fe9beb70fce5ff496bb1a5f2fed3fed" &&
       value.mutationBoundary.immediatePreflightRequired === true &&
       value.mutationBoundary.unconditionalPostflightRequired === true &&
       exact(value.providerContract, [
