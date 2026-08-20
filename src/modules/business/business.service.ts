@@ -17300,7 +17300,12 @@ export class BusinessService {
     };
 
     this.supabaseReadinessInFlight = (async () => {
+      const productionProviderDataRequired = isCanonicalProductionRuntime({
+        nodeEnv: this.config.NODE_ENV,
+        railwayEnvironmentName: process.env.RAILWAY_ENVIRONMENT_NAME,
+      });
       const databaseProbeEndpoint = this.config.RESTORE_REHEARSAL_MODE
+        || !productionProviderDataRequired
         ? "rest/v1/profiles?select=id&limit=1"
         : "rest/v1/venues?select=id&limit=1";
       if (postgresRecoveryRehearsal) {
@@ -17326,7 +17331,9 @@ export class BusinessService {
         probe("auth/v1/health", anonKey),
         // `profiles` is created by the repository-owned migration chain. The
         // production `venues` table is managed by a separate data pipeline and
-        // is intentionally not copied into an isolated restore project.
+        // is required only in the canonical production runtime. Staging and
+        // isolated restore projects prove their repository-owned schema via
+        // `profiles` without inventing an externally managed venue relation.
         probe(databaseProbeEndpoint, serviceRoleKey!),
         probe(`storage/v1/bucket/${encodeURIComponent(SUPABASE_EVIDENCE_BUCKET)}`, serviceRoleKey!, async (response) => {
           try {

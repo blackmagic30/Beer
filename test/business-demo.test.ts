@@ -5045,6 +5045,12 @@ describe("production hardening", () => {
       liveProbe: true,
     }));
     expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock.mock.calls.map(([input]) => String(input))).toContain(
+      "https://deletion-staging.supabase.co/rest/v1/profiles?select=id&limit=1",
+    );
+    expect(fetchMock.mock.calls.map(([input]) => String(input))).not.toContain(
+      "https://deletion-staging.supabase.co/rest/v1/venues?select=id&limit=1",
+    );
   });
 
   it.each([
