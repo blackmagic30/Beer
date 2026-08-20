@@ -133,11 +133,12 @@ describe("production promotion-recovery attestor", () => {
     };
     const fileSha = (name: string) => sha256(fs.readFileSync(files.get(name)!));
     const deployment = {
-      schemaVersion: "pintpath-railway-application-deployment-executor/v4",
+      schemaVersion: "pintpath-railway-application-deployment-executor/v5",
       operation: "pintpath-railway-application-source-upload",
       executorState: "GITHUB_ENVIRONMENT_PROTECTED",
       target: "production",
       outcome: "deployed",
+      failureCode: null,
       candidateSha: CANDIDATE,
       deploymentIdSha256: HASH,
       completedAt: "2026-08-14T00:00:00.000Z",
@@ -145,7 +146,7 @@ describe("production promotion-recovery attestor", () => {
     };
     put("production-deployment-receipt", deployment);
     put("production-scale-receipt", {
-      schemaVersion: "pintpath-permanent-staging-scale-operation/v1",
+      schemaVersion: "pintpath-permanent-staging-scale-operation/v2",
       executorState: "GITHUB_ENVIRONMENT_PROTECTED",
       direction: "converge-production-two",
       outcome: "scaled",

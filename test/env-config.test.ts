@@ -104,6 +104,8 @@ const productionRequiredEnv = {
   ALLOW_DEMO_BILLING_IN_PRODUCTION: "false",
   COMMERCIAL_LAUNCH_ENABLED: "false",
   CONSUMER_PAID_ENROLLMENT_ENABLED: "false",
+  PINTPATH_AUTOMATIC_MAINTENANCE_ENABLED: "true",
+  PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA: "a".repeat(40),
   PINT_POINTS_REWARDS_ENABLED: "false",
   ALCOHOL_GAMIFICATION_ENABLED: "false",
   ALCOHOL_PROMOTION_APPROVAL_REFERENCE: "",
@@ -186,6 +188,8 @@ const restoreRehearsalRequiredEnv = {
   REQUIRE_REDIS_RATE_LIMITING: "true",
   REPORT_EMAIL_MODE: "disabled",
   REPORT_DELIVERY_SCHEDULE_ENABLED: "false",
+  PINTPATH_AUTOMATIC_MAINTENANCE_ENABLED: "true",
+  PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA: "a".repeat(40),
   RESEND_API_KEY: "",
   REPORT_EMAIL_FROM: "",
   REPORT_EMAIL_REPLY_TO: "",
@@ -697,6 +701,7 @@ describe("environment safety defaults", () => {
     async (railwayEnvironmentName) => {
       stubProductionEnv({
         RAILWAY_ENVIRONMENT_NAME: railwayEnvironmentName,
+        PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA: "a".repeat(40),
       });
       delete process.env.NODE_ENV;
 
@@ -712,6 +717,35 @@ describe("environment safety defaults", () => {
 
       await expect(loadEnv()).rejects.toThrow(
         "Hosted Railway production and staging application runtimes require NODE_ENV=production",
+      );
+    },
+  );
+
+  it.each(["production", "staging"])(
+    "requires an exact candidate-bound worker fence in hosted Railway %s",
+    async (railwayEnvironmentName) => {
+      stubProductionEnv({
+        RAILWAY_ENVIRONMENT_NAME: railwayEnvironmentName,
+        PINTPATH_AUTOMATIC_MAINTENANCE_ENABLED: "false",
+        PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA: "",
+      });
+
+      await expect(loadEnv()).rejects.toThrow(
+        "require an exact PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA",
+      );
+    },
+  );
+
+  it.each(["production", "staging"])(
+    "requires an explicit worker-fence state in hosted Railway %s",
+    async (railwayEnvironmentName) => {
+      stubProductionEnv({
+        RAILWAY_ENVIRONMENT_NAME: railwayEnvironmentName,
+      });
+      delete process.env.PINTPATH_AUTOMATIC_MAINTENANCE_ENABLED;
+
+      await expect(loadEnv()).rejects.toThrow(
+        "require an explicit PINTPATH_AUTOMATIC_MAINTENANCE_ENABLED=true or false",
       );
     },
   );

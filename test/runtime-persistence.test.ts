@@ -218,7 +218,9 @@ describe("runtime persistence selection", () => {
       ),
     ).toHaveLength(2);
     expect(
-      appSource.match(/allowLegacyTwoConnectionLimitDuringRollout: true/g),
+      appSource.match(
+        /allowLegacyTwoConnectionLimitDuringRollout:\s*!automaticMaintenanceEnabled/g,
+      ),
     ).toHaveLength(2);
     expect(appSource).toContain("railwayStockLocalhostCaConnection:");
     expect(appSource).toContain(

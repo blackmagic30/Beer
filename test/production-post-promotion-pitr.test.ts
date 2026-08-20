@@ -62,8 +62,9 @@ describe("production post-promotion PITR observer", () => {
     const manifestFile = path.join(backup.backupDirectory, "manifest.json");
     const deploymentFile = path.join(root, "deployment.json");
     fs.writeFileSync(deploymentFile, canonicalPostgresBackupJson({
-      schemaVersion: "pintpath-railway-application-deployment-executor/v4",
+      schemaVersion: "pintpath-railway-application-deployment-executor/v5",
       target: "production",
+      failureCode: null,
       candidateSha: CANDIDATE,
       deploymentIdSha256: DEPLOYMENT_ID_SHA256,
       completedAt: "2026-08-14T00:01:00.000Z",

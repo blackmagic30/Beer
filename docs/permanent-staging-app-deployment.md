@@ -37,6 +37,11 @@ checkouts fetch that exact reviewed head into a candidate-bound local ref before
 validating its tree. They never substitute an ancestry test: a linear
 squash/rebase candidate need not descend from the reviewed head, but their Git
 trees must be exactly equal.
+The permanent-staging workflow pins `PUBLIC_BASE_URL` directly to
+`https://beer-staging.up.railway.app` and verifies that literal against the
+checked-in policy after installing the repository Node runtime. It does not
+accept a mutable GitHub environment variable for the deployment origin.
+The production workflow applies the same rule to `https://pintpath.au`.
 The older capability-pure source-fixture parser is retained only as an offline
 legacy validator and is explicitly superseded by this protected executor; it
 is not a second deployment path.
@@ -206,8 +211,14 @@ still be the SQLite build.
 
 Receipts hash Railway resource identities, CLI output, runtime responses, and
 pre/postflight evidence. They do not contain Railway tokens or raw provider
-responses. A failed or partial receipt is evidence of uncertainty, not
-permission to retry.
+responses. Every terminal receipt also contains one bounded `failureCode` or
+`null` on success. In particular, `provider_query_failed`,
+`provider_target_mismatch`, `target_preflight_failed`, and
+`git_autodeploy_active` remain distinguishable without retaining an exception,
+response body, provider message, token, hostname discovered outside policy, or
+other provider detail. Any unrecognized exception becomes
+`unexpected_failure`. A failed or partial receipt is evidence of uncertainty,
+not permission to retry.
 
 ## Cost evidence is a separate release gate
 

@@ -782,16 +782,17 @@ function parseProductionDeploymentReceipt(
     const value = JSON.parse(source) as unknown;
     if (canonical(value) !== source || !exact(value, [
       "schemaVersion", "operation", "executorState", "target", "outcome",
-      "candidateSha", "startedAt", "completedAt", "writeAttempts", "acknowledgement",
+      "failureCode", "candidateSha", "startedAt", "completedAt", "writeAttempts", "acknowledgement",
       "previousDeploymentIdSha256", "deploymentIdSha256", "intentSha256",
       "cliOutputSha256", "boundaryPreflightSha256", "boundaryPostflightSha256",
       "collateralSnapshotSha256s", "replicaCounts", "runtimeResponseSha256s", "checks",
     ])
-      || value.schemaVersion !== "pintpath-railway-application-deployment-executor/v4"
+      || value.schemaVersion !== "pintpath-railway-application-deployment-executor/v5"
       || value.operation !== "pintpath-railway-application-source-upload"
       || value.executorState !== PROTECTED_PRODUCTION_ROUTE_MUTATION_STATE
       || value.target !== "production"
       || !["deployed", "already_deployed", "reconciled_success"].includes(String(value.outcome))
+      || value.failureCode !== null
       || value.candidateSha !== candidateSha
       || !timestampWithinStage(value.startedAt, value.completedAt, stage)
       || (value.writeAttempts !== 0 && value.writeAttempts !== 1)
@@ -858,7 +859,7 @@ function parseProductionScaleReceipt(
       "retryAllowed", "intentSha256", "terminalEvidenceSha256", "commandStdoutSha256",
       "commandStderrSha256", "checks",
     ])
-      || value.schemaVersion !== "pintpath-permanent-staging-scale-operation/v1"
+      || value.schemaVersion !== "pintpath-permanent-staging-scale-operation/v2"
       || value.executorState !== PROTECTED_PRODUCTION_ROUTE_MUTATION_STATE
       || value.direction !== "converge-production-two"
       || (value.outcome !== "scaled" && value.outcome !== "already_converged")
@@ -879,9 +880,11 @@ function parseProductionScaleReceipt(
           || !sha256Exact(value.commandStderrSha256))
       || !exact(value.checks, [
         "policyExact", "githubAuthorityExact", "tokenScopesExact", "cliExact",
-        "boundaryPreflightExact", "targetPreflightExact", "durableIntentExact",
+        "boundaryPreflightExact", "targetPreflightExact", "runtimePreflightExact",
+        "durableIntentExact",
         "repositoryPrewriteReasserted", "writeAttemptedAtMostOnce", "acknowledgementExact",
-        "postflightAttempted", "targetPostflightExact", "candidateUnchanged",
+        "postflightAttempted", "targetPostflightExact", "runtimePostflightExact",
+        "candidateUnchanged",
         "deploymentUnchanged", "boundaryPostflightExact", "terminalEvidenceExact",
         "finalReceiptEvidenceExact",
       ])) return null;
@@ -1233,6 +1236,8 @@ function runtimeIdentityExact(
   return value !== null
     && value.route === route
     && value.restoreMarkerPresent === false
+    && value.automaticMaintenance.enabled === true
+    && value.automaticMaintenance.candidateBound === true
     && value.deployment.commitSha === candidateSha
     && value.deployment.environment === "production"
     && value.deployment.projectIdSha256

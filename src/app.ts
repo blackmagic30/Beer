@@ -528,10 +528,37 @@ export function shouldRunAutomaticMaintenance(
   nodeEnv = env.NODE_ENV,
   restoreRehearsalMode = env.RESTORE_REHEARSAL_MODE,
   postgresRecoveryRehearsalMode = env.POSTGRES_RECOVERY_REHEARSAL_MODE,
+  automaticMaintenanceEnabled = env.PINTPATH_AUTOMATIC_MAINTENANCE_ENABLED,
+  configuredCandidateSha = env.PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA,
+  deployedCandidateSha = ownProcessEnvironmentString("RAILWAY_GIT_COMMIT_SHA"),
 ): boolean {
-  return nodeEnv !== "test"
+  const candidateBound = nodeEnv !== "production" || (
+    typeof configuredCandidateSha === "string"
+    && APP_REFLECT_APPLY(APP_REGEXP_EXEC, APP_COMMIT_PATTERN, [configuredCandidateSha])
+      !== null
+    && configuredCandidateSha === deployedCandidateSha
+  );
+  return automaticMaintenanceEnabled
+    && candidateBound
+    && nodeEnv !== "test"
     && !restoreRehearsalMode
     && !postgresRecoveryRehearsalMode;
+}
+
+function automaticMaintenanceMetadata() {
+  const configuredCandidateSha = env.PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA;
+  const deployedCandidateSha = ownProcessEnvironmentString("RAILWAY_GIT_COMMIT_SHA");
+  return {
+    automaticMaintenance: {
+      enabled: shouldRunAutomaticMaintenance(),
+      candidateBound: env.NODE_ENV !== "production" || (
+        typeof configuredCandidateSha === "string"
+        && APP_REFLECT_APPLY(APP_REGEXP_EXEC, APP_COMMIT_PATTERN, [configuredCandidateSha])
+          !== null
+        && configuredCandidateSha === deployedCandidateSha
+      ),
+    },
+  } as const;
 }
 
 function hasSyntacticallyValidSession(req: Request): boolean {
@@ -568,6 +595,7 @@ async function buildLazyRouters(): Promise<LazyRouters> {
   }) && !env.POSTGRES_RECOVERY_REHEARSAL_MODE;
   const externalWriteRehearsal =
     env.RESTORE_REHEARSAL_MODE || env.POSTGRES_RECOVERY_REHEARSAL_MODE;
+  const automaticMaintenanceEnabled = shouldRunAutomaticMaintenance();
 
   if (env.RESTORE_REHEARSAL_MODE) {
     if (env.RESTORE_REHEARSAL_PHASE !== "active") {
@@ -761,7 +789,10 @@ async function buildLazyRouters(): Promise<LazyRouters> {
       try {
         maintenanceReadiness = await checkPostgresMaintenanceRuntimeReadiness(
           maintenanceReadinessDatabase,
-          { allowLegacyTwoConnectionLimitDuringRollout: true },
+          {
+            allowLegacyTwoConnectionLimitDuringRollout:
+              !automaticMaintenanceEnabled,
+          },
         );
       } finally {
         await persistence.assertPostgresTransportExact();
@@ -974,7 +1005,8 @@ async function buildLazyRouters(): Promise<LazyRouters> {
             [readiness, maintenanceReadiness] = await Promise.all([
               checkPostgresRuntimeReadiness(sqlDatabase),
               checkPostgresMaintenanceRuntimeReadiness(maintenanceReadinessDatabase, {
-                allowLegacyTwoConnectionLimitDuringRollout: true,
+                allowLegacyTwoConnectionLimitDuringRollout:
+                  !automaticMaintenanceEnabled,
               }),
             ]);
           } finally {
@@ -1031,9 +1063,43 @@ async function buildLazyRouters(): Promise<LazyRouters> {
       leaseUntil: new Date(now.getTime() + input.durationMs).toISOString(),
     });
     if (!acquired) return { skipped: true, reason: "lease_held_by_another_instance" };
+    let renewalInFlight: Promise<void> | null = null;
+    let renewalFailure: Error | null = null;
+    const renewalIntervalMs = Math.max(1_000, Math.floor(input.durationMs / 3));
+    const renew = (): void => {
+      if (renewalInFlight || renewalFailure) return;
+      renewalInFlight = (async () => {
+        const renewedAt = new Date();
+        const renewed = await systemStateRepository.renewLease({
+          key: input.key,
+          owner: schedulerOwner,
+          leaseToken,
+          now: renewedAt.toISOString(),
+          leaseUntil: new Date(
+            renewedAt.getTime() + input.durationMs,
+          ).toISOString(),
+        });
+        if (!renewed) {
+          throw new Error("automatic_maintenance_lease_renewal_lost");
+        }
+      })().catch((error: unknown) => {
+        renewalFailure = error instanceof Error
+          ? error
+          : new Error("automatic_maintenance_lease_renewal_failed");
+      }).finally(() => {
+        renewalInFlight = null;
+      });
+    };
+    const renewalTimer = setInterval(renew, renewalIntervalMs);
+    renewalTimer.unref();
     try {
-      return await input.run();
+      const result = await input.run();
+      if (renewalInFlight) await renewalInFlight;
+      if (renewalFailure) throw renewalFailure;
+      return result;
     } finally {
+      clearInterval(renewalTimer);
+      if (renewalInFlight) await renewalInFlight;
       await systemStateRepository.releaseLease({
         key: input.key,
         owner: schedulerOwner,
@@ -1072,10 +1138,14 @@ async function buildLazyRouters(): Promise<LazyRouters> {
       });
     }));
   }
-  if (shouldRunAutomaticMaintenance()) {
+  if (automaticMaintenanceEnabled) {
     const { scheduleMissionMaintenance } = await import("./lib/mission-maintenance.js");
     const evidenceScheduler = scheduleMissionMaintenance({
-      run: runEvidenceRetention,
+      run: () => withSystemLease({
+        key: "lease:evidence_retention",
+        durationMs: 25 * 60 * 1_000,
+        run: runEvidenceRetention,
+      }),
       intervalMinutes: 60,
       onStatus: (status) => recordOperationalState("evidence_retention", status.state === "succeeded"
         ? { ...status, ...status.result }
@@ -1093,7 +1163,11 @@ async function buildLazyRouters(): Promise<LazyRouters> {
     });
     schedulerStops.push(scheduler.stop);
   }
-  if (canonicalProductionRuntime && env.REPORT_DELIVERY_SCHEDULE_ENABLED) {
+  if (
+    automaticMaintenanceEnabled
+    && canonicalProductionRuntime
+    && env.REPORT_DELIVERY_SCHEDULE_ENABLED
+  ) {
     const {
       createResendReportEmailProvider,
       scheduleMonthlyReportDelivery,
@@ -1121,7 +1195,11 @@ async function buildLazyRouters(): Promise<LazyRouters> {
     });
     schedulerStops.push(scheduler.stop);
   }
-  if ((canonicalProductionRuntime || env.ACCOUNT_DELETION_REHEARSAL_ENABLED) && deletionNotificationCoordinator) {
+  if (
+    automaticMaintenanceEnabled
+    && (canonicalProductionRuntime || env.ACCOUNT_DELETION_REHEARSAL_ENABLED)
+    && deletionNotificationCoordinator
+  ) {
     const { scheduleMissionMaintenance } = await import("./lib/mission-maintenance.js");
     const scheduler = scheduleMissionMaintenance({
       run: () => withSystemLease({
@@ -1928,6 +2006,7 @@ export function createApp() {
         service: "pint-path",
         status: "ok",
         deployment: deploymentMetadata(),
+        ...automaticMaintenanceMetadata(),
         ...(env.RESTORE_REHEARSAL_MODE
           ? { restoreRehearsal: { phase: env.RESTORE_REHEARSAL_PHASE } }
           : {}),
@@ -1946,6 +2025,7 @@ export function createApp() {
         service: "pint-path",
         status: startup.ready ? "startup_ready" : "startup_not_ready",
         deployment: deploymentMetadata(),
+        ...automaticMaintenanceMetadata(),
         dependencies: startup.dependencies,
         ...postgresRecoveryRehearsalMetadata(),
       }));
@@ -1978,6 +2058,7 @@ export function createApp() {
           service: "pint-path",
           status: volumeReady ? "bootstrap_ready" : "bootstrap_not_ready",
           deployment: deploymentMetadata(),
+          ...automaticMaintenanceMetadata(),
           restoreRehearsal: {
             phase: "bootstrap",
             backendServicesInitialized: false,
@@ -2030,6 +2111,7 @@ export function createApp() {
             service: "pint-path",
             status: ready ? "ready" : "not_ready",
             deployment: deploymentMetadata(),
+            ...automaticMaintenanceMetadata(),
             ...postgresRecoveryRehearsalMetadata(),
             dependencies: {
               ...readiness.dependencies,

@@ -164,6 +164,7 @@ function runtime(routeName: "/health" | "/startup" | "/ready") {
         railwayDeploymentIdentityIdSha256("deployment", DEPLOYMENT),
       replicaIdSha256: "c".repeat(64),
     },
+    automaticMaintenance: { enabled: true, candidateBound: true },
   };
   if (routeName !== "/health") data.dependencies = {};
   return { ok: true, data };
@@ -286,11 +287,12 @@ function writePredecessorAuthority(
     DEPLOYMENT,
   )!;
   const deploymentValue = {
-    schemaVersion: "pintpath-railway-application-deployment-executor/v4",
+    schemaVersion: "pintpath-railway-application-deployment-executor/v5",
     operation: "pintpath-railway-application-source-upload",
     executorState: "GITHUB_ENVIRONMENT_PROTECTED",
     target: "production",
     outcome: "deployed",
+    failureCode: null,
     candidateSha: CANDIDATE,
     startedAt: "1970-01-01T00:11:05.000Z",
     completedAt: "1970-01-01T00:11:20.000Z",
@@ -340,7 +342,7 @@ function writePredecessorAuthority(
   const deploymentReceipt = path.join(root, "deployment-receipt.json");
   fs.writeFileSync(deploymentReceipt, canonical(deploymentValue), { mode: 0o600 });
   const scaleValue = {
-    schemaVersion: "pintpath-permanent-staging-scale-operation/v1",
+    schemaVersion: "pintpath-permanent-staging-scale-operation/v2",
     executorState: "GITHUB_ENVIRONMENT_PROTECTED",
     direction: "converge-production-two",
     outcome: "scaled",
@@ -362,12 +364,14 @@ function writePredecessorAuthority(
       cliExact: true,
       boundaryPreflightExact: true,
       targetPreflightExact: true,
+      runtimePreflightExact: true,
       durableIntentExact: true,
       repositoryPrewriteReasserted: true,
       writeAttemptedAtMostOnce: true,
       acknowledgementExact: true,
       postflightAttempted: true,
       targetPostflightExact: true,
+      runtimePostflightExact: true,
       candidateUnchanged: true,
       deploymentUnchanged: true,
       boundaryPostflightExact: true,

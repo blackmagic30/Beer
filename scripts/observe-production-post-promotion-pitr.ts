@@ -217,6 +217,7 @@ export async function observeProductionPostPromotionPitr(
     if (
       deployment.schemaVersion !== PERMANENT_STAGING_APP_DEPLOYMENT_EXECUTOR_SCHEMA
       || deployment.target !== "production"
+      || deployment.failureCode !== null
       || deployment.candidateSha !== candidateSha
       || !SHA256.test(String(deployment.deploymentIdSha256))
       || !isObject(deployment.checks)

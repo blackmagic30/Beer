@@ -141,7 +141,7 @@ describe("release workflow contracts", () => {
     }
     expect(stagingPolicy).toContain('"name": "permanent-staging"');
     expect(stagingPolicyValue.schemaVersion).toBe(
-      "pintpath-railway-application-deployment-policy/v4",
+      "pintpath-railway-application-deployment-policy/v5",
     );
     expect(stagingPolicyValue.target.allowedReplicaCounts).toEqual([1]);
     expect(stagingPolicy).toContain(
@@ -154,7 +154,7 @@ describe("release workflow contracts", () => {
     expect(productionPolicy).toContain('"name": "production"');
     expect(productionPolicy).toContain('"sameCandidateRequired": true');
     expect(productionPolicyValue.schemaVersion).toBe(
-      "pintpath-railway-application-deployment-policy/v4",
+      "pintpath-railway-application-deployment-policy/v5",
     );
     expect(productionPolicyValue.target.allowedReplicaCounts).toEqual([1, 2]);
     expect(productionPolicyValue.prerequisite.expectedReplicaCount).toBe(1);
@@ -182,7 +182,6 @@ describe("release workflow contracts", () => {
         'test "$(git rev-parse refs/remotes/origin/main)" = "$CANDIDATE_SHA"',
       );
       expect(source).toContain("npm run check");
-      expect(source).toContain("PUBLIC_BASE_URL: ${{ vars.PUBLIC_BASE_URL }}");
       expect(source).toContain("github:release-candidate:verify");
       expect(
         source.indexOf("Create the private deployment evidence directory"),
@@ -202,9 +201,26 @@ describe("release workflow contracts", () => {
     expect(stagingWorkflow).toContain(
       "environment: permanent-staging-deployment",
     );
+    expect(stagingWorkflow).toContain(
+      "PUBLIC_BASE_URL: https://beer-staging.up.railway.app",
+    );
+    expect(stagingWorkflow).toContain(
+      "Require the policy-pinned permanent-staging public origin",
+    );
+    expect(stagingWorkflow).toContain(
+      'require("./ops/railway/permanent-staging-app-deployment-policy.json").target.publicOrigin',
+    );
+    expect(stagingWorkflow).not.toContain("vars.PUBLIC_BASE_URL");
     expect(stagingWorkflow).toContain("PINTPATH_RAILWAY_STAGING_DEPLOY_TOKEN");
     expect(stagingWorkflow).toContain("railway:staging:app:deploy");
     expect(productionWorkflow).toContain("environment: production-deployment");
+    expect(productionWorkflow).toContain(
+      "PUBLIC_BASE_URL: https://pintpath.au",
+    );
+    expect(productionWorkflow).toContain(
+      "Require the policy-pinned production public origin",
+    );
+    expect(productionWorkflow).not.toContain("vars.PUBLIC_BASE_URL");
     expect(productionWorkflow).toContain(
       "PINTPATH_RAILWAY_PRODUCTION_DEPLOY_TOKEN",
     );
@@ -901,7 +917,29 @@ describe("release workflow contracts", () => {
     );
     expect(externalSignoffs).toContain("readiness:railway:mutation-boundary");
     expect(externalSignoffs).toContain(
-      "current incident baseline is intentionally non-passing",
+      "pass-capable only while the live provider state matches",
+    );
+    const boundaryDocuments = [
+      releaseDocument("production-launch-runbook.md"),
+      releaseDocument("release-readiness-checklist.md"),
+      releaseDocument("launch-9-readiness-gates.md"),
+      externalSignoffs,
+    ];
+    for (const document of boundaryDocuments) {
+      expect(document).toContain("pass-capable");
+      expect(document).not.toContain("current incident baseline");
+    }
+    expect(boundaryDocuments[0]).not.toContain(
+      "current boundary policy intentionally fails",
+    );
+    expect(boundaryDocuments[0]).not.toContain(
+      "require at least one approval from someone other than the author",
+    );
+    expect(boundaryDocuments[0]).toContain(
+      "do not require human PR approval under the current solo-owner policy",
+    );
+    expect(boundaryDocuments[0]).toContain(
+      "exact reviewed-head verification",
     );
   });
 

@@ -13,7 +13,9 @@ rollback, route, backup, PITR, delete, destroy, or teardown instruction anywhere
 in this runbook is non-executable unless a tracked one-operation executor owns
 the immediate `readiness:railway:mutation-boundary` preflight, the one exact
 reviewed write, and an unconditional postflight. The standalone boundary
-command is read-only, and the checked-in incident baseline intentionally fails.
+command is read-only. The checked-in immutable baseline is pass-capable only
+while the live provider state matches every exact policy pin; a passing receipt
+still does not authorize a mutation.
 Do not use dashboard **Deploy**, Git autodeploy, an ad-hoc CLI/API command, or
 commit/discard an unrelated staged patch to bypass this stop.
 
@@ -1459,9 +1461,11 @@ Required result:
 
 Before pushing the candidate, configure **GitHub Settings → Branches → `main` protection** to:
 
-- require a pull request;
-- require at least one approval from someone other than the author;
-- dismiss stale approvals after new commits;
+- require a pull request and protected linear merge of the exact non-draft,
+  same-repository reviewed head;
+- do not require human PR approval under the current solo-owner policy; if an
+  independent-review requirement is enabled later, require an eligible
+  non-author reviewer and dismiss stale approvals after new commits;
 - require every review conversation to be resolved;
 - require status checks and an up-to-date branch;
 - require `build-test-scan`, `supabase-database`, `release-readiness`, CodeQL, and iOS;
@@ -1568,7 +1572,7 @@ Android is not a required-check, release-evidence, or full-launch gate for this
 web+iOS release. It remains an informational repository-health job, but neither
 `android_release` nor an Android store build belongs in the launch evidence.
 
-After the pre-merge PR checks and approval:
+After the pre-merge PR checks and exact reviewed-head verification:
 
 ```bash
 reviewedPrHeadSha="$(git rev-parse HEAD)"
@@ -1768,13 +1772,14 @@ auto-discard drift. Railway Git autodeploy must be disabled before Phase 16.1;
 the application predeploy hook runs too late to prevent a stale environment
 patch from creating a deployment.
 
-The current boundary policy intentionally fails after the 2026-08-10
-production Postgres redeploy and mutable-tag re-resolution. Do not edit it
-merely to make the gate green. Rebaseline only after the incident is explicitly
-accepted, Postgres data-level readiness and recovery authority are proven, and
-the production image source is immutable. The protected application
-source-upload executor is implemented, but it cannot bypass that non-passing
-preflight. Protected successors also exist for the exact production canonical
+Commit #51 refreshed the boundary after the 2026-08-10 production Postgres
+redeploy by pinning the exact deployment, snapshot, immutable image source, and
+resolved digest. The policy is now pass-capable only while the observed
+provider state matches those pins. Do not edit it merely to make a drifted gate
+green; any later redeploy, source change, digest change, or staged patch must
+remain blocked until it is explicitly reviewed and exactly reauthorized. The
+protected application source-upload executor cannot bypass a failed preflight.
+Protected successors also exist for the exact production canonical
 route close/open pair, reviewed runtime/provider
 variables, Supabase legacy-key cutover, the staging Postgres build canary,
 bounded staging/production scale, Postgres HA/PITR enable-and-verify, and exact

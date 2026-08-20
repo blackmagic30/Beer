@@ -9,6 +9,7 @@ import { runRailwayMutationBoundaryCheck } from
   "./check-railway-mutation-boundary.js";
 import {
   parseRailwayApplicationDeploymentAttestationProviderSnapshotResponse,
+  parseRailwayApplicationDeploymentAttestationRuntimeResponse,
   type RailwayApplicationDeploymentAttestationProviderSnapshot,
 } from "../src/lib/railway-application-deployment-attestation.js";
 import { railwayDeploymentIdentityIdSha256 } from
@@ -19,7 +20,7 @@ import {
 } from "./lib/trusted-filesystem.js";
 
 export const PROTECTED_STAGING_SCALE_SCHEMA =
-  "pintpath-permanent-staging-scale-operation/v1" as const;
+  "pintpath-permanent-staging-scale-operation/v2" as const;
 export const PROTECTED_STAGING_SCALE_STATE =
   "GITHUB_ENVIRONMENT_PROTECTED" as const;
 
@@ -32,7 +33,7 @@ const STAGING_DOMAIN = "beer-staging.up.railway.app";
 const PRODUCTION_DOMAIN = "pintpath.au";
 const POLICY_PATH = "ops/railway/permanent-staging-scale-evidence-policy.json";
 const POLICY_SHA256 =
-  "6a8f6578973ef8b2b2c4002ed31c0d8e763dc35d240b7babcd9b0ab6d36317c6";
+  "f068f9c2af69300468f9504019f5460aa0d239b6621e9f20d65bbdd350903591";
 const BOUNDARY_POLICY_PATH = "ops/railway/production-staging-mutation-policy.json";
 const GRAPHQL_ENDPOINT = "https://backboard.railway.com/graphql/v2";
 const CLI_SHA256 = "27133cfc20bffc43b2f32c1638fa3c50eefc2f9d2d80301a93de34632ccb7a43";
@@ -123,6 +124,11 @@ interface Dependencies {
     args: readonly string[],
     token: string,
   ) => Promise<CommandResult>;
+  readonly probeRuntime: (
+    target: ScaleTarget,
+    candidateSha: string,
+    deploymentId: string,
+  ) => Promise<boolean>;
   readonly writeDurable: (directory: string, leaf: string, source: string) => string;
   readonly writeOutput: (source: string) => void;
 }
@@ -155,12 +161,14 @@ interface ScaleReceipt {
     cliExact: boolean;
     boundaryPreflightExact: boolean;
     targetPreflightExact: boolean;
+    runtimePreflightExact: boolean;
     durableIntentExact: boolean;
     repositoryPrewriteReasserted: boolean;
     writeAttemptedAtMostOnce: boolean;
     acknowledgementExact: boolean;
     postflightAttempted: boolean;
     targetPostflightExact: boolean;
+    runtimePostflightExact: boolean;
     candidateUnchanged: boolean;
     deploymentUnchanged: boolean;
     boundaryPostflightExact: boolean;
@@ -409,6 +417,45 @@ async function querySnapshot(
   return snapshot;
 }
 
+async function probeRuntime(
+  fetchImpl: typeof fetch,
+  target: ScaleTarget,
+  candidateSha: string,
+  deploymentId: string,
+): Promise<boolean> {
+  for (const route of ["/health", "/startup", "/ready"] as const) {
+    const response = await fetchImpl(`https://${target.domain}${route}`, {
+      method: "GET",
+      headers: { accept: "application/json" },
+      redirect: "error",
+      cache: "no-store",
+      signal: AbortSignal.timeout(QUERY_TIMEOUT_MS),
+    });
+    if (!response.ok) return false;
+    const source = await response.text();
+    if (Buffer.byteLength(source, "utf8") > MAX_RESPONSE_BYTES) return false;
+    const runtime = parseRailwayApplicationDeploymentAttestationRuntimeResponse(
+      route,
+      source,
+    );
+    if (
+      !runtime
+      || runtime.deployment.commitSha !== candidateSha
+      || runtime.deployment.projectIdSha256
+        !== railwayDeploymentIdentityIdSha256("project", PROJECT_ID)
+      || runtime.deployment.environmentIdSha256
+        !== railwayDeploymentIdentityIdSha256("environment", target.environmentId)
+      || runtime.deployment.serviceIdSha256
+        !== railwayDeploymentIdentityIdSha256("service", SERVICE_ID)
+      || runtime.deployment.deploymentIdSha256
+        !== railwayDeploymentIdentityIdSha256("deployment", deploymentId)
+      || runtime.automaticMaintenance.enabled !== true
+      || runtime.automaticMaintenance.candidateBound !== true
+    ) return false;
+  }
+  return true;
+}
+
 function snapshotExact(
   snapshot: RailwayApplicationDeploymentAttestationProviderSnapshot,
   candidateSha: string,
@@ -488,10 +535,11 @@ function policyExact(cwd: string): boolean {
         "railwayCli",
         "lifecycle",
         "productionConvergence",
+        "runtimeFence",
         "evidence",
       ]) &&
       value.schemaVersion ===
-        "pintpath-permanent-staging-scale-evidence-policy/v1" &&
+        "pintpath-permanent-staging-scale-evidence-policy/v2" &&
       value.activationState === PROTECTED_STAGING_SCALE_STATE &&
       value.projectId === PROJECT_ID &&
       value.productionEnvironmentId === PRODUCTION_ENVIRONMENT_ID &&
@@ -524,6 +572,20 @@ function policyExact(cwd: string): boolean {
       value.productionConvergence.automaticRetriesAllowed === false &&
       value.productionConvergence.unconditionalReadOnlyPostflight === true &&
       value.productionConvergence.exactExistingDeploymentShaRequired === true &&
+      exactKeys(value.runtimeFence, [
+        "requiredRoutes",
+        "automaticMaintenanceEnabled",
+        "candidateBindingRequired",
+        "preflightRequired",
+        "postflightRequired",
+      ]) &&
+      Array.isArray(value.runtimeFence.requiredRoutes) &&
+      JSON.stringify(value.runtimeFence.requiredRoutes)
+        === JSON.stringify(["/health", "/startup", "/ready"]) &&
+      value.runtimeFence.automaticMaintenanceEnabled === true &&
+      value.runtimeFence.candidateBindingRequired === true &&
+      value.runtimeFence.preflightRequired === true &&
+      value.runtimeFence.postflightRequired === true &&
       exactKeys(value.evidence, [
         "durableIntentRequiredBeforeEachWrite",
         "terminalEvidenceRequired",
@@ -546,12 +608,14 @@ function emptyChecks(): ScaleReceipt["checks"] {
     cliExact: false,
     boundaryPreflightExact: false,
     targetPreflightExact: false,
+    runtimePreflightExact: false,
     durableIntentExact: false,
     repositoryPrewriteReasserted: false,
     writeAttemptedAtMostOnce: true,
     acknowledgementExact: false,
     postflightAttempted: false,
     targetPostflightExact: false,
+    runtimePostflightExact: false,
     candidateUnchanged: false,
     deploymentUnchanged: false,
     boundaryPostflightExact: false,
@@ -610,6 +674,12 @@ export async function runProtectedPermanentStagingScale(
     reassertRepositoryState,
     validateCli,
     runCommand,
+    probeRuntime: (target, candidateSha, deploymentId) => probeRuntime(
+      fetch,
+      target,
+      candidateSha,
+      deploymentId,
+    ),
     writeDurable: durableWrite,
     writeOutput: (source) => process.stdout.write(source),
     ...overrides,
@@ -679,6 +749,12 @@ export async function runProtectedPermanentStagingScale(
       : (beforeReplicas === 1 || beforeReplicas === 2)
         && snapshotExact(before, args.expectedDeploymentSha, beforeReplicas as 1 | 2, target);
     if (!checks.targetPreflightExact) throw new Error("target_invalid");
+    checks.runtimePreflightExact = await dependencies.probeRuntime(
+      target,
+      args.expectedDeploymentSha,
+      before.deployment.id,
+    );
+    if (!checks.runtimePreflightExact) throw new Error("runtime_fence_invalid");
     if ((direction === "converge-one" && beforeReplicas === 1)
       || (direction === "converge-production-two" && beforeReplicas === 2)) {
       checks.repositoryPrewriteReasserted = dependencies.reassertRepositoryState(
@@ -691,6 +767,7 @@ export async function runProtectedPermanentStagingScale(
       checks.acknowledgementExact = true;
       checks.postflightAttempted = true;
       checks.targetPostflightExact = true;
+      checks.runtimePostflightExact = checks.runtimePreflightExact;
       checks.candidateUnchanged = true;
       checks.deploymentUnchanged = true;
       checks.boundaryPostflightExact = await dependencies.boundaryCheck() === 0;
@@ -743,6 +820,12 @@ export async function runProtectedPermanentStagingScale(
         target,
       );
       checks.targetPostflightExact = after !== null;
+      checks.runtimePostflightExact = after !== null
+        && await dependencies.probeRuntime(
+          target,
+          args.expectedDeploymentSha,
+          after.deployment.id,
+        );
       checks.candidateUnchanged = after?.deployment.commitHash === args.expectedDeploymentSha;
       checks.deploymentUnchanged = after !== null
         && deploymentIdentity(before) === deploymentIdentity(after);
@@ -753,6 +836,7 @@ export async function runProtectedPermanentStagingScale(
       }
       outcome = checks.acknowledgementExact && checks.targetPostflightExact
         && checks.candidateUnchanged && checks.deploymentUnchanged
+        && checks.runtimePreflightExact && checks.runtimePostflightExact
         && checks.boundaryPostflightExact && checks.repositoryPrewriteReasserted
         ? "scaled"
         : "mutation_uncertain";
@@ -770,6 +854,12 @@ export async function runProtectedPermanentStagingScale(
         target,
       );
       checks.targetPostflightExact = after !== null;
+      checks.runtimePostflightExact = after !== null
+        && await dependencies.probeRuntime(
+          target,
+          args.expectedDeploymentSha,
+          after.deployment.id,
+        );
       checks.candidateUnchanged = after?.deployment.commitHash === args.expectedDeploymentSha;
       checks.deploymentUnchanged = before !== null && after !== null
         && deploymentIdentity(before) === deploymentIdentity(after);
@@ -875,6 +965,7 @@ export async function runProtectedPermanentStagingScale(
   );
   dependencies.writeOutput(`${JSON.stringify(durableReceipt)}\n`);
   return (outcome === "scaled" || outcome === "already_converged")
+    && checks.runtimePreflightExact && checks.runtimePostflightExact
     && checks.terminalEvidenceExact && checks.finalReceiptEvidenceExact ? 0 : 1;
 }
 

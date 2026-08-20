@@ -21,19 +21,58 @@ import { railwayDeploymentIdentityIdSha256 } from
   "../../src/lib/railway-deployment-identity.js";
 
 export const PERMANENT_STAGING_APP_DEPLOYMENT_POLICY_SCHEMA =
-  "pintpath-railway-application-deployment-policy/v4" as const;
+  "pintpath-railway-application-deployment-policy/v5" as const;
 export const PERMANENT_STAGING_APP_DEPLOYMENT_EXECUTOR_SCHEMA =
-  "pintpath-railway-application-deployment-executor/v4" as const;
+  "pintpath-railway-application-deployment-executor/v5" as const;
 export const PERMANENT_STAGING_APP_DEPLOYMENT_OPERATION =
   "pintpath-railway-application-source-upload" as const;
 export const PERMANENT_STAGING_APP_DEPLOYMENT_EXECUTOR_STATE =
   "GITHUB_ENVIRONMENT_PROTECTED" as const;
+export const PERMANENT_STAGING_APP_DEPLOYMENT_FAILURE_CODES = Object.freeze([
+  "argument_invalid",
+  "boundary_policy_drift",
+  "boundary_postflight_failed",
+  "boundary_preflight_failed",
+  "candidate_preexisting_not_healthy",
+  "cli_invalid",
+  "collateral_invalid",
+  "cost_policy_invalid",
+  "evidence_directory_unsafe",
+  "evidence_exists",
+  "evidence_leaf_invalid",
+  "git_autodeploy_active",
+  "github_authority_failed",
+  "metadata_token_missing",
+  "policy_invalid",
+  "prerequisite_failed",
+  "provider_query_failed",
+  "provider_target_mismatch",
+  "reconciliation_failed",
+  "runtime_probe_failed",
+  "source_authority_failed",
+  "source_cleanup_failed",
+  "source_reassertion_failed",
+  "source_snapshot_invalid",
+  "target_postflight_failed",
+  "target_preflight_failed",
+  "terminal_evidence_failed",
+  "terminal_validation_failed",
+  "unexpected_failure",
+  "write_token_missing",
+  "write_token_scope_invalid",
+] as const);
+
+export type PermanentStagingAppDeploymentFailureCode =
+  typeof PERMANENT_STAGING_APP_DEPLOYMENT_FAILURE_CODES[number];
 
 const SHA1_PATTERN = /^[a-f0-9]{40}$/;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const SAFE_TOKEN_PATTERN = /^[^\r\n\0]{16,4096}$/;
+const SAFE_FAILURE_CODE_SET = new Set<string>(
+  PERMANENT_STAGING_APP_DEPLOYMENT_FAILURE_CODES,
+);
 const MAX_PROVIDER_BYTES = 1024 * 1024;
 const GRAPHQL_ENDPOINT = "https://backboard.railway.com/graphql/v2";
 const RUNTIME_ROUTES = ["/health", "/startup", "/ready"] as const;
@@ -140,6 +179,7 @@ const TARGET_LOCKS = Object.freeze({
       "fd458490dc9821b10681db486f980de7ec0d8b684f5dce4f7a5659a582df2910",
     allowedReplicaCounts: Object.freeze([1] as const),
     githubEnvironment: "permanent-staging-deployment",
+    automaticMaintenanceEnabled: true,
   }),
   production: Object.freeze({
     policyId: "pintpath-production-app-source-upload",
@@ -150,6 +190,7 @@ const TARGET_LOCKS = Object.freeze({
       "a3a1a2e58fa4038b741e1c213af02708e09ae901005c7c31f919e0a4dea46e90",
     allowedReplicaCounts: Object.freeze([1, 2] as const),
     githubEnvironment: "production-deployment",
+    automaticMaintenanceEnabled: false,
   }),
 } as const);
 
@@ -254,6 +295,8 @@ const policySchema = z.object({
       z.literal("/startup"),
       z.literal("/ready"),
     ]),
+    automaticMaintenanceEnabled: z.boolean(),
+    automaticMaintenanceCandidateBindingRequired: z.literal(true),
     maximumObservationSeconds: z.number().int().min(60).max(1_800),
     pollIntervalSeconds: z.number().int().min(2).max(30),
   }).strict(),
@@ -368,6 +411,8 @@ function policyMatchesLock(policy: PermanentStagingAppDeploymentPolicy): boolean
     && policy.target.allowedReplicaCounts.every((count, index) =>
       count === lock.allowedReplicaCounts[index])
     && policy.target.githubEnvironment === lock.githubEnvironment
+    && policy.postflightContract.automaticMaintenanceEnabled
+      === lock.automaticMaintenanceEnabled
     && (policy.target.name === "production") === (policy.prerequisite !== null)
     && (policy.target.name === "production")
       === (policy.providerReadinessContract !== null)
@@ -541,6 +586,7 @@ export interface PermanentStagingAppDeploymentExecutorReceipt {
     | "reconciled_success"
     | "blocked"
     | "mutation_uncertain";
+  readonly failureCode: PermanentStagingAppDeploymentFailureCode | null;
   readonly candidateSha: string | null;
   readonly startedAt: string;
   readonly completedAt: string;
@@ -1242,6 +1288,38 @@ function originHostname(origin: string): string {
   return new URL(origin).hostname;
 }
 
+function validatedProviderObservation(
+  policy: PermanentStagingAppDeploymentPolicy,
+  environmentId: string,
+  expectedReplicaCounts: readonly number[],
+  publicOrigin: string,
+  scope: { readonly projectId: string; readonly environmentId: string },
+  patch: { readonly environmentId: string; readonly patchEmpty: true },
+  snapshot: RailwayApplicationDeploymentAttestationProviderSnapshot | null,
+  collateral: ReturnType<typeof parseCollateralSnapshot>,
+): ProviderObservation {
+  if (!snapshot || !collateral) throw new Error("provider_query_failed");
+  const hostname = originHostname(publicOrigin);
+  const exact = scope.projectId === policy.projectId
+    && scope.environmentId === environmentId
+    && patch.environmentId === environmentId
+    && snapshot.environmentId === environmentId
+    && snapshot.serviceId === policy.target.serviceId
+    && snapshot.deployment.projectId === policy.projectId
+    && snapshot.deployment.environmentId === environmentId
+    && snapshot.deployment.serviceId === policy.target.serviceId
+    && expectedReplicaCounts.includes(snapshot.numReplicas)
+    && snapshot.domains.some((domain) => domain.domain === hostname);
+  if (!exact) throw new Error("provider_target_mismatch");
+  return {
+    tokenScopeExact: true,
+    patchEmpty: patch.patchEmpty === true,
+    gitAutodeployAbsent: collateral.gitAutodeployAbsent,
+    collateralSha256: collateral.collateralSha256,
+    snapshot,
+  };
+}
+
 async function defaultQueryTarget(
   fetchImpl: typeof fetch,
   policy: PermanentStagingAppDeploymentPolicy,
@@ -1312,28 +1390,16 @@ async function defaultQueryTarget(
     environmentId,
     policy.target.serviceId,
   );
-  if (!snapshot || !collateral || !collateral.gitAutodeployAbsent) {
-    throw new Error("provider_query_failed");
-  }
-  const hostname = originHostname(publicOrigin);
-  const exact = scope.projectId === policy.projectId
-    && scope.environmentId === environmentId
-    && patch.environmentId === environmentId
-    && snapshot.environmentId === environmentId
-    && snapshot.serviceId === policy.target.serviceId
-    && snapshot.deployment.projectId === policy.projectId
-    && snapshot.deployment.environmentId === environmentId
-    && snapshot.deployment.serviceId === policy.target.serviceId
-    && expectedReplicaCounts.includes(snapshot.numReplicas)
-    && snapshot.domains.some((domain) => domain.domain === hostname);
-  if (!exact) throw new Error("provider_target_mismatch");
-  return {
-    tokenScopeExact: true,
-    patchEmpty: patch.patchEmpty === true,
-    gitAutodeployAbsent: collateral.gitAutodeployAbsent,
-    collateralSha256: collateral.collateralSha256,
+  return validatedProviderObservation(
+    policy,
+    environmentId,
+    expectedReplicaCounts,
+    publicOrigin,
+    scope,
+    patch,
     snapshot,
-  };
+    collateral,
+  );
 }
 
 async function defaultValidateWriteToken(
@@ -1387,6 +1453,10 @@ function runtimeMatches(
       === railwayDeploymentIdentityIdSha256("service", policy.target.serviceId)
     && response.deployment.deploymentIdSha256
       === railwayDeploymentIdentityIdSha256("deployment", deploymentId)
+    && response.automaticMaintenance.enabled
+      === policy.postflightContract.automaticMaintenanceEnabled
+    && response.automaticMaintenance.candidateBound
+      === policy.postflightContract.automaticMaintenanceCandidateBindingRequired
     && response.restoreMarkerPresent === false;
 }
 
@@ -1730,6 +1800,27 @@ function safeDate(now: () => Date): string {
   return value.toISOString();
 }
 
+function safeFailureCode(error: unknown): PermanentStagingAppDeploymentFailureCode {
+  const candidate = error instanceof Error ? error.message : "";
+  return SAFE_FAILURE_CODE_SET.has(candidate)
+    ? candidate as PermanentStagingAppDeploymentFailureCode
+    : "unexpected_failure";
+}
+
+function terminalFailureCode(
+  checks: PermanentStagingAppDeploymentExecutorChecks,
+  writeAttempts: 0 | 1,
+): PermanentStagingAppDeploymentFailureCode {
+  if (!checks.boundaryPostflightExact) return "boundary_postflight_failed";
+  if (checks.targetPostflightAttempted && !checks.targetPostflightExact) {
+    return "target_postflight_failed";
+  }
+  if (writeAttempts === 1 && !checks.deploymentExact) {
+    return "reconciliation_failed";
+  }
+  return "terminal_validation_failed";
+}
+
 function summary(receipt: PermanentStagingAppDeploymentExecutorReceipt): string {
   return `${JSON.stringify({
     candidateSha: receipt.candidateSha,
@@ -1737,6 +1828,7 @@ function summary(receipt: PermanentStagingAppDeploymentExecutorReceipt): string 
     ok: ["deployed", "already_deployed", "reconciled_success"]
       .includes(receipt.outcome),
     outcome: receipt.outcome,
+    failureCode: receipt.failureCode,
     receiptSha256: sha256(canonicalJson(receipt)),
     target: receipt.target,
     writeAttempts: receipt.writeAttempts,
@@ -1803,6 +1895,7 @@ export async function runPermanentStagingAppDeploymentExecutor(
   let boundaryPreflightSha256: string | null = null;
   let boundaryPostflightSha256: string | null = null;
   let outcome: PermanentStagingAppDeploymentExecutorReceipt["outcome"] = "blocked";
+  let failureCode: PermanentStagingAppDeploymentFailureCode | null = null;
   let preflightAlreadyCandidate = false;
   let preservedReplicaCount: number | null = null;
   let parsedArgs: ReturnType<typeof parseArguments> | null = null;
@@ -2013,7 +2106,8 @@ export async function runPermanentStagingAppDeploymentExecutor(
         : acknowledgement === "received"
           ? "deployed"
           : "reconciled_success";
-  } catch {
+  } catch (error) {
+    failureCode = safeFailureCode(error);
     if (writeAttempts === 1) {
       acknowledgement = acknowledgement === "received"
         ? acknowledgement
@@ -2055,7 +2149,8 @@ export async function runPermanentStagingAppDeploymentExecutor(
             && checks.collateralStateUnchanged
             && (reconciledCandidate === null
               || providerDeploymentUnchanged(reconciledCandidate, postflight));
-        } catch {
+        } catch (error) {
+          failureCode ??= safeFailureCode(error);
           checks.targetPostflightExact = false;
           checks.reconciliationCompleted = false;
           checks.topologyPreserved = false;
@@ -2072,11 +2167,15 @@ export async function runPermanentStagingAppDeploymentExecutor(
           boundaryPostflight.source,
         );
         checks.boundaryPostflightExact = boundaryPostflight.ok;
-      } catch {
+      } catch (error) {
+        failureCode ??= safeFailureCode(error);
         checks.boundaryPostflightExact = false;
       }
     }
-    try { sourceAuthority?.cleanup(); } catch { checks.sourceReasserted = false; }
+    try { sourceAuthority?.cleanup(); } catch {
+      failureCode ??= "source_cleanup_failed";
+      checks.sourceReasserted = false;
+    }
   }
 
   const successfulOutcome = ["deployed", "already_deployed", "reconciled_success"]
@@ -2109,6 +2208,7 @@ export async function runPermanentStagingAppDeploymentExecutor(
   ];
   if (!successfulOutcome || requiredChecks.some((check) => !check)) {
     outcome = writeAttempts === 1 ? "mutation_uncertain" : "blocked";
+    failureCode ??= terminalFailureCode(checks, writeAttempts);
   }
   const completedAt = safeDate(dependencies.now);
   const receiptBase: Omit<PermanentStagingAppDeploymentExecutorReceipt,
@@ -2118,6 +2218,7 @@ export async function runPermanentStagingAppDeploymentExecutor(
     executorState: PERMANENT_STAGING_APP_DEPLOYMENT_EXECUTOR_STATE,
     target: policy?.target.name ?? null,
     outcome,
+    failureCode,
     candidateSha,
     startedAt,
     completedAt,
@@ -2166,9 +2267,11 @@ export async function runPermanentStagingAppDeploymentExecutor(
     } catch {
       checks.terminalEvidenceExact = false;
       outcome = writeAttempts === 1 ? "mutation_uncertain" : "blocked";
+      failureCode ??= "terminal_evidence_failed";
       receipt = {
         ...receiptBase,
         outcome,
+        failureCode,
         checks: Object.freeze({ ...checks }),
       };
     }
@@ -2187,6 +2290,7 @@ export const PERMANENT_STAGING_APP_DEPLOYMENT_BLOCKED_RECEIPT = Object.freeze({
   executorState: PERMANENT_STAGING_APP_DEPLOYMENT_EXECUTOR_STATE,
   target: null,
   outcome: "blocked",
+  failureCode: "unexpected_failure",
 } as const);
 
 export const permanentStagingAppDeploymentExecutorInternals = Object.freeze({
@@ -2200,5 +2304,7 @@ export const permanentStagingAppDeploymentExecutorInternals = Object.freeze({
   policyMatchesLock,
   providerDeploymentUnchanged,
   runtimeMatches,
+  safeFailureCode,
   snapshotManifestSha256,
+  validatedProviderObservation,
 });

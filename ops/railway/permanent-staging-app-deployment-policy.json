@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "pintpath-railway-application-deployment-policy/v4",
+  "schemaVersion": "pintpath-railway-application-deployment-policy/v5",
   "policyId": "pintpath-permanent-staging-app-source-upload",
   "activationState": "GITHUB_ENVIRONMENT_PROTECTED",
   "projectId": "48d8c6cd-1c66-4148-874b-20877f48e1a5",
@@ -78,6 +78,8 @@
       "/startup",
       "/ready"
     ],
+    "automaticMaintenanceEnabled": true,
+    "automaticMaintenanceCandidateBindingRequired": true,
     "maximumObservationSeconds": 900,
     "pollIntervalSeconds": 10
   },

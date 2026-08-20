@@ -256,6 +256,10 @@ export interface RailwayApplicationDeploymentAttestationRuntimeResponse {
   readonly service: "pint-path";
   readonly status: "ok" | "startup_ready" | "ready";
   readonly deployment: RuntimeDeployment;
+  readonly automaticMaintenance: {
+    readonly enabled: boolean;
+    readonly candidateBound: boolean;
+  };
   readonly restoreMarkerPresent: false;
   readonly responseSha256: string;
 }
@@ -979,8 +983,14 @@ export function parseRailwayApplicationDeploymentAttestationRuntimeResponse(
     || !plainObject(value.data)
   ) return null;
   const expectedDataKeys = route === "/health"
-    ? ["service", "status", "deployment"]
-    : ["service", "status", "deployment", "dependencies"];
+    ? ["service", "status", "deployment", "automaticMaintenance"]
+    : [
+      "service",
+      "status",
+      "deployment",
+      "automaticMaintenance",
+      "dependencies",
+    ];
   if (!exactKeys(value.data, expectedDataKeys)) return null;
   const expectedStatus = route === "/health"
     ? "ok"
@@ -990,6 +1000,9 @@ export function parseRailwayApplicationDeploymentAttestationRuntimeResponse(
   if (
     value.data.service !== "pint-path"
     || value.data.status !== expectedStatus
+    || !exactKeys(value.data.automaticMaintenance, ["enabled", "candidateBound"])
+    || typeof value.data.automaticMaintenance.enabled !== "boolean"
+    || typeof value.data.automaticMaintenance.candidateBound !== "boolean"
     || (route !== "/health" && !plainObject(value.data.dependencies))
   ) return null;
   const deployment = value.data.deployment;
@@ -1028,6 +1041,10 @@ export function parseRailwayApplicationDeploymentAttestationRuntimeResponse(
     service: "pint-path",
     status: expectedStatus,
     deployment: deployment as unknown as RuntimeDeployment,
+    automaticMaintenance: {
+      enabled: value.data.automaticMaintenance.enabled,
+      candidateBound: value.data.automaticMaintenance.candidateBound,
+    },
     restoreMarkerPresent: false,
     responseSha256: sha256(source),
   };

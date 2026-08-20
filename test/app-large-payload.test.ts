@@ -171,8 +171,32 @@ describe("restore rehearsal containment", () => {
     expect(isRestoreRehearsalMutationAllowed("POST", "/api/admin/venues")).toBe(false);
     expect(isRestoreRehearsalMutationAllowed("GET", "/pricing.html")).toBe(true);
     expect(shouldRunAutomaticMaintenance("production", true)).toBe(false);
-    expect(shouldRunAutomaticMaintenance("production", false)).toBe(true);
+    expect(shouldRunAutomaticMaintenance(
+      "production",
+      false,
+      false,
+      true,
+      "a".repeat(40),
+      "a".repeat(40),
+    )).toBe(true);
     expect(shouldRunAutomaticMaintenance("production", false, true)).toBe(false);
+    expect(shouldRunAutomaticMaintenance("production", false, false, false)).toBe(false);
+    expect(shouldRunAutomaticMaintenance(
+      "production",
+      false,
+      false,
+      true,
+      "a".repeat(40),
+      "a".repeat(40),
+    )).toBe(true);
+    expect(shouldRunAutomaticMaintenance(
+      "production",
+      false,
+      false,
+      true,
+      "a".repeat(40),
+      "b".repeat(40),
+    )).toBe(false);
     expect(isPostgresRecoveryRehearsalMutationAllowed(
       "POST",
       "/api/business/auth/supabase-session",

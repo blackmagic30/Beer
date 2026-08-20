@@ -105,9 +105,11 @@ production Postgres deployment, snapshot, source, and resolved image digest
 remain bound. It does not execute or authorize a mutation. Railway Git autodeploy,
 dashboard **Deploy**, and ordinary CLI redeploy remain disabled; a tracked
 executor must repeat the boundary before and after its one closed operation.
-The checked-in incident baseline is intentionally non-passing until the
-production recovery and immutable-source reauthorization are separately
-reviewed.
+Commit #51 refreshed the checked-in baseline with the exact production
+Postgres deployment, snapshot, immutable source, and resolved digest. It is
+pass-capable only while live provider state matches those pins; any later drift
+requires separate review and exact reauthorization rather than a permissive
+policy edit.
 
 GitHub keeps these two signals deliberately separate:
 
@@ -282,9 +284,9 @@ These are launch-critical but require provider/staging verification:
   Missing/extra/shared-shadow rows, reference drift, an unsealed row, or use of
   `railway run` keeps this blocker open.
 - **Railway mutation boundary:** Keep production and staging staged patches
-  empty, disable Git autodeploy, replace mutable production database image
-  authority with an independently approved immutable source, then use only the
-  exact protected workflow implemented for the requested operation. The
+  empty, disable Git autodeploy, preserve the independently approved immutable
+  production database image authority, then use only the exact protected
+  workflow implemented for the requested operation. The
   standalone read-only receipt cannot close this blocker or authorize an
   unlisted mutation by itself.
 - **Permanent-staging cost ceiling:** Authorized finance/infra operators capture

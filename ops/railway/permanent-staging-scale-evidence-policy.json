@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "pintpath-permanent-staging-scale-evidence-policy/v1",
+  "schemaVersion": "pintpath-permanent-staging-scale-evidence-policy/v2",
   "policyId": "pintpath-permanent-staging-two-to-one-scale-proof",
   "activationState": "GITHUB_ENVIRONMENT_PROTECTED",
   "projectId": "48d8c6cd-1c66-4148-874b-20877f48e1a5",
@@ -37,6 +37,17 @@
     "automaticRetriesAllowed": false,
     "unconditionalReadOnlyPostflight": true,
     "exactExistingDeploymentShaRequired": true
+  },
+  "runtimeFence": {
+    "requiredRoutes": [
+      "/health",
+      "/startup",
+      "/ready"
+    ],
+    "automaticMaintenanceEnabled": true,
+    "candidateBindingRequired": true,
+    "preflightRequired": true,
+    "postflightRequired": true
   },
   "evidence": {
     "durableIntentRequiredBeforeEachWrite": true,

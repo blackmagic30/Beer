@@ -164,6 +164,7 @@ describe("protected permanent-staging scale evidence operation", () => {
       reassertRepositoryState: () => true,
       validateCli: () => true,
       runCommand,
+      probeRuntime: vi.fn().mockResolvedValue(true),
       writeDurable: durable,
       writeOutput: (source) => output.push(source),
     });
@@ -196,9 +197,11 @@ describe("protected permanent-staging scale evidence operation", () => {
       retryAllowed: false,
       checks: {
         targetPreflightExact: true,
+        runtimePreflightExact: true,
         acknowledgementExact: true,
         postflightAttempted: true,
         targetPostflightExact: true,
+        runtimePostflightExact: true,
         candidateUnchanged: true,
         deploymentUnchanged: true,
         boundaryPostflightExact: true,
@@ -228,6 +231,7 @@ describe("protected permanent-staging scale evidence operation", () => {
       reassertRepositoryState: () => true,
       validateCli: () => true,
       runCommand,
+      probeRuntime: vi.fn().mockResolvedValue(true),
       writeDurable: durable,
       writeOutput: (source) => output.push(source),
     });
@@ -240,6 +244,38 @@ describe("protected permanent-staging scale evidence operation", () => {
         acknowledgementExact: false,
         postflightAttempted: true,
         targetPostflightExact: true,
+      },
+    });
+  });
+
+  it("blocks before scaling unless the exact candidate reports an active worker fence", async () => {
+    const fetchImpl = successfulFetch(1);
+    const runCommand = vi.fn();
+    const output: string[] = [];
+    const result = await runProtectedPermanentStagingScale({
+      argv: argv("out"),
+      env: environment("out"),
+      cwd: process.cwd(),
+      fetchImpl,
+      now: () => 0,
+      sleep: vi.fn(),
+      boundaryCheck: vi.fn().mockResolvedValue(0),
+      reassertRepositoryState: () => true,
+      validateCli: () => true,
+      runCommand,
+      probeRuntime: vi.fn().mockResolvedValue(false),
+      writeDurable: durable,
+      writeOutput: (source) => output.push(source),
+    });
+
+    expect(result).toBe(1);
+    expect(runCommand).not.toHaveBeenCalled();
+    expect(JSON.parse(output[0]!)).toMatchObject({
+      outcome: "failed_before_attempt",
+      attempts: 0,
+      checks: {
+        targetPreflightExact: true,
+        runtimePreflightExact: false,
       },
     });
   });
@@ -260,6 +296,7 @@ describe("protected permanent-staging scale evidence operation", () => {
       reassertRepositoryState: () => true,
       validateCli: () => true,
       runCommand,
+      probeRuntime: vi.fn().mockResolvedValue(true),
       writeDurable: durable,
       writeOutput: (source) => output.push(source),
     });
@@ -313,6 +350,7 @@ describe("protected permanent-staging scale evidence operation", () => {
       reassertRepositoryState: () => true,
       validateCli: () => true,
       runCommand,
+      probeRuntime: vi.fn().mockResolvedValue(true),
       writeDurable: durable,
       writeOutput: (source) => output.push(source),
     });

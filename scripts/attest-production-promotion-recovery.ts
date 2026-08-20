@@ -291,6 +291,7 @@ function verifyDeployment(value: Json, candidateSha: string): {
     || value.executorState !== "GITHUB_ENVIRONMENT_PROTECTED"
     || value.target !== "production"
     || !["deployed", "already_deployed", "reconciled_success"].includes(String(value.outcome))
+    || value.failureCode !== null
     || value.candidateSha !== candidateSha
     || typeof value.deploymentIdSha256 !== "string" || !SHA256.test(value.deploymentIdSha256)
     || !allTrue(value.checks)

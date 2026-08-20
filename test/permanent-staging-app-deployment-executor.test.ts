@@ -134,6 +134,10 @@ function runtimeObservation(
       )!,
       replicaIdSha256: crypto.createHash("sha256").update("replica").digest("hex"),
     },
+    automaticMaintenance: {
+      enabled: exactPolicy.target.name === "permanent-staging",
+      candidateBound: true,
+    },
     restoreMarkerPresent: false,
     responseSha256: crypto.createHash("sha256").update(route).digest("hex"),
   });
@@ -156,6 +160,9 @@ function harness(exactPolicy: PermanentStagingAppDeploymentPolicy, options: {
   commandThrows?: boolean;
   pollThrows?: boolean;
   runtimeProbeThrows?: boolean;
+  preflightFailureCode?: string;
+  preflightGitAutodeployAbsent?: boolean;
+  preflightTargetExact?: boolean;
   preflightReplicaCount?: number;
   postflightReplicaCount?: number;
 } = {}) {
@@ -281,12 +288,16 @@ function harness(exactPolicy: PermanentStagingAppDeploymentPolicy, options: {
             SNAPSHOT_AFTER,
           );
         }
+        const preflightCall = targetCalls === 0;
+        if (preflightCall && options.preflightFailureCode) {
+          throw new Error(options.preflightFailureCode);
+        }
         const pollCall = preflightCandidateSha !== CANDIDATE_SHA
           && targetCalls === 1;
         const terminalCall = targetCalls >= (
           preflightCandidateSha === CANDIDATE_SHA ? 1 : 2
         );
-        const value = options.terminalDeploymentDrifts && terminalCall
+        const exactValue = options.terminalDeploymentDrifts && terminalCall
           ? providerObservation(
             exactPolicy,
             CANDIDATE_SHA,
@@ -298,6 +309,14 @@ function harness(exactPolicy: PermanentStagingAppDeploymentPolicy, options: {
           : observations[preflightCandidateSha === CANDIDATE_SHA
             ? (targetCalls === 0 ? 0 : 2)
             : Math.min(targetCalls, 2)]!;
+        const value = preflightCall
+          ? {
+            ...exactValue,
+            tokenScopeExact: options.preflightTargetExact !== false,
+            gitAutodeployAbsent:
+              options.preflightGitAutodeployAbsent !== false,
+          }
+          : exactValue;
         targetCalls += 1;
         if (options.pollThrows && pollCall) {
           throw new Error("injected_poll_observation_failure");
@@ -342,10 +361,10 @@ function harness(exactPolicy: PermanentStagingAppDeploymentPolicy, options: {
 describe("Railway application deployment executor", () => {
   it("pins active staging and production policies, source/config identities, and CLI bytes", () => {
     expect(PERMANENT_STAGING_APP_DEPLOYMENT_POLICY_SCHEMA).toBe(
-      "pintpath-railway-application-deployment-policy/v4",
+      "pintpath-railway-application-deployment-policy/v5",
     );
     expect(PERMANENT_STAGING_APP_DEPLOYMENT_EXECUTOR_SCHEMA).toBe(
-      "pintpath-railway-application-deployment-executor/v4",
+      "pintpath-railway-application-deployment-executor/v5",
     );
     expect(PERMANENT_STAGING_APP_DEPLOYMENT_EXECUTOR_STATE).toBe(
       "GITHUB_ENVIRONMENT_PROTECTED",
@@ -474,6 +493,7 @@ describe("Railway application deployment executor", () => {
     expect(receipt).toMatchObject({
       target: "permanent-staging",
       outcome: "deployed",
+      failureCode: null,
       candidateSha: CANDIDATE_SHA,
       writeAttempts: 1,
       acknowledgement: "received",
@@ -595,6 +615,63 @@ describe("Railway application deployment executor", () => {
     ));
     expect(receipt.outcome).toBe("blocked");
     expect(receipt.checks.targetPreflightExact).toBe(false);
+  });
+
+  it.each([
+    [
+      "provider query failure",
+      { preflightFailureCode: "provider_query_failed" },
+      "provider_query_failed",
+    ],
+    [
+      "provider target mismatch",
+      { preflightFailureCode: "provider_target_mismatch" },
+      "provider_target_mismatch",
+    ],
+    [
+      "target preflight failure",
+      { preflightTargetExact: false },
+      "target_preflight_failed",
+    ],
+    [
+      "active Git autodeploy",
+      { preflightGitAutodeployAbsent: false },
+      "git_autodeploy_active",
+    ],
+    [
+      "unrecognized provider detail",
+      { preflightFailureCode: "provider leaked detail: do not retain" },
+      "unexpected_failure",
+    ],
+  ] as const)("emits only the bounded safe failure code for %s", async (
+    _label,
+    options,
+    expectedFailureCode,
+  ) => {
+    const exactPolicy = policy("permanent-staging");
+    const fixture = harness(exactPolicy, options);
+    await expect(runPermanentStagingAppDeploymentExecutor([
+      "--policy", "ops/railway/permanent-staging-app-deployment-policy.json",
+      "--candidate-sha", CANDIDATE_SHA,
+      "--evidence-dir", fixture.evidenceDir,
+    ], fixture.overrides)).resolves.toBe(1);
+    expect(fixture.runCommand).not.toHaveBeenCalled();
+    const receiptSource = fs.readFileSync(
+      path.join(fixture.evidenceDir, "deployment-receipt.json"),
+      "utf8",
+    );
+    const receipt = JSON.parse(receiptSource);
+    expect(receipt).toMatchObject({
+      outcome: "blocked",
+      failureCode: expectedFailureCode,
+      writeAttempts: 0,
+    });
+    expect(JSON.parse(fixture.output.at(-1)!)).toMatchObject({
+      ok: false,
+      outcome: "blocked",
+      failureCode: expectedFailureCode,
+    });
+    expect(receiptSource).not.toContain("provider leaked detail");
   });
 
   it("reconciles a successful provider mutation when the CLI acknowledgement is missing", async () => {
@@ -840,6 +917,31 @@ describe("Railway application deployment executor", () => {
       exactPolicy.target.environmentId,
       exactPolicy.target.serviceId,
     )).toMatchObject({ gitAutodeployAbsent: false });
+    const parsedGitSource = permanentStagingAppDeploymentExecutorInternals
+      .parseCollateralSnapshot(
+        collateral("blackmagic30/Beer"),
+        exactPolicy.target.environmentId,
+        exactPolicy.target.serviceId,
+      );
+    expect(permanentStagingAppDeploymentExecutorInternals
+      .validatedProviderObservation(
+        exactPolicy,
+        exactPolicy.target.environmentId,
+        exactPolicy.target.allowedReplicaCounts,
+        exactPolicy.target.publicOrigin,
+        {
+          projectId: exactPolicy.projectId,
+          environmentId: exactPolicy.target.environmentId,
+        },
+        { environmentId: exactPolicy.target.environmentId, patchEmpty: true },
+        providerObservation(
+          exactPolicy,
+          CANDIDATE_SHA,
+          DEPLOYMENT_AFTER,
+          SNAPSHOT_AFTER,
+        ).snapshot,
+        parsedGitSource,
+      )).toMatchObject({ gitAutodeployAbsent: false });
     const paginated = collateral(null).replace(
       '"hasNextPage":false',
       '"hasNextPage":true',
