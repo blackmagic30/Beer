@@ -134,7 +134,7 @@
     "production:backup:workflow:contract:check": "vitest run test/production-backup-volatile-work-root.test.ts test/production-logical-backup-workflow.test.ts --maxWorkers=1",
     "db:postgres:backup:oci-runtime:contract:check": "vitest run test/postgres-railway-stock-localhost-ca.test.ts test/sql-database.test.ts test/postgres-oci-tool-runtime.test.ts test/postgres-logical-offsite-cli.test.ts test/postgres-logical-offsite-retrieval.test.ts test/production-backup-volatile-work-root.test.ts test/production-logical-backup-workflow.test.ts --maxWorkers=1",
     "pretest": "node scripts/ensure-native-dependencies.mjs",
-    "test": "vitest run test",
+    "test": "vitest run test --maxWorkers=1",
     "security:scan": "node scripts/security-scan.mjs",
     "security:audit": "npm audit --audit-level=low",
     "check": "npm run lint && npm run build && npm run smoke:artifact && npm run test && npm run security:scan && npm run deployment:guard:check"
