@@ -536,6 +536,215 @@ function callbackHtml() {
   return fs.readFileSync(path.resolve(process.cwd(), "viewer/auth/callback.html"), "utf8");
 }
 
+function callbackInlineScript() {
+  const html = callbackHtml();
+  const startMarker = "  <script>\n";
+  const startIndex = html.lastIndexOf(startMarker);
+  const endIndex = html.indexOf("\n  </script>", startIndex + startMarker.length);
+  if (startIndex < 0 || endIndex <= startIndex) {
+    throw new Error("Could not locate the inline auth callback script.");
+  }
+  return html.slice(startIndex + startMarker.length, endIndex);
+}
+
+interface CallbackFailureHarnessOptions {
+  href: string;
+  flowState?: Record<string, unknown> | null;
+  memorySessionError?: Error;
+  providerEmail?: string;
+  providerUserError?: Error;
+  syncError?: Error;
+  syncResult?: Record<string, unknown>;
+  postAppSyncError?: Error;
+}
+
+async function runCallbackFailureHarness(options: CallbackFailureHarnessOptions) {
+  const callbackUrl = new URL(options.href);
+  const listeners = new Map<string, () => Promise<void>>();
+  const localStorage = new Map<string, string>();
+  const effects = {
+    logoutPaths: [] as string[],
+    providerSignOuts: 0,
+    authTokenClears: 0,
+    accountContextClears: 0,
+    broadcasts: [] as string[],
+    memorySessionInstalls: 0,
+    providerGetUserCalls: 0,
+    syncCalls: 0,
+    pendingAcceptanceClears: 0,
+    authFlowClears: 0,
+    sensitiveReturnClears: 0,
+    localReturnClears: 0,
+    replacements: [] as string[],
+  };
+  const elementListeners = new Map<string, Map<string, (...args: unknown[]) => unknown>>();
+  const elements = new Map<string, {
+    addEventListener: (name: string, listener: (...args: unknown[]) => unknown) => void;
+    hidden: boolean;
+    disabled: boolean;
+    textContent: string;
+    value: string;
+    ageConfirmed: { checked: boolean };
+    termsAccepted: { checked: boolean };
+    privacyAccepted: { checked: boolean };
+    focus: () => void;
+    removeAttribute: (name: string) => void;
+    reset: () => void;
+    querySelectorAll: (selector: string) => unknown[];
+  }>();
+  const elementFor = (id: string) => {
+    const existing = elements.get(id);
+    if (existing) return existing;
+    const element = {
+      addEventListener: (name: string, listener: (...args: unknown[]) => unknown) => {
+        const listenersForElement = elementListeners.get(id) || new Map();
+        listenersForElement.set(name, listener);
+        elementListeners.set(id, listenersForElement);
+      },
+      hidden: id === "callbackIdentityConfirmationForm",
+      disabled: false,
+      textContent: "",
+      value: "",
+      ageConfirmed: { checked: false },
+      termsAccepted: { checked: false },
+      privacyAccepted: { checked: false },
+      focus: () => undefined,
+      removeAttribute: () => undefined,
+      reset: () => undefined,
+      querySelectorAll: () => [],
+    };
+    elements.set(id, element);
+    return element;
+  };
+  const providerClient = {
+    auth: {
+      getUser: async () => {
+        effects.providerGetUserCalls += 1;
+        if (options.providerUserError) {
+          return { data: { user: null }, error: options.providerUserError };
+        }
+        return {
+          data: { user: { email: options.providerEmail || "verified@example.com" } },
+          error: null,
+        };
+      },
+      signOut: async () => {
+        effects.providerSignOuts += 1;
+        return {};
+      },
+    },
+  };
+  const MelbBeerBusiness = {
+    peekAuthFlowState: () => options.flowState ?? null,
+    peekOAuthPopupState: () => null,
+    getSupabaseClient: () => providerClient,
+    getSupabaseOAuthClient: () => providerClient,
+    createAuthFlowNonce: () => "callback-test-nonce",
+    setSupabaseMemorySession: async () => {
+      effects.memorySessionInstalls += 1;
+      if (options.memorySessionError) throw options.memorySessionError;
+      return {};
+    },
+    syncSupabaseSession: async () => {
+      effects.syncCalls += 1;
+      if (options.syncError) throw options.syncError;
+      return options.syncResult || {
+        synced: false,
+        error: "Callback account sync failed after session installation.",
+      };
+    },
+    getSafeReturnPath: (value: string) => value,
+    consumeSensitiveAuthReturnPath: () => {
+      if (options.postAppSyncError) throw options.postAppSyncError;
+      return null;
+    },
+    apiFetch: async (requestPath: string) => {
+      effects.logoutPaths.push(requestPath);
+      return {};
+    },
+    clearPendingLegalAcceptance: () => {
+      effects.pendingAcceptanceClears += 1;
+    },
+    clearSupabaseOAuthFlowStorage: () => undefined,
+    clearOAuthPopupState: () => undefined,
+    clearAuthFlowState: () => {
+      effects.authFlowClears += 1;
+    },
+    clearSensitiveAuthReturnState: () => {
+      effects.sensitiveReturnClears += 1;
+    },
+    setAuthToken: (value: unknown) => {
+      if (value === null) effects.authTokenClears += 1;
+    },
+    setAccountContext: (value: unknown) => {
+      if (value === null) effects.accountContextClears += 1;
+    },
+    broadcastAuthInvalidation: (reason: string) => {
+      effects.broadcasts.push(reason);
+    },
+  };
+  const windowFixture = {
+    location: {
+      href: callbackUrl.toString(),
+      origin: callbackUrl.origin,
+      search: callbackUrl.search,
+      hash: callbackUrl.hash,
+      replace: (destination: string) => {
+        effects.replacements.push(destination);
+      },
+      assign: () => undefined,
+    },
+    history: {
+      replaceState: () => undefined,
+    },
+    localStorage: {
+      getItem: (key: string) => localStorage.get(key) || null,
+      setItem: (key: string, value: string) => localStorage.set(key, String(value)),
+      removeItem: (key: string) => {
+        if (key === "pintPathAuthReturnTo") effects.localReturnClears += 1;
+        return localStorage.delete(key);
+      },
+    },
+    addEventListener: (name: string, listener: () => Promise<void>) => {
+      listeners.set(name, listener);
+    },
+    close: () => undefined,
+    MelbBeerBusiness,
+  };
+  const context = {
+    URL,
+    URLSearchParams,
+    clearTimeout,
+    setTimeout,
+    MelbBeerBusiness,
+    window: windowFixture,
+    document: {
+      title: "Signing in | Pint Path",
+      getElementById: (id: string) => elementFor(id),
+      querySelector: () => elementFor("query-result"),
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(callbackInlineScript(), context);
+  const callback = listeners.get("DOMContentLoaded");
+  expect(callback).toBeTypeOf("function");
+  await callback?.();
+  return Object.assign(effects, {
+    cancelIdentityConfirmation: async () => {
+      const listener = elementListeners.get("callbackIdentityConfirmationCancel")?.get("click");
+      expect(listener).toBeTypeOf("function");
+      await listener?.();
+    },
+    submitIdentityConfirmation: async (email: string) => {
+      elementFor("callbackIdentityConfirmationEmail").value = email;
+      const listener = elementListeners.get("callbackIdentityConfirmationForm")?.get("submit");
+      expect(listener).toBeTypeOf("function");
+      await listener?.({ preventDefault: () => undefined });
+    },
+    getElement: (id: string) => elementFor(id),
+  });
+}
+
 function resetPasswordHtml() {
   return fs.readFileSync(path.resolve(process.cwd(), "viewer/reset-password.html"), "utf8");
 }
@@ -2221,6 +2430,433 @@ describe("account page shell", () => {
       html.indexOf('throw new Error("No secure sign-in result was returned.'),
     );
     expect(callbackCleanupIndex).toBeLessThan(html.lastIndexOf("await finishCallbackLogin(callbackAuthFlowNonce())"));
+  });
+
+  it("never lets a provider-error URL clear an existing browser session", () => {
+    const errorHandling = htmlBetween(
+      callbackHtml(),
+      "const errorMessage = callbackErrorMessage();",
+      "try {\n        const client = MelbBeerBusiness.getSupabaseClient();",
+    );
+
+    expect(errorHandling).toContain("const callbackErrorIsBound = callbackFlowState !== null;");
+    expect(errorHandling).toContain('"Sign-in did not complete. Start again from Pint Path."');
+    expect(errorHandling).toContain("if (callbackErrorIsBound)");
+    expect(errorHandling).toContain("clearCallbackEphemeralFlowState()");
+    expect(errorHandling).not.toContain("clearCallbackSession");
+    expect(errorHandling).not.toContain("redirectWithError");
+    expect(errorHandling).not.toContain("apiFetch");
+    expect(errorHandling).not.toContain("auth.signOut");
+    expect(errorHandling).not.toContain("broadcastAuthInvalidation");
+  });
+
+  it("authorizes terminal app logout only after callback account synchronization succeeds", () => {
+    const html = callbackHtml();
+    const providerOnlyCleanup = htmlBetween(
+      html,
+      "async function clearCallbackProviderSessionOnly",
+      "async function clearCallbackSession",
+    );
+    const appCleanup = htmlBetween(
+      html,
+      "async function clearCallbackSession",
+      "function showCallbackSessionClearFailure",
+    );
+    const failureHandling = htmlBetween(
+      html,
+      "function clearCallbackEphemeralFlowState",
+      "async function currentCallbackProviderSession",
+    );
+    const terminalCatch = htmlBetween(
+      html,
+      "} catch (error) {\n        if (needsBillingRecovery(error))",
+      "\n      }\n    });",
+    );
+
+    expect(html.match(
+      /await MelbBeerBusiness\.setSupabaseMemorySession\(callbackProviderSession\);\n\s+callbackProviderSessionInstalled = true;/g,
+    )).toHaveLength(2);
+    expect(html.match(/callbackAppSessionInstalled = true;/g)).toHaveLength(1);
+    const appSessionInstall = htmlBetween(
+      html,
+      "const result = await MelbBeerBusiness.syncSupabaseSession",
+      'if (emailReauthenticationPurpose === "logout_all")',
+    );
+    expect(appSessionInstall).toContain("if (result.synced !== true)");
+    expect(appSessionInstall.indexOf("callbackAppSessionInstalled = true"))
+      .toBeGreaterThan(appSessionInstall.indexOf("if (result.synced !== true)"));
+    expect(providerOnlyCleanup).toContain('auth.signOut({ scope: "local" })');
+    expect(providerOnlyCleanup).toContain("callbackProviderSessionInstalled = false");
+    expect(providerOnlyCleanup).not.toContain("apiFetch");
+    expect(providerOnlyCleanup).not.toContain("setAuthToken");
+    expect(providerOnlyCleanup).not.toContain("setAccountContext");
+    expect(providerOnlyCleanup).not.toContain("broadcastAuthInvalidation");
+    expect(appCleanup).toContain('MelbBeerBusiness.apiFetch("/api/business/auth/logout"');
+    expect(appCleanup).toContain("MelbBeerBusiness.setAuthToken(null)");
+    expect(appCleanup).toContain("MelbBeerBusiness.setAccountContext(null)");
+    expect(appCleanup).toContain('MelbBeerBusiness.broadcastAuthInvalidation?.("callback_logout")');
+    expect(failureHandling).toContain("const callbackFailureIsBound = callbackFlowState !== null;");
+    expect(failureHandling).toContain("callbackFailureIsBound || callbackProviderSessionInstalled");
+    expect(failureHandling).toContain("if (callbackAppSessionInstalled)");
+    expect(failureHandling).toContain("await clearCallbackProviderSessionOnly()");
+    expect(failureHandling).toContain("{ clearSession: false }");
+    expect(failureHandling).toContain("{ clearSession: true }");
+    expect(failureHandling).toContain("redirectWithError(CALLBACK_FAILURE_MESSAGE");
+    expect(failureHandling).toContain("MelbBeerBusiness.clearPendingLegalAcceptance()");
+    expect(failureHandling).toContain("MelbBeerBusiness.clearSupabaseOAuthFlowStorage()");
+    expect(failureHandling).toContain("MelbBeerBusiness.clearAuthFlowState()");
+    expect(failureHandling).toContain("MelbBeerBusiness.clearSensitiveAuthReturnState()");
+    expect(failureHandling).not.toContain("apiFetch");
+    expect(failureHandling).not.toContain("auth.signOut");
+    expect(failureHandling).not.toContain("setAuthToken");
+    expect(failureHandling).not.toContain("setAccountContext");
+    expect(failureHandling).not.toContain("broadcastAuthInvalidation");
+    expect(terminalCatch).toContain("await redirectCallbackFailure(error)");
+    expect(terminalCatch).not.toContain("await redirectWithError(error.message)");
+    expect(html).not.toContain("await redirectWithError(error.message)");
+  });
+
+  it("requires verified provider email confirmation for every implicit signup or recovery callback", () => {
+    const html = callbackHtml();
+    const identityVerification = htmlBetween(
+      html,
+      "function normalizeCallbackEmail",
+      "async function clearCallbackProviderSessionOnly",
+    );
+    const implicitEmailHandling = htmlBetween(
+      html,
+      "const expectedFlowKind = isRecoveryResult",
+      '} else {\n          throw new Error("No secure sign-in result was returned.',
+    );
+
+    expect(html).toContain('id="callbackIdentityConfirmationForm"');
+    expect(html).toContain('id="callbackIdentityConfirmationEmail"');
+    expect(html).toContain('id="callbackIdentityConfirmationCancel"');
+    expect(identityVerification).toContain("await client.auth.getUser()");
+    expect(identityVerification).toContain("data?.user?.email");
+    expect(identityVerification).toContain("normalizeCallbackEmail");
+    expect(identityVerification).toContain("callbackVerifiedProviderEmail = normalizedEmail");
+    expect(identityVerification).toContain("callbackIdentityConfirmationPrompt");
+    expect(identityVerification).not.toContain("user_metadata");
+    expect(identityVerification).not.toContain("decodeJwt");
+    expect(identityVerification).not.toContain("access_token");
+    expect(implicitEmailHandling).toContain(
+      "if (callbackFlowState && callbackFlowState.kind !== expectedFlowKind)",
+    );
+    expect(implicitEmailHandling).toContain('if (["signup", "password_recovery"].includes(expectedFlowKind))');
+    expect(implicitEmailHandling).toContain("const verifiedEmail = await getVerifiedCallbackProviderEmail(client)");
+    expect(implicitEmailHandling.indexOf("await MelbBeerBusiness.setSupabaseMemorySession"))
+      .toBeLessThan(implicitEmailHandling.indexOf("await getVerifiedCallbackProviderEmail(client)"));
+    expect(implicitEmailHandling).toContain("callbackProviderSession = null");
+    expect(implicitEmailHandling).not.toContain("localStorage.setItem");
+    expect(implicitEmailHandling).not.toContain("sessionStorage.setItem");
+    expect(implicitEmailHandling).toContain("showCallbackIdentityConfirmation(verifiedEmail)");
+    expect(implicitEmailHandling).toContain("return;");
+  });
+
+  it.each([
+    ["plain callback", "https://pintpath.au/auth/callback"],
+    ["malformed code", "https://pintpath.au/auth/callback?code=attacker-controlled"],
+    [
+      "unsupported hash",
+      "https://pintpath.au/auth/callback#access_token=attacker&refresh_token=attacker&type=unsupported",
+    ],
+  ])("keeps an unbound %s failure non-destructive", async (_label, href) => {
+    const effects = await runCallbackFailureHarness({ href });
+
+    expect(effects.memorySessionInstalls).toBe(0);
+    expect(effects.logoutPaths).toEqual([]);
+    expect(effects.providerSignOuts).toBe(0);
+    expect(effects.authTokenClears).toBe(0);
+    expect(effects.accountContextClears).toBe(0);
+    expect(effects.broadcasts).toEqual([]);
+    expect(effects.pendingAcceptanceClears).toBe(0);
+    expect(effects.authFlowClears).toBe(0);
+    expect(effects.sensitiveReturnClears).toBe(0);
+    expect(effects.localReturnClears).toBe(0);
+    expect(effects.replacements).toHaveLength(1);
+    const redirect = new URL(effects.replacements[0]);
+    expect(redirect.pathname).toBe("/account.html");
+    expect(redirect.searchParams.get("authError")).toBe(
+      "Sign-in did not complete. Start again from Pint Path.",
+    );
+  });
+
+  it("preserves an existing session when malformed code collides with a bound reauthentication flow", async () => {
+    const effects = await runCallbackFailureHarness({
+      href: "https://pintpath.au/auth/callback?code=attacker-controlled",
+      flowState: {
+        kind: "browser_email_reauthentication",
+        nonce: "valid-local-flow-nonce",
+        reauthPurpose: "account_export",
+        returnTo: "/account.html?settings=security",
+      },
+    });
+
+    expect(effects.logoutPaths).toEqual([]);
+    expect(effects.providerSignOuts).toBe(0);
+    expect(effects.authTokenClears).toBe(0);
+    expect(effects.accountContextClears).toBe(0);
+    expect(effects.broadcasts).toEqual([]);
+    expect(effects.pendingAcceptanceClears).toBe(1);
+    expect(effects.authFlowClears).toBe(1);
+    expect(effects.sensitiveReturnClears).toBe(1);
+    expect(effects.localReturnClears).toBe(1);
+  });
+
+  it("does not authorize logout when provider-token installation rejects", async () => {
+    const effects = await runCallbackFailureHarness({
+      href: "https://pintpath.au/auth/callback#access_token=returned&refresh_token=returned&type=recovery",
+      flowState: {
+        kind: "password_recovery",
+        nonce: "valid-local-recovery-nonce",
+        returnTo: "/reset-password.html?mode=update",
+      },
+      memorySessionError: new Error("Provider session installation rejected."),
+    });
+
+    expect(effects.memorySessionInstalls).toBe(1);
+    expect(effects.logoutPaths).toEqual([]);
+    expect(effects.providerSignOuts).toBe(0);
+    expect(effects.authTokenClears).toBe(0);
+    expect(effects.accountContextClears).toBe(0);
+    expect(effects.broadcasts).toEqual([]);
+    expect(effects.pendingAcceptanceClears).toBe(1);
+    expect(effects.authFlowClears).toBe(1);
+    expect(effects.sensitiveReturnClears).toBe(1);
+  });
+
+  it.each([
+    ["recovery", "https://pintpath.au/auth/callback#access_token=returned&refresh_token=returned&type=recovery"],
+    ["signup", "https://pintpath.au/auth/callback#access_token=returned&refresh_token=returned&type=signup"],
+  ])("pauses unbound %s tokens before Pint Path synchronization", async (_type, href) => {
+    const effects = await runCallbackFailureHarness({
+      href,
+      providerEmail: "Attacker.Account@example.com",
+      syncError: new Error("Account synchronization rejected the installed provider session."),
+    });
+
+    expect(effects.memorySessionInstalls).toBe(1);
+    expect(effects.providerGetUserCalls).toBe(1);
+    expect(effects.syncCalls).toBe(0);
+    expect(effects.providerSignOuts).toBe(0);
+    expect(effects.logoutPaths).toEqual([]);
+    expect(effects.authTokenClears).toBe(0);
+    expect(effects.accountContextClears).toBe(0);
+    expect(effects.broadcasts).toEqual([]);
+    expect(effects.replacements).toEqual([]);
+    expect(effects.getElement("callbackIdentityConfirmationForm").hidden).toBe(false);
+    expect(effects.getElement("callbackIdentityConfirmationPrompt").textContent)
+      .toContain("attacker.account@example.com");
+    expect(effects.getElement("callbackIdentityConfirmationEmail").value).toBe("");
+  });
+
+  it("fails closed when the provider cannot verify the unbound token identity", async () => {
+    const effects = await runCallbackFailureHarness({
+      href: "https://pintpath.au/auth/callback#access_token=returned&refresh_token=returned&type=recovery",
+      providerUserError: new Error("Provider identity lookup failed."),
+    });
+
+    expect(effects.memorySessionInstalls).toBe(1);
+    expect(effects.providerGetUserCalls).toBe(1);
+    expect(effects.syncCalls).toBe(0);
+    expect(effects.providerSignOuts).toBe(2);
+    expect(effects.logoutPaths).toEqual([]);
+    expect(effects.authTokenClears).toBe(0);
+    expect(effects.accountContextClears).toBe(0);
+    expect(effects.broadcasts).toEqual([]);
+    expect(new URL(effects.replacements[0]).searchParams.get("authError")).toBe(
+      "Sign-in did not complete. Start again from Pint Path.",
+    );
+  });
+
+  it("fails a wrong verified-email confirmation closed with provider-only cleanup", async () => {
+    const effects = await runCallbackFailureHarness({
+      href: "https://pintpath.au/auth/callback#access_token=attacker&refresh_token=attacker&type=signup",
+      providerEmail: "attacker@example.com",
+      syncError: new Error("Synchronization must remain unreachable after a mismatch."),
+    });
+
+    await effects.submitIdentityConfirmation("victim@example.com");
+
+    expect(effects.syncCalls).toBe(0);
+    expect(effects.providerSignOuts).toBe(2);
+    expect(effects.logoutPaths).toEqual([]);
+    expect(effects.authTokenClears).toBe(0);
+    expect(effects.accountContextClears).toBe(0);
+    expect(effects.broadcasts).toEqual([]);
+    expect(effects.replacements).toHaveLength(1);
+    expect(new URL(effects.replacements[0]).searchParams.get("authError")).toBe(
+      "Sign-in did not complete. Start again from Pint Path.",
+    );
+  });
+
+  it("cancels an unbound email callback with provider-only cleanup", async () => {
+    const effects = await runCallbackFailureHarness({
+      href: "https://pintpath.au/auth/callback#access_token=attacker&refresh_token=attacker&type=recovery",
+      providerEmail: "attacker@example.com",
+    });
+
+    await effects.cancelIdentityConfirmation();
+
+    expect(effects.syncCalls).toBe(0);
+    expect(effects.providerSignOuts).toBe(2);
+    expect(effects.logoutPaths).toEqual([]);
+    expect(effects.authTokenClears).toBe(0);
+    expect(effects.accountContextClears).toBe(0);
+    expect(effects.broadcasts).toEqual([]);
+    expect(new URL(effects.replacements[0]).searchParams.get("authError")).toBe(
+      "Sign-in did not complete. Start again from Pint Path.",
+    );
+  });
+
+  it("allows an exact normalized verified email to begin Pint Path synchronization", async () => {
+    const effects = await runCallbackFailureHarness({
+      href: "https://pintpath.au/auth/callback#access_token=returned&refresh_token=returned&type=signup",
+      providerEmail: "Confirmed.User@example.com",
+      syncError: new Error("Stop after proving synchronization was explicitly authorized."),
+    });
+
+    expect(effects.syncCalls).toBe(0);
+    await effects.submitIdentityConfirmation("CONFIRMED.USER@EXAMPLE.COM");
+
+    expect(effects.syncCalls).toBe(1);
+    expect(effects.providerSignOuts).toBe(2);
+    expect(effects.logoutPaths).toEqual([]);
+    expect(effects.authTokenClears).toBe(0);
+    expect(effects.accountContextClears).toBe(0);
+    expect(effects.broadcasts).toEqual([]);
+  });
+
+  it.each([
+    [
+      "recent password-recovery",
+      "https://pintpath.au/auth/callback#access_token=attacker&refresh_token=attacker&type=recovery",
+      "password_recovery",
+    ],
+    [
+      "recent signup/resend",
+      "https://pintpath.au/auth/callback#access_token=attacker&refresh_token=attacker&type=signup",
+      "signup",
+    ],
+  ])("does not let %s kind-only state auto-sync attacker tokens", async (_type, href, kind) => {
+    const effects = await runCallbackFailureHarness({
+      href,
+      providerEmail: "attacker@example.com",
+      flowState: {
+        kind,
+        nonce: "valid-local-email-flow",
+        returnTo: "/account.html",
+      },
+    });
+
+    expect(effects.memorySessionInstalls).toBe(1);
+    expect(effects.providerGetUserCalls).toBe(1);
+    expect(effects.syncCalls).toBe(0);
+    expect(effects.providerSignOuts).toBe(0);
+    expect(effects.logoutPaths).toEqual([]);
+    expect(effects.authTokenClears).toBe(0);
+    expect(effects.accountContextClears).toBe(0);
+    expect(effects.broadcasts).toEqual([]);
+    expect(effects.getElement("callbackIdentityConfirmationForm").hidden).toBe(false);
+    expect(effects.getElement("callbackIdentityConfirmationPrompt").textContent)
+      .toContain("attacker@example.com");
+  });
+
+  it("keeps browser email reauthentication on its bound automatic path", async () => {
+    const effects = await runCallbackFailureHarness({
+      href: "https://pintpath.au/auth/callback#access_token=returned&refresh_token=returned&type=magiclink",
+      flowState: {
+        kind: "browser_email_reauthentication",
+        nonce: "valid-local-reauth-flow",
+        reauthPurpose: "account_export",
+        returnTo: "/account.html?settings=security",
+      },
+      syncError: new Error("Stop after proving browser reauthentication continued."),
+    });
+
+    expect(effects.memorySessionInstalls).toBe(1);
+    expect(effects.providerGetUserCalls).toBe(0);
+    expect(effects.syncCalls).toBe(1);
+    expect(effects.getElement("callbackIdentityConfirmationForm").hidden).toBe(true);
+  });
+
+  it.each([
+    [
+      "recovery tokens during signup",
+      "https://pintpath.au/auth/callback#access_token=returned&refresh_token=returned&type=recovery",
+      "signup",
+    ],
+    [
+      "signup tokens during recovery",
+      "https://pintpath.au/auth/callback#access_token=returned&refresh_token=returned&type=signup",
+      "password_recovery",
+    ],
+  ])("rejects mismatched bound state for %s", async (_label, href, kind) => {
+    const effects = await runCallbackFailureHarness({
+      href,
+      flowState: {
+        kind,
+        nonce: "different-local-email-flow",
+        returnTo: "/account.html",
+      },
+    });
+
+    expect(effects.memorySessionInstalls).toBe(0);
+    expect(effects.providerGetUserCalls).toBe(0);
+    expect(effects.syncCalls).toBe(0);
+    expect(effects.providerSignOuts).toBe(0);
+    expect(effects.logoutPaths).toEqual([]);
+    expect(effects.authTokenClears).toBe(0);
+    expect(effects.accountContextClears).toBe(0);
+    expect(effects.broadcasts).toEqual([]);
+    expect(new URL(effects.replacements[0]).searchParams.get("authError")).toBe(
+      "Sign-in did not complete. Start again from Pint Path.",
+    );
+  });
+
+  it("allows full cleanup after confirmed callback account synchronization succeeds", async () => {
+    const effects = await runCallbackFailureHarness({
+      href: "https://pintpath.au/auth/callback#access_token=returned&refresh_token=returned&type=recovery",
+      providerEmail: "confirmed@example.com",
+      syncResult: {
+        synced: true,
+        account: { id: "callback-account", role: "customer" },
+        access: { authenticated: true },
+      },
+      postAppSyncError: new Error("Post-sync callback completion failed."),
+    });
+
+    expect(effects.syncCalls).toBe(0);
+    await effects.submitIdentityConfirmation("confirmed@example.com");
+
+    expect(effects.memorySessionInstalls).toBe(1);
+    expect(effects.syncCalls).toBe(1);
+    expect(effects.logoutPaths).toEqual(["/api/business/auth/logout"]);
+    expect(effects.providerSignOuts).toBe(2);
+    expect(effects.authTokenClears).toBe(1);
+    expect(effects.accountContextClears).toBe(1);
+    expect(effects.broadcasts).toEqual(["callback_logout"]);
+  });
+
+  it("rejects a direct OAuth-start callback without a one-time launch record from the active tab", () => {
+    const popupStart = htmlBetween(
+      callbackHtml(),
+      'const popupProvider = String(initialQuery.get("oauthStart")',
+      "callbackFlowState = MelbBeerBusiness.peekAuthFlowState();",
+    );
+
+    expect(popupStart).toContain("MelbBeerBusiness.consumeOAuthPopupLaunch?.({");
+    expect(popupStart).toContain("if (!popupLaunch)");
+    expect(popupStart).toContain("was not started by the active Pint Path tab");
+    expect(popupStart.indexOf("scrubCallbackCredentials()"))
+      .toBeLessThan(popupStart.indexOf("if (!popupLaunch)"));
+    expect(popupStart.indexOf("if (!popupLaunch)")).toBeLessThan(
+      popupStart.indexOf("MelbBeerBusiness.storeOAuthPopupState(popupLaunch)"),
+    );
+    expect(popupStart.indexOf("MelbBeerBusiness.storeOAuthPopupState(popupLaunch)")).toBeLessThan(
+      popupStart.indexOf("await MelbBeerBusiness.signInWithOAuth"),
+    );
   });
 
   it("finishes email-OTP logout-all in the callback without a redirect or provider-session leak", () => {

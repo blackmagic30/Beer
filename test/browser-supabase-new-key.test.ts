@@ -68,6 +68,11 @@ interface CapturedBroadcastMessage {
   data: unknown;
 }
 
+interface CapturedBroadcastChannel {
+  name: string;
+  emit(data: unknown): Promise<void>;
+}
+
 interface BrowserSupabaseApi {
   getSupabaseConfig(): { url: string | null; anonKey: string | null };
   getSupabaseClient(): BrowserSupabaseClient | null;
@@ -87,6 +92,18 @@ interface BrowserSupabaseApi {
       returnTo?: string;
     },
   ): Promise<{ popup: boolean; redirected?: boolean }>;
+  storeOAuthPopupLaunch(input: {
+    channelId: string;
+    provider: string;
+    purpose: string;
+    returnTo: string;
+  }): Record<string, unknown> | null;
+  consumeOAuthPopupLaunch(input: {
+    channelId: string;
+    provider: string;
+    purpose: string;
+    returnTo: string;
+  }): Record<string, unknown> | null;
   getLiveSupabaseProviderSession(
     initialSession?: { access_token: string; refresh_token: string } | null,
     client?: BrowserSupabaseClient | null,
@@ -169,6 +186,7 @@ function loadBrowserSupabase(key: unknown, options: {
 } = {}) {
   const requests: CapturedRequest[] = [];
   const broadcastChannels: string[] = [];
+  const broadcastChannelInstances: CapturedBroadcastChannel[] = [];
   const broadcastMessages: CapturedBroadcastMessage[] = [];
   const clientOptions: ClientOptions[] = [];
   const viewerOrigin = options.viewerOrigin ?? "https://pintpath.au";
@@ -199,10 +217,12 @@ function loadBrowserSupabase(key: unknown, options: {
   });
   class CapturingBroadcastChannel {
     readonly name: string;
+    onmessage: ((event: { data: unknown }) => void | Promise<void>) | null = null;
 
     constructor(name: string) {
       this.name = String(name);
       broadcastChannels.push(this.name);
+      broadcastChannelInstances.push(this);
     }
 
     addEventListener(): void {}
@@ -211,6 +231,10 @@ function loadBrowserSupabase(key: unknown, options: {
 
     postMessage(data: unknown): void {
       broadcastMessages.push({ channel: this.name, data });
+    }
+
+    async emit(data: unknown): Promise<void> {
+      await this.onmessage?.({ data });
     }
   }
   const windowObject: Record<string, unknown> = {
@@ -293,6 +317,7 @@ function loadBrowserSupabase(key: unknown, options: {
 
   return {
     api: windowObject.MelbBeerBusiness as BrowserSupabaseApi,
+    broadcastChannelInstances,
     broadcastChannels,
     broadcastMessages,
     clientOptions,
@@ -424,6 +449,155 @@ describe("browser Supabase publishable-key compatibility", () => {
     expect(harness.broadcastChannels).not.toContainEqual(
       expect.stringMatching(/^pintpath:oauth:/),
     );
+  });
+
+  it("requires an exact one-time tab-bound launch record before a popup callback can start OAuth", () => {
+    const harness = loadBrowserSupabase(PUBLISHABLE_KEY);
+    const launch = {
+      channelId: "launch_channel_1234567890",
+      provider: "google",
+      purpose: "account_export",
+      returnTo: "/account.html?settings=privacy",
+    };
+    const launchKey = `pintPathSupabaseOAuthPopupLaunch:${launch.channelId}`;
+
+    expect(harness.api.storeOAuthPopupLaunch(launch)).toMatchObject(launch);
+    expect(harness.sessionStorage.getItem(launchKey)).not.toBeNull();
+    expect(harness.api.consumeOAuthPopupLaunch({
+      ...launch,
+      channelId: "attacker_channel_1234567890",
+    })).toBeNull();
+    expect(harness.sessionStorage.getItem(launchKey)).not.toBeNull();
+    expect(harness.api.consumeOAuthPopupLaunch({ ...launch, purpose: "logout_all" })).toBeNull();
+    expect(harness.sessionStorage.getItem(launchKey)).toBeNull();
+
+    expect(harness.api.storeOAuthPopupLaunch(launch)).toMatchObject(launch);
+    expect(harness.api.consumeOAuthPopupLaunch(launch)).toMatchObject(launch);
+    expect(harness.api.consumeOAuthPopupLaunch(launch)).toBeNull();
+
+    harness.sessionStorage.setItem(
+      launchKey,
+      JSON.stringify({ ...launch, createdAt: Date.now() - 60_001 }),
+    );
+    expect(harness.api.consumeOAuthPopupLaunch(launch)).toBeNull();
+    harness.sessionStorage.setItem(
+      launchKey,
+      JSON.stringify({ ...launch, createdAt: Date.now() + 5_001 }),
+    );
+    expect(harness.api.consumeOAuthPopupLaunch(launch)).toBeNull();
+    harness.sessionStorage.setItem(
+      launchKey,
+      JSON.stringify({ ...launch, createdAt: Date.now(), bearer: "not-allowed" }),
+    );
+    expect(harness.api.consumeOAuthPopupLaunch(launch)).toBeNull();
+    harness.sessionStorage.setItem(launchKey, "{malformed");
+    expect(harness.api.consumeOAuthPopupLaunch(launch)).toBeNull();
+    expect(harness.sessionStorage.getItem(launchKey)).toBeNull();
+
+    expect(harness.api.storeOAuthPopupLaunch(launch)).toMatchObject(launch);
+    const removeItem = harness.sessionStorage.removeItem.bind(harness.sessionStorage);
+    harness.sessionStorage.removeItem = () => { throw new Error("storage locked"); };
+    expect(harness.api.consumeOAuthPopupLaunch(launch)).toBeNull();
+    harness.sessionStorage.removeItem = removeItem;
+    harness.sessionStorage.removeItem(launchKey);
+  });
+
+  it("leaves the popup clone as the only launch capability after window.open returns", async () => {
+    let clonedLaunch: { key: string; value: string } | null = null;
+    let popupUrl = "";
+    const harness = loadBrowserSupabase(PUBLISHABLE_KEY, {
+      enableBroadcastChannel: true,
+      windowOpen(url) {
+        popupUrl = url;
+        const key = Array.from(
+          { length: harness.sessionStorage.length },
+          (_, index) => harness.sessionStorage.key(index),
+        ).find((candidate) => candidate?.startsWith("pintPathSupabaseOAuthPopupLaunch:"));
+        if (key) clonedLaunch = { key, value: harness.sessionStorage.getItem(key)! };
+        return { close: vi.fn() };
+      },
+    });
+
+    const pending = harness.api.signInWithOAuthPopup("google", {
+      purpose: "login",
+      returnTo: "/account.html?from=map",
+    });
+    expect(clonedLaunch).not.toBeNull();
+    expect(JSON.parse(clonedLaunch!.value)).toMatchObject({
+      provider: "google",
+      purpose: "login",
+      returnTo: "/account.html?from=map",
+    });
+    expect(harness.sessionStorage.getItem(clonedLaunch!.key)).toBeNull();
+
+    const channelId = new URL(popupUrl).searchParams.get("popupChannel");
+    const channel = harness.broadcastChannelInstances.find(
+      (candidate) => candidate.name === `pintpath:oauth:${channelId}`,
+    );
+    expect(channel).toBeDefined();
+    await channel!.emit({
+      type: "pintpath:oauth-error",
+      channelId,
+      message: "Provider cancelled",
+    });
+    await expect(pending).rejects.toThrow("Provider cancelled");
+  });
+
+  it.each([
+    ["blocked", () => null],
+    ["throws", () => { throw new Error("blocked"); }],
+  ])("removes the one-time popup launch when window.open %s", async (_case, windowOpen) => {
+    const harness = loadBrowserSupabase(PUBLISHABLE_KEY, {
+      enableBroadcastChannel: true,
+      enableDocument: true,
+      windowOpen,
+    });
+
+    await expect(harness.api.signInWithOAuthPopup("google", {
+      purpose: "login",
+      returnTo: "/account.html",
+    })).resolves.toMatchObject({ popup: false, redirected: true });
+    const keys = Array.from(
+      { length: harness.sessionStorage.length },
+      (_, index) => harness.sessionStorage.key(index),
+    ).filter(Boolean);
+    expect(keys).not.toEqual(expect.arrayContaining([
+      expect.stringMatching(/^pintPathSupabaseOAuthPopupLaunch:/),
+    ]));
+    expect(harness.locationAssignments).toHaveLength(1);
+  });
+
+  it("fails closed before window.open when the launch capability cannot be stored", async () => {
+    const windowOpen = vi.fn();
+    const harness = loadBrowserSupabase(PUBLISHABLE_KEY, {
+      enableBroadcastChannel: true,
+      windowOpen,
+    });
+    harness.sessionStorage.setItem = () => { throw new Error("storage disabled"); };
+
+    await expect(harness.api.signInWithOAuthPopup("google", {
+      purpose: "login",
+      returnTo: "/account.html",
+    })).rejects.toThrow("launch could not be bound");
+    expect(windowOpen).not.toHaveBeenCalled();
+    expect(harness.locationAssignments).toHaveLength(0);
+  });
+
+  it("closes the popup and fails closed when the parent launch capability cannot be removed", async () => {
+    const popupClose = vi.fn();
+    const harness = loadBrowserSupabase(PUBLISHABLE_KEY, {
+      enableBroadcastChannel: true,
+      windowOpen() {
+        harness.sessionStorage.removeItem = () => { throw new Error("storage locked"); };
+        return { close: popupClose };
+      },
+    });
+
+    await expect(harness.api.signInWithOAuthPopup("google", {
+      purpose: "login",
+      returnTo: "/account.html",
+    })).rejects.toThrow("launch could not be cleared safely");
+    expect(popupClose).toHaveBeenCalledTimes(1);
   });
 
   it("binds permanent-staging OAuth callbacks to the viewer instead of a configured hostile origin", async () => {
