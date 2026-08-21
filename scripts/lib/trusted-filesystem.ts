@@ -4,6 +4,7 @@ import path from "node:path";
 interface TrustedReadOptions {
   readonly minBytes: number;
   readonly maxBytes: number;
+  readonly requireExactMode?: number;
   readonly requireOwner?: boolean;
   readonly requirePrivate?: boolean;
   readonly requireExecutable?: boolean;
@@ -74,11 +75,14 @@ function currentUid(): bigint | null {
 }
 
 function pathMatchesDescriptor(filename: string, descriptorStat: BigIntStats): boolean {
-  const pathnameStat = fs.lstatSync(filename, { bigint: true });
-  return !pathnameStat.isSymbolicLink()
-    && pathnameStat.dev === descriptorStat.dev
-    && pathnameStat.ino === descriptorStat.ino
-    && fs.realpathSync(filename) === filename;
+  const before = fs.lstatSync(filename, { bigint: true });
+  if (before.isSymbolicLink()
+    || !sameIdentity(before, descriptorStat)
+    || fs.realpathSync(filename) !== filename) return false;
+  const after = fs.lstatSync(filename, { bigint: true });
+  return !after.isSymbolicLink()
+    && sameIdentity(before, after)
+    && sameIdentity(after, descriptorStat);
 }
 
 /**
@@ -150,7 +154,13 @@ export function readTrustedRegularFile(
   if (!exactAbsolutePath(filename)
     || !Number.isSafeInteger(options.minBytes) || options.minBytes < 0
     || !Number.isSafeInteger(options.maxBytes)
-    || options.maxBytes < options.minBytes) throw new Error("trusted_file_invalid");
+    || options.maxBytes < options.minBytes
+    || options.requireExactMode !== undefined
+      && (!Number.isSafeInteger(options.requireExactMode)
+        || options.requireExactMode < 0
+        || options.requireExactMode > 0o777)) {
+    throw new Error("trusted_file_invalid");
+  }
 
   let descriptor: number | null = null;
   let bytes: Buffer | null = null;
@@ -161,6 +171,8 @@ export function readTrustedRegularFile(
     if (!before.isFile() || before.nlink !== 1n
       || before.size < BigInt(options.minBytes)
       || before.size > BigInt(options.maxBytes)
+      || options.requireExactMode !== undefined
+        && (before.mode & 0o777n) !== BigInt(options.requireExactMode)
       || options.requirePrivate && (before.mode & 0o077n) !== 0n
       || options.requireExecutable && (before.mode & 0o111n) === 0n
       || options.requireExecutable && (before.mode & 0o022n) !== 0n

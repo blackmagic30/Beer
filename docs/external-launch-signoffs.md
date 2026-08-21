@@ -81,8 +81,8 @@ match every pin and remain distinct from production and permanent staging.
   ```
 
 - [ ] Before permanent-staging scale starts, require exactly two successful
-  deployment runs for the same candidate: the initial deployment and the
-  post-plan closeout redeploy. Require both complete and select the second run
+  deployment runs for the same candidate: the fenced zero-replica upload and
+  the active one-replica closeout. Require both complete and select the second run
   and artifact; zero, one, more than two, or ambiguous completion order fails.
 - [ ] Start each guarded permanent-staging provider mutation, legacy cutover,
   and runtime-variable run through `github:reviewed-candidate-authority:verify`.
@@ -242,11 +242,12 @@ pilots before the role and provider checks pass.
   project tokens scoped to the exact production and staging environments.
   Require the token identity checks, both undecrypted staged-patch checks, and
   every production Postgres deployment/snapshot/source/digest check to be
-  `true`. The current incident baseline is intentionally non-passing. Do not
-  edit it to accept the 2026-08-10 redeploy, commit/discard a staged patch, or
-  use this read-only receipt as mutation authority. Railway writes remain
-  stopped until the tracked one-operation executor owns an immediate preflight
-  and unconditional postflight.
+  `true`. Commit #51 refreshed the immutable baseline for the 2026-08-10
+  redeploy, so it is pass-capable only while the live provider state matches
+  every exact pin. Do not edit it to conceal later drift, commit/discard a
+  staged patch, or use this read-only receipt as mutation authority. Railway
+  writes remain stopped until the tracked one-operation executor owns an
+  immediate preflight and unconditional postflight.
 - [ ] Before the manual release workflow, close permanent-staging sealing as a
   separate ordered gate. Preserve a passing deployed/one-shot pre-seal
   `readiness:launch` receipt with
@@ -305,6 +306,37 @@ pilots before the role and provider checks pass.
   Postgres-compatible rollback. Require zero duplicate/lost work and
   authorization/data-isolation failures, less than 1% 5xx, public API p95 below
   2 seconds, admin p95 below 3 seconds, and no unbounded queue/lock growth.
+- [ ] Configure `production-monitoring` for protected default `main` only, with
+  unattended execution and no wait timer. Store only reviewed public smoke
+  config plus dedicated low-privilege user/venue smoke credentials. Configure
+  the separate `production-monitoring-alerts` environment for protected default `main` only,
+  with unattended execution, no wait timer, and only
+  `PINTPATH_PRODUCTION_MONITOR_WEBHOOK_URL`; prove it contains no provider,
+  deployment, database, service-role, or other production secrets.
+- [ ] Confirm the external webhook receives
+  `pintpath-production-public-health-heartbeat` only for the
+  `*/15 * * * *` scheduled matrix `publicResult=success` and
+  `authenticatedResult=skipped`, and
+  `pintpath-production-authenticated-health-heartbeat` only for the
+  `7 * * * *` hourly scheduled matrix `publicResult=skipped` and
+  `authenticatedResult=success`. A manual exact-both-success run must emit
+  `pintpath-production-health-manual-check`, which is evidence only and must not
+  reset either scheduled deadman. Every other trigger/result matrix must emit
+  `pintpath-production-health-failed`, page, and leave the notifier failed after
+  delivery. Accept
+  `pintpath-venue-directory-refresh-heartbeat` only for the exact
+  `23 14 * * *` schedule after job success with `directorySchemaReady=true`.
+  A successful schema-ready `workflow_dispatch` must emit
+  `pintpath-venue-directory-refresh-manual-check` and must not reset the daily
+  deadman. Every other refresh trigger/result matrix, including deferred or
+  missing schema, must emit `pintpath-venue-directory-refresh-failed`, page, and
+  leave the notifier failed after delivery.
+- [ ] Configure the external service to page a named primary and backup for
+  failures and independently deadman-monitor the 15-minute public, hourly
+  authenticated, and daily directory-refresh heartbeat streams because GitHub
+  cannot alert if its scheduler never starts. Preserve live acknowledged
+  failure pages and controlled missed-run exercises for each deadman; missing
+  evidence remains a launch blocker.
 - [ ] Confirm named alerts and escalation for `/health`, `/ready`, 5xx,
   deployment failure, Redis failure, deletion-notice manual review/retention
   breach, login/rate-limit spikes, database/volume size, backup age, and enabled
@@ -317,7 +349,8 @@ pilots before the role and provider checks pass.
 **Evidence:** Public-smoke JSON, production provider-readiness JSON, permanent-
 staging pre/post-seal deployed-readiness JSON, sealed-variable metadata JSON,
 deployed SHA, sanitized provider screenshots, key-restriction screenshots,
-Storage/RLS results, monitor test alert, timestamp, and verifier.
+Storage/RLS results, failure-event and heartbeat receipts, live page and
+deadman acknowledgements, timestamp, and verifier.
 
 ## 2. `production_role_smoke`
 
@@ -334,35 +367,76 @@ Storage/RLS results, monitor test alert, timestamp, and verifier.
   Attempt the collision/duplicate path and require it to fail or link to that
   same identity; a second account is a release blocker.
 - [ ] Confirm there is no production Apple OAuth secret or enabled provider. If Apple login is proposed later, assign rotation ownership and implement, test, and evidence authorization-token revocation before enabling it.
-- [ ] Set the dedicated user and venue-manager credentials as protected `production` environment secrets for both hourly **Production Health** and **Pint Path Release Gate**. Use these exact names: `PINTPATH_SMOKE_USER_EMAIL`, `PINTPATH_SMOKE_USER_PASSWORD`, `PINTPATH_SMOKE_VENUE_EMAIL`, and `PINTPATH_SMOKE_VENUE_PASSWORD`. Keep protected `SUPABASE_URL=https://auth.pintpath.au` and the exact reviewed `sb_publishable_...` value in `SUPABASE_ANON_KEY` in that environment too: the smoke script rejects another origin and any legacy, secret, malformed, or whitespace-wrapped key, compares the live public auth config against those pins, and sends no password or protected role request on a mismatch. Do not configure user/venue bearer-token secrets; the workflow creates and revokes disposable sessions at runtime.
+- [ ] For scheduled **Production Health**, set the dedicated user and
+  venue-manager credentials only in `production-monitoring`. Permit protected
+  default `main` only, configure it for unattended execution, and set no wait
+  timer. Use these exact secret names: `PINTPATH_SMOKE_USER_EMAIL`,
+  `PINTPATH_SMOKE_USER_PASSWORD`, `PINTPATH_SMOKE_VENUE_EMAIL`, and
+  `PINTPATH_SMOKE_VENUE_PASSWORD`. Keep only the public Auth configuration
+  `SUPABASE_URL=https://auth.pintpath.au` and the exact reviewed
+  `sb_publishable_...` value in `SUPABASE_ANON_KEY` alongside them. Do not add
+  an admin token, service-role key, provider-write credential, deployment
+  credential, or database credential.
+- [ ] Keep a separate copy of those low-privilege credentials and public Auth
+  pins in `production` for the manual **Pint Path Release Gate** only, under its
+  existing protected policy. The smoke script rejects another origin
+  and any legacy, secret, malformed, or whitespace-wrapped key, compares the
+  live public Auth config against those pins, and sends no password or protected
+  role request on a mismatch. Do not configure user/venue bearer-token secrets;
+  both workflows create and revoke disposable sessions at runtime.
 - [ ] Obtain one short-lived Supabase admin access token through a normal password plus MFA ceremony and confirm its JWT is AAL2. Store it temporarily in a mode-`600` file at `$EVIDENCE_DIR/supabase-admin.token`; never paste it into the checklist or shell history. Do not store the admin password or TOTP seed in GitHub Actions.
-- [ ] Exchange the AAL2 Supabase admin token for a one-use Pint Path app token without printing either token or placing it in a process argument:
+- [ ] Exchange the AAL2 Supabase admin token for a one-use Pint Path app-cookie
+  credential without printing either credential or placing it in a process
+  argument. The response body must not contain an app credential; validate the
+  one exact host-only `Set-Cookie` field before retaining only its value in the
+  protected mode-`600` file:
 
   ```bash
   (
     set -euo pipefail
+    umask 077
     ROLE=admin
     TOKEN_FILE="$EVIDENCE_DIR/supabase-$ROLE.token"
+    HEADER_FILE="$EVIDENCE_DIR/pintpath-$ROLE-exchange.headers"
     RESPONSE_FILE="$EVIDENCE_DIR/pintpath-$ROLE-exchange.json"
+    STATUS_FILE="$EVIDENCE_DIR/pintpath-$ROLE-exchange.status"
     APP_TOKEN_FILE="$EVIDENCE_DIR/pintpath-$ROLE.token"
     EXPIRES_FILE="$EVIDENCE_DIR/pintpath-$ROLE.expires-at"
-    trap 'rm -f "$RESPONSE_FILE" "$APP_TOKEN_FILE" "$EXPIRES_FILE"' EXIT INT TERM
+    trap 'rm -f "$HEADER_FILE" "$RESPONSE_FILE" "$STATUS_FILE" "$APP_TOKEN_FILE" "$EXPIRES_FILE"' EXIT INT TERM
+    test ! -e "$HEADER_FILE" && test ! -e "$RESPONSE_FILE" && test ! -e "$STATUS_FILE"
+    test ! -e "$APP_TOKEN_FILE" && test ! -e "$EXPIRES_FILE"
     jq -nc --rawfile accessToken "$TOKEN_FILE" \
       '{accessToken:($accessToken | gsub("[\\r\\n]+$"; ""))}' \
       | curl --fail-with-body --silent --show-error \
+        --proto '=https' \
+        --max-redirs 0 \
+        --dump-header "$HEADER_FILE" \
+        --output "$RESPONSE_FILE" \
+        --write-out '%{http_code}\n' \
+        -H 'Accept: application/json' \
         -H 'Content-Type: application/json' \
+        -H 'Origin: https://pintpath.au' \
         --data-binary @- \
         https://pintpath.au/api/business/auth/supabase-session \
-        > "$RESPONSE_FILE"
-    jq -er '.data.token' "$RESPONSE_FILE" > "$APP_TOKEN_FILE"
+        > "$STATUS_FILE"
+    test "$(<"$STATUS_FILE")" = 200
+    jq -e '.ok == true and (.data | type == "object") and (.data | has("token") | not)' \
+      "$RESPONSE_FILE" > /dev/null
     jq -er '.data.expiresAt' "$RESPONSE_FILE" > "$EXPIRES_FILE"
-    chmod 600 "$APP_TOKEN_FILE" "$EXPIRES_FILE"
-    rm -f "$RESPONSE_FILE"
+    node scripts/extract-production-app-session-cookie.mjs \
+      "$HEADER_FILE" "$APP_TOKEN_FILE"
+    chmod 600 "$EXPIRES_FILE"
+    rm -f "$HEADER_FILE" "$RESPONSE_FILE" "$STATUS_FILE"
     trap - EXIT INT TERM
   )
   ```
 
-- [ ] Set `PINTPATH_SMOKE_ADMIN_TOKEN` as a `production` environment secret immediately before dispatching the manual gate. For an operator-run capture, load the one-use token and prompt for the lower-privilege credentials without writing them to shell history:
+- [ ] Set `PINTPATH_SMOKE_ADMIN_TOKEN` as a `production` environment secret
+  immediately before dispatching the manual gate. Despite the compatibility
+  name, this value is the raw one-use app-cookie value; the smoke script sends
+  it only as `Cookie: pint_path_session=...`, never as a bearer. For an
+  operator-run capture, load it and prompt for the lower-privilege credentials
+  without writing them to shell history:
 
   ```bash
   export PINTPATH_SMOKE_ADMIN_TOKEN="$(<"$EVIDENCE_DIR/pintpath-admin.token")"

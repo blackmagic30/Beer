@@ -49,7 +49,7 @@
         <p class="muted">Every claim is checked manually. Submitting this form never grants immediate dashboard access.</p>
       </div>
       <div id="claimStatus" class="notice">Choose the venue you work for and use the verified email on your signed-in Pint Path account.</div>
-      <form id="venueClaimForm" class="form venueClaimForm" style="margin-top:16px;">
+      <form id="venueClaimForm" class="form venueClaimForm" method="post" action="/form-submission-unavailable" accept-charset="UTF-8" data-sensitive-native-fallback="non-mutating" style="margin-top:16px;">
         <label class="field">Search venue
           <input id="venueClaimSearch" type="search" placeholder="Type venue name, suburb, or address" autocomplete="off" aria-describedby="venueClaimSearchHint" />
           <span id="venueClaimSearchHint" class="fieldHint">Results are loaded from the server in focused batches.</span>
@@ -173,7 +173,7 @@
                 </div>
                 <span class="pill">Venue scoped</span>
               </div>
-              <form id="counterStaffForm" class="form staffAccessForm">
+              <form id="counterStaffForm" class="form staffAccessForm" method="post" action="/form-submission-unavailable" accept-charset="UTF-8" data-sensitive-native-fallback="non-mutating">
                 <label class="field">Staff member public account ID
                   <input name="accountId" maxlength="32" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="PP-XXXXXXXX" required />
                 </label>
@@ -195,7 +195,7 @@
                 <span class="pill pill--premium">Privacy-safe</span>
               </div>
 
-              <form id="memberPurchaseForm" class="form staffCounterForm">
+              <form id="memberPurchaseForm" class="form staffCounterForm" method="post" action="/form-submission-unavailable" accept-charset="UTF-8" data-sensitive-native-fallback="non-mutating">
                 <div class="staffCounterCodeGrid">
                   <label class="field">Member code
                     <input name="code" maxlength="6" pattern="[A-Za-z0-9]{6}" inputmode="text" autocapitalize="characters" autocomplete="off" spellcheck="false" placeholder="ABC123" required />
@@ -285,7 +285,7 @@
                 </div>
                 <span class="pill">Server validated</span>
               </div>
-              <form id="discountRedemptionForm" class="form redemptionStaffForm">
+              <form id="discountRedemptionForm" class="form redemptionStaffForm" method="post" action="/form-submission-unavailable" accept-charset="UTF-8" data-sensitive-native-fallback="non-mutating">
                 <input name="specialId" type="hidden" />
                 <input name="estimatedSavingsDollars" type="hidden" value="0" />
                 <div class="grid grid--two">
@@ -334,7 +334,7 @@
                   </div>
                   <span class="pill pill--premium">50 points</span>
                 </div>
-                <form id="freePintRewardForm" class="form">
+                <form id="freePintRewardForm" class="form" method="post" action="/form-submission-unavailable" accept-charset="UTF-8" data-sensitive-native-fallback="non-mutating">
                   <label class="field">Reward code
                     <input name="code" maxlength="6" pattern="[A-Za-z0-9]{6}" placeholder="ABC123" required />
                   </label>
@@ -353,7 +353,7 @@
           </section>
 
           <section id="venuePanelProfile" class="tabPanel is-hidden" role="tabpanel" aria-labelledby="venueTabProfile" tabindex="0" data-panel="profile" hidden>
-            <form id="profileForm" class="panel form">
+            <form id="profileForm" class="panel form" method="post" action="/form-submission-unavailable" accept-charset="UTF-8" data-sensitive-native-fallback="non-mutating">
               <div class="sectionHeader">
                 <div>
                   <h2>Venue profile details</h2>
@@ -412,7 +412,7 @@
 
           <section id="venuePanelBeers" class="tabPanel is-hidden" role="tabpanel" aria-labelledby="venueTabBeers" tabindex="0" data-panel="beers" hidden>
             <div class="grid grid--two venueBeerStockGrid">
-              <form id="beerForm" class="panel form">
+              <form id="beerForm" class="panel form" method="post" action="/form-submission-unavailable" accept-charset="UTF-8" data-sensitive-native-fallback="non-mutating">
                 <div class="sectionHeader">
                   <div>
                     <h2>Beers, stock and on tap</h2>
@@ -503,7 +503,7 @@
 
           <section id="venuePanelHappyHours" class="tabPanel is-hidden" role="tabpanel" aria-labelledby="venueTabHappyHours" tabindex="0" data-panel="happy-hours" hidden>
             <div class="grid grid--two">
-              <form id="happyHourForm" class="panel form">
+              <form id="happyHourForm" class="panel form" method="post" action="/form-submission-unavailable" accept-charset="UTF-8" data-sensitive-native-fallback="non-mutating">
                 <h2>Happy hours</h2>
                 <p class="muted">Happy-hour details are saved for internal venue operations and a future reviewed release. They are not shown on the public website or iOS app.</p>
                 <input name="id" type="hidden" />
@@ -557,7 +557,7 @@
               </div>
             </article>
             <div id="specialsEditor" class="grid grid--two">
-              <form id="specialForm" class="panel form">
+              <form id="specialForm" class="panel form" method="post" action="/form-submission-unavailable" accept-charset="UTF-8" data-sensitive-native-fallback="non-mutating">
                 <h2>Pint Path specials</h2>
                 <input name="id" type="hidden" />
                 <label class="field">Special title
@@ -655,7 +655,7 @@
               <div id="monthlyReportStatus" class="reportLoadStatus muted" role="status" aria-live="polite" aria-atomic="true"></div>
               <div id="monthlyReport" class="monthlyReport" aria-busy="false"></div>
               <div id="reportExportStatus" class="notice is-hidden" role="status" aria-live="polite" aria-atomic="true"></div>
-              <form id="reportDeliveryForm" class="panel form reportDeliveryForm" style="margin-top:16px;">
+              <form id="reportDeliveryForm" class="panel form reportDeliveryForm" method="post" action="/form-submission-unavailable" accept-charset="UTF-8" data-sensitive-native-fallback="non-mutating" style="margin-top:16px;">
                 <div class="sectionHeader">
                   <div>
                     <div class="eyebrow">Delivery settings</div>
@@ -686,7 +686,7 @@
                 </div>
                 <a class="button" href="/feedback.html?audience=bars">Open support page</a>
               </div>
-              <form id="venueSupportForm" class="form">
+              <form id="venueSupportForm" class="form" method="post" action="/form-submission-unavailable" accept-charset="UTF-8" data-sensitive-native-fallback="non-mutating">
                 <div class="grid grid--two">
                   <label class="field">Topic
                     <select name="feedbackType">
@@ -5375,12 +5375,17 @@
         venueLogoutButton.disabled = true;
         try {
           await MelbBeerBusiness.apiFetch("/api/business/auth/logout", { method: "POST", body: "{}" });
-        } catch {
-          // Local logout is still useful if the server session already expired.
-        } finally {
           await MelbBeerBusiness.getSupabaseClient()?.auth.signOut({ scope: "local" }).catch(() => null);
+          MelbBeerBusiness.broadcastAuthInvalidation("venue_logout");
           MelbBeerBusiness.setAuthToken(null);
           window.location.assign("/account.html");
+        } catch (error) {
+          venueLogoutButton.disabled = false;
+          MelbBeerBusiness.setStatus(
+            portalAccess,
+            `Logout could not be completed. This venue session may still be active; check your connection and retry.${error?.message ? ` ${error.message}` : ""}`,
+            true,
+          );
         }
       });
 
@@ -5782,7 +5787,7 @@
           target.textContent = "Opening Stripe...";
           MelbBeerBusiness.setStatus(billingStatus, "Opening secure Stripe billing management...");
           try {
-            const result = await MelbBeerBusiness.apiFetch(`/api/business/venue-portal/${encodeURIComponent(selectedVenueId())}/billing/portal`, {
+            const result = await MelbBeerBusiness.sensitiveApiFetch(`/api/business/venue-portal/${encodeURIComponent(selectedVenueId())}/billing/portal`, {
               method: "POST",
               body: "{}",
             });

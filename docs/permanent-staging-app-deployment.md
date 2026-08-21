@@ -4,8 +4,11 @@ Status: **ACTIVE ONLY THROUGH PROTECTED GITHUB ENVIRONMENTS**.
 
 Pint Path has two manual, candidate-bound application source-upload paths:
 
-- `.github/workflows/deploy-permanent-staging.yml` deploys one replica to the
-  pinned permanent-staging environment;
+- `.github/workflows/deploy-permanent-staging.yml` runs exactly two
+  candidate-bound phases in the pinned permanent-staging environment: a
+  `fenced` upload while the service is quiesced at zero replicas, then an
+  `active` closeout after the candidate has been restored at one replica and
+  its worker fence has been activated;
 - `.github/workflows/deploy-production.yml` preserves the pinned production
   environment's exact healthy current topology of either one or two replicas,
   but only after the same candidate is healthy in permanent staging. Initial
@@ -21,12 +24,15 @@ Railway write.
 
 ## Immutable boundary
 
-Both version-4 policies pin Railway project
+The active and fenced version-5 policies pin Railway project
 `48d8c6cd-1c66-4148-874b-20877f48e1a5`, Beer service
 `6816c4a2-e392-4ee5-826f-2584cb599ec0`, exact target/forbidden environment
 IDs, origins and their hashes, allowed replica counts, the committed
 `railway.toml` and `package-lock.json` hashes, and the production/staging
-mutation-boundary policy hash. Staging is locked to one replica. Production
+mutation-boundary policy hash. The fenced staging policy accepts only zero
+replicas and requires automatic maintenance disabled and candidate-bound; the
+active staging policy accepts only one replica and requires automatic
+maintenance enabled and candidate-bound. Production
 accepts only an exact healthy preflight topology of one or two replicas and
 must preserve that observed count across the source upload. The source must be
 the exact clean commit currently at protected `main`, recorded as
@@ -37,6 +43,11 @@ checkouts fetch that exact reviewed head into a candidate-bound local ref before
 validating its tree. They never substitute an ancestry test: a linear
 squash/rebase candidate need not descend from the reviewed head, but their Git
 trees must be exactly equal.
+The permanent-staging workflow pins `PUBLIC_BASE_URL` directly to
+`https://beer-staging.up.railway.app` and verifies that literal against the
+checked-in policy after installing the repository Node runtime. It does not
+accept a mutable GitHub environment variable for the deployment origin.
+The production workflow applies the same rule to `https://pintpath.au`.
 The older capability-pure source-fixture parser is retained only as an offline
 legacy validator and is explicitly superseded by this protected executor; it
 is not a second deployment path.
@@ -105,7 +116,18 @@ The raw protected envelope is not uploaded; the workflow artifact contains
 only its hash-bound authority verification.
 
 Dispatch the relevant workflow from `main` and enter the exact 40-character
-protected-main `candidateSha`. The job checks the dispatch ref/SHA, checkout,
+protected-main `candidateSha`. Permanent staging additionally requires the
+exact phase and prerequisite run IDs. The `fenced` phase consumes the
+candidate's worker-prepare and exact one-to-zero quiescence artifacts. The
+`active` phase consumes the candidate's worker-activation artifact after the
+fenced upload and exact zero-to-one restore. It seals and independently parses
+both the activation terminal and the sibling full-chain
+`prerequisites-verification.json`; scale evidence repeats that check before it
+accepts the active deployment closeout. The shared prerequisite verifier
+downloads each producer archive independently from GitHub, checks its reported
+`sha256:` digest, accepts only the exact allowlisted receipt files, and proves
+complete candidate-window chronology before the deployment job can receive its
+Railway write token. The job checks the dispatch ref/SHA, checkout,
 `origin/main`, clean worktree, GitHub-authenticated merged PR and reviewed-head
 tree, repository gate, current required GitHub checks, and required SHA-bound
 artifacts before it can reach the write step. Production
@@ -168,10 +190,13 @@ requires the deployment, snapshot, active-deployment set, replica count,
 domains, and complete collateral inventory to remain unchanged across those
 runtime probes. The mutation-boundary postflight runs unconditionally.
 
-The workflow uploads a SHA-bound artifact containing only the GitHub gate
-receipt and private execution evidence:
+The workflow uploads a SHA-bound artifact containing only the GitHub gate,
+prerequisite-verification receipt, and private execution evidence:
 
-- `pintpath-permanent-staging-deployment-<candidateSha>`;
+- `pintpath-permanent-staging-fenced-deployment-<candidateSha>` for the
+  zero-replica fenced phase;
+- `pintpath-permanent-staging-deployment-<candidateSha>` for the one-replica
+  active closeout;
 - `pintpath-production-deployment-<candidateSha>`.
 
 The current-main verifier first requires the exact associated merged PR,
@@ -190,24 +215,30 @@ digest-bearing base artifacts `pintpath-mission-discovery-scale-evidence`,
 `pintpath-postgres-tool-runtime-closure-v4-observation`, and
 `pintpath-automated-readiness-evidence`. Production additionally requires
 exactly two successful workflow-dispatch deployments for the same candidate:
-the initial permanent-staging deployment and the post-plan closeout redeploy.
-Both must complete before the one protected two-replica scale/soak run starts;
-the gate selects the second deployment and rejects zero, one, more than two, or
+the fenced zero-replica source upload and the active one-replica closeout. Both
+must complete before the one protected two-replica scale/soak run starts; the
+gate selects the second deployment and rejects zero, one, more than two, or
 ambiguous completion chronology. It also requires the selected deployment and
 scale runs' digest-bearing artifacts and the protected iOS production
 configuration check. The post-deployment release gate requires both the
 same-SHA topology-preserving production source-upload artifact and the separate
 candidate-bound proof that that deployed candidate is exactly two replicas.
 For the initial launch this is a one-replica upload followed by convergence;
-for the evidence-closeout redeploy the upload preserves two replicas and the
-convergence workflow emits its same-SHA `already_converged` proof. Never scale
-the older production deployment before uploading the initial candidate; it may
-still be the SQLite build.
+if the protected convergence run observes that exact candidate already at two
+replicas, it emits the same-SHA `already_converged` proof without another
+write. Never scale the older production deployment before uploading the
+candidate; it may still be the SQLite build.
 
 Receipts hash Railway resource identities, CLI output, runtime responses, and
 pre/postflight evidence. They do not contain Railway tokens or raw provider
-responses. A failed or partial receipt is evidence of uncertainty, not
-permission to retry.
+responses. Every terminal receipt also contains one bounded `failureCode` or
+`null` on success. In particular, `provider_query_failed`,
+`provider_target_mismatch`, `target_preflight_failed`, and
+`git_autodeploy_active` remain distinguishable without retaining an exception,
+response body, provider message, token, hostname discovered outside policy, or
+other provider detail. Any unrecognized exception becomes
+`unexpected_failure`. A failed or partial receipt is evidence of uncertainty,
+not permission to retry.
 
 ## Cost evidence is a separate release gate
 

@@ -26,7 +26,8 @@ concurrency group and the exact current `main` candidate:
 1. `deploy` — deploy and attest the exact candidate;
 2. `scale` — converge the same deployment to exactly two healthy replicas;
 3. `close` — remove only the canonical `pintpath.au` route;
-4. `activation` — after the separately authorized apply has completed while
+4. `activation` (recovery activation, not worker activation) — after the
+   separately authorized apply has completed while
    ingress is closed, capture the post-promotion recovery authorities, recover
    them in a different private network, and prove both disposable providers
    absent;
@@ -34,7 +35,7 @@ concurrency group and the exact current `main` candidate:
    version-2 authority and two post-activation approvals; and
 6. `open` — restore only the canonical route after the exact attestation.
 
-The release verifier enforces
+The release verifier enforces the route/recovery evidence chain
 `deploy→scale→close→activation→promotion-recovery→open`, including
 attempt-one workflow identities, check conclusions, timestamps, artifact IDs,
 GitHub digests, sizes, producer jobs, and candidate-bound canonical receipts.
@@ -44,15 +45,20 @@ digest is not a substitute.
 ## Activation topology and data boundary
 
 Dispatch `.github/workflows/activate-production-promotion-recovery.yml` only
-after deploy, scale, route close, and the separately executed reviewed apply
-have completed and their exact receipts are retained for the later attestor.
+after worker fence, deploy, maintenance LOGIN transition, worker activation,
+scale, route close, and the separately executed reviewed apply have completed
+and their exact receipts are retained for the later attestor.
 The activation workflow does not perform or retry the promotion. It has exactly
 four jobs:
 
 1. `production-capture` runs on
    `[self-hosted, linux, x64, pintpath-production-backup]`. This must be a JIT,
    ephemeral, one-job runner inside the production private network. It creates
-   the schema-v3 logical backup, observes PITR inside this job, captures
+   the schema-v3 logical backup, observes PITR inside this job, and binds that
+   observation to the final active deployment from the authenticated scale
+   receipt. The observer requires the activation prerequisite to map the
+   earlier source-upload deployment to a distinct final active deployment; it
+   never substitutes the upload receipt's superseded deployment ID. It captures
    private Storage plus the nonzero deletion authority, writes the logical and
    private recovery sets to their independently verifiable WORM forms, and
    proves the operational logical copy retrievable. The obsolete separate

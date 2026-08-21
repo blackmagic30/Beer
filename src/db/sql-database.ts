@@ -37,6 +37,12 @@ export interface SqlPoolMetrics {
   totalConnections: number;
   idleConnections: number;
   waitingRequests: number;
+  /** Monotonic count of checkouts that began while the pool was at capacity. */
+  capacityWaitEvents?: number;
+  /** Largest capacity-wait queue observed by this process. */
+  capacityWaitHighWater?: number;
+  /** Monotonic, rounded-up milliseconds spent waiting at pool capacity. */
+  capacityWaitDurationMs?: number;
   completedQueries: number;
   failedQueries: number;
   transactionFailures: number;
@@ -189,6 +195,9 @@ export class AsyncSqliteDatabase implements SqlDatabase {
       totalConnections: this.closed ? 0 : 1,
       idleConnections: this.closed ? 0 : 1,
       waitingRequests: 0,
+      capacityWaitEvents: 0,
+      capacityWaitHighWater: 0,
+      capacityWaitDurationMs: 0,
       completedQueries: this.completedQueries,
       failedQueries: this.failedQueries,
       transactionFailures: this.transactionFailures,
@@ -704,6 +713,7 @@ function postgresRailwayStockLocalhostPoolConnection(
 export class PostgresDatabase implements SqlDatabase {
   readonly dialect = "postgres" as const;
   private readonly pool: Pool;
+  private readonly maxConnections: number;
   private readonly transactionClient = new AsyncLocalStorage<{
     client: PoolClient;
     nextSavepoint: number;
@@ -711,6 +721,9 @@ export class PostgresDatabase implements SqlDatabase {
   private completedQueries = 0;
   private failedQueries = 0;
   private transactionFailures = 0;
+  private capacityWaitEvents = 0;
+  private capacityWaitHighWater = 0;
+  private capacityWaitDurationMs = 0;
   private lastQueryDurationMs: number | null = null;
   private closed = false;
 
@@ -738,10 +751,11 @@ export class PostgresDatabase implements SqlDatabase {
           ),
         }
       : { connectionString: clientUrl };
+    this.maxConnections = options.maxConnections ?? 8;
     const poolConfig: PoolConfig = {
       ...poolConnection,
       application_name: options.applicationName ?? "pint-path",
-      max: options.maxConnections ?? 8,
+      max: this.maxConnections,
       idleTimeoutMillis: options.idleTimeoutMs ?? 30_000,
       connectionTimeoutMillis: options.connectionTimeoutMs ?? 10_000,
       // PostgreSQL processes this fixed startup option before node-postgres
@@ -758,13 +772,87 @@ export class PostgresDatabase implements SqlDatabase {
     });
   }
 
+  private async acquirePoolClient(): Promise<PoolClient> {
+    if (this.closed) throw new Error("Database is closed.");
+    const immediatelyServiceableCheckouts = this.pool.idleCount
+      + Math.max(0, this.maxConnections - this.pool.totalCount);
+    const waitedAtCapacity = this.pool.waitingCount >= immediatelyServiceableCheckouts;
+    const startedAt = performance.now();
+    const pending = this.pool.connect();
+    if (waitedAtCapacity) {
+      this.capacityWaitEvents += 1;
+      this.capacityWaitHighWater = Math.max(
+        this.capacityWaitHighWater,
+        Math.max(
+          0,
+          this.pool.waitingCount
+            - this.pool.idleCount
+            - Math.max(0, this.maxConnections - this.pool.totalCount),
+        ),
+      );
+    }
+    try {
+      return await pending;
+    } finally {
+      if (waitedAtCapacity) {
+        this.capacityWaitDurationMs += Math.max(
+          0,
+          Math.ceil(performance.now() - startedAt),
+        );
+      }
+    }
+  }
+
+  private async withCheckedOutClient<Result>(
+    work: (client: PoolClient) => Promise<Result>,
+    destroyOnWorkError: boolean,
+  ): Promise<Result> {
+    const client = await this.acquirePoolClient();
+    let emittedError: Error | undefined;
+    let workError: unknown;
+    const onError = (error: Error) => {
+      emittedError ??= error;
+    };
+    client.on("error", onError);
+    try {
+      const result = await work(client);
+      if (emittedError) throw emittedError;
+      return result;
+    } catch (error) {
+      workError = error;
+      throw error;
+    } finally {
+      client.removeListener("error", onError);
+      const releaseError = emittedError
+        ?? (destroyOnWorkError && workError !== undefined
+          ? workError instanceof Error ? workError : true
+          : undefined);
+      try {
+        client.release(releaseError);
+      } catch (releaseFailure) {
+        if (workError === undefined) throw releaseFailure;
+      }
+    }
+  }
+
+  private async executePoolQuery<Row extends QueryResultRow>(
+    text: string,
+    values: unknown[],
+  ) {
+    const transactionClient = this.transactionClient.getStore()?.client;
+    if (transactionClient) return transactionClient.query<Row>(text, values);
+    return this.withCheckedOutClient(
+      (client) => client.query<Row>(text, values),
+      true,
+    );
+  }
+
   private async query<Row extends QueryResultRow>(sql: string, bindings: SqlBindings) {
     if (this.closed) throw new Error("Database is closed.");
     const compiled = compilePostgresQuery(sql, bindings);
-    const executor = this.transactionClient.getStore()?.client ?? this.pool;
     const startedAt = performance.now();
     try {
-      const result = await executor.query<Row>(compiled.text, compiled.values);
+      const result = await this.executePoolQuery<Row>(compiled.text, compiled.values);
       this.completedQueries += 1;
       return result;
     } catch (error) {
@@ -817,23 +905,22 @@ export class PostgresDatabase implements SqlDatabase {
           throw error;
         }
       }
-      const client = await this.pool.connect();
-      try {
-        await client.query("BEGIN");
-        const result = await this.transactionClient.run({ client, nextSavepoint: 1 }, work);
-        await client.query("COMMIT");
-        return result;
-      } catch (error) {
-        this.transactionFailures += 1;
+      return this.withCheckedOutClient(async (client) => {
         try {
-          await client.query("ROLLBACK");
-        } catch {
-          // Preserve the original transaction error.
+          await client.query("BEGIN");
+          const result = await this.transactionClient.run({ client, nextSavepoint: 1 }, work);
+          await client.query("COMMIT");
+          return result;
+        } catch (error) {
+          this.transactionFailures += 1;
+          try {
+            await client.query("ROLLBACK");
+          } catch {
+            // Preserve the original transaction error.
+          }
+          throw error;
         }
-        throw error;
-      } finally {
-        client.release();
-      }
+      }, false);
     };
   }
 
@@ -849,6 +936,9 @@ export class PostgresDatabase implements SqlDatabase {
       totalConnections: this.pool.totalCount,
       idleConnections: this.pool.idleCount,
       waitingRequests: this.pool.waitingCount,
+      capacityWaitEvents: this.capacityWaitEvents,
+      capacityWaitHighWater: this.capacityWaitHighWater,
+      capacityWaitDurationMs: this.capacityWaitDurationMs,
       completedQueries: this.completedQueries,
       failedQueries: this.failedQueries,
       transactionFailures: this.transactionFailures,

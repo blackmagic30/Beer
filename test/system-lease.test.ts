@@ -27,4 +27,43 @@ describe("system job leases", () => {
       leaseUntil: "2026-07-15T01:00:00.000Z",
     })).rejects.toThrow(/system_state/i);
   });
+
+  it("renews only the unexpired lease held by the exact owner and token", async () => {
+    database = new BetterSqlite3(":memory:");
+    initializeDatabaseSchema(database);
+    const repository = new SystemStateRepository(asAsyncSqliteDatabase(database));
+    const identity = {
+      key: "lease:evidence_retention",
+      owner: "test-owner",
+      leaseToken: "test-execution-token",
+    } as const;
+
+    await expect(repository.acquireLease({
+      ...identity,
+      now: "2026-07-15T00:00:00.000Z",
+      leaseUntil: "2026-07-15T00:10:00.000Z",
+    })).resolves.not.toBeNull();
+    await expect(repository.renewLease({
+      ...identity,
+      now: "2026-07-15T00:05:00.000Z",
+      leaseUntil: "2026-07-15T00:20:00.000Z",
+    })).resolves.toMatchObject({
+      value: {
+        owner: identity.owner,
+        leaseToken: identity.leaseToken,
+        leaseUntil: "2026-07-15T00:20:00.000Z",
+      },
+    });
+    await expect(repository.renewLease({
+      ...identity,
+      leaseToken: "wrong-token",
+      now: "2026-07-15T00:06:00.000Z",
+      leaseUntil: "2026-07-15T00:30:00.000Z",
+    })).resolves.toBeNull();
+    await expect(repository.renewLease({
+      ...identity,
+      now: "2026-07-15T00:21:00.000Z",
+      leaseUntil: "2026-07-15T00:40:00.000Z",
+    })).resolves.toBeNull();
+  });
 });

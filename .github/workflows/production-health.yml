@@ -60,7 +60,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || github.event.schedule == '7 * * * *'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
-    environment: production
+    environment: production-monitoring
     env:
       PINTPATH_SMOKE_BASE_URL: https://pintpath.au
     steps:
@@ -91,7 +91,7 @@ jobs:
           {
             echo "## Authenticated production monitoring is not configured"
             echo
-            echo "Create dedicated verified user and venue-manager smoke accounts, then set these protected production environment secrets:"
+            echo "Create dedicated verified user and venue-manager smoke accounts, then set these protected production-monitoring environment secrets:"
             echo
             echo "- \`PINTPATH_SMOKE_USER_EMAIL\`"
             echo "- \`PINTPATH_SMOKE_USER_PASSWORD\`"
@@ -126,3 +126,86 @@ jobs:
           PINTPATH_SMOKE_VENUE_EMAIL: ${{ secrets.PINTPATH_SMOKE_VENUE_EMAIL }}
           PINTPATH_SMOKE_VENUE_PASSWORD: ${{ secrets.PINTPATH_SMOKE_VENUE_PASSWORD }}
         run: npm run --silent smoke:production:auth -- --auth-only --roles=user,venue
+
+  notify-production-health:
+    name: Page on failure and emit the deadman heartbeat
+    needs: [public-production-health, authenticated-user-venue-health]
+    if: ${{ always() }}
+    permissions: {}
+    runs-on: ubuntu-24.04
+    environment: production-monitoring-alerts
+    timeout-minutes: 5
+    steps:
+      - name: Send the non-secret monitor signal
+        shell: bash
+        env:
+          MONITOR_WEBHOOK_URL: ${{ secrets.PINTPATH_PRODUCTION_MONITOR_WEBHOOK_URL }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_SCHEDULE: ${{ github.event.schedule }}
+          PUBLIC_RESULT: ${{ needs.public-production-health.result }}
+          AUTHENTICATED_RESULT: ${{ needs.authenticated-user-venue-health.result }}
+        run: |
+          set -euo pipefail
+          set +x
+
+          case "$MONITOR_WEBHOOK_URL" in
+            https://*) ;;
+            *) echo "Production monitor webhook must use HTTPS." >&2; exit 1 ;;
+          esac
+          for result in "$PUBLIC_RESULT" "$AUTHENTICATED_RESULT"; do
+            case "$result" in
+              success|failure|cancelled|skipped) ;;
+              *) echo "Unexpected production health job result." >&2; exit 1 ;;
+            esac
+          done
+
+          monitor="unknown"
+          if [[ "$EVENT_NAME" == "schedule" && "$EVENT_SCHEDULE" == "*/15 * * * *" ]]; then
+            monitor="public"
+          elif [[ "$EVENT_NAME" == "schedule" && "$EVENT_SCHEDULE" == "7 * * * *" ]]; then
+            monitor="authenticated"
+          elif [[ "$EVENT_NAME" == "workflow_dispatch" && -z "$EVENT_SCHEDULE" ]]; then
+            monitor="manual"
+          fi
+
+          if [[ "$monitor" == "public" \
+            && "$PUBLIC_RESULT" == "success" \
+            && "$AUTHENTICATED_RESULT" == "skipped" ]]; then
+            status="success"
+            event="pintpath-production-public-health-heartbeat"
+          elif [[ "$monitor" == "authenticated" \
+            && "$PUBLIC_RESULT" == "skipped" \
+            && "$AUTHENTICATED_RESULT" == "success" ]]; then
+            status="success"
+            event="pintpath-production-authenticated-health-heartbeat"
+          elif [[ "$monitor" == "manual" \
+            && "$PUBLIC_RESULT" == "success" \
+            && "$AUTHENTICATED_RESULT" == "success" ]]; then
+            status="success"
+            event="pintpath-production-health-manual-check"
+          else
+            status="failure"
+            event="pintpath-production-health-failed"
+          fi
+
+          payload="$(printf '{\"schemaVersion\":1,\"event\":\"%s\",\"status\":\"%s\",\"monitor\":\"%s\",\"trigger\":\"%s\",\"schedule\":\"%s\",\"repository\":\"%s\",\"runId\":\"%s\",\"runAttempt\":\"%s\",\"publicResult\":\"%s\",\"authenticatedResult\":\"%s\"}' \
+            "$event" "$status" "$monitor" "$EVENT_NAME" "$EVENT_SCHEDULE" \
+            "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" \
+            "$PUBLIC_RESULT" "$AUTHENTICATED_RESULT")"
+          http_status="$(curl --request POST \
+            --silent --show-error --fail-with-body \
+            --proto '=https' --tlsv1.2 \
+            --connect-timeout 5 --max-time 15 \
+            --retry 2 --retry-delay 1 --retry-all-errors \
+            -H 'content-type: application/json' \
+            --data-binary "$payload" \
+            --output /dev/null --write-out '%{http_code}' \
+            "$MONITOR_WEBHOOK_URL")"
+          case "$http_status" in
+            2??) ;;
+            *) echo "Production monitor webhook returned a non-2xx response." >&2; exit 1 ;;
+          esac
+          if [[ "$status" == "failure" ]]; then
+            echo "::error::Production health failed; the external failure signal was delivered."
+            exit 1
+          fi

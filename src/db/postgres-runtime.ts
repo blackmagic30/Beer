@@ -1,5 +1,6 @@
 import type { QueryResultRow } from "pg";
 
+import { POSTGRES_CONNECTION_BUDGET } from "./postgres-connection-budget.js";
 import {
   POSTGRES_APPLICATION_SCHEMA,
   POSTGRES_OPERATIONS_SCHEMA,
@@ -270,7 +271,7 @@ SELECT
         AND NOT child.rolinherit
         AND NOT child.rolreplication
         AND NOT child.rolbypassrls
-        AND child.rolconnlimit = 8
+        AND child.rolconnlimit = ${POSTGRES_CONNECTION_BUDGET.runtimeLoginConnectionLimit}
         AND child.rolvaliduntil IS NULL
         AND NOT membership.admin_option
         AND NOT membership.inherit_option
@@ -801,7 +802,8 @@ export async function checkPostgresRuntimeReadiness(
         && session.loginCanCreateRole === false
         && session.loginInheritsPrivileges === false
         && session.loginCanReplicate === false
-        && session.loginConnectionLimit === 8
+        && session.loginConnectionLimit
+          === POSTGRES_CONNECTION_BUDGET.runtimeLoginConnectionLimit
         && session.loginValidUntilNull === true
         && rolesMatch(session.loginMemberships, [POSTGRES_RUNTIME_ROLE])
         && session.loginMembershipOptionsExact === true

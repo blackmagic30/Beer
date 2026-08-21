@@ -5,6 +5,10 @@ import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 
+import {
+  POSTGRES_CONNECTION_BUDGET,
+  type PostgresApplicationPoolLabel,
+} from "../src/db/postgres-connection-budget.js";
 import { railwayDeploymentIdentityIdSha256 } from "../src/lib/railway-deployment-identity.js";
 import { isRestoreRehearsalEnvironment } from "./lib/operator-mutation-guard.js";
 
@@ -44,6 +48,7 @@ export type LoadSoakRunFailureCode =
   | "lost_write_failure"
   | "isolation_failure"
   | "replica_participation_failed"
+  | "postgres_pool_evidence_failed"
   | "internal_failure";
 
 export interface PermanentStagingLoadConfiguration {
@@ -112,7 +117,7 @@ export interface LoadRouteReport {
 }
 
 export interface PermanentStagingLoadReport {
-  readonly schemaVersion: 1;
+  readonly schemaVersion: 2;
   readonly kind: "pintpath_permanent_staging_load_soak";
   readonly passed: boolean;
   readonly profile: PermanentStagingLoadProfile;
@@ -126,6 +131,7 @@ export interface PermanentStagingLoadReport {
   readonly targetIdentitySha256: string;
   readonly writeFixtureSha256: string;
   readonly expectedCommitSha: string;
+  readonly deploymentIdSha256: string | null;
   readonly thresholds: {
     readonly http5xxRatio: number;
     readonly http5xxLimitExclusive: 0.01;
@@ -138,9 +144,24 @@ export interface PermanentStagingLoadReport {
     readonly isolationFailures: number;
   };
   readonly replicas: {
-    readonly expectedMinimum: number;
+    readonly expectedCount: number;
     readonly observedCount: number;
     readonly replicaIdSha256s: readonly string[];
+  };
+  readonly postgresPoolMetrics: {
+    readonly readinessSamples: number;
+    readonly observedReplicaCount: number;
+    readonly replicaIdSha256s: readonly string[];
+    readonly pools: readonly {
+      readonly label: PostgresApplicationPoolLabel;
+      readonly maxConnections: number;
+      readonly samples: number;
+      readonly maxWaitingRequests: number | null;
+      readonly minAvailableConnections: number | null;
+      readonly maxCapacityWaitEvents: number | null;
+      readonly maxCapacityWaitHighWater: number | null;
+      readonly maxCapacityWaitDurationMs: number | null;
+    }[];
   };
   readonly journeys: {
     readonly writeCyclesAttempted: number;
@@ -188,6 +209,30 @@ const MAX_RESPONSE_BYTES = 1024 * 1024;
 const HTTP_5XX_LIMIT_EXCLUSIVE = 0.01 as const;
 const PUBLIC_P95_LIMIT_EXCLUSIVE_MS = 2_000 as const;
 const ADMIN_P95_LIMIT_EXCLUSIVE_MS = 3_000 as const;
+const POSTGRES_POOL_LABELS = Object.freeze([
+  "runtime",
+  "maintenance_work",
+  "maintenance_readiness",
+] as const satisfies readonly PostgresApplicationPoolLabel[]);
+const POSTGRES_POOL_MAX_CONNECTIONS = Object.freeze({
+  runtime: POSTGRES_CONNECTION_BUDGET.runtimePoolMaxConnectionsPerProcess,
+  maintenance_work:
+    POSTGRES_CONNECTION_BUDGET.maintenanceWorkPoolMaxConnectionsPerProcess,
+  maintenance_readiness:
+    POSTGRES_CONNECTION_BUDGET.maintenanceReadinessPoolMaxConnectionsPerProcess,
+} satisfies Readonly<Record<PostgresApplicationPoolLabel, number>>);
+const POSTGRES_POOL_METRIC_KEYS = Object.freeze([
+  "availableConnections",
+  "capacityWaitDurationMs",
+  "capacityWaitEvents",
+  "capacityWaitHighWater",
+  "connectionCreationHeadroom",
+  "idleConnections",
+  "label",
+  "maxConnections",
+  "totalConnections",
+  "waitingRequests",
+] as const);
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const COMMIT_SHA_PATTERN = /^[a-f0-9]{40}$/;
 const SAFE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/;
@@ -782,6 +827,20 @@ interface RunContext {
   readonly dependencies: PermanentStagingLoadDependencies;
   readonly metrics: LoadMetrics;
   readonly replicaDigests: Set<string>;
+  readonly expectedReplicaDigests: Set<string>;
+  deploymentIdSha256: string | null;
+  readonly postgresPoolMetrics: {
+    readinessSamples: number;
+    readonly replicaDigests: Set<string>;
+    readonly byLabel: Map<PostgresApplicationPoolLabel, {
+      samples: number;
+      maxWaitingRequests: number | null;
+      minAvailableConnections: number | null;
+      maxCapacityWaitEvents: number | null;
+      maxCapacityWaitHighWater: number | null;
+      maxCapacityWaitDurationMs: number | null;
+    }>;
+  };
   readonly runId: string;
   readonly journeys: {
     writeCyclesAttempted: number;
@@ -813,14 +872,15 @@ async function executeRequest(input: {
   body?: unknown;
   expectedStatuses?: readonly number[];
   closeConnection?: boolean;
+  recordMetrics?: boolean;
 }): Promise<RequestOutcome> {
   const { context, route } = input;
-  const metric = context.metrics.get(route);
-  metric.requests += 1;
+  const metric = input.recordMetrics === false ? null : context.metrics.get(route);
+  if (metric) metric.requests += 1;
   const started = context.dependencies.monotonicNow();
   const requestUrl = new URL(route.path, context.configuration.targetOrigin);
   if (requestUrl.origin !== context.configuration.targetOrigin) {
-    metric.contractFailures += 1;
+    if (metric) metric.contractFailures += 1;
     return { status: 0, payload: null, successful: false };
   }
   try {
@@ -836,10 +896,12 @@ async function executeRequest(input: {
     });
     const latency = Math.max(0, context.dependencies.monotonicNow() - started);
     const status = response.status;
-    if (status >= 200 && status < 300) metric.http2xx += 1;
-    else if (status >= 400 && status < 500) metric.http4xx += 1;
-    else if (status >= 500 && status < 600) metric.http5xx += 1;
-    else metric.otherHttp += 1;
+    if (metric) {
+      if (status >= 200 && status < 300) metric.http2xx += 1;
+      else if (status >= 400 && status < 500) metric.http4xx += 1;
+      else if (status >= 500 && status < 600) metric.http5xx += 1;
+      else metric.otherHttp += 1;
+    }
 
     const expectedStatuses = input.expectedStatuses ?? [200];
     if (!expectedStatuses.includes(status)) {
@@ -850,14 +912,16 @@ async function executeRequest(input: {
     try {
       payload = await readBoundedJson(response);
     } catch {
-      metric.contractFailures += 1;
+      if (metric) metric.contractFailures += 1;
       return { status, payload: null, successful: false };
     }
-    metric.successfulLatenciesMs.push(latency);
+    if (metric) metric.successfulLatenciesMs.push(latency);
     return { status, payload, successful: true };
   } catch (error) {
-    if (requestTimedOut(error)) metric.timeouts += 1;
-    else metric.networkErrors += 1;
+    if (metric) {
+      if (requestTimedOut(error)) metric.timeouts += 1;
+      else metric.networkErrors += 1;
+    }
     return { status: 0, payload: null, successful: false };
   }
 }
@@ -866,12 +930,150 @@ function validReplicaDigest(value: unknown): value is string {
   return typeof value === "string" && SHA256_PATTERN.test(value);
 }
 
+function hasExactOwnKeys(
+  value: Record<string, unknown>,
+  expected: readonly string[],
+): boolean {
+  const actual = Object.keys(value).sort();
+  return actual.length === expected.length
+    && actual.every((key, index) => key === expected[index]);
+}
+
+function isNonNegativeSafeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+function rejectPostgresPoolMetrics(
+  context: RunContext,
+  preflight: boolean,
+): never {
+  context.metrics.contractFailure(ROUTES.ready);
+  throw new LoadSoakRunAbort(
+    preflight ? "target_preflight_failed" : "postgres_pool_evidence_failed",
+  );
+}
+
+function validatePostgresPoolMetrics(
+  context: RunContext,
+  outcome: RequestOutcome,
+  preflight: boolean,
+): void {
+  if (!outcome.successful) rejectPostgresPoolMetrics(context, preflight);
+  const data = nestedData(outcome.payload);
+  const deployment = data && isRecord(data.deployment) ? data.deployment : null;
+  const dependencies = data && isRecord(data.dependencies) ? data.dependencies : null;
+  const database = dependencies && isRecord(dependencies.database)
+    ? dependencies.database
+    : null;
+  const metrics = database?.poolMetrics;
+  if (
+    !deployment
+    || !validReplicaDigest(deployment.replicaIdSha256)
+    || database?.status !== "ok"
+    || !Array.isArray(metrics)
+    || metrics.length !== POSTGRES_POOL_LABELS.length
+  ) {
+    rejectPostgresPoolMetrics(context, preflight);
+  }
+
+  const parsed = new Map<PostgresApplicationPoolLabel, {
+    waitingRequests: number;
+    availableConnections: number;
+    capacityWaitEvents: number;
+    capacityWaitHighWater: number;
+    capacityWaitDurationMs: number;
+  }>();
+  for (const candidate of metrics) {
+    if (!isRecord(candidate) || !hasExactOwnKeys(candidate, POSTGRES_POOL_METRIC_KEYS)) {
+      rejectPostgresPoolMetrics(context, preflight);
+    }
+    const label = candidate.label;
+    if (
+      typeof label !== "string"
+      || !POSTGRES_POOL_LABELS.includes(label as PostgresApplicationPoolLabel)
+      || parsed.has(label as PostgresApplicationPoolLabel)
+    ) {
+      rejectPostgresPoolMetrics(context, preflight);
+    }
+    const typedLabel = label as PostgresApplicationPoolLabel;
+    const expectedMaximum = POSTGRES_POOL_MAX_CONNECTIONS[typedLabel];
+    if (
+      candidate.maxConnections !== expectedMaximum
+      || !isNonNegativeSafeInteger(candidate.totalConnections)
+      || !isNonNegativeSafeInteger(candidate.idleConnections)
+      || !isNonNegativeSafeInteger(candidate.waitingRequests)
+      || !isNonNegativeSafeInteger(candidate.capacityWaitEvents)
+      || !isNonNegativeSafeInteger(candidate.capacityWaitHighWater)
+      || !isNonNegativeSafeInteger(candidate.capacityWaitDurationMs)
+      || !isNonNegativeSafeInteger(candidate.connectionCreationHeadroom)
+      || !isNonNegativeSafeInteger(candidate.availableConnections)
+      || candidate.totalConnections > expectedMaximum
+      || candidate.idleConnections > candidate.totalConnections
+      || candidate.connectionCreationHeadroom
+        !== expectedMaximum - candidate.totalConnections
+      || candidate.availableConnections
+        !== candidate.idleConnections + candidate.connectionCreationHeadroom
+      || candidate.capacityWaitHighWater > candidate.capacityWaitEvents
+      || (candidate.capacityWaitEvents === 0 && (
+        candidate.capacityWaitHighWater !== 0 || candidate.capacityWaitDurationMs !== 0
+      ))
+    ) {
+      rejectPostgresPoolMetrics(context, preflight);
+    }
+    parsed.set(typedLabel, {
+      waitingRequests: candidate.waitingRequests,
+      availableConnections: candidate.availableConnections,
+      capacityWaitEvents: candidate.capacityWaitEvents,
+      capacityWaitHighWater: candidate.capacityWaitHighWater,
+      capacityWaitDurationMs: candidate.capacityWaitDurationMs,
+    });
+  }
+  if (parsed.size !== POSTGRES_POOL_LABELS.length) {
+    rejectPostgresPoolMetrics(context, preflight);
+  }
+
+  context.postgresPoolMetrics.readinessSamples += 1;
+  context.postgresPoolMetrics.replicaDigests.add(deployment.replicaIdSha256);
+  let waitingObserved = false;
+  for (const label of POSTGRES_POOL_LABELS) {
+    const sample = parsed.get(label)!;
+    const summary = context.postgresPoolMetrics.byLabel.get(label)!;
+    summary.samples += 1;
+    summary.maxWaitingRequests = Math.max(
+      summary.maxWaitingRequests ?? 0,
+      sample.waitingRequests,
+    );
+    summary.minAvailableConnections = Math.min(
+      summary.minAvailableConnections ?? sample.availableConnections,
+      sample.availableConnections,
+    );
+    summary.maxCapacityWaitEvents = Math.max(
+      summary.maxCapacityWaitEvents ?? 0,
+      sample.capacityWaitEvents,
+    );
+    summary.maxCapacityWaitHighWater = Math.max(
+      summary.maxCapacityWaitHighWater ?? 0,
+      sample.capacityWaitHighWater,
+    );
+    summary.maxCapacityWaitDurationMs = Math.max(
+      summary.maxCapacityWaitDurationMs ?? 0,
+      sample.capacityWaitDurationMs,
+    );
+    waitingObserved ||= sample.waitingRequests > 0
+      || sample.capacityWaitEvents > 0
+      || sample.capacityWaitHighWater > 0
+      || sample.capacityWaitDurationMs > 0;
+  }
+  if (waitingObserved) rejectPostgresPoolMetrics(context, preflight);
+}
+
 function validateDeploymentResponse(
   context: RunContext,
   route: RouteDefinition,
   outcome: RequestOutcome,
   expectedStatus: "ok" | "ready",
   preflight: boolean,
+  recordReplicaParticipation = true,
 ): void {
   if (!outcome.successful) {
     if (preflight) throw new LoadSoakRunAbort("target_preflight_failed");
@@ -893,13 +1095,31 @@ function validateDeploymentResponse(
       === context.configuration.targetEnvironmentIdSha256
     && deployment.serviceIdSha256
       === context.configuration.targetServiceIdSha256
+    && validReplicaDigest(deployment.deploymentIdSha256)
     && validReplicaDigest(deployment.replicaIdSha256),
   );
   if (!valid || !deployment || !validReplicaDigest(deployment.replicaIdSha256)) {
     context.metrics.contractFailure(route);
     throw new LoadSoakRunAbort(preflight ? "target_preflight_failed" : "target_identity_changed");
   }
-  context.replicaDigests.add(deployment.replicaIdSha256);
+  if (context.deploymentIdSha256 === null) {
+    context.deploymentIdSha256 = deployment.deploymentIdSha256 as string;
+  } else if (deployment.deploymentIdSha256 !== context.deploymentIdSha256) {
+    context.metrics.contractFailure(route);
+    throw new LoadSoakRunAbort("target_identity_changed");
+  }
+  if (recordReplicaParticipation) {
+    if (
+      context.expectedReplicaDigests.size === context.configuration.expectedReplicaCount
+      && !context.expectedReplicaDigests.has(deployment.replicaIdSha256)
+    ) {
+      throw new LoadSoakRunAbort("target_identity_changed");
+    }
+    context.replicaDigests.add(deployment.replicaIdSha256);
+    if (context.replicaDigests.size > context.configuration.expectedReplicaCount) {
+      throw new LoadSoakRunAbort("replica_participation_failed");
+    }
+  }
 }
 
 function validatePublicConfig(context: RunContext, outcome: RequestOutcome, preflight: boolean): void {
@@ -970,6 +1190,7 @@ async function executeLoadRoute(context: RunContext, route: RouteDefinition): Pr
   if (route === ROUTES.ready) {
     const outcome = await executeRequest({ context, route, closeConnection: true });
     validateDeploymentResponse(context, route, outcome, "ready", false);
+    validatePostgresPoolMetrics(context, outcome, false);
     return;
   }
   if (route === ROUTES.config) {
@@ -1009,9 +1230,45 @@ function accountIdentity(outcome: RequestOutcome): { id: string; role: string } 
 
 async function preflight(context: RunContext): Promise<void> {
   const health = await executeRequest({ context, route: ROUTES.health, closeConnection: true });
-  validateDeploymentResponse(context, ROUTES.health, health, "ok", true);
+  validateDeploymentResponse(context, ROUTES.health, health, "ok", true, false);
   const ready = await executeRequest({ context, route: ROUTES.ready, closeConnection: true });
-  validateDeploymentResponse(context, ROUTES.ready, ready, "ready", true);
+  validateDeploymentResponse(context, ROUTES.ready, ready, "ready", true, false);
+  validatePostgresPoolMetrics(context, ready, true);
+  const initialData = nestedData(ready.payload);
+  const initialDeployment = initialData && isRecord(initialData.deployment)
+    ? initialData.deployment
+    : null;
+  if (!initialDeployment || !validReplicaDigest(initialDeployment.replicaIdSha256)) {
+    rejectPostgresPoolMetrics(context, true);
+  }
+  context.expectedReplicaDigests.add(initialDeployment.replicaIdSha256);
+  const maximumReplicaDiscoveryAttempts = context.configuration.expectedReplicaCount * 16;
+  for (
+    let attempt = 0;
+    context.expectedReplicaDigests.size < context.configuration.expectedReplicaCount
+      && attempt < maximumReplicaDiscoveryAttempts;
+    attempt += 1
+  ) {
+    const replicaReady = await executeRequest({
+      context,
+      route: ROUTES.ready,
+      closeConnection: true,
+      recordMetrics: false,
+    });
+    validateDeploymentResponse(context, ROUTES.ready, replicaReady, "ready", true, false);
+    validatePostgresPoolMetrics(context, replicaReady, true);
+    const replicaData = nestedData(replicaReady.payload);
+    const replicaDeployment = replicaData && isRecord(replicaData.deployment)
+      ? replicaData.deployment
+      : null;
+    if (!replicaDeployment || !validReplicaDigest(replicaDeployment.replicaIdSha256)) {
+      rejectPostgresPoolMetrics(context, true);
+    }
+    context.expectedReplicaDigests.add(replicaDeployment.replicaIdSha256);
+  }
+  if (context.expectedReplicaDigests.size !== context.configuration.expectedReplicaCount) {
+    rejectPostgresPoolMetrics(context, true);
+  }
   validatePublicConfig(context, await executeRequest({ context, route: ROUTES.config }), true);
   validateAdminStatus(
     context,
@@ -1028,6 +1285,34 @@ async function preflight(context: RunContext): Promise<void> {
     context.metrics.contractFailure(ROUTES.account);
     throw new LoadSoakRunAbort("credential_scope_invalid");
   }
+}
+
+async function postflightPostgresPoolEvidence(
+  context: RunContext,
+  expectedReplicas: ReadonlySet<string>,
+): Promise<void> {
+  const observedReplicas = new Set<string>();
+  const maximumAttempts = context.configuration.expectedReplicaCount * 16;
+  for (let attempt = 0; attempt < maximumAttempts; attempt += 1) {
+    const ready = await executeRequest({
+      context,
+      route: ROUTES.ready,
+      closeConnection: true,
+      recordMetrics: false,
+    });
+    validateDeploymentResponse(context, ROUTES.ready, ready, "ready", false, false);
+    const data = nestedData(ready.payload);
+    const deployment = data && isRecord(data.deployment) ? data.deployment : null;
+    if (deployment && validReplicaDigest(deployment.replicaIdSha256)) {
+      if (!expectedReplicas.has(deployment.replicaIdSha256)) {
+        throw new LoadSoakRunAbort("target_identity_changed");
+      }
+      observedReplicas.add(deployment.replicaIdSha256);
+    }
+    validatePostgresPoolMetrics(context, ready, false);
+    if (observedReplicas.size === expectedReplicas.size) return;
+  }
+  rejectPostgresPoolMetrics(context, false);
 }
 
 function submissionPayload(context: RunContext, clientSubmissionId: string): Record<string, unknown> {
@@ -1252,13 +1537,26 @@ function buildReport(input: {
   if (context.journeys.duplicateFailures > 0) failures.add("duplicate_write_failure");
   if (context.journeys.lostWriteFailures > 0) failures.add("lost_write_failure");
   if (context.journeys.isolationFailures > 0) failures.add("isolation_failure");
-  if (context.replicaDigests.size < context.configuration.expectedReplicaCount) {
+  if (
+    context.replicaDigests.size !== context.configuration.expectedReplicaCount
+    || [...context.replicaDigests].some((digest) => !context.expectedReplicaDigests.has(digest))
+  ) {
     failures.add("replica_participation_failed");
   }
+  if (
+    context.postgresPoolMetrics.readinessSamples === 0
+    || context.postgresPoolMetrics.replicaDigests.size
+      !== context.configuration.expectedReplicaCount
+  ) {
+    failures.add("postgres_pool_evidence_failed");
+  }
   const replicaIdSha256s = [...context.replicaDigests].sort();
+  const postgresPoolReplicaIdSha256s = [
+    ...context.postgresPoolMetrics.replicaDigests,
+  ].sort();
   const failureCodes = [...failures].sort();
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: "pintpath_permanent_staging_load_soak",
     passed: failureCodes.length === 0,
     profile: context.configuration.profile,
@@ -1272,6 +1570,7 @@ function buildReport(input: {
     targetIdentitySha256: context.configuration.targetIdentitySha256,
     writeFixtureSha256: context.configuration.writeFixtureSha256,
     expectedCommitSha: context.configuration.expectedCommitSha,
+    deploymentIdSha256: context.deploymentIdSha256,
     thresholds: {
       http5xxRatio: Math.round(http5xxRatio * 1_000_000) / 1_000_000,
       http5xxLimitExclusive: HTTP_5XX_LIMIT_EXCLUSIVE,
@@ -1284,9 +1583,27 @@ function buildReport(input: {
       isolationFailures: context.journeys.isolationFailures,
     },
     replicas: {
-      expectedMinimum: context.configuration.expectedReplicaCount,
+      expectedCount: context.configuration.expectedReplicaCount,
       observedCount: replicaIdSha256s.length,
       replicaIdSha256s,
+    },
+    postgresPoolMetrics: {
+      readinessSamples: context.postgresPoolMetrics.readinessSamples,
+      observedReplicaCount: postgresPoolReplicaIdSha256s.length,
+      replicaIdSha256s: postgresPoolReplicaIdSha256s,
+      pools: POSTGRES_POOL_LABELS.map((label) => {
+        const summary = context.postgresPoolMetrics.byLabel.get(label)!;
+        return {
+          label,
+          maxConnections: POSTGRES_POOL_MAX_CONNECTIONS[label],
+          samples: summary.samples,
+          maxWaitingRequests: summary.maxWaitingRequests,
+          minAvailableConnections: summary.minAvailableConnections,
+          maxCapacityWaitEvents: summary.maxCapacityWaitEvents,
+          maxCapacityWaitHighWater: summary.maxCapacityWaitHighWater,
+          maxCapacityWaitDurationMs: summary.maxCapacityWaitDurationMs,
+        };
+      }),
     },
     journeys: { ...context.journeys },
     totals,
@@ -1308,6 +1625,23 @@ export async function runPermanentStagingLoadSoak(
     dependencies,
     metrics: new LoadMetrics(),
     replicaDigests: new Set(),
+    expectedReplicaDigests: new Set(),
+    deploymentIdSha256: null,
+    postgresPoolMetrics: {
+      readinessSamples: 0,
+      replicaDigests: new Set(),
+      byLabel: new Map(POSTGRES_POOL_LABELS.map((label) => [
+        label,
+        {
+          samples: 0,
+          maxWaitingRequests: null,
+          minAvailableConnections: null,
+          maxCapacityWaitEvents: null,
+          maxCapacityWaitHighWater: null,
+          maxCapacityWaitDurationMs: null,
+        },
+      ])),
+    },
     runId: dependencies.randomBytes(12).toString("hex"),
     journeys: {
       writeCyclesAttempted: 0,
@@ -1324,6 +1658,15 @@ export async function runPermanentStagingLoadSoak(
     await preflight(context);
     await executeWriteJourney(context, 0);
     await executeTimedProfile(context);
+    if (
+      context.replicaDigests.size !== context.configuration.expectedReplicaCount
+      || [...context.replicaDigests].some(
+        (digest) => !context.expectedReplicaDigests.has(digest),
+      )
+    ) {
+      throw new LoadSoakRunAbort("replica_participation_failed");
+    }
+    await postflightPostgresPoolEvidence(context, context.expectedReplicaDigests);
     profileCompleted = true;
   } catch (error) {
     abortCode = error instanceof LoadSoakRunAbort ? error.code : "internal_failure";
@@ -1357,7 +1700,7 @@ async function runCli(): Promise<0 | 1 | 2> {
   } catch (error) {
     const failureCode = error instanceof LoadSoakConfigurationError ? error.code : "internal_failure";
     process.stdout.write(`${JSON.stringify({
-      schemaVersion: 1,
+      schemaVersion: 2,
       kind: "pintpath_permanent_staging_load_soak",
       passed: false,
       failureCodes: [failureCode],

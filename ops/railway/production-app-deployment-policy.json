@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "pintpath-railway-application-deployment-policy/v4",
+  "schemaVersion": "pintpath-railway-application-deployment-policy/v5",
   "policyId": "pintpath-production-app-source-upload",
   "activationState": "GITHUB_ENVIRONMENT_PROTECTED",
   "projectId": "48d8c6cd-1c66-4148-874b-20877f48e1a5",
@@ -74,11 +74,14 @@
     "expectedDeploymentStopped": false,
     "deploymentPatchAllowed": false,
     "replicaCountMustMatchPreflight": true,
+    "runtimeProbeRequired": true,
     "requiredRuntimeRoutes": [
       "/health",
       "/startup",
       "/ready"
     ],
+    "automaticMaintenanceEnabled": false,
+    "automaticMaintenanceCandidateBindingRequired": true,
     "maximumObservationSeconds": 900,
     "pollIntervalSeconds": 10
   },
@@ -86,8 +89,8 @@
     "target": "permanent-staging",
     "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
     "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0",
-    "publicOrigin": "https://pintpath-staging.up.railway.app",
-    "publicOriginSha256": "4532dc3b87deb570735196a86cd1b75ddc490c752dd6993e2f0d7bcb7df8161b",
+    "publicOrigin": "https://beer-staging.up.railway.app",
+    "publicOriginSha256": "fd458490dc9821b10681db486f980de7ec0d8b684f5dce4f7a5659a582df2910",
     "expectedReplicaCount": 1,
     "sameCandidateRequired": true
   },
@@ -98,6 +101,15 @@
     "maximumAgeSeconds": 86400,
     "candidateBindingRequired": true,
     "allChecksPassRequired": true
+  },
+  "workerFencePrerequisiteContract": {
+    "required": true,
+    "verificationSchema": "pintpath-production-deployment-worker-fence-prerequisite/v1",
+    "verificationFilename": "production-deployment-worker-fence-verification.json",
+    "exactFenceRunBindingRequired": true,
+    "liveDeploymentContinuityRequired": true,
+    "durableIntentBindingRequired": true,
+    "terminalReceiptBindingRequired": true
   },
   "costContract": {
     "required": false,

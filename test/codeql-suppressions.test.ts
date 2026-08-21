@@ -12,7 +12,10 @@ const EXPECTED_ALERT_LINE = new Map<string, RegExp>([
     "js/missing-rate-limiting",
     /(?:app|router)\.(?:get|post|delete|put|patch)\(|^}, async \(_req, res, next\) => \{$/,
   ],
-  ["js/user-controlled-bypass", /if \(!rawBody \|\| !signature\)/],
+  [
+    "js/user-controlled-bypass",
+    /if \((?:!rawBody \|\| !signature|browserEmailChallenge !== null)\)/,
+  ],
 ]);
 
 function sourceFiles(directory = "src"): string[] {
@@ -64,16 +67,16 @@ describe("CodeQL source suppressions", () => {
     expect(Object.fromEntries([...counts].sort())).toEqual({
       "js/file-system-race": 14,
       "js/insufficient-password-hash": 2,
-      "js/missing-rate-limiting": 10,
-      "js/user-controlled-bypass": 1,
+      "js/missing-rate-limiting": 13,
+      "js/user-controlled-bypass": 2,
     });
-    // The hosted 010694c analysis reported 26 alerts at these 25 exact source
+    // The hosted 010694c analysis plus alerts 192-195 reported 30 alerts at 29 exact source
     // locations (the Stripe guard produced two findings on the same line).
     expect(Object.fromEntries([...sameLineCounts].sort())).toEqual({
       "js/file-system-race": 14,
       "js/insufficient-password-hash": 2,
-      "js/missing-rate-limiting": 8,
-      "js/user-controlled-bypass": 1,
+      "js/missing-rate-limiting": 11,
+      "js/user-controlled-bypass": 2,
     });
   });
 });

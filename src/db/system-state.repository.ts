@@ -37,6 +37,10 @@ export interface ReleaseSystemLeaseInput {
   now: string;
 }
 
+export interface RenewSystemLeaseInput extends ReleaseSystemLeaseInput {
+  leaseUntil: string;
+}
+
 interface SystemStateRow {
   valueJson: unknown;
   updatedAt: unknown;
@@ -119,6 +123,24 @@ const releasePostgresSystemLease = `/* system-state:release-lease:postgres */
             updated_at AS "updatedAt",
             revision`;
 
+const renewPostgresSystemLease = `/* system-state:renew-lease:postgres */
+  UPDATE system_state
+     SET value_json = @valueJson::jsonb,
+         updated_at = @now::timestamptz,
+         revision = @revision
+   WHERE key = @key
+     AND jsonb_typeof(value_json) = 'object'
+     AND jsonb_typeof(value_json -> 'owner') = 'string'
+     AND jsonb_typeof(value_json -> 'leaseToken') = 'string'
+     AND jsonb_typeof(value_json -> 'leaseUntil') = 'string'
+     AND value_json ->> 'owner' = @owner
+     AND value_json ->> 'leaseToken' = @leaseToken
+     AND pg_input_is_valid(value_json ->> 'leaseUntil', 'timestamp with time zone')
+     AND (value_json ->> 'leaseUntil')::timestamptz > @now::timestamptz
+  RETURNING value_json AS "valueJson",
+            updated_at AS "updatedAt",
+            revision`;
+
 const acquireSqliteSystemLease = `/* system-state:acquire-lease:sqlite */
   INSERT INTO system_state (key, value_json, updated_at, revision)
   VALUES (@key, @valueJson, @now, @revision)
@@ -167,14 +189,39 @@ const releaseSqliteSystemLease = `/* system-state:release-lease:sqlite */
             updated_at AS "updatedAt",
             revision`;
 
+const renewSqliteSystemLease = `/* system-state:renew-lease:sqlite */
+  UPDATE system_state
+     SET value_json = @valueJson,
+         updated_at = @now,
+         revision = @revision
+   WHERE key = @key
+     AND json_valid(value_json) = 1
+     AND json_type(value_json) = 'object'
+     AND json_type(value_json, '$.owner') = 'text'
+     AND json_type(value_json, '$.leaseToken') = 'text'
+     AND json_type(value_json, '$.leaseUntil') = 'text'
+     AND json_extract(value_json, '$.owner') = @owner
+     AND json_extract(value_json, '$.leaseToken') = @leaseToken
+     AND length(json_extract(value_json, '$.leaseUntil')) = 24
+     AND json_extract(value_json, '$.leaseUntil') GLOB
+       '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9].[0-9][0-9][0-9]Z'
+     AND strftime('%Y-%m-%dT%H:%M:%fZ', json_extract(value_json, '$.leaseUntil'))
+       = json_extract(value_json, '$.leaseUntil')
+     AND json_extract(value_json, '$.leaseUntil') > @now
+  RETURNING value_json AS "valueJson",
+            updated_at AS "updatedAt",
+            revision`;
+
 export const systemStateRepositoryQueries = Object.freeze({
   getSystemState,
   setSystemState,
   createSystemState,
   updateSystemState,
   acquirePostgresSystemLease,
+  renewPostgresSystemLease,
   releasePostgresSystemLease,
   acquireSqliteSystemLease,
+  renewSqliteSystemLease,
   releaseSqliteSystemLease,
 });
 
@@ -401,6 +448,36 @@ export class SystemStateRepository {
       leaseToken: input.leaseToken,
       valueJson: serializeJsonObject(value),
       now: input.now,
+      revision,
+    });
+    return row ? this.normalizeMutation<SystemLeaseValue>(row, input.now, revision) : null;
+  }
+
+  async renewLease(
+    input: RenewSystemLeaseInput,
+  ): Promise<SystemStateRecord<SystemLeaseValue> | null> {
+    this.assertLeaseIdentity(input);
+    assertCanonicalTimestamp("now", input.now);
+    assertCanonicalTimestamp("leaseUntil", input.leaseUntil);
+    if (input.leaseUntil <= input.now) {
+      throw new Error("leaseUntil must be after now.");
+    }
+    const value: SystemLeaseValue = {
+      owner: input.owner,
+      leaseToken: input.leaseToken,
+      leaseUntil: input.leaseUntil,
+    };
+    const revision = createRevision(input.now);
+    const query = this.database.dialect === "postgres"
+      ? systemStateRepositoryQueries.renewPostgresSystemLease
+      : systemStateRepositoryQueries.renewSqliteSystemLease;
+    const row = await this.database.prepare(query).get<SystemStateRow>({
+      key: input.key,
+      owner: input.owner,
+      leaseToken: input.leaseToken,
+      valueJson: serializeJsonObject(value),
+      now: input.now,
+      leaseUntil: input.leaseUntil,
       revision,
     });
     return row ? this.normalizeMutation<SystemLeaseValue>(row, input.now, revision) : null;

@@ -13,7 +13,9 @@ rollback, route, backup, PITR, delete, destroy, or teardown instruction anywhere
 in this runbook is non-executable unless a tracked one-operation executor owns
 the immediate `readiness:railway:mutation-boundary` preflight, the one exact
 reviewed write, and an unconditional postflight. The standalone boundary
-command is read-only, and the checked-in incident baseline intentionally fails.
+command is read-only. The checked-in immutable baseline is pass-capable only
+while the live provider state matches every exact policy pin; a passing receipt
+still does not authorize a mutation.
 Do not use dashboard **Deploy**, Git autodeploy, an ad-hoc CLI/API command, or
 commit/discard an unrelated staged patch to bypass this stop.
 
@@ -81,14 +83,20 @@ never share production or permanent-staging credentials or data paths.
 
 ### Frozen post-promotion recovery boundary
 
-The release chronology is exactly
-`deploy→scale→close→activation→promotion-recovery→open`. The controlling
+The route/recovery evidence chronology remains exactly
+`deploy→scale→close→recovery-activation→promotion-recovery→open`. Before its
+deploy stage, the production worker fence must pass; between deploy and scale,
+the maintenance LOGIN 2→8 transition and candidate-bound worker activation
+must pass. Those prerequisite receipts are embedded in the deployment and
+scale artifacts rather than added as substitutable route/recovery stages. The controlling
 promotion-recovery policy is schema v2 with SHA-256
 `57f66c1c9dde912586ec510e37c28cc3dfea2c098e67c78edbea189c7dcc9988`.
 
 Activation is one four-job workflow. `production-capture` runs on the JIT
 `pintpath-production-backup` runner in the production private network and
-performs PITR observation, logical/private capture, operational-copy proof, and
+performs PITR observation bound through the scale receipt from the source-upload
+deployment to the distinct final active deployment, logical/private capture,
+operational-copy proof, and
 separate logical/private WORM sealing. `disposable-recover` runs on the distinct
 JIT `pintpath-disposable-recovery` runner in the disposable private network,
 separately reads both WORM authorities, restores them, replays deletion twice,
@@ -179,6 +187,9 @@ The remaining launch blockers require live/external completion:
 - correct all malformed structured addresses;
 - enable PITR, prove a usable recovery point, and restrict production database network access;
 - configure and dispatch the protected daily status workflow, then connect its failure threshold to the real on-call page;
+- configure the separated unattended Production Health/monitor-alert
+  environments, route both scheduled workflows into the external on-call
+  service, and pass the live failure-page and missing-heartbeat exercises;
 - build and rehearse the immutable Postgres-compatible rollback artifact;
 - a clean candidate commit, current remote CI/CodeQL, an authenticated merged
   PR with exact reviewed/candidate tree equality, and required branch protections;
@@ -825,8 +836,20 @@ permanent staging, and a new candidate.
    `SUPABASE_SERVICE_ROLE_KEY`, and `GOOGLE_PLACES_API_KEY`.
 2. Require a production-environment reviewer who is not the workflow
    dispatcher.
-3. Connect workflow failure to the real on-call paging integration. A GitHub
-   warning or failed check without a page is not sufficient.
+3. Connect the notifier's `pintpath-venue-directory-refresh-failed` event to the
+   real on-call page and its `pintpath-venue-directory-refresh-heartbeat` event
+   to an independent daily deadman monitor. Only the exact `23 14 * * *`
+   schedule with job success and `directorySchemaReady=true` may emit that
+   heartbeat. A successful schema-ready manual dispatch emits
+   `pintpath-venue-directory-refresh-manual-check` and must not reset the daily
+   deadman. Every other trigger/result matrix, including deferred or missing
+   schema, emits `pintpath-venue-directory-refresh-failed` and pages. A GitHub
+   warning, failed check, or blocked start without an external page is not
+   sufficient. After delivering a failure event, the notifier must exit nonzero
+   so the workflow remains failed. Keep the
+   provider/database mutation job under its existing protected policy; only its
+   provider-credential-free, webhook-only notifier uses the unattended
+   `production-monitoring-alerts` environment described in Phase 16.7.
 4. Dispatch the workflow from the exact protected `main` SHA and require both
    its dry run and write run to check every existing Place ID successfully.
 5. Preserve the Actions log containing the target-pinned transition manifest
@@ -936,6 +959,16 @@ ownership. Each pool activates the fixed NOLOGIN role through the PostgreSQL
 startup packet before exposing a backend, and readiness requires exact
 `session_user` login authority plus `current_user=pintpath_runtime`.
 
+Each process may open at most two runtime sessions. The exact launch budget is
+two steady replicas times two overlapping deployment generations, or four
+processes; `4 * 2 = 8` therefore exhausts, but never exceeds, the shared runtime
+LOGIN limit. This is paired with separate one-slot maintenance work and
+readiness pools per process and a maintenance LOGIN limit of 8, for 16
+application sessions during a rolling replacement. Complete the
+expand/contract procedure and live global-capacity
+proof in [the PostgreSQL connection-budget transition](postgres-connection-budget-transition.md)
+before deploying this change or converging to two replicas.
+
 Both application URLs must name the same exact lower-case Railway private
 `*.railway.internal:5432` authority and contain only `sslmode=verify-full`.
 Configure the exact stock root certificate PEM and its independently reviewed
@@ -962,7 +995,7 @@ membership is `pintpath_maintenance`, put its same-database TLS URL in
 `pintpath_migrator`, `pintpath_ops`, function, sequence, INSERT, role-creation,
 database-creation, temporary-object, superuser, replication, inheritance, role
 setting, ownership, default-privilege, or RLS-bypass authority. The login must
-be `LOGIN NOINHERIT NOREPLICATION CONNECTION LIMIT 2`; its one direct PG17
+be `LOGIN NOINHERIT NOREPLICATION CONNECTION LIMIT 8`; its one direct PG17
 membership is `pintpath_maintenance` with `ADMIN FALSE`, `INHERIT FALSE`, and
 `SET TRUE`, and its only permitted direct ACL dependency is the current
 database `CONNECT` grant; `CREATE` and `TEMP` on that database must both be
@@ -1048,13 +1081,21 @@ list, candidate freeze is blocked.
 
 - [ ] Site URL and exact HTTPS web callback for OAuth, email confirmation, and password recovery verified. The first-release iOS app has no custom URL callback; after completing an email link in the browser, the user returns to the app and signs in.
 - [ ] Email confirmation and custom SMTP tested.
+- [ ] Browser sensitive-action email reauthentication tested with the exact
+      account-derived email, `shouldCreateUser:false`, the active app cookie,
+      exact purpose, ten-minute challenge expiry, replay denial, and AAL2 when
+      any verified provider factor exists. Prove an OAuth-only account remains
+      the same Supabase user and is never silently converted into a password
+      account.
 - [ ] Native Google and Apple providers absent from the first-release archive.
 - [ ] Starting with an existing Google-only web account, use the approved email
       recovery/set-password path, then sign in on iOS and prove the same Supabase
       user ID and Pint Path account/public ID are retained. Reject any duplicate
       identity/account result and test an email-collision attempt explicitly.
 - [ ] Leaked-password protection enabled.
-- [ ] Admin MFA/AAL2 enforced.
+- [ ] Admin MFA/AAL2 enforced, including a live service-role factor-list check
+      that denies stale app-side AAL2 after the final factor is removed and
+      fails closed when Supabase factor authority is unavailable.
 - [ ] Every exposed table has explicit grants and RLS.
 - [ ] Storage policies deny source evidence to public clients.
 - [ ] Capture a short-lived Supabase access JWT before deleting a sacrificial
@@ -1426,9 +1467,11 @@ Required result:
 
 Before pushing the candidate, configure **GitHub Settings → Branches → `main` protection** to:
 
-- require a pull request;
-- require at least one approval from someone other than the author;
-- dismiss stale approvals after new commits;
+- require a pull request and protected linear merge of the exact non-draft,
+  same-repository reviewed head;
+- do not require human PR approval under the current solo-owner policy; if an
+  independent-review requirement is enabled later, require an eligible
+  non-author reviewer and dismiss stale approvals after new commits;
 - require every review conversation to be resolved;
 - require status checks and an up-to-date branch;
 - require `build-test-scan`, `supabase-database`, `release-readiness`, CodeQL, and iOS;
@@ -1446,8 +1489,15 @@ Configure **GitHub Settings → Environments → `production`** to:
 - allow protected branches only;
 - require a reviewer who is not the deployer;
 - prevent self-review where the plan supports it;
-- store production smoke credentials only in that environment;
+- store the manual release gate's one-use admin token and its copy of the
+  low-privilege smoke credentials only in that environment;
 - use a review wait timer if required by the launch owner.
+
+Do not use `production` for scheduled **Production Health**. Phase 16.7
+configures separate unattended, default-branch-only monitoring and alert
+environments so scheduled probes and failure pages start without a gate or wait
+timer. This does not change the existing protected policy for release,
+deployment, provider, database, or route mutations.
 
 Required checks must report for every protected PR. The candidate native
 workflow is now unfiltered so its `ios` job reports on evidence-only PRs as
@@ -1495,13 +1545,15 @@ These later required launch gates cannot be PR checks because their protected
 workflows accept only the exact current `main` SHA:
 
 - after the protected merge and before production deployment: exactly two
-  successful `Deploy permanent staging` runs for `candidateSha`—the initial run
-  and closeout redeploy—followed by `Scale 1→2, prove, and converge 2→1`, with
+  successful `Deploy permanent staging` runs for `candidateSha`—the fenced
+  zero-replica upload and active one-replica closeout—followed by `Scale 1→2,
+  prove, and converge 2→1`, with
   the selected second deployment and scale artifacts, plus `iOS protected
   production configuration archive`;
-- after production deployment: `Deploy protected production`, then `Converge
-  exact production deployment to two replicas`, with both exact-`candidateSha`
-  artifacts.
+- for production: worker `fence`, `Deploy protected production`, maintenance
+  LOGIN 2→8, worker `activate`, then `Converge exact production deployment to
+  two replicas`, with the fence/role/activation proofs bound into both exact-
+  `candidateSha` deployment and scale artifacts.
 
 The release-candidate verifier resolves each required check with
 `filter=all&check_name=...`, then binds it to the workflow path, event, check
@@ -1528,7 +1580,7 @@ Android is not a required-check, release-evidence, or full-launch gate for this
 web+iOS release. It remains an informational repository-health job, but neither
 `android_release` nor an Android store build belongs in the launch evidence.
 
-After the pre-merge PR checks and approval:
+After the pre-merge PR checks and exact reviewed-head verification:
 
 ```bash
 reviewedPrHeadSha="$(git rev-parse HEAD)"
@@ -1728,13 +1780,14 @@ auto-discard drift. Railway Git autodeploy must be disabled before Phase 16.1;
 the application predeploy hook runs too late to prevent a stale environment
 patch from creating a deployment.
 
-The current boundary policy intentionally fails after the 2026-08-10
-production Postgres redeploy and mutable-tag re-resolution. Do not edit it
-merely to make the gate green. Rebaseline only after the incident is explicitly
-accepted, Postgres data-level readiness and recovery authority are proven, and
-the production image source is immutable. The protected application
-source-upload executor is implemented, but it cannot bypass that non-passing
-preflight. Protected successors also exist for the exact production canonical
+Commit #51 refreshed the boundary after the 2026-08-10 production Postgres
+redeploy by pinning the exact deployment, snapshot, immutable image source, and
+resolved digest. The policy is now pass-capable only while the observed
+provider state matches those pins. Do not edit it merely to make a drifted gate
+green; any later redeploy, source change, digest change, or staged patch must
+remain blocked until it is explicitly reviewed and exactly reauthorized. The
+protected application source-upload executor cannot bypass a failed preflight.
+Protected successors also exist for the exact production canonical
 route close/open pair, reviewed runtime/provider
 variables, Supabase legacy-key cutover, the staging Postgres build canary,
 bounded staging/production scale, Postgres HA/PITR enable-and-verify, and exact
@@ -1857,29 +1910,68 @@ in Phase 16.6 have passed independent retrieval and restore proof.
 
 ### 16.5 Deploy the exact protected `main` build with enrolment disabled
 
-First dispatch the protected
+First complete the protected permanent-staging worker bootstrap for
+`deploymentSha`. Dispatch
+[`Configure candidate-bound automatic-maintenance worker fence`](../.github/workflows/configure-automatic-maintenance-worker-fence.yml)
+with staging `prepare`; then dispatch
+[`Bootstrap permanent-staging worker fence`](../.github/workflows/bootstrap-permanent-staging-worker-fence.yml)
+with `quiesce` to prove the legacy deployment changes exactly from one replica
+to zero. Dispatch
 [`Deploy Pint Path permanent staging`](../.github/workflows/deploy-permanent-staging.yml)
-workflow from `main` with `candidate_sha=deploymentSha`. This is the initial
-same-candidate staging deployment. After its exact-SHA check and artifact pass,
-execute the complete Phase 12 staging and rollback plan against that deployed
-tree, then dispatch the same workflow once more for `deploymentSha` as the
-closeout redeploy. There must be exactly these two successful same-candidate
-deployment runs. Both must complete before the protected staging scale proof
-starts; the release gate selects the second closeout run and rejects zero, one,
-more than two, or ambiguous same-candidate successes. All provider/Auth/Storage,
-data, two-replica, restart, rolling-deploy, iOS, and rollback evidence must bind
-`deploymentSha`; any implementation change requires a new candidate and
-protected merge. Only then dispatch the protected
+with phase `fenced`, supplying the exact prepare and quiesce run IDs. Restore
+the candidate exactly from zero to one through the bootstrap workflow, require
+all three runtime routes to report disabled and candidate-bound automatic
+maintenance, then dispatch staging `activate`. Finally dispatch the staging
+deployment workflow with phase `active` and the exact activation run ID. The
+shared verifier must authenticate every producer artifact, GitHub digest,
+receipt, and completion-before-start edge before any consumer receives its
+provider token.
+
+There must be exactly these two successful same-candidate staging deployment
+runs: the fenced zero-replica source upload and active one-replica closeout.
+Both must complete before the protected staging scale proof starts; the release
+gate selects the second closeout run and rejects zero, one, more than two, or
+ambiguous same-candidate successes. Execute the complete Phase 12 staging,
+load/soak, rolling-replacement, and rollback plan against that deployed tree.
+All provider/Auth/Storage, data, two-replica, restart, rolling-deploy, iOS, and
+rollback evidence must bind `deploymentSha`; any implementation change requires
+a new candidate and protected merge.
+
+Only then begin the production chain. First prove the current production
+bootstrap topology is exactly one healthy replica and obtain the external,
+sanitized authority showing the old SQLite application is detached from the
+target Postgres and cannot run a Postgres maintenance scheduler. Dispatch
+[`Configure candidate-bound automatic-maintenance worker fence`](../.github/workflows/configure-automatic-maintenance-worker-fence.yml)
+with production `fence`; it writes disabled plus `deploymentSha` without a
+deploy and emits the immutable fence artifact. Dispatch
 [`Deploy Pint Path protected production`](../.github/workflows/deploy-production.yml)
-workflow with the same value. For this initial launch, first prove the current
-production bootstrap topology is exactly one healthy replica; the upload
-preserves that one-replica topology and proves the candidate without scaling.
-Only after that artifact passes, dispatch the candidate-bound
+with that exact fence run ID and confirmation
+`DEPLOY_PRODUCTION_<deploymentSha>_AFTER_FENCE_RUN_<fenceRunId>`. The workflow
+independently authenticates the fence archive and its unchanged deployment ID;
+the executor binds the verification into its durable intent and receipt and
+rechecks that deployment immediately before the source upload. The upload
+preserves the one-replica topology and proves the candidate with automatic
+maintenance disabled and candidate-bound.
+
+After the source-upload artifact passes, dispatch
+[`Transition protected production Postgres maintenance LOGIN limit`](../.github/workflows/transition-production-postgres-maintenance-role-limit.yml)
+in `apply` mode with the exact fence and deployment run IDs. Its private runner
+may change only `privacy_maintenance_login` from connection limit 2 to 8 after
+exact catalog, capacity, and artifact preflight. If acknowledgement is
+uncertain, use only the original-run-bound read-only `reconcile` mode; never
+repeat the apply write. Supply the successful apply run ID to production
+`activate` in the worker workflow. Activation independently authenticates the
+role intent, terminal, receipt, and full fence→deploy→role chain, then rechecks
+the exact live deployment before enabling candidate-bound workers.
+
+Only after the activation artifact passes, dispatch the candidate-bound
 [`Converge Pint Path production to two replicas`](../.github/workflows/production-converge-two-replicas.yml)
-workflow with `candidate_sha=deploymentSha` and the exact confirmation
-`CONVERGE_PRODUCTION_TO_TWO_REPLICAS`. The workflow supplies that same
-candidate internally as the expected deployed SHA; there is no separate
-operator-controlled deployment-SHA input.
+workflow with `candidate_sha=deploymentSha`, the exact activation run ID, and
+confirmation `CONVERGE_PRODUCTION_TO_TWO_REPLICAS`. Its verifier authenticates
+the complete role→activate chain, and the scale executor binds that receipt and
+requires the live deployment ID to equal activation postflight before changing
+topology. The workflow supplies that same candidate internally as the expected
+deployed SHA; there is no separate operator-controlled deployment-SHA input.
 Never scale the older production deployment first: it may still be the
 authoritative SQLite build. These exact workflow files are the only
 application-deployment operator paths; similarly named dashboard or local CLI
@@ -2105,7 +2197,28 @@ PINTPATH_DATA_STRICT=true \
   npm run readiness:data
 ```
 
-Dispatch **Production Health** at `deploymentSha` through the protected `production` GitHub environment. Do not run protected credentials in a local shell:
+Before dispatching **Production Health**, configure these two GitHub
+environments:
+
+1. `production-monitoring` permits only protected default `main`, is configured
+   for unattended execution with no wait timer, and contains only `SUPABASE_URL`,
+   `SUPABASE_ANON_KEY`, `PINTPATH_SMOKE_USER_EMAIL`,
+   `PINTPATH_SMOKE_USER_PASSWORD`, `PINTPATH_SMOKE_VENUE_EMAIL`, and
+   `PINTPATH_SMOKE_VENUE_PASSWORD`. The URL and publishable key are reviewed
+   public smoke configuration; the accounts are dedicated low-privilege
+   synthetic user and venue-manager accounts. Do not add admin, provider-write,
+   deployment, database, or service-role credentials.
+2. `production-monitoring-alerts` permits only protected default `main`, is
+   configured for unattended execution with no wait timer, and contains only
+   `PINTPATH_PRODUCTION_MONITOR_WEBHOOK_URL`. Do not add provider, deployment,
+   database, smoke-account, or other production secrets. This environment is
+   shared only by the provider-credential-free, webhook-only Production Health
+   and Venue Directory Status Refresh notifier jobs.
+
+Keep the `production` environment for the manual **Pint Path Release Gate** and
+mutation workflows under their existing protected policy. Dispatch
+**Production Health** at `deploymentSha` from protected default `main`; do not
+load monitoring credentials or the webhook into a local shell:
 
 ```bash
 git fetch origin main
@@ -2124,7 +2237,38 @@ test "$(
 gh run watch "$PINTPATH_PRODUCTION_HEALTH_RUN_ID" --exit-status
 ```
 
-Require public health plus configured verified user and venue-manager role smoke. The environment must require a reviewer who is not the deployer. Missing credentials or a skipped authenticated job is not a pass.
+For this manual dispatch, require public health plus configured verified user
+and venue-manager role smoke. Missing credentials or a skipped job is not a
+pass. The exact both-success matrix must deliver
+`pintpath-production-health-manual-check`; the external service records it as
+manual evidence but must not use it to reset either scheduled deadman.
+
+For scheduled runs, the workflow must deliver:
+
+- `pintpath-production-public-health-heartbeat` only for the
+  `*/15 * * * *` trigger with `publicResult=success` and
+  `authenticatedResult=skipped`;
+- `pintpath-production-authenticated-health-heartbeat` only for the
+  `7 * * * *` trigger with `publicResult=skipped` and
+  `authenticatedResult=success`; and
+- `pintpath-production-health-failed` immediately for every other
+  trigger/result matrix, followed by a nonzero notifier exit after delivery.
+
+Both monitoring environments must start unattended and without a wait timer so
+schedules and failure delivery cannot be held at an environment gate.
+
+Configure the external service to page a named primary and backup from failure
+events. Use distinct deadman monitors for the 15-minute public heartbeat and
+hourly authenticated heartbeat; never let a public or manual event check in the
+authenticated deadman, and never let an authenticated or manual event check in
+the public deadman. Keep the daily directory-refresh heartbeat on its own
+deadman, and never let a directory manual-check event reset it. GitHub cannot
+call the webhook when its scheduler never starts, so
+GitHub's failed-run status is not a substitute for these external
+missing-heartbeat alarms. Before go/no-go, preserve evidence of live pages
+acknowledged through the primary/backup escalation path and controlled
+missed-run exercises for all three deadman monitors. Any missing exercise is a
+launch blocker.
 
 Keep this ingress in non-marketed observation mode only after the strict data
 check and protected role smoke pass. If either check fails, immediately restore
@@ -2208,7 +2352,7 @@ the release gate while the closeout route is absent.
 
 ### 17.3 Run strict authenticated evidence through the protected environment
 
-Create a fresh, one-use MFA/AAL2 admin smoke token only after the production-environment reviewer is ready. Enter it interactively into the protected environment; never print or pass it on a command line:
+Create a fresh, one-use MFA/AAL2 admin app-cookie credential only after the production-environment reviewer is ready, using the exact cookie-only exchange procedure in `docs/external-launch-signoffs.md`. Enter its raw cookie value interactively into the protected environment; never print or pass it on a command line. The compatibility secret name remains `PINTPATH_SMOKE_ADMIN_TOKEN`, but the smoke script transports that value only in `Cookie: pint_path_session=...`, never in `Authorization`:
 
 ```bash
 gh secret set PINTPATH_SMOKE_ADMIN_TOKEN --env production
@@ -2236,7 +2380,7 @@ The **Pint Path Release Gate** must:
 - run the public production smoke and require `/health` and `/ready`;
 - match the live deployment SHA and exact launch-flag state;
 - run public and authenticated user, venue, and admin smoke;
-- revoke temporary direct smoke sessions;
+- revoke temporary cookie-backed smoke sessions;
 - enforce the immutable strict data values;
 - execute `npm run release:evidence:strict` and enforce the web-and-iOS release evidence;
 - upload the sealed-variable/mutation-boundary, data, role-smoke, evidence, and tested-SHA artifacts.
@@ -2302,7 +2446,9 @@ Repeat:
   `PINTPATH_EXPECTED_COMMERCIAL_LAUNCH_ENABLED=false`, and
   `PINTPATH_EXPECTED_COMMIT_SHA="$deployedMainSha"`;
 - the strict data command from Phase 16;
-- a fresh protected Production Health dispatch;
+- a fresh unattended, default-branch **Production Health** dispatch with a
+  delivered `pintpath-production-health-manual-check` that does not reset either
+  scheduled deadman;
 - the one-use admin-token ceremony and **Pint Path Release Gate** dispatch; its
   workflow contract hard-codes the expected commercial launch state to `false`
   and exposes no operator override;
@@ -2340,7 +2486,15 @@ Release web traffic progressively and monitor:
 - backup age and next restore rehearsal;
 - unsubscribe failures, complaint rate, and support volume.
 
-Run public health continuously and strict data daily. Run the complete target-pinned venue status refresh daily; never allow more than six days between successful complete runs. Keep the named operator on call for the first 72 hours.
+Run public health continuously and strict data daily. Require every invalid
+Production Health trigger/result matrix to generate the immediate external
+failure event. Watch the separate 15-minute public and hourly authenticated
+deadmans; manual checks must reset neither. Run the complete target-pinned venue
+status refresh daily, require its failure event on any non-passing or
+schema-deferred result, and watch its independent heartbeat deadman. A manual
+directory check must not reset that deadman. Never allow more than six days
+between successful complete runs. Keep the named primary and backup operators
+on call for the first 72 hours.
 
 ## Rollback triggers and exact order
 
@@ -2422,7 +2576,9 @@ The release is **go** only when every item is true for the same `releaseId`,
       terminals pass in the exact 18-leaf/20-file activation;
 - [ ] Postgres-compatible rollback build and rehearsal pass without SQLite writes;
 - [ ] complete Place-ID refresh, target pin, transitions, and 24-hour launch freshness pass;
-- [ ] daily monitored status refresh and five-/six-/seven-day alerts pass;
+- [ ] daily monitored status refresh, exact-schedule schema-ready-only
+      heartbeat, non-heartbeating manual checks, immediate failure event,
+      deadman exercise, and five-/six-/seven-day alerts pass;
 - [ ] reviewed Postgres production price-promotion tool, dry run, publication, evidence, and rollback manifest pass;
 - [ ] every trusted public row has durable evidence;
 - [ ] strict data gate passes independently for every marketed suburb;
@@ -2449,7 +2605,11 @@ The release is **go** only when every item is true for the same `releaseId`,
       physical devices, external TestFlight, and App Review pass;
 - [ ] Apple membership, Account Holder/backup access, agreements, compliance
       review, app ownership, and crash-threshold evidence pass;
-- [ ] strict release evidence and protected authenticated smoke pass;
+- [ ] strict release evidence and protected manual authenticated smoke pass;
+- [ ] unattended scheduled Production Health, immediate failure delivery,
+      distinct public/authenticated heartbeats and deadmans, non-heartbeating
+      manual checks, named primary/backup paging, a live acknowledged page, and
+      both missing-heartbeat exercises pass;
 - [ ] a fresh candidate-bound provider-observed permanent-staging-only cost
       receipt proves a recurring upper bound of at most `5000` integer USD cents,
       with complete Railway, staging Supabase, and external-provider caps and no

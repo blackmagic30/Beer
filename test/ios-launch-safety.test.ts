@@ -225,7 +225,7 @@ describe("iOS launch safety", () => {
     expect(androidAPI).not.toContain(
       'effectiveApiBaseUrl() + "/reset-password.html"',
     );
-    expect(callback).toContain('hash.get("type") === "recovery"');
+    expect(callback).toContain('callbackType === "recovery"');
     expect(callback).toContain(
       "MelbBeerBusiness.markPasswordRecoverySession(result.account?.id)",
     );

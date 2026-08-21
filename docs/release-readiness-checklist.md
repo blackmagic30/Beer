@@ -105,9 +105,11 @@ production Postgres deployment, snapshot, source, and resolved image digest
 remain bound. It does not execute or authorize a mutation. Railway Git autodeploy,
 dashboard **Deploy**, and ordinary CLI redeploy remain disabled; a tracked
 executor must repeat the boundary before and after its one closed operation.
-The checked-in incident baseline is intentionally non-passing until the
-production recovery and immutable-source reauthorization are separately
-reviewed.
+Commit #51 refreshed the checked-in baseline with the exact production
+Postgres deployment, snapshot, immutable source, and resolved digest. It is
+pass-capable only while live provider state matches those pins; any later drift
+requires separate review and exact reauthorization rather than a permissive
+policy edit.
 
 GitHub keeps these two signals deliberately separate:
 
@@ -117,8 +119,8 @@ GitHub keeps these two signals deliberately separate:
 The informational evidence command exits successfully when the evidence file is structurally valid, but its JSON keeps `launchReady: false` until every required sign-off passes. Its `incomplete` array names the accountable owner and exact next action for every open gate. Only the strict command is a launch gate.
 
 Permanent-staging rollout requires exactly two successful workflow-dispatch
-deployments of the same current protected-main candidate: the initial deployment
-and the post-plan closeout redeploy. Both complete before the scale run starts;
+deployments of the same current protected-main candidate: the fenced
+zero-replica upload and the active one-replica closeout. Both complete before the scale run starts;
 the verifier selects the second deployment and rejects any other count or
 ambiguous completion order.
 
@@ -233,7 +235,7 @@ Immediately before manually dispatching **Pint Path Release Gate**, also set thi
 PINTPATH_SMOKE_ADMIN_TOKEN
 ```
 
-The admin token must be a fresh Pint Path session created from a currently MFA-verified Supabase AAL2 admin session. Do not store an admin password or TOTP seed in Actions. The release gate revokes this one-use admin session after the check. Never commit credentials or print them in logs/evidence notes.
+Despite the compatibility name, this secret must contain the raw value from one exact host-only `pint_path_session` cookie created from a currently MFA-verified Supabase AAL2 admin session. The smoke script sends it only in the `Cookie` header, never as a bearer. Do not store an admin password or TOTP seed in Actions. The release gate revokes this one-use admin session after the check. Never commit credentials or print them in logs/evidence notes.
 
 ## Synthetic Data
 
@@ -282,9 +284,9 @@ These are launch-critical but require provider/staging verification:
   Missing/extra/shared-shadow rows, reference drift, an unsealed row, or use of
   `railway run` keeps this blocker open.
 - **Railway mutation boundary:** Keep production and staging staged patches
-  empty, disable Git autodeploy, replace mutable production database image
-  authority with an independently approved immutable source, then use only the
-  exact protected workflow implemented for the requested operation. The
+  empty, disable Git autodeploy, preserve the independently approved immutable
+  production database image authority, then use only the exact protected
+  workflow implemented for the requested operation. The
   standalone read-only receipt cannot close this blocker or authorize an
   unlisted mutation by itself.
 - **Permanent-staging cost ceiling:** Authorized finance/infra operators capture
@@ -297,7 +299,7 @@ These are launch-critical but require provider/staging verification:
   unknown, unpriced, shared, or unbounded resource keeps launch blocked. The
   receipt is a post-deployment release gate and cannot authorize deployment.
 - **Supabase OAuth:** Google provider credentials, web redirect URLs, the provider callback, and email-confirmation behavior must be verified. Supabase should allow `https://pintpath.au/auth/callback`; the Google console should allow the callback derived from `SUPABASE_URL`, for example `https://auth.pintpath.au/auth/v1/callback`. Set `SUPABASE_OAUTH_PROVIDERS=google` and prove Apple is disabled. The first-release iOS app is email/password only, declares no custom URL scheme, and uses the HTTPS callback for email confirmation/password recovery.
-- **Supabase Auth security:** Enable leaked-password protection before public launch.
+- **Supabase Auth security:** Enable leaked-password protection before public launch. Prove browser access/refresh tokens never enter localStorage, sessionStorage, a fixed SDK BroadcastChannel, logs, or ordinary Pint Path requests. Exercise the server-bound sensitive-action email link for a Google-only account with exact cookie/account/purpose binding, `shouldCreateUser:false`, expiry/replay denial, MFA step-up, and no identity/provider downgrade. Prove production admin access rechecks the authoritative verified-factor list and fails closed after factor removal or provider lookup failure.
 - **Supabase live access audit:** Apply the final Data API retirement migration, then prove live that `anon` and `authenticated` have zero privileges on public tables, sequences, RPCs, and private helpers. RLS remains defence in depth; only the Express service, using its server-only service role, may access application data. Local SQL parsing is not a substitute for live privilege and denial proof.
 - **Supabase database version:** Confirm the live project is not on deprecated Postgres 14 before launch.
 - **Supabase Data API retirement:** Prove direct PostgREST/Data API reads, writes, RPCs, and storage-object access are denied to ordinary clients while the documented Express API paths still work. Future migrations must not add public grants unless a separately reviewed access contract explicitly reintroduces them.
@@ -306,8 +308,23 @@ These are launch-critical but require provider/staging verification:
   Postgres persistence adapter before candidate freeze. Permanent staging and
   production must use a least-privilege pooled TLS `DATABASE_URL`, at least two
   application replicas, shared Redis, migration/reconciliation proof, and a
-  Postgres-compatible rollback build. A mounted SQLite file is migration input
-  only and fails this gate.
+  Postgres-compatible rollback build. Require the strict post-transition pool
+  contract: runtime 2/process with LOGIN limit 8, separate maintenance work and
+  readiness pools of 1/process each with LOGIN limit 8, four-process rolling
+  overlap, 16 application sessions, and
+  separately measured provider/reserved/non-app headroom. Require every accepted
+  permanent-staging load report to validate the three fixed labeled pool metric
+  shapes on each `/ready` sample and in a bounded post-load sweep across every
+  exact frozen replica hash under one unchanged deployment identity, with zero
+  instantaneous waiters, zero monotonic capacity-wait
+  events/high-water/duration, and a retained minimum available-connection count
+  per label.
+  The candidate may retain the exact 2-or-8 rollout compatibility needed to
+  deploy safely while workers are fenced, but the protected transition must
+  prove the maintenance LOGIN changed from 2 to 8 before worker activation or
+  scale. An incomplete fence→deploy→role→activate→scale chain, or a live limit
+  of 2 at scale, fails this gate. A mounted SQLite file is migration input only
+  and fails this gate.
 - **Google Maps Map ID:** Create a JavaScript/vector Map ID in Google Maps Platform, set `GOOGLE_MAPS_MAP_ID`, and verify AdvancedMarkerElement markers render on staging.
 - **Stripe/pricing:** Keep `COMMERCIAL_LAUNCH_ENABLED=false` and
   `CONSUMER_PAID_ENROLLMENT_ENABLED=false` for this release. Stripe values may

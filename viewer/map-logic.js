@@ -144,6 +144,51 @@
       && isFreshVerificationTimestamp(verifiedAt, options);
   }
 
+  function getVenueDiscoverySortRank(beers, options = {}) {
+    const beerItems = Array.isArray(beers) ? beers : [];
+    const isPriceVisible = typeof options.isPriceVisible === "function"
+      ? options.isPriceVisible
+      : () => true;
+    const visiblePricedBeers = beerItems.filter((beer) =>
+      hasNumericPrice(beer) && isPriceVisible(beer)
+    );
+
+    if (visiblePricedBeers.some((beer) => isCurrentVerifiedBeer(beer, options))) {
+      return 0;
+    }
+
+    if (visiblePricedBeers.length > 0) {
+      return 1;
+    }
+
+    const hasUsefulSignal = typeof options.hasUsefulSignal === "boolean"
+      ? options.hasUsefulSignal
+      : beerItems.length > 0;
+    return hasUsefulSignal ? 2 : 3;
+  }
+
+  function compareVenueSmartSort(left, right) {
+    const normalizeRank = (value) => {
+      const rank = Number(value);
+      return Number.isFinite(rank) && rank >= 0 ? rank : 3;
+    };
+    const normalizeWeight = (value) => {
+      const weight = Number(value);
+      return Number.isFinite(weight) ? weight : Number.POSITIVE_INFINITY;
+    };
+    const rankDifference = normalizeRank(left?.discoveryRank) - normalizeRank(right?.discoveryRank);
+    if (rankDifference !== 0) {
+      return rankDifference;
+    }
+
+    const weightDifference = normalizeWeight(left?.sortWeight) - normalizeWeight(right?.sortWeight);
+    if (weightDifference !== 0) {
+      return weightDifference;
+    }
+
+    return String(left?.name || "").localeCompare(String(right?.name || ""));
+  }
+
   function normalizeSearchKey(value) {
     return String(value || "")
       .toLowerCase()
@@ -788,6 +833,8 @@
     normalizeBeerPriceNumeric,
     isFreshVerificationTimestamp,
     isCurrentVerifiedBeer,
+    getVenueDiscoverySortRank,
+    compareVenueSmartSort,
     getAvailabilityLabel,
     getBeerPriceText,
     getAvailabilityTone,

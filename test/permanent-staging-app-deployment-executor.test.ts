@@ -21,6 +21,8 @@ import type {
 } from "../src/lib/railway-application-deployment-attestation.js";
 import { railwayDeploymentIdentityIdSha256 } from
   "../src/lib/railway-deployment-identity.js";
+import type { ProductionDeploymentWorkerFencePrerequisiteVerification } from
+  "../scripts/verify-production-maintenance-role-limit-prerequisites.js";
 
 const CANDIDATE_SHA = "a".repeat(40);
 const DEPLOYMENT_BEFORE = "11111111-1111-4111-8111-111111111111";
@@ -31,10 +33,13 @@ const INSTANCE_ID = "55555555-5555-4555-8555-555555555555";
 const DOMAIN_ID = "66666666-6666-4666-8666-666666666666";
 const TERMINAL_DRIFT_DEPLOYMENT = "77777777-7777-4777-8777-777777777777";
 const TERMINAL_DRIFT_SNAPSHOT = "88888888-8888-4888-8888-888888888888";
+const PRODUCTION_RUN_ID = "9000";
+const PRODUCTION_FENCE_RUN_ID = "8000";
 
 const temporaryRoots: string[] = [];
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const root of temporaryRoots.splice(0)) {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -45,6 +50,12 @@ function policySource(name: "permanent-staging" | "production"): string {
     ? "ops/railway/production-app-deployment-policy.json"
     : "ops/railway/permanent-staging-app-deployment-policy.json";
   return fs.readFileSync(path.resolve(filename), "utf8");
+}
+
+function fencedStagingPolicySource(): string {
+  return fs.readFileSync(path.resolve(
+    "ops/railway/permanent-staging-fenced-app-deployment-policy.json",
+  ), "utf8");
 }
 
 function policy(name: "permanent-staging" | "production"):
@@ -134,6 +145,10 @@ function runtimeObservation(
       )!,
       replicaIdSha256: crypto.createHash("sha256").update("replica").digest("hex"),
     },
+    automaticMaintenance: {
+      enabled: exactPolicy.target.name === "permanent-staging",
+      candidateBound: true,
+    },
     restoreMarkerPresent: false,
     responseSha256: crypto.createHash("sha256").update(route).digest("hex"),
   });
@@ -156,8 +171,12 @@ function harness(exactPolicy: PermanentStagingAppDeploymentPolicy, options: {
   commandThrows?: boolean;
   pollThrows?: boolean;
   runtimeProbeThrows?: boolean;
+  preflightFailureCode?: string;
+  preflightGitAutodeployAbsent?: boolean;
+  preflightTargetExact?: boolean;
   preflightReplicaCount?: number;
   postflightReplicaCount?: number;
+  workerFenceDeploymentId?: string;
 } = {}) {
   const root = fs.realpathSync(fs.mkdtempSync(
     path.join(os.tmpdir(), "pintpath-app-deploy-test-"),
@@ -167,6 +186,15 @@ function harness(exactPolicy: PermanentStagingAppDeploymentPolicy, options: {
   const snapshotPath = path.join(root, "snapshot");
   fs.mkdirSync(evidenceDir, { mode: 0o700 });
   fs.mkdirSync(snapshotPath, { mode: 0o700 });
+  const productionWorkerFenceVerificationFile = path.join(
+    evidenceDir,
+    "production-deployment-worker-fence-verification.json",
+  );
+  if (exactPolicy.target.name === "production") {
+    fs.writeFileSync(productionWorkerFenceVerificationFile, "{}\n", {
+      mode: 0o600,
+    });
+  }
   const output: string[] = [];
   const preflightCandidateSha = options.preflightCandidateSha ?? "c".repeat(40);
   const preflightReplicaCount = options.preflightReplicaCount
@@ -230,10 +258,19 @@ function harness(exactPolicy: PermanentStagingAppDeploymentPolicy, options: {
         GITHUB_ACTIONS: "true",
         GITHUB_RUN_ATTEMPT: "1",
         GITHUB_REF: "refs/heads/main",
+        GITHUB_RUN_ID: PRODUCTION_RUN_ID,
         GITHUB_SHA: CANDIDATE_SHA,
         PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: "p".repeat(32),
         PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: "s".repeat(32),
         PINTPATH_RAILWAY_WRITE_TOKEN: "w".repeat(32),
+        ...(exactPolicy.target.name === "production"
+          ? {
+              PINTPATH_PRODUCTION_DEPLOYMENT_FENCE_RUN_ID:
+                PRODUCTION_FENCE_RUN_ID,
+              PINTPATH_PRODUCTION_DEPLOYMENT_WORKER_FENCE_VERIFICATION_FILE:
+                productionWorkerFenceVerificationFile,
+            }
+          : {}),
       },
       now: vi.fn(() => {
         const value = new Date(Date.parse("2026-08-13T00:00:00.000Z") + nowTick);
@@ -255,6 +292,19 @@ function harness(exactPolicy: PermanentStagingAppDeploymentPolicy, options: {
       validateCli: vi.fn(async () => "/reviewed/railway"),
       validateWriteToken: vi.fn(async () =>
         options.writeTokenScopeSucceeds !== false),
+      validateProductionWorkerFencePrerequisite: vi.fn(() => ({
+        candidateSha: CANDIDATE_SHA,
+        consumer: { runId: PRODUCTION_RUN_ID },
+        workerFence: {
+          runId: PRODUCTION_FENCE_RUN_ID,
+          bindingSha256: "1".repeat(64),
+          terminalSha256: "2".repeat(64),
+          deploymentIdSha256: railwayDeploymentIdentityIdSha256(
+            "deployment",
+            options.workerFenceDeploymentId ?? DEPLOYMENT_BEFORE,
+          )!,
+        },
+      } as unknown as ProductionDeploymentWorkerFencePrerequisiteVerification)),
       runBoundary: vi.fn(async () => {
         boundaryCalls += 1;
         const ok = boundaryCalls === 1 || options.boundaryPostflightPasses !== false;
@@ -281,12 +331,16 @@ function harness(exactPolicy: PermanentStagingAppDeploymentPolicy, options: {
             SNAPSHOT_AFTER,
           );
         }
+        const preflightCall = targetCalls === 0;
+        if (preflightCall && options.preflightFailureCode) {
+          throw new Error(options.preflightFailureCode);
+        }
         const pollCall = preflightCandidateSha !== CANDIDATE_SHA
           && targetCalls === 1;
         const terminalCall = targetCalls >= (
           preflightCandidateSha === CANDIDATE_SHA ? 1 : 2
         );
-        const value = options.terminalDeploymentDrifts && terminalCall
+        const exactValue = options.terminalDeploymentDrifts && terminalCall
           ? providerObservation(
             exactPolicy,
             CANDIDATE_SHA,
@@ -298,6 +352,14 @@ function harness(exactPolicy: PermanentStagingAppDeploymentPolicy, options: {
           : observations[preflightCandidateSha === CANDIDATE_SHA
             ? (targetCalls === 0 ? 0 : 2)
             : Math.min(targetCalls, 2)]!;
+        const value = preflightCall
+          ? {
+            ...exactValue,
+            tokenScopeExact: options.preflightTargetExact !== false,
+            gitAutodeployAbsent:
+              options.preflightGitAutodeployAbsent !== false,
+          }
+          : exactValue;
         targetCalls += 1;
         if (options.pollThrows && pollCall) {
           throw new Error("injected_poll_observation_failure");
@@ -342,10 +404,10 @@ function harness(exactPolicy: PermanentStagingAppDeploymentPolicy, options: {
 describe("Railway application deployment executor", () => {
   it("pins active staging and production policies, source/config identities, and CLI bytes", () => {
     expect(PERMANENT_STAGING_APP_DEPLOYMENT_POLICY_SCHEMA).toBe(
-      "pintpath-railway-application-deployment-policy/v4",
+      "pintpath-railway-application-deployment-policy/v5",
     );
     expect(PERMANENT_STAGING_APP_DEPLOYMENT_EXECUTOR_SCHEMA).toBe(
-      "pintpath-railway-application-deployment-executor/v4",
+      "pintpath-railway-application-deployment-executor/v5",
     );
     expect(PERMANENT_STAGING_APP_DEPLOYMENT_EXECUTOR_STATE).toBe(
       "GITHUB_ENVIRONMENT_PROTECTED",
@@ -362,8 +424,20 @@ describe("Railway application deployment executor", () => {
       },
     });
     const staging = policy("permanent-staging");
+    const fencedStaging = parsePermanentStagingAppDeploymentPolicy(
+      fencedStagingPolicySource(),
+    );
     const production = policy("production");
+    expect(fencedStaging).not.toBeNull();
+    expect(fencedStaging?.policyId).toBe(
+      "pintpath-permanent-staging-fenced-app-source-upload",
+    );
+    expect(fencedStaging?.postflightContract.automaticMaintenanceEnabled).toBe(false);
+    expect(fencedStaging?.postflightContract.runtimeProbeRequired).toBe(false);
+    expect(fencedStaging?.target.allowedReplicaCounts).toEqual([0]);
     expect(staging.target.name).toBe("permanent-staging");
+    expect(staging.postflightContract.automaticMaintenanceEnabled).toBe(true);
+    expect(staging.postflightContract.runtimeProbeRequired).toBe(true);
     expect(staging.target.allowedReplicaCounts).toEqual([1]);
     expect(staging.postflightContract.replicaCountMustMatchPreflight).toBe(true);
     expect(staging.writeContract.topologyMutationAllowed).toBe(false);
@@ -398,6 +472,9 @@ describe("Railway application deployment executor", () => {
     expect(parsePermanentStagingAppDeploymentPolicy(source)).not.toBeNull();
     expect(parsePermanentStagingAppDeploymentPolicy(source.trimEnd())).toBeNull();
     expect(parsePermanentStagingAppDeploymentPolicy(`${source}\n`)).toBeNull();
+    expect(parsePermanentStagingAppDeploymentPolicy(
+      fencedStagingPolicySource(),
+    )).not.toBeNull();
     const value = JSON.parse(source) as Record<string, unknown>;
     const reordered = source.replace(
       /^\{\n  "schemaVersion": ([^\n]+),\n  "policyId": ([^\n]+),/,
@@ -408,6 +485,22 @@ describe("Railway application deployment executor", () => {
     expect(parsePermanentStagingAppDeploymentPolicy(`${JSON.stringify({
       ...value,
       unknown: true,
+    }, null, 2)}\n`)).toBeNull();
+    expect(parsePermanentStagingAppDeploymentPolicy(`${JSON.stringify({
+      ...value,
+      postflightContract: {
+        ...(value.postflightContract as Record<string, unknown>),
+        automaticMaintenanceEnabled: false,
+      },
+    }, null, 2)}\n`)).toBeNull();
+    const fencedValue = JSON.parse(fencedStagingPolicySource()) as
+      Record<string, unknown>;
+    expect(parsePermanentStagingAppDeploymentPolicy(`${JSON.stringify({
+      ...fencedValue,
+      postflightContract: {
+        ...(fencedValue.postflightContract as Record<string, unknown>),
+        automaticMaintenanceEnabled: true,
+      },
     }, null, 2)}\n`)).toBeNull();
     const target = value.target as Record<string, unknown>;
     expect(parsePermanentStagingAppDeploymentPolicy(`${JSON.stringify({
@@ -474,6 +567,7 @@ describe("Railway application deployment executor", () => {
     expect(receipt).toMatchObject({
       target: "permanent-staging",
       outcome: "deployed",
+      failureCode: null,
       candidateSha: CANDIDATE_SHA,
       writeAttempts: 1,
       acknowledgement: "received",
@@ -497,6 +591,46 @@ describe("Railway application deployment executor", () => {
       "railway-boundary-postflight.json",
       "railway-boundary-preflight.json",
     ]);
+  });
+
+  it("uploads the fenced candidate at zero replicas without claiming runtime evidence", async () => {
+    const exactPolicy = parsePermanentStagingAppDeploymentPolicy(
+      fencedStagingPolicySource(),
+    );
+    if (!exactPolicy) throw new Error("fenced_fixture_policy_invalid");
+    const fixture = harness(exactPolicy);
+    const code = await runPermanentStagingAppDeploymentExecutor([
+      "--policy", "ops/railway/permanent-staging-fenced-app-deployment-policy.json",
+      "--candidate-sha", CANDIDATE_SHA,
+      "--evidence-dir", fixture.evidenceDir,
+    ], fixture.overrides);
+
+    expect(code).toBe(0);
+    expect(fixture.runCommand).toHaveBeenCalledTimes(1);
+    expect(fixture.overrides.probeRuntime).not.toHaveBeenCalled();
+    const receipt = JSON.parse(fs.readFileSync(
+      path.join(fixture.evidenceDir, "deployment-receipt.json"),
+      "utf8",
+    ));
+    expect(receipt).toMatchObject({
+      target: "permanent-staging",
+      outcome: "deployed",
+      candidateSha: CANDIDATE_SHA,
+      replicaCounts: { before: 0, after: 0 },
+      runtimeResponseSha256s: {
+        health: null,
+        startup: null,
+        ready: null,
+      },
+      checks: {
+        topologyPreserved: true,
+        deploymentExact: true,
+        runtimeHealthExact: true,
+        runtimeStartupExact: true,
+        runtimeReadinessExact: true,
+        terminalEvidenceExact: true,
+      },
+    });
   });
 
   it.each([
@@ -529,6 +663,16 @@ describe("Railway application deployment executor", () => {
     expect(intent).toMatchObject({
       schemaVersion: "pintpath-railway-application-deployment-intent/v2",
       preservedReplicaCount: replicaCount,
+      workerFencePrerequisite: {
+        runId: PRODUCTION_FENCE_RUN_ID,
+        verificationSha256: crypto.createHash("sha256").update("{}\n").digest("hex"),
+        bindingSha256: "1".repeat(64),
+        terminalSha256: "2".repeat(64),
+        deploymentIdSha256: railwayDeploymentIdentityIdSha256(
+          "deployment",
+          DEPLOYMENT_BEFORE,
+        ),
+      },
     });
     const receipt = JSON.parse(fs.readFileSync(
       path.join(fixture.evidenceDir, "deployment-receipt.json"),
@@ -539,8 +683,13 @@ describe("Railway application deployment executor", () => {
       outcome: "deployed",
       replicaCounts: { before: replicaCount, after: replicaCount },
       checks: {
+        workerFencePrerequisiteExact: true,
+        workerFenceDeploymentContinuityExact: true,
         topologyPreserved: true,
         targetPostflightExact: true,
+      },
+      workerFencePrerequisite: {
+        runId: PRODUCTION_FENCE_RUN_ID,
       },
     });
   });
@@ -571,6 +720,103 @@ describe("Railway application deployment executor", () => {
     });
   });
 
+  it("blocks production before source upload when the fenced deployment changed", async () => {
+    const exactPolicy = policy("production");
+    const fixture = harness(exactPolicy, {
+      workerFenceDeploymentId: TERMINAL_DRIFT_DEPLOYMENT,
+    });
+    await expect(runPermanentStagingAppDeploymentExecutor([
+      "--policy", "ops/railway/production-app-deployment-policy.json",
+      "--candidate-sha", CANDIDATE_SHA,
+      "--evidence-dir", fixture.evidenceDir,
+    ], fixture.overrides)).resolves.toBe(1);
+    expect(fixture.runCommand).not.toHaveBeenCalled();
+    const receipt = JSON.parse(fs.readFileSync(
+      path.join(fixture.evidenceDir, "deployment-receipt.json"),
+      "utf8",
+    ));
+    expect(receipt).toMatchObject({
+      outcome: "blocked",
+      failureCode: "worker_fence_prerequisite_failed",
+      checks: {
+        workerFencePrerequisiteExact: true,
+        workerFenceDeploymentContinuityExact: false,
+      },
+    });
+  });
+
+  it("fails closed when the worker-fence prerequisite pathname is replaced after inspection", async () => {
+    const exactPolicy = policy("production");
+    const fixture = harness(exactPolicy);
+    const prerequisite = path.join(
+      fixture.evidenceDir,
+      "production-deployment-worker-fence-verification.json",
+    );
+    const displaced = `${prerequisite}.displaced`;
+    const originalLstat = fs.lstatSync.bind(fs);
+    let replaced = false;
+    vi.spyOn(fs, "lstatSync").mockImplementation(((filename, options) => {
+      const stat = originalLstat(filename, options as never);
+      if (!replaced && filename === prerequisite) {
+        replaced = true;
+        fs.renameSync(prerequisite, displaced);
+        fs.writeFileSync(prerequisite, "{\"forged\":true}\n", { mode: 0o600 });
+      }
+      return stat;
+    }) as typeof fs.lstatSync);
+
+    await expect(runPermanentStagingAppDeploymentExecutor([
+      "--policy", "ops/railway/production-app-deployment-policy.json",
+      "--candidate-sha", CANDIDATE_SHA,
+      "--evidence-dir", fixture.evidenceDir,
+    ], fixture.overrides)).resolves.toBe(1);
+
+    expect(replaced).toBe(true);
+    expect(fixture.overrides.validateProductionWorkerFencePrerequisite)
+      .not.toHaveBeenCalled();
+    expect(fixture.runCommand).not.toHaveBeenCalled();
+    const receipt = JSON.parse(fs.readFileSync(
+      path.join(fixture.evidenceDir, "deployment-receipt.json"),
+      "utf8",
+    ));
+    expect(receipt).toMatchObject({
+      outcome: "blocked",
+      failureCode: "worker_fence_prerequisite_failed",
+      writeAttempts: 0,
+      checks: { workerFencePrerequisiteExact: false },
+    });
+  });
+
+  it("rejects a multiply linked worker-fence prerequisite before validation or upload", async () => {
+    const exactPolicy = policy("production");
+    const fixture = harness(exactPolicy);
+    const prerequisite = path.join(
+      fixture.evidenceDir,
+      "production-deployment-worker-fence-verification.json",
+    );
+    fs.linkSync(prerequisite, `${prerequisite}.alias`);
+
+    await expect(runPermanentStagingAppDeploymentExecutor([
+      "--policy", "ops/railway/production-app-deployment-policy.json",
+      "--candidate-sha", CANDIDATE_SHA,
+      "--evidence-dir", fixture.evidenceDir,
+    ], fixture.overrides)).resolves.toBe(1);
+
+    expect(fixture.overrides.validateProductionWorkerFencePrerequisite)
+      .not.toHaveBeenCalled();
+    expect(fixture.runCommand).not.toHaveBeenCalled();
+    const receipt = JSON.parse(fs.readFileSync(
+      path.join(fixture.evidenceDir, "deployment-receipt.json"),
+      "utf8",
+    ));
+    expect(receipt).toMatchObject({
+      outcome: "blocked",
+      failureCode: "worker_fence_prerequisite_failed",
+      writeAttempts: 0,
+      checks: { workerFencePrerequisiteExact: false },
+    });
+  });
+
   it.each([
     ["permanent-staging", 2],
     ["production", 3],
@@ -595,6 +841,63 @@ describe("Railway application deployment executor", () => {
     ));
     expect(receipt.outcome).toBe("blocked");
     expect(receipt.checks.targetPreflightExact).toBe(false);
+  });
+
+  it.each([
+    [
+      "provider query failure",
+      { preflightFailureCode: "provider_query_failed" },
+      "provider_query_failed",
+    ],
+    [
+      "provider target mismatch",
+      { preflightFailureCode: "provider_target_mismatch" },
+      "provider_target_mismatch",
+    ],
+    [
+      "target preflight failure",
+      { preflightTargetExact: false },
+      "target_preflight_failed",
+    ],
+    [
+      "active Git autodeploy",
+      { preflightGitAutodeployAbsent: false },
+      "git_autodeploy_active",
+    ],
+    [
+      "unrecognized provider detail",
+      { preflightFailureCode: "provider leaked detail: do not retain" },
+      "unexpected_failure",
+    ],
+  ] as const)("emits only the bounded safe failure code for %s", async (
+    _label,
+    options,
+    expectedFailureCode,
+  ) => {
+    const exactPolicy = policy("permanent-staging");
+    const fixture = harness(exactPolicy, options);
+    await expect(runPermanentStagingAppDeploymentExecutor([
+      "--policy", "ops/railway/permanent-staging-app-deployment-policy.json",
+      "--candidate-sha", CANDIDATE_SHA,
+      "--evidence-dir", fixture.evidenceDir,
+    ], fixture.overrides)).resolves.toBe(1);
+    expect(fixture.runCommand).not.toHaveBeenCalled();
+    const receiptSource = fs.readFileSync(
+      path.join(fixture.evidenceDir, "deployment-receipt.json"),
+      "utf8",
+    );
+    const receipt = JSON.parse(receiptSource);
+    expect(receipt).toMatchObject({
+      outcome: "blocked",
+      failureCode: expectedFailureCode,
+      writeAttempts: 0,
+    });
+    expect(JSON.parse(fixture.output.at(-1)!)).toMatchObject({
+      ok: false,
+      outcome: "blocked",
+      failureCode: expectedFailureCode,
+    });
+    expect(receiptSource).not.toContain("provider leaked detail");
   });
 
   it("reconciles a successful provider mutation when the CLI acknowledgement is missing", async () => {
@@ -809,6 +1112,18 @@ describe("Railway application deployment executor", () => {
                 cronSchedule: null,
                 startCommand: "node dist/src/server.js",
               },
+            }, {
+              node: {
+                id: "77777777-7777-4777-8777-777777777779",
+                serviceId: "88888888-8888-4888-8888-888888888889",
+                serviceName: "stopped-helper",
+                environmentId: exactPolicy.target.environmentId,
+                numReplicas: null,
+                source: null,
+                domains: { serviceDomains: [], customDomains: [] },
+                cronSchedule: null,
+                startCommand: null,
+              },
             }],
             pageInfo: { hasNextPage: false, endCursor: null },
           },
@@ -828,6 +1143,31 @@ describe("Railway application deployment executor", () => {
       exactPolicy.target.environmentId,
       exactPolicy.target.serviceId,
     )).toMatchObject({ gitAutodeployAbsent: false });
+    const parsedGitSource = permanentStagingAppDeploymentExecutorInternals
+      .parseCollateralSnapshot(
+        collateral("blackmagic30/Beer"),
+        exactPolicy.target.environmentId,
+        exactPolicy.target.serviceId,
+      );
+    expect(permanentStagingAppDeploymentExecutorInternals
+      .validatedProviderObservation(
+        exactPolicy,
+        exactPolicy.target.environmentId,
+        exactPolicy.target.allowedReplicaCounts,
+        exactPolicy.target.publicOrigin,
+        {
+          projectId: exactPolicy.projectId,
+          environmentId: exactPolicy.target.environmentId,
+        },
+        { environmentId: exactPolicy.target.environmentId, patchEmpty: true },
+        providerObservation(
+          exactPolicy,
+          CANDIDATE_SHA,
+          DEPLOYMENT_AFTER,
+          SNAPSHOT_AFTER,
+        ).snapshot,
+        parsedGitSource,
+      )).toMatchObject({ gitAutodeployAbsent: false });
     const paginated = collateral(null).replace(
       '"hasNextPage":false',
       '"hasNextPage":true',
@@ -837,6 +1177,109 @@ describe("Railway application deployment executor", () => {
       exactPolicy.target.environmentId,
       exactPolicy.target.serviceId,
     )).toBeNull();
+  });
+
+  it("paginates every collateral connection without dropping stopped services", async () => {
+    const exactPolicy = policy("permanent-staging");
+    const pages = [
+      {
+        variables: {
+          edges: [{ node: {
+            id: "variable-one",
+            name: "DATABASE_URL",
+            environmentId: exactPolicy.target.environmentId,
+            serviceId: exactPolicy.target.serviceId,
+            isSealed: true,
+            references: [],
+          } }],
+          pageInfo: { hasNextPage: true, endCursor: "variables-page-one" },
+        },
+        volumeInstances: {
+          edges: [],
+          pageInfo: { hasNextPage: false, endCursor: null },
+        },
+        serviceInstances: {
+          edges: [{ node: {
+            id: INSTANCE_ID,
+            serviceId: exactPolicy.target.serviceId,
+            serviceName: "Beer",
+            environmentId: exactPolicy.target.environmentId,
+            numReplicas: 1,
+            source: null,
+            domains: {
+              serviceDomains: [{
+                id: DOMAIN_ID,
+                domain: new URL(exactPolicy.target.publicOrigin).hostname,
+                targetPort: 8080,
+              }],
+              customDomains: [],
+            },
+            cronSchedule: null,
+            startCommand: "node dist/src/server.js",
+          } }, { node: {
+            id: "77777777-7777-4777-8777-777777777779",
+            serviceId: "88888888-8888-4888-8888-888888888889",
+            serviceName: "stopped-helper",
+            environmentId: exactPolicy.target.environmentId,
+            numReplicas: null,
+            source: null,
+            domains: { serviceDomains: [], customDomains: [] },
+            cronSchedule: null,
+            startCommand: null,
+          } }],
+          pageInfo: { hasNextPage: false, endCursor: null },
+        },
+      },
+      {
+        variables: {
+          edges: [{ node: {
+            id: "variable-two",
+            name: "REDIS_URL",
+            environmentId: exactPolicy.target.environmentId,
+            serviceId: exactPolicy.target.serviceId,
+            isSealed: true,
+            references: [],
+          } }],
+          pageInfo: { hasNextPage: false, endCursor: null },
+        },
+        volumeInstances: {
+          edges: [],
+          pageInfo: { hasNextPage: false, endCursor: null },
+        },
+        serviceInstances: {
+          edges: [],
+          pageInfo: { hasNextPage: false, endCursor: null },
+        },
+      },
+    ];
+    const requests: unknown[] = [];
+    const fetchImpl = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      requests.push(JSON.parse(String(init?.body)));
+      const page = pages[requests.length - 1];
+      return new Response(JSON.stringify({
+        data: {
+          environment: { id: exactPolicy.target.environmentId, ...page },
+        },
+      }), { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const source = await permanentStagingAppDeploymentExecutorInternals
+      .queryCollateralSnapshot(
+        fetchImpl,
+        "t".repeat(32),
+        exactPolicy.projectId,
+        exactPolicy.target.environmentId,
+      );
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(requests).toMatchObject([
+      { variables: { variablesAfter: null } },
+      { variables: { variablesAfter: "variables-page-one" } },
+    ]);
+    expect(permanentStagingAppDeploymentExecutorInternals.parseCollateralSnapshot(
+      source,
+      exactPolicy.target.environmentId,
+      exactPolicy.target.serviceId,
+    )).toMatchObject({ gitAutodeployAbsent: true });
   });
 
   it("accepts nested source directories and rejects multiply linked files", () => {

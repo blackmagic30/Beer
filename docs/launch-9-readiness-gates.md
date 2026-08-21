@@ -26,8 +26,10 @@ route, delete, destroy, or teardown operation in these gates requires a tracked
 one-operation executor that owns the
 immediate `readiness:railway:mutation-boundary` preflight, one exact reviewed
 operation, and unconditional postflight.
-Its standalone receipt is read-only; the current incident baseline
-intentionally fails. Restore-staging teardown additionally requires complete
+Its standalone receipt is read-only; commit #51 made the immutable baseline
+pass-capable only while every live provider observation matches its exact
+pins. A passing receipt does not authorize a mutation. Restore-staging teardown
+additionally requires complete
 resource/evidence reconciliation, specific authorization naming the exact
 resource IDs, and the exact reviewed teardown executor. Signed evidence or
 two-person sign-off alone is not mutation authority.

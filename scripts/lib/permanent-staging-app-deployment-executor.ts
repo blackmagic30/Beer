@@ -19,21 +19,67 @@ import {
 } from "../../src/lib/railway-application-deployment-attestation.js";
 import { railwayDeploymentIdentityIdSha256 } from
   "../../src/lib/railway-deployment-identity.js";
+import {
+  parseProductionDeploymentWorkerFencePrerequisiteVerification,
+  type ProductionDeploymentWorkerFencePrerequisiteVerification,
+} from "../verify-production-maintenance-role-limit-prerequisites.js";
+import { readTrustedRegularFile } from "./trusted-filesystem.js";
 
 export const PERMANENT_STAGING_APP_DEPLOYMENT_POLICY_SCHEMA =
-  "pintpath-railway-application-deployment-policy/v4" as const;
+  "pintpath-railway-application-deployment-policy/v5" as const;
 export const PERMANENT_STAGING_APP_DEPLOYMENT_EXECUTOR_SCHEMA =
-  "pintpath-railway-application-deployment-executor/v4" as const;
+  "pintpath-railway-application-deployment-executor/v5" as const;
 export const PERMANENT_STAGING_APP_DEPLOYMENT_OPERATION =
   "pintpath-railway-application-source-upload" as const;
 export const PERMANENT_STAGING_APP_DEPLOYMENT_EXECUTOR_STATE =
   "GITHUB_ENVIRONMENT_PROTECTED" as const;
+export const PERMANENT_STAGING_APP_DEPLOYMENT_FAILURE_CODES = Object.freeze([
+  "argument_invalid",
+  "boundary_policy_drift",
+  "boundary_postflight_failed",
+  "boundary_preflight_failed",
+  "candidate_preexisting_not_healthy",
+  "cli_invalid",
+  "collateral_invalid",
+  "cost_policy_invalid",
+  "evidence_directory_unsafe",
+  "evidence_exists",
+  "evidence_leaf_invalid",
+  "git_autodeploy_active",
+  "github_authority_failed",
+  "metadata_token_missing",
+  "policy_invalid",
+  "prerequisite_failed",
+  "provider_query_failed",
+  "provider_target_mismatch",
+  "reconciliation_failed",
+  "runtime_probe_failed",
+  "source_authority_failed",
+  "source_cleanup_failed",
+  "source_reassertion_failed",
+  "source_snapshot_invalid",
+  "target_postflight_failed",
+  "target_preflight_failed",
+  "terminal_evidence_failed",
+  "terminal_validation_failed",
+  "unexpected_failure",
+  "write_token_missing",
+  "write_token_scope_invalid",
+  "worker_fence_prerequisite_failed",
+] as const);
+
+export type PermanentStagingAppDeploymentFailureCode =
+  typeof PERMANENT_STAGING_APP_DEPLOYMENT_FAILURE_CODES[number];
 
 const SHA1_PATTERN = /^[a-f0-9]{40}$/;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
+const RUN_ID_PATTERN = /^[1-9][0-9]*$/;
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const SAFE_TOKEN_PATTERN = /^[^\r\n\0]{16,4096}$/;
+const SAFE_FAILURE_CODE_SET = new Set<string>(
+  PERMANENT_STAGING_APP_DEPLOYMENT_FAILURE_CODES,
+);
 const MAX_PROVIDER_BYTES = 1024 * 1024;
 const GRAPHQL_ENDPOINT = "https://backboard.railway.com/graphql/v2";
 const RUNTIME_ROUTES = ["/health", "/startup", "/ready"] as const;
@@ -92,18 +138,21 @@ const RAILWAY_APPLICATION_DEPLOYMENT_COLLATERAL_QUERY =
   `query PintPathRailwayApplicationDeploymentCollateral(
   $projectId: String!
   $environmentId: String!
+  $variablesAfter: String
+  $volumeInstancesAfter: String
+  $serviceInstancesAfter: String
 ) {
   environment(id: $environmentId, projectId: $projectId) {
     id
-    variables(first: 100) {
+    variables(first: 100, after: $variablesAfter) {
       edges { node { id name environmentId serviceId isSealed references } }
       pageInfo { hasNextPage endCursor }
     }
-    volumeInstances(first: 100) {
+    volumeInstances(first: 100, after: $volumeInstancesAfter) {
       edges { node { serviceId environmentId volume { id } } }
       pageInfo { hasNextPage endCursor }
     }
-    serviceInstances(first: 100) {
+    serviceInstances(first: 100, after: $serviceInstancesAfter) {
       edges {
         node {
           id
@@ -130,13 +179,16 @@ type DeploymentTarget = "permanent-staging" | "production";
 const TARGET_LOCKS = Object.freeze({
   "permanent-staging": Object.freeze({
     policyId: "pintpath-permanent-staging-app-source-upload",
+    fencedPolicyId: "pintpath-permanent-staging-fenced-app-source-upload",
     environmentId: "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
     forbiddenEnvironmentId: "13dab015-df74-45c6-b26f-69323daea99a",
-    publicOrigin: "https://pintpath-staging.up.railway.app",
+    publicOrigin: "https://beer-staging.up.railway.app",
     publicOriginSha256:
-      "4532dc3b87deb570735196a86cd1b75ddc490c752dd6993e2f0d7bcb7df8161b",
+      "fd458490dc9821b10681db486f980de7ec0d8b684f5dce4f7a5659a582df2910",
     allowedReplicaCounts: Object.freeze([1] as const),
+    fencedAllowedReplicaCounts: Object.freeze([0] as const),
     githubEnvironment: "permanent-staging-deployment",
+    allowedAutomaticMaintenanceStates: Object.freeze([false, true] as const),
   }),
   production: Object.freeze({
     policyId: "pintpath-production-app-source-upload",
@@ -147,6 +199,7 @@ const TARGET_LOCKS = Object.freeze({
       "a3a1a2e58fa4038b741e1c213af02708e09ae901005c7c31f919e0a4dea46e90",
     allowedReplicaCounts: Object.freeze([1, 2] as const),
     githubEnvironment: "production-deployment",
+    automaticMaintenanceEnabled: false,
   }),
 } as const);
 
@@ -181,6 +234,7 @@ const policySchema = z.object({
     publicOrigin: z.string().url(),
     publicOriginSha256: sha256Schema,
     allowedReplicaCounts: z.union([
+      z.tuple([z.literal(0)]),
       z.tuple([z.literal(1)]),
       z.tuple([z.literal(1), z.literal(2)]),
     ]),
@@ -246,11 +300,14 @@ const policySchema = z.object({
     expectedDeploymentStopped: z.literal(false),
     deploymentPatchAllowed: z.literal(false),
     replicaCountMustMatchPreflight: z.literal(true),
+    runtimeProbeRequired: z.boolean(),
     requiredRuntimeRoutes: z.tuple([
       z.literal("/health"),
       z.literal("/startup"),
       z.literal("/ready"),
     ]),
+    automaticMaintenanceEnabled: z.boolean(),
+    automaticMaintenanceCandidateBindingRequired: z.literal(true),
     maximumObservationSeconds: z.number().int().min(60).max(1_800),
     pollIntervalSeconds: z.number().int().min(2).max(30),
   }).strict(),
@@ -285,6 +342,19 @@ const policySchema = z.object({
       allChecksPassRequired: z.literal(true),
     }).strict(),
   ]),
+  workerFencePrerequisiteContract: z.object({
+    required: z.literal(true),
+    verificationSchema: z.literal(
+      "pintpath-production-deployment-worker-fence-prerequisite/v1",
+    ),
+    verificationFilename: z.literal(
+      "production-deployment-worker-fence-verification.json",
+    ),
+    exactFenceRunBindingRequired: z.literal(true),
+    liveDeploymentContinuityRequired: z.literal(true),
+    durableIntentBindingRequired: z.literal(true),
+    terminalReceiptBindingRequired: z.literal(true),
+  }).strict().optional(),
   costContract: z.object({
     required: z.boolean(),
     policySchema: z.union([
@@ -350,7 +420,34 @@ function exactOrigin(value: string): boolean {
 
 function policyMatchesLock(policy: PermanentStagingAppDeploymentPolicy): boolean {
   const lock = TARGET_LOCKS[policy.target.name];
-  return policy.policyId === lock.policyId
+  let policyIdExact: boolean;
+  let automaticMaintenanceStateAllowed: boolean;
+  let expectedReplicaCounts: readonly number[];
+  if (policy.target.name === "permanent-staging") {
+    const stagingLock = TARGET_LOCKS["permanent-staging"];
+    policyIdExact = policy.policyId === (
+      policy.postflightContract.automaticMaintenanceEnabled
+        ? stagingLock.policyId
+        : stagingLock.fencedPolicyId
+    );
+    automaticMaintenanceStateAllowed = (
+      stagingLock.allowedAutomaticMaintenanceStates as readonly boolean[]
+    ).includes(policy.postflightContract.automaticMaintenanceEnabled);
+    if (policy.postflightContract.automaticMaintenanceEnabled
+      !== policy.postflightContract.runtimeProbeRequired) return false;
+    expectedReplicaCounts = policy.postflightContract.automaticMaintenanceEnabled
+      ? stagingLock.allowedReplicaCounts
+      : stagingLock.fencedAllowedReplicaCounts;
+  } else {
+    const productionLock = TARGET_LOCKS.production;
+    policyIdExact = policy.policyId === productionLock.policyId;
+    automaticMaintenanceStateAllowed =
+      policy.postflightContract.automaticMaintenanceEnabled
+        === productionLock.automaticMaintenanceEnabled;
+    if (!policy.postflightContract.runtimeProbeRequired) return false;
+    expectedReplicaCounts = productionLock.allowedReplicaCounts;
+  }
+  return policyIdExact
     && policy.projectId === PROJECT_ID
     && policy.target.environmentId === lock.environmentId
     && policy.target.forbiddenEnvironmentId === lock.forbiddenEnvironmentId
@@ -361,13 +458,16 @@ function policyMatchesLock(policy: PermanentStagingAppDeploymentPolicy): boolean
     && sha256(policy.target.publicOrigin) === lock.publicOriginSha256
     && exactOrigin(policy.target.publicOrigin)
     && policy.target.allowedReplicaCounts.length
-      === lock.allowedReplicaCounts.length
+      === expectedReplicaCounts.length
     && policy.target.allowedReplicaCounts.every((count, index) =>
-      count === lock.allowedReplicaCounts[index])
+      count === expectedReplicaCounts[index])
     && policy.target.githubEnvironment === lock.githubEnvironment
+    && automaticMaintenanceStateAllowed
     && (policy.target.name === "production") === (policy.prerequisite !== null)
     && (policy.target.name === "production")
       === (policy.providerReadinessContract !== null)
+    && (policy.target.name === "production")
+      === (policy.workerFencePrerequisiteContract !== undefined)
     && (policy.target.name === "permanent-staging") === policy.costContract.required
     && (policy.costContract.required
       ? policy.costContract.policySchema
@@ -478,6 +578,15 @@ interface ExecutorDependencies {
     policy: PermanentStagingAppDeploymentPolicy,
     token: string,
   ) => Promise<boolean>;
+  readonly validateProductionWorkerFencePrerequisite: (
+    source: string,
+    expected: {
+      readonly candidateSha: string;
+      readonly currentRunId: string;
+      readonly fenceRunId: string;
+      readonly now: Date;
+    },
+  ) => ProductionDeploymentWorkerFencePrerequisiteVerification;
   readonly queryTarget: (
     policy: PermanentStagingAppDeploymentPolicy,
     environmentId: string,
@@ -507,6 +616,8 @@ export interface PermanentStagingAppDeploymentExecutorChecks {
   writeTokenScopeExact: boolean;
   costPolicyExact: boolean;
   prerequisiteExact: boolean;
+  workerFencePrerequisiteExact: boolean;
+  workerFenceDeploymentContinuityExact: boolean;
   boundaryPreflightExact: boolean;
   targetPreflightExact: boolean;
   gitAutodeployAbsent: boolean;
@@ -538,6 +649,7 @@ export interface PermanentStagingAppDeploymentExecutorReceipt {
     | "reconciled_success"
     | "blocked"
     | "mutation_uncertain";
+  readonly failureCode: PermanentStagingAppDeploymentFailureCode | null;
   readonly candidateSha: string | null;
   readonly startedAt: string;
   readonly completedAt: string;
@@ -562,6 +674,13 @@ export interface PermanentStagingAppDeploymentExecutorReceipt {
     readonly startup: string | null;
     readonly ready: string | null;
   };
+  readonly workerFencePrerequisite: {
+    readonly runId: string;
+    readonly verificationSha256: string;
+    readonly bindingSha256: string;
+    readonly terminalSha256: string;
+    readonly deploymentIdSha256: string;
+  } | null;
   readonly checks: Readonly<PermanentStagingAppDeploymentExecutorChecks>;
 }
 
@@ -574,6 +693,8 @@ function emptyChecks(): PermanentStagingAppDeploymentExecutorChecks {
     writeTokenScopeExact: false,
     costPolicyExact: false,
     prerequisiteExact: false,
+    workerFencePrerequisiteExact: false,
+    workerFenceDeploymentContinuityExact: false,
     boundaryPreflightExact: false,
     targetPreflightExact: false,
     gitAutodeployAbsent: false,
@@ -863,7 +984,7 @@ async function railwayQuery(
   token: string,
   operationName: string,
   query: string,
-  variables: Readonly<Record<string, string>>,
+  variables: Readonly<Record<string, string | null>>,
 ): Promise<string> {
   const response = await fetchImpl(GRAPHQL_ENDPOINT, {
     method: "POST",
@@ -925,7 +1046,7 @@ function safeProviderString(value: unknown, maximumBytes: number): value is stri
 
 function parseCompleteConnection(value: unknown): readonly unknown[] | null {
   const connection = exactRecord(value, ["edges", "pageInfo"]);
-  if (!connection || !Array.isArray(connection.edges) || connection.edges.length > 100) {
+  if (!connection || !Array.isArray(connection.edges) || connection.edges.length > 2_000) {
     return null;
   }
   const pageInfo = exactRecord(connection.pageInfo, ["hasNextPage", "endCursor"]);
@@ -936,6 +1057,130 @@ function parseCompleteConnection(value: unknown): readonly unknown[] | null {
       || safeProviderString(pageInfo.endCursor, 512))
   ) return null;
   return connection.edges;
+}
+
+interface CollateralConnectionPage {
+  readonly edges: readonly unknown[];
+  readonly hasNextPage: boolean;
+  readonly endCursor: string | null;
+}
+
+function parseCollateralConnectionPage(value: unknown): CollateralConnectionPage | null {
+  const connection = exactRecord(value, ["edges", "pageInfo"]);
+  if (!connection || !Array.isArray(connection.edges) || connection.edges.length > 100) {
+    return null;
+  }
+  const pageInfo = exactRecord(connection.pageInfo, ["hasNextPage", "endCursor"]);
+  if (
+    !pageInfo
+    || typeof pageInfo.hasNextPage !== "boolean"
+    || !(pageInfo.endCursor === null
+      || safeProviderString(pageInfo.endCursor, 512))
+    || (pageInfo.hasNextPage && pageInfo.endCursor === null)
+  ) return null;
+  return {
+    edges: connection.edges,
+    hasNextPage: pageInfo.hasNextPage,
+    endCursor: pageInfo.endCursor as string | null,
+  };
+}
+
+async function queryCollateralSnapshot(
+  fetchImpl: typeof fetch,
+  token: string,
+  projectId: string,
+  environmentId: string,
+): Promise<string> {
+  const connectionNames = [
+    "variables",
+    "volumeInstances",
+    "serviceInstances",
+  ] as const;
+  const cursors: Record<typeof connectionNames[number], string | null> = {
+    variables: null,
+    volumeInstances: null,
+    serviceInstances: null,
+  };
+  const completed: Record<typeof connectionNames[number], boolean> = {
+    variables: false,
+    volumeInstances: false,
+    serviceInstances: false,
+  };
+  const edges: Record<typeof connectionNames[number], unknown[]> = {
+    variables: [],
+    volumeInstances: [],
+    serviceInstances: [],
+  };
+  const seenCursors: Record<typeof connectionNames[number], Set<string>> = {
+    variables: new Set(),
+    volumeInstances: new Set(),
+    serviceInstances: new Set(),
+  };
+
+  for (let pageNumber = 0; pageNumber < 20; pageNumber += 1) {
+    const source = await railwayQuery(
+      fetchImpl,
+      token,
+      "PintPathRailwayApplicationDeploymentCollateral",
+      RAILWAY_APPLICATION_DEPLOYMENT_COLLATERAL_QUERY,
+      {
+        projectId,
+        environmentId,
+        variablesAfter: cursors.variables,
+        volumeInstancesAfter: cursors.volumeInstances,
+        serviceInstancesAfter: cursors.serviceInstances,
+      },
+    );
+    let root: Record<string, unknown> | null = null;
+    let environment: Record<string, unknown> | null = null;
+    try {
+      root = exactRecord(JSON.parse(source), ["data"]);
+      const data = exactRecord(root?.data, ["environment"]);
+      environment = exactRecord(data?.environment, [
+        "id",
+        "variables",
+        "volumeInstances",
+        "serviceInstances",
+      ]);
+    } catch {
+      throw new Error("provider_query_failed");
+    }
+    if (!environment || environment.id !== environmentId) {
+      throw new Error("provider_query_failed");
+    }
+    for (const name of connectionNames) {
+      const page = parseCollateralConnectionPage(environment[name]);
+      if (!page) throw new Error("provider_query_failed");
+      if (completed[name]) continue;
+      if (edges[name].length + page.edges.length > 2_000) {
+        throw new Error("provider_query_failed");
+      }
+      edges[name].push(...page.edges);
+      if (!page.hasNextPage) {
+        completed[name] = true;
+        continue;
+      }
+      if (
+        page.endCursor === null
+        || seenCursors[name].has(page.endCursor)
+      ) throw new Error("provider_query_failed");
+      seenCursors[name].add(page.endCursor);
+      cursors[name] = page.endCursor;
+    }
+    if (connectionNames.every((name) => completed[name])) {
+      return JSON.stringify({
+        data: {
+          environment: {
+            id: environmentId,
+            variables: { edges: edges.variables, pageInfo: { hasNextPage: false, endCursor: null } },
+            volumeInstances: { edges: edges.volumeInstances, pageInfo: { hasNextPage: false, endCursor: null } },
+            serviceInstances: { edges: edges.serviceInstances, pageInfo: { hasNextPage: false, endCursor: null } },
+          },
+        },
+      });
+    }
+  }
+  throw new Error("provider_query_failed");
 }
 
 function parseCollateralSnapshot(
@@ -1042,9 +1287,10 @@ function parseCollateralSnapshot(
         || !UUID_PATTERN.test(node.serviceId)
         || !safeProviderString(node.serviceName, 256)
         || node.environmentId !== environmentId
-        || !Number.isSafeInteger(node.numReplicas)
-        || (node.numReplicas as number) < 0
-        || (node.numReplicas as number) > 50
+        || !(node.numReplicas === null
+          || (Number.isSafeInteger(node.numReplicas)
+            && (node.numReplicas as number) >= 0
+            && (node.numReplicas as number) <= 50))
         || (node.source !== null && !sourceValue)
         || !domains
         || !Array.isArray(domains.serviceDomains)
@@ -1114,6 +1360,38 @@ function originHostname(origin: string): string {
   return new URL(origin).hostname;
 }
 
+function validatedProviderObservation(
+  policy: PermanentStagingAppDeploymentPolicy,
+  environmentId: string,
+  expectedReplicaCounts: readonly number[],
+  publicOrigin: string,
+  scope: { readonly projectId: string; readonly environmentId: string },
+  patch: { readonly environmentId: string; readonly patchEmpty: true },
+  snapshot: RailwayApplicationDeploymentAttestationProviderSnapshot | null,
+  collateral: ReturnType<typeof parseCollateralSnapshot>,
+): ProviderObservation {
+  if (!snapshot || !collateral) throw new Error("provider_query_failed");
+  const hostname = originHostname(publicOrigin);
+  const exact = scope.projectId === policy.projectId
+    && scope.environmentId === environmentId
+    && patch.environmentId === environmentId
+    && snapshot.environmentId === environmentId
+    && snapshot.serviceId === policy.target.serviceId
+    && snapshot.deployment.projectId === policy.projectId
+    && snapshot.deployment.environmentId === environmentId
+    && snapshot.deployment.serviceId === policy.target.serviceId
+    && expectedReplicaCounts.includes(snapshot.numReplicas)
+    && snapshot.domains.some((domain) => domain.domain === hostname);
+  if (!exact) throw new Error("provider_target_mismatch");
+  return {
+    tokenScopeExact: true,
+    patchEmpty: patch.patchEmpty === true,
+    gitAutodeployAbsent: collateral.gitAutodeployAbsent,
+    collateralSha256: collateral.collateralSha256,
+    snapshot,
+  };
+}
+
 async function defaultQueryTarget(
   fetchImpl: typeof fetch,
   policy: PermanentStagingAppDeploymentPolicy,
@@ -1168,12 +1446,11 @@ async function defaultQueryTarget(
       RAILWAY_APPLICATION_DEPLOYMENT_SNAPSHOT_QUERY,
       { environmentId, serviceId: policy.target.serviceId, deploymentId },
     ),
-    railwayQuery(
+    queryCollateralSnapshot(
       fetchImpl,
       token,
-      "PintPathRailwayApplicationDeploymentCollateral",
-      RAILWAY_APPLICATION_DEPLOYMENT_COLLATERAL_QUERY,
-      { projectId: policy.projectId, environmentId },
+      policy.projectId,
+      environmentId,
     ),
   ]);
   const snapshot =
@@ -1185,28 +1462,16 @@ async function defaultQueryTarget(
     environmentId,
     policy.target.serviceId,
   );
-  if (!snapshot || !collateral || !collateral.gitAutodeployAbsent) {
-    throw new Error("provider_query_failed");
-  }
-  const hostname = originHostname(publicOrigin);
-  const exact = scope.projectId === policy.projectId
-    && scope.environmentId === environmentId
-    && patch.environmentId === environmentId
-    && snapshot.environmentId === environmentId
-    && snapshot.serviceId === policy.target.serviceId
-    && snapshot.deployment.projectId === policy.projectId
-    && snapshot.deployment.environmentId === environmentId
-    && snapshot.deployment.serviceId === policy.target.serviceId
-    && expectedReplicaCounts.includes(snapshot.numReplicas)
-    && snapshot.domains.some((domain) => domain.domain === hostname);
-  if (!exact) throw new Error("provider_target_mismatch");
-  return {
-    tokenScopeExact: true,
-    patchEmpty: patch.patchEmpty === true,
-    gitAutodeployAbsent: collateral.gitAutodeployAbsent,
-    collateralSha256: collateral.collateralSha256,
+  return validatedProviderObservation(
+    policy,
+    environmentId,
+    expectedReplicaCounts,
+    publicOrigin,
+    scope,
+    patch,
     snapshot,
-  };
+    collateral,
+  );
 }
 
 async function defaultValidateWriteToken(
@@ -1260,6 +1525,10 @@ function runtimeMatches(
       === railwayDeploymentIdentityIdSha256("service", policy.target.serviceId)
     && response.deployment.deploymentIdSha256
       === railwayDeploymentIdentityIdSha256("deployment", deploymentId)
+    && response.automaticMaintenance.enabled
+      === policy.postflightContract.automaticMaintenanceEnabled
+    && response.automaticMaintenance.candidateBound
+      === policy.postflightContract.automaticMaintenanceCandidateBindingRequired
     && response.restoreMarkerPresent === false;
 }
 
@@ -1341,6 +1610,8 @@ const DEFAULT_DEPENDENCIES: ExecutorDependencies = {
   createSourceAuthority: defaultCreateSourceAuthority,
   validateCli,
   validateWriteToken: async (...args) => defaultValidateWriteToken(fetch, ...args),
+  validateProductionWorkerFencePrerequisite:
+    parseProductionDeploymentWorkerFencePrerequisiteVerification,
   queryTarget: async (...args) => defaultQueryTarget(fetch, ...args),
   probeRuntime: async (...args) => defaultProbeRuntime(fetch, ...args),
   runBoundary: defaultRunBoundary,
@@ -1351,11 +1622,15 @@ function parseArguments(argv: readonly string[]): {
   policyPath: string;
   candidateSha: string;
   evidenceDir: string;
+  productionWorkerFenceRunId: string | null;
+  productionWorkerFenceVerificationFile: string | null;
 } {
   const allowed = new Set([
     "--policy",
     "--candidate-sha",
     "--evidence-dir",
+    "--production-worker-fence-run-id",
+    "--production-worker-fence-verification-file",
   ]);
   const values = new Map<string, string>();
   if (argv.length % 2 !== 0) throw new Error("argument_invalid");
@@ -1381,7 +1656,40 @@ function parseArguments(argv: readonly string[]): {
     policyPath,
     candidateSha,
     evidenceDir,
+    productionWorkerFenceRunId:
+      values.get("--production-worker-fence-run-id") ?? null,
+    productionWorkerFenceVerificationFile:
+      values.get("--production-worker-fence-verification-file") ?? null,
   };
+}
+
+function readPrivatePrerequisite(
+  filename: string,
+  evidenceDir: string,
+): string {
+  let bytes: Buffer | null = null;
+  try {
+    if (
+      !path.isAbsolute(filename)
+      || path.basename(filename)
+        !== "production-deployment-worker-fence-verification.json"
+      || path.dirname(path.resolve(filename)) !== fs.realpathSync(evidenceDir)
+    ) throw new Error("worker_fence_prerequisite_failed");
+    bytes = readTrustedRegularFile(filename, {
+      minBytes: 2,
+      maxBytes: 1024 * 1024,
+      requireExactMode: 0o600,
+      requireOwner: true,
+      requirePrivate: true,
+    });
+    const source = bytes.toString("utf8");
+    if (source.includes("\0")) throw new Error("worker_fence_prerequisite_failed");
+    return source;
+  } catch {
+    throw new Error("worker_fence_prerequisite_failed");
+  } finally {
+    bytes?.fill(0);
+  }
 }
 
 function assertEvidenceDirectory(evidenceDir: string): void {
@@ -1603,6 +1911,27 @@ function safeDate(now: () => Date): string {
   return value.toISOString();
 }
 
+function safeFailureCode(error: unknown): PermanentStagingAppDeploymentFailureCode {
+  const candidate = error instanceof Error ? error.message : "";
+  return SAFE_FAILURE_CODE_SET.has(candidate)
+    ? candidate as PermanentStagingAppDeploymentFailureCode
+    : "unexpected_failure";
+}
+
+function terminalFailureCode(
+  checks: PermanentStagingAppDeploymentExecutorChecks,
+  writeAttempts: 0 | 1,
+): PermanentStagingAppDeploymentFailureCode {
+  if (!checks.boundaryPostflightExact) return "boundary_postflight_failed";
+  if (checks.targetPostflightAttempted && !checks.targetPostflightExact) {
+    return "target_postflight_failed";
+  }
+  if (writeAttempts === 1 && !checks.deploymentExact) {
+    return "reconciliation_failed";
+  }
+  return "terminal_validation_failed";
+}
+
 function summary(receipt: PermanentStagingAppDeploymentExecutorReceipt): string {
   return `${JSON.stringify({
     candidateSha: receipt.candidateSha,
@@ -1610,6 +1939,7 @@ function summary(receipt: PermanentStagingAppDeploymentExecutorReceipt): string 
     ok: ["deployed", "already_deployed", "reconciled_success"]
       .includes(receipt.outcome),
     outcome: receipt.outcome,
+    failureCode: receipt.failureCode,
     receiptSha256: sha256(canonicalJson(receipt)),
     target: receipt.target,
     writeAttempts: receipt.writeAttempts,
@@ -1676,10 +2006,15 @@ export async function runPermanentStagingAppDeploymentExecutor(
   let boundaryPreflightSha256: string | null = null;
   let boundaryPostflightSha256: string | null = null;
   let outcome: PermanentStagingAppDeploymentExecutorReceipt["outcome"] = "blocked";
+  let failureCode: PermanentStagingAppDeploymentFailureCode | null = null;
   let preflightAlreadyCandidate = false;
   let preservedReplicaCount: number | null = null;
   let parsedArgs: ReturnType<typeof parseArguments> | null = null;
   let writeResult: CommandResult | null = null;
+  let workerFencePrerequisite:
+    PermanentStagingAppDeploymentExecutorReceipt["workerFencePrerequisite"] = null;
+  let workerFenceVerification:
+    ProductionDeploymentWorkerFencePrerequisiteVerification | null = null;
 
   try {
     parsedArgs = parseArguments(argv);
@@ -1706,6 +2041,71 @@ export async function runPermanentStagingAppDeploymentExecutor(
     ) throw new Error("boundary_policy_drift");
     checks.costPolicyExact = costPolicyExact(policy, dependencies.cwd);
     if (!checks.costPolicyExact) throw new Error("cost_policy_invalid");
+
+    const productionWorkerFenceRunId =
+      parsedArgs.productionWorkerFenceRunId
+      ?? dependencies.env.PINTPATH_PRODUCTION_DEPLOYMENT_FENCE_RUN_ID
+      ?? null;
+    const productionWorkerFenceVerificationFile =
+      parsedArgs.productionWorkerFenceVerificationFile
+      ?? dependencies.env
+        .PINTPATH_PRODUCTION_DEPLOYMENT_WORKER_FENCE_VERIFICATION_FILE
+      ?? null;
+    if (policy.target.name === "production") {
+      const currentRunId = dependencies.env.GITHUB_RUN_ID ?? "";
+      if (
+        !policy.workerFencePrerequisiteContract
+        || !productionWorkerFenceRunId
+        || !RUN_ID_PATTERN.test(productionWorkerFenceRunId)
+        || !RUN_ID_PATTERN.test(currentRunId)
+        || !productionWorkerFenceVerificationFile
+      ) throw new Error("worker_fence_prerequisite_failed");
+      try {
+        const prerequisiteSource = readPrivatePrerequisite(
+          productionWorkerFenceVerificationFile,
+          evidenceDir,
+        );
+        workerFenceVerification =
+          dependencies.validateProductionWorkerFencePrerequisite(
+            prerequisiteSource,
+            {
+              candidateSha,
+              currentRunId,
+              fenceRunId: productionWorkerFenceRunId,
+              now: dependencies.now(),
+            },
+          );
+        workerFencePrerequisite = {
+          runId: workerFenceVerification.workerFence.runId,
+          verificationSha256: sha256(prerequisiteSource),
+          bindingSha256: workerFenceVerification.workerFence.bindingSha256,
+          terminalSha256: workerFenceVerification.workerFence.terminalSha256,
+          deploymentIdSha256:
+            workerFenceVerification.workerFence.deploymentIdSha256,
+        };
+        checks.workerFencePrerequisiteExact =
+          workerFencePrerequisite.runId === productionWorkerFenceRunId
+          && workerFenceVerification.candidateSha === candidateSha
+          && workerFenceVerification.consumer.runId === currentRunId
+          && SHA256_PATTERN.test(workerFencePrerequisite.verificationSha256)
+          && SHA256_PATTERN.test(workerFencePrerequisite.bindingSha256)
+          && SHA256_PATTERN.test(workerFencePrerequisite.terminalSha256)
+          && SHA256_PATTERN.test(workerFencePrerequisite.deploymentIdSha256);
+      } catch {
+        throw new Error("worker_fence_prerequisite_failed");
+      }
+      if (!checks.workerFencePrerequisiteExact) {
+        throw new Error("worker_fence_prerequisite_failed");
+      }
+    } else {
+      if (
+        productionWorkerFenceRunId !== null
+        || productionWorkerFenceVerificationFile !== null
+        || policy.workerFencePrerequisiteContract !== undefined
+      ) throw new Error("worker_fence_prerequisite_failed");
+      checks.workerFencePrerequisiteExact = true;
+      checks.workerFenceDeploymentContinuityExact = true;
+    }
 
     sourceAuthority = await dependencies.createSourceAuthority(
       dependencies.cwd,
@@ -1782,6 +2182,17 @@ export async function runPermanentStagingAppDeploymentExecutor(
     checks.collateralInventoryExact = checks.targetPreflightExact;
     if (!checks.targetPreflightExact) throw new Error("target_preflight_failed");
     if (!checks.gitAutodeployAbsent) throw new Error("git_autodeploy_active");
+    if (policy.target.name === "production") {
+      checks.workerFenceDeploymentContinuityExact =
+        workerFencePrerequisite !== null
+        && railwayDeploymentIdentityIdSha256(
+            "deployment",
+            preflight.snapshot.deployment.id,
+          ) === workerFencePrerequisite.deploymentIdSha256;
+      if (!checks.workerFenceDeploymentContinuityExact) {
+        throw new Error("worker_fence_prerequisite_failed");
+      }
+    }
     preflightAlreadyCandidate = preflight.snapshot.deployment.commitHash === candidateSha;
     if (preflightAlreadyCandidate && !deploymentHealthy(
       preflight,
@@ -1804,6 +2215,7 @@ export async function runPermanentStagingAppDeploymentExecutor(
         "deployment",
         preflight.snapshot.deployment.id,
       ),
+      workerFencePrerequisite,
       preservedReplicaCount,
       createdAt: safeDate(dependencies.now),
       maximumWriteAttempts: 1,
@@ -1868,13 +2280,15 @@ export async function runPermanentStagingAppDeploymentExecutor(
         candidateSha,
         preservedReplicaCount,
       );
-      runtime = await dependencies.probeRuntime(
-        policy.target.publicOrigin,
-        candidateSha,
-        policy,
-        policy.target.environmentId,
-        reconciledCandidate.snapshot.deployment.id,
-      );
+      runtime = policy.postflightContract.runtimeProbeRequired
+        ? await dependencies.probeRuntime(
+          policy.target.publicOrigin,
+          candidateSha,
+          policy,
+          policy.target.environmentId,
+          reconciledCandidate.snapshot.deployment.id,
+        )
+        : null;
       checks.runtimeHealthExact = true;
       checks.runtimeStartupExact = true;
       checks.runtimeReadinessExact = true;
@@ -1886,7 +2300,8 @@ export async function runPermanentStagingAppDeploymentExecutor(
         : acknowledgement === "received"
           ? "deployed"
           : "reconciled_success";
-  } catch {
+  } catch (error) {
+    failureCode = safeFailureCode(error);
     if (writeAttempts === 1) {
       acknowledgement = acknowledgement === "received"
         ? acknowledgement
@@ -1928,7 +2343,8 @@ export async function runPermanentStagingAppDeploymentExecutor(
             && checks.collateralStateUnchanged
             && (reconciledCandidate === null
               || providerDeploymentUnchanged(reconciledCandidate, postflight));
-        } catch {
+        } catch (error) {
+          failureCode ??= safeFailureCode(error);
           checks.targetPostflightExact = false;
           checks.reconciliationCompleted = false;
           checks.topologyPreserved = false;
@@ -1945,11 +2361,15 @@ export async function runPermanentStagingAppDeploymentExecutor(
           boundaryPostflight.source,
         );
         checks.boundaryPostflightExact = boundaryPostflight.ok;
-      } catch {
+      } catch (error) {
+        failureCode ??= safeFailureCode(error);
         checks.boundaryPostflightExact = false;
       }
     }
-    try { sourceAuthority?.cleanup(); } catch { checks.sourceReasserted = false; }
+    try { sourceAuthority?.cleanup(); } catch {
+      failureCode ??= "source_cleanup_failed";
+      checks.sourceReasserted = false;
+    }
   }
 
   const successfulOutcome = ["deployed", "already_deployed", "reconciled_success"]
@@ -1962,6 +2382,8 @@ export async function runPermanentStagingAppDeploymentExecutor(
     checks.writeTokenScopeExact,
     checks.costPolicyExact,
     checks.prerequisiteExact,
+    checks.workerFencePrerequisiteExact,
+    checks.workerFenceDeploymentContinuityExact,
     checks.boundaryPreflightExact,
     checks.targetPreflightExact,
     checks.durableIntentExact,
@@ -1982,6 +2404,7 @@ export async function runPermanentStagingAppDeploymentExecutor(
   ];
   if (!successfulOutcome || requiredChecks.some((check) => !check)) {
     outcome = writeAttempts === 1 ? "mutation_uncertain" : "blocked";
+    failureCode ??= terminalFailureCode(checks, writeAttempts);
   }
   const completedAt = safeDate(dependencies.now);
   const receiptBase: Omit<PermanentStagingAppDeploymentExecutorReceipt,
@@ -1991,6 +2414,7 @@ export async function runPermanentStagingAppDeploymentExecutor(
     executorState: PERMANENT_STAGING_APP_DEPLOYMENT_EXECUTOR_STATE,
     target: policy?.target.name ?? null,
     outcome,
+    failureCode,
     candidateSha,
     startedAt,
     completedAt,
@@ -2019,6 +2443,7 @@ export async function runPermanentStagingAppDeploymentExecutor(
       startup: runtime?.startup.responseSha256 ?? null,
       ready: runtime?.ready.responseSha256 ?? null,
     },
+    workerFencePrerequisite,
   };
   let receipt: PermanentStagingAppDeploymentExecutorReceipt = {
     ...receiptBase,
@@ -2039,9 +2464,11 @@ export async function runPermanentStagingAppDeploymentExecutor(
     } catch {
       checks.terminalEvidenceExact = false;
       outcome = writeAttempts === 1 ? "mutation_uncertain" : "blocked";
+      failureCode ??= "terminal_evidence_failed";
       receipt = {
         ...receiptBase,
         outcome,
+        failureCode,
         checks: Object.freeze({ ...checks }),
       };
     }
@@ -2060,6 +2487,7 @@ export const PERMANENT_STAGING_APP_DEPLOYMENT_BLOCKED_RECEIPT = Object.freeze({
   executorState: PERMANENT_STAGING_APP_DEPLOYMENT_EXECUTOR_STATE,
   target: null,
   outcome: "blocked",
+  failureCode: "unexpected_failure",
 } as const);
 
 export const permanentStagingAppDeploymentExecutorInternals = Object.freeze({
@@ -2068,9 +2496,12 @@ export const permanentStagingAppDeploymentExecutorInternals = Object.freeze({
   deploymentHealthy,
   parseArguments,
   parseCollateralSnapshot,
+  queryCollateralSnapshot,
   parseDiscoveryDeploymentId,
   policyMatchesLock,
   providerDeploymentUnchanged,
   runtimeMatches,
+  safeFailureCode,
   snapshotManifestSha256,
+  validatedProviderObservation,
 });

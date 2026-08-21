@@ -1,4 +1,5 @@
 name: Converge Pint Path production to two replicas
+run-name: Converge production to two replicas | ${{ inputs.candidate_sha }}
 
 on:
   workflow_dispatch:
@@ -11,11 +12,16 @@ on:
         description: CONVERGE_PRODUCTION_TO_TWO_REPLICAS
         required: true
         type: string
+      activate_run_id:
+        description: Exact successful production automatic-maintenance activation run ID
+        required: true
+        type: string
 
 permissions:
   actions: read
   checks: read
   contents: read
+  pull-requests: read
 
 concurrency:
   group: pintpath-production-rollout
@@ -42,10 +48,12 @@ jobs:
           DISPATCH_SHA: ${{ github.sha }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
           CONFIRMATION: ${{ inputs.confirmation }}
+          ACTIVATE_RUN_ID: ${{ inputs.activate_run_id }}
         shell: bash
         run: |
           set -euo pipefail
           [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$ACTIVATE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
           test "$DISPATCH_REF" = 'refs/heads/main'
           test "$DISPATCH_SHA" = "$CANDIDATE_SHA"
           test "$RUN_ATTEMPT" = '1'
@@ -62,6 +70,56 @@ jobs:
 
       - name: Install immutable dependencies
         run: npm ci
+
+      - name: Create private evidence custody
+        shell: bash
+        run: mkdir -m 700 "$RUNNER_TEMP/pintpath-production-scale-evidence"
+
+      - name: Download the exact production worker-activation artifact
+        uses: actions/download-artifact@b7c52a5f7a25fce4c22e476a93420dd79a061a70 # v8.0.1
+        with:
+          name: pintpath-automatic-maintenance-worker-fence-production-activate-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}/pintpath-production-worker-activation-prerequisite
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.activate_run_id }}
+
+      - name: Seal and verify the exact production worker activation
+        env:
+          ACTIVATE_RUN_ID: ${{ inputs.activate_run_id }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          GITHUB_ACTIONS: "true"
+          GITHUB_API_URL: https://api.github.com
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_WORKFLOW_REF: ${{ github.workflow_ref }}
+          PINTPATH_PRODUCTION_SCALE_ACTIVATE_RUN_ID: ${{ inputs.activate_run_id }}
+          PINTPATH_PRODUCTION_SCALE_GITHUB_ENVIRONMENT: production-topology-configuration
+          PINTPATH_SCALE_CONFIRMATION: ${{ inputs.confirmation }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          prerequisite_root="$RUNNER_TEMP/pintpath-production-worker-activation-prerequisite"
+          terminal="$prerequisite_root/automatic-maintenance-worker-fence-terminal.json"
+          activation_prerequisites="$prerequisite_root/production-activation-role-limit-verification.json"
+          test -d "$prerequisite_root"
+          test ! -L "$prerequisite_root"
+          test -f "$terminal"
+          test -f "$activation_prerequisites"
+          test ! -L "$terminal"
+          test ! -L "$activation_prerequisites"
+          test "$(find "$prerequisite_root" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')" = '2'
+          chmod 600 "$terminal" "$activation_prerequisites"
+          ./node_modules/.bin/tsx scripts/verify-production-maintenance-role-limit-prerequisites.ts \
+            --mode production-scale \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --activate-run-id "$ACTIVATE_RUN_ID" \
+            --activate-terminal-file "$terminal" \
+            --activation-prerequisites-file "$activation_prerequisites" \
+            --output "$RUNNER_TEMP/pintpath-production-scale-evidence/production-scale-activation-verification.json"
 
       - name: Install the exact reviewed Railway CLI archive
         shell: bash
@@ -84,10 +142,6 @@ jobs:
           test "$("$cli_path" --version)" = 'railway 5.32.0'
           echo "PINTPATH_RAILWAY_CLI_PATH=$cli_path" >> "$GITHUB_ENV"
 
-      - name: Create private evidence custody
-        shell: bash
-        run: mkdir -m 700 "$RUNNER_TEMP/pintpath-production-scale-evidence"
-
       - name: Verify the complete repository before the provider write
         run: npm run check
 
@@ -105,9 +159,12 @@ jobs:
       - name: Converge the exact production deployment to two replicas once
         env:
           GITHUB_REF: ${{ github.ref }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
           GITHUB_SHA: ${{ github.sha }}
           GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
           PINTPATH_SCALE_CONFIRMATION: ${{ inputs.confirmation }}
+          PINTPATH_PRODUCTION_SCALE_ACTIVATE_RUN_ID: ${{ inputs.activate_run_id }}
+          PINTPATH_PRODUCTION_SCALE_ACTIVATION_VERIFICATION_FILE: ${{ runner.temp }}/pintpath-production-scale-evidence/production-scale-activation-verification.json
           PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
           PINTPATH_RAILWAY_PRODUCTION_SCALE_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_SCALE_TOKEN }}
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
@@ -118,7 +175,9 @@ jobs:
             --direction converge-production-two \
             --candidate-sha "$CANDIDATE_SHA" \
             --expected-deployment-sha "$CANDIDATE_SHA" \
-            --evidence-dir "$RUNNER_TEMP/pintpath-production-scale-evidence"
+            --evidence-dir "$RUNNER_TEMP/pintpath-production-scale-evidence" \
+            --production-activation-run-id "$PINTPATH_PRODUCTION_SCALE_ACTIVATE_RUN_ID" \
+            --production-scale-verification-file "$PINTPATH_PRODUCTION_SCALE_ACTIVATION_VERIFICATION_FILE"
 
       - name: Reconcile the Railway mutation boundary after every attempt
         if: always()

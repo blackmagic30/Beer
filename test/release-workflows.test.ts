@@ -19,6 +19,29 @@ function allWorkflows(): string[] {
     .sort();
 }
 
+function workflowJobContaining(source: string, marker: string): string {
+  const markerIndex = source.indexOf(marker);
+  const jobsIndex = source.search(/^jobs:\s*$/m);
+  if (markerIndex < 0 || jobsIndex < 0 || markerIndex <= jobsIndex) return "";
+
+  const jobStarts = [...source.matchAll(/^  [A-Za-z0-9_-]+:\s*$/gm)]
+    .map((match) => match.index ?? -1)
+    .filter((index) => index > jobsIndex);
+  const jobStart = [...jobStarts]
+    .reverse()
+    .find((index) => index < markerIndex);
+  if (jobStart === undefined) return "";
+
+  const nextJobStart = jobStarts.find((index) => index > jobStart);
+  return source.slice(jobStart, nextJobStart ?? source.length);
+}
+
+function workflowSecretNames(source: string): string[] {
+  return [...source.matchAll(/\$\{\{\s*secrets\.([A-Z0-9_]+)\s*\}\}/g)].map(
+    (match) => match[1]!,
+  );
+}
+
 function evidenceValidator(): string {
   return fs.readFileSync(
     path.resolve(process.cwd(), "scripts/validate-release-evidence.ts"),
@@ -118,7 +141,7 @@ describe("release workflow contracts", () => {
     }
     expect(stagingPolicy).toContain('"name": "permanent-staging"');
     expect(stagingPolicyValue.schemaVersion).toBe(
-      "pintpath-railway-application-deployment-policy/v4",
+      "pintpath-railway-application-deployment-policy/v5",
     );
     expect(stagingPolicyValue.target.allowedReplicaCounts).toEqual([1]);
     expect(stagingPolicy).toContain(
@@ -131,7 +154,7 @@ describe("release workflow contracts", () => {
     expect(productionPolicy).toContain('"name": "production"');
     expect(productionPolicy).toContain('"sameCandidateRequired": true');
     expect(productionPolicyValue.schemaVersion).toBe(
-      "pintpath-railway-application-deployment-policy/v4",
+      "pintpath-railway-application-deployment-policy/v5",
     );
     expect(productionPolicyValue.target.allowedReplicaCounts).toEqual([1, 2]);
     expect(productionPolicyValue.prerequisite.expectedReplicaCount).toBe(1);
@@ -159,7 +182,6 @@ describe("release workflow contracts", () => {
         'test "$(git rev-parse refs/remotes/origin/main)" = "$CANDIDATE_SHA"',
       );
       expect(source).toContain("npm run check");
-      expect(source).toContain("PUBLIC_BASE_URL: ${{ vars.PUBLIC_BASE_URL }}");
       expect(source).toContain("github:release-candidate:verify");
       expect(
         source.indexOf("Create the private deployment evidence directory"),
@@ -179,9 +201,33 @@ describe("release workflow contracts", () => {
     expect(stagingWorkflow).toContain(
       "environment: permanent-staging-deployment",
     );
+    expect(stagingWorkflow).toContain(
+      "PUBLIC_BASE_URL: https://beer-staging.up.railway.app",
+    );
+    expect(stagingWorkflow).toContain(
+      "Require the policy-pinned permanent-staging public origin",
+    );
+    expect(stagingWorkflow).toContain(
+      "ops/railway/permanent-staging-app-deployment-policy.json",
+    );
+    expect(stagingWorkflow).toContain(
+      "ops/railway/permanent-staging-fenced-app-deployment-policy.json",
+    );
+    expect(stagingWorkflow).toContain(
+      "scripts/execute-permanent-staging-app-deployment.ts",
+    );
+    expect(stagingWorkflow).not.toContain("vars.PUBLIC_BASE_URL");
     expect(stagingWorkflow).toContain("PINTPATH_RAILWAY_STAGING_DEPLOY_TOKEN");
-    expect(stagingWorkflow).toContain("railway:staging:app:deploy");
+    expect(stagingWorkflow).toContain("--operation fenced-deploy");
+    expect(stagingWorkflow).toContain("--operation active-deploy");
     expect(productionWorkflow).toContain("environment: production-deployment");
+    expect(productionWorkflow).toContain(
+      "PUBLIC_BASE_URL: https://pintpath.au",
+    );
+    expect(productionWorkflow).toContain(
+      "Require the policy-pinned production public origin",
+    );
+    expect(productionWorkflow).not.toContain("vars.PUBLIC_BASE_URL");
     expect(productionWorkflow).toContain(
       "PINTPATH_RAILWAY_PRODUCTION_DEPLOY_TOKEN",
     );
@@ -878,7 +924,29 @@ describe("release workflow contracts", () => {
     );
     expect(externalSignoffs).toContain("readiness:railway:mutation-boundary");
     expect(externalSignoffs).toContain(
-      "current incident baseline is intentionally non-passing",
+      "pass-capable only while the live provider state matches",
+    );
+    const boundaryDocuments = [
+      releaseDocument("production-launch-runbook.md"),
+      releaseDocument("release-readiness-checklist.md"),
+      releaseDocument("launch-9-readiness-gates.md"),
+      externalSignoffs,
+    ];
+    for (const document of boundaryDocuments) {
+      expect(document).toContain("pass-capable");
+      expect(document).not.toContain("current incident baseline");
+    }
+    expect(boundaryDocuments[0]).not.toContain(
+      "current boundary policy intentionally fails",
+    );
+    expect(boundaryDocuments[0]).not.toContain(
+      "require at least one approval from someone other than the author",
+    );
+    expect(boundaryDocuments[0]).toContain(
+      "do not require human PR approval under the current solo-owner policy",
+    );
+    expect(boundaryDocuments[0]).toContain(
+      "exact reviewed-head verification",
     );
   });
 
@@ -921,21 +989,32 @@ describe("release workflow contracts", () => {
       return source.includes("github:release-candidate:verify") ||
         source.includes("github:release-reviewed-head:fetch") ||
         source.includes("github:reviewed-candidate-authority:verify") ||
+        source.includes(
+          "verify-permanent-staging-worker-bootstrap-prerequisites",
+        ) ||
+        source.includes(
+          "verify-production-maintenance-role-limit-prerequisites",
+        ) ||
         name === "configure-runtime-variable.yml";
     });
     expect(consumers).toEqual([
       "activate-production-promotion-recovery.yml",
       "attest-production-promotion-recovery.yml",
+      "bootstrap-permanent-staging-worker-fence.yml",
       "close-production-route.yml",
+      "configure-automatic-maintenance-worker-fence.yml",
       "configure-runtime-variable.yml",
       "deploy-permanent-staging.yml",
       "deploy-production.yml",
       "open-production-route.yml",
       "permanent-staging-provider-mutation.yml",
+      "permanent-staging-scale-evidence.yml",
       "permanent-staging-supabase-legacy-cutover.yml",
       "pintpath-release-gate.yml",
       "pintpath-release-readiness.yml",
+      "production-converge-two-replicas.yml",
       "runtime-variable-worker.yml",
+      "transition-production-postgres-maintenance-role-limit.yml",
     ]);
     for (const name of consumers) {
       const permissions = workflow(name).match(
@@ -948,12 +1027,12 @@ describe("release workflow contracts", () => {
   it("pins every workflow action to an audited immutable release", () => {
     const source = allWorkflows().map(workflow).join("\n");
     const expectedPins = new Map([
-      ["actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", 38],
-      ["actions/setup-node@820762786026740c76f36085b0efc47a31fe5020", 30],
+      ["actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", 41],
+      ["actions/setup-node@820762786026740c76f36085b0efc47a31fe5020", 33],
       ["actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961", 2],
-      ["actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", 29],
+      ["actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", 34],
       ["actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3", 1],
-      ["actions/download-artifact@b7c52a5f7a25fce4c22e476a93420dd79a061a70", 7],
+      ["actions/download-artifact@b7c52a5f7a25fce4c22e476a93420dd79a061a70", 25],
       [
         "android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699",
         2,
@@ -1001,7 +1080,7 @@ describe("release workflow contracts", () => {
         line.includes("uses: actions/checkout@") ? index : -1,
       )
       .filter((index) => index >= 0);
-    expect(checkoutIndexes).toHaveLength(38);
+    expect(checkoutIndexes).toHaveLength(41);
     for (const index of checkoutIndexes) {
       expect(lines.slice(index, index + 4).join("\n")).toContain(
         "persist-credentials: false",
@@ -3056,6 +3135,250 @@ describe("release workflow contracts", () => {
     );
   });
 
+  it("pages failed production monitors with provider-credential-free deadman signals", () => {
+    const health = workflow("production-health.yml");
+    const refresh = workflow("venue-directory-refresh.yml");
+    const authenticatedHealth = workflowJobContaining(
+      health,
+      "PINTPATH_SMOKE_BASE_URL",
+    );
+    const healthNotifier = workflowJobContaining(
+      health,
+      "environment: production-monitoring-alerts",
+    );
+    const refreshNotifier = workflowJobContaining(
+      refresh,
+      "environment: production-monitoring-alerts",
+    );
+
+    expect(authenticatedHealth).toMatch(
+      /^    environment:\s*production-monitoring\s*$/m,
+    );
+    expect(healthNotifier).not.toBe("");
+    expect(refreshNotifier).not.toBe("");
+
+    const assertNotifierTransport = (
+      notifier: string,
+      payloadEnvironmentNames: string[],
+    ) => {
+      expect(notifier).toMatch(
+        /^    if:\s*(?:\$\{\{\s*)?always\(\)(?:\s*\}\})?\s*$/m,
+      );
+      expect(notifier).toMatch(
+        /^    environment:\s*production-monitoring-alerts\s*$/m,
+      );
+      expect(workflowSecretNames(notifier)).toEqual([
+        "PINTPATH_PRODUCTION_MONITOR_WEBHOOK_URL",
+      ]);
+      expect(notifier).not.toContain("actions/checkout");
+      expect(notifier).not.toContain("actions/setup-node");
+      expect(notifier).not.toMatch(
+        /SUPABASE_|GOOGLE_PLACES|PINTPATH_SMOKE_|PROVIDER_/,
+      );
+
+      const payloadStart = notifier.indexOf('payload="');
+      const curlStart = notifier.indexOf("curl ", payloadStart);
+      expect(payloadStart).toBeGreaterThan(-1);
+      expect(curlStart).toBeGreaterThan(payloadStart);
+      const payloadBuilder = notifier.slice(payloadStart, curlStart);
+      const referencedPayloadEnvironmentNames = [
+        ...new Set(
+          [...payloadBuilder.matchAll(/\$([A-Z][A-Z0-9_]*)/g)].map(
+            (match) => match[1]!,
+          ),
+        ),
+      ].sort();
+      expect(referencedPayloadEnvironmentNames).toEqual(
+        [...payloadEnvironmentNames].sort(),
+      );
+      expect(payloadBuilder).not.toMatch(
+        /password|secret|credential|authorization|cookie|webhook|supabase|google[_-]?places/i,
+      );
+
+      const curlCommand = notifier.slice(curlStart);
+      expect(curlCommand).toMatch(/--proto\s+['"]?=https['"]?/);
+      expect(curlCommand).toMatch(/--tlsv1\.2\b/);
+      expect(curlCommand).toMatch(/--connect-timeout\s+[1-9][0-9]*/);
+      expect(curlCommand).toMatch(/--max-time\s+[1-9][0-9]*/);
+      expect(curlCommand).toMatch(/--retry\s+[1-9][0-9]*/);
+      expect(curlCommand).toMatch(/--retry-delay\s+1\b/);
+      expect(curlCommand).toContain('--data-binary "$payload"');
+      expect(curlCommand).toContain('"$MONITOR_WEBHOOK_URL"');
+      expect(notifier).toMatch(
+        /case\s+"\$http_status"\s+in[\s\S]*?2\?\?\)\s*;;/,
+      );
+      const deliveredFailureGuard =
+        /if\s+\[\[\s*"\$status"\s*={1,2}\s*"failure"\s*\]\];\s*then[\s\S]*?\bexit\s+1\b[\s\S]*?\bfi\b/g.exec(
+          notifier,
+        );
+      expect(deliveredFailureGuard).not.toBeNull();
+      expect(deliveredFailureGuard?.index ?? -1).toBeGreaterThan(curlStart);
+    };
+
+    expect(healthNotifier).toContain(
+      "${{ needs.public-production-health.result }}",
+    );
+    expect(healthNotifier).toContain(
+      "${{ needs.authenticated-user-venue-health.result }}",
+    );
+    expect(healthNotifier).toContain(
+      "EVENT_NAME: ${{ github.event_name }}",
+    );
+    expect(healthNotifier).toContain(
+      "EVENT_SCHEDULE: ${{ github.event.schedule }}",
+    );
+    expect(healthNotifier).toMatch(/\\"trigger\\":\\"%s\\"/);
+    expect(healthNotifier).toMatch(/\\"schedule\\":\\"%s\\"/);
+
+    const normalizedHealthNotifier = healthNotifier
+      .replace(/\\\n\s*/g, " ")
+      .replace(/\s+/g, " ");
+    expect(normalizedHealthNotifier).toContain(
+      'monitor="unknown" if [[ "$EVENT_NAME" == "schedule" && "$EVENT_SCHEDULE" == "*/15 * * * *" ]]; then monitor="public"',
+    );
+    expect(normalizedHealthNotifier).toContain(
+      'elif [[ "$EVENT_NAME" == "schedule" && "$EVENT_SCHEDULE" == "7 * * * *" ]]; then monitor="authenticated"',
+    );
+    expect(normalizedHealthNotifier).toContain(
+      'elif [[ "$EVENT_NAME" == "workflow_dispatch" && -z "$EVENT_SCHEDULE" ]]; then monitor="manual"',
+    );
+
+    const expectExactHealthSuccessBranch = (
+      event: string,
+      comparisons: string[],
+    ) => {
+      const eventAssignment = `event="${event}"`;
+      const eventIndex = healthNotifier.indexOf(eventAssignment);
+      expect(eventIndex).toBeGreaterThan(-1);
+
+      const branchPrefix = healthNotifier.slice(0, eventIndex);
+      const branches = [
+        ...branchPrefix.matchAll(
+          /(?:^|\n)\s*(?:if|elif)\s+\[\[([\s\S]*?)\]\];\s*then/g,
+        ),
+      ];
+      const branch = branches[branches.length - 1];
+      expect(branch).toBeDefined();
+      const condition = branch?.[1] ?? "";
+      const actualComparisons = [
+        ...condition.matchAll(
+          /"\$(monitor|PUBLIC_RESULT|AUTHENTICATED_RESULT)"\s*={1,2}\s*"([^"]*)"/g,
+        ),
+      ]
+        .map((match) => `${match[1]}=${match[2]}`)
+        .sort();
+      expect(actualComparisons).toEqual([...comparisons].sort());
+      expect(condition).not.toContain("||");
+      expect(condition.match(/&&/g)).toHaveLength(comparisons.length - 1);
+
+      const branchBodyStart = (branch?.index ?? 0) + (branch?.[0].length ?? 0);
+      expect(healthNotifier.slice(branchBodyStart, eventIndex)).toContain(
+        'status="success"',
+      );
+    };
+
+    expectExactHealthSuccessBranch(
+      "pintpath-production-public-health-heartbeat",
+      [
+        "monitor=public",
+        "PUBLIC_RESULT=success",
+        "AUTHENTICATED_RESULT=skipped",
+      ],
+    );
+    expectExactHealthSuccessBranch(
+      "pintpath-production-authenticated-health-heartbeat",
+      [
+        "monitor=authenticated",
+        "PUBLIC_RESULT=skipped",
+        "AUTHENTICATED_RESULT=success",
+      ],
+    );
+    expectExactHealthSuccessBranch("pintpath-production-health-manual-check", [
+      "monitor=manual",
+      "PUBLIC_RESULT=success",
+      "AUTHENTICATED_RESULT=success",
+    ]);
+    expect(healthNotifier).not.toContain(
+      'event="pintpath-production-health-heartbeat"',
+    );
+    expect(healthNotifier).toContain(
+      'event="pintpath-production-health-failed"',
+    );
+    const failureEventIndex = healthNotifier.indexOf(
+      'event="pintpath-production-health-failed"',
+    );
+    const manualEventIndex = healthNotifier.indexOf(
+      'event="pintpath-production-health-manual-check"',
+    );
+    expect(
+      healthNotifier.slice(manualEventIndex, failureEventIndex),
+    ).toMatch(/\n\s*else\s*\n\s*status="failure"\s*\n\s*$/);
+    assertNotifierTransport(healthNotifier, [
+      "AUTHENTICATED_RESULT",
+      "EVENT_NAME",
+      "EVENT_SCHEDULE",
+      "GITHUB_REPOSITORY",
+      "GITHUB_RUN_ATTEMPT",
+      "GITHUB_RUN_ID",
+      "PUBLIC_RESULT",
+    ]);
+
+    expect(refresh).toMatch(
+      /^    outputs:\s*$[\s\S]*?^      directory_schema_ready:\s*\$\{\{\s*steps\.directory_schema\.outputs\.ready\s*\}\}\s*$/m,
+    );
+    expect(refreshNotifier).toContain(
+      "${{ needs.refresh-production-directory-status.result }}",
+    );
+    expect(refreshNotifier).toContain(
+      "${{ needs.refresh-production-directory-status.outputs.directory_schema_ready }}",
+    );
+    expect(refreshNotifier).toContain(
+      "EVENT_NAME: ${{ github.event_name }}",
+    );
+    expect(refreshNotifier).toContain(
+      "EVENT_SCHEDULE: ${{ github.event.schedule }}",
+    );
+    expect(refreshNotifier).toMatch(/\\"trigger\\":\\"%s\\"/);
+    expect(refreshNotifier).toMatch(/\\"schedule\\":\\"%s\\"/);
+
+    const normalizedRefreshNotifier = refreshNotifier
+      .replace(/\\\n\s*/g, " ")
+      .replace(/\s+/g, " ");
+    expect(normalizedRefreshNotifier).toContain(
+      'monitor="unknown" if [[ "$EVENT_NAME" == "schedule" && "$EVENT_SCHEDULE" == "23 14 * * *" ]]; then monitor="daily"',
+    );
+    expect(normalizedRefreshNotifier).toContain(
+      'elif [[ "$EVENT_NAME" == "workflow_dispatch" && -z "$EVENT_SCHEDULE" ]]; then monitor="manual"',
+    );
+    expect(normalizedRefreshNotifier).toContain(
+      'if [[ "$monitor" == "daily" && "$REFRESH_RESULT" == "success" && "$DIRECTORY_SCHEMA_READY" == "true" ]]; then status="success" event="pintpath-venue-directory-refresh-heartbeat"',
+    );
+    expect(normalizedRefreshNotifier).toContain(
+      'elif [[ "$monitor" == "manual" && "$REFRESH_RESULT" == "success" && "$DIRECTORY_SCHEMA_READY" == "true" ]]; then status="success" event="pintpath-venue-directory-refresh-manual-check"',
+    );
+    expect(normalizedRefreshNotifier).toContain(
+      'else status="failure" event="pintpath-venue-directory-refresh-failed"',
+    );
+    expect(refreshNotifier).toContain(
+      'event="pintpath-venue-directory-refresh-heartbeat"',
+    );
+    expect(refreshNotifier).toContain(
+      'event="pintpath-venue-directory-refresh-manual-check"',
+    );
+    expect(refreshNotifier).toContain(
+      'event="pintpath-venue-directory-refresh-failed"',
+    );
+    assertNotifierTransport(refreshNotifier, [
+      "DIRECTORY_SCHEMA_READY",
+      "EVENT_NAME",
+      "EVENT_SCHEDULE",
+      "GITHUB_REPOSITORY",
+      "GITHUB_RUN_ATTEMPT",
+      "GITHUB_RUN_ID",
+      "REFRESH_RESULT",
+    ]);
+  });
+
   it("does not mix failed retry bodies into successful production health JSON", () => {
     const source = workflow("production-health.yml");
     const monitor = repositoryFile("scripts/production-health-check.mjs");
@@ -3484,7 +3807,7 @@ describe("release workflow contracts", () => {
       phase16.indexOf("### 16.5 Deploy the exact protected `main` build"),
     );
     expect(phase16).toContain(
-      "execute the complete Phase 12 staging and rollback",
+      "Execute the complete Phase 12 staging",
     );
     expect(protectedOperations).toContain(
       "The workflow rejects a PR head or any SHA other than protected `main`",

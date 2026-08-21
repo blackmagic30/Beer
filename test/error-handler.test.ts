@@ -9,8 +9,23 @@ function mockResponse() {
     statusCode: 0,
     body: null as unknown,
     sentFile: "",
+    headers: new Map<string, string>(),
     status(code: number) {
       this.statusCode = code;
+      return this;
+    },
+    setHeader(name: string, value: string) {
+      this.headers.set(name.toLowerCase(), value);
+      return this;
+    },
+    type(value: string) {
+      this.headers.set("content-type", value === "json" ? "application/json" : value);
+      return this;
+    },
+    vary(value: string) {
+      const existing = this.headers.get("vary")?.split(",").map((entry) => entry.trim()) ?? [];
+      if (!existing.includes(value)) existing.push(value);
+      this.headers.set("vary", existing.join(", "));
       return this;
     },
     json(body: unknown) {
@@ -129,7 +144,61 @@ describe("error handler logging", () => {
 
     expect(response.statusCode).toBe(404);
     expect(response.sentFile).toContain("viewer/404.html");
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("vary")).toBe("Accept");
     expect(response.body).toBeNull();
+  });
+
+  it("serves the branded recovery page for handled browser 404 errors", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const response = mockResponse();
+
+    errorHandler(
+      new AppError("Venue not found.", 404),
+      {
+        method: "GET",
+        path: "/venues/deleted-venue",
+        originalUrl: "/venues/deleted-venue",
+        accepts: (types: string[]) => types.includes("html") ? "html" : false,
+      } as never,
+      response as never,
+      (() => undefined) as never,
+    );
+
+    expect(response.statusCode).toBe(404);
+    expect(response.sentFile).toContain("viewer/404.html");
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("vary")).toBe("Accept");
+    expect(response.body).toBeNull();
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps handled API 404 errors in the JSON contract even when HTML is accepted", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const response = mockResponse();
+
+    errorHandler(
+      new AppError("Venue not found.", 404),
+      {
+        method: "GET",
+        path: "/api/business/venues/deleted-venue",
+        originalUrl: "/api/business/venues/deleted-venue",
+        accepts: (types: string[]) => types.includes("html") ? "html" : false,
+      } as never,
+      response as never,
+      (() => undefined) as never,
+    );
+
+    expect(response.statusCode).toBe(404);
+    expect(response.sentFile).toBe("");
+    expect(response.headers.get("content-type")).toBe("application/json");
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("vary")).toBeUndefined();
+    expect(response.body).toEqual(expect.objectContaining({
+      ok: false,
+      error: expect.objectContaining({ message: "Venue not found." }),
+    }));
+    expect(warn).toHaveBeenCalledTimes(1);
   });
 
   it("logs server errors at error level", () => {

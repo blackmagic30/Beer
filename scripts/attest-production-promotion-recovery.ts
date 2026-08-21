@@ -3,9 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import {
-  PERMANENT_STAGING_APP_DEPLOYMENT_EXECUTOR_SCHEMA,
-} from "./lib/permanent-staging-app-deployment-executor.js";
+import { parseProductionApplicationDeploymentReceipt } from
+  "./lib/production-application-deployment-receipt.js";
 import {
   PROTECTED_STAGING_SCALE_SCHEMA,
 } from "./execute-protected-permanent-staging-scale.js";
@@ -285,20 +284,9 @@ function verifyDeployment(value: Json, candidateSha: string): {
   readonly completedAt: string;
   readonly deploymentIdSha256: string;
 } {
-  if (
-    value.schemaVersion !== PERMANENT_STAGING_APP_DEPLOYMENT_EXECUTOR_SCHEMA
-    || value.operation !== "pintpath-railway-application-source-upload"
-    || value.executorState !== "GITHUB_ENVIRONMENT_PROTECTED"
-    || value.target !== "production"
-    || !["deployed", "already_deployed", "reconciled_success"].includes(String(value.outcome))
-    || value.candidateSha !== candidateSha
-    || typeof value.deploymentIdSha256 !== "string" || !SHA256.test(value.deploymentIdSha256)
-    || !allTrue(value.checks)
-  ) fail("production_deployment_invalid");
-  return {
-    completedAt: exactTimestamp(value.completedAt),
-    deploymentIdSha256: value.deploymentIdSha256,
-  };
+  const receipt = parseProductionApplicationDeploymentReceipt(value, candidateSha);
+  if (!receipt) fail("production_deployment_invalid");
+  return receipt;
 }
 
 function verifyClosedRoute(
@@ -357,26 +345,72 @@ function verifyClosedRoute(
 function verifyScale(
   value: Json,
   candidateSha: string,
-  deploymentIdSha256: string,
+  deploymentBeforeActivationIdSha256: string,
   deploymentCompletedAt: string,
-): { readonly completedAt: string } {
+): { readonly completedAt: string; readonly deploymentIdSha256: string } {
   const checks = value.checks;
+  const prerequisite = value.productionActivationPrerequisite;
+  const attempts = value.attempts;
+  const checkKeys = [
+    "policyExact", "githubAuthorityExact", "tokenScopesExact", "cliExact",
+    "boundaryPreflightExact", "targetPreflightExact",
+    "productionActivationPrerequisiteExact",
+    "productionActivationDeploymentContinuityExact", "runtimePreflightExact",
+    "durableIntentExact", "repositoryPrewriteReasserted",
+    "writeAttemptedAtMostOnce", "acknowledgementExact", "postflightAttempted",
+    "targetPostflightExact", "runtimePostflightExact", "candidateUnchanged",
+    "deploymentUnchanged", "boundaryPostflightExact", "terminalEvidenceExact",
+    "finalReceiptEvidenceExact",
+  ];
   if (
-    value.schemaVersion !== PROTECTED_STAGING_SCALE_SCHEMA
+    !exactKeys(value, [
+      "schemaVersion", "executorState", "direction", "outcome", "candidateSha",
+      "startedAt", "completedAt", "desiredReplicas", "deploymentIdSha256",
+      "attempts", "retryAllowed", "intentSha256", "terminalEvidenceSha256",
+      "commandStdoutSha256", "commandStderrSha256",
+      "productionActivationPrerequisite", "checks",
+    ])
+    || value.schemaVersion !== PROTECTED_STAGING_SCALE_SCHEMA
     || value.executorState !== "GITHUB_ENVIRONMENT_PROTECTED"
     || value.direction !== "converge-production-two"
     || !["scaled", "already_converged"].includes(String(value.outcome))
     || value.candidateSha !== candidateSha
     || value.desiredReplicas !== 2
-    || value.deploymentIdSha256 !== deploymentIdSha256
+    || typeof value.deploymentIdSha256 !== "string"
+    || !SHA256.test(value.deploymentIdSha256)
     || value.retryAllowed !== false
-    || ![0, 1].includes(Number(value.attempts))
+    || (attempts !== 0 && attempts !== 1)
+    || typeof value.terminalEvidenceSha256 !== "string"
+    || !SHA256.test(value.terminalEvidenceSha256)
+    || (attempts === 0
+      ? value.intentSha256 !== null
+        || value.commandStdoutSha256 !== null
+        || value.commandStderrSha256 !== null
+      : typeof value.intentSha256 !== "string" || !SHA256.test(value.intentSha256)
+        || typeof value.commandStdoutSha256 !== "string"
+        || !SHA256.test(value.commandStdoutSha256)
+        || typeof value.commandStderrSha256 !== "string"
+        || !SHA256.test(value.commandStderrSha256))
+    || !isObject(prerequisite)
+    || !exactKeys(prerequisite, [
+      "runId", "verificationSha256", "terminalSha256", "prerequisitesSha256",
+      "deploymentBeforeIdSha256", "deploymentAfterIdSha256",
+    ])
+    || typeof prerequisite.runId !== "string"
+    || !/^[1-9][0-9]*$/.test(prerequisite.runId)
+    || [prerequisite.verificationSha256, prerequisite.terminalSha256,
+      prerequisite.prerequisitesSha256].some(
+      (entry) => typeof entry !== "string" || !SHA256.test(entry),
+    )
+    || prerequisite.deploymentBeforeIdSha256 !== deploymentBeforeActivationIdSha256
+    || prerequisite.deploymentAfterIdSha256 !== value.deploymentIdSha256
+    || prerequisite.deploymentAfterIdSha256 === prerequisite.deploymentBeforeIdSha256
     || !isObject(checks)
-    || checks.durableIntentExact !== (value.attempts === 1)
+    || !exactKeys(checks, checkKeys)
     || Object.entries(checks).some(([name, entry]) => (
-      name !== "durableIntentExact" && entry !== true
+      name === "durableIntentExact" ? entry !== (attempts === 1) : entry !== true
     ))
-    || (value.outcome === "scaled") !== (value.attempts === 1)
+    || (value.outcome === "scaled") !== (attempts === 1)
   ) fail("production_scale_invalid");
   const startedAt = exactTimestamp(value.startedAt);
   const completedAt = exactTimestamp(value.completedAt);
@@ -384,7 +418,7 @@ function verifyScale(
     Date.parse(startedAt) < Date.parse(deploymentCompletedAt)
     || Date.parse(completedAt) < Date.parse(startedAt)
   ) fail("production_scale_invalid");
-  return { completedAt };
+  return { completedAt, deploymentIdSha256: value.deploymentIdSha256 };
 }
 
 function verifyClosedRouteTerminal(
@@ -1071,15 +1105,15 @@ export async function attestProductionPromotionRecovery(
   }
 
   const deployment = verifyDeployment(json("production-deployment-receipt"), candidateSha);
-  if (deployment.deploymentIdSha256 !== authority.productionDeploymentIdSha256) {
-    fail("production_deployment_invalid");
-  }
   const scale = verifyScale(
     json("production-scale-receipt"), candidateSha,
     deployment.deploymentIdSha256, deployment.completedAt,
   );
+  if (scale.deploymentIdSha256 !== authority.productionDeploymentIdSha256) {
+    fail("production_scale_invalid");
+  }
   const closedRoute = verifyClosedRoute(
-    json("closed-route-receipt"), candidateSha, deployment.deploymentIdSha256,
+    json("closed-route-receipt"), candidateSha, scale.deploymentIdSha256,
     authority.productionDeploymentReceiptSha256,
     authority.productionScaleReceiptSha256,
   );
@@ -1087,7 +1121,7 @@ export async function attestProductionPromotionRecovery(
     fail("closed_route_invalid");
   }
   verifyClosedRouteTerminal(
-    json("closed-route-terminal"), candidateSha, deployment.deploymentIdSha256,
+    json("closed-route-terminal"), candidateSha, scale.deploymentIdSha256,
   );
 
   const authorization = postgresReviewedPriceOperationAuthorizationReceiptSchema.parse(
@@ -1104,7 +1138,7 @@ export async function attestProductionPromotionRecovery(
     || apply.sourceApplyOperationId !== null
   ) fail("promotion_invalid");
 
-  const pitr = verifyPitr(json("pitr-receipt"), candidateSha, deployment.deploymentIdSha256);
+  const pitr = verifyPitr(json("pitr-receipt"), candidateSha, scale.deploymentIdSha256);
   const manifest = parsePostgresLogicalBackupManifest(files.get("logical-backup-manifest")!.source);
   if (
     manifest.schemaVersion !== 3
@@ -1433,7 +1467,7 @@ export async function attestProductionPromotionRecovery(
     activationEvidenceAggregateSha256,
     cleanupEvidenceAggregateSha256,
     productionDeploymentReceiptSha256: authority.productionDeploymentReceiptSha256,
-    productionDeploymentIdSha256: deployment.deploymentIdSha256,
+    productionDeploymentIdSha256: scale.deploymentIdSha256,
     productionScaleReceiptSha256: authority.productionScaleReceiptSha256,
     closedRouteReceiptSha256: authority.closedRouteReceiptSha256,
     closedRouteTerminalEvidenceSha256: authority.closedRouteTerminalEvidenceSha256,

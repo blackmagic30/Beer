@@ -53,6 +53,7 @@ import { BeerCatalogRepository, type BeerCatalogAdminItem, type ResolvedBeerCata
 import {
   AccountSessionRepository,
   AccountSessionRepositoryError,
+  type SupabaseAccountSessionMutation,
 } from "../../db/account-session.repository.js";
 import {
   AccountProfilePreferencesRepository,
@@ -173,7 +174,11 @@ import {
   VenueIdentityRepository,
   VenueIdentityRepositoryError,
 } from "../../db/venue-identity.repository.js";
-import { VenueInventoryRepository } from "../../db/venue-inventory.repository.js";
+import {
+  VenueInventoryRepository,
+  type BarProfilePublicMetadata,
+} from "../../db/venue-inventory.repository.js";
+import type { SafePostgresApplicationPoolMetrics } from "../../db/postgres-connection-budget.js";
 import {
   SUPPORTED_BEERS,
   VIEWER_TRACKED_BEERS,
@@ -226,6 +231,7 @@ import type {
   AdminPaginationInput,
   AuthLoginInput,
   BillingRecoveryPortalInput,
+  BrowserReauthenticationPurpose,
   AuthSignupInput,
   AuthSupabaseSessionInput,
   BarBeerInput,
@@ -284,6 +290,173 @@ import type {
   WrongPriceReportInput,
 } from "./business.schemas.js";
 
+const BROWSER_MEMORY_CREDENTIAL_CEREMONY = "browser_memory_v1";
+const BROWSER_CREDENTIAL_SESSION_PREFIX = "credential-v1";
+const BROWSER_CREDENTIAL_SESSION_RANDOM_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+const BROWSER_CREDENTIAL_SESSION_TIMESTAMP_PATTERN = /^[1-9][0-9]{0,10}$/;
+const BROWSER_CREDENTIAL_CEREMONY_MAX_AGE_MS = 15 * 60_000;
+const BROWSER_CREDENTIAL_FUTURE_SKEW_MS = 60_000;
+const BROWSER_EMAIL_REAUTH_CHALLENGE_TTL_SECONDS = 10 * 60;
+const BROWSER_EMAIL_REAUTH_CHALLENGE_DOMAIN = "pintpath-browser-email-reauth/v1";
+const BROWSER_EMAIL_REAUTH_CHALLENGE_RANDOM_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/;
+const SUPABASE_SIGN_IN_CREDENTIAL_METHODS = new Set([
+  "oauth",
+  "otp",
+  "passkey",
+  "password",
+  "saml",
+  "sso",
+  "totp",
+  "webauthn",
+]);
+type BrowserCredentialSessionPurpose = BrowserReauthenticationPurpose | "session";
+
+type BrowserEmailReauthenticationChallenge = {
+  accountId: string;
+  purpose: BrowserReauthenticationPurpose;
+  currentTokenHash: string;
+  issuedAtSeconds: number;
+  expiresAtSeconds: number;
+};
+
+function browserEmailReauthenticationChallengeMessage(input: {
+  accountId: string;
+  purpose: BrowserReauthenticationPurpose;
+  currentTokenHash: string;
+  issuedAtSeconds: number;
+  expiresAtSeconds: number;
+  nonce: string;
+}): string {
+  return [
+    BROWSER_EMAIL_REAUTH_CHALLENGE_DOMAIN,
+    input.accountId,
+    input.purpose,
+    input.currentTokenHash,
+    String(input.issuedAtSeconds),
+    String(input.expiresAtSeconds),
+    input.nonce,
+  ].join("\0");
+}
+
+function createBrowserEmailReauthenticationChallenge(input: {
+  secret: string;
+  accountId: string;
+  purpose: BrowserReauthenticationPurpose;
+  currentTokenHash: string;
+  issuedAtSeconds: number;
+}): { token: string; expiresAt: string } {
+  const expiresAtSeconds = input.issuedAtSeconds + BROWSER_EMAIL_REAUTH_CHALLENGE_TTL_SECONDS;
+  const nonce = crypto.randomBytes(32).toString("base64url");
+  const encodedAccountId = Buffer.from(input.accountId, "utf8").toString("base64url");
+  const message = browserEmailReauthenticationChallengeMessage({ ...input, expiresAtSeconds, nonce });
+  const signature = crypto.createHmac("sha256", input.secret).update(message).digest("base64url");
+  return {
+    token: [
+      "v1",
+      encodedAccountId,
+      input.purpose,
+      input.currentTokenHash,
+      String(input.issuedAtSeconds),
+      String(expiresAtSeconds),
+      nonce,
+      signature,
+    ].join("."),
+    expiresAt: new Date(expiresAtSeconds * 1000).toISOString(),
+  };
+}
+
+function parseBrowserEmailReauthenticationChallenge(
+  token: string,
+  secret: string,
+  nowSeconds: number,
+): BrowserEmailReauthenticationChallenge | null {
+  const segments = token.split(".");
+  if (segments.length !== 8 || segments[0] !== "v1") return null;
+  const [, encodedAccountId, purposeValue, currentTokenHash, issuedValue, expiresValue, nonce, signature] = segments;
+  if (
+    !encodedAccountId
+    || !purposeValue
+    || !currentTokenHash
+    || !issuedValue
+    || !expiresValue
+    || !nonce
+    || !signature
+    || !SHA256_HEX_PATTERN.test(currentTokenHash)
+    || !/^[1-9][0-9]{0,10}$/.test(issuedValue)
+    || !/^[1-9][0-9]{0,10}$/.test(expiresValue)
+    || !BROWSER_EMAIL_REAUTH_CHALLENGE_RANDOM_PATTERN.test(nonce)
+    || !BROWSER_EMAIL_REAUTH_CHALLENGE_RANDOM_PATTERN.test(signature)
+  ) return null;
+  let accountId: string;
+  try {
+    accountId = Buffer.from(encodedAccountId, "base64url").toString("utf8");
+  } catch {
+    return null;
+  }
+  if (
+    !accountId
+    || accountId.length > 256
+    || Buffer.from(accountId, "utf8").toString("base64url") !== encodedAccountId
+    || ![
+      "session_management",
+      "account_export",
+      "account_deletion",
+      "billing_portal",
+      "venue_billing_portal",
+      "logout_all",
+    ].includes(purposeValue)
+  ) return null;
+  const issuedAtSeconds = Number(issuedValue);
+  const expiresAtSeconds = Number(expiresValue);
+  if (
+    !Number.isSafeInteger(issuedAtSeconds)
+    || !Number.isSafeInteger(expiresAtSeconds)
+    || expiresAtSeconds - issuedAtSeconds !== BROWSER_EMAIL_REAUTH_CHALLENGE_TTL_SECONDS
+    || issuedAtSeconds > nowSeconds + Math.floor(BROWSER_CREDENTIAL_FUTURE_SKEW_MS / 1000)
+    || expiresAtSeconds <= nowSeconds
+  ) return null;
+  const purpose = purposeValue as BrowserReauthenticationPurpose;
+  const expected = crypto.createHmac("sha256", secret).update(
+    browserEmailReauthenticationChallengeMessage({
+      accountId,
+      purpose,
+      currentTokenHash,
+      issuedAtSeconds,
+      expiresAtSeconds,
+      nonce,
+    }),
+  ).digest();
+  const supplied = Buffer.from(signature, "base64url");
+  if (supplied.length !== expected.length || !crypto.timingSafeEqual(supplied, expected)) return null;
+  return { accountId, purpose, currentTokenHash, issuedAtSeconds, expiresAtSeconds };
+}
+
+function browserCredentialSessionToken(
+  token: string,
+): { purpose: BrowserCredentialSessionPurpose; credentialTimeSeconds: number } | null {
+  const segments = token.split(".");
+  if (
+    segments.length !== 4
+    || segments[0] !== BROWSER_CREDENTIAL_SESSION_PREFIX
+    || !BROWSER_CREDENTIAL_SESSION_TIMESTAMP_PATTERN.test(segments[2] ?? "")
+    || !BROWSER_CREDENTIAL_SESSION_RANDOM_PATTERN.test(segments[3] ?? "")
+  ) return null;
+  const purpose = segments[1];
+  const credentialTimeSeconds = Number(segments[2]);
+  if (!Number.isSafeInteger(credentialTimeSeconds) || credentialTimeSeconds <= 0) return null;
+  if (purpose === "session") return { purpose, credentialTimeSeconds };
+  if (
+    purpose !== "session_management"
+    && purpose !== "account_export"
+    && purpose !== "account_deletion"
+    && purpose !== "billing_portal"
+    && purpose !== "venue_billing_portal"
+    && purpose !== "logout_all"
+  ) return null;
+  return { purpose, credentialTimeSeconds };
+}
+
 interface VenueRow {
   id: string;
   name: string;
@@ -310,6 +483,16 @@ interface VenueRow {
   isUserSubmittedVenue?: boolean;
   beerKeys?: string[];
 }
+
+type PublicVenueTierMetadata = Required<Pick<
+  VenueRow,
+  | "membershipTier"
+  | "highlightedName"
+  | "premiumBadge"
+  | "promoted"
+  | "featuredSpecialEligible"
+  | "acceptsPintPathCodes"
+>>;
 
 interface MissionAreaLookup {
   latitude: number;
@@ -503,6 +686,18 @@ export interface SessionRequestContext {
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+function providerSecurityEpochIso(): string {
+  // Supabase access-token timestamps are accepted with a small positive clock
+  // skew. Advance the local epoch through that entire window so a token minted
+  // before provider-wide sign-out cannot replay merely because the provider's
+  // clock was ahead of this process.
+  return new Date(Date.now() + BROWSER_CREDENTIAL_FUTURE_SKEW_MS).toISOString();
+}
+
+function providerGlobalRevocationClaimId(): string {
+  return crypto.randomBytes(32).toString("base64url");
 }
 
 function nextRevisionTimestamp(expectedUpdatedAt: string | null): string {
@@ -1405,32 +1600,170 @@ function getSupabaseAuthenticationMethods(accessToken: string): string[] {
   });
 }
 
+function getSupabaseAuthenticationMethodTimeSeconds(
+  accessToken: string,
+  requiredMethod: string,
+): number | null {
+  const payload = decodeJwtPayload(accessToken);
+  const normalizedMethod = requiredMethod.trim().toLowerCase();
+  const candidates: number[] = [];
+  let stringMethodPresent = false;
+  if (Array.isArray(payload?.amr)) {
+    for (const entry of payload.amr) {
+      if (typeof entry === "string") {
+        if (entry.trim().toLowerCase() === normalizedMethod) stringMethodPresent = true;
+        continue;
+      }
+      if (!entry || typeof entry !== "object") continue;
+      const record = entry as Record<string, unknown>;
+      if (
+        typeof record.method === "string"
+        && record.method.trim().toLowerCase() === normalizedMethod
+        && Number.isSafeInteger(record.timestamp)
+        && Number(record.timestamp) > 0
+      ) candidates.push(Number(record.timestamp));
+    }
+  }
+  if (
+    candidates.length === 0
+    && stringMethodPresent
+    && Number.isSafeInteger(payload?.auth_time)
+    && Number(payload?.auth_time) > 0
+  ) candidates.push(Number(payload!.auth_time));
+  return candidates.length > 0 ? Math.max(...candidates) : null;
+}
+
+function getSupabaseCredentialTimeSeconds(
+  accessToken: string,
+  options: { allowRecovery?: boolean } = {},
+): number | null {
+  const payload = decodeJwtPayload(accessToken);
+  const allowedMethods = new Set(SUPABASE_SIGN_IN_CREDENTIAL_METHODS);
+  if (options.allowRecovery === true) allowedMethods.add("recovery");
+  const candidates: number[] = [];
+  let allowedStringMethod = false;
+  if (Array.isArray(payload?.amr)) {
+    for (const entry of payload.amr) {
+      if (typeof entry === "string") {
+        if (allowedMethods.has(entry.trim().toLowerCase())) allowedStringMethod = true;
+        continue;
+      }
+      if (!entry || typeof entry !== "object") continue;
+      const record = entry as Record<string, unknown>;
+      const method = typeof record.method === "string" ? record.method.trim().toLowerCase() : "";
+      if (
+        !allowedMethods.has(method)
+        || !Number.isSafeInteger(record.timestamp)
+        || Number(record.timestamp) <= 0
+      ) continue;
+      candidates.push(Number(record.timestamp));
+    }
+  }
+  if (
+    candidates.length === 0
+    && allowedStringMethod
+    && Number.isSafeInteger(payload?.auth_time)
+    && Number(payload?.auth_time) > 0
+  ) {
+    candidates.push(Number(payload!.auth_time));
+  }
+  return candidates.length > 0 ? Math.max(...candidates) : null;
+}
+
+function requireFreshSupabaseCredentialCeremony(
+  accessToken: string,
+  maxAgeMs = BROWSER_CREDENTIAL_CEREMONY_MAX_AGE_MS,
+  options: { allowRecovery?: boolean } = {},
+): number {
+  const credentialTimeSeconds = getSupabaseCredentialTimeSeconds(accessToken, options);
+  const credentialAgeMs = credentialTimeSeconds === null
+    ? Number.POSITIVE_INFINITY
+    : Date.now() - credentialTimeSeconds * 1000;
+  if (
+    credentialTimeSeconds === null
+    || !Number.isFinite(credentialAgeMs)
+    || credentialAgeMs < -BROWSER_CREDENTIAL_FUTURE_SKEW_MS
+    || credentialAgeMs > maxAgeMs
+  ) {
+    throw new AppError("A fresh provider sign-in or MFA step-up is required.", 403, {
+      reauthenticationRequired: true,
+      maxAgeMinutes: Math.floor(maxAgeMs / 60_000),
+    });
+  }
+  return credentialTimeSeconds;
+}
+
 function getSupabaseEmailVerifiedAt(user: unknown): string | null {
   const record = user as Record<string, unknown>;
   const value = record.email_confirmed_at ?? record.confirmed_at;
   return typeof value === "string" && value ? value : null;
 }
 
-function getSupabaseMfaClaims(accessToken: string): { mfaLevel: string; mfaVerifiedAt: string | null } {
+function getSupabaseMfaClaims(
+  accessToken: string,
+  user?: unknown,
+): { mfaLevel: string; mfaVerifiedAt: string | null } {
   const payload = decodeJwtPayload(accessToken);
   const aal = typeof payload?.aal === "string" ? payload.aal : "aal1";
+  if (user !== undefined && verifiedSupabaseMfaFactorIds(user).length === 0) {
+    return { mfaLevel: "aal1", mfaVerifiedAt: null };
+  }
   const amr = Array.isArray(payload?.amr) ? payload.amr : [];
-  const latestTotpTimestamp = amr.reduce<number | null>((latest, entry) => {
+  const latestMfaTimestamp = amr.reduce<number | null>((latest, entry) => {
     if (!entry || typeof entry !== "object") {
       return latest;
     }
     const record = entry as Record<string, unknown>;
-    if (record.method !== "totp" || typeof record.timestamp !== "number" || !Number.isSafeInteger(record.timestamp)) {
+    if (
+      !["totp", "phone", "webauthn", "passkey"].includes(String(record.method || "").toLowerCase())
+      || typeof record.timestamp !== "number"
+      || !Number.isSafeInteger(record.timestamp)
+    ) {
       return latest;
     }
     return latest == null || record.timestamp > latest ? record.timestamp : latest;
   }, null);
   return {
     mfaLevel: aal,
-    mfaVerifiedAt: aal === "aal2" && latestTotpTimestamp != null
-      ? new Date(latestTotpTimestamp * 1000).toISOString()
+    mfaVerifiedAt: aal === "aal2" && latestMfaTimestamp != null
+      ? new Date(latestMfaTimestamp * 1000).toISOString()
       : null,
   };
+}
+
+function verifiedSupabaseMfaFactorIds(user: unknown): string[] {
+  const factors = (user as Record<string, unknown>)?.factors;
+  if (factors == null) return [];
+  if (!Array.isArray(factors)) {
+    throw new AppError("The sign-in provider returned invalid authenticator state.", 503, undefined, false);
+  }
+  const verified: string[] = [];
+  for (const factor of factors) {
+    if (!factor || typeof factor !== "object") continue;
+    const record = factor as Record<string, unknown>;
+    if (record.status !== "verified") continue;
+    if (
+      typeof record.id !== "string"
+      || !record.id.trim()
+      || typeof record.factor_type !== "string"
+      || !record.factor_type.trim()
+    ) {
+      throw new AppError("The sign-in provider returned invalid authenticator state.", 503, undefined, false);
+    }
+    verified.push(record.id.trim());
+  }
+  return [...new Set(verified)].sort();
+}
+
+function requireSupabaseMfaAssurance(user: unknown, accessToken: string): void {
+  if (verifiedSupabaseMfaFactorIds(user).length === 0) return;
+  if (getSupabaseMfaClaims(accessToken).mfaLevel !== "aal2") {
+    throw new AppError("Complete your authenticator verification before continuing.", 403, {
+      publicCode: "MFA_STEP_UP_REQUIRED",
+      reauthenticationRequired: true,
+      mfaRequired: true,
+    });
+  }
 }
 
 function isFullAccess(account: BusinessAccount | null, currentAdmin = false): boolean {
@@ -2793,7 +3126,11 @@ export class BusinessService {
   private readonly venueManagerInsightsRepository: VenueManagerInsightsRepository;
   private readonly venuePendingChangeRepository: VenuePendingChangeRepository;
   private readonly venueDataReadRepository: VenueDataReadRepository;
-  private readonly databaseHealthProbe: () => Promise<{ ok: boolean; foreignKeyViolations: number }>;
+  private readonly databaseHealthProbe: () => Promise<{
+    ok: boolean;
+    foreignKeyViolations: number;
+    poolMetrics?: readonly SafePostgresApplicationPoolMetrics[];
+  }>;
   private supabaseReadinessCache: { expiresAt: number; value: SupabaseReadinessDependencies } | null = null;
   private supabaseReadinessInFlight: Promise<SupabaseReadinessDependencies> | null = null;
 
@@ -2895,7 +3232,11 @@ export class BusinessService {
       completedAt: string;
     }) => Promise<void>,
     private readonly accountDeletionNotificationCoordinator?: AccountDeletionNotificationCoordinator,
-    databaseHealthProbe?: () => Promise<{ ok: boolean; foreignKeyViolations: number }>,
+    databaseHealthProbe?: () => Promise<{
+      ok: boolean;
+      foreignKeyViolations: number;
+      poolMetrics?: readonly SafePostgresApplicationPoolMetrics[];
+    }>,
   ) {
     this.activityAuditRepository = this.wrapActivityAuditRepository(activityAuditRepository);
     this.supportFeedbackRepository = this.wrapSupportFeedbackRepository(supportFeedbackRepository);
@@ -3702,6 +4043,12 @@ export class BusinessService {
         throw new AppError("That display name is already taken. Choose another leaderboard name.", 409);
       case "invalid_input":
         throw new AppError("Invalid account or session input.", 400);
+      case "provider_global_revocation_pending":
+        throw new AppError(
+          "Provider-wide sign-out is already being completed. Wait a few minutes, then retry.",
+          409,
+          { publicCode: "PROVIDER_GLOBAL_REVOCATION_PENDING", reauthenticationRequired: true },
+        );
       case "provider_session_revoked":
         throw new AppError("This sign-in provider session was revoked. Sign in again to start a new session.", 401);
       case "session_conflict":
@@ -4174,6 +4521,7 @@ export class BusinessService {
     account: BusinessAccount,
     authorizationHeader: string | undefined,
     proof?: { accessToken: string | undefined; password: string | undefined },
+    requiredPurpose: BrowserReauthenticationPurpose = "session_management",
     maxAgeMinutes = 15,
   ): Promise<void> {
     const token = getBearerToken(authorizationHeader);
@@ -4183,56 +4531,47 @@ export class BusinessService {
       userId: account.id,
       now: nowIso(),
     });
-    const ageMs = createdAt ? Date.now() - new Date(createdAt).getTime() : Number.POSITIVE_INFINITY;
-    if (!createdAt || !Number.isFinite(ageMs) || ageMs < 0 || ageMs > maxAgeMinutes * 60_000) {
-      throw new AppError("Recent sign-in required for this sensitive action.", 403, {
+    if (!createdAt) {
+      throw new AppError("Recent sign-in required for this sensitive action.", 401, {
         reauthenticationRequired: true,
+        reauthPurpose: requiredPurpose,
         maxAgeMinutes,
       });
     }
 
-    // Tests use short-lived, isolated app sessions. Real deployments require
-    // proof of the underlying credential ceremony as well; minting a new app
-    // cookie from a refreshed/stolen provider session is not a reauthentication.
-    if (this.config.NODE_ENV === "test") return;
-
-    if (account.supabaseUserId) {
-      const accessToken = proof?.accessToken?.trim();
-      if (!accessToken || !this.supabase) {
-        throw new AppError("Provider reauthentication required for this sensitive action.", 403, {
-          reauthenticationRequired: true,
-          provider: account.authProvider,
-        });
-      }
-      const payload = decodeJwtPayload(accessToken);
-      const authTime = typeof payload?.auth_time === "number" ? payload.auth_time : null;
-      const amrTimes = Array.isArray(payload?.amr)
-        ? payload.amr.flatMap((entry) => {
-            if (!entry || typeof entry !== "object") return [];
-            const record = entry as Record<string, unknown>;
-            const method = typeof record.method === "string" ? record.method.toLowerCase() : "";
-            return method && !method.includes("refresh") && typeof record.timestamp === "number"
-              ? [record.timestamp]
-              : [];
-          })
-        : [];
-      const credentialTimeSeconds = Math.max(authTime ?? 0, ...amrTimes, 0);
-      const credentialAgeMs = Date.now() - credentialTimeSeconds * 1000;
+    const browserCredential = browserCredentialSessionToken(token);
+    if (browserCredential) {
+      const createdAtMs = Date.parse(createdAt);
+      const credentialTimeMs = browserCredential.credentialTimeSeconds * 1000;
+      const ageMs = Date.now() - credentialTimeMs;
       if (
-        credentialTimeSeconds <= 0 ||
-        credentialAgeMs < 0 ||
-        credentialAgeMs > maxAgeMinutes * 60_000
+        browserCredential.purpose !== requiredPurpose
+        || !Number.isFinite(createdAtMs)
+        || credentialTimeMs > createdAtMs + BROWSER_CREDENTIAL_FUTURE_SKEW_MS
+        || !Number.isFinite(ageMs)
+        || ageMs < -BROWSER_CREDENTIAL_FUTURE_SKEW_MS
+        || ageMs > maxAgeMinutes * 60_000
       ) {
-        throw new AppError("A fresh provider sign-in or MFA step-up is required.", 403, {
+        throw new AppError("Purpose-bound reauthentication is required for this sensitive action.", 403, {
           reauthenticationRequired: true,
+          reauthPurpose: requiredPurpose,
           maxAgeMinutes,
         });
       }
-      const { data, error } = await this.supabase.auth.getUser(accessToken);
-      if (error || data.user?.id !== account.supabaseUserId) {
-        throw new AppError("Provider reauthentication proof is invalid.", 403);
-      }
       return;
+    }
+
+    // Hosted accounts use only the purpose-bound HttpOnly capability above.
+    // A raw provider bearer is a browser-sendable header and therefore cannot
+    // distinguish native secure storage from same-origin script execution.
+    if (this.config.NODE_ENV === "test") return;
+
+    if (account.supabaseUserId) {
+      throw new AppError("Purpose-bound reauthentication is required for this sensitive action.", 403, {
+        reauthenticationRequired: true,
+        reauthPurpose: requiredPurpose,
+        maxAgeMinutes,
+      });
     }
 
     if (!proof?.password || !await verifyPassword(proof.password, account.passwordHash)) {
@@ -4279,6 +4618,33 @@ export class BusinessService {
           context,
         });
         throw new AppError("Admin MFA step-up required.", 403);
+      }
+
+      if (this.config.REQUIRE_ADMIN_MFA_IN_PRODUCTION && account.supabaseUserId) {
+        const adminMfa = this.supabase?.auth.admin?.mfa;
+        if (!adminMfa?.listFactors) {
+          throw new AppError("Admin authenticator verification is temporarily unavailable.", 503);
+        }
+        let factorResult;
+        try {
+          factorResult = await adminMfa.listFactors({ userId: account.supabaseUserId });
+        } catch {
+          throw new AppError("Admin authenticator verification is temporarily unavailable.", 503);
+        }
+        if (factorResult.error || !Array.isArray(factorResult.data?.factors)) {
+          throw new AppError("Admin authenticator verification is temporarily unavailable.", 503);
+        }
+        if (verifiedSupabaseMfaFactorIds({ factors: factorResult.data.factors }).length === 0) {
+          await this.auditSecurity({
+            actor: account,
+            action: "admin_mfa_step_up_required",
+            targetType: "account",
+            targetId: account.id,
+            metadata: { mfaLevel: account.mfaLevel, providerFactorMissing: true },
+            context,
+          });
+          throw new AppError("Admin MFA step-up required.", 403);
+        }
       }
     }
 
@@ -4995,10 +5361,51 @@ export class BusinessService {
     return session;
   }
 
+  async beginBrowserEmailReauthentication(
+    account: BusinessAccount,
+    authorizationHeader: string | undefined,
+    purpose: BrowserReauthenticationPurpose,
+  ): Promise<{ email: string; expiresAt: string; challengeToken: string }> {
+    const currentToken = getBearerToken(authorizationHeader);
+    const secret = this.config.SOURCE_EVIDENCE_SIGNING_SECRET;
+    if (!currentToken || !secret || !account.supabaseUserId) {
+      throw new AppError("Email reauthentication is unavailable for this account.", 503);
+    }
+    const currentAccount = await this.accountSessionRepository.getAccountBySessionTokenHash(
+      hashToken(currentToken),
+      nowIso(),
+    );
+    if (
+      !currentAccount
+      || currentAccount.id !== account.id
+      || currentAccount.supabaseUserId !== account.supabaseUserId
+      || normalizeEmail(currentAccount.email) !== normalizeEmail(account.email)
+    ) {
+      throw new AppError("Your Pint Path session changed before email reauthentication could start.", 409, {
+        reauthenticationRequired: true,
+        reauthPurpose: purpose,
+      });
+    }
+    const challenge = createBrowserEmailReauthenticationChallenge({
+      secret,
+      accountId: account.id,
+      purpose,
+      currentTokenHash: hashToken(currentToken),
+      issuedAtSeconds: Math.floor(Date.now() / 1000),
+    });
+    return {
+      email: normalizeEmail(account.email),
+      expiresAt: challenge.expiresAt,
+      challengeToken: challenge.token,
+    };
+  }
+
   async loginWithSupabaseAccessToken(
     input: AuthSupabaseSessionInput,
     context?: SessionRequestContext | undefined,
     existingAuthorization?: string | undefined,
+    browserEmailReauthenticationChallenge?: string | undefined,
+    trustedNativeClient?: "ios-native-v1" | "android-native-v1" | null | undefined,
   ) {
     if (!this.supabase) {
       throw new AppError("Supabase authentication is not configured.", 503);
@@ -5016,6 +5423,96 @@ export class BusinessService {
     }
 
     const email = normalizeEmail(supabaseEmail);
+    if (input.credentialCeremony === "native_memory_v1" && !trustedNativeClient) {
+      throw new AppError("The native credential ceremony is unavailable on this client channel.", 403, {
+        reauthenticationRequired: true,
+        reauthPurpose: input.reauthPurpose,
+      });
+    }
+    const browserCredentialPurpose: BrowserCredentialSessionPurpose | null =
+      input.credentialCeremony !== undefined
+        ? input.reauthPurpose ?? "session"
+        : null;
+    const currentCookieSessionToken = getBearerToken(existingAuthorization);
+    if (
+      browserCredentialPurpose !== null
+      && browserCredentialPurpose !== "session"
+      && !currentCookieSessionToken
+    ) {
+      throw new AppError("Your Pint Path session expired before reauthentication completed. Sign in again, then retry the sensitive action.", 409, {
+        reauthenticationRequired: true,
+        reauthPurpose: browserCredentialPurpose,
+      });
+    }
+    let currentAppAccount: BusinessAccount | null = null;
+    if (browserCredentialPurpose !== null && browserCredentialPurpose !== "session") {
+      currentAppAccount = await this.accountSessionRepository.getAccountBySessionTokenHash(
+        hashToken(currentCookieSessionToken!),
+        nowIso(),
+      );
+      if (
+        !currentAppAccount
+        || currentAppAccount.supabaseUserId !== supabaseUser.id
+        || normalizeEmail(currentAppAccount.email) !== email
+      ) {
+        throw new AppError(
+          "That provider login does not match the active Pint Path session. Sign in to the original account and retry.",
+          409,
+          {
+            reauthenticationRequired: true,
+            reauthPurpose: browserCredentialPurpose,
+          },
+        );
+      }
+    }
+    if (input.credentialCeremony === "browser_email_otp_v1") {
+      const secret = this.config.SOURCE_EVIDENCE_SIGNING_SECRET;
+      if (!secret) {
+        throw new AppError("The email reauthentication challenge is missing, expired, or does not match this session.", 409, {
+          reauthenticationRequired: true,
+          reauthPurpose: input.reauthPurpose,
+        });
+      }
+      const parsedChallenge = parseBrowserEmailReauthenticationChallenge(
+        browserEmailReauthenticationChallenge ?? "",
+        secret,
+        Math.floor(Date.now() / 1000),
+      );
+      if (
+        !currentAppAccount
+        || !input.reauthPurpose
+        || !parsedChallenge
+        || parsedChallenge.accountId !== currentAppAccount.id
+        || parsedChallenge.purpose !== input.reauthPurpose
+        || parsedChallenge.currentTokenHash !== hashToken(currentCookieSessionToken!)
+      ) {
+        throw new AppError("The email reauthentication challenge is missing, expired, or does not match this session.", 409, {
+          reauthenticationRequired: true,
+          reauthPurpose: input.reauthPurpose,
+        });
+      }
+      const authenticationMethods = getSupabaseAuthenticationMethods(input.accessToken);
+      if (!authenticationMethods.includes("otp")) {
+        throw new AppError("Open the latest Pint Path email reauthentication link before continuing.", 403, {
+          reauthenticationRequired: true,
+          reauthPurpose: input.reauthPurpose,
+        });
+      }
+      const otpTimeSeconds = getSupabaseAuthenticationMethodTimeSeconds(input.accessToken, "otp");
+      const nowSeconds = Math.floor(Date.now() / 1000);
+      if (
+        otpTimeSeconds === null
+        || otpTimeSeconds < parsedChallenge.issuedAtSeconds
+        || otpTimeSeconds > nowSeconds + Math.floor(BROWSER_CREDENTIAL_FUTURE_SKEW_MS / 1000)
+        || nowSeconds - otpTimeSeconds > BROWSER_EMAIL_REAUTH_CHALLENGE_TTL_SECONDS
+      ) {
+        throw new AppError("Open the latest Pint Path email reauthentication link before continuing.", 403, {
+          reauthenticationRequired: true,
+          reauthPurpose: input.reauthPurpose,
+        });
+      }
+    }
+    let browserCredentialTimeSeconds: number | null = null;
     const metadata = (supabaseUser.user_metadata ?? {}) as Record<string, unknown>;
     const providerDisplayName =
       typeof metadata.full_name === "string"
@@ -5039,15 +5536,40 @@ export class BusinessService {
       throw new AppError("This email is already linked to a different sign-in identity. Contact support before relinking it.", 409);
     }
     let account = accountBySupabaseId ?? accountByEmail;
+    if (account && await this.accountSessionRepository.hasProviderGlobalRevocationPending(account.id)) {
+      throw new AppError(
+        "Provider-wide sign-out is still incomplete. Finish that security cleanup before creating another Pint Path session.",
+        409,
+        {
+          publicCode: "PROVIDER_GLOBAL_REVOCATION_PENDING",
+          reauthenticationRequired: true,
+        },
+      );
+    }
+    requireSupabaseMfaAssurance(supabaseUser, input.accessToken);
     const now = nowIso();
+    const providerTokenIssuedAt = getSupabaseTokenIssuedAt(input.accessToken);
     if (account?.providerTokensValidAfter) {
-      const issuedAt = getSupabaseTokenIssuedAt(input.accessToken);
-      if (!issuedAt || Date.parse(issuedAt) <= Date.parse(account.providerTokensValidAfter)) {
+      if (
+        !providerTokenIssuedAt
+        || Date.parse(providerTokenIssuedAt) <= Date.parse(account.providerTokensValidAfter)
+      ) {
         throw new AppError("This sign-in token predates a security reset. Sign in again to continue.", 401);
       }
     }
     const emailVerifiedAt = getSupabaseEmailVerifiedAt(supabaseUser);
-    const mfaClaims = getSupabaseMfaClaims(input.accessToken);
+    const mfaClaims = getSupabaseMfaClaims(input.accessToken, supabaseUser);
+    if (
+      input.credentialCeremony === BROWSER_MEMORY_CREDENTIAL_CEREMONY
+      && input.reauthPurpose
+      && getSupabaseAuthenticationMethods(input.accessToken).some((method) => ["oauth", "saml", "sso"].includes(method))
+    ) {
+      throw new AppError("Confirm this sensitive action through the email sent to your verified account.", 403, {
+        publicCode: "EMAIL_REAUTHENTICATION_REQUIRED",
+        reauthenticationRequired: true,
+        reauthPurpose: input.reauthPurpose,
+      });
+    }
     const providerSessionIdHash = getSupabaseSessionIdHash(input.accessToken);
     if (!providerSessionIdHash) {
       throw new AppError("The sign-in provider session is missing its session identifier. Sign in again before continuing.", 401);
@@ -5057,6 +5579,13 @@ export class BusinessService {
       providerSessionIdHash,
     })) {
       throw new AppError("This sign-in provider session was revoked. Sign in again to start a new session.", 401);
+    }
+    if (browserCredentialPurpose) {
+      browserCredentialTimeSeconds = requireFreshSupabaseCredentialCeremony(
+        input.accessToken,
+        BROWSER_CREDENTIAL_CEREMONY_MAX_AGE_MS,
+        { allowRecovery: browserCredentialPurpose === "session" },
+      );
     }
     const legalAcceptance = input.legalAcceptance ?? (
       input.ageConfirmed === true &&
@@ -5089,6 +5618,7 @@ export class BusinessService {
       });
     }
 
+    let supabaseAccountSessionMutation: SupabaseAccountSessionMutation | null = null;
     if (!account) {
       const adminEmails = this.getAdminEmailAllowlist();
       const providerIdentity = await this.providerDisplayNameIfAvailable(displayName);
@@ -5131,34 +5661,27 @@ export class BusinessService {
       }
       const nextDisplayName = account.displayName ?? displayName;
       const providerIdentity = await this.providerDisplayNameIfAvailable(nextDisplayName, account.id);
-      account = await this.accountSessionRepository.linkSupabaseAccount({
-        userId: account.id,
+      supabaseAccountSessionMutation = {
+        authProvider: "supabase",
         supabaseUserId: supabaseUser.id,
         email,
-        authProvider: "supabase",
         displayName: providerIdentity.displayName,
         displayNameKey: providerIdentity.displayNameKey,
         avatarUrl,
         emailVerifiedAt,
         mfaLevel: mfaClaims.mfaLevel,
         mfaVerifiedAt: mfaClaims.mfaVerifiedAt,
-        now,
-      });
+        legalAcceptance: legalAcceptance
+          ? {
+              termsVersion: CURRENT_LEGAL_POLICY_VERSION,
+              privacyVersion: CURRENT_LEGAL_POLICY_VERSION,
+              ageConfirmed: true,
+            }
+          : null,
+      };
     }
 
-    if (legalAcceptance) {
-      account = await this.accountSessionRepository.updateLegalAcceptance({
-        userId: account.id,
-        acceptedAt: now,
-        termsVersion: CURRENT_LEGAL_POLICY_VERSION,
-        privacyVersion: CURRENT_LEGAL_POLICY_VERSION,
-      });
-      if (!account.ageConfirmedAt && legalAcceptance.ageConfirmed) {
-        account = await this.accountSessionRepository.updateAgeConfirmed(account.id, now);
-      }
-    }
-
-    this.requireCurrentLegalAcceptance(account);
+    if (!legalAcceptance) this.requireCurrentLegalAcceptance(account);
 
     if (account.status === "suspended") {
       const recovery = await this.getSuspendedBillingRecoveryOptions(account);
@@ -5172,25 +5695,29 @@ export class BusinessService {
       });
     }
 
-    const existingToken = getBearerToken(existingAuthorization);
-    const existingExpiresAt = existingToken
-      ? await this.accountSessionRepository.getActiveProviderSessionExpiresAt({
-          tokenHash: hashToken(existingToken),
-          userId: account.id,
-          providerSessionIdHash,
-          now,
-        })
-      : null;
-    if (existingToken && existingExpiresAt) {
-      return {
-        token: existingToken,
-        expiresAt: existingExpiresAt,
-        account: sanitizeAccount(account),
-        access: this.getAccessState(account, null),
-        reused: true,
-      };
-    }
-
+    const session = await this.createSessionResponse(
+      account,
+      context,
+      providerSessionIdHash,
+      {
+        currentToken: currentCookieSessionToken,
+        providerTokenIssuedAt,
+        credential: browserCredentialPurpose && browserCredentialTimeSeconds !== null
+          ? {
+              purpose: browserCredentialPurpose,
+              credentialTimeSeconds: browserCredentialTimeSeconds,
+            }
+          : null,
+        supabaseAccountMutation: supabaseAccountSessionMutation,
+        onSupabaseAccountCommitted: (committedAccount) => {
+          account = committedAccount;
+        },
+      },
+    );
+    // A provider identity is not a successful Pint Path login until the
+    // account-locked session rotation/creation has committed. Both audit
+    // writers are best-effort, so recording afterwards cannot strand a valid
+    // credential if an audit sink is temporarily unavailable.
     await this.recordUserActivity({
       account,
       eventType: "user_login",
@@ -5206,8 +5733,7 @@ export class BusinessService {
       metadata: { authProvider: "supabase", role: account.role },
       context,
     });
-
-    return this.createSessionResponse(account, context, providerSessionIdHash);
+    return session;
   }
 
   async completePasswordReset(input: PasswordResetCompleteInput, context?: SessionRequestContext | undefined) {
@@ -5234,16 +5760,88 @@ export class BusinessService {
     if (!account || normalizeEmail(account.email) !== normalizeEmail(data.user.email)) {
       throw new AppError("Invalid password recovery session. Request a new password reset link.", 401);
     }
-
-    await this.revokeProviderSessionsGlobally(account, input.accessToken, "password_reset", context, data.user.id);
+    const verifiedMfaFactorIds = verifiedSupabaseMfaFactorIds(data.user);
+    if (verifiedMfaFactorIds.length > 0) {
+      const mfaAccessToken = input.mfaAccessToken ?? input.accessToken;
+      let mfaUser = data.user;
+      if (mfaAccessToken !== input.accessToken) {
+        const mfaIdentity = await this.supabase.auth.getUser(mfaAccessToken);
+        if (
+          mfaIdentity.error
+          || mfaIdentity.data.user?.id !== data.user.id
+          || normalizeEmail(mfaIdentity.data.user?.email ?? "") !== normalizeEmail(data.user.email)
+          || getSupabaseSessionIdHash(mfaAccessToken) !== providerSessionIdHash
+        ) {
+          throw new AppError("Authenticator verification does not belong to this recovery session.", 403, {
+            publicCode: "MFA_STEP_UP_REQUIRED",
+            reauthenticationRequired: true,
+            mfaRequired: true,
+          });
+        }
+        mfaUser = mfaIdentity.data.user;
+      }
+      requireSupabaseMfaAssurance(mfaUser, mfaAccessToken);
+    }
 
     const completedAt = nowIso();
-    const containment = await this.accountSessionRepository.completePasswordResetContainment({
+    const revocationClaimId = providerGlobalRevocationClaimId();
+    let initialContainment;
+    try {
+      initialContainment = await this.accountSessionRepository.completePasswordResetContainment({
+        userId: account.id,
+        providerSessionIdHash,
+        providerTokensValidAfter: providerSecurityEpochIso(),
+        revokedAt: completedAt,
+        beginProviderGlobalRevocation: {
+          claimId: revocationClaimId,
+          operation: "password_reset",
+        },
+      });
+    } catch (error) {
+      if (
+        error instanceof AccountSessionRepositoryError
+        && error.code === "provider_global_revocation_pending"
+      ) {
+        throw new AppError(
+          "Provider-wide sign-out is already being completed for this account. Wait a few minutes, then retry recovery.",
+          409,
+          { publicCode: "PROVIDER_GLOBAL_REVOCATION_PENDING", reauthenticationRequired: true },
+        );
+      }
+      throw error;
+    }
+    const providerRevocation = await this.revokeProviderSessionsGlobally(
+      account,
+      input.accessToken,
+      data.user.id,
+    );
+    const postProviderCompletedAt = nowIso();
+    const postProviderContainment = await this.accountSessionRepository.completePasswordResetContainment({
       userId: account.id,
       providerSessionIdHash,
-      providerTokensValidAfter: completedAt,
-      revokedAt: completedAt,
+      providerTokensValidAfter: providerSecurityEpochIso(),
+      revokedAt: postProviderCompletedAt,
+      finishProviderGlobalRevocation: {
+        claimId: revocationClaimId,
+        completed: providerRevocation.revoked,
+        operation: "password_reset",
+      },
     });
+    const containment = {
+      revokedSessions: initialContainment.revokedSessions + postProviderContainment.revokedSessions,
+      revokedDiscountPasses:
+        initialContainment.revokedDiscountPasses + postProviderContainment.revokedDiscountPasses,
+      cancelledRewardCodes:
+        initialContainment.cancelledRewardCodes + postProviderContainment.cancelledRewardCodes,
+    };
+    if (!providerRevocation.revoked) {
+      await this.auditProviderGlobalSignoutFailure(
+        account,
+        "password_reset",
+        providerRevocation.errorCode,
+        context,
+      );
+    }
     await this.recordUserActivity({
       account,
       eventType: "password_reset_completed",
@@ -5261,25 +5859,103 @@ export class BusinessService {
         revokedDiscountPasses: containment.revokedDiscountPasses,
         cancelledRewardCodes: containment.cancelledRewardCodes,
         providerTokenEpochAdvanced: true,
+        providerSessionsRevoked: providerRevocation.revoked,
       },
       context,
     });
     return {
       completed: true,
       reauthenticationRequired: true,
+      providerSessionsRevoked: providerRevocation.revoked,
       ...containment,
+    };
+  }
+
+  async resumeProviderGlobalRevocation(
+    input: PasswordResetCompleteInput,
+    context?: SessionRequestContext | undefined,
+  ) {
+    if (!this.supabase) {
+      throw new AppError("Supabase authentication is not configured.", 503);
+    }
+    const { data, error } = await this.supabase.auth.getUser(input.accessToken);
+    if (error || !data.user?.id || !data.user.email) {
+      throw new AppError("A current sign-in provider session is required to finish global sign-out.", 401);
+    }
+    const account = await this.accountSessionRepository.getAccountBySupabaseUserId(data.user.id);
+    if (!account || normalizeEmail(account.email) !== normalizeEmail(data.user.email)) {
+      throw new AppError("The sign-in provider session does not belong to this account.", 403);
+    }
+    const claimedAt = nowIso();
+    const claimId = providerGlobalRevocationClaimId();
+    const claim = await this.accountSessionRepository.claimProviderGlobalRevocation({
+      userId: account.id,
+      claimId,
+      claimedAt,
+    });
+    if (claim.status !== "claimed") {
+      if (claim.status === "absent") {
+        throw new AppError("There is no pending provider-wide sign-out to resume.", 409);
+      }
+      throw new AppError(
+        "Provider-wide sign-out is already being completed. Wait five minutes, then retry if it does not finish.",
+        409,
+        { publicCode: "PROVIDER_GLOBAL_REVOCATION_PENDING", reauthenticationRequired: true },
+      );
+    }
+
+    const providerRevocation = await this.revokeProviderSessionsGlobally(
+      account,
+      input.accessToken,
+      data.user.id,
+    );
+    const completedAt = nowIso();
+    const containment = await this.accountSessionRepository.revokeUserSessionsWithSummary({
+      userId: account.id,
+      revokedAt: completedAt,
+      providerTokensValidAfter: providerSecurityEpochIso(),
+      finishProviderGlobalRevocation: {
+        claimId,
+        completed: providerRevocation.revoked,
+        operation: claim.operation,
+      },
+    });
+    if (!providerRevocation.revoked) {
+      await this.auditProviderGlobalSignoutFailure(
+        account,
+        claim.operation,
+        providerRevocation.errorCode,
+        context,
+      );
+    }
+    await this.auditSecurity({
+      actor: account,
+      action: "provider_global_signout_resumed",
+      targetType: "account",
+      targetId: account.id,
+      metadata: {
+        operation: claim.operation,
+        providerSessionsRevoked: providerRevocation.revoked,
+        revokedCount: containment.revokedSessions,
+        revokedDiscountPasses: containment.revokedDiscountPasses,
+      },
+      context,
+    });
+    return {
+      completed: providerRevocation.revoked,
+      providerSessionsRevoked: providerRevocation.revoked,
+      revokedCount: containment.revokedSessions,
+      revokedDiscountPasses: containment.revokedDiscountPasses,
     };
   }
 
   private async revokeProviderSessionsGlobally(
     account: BusinessAccount,
     accessToken: string,
-    operation: "password_reset" | "logout_all",
-    context?: SessionRequestContext | undefined,
     verifiedProviderUserId?: string,
-  ): Promise<void> {
-    if (!this.supabase || !this.config.SUPABASE_SERVICE_ROLE_KEY) {
-      throw new AppError("Provider-wide session revocation is not configured. Try again shortly.", 503);
+  ): Promise<{ revoked: boolean; errorCode: string | null }> {
+    if (!this.supabase) {
+      throw new AppError("Supabase authentication is not configured.", 503);
     }
 
     let providerUserId = verifiedProviderUserId;
@@ -5301,18 +5977,42 @@ export class BusinessService {
       throw new AppError("The sign-in provider session does not belong to this account.", 403);
     }
 
-    const { error } = await this.supabase.auth.admin.signOut(accessToken, "global");
-    if (error) {
-      await this.auditSecurity({
-        actor: account,
-        action: "provider_global_signout_failed",
-        targetType: "account",
-        targetId: account.id,
-        metadata: { operation, errorCode: typeof error.code === "string" ? error.code : null },
-        context,
-      });
-      throw new AppError("The sign-in provider could not revoke every session. Nothing was reported as complete; try again.", 503);
+    let providerError: unknown = this.config.SUPABASE_SERVICE_ROLE_KEY
+      ? null
+      : { code: "provider_global_signout_not_configured" };
+    if (!providerError) {
+      try {
+        const result = await this.supabase.auth.admin.signOut(accessToken, "global");
+        providerError = result.error;
+      } catch (error) {
+        providerError = error;
+      }
     }
+    return providerError
+      ? {
+          revoked: false,
+          errorCode: typeof providerError === "object" && providerError !== null && "code" in providerError &&
+              typeof providerError.code === "string"
+            ? providerError.code
+            : null,
+        }
+      : { revoked: true, errorCode: null };
+  }
+
+  private async auditProviderGlobalSignoutFailure(
+    account: BusinessAccount,
+    operation: "password_reset" | "logout_all",
+    errorCode: string | null,
+    context?: SessionRequestContext | undefined,
+  ): Promise<void> {
+    await this.auditSecurity({
+      actor: account,
+      action: "provider_global_signout_failed",
+      targetType: "account",
+      targetId: account.id,
+      metadata: { operation, appSessionsContained: true, errorCode },
+      context,
+    });
   }
 
   async confirmAge(account: BusinessAccount) {
@@ -5398,9 +6098,22 @@ export class BusinessService {
     account: BusinessAccount,
     context?: SessionRequestContext | undefined,
     providerSessionIdHash?: string | null,
+    cookieSession?: {
+      currentToken: string | null;
+      providerTokenIssuedAt: string | null;
+      credential: {
+        purpose: BrowserCredentialSessionPurpose;
+        credentialTimeSeconds: number;
+      } | null;
+      supabaseAccountMutation?: SupabaseAccountSessionMutation | null | undefined;
+      onSupabaseAccountCommitted?: ((account: BusinessAccount) => void) | undefined;
+    } | null,
   ) {
     const now = nowIso();
-    const token = crypto.randomBytes(32).toString("base64url");
+    const randomToken = crypto.randomBytes(32).toString("base64url");
+    const token = cookieSession?.credential
+      ? `${BROWSER_CREDENTIAL_SESSION_PREFIX}.${cookieSession.credential.purpose}.${cookieSession.credential.credentialTimeSeconds}.${randomToken}`
+      : randomToken;
     const ttlDays = this.isAdmin(account)
       ? this.config.ADMIN_SESSION_TTL_DAYS
       : this.config.SESSION_TTL_DAYS;
@@ -5408,24 +6121,65 @@ export class BusinessService {
 
     const expiresAt = addDays(now, ttlDays);
     const tokenHash = hashToken(token);
-    await this.accountSessionRepository.createSessionWithLimit({
-      tokenHash,
-      userId: account.id,
-      createdAt: now,
-      expiresAt,
-      lastUsedAt: now,
-      lastIpHash: requestHashes.ipHash,
-      userAgentHash: requestHashes.userAgentHash,
-      providerSessionIdHash: providerSessionIdHash ?? null,
-      maxActiveSessions: MAX_ACTIVE_SESSIONS_PER_ACCOUNT,
-    });
+    let responseAccount = account;
+    if (cookieSession && providerSessionIdHash) {
+      const suppliedCurrentTokenHash = cookieSession.currentToken
+        ? hashToken(cookieSession.currentToken)
+        : null;
+      const mutationInput = {
+          currentTokenHash: suppliedCurrentTokenHash,
+          newTokenHash: tokenHash,
+          userId: account.id,
+          providerSessionIdHash,
+          providerTokenIssuedAt: cookieSession.providerTokenIssuedAt,
+          createdAt: now,
+          expiresAt,
+          lastUsedAt: now,
+          lastIpHash: requestHashes.ipHash,
+          userAgentHash: requestHashes.userAgentHash,
+          maxActiveSessions: MAX_ACTIVE_SESSIONS_PER_ACCOUNT,
+        };
+      const result = cookieSession.supabaseAccountMutation
+        ? await this.accountSessionRepository.rotateOrCreateSessionTokenWithSupabaseAccountMutation({
+            ...mutationInput,
+            supabaseAccountMutation: cookieSession.supabaseAccountMutation,
+          })
+        : await this.accountSessionRepository.rotateOrCreateSessionToken(mutationInput);
+      const sessionConflict = typeof result === "string"
+        ? result === "conflict"
+        : result.status === "conflict";
+      if (sessionConflict) {
+        throw new AppError("The cookie session changed while authentication was completing. Sign in again and retry.", 409, {
+          reauthenticationRequired: true,
+          reauthPurpose: cookieSession.credential?.purpose === "session"
+            ? null
+            : cookieSession.credential?.purpose ?? null,
+        });
+      }
+      if (typeof result !== "string" && result.status !== "conflict") {
+        responseAccount = result.account;
+        cookieSession.onSupabaseAccountCommitted?.(responseAccount);
+      }
+    } else {
+      await this.accountSessionRepository.createSessionWithLimit({
+        tokenHash,
+        userId: account.id,
+        createdAt: now,
+        expiresAt,
+        lastUsedAt: now,
+        lastIpHash: requestHashes.ipHash,
+        userAgentHash: requestHashes.userAgentHash,
+        providerSessionIdHash: providerSessionIdHash ?? null,
+        maxActiveSessions: MAX_ACTIVE_SESSIONS_PER_ACCOUNT,
+      });
+    }
 
     return {
       token,
       expiresAt,
-      account: sanitizeAccount(account),
-      access: this.getAccessState(account, null),
-      counterStaffAssignments: await this.getCounterStaffAssignmentsForAccount(account.id),
+      account: sanitizeAccount(responseAccount),
+      access: this.getAccessState(responseAccount, null),
+      counterStaffAssignments: await this.getCounterStaffAssignmentsForAccount(responseAccount.id),
     };
   }
 
@@ -5502,26 +6256,94 @@ export class BusinessService {
     context?: SessionRequestContext | undefined,
   ) {
     const providerLinked = account.authProvider === "supabase" || Boolean(account.supabaseUserId);
+    let verifiedProviderUserId: string | undefined;
     if (providerLinked) {
       if (!input.accessToken) {
         throw new AppError("A current sign-in provider session is required to log out every device.", 400);
       }
-      await this.revokeProviderSessionsGlobally(account, input.accessToken, "logout_all", context);
+      if (!this.supabase) {
+        throw new AppError("Supabase authentication is not configured.", 503);
+      }
+      const { data, error } = await this.supabase.auth.getUser(input.accessToken);
+      if (error || !data.user?.id || !data.user.email) {
+        throw new AppError("A current sign-in provider session is required to log out every device.", 401);
+      }
+      if (
+        data.user.id !== account.supabaseUserId ||
+        normalizeEmail(data.user.email) !== normalizeEmail(account.email)
+      ) {
+        throw new AppError("The sign-in provider session does not belong to this account.", 403);
+      }
+      verifiedProviderUserId = data.user.id;
     }
     const now = nowIso();
-    const { revokedSessions: revokedCount, revokedDiscountPasses } = await this.accountSessionRepository.revokeUserSessionsWithSummary({
-      userId: account.id,
-      revokedAt: now,
-    });
+    const revocationClaimId = providerLinked ? providerGlobalRevocationClaimId() : null;
+    let initialContainment;
+    try {
+      initialContainment = await this.accountSessionRepository.revokeUserSessionsWithSummary({
+        userId: account.id,
+        revokedAt: now,
+        providerTokensValidAfter: providerLinked ? providerSecurityEpochIso() : null,
+        ...(revocationClaimId ? {
+          beginProviderGlobalRevocation: {
+            claimId: revocationClaimId,
+            operation: "logout_all" as const,
+          },
+        } : {}),
+      });
+    } catch (error) {
+      if (
+        error instanceof AccountSessionRepositoryError
+        && error.code === "provider_global_revocation_pending"
+      ) {
+        throw new AppError(
+          "Provider-wide sign-out is already being completed for this account. Wait a few minutes, then retry.",
+          409,
+          { publicCode: "PROVIDER_GLOBAL_REVOCATION_PENDING", reauthenticationRequired: true },
+        );
+      }
+      throw error;
+    }
+    const providerRevocation = providerLinked
+      ? await this.revokeProviderSessionsGlobally(
+          account,
+          input.accessToken!,
+          verifiedProviderUserId,
+        )
+      : { revoked: true, errorCode: null };
+    const postProviderCompletedAt = nowIso();
+    const postProviderContainment = providerLinked
+      ? await this.accountSessionRepository.revokeUserSessionsWithSummary({
+          userId: account.id,
+          revokedAt: postProviderCompletedAt,
+          providerTokensValidAfter: providerSecurityEpochIso(),
+          finishProviderGlobalRevocation: {
+            claimId: revocationClaimId!,
+            completed: providerRevocation.revoked,
+            operation: "logout_all",
+          },
+        })
+      : { revokedSessions: 0, revokedDiscountPasses: 0 };
+    const revokedCount = initialContainment.revokedSessions + postProviderContainment.revokedSessions;
+    const revokedDiscountPasses =
+      initialContainment.revokedDiscountPasses + postProviderContainment.revokedDiscountPasses;
+    if (!providerRevocation.revoked) {
+      await this.auditProviderGlobalSignoutFailure(
+        account,
+        "logout_all",
+        providerRevocation.errorCode,
+        context,
+      );
+    }
     await this.auditSecurity({
       actor: account,
       action: "logout_all",
       targetType: "account",
       targetId: account.id,
-      metadata: { revokedCount, revokedDiscountPasses, providerSessionsRevoked: providerLinked },
+      metadata: { revokedCount, revokedDiscountPasses, providerSessionsRevoked: providerRevocation.revoked },
       context,
     });
-    return { revokedCount, revokedDiscountPasses, providerSessionsRevoked: providerLinked };
+    return { revokedCount, revokedDiscountPasses, providerSessionsRevoked: providerRevocation.revoked };
   }
 
   async listAccountSessions(account: BusinessAccount, authorizationHeader?: string, query: AdminPaginationInput = { limit: 50, offset: 0 }) {
@@ -10572,6 +11394,72 @@ export class BusinessService {
     }));
   }
 
+  private defaultPublicVenueTierMetadata(): PublicVenueTierMetadata {
+    return {
+      membershipTier: "basic",
+      highlightedName: false,
+      premiumBadge: null,
+      promoted: false,
+      featuredSpecialEligible: false,
+      acceptsPintPathCodes: false,
+    };
+  }
+
+  private publicVenueTierMetadata(
+    profile: BarProfilePublicMetadata | BarProfile | null | undefined,
+  ): PublicVenueTierMetadata {
+    if (!this.config.COMMERCIAL_LAUNCH_ENABLED || !profile?.active) {
+      return this.defaultPublicVenueTierMetadata();
+    }
+
+    const flags = tierFlags(profile.membershipTier);
+    return {
+      membershipTier: profile.membershipTier,
+      highlightedName: flags.highlightedName && profile.highlightedName,
+      premiumBadge: profile.premiumBadge || flags.premiumBadge,
+      promoted: flags.promoted && profile.promoted,
+      featuredSpecialEligible: flags.featuredSpecialEligible && profile.featuredSpecialEligible,
+      acceptsPintPathCodes: profile.acceptsPintPathCodes,
+    };
+  }
+
+  private async loadPublicVenueTierMetadata(
+    venueIds: readonly string[],
+  ): Promise<Map<string, PublicVenueTierMetadata>> {
+    const uniqueVenueIds = Array.from(new Set(venueIds));
+    if (!this.config.COMMERCIAL_LAUNCH_ENABLED) {
+      return new Map(uniqueVenueIds.map((venueId) => [venueId, this.defaultPublicVenueTierMetadata()]));
+    }
+
+    const profiles = await this.venueInventoryRepository.listBarProfilePublicMetadata(uniqueVenueIds);
+    return new Map(uniqueVenueIds.map((venueId) => [
+      venueId,
+      this.publicVenueTierMetadata(profiles.get(venueId)),
+    ]));
+  }
+
+  private createPublicVenueTierMetadataAttacher(): (venues: VenueRow[]) => Promise<VenueRow[]> {
+    const metadataByVenueId = new Map<string, PublicVenueTierMetadata>();
+    return async (venues) => {
+      const missingVenueIds = Array.from(new Set(
+        venues.map((venue) => venue.id).filter((venueId) => !metadataByVenueId.has(venueId)),
+      ));
+      if (missingVenueIds.length > 0) {
+        const loaded = await this.loadPublicVenueTierMetadata(missingVenueIds);
+        for (const venueId of missingVenueIds) {
+          metadataByVenueId.set(
+            venueId,
+            loaded.get(venueId) ?? this.defaultPublicVenueTierMetadata(),
+          );
+        }
+      }
+      return venues.map((venue) => ({
+        ...venue,
+        ...metadataByVenueId.get(venue.id),
+      }));
+    };
+  }
+
   async listVenuesPage(
     query: string | undefined,
     limit: number,
@@ -10584,11 +11472,9 @@ export class BusinessService {
     const hasFullAccess = isFullAccess(account, account ? this.isAdmin(account) : false);
     const normalizedLimit = Math.min(1000, Math.max(1, limit));
     const normalizedOffset = Math.max(0, offset);
+    const attachPublicVenueTierMetadata = this.createPublicVenueTierMetadataAttacher();
     const deduplicateLocalVenues = async (venues: VenueRow[]) => this.mergeVenueRows(
-      await Promise.all(venues.map(async (venue) => ({
-        ...venue,
-        ...await this.getPublicVenueTierMetadata(venue.id),
-      }))),
+      await attachPublicVenueTierMetadata(venues),
       [],
       venues.length,
       false,
@@ -10790,10 +11676,7 @@ export class BusinessService {
       remoteRows = uniqueRemoteRows.slice(remoteOffset, remoteOffset + remoteSlots);
       estimatedRemoteTotal = uniqueRemoteRows.length;
     }
-    const remoteRowsWithMetadata = await Promise.all(remoteRows.map(async (venue) => ({
-      ...venue,
-      ...await this.getPublicVenueTierMetadata(venue.id),
-    })));
+    const remoteRowsWithMetadata = await attachPublicVenueTierMetadata(remoteRows);
     const page = this.mergeVenueRows(
       localPage,
       remoteRowsWithMetadata,
@@ -10897,7 +11780,7 @@ export class BusinessService {
       openingHours: profile?.openingHours ?? {},
       venueTags: profile?.venueTags ?? [],
       isUserSubmittedVenue: profile?.venueTags.includes("user submitted") ?? false,
-      ...await this.getPublicVenueTierMetadata(venueId),
+      ...this.publicVenueTierMetadata(profile),
     };
   }
 
@@ -11182,28 +12065,8 @@ export class BusinessService {
     VenueRow,
     "membershipTier" | "highlightedName" | "premiumBadge" | "promoted" | "featuredSpecialEligible" | "acceptsPintPathCodes"
   >> {
-    const profile = await this.venueInventoryRepository.getBarProfile(venueId);
-
-    if (!this.config.COMMERCIAL_LAUNCH_ENABLED || !profile?.active) {
-      return {
-        membershipTier: "basic",
-        highlightedName: false,
-        premiumBadge: null,
-        promoted: false,
-        featuredSpecialEligible: false,
-        acceptsPintPathCodes: false,
-      };
-    }
-
-    const flags = tierFlags(profile.membershipTier);
-    return {
-      membershipTier: profile.membershipTier,
-      highlightedName: flags.highlightedName && profile.highlightedName,
-      premiumBadge: profile.premiumBadge || flags.premiumBadge,
-      promoted: flags.promoted && profile.promoted,
-      featuredSpecialEligible: flags.featuredSpecialEligible && profile.featuredSpecialEligible,
-      acceptsPintPathCodes: profile.acceptsPintPathCodes,
-    };
+    return (await this.loadPublicVenueTierMetadata([venueId])).get(venueId)
+      ?? this.defaultPublicVenueTierMetadata();
   }
 
   async seedDemoMissions() {
@@ -12023,13 +12886,9 @@ export class BusinessService {
         break;
       }
     }
-    const publicVenueMetadata = new Map<string, Pick<
-      VenueRow,
-      "membershipTier" | "highlightedName" | "premiumBadge" | "promoted" | "featuredSpecialEligible" | "acceptsPintPathCodes"
-    >>();
-    await Promise.all([...new Set(records.map((record) => record.venueId))].map(async (venueId) => {
-      publicVenueMetadata.set(venueId, await this.getPublicVenueTierMetadata(venueId));
-    }));
+    const publicVenueMetadata = await this.loadPublicVenueTierMetadata(
+      [...new Set(records.map((record) => record.venueId))],
+    );
     const submissionEvidencePresence = new Map<string, boolean>();
     await Promise.all([...new Set(records
       .map((record) => record.sourceSubmissionId)
@@ -15219,11 +16078,20 @@ export class BusinessService {
       if (!account || account.authProvider !== "supabase" || account.supabaseUserId !== data.user.id) {
         throw new AppError("Invalid billing recovery credentials.", 401);
       }
+      requireSupabaseMfaAssurance(data.user, input.accessToken);
+      requireFreshSupabaseCredentialCeremony(input.accessToken);
       if (account.providerTokensValidAfter) {
         const issuedAt = getSupabaseTokenIssuedAt(input.accessToken);
         if (!issuedAt || Date.parse(issuedAt) <= Date.parse(account.providerTokensValidAfter)) {
           throw new AppError("This sign-in token predates a security reset. Sign in again to manage billing.", 401);
         }
+      }
+      const providerSessionIdHash = getSupabaseSessionIdHash(input.accessToken);
+      if (!providerSessionIdHash || await this.accountSessionRepository.isProviderSessionRevoked({
+        userId: account.id,
+        providerSessionIdHash,
+      })) {
+        throw new AppError("This provider session was revoked. Sign in again to manage billing.", 401);
       }
     } else if (input.email && input.password) {
       const candidate = await this.accountSessionRepository.getAccountByEmail(normalizeEmail(input.email));
@@ -16436,7 +17304,12 @@ export class BusinessService {
     };
 
     this.supabaseReadinessInFlight = (async () => {
+      const productionProviderDataRequired = isCanonicalProductionRuntime({
+        nodeEnv: this.config.NODE_ENV,
+        railwayEnvironmentName: process.env.RAILWAY_ENVIRONMENT_NAME,
+      });
       const databaseProbeEndpoint = this.config.RESTORE_REHEARSAL_MODE
+        || !productionProviderDataRequired
         ? "rest/v1/profiles?select=id&limit=1"
         : "rest/v1/venues?select=id&limit=1";
       if (postgresRecoveryRehearsal) {
@@ -16462,7 +17335,9 @@ export class BusinessService {
         probe("auth/v1/health", anonKey),
         // `profiles` is created by the repository-owned migration chain. The
         // production `venues` table is managed by a separate data pipeline and
-        // is intentionally not copied into an isolated restore project.
+        // is required only in the canonical production runtime. Staging and
+        // isolated restore projects prove their repository-owned schema via
+        // `profiles` without inventing an externally managed venue relation.
         probe(databaseProbeEndpoint, serviceRoleKey!),
         probe(`storage/v1/bucket/${encodeURIComponent(SUPABASE_EVIDENCE_BUCKET)}`, serviceRoleKey!, async (response) => {
           try {
@@ -16558,12 +17433,18 @@ export class BusinessService {
   }
 
   async getOperationalReadiness() {
-    let database: { status: "ok" | "failed"; foreignKeyViolations: number; error?: string };
+    let database: {
+      status: "ok" | "failed";
+      foreignKeyViolations: number;
+      poolMetrics?: readonly SafePostgresApplicationPoolMetrics[];
+      error?: string;
+    };
     try {
       const health = await this.databaseHealthProbe();
       database = {
         status: health.ok ? "ok" : "failed",
         foreignKeyViolations: health.foreignKeyViolations,
+        ...(health.poolMetrics ? { poolMetrics: health.poolMetrics } : {}),
       };
     } catch (error) {
       database = {
@@ -16790,12 +17671,18 @@ export class BusinessService {
   }
 
   async getLocalStartupReadiness() {
-    let database: { status: "ok" | "failed"; foreignKeyViolations: number; error?: string };
+    let database: {
+      status: "ok" | "failed";
+      foreignKeyViolations: number;
+      poolMetrics?: readonly SafePostgresApplicationPoolMetrics[];
+      error?: string;
+    };
     try {
       const health = await this.databaseHealthProbe();
       database = {
         status: health.ok ? "ok" : "failed",
         foreignKeyViolations: health.foreignKeyViolations,
+        ...(health.poolMetrics ? { poolMetrics: health.poolMetrics } : {}),
       };
     } catch (error) {
       database = {

@@ -1,9 +1,10 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { EventEmitter } from "node:events";
 
-import { Client, types as postgresTypes } from "pg";
-import { describe, expect, it } from "vitest";
+import { Client, Pool, types as postgresTypes, type PoolClient } from "pg";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   PostgresDatabase,
@@ -167,6 +168,164 @@ describe("Postgres connection URL validation", () => {
       });
       expect(database.dialect).toBe("postgres");
       await database.close();
+    },
+  );
+
+  it("retains monotonic capacity-wait evidence after the live queue drains", async () => {
+    const database = new PostgresDatabase({
+      connectionString:
+        "postgresql://runtime:password@example.invalid/pintpath?sslmode=require",
+      maxConnections: 1,
+    });
+    const internals = database as unknown as { pool: Pool };
+    const originalPool = internals.pool;
+    let releaseCheckout!: (client: PoolClient) => void;
+    const client = Object.assign(new EventEmitter(), {
+      query: vi.fn(async () => ({ rows: [{ value: 1 }], rowCount: 1 })),
+      release: vi.fn(),
+    }) as unknown as PoolClient;
+    const fakePool = {
+      idleCount: 0,
+      totalCount: 1,
+      waitingCount: 0,
+      connect: vi.fn(() => {
+        fakePool.waitingCount = 1;
+        return new Promise<PoolClient>((resolve) => {
+          releaseCheckout = resolve;
+        });
+      }),
+    };
+    internals.pool = fakePool as unknown as Pool;
+    try {
+      const query = database.prepare("SELECT 1 AS value").get<{ value: number }>();
+      await Promise.resolve();
+      expect(database.metrics()).toMatchObject({
+        waitingRequests: 1,
+        capacityWaitEvents: 1,
+        capacityWaitHighWater: 1,
+      });
+
+      fakePool.waitingCount = 0;
+      releaseCheckout(client);
+      await expect(query).resolves.toEqual({ value: 1 });
+      expect(database.metrics()).toMatchObject({
+        waitingRequests: 0,
+        capacityWaitEvents: 1,
+        capacityWaitHighWater: 1,
+        capacityWaitDurationMs: expect.any(Number),
+      });
+      expect(database.metrics().capacityWaitDurationMs).toBeGreaterThanOrEqual(0);
+      expect(client.release).toHaveBeenCalledTimes(1);
+      expect(client.listenerCount("error")).toBe(0);
+    } finally {
+      internals.pool = originalPool;
+      await database.close();
+    }
+  });
+
+  it.each([
+    { priorPendingCheckout: 0, expectedWaitEvents: 0 },
+    { priorPendingCheckout: 1, expectedWaitEvents: 1 },
+  ])(
+    "accounts for idle clients already claimed by $priorPendingCheckout synchronous checkout(s)",
+    async ({ priorPendingCheckout, expectedWaitEvents }) => {
+      const database = new PostgresDatabase({
+        connectionString:
+          "postgresql://runtime:password@example.invalid/pintpath?sslmode=require",
+        maxConnections: 1,
+      });
+      const internals = database as unknown as { pool: Pool };
+      const originalPool = internals.pool;
+      let releaseCheckout!: (client: PoolClient) => void;
+      const client = Object.assign(new EventEmitter(), {
+        query: vi.fn(async () => ({ rows: [{ value: 1 }], rowCount: 1 })),
+        release: vi.fn(),
+      }) as unknown as PoolClient;
+      const fakePool = {
+        idleCount: 1,
+        totalCount: 1,
+        waitingCount: priorPendingCheckout,
+        connect: vi.fn(() => {
+          fakePool.waitingCount += 1;
+          return new Promise<PoolClient>((resolve) => {
+            releaseCheckout = resolve;
+          });
+        }),
+      };
+      internals.pool = fakePool as unknown as Pool;
+      try {
+        const query = database.prepare("SELECT 1 AS value").get<{ value: number }>();
+        await Promise.resolve();
+        expect(database.metrics()).toMatchObject({
+          capacityWaitEvents: expectedWaitEvents,
+          capacityWaitHighWater: expectedWaitEvents,
+        });
+
+        fakePool.idleCount = 0;
+        fakePool.waitingCount = 0;
+        releaseCheckout(client);
+        await expect(query).resolves.toEqual({ value: 1 });
+        expect(client.release).toHaveBeenCalledTimes(1);
+      } finally {
+        internals.pool = originalPool;
+        await database.close();
+      }
+    },
+  );
+
+  it.each(["direct query", "transaction"])(
+    "handles a checked-out client error during a %s without an unhandled event",
+    async (operation) => {
+      const database = new PostgresDatabase({
+        connectionString:
+          "postgresql://runtime:password@example.invalid/pintpath?sslmode=require",
+        maxConnections: 1,
+      });
+      const internals = database as unknown as { pool: Pool };
+      const originalPool = internals.pool;
+      const transportError = new Error("socket closed");
+      let rejectActiveQuery!: (error: Error) => void;
+      let markActiveQueryStarted!: () => void;
+      const activeQueryStarted = new Promise<void>((resolve) => {
+        markActiveQueryStarted = resolve;
+      });
+      const client = Object.assign(new EventEmitter(), {
+        query: vi.fn((text: string) => {
+          if (operation === "transaction" && text === "BEGIN") {
+            return Promise.resolve({ rows: [], rowCount: 0 });
+          }
+          if (operation === "transaction" && text === "ROLLBACK") {
+            return Promise.reject(transportError);
+          }
+          return new Promise((_, reject) => {
+            rejectActiveQuery = reject;
+            markActiveQueryStarted();
+          });
+        }),
+        release: vi.fn(),
+      }) as unknown as PoolClient;
+      const fakePool = {
+        idleCount: 1,
+        totalCount: 1,
+        waitingCount: 0,
+        connect: vi.fn(async () => client),
+      };
+      internals.pool = fakePool as unknown as Pool;
+      try {
+        const pending = operation === "transaction"
+          ? database.transaction(() => database.prepare("SELECT 1").get())()
+          : database.prepare("SELECT 1").get();
+        await activeQueryStarted;
+        expect(() => client.emit("error", transportError)).not.toThrow();
+        rejectActiveQuery(transportError);
+        await expect(pending).rejects.toBe(transportError);
+        expect(client.release).toHaveBeenCalledTimes(1);
+        expect(client.release).toHaveBeenCalledWith(transportError);
+        expect(client.listenerCount("error")).toBe(0);
+      } finally {
+        internals.pool = originalPool;
+        await database.close();
+      }
     },
   );
 

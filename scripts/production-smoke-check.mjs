@@ -1,3 +1,8 @@
+import {
+  extractExactAppSessionCookie,
+  readSetCookieHeaders,
+} from "./lib/app-session-cookie.mjs";
+
 const restoreRehearsalValue = process.env.RESTORE_REHEARSAL_MODE?.trim().toLowerCase() ?? "";
 if (restoreRehearsalValue && !["0", "false", "no", "off"].includes(restoreRehearsalValue)) {
   throw new Error(
@@ -106,10 +111,10 @@ async function parseJson(response, label) {
   }
 }
 
-async function checkJson(id, pathname, assertion, token) {
+async function checkJson(id, pathname, assertion, credential) {
   try {
     const response = await fetch(`${baseUrl}${pathname}`, {
-      ...(token ? { headers: { Authorization: `Bearer ${token}` } } : {}),
+      ...(credential ? { headers: sessionRequestHeaders(credential) } : {}),
       redirect: "error",
       signal: AbortSignal.timeout(20_000),
     });
@@ -123,6 +128,21 @@ async function checkJson(id, pathname, assertion, token) {
   } catch (error) {
     results.push({ id, status: "fail", detail: detailFromError(error, "Request failed") });
   }
+}
+
+function directCookieCredential(value, label) {
+  try {
+    return extractExactAppSessionCookie(
+      [`pint_path_session=${value}; Path=/; HttpOnly; SameSite=Lax`],
+      "http://127.0.0.1",
+    );
+  } catch {
+    throw new Error(`${label} must be one exact Pint Path app-session cookie value`);
+  }
+}
+
+function sessionRequestHeaders(session) {
+  return { Cookie: session.cookieHeader };
 }
 
 async function checkProductionReadiness() {
@@ -280,38 +300,73 @@ async function createDisposableSession(role) {
     throw new Error(`${role.label} provider sign-in failed (HTTP ${providerResponse.status})`);
   }
 
+  let appSession = null;
   try {
-    const exchangeResponse = await fetch(`${baseUrl}/api/business/auth/supabase-session`, {
+    const exchangeUrl = `${baseUrl}/api/business/auth/supabase-session`;
+    const exchangeResponse = await fetch(exchangeUrl, {
       method: "POST",
       headers: { Accept: "application/json", "Content-Type": "application/json" },
       body: JSON.stringify({ accessToken }),
       redirect: "error",
       signal: AbortSignal.timeout(20_000),
     });
+    if (!exchangeResponse.ok) {
+      throw new Error(`${role.label} Pint Path session exchange failed (HTTP ${exchangeResponse.status})`);
+    }
+    appSession = extractExactAppSessionCookie(
+      readSetCookieHeaders(exchangeResponse.headers),
+      exchangeUrl,
+    );
     const exchangePayload = await parseJson(exchangeResponse, `${role.label} Pint Path session exchange`);
-    const token = typeof nestedData(exchangePayload).token === "string" ? nestedData(exchangePayload).token.trim() : "";
-    if (!exchangeResponse.ok || !token) {
+    const exchangeData = nestedData(exchangePayload);
+    if (
+      exchangePayload?.ok !== true ||
+      Object.prototype.hasOwnProperty.call(exchangeData, "token")
+    ) {
       throw new Error(`${role.label} Pint Path session exchange failed (HTTP ${exchangeResponse.status})`);
     }
     return {
-      token,
+      ...appSession,
       revokeAfterUse: true,
       source: "supabase_password",
       providerSession: { accessToken, supabaseUrl, supabaseAnonKey },
     };
   } catch (error) {
+    if (appSession) {
+      await revokeAppSessionCookie(appSession.cookieHeader).catch(() => null);
+    }
     await revokeProviderSession({ accessToken, supabaseUrl, supabaseAnonKey }).catch(() => null);
     throw error;
   }
 }
 
+async function revokeAppSessionCookie(cookieHeader) {
+  const response = await fetch(`${baseUrl}/api/business/auth/logout`, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      Cookie: cookieHeader,
+      Origin: baseUrl,
+    },
+    body: "{}",
+    redirect: "error",
+    signal: AbortSignal.timeout(20_000),
+  });
+  if (response.body) await response.body.cancel();
+}
+
 async function resolveRoleSession(role) {
-  const directToken = process.env[`PINTPATH_SMOKE_${role.environmentPrefix}_TOKEN`]?.trim();
+  const directToken = process.env[`PINTPATH_SMOKE_${role.environmentPrefix}_TOKEN`] || "";
   if (directToken) {
-    return { token: directToken, revokeAfterUse: revokeDirectTokens, source: "pintpath_token" };
+    return {
+      ...directCookieCredential(directToken, `PINTPATH_SMOKE_${role.environmentPrefix}_TOKEN`),
+      revokeAfterUse: revokeDirectTokens,
+      source: "pintpath_cookie",
+    };
   }
   if (role.role === "admin") {
-    throw new Error("Set PINTPATH_SMOKE_ADMIN_TOKEN to a fresh MFA/AAL2 Pint Path session");
+    throw new Error("Set PINTPATH_SMOKE_ADMIN_TOKEN to one fresh MFA/AAL2 Pint Path cookie value");
   }
   return createDisposableSession(role);
 }
@@ -323,7 +378,8 @@ async function revokeSession(role, session) {
       headers: {
         Accept: "application/json",
         "Content-Type": "application/json",
-        Authorization: `Bearer ${session.token}`,
+        ...sessionRequestHeaders(session),
+        Origin: baseUrl,
       },
       body: "{}",
       redirect: "error",
@@ -460,7 +516,7 @@ for (const role of authChecks.filter((check) => selectedRoles.has(check.role))) 
   try {
     if (strictAuthConfigError) throw strictAuthConfigError;
     session = await resolveRoleSession(role);
-    await checkJson(role.id, role.path, role.assert, session.token);
+    await checkJson(role.id, role.path, role.assert, session);
   } catch (error) {
     results.push({
       id: role.id,

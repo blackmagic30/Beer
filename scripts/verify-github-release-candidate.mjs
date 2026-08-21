@@ -57,6 +57,14 @@ const PROVIDER_MUTATION_WORKFLOW_ID =
 const RUNTIME_VARIABLE_WORKFLOW_PATH =
   ".github/workflows/configure-runtime-variable.yml";
 const RUNTIME_VARIABLE_WORKFLOW_ID = "configure-runtime-variable.yml";
+const WORKER_FENCE_WORKFLOW_PATH =
+  ".github/workflows/configure-automatic-maintenance-worker-fence.yml";
+const WORKER_FENCE_WORKFLOW_ID =
+  "configure-automatic-maintenance-worker-fence.yml";
+const STAGING_BOOTSTRAP_WORKFLOW_PATH =
+  ".github/workflows/bootstrap-permanent-staging-worker-fence.yml";
+const STAGING_BOOTSTRAP_WORKFLOW_ID =
+  "bootstrap-permanent-staging-worker-fence.yml";
 const PROVIDER_MUTATION_JOB = "One atomic variable mutation";
 const PROVIDER_MUTATION_STEP =
   "Execute exactly one reviewed atomic Railway mutation";
@@ -520,6 +528,26 @@ function runtimeVariableTitle(value, candidateSha) {
   return null;
 }
 
+function stagingWorkerOperationForTitle(value, candidateSha) {
+  for (const operation of ["prepare", "activate"]) {
+    if (
+      value ===
+        `Automatic maintenance worker fence | permanent-staging | ${operation} | ${candidateSha}`
+    ) return operation;
+  }
+  return null;
+}
+
+function stagingBootstrapOperationForTitle(value, candidateSha) {
+  for (const operation of ["quiesce", "restore"]) {
+    if (
+      value ===
+        `Permanent staging worker bootstrap | ${operation} | ${candidateSha}`
+    ) return operation;
+  }
+  return null;
+}
+
 function validateMutationWorkflowRun(
   value,
   policy,
@@ -590,7 +618,7 @@ async function providerFailureSkippedWrite(
 
 async function verifyStagingMutationClosure(input) {
   const mergedAtMs = timestamp(input.reviewedPullRequest.mergedAt);
-  const deployStartedAtMs = timestamp(input.deployment.startedAt);
+  const deployStartedAtMs = timestamp(input.deployments?.[1]?.startedAt);
   const consumerStartedAtMs = timestamp(input.consumerStartedAt);
   if (
     mergedAtMs === null ||
@@ -674,6 +702,121 @@ async function verifyStagingMutationClosure(input) {
       throw new Error("staging_mutation_after_closeout_deployment");
     }
   }
+
+  if (
+    !Array.isArray(input.deployments) ||
+    input.deployments.length !== 2 ||
+    !input.scale
+  ) throw new Error("staging_bootstrap_history_invalid");
+  const [fencedDeployment, activeDeployment] = input.deployments;
+  const fencedStartedAtMs = timestamp(fencedDeployment.startedAt);
+  const fencedCompletedAtMs = timestamp(fencedDeployment.completedAt);
+  const activeStartedAtMs = timestamp(activeDeployment.startedAt);
+  const activeCompletedAtMs = timestamp(activeDeployment.completedAt);
+  const scaleStartedAtMs = timestamp(input.scale.startedAt);
+  const fencedRun = input.workflowRuns.get(fencedDeployment.runId);
+  const activeRun = input.workflowRuns.get(activeDeployment.runId);
+  if (
+    fencedStartedAtMs === null ||
+    fencedCompletedAtMs === null ||
+    activeStartedAtMs === null ||
+    activeCompletedAtMs === null ||
+    scaleStartedAtMs === null ||
+    fencedRun?.display_title !==
+      `Deploy permanent staging | fenced | ${input.candidateSha}` ||
+    activeRun?.display_title !==
+      `Deploy permanent staging | active | ${input.candidateSha}`
+  ) throw new Error("staging_bootstrap_history_invalid");
+
+  const workerRuns = await listMutationWorkflowRuns(
+    input.fetchImpl,
+    input.token,
+    input.policy,
+    WORKER_FENCE_WORKFLOW_ID,
+    input.reviewedPullRequest.mergedAt,
+    input.consumerStartedAt,
+  );
+  const stagingWorkers = [];
+  for (const observed of workerRuns.filter((run) =>
+    run?.head_sha === input.candidateSha &&
+    String(run?.display_title ?? "").startsWith(
+      "Automatic maintenance worker fence | permanent-staging | ",
+    ))) {
+    const operation = stagingWorkerOperationForTitle(
+      observed.display_title,
+      input.candidateSha,
+    );
+    if (operation === null) throw new Error("staging_bootstrap_history_invalid");
+    const run = validateMutationWorkflowRun(
+      observed,
+      input.policy,
+      input.candidateSha,
+      WORKER_FENCE_WORKFLOW_PATH,
+      observed.display_title,
+    );
+    if (
+      run.conclusion !== "success" ||
+      run.createdAtMs < mergedAtMs ||
+      run.createdAtMs > consumerStartedAtMs
+    ) {
+      throw new Error("staging_bootstrap_history_invalid");
+    }
+    stagingWorkers.push(Object.freeze({ operation, run }));
+  }
+
+  const bootstrapRuns = await listMutationWorkflowRuns(
+    input.fetchImpl,
+    input.token,
+    input.policy,
+    STAGING_BOOTSTRAP_WORKFLOW_ID,
+    input.reviewedPullRequest.mergedAt,
+    input.consumerStartedAt,
+  );
+  const stagingBootstrap = [];
+  for (const observed of bootstrapRuns.filter((run) =>
+    run?.head_sha === input.candidateSha)) {
+    const operation = stagingBootstrapOperationForTitle(
+      observed?.display_title,
+      input.candidateSha,
+    );
+    if (operation === null) throw new Error("staging_bootstrap_history_invalid");
+    const run = validateMutationWorkflowRun(
+      observed,
+      input.policy,
+      input.candidateSha,
+      STAGING_BOOTSTRAP_WORKFLOW_PATH,
+      observed.display_title,
+    );
+    if (
+      run.conclusion !== "success" ||
+      run.createdAtMs < mergedAtMs ||
+      run.createdAtMs > consumerStartedAtMs
+    ) {
+      throw new Error("staging_bootstrap_history_invalid");
+    }
+    stagingBootstrap.push(Object.freeze({ operation, run }));
+  }
+
+  const one = (values, operation) => {
+    const matches = values.filter((item) => item.operation === operation);
+    if (matches.length !== 1) throw new Error("staging_bootstrap_history_invalid");
+    return matches[0].run;
+  };
+  if (stagingWorkers.length !== 2 || stagingBootstrap.length !== 2) {
+    throw new Error("staging_bootstrap_history_invalid");
+  }
+  const prepare = one(stagingWorkers, "prepare");
+  const activate = one(stagingWorkers, "activate");
+  const quiesce = one(stagingBootstrap, "quiesce");
+  const restore = one(stagingBootstrap, "restore");
+  if (
+    prepare.updatedAtMs >= quiesce.startedAtMs ||
+    quiesce.updatedAtMs >= fencedStartedAtMs ||
+    fencedCompletedAtMs >= restore.startedAtMs ||
+    restore.updatedAtMs >= activate.startedAtMs ||
+    activate.updatedAtMs >= activeStartedAtMs ||
+    activeCompletedAtMs >= scaleStartedAtMs
+  ) throw new Error("staging_bootstrap_history_invalid");
 }
 
 function selectCheckRunCandidates(value, requirement, candidateSha) {
@@ -952,7 +1095,9 @@ export async function runGithubReleaseCandidateVerification(argv, dependencies =
         policy,
         candidateSha: args.candidateSha,
         reviewedPullRequest,
-        deployment: ordered[1],
+        deployments: ordered,
+        scale: stagingScales[0],
+        workflowRuns,
         consumerStartedAt: consumer.runStartedAt,
       });
       intendedByName.set(STAGING_DEPLOYMENT_CHECK, [ordered[1]]);

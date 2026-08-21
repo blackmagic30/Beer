@@ -182,7 +182,12 @@ function successfulFetchResponses(): Response[] {
     jsonResponse(snapshot),
     jsonResponse({
       ok: true,
-      data: { service: "pint-path", status: "ok", deployment },
+      data: {
+        service: "pint-path",
+        status: "ok",
+        deployment,
+        automaticMaintenance: { enabled: true, candidateBound: true },
+      },
     }, true),
     jsonResponse({
       ok: true,
@@ -190,6 +195,7 @@ function successfulFetchResponses(): Response[] {
         service: "pint-path",
         status: "startup_ready",
         deployment,
+        automaticMaintenance: { enabled: true, candidateBound: true },
         dependencies: {},
       },
     }, true),
@@ -199,6 +205,7 @@ function successfulFetchResponses(): Response[] {
         service: "pint-path",
         status: "ready",
         deployment,
+        automaticMaintenance: { enabled: true, candidateBound: true },
         dependencies: {
           restoreRehearsal: {
             enabled: false,

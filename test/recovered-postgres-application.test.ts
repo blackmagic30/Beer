@@ -319,7 +319,14 @@ function replayReceipt(input: {
   } as const;
 }
 
-function topLevelFixture(input: { readonly readyStatus?: number } = {}) {
+function topLevelFixture(
+  input: {
+    readonly readyStatus?: number;
+    readonly exchangeSetCookie?: string | null;
+    readonly exchangeJsonToken?: boolean;
+    readonly exchangeInvalidJson?: boolean;
+  } = {},
+) {
   const root = fs.realpathSync(
     fs.mkdtempSync(
       path.join(os.tmpdir(), "pintpath-recovered-application-top-level-"),
@@ -334,7 +341,8 @@ function topLevelFixture(input: { readonly readyStatus?: number } = {}) {
   const authEmail = "recovery-user@example.invalid";
   const authPassword = "disposable-auth-password-32-bytes";
   const publishableKey = `sb_publishable_${"r".repeat(32)}`;
-  const appToken = "app-session-token-that-is-long-and-disposable-only";
+  const appToken = "a".repeat(43);
+  const appCookie = `pint_path_session=${appToken}`;
   const providerToken = jwt({ subject: authSubject });
   const privateRoot = path.join(root, "private");
   const runtimeStageRoot = fs.realpathSync(
@@ -600,19 +608,43 @@ function topLevelFixture(input: { readonly readyStatus?: number } = {}) {
         );
       }
       if (url.endsWith("/api/business/auth/supabase-session")) {
+        const requestHeaders = new Headers(init?.headers);
+        const requestBody = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+        if (
+          requestHeaders.get("Authorization") !== null ||
+          requestHeaders.get("Cookie") !== null ||
+          Object.prototype.hasOwnProperty.call(requestBody, "credentialCeremony")
+        ) {
+          return new Response("invalid exchange", { status: 401 });
+        }
+        const setCookie = input.exchangeSetCookie === undefined
+          ? `${appCookie}; Path=/; Expires=Sat, 15 Aug 2026 06:00:00 GMT; HttpOnly; Secure; SameSite=Lax`
+          : input.exchangeSetCookie;
         return new Response(
-          JSON.stringify({
-            ok: true,
-            data: {
-              token: appToken,
-              account: { id: authSubject, role: "user" },
-              counterStaffAssignments: [],
-            },
-          }),
-          { status: 200 },
+          input.exchangeInvalidJson
+            ? "not-json"
+            : JSON.stringify({
+              ok: true,
+              data: {
+                account: { id: authSubject, role: "user" },
+                counterStaffAssignments: [],
+                ...(input.exchangeJsonToken ? { token: appToken } : {}),
+              },
+            }),
+          {
+            status: 200,
+            ...(setCookie === null ? {} : { headers: { "Set-Cookie": setCookie } }),
+          },
         );
       }
       if (url.endsWith("/api/business/account") && method === "GET") {
+        const headers = new Headers(init?.headers);
+        if (
+          headers.get("Cookie") !== appCookie ||
+          headers.get("Authorization") !== null
+        ) {
+          return new Response("unauthorized", { status: 401 });
+        }
         if (loggedOut) return new Response("unauthorized", { status: 401 });
         return new Response(
           JSON.stringify({
@@ -642,12 +674,32 @@ function topLevelFixture(input: { readonly readyStatus?: number } = {}) {
           { status: 200 },
         );
       }
-      if (url.endsWith("/api/admin/status"))
-        return new Response("forbidden", { status: 403 });
+      if (url.endsWith("/api/admin/status")) {
+        const headers = new Headers(init?.headers);
+        return new Response("forbidden", {
+          status: headers.get("Cookie") === appCookie &&
+            headers.get("Authorization") === null
+            ? 403
+            : 401,
+        });
+      }
       if (url.endsWith("/api/business/account/delete-request")) {
-        return new Response("writes disabled", { status: 503 });
+        const headers = new Headers(init?.headers);
+        return new Response("writes disabled", {
+          status: headers.get("Cookie") === appCookie &&
+            headers.get("Authorization") === null
+            ? 503
+            : 401,
+        });
       }
       if (url.endsWith("/api/business/auth/logout")) {
+        const headers = new Headers(init?.headers);
+        if (
+          headers.get("Cookie") !== appCookie ||
+          headers.get("Authorization") !== null
+        ) {
+          return new Response("unauthorized", { status: 401 });
+        }
         loggedOut = true;
         return new Response(
           JSON.stringify({
@@ -807,6 +859,24 @@ describe("recovered PostgreSQL application verifier", () => {
     await expect(
       verifyRecoveredPostgresApplication(fixture.argv, fixture.dependencies),
     ).rejects.toThrow("ready_non_2xx");
+    expect(fixture.child.exitCode).toBe(0);
+    expect(fixture.runtimeEnd).toHaveBeenCalledOnce();
+    expect(fixture.maintenanceEnd).toHaveBeenCalledOnce();
+    expect(fixture.transportClose).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    { exchangeSetCookie: null },
+    {
+      exchangeSetCookie: `pint_path_session=${"a".repeat(43)}; Domain=127.0.0.1; Path=/; HttpOnly; Secure; SameSite=Lax`,
+    },
+    { exchangeJsonToken: true },
+    { exchangeInvalidJson: true },
+  ])("fails the recovery ceremony closed on a downgraded app-session exchange", async (input) => {
+    const fixture = topLevelFixture(input);
+    await expect(
+      verifyRecoveredPostgresApplication(fixture.argv, fixture.dependencies),
+    ).rejects.toThrow("app_auth_exchange_failed");
     expect(fixture.child.exitCode).toBe(0);
     expect(fixture.runtimeEnd).toHaveBeenCalledOnce();
     expect(fixture.maintenanceEnd).toHaveBeenCalledOnce();

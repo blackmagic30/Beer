@@ -15,6 +15,19 @@ function legacySupabaseJwt(role: "anon" | "service_role", signatureByte: number)
   ].join(".");
 }
 
+function providerSessionJwt(input: { subject: string; sessionId: string; aal: "aal1" | "aal2" }): string {
+  return [
+    Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" }), "utf8").toString("base64url"),
+    Buffer.from(JSON.stringify({
+      sub: input.subject,
+      session_id: input.sessionId,
+      aal: input.aal,
+      exp: Math.floor(Date.now() / 1000) + 3600,
+    }), "utf8").toString("base64url"),
+    Buffer.alloc(32, input.aal === "aal2" ? 4 : 3).toString("base64url"),
+  ].join(".");
+}
+
 const LEGACY_ANON_KEY = legacySupabaseJwt("anon", 1);
 const LEGACY_SERVICE_ROLE_KEY = legacySupabaseJwt("service_role", 2);
 
@@ -50,24 +63,66 @@ interface CapturedRequest {
   url: string;
 }
 
+interface CapturedBroadcastMessage {
+  channel: string;
+  data: unknown;
+}
+
 interface BrowserSupabaseApi {
   getSupabaseConfig(): { url: string | null; anonKey: string | null };
   getSupabaseClient(): BrowserSupabaseClient | null;
   getSupabaseOAuthClient(): BrowserSupabaseClient | null;
   getCanonicalBaseUrl(): string;
   getAuthCallbackUrl(): string;
-  signInWithOAuth(provider: string, options?: { returnTo?: string }): Promise<void>;
+  signInWithOAuth(
+    provider: string,
+    options?: { returnTo?: string; reauthPurpose?: string },
+  ): Promise<void>;
+  signInWithOAuthPopup(
+    provider: string,
+    options?: {
+      preferTopLevel?: boolean;
+      purpose?: string;
+      requirePopup?: boolean;
+      returnTo?: string;
+    },
+  ): Promise<{ popup: boolean; redirected?: boolean }>;
+  getLiveSupabaseProviderSession(
+    initialSession?: { access_token: string; refresh_token: string } | null,
+    client?: BrowserSupabaseClient | null,
+  ): Promise<{ access_token: string; refresh_token: string }>;
 }
 
 interface ClientOptions {
-  auth?: { flowType?: string };
+  auth?: {
+    flowType?: string;
+    persistSession?: boolean;
+    storage?: BrowserStorageFixture;
+    storageKey?: string;
+  };
   global?: { fetch?: typeof globalThis.fetch };
+}
+
+interface BrowserStorageFixture {
+  getItem(key: string): string | null | Promise<string | null>;
+  setItem(key: string, value: string): void | Promise<void>;
+  removeItem(key: string): void | Promise<void>;
 }
 
 interface BrowserSupabaseClient {
   auth: {
+    exchangeCodeForSession: (
+      authCode: string,
+      options?: { flowId?: string },
+    ) => Promise<{
+      data: { session?: { access_token?: string; refresh_token?: string } | null };
+      error: { message?: string } | null;
+    }>;
     getSession: () => Promise<unknown>;
-    signInWithOAuth: (input: unknown) => Promise<unknown>;
+    signInWithOAuth: (input: unknown) => Promise<{
+      data?: { flowId?: string | null; url?: string | null };
+      error?: { message?: string } | null;
+    }>;
     signInWithPassword: (credentials: {
       email: string;
       password: string;
@@ -99,26 +154,65 @@ function requestHeaders(input: URL | RequestInfo, init?: RequestInit): Headers {
 }
 
 function loadBrowserSupabase(key: unknown, options: {
+  enableBroadcastChannel?: boolean;
+  enableDocument?: boolean;
+  initialLocalStorage?: Record<string, string>;
+  initialSessionStorage?: Record<string, string>;
+  responseForRequest?: (
+    request: CapturedRequest,
+  ) => Response | null | Promise<Response | null>;
   supabaseUrl?: unknown;
   viewerConfig?: Record<string, unknown>;
   viewerOrigin?: string;
+  locationAssign?: (url: string) => void;
+  windowOpen?: (...args: string[]) => unknown;
 } = {}) {
   const requests: CapturedRequest[] = [];
+  const broadcastChannels: string[] = [];
+  const broadcastMessages: CapturedBroadcastMessage[] = [];
   const clientOptions: ClientOptions[] = [];
   const viewerOrigin = options.viewerOrigin ?? "https://pintpath.au";
+  const locationAssignments: string[] = [];
+  const localStorage = new BrowserStorage();
+  const sessionStorage = new BrowserStorage();
+  Object.entries(options.initialLocalStorage ?? {}).forEach(([storageKey, value]) => {
+    localStorage.setItem(storageKey, value);
+  });
+  Object.entries(options.initialSessionStorage ?? {}).forEach(([storageKey, value]) => {
+    sessionStorage.setItem(storageKey, value);
+  });
   const fetchImplementation = vi.fn(async (input: URL | RequestInfo, init?: RequestInit) => {
-    requests.push({
+    const capturedRequest = {
       body: typeof init?.body === "string" ? init.body : null,
       headers: requestHeaders(input, init),
       method: init?.method || (input instanceof Request ? input.method : "GET"),
       redirect: init?.redirect,
       url: input instanceof Request ? input.url : String(input),
-    });
+    };
+    requests.push(capturedRequest);
+    const configuredResponse = await options.responseForRequest?.(capturedRequest);
+    if (configuredResponse) return configuredResponse;
     return new Response("[]", {
       status: 200,
       headers: { "content-type": "application/json" },
     });
   });
+  class CapturingBroadcastChannel {
+    readonly name: string;
+
+    constructor(name: string) {
+      this.name = String(name);
+      broadcastChannels.push(this.name);
+    }
+
+    addEventListener(): void {}
+
+    close(): void {}
+
+    postMessage(data: unknown): void {
+      broadcastMessages.push({ channel: this.name, data });
+    }
+  }
   const windowObject: Record<string, unknown> = {
     MELB_BEER_BOT_VIEWER_CONFIG: options.viewerConfig ?? {
       supabaseUrl: options.supabaseUrl ?? SUPABASE_URL,
@@ -130,12 +224,32 @@ function loadBrowserSupabase(key: unknown, options: {
       pathname: "/account.html",
       search: "",
       hash: "",
+      href: `${viewerOrigin}/account.html`,
+      assign(url: string) {
+        const normalizedUrl = String(url);
+        locationAssignments.push(normalizedUrl);
+        options.locationAssign?.(normalizedUrl);
+      },
     },
-    localStorage: new BrowserStorage(),
-    sessionStorage: new BrowserStorage(),
+    localStorage,
+    sessionStorage,
     addEventListener: vi.fn(),
   };
-  const context = vm.createContext({
+  const documentObject = {
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    visibilityState: "visible",
+  };
+  if (options.enableDocument) {
+    windowObject.document = documentObject;
+  }
+  if (options.enableBroadcastChannel) {
+    windowObject.BroadcastChannel = CapturingBroadcastChannel;
+  }
+  if (options.windowOpen) {
+    windowObject.open = options.windowOpen;
+  }
+  const browserGlobals: Record<string, unknown> = {
     AbortController,
     AbortSignal,
     DOMException,
@@ -157,7 +271,14 @@ function loadBrowserSupabase(key: unknown, options: {
     setTimeout,
     WebSocket: class {},
     window: windowObject,
-  });
+  };
+  if (options.enableDocument) {
+    browserGlobals.document = documentObject;
+  }
+  if (options.enableBroadcastChannel) {
+    browserGlobals.BroadcastChannel = CapturingBroadcastChannel;
+  }
+  const context = vm.createContext(browserGlobals);
   vm.runInContext(supabaseBrowserBundleSource(), context, {
     filename: "node_modules/@supabase/supabase-js/dist/umd/supabase.js",
   });
@@ -172,9 +293,14 @@ function loadBrowserSupabase(key: unknown, options: {
 
   return {
     api: windowObject.MelbBeerBusiness as BrowserSupabaseApi,
+    broadcastChannels,
+    broadcastMessages,
     clientOptions,
     fetchImplementation,
+    locationAssignments,
+    localStorage,
     requests,
+    sessionStorage,
   };
 }
 
@@ -208,6 +334,96 @@ describe("browser Supabase publishable-key compatibility", () => {
       },
     });
     expect(JSON.stringify(signInWithOAuth.mock.calls)).not.toContain("attacker.invalid");
+  });
+
+  it("uses the top-level PKCE path for ordinary OAuth login without opening a popup channel", async () => {
+    const windowOpen = vi.fn(() => {
+      throw new Error("window.open must not be called for a preferred top-level flow");
+    });
+    const harness = loadBrowserSupabase(PUBLISHABLE_KEY, {
+      enableBroadcastChannel: true,
+      enableDocument: true,
+      windowOpen,
+    });
+
+    await expect(harness.api.signInWithOAuthPopup("google", {
+      preferTopLevel: true,
+      purpose: "login",
+      returnTo: "/account.html?from=map",
+    })).resolves.toMatchObject({
+      popup: false,
+      redirected: true,
+    });
+
+    expect(harness.locationAssignments).toHaveLength(1);
+    const authorizeUrl = new URL(harness.locationAssignments[0]!);
+    expect(`${authorizeUrl.origin}${authorizeUrl.pathname}`).toBe(`${SUPABASE_URL}/auth/v1/authorize`);
+    expect(authorizeUrl.searchParams.get("provider")).toBe("google");
+    expect(authorizeUrl.searchParams.get("scopes")).toBe("email profile");
+    expect(authorizeUrl.searchParams.get("code_challenge_method")).toBe("s256");
+    expect(authorizeUrl.searchParams.get("code_challenge")).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    const callbackUrl = new URL(authorizeUrl.searchParams.get("redirect_to")!);
+    expect(`${callbackUrl.origin}${callbackUrl.pathname}`).toBe("https://pintpath.au/auth/callback");
+    expect(callbackUrl.search).toBe("");
+    const pendingFlows = JSON.parse(
+      harness.sessionStorage.getItem("pintPathSupabaseOAuth-flows-code-verifier") || "null",
+    ) as unknown;
+    expect(pendingFlows).toEqual([expect.stringMatching(/^[A-Za-z0-9_-]{8,160}$/)]);
+    const [flowId] = pendingFlows as string[];
+    expect(flowId).toMatch(/^[A-Za-z0-9_-]{8,160}$/);
+
+    expect(harness.localStorage.getItem("pintPathAuthReturnTo")).toBe("/account.html?from=map");
+    expect(JSON.parse(harness.localStorage.getItem("pintPathAuthFlow") || "null")).toMatchObject({
+      kind: "oauth",
+      reauthPurpose: null,
+      returnTo: "/account.html?from=map",
+    });
+    const verifierKeys = Array.from(
+      { length: harness.sessionStorage.length },
+      (_, index) => harness.sessionStorage.key(index),
+    ).filter((storageKey): storageKey is string => Boolean(storageKey));
+    expect(verifierKeys).toEqual(expect.arrayContaining([
+      "pintPathSupabaseOAuth-code-verifier",
+      "pintPathSupabaseOAuth-flows-code-verifier",
+      `pintPathSupabaseOAuth-flow-${flowId}-code-verifier`,
+    ]));
+    const browserStorage = [harness.localStorage, harness.sessionStorage].flatMap((storage) =>
+      Array.from({ length: storage.length }, (_, index) => {
+        const storageKey = storage.key(index);
+        return storageKey ? storage.getItem(storageKey) : null;
+      }));
+    expect(JSON.stringify(browserStorage)).not.toMatch(/access_token|refresh_token/i);
+    expect(windowOpen).not.toHaveBeenCalled();
+    expect(harness.broadcastChannels).not.toContainEqual(
+      expect.stringMatching(/^pintpath:oauth:/),
+    );
+  });
+
+  it("keeps top-level preference fail-closed for invalid and popup-required OAuth requests", async () => {
+    const windowOpen = vi.fn();
+    const harness = loadBrowserSupabase(PUBLISHABLE_KEY, {
+      enableBroadcastChannel: true,
+      windowOpen,
+    });
+
+    await expect(harness.api.signInWithOAuthPopup("apple", {
+      preferTopLevel: true,
+      purpose: "login",
+    })).rejects.toThrow("not enabled");
+    await expect(harness.api.signInWithOAuthPopup("google", {
+      preferTopLevel: true,
+      purpose: "unsupported",
+    })).rejects.toThrow("purpose is not supported");
+    await expect(harness.api.signInWithOAuthPopup("google", {
+      preferTopLevel: true,
+      purpose: "account_export",
+      requirePopup: true,
+    })).rejects.toThrow("needs a secure sign-in popup");
+
+    expect(windowOpen).not.toHaveBeenCalled();
+    expect(harness.broadcastChannels).not.toContainEqual(
+      expect.stringMatching(/^pintpath:oauth:/),
+    );
   });
 
   it("binds permanent-staging OAuth callbacks to the viewer instead of a configured hostile origin", async () => {
@@ -259,6 +475,10 @@ describe("browser Supabase publishable-key compatibility", () => {
       "implicit",
       "pkce",
     ]);
+    expect(harness.clientOptions[0]?.auth?.persistSession).toBe(false);
+    expect(harness.clientOptions[1]?.auth?.persistSession).toBe(true);
+    expect(harness.clientOptions[1]?.auth?.storageKey).toBe("");
+    expect(harness.clientOptions[1]?.auth?.storage).toBeDefined();
     expect(harness.clientOptions.every((options) => typeof options.global?.fetch === "function"))
       .toBe(true);
 
@@ -271,6 +491,190 @@ describe("browser Supabase publishable-key compatibility", () => {
       expect(request.headers.has("authorization")).toBe(false);
       expect(request.redirect).toBe("error");
     }
+  });
+
+  it("keeps provider sessions in memory, migrates only PKCE verifiers, and purges legacy browser bearers", async () => {
+    const harness = loadBrowserSupabase(PUBLISHABLE_KEY);
+    const verifierKey = "pintPathSupabaseOAuth-code-verifier";
+    harness.localStorage.setItem("sb-auth-auth-token", JSON.stringify({ access_token: "legacy-main" }));
+    harness.localStorage.setItem("pintPathSupabaseOAuth", JSON.stringify({ refresh_token: "legacy-oauth" }));
+    harness.localStorage.setItem(verifierKey, "legacy-verifier/recovery");
+
+    harness.api.getSupabaseClient();
+    harness.api.getSupabaseOAuthClient();
+
+    expect(harness.localStorage.getItem("sb-auth-auth-token")).toBeNull();
+    expect(harness.localStorage.getItem("pintPathSupabaseOAuth")).toBeNull();
+    const splitStorage = harness.clientOptions[1]?.auth?.storage;
+    expect(splitStorage).toBeDefined();
+    expect(await splitStorage!.getItem(verifierKey)).toBe("legacy-verifier/recovery");
+    expect(harness.localStorage.getItem(verifierKey)).toBeNull();
+    expect(harness.sessionStorage.getItem(verifierKey)).toBe("legacy-verifier/recovery");
+
+    await splitStorage!.setItem("pintPathSupabaseOAuth", JSON.stringify({ access_token: "memory-only" }));
+    expect(harness.localStorage.getItem("pintPathSupabaseOAuth")).toBeNull();
+    expect(harness.sessionStorage.getItem("pintPathSupabaseOAuth")).toBeNull();
+    expect(await splitStorage!.getItem("pintPathSupabaseOAuth")).toContain("memory-only");
+  });
+
+  it("preserves PKCE across a callback without auth-js broadcasting the provider session", async () => {
+    const initialHarness = loadBrowserSupabase(PUBLISHABLE_KEY, {
+      enableBroadcastChannel: true,
+    });
+    const initialClient = initialHarness.api.getSupabaseOAuthClient();
+    expect(initialClient).not.toBeNull();
+
+    const started = await initialClient!.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo: "https://pintpath.au/auth/callback",
+        skipBrowserRedirect: true,
+      },
+    });
+    expect(started.error).toBeNull();
+    expect(started.data?.flowId).toMatch(/^[A-Za-z0-9_-]{8,160}$/);
+    expect(initialHarness.broadcastChannels).not.toContain("pintPathSupabaseOAuth");
+    expect(initialHarness.broadcastMessages).toEqual([]);
+
+    const verifierStorage: Record<string, string> = {};
+    for (let index = 0; index < initialHarness.sessionStorage.length; index += 1) {
+      const storageKey = initialHarness.sessionStorage.key(index);
+      if (!storageKey) continue;
+      const value = initialHarness.sessionStorage.getItem(storageKey);
+      if (value !== null) verifierStorage[storageKey] = value;
+    }
+    expect(Object.keys(verifierStorage)).toEqual(expect.arrayContaining([
+      "pintPathSupabaseOAuth-code-verifier",
+      "pintPathSupabaseOAuth-flows-code-verifier",
+      `pintPathSupabaseOAuth-flow-${started.data?.flowId}-code-verifier`,
+    ]));
+    expect(JSON.stringify(verifierStorage)).not.toMatch(/access_token|refresh_token/i);
+    expect(initialHarness.localStorage.getItem("pintPathSupabaseOAuth-code-verifier")).toBeNull();
+
+    const providerAccessToken = [
+      Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" }), "utf8").toString("base64url"),
+      Buffer.from(JSON.stringify({
+        exp: Math.floor(Date.now() / 1000) + 3600,
+        sub: "browser-user-id",
+      }), "utf8").toString("base64url"),
+      Buffer.alloc(32, 3).toString("base64url"),
+    ].join(".");
+    const providerRefreshToken = "fixture-provider-refresh-token";
+    const callbackHarness = loadBrowserSupabase(PUBLISHABLE_KEY, {
+      enableBroadcastChannel: true,
+      initialSessionStorage: verifierStorage,
+      responseForRequest(request) {
+        if (request.url !== `${SUPABASE_URL}/auth/v1/token?grant_type=pkce`) return null;
+        return new Response(JSON.stringify({
+          access_token: providerAccessToken,
+          expires_in: 3600,
+          refresh_token: providerRefreshToken,
+          token_type: "bearer",
+          user: {
+            id: "browser-user-id",
+            email: "browser-user@example.test",
+            app_metadata: { provider: "google" },
+            user_metadata: {},
+          },
+        }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      },
+    });
+    const callbackClient = callbackHarness.api.getSupabaseOAuthClient();
+    expect(callbackClient).not.toBeNull();
+
+    // Production callbacks omit sb_flow_id unless that SDK option is enabled,
+    // so exercise the fixed verifier fallback used by callback.html.
+    const exchanged = await callbackClient!.auth.exchangeCodeForSession("fixture-auth-code");
+    expect(exchanged.error).toBeNull();
+    expect(exchanged.data.session).toMatchObject({
+      access_token: providerAccessToken,
+      refresh_token: providerRefreshToken,
+    });
+    expect(callbackHarness.broadcastChannels).not.toContain("pintPathSupabaseOAuth");
+    expect(callbackHarness.broadcastMessages).toEqual([]);
+    expect(callbackHarness.sessionStorage.getItem("pintPathSupabaseOAuth-code-verifier")).toBeNull();
+    const remainingBrowserStorage = [
+      callbackHarness.localStorage,
+      callbackHarness.sessionStorage,
+    ].flatMap((storage) => Array.from({ length: storage.length }, (_, index) => {
+      const storageKey = storage.key(index);
+      return storageKey ? storage.getItem(storageKey) : null;
+    }));
+    expect(JSON.stringify(remainingBrowserStorage)).not.toContain(providerAccessToken);
+    expect(JSON.stringify(remainingBrowserStorage)).not.toContain(providerRefreshToken);
+
+    const splitStorage = callbackHarness.clientOptions[0]?.auth?.storage;
+    expect(await splitStorage?.getItem("")).toContain(providerAccessToken);
+    expect(await splitStorage?.getItem("")).toContain(providerRefreshToken);
+  });
+
+  it("bridges only the live post-MFA token pair from the same provider session", async () => {
+    const harness = loadBrowserSupabase(PUBLISHABLE_KEY);
+    const client = harness.api.getSupabaseClient();
+    expect(client).not.toBeNull();
+    const initialAccessToken = providerSessionJwt({
+      subject: "browser-user-id",
+      sessionId: "browser-provider-session",
+      aal: "aal1",
+    });
+    const liveAccessToken = providerSessionJwt({
+      subject: "browser-user-id",
+      sessionId: "browser-provider-session",
+      aal: "aal2",
+    });
+    client!.auth.getSession = vi.fn(async () => ({
+      data: {
+        session: {
+          access_token: liveAccessToken,
+          refresh_token: "rotated-post-mfa-refresh-token",
+        },
+      },
+      error: null,
+    })) as BrowserSupabaseClient["auth"]["getSession"];
+
+    await expect(harness.api.getLiveSupabaseProviderSession({
+      access_token: initialAccessToken,
+      refresh_token: "pre-mfa-refresh-token",
+    }, client)).resolves.toEqual({
+      access_token: liveAccessToken,
+      refresh_token: "rotated-post-mfa-refresh-token",
+    });
+
+    await expect(harness.api.getLiveSupabaseProviderSession({
+      access_token: providerSessionJwt({
+        subject: "browser-user-id",
+        sessionId: "different-provider-session",
+        aal: "aal1",
+      }),
+      refresh_token: "pre-mfa-refresh-token",
+    }, client)).rejects.toThrow("provider session changed");
+    expect(JSON.stringify(await harness.api.getLiveSupabaseProviderSession({
+      access_token: initialAccessToken,
+      refresh_token: "pre-mfa-refresh-token",
+    }, client))).not.toContain("pre-mfa-refresh-token");
+  });
+
+  it("purges former persistent provider bearers before a public page initializes any Supabase client", () => {
+    const verifierKey = "pintPathSupabaseOAuth-code-verifier";
+    const harness = loadBrowserSupabase(PUBLISHABLE_KEY, {
+      initialLocalStorage: {
+        "sb-auth-auth-token": JSON.stringify({ access_token: "legacy-main" }),
+        pintPathSupabaseOAuth: JSON.stringify({ refresh_token: "legacy-oauth" }),
+        [verifierKey]: "legacy-verifier/recovery",
+      },
+      initialSessionStorage: {
+        "sb-secondary-auth-token": JSON.stringify({ access_token: "legacy-session" }),
+      },
+    });
+
+    expect(harness.clientOptions).toHaveLength(0);
+    expect(harness.localStorage.getItem("sb-auth-auth-token")).toBeNull();
+    expect(harness.localStorage.getItem("pintPathSupabaseOAuth")).toBeNull();
+    expect(harness.sessionStorage.getItem("sb-secondary-auth-token")).toBeNull();
+    expect(harness.localStorage.getItem(verifierKey)).toBe("legacy-verifier/recovery");
   });
 
   it("keeps a distinct authenticated-user bearer on an actual pinned SDK request", async () => {

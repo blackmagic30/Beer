@@ -155,6 +155,55 @@ describe("native mobile remediation guardrails", () => {
     expect(androidOAuth).not.toContain("existingAppToken");
   });
 
+  it("holds AAL1 provider authority in memory until native TOTP step-up succeeds", () => {
+    for (const api of [iosAPI, androidAPI]) {
+      expect(api).toContain("MFA_STEP_UP_REQUIRED");
+      expect(api).toContain("/auth/v1/user");
+      expect(api).toContain("/challenge");
+      expect(api).toContain("/verify");
+      expect(api).toContain('"aal2"');
+      expect(api).toContain("sessionId");
+      expect(api).toContain("userId");
+    }
+
+    expect(iosApp).toContain("private var pendingMFAStepUp: PendingMFAStepUp?");
+    expect(androidApp).toContain("private var pendingMfaStepUp: PendingMfaStepUp? = null");
+    expect(iosKeychain).not.toMatch(/pending.*mfa/i);
+    expect(androidSessions).not.toMatch(/pending.*mfa/i);
+    expect(iosRoot).toContain("Six-digit authenticator code");
+    expect(androidApp).toContain('label = { Text("Six-digit code") }');
+    expect(iosRoot).toContain("model.cancelPendingMFAStepUp()");
+    expect(androidApp).toContain("state.cancelPendingMfaStepUp()");
+
+    expect(iosApp).toContain("private enum PendingMFAStepUpContinuation");
+    expect(iosApp).toContain(".newSession(");
+    expect(iosApp).toContain("case .refresh");
+    expect(iosApp).toContain("case .purpose");
+    expect(androidApp).toContain("PendingMfaContinuation.NewSession");
+    expect(androidApp).toContain("PendingMfaContinuation.Refresh");
+    expect(androidApp).toContain("PendingMfaContinuation.Purpose");
+    expect(androidApp).toMatch(/completeOAuthCallback[\s\S]*presentMfaStepUp/);
+
+    const iosMfaCompletion = sourceSection(
+      iosApp,
+      "func completeMFAStepUp(",
+      "func requestPasswordReset(",
+    );
+    const androidMfaCompletion = sourceSection(
+      androidApp,
+      "suspend fun completeMfaStepUp(",
+      "suspend fun logout(",
+    );
+    expect(iosMfaCompletion.indexOf("challengeAndVerifySupabaseMFA")).toBeLessThan(
+      iosMfaCompletion.indexOf("api.syncSupabase("),
+    );
+    expect(androidMfaCompletion.indexOf("challengeAndVerifySupabaseMfa")).toBeLessThan(
+      androidMfaCompletion.indexOf("api.completeMfaSession("),
+    );
+    expect(iosMfaCompletion).toContain("clearMFAStepUpState()");
+    expect(androidMfaCompletion).toContain("clearMfaStepUpState()");
+  });
+
   it("keeps price-access contracts without obstructing Explore with account metrics", () => {
     expect(iosDiscover).not.toContain('title: "Free price access"');
     expect(iosDiscover).not.toContain('value: "Fixed preview"');
@@ -509,14 +558,15 @@ describe("native mobile remediation guardrails", () => {
       expect(client).toContain("accessToken");
     }
     expect(iosApp).toContain("KeychainSessionStore.loadSupabaseAccessToken()");
-    expect(androidApp).toContain("api.logoutAll(currentReauthenticationToken(), current)");
+    expect(iosApp).toMatch(/withPurposeBoundSession\("logout_all"\)[\s\S]*api\.logoutAll\([\s\S]*accessToken: accessToken,[\s\S]*token: token/);
+    expect(androidApp).toMatch(/withPurposeBoundSession\("logout_all"\)[\s\S]*api\.logoutAll\(accessToken, credential\)/);
     expect(read("apps/ios/BeerMap/Features/AccountView.swift")).toContain("Sign out all devices");
     expect(androidApp).toContain("Sign out all devices");
   });
 
-  it("sends the current provider token only on recent-auth account operations", () => {
+  it("exchanges a recent provider proof for a purpose-bound cookie before sensitive operations", () => {
     for (const client of [iosAPI, androidAPI]) {
-      expect(client).toContain("X-Pint-Path-Reauth-Token");
+      expect(client).not.toContain("X-Pint-Path-Reauth-Token");
       expect(client).not.toContain("X-Pint-Path-Current-Password");
       expect(client).not.toMatch(/current.password/i);
       for (const route of [
@@ -528,16 +578,108 @@ describe("native mobile remediation guardrails", () => {
         expect(client).toContain(route);
       }
     }
+    expect(iosModels).toContain("let credentialCeremony: String?");
+    expect(iosModels).toContain("let reauthPurpose: String?");
+    expect(iosAPI).toContain('credentialCeremony: reauthPurpose == nil ? nil : "native_memory_v1"');
+    expect(androidAPI).toMatch(/if \(!reauthPurpose\.isNullOrBlank\(\)\) \{[\s\S]*put\("credentialCeremony", "native_memory_v1"\)[\s\S]*put\("reauthPurpose", reauthPurpose\)/);
+    expect(iosAPI).toContain("nativeReauthenticationClient: reauthPurpose != nil");
+    expect(androidAPI).toContain("nativeReauthenticationClient = !reauthPurpose.isNullOrBlank()");
+    expect(iosAPI).toMatch(/if nativeReauthenticationClient \{[\s\S]*path == "\/api\/business\/auth\/supabase-session"[\s\S]*"ios-native-v1"[\s\S]*"Sec-Pint-Path-Client"/);
+    expect(androidAPI).toMatch(/if \(nativeReauthenticationClient\) \{[\s\S]*path == "\/api\/business\/auth\/supabase-session"[\s\S]*setRequestProperty\("Sec-Pint-Path-Client", "android-native-v1"\)/);
+    expect(iosAPI).toContain("func reauthenticateSupabaseSession(");
+    expect(androidAPI).toContain("suspend fun reauthenticateSupabaseSession(");
+    for (const purpose of [
+      "session_management",
+      "account_export",
+      "account_deletion",
+      "logout_all",
+    ]) {
+      expect(iosApp).toContain(`withPurposeBoundSession("${purpose}")`);
+      expect(androidApp).toContain(`withPurposeBoundSession("${purpose}")`);
+    }
     expect(iosAPI).toMatch(/func account\(token: String\)[\s\S]*?get\("\/api\/business\/account", token: token\)/);
     expect(androidAPI).toContain('request("/api/business/account", token = token).toAccountDashboard()');
-    expect(iosAPI).toMatch(/func logoutAll[\s\S]*LogoutAllRequest\(accessToken: accessToken\)[\s\S]*reauthenticationToken: accessToken/);
-    expect(androidAPI).toMatch(/suspend fun logoutAll[\s\S]*put\("accessToken", accessToken\)[\s\S]*reauthenticationToken = accessToken/);
+    expect(iosAPI).toMatch(/func logoutAll[\s\S]*LogoutAllRequest\(accessToken: accessToken\)[\s\S]*token: token/);
+    expect(androidAPI).toMatch(/suspend fun logoutAll[\s\S]*put\("accessToken", accessToken\)[\s\S]*token = token/);
+    expect(iosAPI).toContain("async throws -> LogoutAllResponse");
+    expect(iosModels).toMatch(/struct LogoutAllResponse: Codable \{\s*let providerSessionsRevoked: Bool/);
+    expect(androidAPI).toContain('.optBoolean("providerSessionsRevoked", false)');
+    expect(iosApp).toContain("if result.providerSessionsRevoked");
+    expect(androidApp).toContain("if (providerSessionsRevoked)");
+    expect(iosApp).toContain("before relying on provider-wide logout");
+    expect(androidApp).toContain("before relying on provider-wide logout");
     expect(iosApp).toContain("Nothing was completed; retry after signing in.");
     expect(androidApp).toContain("Nothing was completed; retry after signing in.");
     expect(iosAccount).toContain("Sign out and sign in again");
     expect(androidApp).toContain("Sign out and sign in again");
     expect(iosApp).toContain("Pint Path has not run it automatically");
     expect(androidApp).toContain("Pint Path has not run it automatically");
+  });
+
+  it("keeps hosted native app sessions cookie-only without using global cookie stores", () => {
+    const iosSync = sourceSection(iosAPI, "func syncSupabase(", "func requestPasswordReset(");
+    const androidSync = sourceSection(androidAPI, "private suspend fun syncSupabase(", "suspend fun logout(");
+    const androidExport = sourceSection(
+      androidAPI,
+      "suspend fun exportVenueMonthlyReport(",
+      "suspend fun feedback(",
+    );
+
+    expect(iosModels).toMatch(/struct AuthResult: Codable \{\s*let token: String\?/);
+    expect(androidModels).toMatch(/data class AuthResult\(\s*val token: String\?/);
+    expect(iosSync).toContain("reauthPurpose: String? = nil");
+    expect(androidSync).toContain("reauthPurpose: String? = null");
+    expect(iosSync).toContain('credentialCeremony: reauthPurpose == nil ? nil : "native_memory_v1"');
+    expect(androidSync).toContain("if (!reauthPurpose.isNullOrBlank())");
+    expect(androidSync).toContain("return AuthResult(null");
+    expect(androidSync).not.toContain('stringOrNull("token")');
+
+    for (const store of [iosKeychain, androidSessions]) {
+      expect(store).toContain("cookie-v1:");
+      expect(store).toContain("credential-v1");
+      expect(store).toContain("[A-Za-z0-9_-]{43}");
+    }
+    expect(androidSessions).toContain("local-bearer-v1:");
+    expect(androidSessions).toContain("saveLocalBearerToken");
+    expect(iosKeychain).toContain("saveSessionCookie");
+    expect(androidSessions).toContain("saveSessionCookie");
+    expect(iosAPI).toContain('response.value(forHTTPHeaderField: "Set-Cookie")');
+    expect(iosAPI).toContain('nameValue.hasPrefix("pint_path_session=")');
+    expect(iosAPI).toContain('attributes.contains("httponly")');
+    expect(iosAPI).toContain('attributes.contains("samesite=lax")');
+    expect(androidAPI).toContain('name != "pint_path_session"');
+    expect(androidAPI).toContain("hasHttpOnly");
+    expect(androidAPI).toContain("hasLaxSameSite");
+
+    expect(iosAPI).toContain('request.setValue("pint_path_session=\\(cookieValue)", forHTTPHeaderField: "Cookie")');
+    expect(androidAPI).toContain('connection.setRequestProperty("Cookie", "pint_path_session=$cookieValue")');
+    expect(iosAPI).toContain('request.setValue("Bearer \\(bearerToken)", forHTTPHeaderField: "Authorization")');
+    expect(androidAPI).toContain('connection.setRequestProperty("Authorization", "Bearer $bearerToken")');
+    expect(iosAPI).toMatch(/path == "\/api\/business\/auth\/supabase-session"[\s\S]*legacyBearerToken/);
+    expect(androidAPI).toContain('allowLegacyUpgrade = path == "/api/business/auth/supabase-session"');
+    expect(androidAPI).toContain("if (!allowLegacyUpgrade) return");
+    expect(androidExport).toContain("applySessionCredential(this, token, allowLegacyUpgrade = false)");
+
+    expect(iosAPI).toContain("configuration.httpCookieStorage = nil");
+    expect(iosAPI).toContain("configuration.httpShouldSetCookies = false");
+    expect(androidAPI).not.toContain("CookieManager");
+    expect(androidSessions).not.toContain("CookieManager");
+    expect(iosApp).toContain("KeychainSessionStore.cookieValue(from: storedCredential)");
+    expect(androidApp).toContain("sessions.cookieValue(it) != null");
+  });
+
+  it("refreshes an expired iOS provider token once before retrying only the purpose exchange", () => {
+    const iosPurposeExchange = sourceSection(
+      iosApp,
+      "private func withPurposeBoundSession",
+      "private func handleSensitiveActionError",
+    );
+
+    expect(iosPurposeExchange).toMatch(
+      /try await establishPurposeCookie\(\)[\s\S]*catch let apiError as BeerMapAPIError where apiError\.isUnauthorized[\s\S]*await refreshExpiredSession\(\)[\s\S]*try await establishPurposeCookie\(\)[\s\S]*return try await operation/,
+    );
+    expect(iosPurposeExchange.match(/operation\(/g)).toHaveLength(1);
+    expect(iosPurposeExchange).toContain("Never retry the sensitive operation itself.");
   });
 
   it("loads recent-auth-protected session lists only after an explicit security action", () => {
@@ -1148,7 +1290,14 @@ describe("native mobile remediation guardrails", () => {
   });
 
   it("keeps native page sizes and cursors inside the live backend contracts", () => {
-    expect(venuesQuerySchema.parse({ limit: "500", offset: "500" })).toMatchObject({ limit: 500, offset: 500 });
+    expect(venuesQuerySchema.parse({ limit: "250", offset: "500" })).toMatchObject({ limit: 250, offset: 500 });
+    expect(venuesQuerySchema.parse({ limit: "500" }).limit).toBe(500);
+    expect(venuesQuerySchema.parse({ limit: "1000" }).limit).toBe(1_000);
+    expect(() => venuesQuerySchema.parse({ limit: "1001" })).toThrow();
+    expect(venuesQuerySchema.parse({ q: "v".repeat(160) }).q).toHaveLength(160);
+    expect(() => venuesQuerySchema.parse({ q: "v".repeat(161) })).toThrow();
+    expect(iosAPI).toContain("min(250, max(1, limit))");
+    expect(androidAPI).toContain("val pageSize = 250");
     expect(missionsQuerySchema.parse({ limit: "200", offset: "200" })).toMatchObject({ limit: 200, offset: 200 });
     expect(adminPaginationSchema.parse({ limit: "100", offset: "100" })).toMatchObject({ limit: 100, offset: 100 });
     expect(priceRecordsQuerySchema.parse({ limit: "500", cursor: "opaque-page-token" })).toMatchObject({

@@ -9,6 +9,7 @@ import { runRailwayMutationBoundaryCheck } from
   "./check-railway-mutation-boundary.js";
 import {
   parseRailwayApplicationDeploymentAttestationProviderSnapshotResponse,
+  parseRailwayApplicationDeploymentAttestationRuntimeResponse,
   type RailwayApplicationDeploymentAttestationProviderSnapshot,
 } from "../src/lib/railway-application-deployment-attestation.js";
 import { railwayDeploymentIdentityIdSha256 } from
@@ -17,9 +18,13 @@ import {
   readTrustedRegularFile,
   writePrivateExclusiveFile,
 } from "./lib/trusted-filesystem.js";
+import {
+  parseProductionScaleActivationPrerequisiteVerification,
+  type ProductionScaleActivationPrerequisiteVerification,
+} from "./verify-production-maintenance-role-limit-prerequisites.js";
 
 export const PROTECTED_STAGING_SCALE_SCHEMA =
-  "pintpath-permanent-staging-scale-operation/v1" as const;
+  "pintpath-permanent-staging-scale-operation/v2" as const;
 export const PROTECTED_STAGING_SCALE_STATE =
   "GITHUB_ENVIRONMENT_PROTECTED" as const;
 
@@ -28,17 +33,19 @@ const PRODUCTION_ENVIRONMENT_ID = "13dab015-df74-45c6-b26f-69323daea99a";
 const STAGING_ENVIRONMENT_ID = "a4e0f507-d6d3-4df9-a818-ad92c0071a35";
 const SERVICE_ID = "6816c4a2-e392-4ee5-826f-2584cb599ec0";
 const REGION = "asia-southeast1-eqsg3a";
-const STAGING_DOMAIN = "pintpath-staging.up.railway.app";
+const STAGING_DOMAIN = "beer-staging.up.railway.app";
 const PRODUCTION_DOMAIN = "pintpath.au";
 const POLICY_PATH = "ops/railway/permanent-staging-scale-evidence-policy.json";
 const POLICY_SHA256 =
-  "970d5046b5c5b7d7cc1ddefe0649782c009d91ddb38c08c9369d81c82012b520";
+  "164d53a5bccff4a861c8568abebe5caa06352f64245ac7e734e55c056c2be608";
 const BOUNDARY_POLICY_PATH = "ops/railway/production-staging-mutation-policy.json";
 const GRAPHQL_ENDPOINT = "https://backboard.railway.com/graphql/v2";
 const CLI_SHA256 = "27133cfc20bffc43b2f32c1638fa3c50eefc2f9d2d80301a93de34632ccb7a43";
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHA_PATTERN = /^[a-f0-9]{40}$/;
+const SHA256_PATTERN = /^[a-f0-9]{64}$/;
+const RUN_ID_PATTERN = /^[1-9][0-9]*$/;
 const TOKEN_PATTERN = /^[^\r\n\0]{16,4096}$/;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const QUERY_TIMEOUT_MS = 20_000;
@@ -85,7 +92,19 @@ export const PROTECTED_STAGING_SCALE_SNAPSHOT_QUERY = `query PintPathProtectedSc
 export const PROTECTED_STAGING_SCALE_TOKEN_SCOPE_QUERY =
   `query PintPathProtectedScaleTokenScope { projectToken { projectId environmentId } }`;
 
-type Direction = "out" | "converge-one" | "converge-production-two";
+type Direction =
+  | "out"
+  | "converge-one"
+  | "converge-production-two"
+  | "quiesce-staging-zero"
+  | "bootstrap-staging-one";
+
+type ReplicaCount = 0 | 1 | 2;
+
+interface RuntimeMaintenanceExpectation {
+  readonly enabled: boolean;
+  readonly candidateBound: boolean;
+}
 
 interface ScaleTarget {
   readonly environmentId: string;
@@ -118,11 +137,27 @@ interface Dependencies {
   readonly boundaryCheck: () => Promise<0 | 1>;
   readonly reassertRepositoryState: (cwd: string, candidateSha: string) => boolean;
   readonly validateCli: (filename: string) => boolean;
+  readonly validateProductionActivationPrerequisite: (
+    source: string,
+    expected: {
+      readonly candidateSha: string;
+      readonly currentRunId: string;
+      readonly activateRunId: string;
+      readonly now: Date;
+    },
+  ) => ProductionScaleActivationPrerequisiteVerification;
   readonly runCommand: (
     executable: string,
     args: readonly string[],
     token: string,
   ) => Promise<CommandResult>;
+  readonly probeRuntime: (
+    target: ScaleTarget,
+    candidateSha: string,
+    deploymentId: string,
+    expectation: RuntimeMaintenanceExpectation,
+  ) => Promise<boolean>;
+  readonly probeRuntimeAbsent: (target: ScaleTarget) => Promise<boolean>;
   readonly writeDurable: (directory: string, leaf: string, source: string) => string;
   readonly writeOutput: (source: string) => void;
 }
@@ -140,7 +175,7 @@ interface ScaleReceipt {
   readonly candidateSha: string | null;
   readonly startedAt: string;
   readonly completedAt: string;
-  readonly desiredReplicas: 1 | 2 | null;
+  readonly desiredReplicas: ReplicaCount | null;
   readonly deploymentIdSha256: string | null;
   readonly attempts: 0 | 1;
   readonly retryAllowed: false;
@@ -148,6 +183,14 @@ interface ScaleReceipt {
   readonly terminalEvidenceSha256: string | null;
   readonly commandStdoutSha256: string | null;
   readonly commandStderrSha256: string | null;
+  readonly productionActivationPrerequisite: {
+    readonly runId: string;
+    readonly verificationSha256: string;
+    readonly terminalSha256: string;
+    readonly prerequisitesSha256: string;
+    readonly deploymentBeforeIdSha256: string;
+    readonly deploymentAfterIdSha256: string;
+  } | null;
   readonly checks: {
     policyExact: boolean;
     githubAuthorityExact: boolean;
@@ -155,12 +198,16 @@ interface ScaleReceipt {
     cliExact: boolean;
     boundaryPreflightExact: boolean;
     targetPreflightExact: boolean;
+    productionActivationPrerequisiteExact: boolean;
+    productionActivationDeploymentContinuityExact: boolean;
+    runtimePreflightExact: boolean;
     durableIntentExact: boolean;
     repositoryPrewriteReasserted: boolean;
     writeAttemptedAtMostOnce: boolean;
     acknowledgementExact: boolean;
     postflightAttempted: boolean;
     targetPostflightExact: boolean;
+    runtimePostflightExact: boolean;
     candidateUnchanged: boolean;
     deploymentUnchanged: boolean;
     boundaryPostflightExact: boolean;
@@ -189,8 +236,10 @@ function parseArguments(argv: readonly string[]): {
   readonly candidateSha: string;
   readonly expectedDeploymentSha: string;
   readonly evidenceDirectory: string;
+  readonly productionActivationRunId: string | null;
+  readonly productionScaleVerificationFile: string | null;
 } | null {
-  if (argv.length !== 6 && argv.length !== 8) return null;
+  if (argv.length !== 6 && argv.length !== 8 && argv.length !== 12) return null;
   const values = new Map<string, string>();
   for (let index = 0; index < argv.length; index += 2) {
     if (!argv[index]?.startsWith("--") || !argv[index + 1]
@@ -198,21 +247,81 @@ function parseArguments(argv: readonly string[]): {
     values.set(argv[index]!, argv[index + 1]!);
   }
   if ([...values.keys()].some((key) =>
-    !["--direction", "--candidate-sha", "--expected-deployment-sha", "--evidence-dir"].includes(key))) return null;
+    ![
+      "--direction",
+      "--candidate-sha",
+      "--expected-deployment-sha",
+      "--evidence-dir",
+      "--production-activation-run-id",
+      "--production-scale-verification-file",
+    ].includes(key))) return null;
   const direction = values.get("--direction");
   const candidateSha = values.get("--candidate-sha") ?? "";
   const evidenceDirectory = values.get("--evidence-dir") ?? "";
+  const productionActivationRunId =
+    values.get("--production-activation-run-id") ?? null;
+  const productionScaleVerificationFile =
+    values.get("--production-scale-verification-file") ?? null;
   if ((direction === "out" || direction === "converge-one") && argv.length === 6
     && !values.has("--expected-deployment-sha") && SHA_PATTERN.test(candidateSha)
     && path.isAbsolute(evidenceDirectory)) {
-    return { direction, candidateSha, expectedDeploymentSha: candidateSha, evidenceDirectory };
+    return {
+      direction,
+      candidateSha,
+      expectedDeploymentSha: candidateSha,
+      evidenceDirectory,
+      productionActivationRunId: null,
+      productionScaleVerificationFile: null,
+    };
   }
   const expectedDeploymentSha = values.get("--expected-deployment-sha") ?? "";
-  return direction === "converge-production-two" && argv.length === 8
-    && SHA_PATTERN.test(candidateSha)
-    && expectedDeploymentSha === candidateSha
-    && path.isAbsolute(evidenceDirectory)
-    ? { direction, candidateSha, expectedDeploymentSha, evidenceDirectory }
+  if (!SHA_PATTERN.test(candidateSha) || !SHA_PATTERN.test(expectedDeploymentSha)
+    || !path.isAbsolute(evidenceDirectory)) return null;
+  if (direction === "converge-production-two") {
+    const producerArgumentsExact =
+      (productionActivationRunId === null
+        && productionScaleVerificationFile === null)
+      || (productionActivationRunId !== null
+        && RUN_ID_PATTERN.test(productionActivationRunId)
+        && productionScaleVerificationFile !== null
+        && path.isAbsolute(productionScaleVerificationFile));
+    return expectedDeploymentSha === candidateSha && producerArgumentsExact
+      ? {
+          direction,
+          candidateSha,
+          expectedDeploymentSha,
+          evidenceDirectory,
+          productionActivationRunId,
+          productionScaleVerificationFile,
+        }
+      : null;
+  }
+  if (direction === "bootstrap-staging-one") {
+    return expectedDeploymentSha === candidateSha
+        && productionActivationRunId === null
+        && productionScaleVerificationFile === null
+      ? {
+          direction,
+          candidateSha,
+          expectedDeploymentSha,
+          evidenceDirectory,
+          productionActivationRunId: null,
+          productionScaleVerificationFile: null,
+        }
+      : null;
+  }
+  return direction === "quiesce-staging-zero"
+    && expectedDeploymentSha !== candidateSha
+    && productionActivationRunId === null
+    && productionScaleVerificationFile === null
+    ? {
+        direction,
+        candidateSha,
+        expectedDeploymentSha,
+        evidenceDirectory,
+        productionActivationRunId: null,
+        productionScaleVerificationFile: null,
+      }
     : null;
 }
 
@@ -229,6 +338,30 @@ function validateCli(filename: string): boolean {
     return false;
   } finally {
     bytes?.fill(0);
+  }
+}
+
+function readProductionActivationPrerequisite(
+  filename: string,
+  evidenceDirectory: string,
+): string {
+  if (
+    !path.isAbsolute(filename)
+    || path.basename(filename)
+      !== "production-scale-activation-verification.json"
+    || path.dirname(path.resolve(filename)) !== fs.realpathSync(evidenceDirectory)
+  ) throw new Error("activation_prerequisite_invalid");
+  try {
+    const source = readTrustedRegularFile(filename, {
+      minBytes: 2,
+      maxBytes: 1024 * 1024,
+      requireOwner: true,
+      requirePrivate: true,
+    }).toString("utf8");
+    if (source.includes("\0")) throw new Error("activation_prerequisite_invalid");
+    return source;
+  } catch {
+    throw new Error("activation_prerequisite_invalid");
   }
 }
 
@@ -409,10 +542,76 @@ async function querySnapshot(
   return snapshot;
 }
 
+async function probeRuntime(
+  fetchImpl: typeof fetch,
+  target: ScaleTarget,
+  candidateSha: string,
+  deploymentId: string,
+  expectation: RuntimeMaintenanceExpectation,
+): Promise<boolean> {
+  for (const route of ["/health", "/startup", "/ready"] as const) {
+    const response = await fetchImpl(`https://${target.domain}${route}`, {
+      method: "GET",
+      headers: { accept: "application/json" },
+      redirect: "error",
+      cache: "no-store",
+      signal: AbortSignal.timeout(QUERY_TIMEOUT_MS),
+    });
+    if (!response.ok) return false;
+    const source = await response.text();
+    if (Buffer.byteLength(source, "utf8") > MAX_RESPONSE_BYTES) return false;
+    const runtime = parseRailwayApplicationDeploymentAttestationRuntimeResponse(
+      route,
+      source,
+    );
+    if (
+      !runtime
+      || runtime.deployment.commitSha !== candidateSha
+      || runtime.deployment.projectIdSha256
+        !== railwayDeploymentIdentityIdSha256("project", PROJECT_ID)
+      || runtime.deployment.environmentIdSha256
+        !== railwayDeploymentIdentityIdSha256("environment", target.environmentId)
+      || runtime.deployment.serviceIdSha256
+        !== railwayDeploymentIdentityIdSha256("service", SERVICE_ID)
+      || runtime.deployment.deploymentIdSha256
+        !== railwayDeploymentIdentityIdSha256("deployment", deploymentId)
+      || runtime.automaticMaintenance.enabled !== expectation.enabled
+      || runtime.automaticMaintenance.candidateBound !== expectation.candidateBound
+    ) return false;
+  }
+  return true;
+}
+
+async function probeRuntimeAbsent(
+  fetchImpl: typeof fetch,
+  target: ScaleTarget,
+  sleep: (milliseconds: number) => Promise<void>,
+): Promise<boolean> {
+  for (let round = 0; round < 3; round += 1) {
+    for (const route of ["/health", "/startup", "/ready"] as const) {
+      try {
+        const response = await fetchImpl(`https://${target.domain}${route}`, {
+          method: "GET",
+          headers: { accept: "application/json" },
+          redirect: "error",
+          cache: "no-store",
+          signal: AbortSignal.timeout(QUERY_TIMEOUT_MS),
+        });
+        if (response.ok) return false;
+        await response.body?.cancel();
+      } catch {
+        // Connection refusal and provider 5xx both confirm no healthy app route.
+      }
+    }
+    if (round < 2) await sleep(10_000);
+  }
+  return true;
+}
+
 function snapshotExact(
   snapshot: RailwayApplicationDeploymentAttestationProviderSnapshot,
   candidateSha: string,
-  replicas: 1 | 2,
+  replicas: ReplicaCount,
   target: ScaleTarget = STAGING_TARGET,
 ): boolean {
   return snapshot.serviceId === SERVICE_ID
@@ -426,10 +625,10 @@ function snapshotExact(
     && snapshot.deployment.serviceId === SERVICE_ID
     && snapshot.deployment.commitHash === candidateSha
     && snapshot.deployment.patchId === null
-    && snapshot.activeDeployments.some((row) =>
-      row.id === snapshot.latestDeployment.id
-      && row.status === "SUCCESS"
-      && row.deploymentStopped === false)
+    && snapshot.activeDeployments.length === 1
+    && snapshot.activeDeployments[0]?.id === snapshot.latestDeployment.id
+    && snapshot.activeDeployments[0]?.status === "SUCCESS"
+    && snapshot.activeDeployments[0]?.deploymentStopped === false
     && snapshot.domains.length === 1
     && snapshot.domains[0]?.kind === "service"
     && snapshot.domains[0].domain === target.domain
@@ -450,7 +649,7 @@ async function reconcile(
   dependencies: Dependencies,
   token: string,
   candidateSha: string,
-  replicas: 1 | 2,
+  replicas: ReplicaCount,
   target: ScaleTarget = STAGING_TARGET,
 ): Promise<RailwayApplicationDeploymentAttestationProviderSnapshot | null> {
   const deadline = dependencies.now() + RECONCILIATION_TIMEOUT_MS;
@@ -488,10 +687,12 @@ function policyExact(cwd: string): boolean {
         "railwayCli",
         "lifecycle",
         "productionConvergence",
+        "workerBootstrap",
+        "runtimeFence",
         "evidence",
       ]) &&
       value.schemaVersion ===
-        "pintpath-permanent-staging-scale-evidence-policy/v1" &&
+        "pintpath-permanent-staging-scale-evidence-policy/v2" &&
       value.activationState === PROTECTED_STAGING_SCALE_STATE &&
       value.projectId === PROJECT_ID &&
       value.productionEnvironmentId === PRODUCTION_ENVIRONMENT_ID &&
@@ -511,6 +712,13 @@ function policyExact(cwd: string): boolean {
         "automaticRetriesAllowed",
         "unconditionalReadOnlyPostflight",
         "exactExistingDeploymentShaRequired",
+        "activationPrerequisiteRequired",
+        "activationVerificationSchema",
+        "activationVerificationFilename",
+        "exactActivationRunBindingRequired",
+        "liveDeploymentContinuityRequired",
+        "durableIntentBindingRequired",
+        "terminalReceiptBindingRequired",
       ]) &&
       value.productionConvergence.environmentId ===
         PRODUCTION_ENVIRONMENT_ID &&
@@ -524,6 +732,53 @@ function policyExact(cwd: string): boolean {
       value.productionConvergence.automaticRetriesAllowed === false &&
       value.productionConvergence.unconditionalReadOnlyPostflight === true &&
       value.productionConvergence.exactExistingDeploymentShaRequired === true &&
+      value.productionConvergence.activationPrerequisiteRequired === true &&
+      value.productionConvergence.activationVerificationSchema ===
+        "pintpath-production-scale-activation-prerequisite/v1" &&
+      value.productionConvergence.activationVerificationFilename ===
+        "production-scale-activation-verification.json" &&
+      value.productionConvergence.exactActivationRunBindingRequired === true &&
+      value.productionConvergence.liveDeploymentContinuityRequired === true &&
+      value.productionConvergence.durableIntentBindingRequired === true &&
+      value.productionConvergence.terminalReceiptBindingRequired === true &&
+      exactKeys(value.workerBootstrap, [
+        "quiesceDirection",
+        "bootstrapDirection",
+        "initialReplicaCount",
+        "quiescedReplicaCount",
+        "restoredReplicaCount",
+        "maximumAttemptsPerTransition",
+        "automaticRetriesAllowed",
+        "runtimeMustBeUnavailableWhileQuiesced",
+        "restoredRuntimeAutomaticMaintenanceEnabled",
+        "restoredRuntimeCandidateBindingRequired",
+        "deploymentMustRemainUnchangedPerScale",
+      ]) &&
+      value.workerBootstrap.quiesceDirection === "quiesce-staging-zero" &&
+      value.workerBootstrap.bootstrapDirection === "bootstrap-staging-one" &&
+      value.workerBootstrap.initialReplicaCount === 1 &&
+      value.workerBootstrap.quiescedReplicaCount === 0 &&
+      value.workerBootstrap.restoredReplicaCount === 1 &&
+      value.workerBootstrap.maximumAttemptsPerTransition === 1 &&
+      value.workerBootstrap.automaticRetriesAllowed === false &&
+      value.workerBootstrap.runtimeMustBeUnavailableWhileQuiesced === true &&
+      value.workerBootstrap.restoredRuntimeAutomaticMaintenanceEnabled === false &&
+      value.workerBootstrap.restoredRuntimeCandidateBindingRequired === true &&
+      value.workerBootstrap.deploymentMustRemainUnchangedPerScale === true &&
+      exactKeys(value.runtimeFence, [
+        "requiredRoutes",
+        "automaticMaintenanceEnabled",
+        "candidateBindingRequired",
+        "preflightRequired",
+        "postflightRequired",
+      ]) &&
+      Array.isArray(value.runtimeFence.requiredRoutes) &&
+      JSON.stringify(value.runtimeFence.requiredRoutes)
+        === JSON.stringify(["/health", "/startup", "/ready"]) &&
+      value.runtimeFence.automaticMaintenanceEnabled === true &&
+      value.runtimeFence.candidateBindingRequired === true &&
+      value.runtimeFence.preflightRequired === true &&
+      value.runtimeFence.postflightRequired === true &&
       exactKeys(value.evidence, [
         "durableIntentRequiredBeforeEachWrite",
         "terminalEvidenceRequired",
@@ -546,12 +801,16 @@ function emptyChecks(): ScaleReceipt["checks"] {
     cliExact: false,
     boundaryPreflightExact: false,
     targetPreflightExact: false,
+    productionActivationPrerequisiteExact: false,
+    productionActivationDeploymentContinuityExact: false,
+    runtimePreflightExact: false,
     durableIntentExact: false,
     repositoryPrewriteReasserted: false,
     writeAttemptedAtMostOnce: true,
     acknowledgementExact: false,
     postflightAttempted: false,
     targetPostflightExact: false,
+    runtimePostflightExact: false,
     candidateUnchanged: false,
     deploymentUnchanged: false,
     boundaryPostflightExact: false,
@@ -566,11 +825,13 @@ function receipt(
   candidateSha: string | null,
   startedAt: string,
   completedAt: string,
-  desiredReplicas: 1 | 2 | null,
+  desiredReplicas: ReplicaCount | null,
   deploymentIdSha256: string | null,
   attempts: 0 | 1,
   intentSha256: string | null,
   terminalEvidenceSha256: string | null,
+  productionActivationPrerequisite:
+    ScaleReceipt["productionActivationPrerequisite"],
   command: CommandResult | null,
   checks: ScaleReceipt["checks"],
 ): ScaleReceipt {
@@ -590,6 +851,7 @@ function receipt(
     terminalEvidenceSha256,
     commandStdoutSha256: command?.stdoutSha256 ?? null,
     commandStderrSha256: command?.stderrSha256 ?? null,
+    productionActivationPrerequisite,
     checks,
   };
 }
@@ -609,7 +871,21 @@ export async function runProtectedPermanentStagingScale(
     }),
     reassertRepositoryState,
     validateCli,
+    validateProductionActivationPrerequisite:
+      parseProductionScaleActivationPrerequisiteVerification,
     runCommand,
+    probeRuntime: (target, candidateSha, deploymentId, expectation) => probeRuntime(
+      fetch,
+      target,
+      candidateSha,
+      deploymentId,
+      expectation,
+    ),
+    probeRuntimeAbsent: (target) => probeRuntimeAbsent(
+      fetch,
+      target,
+      (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+    ),
     writeDurable: durableWrite,
     writeOutput: (source) => process.stdout.write(source),
     ...overrides,
@@ -620,8 +896,9 @@ export async function runProtectedPermanentStagingScale(
   const checks = emptyChecks();
   const direction = args?.direction ?? null;
   const candidateSha = args?.candidateSha ?? null;
-  const desiredReplicas = direction === "converge-one" ? 1
-    : direction === "out" || direction === "converge-production-two" ? 2 : null;
+  const desiredReplicas = direction === "quiesce-staging-zero" ? 0
+    : direction === "converge-one" || direction === "bootstrap-staging-one" ? 1
+      : direction === "out" || direction === "converge-production-two" ? 2 : null;
   const target = direction === "converge-production-two" ? PRODUCTION_TARGET : STAGING_TARGET;
   let attempts: 0 | 1 = 0;
   let intentSha: string | null = null;
@@ -631,13 +908,21 @@ export async function runProtectedPermanentStagingScale(
   let before: RailwayApplicationDeploymentAttestationProviderSnapshot | null = null;
   let deploymentIdSha256: string | null = null;
   let metadataToken = "";
+  let productionActivationVerification:
+    ProductionScaleActivationPrerequisiteVerification | null = null;
+  let productionActivationPrerequisite:
+    ScaleReceipt["productionActivationPrerequisite"] = null;
   try {
     checks.policyExact = policyExact(dependencies.cwd);
     const confirmation = direction === "out"
       ? "SCALE_PERMANENT_STAGING_TO_TWO_FOR_EVIDENCE"
       : direction === "converge-one"
         ? "CONVERGE_PERMANENT_STAGING_TO_ONE"
-        : "CONVERGE_PRODUCTION_TO_TWO_REPLICAS";
+        : direction === "converge-production-two"
+          ? "CONVERGE_PRODUCTION_TO_TWO_REPLICAS"
+          : direction === "quiesce-staging-zero"
+            ? "QUIESCE_PERMANENT_STAGING_TO_ZERO_FOR_WORKER_BOOTSTRAP"
+            : "RESTORE_PERMANENT_STAGING_TO_ONE_FOR_WORKER_BOOTSTRAP";
     checks.githubAuthorityExact = args !== null
       && dependencies.env.GITHUB_REF === "refs/heads/main"
       && dependencies.env.GITHUB_SHA === args.candidateSha
@@ -646,6 +931,69 @@ export async function runProtectedPermanentStagingScale(
         || dependencies.env.GITHUB_RUN_ATTEMPT === "1");
     if (!args || !checks.policyExact || !checks.githubAuthorityExact) {
       throw new Error("authority_invalid");
+    }
+    const productionActivationRunId = args.productionActivationRunId
+      ?? dependencies.env.PINTPATH_PRODUCTION_SCALE_ACTIVATE_RUN_ID
+      ?? null;
+    const productionScaleVerificationFile = args.productionScaleVerificationFile
+      ?? dependencies.env.PINTPATH_PRODUCTION_SCALE_ACTIVATION_VERIFICATION_FILE
+      ?? null;
+    if (direction === "converge-production-two") {
+      const currentRunId = dependencies.env.GITHUB_RUN_ID ?? "";
+      if (
+        !productionActivationRunId
+        || !RUN_ID_PATTERN.test(productionActivationRunId)
+        || !RUN_ID_PATTERN.test(currentRunId)
+        || !productionScaleVerificationFile
+      ) throw new Error("activation_prerequisite_invalid");
+      try {
+        const verificationSource = readProductionActivationPrerequisite(
+          productionScaleVerificationFile,
+          args.evidenceDirectory,
+        );
+        productionActivationVerification =
+          dependencies.validateProductionActivationPrerequisite(
+            verificationSource,
+            {
+              candidateSha: args.candidateSha,
+              currentRunId,
+              activateRunId: productionActivationRunId,
+              now: new Date(dependencies.now()),
+            },
+          );
+        productionActivationPrerequisite = {
+          runId: productionActivationVerification.activation.runId,
+          verificationSha256: sha256(verificationSource),
+          terminalSha256:
+            productionActivationVerification.activation.terminalSha256,
+          prerequisitesSha256:
+            productionActivationVerification.activation.prerequisitesSha256,
+          deploymentBeforeIdSha256:
+            productionActivationVerification.activation
+              .deploymentBeforeIdSha256,
+          deploymentAfterIdSha256:
+            productionActivationVerification.activation.deploymentAfterIdSha256,
+        };
+        checks.productionActivationPrerequisiteExact =
+          productionActivationPrerequisite.runId === productionActivationRunId
+          && productionActivationVerification.candidateSha === args.candidateSha
+          && productionActivationVerification.consumer.runId === currentRunId
+          && Object.entries(productionActivationPrerequisite)
+            .filter(([key]) => key !== "runId")
+            .every(([, value]) => SHA256_PATTERN.test(value));
+      } catch {
+        throw new Error("activation_prerequisite_invalid");
+      }
+      if (!checks.productionActivationPrerequisiteExact) {
+        throw new Error("activation_prerequisite_invalid");
+      }
+    } else {
+      if (
+        productionActivationRunId !== null
+        || productionScaleVerificationFile !== null
+      ) throw new Error("activation_prerequisite_invalid");
+      checks.productionActivationPrerequisiteExact = true;
+      checks.productionActivationDeploymentContinuityExact = true;
     }
     metadataToken = direction === "converge-production-two"
       ? dependencies.env.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN ?? ""
@@ -673,12 +1021,41 @@ export async function runProtectedPermanentStagingScale(
       before.deployment.id,
     ) ?? null;
     if (!deploymentIdSha256) throw new Error("deployment_identity_invalid");
+    if (direction === "converge-production-two") {
+      checks.productionActivationDeploymentContinuityExact =
+        productionActivationPrerequisite !== null
+        && deploymentIdSha256
+          === productionActivationPrerequisite.deploymentAfterIdSha256;
+      if (!checks.productionActivationDeploymentContinuityExact) {
+        throw new Error("activation_prerequisite_invalid");
+      }
+    }
     const beforeReplicas = before.numReplicas;
     checks.targetPreflightExact = direction === "out"
       ? snapshotExact(before, args.expectedDeploymentSha, 1, target)
-      : (beforeReplicas === 1 || beforeReplicas === 2)
-        && snapshotExact(before, args.expectedDeploymentSha, beforeReplicas as 1 | 2, target);
+      : direction === "quiesce-staging-zero"
+        ? snapshotExact(before, args.expectedDeploymentSha, 1, target)
+        : direction === "bootstrap-staging-one"
+          ? snapshotExact(before, args.expectedDeploymentSha, 0, target)
+          : (beforeReplicas === 1 || beforeReplicas === 2)
+            && snapshotExact(
+              before,
+              args.expectedDeploymentSha,
+              beforeReplicas as 1 | 2,
+              target,
+            );
     if (!checks.targetPreflightExact) throw new Error("target_invalid");
+    checks.runtimePreflightExact = direction === "quiesce-staging-zero"
+      ? true
+      : direction === "bootstrap-staging-one"
+        ? await dependencies.probeRuntimeAbsent(target)
+        : await dependencies.probeRuntime(
+          target,
+          args.expectedDeploymentSha,
+          before.deployment.id,
+          { enabled: true, candidateBound: true },
+        );
+    if (!checks.runtimePreflightExact) throw new Error("runtime_fence_invalid");
     if ((direction === "converge-one" && beforeReplicas === 1)
       || (direction === "converge-production-two" && beforeReplicas === 2)) {
       checks.repositoryPrewriteReasserted = dependencies.reassertRepositoryState(
@@ -691,6 +1068,7 @@ export async function runProtectedPermanentStagingScale(
       checks.acknowledgementExact = true;
       checks.postflightAttempted = true;
       checks.targetPostflightExact = true;
+      checks.runtimePostflightExact = checks.runtimePreflightExact;
       checks.candidateUnchanged = true;
       checks.deploymentUnchanged = true;
       checks.boundaryPostflightExact = await dependencies.boundaryCheck() === 0;
@@ -707,6 +1085,7 @@ export async function runProtectedPermanentStagingScale(
         region: REGION,
         beforeReplicas,
         desiredReplicas,
+        productionActivationPrerequisite,
         maximumAttempts: 1,
         retryAllowed: false,
         beforeDeploymentSha256: sha256(deploymentIdentity(before)),
@@ -725,6 +1104,55 @@ export async function runProtectedPermanentStagingScale(
       if (!checks.repositoryPrewriteReasserted) {
         throw new Error("repository_prewrite_drift");
       }
+
+      let runtimePrewriteExact = direction === "quiesce-staging-zero";
+      try {
+        runtimePrewriteExact = direction === "quiesce-staging-zero"
+          ? true
+          : direction === "bootstrap-staging-one"
+            ? await dependencies.probeRuntimeAbsent(target)
+            : await dependencies.probeRuntime(
+                target,
+                args.expectedDeploymentSha,
+                before.deployment.id,
+                { enabled: true, candidateBound: true },
+              );
+      } catch {
+        runtimePrewriteExact = false;
+      }
+      checks.runtimePreflightExact = checks.runtimePreflightExact && runtimePrewriteExact;
+      if (!checks.runtimePreflightExact) throw new Error("runtime_prewrite_drift");
+
+      let prewrite: RailwayApplicationDeploymentAttestationProviderSnapshot | null = null;
+      try {
+        prewrite = await querySnapshot(dependencies.fetchImpl, metadataToken, target);
+      } catch {
+        prewrite = null;
+      }
+      checks.targetPreflightExact = checks.targetPreflightExact
+        && prewrite !== null
+        && canonical(prewrite) === canonical(before)
+        && snapshotExact(
+          prewrite,
+          args.expectedDeploymentSha,
+          beforeReplicas as ReplicaCount,
+          target,
+        );
+      if (direction === "converge-production-two") {
+        const prewriteDeploymentIdSha256 = prewrite === null
+          ? null
+          : railwayDeploymentIdentityIdSha256("deployment", prewrite.deployment.id);
+        checks.productionActivationDeploymentContinuityExact =
+          checks.productionActivationDeploymentContinuityExact
+          && productionActivationPrerequisite !== null
+          && prewriteDeploymentIdSha256
+            === productionActivationPrerequisite.deploymentAfterIdSha256;
+      }
+      if (!checks.targetPreflightExact
+        || !checks.productionActivationDeploymentContinuityExact) {
+        throw new Error("provider_prewrite_drift");
+      }
+
       attempts = 1;
       command = await dependencies.runCommand(cli, [
         "service", "scale", `${REGION}=${desiredReplicas}`,
@@ -743,6 +1171,18 @@ export async function runProtectedPermanentStagingScale(
         target,
       );
       checks.targetPostflightExact = after !== null;
+      checks.runtimePostflightExact = after !== null && (
+        direction === "quiesce-staging-zero"
+          ? await dependencies.probeRuntimeAbsent(target)
+          : await dependencies.probeRuntime(
+            target,
+            args.expectedDeploymentSha,
+            after.deployment.id,
+            direction === "bootstrap-staging-one"
+              ? { enabled: false, candidateBound: true }
+              : { enabled: true, candidateBound: true },
+          )
+      );
       checks.candidateUnchanged = after?.deployment.commitHash === args.expectedDeploymentSha;
       checks.deploymentUnchanged = after !== null
         && deploymentIdentity(before) === deploymentIdentity(after);
@@ -753,6 +1193,7 @@ export async function runProtectedPermanentStagingScale(
       }
       outcome = checks.acknowledgementExact && checks.targetPostflightExact
         && checks.candidateUnchanged && checks.deploymentUnchanged
+        && checks.runtimePreflightExact && checks.runtimePostflightExact
         && checks.boundaryPostflightExact && checks.repositoryPrewriteReasserted
         ? "scaled"
         : "mutation_uncertain";
@@ -770,6 +1211,18 @@ export async function runProtectedPermanentStagingScale(
         target,
       );
       checks.targetPostflightExact = after !== null;
+      checks.runtimePostflightExact = after !== null && (
+        direction === "quiesce-staging-zero"
+          ? await dependencies.probeRuntimeAbsent(target)
+          : await dependencies.probeRuntime(
+            target,
+            args.expectedDeploymentSha,
+            after.deployment.id,
+            direction === "bootstrap-staging-one"
+              ? { enabled: false, candidateBound: true }
+              : { enabled: true, candidateBound: true },
+          )
+      );
       checks.candidateUnchanged = after?.deployment.commitHash === args.expectedDeploymentSha;
       checks.deploymentUnchanged = before !== null && after !== null
         && deploymentIdentity(before) === deploymentIdentity(after);
@@ -794,6 +1247,7 @@ export async function runProtectedPermanentStagingScale(
     attempts,
     intentSha,
     null,
+    productionActivationPrerequisite,
     command,
     checks,
   );
@@ -825,6 +1279,7 @@ export async function runProtectedPermanentStagingScale(
     attempts,
     intentSha,
     terminalSha,
+    productionActivationPrerequisite,
     command,
     checks,
   );
@@ -843,6 +1298,7 @@ export async function runProtectedPermanentStagingScale(
         attempts,
         intentSha,
         terminalSha,
+        productionActivationPrerequisite,
         command,
         checks,
       );
@@ -870,11 +1326,13 @@ export async function runProtectedPermanentStagingScale(
     attempts,
     intentSha,
     terminalSha,
+    productionActivationPrerequisite,
     command,
     checks,
   );
   dependencies.writeOutput(`${JSON.stringify(durableReceipt)}\n`);
   return (outcome === "scaled" || outcome === "already_converged")
+    && checks.runtimePreflightExact && checks.runtimePostflightExact
     && checks.terminalEvidenceExact && checks.finalReceiptEvidenceExact ? 0 : 1;
 }
 

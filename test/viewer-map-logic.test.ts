@@ -30,6 +30,20 @@ describe("viewer map price logic", () => {
       beer: Record<string, unknown>,
       options?: { nowMs?: number; maximumAgeDays?: number; futureToleranceMinutes?: number },
     ) => boolean;
+    getVenueDiscoverySortRank: (
+      beers: Array<Record<string, unknown>>,
+      options?: {
+        nowMs?: number;
+        maximumAgeDays?: number;
+        futureToleranceMinutes?: number;
+        isPriceVisible?: (beer: Record<string, unknown>) => boolean;
+        hasUsefulSignal?: boolean;
+      },
+    ) => number;
+    compareVenueSmartSort: (
+      left: { discoveryRank?: number; sortWeight?: number; name?: string },
+      right: { discoveryRank?: number; sortWeight?: number; name?: string },
+    ) => number;
     getMarkerColor: (beer: Record<string, unknown>) => string;
     getMarkerLabel: (beer: Record<string, unknown>) => string;
     getPriceTier: (beer: Record<string, unknown>) => string;
@@ -162,6 +176,83 @@ describe("viewer map price logic", () => {
       "2026-07-28T12:06:00.000Z",
       { nowMs, futureToleranceMinutes: 5 },
     )).toBe(false);
+  });
+
+  it("ranks visible current verified prices ahead of stale, untrusted, useful, and empty venue data", () => {
+    const nowMs = Date.parse("2026-08-15T00:00:00.000Z");
+    const isPriceVisible = () => true;
+    const currentVerifiedPrice = {
+      priceNumeric: 12,
+      availabilityLabel: "On tap",
+      confidenceLabel: "photo_verified",
+      lastVerifiedAt: "2026-08-10T00:00:00.000Z",
+    };
+    const staleVerifiedPrice = {
+      ...currentVerifiedPrice,
+      lastVerifiedAt: "2026-06-01T00:00:00.000Z",
+    };
+    const currentUntrustedPrice = {
+      ...currentVerifiedPrice,
+      confidenceLabel: "user_reported_pending",
+    };
+
+    expect(logic.getVenueDiscoverySortRank(
+      [currentVerifiedPrice],
+      { nowMs, isPriceVisible, hasUsefulSignal: true },
+    )).toBe(0);
+    expect(logic.getVenueDiscoverySortRank(
+      [staleVerifiedPrice],
+      { nowMs, isPriceVisible, hasUsefulSignal: true },
+    )).toBe(1);
+    expect(logic.getVenueDiscoverySortRank(
+      [currentUntrustedPrice],
+      { nowMs, isPriceVisible, hasUsefulSignal: true },
+    )).toBe(1);
+    expect(logic.getVenueDiscoverySortRank(
+      [{ priceNumeric: null, confidenceLabel: "venue_confirmed", lastVerifiedAt: "2026-08-10T00:00:00.000Z" }],
+      { nowMs, isPriceVisible, hasUsefulSignal: true },
+    )).toBe(2);
+    expect(logic.getVenueDiscoverySortRank([], { nowMs, hasUsefulSignal: true })).toBe(2);
+    expect(logic.getVenueDiscoverySortRank([], { nowMs, hasUsefulSignal: false })).toBe(3);
+  });
+
+  it("does not promote a current verified numeric price that is locked for the viewer", () => {
+    const currentVerifiedPrice = {
+      priceNumeric: 12,
+      availabilityLabel: "On tap",
+      confidenceLabel: "admin_verified",
+      lastVerifiedAt: "2026-08-10T00:00:00.000Z",
+    };
+
+    expect(logic.getVenueDiscoverySortRank([currentVerifiedPrice], {
+      nowMs: Date.parse("2026-08-15T00:00:00.000Z"),
+      isPriceVisible: () => false,
+      hasUsefulSignal: true,
+    })).toBe(2);
+  });
+
+  it("sorts smart discovery by rank, then existing score, then venue name without changing exact ties", () => {
+    const records = [
+      { discoveryRank: 3, sortWeight: 0, name: "Empty Alpha" },
+      { discoveryRank: 1, sortWeight: 1, name: "Stale Price" },
+      { discoveryRank: 0, sortWeight: 2, name: "Verified Zed" },
+      { discoveryRank: 0, sortWeight: 1, name: "Verified Beta" },
+      { discoveryRank: 0, sortWeight: 1, name: "Verified Alpha" },
+      { discoveryRank: 2, sortWeight: -1, name: "Useful Signal" },
+    ];
+
+    expect(records.slice().sort(logic.compareVenueSmartSort).map((record) => record.name)).toEqual([
+      "Verified Alpha",
+      "Verified Beta",
+      "Verified Zed",
+      "Stale Price",
+      "Useful Signal",
+      "Empty Alpha",
+    ]);
+    expect(logic.compareVenueSmartSort(
+      { discoveryRank: 0, sortWeight: 1, name: "Same" },
+      { discoveryRank: 0, sortWeight: 1, name: "Same" },
+    )).toBe(0);
   });
 
   it("keeps unknown price markers neutral instead of green", () => {
@@ -478,6 +569,37 @@ describe("viewer map UI wiring", () => {
     expect(html).not.toContain("new google.maps.Marker");
     expect(html).not.toContain("Blue markers have no captured beer prices yet.");
     expect(html).not.toContain("buildCurrentViewState");
+  });
+
+  it("uses current verified price rank only for smart sorting without hiding coverage or overriding explicit sorts", () => {
+    const renderRail = html.slice(
+      html.indexOf("function renderVenueRail(markerRecords, viewState)"),
+      html.indexOf("function createListModeVenueRecord", html.indexOf("function renderVenueRail(markerRecords, viewState)")),
+    );
+    const distanceSortIndex = renderRail.indexOf("if (shouldSortByDistance)");
+    const priceSortIndex = renderRail.indexOf("if (shouldSortByPrice)");
+    const smartSortIndex = renderRail.indexOf('venueRailSortMode === "smart" &&');
+
+    expect(html).toContain("getVenueDiscoverySortRank(");
+    expect(html).toContain("isPriceVisible: (beer) => !isBeerPriceHiddenForViewer(beer, record.id)");
+    expect(html).toContain("hasUsefulSignal: hasUsefulVenueSignal(record.row)");
+    expect(html).toContain("compareVenueSmartSort(");
+    expect(html).toContain(">Current verified first</button>");
+    expect(html).toContain("Current verified prices appear first in this shortlist");
+    expect(html).toContain("venues that still need data remain on the map and in the result set");
+    expect(distanceSortIndex).toBeGreaterThanOrEqual(0);
+    expect(priceSortIndex).toBeGreaterThan(distanceSortIndex);
+    expect(smartSortIndex).toBeGreaterThan(priceSortIndex);
+    expect(renderRail).toContain("!viewState.beerQuery");
+    expect(renderRail).toContain("!shouldSortByDistance");
+    expect(renderRail).toContain("!shouldSortByPrice");
+    expect(html).toContain('let activeScope = "all";');
+    expect(html).toContain("const activeFilterChips = new Set();");
+    expect(html).toContain("const filteredRows = allVenueRows.filter((item) => rowMatchesView(item, viewState));");
+    expect(html).toContain("filteredRows.forEach((item) => {");
+    expect(html).toContain("map.fitBounds(bounds);");
+    expect(html).toContain("visibleRecords.slice(0, 8)");
+    expect(html).not.toContain("allVenueRows.filter((item) => hasVerifiedBeerData(item))");
   });
 
   it("has distinct venue card row states for known, unknown, unavailable, package, and locked prices", () => {

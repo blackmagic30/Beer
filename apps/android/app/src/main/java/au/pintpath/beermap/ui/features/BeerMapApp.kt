@@ -119,6 +119,7 @@ import au.pintpath.beermap.data.PrivacySettings
 import au.pintpath.beermap.data.RotatingCodeResult
 import au.pintpath.beermap.data.SessionStore
 import au.pintpath.beermap.data.SupabasePublicAuthConfigurationResolver
+import au.pintpath.beermap.data.SupabaseMfaFactor
 import au.pintpath.beermap.data.UploadLocation
 import au.pintpath.beermap.data.Venue
 import au.pintpath.beermap.data.stringOrNull
@@ -149,6 +150,7 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.IOException
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.time.Instant
@@ -163,9 +165,35 @@ private data class PendingLegalAcceptance(
     val refreshToken: String?
 )
 
+private sealed interface PendingMfaContinuation {
+    data class NewSession(
+        val ageConfirmed: Boolean?,
+        val termsAccepted: Boolean?,
+        val privacyAccepted: Boolean?,
+        val successMessage: String
+    ) : PendingMfaContinuation
+
+    data class Refresh(
+        val existingAppToken: String,
+        val fallbackRefreshToken: String
+    ) : PendingMfaContinuation
+
+    data class Purpose(
+        val existingAppToken: String,
+        val purpose: String
+    ) : PendingMfaContinuation
+}
+
+private data class PendingMfaStepUp(
+    val accessToken: String,
+    val refreshToken: String?,
+    val factors: List<SupabaseMfaFactor>,
+    val continuation: PendingMfaContinuation
+)
+
 class BeerMapState(context: Context) {
-    private val api = BeerMapApiClient()
     private val sessions = SessionStore(context)
+    private val api = BeerMapApiClient(sessionStore = sessions)
 
     val anonymousSessionId: String = sessions.anonymousSessionId()
     var token by mutableStateOf(sessions.loadToken())
@@ -206,10 +234,15 @@ class BeerMapState(context: Context) {
         private set
     var legalAcceptanceVersion by mutableStateOf<String?>(null)
         private set
+    var mfaStepUpRequired by mutableStateOf(false)
+        private set
+    var mfaFactors by mutableStateOf<List<SupabaseMfaFactor>>(emptyList())
+        private set
     var optionalAnalytics by mutableStateOf(false)
     private var activeRequests = 0
     private var billingRecoveryAccessToken: String? = null
     private var pendingLegalAcceptance: PendingLegalAcceptance? = null
+    private var pendingMfaStepUp: PendingMfaStepUp? = null
 
     val signedIn: Boolean get() = token != null
     val hasAdminAccess: Boolean
@@ -251,7 +284,13 @@ class BeerMapState(context: Context) {
             refreshAccount()
             refreshPortal()
         } catch (throwable: Throwable) {
-            if (!presentBillingRecovery(throwable) && !presentLegalAcceptance(throwable)) throw throwable
+            if (!presentMfaStepUp(
+                    throwable,
+                    PendingMfaContinuation.NewSession(null, null, null, "Authenticator verified.")
+                ) &&
+                !presentBillingRecovery(throwable) &&
+                !presentLegalAcceptance(throwable)
+            ) throw throwable
         }
     }
 
@@ -264,22 +303,35 @@ class BeerMapState(context: Context) {
         privacyAccepted: Boolean
     ) = mutate {
         clearLegalAcceptanceState()
-        val outcome = api.signup(
-            email,
-            password,
-            displayName?.trim()?.takeIf { it.isNotBlank() },
-            config,
-            ageConfirmed,
-            termsAccepted,
-            privacyAccepted
-        )
-        val result = outcome.authResult
-        if (result == null) {
-            message = "Check your email to verify the account, then return here to sign in."
-        } else {
-            storeSession(result.token, outcome.refreshToken, outcome.accessToken)
-            finishSignIn("Account created. Welcome to Pint Path.")
-            refreshAccount()
+        try {
+            val outcome = api.signup(
+                email,
+                password,
+                displayName?.trim()?.takeIf { it.isNotBlank() },
+                config,
+                ageConfirmed,
+                termsAccepted,
+                privacyAccepted
+            )
+            val result = outcome.authResult
+            if (result == null) {
+                message = "Check your email to verify the account, then return here to sign in."
+            } else {
+                storeSession(result.token, outcome.refreshToken, outcome.accessToken)
+                finishSignIn("Account created. Welcome to Pint Path.")
+                refreshAccount()
+            }
+        } catch (throwable: Throwable) {
+            if (!presentMfaStepUp(
+                    throwable,
+                    PendingMfaContinuation.NewSession(
+                        ageConfirmed,
+                        termsAccepted,
+                        privacyAccepted,
+                        "Account created. Welcome to Pint Path."
+                    )
+                )
+            ) throw throwable
         }
     }
 
@@ -369,7 +421,13 @@ class BeerMapState(context: Context) {
             refreshAccount()
             refreshPortal()
         } catch (throwable: Throwable) {
-            if (!presentBillingRecovery(throwable, accessToken) &&
+            if (!presentMfaStepUp(
+                    throwable,
+                    PendingMfaContinuation.NewSession(null, null, null, "Authenticator verified."),
+                    accessToken,
+                    tokens.refreshToken
+                ) &&
+                !presentBillingRecovery(throwable, accessToken) &&
                 !presentLegalAcceptance(throwable, accessToken, tokens.refreshToken)
             ) throw throwable
         }
@@ -391,7 +449,22 @@ class BeerMapState(context: Context) {
             refreshAccount()
             refreshPortal()
         } catch (throwable: Throwable) {
-            if (!presentBillingRecovery(throwable, pending.accessToken)) throw throwable
+            if (presentMfaStepUp(
+                    throwable,
+                    PendingMfaContinuation.NewSession(
+                        true,
+                        true,
+                        true,
+                        "Current Terms and Privacy Policy accepted."
+                    ),
+                    pending.accessToken,
+                    pending.refreshToken
+                )
+            ) {
+                clearLegalAcceptanceState()
+            } else if (!presentBillingRecovery(throwable, pending.accessToken)) {
+                throw throwable
+            }
         }
     }
 
@@ -399,6 +472,93 @@ class BeerMapState(context: Context) {
         clearLegalAcceptanceState()
         error = null
         message = "Sign-in cancelled. No Pint Path session was created."
+    }
+
+    fun cancelPendingMfaStepUp() {
+        if (pendingMfaStepUp == null) return
+        clearMfaStepUpState()
+        error = null
+        message = if (signedIn) {
+            "Authenticator verification cancelled. Your existing Pint Path session was not upgraded."
+        } else {
+            "Sign-in cancelled. No Pint Path session was created."
+        }
+    }
+
+    suspend fun completeMfaStepUp(factorId: String, code: String) = mutate {
+        val pending = pendingMfaStepUp ?: error("Authenticator verification expired. Sign in again.")
+        val upgraded = api.challengeAndVerifySupabaseMfa(
+            accessToken = pending.accessToken,
+            refreshToken = pending.refreshToken,
+            factorId = factorId,
+            code = code,
+            config = config
+        )
+        val upgradedAccessToken = upgraded.accessToken
+            ?: error("The sign-in provider did not return an upgraded session.")
+        val upgradedRefreshToken = upgraded.refreshToken ?: pending.refreshToken
+        val continuation = pending.continuation
+        // Consume the AAL1 pending authority before retrying the Pint Path
+        // exchange so another MFA boundary cannot recursively reopen this flow.
+        clearMfaStepUpState()
+        when (continuation) {
+            is PendingMfaContinuation.NewSession -> {
+                try {
+                    val outcome = api.completeMfaSession(
+                        accessToken = upgradedAccessToken,
+                        refreshToken = upgradedRefreshToken,
+                        config = config,
+                        ageConfirmed = continuation.ageConfirmed,
+                        termsAccepted = continuation.termsAccepted,
+                        privacyAccepted = continuation.privacyAccepted
+                    )
+                    val result = outcome.authResult ?: error("Secure sign-in did not return an account.")
+                    storeSession(result.token, outcome.refreshToken, outcome.accessToken)
+                    finishSignIn("${continuation.successMessage} Signed in as ${result.account.email}.")
+                    refreshAccount()
+                    refreshPortal()
+                } catch (throwable: Throwable) {
+                    if (!presentBillingRecovery(throwable, upgradedAccessToken) &&
+                        !presentLegalAcceptance(throwable, upgradedAccessToken, upgradedRefreshToken)
+                    ) throw throwable
+                }
+            }
+            is PendingMfaContinuation.Refresh -> {
+                val outcome = api.completeMfaSession(
+                    accessToken = upgradedAccessToken,
+                    refreshToken = upgradedRefreshToken,
+                    config = config,
+                    existingAppToken = continuation.existingAppToken
+                )
+                val result = outcome.authResult ?: error("Secure session refresh did not return an account.")
+                storeSession(
+                    result.token,
+                    outcome.refreshToken ?: continuation.fallbackRefreshToken,
+                    outcome.accessToken,
+                    resetAuthority = false
+                )
+                error = null
+                message = "Authenticator verified. Retry the action that needed a refreshed session."
+            }
+            is PendingMfaContinuation.Purpose -> {
+                val outcome = api.completeMfaSession(
+                    accessToken = upgradedAccessToken,
+                    refreshToken = upgradedRefreshToken,
+                    config = config,
+                    existingAppToken = continuation.existingAppToken,
+                    reauthPurpose = continuation.purpose
+                )
+                val result = outcome.authResult ?: error("Secure reauthentication did not return an account.")
+                storeSession(
+                    result.token,
+                    outcome.refreshToken,
+                    outcome.accessToken,
+                    resetAuthority = false
+                )
+                error = null
+                message = "Authenticator verified. Retry the sensitive action; Pint Path has not run it automatically."
+            }
+        }
     }
 
     suspend fun logout() = mutate {
@@ -411,12 +571,17 @@ class BeerMapState(context: Context) {
     }
 
     suspend fun logoutAllSessions() = mutate {
-        val current = token ?: error("Login required.")
-        sensitiveAction("sign out all devices") {
-            api.logoutAll(currentReauthenticationToken(), current)
+        val providerSessionsRevoked = sensitiveAction("sign out all devices") {
+            withPurposeBoundSession("logout_all") { credential, accessToken ->
+                api.logoutAll(accessToken, credential)
+            }
         }
         clearLocalSession()
-        message = "Signed out on every device."
+        if (providerSessionsRevoked) {
+            message = "Signed out on every device."
+        } else {
+            error = "Every Pint Path app session was revoked, but the sign-in provider could not finish its own global sign-out. Sign in again and retry before relying on provider-wide logout."
+        }
     }
 
     suspend fun signOutForReauthentication() = mutate {
@@ -461,11 +626,12 @@ class BeerMapState(context: Context) {
     }
 
     suspend fun loadAccountSessions() = busy {
-        val current = token ?: error("Login required.")
         accountSessions = emptyList()
         accountSessionsLoaded = false
         accountSessions = sensitiveAction("review signed-in sessions") {
-            api.accountSessions(current, currentReauthenticationToken())
+            withPurposeBoundSession("session_management") { credential, _ ->
+                api.accountSessions(credential)
+            }
         }
         accountSessionsLoaded = true
         clearReauthenticationContext("review signed-in sessions")
@@ -480,21 +646,25 @@ class BeerMapState(context: Context) {
     }
 
     suspend fun requestDeletion() = mutate {
-        val current = token ?: error("Login required.")
         sensitiveAction("request account deletion") {
-            api.requestAccountDeletion(current, currentReauthenticationToken())
+            withPurposeBoundSession("account_deletion") { credential, _ ->
+                api.requestAccountDeletion(credential)
+            }
         }
+        val current = token ?: error("Login required.")
         accountDeletionRequest = api.accountDeletionStatus(current)
         message = "Account deletion review requested. You can cancel while it remains pending."
         clearReauthenticationContext("request account deletion")
     }
 
     suspend fun cancelDeletion() = mutate {
-        val current = token ?: error("Login required.")
         val request = accountDeletionRequest ?: error("No deletion request is available.")
         sensitiveAction("cancel account deletion") {
-            api.cancelAccountDeletion(request.id, current, currentReauthenticationToken())
+            withPurposeBoundSession("account_deletion") { credential, _ ->
+                api.cancelAccountDeletion(request.id, credential)
+            }
         }
+        val current = token ?: error("Login required.")
         accountDeletionRequest = api.accountDeletionStatus(current)
         message = "Account deletion request cancelled."
         clearReauthenticationContext("cancel account deletion")
@@ -512,9 +682,10 @@ class BeerMapState(context: Context) {
     suspend fun prepareAccountExport(): String? {
         var export: String? = null
         mutate {
-            val current = token ?: error("Login required.")
             export = sensitiveAction("prepare your account export") {
-                api.accountExport(current, currentReauthenticationToken()).toString(2)
+                withPurposeBoundSession("account_export") { credential, _ ->
+                    api.accountExport(credential).toString(2)
+                }
             }
             message = "Your private account export is ready to save."
             clearReauthenticationContext("prepare your account export")
@@ -523,15 +694,18 @@ class BeerMapState(context: Context) {
     }
 
     suspend fun revokeSession(session: AccountSession) = mutate {
-        val current = token ?: error("Login required.")
         sensitiveAction("revoke a signed-in session") {
-            api.revokeAccountSession(session.id, current, currentReauthenticationToken())
+            withPurposeBoundSession("session_management") { credential, _ ->
+                api.revokeAccountSession(session.id, credential)
+            }
         }
         if (session.current) {
             clearLocalSession()
             message = "This session was revoked. Sign in again to continue."
         } else {
-            accountSessions = api.accountSessions(current, currentReauthenticationToken())
+            accountSessions = withPurposeBoundSession("session_management") { credential, _ ->
+                api.accountSessions(credential)
+            }
             accountSessionsLoaded = true
             message = "Session revoked."
             clearReauthenticationContext("revoke a signed-in session")
@@ -832,6 +1006,53 @@ class BeerMapState(context: Context) {
         legalAcceptanceVersion = null
     }
 
+    private suspend fun presentMfaStepUp(
+        throwable: Throwable,
+        continuation: PendingMfaContinuation,
+        providerAccessToken: String? = null,
+        providerRefreshToken: String? = null
+    ): Boolean {
+        val apiError = throwable as? ApiException
+        if (apiError?.mfaStepUpRequired != true || apiError.code != "MFA_STEP_UP_REQUIRED") return false
+        val accessToken = providerAccessToken ?: apiError.mfaAccessToken
+        if (accessToken.isNullOrBlank()) {
+            error = "Authenticator verification could not retain the provider session. Sign in again."
+            return true
+        }
+        val refreshToken = providerRefreshToken ?: apiError.mfaRefreshToken
+        val retainedReauthenticationContext = reauthenticationContext
+        if (continuation is PendingMfaContinuation.NewSession) {
+            // Remove any prior app cookie and long-lived provider credential
+            // before retaining this AAL1 authority in process memory.
+            clearLocalSession()
+            reauthenticationContext = retainedReauthenticationContext
+        } else {
+            clearMfaStepUpState()
+        }
+        return try {
+            val factors = api.verifiedSupabaseTotpFactors(accessToken, config)
+            if (factors.isEmpty()) {
+                throw IOException("No verified authenticator is available for this account. Sign in again or contact support.")
+            }
+            pendingMfaStepUp = PendingMfaStepUp(accessToken, refreshToken, factors, continuation)
+            mfaFactors = factors
+            mfaStepUpRequired = true
+            error = null
+            message = null
+            true
+        } catch (factorError: Throwable) {
+            clearMfaStepUpState()
+            error = factorError.message ?: "Could not load the verified authenticator. Sign in again."
+            true
+        }
+    }
+
+    private fun clearMfaStepUpState() {
+        pendingMfaStepUp = null
+        mfaFactors = emptyList()
+        mfaStepUpRequired = false
+    }
+
     private fun currentReauthenticationToken(): String =
         sessions.loadSupabaseAccessToken()?.takeIf { it.isNotBlank() }
             ?: throw ApiException(
@@ -839,6 +1060,39 @@ class BeerMapState(context: Context) {
                 "A fresh provider sign-in is required for this sensitive action.",
                 reauthenticationRequired = true
             )
+
+    private suspend fun <T> withPurposeBoundSession(
+        purpose: String,
+        block: suspend (String, String) -> T
+    ): T {
+        val currentCredential = token ?: error("Login required.")
+        val accessToken = currentReauthenticationToken()
+        try {
+            api.reauthenticateSupabaseSession(
+                accessToken = accessToken,
+                purpose = purpose,
+                config = config,
+                existingAppToken = currentCredential
+            )
+        } catch (apiError: ApiException) {
+            if (!presentMfaStepUp(
+                    apiError,
+                    PendingMfaContinuation.Purpose(currentCredential, purpose),
+                    accessToken,
+                    sessions.loadSupabaseRefreshToken()
+                )
+            ) throw apiError
+            throw ApiException(
+                403,
+                "Enter the six-digit code from your authenticator app.",
+                code = "MFA_STEP_UP_IN_PROGRESS"
+            )
+        }
+        val rotatedCredential = sessions.loadToken()?.takeIf { sessions.cookieValue(it) != null }
+            ?: throw IOException("The server did not establish a purpose-bound app cookie.")
+        token = rotatedCredential
+        return block(rotatedCredential, accessToken)
+    }
 
     private suspend fun <T> sensitiveAction(action: String, block: suspend () -> T): T {
         return try {
@@ -883,14 +1137,14 @@ class BeerMapState(context: Context) {
                 runCatching { block() }.fold(
                     onSuccess = { true },
                     onFailure = {
-                        if (it is ApiException && it.status == 401) clearLocalSession()
-                        error = it.message ?: "Something went wrong."
+                        if (it is ApiException && it.status == 401 && !mfaStepUpRequired) clearLocalSession()
+                        error = if (mfaStepUpRequired) null else it.message ?: "Something went wrong."
                         false
                     }
                 )
             } else {
-                if (throwable is ApiException && throwable.status == 401) clearLocalSession()
-                error = throwable.message ?: "Something went wrong."
+                if (throwable is ApiException && throwable.status == 401 && !mfaStepUpRequired) clearLocalSession()
+                error = if (mfaStepUpRequired) null else throwable.message ?: "Something went wrong."
                 false
             }
         } finally {
@@ -918,30 +1172,45 @@ class BeerMapState(context: Context) {
             clearLocalSession()
             return false
         }
-        return runCatching {
+        return try {
             val outcome = api.refreshSupabaseSession(refreshToken, config, currentAppToken)
-            val result = outcome.authResult ?: return@runCatching false
+            val result = outcome.authResult ?: return false
             storeSession(result.token, outcome.refreshToken ?: refreshToken, outcome.accessToken, resetAuthority = false)
             true
-        }.getOrDefault(false).also { refreshed ->
-            if (!refreshed) {
+        } catch (throwable: Throwable) {
+            if (presentMfaStepUp(
+                    throwable,
+                    PendingMfaContinuation.Refresh(currentAppToken, refreshToken)
+                )
+            ) {
+                false
+            } else {
                 clearLocalSession()
+                false
             }
         }
     }
 
     private fun storeSession(
-        appToken: String,
+        appToken: String?,
         refreshToken: String?,
         accessToken: String?,
         resetAuthority: Boolean = true
     ) {
         clearBillingRecoveryState()
         clearLegalAcceptanceState()
-        sessions.saveToken(appToken)
+        clearMfaStepUpState()
+        val credential = appToken?.let { legacyToken ->
+            if (!sessions.saveLocalBearerToken(legacyToken)) {
+                throw IOException("The local development server returned an invalid app credential.")
+            }
+            sessions.loadToken()?.takeIf { sessions.localBearerToken(it) == legacyToken }
+                ?: throw IOException("The local development app credential could not be stored.")
+        } ?: sessions.loadToken()?.takeIf { sessions.cookieValue(it) != null }
+            ?: throw IOException("The server did not establish a valid app cookie.")
         sessions.saveSupabaseRefreshToken(refreshToken)
         sessions.saveSupabaseAccessToken(accessToken)
-        token = appToken
+        token = credential
         if (resetAuthority) {
             // A newly authenticated account must fetch fresh authority and consent.
             accountDashboard = null
@@ -957,6 +1226,7 @@ class BeerMapState(context: Context) {
         token = null
         clearBillingRecoveryState()
         clearLegalAcceptanceState()
+        clearMfaStepUpState()
         accountDashboard = null
         accountSessions = emptyList()
         accountSessionsLoaded = false
@@ -1071,7 +1341,87 @@ fun BeerMapApp(oauthCallback: Uri? = null, onOAuthCallbackConsumed: () -> Unit =
             }
         }
     }
+    if (state.mfaStepUpRequired) {
+        MfaStepUpDialog(state, scope)
     }
+    }
+}
+
+@Composable
+private fun MfaStepUpDialog(state: BeerMapState, scope: CoroutineScope) {
+    var code by remember(state.mfaStepUpRequired) { mutableStateOf("") }
+    var factorId by remember(state.mfaFactors) {
+        mutableStateOf(state.mfaFactors.firstOrNull()?.id.orEmpty())
+    }
+    val selectedFactorId = factorId.takeIf { selected -> state.mfaFactors.any { it.id == selected } }
+        ?: state.mfaFactors.firstOrNull()?.id.orEmpty()
+
+    AlertDialog(
+        onDismissRequest = {
+            if (!state.loading) {
+                code = ""
+                state.cancelPendingMfaStepUp()
+            }
+        },
+        title = { Text("Authenticator check") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    "Open your authenticator app and enter its current six-digit code. Pint Path creates or upgrades the app session only after Supabase confirms AAL2 for this exact provider session.",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                state.error?.let { StatusBanner(it, isError = true, icon = Icons.Filled.Lock) }
+                if (state.mfaFactors.size > 1) {
+                    Text("Authenticator", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(state.mfaFactors, key = { it.id }) { factor ->
+                            FilterChip(
+                                selected = selectedFactorId == factor.id,
+                                onClick = { factorId = factor.id },
+                                label = { Text(factor.displayName) }
+                            )
+                        }
+                    }
+                }
+                OutlinedTextField(
+                    value = code,
+                    onValueChange = { value -> code = value.filter { it.isDigit() }.take(6) },
+                    label = { Text("Six-digit code") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.NumberPassword,
+                        imeAction = ImeAction.Done,
+                        autoCorrectEnabled = false
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = code.length == 6 && selectedFactorId.isNotBlank() && !state.loading,
+                onClick = {
+                    val submittedCode = code
+                    code = ""
+                    scope.launch { state.completeMfaStepUp(selectedFactorId, submittedCode) }
+                }
+            ) {
+                Text("Verify")
+            }
+        },
+        dismissButton = {
+            TextButton(
+                enabled = !state.loading,
+                onClick = {
+                    code = ""
+                    state.cancelPendingMfaStepUp()
+                }
+            ) {
+                Text("Cancel")
+            }
+        }
+    )
 }
 
 @Composable

@@ -125,7 +125,8 @@ Business demo pages:
 
 Supabase auth/account foundation:
 
-- App APIs still use scoped Pint Path sessions, issued after a verified Supabase Auth exchange through `POST /api/business/auth/supabase-session`. The browser receives that app session in an HttpOnly cookie; native apps keep it in platform-protected storage.
+- App APIs still use scoped Pint Path sessions, issued after a verified Supabase Auth exchange through `POST /api/business/auth/supabase-session`. That endpoint never serializes the app token in JSON: browsers retain its HttpOnly cookie, while native apps consume the same `Set-Cookie` credential into platform-protected cookie storage and return it only in the `Cookie` header. Browser Supabase access and refresh tokens are memory-only, legacy bearer records are purged from web storage, and the OAuth PKCE verifier is held only in per-tab `sessionStorage` for the redirect.
+- Browser export, deletion, session management, logout-all, and consumer/venue billing portals rotate the current cookie session into a short, purpose-bound capability whose lifetime is measured from the original provider sign-in/MFA event. Google accounts confirm sensitive actions through a server-started, account/cookie/purpose-bound email link with `shouldCreateUser:false`; email/password accounts re-enter the provider password. A verified MFA factor additionally requires AAL2. Provider access tokens stay memory-only and are sent to Pint Path only where provider-global sign-out or suspended-provider billing recovery intrinsically requires them; they are never written to browser storage, logs, or ordinary application requests. Cross-tab logout invalidates every in-memory provider session.
 - Supabase is an Auth provider for browser/native clients, not a direct
   application-data API. The final migration revokes all `anon`/`authenticated`
   public table, sequence, RPC, and private-helper privileges; venue, profile,
@@ -141,7 +142,10 @@ Supabase auth/account foundation:
 - Production admin access requires Supabase Auth MFA/Auth Assurance Level 2
   (`aal2`). This full-scale release has no production field-test/beta exception;
   keep `REQUIRE_ADMIN_MFA_IN_PRODUCTION=true` and block admin access until AAL2
-  is configured and proved.
+  is configured and proved. Production admin authorization also rechecks the
+  authoritative Supabase factor list and fails closed if the factor was removed
+  or the provider lookup is unavailable; a stale app-side AAL2 timestamp is not
+  sufficient authority.
 - Public browsing stays anonymous. Uploads and verification actions require a logged-in account, and submissions always use the authenticated session user rather than a client-provided user id.
 - Users cannot verify their own uploads. Verifications are recorded in `verifications`, and intentional product actions are recorded in `user_activity_events`.
 - Supabase/Postgres tables and defense-in-depth RLS policies live in `supabase/migrations/20260512000000_auth_profiles_activity.sql` and later migrations. Earlier migrations included direct-browser owner policies for `public.profiles`, uploads, verification, activity, privacy, and rewards, but the canonical production path is Express-only. `20260803000000_revoke_direct_browser_data_api.sql` removes every remaining `anon`/`authenticated` Data API/RPC/helper privilege without weakening server/service-role access. The full-scale migration must also put authoritative app tables in a non-exposed schema and connect through a dedicated least-privilege database role; the Supabase service-role key is not the Postgres runtime login. The private `beermap-source-evidence` bucket has no browser object policies.

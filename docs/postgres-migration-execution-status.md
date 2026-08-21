@@ -25,8 +25,11 @@ resource pins, operator approvals, or two-person evidence.
 - Implemented the policy-v2 post-promotion recovery chain at exact policy
   SHA-256
   `57f66c1c9dde912586ec510e37c28cc3dfea2c098e67c78edbea189c7dcc9988`.
-  Its fixed rollout order is
-  `deploy→scale→close→activation→promotion-recovery→open`. Activation
+  Its fixed route/recovery evidence order is
+  `deploy→scale→close→recovery-activation→promotion-recovery→open`; production
+  worker fence precedes deploy, and the maintenance LOGIN transition plus
+  worker activation are authenticated prerequisites between deploy and scale.
+  Recovery activation
   splits production capture and PITR observation onto the JIT
   `pintpath-production-backup` runner, and separate logical/private WORM reads,
   restore, twice-replayed deletion, and compiled local-child application smoke

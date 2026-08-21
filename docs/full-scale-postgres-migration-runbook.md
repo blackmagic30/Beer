@@ -156,13 +156,26 @@ customer data in Git or public evidence.
       staging volume, including the documented follow-up index candidates.
 - [x] Implement SSL-required pooled connections with bounded timeouts, a direct
       migration/logical-backup path, and safe persistent-session semantics.
-- [ ] Approve and prove the explicit connection budget for at least two
-      replicas, overlapping workers, migrations, monitoring, and operator access
-      against the pinned provider/pooler topology; prove driver and prepared-
-      statement compatibility before any transaction-pooler use.
-- [x] Expose safe readiness metrics for pool saturation, checkout latency,
-      transaction failures, deadlocks, lock waits, and database availability. Do
-      not expose connection strings or customer data.
+- [ ] Complete the exact [PostgreSQL rolling connection-budget transition](postgres-connection-budget-transition.md):
+      prove two steady replicas plus old/new deployment overlap use four
+      processes, runtime pools `4 * 2 = 8`, split maintenance work/readiness
+      pools `4 * (1 + 1) = 8`, and 16 total application sessions; separately
+      prove reserved, migration,
+      backup, monitoring, and operator headroom against live provider capacity.
+      Prove driver and prepared-statement compatibility before any
+      transaction-pooler use.
+- [x] Expose fixed, labeled, secret-free readiness counters for each runtime,
+      maintenance-work, and maintenance-readiness pool: maximum, total, idle,
+      instantaneous waiting, monotonic capacity-wait events/high-water/duration,
+      connection-creation headroom, and immediately available connections.
+      Validate every permanent-staging load/soak sample plus the bounded
+      post-load sweep across every expected replica, and retain only per-label
+      maxima and minimum available connections. Any historical capacity wait is
+      a failure even when the instantaneous queue has drained.
+- [ ] Correlate the accepted interval with provider-side checkout latency,
+      transaction failures, deadlocks, lock waits, database availability, and
+      global/reserved/non-application capacity. Do not expose connection strings
+      or customer data.
 
 ## 2. Make workers and retries replica-safe
 
@@ -401,7 +414,7 @@ line, print it, or put it in Git.
    backend is exposed. It must not receive migrator or operations-schema
    privileges. Provision a third
    login whose only membership is `pintpath_maintenance`; it must be `LOGIN
-NOINHERIT NOREPLICATION CONNECTION LIMIT 2`, with PG17 membership options
+NOINHERIT NOREPLICATION CONNECTION LIMIT 8`, with PG17 membership options
    `ADMIN FALSE`, `INHERIT FALSE`, and `SET TRUE`. It must target the same
    database as the runtime login, receive only direct `CONNECT` on that
    database, have no effective database `CREATE` or `TEMP` privilege (including
@@ -1051,11 +1064,14 @@ be measured and approved.
    reconciliation/deletion replay, and sign RPO/RTO before traffic is routed.
    The pre-import SQLite/Postgres snapshot is not rollback authority for the
    migrated state.
-6. Deploy the exact current-`main` candidate with the Postgres connection,
-   converge it to exactly two replicas, prove `/startup`, `/ready`, role smoke,
+6. Fence production automatic maintenance, deploy the exact current-`main`
+   candidate with the Postgres connection, transition the protected maintenance
+   LOGIN from 2 to 8, activate only the candidate-bound worker, and then
+   converge it to exactly two replicas. Prove `/startup`, `/ready`, role smoke,
    Free-scope writes, worker overlap, public data gates, and provider readiness,
-   then close only the canonical route. The release chronology is fixed as
-   `deploy→scale→close→activation→promotion-recovery→open`.
+   then close only the canonical route. The subsequent route/recovery evidence
+   chronology is fixed as
+   `deploy→scale→close→recovery-activation→promotion-recovery→open`.
 7. Publish only the exactly reviewed launch data through the candidate's
    authorised Postgres workflow. Produce the no-write plan first, register the
    independent reviewer's signed apply authorization with

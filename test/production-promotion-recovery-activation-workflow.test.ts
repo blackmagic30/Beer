@@ -289,6 +289,8 @@ describe("protected production promotion-recovery activation workflow", () => {
     const recover = job("disposable-recover");
     expect(capture).toContain("production:promotion-recovery:pitr:observe");
     expect(capture).toContain("production-deployment-receipt.json");
+    expect(capture).toContain("production-scale-receipt.json");
+    expect(capture).toContain("closed-route-receipt.json");
     expect(capture).toContain("logical-backup-manifest.json");
     expect(capture).toContain("db:postgres:backup:logical:retrieve");
     expect(recover).not.toContain("db:postgres:backup:logical:retrieve");

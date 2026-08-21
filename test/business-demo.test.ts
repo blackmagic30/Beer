@@ -90,6 +90,23 @@ const JPEG_DATA_URL = `data:image/jpeg;base64,${Buffer.from([
 const WEBP_DATA_URL = `data:image/webp;base64,${Buffer.from("RIFF0000WEBPVP8 ", "ascii").toString("base64")}`;
 const PDF_DATA_URL = `data:application/pdf;base64,${Buffer.from("%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF", "ascii").toString("base64")}`;
 
+function testSupabaseAccessToken(
+  payload: Record<string, unknown>,
+  signature = "test-signature-value",
+): string {
+  return [
+    Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url"),
+    Buffer.from(JSON.stringify(payload)).toString("base64url"),
+    signature,
+  ].join(".");
+}
+
+function responseCookie(headers: Headers, name: string): string {
+  return headers.getSetCookie()
+    .map((value) => value.split(";", 1)[0] ?? "")
+    .find((value) => value.startsWith(`${name}=`)) ?? "";
+}
+
 it("accepts and normalizes consent source identifiers from every active client", async () => {
   const base = {
     accessToken: "x".repeat(32),
@@ -106,6 +123,56 @@ it("accepts and normalizes consent source identifiers from every active client",
     accessToken: "x".repeat(32),
     legalAcceptance: { ...base, source: "web_oauth", accessToken: undefined },
   }).legalAcceptance?.source).toBe("web");
+});
+
+it("accepts only versioned memory ceremonies and binds email/native ceremonies to exact purposes", () => {
+  const accessToken = "x".repeat(32);
+  expect(authSupabaseSessionSchema.parse({
+    accessToken,
+    credentialCeremony: "browser_memory_v1",
+  })).toEqual(expect.objectContaining({
+    credentialCeremony: "browser_memory_v1",
+  }));
+  expect(authSupabaseSessionSchema.parse({
+    accessToken,
+    credentialCeremony: "browser_memory_v1",
+    reauthPurpose: "account_export",
+  })).toEqual(expect.objectContaining({
+    credentialCeremony: "browser_memory_v1",
+    reauthPurpose: "account_export",
+  }));
+  expect(authSupabaseSessionSchema.parse({
+    accessToken,
+    credentialCeremony: "browser_memory_v1",
+    reauthPurpose: "venue_billing_portal",
+  }).reauthPurpose).toBe("venue_billing_portal");
+  expect(authSupabaseSessionSchema.parse({
+    accessToken,
+    credentialCeremony: "browser_email_otp_v1",
+    reauthPurpose: "account_export",
+  }).credentialCeremony).toBe("browser_email_otp_v1");
+  expect(authSupabaseSessionSchema.parse({
+    accessToken,
+    credentialCeremony: "native_memory_v1",
+    reauthPurpose: "logout_all",
+  }).credentialCeremony).toBe("native_memory_v1");
+  for (const credentialCeremony of ["browser_email_otp_v1", "native_memory_v1"] as const) {
+    expect(authSupabaseSessionSchema.safeParse({ accessToken, credentialCeremony }).success).toBe(false);
+  }
+  expect(authSupabaseSessionSchema.safeParse({
+    accessToken,
+    reauthPurpose: "account_export",
+  }).success).toBe(false);
+  expect(authSupabaseSessionSchema.safeParse({
+    accessToken,
+    credentialCeremony: "browser_storage_v0",
+    reauthPurpose: "account_export",
+  }).success).toBe(false);
+  expect(authSupabaseSessionSchema.safeParse({
+    accessToken,
+    credentialCeremony: "browser_memory_v1",
+    reauthPurpose: "arbitrary_sensitive_action",
+  }).success).toBe(false);
 });
 
 it("bounds monthly report filenames and removes long boundary separator runs", async () => {
@@ -1300,7 +1367,6 @@ describe("Supabase account and verification foundation", () => {
       SUPABASE_ANON_KEY: "placeholder-anon-key",
       SUPABASE_SERVICE_ROLE_KEY: "placeholder-service-role-key",
     });
-
     (service as unknown as { supabase: unknown }).supabase = {
       auth: {
         admin: { signOut: globalSignOut },
@@ -1309,6 +1375,7 @@ describe("Supabase account and verification foundation", () => {
             user: {
               id: "supabase-user-1",
               email: "oauth-user@example.com",
+              factors: [{ id: "totp-factor-1", factor_type: "totp", status: "verified" }],
               user_metadata: {
                 full_name: "OAuth User",
                 avatar_url: "https://example.com/avatar.png",
@@ -1363,14 +1430,15 @@ describe("Supabase account and verification foundation", () => {
       undefined,
       `Bearer ${result.token}`,
     );
-    expect(repeated).toEqual(expect.objectContaining({ token: result.token, reused: true }));
+    expect(repeated.token).not.toBe(result.token);
+    expect(repeated).not.toHaveProperty("reused");
     expect(repositoryDatabases.get(repository)!
       .prepare("SELECT count(*) AS count FROM auth_sessions WHERE user_id = ? AND revoked_at IS NULL")
       .get(result.account.id)).toEqual({ count: 1 });
     expect((await getActivityAuditRepository(repository).listUserActivityEvents({ userId: result.account.id, limit: 20 })).items.filter((event) => event.eventType === "user_login"))
-      .toHaveLength(1);
+      .toHaveLength(2);
 
-    const session = (await service.listAccountSessions(linkedAccount!, `Bearer ${result.token}`, { limit: 10, offset: 0 })).sessions[0]!;
+    const session = (await service.listAccountSessions(linkedAccount!, `Bearer ${repeated.token}`, { limit: 10, offset: 0 })).sessions[0]!;
     expect(session.providerBacked).toBe(true);
     expect((await service.revokeAccountSession(linkedAccount!, linkedAccount!.id, session.id)).revoked).toBe(true);
 
@@ -1389,14 +1457,40 @@ describe("Supabase account and verification foundation", () => {
     const newProviderSession = await service.loginWithSupabaseAccessToken({ accessToken: newProviderAccessToken });
     expect(newProviderSession).toEqual(expect.objectContaining({ token: expect.any(String) }));
     const refreshedAccount = repository.getAccountBySupabaseUserId("supabase-user-1")!;
+    const logoutSessionRepository = (service as unknown as {
+      accountSessionRepository: AccountSessionRepository;
+    }).accountSessionRepository;
+    const originalRevokeUserSessions = logoutSessionRepository.revokeUserSessionsWithSummary
+      .bind(logoutSessionRepository);
+    const failedLogoutContainment = vi.spyOn(logoutSessionRepository, "revokeUserSessionsWithSummary")
+      .mockRejectedValueOnce(new Error("simulated logout containment failure"));
+    await expect(service.logoutAll(refreshedAccount, { accessToken: newProviderAccessToken }))
+      .rejects.toThrow("simulated logout containment failure");
+    expect(globalSignOut).not.toHaveBeenCalled();
+    expect(await service.getAccountFromAuthorization(`Bearer ${newProviderSession.token}`))
+      .toEqual(expect.objectContaining({ id: refreshedAccount.id }));
+    failedLogoutContainment.mockImplementation(originalRevokeUserSessions);
     expect((await service.logoutAll(refreshedAccount, { accessToken: newProviderAccessToken })).revokedCount).toBeGreaterThan(0);
     expect(globalSignOut).toHaveBeenCalledWith(newProviderAccessToken, "global");
+    expect(repository.getAccountBySupabaseUserId("supabase-user-1")?.providerTokensValidAfter)
+      .toBe(new Date(Date.parse(NOW) + 60_000).toISOString());
+    expect(await repository.isProviderSessionRevoked({
+      userId: refreshedAccount.id,
+      providerSessionIdHash: crypto.createHash("sha256")
+        .update("supabase-session:provider-session-new-device-login")
+        .digest("hex"),
+    })).toBe(true);
     await expect(service.loginWithSupabaseAccessToken({ accessToken: newProviderAccessToken }))
-      .rejects.toThrow("sign-in provider session was revoked");
+      .rejects.toThrow("predates a security reset");
 
     const suspensionAccessToken = [
       Buffer.from("{}").toString("base64url"),
-      Buffer.from(JSON.stringify({ aal: "aal1", session_id: "provider-session-before-suspension" })).toString("base64url"),
+      Buffer.from(JSON.stringify({
+        aal: "aal2",
+        session_id: "provider-session-before-suspension",
+        iat: totpVerifiedAtSeconds + 421,
+        amr: [{ method: "totp", timestamp: totpVerifiedAtSeconds + 421 }],
+      })).toString("base64url"),
       "suspension-test-signature-value",
     ].join(".");
     await service.loginWithSupabaseAccessToken({ accessToken: suspensionAccessToken });
@@ -1407,6 +1501,1272 @@ describe("Supabase account and verification foundation", () => {
     });
     await expect(service.loginWithSupabaseAccessToken({ accessToken: suspensionAccessToken }))
       .rejects.toThrow("sign-in provider session was revoked");
+  });
+
+  it("requires AAL2 before any verified provider factor can create, refresh, or prove an app session", async () => {
+    const { database, repository } = createRepository();
+    const nowSeconds = Math.floor(Date.parse(NOW) / 1000);
+    const providerUser = {
+      id: "mfa-gated-provider-user",
+      email: "mfa-gated-provider-user@example.com",
+      email_confirmed_at: NOW,
+      user_metadata: {},
+      factors: [
+        { id: "verified-totp-factor", factor_type: "totp", status: "verified" },
+      ],
+    };
+    const getUser = vi.fn(async () => ({ data: { user: providerUser }, error: null }));
+    const service = createBusinessService(repository, {
+      NODE_ENV: "production",
+      SUPABASE_URL: "https://example.supabase.co",
+      SUPABASE_ANON_KEY: "placeholder-anon-key",
+      SUPABASE_SERVICE_ROLE_KEY: "placeholder-service-role-key",
+    });
+    (service as unknown as { supabase: unknown }).supabase = { auth: { getUser } };
+    const token = (input: { sessionId: string; aal: "aal1" | "aal2"; method: "password" | "totp" }) =>
+      testSupabaseAccessToken({
+        sub: providerUser.id,
+        iat: nowSeconds - 30,
+        auth_time: nowSeconds - 30,
+        session_id: input.sessionId,
+        aal: input.aal,
+        amr: [{ method: input.method, timestamp: nowSeconds - 30 }],
+      }, `mfa-gated-${input.sessionId}`);
+    const aal1Token = token({ sessionId: "mfa-aal1-create", aal: "aal1", method: "password" });
+
+    await expect(service.loginWithSupabaseAccessToken({
+      accessToken: aal1Token,
+      ageConfirmed: true,
+      termsAccepted: true,
+      privacyAccepted: true,
+      termsVersion: CURRENT_LEGAL_POLICY_VERSION,
+      privacyVersion: CURRENT_LEGAL_POLICY_VERSION,
+      consentSource: "web",
+    })).rejects.toMatchObject({
+      statusCode: 403,
+      details: expect.objectContaining({
+        publicCode: "MFA_STEP_UP_REQUIRED",
+        mfaRequired: true,
+      }),
+    });
+    expect(repository.getAccountBySupabaseUserId(providerUser.id)).toBeNull();
+
+    const aal2Token = token({ sessionId: "mfa-aal2-create", aal: "aal2", method: "totp" });
+    let login = await service.loginWithSupabaseAccessToken({
+      accessToken: aal2Token,
+      ageConfirmed: true,
+      termsAccepted: true,
+      privacyAccepted: true,
+      termsVersion: CURRENT_LEGAL_POLICY_VERSION,
+      privacyVersion: CURRENT_LEGAL_POLICY_VERSION,
+      consentSource: "web",
+    });
+    let account = repository.getAccountBySupabaseUserId(providerUser.id)!;
+    expect(account.mfaLevel).toBe("aal2");
+
+    await expect(service.loginWithSupabaseAccessToken({ accessToken: aal1Token }, undefined, `Bearer ${login.token}`))
+      .rejects.toMatchObject({
+        statusCode: 403,
+        details: expect.objectContaining({ publicCode: "MFA_STEP_UP_REQUIRED" }),
+      });
+    expect(repository.getAccountBySupabaseUserId(providerUser.id)?.mfaLevel).toBe("aal2");
+
+    const providerReadsBeforeRawProof = getUser.mock.calls.length;
+    await expect(service.requireRecentAuthentication(
+      account,
+      `Bearer ${login.token}`,
+      { accessToken: aal1Token, password: undefined },
+      "account_export",
+    )).rejects.toMatchObject({
+      statusCode: 403,
+      details: expect.objectContaining({ reauthPurpose: "account_export" }),
+    });
+    await expect(service.requireRecentAuthentication(
+      account,
+      `Bearer ${login.token}`,
+      { accessToken: aal2Token, password: undefined },
+      "account_export",
+    )).rejects.toMatchObject({
+      statusCode: 403,
+      details: expect.objectContaining({ reauthPurpose: "account_export" }),
+    });
+    expect(getUser).toHaveBeenCalledTimes(providerReadsBeforeRawProof);
+
+    providerUser.factors = [];
+    login = await service.loginWithSupabaseAccessToken({
+      accessToken: token({ sessionId: "mfa-last-factor-removed", aal: "aal2", method: "totp" }),
+    }, undefined, `Bearer ${login.token}`);
+    account = repository.getAccountBySupabaseUserId(providerUser.id)!;
+    expect(account.mfaLevel).toBe("aal1");
+    expect(account.mfaVerifiedAt).toBeNull();
+
+    providerUser.factors = [
+      { id: "verified-phone-factor", factor_type: "phone", status: "verified" },
+    ];
+    await expect(service.loginWithSupabaseAccessToken({
+      accessToken: token({ sessionId: "mfa-phone-aal1", aal: "aal1", method: "password" }),
+    }, undefined, `Bearer ${login.token}`)).rejects.toMatchObject({
+      statusCode: 403,
+      details: expect.objectContaining({ publicCode: "MFA_STEP_UP_REQUIRED" }),
+    });
+
+    providerUser.id = "different-provider-user";
+    providerUser.email = "different-provider-user@example.com";
+    providerUser.factors = [];
+    await expect(service.loginWithSupabaseAccessToken({
+      accessToken: token({ sessionId: "different-provider-reauth", aal: "aal2", method: "totp" }),
+      credentialCeremony: "browser_memory_v1",
+      reauthPurpose: "account_export",
+    }, undefined, `Bearer ${login.token}`)).rejects.toMatchObject({
+      statusCode: 409,
+      details: expect.objectContaining({ reauthPurpose: "account_export" }),
+    });
+    expect(repository.getAccountBySupabaseUserId("different-provider-user")).toBeNull();
+    providerUser.id = "mfa-gated-provider-user";
+    providerUser.email = "mfa-gated-provider-user@example.com";
+    providerUser.factors = [
+      { id: "verified-phone-factor", factor_type: "phone", status: "verified" },
+    ];
+
+    database.prepare("UPDATE accounts SET status = 'suspended', updated_at = ? WHERE id = ?")
+      .run(NOW, account.id);
+    database.prepare("UPDATE profiles SET account_status = 'suspended', updated_at = ? WHERE id = ?")
+      .run(NOW, account.id);
+    account = repository.getAccountById(account.id)!;
+    expect(account.status).toBe("suspended");
+    await expect(service.createSuspendedAccountBillingPortal({ accessToken: aal1Token }))
+      .rejects.toMatchObject({
+        statusCode: 403,
+        details: expect.objectContaining({ publicCode: "MFA_STEP_UP_REQUIRED" }),
+      });
+  });
+
+  it.each(["returned error", "transport error"] as const)(
+    "contains every app session and reports incomplete provider cleanup after a %s",
+    async (failureMode) => {
+      const { database, repository } = createRepository();
+      const nowSeconds = Math.floor(Date.parse(NOW) / 1000);
+      const providerUser = {
+        id: `provider-signout-${failureMode.replaceAll(" ", "-")}`,
+        email: `provider-signout-${failureMode.replaceAll(" ", "-")}@example.com`,
+        email_confirmed_at: NOW,
+        user_metadata: {},
+      };
+      const globalSignOut = vi.fn();
+      if (failureMode === "returned error") {
+        globalSignOut.mockResolvedValueOnce({ data: null, error: { code: "provider_unavailable" } });
+      } else {
+        globalSignOut.mockRejectedValueOnce(Object.assign(new Error("provider transport unavailable"), {
+          code: "provider_transport_unavailable",
+        }));
+      }
+      globalSignOut.mockResolvedValue({ data: null, error: null });
+      const service = createBusinessService(repository, {
+        SUPABASE_URL: "https://example.supabase.co",
+        SUPABASE_ANON_KEY: "placeholder-anon-key",
+        SUPABASE_SERVICE_ROLE_KEY: "placeholder-service-role-key",
+      });
+      (service as unknown as { supabase: unknown }).supabase = {
+        auth: {
+          admin: { signOut: globalSignOut },
+          getUser: vi.fn(async () => ({ data: { user: providerUser }, error: null })),
+        },
+      };
+      const providerToken = (sessionId: string, issuedAt: number) => testSupabaseAccessToken({
+        sub: providerUser.id,
+        iat: issuedAt,
+        auth_time: issuedAt,
+        session_id: sessionId,
+        amr: [{ method: "password", timestamp: issuedAt }],
+      }, `provider-signout-${sessionId}`);
+      const firstProviderToken = providerToken("initial", nowSeconds - 60);
+      const initial = await service.loginWithSupabaseAccessToken({
+        accessToken: firstProviderToken,
+        ageConfirmed: true,
+        termsAccepted: true,
+        privacyAccepted: true,
+        termsVersion: CURRENT_LEGAL_POLICY_VERSION,
+        privacyVersion: CURRENT_LEGAL_POLICY_VERSION,
+        consentSource: "web",
+      });
+
+      const linkedAccount = repository.getAccountBySupabaseUserId(providerUser.id)!;
+      const partial = await service.logoutAll(linkedAccount, { accessToken: firstProviderToken });
+      expect(partial).toEqual(expect.objectContaining({
+        revokedCount: 1,
+        providerSessionsRevoked: false,
+      }));
+      expect(database.prepare(
+        "SELECT count(*) AS count FROM auth_sessions WHERE user_id = ? AND revoked_at IS NULL",
+      ).get(initial.account.id)).toEqual({ count: 0 });
+      expect(repository.getAccountById(initial.account.id)).toMatchObject({
+        providerTokensValidAfter: new Date(Date.parse(NOW) + 60_000).toISOString(),
+      });
+      expect(await listSecurityAuditLogs(repository, { action: "provider_global_signout_failed" }))
+        .toEqual([
+          expect.objectContaining({
+            metadata: expect.objectContaining({
+              operation: "logout_all",
+              appSessionsContained: true,
+            }),
+          }),
+        ]);
+      await expect(service.loginWithSupabaseAccessToken({ accessToken: firstProviderToken }))
+        .rejects.toThrow();
+
+      const resumeProviderToken = providerToken("resume-cleanup", nowSeconds + 60);
+      await expect(service.resumeProviderGlobalRevocation({ accessToken: resumeProviderToken }))
+        .resolves.toEqual(expect.objectContaining({ providerSessionsRevoked: true }));
+      await expect(service.loginWithSupabaseAccessToken({ accessToken: resumeProviderToken }))
+        .rejects.toThrow("predates a security reset");
+
+      const freshProviderToken = providerToken("fresh-retry", nowSeconds + 120);
+      const fresh = await service.loginWithSupabaseAccessToken({ accessToken: freshProviderToken });
+      await expect(service.logoutAll(
+        repository.getAccountById(fresh.account.id)!,
+        { accessToken: freshProviderToken },
+      ))
+        .resolves.toEqual(expect.objectContaining({ providerSessionsRevoked: true }));
+      expect(database.prepare(
+        "SELECT count(*) AS count FROM auth_sessions WHERE user_id = ? AND revoked_at IS NULL",
+      ).get(initial.account.id)).toEqual({ count: 0 });
+    },
+  );
+
+  it("blocks app-session minting while provider-wide logout is in flight", async () => {
+    const { database, repository } = createRepository();
+    const nowSeconds = Math.floor(Date.parse(NOW) / 1000);
+    const providerUser = {
+      id: "logout-provider-race-user",
+      email: "logout-provider-race-user@example.com",
+      email_confirmed_at: NOW,
+      user_metadata: {},
+    };
+    let releaseProviderSignout!: () => void;
+    let markProviderSignoutStarted!: () => void;
+    const providerSignoutStarted = new Promise<void>((resolve) => { markProviderSignoutStarted = resolve; });
+    const providerSignoutRelease = new Promise<void>((resolve) => { releaseProviderSignout = resolve; });
+    const globalSignOut = vi.fn(async () => {
+      markProviderSignoutStarted();
+      await providerSignoutRelease;
+      return { data: null, error: null };
+    });
+    const service = createBusinessService(repository, {
+      SUPABASE_URL: "https://example.supabase.co",
+      SUPABASE_ANON_KEY: "placeholder-anon-key",
+      SUPABASE_SERVICE_ROLE_KEY: "placeholder-service-role-key",
+    });
+    (service as unknown as { supabase: unknown }).supabase = {
+      auth: {
+        admin: { signOut: globalSignOut },
+        getUser: vi.fn(async () => ({ data: { user: providerUser }, error: null })),
+      },
+    };
+    const providerToken = (sessionId: string, issuedAt: number) => testSupabaseAccessToken({
+      sub: providerUser.id,
+      iat: issuedAt,
+      auth_time: issuedAt,
+      session_id: sessionId,
+      amr: [{ method: "password", timestamp: issuedAt }],
+    }, `logout-provider-race-${sessionId}`);
+    const initialToken = providerToken("initial", nowSeconds - 60);
+    const initial = await service.loginWithSupabaseAccessToken({
+      accessToken: initialToken,
+      ageConfirmed: true,
+      termsAccepted: true,
+      privacyAccepted: true,
+      termsVersion: CURRENT_LEGAL_POLICY_VERSION,
+      privacyVersion: CURRENT_LEGAL_POLICY_VERSION,
+      consentSource: "web",
+    });
+    const logout = service.logoutAll(
+      repository.getAccountBySupabaseUserId(providerUser.id)!,
+      { accessToken: initialToken },
+    );
+    await providerSignoutStarted;
+
+    vi.setSystemTime(new Date(Date.parse(NOW) + 60_000));
+    const racingToken = providerToken("racing-refresh", nowSeconds + 60);
+    await expect(service.loginWithSupabaseAccessToken({ accessToken: racingToken }))
+      .rejects.toMatchObject({
+        statusCode: 409,
+        details: expect.objectContaining({ publicCode: "PROVIDER_GLOBAL_REVOCATION_PENDING" }),
+      });
+    expect(database.prepare(
+      "SELECT count(*) AS count FROM auth_sessions WHERE user_id = ? AND revoked_at IS NULL",
+    ).get(initial.account.id)).toEqual({ count: 0 });
+
+    releaseProviderSignout();
+    await expect(logout).resolves.toEqual(expect.objectContaining({
+      revokedCount: 1,
+      providerSessionsRevoked: true,
+    }));
+    expect(database.prepare(
+      "SELECT count(*) AS count FROM auth_sessions WHERE user_id = ? AND revoked_at IS NULL",
+    ).get(initial.account.id)).toEqual({ count: 0 });
+    await expect(service.loginWithSupabaseAccessToken({ accessToken: racingToken }))
+      .rejects.toThrow("predates a security reset");
+  });
+
+  it("blocks app-session minting while password-reset provider signout is in flight", async () => {
+    const { database, repository } = createRepository();
+    const nowSeconds = Math.floor(Date.parse(NOW) / 1000);
+    const providerUser = {
+      id: "password-reset-provider-race-user",
+      email: "password-reset-provider-race-user@example.com",
+      email_confirmed_at: NOW,
+      user_metadata: {},
+    };
+    let releaseProviderSignout!: () => void;
+    let markProviderSignoutStarted!: () => void;
+    const providerSignoutStarted = new Promise<void>((resolve) => { markProviderSignoutStarted = resolve; });
+    const providerSignoutRelease = new Promise<void>((resolve) => { releaseProviderSignout = resolve; });
+    const globalSignOut = vi.fn(async () => {
+      markProviderSignoutStarted();
+      await providerSignoutRelease;
+      return { data: null, error: null };
+    });
+    const service = createBusinessService(repository, {
+      SUPABASE_URL: "https://example.supabase.co",
+      SUPABASE_ANON_KEY: "placeholder-anon-key",
+      SUPABASE_SERVICE_ROLE_KEY: "placeholder-service-role-key",
+    });
+    (service as unknown as { supabase: unknown }).supabase = {
+      auth: {
+        admin: { signOut: globalSignOut },
+        getUser: vi.fn(async () => ({ data: { user: providerUser }, error: null })),
+      },
+    };
+    const providerToken = (sessionId: string, method: string, issuedAt: number) => testSupabaseAccessToken({
+      sub: providerUser.id,
+      iat: issuedAt,
+      auth_time: issuedAt,
+      session_id: sessionId,
+      amr: [{ method, timestamp: issuedAt }],
+    }, `password-reset-provider-race-${sessionId}`);
+    const initialToken = providerToken("initial", "password", nowSeconds - 60);
+    const initial = await service.loginWithSupabaseAccessToken({
+      accessToken: initialToken,
+      ageConfirmed: true,
+      termsAccepted: true,
+      privacyAccepted: true,
+      termsVersion: CURRENT_LEGAL_POLICY_VERSION,
+      privacyVersion: CURRENT_LEGAL_POLICY_VERSION,
+      consentSource: "web",
+    });
+    const recoveryToken = providerToken("recovery", "recovery", nowSeconds - 30);
+    const reset = service.completePasswordReset({ accessToken: recoveryToken });
+    await providerSignoutStarted;
+
+    vi.setSystemTime(new Date(Date.parse(NOW) + 60_000));
+    const racingToken = providerToken("racing-refresh", "password", nowSeconds + 60);
+    await expect(service.loginWithSupabaseAccessToken({ accessToken: racingToken }))
+      .rejects.toMatchObject({
+        statusCode: 409,
+        details: expect.objectContaining({ publicCode: "PROVIDER_GLOBAL_REVOCATION_PENDING" }),
+      });
+    expect(database.prepare(
+      "SELECT count(*) AS count FROM auth_sessions WHERE user_id = ? AND revoked_at IS NULL",
+    ).get(initial.account.id)).toEqual({ count: 0 });
+
+    releaseProviderSignout();
+    await expect(reset).resolves.toEqual(expect.objectContaining({
+      revokedSessions: 1,
+      providerSessionsRevoked: true,
+    }));
+    expect(database.prepare(
+      "SELECT count(*) AS count FROM auth_sessions WHERE user_id = ? AND revoked_at IS NULL",
+    ).get(initial.account.id)).toEqual({ count: 0 });
+    await expect(service.loginWithSupabaseAccessToken({ accessToken: racingToken }))
+      .rejects.toThrow("predates a security reset");
+  });
+
+  it.each(["logout_all", "password_reset"] as const)(
+    "keeps the provider revocation fence after %s final-containment failure and resumes without minting",
+    async (operation) => {
+      const { database, repository } = createRepository();
+      const nowSeconds = Math.floor(Date.parse(NOW) / 1000);
+      const providerUser = {
+        id: `provider-final-containment-${operation}`,
+        email: `provider-final-containment-${operation}@example.com`,
+        email_confirmed_at: NOW,
+        user_metadata: {},
+      };
+      const globalSignOut = vi.fn(async () => ({ data: null, error: null }));
+      const service = createBusinessService(repository, {
+        SUPABASE_URL: "https://example.supabase.co",
+        SUPABASE_ANON_KEY: "placeholder-anon-key",
+        SUPABASE_SERVICE_ROLE_KEY: "placeholder-service-role-key",
+      });
+      (service as unknown as { supabase: unknown }).supabase = {
+        auth: {
+          admin: { signOut: globalSignOut },
+          getUser: vi.fn(async () => ({ data: { user: providerUser }, error: null })),
+        },
+      };
+      const providerToken = (sessionId: string, issuedAt: number, method = "password") =>
+        testSupabaseAccessToken({
+          sub: providerUser.id,
+          iat: issuedAt,
+          auth_time: issuedAt,
+          session_id: sessionId,
+          amr: [{ method, timestamp: issuedAt }],
+        }, `provider-final-containment-${operation}-${sessionId}`);
+      const initialToken = providerToken("initial", nowSeconds - 60);
+      const initial = await service.loginWithSupabaseAccessToken({
+        accessToken: initialToken,
+        ageConfirmed: true,
+        termsAccepted: true,
+        privacyAccepted: true,
+        termsVersion: CURRENT_LEGAL_POLICY_VERSION,
+        privacyVersion: CURRENT_LEGAL_POLICY_VERSION,
+        consentSource: "web",
+      });
+      const accountSessionRepository = (service as unknown as {
+        accountSessionRepository: AccountSessionRepository;
+      }).accountSessionRepository;
+      const finalFailure = new Error(`simulated ${operation} final containment failure`);
+      let containmentSpy;
+      let operationPromise: Promise<unknown>;
+      if (operation === "logout_all") {
+        const original = accountSessionRepository.revokeUserSessionsWithSummary
+          .bind(accountSessionRepository);
+        containmentSpy = vi.spyOn(accountSessionRepository, "revokeUserSessionsWithSummary")
+          .mockImplementationOnce(original)
+          .mockRejectedValueOnce(finalFailure);
+        operationPromise = service.logoutAll(
+          repository.getAccountBySupabaseUserId(providerUser.id)!,
+          { accessToken: initialToken },
+        );
+      } else {
+        const original = accountSessionRepository.completePasswordResetContainment
+          .bind(accountSessionRepository);
+        containmentSpy = vi.spyOn(accountSessionRepository, "completePasswordResetContainment")
+          .mockImplementationOnce(original)
+          .mockRejectedValueOnce(finalFailure);
+        operationPromise = service.completePasswordReset({
+          accessToken: providerToken("recovery", nowSeconds - 30, "recovery"),
+        });
+      }
+
+      await expect(operationPromise).rejects.toThrow(finalFailure.message);
+      containmentSpy.mockRestore();
+      expect(globalSignOut).toHaveBeenCalledTimes(1);
+      expect(await accountSessionRepository.hasProviderGlobalRevocationPending(initial.account.id)).toBe(true);
+      expect(database.prepare(
+        "SELECT count(*) AS count FROM auth_sessions WHERE user_id = ? AND revoked_at IS NULL",
+      ).get(initial.account.id)).toEqual({ count: 0 });
+      const tokenDuringFence = providerToken("during-fence", nowSeconds + 120);
+      await expect(service.loginWithSupabaseAccessToken({ accessToken: tokenDuringFence }))
+        .rejects.toMatchObject({
+          statusCode: 409,
+          details: expect.objectContaining({ publicCode: "PROVIDER_GLOBAL_REVOCATION_PENDING" }),
+        });
+
+      vi.setSystemTime(new Date(Date.parse(NOW) + 6 * 60_000));
+      const resumeToken = providerToken("resume", nowSeconds + 6 * 60);
+      await expect(service.resumeProviderGlobalRevocation({ accessToken: resumeToken }))
+        .resolves.toEqual(expect.objectContaining({
+          completed: true,
+          providerSessionsRevoked: true,
+          revokedCount: 0,
+        }));
+      expect(await accountSessionRepository.hasProviderGlobalRevocationPending(initial.account.id)).toBe(false);
+      await expect(service.loginWithSupabaseAccessToken({ accessToken: resumeToken }))
+        .rejects.toThrow("predates a security reset");
+      await expect(service.loginWithSupabaseAccessToken({
+        accessToken: providerToken("fresh-after-resume", nowSeconds + 8 * 60),
+      })).resolves.toEqual(expect.objectContaining({ token: expect.any(String) }));
+      expect(await listSecurityAuditLogs(repository, { action: "provider_global_signout_resumed" }))
+        .toEqual([
+          expect.objectContaining({
+            metadata: expect.objectContaining({ operation }),
+          }),
+        ]);
+    },
+  );
+
+  it("mints fresh purpose-bound browser sessions without reusing or changing the provider-session family", async () => {
+    const { database, repository } = createRepository();
+    const nowSeconds = Math.floor(Date.parse(NOW) / 1000);
+    const providerSessionId = "browser-memory-provider-session";
+    const providerUser = {
+      id: "browser-memory-user",
+      email: "browser-memory-user@example.com",
+      email_confirmed_at: NOW,
+      user_metadata: {},
+    };
+    const service = createBusinessService(repository, {
+      SUPABASE_URL: "https://example.supabase.co",
+      SUPABASE_ANON_KEY: "placeholder-anon-key",
+      SUPABASE_SERVICE_ROLE_KEY: "placeholder-service-role-key",
+    });
+    (service as unknown as { supabase: unknown }).supabase = {
+      auth: {
+        getUser: vi.fn(async () => ({ data: { user: providerUser }, error: null })),
+      },
+    };
+    const freshAccessToken = testSupabaseAccessToken({
+      iat: nowSeconds - 60,
+      auth_time: nowSeconds - 60,
+      session_id: providerSessionId,
+      amr: [{ method: "password", timestamp: nowSeconds - 60 }],
+    });
+    const initial = await service.loginWithSupabaseAccessToken({
+      accessToken: freshAccessToken,
+      ageConfirmed: true,
+      termsAccepted: true,
+      privacyAccepted: true,
+      termsVersion: CURRENT_LEGAL_POLICY_VERSION,
+      privacyVersion: CURRENT_LEGAL_POLICY_VERSION,
+      consentSource: "web",
+    });
+
+    await expect(service.loginWithSupabaseAccessToken({
+      accessToken: freshAccessToken,
+      credentialCeremony: "browser_memory_v1",
+      reauthPurpose: "account_export",
+    })).rejects.toMatchObject({
+      statusCode: 409,
+      details: expect.objectContaining({ reauthPurpose: "account_export" }),
+    });
+
+    const sessionCount = () => database.prepare(
+      "SELECT count(*) AS count FROM auth_sessions WHERE user_id = ? AND revoked_at IS NULL",
+    ).get(providerUser.id) as { count: number };
+    const malformedRefreshOnly = testSupabaseAccessToken({
+      iat: nowSeconds,
+      session_id: "refresh-only-session",
+      amr: [{ method: "token_refresh", timestamp: nowSeconds }],
+    }, "refresh-only-signature");
+    const staleCredential = testSupabaseAccessToken({
+      iat: nowSeconds - 16 * 60,
+      auth_time: nowSeconds - 16 * 60,
+      session_id: "stale-credential-session",
+      amr: [{ method: "password", timestamp: nowSeconds - 16 * 60 }],
+    }, "stale-signature");
+    const futureCredential = testSupabaseAccessToken({
+      iat: nowSeconds,
+      auth_time: nowSeconds + 61,
+      session_id: "future-credential-session",
+      amr: [{ method: "password", timestamp: nowSeconds + 61 }],
+    }, "future-signature");
+    const nonAuthenticationEventCredential = testSupabaseAccessToken({
+      iat: nowSeconds,
+      auth_time: nowSeconds,
+      session_id: "non-authentication-event-session",
+      amr: [
+        { method: "password", timestamp: nowSeconds - 16 * 60 },
+        { method: "email_change", timestamp: nowSeconds },
+      ],
+    }, "non-authentication-event-signature");
+
+    for (const accessToken of [
+      malformedRefreshOnly,
+      staleCredential,
+      futureCredential,
+      nonAuthenticationEventCredential,
+    ]) {
+      await expect(service.loginWithSupabaseAccessToken({
+        accessToken,
+        credentialCeremony: "browser_memory_v1",
+        reauthPurpose: "account_export",
+      }, undefined, `Bearer ${initial.token}`)).rejects.toMatchObject({
+        statusCode: 403,
+        details: expect.objectContaining({ reauthenticationRequired: true }),
+      });
+    }
+    expect(sessionCount()).toEqual({ count: 1 });
+
+    const credentialSession = await service.loginWithSupabaseAccessToken({
+      accessToken: freshAccessToken,
+      credentialCeremony: "browser_memory_v1",
+      reauthPurpose: "account_export",
+    }, undefined, `Bearer ${initial.token}`);
+    expect(credentialSession).toEqual(expect.objectContaining({
+      token: expect.stringMatching(new RegExp(`^credential-v1\\.account_export\\.${nowSeconds - 60}\\.[A-Za-z0-9_-]{43}$`)),
+    }));
+    expect(credentialSession).not.toHaveProperty("reused");
+    expect(credentialSession.token).not.toBe(initial.token);
+    expect(sessionCount()).toEqual({ count: 1 });
+
+    const rotatedAgain = await service.loginWithSupabaseAccessToken({
+      accessToken: freshAccessToken,
+      credentialCeremony: "browser_memory_v1",
+      reauthPurpose: "account_export",
+    }, undefined, `Bearer ${credentialSession.token}`);
+    expect(rotatedAgain.token).toMatch(new RegExp(`^credential-v1\\.account_export\\.${nowSeconds - 60}\\.[A-Za-z0-9_-]{43}$`));
+    expect(rotatedAgain.token).not.toBe(credentialSession.token);
+    expect(rotatedAgain).not.toHaveProperty("reused");
+    expect(sessionCount()).toEqual({ count: 1 });
+
+    const expectedProviderHash = crypto
+      .createHash("sha256")
+      .update(`supabase-session:${providerSessionId}`)
+      .digest("hex");
+    const credentialTokenHash = crypto.createHash("sha256").update(rotatedAgain.token).digest("hex");
+    expect(database.prepare(
+      `SELECT provider_session_id_hash AS "providerSessionIdHash"
+       FROM auth_sessions WHERE token_hash = ?`,
+    ).get(credentialTokenHash)).toEqual({ providerSessionIdHash: expectedProviderHash });
+    expect(database.prepare(
+      `SELECT count(*) AS count, max(revoked_at) AS "revokedAt"
+       FROM auth_sessions WHERE token_hash = ?`,
+    ).get(crypto.createHash("sha256").update(credentialSession.token).digest("hex"))).toEqual({
+      count: 1,
+      revokedAt: NOW,
+    });
+
+    const account = repository.getAccountBySupabaseUserId(providerUser.id)!;
+    await expect(service.requireRecentAuthentication(
+      account,
+      `Bearer ${rotatedAgain.token}`,
+      undefined,
+      "account_export",
+    )).resolves.toBeUndefined();
+    await expect(service.requireRecentAuthentication(
+      account,
+      `Bearer ${rotatedAgain.token}`,
+      undefined,
+      "session_management",
+    )).rejects.toMatchObject({
+      statusCode: 403,
+      details: expect.objectContaining({ reauthPurpose: "session_management" }),
+    });
+
+    const forgedToken = `credential-v1.account_export.${nowSeconds - 60}.${Buffer.alloc(32, 9).toString("base64url")}`;
+    await expect(service.requireRecentAuthentication(
+      account,
+      `Bearer ${forgedToken}`,
+      undefined,
+      "account_export",
+    )).rejects.toMatchObject({ statusCode: 401 });
+
+    vi.setSystemTime(new Date(Date.parse(NOW) + 14 * 60_000 + 1));
+    await expect(service.requireRecentAuthentication(
+      account,
+      `Bearer ${rotatedAgain.token}`,
+      undefined,
+      "account_export",
+    )).rejects.toMatchObject({
+      statusCode: 403,
+      details: expect.objectContaining({ reauthPurpose: "account_export" }),
+    });
+
+    vi.setSystemTime(new Date(NOW));
+    const concurrentCeremonies = await Promise.allSettled([
+      service.loginWithSupabaseAccessToken({
+        accessToken: freshAccessToken,
+        credentialCeremony: "browser_memory_v1",
+        reauthPurpose: "account_export",
+      }, undefined, `Bearer ${rotatedAgain.token}`),
+      service.loginWithSupabaseAccessToken({
+        accessToken: freshAccessToken,
+        credentialCeremony: "browser_memory_v1",
+        reauthPurpose: "account_export",
+      }, undefined, `Bearer ${rotatedAgain.token}`),
+    ]);
+    expect(concurrentCeremonies.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    const rejectedCeremony = concurrentCeremonies.find((result) => result.status === "rejected");
+    expect(rejectedCeremony).toMatchObject({
+      status: "rejected",
+      reason: expect.objectContaining({
+        statusCode: 409,
+        details: expect.objectContaining({ reauthenticationRequired: true }),
+      }),
+    });
+    expect(sessionCount()).toEqual({ count: 1 });
+  });
+
+  it("sets a purpose-bound HttpOnly cookie, omits its token from JSON, and enforces route purposes", async () => {
+    const { repository } = createRepository();
+    const nowSeconds = Math.floor(Date.parse(NOW) / 1000);
+    const providerUser = {
+      id: "browser-cookie-user",
+      email: "browser-cookie-user@example.com",
+      email_confirmed_at: NOW,
+      user_metadata: {},
+    };
+    const service = createBusinessService(repository, {
+      SUPABASE_URL: "https://example.supabase.co",
+      SUPABASE_ANON_KEY: "placeholder-anon-key",
+      SUPABASE_SERVICE_ROLE_KEY: "placeholder-service-role-key",
+    });
+    (service as unknown as { supabase: unknown }).supabase = {
+      auth: {
+        getUser: vi.fn(async () => ({ data: { user: providerUser }, error: null })),
+      },
+    };
+    const accessToken = testSupabaseAccessToken({
+      iat: nowSeconds - 30,
+      auth_time: nowSeconds - 30,
+      session_id: "browser-cookie-provider-session",
+      amr: [{ method: "password", timestamp: nowSeconds - 30 }],
+    }, "browser-cookie-signature");
+    const initial = await service.loginWithSupabaseAccessToken({
+      accessToken,
+      ageConfirmed: true,
+      termsAccepted: true,
+      privacyAccepted: true,
+      termsVersion: CURRENT_LEGAL_POLICY_VERSION,
+      privacyVersion: CURRENT_LEGAL_POLICY_VERSION,
+      consentSource: "web",
+    });
+    const app = express();
+    app.use(express.json());
+    app.use("/api/business", createBusinessRouter(service));
+    app.use(errorHandler);
+    const createBarBillingPortal = vi.spyOn(service, "createBarBillingPortal")
+      .mockResolvedValue({ url: "https://billing.stripe.test/venue" });
+
+    await withHttpServer(app, async (baseUrl) => {
+      const downgradeResponse = await fetch(`${baseUrl}/api/business/auth/supabase-session`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${initial.token}`,
+          "content-type": "application/json",
+          origin: "https://pintpath.au",
+        },
+        body: JSON.stringify({ accessToken }),
+      });
+      const downgradePayload = await downgradeResponse.json() as {
+        ok: boolean;
+        data: Record<string, unknown>;
+      };
+      const upgradedCookie = responseCookie(downgradeResponse.headers, "pint_path_session");
+      expect(downgradeResponse.status).toBe(200);
+      expect(downgradePayload.ok).toBe(true);
+      expect(downgradePayload.data).not.toHaveProperty("token");
+      expect(upgradedCookie).toMatch(/^pint_path_session=[A-Za-z0-9_-]{43}$/);
+
+      const replayWithoutCookie = await fetch(`${baseUrl}/api/business/auth/supabase-session`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ accessToken }),
+      });
+      expect(replayWithoutCookie.status).toBe(409);
+      expect(replayWithoutCookie.headers.get("set-cookie")).toBeNull();
+      await expect(replayWithoutCookie.json()).resolves.toEqual(expect.objectContaining({
+        error: expect.objectContaining({
+          message: "The cookie session changed while authentication was completing. Sign in again and retry.",
+        }),
+      }));
+
+      const purposeWithoutCookie = await fetch(`${baseUrl}/api/business/auth/supabase-session`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          accessToken,
+          credentialCeremony: "browser_memory_v1",
+          reauthPurpose: "account_export",
+        }),
+      });
+      expect(purposeWithoutCookie.status).toBe(409);
+      expect(purposeWithoutCookie.headers.get("set-cookie")).toBeNull();
+      await expect(purposeWithoutCookie.json()).resolves.toEqual(expect.objectContaining({
+        error: expect.objectContaining({
+          message: "Your Pint Path session expired before reauthentication completed. Sign in again, then retry the sensitive action.",
+        }),
+      }));
+
+      const ceremonyResponse = await fetch(`${baseUrl}/api/business/auth/supabase-session`, {
+        method: "POST",
+        headers: {
+          cookie: upgradedCookie,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          accessToken,
+          credentialCeremony: "browser_memory_v1",
+          reauthPurpose: "account_export",
+        }),
+      });
+      const payload = await ceremonyResponse.json() as {
+        ok: boolean;
+        data: Record<string, unknown>;
+      };
+      const setCookie = ceremonyResponse.headers.get("set-cookie") ?? "";
+      const cookie = responseCookie(ceremonyResponse.headers, "pint_path_session");
+      expect(ceremonyResponse.status).toBe(200);
+      expect(payload.ok).toBe(true);
+      expect(payload.data).not.toHaveProperty("token");
+      expect(setCookie).toMatch(new RegExp(`pint_path_session=credential-v1\\.account_export\\.${nowSeconds - 30}\\.[A-Za-z0-9_-]{43}`));
+      expect(setCookie).toContain("HttpOnly");
+      expect(setCookie).toContain("SameSite=Lax");
+      expect(setCookie).toContain("Path=/");
+
+      const exportResponse = await fetch(`${baseUrl}/api/business/account/export`, {
+        headers: { cookie },
+      });
+      expect(exportResponse.status).toBe(200);
+
+      const wrongPurposeResponse = await fetch(`${baseUrl}/api/business/account/sessions`, {
+        headers: { cookie },
+      });
+      expect(wrongPurposeResponse.status).toBe(403);
+      await expect(wrongPurposeResponse.json()).resolves.toEqual(expect.objectContaining({
+        error: expect.objectContaining({
+          message: "Purpose-bound reauthentication is required for this sensitive action.",
+        }),
+      }));
+
+      const wrongVenuePurposeResponse = await fetch(`${baseUrl}/api/business/venue-portal/venue-1/billing/portal`, {
+        method: "POST",
+        headers: { cookie },
+      });
+      expect(wrongVenuePurposeResponse.status).toBe(403);
+      expect(createBarBillingPortal).not.toHaveBeenCalled();
+
+      vi.setSystemTime(new Date(Date.parse(NOW) + 14 * 60_000 + 30_001));
+      const staleResponse = await fetch(`${baseUrl}/api/business/account/export`, {
+        headers: { cookie },
+      });
+      expect(staleResponse.status).toBe(403);
+
+      vi.setSystemTime(new Date(NOW));
+      const venueCeremonyResponse = await fetch(`${baseUrl}/api/business/auth/supabase-session`, {
+        method: "POST",
+        headers: {
+          cookie,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          accessToken,
+          credentialCeremony: "browser_memory_v1",
+          reauthPurpose: "venue_billing_portal",
+        }),
+      });
+      const venueCookie = responseCookie(venueCeremonyResponse.headers, "pint_path_session");
+      expect(venueCeremonyResponse.status).toBe(200);
+      expect(venueCookie).toMatch(new RegExp(`pint_path_session=credential-v1\\.venue_billing_portal\\.${nowSeconds - 30}\\.[A-Za-z0-9_-]{43}`));
+      const venuePortalResponse = await fetch(`${baseUrl}/api/business/venue-portal/venue-1/billing/portal`, {
+        method: "POST",
+        headers: { cookie: venueCookie },
+      });
+      expect(venuePortalResponse.status).toBe(201);
+      expect(createBarBillingPortal).toHaveBeenCalledWith(expect.objectContaining({ id: providerUser.id }), "venue-1");
+    });
+  });
+
+  it("binds browser email reauthentication to the active cookie, purpose, fresh OTP, and MFA-upgraded session", async () => {
+    vi.stubEnv("RAILWAY_REPLICA_ID", "browser-email-reauth-test-replica");
+    const { repository } = createRepository();
+    const nowSeconds = Math.floor(Date.parse(NOW) / 1000);
+    const providerUser = {
+      id: "browser-email-reauth-user",
+      email: "browser-email-reauth-user@example.com",
+      email_confirmed_at: NOW,
+      factors: [{ id: "browser-email-totp", factor_type: "totp", status: "verified" }],
+      user_metadata: {},
+    };
+    const service = createBusinessService(repository, {
+      SUPABASE_URL: "https://example.supabase.co",
+      SUPABASE_ANON_KEY: "placeholder-anon-key",
+      SUPABASE_SERVICE_ROLE_KEY: "placeholder-service-role-key",
+    });
+    (service as unknown as { supabase: unknown }).supabase = {
+      auth: {
+        getUser: vi.fn(async () => ({ data: { user: providerUser }, error: null })),
+      },
+    };
+    const initialProviderToken = testSupabaseAccessToken({
+      sub: providerUser.id,
+      iat: nowSeconds - 30,
+      auth_time: nowSeconds - 30,
+      session_id: "browser-email-initial-session",
+      aal: "aal2",
+      amr: [
+        { method: "oauth", timestamp: nowSeconds - 60 },
+        { method: "totp", timestamp: nowSeconds - 30 },
+      ],
+    }, "browser-email-initial-signature");
+    const initial = await service.loginWithSupabaseAccessToken({
+      accessToken: initialProviderToken,
+      ageConfirmed: true,
+      termsAccepted: true,
+      privacyAccepted: true,
+      termsVersion: CURRENT_LEGAL_POLICY_VERSION,
+      privacyVersion: CURRENT_LEGAL_POLICY_VERSION,
+      consentSource: "web",
+    });
+    const appCookie = `pint_path_session=${initial.token}`;
+    const app = express();
+    app.use(express.json());
+    app.use("/api/business", createBusinessRouter(service));
+    app.use(errorHandler);
+
+    await withHttpServer(app, async (baseUrl) => {
+      providerUser.factors = [];
+      const oauthAal1Token = testSupabaseAccessToken({
+        sub: providerUser.id,
+        iat: nowSeconds,
+        auth_time: nowSeconds,
+        session_id: "browser-email-oauth-aal1-session",
+        aal: "aal1",
+        amr: [{ method: "oauth", timestamp: nowSeconds }],
+      }, "browser-email-oauth-aal1-signature");
+      const oauthPurpose = await fetch(`${baseUrl}/api/business/auth/supabase-session`, {
+        method: "POST",
+        headers: {
+          cookie: appCookie,
+          "content-type": "application/json",
+          origin: "https://pintpath.au",
+          "x-real-ip": "203.0.113.44",
+        },
+        body: JSON.stringify({
+          accessToken: oauthAal1Token,
+          credentialCeremony: "browser_memory_v1",
+          reauthPurpose: "account_export",
+        }),
+      });
+      expect(oauthPurpose.status).toBe(403);
+      await expect(oauthPurpose.json()).resolves.toEqual(expect.objectContaining({
+        error: expect.objectContaining({ code: "EMAIL_REAUTHENTICATION_REQUIRED" }),
+      }));
+      providerUser.factors = [{ id: "browser-email-totp", factor_type: "totp", status: "verified" }];
+      const oauthAal2Purpose = await fetch(`${baseUrl}/api/business/auth/supabase-session`, {
+        method: "POST",
+        headers: {
+          cookie: appCookie,
+          "content-type": "application/json",
+          origin: "https://pintpath.au",
+          "x-real-ip": "203.0.113.44",
+        },
+        body: JSON.stringify({
+          accessToken: initialProviderToken,
+          credentialCeremony: "browser_memory_v1",
+          reauthPurpose: "account_export",
+        }),
+      });
+      expect(oauthAal2Purpose.status).toBe(403);
+      await expect(oauthAal2Purpose.json()).resolves.toEqual(expect.objectContaining({
+        error: expect.objectContaining({ code: "EMAIL_REAUTHENTICATION_REQUIRED" }),
+      }));
+
+      const start = await fetch(`${baseUrl}/api/business/auth/browser-email-reauthentication`, {
+        method: "POST",
+        headers: {
+          cookie: appCookie,
+          "content-type": "application/json",
+          origin: "https://pintpath.au",
+          "x-real-ip": "203.0.113.44",
+        },
+        body: JSON.stringify({ purpose: "account_export" }),
+      });
+      const startPayload = await start.json() as {
+        ok: boolean;
+        data: { email: string; expiresAt: string; challengeToken?: string };
+      };
+      const challengeCookie = responseCookie(start.headers, "pint_path_email_reauth");
+      const startSetCookie = start.headers.get("set-cookie") ?? "";
+      expect(start.status).toBe(200);
+      expect(startPayload).toEqual(expect.objectContaining({
+        ok: true,
+        data: expect.objectContaining({
+          email: providerUser.email,
+          expiresAt: new Date((nowSeconds + 10 * 60) * 1000).toISOString(),
+        }),
+      }));
+      expect(startPayload.data).not.toHaveProperty("challengeToken");
+      expect(challengeCookie).toMatch(/^pint_path_email_reauth=v1\./);
+      expect(startSetCookie).toContain("HttpOnly");
+      expect(startSetCookie).toContain("SameSite=Lax");
+      expect(startSetCookie).toContain("Path=/api/business/auth/supabase-session");
+      expect(startSetCookie).not.toContain("Domain=");
+
+      const token = (input: {
+        timestamp: number;
+        aal: "aal1" | "aal2";
+        otpTimestamp?: number;
+      }) => testSupabaseAccessToken({
+        sub: providerUser.id,
+        iat: input.timestamp,
+        auth_time: input.timestamp,
+        session_id: "browser-email-otp-session",
+        aal: input.aal,
+        amr: input.aal === "aal2"
+          ? [
+              { method: "otp", timestamp: input.otpTimestamp ?? input.timestamp },
+              { method: "totp", timestamp: input.timestamp },
+            ]
+          : [{ method: "otp", timestamp: input.timestamp }],
+      }, `browser-email-${input.aal}-${input.timestamp}`);
+      const exchange = (accessToken: string, cookie = `${appCookie}; ${challengeCookie}`) =>
+        fetch(`${baseUrl}/api/business/auth/supabase-session`, {
+          method: "POST",
+          headers: {
+            cookie,
+            "content-type": "application/json",
+            origin: "https://pintpath.au",
+            "x-real-ip": "203.0.113.44",
+          },
+          body: JSON.stringify({
+            accessToken,
+            credentialCeremony: "browser_email_otp_v1",
+            reauthPurpose: "account_export",
+          }),
+        });
+
+      const missingChallenge = await exchange(
+        token({ timestamp: nowSeconds, aal: "aal2" }),
+        appCookie,
+      );
+      expect(missingChallenge.status).toBe(409);
+      expect(responseCookie(missingChallenge.headers, "pint_path_session")).toBe("");
+
+      const malformedChallenge = await exchange(
+        token({ timestamp: nowSeconds, aal: "aal2" }),
+        `${appCookie}; pint_path_email_reauth=not-a-signed-challenge`,
+      );
+      expect(malformedChallenge.status).toBe(409);
+      expect(responseCookie(malformedChallenge.headers, "pint_path_session")).toBe("");
+
+      const duplicateChallenge = await exchange(
+        token({ timestamp: nowSeconds, aal: "aal2" }),
+        `${appCookie}; ${challengeCookie}; ${challengeCookie}`,
+      );
+      expect(duplicateChallenge.status).toBe(409);
+      expect(responseCookie(duplicateChallenge.headers, "pint_path_session")).toBe("");
+
+      const preChallengeCredential = await exchange(token({
+        timestamp: nowSeconds,
+        otpTimestamp: nowSeconds - 1,
+        aal: "aal2",
+      }));
+      expect(preChallengeCredential.status).toBe(403);
+      expect(responseCookie(preChallengeCredential.headers, "pint_path_session")).toBe("");
+
+      const mfaRequired = await exchange(token({ timestamp: nowSeconds, aal: "aal1" }));
+      expect(mfaRequired.status).toBe(403);
+      expect(responseCookie(mfaRequired.headers, "pint_path_email_reauth")).toBe("");
+      await expect(mfaRequired.json()).resolves.toEqual(expect.objectContaining({
+        error: expect.objectContaining({ code: "MFA_STEP_UP_REQUIRED" }),
+      }));
+
+      const completed = await exchange(token({ timestamp: nowSeconds, aal: "aal2" }));
+      const completedPayload = await completed.json() as { ok: boolean; data: Record<string, unknown> };
+      const purposeCookie = responseCookie(completed.headers, "pint_path_session");
+      expect(completed.status).toBe(200);
+      expect(completedPayload.ok).toBe(true);
+      expect(completedPayload.data).not.toHaveProperty("token");
+      expect(purposeCookie).toMatch(new RegExp(
+        `^pint_path_session=credential-v1\\.account_export\\.${nowSeconds}\\.[A-Za-z0-9_-]{43}$`,
+      ));
+      expect(completed.headers.getSetCookie()).toEqual(expect.arrayContaining([
+        expect.stringMatching(/^pint_path_email_reauth=;/),
+      ]));
+
+      const replay = await exchange(token({ timestamp: nowSeconds, aal: "aal2" }));
+      expect(replay.status).toBe(409);
+      expect(responseCookie(replay.headers, "pint_path_session")).toBe("");
+    });
+  });
+
+  it("accepts a native purpose ceremony only on the exact forbidden-browser-header channel", async () => {
+    vi.stubEnv("RAILWAY_REPLICA_ID", "native-purpose-channel-test-replica");
+    const { repository } = createRepository();
+    const nowSeconds = Math.floor(Date.parse(NOW) / 1000);
+    const providerUser = {
+      id: "native-purpose-channel-user",
+      email: "native-purpose-channel-user@example.com",
+      email_confirmed_at: NOW,
+      user_metadata: {},
+    };
+    const service = createBusinessService(repository, {
+      SUPABASE_URL: "https://example.supabase.co",
+      SUPABASE_ANON_KEY: "placeholder-anon-key",
+    });
+    (service as unknown as { supabase: unknown }).supabase = {
+      auth: {
+        getUser: vi.fn(async () => ({ data: { user: providerUser }, error: null })),
+      },
+    };
+    const accessToken = testSupabaseAccessToken({
+      sub: providerUser.id,
+      iat: nowSeconds,
+      auth_time: nowSeconds,
+      session_id: "native-purpose-provider-session",
+      aal: "aal1",
+      amr: [{ method: "password", timestamp: nowSeconds }],
+    }, "native-purpose-provider-signature");
+    const initial = await service.loginWithSupabaseAccessToken({
+      accessToken,
+      ageConfirmed: true,
+      termsAccepted: true,
+      privacyAccepted: true,
+      termsVersion: CURRENT_LEGAL_POLICY_VERSION,
+      privacyVersion: CURRENT_LEGAL_POLICY_VERSION,
+      consentSource: "ios",
+    });
+    const app = express();
+    app.use(express.json());
+    app.use("/api/business", createBusinessRouter(service));
+    app.use(errorHandler);
+    const body = JSON.stringify({
+      accessToken,
+      credentialCeremony: "native_memory_v1",
+      reauthPurpose: "account_export",
+    });
+
+    await withHttpServer(app, async (baseUrl) => {
+      const endpoint = `${baseUrl}/api/business/auth/supabase-session`;
+      const headers = {
+        cookie: `pint_path_session=${initial.token}`,
+        "content-type": "application/json",
+        "x-real-ip": "203.0.113.45",
+      };
+      const post = (extra: Record<string, string> = {}) => fetch(endpoint, {
+        method: "POST",
+        headers: { ...headers, ...extra },
+        body,
+      });
+
+      const missingMarker = await post();
+      expect(missingMarker.status).toBe(403);
+      expect(responseCookie(missingMarker.headers, "pint_path_session")).toBe("");
+
+      const browserSpoof = await post({
+        origin: "null",
+        "sec-pint-path-client": "ios-native-v1",
+      });
+      expect(browserSpoof.status).toBe(403);
+      expect(responseCookie(browserSpoof.headers, "pint_path_session")).toBe("");
+
+      const fetchMetadataSpoof = await post({
+        "sec-fetch-site": "same-origin",
+        "sec-pint-path-client": "ios-native-v1",
+      });
+      expect(fetchMetadataSpoof.status).toBe(403);
+      expect(responseCookie(fetchMetadataSpoof.headers, "pint_path_session")).toBe("");
+
+      const completed = await new Promise<{
+        status: number;
+        headers: http.IncomingHttpHeaders;
+        payload: { ok: boolean; data: Record<string, unknown> };
+      }>((resolve, reject) => {
+        const target = new URL(endpoint);
+        const request = http.request({
+          hostname: target.hostname,
+          port: target.port,
+          path: target.pathname,
+          method: "POST",
+          headers: {
+            ...headers,
+            "content-length": Buffer.byteLength(body),
+            "sec-pint-path-client": "ios-native-v1",
+          },
+        }, (response) => {
+          const chunks: Buffer[] = [];
+          response.on("data", (chunk: Buffer) => chunks.push(chunk));
+          response.on("end", () => resolve({
+            status: response.statusCode ?? 0,
+            headers: response.headers,
+            payload: JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
+              ok: boolean;
+              data: Record<string, unknown>;
+            },
+          }));
+        });
+        request.on("error", reject);
+        request.end(body);
+      });
+      const setCookie = completed.headers["set-cookie"] ?? [];
+      expect(setCookie).toHaveLength(1);
+      const nativeSessionCookie = setCookie
+        .map((value) => value.split(";", 1)[0] ?? "")
+        .find((value) => value.startsWith("pint_path_session=")) ?? "";
+      expect(completed.status).toBe(200);
+      const payload = completed.payload;
+      expect(payload.ok).toBe(true);
+      expect(payload.data).not.toHaveProperty("token");
+      expect(nativeSessionCookie).toMatch(new RegExp(
+        `^pint_path_session=credential-v1\\.account_export\\.${nowSeconds}\\.[A-Za-z0-9_-]{43}$`,
+      ));
+    });
+  });
+
+  it("rejects raw hosted-provider reauthentication proof while enforcing suspended-billing revocation", async () => {
+    const { database, repository } = createRepository();
+    const initialSeconds = Math.floor(Date.parse(NOW) / 1000);
+    const providerUser = {
+      id: "legacy-native-proof-user",
+      email: "legacy-native-proof-user@example.com",
+      email_confirmed_at: NOW,
+      user_metadata: {},
+    };
+    const getUser = vi.fn(async () => ({ data: { user: providerUser }, error: null }));
+    const service = createBusinessService(repository, {
+      NODE_ENV: "production",
+      SUPABASE_URL: "https://example.supabase.co",
+      SUPABASE_ANON_KEY: "placeholder-anon-key",
+      SUPABASE_SERVICE_ROLE_KEY: "placeholder-service-role-key",
+    });
+    (service as unknown as { supabase: unknown }).supabase = { auth: { getUser } };
+    const initialProviderToken = testSupabaseAccessToken({
+      iat: initialSeconds - 30,
+      auth_time: initialSeconds - 30,
+      session_id: "legacy-native-initial-session",
+      amr: [{ method: "password", timestamp: initialSeconds - 30 }],
+    }, "legacy-native-initial-signature");
+    const initial = await service.loginWithSupabaseAccessToken({
+      accessToken: initialProviderToken,
+      ageConfirmed: true,
+      termsAccepted: true,
+      privacyAccepted: true,
+      termsVersion: CURRENT_LEGAL_POLICY_VERSION,
+      privacyVersion: CURRENT_LEGAL_POLICY_VERSION,
+      consentSource: "ios",
+    });
+
+    const laterMs = Date.parse(NOW) + 31 * 60_000;
+    const laterSeconds = Math.floor(laterMs / 1000);
+    vi.setSystemTime(new Date(laterMs));
+    const freshNativeProof = testSupabaseAccessToken({
+      iat: laterSeconds - 10,
+      auth_time: laterSeconds - 10,
+      session_id: "legacy-native-fresh-session",
+      amr: [{ method: "totp", timestamp: laterSeconds - 10 }],
+    }, "legacy-native-fresh-signature");
+    let account = repository.getAccountBySupabaseUserId(providerUser.id)!;
+    await expect(service.requireRecentAuthentication(
+      account,
+      `Bearer ${initial.token}`,
+      { accessToken: freshNativeProof, password: undefined },
+      "account_export",
+    )).rejects.toMatchObject({
+      statusCode: 403,
+      details: expect.objectContaining({ reauthPurpose: "account_export" }),
+    });
+    expect(getUser).toHaveBeenCalledTimes(1);
+
+    const validAfter = new Date(laterMs - 60_000).toISOString();
+    database.prepare("UPDATE accounts SET provider_tokens_valid_after = ?, updated_at = ? WHERE id = ?")
+      .run(validAfter, validAfter, account.id);
+    account = repository.getAccountById(account.id)!;
+
+    const revokedProviderSessionId = "legacy-native-revoked-session";
+    const revokedProof = testSupabaseAccessToken({
+      iat: laterSeconds,
+      auth_time: laterSeconds,
+      session_id: revokedProviderSessionId,
+      amr: [{ method: "password", timestamp: laterSeconds }],
+    }, "legacy-native-revoked-signature");
+    const revokedProviderHash = crypto
+      .createHash("sha256")
+      .update(`supabase-session:${revokedProviderSessionId}`)
+      .digest("hex");
+    database.prepare(
+      `INSERT INTO revoked_provider_sessions (
+         user_id, provider_session_id_hash, revoked_at, reason
+       ) VALUES (?, ?, ?, ?)`,
+    ).run(account.id, revokedProviderHash, new Date(laterMs).toISOString(), "test_revocation");
+    database.prepare("UPDATE accounts SET status = 'suspended', updated_at = ? WHERE id = ?")
+      .run(new Date(laterMs).toISOString(), account.id);
+    database.prepare("UPDATE profiles SET account_status = 'suspended', updated_at = ? WHERE id = ?")
+      .run(new Date(laterMs).toISOString(), account.id);
+    await expect(service.createSuspendedAccountBillingPortal({
+      accessToken: revokedProof,
+    })).rejects.toMatchObject({ statusCode: 401 });
   });
 
   it("contains password resets by revoking every app session and invalidating older provider tokens", async () => {
@@ -1469,6 +2829,58 @@ describe("Supabase account and verification foundation", () => {
       .all(login.account.id)).toHaveLength(2);
 
     const recoveryToken = token("password-reset-recovery", "otp", issuedAt + 60);
+    providerUser.factors = [
+      { id: "password-reset-totp", factor_type: "totp", status: "verified" },
+    ];
+    const mfaRecoveryToken = testSupabaseAccessToken({
+      sub: providerUser.id,
+      session_id: "password-reset-recovery",
+      iat: issuedAt + 60,
+      aal: "aal2",
+      amr: [
+        { method: "otp", timestamp: issuedAt + 60 },
+        { method: "totp", timestamp: issuedAt + 60 },
+      ],
+    }, "password-reset-mfa-signature");
+    const wrongSessionMfaToken = testSupabaseAccessToken({
+      sub: providerUser.id,
+      session_id: "password-reset-wrong-session",
+      iat: issuedAt + 60,
+      aal: "aal2",
+      amr: [{ method: "totp", timestamp: issuedAt + 60 }],
+    }, "password-reset-wrong-session-signature");
+    const resetSessionRepository = (service as unknown as {
+      accountSessionRepository: AccountSessionRepository;
+    }).accountSessionRepository;
+    const originalPasswordResetContainment = resetSessionRepository.completePasswordResetContainment
+      .bind(resetSessionRepository);
+    const passwordResetContainment = vi.spyOn(resetSessionRepository, "completePasswordResetContainment");
+    await expect(service.completePasswordReset({ accessToken: recoveryToken }))
+      .rejects.toMatchObject({
+        statusCode: 403,
+        details: expect.objectContaining({ publicCode: "MFA_STEP_UP_REQUIRED" }),
+      });
+    await expect(service.completePasswordReset({
+      accessToken: recoveryToken,
+      mfaAccessToken: wrongSessionMfaToken,
+    })).rejects.toMatchObject({
+      statusCode: 403,
+      details: expect.objectContaining({ publicCode: "MFA_STEP_UP_REQUIRED" }),
+    });
+    expect(passwordResetContainment).not.toHaveBeenCalled();
+    const failedPasswordResetContainment = vi.spyOn(resetSessionRepository, "completePasswordResetContainment")
+      .mockRejectedValueOnce(new Error("simulated password-reset containment failure"));
+    await expect(service.completePasswordReset({
+      accessToken: recoveryToken,
+      mfaAccessToken: mfaRecoveryToken,
+    }))
+      .rejects.toThrow("simulated password-reset containment failure");
+    expect(globalSignOut).not.toHaveBeenCalled();
+    expect(repositoryDatabases.get(repository)!
+      .prepare("SELECT count(*) AS count FROM auth_sessions WHERE user_id = ? AND revoked_at IS NULL")
+      .get(login.account.id)).toEqual({ count: 2 });
+    expect(providerRefreshTokensRevoked).toBe(false);
+    failedPasswordResetContainment.mockImplementation(originalPasswordResetContainment);
     const app = express();
     app.use(express.json());
     app.use("/api/business", createBusinessRouter(service));
@@ -1480,7 +2892,7 @@ describe("Supabase account and verification foundation", () => {
           "content-type": "application/json",
           cookie: `pint_path_session=${login.token}`,
         },
-        body: JSON.stringify({ accessToken: recoveryToken }),
+        body: JSON.stringify({ accessToken: recoveryToken, mfaAccessToken: mfaRecoveryToken }),
       });
       const payload = await completed.json() as { data: Record<string, unknown> };
       expect(completed.status).toBe(200);
@@ -1502,13 +2914,15 @@ describe("Supabase account and verification foundation", () => {
     });
 
     const resetAccount = repository.getAccountById(login.account.id)!;
-    expect(resetAccount.providerTokensValidAfter).toBe(NOW);
+    expect(resetAccount.providerTokensValidAfter)
+      .toBe(new Date(Date.parse(NOW) + 60_000).toISOString());
     expect(await listSecurityAuditLogs(repository, { action: "password_reset_completed" })).toHaveLength(1);
     expect(providerRefreshTokensRevoked).toBe(true);
     const refreshUnknownNeverSyncedProviderSession = () => providerRefreshTokensRevoked
       ? { data: null, error: { message: "refresh token revoked" } }
       : { data: { accessToken: token("password-reset-never-synced", "password", issuedAt + 120) }, error: null };
     expect(refreshUnknownNeverSyncedProviderSession()).toEqual(expect.objectContaining({ data: null }));
+    providerUser.factors = [];
     await expect(service.loginWithSupabaseAccessToken({
       accessToken: token("password-reset-unseen-stale", "password", issuedAt + 90),
     })).rejects.toThrow("predates a security reset");
@@ -1516,9 +2930,130 @@ describe("Supabase account and verification foundation", () => {
       accessToken: token(
         "password-reset-fresh-sign-in",
         "password",
-        Math.floor(new Date(NOW).getTime() / 1000) + 60,
+        Math.floor(new Date(NOW).getTime() / 1000) + 120,
       ),
     })).resolves.toEqual(expect.objectContaining({ token: expect.any(String) }));
+  });
+
+  it("rejects a provider exchange already in flight when the account token epoch advances", async () => {
+    const { repository } = createRepository();
+    const nowSeconds = Math.floor(Date.parse(NOW) / 1000);
+    const providerUser = {
+      id: "provider-epoch-race-user",
+      email: "provider-epoch-race-user@example.com",
+      email_confirmed_at: NOW,
+      user_metadata: {},
+    };
+    const service = createBusinessService(repository, {
+      SUPABASE_URL: "https://example.supabase.co",
+      SUPABASE_ANON_KEY: "placeholder-anon-key",
+      SUPABASE_SERVICE_ROLE_KEY: "placeholder-service-role-key",
+    });
+    const accountSessionRepository = (service as unknown as {
+      accountSessionRepository: AccountSessionRepository;
+    }).accountSessionRepository;
+    (service as unknown as { supabase: unknown }).supabase = {
+      auth: {
+        getUser: vi.fn(async () => ({ data: { user: providerUser }, error: null })),
+      },
+    };
+    const providerToken = (sessionId: string, issuedAt: number) => testSupabaseAccessToken({
+      sub: providerUser.id,
+      iat: issuedAt,
+      auth_time: issuedAt,
+      session_id: sessionId,
+      amr: [{ method: "password", timestamp: issuedAt }],
+    }, `provider-epoch-race-${sessionId}`);
+    const initial = await service.loginWithSupabaseAccessToken({
+      accessToken: providerToken("initial", nowSeconds - 120),
+      ageConfirmed: true,
+      termsAccepted: true,
+      privacyAccepted: true,
+      termsVersion: CURRENT_LEGAL_POLICY_VERSION,
+      privacyVersion: CURRENT_LEGAL_POLICY_VERSION,
+      consentSource: "web",
+    });
+    const accountBeforeInFlight = repository.getAccountById(initial.account.id)!;
+    const profileBeforeInFlight = await accountProfilePreferencesRepositories
+      .get(repository)!
+      .getProfileById(initial.account.id);
+
+    Object.assign(providerUser, {
+      email: "provider-epoch-race-changed@example.com",
+      user_metadata: {
+        full_name: "Rejected Provider Mutation",
+        avatar_url: "https://example.test/rejected-provider-avatar.png",
+      },
+      factors: [
+        { id: "rejected-provider-factor", factor_type: "totp", status: "verified" },
+      ],
+    });
+
+    let releaseExchange!: () => void;
+    let markExchangePaused!: () => void;
+    const exchangePaused = new Promise<void>((resolve) => { markExchangePaused = resolve; });
+    const exchangeRelease = new Promise<void>((resolve) => { releaseExchange = resolve; });
+    const originalRotateOrCreate = accountSessionRepository
+      .rotateOrCreateSessionTokenWithSupabaseAccountMutation
+      .bind(accountSessionRepository);
+    vi.spyOn(accountSessionRepository, "rotateOrCreateSessionTokenWithSupabaseAccountMutation")
+      .mockImplementation(async (input) => {
+      markExchangePaused();
+      await exchangeRelease;
+      return originalRotateOrCreate(input);
+      });
+
+    const inFlightExchange = service.loginWithSupabaseAccessToken({
+      accessToken: testSupabaseAccessToken({
+        sub: providerUser.id,
+        iat: nowSeconds - 60,
+        auth_time: nowSeconds - 60,
+        session_id: "in-flight",
+        aal: "aal2",
+        amr: [{ method: "totp", timestamp: nowSeconds - 60 }],
+      }, "provider-epoch-race-in-flight"),
+    });
+    await exchangePaused;
+    await accountSessionRepository.completePasswordResetContainment({
+      userId: initial.account.id,
+      providerSessionIdHash: crypto.createHash("sha256").update("reset-provider-session").digest("hex"),
+      providerTokensValidAfter: NOW,
+      revokedAt: NOW,
+    });
+    releaseExchange();
+
+    await expect(inFlightExchange).rejects.toMatchObject({
+      statusCode: 409,
+      details: expect.objectContaining({ reauthenticationRequired: true }),
+    });
+    expect(repositoryDatabases.get(repository)!.prepare(
+      "SELECT count(*) AS count FROM auth_sessions WHERE user_id = ? AND revoked_at IS NULL",
+    ).get(initial.account.id)).toEqual({ count: 0 });
+    const accountAfterRejectedExchange = repository.getAccountById(initial.account.id)!;
+    expect(accountAfterRejectedExchange).toMatchObject({
+      email: accountBeforeInFlight.email,
+      displayName: accountBeforeInFlight.displayName,
+      displayNameKey: accountBeforeInFlight.displayNameKey,
+      avatarUrl: accountBeforeInFlight.avatarUrl,
+      authProvider: accountBeforeInFlight.authProvider,
+      supabaseUserId: accountBeforeInFlight.supabaseUserId,
+      emailVerifiedAt: accountBeforeInFlight.emailVerifiedAt,
+      mfaLevel: accountBeforeInFlight.mfaLevel,
+      mfaVerifiedAt: accountBeforeInFlight.mfaVerifiedAt,
+      termsAcceptedAt: accountBeforeInFlight.termsAcceptedAt,
+      privacyAcceptedAt: accountBeforeInFlight.privacyAcceptedAt,
+      termsVersion: accountBeforeInFlight.termsVersion,
+      privacyVersion: accountBeforeInFlight.privacyVersion,
+      ageConfirmedAt: accountBeforeInFlight.ageConfirmedAt,
+    });
+    expect(await accountProfilePreferencesRepositories
+      .get(repository)!
+      .getProfileById(initial.account.id)).toEqual(profileBeforeInFlight);
+    expect((await getActivityAuditRepository(repository).listUserActivityEvents({
+      userId: initial.account.id,
+      limit: 20,
+    })).items.filter((event) => event.eventType === "user_login")).toHaveLength(1);
+    expect(await listSecurityAuditLogs(repository, { action: "login_success" })).toHaveLength(1);
   });
 
   it("links uploads and verifications to authenticated users and blocks self-verification", async () => {
@@ -3109,6 +4644,52 @@ describe("production hardening", () => {
     expect((await service.requireAdmin(adminAuthorization)).id).toBe(admin.id);
   });
 
+  it("revalidates hosted admin factors with Supabase before every production admin authorization", async () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository, {
+      NODE_ENV: "production",
+      ADMIN_EMAILS: "provider-admin@example.com",
+      REQUIRE_ADMIN_MFA_IN_PRODUCTION: true,
+      REQUIRE_VERIFIED_ACCOUNT_IN_PRODUCTION: true,
+      SUPABASE_URL: "https://example.supabase.co",
+      SUPABASE_ANON_KEY: "placeholder-anon-key",
+      SUPABASE_SERVICE_ROLE_KEY: "placeholder-service-role-key",
+      SOURCE_EVIDENCE_SIGNING_SECRET: "production-source-evidence-signing-secret-32",
+    });
+    const admin = createAccount(repository, "provider-admin", "admin");
+    repository.linkSupabaseAccount({
+      userId: admin.id,
+      supabaseUserId: "00000000-0000-4000-8000-000000000401",
+      email: admin.email,
+      authProvider: "supabase",
+      displayName: null,
+      avatarUrl: null,
+      emailVerifiedAt: NOW,
+      mfaLevel: "aal2",
+      mfaVerifiedAt: new Date().toISOString(),
+      now: NOW,
+    });
+    const adminAuthorization = createSession(repository, admin.id, "provider-admin-session-token");
+    const listFactors = vi.fn(async () => ({
+      data: {
+        factors: [{ id: "provider-admin-factor", factor_type: "totp", status: "verified" }],
+      },
+      error: null,
+    }));
+    (service as unknown as { supabase: unknown }).supabase = {
+      auth: { admin: { mfa: { listFactors } } },
+    };
+
+    await expect(service.requireAdmin(adminAuthorization)).resolves.toEqual(expect.objectContaining({ id: admin.id }));
+    expect(listFactors).toHaveBeenCalledWith({ userId: "00000000-0000-4000-8000-000000000401" });
+
+    listFactors.mockResolvedValueOnce({ data: { factors: [] }, error: null });
+    await expect(service.requireAdmin(adminAuthorization)).rejects.toThrow("Admin MFA step-up required");
+
+    listFactors.mockResolvedValueOnce({ data: null, error: { message: "provider unavailable" } });
+    await expect(service.requireAdmin(adminAuthorization)).rejects.toMatchObject({ statusCode: 503 });
+  });
+
   it("keeps production admin routes locked until an admin email allowlist is configured", async () => {
     const { repository } = createRepository();
     const serviceWithAllowlist = createBusinessService(repository, {
@@ -3478,6 +5059,12 @@ describe("production hardening", () => {
       liveProbe: true,
     }));
     expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock.mock.calls.map(([input]) => String(input))).toContain(
+      "https://deletion-staging.supabase.co/rest/v1/profiles?select=id&limit=1",
+    );
+    expect(fetchMock.mock.calls.map(([input]) => String(input))).not.toContain(
+      "https://deletion-staging.supabase.co/rest/v1/venues?select=id&limit=1",
+    );
   });
 
   it.each([
@@ -4730,6 +6317,59 @@ describe("production hardening", () => {
     }));
   });
 
+  it("batch-loads public venue tier metadata instead of issuing one profile read per venue", async () => {
+    const { repository } = createRepository();
+    for (const [index, venueId] of ["venue-a", "venue-b", "venue-c", "venue-d"].entries()) {
+      repository.upsertBarProfile({
+        barId: venueId,
+        name: `Venue ${String.fromCharCode(65 + index)}`,
+        address: null,
+        suburb: "Melbourne",
+        area: "Melbourne",
+        phone: null,
+        website: null,
+        instagram: null,
+        description: null,
+        openingHours: {},
+        venueTags: [],
+        membershipTier: venueId === "venue-a" ? "pro" : "basic",
+        highlightedName: venueId === "venue-a",
+        premiumBadge: null,
+        promoted: venueId === "venue-a",
+        featuredSpecialEligible: venueId === "venue-a",
+        acceptsPintPathCodes: venueId === "venue-a",
+        active: true,
+        now: NOW,
+      });
+    }
+
+    const inventory = venueInventoryRepositories.get(repository)!;
+    const batchMetadata = vi.spyOn(inventory, "listBarProfilePublicMetadata");
+    const pointMetadata = vi.spyOn(inventory, "getBarProfile");
+    const service = createBusinessService(repository);
+    const result = await service.listVenuesPage(undefined, 2, 0);
+
+    expect(result.venues).toHaveLength(2);
+    expect(result.venues[0]).toEqual(expect.objectContaining({
+      id: "venue-a",
+      membershipTier: "pro",
+      highlightedName: true,
+      promoted: true,
+      featuredSpecialEligible: true,
+      acceptsPintPathCodes: true,
+    }));
+    expect(batchMetadata).toHaveBeenCalledTimes(1);
+    expect(batchMetadata.mock.calls[0]?.[0]).toEqual(["venue-a", "venue-b", "venue-c", "venue-d"]);
+    expect(pointMetadata).not.toHaveBeenCalled();
+
+    batchMetadata.mockClear();
+    const prelaunchService = createBusinessService(repository, { COMMERCIAL_LAUNCH_ENABLED: false });
+    const prelaunchResult = await prelaunchService.listVenuesPage(undefined, 2, 0);
+    expect(prelaunchResult.venues.every((venue) => venue.membershipTier === "basic")).toBe(true);
+    expect(batchMetadata).not.toHaveBeenCalled();
+    expect(pointMetadata).not.toHaveBeenCalled();
+  });
+
   it("exposes remote contact provenance while filtering closed venues and withholding malformed postcodes", async () => {
     const { repository } = createRepository();
     const selectedColumns: string[] = [];
@@ -4999,7 +6639,7 @@ describe("production hardening", () => {
 
   it("deduplicates the complete local directory before applying page offsets", async () => {
     const { repository } = createRepository();
-    const upsertProfile = (barId: string, name: string) => repository.upsertBarProfile({
+    const upsertProfile = (barId: string, name: string, pro = false) => repository.upsertBarProfile({
       barId,
       name,
       address: null,
@@ -5011,17 +6651,18 @@ describe("production hardening", () => {
       description: null,
       openingHours: {},
       venueTags: [],
-      membershipTier: "basic",
-      highlightedName: false,
-      premiumBadge: null,
-      promoted: false,
-      featuredSpecialEligible: false,
+      membershipTier: pro ? "pro" : "basic",
+      highlightedName: pro,
+      premiumBadge: pro ? "Identity Pro" : null,
+      promoted: pro,
+      featuredSpecialEligible: pro,
+      acceptsPintPathCodes: pro,
       active: true,
       now: NOW,
     });
     const canonicalVenueId = "9102aedc-de45-4784-a2ce-f89b7d194c01";
     upsertProfile(canonicalVenueId, "Rooftop Bar");
-    upsertProfile("demo:rooftop-bar", "Rooftop Bar");
+    upsertProfile("demo:rooftop-bar", "Rooftop Bar", true);
     upsertProfile("unique-local", "Unique Local Venue");
     const service = createBusinessService(repository);
 
@@ -5029,6 +6670,14 @@ describe("production hardening", () => {
     const secondPage = await service.listVenuesPage(undefined, 1, 1);
 
     expect(firstPage.venues.map((venue) => venue.id)).toEqual([canonicalVenueId]);
+    expect(firstPage.venues[0]).toEqual(expect.objectContaining({
+      membershipTier: "pro",
+      highlightedName: true,
+      premiumBadge: "Identity Pro",
+      promoted: true,
+      featuredSpecialEligible: true,
+      acceptsPintPathCodes: true,
+    }));
     expect(firstPage.pagination).toEqual({ total: 2, limit: 1, offset: 0, hasMore: true });
     expect(secondPage.venues.map((venue) => venue.id)).toEqual(["unique-local"]);
     expect(secondPage.pagination).toEqual({ total: 2, limit: 1, offset: 1, hasMore: false });
@@ -5529,7 +7178,9 @@ describe("production hardening", () => {
       expect(anonymousResponse.headers.get("cache-control")).toBe(
         "public, max-age=30, stale-while-revalidate=120",
       );
-      expect(anonymousResponse.headers.get("vary")).toBeNull();
+      expect(anonymousResponse.headers.get("vary")).toContain("Authorization");
+      expect(anonymousResponse.headers.get("vary")).toContain("Cookie");
+      expect(anonymousResponse.headers.get("vary")).toContain("Origin");
       expect(await anonymousResponse.json()).toEqual(expect.objectContaining({
         data: expect.objectContaining({
           venues: [
@@ -5541,6 +7192,14 @@ describe("production hardening", () => {
               ],
             }),
           ],
+        }),
+      }));
+
+      const legacyPageResponse = await fetch(`${baseUrl}/api/business/venues?limit=500`);
+      expect(legacyPageResponse.status).toBe(200);
+      expect(await legacyPageResponse.json()).toEqual(expect.objectContaining({
+        data: expect.objectContaining({
+          pagination: expect.objectContaining({ limit: 250 }),
         }),
       }));
 
@@ -7744,6 +9403,17 @@ describe("production hardening", () => {
       expect(clearedCookie).toContain("pint_path_session=");
       expect(clearedCookie).toContain("Expires=Thu, 01 Jan 1970");
       expect(await service.getAccountFromAuthorization(`Bearer ${token}`)).toBeNull();
+
+      const repeatedLogout = await fetch(`${baseUrl}/api/business/auth/logout`, {
+        method: "POST",
+        headers: { cookie },
+      });
+      expect(repeatedLogout.status).toBe(200);
+      expect(repeatedLogout.headers.get("set-cookie") ?? "").toContain("Expires=Thu, 01 Jan 1970");
+      await expect(repeatedLogout.json()).resolves.toEqual(expect.objectContaining({
+        ok: true,
+        data: { revoked: false, revokedDiscountPasses: 0 },
+      }));
     });
   });
 

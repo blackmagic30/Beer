@@ -12,10 +12,18 @@ import type {
 import type { SqlDatabase } from "./sql-database.js";
 
 const CANONICAL_UTC_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+const SHA256_HEX_HASH = /^[0-9a-f]{64}$/;
 const MAX_ACCOUNT_SESSION_LIMIT = 1_000;
 const MAX_SESSION_LIST_OFFSET = 2_147_483_647;
 const PUBLIC_ACCOUNT_ID_ATTEMPTS = 20;
 const TOUCH_THROTTLE_MS = 2 * 60_000;
+const PROVIDER_GLOBAL_REVOCATION_PENDING_HASH =
+  "1c85b251c4aa3bab422ff9f4d0d1af2662f30cc4d7c2cb7717d80583eb80d8c6";
+const PROVIDER_GLOBAL_REVOCATION_PENDING_PREFIX = "provider_global_revocation_pending:";
+const PROVIDER_GLOBAL_REVOCATION_CLAIM_PREFIX = "provider_global_revocation_claim:";
+const PROVIDER_GLOBAL_REVOCATION_CLAIM = /^[A-Za-z0-9_-]{43}$/;
+const PROVIDER_GLOBAL_REVOCATION_CLAIM_LEASE_MS = 5 * 60_000;
+type ProviderGlobalRevocationOperation = "logout_all" | "password_reset";
 
 export type AccountSessionRepositoryErrorCode =
   | "account_not_found"
@@ -23,6 +31,7 @@ export type AccountSessionRepositoryErrorCode =
   | "account_identity_conflict"
   | "display_name_conflict"
   | "invalid_input"
+  | "provider_global_revocation_pending"
   | "provider_session_revoked"
   | "session_conflict";
 
@@ -32,6 +41,7 @@ const ERROR_MESSAGES: Readonly<Record<AccountSessionRepositoryErrorCode, string>
   account_identity_conflict: "The account identity conflicts with an existing account.",
   display_name_conflict: "The display name conflicts with an existing account.",
   invalid_input: "The account or session input is invalid.",
+  provider_global_revocation_pending: "Provider-wide session revocation is already pending.",
   provider_session_revoked: "The provider session has been revoked.",
   session_conflict: "The session conflicts with existing session state.",
 };
@@ -114,6 +124,8 @@ interface LockedAccountRow {
   id: string;
   status: AccountStatus;
   authProvider: string;
+  providerTokensValidAfter: string | null;
+  updatedAt: string;
   deletionLocked: boolean | number;
 }
 
@@ -206,6 +218,12 @@ function requireCanonicalUtc(value: string): string {
   } catch {
     return invalidInput();
   }
+}
+
+function requireSha256Hash(value: string): string {
+  const normalized = requireBoundedText(value, 64);
+  if (value !== normalized || !SHA256_HEX_HASH.test(normalized)) invalidInput();
+  return normalized;
 }
 
 function optionalCanonicalUtc(value: string | null | undefined): string | null {
@@ -309,6 +327,147 @@ export interface SessionMutationSummary {
   revokedProviderSessions: number;
 }
 
+export type AccountSessionTokenRotationResult = "rotated" | "created" | "conflict";
+
+/**
+ * Authoritative Supabase account state that may be committed with a provider-
+ * bound app-session rotation. Legal and age acceptance, when present, are
+ * timestamped with the new session's `createdAt` inside the same transaction.
+ */
+export interface SupabaseAccountSessionMutation {
+  authProvider: "supabase";
+  supabaseUserId: string;
+  email: string;
+  displayName: string | null;
+  displayNameKey?: string | null | undefined;
+  avatarUrl: string | null;
+  emailVerifiedAt: string | null;
+  mfaLevel: string;
+  mfaVerifiedAt: string | null;
+  legalAcceptance?: {
+    termsVersion: string;
+    privacyVersion: string;
+    ageConfirmed: true;
+  } | null | undefined;
+}
+
+export interface AccountSessionTokenRotationInput {
+  currentTokenHash?: string | null | undefined;
+  newTokenHash: string;
+  userId: string;
+  providerSessionIdHash: string;
+  providerTokenIssuedAt?: string | null | undefined;
+  createdAt: string;
+  expiresAt: string;
+  lastUsedAt?: string | null | undefined;
+  lastIpHash?: string | null | undefined;
+  userAgentHash?: string | null | undefined;
+  maxActiveSessions: number;
+  supabaseAccountMutation?: SupabaseAccountSessionMutation | null | undefined;
+}
+
+export type SupabaseAccountSessionTokenRotationInput = Omit<
+  AccountSessionTokenRotationInput,
+  "supabaseAccountMutation"
+> & {
+  supabaseAccountMutation: SupabaseAccountSessionMutation;
+};
+
+export type SupabaseAccountSessionTokenRotationResult =
+  | { status: "rotated" | "created"; account: BusinessAccount }
+  | { status: "conflict" };
+
+interface NormalizedSupabaseAccountSessionMutation {
+  authProvider: "supabase";
+  supabaseUserId: string;
+  email: string;
+  displayName: string | null;
+  displayNameKey: string | null;
+  avatarUrl: string | null;
+  emailVerifiedAt: string | null;
+  mfaLevel: string;
+  mfaVerifiedAt: string | null;
+  legalAcceptance: {
+    termsVersion: string;
+    privacyVersion: string;
+    ageConfirmed: true;
+  } | null;
+}
+
+function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
+  const allowedKeys = new Set(allowed);
+  return Object.keys(value).every((key) => allowedKeys.has(key));
+}
+
+function nullableBoundedText(value: unknown, maximum: number): string | null {
+  if (value === null) return null;
+  if (typeof value !== "string") invalidInput();
+  return requireBoundedText(value, maximum);
+}
+
+function normalizeSupabaseAccountSessionMutation(
+  value: SupabaseAccountSessionMutation,
+): NormalizedSupabaseAccountSessionMutation {
+  if (
+    !value
+    || typeof value !== "object"
+    || Array.isArray(value)
+    || !hasOnlyKeys(value as unknown as Record<string, unknown>, [
+      "authProvider",
+      "supabaseUserId",
+      "email",
+      "displayName",
+      "displayNameKey",
+      "avatarUrl",
+      "emailVerifiedAt",
+      "mfaLevel",
+      "mfaVerifiedAt",
+      "legalAcceptance",
+    ])
+    || value.authProvider !== "supabase"
+  ) invalidInput();
+  const emailVerifiedAt = value.emailVerifiedAt === null
+    ? null
+    : typeof value.emailVerifiedAt === "string"
+      ? requireCanonicalUtc(value.emailVerifiedAt)
+      : invalidInput();
+  const mfaVerifiedAt = value.mfaVerifiedAt === null
+    ? null
+    : typeof value.mfaVerifiedAt === "string"
+      ? requireCanonicalUtc(value.mfaVerifiedAt)
+      : invalidInput();
+  let legalAcceptance: NormalizedSupabaseAccountSessionMutation["legalAcceptance"] = null;
+  if (value.legalAcceptance != null) {
+    if (
+      typeof value.legalAcceptance !== "object"
+      || Array.isArray(value.legalAcceptance)
+      || !hasOnlyKeys(value.legalAcceptance as unknown as Record<string, unknown>, [
+        "termsVersion",
+        "privacyVersion",
+        "ageConfirmed",
+      ])
+      || value.legalAcceptance.ageConfirmed !== true
+    ) invalidInput();
+    legalAcceptance = {
+      termsVersion: requireBoundedText(value.legalAcceptance.termsVersion, 80),
+      privacyVersion: requireBoundedText(value.legalAcceptance.privacyVersion, 80),
+      ageConfirmed: true,
+    };
+  }
+  return {
+    authProvider: "supabase",
+    supabaseUserId: requireBoundedText(value.supabaseUserId),
+    email: normalizeEmail(value.email),
+    displayName: nullableBoundedText(value.displayName, 160),
+    displayNameKey: normalizeDisplayNameKey(value.displayNameKey),
+    avatarUrl: nullableBoundedText(value.avatarUrl, 2_048),
+    emailVerifiedAt,
+    mfaLevel: requireBoundedText(value.mfaLevel, 80),
+    mfaVerifiedAt,
+    legalAcceptance,
+  };
+}
+
 const EMPTY_SESSION_MUTATION: SessionMutationSummary = {
   revokedSessions: 0,
   revokedDiscountPasses: 0,
@@ -337,6 +496,8 @@ export class AccountSessionRepository {
     const row = await this.database.prepare(
       `SELECT account.id AS "id", account.status AS "status",
               account.auth_provider AS "authProvider",
+              account.provider_tokens_valid_after AS "providerTokensValidAfter",
+              account.updated_at AS "updatedAt",
               EXISTS (
                 SELECT 1 FROM account_deletion_requests deletion
                 WHERE deletion.user_id = account.id
@@ -362,6 +523,26 @@ export class AccountSessionRepository {
       throw new AccountSessionRepositoryError("account_not_session_eligible");
     }
     return account;
+  }
+
+  private async advanceProviderTokensValidAfter(input: {
+    account: LockedAccountRow;
+    candidate: string;
+    updatedAt: string;
+  }): Promise<void> {
+    if (
+      input.account.providerTokensValidAfter
+      && Date.parse(input.candidate) <= Date.parse(input.account.providerTokensValidAfter)
+    ) return;
+    const updatedAt = Date.parse(input.updatedAt) > Date.parse(input.account.updatedAt)
+      ? input.updatedAt
+      : input.account.updatedAt;
+    const updated = await this.database.prepare(
+      `UPDATE accounts
+       SET provider_tokens_valid_after = ?, updated_at = ?
+       WHERE id = ?`,
+    ).run(input.candidate, updatedAt, input.account.id);
+    if (updated.changes !== 1) throw new AccountSessionRepositoryError("account_not_found");
   }
 
   private async findAccount(sql: string, ...bindings: unknown[]): Promise<BusinessAccount | null> {
@@ -418,6 +599,86 @@ export class AccountSessionRepository {
       now,
       now,
     );
+  }
+
+  /** Caller must hold the account row lock for the enclosing transaction. */
+  private async applySupabaseAccountSessionMutationLocked(
+    userId: string,
+    mutation: NormalizedSupabaseAccountSessionMutation,
+    now: string,
+  ): Promise<{ account: BusinessAccount; establishedProviderCredentialBoundary: boolean }> {
+    if (await this.identityOwner("lower(account.email) = ?", mutation.email, userId)) {
+      throw new AccountSessionRepositoryError("account_identity_conflict");
+    }
+    if (await this.identityOwner("account.supabase_user_id = ?", mutation.supabaseUserId, userId)) {
+      throw new AccountSessionRepositoryError("account_identity_conflict");
+    }
+    if (
+      mutation.displayNameKey
+      && await this.identityOwner("lower(account.display_name_key) = ?", mutation.displayNameKey, userId)
+    ) {
+      throw new AccountSessionRepositoryError("display_name_conflict");
+    }
+
+    const previous = await this.getAccountByIdInternal(userId);
+    if (!previous) throw new AccountSessionRepositoryError("account_not_found");
+    const establishedProviderCredentialBoundary = previous.supabaseUserId !== mutation.supabaseUserId;
+    const linked = await this.database.prepare(
+      `UPDATE accounts
+       SET supabase_user_id = ?, auth_provider = ?, email = ?,
+           password_hash = 'supabase-auth', display_name = ?,
+           display_name_key = ?, avatar_url = ?,
+           email_verified_at = COALESCE(?, email_verified_at),
+           mfa_level = ?, mfa_verified_at = ?, updated_at = ?
+       WHERE id = ? AND auth_provider <> 'deleted'`,
+    ).run(
+      mutation.supabaseUserId,
+      mutation.authProvider,
+      mutation.email,
+      mutation.displayName,
+      mutation.displayNameKey,
+      mutation.avatarUrl,
+      mutation.emailVerifiedAt,
+      mutation.mfaLevel,
+      mutation.mfaVerifiedAt,
+      now,
+      userId,
+    );
+    if (linked.changes !== 1) throw new AccountSessionRepositoryError("account_not_found");
+
+    if (mutation.legalAcceptance) {
+      const accepted = await this.database.prepare(
+        `UPDATE accounts
+         SET terms_accepted_at = ?, privacy_accepted_at = ?, terms_version = ?,
+             privacy_version = ?, age_confirmed_at = COALESCE(age_confirmed_at, ?),
+             updated_at = ?
+         WHERE id = ? AND auth_provider <> 'deleted'`,
+      ).run(
+        now,
+        now,
+        mutation.legalAcceptance.termsVersion,
+        mutation.legalAcceptance.privacyVersion,
+        now,
+        now,
+        userId,
+      );
+      if (accepted.changes !== 1) throw new AccountSessionRepositoryError("account_not_found");
+    }
+
+    if (establishedProviderCredentialBoundary) {
+      await this.database.prepare(
+        "UPDATE auth_sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL",
+      ).run(now, userId);
+      await this.database.prepare(
+        `UPDATE account_discount_passes SET status = 'revoked', revoked_at = ?
+         WHERE user_id = ? AND status = 'active'`,
+      ).run(now, userId);
+    }
+
+    const account = await this.getAccountByIdInternal(userId);
+    if (!account) throw new AccountSessionRepositoryError("account_not_found");
+    await this.upsertProfileFromAccount(account, now);
+    return { account, establishedProviderCredentialBoundary };
   }
 
   async getAccountById(id: string): Promise<BusinessAccount | null> {
@@ -954,6 +1215,170 @@ export class AccountSessionRepository {
     );
   }
 
+  private async isProviderGlobalRevocationPending(userId: string): Promise<boolean> {
+    const row = await this.database.prepare(
+      `SELECT 1 AS "pending" FROM revoked_provider_sessions
+       WHERE user_id = ? AND provider_session_id_hash = ?
+       LIMIT 1`,
+    ).get<{ pending: number | boolean }>(
+      userId,
+      PROVIDER_GLOBAL_REVOCATION_PENDING_HASH,
+    );
+    return row !== undefined;
+  }
+
+  async hasProviderGlobalRevocationPending(userId: string): Promise<boolean> {
+    return this.isProviderGlobalRevocationPending(requireBoundedText(userId));
+  }
+
+  private requireProviderGlobalRevocationOperation(
+    operation: ProviderGlobalRevocationOperation,
+  ): ProviderGlobalRevocationOperation {
+    if (operation !== "logout_all" && operation !== "password_reset") invalidInput();
+    return operation;
+  }
+
+  private providerGlobalRevocationPendingReason(operation: ProviderGlobalRevocationOperation): string {
+    return `${PROVIDER_GLOBAL_REVOCATION_PENDING_PREFIX}${this.requireProviderGlobalRevocationOperation(operation)}`;
+  }
+
+  private providerGlobalRevocationClaimReason(
+    operation: ProviderGlobalRevocationOperation,
+    claimId: string,
+  ): string {
+    if (!PROVIDER_GLOBAL_REVOCATION_CLAIM.test(claimId)) invalidInput();
+    return `${PROVIDER_GLOBAL_REVOCATION_CLAIM_PREFIX}${this.requireProviderGlobalRevocationOperation(operation)}:${claimId}`;
+  }
+
+  private providerGlobalRevocationOperationFromReason(reason: string): ProviderGlobalRevocationOperation | null {
+    for (const operation of ["logout_all", "password_reset"] as const) {
+      if (
+        reason === this.providerGlobalRevocationPendingReason(operation)
+        || reason.startsWith(`${PROVIDER_GLOBAL_REVOCATION_CLAIM_PREFIX}${operation}:`)
+      ) return operation;
+    }
+    return null;
+  }
+
+  private async beginProviderGlobalRevocation(
+    userId: string,
+    startedAt: string,
+    operation: ProviderGlobalRevocationOperation,
+    claimId: string,
+  ): Promise<void> {
+    const result = await this.database.prepare(
+      `INSERT INTO revoked_provider_sessions (
+         user_id, provider_session_id_hash, revoked_at, reason
+       ) VALUES (?, ?, ?, ?)
+       ON CONFLICT(user_id, provider_session_id_hash) DO NOTHING`,
+    ).run(
+      userId,
+      PROVIDER_GLOBAL_REVOCATION_PENDING_HASH,
+      startedAt,
+      this.providerGlobalRevocationClaimReason(operation, claimId),
+    );
+    if (result.changes !== 1) {
+      throw new AccountSessionRepositoryError("provider_global_revocation_pending");
+    }
+  }
+
+  private async requireProviderGlobalRevocationClaim(
+    userId: string,
+    operation: ProviderGlobalRevocationOperation,
+    claimId: string,
+  ): Promise<void> {
+    const row = await this.database.prepare(
+      `SELECT reason AS "reason" FROM revoked_provider_sessions
+       WHERE user_id = ? AND provider_session_id_hash = ?
+       LIMIT 1`,
+    ).get<{ reason: string }>(userId, PROVIDER_GLOBAL_REVOCATION_PENDING_HASH);
+    if (row?.reason !== this.providerGlobalRevocationClaimReason(operation, claimId)) {
+      throw new AccountSessionRepositoryError("provider_global_revocation_pending");
+    }
+  }
+
+  private async finishProviderGlobalRevocation(
+    userId: string,
+    operation: ProviderGlobalRevocationOperation,
+    claimId: string,
+    finishedAt: string,
+    completed: boolean,
+  ): Promise<void> {
+    const claimReason = this.providerGlobalRevocationClaimReason(operation, claimId);
+    const result = completed
+      ? await this.database.prepare(
+          `DELETE FROM revoked_provider_sessions
+           WHERE user_id = ? AND provider_session_id_hash = ? AND reason = ?`,
+        ).run(userId, PROVIDER_GLOBAL_REVOCATION_PENDING_HASH, claimReason)
+      : await this.database.prepare(
+          `UPDATE revoked_provider_sessions
+           SET revoked_at = ?, reason = ?
+           WHERE user_id = ? AND provider_session_id_hash = ? AND reason = ?`,
+        ).run(
+          finishedAt,
+          this.providerGlobalRevocationPendingReason(operation),
+          userId,
+          PROVIDER_GLOBAL_REVOCATION_PENDING_HASH,
+          claimReason,
+        );
+    if (result.changes !== 1) {
+      throw new AccountSessionRepositoryError("provider_global_revocation_pending");
+    }
+  }
+
+  async claimProviderGlobalRevocation(input: {
+    userId: string;
+    claimId: string;
+    claimedAt: string;
+  }): Promise<
+    | { status: "claimed"; operation: ProviderGlobalRevocationOperation }
+    | { status: "absent" | "busy" }
+  > {
+    const userId = requireBoundedText(input.userId);
+    const claimedAt = requireCanonicalUtc(input.claimedAt);
+    const staleBefore = new Date(
+      Date.parse(claimedAt) - PROVIDER_GLOBAL_REVOCATION_CLAIM_LEASE_MS,
+    ).toISOString();
+    const claim = this.database.transaction(async (): Promise<
+      | { status: "claimed"; operation: ProviderGlobalRevocationOperation }
+      | { status: "absent" | "busy" }
+    > => {
+      if (!await this.lockAccount(userId)) {
+        throw new AccountSessionRepositoryError("account_not_found");
+      }
+      const marker = await this.database.prepare(
+        `SELECT revoked_at AS "revokedAt", reason AS "reason"
+         FROM revoked_provider_sessions
+         WHERE user_id = ? AND provider_session_id_hash = ?
+         LIMIT 1`,
+      ).get<{ revokedAt: string; reason: string }>(userId, PROVIDER_GLOBAL_REVOCATION_PENDING_HASH);
+      if (!marker) return { status: "absent" };
+      const operation = this.providerGlobalRevocationOperationFromReason(marker.reason);
+      if (!operation) return { status: "busy" };
+      const claimIsStale = marker.reason.startsWith(PROVIDER_GLOBAL_REVOCATION_CLAIM_PREFIX)
+        && Date.parse(marker.revokedAt) <= Date.parse(staleBefore);
+      if (marker.reason !== this.providerGlobalRevocationPendingReason(operation) && !claimIsStale) {
+        return { status: "busy" };
+      }
+      const claimReason = this.providerGlobalRevocationClaimReason(operation, input.claimId);
+      const result = await this.database.prepare(
+        `UPDATE revoked_provider_sessions
+         SET revoked_at = ?, reason = ?
+         WHERE user_id = ? AND provider_session_id_hash = ?
+           AND revoked_at = ? AND reason = ?`,
+      ).run(
+        claimedAt,
+        claimReason,
+        userId,
+        PROVIDER_GLOBAL_REVOCATION_PENDING_HASH,
+        marker.revokedAt,
+        marker.reason,
+      );
+      return result.changes === 1 ? { status: "claimed", operation } : { status: "busy" };
+    });
+    return claim();
+  }
+
   async createSession(input: {
     tokenHash: string;
     userId: string;
@@ -967,6 +1392,9 @@ export class AccountSessionRepository {
     const normalized = this.validateSessionInput(input);
     const create = this.database.transaction(async () => {
       this.requireSessionEligibleAccount(await this.lockAccount(normalized.userId));
+      if (await this.isProviderGlobalRevocationPending(normalized.userId)) {
+        throw new AccountSessionRepositoryError("account_not_session_eligible");
+      }
       await this.insertSession(normalized);
     });
     try {
@@ -993,6 +1421,9 @@ export class AccountSessionRepository {
     const maxActiveSessions = normalizeActiveSessionLimit(input.maxActiveSessions);
     const create = this.database.transaction(async () => {
       this.requireSessionEligibleAccount(await this.lockAccount(normalized.userId));
+      if (await this.isProviderGlobalRevocationPending(normalized.userId)) {
+        throw new AccountSessionRepositoryError("account_not_session_eligible");
+      }
       await this.insertSession(normalized);
       return this.revokeExcessActiveSessionsInternal({
         userId: normalized.userId,
@@ -1006,6 +1437,168 @@ export class AccountSessionRepository {
     } catch (error) {
       if (error instanceof AccountSessionRepositoryError) throw error;
       if (isConstraintViolation(error)) throw new AccountSessionRepositoryError("session_conflict");
+      throw error;
+    }
+  }
+
+  /** Atomically rotates or creates one provider-bound browser app session. */
+  async rotateOrCreateSessionToken(
+    input: AccountSessionTokenRotationInput,
+  ): Promise<AccountSessionTokenRotationResult> {
+    return this.rotateOrCreateSessionTokenAtomic(input, "status");
+  }
+
+  /**
+   * Atomically commits a Supabase account mutation with its provider-bound app
+   * session and returns the account projection loaded inside that transaction.
+   */
+  async rotateOrCreateSessionTokenWithSupabaseAccountMutation(
+    input: SupabaseAccountSessionTokenRotationInput,
+  ): Promise<SupabaseAccountSessionTokenRotationResult> {
+    return this.rotateOrCreateSessionTokenAtomic(input, "supabase_account");
+  }
+
+  private rotateOrCreateSessionTokenAtomic(
+    input: AccountSessionTokenRotationInput,
+    response: "status",
+  ): Promise<AccountSessionTokenRotationResult>;
+  private rotateOrCreateSessionTokenAtomic(
+    input: SupabaseAccountSessionTokenRotationInput,
+    response: "supabase_account",
+  ): Promise<SupabaseAccountSessionTokenRotationResult>;
+  private async rotateOrCreateSessionTokenAtomic(
+    input: AccountSessionTokenRotationInput,
+    response: "status" | "supabase_account",
+  ): Promise<AccountSessionTokenRotationResult | SupabaseAccountSessionTokenRotationResult> {
+    const currentTokenHash = input.currentTokenHash == null
+      ? null
+      : requireSha256Hash(input.currentTokenHash);
+    const newTokenHash = requireSha256Hash(input.newTokenHash);
+    const providerSessionIdHash = requireSha256Hash(input.providerSessionIdHash);
+    const providerTokenIssuedAt = input.providerTokenIssuedAt == null
+      ? null
+      : requireCanonicalUtc(input.providerTokenIssuedAt);
+    const supabaseAccountMutation = input.supabaseAccountMutation == null
+      ? null
+      : normalizeSupabaseAccountSessionMutation(input.supabaseAccountMutation);
+    const maxActiveSessions = normalizeActiveSessionLimit(input.maxActiveSessions);
+    const normalized = this.validateSessionInput({
+      tokenHash: newTokenHash,
+      userId: input.userId,
+      createdAt: input.createdAt,
+      expiresAt: input.expiresAt,
+      lastUsedAt: input.lastUsedAt,
+      lastIpHash: input.lastIpHash,
+      userAgentHash: input.userAgentHash,
+      providerSessionIdHash,
+    });
+    if (currentTokenHash && currentTokenHash === normalized.tokenHash) invalidInput();
+    if (
+      Date.parse(normalized.lastUsedAt) < Date.parse(normalized.createdAt)
+      || Date.parse(normalized.lastUsedAt) >= Date.parse(normalized.expiresAt)
+    ) invalidInput();
+
+    const conflictResult = (): AccountSessionTokenRotationResult | SupabaseAccountSessionTokenRotationResult =>
+      response === "supabase_account" ? { status: "conflict" } : "conflict";
+    const rotateOrCreate = this.database.transaction(async (): Promise<
+      AccountSessionTokenRotationResult | SupabaseAccountSessionTokenRotationResult
+    > => {
+      if (supabaseAccountMutation) {
+        // Keep the global identity -> account -> session lock order used by
+        // account linking. Conflict checks and every write still happen only
+        // after the account/session authority has been locked and revalidated.
+        await this.lockIdentityKeys([
+          `account:email:${supabaseAccountMutation.email}`,
+          `account:supabase:${supabaseAccountMutation.supabaseUserId}`,
+          ...(supabaseAccountMutation.displayNameKey
+            ? [`account:display:${supabaseAccountMutation.displayNameKey}`]
+            : []),
+        ]);
+      }
+      const account = this.requireSessionEligibleAccount(await this.lockAccount(normalized.userId));
+      if (await this.isProviderGlobalRevocationPending(normalized.userId)) return conflictResult();
+      if (
+        account.providerTokensValidAfter
+        && (
+          providerTokenIssuedAt === null
+          || Date.parse(providerTokenIssuedAt) <= Date.parse(account.providerTokensValidAfter)
+        )
+      ) return conflictResult();
+      const current = currentTokenHash
+        ? await this.lockSessionByTokenForUser(currentTokenHash, normalized.userId)
+        : null;
+      if (currentTokenHash && !current) return conflictResult();
+      if (current && (
+        current.revokedAt !== null
+        || Date.parse(current.createdAt) > Date.parse(normalized.createdAt)
+        || Date.parse(current.expiresAt) <= Date.parse(normalized.createdAt)
+      )) return conflictResult();
+      if (
+        current?.providerSessionIdHash && await this.isProviderSessionRevoked({
+          userId: normalized.userId,
+          providerSessionIdHash: current.providerSessionIdHash,
+        })
+      ) return conflictResult();
+      if (!normalized.providerSessionIdHash || await this.isProviderSessionRevoked({
+        userId: normalized.userId,
+        providerSessionIdHash: normalized.providerSessionIdHash,
+      })) return conflictResult();
+      if (await this.hasActiveProviderSessionForUser({
+        userId: normalized.userId,
+        providerSessionIdHash: normalized.providerSessionIdHash,
+        now: normalized.createdAt,
+        excludingTokenHash: current?.tokenHash ?? null,
+      })) return conflictResult();
+
+      const accountMutation = supabaseAccountMutation
+        ? await this.applySupabaseAccountSessionMutationLocked(
+            normalized.userId,
+            supabaseAccountMutation,
+            normalized.createdAt,
+          )
+        : null;
+
+      await this.insertSession(normalized);
+
+      if (current && currentTokenHash && !accountMutation?.establishedProviderCredentialBoundary) {
+        await this.database.prepare(
+          `UPDATE account_discount_passes
+           SET status = 'revoked', revoked_at = ?
+           WHERE user_id = ? AND session_token_hash = ? AND status = 'active'`,
+        ).run(normalized.createdAt, normalized.userId, currentTokenHash);
+        const revoked = await this.database.prepare(
+          `UPDATE auth_sessions SET revoked_at = ?
+           WHERE token_hash = ? AND user_id = ?
+             AND revoked_at IS NULL AND expires_at > ?`,
+        ).run(normalized.createdAt, currentTokenHash, normalized.userId, normalized.createdAt);
+        if (revoked.changes !== 1) {
+          throw new AccountSessionRepositoryError("session_conflict");
+        }
+      }
+      await this.revokeExcessActiveSessionsInternal({
+        userId: normalized.userId,
+        now: normalized.createdAt,
+        maxActiveSessions,
+        preserveTokenHash: normalized.tokenHash,
+      });
+      const status = current ? "rotated" : "created";
+      if (response === "supabase_account") {
+        if (!accountMutation) throw new AccountSessionRepositoryError("invalid_input");
+        return { status, account: accountMutation.account };
+      }
+      return status;
+    });
+
+    try {
+      return await rotateOrCreate();
+    } catch (error) {
+      if (error instanceof AccountSessionRepositoryError) {
+        if (error.code === "provider_session_revoked" || error.code === "session_conflict") {
+          return conflictResult();
+        }
+        throw error;
+      }
+      if (isConstraintViolation(error)) return conflictResult();
       throw error;
     }
   }
@@ -1132,6 +1725,11 @@ export class AccountSessionRepository {
     return `${accountAlias}.status <> 'suspended'
       AND ${accountAlias}.auth_provider <> 'deleted'
       AND NOT EXISTS (
+        SELECT 1 FROM revoked_provider_sessions provider_global_revocation
+        WHERE provider_global_revocation.user_id = ${accountAlias}.id
+          AND provider_global_revocation.provider_session_id_hash = '${PROVIDER_GLOBAL_REVOCATION_PENDING_HASH}'
+      )
+      AND NOT EXISTS (
         SELECT 1 FROM account_deletion_requests deletion
         WHERE deletion.user_id = ${accountAlias}.id
           AND deletion.status IN ('processing', 'failed', 'completed')
@@ -1247,6 +1845,7 @@ export class AccountSessionRepository {
         if (error instanceof AccountSessionRepositoryError) return false;
         throw error;
       }
+      if (await this.isProviderGlobalRevocationPending(userId)) return false;
       const result = await this.database.prepare(
         `UPDATE auth_sessions AS session
          SET last_used_at = ?, last_ip_hash = ?, user_agent_hash = ?
@@ -1290,6 +1889,38 @@ export class AccountSessionRepository {
        WHERE session.token_hash = ? LIMIT 1${suffix}`,
     ).get<SessionRow>(tokenHash);
     return row ?? null;
+  }
+
+  private async lockSessionByTokenForUser(tokenHash: string, userId: string): Promise<SessionRow | null> {
+    const suffix = this.database.dialect === "postgres" ? " FOR UPDATE OF session" : "";
+    const row = await this.database.prepare(
+      `SELECT ${SESSION_PROJECTION} FROM auth_sessions session
+       WHERE session.token_hash = ? AND session.user_id = ? LIMIT 1${suffix}`,
+    ).get<SessionRow>(tokenHash, userId);
+    return row ?? null;
+  }
+
+  private async hasActiveProviderSessionForUser(input: {
+    userId: string;
+    providerSessionIdHash: string;
+    now: string;
+    excludingTokenHash: string | null;
+  }): Promise<boolean> {
+    const suffix = this.database.dialect === "postgres" ? " FOR UPDATE OF session" : "";
+    const row = await this.database.prepare(
+      `SELECT session.token_hash AS "tokenHash" FROM auth_sessions session
+       WHERE session.user_id = ? AND session.provider_session_id_hash = ?
+         AND session.revoked_at IS NULL AND session.expires_at > ?
+         AND (CAST(? AS TEXT) IS NULL OR session.token_hash <> ?)
+       ORDER BY session.token_hash ASC LIMIT 1${suffix}`,
+    ).get<{ tokenHash: string }>(
+      input.userId,
+      input.providerSessionIdHash,
+      input.now,
+      input.excludingTokenHash,
+      input.excludingTokenHash,
+    );
+    return Boolean(row);
   }
 
   private async upsertProviderRevocation(input: {
@@ -1397,14 +2028,56 @@ export class AccountSessionRepository {
     return result.changes;
   }
 
-  async revokeUserSessionsWithSummary(input: { userId: string; revokedAt: string }): Promise<{
+  async revokeUserSessionsWithSummary(input: {
+    userId: string;
+    revokedAt: string;
+    providerTokensValidAfter?: string | null | undefined;
+    beginProviderGlobalRevocation?: {
+      claimId: string;
+      operation: ProviderGlobalRevocationOperation;
+    } | undefined;
+    finishProviderGlobalRevocation?: {
+      claimId: string;
+      completed: boolean;
+      operation: ProviderGlobalRevocationOperation;
+    } | undefined;
+  }): Promise<{
     revokedSessions: number;
     revokedDiscountPasses: number;
   }> {
     const userId = requireBoundedText(input.userId);
     const revokedAt = requireCanonicalUtc(input.revokedAt);
+    const providerTokensValidAfter = input.providerTokensValidAfter == null
+      ? null
+      : requireCanonicalUtc(input.providerTokensValidAfter);
+    if (input.beginProviderGlobalRevocation && input.finishProviderGlobalRevocation) {
+      invalidInput();
+    }
     const revoke = this.database.transaction(async () => {
-      if (!await this.lockAccount(userId)) return { revokedSessions: 0, revokedDiscountPasses: 0 };
+      const account = await this.lockAccount(userId);
+      if (!account) return { revokedSessions: 0, revokedDiscountPasses: 0 };
+      if (input.beginProviderGlobalRevocation) {
+        await this.beginProviderGlobalRevocation(
+          userId,
+          revokedAt,
+          input.beginProviderGlobalRevocation.operation,
+          input.beginProviderGlobalRevocation.claimId,
+        );
+      }
+      if (input.finishProviderGlobalRevocation) {
+        await this.requireProviderGlobalRevocationClaim(
+          userId,
+          input.finishProviderGlobalRevocation.operation,
+          input.finishProviderGlobalRevocation.claimId,
+        );
+      }
+      if (providerTokensValidAfter) {
+        await this.advanceProviderTokensValidAfter({
+          account,
+          candidate: providerTokensValidAfter,
+          updatedAt: revokedAt,
+        });
+      }
       await this.revokeAllProviderSessionsForUser({
         userId,
         revokedAt,
@@ -1417,6 +2090,15 @@ export class AccountSessionRepository {
       const result = await this.database.prepare(
         "UPDATE auth_sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL",
       ).run(revokedAt, userId);
+      if (input.finishProviderGlobalRevocation) {
+        await this.finishProviderGlobalRevocation(
+          userId,
+          input.finishProviderGlobalRevocation.operation,
+          input.finishProviderGlobalRevocation.claimId,
+          revokedAt,
+          input.finishProviderGlobalRevocation.completed,
+        );
+      }
       return { revokedSessions: result.changes, revokedDiscountPasses: revokedDiscountPasses.changes };
     });
     return revoke();
@@ -1431,14 +2113,42 @@ export class AccountSessionRepository {
     providerSessionIdHash: string;
     providerTokensValidAfter: string;
     revokedAt: string;
+    beginProviderGlobalRevocation?: {
+      claimId: string;
+      operation: ProviderGlobalRevocationOperation;
+    } | undefined;
+    finishProviderGlobalRevocation?: {
+      claimId: string;
+      completed: boolean;
+      operation: ProviderGlobalRevocationOperation;
+    } | undefined;
   }): Promise<{ revokedSessions: number; revokedDiscountPasses: number; cancelledRewardCodes: number }> {
     const userId = requireBoundedText(input.userId);
     const providerSessionIdHash = requireBoundedText(input.providerSessionIdHash);
     const providerTokensValidAfter = requireCanonicalUtc(input.providerTokensValidAfter);
     const revokedAt = requireCanonicalUtc(input.revokedAt);
+    if (input.beginProviderGlobalRevocation && input.finishProviderGlobalRevocation) {
+      invalidInput();
+    }
     const contain = this.database.transaction(async () => {
-      if (!await this.lockAccount(userId)) {
+      const account = await this.lockAccount(userId);
+      if (!account) {
         throw new AccountSessionRepositoryError("account_not_found");
+      }
+      if (input.beginProviderGlobalRevocation) {
+        await this.beginProviderGlobalRevocation(
+          userId,
+          revokedAt,
+          input.beginProviderGlobalRevocation.operation,
+          input.beginProviderGlobalRevocation.claimId,
+        );
+      }
+      if (input.finishProviderGlobalRevocation) {
+        await this.requireProviderGlobalRevocationClaim(
+          userId,
+          input.finishProviderGlobalRevocation.operation,
+          input.finishProviderGlobalRevocation.claimId,
+        );
       }
       await this.revokeAllProviderSessionsForUser({
         userId,
@@ -1462,11 +2172,20 @@ export class AccountSessionRepository {
         `UPDATE free_pint_reward_codes SET status = 'cancelled', cancelled_at = ?
          WHERE user_id = ? AND status = 'active'`,
       ).run(revokedAt, userId);
-      const account = await this.database.prepare(
-        `UPDATE accounts SET provider_tokens_valid_after = ?, updated_at = ?
-         WHERE id = ?`,
-      ).run(providerTokensValidAfter, revokedAt, userId);
-      if (account.changes !== 1) throw new AccountSessionRepositoryError("account_not_found");
+      await this.advanceProviderTokensValidAfter({
+        account,
+        candidate: providerTokensValidAfter,
+        updatedAt: revokedAt,
+      });
+      if (input.finishProviderGlobalRevocation) {
+        await this.finishProviderGlobalRevocation(
+          userId,
+          input.finishProviderGlobalRevocation.operation,
+          input.finishProviderGlobalRevocation.claimId,
+          revokedAt,
+          input.finishProviderGlobalRevocation.completed,
+        );
+      }
       return {
         revokedSessions: revokedSessions.changes,
         revokedDiscountPasses: revokedDiscountPasses.changes,

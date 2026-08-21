@@ -50,7 +50,7 @@
           <button id="showSignupButton" class="authTab" type="button" role="tab" aria-selected="false" aria-controls="signupForm">Create account</button>
         </div>
 
-        <form id="loginForm" class="form authForm" role="tabpanel" aria-labelledby="showLoginButton loginHeading">
+        <form id="loginForm" class="form authForm" method="post" action="/form-submission-unavailable" accept-charset="UTF-8" data-sensitive-native-fallback="non-mutating" role="tabpanel" aria-labelledby="showLoginButton loginHeading">
           <div id="loginPanel" class="authPanelStack">
             <h2 id="loginHeading">Continue with Google</h2>
             <p id="loginLead" class="muted">Google securely verifies your web account. Email/password access is reserved for the first iOS release.</p>
@@ -100,7 +100,7 @@
           </div>
         </form>
 
-        <form id="signupForm" class="form authForm is-hidden" role="tabpanel" aria-labelledby="showSignupButton signupHeading" hidden>
+        <form id="signupForm" class="form authForm is-hidden" method="post" action="/form-submission-unavailable" accept-charset="UTF-8" data-sensitive-native-fallback="non-mutating" role="tabpanel" aria-labelledby="showSignupButton signupHeading" hidden>
           <div id="signupPanel" class="authPanelStack">
             <h2 id="signupHeading">Create your contributor account</h2>
             <p class="muted">Use a real email so review notes and future contributor access can stay attached to you.</p>
@@ -137,7 +137,7 @@
           </div>
         </form>
 
-        <form id="returningLegalAcceptanceForm" class="form authForm" aria-labelledby="returningLegalAcceptanceTitle" aria-describedby="returningLegalAcceptanceHelp" hidden>
+        <form id="returningLegalAcceptanceForm" class="form authForm" method="post" action="/form-submission-unavailable" accept-charset="UTF-8" data-sensitive-native-fallback="non-mutating" aria-labelledby="returningLegalAcceptanceTitle" aria-describedby="returningLegalAcceptanceHelp" hidden>
           <div class="authPanelStack">
             <h2 id="returningLegalAcceptanceTitle">Review updated account terms</h2>
             <p class="muted">Your password was accepted, but Pint Path needs your explicit acceptance of the current policies before creating an app session.</p>
@@ -332,7 +332,7 @@
         </div>
 
         <div id="settingsPreferencesPanel" class="settingsPanel" data-settings-panel="preferences" role="tabpanel" aria-labelledby="settingsPreferencesTab" hidden>
-          <form id="accountPreferencesForm" class="panel form">
+          <form id="accountPreferencesForm" class="panel form" method="post" action="/form-submission-unavailable" accept-charset="UTF-8" data-sensitive-native-fallback="non-mutating">
             <div class="sectionHeader">
               <div>
                 <h2>Discovery preferences</h2>
@@ -391,7 +391,7 @@
                 <strong>This is a route planner, not a drinking challenge.</strong>
                 <span>You never need to buy or finish alcohol. Skip rounds, choose water or food, follow every venue's RSA decisions, and never drive after drinking.</span>
               </div>
-              <form id="pubGolfForm" class="form">
+              <form id="pubGolfForm" class="form" method="post" action="/form-submission-unavailable" accept-charset="UTF-8" data-sensitive-native-fallback="non-mutating">
                 <div class="grid grid--two">
                   <label class="field">Start
                     <input name="startLocation" maxlength="160" placeholder="Start address, station, or venue" autocomplete="off" data-pub-golf-location="start" required />
@@ -424,7 +424,7 @@
                 </div>
                 <span id="betaCampaignBadge" class="pill pill--premium">Monthly</span>
               </div>
-              <form id="displayNameForm" class="displayNameForm">
+              <form id="displayNameForm" class="displayNameForm" method="post" action="/form-submission-unavailable" accept-charset="UTF-8" data-sensitive-native-fallback="non-mutating">
                 <label class="field">Leaderboard display name
                   <input name="displayName" maxlength="28" placeholder="Pick a public name" autocomplete="nickname" />
                   <span class="nameRuleHint"><span class="nameRuleIcon" aria-hidden="true">!</span> Must be unique. No disrespectful, racist, hateful, rude, URL, or impersonation names.</span>
@@ -471,7 +471,7 @@
               <div class="canIDriveWarningStack" role="note" aria-label="Standard drink log warning">
                 <div class="notice notice--warning">This is not a BAC estimate, breath test, driving clearance, legal advice, or medical advice. Do not drive after drinking.</div>
               </div>
-              <form id="canIDriveForm" class="form canIDriveForm">
+              <form id="canIDriveForm" class="form canIDriveForm" method="post" action="/form-submission-unavailable" accept-charset="UTF-8" data-sensitive-native-fallback="non-mutating">
                 <div class="grid grid--two">
                   <label class="field">Logged drink window
                     <select name="windowHours">
@@ -502,7 +502,7 @@
         </div>
 
         <div id="settingsPrivacyPanel" class="settingsPanel" data-settings-panel="privacy" role="tabpanel" aria-labelledby="settingsPrivacyTab" hidden>
-          <form id="privacySettingsForm" class="panel form">
+          <form id="privacySettingsForm" class="panel form" method="post" action="/form-submission-unavailable" accept-charset="UTF-8" data-sensitive-native-fallback="non-mutating">
             <div class="sectionHeader">
               <div>
                 <h2>Privacy settings</h2>
@@ -524,7 +524,7 @@
 
         <div id="settingsSupportPanel" class="settingsPanel" data-settings-panel="support" role="tabpanel" aria-labelledby="settingsSupportTab" hidden>
           <div class="grid grid--two accountSupportGrid">
-            <form id="dataRequestForm" class="panel form accountSupportPanel">
+            <form id="dataRequestForm" class="panel form accountSupportPanel" method="post" action="/form-submission-unavailable" accept-charset="UTF-8" data-sensitive-native-fallback="non-mutating">
               <div class="accountSupportIntro">
                 <div>
                   <h2>Privacy, support, and appeals</h2>
@@ -1542,9 +1542,14 @@
         if (!sessionData.session) {
           hideMfaVerification();
           hideMfaManagementActions();
-          setMfaStatus("Your hosted sign-in session is no longer available. Sign out and sign back in before changing authenticator settings.", "error");
+          $("startMfaButton").hidden = false;
+          $("startMfaButton").dataset.reauthenticate = "true";
+          $("startMfaButton").textContent = "Reauthenticate to manage";
+          setMfaStatus("Reauthenticate with your sign-in provider before changing authenticator settings.", "action");
           return;
         }
+        delete $("startMfaButton").dataset.reauthenticate;
+        $("startMfaButton").textContent = "Set up authenticator";
         const [{ data: factorData, error: factorError }, { data: assuranceData, error: assuranceError }] = await Promise.all([
           client.auth.mfa.listFactors(),
           client.auth.mfa.getAuthenticatorAssuranceLevel(),
@@ -1553,12 +1558,21 @@
         if (factorError || assuranceError) throw factorError || assuranceError;
 
         const factors = Array.isArray(factorData?.all) ? factorData.all : [];
-        const verifiedFactor = factors.find((factor) => factor.factor_type === "totp" && factor.status === "verified");
+        const verifiedFactors = factors.filter((factor) => factor.status === "verified");
+        const verifiedFactor = verifiedFactors.find((factor) => factor.factor_type === "totp");
         state.mfaFactorId = verifiedFactor?.id || null;
         state.mfaVerifiedFactorId = verifiedFactor?.id || null;
         state.mfaEnrollmentFactorId = null;
         state.mfaReplacementOldFactorId = null;
         hideMfaVerification();
+        if (!verifiedFactor && verifiedFactors.length > 0) {
+          $("startMfaButton").hidden = true;
+          setMfaStatus(
+            "This account has a verified authenticator type that Pint Path cannot manage here. Contact support before changing authenticators.",
+            "error",
+          );
+          return;
+        }
         if (!verifiedFactor) {
           $("startMfaButton").hidden = false;
           setMfaStatus("No authenticator is connected yet.", "action");
@@ -1580,9 +1594,15 @@
         hideMfaVerification();
         hideMfaManagementActions();
         const message = String(error?.message || "");
+        const missingSession = /auth session missing|session not found|not authenticated/i.test(message);
+        if (missingSession) {
+          $("startMfaButton").hidden = false;
+          $("startMfaButton").dataset.reauthenticate = "true";
+          $("startMfaButton").textContent = "Reauthenticate to manage";
+        }
         setMfaStatus(
-          /auth session missing|session not found|not authenticated/i.test(message)
-            ? "Your hosted sign-in session is no longer available. Sign out and sign back in before changing authenticator settings."
+          missingSession
+            ? "Reauthenticate with your sign-in provider before changing authenticator settings."
             : message || "Could not read authenticator status.",
           "error",
         );
@@ -2287,7 +2307,7 @@
         button.textContent = "Opening Stripe...";
         MelbBeerBusiness.setStatus(billingStatus, "Opening secure Stripe billing management...");
         try {
-          const result = await MelbBeerBusiness.apiFetch("/api/business/billing/portal", { method: "POST", body: "{}" });
+          const result = await MelbBeerBusiness.sensitiveApiFetch("/api/business/billing/portal", { method: "POST", body: "{}" });
           if (!isAccountUiContextCurrent(requestedContext)) return;
           if (typeof result?.portalUrl !== "string" || !result.portalUrl.trim()) {
             throw new Error("Stripe did not return a billing portal address. Try again shortly.");
@@ -3788,14 +3808,22 @@
         setLoading(button, true, "Signing out...");
         MelbBeerBusiness.clearPendingLegalAcceptance();
         MelbBeerBusiness.clearSensitiveAuthReturnState();
-        await MelbBeerBusiness.apiFetch("/api/business/auth/logout", { method: "POST", body: "{}" }).catch(() => null);
+        await MelbBeerBusiness.apiFetch("/api/business/auth/logout", { method: "POST", body: "{}" });
         if (authFlowId !== state.authFlowEpoch) return;
         await MelbBeerBusiness.getSupabaseClient()?.auth.signOut({ scope: "local" }).catch(() => null);
         if (authFlowId !== state.authFlowEpoch) return;
+        MelbBeerBusiness.broadcastAuthInvalidation("policy_acceptance_cancelled");
         MelbBeerBusiness.setAuthToken(null);
         $("returningLegalAcceptanceForm").reset();
         showAuthTab("login");
         setAccountStatus($("authStatus"), "Sign-in cancelled. No policy choices were saved.");
+      } catch (error) {
+        if (authFlowId !== state.authFlowEpoch) return;
+        setAccountStatus(
+          $("authStatus"),
+          `Sign-in cancellation could not be completed. This browser session may still be active; check your connection and retry.${error?.message ? ` ${error.message}` : ""}`,
+          true,
+        );
       } finally {
         if (authFlowId === state.authFlowEpoch) setLoading(button, false);
       }
@@ -3848,12 +3876,45 @@
           const provider = button.dataset.provider;
           try {
             setOauthButtonsLoading(true, button);
-            await MelbBeerBusiness.signInWithOAuth(provider, {
+            const result = await MelbBeerBusiness.signInWithOAuthPopup(provider, {
               returnTo: MelbBeerBusiness.getAuthReturnPathFromLocation(),
+              purpose: "login",
+              preferTopLevel: true,
             });
+            if (result?.redirected) return;
+            const dashboard = await refreshAccount();
+            if (!dashboard || pendingCheckoutPlan()) return;
+            const nextPath = authenticatedReturnDestination(dashboard.account);
+            if (nextPath && nextPath !== "/account.html" && !nextPath.startsWith("/account.html")) {
+              const destination = new URL(MelbBeerBusiness.getSafeReturnPath(nextPath), window.location.origin);
+              window.location.assign(destination.origin === window.location.origin
+                ? `${destination.pathname}${destination.search}${destination.hash}`
+                : "/account.html");
+            }
           } catch (error) {
-            setOauthButtonsLoading(false);
+            if (
+              error?.code === "ACCOUNT_SUSPENDED_BILLING_RECOVERY"
+              && error?.recovery?.eligible === true
+            ) {
+              showLoggedOut(error.message || "Account access is suspended. Billing-only recovery remains available.", true);
+              showBillingRecovery({ providerMode: true, recovery: error.recovery });
+              return;
+            }
+            if (
+              [403, 409].includes(Number(error?.status))
+              && /accept the current terms and privacy policy/i.test(String(error?.message || ""))
+            ) {
+              showReturningLegalAcceptance();
+              MelbBeerBusiness.setStatus(
+                $("authStatus"),
+                "Your identity is confirmed. Review and accept the current policies below to finish signing in.",
+                true,
+              );
+              return;
+            }
             MelbBeerBusiness.setStatus($("authStatus"), error.message, true);
+          } finally {
+            setOauthButtonsLoading(false);
           }
         });
       });
@@ -3861,6 +3922,10 @@
 
     window.addEventListener("DOMContentLoaded", async () => {
       $("nav").innerHTML = MelbBeerBusiness.renderNav("account");
+      window.addEventListener("pintpath:auth-invalidated", () => {
+        state.authFlowEpoch += 1;
+        showLoggedOut("This browser session was signed out in another tab or security flow.");
+      });
       if (!COMMERCIAL_LAUNCH_ENABLED) {
         document.querySelectorAll("[data-commercial-surface]").forEach((element) => {
           element.hidden = true;
@@ -3961,9 +4026,9 @@
       $("logoutButton").addEventListener("click", async () => {
         const hadApiSession = MelbBeerBusiness.hasAuthenticatedSessionHint();
         const supabaseClient = MelbBeerBusiness.getSupabaseClient();
-        MelbBeerBusiness.setAuthToken(null);
-        showLoggedOut("Logging out securely...");
         const requestedContext = captureAccountUiContext();
+        $("logoutButton").disabled = true;
+        MelbBeerBusiness.setStatus($("dashboardStatus"), "Logging out securely...");
         let hadSupabaseSession = false;
         try {
           const session = await supabaseClient?.auth.getSession();
@@ -3975,8 +4040,15 @@
         try {
           if (!isAccountUiContextCurrent(requestedContext)) return;
           await MelbBeerBusiness.apiFetch("/api/business/auth/logout", { method: "POST", body: "{}" });
-        } catch {
-          // Clear local session even if the server session already expired.
+        } catch (error) {
+          if (!isAccountUiContextCurrent(requestedContext)) return;
+          $("logoutButton").disabled = false;
+          MelbBeerBusiness.setStatus(
+            $("dashboardStatus"),
+            `Logout could not be completed. This device may still be signed in; check your connection and retry.${error?.message ? ` ${error.message}` : ""}`,
+            true,
+          );
+          return;
         }
         if (!isAccountUiContextCurrent(requestedContext)) return;
         try {
@@ -3988,6 +4060,7 @@
         }
         if (!isAccountUiContextCurrent(requestedContext)) return;
         MelbBeerBusiness.setAuthToken(null);
+        MelbBeerBusiness.broadcastAuthInvalidation("logout");
         showLoggedOut(hadApiSession || hadSupabaseSession ? "You have been logged out." : "Enter your details to continue.");
       });
       $("confirmAgeButton").addEventListener("click", async () => {
@@ -4150,7 +4223,10 @@
           });
           if (!isAccountUiContextCurrent(requestedContext)) return;
           if (state.accountData) state.accountData.privacySettings = result.privacySettings || settings;
-          MelbBeerBusiness.setPrivacyPreferenceCache(result.privacySettings || settings);
+          MelbBeerBusiness.setPrivacyPreferenceCache(
+            result.privacySettings || settings,
+            { allowOptionalPromotion: true },
+          );
           MelbBeerBusiness.setStatus($("dashboardStatus"), "Privacy settings saved.");
           await refreshAccount();
         } catch (error) {
@@ -4410,27 +4486,61 @@
         const requestedContext = captureAccountUiContext();
         try {
           const supabaseClient = MelbBeerBusiness.getSupabaseClient();
-          const providerSession = supabaseClient
-            ? await supabaseClient.auth.getSession()
-            : { data: { session: null }, error: null };
-          if (!isAccountUiContextCurrent(requestedContext)) return;
-          if (providerSession.error) throw new Error(providerSession.error.message);
-          const accessToken = providerSession.data.session?.access_token || null;
-          await MelbBeerBusiness.sensitiveApiFetch("/api/business/auth/logout-all", {
+          const accountContext = MelbBeerBusiness.getAccountContext();
+          let providerAccessToken = null;
+          if (String(accountContext?.authProvider || "").toLowerCase() === "supabase") {
+            await MelbBeerBusiness.ensureSupabaseSessionForPurpose("logout_all", {
+              requireProviderSession: true,
+            });
+            const { data, error } = await supabaseClient?.auth.getSession() || {};
+            providerAccessToken = data?.session?.access_token || null;
+            if (error || !providerAccessToken) {
+              throw new Error(error?.message || "A current provider session is required to log out every device.");
+            }
+          }
+          const result = await MelbBeerBusiness.sensitiveApiFetch("/api/business/auth/logout-all", {
             method: "POST",
-            body: JSON.stringify(accessToken ? { accessToken } : {}),
+            body: JSON.stringify(providerAccessToken
+              ? { accessToken: providerAccessToken }
+              : {}),
           });
           if (!isAccountUiContextCurrent(requestedContext)) return;
-          await supabaseClient?.auth.signOut({ scope: "local" }).catch(() => null);
-          if (!isAccountUiContextCurrent(requestedContext)) return;
+          MelbBeerBusiness.broadcastAuthInvalidation("logout_all");
+          if (result?.providerSessionsRevoked !== false) {
+            await supabaseClient?.auth.signOut({ scope: "local" }).catch(() => null);
+          }
           MelbBeerBusiness.setAuthToken(null);
-          showLoggedOut("All Pint Path sessions have been logged out.");
+          showLoggedOut(
+            result?.providerSessionsRevoked === false
+              ? "Every Pint Path app session was revoked, but the sign-in provider could not finish its own global sign-out. Sign in again and retry before relying on provider-wide logout."
+              : "All Pint Path sessions have been logged out.",
+            result?.providerSessionsRevoked === false,
+          );
         } catch (error) {
           if (!isAccountUiContextCurrent(requestedContext)) return;
           MelbBeerBusiness.setStatus($("dashboardStatus"), error.message, true);
         }
       });
-      $("startMfaButton").addEventListener("click", () => void beginMfaEnrollment());
+      $("startMfaButton").addEventListener("click", async () => {
+        try {
+          setLoading($("startMfaButton"), true, "Reauthenticating...");
+          await MelbBeerBusiness.ensureSupabaseSessionForPurpose("session_management", {
+            requireProviderSession: true,
+            forceFresh: true,
+            continuation: "mfa_management",
+          });
+          delete $("startMfaButton").dataset.reauthenticate;
+          $("startMfaButton").textContent = "Set up authenticator";
+          await loadMfaState(true);
+          if (!state.mfaVerifiedFactorId) {
+            await beginMfaEnrollment();
+          }
+        } catch (error) {
+          setMfaStatus(error.message || "Could not reauthenticate for authenticator management.", "error");
+        } finally {
+          setLoading($("startMfaButton"), false);
+        }
+      });
       $("replaceMfaButton").addEventListener("click", () => {
         if (!state.mfaVerifiedFactorId) return;
         if (hasRecentMfaVerification()) {

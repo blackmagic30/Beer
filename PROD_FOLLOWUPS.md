@@ -221,9 +221,41 @@ redeploy/rollback, and every unlisted write remain blocked.
   Postgres connection-pool saturation/recovery, Redis shared limiting and outage
   recovery, restart and deploy recovery, job overlap, and rollback on at least
   two application replicas.
-- **Required monitoring:** External `/health` and `/ready` uptime, 5xx/latency,
-  Redis, database/volume, backup age, deletion queue, moderation queue, provider
-  failures, and iOS crash alerts with named primary/backup responders.
+- **Required health-monitor contract:** Run scheduled **Production Health** only
+  from protected default `main` through a dedicated `production-monitoring`
+  GitHub environment configured for unattended execution with no wait timer.
+  That environment may contain only the reviewed public smoke configuration and
+  dedicated low-privilege user/venue smoke credentials. Send both Production
+  Health and Venue Directory Status Refresh monitor events through a separate,
+  unattended, default-branch-only `production-monitoring-alerts` environment
+  containing only `PINTPATH_PRODUCTION_MONITOR_WEBHOOK_URL`; it must contain no
+  provider, deployment, database, or other production secrets.
+- **Required Production Health events:** The `*/15 * * * *` public-only success
+  matrix must emit `pintpath-production-public-health-heartbeat`; the
+  `7 * * * *` hourly authenticated-only success matrix must emit
+  `pintpath-production-authenticated-health-heartbeat`. A manual run with both
+  jobs successful emits `pintpath-production-health-manual-check`, which must
+  never reset either scheduled deadman. Every other result/trigger matrix must
+  immediately emit `pintpath-production-health-failed`, page, and leave the
+  notifier failed after delivery.
+- **Required directory-refresh events:** Only exact `23 14 * * *` schedule
+  success with `directorySchemaReady=true` may emit
+  `pintpath-venue-directory-refresh-heartbeat`. A successful schema-ready manual
+  dispatch emits `pintpath-venue-directory-refresh-manual-check`, which must not
+  reset the daily deadman. Every other result/trigger matrix must immediately
+  emit `pintpath-venue-directory-refresh-failed`, page, and leave the notifier
+  failed after delivery.
+- **Required external alerting:** The external on-call service must page a named
+  primary and backup for failure events and run separate deadman monitors for
+  the 15-minute public heartbeat, hourly authenticated heartbeat, and daily
+  directory-refresh heartbeat. GitHub cannot emit an in-workflow alert when its
+  scheduler never starts. Live acknowledged failure pages and controlled
+  missed-run/deadman exercises remain launch blockers, not post-launch
+  follow-up.
+- **Additional required monitoring:** External `/health` and `/ready` uptime,
+  5xx/latency, Redis, database/volume, backup age, deletion queue, moderation
+  queue, provider failures, and iOS crash alerts with named primary/backup
+  responders.
 - **Required security operations:** DAST only against staging, live header/cache
   verification, secret/provider restriction review, dependency/CodeQL gates,
   session revocation on two devices, and a passed breach tabletop using

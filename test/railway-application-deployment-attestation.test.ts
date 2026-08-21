@@ -179,6 +179,7 @@ function runtimeSource(
         ),
         replicaIdSha256: railwayDeploymentIdentityIdSha256("replica", IDS.replica),
       },
+      automaticMaintenance: { enabled: true, candidateBound: true },
       ...(route === "/health" ? {} : { dependencies: { postgres: { ready: true } } }),
     },
   };
@@ -328,8 +329,34 @@ describe("Railway application deployment attestation contract", () => {
       expect(parseRailwayApplicationDeploymentAttestationRuntimeResponse(
         route,
         runtimeSource(route),
-      )).toMatchObject({ route, restoreMarkerPresent: false });
+      )).toMatchObject({
+        route,
+        automaticMaintenance: { enabled: true, candidateBound: true },
+        restoreMarkerPresent: false,
+      });
     }
+
+    expect(parseRailwayApplicationDeploymentAttestationRuntimeResponse(
+      "/health",
+      runtimeSource("/health", (value) => {
+        const data = value.data as Record<string, unknown>;
+        delete data.automaticMaintenance;
+      }),
+    )).toBeNull();
+    expect(parseRailwayApplicationDeploymentAttestationRuntimeResponse(
+      "/health",
+      runtimeSource("/health", (value) => {
+        const data = value.data as Record<string, unknown>;
+        data.automaticMaintenance = { enabled: "false", candidateBound: true };
+      }),
+    )).toBeNull();
+    expect(parseRailwayApplicationDeploymentAttestationRuntimeResponse(
+      "/health",
+      runtimeSource("/health", (value) => {
+        const data = value.data as Record<string, unknown>;
+        data.automaticMaintenance = { enabled: false, candidateBound: "true" };
+      }),
+    )).toBeNull();
 
     expect(parseRailwayApplicationDeploymentAttestationRuntimeResponse(
       "/ready",

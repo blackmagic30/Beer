@@ -4,12 +4,22 @@ import { AppError, isAppError } from "../lib/errors.js";
 import { failure } from "../lib/http.js";
 import { logger } from "../lib/logger.js";
 import { redactSecrets } from "../lib/redact.js";
+import {
+  isHtmlPageRequest,
+  prepareNotFoundResponse,
+  sendBrandedNotFoundPage,
+} from "./not-found.js";
 
 const SAFE_BILLING_ERROR_CODES = new Set([
   "BILLING_CUSTOMER_UNLINKED",
   "BILLING_CUSTOMER_NOT_FOUND_OR_MODE_MISMATCH",
   "BILLING_PORTAL_NOT_CONFIGURED",
   "BILLING_PORTAL_UNAVAILABLE",
+]);
+const SAFE_AUTH_ERROR_CODES = new Set([
+  "PROVIDER_GLOBAL_REVOCATION_PENDING",
+  "MFA_STEP_UP_REQUIRED",
+  "EMAIL_REAUTHENTICATION_REQUIRED",
 ]);
 
 function safeRequestPath(req: Request): string {
@@ -27,6 +37,9 @@ function safePublicErrorMetadata(details: unknown): {
 } | undefined {
   if (!details || typeof details !== "object" || Array.isArray(details)) return undefined;
   const value = details as Record<string, unknown>;
+  if (typeof value.publicCode === "string" && SAFE_AUTH_ERROR_CODES.has(value.publicCode)) {
+    return { code: value.publicCode };
+  }
   if (typeof value.publicCode === "string" && SAFE_BILLING_ERROR_CODES.has(value.publicCode)) {
     return { code: value.publicCode };
   }
@@ -78,7 +91,15 @@ export function errorHandler(error: unknown, req: Request, res: Response, _next:
     logger.warn("Request rejected", logMeta);
   }
 
-  res.status(appError.statusCode).json(
+  if (appError.statusCode === 404) {
+    prepareNotFoundResponse(req, res);
+    if (isHtmlPageRequest(req)) {
+      sendBrandedNotFoundPage(res);
+      return;
+    }
+  }
+
+  res.status(appError.statusCode).type("json").json(
     failure(
       appError.expose ? appError.message : "Internal server error",
       isProduction ? undefined : redactSecrets(appError.details),

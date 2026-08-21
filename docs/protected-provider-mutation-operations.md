@@ -375,9 +375,12 @@ route open. The controlling policy is schema v2 at SHA-256
    ancestry. Human PR approval is not required in this solo-owner repository;
    require the exact merged non-draft same-repository PR and pass all required
    checks on the exact candidate.
-2. Run `Deploy Pint Path permanent staging` for `candidateSha` at one replica
-   and retain this first successful candidate-bound deployment artifact. This is
-   the initial deployment, not the later release-gate selection.
+2. Prepare and quiesce the candidate-bound worker transition: run worker
+   `prepare`, scale the exact legacy deployment from one replica to zero, run
+   the `fenced` phase of `Deploy Pint Path permanent staging` at zero, then
+   restore the candidate from zero to one with automatic maintenance disabled
+   and candidate-bound. Retain every authenticated artifact; the fenced upload
+   is the first of exactly two same-candidate staging deployment successes.
 3. Run `Mutate Pint Path permanent-staging provider variables` once per absent
    Google/OpenAI variable. The confirmation is
    `MUTATE_<UPPERCASE_OPERATION_WITH_UNDERSCORES>_IN_PERMANENT_STAGING`. The run
@@ -388,13 +391,16 @@ route open. The controlling policy is schema v2 at SHA-256
    atomic `skipDeploys=true` mutation. Its receipt is not runtime proof.
 5. Run any general runtime-variable operation at most once for its exact
    candidate+target+variable guard; even a skipped prior run requires a new
-   reviewed candidate. After every reviewed provider/runtime operation and the
-   complete staging and rollback plan, run `Deploy Pint Path permanent staging`
-   once more at one replica for the exact same candidate. Retain this second
-   successful candidate-bound artifact as the closeout redeploy. Prove every tracked
-   server, browser, mobile, CI, scheduled, webhook, backup, and archived
-   consumer plus Auth, admin, role, private Storage, provider, and Free-scope
-   behavior uses the final configuration.
+   reviewed candidate. Complete those reviewed provider/runtime writes while
+   the restored candidate remains worker-disabled. Then run staging worker
+   `activate`, which independently authenticates the full prepare→quiesce→
+   fenced-upload→restore chain. Run the `active` deployment phase once at one
+   replica and require both its activation terminal and sibling full-chain
+   prerequisite verification. Retain this second successful candidate-bound
+   artifact as the active closeout. Prove every tracked server, browser,
+   mobile, CI, scheduled, webhook, backup, and archived consumer plus Auth,
+   admin, role, private Storage, provider, and Free-scope behavior uses the
+   final configuration.
    The workflow rejects a PR head or any SHA other than protected `main`; its
    GitHub receipt separately authenticates
    the reviewed PR head, the unique merged non-draft same-repository PR, the
@@ -418,20 +424,23 @@ route open. The controlling policy is schema v2 at SHA-256
 7. Run `Permanent staging Postgres build canary` and retain its candidate-bound
    stopped build receipt before accepting the pinned PG17 build/tool chain.
 8. Require exactly the two successful same-candidate staging deployment runs
-   from steps 2 and 5. Both must have completed before scale starts; the release
-   verifier selects the second closeout run and rejects zero, one, more than two,
-   or ambiguous same-candidate successes. Then run `Prove Pint Path
+   from steps 2 and 5: the fenced zero-replica upload and active one-replica
+   closeout. Both must have completed before scale starts; the release verifier
+   selects the second closeout run and rejects zero, one, more than two, or
+   ambiguous same-candidate successes. Then run `Prove Pint Path
    permanent-staging two-replica scale` with confirmation
    `SCALE_PERMANENT_STAGING_TO_TWO_FOR_EVIDENCE`. Do not cancel it. The final
    protected step converges the service to one replica even after an earlier
    failure. A workflow rerun cannot scale out again but may perform convergence.
 9. Retain the candidate-bound artifacts and bind their hashes into the private
    release evidence register.
-10. Production deploy, two-replica convergence, route close, recovery
-    activation, promotion-recovery attestation, and route open share the non-cancelling
-    `pintpath-production-rollout` concurrency group. After the production source
-    upload, same-SHA public smoke, and exact two-replica convergence have
-    passed—but before price promotion—dispatch
+10. Production worker fence, source upload, maintenance LOGIN transition,
+    worker activation, two-replica convergence, route close, recovery
+    activation, promotion-recovery attestation, and route open share the
+    non-cancelling `pintpath-production-rollout` concurrency group. Require the
+    exact fence→deploy→LOGIN 2→8→worker-activate→scale sequence and its
+    cross-bound receipts. After the same-SHA public smoke and exact two-replica
+    convergence have passed—but before price promotion—dispatch
     `Close Pint Path protected production route` with
     `CLOSE_PINTPATH_PRODUCTION_ROUTE`. Require the custom domain absent with
     every collateral route and candidate-deployment field unchanged. Close

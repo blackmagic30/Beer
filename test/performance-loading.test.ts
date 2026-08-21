@@ -29,11 +29,16 @@ describe("website performance loading", () => {
     expect(html).toContain("if (!nextCursor) break;");
     expect(html).toContain("seenCursors.has(nextCursor)");
     expect(routes).toContain("public, max-age=30, stale-while-revalidate=120");
+    expect(routes).toContain('router.get("/venues", venueDirectoryReadLimiter');
     expect(routes).toContain('res.setHeader("Cache-Control", "private, no-store")');
-    expect(routes).toContain('res.setHeader("Vary", "Authorization, Cookie")');
+    expect(routes).toContain('res.vary("Origin")');
+    expect(routes).toContain('res.vary("Authorization")');
+    expect(routes).toContain('res.vary("Cookie")');
+    expect(routes).toContain("Math.min(query.limit, PUBLIC_VENUE_DIRECTORY_PAGE_LIMIT)");
     expect(routes).toContain("if (credentialsSupplied && !account)");
     expect(service).not.toContain("private publicVenueCache:");
     expect(service).toContain("listPublicVenueDirectoryPage");
+    expect(service).toContain("listBarProfilePublicMetadata");
     expect(service).toContain('{ count: "exact" }');
     expect(service).toContain("request.range(remoteOffset, remoteOffset + remoteFetchLimit - 1)");
     expect(service).toContain("if (allLocalVenues.length === 0)");

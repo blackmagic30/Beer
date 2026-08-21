@@ -3,6 +3,7 @@ export {
   PERMANENT_STAGING_APP_DEPLOYMENT_CANONICAL_POLICY_SOURCE,
   PERMANENT_STAGING_APP_DEPLOYMENT_EXECUTOR_SCHEMA,
   PERMANENT_STAGING_APP_DEPLOYMENT_EXECUTOR_STATE,
+  PERMANENT_STAGING_APP_DEPLOYMENT_FAILURE_CODES,
   PERMANENT_STAGING_APP_DEPLOYMENT_LOCK,
   PERMANENT_STAGING_APP_DEPLOYMENT_OPERATION,
   PERMANENT_STAGING_APP_DEPLOYMENT_POLICY_SCHEMA,
@@ -10,6 +11,7 @@ export {
   runPermanentStagingAppDeploymentExecutor,
   type PermanentStagingAppDeploymentExecutorChecks,
   type PermanentStagingAppDeploymentExecutorReceipt,
+  type PermanentStagingAppDeploymentFailureCode,
   type PermanentStagingAppDeploymentPolicy,
 } from "./lib/permanent-staging-app-deployment-executor.js";
 

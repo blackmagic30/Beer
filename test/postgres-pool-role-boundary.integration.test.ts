@@ -206,6 +206,9 @@ describe.skipIf(!configuredAdminUrl)(
     let maintenanceWithoutRole: Client;
     let runtimeDatabase: Pg17StartupRoleDatabase;
     let maintenanceDatabase: Pg17StartupRoleDatabase;
+    let runtimeUrl = "";
+    let maintenanceUrl = "";
+    let standaloneClientsClosed = false;
     let databaseOid = "";
     const preexistingRoles = new Set<string>();
 
@@ -265,7 +268,7 @@ describe.skipIf(!configuredAdminUrl)(
         NOINHERIT NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 8`);
       await clusterAdmin.query(`CREATE ROLE ${quoteIdentifier(maintenanceLogin)}
         LOGIN PASSWORD '${maintenancePassword}' NOSUPERUSER NOCREATEDB NOCREATEROLE
-        NOINHERIT NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 2`);
+        NOINHERIT NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 8`);
       await clusterAdmin.query(`GRANT pintpath_runtime TO ${quoteIdentifier(runtimeLogin)}
         WITH ADMIN FALSE, INHERIT FALSE, SET TRUE`);
       await clusterAdmin.query(`GRANT pintpath_maintenance TO ${quoteIdentifier(maintenanceLogin)}
@@ -280,8 +283,8 @@ describe.skipIf(!configuredAdminUrl)(
         `GRANT CONNECT ON DATABASE ${quoteIdentifier(databaseName)} TO ${quoteIdentifier(maintenanceLogin)}`,
       );
 
-      const runtimeUrl = withDatabase(adminUrl, runtimeLogin, runtimePassword);
-      const maintenanceUrl = withDatabase(
+      runtimeUrl = withDatabase(adminUrl, runtimeLogin, runtimePassword);
+      maintenanceUrl = withDatabase(
         adminUrl,
         maintenanceLogin,
         maintenancePassword,
@@ -301,8 +304,10 @@ describe.skipIf(!configuredAdminUrl)(
       const failures: unknown[] = [];
       await runtimeDatabase?.close().catch((error) => failures.push(error));
       await maintenanceDatabase?.close().catch((error) => failures.push(error));
-      await runtimeWithoutRole?.end().catch((error) => failures.push(error));
-      await maintenanceWithoutRole?.end().catch((error) => failures.push(error));
+      if (!standaloneClientsClosed) {
+        await runtimeWithoutRole?.end().catch((error) => failures.push(error));
+        await maintenanceWithoutRole?.end().catch((error) => failures.push(error));
+      }
       await databaseAdmin?.end().catch((error) => failures.push(error));
       if (clusterAdmin) {
         try {
@@ -475,5 +480,92 @@ describe.skipIf(!configuredAdminUrl)(
         checkPostgresMaintenanceRuntimeReadiness(maintenanceDatabase),
       ).resolves.toEqual({ ready: true, failures: [] });
     });
+
+    it("admits four process-shaped pool sets with a reserved maintenance probe", async () => {
+      await runtimeDatabase.close();
+      await maintenanceDatabase.close();
+      await runtimeWithoutRole.end();
+      await maintenanceWithoutRole.end();
+      standaloneClientsClosed = true;
+
+      const runtimePools = Array.from({ length: 4 }, () => new Pool({
+        connectionString: runtimeUrl,
+        max: 2,
+        connectionTimeoutMillis: 2_000,
+        idleTimeoutMillis: 0,
+        options: sqlDatabaseInternals.buildPostgresStartupOptions({
+          activeRole: "pintpath_runtime",
+          statementTimeoutMs: 30_000,
+          idleInTransactionTimeoutMs: 30_000,
+        }),
+      }));
+      const maintenancePoolPairs = Array.from({ length: 4 }, () => ({
+        work: new Pool({
+          connectionString: maintenanceUrl,
+          max: 1,
+          connectionTimeoutMillis: 2_000,
+          idleTimeoutMillis: 0,
+          options: sqlDatabaseInternals.buildPostgresStartupOptions({
+            activeRole: "pintpath_maintenance",
+            statementTimeoutMs: 30_000,
+            idleInTransactionTimeoutMs: 30_000,
+          }),
+        }),
+        readiness: new Pool({
+          connectionString: maintenanceUrl,
+          max: 1,
+          connectionTimeoutMillis: 2_000,
+          idleTimeoutMillis: 0,
+          options: sqlDatabaseInternals.buildPostgresStartupOptions({
+            activeRole: "pintpath_maintenance",
+            statementTimeoutMs: 30_000,
+            idleInTransactionTimeoutMs: 30_000,
+          }),
+        }),
+      }));
+      const maintenancePools = maintenancePoolPairs.flatMap(
+        ({ readiness, work }) => [readiness, work],
+      );
+      const heldClients: PoolClient[] = [];
+      const overflowClients: Client[] = [];
+      try {
+        for (const pool of runtimePools) {
+          heldClients.push(await pool.connect(), await pool.connect());
+        }
+        for (const pool of maintenancePools) {
+          heldClients.push(await pool.connect());
+        }
+
+        const observed = await databaseAdmin.query<{
+          username: string;
+          connectionCount: number;
+        }>(`SELECT usename::text AS username,
+                  pg_catalog.count(*)::integer AS "connectionCount"
+             FROM pg_catalog.pg_stat_activity
+            WHERE datname = pg_catalog.current_database()
+              AND usename = ANY($1::text[])
+            GROUP BY usename`, [[runtimeLogin, maintenanceLogin]]);
+        expect(new Map(observed.rows.map((row) => [
+          row.username,
+          row.connectionCount,
+        ]))).toEqual(new Map([
+          [runtimeLogin, 8],
+          [maintenanceLogin, 8],
+        ]));
+
+        for (const connectionString of [runtimeUrl, maintenanceUrl]) {
+          const overflow = new Client({ connectionString, connectionTimeoutMillis: 2_000 });
+          overflowClients.push(overflow);
+          await expect(overflow.connect()).rejects.toMatchObject({ code: "53300" });
+        }
+      } finally {
+        for (const client of heldClients) client.release();
+        await Promise.all([
+          ...runtimePools.map((pool) => pool.end()),
+          ...maintenancePools.map((pool) => pool.end()),
+          ...overflowClients.map((client) => client.end().catch(() => undefined)),
+        ]);
+      }
+    }, 30_000);
   },
 );

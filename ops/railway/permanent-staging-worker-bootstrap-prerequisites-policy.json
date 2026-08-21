@@ -1,0 +1,135 @@
+{
+  "schemaVersion": "pintpath-permanent-staging-worker-bootstrap-prerequisites-policy/v1",
+  "policyId": "pintpath-permanent-staging-worker-bootstrap-prerequisites",
+  "activationState": "GITHUB_ENVIRONMENT_PROTECTED",
+  "repository": "blackmagic30/Beer",
+  "githubApiOrigin": "https://api.github.com",
+  "requiredRef": "refs/heads/main",
+  "requiredRunAttempt": 1,
+  "maximumReceiptAgeSeconds": 86400,
+  "maximumVerificationAgeSeconds": 900,
+  "maximumClockSkewSeconds": 300,
+  "target": {
+    "projectId": "48d8c6cd-1c66-4148-874b-20877f48e1a5",
+    "environmentId": "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+    "forbiddenEnvironmentId": "13dab015-df74-45c6-b26f-69323daea99a",
+    "serviceId": "6816c4a2-e392-4ee5-826f-2584cb599ec0"
+  },
+  "producerPolicies": {
+    "workerFence": {
+      "path": "ops/railway/protected-automatic-maintenance-worker-fence-policy.json",
+      "sha256": "260a15eb364fe6e95a40b1e15af8950f8ea6f8ccd1f3b0983ef4a39810ea57bb"
+    },
+    "scale": {
+      "path": "ops/railway/permanent-staging-scale-evidence-policy.json",
+      "sha256": "164d53a5bccff4a861c8568abebe5caa06352f64245ac7e734e55c056c2be608"
+    },
+    "fencedDeployment": {
+      "path": "ops/railway/permanent-staging-fenced-app-deployment-policy.json",
+      "sha256": "beda3ad174ae5c11757ce3b38f7f4b12a852e3c1726f009667d41d2423ad011e"
+    },
+    "activeDeployment": {
+      "path": "ops/railway/permanent-staging-app-deployment-policy.json",
+      "sha256": "27018e41f75661260e2d9a22b092c87d90490a46f85fcfb757f19d89e6cccae2"
+    }
+  },
+  "producers": {
+    "prepare": {
+      "workflowPath": ".github/workflows/configure-automatic-maintenance-worker-fence.yml",
+      "workflowName": "Configure candidate-bound automatic-maintenance worker fence",
+      "runNameTemplate": "Automatic maintenance worker fence | permanent-staging | prepare | <candidate-sha>",
+      "artifactNameTemplate": "pintpath-automatic-maintenance-worker-fence-permanent-staging-prepare-<candidate-sha>",
+      "receiptFilename": "automatic-maintenance-worker-fence-terminal.json",
+      "receiptSchema": "pintpath-automatic-maintenance-worker-fence-terminal/v1"
+    },
+    "quiesce": {
+      "workflowPath": ".github/workflows/bootstrap-permanent-staging-worker-fence.yml",
+      "workflowName": "Bootstrap permanent-staging automatic-maintenance worker fence",
+      "runNameTemplate": "Permanent staging worker bootstrap | quiesce | <candidate-sha>",
+      "artifactNameTemplate": "pintpath-permanent-staging-worker-bootstrap-quiesce-<candidate-sha>",
+      "receiptFilename": "quiesce-staging-zero-receipt.json",
+      "receiptSchema": "pintpath-permanent-staging-scale-operation/v2",
+      "prerequisitesFilename": "prerequisites-verification.json"
+    },
+    "fenced-deployment": {
+      "workflowPath": ".github/workflows/deploy-permanent-staging.yml",
+      "workflowName": "Deploy Pint Path permanent staging",
+      "runNameTemplate": "Deploy permanent staging | fenced | <candidate-sha>",
+      "artifactNameTemplate": "pintpath-permanent-staging-fenced-deployment-<candidate-sha>",
+      "receiptFilename": "deployment-receipt.json",
+      "receiptSchema": "pintpath-railway-application-deployment-executor/v5"
+    },
+    "restore": {
+      "workflowPath": ".github/workflows/bootstrap-permanent-staging-worker-fence.yml",
+      "workflowName": "Bootstrap permanent-staging automatic-maintenance worker fence",
+      "runNameTemplate": "Permanent staging worker bootstrap | restore | <candidate-sha>",
+      "artifactNameTemplate": "pintpath-permanent-staging-worker-bootstrap-restore-<candidate-sha>",
+      "receiptFilename": "bootstrap-staging-one-receipt.json",
+      "receiptSchema": "pintpath-permanent-staging-scale-operation/v2",
+      "prerequisitesFilename": "prerequisites-verification.json"
+    },
+    "activate": {
+      "workflowPath": ".github/workflows/configure-automatic-maintenance-worker-fence.yml",
+      "workflowName": "Configure candidate-bound automatic-maintenance worker fence",
+      "runNameTemplate": "Automatic maintenance worker fence | permanent-staging | activate | <candidate-sha>",
+      "artifactNameTemplate": "pintpath-automatic-maintenance-worker-fence-permanent-staging-activate-<candidate-sha>",
+      "receiptFilename": "automatic-maintenance-worker-fence-terminal.json",
+      "receiptSchema": "pintpath-automatic-maintenance-worker-fence-terminal/v1",
+      "prerequisitesFilename": "prerequisites-verification.json"
+    },
+    "active-deployment": {
+      "workflowPath": ".github/workflows/deploy-permanent-staging.yml",
+      "workflowName": "Deploy Pint Path permanent staging",
+      "runNameTemplate": "Deploy permanent staging | active | <candidate-sha>",
+      "artifactNameTemplate": "pintpath-permanent-staging-deployment-<candidate-sha>",
+      "receiptFilename": "deployment-receipt.json",
+      "receiptSchema": "pintpath-railway-application-deployment-executor/v5"
+    }
+  },
+  "consumers": {
+    "quiesce": {
+      "workflowPath": ".github/workflows/bootstrap-permanent-staging-worker-fence.yml",
+      "githubEnvironment": "permanent-staging-scale-evidence",
+      "requires": ["prepare"]
+    },
+    "fenced-deploy": {
+      "workflowPath": ".github/workflows/deploy-permanent-staging.yml",
+      "githubEnvironment": "permanent-staging-deployment",
+      "requires": ["prepare", "quiesce"]
+    },
+    "restore": {
+      "workflowPath": ".github/workflows/bootstrap-permanent-staging-worker-fence.yml",
+      "githubEnvironment": "permanent-staging-scale-evidence",
+      "requires": ["prepare", "quiesce", "fenced-deployment"]
+    },
+    "activate": {
+      "workflowPath": ".github/workflows/configure-automatic-maintenance-worker-fence.yml",
+      "githubEnvironment": "permanent-staging-provider-mutation",
+      "requires": ["prepare", "quiesce", "fenced-deployment", "restore"]
+    },
+    "active-deploy": {
+      "workflowPath": ".github/workflows/deploy-permanent-staging.yml",
+      "githubEnvironment": "permanent-staging-deployment",
+      "requires": ["activate"]
+    },
+    "scale-evidence": {
+      "workflowPath": ".github/workflows/permanent-staging-scale-evidence.yml",
+      "githubEnvironment": "permanent-staging-scale-evidence",
+      "requires": ["activate", "active-deployment"]
+    }
+  },
+  "chronology": {
+    "strictCompletionBeforeNextStart": true,
+    "selectedRunMustBeOnlyMatchingRunInWindow": true,
+    "sameCandidateRequired": true,
+    "sameMainRefRequired": true
+  },
+  "evidence": {
+    "schemaVersion": "pintpath-permanent-staging-worker-bootstrap-prerequisites/v1",
+    "filename": "prerequisites-verification.json",
+    "canonicalJsonRequired": true,
+    "artifactDigestRequired": true,
+    "secretMaterialAllowed": false,
+    "secretDerivedCommitmentsAllowed": false
+  }
+}

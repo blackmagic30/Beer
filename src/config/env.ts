@@ -147,6 +147,14 @@ const optionalSha256FromEnv = z.preprocess((value) => {
   return trimmed.toLowerCase();
 }, z.string().regex(/^[a-f0-9]{64}$/).optional());
 
+const optionalCommitShaFromEnv = z.preprocess((value) => {
+  const trimmed = sanitizeEnvString(value);
+  if (typeof trimmed !== "string" || trimmed.length === 0) {
+    return undefined;
+  }
+  return trimmed;
+}, z.string().regex(/^[a-f0-9]{40}$/).optional());
+
 type HostedSupabaseKeyValidationMode =
   | "permanent-staging-bootstrap"
   | "permanent-staging-complete"
@@ -694,6 +702,8 @@ const envSchema = z.object({
   REPORT_DELIVERY_DAY: z.coerce.number().int().min(1).max(28).default(2),
   REPORT_DELIVERY_HOUR: z.coerce.number().int().min(0).max(23).default(9),
   REPORT_DELIVERY_CHECK_INTERVAL_MINUTES: z.coerce.number().int().min(5).max(1440).default(60),
+  PINTPATH_AUTOMATIC_MAINTENANCE_ENABLED: exactBooleanFromEnv.default(true),
+  PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA: optionalCommitShaFromEnv,
   ACCOUNT_DELETION_NOTICE_MODE: z.enum(["disabled", "mock", "resend"]).default("disabled"),
   RESEND_TRANSACTIONAL_API_KEY: optionalStringFromEnv,
   ACCOUNT_DELETION_NOTICE_FROM: optionalStringFromEnv,
@@ -772,6 +782,26 @@ const canonicalProductionRuntime = isCanonicalProductionRuntime({
 const postgresApplicationRuntime =
   parsedEnv.data.NODE_ENV === "production" &&
   !parsedEnv.data.RESTORE_REHEARSAL_MODE;
+
+if (
+  postgresApplicationRuntime
+  && (railwayEnvironmentName === "production" || railwayEnvironmentName === "staging")
+) {
+  if (!["true", "false"].includes(
+    String(process.env.PINTPATH_AUTOMATIC_MAINTENANCE_ENABLED ?? "")
+      .trim()
+      .toLowerCase(),
+  )) {
+    throw new Error(
+      "Hosted PostgreSQL application runtimes require an explicit PINTPATH_AUTOMATIC_MAINTENANCE_ENABLED=true or false worker-fence state.",
+    );
+  }
+  if (!parsedEnv.data.PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA) {
+    throw new Error(
+      "Hosted PostgreSQL application runtimes require an exact PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA worker-fence binding.",
+    );
+  }
+}
 
 function assertDedicatedMaintenanceConnection(
   applicationUrl: string | undefined,

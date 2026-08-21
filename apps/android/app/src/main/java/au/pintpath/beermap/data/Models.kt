@@ -4,7 +4,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 data class AuthResult(
-    val token: String,
+    val token: String?,
     val account: Account
 )
 
@@ -19,6 +19,14 @@ data class SupabaseAuthTokens(
     val accessToken: String?,
     val refreshToken: String?
 )
+
+data class SupabaseMfaFactor(
+    val id: String,
+    val friendlyName: String?
+) {
+    val displayName: String
+        get() = friendlyName?.trim()?.takeIf { it.isNotEmpty() } ?: "Authenticator app"
+}
 
 data class BillingRecoveryResult(
     val portalUrl: String,

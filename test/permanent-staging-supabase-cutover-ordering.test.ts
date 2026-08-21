@@ -41,7 +41,8 @@ describe("permanent-staging Supabase cutover ordering", () => {
       "docs/protected-provider-mutation-operations.md",
       [
         "one atomic skipDeploys=true mutation",
-        "After every reviewed provider/runtime operation and the complete staging and rollback plan, run Deploy Pint Path permanent staging once more",
+        "Then run staging worker activate, which independently authenticates the full prepare→quiesce→ fenced-upload→restore chain",
+        "Run the active deployment phase once at one replica and require both its activation terminal and sibling full-chain prerequisite verification",
         "Only then run Permanent staging Supabase legacy-key cutover",
       ],
     ],
