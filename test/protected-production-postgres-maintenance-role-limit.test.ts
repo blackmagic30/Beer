@@ -88,7 +88,7 @@ function prerequisitesVerification(candidateSha = CANDIDATE): string {
       policySha256:
         "e50bd4be0a2d06d457ba097d80d15fe940f6f978b89422fb0c92c8d34ddf213b",
       producerSha256:
-        "69452a334e9bf07ca2185c5793a0c6bdf1b49c4f5f4409ee54acfe6397042b4c",
+        "59a20b0b794e8caf35ea1771d3b38afe11a72aee640a4eb751e58cdf0a790ae6",
       producerWorkflowSha256:
         "517158926950ff623482a84fb3516c4218858f7f59fc9a7552c930eaa156768f",
       receiptSha256: hash,

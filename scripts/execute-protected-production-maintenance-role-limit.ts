@@ -32,7 +32,7 @@ import {
 export const PRODUCTION_MAINTENANCE_ROLE_LIMIT_POLICY_PATH =
   "ops/postgres/protected-production-maintenance-login-limit-policy.json" as const;
 export const PRODUCTION_MAINTENANCE_ROLE_LIMIT_POLICY_SHA256 =
-  "e85c95824a5f706f46a2574066201aa4095010f9567b62c858ca587fe66e81a4" as const;
+  "f3b8b54c636a8a7de2941dd7bf88790ee87102441a43059e2e0014f1383f7708" as const;
 export const PRODUCTION_MAINTENANCE_ROLE_LIMIT_WORKFLOW =
   ".github/workflows/transition-production-postgres-maintenance-role-limit.yml" as const;
 export const PRODUCTION_MAINTENANCE_ROLE_LIMIT_GITHUB_ENVIRONMENT =

@@ -1088,11 +1088,17 @@ function snapshotManifestSha256(
       ) throw new Error("source_snapshot_invalid");
     };
     let rootDescriptor: number | null = fs.openSync(
-      rootAuthorityPath,
+      snapshotRoot,
       directoryFlags,
     );
     try {
       const heldRoot = fs.fstatSync(rootDescriptor, { bigint: true });
+      if (rootAuthorityPath !== snapshotRoot) {
+        const authorityRoot = fs.statSync(rootAuthorityPath, { bigint: true });
+        if (!sameFileIdentity(heldRoot, authorityRoot)) {
+          throw new Error("source_snapshot_invalid");
+        }
+      }
       visitHeldDirectory(root, rootDescriptor, heldRoot);
     } finally {
       if (rootDescriptor !== null) {
