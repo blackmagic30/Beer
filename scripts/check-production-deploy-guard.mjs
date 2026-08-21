@@ -156,6 +156,8 @@ const productionFixture = {
   PINTPATH_PERMANENT_STAGING_REDIS_URL_SHA256: sha256(syntheticStagingRedisUrl),
   REQUIRE_REDIS_RATE_LIMITING: "true",
   ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION: "false",
+  PINTPATH_AUTOMATIC_MAINTENANCE_ENABLED: "true",
+  PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA: "a".repeat(40),
   PORT: "3000",
   GOOGLE_MAPS_API_KEY: "ci-maps-browser-key",
   GOOGLE_MAPS_MAP_ID: "ci-vector-map-id",
@@ -305,6 +307,16 @@ function assertExit(result, expectedSuccess, label) {
 }
 
 assertExit(runValidator(), true, "Complete production environment validation");
+for (const variable of [
+  "PINTPATH_AUTOMATIC_MAINTENANCE_ENABLED",
+  "PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA",
+]) {
+  assertExit(
+    runValidator({ unset: [variable] }),
+    false,
+    `Production validation without worker-fence binding ${variable}`,
+  );
+}
 for (const [variable, verifiedUrl] of [
   ["DATABASE_URL", syntheticProductionDatabaseUrl],
   ["DATABASE_MAINTENANCE_URL", syntheticProductionMaintenanceDatabaseUrl],
@@ -522,6 +534,8 @@ const ordinaryStagingFixture = {
   REDIS_KEY_NAMESPACE: "pintpath:permanent-staging-bootstrap",
   REQUIRE_REDIS_RATE_LIMITING: "true",
   ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION: "false",
+  PINTPATH_AUTOMATIC_MAINTENANCE_ENABLED: "false",
+  PINTPATH_AUTOMATIC_MAINTENANCE_CANDIDATE_SHA: "b".repeat(40),
   SUPABASE_URL: syntheticPermanentStagingSupabaseUrl,
   SUPABASE_ANON_KEY: stagingPublishableKey,
   SUPABASE_SERVICE_ROLE_KEY: stagingServiceKey,
