@@ -313,6 +313,14 @@ pilots before the role and provider checks pass.
   with unattended execution, no wait timer, and only
   `PINTPATH_PRODUCTION_MONITOR_WEBHOOK_URL`; prove it contains no provider,
   deployment, database, service-role, or other production secrets.
+- [ ] Until those environments and the external deadman are complete, keep the
+  Production Health workflow disabled and leave repository variable
+  `PINTPATH_PRODUCTION_MONITORING_ENABLED` absent. After a successful manual
+  proof, set it to exact lower-case `true` and enable the workflow. Likewise,
+  keep Venue Directory Status Refresh disabled and leave
+  `PINTPATH_VENUE_DIRECTORY_REFRESH_ENABLED` absent until its exact production
+  Supabase target, directory-status schema, Google Places credential, and
+  webhook pass manually. Manual dispatch remains fail-closed for both paths.
 - [ ] Confirm the external webhook receives
   `pintpath-production-public-health-heartbeat` only for the
   `*/15 * * * *` scheduled matrix `publicResult=success` and

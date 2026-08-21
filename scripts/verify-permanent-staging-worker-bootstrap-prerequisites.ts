@@ -15,7 +15,7 @@ export const STAGING_WORKER_BOOTSTRAP_PREREQUISITES_SCHEMA =
 export const STAGING_WORKER_BOOTSTRAP_PREREQUISITES_FILENAME =
   "prerequisites-verification.json" as const;
 export const STAGING_WORKER_BOOTSTRAP_PREREQUISITES_POLICY_SHA256 =
-  "f9419b36bebaaf3110d267836706befdfdec3432abd5f444f9d2452f09e634c8" as const;
+  "f97f246b71bf5beebb439572a891e6ce07c738859ebc7d3a1bf5626ae442ec73" as const;
 
 const REPOSITORY = "blackmagic30/Beer" as const;
 const BRANCH = "main" as const;
@@ -33,11 +33,11 @@ const SCALE_POLICY_SHA256 =
 const FENCED_DEPLOYMENT_POLICY_PATH =
   "ops/railway/permanent-staging-fenced-app-deployment-policy.json";
 const FENCED_DEPLOYMENT_POLICY_SHA256 =
-  "beda3ad174ae5c11757ce3b38f7f4b12a852e3c1726f009667d41d2423ad011e";
+  "5b3a47d5155347d5b74379ebd969aa95df465bc0e8fef6fad32895a202c6f864";
 const ACTIVE_DEPLOYMENT_POLICY_PATH =
   "ops/railway/permanent-staging-app-deployment-policy.json";
 const ACTIVE_DEPLOYMENT_POLICY_SHA256 =
-  "27018e41f75661260e2d9a22b092c87d90490a46f85fcfb757f19d89e6cccae2";
+  "7d4f899e5ee17ee3a7b4d86183aedf7f7f0f86b7e24ed0f2afc50a2df9e8f2e6";
 const PROJECT_ID = "48d8c6cd-1c66-4148-874b-20877f48e1a5";
 const ENVIRONMENT_ID = "a4e0f507-d6d3-4df9-a818-ad92c0071a35";
 const SERVICE_ID = "6816c4a2-e392-4ee5-826f-2584cb599ec0";

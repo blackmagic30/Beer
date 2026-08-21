@@ -94,6 +94,13 @@ Each environment also needs
 environment-scoped Railway project tokens. The write secret must target only
 the named environment. Do not reuse account-wide, production, staging,
 database, or emergency authority across roles. Disable Railway Git autodeploy.
+The committed Railway activation healthcheck is `/startup`, which proves the
+candidate can boot against its local runtime authority. The protected executor
+still requires `/health`, `/startup`, and `/ready` after activation, so changing
+the provider-depth deployment check does not waive operational readiness.
+Committed watch patterns restrict any accidentally re-enabled Git trigger to
+the server, viewer, build scripts, package manifests, TypeScript configuration,
+or Railway configuration; Git autodeploy must nevertheless remain disabled.
 
 The production environment additionally needs
 `PINTPATH_PRODUCTION_PROVIDER_READINESS_ENVELOPE_BASE64` and

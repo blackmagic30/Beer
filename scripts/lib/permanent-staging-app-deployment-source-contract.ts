@@ -67,7 +67,7 @@ export const PERMANENT_STAGING_APP_DEPLOYMENT_SOURCE_CONTRACT_LOCK =
   OBJECT_FREEZE({
     railwayConfigPath: "railway.toml",
     railwayConfigSha256:
-      "85dc659ebec2e0132092d917505d71678e92b8441b54bcefc80c6a082e3b967b",
+      "2b62fd2b216fb8d404b15768aa02441dc453648bc8596e04d6993da62d1d98fa",
     packageLockPath: "package-lock.json",
     packageLockSha256:
       "b5bfc2258853ab58dd5749b91ae55d9724620e102fe55e91de31a4599ab9f67b",

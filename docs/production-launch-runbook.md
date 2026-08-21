@@ -32,11 +32,15 @@ attempt, read-only uncertainty reconciliation, and unconditional postflight.
 They authorize only their exact named operations. They do not authorize any
 other route, billing, arbitrary database/resource, backup, or rollback write.
 
-The scheduled logical-backup and monthly restore-drill workflow uses the
+The logical-backup and monthly restore-drill workflow uses the
 separately reviewed digest-pinned PostgreSQL 17 OCI runtime and its protected
 self-hosted runners. It is operational only for the schema-v3 logical backup,
 operational-copy/WORM receipts, retrieval, and disposable restore ceremony in
 [`production-logical-backup-operations.md`](./production-logical-backup-operations.md).
+Keep the workflow disabled and
+`PINTPATH_PRODUCTION_BACKUP_RUNNER_READY` absent or false until its runner,
+secrets, pins, provider authorities, and a manual proof are complete; the same
+variable explicitly opts scheduled backup and alert jobs in.
 The logical-backup V4 modules remain passive, offline fail-closed contracts;
 neither path authorizes a Railway resource mutation.
 
@@ -2214,6 +2218,22 @@ environments:
    database, smoke-account, or other production secrets. This environment is
    shared only by the provider-credential-free, webhook-only Production Health
    and Venue Directory Status Refresh notifier jobs.
+
+Keep scheduled production monitoring fail-silent while either environment is
+incomplete: leave the repository variable
+`PINTPATH_PRODUCTION_MONITORING_ENABLED` absent (or not exactly `true`) and keep
+the workflow disabled. After both environments and the external deadman are
+proved, set the variable to exact lower-case `true`, enable the workflow, and
+run the manual proof below before relying on either schedule. Manual dispatches
+remain fail-closed regardless of the variable.
+
+Apply the same activation boundary to the daily directory refresh. Leave
+`PINTPATH_VENUE_DIRECTORY_REFRESH_ENABLED` absent (or not exactly `true`) and
+keep its workflow disabled until the exact production Supabase target,
+directory-status schema, Google Places credential, and monitor webhook all
+pass a manual run. Then set the variable to exact lower-case `true` and enable
+the workflow. Manual dispatches remain fail-closed while disabled schedules do
+not manufacture incident emails.
 
 Keep the `production` environment for the manual **Pint Path Release Gate** and
 mutation workflows under their existing protected policy. Dispatch

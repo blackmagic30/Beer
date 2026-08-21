@@ -26,11 +26,11 @@
     },
     "fencedDeployment": {
       "path": "ops/railway/permanent-staging-fenced-app-deployment-policy.json",
-      "sha256": "beda3ad174ae5c11757ce3b38f7f4b12a852e3c1726f009667d41d2423ad011e"
+      "sha256": "5b3a47d5155347d5b74379ebd969aa95df465bc0e8fef6fad32895a202c6f864"
     },
     "activeDeployment": {
       "path": "ops/railway/permanent-staging-app-deployment-policy.json",
-      "sha256": "27018e41f75661260e2d9a22b092c87d90490a46f85fcfb757f19d89e6cccae2"
+      "sha256": "7d4f899e5ee17ee3a7b4d86183aedf7f7f0f86b7e24ed0f2afc50a2df9e8f2e6"
     }
   },
   "producers": {

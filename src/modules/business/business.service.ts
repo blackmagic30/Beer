@@ -17749,9 +17749,15 @@ export class BusinessService {
       };
     }
 
-    const deletionNotificationsRequired = this.config.NODE_ENV === "production"
-      && !this.config.RESTORE_REHEARSAL_MODE
-      && !this.config.POSTGRES_RECOVERY_REHEARSAL_MODE;
+    const deletionNotificationsRequired = !this.config.RESTORE_REHEARSAL_MODE
+      && !this.config.POSTGRES_RECOVERY_REHEARSAL_MODE
+      && (
+        isCanonicalProductionRuntime({
+          nodeEnv: this.config.NODE_ENV,
+          railwayEnvironmentName: process.env.RAILWAY_ENVIRONMENT_NAME,
+        })
+        || Boolean(this.config.ACCOUNT_DELETION_REHEARSAL_ENABLED)
+      );
     const deletionNotificationsConfigured = Boolean(
       this.accountDeletionNotificationCoordinator
       && this.config.ACCOUNT_DELETION_NOTICE_MODE === "resend"

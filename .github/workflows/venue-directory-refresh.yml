@@ -14,6 +14,9 @@ concurrency:
 
 jobs:
   refresh-production-directory-status:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      vars.PINTPATH_VENUE_DIRECTORY_REFRESH_ENABLED == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     environment: production
@@ -183,7 +186,9 @@ jobs:
   notify-directory-refresh:
     name: Page on failure and emit the deadman heartbeat
     needs: [refresh-production-directory-status]
-    if: ${{ always() }}
+    if: >-
+      ${{ always() &&
+      (github.event_name == 'workflow_dispatch' || vars.PINTPATH_VENUE_DIRECTORY_REFRESH_ENABLED == 'true') }}
     permissions: {}
     runs-on: ubuntu-24.04
     environment: production-monitoring-alerts

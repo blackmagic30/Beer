@@ -25,5 +25,10 @@ describe("environment example contract", () => {
     expect(schemaKeys.filter((key) => !exampleKeys.includes(key))).toEqual([]);
     expect(example).toContain("TARGET_BEER=guinness");
     expect(example).toContain("DATABASE_MAINTENANCE_URL=");
+    expect(example).toContain("SUPABASE_URL=\n");
+    expect(example).toContain("SOURCE_EVIDENCE_SIGNING_SECRET=\n");
+    expect(example).not.toContain(
+      "SOURCE_EVIDENCE_SIGNING_SECRET=replace_with_32_plus_random_characters",
+    );
   });
 });
