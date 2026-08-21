@@ -611,9 +611,11 @@ Use the candidate-values block only after the migration runbook has created and 
 This repo includes [railway.toml](railway.toml) with:
 
 - build command: `npm run build`
-- start command: `npm run start`
-- default/staging healthcheck path: `/ready`
-- production deploy healthcheck path: `/startup`
+- start command: `node dist/src/server.js`
+- deploy healthcheck path in every environment: `/startup`
+- provider-dependent operational readiness and protected attestation path: `/ready`
+- build watch patterns limited to server/runtime inputs, including the pinned
+  Node version and package lockfile
 
 Recommended Railway service setup:
 

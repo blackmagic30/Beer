@@ -5309,6 +5309,49 @@ describe("production hardening", () => {
     });
   });
 
+  it("keeps permanent-staging startup independent of production deletion delivery", async () => {
+    const { repository } = createRepository();
+    vi.stubEnv("RAILWAY_ENVIRONMENT_NAME", "staging");
+
+    try {
+      const startup = await createBusinessService(repository, {
+        NODE_ENV: "production",
+        ACCOUNT_DELETION_NOTICE_MODE: "disabled",
+      }).getLocalStartupReadiness();
+
+      expect(startup.ready).toBe(true);
+      expect(startup.dependencies.accountDeletionNotifications).toEqual({
+        required: false,
+        configured: false,
+        schedulerState: "not_run",
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("keeps deletion-rehearsal delivery required in permanent staging", async () => {
+    const { repository } = createRepository();
+    vi.stubEnv("RAILWAY_ENVIRONMENT_NAME", "staging");
+
+    try {
+      const startup = await createBusinessService(repository, {
+        NODE_ENV: "production",
+        ACCOUNT_DELETION_REHEARSAL_ENABLED: true,
+        ACCOUNT_DELETION_NOTICE_MODE: "disabled",
+      }).getLocalStartupReadiness();
+
+      expect(startup.ready).toBe(false);
+      expect(startup.dependencies.accountDeletionNotifications).toEqual({
+        required: true,
+        configured: false,
+        schedulerState: "not_run",
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("keeps restore Supabase blocked until independent destination authority exists", async () => {
     const { repository } = createRepository();
     const publishableKey = ["sb", "publishable", "restore_readiness_fixture"].join("_");

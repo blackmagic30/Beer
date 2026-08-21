@@ -11,7 +11,9 @@ permissions:
 
 jobs:
   public-production-health:
-    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '*/15 * * * *'
+    if: >-
+      (github.event_name == 'workflow_dispatch' || github.event.schedule == '*/15 * * * *') &&
+      (github.event_name == 'workflow_dispatch' || vars.PINTPATH_PRODUCTION_MONITORING_ENABLED == 'true')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -57,7 +59,9 @@ jobs:
           npm run --silent readiness:data | tee production-data-readiness.json
 
   authenticated-user-venue-health:
-    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '7 * * * *'
+    if: >-
+      (github.event_name == 'workflow_dispatch' || github.event.schedule == '7 * * * *') &&
+      (github.event_name == 'workflow_dispatch' || vars.PINTPATH_PRODUCTION_MONITORING_ENABLED == 'true')
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     environment: production-monitoring
@@ -130,7 +134,9 @@ jobs:
   notify-production-health:
     name: Page on failure and emit the deadman heartbeat
     needs: [public-production-health, authenticated-user-venue-health]
-    if: ${{ always() }}
+    if: >-
+      ${{ always() &&
+      (github.event_name == 'workflow_dispatch' || vars.PINTPATH_PRODUCTION_MONITORING_ENABLED == 'true') }}
     permissions: {}
     runs-on: ubuntu-24.04
     environment: production-monitoring-alerts

@@ -3047,6 +3047,8 @@ describe("release workflow contracts", () => {
     expect(source).toContain("environment: production");
     expect(source).toContain('cron: "*/15 * * * *"');
     expect(source).toContain('cron: "7 * * * *"');
+    expect(source.match(/PINTPATH_PRODUCTION_MONITORING_ENABLED/g)).toHaveLength(3);
+    expect(source).toContain("github.event_name == 'workflow_dispatch' || vars.PINTPATH_PRODUCTION_MONITORING_ENABLED == 'true'");
     expect(source).toContain(
       "must not report success without end-to-end credentials",
     );
@@ -3162,7 +3164,7 @@ describe("release workflow contracts", () => {
       payloadEnvironmentNames: string[],
     ) => {
       expect(notifier).toMatch(
-        /^    if:\s*(?:\$\{\{\s*)?always\(\)(?:\s*\}\})?\s*$/m,
+        /^    if:\s*>-\s*$[\s\S]*?^\s+\$\{\{\s*always\(\)\s*&&/m,
       );
       expect(notifier).toMatch(
         /^    environment:\s*production-monitoring-alerts\s*$/m,
@@ -3332,6 +3334,7 @@ describe("release workflow contracts", () => {
     expect(refreshNotifier).toContain(
       "${{ needs.refresh-production-directory-status.outputs.directory_schema_ready }}",
     );
+    expect(refresh.match(/PINTPATH_VENUE_DIRECTORY_REFRESH_ENABLED/g)).toHaveLength(2);
     expect(refreshNotifier).toContain(
       "EVENT_NAME: ${{ github.event_name }}",
     );
@@ -3391,16 +3394,32 @@ describe("release workflow contracts", () => {
     expect(monitor).not.toContain("body.slice");
   });
 
-  it("keeps Railway production activation local while retaining deep staging readiness", () => {
+  it("keeps Railway activation local while retaining deep protected readiness", () => {
     const railway = repositoryFile("railway.toml");
     const app = repositoryFile("src/app.ts");
 
-    expect(railway).toContain('healthcheckPath = "/ready"');
-    expect(railway).toContain(
-      '[environments.production.deploy]\nhealthcheckPath = "/startup"',
-    );
+    expect(railway).toContain('healthcheckPath = "/startup"');
+    expect(railway).not.toContain('healthcheckPath = "/ready"');
+    expect(railway).toContain('watchPatterns = [');
+    expect(railway).toContain('"src/**"');
+    expect(railway).toContain('"viewer/**"');
+    expect(railway).toContain('".node-version"');
+    expect(railway).toContain("healthcheckTimeout = 300");
+    expect(railway).not.toContain("[environments.production.deploy]");
+    expect(repositoryFile("ops/railway/production-app-deployment-policy.json"))
+      .toContain('"/ready"');
+    expect(repositoryFile("ops/railway/permanent-staging-app-deployment-policy.json"))
+      .toContain('"/ready"');
     expect(app).toContain("probeCapabilities: false");
     expect(app).toContain('logger.warn("Operational readiness check failed"');
+  });
+
+  it("keeps the test gate self-contained in a clean checkout", () => {
+    const vitest = repositoryFile("vitest.config.ts");
+    expect(vitest).toContain('process.env.NODE_ENV ??= "test"');
+    expect(vitest).toContain(
+      'process.env.PUBLIC_BASE_URL ??= "http://127.0.0.1:3000"',
+    );
   });
 
   it("keeps the future POS contract isolated from the current launch checklist", () => {

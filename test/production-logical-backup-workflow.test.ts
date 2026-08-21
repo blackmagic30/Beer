@@ -27,6 +27,17 @@ describe("production logical-backup workflow", () => {
     expect(workflow).toContain("permissions:\n  contents: read");
   });
 
+  it("keeps scheduled work dormant until the private backup runner is ready", () => {
+    const backup = jobSource("logical-backup", "restore-drill");
+    const alert = workflow.slice(workflow.indexOf("  alert:\n"));
+    for (const source of [backup, alert]) {
+      expect(source).toContain("github.event_name == 'workflow_dispatch'");
+      expect(source).toContain(
+        "vars.PINTPATH_PRODUCTION_BACKUP_RUNNER_READY == 'true'",
+      );
+    }
+  });
+
   it("keeps all data-bearing work on the protected private-network runner", () => {
     const backup = jobSource("logical-backup", "restore-drill");
     const restore = jobSource("restore-drill", "alert");

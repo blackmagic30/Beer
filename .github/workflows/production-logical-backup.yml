@@ -25,6 +25,9 @@ concurrency:
 jobs:
   logical-backup:
     name: Logical backup, operational copy, and WORM receipt
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' ||
+          vars.PINTPATH_PRODUCTION_BACKUP_RUNNER_READY == 'true' }}
     runs-on: [self-hosted, linux, x64, pintpath-production-backup]
     environment: production-backup
     timeout-minutes: 120
@@ -508,6 +511,8 @@ jobs:
     needs: [logical-backup, restore-drill]
     if: >-
       ${{ always() &&
+          (github.event_name == 'workflow_dispatch' ||
+           vars.PINTPATH_PRODUCTION_BACKUP_RUNNER_READY == 'true') &&
           (needs.logical-backup.result != 'success' ||
            (needs.restore-drill.result != 'success' && needs.restore-drill.result != 'skipped')) }}
     runs-on: ubuntu-24.04

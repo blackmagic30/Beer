@@ -1,9 +1,12 @@
 # Production PostgreSQL logical-backup operations
 
-Status: **scheduled workflow committed; intentionally fail-closed until the
+Status: **scheduled workflow committed but deliberately dormant until the
 protected runner, environments, secrets, pins, and provider authorities are
-provisioned and approved.** The repository change did not connect to a provider
-or create, upload, restore, or delete any backup.
+provisioned and approved.** Scheduled jobs and their alert job are skipped
+unless `PINTPATH_PRODUCTION_BACKUP_RUNNER_READY=true`; manual dispatches bypass
+that scheduling guard and remain fail-closed for prerequisite validation. The
+repository change did not connect to a provider or create, upload, restore, or
+delete any backup.
 
 `.github/workflows/production-logical-backup.yml` supplies two operations:
 
@@ -171,10 +174,12 @@ not repository work. A mutable Supabase copy alone never satisfies retention.
 
 ### `production-backup` variables
 
-Set `PINTPATH_PRODUCTION_BACKUP_RUNNER_READY=true`, then provide the reviewed
-source URL/CA and OCI-policy hashes, operational-copy origin/bucket hashes,
-WORM bucket/profile/account/role hashes, and a non-secret named operator
-reference through:
+Keep `PINTPATH_PRODUCTION_BACKUP_RUNNER_READY` absent or false while the
+workflow is disabled and until one manual run has proved the complete setup.
+Then set it to `true` to opt scheduled backup, restore, and alert jobs in, and
+provide the reviewed source URL/CA and OCI-policy hashes, operational-copy
+origin/bucket hashes, WORM bucket/profile/account/role hashes, and a non-secret
+named operator reference through:
 
 ```text
 PINTPATH_PRODUCTION_BACKUP_SOURCE_URL_SHA256

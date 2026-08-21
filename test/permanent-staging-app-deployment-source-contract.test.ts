@@ -29,7 +29,7 @@ function sha256(value: string): string {
 function exactEntries(): PermanentStagingAppDeploymentSourceManifestEntry[] {
   return [
     ["package-lock.json", "f", 384, 123, LOCK.packageLockSha256],
-    ["railway.toml", "f", 384, 456, LOCK.railwayConfigSha256],
+    ["railway.toml", "f", 384, 666, LOCK.railwayConfigSha256],
     ["src", "d", 448, 0, null],
     ["src/index.ts", "f", 384, 12, APP_SHA256],
   ];
@@ -157,7 +157,7 @@ describe("permanent staging app deployment source contract", () => {
     expect(LOCK).toEqual({
       railwayConfigPath: "railway.toml",
       railwayConfigSha256:
-        "85dc659ebec2e0132092d917505d71678e92b8441b54bcefc80c6a082e3b967b",
+        "2b62fd2b216fb8d404b15768aa02441dc453648bc8596e04d6993da62d1d98fa",
       packageLockPath: "package-lock.json",
       packageLockSha256:
         "b5bfc2258853ab58dd5749b91ae55d9724620e102fe55e91de31a4599ab9f67b",
@@ -224,7 +224,7 @@ describe("permanent staging app deployment source contract", () => {
         entryCount: 4,
         directoryCount: 1,
         fileCount: 3,
-        fileBytes: 591,
+        fileBytes: 801,
       },
     });
     expect(Object.isFrozen(parsed)).toBe(true);
@@ -264,7 +264,7 @@ describe("permanent staging app deployment source contract", () => {
       sourceEntryCount: 4,
       sourceDirectoryCount: 1,
       sourceFileCount: 3,
-      sourceFileBytes: 591,
+      sourceFileBytes: 801,
       railwayConfigSha256: LOCK.railwayConfigSha256,
       packageLockSha256: LOCK.packageLockSha256,
     });
