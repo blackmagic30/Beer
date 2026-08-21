@@ -1503,6 +1503,152 @@ describe("Supabase account and verification foundation", () => {
       .rejects.toThrow("sign-in provider session was revoked");
   });
 
+  it("keeps ordinary browser exchanges bound to a live account while preserving logged-out recovery", async () => {
+    const { database, repository } = createRepository();
+    const nowSeconds = Math.floor(Date.parse(NOW) / 1000);
+    const providerUser = {
+      id: "browser-bound-user-a",
+      email: "browser-bound-a@example.com",
+      email_confirmed_at: NOW,
+      user_metadata: {},
+    };
+    const service = createBusinessService(repository, {
+      SUPABASE_URL: "https://example.supabase.co",
+      SUPABASE_ANON_KEY: "placeholder-anon-key",
+      SUPABASE_SERVICE_ROLE_KEY: "placeholder-service-role-key",
+    });
+    (service as unknown as { supabase: unknown }).supabase = {
+      auth: {
+        getUser: vi.fn(async () => ({ data: { user: providerUser }, error: null })),
+      },
+    };
+    const providerToken = (sessionId: string) => testSupabaseAccessToken({
+      sub: providerUser.id,
+      iat: nowSeconds - 30,
+      auth_time: nowSeconds - 30,
+      session_id: sessionId,
+      amr: [{ method: "password", timestamp: nowSeconds - 30 }],
+    }, `browser-bound-${sessionId}`);
+    const legalAcceptance = {
+      ageConfirmed: true as const,
+      termsAccepted: true as const,
+      privacyAccepted: true as const,
+      termsVersion: CURRENT_LEGAL_POLICY_VERSION,
+      privacyVersion: CURRENT_LEGAL_POLICY_VERSION,
+      consentSource: "web" as const,
+    };
+    const initial = await service.loginWithSupabaseAccessToken({
+      accessToken: providerToken("account-a-initial"),
+      ...legalAcceptance,
+    });
+    providerUser.id = "browser-bound-user-b";
+    providerUser.email = "browser-bound-b@example.com";
+    const loggedOutSignup = await service.loginWithSupabaseAccessToken({
+      accessToken: providerToken("account-b-logged-out-signup"),
+      credentialCeremony: "browser_memory_v1",
+      ...legalAcceptance,
+    });
+    expect(loggedOutSignup.account.id).toBe("browser-bound-user-b");
+
+    const sessionRepository = (service as unknown as {
+      accountSessionRepository: AccountSessionRepository;
+    }).accountSessionRepository;
+    const createSessionWithLimit = vi.spyOn(sessionRepository, "createSessionWithLimit");
+    const rotateSession = vi.spyOn(sessionRepository, "rotateOrCreateSessionToken");
+    const rotateSessionWithAccount = vi.spyOn(
+      sessionRepository,
+      "rotateOrCreateSessionTokenWithSupabaseAccountMutation",
+    );
+    const sessionRows = () => database.prepare(
+      `SELECT token_hash AS "tokenHash", user_id AS "userId",
+              provider_session_id_hash AS "providerSessionIdHash",
+              revoked_at AS "revokedAt"
+         FROM auth_sessions
+        ORDER BY token_hash`,
+    ).all();
+    const beforeMismatch = sessionRows();
+
+    providerUser.id = "browser-bound-user-b";
+    providerUser.email = "browser-bound-b@example.com";
+    await expect(service.loginWithSupabaseAccessToken({
+      accessToken: providerToken("account-b-blocked"),
+      credentialCeremony: "browser_memory_v1",
+      ...legalAcceptance,
+    }, undefined, `Bearer ${initial.token}`)).rejects.toMatchObject({
+      statusCode: 409,
+      message: expect.stringContaining("Sign out before switching accounts"),
+    });
+    expect(repository.getAccountBySupabaseUserId(providerUser.id)?.id)
+      .toBe("browser-bound-user-b");
+    expect(sessionRows()).toEqual(beforeMismatch);
+    expect(createSessionWithLimit).not.toHaveBeenCalled();
+    expect(rotateSession).not.toHaveBeenCalled();
+    expect(rotateSessionWithAccount).not.toHaveBeenCalled();
+    expect(await service.getAccountFromAuthorization(`Bearer ${initial.token}`))
+      .toEqual(expect.objectContaining({ id: "browser-bound-user-a" }));
+
+    providerUser.id = "browser-bound-user-a";
+    providerUser.email = "browser-bound-a-renamed@example.com";
+    const sameAccount = await service.loginWithSupabaseAccessToken({
+      accessToken: providerToken("account-a-same-identity"),
+      credentialCeremony: "browser_memory_v1",
+    }, undefined, `Bearer ${initial.token}`);
+    expect(sameAccount.account).toEqual(expect.objectContaining({
+      id: "browser-bound-user-a",
+      email: "browser-bound-a-renamed@example.com",
+    }));
+    expect(sameAccount.token).not.toBe(initial.token);
+
+    providerUser.id = "browser-bound-user-b";
+    providerUser.email = "browser-bound-b@example.com";
+    const crossDeviceRecovery = await service.loginWithSupabaseAccessToken({
+      accessToken: providerToken("account-b-cross-device"),
+      credentialCeremony: "browser_memory_v1",
+    });
+    expect(crossDeviceRecovery.account.id).toBe("browser-bound-user-b");
+
+    const expiredCookieToken = "expired-account-a-cookie";
+    repository.createSession({
+      tokenHash: crypto.createHash("sha256").update(expiredCookieToken).digest("hex"),
+      userId: "browser-bound-user-a",
+      createdAt: "2026-05-03T08:00:00.000Z",
+      expiresAt: "2026-05-04T07:59:59.999Z",
+    });
+    const expiredCookieRecovery = await service.loginWithSupabaseAccessToken({
+      accessToken: providerToken("account-b-expired-cookie"),
+      credentialCeremony: "browser_memory_v1",
+    }, undefined, `Bearer ${expiredCookieToken}`);
+    expect(expiredCookieRecovery.account.id).toBe("browser-bound-user-b");
+
+    const legacy = createAccount(repository, "browser-bound-legacy");
+    const legacyAuthorization = createSession(
+      repository,
+      legacy.id,
+      "browser-bound-legacy-session",
+    );
+    providerUser.id = "browser-bound-legacy-supabase";
+    providerUser.email = "different-legacy-email@example.com";
+    await expect(service.loginWithSupabaseAccessToken({
+      accessToken: providerToken("legacy-wrong-email"),
+      credentialCeremony: "browser_memory_v1",
+    }, undefined, legacyAuthorization)).rejects.toMatchObject({ statusCode: 409 });
+
+    providerUser.email = "BROWSER-BOUND-LEGACY@EXAMPLE.COM";
+    providerUser.email_confirmed_at = "";
+    await expect(service.loginWithSupabaseAccessToken({
+      accessToken: providerToken("legacy-unverified-email"),
+      credentialCeremony: "browser_memory_v1",
+    }, undefined, legacyAuthorization)).rejects.toMatchObject({ statusCode: 409 });
+
+    providerUser.email_confirmed_at = NOW;
+    const linkedLegacy = await service.loginWithSupabaseAccessToken({
+      accessToken: providerToken("legacy-exact-email-link"),
+      credentialCeremony: "browser_memory_v1",
+    }, undefined, legacyAuthorization);
+    expect(linkedLegacy.account.id).toBe(legacy.id);
+    expect(repository.getAccountBySupabaseUserId(providerUser.id)?.id).toBe(legacy.id);
+  });
+
   it("requires AAL2 before any verified provider factor can create, refresh, or prove an app session", async () => {
     const { database, repository } = createRepository();
     const nowSeconds = Math.floor(Date.parse(NOW) / 1000);

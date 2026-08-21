@@ -5433,7 +5433,10 @@ export class BusinessService {
       input.credentialCeremony !== undefined
         ? input.reauthPurpose ?? "session"
         : null;
-    const currentCookieSessionToken = getBearerToken(existingAuthorization);
+    let currentCookieSessionToken = getBearerToken(existingAuthorization);
+    const ordinaryBrowserSessionExchange =
+      input.credentialCeremony === BROWSER_MEMORY_CREDENTIAL_CEREMONY
+      && browserCredentialPurpose === "session";
     if (
       browserCredentialPurpose !== null
       && browserCredentialPurpose !== "session"
@@ -5445,11 +5448,19 @@ export class BusinessService {
       });
     }
     let currentAppAccount: BusinessAccount | null = null;
-    if (browserCredentialPurpose !== null && browserCredentialPurpose !== "session") {
+    if (
+      currentCookieSessionToken
+      && (
+        ordinaryBrowserSessionExchange
+        || (browserCredentialPurpose !== null && browserCredentialPurpose !== "session")
+      )
+    ) {
       currentAppAccount = await this.accountSessionRepository.getAccountBySessionTokenHash(
-        hashToken(currentCookieSessionToken!),
+        hashToken(currentCookieSessionToken),
         nowIso(),
       );
+    }
+    if (browserCredentialPurpose !== null && browserCredentialPurpose !== "session") {
       if (
         !currentAppAccount
         || currentAppAccount.supabaseUserId !== supabaseUser.id
@@ -5463,6 +5474,24 @@ export class BusinessService {
             reauthPurpose: browserCredentialPurpose,
           },
         );
+      }
+    }
+    if (ordinaryBrowserSessionExchange) {
+      if (currentAppAccount) {
+        const existingIdentityMatches = currentAppAccount.supabaseUserId !== null
+          ? currentAppAccount.supabaseUserId === supabaseUser.id
+          : normalizeEmail(currentAppAccount.email) === email
+            && Boolean(getSupabaseEmailVerifiedAt(supabaseUser));
+        if (!existingIdentityMatches) {
+          throw new AppError(
+            "That provider login does not match the active Pint Path session. Sign out before switching accounts.",
+            409,
+          );
+        }
+      } else {
+        // A missing, expired, revoked, or otherwise ineligible cookie is not
+        // rotation authority. Continue as a logged-out cross-device exchange.
+        currentCookieSessionToken = null;
       }
     }
     if (input.credentialCeremony === "browser_email_otp_v1") {

@@ -1033,6 +1033,97 @@ describe("GitHub release-candidate verifier", () => {
     }
   });
 
+  it("fails closed if the validated output parent is replaced during exclusive creation", async () => {
+    const fixture = harness({ phase: "staging" });
+    const displaced = `${fixture.directory}-held`;
+    temporaryDirectories.push(displaced);
+    const originalOpenSync = fs.openSync;
+    let injected = false;
+    let creationTarget = "";
+    const openSpy = vi.spyOn(fs, "openSync").mockImplementation((...args) => {
+      const [target, flags] = args;
+      if (
+        !injected && typeof flags === "number" &&
+        (flags & fs.constants.O_CREAT) !== 0 &&
+        path.basename(String(target)) === "receipt.json"
+      ) {
+        injected = true;
+        creationTarget = String(target);
+        fs.renameSync(fixture.directory, displaced);
+        fs.mkdirSync(fixture.directory, { mode: 0o700 });
+      }
+      return Reflect.apply(originalOpenSync, fs, args);
+    });
+    let summary = "";
+    try {
+      const code = await runGithubReleaseCandidateVerification(fixture.argv, {
+        env: {
+          GITHUB_ACTIONS: "true",
+          GITHUB_REF: "refs/heads/main",
+          GITHUB_SHA: CANDIDATE,
+          GITHUB_REPOSITORY: "blackmagic30/Beer",
+          GITHUB_RUN_ATTEMPT: "1",
+          GITHUB_RUN_ID: "9999",
+          GITHUB_TOKEN: "g".repeat(32),
+        },
+        fetchImpl: fixture.fetchImpl,
+        writeOutput: (value: string) => { summary += value; },
+      });
+      expect(injected).toBe(true);
+      if (process.platform === "linux") {
+        expect(creationTarget).toMatch(/^\/proc\/self\/fd\/[1-9][0-9]*\/receipt\.json$/);
+        expect(fs.existsSync(path.join(fixture.directory, "receipt.json"))).toBe(false);
+      }
+      expect(code).toBe(1);
+      expect(JSON.parse(summary)).toMatchObject({
+        ok: false,
+        failureCode: "output_unsafe",
+      });
+    } finally {
+      openSpy.mockRestore();
+    }
+  });
+
+  it("fails closed if the output leaf is replaced during parent durability sync", async () => {
+    const fixture = harness({ phase: "staging" });
+    const receipt = path.join(fixture.directory, "receipt.json");
+    const displaced = path.join(fixture.directory, "receipt-held.json");
+    const originalFsyncSync = fs.fsyncSync;
+    let fsyncCalls = 0;
+    const fsyncSpy = vi.spyOn(fs, "fsyncSync").mockImplementation((fd) => {
+      fsyncCalls += 1;
+      if (fsyncCalls === 2) {
+        fs.renameSync(receipt, displaced);
+        fs.writeFileSync(receipt, "forged", { flag: "wx", mode: 0o600 });
+      }
+      return originalFsyncSync(fd);
+    });
+    let summary = "";
+    try {
+      const code = await runGithubReleaseCandidateVerification(fixture.argv, {
+        env: {
+          GITHUB_ACTIONS: "true",
+          GITHUB_REF: "refs/heads/main",
+          GITHUB_SHA: CANDIDATE,
+          GITHUB_REPOSITORY: "blackmagic30/Beer",
+          GITHUB_RUN_ATTEMPT: "1",
+          GITHUB_RUN_ID: "9999",
+          GITHUB_TOKEN: "g".repeat(32),
+        },
+        fetchImpl: fixture.fetchImpl,
+        writeOutput: (value: string) => { summary += value; },
+      });
+      expect(fsyncCalls).toBe(2);
+      expect(code).toBe(1);
+      expect(JSON.parse(summary)).toMatchObject({
+        ok: false,
+        failureCode: "output_unsafe",
+      });
+    } finally {
+      fsyncSpy.mockRestore();
+    }
+  });
+
   it("rejects an out-of-order rollout, a rerun predecessor, or the wrong current consumer", async () => {
     for (const fixture of [
       harness({ phase: "open", chronologyOverlapStage: "scale" }),

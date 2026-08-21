@@ -25,6 +25,14 @@
       <div class="eyebrow">Secure sign in</div>
       <h1>Finishing your Pint Path login</h1>
       <p id="callbackStatus" class="lead">Checking your Supabase session and returning you to Pint Path...</p>
+      <form id="callbackIdentityConfirmationForm" class="form" method="post" action="/form-submission-unavailable" accept-charset="UTF-8" data-sensitive-native-fallback="non-mutating" hidden>
+        <p id="callbackIdentityConfirmationPrompt" class="helperCopy"></p>
+        <label class="field">Email address that received this link
+          <input id="callbackIdentityConfirmationEmail" name="email" type="email" inputmode="email" autocomplete="email" autocapitalize="none" spellcheck="false" maxlength="320" aria-describedby="callbackIdentityConfirmationPrompt" required />
+        </label>
+        <button id="callbackIdentityConfirmationButton" class="button button--primary" type="submit">Confirm and continue</button>
+        <button id="callbackIdentityConfirmationCancel" class="button" type="button">Cancel</button>
+      </form>
       <form id="callbackAcceptanceForm" class="form" method="post" action="/form-submission-unavailable" accept-charset="UTF-8" data-sensitive-native-fallback="non-mutating" hidden>
         <fieldset class="field consentField" aria-describedby="callbackAcceptanceHelp">
           <legend>Before creating your Pint Path account</legend>
@@ -75,11 +83,15 @@
     let callbackFlowNonce = "";
     let callbackPopupState = null;
     let callbackProviderSession = null;
+    let callbackProviderSessionInstalled = false;
+    let callbackAppSessionInstalled = false;
+    let callbackVerifiedProviderEmail = "";
     let callbackRecoveryResult = false;
     let callbackBillingRecovery = null;
     let callbackContinuationRetry = null;
     let callbackMfaEnrollmentFactorId = null;
     let callbackContinuationBusy = false;
+    const CALLBACK_FAILURE_MESSAGE = "Sign-in did not complete. Start again from Pint Path.";
 
     function callbackHashParams() {
       return new URLSearchParams(String(window.location.hash || "").replace(/^#/, ""));
@@ -187,6 +199,55 @@
       return callbackFlowNonce;
     }
 
+    function normalizeCallbackEmail(value) {
+      return String(value || "").trim().toLowerCase();
+    }
+
+    async function getVerifiedCallbackProviderEmail(client) {
+      if (typeof client?.auth?.getUser !== "function") {
+        throw new Error(CALLBACK_FAILURE_MESSAGE);
+      }
+      const { data, error } = await client.auth.getUser();
+      const verifiedEmail = normalizeCallbackEmail(data?.user?.email);
+      if (error || !verifiedEmail || verifiedEmail.length > 320) {
+        throw new Error(CALLBACK_FAILURE_MESSAGE);
+      }
+      return verifiedEmail;
+    }
+
+    function clearCallbackIdentityConfirmation() {
+      callbackVerifiedProviderEmail = "";
+      const form = document.getElementById("callbackIdentityConfirmationForm");
+      form.hidden = true;
+      document.getElementById("callbackIdentityConfirmationEmail").value = "";
+      document.getElementById("callbackIdentityConfirmationPrompt").textContent = "";
+    }
+
+    function showCallbackIdentityConfirmation(verifiedEmail) {
+      const normalizedEmail = normalizeCallbackEmail(verifiedEmail);
+      if (!normalizedEmail) throw new Error(CALLBACK_FAILURE_MESSAGE);
+      callbackVerifiedProviderEmail = normalizedEmail;
+      const form = document.getElementById("callbackIdentityConfirmationForm");
+      const input = document.getElementById("callbackIdentityConfirmationEmail");
+      document.getElementById("callbackStatus").textContent = "Confirm the account identity before Pint Path finishes signing in.";
+      document.getElementById("callbackIdentityConfirmationPrompt").textContent = `The sign-in provider verified the session for ${normalizedEmail}. Type that exact email address to confirm it received this link and continue.`;
+      document.getElementById("callbackCancelButton").hidden = true;
+      input.value = "";
+      form.hidden = false;
+      input.focus();
+    }
+
+    async function clearCallbackProviderSessionOnly() {
+      const clients = [
+        MelbBeerBusiness.getSupabaseOAuthClient?.(),
+        MelbBeerBusiness.getSupabaseClient?.(),
+      ].filter(Boolean);
+      await Promise.all(clients.map((client) => client.auth.signOut({ scope: "local" }).catch(() => null)));
+      callbackProviderSession = null;
+      callbackProviderSessionInstalled = false;
+      clearCallbackIdentityConfirmation();
+    }
+
     async function clearCallbackSession() {
       let serverLogoutError = null;
       try {
@@ -197,17 +258,14 @@
       } catch (error) {
         serverLogoutError = error;
       }
-      const clients = [
-        MelbBeerBusiness.getSupabaseOAuthClient?.(),
-        MelbBeerBusiness.getSupabaseClient?.(),
-      ].filter(Boolean);
-      await Promise.all(clients.map((client) => client.auth.signOut({ scope: "local" }).catch(() => null)));
+      await clearCallbackProviderSessionOnly();
       MelbBeerBusiness.clearSupabaseOAuthFlowStorage();
       MelbBeerBusiness.clearOAuthPopupState?.();
       MelbBeerBusiness.clearAuthFlowState();
       MelbBeerBusiness.clearSensitiveAuthReturnState();
       MelbBeerBusiness.setAuthToken(null);
       MelbBeerBusiness.setAccountContext(null);
+      callbackAppSessionInstalled = false;
       window.localStorage.removeItem("pintPathAuthReturnTo");
       MelbBeerBusiness.broadcastAuthInvalidation?.("callback_logout");
       if (serverLogoutError) {
@@ -237,6 +295,37 @@
       accountUrl.searchParams.set("authError", message || "Login failed. Please try again.");
       window.location.replace(accountUrl.toString());
       return true;
+    }
+
+    function clearCallbackEphemeralFlowState() {
+      callbackFlowNonce = "";
+      callbackFlowState = null;
+      callbackPopupState = null;
+      clearCallbackIdentityConfirmation();
+      MelbBeerBusiness.clearPendingLegalAcceptance();
+      MelbBeerBusiness.clearSupabaseOAuthFlowStorage();
+      MelbBeerBusiness.clearOAuthPopupState?.();
+      MelbBeerBusiness.clearAuthFlowState();
+      MelbBeerBusiness.clearSensitiveAuthReturnState();
+      window.localStorage.removeItem("pintPathAuthReturnTo");
+    }
+
+    async function redirectCallbackFailure() {
+      const callbackFailureIsBound = callbackFlowState !== null;
+      if (callbackFailureIsBound || callbackProviderSessionInstalled) {
+        clearCallbackEphemeralFlowState();
+      }
+      if (callbackAppSessionInstalled) {
+        return redirectWithError(CALLBACK_FAILURE_MESSAGE, { clearSession: true });
+      }
+      if (callbackProviderSessionInstalled) await clearCallbackProviderSessionOnly();
+      return redirectWithError(CALLBACK_FAILURE_MESSAGE, { clearSession: false });
+    }
+
+    async function rejectCallbackIdentityConfirmation() {
+      clearCallbackEphemeralFlowState();
+      if (callbackProviderSessionInstalled) await clearCallbackProviderSessionOnly();
+      return redirectWithError(CALLBACK_FAILURE_MESSAGE, { clearSession: false });
     }
 
     async function currentCallbackProviderSession() {
@@ -619,9 +708,10 @@
           ? { reauthPurpose: callbackPopupState?.purpose || callbackFlowState.reauthPurpose }
           : {}),
       });
-      if (!result.synced) {
+      if (result.synced !== true) {
         throw new Error(result.error || "No Supabase session was returned. Please try signing in again.");
       }
+      callbackAppSessionInstalled = true;
 
       if (emailReauthenticationPurpose === "logout_all") {
         await continueCallbackLogoutAll();
@@ -673,6 +763,10 @@
     }
 
     window.addEventListener("DOMContentLoaded", async () => {
+      const identityConfirmationForm = document.getElementById("callbackIdentityConfirmationForm");
+      const identityConfirmationInput = document.getElementById("callbackIdentityConfirmationEmail");
+      const identityConfirmationButton = document.getElementById("callbackIdentityConfirmationButton");
+      const identityConfirmationCancel = document.getElementById("callbackIdentityConfirmationCancel");
       const acceptanceForm = document.getElementById("callbackAcceptanceForm");
       const recoveryForm = document.getElementById("callbackPasswordRecoveryForm");
       document.getElementById("callbackCancelButton").addEventListener("click", cancelCallbackLogin);
@@ -690,6 +784,38 @@
         } finally {
           callbackContinuationBusy = false;
           button.disabled = false;
+        }
+      });
+      identityConfirmationCancel.addEventListener("click", async () => {
+        identityConfirmationButton.disabled = true;
+        identityConfirmationCancel.disabled = true;
+        await rejectCallbackIdentityConfirmation();
+      });
+      identityConfirmationForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        identityConfirmationButton.disabled = true;
+        identityConfirmationCancel.disabled = true;
+        const confirmedEmail = normalizeCallbackEmail(identityConfirmationInput.value);
+        // The comparison authority came from provider getUser(), never the callback URL
+        // or editable profile metadata. A mismatch consumes the one-shot callback.
+        if (!callbackVerifiedProviderEmail || confirmedEmail !== callbackVerifiedProviderEmail) {
+          await rejectCallbackIdentityConfirmation();
+          return;
+        }
+        clearCallbackIdentityConfirmation();
+        document.getElementById("callbackStatus").textContent = "Finishing the confirmed sign-in...";
+        try {
+          await finishCallbackLogin(callbackAuthFlowNonce());
+        } catch (error) {
+          if (needsBillingRecovery(error)) {
+            await handleCallbackBillingRecovery(error);
+            return;
+          }
+          if (needsFirstAccountAcceptance(error)) {
+            showCallbackAcceptance();
+            return;
+          }
+          await redirectCallbackFailure(error);
         }
       });
       acceptanceForm.addEventListener("submit", async (event) => {
@@ -715,7 +841,7 @@
             showCallbackAcceptance();
             return;
           }
-          await redirectWithError(error.message);
+          await redirectCallbackFailure(error);
         }
       });
 
@@ -744,15 +870,25 @@
 
       const initialQuery = new URLSearchParams(window.location.search);
       const popupProvider = String(initialQuery.get("oauthStart") || "").trim().toLowerCase();
-      if (popupProvider) {
+      // The URL chooses only an allowlisted provider after the popup has consumed an
+      // exact, short-lived capability cloned from the initiating same-origin tab.
+      // codeql[js/user-controlled-bypass]
+      if (popupProvider) { // lgtm[js/user-controlled-bypass]
+        const popupLaunch = MelbBeerBusiness.consumeOAuthPopupLaunch?.({
+          channelId: initialQuery.get("popupChannel"),
+          provider: popupProvider,
+          purpose: initialQuery.get("popupPurpose") || "login",
+          returnTo: initialQuery.get("returnTo") || "/account.html",
+        });
+        scrubCallbackCredentials();
+        if (!popupLaunch) {
+          document.getElementById("callbackStatus").textContent = "This secure provider popup was not started by the active Pint Path tab. Close it and retry from Pint Path.";
+          document.getElementById("callbackCancelButton").hidden = true;
+          return;
+        }
+        callbackPopupState = popupLaunch;
         try {
-          callbackPopupState = MelbBeerBusiness.storeOAuthPopupState({
-            channelId: initialQuery.get("popupChannel"),
-            provider: popupProvider,
-            purpose: initialQuery.get("popupPurpose") || "login",
-            returnTo: initialQuery.get("returnTo") || "/account.html",
-          });
-          scrubCallbackCredentials();
+          callbackPopupState = MelbBeerBusiness.storeOAuthPopupState(popupLaunch);
           document.getElementById("callbackStatus").textContent = "Opening your secure sign-in provider...";
           await MelbBeerBusiness.signInWithOAuth(popupProvider, {
             returnTo: callbackPopupState.returnTo,
@@ -778,7 +914,11 @@
         ? null
         : MelbBeerBusiness.peekOAuthPopupState?.();
       const errorMessage = callbackErrorMessage();
-      if (errorMessage) {
+      // Provider error text affects display only. A valid, unexpired local flow
+      // authorizes cancellation of that flow's ephemeral artifacts, never logout.
+      // codeql[js/user-controlled-bypass]
+      if (errorMessage) { // lgtm[js/user-controlled-bypass]
+        const callbackErrorIsBound = callbackFlowState !== null;
         scrubCallbackCredentials();
         if (callbackPopupState) {
           const delivered = await finishPopupBridge({
@@ -790,7 +930,12 @@
           document.getElementById("callbackCancelButton").hidden = true;
           return;
         }
-        await redirectWithError(errorMessage, { clearAcceptance: true });
+        if (callbackErrorIsBound) {
+          clearCallbackEphemeralFlowState();
+        }
+        const accountUrl = new URL("/account.html", window.location.origin);
+        accountUrl.searchParams.set("authError", "Sign-in did not complete. Start again from Pint Path.");
+        window.location.replace(accountUrl.toString());
         return;
       }
 
@@ -837,7 +982,10 @@
             refresh_token: data.session.refresh_token,
           };
           await MelbBeerBusiness.setSupabaseMemorySession(callbackProviderSession);
+          callbackProviderSessionInstalled = true;
         } else if (accessToken || refreshToken) {
+          // The URL type and local flow kind select an allowed ceremony only. Neither
+          // supplies identity; every signup/recovery identity comes from getUser().
           const expectedFlowKind = isRecoveryResult
             ? "password_recovery"
             : isBrowserEmailReauthenticationResult
@@ -848,23 +996,27 @@
           if (!expectedFlowKind) {
             throw new Error("This email sign-in link type is not supported. Request a new Pint Path confirmation or recovery link.");
           }
-          if (
-            expectedFlowKind === "browser_email_reauthentication"
-            && callbackFlowState?.kind !== expectedFlowKind
-          ) {
-            throw new Error("This email security link was not started by the active Pint Path session. Return to the original browser and retry the action.");
-          }
-          if (!isRecoveryResult && callbackFlowState && callbackFlowState.kind !== expectedFlowKind) {
-            throw new Error("This email sign-in link does not match the secure request started in this browser. Request a new link and try again.");
+          if (callbackFlowState && callbackFlowState.kind !== expectedFlowKind) {
+            throw new Error(CALLBACK_FAILURE_MESSAGE);
           }
           if (!accessToken || !refreshToken) {
             throw new Error("The email sign-in link did not return a complete secure session. Request a new link and try again.");
           }
+          callbackPopupState = null;
+          MelbBeerBusiness.clearOAuthPopupState?.();
           callbackProviderSession = {
             access_token: accessToken,
             refresh_token: refreshToken,
           };
           await MelbBeerBusiness.setSupabaseMemorySession(callbackProviderSession);
+          callbackProviderSessionInstalled = true;
+          if (["signup", "password_recovery"].includes(expectedFlowKind)) {
+            const verifiedEmail = await getVerifiedCallbackProviderEmail(client);
+            callbackProviderSession = null;
+            MelbBeerBusiness.clearSupabaseOAuthFlowStorage();
+            showCallbackIdentityConfirmation(verifiedEmail);
+            return;
+          }
         } else {
           throw new Error("No secure sign-in result was returned. Start again from the Pint Path account page.");
         }
@@ -901,7 +1053,7 @@
           showCallbackAcceptance();
           return;
         }
-        await redirectWithError(error.message);
+        await redirectCallbackFailure(error);
       }
     });
   </script>

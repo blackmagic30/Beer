@@ -524,8 +524,22 @@ interface SourceAuthority {
   readonly archiveSha256: string;
   readonly snapshotManifestSha256: string;
   readonly snapshotPath: string;
+  readonly deploymentPath: string;
+  readonly close: () => void;
   readonly cleanup: () => void;
   readonly reassert: () => void;
+}
+
+interface HeldSnapshotRoot {
+  readonly authorityPath: string;
+  readonly assertExact: () => void;
+  readonly close: () => void;
+}
+
+interface CliAuthority {
+  readonly executablePath: string;
+  readonly assertExact: () => void;
+  readonly close: () => void;
 }
 
 interface ProviderObservation {
@@ -573,7 +587,7 @@ interface ExecutorDependencies {
   readonly validateCli: (
     policy: PermanentStagingAppDeploymentPolicy,
     dependencies: ExecutorDependencies,
-  ) => Promise<string>;
+  ) => Promise<CliAuthority>;
   readonly validateWriteToken: (
     policy: PermanentStagingAppDeploymentPolicy,
     token: string,
@@ -816,57 +830,286 @@ async function checkedCommand(
   return result.stdout.trim();
 }
 
-function snapshotManifestSha256(snapshotRoot: string): string {
-  const root = fs.realpathSync(snapshotRoot);
-  const entries: Array<Readonly<{
-    path: string;
-    type: "directory" | "file";
-    mode: number;
-    size?: number;
-    sha256?: string;
-  }>> = [];
-  let totalBytes = 0;
-  const visit = (directory: string): void => {
-    const names = fs.readdirSync(directory).sort((left, right) =>
-      Buffer.from(left).compare(Buffer.from(right)));
-    for (const name of names) {
-      if (/[\0\r\n]/.test(name)) throw new Error("source_snapshot_invalid");
-      const absolute = path.join(directory, name);
-      const relative = path.relative(root, absolute).split(path.sep).join("/");
-      const stat = fs.lstatSync(absolute);
-      if (
-        entries.length >= 100_000
-        || relative.startsWith("../")
-        || path.isAbsolute(relative)
-        || stat.isSymbolicLink()
-      ) throw new Error("source_snapshot_invalid");
-      if (stat.isDirectory()) {
-        entries.push(Object.freeze({
-          path: relative,
-          type: "directory",
-          mode: stat.mode & 0o777,
-        }));
-        visit(absolute);
-      } else if (stat.isFile()) {
-        if (stat.nlink !== 1) throw new Error("source_snapshot_invalid");
-        totalBytes += stat.size;
-        if (totalBytes > 1024 * 1024 * 1024) {
+type BigIntStats = fs.BigIntStats;
+
+function requiredFilesystemFlag(value: number | undefined): number {
+  if (value === undefined || !Number.isSafeInteger(value) || value <= 0) {
+    throw new Error("filesystem_capability_unavailable");
+  }
+  return value;
+}
+
+function sameFileIdentity(left: BigIntStats, right: BigIntStats): boolean {
+  return left.dev === right.dev
+    && left.ino === right.ino
+    && left.mode === right.mode
+    && left.uid === right.uid
+    && left.gid === right.gid
+    && left.nlink === right.nlink
+    && left.size === right.size
+    && left.mtimeNs === right.mtimeNs
+    && left.ctimeNs === right.ctimeNs;
+}
+
+function exactCanonicalPath(filename: string): boolean {
+  return path.isAbsolute(filename)
+    && path.normalize(filename) === filename
+    && path.resolve(filename) === filename
+    && !filename.includes("\0")
+    && fs.realpathSync(filename) === filename;
+}
+
+function pathMatchesHeldDescriptor(
+  filename: string,
+  descriptor: number,
+  expected: BigIntStats,
+): boolean {
+  const before = fs.lstatSync(filename, { bigint: true });
+  const held = fs.fstatSync(descriptor, { bigint: true });
+  if (
+    before.isSymbolicLink()
+    || !sameFileIdentity(before, expected)
+    || !sameFileIdentity(held, expected)
+    || !exactCanonicalPath(filename)
+  ) return false;
+  const after = fs.lstatSync(filename, { bigint: true });
+  return !after.isSymbolicLink()
+    && sameFileIdentity(before, after)
+    && sameFileIdentity(after, held);
+}
+
+function sha256HeldDescriptor(
+  descriptor: number,
+  expectedSize: bigint,
+  maximumBytes: number,
+): string {
+  if (
+    expectedSize < 0n
+    || expectedSize > BigInt(maximumBytes)
+    || expectedSize > BigInt(Number.MAX_SAFE_INTEGER)
+  ) throw new Error("held_file_invalid");
+  const expectedBytes = Number(expectedSize);
+  const buffer = Buffer.allocUnsafe(Math.min(64 * 1024, Math.max(1, expectedBytes)));
+  const hash = crypto.createHash("sha256");
+  let offset = 0;
+  try {
+    while (offset < expectedBytes) {
+      const requested = Math.min(buffer.length, expectedBytes - offset);
+      const count = fs.readSync(descriptor, buffer, 0, requested, offset);
+      if (count < 1) throw new Error("held_file_invalid");
+      hash.update(buffer.subarray(0, count));
+      offset += count;
+    }
+    if (fs.readSync(descriptor, buffer, 0, 1, offset) !== 0) {
+      throw new Error("held_file_invalid");
+    }
+    return hash.digest("hex");
+  } finally {
+    buffer.fill(0);
+  }
+}
+
+function holdSnapshotRootDirectory(snapshotPath: string): HeldSnapshotRoot {
+  let descriptor: number | null = null;
+  try {
+    if (process.platform !== "linux" || !exactCanonicalPath(snapshotPath)) {
+      throw new Error("source_snapshot_invalid");
+    }
+    descriptor = fs.openSync(
+      snapshotPath,
+      fs.constants.O_RDONLY
+        | requiredFilesystemFlag(fs.constants.O_DIRECTORY)
+        | requiredFilesystemFlag(fs.constants.O_NOFOLLOW)
+        | requiredFilesystemFlag(fs.constants.O_NONBLOCK),
+    );
+    const baseline = fs.fstatSync(descriptor, { bigint: true });
+    const uid = process.geteuid?.() ?? process.getuid?.();
+    if (
+      !baseline.isDirectory()
+      || !Number.isSafeInteger(uid)
+      || baseline.uid !== BigInt(uid!)
+      || (baseline.mode & 0o777n) !== 0o700n
+      || !pathMatchesHeldDescriptor(snapshotPath, descriptor, baseline)
+    ) throw new Error("source_snapshot_invalid");
+    const heldDescriptor = descriptor;
+    const authorityPath = `/proc/${process.pid}/fd/${heldDescriptor}`;
+    if (!sameFileIdentity(
+      baseline,
+      fs.statSync(authorityPath, { bigint: true }),
+    )) throw new Error("source_snapshot_invalid");
+    let closed = false;
+    const authority = Object.freeze({
+      authorityPath,
+      assertExact: (): void => {
+        try {
+          if (
+            closed
+            || !sameFileIdentity(
+              baseline,
+              fs.fstatSync(heldDescriptor, { bigint: true }),
+            )
+            || !pathMatchesHeldDescriptor(
+              snapshotPath,
+              heldDescriptor,
+              baseline,
+            )
+            || !sameFileIdentity(
+              baseline,
+              fs.statSync(authorityPath, { bigint: true }),
+            )
+          ) throw new Error("source_snapshot_invalid");
+        } catch {
           throw new Error("source_snapshot_invalid");
         }
-        entries.push(Object.freeze({
-          path: relative,
-          type: "file",
-          mode: stat.mode & 0o777,
-          size: stat.size,
-          sha256: sha256(fs.readFileSync(absolute)),
-        }));
-      } else {
-        throw new Error("source_snapshot_invalid");
+      },
+      close: (): void => {
+        if (closed) return;
+        fs.closeSync(heldDescriptor);
+        closed = true;
+      },
+    });
+    descriptor = null;
+    return authority;
+  } catch {
+    throw new Error("source_snapshot_invalid");
+  } finally {
+    if (descriptor !== null) fs.closeSync(descriptor);
+  }
+}
+
+function snapshotManifestSha256(
+  snapshotRoot: string,
+  rootAuthorityPath: string = snapshotRoot,
+): string {
+  try {
+    const root = fs.realpathSync(snapshotRoot);
+    if (!exactCanonicalPath(root)) throw new Error("source_snapshot_invalid");
+    const noFollow = requiredFilesystemFlag(fs.constants.O_NOFOLLOW);
+    const directoryOnly = requiredFilesystemFlag(fs.constants.O_DIRECTORY);
+    const nonblocking = requiredFilesystemFlag(fs.constants.O_NONBLOCK);
+    const readFlags = fs.constants.O_RDONLY | noFollow | nonblocking;
+    const directoryFlags = readFlags | directoryOnly;
+    const entries: Array<Readonly<{
+      path: string;
+      type: "directory" | "file";
+      mode: number;
+      size?: number;
+      sha256?: string;
+    }>> = [];
+    const seenDirectories = new Set<string>();
+    let totalBytes = 0n;
+
+    const visitHeldDirectory = (
+      directory: string,
+      descriptor: number,
+      held: BigIntStats,
+    ): void => {
+      const initial = fs.lstatSync(directory, { bigint: true });
+      if (
+        initial.isSymbolicLink()
+        || !initial.isDirectory()
+        || !sameFileIdentity(initial, held)
+      ) throw new Error("source_snapshot_invalid");
+      const identity = `${held.dev}:${held.ino}`;
+      if (
+        !held.isDirectory()
+        || seenDirectories.has(identity)
+        || !pathMatchesHeldDescriptor(directory, descriptor, held)
+      ) throw new Error("source_snapshot_invalid");
+      seenDirectories.add(identity);
+      const heldPath = process.platform === "linux"
+        ? `/proc/${process.pid}/fd/${descriptor}`
+        : directory;
+      const names = fs.readdirSync(heldPath).sort((left, right) =>
+        Buffer.from(left).compare(Buffer.from(right)));
+      for (const name of names) {
+        if (/[\0\r\n]/.test(name)) throw new Error("source_snapshot_invalid");
+        const absolute = path.join(directory, name);
+        const heldChildPath = path.join(heldPath, name);
+        const relative = path.relative(root, absolute).split(path.sep).join("/");
+        if (
+          entries.length >= 100_000
+          || relative.startsWith("../")
+          || path.isAbsolute(relative)
+        ) throw new Error("source_snapshot_invalid");
+        let childDescriptor: number | null = fs.openSync(heldChildPath, readFlags);
+        try {
+          const child = fs.fstatSync(childDescriptor, { bigint: true });
+          const stat = fs.lstatSync(absolute, { bigint: true });
+          if (
+            stat.isSymbolicLink()
+            || !sameFileIdentity(stat, child)
+            || !pathMatchesHeldDescriptor(absolute, childDescriptor, child)
+          ) throw new Error("source_snapshot_invalid");
+          if (child.isDirectory()) {
+            entries.push(Object.freeze({
+              path: relative,
+              type: "directory",
+              mode: Number(child.mode & 0o777n),
+            }));
+            visitHeldDirectory(absolute, childDescriptor, child);
+          } else if (child.isFile()) {
+            if (child.nlink !== 1n) throw new Error("source_snapshot_invalid");
+            totalBytes += child.size;
+            if (totalBytes > 1024n * 1024n * 1024n) {
+              throw new Error("source_snapshot_invalid");
+            }
+            const digest = sha256HeldDescriptor(
+              childDescriptor,
+              child.size,
+              1024 * 1024 * 1024,
+            );
+            const after = fs.fstatSync(childDescriptor, { bigint: true });
+            if (
+              !sameFileIdentity(child, after)
+              || !pathMatchesHeldDescriptor(absolute, childDescriptor, after)
+            ) throw new Error("source_snapshot_invalid");
+            entries.push(Object.freeze({
+              path: relative,
+              type: "file",
+              mode: Number(child.mode & 0o777n),
+              size: Number(child.size),
+              sha256: digest,
+            }));
+          } else {
+            throw new Error("source_snapshot_invalid");
+          }
+        } finally {
+          if (childDescriptor !== null) {
+            fs.closeSync(childDescriptor);
+            childDescriptor = null;
+          }
+        }
+      }
+      const after = fs.fstatSync(descriptor, { bigint: true });
+      if (
+        !sameFileIdentity(held, after)
+        || !pathMatchesHeldDescriptor(directory, descriptor, after)
+      ) throw new Error("source_snapshot_invalid");
+    };
+    let rootDescriptor: number | null = fs.openSync(
+      snapshotRoot,
+      directoryFlags,
+    );
+    try {
+      const heldRoot = fs.fstatSync(rootDescriptor, { bigint: true });
+      if (rootAuthorityPath !== snapshotRoot) {
+        const authorityRoot = fs.statSync(rootAuthorityPath, { bigint: true });
+        if (!sameFileIdentity(heldRoot, authorityRoot)) {
+          throw new Error("source_snapshot_invalid");
+        }
+      }
+      visitHeldDirectory(root, rootDescriptor, heldRoot);
+    } finally {
+      if (rootDescriptor !== null) {
+        fs.closeSync(rootDescriptor);
+        rootDescriptor = null;
       }
     }
-  };
-  visit(root);
-  return sha256(canonicalJson(entries));
+    return sha256(canonicalJson(entries));
+  } catch {
+    throw new Error("source_snapshot_invalid");
+  }
 }
 
 async function defaultCreateSourceAuthority(
@@ -911,6 +1154,7 @@ async function defaultCreateSourceAuthority(
   const archivePath = path.join(privateRoot, "candidate.tar");
   const snapshotPath = path.join(privateRoot, "snapshot");
   fs.mkdirSync(snapshotPath, { mode: 0o700 });
+  let heldSnapshotRoot: HeldSnapshotRoot | null = null;
   try {
     await checkedCommand(
       "git",
@@ -921,24 +1165,34 @@ async function defaultCreateSourceAuthority(
     await checkedCommand("tar", ["-xf", archivePath, "-C", snapshotPath], cwd);
     const archiveSha256 = sha256(fs.readFileSync(archivePath));
     const manifestSha256 = snapshotManifestSha256(snapshotPath);
+    heldSnapshotRoot = holdSnapshotRootDirectory(snapshotPath);
+    const snapshotRoot = heldSnapshotRoot;
     const reassert = () => {
-      const root = fs.lstatSync(privateRoot);
-      const archive = fs.lstatSync(archivePath);
-      const snapshot = fs.lstatSync(snapshotPath);
-      if (
-        !root.isDirectory()
-        || root.isSymbolicLink()
-        || (root.mode & 0o777) !== 0o700
-        || !archive.isFile()
-        || archive.isSymbolicLink()
-        || archive.nlink !== 1
-        || (archive.mode & 0o777) !== 0o600
-        || !snapshot.isDirectory()
-        || snapshot.isSymbolicLink()
-        || (snapshot.mode & 0o777) !== 0o700
-        || sha256(fs.readFileSync(archivePath)) !== archiveSha256
-        || snapshotManifestSha256(snapshotPath) !== manifestSha256
-      ) throw new Error("source_reassertion_failed");
+      try {
+        snapshotRoot.assertExact();
+        const root = fs.lstatSync(privateRoot);
+        const archive = fs.lstatSync(archivePath);
+        const snapshot = fs.lstatSync(snapshotPath);
+        if (
+          !root.isDirectory()
+          || root.isSymbolicLink()
+          || (root.mode & 0o777) !== 0o700
+          || !archive.isFile()
+          || archive.isSymbolicLink()
+          || archive.nlink !== 1
+          || (archive.mode & 0o777) !== 0o600
+          || !snapshot.isDirectory()
+          || snapshot.isSymbolicLink()
+          || (snapshot.mode & 0o777) !== 0o700
+          || sha256(fs.readFileSync(archivePath)) !== archiveSha256
+          || snapshotManifestSha256(
+            snapshotPath,
+            snapshotRoot.authorityPath,
+          ) !== manifestSha256
+        ) throw new Error("source_reassertion_failed");
+      } catch {
+        throw new Error("source_reassertion_failed");
+      }
     };
     reassert();
     return Object.freeze({
@@ -947,10 +1201,19 @@ async function defaultCreateSourceAuthority(
       archiveSha256,
       snapshotManifestSha256: manifestSha256,
       snapshotPath,
+      deploymentPath: snapshotRoot.authorityPath,
+      close: snapshotRoot.close,
       reassert,
-      cleanup: () => fs.rmSync(privateRoot, { recursive: true, force: false }),
+      cleanup: () => {
+        try {
+          snapshotRoot.close();
+        } finally {
+          fs.rmSync(privateRoot, { recursive: true, force: false });
+        }
+      },
     });
   } catch (error) {
+    try { heldSnapshotRoot?.close(); } catch { /* Cleanup continues below. */ }
     fs.rmSync(privateRoot, { recursive: true, force: true });
     throw error;
   }
@@ -1796,37 +2059,178 @@ function providerDeploymentUnchanged(
       === canonicalJson(after.snapshot.deployment);
 }
 
-function validateCli(
+function currentEffectiveUid(): bigint {
+  const uid = process.geteuid?.() ?? process.getuid?.();
+  if (!Number.isSafeInteger(uid)) throw new Error("cli_invalid");
+  return BigInt(uid!);
+}
+
+function heldRegularFileExact(
+  filename: string,
+  descriptor: number,
+  baseline: BigIntStats,
+  expectedUid: bigint,
+  expectedMode: bigint,
+  expectedSha256: string,
+  maximumBytes: number,
+): boolean {
+  const held = fs.fstatSync(descriptor, { bigint: true });
+  if (
+    !held.isFile()
+    || held.nlink !== 1n
+    || held.uid !== expectedUid
+    || (held.mode & 0o777n) !== expectedMode
+    || held.size < 1n
+    || held.size > BigInt(maximumBytes)
+    || !sameFileIdentity(baseline, held)
+    || !pathMatchesHeldDescriptor(filename, descriptor, held)
+  ) return false;
+  const digest = sha256HeldDescriptor(descriptor, held.size, maximumBytes);
+  const after = fs.fstatSync(descriptor, { bigint: true });
+  return digest === expectedSha256
+    && sameFileIdentity(held, after)
+    && pathMatchesHeldDescriptor(filename, descriptor, after);
+}
+
+function openPinnedRegularFile(
+  filename: string,
+  expectedUid: bigint,
+  expectedMode: bigint,
+  expectedSha256: string,
+  maximumBytes: number,
+): { readonly descriptor: number; readonly baseline: BigIntStats } {
+  let descriptor: number | null = null;
+  try {
+    if (!exactCanonicalPath(filename) || !SHA256_PATTERN.test(expectedSha256)) {
+      throw new Error("cli_invalid");
+    }
+    descriptor = fs.openSync(
+      filename,
+      fs.constants.O_RDONLY
+        | requiredFilesystemFlag(fs.constants.O_NOFOLLOW)
+        | requiredFilesystemFlag(fs.constants.O_NONBLOCK),
+    );
+    const baseline = fs.fstatSync(descriptor, { bigint: true });
+    if (!heldRegularFileExact(
+      filename,
+      descriptor,
+      baseline,
+      expectedUid,
+      expectedMode,
+      expectedSha256,
+      maximumBytes,
+    )) throw new Error("cli_invalid");
+    const result = { descriptor, baseline };
+    descriptor = null;
+    return result;
+  } catch {
+    throw new Error("cli_invalid");
+  } finally {
+    if (descriptor !== null) fs.closeSync(descriptor);
+  }
+}
+
+async function validateCli(
   policy: PermanentStagingAppDeploymentPolicy,
   dependencies: ExecutorDependencies,
-): Promise<string> {
+): Promise<CliAuthority> {
   const cliPath = dependencies.env.PINTPATH_RAILWAY_CLI_PATH;
   const archivePath = dependencies.env.PINTPATH_RAILWAY_CLI_ARCHIVE;
-  if (
-    dependencies.platform !== policy.railwayCli.platform
-    || dependencies.arch !== policy.railwayCli.architecture
-    || typeof cliPath !== "string"
-    || !path.isAbsolute(cliPath)
-    || typeof archivePath !== "string"
-    || !path.isAbsolute(archivePath)
-    || !fs.statSync(cliPath).isFile()
-    || !fs.statSync(archivePath).isFile()
-    || (fs.statSync(cliPath).mode & 0o777) !== 0o500
-    || sha256(fs.readFileSync(archivePath)) !== policy.railwayCli.archiveSha256
-    || sha256(fs.readFileSync(cliPath)) !== policy.railwayCli.executableSha256
-  ) return Promise.reject(new Error("cli_invalid"));
-  return dependencies.runCommand(cliPath, ["--version"], {
-    timeoutMs: 5_000,
-    maximumOutputBytes: 1024,
-    env: { CI: "true", NO_COLOR: "1" },
-  }).then((result) => {
+  let authority: CliAuthority | null = null;
+  let archiveDescriptor: number | null = null;
+  let cliDescriptor: number | null = null;
+  try {
+    if (
+      process.platform !== "linux"
+      || dependencies.platform !== policy.railwayCli.platform
+      || dependencies.platform !== "linux"
+      || dependencies.arch !== policy.railwayCli.architecture
+      || typeof cliPath !== "string"
+      || typeof archivePath !== "string"
+    ) throw new Error("cli_invalid");
+    const uid = currentEffectiveUid();
+    const archive = openPinnedRegularFile(
+      archivePath,
+      uid,
+      0o400n,
+      policy.railwayCli.archiveSha256,
+      256 * 1024 * 1024,
+    );
+    archiveDescriptor = archive.descriptor;
+    fs.closeSync(archiveDescriptor);
+    archiveDescriptor = null;
+
+    const executable = openPinnedRegularFile(
+      cliPath,
+      uid,
+      0o500n,
+      policy.railwayCli.executableSha256,
+      128 * 1024 * 1024,
+    );
+    cliDescriptor = executable.descriptor;
+    const descriptor = cliDescriptor;
+    const procPath = `/proc/${process.pid}/fd/${descriptor}`;
+    const procStat = fs.statSync(procPath, { bigint: true });
+    if (!sameFileIdentity(executable.baseline, procStat)) {
+      throw new Error("cli_invalid");
+    }
+    let closed = false;
+    authority = Object.freeze({
+      executablePath: procPath,
+      assertExact: (): void => {
+        try {
+          if (
+            closed
+            || !heldRegularFileExact(
+              cliPath,
+              descriptor,
+              executable.baseline,
+              uid,
+              0o500n,
+              policy.railwayCli.executableSha256,
+              128 * 1024 * 1024,
+            )
+            || !sameFileIdentity(
+              executable.baseline,
+              fs.statSync(procPath, { bigint: true }),
+            )
+          ) throw new Error("cli_invalid");
+        } catch {
+          throw new Error("cli_invalid");
+        }
+      },
+      close: (): void => {
+        if (closed) return;
+        fs.closeSync(descriptor);
+        closed = true;
+      },
+    });
+    authority.assertExact();
+    const result = await dependencies.runCommand(procPath, ["--version"], {
+      timeoutMs: 5_000,
+      maximumOutputBytes: 1024,
+      env: { CI: "true", NO_COLOR: "1" },
+    });
+    authority.assertExact();
     if (
       result.code !== 0
       || result.timedOut
       || result.stdout.trim() !== `railway ${policy.railwayCli.version}`
     ) throw new Error("cli_invalid");
-    return cliPath;
-  });
+    cliDescriptor = null;
+    return authority;
+  } catch {
+    if (authority !== null) {
+      try {
+        authority.close();
+        cliDescriptor = null;
+      } catch { /* The finally block retries the raw descriptor close. */ }
+    }
+    throw new Error("cli_invalid");
+  } finally {
+    if (archiveDescriptor !== null) fs.closeSync(archiveDescriptor);
+    if (cliDescriptor !== null) fs.closeSync(cliDescriptor);
+  }
 }
 
 function costPolicyExact(
@@ -1993,6 +2397,7 @@ export async function runPermanentStagingAppDeploymentExecutor(
   let policy: PermanentStagingAppDeploymentPolicy | null = null;
   let evidenceDir: string | null = null;
   let sourceAuthority: SourceAuthority | null = null;
+  let cliAuthority: CliAuthority | null = null;
   let preflight: ProviderObservation | null = null;
   let reconciledCandidate: ProviderObservation | null = null;
   let postflight: ProviderObservation | null = null;
@@ -2116,9 +2521,10 @@ export async function runPermanentStagingAppDeploymentExecutor(
       && SHA1_PATTERN.test(sourceAuthority.treeSha)
       && SHA256_PATTERN.test(sourceAuthority.archiveSha256)
       && SHA256_PATTERN.test(sourceAuthority.snapshotManifestSha256)
-      && path.isAbsolute(sourceAuthority.snapshotPath);
+      && path.isAbsolute(sourceAuthority.snapshotPath)
+      && path.isAbsolute(sourceAuthority.deploymentPath);
     if (!checks.sourceAuthorityExact) throw new Error("source_authority_failed");
-    const cliPath = await dependencies.validateCli(policy, dependencies);
+    cliAuthority = await dependencies.validateCli(policy, dependencies);
     checks.cliExact = true;
     const writeToken = dependencies.env.PINTPATH_RAILWAY_WRITE_TOKEN;
     if (typeof writeToken !== "string" || !SAFE_TOKEN_PATTERN.test(writeToken)) {
@@ -2231,33 +2637,48 @@ export async function runPermanentStagingAppDeploymentExecutor(
     checks.sourceReasserted = true;
 
     if (!preflightAlreadyCandidate) {
-      writeAttempts = 1;
+      cliAuthority.assertExact();
       const message = `pintpath:${policy.target.name}:${candidateSha}:${intentSha256}`;
-      writeResult = await dependencies.runCommand(cliPath, [
-        "up",
-        sourceAuthority.snapshotPath,
-        "--path-as-root",
-        "--no-gitignore",
-        "--detach",
-        "--json",
-        "--project",
-        policy.projectId,
-        "--environment",
-        policy.target.environmentId,
-        "--service",
-        policy.target.serviceId,
-        "--message",
-        message,
-      ], {
-        cwd: sourceAuthority.snapshotPath,
-        timeoutMs: 120_000,
-        maximumOutputBytes: 2 * 1024 * 1024,
-        env: {
-          CI: "true",
-          NO_COLOR: "1",
-          RAILWAY_TOKEN: writeToken,
-        },
-      });
+      writeAttempts = 1;
+      try {
+        writeResult = await dependencies.runCommand(
+          cliAuthority.executablePath,
+          [
+            "up",
+            sourceAuthority.deploymentPath,
+            "--path-as-root",
+            "--no-gitignore",
+            "--detach",
+            "--json",
+            "--project",
+            policy.projectId,
+            "--environment",
+            policy.target.environmentId,
+            "--service",
+            policy.target.serviceId,
+            "--message",
+            message,
+          ],
+          {
+            cwd: sourceAuthority.deploymentPath,
+            timeoutMs: 120_000,
+            maximumOutputBytes: 2 * 1024 * 1024,
+            env: {
+              CI: "true",
+              NO_COLOR: "1",
+              RAILWAY_TOKEN: writeToken,
+            },
+          },
+        );
+      } finally {
+        checks.sourceReasserted = false;
+        try {
+          sourceAuthority.reassert();
+          checks.sourceReasserted = true;
+        } finally {
+          cliAuthority.assertExact();
+        }
+      }
       cliOutputSha256 = sha256(`${writeResult.stdout}\0${writeResult.stderr}`);
       acknowledgement = writeResult.code === 0 && !writeResult.timedOut
         ? "received"
@@ -2309,6 +2730,14 @@ export async function runPermanentStagingAppDeploymentExecutor(
       outcome = "mutation_uncertain";
     }
   } finally {
+    try { cliAuthority?.close(); } catch {
+      failureCode ??= "cli_invalid";
+      checks.cliExact = false;
+    }
+    try { sourceAuthority?.close(); } catch {
+      failureCode ??= "source_cleanup_failed";
+      checks.sourceReasserted = false;
+    }
     if (policy && evidenceDir) {
       if (
         preflight
@@ -2494,6 +2923,7 @@ export const permanentStagingAppDeploymentExecutorInternals = Object.freeze({
   TARGET_LOCKS,
   costPolicyExact,
   deploymentHealthy,
+  holdSnapshotRootDirectory,
   parseArguments,
   parseCollateralSnapshot,
   queryCollateralSnapshot,
@@ -2503,5 +2933,6 @@ export const permanentStagingAppDeploymentExecutorInternals = Object.freeze({
   runtimeMatches,
   safeFailureCode,
   snapshotManifestSha256,
+  validateCli,
   validatedProviderObservation,
 });

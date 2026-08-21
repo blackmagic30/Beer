@@ -13,6 +13,9 @@ const OAUTH_PKCE_STORAGE_KEY = "pintPathSupabaseOAuth";
 // below maps the SDK's verifier-only slots back into our namespaced key.
 const OAUTH_SDK_STORAGE_KEY = "";
 const OAUTH_POPUP_STATE_KEY = "pintPathSupabaseOAuthPopup";
+const OAUTH_POPUP_LAUNCH_KEY_PREFIX = "pintPathSupabaseOAuthPopupLaunch:";
+const OAUTH_POPUP_LAUNCH_MAX_AGE_MS = 60 * 1000;
+const OAUTH_POPUP_LAUNCH_MAX_FUTURE_SKEW_MS = 5 * 1000;
 const SENSITIVE_AUTH_RETURN_KEY = "pintPathSensitiveAuthReturnTo";
 const PENDING_PORTAL_REDEMPTION_KEY = "pintPathPendingPortalRedemption";
 const SENSITIVE_AUTH_RETURN_MAX_AGE_MS = 20 * 60 * 1000;
@@ -190,7 +193,10 @@ function purgeLegacySupabaseBearerRecords() {
 purgeLegacySupabaseBearerRecords();
 
 function isRestoreSensitiveStorageKey(key, exactKeys) {
-  return exactKeys.has(key) || key.includes(":account:") || isSupabaseSessionStorageKey(key);
+  return exactKeys.has(key)
+    || key.startsWith(OAUTH_POPUP_LAUNCH_KEY_PREFIX)
+    || key.includes(":account:")
+    || isSupabaseSessionStorageKey(key);
 }
 
 function clearRestoreSensitiveStorage(storage, exactKeys) {
@@ -1333,6 +1339,110 @@ function clearOAuthPopupState() {
   safeStorageRemove(window.sessionStorage, OAUTH_POPUP_STATE_KEY);
 }
 
+function oauthPopupLaunchStorageKey(channelId) {
+  const normalizedChannelId = String(channelId || "").trim();
+  return /^[A-Za-z0-9_-]{8,160}$/.test(normalizedChannelId)
+    ? `${OAUTH_POPUP_LAUNCH_KEY_PREFIX}${normalizedChannelId}`
+    : null;
+}
+
+function clearOAuthPopupLaunch(channelId) {
+  const storageKey = oauthPopupLaunchStorageKey(channelId);
+  if (!storageKey) return false;
+  try {
+    window.sessionStorage.removeItem(storageKey);
+    return window.sessionStorage.getItem(storageKey) === null;
+  } catch {
+    return false;
+  }
+}
+
+function normalizeOAuthPopupLaunch(record, options = {}) {
+  if (!record || typeof record !== "object" || Array.isArray(record)) return null;
+  if (options.requireExactKeys === true) {
+    const keys = Object.keys(record).sort();
+    if (JSON.stringify(keys) !== JSON.stringify([
+      "channelId",
+      "createdAt",
+      "provider",
+      "purpose",
+      "returnTo",
+    ])) return null;
+  }
+  const normalized = normalizeOAuthPopupState(record);
+  if (!normalized) return null;
+  const now = Date.now();
+  if (
+    normalized.createdAt > now + OAUTH_POPUP_LAUNCH_MAX_FUTURE_SKEW_MS
+    || now - normalized.createdAt > OAUTH_POPUP_LAUNCH_MAX_AGE_MS
+  ) return null;
+  return normalized;
+}
+
+function storeOAuthPopupLaunch(input = {}) {
+  if (isRestoreRehearsalMode()) return null;
+  const record = normalizeOAuthPopupLaunch({ ...input, createdAt: Date.now() });
+  const storageKey = oauthPopupLaunchStorageKey(record?.channelId);
+  if (!record || !storageKey) {
+    throw new Error("Secure provider popup launch could not be bound to this tab.");
+  }
+  const serialized = JSON.stringify(record);
+  try {
+    // This record contains only an unguessable channel, allowlisted provider/purpose,
+    // same-origin return path, and timestamp. It is a one-time capability, not a bearer credential.
+    // codeql[js/clear-text-storage-of-sensitive-data]
+    window.sessionStorage.setItem(storageKey, serialized); // lgtm[js/clear-text-storage-of-sensitive-data]
+    if (window.sessionStorage.getItem(storageKey) !== serialized) throw new Error("storage rejected");
+  } catch {
+    clearOAuthPopupLaunch(input.channelId);
+    throw new Error("Secure provider popup launch could not be bound to this tab.");
+  }
+  return record;
+}
+
+function consumeOAuthPopupLaunch(input = {}) {
+  const storageKey = oauthPopupLaunchStorageKey(input.channelId);
+  if (!storageKey || isRestoreRehearsalMode()) {
+    if (storageKey) safeStorageRemove(window.sessionStorage, storageKey);
+    return null;
+  }
+  let source;
+  try {
+    source = window.sessionStorage.getItem(storageKey);
+    window.sessionStorage.removeItem(storageKey);
+    if (window.sessionStorage.getItem(storageKey) !== null) return null;
+  } catch {
+    return null;
+  }
+  try {
+    const record = normalizeOAuthPopupLaunch(JSON.parse(source || "null"), {
+      requireExactKeys: true,
+    });
+    const expected = normalizeOAuthPopupLaunch({
+      ...input,
+      createdAt: record?.createdAt,
+    });
+    if (
+      !record
+      || !expected
+      || record.channelId !== expected.channelId
+      || record.provider !== expected.provider
+      || record.purpose !== expected.purpose
+      || record.returnTo !== expected.returnTo
+      || record.createdAt !== expected.createdAt
+    ) return null;
+    return record;
+  } catch {
+    return null;
+  }
+}
+
+function clearOAuthPopupLaunches() {
+  storageKeys(window.sessionStorage)
+    .filter((key) => key.startsWith(OAUTH_POPUP_LAUNCH_KEY_PREFIX))
+    .forEach((key) => safeStorageRemove(window.sessionStorage, key));
+}
+
 function clearSupabaseOAuthFlowStorage() {
   oauthMemoryStorage.clear();
   [window.localStorage, window.sessionStorage].filter(Boolean).forEach((storage) => {
@@ -1342,6 +1452,7 @@ function clearSupabaseOAuthFlowStorage() {
       }
     });
   });
+  clearOAuthPopupLaunches();
 }
 
 function clearAuthFlowState() {
@@ -2432,6 +2543,18 @@ function signInWithOAuthPopup(provider, options = {}) {
   popupUrl.searchParams.set("popupChannel", channelId);
   popupUrl.searchParams.set("popupPurpose", purpose);
   popupUrl.searchParams.set("returnTo", returnTo);
+  try {
+    const popupLaunch = storeOAuthPopupLaunch({
+      channelId,
+      provider: normalizedProvider,
+      purpose,
+      returnTo,
+    });
+    if (!popupLaunch) throw new Error("popup launch unavailable");
+  } catch {
+    channel.close();
+    return Promise.reject(new Error("Secure provider popup launch could not be bound to this tab."));
+  }
   let popup;
   try {
     popup = window.open(
@@ -2440,12 +2563,31 @@ function signInWithOAuthPopup(provider, options = {}) {
       "popup,width=520,height=720,resizable=yes,scrollbars=yes",
     );
   } catch {
+    if (!clearOAuthPopupLaunch(channelId)) {
+      channel.close();
+      return Promise.reject(new Error("Secure provider popup launch could not be cleared safely."));
+    }
     channel.close();
     return useTopLevelFallback();
   }
   if (!popup) {
+    if (!clearOAuthPopupLaunch(channelId)) {
+      channel.close();
+      return Promise.reject(new Error("Secure provider popup launch could not be cleared safely."));
+    }
     channel.close();
     return useTopLevelFallback();
+  }
+  // window.open creates and clones the same-origin popup sessionStorage before it
+  // returns. The original tab must not retain a second usable copy of the launch.
+  if (!clearOAuthPopupLaunch(channelId)) {
+    try {
+      popup.close();
+    } catch {
+      // The untrusted popup is already denied any bridge authority below.
+    }
+    channel.close();
+    return Promise.reject(new Error("Secure provider popup launch could not be cleared safely."));
   }
 
   return new Promise((resolve, reject) => {
@@ -3329,6 +3471,9 @@ window.MelbBeerBusiness = {
   consumeAuthFlowState,
   clearAuthFlowState,
   clearSupabaseOAuthFlowStorage,
+  storeOAuthPopupLaunch,
+  consumeOAuthPopupLaunch,
+  clearOAuthPopupLaunch,
   storeOAuthPopupState,
   peekOAuthPopupState,
   clearOAuthPopupState,
