@@ -18,7 +18,7 @@ It is locked to Railway project
 | --- | --- | --- | --- | --- | --- | --- |
 | `prepare` | permanent staging only | `false` | exact current main | `true` | reviewed candidate; provider state must remain unchanged | `prepared` |
 | `fence` | production only | `false` | exact current main | `true` | reviewed candidate plus external proof that the old runtime is SQLite/detached from Postgres | `fenced` |
-| `activate` | permanent staging or production | `true` | exact current main | `false` | candidate is the sole active, successful, unstopped, unpatched deployed source | `activated` |
+| `activate` | permanent staging or production | `true` | exact current main | `false` | candidate is the sole active, successful, unstopped, unpatched deployed source and the target-specific prerequisite chain below is current | `activated` |
 
 `prepare` is allowed only in permanent staging. It writes the disabled state and
 next candidate binding without deploying, and proves the deployment, source,
@@ -36,6 +36,35 @@ sole healthy deployed source, then polls `/health`, `/startup`, and `/ready`
 together until every route reports the same candidate and `automaticMaintenance` equal to
 `{ "enabled": true, "candidateBound": true }`.
 
+Permanent-staging activation requires four distinct successful run IDs for the
+same candidate: `prepare_run_id`, `quiesce_run_id`,
+`fenced_deployment_run_id`, and `restore_run_id`. Before any provider token is
+available, the workflow downloads the four exact named artifacts and runs the
+staging bootstrap verifier in `activate` mode. It includes the resulting
+`prerequisites-verification.json` in the worker artifact.
+
+Production activation instead requires one `role_limit_run_id` and rejects all
+four staging run IDs. Before provider-token custody, the workflow downloads the
+exact `pintpath-production-maintenance-role-limit-apply-<sha>-<run-id>` artifact,
+requires unique root `intent.json`, `terminal.json`, `receipt.json`, and
+`prerequisites-verification.json` files, and runs the production prerequisite
+verifier in `production-activate` mode. The resulting
+`production-activation-role-limit-verification.json` is included in the worker
+artifact. Immediately before the variable upsert, the executor independently
+consumes that verification, binds its SHA-256 and role-limit run ID in the
+durable intent, and requires all of the following:
+
+- the sole live successful candidate deployment ID matches
+  `rolePrerequisites.productionDeployment.deploymentIdSha256`;
+- `/health`, `/startup`, and `/ready` all identify that same deployment and
+  candidate; and
+- all three routes report automatic maintenance disabled and candidate-bound.
+
+This proves the application is still on the exact disabled-worker deployment
+that the protected 2-to-8 maintenance LOGIN transition consumed. The upsert is
+not attempted if any prerequisite file, run binding, deployment identity, or
+runtime response differs.
+
 ## Manual authority and serialization
 
 Dispatch `.github/workflows/configure-automatic-maintenance-worker-fence.yml`
@@ -49,6 +78,11 @@ The run must be attempt 1. The workflow validates the merged reviewed tree,
 current main ref, exact workflow run identity, and absence of a prior matching
 run. It runs the complete repository check before Railway token custody and
 reasserts current main immediately before custody.
+
+`prepare` and `fence` reject every prerequisite run-ID input. Staging
+`activate` requires exactly its four distinct staging IDs and rejects the role
+ID. Production `activate` requires only the role ID. No prerequisite run ID may
+equal the current workflow run ID.
 
 Production uses concurrency group `pintpath-production-rollout`. Permanent
 staging uses `pintpath-permanent-staging-key-rollout` with `queue: max`. Both use
@@ -91,9 +125,14 @@ JSON files:
   `pintpath-automatic-maintenance-worker-fence-intent/v1`; durably written before
   the mutation and binds the exact variable pair, `skipDeploys`, policy hash,
   authority hash, preflight provider hash, boundary hash, one-attempt limit, and
-  no-retry rule.
+  no-retry rule. For production activation it also binds the verified role-limit
+  run ID, prerequisite-verification SHA-256, exact deployment ID SHA-256, and
+  disabled/candidate-bound preflight response hashes.
 - `automatic-maintenance-worker-fence-terminal.json`: schema
   `pintpath-automatic-maintenance-worker-fence-terminal/v1`.
+- staging activation only: `prerequisites-verification.json`.
+- production activation only:
+  `production-activation-role-limit-verification.json`.
 
 The terminal receipt has these exact top-level fields:
 
@@ -169,22 +208,19 @@ automatic-maintenance state.
 4. Permanent-staging activation and closeout: dispatch `activate` for the same
    candidate, accept only its `activated` receipt, then run the active closeout
    deployment/attestation requiring enabled and candidate-bound workers.
-5. Production deployment: dispatch `fence` for production, verify its `fenced`
-   terminal receipt as described above, then deploy the exact same candidate
-   with automatic maintenance disabled.
+5. Production deployment: dispatch `fence` for production. The protected
+   deployment workflow downloads and verifies that exact `fenced` artifact,
+   then deploys the same candidate with automatic maintenance disabled and
+   candidate-bound.
 6. Production activation: after the production deployment and the protected
-   production maintenance-role-limit transition, dispatch `activate` for the
-   same production candidate. Accept only an `activated` receipt with sole
-   healthy candidate proof and hashes for all three runtime routes.
-7. Production scale: run only after the accepted activation receipt, under the
-   shared `pintpath-production-rollout` concurrency group. The scale consumer
-   must bind to the same candidate and re-prove the sole successful deployment
-   plus enabled, candidate-bound responses from all three runtime routes after
-   the replica change.
-
-Existing deployment and scale workflows do not yet download and validate this
-new artifact. Their consumers must add the exact checks above before the new
-operation becomes an enforced rollout prerequisite.
+   production maintenance LOGIN limit transition, dispatch `activate` with that
+   exact successful role-limit run ID. Accept only an `activated` receipt with
+   the verified role/deployment chain, sole healthy candidate proof, and hashes
+   for all three enabled, candidate-bound runtime routes.
+7. Production scale: the protected scale workflow downloads both the exact
+   activation terminal and its production activation prerequisite verification,
+   validates the full role-to-activation chronology, and only then performs the
+   scale under the shared `pintpath-production-rollout` concurrency group.
 
 Both `prepare` and `fence` use `skipDeploys: true`, so neither can prove that the
 already-running process observed the new values. Production depends on the

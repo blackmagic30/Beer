@@ -15,7 +15,7 @@ export const STAGING_WORKER_BOOTSTRAP_PREREQUISITES_SCHEMA =
 export const STAGING_WORKER_BOOTSTRAP_PREREQUISITES_FILENAME =
   "prerequisites-verification.json" as const;
 export const STAGING_WORKER_BOOTSTRAP_PREREQUISITES_POLICY_SHA256 =
-  "e052c0a6c6b5d9434335765b6f01a3824f1a467e25e01098f1fd1afc7f9347a2" as const;
+  "f9419b36bebaaf3110d267836706befdfdec3432abd5f444f9d2452f09e634c8" as const;
 
 const REPOSITORY = "blackmagic30/Beer" as const;
 const BRANCH = "main" as const;
@@ -25,11 +25,11 @@ const POLICY_PATH =
 const WORKER_POLICY_PATH =
   "ops/railway/protected-automatic-maintenance-worker-fence-policy.json";
 const WORKER_POLICY_SHA256 =
-  "a06c7393dfc332461d2c82af310b9cfb654f17884f85cd489d157ce7d06f61a3";
+  "260a15eb364fe6e95a40b1e15af8950f8ea6f8ccd1f3b0983ef4a39810ea57bb";
 const SCALE_POLICY_PATH =
   "ops/railway/permanent-staging-scale-evidence-policy.json";
 const SCALE_POLICY_SHA256 =
-  "7182b42fd454cab030e48f279d8d49ed9dc6638e5620b91d13b9ea08451afbd6";
+  "164d53a5bccff4a861c8568abebe5caa06352f64245ac7e734e55c056c2be608";
 const FENCED_DEPLOYMENT_POLICY_PATH =
   "ops/railway/permanent-staging-fenced-app-deployment-policy.json";
 const FENCED_DEPLOYMENT_POLICY_SHA256 =
@@ -170,6 +170,8 @@ const PRODUCERS: Readonly<Record<ProducerKind, ProducerSpec>> = Object.freeze({
       `pintpath-automatic-maintenance-worker-fence-permanent-staging-activate-${sha}`,
     receiptFilename: "automatic-maintenance-worker-fence-terminal.json",
     receiptSchema: WORKER_RECEIPT_SCHEMA,
+    verificationFlag: "--activate-verification-file",
+    verificationFilename: STAGING_WORKER_BOOTSTRAP_PREREQUISITES_FILENAME,
   },
   "active-deployment": {
     workflowPath: ".github/workflows/deploy-permanent-staging.yml",
@@ -1065,6 +1067,8 @@ const SCALE_CHECK_KEYS = [
   "cliExact",
   "boundaryPreflightExact",
   "targetPreflightExact",
+  "productionActivationPrerequisiteExact",
+  "productionActivationDeploymentContinuityExact",
   "runtimePreflightExact",
   "durableIntentExact",
   "repositoryPrewriteReasserted",
@@ -1103,6 +1107,7 @@ function validateScaleReceipt(
     "terminalEvidenceSha256",
     "commandStdoutSha256",
     "commandStderrSha256",
+    "productionActivationPrerequisite",
     "checks",
   ])) fail("receipt_invalid");
   const started = timestamp(value.startedAt, "receipt_invalid");
@@ -1125,6 +1130,7 @@ function validateScaleReceipt(
     || !SHA256_PATTERN.test(String(value.terminalEvidenceSha256))
     || !SHA256_PATTERN.test(String(value.commandStdoutSha256))
     || !SHA256_PATTERN.test(String(value.commandStderrSha256))
+    || value.productionActivationPrerequisite !== null
     || !exactTrueChecks(value.checks, SCALE_CHECK_KEYS)
   ) fail("receipt_invalid");
   return {
@@ -1152,6 +1158,8 @@ const DEPLOYMENT_CHECK_KEYS = [
   "writeTokenScopeExact",
   "costPolicyExact",
   "prerequisiteExact",
+  "workerFencePrerequisiteExact",
+  "workerFenceDeploymentContinuityExact",
   "boundaryPreflightExact",
   "targetPreflightExact",
   "gitAutodeployAbsent",
@@ -1199,6 +1207,7 @@ function validateDeploymentReceipt(
     "collateralSnapshotSha256s",
     "replicaCounts",
     "runtimeResponseSha256s",
+    "workerFencePrerequisite",
     "checks",
   ])) fail("receipt_invalid");
   const collateral = record(value.collateralSnapshotSha256s)
@@ -1254,6 +1263,7 @@ function validateDeploymentReceipt(
       : !SHA256_PATTERN.test(String(runtime.health))
         || !SHA256_PATTERN.test(String(runtime.startup))
         || !SHA256_PATTERN.test(String(runtime.ready)))
+    || value.workerFencePrerequisite !== null
     || !exactTrueChecks(value.checks, DEPLOYMENT_CHECK_KEYS)
   ) fail("receipt_invalid");
   return {
@@ -1288,71 +1298,37 @@ function validatePriorVerification(
   source: string,
   value: JsonRecord,
   input: {
-    readonly operation: "quiesce" | "restore";
+    readonly operation: "quiesce" | "restore" | "activate";
     readonly candidateSha: string;
     readonly runId: string;
   },
-): { readonly sha256: string; readonly expectedDeploymentSha: string } {
-  if (!exactKeys(value, [
-    "schemaVersion",
-    "policySha256",
-    "operation",
-    "candidateSha",
-    "expectedDeploymentSha",
-    "repository",
-    "reviewedPullRequest",
-    "consumer",
-    "prerequisites",
-    "verifiedAt",
-    "expiresAt",
-    "checks",
-    "secretMaterialIncluded",
-    "secretDerivedCommitmentsIncluded",
-  ])) fail("receipt_invalid");
-  const consumer = record(value.consumer) ? value.consumer : null;
-  const expectedKinds = REQUIRED_PRODUCERS[input.operation];
-  const prerequisites = Array.isArray(value.prerequisites)
-    ? value.prerequisites.filter(record)
-    : [];
+): {
+  readonly sha256: string;
+  readonly expectedDeploymentSha: string | null;
+} {
+  let parsed: StagingWorkerBootstrapPrerequisitesVerification;
+  try {
+    const verifiedAt = timestamp(value.verifiedAt, "receipt_invalid");
+    parsed = parseVerificationObject(source, {
+      operation: input.operation,
+      candidateSha: input.candidateSha,
+      currentRunId: input.runId,
+      now: new Date(verifiedAt.milliseconds),
+    });
+  } catch {
+    fail("receipt_invalid");
+  }
   if (
-    value.schemaVersion !== STAGING_WORKER_BOOTSTRAP_PREREQUISITES_SCHEMA
-    || value.policySha256
-      !== STAGING_WORKER_BOOTSTRAP_PREREQUISITES_POLICY_SHA256
-    || value.operation !== input.operation
-    || value.candidateSha !== input.candidateSha
-    || !SHA_PATTERN.test(String(value.expectedDeploymentSha))
-    || (input.operation === "quiesce"
-      ? value.expectedDeploymentSha === input.candidateSha
-      : value.expectedDeploymentSha !== input.candidateSha)
-    || value.repository !== REPOSITORY
-    || !exactKeys(consumer, [
-      "workflowPath",
-      "githubEnvironment",
-      "runId",
-      "runAttempt",
-      "startedAt",
-    ])
-    || consumer.workflowPath !== CONSUMERS[input.operation].workflowPath
-    || consumer.githubEnvironment !== CONSUMERS[input.operation].environment
-    || consumer.runId !== input.runId
-    || consumer.runAttempt !== 1
-    || prerequisites.length !== expectedKinds.length
-    || prerequisites.some((item, index) =>
-      item.kind !== expectedKinds[index]
-      || item.workflowPath !== PRODUCERS[expectedKinds[index]!].workflowPath
-      || item.runAttempt !== 1
-      || !RUN_ID_PATTERN.test(String(item.runId))
-      || !ARTIFACT_DIGEST_PATTERN.test(String(item.artifactDigest))
-      || !record(item.receipt)
-      || item.receipt.candidateSha !== input.candidateSha
-      || !SHA256_PATTERN.test(String(item.receipt.sha256)))
-    || !exactTrueChecks(value.checks, VERIFICATION_CHECK_KEYS)
-    || value.secretMaterialIncluded !== false
-    || value.secretDerivedCommitmentsIncluded !== false
+    input.operation === "quiesce"
+      ? !SHA_PATTERN.test(String(parsed.expectedDeploymentSha))
+        || parsed.expectedDeploymentSha === input.candidateSha
+      : input.operation === "restore"
+        ? parsed.expectedDeploymentSha !== input.candidateSha
+        : parsed.expectedDeploymentSha !== null
   ) fail("receipt_invalid");
   return {
     sha256: sha256(source),
-    expectedDeploymentSha: String(value.expectedDeploymentSha),
+    expectedDeploymentSha: parsed.expectedDeploymentSha,
   };
 }
 
@@ -1576,7 +1552,7 @@ async function verify(
     validateHistory(historyValue, spec, args.candidateSha, input.runId);
 
     let priorVerificationSha: string | null = null;
-    if (kind === "quiesce" || kind === "restore") {
+    if (kind === "quiesce" || kind === "restore" || kind === "activate") {
       if (!input.verificationFile) fail("arguments_invalid");
       const verificationInput = parseCanonicalPrivateJson(
         input.verificationFile,

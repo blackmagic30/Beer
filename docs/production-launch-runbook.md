@@ -83,14 +83,20 @@ never share production or permanent-staging credentials or data paths.
 
 ### Frozen post-promotion recovery boundary
 
-The release chronology is exactly
-`deploy→scale→close→activation→promotion-recovery→open`. The controlling
+The route/recovery evidence chronology remains exactly
+`deploy→scale→close→recovery-activation→promotion-recovery→open`. Before its
+deploy stage, the production worker fence must pass; between deploy and scale,
+the maintenance LOGIN 2→8 transition and candidate-bound worker activation
+must pass. Those prerequisite receipts are embedded in the deployment and
+scale artifacts rather than added as substitutable route/recovery stages. The controlling
 promotion-recovery policy is schema v2 with SHA-256
 `57f66c1c9dde912586ec510e37c28cc3dfea2c098e67c78edbea189c7dcc9988`.
 
 Activation is one four-job workflow. `production-capture` runs on the JIT
 `pintpath-production-backup` runner in the production private network and
-performs PITR observation, logical/private capture, operational-copy proof, and
+performs PITR observation bound through the scale receipt from the source-upload
+deployment to the distinct final active deployment, logical/private capture,
+operational-copy proof, and
 separate logical/private WORM sealing. `disposable-recover` runs on the distinct
 JIT `pintpath-disposable-recovery` runner in the disposable private network,
 separately reads both WORM authorities, restores them, replays deletion twice,
@@ -1539,13 +1545,15 @@ These later required launch gates cannot be PR checks because their protected
 workflows accept only the exact current `main` SHA:
 
 - after the protected merge and before production deployment: exactly two
-  successful `Deploy permanent staging` runs for `candidateSha`—the initial run
-  and closeout redeploy—followed by `Scale 1→2, prove, and converge 2→1`, with
+  successful `Deploy permanent staging` runs for `candidateSha`—the fenced
+  zero-replica upload and active one-replica closeout—followed by `Scale 1→2,
+  prove, and converge 2→1`, with
   the selected second deployment and scale artifacts, plus `iOS protected
   production configuration archive`;
-- after production deployment: `Deploy protected production`, then `Converge
-  exact production deployment to two replicas`, with both exact-`candidateSha`
-  artifacts.
+- for production: worker `fence`, `Deploy protected production`, maintenance
+  LOGIN 2→8, worker `activate`, then `Converge exact production deployment to
+  two replicas`, with the fence/role/activation proofs bound into both exact-
+  `candidateSha` deployment and scale artifacts.
 
 The release-candidate verifier resolves each required check with
 `filter=all&check_name=...`, then binds it to the workflow path, event, check
@@ -1902,29 +1910,68 @@ in Phase 16.6 have passed independent retrieval and restore proof.
 
 ### 16.5 Deploy the exact protected `main` build with enrolment disabled
 
-First dispatch the protected
+First complete the protected permanent-staging worker bootstrap for
+`deploymentSha`. Dispatch
+[`Configure candidate-bound automatic-maintenance worker fence`](../.github/workflows/configure-automatic-maintenance-worker-fence.yml)
+with staging `prepare`; then dispatch
+[`Bootstrap permanent-staging worker fence`](../.github/workflows/bootstrap-permanent-staging-worker-fence.yml)
+with `quiesce` to prove the legacy deployment changes exactly from one replica
+to zero. Dispatch
 [`Deploy Pint Path permanent staging`](../.github/workflows/deploy-permanent-staging.yml)
-workflow from `main` with `candidate_sha=deploymentSha`. This is the initial
-same-candidate staging deployment. After its exact-SHA check and artifact pass,
-execute the complete Phase 12 staging and rollback plan against that deployed
-tree, then dispatch the same workflow once more for `deploymentSha` as the
-closeout redeploy. There must be exactly these two successful same-candidate
-deployment runs. Both must complete before the protected staging scale proof
-starts; the release gate selects the second closeout run and rejects zero, one,
-more than two, or ambiguous same-candidate successes. All provider/Auth/Storage,
-data, two-replica, restart, rolling-deploy, iOS, and rollback evidence must bind
-`deploymentSha`; any implementation change requires a new candidate and
-protected merge. Only then dispatch the protected
+with phase `fenced`, supplying the exact prepare and quiesce run IDs. Restore
+the candidate exactly from zero to one through the bootstrap workflow, require
+all three runtime routes to report disabled and candidate-bound automatic
+maintenance, then dispatch staging `activate`. Finally dispatch the staging
+deployment workflow with phase `active` and the exact activation run ID. The
+shared verifier must authenticate every producer artifact, GitHub digest,
+receipt, and completion-before-start edge before any consumer receives its
+provider token.
+
+There must be exactly these two successful same-candidate staging deployment
+runs: the fenced zero-replica source upload and active one-replica closeout.
+Both must complete before the protected staging scale proof starts; the release
+gate selects the second closeout run and rejects zero, one, more than two, or
+ambiguous same-candidate successes. Execute the complete Phase 12 staging,
+load/soak, rolling-replacement, and rollback plan against that deployed tree.
+All provider/Auth/Storage, data, two-replica, restart, rolling-deploy, iOS, and
+rollback evidence must bind `deploymentSha`; any implementation change requires
+a new candidate and protected merge.
+
+Only then begin the production chain. First prove the current production
+bootstrap topology is exactly one healthy replica and obtain the external,
+sanitized authority showing the old SQLite application is detached from the
+target Postgres and cannot run a Postgres maintenance scheduler. Dispatch
+[`Configure candidate-bound automatic-maintenance worker fence`](../.github/workflows/configure-automatic-maintenance-worker-fence.yml)
+with production `fence`; it writes disabled plus `deploymentSha` without a
+deploy and emits the immutable fence artifact. Dispatch
 [`Deploy Pint Path protected production`](../.github/workflows/deploy-production.yml)
-workflow with the same value. For this initial launch, first prove the current
-production bootstrap topology is exactly one healthy replica; the upload
-preserves that one-replica topology and proves the candidate without scaling.
-Only after that artifact passes, dispatch the candidate-bound
+with that exact fence run ID and confirmation
+`DEPLOY_PRODUCTION_<deploymentSha>_AFTER_FENCE_RUN_<fenceRunId>`. The workflow
+independently authenticates the fence archive and its unchanged deployment ID;
+the executor binds the verification into its durable intent and receipt and
+rechecks that deployment immediately before the source upload. The upload
+preserves the one-replica topology and proves the candidate with automatic
+maintenance disabled and candidate-bound.
+
+After the source-upload artifact passes, dispatch
+[`Transition protected production Postgres maintenance LOGIN limit`](../.github/workflows/transition-production-postgres-maintenance-role-limit.yml)
+in `apply` mode with the exact fence and deployment run IDs. Its private runner
+may change only `privacy_maintenance_login` from connection limit 2 to 8 after
+exact catalog, capacity, and artifact preflight. If acknowledgement is
+uncertain, use only the original-run-bound read-only `reconcile` mode; never
+repeat the apply write. Supply the successful apply run ID to production
+`activate` in the worker workflow. Activation independently authenticates the
+role intent, terminal, receipt, and full fence→deploy→role chain, then rechecks
+the exact live deployment before enabling candidate-bound workers.
+
+Only after the activation artifact passes, dispatch the candidate-bound
 [`Converge Pint Path production to two replicas`](../.github/workflows/production-converge-two-replicas.yml)
-workflow with `candidate_sha=deploymentSha` and the exact confirmation
-`CONVERGE_PRODUCTION_TO_TWO_REPLICAS`. The workflow supplies that same
-candidate internally as the expected deployed SHA; there is no separate
-operator-controlled deployment-SHA input.
+workflow with `candidate_sha=deploymentSha`, the exact activation run ID, and
+confirmation `CONVERGE_PRODUCTION_TO_TWO_REPLICAS`. Its verifier authenticates
+the complete role→activate chain, and the scale executor binds that receipt and
+requires the live deployment ID to equal activation postflight before changing
+topology. The workflow supplies that same candidate internally as the expected
+deployed SHA; there is no separate operator-controlled deployment-SHA input.
 Never scale the older production deployment first: it may still be the
 authoritative SQLite build. These exact workflow files are the only
 application-deployment operator paths; similarly named dashboard or local CLI

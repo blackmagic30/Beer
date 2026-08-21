@@ -15,14 +15,16 @@ import {
   protectedPostgresHaPitrInternals,
 } from "./execute-protected-postgres-ha-pitr.js";
 import { parseStrictArguments } from "./lib/strict-arguments.js";
-import { PERMANENT_STAGING_APP_DEPLOYMENT_EXECUTOR_SCHEMA } from
-  "./lib/permanent-staging-app-deployment-executor.js";
+import { parseProductionApplicationDeploymentReceipt } from
+  "./lib/production-application-deployment-receipt.js";
 
 export const PRODUCTION_POST_PROMOTION_PITR_OBSERVATION_SCHEMA =
   "pintpath-production-post-promotion-pitr-observation/v1" as const;
 
 const ARGUMENTS = new Set([
   "--candidate-sha", "--production-deployment-receipt",
+  "--production-scale-receipt",
+  "--closed-route-receipt",
   "--logical-backup-manifest", "--output",
 ]);
 const CANDIDATE = /^[a-f0-9]{40}$/;
@@ -55,6 +57,11 @@ function fail(code: string): never {
 
 function isObject(value: unknown): value is Json {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function exactKeys(value: unknown, keys: readonly string[]): value is Json {
+  return isObject(value)
+    && JSON.stringify(Object.keys(value).sort()) === JSON.stringify([...keys].sort());
 }
 
 function sha256(value: crypto.BinaryLike): string {
@@ -123,6 +130,166 @@ function timestamp(value: unknown): string {
     fail("provider_invalid");
   }
   return value;
+}
+
+function finalDeploymentFromScale(
+  value: Json,
+  candidateSha: string,
+  deploymentIdSha256: string,
+  deploymentCompletedAt: string,
+): string {
+  const checks = value.checks;
+  const prerequisite = value.productionActivationPrerequisite;
+  const attempts = value.attempts;
+  const checkKeys = [
+    "policyExact", "githubAuthorityExact", "tokenScopesExact", "cliExact",
+    "boundaryPreflightExact", "targetPreflightExact",
+    "productionActivationPrerequisiteExact",
+    "productionActivationDeploymentContinuityExact", "runtimePreflightExact",
+    "durableIntentExact", "repositoryPrewriteReasserted",
+    "writeAttemptedAtMostOnce", "acknowledgementExact", "postflightAttempted",
+    "targetPostflightExact", "runtimePostflightExact", "candidateUnchanged",
+    "deploymentUnchanged", "boundaryPostflightExact", "terminalEvidenceExact",
+    "finalReceiptEvidenceExact",
+  ];
+  if (
+    !exactKeys(value, [
+      "schemaVersion", "executorState", "direction", "outcome", "candidateSha",
+      "startedAt", "completedAt", "desiredReplicas", "deploymentIdSha256",
+      "attempts", "retryAllowed", "intentSha256", "terminalEvidenceSha256",
+      "commandStdoutSha256", "commandStderrSha256",
+      "productionActivationPrerequisite", "checks",
+    ])
+    || value.schemaVersion !== "pintpath-permanent-staging-scale-operation/v2"
+    || value.executorState !== "GITHUB_ENVIRONMENT_PROTECTED"
+    || value.direction !== "converge-production-two"
+    || !["scaled", "already_converged"].includes(String(value.outcome))
+    || value.candidateSha !== candidateSha
+    || value.desiredReplicas !== 2
+    || typeof value.deploymentIdSha256 !== "string"
+    || !SHA256.test(value.deploymentIdSha256)
+    || value.retryAllowed !== false
+    || (attempts !== 0 && attempts !== 1)
+    || typeof value.terminalEvidenceSha256 !== "string"
+    || !SHA256.test(value.terminalEvidenceSha256)
+    || (attempts === 0
+      ? value.intentSha256 !== null
+        || value.commandStdoutSha256 !== null
+        || value.commandStderrSha256 !== null
+      : typeof value.intentSha256 !== "string" || !SHA256.test(value.intentSha256)
+        || typeof value.commandStdoutSha256 !== "string"
+        || !SHA256.test(value.commandStdoutSha256)
+        || typeof value.commandStderrSha256 !== "string"
+        || !SHA256.test(value.commandStderrSha256))
+    || !exactKeys(prerequisite, [
+      "runId", "verificationSha256", "terminalSha256", "prerequisitesSha256",
+      "deploymentBeforeIdSha256", "deploymentAfterIdSha256",
+    ])
+    || typeof prerequisite.runId !== "string"
+    || !/^[1-9][0-9]*$/.test(prerequisite.runId)
+    || [prerequisite.verificationSha256, prerequisite.terminalSha256,
+      prerequisite.prerequisitesSha256].some(
+      (entry) => typeof entry !== "string" || !SHA256.test(entry),
+    )
+    || prerequisite.deploymentBeforeIdSha256 !== deploymentIdSha256
+    || prerequisite.deploymentAfterIdSha256 !== value.deploymentIdSha256
+    || prerequisite.deploymentAfterIdSha256 === prerequisite.deploymentBeforeIdSha256
+    || !exactKeys(checks, checkKeys)
+    || Object.entries(checks).some(([name, entry]) => (
+      name === "durableIntentExact" ? entry !== (attempts === 1) : entry !== true
+    ))
+    || (value.outcome === "scaled") !== (attempts === 1)
+  ) fail("deployment_invalid");
+  const startedAt = timestamp(value.startedAt);
+  const completedAt = timestamp(value.completedAt);
+  if (
+    Date.parse(startedAt) < Date.parse(deploymentCompletedAt)
+    || Date.parse(completedAt) < Date.parse(startedAt)
+  ) fail("deployment_invalid");
+  return value.deploymentIdSha256;
+}
+
+function verifyClosedRouteForCapture(
+  value: Json,
+  candidateSha: string,
+  deploymentIdSha256: string,
+  deploymentReceiptSha256: string,
+  scaleReceiptSha256: string,
+  scaleCompletedAt: string,
+): void {
+  const checks = value.checks;
+  const artifactDigest = /^sha256:[a-f0-9]{64}$/;
+  const checkKeys = [
+    "policyExact", "githubAuthorityExact", "repositoryAuthorityExact",
+    "predecessorAuthorityExact", "predecessorReceiptsExact",
+    "promotionRecoveryAuthorityExact", "credentialsExact", "tokenScopesExact",
+    "patchPreflightEmpty", "inventoryPreflightExact", "candidateDeploymentPreflightExact",
+    "boundaryPreflightExact", "durableIntentExact", "repositoryPrewriteReasserted",
+    "providerPrewriteReasserted", "writeAttemptedAtMostOnce", "acknowledgementExact",
+    "postflightAttempted", "patchPostflightEmpty", "inventoryTransitionExact",
+    "candidateDeploymentPostflightExact", "boundaryPostflightExact",
+    "publicRuntimePostflightExact", "terminalEvidenceExact", "finalReceiptEvidenceExact",
+  ];
+  if (
+    !exactKeys(value, [
+      "schemaVersion", "executorState", "outcome", "operation", "candidateSha",
+      "startedAt", "completedAt", "githubEnvironment", "policySha256",
+      "projectIdSha256", "environmentIdSha256", "serviceIdSha256", "domain",
+      "targetPort", "routeIdSha256", "deploymentIdSha256",
+      "predecessorAuthoritySha256", "orderedProductionChainSha256",
+      "productionDeploymentArtifactDigest", "productionScaleArtifactDigest",
+      "closedRouteArtifactDigest", "promotionRecoveryArtifactDigest",
+      "promotionRecoveryReceiptSha256", "productionDeploymentReceiptSha256",
+      "productionScaleReceiptSha256", "closedRouteReceiptSha256", "attempts",
+      "retryAllowed", "intentSha256", "terminalEvidenceSha256",
+      "beforeInventorySha256", "afterInventorySha256", "checks",
+    ])
+    || value.schemaVersion !== "pintpath-protected-production-route-mutation/v1"
+    || value.executorState !== "GITHUB_ENVIRONMENT_PROTECTED"
+    || !["closed", "closed_reconciled_after_lost_ack"].includes(String(value.outcome))
+    || value.operation !== "close"
+    || value.candidateSha !== candidateSha
+    || value.githubEnvironment !== "production-route-close"
+    || value.policySha256 !== "79639878b7938386421fdfb0258aec732f93fadd1e2823b697882de568076d0a"
+    || value.domain !== "pintpath.au"
+    || value.targetPort !== null
+    || value.deploymentIdSha256 !== deploymentIdSha256
+    || [value.projectIdSha256, value.environmentIdSha256, value.serviceIdSha256,
+      value.routeIdSha256, value.predecessorAuthoritySha256,
+      value.orderedProductionChainSha256, value.intentSha256,
+      value.terminalEvidenceSha256, value.beforeInventorySha256,
+      value.afterInventorySha256].some(
+      (entry) => typeof entry !== "string" || !SHA256.test(entry),
+    )
+    || typeof value.productionDeploymentArtifactDigest !== "string"
+    || !artifactDigest.test(value.productionDeploymentArtifactDigest)
+    || typeof value.productionScaleArtifactDigest !== "string"
+    || !artifactDigest.test(value.productionScaleArtifactDigest)
+    || value.closedRouteArtifactDigest !== null
+    || value.promotionRecoveryArtifactDigest !== null
+    || value.promotionRecoveryReceiptSha256 !== null
+    || value.productionDeploymentReceiptSha256 !== deploymentReceiptSha256
+    || value.productionScaleReceiptSha256 !== scaleReceiptSha256
+    || value.closedRouteReceiptSha256 !== null
+    || value.attempts !== 1
+    || value.retryAllowed !== false
+    || !exactKeys(checks, checkKeys)
+    || checks.publicRuntimePostflightExact !== false
+    || Object.entries(checks).some(([name, entry]) => (
+      name === "publicRuntimePostflightExact" || name === "acknowledgementExact"
+        ? typeof entry !== "boolean"
+        : entry !== true
+    ))
+    || (value.outcome === "closed" && checks.acknowledgementExact !== true)
+    || (value.outcome === "closed_reconciled_after_lost_ack"
+      && checks.acknowledgementExact !== false)
+  ) fail("deployment_invalid");
+  const startedAt = timestamp(value.startedAt);
+  const completedAt = timestamp(value.completedAt);
+  if (
+    Date.parse(startedAt) < Date.parse(scaleCompletedAt)
+    || Date.parse(completedAt) < Date.parse(startedAt)
+  ) fail("deployment_invalid");
 }
 
 async function call(
@@ -211,20 +378,31 @@ export async function observeProductionPostPromotionPitr(
       !== "ATTEST_PRODUCTION_PROMOTION_RECOVERY"
   ) fail("github_authority_invalid");
   const deploymentSource = readPrivate(args.get("--production-deployment-receipt")!, Number(uid));
+  const scaleSource = readPrivate(args.get("--production-scale-receipt")!, Number(uid));
+  const closeSource = readPrivate(args.get("--closed-route-receipt")!, Number(uid));
   const manifestSource = readPrivate(args.get("--logical-backup-manifest")!, Number(uid));
   try {
     const deployment = parseCanonical(deploymentSource);
-    if (
-      deployment.schemaVersion !== PERMANENT_STAGING_APP_DEPLOYMENT_EXECUTOR_SCHEMA
-      || deployment.target !== "production"
-      || deployment.failureCode !== null
-      || deployment.candidateSha !== candidateSha
-      || !SHA256.test(String(deployment.deploymentIdSha256))
-      || !isObject(deployment.checks)
-      || Object.keys(deployment.checks).length < 1
-      || Object.values(deployment.checks).some((check) => check !== true)
-    ) fail("deployment_invalid");
-    timestamp(deployment.completedAt);
+    const deploymentReceipt = parseProductionApplicationDeploymentReceipt(
+      deployment,
+      candidateSha,
+    );
+    if (!deploymentReceipt) fail("deployment_invalid");
+    const scale = parseCanonical(scaleSource);
+    const finalDeploymentIdSha256 = finalDeploymentFromScale(
+      scale,
+      candidateSha,
+      deploymentReceipt.deploymentIdSha256,
+      deploymentReceipt.completedAt,
+    );
+    verifyClosedRouteForCapture(
+      parseCanonical(closeSource),
+      candidateSha,
+      finalDeploymentIdSha256,
+      sha256(deploymentSource),
+      sha256(scaleSource),
+      timestamp(scale.completedAt),
+    );
     const manifest = parsePostgresLogicalBackupManifest(manifestSource);
     if (manifest.schemaVersion !== 3) fail("backup_invalid");
     const recoveryPointAt = timestamp(manifest.createdAt);
@@ -275,7 +453,7 @@ export async function observeProductionPostPromotionPitr(
       schemaVersion: PRODUCTION_POST_PROMOTION_PITR_OBSERVATION_SCHEMA,
       outcome: "verified",
       candidateSha,
-      productionDeploymentIdSha256: deployment.deploymentIdSha256,
+      productionDeploymentIdSha256: finalDeploymentIdSha256,
       recoveryPointAt,
       observedAt,
       pitrEnabledAt: enabledAt,
@@ -299,6 +477,8 @@ export async function observeProductionPostPromotionPitr(
     return receipt;
   } finally {
     deploymentSource.fill(0);
+    scaleSource.fill(0);
+    closeSource.fill(0);
     manifestSource.fill(0);
   }
 }

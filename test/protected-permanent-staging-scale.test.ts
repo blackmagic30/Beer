@@ -1,6 +1,9 @@
 import crypto from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   PROTECTED_STAGING_SCALE_DISCOVERY_QUERY,
@@ -10,6 +13,10 @@ import {
   PROTECTED_STAGING_SCALE_TOKEN_SCOPE_QUERY,
   runProtectedPermanentStagingScale,
 } from "../scripts/execute-protected-permanent-staging-scale.js";
+import type { ProductionScaleActivationPrerequisiteVerification } from
+  "../scripts/verify-production-maintenance-role-limit-prerequisites.js";
+import { railwayDeploymentIdentityIdSha256 } from
+  "../src/lib/railway-deployment-identity.js";
 
 const PROJECT_ID = "48d8c6cd-1c66-4148-874b-20877f48e1a5";
 const ENVIRONMENT_ID = "a4e0f507-d6d3-4df9-a818-ad92c0071a35";
@@ -19,7 +26,18 @@ const INSTANCE_ID = "11111111-1111-4111-8111-111111111111";
 const DEPLOYMENT_ID = "22222222-2222-4222-8222-222222222222";
 const SNAPSHOT_ID = "33333333-3333-4333-8333-333333333333";
 const DOMAIN_ID = "44444444-4444-4444-8444-444444444444";
+const DRIFT_DEPLOYMENT_ID = "55555555-5555-4555-8555-555555555555";
+const DRIFT_SNAPSHOT_ID = "66666666-6666-4666-8666-666666666666";
 const CANDIDATE_SHA = "a".repeat(40);
+const PRODUCTION_SCALE_RUN_ID = "9000";
+const PRODUCTION_ACTIVATE_RUN_ID = "8000";
+const temporaryRoots: string[] = [];
+
+afterEach(() => {
+  for (const root of temporaryRoots.splice(0)) {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 function sha256(value: string): string {
   return crypto.createHash("sha256").update(value).digest("hex");
@@ -38,9 +56,9 @@ function scope(environmentId = ENVIRONMENT_ID): Response {
   });
 }
 
-function discovery(): Response {
+function discovery(deploymentId = DEPLOYMENT_ID): Response {
   return response({
-    data: { serviceInstance: { latestDeployment: { id: DEPLOYMENT_ID } } },
+    data: { serviceInstance: { latestDeployment: { id: deploymentId } } },
   });
 }
 
@@ -49,6 +67,8 @@ function snapshot(
   environmentId = ENVIRONMENT_ID,
   domain = "beer-staging.up.railway.app",
   deployedSha = CANDIDATE_SHA,
+  deploymentId = DEPLOYMENT_ID,
+  snapshotId = SNAPSHOT_ID,
 ): Response {
   return response({
     data: {
@@ -58,13 +78,13 @@ function snapshot(
         environmentId,
         numReplicas: replicas,
         latestDeployment: {
-          id: DEPLOYMENT_ID,
+          id: deploymentId,
           status: "SUCCESS",
           deploymentStopped: false,
-          snapshotId: SNAPSHOT_ID,
+          snapshotId,
         },
         activeDeployments: [{
-          id: DEPLOYMENT_ID,
+          id: deploymentId,
           status: "SUCCESS",
           deploymentStopped: false,
         }],
@@ -78,11 +98,11 @@ function snapshot(
         },
       },
       deployment: {
-        id: DEPLOYMENT_ID,
+        id: deploymentId,
         projectId: PROJECT_ID,
         environmentId,
         serviceId: SERVICE_ID,
-        snapshotId: SNAPSHOT_ID,
+        snapshotId,
         meta: {
           commitHash: deployedSha,
           imageDigest: `sha256:${"b".repeat(64)}`,
@@ -126,7 +146,11 @@ function successfulFetch(before: 0 | 1 | 2, after?: 0 | 1 | 2) {
     .mockResolvedValueOnce(discovery())
     .mockResolvedValueOnce(snapshot(before));
   if (after !== undefined) {
-    fetchImpl.mockResolvedValueOnce(discovery()).mockResolvedValueOnce(snapshot(after));
+    fetchImpl
+      .mockResolvedValueOnce(discovery())
+      .mockResolvedValueOnce(snapshot(before))
+      .mockResolvedValueOnce(discovery())
+      .mockResolvedValueOnce(snapshot(after));
   }
   return fetchImpl;
 }
@@ -183,7 +207,7 @@ describe("protected permanent-staging scale evidence operation", () => {
       "scale-token-that-is-long-enough",
     );
     expect(boundaryCheck).toHaveBeenCalledTimes(2);
-    expect(fetchImpl).toHaveBeenCalledTimes(6);
+    expect(fetchImpl).toHaveBeenCalledTimes(8);
     expect(JSON.parse(output[0]!)).toMatchObject({
       schemaVersion: PROTECTED_STAGING_SCALE_SCHEMA,
       direction: "out",
@@ -216,6 +240,8 @@ describe("protected permanent-staging scale evidence operation", () => {
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce(scope())
       .mockResolvedValueOnce(scope())
+      .mockResolvedValueOnce(discovery())
+      .mockResolvedValueOnce(snapshot(1, ENVIRONMENT_ID, "beer-staging.up.railway.app", legacySha))
       .mockResolvedValueOnce(discovery())
       .mockResolvedValueOnce(snapshot(1, ENVIRONMENT_ID, "beer-staging.up.railway.app", legacySha))
       .mockResolvedValueOnce(discovery())
@@ -428,9 +454,28 @@ describe("protected permanent-staging scale evidence operation", () => {
 
   it("converges an exact existing production deployment to two without a scale-down path", async () => {
     const deployedSha = CANDIDATE_SHA;
+    const evidenceDirectory = fs.realpathSync(fs.mkdtempSync(
+      path.join(os.tmpdir(), "pintpath-production-scale-test-"),
+    ));
+    temporaryRoots.push(evidenceDirectory);
+    const activationVerificationFile = path.join(
+      evidenceDirectory,
+      "production-scale-activation-verification.json",
+    );
+    fs.writeFileSync(activationVerificationFile, "{}\n", { mode: 0o600 });
+    const activationDeploymentIdSha256 = railwayDeploymentIdentityIdSha256(
+      "deployment",
+      DEPLOYMENT_ID,
+    )!;
+    const preActivationDeploymentIdSha256 = railwayDeploymentIdentityIdSha256(
+      "deployment",
+      "55555555-5555-4555-8555-555555555555",
+    )!;
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce(scope(PRODUCTION_ENVIRONMENT_ID))
       .mockResolvedValueOnce(scope(PRODUCTION_ENVIRONMENT_ID))
+      .mockResolvedValueOnce(discovery())
+      .mockResolvedValueOnce(snapshot(1, PRODUCTION_ENVIRONMENT_ID, "pintpath.au", deployedSha))
       .mockResolvedValueOnce(discovery())
       .mockResolvedValueOnce(snapshot(1, PRODUCTION_ENVIRONMENT_ID, "pintpath.au", deployedSha))
       .mockResolvedValueOnce(discovery())
@@ -447,16 +492,22 @@ describe("protected permanent-staging scale evidence operation", () => {
         "--direction", "converge-production-two",
         "--candidate-sha", CANDIDATE_SHA,
         "--expected-deployment-sha", deployedSha,
-        "--evidence-dir", "/private/evidence",
+        "--evidence-dir", evidenceDirectory,
+        "--production-activation-run-id", PRODUCTION_ACTIVATE_RUN_ID,
+        "--production-scale-verification-file", activationVerificationFile,
       ],
       env: {
         GITHUB_REF: "refs/heads/main",
+        GITHUB_RUN_ID: PRODUCTION_SCALE_RUN_ID,
         GITHUB_SHA: CANDIDATE_SHA,
         GITHUB_RUN_ATTEMPT: "1",
         PINTPATH_SCALE_CONFIRMATION: "CONVERGE_PRODUCTION_TO_TWO_REPLICAS",
         PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: "production-metadata-token-long-enough",
         PINTPATH_RAILWAY_PRODUCTION_SCALE_TOKEN: "production-scale-token-long-enough",
         PINTPATH_RAILWAY_CLI_PATH: "/private/railway",
+        PINTPATH_PRODUCTION_SCALE_ACTIVATE_RUN_ID: PRODUCTION_ACTIVATE_RUN_ID,
+        PINTPATH_PRODUCTION_SCALE_ACTIVATION_VERIFICATION_FILE:
+          activationVerificationFile,
       },
       cwd: process.cwd(),
       fetchImpl,
@@ -465,6 +516,17 @@ describe("protected permanent-staging scale evidence operation", () => {
       boundaryCheck: vi.fn().mockResolvedValue(0),
       reassertRepositoryState: () => true,
       validateCli: () => true,
+      validateProductionActivationPrerequisite: vi.fn(() => ({
+        candidateSha: CANDIDATE_SHA,
+        consumer: { runId: PRODUCTION_SCALE_RUN_ID },
+        activation: {
+          runId: PRODUCTION_ACTIVATE_RUN_ID,
+          terminalSha256: "1".repeat(64),
+          prerequisitesSha256: "2".repeat(64),
+          deploymentBeforeIdSha256: preActivationDeploymentIdSha256,
+          deploymentAfterIdSha256: activationDeploymentIdSha256,
+        },
+      } as unknown as ProductionScaleActivationPrerequisiteVerification)),
       runCommand,
       probeRuntime: vi.fn().mockResolvedValue(true),
       writeDurable: durable,
@@ -489,7 +551,114 @@ describe("protected permanent-staging scale evidence operation", () => {
       desiredReplicas: 2,
       attempts: 1,
       retryAllowed: false,
-      checks: { targetPostflightExact: true, deploymentUnchanged: true },
+      checks: {
+        productionActivationPrerequisiteExact: true,
+        productionActivationDeploymentContinuityExact: true,
+        targetPostflightExact: true,
+        deploymentUnchanged: true,
+      },
+      productionActivationPrerequisite: {
+        runId: PRODUCTION_ACTIVATE_RUN_ID,
+        verificationSha256: sha256("{}\n"),
+        deploymentAfterIdSha256: activationDeploymentIdSha256,
+      },
+    });
+  });
+
+  it("blocks a D2 generation drift after intent and immediately before service scale", async () => {
+    const evidenceDirectory = fs.realpathSync(fs.mkdtempSync(
+      path.join(os.tmpdir(), "pintpath-production-scale-prewrite-drift-test-"),
+    ));
+    temporaryRoots.push(evidenceDirectory);
+    const activationVerificationFile = path.join(
+      evidenceDirectory,
+      "production-scale-activation-verification.json",
+    );
+    fs.writeFileSync(activationVerificationFile, "{}\n", { mode: 0o600 });
+    const activationDeploymentIdSha256 = railwayDeploymentIdentityIdSha256(
+      "deployment",
+      DEPLOYMENT_ID,
+    )!;
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(scope(PRODUCTION_ENVIRONMENT_ID))
+      .mockResolvedValueOnce(scope(PRODUCTION_ENVIRONMENT_ID))
+      .mockResolvedValueOnce(discovery())
+      .mockResolvedValueOnce(snapshot(
+        1,
+        PRODUCTION_ENVIRONMENT_ID,
+        "pintpath.au",
+      ))
+      .mockResolvedValueOnce(discovery(DRIFT_DEPLOYMENT_ID))
+      .mockResolvedValueOnce(snapshot(
+        1,
+        PRODUCTION_ENVIRONMENT_ID,
+        "pintpath.au",
+        CANDIDATE_SHA,
+        DRIFT_DEPLOYMENT_ID,
+        DRIFT_SNAPSHOT_ID,
+      ));
+    const runCommand = vi.fn();
+    const output: string[] = [];
+
+    const result = await runProtectedPermanentStagingScale({
+      argv: [
+        "--direction", "converge-production-two",
+        "--candidate-sha", CANDIDATE_SHA,
+        "--expected-deployment-sha", CANDIDATE_SHA,
+        "--evidence-dir", evidenceDirectory,
+        "--production-activation-run-id", PRODUCTION_ACTIVATE_RUN_ID,
+        "--production-scale-verification-file", activationVerificationFile,
+      ],
+      env: {
+        GITHUB_REF: "refs/heads/main",
+        GITHUB_RUN_ID: PRODUCTION_SCALE_RUN_ID,
+        GITHUB_SHA: CANDIDATE_SHA,
+        GITHUB_RUN_ATTEMPT: "1",
+        PINTPATH_SCALE_CONFIRMATION: "CONVERGE_PRODUCTION_TO_TWO_REPLICAS",
+        PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN:
+          "production-metadata-token-long-enough",
+        PINTPATH_RAILWAY_PRODUCTION_SCALE_TOKEN:
+          "production-scale-token-long-enough",
+        PINTPATH_RAILWAY_CLI_PATH: "/private/railway",
+        PINTPATH_PRODUCTION_SCALE_ACTIVATE_RUN_ID: PRODUCTION_ACTIVATE_RUN_ID,
+        PINTPATH_PRODUCTION_SCALE_ACTIVATION_VERIFICATION_FILE:
+          activationVerificationFile,
+      },
+      cwd: process.cwd(),
+      fetchImpl,
+      now: () => 0,
+      sleep: vi.fn(),
+      boundaryCheck: vi.fn().mockResolvedValue(0),
+      reassertRepositoryState: () => true,
+      validateCli: () => true,
+      validateProductionActivationPrerequisite: vi.fn(() => ({
+        candidateSha: CANDIDATE_SHA,
+        consumer: { runId: PRODUCTION_SCALE_RUN_ID },
+        activation: {
+          runId: PRODUCTION_ACTIVATE_RUN_ID,
+          terminalSha256: "1".repeat(64),
+          prerequisitesSha256: "2".repeat(64),
+          deploymentBeforeIdSha256: "3".repeat(64),
+          deploymentAfterIdSha256: activationDeploymentIdSha256,
+        },
+      } as unknown as ProductionScaleActivationPrerequisiteVerification)),
+      runCommand,
+      probeRuntime: vi.fn().mockResolvedValue(true),
+      writeDurable: durable,
+      writeOutput: (source) => output.push(source),
+    });
+
+    expect(result).toBe(1);
+    expect(runCommand).not.toHaveBeenCalled();
+    expect(JSON.parse(output[0]!)).toMatchObject({
+      outcome: "failed_before_attempt",
+      attempts: 0,
+      checks: {
+        durableIntentExact: true,
+        targetPreflightExact: false,
+        productionActivationDeploymentContinuityExact: false,
+        writeAttemptedAtMostOnce: true,
+      },
     });
   });
 
@@ -529,6 +698,85 @@ describe("protected permanent-staging scale evidence operation", () => {
       outcome: "failed_before_attempt",
       attempts: 0,
       candidateSha: null,
+    });
+  });
+
+  it("blocks production scale before the write when activation names another deployment", async () => {
+    const evidenceDirectory = fs.realpathSync(fs.mkdtempSync(
+      path.join(os.tmpdir(), "pintpath-production-scale-drift-test-"),
+    ));
+    temporaryRoots.push(evidenceDirectory);
+    const activationVerificationFile = path.join(
+      evidenceDirectory,
+      "production-scale-activation-verification.json",
+    );
+    fs.writeFileSync(activationVerificationFile, "{}\n", { mode: 0o600 });
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(scope(PRODUCTION_ENVIRONMENT_ID))
+      .mockResolvedValueOnce(scope(PRODUCTION_ENVIRONMENT_ID))
+      .mockResolvedValueOnce(discovery())
+      .mockResolvedValueOnce(snapshot(
+        1,
+        PRODUCTION_ENVIRONMENT_ID,
+        "pintpath.au",
+      ));
+    const runCommand = vi.fn();
+    const output: string[] = [];
+    const result = await runProtectedPermanentStagingScale({
+      argv: [
+        "--direction", "converge-production-two",
+        "--candidate-sha", CANDIDATE_SHA,
+        "--expected-deployment-sha", CANDIDATE_SHA,
+        "--evidence-dir", evidenceDirectory,
+      ],
+      env: {
+        GITHUB_REF: "refs/heads/main",
+        GITHUB_RUN_ID: PRODUCTION_SCALE_RUN_ID,
+        GITHUB_SHA: CANDIDATE_SHA,
+        GITHUB_RUN_ATTEMPT: "1",
+        PINTPATH_SCALE_CONFIRMATION: "CONVERGE_PRODUCTION_TO_TWO_REPLICAS",
+        PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN:
+          "production-metadata-token-long-enough",
+        PINTPATH_RAILWAY_PRODUCTION_SCALE_TOKEN:
+          "production-scale-token-long-enough",
+        PINTPATH_RAILWAY_CLI_PATH: "/private/railway",
+        PINTPATH_PRODUCTION_SCALE_ACTIVATE_RUN_ID: PRODUCTION_ACTIVATE_RUN_ID,
+        PINTPATH_PRODUCTION_SCALE_ACTIVATION_VERIFICATION_FILE:
+          activationVerificationFile,
+      },
+      cwd: process.cwd(),
+      fetchImpl,
+      now: () => 0,
+      sleep: vi.fn(),
+      boundaryCheck: vi.fn().mockResolvedValue(0),
+      reassertRepositoryState: () => true,
+      validateCli: () => true,
+      validateProductionActivationPrerequisite: vi.fn(() => ({
+        candidateSha: CANDIDATE_SHA,
+        consumer: { runId: PRODUCTION_SCALE_RUN_ID },
+        activation: {
+          runId: PRODUCTION_ACTIVATE_RUN_ID,
+          terminalSha256: "1".repeat(64),
+          prerequisitesSha256: "2".repeat(64),
+          deploymentBeforeIdSha256: "3".repeat(64),
+          deploymentAfterIdSha256: "4".repeat(64),
+        },
+      } as unknown as ProductionScaleActivationPrerequisiteVerification)),
+      runCommand,
+      probeRuntime: vi.fn(),
+      writeDurable: durable,
+      writeOutput: (source) => output.push(source),
+    });
+
+    expect(result).toBe(1);
+    expect(runCommand).not.toHaveBeenCalled();
+    expect(JSON.parse(output[0]!)).toMatchObject({
+      outcome: "failed_before_attempt",
+      attempts: 0,
+      checks: {
+        productionActivationPrerequisiteExact: true,
+        productionActivationDeploymentContinuityExact: false,
+      },
     });
   });
 

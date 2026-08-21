@@ -1064,11 +1064,14 @@ be measured and approved.
    reconciliation/deletion replay, and sign RPO/RTO before traffic is routed.
    The pre-import SQLite/Postgres snapshot is not rollback authority for the
    migrated state.
-6. Deploy the exact current-`main` candidate with the Postgres connection,
-   converge it to exactly two replicas, prove `/startup`, `/ready`, role smoke,
+6. Fence production automatic maintenance, deploy the exact current-`main`
+   candidate with the Postgres connection, transition the protected maintenance
+   LOGIN from 2 to 8, activate only the candidate-bound worker, and then
+   converge it to exactly two replicas. Prove `/startup`, `/ready`, role smoke,
    Free-scope writes, worker overlap, public data gates, and provider readiness,
-   then close only the canonical route. The release chronology is fixed as
-   `deploy→scale→close→activation→promotion-recovery→open`.
+   then close only the canonical route. The subsequent route/recovery evidence
+   chronology is fixed as
+   `deploy→scale→close→recovery-activation→promotion-recovery→open`.
 7. Publish only the exactly reviewed launch data through the candidate's
    authorised Postgres workflow. Produce the no-write plan first, register the
    independent reviewer's signed apply authorization with

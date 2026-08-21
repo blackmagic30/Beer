@@ -63,6 +63,47 @@
       "runtimeProofRequired": true
     }
   },
+  "activationPrerequisites": {
+    "permanentStaging": {
+      "verificationScript": "scripts/verify-permanent-staging-worker-bootstrap-prerequisites.ts",
+      "verificationOperation": "activate",
+      "verificationFilename": "prerequisites-verification.json",
+      "requiredRunInputs": [
+        "prepare_run_id",
+        "quiesce_run_id",
+        "fenced_deployment_run_id",
+        "restore_run_id"
+      ],
+      "productionRoleLimitRunInputAllowed": false,
+      "verifiedBeforeProviderTokenCustody": true
+    },
+    "production": {
+      "verificationScript": "scripts/verify-production-maintenance-role-limit-prerequisites.ts",
+      "verificationMode": "production-activate",
+      "verificationSchema": "pintpath-production-activation-role-limit-prerequisite/v1",
+      "verificationFilename": "production-activation-role-limit-verification.json",
+      "requiredRunInput": "role_limit_run_id",
+      "requiredArtifactRootFiles": [
+        "intent.json",
+        "terminal.json",
+        "receipt.json",
+        "prerequisites-verification.json"
+      ],
+      "stagingRunInputsAllowed": false,
+      "verifiedBeforeProviderTokenCustody": true,
+      "executorMustBindVerificationSha256": true,
+      "executorMustBindRoleLimitRunId": true,
+      "liveDeploymentMustMatchRolePrerequisiteDeployment": true,
+      "runtimeAutomaticMaintenanceEnabledBeforeWrite": false,
+      "runtimeAutomaticMaintenanceCandidateBoundBeforeWrite": true,
+      "runtimeRoutesRequiredBeforeWrite": [
+        "/health",
+        "/startup",
+        "/ready"
+      ]
+    },
+    "nonActivationPrerequisiteRunInputsAllowed": false
+  },
   "mutationBoundary": {
     "policyPath": "ops/railway/production-staging-mutation-policy.json",
     "policySha256": "9392f0c605dec43657d4d3a5a6ce40d57fe9beb70fce5ff496bb1a5f2fed3fed",
@@ -97,6 +138,9 @@
     "terminalReceiptRequired": true,
     "terminalReceiptCandidateTargetOperationBound": true,
     "fenceReceiptConsumableByProductionDeployment": true,
+    "stagingActivationPrerequisitesIncludedInArtifact": true,
+    "productionActivationPrerequisitesIncludedInArtifact": true,
+    "productionActivationPrerequisitesTransitivelyBoundByIntentSha256": true,
     "secretMaterialAllowed": false,
     "secretDerivedCommitmentsAllowed": false
   }

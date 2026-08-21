@@ -23,6 +23,8 @@ import {
   readTrustedRegularFile,
   writePrivateExclusiveFile,
 } from "./lib/trusted-filesystem.js";
+import { parseProductionApplicationDeploymentReceipt } from
+  "./lib/production-application-deployment-receipt.js";
 
 export const PROTECTED_PRODUCTION_ROUTE_MUTATION_SCHEMA =
   "pintpath-protected-production-route-mutation/v1" as const;
@@ -780,64 +782,13 @@ function parseProductionDeploymentReceipt(
 ): { sourceSha256: string; deploymentIdSha256: string; completedAt: string } | null {
   try {
     const value = JSON.parse(source) as unknown;
-    if (canonical(value) !== source || !exact(value, [
-      "schemaVersion", "operation", "executorState", "target", "outcome",
-      "failureCode", "candidateSha", "startedAt", "completedAt", "writeAttempts", "acknowledgement",
-      "previousDeploymentIdSha256", "deploymentIdSha256", "intentSha256",
-      "cliOutputSha256", "boundaryPreflightSha256", "boundaryPostflightSha256",
-      "collateralSnapshotSha256s", "replicaCounts", "runtimeResponseSha256s", "checks",
-    ])
-      || value.schemaVersion !== "pintpath-railway-application-deployment-executor/v5"
-      || value.operation !== "pintpath-railway-application-source-upload"
-      || value.executorState !== PROTECTED_PRODUCTION_ROUTE_MUTATION_STATE
-      || value.target !== "production"
-      || !["deployed", "already_deployed", "reconciled_success"].includes(String(value.outcome))
-      || value.failureCode !== null
-      || value.candidateSha !== candidateSha
-      || !timestampWithinStage(value.startedAt, value.completedAt, stage)
-      || (value.writeAttempts !== 0 && value.writeAttempts !== 1)
-      || !["not_attempted", "received", "missing_or_failed"].includes(
-        String(value.acknowledgement),
-      )
-      || !sha256Exact(value.previousDeploymentIdSha256)
-      || !sha256Exact(value.deploymentIdSha256)
-      || !sha256Exact(value.intentSha256)
-      || !sha256Exact(value.boundaryPreflightSha256)
-      || !sha256Exact(value.boundaryPostflightSha256)
-      || (value.writeAttempts === 0
-        ? value.cliOutputSha256 !== null
-        : !sha256Exact(value.cliOutputSha256))
-      || !exact(value.collateralSnapshotSha256s, ["before", "after"])
-      || !sha256Exact(value.collateralSnapshotSha256s.before)
-      || !sha256Exact(value.collateralSnapshotSha256s.after)
-      || !exact(value.replicaCounts, ["before", "after"])
-      || (value.replicaCounts.after !== 1 && value.replicaCounts.after !== 2)
-      || value.replicaCounts.before !== value.replicaCounts.after
-      || !exact(value.runtimeResponseSha256s, ["health", "startup", "ready"])
-      || !sha256Exact(value.runtimeResponseSha256s.health)
-      || !sha256Exact(value.runtimeResponseSha256s.startup)
-      || !sha256Exact(value.runtimeResponseSha256s.ready)
-      || !exact(value.checks, [
-        "policyExact", "githubMainExact", "sourceAuthorityExact", "cliExact",
-        "writeTokenScopeExact", "costPolicyExact", "prerequisiteExact",
-        "boundaryPreflightExact", "targetPreflightExact", "gitAutodeployAbsent",
-        "collateralInventoryExact", "durableIntentExact", "sourceReasserted",
-        "writeAttemptedAtMostOnce", "targetPostflightAttempted", "targetPostflightExact",
-        "reconciliationCompleted", "topologyPreserved", "deploymentExact",
-        "runtimeHealthExact", "runtimeStartupExact", "runtimeReadinessExact",
-        "collateralStateUnchanged", "boundaryPostflightExact", "terminalEvidenceExact",
-      ])
-      || Object.values(value.checks).some((check) => check !== true)
-      || (value.outcome === "already_deployed"
-        ? value.writeAttempts !== 0 || value.acknowledgement !== "not_attempted"
-        : value.writeAttempts !== 1)
-      || (value.outcome === "deployed" && value.acknowledgement !== "received")
-      || (value.outcome === "reconciled_success"
-        && value.acknowledgement !== "missing_or_failed")) return null;
+    const receipt = parseProductionApplicationDeploymentReceipt(value, candidateSha);
+    if (canonical(value) !== source || !receipt
+      || !timestampWithinStage(receipt.startedAt, receipt.completedAt, stage)) return null;
     return {
       sourceSha256: sha256(source),
-      deploymentIdSha256: value.deploymentIdSha256,
-      completedAt: value.completedAt as string,
+      deploymentIdSha256: receipt.deploymentIdSha256,
+      completedAt: receipt.completedAt,
     };
   } catch {
     return null;
@@ -847,17 +798,17 @@ function parseProductionDeploymentReceipt(
 function parseProductionScaleReceipt(
   source: string,
   candidateSha: string,
-  deploymentIdSha256: string,
+  deploymentBeforeActivationIdSha256: string,
   deploymentCompletedAt: string,
   stage: ProductionChainStage,
-): { sourceSha256: string } | null {
+): { sourceSha256: string; deploymentIdSha256: string } | null {
   try {
     const value = JSON.parse(source) as unknown;
     if (canonical(value) !== source || !exact(value, [
       "schemaVersion", "executorState", "direction", "outcome", "candidateSha",
       "startedAt", "completedAt", "desiredReplicas", "deploymentIdSha256", "attempts",
       "retryAllowed", "intentSha256", "terminalEvidenceSha256", "commandStdoutSha256",
-      "commandStderrSha256", "checks",
+      "commandStderrSha256", "productionActivationPrerequisite", "checks",
     ])
       || value.schemaVersion !== "pintpath-permanent-staging-scale-operation/v2"
       || value.executorState !== PROTECTED_PRODUCTION_ROUTE_MUTATION_STATE
@@ -865,7 +816,7 @@ function parseProductionScaleReceipt(
       || (value.outcome !== "scaled" && value.outcome !== "already_converged")
       || value.candidateSha !== candidateSha
       || value.desiredReplicas !== 2
-      || value.deploymentIdSha256 !== deploymentIdSha256
+      || !sha256Exact(value.deploymentIdSha256)
       || value.retryAllowed !== false
       || (value.attempts !== 0 && value.attempts !== 1)
       || !timestampWithinStage(value.startedAt, value.completedAt, stage)
@@ -878,9 +829,27 @@ function parseProductionScaleReceipt(
         : !sha256Exact(value.intentSha256)
           || !sha256Exact(value.commandStdoutSha256)
           || !sha256Exact(value.commandStderrSha256))
+      || !exact(value.productionActivationPrerequisite, [
+        "runId", "verificationSha256", "terminalSha256", "prerequisitesSha256",
+        "deploymentBeforeIdSha256", "deploymentAfterIdSha256",
+      ])
+      || typeof value.productionActivationPrerequisite.runId !== "string"
+      || !/^[1-9][0-9]*$/.test(value.productionActivationPrerequisite.runId)
+      || !sha256Exact(value.productionActivationPrerequisite.verificationSha256)
+      || !sha256Exact(value.productionActivationPrerequisite.terminalSha256)
+      || !sha256Exact(value.productionActivationPrerequisite.prerequisitesSha256)
+      || value.productionActivationPrerequisite.deploymentBeforeIdSha256
+        !== deploymentBeforeActivationIdSha256
+      || value.productionActivationPrerequisite.deploymentAfterIdSha256
+        !== value.deploymentIdSha256
+      || value.productionActivationPrerequisite.deploymentAfterIdSha256
+        === value.productionActivationPrerequisite.deploymentBeforeIdSha256
       || !exact(value.checks, [
         "policyExact", "githubAuthorityExact", "tokenScopesExact", "cliExact",
-        "boundaryPreflightExact", "targetPreflightExact", "runtimePreflightExact",
+        "boundaryPreflightExact", "targetPreflightExact",
+        "productionActivationPrerequisiteExact",
+        "productionActivationDeploymentContinuityExact",
+        "runtimePreflightExact",
         "durableIntentExact",
         "repositoryPrewriteReasserted", "writeAttemptedAtMostOnce", "acknowledgementExact",
         "postflightAttempted", "targetPostflightExact", "runtimePostflightExact",
@@ -893,7 +862,10 @@ function parseProductionScaleReceipt(
       .every(([, check]) => check === true);
     if (!required || value.checks.durableIntentExact !== (value.attempts === 1)
       || (value.outcome === "scaled") !== (value.attempts === 1)) return null;
-    return { sourceSha256: sha256(source) };
+    return {
+      sourceSha256: sha256(source),
+      deploymentIdSha256: value.deploymentIdSha256 as string,
+    };
   } catch {
     return null;
   }
@@ -1615,7 +1587,7 @@ export async function runProtectedProductionRouteMutation(
         : null;
       checks.predecessorReceiptsExact = deploymentAuthority !== null
         && scaleAuthority !== null
-        && deploymentAuthority.deploymentIdSha256 === deploymentIdSha256;
+        && scaleAuthority.deploymentIdSha256 === deploymentIdSha256;
       operationReceiptAuthorities.productionDeploymentReceiptSha256 =
         deploymentAuthority?.sourceSha256 ?? null;
       operationReceiptAuthorities.productionScaleReceiptSha256 =

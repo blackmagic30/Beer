@@ -23,6 +23,26 @@ on:
           - prepare
           - fence
           - activate
+      prepare_run_id:
+        description: Staging activate only; successful same-candidate prepare run
+        required: false
+        type: string
+      quiesce_run_id:
+        description: Staging activate only; successful same-candidate quiesce run
+        required: false
+        type: string
+      fenced_deployment_run_id:
+        description: Staging activate only; successful candidate upload at zero replicas
+        required: false
+        type: string
+      restore_run_id:
+        description: Staging activate only; successful candidate restore run
+        required: false
+        type: string
+      role_limit_run_id:
+        description: Production activate only; successful same-candidate maintenance LOGIN limit apply run
+        required: false
+        type: string
       confirmation:
         description: <PREPARE|FENCE|ACTIVATE>_AUTOMATIC_MAINTENANCE_IN_<TARGET>_FOR_<SHA>
         required: true
@@ -60,7 +80,13 @@ jobs:
           DISPATCH_REF: ${{ github.ref }}
           DISPATCH_SHA: ${{ github.sha }}
           OPERATION: ${{ inputs.operation }}
+          PREPARE_RUN_ID: ${{ inputs.prepare_run_id }}
+          QUIESCE_RUN_ID: ${{ inputs.quiesce_run_id }}
+          FENCED_DEPLOYMENT_RUN_ID: ${{ inputs.fenced_deployment_run_id }}
+          RESTORE_RUN_ID: ${{ inputs.restore_run_id }}
+          ROLE_LIMIT_RUN_ID: ${{ inputs.role_limit_run_id }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_ID: ${{ github.run_id }}
           TARGET: ${{ inputs.target }}
         shell: bash
         run: |
@@ -82,9 +108,43 @@ jobs:
           esac
           if test "$OPERATION" = prepare; then
             test "$TARGET" = permanent-staging
+            test -z "$PREPARE_RUN_ID"
+            test -z "$QUIESCE_RUN_ID"
+            test -z "$FENCED_DEPLOYMENT_RUN_ID"
+            test -z "$RESTORE_RUN_ID"
+            test -z "$ROLE_LIMIT_RUN_ID"
           fi
           if test "$OPERATION" = fence; then
             test "$TARGET" = production
+            test -z "$PREPARE_RUN_ID"
+            test -z "$QUIESCE_RUN_ID"
+            test -z "$FENCED_DEPLOYMENT_RUN_ID"
+            test -z "$RESTORE_RUN_ID"
+            test -z "$ROLE_LIMIT_RUN_ID"
+          fi
+          if test "$OPERATION" = activate; then
+            if test "$TARGET" = permanent-staging; then
+              test -z "$ROLE_LIMIT_RUN_ID"
+              provided=(
+                "$PREPARE_RUN_ID"
+                "$QUIESCE_RUN_ID"
+                "$FENCED_DEPLOYMENT_RUN_ID"
+                "$RESTORE_RUN_ID"
+              )
+              for prerequisite_run_id in "${provided[@]}"; do
+                [[ "$prerequisite_run_id" =~ ^[1-9][0-9]{0,19}$ ]]
+                test "$prerequisite_run_id" != "$RUN_ID"
+              done
+              test "$(printf '%s\n' "${provided[@]}" | sort -u | wc -l | tr -d ' ')" = '4'
+            else
+              test "$TARGET" = production
+              test -z "$PREPARE_RUN_ID"
+              test -z "$QUIESCE_RUN_ID"
+              test -z "$FENCED_DEPLOYMENT_RUN_ID"
+              test -z "$RESTORE_RUN_ID"
+              [[ "$ROLE_LIMIT_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+              test "$ROLE_LIMIT_RUN_ID" != "$RUN_ID"
+            fi
           fi
           target_confirmation="${TARGET^^}"
           target_confirmation="${target_confirmation//-/_}"
@@ -111,19 +171,194 @@ jobs:
       - name: Create private secret-free evidence custody
         env:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          FENCED_DEPLOYMENT_RUN_ID: ${{ inputs.fenced_deployment_run_id }}
           OPERATION: ${{ inputs.operation }}
+          PREPARE_RUN_ID: ${{ inputs.prepare_run_id }}
+          QUIESCE_RUN_ID: ${{ inputs.quiesce_run_id }}
+          RESTORE_RUN_ID: ${{ inputs.restore_run_id }}
+          ROLE_LIMIT_RUN_ID: ${{ inputs.role_limit_run_id }}
           TARGET: ${{ inputs.target }}
         shell: bash
         run: |
           set -euo pipefail
           install -d -m 700 "$RUNNER_TEMP/pintpath-automatic-maintenance-worker-fence-evidence"
+          install -d -m 700 \
+            "$RUNNER_TEMP/pintpath-automatic-maintenance-prerequisites" \
+            "$RUNNER_TEMP/pintpath-automatic-maintenance-prerequisites/prepare" \
+            "$RUNNER_TEMP/pintpath-automatic-maintenance-prerequisites/quiesce" \
+            "$RUNNER_TEMP/pintpath-automatic-maintenance-prerequisites/fenced-deployment" \
+            "$RUNNER_TEMP/pintpath-automatic-maintenance-prerequisites/restore" \
+            "$RUNNER_TEMP/pintpath-automatic-maintenance-prerequisites/role-limit" \
+            "$RUNNER_TEMP/pintpath-automatic-maintenance-prerequisites/sealed"
           umask 077
           jq -n \
             --arg candidateSha "$CANDIDATE_SHA" \
+            --arg fencedDeploymentRunId "$FENCED_DEPLOYMENT_RUN_ID" \
             --arg operation "$OPERATION" \
+            --arg prepareRunId "$PREPARE_RUN_ID" \
+            --arg quiesceRunId "$QUIESCE_RUN_ID" \
+            --arg restoreRunId "$RESTORE_RUN_ID" \
+            --arg roleLimitRunId "$ROLE_LIMIT_RUN_ID" \
             --arg target "$TARGET" \
-            '{schemaVersion:"pintpath-automatic-maintenance-worker-fence-dispatch/v1",candidateSha:$candidateSha,target:$target,operation:$operation,secretMaterialIncluded:false}' \
+            '{schemaVersion:"pintpath-automatic-maintenance-worker-fence-dispatch/v1",candidateSha:$candidateSha,target:$target,operation:$operation,prerequisiteRunIds:{prepare:$prepareRunId,quiesce:$quiesceRunId,fencedDeployment:$fencedDeploymentRunId,restore:$restoreRunId,roleLimit:$roleLimitRunId},secretMaterialIncluded:false}' \
             > "$RUNNER_TEMP/pintpath-automatic-maintenance-worker-fence-evidence/dispatch.json"
+
+      - name: Retrieve the exact staging prepare artifact
+        if: inputs.target == 'permanent-staging' && inputs.operation == 'activate'
+        uses: actions/download-artifact@b7c52a5f7a25fce4c22e476a93420dd79a061a70 # v8.0.1
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.prepare_run_id }}
+          name: pintpath-automatic-maintenance-worker-fence-permanent-staging-prepare-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}/pintpath-automatic-maintenance-prerequisites/prepare
+
+      - name: Retrieve the exact staging quiesce artifact
+        if: inputs.target == 'permanent-staging' && inputs.operation == 'activate'
+        uses: actions/download-artifact@b7c52a5f7a25fce4c22e476a93420dd79a061a70 # v8.0.1
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.quiesce_run_id }}
+          name: pintpath-permanent-staging-worker-bootstrap-quiesce-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}/pintpath-automatic-maintenance-prerequisites/quiesce
+
+      - name: Retrieve the exact fenced staging deployment artifact
+        if: inputs.target == 'permanent-staging' && inputs.operation == 'activate'
+        uses: actions/download-artifact@b7c52a5f7a25fce4c22e476a93420dd79a061a70 # v8.0.1
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.fenced_deployment_run_id }}
+          name: pintpath-permanent-staging-fenced-deployment-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}/pintpath-automatic-maintenance-prerequisites/fenced-deployment
+
+      - name: Retrieve the exact staging restore artifact
+        if: inputs.target == 'permanent-staging' && inputs.operation == 'activate'
+        uses: actions/download-artifact@b7c52a5f7a25fce4c22e476a93420dd79a061a70 # v8.0.1
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.restore_run_id }}
+          name: pintpath-permanent-staging-worker-bootstrap-restore-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}/pintpath-automatic-maintenance-prerequisites/restore
+
+      - name: Seal and verify the exact staging activation prerequisites
+        if: inputs.target == 'permanent-staging' && inputs.operation == 'activate'
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          FENCED_DEPLOYMENT_RUN_ID: ${{ inputs.fenced_deployment_run_id }}
+          GITHUB_API_URL: ${{ github.api_url }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PINTPATH_STAGING_WORKER_BOOTSTRAP_GITHUB_ENVIRONMENT: permanent-staging-provider-mutation
+          PINTPATH_STAGING_WORKER_BOOTSTRAP_OPERATION: activate
+          PREPARE_RUN_ID: ${{ inputs.prepare_run_id }}
+          QUIESCE_RUN_ID: ${{ inputs.quiesce_run_id }}
+          RESTORE_RUN_ID: ${{ inputs.restore_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/pintpath-automatic-maintenance-prerequisites"
+          sealed="$root/sealed"
+          seal_unique() {
+            local source_root="$1"
+            local leaf="$2"
+            local destination="$3"
+            mapfile -d '' matches < <(find "$source_root" -type f -name "$leaf" -print0)
+            test "${#matches[@]}" = 1
+            test ! -L "${matches[0]}"
+            test ! -e "$destination"
+            cp --no-dereference -- "${matches[0]}" "$destination"
+            chmod 600 "$destination"
+          }
+          install -d -m 700 \
+            "$sealed/prepare" \
+            "$sealed/quiesce" \
+            "$sealed/fenced-deployment" \
+            "$sealed/restore"
+          seal_unique "$root/prepare" automatic-maintenance-worker-fence-terminal.json \
+            "$sealed/prepare/automatic-maintenance-worker-fence-terminal.json"
+          seal_unique "$root/quiesce" quiesce-staging-zero-receipt.json \
+            "$sealed/quiesce/quiesce-staging-zero-receipt.json"
+          seal_unique "$root/quiesce" prerequisites-verification.json \
+            "$sealed/quiesce/prerequisites-verification.json"
+          seal_unique "$root/fenced-deployment" deployment-receipt.json \
+            "$sealed/fenced-deployment/deployment-receipt.json"
+          seal_unique "$root/restore" bootstrap-staging-one-receipt.json \
+            "$sealed/restore/bootstrap-staging-one-receipt.json"
+          seal_unique "$root/restore" prerequisites-verification.json \
+            "$sealed/restore/prerequisites-verification.json"
+          ./node_modules/.bin/tsx \
+            scripts/verify-permanent-staging-worker-bootstrap-prerequisites.ts \
+            --operation activate \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --prepare-run-id "$PREPARE_RUN_ID" \
+            --prepare-terminal-file "$sealed/prepare/automatic-maintenance-worker-fence-terminal.json" \
+            --quiesce-run-id "$QUIESCE_RUN_ID" \
+            --quiesce-receipt-file "$sealed/quiesce/quiesce-staging-zero-receipt.json" \
+            --quiesce-verification-file "$sealed/quiesce/prerequisites-verification.json" \
+            --fenced-deployment-run-id "$FENCED_DEPLOYMENT_RUN_ID" \
+            --fenced-deployment-receipt-file "$sealed/fenced-deployment/deployment-receipt.json" \
+            --restore-run-id "$RESTORE_RUN_ID" \
+            --restore-receipt-file "$sealed/restore/bootstrap-staging-one-receipt.json" \
+            --restore-verification-file "$sealed/restore/prerequisites-verification.json" \
+            --output "$RUNNER_TEMP/pintpath-automatic-maintenance-worker-fence-evidence/prerequisites-verification.json"
+
+      - name: Retrieve the exact production maintenance LOGIN limit artifact
+        if: inputs.target == 'production' && inputs.operation == 'activate'
+        uses: actions/download-artifact@b7c52a5f7a25fce4c22e476a93420dd79a061a70 # v8.0.1
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.role_limit_run_id }}
+          name: pintpath-production-maintenance-role-limit-apply-${{ inputs.candidate_sha }}-${{ inputs.role_limit_run_id }}
+          path: ${{ runner.temp }}/pintpath-automatic-maintenance-prerequisites/role-limit
+
+      - name: Seal and verify the exact production activation prerequisites
+        if: inputs.target == 'production' && inputs.operation == 'activate'
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          GITHUB_API_URL: ${{ github.api_url }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PINTPATH_AUTOMATIC_MAINTENANCE_CONFIRMATION: ${{ inputs.confirmation }}
+          PINTPATH_PRODUCTION_ACTIVATE_ROLE_LIMIT_RUN_ID: ${{ inputs.role_limit_run_id }}
+          PINTPATH_PROTECTED_ENVIRONMENT: production-runtime-configuration
+          ROLE_LIMIT_RUN_ID: ${{ inputs.role_limit_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/pintpath-automatic-maintenance-prerequisites"
+          source_root="$root/role-limit"
+          sealed="$root/sealed/role-limit"
+          install -d -m 700 "$sealed"
+          for leaf in intent.json terminal.json receipt.json prerequisites-verification.json; do
+            mapfile -d '' matches < <(find "$source_root" -mindepth 1 -maxdepth 1 -type f -name "$leaf" -print0)
+            test "${#matches[@]}" = 1
+            test ! -L "${matches[0]}"
+            cp --no-dereference -- "${matches[0]}" "$sealed/$leaf"
+            chmod 600 "$sealed/$leaf"
+          done
+          ./node_modules/.bin/tsx \
+            scripts/verify-production-maintenance-role-limit-prerequisites.ts \
+            --mode production-activate \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --role-limit-run-id "$ROLE_LIMIT_RUN_ID" \
+            --role-intent-file "$sealed/intent.json" \
+            --role-terminal-file "$sealed/terminal.json" \
+            --role-receipt-file "$sealed/receipt.json" \
+            --role-prerequisites-file "$sealed/prerequisites-verification.json" \
+            --output "$RUNNER_TEMP/pintpath-automatic-maintenance-worker-fence-evidence/production-activation-role-limit-verification.json"
+
+      - name: Remove downloaded prerequisite receipt custody
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          custody="$RUNNER_TEMP/pintpath-automatic-maintenance-prerequisites"
+          if [[ -d "$custody" && ! -L "$custody" ]]; then
+            find "$custody" -depth -mindepth 1 -delete
+            rmdir "$custody"
+          fi
 
       - name: Materialize reviewed-candidate authority before provider-token custody
         env:
@@ -134,6 +369,7 @@ jobs:
           GITHUB_SHA: ${{ github.sha }}
           GITHUB_TOKEN: ${{ github.token }}
           PINTPATH_AUTOMATIC_MAINTENANCE_CONFIRMATION: ${{ inputs.confirmation }}
+          PINTPATH_PRODUCTION_ACTIVATE_ROLE_LIMIT_RUN_ID: ${{ inputs.role_limit_run_id }}
           PINTPATH_PROTECTED_ENVIRONMENT: ${{ inputs.target == 'production' && 'production-runtime-configuration' || 'permanent-staging-provider-mutation' }}
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           OPERATION: ${{ inputs.operation }}
@@ -168,6 +404,7 @@ jobs:
           GITHUB_RUN_ID: ${{ github.run_id }}
           GITHUB_SHA: ${{ github.sha }}
           PINTPATH_AUTOMATIC_MAINTENANCE_CONFIRMATION: ${{ inputs.confirmation }}
+          PINTPATH_PRODUCTION_ACTIVATE_ROLE_LIMIT_RUN_ID: ${{ inputs.role_limit_run_id }}
           PINTPATH_PROTECTED_ENVIRONMENT: ${{ inputs.target == 'production' && 'production-runtime-configuration' || 'permanent-staging-provider-mutation' }}
           PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
           PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}

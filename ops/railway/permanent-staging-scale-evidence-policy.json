@@ -36,7 +36,14 @@
     "maximumAttempts": 1,
     "automaticRetriesAllowed": false,
     "unconditionalReadOnlyPostflight": true,
-    "exactExistingDeploymentShaRequired": true
+    "exactExistingDeploymentShaRequired": true,
+    "activationPrerequisiteRequired": true,
+    "activationVerificationSchema": "pintpath-production-scale-activation-prerequisite/v1",
+    "activationVerificationFilename": "production-scale-activation-verification.json",
+    "exactActivationRunBindingRequired": true,
+    "liveDeploymentContinuityRequired": true,
+    "durableIntentBindingRequired": true,
+    "terminalReceiptBindingRequired": true
   },
   "workerBootstrap": {
     "quiesceDirection": "quiesce-staging-zero",

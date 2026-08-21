@@ -89,8 +89,8 @@ receipt inputs are:
 | `fenced-deploy` | prepare inputs plus `--quiesce-run-id`, `--quiesce-receipt-file`, `--quiesce-verification-file` |
 | `restore` | `--expected-deployment-sha <candidate>`, prepare and quiesce inputs, plus `--fenced-deployment-run-id`, `--fenced-deployment-receipt-file` |
 | `activate` | prepare, quiesce, and fenced-deployment inputs, plus `--restore-run-id`, `--restore-receipt-file`, `--restore-verification-file` |
-| `active-deploy` | `--activate-run-id`, `--activate-terminal-file` |
-| `scale-evidence` | activate inputs plus `--active-deployment-run-id`, `--active-deployment-receipt-file` |
+| `active-deploy` | `--activate-run-id`, `--activate-terminal-file`, `--activate-verification-file` |
+| `scale-evidence` | all three activate inputs plus `--active-deployment-run-id`, `--active-deployment-receipt-file` |
 
 The verifier accepts only attempt 1 manual runs on the exact current-main SHA,
 re-proves that the SHA is the tree-equivalent merge commit of exactly one
@@ -110,13 +110,13 @@ more than 24 hours old.
 ## Immutable policy bindings
 
 The prerequisite policy SHA is
-`e052c0a6c6b5d9434335765b6f01a3824f1a467e25e01098f1fd1afc7f9347a2`.
+`f9419b36bebaaf3110d267836706befdfdec3432abd5f444f9d2452f09e634c8`.
 Its producer hashes are:
 
 - worker prepare/activate policy:
-  `a06c7393dfc332461d2c82af310b9cfb654f17884f85cd489d157ce7d06f61a3`;
+  `260a15eb364fe6e95a40b1e15af8950f8ea6f8ccd1f3b0983ef4a39810ea57bb`;
 - scale policy:
-  `7182b42fd454cab030e48f279d8d49ed9dc6638e5620b91d13b9ea08451afbd6`;
+  `164d53a5bccff4a861c8568abebe5caa06352f64245ac7e734e55c056c2be608`;
 - fenced zero-replica deployment policy:
   `beda3ad174ae5c11757ce3b38f7f4b12a852e3c1726f009667d41d2423ad011e`;
 - active one-replica deployment policy:

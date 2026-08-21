@@ -25,11 +25,16 @@ import {
 import {
   PRODUCTION_PROMOTION_RECOVERY_ACTIVATION_EVIDENCE,
 } from "../scripts/create-production-promotion-recovery-activation-receipt.mjs";
+import { productionApplicationDeploymentReceiptFixture } from
+  "./production-application-deployment-receipt.fixtures.js";
 import { writeLogicalOffsiteFixture } from "./postgres-logical-offsite.fixtures.js";
 
 const CANDIDATE = "c".repeat(40);
 const HASH = "a".repeat(64);
 const OTHER_HASH = "b".repeat(64);
+const PRE_UPLOAD_DEPLOYMENT_ID_SHA256 = "e".repeat(64);
+const UPLOAD_DEPLOYMENT_ID_SHA256 = "c".repeat(64);
+const ACTIVE_DEPLOYMENT_ID_SHA256 = "d".repeat(64);
 const TARGET = "1".repeat(64);
 const CA_DER = "f".repeat(64);
 const OPERATION = "11111111-1111-4111-8111-111111111111";
@@ -132,18 +137,13 @@ describe("production promotion-recovery attestor", () => {
       return filename;
     };
     const fileSha = (name: string) => sha256(fs.readFileSync(files.get(name)!));
-    const deployment = {
-      schemaVersion: "pintpath-railway-application-deployment-executor/v5",
-      operation: "pintpath-railway-application-source-upload",
-      executorState: "GITHUB_ENVIRONMENT_PROTECTED",
-      target: "production",
-      outcome: "deployed",
-      failureCode: null,
+    const deployment = productionApplicationDeploymentReceiptFixture({
       candidateSha: CANDIDATE,
-      deploymentIdSha256: HASH,
+      previousDeploymentIdSha256: PRE_UPLOAD_DEPLOYMENT_ID_SHA256,
+      deploymentIdSha256: UPLOAD_DEPLOYMENT_ID_SHA256,
+      startedAt: "2026-08-13T23:59:30.000Z",
       completedAt: "2026-08-14T00:00:00.000Z",
-      checks: { exact: true },
-    };
+    });
     put("production-deployment-receipt", deployment);
     put("production-scale-receipt", {
       schemaVersion: "pintpath-permanent-staging-scale-operation/v2",
@@ -154,16 +154,50 @@ describe("production promotion-recovery attestor", () => {
       startedAt: "2026-08-14T00:00:30.000Z",
       completedAt: "2026-08-14T00:01:00.000Z",
       desiredReplicas: 2,
-      deploymentIdSha256: HASH,
+      deploymentIdSha256: ACTIVE_DEPLOYMENT_ID_SHA256,
       attempts: 1,
       retryAllowed: false,
-      checks: { durableIntentExact: true, exact: true },
+      intentSha256: "1".repeat(64),
+      terminalEvidenceSha256: "2".repeat(64),
+      commandStdoutSha256: "3".repeat(64),
+      commandStderrSha256: "4".repeat(64),
+      productionActivationPrerequisite: {
+        runId: "8000",
+        verificationSha256: "5".repeat(64),
+        terminalSha256: "6".repeat(64),
+        prerequisitesSha256: "7".repeat(64),
+        deploymentBeforeIdSha256: UPLOAD_DEPLOYMENT_ID_SHA256,
+        deploymentAfterIdSha256: ACTIVE_DEPLOYMENT_ID_SHA256,
+      },
+      checks: {
+        policyExact: true,
+        githubAuthorityExact: true,
+        tokenScopesExact: true,
+        cliExact: true,
+        boundaryPreflightExact: true,
+        targetPreflightExact: true,
+        productionActivationPrerequisiteExact: true,
+        productionActivationDeploymentContinuityExact: true,
+        runtimePreflightExact: true,
+        durableIntentExact: true,
+        repositoryPrewriteReasserted: true,
+        writeAttemptedAtMostOnce: true,
+        acknowledgementExact: true,
+        postflightAttempted: true,
+        targetPostflightExact: true,
+        runtimePostflightExact: true,
+        candidateUnchanged: true,
+        deploymentUnchanged: true,
+        boundaryPostflightExact: true,
+        terminalEvidenceExact: true,
+        finalReceiptEvidenceExact: true,
+      },
     });
     const provisionalClose = {
       schemaVersion: "pintpath-protected-production-route-mutation/v1",
       operation: "close",
       candidateSha: CANDIDATE,
-      deploymentIdSha256: HASH,
+      deploymentIdSha256: ACTIVE_DEPLOYMENT_ID_SHA256,
       terminalEvidenceSha256: null,
       checks: { terminalEvidenceExact: false, finalReceiptEvidenceExact: false },
     };
@@ -207,7 +241,7 @@ describe("production promotion-recovery attestor", () => {
       candidateSha: CANDIDATE,
       completedAt: "2026-08-14T00:02:00.000Z",
       githubEnvironment: "production-route-close",
-      deploymentIdSha256: HASH,
+      deploymentIdSha256: ACTIVE_DEPLOYMENT_ID_SHA256,
       closedRouteArtifactDigest: null,
       promotionRecoveryArtifactDigest: null,
       promotionRecoveryReceiptSha256: null,
@@ -267,7 +301,7 @@ describe("production promotion-recovery attestor", () => {
       schemaVersion: "pintpath-production-post-promotion-pitr-observation/v1",
       outcome: "verified",
       candidateSha: CANDIDATE,
-      productionDeploymentIdSha256: HASH,
+      productionDeploymentIdSha256: ACTIVE_DEPLOYMENT_ID_SHA256,
       recoveryPointAt: "2026-08-14T00:05:00.000Z",
       observedAt: "2026-08-14T00:06:00.000Z",
       pitrEnabledAt: "2026-08-13T23:55:00.000Z",
@@ -857,7 +891,7 @@ describe("production promotion-recovery attestor", () => {
       schemaVersion: PRODUCTION_PROMOTION_RECOVERY_AUTHORITY_SCHEMA,
       candidateSha: CANDIDATE,
       productionDeploymentReceiptSha256: fileSha("production-deployment-receipt"),
-      productionDeploymentIdSha256: HASH,
+      productionDeploymentIdSha256: ACTIVE_DEPLOYMENT_ID_SHA256,
       productionScaleReceiptSha256: fileSha("production-scale-receipt"),
       closedRouteReceiptSha256: fileSha("closed-route-receipt"),
       closedRouteTerminalEvidenceSha256: fileSha("closed-route-terminal"),
@@ -976,7 +1010,7 @@ describe("production promotion-recovery attestor", () => {
       outcome: "verified",
       candidateSha: CANDIDATE,
       policySha256: PRODUCTION_PROMOTION_RECOVERY_POLICY_SHA256,
-      productionDeploymentIdSha256: HASH,
+      productionDeploymentIdSha256: ACTIVE_DEPLOYMENT_ID_SHA256,
       productionScaleReceiptSha256: authority.productionScaleReceiptSha256,
       quarantineReceiptSha256: null,
       rpoSeconds: 60,

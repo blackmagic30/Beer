@@ -1,0 +1,378 @@
+name: Transition protected production Postgres maintenance LOGIN limit
+run-name: Production maintenance LOGIN limit | ${{ inputs.operation_mode }} | ${{ inputs.candidate_sha }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Exact 40-character SHA currently at main
+        required: true
+        type: string
+      operation_mode:
+        description: Apply once from limit 2, or reconcile limit 8 from a prior durable intent
+        required: true
+        type: choice
+        options:
+          - apply
+          - reconcile
+      prior_run_id:
+        description: Required only for reconcile; GitHub run containing the prior exact-candidate intent artifact
+        required: false
+        type: string
+      worker_fence_run_id:
+        description: Apply only; successful same-candidate production fence run
+        required: false
+        type: string
+      production_deployment_run_id:
+        description: Apply only; successful same-candidate production deployment after the fence
+        required: false
+        type: string
+      confirmation:
+        description: Type the exact apply or reconciliation confirmation shown in the operator document
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: pintpath-production-rollout
+  queue: max
+  cancel-in-progress: false
+
+jobs:
+  transition:
+    name: Transition exactly privacy_maintenance_login from 2 to 8
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+      - pintpath-production-postgres
+    timeout-minutes: 45
+    environment: production-postgres-maintenance-role-limit
+    steps:
+      - name: Checkout the exact main candidate without persisted credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+
+      - name: Require exact original-run authority and confirmation
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          DISPATCH_REF: ${{ github.ref }}
+          DISPATCH_SHA: ${{ github.sha }}
+          OPERATION_MODE: ${{ inputs.operation_mode }}
+          PRIOR_RUN_ID: ${{ inputs.prior_run_id }}
+          WORKER_FENCE_RUN_ID: ${{ inputs.worker_fence_run_id }}
+          PRODUCTION_DEPLOYMENT_RUN_ID: ${{ inputs.production_deployment_run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_ID: ${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          test "$DISPATCH_REF" = refs/heads/main
+          test "$DISPATCH_SHA" = "$CANDIDATE_SHA"
+          test "$RUN_ATTEMPT" = 1
+          case "$OPERATION_MODE" in
+            apply)
+              test -z "$PRIOR_RUN_ID"
+              [[ "$WORKER_FENCE_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+              [[ "$PRODUCTION_DEPLOYMENT_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+              test "$WORKER_FENCE_RUN_ID" != "$PRODUCTION_DEPLOYMENT_RUN_ID"
+              test "$WORKER_FENCE_RUN_ID" != "$RUN_ID"
+              test "$PRODUCTION_DEPLOYMENT_RUN_ID" != "$RUN_ID"
+              test "$CONFIRMATION" = ALTER_PRIVACY_MAINTENANCE_LOGIN_CONNECTION_LIMIT_2_TO_8
+              ;;
+            reconcile)
+              [[ "$PRIOR_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+              test "$PRIOR_RUN_ID" != "$RUN_ID"
+              test -z "$WORKER_FENCE_RUN_ID"
+              test -z "$PRODUCTION_DEPLOYMENT_RUN_ID"
+              test "$CONFIRMATION" = RECONCILE_PRIVACY_MAINTENANCE_LOGIN_CONNECTION_LIMIT_8
+              ;;
+            *)
+              exit 1
+              ;;
+          esac
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse refs/remotes/origin/main)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain=v2 --untracked-files=all)"
+
+      - name: Setup the repository Node runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Install immutable dependencies
+        run: npm ci
+
+      - name: Run the complete repository gate before credential custody
+        run: npm run check
+
+      - name: Create private evidence custody
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -m 700 "$RUNNER_TEMP/pintpath-production-maintenance-role-limit-evidence"
+          if [[ "${{ inputs.operation_mode }}" = apply ]]; then
+            mkdir -m 700 "$RUNNER_TEMP/pintpath-production-maintenance-role-limit-prerequisites"
+            mkdir -m 700 "$RUNNER_TEMP/pintpath-production-maintenance-role-limit-prerequisites/fence"
+            mkdir -m 700 "$RUNNER_TEMP/pintpath-production-maintenance-role-limit-prerequisites/deployment"
+            mkdir -m 700 "$RUNNER_TEMP/pintpath-production-maintenance-role-limit-prerequisites/sealed"
+          fi
+
+      - name: Retrieve the exact successful production worker-fence artifact
+        if: inputs.operation_mode == 'apply'
+        uses: actions/download-artifact@b7c52a5f7a25fce4c22e476a93420dd79a061a70 # v8.0.1
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.worker_fence_run_id }}
+          name: pintpath-automatic-maintenance-worker-fence-production-fence-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}/pintpath-production-maintenance-role-limit-prerequisites/fence
+
+      - name: Retrieve the exact successful production deployment artifact
+        if: inputs.operation_mode == 'apply'
+        uses: actions/download-artifact@b7c52a5f7a25fce4c22e476a93420dd79a061a70 # v8.0.1
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.production_deployment_run_id }}
+          name: pintpath-production-deployment-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}/pintpath-production-maintenance-role-limit-prerequisites/deployment
+
+      - name: Seal the unique prerequisite receipts into private custody
+        if: inputs.operation_mode == 'apply'
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/pintpath-production-maintenance-role-limit-prerequisites"
+          find "$root" -type d -exec chmod 700 {} +
+          mapfile -d '' fence_matches < <(find "$root/fence" -type f -name automatic-maintenance-worker-fence-terminal.json -print0)
+          mapfile -d '' deployment_matches < <(find "$root/deployment" -type f -name deployment-receipt.json -print0)
+          test "${#fence_matches[@]}" = 1
+          test "${#deployment_matches[@]}" = 1
+          test ! -L "${fence_matches[0]}"
+          test ! -L "${deployment_matches[0]}"
+          test ! -e "$root/sealed/automatic-maintenance-worker-fence-terminal.json"
+          test ! -e "$root/sealed/deployment-receipt.json"
+          cp --no-dereference -- "${fence_matches[0]}" \
+            "$root/sealed/automatic-maintenance-worker-fence-terminal.json"
+          cp --no-dereference -- "${deployment_matches[0]}" \
+            "$root/sealed/deployment-receipt.json"
+          chmod 600 "$root/sealed/automatic-maintenance-worker-fence-terminal.json"
+          chmod 600 "$root/sealed/deployment-receipt.json"
+
+      - name: Verify exact run, artifact, fence, and sole-healthy-deployment prerequisites
+        if: inputs.operation_mode == 'apply'
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          GITHUB_API_URL: ${{ github.api_url }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PINTPATH_PRODUCTION_MAINTENANCE_ROLE_LIMIT_CONFIRMATION: ${{ inputs.confirmation }}
+          PINTPATH_PRODUCTION_MAINTENANCE_ROLE_LIMIT_GITHUB_ENVIRONMENT: production-postgres-maintenance-role-limit
+          PINTPATH_PRODUCTION_MAINTENANCE_ROLE_LIMIT_MODE: apply
+          PRODUCTION_DEPLOYMENT_RUN_ID: ${{ inputs.production_deployment_run_id }}
+          WORKER_FENCE_RUN_ID: ${{ inputs.worker_fence_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/pintpath-production-maintenance-role-limit-prerequisites"
+          evidence="$RUNNER_TEMP/pintpath-production-maintenance-role-limit-evidence"
+          ./node_modules/.bin/tsx scripts/verify-production-maintenance-role-limit-prerequisites.ts \
+            --mode role-limit \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --fence-run-id "$WORKER_FENCE_RUN_ID" \
+            --deployment-run-id "$PRODUCTION_DEPLOYMENT_RUN_ID" \
+            --fence-terminal-file "$root/sealed/automatic-maintenance-worker-fence-terminal.json" \
+            --deployment-receipt-file "$root/sealed/deployment-receipt.json" \
+            --output "$evidence/prerequisites-verification.json"
+
+      - name: Prepare the secret-free exact-candidate mutation intent
+        if: inputs.operation_mode == 'apply'
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          PINTPATH_PRODUCTION_MAINTENANCE_ROLE_LIMIT_CONFIRMATION: ${{ inputs.confirmation }}
+          PINTPATH_PRODUCTION_MAINTENANCE_ROLE_LIMIT_GITHUB_ENVIRONMENT: production-postgres-maintenance-role-limit
+          PINTPATH_PRODUCTION_MAINTENANCE_ROLE_LIMIT_MODE: apply
+          PRODUCTION_DEPLOYMENT_RUN_ID: ${{ inputs.production_deployment_run_id }}
+          ROOT_CA_DER_SHA256: ${{ vars.PINTPATH_PRODUCTION_POSTGRES_ROOT_CA_DER_SHA256 }}
+          WORKER_FENCE_RUN_ID: ${{ inputs.worker_fence_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./node_modules/.bin/tsx scripts/execute-protected-production-maintenance-role-limit.ts \
+            --phase prepare \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --evidence-dir "$RUNNER_TEMP/pintpath-production-maintenance-role-limit-evidence" \
+            --fence-run-id "$WORKER_FENCE_RUN_ID" \
+            --deployment-run-id "$PRODUCTION_DEPLOYMENT_RUN_ID" \
+            --prerequisites-verification-file "$RUNNER_TEMP/pintpath-production-maintenance-role-limit-evidence/prerequisites-verification.json" \
+            --root-ca-der-sha256 "$ROOT_CA_DER_SHA256"
+
+      - name: Persist the exact intent before any database credential exists
+        if: inputs.operation_mode == 'apply'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pintpath-production-maintenance-role-limit-intent-${{ inputs.candidate_sha }}-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/pintpath-production-maintenance-role-limit-evidence/intent.json
+            ${{ runner.temp }}/pintpath-production-maintenance-role-limit-evidence/prerequisites-verification.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Remove downloaded prerequisite receipt custody
+        if: always() && inputs.operation_mode == 'apply'
+        shell: bash
+        run: |
+          set -euo pipefail
+          custody="$RUNNER_TEMP/pintpath-production-maintenance-role-limit-prerequisites"
+          if [[ -d "$custody" && ! -L "$custody" ]]; then
+            find "$custody" -depth -mindepth 1 -delete
+            rmdir "$custody"
+          fi
+
+      - name: Retrieve the prior immutable exact-candidate intent and prerequisite binding for read-only reconciliation
+        if: inputs.operation_mode == 'reconcile'
+        uses: actions/download-artifact@b7c52a5f7a25fce4c22e476a93420dd79a061a70 # v8.0.1
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.prior_run_id }}
+          name: pintpath-production-maintenance-role-limit-intent-${{ inputs.candidate_sha }}-${{ inputs.prior_run_id }}
+          path: ${{ runner.temp }}/pintpath-production-maintenance-role-limit-evidence
+
+      - name: Seal the retrieved intent and prerequisite binding into private local custody
+        if: inputs.operation_mode == 'reconcile'
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/pintpath-production-maintenance-role-limit-evidence"
+          test -f "$evidence/intent.json"
+          test -f "$evidence/prerequisites-verification.json"
+          test ! -L "$evidence/intent.json"
+          test ! -L "$evidence/prerequisites-verification.json"
+          test "$(find "$evidence" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d ' ')" = 2
+          chmod 600 "$evidence/intent.json" "$evidence/prerequisites-verification.json"
+
+      - name: Verify prior apply run and durable intent artifact authority for reconciliation
+        if: inputs.operation_mode == 'reconcile'
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          GITHUB_API_URL: ${{ github.api_url }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PINTPATH_PRODUCTION_MAINTENANCE_ROLE_LIMIT_CONFIRMATION: ${{ inputs.confirmation }}
+          PINTPATH_PRODUCTION_MAINTENANCE_ROLE_LIMIT_GITHUB_ENVIRONMENT: production-postgres-maintenance-role-limit
+          PINTPATH_PRODUCTION_MAINTENANCE_ROLE_LIMIT_MODE: reconcile
+          PINTPATH_PRODUCTION_RECONCILE_PRIOR_ROLE_RUN_ID: ${{ inputs.prior_run_id }}
+          PRIOR_RUN_ID: ${{ inputs.prior_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/pintpath-production-maintenance-role-limit-evidence"
+          ./node_modules/.bin/tsx scripts/verify-production-maintenance-role-limit-prerequisites.ts \
+            --mode role-limit-reconcile \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --prior-role-run-id "$PRIOR_RUN_ID" \
+            --prior-intent-file "$evidence/intent.json" \
+            --prior-prerequisites-file "$evidence/prerequisites-verification.json" \
+            --output "$evidence/reconciliation-authority-verification.json"
+
+      - name: Reassert exact current main immediately before credential custody
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse refs/remotes/origin/main)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain=v2 --untracked-files=all)"
+          test "$(id -u)" -gt 0
+          test "$(id -u)" = "$(id -ru)"
+
+      - name: Materialize the production database authority into private files
+        env:
+          ADMIN_URL: ${{ secrets.PINTPATH_PRODUCTION_POSTGRES_ROLE_ADMIN_URL }}
+          ROOT_CA_PEM: ${{ secrets.PINTPATH_PRODUCTION_POSTGRES_ROOT_CA_PEM }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          umask 077
+          custody="$RUNNER_TEMP/pintpath-production-maintenance-role-limit-credentials"
+          mkdir -m 700 "$custody"
+          test -n "$ADMIN_URL"
+          test -n "$ROOT_CA_PEM"
+          printf '%s' "$ADMIN_URL" > "$custody/admin-url.secret"
+          printf '%s' "$ROOT_CA_PEM" > "$custody/root-ca.pem"
+          chmod 600 "$custody/admin-url.secret" "$custody/root-ca.pem"
+
+      - name: Apply once or perform read-only prior-intent reconciliation
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          OPERATION_MODE: ${{ inputs.operation_mode }}
+          PINTPATH_PRODUCTION_MAINTENANCE_ROLE_LIMIT_CONFIRMATION: ${{ inputs.confirmation }}
+          PINTPATH_PRODUCTION_MAINTENANCE_ROLE_LIMIT_GITHUB_ENVIRONMENT: production-postgres-maintenance-role-limit
+          PINTPATH_PRODUCTION_MAINTENANCE_ROLE_LIMIT_MODE: ${{ inputs.operation_mode }}
+          PRIOR_RUN_ID: ${{ inputs.prior_run_id }}
+          PRODUCTION_DEPLOYMENT_RUN_ID: ${{ inputs.production_deployment_run_id }}
+          ROOT_CA_DER_SHA256: ${{ vars.PINTPATH_PRODUCTION_POSTGRES_ROOT_CA_DER_SHA256 }}
+          WORKER_FENCE_RUN_ID: ${{ inputs.worker_fence_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          credentials="$RUNNER_TEMP/pintpath-production-maintenance-role-limit-credentials"
+          evidence="$RUNNER_TEMP/pintpath-production-maintenance-role-limit-evidence"
+          command=(
+            ./node_modules/.bin/tsx
+            scripts/execute-protected-production-maintenance-role-limit.ts
+            --phase "$OPERATION_MODE"
+            --candidate-sha "$CANDIDATE_SHA"
+            --credential-file "$credentials/admin-url.secret"
+            --evidence-dir "$evidence"
+            --intent-file "$evidence/intent.json"
+            --root-ca-der-sha256 "$ROOT_CA_DER_SHA256"
+            --root-ca-file "$credentials/root-ca.pem"
+          )
+          if [[ "$OPERATION_MODE" = reconcile ]]; then
+            command+=(
+              --prior-run-id "$PRIOR_RUN_ID"
+              --prerequisites-verification-file "$evidence/prerequisites-verification.json"
+              --reconciliation-authority-file "$evidence/reconciliation-authority-verification.json"
+            )
+          else
+            command+=(
+              --fence-run-id "$WORKER_FENCE_RUN_ID"
+              --deployment-run-id "$PRODUCTION_DEPLOYMENT_RUN_ID"
+              --prerequisites-verification-file "$evidence/prerequisites-verification.json"
+            )
+          fi
+          "${command[@]}"
+
+      - name: Remove private database credential custody
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          custody="$RUNNER_TEMP/pintpath-production-maintenance-role-limit-credentials"
+          if [[ -d "$custody" && ! -L "$custody" ]]; then
+            find "$custody" -depth -mindepth 1 -delete
+            rmdir "$custody"
+          fi
+
+      - name: Upload secret-free terminal and reconciliation evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pintpath-production-maintenance-role-limit-${{ inputs.operation_mode }}-${{ inputs.candidate_sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/pintpath-production-maintenance-role-limit-evidence/
+          if-no-files-found: error
+          retention-days: 30

@@ -9,6 +9,8 @@ import {
   automaticMaintenanceWorkerFenceInternals,
   runProtectedAutomaticMaintenanceWorkerFence,
 } from "../scripts/execute-protected-automatic-maintenance-worker-fence.js";
+import type { ProductionActivationRoleLimitPrerequisiteVerification } from
+  "../scripts/verify-production-maintenance-role-limit-prerequisites.js";
 import { railwayDeploymentIdentityIdSha256 } from
   "../src/lib/railway-deployment-identity.js";
 
@@ -33,6 +35,7 @@ const METADATA_TOKEN = "production-metadata-token-fixture";
 const STAGING_TOKEN = "staging-metadata-token-fixture";
 const WRITE_TOKEN = "production-variable-write-token-fixture";
 const STAGING_WRITE_TOKEN = "staging-variable-write-token-fixture";
+const ROLE_LIMIT_RUN_ID = "223456789";
 
 function sha256(value: string | Buffer): string {
   return crypto.createHash("sha256").update(value).digest("hex");
@@ -41,6 +44,10 @@ function sha256(value: string | Buffer): string {
 function canonical(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;
 }
+
+const ACTIVATION_PREREQUISITE_SOURCE = canonical({
+  fixture: "production-activate",
+});
 
 function confirmation(operation: "fence" | "activate"): string {
   return `${operation.toUpperCase()}_AUTOMATIC_MAINTENANCE_IN_PRODUCTION_FOR_${CANDIDATE}`;
@@ -55,12 +62,30 @@ function environment(operation: "fence" | "activate") {
     GITHUB_RUN_ID: "123456789",
     GITHUB_SHA: CANDIDATE,
     PINTPATH_AUTOMATIC_MAINTENANCE_CONFIRMATION: confirmation(operation),
+    ...(operation === "activate"
+      ? { PINTPATH_PRODUCTION_ACTIVATE_ROLE_LIMIT_RUN_ID: ROLE_LIMIT_RUN_ID }
+      : {}),
     PINTPATH_PROTECTED_ENVIRONMENT: "production-runtime-configuration",
     PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: METADATA_TOKEN,
     PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: STAGING_TOKEN,
     PINTPATH_RAILWAY_TARGET_METADATA_TOKEN: METADATA_TOKEN,
     PINTPATH_RAILWAY_TARGET_VARIABLE_TOKEN: WRITE_TOKEN,
   };
+}
+
+function parsedActivationPrerequisite(
+  deploymentId = IDS.deployment,
+): ProductionActivationRoleLimitPrerequisiteVerification {
+  return {
+    rolePrerequisites: {
+      productionDeployment: {
+        deploymentIdSha256: railwayDeploymentIdentityIdSha256(
+          "deployment",
+          deploymentId,
+        ),
+      },
+    },
+  } as unknown as ProductionActivationRoleLimitPrerequisiteVerification;
 }
 
 function authority(operation: "fence" | "activate"): string {
@@ -398,6 +423,36 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
       enabledValue: "true",
       skipDeploys: false,
     });
+    expect(policy.activationPrerequisites).toMatchObject({
+      permanentStaging: {
+        verificationOperation: "activate",
+        requiredRunInputs: [
+          "prepare_run_id",
+          "quiesce_run_id",
+          "fenced_deployment_run_id",
+          "restore_run_id",
+        ],
+        productionRoleLimitRunInputAllowed: false,
+        verifiedBeforeProviderTokenCustody: true,
+      },
+      production: {
+        verificationMode: "production-activate",
+        requiredRunInput: "role_limit_run_id",
+        requiredArtifactRootFiles: [
+          "intent.json",
+          "terminal.json",
+          "receipt.json",
+          "prerequisites-verification.json",
+        ],
+        stagingRunInputsAllowed: false,
+        executorMustBindVerificationSha256: true,
+        executorMustBindRoleLimitRunId: true,
+        liveDeploymentMustMatchRolePrerequisiteDeployment: true,
+        runtimeAutomaticMaintenanceEnabledBeforeWrite: false,
+        runtimeAutomaticMaintenanceCandidateBoundBeforeWrite: true,
+      },
+      nonActivationPrerequisiteRunInputsAllowed: false,
+    });
     expect(policy.mutation).toMatchObject({
       operationName: "variableCollectionUpsert",
       exactlyTwoVariables: true,
@@ -528,9 +583,11 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
     const existingSourceSha = "9".repeat(40);
     const metadata = [
       forStaging(metadataSource({})),
+      forStaging(metadataSource({})),
       forStaging(metadataSource({ rows: targetRows() })),
     ];
     const deployments = [
+      forStaging(deploymentSource({ candidateSha: existingSourceSha })),
       forStaging(deploymentSource({ candidateSha: existingSourceSha })),
       forStaging(deploymentSource({ candidateSha: existingSourceSha })),
     ];
@@ -582,6 +639,7 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
         passed: true,
         receiptSha256: "6".repeat(64),
       }),
+      reassertRepositoryState: () => true,
       readAuthority: stagingPrepareAuthority,
       writeDurable: (_directory, leaf, source) => {
         writes.set(leaf, source);
@@ -661,9 +719,14 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
   it("fences once without a deploy and emits a production-consumable receipt", async () => {
     const metadata = [
       metadataSource({}),
+      metadataSource({}),
       metadataSource({ rows: targetRows() }),
     ];
-    const deployments = [deploymentSource({}), deploymentSource({})];
+    const deployments = [
+      deploymentSource({}),
+      deploymentSource({}),
+      deploymentSource({}),
+    ];
     const writes = new Map<string, string>();
     const events: string[] = [];
     const mutationInputs: Record<string, unknown>[] = [];
@@ -706,6 +769,7 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
         boundaryCalls += 1;
         return { passed: true, receiptSha256: String(boundaryCalls).repeat(64) };
       },
+      reassertRepositoryState: () => true,
       readAuthority: () => authority("fence"),
       writeDurable: (_directory, leaf, source) => {
         events.push(`write:${leaf}`);
@@ -779,6 +843,7 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
   it("activates only from the sole healthy candidate and polls every route", async () => {
     const metadata = [
       metadataSource({ rows: targetRows() }),
+      metadataSource({ rows: targetRows() }),
       metadataSource({
         deploymentId: IDS.nextDeployment,
         snapshotId: IDS.nextSnapshot,
@@ -786,6 +851,7 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
       }),
     ];
     const deployments = [
+      deploymentSource({}),
       deploymentSource({}),
       deploymentSource({
         deploymentId: IDS.nextDeployment,
@@ -800,8 +866,13 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
       const url = String(input);
       if (url.startsWith("https://pintpath.au/")) {
         const route = new URL(url).pathname as "/health" | "/startup" | "/ready";
+        const preflight = runtimeRoutes.length < 6;
         runtimeRoutes.push(route);
-        return jsonResponse(runtimeSource(route));
+        return jsonResponse(runtimeSource(route, {
+          deploymentId: preflight ? IDS.deployment : IDS.nextDeployment,
+          enabled: !preflight,
+          candidateBound: true,
+        }));
       }
       const body = JSON.parse(String(init?.body)) as {
         query: string;
@@ -832,7 +903,10 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
         passed: true,
         receiptSha256: "f".repeat(64),
       }),
+      reassertRepositoryState: () => true,
       readAuthority: () => authority("activate"),
+      readActivationPrerequisite: () => ACTIVATION_PREREQUISITE_SOURCE,
+      parseActivationPrerequisite: () => parsedActivationPrerequisite(),
       writeDurable: (_directory, leaf, source) => {
         writes.set(leaf, source);
         return sha256(source);
@@ -851,7 +925,35 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
       },
       skipDeploys: false,
     });
-    expect(runtimeRoutes).toEqual(["/health", "/startup", "/ready"]);
+    expect(runtimeRoutes).toEqual([
+      "/health",
+      "/startup",
+      "/ready",
+      "/health",
+      "/startup",
+      "/ready",
+      "/health",
+      "/startup",
+      "/ready",
+    ]);
+    const intent = JSON.parse(writes.get("intent.json")!);
+    expect(intent.productionActivationPrerequisite).toMatchObject({
+      verificationSha256: sha256(ACTIVATION_PREREQUISITE_SOURCE),
+      roleLimitRunId: ROLE_LIMIT_RUN_ID,
+      expectedDeploymentIdSha256: railwayDeploymentIdentityIdSha256(
+        "deployment",
+        IDS.deployment,
+      ),
+      liveDeploymentIdSha256: railwayDeploymentIdentityIdSha256(
+        "deployment",
+        IDS.deployment,
+      ),
+      runtimeResponseSha256s: {
+        "/health": expect.stringMatching(/^[a-f0-9]{64}$/),
+        "/startup": expect.stringMatching(/^[a-f0-9]{64}$/),
+        "/ready": expect.stringMatching(/^[a-f0-9]{64}$/),
+      },
+    });
     const terminal = JSON.parse(
       writes.get("automatic-maintenance-worker-fence-terminal.json")!,
     );
@@ -880,6 +982,88 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
         postflightDeploymentExact: true,
         runtimeRoutesPolledExact: true,
         runtimeMaintenanceStateExact: true,
+      },
+    });
+  });
+
+  it("blocks a D1 generation drift after durable intent and before the variable upsert", async () => {
+    const metadata = [
+      metadataSource({ rows: targetRows() }),
+      metadataSource({
+        deploymentId: IDS.nextDeployment,
+        snapshotId: IDS.nextSnapshot,
+        rows: targetRows(),
+      }),
+    ];
+    const deployments = [
+      deploymentSource({}),
+      deploymentSource({
+        deploymentId: IDS.nextDeployment,
+        snapshotId: IDS.nextSnapshot,
+      }),
+    ];
+    let mutationCalls = 0;
+    let output = "";
+    const writes = new Map<string, string>();
+    const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.startsWith("https://pintpath.au/")) {
+        const route = new URL(url).pathname as "/health" | "/startup" | "/ready";
+        return jsonResponse(runtimeSource(route, {
+          deploymentId: IDS.deployment,
+          enabled: false,
+          candidateBound: true,
+        }));
+      }
+      const body = JSON.parse(String(init?.body)) as { query: string };
+      if (body.query.includes("WorkerFenceScope")) return jsonResponse(scopeSource());
+      if (body.query.includes("WorkerFenceMetadata")) {
+        return jsonResponse(metadata.shift());
+      }
+      if (body.query.includes("WorkerFenceDeployment")) {
+        return jsonResponse(deployments.shift());
+      }
+      if (body.query === AUTOMATIC_MAINTENANCE_WORKER_FENCE_MUTATION) {
+        mutationCalls += 1;
+      }
+      throw new Error("unexpected request");
+    }) as typeof fetch;
+
+    const code = await runProtectedAutomaticMaintenanceWorkerFence({
+      argv: mutationArguments("activate"),
+      env: environment("activate"),
+      cwd: process.cwd(),
+      fetchImpl,
+      now: () => 0,
+      sleep: async () => undefined,
+      boundaryCheck: async () => ({
+        passed: true,
+        receiptSha256: "f".repeat(64),
+      }),
+      reassertRepositoryState: () => true,
+      readAuthority: () => authority("activate"),
+      readActivationPrerequisite: () => ACTIVATION_PREREQUISITE_SOURCE,
+      parseActivationPrerequisite: () => parsedActivationPrerequisite(),
+      writeDurable: (_directory, leaf, source) => {
+        writes.set(leaf, source);
+        return sha256(source);
+      },
+      writeOutput: (source) => {
+        output += source;
+      },
+    });
+
+    expect(code).toBe(1);
+    expect(writes.has("intent.json")).toBe(true);
+    expect(mutationCalls).toBe(0);
+    expect(JSON.parse(output)).toMatchObject({
+      outcome: "failed_before_attempt",
+      attempts: 0,
+      failureCode: "TARGET_PREFLIGHT_FAILED",
+      checks: {
+        durableIntentExact: true,
+        targetPreflightExact: false,
+        writeAttemptedAtMostOnce: true,
       },
     });
   });
@@ -913,6 +1097,8 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
         return { passed: true, receiptSha256: "8".repeat(64) };
       },
       readAuthority: () => authority("activate"),
+      readActivationPrerequisite: () => ACTIVATION_PREREQUISITE_SOURCE,
+      parseActivationPrerequisite: () => parsedActivationPrerequisite(),
       writeDurable: () => {
         throw new Error("write must not occur");
       },
@@ -931,12 +1117,74 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
     });
   });
 
+  it("binds production activation to the role-limit deployment before any write", async () => {
+    let mutationCalls = 0;
+    let output = "";
+    const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.startsWith("https://pintpath.au/")) {
+        const route = new URL(url).pathname as "/health" | "/startup" | "/ready";
+        return jsonResponse(runtimeSource(route, {
+          enabled: false,
+          candidateBound: true,
+        }));
+      }
+      const body = JSON.parse(String(init?.body)) as { query: string };
+      if (body.query.includes("WorkerFenceScope")) return jsonResponse(scopeSource());
+      if (body.query.includes("WorkerFenceMetadata")) {
+        return jsonResponse(metadataSource({ rows: targetRows() }));
+      }
+      if (body.query.includes("WorkerFenceDeployment")) {
+        return jsonResponse(deploymentSource({}));
+      }
+      if (body.query === AUTOMATIC_MAINTENANCE_WORKER_FENCE_MUTATION) {
+        mutationCalls += 1;
+      }
+      throw new Error("unexpected request");
+    }) as typeof fetch;
+
+    const code = await runProtectedAutomaticMaintenanceWorkerFence({
+      argv: mutationArguments("activate"),
+      env: environment("activate"),
+      cwd: process.cwd(),
+      fetchImpl,
+      boundaryCheck: async () => ({
+        passed: true,
+        receiptSha256: "6".repeat(64),
+      }),
+      readAuthority: () => authority("activate"),
+      readActivationPrerequisite: () => ACTIVATION_PREREQUISITE_SOURCE,
+      parseActivationPrerequisite: () =>
+        parsedActivationPrerequisite(IDS.nextDeployment),
+      writeDurable: () => {
+        throw new Error("write must not occur");
+      },
+      writeOutput: (source) => {
+        output += source;
+      },
+    });
+
+    expect(code).toBe(1);
+    expect(mutationCalls).toBe(0);
+    expect(JSON.parse(output)).toMatchObject({
+      outcome: "failed_before_attempt",
+      attempts: 0,
+      failureCode: "OPERATION_PREFLIGHT_FAILED",
+      checks: { operationPreflightExact: false },
+    });
+  });
+
   it("never retries an uncertain write and still performs read-only reconciliation", async () => {
     const metadata = [
       metadataSource({}),
+      metadataSource({}),
       metadataSource({ rows: targetRows() }),
     ];
-    const deployments = [deploymentSource({}), deploymentSource({})];
+    const deployments = [
+      deploymentSource({}),
+      deploymentSource({}),
+      deploymentSource({}),
+    ];
     let mutationCalls = 0;
     let boundaryCalls = 0;
     let output = "";
@@ -968,6 +1216,7 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
         boundaryCalls += 1;
         return { passed: true, receiptSha256: "7".repeat(64) };
       },
+      reassertRepositoryState: () => true,
       readAuthority: () => authority("fence"),
       writeDurable: (_directory, leaf, source) => {
         writes.set(leaf, source);
@@ -1005,8 +1254,14 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
     expect(workflow).toContain("workflow_dispatch:");
     expect(workflow).not.toMatch(/^\s*(push|pull_request|schedule):/m);
     expect(workflow).toContain("prepare|fence|activate");
+    expect(workflow).toContain("prepare_run_id:");
+    expect(workflow).toContain("quiesce_run_id:");
+    expect(workflow).toContain("fenced_deployment_run_id:");
+    expect(workflow).toContain("restore_run_id:");
+    expect(workflow).toContain("role_limit_run_id:");
     expect(workflow).toContain('if test "$OPERATION" = prepare; then');
     expect(workflow).toContain('if test "$OPERATION" = fence; then');
+    expect(workflow).toContain('if test "$OPERATION" = activate; then');
     expect(workflow).not.toContain("prime|fence|activate");
     expect(workflow).toContain("cancel-in-progress: false");
     expect(workflow).toContain("queue: max");
@@ -1023,6 +1278,17 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
     expect(workflow).toContain("npm run check");
     expect(workflow).toContain("--mode authority");
     expect(workflow).toContain("--mode mutate");
+    expect(workflow).toContain(
+      "scripts/verify-permanent-staging-worker-bootstrap-prerequisites.ts",
+    );
+    expect(workflow).toContain("--operation activate");
+    expect(workflow).toContain(
+      "scripts/verify-production-maintenance-role-limit-prerequisites.ts",
+    );
+    expect(workflow).toContain("--mode production-activate");
+    expect(workflow).toContain("--role-intent-file \"$sealed/intent.json\"");
+    expect(workflow.match(/actions\/download-artifact@b7c52a5f7a25/g))
+      .toHaveLength(5);
     expect(workflow).toContain("PINTPATH_RAILWAY_TARGET_METADATA_TOKEN");
     expect(workflow).toContain("PINTPATH_RAILWAY_TARGET_VARIABLE_TOKEN");
     expect(workflow).toContain("if: always()");
@@ -1036,8 +1302,17 @@ describe("candidate-bound automatic-maintenance worker fence", () => {
     const reassertion = workflow.indexOf(
       "Reassert exact current main immediately before provider-token custody",
     );
+    const stagingPrerequisite = workflow.indexOf(
+      "scripts/verify-permanent-staging-worker-bootstrap-prerequisites.ts",
+    );
+    const productionPrerequisite = workflow.indexOf(
+      "scripts/verify-production-maintenance-role-limit-prerequisites.ts",
+    );
     expect(fullCheck).toBeGreaterThan(0);
     expect(authority).toBeGreaterThan(fullCheck);
+    expect(stagingPrerequisite).toBeGreaterThan(fullCheck);
+    expect(productionPrerequisite).toBeGreaterThan(stagingPrerequisite);
+    expect(firstProviderSecret).toBeGreaterThan(productionPrerequisite);
     expect(reassertion).toBeGreaterThan(authority);
     expect(firstProviderSecret).toBeGreaterThan(reassertion);
   });

@@ -150,6 +150,8 @@ describe("protected production promotion-recovery workflow", () => {
     expect(activation).toContain("PINTPATH_RAILWAY_PITR_METADATA_TOKEN");
     expect(activation).toContain("production:promotion-recovery:pitr:observe");
     expect(activation).toContain("production-deployment-receipt.json");
+    expect(activation).toContain("production-scale-receipt.json");
+    expect(activation).toContain("closed-route-receipt.json");
     expect(activation).toContain("logical-backup-manifest.json");
     expect(activation).not.toContain("PINTPATH_RAILWAY_PITR_ENABLE_TOKEN");
   });

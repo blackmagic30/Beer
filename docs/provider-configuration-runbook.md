@@ -784,10 +784,12 @@ Do not launch public production if any of these are true:
 - The reviewed PostgreSQL build is not deployed and proved in permanent
   staging, production still opens authoritative state through SQLite, or the
   candidate cannot run two safe replicas and a Postgres-native rollback path.
-- The PostgreSQL connection-budget transition is incomplete, the temporary
-  legacy maintenance-limit bridge is still present in the final candidate, the
-  maintenance LOGIN is not exactly 8, or live server/reserved/non-app headroom
-  and four-process rolling overlap have not been proved.
+- The PostgreSQL connection-budget transition is incomplete, the protected
+  fence→deploy→maintenance-LOGIN-limit→activate→scale chain is not exact, the
+  live maintenance LOGIN is not exactly 8 before activation and scale, or live
+  server/reserved/non-app headroom and four-process rolling overlap have not
+  been proved. The candidate's exact 2-or-8 rollout compatibility is not
+  permission to scale while the live role remains at 2.
 - `GOOGLE_MAPS_MAP_ID` is missing.
 - Admin access is enabled without MFA/verified admin allowlist.
 - Any paid, trial, Pro, reward, counter, redemption, POS, public happy-hour, or report-delivery surface is enabled for this Free-only release.

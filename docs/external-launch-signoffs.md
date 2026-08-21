@@ -81,8 +81,8 @@ match every pin and remain distinct from production and permanent staging.
   ```
 
 - [ ] Before permanent-staging scale starts, require exactly two successful
-  deployment runs for the same candidate: the initial deployment and the
-  post-plan closeout redeploy. Require both complete and select the second run
+  deployment runs for the same candidate: the fenced zero-replica upload and
+  the active one-replica closeout. Require both complete and select the second run
   and artifact; zero, one, more than two, or ambiguous completion order fails.
 - [ ] Start each guarded permanent-staging provider mutation, legacy cutover,
   and runtime-variable run through `github:reviewed-candidate-authority:verify`.

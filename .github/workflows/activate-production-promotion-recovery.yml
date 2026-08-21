@@ -240,6 +240,14 @@ jobs:
             --authority "$authority_root/required-chain.json" \
             --candidate-sha "$CANDIDATE_SHA" --stage deploy \
             --output "$authority_root/production-deployment-receipt.json"
+          npm run --silent github:production-promotion-recovery:materialize -- \
+            --authority "$authority_root/required-chain.json" \
+            --candidate-sha "$CANDIDATE_SHA" --stage scale \
+            --output "$authority_root/production-scale-receipt.json"
+          npm run --silent github:production-promotion-recovery:materialize -- \
+            --authority "$authority_root/required-chain.json" \
+            --candidate-sha "$CANDIDATE_SHA" --stage close \
+            --output "$authority_root/closed-route-receipt.json"
           chmod 600 "$authority_root"/*.json
 
       - name: Verify the production-capture JIT runner and prepare tmpfs custody
@@ -339,6 +347,8 @@ jobs:
           npm run --silent production:promotion-recovery:pitr:observe -- \
             --candidate-sha "$CANDIDATE_SHA" \
             --production-deployment-receipt "$RUNNER_TEMP/pintpath-production-recovery-chain/production-deployment-receipt.json" \
+            --production-scale-receipt "$RUNNER_TEMP/pintpath-production-recovery-chain/production-scale-receipt.json" \
+            --closed-route-receipt "$RUNNER_TEMP/pintpath-production-recovery-chain/closed-route-receipt.json" \
             --logical-backup-manifest "$PINTPATH_BACKUP_WORK_ROOT/logical-backup-manifest.json" \
             --output "$PINTPATH_BACKUP_WORK_ROOT/pitr-receipt.json"
           chmod 600 "$PINTPATH_BACKUP_WORK_ROOT/pitr-receipt.json"

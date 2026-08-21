@@ -102,6 +102,15 @@
     "candidateBindingRequired": true,
     "allChecksPassRequired": true
   },
+  "workerFencePrerequisiteContract": {
+    "required": true,
+    "verificationSchema": "pintpath-production-deployment-worker-fence-prerequisite/v1",
+    "verificationFilename": "production-deployment-worker-fence-verification.json",
+    "exactFenceRunBindingRequired": true,
+    "liveDeploymentContinuityRequired": true,
+    "durableIntentBindingRequired": true,
+    "terminalReceiptBindingRequired": true
+  },
   "costContract": {
     "required": false,
     "policySchema": null,

@@ -119,8 +119,8 @@ GitHub keeps these two signals deliberately separate:
 The informational evidence command exits successfully when the evidence file is structurally valid, but its JSON keeps `launchReady: false` until every required sign-off passes. Its `incomplete` array names the accountable owner and exact next action for every open gate. Only the strict command is a launch gate.
 
 Permanent-staging rollout requires exactly two successful workflow-dispatch
-deployments of the same current protected-main candidate: the initial deployment
-and the post-plan closeout redeploy. Both complete before the scale run starts;
+deployments of the same current protected-main candidate: the fenced
+zero-replica upload and the active one-replica closeout. Both complete before the scale run starts;
 the verifier selects the second deployment and rejects any other count or
 ambiguous completion order.
 
@@ -319,9 +319,12 @@ These are launch-critical but require provider/staging verification:
   instantaneous waiters, zero monotonic capacity-wait
   events/high-water/duration, and a retained minimum available-connection count
   per label.
-  The temporary legacy maintenance-limit bridge or an incomplete protected
-  2-to-8 role transition fails this gate. A mounted SQLite file is migration
-  input only and fails this gate.
+  The candidate may retain the exact 2-or-8 rollout compatibility needed to
+  deploy safely while workers are fenced, but the protected transition must
+  prove the maintenance LOGIN changed from 2 to 8 before worker activation or
+  scale. An incomplete fence→deploy→role→activate→scale chain, or a live limit
+  of 2 at scale, fails this gate. A mounted SQLite file is migration input only
+  and fails this gate.
 - **Google Maps Map ID:** Create a JavaScript/vector Map ID in Google Maps Platform, set `GOOGLE_MAPS_MAP_ID`, and verify AdvancedMarkerElement markers render on staging.
 - **Stripe/pricing:** Keep `COMMERCIAL_LAUNCH_ENABLED=false` and
   `CONSUMER_PAID_ENROLLMENT_ENABLED=false` for this release. Stripe values may

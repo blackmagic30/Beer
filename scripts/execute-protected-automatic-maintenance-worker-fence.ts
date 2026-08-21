@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,6 +12,11 @@ import {
   readTrustedRegularFile,
   writePrivateExclusiveFile,
 } from "./lib/trusted-filesystem.js";
+import {
+  parseProductionActivationRoleLimitPrerequisiteVerification,
+  PRODUCTION_ACTIVATION_ROLE_LIMIT_PREREQUISITE_FILENAME,
+  type ProductionActivationRoleLimitPrerequisiteVerification,
+} from "./verify-production-maintenance-role-limit-prerequisites.js";
 
 export const AUTOMATIC_MAINTENANCE_WORKER_FENCE_POLICY_SCHEMA =
   "pintpath-protected-automatic-maintenance-worker-fence-policy/v1" as const;
@@ -23,7 +29,7 @@ export const AUTOMATIC_MAINTENANCE_WORKER_FENCE_TERMINAL_SCHEMA =
 export const AUTOMATIC_MAINTENANCE_WORKER_FENCE_EXECUTOR_STATE =
   "GITHUB_ENVIRONMENT_PROTECTED" as const;
 export const AUTOMATIC_MAINTENANCE_WORKER_FENCE_POLICY_SHA256 =
-  "a06c7393dfc332461d2c82af310b9cfb654f17884f85cd489d157ce7d06f61a3" as const;
+  "260a15eb364fe6e95a40b1e15af8950f8ea6f8ccd1f3b0983ef4a39810ea57bb" as const;
 
 const POLICY_PATH =
   "ops/railway/protected-automatic-maintenance-worker-fence-policy.json";
@@ -172,6 +178,7 @@ type FailureCode =
   | "POLICY_INVALID"
   | "AUTHORITY_INVALID"
   | "AUTHORITY_RECEIPT_INVALID"
+  | "ACTIVATION_PREREQUISITE_INVALID"
   | "TOKEN_CONFIGURATION_INVALID"
   | "TOKEN_SCOPE_INVALID"
   | "BOUNDARY_PREFLIGHT_FAILED"
@@ -284,7 +291,18 @@ interface Dependencies {
   readonly now: () => number;
   readonly sleep: (milliseconds: number) => Promise<void>;
   readonly boundaryCheck: () => Promise<BoundaryEvidence>;
+  readonly reassertRepositoryState: (cwd: string, candidateSha: string) => boolean;
   readonly readAuthority: (filename: string) => string;
+  readonly readActivationPrerequisite: (filename: string) => string;
+  readonly parseActivationPrerequisite: (
+    source: string,
+    expected: {
+      readonly candidateSha: string;
+      readonly currentRunId: string;
+      readonly roleLimitRunId: string;
+      readonly now: Date;
+    },
+  ) => ProductionActivationRoleLimitPrerequisiteVerification;
   readonly writeDurable: (
     directory: string,
     leaf: string,
@@ -429,6 +447,7 @@ function policyExact(cwd: string): boolean {
       "targets",
       "variables",
       "operations",
+      "activationPrerequisites",
       "mutationBoundary",
       "mutation",
       "runtimeProof",
@@ -440,7 +459,23 @@ function policyExact(cwd: string): boolean {
       value.branch === BRANCH &&
       value.projectId === PROJECT_ID &&
       value.serviceId === SERVICE_ID &&
-      JSON.stringify(value.variables) === JSON.stringify(VARIABLE_NAMES);
+      JSON.stringify(value.variables) === JSON.stringify(VARIABLE_NAMES) &&
+      record(value.activationPrerequisites) &&
+      record(value.activationPrerequisites.production) &&
+      value.activationPrerequisites.production.verificationFilename ===
+        PRODUCTION_ACTIVATION_ROLE_LIMIT_PREREQUISITE_FILENAME &&
+      value.activationPrerequisites.production.verificationSchema ===
+        "pintpath-production-activation-role-limit-prerequisite/v1" &&
+      value.activationPrerequisites.production
+          .executorMustBindVerificationSha256 === true &&
+      value.activationPrerequisites.production
+          .executorMustBindRoleLimitRunId === true &&
+      value.activationPrerequisites.production
+          .liveDeploymentMustMatchRolePrerequisiteDeployment === true &&
+      value.activationPrerequisites.production
+          .runtimeAutomaticMaintenanceEnabledBeforeWrite === false &&
+      value.activationPrerequisites.production
+          .runtimeAutomaticMaintenanceCandidateBoundBeforeWrite === true;
   } catch {
     return false;
   }
@@ -742,6 +777,29 @@ function readAuthorityDefault(filename: string): string {
     requireOwner: true,
     requirePrivate: true,
   }).toString("utf8");
+}
+
+const readActivationPrerequisiteDefault = readAuthorityDefault;
+
+function reassertRepositoryState(cwd: string, candidateSha: string): boolean {
+  try {
+    const run = (args: readonly string[]): string => execFileSync("git", [...args], {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    execFileSync("git", [
+      "fetch",
+      "--no-tags",
+      "origin",
+      "+refs/heads/main:refs/remotes/origin/main",
+    ], { cwd, stdio: ["ignore", "ignore", "ignore"] });
+    return run(["rev-parse", "HEAD"]) === candidateSha
+      && run(["rev-parse", "refs/remotes/origin/main"]) === candidateSha
+      && run(["status", "--porcelain=v2", "--untracked-files=all"]) === "";
+  } catch {
+    return false;
+  }
 }
 
 function durableWriteDefault(directory: string, leaf: string, source: string): string {
@@ -1468,6 +1526,13 @@ async function runMutationMode(
   let after: ProviderSnapshot | null = null;
   let boundaryBefore: BoundaryEvidence = { passed: false, receiptSha256: null };
   let boundaryAfter: BoundaryEvidence = { passed: false, receiptSha256: null };
+  let productionActivationPrerequisite: {
+    readonly verificationSha256: string;
+    readonly roleLimitRunId: string;
+    readonly expectedDeploymentIdSha256: string;
+    readonly liveDeploymentIdSha256: string | null;
+    readonly runtimeResponseSha256s: Readonly<Record<RuntimeRoute, string | null>>;
+  } | null = null;
   let runtime: RuntimeProof = {
     required: OPERATIONS[args.operation].requiresRuntimeProof,
     observed: false,
@@ -1481,6 +1546,49 @@ async function runMutationMode(
   const operation = OPERATIONS[args.operation];
   try {
     if (!checks.policyExact) throw new OperationFailure("POLICY_INVALID");
+    if (args.target === "production" && args.operation === "activate") {
+      const roleLimitRunId =
+        dependencies.env.PINTPATH_PRODUCTION_ACTIVATE_ROLE_LIMIT_RUN_ID ?? "";
+      const currentRunId = dependencies.env.GITHUB_RUN_ID ?? "";
+      if (
+        !RUN_ID_PATTERN.test(roleLimitRunId) ||
+        !RUN_ID_PATTERN.test(currentRunId) ||
+        roleLimitRunId === currentRunId
+      ) throw new OperationFailure("ACTIVATION_PREREQUISITE_INVALID");
+      let verificationSource: string;
+      let verification: ProductionActivationRoleLimitPrerequisiteVerification;
+      try {
+        verificationSource = dependencies.readActivationPrerequisite(
+          path.join(
+            args.evidenceDirectory,
+            PRODUCTION_ACTIVATION_ROLE_LIMIT_PREREQUISITE_FILENAME,
+          ),
+        );
+        verification = dependencies.parseActivationPrerequisite(
+          verificationSource,
+          {
+            candidateSha: args.candidateSha,
+            currentRunId,
+            roleLimitRunId,
+            now: new Date(dependencies.now()),
+          },
+        );
+      } catch {
+        throw new OperationFailure("ACTIVATION_PREREQUISITE_INVALID");
+      }
+      productionActivationPrerequisite = {
+        verificationSha256: sha256(verificationSource),
+        roleLimitRunId,
+        expectedDeploymentIdSha256:
+          verification.rolePrerequisites.productionDeployment.deploymentIdSha256,
+        liveDeploymentIdSha256: null,
+        runtimeResponseSha256s: {
+          "/health": null,
+          "/startup": null,
+          "/ready": null,
+        },
+      };
+    }
     let authoritySource: string;
     try {
       authoritySource = dependencies.readAuthority(args.authorityFile!);
@@ -1557,13 +1665,53 @@ async function runMutationMode(
     checks.targetPreflightExact = before !== null &&
       targetRowsBeforeExact(before) &&
       targetOriginAttached(before, args.target);
+    if (!checks.targetPreflightExact) {
+      throw new OperationFailure("TARGET_PREFLIGHT_FAILED");
+    }
     checks.operationPreflightExact = before !== null && (
       operation.preflightMode === "none" ||
       (operation.preflightMode === "healthy-candidate" &&
         soleHealthyCandidate(before, args.candidateSha))
     );
-    if (!checks.targetPreflightExact) {
-      throw new OperationFailure("TARGET_PREFLIGHT_FAILED");
+    if (
+      checks.operationPreflightExact &&
+      args.target === "production" &&
+      args.operation === "activate" &&
+      before !== null &&
+      productionActivationPrerequisite !== null
+    ) {
+      const expectedDeploymentIdSha256 =
+        productionActivationPrerequisite.expectedDeploymentIdSha256;
+      const liveDeploymentIdSha256 = railwayDeploymentIdentityIdSha256(
+        "deployment",
+        before.deployment.id,
+      ) ?? null;
+      const results = await Promise.all(
+        RUNTIME_ROUTES.map((route) =>
+          runtimeResponse(
+            dependencies,
+            TARGETS.production.publicOrigin,
+            route,
+            args.candidateSha,
+            false,
+            true,
+            TARGETS.production.environmentId,
+            before!.deployment.id,
+          )),
+      );
+      productionActivationPrerequisite = {
+        ...productionActivationPrerequisite,
+        liveDeploymentIdSha256,
+        runtimeResponseSha256s: {
+          "/health": results[0] ?? null,
+          "/startup": results[1] ?? null,
+          "/ready": results[2] ?? null,
+        },
+      };
+      checks.operationPreflightExact =
+        liveDeploymentIdSha256 !== null &&
+        liveDeploymentIdSha256 === expectedDeploymentIdSha256 &&
+        results.every((result) => result !== null);
     }
     if (!checks.operationPreflightExact) {
       throw new OperationFailure("OPERATION_PREFLIGHT_FAILED");
@@ -1594,6 +1742,7 @@ async function runMutationMode(
       retryAllowed: false,
       preflightProviderSha256: sha256(canonical(before)),
       boundaryPreflightReceiptSha256: boundaryBefore.receiptSha256,
+      productionActivationPrerequisite,
       secretMaterialIncluded: false,
       secretDerivedCommitmentsIncluded: false,
     });
@@ -1608,6 +1757,47 @@ async function runMutationMode(
     }
     checks.durableIntentExact = intentSha === sha256(intent);
     if (!checks.durableIntentExact) throw new OperationFailure("INTENT_WRITE_FAILED");
+
+    checks.githubAuthorityExact = checks.githubAuthorityExact &&
+      dependencies.reassertRepositoryState(dependencies.cwd, args.candidateSha);
+    if (!checks.githubAuthorityExact) {
+      throw new OperationFailure("AUTHORITY_RECEIPT_INVALID");
+    }
+
+    if (args.operation === "activate") {
+      const prewriteRuntime = await Promise.all(
+        RUNTIME_ROUTES.map((route) =>
+          runtimeResponse(
+            dependencies,
+            target.publicOrigin,
+            route,
+            args.candidateSha,
+            false,
+            true,
+            target.environmentId,
+            before!.deployment.id,
+          )),
+      );
+      checks.operationPreflightExact = checks.operationPreflightExact &&
+        prewriteRuntime.every((result) => result !== null);
+      if (!checks.operationPreflightExact) {
+        throw new OperationFailure("OPERATION_PREFLIGHT_FAILED");
+      }
+    }
+
+    const prewrite = await readProviderSnapshot(
+      dependencies,
+      metadataToken,
+      target.environmentId,
+    );
+    checks.targetPreflightExact = checks.targetPreflightExact &&
+      prewrite !== null &&
+      canonical(prewrite) === canonical(before) &&
+      targetRowsBeforeExact(prewrite) &&
+      targetOriginAttached(prewrite, args.target);
+    if (!checks.targetPreflightExact) {
+      throw new OperationFailure("TARGET_PREFLIGHT_FAILED");
+    }
 
     attempts = 1;
     try {
@@ -1815,7 +2005,11 @@ export async function runProtectedAutomaticMaintenanceWorkerFence(
     now: () => Date.now(),
     sleep: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
     boundaryCheck: async () => ({ passed: false, receiptSha256: null }),
+    reassertRepositoryState,
     readAuthority: readAuthorityDefault,
+    readActivationPrerequisite: readActivationPrerequisiteDefault,
+    parseActivationPrerequisite:
+      parseProductionActivationRoleLimitPrerequisiteVerification,
     writeDurable: durableWriteDefault,
     writeOutput: (source) => process.stdout.write(source),
     ...overrides,

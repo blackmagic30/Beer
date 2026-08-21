@@ -35,7 +35,7 @@
         <p id="callbackAcceptanceHelp" class="helperCopy">Your signup acceptance was missing or expired on this device. Confirm it here; Pint Path never treats editable provider profile metadata as consent.</p>
         <button id="callbackAcceptanceButton" class="button button--primary" type="submit">Accept and finish account</button>
       </form>
-      <form id="callbackPasswordRecoveryForm" class="form" hidden>
+      <form id="callbackPasswordRecoveryForm" class="form" method="post" action="/form-submission-unavailable" accept-charset="UTF-8" data-sensitive-native-fallback="non-mutating" hidden>
         <label class="field">New password
           <input id="callbackNewPassword" name="password" type="password" autocomplete="new-password" minlength="8" required />
         </label>

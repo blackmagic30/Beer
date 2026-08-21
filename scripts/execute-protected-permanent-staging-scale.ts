@@ -18,6 +18,10 @@ import {
   readTrustedRegularFile,
   writePrivateExclusiveFile,
 } from "./lib/trusted-filesystem.js";
+import {
+  parseProductionScaleActivationPrerequisiteVerification,
+  type ProductionScaleActivationPrerequisiteVerification,
+} from "./verify-production-maintenance-role-limit-prerequisites.js";
 
 export const PROTECTED_STAGING_SCALE_SCHEMA =
   "pintpath-permanent-staging-scale-operation/v2" as const;
@@ -33,13 +37,15 @@ const STAGING_DOMAIN = "beer-staging.up.railway.app";
 const PRODUCTION_DOMAIN = "pintpath.au";
 const POLICY_PATH = "ops/railway/permanent-staging-scale-evidence-policy.json";
 const POLICY_SHA256 =
-  "7182b42fd454cab030e48f279d8d49ed9dc6638e5620b91d13b9ea08451afbd6";
+  "164d53a5bccff4a861c8568abebe5caa06352f64245ac7e734e55c056c2be608";
 const BOUNDARY_POLICY_PATH = "ops/railway/production-staging-mutation-policy.json";
 const GRAPHQL_ENDPOINT = "https://backboard.railway.com/graphql/v2";
 const CLI_SHA256 = "27133cfc20bffc43b2f32c1638fa3c50eefc2f9d2d80301a93de34632ccb7a43";
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHA_PATTERN = /^[a-f0-9]{40}$/;
+const SHA256_PATTERN = /^[a-f0-9]{64}$/;
+const RUN_ID_PATTERN = /^[1-9][0-9]*$/;
 const TOKEN_PATTERN = /^[^\r\n\0]{16,4096}$/;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const QUERY_TIMEOUT_MS = 20_000;
@@ -131,6 +137,15 @@ interface Dependencies {
   readonly boundaryCheck: () => Promise<0 | 1>;
   readonly reassertRepositoryState: (cwd: string, candidateSha: string) => boolean;
   readonly validateCli: (filename: string) => boolean;
+  readonly validateProductionActivationPrerequisite: (
+    source: string,
+    expected: {
+      readonly candidateSha: string;
+      readonly currentRunId: string;
+      readonly activateRunId: string;
+      readonly now: Date;
+    },
+  ) => ProductionScaleActivationPrerequisiteVerification;
   readonly runCommand: (
     executable: string,
     args: readonly string[],
@@ -168,6 +183,14 @@ interface ScaleReceipt {
   readonly terminalEvidenceSha256: string | null;
   readonly commandStdoutSha256: string | null;
   readonly commandStderrSha256: string | null;
+  readonly productionActivationPrerequisite: {
+    readonly runId: string;
+    readonly verificationSha256: string;
+    readonly terminalSha256: string;
+    readonly prerequisitesSha256: string;
+    readonly deploymentBeforeIdSha256: string;
+    readonly deploymentAfterIdSha256: string;
+  } | null;
   readonly checks: {
     policyExact: boolean;
     githubAuthorityExact: boolean;
@@ -175,6 +198,8 @@ interface ScaleReceipt {
     cliExact: boolean;
     boundaryPreflightExact: boolean;
     targetPreflightExact: boolean;
+    productionActivationPrerequisiteExact: boolean;
+    productionActivationDeploymentContinuityExact: boolean;
     runtimePreflightExact: boolean;
     durableIntentExact: boolean;
     repositoryPrewriteReasserted: boolean;
@@ -211,8 +236,10 @@ function parseArguments(argv: readonly string[]): {
   readonly candidateSha: string;
   readonly expectedDeploymentSha: string;
   readonly evidenceDirectory: string;
+  readonly productionActivationRunId: string | null;
+  readonly productionScaleVerificationFile: string | null;
 } | null {
-  if (argv.length !== 6 && argv.length !== 8) return null;
+  if (argv.length !== 6 && argv.length !== 8 && argv.length !== 12) return null;
   const values = new Map<string, string>();
   for (let index = 0; index < argv.length; index += 2) {
     if (!argv[index]?.startsWith("--") || !argv[index + 1]
@@ -220,27 +247,81 @@ function parseArguments(argv: readonly string[]): {
     values.set(argv[index]!, argv[index + 1]!);
   }
   if ([...values.keys()].some((key) =>
-    !["--direction", "--candidate-sha", "--expected-deployment-sha", "--evidence-dir"].includes(key))) return null;
+    ![
+      "--direction",
+      "--candidate-sha",
+      "--expected-deployment-sha",
+      "--evidence-dir",
+      "--production-activation-run-id",
+      "--production-scale-verification-file",
+    ].includes(key))) return null;
   const direction = values.get("--direction");
   const candidateSha = values.get("--candidate-sha") ?? "";
   const evidenceDirectory = values.get("--evidence-dir") ?? "";
+  const productionActivationRunId =
+    values.get("--production-activation-run-id") ?? null;
+  const productionScaleVerificationFile =
+    values.get("--production-scale-verification-file") ?? null;
   if ((direction === "out" || direction === "converge-one") && argv.length === 6
     && !values.has("--expected-deployment-sha") && SHA_PATTERN.test(candidateSha)
     && path.isAbsolute(evidenceDirectory)) {
-    return { direction, candidateSha, expectedDeploymentSha: candidateSha, evidenceDirectory };
+    return {
+      direction,
+      candidateSha,
+      expectedDeploymentSha: candidateSha,
+      evidenceDirectory,
+      productionActivationRunId: null,
+      productionScaleVerificationFile: null,
+    };
   }
   const expectedDeploymentSha = values.get("--expected-deployment-sha") ?? "";
   if (!SHA_PATTERN.test(candidateSha) || !SHA_PATTERN.test(expectedDeploymentSha)
     || !path.isAbsolute(evidenceDirectory)) return null;
-  if (direction === "converge-production-two"
-    || direction === "bootstrap-staging-one") {
+  if (direction === "converge-production-two") {
+    const producerArgumentsExact =
+      (productionActivationRunId === null
+        && productionScaleVerificationFile === null)
+      || (productionActivationRunId !== null
+        && RUN_ID_PATTERN.test(productionActivationRunId)
+        && productionScaleVerificationFile !== null
+        && path.isAbsolute(productionScaleVerificationFile));
+    return expectedDeploymentSha === candidateSha && producerArgumentsExact
+      ? {
+          direction,
+          candidateSha,
+          expectedDeploymentSha,
+          evidenceDirectory,
+          productionActivationRunId,
+          productionScaleVerificationFile,
+        }
+      : null;
+  }
+  if (direction === "bootstrap-staging-one") {
     return expectedDeploymentSha === candidateSha
-      ? { direction, candidateSha, expectedDeploymentSha, evidenceDirectory }
+        && productionActivationRunId === null
+        && productionScaleVerificationFile === null
+      ? {
+          direction,
+          candidateSha,
+          expectedDeploymentSha,
+          evidenceDirectory,
+          productionActivationRunId: null,
+          productionScaleVerificationFile: null,
+        }
       : null;
   }
   return direction === "quiesce-staging-zero"
     && expectedDeploymentSha !== candidateSha
-    ? { direction, candidateSha, expectedDeploymentSha, evidenceDirectory }
+    && productionActivationRunId === null
+    && productionScaleVerificationFile === null
+    ? {
+        direction,
+        candidateSha,
+        expectedDeploymentSha,
+        evidenceDirectory,
+        productionActivationRunId: null,
+        productionScaleVerificationFile: null,
+      }
     : null;
 }
 
@@ -257,6 +338,30 @@ function validateCli(filename: string): boolean {
     return false;
   } finally {
     bytes?.fill(0);
+  }
+}
+
+function readProductionActivationPrerequisite(
+  filename: string,
+  evidenceDirectory: string,
+): string {
+  if (
+    !path.isAbsolute(filename)
+    || path.basename(filename)
+      !== "production-scale-activation-verification.json"
+    || path.dirname(path.resolve(filename)) !== fs.realpathSync(evidenceDirectory)
+  ) throw new Error("activation_prerequisite_invalid");
+  try {
+    const source = readTrustedRegularFile(filename, {
+      minBytes: 2,
+      maxBytes: 1024 * 1024,
+      requireOwner: true,
+      requirePrivate: true,
+    }).toString("utf8");
+    if (source.includes("\0")) throw new Error("activation_prerequisite_invalid");
+    return source;
+  } catch {
+    throw new Error("activation_prerequisite_invalid");
   }
 }
 
@@ -607,6 +712,13 @@ function policyExact(cwd: string): boolean {
         "automaticRetriesAllowed",
         "unconditionalReadOnlyPostflight",
         "exactExistingDeploymentShaRequired",
+        "activationPrerequisiteRequired",
+        "activationVerificationSchema",
+        "activationVerificationFilename",
+        "exactActivationRunBindingRequired",
+        "liveDeploymentContinuityRequired",
+        "durableIntentBindingRequired",
+        "terminalReceiptBindingRequired",
       ]) &&
       value.productionConvergence.environmentId ===
         PRODUCTION_ENVIRONMENT_ID &&
@@ -620,6 +732,15 @@ function policyExact(cwd: string): boolean {
       value.productionConvergence.automaticRetriesAllowed === false &&
       value.productionConvergence.unconditionalReadOnlyPostflight === true &&
       value.productionConvergence.exactExistingDeploymentShaRequired === true &&
+      value.productionConvergence.activationPrerequisiteRequired === true &&
+      value.productionConvergence.activationVerificationSchema ===
+        "pintpath-production-scale-activation-prerequisite/v1" &&
+      value.productionConvergence.activationVerificationFilename ===
+        "production-scale-activation-verification.json" &&
+      value.productionConvergence.exactActivationRunBindingRequired === true &&
+      value.productionConvergence.liveDeploymentContinuityRequired === true &&
+      value.productionConvergence.durableIntentBindingRequired === true &&
+      value.productionConvergence.terminalReceiptBindingRequired === true &&
       exactKeys(value.workerBootstrap, [
         "quiesceDirection",
         "bootstrapDirection",
@@ -680,6 +801,8 @@ function emptyChecks(): ScaleReceipt["checks"] {
     cliExact: false,
     boundaryPreflightExact: false,
     targetPreflightExact: false,
+    productionActivationPrerequisiteExact: false,
+    productionActivationDeploymentContinuityExact: false,
     runtimePreflightExact: false,
     durableIntentExact: false,
     repositoryPrewriteReasserted: false,
@@ -707,6 +830,8 @@ function receipt(
   attempts: 0 | 1,
   intentSha256: string | null,
   terminalEvidenceSha256: string | null,
+  productionActivationPrerequisite:
+    ScaleReceipt["productionActivationPrerequisite"],
   command: CommandResult | null,
   checks: ScaleReceipt["checks"],
 ): ScaleReceipt {
@@ -726,6 +851,7 @@ function receipt(
     terminalEvidenceSha256,
     commandStdoutSha256: command?.stdoutSha256 ?? null,
     commandStderrSha256: command?.stderrSha256 ?? null,
+    productionActivationPrerequisite,
     checks,
   };
 }
@@ -745,6 +871,8 @@ export async function runProtectedPermanentStagingScale(
     }),
     reassertRepositoryState,
     validateCli,
+    validateProductionActivationPrerequisite:
+      parseProductionScaleActivationPrerequisiteVerification,
     runCommand,
     probeRuntime: (target, candidateSha, deploymentId, expectation) => probeRuntime(
       fetch,
@@ -780,6 +908,10 @@ export async function runProtectedPermanentStagingScale(
   let before: RailwayApplicationDeploymentAttestationProviderSnapshot | null = null;
   let deploymentIdSha256: string | null = null;
   let metadataToken = "";
+  let productionActivationVerification:
+    ProductionScaleActivationPrerequisiteVerification | null = null;
+  let productionActivationPrerequisite:
+    ScaleReceipt["productionActivationPrerequisite"] = null;
   try {
     checks.policyExact = policyExact(dependencies.cwd);
     const confirmation = direction === "out"
@@ -799,6 +931,69 @@ export async function runProtectedPermanentStagingScale(
         || dependencies.env.GITHUB_RUN_ATTEMPT === "1");
     if (!args || !checks.policyExact || !checks.githubAuthorityExact) {
       throw new Error("authority_invalid");
+    }
+    const productionActivationRunId = args.productionActivationRunId
+      ?? dependencies.env.PINTPATH_PRODUCTION_SCALE_ACTIVATE_RUN_ID
+      ?? null;
+    const productionScaleVerificationFile = args.productionScaleVerificationFile
+      ?? dependencies.env.PINTPATH_PRODUCTION_SCALE_ACTIVATION_VERIFICATION_FILE
+      ?? null;
+    if (direction === "converge-production-two") {
+      const currentRunId = dependencies.env.GITHUB_RUN_ID ?? "";
+      if (
+        !productionActivationRunId
+        || !RUN_ID_PATTERN.test(productionActivationRunId)
+        || !RUN_ID_PATTERN.test(currentRunId)
+        || !productionScaleVerificationFile
+      ) throw new Error("activation_prerequisite_invalid");
+      try {
+        const verificationSource = readProductionActivationPrerequisite(
+          productionScaleVerificationFile,
+          args.evidenceDirectory,
+        );
+        productionActivationVerification =
+          dependencies.validateProductionActivationPrerequisite(
+            verificationSource,
+            {
+              candidateSha: args.candidateSha,
+              currentRunId,
+              activateRunId: productionActivationRunId,
+              now: new Date(dependencies.now()),
+            },
+          );
+        productionActivationPrerequisite = {
+          runId: productionActivationVerification.activation.runId,
+          verificationSha256: sha256(verificationSource),
+          terminalSha256:
+            productionActivationVerification.activation.terminalSha256,
+          prerequisitesSha256:
+            productionActivationVerification.activation.prerequisitesSha256,
+          deploymentBeforeIdSha256:
+            productionActivationVerification.activation
+              .deploymentBeforeIdSha256,
+          deploymentAfterIdSha256:
+            productionActivationVerification.activation.deploymentAfterIdSha256,
+        };
+        checks.productionActivationPrerequisiteExact =
+          productionActivationPrerequisite.runId === productionActivationRunId
+          && productionActivationVerification.candidateSha === args.candidateSha
+          && productionActivationVerification.consumer.runId === currentRunId
+          && Object.entries(productionActivationPrerequisite)
+            .filter(([key]) => key !== "runId")
+            .every(([, value]) => SHA256_PATTERN.test(value));
+      } catch {
+        throw new Error("activation_prerequisite_invalid");
+      }
+      if (!checks.productionActivationPrerequisiteExact) {
+        throw new Error("activation_prerequisite_invalid");
+      }
+    } else {
+      if (
+        productionActivationRunId !== null
+        || productionScaleVerificationFile !== null
+      ) throw new Error("activation_prerequisite_invalid");
+      checks.productionActivationPrerequisiteExact = true;
+      checks.productionActivationDeploymentContinuityExact = true;
     }
     metadataToken = direction === "converge-production-two"
       ? dependencies.env.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN ?? ""
@@ -826,6 +1021,15 @@ export async function runProtectedPermanentStagingScale(
       before.deployment.id,
     ) ?? null;
     if (!deploymentIdSha256) throw new Error("deployment_identity_invalid");
+    if (direction === "converge-production-two") {
+      checks.productionActivationDeploymentContinuityExact =
+        productionActivationPrerequisite !== null
+        && deploymentIdSha256
+          === productionActivationPrerequisite.deploymentAfterIdSha256;
+      if (!checks.productionActivationDeploymentContinuityExact) {
+        throw new Error("activation_prerequisite_invalid");
+      }
+    }
     const beforeReplicas = before.numReplicas;
     checks.targetPreflightExact = direction === "out"
       ? snapshotExact(before, args.expectedDeploymentSha, 1, target)
@@ -881,6 +1085,7 @@ export async function runProtectedPermanentStagingScale(
         region: REGION,
         beforeReplicas,
         desiredReplicas,
+        productionActivationPrerequisite,
         maximumAttempts: 1,
         retryAllowed: false,
         beforeDeploymentSha256: sha256(deploymentIdentity(before)),
@@ -899,6 +1104,55 @@ export async function runProtectedPermanentStagingScale(
       if (!checks.repositoryPrewriteReasserted) {
         throw new Error("repository_prewrite_drift");
       }
+
+      let runtimePrewriteExact = direction === "quiesce-staging-zero";
+      try {
+        runtimePrewriteExact = direction === "quiesce-staging-zero"
+          ? true
+          : direction === "bootstrap-staging-one"
+            ? await dependencies.probeRuntimeAbsent(target)
+            : await dependencies.probeRuntime(
+                target,
+                args.expectedDeploymentSha,
+                before.deployment.id,
+                { enabled: true, candidateBound: true },
+              );
+      } catch {
+        runtimePrewriteExact = false;
+      }
+      checks.runtimePreflightExact = checks.runtimePreflightExact && runtimePrewriteExact;
+      if (!checks.runtimePreflightExact) throw new Error("runtime_prewrite_drift");
+
+      let prewrite: RailwayApplicationDeploymentAttestationProviderSnapshot | null = null;
+      try {
+        prewrite = await querySnapshot(dependencies.fetchImpl, metadataToken, target);
+      } catch {
+        prewrite = null;
+      }
+      checks.targetPreflightExact = checks.targetPreflightExact
+        && prewrite !== null
+        && canonical(prewrite) === canonical(before)
+        && snapshotExact(
+          prewrite,
+          args.expectedDeploymentSha,
+          beforeReplicas as ReplicaCount,
+          target,
+        );
+      if (direction === "converge-production-two") {
+        const prewriteDeploymentIdSha256 = prewrite === null
+          ? null
+          : railwayDeploymentIdentityIdSha256("deployment", prewrite.deployment.id);
+        checks.productionActivationDeploymentContinuityExact =
+          checks.productionActivationDeploymentContinuityExact
+          && productionActivationPrerequisite !== null
+          && prewriteDeploymentIdSha256
+            === productionActivationPrerequisite.deploymentAfterIdSha256;
+      }
+      if (!checks.targetPreflightExact
+        || !checks.productionActivationDeploymentContinuityExact) {
+        throw new Error("provider_prewrite_drift");
+      }
+
       attempts = 1;
       command = await dependencies.runCommand(cli, [
         "service", "scale", `${REGION}=${desiredReplicas}`,
@@ -993,6 +1247,7 @@ export async function runProtectedPermanentStagingScale(
     attempts,
     intentSha,
     null,
+    productionActivationPrerequisite,
     command,
     checks,
   );
@@ -1024,6 +1279,7 @@ export async function runProtectedPermanentStagingScale(
     attempts,
     intentSha,
     terminalSha,
+    productionActivationPrerequisite,
     command,
     checks,
   );
@@ -1042,6 +1298,7 @@ export async function runProtectedPermanentStagingScale(
         attempts,
         intentSha,
         terminalSha,
+        productionActivationPrerequisite,
         command,
         checks,
       );
@@ -1069,6 +1326,7 @@ export async function runProtectedPermanentStagingScale(
     attempts,
     intentSha,
     terminalSha,
+    productionActivationPrerequisite,
     command,
     checks,
   );

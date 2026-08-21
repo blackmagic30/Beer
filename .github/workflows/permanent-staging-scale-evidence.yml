@@ -167,6 +167,8 @@ jobs:
           install -d -m 700 "$root/sealed/activate" "$root/sealed/active-deployment"
           seal_one "$root/activate" automatic-maintenance-worker-fence-terminal.json \
             "$root/sealed/activate/automatic-maintenance-worker-fence-terminal.json"
+          seal_one "$root/activate" prerequisites-verification.json \
+            "$root/sealed/activate/prerequisites-verification.json"
           seal_one "$root/active-deployment" deployment-receipt.json \
             "$root/sealed/active-deployment/deployment-receipt.json"
           ./node_modules/.bin/tsx \
@@ -175,6 +177,7 @@ jobs:
             --candidate-sha "$CANDIDATE_SHA" \
             --activate-run-id "$ACTIVATION_RUN_ID" \
             --activate-terminal-file "$root/sealed/activate/automatic-maintenance-worker-fence-terminal.json" \
+            --activate-verification-file "$root/sealed/activate/prerequisites-verification.json" \
             --active-deployment-run-id "$ACTIVE_DEPLOYMENT_RUN_ID" \
             --active-deployment-receipt-file "$root/sealed/active-deployment/deployment-receipt.json" \
             --output "$RUNNER_TEMP/pintpath-scale-evidence/prerequisites-verification.json"

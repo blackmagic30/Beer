@@ -208,11 +208,18 @@ describe("release workflow contracts", () => {
       "Require the policy-pinned permanent-staging public origin",
     );
     expect(stagingWorkflow).toContain(
-      'require("./ops/railway/permanent-staging-app-deployment-policy.json").target.publicOrigin',
+      "ops/railway/permanent-staging-app-deployment-policy.json",
+    );
+    expect(stagingWorkflow).toContain(
+      "ops/railway/permanent-staging-fenced-app-deployment-policy.json",
+    );
+    expect(stagingWorkflow).toContain(
+      "scripts/execute-permanent-staging-app-deployment.ts",
     );
     expect(stagingWorkflow).not.toContain("vars.PUBLIC_BASE_URL");
     expect(stagingWorkflow).toContain("PINTPATH_RAILWAY_STAGING_DEPLOY_TOKEN");
-    expect(stagingWorkflow).toContain("railway:staging:app:deploy");
+    expect(stagingWorkflow).toContain("--operation fenced-deploy");
+    expect(stagingWorkflow).toContain("--operation active-deploy");
     expect(productionWorkflow).toContain("environment: production-deployment");
     expect(productionWorkflow).toContain(
       "PUBLIC_BASE_URL: https://pintpath.au",
@@ -982,21 +989,32 @@ describe("release workflow contracts", () => {
       return source.includes("github:release-candidate:verify") ||
         source.includes("github:release-reviewed-head:fetch") ||
         source.includes("github:reviewed-candidate-authority:verify") ||
+        source.includes(
+          "verify-permanent-staging-worker-bootstrap-prerequisites",
+        ) ||
+        source.includes(
+          "verify-production-maintenance-role-limit-prerequisites",
+        ) ||
         name === "configure-runtime-variable.yml";
     });
     expect(consumers).toEqual([
       "activate-production-promotion-recovery.yml",
       "attest-production-promotion-recovery.yml",
+      "bootstrap-permanent-staging-worker-fence.yml",
       "close-production-route.yml",
+      "configure-automatic-maintenance-worker-fence.yml",
       "configure-runtime-variable.yml",
       "deploy-permanent-staging.yml",
       "deploy-production.yml",
       "open-production-route.yml",
       "permanent-staging-provider-mutation.yml",
+      "permanent-staging-scale-evidence.yml",
       "permanent-staging-supabase-legacy-cutover.yml",
       "pintpath-release-gate.yml",
       "pintpath-release-readiness.yml",
+      "production-converge-two-replicas.yml",
       "runtime-variable-worker.yml",
+      "transition-production-postgres-maintenance-role-limit.yml",
     ]);
     for (const name of consumers) {
       const permissions = workflow(name).match(
@@ -1009,12 +1027,12 @@ describe("release workflow contracts", () => {
   it("pins every workflow action to an audited immutable release", () => {
     const source = allWorkflows().map(workflow).join("\n");
     const expectedPins = new Map([
-      ["actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", 38],
-      ["actions/setup-node@820762786026740c76f36085b0efc47a31fe5020", 30],
+      ["actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", 41],
+      ["actions/setup-node@820762786026740c76f36085b0efc47a31fe5020", 33],
       ["actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961", 2],
-      ["actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", 29],
+      ["actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", 34],
       ["actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3", 1],
-      ["actions/download-artifact@b7c52a5f7a25fce4c22e476a93420dd79a061a70", 7],
+      ["actions/download-artifact@b7c52a5f7a25fce4c22e476a93420dd79a061a70", 25],
       [
         "android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699",
         2,
@@ -1062,7 +1080,7 @@ describe("release workflow contracts", () => {
         line.includes("uses: actions/checkout@") ? index : -1,
       )
       .filter((index) => index >= 0);
-    expect(checkoutIndexes).toHaveLength(38);
+    expect(checkoutIndexes).toHaveLength(41);
     for (const index of checkoutIndexes) {
       expect(lines.slice(index, index + 4).join("\n")).toContain(
         "persist-credentials: false",
@@ -3789,7 +3807,7 @@ describe("release workflow contracts", () => {
       phase16.indexOf("### 16.5 Deploy the exact protected `main` build"),
     );
     expect(phase16).toContain(
-      "execute the complete Phase 12 staging and rollback",
+      "Execute the complete Phase 12 staging",
     );
     expect(protectedOperations).toContain(
       "The workflow rejects a PR head or any SHA other than protected `main`",

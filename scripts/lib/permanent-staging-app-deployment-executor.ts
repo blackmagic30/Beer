@@ -19,6 +19,10 @@ import {
 } from "../../src/lib/railway-application-deployment-attestation.js";
 import { railwayDeploymentIdentityIdSha256 } from
   "../../src/lib/railway-deployment-identity.js";
+import {
+  parseProductionDeploymentWorkerFencePrerequisiteVerification,
+  type ProductionDeploymentWorkerFencePrerequisiteVerification,
+} from "../verify-production-maintenance-role-limit-prerequisites.js";
 
 export const PERMANENT_STAGING_APP_DEPLOYMENT_POLICY_SCHEMA =
   "pintpath-railway-application-deployment-policy/v5" as const;
@@ -60,6 +64,7 @@ export const PERMANENT_STAGING_APP_DEPLOYMENT_FAILURE_CODES = Object.freeze([
   "unexpected_failure",
   "write_token_missing",
   "write_token_scope_invalid",
+  "worker_fence_prerequisite_failed",
 ] as const);
 
 export type PermanentStagingAppDeploymentFailureCode =
@@ -67,6 +72,7 @@ export type PermanentStagingAppDeploymentFailureCode =
 
 const SHA1_PATTERN = /^[a-f0-9]{40}$/;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
+const RUN_ID_PATTERN = /^[1-9][0-9]*$/;
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const SAFE_TOKEN_PATTERN = /^[^\r\n\0]{16,4096}$/;
@@ -335,6 +341,19 @@ const policySchema = z.object({
       allChecksPassRequired: z.literal(true),
     }).strict(),
   ]),
+  workerFencePrerequisiteContract: z.object({
+    required: z.literal(true),
+    verificationSchema: z.literal(
+      "pintpath-production-deployment-worker-fence-prerequisite/v1",
+    ),
+    verificationFilename: z.literal(
+      "production-deployment-worker-fence-verification.json",
+    ),
+    exactFenceRunBindingRequired: z.literal(true),
+    liveDeploymentContinuityRequired: z.literal(true),
+    durableIntentBindingRequired: z.literal(true),
+    terminalReceiptBindingRequired: z.literal(true),
+  }).strict().optional(),
   costContract: z.object({
     required: z.boolean(),
     policySchema: z.union([
@@ -446,6 +465,8 @@ function policyMatchesLock(policy: PermanentStagingAppDeploymentPolicy): boolean
     && (policy.target.name === "production") === (policy.prerequisite !== null)
     && (policy.target.name === "production")
       === (policy.providerReadinessContract !== null)
+    && (policy.target.name === "production")
+      === (policy.workerFencePrerequisiteContract !== undefined)
     && (policy.target.name === "permanent-staging") === policy.costContract.required
     && (policy.costContract.required
       ? policy.costContract.policySchema
@@ -556,6 +577,15 @@ interface ExecutorDependencies {
     policy: PermanentStagingAppDeploymentPolicy,
     token: string,
   ) => Promise<boolean>;
+  readonly validateProductionWorkerFencePrerequisite: (
+    source: string,
+    expected: {
+      readonly candidateSha: string;
+      readonly currentRunId: string;
+      readonly fenceRunId: string;
+      readonly now: Date;
+    },
+  ) => ProductionDeploymentWorkerFencePrerequisiteVerification;
   readonly queryTarget: (
     policy: PermanentStagingAppDeploymentPolicy,
     environmentId: string,
@@ -585,6 +615,8 @@ export interface PermanentStagingAppDeploymentExecutorChecks {
   writeTokenScopeExact: boolean;
   costPolicyExact: boolean;
   prerequisiteExact: boolean;
+  workerFencePrerequisiteExact: boolean;
+  workerFenceDeploymentContinuityExact: boolean;
   boundaryPreflightExact: boolean;
   targetPreflightExact: boolean;
   gitAutodeployAbsent: boolean;
@@ -641,6 +673,13 @@ export interface PermanentStagingAppDeploymentExecutorReceipt {
     readonly startup: string | null;
     readonly ready: string | null;
   };
+  readonly workerFencePrerequisite: {
+    readonly runId: string;
+    readonly verificationSha256: string;
+    readonly bindingSha256: string;
+    readonly terminalSha256: string;
+    readonly deploymentIdSha256: string;
+  } | null;
   readonly checks: Readonly<PermanentStagingAppDeploymentExecutorChecks>;
 }
 
@@ -653,6 +692,8 @@ function emptyChecks(): PermanentStagingAppDeploymentExecutorChecks {
     writeTokenScopeExact: false,
     costPolicyExact: false,
     prerequisiteExact: false,
+    workerFencePrerequisiteExact: false,
+    workerFenceDeploymentContinuityExact: false,
     boundaryPreflightExact: false,
     targetPreflightExact: false,
     gitAutodeployAbsent: false,
@@ -1568,6 +1609,8 @@ const DEFAULT_DEPENDENCIES: ExecutorDependencies = {
   createSourceAuthority: defaultCreateSourceAuthority,
   validateCli,
   validateWriteToken: async (...args) => defaultValidateWriteToken(fetch, ...args),
+  validateProductionWorkerFencePrerequisite:
+    parseProductionDeploymentWorkerFencePrerequisiteVerification,
   queryTarget: async (...args) => defaultQueryTarget(fetch, ...args),
   probeRuntime: async (...args) => defaultProbeRuntime(fetch, ...args),
   runBoundary: defaultRunBoundary,
@@ -1578,11 +1621,15 @@ function parseArguments(argv: readonly string[]): {
   policyPath: string;
   candidateSha: string;
   evidenceDir: string;
+  productionWorkerFenceRunId: string | null;
+  productionWorkerFenceVerificationFile: string | null;
 } {
   const allowed = new Set([
     "--policy",
     "--candidate-sha",
     "--evidence-dir",
+    "--production-worker-fence-run-id",
+    "--production-worker-fence-verification-file",
   ]);
   const values = new Map<string, string>();
   if (argv.length % 2 !== 0) throw new Error("argument_invalid");
@@ -1608,7 +1655,36 @@ function parseArguments(argv: readonly string[]): {
     policyPath,
     candidateSha,
     evidenceDir,
+    productionWorkerFenceRunId:
+      values.get("--production-worker-fence-run-id") ?? null,
+    productionWorkerFenceVerificationFile:
+      values.get("--production-worker-fence-verification-file") ?? null,
   };
+}
+
+function readPrivatePrerequisite(
+  filename: string,
+  evidenceDir: string,
+): string {
+  if (
+    !path.isAbsolute(filename)
+    || path.basename(filename)
+      !== "production-deployment-worker-fence-verification.json"
+    || path.dirname(path.resolve(filename)) !== fs.realpathSync(evidenceDir)
+  ) throw new Error("worker_fence_prerequisite_failed");
+  const stat = fs.lstatSync(filename);
+  if (
+    !stat.isFile()
+    || stat.isSymbolicLink()
+    || stat.size < 2
+    || stat.size > 1024 * 1024
+    || (typeof process.geteuid === "function" && stat.uid !== process.geteuid())
+    || (stat.mode & 0o777) !== 0o600
+    || fs.realpathSync(filename) !== path.resolve(filename)
+  ) throw new Error("worker_fence_prerequisite_failed");
+  const source = fs.readFileSync(filename, "utf8");
+  if (source.includes("\0")) throw new Error("worker_fence_prerequisite_failed");
+  return source;
 }
 
 function assertEvidenceDirectory(evidenceDir: string): void {
@@ -1930,6 +2006,10 @@ export async function runPermanentStagingAppDeploymentExecutor(
   let preservedReplicaCount: number | null = null;
   let parsedArgs: ReturnType<typeof parseArguments> | null = null;
   let writeResult: CommandResult | null = null;
+  let workerFencePrerequisite:
+    PermanentStagingAppDeploymentExecutorReceipt["workerFencePrerequisite"] = null;
+  let workerFenceVerification:
+    ProductionDeploymentWorkerFencePrerequisiteVerification | null = null;
 
   try {
     parsedArgs = parseArguments(argv);
@@ -1956,6 +2036,71 @@ export async function runPermanentStagingAppDeploymentExecutor(
     ) throw new Error("boundary_policy_drift");
     checks.costPolicyExact = costPolicyExact(policy, dependencies.cwd);
     if (!checks.costPolicyExact) throw new Error("cost_policy_invalid");
+
+    const productionWorkerFenceRunId =
+      parsedArgs.productionWorkerFenceRunId
+      ?? dependencies.env.PINTPATH_PRODUCTION_DEPLOYMENT_FENCE_RUN_ID
+      ?? null;
+    const productionWorkerFenceVerificationFile =
+      parsedArgs.productionWorkerFenceVerificationFile
+      ?? dependencies.env
+        .PINTPATH_PRODUCTION_DEPLOYMENT_WORKER_FENCE_VERIFICATION_FILE
+      ?? null;
+    if (policy.target.name === "production") {
+      const currentRunId = dependencies.env.GITHUB_RUN_ID ?? "";
+      if (
+        !policy.workerFencePrerequisiteContract
+        || !productionWorkerFenceRunId
+        || !RUN_ID_PATTERN.test(productionWorkerFenceRunId)
+        || !RUN_ID_PATTERN.test(currentRunId)
+        || !productionWorkerFenceVerificationFile
+      ) throw new Error("worker_fence_prerequisite_failed");
+      try {
+        const prerequisiteSource = readPrivatePrerequisite(
+          productionWorkerFenceVerificationFile,
+          evidenceDir,
+        );
+        workerFenceVerification =
+          dependencies.validateProductionWorkerFencePrerequisite(
+            prerequisiteSource,
+            {
+              candidateSha,
+              currentRunId,
+              fenceRunId: productionWorkerFenceRunId,
+              now: dependencies.now(),
+            },
+          );
+        workerFencePrerequisite = {
+          runId: workerFenceVerification.workerFence.runId,
+          verificationSha256: sha256(prerequisiteSource),
+          bindingSha256: workerFenceVerification.workerFence.bindingSha256,
+          terminalSha256: workerFenceVerification.workerFence.terminalSha256,
+          deploymentIdSha256:
+            workerFenceVerification.workerFence.deploymentIdSha256,
+        };
+        checks.workerFencePrerequisiteExact =
+          workerFencePrerequisite.runId === productionWorkerFenceRunId
+          && workerFenceVerification.candidateSha === candidateSha
+          && workerFenceVerification.consumer.runId === currentRunId
+          && SHA256_PATTERN.test(workerFencePrerequisite.verificationSha256)
+          && SHA256_PATTERN.test(workerFencePrerequisite.bindingSha256)
+          && SHA256_PATTERN.test(workerFencePrerequisite.terminalSha256)
+          && SHA256_PATTERN.test(workerFencePrerequisite.deploymentIdSha256);
+      } catch {
+        throw new Error("worker_fence_prerequisite_failed");
+      }
+      if (!checks.workerFencePrerequisiteExact) {
+        throw new Error("worker_fence_prerequisite_failed");
+      }
+    } else {
+      if (
+        productionWorkerFenceRunId !== null
+        || productionWorkerFenceVerificationFile !== null
+        || policy.workerFencePrerequisiteContract !== undefined
+      ) throw new Error("worker_fence_prerequisite_failed");
+      checks.workerFencePrerequisiteExact = true;
+      checks.workerFenceDeploymentContinuityExact = true;
+    }
 
     sourceAuthority = await dependencies.createSourceAuthority(
       dependencies.cwd,
@@ -2032,6 +2177,17 @@ export async function runPermanentStagingAppDeploymentExecutor(
     checks.collateralInventoryExact = checks.targetPreflightExact;
     if (!checks.targetPreflightExact) throw new Error("target_preflight_failed");
     if (!checks.gitAutodeployAbsent) throw new Error("git_autodeploy_active");
+    if (policy.target.name === "production") {
+      checks.workerFenceDeploymentContinuityExact =
+        workerFencePrerequisite !== null
+        && railwayDeploymentIdentityIdSha256(
+            "deployment",
+            preflight.snapshot.deployment.id,
+          ) === workerFencePrerequisite.deploymentIdSha256;
+      if (!checks.workerFenceDeploymentContinuityExact) {
+        throw new Error("worker_fence_prerequisite_failed");
+      }
+    }
     preflightAlreadyCandidate = preflight.snapshot.deployment.commitHash === candidateSha;
     if (preflightAlreadyCandidate && !deploymentHealthy(
       preflight,
@@ -2054,6 +2210,7 @@ export async function runPermanentStagingAppDeploymentExecutor(
         "deployment",
         preflight.snapshot.deployment.id,
       ),
+      workerFencePrerequisite,
       preservedReplicaCount,
       createdAt: safeDate(dependencies.now),
       maximumWriteAttempts: 1,
@@ -2220,6 +2377,8 @@ export async function runPermanentStagingAppDeploymentExecutor(
     checks.writeTokenScopeExact,
     checks.costPolicyExact,
     checks.prerequisiteExact,
+    checks.workerFencePrerequisiteExact,
+    checks.workerFenceDeploymentContinuityExact,
     checks.boundaryPreflightExact,
     checks.targetPreflightExact,
     checks.durableIntentExact,
@@ -2279,6 +2438,7 @@ export async function runPermanentStagingAppDeploymentExecutor(
       startup: runtime?.startup.responseSha256 ?? null,
       ready: runtime?.ready.responseSha256 ?? null,
     },
+    workerFencePrerequisite,
   };
   let receipt: PermanentStagingAppDeploymentExecutorReceipt = {
     ...receiptBase,

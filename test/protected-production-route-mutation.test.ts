@@ -24,6 +24,7 @@ const PRODUCTION = "13dab015-df74-45c6-b26f-69323daea99a";
 const SERVICE = "6816c4a2-e392-4ee5-826f-2584cb599ec0";
 const INSTANCE = "11111111-1111-4111-8111-111111111111";
 const DEPLOYMENT = "22222222-2222-4222-8222-222222222222";
+const DEPLOYMENT_BEFORE_ACTIVATION = "66666666-6666-4666-8666-666666666666";
 const SNAPSHOT = "33333333-3333-4333-8333-333333333333";
 const CUSTOM_ROUTE = "44444444-4444-4444-8444-444444444444";
 const OTHER_ROUTE = "55555555-5555-4555-8555-555555555555";
@@ -286,6 +287,10 @@ function writePredecessorAuthority(
     "deployment",
     DEPLOYMENT,
   )!;
+  const deploymentBeforeActivationIdSha256 = railwayDeploymentIdentityIdSha256(
+    "deployment",
+    DEPLOYMENT_BEFORE_ACTIVATION,
+  )!;
   const deploymentValue = {
     schemaVersion: "pintpath-railway-application-deployment-executor/v5",
     operation: "pintpath-railway-application-source-upload",
@@ -299,7 +304,7 @@ function writePredecessorAuthority(
     writeAttempts: 1,
     acknowledgement: "received",
     previousDeploymentIdSha256: "1".repeat(64),
-    deploymentIdSha256,
+    deploymentIdSha256: deploymentBeforeActivationIdSha256,
     intentSha256: "2".repeat(64),
     cliOutputSha256: "3".repeat(64),
     boundaryPreflightSha256: "4".repeat(64),
@@ -311,6 +316,13 @@ function writePredecessorAuthority(
       startup: "8".repeat(64),
       ready: "9".repeat(64),
     },
+    workerFencePrerequisite: {
+      runId: "7777",
+      verificationSha256: "a".repeat(64),
+      bindingSha256: "b".repeat(64),
+      terminalSha256: "c".repeat(64),
+      deploymentIdSha256: "1".repeat(64),
+    },
     checks: {
       policyExact: true,
       githubMainExact: true,
@@ -319,6 +331,8 @@ function writePredecessorAuthority(
       writeTokenScopeExact: true,
       costPolicyExact: true,
       prerequisiteExact: true,
+      workerFencePrerequisiteExact: true,
+      workerFenceDeploymentContinuityExact: true,
       boundaryPreflightExact: true,
       targetPreflightExact: true,
       gitAutodeployAbsent: true,
@@ -357,6 +371,14 @@ function writePredecessorAuthority(
     terminalEvidenceSha256: "b".repeat(64),
     commandStdoutSha256: "c".repeat(64),
     commandStderrSha256: "d".repeat(64),
+    productionActivationPrerequisite: {
+      runId: "8888",
+      verificationSha256: "e".repeat(64),
+      terminalSha256: "f".repeat(64),
+      prerequisitesSha256: "0".repeat(64),
+      deploymentBeforeIdSha256: deploymentBeforeActivationIdSha256,
+      deploymentAfterIdSha256: deploymentIdSha256,
+    },
     checks: {
       policyExact: true,
       githubAuthorityExact: true,
@@ -364,6 +386,8 @@ function writePredecessorAuthority(
       cliExact: true,
       boundaryPreflightExact: true,
       targetPreflightExact: true,
+      productionActivationPrerequisiteExact: true,
+      productionActivationDeploymentContinuityExact: true,
       runtimePreflightExact: true,
       durableIntentExact: true,
       repositoryPrewriteReasserted: true,

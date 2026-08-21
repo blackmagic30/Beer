@@ -18,11 +18,11 @@
   "producerPolicies": {
     "workerFence": {
       "path": "ops/railway/protected-automatic-maintenance-worker-fence-policy.json",
-      "sha256": "a06c7393dfc332461d2c82af310b9cfb654f17884f85cd489d157ce7d06f61a3"
+      "sha256": "260a15eb364fe6e95a40b1e15af8950f8ea6f8ccd1f3b0983ef4a39810ea57bb"
     },
     "scale": {
       "path": "ops/railway/permanent-staging-scale-evidence-policy.json",
-      "sha256": "7182b42fd454cab030e48f279d8d49ed9dc6638e5620b91d13b9ea08451afbd6"
+      "sha256": "164d53a5bccff4a861c8568abebe5caa06352f64245ac7e734e55c056c2be608"
     },
     "fencedDeployment": {
       "path": "ops/railway/permanent-staging-fenced-app-deployment-policy.json",
@@ -74,7 +74,8 @@
       "runNameTemplate": "Automatic maintenance worker fence | permanent-staging | activate | <candidate-sha>",
       "artifactNameTemplate": "pintpath-automatic-maintenance-worker-fence-permanent-staging-activate-<candidate-sha>",
       "receiptFilename": "automatic-maintenance-worker-fence-terminal.json",
-      "receiptSchema": "pintpath-automatic-maintenance-worker-fence-terminal/v1"
+      "receiptSchema": "pintpath-automatic-maintenance-worker-fence-terminal/v1",
+      "prerequisitesFilename": "prerequisites-verification.json"
     },
     "active-deployment": {
       "workflowPath": ".github/workflows/deploy-permanent-staging.yml",

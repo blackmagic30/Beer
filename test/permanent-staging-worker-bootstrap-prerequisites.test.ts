@@ -18,7 +18,7 @@ const PREPARE_RUN = "1000";
 const QUIESCE_RUN = "2000";
 const FENCED_DEPLOYMENT_RUN = "3000";
 const POLICY_SHA =
-  "a06c7393dfc332461d2c82af310b9cfb654f17884f85cd489d157ce7d06f61a3";
+  "260a15eb364fe6e95a40b1e15af8950f8ea6f8ccd1f3b0983ef4a39810ea57bb";
 const PROJECT_ID = "48d8c6cd-1c66-4148-874b-20877f48e1a5";
 const ENVIRONMENT_ID = "a4e0f507-d6d3-4df9-a818-ad92c0071a35";
 const SERVICE_ID = "6816c4a2-e392-4ee5-826f-2584cb599ec0";
@@ -29,6 +29,10 @@ const QUIESCE_VERIFICATION_FILE =
   "/private/quiesce/prerequisites-verification.json";
 const FENCED_DEPLOYMENT_FILE =
   "/private/fenced/deployment-receipt.json";
+const ACTIVATE_FILE =
+  "/private/activate/automatic-maintenance-worker-fence-terminal.json";
+const ACTIVATE_VERIFICATION_FILE =
+  "/private/activate/prerequisites-verification.json";
 const OUTPUT_FILE = "/private/output/prerequisites-verification.json";
 
 const WORKER_CHECKS = {
@@ -59,6 +63,8 @@ const SCALE_CHECKS = {
   cliExact: true,
   boundaryPreflightExact: true,
   targetPreflightExact: true,
+  productionActivationPrerequisiteExact: true,
+  productionActivationDeploymentContinuityExact: true,
   runtimePreflightExact: true,
   durableIntentExact: true,
   repositoryPrewriteReasserted: true,
@@ -82,6 +88,8 @@ const DEPLOYMENT_CHECKS = {
   writeTokenScopeExact: true,
   costPolicyExact: true,
   prerequisiteExact: true,
+  workerFencePrerequisiteExact: true,
+  workerFenceDeploymentContinuityExact: true,
   boundaryPreflightExact: true,
   targetPreflightExact: true,
   gitAutodeployAbsent: true,
@@ -308,6 +316,7 @@ function scaleReceipt(): string {
     terminalEvidenceSha256: sha("scale-terminal"),
     commandStdoutSha256: sha("scale-stdout"),
     commandStderrSha256: sha("scale-stderr"),
+    productionActivationPrerequisite: null,
     checks: SCALE_CHECKS,
   });
 }
@@ -335,6 +344,7 @@ function fencedDeploymentReceipt(): string {
     collateralSnapshotSha256s: { before: collateral, after: collateral },
     replicaCounts: { before: 0, after: 0 },
     runtimeResponseSha256s: { health: null, startup: null, ready: null },
+    workerFencePrerequisite: null,
     checks: DEPLOYMENT_CHECKS,
   });
 }
@@ -352,6 +362,66 @@ function activeDeploymentReceipt(): string {
   return canonical(value);
 }
 
+function reviewedCandidateFixture() {
+  return {
+    number: 51,
+    reviewedHeadSha: REVIEWED_HEAD,
+    mergeCommitSha: CANDIDATE,
+    treeSha: TREE,
+    mergedAt: "2026-08-20T23:00:00.000Z",
+    authorId: 1,
+    mergedById: 2,
+  };
+}
+
+function prerequisiteEvidenceFixture(input: {
+  readonly kind:
+    | "prepare"
+    | "quiesce"
+    | "fenced-deployment"
+    | "restore";
+  readonly workflowPath: string;
+  readonly runId: string;
+  readonly startedAt: string;
+  readonly completedAt: string;
+  readonly artifactName: string;
+  readonly artifactId: string;
+  readonly filename: string;
+  readonly schemaVersion: string;
+  readonly outcome: string;
+  readonly sourceSha: string;
+  readonly deploymentIdSha256: string;
+  readonly replicasBefore: number;
+  readonly replicasAfter: number;
+  readonly prerequisiteVerificationSha256: string | null;
+}) {
+  return {
+    kind: input.kind,
+    workflowPath: input.workflowPath,
+    runId: input.runId,
+    runAttempt: 1,
+    startedAt: input.startedAt,
+    completedAt: input.completedAt,
+    artifactName: input.artifactName,
+    artifactId: input.artifactId,
+    artifactDigest: `sha256:${sha(`${input.artifactName}-archive`)}`,
+    artifactSizeBytes: 2048,
+    receipt: {
+      filename: input.filename,
+      schemaVersion: input.schemaVersion,
+      sha256: sha(`receipt-${input.kind}-${input.runId}`),
+      outcome: input.outcome,
+      candidateSha: CANDIDATE,
+      sourceSha: input.sourceSha,
+      deploymentIdSha256: input.deploymentIdSha256,
+      replicasBefore: input.replicasBefore,
+      replicasAfter: input.replicasAfter,
+    },
+    prerequisiteVerificationSha256:
+      input.prerequisiteVerificationSha256,
+  };
+}
+
 function priorQuiesceVerification(): string {
   return canonical({
     schemaVersion: "pintpath-permanent-staging-worker-bootstrap-prerequisites/v1",
@@ -360,7 +430,7 @@ function priorQuiesceVerification(): string {
     candidateSha: CANDIDATE,
     expectedDeploymentSha: OLD_SOURCE,
     repository: "blackmagic30/Beer",
-    reviewedPullRequest: {},
+    reviewedPullRequest: reviewedCandidateFixture(),
     consumer: {
       workflowPath:
         ".github/workflows/bootstrap-permanent-staging-worker-fence.yml",
@@ -369,20 +439,110 @@ function priorQuiesceVerification(): string {
       runAttempt: 1,
       startedAt: "2026-08-21T01:03:00.000Z",
     },
-    prerequisites: [{
+    prerequisites: [prerequisiteEvidenceFixture({
       kind: "prepare",
       workflowPath:
         ".github/workflows/configure-automatic-maintenance-worker-fence.yml",
       runId: PREPARE_RUN,
-      runAttempt: 1,
-      artifactDigest: `sha256:${sha("prepare-archive")}`,
-      receipt: {
-        candidateSha: CANDIDATE,
-        sha256: sha(prepareReceipt()),
-      },
-    }],
+      startedAt: "2026-08-21T01:01:00.000Z",
+      completedAt: "2026-08-21T01:02:00.000Z",
+      artifactName:
+        `pintpath-automatic-maintenance-worker-fence-permanent-staging-prepare-${CANDIDATE}`,
+      artifactId: "7001",
+      filename: "automatic-maintenance-worker-fence-terminal.json",
+      schemaVersion: "pintpath-automatic-maintenance-worker-fence-terminal/v1",
+      outcome: "prepared",
+      sourceSha: OLD_SOURCE,
+      deploymentIdSha256: sha("legacy-deployment"),
+      replicasBefore: 1,
+      replicasAfter: 1,
+      prerequisiteVerificationSha256: null,
+    })],
     verifiedAt: "2026-08-21T01:03:05.000Z",
     expiresAt: "2026-08-21T01:18:05.000Z",
+    checks: VERIFICATION_CHECKS,
+    secretMaterialIncluded: false,
+    secretDerivedCommitmentsIncluded: false,
+  });
+}
+
+function priorActivationVerification(): string {
+  const kinds = [
+    ["prepare", ".github/workflows/configure-automatic-maintenance-worker-fence.yml"],
+    ["quiesce", ".github/workflows/bootstrap-permanent-staging-worker-fence.yml"],
+    ["fenced-deployment", ".github/workflows/deploy-permanent-staging.yml"],
+    ["restore", ".github/workflows/bootstrap-permanent-staging-worker-fence.yml"],
+  ] as const;
+  return canonical({
+    schemaVersion: "pintpath-permanent-staging-worker-bootstrap-prerequisites/v1",
+    policySha256: STAGING_WORKER_BOOTSTRAP_PREREQUISITES_POLICY_SHA256,
+    operation: "activate",
+    candidateSha: CANDIDATE,
+    expectedDeploymentSha: null,
+    repository: "blackmagic30/Beer",
+    reviewedPullRequest: reviewedCandidateFixture(),
+    consumer: {
+      workflowPath:
+        ".github/workflows/configure-automatic-maintenance-worker-fence.yml",
+      githubEnvironment: "permanent-staging-provider-mutation",
+      runId: "5000",
+      runAttempt: 1,
+      startedAt: "2026-08-21T01:09:00.000Z",
+    },
+    prerequisites: kinds.map(([kind, workflowPath], index) => {
+      const runId = String(index + 1_000);
+      const artifactName = kind === "prepare"
+        ? `pintpath-automatic-maintenance-worker-fence-permanent-staging-prepare-${CANDIDATE}`
+        : kind === "quiesce"
+          ? `pintpath-permanent-staging-worker-bootstrap-quiesce-${CANDIDATE}`
+          : kind === "fenced-deployment"
+            ? `pintpath-permanent-staging-fenced-deployment-${CANDIDATE}`
+            : `pintpath-permanent-staging-worker-bootstrap-restore-${CANDIDATE}`;
+      const scale = kind === "quiesce" || kind === "restore";
+      return prerequisiteEvidenceFixture({
+        kind,
+        workflowPath,
+        runId,
+        startedAt: `2026-08-21T01:0${index * 2 + 1}:00.000Z`,
+        completedAt: `2026-08-21T01:0${index * 2 + 2}:00.000Z`,
+        artifactName,
+        artifactId: String(7_001 + index),
+        filename: kind === "prepare"
+          ? "automatic-maintenance-worker-fence-terminal.json"
+          : kind === "quiesce"
+            ? "quiesce-staging-zero-receipt.json"
+            : kind === "fenced-deployment"
+              ? "deployment-receipt.json"
+              : "bootstrap-staging-one-receipt.json",
+        schemaVersion: kind === "prepare"
+          ? "pintpath-automatic-maintenance-worker-fence-terminal/v1"
+          : scale
+            ? "pintpath-permanent-staging-scale-operation/v2"
+            : "pintpath-railway-application-deployment-executor/v5",
+        outcome: kind === "prepare"
+          ? "prepared"
+          : kind === "fenced-deployment"
+            ? "deployed"
+            : "scaled",
+        sourceSha: kind === "prepare" || kind === "quiesce"
+          ? OLD_SOURCE
+          : CANDIDATE,
+        deploymentIdSha256: sha(`activation-prerequisite-deployment-${kind}`),
+        replicasBefore: kind === "quiesce"
+          ? 1
+          : kind === "fenced-deployment" || kind === "restore"
+            ? 0
+            : 1,
+        replicasAfter: kind === "quiesce" || kind === "fenced-deployment"
+          ? 0
+          : 1,
+        prerequisiteVerificationSha256: scale
+          ? sha(`prior-verification-${kind}`)
+          : null,
+      });
+    }),
+    verifiedAt: "2026-08-21T01:09:05.000Z",
+    expiresAt: "2026-08-21T01:24:05.000Z",
     checks: VERIFICATION_CHECKS,
     secretMaterialIncluded: false,
     secretDerivedCommitmentsIncluded: false,
@@ -462,7 +622,7 @@ function harness(operation: "quiesce" | "restore", options: {
   const quiesce = githubRun({
     id: QUIESCE_RUN,
     workflow: bootstrapWorkflow,
-    name: "Bootstrap permanent-staging automatic-maintenance worker fence",
+    name: "Bootstrap permanent-staging automatic-maintenance worker fence", // security-scan allow: synthetic workflow fixture
     title: `Permanent staging worker bootstrap | quiesce | ${CANDIDATE}`,
     created: "2026-08-21T01:02:30.000Z",
     started: "2026-08-21T01:03:00.000Z",
@@ -622,7 +782,7 @@ function harness(operation: "quiesce" | "restore", options: {
       GITHUB_WORKFLOW_REF:
         `blackmagic30/Beer/${bootstrapWorkflow}@refs/heads/main`,
       GITHUB_API_URL: "https://api.github.com",
-      GITHUB_TOKEN: "github-token-long-enough",
+      GITHUB_TOKEN: "github-token-long-enough", // security-scan allow: synthetic no-call fixture
       PINTPATH_STAGING_WORKER_BOOTSTRAP_OPERATION: operation,
       PINTPATH_STAGING_WORKER_BOOTSTRAP_GITHUB_ENVIRONMENT:
         "permanent-staging-scale-evidence",
@@ -757,6 +917,36 @@ describe("permanent-staging worker bootstrap prerequisites", () => {
       replicasBefore: 1,
       replicasAfter: 1,
     });
+    const activationVerificationSource = priorActivationVerification();
+    expect(stagingWorkerBootstrapPrerequisiteInternals.validatePriorVerification(
+      activationVerificationSource,
+      JSON.parse(activationVerificationSource),
+      { operation: "activate", candidateSha: CANDIDATE, runId: "5000" },
+    )).toMatchObject({
+      sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+      expectedDeploymentSha: null,
+    });
+  });
+
+  it("requires the activation-chain verification beside every activation terminal", () => {
+    const parsed = stagingWorkerBootstrapPrerequisiteInternals.parseArguments([
+      "--operation", "active-deploy",
+      "--candidate-sha", CANDIDATE,
+      "--activate-run-id", "5000",
+      "--activate-terminal-file", ACTIVATE_FILE,
+      "--activate-verification-file", ACTIVATE_VERIFICATION_FILE,
+      "--output", OUTPUT_FILE,
+    ]);
+    expect(parsed.inputs.get("activate")?.verificationFile).toBe(
+      ACTIVATE_VERIFICATION_FILE,
+    );
+    expect(() => stagingWorkerBootstrapPrerequisiteInternals.parseArguments([
+      "--operation", "active-deploy",
+      "--candidate-sha", CANDIDATE,
+      "--activate-run-id", "5000",
+      "--activate-terminal-file", ACTIVATE_FILE,
+      "--output", OUTPUT_FILE,
+    ])).toThrow("arguments_invalid");
   });
 
   it("requires the complete ordered chain for activate mode arguments", () => {
@@ -823,6 +1013,9 @@ describe("permanent-staging worker bootstrap prerequisites", () => {
     expect(deployment).toContain("--operation fenced-deploy");
     expect(deployment).toContain("--operation active-deploy");
     expect(deployment).toContain(
+      '--activate-verification-file "$root/activate/prerequisites-verification.json"',
+    );
+    expect(deployment).toContain(
       "pintpath-permanent-staging-fenced-deployment-${{ inputs.candidate_sha }}",
     );
     expect(deployment).toContain(
@@ -846,6 +1039,9 @@ describe("permanent-staging worker bootstrap prerequisites", () => {
     expect(scale).toContain("pull-requests: read");
     expect(scale).toContain("--operation scale-evidence");
     expect(scale).toContain("--activate-run-id \"$ACTIVATION_RUN_ID\"");
+    expect(scale).toContain(
+      '--activate-verification-file "$root/sealed/activate/prerequisites-verification.json"',
+    );
     expect(scale).toContain(
       "--active-deployment-run-id \"$ACTIVE_DEPLOYMENT_RUN_ID\"",
     );

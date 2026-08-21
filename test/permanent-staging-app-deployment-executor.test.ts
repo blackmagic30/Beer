@@ -21,6 +21,8 @@ import type {
 } from "../src/lib/railway-application-deployment-attestation.js";
 import { railwayDeploymentIdentityIdSha256 } from
   "../src/lib/railway-deployment-identity.js";
+import type { ProductionDeploymentWorkerFencePrerequisiteVerification } from
+  "../scripts/verify-production-maintenance-role-limit-prerequisites.js";
 
 const CANDIDATE_SHA = "a".repeat(40);
 const DEPLOYMENT_BEFORE = "11111111-1111-4111-8111-111111111111";
@@ -31,6 +33,8 @@ const INSTANCE_ID = "55555555-5555-4555-8555-555555555555";
 const DOMAIN_ID = "66666666-6666-4666-8666-666666666666";
 const TERMINAL_DRIFT_DEPLOYMENT = "77777777-7777-4777-8777-777777777777";
 const TERMINAL_DRIFT_SNAPSHOT = "88888888-8888-4888-8888-888888888888";
+const PRODUCTION_RUN_ID = "9000";
+const PRODUCTION_FENCE_RUN_ID = "8000";
 
 const temporaryRoots: string[] = [];
 
@@ -171,6 +175,7 @@ function harness(exactPolicy: PermanentStagingAppDeploymentPolicy, options: {
   preflightTargetExact?: boolean;
   preflightReplicaCount?: number;
   postflightReplicaCount?: number;
+  workerFenceDeploymentId?: string;
 } = {}) {
   const root = fs.realpathSync(fs.mkdtempSync(
     path.join(os.tmpdir(), "pintpath-app-deploy-test-"),
@@ -180,6 +185,15 @@ function harness(exactPolicy: PermanentStagingAppDeploymentPolicy, options: {
   const snapshotPath = path.join(root, "snapshot");
   fs.mkdirSync(evidenceDir, { mode: 0o700 });
   fs.mkdirSync(snapshotPath, { mode: 0o700 });
+  const productionWorkerFenceVerificationFile = path.join(
+    evidenceDir,
+    "production-deployment-worker-fence-verification.json",
+  );
+  if (exactPolicy.target.name === "production") {
+    fs.writeFileSync(productionWorkerFenceVerificationFile, "{}\n", {
+      mode: 0o600,
+    });
+  }
   const output: string[] = [];
   const preflightCandidateSha = options.preflightCandidateSha ?? "c".repeat(40);
   const preflightReplicaCount = options.preflightReplicaCount
@@ -243,10 +257,19 @@ function harness(exactPolicy: PermanentStagingAppDeploymentPolicy, options: {
         GITHUB_ACTIONS: "true",
         GITHUB_RUN_ATTEMPT: "1",
         GITHUB_REF: "refs/heads/main",
+        GITHUB_RUN_ID: PRODUCTION_RUN_ID,
         GITHUB_SHA: CANDIDATE_SHA,
         PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: "p".repeat(32),
         PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: "s".repeat(32),
         PINTPATH_RAILWAY_WRITE_TOKEN: "w".repeat(32),
+        ...(exactPolicy.target.name === "production"
+          ? {
+              PINTPATH_PRODUCTION_DEPLOYMENT_FENCE_RUN_ID:
+                PRODUCTION_FENCE_RUN_ID,
+              PINTPATH_PRODUCTION_DEPLOYMENT_WORKER_FENCE_VERIFICATION_FILE:
+                productionWorkerFenceVerificationFile,
+            }
+          : {}),
       },
       now: vi.fn(() => {
         const value = new Date(Date.parse("2026-08-13T00:00:00.000Z") + nowTick);
@@ -268,6 +291,19 @@ function harness(exactPolicy: PermanentStagingAppDeploymentPolicy, options: {
       validateCli: vi.fn(async () => "/reviewed/railway"),
       validateWriteToken: vi.fn(async () =>
         options.writeTokenScopeSucceeds !== false),
+      validateProductionWorkerFencePrerequisite: vi.fn(() => ({
+        candidateSha: CANDIDATE_SHA,
+        consumer: { runId: PRODUCTION_RUN_ID },
+        workerFence: {
+          runId: PRODUCTION_FENCE_RUN_ID,
+          bindingSha256: "1".repeat(64),
+          terminalSha256: "2".repeat(64),
+          deploymentIdSha256: railwayDeploymentIdentityIdSha256(
+            "deployment",
+            options.workerFenceDeploymentId ?? DEPLOYMENT_BEFORE,
+          )!,
+        },
+      } as unknown as ProductionDeploymentWorkerFencePrerequisiteVerification)),
       runBoundary: vi.fn(async () => {
         boundaryCalls += 1;
         const ok = boundaryCalls === 1 || options.boundaryPostflightPasses !== false;
@@ -626,6 +662,16 @@ describe("Railway application deployment executor", () => {
     expect(intent).toMatchObject({
       schemaVersion: "pintpath-railway-application-deployment-intent/v2",
       preservedReplicaCount: replicaCount,
+      workerFencePrerequisite: {
+        runId: PRODUCTION_FENCE_RUN_ID,
+        verificationSha256: crypto.createHash("sha256").update("{}\n").digest("hex"),
+        bindingSha256: "1".repeat(64),
+        terminalSha256: "2".repeat(64),
+        deploymentIdSha256: railwayDeploymentIdentityIdSha256(
+          "deployment",
+          DEPLOYMENT_BEFORE,
+        ),
+      },
     });
     const receipt = JSON.parse(fs.readFileSync(
       path.join(fixture.evidenceDir, "deployment-receipt.json"),
@@ -636,8 +682,13 @@ describe("Railway application deployment executor", () => {
       outcome: "deployed",
       replicaCounts: { before: replicaCount, after: replicaCount },
       checks: {
+        workerFencePrerequisiteExact: true,
+        workerFenceDeploymentContinuityExact: true,
         topologyPreserved: true,
         targetPostflightExact: true,
+      },
+      workerFencePrerequisite: {
+        runId: PRODUCTION_FENCE_RUN_ID,
       },
     });
   });
@@ -664,6 +715,31 @@ describe("Railway application deployment executor", () => {
       checks: {
         topologyPreserved: false,
         targetPostflightExact: false,
+      },
+    });
+  });
+
+  it("blocks production before source upload when the fenced deployment changed", async () => {
+    const exactPolicy = policy("production");
+    const fixture = harness(exactPolicy, {
+      workerFenceDeploymentId: TERMINAL_DRIFT_DEPLOYMENT,
+    });
+    await expect(runPermanentStagingAppDeploymentExecutor([
+      "--policy", "ops/railway/production-app-deployment-policy.json",
+      "--candidate-sha", CANDIDATE_SHA,
+      "--evidence-dir", fixture.evidenceDir,
+    ], fixture.overrides)).resolves.toBe(1);
+    expect(fixture.runCommand).not.toHaveBeenCalled();
+    const receipt = JSON.parse(fs.readFileSync(
+      path.join(fixture.evidenceDir, "deployment-receipt.json"),
+      "utf8",
+    ));
+    expect(receipt).toMatchObject({
+      outcome: "blocked",
+      failureCode: "worker_fence_prerequisite_failed",
+      checks: {
+        workerFencePrerequisiteExact: true,
+        workerFenceDeploymentContinuityExact: false,
       },
     });
   });

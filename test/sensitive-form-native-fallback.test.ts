@@ -46,6 +46,7 @@ const EXPECTED_STATIC_FORMS = [
   "admin.html#outreachForm",
   "admin.html#securityAuditFilterForm",
   "auth/callback.html#callbackAcceptanceForm",
+  "auth/callback.html#callbackPasswordRecoveryForm",
   "feedback.html#feedbackForm",
   "index.html#wrongPriceForm",
   "resend-confirmation.html#resendConfirmationForm",
@@ -95,6 +96,7 @@ const SUBMIT_HANDLER_EVIDENCE: Readonly<Record<string, string>> = {
   "admin.html#outreachForm": 'outreachForm.addEventListener("submit"',
   "admin.html#securityAuditFilterForm": 'document.getElementById("securityAuditFilterForm")?.addEventListener("submit"',
   "auth/callback.html#callbackAcceptanceForm": 'acceptanceForm.addEventListener("submit"',
+  "auth/callback.html#callbackPasswordRecoveryForm": 'recoveryForm.addEventListener("submit"',
   "feedback.html#feedbackForm": '$("feedbackForm").addEventListener("submit"',
   "resend-confirmation.html#resendConfirmationForm": '$("resendConfirmationForm").addEventListener("submit"',
   "reset-password.html#requestResetForm": '$("requestResetForm").addEventListener("submit"',
@@ -220,7 +222,7 @@ describe("static form native fallback", () => {
     const scriptFormMarkup = viewerFiles(".js")
       .filter((file) => readViewer(file).includes("<form"));
     expect(scriptFormMarkup).toEqual(["business.js"]);
-    expect(readViewer("business.js").match(/<form/g)).toHaveLength(1);
+    expect(readViewer("business.js").match(/<form method="dialog" class="form">/g)).toHaveLength(3);
   });
 
   it("makes every non-dialog form an explicit POST and preserves enhanced submission", () => {
