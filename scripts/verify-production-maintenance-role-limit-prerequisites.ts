@@ -32,7 +32,7 @@ export const PRODUCTION_ROLE_LIMIT_RECONCILIATION_AUTHORITY_SCHEMA =
 export const PRODUCTION_ROLE_LIMIT_RECONCILIATION_AUTHORITY_FILENAME =
   "reconciliation-authority-verification.json" as const;
 export const PRODUCTION_MAINTENANCE_ROLE_LIMIT_POLICY_SHA256 =
-  "0f25877fc4e9bcf136df21887bbb3e8207bdd1861992f1ad6b7fea846ca96e73" as const;
+  "7e90ec379d2b50e79f808c2c100481e6f3eacac410bc5c4dbc7fab39da24c309" as const;
 
 const REPOSITORY = "blackmagic30/Beer" as const;
 const ROLE_LIMIT_WORKFLOW =
@@ -94,7 +94,7 @@ const DEPLOYMENT_POLICY_SHA256 =
 const DEPLOYMENT_PRODUCER_PATH =
   "scripts/lib/permanent-staging-app-deployment-executor.ts" as const;
 const DEPLOYMENT_PRODUCER_SHA256 =
-  "a05cb19483f8871a153a0c959f0bb1950fbb3a52d206f7b494ba714f610d1ca5" as const;
+  "af9e63d17e2eac52689d9db1e8a9615f773819cfc786c98bac009376715f2a13" as const;
 const DEPLOYMENT_RECEIPT_SCHEMA =
   "pintpath-railway-application-deployment-executor/v5" as const;
 const GITHUB_API_ORIGIN = "https://api.github.com" as const;

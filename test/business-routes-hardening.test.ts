@@ -1,7 +1,15 @@
 import fs from "node:fs";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import express from "express";
+import { beforeEach, describe, expect, it } from "vitest";
+
+import { clearRateLimitBucketsForTests } from "../src/middleware/rate-limit.js";
+import { errorHandler } from "../src/middleware/error-handler.js";
+import { createBusinessRouter } from "../src/modules/business/business.routes.js";
+import type { BusinessService } from "../src/modules/business/business.service.js";
 
 function routesSource() {
   return fs.readFileSync(path.resolve(process.cwd(), "src/modules/business/business.routes.ts"), "utf8");
@@ -10,6 +18,34 @@ function routesSource() {
 function adminRoutesSource() {
   return fs.readFileSync(path.resolve(process.cwd(), "src/modules/admin/admin.routes.ts"), "utf8");
 }
+
+async function withBusinessRouter(callback: (baseUrl: string) => Promise<void>): Promise<void> {
+  const service = {
+    assertCommercialVenueFeatureOpen: () => undefined,
+    requireAccount: () => {
+      throw new Error("test authentication stop");
+    },
+  } as unknown as BusinessService;
+  const app = express();
+  app.use(express.json());
+  app.use("/api/business", createBusinessRouter(service));
+  app.use(errorHandler);
+  const server = http.createServer(app);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address() as AddressInfo;
+  try {
+    await callback(`http://127.0.0.1:${address.port}`);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => {
+      if (error) reject(error);
+      else resolve();
+    }));
+  }
+}
+
+beforeEach(() => {
+  clearRateLimitBucketsForTests();
+});
 
 describe("business route hardening", () => {
   it("rate limits and safely cache-partitions the public venue directory", () => {
@@ -82,13 +118,67 @@ describe("business route hardening", () => {
     const source = routesSource();
 
     [
+      'router.post("/auth/browser-email-reauthentication", authLimiter',
       'router.post("/auth/logout-all", authLimiter',
       'router.get("/account/sessions", authLimiter',
       'router.delete("/account/sessions/:sessionId", writeLimiter',
       'router.get("/account/export", accountExportLimiter',
       'router.post("/account/delete-request", writeLimiter',
       'router.delete("/account/delete-request/:id", writeLimiter',
+      'router.post("/venue-portal/:venueId/billing/portal", billingLimiter',
+      'router.post("/billing/portal", billingLimiter',
     ].forEach((route) => expect(source).toContain(route));
+  });
+
+  it.each([
+    ["browser email reauthentication", "/auth/browser-email-reauthentication", 12, { purpose: "account_export" }],
+    ["account billing portal", "/billing/portal", 8, {}],
+    ["venue billing portal", "/venue-portal/venue-1/billing/portal", 8, {}],
+  ])("enforces the shared limiter before %s service work", async (_label, route, maximum, body) => {
+    await withBusinessRouter(async (baseUrl) => {
+      for (let request = 0; request < maximum; request += 1) {
+        const response = await fetch(`${baseUrl}/api/business${route}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        expect(response.status).not.toBe(429);
+      }
+      const limited = await fetch(`${baseUrl}/api/business${route}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      expect(limited.status).toBe(429);
+      await expect(limited.json()).resolves.toEqual(expect.objectContaining({
+        ok: false,
+        error: expect.objectContaining({
+          message: "Too many requests. Please wait a moment and try again.",
+        }),
+      }));
+    });
+  });
+
+  it("documents that challenge-cookie cleanup cannot bypass the authenticated exchange", () => {
+    const source = routesSource();
+    const supabaseSessionRoute = source.slice(
+      source.indexOf('router.post("/auth/supabase-session"'),
+      source.indexOf('router.post("/auth/password-reset-complete"'),
+    );
+
+    const serviceCall = supabaseSessionRoute.indexOf(
+      "await businessService.loginWithSupabaseAccessToken",
+    );
+    const cleanup = supabaseSessionRoute.indexOf(
+      "if (browserEmailChallenge !== null)",
+    );
+    expect(serviceCall).toBeGreaterThan(-1);
+    expect(cleanup).toBeGreaterThan(serviceCall);
+    expect(supabaseSessionRoute).toContain(
+      "branch only expires the narrow challenge after a successful exchange",
+    );
+    expect(supabaseSessionRoute).toContain("codeql[js/user-controlled-bypass]");
+    expect(supabaseSessionRoute).toContain("lgtm[js/user-controlled-bypass]");
   });
 
   it("does not let caller-controlled anonymous session ids or auth headers split rate limit buckets", () => {

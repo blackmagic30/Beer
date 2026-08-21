@@ -376,7 +376,10 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     }
   });
 
-  router.post("/auth/browser-email-reauthentication", authLimiter, async (req, res, next) => {
+  // authLimiter is the first route-specific handler and uses the shared,
+  // production-fail-closed Redis rate-limit authority.
+  // codeql[js/missing-rate-limiting]
+  router.post("/auth/browser-email-reauthentication", authLimiter, async (req, res, next) => { // lgtm[js/missing-rate-limiting]
     try {
       const body = parseWithSchema(
         browserEmailReauthenticationStartSchema,
@@ -411,7 +414,11 @@ export function createBusinessRouter(businessService: BusinessService): Router {
       // consume it only after the account-locked purpose-session rotation has
       // committed. Invalid or abandoned challenges expire after ten minutes
       // and a newly started ceremony atomically overwrites the cookie.
-      if (browserEmailChallenge !== null) {
+      // The cookie value is validated inside loginWithSupabaseAccessToken. This
+      // branch only expires the narrow challenge after a successful exchange;
+      // it cannot bypass authentication or select a success response.
+      // codeql[js/user-controlled-bypass]
+      if (browserEmailChallenge !== null) { // lgtm[js/user-controlled-bypass]
         clearBrowserEmailReauthenticationCookie(res);
       }
       setSessionCookie(res, result.token, result.expiresAt);
@@ -1219,7 +1226,10 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     }
   });
 
-  router.post("/venue-portal/:venueId/billing/portal", billingLimiter, async (req, res, next) => {
+  // billingLimiter is the first route-specific handler and uses the shared,
+  // production-fail-closed Redis rate-limit authority.
+  // codeql[js/missing-rate-limiting]
+  router.post("/venue-portal/:venueId/billing/portal", billingLimiter, async (req, res, next) => { // lgtm[js/missing-rate-limiting]
     try {
       const account = await requireAccount(req, businessService);
       const venueId = String(req.params.venueId ?? "");
@@ -1454,7 +1464,10 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     }
   });
 
-  router.post("/billing/portal", billingLimiter, async (req, res, next) => {
+  // billingLimiter is the first route-specific handler and uses the shared,
+  // production-fail-closed Redis rate-limit authority.
+  // codeql[js/missing-rate-limiting]
+  router.post("/billing/portal", billingLimiter, async (req, res, next) => { // lgtm[js/missing-rate-limiting]
     try {
       const account = await requireAccount(req, businessService);
       await businessService.requireRecentAuthentication(

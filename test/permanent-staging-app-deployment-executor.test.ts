@@ -39,6 +39,7 @@ const PRODUCTION_FENCE_RUN_ID = "8000";
 const temporaryRoots: string[] = [];
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const root of temporaryRoots.splice(0)) {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -741,6 +742,78 @@ describe("Railway application deployment executor", () => {
         workerFencePrerequisiteExact: true,
         workerFenceDeploymentContinuityExact: false,
       },
+    });
+  });
+
+  it("fails closed when the worker-fence prerequisite pathname is replaced after inspection", async () => {
+    const exactPolicy = policy("production");
+    const fixture = harness(exactPolicy);
+    const prerequisite = path.join(
+      fixture.evidenceDir,
+      "production-deployment-worker-fence-verification.json",
+    );
+    const displaced = `${prerequisite}.displaced`;
+    const originalLstat = fs.lstatSync.bind(fs);
+    let replaced = false;
+    vi.spyOn(fs, "lstatSync").mockImplementation(((filename, options) => {
+      const stat = originalLstat(filename, options as never);
+      if (!replaced && filename === prerequisite) {
+        replaced = true;
+        fs.renameSync(prerequisite, displaced);
+        fs.writeFileSync(prerequisite, "{\"forged\":true}\n", { mode: 0o600 });
+      }
+      return stat;
+    }) as typeof fs.lstatSync);
+
+    await expect(runPermanentStagingAppDeploymentExecutor([
+      "--policy", "ops/railway/production-app-deployment-policy.json",
+      "--candidate-sha", CANDIDATE_SHA,
+      "--evidence-dir", fixture.evidenceDir,
+    ], fixture.overrides)).resolves.toBe(1);
+
+    expect(replaced).toBe(true);
+    expect(fixture.overrides.validateProductionWorkerFencePrerequisite)
+      .not.toHaveBeenCalled();
+    expect(fixture.runCommand).not.toHaveBeenCalled();
+    const receipt = JSON.parse(fs.readFileSync(
+      path.join(fixture.evidenceDir, "deployment-receipt.json"),
+      "utf8",
+    ));
+    expect(receipt).toMatchObject({
+      outcome: "blocked",
+      failureCode: "worker_fence_prerequisite_failed",
+      writeAttempts: 0,
+      checks: { workerFencePrerequisiteExact: false },
+    });
+  });
+
+  it("rejects a multiply linked worker-fence prerequisite before validation or upload", async () => {
+    const exactPolicy = policy("production");
+    const fixture = harness(exactPolicy);
+    const prerequisite = path.join(
+      fixture.evidenceDir,
+      "production-deployment-worker-fence-verification.json",
+    );
+    fs.linkSync(prerequisite, `${prerequisite}.alias`);
+
+    await expect(runPermanentStagingAppDeploymentExecutor([
+      "--policy", "ops/railway/production-app-deployment-policy.json",
+      "--candidate-sha", CANDIDATE_SHA,
+      "--evidence-dir", fixture.evidenceDir,
+    ], fixture.overrides)).resolves.toBe(1);
+
+    expect(fixture.overrides.validateProductionWorkerFencePrerequisite)
+      .not.toHaveBeenCalled();
+    expect(fixture.runCommand).not.toHaveBeenCalled();
+    const receipt = JSON.parse(fs.readFileSync(
+      path.join(fixture.evidenceDir, "deployment-receipt.json"),
+      "utf8",
+    ));
+    expect(receipt).toMatchObject({
+      outcome: "blocked",
+      failureCode: "worker_fence_prerequisite_failed",
+      writeAttempts: 0,
+      checks: { workerFencePrerequisiteExact: false },
     });
   });
 

@@ -5467,13 +5467,17 @@ export class BusinessService {
     }
     if (input.credentialCeremony === "browser_email_otp_v1") {
       const secret = this.config.SOURCE_EVIDENCE_SIGNING_SECRET;
-      const parsedChallenge = secret && browserEmailReauthenticationChallenge
-        ? parseBrowserEmailReauthenticationChallenge(
-            browserEmailReauthenticationChallenge,
-            secret,
-            Math.floor(Date.now() / 1000),
-          )
-        : null;
+      if (!secret) {
+        throw new AppError("The email reauthentication challenge is missing, expired, or does not match this session.", 409, {
+          reauthenticationRequired: true,
+          reauthPurpose: input.reauthPurpose,
+        });
+      }
+      const parsedChallenge = parseBrowserEmailReauthenticationChallenge(
+        browserEmailReauthenticationChallenge ?? "",
+        secret,
+        Math.floor(Date.now() / 1000),
+      );
       if (
         !currentAppAccount
         || !input.reauthPurpose

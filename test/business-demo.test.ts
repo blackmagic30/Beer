@@ -2507,6 +2507,20 @@ describe("Supabase account and verification foundation", () => {
           }),
         });
 
+      const missingChallenge = await exchange(
+        token({ timestamp: nowSeconds, aal: "aal2" }),
+        appCookie,
+      );
+      expect(missingChallenge.status).toBe(409);
+      expect(responseCookie(missingChallenge.headers, "pint_path_session")).toBe("");
+
+      const malformedChallenge = await exchange(
+        token({ timestamp: nowSeconds, aal: "aal2" }),
+        `${appCookie}; pint_path_email_reauth=not-a-signed-challenge`,
+      );
+      expect(malformedChallenge.status).toBe(409);
+      expect(responseCookie(malformedChallenge.headers, "pint_path_session")).toBe("");
+
       const duplicateChallenge = await exchange(
         token({ timestamp: nowSeconds, aal: "aal2" }),
         `${appCookie}; ${challengeCookie}; ${challengeCookie}`,

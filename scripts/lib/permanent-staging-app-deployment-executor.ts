@@ -23,6 +23,7 @@ import {
   parseProductionDeploymentWorkerFencePrerequisiteVerification,
   type ProductionDeploymentWorkerFencePrerequisiteVerification,
 } from "../verify-production-maintenance-role-limit-prerequisites.js";
+import { readTrustedRegularFile } from "./trusted-filesystem.js";
 
 export const PERMANENT_STAGING_APP_DEPLOYMENT_POLICY_SCHEMA =
   "pintpath-railway-application-deployment-policy/v5" as const;
@@ -1666,25 +1667,29 @@ function readPrivatePrerequisite(
   filename: string,
   evidenceDir: string,
 ): string {
-  if (
-    !path.isAbsolute(filename)
-    || path.basename(filename)
-      !== "production-deployment-worker-fence-verification.json"
-    || path.dirname(path.resolve(filename)) !== fs.realpathSync(evidenceDir)
-  ) throw new Error("worker_fence_prerequisite_failed");
-  const stat = fs.lstatSync(filename);
-  if (
-    !stat.isFile()
-    || stat.isSymbolicLink()
-    || stat.size < 2
-    || stat.size > 1024 * 1024
-    || (typeof process.geteuid === "function" && stat.uid !== process.geteuid())
-    || (stat.mode & 0o777) !== 0o600
-    || fs.realpathSync(filename) !== path.resolve(filename)
-  ) throw new Error("worker_fence_prerequisite_failed");
-  const source = fs.readFileSync(filename, "utf8");
-  if (source.includes("\0")) throw new Error("worker_fence_prerequisite_failed");
-  return source;
+  let bytes: Buffer | null = null;
+  try {
+    if (
+      !path.isAbsolute(filename)
+      || path.basename(filename)
+        !== "production-deployment-worker-fence-verification.json"
+      || path.dirname(path.resolve(filename)) !== fs.realpathSync(evidenceDir)
+    ) throw new Error("worker_fence_prerequisite_failed");
+    bytes = readTrustedRegularFile(filename, {
+      minBytes: 2,
+      maxBytes: 1024 * 1024,
+      requireExactMode: 0o600,
+      requireOwner: true,
+      requirePrivate: true,
+    });
+    const source = bytes.toString("utf8");
+    if (source.includes("\0")) throw new Error("worker_fence_prerequisite_failed");
+    return source;
+  } catch {
+    throw new Error("worker_fence_prerequisite_failed");
+  } finally {
+    bytes?.fill(0);
+  }
 }
 
 function assertEvidenceDirectory(evidenceDir: string): void {
