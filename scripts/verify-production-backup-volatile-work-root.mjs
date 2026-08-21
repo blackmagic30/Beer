@@ -148,12 +148,78 @@ export function verifyVolatileRoot(expectedPolicySha256, { requireEmpty = false 
   return rootStat.dev;
 }
 
-function appendEnvironment(filename, name, value) {
-  const stat = fs.lstatSync(filename, { bigint: true });
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.uid !== BigInt(process.getuid())) {
+function sameEnvironmentFileIdentity(left, right) {
+  return left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.uid === right.uid &&
+    left.gid === right.gid &&
+    left.mode === right.mode &&
+    left.nlink === right.nlink;
+}
+
+function validEnvironmentFile(stat, uid) {
+  const permissions = stat.mode & 0o777n;
+  return stat.isFile() &&
+    !stat.isSymbolicLink() &&
+    stat.uid === uid &&
+    stat.nlink === 1n &&
+    (permissions === 0o600n || permissions === 0o640n || permissions === 0o644n);
+}
+
+export function appendEnvironment(filename, name, value) {
+  const noFollow = fs.constants.O_NOFOLLOW;
+  const nonBlock = fs.constants.O_NONBLOCK;
+  if (
+    typeof process.getuid !== "function" ||
+    typeof noFollow !== "number" ||
+    typeof nonBlock !== "number"
+  ) {
     fail("github_environment_file_invalid");
   }
-  fs.appendFileSync(filename, `${name}=${value}\n`, { encoding: "utf8", flag: "a" });
+  const uid = BigInt(process.getuid());
+  const source = Buffer.from(`${name}=${value}\n`, "utf8");
+  let descriptor = null;
+  try {
+    descriptor = fs.openSync(
+      filename,
+      fs.constants.O_WRONLY | fs.constants.O_APPEND | noFollow | nonBlock,
+    );
+    const before = fs.fstatSync(descriptor, { bigint: true });
+    const beforePath = fs.lstatSync(filename, { bigint: true });
+    if (
+      !validEnvironmentFile(before, uid) ||
+      !validEnvironmentFile(beforePath, uid) ||
+      !sameEnvironmentFileIdentity(before, beforePath)
+    ) {
+      fail("github_environment_file_invalid");
+    }
+
+    let offset = 0;
+    while (offset < source.length) {
+      const written = fs.writeSync(descriptor, source, offset, source.length - offset);
+      if (written < 1) fail("github_environment_file_invalid");
+      offset += written;
+    }
+    fs.fsyncSync(descriptor);
+
+    const after = fs.fstatSync(descriptor, { bigint: true });
+    const afterPath = fs.lstatSync(filename, { bigint: true });
+    const expectedSize = before.size + BigInt(source.length);
+    if (
+      !validEnvironmentFile(after, uid) ||
+      !validEnvironmentFile(afterPath, uid) ||
+      !sameEnvironmentFileIdentity(before, after) ||
+      !sameEnvironmentFileIdentity(before, afterPath) ||
+      after.size !== expectedSize ||
+      afterPath.size !== expectedSize
+    ) {
+      fail("github_environment_file_invalid");
+    }
+  } catch {
+    fail("github_environment_file_invalid");
+  } finally {
+    if (descriptor !== null) fs.closeSync(descriptor);
+  }
 }
 
 export function prepareWorkRoot({ operation, runId, runAttempt, policySha256, githubEnv }) {

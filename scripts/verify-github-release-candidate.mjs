@@ -964,21 +964,116 @@ function selectArtifact(value, requirement, candidateSha, runId, repository) {
   });
 }
 
+function sameFilesystemNode(left, right) {
+  return left.dev === right.dev && left.ino === right.ino &&
+    left.uid === right.uid && left.gid === right.gid && left.mode === right.mode;
+}
+
+function descriptorChildPath(parentFd, parent, leaf) {
+  // GitHub-hosted release consumers are Linux. The descriptor-relative path
+  // keeps creation in the directory we opened even if its pathname is swapped.
+  return process.platform === "linux"
+    ? path.posix.join("/proc/self/fd", String(parentFd), leaf)
+    : path.join(parent, leaf);
+}
+
 function writeExclusive(filename, source) {
   const parent = path.dirname(filename);
-  const parentStat = fs.lstatSync(parent);
-  if (
-    !parentStat.isDirectory() ||
-    parentStat.isSymbolicLink() ||
-    (parentStat.mode & 0o777) !== 0o700 ||
-    (typeof process.geteuid === "function" && parentStat.uid !== process.geteuid()) ||
-    fs.realpathSync(parent) !== path.resolve(parent)
-  ) throw new Error("output_unsafe");
-  fs.writeFileSync(filename, source, { encoding: "utf8", flag: "wx", mode: 0o600 });
-  const fd = fs.openSync(filename, "r");
-  try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
-  const parentFd = fs.openSync(parent, "r");
-  try { fs.fsyncSync(parentFd); } finally { fs.closeSync(parentFd); }
+  const leaf = path.basename(filename);
+  const uid = process.geteuid?.() ?? process.getuid?.();
+  let parentFd = null;
+  let outputFd = null;
+  let exact = false;
+  try {
+    if (
+      !Number.isSafeInteger(uid) || uid === undefined || uid < 0 ||
+      filename.includes("\0") || path.resolve(filename) !== filename ||
+      leaf.length === 0 || leaf === "." || leaf === ".." ||
+      !Number.isSafeInteger(fs.constants.O_DIRECTORY) ||
+      fs.constants.O_DIRECTORY <= 0 ||
+      !Number.isSafeInteger(fs.constants.O_NOFOLLOW) ||
+      fs.constants.O_NOFOLLOW <= 0
+    ) throw new Error("output_unsafe");
+    parentFd = fs.openSync(
+      parent,
+      fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW,
+    );
+    const parentDescriptor = fs.fstatSync(parentFd, { bigint: true });
+    const parentPath = fs.lstatSync(parent, { bigint: true });
+    if (
+      !parentDescriptor.isDirectory() || !parentPath.isDirectory() ||
+      parentPath.isSymbolicLink() ||
+      !sameFilesystemNode(parentDescriptor, parentPath) ||
+      parentDescriptor.uid !== BigInt(uid) || parentDescriptor.nlink < 1n ||
+      Number(parentDescriptor.mode & 0o7777n) !== 0o700 ||
+      fs.realpathSync(parent) !== parent
+    ) throw new Error("output_unsafe");
+
+    const target = descriptorChildPath(parentFd, parent, leaf);
+    if (process.platform === "linux") {
+      const descriptorAlias = fs.statSync(`/proc/self/fd/${parentFd}`, { bigint: true });
+      if (!sameFilesystemNode(descriptorAlias, parentDescriptor)) {
+        throw new Error("output_unsafe");
+      }
+    }
+    outputFd = fs.openSync(
+      target,
+      fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL |
+        fs.constants.O_NOFOLLOW,
+      0o600,
+    );
+    const created = fs.fstatSync(outputFd, { bigint: true });
+    if (
+      !created.isFile() || created.nlink !== 1n || created.uid !== BigInt(uid) ||
+      Number(created.mode & 0o7777n) !== 0o600 || created.size !== 0n
+    ) throw new Error("output_unsafe");
+    const bytes = Buffer.from(source, "utf8");
+    let offset = 0;
+    while (offset < bytes.length) {
+      const written = fs.writeSync(outputFd, bytes, offset, bytes.length - offset, null);
+      if (!Number.isSafeInteger(written) || written <= 0) {
+        throw new Error("output_unsafe");
+      }
+      offset += written;
+    }
+    fs.fsyncSync(outputFd);
+    const completed = fs.fstatSync(outputFd, { bigint: true });
+    const outputPath = fs.lstatSync(filename, { bigint: true });
+    const parentDescriptorAfter = fs.fstatSync(parentFd, { bigint: true });
+    const parentPathAfter = fs.lstatSync(parent, { bigint: true });
+    if (
+      !sameFilesystemNode(completed, created) || completed.nlink !== 1n ||
+      completed.size !== BigInt(bytes.length) || !outputPath.isFile() ||
+      outputPath.isSymbolicLink() || !sameFilesystemNode(outputPath, completed) ||
+      outputPath.nlink !== 1n || outputPath.size !== BigInt(bytes.length) ||
+      fs.realpathSync(filename) !== filename ||
+      !sameFilesystemNode(parentDescriptorAfter, parentDescriptor) ||
+      !sameFilesystemNode(parentPathAfter, parentDescriptor) ||
+      parentPathAfter.isSymbolicLink() || fs.realpathSync(parent) !== parent
+    ) throw new Error("output_unsafe");
+    fs.fsyncSync(parentFd);
+    const outputDescriptorFinal = fs.fstatSync(outputFd, { bigint: true });
+    const outputPathFinal = fs.lstatSync(filename, { bigint: true });
+    const parentDescriptorFinal = fs.fstatSync(parentFd, { bigint: true });
+    const parentPathFinal = fs.lstatSync(parent, { bigint: true });
+    exact = sameFilesystemNode(outputDescriptorFinal, completed) &&
+      outputDescriptorFinal.nlink === 1n &&
+      outputDescriptorFinal.size === BigInt(bytes.length) &&
+      outputPathFinal.isFile() && !outputPathFinal.isSymbolicLink() &&
+      sameFilesystemNode(outputPathFinal, outputDescriptorFinal) &&
+      outputPathFinal.nlink === 1n &&
+      outputPathFinal.size === BigInt(bytes.length) &&
+      fs.realpathSync(filename) === filename &&
+      sameFilesystemNode(parentDescriptorFinal, parentDescriptor) &&
+      sameFilesystemNode(parentPathFinal, parentDescriptor) &&
+      fs.realpathSync(parent) === parent;
+  } catch {
+    exact = false;
+  } finally {
+    try { if (outputFd !== null) fs.closeSync(outputFd); } catch { exact = false; }
+    try { if (parentFd !== null) fs.closeSync(parentFd); } catch { exact = false; }
+  }
+  if (!exact) throw new Error("output_unsafe");
 }
 
 export async function runGithubReleaseCandidateVerification(argv, dependencies = {}) {

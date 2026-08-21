@@ -486,6 +486,48 @@ describe("Postgres logical WORM authority", () => {
 });
 
 describe("Postgres logical WORM read-only retrieval", () => {
+  it("rejects a replacement inserted after output creation but before descriptor open", () => {
+    const root = fs.realpathSync(
+      fs.mkdtempSync(path.join(os.tmpdir(), "pintpath-worm-output-race-")),
+    );
+    fs.chmodSync(root, 0o700);
+    temporaryRoots.push(root);
+    const outputDirectory = path.join(root, "retrieved-backup");
+    const displaced = path.join(root, "created-output-held");
+    const originalOpenSync = fs.openSync;
+    let injected = false;
+    let creationTarget = "";
+    const openSpy = vi.spyOn(fs, "openSync").mockImplementation((...args) => {
+      const [target, flags] = args;
+      if (
+        !injected && typeof flags === "number"
+        && (flags & fs.constants.O_DIRECTORY) !== 0
+        && path.basename(String(target)) === path.basename(outputDirectory)
+      ) {
+        injected = true;
+        creationTarget = String(target);
+        fs.renameSync(outputDirectory, displaced);
+        fs.mkdirSync(outputDirectory, { mode: 0o700 });
+      }
+      return Reflect.apply(originalOpenSync, fs, args);
+    });
+    try {
+      expect(() => postgresLogicalWormRetrievalInternals.prepareOutput(
+        outputDirectory,
+      )).toThrow(new PostgresLogicalWormRetrievalError("unsafe_output_path"));
+      expect(injected).toBe(true);
+      if (process.platform === "linux") {
+        expect(creationTarget).toMatch(
+          /^\/proc\/self\/fd\/[1-9][0-9]*\/retrieved-backup$/,
+        );
+      }
+      expect(fs.statSync(displaced).isDirectory()).toBe(true);
+      expect(fs.statSync(outputDirectory).isDirectory()).toBe(true);
+    } finally {
+      openSpy.mockRestore();
+    }
+  });
+
   it("reconstructs the exact restore directory from independently verified immutable versions", async () => {
     const provider = new MemoryWormProvider();
     const backup = fixture();

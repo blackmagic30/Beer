@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -247,11 +248,29 @@ function harness(exactPolicy: PermanentStagingAppDeploymentPolicy, options: {
       stderr: "",
     };
   });
+  const cliAuthority = {
+    executablePath: "/reviewed/railway-fd",
+    assertExact: vi.fn(),
+    close: vi.fn(),
+  };
+  const sourceAuthority = {
+    candidateSha: CANDIDATE_SHA,
+    treeSha: "d".repeat(40),
+    archiveSha256: "e".repeat(64),
+    snapshotManifestSha256: "f".repeat(64),
+    snapshotPath,
+    deploymentPath: snapshotPath,
+    close: vi.fn(),
+    reassert: vi.fn(),
+    cleanup: vi.fn(),
+  };
   let nowTick = 0;
   return {
     evidenceDir,
     output,
     runCommand,
+    cliAuthority,
+    sourceAuthority,
     overrides: {
       cwd: process.cwd(),
       env: {
@@ -280,16 +299,8 @@ function harness(exactPolicy: PermanentStagingAppDeploymentPolicy, options: {
       sleep: vi.fn(async () => {
         if (options.pollThrows) throw new Error("injected_poll_failure");
       }),
-      createSourceAuthority: vi.fn(async () => ({
-        candidateSha: CANDIDATE_SHA,
-        treeSha: "d".repeat(40),
-        archiveSha256: "e".repeat(64),
-        snapshotManifestSha256: "f".repeat(64),
-        snapshotPath,
-        reassert: vi.fn(),
-        cleanup: vi.fn(),
-      })),
-      validateCli: vi.fn(async () => "/reviewed/railway"),
+      createSourceAuthority: vi.fn(async () => sourceAuthority),
+      validateCli: vi.fn(async () => cliAuthority),
       validateWriteToken: vi.fn(async () =>
         options.writeTokenScopeSucceeds !== false),
       validateProductionWorkerFencePrerequisite: vi.fn(() => ({
@@ -398,6 +409,71 @@ function harness(exactPolicy: PermanentStagingAppDeploymentPolicy, options: {
       runCommand,
       writeOutput: (value: string) => output.push(value),
     },
+  };
+}
+
+async function linuxPinnedCliFixture(
+  exactPolicy: PermanentStagingAppDeploymentPolicy,
+) {
+  const root = fs.realpathSync(fs.mkdtempSync(
+    path.join(os.tmpdir(), "pintpath-pinned-cli-test-"),
+  ));
+  temporaryRoots.push(root);
+  const cliPath = path.join(root, "railway");
+  const archivePath = path.join(root, "railway.tar.gz");
+  const trustedBytes = Buffer.from(
+    `#!/bin/sh\nprintf 'railway ${exactPolicy.railwayCli.version}\\n'\n`,
+    "utf8",
+  );
+  const maliciousBytes = Buffer.from(
+    "#!/bin/sh\nprintf 'malicious railway\\n'\n",
+    "utf8",
+  );
+  const archiveBytes = Buffer.from("trusted-railway-archive\n", "utf8");
+  fs.writeFileSync(cliPath, trustedBytes);
+  fs.chmodSync(cliPath, 0o500);
+  fs.writeFileSync(archivePath, archiveBytes);
+  fs.chmodSync(archivePath, 0o400);
+  const pinnedPolicy = {
+    ...exactPolicy,
+    railwayCli: {
+      ...exactPolicy.railwayCli,
+      archiveSha256: crypto.createHash("sha256").update(archiveBytes).digest("hex"),
+      executableSha256:
+        crypto.createHash("sha256").update(trustedBytes).digest("hex"),
+    },
+  } satisfies PermanentStagingAppDeploymentPolicy;
+  const versionCommand = vi.fn(async (
+    executable: string,
+    args: readonly string[],
+  ) => {
+    expect(args).toEqual(["--version"]);
+    expect(executable).toMatch(new RegExp(`^/proc/${process.pid}/fd/[0-9]+$`));
+    expect(fs.readFileSync(executable)).toEqual(trustedBytes);
+    return {
+      code: 0,
+      signal: null,
+      timedOut: false,
+      stdout: `railway ${pinnedPolicy.railwayCli.version}\n`,
+      stderr: "",
+    };
+  });
+  const authority = await permanentStagingAppDeploymentExecutorInternals
+    .validateCli(pinnedPolicy, {
+      platform: "linux",
+      arch: pinnedPolicy.railwayCli.architecture,
+      env: {
+        PINTPATH_RAILWAY_CLI_PATH: cliPath,
+        PINTPATH_RAILWAY_CLI_ARCHIVE: archivePath,
+      },
+      runCommand: versionCommand,
+    } as never);
+  return {
+    authority,
+    cliPath,
+    maliciousBytes,
+    trustedBytes,
+    versionCommand,
   };
 }
 
@@ -540,6 +616,13 @@ describe("Railway application deployment executor", () => {
     ], fixture.overrides);
     expect(code).toBe(0);
     expect(fixture.runCommand).toHaveBeenCalledTimes(1);
+    expect(fixture.runCommand.mock.calls[0]![0]).toBe(
+      fixture.cliAuthority.executablePath,
+    );
+    expect(fixture.cliAuthority.assertExact).toHaveBeenCalledTimes(2);
+    expect(fixture.cliAuthority.close).toHaveBeenCalledTimes(1);
+    expect(fixture.sourceAuthority.reassert).toHaveBeenCalledTimes(2);
+    expect(fixture.sourceAuthority.close).toHaveBeenCalledTimes(1);
     expect(fixture.overrides.queryTarget).toHaveBeenCalledTimes(3);
     const argv = fixture.runCommand.mock.calls[0]![1] as readonly string[];
     expect(argv).toEqual([
@@ -1297,6 +1380,371 @@ describe("Railway application deployment executor", () => {
     expect(() => permanentStagingAppDeploymentExecutorInternals
       .snapshotManifestSha256(root)).toThrow("source_snapshot_invalid");
   });
+
+  it("rejects a snapshot leaf replaced after O_NOFOLLOW open", () => {
+    const root = fs.realpathSync(fs.mkdtempSync(
+      path.join(os.tmpdir(), "pintpath-source-open-race-"),
+    ));
+    temporaryRoots.push(root);
+    const source = path.join(root, "server.ts");
+    const displaced = path.join(root, "server.held.ts");
+    fs.writeFileSync(source, "export const trusted = true;\n", { mode: 0o644 });
+    const originalOpen = fs.openSync.bind(fs);
+    let replaced = false;
+    const openSpy = vi.spyOn(fs, "openSync").mockImplementation(((
+      filename,
+      flags,
+      mode,
+    ) => {
+      const descriptor = originalOpen(filename, flags, mode);
+      if (
+        !replaced
+        && typeof flags === "number"
+        && (flags & fs.constants.O_NOFOLLOW) !== 0
+        && path.basename(String(filename)) === "server.ts"
+      ) {
+        replaced = true;
+        fs.renameSync(source, displaced);
+        fs.writeFileSync(source, "export const malicious = true;\n", {
+          mode: 0o644,
+        });
+      }
+      return descriptor;
+    }) as typeof fs.openSync);
+
+    expect(() => permanentStagingAppDeploymentExecutorInternals
+      .snapshotManifestSha256(root)).toThrow("source_snapshot_invalid");
+    expect(replaced).toBe(true);
+    openSpy.mockRestore();
+  });
+
+  it("blocks every provider write when a held snapshot path is swapped during read", async () => {
+    const exactPolicy = policy("permanent-staging");
+    const fixture = harness(exactPolicy);
+    const source = path.join(fixture.sourceAuthority.snapshotPath, "server.ts");
+    const displaced = path.join(
+      fixture.sourceAuthority.snapshotPath,
+      "server.held.ts",
+    );
+    fs.writeFileSync(source, "export const trusted = true;\n", { mode: 0o644 });
+    const originalOpen = fs.openSync.bind(fs);
+    const originalRead = fs.readSync.bind(fs);
+    let heldDescriptor: number | null = null;
+    let replaced = false;
+    const openSpy = vi.spyOn(fs, "openSync").mockImplementation(((
+      filename,
+      flags,
+      mode,
+    ) => {
+      const descriptor = originalOpen(filename, flags, mode);
+      if (path.basename(String(filename)) === "server.ts") {
+        heldDescriptor = descriptor;
+      }
+      return descriptor;
+    }) as typeof fs.openSync);
+    const readSpy = vi.spyOn(fs, "readSync").mockImplementation(((
+      ...args: Parameters<typeof fs.readSync>
+    ) => {
+      if (!replaced && args[0] === heldDescriptor) {
+        replaced = true;
+        fs.renameSync(source, displaced);
+        fs.writeFileSync(source, "export const malicious = true;\n", {
+          mode: 0o644,
+        });
+      }
+      return Reflect.apply(originalRead, fs, args);
+    }) as typeof fs.readSync);
+    fixture.sourceAuthority.reassert.mockImplementation(() => {
+      permanentStagingAppDeploymentExecutorInternals.snapshotManifestSha256(
+        fixture.sourceAuthority.snapshotPath,
+      );
+    });
+
+    await expect(runPermanentStagingAppDeploymentExecutor([
+      "--policy", "ops/railway/permanent-staging-app-deployment-policy.json",
+      "--candidate-sha", CANDIDATE_SHA,
+      "--evidence-dir", fixture.evidenceDir,
+    ], fixture.overrides)).resolves.toBe(1);
+
+    expect(replaced).toBe(true);
+    expect(fixture.runCommand).not.toHaveBeenCalled();
+    expect(fixture.cliAuthority.close).toHaveBeenCalledTimes(1);
+    const receipt = JSON.parse(fs.readFileSync(
+      path.join(fixture.evidenceDir, "deployment-receipt.json"),
+      "utf8",
+    ));
+    expect(receipt).toMatchObject({
+      outcome: "blocked",
+      failureCode: "source_snapshot_invalid",
+      writeAttempts: 0,
+      checks: { sourceReasserted: false },
+    });
+    readSpy.mockRestore();
+    openSpy.mockRestore();
+  });
+
+  it.runIf(process.platform === "linux")(
+    "lets a real child chdir to and read from the held snapshot root",
+    () => {
+      const snapshotPath = fs.realpathSync(fs.mkdtempSync(
+        path.join(os.tmpdir(), "pintpath-held-root-child-"),
+      ));
+      temporaryRoots.push(snapshotPath);
+      const trustedSource = "export const source = 'trusted child';\n";
+      fs.chmodSync(snapshotPath, 0o700);
+      fs.writeFileSync(path.join(snapshotPath, "server.ts"), trustedSource, {
+        mode: 0o600,
+      });
+      const heldRoot = permanentStagingAppDeploymentExecutorInternals
+        .holdSnapshotRootDirectory(snapshotPath);
+
+      try {
+        const child = spawnSync(process.execPath, [
+          "-e",
+          "process.stdout.write(require('node:fs').readFileSync('server.ts', 'utf8'))",
+        ], {
+          cwd: heldRoot.authorityPath,
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+
+        expect(child.error).toBeUndefined();
+        expect(child.status).toBe(0);
+        expect(child.signal).toBeNull();
+        expect(child.stderr).toBe("");
+        expect(child.stdout).toBe(trustedSource);
+        heldRoot.assertExact();
+      } finally {
+        heldRoot.close();
+      }
+
+      expect(fs.existsSync(heldRoot.authorityPath)).toBe(false);
+    },
+  );
+
+  it.runIf(process.platform === "linux")(
+    "uploads only the held trusted tree when the snapshot root path is swapped",
+    async () => {
+      const exactPolicy = policy("permanent-staging");
+      const fixture = harness(exactPolicy);
+      const snapshotPath = fixture.sourceAuthority.snapshotPath;
+      const trustedSource = "export const source = 'trusted';\n";
+      const maliciousSource = "export const source = 'swapped';\n";
+      fs.writeFileSync(path.join(snapshotPath, "server.ts"), trustedSource, {
+        mode: 0o600,
+      });
+      const heldRoot = permanentStagingAppDeploymentExecutorInternals
+        .holdSnapshotRootDirectory(snapshotPath);
+      const manifestSha256 = permanentStagingAppDeploymentExecutorInternals
+        .snapshotManifestSha256(snapshotPath, heldRoot.authorityPath);
+      const sourceAuthority = {
+        ...fixture.sourceAuthority,
+        snapshotManifestSha256: manifestSha256,
+        deploymentPath: heldRoot.authorityPath,
+        close: vi.fn(() => heldRoot.close()),
+        cleanup: vi.fn(),
+        reassert: vi.fn(() => {
+          try {
+            heldRoot.assertExact();
+            if (
+              permanentStagingAppDeploymentExecutorInternals
+                .snapshotManifestSha256(snapshotPath, heldRoot.authorityPath)
+              !== manifestSha256
+            ) throw new Error("source_reassertion_failed");
+          } catch {
+            throw new Error("source_reassertion_failed");
+          }
+        }),
+      };
+      fixture.overrides.createSourceAuthority = vi.fn(async () => sourceAuthority);
+      const displaced = `${snapshotPath}.held`;
+      let unsafeProviderWrites = 0;
+      const providerCommand = vi.fn(async (
+        _executable: string,
+        args: readonly string[],
+        options: { cwd?: string },
+      ) => {
+        expect(args[0]).toBe("up");
+        expect(args[1]).toBe(heldRoot.authorityPath);
+        expect(options.cwd).toBe(heldRoot.authorityPath);
+        fs.renameSync(snapshotPath, displaced);
+        fs.mkdirSync(snapshotPath, { mode: 0o700 });
+        fs.writeFileSync(path.join(snapshotPath, "server.ts"), maliciousSource, {
+          mode: 0o600,
+        });
+        const uploadedSource = fs.readFileSync(
+          path.join(String(args[1]), "server.ts"),
+          "utf8",
+        );
+        if (uploadedSource !== trustedSource) unsafeProviderWrites += 1;
+        return {
+          code: 0,
+          signal: null,
+          timedOut: false,
+          stdout: "queued",
+          stderr: "",
+        };
+      });
+      fixture.overrides.runCommand = providerCommand;
+
+      try {
+        await expect(runPermanentStagingAppDeploymentExecutor([
+          "--policy", "ops/railway/permanent-staging-app-deployment-policy.json",
+          "--candidate-sha", CANDIDATE_SHA,
+          "--evidence-dir", fixture.evidenceDir,
+        ], fixture.overrides)).resolves.toBe(1);
+      } finally {
+        heldRoot.close();
+      }
+
+      expect(providerCommand).toHaveBeenCalledTimes(1);
+      expect(unsafeProviderWrites).toBe(0);
+      expect(sourceAuthority.reassert).toHaveBeenCalledTimes(2);
+      expect(sourceAuthority.close).toHaveBeenCalledTimes(1);
+      expect(fs.existsSync(heldRoot.authorityPath)).toBe(false);
+      const receipt = JSON.parse(fs.readFileSync(
+        path.join(fixture.evidenceDir, "deployment-receipt.json"),
+        "utf8",
+      ));
+      expect(receipt).toMatchObject({
+        outcome: "mutation_uncertain",
+        failureCode: "source_reassertion_failed",
+        writeAttempts: 1,
+        checks: { sourceReasserted: false },
+      });
+    },
+  );
+
+  it("blocks before upload when the held CLI identity no longer reasserts", async () => {
+    const exactPolicy = policy("permanent-staging");
+    const fixture = harness(exactPolicy);
+    fixture.cliAuthority.assertExact.mockImplementation(() => {
+      throw new Error("cli_invalid");
+    });
+
+    await expect(runPermanentStagingAppDeploymentExecutor([
+      "--policy", "ops/railway/permanent-staging-app-deployment-policy.json",
+      "--candidate-sha", CANDIDATE_SHA,
+      "--evidence-dir", fixture.evidenceDir,
+    ], fixture.overrides)).resolves.toBe(1);
+
+    expect(fixture.runCommand).not.toHaveBeenCalled();
+    expect(fixture.cliAuthority.close).toHaveBeenCalledTimes(1);
+    const receipt = JSON.parse(fs.readFileSync(
+      path.join(fixture.evidenceDir, "deployment-receipt.json"),
+      "utf8",
+    ));
+    expect(receipt).toMatchObject({
+      outcome: "blocked",
+      failureCode: "cli_invalid",
+      writeAttempts: 0,
+    });
+  });
+
+  it.runIf(process.platform === "linux")(
+    "holds the exact owner/mode/link/hash-pinned CLI inode through path replacement",
+    async () => {
+      const fixture = await linuxPinnedCliFixture(policy("permanent-staging"));
+      const displaced = `${fixture.cliPath}.held`;
+      try {
+        expect(fixture.versionCommand).toHaveBeenCalledTimes(1);
+        fs.renameSync(fixture.cliPath, displaced);
+        fs.writeFileSync(fixture.cliPath, fixture.maliciousBytes);
+        fs.chmodSync(fixture.cliPath, 0o500);
+        expect(() => fixture.authority.assertExact()).toThrow("cli_invalid");
+        expect(fs.readFileSync(fixture.authority.executablePath))
+          .toEqual(fixture.trustedBytes);
+      } finally {
+        fixture.authority.close();
+      }
+      expect(fs.existsSync(fixture.authority.executablePath)).toBe(false);
+    },
+  );
+
+  it.runIf(process.platform === "linux")(
+    "executes the held CLI inode through its real procfs descriptor path",
+    async () => {
+      const exactPolicy = policy("permanent-staging");
+      const fixture = await linuxPinnedCliFixture(exactPolicy);
+      try {
+        const child = spawnSync(fixture.authority.executablePath, ["--version"], {
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+
+        expect(child.error).toBeUndefined();
+        expect(child.status).toBe(0);
+        expect(child.signal).toBeNull();
+        expect(child.stderr).toBe("");
+        expect(child.stdout).toBe(
+          `railway ${exactPolicy.railwayCli.version}\n`,
+        );
+        fixture.authority.assertExact();
+      } finally {
+        fixture.authority.close();
+      }
+
+      expect(fs.existsSync(fixture.authority.executablePath)).toBe(false);
+    },
+  );
+
+  it.runIf(process.platform === "linux")(
+    "never invokes an unsafe provider binary during the final path-swap race",
+    async () => {
+      const exactPolicy = policy("permanent-staging");
+      const pinned = await linuxPinnedCliFixture(exactPolicy);
+      const fixture = harness(exactPolicy);
+      const displaced = `${pinned.cliPath}.held`;
+      let unsafeProviderWrites = 0;
+      let providerCalls = 0;
+      const providerCommand = vi.fn(async (
+        executable: string,
+        args: readonly string[],
+      ) => {
+        expect(args[0]).toBe("up");
+        providerCalls += 1;
+        fs.renameSync(pinned.cliPath, displaced);
+        fs.writeFileSync(pinned.cliPath, pinned.maliciousBytes);
+        fs.chmodSync(pinned.cliPath, 0o500);
+        if (!fs.readFileSync(executable).equals(pinned.trustedBytes)) {
+          unsafeProviderWrites += 1;
+        }
+        return {
+          code: 0,
+          signal: null,
+          timedOut: false,
+          stdout: "queued",
+          stderr: "",
+        };
+      });
+      fixture.overrides.validateCli = vi.fn(async () => pinned.authority);
+      fixture.overrides.runCommand = providerCommand;
+
+      await expect(runPermanentStagingAppDeploymentExecutor([
+        "--policy", "ops/railway/permanent-staging-app-deployment-policy.json",
+        "--candidate-sha", CANDIDATE_SHA,
+        "--evidence-dir", fixture.evidenceDir,
+      ], fixture.overrides)).resolves.toBe(1);
+
+      expect(providerCalls).toBe(1);
+      expect(unsafeProviderWrites).toBe(0);
+      expect(providerCommand).toHaveBeenCalledWith(
+        expect.stringMatching(new RegExp(`^/proc/${process.pid}/fd/[0-9]+$`)),
+        expect.arrayContaining(["up"]),
+        expect.any(Object),
+      );
+      expect(fs.existsSync(pinned.authority.executablePath)).toBe(false);
+      const receipt = JSON.parse(fs.readFileSync(
+        path.join(fixture.evidenceDir, "deployment-receipt.json"),
+        "utf8",
+      ));
+      expect(receipt).toMatchObject({
+        outcome: "mutation_uncertain",
+        failureCode: "cli_invalid",
+        writeAttempts: 1,
+      });
+    },
+  );
 
   it("keeps the exact CLI command contract free of adjacent Railway mutations", () => {
     const write = policy("permanent-staging").writeContract;

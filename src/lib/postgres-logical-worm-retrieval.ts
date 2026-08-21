@@ -411,6 +411,20 @@ function sameNode(filename: string, expected: OutputNode): boolean {
   }
 }
 
+function sameDirectoryNode(left: fs.BigIntStats, right: fs.BigIntStats): boolean {
+  return left.isDirectory() && right.isDirectory()
+    && left.dev === right.dev && left.ino === right.ino
+    && left.uid === right.uid && left.gid === right.gid && left.mode === right.mode;
+}
+
+function descriptorChildPath(parentFd: number, parent: string, leaf: string): string {
+  // Protected retrieval runs on Linux. Resolve children through the held
+  // directory descriptor so a pathname replacement cannot redirect creation.
+  return process.platform === "linux"
+    ? path.posix.join("/proc/self/fd", String(parentFd), leaf)
+    : path.join(parent, leaf);
+}
+
 function prepareOutput(directory: string): HeldOutput {
   const allowed = new Set([
     POSTGRES_LOGICAL_BACKUP_ARCHIVE,
@@ -426,8 +440,11 @@ function prepareOutput(directory: string): HeldOutput {
     || !Number.isSafeInteger(fs.constants.O_DIRECTORY) || fs.constants.O_DIRECTORY <= 0
   ) fail("unsafe_output_path");
   const parent = path.dirname(directory);
+  const leaf = path.basename(directory);
   let parentFd: number | null = null;
   let directoryFd: number | null = null;
+  let parentIdentity: fs.BigIntStats | null = null;
+  let createdIdentity: fs.BigIntStats | null = null;
   let rootIdentity: fs.BigIntStats | null = null;
   const files = new Map<string, OutputNode>();
   let closed = false;
@@ -443,7 +460,10 @@ function prepareOutput(directory: string): HeldOutput {
   };
   const rootMatches = (): boolean => {
     try {
-      if (closed || rootIdentity === null || directoryFd === null || parentFd === null) return false;
+      if (
+        closed || rootIdentity === null || directoryFd === null || parentFd === null
+        || parentIdentity === null
+      ) return false;
       const pathname = fs.lstatSync(directory, { bigint: true });
       const descriptor = fs.fstatSync(directoryFd, { bigint: true });
       const parentPath = fs.lstatSync(parent, { bigint: true });
@@ -456,7 +476,8 @@ function prepareOutput(directory: string): HeldOutput {
         && descriptor.gid === rootIdentity.gid && pathname.mode === rootIdentity.mode
         && descriptor.mode === rootIdentity.mode
         && Number(pathname.mode & 0o7777n) === 0o700
-        && parentPath.dev === parentDescriptor.dev && parentPath.ino === parentDescriptor.ino
+        && sameDirectoryNode(parentPath, parentIdentity)
+        && sameDirectoryNode(parentDescriptor, parentIdentity)
         && parentPath.uid === BigInt(uid) && Number(parentPath.mode & 0o077n) === 0
         && fs.realpathSync(parent) === parent && fs.realpathSync(directory) === directory;
     } catch {
@@ -464,21 +485,49 @@ function prepareOutput(directory: string): HeldOutput {
     }
   };
   try {
-    const existing = fs.lstatSync(directory, { throwIfNoEntry: false });
-    if (existing) fail("unsafe_output_path");
     parentFd = fs.openSync(parent, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW);
-    const parentStat = fs.fstatSync(parentFd, { bigint: true });
+    parentIdentity = fs.fstatSync(parentFd, { bigint: true });
+    const parentPath = fs.lstatSync(parent, { bigint: true });
     if (
-      !parentStat.isDirectory() || parentStat.uid !== BigInt(uid)
-      || Number(parentStat.mode & 0o077n) !== 0 || fs.realpathSync(parent) !== parent
+      leaf.length === 0 || leaf === "." || leaf === ".."
+      || !sameDirectoryNode(parentPath, parentIdentity)
+      || parentPath.isSymbolicLink() || parentIdentity.uid !== BigInt(uid)
+      || parentIdentity.nlink < 1n || Number(parentIdentity.mode & 0o077n) !== 0
+      || fs.realpathSync(parent) !== parent
     ) fail("unsafe_output_path");
-    fs.mkdirSync(directory, { mode: 0o700 });
-    directoryFd = fs.openSync(directory, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW);
+    const child = descriptorChildPath(parentFd, parent, leaf);
+    if (process.platform === "linux") {
+      const alias = fs.statSync(`/proc/self/fd/${parentFd}`, { bigint: true });
+      if (!sameDirectoryNode(alias, parentIdentity)) fail("unsafe_output_path");
+    }
+    const existing = fs.lstatSync(child, { bigint: true, throwIfNoEntry: false });
+    if (existing) fail("unsafe_output_path");
+    fs.mkdirSync(child, { mode: 0o700 });
+    createdIdentity = fs.lstatSync(child, { bigint: true });
+    if (
+      !createdIdentity.isDirectory() || createdIdentity.isSymbolicLink()
+      || createdIdentity.uid !== BigInt(uid) || createdIdentity.nlink < 1n
+      || Number(createdIdentity.mode & 0o7777n) !== 0o700
+    ) fail("unsafe_output_path");
+    directoryFd = fs.openSync(
+      child,
+      fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW,
+    );
     rootIdentity = fs.fstatSync(directoryFd, { bigint: true });
+    if (!sameDirectoryNode(rootIdentity, createdIdentity)) fail("unsafe_output_path");
     if (!rootMatches()) fail("unsafe_output_path");
   } catch (error) {
+    try {
+      if (
+        createdIdentity !== null && rootIdentity !== null
+        && sameDirectoryNode(createdIdentity, rootIdentity) && rootMatches()
+        && fs.readdirSync(directory).length === 0
+      ) {
+        fs.rmdirSync(directory);
+        if (parentFd !== null) fs.fsyncSync(parentFd);
+      }
+    } catch { /* retain ambiguous output */ }
     close();
-    try { fs.rmdirSync(directory); } catch { /* directory may not have been created */ }
     if (error instanceof PostgresLogicalWormRetrievalError) throw error;
     fail("unsafe_output_path");
   }
@@ -507,7 +556,7 @@ function prepareOutput(directory: string): HeldOutput {
       let handle: fs.promises.FileHandle | null = null;
       try {
         handle = await fs.promises.open(
-          path.join(directory, filename),
+          descriptorChildPath(directoryFd!, directory, filename),
           fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY
             | fs.constants.O_NOFOLLOW,
           0o600,
