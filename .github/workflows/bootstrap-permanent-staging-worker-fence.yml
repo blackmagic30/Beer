@@ -1,0 +1,340 @@
+name: Bootstrap permanent-staging automatic-maintenance worker fence
+run-name: Permanent staging worker bootstrap | ${{ inputs.operation }} | ${{ inputs.candidate_sha }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Quiesce the legacy source at zero, or restore the fenced candidate at one
+        required: true
+        type: choice
+        options:
+          - quiesce
+          - restore
+      candidate_sha:
+        description: Exact reviewed 40-character SHA currently at main
+        required: true
+        type: string
+      expected_deployment_sha:
+        description: Quiesce old source SHA; restore exact candidate SHA
+        required: true
+        type: string
+      prepare_run_id:
+        description: Successful same-candidate permanent-staging prepare run
+        required: true
+        type: string
+      quiesce_run_id:
+        description: Restore only; successful same-candidate bootstrap quiesce run
+        required: false
+        type: string
+      fenced_deployment_run_id:
+        description: Restore only; successful candidate upload at zero replicas
+        required: false
+        type: string
+      confirmation:
+        description: Exact operation, candidate, and old-source confirmation from the runbook
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: pintpath-permanent-staging-key-rollout
+  queue: max
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    name: Verify the chain and perform one exact protected scale transition
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment: permanent-staging-scale-evidence
+    steps:
+      - name: Checkout the exact main candidate without persisted credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+
+      - name: Require exact original manual authority and confirmation
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          DISPATCH_REF: ${{ github.ref }}
+          DISPATCH_SHA: ${{ github.sha }}
+          EXPECTED_DEPLOYMENT_SHA: ${{ inputs.expected_deployment_sha }}
+          FENCED_DEPLOYMENT_RUN_ID: ${{ inputs.fenced_deployment_run_id }}
+          OPERATION: ${{ inputs.operation }}
+          PREPARE_RUN_ID: ${{ inputs.prepare_run_id }}
+          QUIESCE_RUN_ID: ${{ inputs.quiesce_run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_ID: ${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$EXPECTED_DEPLOYMENT_SHA" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$PREPARE_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+          test "$PREPARE_RUN_ID" != "$RUN_ID"
+          test "$DISPATCH_REF" = refs/heads/main
+          test "$DISPATCH_SHA" = "$CANDIDATE_SHA"
+          test "$RUN_ATTEMPT" = 1
+          case "$OPERATION" in
+            quiesce)
+              test "$EXPECTED_DEPLOYMENT_SHA" != "$CANDIDATE_SHA"
+              test -z "$QUIESCE_RUN_ID"
+              test -z "$FENCED_DEPLOYMENT_RUN_ID"
+              test "$CONFIRMATION" = \
+                "QUIESCE_PERMANENT_STAGING_WORKER_BOOTSTRAP_FOR_${CANDIDATE_SHA}_FROM_${EXPECTED_DEPLOYMENT_SHA}"
+              ;;
+            restore)
+              test "$EXPECTED_DEPLOYMENT_SHA" = "$CANDIDATE_SHA"
+              [[ "$QUIESCE_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+              [[ "$FENCED_DEPLOYMENT_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+              test "$QUIESCE_RUN_ID" != "$PREPARE_RUN_ID"
+              test "$FENCED_DEPLOYMENT_RUN_ID" != "$PREPARE_RUN_ID"
+              test "$FENCED_DEPLOYMENT_RUN_ID" != "$QUIESCE_RUN_ID"
+              test "$QUIESCE_RUN_ID" != "$RUN_ID"
+              test "$FENCED_DEPLOYMENT_RUN_ID" != "$RUN_ID"
+              test "$CONFIRMATION" = \
+                "RESTORE_PERMANENT_STAGING_WORKER_BOOTSTRAP_FOR_${CANDIDATE_SHA}"
+              ;;
+            *) exit 1 ;;
+          esac
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse refs/remotes/origin/main)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain=v2 --untracked-files=all)"
+
+      - name: Setup the repository Node runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Install immutable dependencies
+        run: npm ci
+
+      - name: Run the complete repository gate before provider-token custody
+        env:
+          NODE_ENV: test
+          PUBLIC_BASE_URL: http://localhost:3000
+          DATABASE_PATH: ./data/ci-staging-worker-bootstrap.sqlite
+          OUTBOUND_CALLS_ENABLED: false
+        run: npm run check
+
+      - name: Create private prerequisite and terminal evidence custody
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          EXPECTED_DEPLOYMENT_SHA: ${{ inputs.expected_deployment_sha }}
+          OPERATION: ${{ inputs.operation }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/pintpath-staging-worker-bootstrap-prerequisites"
+          evidence="$RUNNER_TEMP/pintpath-staging-worker-bootstrap-evidence"
+          install -d -m 700 "$root" "$root/prepare" "$root/quiesce" \
+            "$root/fenced-deployment" "$root/sealed" "$evidence"
+          umask 077
+          jq -n \
+            --arg candidateSha "$CANDIDATE_SHA" \
+            --arg expectedDeploymentSha "$EXPECTED_DEPLOYMENT_SHA" \
+            --arg operation "$OPERATION" \
+            '{schemaVersion:"pintpath-permanent-staging-worker-bootstrap-dispatch/v1",candidateSha:$candidateSha,expectedDeploymentSha:$expectedDeploymentSha,operation:$operation,maximumScaleAttempts:1,retryAllowed:false,secretMaterialIncluded:false}' \
+            > "$evidence/dispatch.json"
+          printf '%s\n' "$CANDIDATE_SHA" > "$evidence/tested-commit-sha.txt"
+          chmod 600 "$evidence/dispatch.json" "$evidence/tested-commit-sha.txt"
+
+      - name: Retrieve the exact successful staging worker prepare artifact
+        uses: actions/download-artifact@b7c52a5f7a25fce4c22e476a93420dd79a061a70 # v8.0.1
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.prepare_run_id }}
+          name: pintpath-automatic-maintenance-worker-fence-permanent-staging-prepare-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}/pintpath-staging-worker-bootstrap-prerequisites/prepare
+
+      - name: Retrieve the exact successful quiescence artifact
+        if: inputs.operation == 'restore'
+        uses: actions/download-artifact@b7c52a5f7a25fce4c22e476a93420dd79a061a70 # v8.0.1
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.quiesce_run_id }}
+          name: pintpath-permanent-staging-worker-bootstrap-quiesce-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}/pintpath-staging-worker-bootstrap-prerequisites/quiesce
+
+      - name: Retrieve the exact fenced zero-replica deployment artifact
+        if: inputs.operation == 'restore'
+        uses: actions/download-artifact@b7c52a5f7a25fce4c22e476a93420dd79a061a70 # v8.0.1
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.fenced_deployment_run_id }}
+          name: pintpath-permanent-staging-fenced-deployment-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}/pintpath-staging-worker-bootstrap-prerequisites/fenced-deployment
+
+      - name: Seal unique prerequisite receipts into private custody
+        env:
+          OPERATION: ${{ inputs.operation }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/pintpath-staging-worker-bootstrap-prerequisites"
+          seal_one() {
+            local source_root="$1"
+            local leaf="$2"
+            local destination="$3"
+            mapfile -d '' matches < <(find "$source_root" -type f -name "$leaf" -print0)
+            test "${#matches[@]}" = 1
+            test ! -L "${matches[0]}"
+            test ! -e "$destination"
+            cp --no-dereference -- "${matches[0]}" "$destination"
+            chmod 600 "$destination"
+          }
+          seal_one "$root/prepare" \
+            automatic-maintenance-worker-fence-terminal.json \
+            "$root/sealed/automatic-maintenance-worker-fence-terminal.json"
+          if test "$OPERATION" = restore; then
+            install -d -m 700 "$root/sealed/quiesce" "$root/sealed/fenced-deployment"
+            seal_one "$root/quiesce" prerequisites-verification.json \
+              "$root/sealed/quiesce/prerequisites-verification.json"
+            seal_one "$root/quiesce" quiesce-staging-zero-receipt.json \
+              "$root/sealed/quiesce/quiesce-staging-zero-receipt.json"
+            seal_one "$root/fenced-deployment" deployment-receipt.json \
+              "$root/sealed/fenced-deployment/deployment-receipt.json"
+          fi
+
+      - name: Verify exact current-main, review, run, artifact, receipt, and chronology prerequisites
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          EXPECTED_DEPLOYMENT_SHA: ${{ inputs.expected_deployment_sha }}
+          FENCED_DEPLOYMENT_RUN_ID: ${{ inputs.fenced_deployment_run_id }}
+          GITHUB_API_URL: ${{ github.api_url }}
+          GITHUB_TOKEN: ${{ github.token }}
+          OPERATION: ${{ inputs.operation }}
+          PINTPATH_STAGING_WORKER_BOOTSTRAP_GITHUB_ENVIRONMENT: permanent-staging-scale-evidence
+          PINTPATH_STAGING_WORKER_BOOTSTRAP_OPERATION: ${{ inputs.operation }}
+          PREPARE_RUN_ID: ${{ inputs.prepare_run_id }}
+          QUIESCE_RUN_ID: ${{ inputs.quiesce_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/pintpath-staging-worker-bootstrap-prerequisites/sealed"
+          evidence="$RUNNER_TEMP/pintpath-staging-worker-bootstrap-evidence"
+          args=(
+            --operation "$OPERATION"
+            --candidate-sha "$CANDIDATE_SHA"
+            --expected-deployment-sha "$EXPECTED_DEPLOYMENT_SHA"
+            --prepare-run-id "$PREPARE_RUN_ID"
+            --prepare-terminal-file "$root/automatic-maintenance-worker-fence-terminal.json"
+            --output "$evidence/prerequisites-verification.json"
+          )
+          if test "$OPERATION" = restore; then
+            args+=(
+              --quiesce-run-id "$QUIESCE_RUN_ID"
+              --quiesce-receipt-file "$root/quiesce/quiesce-staging-zero-receipt.json"
+              --quiesce-verification-file "$root/quiesce/prerequisites-verification.json"
+              --fenced-deployment-run-id "$FENCED_DEPLOYMENT_RUN_ID"
+              --fenced-deployment-receipt-file "$root/fenced-deployment/deployment-receipt.json"
+            )
+          fi
+          ./node_modules/.bin/tsx \
+            scripts/verify-permanent-staging-worker-bootstrap-prerequisites.ts \
+            "${args[@]}"
+
+      - name: Remove downloaded prerequisite receipt custody
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          custody="$RUNNER_TEMP/pintpath-staging-worker-bootstrap-prerequisites"
+          if [[ -d "$custody" && ! -L "$custody" ]]; then
+            find "$custody" -depth -mindepth 1 -delete
+            rmdir "$custody"
+          fi
+
+      - name: Install the exact reviewed Railway CLI archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          cli_root="$RUNNER_TEMP/pintpath-railway-cli"
+          cli_archive="$cli_root/railway-5.32.0-x86_64-linux.tar.gz"
+          mkdir -m 700 "$cli_root"
+          curl --fail --silent --show-error --location \
+            'https://github.com/railwayapp/cli/releases/download/v5.32.0/railway-v5.32.0-x86_64-unknown-linux-musl.tar.gz' \
+            --output "$cli_archive"
+          echo 'cd69b2ecb556601751165d85ac31a5fbc38cff46397939356df28d2b96a005f5  '"$cli_archive" \
+            | sha256sum --check --strict
+          tar --extract --gzip --file "$cli_archive" --directory "$cli_root" \
+            --no-same-owner --no-same-permissions
+          cli_path="$cli_root/railway"
+          echo '27133cfc20bffc43b2f32c1638fa3c50eefc2f9d2d80301a93de34632ccb7a43  '"$cli_path" \
+            | sha256sum --check --strict
+          chmod 500 "$cli_path"
+          test "$("$cli_path" --version)" = 'railway 5.32.0'
+          echo "PINTPATH_RAILWAY_CLI_PATH=$cli_path" >> "$GITHUB_ENV"
+
+      - name: Reassert exact current main immediately before provider-token custody
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse refs/remotes/origin/main)" = "$CANDIDATE_SHA"
+          test -z "$(git status --porcelain=v2 --untracked-files=all)"
+
+      - name: Perform at most one exact candidate-bound scale transition
+        id: scale
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          EXPECTED_DEPLOYMENT_SHA: ${{ inputs.expected_deployment_sha }}
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+          GITHUB_SHA: ${{ github.sha }}
+          OPERATION: ${{ inputs.operation }}
+          PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_SCALE_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_SCALE_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'custody_entered=true' >> "$GITHUB_OUTPUT"
+          case "$OPERATION" in
+            quiesce)
+              direction=quiesce-staging-zero
+              export PINTPATH_SCALE_CONFIRMATION=QUIESCE_PERMANENT_STAGING_TO_ZERO_FOR_WORKER_BOOTSTRAP
+              ;;
+            restore)
+              direction=bootstrap-staging-one
+              export PINTPATH_SCALE_CONFIRMATION=RESTORE_PERMANENT_STAGING_TO_ONE_FOR_WORKER_BOOTSTRAP
+              ;;
+            *) exit 1 ;;
+          esac
+          ./node_modules/.bin/tsx scripts/execute-protected-permanent-staging-scale.ts \
+            --direction "$direction" \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --expected-deployment-sha "$EXPECTED_DEPLOYMENT_SHA" \
+            --evidence-dir "$RUNNER_TEMP/pintpath-staging-worker-bootstrap-evidence"
+
+      - name: Unconditionally reconcile the Railway mutation boundary after token custody
+        if: always() && steps.scale.outputs.custody_entered == 'true'
+        env:
+          PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_PRODUCTION_METADATA_TOKEN }}
+          PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
+        run: npm run readiness:railway:mutation-boundary
+
+      - name: Upload bounded secret-free bootstrap evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pintpath-permanent-staging-worker-bootstrap-${{ inputs.operation }}-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}/pintpath-staging-worker-bootstrap-evidence/
+          if-no-files-found: error
+          retention-days: 30

@@ -7,16 +7,27 @@ on:
         description: Exact 40-character SHA currently deployed from main
         required: true
         type: string
+      activation_run_id:
+        description: Successful same-candidate permanent-staging worker activation run
+        required: true
+        type: string
+      active_deployment_run_id:
+        description: Successful same-candidate active deployment closeout run
+        required: true
+        type: string
       confirmation:
         description: SCALE_PERMANENT_STAGING_TO_TWO_FOR_EVIDENCE
         required: true
         type: string
 
 permissions:
+  actions: read
   contents: read
+  pull-requests: read
 
 concurrency:
-  group: pintpath-permanent-staging-scale-evidence
+  group: pintpath-permanent-staging-key-rollout
+  queue: max
   cancel-in-progress: false
 
 jobs:
@@ -40,7 +51,10 @@ jobs:
           DISPATCH_SHA: ${{ github.sha }}
           DISPATCH_REF: ${{ github.ref }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_ID: ${{ github.run_id }}
           CONFIRMATION: ${{ inputs.confirmation }}
+          ACTIVATION_RUN_ID: ${{ inputs.activation_run_id }}
+          ACTIVE_DEPLOYMENT_RUN_ID: ${{ inputs.active_deployment_run_id }}
         shell: bash
         run: |
           set -euo pipefail
@@ -49,6 +63,11 @@ jobs:
           test "$RUN_ATTEMPT" = '1'
           test "$DISPATCH_SHA" = "$CANDIDATE_SHA"
           test "$CONFIRMATION" = 'SCALE_PERMANENT_STAGING_TO_TWO_FOR_EVIDENCE'
+          [[ "$ACTIVATION_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+          [[ "$ACTIVE_DEPLOYMENT_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+          test "$ACTIVATION_RUN_ID" != "$ACTIVE_DEPLOYMENT_RUN_ID"
+          test "$ACTIVATION_RUN_ID" != "$RUN_ID"
+          test "$ACTIVE_DEPLOYMENT_RUN_ID" != "$RUN_ID"
           test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
           test "$(git rev-parse refs/remotes/origin/main)" = "$CANDIDATE_SHA"
           test -z "$(git status --porcelain=v2 --untracked-files=all)"
@@ -91,12 +110,85 @@ jobs:
           set -euo pipefail
           mkdir -m 700 "$RUNNER_TEMP/pintpath-scale-evidence"
           mkdir -m 700 "$RUNNER_TEMP/pintpath-load-input"
+          install -d -m 700 \
+            "$RUNNER_TEMP/pintpath-scale-prerequisites" \
+            "$RUNNER_TEMP/pintpath-scale-prerequisites/activate" \
+            "$RUNNER_TEMP/pintpath-scale-prerequisites/active-deployment" \
+            "$RUNNER_TEMP/pintpath-scale-prerequisites/sealed"
           printf '%s\n' "$CANDIDATE_SHA" \
             > "$RUNNER_TEMP/pintpath-scale-evidence/tested-commit-sha.txt"
           chmod 600 "$RUNNER_TEMP/pintpath-scale-evidence/tested-commit-sha.txt"
 
       - name: Verify the complete repository before provider writes
         run: npm run check
+
+      - name: Retrieve the exact staging worker activation artifact
+        uses: actions/download-artifact@b7c52a5f7a25fce4c22e476a93420dd79a061a70 # v8.0.1
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.activation_run_id }}
+          name: pintpath-automatic-maintenance-worker-fence-permanent-staging-activate-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}/pintpath-scale-prerequisites/activate
+
+      - name: Retrieve the exact active staging deployment artifact
+        uses: actions/download-artifact@b7c52a5f7a25fce4c22e476a93420dd79a061a70 # v8.0.1
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.active_deployment_run_id }}
+          name: pintpath-permanent-staging-deployment-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}/pintpath-scale-prerequisites/active-deployment
+
+      - name: Seal and verify the exact active staging prerequisites
+        env:
+          ACTIVATION_RUN_ID: ${{ inputs.activation_run_id }}
+          ACTIVE_DEPLOYMENT_RUN_ID: ${{ inputs.active_deployment_run_id }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          GITHUB_API_URL: ${{ github.api_url }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PINTPATH_STAGING_WORKER_BOOTSTRAP_GITHUB_ENVIRONMENT: permanent-staging-scale-evidence
+          PINTPATH_STAGING_WORKER_BOOTSTRAP_OPERATION: scale-evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/pintpath-scale-prerequisites"
+          seal_one() {
+            local source_root="$1"
+            local leaf="$2"
+            local destination="$3"
+            mapfile -d '' matches < <(find "$source_root" -type f -name "$leaf" -print0)
+            test "${#matches[@]}" = 1
+            test ! -L "${matches[0]}"
+            test ! -e "$destination"
+            cp --no-dereference -- "${matches[0]}" "$destination"
+            chmod 600 "$destination"
+          }
+          install -d -m 700 "$root/sealed/activate" "$root/sealed/active-deployment"
+          seal_one "$root/activate" automatic-maintenance-worker-fence-terminal.json \
+            "$root/sealed/activate/automatic-maintenance-worker-fence-terminal.json"
+          seal_one "$root/active-deployment" deployment-receipt.json \
+            "$root/sealed/active-deployment/deployment-receipt.json"
+          ./node_modules/.bin/tsx \
+            scripts/verify-permanent-staging-worker-bootstrap-prerequisites.ts \
+            --operation scale-evidence \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --activate-run-id "$ACTIVATION_RUN_ID" \
+            --activate-terminal-file "$root/sealed/activate/automatic-maintenance-worker-fence-terminal.json" \
+            --active-deployment-run-id "$ACTIVE_DEPLOYMENT_RUN_ID" \
+            --active-deployment-receipt-file "$root/sealed/active-deployment/deployment-receipt.json" \
+            --output "$RUNNER_TEMP/pintpath-scale-evidence/prerequisites-verification.json"
+
+      - name: Remove downloaded staging scale prerequisite custody
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          custody="$RUNNER_TEMP/pintpath-scale-prerequisites"
+          if [[ -d "$custody" && ! -L "$custody" ]]; then
+            find "$custody" -depth -mindepth 1 -delete
+            rmdir "$custody"
+          fi
 
       - name: Reassert exact current main immediately before scale-out
         env:

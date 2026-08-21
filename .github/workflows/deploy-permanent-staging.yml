@@ -1,10 +1,34 @@
 name: Deploy Pint Path permanent staging
+run-name: Deploy permanent staging | ${{ inputs.phase }} | ${{ inputs.candidate_sha }}
 
 on:
   workflow_dispatch:
     inputs:
       candidate_sha:
         description: Exact 40-character SHA currently at main
+        required: true
+        type: string
+      phase:
+        description: Upload the candidate while fenced at zero, or close out the active candidate at one
+        required: true
+        type: choice
+        options:
+          - fenced
+          - active
+      prepare_run_id:
+        description: Fenced only; successful same-candidate permanent-staging prepare run
+        required: false
+        type: string
+      quiesce_run_id:
+        description: Fenced only; successful same-candidate zero-replica quiescence run
+        required: false
+        type: string
+      activation_run_id:
+        description: Active only; successful same-candidate permanent-staging activation run
+        required: false
+        type: string
+      confirmation:
+        description: Exact phase and candidate confirmation from the runbook
         required: true
         type: string
 
@@ -41,7 +65,13 @@ jobs:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           DISPATCH_SHA: ${{ github.sha }}
           DISPATCH_REF: ${{ github.ref }}
+          PHASE: ${{ inputs.phase }}
+          PREPARE_RUN_ID: ${{ inputs.prepare_run_id }}
+          QUIESCE_RUN_ID: ${{ inputs.quiesce_run_id }}
+          ACTIVATION_RUN_ID: ${{ inputs.activation_run_id }}
+          CONFIRMATION: ${{ inputs.confirmation }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_ID: ${{ github.run_id }}
         shell: bash
         run: |
           set -euo pipefail
@@ -49,6 +79,27 @@ jobs:
           test "$DISPATCH_REF" = "refs/heads/main"
           test "$RUN_ATTEMPT" = "1"
           test "$DISPATCH_SHA" = "$CANDIDATE_SHA"
+          case "$PHASE" in
+            fenced)
+              [[ "$PREPARE_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+              [[ "$QUIESCE_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+              test "$PREPARE_RUN_ID" != "$QUIESCE_RUN_ID"
+              test "$PREPARE_RUN_ID" != "$RUN_ID"
+              test "$QUIESCE_RUN_ID" != "$RUN_ID"
+              test -z "$ACTIVATION_RUN_ID"
+              test "$CONFIRMATION" = \
+                "DEPLOY_PERMANENT_STAGING_FENCED_AT_ZERO_FOR_${CANDIDATE_SHA}"
+              ;;
+            active)
+              test -z "$PREPARE_RUN_ID"
+              test -z "$QUIESCE_RUN_ID"
+              [[ "$ACTIVATION_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+              test "$ACTIVATION_RUN_ID" != "$RUN_ID"
+              test "$CONFIRMATION" = \
+                "DEPLOY_PERMANENT_STAGING_ACTIVE_AT_ONE_FOR_${CANDIDATE_SHA}"
+              ;;
+            *) exit 1 ;;
+          esac
           git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
           test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
           test "$(git rev-parse refs/remotes/origin/main)" = "$CANDIDATE_SHA"
@@ -61,12 +112,19 @@ jobs:
           cache: npm
 
       - name: Require the policy-pinned permanent-staging public origin
+        env:
+          PHASE: ${{ inputs.phase }}
         shell: bash
         run: |
           set -euo pipefail
           test "$PUBLIC_BASE_URL" = 'https://beer-staging.up.railway.app'
+          if test "$PHASE" = fenced; then
+            policy=./ops/railway/permanent-staging-fenced-app-deployment-policy.json
+          else
+            policy=./ops/railway/permanent-staging-app-deployment-policy.json
+          fi
           policy_origin="$(node --eval \
-            'process.stdout.write(require("./ops/railway/permanent-staging-app-deployment-policy.json").target.publicOrigin)')"
+            'process.stdout.write(require(process.argv[1]).target.publicOrigin)' "$policy")"
           test "$policy_origin" = "$PUBLIC_BASE_URL"
 
       - name: Install immutable dependencies
@@ -77,7 +135,15 @@ jobs:
 
       - name: Create the private deployment evidence directory
         shell: bash
-        run: mkdir -m 700 "$RUNNER_TEMP/pintpath-staging-deployment-evidence"
+        run: |
+          set -euo pipefail
+          install -d -m 700 \
+            "$RUNNER_TEMP/pintpath-staging-deployment-evidence" \
+            "$RUNNER_TEMP/pintpath-staging-deployment-prerequisites" \
+            "$RUNNER_TEMP/pintpath-staging-deployment-prerequisites/prepare" \
+            "$RUNNER_TEMP/pintpath-staging-deployment-prerequisites/quiesce" \
+            "$RUNNER_TEMP/pintpath-staging-deployment-prerequisites/activate" \
+            "$RUNNER_TEMP/pintpath-staging-deployment-prerequisites/sealed"
 
       - name: Require current main checks and artifacts
         env:
@@ -91,6 +157,119 @@ jobs:
             --candidate-sha "$CANDIDATE_SHA" \
             --phase staging \
             --output "$RUNNER_TEMP/github-candidate-evidence/required-checks.json"
+
+      - name: Retrieve the exact staging worker prepare artifact
+        if: inputs.phase == 'fenced'
+        uses: actions/download-artifact@b7c52a5f7a25fce4c22e476a93420dd79a061a70 # v8.0.1
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.prepare_run_id }}
+          name: pintpath-automatic-maintenance-worker-fence-permanent-staging-prepare-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}/pintpath-staging-deployment-prerequisites/prepare
+
+      - name: Retrieve the exact staging quiescence artifact
+        if: inputs.phase == 'fenced'
+        uses: actions/download-artifact@b7c52a5f7a25fce4c22e476a93420dd79a061a70 # v8.0.1
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.quiesce_run_id }}
+          name: pintpath-permanent-staging-worker-bootstrap-quiesce-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}/pintpath-staging-deployment-prerequisites/quiesce
+
+      - name: Retrieve the exact staging worker activation artifact
+        if: inputs.phase == 'active'
+        uses: actions/download-artifact@b7c52a5f7a25fce4c22e476a93420dd79a061a70 # v8.0.1
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.activation_run_id }}
+          name: pintpath-automatic-maintenance-worker-fence-permanent-staging-activate-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}/pintpath-staging-deployment-prerequisites/activate
+
+      - name: Seal unique staging deployment prerequisite receipts
+        env:
+          PHASE: ${{ inputs.phase }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/pintpath-staging-deployment-prerequisites"
+          seal_one() {
+            local source_root="$1"
+            local leaf="$2"
+            local destination="$3"
+            mapfile -d '' matches < <(find "$source_root" -type f -name "$leaf" -print0)
+            test "${#matches[@]}" = 1
+            test ! -L "${matches[0]}"
+            test ! -e "$destination"
+            cp --no-dereference -- "${matches[0]}" "$destination"
+            chmod 600 "$destination"
+          }
+          if test "$PHASE" = fenced; then
+            install -d -m 700 "$root/sealed/prepare" "$root/sealed/quiesce"
+            seal_one "$root/prepare" automatic-maintenance-worker-fence-terminal.json \
+              "$root/sealed/prepare/automatic-maintenance-worker-fence-terminal.json"
+            seal_one "$root/quiesce" quiesce-staging-zero-receipt.json \
+              "$root/sealed/quiesce/quiesce-staging-zero-receipt.json"
+            seal_one "$root/quiesce" prerequisites-verification.json \
+              "$root/sealed/quiesce/prerequisites-verification.json"
+          else
+            install -d -m 700 "$root/sealed/activate"
+            seal_one "$root/activate" automatic-maintenance-worker-fence-terminal.json \
+              "$root/sealed/activate/automatic-maintenance-worker-fence-terminal.json"
+          fi
+
+      - name: Verify exact staging deployment prerequisite provenance and chronology
+        env:
+          ACTIVATION_RUN_ID: ${{ inputs.activation_run_id }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          GITHUB_API_URL: ${{ github.api_url }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PHASE: ${{ inputs.phase }}
+          PINTPATH_STAGING_WORKER_BOOTSTRAP_GITHUB_ENVIRONMENT: permanent-staging-deployment
+          PINTPATH_STAGING_WORKER_BOOTSTRAP_OPERATION: ${{ inputs.phase == 'fenced' && 'fenced-deploy' || 'active-deploy' }}
+          PREPARE_RUN_ID: ${{ inputs.prepare_run_id }}
+          QUIESCE_RUN_ID: ${{ inputs.quiesce_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/pintpath-staging-deployment-prerequisites/sealed"
+          output="$RUNNER_TEMP/pintpath-staging-deployment-evidence/prerequisites-verification.json"
+          if test "$PHASE" = fenced; then
+            args=(
+              --operation fenced-deploy
+              --candidate-sha "$CANDIDATE_SHA"
+              --prepare-run-id "$PREPARE_RUN_ID"
+              --prepare-terminal-file "$root/prepare/automatic-maintenance-worker-fence-terminal.json"
+              --quiesce-run-id "$QUIESCE_RUN_ID"
+              --quiesce-receipt-file "$root/quiesce/quiesce-staging-zero-receipt.json"
+              --quiesce-verification-file "$root/quiesce/prerequisites-verification.json"
+              --output "$output"
+            )
+          else
+            args=(
+              --operation active-deploy
+              --candidate-sha "$CANDIDATE_SHA"
+              --activate-run-id "$ACTIVATION_RUN_ID"
+              --activate-terminal-file "$root/activate/automatic-maintenance-worker-fence-terminal.json"
+              --output "$output"
+            )
+          fi
+          ./node_modules/.bin/tsx \
+            scripts/verify-permanent-staging-worker-bootstrap-prerequisites.ts \
+            "${args[@]}"
+
+      - name: Remove downloaded staging deployment prerequisite custody
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          custody="$RUNNER_TEMP/pintpath-staging-deployment-prerequisites"
+          if [[ -d "$custody" && ! -L "$custody" ]]; then
+            find "$custody" -depth -mindepth 1 -delete
+            rmdir "$custody"
+          fi
 
       - name: Install the exact reviewed Railway CLI archive
         shell: bash
@@ -135,10 +314,17 @@ jobs:
           PINTPATH_RAILWAY_STAGING_METADATA_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_METADATA_TOKEN }}
           PINTPATH_RAILWAY_WRITE_TOKEN: ${{ secrets.PINTPATH_RAILWAY_STAGING_DEPLOY_TOKEN }}
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          PHASE: ${{ inputs.phase }}
         shell: bash
         run: |
           set -euo pipefail
-          npm run --silent railway:staging:app:deploy -- \
+          if test "$PHASE" = fenced; then
+            policy=ops/railway/permanent-staging-fenced-app-deployment-policy.json
+          else
+            policy=ops/railway/permanent-staging-app-deployment-policy.json
+          fi
+          ./node_modules/.bin/tsx scripts/execute-permanent-staging-app-deployment.ts \
+            --policy "$policy" \
             --candidate-sha "$CANDIDATE_SHA" \
             --evidence-dir "$RUNNER_TEMP/pintpath-staging-deployment-evidence"
 
@@ -153,8 +339,19 @@ jobs:
             > "$RUNNER_TEMP/pintpath-staging-deployment-evidence/tested-commit-sha.txt"
           chmod 600 "$RUNNER_TEMP/pintpath-staging-deployment-evidence/tested-commit-sha.txt"
 
-      - name: Upload immutable permanent-staging deployment evidence
-        if: always()
+      - name: Upload immutable fenced permanent-staging deployment evidence
+        if: always() && inputs.phase == 'fenced'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pintpath-permanent-staging-fenced-deployment-${{ inputs.candidate_sha }}
+          path: |
+            ${{ runner.temp }}/github-candidate-evidence/required-checks.json
+            ${{ runner.temp }}/pintpath-staging-deployment-evidence/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload immutable active permanent-staging deployment evidence
+        if: always() && inputs.phase == 'active'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: pintpath-permanent-staging-deployment-${{ inputs.candidate_sha }}
