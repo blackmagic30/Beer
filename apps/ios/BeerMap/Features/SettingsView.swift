@@ -7,6 +7,12 @@ struct SettingsView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
+                PintPathHero(
+                    eyebrow: "GOOD TO KNOW",
+                    title: "Help along the way",
+                    subtitle: "Support, responsible use, privacy and the details behind Pint Path.",
+                    systemImage: "lifepreserver.fill"
+                )
 #if DEBUG
                 VStack(alignment: .leading, spacing: 12) {
                     SectionHeader(
@@ -31,7 +37,7 @@ struct SettingsView: View {
                     )
                     TextField("Message", text: $supportMessage, axis: .vertical)
                         .lineLimit(4...8)
-                        .textFieldStyle(.roundedBorder)
+                        .textFieldStyle(PintPathTextFieldStyle())
                     PrimaryButton(title: "Send support note", systemImage: "paperplane.fill", isLoading: model.isLoading) {
                         Task { await sendSupport() }
                     }
@@ -78,7 +84,7 @@ struct SettingsView: View {
             .padding()
         }
         .beerMapScreen()
-        .navigationTitle("Help")
+        .navigationTitle("Help & legal")
     }
 
     private func row(_ title: String, _ value: String) -> some View {

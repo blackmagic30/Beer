@@ -451,6 +451,12 @@ describe("public price repository", () => {
       confidence: "venue_confirmed",
       priceVerifiedAt: MINUTE_3,
     }));
+    await expect(repository.getCurrentVenueManagerPriceRecordById("bar_beer:beer-visible"))
+      .resolves.toEqual(records[2]);
+    await expect(repository.getCurrentVenueManagerPriceRecordById("bar_beer:beer-quarantined"))
+      .resolves.toBeNull();
+    await expect(repository.getCurrentVenueManagerPriceRecordById("bar_happy_hour:happy-1"))
+      .resolves.toBeNull();
 
     const beforeHappy = await repository.listVenueManagerPriceRecords(
       20,
@@ -467,6 +473,8 @@ describe("public price repository", () => {
     insertPrice({ id: "community-new", verifiedAt: MINUTE_3 });
 
     await expect(repository.listVenueManagerPriceRecords(20, "venue-a")).resolves.toEqual([]);
+    await expect(repository.getCurrentVenueManagerPriceRecordById("bar_beer:manager-old"))
+      .resolves.toBeNull();
   });
 
   it("bounds dynamic venue filters and propagates adapter query failures", async () => {

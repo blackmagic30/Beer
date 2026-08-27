@@ -51,9 +51,11 @@ private enum ExploreBeerFilterAccess {
 
 struct DiscoverView: View {
     @EnvironmentObject private var model: BeerMapAppModel
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @StateObject private var locationProvider = ExploreLocationProvider()
     @State private var searchText = ""
     @State private var selectedMapVenue: Venue?
+    @State private var destinationVenue: Venue?
     @State private var selectedSuburb: String?
     @State private var selectedBeerKey: String?
     @State private var nearbyOnly = false
@@ -62,6 +64,9 @@ struct DiscoverView: View {
     @State private var isLocating = false
     @State private var showingFilters = false
     @State private var distanceByVenue: [VenueDistanceKey: CLLocationDistance] = [:]
+    @State private var lastTrackedSearchSignature: String?
+    @State private var pendingSearchTrackingTask: Task<Void, Never>?
+    @State private var activeSearchMeasurementTask: Task<Void, Never>?
 
     private struct VenueDistanceKey: Hashable {
         let id: String
@@ -114,24 +119,25 @@ struct DiscoverView: View {
     var body: some View {
         let results = makeVenueResults()
 
-        VStack(spacing: 0) {
-            controls(resultCount: results.filtered.count)
-                .padding(.horizontal)
-                .padding(.top, 8)
-                .padding(.bottom, 10)
-
-            Divider()
-
+        ZStack(alignment: .top) {
             if model.venues.isEmpty && model.isLoading {
-                ProgressView("Loading venues…")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                VStack(spacing: 12) {
+                    ProgressView()
+                        .controlSize(.large)
+                        .tint(BeerMapTheme.amber)
+                    Text("Drawing the pub map…")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.top, 190)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if results.filtered.isEmpty {
                 VStack(spacing: 16) {
                     EmptyStateView(
                         title: model.venues.isEmpty ? "Venues are unavailable" : "No venues match",
                         message: model.venues.isEmpty
-                            ? "Check your connection, then try loading the venue map again."
-                            : "Try a different search or clear the active filters.",
+                            ? "Check your connection, then draw the pub map again."
+                            : "Try another pub, suburb or beer—or clear the route.",
                         systemImage: model.venues.isEmpty ? "wifi.exclamationmark" : "line.3.horizontal.decrease.circle"
                     )
                     .frame(maxWidth: 440)
@@ -149,22 +155,23 @@ struct DiscoverView: View {
                     }
                     .frame(maxWidth: 320)
                 }
-                .padding()
+                .padding(.horizontal)
+                .padding(.top, 170)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 venueMap(filteredVenues: results.filtered, mappedVenues: results.mapped)
             }
+
+            controls(resultCount: results.filtered.count)
+                .padding(.horizontal, 12)
+                .padding(.top, 10)
         }
         .beerMapScreen()
         .navigationBarTitleDisplayMode(.inline)
-        .searchable(
-            text: $searchText,
-            placement: .navigationBarDrawer(displayMode: .always),
-            prompt: "Venue, suburb, or postcode"
-        )
-        .textInputAutocapitalization(.words)
-        .autocorrectionDisabled()
         .toolbar {
+            ToolbarItem(placement: .principal) {
+                PintPathBrandLockup(compact: true)
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     Task { await model.loadHome() }
@@ -175,7 +182,7 @@ struct DiscoverView: View {
                 .accessibilityLabel("Refresh venues")
             }
         }
-        .sheet(isPresented: $showingFilters) {
+        .sheet(isPresented: $showingFilters, onDismiss: trackCommittedSearch) {
             ExploreFilterSheet(
                 suburbs: results.suburbs,
                 beers: beerOptions,
@@ -211,22 +218,82 @@ struct DiscoverView: View {
         .navigationDestination(for: Venue.self) { venue in
             VenueDetailView(venue: venue)
         }
-        .navigationDestination(item: $selectedMapVenue) { venue in
+        .navigationDestination(item: $destinationVenue) { venue in
             VenueDetailView(venue: venue)
+        }
+        .onDisappear {
+            pendingSearchTrackingTask?.cancel()
+            activeSearchMeasurementTask?.cancel()
         }
     }
 
     private func controls(resultCount: Int) -> some View {
-        VStack(spacing: 10) {
-            HStack {
-                Label("\(resultCount) venues", systemImage: "mappin.and.ellipse")
-                    .font(.subheadline.monospacedDigit().weight(.semibold))
-                    .foregroundStyle(.secondary)
-                Spacer()
+        VStack(spacing: 11) {
+            HStack(spacing: 10) {
+                Image(systemName: "magnifyingglass")
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(BeerMapTheme.amber)
+                    .accessibilityHidden(true)
+                TextField("Pub, suburb or postcode", text: $searchText)
+                    .textInputAutocapitalization(.words)
+                    .autocorrectionDisabled()
+                    .submitLabel(.search)
+                    .font(.body.weight(.medium))
+                    .accessibilityLabel("Search pubs, suburbs or postcodes")
+                    .onSubmit(trackCommittedSearch)
+                if !searchText.isEmpty {
+                    Button {
+                        searchText = ""
+                        scheduleSearchTracking()
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                            .frame(width: 32, height: 32)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Clear search")
+                }
             }
+            .padding(.leading, 13)
+            .padding(.trailing, searchText.isEmpty ? 13 : 4)
+            .frame(minHeight: 48)
+            .background(BeerMapTheme.card.opacity(0.92), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(BeerMapTheme.hairline, lineWidth: 1)
+            )
 
-            ScrollView(.horizontal, showsIndicators: false) {
+            if dynamicTypeSize.isAccessibilitySize {
+                HStack(spacing: 10) {
+                    Label("\(resultCount) pubs", systemImage: "mappin.and.ellipse")
+                        .font(.headline.monospacedDigit().weight(.bold))
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 4)
+                    compactExploreButton(
+                        systemImage: "line.3.horizontal.decrease",
+                        label: "Filters",
+                        selected: activeFilterCount > 0,
+                        badge: activeFilterCount
+                    ) {
+                        showingFilters = true
+                    }
+                    compactExploreButton(
+                        systemImage: isLocating ? "location.circle" : "location.fill",
+                        label: isLocating ? "Locating" : "Near me",
+                        selected: nearbyOnly
+                    ) {
+                        setNearbyEnabled(!nearbyOnly)
+                        scheduleSearchTracking()
+                    }
+                }
+            } else {
                 HStack(spacing: 8) {
+                    Label("\(resultCount) pubs", systemImage: "mappin.and.ellipse")
+                        .font(.subheadline.monospacedDigit().weight(.bold))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                    Spacer(minLength: 2)
                     FilterChip(
                         title: "Filters",
                         systemImage: "line.3.horizontal.decrease",
@@ -242,8 +309,14 @@ struct DiscoverView: View {
                         isSelected: nearbyOnly
                     ) {
                         setNearbyEnabled(!nearbyOnly)
+                        scheduleSearchTracking()
                     }
+                }
+            }
 
+            if selectedSuburb != nil || selectedBeerName != nil || activeFilterCount > 1 {
+                ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
                     if let selectedSuburb {
                         FilterChip(
                             title: selectedSuburb,
@@ -251,6 +324,7 @@ struct DiscoverView: View {
                             isSelected: true
                         ) {
                             self.selectedSuburb = nil
+                            scheduleSearchTracking()
                         }
                     }
 
@@ -261,15 +335,49 @@ struct DiscoverView: View {
                             isSelected: true
                         ) {
                             selectedBeerKey = nil
+                            scheduleSearchTracking()
                         }
                     }
 
                     if activeFilterCount > 0 || !searchText.isEmpty {
-                        FilterChip(title: "Clear", systemImage: "xmark", action: clearFilters)
+                        FilterChip(title: "Clear route", systemImage: "xmark", action: clearFilters)
                     }
                 }
             }
+            }
         }
+        .pintPathFloatingPanel(padding: 11)
+    }
+
+    private func compactExploreButton(
+        systemImage: String,
+        label: String,
+        selected: Bool,
+        badge: Int? = nil,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.headline.weight(.bold))
+                .foregroundStyle(selected ? BeerMapTheme.brandInk : BeerMapTheme.primaryAction)
+                .frame(width: 52, height: 52)
+                .background(selected ? BeerMapTheme.brandGold : BeerMapTheme.card, in: Circle())
+                .overlay(
+                    Circle().stroke(BeerMapTheme.separator.opacity(selected ? 0 : 0.35), lineWidth: 1)
+                )
+                .overlay(alignment: .topTrailing) {
+                    if let badge, badge > 0 {
+                        Text("\(badge)")
+                            .font(.caption2.weight(.black))
+                            .foregroundStyle(BeerMapTheme.paper)
+                            .frame(minWidth: 20, minHeight: 20)
+                            .background(BeerMapTheme.brandInk, in: Circle())
+                    }
+                }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
     private func makeVenueResults() -> VenueResults {
@@ -348,25 +456,72 @@ struct DiscoverView: View {
             ClusteredVenueMap(venues: mappedVenues, selectedVenue: $selectedMapVenue)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .overlay(alignment: .bottom) {
-                    if mappedVenues.count < filteredVenues.count {
+                    VStack(spacing: 10) {
+                        if let selectedMapVenue {
+                            venuePeek(selectedMapVenue)
+                                .transition(.move(edge: .bottom).combined(with: .opacity))
+                        }
+                        if mappedVenues.count < filteredVenues.count {
                         Label(
-                            "\(filteredVenues.count - mappedVenues.count) venues need map coordinates",
+                            "\(filteredVenues.count - mappedVenues.count) pubs are listed without a pin",
                             systemImage: "mappin.slash"
                         )
                         .font(.caption.weight(.semibold))
                         .padding(.horizontal, 14)
                         .frame(minHeight: 44)
-                        .background(BeerMapTheme.card, in: Capsule())
-                        .padding(.bottom, 12)
+                            .background(.regularMaterial, in: Capsule())
+                        }
                     }
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 12)
+                    .animation(.snappy, value: selectedMapVenue?.id)
                 }
                 .accessibilityLabel("Venue map with \(mappedVenues.count) mapped venues")
         }
     }
 
+    private func venuePeek(_ venue: Venue) -> some View {
+        HStack(spacing: 13) {
+            PintPathMark(size: 42)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(venue.name)
+                    .font(.system(.headline, design: .serif, weight: .bold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(2)
+                Text(venue.displayLocation.isEmpty ? "Melbourne pub" : venue.displayLocation)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 8)
+            Button {
+                selectedMapVenue = nil
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.caption.weight(.bold))
+                    .frame(width: 38, height: 38)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .accessibilityLabel("Close venue preview")
+            Button {
+                destinationVenue = venue
+            } label: {
+                Image(systemName: "arrow.right")
+                    .font(.subheadline.weight(.black))
+                    .foregroundStyle(BeerMapTheme.brandInk)
+                    .frame(width: 42, height: 42)
+                    .background(BeerMapTheme.brandGold, in: Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("View \(venue.name)")
+        }
+        .pintPathFloatingPanel(padding: 12)
+    }
+
     private func clearFilters() {
         searchText = ""
         clearFilterValues()
+        scheduleSearchTracking()
     }
 
     private func clearFilterValues() {
@@ -393,6 +548,9 @@ struct DiscoverView: View {
             let location = try await locationProvider.request()
             rebuildDistanceCache(for: model.venues, from: location)
             userLocation = location
+            if !showingFilters {
+                scheduleSearchTracking()
+            }
         } catch {
             nearbyOnly = false
             model.errorMessage = error.localizedDescription
@@ -419,6 +577,66 @@ struct DiscoverView: View {
     private func cachedDistance(to venue: Venue) -> CLLocationDistance? {
         guard let key = VenueDistanceKey(venue: venue) else { return nil }
         return distanceByVenue[key]
+    }
+
+    private func scheduleSearchTracking() {
+        pendingSearchTrackingTask?.cancel()
+        pendingSearchTrackingTask = Task { @MainActor in
+            do {
+                try await Task.sleep(nanoseconds: 350_000_000)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            trackCommittedSearch()
+        }
+    }
+
+    private func trackCommittedSearch() {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasSearchIntent = !query.isEmpty
+            || selectedSuburb != nil
+            || selectedBeerKey != nil
+            || nearbyOnly
+        guard hasSearchIntent else {
+            activeSearchMeasurementTask?.cancel()
+            return
+        }
+        guard !nearbyOnly || userLocation != nil else {
+            activeSearchMeasurementTask?.cancel()
+            return
+        }
+
+        let normalizedQuery = query.folding(
+            options: [.caseInsensitive, .diacriticInsensitive],
+            locale: Locale(identifier: "en_AU")
+        ).lowercased()
+        let signature = [
+            normalizedQuery,
+            selectedSuburb?.lowercased() ?? "",
+            selectedBeerKey.map(ExploreBeerFilterAccess.canonicalKey) ?? "",
+            nearbyOnly ? "nearby" : "all_distances",
+            nearbyOnly ? String(format: "%.1f", nearbyRadiusKm) : "",
+        ].joined(separator: "|")
+        guard signature != lastTrackedSearchSignature else { return }
+        lastTrackedSearchSignature = signature
+
+        let results = makeVenueResults()
+        activeSearchMeasurementTask?.cancel()
+        activeSearchMeasurementTask = Task { @MainActor in
+            let measured = await model.trackExploreSearch(
+                query: query,
+                visibleVenues: results.filtered,
+                selectedBeerKey: selectedBeerKey,
+                selectedSuburb: selectedSuburb,
+                nearbyOnly: nearbyOnly,
+                radiusKm: nearbyRadiusKm
+            )
+            guard !Task.isCancelled else { return }
+            if !measured, lastTrackedSearchSignature == signature {
+                lastTrackedSearchSignature = nil
+            }
+        }
     }
 
 }
@@ -579,7 +797,7 @@ private struct ExploreFilterSheet: View {
                     }
                 }
 
-                Section("Beer type") {
+                Section("Beer") {
                     Button {
                         selectedBeerKey = nil
                     } label: {
@@ -638,7 +856,9 @@ private struct ExploreFilterSheet: View {
                     }
                 }
             }
-            .searchable(text: $filterSearch, prompt: "Search areas or beers")
+            .scrollContentBackground(.hidden)
+            .background(PintPathBackdrop())
+            .searchable(text: $filterSearch, prompt: "Search suburbs or beers")
             .navigationTitle("Filters")
             .navigationBarTitleDisplayMode(.inline)
             .safeAreaInset(edge: .bottom) {
@@ -670,6 +890,7 @@ private struct ExploreFilterSheet: View {
             }
         }
         .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
     }
 
     private func resetFilters() {
@@ -860,7 +1081,8 @@ private struct ClusteredVenueMap: UIViewRepresentable {
                 ) as! MKMarkerAnnotationView
                 view.annotation = cluster
                 view.clusteringIdentifier = nil
-                view.markerTintColor = .systemIndigo
+                view.markerTintColor = BeerMapTheme.markerInkUIColor
+                view.glyphTintColor = BeerMapTheme.markerUIColor
                 view.glyphText = "\(cluster.memberAnnotations.count)"
                 view.displayPriority = .required
                 view.canShowCallout = false
@@ -877,7 +1099,8 @@ private struct ClusteredVenueMap: UIViewRepresentable {
             ) as! MKMarkerAnnotationView
             view.annotation = venueAnnotation
             view.clusteringIdentifier = Self.clusterIdentifier
-            view.markerTintColor = .systemIndigo
+            view.markerTintColor = BeerMapTheme.markerUIColor
+            view.glyphTintColor = BeerMapTheme.markerInkUIColor
             view.glyphImage = UIImage(named: BeerMapAsset.beerPint)?.withRenderingMode(.alwaysTemplate)
                 ?? UIImage(systemName: "wineglass.fill")
             view.displayPriority = .defaultHigh
@@ -955,6 +1178,8 @@ private final class VenueMapAnnotation: NSObject, MKAnnotation {
 struct VenueDetailView: View {
     @EnvironmentObject private var model: BeerMapAppModel
     @State private var pendingWrongPriceReport: PriceRecord?
+    @State private var priceConfirmationResults: [String: PriceConfirmationResult] = [:]
+    @State private var confirmingPriceKeys = Set<String>()
     let venue: Venue
 
     private var priceResponse: PriceRecordsResponse? {
@@ -963,89 +1188,114 @@ struct VenueDetailView: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 16) {
-                VStack(alignment: .leading, spacing: 12) {
-                    SectionHeader(
-                        eyebrow: "Venue",
-                        title: venue.name,
-                        subtitle: venue.address ?? venue.displayLocation,
-                        systemImage: "building.2.fill"
-                    )
+            VStack(spacing: 18) {
+                PintPathHero(
+                    eyebrow: "VENUE STOP",
+                    title: venue.name,
+                    subtitle: venue.address ?? venue.displayLocation,
+                    systemImage: "mappin.and.ellipse"
+                )
 
-                    PrimaryButton(title: "Add or update a price", systemImage: "plus.circle.fill", isLoading: false) {
-                        model.startPriceContribution(for: venue)
+                HStack(spacing: 8) {
+                    Button {
+                        Task { await model.saveVenue(venue) }
+                    } label: {
+                        VenueQuickActionLabel(title: "Save", systemImage: "bookmark.fill")
                     }
+                    .buttonStyle(.plain)
 
-                    ViewThatFits(in: .horizontal) {
-                        HStack(spacing: 10) {
-                            saveVenueButton
-                            showPricesButton
-                        }
-                        VStack(spacing: 10) {
-                            saveVenueButton
-                            showPricesButton
-                        }
+                    Button {
+                        Task { await model.loadPrices(for: venue) }
+                    } label: {
+                        VenueQuickActionLabel(title: "Prices", systemImage: "dollarsign.circle.fill")
                     }
+                    .buttonStyle(.plain)
+
                     if let directionsURL {
                         Link(destination: directionsURL) {
-                            Label("Open directions", systemImage: "map.fill")
-                                .font(.headline.weight(.bold))
-                                .frame(maxWidth: .infinity, minHeight: 50)
+                            VenueQuickActionLabel(title: "Directions", systemImage: "arrow.triangle.turn.up.right.diamond.fill")
                         }
-                        .buttonStyle(.bordered)
                         .accessibilityHint("Opens this venue in Apple Maps")
                     }
                 }
-                .beerMapCard()
+                .beerMapCard(padding: 10)
 
-                if let response = priceResponse {
-                    if (response.preview?.lockedCount ?? 0) > 0 {
-                        StatusBanner(message: "Some prices are outside this iOS preview. Approved contributors can unlock the full beer list.", isError: false)
-                    }
-                    if response.records.isEmpty {
-                        EmptyStateView(title: "No price rows yet", message: "This venue needs a trusted update.", systemImage: "tray", isFramed: false)
-                    } else {
-                        VStack(spacing: 10) {
-                            ForEach(response.records) { record in
-                                HStack(alignment: .top) {
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text(record.beerName ?? "Beer")
-                                            .font(.headline)
-                                        Text(record.servingSize ?? "Serving size not listed")
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    Spacer()
-                                    Text(record.formattedPrice)
-                                        .font(.headline.weight(.bold))
-                                        .foregroundStyle(record.priceRedacted == true ? BeerMapTheme.plum : BeerMapTheme.leaf)
-                                    if record.priceRedacted != true {
-                                        Button {
-                                            pendingWrongPriceReport = record
-                                        } label: {
-                                            Image(systemName: "exclamationmark.bubble")
-                                                .frame(width: 44, height: 44)
-                                        }
-                                        .buttonStyle(.plain)
-                                        .foregroundStyle(.secondary)
-                                        .accessibilityLabel("Report \(record.beerName ?? "this price") as wrong")
-                                    }
-                                }
-                                .padding(12)
-                                .background(BeerMapTheme.softCard, in: RoundedRectangle(cornerRadius: 8))
+                VStack(alignment: .leading, spacing: 14) {
+                    SectionHeader(
+                        eyebrow: "PRICE BOARD",
+                        title: "What a drink costs here",
+                        subtitle: "Community prices are checked before they appear.",
+                        assetImage: BeerMapAsset.beerPint
+                    )
+
+                    if let response = priceResponse {
+                        if let lockedCount = response.preview?.lockedCount, lockedCount > 0 {
+                            HStack(spacing: 9) {
+                                Image(systemName: "lock.fill")
+                                    .foregroundStyle(BeerMapTheme.amber)
+                                Text("Contribute to unlock \(lockedCount) more price\(lockedCount == 1 ? "" : "s").")
+                                    .font(.caption.weight(.semibold))
+                                Spacer(minLength: 0)
+                            }
+                            .padding(.vertical, 10)
+                            .overlay(alignment: .bottom) {
+                                Rectangle().fill(BeerMapTheme.hairline).frame(height: 1)
                             }
                         }
-                        .beerMapCard()
+                        if response.records.isEmpty {
+                            EmptyStateView(
+                                title: "No fresh prices yet",
+                                message: "This pub is ready for its first checked update.",
+                                systemImage: "tray",
+                                isFramed: false
+                            )
+                        } else {
+                            VStack(spacing: 0) {
+                                ForEach(Array(response.records.enumerated()), id: \.element.id) { index, record in
+                                    priceRow(record)
+                                    if index < response.records.count - 1 {
+                                        Rectangle()
+                                            .fill(BeerMapTheme.hairline)
+                                            .frame(height: 1)
+                                            .padding(.leading, 48)
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("See the latest available prices for this pub.")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                            PrimaryButton(
+                                title: "See current prices",
+                                systemImage: "eye.fill",
+                                isLoading: model.isLoading
+                            ) {
+                                Task { await model.loadPrices(for: venue) }
+                            }
+                        }
                     }
-                } else {
-                    EmptyStateView(title: "Prices are server-gated", message: "Tap Show prices to load the free iOS preview or an earned contributor unlock.", systemImage: "lock.shield")
                 }
+                .beerMapCard()
             }
             .padding()
         }
         .beerMapScreen()
         .navigationTitle(venue.name)
         .navigationBarTitleDisplayMode(.inline)
+        .safeAreaInset(edge: .bottom) {
+            PrimaryButton(
+                title: "Add a fresh price",
+                systemImage: "plus",
+                isLoading: false
+            ) {
+                model.startPriceContribution(for: venue)
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 9)
+            .background(.ultraThinMaterial)
+        }
         .confirmationDialog(
             "Report this displayed price?",
             isPresented: Binding(
@@ -1075,6 +1325,155 @@ struct VenueDetailView: View {
         }
     }
 
+    private func priceRow(_ record: PriceRecord) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle()
+                        .fill(BeerMapTheme.honey.opacity(0.72))
+                    if let asset = servingAsset(record.servingSize) {
+                        Image(asset)
+                            .renderingMode(.template)
+                            .resizable()
+                            .scaledToFit()
+                            .padding(9)
+                            .foregroundStyle(BeerMapTheme.amber)
+                    } else {
+                        Image(systemName: fallbackServingSystemImage(record.servingSize))
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(BeerMapTheme.amber)
+                    }
+                }
+                .frame(width: 40, height: 40)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(record.beerName ?? "Beer")
+                        .font(.headline.weight(.semibold))
+                        .lineLimit(2)
+                    Text((record.servingSize ?? "Serving").capitalized)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 8)
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(record.formattedPrice)
+                        .font(.system(.title3, design: .rounded, weight: .bold))
+                        .monospacedDigit()
+                    if record.priceRedacted == true {
+                        Text("Preview")
+                            .font(.system(size: 9, weight: .bold))
+                            .tracking(0.6)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                if record.priceRedacted != true {
+                    Button {
+                        pendingWrongPriceReport = record
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .frame(width: 40, height: 40)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("Report \(record.beerName ?? "this price") as wrong")
+                }
+            }
+
+            if model.isSignedIn && record.isActionablePriceConfirmationCandidate {
+                priceConfirmationControl(record)
+                    .padding(.leading, 52)
+            }
+        }
+        .padding(.vertical, 10)
+    }
+
+    @ViewBuilder
+    private func priceConfirmationControl(_ record: PriceRecord) -> some View {
+        let key = record.confirmationDisplayKey
+        if let result = priceConfirmationResults[key] {
+            Text(priceConfirmationCopy(result))
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .accessibilityLabel(priceConfirmationCopy(result))
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Was this price still correct?")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 6) {
+                        priceConfirmationButtons(record, key: key)
+                    }
+                    VStack(alignment: .leading, spacing: 6) {
+                        priceConfirmationButtons(record, key: key)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func priceConfirmationButtons(_ record: PriceRecord, key: String) -> some View {
+        ForEach(PriceConfirmationOutcome.allCases, id: \.self) { outcome in
+            Button(outcome.buttonTitle) {
+                submitPriceConfirmation(record, outcome: outcome)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .frame(minHeight: 44)
+            .fixedSize(horizontal: true, vertical: false)
+            .disabled(confirmingPriceKeys.contains(key))
+            .accessibilityHint(
+                outcome == .no
+                    ? "Sends this exact price for review"
+                    : "Records your answer without changing public trust automatically"
+            )
+        }
+    }
+
+    private func submitPriceConfirmation(_ record: PriceRecord, outcome: PriceConfirmationOutcome) {
+        let key = record.confirmationDisplayKey
+        guard confirmingPriceKeys.insert(key).inserted else { return }
+        Task {
+            let result = await model.answerPriceConfirmation(record, outcome: outcome)
+            confirmingPriceKeys.remove(key)
+            if let result {
+                priceConfirmationResults[key] = result
+            }
+        }
+    }
+
+    private func priceConfirmationCopy(_ result: PriceConfirmationResult) -> String {
+        switch result.outcome {
+        case .yes:
+            return "Thanks — saved as signal-only evidence."
+        case .no:
+            return "Thanks — sent for price review."
+        case .didntOrder:
+            return result.analyticsRecorded
+                ? "Got it — optional product signal saved."
+                : "Got it — no optional analytics recorded."
+        }
+    }
+
+    private func servingAsset(_ serving: String?) -> String? {
+        switch serving?.lowercased() {
+        case "pint": return BeerMapAsset.beerPint
+        case "pot": return BeerMapAsset.beerPot
+        case "schooner": return BeerMapAsset.beerSchooner
+        case "jug": return BeerMapAsset.beerJug
+        default: return nil
+        }
+    }
+
+    private func fallbackServingSystemImage(_ serving: String?) -> String {
+        switch serving?.lowercased() {
+        case "bottle": return "waterbottle.fill"
+        case "can": return "cylinder.fill"
+        default: return "wineglass.fill"
+        }
+    }
+
     private var directionsURL: URL? {
         guard let latitude = venue.latitude, let longitude = venue.longitude else { return nil }
         var components = URLComponents(string: "https://maps.apple.com/")
@@ -1085,15 +1484,22 @@ struct VenueDetailView: View {
         return components?.url
     }
 
-    private var saveVenueButton: some View {
-        SecondaryButton(title: "Save", systemImage: "bookmark.fill") {
-            Task { await model.saveVenue(venue) }
-        }
-    }
+}
 
-    private var showPricesButton: some View {
-        SecondaryButton(title: "Show prices", systemImage: "eye.fill") {
-            Task { await model.loadPrices(for: venue) }
+private struct VenueQuickActionLabel: View {
+    let title: String
+    let systemImage: String
+
+    var body: some View {
+        VStack(spacing: 6) {
+            Image(systemName: systemImage)
+                .font(.headline.weight(.bold))
+                .foregroundStyle(BeerMapTheme.amber)
+            Text(title)
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.primary)
         }
+        .frame(maxWidth: .infinity, minHeight: 58)
+        .contentShape(Rectangle())
     }
 }

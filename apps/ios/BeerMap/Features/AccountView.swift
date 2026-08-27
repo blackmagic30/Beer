@@ -121,49 +121,7 @@ struct AccountView: View {
 
     private func signedInView(_ dashboard: AccountDashboard) -> some View {
         VStack(spacing: 16) {
-            VStack(alignment: .leading, spacing: 12) {
-                SectionHeader(
-                    eyebrow: model.hasContributorAccess ? "Contributor access" : "Account",
-                    title: dashboard.account.displayName ?? dashboard.account.email,
-                    subtitle: "Manage access, contribution progress, privacy, and session controls.",
-                    systemImage: "person.crop.circle.fill"
-                )
-                HStack {
-                    Label(dashboard.account.emailVerifiedAt == nil ? "Email pending" : "Email verified", systemImage: "envelope.badge.shield.half.filled")
-                    Spacer()
-                    Label(dashboard.account.ageConfirmedAt == nil ? "18+ pending" : "18+ confirmed", systemImage: "checkmark.seal.fill")
-                }
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-            }
-            .beerMapCard()
-
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-                MetricPill(
-                    title: "Monthly points",
-                    value: numberString(dashboard.account.contributionPointsCurrentMonth),
-                    systemImage: "sparkles",
-                    tint: BeerMapTheme.amber
-                )
-                MetricPill(
-                    title: "Trust score",
-                    value: numberString(dashboard.stats?.trustScore ?? dashboard.account.trustScore),
-                    systemImage: "shield.lefthalf.filled",
-                    tint: BeerMapTheme.leaf
-                )
-                MetricPill(
-                    title: "Uploads",
-                    value: "\(dashboard.stats?.totalSubmissions ?? dashboard.submissions?.count ?? 0)",
-                    systemImage: "square.and.arrow.up.fill",
-                    tint: BeerMapTheme.sky
-                )
-                MetricPill(
-                    title: "Saved",
-                    value: "\(dashboard.savedItems?.count ?? 0)",
-                    systemImage: "bookmark.fill",
-                    tint: BeerMapTheme.plum
-                )
-            }
+            accountPassport(dashboard)
 
             privacyCard(dashboard.privacySettings)
 
@@ -174,19 +132,34 @@ struct AccountView: View {
             if let submissions = dashboard.submissions, !submissions.isEmpty {
                 VStack(alignment: .leading, spacing: 10) {
                     SectionHeader(eyebrow: "Recent", title: "Your submissions", subtitle: nil)
-                    ForEach(submissions.prefix(5)) { item in
-                        HStack {
+                    ForEach(Array(submissions.prefix(5).enumerated()), id: \.element.id) { index, item in
+                        HStack(spacing: 12) {
+                            Circle()
+                                .fill(submissionTint(item.status))
+                                .frame(width: 9, height: 9)
+                                .accessibilityHidden(true)
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(item.venueName ?? "Venue update")
-                                    .font(.subheadline.weight(.bold))
-                                Text([item.status, item.submissionType].compactMap { $0 }.joined(separator: " · "))
+                                    .font(.subheadline.weight(.semibold))
+                                Text([humanized(item.status), humanized(item.submissionType)].compactMap { $0 }.joined(separator: " · "))
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
                             Spacer()
+                            if let status = humanized(item.status) {
+                                Text(status.uppercased())
+                                    .font(.system(size: 8, weight: .black))
+                                    .tracking(0.6)
+                                    .foregroundStyle(submissionTint(item.status))
+                            }
                         }
-                        .padding(10)
-                        .background(BeerMapTheme.softCard, in: RoundedRectangle(cornerRadius: 8))
+                        .padding(.vertical, 9)
+                        if index < min(submissions.count, 5) - 1 {
+                            Rectangle()
+                                .fill(BeerMapTheme.hairline)
+                                .frame(height: 1)
+                                .padding(.leading, 21)
+                        }
                     }
                 }
                 .beerMapCard()
@@ -229,11 +202,141 @@ struct AccountView: View {
                     }
                 }
 
-                PrimaryButton(title: "Log out", systemImage: "rectangle.portrait.and.arrow.right", isLoading: model.isLoading) {
+                SecondaryButton(title: "Log out", systemImage: "rectangle.portrait.and.arrow.right", isDestructive: true) {
                     showLogoutConfirmation = true
                 }
             }
             .beerMapCard()
+        }
+    }
+
+    private func accountPassport(_ dashboard: AccountDashboard) -> some View {
+        let points = dashboard.account.contributionPointsCurrentMonth ?? 0
+        let target = Double(max(model.config?.contributorUnlockPoints ?? 10, 1))
+        let progress = min(max(points / target, 0), 1)
+
+        return ZStack(alignment: .topTrailing) {
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .fill(BeerMapTheme.brandInk)
+            PintPathRouteShape()
+                .stroke(
+                    BeerMapTheme.brandGold.opacity(0.32),
+                    style: StrokeStyle(lineWidth: 2, lineCap: .round, dash: [2, 8])
+                )
+                .frame(width: 250, height: 150)
+                .offset(x: 60, y: -28)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 15) {
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(model.hasContributorAccess ? "CONTRIBUTOR PASS" : "PINT PATH PASS")
+                            .font(.system(size: 10, weight: .black))
+                            .tracking(1.35)
+                            .foregroundStyle(BeerMapTheme.brandGold)
+                        Text(dashboard.account.displayName ?? dashboard.account.email)
+                            .font(.system(.title2, design: .serif, weight: .bold))
+                            .foregroundStyle(BeerMapTheme.paper)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if dashboard.account.displayName != nil {
+                            Text(dashboard.account.email)
+                                .font(.caption)
+                                .foregroundStyle(BeerMapTheme.paper.opacity(0.62))
+                        }
+                    }
+                    Spacer(minLength: 10)
+                    PintPathMark(size: 42)
+                }
+
+                HStack(spacing: 8) {
+                    passportBadge(
+                        dashboard.account.emailVerifiedAt == nil ? "Email pending" : "Email verified",
+                        systemImage: "envelope.fill"
+                    )
+                    passportBadge(
+                        dashboard.account.ageConfirmedAt == nil ? "18+ pending" : "18+ confirmed",
+                        systemImage: "checkmark.seal.fill"
+                    )
+                }
+
+                Rectangle()
+                    .fill(BeerMapTheme.paper.opacity(0.13))
+                    .frame(height: 1)
+
+                HStack(alignment: .lastTextBaseline, spacing: 7) {
+                    Text(numberString(points))
+                        .font(.system(size: 39, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(BeerMapTheme.paper)
+                    Text("POINTS THIS MONTH")
+                        .font(.system(size: 9, weight: .black))
+                        .tracking(0.9)
+                        .foregroundStyle(BeerMapTheme.paper.opacity(0.62))
+                    Spacer(minLength: 0)
+                }
+
+                ProgressView(value: progress)
+                    .tint(BeerMapTheme.brandGold)
+                    .background(BeerMapTheme.paper.opacity(0.16))
+                    .clipShape(Capsule())
+                    .accessibilityLabel("Contributor unlock progress")
+                    .accessibilityValue("\(Int(progress * 100)) percent")
+
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 76), spacing: 8)], spacing: 8) {
+                    passportStat(
+                        value: numberString(dashboard.stats?.trustScore ?? dashboard.account.trustScore),
+                        title: "Trust"
+                    )
+                    passportStat(
+                        value: "\(dashboard.stats?.totalSubmissions ?? dashboard.submissions?.count ?? 0)",
+                        title: "Uploads"
+                    )
+                    passportStat(value: "\(dashboard.savedItems?.count ?? 0)", title: "Saved")
+                }
+            }
+            .padding(20)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+        )
+        .shadow(color: Color.black.opacity(0.17), radius: 18, x: 0, y: 9)
+    }
+
+    private func passportBadge(_ title: String, systemImage: String) -> some View {
+        Label(title, systemImage: systemImage)
+            .font(.system(size: 9, weight: .bold))
+            .foregroundStyle(BeerMapTheme.paper.opacity(0.82))
+            .padding(.horizontal, 9)
+            .frame(minHeight: 28)
+            .background(BeerMapTheme.paper.opacity(0.09), in: Capsule())
+    }
+
+    private func passportStat(value: String, title: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(value)
+                .font(.headline.monospacedDigit().weight(.bold))
+                .foregroundStyle(BeerMapTheme.paper)
+            Text(title.uppercased())
+                .font(.system(size: 8, weight: .bold))
+                .tracking(0.65)
+                .foregroundStyle(BeerMapTheme.paper.opacity(0.56))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(9)
+        .background(BeerMapTheme.paper.opacity(0.07), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+    }
+
+    private func humanized(_ value: String?) -> String? {
+        value?.replacingOccurrences(of: "_", with: " ").capitalized
+    }
+
+    private func submissionTint(_ status: String?) -> Color {
+        switch status?.lowercased() {
+        case "approved", "verified": return BeerMapTheme.leaf
+        case "rejected", "failed": return BeerMapTheme.danger
+        default: return BeerMapTheme.amber
         }
     }
 

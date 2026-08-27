@@ -91,7 +91,7 @@ describe("iOS launch safety", () => {
     expect(reusableViews).not.toContain('Text("Pro")');
     expect(models).toContain('return "Preview only"');
     expect(account).toContain(
-      'model.hasContributorAccess ? "Contributor access" : "Account"',
+      'model.hasContributorAccess ? "CONTRIBUTOR PASS" : "PINT PATH PASS"',
     );
     expect(account).not.toContain("specialsCard");
     expect(account).not.toContain("subscriptionStatus ??");
@@ -229,7 +229,7 @@ describe("iOS launch safety", () => {
     expect(callback).toContain(
       "MelbBeerBusiness.markPasswordRecoverySession(result.account?.id)",
     );
-    expect(auth).toContain("Already use Google on the Pint Path website?");
+    expect(auth).toContain("Used Google on the web?");
     expect(auth).toContain("choose Forgot password");
   });
 

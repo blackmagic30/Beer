@@ -26,6 +26,7 @@ const WRONG_PRICE_REASONS = new Set([
   "other",
 ] as const);
 const MAX_PAGE_SIZE = 100;
+const VENUE_MANAGER_BEER_PRICE_PREFIX = "bar_beer:";
 
 export type FeedbackType =
   | "bug"
@@ -517,10 +518,22 @@ export class SupportFeedbackRepository {
     const reporterKey = normalized.userId
       ? `user:${normalized.userId}`
       : `anonymous:${normalized.anonymousSessionId}`;
+    const venueManagerPriceRequested = normalized.priceRecordId?.startsWith(
+      VENUE_MANAGER_BEER_PRICE_PREFIX,
+    ) ?? false;
+    const venueManagerBeerId = venueManagerPriceRequested
+      ? requireText(normalized.priceRecordId!.slice(VENUE_MANAGER_BEER_PRICE_PREFIX.length))
+      : null;
+    if (venueManagerBeerId && !normalized.beerName) return repositoryError("invalid_input");
+    const storedPriceRecordId = venueManagerBeerId ? null : normalized.priceRecordId;
 
     return this.database.transaction<WrongPriceReportWriteResult>(async () => {
       await this.advisoryLock(`wrong-price:id:${normalized.id}`);
-      if (normalized.priceRecordId) {
+      if (venueManagerBeerId) {
+        const subjectKey = `${normalized.venueId}:${normalized.beerName}:${normalized.reason}`;
+        await this.advisoryLock(`wrong-price:manager-subject:${subjectKey}`);
+        await this.advisoryLock(`wrong-price:manager-reporter:${subjectKey}:${reporterKey}`);
+      } else if (normalized.priceRecordId) {
         await this.advisoryLock(`wrong-price:record:${normalized.priceRecordId}`);
         await this.advisoryLock(`wrong-price:reporter:${normalized.priceRecordId}:${reporterKey}`);
       }
@@ -533,7 +546,7 @@ export class SupportFeedbackRepository {
           anonymousSessionId: normalized.anonymousSessionId,
           venueId: normalized.venueId,
           venueName: normalized.venueName,
-          priceRecordId: normalized.priceRecordId,
+          priceRecordId: storedPriceRecordId,
           beerName: normalized.beerName,
           reason: normalized.reason,
           notes: normalized.notes,
@@ -551,17 +564,57 @@ export class SupportFeedbackRepository {
       }
       if (!await this.accountExists(normalized.userId)) return repositoryError("account_not_found");
       if (normalized.priceRecordId) {
-        const priceExists = await this.database
-          .prepare("SELECT 1 AS \"present\" FROM venue_price_records WHERE id = ?")
-          .get(normalized.priceRecordId);
-        if (!priceExists) return repositoryError("price_record_not_found");
-        const existing = normalized.userId
-          ? await this.database.prepare(wrongPriceSelect(
-              "WHERE price_record_id = ? AND user_id = ? AND status IN ('open', 'in_progress') ORDER BY created_at DESC, id DESC LIMIT 1",
-            )).get<WrongPriceReportRow>(normalized.priceRecordId, normalized.userId)
-          : await this.database.prepare(wrongPriceSelect(
-              "WHERE price_record_id = ? AND user_id IS NULL AND anonymous_session_id = ? AND status IN ('open', 'in_progress') ORDER BY created_at DESC, id DESC LIMIT 1",
-            )).get<WrongPriceReportRow>(normalized.priceRecordId, normalized.anonymousSessionId);
+        if (venueManagerBeerId) {
+          const managerSource = await this.database.prepare(
+            `SELECT COALESCE(identity.canonical_venue_id, beer.venue_id) AS "venueId",
+                    beer.beer_name AS "beerName"
+               FROM venue_beers beer
+               LEFT JOIN venue_identity_aliases identity
+                 ON identity.alias_venue_id = beer.venue_id
+              WHERE beer.id = ?
+              LIMIT 1`,
+          ).get<{ venueId: unknown; beerName: unknown }>(venueManagerBeerId);
+          if (
+            !managerSource
+            || persistedText(managerSource.venueId, 180) !== normalized.venueId
+            || persistedText(managerSource.beerName, 2_000) !== normalized.beerName
+          ) return repositoryError("price_record_not_found");
+        } else {
+          const priceExists = await this.database
+            .prepare("SELECT 1 AS \"present\" FROM venue_price_records WHERE id = ?")
+            .get(normalized.priceRecordId);
+          if (!priceExists) return repositoryError("price_record_not_found");
+        }
+        const existing = venueManagerBeerId
+          ? normalized.userId
+            ? await this.database.prepare(wrongPriceSelect(
+                `WHERE price_record_id IS NULL AND venue_id = ? AND beer_name = ? AND reason = ?
+                   AND user_id = ? AND status IN ('open', 'in_progress')
+                 ORDER BY created_at DESC, id DESC LIMIT 1`,
+              )).get<WrongPriceReportRow>(
+                normalized.venueId,
+                normalized.beerName,
+                normalized.reason,
+                normalized.userId,
+              )
+            : await this.database.prepare(wrongPriceSelect(
+                `WHERE price_record_id IS NULL AND venue_id = ? AND beer_name = ? AND reason = ?
+                   AND user_id IS NULL AND anonymous_session_id = ?
+                   AND status IN ('open', 'in_progress')
+                 ORDER BY created_at DESC, id DESC LIMIT 1`,
+              )).get<WrongPriceReportRow>(
+                normalized.venueId,
+                normalized.beerName,
+                normalized.reason,
+                normalized.anonymousSessionId,
+              )
+          : normalized.userId
+            ? await this.database.prepare(wrongPriceSelect(
+                "WHERE price_record_id = ? AND user_id = ? AND status IN ('open', 'in_progress') ORDER BY created_at DESC, id DESC LIMIT 1",
+              )).get<WrongPriceReportRow>(normalized.priceRecordId, normalized.userId)
+            : await this.database.prepare(wrongPriceSelect(
+                "WHERE price_record_id = ? AND user_id IS NULL AND anonymous_session_id = ? AND status IN ('open', 'in_progress') ORDER BY created_at DESC, id DESC LIMIT 1",
+              )).get<WrongPriceReportRow>(normalized.priceRecordId, normalized.anonymousSessionId);
         if (existing) {
           return { report: toWrongPriceReport(existing), markedDisputed: false, duplicate: true };
         }
@@ -579,7 +632,7 @@ export class SupportFeedbackRepository {
           normalized.anonymousSessionId,
           normalized.venueId,
           normalized.venueName,
-          normalized.priceRecordId,
+          storedPriceRecordId,
           normalized.beerName,
           normalized.reason,
           normalized.notes,
@@ -593,18 +646,18 @@ export class SupportFeedbackRepository {
       }
 
       let markedDisputed = false;
-      if (normalized.priceRecordId) {
+      if (storedPriceRecordId) {
         const row = await this.database.prepare(
           `SELECT count(DISTINCT user_id) AS "count"
              FROM wrong_price_reports
             WHERE price_record_id = ? AND status = 'open' AND user_id IS NOT NULL`,
-        ).get<{ count: unknown }>(normalized.priceRecordId);
+        ).get<{ count: unknown }>(storedPriceRecordId);
         if (countValue(row?.count ?? 0) >= 2) {
           const updated = await this.database.prepare(
             `UPDATE venue_price_records
                 SET confidence = 'disputed', updated_at = ?
               WHERE id = ? AND confidence != 'venue_confirmed'`,
-          ).run(normalized.now, normalized.priceRecordId);
+          ).run(normalized.now, storedPriceRecordId);
           markedDisputed = updated.changes === 1;
         }
       }

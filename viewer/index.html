@@ -41,7 +41,7 @@
       }
     }
   </script>
-  <script src="./map-logic.js?v=20260815-current-verified-sort"></script>
+  <script src="./map-logic.js?v=20260827-retention-loop"></script>
   <script src="./config.js"></script>
   <script src="./business.js" defer></script>
   <link rel="stylesheet" href="./consent.css" />
@@ -509,6 +509,10 @@
       align-items: center;
       gap: 10px;
       flex-wrap: wrap;
+    }
+
+    .specialsFilterRow[hidden] {
+      display: none;
     }
 
     .popularBeerRow {
@@ -2855,6 +2859,42 @@
       text-underline-offset: 3px;
     }
 
+    .priceConfirmation {
+      display: grid;
+      gap: 6px;
+      justify-items: end;
+      max-width: 220px;
+      margin-top: 4px;
+      color: #cbd5e1;
+      font-size: 11px;
+      line-height: 1.35;
+      text-align: right;
+    }
+
+    .priceConfirmation__choices {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 5px;
+    }
+
+    .priceConfirmation__choice {
+      appearance: none;
+      border: 1px solid rgba(34, 211, 238, 0.28);
+      border-radius: 999px;
+      background: rgba(15, 23, 42, 0.82);
+      color: #cffafe;
+      padding: 5px 8px;
+      font: inherit;
+      font-weight: 850;
+      cursor: pointer;
+    }
+
+    .priceConfirmation__choice:disabled {
+      cursor: wait;
+      opacity: 0.6;
+    }
+
     .beerPopup__notice {
       color: #cbd5e1;
     }
@@ -3761,10 +3801,9 @@
       <div class="topbar__actions">
         <div id="topbarBusinessLinks" class="topbar__businessLinks" aria-label="Business navigation" data-mobile-nav-panel>
           <a href="/" aria-current="page">Map</a>
-          <a id="venueDashboardLink" href="/venue-portal.html" hidden>Dashboard</a>
+          <a id="venueDashboardLink" href="/venue-portal.html">For venues</a>
           <a href="/submit.html">Submit</a>
           <a href="/missions.html">Missions</a>
-          <a href="/pricing.html">Pricing</a>
           <a href="/trust.html" id="venueFaqLink">FAQ</a>
           <a href="/account.html">Account</a>
           <a href="/feedback.html" id="topbarFeedbackLink">Contact us</a>
@@ -3820,6 +3859,8 @@
       <div id="activeFilterSummary" class="activeFilterSummary" hidden>
         <span id="activeFilterCopy"><strong>Filters:</strong> All venues</span>
         <div class="activeFilterSummary__actions">
+          <button id="saveAreaButton" class="utilityButton" type="button" hidden>Save area</button>
+          <button id="saveBeerButton" class="utilityButton" type="button" hidden>Save beer</button>
           <button id="shareSearchButton" class="utilityButton" type="button" hidden>Share search</button>
           <button id="clearFilters" class="utilityButton" type="button" hidden>Clear all</button>
         </div>
@@ -3829,13 +3870,13 @@
         <div class="advancedFiltersPanel__header">
           <div>
             <h2 class="advancedFiltersPanel__title">Advanced filters</h2>
-            <p class="advancedFiltersPanel__copy">Premium and contributor access unlock deeper filters when you need a narrower answer.</p>
+            <p class="advancedFiltersPanel__copy">Contributor full-map access unlocks deeper filters when you need a narrower answer.</p>
           </div>
           <button id="advancedFiltersApply" class="utilityButton" type="button">Apply filters</button>
         </div>
 
         <p id="advancedFiltersNotice" class="advancedFiltersPanel__notice" hidden>
-          Unlock advanced filters with Premium or by submitting verified venue data.
+          Earn contributor access through approved venue-data submissions to unlock advanced filters.
         </p>
 
         <div class="advancedFiltersGrid">
@@ -4035,14 +4076,16 @@
     const BUSINESS_CONFIG = viewerConfig.business || {};
     const HAPPY_HOUR_DISCOVERY_ENABLED = BUSINESS_CONFIG.happyHourDiscoveryEnabled === true;
     const COMMERCIAL_LAUNCH_ENABLED = BUSINESS_CONFIG.commercialLaunchEnabled === true;
+    const PUBLIC_SPECIAL_DISCOVERY_ENABLED = HAPPY_HOUR_DISCOVERY_ENABLED && COMMERCIAL_LAUNCH_ENABLED;
     const specialsFilterRow = document.getElementById("specialsFilterRow");
-    if (specialsFilterRow) specialsFilterRow.hidden = !COMMERCIAL_LAUNCH_ENABLED;
+    if (specialsFilterRow) specialsFilterRow.hidden = !PUBLIC_SPECIAL_DISCOVERY_ENABLED;
     const RESTORE_REHEARSAL_MODE = BUSINESS_CONFIG.restoreRehearsalMode === true;
     const LOCATION_PREFERENCE_STORAGE_KEY = "pintPathLocationPreference";
     const LOCAL_SAVED_VENUES_STORAGE_KEY = "pintPathLocalSavedVenues";
     const RECENTLY_VIEWED_STORAGE_KEY = "pintPathRecentlyViewedVenues";
     const NIGHT_PLAN_STORAGE_KEY = "pintPathNightPlanVenues";
     const NIGHT_PLAN_ACCOUNT_ITEM_ID = "current-night-plan";
+    const MINIMUM_USEFUL_SEARCH_RESULTS = 3;
     const MAX_RECENT_VENUES = 6;
     const MAX_NIGHT_PLAN_STOPS = 8;
     const FREE_PREVIEW_BEER_CHIPS = Object.freeze([
@@ -4069,6 +4112,8 @@
     const beerChipHostEl = document.getElementById("beerChipHost");
     const onTapOnlyEl = document.getElementById("onTapOnly");
     const clearFiltersEl = document.getElementById("clearFilters");
+    const saveAreaButtonEl = document.getElementById("saveAreaButton");
+    const saveBeerButtonEl = document.getElementById("saveBeerButton");
     const shareSearchButtonEl = document.getElementById("shareSearchButton");
     const advancedFiltersToggleEl = document.getElementById("advancedFiltersToggle");
     const advancedFiltersPanelEl = document.getElementById("advancedFiltersPanel");
@@ -4118,6 +4163,9 @@
     let activeScope = "all";
     const activeFilterChips = new Set();
     let savedSuburbFilters = [];
+    let preferredSuburbFilters = [];
+    const savedSuburbItemsByKey = new Map();
+    const savedBeerItemsByKey = new Map();
     let savedVenueIds = new Set();
     let savedVenueRecords = [];
     let recentlyViewedVenues = [];
@@ -4305,9 +4353,11 @@
         link.hidden = !isAuthenticated || isVenueManager;
       });
       if (venueDashboardLinkEl) {
-        venueDashboardLinkEl.hidden = !canUseVenuePortal;
+        venueDashboardLinkEl.hidden = false;
         venueDashboardLinkEl.href = counterOnlyPortalPath || "/venue-portal.html";
-        venueDashboardLinkEl.textContent = counterOnlyPortalPath ? "Counter" : "Dashboard";
+        venueDashboardLinkEl.textContent = canUseVenuePortal
+          ? counterOnlyPortalPath ? "Counter" : "Dashboard"
+          : "For venues";
       }
       if (venueFaqLinkEl) {
         venueFaqLinkEl.href = venueAudience ? "/trust.html?audience=bars" : "/trust.html";
@@ -4365,6 +4415,10 @@
 
       if (!businessAccess.hasFullAccess) {
         return "Free preview";
+      }
+
+      if (!COMMERCIAL_LAUNCH_ENABLED) {
+        return "Contributor access";
       }
 
       switch (businessAccess.status) {
@@ -4485,6 +4539,31 @@
         .sort((left, right) => left.distanceKm - right.distanceKm)[0] || null;
     }
 
+    function getUsefulSearchResultCount(rows, viewState) {
+      return rows.filter((row) => window.MelbBeerMapLogic.isUsefulSearchVenueResult({
+        hasBeerQuery: Boolean(viewState.beerQuery),
+        allBeerItems: getBeerItems(row),
+        matchedBeerItems: getMatchingBeerItems(row, viewState.beerQuery, viewState.onTapOnly),
+      }, {
+        minimumPricesPerVenue: MINIMUM_USEFUL_SEARCH_RESULTS,
+      })).length;
+    }
+
+    function getExactSuburbSearchLabel(viewState, rows = getAnalyticsRowsForView(viewState)) {
+      const queryKey = toSearchKey(viewState.venueQuery);
+      if (!queryKey) {
+        return null;
+      }
+      for (const row of rows) {
+        const venue = getVenueRecord(row.venues) || {};
+        const suburb = String(venue.suburb || row.suburb || "").trim();
+        if (suburb && toSearchKey(suburb) === queryKey) {
+          return suburb;
+        }
+      }
+      return null;
+    }
+
     function inferSuburbContext(query, rows = getAnalyticsRowsForView()) {
       const nearest = getNearestAnalyticsVenue(rows);
       if (nearest) {
@@ -4528,6 +4607,7 @@
     function getAnalyticsContext(extra = {}) {
       const viewState = getViewState();
       const rows = getAnalyticsRowsForView(viewState);
+      const usefulResultCount = getUsefulSearchResultCount(rows, viewState);
       const nearest = getNearestAnalyticsVenue(rows);
       const nearestVenue = nearest ? getVenueRecord(nearest.row.venues) || {} : {};
       const timeContext = getMelbourneTimeContext();
@@ -4538,6 +4618,11 @@
         activeFilters: viewState.filters,
         activeFilterCount: viewState.filters.length,
         resultCount: rows.length,
+        usefulResultCount,
+        usefulResultThreshold: MINIMUM_USEFUL_SEARCH_RESULTS,
+        searchSuccessful: usefulResultCount >= MINIMUM_USEFUL_SEARCH_RESULTS,
+        usefulnessMeasurement: "client_visible_current_trusted_pint_v1",
+        formalReleaseEvidence: false,
         beerQuery: viewState.beerQuery || null,
         searchIntent: getSearchIntent(viewState),
         locationStatus: userLocationState.status,
@@ -4597,6 +4682,7 @@
         source,
         listedBeerCount: beerItems.length,
         knownPriceCount: beerItems.filter(hasNumericPrice).length,
+        actionableCurrentPintPriceCount: window.MelbBeerMapLogic.countActionableCurrentPintPrices(beerItems),
         onTapCount: beerItems.filter((beer) => beer.availableOnTap === true || beer.availabilityLabel === "On tap").length,
         hasHappyHour: Boolean(happyHourDetails?.exists || happyHourDetails),
         happyHourActiveNow: record?.row ? hasActiveHappyHourNow(record.row) : false,
@@ -4856,6 +4942,33 @@
 
     function canReportBeerPrice(beer, markerId) {
       return Boolean(beer && !isBeerPriceHiddenForViewer(beer, markerId));
+    }
+
+    function canConfirmBeerPrice(beer, markerId) {
+      return Boolean(
+        window.MelbBeerBusiness?.hasAuthenticatedSessionHint?.()
+        && beer?.priceRecordId
+        && !isBeerPriceHiddenForViewer(beer, markerId)
+        && hasNumericPrice(beer)
+        && toSearchKey(beer.servingSize) === "pint"
+        && (beer.availableOnTap === true || beer.availabilityLabel === "On tap")
+      );
+    }
+
+    function renderPriceConfirmationMarkup(beer, markerId) {
+      if (!canConfirmBeerPrice(beer, markerId)) {
+        return "";
+      }
+      return `
+        <div class="priceConfirmation" data-price-confirmation>
+          <span>Was this price still correct?</span>
+          <span class="priceConfirmation__choices">
+            <button class="priceConfirmation__choice" type="button" data-confirm-price-outcome="yes" data-price-record-id="${escapeHtml(beer.priceRecordId)}">Yes</button>
+            <button class="priceConfirmation__choice" type="button" data-confirm-price-outcome="no" data-price-record-id="${escapeHtml(beer.priceRecordId)}">No</button>
+            <button class="priceConfirmation__choice" type="button" data-confirm-price-outcome="didnt_order" data-price-record-id="${escapeHtml(beer.priceRecordId)}">Didn’t order it</button>
+          </span>
+        </div>
+      `;
     }
 
     function getDisplayBeerPriceText(beer, markerId) {
@@ -5168,9 +5281,10 @@
 
         if (action === "plan") {
           const added = addVenueToNightPlan(activeVenueRecord);
-          if (added) {
+          if (added && !window.MelbBeerBusiness?.hasAuthenticatedSessionHint?.()) {
             trackVenueAnalytics("saved_night_plan_added", activeVenueRecord, "venue_detail", {
               interactionType: "night_plan_add",
+              savedPersistence: "local",
             });
           }
           return;
@@ -5204,6 +5318,41 @@
       if (planRemoveButton) {
         event.preventDefault();
         removeVenueFromNightPlan(planRemoveButton.getAttribute("data-remove-night_plan"));
+        return;
+      }
+
+      const priceConfirmationButton = clickTarget.closest("[data-confirm-price-outcome]");
+      if (priceConfirmationButton) {
+        event.preventDefault();
+        const group = priceConfirmationButton.closest("[data-price-confirmation]");
+        const priceRecordId = priceConfirmationButton.dataset.priceRecordId || "";
+        const outcome = priceConfirmationButton.dataset.confirmPriceOutcome || "";
+        const buttons = group ? Array.from(group.querySelectorAll("button")) : [priceConfirmationButton];
+        buttons.forEach((button) => {
+          button.disabled = true;
+        });
+        try {
+          await window.MelbBeerBusiness.apiFetch(
+            `/api/business/price-records/${encodeURIComponent(priceRecordId)}/confirmation`,
+            {
+              method: "POST",
+              body: JSON.stringify({ outcome }),
+            },
+          );
+          if (group) {
+            group.textContent = outcome === "yes"
+              ? "Thanks — saved as a product signal."
+              : outcome === "no"
+                ? "Thanks — sent for price review."
+                : "Got it — no price claim recorded.";
+          }
+          showToast(outcome === "no" ? "Price sent for review." : "Thanks for the quick check.");
+        } catch (error) {
+          buttons.forEach((button) => {
+            button.disabled = false;
+          });
+          showToast(error instanceof Error ? error.message : "Could not save that price check.");
+        }
         return;
       }
 
@@ -5274,6 +5423,14 @@
         shareType: "search",
         source: "share_search_button",
       }));
+    });
+
+    saveAreaButtonEl.addEventListener("click", () => {
+      void toggleSavedSearchItem("suburb");
+    });
+
+    saveBeerButtonEl.addEventListener("click", () => {
+      void toggleSavedSearchItem("beer");
     });
 
     if (clearRecentlyViewedEl) {
@@ -5356,7 +5513,7 @@
         chipEl.classList.toggle("is-locked", isLocked);
         chipEl.setAttribute("aria-disabled", isLocked ? "true" : "false");
         chipEl.title = isLocked
-          ? "Unlock advanced filters with Premium or by submitting verified venue data."
+          ? "Earn contributor access through approved venue-data submissions to unlock advanced filters."
           : "";
       });
     }
@@ -5406,7 +5563,7 @@
     function showAdvancedFilterUnlockPrompt() {
       advancedFiltersPanelEl.hidden = true;
       advancedFiltersToggleEl.setAttribute("aria-expanded", "false");
-      showToast("Advanced filters are for signed-in Premium or contributor accounts.");
+      showToast("Advanced filters unlock with contributor full-map access.");
     }
 
     function renderTrackedBeerChips() {
@@ -5700,6 +5857,10 @@
     }
 
     function getHappyHourDetails(row) {
+      if (!HAPPY_HOUR_DISCOVERY_ENABLED) {
+        return null;
+      }
+
       const happyHour = getHappyHourRecord(row);
 
       if (!happyHour || !hasHappyHourData(row)) {
@@ -5871,7 +6032,7 @@
     }
 
     function renderSpecialPopupMarkup(specials) {
-      if (!specials.length) {
+      if (!PUBLIC_SPECIAL_DISCOVERY_ENABLED || !specials.length) {
         return "";
       }
 
@@ -5965,6 +6126,7 @@
             confidenceLabel: source.confidence_label || null,
             sourceType: source.source_type || null,
             lastVerifiedAt: source.last_verified_at || null,
+            priceVerifiedAt: source.price_verified_at || null,
             availableOnTap:
               source.available_on_tap == null
                 ? null
@@ -5984,6 +6146,9 @@
     }
 
     function getSpecialItems(row) {
+      if (!PUBLIC_SPECIAL_DISCOVERY_ENABLED) {
+        return [];
+      }
       const cleaned = getCleanedRecord(row);
       const specials = Array.isArray(cleaned.specials) ? cleaned.specials : [];
 
@@ -6365,6 +6530,7 @@
         normalized_beer_id: record.normalizedBeerId || null,
         source_venue_id: record.venueId,
         last_verified_at: record.lastVerifiedAt,
+        price_verified_at: record.priceVerifiedAt || null,
         needs_review: false,
       };
     }
@@ -6395,14 +6561,13 @@
     }
 
     function mergeBusinessPriceRecords(row, records = []) {
-      const visibleRecords = HAPPY_HOUR_DISCOVERY_ENABLED
-        ? records
-        : records.filter(
-            (record) =>
-              record.isHappyHourPrice !== true &&
-              record.displayKind !== "happy_hour" &&
-              !record.happyHourDetails,
-          );
+      const visibleRecords = records.filter((record) =>
+        (HAPPY_HOUR_DISCOVERY_ENABLED || (
+          record.isHappyHourPrice !== true &&
+          record.displayKind !== "happy_hour" &&
+          !record.happyHourDetails
+        )) &&
+        (PUBLIC_SPECIAL_DISCOVERY_ENABLED || record.displayKind !== "special"));
       if (!visibleRecords.length) {
         return row;
       }
@@ -6426,7 +6591,7 @@
         record.premiumBadge ||
         record.premium_badge
       ) || visibleRecords[0];
-      const mergedSpecials = Array.isArray(cleaned.specials)
+      const mergedSpecials = PUBLIC_SPECIAL_DISCOVERY_ENABLED && Array.isArray(cleaned.specials)
         ? cleaned.specials.filter((special) => special && typeof special === "object")
         : [];
       const specialIds = new Set(mergedSpecials.map((special) => special.id).filter(Boolean));
@@ -6749,6 +6914,10 @@
     }
 
     function getVenueTier(rowOrVenue) {
+      if (!COMMERCIAL_LAUNCH_ENABLED) {
+        return "free";
+      }
+
       const venue = getVenueRecord(rowOrVenue?.venues) || rowOrVenue || {};
       const tierValue = String(
         venue.membershipTier ||
@@ -6766,6 +6935,10 @@
     }
 
     function venueAcceptsPintPathCodes(rowOrVenue) {
+      if (!COMMERCIAL_LAUNCH_ENABLED) {
+        return false;
+      }
+
       const venue = getVenueRecord(rowOrVenue?.venues) || rowOrVenue || {};
       return Boolean(
         venue.acceptsPintPathCodes ??
@@ -7149,7 +7322,7 @@
       const selectedValue = getMatchingBeerOptionValue(selectableLabels, previousValue);
       const upgradeMarkup = hasFullBeerAccess
         ? ""
-        : '<option value="__upgrade_beer_search__">Unlock all beer search</option>';
+        : '<option value="__upgrade_beer_search__">Earn all-beer search with missions</option>';
 
       beerSearchEl.innerHTML = `
         <option value="">Beer</option>
@@ -7244,14 +7417,41 @@
       return labels;
     }
 
+    function getSelectedBeerSaveLabel(viewState) {
+      if (!viewState.beerQuery) {
+        return null;
+      }
+      return getInferredBeerQuery(viewState.beerQuery)
+        || getTrackedBeerDisplayName(viewState.beerQuery)
+        || viewState.beerQuery;
+    }
+
+    function syncSavedSuburbFilters() {
+      savedSuburbFilters = [...new Set([
+        ...preferredSuburbFilters,
+        ...Array.from(savedSuburbItemsByKey.values(), (item) => item.label),
+      ].filter(Boolean))];
+    }
+
     function syncActiveFilterSummary(viewState) {
       const labels = getActiveFilterLabels(viewState);
       const count = labels.length;
       const hasAdvancedOpen = !advancedFiltersPanelEl.hidden;
+      const exactSuburb = getExactSuburbSearchLabel(viewState);
+      const selectedBeer = getSelectedBeerSaveLabel(viewState);
+      const canSaveToAccount = window.MelbBeerBusiness.hasAuthenticatedSessionHint();
+      const suburbSaved = exactSuburb && savedSuburbItemsByKey.has(toSearchKey(exactSuburb));
+      const beerSaved = selectedBeer && savedBeerItemsByKey.has(toSearchKey(selectedBeer));
 
       activeFilterSummaryEl.hidden = count === 0;
       clearFiltersEl.hidden = count === 0;
       shareSearchButtonEl.hidden = count === 0;
+      saveAreaButtonEl.hidden = !canSaveToAccount || !exactSuburb;
+      saveAreaButtonEl.textContent = suburbSaved ? "Area saved" : "Save area";
+      saveAreaButtonEl.setAttribute("aria-pressed", suburbSaved ? "true" : "false");
+      saveBeerButtonEl.hidden = !canSaveToAccount || !selectedBeer;
+      saveBeerButtonEl.textContent = beerSaved ? "Beer saved" : "Save beer";
+      saveBeerButtonEl.setAttribute("aria-pressed", beerSaved ? "true" : "false");
       activeFilterCopyEl.innerHTML = `<strong>Filters:</strong> ${escapeHtml(count ? labels.join(" · ") : "All venues")}`;
       advancedFiltersToggleEl.textContent = count
         ? `Advanced filters · ${count} active`
@@ -7936,6 +8136,7 @@
             </div>
             <div class="beerPopup__beerActions">
               <span class="beerPopup__beerPrice ${escapeHtml(getBeerPriceClass(beer, markerId))}">${escapeHtml(getDisplayBeerPriceText(beer, markerId))}</span>
+              ${renderPriceConfirmationMarkup(beer, markerId)}
             </div>
           </div>
         `).join("")
@@ -8061,7 +8262,7 @@
       beerSearchEl.addEventListener("change", () => {
         if (beerSearchEl.value === "__upgrade_beer_search__") {
           beerSearchEl.value = "";
-          window.location.href = "/pricing.html";
+          window.location.href = "/missions.html";
           return;
         }
         renderFallbackRecords();
@@ -8251,7 +8452,9 @@
         address: String(value.address || "").trim(),
         latitude: coords?.lat ?? null,
         longitude: coords?.lng ?? null,
-        tier: String(value.tier || "") === "pro" || String(value.tier || "") === "plus" ? "pro" : "free",
+        tier: COMMERCIAL_LAUNCH_ENABLED && (
+          String(value.tier || "") === "pro" || String(value.tier || "") === "plus"
+        ) ? "pro" : "free",
         updatedAt: String(value.updatedAt || new Date().toISOString()),
       };
     }
@@ -8468,6 +8671,7 @@
       }
 
       const alreadyPlanned = nightPlanVenues.some((venue) => venue.id === snapshot.id);
+      const createsTonightPlan = !alreadyPlanned && nightPlanVenues.length === 0;
       nightPlanVenues = alreadyPlanned
         ? nightPlanVenues
         : [...nightPlanVenues, snapshot].slice(0, MAX_NIGHT_PLAN_STOPS);
@@ -8479,6 +8683,12 @@
           : "Added to the night plan on this device.");
       if (!alreadyPlanned) {
         void persistAccountNightPlan();
+      }
+      if (createsTonightPlan && !window.MelbBeerBusiness?.hasAuthenticatedSessionHint?.()) {
+        trackVenueAnalytics("tonight_plan_created", record, "venue_detail", {
+          interactionType: "night_plan_create",
+          savedPersistence: "local",
+        });
       }
       if (activeVenueRecord) {
         venueDetailBodyEl.innerHTML = getVenueDetailContent(activeVenueRecord);
@@ -8552,6 +8762,22 @@
         try {
           const account = await window.MelbBeerBusiness.apiFetch("/api/business/account");
           const savedItems = account?.savedItems || [];
+          preferredSuburbFilters = Array.isArray(account?.preferences?.preferredSuburbs)
+            ? account.preferences.preferredSuburbs.filter(Boolean)
+            : [];
+          savedSuburbItemsByKey.clear();
+          savedBeerItemsByKey.clear();
+          savedItems.forEach((item) => {
+            const key = toSearchKey(item.label || item.itemId);
+            if (!key) return;
+            if (item.itemType === "suburb") {
+              savedSuburbItemsByKey.set(key, { itemId: item.itemId, label: item.label });
+            }
+            if (item.itemType === "beer") {
+              savedBeerItemsByKey.set(key, { itemId: item.itemId, label: item.label });
+            }
+          });
+          syncSavedSuburbFilters();
           const accountSavedVenues = (account?.savedItems || [])
             .filter((item) => item.itemType === "venue")
             .map((item) => normalizeStoredVenue({
@@ -8579,6 +8805,52 @@
         }
       } else {
         syncSavedVenueIds();
+      }
+    }
+
+    async function toggleSavedSearchItem(itemType) {
+      if (!window.MelbBeerBusiness?.hasAuthenticatedSessionHint?.()) {
+        showToast("Sign in to save beers and areas to your account.");
+        return;
+      }
+      const viewState = getViewState();
+      const label = itemType === "suburb"
+        ? getExactSuburbSearchLabel(viewState)
+        : getSelectedBeerSaveLabel(viewState);
+      if (!label) {
+        showToast(itemType === "suburb" ? "Search an exact suburb first." : "Choose a beer first.");
+        return;
+      }
+      const key = toSearchKey(label);
+      const savedItems = itemType === "suburb" ? savedSuburbItemsByKey : savedBeerItemsByKey;
+      const existing = savedItems.get(key);
+      try {
+        if (existing) {
+          await window.MelbBeerBusiness.apiFetch("/api/business/account/saved-items", {
+            method: "DELETE",
+            body: JSON.stringify({ itemType, itemId: existing.itemId }),
+          });
+          savedItems.delete(key);
+          showToast(itemType === "suburb" ? "Area removed from your saved list." : "Beer removed from your saved list.");
+        } else {
+          const itemId = itemType === "suburb" ? label : getBeerAnalyticsKey(label) || key;
+          await window.MelbBeerBusiness.apiFetch("/api/business/account/saved-items", {
+            method: "POST",
+            body: JSON.stringify({
+              itemType,
+              itemId,
+              label,
+              suburb: itemType === "suburb" ? label : null,
+              metadata: { source: "map_search" },
+            }),
+          });
+          savedItems.set(key, { itemId, label });
+          showToast(itemType === "suburb" ? "Area saved to your account." : "Beer saved to your account.");
+        }
+        syncSavedSuburbFilters();
+        syncActiveFilterSummary(viewState);
+      } catch (error) {
+        showToast(error instanceof Error ? error.message : "Could not update this saved search.");
       }
     }
 
@@ -9234,11 +9506,11 @@
                       <div class="beerPopup__summaryValue">${escapeHtml(happyHourValue)}</div>
                       <div class="beerPopup__summarySub">${escapeHtml(happyHourSub)}</div>
                     </div>` : ""}
-                    <div class="beerPopup__summaryCard">
+                    ${PUBLIC_SPECIAL_DISCOVERY_ENABLED ? `<div class="beerPopup__summaryCard">
                       <div class="beerPopup__summaryLabel">Specials</div>
                       <div class="beerPopup__summaryValue">${escapeHtml(liveSpecials.some((special) => special.exclusive) ? "Pint Path" : liveSpecials.length ? "Listed" : "None listed")}</div>
                       <div class="beerPopup__summarySub">${escapeHtml(liveSpecials.length ? `${liveSpecials.length} active venue special${liveSpecials.length === 1 ? "" : "s"}` : "No exclusive listed yet.")}</div>
-                    </div>
+                    </div>` : ""}
                     <div class="beerPopup__summaryCard">
                       <div class="beerPopup__summaryLabel">Trust</div>
                       <div class="beerPopup__summaryValue">${escapeHtml(newestVerifiedLabel ? `Verified ${newestVerifiedLabel}` : trustValue)}</div>
@@ -9289,6 +9561,7 @@
                   </div>
                   <div class="beerPopup__beerActions">
                     <span class="beerPopup__beerPrice ${escapeHtml(getBeerPriceClass(beer, markerId))}">${escapeHtml(getDisplayBeerPriceText(beer, markerId))}</span>
+                    ${renderPriceConfirmationMarkup(beer, markerId)}
                     ${reportButtonMarkup}
                   </div>
                 </div>
@@ -9324,7 +9597,7 @@
               const directionsUrl = getVenueDirectionsUrl(detailRecord);
               const upgradeActionMarkup = businessAccess.hasFullAccess
                 ? ""
-                : `<a class="beerPopup__button" href="/pricing.html">Unlock full map</a>`;
+                : `<a class="beerPopup__button" href="/missions.html">Earn full-map access</a>`;
 
               return `
                 <div class="beerPopup beerPopup--tier-${escapeHtml(tierMeta.tier)}">
@@ -9557,22 +9830,25 @@
         venueSearchEl.addEventListener("change", () => {
           const query = venueSearchEl.value.trim();
           if (query) {
+            const exactSuburb = getExactSuburbSearchLabel(getViewState());
             trackSearchAnalytics("search_performed", query, {
               source: "suburb_venue_search",
               searchKind: "venue_or_suburb",
             });
-            trackSearchAnalytics("suburb_search_performed", query, {
-              source: "suburb_venue_search",
-              searchKind: "suburb_or_area",
-              suburb: inferSuburbContext(query),
-            });
+            if (exactSuburb) {
+              trackSearchAnalytics("suburb_search_performed", query, {
+                source: "suburb_venue_search",
+                searchKind: "suburb_or_area",
+                suburb: exactSuburb,
+              });
+            }
           }
         });
         beerSearchEl.addEventListener("change", () => {
           const query = beerSearchEl.value.trim();
           if (query === "__upgrade_beer_search__") {
             beerSearchEl.value = "";
-            window.location.href = "/pricing.html";
+            window.location.href = "/missions.html";
             return;
           }
           if (query) {

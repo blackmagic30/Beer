@@ -1,0 +1,49 @@
+{
+  "ok": true,
+  "data": {
+    "records": [
+      {
+        "id": "bar_beer:ios-confirmation-current",
+        "venueId": "venue-ios-retention",
+        "venueName": "Retention Arms",
+        "suburb": "Fitzroy",
+        "beerName": "Carlton Draught",
+        "normalizedBeerId": "carlton_draft",
+        "servingSize": "pint",
+        "price": 12.5,
+        "priceRedacted": false,
+        "freePreviewIncluded": true,
+        "displayKind": "beer",
+        "isOnTap": "yes",
+        "confidence": "venue_confirmed",
+        "sourceType": "venue_manager_portal",
+        "lastVerifiedAt": "2026-08-20T01:00:00.000Z",
+        "priceVerifiedAt": "2026-08-20T01:00:00.000Z"
+      },
+      {
+        "id": "ios-confirmation-redacted",
+        "venueId": "venue-ios-retention",
+        "venueName": "Retention Arms",
+        "suburb": "Fitzroy",
+        "beerName": "Locked Lager",
+        "normalizedBeerId": "locked_lager",
+        "servingSize": "pint",
+        "price": null,
+        "priceRedacted": true,
+        "displayKind": "beer",
+        "isOnTap": "yes",
+        "confidence": "community_confirmed",
+        "sourceType": "approved_submission",
+        "lastVerifiedAt": "2026-08-20T01:00:00.000Z",
+        "priceVerifiedAt": null
+      }
+    ],
+    "access": null,
+    "preview": {
+      "model": "fixed_preview",
+      "includedCount": 1,
+      "lockedCount": 1
+    },
+    "nextCursor": null
+  }
+}

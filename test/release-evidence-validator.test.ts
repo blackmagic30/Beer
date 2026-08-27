@@ -325,7 +325,7 @@ describe("release evidence validator", () => {
 
     const stale = validate(otherwiseAllPassed(completeCostReceipt({
       preObservedAt: new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString(),
-    })));
+    })), true);
     expect(stale.status).toBe(1);
     expect(stale.output).toMatchObject({ evidenceCurrent: false, launchReady: false });
     expect(stale.output.stalePermanentStagingCostReceipt)

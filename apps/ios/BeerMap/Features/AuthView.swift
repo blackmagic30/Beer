@@ -20,14 +20,16 @@ struct AuthView: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            SectionHeader(
-                eyebrow: "Pint Path account",
+            PintPathHero(
+                eyebrow: model.legalAcceptanceRequired ? "ACCOUNT CHECK" : "PINT PATH",
                 title: model.legalAcceptanceRequired
                     ? "Review the current policies"
-                    : (mode == .login ? "Welcome back" : "Create your contributor account"),
+                    : (mode == .login ? "Find your next good pint" : "Join the local price crew"),
                 subtitle: model.legalAcceptanceRequired
-                    ? "Your email identity is verified. Accept the current version before Pint Path creates an app session."
-                    : "Use the same account, access rules, and venue assignments as the website.",
+                    ? "Accept the latest terms to finish signing in."
+                    : (mode == .login
+                        ? "Save pubs, share prices and keep your Pint Path progress in one place."
+                        : "Help Melbourne find better-value pours. Your web account works here too."),
                 systemImage: model.legalAcceptanceRequired
                     ? "checkmark.shield.fill"
                     : (mode == .login ? "person.crop.circle.fill" : "person.badge.plus.fill")
@@ -36,7 +38,7 @@ struct AuthView: View {
             if model.legalAcceptanceRequired {
                 VStack(spacing: 12) {
                     StatusBanner(
-                        message: "Policy version \(model.legalAcceptanceVersion ?? "current") is required for this verified account. Your sign-in credential is held only in memory until you decide.",
+                        message: "Policy version \(model.legalAcceptanceVersion ?? "current") is ready for review. Your verified sign-in is held only in memory until you decide; no Pint Path session is created unless you accept.",
                         systemImage: "checkmark.shield.fill"
                     )
                     Toggle("I confirm I am 18 or older", isOn: $ageConfirmed)
@@ -77,15 +79,9 @@ struct AuthView: View {
                 }
                 .beerMapCard()
             } else {
-
-            Picker("Mode", selection: $mode) {
-                ForEach(AuthMode.allCases) { item in
-                    Text(item.rawValue).tag(item)
-                }
-            }
-            .pickerStyle(.segmented)
-
             VStack(spacing: 12) {
+                authModeControl
+
                 FormFieldShell(label: "Email address", systemImage: "envelope.fill") {
                     TextField("Email", text: $email)
                         .keyboardType(.emailAddress)
@@ -93,7 +89,7 @@ struct AuthView: View {
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .readableForm()
-                        .textFieldStyle(.roundedBorder)
+                        .textFieldStyle(PintPathTextFieldStyle())
                         .accessibilityLabel("Email address")
                 }
 
@@ -104,7 +100,7 @@ struct AuthView: View {
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .readableForm()
-                        .textFieldStyle(.roundedBorder)
+                        .textFieldStyle(PintPathTextFieldStyle())
                         .accessibilityLabel("Password")
                 }
 
@@ -116,14 +112,14 @@ struct AuthView: View {
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                             .readableForm()
-                            .textFieldStyle(.roundedBorder)
+                            .textFieldStyle(PintPathTextFieldStyle())
                             .accessibilityLabel("Confirm password")
                     }
 
                     FormFieldShell(label: "Profile", systemImage: "person.text.rectangle.fill") {
                         TextField("Display name, optional", text: $displayName)
                             .textContentType(.nickname)
-                            .textFieldStyle(.roundedBorder)
+                            .textFieldStyle(PintPathTextFieldStyle())
                             .accessibilityLabel("Display name")
                     }
                     Toggle("I confirm I am 18 or older", isOn: $ageConfirmed)
@@ -135,13 +131,17 @@ struct AuthView: View {
                         Toggle("I accept the current Privacy Policy", isOn: $privacyAccepted)
                     }
                     .padding(12)
-                    .background(BeerMapTheme.softCard, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .background(BeerMapTheme.softCard, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                 }
 
-                StatusBanner(
-                    message: "Pint Path uses verified Supabase authentication and the same safety, privacy, and account rules as the website.",
-                    systemImage: "checkmark.shield.fill"
-                )
+                HStack(spacing: 8) {
+                    Image(systemName: "lock.shield.fill")
+                        .foregroundStyle(BeerMapTheme.leaf)
+                    Text("Your account is protected and shared across Pint Path.")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                }
             }
             .beerMapCard()
 
@@ -195,11 +195,14 @@ struct AuthView: View {
             .buttonStyle(.plain)
             .font(.subheadline.weight(.semibold))
 
-            Text("Already use Google on the Pint Path website? Enter that same email and choose Forgot password to add iOS password access without creating another account.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .accessibilityLabel("Existing website Google users should enter the same email and use Forgot password for iOS access.")
+            DisclosureGroup("Used Google on the web?") {
+                Text("Enter the same email, then choose Forgot password to add iPhone password access without creating another account.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 6)
+            }
+            .font(.caption.weight(.semibold))
+            .padding(.horizontal, 8)
 
             }
         }
@@ -210,6 +213,31 @@ struct AuthView: View {
             termsAccepted = false
             privacyAccepted = false
         }
+    }
+
+    private var authModeControl: some View {
+        HStack(spacing: 5) {
+            ForEach(AuthMode.allCases) { item in
+                Button {
+                    withAnimation(.snappy) {
+                        mode = item
+                    }
+                } label: {
+                    Text(item.rawValue)
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(mode == item ? BeerMapTheme.brandInk : Color.secondary)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .background(
+                            mode == item ? BeerMapTheme.brandGold : Color.clear,
+                            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        )
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(mode == item ? .isSelected : [])
+            }
+        }
+        .padding(4)
+        .background(BeerMapTheme.softCard, in: RoundedRectangle(cornerRadius: 15, style: .continuous))
     }
 
 }

@@ -1,0 +1,14 @@
+{
+  "ok": true,
+  "data": {
+    "priceRecordId": "bar_beer:ios-confirmation-current",
+    "priceVersion": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "outcome": "didnt_order",
+    "recordedAt": null,
+    "idempotentReplay": false,
+    "analyticsRecorded": false,
+    "publicTrustMutated": false,
+    "wrongPriceReport": null,
+    "message": "Got it. No price claim or optional analytics event was recorded."
+  }
+}

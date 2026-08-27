@@ -30,6 +30,27 @@ describe("viewer map price logic", () => {
       beer: Record<string, unknown>,
       options?: { nowMs?: number; maximumAgeDays?: number; futureToleranceMinutes?: number },
     ) => boolean;
+    isActionableCurrentPintPrice: (
+      beer: Record<string, unknown>,
+      options?: { nowMs?: number; maximumAgeDays?: number; futureToleranceMinutes?: number },
+    ) => boolean;
+    countActionableCurrentPintPrices: (
+      beers: Array<Record<string, unknown>>,
+      options?: { nowMs?: number; maximumAgeDays?: number; futureToleranceMinutes?: number },
+    ) => number;
+    isUsefulSearchVenueResult: (
+      input: {
+        hasBeerQuery: boolean;
+        allBeerItems: Array<Record<string, unknown>>;
+        matchedBeerItems: Array<Record<string, unknown>>;
+      },
+      options?: {
+        nowMs?: number;
+        maximumAgeDays?: number;
+        futureToleranceMinutes?: number;
+        minimumPricesPerVenue?: number;
+      },
+    ) => boolean;
     getVenueDiscoverySortRank: (
       beers: Array<Record<string, unknown>>,
       options?: {
@@ -172,10 +193,77 @@ describe("viewer map price logic", () => {
       confidenceLabel: "admin_verified",
       lastVerifiedAt: "not-a-date",
     }, { nowMs })).toBe(false);
+    expect(logic.isCurrentVerifiedBeer({
+      confidenceLabel: "venue_confirmed",
+      sourceType: "venue_manager_portal",
+      lastVerifiedAt: "2026-07-28T00:00:00.000Z",
+      priceVerifiedAt: null,
+    }, { nowMs })).toBe(false);
+    expect(logic.isCurrentVerifiedBeer({
+      confidenceLabel: "venue_confirmed",
+      sourceType: "venue_manager_portal",
+      lastVerifiedAt: "2026-06-01T00:00:00.000Z",
+      priceVerifiedAt: "2026-07-28T00:00:00.000Z",
+    }, { nowMs })).toBe(true);
     expect(logic.isFreshVerificationTimestamp(
       "2026-07-28T12:06:00.000Z",
       { nowMs, futureToleranceMinutes: 5 },
     )).toBe(false);
+  });
+
+  it("counts only visible numeric, on-tap, current trusted pint prices as actionable", () => {
+    const nowMs = Date.parse("2026-08-15T00:00:00.000Z");
+    const actionable = {
+      priceNumeric: 12,
+      servingSize: "pint",
+      availabilityLabel: "On tap",
+      confidenceLabel: "photo_verified",
+      lastVerifiedAt: "2026-08-10T00:00:00.000Z",
+    };
+    const rows = [
+      actionable,
+      { ...actionable, priceNumeric: null },
+      { ...actionable, servingSize: "pot" },
+      { ...actionable, availabilityLabel: "Not on tap", availableOnTap: false },
+      { ...actionable, confidenceLabel: "user_reported_pending" },
+      { ...actionable, lastVerifiedAt: "2026-06-01T00:00:00.000Z" },
+    ];
+
+    expect(logic.isActionableCurrentPintPrice(actionable, { nowMs })).toBe(true);
+    expect(logic.countActionableCurrentPintPrices(rows, { nowMs })).toBe(1);
+  });
+
+  it("does not credit unrelated beers as useful results for a beer search", () => {
+    const nowMs = Date.parse("2026-08-15T00:00:00.000Z");
+    const current = (label: string) => ({
+      label,
+      priceNumeric: 12,
+      servingSize: "pint",
+      availabilityLabel: "On tap",
+      confidenceLabel: "photo_verified",
+      lastVerifiedAt: "2026-08-10T00:00:00.000Z",
+    });
+    const staleGuinness = {
+      ...current("Guinness"),
+      lastVerifiedAt: "2026-06-01T00:00:00.000Z",
+    };
+    const unrelated = [current("Carlton Draught"), current("Stone & Wood"), current("Coopers Pale Ale")];
+
+    expect(logic.isUsefulSearchVenueResult({
+      hasBeerQuery: true,
+      allBeerItems: [staleGuinness, ...unrelated],
+      matchedBeerItems: [staleGuinness],
+    }, { nowMs, minimumPricesPerVenue: 3 })).toBe(false);
+    expect(logic.isUsefulSearchVenueResult({
+      hasBeerQuery: true,
+      allBeerItems: [current("Guinness"), ...unrelated],
+      matchedBeerItems: [current("Guinness")],
+    }, { nowMs, minimumPricesPerVenue: 3 })).toBe(true);
+    expect(logic.isUsefulSearchVenueResult({
+      hasBeerQuery: false,
+      allBeerItems: unrelated,
+      matchedBeerItems: [],
+    }, { nowMs, minimumPricesPerVenue: 3 })).toBe(true);
   });
 
   it("ranks visible current verified prices ahead of stale, untrusted, useful, and empty venue data", () => {
@@ -873,7 +961,7 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain("onTapOnlyEl.disabled = !canUseAdvancedFilters()");
     expect(html).toContain("const canApplyAdvancedFilters = canUseAdvancedFilters();");
     expect(html).toContain('onTapOnlyEl.checked = canApplyAdvancedFilters &&');
-    expect(html).toContain('showToast("Advanced filters are for signed-in Premium or contributor accounts.")');
+    expect(html).toContain('showToast("Advanced filters unlock with contributor full-map access.")');
     expect(html).toContain('class="belowMapInsights"');
     expect(html).not.toContain('id="accessSummary"');
     expect(html).not.toContain('id="statusBar"');
@@ -905,22 +993,62 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain('if (googleMapsAuthFailed) {\n          throw new Error("Google Maps authentication failed");');
   });
 
+  it("instruments useful search results, saved search subjects, and Tonight plan creation", () => {
+    expect(html).toContain('id="saveAreaButton"');
+    expect(html).toContain('id="saveBeerButton"');
+    expect(html).toContain("MINIMUM_USEFUL_SEARCH_RESULTS = 3");
+    expect(html).toContain("function getUsefulSearchResultCount");
+    expect(html).toContain("countActionableCurrentPintPrices");
+    expect(html).toContain("usefulResultCount,");
+    expect(html).toContain("searchSuccessful: usefulResultCount >= MINIMUM_USEFUL_SEARCH_RESULTS");
+    expect(html).toContain('usefulnessMeasurement: "client_visible_current_trusted_pint_v1"');
+    expect(html).toContain("formalReleaseEvidence: false");
+    expect(html).toContain("const exactSuburb = getExactSuburbSearchLabel(getViewState())");
+    expect(html).toContain('if (exactSuburb) {\n              trackSearchAnalytics("suburb_search_performed"');
+    expect(html).toContain("suburb: exactSuburb");
+    expect(html).toContain('void toggleSavedSearchItem("suburb")');
+    expect(html).toContain('void toggleSavedSearchItem("beer")');
+    expect(html).toContain('trackVenueAnalytics("tonight_plan_created"');
+    expect(html).toContain('if (createsTonightPlan && !window.MelbBeerBusiness?.hasAuthenticatedSessionHint?.())');
+    expect(html).toContain('savedPersistence: "local"');
+  });
+
+  it("renders the signed-in one-tap price confirmation choices against the durable endpoint", () => {
+    expect(html).toContain("function canConfirmBeerPrice");
+    expect(html).not.toContain('!String(beer.priceRecordId).startsWith("bar_beer:")');
+    expect(html).toContain("Was this price still correct?");
+    expect(html).toContain('data-confirm-price-outcome="yes"');
+    expect(html).toContain('data-confirm-price-outcome="no"');
+    expect(html).toContain('data-confirm-price-outcome="didnt_order"');
+    expect(html).toContain("/api/business/price-records/${encodeURIComponent(priceRecordId)}/confirmation");
+    expect(html).toContain('body: JSON.stringify({ outcome })');
+    expect(html).toContain('"Thanks — saved as a product signal."');
+    expect(html).toContain('"Thanks — sent for price review."');
+    expect(html).toContain('"Got it — no price claim recorded."');
+  });
+
   it("limits public beer shortcut chips to the free preview beers", () => {
     expect(html).toContain('label: "Guinness", query: "Guinness"');
     expect(html).toContain('label: "Carlton Draught", query: "Carlton Draught"');
     expect(html).toContain('label: "Stone & Wood Pacific Ale", query: "Stone & Wood Pacific Ale"');
     expect(html).toContain("FREE_PREVIEW_BEER_CHIPS");
     expect(html).toContain("FREE_PREVIEW_BEER_KEYS");
-    expect(html).toContain('value="__upgrade_beer_search__">Unlock all beer search');
+    expect(html).toContain('value="__upgrade_beer_search__">Earn all-beer search with missions');
+    expect(html).toContain('window.location.href = "/missions.html"');
+    expect(html).not.toContain('window.location.href = "/pricing.html"');
     expect(html).toContain("const selectableLabels = hasFullBeerAccess ? allLabels : freeLabels");
     expect(html).not.toContain('optgroup label="Unlock full beer search"');
     expect(html).not.toContain("Search for more beers");
   });
 
-  it("renders a Pint Path specials filter and locked special-detail copy", () => {
+  it("keeps specials and happy-hour details behind the signed public discovery gates", () => {
     expect(html).toContain("Pint Path specials");
     expect(html).toContain("hasPintPathSpecial(row)");
-    expect(html).toContain("Pint Path special available. Unlock full access to view price, discount, and conditions.");
+    expect(html).toContain("const PUBLIC_SPECIAL_DISCOVERY_ENABLED = HAPPY_HOUR_DISCOVERY_ENABLED && COMMERCIAL_LAUNCH_ENABLED");
+    expect(html).toContain("if (specialsFilterRow) specialsFilterRow.hidden = !PUBLIC_SPECIAL_DISCOVERY_ENABLED");
+    expect(html).toContain("if (!PUBLIC_SPECIAL_DISCOVERY_ENABLED || !specials.length)");
+    expect(html).toContain("if (!PUBLIC_SPECIAL_DISCOVERY_ENABLED) {");
+    expect(html).toContain("if (!HAPPY_HOUR_DISCOVERY_ENABLED) {");
   });
 
   it("keeps the public map top area compact and touch-friendly on phones", () => {

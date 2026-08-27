@@ -72,6 +72,8 @@ struct ContributeView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
+                contributionModeRail
+
                 if acceptedMissionId != nil {
                     StatusBanner(
                         message: "Mission reserved for this update.",
@@ -93,38 +95,19 @@ struct ContributeView: View {
             .padding()
         }
         .beerMapScreen()
-        .navigationTitle(selectedMode == .price ? "Add price" : selectedMode.rawValue)
+        .navigationTitle("Contribute")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 Button {
-                    focusedPriceField = nil
                     model.selectedTab = .explore
                 } label: {
                     Label("Back", systemImage: "chevron.left")
                 }
-                .accessibilityLabel("Back to map")
+                .accessibilityHint("Returns to the Explore map")
             }
-            ToolbarItem(placement: .topBarTrailing) {
-                Menu {
-                    ForEach(ContributionMode.allCases) { mode in
-                        Button {
-                            selectedMode = mode
-                        } label: {
-                            if mode == .price {
-                                Label {
-                                    Text("Quick price")
-                                } icon: {
-                                    BeerPintIcon(size: 17)
-                                }
-                            } else {
-                                Label(mode.rawValue, systemImage: mode.systemImage)
-                            }
-                        }
-                    }
-                } label: {
-                    Label("More updates", systemImage: "ellipsis.circle")
-                }
+            ToolbarItem(placement: .principal) {
+                PintPathBrandLockup(compact: true)
             }
             ToolbarItemGroup(placement: .keyboard) {
                 Spacer()
@@ -181,12 +164,88 @@ struct ContributeView: View {
         }
     }
 
+    private var contributionModeRail: some View {
+        HStack(spacing: 4) {
+            ForEach(ContributionMode.allCases) { mode in
+                Button {
+                    focusedPriceField = nil
+                    withAnimation(.snappy) {
+                        selectedMode = mode
+                    }
+                } label: {
+                    VStack(spacing: 4) {
+                        if mode == .price {
+                            BeerPintIcon(size: 18)
+                        } else {
+                            Image(systemName: mode.systemImage)
+                                .font(.subheadline.weight(.bold))
+                        }
+                        Text(modeLabel(mode))
+                            .font(.caption.weight(.bold))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.75)
+                    }
+                    .foregroundStyle(selectedMode == mode ? BeerMapTheme.brandInk : Color.primary)
+                    .frame(maxWidth: .infinity, minHeight: 58)
+                    .background(
+                        selectedMode == mode ? BeerMapTheme.brandGold : Color.clear,
+                        in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    )
+                    .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(selectedMode == mode ? .isSelected : [])
+            }
+        }
+        .padding(5)
+        .background(BeerMapTheme.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(BeerMapTheme.hairline, lineWidth: 1)
+        )
+        .shadow(color: Color.black.opacity(0.045), radius: 10, x: 0, y: 4)
+    }
+
+    private func modeLabel(_ mode: ContributionMode) -> String {
+        switch mode {
+        case .price: return "Price"
+        case .source: return "Scan"
+        case .request: return "Request"
+        case .missions: return "Missions"
+        }
+    }
+
     private var priceCard: some View {
         VStack(alignment: .leading, spacing: 12) {
+            SectionHeader(
+                eyebrow: "QUICK UPDATE",
+                title: "Log a fresh price",
+                subtitle: "Four quick stops. Every update is checked before it joins the map.",
+                assetImage: BeerMapAsset.beerPint
+            )
+
             if !model.isSignedIn {
-                Label("Sign in from Account to submit a price.", systemImage: "person.crop.circle.badge.exclamationmark")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                Button {
+                    model.selectedTab = .account
+                } label: {
+                    HStack(spacing: 11) {
+                        Image(systemName: "person.crop.circle.badge.exclamationmark")
+                            .foregroundStyle(BeerMapTheme.amber)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Sign in to share this update")
+                                .font(.subheadline.weight(.bold))
+                            Text("Your progress and review history stay with your account.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 4)
+                        Image(systemName: "arrow.right")
+                            .font(.caption.weight(.bold))
+                    }
+                    .padding(12)
+                    .background(BeerMapTheme.softCard, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
+                .buttonStyle(.plain)
             }
 
             priceStep(number: 1, title: "Venue") {
@@ -195,7 +254,7 @@ struct ContributeView: View {
 
             priceStep(number: 2, title: "Beer") {
                 TextField("Start typing a beer", text: $beerName)
-                    .textFieldStyle(.roundedBorder)
+                    .textFieldStyle(PintPathTextFieldStyle())
                     .frame(minHeight: 44)
                     .textContentType(.none)
                     .submitLabel(.next)
@@ -249,7 +308,9 @@ struct ContributeView: View {
                         .accessibilityHidden(true)
                     TextField("0.00", text: $priceText)
                         .keyboardType(.decimalPad)
-                        .textFieldStyle(.roundedBorder)
+                        .textFieldStyle(PintPathTextFieldStyle())
+                        .font(.system(.title2, design: .rounded, weight: .bold))
+                        .monospacedDigit()
                         .frame(minHeight: 44)
                         .focused($focusedPriceField, equals: .price)
                         .accessibilityLabel("Observed price in Australian dollars")
@@ -280,7 +341,7 @@ struct ContributeView: View {
 
                     TextField("Review note, optional", text: $notes, axis: .vertical)
                         .lineLimit(2...4)
-                        .textFieldStyle(.roundedBorder)
+                        .textFieldStyle(PintPathTextFieldStyle())
                     locationProofToggle
                 }
                 .padding(.top, 10)
@@ -332,7 +393,7 @@ struct ContributeView: View {
             )
             TextField("What should reviewers look for?", text: $notes, axis: .vertical)
                 .lineLimit(3...6)
-                .textFieldStyle(.roundedBorder)
+                .textFieldStyle(PintPathTextFieldStyle())
             locationProofToggle
             PrimaryButton(title: "Scan and submit menu", systemImage: "arrow.up.doc.fill", isLoading: model.isLoading) {
                 guard let dataURL = sourcePhotoDataURL else {
@@ -378,18 +439,18 @@ struct ContributeView: View {
             .pickerStyle(.segmented)
             if requestKind == .venue {
                 TextField("Venue name", text: $requestVenueName)
-                    .textFieldStyle(.roundedBorder)
+                    .textFieldStyle(PintPathTextFieldStyle())
             } else {
                 TextField("Beer name", text: $requestBeerName)
-                    .textFieldStyle(.roundedBorder)
+                    .textFieldStyle(PintPathTextFieldStyle())
                 TextField("Venue name, optional", text: $requestVenueName)
-                    .textFieldStyle(.roundedBorder)
+                    .textFieldStyle(PintPathTextFieldStyle())
             }
             TextField("Suburb, optional", text: $requestSuburb)
-                .textFieldStyle(.roundedBorder)
+                .textFieldStyle(PintPathTextFieldStyle())
             TextField("Notes, optional", text: $requestNotes, axis: .vertical)
                 .lineLimit(3...6)
-                .textFieldStyle(.roundedBorder)
+                .textFieldStyle(PintPathTextFieldStyle())
             PrimaryButton(title: "Send request", systemImage: "paperplane.fill", isLoading: model.isLoading) {
                 Task {
                     let submitted = await model.requestMissing(
@@ -653,25 +714,42 @@ struct ContributeView: View {
 
     private var servingPicker: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
+            HStack(spacing: 9) {
                 ForEach(servingSizes.prefix(4), id: \.self) { size in
-                    if let assetImage = servingAssetImage(size) {
-                        FilterChip(
-                            title: size.capitalized,
-                            assetImage: assetImage,
-                            isSelected: servingSize == size
-                        ) {
-                            servingSize = size
+                    Button {
+                        servingSize = size
+                    } label: {
+                        VStack(spacing: 6) {
+                            if let assetImage = servingAssetImage(size) {
+                                Image(assetImage)
+                                    .renderingMode(.template)
+                                    .resizable()
+                                    .scaledToFit()
+                                    .frame(width: 27, height: 27)
+                            } else {
+                                Image(systemName: servingSystemImage(size))
+                                    .font(.title3.weight(.bold))
+                            }
+                            Text(size.capitalized)
+                                .font(.caption.weight(.bold))
                         }
-                    } else {
-                        FilterChip(
-                            title: size.capitalized,
-                            systemImage: servingSystemImage(size),
-                            isSelected: servingSize == size
-                        ) {
-                            servingSize = size
-                        }
+                        .foregroundStyle(servingSize == size ? BeerMapTheme.brandInk : BeerMapTheme.primaryAction)
+                        .frame(width: 82, height: 72)
+                        .background(
+                            servingSize == size ? BeerMapTheme.brandGold : BeerMapTheme.card,
+                            in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                .stroke(
+                                    servingSize == size ? Color.clear : BeerMapTheme.separator.opacity(0.35),
+                                    lineWidth: 1
+                                )
+                        )
                     }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(servingSize == size ? .isSelected : [])
+                    .accessibilityLabel(size.capitalized)
                 }
 
                 Menu {
@@ -722,19 +800,28 @@ struct ContributeView: View {
         title: String,
         @ViewBuilder content: () -> Content
     ) -> some View {
-        VStack(alignment: .leading, spacing: 9) {
-            HStack(spacing: 8) {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(spacing: 5) {
                 Text("\(number)")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(BeerMapTheme.primaryActionForeground)
-                    .frame(width: 24, height: 24)
-                    .background(BeerMapTheme.primaryAction, in: Circle())
-                    .accessibilityHidden(true)
-                Text(title)
-                    .font(.subheadline.weight(.semibold))
-                    .accessibilityAddTraits(.isHeader)
+                    .font(.caption.weight(.black))
+                    .foregroundStyle(BeerMapTheme.brandInk)
+                    .frame(width: 29, height: 29)
+                    .background(BeerMapTheme.brandGold, in: Circle())
+                Capsule()
+                    .fill(BeerMapTheme.brandGold.opacity(number == 4 ? 0 : 0.42))
+                    .frame(width: 2, height: 23)
             }
-            content()
+            .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 9) {
+                Text(title.uppercased())
+                    .font(.system(size: 10, weight: .black))
+                    .tracking(1.15)
+                    .foregroundStyle(.secondary)
+                    .accessibilityAddTraits(.isHeader)
+                content()
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 

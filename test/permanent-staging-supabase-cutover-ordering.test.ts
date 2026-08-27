@@ -50,7 +50,9 @@ describe("permanent-staging Supabase cutover ordering", () => {
       "docs/full-scale-postgres-migration-runbook.md",
       [
         "Supabase publishable/secret-key replacement under its own approval",
-        "After every planned provider/runtime operation, deploy the exact same candidate once more",
+        "Then prepare and quiesce the worker fence",
+        "apply and prove the staging schema/venue refresh",
+        "retain the active closeout artifact",
         "Only then run protected canary-B/legacy-disable/old-key-denial",
       ],
     ],
@@ -58,7 +60,9 @@ describe("permanent-staging Supabase cutover ordering", () => {
       "docs/launch-9-readiness-gates.md",
       [
         "atomic Railway upsert",
-        "After every planned provider/runtime operation, deploy the exact same current-main build once more",
+        "Then prepare the candidate-bound worker fence",
+        "Apply and prove the permanent-staging venue-directory schema",
+        "run the active closeout deployment",
         "Only then run the protected replacement-canary/ legacy-disable/old-key-denial workflow",
       ],
     ],
@@ -76,6 +80,46 @@ describe("permanent-staging Supabase cutover ordering", () => {
   ) => {
     const source = normalized(filename as string).replaceAll("`", "");
     expectInOrder(source, markers as string[]);
+  });
+
+  it.each([
+    [
+      "docs/launch-readiness-review-2026-08-27.md",
+      "## Exact next staging chain",
+      [
+        "While the legacy staging deployment is still the sole healthy one-replica deployment",
+        "skipDeploys=true",
+        "configure-automatic-maintenance-worker-fence.yml",
+        "bootstrap-permanent-staging-worker-fence.yml",
+        "phase fenced",
+        "Link only the exact permanent-staging Supabase project",
+        "worker bootstrap restore operation",
+        "phase active",
+      ],
+    ],
+    [
+      "docs/production-launch-runbook.md",
+      "### 16.5 Deploy the exact protected main build with enrolment disabled",
+      [
+        "While that healthy legacy deployment remains unchanged",
+        "skipDeploys=true",
+        "with staging prepare",
+        "with quiesce",
+        "with phase fenced",
+        "venue-directory migration and status refresh",
+        "Restore the candidate exactly from zero to one",
+        "dispatch staging activate",
+      ],
+    ],
+  ])("keeps provider writes in the healthy pre-fence phase in %s", (
+    filename,
+    sectionMarker,
+    markers,
+  ) => {
+    const source = normalized(filename as string).replaceAll("`", "");
+    const section = source.slice(source.indexOf(sectionMarker as string));
+    expect(section.length).toBeGreaterThan(0);
+    expectInOrder(section, markers as string[]);
   });
 
   it("requires both authenticated predecessor artifacts before secret custody", () => {

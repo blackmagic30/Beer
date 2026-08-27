@@ -443,5 +443,9 @@ describe.skipIf(!configuredAdminUrl)("public price repository on real PostgreSQL
       happyHourEndTime: "19:00:00",
       happyHourBeers: [expect.objectContaining({ happyHourPrice: 7.5, onTap: true })],
     }));
+    await expect(repository.getCurrentVenueManagerPriceRecordById("bar_beer:manager-carlton"))
+      .resolves.toEqual(manager.find((record) => record.id === "bar_beer:manager-carlton"));
+    await expect(repository.getCurrentVenueManagerPriceRecordById("bar_happy_hour:manager-happy"))
+      .resolves.toBeNull();
   });
 });

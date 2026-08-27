@@ -68,12 +68,16 @@ describe("public UI hardening", () => {
     const pricing = readViewer("pricing.html");
 
     expect(stats).toContain('$("nav").innerHTML = MelbBeerBusiness.renderNav("account")');
+    expect(stats).toContain("more points unlock full-map access until month end");
+    expect(stats).not.toMatch(/premium|reward|discount redemption|total saved|Pint Path special|leaderboard|monthly rank/i);
+    expect(readViewer("account.html")).not.toContain("Pint Path special activity in one place");
     expect(feedback).toContain("result.feedback?.id");
     expect(feedback).toContain("Keep this reference for follow-up.");
-    expect(pricing).toContain('class="pricingAudienceSwitch" role="tablist"');
-    expect(pricing).toContain('role="tabpanel" aria-labelledby="consumerPricingTab userPricingTitle"');
-    expect(pricing).toContain('role="tabpanel" aria-labelledby="venuePricingTab venuePricingTitle" hidden');
-    expect(pricing).toContain('url.searchParams.set("audience", showVenuePricing ? "venues" : "users")');
+    expect(pricing).toContain('<meta name="robots" content="noindex,follow"');
+    expect(pricing).toContain("Pint Path is free to use for this launch.");
+    expect(pricing).toContain('href="/venue-portal.html"');
+    expect(pricing).toContain('href="/missions.html"');
+    expect(pricing).not.toMatch(/checkout|premium|\bPro\b/i);
   });
 
   it("renders the 404 navigation without a CSP-blocked inline script", () => {

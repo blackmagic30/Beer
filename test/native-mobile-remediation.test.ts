@@ -239,10 +239,11 @@ describe("native mobile remediation guardrails", () => {
   });
 
   it("keeps iOS exploration map-first with stable navigation and accessible filters", () => {
-    expect(iosRoot).toContain('Label("Explore", systemImage: "map.fill")');
-    expect(iosRoot).toContain('Label("Add Price", systemImage: "plus.circle.fill")');
+    expect(iosRoot).toContain('Label("Explore", systemImage: "map")');
+    expect(iosRoot).toContain('Text("Contribute")');
+    expect(iosRoot).toContain("Image(BeerMapAsset.beerPint)");
     expect(iosRoot).toContain('Label("Account", systemImage: "person.crop.circle")');
-    expect(iosRoot).toContain('Label("More", systemImage: "ellipsis.circle.fill")');
+    expect(iosRoot).toContain('Label("More", systemImage: "line.3.horizontal")');
     expect(iosRoot).not.toContain('Label("Find"');
     expect(iosRoot).not.toContain('Label("Bars"');
     expect(iosDiscover).not.toContain('.navigationTitle("Find")');
@@ -750,7 +751,7 @@ describe("native mobile remediation guardrails", () => {
   });
 
   it("keeps optional analytics consent scoped to a confirmed signed-in account", () => {
-    expect(iosApp).toContain("guard optionalAnalyticsEnabled, let token = sessionToken else { return }");
+    expect(iosApp).toContain("guard optionalAnalyticsEnabled, let token = sessionToken else { return false }");
     expect(iosApp).toContain('UserDefaults.standard.removeObject(forKey: "au.pintpath.app.optionalAnalytics")');
     expect(iosApp).toMatch(/private func clearLocalSession\(\)[\s\S]*resetOptionalAnalytics\(\)/);
 

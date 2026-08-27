@@ -596,7 +596,14 @@ struct BeerMapAPI {
         return venues
     }
 
-    func priceRecords(venueId: String? = nil, anonymousSessionId: String, token: String?) async throws -> PriceRecordsResponse {
+    func priceRecords(
+        venueId: String? = nil,
+        anonymousSessionId: String,
+        token: String?,
+        maximumRecords: Int? = nil
+    ) async throws -> PriceRecordsResponse {
+        let boundedMaximumRecords = maximumRecords.map { min(5_000, max(1, $0)) }
+        let maximumPageCount = boundedMaximumRecords.map { (($0 + 499) / 500) + 1 } ?? 1_000
         var records: [PriceRecord] = []
         var seenRecordKeys = Set<String>()
         var seenCursors = Set<String>()
@@ -608,13 +615,16 @@ struct BeerMapAPI {
         var pageCount = 0
 
         while true {
+            try Task<Never, Never>.checkCancellation()
             pageCount += 1
-            guard pageCount <= 1_000 else {
+            guard pageCount <= maximumPageCount else {
                 throw BeerMapAPIError.server("Price pagination exceeded its safety limit. Refresh and try again.")
             }
+            let remainingRecords = boundedMaximumRecords.map { max(1, $0 - records.count) }
+            let pageSize = min(500, remainingRecords ?? 500)
             var items = [
                 URLQueryItem(name: "anonymousSessionId", value: anonymousSessionId),
-                URLQueryItem(name: "limit", value: "500")
+                URLQueryItem(name: "limit", value: "\(pageSize)")
             ]
             if let venueId { items.append(URLQueryItem(name: "venueId", value: venueId)) }
             if let cursor { items.append(URLQueryItem(name: "cursor", value: cursor)) }
@@ -622,6 +632,7 @@ struct BeerMapAPI {
                 path("/api/business/price-records", queryItems: items),
                 token: token
             )
+            try Task<Never, Never>.checkCancellation()
             records.append(contentsOf: response.records.filter {
                 seenRecordKeys.insert(priceRecordIdentityKey($0)).inserted
             })
@@ -633,6 +644,11 @@ struct BeerMapAPI {
             }
 
             guard let nextCursor = response.nextCursor, !nextCursor.isEmpty else { break }
+            if let boundedMaximumRecords, records.count >= boundedMaximumRecords {
+                throw BeerMapAPIError.server(
+                    "Price measurement exceeded its bounded catalogue window. Try a narrower search."
+                )
+            }
             guard nextCursor != cursor, seenCursors.insert(nextCursor).inserted else {
                 throw BeerMapAPIError.server("Price pagination returned a repeated cursor. Refresh and try again.")
             }
@@ -731,15 +747,30 @@ struct BeerMapAPI {
         try await send("/api/business/wrong-price-reports", method: "POST", body: report, token: token)
     }
 
+    func answerPriceConfirmation(
+        priceRecordId: String,
+        outcome: PriceConfirmationOutcome,
+        token: String
+    ) async throws -> PriceConfirmationResult {
+        try await send(
+            "/api/business/price-records/\(escape(priceRecordId))/confirmation",
+            method: "POST",
+            body: PriceConfirmationRequest(outcome: outcome),
+            token: token
+        )
+    }
+
     func createRequest(_ request: VenueRequestPayload, token: String?) async throws -> EmptyResponse {
         try await send("/api/business/requests", method: "POST", body: request, token: token)
     }
 
-    func track(_ event: EventRequest, token: String?) async {
+    @discardableResult
+    func track(_ event: EventRequest, token: String?) async -> Bool {
         do {
             let _: EmptyResponse = try await send("/api/business/events", method: "POST", body: event, token: token)
+            return true
         } catch {
-            return
+            return false
         }
     }
 

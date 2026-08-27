@@ -44,11 +44,13 @@ describe("commercial launch gate", () => {
     const indexHtml = readRepoFile("viewer/index.html");
     const venuePortalHtml = readRepoFile("viewer/venue-portal.html");
 
-    expect(pricingHtml).toContain('id="consumerMonthlyAction" class="button button--primary" aria-disabled="true"');
-    expect(pricingHtml).toContain('id="consumerYearlyAction" class="button button--premium" aria-disabled="true"');
-    expect(pricingHtml).toContain("businessConfig.commercialLaunchEnabled === true");
-    expect(pricingHtml).toContain("businessConfig.consumerPaidEnrollmentEnabled === true");
-    expect(pricingHtml).toContain('action.removeAttribute("href")');
+    expect(pricingHtml).toContain("Pint Path is free to use for this launch.");
+    expect(pricingHtml).toContain('href="/missions.html"');
+    expect(pricingHtml).toContain('href="/venue-portal.html"');
+    expect(pricingHtml).not.toContain("commercialLaunchEnabled");
+    expect(pricingHtml).not.toContain("consumerPaidEnrollmentEnabled");
+    expect(pricingHtml).not.toContain("checkoutPlan=");
+    expect(pricingHtml).not.toMatch(/checkout|subscription|premium|\bPro\b/i);
 
     const accountResume = accountHtml.slice(
       accountHtml.indexOf("async function resumeCheckoutIfRequested"),
@@ -77,6 +79,18 @@ describe("commercial launch gate", () => {
     expect(venueLegend).toContain("This is the full Free venue footprint.");
     expect(venueLegend.indexOf("COMMERCIAL_LAUNCH_ENABLED"))
       .toBeLessThan(venueLegend.indexOf('["pro", "Premium venue"'));
+    const venueTierResolver = indexHtml.slice(
+      indexHtml.indexOf("function getVenueTier(rowOrVenue)"),
+      indexHtml.indexOf("function getVenueTierLabel(rowOrVenue)"),
+    );
+    expect(venueTierResolver).toContain('if (!COMMERCIAL_LAUNCH_ENABLED) {\n        return "free";');
+    expect(venueTierResolver).toContain('if (!COMMERCIAL_LAUNCH_ENABLED) {\n        return false;');
+    const storedVenueNormalizer = indexHtml.slice(
+      indexHtml.indexOf("function normalizeStoredVenue(value)"),
+      indexHtml.indexOf("function readStoredVenues(storageKey, maxItems)"),
+    );
+    expect(storedVenueNormalizer).toContain("tier: COMMERCIAL_LAUNCH_ENABLED && (");
+    expect(indexHtml).toContain(".specialsFilterRow[hidden]");
 
     expect(venuePortalHtml).toContain("viewerConfig.business?.commercialLaunchEnabled === true");
     expect(venuePortalHtml).toContain("syncCommercialCheckoutControls");
@@ -99,38 +113,18 @@ describe("commercial launch gate", () => {
       .toBeLessThan(venueUpgradeHandler.indexOf("/billing/checkout"));
   });
 
-  it("fails closed in the initial pricing and venue-portal markup without advertising unsettled prices", () => {
+  it("keeps the legacy access page Free-only and venue commercial tools fail closed", () => {
     const pricingHtml = readRepoFile("viewer/pricing.html");
     const termsHtml = readRepoFile("viewer/terms.html");
     const venuePortalHtml = readRepoFile("viewer/venue-portal.html");
 
-    expect(pricingHtml).toContain(
-      'id="consumerMonthlyCard" class="card pricingCard card--highlight" hidden',
-    );
-    expect(pricingHtml).toContain(
-      'id="consumerYearlyCard" class="card pricingCard card--tierPro" hidden',
-    );
-    expect(pricingHtml).toContain(
-      'id="venueProCard" class="card venuePricingCard venuePricingCard--pro card--tierPro" hidden',
-    );
-    expect(pricingHtml).toContain(
-      'id="venueCommercialTerms" class="helperCopy" hidden',
-    );
-    expect(pricingHtml).toContain(
-      'id="consumerPricingDeferred" class="card pricingCard card--highlight"',
-    );
-    expect(pricingHtml).toContain(
-      'id="venuePricingDeferred" class="card venuePricingCard venuePricingCard--pro card--tierPro"',
-    );
-    expect(pricingHtml).toContain("Paid pricing is coming later");
-    expect(pricingHtml).toContain("Pro pricing and enrolment are coming later");
-    expect(pricingHtml).toContain("No payment or checkout is available.");
-    expect(pricingHtml).toContain("No trial starts automatically or from this page");
-    expect(pricingHtml).toContain("card.hidden = !consumerPaidEnrollmentEnabled");
-    expect(pricingHtml).toContain("consumerPricingDeferred.hidden = consumerPaidEnrollmentEnabled");
-    expect(pricingHtml).toContain("venueProCard.hidden = !commercialLaunchEnabled");
-    expect(pricingHtml).toContain("venuePricingDeferred.hidden = commercialLaunchEnabled");
-    expect(pricingHtml).toContain("venueCommercialTerms.hidden = !commercialLaunchEnabled");
+    expect(pricingHtml).toContain('<meta name="robots" content="noindex,follow"');
+    expect(pricingHtml).toContain("Pint Path is free to use for this launch.");
+    expect(pricingHtml).toContain("Drinkers and contributors");
+    expect(pricingHtml).toContain("For venues");
+    expect(pricingHtml).not.toMatch(/A\$\s*\d/);
+    expect(pricingHtml).not.toMatch(/checkout|subscription|premium|\bPro\b/i);
+    expect(pricingHtml).not.toMatch(/coming later|deferred commercial|final price pending/i);
 
     const upgradeActionRenderer = venuePortalHtml.slice(
       venuePortalHtml.indexOf("function renderCommercialUpgradeAction"),

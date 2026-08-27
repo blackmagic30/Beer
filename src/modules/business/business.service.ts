@@ -169,6 +169,7 @@ import {
 } from "../../db/venue-data-read.repository.js";
 import { PublicVenueDirectoryRepository } from "../../db/public-venue-directory.repository.js";
 import { PublicPriceRepository } from "../../db/public-price.repository.js";
+import { SavedUpdatesReadRepository } from "../../db/saved-updates-read.repository.js";
 import { SystemStateRepository } from "../../db/system-state.repository.js";
 import {
   VenueIdentityRepository,
@@ -191,6 +192,7 @@ import { AppError, ExternalServiceError } from "../../lib/errors.js";
 import { isCanonicalProductionRuntime } from "../../lib/deployment-environment.js";
 import type { AccountDeletionNotificationCoordinator } from "../../lib/account-deletion-notification-worker.js";
 import { logger } from "../../lib/logger.js";
+import { priceConfirmationVersion } from "../../lib/price-confirmation.js";
 import {
   createMockReportEmailProvider,
   createResendReportEmailProvider,
@@ -268,6 +270,7 @@ import type {
   PintPointDrinkRecordInput,
   PintPointDrinkVoidInput,
   PosDiscountRedemptionInput,
+  PriceConfirmationInput,
   PriceRecordsQuery,
   PubGolfPlanInput,
   RemoveSavedItemInput,
@@ -288,7 +291,14 @@ import type {
   VenueReconciliationQuery,
   VerificationInput,
   WrongPriceReportInput,
+  SavedUpdateOpenedInput,
+  SavedUpdatesViewedInput,
 } from "./business.schemas.js";
+import {
+  buildSavedUpdatesFeed,
+  savedUpdatesExperimentVariant,
+  type SavedUpdatesFeed,
+} from "./saved-updates.js";
 
 const BROWSER_MEMORY_CREDENTIAL_CEREMONY = "browser_memory_v1";
 const BROWSER_CREDENTIAL_SESSION_PREFIX = "credential-v1";
@@ -1838,7 +1848,7 @@ function buildConsumerPremiumToolkit(input: {
     summary: hasFullAccess
       ? input.commercialLaunchEnabled
         ? "Your full-map tools are active: exact prices, value rings, premium filters, special access, saved night shortcuts, and savings tracking."
-        : "Your contributor full-map tools are active: exact prices, value rings, premium filters, and saved night shortcuts."
+        : "Your contributor full-map tools are active: exact prices, value rings, full-map filters, and saved night shortcuts."
       : paidEnrollmentEnabled
         ? `Paid or earned access includes exact prices, value rings, premium filters, and saved night shortcuts. ${upgradeCopy}`
         : `Paid enrolment is closed. ${contributionCopy}`,
@@ -2014,6 +2024,7 @@ const ESSENTIAL_EVENT_TYPES = new Set<EventTrackInput["eventType"]>([
   "submission_approved",
   "submission_rejected",
   "contributor_access_unlocked",
+  "price_confirmation_answered",
   "wrong_price_reported",
   "venue_requested",
   "beer_requested",
@@ -2026,6 +2037,15 @@ const ESSENTIAL_EVENT_TYPES = new Set<EventTrackInput["eventType"]>([
   "venue_manager_revoked",
   "outreach_status_updated",
 ]);
+
+const SERVER_ONLY_EVENT_TYPES = new Set<EventTrackInput["eventType"]>([
+  "account_dashboard_viewed",
+  "price_confirmation_answered",
+  "saved_update_opened",
+  "saved_updates_viewed",
+]);
+
+const SAVED_UPDATES_EXPERIMENT_VERSION = "v1";
 
 function serverEventPrivacyScope(input: EventTrackInput): "optional_analytics" | "venue_insight" | null {
   if (ESSENTIAL_EVENT_TYPES.has(input.eventType)) return null;
@@ -2083,6 +2103,32 @@ function dedupePublicPriceRecords(records: PublicVenuePriceRecord[]): PublicVenu
 
 function isPintServing(record: PublicVenuePriceRecord): boolean {
   return normalizeBeerSearchKey(record.servingSize) === "pint";
+}
+
+function isActionablePriceConfirmationRecord(record: PublicVenuePriceRecord): boolean {
+  return shouldExposePriceRecord(record) &&
+    isPublicLaunchPriceRecord(record) &&
+    !isHappyHourRecord(record) &&
+    !isSpecialRecord(record) &&
+    (record.displayKind == null || record.displayKind === "beer") &&
+    isPintServing(record) &&
+    record.isOnTap === "yes" &&
+    typeof record.price === "number" &&
+    Number.isFinite(record.price) &&
+    record.price > 0;
+}
+
+function priceConfirmationEventId(
+  accountId: string,
+  priceRecordId: string,
+  priceVersion: string,
+  outcome: PriceConfirmationInput["outcome"],
+): string {
+  const idempotencyDigest = crypto
+    .createHash("sha256")
+    .update(["v1", accountId, priceRecordId, priceVersion, outcome].join("\0"))
+    .digest("hex");
+  return `price_confirmation:${idempotencyDigest}`;
 }
 
 function isFreePreviewBeerRecord(record: PublicVenuePriceRecord): boolean {
@@ -3126,6 +3172,7 @@ export class BusinessService {
   private readonly venueManagerInsightsRepository: VenueManagerInsightsRepository;
   private readonly venuePendingChangeRepository: VenuePendingChangeRepository;
   private readonly venueDataReadRepository: VenueDataReadRepository;
+  private readonly savedUpdatesReadRepository: SavedUpdatesReadRepository | undefined;
   private readonly databaseHealthProbe: () => Promise<{
     ok: boolean;
     foreignKeyViolations: number;
@@ -3237,6 +3284,7 @@ export class BusinessService {
       foreignKeyViolations: number;
       poolMetrics?: readonly SafePostgresApplicationPoolMetrics[];
     }>,
+    savedUpdatesReadRepository?: SavedUpdatesReadRepository,
   ) {
     this.activityAuditRepository = this.wrapActivityAuditRepository(activityAuditRepository);
     this.supportFeedbackRepository = this.wrapSupportFeedbackRepository(supportFeedbackRepository);
@@ -3269,6 +3317,7 @@ export class BusinessService {
     this.sourceEvidenceObjectRepository = this.wrapSourceEvidenceObjectRepository(sourceEvidenceObjectRepository);
     this.venuePendingChangeRepository = this.wrapVenuePendingChangeRepository(venuePendingChangeRepository);
     this.venueDataReadRepository = this.wrapVenueDataReadRepository(venueDataReadRepository);
+    this.savedUpdatesReadRepository = savedUpdatesReadRepository;
     this.databaseHealthProbe = databaseHealthProbe ?? (async () => this.repository.checkDatabaseHealth());
     const supabaseServerKey = config.SUPABASE_SERVICE_ROLE_KEY ?? config.SUPABASE_ANON_KEY;
     if (supabaseClientOverride && !config.RESTORE_REHEARSAL_MODE) {
@@ -6834,7 +6883,7 @@ export class BusinessService {
       );
     }
     if (!isFullAccess(account, this.isAdmin(account))) {
-      throw new AppError("Pub Golf beta planning is for premium or contributor accounts.", 403);
+      throw new AppError("Pub Golf beta planning is for full-map accounts.", 403);
     }
 
     const start = await this.resolvePubGolfLocation(input.startLocation);
@@ -7062,7 +7111,7 @@ export class BusinessService {
     this.assertCommercialVenueFeatureOpen();
     this.requireCurrentLegalAcceptance(account);
     if (!isFullAccess(account, this.isAdmin(account))) {
-      throw new AppError("Discount passes are for premium or contributor accounts.", 403);
+      throw new AppError("Discount passes are for full-map accounts.", 403);
     }
 
     const token = getBearerToken(authorizationHeader);
@@ -8368,6 +8417,7 @@ export class BusinessService {
         multiplier: mission?.multiplier ?? null,
       };
     }));
+    const savedUpdates = await this.getSavedUpdatesFeed(account, savedItems, dashboardNow);
 
     return {
       account: sanitizeAccount(dashboardAccount),
@@ -8422,6 +8472,7 @@ export class BusinessService {
       },
       privacySettings,
       savedItems,
+      savedUpdates,
       recentSearches,
       suggestedMissions,
       missionHistory,
@@ -8530,6 +8581,133 @@ export class BusinessService {
           : "18+ confirmation is required for protected contribution features. Pint Path does not store raw ID documents.",
       },
     };
+  }
+
+  private async getSavedUpdatesFeed(
+    account: BusinessAccount,
+    savedItems: readonly SavedItem[],
+    asOf: string,
+  ): Promise<SavedUpdatesFeed> {
+    const variant = savedUpdatesExperimentVariant(account.id);
+    if (!this.savedUpdatesReadRepository) {
+      return {
+        enabled: false,
+        variant,
+        asOf,
+        windowDays: 7,
+        revision: null,
+        updates: [],
+        eligibleResultCount: 0,
+        copy: "Saved Updates is temporarily unavailable.",
+      };
+    }
+    try {
+      return await buildSavedUpdatesFeed({
+        accountId: account.id,
+        savedItems,
+        asOf,
+        repository: this.savedUpdatesReadRepository,
+      });
+    } catch (error) {
+      logger.warn("Saved Updates evidence query failed", {
+        accountId: account.publicAccountId,
+        error: error instanceof Error ? error.message : "unknown",
+      });
+      return {
+        enabled: false,
+        variant,
+        asOf,
+        windowDays: 7,
+        revision: null,
+        updates: [],
+        eligibleResultCount: 0,
+        copy: "Saved Updates is temporarily unavailable.",
+      };
+    }
+  }
+
+  async recordAccountDashboardViewed(account: BusinessAccount) {
+    const variant = savedUpdatesExperimentVariant(account.id);
+    const savedItems = await this.accountProfilePreferencesRepository.listSavedItems(account.id);
+    const savedUpdatesEligibleAtAssignment = savedItems.some((item) =>
+      item.itemType === "venue" || item.itemType === "beer");
+    await this.trackEvent(account, {
+      anonymousSessionId: null,
+      eventType: "account_dashboard_viewed",
+      venueId: null,
+      beerId: null,
+      suburb: null,
+      metadata: {
+        accountRole: account.role,
+        accountSubscriptionStatus: account.subscriptionStatus,
+        savedUpdatesEligibleAtAssignment,
+        savedUpdatesExperimentVersion: SAVED_UPDATES_EXPERIMENT_VERSION,
+        savedUpdatesVariant: variant,
+      },
+    });
+    return { recorded: true, savedUpdatesVariant: variant };
+  }
+
+  async recordSavedUpdatesViewed(account: BusinessAccount, input: SavedUpdatesViewedInput) {
+    if (!this.savedUpdatesReadRepository) {
+      throw new AppError("Saved Updates is temporarily unavailable.", 503);
+    }
+    const savedItems = await this.accountProfilePreferencesRepository.listSavedItems(account.id);
+    const feed = await this.getSavedUpdatesFeed(account, savedItems, nowIso());
+    if (
+      !feed.enabled
+      || feed.variant !== "treatment"
+      || feed.revision === null
+      || feed.revision !== input.revision
+      || feed.updates.length === 0
+    ) {
+      throw new AppError("That Saved Updates feed is no longer current.", 409);
+    }
+    await this.trackEvent(account, {
+      anonymousSessionId: null,
+      eventType: "saved_updates_viewed",
+      venueId: null,
+      beerId: null,
+      suburb: null,
+      metadata: {
+        savedUpdatesExperimentVersion: SAVED_UPDATES_EXPERIMENT_VERSION,
+        savedUpdatesVariant: feed.variant,
+        revision: feed.revision,
+        updateCount: feed.updates.length,
+        eligibleResultCount: feed.eligibleResultCount,
+        windowDays: feed.windowDays,
+      },
+    });
+    return { recorded: true, revision: feed.revision };
+  }
+
+  async recordSavedUpdateOpened(account: BusinessAccount, input: SavedUpdateOpenedInput) {
+    if (!this.savedUpdatesReadRepository) {
+      throw new AppError("Saved Updates is temporarily unavailable.", 503);
+    }
+    const savedItems = await this.accountProfilePreferencesRepository.listSavedItems(account.id);
+    const feed = await this.getSavedUpdatesFeed(account, savedItems, nowIso());
+    const update = feed.enabled && feed.variant === "treatment"
+      ? feed.updates.find((candidate) => candidate.id === input.updateId) ?? null
+      : null;
+    if (!update) {
+      throw new AppError("That Saved Update is no longer current.", 409);
+    }
+    await this.trackEvent(account, {
+      anonymousSessionId: null,
+      eventType: "saved_update_opened",
+      venueId: null,
+      beerId: null,
+      suburb: null,
+      metadata: {
+        savedUpdatesExperimentVersion: SAVED_UPDATES_EXPERIMENT_VERSION,
+        savedUpdatesVariant: feed.variant,
+        updateId: update.id,
+        updateType: update.type,
+        effectiveAt: update.effectiveAt,
+      },
+    });
+    return { recorded: true, updateId: update.id };
   }
 
   async exportAccountData(account: BusinessAccount) {
@@ -10130,8 +10308,9 @@ export class BusinessService {
 
   async saveItem(account: BusinessAccount, input: SaveItemInput) {
     const now = nowIso();
+    const requestedId = crypto.randomUUID();
     const savedItem = await this.accountProfilePreferencesRepository.saveItem({
-      id: crypto.randomUUID(),
+      id: requestedId,
       userId: account.id,
       itemType: input.itemType,
       itemId: input.itemId,
@@ -10140,6 +10319,7 @@ export class BusinessService {
       metadata: sanitizeEventMetadata(input.metadata),
       now,
     });
+    const created = savedItem.id === requestedId;
     const eventTypeByItem: Record<SaveItemInput["itemType"], EventTrackInput["eventType"]> = {
       venue: "saved_venue_added",
       beer: "saved_beer_added",
@@ -10147,20 +10327,36 @@ export class BusinessService {
       night_plan: "saved_night_plan_added",
     };
 
-    await this.trackEvent(account, {
-      anonymousSessionId: null,
-      eventType: eventTypeByItem[input.itemType],
-      venueId: input.itemType === "venue" ? input.itemId : null,
-      beerId: input.itemType === "beer" ? normalizeTrackedBeerId(input.label) : null,
-      suburb: input.itemType === "suburb" ? input.label : input.suburb,
-      metadata: {
-        itemId: input.itemId,
-        label: input.label,
-        privacyScope: input.itemType === "venue" ? "venue_insight" : "optional_analytics",
-      },
-    });
+    if (created) {
+      await this.trackEvent(account, {
+        anonymousSessionId: null,
+        eventType: eventTypeByItem[input.itemType],
+        venueId: input.itemType === "venue" ? input.itemId : null,
+        beerId: input.itemType === "beer" ? normalizeTrackedBeerId(input.label) : null,
+        suburb: input.itemType === "suburb" ? input.label : input.suburb,
+        metadata: {
+          itemId: input.itemId,
+          label: input.label,
+          privacyScope: input.itemType === "venue" ? "venue_insight" : "optional_analytics",
+        },
+      });
+      if (input.itemType === "night_plan") {
+        await this.trackEvent(account, {
+          anonymousSessionId: null,
+          eventType: "tonight_plan_created",
+          venueId: null,
+          beerId: null,
+          suburb: input.suburb,
+          metadata: {
+            itemId: input.itemId,
+            label: input.label,
+            source: "account_saved_night_plan",
+          },
+        });
+      }
+    }
 
-    return { savedItem };
+    return { savedItem, created };
   }
 
   async removeSavedItem(account: BusinessAccount, input: RemoveSavedItemInput) {
@@ -10899,19 +11095,130 @@ export class BusinessService {
     });
   }
 
+  async answerPriceConfirmation(
+    account: BusinessAccount,
+    priceRecordId: string,
+    input: PriceConfirmationInput,
+  ) {
+    this.assertCanCommunityVerify(account);
+    const isVenueManagerPrice = priceRecordId.startsWith("bar_beer:");
+    const record = isVenueManagerPrice
+      ? await this.publicPriceRepository.getCurrentVenueManagerPriceRecordById(priceRecordId)
+      : await this.publicPriceRepository.getPriceRecordById(priceRecordId);
+    const canSeeExactPrice = record
+      ? isFullAccess(account, this.isAdmin(account)) || canFreeUserSeeRecord(record)
+      : false;
+    if (!record || !isActionablePriceConfirmationRecord(record) || !canSeeExactPrice) {
+      throw new AppError(
+        "That public on-tap pint price is not available for confirmation. Refresh the venue and try again.",
+        404,
+      );
+    }
+
+    const canonicalVenueId = await this.venueIdentityRepository.getCanonicalVenueId(record.venueId);
+    const venueIdentityIds = await this.venueIdentityRepository.listVenueIdentityIds(canonicalVenueId);
+    const isCurrentRecord = isVenueManagerPrice || (
+      await this.publicPriceRepository.listCurrentPriceRecords(
+        venueIdentityIds.length > 0 ? venueIdentityIds : [canonicalVenueId],
+      )
+    ).some((candidate) => candidate.id === record.id);
+    if (!isCurrentRecord) {
+      throw new AppError(
+        "That price is no longer the current public record. Refresh the venue before confirming it.",
+        409,
+      );
+    }
+
+    const priceVersion = priceConfirmationVersion(record);
+    const shouldRecordAnswer = input.outcome !== "didnt_order" || (
+      await this.accountProfilePreferencesRepository.getAccountPrivacySettings(account.id) ??
+      await this.accountProfilePreferencesRepository.getDefaultAccountPrivacySettings(account.id)
+    ).optionalAnalyticsEnabled;
+    const wrongPriceResult = input.outcome === "no"
+      ? await this.reportWrongPrice(account, {
+          anonymousSessionId: null,
+          venueId: canonicalVenueId,
+          venueName: record.venueName,
+          priceRecordId: record.id,
+          beerName: record.beerName,
+          reason: "price_changed",
+          notes: null,
+          sourcePhotoDataUrl: null,
+          sourcePhotoUrl: null,
+        })
+      : null;
+    const event = shouldRecordAnswer
+      ? await this.activityAuditRepository.recordIdempotentEvent({
+          id: priceConfirmationEventId(account.id, record.id, priceVersion, input.outcome),
+          userId: account.id,
+          anonymousSessionId: null,
+          eventType: "price_confirmation_answered",
+          venueId: canonicalVenueId,
+          beerId: record.normalizedBeerId ?? normalizeTrackedBeerId(record.beerName),
+          suburb: record.suburb,
+          metadata: sanitizeEventMetadata({
+            outcome: input.outcome,
+            priceRecordId: record.id,
+            priceVersion,
+            beerName: record.beerName,
+            servingSize: record.servingSize,
+            sourceType: record.sourceType,
+            ...(input.outcome === "didnt_order" ? { privacyScope: "optional_analytics" } : {}),
+          }),
+          createdAt: nowIso(),
+        })
+      : null;
+
+    return {
+      priceRecordId: record.id,
+      priceVersion,
+      outcome: input.outcome,
+      recordedAt: event?.record.createdAt ?? null,
+      idempotentReplay: event?.outcome === "duplicate",
+      analyticsRecorded: event !== null,
+      publicTrustMutated: wrongPriceResult?.markedDisputed ?? false,
+      wrongPriceReport: wrongPriceResult
+        ? {
+            id: wrongPriceResult.report.id,
+            status: wrongPriceResult.report.status,
+            duplicate: wrongPriceResult.duplicate,
+            markedDisputed: wrongPriceResult.markedDisputed,
+          }
+        : null,
+      message: input.outcome === "yes"
+        ? "Thanks. Your confirmation was saved as durable signal-only evidence; it did not change the public verification date or confidence by itself."
+        : input.outcome === "didnt_order"
+          ? event
+            ? "Thanks. Your optional product signal was saved without changing the price record."
+            : "Got it. No price claim or optional analytics event was recorded."
+          : wrongPriceResult?.message ?? "Thanks. The price was reported for review.",
+    };
+  }
+
   async reportWrongPrice(account: BusinessAccount | null, input: WrongPriceReportInput) {
     const now = nowIso();
     if (!account && !input.anonymousSessionId) {
       throw new AppError("A privacy-safe session identifier is required for anonymous reports.", 400);
     }
+    const canonicalVenueId = await this.venueIdentityRepository.getCanonicalVenueId(input.venueId);
     let venueName = input.venueName;
     let beerName = input.beerName;
     if (input.priceRecordId) {
-      const record = await this.publicPriceRepository.getPriceRecordById(input.priceRecordId);
+      const isVenueManagerPrice = input.priceRecordId.startsWith("bar_beer:");
+      const record = isVenueManagerPrice
+        ? await this.publicPriceRepository.getCurrentVenueManagerPriceRecordById(input.priceRecordId)
+        : await this.publicPriceRepository.getPriceRecordById(input.priceRecordId);
       if (!record) {
         throw new AppError("That price record no longer exists. Refresh the venue before reporting it.", 404);
       }
-      if (record.venueId !== input.venueId) {
+      if (
+        isVenueManagerPrice
+        && (!account || !(isFullAccess(account, this.isAdmin(account)) || canFreeUserSeeRecord(record)))
+      ) {
+        throw new AppError("That price record no longer exists. Refresh the venue before reporting it.", 404);
+      }
+      const recordCanonicalVenueId = await this.venueIdentityRepository.getCanonicalVenueId(record.venueId);
+      if (recordCanonicalVenueId !== canonicalVenueId) {
         throw new AppError("That price record does not belong to this venue.", 400);
       }
       venueName = record.venueName;
@@ -10922,7 +11229,7 @@ export class BusinessService {
       id: crypto.randomUUID(),
       userId: account?.id ?? null,
       anonymousSessionId: input.anonymousSessionId,
-      venueId: input.venueId,
+      venueId: canonicalVenueId,
       venueName,
       priceRecordId: input.priceRecordId,
       beerName,
@@ -10932,19 +11239,21 @@ export class BusinessService {
       now,
     });
 
-    await this.trackEvent(account, {
-      anonymousSessionId: input.anonymousSessionId,
-      eventType: "wrong_price_reported",
-      venueId: input.venueId,
-      beerId: beerName ? normalizeTrackedBeerId(beerName) : null,
-      suburb: null,
-      metadata: {
-        reportId: result.report.id,
-        reason: input.reason,
-        hasSourcePhoto: Boolean(sourcePhotoUrl),
-        markedDisputed: result.markedDisputed,
-      },
-    });
+    if (!result.duplicate) {
+      await this.trackEvent(account, {
+        anonymousSessionId: input.anonymousSessionId,
+        eventType: "wrong_price_reported",
+        venueId: canonicalVenueId,
+        beerId: beerName ? normalizeTrackedBeerId(beerName) : null,
+        suburb: null,
+        metadata: {
+          reportId: result.report.id,
+          reason: input.reason,
+          hasSourcePhoto: Boolean(sourcePhotoUrl),
+          markedDisputed: result.markedDisputed,
+        },
+      });
+    }
 
     return {
       ...result,
@@ -13022,6 +13331,12 @@ export class BusinessService {
     input: EventTrackInput,
     context?: SessionRequestContext | undefined,
   ): Promise<void> {
+    if (SERVER_ONLY_EVENT_TYPES.has(input.eventType)) {
+      throw new AppError(
+        "This event can only be recorded through its dedicated product action.",
+        400,
+      );
+    }
     // trackEvent always classifies privacy from server-parsed fields and event
     // semantics. Keeping a separate client entry point makes that trust
     // boundary explicit at the route.
@@ -15560,6 +15875,7 @@ export class BusinessService {
     const totalVenues = Math.max(knownVenues, missionCount);
     const dashboard = await this.adminAnalyticsRepository.getAdminKpiDashboard({
       since: startOfAdminRange(query.range, asOf),
+      asOf,
       sevenDaysAgo: daysAgoIso(7, asOf),
       thirtyDaysAgo: daysAgoIso(30, asOf),
       staleBefore: daysAgoIso(90, asOf),
@@ -15567,6 +15883,7 @@ export class BusinessService {
     });
     return {
       ...dashboard,
+      asOf,
       topSearchedBeers: this.applyAnalyticsThreshold(dashboard.topSearchedBeers),
       topSearchedSuburbs: this.applyAnalyticsThreshold(dashboard.topSearchedSuburbs),
       topClickedVenues: this.applyAnalyticsThreshold(dashboard.topClickedVenues),
@@ -15582,9 +15899,35 @@ export class BusinessService {
       throw new AppError("Admin access required.", 403);
     }
 
+    const asOf = nowIso();
+    const [cohorts, savedUpdatesExperiment] = await Promise.all([
+      this.adminAnalyticsRepository.getRetentionCohorts({ ...query, asOf }),
+      this.adminAnalyticsRepository.getSavedUpdatesExperimentRollup({
+        experimentVersion: SAVED_UPDATES_EXPERIMENT_VERSION,
+        asOf,
+      }),
+    ]);
     return {
       groupBy: query.groupBy,
-      cohorts: await this.adminAnalyticsRepository.getRetentionCohorts(query),
+      asOf,
+      population: "optional_analytics_enabled_accounts" as const,
+      cohortAnchor: "current_optional_analytics_opt_in_episode" as const,
+      populationCaveat: "Directional product-loop cohorts include only accounts currently opted into optional analytics and begin at the later of account creation or the recorded start of the current analytics opt-in episode. Legacy rows use a consent-time backfill, so this is not signup retention and does not represent all accounts.",
+      cohorts,
+      savedUpdatesExperiment: {
+        definition: "saved_updates_d7_intent_to_treat_v1" as const,
+        evidenceStatus: "directional_opt_in_experiment" as const,
+        formalReleaseEvidence: false as const,
+        experimentVersion: savedUpdatesExperiment.experimentVersion,
+        observedD7RetentionDifference: savedUpdatesExperiment.observedD7RetentionDifference,
+        population: "currently_opted_in_free_or_contributor_consumers_with_recorded_v1_dashboard_assignment" as const,
+        anchor: "first_server_recorded_account_dashboard_viewed_in_current_opt_in_episode" as const,
+        eligibilityDefinition: "The server observed at least one venue or beer save when it stored the neutral dashboard assignment event. This immutable baseline does not prove that a Saved Update was available.",
+        exposureDefinition: "A server-validated Saved Updates panel view during UTC D0-D7. Exposure is treatment-only and is diagnostic, not the retention outcome.",
+        outcomeDefinition: "At least one authenticated, variant-neutral core-loop event on UTC D1-D7 after assignment. Saved Updates view/open events are excluded.",
+        caveat: "Directional intent-to-treat evidence only: v1 begins with the first persisted v1 assignment event after deployment; no commit-time or historical events are backfilled. Assignment is observed only for baseline Free or contributor consumer accounts currently opted into optional analytics whose neutral dashboard event was stored. Existing accounts enter on their first recorded dashboard view in the current opt-in episode. Compare D7 retention only after both arms have mature denominators; eligibility and exposure are diagnostics and must not be used to select the primary comparison population.",
+        variants: savedUpdatesExperiment.variants,
+      },
     };
   }
 

@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 enum AppTab: Hashable {
     case explore
@@ -10,6 +11,35 @@ enum AppTab: Hashable {
 @main
 struct BeerMapApp: App {
     @StateObject private var model = BeerMapAppModel()
+
+    init() {
+        let appearance = UITabBarAppearance()
+        appearance.configureWithOpaqueBackground()
+        appearance.backgroundColor = BeerMapTheme.markerInkUIColor
+        appearance.shadowColor = UIColor.white.withAlphaComponent(0.08)
+
+        let itemAppearances = [
+            appearance.stackedLayoutAppearance,
+            appearance.inlineLayoutAppearance,
+            appearance.compactInlineLayoutAppearance,
+        ]
+        for itemAppearance in itemAppearances {
+            itemAppearance.normal.iconColor = UIColor(red: 0.75, green: 0.74, blue: 0.69, alpha: 1)
+            itemAppearance.normal.titleTextAttributes = [
+                .foregroundColor: UIColor(red: 0.75, green: 0.74, blue: 0.69, alpha: 1),
+            ]
+            itemAppearance.selected.iconColor = BeerMapTheme.markerUIColor
+            itemAppearance.selected.titleTextAttributes = [
+                .foregroundColor: BeerMapTheme.markerUIColor,
+                .font: UIFont.systemFont(ofSize: 10, weight: .bold),
+            ]
+        }
+
+        UITabBar.appearance().standardAppearance = appearance
+        UITabBar.appearance().scrollEdgeAppearance = appearance
+        UITabBar.appearance().tintColor = BeerMapTheme.markerUIColor
+        UITabBar.appearance().unselectedItemTintColor = UIColor(red: 0.75, green: 0.74, blue: 0.69, alpha: 1)
+    }
 
     var body: some Scene {
         WindowGroup {
@@ -651,6 +681,78 @@ final class BeerMapAppModel: ObservableObject {
         }
     }
 
+    func trackExploreSearch(
+        query: String,
+        visibleVenues: [Venue],
+        selectedBeerKey: String?,
+        selectedSuburb: String?,
+        nearbyOnly: Bool,
+        radiusKm: Double
+    ) async -> Bool {
+        guard optionalAnalyticsEnabled, sessionToken != nil else { return false }
+
+        do {
+            try Task<Never, Never>.checkCancellation()
+            let response = try await withContributorAuthenticatedSession { token in
+                try await self.api.priceRecords(
+                    anonymousSessionId: self.anonymousSessionId,
+                    token: token,
+                    maximumRecords: 2_000
+                )
+            }
+            try Task<Never, Never>.checkCancellation()
+            let usefulResultCount = usefulSearchVenueCount(
+                visibleVenues: visibleVenues,
+                priceRecords: response.records,
+                selectedBeerKey: selectedBeerKey
+            )
+            let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+            let eventType = selectedBeerKey == nil
+                ? "search_performed"
+                : "beer_search_performed"
+            let searchKind = selectedBeerKey == nil
+                ? (selectedSuburb == nil ? "venue_or_suburb" : "suburb_or_area")
+                : "beer"
+            var activeFilters: [JSONValue] = []
+            if selectedBeerKey != nil { activeFilters.append(.string("beer")) }
+            if selectedSuburb != nil { activeFilters.append(.string("suburb")) }
+            if nearbyOnly { activeFilters.append(.string("nearby")) }
+
+            var metadata: [String: JSONValue] = [
+                "source": .string("ios_explore"),
+                "searchKind": .string(searchKind),
+                "resultCount": .number(Double(visibleVenues.count)),
+                "visibleResultCount": .number(Double(visibleVenues.count)),
+                "usefulResultCount": .number(Double(usefulResultCount)),
+                "usefulResultThreshold": .number(3),
+                "searchSuccessful": .bool(usefulResultCount >= 3),
+                "usefulnessMeasurement": .string("client_visible_current_trusted_pint_v1"),
+                "formalReleaseEvidence": .bool(false),
+                "activeFilters": .array(activeFilters),
+                "activeFilterCount": .number(Double(activeFilters.count)),
+                "nearbyOnly": .bool(nearbyOnly),
+            ]
+            if !trimmedQuery.isEmpty {
+                metadata["query"] = .string(String(trimmedQuery.prefix(80)))
+            }
+            if nearbyOnly {
+                metadata["radiusKm"] = .number(radiusKm)
+            }
+
+            try Task<Never, Never>.checkCancellation()
+            return await track(
+                eventType,
+                beerId: selectedBeerKey,
+                suburb: selectedSuburb,
+                metadata: metadata
+            )
+        } catch {
+            // A failed background measurement must not interrupt discovery or
+            // manufacture a zero-result event from incomplete price data.
+            return false
+        }
+    }
+
     func saveVenue(_ venue: Venue) async {
         guard sessionToken != nil else {
             errorMessage = "Sign in to save venues to your account."
@@ -929,6 +1031,45 @@ final class BeerMapAppModel: ObservableObject {
     }
 
     @discardableResult
+    func answerPriceConfirmation(
+        _ record: PriceRecord,
+        outcome: PriceConfirmationOutcome
+    ) async -> PriceConfirmationResult? {
+        guard sessionToken != nil else {
+            errorMessage = "Sign in before checking a displayed price."
+            return nil
+        }
+        guard record.isActionablePriceConfirmationCandidate else {
+            errorMessage = "That displayed on-tap pint price is not available for a quick check."
+            return nil
+        }
+
+        do {
+            let result = try await withAuthenticatedSession { token in
+                try await self.api.answerPriceConfirmation(
+                    priceRecordId: record.id,
+                    outcome: outcome,
+                    token: token
+                )
+            }
+            notice = switch outcome {
+            case .yes:
+                "Thanks. Your check was saved as signal-only evidence."
+            case .no:
+                "Thanks. The price was sent for review."
+            case .didntOrder:
+                result.analyticsRecorded
+                    ? "Thanks. Your optional product signal was saved."
+                    : "Got it. No price claim or optional analytics was recorded."
+            }
+            return result
+        } catch {
+            errorMessage = error.localizedDescription
+            return nil
+        }
+    }
+
+    @discardableResult
     func requestMissing(requestType: String, venueName: String, beerName: String, suburb: String, notes: String) async -> Bool {
         let trimmedVenue = venueName.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedBeer = beerName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -964,16 +1105,23 @@ final class BeerMapAppModel: ObservableObject {
         }
     }
 
-    func track(_ eventType: String, venueId: String? = nil, suburb: String? = nil, metadata: [String: JSONValue] = [:]) async {
-        guard optionalAnalyticsEnabled, let token = sessionToken else { return }
+    @discardableResult
+    func track(
+        _ eventType: String,
+        venueId: String? = nil,
+        beerId: String? = nil,
+        suburb: String? = nil,
+        metadata: [String: JSONValue] = [:]
+    ) async -> Bool {
+        guard optionalAnalyticsEnabled, let token = sessionToken else { return false }
         var scopedMetadata = metadata
         scopedMetadata["privacyScope"] = .string("optional_analytics")
-        await api.track(
+        return await api.track(
             EventRequest(
                 anonymousSessionId: anonymousSessionId,
                 eventType: eventType,
                 venueId: venueId,
-                beerId: nil,
+                beerId: beerId,
                 suburb: suburb,
                 metadata: scopedMetadata
             ),
@@ -1349,6 +1497,31 @@ final class BeerMapAppModel: ObservableObject {
 
     private func markAccountDashboardDirty() {
         accountDashboardNeedsRefresh = true
+    }
+
+    private func usefulSearchVenueCount(
+        visibleVenues: [Venue],
+        priceRecords: [PriceRecord],
+        selectedBeerKey: String?
+    ) -> Int {
+        let asOf = Date()
+        let recordsByVenue = Dictionary(grouping: priceRecords.compactMap { record in
+            record.venueId.map { ($0, record) }
+        }, by: { $0.0 })
+
+        return visibleVenues.reduce(into: 0) { count, venue in
+            let candidates = (recordsByVenue[venue.id] ?? [])
+                .map(\.1)
+                .filter { record in
+                    record.isCurrentTrustedPintPrice(asOf: asOf)
+                        && (selectedBeerKey.map(record.matchesBeerKey) ?? true)
+                }
+            let distinctPrices = Set(candidates.map(\.analyticsIdentity)).count
+            let minimumPricesForUsefulVenue = selectedBeerKey == nil ? 3 : 1
+            if distinctPrices >= minimumPricesForUsefulVenue {
+                count += 1
+            }
+        }
     }
 
     private func validatedObservedPrice(_ priceText: String) -> Double? {

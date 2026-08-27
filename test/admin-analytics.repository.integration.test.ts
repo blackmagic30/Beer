@@ -37,6 +37,8 @@ const configuredAdminUrl = process.env[ADMIN_URL_ENV]?.trim() ?? "";
 
 const TABLES = [
   "accounts",
+  "account_privacy_settings",
+  "user_activity_events",
   "missions",
   "venue_location_cache",
   "venue_profiles",
@@ -269,6 +271,26 @@ describe.skipIf(!configuredAdminUrl)("admin analytics repository on real Postgre
         created_at timestamptz NOT NULL,
         updated_at timestamptz NOT NULL
       );
+      CREATE TABLE account_privacy_settings (
+        user_id text PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
+        optional_analytics_enabled boolean NOT NULL DEFAULT false,
+        venue_report_inclusion_enabled boolean NOT NULL DEFAULT false,
+        product_research_enabled boolean NOT NULL DEFAULT false,
+        email_updates_enabled boolean NOT NULL DEFAULT false,
+        consent_version text NOT NULL DEFAULT '2026-08-03',
+        consented_at timestamptz,
+        created_at timestamptz NOT NULL,
+        updated_at timestamptz NOT NULL
+      );
+      CREATE TABLE user_activity_events (
+        id text PRIMARY KEY,
+        user_id text NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+        event_type text NOT NULL,
+        related_entity_type text,
+        related_entity_id text,
+        metadata_json jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(metadata_json) = 'object'),
+        created_at timestamptz NOT NULL
+      );
       CREATE TABLE missions (
         id text PRIMARY KEY,
         venue_id text NOT NULL,
@@ -379,8 +401,9 @@ describe.skipIf(!configuredAdminUrl)("admin analytics repository on real Postgre
     await restrictedDatabase?.close();
     restrictedDatabase = null;
     await targetAdmin.query(`TRUNCATE TABLE
-      events, contribution_ledger, submissions, venue_requests, venue_price_records,
-      venue_profiles, venue_location_cache, missions, accounts`);
+      events, user_activity_events, account_privacy_settings, contribution_ledger,
+      submissions, venue_requests, venue_price_records, venue_profiles,
+      venue_location_cache, missions, accounts`);
     await seedAdminAnalyticsFixture(adminDatabase);
     restrictedDatabase = new LoopbackPostgresTestDatabase(restrictedUrl);
     repository = new AdminAnalyticsRepository(restrictedDatabase);
@@ -416,6 +439,14 @@ describe.skipIf(!configuredAdminUrl)("admin analytics repository on real Postgre
     expect(preview.topSearchedBeers).toContainEqual({ key: "guinness", count: 3 });
     expect(preview.topClickedVenues).toContainEqual({ key: "venue-alpha", label: "Alpha Hotel", count: 3 });
     expect(dashboard.metrics).toEqual(EXPECTED_KPI_METRICS);
+    expect(dashboard.searchUsefulness).toMatchObject({
+      evidenceStatus: "client_reported_non_formal",
+      formalReleaseEvidence: false,
+      searchEventCount: 4,
+      measuredSearchCount: 0,
+      unmeasuredSearchCount: 4,
+      successfulSearchRate: null,
+    });
     expect({
       topSearchedBeers: dashboard.topSearchedBeers,
       topSearchedSuburbs: dashboard.topSearchedSuburbs,
@@ -423,9 +454,9 @@ describe.skipIf(!configuredAdminUrl)("admin analytics repository on real Postgre
       topVenuesNeedingData: dashboard.topVenuesNeedingData,
       highDemandVenuesWithStaleOrMissingData: dashboard.highDemandVenuesWithStaleOrMissingData,
     }).toEqual(EXPECTED_KPI_BUCKETS);
-    await expect(repository.getRetentionCohorts({ groupBy: "week", limit: 24 }))
+    await expect(repository.getRetentionCohorts({ groupBy: "week", limit: 24, asOf: ANALYTICS_AS_OF }))
       .resolves.toEqual(EXPECTED_WEEK_COHORTS);
-    await expect(repository.getRetentionCohorts({ groupBy: "month", limit: 24 }))
+    await expect(repository.getRetentionCohorts({ groupBy: "month", limit: 24, asOf: ANALYTICS_AS_OF }))
       .resolves.toEqual(EXPECTED_MONTH_COHORTS);
 
     const coverage = await repository.getCoverageDashboard({
@@ -468,19 +499,184 @@ describe.skipIf(!configuredAdminUrl)("admin analytics repository on real Postgre
       .rejects.toSatisfy(expectCode("malformed_record"));
   });
 
+  it("matches privacy-anchor and search-usefulness semantics on native PostgreSQL", async () => {
+    if (!targetAdmin) throw new Error("PostgreSQL fixture is unavailable.");
+    await targetAdmin.query(
+      `UPDATE pintpath_app.account_privacy_settings
+          SET optional_analytics_enabled = false
+        WHERE user_id = 'user-b'`,
+    );
+    await targetAdmin.query(
+      `INSERT INTO pintpath_app.events (
+         id, user_id, anonymous_session_id, event_type, venue_id, beer_id, suburb,
+         metadata_json, created_at
+       ) VALUES
+         ('pg-useful-success', NULL, 'pg-anon', 'search_performed', NULL, NULL, 'Richmond',
+          '{"usefulResultCount":3,"searchSuccessful":true}'::jsonb, '2026-07-20T00:00:00.000Z'),
+         ('pg-useful-zero', NULL, 'pg-anon', 'search_performed', NULL, NULL, 'Richmond',
+          '{"usefulResultCount":0,"searchSuccessful":false}'::jsonb, '2026-07-20T00:01:00.000Z'),
+         ('pg-useful-inconsistent', NULL, 'pg-anon', 'search_performed', NULL, NULL, 'Richmond',
+          '{"usefulResultCount":3,"searchSuccessful":false}'::jsonb, '2026-07-20T00:02:00.000Z'),
+         ('pg-useful-invalid', NULL, 'pg-anon', 'search_performed', NULL, NULL, 'Richmond',
+          '{"usefulResultCount":"3","searchSuccessful":true}'::jsonb, '2026-07-20T00:03:00.000Z'),
+         ('pg-useful-beer', NULL, 'pg-anon', 'beer_search_performed', NULL, 'guinness', NULL,
+          '{"usefulResultCount":5,"searchSuccessful":true}'::jsonb, '2026-07-20T00:04:00.000Z'),
+         ('pg-useful-authenticated', 'user-a', NULL, 'search_performed', NULL, NULL, 'Richmond',
+          '{"usefulResultCount":4,"searchSuccessful":true}'::jsonb, '2026-07-20T00:05:00.000Z'),
+         ('pg-useful-opted-out', 'user-b', NULL, 'search_performed', NULL, NULL, 'Richmond',
+          '{"usefulResultCount":10,"searchSuccessful":true}'::jsonb, '2026-07-20T00:06:00.000Z'),
+         ('pg-useful-after-as-of', NULL, 'pg-anon', 'search_performed', NULL, NULL, 'Richmond',
+          '{"usefulResultCount":10,"searchSuccessful":true}'::jsonb, '2026-08-01T00:00:00.001Z')`,
+    );
+
+    const dashboard = await repository.getAdminKpiDashboard(KPI_INPUT);
+    expect(dashboard.searchUsefulness).toMatchObject({
+      searchEventCount: 10,
+      measuredSearchCount: 5,
+      unmeasuredSearchCount: 5,
+      successfulSearchCount: 4,
+      successfulSearchRate: 0.8,
+      averageUsefulResultCount: 3,
+      inconsistentSuccessFlagCount: 1,
+      distribution: { zero: 1, one: 0, two: 0, threeOrMore: 4 },
+    });
+
+    await targetAdmin.query(
+      `INSERT INTO pintpath_app.user_activity_events (
+         id, user_id, event_type, related_entity_type, related_entity_id,
+         metadata_json, created_at
+       ) VALUES (
+         'pg-user-a-opt-in', 'user-a', 'account_privacy_settings_updated',
+         'account', 'user-a', '{"optionalAnalyticsEnabled":true}'::jsonb,
+         '2026-01-04T00:00:00.000Z'
+       )`,
+    );
+    const before = await repository.getRetentionCohorts({
+      groupBy: "month",
+      limit: 24,
+      asOf: ANALYTICS_AS_OF,
+    });
+    await targetAdmin.query(
+      `UPDATE pintpath_app.account_privacy_settings
+          SET consented_at = '2026-03-20T12:00:00.000Z',
+              updated_at = '2026-03-20T12:00:00.000Z'
+        WHERE user_id = 'user-a'`,
+    );
+    await targetAdmin.query(
+      `INSERT INTO pintpath_app.user_activity_events (
+         id, user_id, event_type, related_entity_type, related_entity_id,
+         metadata_json, created_at
+       ) VALUES (
+         'pg-user-a-unrelated-consent-edit', 'user-a', 'account_privacy_settings_updated',
+         'account', 'user-a', '{"optionalAnalyticsEnabled":true}'::jsonb,
+         '2026-03-20T12:00:00.000Z'
+       )`,
+    );
+    await expect(repository.getRetentionCohorts({
+      groupBy: "month",
+      limit: 24,
+      asOf: ANALYTICS_AS_OF,
+    })).resolves.toEqual(before);
+  });
+
   it("keeps concurrent reads deterministic and enforces all result bounds", async () => {
     const results = await Promise.all(Array.from({ length: 12 }, async () => Promise.all([
-      repository.getRetentionCohorts({ groupBy: "week", limit: 2 }),
+      repository.getRetentionCohorts({ groupBy: "week", limit: 2, asOf: ANALYTICS_AS_OF }),
       repository.getPotentialPartnerLeads({ staleBefore: ANALYTICS_STALE_BEFORE, limit: 2 }),
     ])));
     for (const [cohorts, leads] of results) {
       expect(cohorts).toEqual(EXPECTED_WEEK_COHORTS.slice(0, 2));
       expect(leads).toEqual(EXPECTED_PARTNER_LEADS.slice(0, 2));
     }
-    await expect(repository.getRetentionCohorts({ groupBy: "week", limit: 25 }))
+    await expect(repository.getRetentionCohorts({ groupBy: "week", limit: 25, asOf: ANALYTICS_AS_OF }))
       .rejects.toSatisfy(expectCode("invalid_input"));
     await expect(repository.getPotentialPartnerLeads({ staleBefore: ANALYTICS_STALE_BEFORE, limit: 101 }))
       .rejects.toSatisfy(expectCode("invalid_input"));
+  });
+
+  it("matches the consent-scoped Saved Updates D7 ITT contract with native JSONB and UTC dates", async () => {
+    if (!targetAdmin) throw new Error("PostgreSQL fixture is unavailable.");
+    await targetAdmin.query(
+      `INSERT INTO pintpath_app.accounts (
+         id, email, password_hash, role, subscription_status, status, created_at, updated_at
+       ) VALUES
+         ('pg-itt-control', 'pg-itt-control@example.test', 'hash', 'user', 'free', 'active', $1, $1),
+         ('pg-itt-treatment', 'pg-itt-treatment@example.test', 'hash', 'user', 'free', 'active', $1, $1)`,
+      ["2026-08-01T00:00:00.000Z"],
+    );
+    await targetAdmin.query(
+      `INSERT INTO pintpath_app.account_privacy_settings (
+         user_id, optional_analytics_enabled, venue_report_inclusion_enabled,
+         product_research_enabled, email_updates_enabled, consent_version,
+         consented_at, created_at, updated_at
+       ) VALUES
+         ('pg-itt-control', true, false, false, false, 'experiment-v1', $1, $1, $1),
+         ('pg-itt-treatment', true, false, false, false, 'experiment-v1', $1, $1, $1)`,
+      ["2026-08-01T00:00:00.000Z"],
+    );
+    const controlMetadata = JSON.stringify({
+      accountRole: "user",
+      accountSubscriptionStatus: "free",
+      savedUpdatesEligibleAtAssignment: true,
+      savedUpdatesExperimentVersion: "v1",
+      savedUpdatesVariant: "control",
+    });
+    const treatmentMetadata = JSON.stringify({
+      accountRole: "user",
+      accountSubscriptionStatus: "free",
+      savedUpdatesEligibleAtAssignment: true,
+      savedUpdatesExperimentVersion: "v1",
+      savedUpdatesVariant: "treatment",
+    });
+    await targetAdmin.query(
+      `INSERT INTO pintpath_app.events (
+         id, user_id, anonymous_session_id, event_type, venue_id, beer_id, suburb,
+         metadata_json, created_at
+       ) VALUES
+         ('pg-itt-control-anchor', 'pg-itt-control', NULL, 'account_dashboard_viewed', NULL, NULL, NULL, $1::jsonb, '2026-08-20T12:00:00.000Z'),
+         ('pg-itt-control-d0', 'pg-itt-control', NULL, 'search_performed', NULL, NULL, NULL, '{}'::jsonb, '2026-08-20T23:59:59.999Z'),
+         ('pg-itt-treatment-anchor', 'pg-itt-treatment', NULL, 'account_dashboard_viewed', NULL, NULL, NULL, $2::jsonb, '2026-08-20T12:00:00.000Z'),
+         ('pg-itt-treatment-view', 'pg-itt-treatment', NULL, 'saved_updates_viewed', NULL, NULL, NULL, $2::jsonb, '2026-08-21T12:00:00.000Z'),
+         ('pg-itt-treatment-open', 'pg-itt-treatment', NULL, 'saved_update_opened', NULL, NULL, NULL, $2::jsonb, '2026-08-22T12:00:00.000Z'),
+         ('pg-itt-treatment-d7', 'pg-itt-treatment', NULL, 'search_performed', NULL, NULL, NULL, '{}'::jsonb, '2026-08-27T23:59:59.999Z')`,
+      [controlMetadata, treatmentMetadata],
+    );
+
+    await expect(repository.getSavedUpdatesExperimentRollup({
+      experimentVersion: "v1",
+      asOf: "2026-08-31T12:00:00.000Z",
+    })).resolves.toEqual({
+      experimentVersion: "v1",
+      observedD7RetentionDifference: 1,
+      variants: [
+        {
+          variant: "control",
+          assignedAccounts: 1,
+          assignedShare: 0.5,
+          eligibleAtAssignmentAccounts: 1,
+          eligibilityRateAtAssignment: 1,
+          exposedAccounts: 0,
+          exposureRate: null,
+          maturedAccounts7: 1,
+          maturityRate7: 1,
+          returnedAccounts7: 0,
+          retentionRate7: 0,
+        },
+        {
+          variant: "treatment",
+          assignedAccounts: 1,
+          assignedShare: 0.5,
+          eligibleAtAssignmentAccounts: 1,
+          eligibilityRateAtAssignment: 1,
+          exposedAccounts: 1,
+          exposureRate: 1,
+          maturedAccounts7: 1,
+          maturityRate7: 1,
+          returnedAccounts7: 1,
+          retentionRate7: 1,
+        },
+      ],
+    });
   });
 
   it("runs under forced RLS with SELECT-only privileges, rolls back, and closes privately", async () => {

@@ -10,7 +10,7 @@ struct RootView: View {
                     DiscoverView()
                 }
                 .tabItem {
-                    Label("Explore", systemImage: "map.fill")
+                    Label("Explore", systemImage: "map")
                 }
                 .tag(AppTab.explore)
 
@@ -18,7 +18,11 @@ struct RootView: View {
                     ContributeView()
                 }
                 .tabItem {
-                    Label("Add Price", systemImage: "plus.circle.fill")
+                    Label {
+                        Text("Contribute")
+                    } icon: {
+                        Image(BeerMapAsset.beerPint)
+                    }
                 }
                 .tag(AppTab.addPrice)
 
@@ -34,10 +38,12 @@ struct RootView: View {
                     MoreView()
                 }
                 .tabItem {
-                    Label("More", systemImage: "ellipsis.circle.fill")
+                    Label("More", systemImage: "line.3.horizontal")
                 }
                 .tag(AppTab.more)
             }
+            .toolbarBackground(BeerMapTheme.brandInk, for: .tabBar)
+            .toolbarBackground(.visible, for: .tabBar)
             .task {
                 await model.start()
             }
@@ -154,39 +160,80 @@ private struct MoreView: View {
     @EnvironmentObject private var model: BeerMapAppModel
 
     var body: some View {
-        List {
-            if model.hasVenueAccess && !model.hasAdminAccess {
-                Section("Workspaces") {
+        ScrollView {
+            VStack(spacing: 18) {
+                PintPathHero(
+                    eyebrow: "FIELD NOTES",
+                    title: "The rest of the route",
+                    subtitle: "Venue tools, support, privacy and the practical details behind Pint Path.",
+                    systemImage: "signpost.right.and.left.fill"
+                )
+
+                if model.hasVenueAccess && !model.hasAdminAccess {
+                    VStack(alignment: .leading, spacing: 11) {
+                        SectionHeader(
+                            eyebrow: "WORKSPACE",
+                            title: "Your venue",
+                            subtitle: "Keep your public listing and tap list current."
+                        )
+                        NavigationLink {
+                            VenuePortalView()
+                        } label: {
+                            moreRow(
+                                title: "Manage venue",
+                                message: "Public profile and beer list",
+                                systemImage: "building.2.fill"
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .beerMapCard()
+                }
+
+                VStack(alignment: .leading, spacing: 11) {
+                    SectionHeader(
+                        eyebrow: "PINT PATH",
+                        title: "Help & information",
+                        subtitle: "Support, privacy, responsible use and legal details."
+                    )
                     NavigationLink {
-                        VenuePortalView()
+                        SettingsView()
                     } label: {
                         moreRow(
-                            title: "Manage venue",
-                            message: "Public profile and beer list",
-                            systemImage: "building.2.fill"
+                            title: "Open help & legal",
+                            message: "Support, service status, policies and security",
+                            systemImage: "questionmark.circle.fill"
                         )
                     }
+                    .buttonStyle(.plain)
                 }
-            }
+                .beerMapCard()
 
-            Section("Help and information") {
-                NavigationLink {
-                    SettingsView()
-                } label: {
-                    moreRow(
-                        title: "Help, privacy, and legal",
-                        message: "Support, service status, policies, and security",
-                        systemImage: "questionmark.circle.fill"
-                    )
+                HStack(spacing: 8) {
+                    PintPathMark(size: 28)
+                    Text("Made for better pub decisions around Melbourne.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
                 }
+                .padding(.horizontal, 4)
             }
+            .padding()
         }
-        .listStyle(.insetGrouped)
+        .beerMapScreen()
         .navigationTitle("More")
     }
 
     private func moreRow(title: String, message: String, systemImage: String) -> some View {
-        Label {
+        HStack(spacing: 13) {
+            ZStack {
+                Circle()
+                    .fill(BeerMapTheme.brandGold)
+                Image(systemName: systemImage)
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(BeerMapTheme.brandInk)
+            }
+            .frame(width: 40, height: 40)
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
                     .font(.body.weight(.semibold))
@@ -195,10 +242,12 @@ private struct MoreView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(.vertical, 4)
-        } icon: {
-            Image(systemName: systemImage)
-                .foregroundStyle(BeerMapTheme.primaryAction)
+            Spacer(minLength: 8)
+            Image(systemName: "chevron.right")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.tertiary)
         }
+        .padding(.vertical, 6)
+        .contentShape(Rectangle())
     }
 }

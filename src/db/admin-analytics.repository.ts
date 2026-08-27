@@ -4,6 +4,8 @@ const CANONICAL_UTC_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const MAX_RETENTION_COHORTS = 24;
 const MAX_PARTNER_LEADS = 100;
 const MAX_TOTAL_VENUES = 10_000_000;
+const MAX_CLIENT_REPORTED_USEFUL_RESULTS = 10_000;
+const USEFUL_SEARCH_RESULT_THRESHOLD = 3;
 const MAX_TEXT_LENGTH = 500;
 
 const VERIFIED_CONFIDENCES = [
@@ -11,6 +13,29 @@ const VERIFIED_CONFIDENCES = [
   "venue_confirmed",
   "photo_verified",
   "community_confirmed",
+] as const;
+
+const RETENTION_LOOP_EVENT_TYPES = [
+  "account_dashboard_viewed",
+  "map_viewed",
+  "search_performed",
+  "beer_search_performed",
+  "suburb_search_performed",
+  "venue_card_viewed",
+  "venue_detail_opened",
+  "free_preview_viewed",
+  "price_view_revealed",
+  "map_filter_used",
+  "saved_venue_added",
+  "saved_beer_added",
+  "saved_suburb_added",
+  "saved_night_plan_added",
+  "tonight_plan_created",
+  "submission_completed",
+  "data_verified",
+  "price_confirmation_answered",
+  "wrong_price_reported",
+  "mission_opened",
 ] as const;
 
 const PARTNER_LEAD_CONFIDENCES = new Set([
@@ -23,6 +48,7 @@ const PARTNER_LEAD_CONFIDENCES = new Set([
 
 export interface AdminKpiDashboardInput {
   since: string | null;
+  asOf: string;
   sevenDaysAgo: string;
   thirtyDaysAgo: string;
   staleBefore: string;
@@ -97,6 +123,7 @@ export interface AdminScorecardItem {
 
 export interface AdminKpiDashboard {
   metrics: AdminKpiMetrics;
+  searchUsefulness: ClientReportedSearchUsefulness;
   scorecard: AdminScorecardItem[];
   topSearchedBeers: AdminAnalyticsBucket[];
   topSearchedSuburbs: AdminAnalyticsBucket[];
@@ -105,18 +132,70 @@ export interface AdminKpiDashboard {
   highDemandVenuesWithStaleOrMissingData: AdminAnalyticsLabeledBucket[];
 }
 
+export interface ClientReportedSearchUsefulness {
+  definition: "client_reported_search_usefulness_v1";
+  evidenceStatus: "client_reported_non_formal";
+  formalReleaseEvidence: false;
+  population: "currently_opted_in_accounts_and_consented_anonymous_sessions";
+  caveat: string;
+  usefulResultThreshold: number;
+  searchEventCount: number;
+  measuredSearchCount: number;
+  unmeasuredSearchCount: number;
+  successfulSearchCount: number;
+  successfulSearchRate: number | null;
+  averageUsefulResultCount: number | null;
+  inconsistentSuccessFlagCount: number;
+  distribution: {
+    zero: number;
+    one: number;
+    two: number;
+    threeOrMore: number;
+  };
+}
+
 export interface RetentionCohortInput {
   groupBy: "week" | "month";
   limit: number;
+  asOf: string;
 }
 
 export interface RetentionCohort {
   cohort: string;
   users: number;
+  eligibleUsers7: number;
+  eligibleUsers30: number;
   returned7: number;
   returned30: number;
-  retention7: number;
-  retention30: number;
+  retention7: number | null;
+  retention30: number | null;
+}
+
+export type SavedUpdatesExperimentVariant = "control" | "treatment";
+
+export interface SavedUpdatesExperimentInput {
+  experimentVersion: string;
+  asOf: string;
+}
+
+export interface SavedUpdatesExperimentVariantMetrics {
+  variant: SavedUpdatesExperimentVariant;
+  assignedAccounts: number;
+  assignedShare: number | null;
+  eligibleAtAssignmentAccounts: number;
+  eligibilityRateAtAssignment: number | null;
+  exposedAccounts: number;
+  exposureRate: number | null;
+  maturedAccounts7: number;
+  maturityRate7: number | null;
+  returnedAccounts7: number;
+  retentionRate7: number | null;
+}
+
+export interface SavedUpdatesExperimentRollup {
+  experimentVersion: string;
+  observedD7RetentionDifference: number | null;
+  variants: SavedUpdatesExperimentVariantMetrics[];
 }
 
 export interface CoverageDashboardInput {
@@ -230,6 +309,18 @@ interface KpiMetricRow extends RawRow {
   verifiedPricesAdded: unknown;
 }
 
+interface SearchUsefulnessRow extends RawRow {
+  searchEventCount: unknown;
+  measuredSearchCount: unknown;
+  successfulSearchCount: unknown;
+  averageUsefulResultCount: unknown;
+  inconsistentSuccessFlagCount: unknown;
+  zeroUsefulResults: unknown;
+  oneUsefulResult: unknown;
+  twoUsefulResults: unknown;
+  threeOrMoreUsefulResults: unknown;
+}
+
 interface BucketRow extends RawRow {
   key: unknown;
   count: unknown;
@@ -242,8 +333,19 @@ interface LabeledBucketRow extends BucketRow {
 interface RetentionRow extends RawRow {
   cohort: unknown;
   users: unknown;
+  eligibleUsers7: unknown;
+  eligibleUsers30: unknown;
   returned7: unknown;
   returned30: unknown;
+}
+
+interface SavedUpdatesExperimentRow extends RawRow {
+  variant: unknown;
+  assignedAccounts: unknown;
+  eligibleAtAssignmentAccounts: unknown;
+  exposedAccounts: unknown;
+  maturedAccounts7: unknown;
+  returnedAccounts7: unknown;
 }
 
 interface CoverageMetricRow extends RawRow {
@@ -314,6 +416,11 @@ function inputLimit(value: unknown, maximum: number): number {
   return parsed;
 }
 
+function inputExperimentVersion(value: unknown): string {
+  if (typeof value !== "string" || !/^v[1-9]\d{0,8}$/.test(value)) return fail("invalid_input");
+  return value;
+}
+
 function recordText(value: unknown, maximum = MAX_TEXT_LENGTH): string {
   if (typeof value !== "string" || value.length < 1 || value.length > maximum || /[\r\n\0]/.test(value)) {
     return fail("malformed_record");
@@ -348,6 +455,11 @@ function safeFiniteNumber(value: unknown): number {
   const parsed = Number(text);
   if (!Number.isFinite(parsed) || Math.abs(parsed) > Number.MAX_SAFE_INTEGER) return fail("malformed_record");
   return parsed;
+}
+
+function savedUpdatesExperimentVariant(value: unknown): SavedUpdatesExperimentVariant {
+  if (value !== "control" && value !== "treatment") return fail("malformed_record");
+  return value;
 }
 
 function booleanBinding(database: SqlDatabase, value: boolean): boolean | number {
@@ -409,6 +521,37 @@ export class AdminAnalyticsRepository {
     return this.database.dialect === "postgres"
       ? `(${expression}) COLLATE "C"`
       : `(${expression}) COLLATE BINARY`;
+  }
+
+  private privacyAnchorCtes(): string {
+    const validBoolean = this.database.dialect === "postgres"
+      ? "jsonb_typeof(activity.metadata_json -> 'optionalAnalyticsEnabled') = 'boolean'"
+      : "json_type(activity.metadata_json, '$.optionalAnalyticsEnabled') IN ('true', 'false')";
+    const enabledValue = this.database.dialect === "postgres"
+      ? "CAST(activity.metadata_json ->> 'optionalAnalyticsEnabled' AS boolean)"
+      : "json_extract(activity.metadata_json, '$.optionalAnalyticsEnabled')";
+    return `privacy_activity AS (
+      SELECT activity.user_id, activity.created_at, ${enabledValue} AS analytics_enabled
+        FROM user_activity_events activity
+       WHERE activity.event_type = 'account_privacy_settings_updated'
+         AND ${validBoolean}
+    ), privacy_last_disabled AS (
+      SELECT user_id, max(created_at) AS disabled_at
+        FROM privacy_activity
+       WHERE analytics_enabled = @analyticsDisabled
+       GROUP BY user_id
+    ), privacy_anchors AS (
+      SELECT privacy.*,
+             COALESCE((
+               SELECT min(enabled.created_at)
+                 FROM privacy_activity enabled
+                WHERE enabled.user_id = privacy.user_id
+                  AND enabled.analytics_enabled = @analyticsEnabled
+                  AND (last_disabled.disabled_at IS NULL OR enabled.created_at > last_disabled.disabled_at)
+             ), privacy.consented_at) AS analytics_opt_in_at
+        FROM account_privacy_settings privacy
+        LEFT JOIN privacy_last_disabled last_disabled ON last_disabled.user_id = privacy.user_id
+    )`;
   }
 
   private venueLabelExpression(keyExpression: string, metadataExpression = "NULL"): string {
@@ -508,9 +651,150 @@ export class AdminAnalyticsRepository {
     });
   }
 
+  private async getClientReportedSearchUsefulness(input: {
+    since: string | null;
+    asOf: string;
+  }): Promise<ClientReportedSearchUsefulness> {
+    const eventRangeCondition = input.since === null
+      ? "1 = 1"
+      : this.database.dialect === "postgres"
+        ? "e.created_at >= CAST(@since AS timestamptz)"
+        : "e.created_at >= @since";
+    const eventObservedByAsOf = this.database.dialect === "postgres"
+      ? "e.created_at <= CAST(@asOf AS timestamptz)"
+      : "e.created_at <= @asOf";
+    const usefulResultCount = this.database.dialect === "postgres"
+      ? `CASE
+           WHEN jsonb_typeof(metadata_json -> 'usefulResultCount') = 'number'
+            AND (metadata_json ->> 'usefulResultCount') ~ '^(0|[1-9][0-9]*)$'
+            AND CAST(metadata_json ->> 'usefulResultCount' AS numeric) <= @maximumUsefulResults
+           THEN CAST(metadata_json ->> 'usefulResultCount' AS bigint)
+           ELSE NULL
+         END`
+      : `CASE
+           WHEN json_type(metadata_json, '$.usefulResultCount') = 'integer'
+            AND json_extract(metadata_json, '$.usefulResultCount') >= 0
+            AND json_extract(metadata_json, '$.usefulResultCount') <= @maximumUsefulResults
+           THEN CAST(json_extract(metadata_json, '$.usefulResultCount') AS INTEGER)
+           ELSE NULL
+         END`;
+    const reportedSuccessful = this.database.dialect === "postgres"
+      ? `CASE
+           WHEN jsonb_typeof(metadata_json -> 'searchSuccessful') = 'boolean'
+           THEN CAST(metadata_json ->> 'searchSuccessful' AS boolean)
+           ELSE NULL
+         END`
+      : `CASE
+           WHEN json_type(metadata_json, '$.searchSuccessful') IN ('true', 'false')
+           THEN json_extract(metadata_json, '$.searchSuccessful')
+           ELSE NULL
+         END`;
+    const successFlagMismatch = this.database.dialect === "postgres"
+      ? "reported_successful != (useful_result_count >= @usefulThreshold)"
+      : `reported_successful != CASE
+           WHEN useful_result_count >= @usefulThreshold THEN 1 ELSE 0
+         END`;
+    const analyticsEnabled = booleanBinding(this.database, true);
+    const row = await this.database.prepare(
+      `WITH ${this.privacyAnchorCtes()}, scoped_searches AS (
+         SELECT e.metadata_json
+           FROM events e
+           LEFT JOIN privacy_anchors privacy ON privacy.user_id = e.user_id
+          WHERE e.event_type IN ('search_performed', 'beer_search_performed')
+            AND ${eventRangeCondition}
+            AND ${eventObservedByAsOf}
+            AND (
+              (e.user_id IS NULL AND e.anonymous_session_id IS NOT NULL)
+              OR (
+                e.user_id IS NOT NULL
+                AND privacy.optional_analytics_enabled = @analyticsEnabled
+                AND privacy.analytics_opt_in_at IS NOT NULL
+                AND privacy.analytics_opt_in_at <= e.created_at
+              )
+            )
+       ), decoded_searches AS (
+         SELECT ${usefulResultCount} AS useful_result_count,
+                ${reportedSuccessful} AS reported_successful
+           FROM scoped_searches
+       ), measured_searches AS (
+         SELECT useful_result_count, reported_successful
+           FROM decoded_searches
+          WHERE useful_result_count IS NOT NULL
+            AND reported_successful IS NOT NULL
+       )
+       SELECT (SELECT count(*) FROM scoped_searches) AS "searchEventCount",
+              count(*) AS "measuredSearchCount",
+              count(CASE WHEN useful_result_count >= @usefulThreshold THEN 1 END)
+                AS "successfulSearchCount",
+              avg(useful_result_count) AS "averageUsefulResultCount",
+              count(CASE WHEN ${successFlagMismatch} THEN 1 END)
+                AS "inconsistentSuccessFlagCount",
+              count(CASE WHEN useful_result_count = 0 THEN 1 END) AS "zeroUsefulResults",
+              count(CASE WHEN useful_result_count = 1 THEN 1 END) AS "oneUsefulResult",
+              count(CASE WHEN useful_result_count = 2 THEN 1 END) AS "twoUsefulResults",
+              count(CASE WHEN useful_result_count >= @usefulThreshold THEN 1 END)
+                AS "threeOrMoreUsefulResults"
+         FROM measured_searches`,
+    ).get<SearchUsefulnessRow>({
+      ...(input.since === null ? {} : { since: input.since }),
+      asOf: input.asOf,
+      analyticsEnabled,
+      analyticsDisabled: booleanBinding(this.database, false),
+      maximumUsefulResults: MAX_CLIENT_REPORTED_USEFUL_RESULTS,
+      usefulThreshold: USEFUL_SEARCH_RESULT_THRESHOLD,
+    });
+    if (!row) return fail("malformed_record");
+
+    const searchEventCount = safeCount(row.searchEventCount);
+    const measuredSearchCount = safeCount(row.measuredSearchCount);
+    const successfulSearchCount = safeCount(row.successfulSearchCount);
+    const inconsistentSuccessFlagCount = safeCount(row.inconsistentSuccessFlagCount);
+    const distribution = {
+      zero: safeCount(row.zeroUsefulResults),
+      one: safeCount(row.oneUsefulResult),
+      two: safeCount(row.twoUsefulResults),
+      threeOrMore: safeCount(row.threeOrMoreUsefulResults),
+    };
+    const distributionCount = Object.values(distribution).reduce((total, count) => total + count, 0);
+    const averageUsefulResultCount = row.averageUsefulResultCount === null
+      ? null
+      : safeFiniteNumber(row.averageUsefulResultCount);
+    if (
+      measuredSearchCount > searchEventCount
+      || successfulSearchCount > measuredSearchCount
+      || inconsistentSuccessFlagCount > measuredSearchCount
+      || distributionCount !== measuredSearchCount
+      || distribution.threeOrMore !== successfulSearchCount
+      || (averageUsefulResultCount !== null && (
+        averageUsefulResultCount < 0
+        || averageUsefulResultCount > MAX_CLIENT_REPORTED_USEFUL_RESULTS
+      ))
+    ) return fail("malformed_record");
+
+    return {
+      definition: "client_reported_search_usefulness_v1",
+      evidenceStatus: "client_reported_non_formal",
+      formalReleaseEvidence: false,
+      population: "currently_opted_in_accounts_and_consented_anonymous_sessions",
+      caveat: "Client-reported visible-result counts from consented web sessions; useful-result consistency is server-checked, but this is directional product telemetry and not formal release evidence.",
+      usefulResultThreshold: USEFUL_SEARCH_RESULT_THRESHOLD,
+      searchEventCount,
+      measuredSearchCount,
+      unmeasuredSearchCount: searchEventCount - measuredSearchCount,
+      successfulSearchCount,
+      successfulSearchRate: measuredSearchCount > 0
+        ? successfulSearchCount / measuredSearchCount
+        : null,
+      averageUsefulResultCount,
+      inconsistentSuccessFlagCount,
+      distribution,
+    };
+  }
+
   async getAdminKpiDashboard(input: AdminKpiDashboardInput): Promise<AdminKpiDashboard> {
     return this.guarded(async () => {
       const since = optionalInputTimestamp(input.since);
+      const asOf = inputTimestamp(input.asOf);
       const sevenDaysAgo = inputTimestamp(input.sevenDaysAgo);
       const thirtyDaysAgo = inputTimestamp(input.thirtyDaysAgo);
       const staleBefore = inputTimestamp(input.staleBefore);
@@ -643,6 +927,7 @@ export class AdminAnalyticsRepository {
       );
       const topVenuesNeedingData = await this.topVenuesNeedingData(active);
       const highDemandVenuesWithStaleOrMissingData = await this.highDemandMissing(since, staleBefore);
+      const searchUsefulness = await this.getClientReportedSearchUsefulness({ since, asOf });
       if (!metricRow) return fail("malformed_record");
 
       const totalUsers = safeCount(metricRow.totalUsers);
@@ -711,6 +996,7 @@ export class AdminAnalyticsRepository {
 
       return {
         metrics,
+        searchUsefulness,
         scorecard,
         topSearchedBeers,
         topSearchedSuburbs,
@@ -843,58 +1129,341 @@ export class AdminAnalyticsRepository {
     return this.guarded(async () => {
       if (input.groupBy !== "week" && input.groupBy !== "month") return fail("invalid_input");
       const limit = inputLimit(input.limit, MAX_RETENTION_COHORTS);
-      const bucketExpression = this.retentionBucketExpression("created_at", input.groupBy);
+      const asOf = inputTimestamp(input.asOf);
+      const analyticsEnabled = booleanBinding(this.database, true);
+      const analyticsDisabled = booleanBinding(this.database, false);
+      // `consented_at` is a mutable legal-consent revision. Reconstruct the
+      // current analytics opt-in episode from the existing privacy activity
+      // audit, falling back to consented_at for legacy or failed audit writes.
+      const analyticsOptInExpression = "privacy.analytics_opt_in_at";
+      const cohortStartExpression = `CASE
+        WHEN ${analyticsOptInExpression} > account.created_at THEN ${analyticsOptInExpression}
+        ELSE account.created_at
+      END`;
+      const bucketExpression = this.retentionBucketExpression(cohortStartExpression, input.groupBy);
+      const retentionEventTypes = RETENTION_LOOP_EVENT_TYPES
+        .map((eventType) => `'${eventType}'`)
+        .join(", ");
+      const accountObservedByAsOf = this.database.dialect === "postgres"
+        ? "account.created_at <= CAST(@asOf AS timestamptz)"
+        : "account.created_at <= @asOf";
+      const consentObservedByAsOf = this.database.dialect === "postgres"
+        ? `${analyticsOptInExpression} <= CAST(@asOf AS timestamptz)`
+        : `${analyticsOptInExpression} <= @asOf`;
+      const eventObservedByAsOf = this.database.dialect === "postgres"
+        ? "e.created_at <= CAST(@asOf AS timestamptz)"
+        : "e.created_at <= @asOf";
+      // A D1-D7 cohort is mature only after the whole seventh UTC calendar day
+      // has elapsed. The same rule applies to D1-D30 and avoids partial-day
+      // right-censoring when this query runs during the final observation day.
+      const matureSeven = this.database.dialect === "postgres"
+        ? `timezone('UTC', cohort_accounts.created_at)::date + 7
+           < timezone('UTC', CAST(@asOf AS timestamptz))::date`
+        : `date(cohort_accounts.created_at, '+7 days') < date(@asOf)`;
+      const matureThirty = this.database.dialect === "postgres"
+        ? `timezone('UTC', cohort_accounts.created_at)::date + 30
+           < timezone('UTC', CAST(@asOf AS timestamptz))::date`
+        : `date(cohort_accounts.created_at, '+30 days') < date(@asOf)`;
       const withinSeven = this.database.dialect === "postgres"
-        ? "e.created_at > cohort_accounts.created_at AND e.created_at <= cohort_accounts.created_at + INTERVAL '7 days'"
-        : "julianday(e.created_at) > julianday(cohort_accounts.created_at) AND julianday(e.created_at) <= julianday(cohort_accounts.created_at) + 7";
+        ? `timezone('UTC', e.created_at)::date > timezone('UTC', cohort_accounts.created_at)::date
+           AND timezone('UTC', e.created_at)::date <= timezone('UTC', cohort_accounts.created_at)::date + 7`
+        : `date(e.created_at) > date(cohort_accounts.created_at)
+           AND date(e.created_at) <= date(cohort_accounts.created_at, '+7 days')`;
       const withinThirty = this.database.dialect === "postgres"
-        ? "e.created_at > cohort_accounts.created_at AND e.created_at <= cohort_accounts.created_at + INTERVAL '30 days'"
-        : "julianday(e.created_at) > julianday(cohort_accounts.created_at) AND julianday(e.created_at) <= julianday(cohort_accounts.created_at) + 30";
+        ? `timezone('UTC', e.created_at)::date > timezone('UTC', cohort_accounts.created_at)::date
+           AND timezone('UTC', e.created_at)::date <= timezone('UTC', cohort_accounts.created_at)::date + 30`
+        : `date(e.created_at) > date(cohort_accounts.created_at)
+           AND date(e.created_at) <= date(cohort_accounts.created_at, '+30 days')`;
       const rows = await this.database.prepare(
-        `WITH cohort_accounts AS (
-           SELECT id, created_at, ${bucketExpression} AS cohort
-             FROM accounts
+        `WITH ${this.privacyAnchorCtes()}, cohort_accounts AS (
+           SELECT account.id, ${cohortStartExpression} AS created_at, ${bucketExpression} AS cohort
+             FROM accounts account
+             JOIN privacy_anchors privacy
+               ON privacy.user_id = account.id
+              AND privacy.optional_analytics_enabled = @analyticsEnabled
+            WHERE ${accountObservedByAsOf}
+              AND ${analyticsOptInExpression} IS NOT NULL
+              AND ${consentObservedByAsOf}
          ), limited_cohorts AS (
            SELECT cohort, count(*) AS users
              FROM cohort_accounts
             GROUP BY cohort
             ORDER BY cohort DESC
-            LIMIT ?
+            LIMIT @limit
          )
          SELECT limited_cohorts.cohort AS "cohort",
                 limited_cohorts.users AS "users",
-                count(DISTINCT CASE WHEN ${withinSeven} THEN cohort_accounts.id END) AS "returned7",
-                count(DISTINCT CASE WHEN ${withinThirty} THEN cohort_accounts.id END) AS "returned30"
+                count(DISTINCT CASE WHEN ${matureSeven} THEN cohort_accounts.id END) AS "eligibleUsers7",
+                count(DISTINCT CASE WHEN ${matureThirty} THEN cohort_accounts.id END) AS "eligibleUsers30",
+                count(DISTINCT CASE WHEN ${matureSeven} AND ${withinSeven}
+                                    THEN cohort_accounts.id END) AS "returned7",
+                count(DISTINCT CASE WHEN ${matureThirty} AND ${withinThirty}
+                                    THEN cohort_accounts.id END) AS "returned30"
            FROM limited_cohorts
            JOIN cohort_accounts ON cohort_accounts.cohort = limited_cohorts.cohort
            LEFT JOIN events e
              ON e.user_id = cohort_accounts.id
-            AND e.event_type IN (
-              'search_performed', 'beer_search_performed', 'venue_detail_opened',
-              'free_preview_viewed', 'price_view_revealed', 'submission_completed',
-              'mission_opened', 'map_filter_used'
-            )
+            AND e.event_type IN (${retentionEventTypes})
+            AND ${eventObservedByAsOf}
           GROUP BY limited_cohorts.cohort, limited_cohorts.users
           ORDER BY limited_cohorts.cohort DESC`,
-      ).all<RetentionRow>(limit);
+      ).all<RetentionRow>({ limit, asOf, analyticsEnabled, analyticsDisabled });
 
       const pattern = input.groupBy === "week" ? /^\d{4}-W\d{2}$/ : /^\d{4}-\d{2}$/;
       return rows.map((row) => {
         const cohort = recordText(row.cohort, 8);
         if (!pattern.test(cohort)) return fail("malformed_record");
         const users = safeCount(row.users);
+        const eligibleUsers7 = safeCount(row.eligibleUsers7);
+        const eligibleUsers30 = safeCount(row.eligibleUsers30);
         const returned7 = safeCount(row.returned7);
         const returned30 = safeCount(row.returned30);
-        if (returned7 > returned30 || returned30 > users) return fail("malformed_record");
+        if (
+          eligibleUsers7 > users ||
+          eligibleUsers30 > eligibleUsers7 ||
+          returned7 > eligibleUsers7 ||
+          returned30 > eligibleUsers30
+        ) return fail("malformed_record");
         return {
           cohort,
           users,
+          eligibleUsers7,
+          eligibleUsers30,
           returned7,
           returned30,
-          retention7: users > 0 ? returned7 / users : 0,
-          retention30: users > 0 ? returned30 / users : 0,
+          retention7: eligibleUsers7 > 0 ? returned7 / eligibleUsers7 : null,
+          retention30: eligibleUsers30 > 0 ? returned30 / eligibleUsers30 : null,
         };
       });
+    });
+  }
+
+  async getSavedUpdatesExperimentRollup(
+    input: SavedUpdatesExperimentInput,
+  ): Promise<SavedUpdatesExperimentRollup> {
+    return this.guarded(async () => {
+      const experimentVersion = inputExperimentVersion(input.experimentVersion);
+      const asOf = inputTimestamp(input.asOf);
+      const analyticsEnabled = booleanBinding(this.database, true);
+      const analyticsDisabled = booleanBinding(this.database, false);
+      const versionType = this.database.dialect === "postgres"
+        ? "jsonb_typeof(assignment.metadata_json -> 'savedUpdatesExperimentVersion') = 'string'"
+        : "json_type(assignment.metadata_json, '$.savedUpdatesExperimentVersion') = 'text'";
+      const variantType = this.database.dialect === "postgres"
+        ? "jsonb_typeof(assignment.metadata_json -> 'savedUpdatesVariant') = 'string'"
+        : "json_type(assignment.metadata_json, '$.savedUpdatesVariant') = 'text'";
+      const assignmentVersion = this.database.dialect === "postgres"
+        ? "assignment.metadata_json ->> 'savedUpdatesExperimentVersion'"
+        : "json_extract(assignment.metadata_json, '$.savedUpdatesExperimentVersion')";
+      const assignmentVariant = this.database.dialect === "postgres"
+        ? "assignment.metadata_json ->> 'savedUpdatesVariant'"
+        : "json_extract(assignment.metadata_json, '$.savedUpdatesVariant')";
+      const assignmentRoleType = this.database.dialect === "postgres"
+        ? "jsonb_typeof(assignment.metadata_json -> 'accountRole') = 'string'"
+        : "json_type(assignment.metadata_json, '$.accountRole') = 'text'";
+      const assignmentRole = this.database.dialect === "postgres"
+        ? "assignment.metadata_json ->> 'accountRole'"
+        : "json_extract(assignment.metadata_json, '$.accountRole')";
+      const assignmentSubscriptionType = this.database.dialect === "postgres"
+        ? "jsonb_typeof(assignment.metadata_json -> 'accountSubscriptionStatus') = 'string'"
+        : "json_type(assignment.metadata_json, '$.accountSubscriptionStatus') = 'text'";
+      const assignmentSubscription = this.database.dialect === "postgres"
+        ? "assignment.metadata_json ->> 'accountSubscriptionStatus'"
+        : "json_extract(assignment.metadata_json, '$.accountSubscriptionStatus')";
+      const assignmentEligibilityType = this.database.dialect === "postgres"
+        ? "jsonb_typeof(assignment.metadata_json -> 'savedUpdatesEligibleAtAssignment') = 'boolean'"
+        : "json_type(assignment.metadata_json, '$.savedUpdatesEligibleAtAssignment') IN ('true', 'false')";
+      const assignmentEligibility = this.database.dialect === "postgres"
+        ? `CASE WHEN ${assignmentEligibilityType}
+             THEN CAST(assignment.metadata_json ->> 'savedUpdatesEligibleAtAssignment' AS boolean)
+             ELSE NULL END`
+        : `CASE WHEN ${assignmentEligibilityType}
+             THEN json_extract(assignment.metadata_json, '$.savedUpdatesEligibleAtAssignment')
+             ELSE NULL END`;
+      const exposureVersionType = this.database.dialect === "postgres"
+        ? "jsonb_typeof(exposure.metadata_json -> 'savedUpdatesExperimentVersion') = 'string'"
+        : "json_type(exposure.metadata_json, '$.savedUpdatesExperimentVersion') = 'text'";
+      const exposureVariantType = this.database.dialect === "postgres"
+        ? "jsonb_typeof(exposure.metadata_json -> 'savedUpdatesVariant') = 'string'"
+        : "json_type(exposure.metadata_json, '$.savedUpdatesVariant') = 'text'";
+      const exposureVersion = this.database.dialect === "postgres"
+        ? "exposure.metadata_json ->> 'savedUpdatesExperimentVersion'"
+        : "json_extract(exposure.metadata_json, '$.savedUpdatesExperimentVersion')";
+      const exposureVariant = this.database.dialect === "postgres"
+        ? "exposure.metadata_json ->> 'savedUpdatesVariant'"
+        : "json_extract(exposure.metadata_json, '$.savedUpdatesVariant')";
+      const observedByAsOf = (column: string) => this.database.dialect === "postgres"
+        ? `${column} <= CAST(@asOf AS timestamptz)`
+        : `${column} <= @asOf`;
+      const matureSeven = this.database.dialect === "postgres"
+        ? `timezone('UTC', assigned.assigned_at)::date + 7
+           < timezone('UTC', CAST(@asOf AS timestamptz))::date`
+        : "date(assigned.assigned_at, '+7 days') < date(@asOf)";
+      const withinSeven = (eventTimestamp: string) => this.database.dialect === "postgres"
+        ? `timezone('UTC', ${eventTimestamp})::date > timezone('UTC', assigned.assigned_at)::date
+           AND timezone('UTC', ${eventTimestamp})::date <= timezone('UTC', assigned.assigned_at)::date + 7`
+        : `date(${eventTimestamp}) > date(assigned.assigned_at)
+           AND date(${eventTimestamp}) <= date(assigned.assigned_at, '+7 days')`;
+      const exposureWithinSeven = this.database.dialect === "postgres"
+        ? `exposure.created_at >= assigned.assigned_at
+           AND timezone('UTC', exposure.created_at)::date >= timezone('UTC', assigned.assigned_at)::date
+           AND timezone('UTC', exposure.created_at)::date <= timezone('UTC', assigned.assigned_at)::date + 7`
+        : `exposure.created_at >= assigned.assigned_at
+           AND date(exposure.created_at) >= date(assigned.assigned_at)
+           AND date(exposure.created_at) <= date(assigned.assigned_at, '+7 days')`;
+      const retentionEventTypes = RETENTION_LOOP_EVENT_TYPES
+        .map((eventType) => `'${eventType}'`)
+        .join(", ");
+      const rows = await this.database.prepare(
+        `WITH ${this.privacyAnchorCtes()}, assignment_candidates AS (
+           SELECT assignment.user_id,
+                  assignment.created_at AS assigned_at,
+                  ${assignmentVariant} AS variant,
+                  ${assignmentRole} AS account_role,
+                  ${assignmentSubscription} AS account_subscription_status,
+                  CASE WHEN ${assignmentEligibility} = @analyticsEnabled THEN 1 ELSE 0 END
+                    AS eligible_at_assignment,
+                  CASE WHEN ${variantType} THEN 1 ELSE 0 END AS variant_is_string,
+                  CASE WHEN ${assignmentRoleType} THEN 1 ELSE 0 END AS account_role_is_string,
+                  CASE WHEN ${assignmentSubscriptionType} THEN 1 ELSE 0 END AS subscription_is_string,
+                  CASE WHEN ${assignmentEligibilityType} THEN 1 ELSE 0 END AS eligibility_is_boolean,
+                  row_number() OVER (
+                    PARTITION BY assignment.user_id
+                    ORDER BY assignment.created_at ASC, assignment.id ASC
+                  ) AS assignment_rank
+             FROM events assignment
+             JOIN privacy_anchors privacy
+               ON privacy.user_id = assignment.user_id
+              AND privacy.optional_analytics_enabled = @analyticsEnabled
+            WHERE assignment.event_type = 'account_dashboard_viewed'
+              AND privacy.analytics_opt_in_at IS NOT NULL
+              AND assignment.created_at >= privacy.analytics_opt_in_at
+              AND ${observedByAsOf("assignment.created_at")}
+              AND ${versionType}
+              AND ${assignmentVersion} = @experimentVersion
+         ), assigned_accounts AS (
+           SELECT candidate.user_id,
+                  candidate.assigned_at,
+                  candidate.variant,
+                  candidate.eligible_at_assignment
+             FROM assignment_candidates candidate
+            WHERE candidate.assignment_rank = 1
+              AND candidate.variant_is_string = 1
+              AND candidate.variant IN ('control', 'treatment')
+              AND candidate.account_role_is_string = 1
+              AND candidate.account_role = 'user'
+              AND candidate.subscription_is_string = 1
+              AND candidate.account_subscription_status IN ('free', 'contributor_unlocked')
+              AND candidate.eligibility_is_boolean = 1
+         ), exposed_accounts AS (
+           SELECT DISTINCT assigned.user_id
+             FROM assigned_accounts assigned
+             JOIN events exposure
+               ON exposure.user_id = assigned.user_id
+              AND exposure.event_type = 'saved_updates_viewed'
+              AND ${observedByAsOf("exposure.created_at")}
+              AND ${exposureWithinSeven}
+              AND ${exposureVersionType}
+              AND ${exposureVariantType}
+              AND ${exposureVersion} = @experimentVersion
+              AND ${exposureVariant} = 'treatment'
+            WHERE assigned.variant = 'treatment'
+         ), returned_accounts AS (
+           SELECT DISTINCT assigned.user_id
+             FROM assigned_accounts assigned
+             JOIN events return_event
+               ON return_event.user_id = assigned.user_id
+              AND return_event.event_type IN (${retentionEventTypes})
+              AND ${observedByAsOf("return_event.created_at")}
+              AND ${withinSeven("return_event.created_at")}
+         )
+         SELECT assigned.variant AS "variant",
+                count(*) AS "assignedAccounts",
+                count(CASE WHEN assigned.eligible_at_assignment = 1 THEN 1 END)
+                  AS "eligibleAtAssignmentAccounts",
+                count(CASE WHEN exposed.user_id IS NOT NULL THEN 1 END) AS "exposedAccounts",
+                count(CASE WHEN ${matureSeven} THEN 1 END) AS "maturedAccounts7",
+                count(CASE WHEN ${matureSeven} AND returned.user_id IS NOT NULL THEN 1 END)
+                  AS "returnedAccounts7"
+           FROM assigned_accounts assigned
+           LEFT JOIN exposed_accounts exposed ON exposed.user_id = assigned.user_id
+           LEFT JOIN returned_accounts returned ON returned.user_id = assigned.user_id
+          GROUP BY assigned.variant
+          ORDER BY assigned.variant ASC`,
+      ).all<SavedUpdatesExperimentRow>({
+        experimentVersion,
+        asOf,
+        analyticsEnabled,
+        analyticsDisabled,
+      });
+
+      const decoded = new Map<SavedUpdatesExperimentVariant, {
+        assignedAccounts: number;
+        eligibleAtAssignmentAccounts: number;
+        exposedAccounts: number;
+        maturedAccounts7: number;
+        returnedAccounts7: number;
+      }>();
+      for (const row of rows) {
+        const variant = savedUpdatesExperimentVariant(row.variant);
+        if (decoded.has(variant)) return fail("malformed_record");
+        const assignedAccounts = safeCount(row.assignedAccounts);
+        const eligibleAtAssignmentAccounts = safeCount(row.eligibleAtAssignmentAccounts);
+        const exposedAccounts = safeCount(row.exposedAccounts);
+        const maturedAccounts7 = safeCount(row.maturedAccounts7);
+        const returnedAccounts7 = safeCount(row.returnedAccounts7);
+        if (
+          eligibleAtAssignmentAccounts > assignedAccounts
+          || exposedAccounts > assignedAccounts
+          || maturedAccounts7 > assignedAccounts
+          || returnedAccounts7 > maturedAccounts7
+          || (variant === "control" && exposedAccounts !== 0)
+        ) return fail("malformed_record");
+        decoded.set(variant, {
+          assignedAccounts,
+          eligibleAtAssignmentAccounts,
+          exposedAccounts,
+          maturedAccounts7,
+          returnedAccounts7,
+        });
+      }
+
+      const variants = (["control", "treatment"] as const).map((variant) => ({
+        variant,
+        ...(decoded.get(variant) ?? {
+          assignedAccounts: 0,
+          eligibleAtAssignmentAccounts: 0,
+          exposedAccounts: 0,
+          maturedAccounts7: 0,
+          returnedAccounts7: 0,
+        }),
+      }));
+      const totalAssigned = variants.reduce((total, variant) => total + variant.assignedAccounts, 0);
+      const variantMetrics = variants.map((variant) => ({
+        ...variant,
+        assignedShare: totalAssigned > 0 ? variant.assignedAccounts / totalAssigned : null,
+        eligibilityRateAtAssignment: variant.assignedAccounts > 0
+          ? variant.eligibleAtAssignmentAccounts / variant.assignedAccounts
+          : null,
+        exposureRate: variant.variant === "treatment" && variant.assignedAccounts > 0
+          ? variant.exposedAccounts / variant.assignedAccounts
+          : null,
+        maturityRate7: variant.assignedAccounts > 0
+          ? variant.maturedAccounts7 / variant.assignedAccounts
+          : null,
+        retentionRate7: variant.maturedAccounts7 > 0
+          ? variant.returnedAccounts7 / variant.maturedAccounts7
+          : null,
+      }));
+      const control = variantMetrics.find((variant) => variant.variant === "control")!;
+      const treatment = variantMetrics.find((variant) => variant.variant === "treatment")!;
+      return {
+        experimentVersion,
+        observedD7RetentionDifference: control.retentionRate7 !== null && treatment.retentionRate7 !== null
+          ? treatment.retentionRate7 - control.retentionRate7
+          : null,
+        variants: variantMetrics,
+      };
     });
   }
 

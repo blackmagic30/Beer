@@ -79,8 +79,8 @@ struct VenuePortalView: View {
         let activeSection = sections.contains(selectedSection) ? selectedSection : sections[0]
         return VStack(spacing: 16) {
             VStack(alignment: .leading, spacing: 12) {
-                SectionHeader(
-                    eyebrow: "Venue tools",
+                PintPathHero(
+                    eyebrow: "VENUE TOOLS",
                     title: portal.selectedVenue?.venueName ?? "Venue dashboard",
                     subtitle: "Manage the public profile and beer list for this venue.",
                     systemImage: "building.2.fill"
@@ -103,7 +103,6 @@ struct VenuePortalView: View {
                     }
                 }
             }
-            .beerMapCard()
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
@@ -123,19 +122,20 @@ struct VenuePortalView: View {
                                 .font(.caption.weight(.bold))
                                 .lineLimit(1)
                                 .padding(.horizontal, 12)
-                                .frame(height: 42)
+                                .frame(minHeight: 44)
                                 .background(
-                                    activeSection == section ? BeerMapTheme.ink : BeerMapTheme.card,
-                                    in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    activeSection == section ? BeerMapTheme.brandGold : BeerMapTheme.card,
+                                    in: Capsule()
                                 )
-                                .foregroundStyle(activeSection == section ? Color.white : Color.primary)
+                                .foregroundStyle(activeSection == section ? BeerMapTheme.brandInk : Color.primary)
                                 .overlay(
-                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    Capsule()
                                         .stroke(BeerMapTheme.hairline, lineWidth: 1)
                                 )
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel("Show \(section.rawValue)")
+                        .accessibilityAddTraits(activeSection == section ? .isSelected : [])
                     }
                 }
                 .padding(.vertical, 2)
@@ -185,27 +185,27 @@ struct ProfileEditor: View {
         VStack(alignment: .leading, spacing: 12) {
             SectionHeader(eyebrow: "Profile", title: "Bar profile", subtitle: "Keep public venue details accurate for the map.", systemImage: "building.2.fill")
             TextField("Venue name", text: $draft.name)
-                .textFieldStyle(.roundedBorder)
+                .textFieldStyle(PintPathTextFieldStyle())
             TextField("Address", text: binding("address"))
-                .textFieldStyle(.roundedBorder)
+                .textFieldStyle(PintPathTextFieldStyle())
             TextField("Suburb", text: binding("suburb"))
-                .textFieldStyle(.roundedBorder)
+                .textFieldStyle(PintPathTextFieldStyle())
             TextField("Phone", text: binding("phone"))
-                .textFieldStyle(.roundedBorder)
+                .textFieldStyle(PintPathTextFieldStyle())
                 .keyboardType(.phonePad)
             TextField("Website", text: binding("website"))
-                .textFieldStyle(.roundedBorder)
+                .textFieldStyle(PintPathTextFieldStyle())
                 .keyboardType(.URL)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
             TextField("Instagram URL", text: binding("instagram"))
-                .textFieldStyle(.roundedBorder)
+                .textFieldStyle(PintPathTextFieldStyle())
                 .keyboardType(.URL)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
             TextField("Description", text: binding("description"), axis: .vertical)
                 .lineLimit(3...6)
-                .textFieldStyle(.roundedBorder)
+                .textFieldStyle(PintPathTextFieldStyle())
             Toggle("Active listing", isOn: Binding(
                 get: { draft.active ?? true },
                 set: { draft.active = $0 }
@@ -292,13 +292,13 @@ struct BeerInventoryView: View {
 
             Divider()
             TextField("Beer name", text: $draft.beerName)
-                .textFieldStyle(.roundedBorder)
+                .textFieldStyle(PintPathTextFieldStyle())
             TextField("Brewery", text: optionalBinding(\.brewery))
-                .textFieldStyle(.roundedBorder)
+                .textFieldStyle(PintPathTextFieldStyle())
             TextField("Style", text: optionalBinding(\.style))
-                .textFieldStyle(.roundedBorder)
+                .textFieldStyle(PintPathTextFieldStyle())
             TextField("Price", text: $priceText)
-                .textFieldStyle(.roundedBorder)
+                .textFieldStyle(PintPathTextFieldStyle())
                 .keyboardType(.decimalPad)
             Toggle("On tap", isOn: $draft.onTap)
             Toggle("In stock", isOn: $draft.inStock)

@@ -3079,11 +3079,12 @@ function renderNav(active = "") {
   const betaPill = isFieldTestMode() ? '<span class="betaPill">Beta field test</span>' : "";
   const navItems = [
     { key: "map", href: "/", label: "Map" },
-    ...(venuePortalNav ? [{ key: "venue-portal", href: counterOnlyPortalPath || "/venue-portal.html", label: counterOnlyPortalPath ? "Counter" : "Dashboard" }] : []),
+    ...(venuePortalNav
+      ? [{ key: "venue-portal", href: counterOnlyPortalPath || "/venue-portal.html", label: counterOnlyPortalPath ? "Counter" : "Dashboard" }]
+      : [{ key: "venue-portal", href: "/venue-portal.html", label: "For venues" }]),
     { key: "submit", href: "/submit.html", label: "Submit" },
     { key: "missions", href: "/missions.html", label: "Missions" },
     ...(adminNav ? [{ key: "admin", href: "/admin.html", label: "Admin" }] : []),
-    { key: "pricing", href: "/pricing.html", label: "Pricing" },
     { key: "faq", href: venueManagerNav ? "/trust.html?audience=bars" : "/trust.html", label: "FAQ" },
     { key: "account", href: "/account.html", label: "Account" },
     { key: "feedback", href: venueManagerNav ? "/feedback.html?audience=bars" : "/feedback.html", label: "Contact us" },

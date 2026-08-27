@@ -11,7 +11,6 @@ describe("SEO metadata", () => {
   it("keeps public website pages discoverable with descriptions, canonicals, and social previews", () => {
     [
       "index.html",
-      "pricing.html",
       "venue-portal.html",
       "trust.html",
       "submit.html",
@@ -42,8 +41,12 @@ describe("SEO metadata", () => {
     expect(robots).toContain("Disallow: /api/");
     expect(robots).toContain("Disallow: /admin.html");
     expect(sitemap).toContain("<loc>https://pintpath.au/</loc>");
-    expect(sitemap).toContain("<loc>https://pintpath.au/pricing.html</loc>");
+    expect(sitemap).not.toContain("<loc>https://pintpath.au/pricing.html</loc>");
     expect(sitemap).toContain("<loc>https://pintpath.au/venue-portal</loc>");
+
+    const legacyAccessPage = readViewerFile("pricing.html");
+    expect(legacyAccessPage).toContain('<meta name="robots" content="noindex,follow"');
+    expect(legacyAccessPage).toContain('rel="canonical"');
 
     [
       "account.html",

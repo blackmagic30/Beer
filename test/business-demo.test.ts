@@ -10622,7 +10622,7 @@ describe("business demo contribution model", () => {
     })).rejects.toThrow("expired");
   });
 
-  it("keeps Pub Golf beta premium-only and plans nine drink stops from verified venue data", async () => {
+  it("keeps Pub Golf beta full-map-only and plans nine drink stops from verified venue data", async () => {
     const { repository } = createRepository();
     const service = createBusinessService(repository);
     const admin = createAccount(repository, "pub-golf-admin", "admin");
@@ -10697,7 +10697,7 @@ describe("business demo contribution model", () => {
       finishLocation: "Richmond",
       drinks,
       mode: "auto",
-    })).rejects.toThrow("premium or contributor");
+    })).rejects.toThrow("full-map accounts");
 
     const plan = await service.planPubGolf(premiumUser, {
       startLocation: "Melbourne CBD",
@@ -12727,6 +12727,7 @@ describe("business demo contribution model", () => {
 
     const dashboard = await getAdminAnalyticsRepository(repository).getAdminKpiDashboard({
       since: null,
+      asOf: NOW,
       sevenDaysAgo: "2026-04-27T00:00:00.000Z",
       thirtyDaysAgo: "2026-04-04T00:00:00.000Z",
       staleBefore: "2026-02-04T00:00:00.000Z",
@@ -12823,6 +12824,7 @@ describe("business demo contribution model", () => {
     const metadata = JSON.parse(stored?.metadata_json ?? "{}") as Record<string, unknown>;
     const dashboard = await getAdminAnalyticsRepository(repository).getAdminKpiDashboard({
       since: null,
+      asOf: NOW,
       sevenDaysAgo: "2026-04-27T00:00:00.000Z",
       thirtyDaysAgo: "2026-04-04T00:00:00.000Z",
       staleBefore: "2026-02-04T00:00:00.000Z",
@@ -12885,6 +12887,7 @@ describe("business demo contribution model", () => {
 
     const dashboard = await getAdminAnalyticsRepository(repository).getAdminKpiDashboard({
       since: null,
+      asOf: NOW,
       sevenDaysAgo: "2026-04-27T00:00:00.000Z",
       thirtyDaysAgo: "2026-04-04T00:00:00.000Z",
       staleBefore: "2026-02-04T00:00:00.000Z",
@@ -12961,6 +12964,64 @@ describe("business demo contribution model", () => {
     expect(await accountProfilePreferencesRepository.listSavedItems(user.id)).toHaveLength(0);
   });
 
+  it("records saved-item creation metrics only for atomic inserts and creates Tonight plans server-side", async () => {
+    const { database, repository } = createRepository();
+    const service = createBusinessService(repository);
+    const user = createAccount(repository, "atomic-saved-item-user");
+    await service.savePrivacySettings(user, {
+      optionalAnalyticsEnabled: true,
+      venueReportInclusionEnabled: false,
+      productResearchEnabled: false,
+      emailUpdatesEnabled: false,
+      expectedUpdatedAt: null,
+    });
+
+    const firstPlan = await service.saveItem(user, {
+      itemType: "night_plan",
+      itemId: "current-night-plan",
+      label: "Two-stop plan",
+      suburb: "Fitzroy",
+      metadata: { venueIds: ["venue-1", "venue-2"] },
+    });
+    const updatedPlan = await service.saveItem(user, {
+      itemType: "night_plan",
+      itemId: "current-night-plan",
+      label: "Three-stop plan",
+      suburb: "Richmond",
+      metadata: { venueIds: ["venue-1", "venue-2", "venue-3"] },
+    });
+    const firstBeer = await service.saveItem(user, {
+      itemType: "beer",
+      itemId: "guinness",
+      label: "Guinness",
+      suburb: null,
+      metadata: {},
+    });
+    const updatedBeer = await service.saveItem(user, {
+      itemType: "beer",
+      itemId: "guinness",
+      label: "Guinness Draught",
+      suburb: null,
+      metadata: {},
+    });
+
+    expect(firstPlan.created).toBe(true);
+    expect(updatedPlan).toMatchObject({ created: false, savedItem: { id: firstPlan.savedItem.id } });
+    expect(firstBeer.created).toBe(true);
+    expect(updatedBeer).toMatchObject({ created: false, savedItem: { id: firstBeer.savedItem.id } });
+    expect(database.prepare(
+      `SELECT event_type AS eventType, count(*) AS count
+         FROM events
+        WHERE event_type IN ('saved_night_plan_added', 'tonight_plan_created', 'saved_beer_added')
+        GROUP BY event_type
+        ORDER BY event_type`,
+    ).all()).toEqual([
+      { eventType: "saved_beer_added", count: 1 },
+      { eventType: "saved_night_plan_added", count: 1 },
+      { eventType: "tonight_plan_created", count: 1 },
+    ]);
+  });
+
   it("marks a price record disputed after multiple wrong-price reports", async () => {
     const { repository } = createRepository();
     const service = createBusinessService(repository);
@@ -13010,9 +13071,294 @@ describe("business demo contribution model", () => {
     expect((await publicPriceRepositories.get(repository)!.listLatestPriceRecords(1))[0]?.confidence).toBe("disputed");
   });
 
-  it("records requests, KPI counts, retention cohorts, and partner lead signals", async () => {
+  it("idempotently records each price-confirmation outcome without refreshing trust", async () => {
+    const { database, repository } = createRepository();
+    const service = createBusinessService(repository);
+    const user = repository.updateAccountSecurityClaims({
+      userId: createAccount(repository, "price-confirmation-user").id,
+      emailVerifiedAt: NOW,
+      now: NOW,
+    });
+    const admin = createAccount(repository, "price-confirmation-admin", "admin");
+    const submission = createSubmission(repository, {
+      id: "submission-price-confirmation",
+      userId: user.id,
+      venueId: "venue-price-confirmation",
+      venueName: "Confirmation Hotel",
+      beerName: "Guinness",
+      servingSize: "pint",
+      price: 13,
+    });
+    approve(repository, submission.id, admin.id);
+    const priceRecord = (await publicPriceRepositories.get(repository)!.listLatestPriceRecords(1))[0]!;
+    const before = database.prepare(
+      `SELECT confidence, last_verified_at AS "lastVerifiedAt", updated_at AS "updatedAt"
+         FROM venue_price_records WHERE id = ?`,
+    ).get(priceRecord.id);
+
+    const first = await service.answerPriceConfirmation(user, priceRecord.id, { outcome: "yes" });
+    vi.setSystemTime(new Date("2026-05-04T08:05:00.000Z"));
+    const replay = await service.answerPriceConfirmation(user, priceRecord.id, { outcome: "yes" });
+
+    expect(first).toMatchObject({
+      priceRecordId: priceRecord.id,
+      outcome: "yes",
+      idempotentReplay: false,
+      publicTrustMutated: false,
+      wrongPriceReport: null,
+    });
+    expect(replay).toMatchObject({
+      priceRecordId: priceRecord.id,
+      outcome: "yes",
+      idempotentReplay: true,
+      recordedAt: first.recordedAt,
+    });
+    expect(first.priceVersion).toMatch(/^[a-f0-9]{64}$/);
+    expect(database.prepare(
+      "SELECT count(*) AS count FROM events WHERE event_type = 'price_confirmation_answered'",
+    ).get()).toEqual({ count: 1 });
+    expect(database.prepare(
+      `SELECT confidence, last_verified_at AS "lastVerifiedAt", updated_at AS "updatedAt"
+         FROM venue_price_records WHERE id = ?`,
+    ).get(priceRecord.id)).toEqual(before);
+    await expect(service.answerPriceConfirmation(user, priceRecord.id, { outcome: "no" }))
+      .resolves.toMatchObject({ outcome: "no", idempotentReplay: false });
+    await expect(getSupportFeedbackRepository(repository).countWrongPriceReports()).resolves.toBe(1);
+  });
+
+  it("deduplicates the No confirmation report and records Didn't order without a report", async () => {
+    const { database, repository } = createRepository();
+    const service = createBusinessService(repository);
+    const noUser = repository.updateAccountSecurityClaims({
+      userId: createAccount(repository, "price-confirmation-no-user").id,
+      emailVerifiedAt: NOW,
+      now: NOW,
+    });
+    const skippedUser = repository.updateAccountSecurityClaims({
+      userId: createAccount(repository, "price-confirmation-skipped-user").id,
+      emailVerifiedAt: NOW,
+      now: NOW,
+    });
+    const admin = createAccount(repository, "price-confirmation-no-admin", "admin");
+    const noSubmission = createSubmission(repository, {
+      id: "submission-price-confirmation-no",
+      userId: noUser.id,
+      venueId: "venue-price-confirmation-no",
+      venueName: "Changed Price Hotel",
+      beerName: "Guinness",
+      price: 14,
+    });
+    approve(repository, noSubmission.id, admin.id);
+    const skippedSubmission = createSubmission(repository, {
+      id: "submission-price-confirmation-skipped",
+      userId: skippedUser.id,
+      venueId: "venue-price-confirmation-skipped",
+      venueName: "Skipped Order Hotel",
+      beerName: "Carlton Draught",
+      price: 12,
+    });
+    approve(repository, skippedSubmission.id, admin.id);
+    const records = await publicPriceRepositories.get(repository)!.listLatestPriceRecords(10);
+    const noRecord = records.find((record) => record.venueId === "venue-price-confirmation-no")!;
+    const skippedRecord = records.find((record) => record.venueId === "venue-price-confirmation-skipped")!;
+
+    const firstNo = await service.answerPriceConfirmation(noUser, noRecord.id, { outcome: "no" });
+    const replayNo = await service.answerPriceConfirmation(noUser, noRecord.id, { outcome: "no" });
+    const skipped = await service.answerPriceConfirmation(skippedUser, skippedRecord.id, {
+      outcome: "didnt_order",
+    });
+
+    expect(firstNo).toMatchObject({
+      outcome: "no",
+      idempotentReplay: false,
+      wrongPriceReport: { duplicate: false, markedDisputed: false },
+    });
+    expect(replayNo).toMatchObject({
+      outcome: "no",
+      idempotentReplay: true,
+      wrongPriceReport: { duplicate: true, markedDisputed: false },
+    });
+    expect(skipped).toMatchObject({
+      outcome: "didnt_order",
+      publicTrustMutated: false,
+      wrongPriceReport: null,
+      recordedAt: null,
+      analyticsRecorded: false,
+    });
+    await expect(getSupportFeedbackRepository(repository).countWrongPriceReports()).resolves.toBe(1);
+    expect(database.prepare(
+      "SELECT count(*) AS count FROM events WHERE event_type = 'price_confirmation_answered'",
+    ).get()).toEqual({ count: 1 });
+    expect(database.prepare(
+      "SELECT count(*) AS count FROM events WHERE event_type = 'wrong_price_reported'",
+    ).get()).toEqual({ count: 1 });
+  });
+
+  it("rejects price confirmations for non-actionable or superseded public records", async () => {
+    const { database, repository } = createRepository();
+    const service = createBusinessService(repository);
+    const user = repository.updateAccountSecurityClaims({
+      userId: createAccount(repository, "price-confirmation-validation-user").id,
+      emailVerifiedAt: NOW,
+      now: NOW,
+    });
+    const admin = createAccount(repository, "price-confirmation-validation-admin", "admin");
+    const createApprovedRecord = async (id: string, venueId: string) => {
+      const submission = createSubmission(repository, {
+        id,
+        userId: user.id,
+        venueId,
+        venueName: `${venueId} Hotel`,
+        beerName: "Guinness",
+        price: 13,
+      });
+      approve(repository, submission.id, admin.id);
+      return (await publicPriceRepositories.get(repository)!.listLatestPriceRecords(20))
+        .find((record) => record.venueId === venueId)!;
+    };
+
+    const nullPrice = await createApprovedRecord("confirmation-null-price", "confirmation-null-venue");
+    database.prepare("UPDATE venue_price_records SET price = NULL WHERE id = ?").run(nullPrice.id);
+    const wrongServing = await createApprovedRecord("confirmation-pot", "confirmation-pot-venue");
+    database.prepare("UPDATE venue_price_records SET serving_size = 'pot' WHERE id = ?").run(wrongServing.id);
+    const offTap = await createApprovedRecord("confirmation-off-tap", "confirmation-off-tap-venue");
+    database.prepare("UPDATE venue_price_records SET is_on_tap = 'no' WHERE id = ?").run(offTap.id);
+    const happyHour = await createApprovedRecord("confirmation-happy-hour", "confirmation-happy-hour-venue");
+    database.prepare(
+      "UPDATE venue_price_records SET is_happy_hour_price = 1, happy_hour_details = '5-7pm' WHERE id = ?",
+    ).run(happyHour.id);
+
+    for (const record of [nullPrice, wrongServing, offTap, happyHour]) {
+      await expect(service.answerPriceConfirmation(user, record.id, { outcome: "yes" }))
+        .rejects.toThrow("not available for confirmation");
+    }
+
+    const lockedSubmission = createSubmission(repository, {
+      id: "confirmation-locked-beer",
+      userId: user.id,
+      venueId: "confirmation-locked-venue",
+      venueName: "Locked Beer Hotel",
+      beerName: "Asahi Super Dry",
+      price: 15,
+    });
+    approve(repository, lockedSubmission.id, admin.id);
+    const lockedRecord = (await publicPriceRepositories.get(repository)!.listLatestPriceRecords(20))
+      .find((record) => record.sourceSubmissionId === lockedSubmission.id)!;
+    await expect(service.answerPriceConfirmation(user, lockedRecord.id, { outcome: "yes" }))
+      .rejects.toThrow("not available for confirmation");
+
+    const older = await createApprovedRecord("confirmation-older", "confirmation-current-venue");
+    vi.setSystemTime(new Date("2026-05-04T08:10:00.000Z"));
+    const newerSubmission = createSubmission(repository, {
+      id: "confirmation-newer",
+      userId: user.id,
+      venueId: "confirmation-current-venue",
+      venueName: "confirmation-current-venue Hotel",
+      beerName: "Guinness",
+      price: 15,
+    });
+    approve(repository, newerSubmission.id, admin.id);
+    const newer = (await publicPriceRepositories.get(repository)!.listLatestPriceRecords(20))
+      .find((record) => record.sourceSubmissionId === newerSubmission.id)!;
+    database.prepare(
+      "UPDATE venue_price_records SET last_verified_at = ?, updated_at = ? WHERE id = ?",
+    ).run("2026-05-04T08:10:00.000Z", "2026-05-04T08:10:00.000Z", newer.id);
+    await expect(service.answerPriceConfirmation(user, older.id, { outcome: "yes" }))
+      .rejects.toThrow("no longer the current public record");
+  });
+
+  it("requires an account and a valid answer at the price-confirmation route", async () => {
     const { repository } = createRepository();
+    const service = createBusinessService(repository);
+    const user = repository.updateAccountSecurityClaims({
+      userId: createAccount(repository, "price-confirmation-route-user").id,
+      emailVerifiedAt: NOW,
+      now: NOW,
+    });
+    const admin = createAccount(repository, "price-confirmation-route-admin", "admin");
+    const token = "price-confirmation-route-token";
+    createSession(repository, user.id, token);
+    const submission = createSubmission(repository, {
+      id: "submission-price-confirmation-route",
+      userId: user.id,
+      venueId: "venue-price-confirmation-route",
+      venueName: "Route Confirmation Hotel",
+      beerName: "Guinness",
+      price: 13,
+    });
+    approve(repository, submission.id, admin.id);
+    const record = (await publicPriceRepositories.get(repository)!.listLatestPriceRecords(1))[0]!;
+    const app = express();
+    app.use(express.json());
+    app.use("/api/business", createBusinessRouter(service));
+    app.use(errorHandler);
+
+    await withHttpServer(app, async (baseUrl) => {
+      const endpoint = `${baseUrl}/api/business/price-records/${encodeURIComponent(record.id)}/confirmation`;
+      const anonymous = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ outcome: "yes" }),
+      });
+      expect(anonymous.status).toBe(401);
+
+      const spoofedEvent = await fetch(`${baseUrl}/api/business/events`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          anonymousSessionId: "spoofed-confirmation",
+          eventType: "price_confirmation_answered",
+          venueId: record.venueId,
+          beerId: record.normalizedBeerId,
+          suburb: record.suburb,
+          metadata: { outcome: "yes", priceRecordId: record.id },
+        }),
+      });
+      expect(spoofedEvent.status).toBe(400);
+      const spoofedEventBody = await spoofedEvent.json() as { error: { message: string } };
+      expect(spoofedEventBody.error.message).toContain("dedicated product action");
+
+      const invalid = await fetch(endpoint, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ outcome: "maybe" }),
+      });
+      expect(invalid.status).toBe(400);
+
+      const first = await fetch(endpoint, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ outcome: "yes" }),
+      });
+      expect(first.status).toBe(201);
+      expect((await first.json()).data).toEqual(expect.objectContaining({
+        outcome: "yes",
+        idempotentReplay: false,
+      }));
+
+      const replay = await fetch(endpoint, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ outcome: "yes" }),
+      });
+      expect(replay.status).toBe(200);
+      expect((await replay.json()).data).toEqual(expect.objectContaining({
+        outcome: "yes",
+        idempotentReplay: true,
+      }));
+    });
+  });
+
+  it("records requests, KPI counts, retention cohorts, and partner lead signals", async () => {
+    const { database, repository } = createRepository();
     const user = createAccount(repository, "retention-user");
+    database.prepare(
+      `INSERT INTO account_privacy_settings (
+         user_id, optional_analytics_enabled, venue_report_inclusion_enabled,
+         product_research_enabled, email_updates_enabled, consent_version,
+         consented_at, created_at, updated_at
+       ) VALUES (?, 1, 0, 0, 0, 'test-v1', ?, ?, ?)`,
+    ).run(user.id, NOW, NOW, NOW);
 
     await getVenueRequestRepository(repository).createOrGetVenueRequest({
       id: "request-1",
@@ -13063,12 +13409,17 @@ describe("business demo contribution model", () => {
 
     const dashboard = await getAdminAnalyticsRepository(repository).getAdminKpiDashboard({
       since: null,
+      asOf: "2026-06-10T00:00:00.000Z",
       sevenDaysAgo: "2026-04-27T00:00:00.000Z",
       thirtyDaysAgo: "2026-04-04T00:00:00.000Z",
       staleBefore: "2026-02-04T00:00:00.000Z",
       totalVenues: 3,
     });
-    const cohorts = await getAdminAnalyticsRepository(repository).getRetentionCohorts({ groupBy: "week", limit: 4 });
+    const cohorts = await getAdminAnalyticsRepository(repository).getRetentionCohorts({
+      groupBy: "week",
+      limit: 4,
+      asOf: "2026-06-10T00:00:00.000Z",
+    });
     const leads = await getAdminAnalyticsRepository(repository).getPotentialPartnerLeads({
       staleBefore: "2026-02-04T00:00:00.000Z",
       limit: 5,
@@ -13077,12 +13428,61 @@ describe("business demo contribution model", () => {
     expect(await getVenueRequestRepository(repository).countVenueRequests()).toBe(1);
     expect(dashboard.metrics.totalBeerSearches).toBe(1);
     expect(dashboard.topSearchedBeers).toEqual([{ key: "guinness", count: 1 }]);
-    expect(cohorts[0]).toEqual(expect.objectContaining({ users: 1, returned7: 1, returned30: 1 }));
+    expect(cohorts[0]).toEqual(expect.objectContaining({
+      users: 1,
+      eligibleUsers7: 1,
+      eligibleUsers30: 1,
+      returned7: 1,
+      returned30: 1,
+    }));
     expect(leads[0]).toEqual(expect.objectContaining({
       venueId: "venue-1",
       requests: 1,
       dataFreshness: "stale_or_missing",
     }));
+  });
+
+  it("uses the server clock for retention and client-reported search-usefulness boundaries", async () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository);
+    const admin = createAccount(repository, "retention-boundary-admin", "admin");
+    const spoofedClientQuery = {
+      groupBy: "week",
+      limit: 4,
+      asOf: "2099-01-01T00:00:00.000Z",
+    } as const;
+
+    const result = await service.getRetentionCohorts(admin, spoofedClientQuery);
+    const kpis = await service.getAdminKpis(admin, {
+      range: "7d",
+      asOf: "2099-01-01T00:00:00.000Z",
+    } as { range: "7d" });
+
+    expect(result.asOf).toBe(NOW);
+    expect(result.population).toBe("optional_analytics_enabled_accounts");
+    expect(result.populationCaveat).toContain("does not represent all accounts");
+    expect(result.cohorts).toEqual([]);
+    expect(result.savedUpdatesExperiment).toMatchObject({
+      definition: "saved_updates_d7_intent_to_treat_v1",
+      evidenceStatus: "directional_opt_in_experiment",
+      formalReleaseEvidence: false,
+      experimentVersion: "v1",
+      observedD7RetentionDifference: null,
+      population: "currently_opted_in_free_or_contributor_consumers_with_recorded_v1_dashboard_assignment",
+      variants: [
+        expect.objectContaining({ variant: "control", assignedAccounts: 0, retentionRate7: null }),
+        expect.objectContaining({ variant: "treatment", assignedAccounts: 0, retentionRate7: null }),
+      ],
+    });
+    expect(result.savedUpdatesExperiment.outcomeDefinition).toContain("Saved Updates view/open events are excluded");
+    expect(result.savedUpdatesExperiment.caveat).toContain("no commit-time or historical events are backfilled");
+    expect(kpis.asOf).toBe(NOW);
+    expect(kpis.searchUsefulness).toMatchObject({
+      evidenceStatus: "client_reported_non_formal",
+      formalReleaseEvidence: false,
+      measuredSearchCount: 0,
+      successfulSearchRate: null,
+    });
   });
 
   it("creates missing venue requests through the public request service", async () => {
