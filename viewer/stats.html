@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>My Stats | Pint Path</title>
   <meta name="robots" content="noindex,follow" />
-  <meta name="description" content="Sign in to view your Pint Path contributor progress, review status, unlocks, and saved account activity." />
+  <meta name="description" content="Sign in to view your Pint Path contributor progress, review status, trust, and account activity." />
   <link rel="icon" href="/favicon.ico" sizes="any" />
   <link rel="icon" type="image/png" sizes="48x48" href="/favicon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="/assets/pint-path-icon-192.png" />
@@ -27,7 +27,7 @@
       <div>
         <div class="eyebrow">My stats</div>
         <h1>Contributor stats</h1>
-        <p class="lead">Uploads, points, leaderboard rank, trust, and savings in one focused view.</p>
+        <p class="lead">Uploads, review status, contribution points, and trust in one focused view.</p>
       </div>
       <div class="heroCard accountIdentityCard">
         <span class="muted">Account ID</span>
@@ -54,10 +54,6 @@
         <div class="metricCard"><div id="trustMetric" class="metricValue">0</div><div class="metricLabel">Trust score</div></div>
         <div class="metricCard"><div id="verificationMetric" class="metricValue">0</div><div class="metricLabel">Community verifications</div></div>
         <div class="metricCard"><div id="fraudMetric" class="metricValue">0</div><div class="metricLabel">Fraud strikes</div></div>
-        <div class="metricCard"><div id="leaderboardMetric" class="metricValue">—</div><div class="metricLabel">Monthly rank</div></div>
-        <div class="metricCard"><div id="savingsMetric" class="metricValue">A$0</div><div class="metricLabel">Total saved</div></div>
-        <div class="metricCard"><div id="discountRedemptionsMetric" class="metricValue">0</div><div class="metricLabel">Discount redemptions</div></div>
-        <div class="metricCard"><div id="discountVenuesMetric" class="metricValue">0</div><div class="metricLabel">Venues redeemed</div></div>
       </section>
 
       <section class="grid grid--two">
@@ -74,48 +70,18 @@
         </article>
 
         <article class="panel">
-          <h2>Leaderboard and savings notes</h2>
+          <h2>Contributor notes</h2>
           <ul class="checkList">
-            <li>Leaderboard rank is based on approved Pint Path submissions for the month.</li>
-            <li>Fraud strikes reduce trust and may block rewards or contributor access.</li>
-            <li>Total saved only counts discount redemptions explicitly logged by venues.</li>
+            <li>Fraud strikes reduce trust and may block contributor access.</li>
             <li>Raw evidence and private upload notes stay out of public map data.</li>
           </ul>
         </article>
-      </section>
-
-      <section class="panel">
-        <div class="sectionHeader">
-          <div>
-            <h2>Recent discount redemptions</h2>
-            <p class="muted">These are used to estimate what you have saved with Pint Path specials.</p>
-          </div>
-        </div>
-        <div id="recentRedemptionsList" class="submissionList"></div>
       </section>
     </section>
   </main>
 
   <script>
     const $ = (id) => document.getElementById(id);
-
-    function escapeHtml(value) {
-      return String(value ?? "").replace(/[&<>"']/g, (char) => ({
-        "&": "&amp;",
-        "<": "&lt;",
-        ">": "&gt;",
-        '"': "&quot;",
-        "'": "&#039;",
-      })[char]);
-    }
-
-    function formatMoney(value) {
-      return new Intl.NumberFormat("en-AU", {
-        style: "currency",
-        currency: "AUD",
-        maximumFractionDigits: value % 1 === 0 ? 0 : 2,
-      }).format(Number(value || 0));
-    }
 
     function formatPoints(value) {
       const numeric = Number(value || 0);
@@ -141,49 +107,17 @@
       $("statsDashboard").classList.remove("is-hidden");
     }
 
-    function renderRedemptions(redemptions) {
-      const list = $("recentRedemptionsList");
-      if (!redemptions.length) {
-        list.innerHTML = `
-          <div class="emptyState accountEmptyState">
-            <strong>No discount redemptions yet.</strong>
-            <span>When a venue logs your rotating pass, your estimated savings will appear here.</span>
-          </div>
-        `;
-        return;
-      }
-
-      list.innerHTML = redemptions.map((redemption) => `
-        <article class="submissionCard">
-          <div>
-            <div class="submissionCard__top">
-              <strong>${escapeHtml(redemption.venueName || "Venue")}</strong>
-              <span class="statusBadge statusBadge--verified">Redeemed</span>
-            </div>
-            <p>${escapeHtml(redemption.itemName || "Pint Path special")} · ${escapeHtml(redemption.suburb || "Melbourne")}</p>
-            <div class="muted">Logged ${MelbBeerBusiness.formatDate(redemption.redeemedAt)}</div>
-          </div>
-          <div class="submissionCard__price">
-            <strong>${formatMoney((redemption.estimatedSavingsCents || 0) / 100)}</strong>
-            <span>estimated saved</span>
-          </div>
-        </article>
-      `).join("");
-    }
-
     function renderStats(result) {
       showDashboard();
       const account = result.account || {};
       const stats = result.dashboardStats || {};
-      const discounts = result.discounts || {};
-      const leaderboardRank = result.leaderboard?.monthRank;
       const progress = result.contributorProgress || {};
       const threshold = Math.max(1, progress.unlockThreshold || 15);
       const points = Math.max(0, progress.pointsThisMonth || 0);
       const percent = Math.min(100, Math.round((points / threshold) * 100));
 
-      $("statsAccountId").textContent = result.leaderboard?.accountId || account.publicAccountId || "—";
-      $("statsTierPill").textContent = account.subscriptionStatus?.replaceAll("_", " ") || "Free";
+      $("statsAccountId").textContent = account.publicAccountId || "—";
+      $("statsTierPill").textContent = account.subscriptionStatus === "contributor_unlocked" ? "Contributor" : "Free";
       $("totalUploadsMetric").textContent = stats.totalUploads ?? 0;
       $("pendingMetric").textContent = stats.pendingVerificationCount ?? stats.pendingCount ?? 0;
       $("verifiedMetric").textContent = stats.verifiedCount ?? account.approvedSubmissionCount ?? 0;
@@ -192,15 +126,10 @@
       $("trustMetric").textContent = stats.trustScore ?? account.trustScore ?? 0;
       $("verificationMetric").textContent = (result.verifications || []).length;
       $("fraudMetric").textContent = stats.fraudStrikes ?? account.fraudStrikeCount ?? 0;
-      $("leaderboardMetric").textContent = leaderboardRank ? `#${leaderboardRank.rank}` : "—";
-      $("savingsMetric").textContent = formatMoney((discounts.estimatedSavingsCents || 0) / 100);
-      $("discountRedemptionsMetric").textContent = discounts.totalRedemptions ?? 0;
-      $("discountVenuesMetric").textContent = discounts.uniqueVenues ?? 0;
       $("statsProgressBar").style.width = `${percent}%`;
       $("statsProgressCopy").textContent = progress.pointsNeeded > 0
-        ? `${formatPoints(points)} / ${formatPoints(threshold)} points. ${formatPoints(progress.pointsNeeded)} more points unlock premium until month end.`
+        ? `${formatPoints(points)} / ${formatPoints(threshold)} points. ${formatPoints(progress.pointsNeeded)} more points unlock full-map access until month end.`
         : `${formatPoints(points)} / ${formatPoints(threshold)} points. Contributor unlock reached for this month.`;
-      renderRedemptions(discounts.recentRedemptions || []);
       MelbBeerBusiness.setStatus($("statsStatus"), "Stats loaded.");
     }
 

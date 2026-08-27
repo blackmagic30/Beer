@@ -24,6 +24,7 @@ const TEST_DATABASE = "pintpath_activity_audit_integration_test";
 const TEST_LOGIN = "pintpath_activity_audit_integration_login";
 const NOW = "2026-08-08T18:00:00.000Z";
 const LATER = "2026-08-08T18:01:00.000Z";
+const BEFORE = "2026-08-08T17:59:00.000Z";
 const IP_HASH = "a".repeat(32);
 const USER_AGENT_HASH = "b".repeat(32);
 
@@ -397,6 +398,59 @@ describe.skipIf(!configuredAdminUrl)("real restricted PG17 activity/audit reposi
       metadata: { query: "Guinness" },
       createdAt: NOW,
     });
+    const idempotentEventInput = {
+      id: "pg-price-confirmation",
+      userId: "pg-activity-user",
+      anonymousSessionId: null,
+      eventType: "price_confirmation_answered",
+      venueId: "pg-venue",
+      beerId: "Guinness",
+      suburb: "Fitzroy",
+      metadata: {
+        outcome: "yes",
+        priceRecordId: "pg-price-1",
+        priceVersion: "a".repeat(64),
+        sourceType: "community_verified",
+      },
+      createdAt: NOW,
+    };
+    const idempotentWrites = await Promise.all([
+      repository.recordIdempotentEvent(idempotentEventInput),
+      repository.recordIdempotentEvent({ ...idempotentEventInput, createdAt: LATER }),
+    ]);
+    expect(idempotentWrites.map((write) => write.outcome).sort()).toEqual(["duplicate", "inserted"]);
+    const insertedIdempotentIndex = idempotentWrites.findIndex((write) => write.outcome === "inserted");
+    const firstIdempotentTimestamp = insertedIdempotentIndex === 0 ? NOW : LATER;
+    expect(idempotentWrites.every((write) => write.record.createdAt === firstIdempotentTimestamp)).toBe(true);
+    await expect(repository.recordIdempotentEvent({
+      ...idempotentEventInput,
+      metadata: { ...idempotentEventInput.metadata, outcome: "no" },
+      createdAt: LATER,
+    })).rejects.toSatisfy(expectCode("event_conflict"));
+    await expect(repository.listLatestPositivePriceConfirmations({
+      priceRecordIds: ["pg-price-1"],
+      since: BEFORE,
+      asOf: LATER,
+    })).resolves.toEqual([
+      expect.objectContaining({
+        eventId: "pg-price-confirmation",
+        priceRecordId: "pg-price-1",
+        priceVersion: "a".repeat(64),
+        sourceType: "community_verified",
+        verificationEffect: "signal_only",
+      }),
+    ]);
+    await repository.recordIdempotentEvent({
+      ...idempotentEventInput,
+      id: "pg-price-confirmation-no",
+      metadata: { ...idempotentEventInput.metadata, outcome: "no" },
+      createdAt: LATER,
+    });
+    await expect(repository.listLatestPositivePriceConfirmations({
+      priceRecordIds: ["pg-price-1"],
+      since: BEFORE,
+      asOf: LATER,
+    })).resolves.toEqual([]);
     await repository.insertSecurityAuditLog({
       id: "pg-audit",
       actorUserId: "pg-activity-user",

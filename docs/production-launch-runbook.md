@@ -1914,7 +1914,17 @@ in Phase 16.6 have passed independent retrieval and restore proof.
 
 ### 16.5 Deploy the exact protected `main` build with enrolment disabled
 
-First complete the protected permanent-staging worker bootstrap for
+Before worker preparation, require the existing staging Beer service to be the
+sole healthy one-replica legacy deployment with empty staged patches. The
+current failed/stopped service with no active deployment is not eligible; stop
+and use only a separately reviewed recovery path rather than an ad-hoc Railway
+write. While that healthy legacy deployment remains unchanged, execute the four
+candidate-bound Google Maps/Map ID, Google Places, and OpenAI provider-variable
+operations plus the atomic Supabase publishable/secret-key replacement. Each
+protected workflow must use `skipDeploys=true` and prove that it caused no
+runtime rollout or deployment/topology change.
+
+Then complete the protected permanent-staging worker bootstrap for
 `deploymentSha`. Dispatch
 [`Configure candidate-bound automatic-maintenance worker fence`](../.github/workflows/configure-automatic-maintenance-worker-fence.yml)
 with staging `prepare`; then dispatch
@@ -1922,8 +1932,11 @@ with staging `prepare`; then dispatch
 with `quiesce` to prove the legacy deployment changes exactly from one replica
 to zero. Dispatch
 [`Deploy Pint Path permanent staging`](../.github/workflows/deploy-permanent-staging.yml)
-with phase `fenced`, supplying the exact prepare and quiesce run IDs. Restore
-the candidate exactly from zero to one through the bootstrap workflow, require
+with phase `fenced`, supplying the exact prepare and quiesce run IDs. While the
+candidate is fenced at zero, apply and prove the reviewed permanent-staging
+venue-directory migration and status refresh against only the pinned staging
+Supabase project. Restore the candidate exactly from zero to one through the
+bootstrap workflow, require
 all three runtime routes to report disabled and candidate-bound automatic
 maintenance, then dispatch staging `activate`. Finally dispatch the staging
 deployment workflow with phase `active` and the exact activation run ID. The

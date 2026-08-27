@@ -52,18 +52,27 @@ prior matching run's exact write step is authenticated with conclusion
 reviewed authority keyed by candidate+target+variable and reject every matching
 prior run, including one skipped before write.
 
-1. First deploy the exact candidate to permanent staging and retain its initial
-   successful artifact. Then execute and retain evidence from the protected
-   workflows for the three
+1. Before fencing or deploying the candidate, require the legacy staging
+   application to be the sole healthy one-replica deployment with no staged
+   provider patch. The current failed/stopped Beer service does not meet that
+   preflight and remains blocked pending a separately reviewed recovery path.
+   While that healthy legacy deployment is unchanged, execute and retain
+   evidence from the protected workflows for the three
    Google/OpenAI provider categories, comprising four exact
    Railway variable operations: Google Maps client configuration
    (`GOOGLE_MAPS_API_KEY` and `GOOGLE_MAPS_MAP_ID`), Google Places server access
    (`GOOGLE_PLACES_API_KEY`), and OpenAI menu OCR (`OPENAI_API_KEY`). Separately,
    the two permanent-staging Supabase replacement-key variables
    (`SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY`) use one protected
-   atomic Railway upsert. After every planned provider/runtime operation,
-   deploy the exact same current-`main` build once more and retain this second,
-   closeout artifact;
+   atomic Railway upsert. Every mutation must use `skipDeploys=true` and must
+   prove the existing deployment identity, one-replica topology, and runtime
+   remained unchanged; it configures the candidate but does not roll it out.
+   Then prepare the candidate-bound worker fence, quiesce the unchanged legacy
+   deployment from one replica to zero, and perform the fenced candidate source
+   upload. Apply and prove the permanent-staging venue-directory schema and
+   refresh while fenced, then restore the candidate to one replica, activate
+   its worker fence, and run the active closeout deployment. Retain exactly the
+   fenced upload and active closeout artifacts;
    prove all server, browser, mobile, CI, scheduled, webhook, backup, and
    archived consumers plus Auth, admin, role, private Storage, provider, and
    Free-scope behavior. Only then run the protected replacement-canary/

@@ -62,6 +62,9 @@ struct DiscoverView: View {
     @State private var isLocating = false
     @State private var showingFilters = false
     @State private var distanceByVenue: [VenueDistanceKey: CLLocationDistance] = [:]
+    @State private var lastTrackedSearchSignature: String?
+    @State private var pendingSearchTrackingTask: Task<Void, Never>?
+    @State private var activeSearchMeasurementTask: Task<Void, Never>?
 
     private struct VenueDistanceKey: Hashable {
         let id: String
@@ -164,6 +167,9 @@ struct DiscoverView: View {
         )
         .textInputAutocapitalization(.words)
         .autocorrectionDisabled()
+        .onSubmit(of: .search) {
+            trackCommittedSearch()
+        }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
@@ -175,7 +181,7 @@ struct DiscoverView: View {
                 .accessibilityLabel("Refresh venues")
             }
         }
-        .sheet(isPresented: $showingFilters) {
+        .sheet(isPresented: $showingFilters, onDismiss: trackCommittedSearch) {
             ExploreFilterSheet(
                 suburbs: results.suburbs,
                 beers: beerOptions,
@@ -206,6 +212,7 @@ struct DiscoverView: View {
                       let selectedBeerKey,
                       !ExploreBeerFilterAccess.isFree(selectedBeerKey) {
                 self.selectedBeerKey = nil
+                scheduleSearchTracking()
             }
         }
         .navigationDestination(for: Venue.self) { venue in
@@ -213,6 +220,10 @@ struct DiscoverView: View {
         }
         .navigationDestination(item: $selectedMapVenue) { venue in
             VenueDetailView(venue: venue)
+        }
+        .onDisappear {
+            pendingSearchTrackingTask?.cancel()
+            activeSearchMeasurementTask?.cancel()
         }
     }
 
@@ -242,6 +253,7 @@ struct DiscoverView: View {
                         isSelected: nearbyOnly
                     ) {
                         setNearbyEnabled(!nearbyOnly)
+                        scheduleSearchTracking()
                     }
 
                     if let selectedSuburb {
@@ -251,6 +263,7 @@ struct DiscoverView: View {
                             isSelected: true
                         ) {
                             self.selectedSuburb = nil
+                            scheduleSearchTracking()
                         }
                     }
 
@@ -261,6 +274,7 @@ struct DiscoverView: View {
                             isSelected: true
                         ) {
                             selectedBeerKey = nil
+                            scheduleSearchTracking()
                         }
                     }
 
@@ -367,6 +381,7 @@ struct DiscoverView: View {
     private func clearFilters() {
         searchText = ""
         clearFilterValues()
+        scheduleSearchTracking()
     }
 
     private func clearFilterValues() {
@@ -393,6 +408,9 @@ struct DiscoverView: View {
             let location = try await locationProvider.request()
             rebuildDistanceCache(for: model.venues, from: location)
             userLocation = location
+            if !showingFilters {
+                scheduleSearchTracking()
+            }
         } catch {
             nearbyOnly = false
             model.errorMessage = error.localizedDescription
@@ -419,6 +437,66 @@ struct DiscoverView: View {
     private func cachedDistance(to venue: Venue) -> CLLocationDistance? {
         guard let key = VenueDistanceKey(venue: venue) else { return nil }
         return distanceByVenue[key]
+    }
+
+    private func scheduleSearchTracking() {
+        pendingSearchTrackingTask?.cancel()
+        pendingSearchTrackingTask = Task { @MainActor in
+            do {
+                try await Task.sleep(nanoseconds: 350_000_000)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            trackCommittedSearch()
+        }
+    }
+
+    private func trackCommittedSearch() {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasSearchIntent = !query.isEmpty
+            || selectedSuburb != nil
+            || selectedBeerKey != nil
+            || nearbyOnly
+        guard hasSearchIntent else {
+            activeSearchMeasurementTask?.cancel()
+            return
+        }
+        guard !nearbyOnly || userLocation != nil else {
+            activeSearchMeasurementTask?.cancel()
+            return
+        }
+
+        let normalizedQuery = query.folding(
+            options: [.caseInsensitive, .diacriticInsensitive],
+            locale: Locale(identifier: "en_AU")
+        ).lowercased()
+        let signature = [
+            normalizedQuery,
+            selectedSuburb?.lowercased() ?? "",
+            selectedBeerKey.map(ExploreBeerFilterAccess.canonicalKey) ?? "",
+            nearbyOnly ? "nearby" : "all_distances",
+            nearbyOnly ? String(format: "%.1f", nearbyRadiusKm) : "",
+        ].joined(separator: "|")
+        guard signature != lastTrackedSearchSignature else { return }
+        lastTrackedSearchSignature = signature
+
+        let results = makeVenueResults()
+        activeSearchMeasurementTask?.cancel()
+        activeSearchMeasurementTask = Task { @MainActor in
+            let measured = await model.trackExploreSearch(
+                query: query,
+                visibleVenues: results.filtered,
+                selectedBeerKey: selectedBeerKey,
+                selectedSuburb: selectedSuburb,
+                nearbyOnly: nearbyOnly,
+                radiusKm: nearbyRadiusKm
+            )
+            guard !Task.isCancelled else { return }
+            if !measured, lastTrackedSearchSignature == signature {
+                lastTrackedSearchSignature = nil
+            }
+        }
     }
 
 }
@@ -955,6 +1033,8 @@ private final class VenueMapAnnotation: NSObject, MKAnnotation {
 struct VenueDetailView: View {
     @EnvironmentObject private var model: BeerMapAppModel
     @State private var pendingWrongPriceReport: PriceRecord?
+    @State private var confirmingPriceKeys = Set<String>()
+    @State private var priceConfirmationResults: [String: PriceConfirmationResult] = [:]
     let venue: Venue
 
     private var priceResponse: PriceRecordsResponse? {
@@ -1007,28 +1087,34 @@ struct VenueDetailView: View {
                     } else {
                         VStack(spacing: 10) {
                             ForEach(response.records) { record in
-                                HStack(alignment: .top) {
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text(record.beerName ?? "Beer")
-                                            .font(.headline)
-                                        Text(record.servingSize ?? "Serving size not listed")
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    Spacer()
-                                    Text(record.formattedPrice)
-                                        .font(.headline.weight(.bold))
-                                        .foregroundStyle(record.priceRedacted == true ? BeerMapTheme.plum : BeerMapTheme.leaf)
-                                    if record.priceRedacted != true {
-                                        Button {
-                                            pendingWrongPriceReport = record
-                                        } label: {
-                                            Image(systemName: "exclamationmark.bubble")
-                                                .frame(width: 44, height: 44)
+                                VStack(alignment: .leading, spacing: 8) {
+                                    HStack(alignment: .top) {
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            Text(record.beerName ?? "Beer")
+                                                .font(.headline)
+                                            Text(record.servingSize ?? "Serving size not listed")
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
                                         }
-                                        .buttonStyle(.plain)
-                                        .foregroundStyle(.secondary)
-                                        .accessibilityLabel("Report \(record.beerName ?? "this price") as wrong")
+                                        Spacer()
+                                        Text(record.formattedPrice)
+                                            .font(.headline.weight(.bold))
+                                            .foregroundStyle(record.priceRedacted == true ? BeerMapTheme.plum : BeerMapTheme.leaf)
+                                        if record.priceRedacted != true {
+                                            Button {
+                                                pendingWrongPriceReport = record
+                                            } label: {
+                                                Image(systemName: "exclamationmark.bubble")
+                                                    .frame(width: 44, height: 44)
+                                            }
+                                            .buttonStyle(.plain)
+                                            .foregroundStyle(.secondary)
+                                            .accessibilityLabel("Report \(record.beerName ?? "this price") as wrong")
+                                        }
+                                    }
+
+                                    if model.isSignedIn && record.isActionablePriceConfirmationCandidate {
+                                        priceConfirmationControl(record)
                                     }
                                 }
                                 .padding(12)
@@ -1072,6 +1158,75 @@ struct VenueDetailView: View {
             }
         } message: {
             Text("Pint Path will send the exact price row to review. No public change is made until it is checked.")
+        }
+    }
+
+    @ViewBuilder
+    private func priceConfirmationControl(_ record: PriceRecord) -> some View {
+        let key = record.confirmationDisplayKey
+        if let result = priceConfirmationResults[key] {
+            Text(priceConfirmationCopy(result))
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .accessibilityLabel(priceConfirmationCopy(result))
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Was this price still correct?")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 6) {
+                        priceConfirmationButtons(record, key: key)
+                    }
+                    VStack(alignment: .leading, spacing: 6) {
+                        priceConfirmationButtons(record, key: key)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func priceConfirmationButtons(_ record: PriceRecord, key: String) -> some View {
+        ForEach(PriceConfirmationOutcome.allCases, id: \.self) { outcome in
+            Button(outcome.buttonTitle) {
+                submitPriceConfirmation(record, outcome: outcome)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .frame(minHeight: 44)
+            .fixedSize(horizontal: true, vertical: false)
+            .disabled(confirmingPriceKeys.contains(key))
+            .accessibilityHint(
+                outcome == .no
+                    ? "Sends this exact price for review"
+                    : "Records your answer without changing public trust automatically"
+            )
+        }
+    }
+
+    private func submitPriceConfirmation(_ record: PriceRecord, outcome: PriceConfirmationOutcome) {
+        let key = record.confirmationDisplayKey
+        guard confirmingPriceKeys.insert(key).inserted else { return }
+        Task {
+            let result = await model.answerPriceConfirmation(record, outcome: outcome)
+            confirmingPriceKeys.remove(key)
+            if let result {
+                priceConfirmationResults[key] = result
+            }
+        }
+    }
+
+    private func priceConfirmationCopy(_ result: PriceConfirmationResult) -> String {
+        switch result.outcome {
+        case .yes:
+            return "Thanks — saved as signal-only evidence."
+        case .no:
+            return "Thanks — sent for price review."
+        case .didntOrder:
+            return result.analyticsRecorded
+                ? "Got it — optional product signal saved."
+                : "Got it — no optional analytics recorded."
         }
     }
 

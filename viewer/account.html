@@ -275,7 +275,7 @@
             <div class="sectionHeader">
               <div>
                 <h2>My stats</h2>
-                <p class="muted">Your contribution totals, unlock progress, account ID, and Pint Path special activity in one place.</p>
+                <p class="muted">Your contribution totals, unlock progress, trust score, and account ID in one place.</p>
               </div>
               <div class="actionRow accountStatsActions">
                 <button id="confirmAgeButton" class="button" type="button">Confirm I am 18+</button>
@@ -327,6 +327,15 @@
               </div>
               <a class="button" href="/">Open map</a>
             </div>
+            <section id="savedUpdatesSection" aria-labelledby="savedUpdatesTitle" hidden>
+              <div class="sectionHeader sectionHeader--compact">
+                <div>
+                  <h3 id="savedUpdatesTitle">Saved Updates</h3>
+                  <p id="savedUpdatesCopy" class="muted"></p>
+                </div>
+              </div>
+              <div id="savedUpdatesList" class="list"></div>
+            </section>
             <div id="savedItemsList" class="list"></div>
           </section>
         </div>
@@ -696,6 +705,9 @@
       accountSessionTotal: 0,
       accountUiEpoch: 0,
       authFlowEpoch: 0,
+      dashboardViewRecordedAccountId: null,
+      dashboardViewRecording: null,
+      savedUpdatesViewedRevisions: new Set(),
     };
 
     const SUBMISSION_HISTORY_PAGE_SIZE = 25;
@@ -1196,6 +1208,9 @@
       state.pubGolfRenderEpoch += 1;
       state.checkoutResumeStarted = false;
       state.checkoutReconcileStarted = false;
+      state.dashboardViewRecordedAccountId = null;
+      state.dashboardViewRecording = null;
+      state.savedUpdatesViewedRevisions.clear();
       state.mfaPendingRequest = false;
       state.mfaFactorId = null;
       state.mfaVerifiedFactorId = null;
@@ -1460,6 +1475,9 @@
       }
       if (activeTarget === "submissions" && state.accountData && !state.verificationCandidatesLoaded) {
         void loadCommunityVerificationCandidates();
+      }
+      if (activeTarget === "saved") {
+        void recordSavedUpdatesExposure();
       }
     }
 
@@ -3116,6 +3134,75 @@
       `).join("");
     }
 
+    function renderSavedUpdates(feed) {
+      const section = $("savedUpdatesSection");
+      const list = $("savedUpdatesList");
+      const updates = Array.isArray(feed?.updates) ? feed.updates : [];
+      const visible = feed?.enabled === true && feed?.variant === "treatment" && updates.length > 0;
+      section.hidden = !visible;
+      $("savedUpdatesCopy").textContent = visible ? String(feed.copy || "Recent changes for saved venues and beers.") : "";
+      list.innerHTML = visible ? updates.map((update) => `
+        <article class="listItem">
+          <div>
+            <strong>${escapeHtml(update.title || "Saved item update")}</strong>
+            <div class="muted">${escapeHtml(update.summary || "")}</div>
+            <div class="muted">${escapeHtml(MelbBeerBusiness.formatDate(update.effectiveAt))}</div>
+          </div>
+          <a class="button button--small" href="${escapeHtml(update.mapHref || "/")}" data-saved-update-id="${escapeHtml(update.id || "")}">Open map</a>
+        </article>
+      `).join("") : "";
+    }
+
+    function recordAccountDashboardView(accountId) {
+      if (!accountId) return Promise.resolve(false);
+      if (state.dashboardViewRecording?.accountId === accountId) {
+        return state.dashboardViewRecording.promise;
+      }
+      if (state.dashboardViewRecordedAccountId === accountId) return Promise.resolve(true);
+      const requestedContext = captureAccountUiContext();
+      state.dashboardViewRecordedAccountId = accountId;
+      const request = MelbBeerBusiness.apiFetch("/api/business/account/dashboard-viewed", {
+        method: "POST",
+        body: "{}",
+        keepalive: true,
+      }).then(() => isAccountUiContextCurrent(requestedContext)).catch(() => {
+        if (isAccountUiContextCurrent(requestedContext)) state.dashboardViewRecordedAccountId = null;
+        return false;
+      }).finally(() => {
+        if (state.dashboardViewRecording?.promise === request) state.dashboardViewRecording = null;
+      });
+      state.dashboardViewRecording = { accountId, promise: request };
+      return request;
+    }
+
+    async function recordSavedUpdatesExposure() {
+      const requestedContext = captureAccountUiContext();
+      if (!await recordAccountDashboardView(requestedContext.accountId)) return;
+      if (!isAccountUiContextCurrent(requestedContext)) return;
+      const feed = state.accountData?.savedUpdates;
+      const section = $("savedUpdatesSection");
+      if (
+        $("settingsSavedPanel").hidden
+        || section.hidden
+        || feed?.enabled !== true
+        || feed?.variant !== "treatment"
+        || !feed.revision
+        || !Array.isArray(feed.updates)
+        || feed.updates.length === 0
+        || state.savedUpdatesViewedRevisions.has(feed.revision)
+      ) return;
+      state.savedUpdatesViewedRevisions.add(feed.revision);
+      void MelbBeerBusiness.apiFetch("/api/business/account/saved-updates/viewed", {
+        method: "POST",
+        body: JSON.stringify({ revision: feed.revision }),
+        keepalive: true,
+      }).catch(() => {
+        if (isAccountUiContextCurrent(requestedContext)) {
+          state.savedUpdatesViewedRevisions.delete(feed.revision);
+        }
+      });
+    }
+
     function renderAccountPreferences(preferences = {}) {
       const form = $("accountPreferencesForm");
       form.preferredSuburbs.value = (preferences.preferredSuburbs || []).join(", ");
@@ -3489,6 +3576,9 @@
         void loadCommunityVerificationCandidates();
       }
       renderSavedItems(result.savedItems || []);
+      renderSavedUpdates(result.savedUpdates || null);
+      void recordAccountDashboardView(account.id);
+      if (!$("settingsSavedPanel").hidden) void recordSavedUpdatesExposure();
       renderAccountPreferences(result.preferences || {});
       renderSupportReceipts();
       void loadDeletionStatus();
@@ -4309,6 +4399,15 @@
           button.disabled = false;
           MelbBeerBusiness.setStatus($("dashboardStatus"), error.message || "Could not remove the saved item.", true);
         }
+      });
+      $("savedUpdatesList").addEventListener("click", (event) => {
+        const link = event.target.closest("[data-saved-update-id]");
+        if (!link?.dataset.savedUpdateId) return;
+        void MelbBeerBusiness.apiFetch("/api/business/account/saved-updates/opened", {
+          method: "POST",
+          body: JSON.stringify({ updateId: link.dataset.savedUpdateId }),
+          keepalive: true,
+        }).catch(() => null);
       });
       $("rewardVoucherList").addEventListener("click", async (event) => {
         const button = event.target.closest("[data-copy-voucher-reference]");

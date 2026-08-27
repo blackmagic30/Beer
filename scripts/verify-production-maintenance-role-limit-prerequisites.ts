@@ -32,7 +32,7 @@ export const PRODUCTION_ROLE_LIMIT_RECONCILIATION_AUTHORITY_SCHEMA =
 export const PRODUCTION_ROLE_LIMIT_RECONCILIATION_AUTHORITY_FILENAME =
   "reconciliation-authority-verification.json" as const;
 export const PRODUCTION_MAINTENANCE_ROLE_LIMIT_POLICY_SHA256 =
-  "cc0891af9e71699c6786da8ba432b43d559d4ca1f3703d1ad17fee8c36bae108" as const;
+  "a7fb80f1425ca6851176089e0df0ae562ce57090d24383ddbb8955565672ecf7" as const;
 
 const REPOSITORY = "blackmagic30/Beer" as const;
 const ROLE_LIMIT_WORKFLOW =
@@ -86,7 +86,7 @@ const PRODUCTION_SCALE_POLICY_SHA256 =
 const PRODUCTION_SCALE_PRODUCER_PATH =
   "scripts/execute-protected-permanent-staging-scale.ts" as const;
 const PRODUCTION_SCALE_PRODUCER_SHA256 =
-  "ae6166563b580fe407736522f17e60319bdfe6f897a1ed077d5483fed973ed40" as const;
+  "dc888847dd7cbeedbfc051c2069c17a456217f5834bea1761789216038366aac" as const;
 const DEPLOYMENT_POLICY_PATH =
   "ops/railway/production-app-deployment-policy.json" as const;
 const DEPLOYMENT_POLICY_SHA256 =

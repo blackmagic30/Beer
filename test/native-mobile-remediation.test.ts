@@ -750,7 +750,7 @@ describe("native mobile remediation guardrails", () => {
   });
 
   it("keeps optional analytics consent scoped to a confirmed signed-in account", () => {
-    expect(iosApp).toContain("guard optionalAnalyticsEnabled, let token = sessionToken else { return }");
+    expect(iosApp).toContain("guard optionalAnalyticsEnabled, let token = sessionToken else { return false }");
     expect(iosApp).toContain('UserDefaults.standard.removeObject(forKey: "au.pintpath.app.optionalAnalytics")');
     expect(iosApp).toMatch(/private func clearLocalSession\(\)[\s\S]*resetOptionalAnalytics\(\)/);
 

@@ -16,6 +16,9 @@ describe("signed no-happy-hour public launch scope", () => {
     expect(map).not.toContain('data-filter-chip="happy_hour_active_now"');
     expect(map).toContain("const HAPPY_HOUR_DISCOVERY_ENABLED = BUSINESS_CONFIG.happyHourDiscoveryEnabled === true");
     expect(map).toContain("if (!HAPPY_HOUR_DISCOVERY_ENABLED)");
+    expect(map).toContain("const PUBLIC_SPECIAL_DISCOVERY_ENABLED = HAPPY_HOUR_DISCOVERY_ENABLED && COMMERCIAL_LAUNCH_ENABLED");
+    expect(map).toContain("specialsFilterRow.hidden = !PUBLIC_SPECIAL_DISCOVERY_ENABLED");
+    expect(map).toContain("if (!PUBLIC_SPECIAL_DISCOVERY_ENABLED || !specials.length)");
     expect(map).toContain("record.isHappyHourPrice !== true");
 
     [

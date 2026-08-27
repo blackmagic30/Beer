@@ -406,6 +406,61 @@ describe.skipIf(!configuredAdminUrl)("real restricted PG17 support/feedback repo
       confidence: "disputed",
     });
 
+    await database.prepare(
+      `INSERT INTO venue_profiles (
+         venue_id, name, suburb, active, created_at, updated_at
+       ) VALUES ('pg-manager-venue', 'PG Manager Venue', 'Fitzroy', TRUE, @now, @now)`,
+    ).run({ now: NOW });
+    await database.prepare(
+      `INSERT INTO venue_beers (
+         id, venue_id, beer_name, normalized_beer_id, serve_size, price,
+         on_tap, in_stock, price_verified_at, created_at, updated_at
+       ) VALUES ('pg-manager-beer', 'pg-manager-venue', 'Guinness', 'guinness',
+                 'pint', 12, TRUE, TRUE, @now, @now, @now)`,
+    ).run({ now: NOW });
+    const managerCommon = {
+      venueId: "pg-manager-venue",
+      venueName: "PG Manager Venue",
+      priceRecordId: "bar_beer:pg-manager-beer",
+      beerName: "Guinness",
+      reason: "price_changed" as const,
+      notes: null,
+      sourcePhotoUrl: null,
+      now: NOW,
+    };
+    const managerRace = await Promise.all([
+      repository.createWrongPriceReport({
+        ...managerCommon,
+        id: "pg-manager-report-a",
+        userId: "pg-user-one",
+        anonymousSessionId: null,
+      }),
+      repository.createWrongPriceReport({
+        ...managerCommon,
+        id: "pg-manager-report-b",
+        userId: "pg-user-one",
+        anonymousSessionId: null,
+      }),
+    ]);
+    expect(managerRace.filter((result) => result.duplicate)).toHaveLength(1);
+    expect(managerRace.filter((result) => !result.duplicate)).toHaveLength(1);
+    await expect(repository.createWrongPriceReport({
+      ...managerCommon,
+      id: "pg-manager-report-second",
+      userId: "pg-user-two",
+      anonymousSessionId: null,
+      now: LATER,
+    })).resolves.toMatchObject({ duplicate: false, markedDisputed: false });
+    const managerStorage = await database.prepare(
+      `SELECT count(*)::text AS "count",
+              min(price_record_id) AS "priceRecordId"
+         FROM wrong_price_reports
+        WHERE venue_id = 'pg-manager-venue'
+          AND beer_name = 'Guinness'
+          AND reason = 'price_changed'`,
+    ).get<{ count: string; priceRecordId: string | null }>();
+    expect(managerStorage).toEqual({ count: "2", priceRecordId: null });
+
     const workflowRace = await Promise.all([
       repository.updateFeedbackWorkflow({
         id: "pg-feedback",

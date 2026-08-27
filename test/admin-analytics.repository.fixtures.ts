@@ -9,6 +9,7 @@ export const ANALYTICS_TOTAL_VENUES = 14;
 
 export const KPI_INPUT = Object.freeze({
   since: ANALYTICS_SINCE,
+  asOf: ANALYTICS_AS_OF,
   sevenDaysAgo: ANALYTICS_SEVEN_DAYS_AGO,
   thirtyDaysAgo: ANALYTICS_THIRTY_DAYS_AGO,
   staleBefore: ANALYTICS_STALE_BEFORE,
@@ -79,16 +80,37 @@ export const EXPECTED_KPI_BUCKETS = Object.freeze({
 });
 
 export const EXPECTED_WEEK_COHORTS = Object.freeze([
-  { cohort: "2026-W30", users: 1, returned7: 0, returned30: 0, retention7: 0, retention30: 0 },
-  { cohort: "2026-W26", users: 2, returned7: 0, returned30: 1, retention7: 0, retention30: 0.5 },
-  { cohort: "2026-W01", users: 1, returned7: 0, returned30: 1, retention7: 0, retention30: 1 },
-  { cohort: "2026-W00", users: 1, returned7: 1, returned30: 1, retention7: 1, retention30: 1 },
+  {
+    cohort: "2026-W30", users: 1, eligibleUsers7: 0, eligibleUsers30: 0,
+    returned7: 0, returned30: 0, retention7: null, retention30: null,
+  },
+  {
+    cohort: "2026-W26", users: 2, eligibleUsers7: 2, eligibleUsers30: 2,
+    returned7: 0, returned30: 2, retention7: 0, retention30: 1,
+  },
+  {
+    cohort: "2026-W01", users: 1, eligibleUsers7: 1, eligibleUsers30: 1,
+    returned7: 1, returned30: 1, retention7: 1, retention30: 1,
+  },
+  {
+    cohort: "2026-W00", users: 1, eligibleUsers7: 1, eligibleUsers30: 1,
+    returned7: 1, returned30: 1, retention7: 1, retention30: 1,
+  },
 ]);
 
 export const EXPECTED_MONTH_COHORTS = Object.freeze([
-  { cohort: "2026-07", users: 2, returned7: 0, returned30: 0, retention7: 0, retention30: 0 },
-  { cohort: "2026-06", users: 1, returned7: 0, returned30: 1, retention7: 0, retention30: 1 },
-  { cohort: "2026-01", users: 2, returned7: 1, returned30: 2, retention7: 0.5, retention30: 1 },
+  {
+    cohort: "2026-07", users: 2, eligibleUsers7: 1, eligibleUsers30: 1,
+    returned7: 0, returned30: 1, retention7: 0, retention30: 1,
+  },
+  {
+    cohort: "2026-06", users: 1, eligibleUsers7: 1, eligibleUsers30: 1,
+    returned7: 0, returned30: 1, retention7: 0, retention30: 1,
+  },
+  {
+    cohort: "2026-01", users: 2, eligibleUsers7: 2, eligibleUsers30: 2,
+    returned7: 2, returned30: 2, retention7: 1, retention30: 1,
+  },
 ]);
 
 export const EXPECTED_COVERAGE_WITHOUT_AGE = Object.freeze({
@@ -670,6 +692,22 @@ export async function seedAdminAnalyticsFixture(database: SqlDatabase): Promise<
          id, email, password_hash, role, subscription_status, status, created_at, updated_at
        ) VALUES (?, ?, 'hash', 'user', ?, 'active', ?, ?)`,
     ).run(account.id, `${account.id}@example.test`, account.subscriptionStatus, account.createdAt, account.createdAt);
+    await database.prepare(
+      `INSERT INTO account_privacy_settings (
+         user_id, optional_analytics_enabled, venue_report_inclusion_enabled,
+         product_research_enabled, email_updates_enabled, consent_version,
+         consented_at, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, 'fixture-v1', ?, ?, ?)`,
+    ).run(
+      account.id,
+      nativeBoolean(database, true),
+      nativeBoolean(database, false),
+      nativeBoolean(database, false),
+      nativeBoolean(database, false),
+      account.createdAt,
+      account.createdAt,
+      account.createdAt,
+    );
   }
 
   const active = nativeBoolean(database, true);

@@ -11,6 +11,7 @@ const MAX_VENUE_ROWS = 5_000;
 const MAX_PRICE_ROWS = 10_000;
 const REQUEST_TIMEOUT_MS = 20_000;
 const FUTURE_TIMESTAMP_TOLERANCE_MS = 5 * 60 * 1_000;
+const MINIMUM_USEFUL_OPTIONS_PER_SEARCH = 3;
 const TRUSTED_CONFIDENCE = new Set([
   "admin_verified",
   "venue_confirmed",
@@ -46,6 +47,10 @@ interface PublicPriceRecord {
   venueId: string;
   displayKind: string | null;
   isHappyHourPrice: boolean;
+  servingSize: string;
+  price: number | null;
+  priceRedacted: boolean;
+  isOnTap: "yes" | "no" | "unknown";
   confidence: string;
   sourceType: string;
   sourceSubmissionId: string | null;
@@ -111,6 +116,7 @@ export interface ProductionDataReadinessReport {
     maximumVenueStatusAgeHours: number;
     maximumTrustedRowAgeDays: number;
     minimumHappyHourCoveragePercent: number;
+    minimumUsefulOptionsPerSearch: number;
     documentedNoHappyHourScopeEnabled: boolean;
     documentedNoHappyHourScopeReferenceProvided: boolean;
   };
@@ -154,6 +160,8 @@ export interface ProductionDataReadinessReport {
       trustedRowCount: number;
       trustedRowsWithInvalidVerificationTime: number;
       trustedRowsOlderThanMaximum: number;
+      redactedRowCount: number;
+      numericVisiblePriceRowCount: number;
       qualifyingCurrentVerifiedPriceRows: number;
       orphanQualifyingPriceRows: number;
     };
@@ -166,6 +174,20 @@ export interface ProductionDataReadinessReport {
       passingSuburbCount: number;
       failingSuburbCount: number;
       minimumCoveragePercent: number | null;
+    };
+    marketedSuburbSearchUsefulness: {
+      definition: "canonical_marketed_suburb_readiness_proxy";
+      caveat: "Readiness proxy only; not historical user-search telemetry.";
+      historicalUserSearchTelemetry: false;
+      proofComplete: boolean;
+      evaluatedSearchCount: number;
+      usefulOptionCount: number;
+      minimumUsefulOptionCount: number | null;
+      maximumUsefulOptionCount: number | null;
+      successfulSearchCount: number;
+      unsuccessfulSearchCount: number;
+      successfulSearchPercent: number | null;
+      minimumUsefulOptionsPerSearch: number;
     };
     trustedEvidence: {
       eligibleNonManagerRowCount: number;
@@ -393,10 +415,21 @@ function publicPriceRecord(value: unknown): PublicPriceRecord | null {
   if (!isObject(value)) return null;
   const id = stringValue(value.id);
   const venueId = stringValue(value.venueId);
+  const servingSize = stringValue(value.servingSize).toLowerCase();
+  const isOnTap = stringValue(value.isOnTap).toLowerCase();
   const confidence = stringValue(value.confidence).toLowerCase();
   const sourceType = stringValue(value.sourceType).toLowerCase();
   const lastVerifiedAt = stringValue(value.lastVerifiedAt);
-  if (!id || !venueId || !confidence || !sourceType || !lastVerifiedAt) return null;
+  if (
+    !id
+    || !venueId
+    || !servingSize
+    || !["yes", "no", "unknown"].includes(isOnTap)
+    || !confidence
+    || !sourceType
+    || !lastVerifiedAt
+    || (value.price !== null && (typeof value.price !== "number" || !Number.isFinite(value.price)))
+  ) return null;
   const hasSourceEvidence = typeof value.hasSourceEvidence === "boolean"
     ? value.hasSourceEvidence
     : undefined;
@@ -408,6 +441,10 @@ function publicPriceRecord(value: unknown): PublicPriceRecord | null {
     venueId,
     displayKind: nullableString(value.displayKind)?.toLowerCase() ?? null,
     isHappyHourPrice: value.isHappyHourPrice === true,
+    servingSize,
+    price: value.price,
+    priceRedacted: value.priceRedacted === true,
+    isOnTap: isOnTap as PublicPriceRecord["isOnTap"],
     confidence,
     sourceType,
     sourceSubmissionId: nullableString(value.sourceSubmissionId),
@@ -555,6 +592,15 @@ function isBeerPrice(record: PublicPriceRecord): boolean {
     && !record.isHappyHourPrice;
 }
 
+function isActionablePintPrice(record: PublicPriceRecord): boolean {
+  return isBeerPrice(record)
+    && record.servingSize === "pint"
+    && record.price !== null
+    && record.price > 0
+    && !record.priceRedacted
+    && record.isOnTap === "yes";
+}
+
 function statusKnown(venue: PublicVenue): string | null {
   return nullableString(venue.businessStatus ?? venue.business_status)?.toLowerCase() ?? null;
 }
@@ -661,6 +707,12 @@ export async function runProductionDataReadiness(input: {
   }
   const prices = [...priceById.values()];
   const trustedRows = prices.filter(isTrusted);
+  const redactedRowCount = prices.filter((record) => record.priceRedacted).length;
+  const numericVisiblePriceRowCount = prices.filter(
+    (record) => !record.priceRedacted
+      && typeof record.price === "number"
+      && Number.isFinite(record.price),
+  ).length;
   const maximumTrustedAgeMs = input.config.maximumTrustedRowAgeDays * 24 * 60 * 60 * 1_000;
   const trustedAges = trustedRows.map((record) => ({
     record,
@@ -677,7 +729,7 @@ export async function runProductionDataReadiness(input: {
 
   const qualifyingPrices: Array<{ record: PublicPriceRecord; verifiedAtMs: number }> = [];
   for (const { record } of currentTrustedRows) {
-    if (!isBeerPrice(record)) continue;
+    if (!isActionablePintPrice(record)) continue;
     const verificationTimestamp = isManagerRecord(record)
       ? record.priceVerifiedAt
       : record.lastVerifiedAt;
@@ -707,6 +759,7 @@ export async function runProductionDataReadiness(input: {
     ).length;
     return {
       coveragePercent: percentage(coveredVenueCount, venueIds.length),
+      usefulOptionCount: coveredVenueCount,
     };
   });
   const passingSuburbCount = suburbPriceCoverage.filter(
@@ -716,6 +769,20 @@ export async function runProductionDataReadiness(input: {
   const minimumSuburbCoveragePercent = suburbPriceCoverage.length === 0
     ? null
     : Math.min(...suburbPriceCoverage.map((item) => item.coveragePercent));
+  const usefulOptionCounts = suburbPriceCoverage.map((item) => item.usefulOptionCount);
+  const successfulSearchCount = usefulOptionCounts.filter(
+    (count) => count >= MINIMUM_USEFUL_OPTIONS_PER_SEARCH,
+  ).length;
+  const unsuccessfulSearchCount = usefulOptionCounts.length - successfulSearchCount;
+  const successfulSearchPercent = usefulOptionCounts.length === 0
+    ? null
+    : percentage(successfulSearchCount, usefulOptionCounts.length);
+  const minimumUsefulOptionCount = usefulOptionCounts.length === 0
+    ? null
+    : Math.min(...usefulOptionCounts);
+  const maximumUsefulOptionCount = usefulOptionCounts.length === 0
+    ? null
+    : Math.max(...usefulOptionCounts);
 
   const evidenceEligibleRows = currentTrustedRows
     .map(({ record }) => record)
@@ -856,7 +923,7 @@ export async function runProductionDataReadiness(input: {
     check(
       "qualifying_prices_reference_marketed_venues",
       zeroDefectsStatus(orphanQualifyingPriceRows, collectionComplete),
-      "Every qualifying current verified price must resolve to a marketed venue.",
+      "Every qualifying current trusted, numeric, on-tap pint price must resolve to a marketed venue.",
       orphanQualifyingPriceRows,
       0,
     ),
@@ -877,7 +944,7 @@ export async function runProductionDataReadiness(input: {
           && marketedVenueCoveragePercent >= input.config.minimumMarketedVenueCoveragePercent
           ? "pass"
           : "fail",
-      `Aggregate share of scoped marketed venues with at least ${input.config.minimumCurrentPricesPerVenue} trusted beer prices verified within ${input.config.maximumTrustedRowAgeDays} days. This aggregate does not replace the every-suburb check.`,
+      `Aggregate share of scoped marketed venues with at least ${input.config.minimumCurrentPricesPerVenue} trusted, numeric, on-tap pint prices verified within ${input.config.maximumTrustedRowAgeDays} days. This aggregate does not replace the every-suburb check.`,
       marketedVenueCoveragePercent,
       input.config.minimumMarketedVenueCoveragePercent,
     ),
@@ -888,7 +955,7 @@ export async function runProductionDataReadiness(input: {
         : marketedSuburbs.length > 0 && failingSuburbCount === 0
           ? "pass"
           : "fail",
-      `Every marketed suburb must independently have at least ${input.config.minimumMarketedVenueCoveragePercent}% of its venues covered by ${input.config.minimumCurrentPricesPerVenue} current verified beer prices. The report emits only aggregate counts and scope hashes.`,
+      `Every marketed suburb must independently have at least ${input.config.minimumMarketedVenueCoveragePercent}% of its venues covered by ${input.config.minimumCurrentPricesPerVenue} current trusted, numeric, on-tap pint prices. The report emits only aggregate counts and scope hashes.`,
       minimumSuburbCoveragePercent,
       input.config.minimumMarketedVenueCoveragePercent,
     ),
@@ -993,6 +1060,7 @@ export async function runProductionDataReadiness(input: {
       maximumVenueStatusAgeHours: input.config.maximumVenueStatusAgeHours,
       maximumTrustedRowAgeDays: input.config.maximumTrustedRowAgeDays,
       minimumHappyHourCoveragePercent: input.config.minimumHappyHourCoveragePercent,
+      minimumUsefulOptionsPerSearch: MINIMUM_USEFUL_OPTIONS_PER_SEARCH,
       documentedNoHappyHourScopeEnabled: input.config.noHappyHourLaunchScope,
       documentedNoHappyHourScopeReferenceProvided: input.config.noHappyHourScopeReferenceProvided,
     },
@@ -1036,6 +1104,8 @@ export async function runProductionDataReadiness(input: {
         trustedRowCount: trustedRows.length,
         trustedRowsWithInvalidVerificationTime: invalidTrustedTimestampCount,
         trustedRowsOlderThanMaximum,
+        redactedRowCount,
+        numericVisiblePriceRowCount,
         qualifyingCurrentVerifiedPriceRows: qualifyingPrices.length,
         orphanQualifyingPriceRows,
       },
@@ -1048,6 +1118,20 @@ export async function runProductionDataReadiness(input: {
         passingSuburbCount,
         failingSuburbCount,
         minimumCoveragePercent: minimumSuburbCoveragePercent,
+      },
+      marketedSuburbSearchUsefulness: {
+        definition: "canonical_marketed_suburb_readiness_proxy",
+        caveat: "Readiness proxy only; not historical user-search telemetry.",
+        historicalUserSearchTelemetry: false,
+        proofComplete: collectionComplete && missingConfiguredSuburbs.length === 0,
+        evaluatedSearchCount: usefulOptionCounts.length,
+        usefulOptionCount: usefulOptionCounts.reduce((total, count) => total + count, 0),
+        minimumUsefulOptionCount,
+        maximumUsefulOptionCount,
+        successfulSearchCount,
+        unsuccessfulSearchCount,
+        successfulSearchPercent,
+        minimumUsefulOptionsPerSearch: MINIMUM_USEFUL_OPTIONS_PER_SEARCH,
       },
       trustedEvidence: {
         eligibleNonManagerRowCount: evidenceEligibleRows.length,

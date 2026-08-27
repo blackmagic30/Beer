@@ -543,12 +543,17 @@ URL file.
 - [x] Create and pin the permanent-staging Railway app service, Postgres,
       Supabase/Auth/private Storage, and Redis core identities; prove they differ
       from production and the disposable restore resources.
-- [ ] Complete the three Google/OpenAI categories/four exact Railway variable
-      operations only through their protected authority after the first
-      successful deployment of the exact protected-main candidate. Run the
-      separate atomic Supabase publishable/secret-key replacement under its own
-      approval. After every planned provider/runtime operation, deploy the exact
-      same candidate once more and retain that second, closeout artifact; prove
+- [ ] While the exact legacy staging deployment remains the sole healthy
+      one-replica deployment, complete the three Google/OpenAI categories/four
+      exact Railway variable operations only through their protected authority.
+      Run the separate atomic Supabase publishable/secret-key replacement under
+      its own approval. Every operation uses `skipDeploys=true` and must prove
+      deployment identity, topology, and runtime unchanged; the current
+      failed/stopped staging app cannot satisfy this preflight and requires a
+      separately reviewed recovery path first. Then prepare and quiesce the
+      worker fence, upload the exact protected-main candidate at zero replicas,
+      apply and prove the staging schema/venue refresh, restore and activate the
+      candidate at one replica, and retain the active closeout artifact; prove
       all server, browser, mobile, CI, scheduled,
       webhook, backup, and archived consumers plus Auth, admin, role, private
       Storage, provider, and Free-scope behavior. Only then run protected

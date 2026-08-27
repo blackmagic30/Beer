@@ -49,6 +49,20 @@ function insertPrice(raw: BetterSqlite3.Database, id: string, confidence = "comm
   ).run(id, confidence, NOW, NOW, NOW);
 }
 
+function insertManagerPrice(raw: BetterSqlite3.Database, id: string): void {
+  raw.prepare(
+    `INSERT INTO venue_profiles (venue_id, name, suburb, active, created_at, updated_at)
+     VALUES ('venue-manager', 'Manager Venue', 'Fitzroy', 1, ?, ?)`,
+  ).run(NOW, NOW);
+  raw.prepare(
+    `INSERT INTO venue_beers (
+       id, venue_id, beer_name, normalized_beer_id, serve_size, price,
+       on_tap, in_stock, price_verified_at, created_at, updated_at
+     ) VALUES (?, 'venue-manager', 'Guinness', 'guinness', 'pint', 12,
+               1, 1, ?, ?, ?)`,
+  ).run(id, NOW, NOW, NOW);
+}
+
 function expectCode(code: SupportFeedbackRepositoryError["code"]): (error: unknown) => boolean {
   return (error) => error instanceof SupportFeedbackRepositoryError && error.code === code;
 }
@@ -209,6 +223,68 @@ describe("SupportFeedbackRepository with AsyncSqliteDatabase", () => {
       { id: "report-two" },
       { id: "report-one" },
     ]);
+  });
+
+  it("binds manager-price reports to venue_beers, deduplicates, and never mutates trust", async () => {
+    const { raw, repository } = fixture();
+    insertManagerPrice(raw, "manager-beer-one");
+    insertAccount(raw, "manager-reporter-one");
+    insertAccount(raw, "manager-reporter-two");
+    const common = {
+      venueId: "venue-manager",
+      venueName: "Manager Venue",
+      priceRecordId: "bar_beer:manager-beer-one",
+      beerName: "Guinness",
+      reason: "price_changed" as const,
+      notes: null,
+      sourcePhotoUrl: null,
+      now: NOW,
+    };
+
+    const race = await Promise.all([
+      repository.createWrongPriceReport({
+        ...common,
+        id: "manager-report-a",
+        userId: "manager-reporter-one",
+        anonymousSessionId: null,
+      }),
+      repository.createWrongPriceReport({
+        ...common,
+        id: "manager-report-b",
+        userId: "manager-reporter-one",
+        anonymousSessionId: null,
+      }),
+    ]);
+    expect(race.filter((result) => result.duplicate)).toHaveLength(1);
+    expect(race.filter((result) => !result.duplicate)).toHaveLength(1);
+    const second = await repository.createWrongPriceReport({
+      ...common,
+      id: "manager-report-second",
+      userId: "manager-reporter-two",
+      anonymousSessionId: null,
+      now: LATER,
+    });
+    expect(second).toMatchObject({ duplicate: false, markedDisputed: false });
+    expect(raw.prepare(
+      `SELECT count(*) AS count,
+              min(price_record_id) AS priceRecordId
+         FROM wrong_price_reports
+        WHERE venue_id = 'venue-manager' AND beer_name = 'Guinness' AND reason = 'price_changed'`,
+    ).get()).toEqual({ count: 2, priceRecordId: null });
+    await expect(repository.listWrongPriceReports({ limit: 10 })).resolves.toEqual([
+      expect.objectContaining({
+        id: "manager-report-second",
+        priceRecordId: null,
+      }),
+      expect.objectContaining({ priceRecordId: null }),
+    ]);
+    await expect(repository.createWrongPriceReport({
+      ...common,
+      id: "missing-manager-report",
+      userId: "manager-reporter-one",
+      anonymousSessionId: null,
+      priceRecordId: "bar_beer:missing-manager-beer",
+    })).rejects.toSatisfy(expectCode("price_record_not_found"));
   });
 
   it("deduplicates anonymous reporters, keeps venue-confirmed prices authoritative, and checks references", async () => {
