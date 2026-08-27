@@ -363,8 +363,10 @@ describe.skipIf(!configuredAdminUrl)("public price repository on real PostgreSQL
          ('manager-carlton', 'venue-canonical', 'Carlton Draught', 'carlton_draft',
           'pint', 10.50, TRUE, TRUE, $3, NULL, $1, $3),
          ('manager-stone', 'venue-canonical', 'Stone & Wood Pacific Ale', 'stone_and_wood_pacific_ale',
-          'pint', 13.25, TRUE, TRUE, $2, NULL, $1, $2)`,
-      [BASE_TIME, MINUTE_2, MINUTE_3],
+          'pint', 13.25, TRUE, TRUE, $2, NULL, $1, $2),
+         ('manager-guinness-quarantined', 'venue-canonical', 'Guinness', 'guinness',
+          'pint', 13.75, TRUE, TRUE, $4, 'ingestion-q', $1, $4)`,
+      [BASE_TIME, MINUTE_2, MINUTE_3, MINUTE_6],
     );
     await targetAdmin!.query(
       `INSERT INTO venue_happy_hours (
@@ -412,6 +414,12 @@ describe.skipIf(!configuredAdminUrl)("public price repository on real PostgreSQL
       hasSourceEvidence: true,
       lastVerifiedAt: MINUTE_5,
     }));
+    await expect(repository.getCurrentCommunityPriceRecordById("carlton-old"))
+      .resolves.toBeNull();
+    await expect(repository.getCurrentCommunityPriceRecordById("carlton-current"))
+      .resolves.toBeNull();
+    await expect(repository.getCurrentCommunityPriceRecordById("guinness-current"))
+      .resolves.toEqual(current.find((record) => record.id === "guinness-current"));
 
     const firstPage = await repository.listCurrentPriceRecordPage({ limit: 1 });
     expect(firstPage.map((record) => record.id)).toEqual(["guinness-current"]);
@@ -443,5 +451,9 @@ describe.skipIf(!configuredAdminUrl)("public price repository on real PostgreSQL
       happyHourEndTime: "19:00:00",
       happyHourBeers: [expect.objectContaining({ happyHourPrice: 7.5, onTap: true })],
     }));
+    await expect(repository.getCurrentVenueManagerPriceRecordById("bar_beer:manager-carlton"))
+      .resolves.toEqual(manager.find((record) => record.id === "bar_beer:manager-carlton"));
+    await expect(repository.getCurrentVenueManagerPriceRecordById("bar_happy_hour:manager-happy"))
+      .resolves.toBeNull();
   });
 });

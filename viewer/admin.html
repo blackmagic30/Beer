@@ -726,8 +726,10 @@
 
         <div class="adminGrid adminGrid--two">
           <div class="panel">
-            <h2>Retention cohorts</h2>
+            <h2>Opt-in activity cohorts (proxy)</h2>
             <div id="retentionCohorts" class="list"></div>
+            <h3 class="adminSubheading">Saved Updates D7 experiment</h3>
+            <div id="savedUpdatesExperiment" class="list"></div>
           </div>
           <div class="panel">
             <h2>Coverage</h2>
@@ -1550,6 +1552,13 @@
 
     function renderKpis(data) {
       const metrics = data.metrics;
+      const usefulness = data.searchUsefulness || {};
+      const measuredSearches = Math.max(0, Number(usefulness.measuredSearchCount || 0));
+      const successfulSearches = Math.max(0, Number(usefulness.successfulSearchCount || 0));
+      const distribution = usefulness.distribution || {};
+      const usefulnessRate = measuredSearches > 0
+        ? formatPercent(usefulness.successfulSearchRate)
+        : "No measured searches";
       headlineMetrics.innerHTML = [
         renderMetric("Total users", metrics.totalUsers),
         renderMetric("New users", metrics.newUsers),
@@ -1558,6 +1567,7 @@
         renderMetric("Paid users", metrics.paidUsers),
         renderMetric("Contributor unlocked", metrics.contributorUnlockedUsers),
         renderMetric("Beer searches", metrics.totalBeerSearches),
+        renderMetric("Searches with 3+ useful options", usefulnessRate),
         renderMetric("Near-me uses", metrics.totalNearMeUses || 0),
         renderMetric("Happy-hour near me", metrics.totalHappyHourNearMeUses || 0),
         renderMetric("Free preview views", metrics.totalFreePreviewViews || 0),
@@ -1575,6 +1585,7 @@
         </div>
       `).join("");
       demandSignals.innerHTML = [
+        `<div class="listItem"><strong>Search usefulness · client-reported</strong><div class="muted">${formatCount(successfulSearches)}/${formatCount(measuredSearches)} measured searches returned at least ${formatCount(usefulness.usefulResultThreshold || 3)} useful options · ${usefulnessRate} · average ${measuredSearches > 0 ? Number(usefulness.averageUsefulResultCount || 0).toFixed(1) : "—"}</div><div class="muted">Distribution: 0=${formatCount(distribution.zero || 0)}, 1=${formatCount(distribution.one || 0)}, 2=${formatCount(distribution.two || 0)}, 3+=${formatCount(distribution.threeOrMore || 0)} · ${formatCount(usefulness.unmeasuredSearchCount || 0)} unmeasured · ${formatCount(usefulness.inconsistentSuccessFlagCount || 0)} inconsistent flags.</div><div class="muted">${escapeHtml(usefulness.caveat || "Client-reported directional telemetry; not formal release evidence.")}</div></div>`,
         `<div class="listItem"><strong>Top searched beers</strong><div class="muted">${formatBucketSummary(data.topSearchedBeers, "No beer searches yet")}</div></div>`,
         `<div class="listItem"><strong>Top searched areas</strong><div class="muted">${formatBucketSummary(data.topSearchedSuburbs, "No area searches yet")}</div></div>`,
         `<div class="listItem"><strong>Top clicked venues</strong><div class="muted">${formatBucketSummary(data.topClickedVenues, "No venue clicks yet")}</div></div>`,
@@ -1605,15 +1616,73 @@
       fieldTestPanel.hidden = !MelbBeerBusiness.isFieldTestMode();
     }
 
+    function formatRetentionWindow(cohort, days) {
+      const users = Math.max(0, Number(cohort.users || 0));
+      const eligible = Math.max(0, Number(cohort[`eligibleUsers${days}`] || 0));
+      const returned = Math.max(0, Number(cohort[`returned${days}`] || 0));
+      const maturing = Math.max(0, users - eligible);
+      const eligibility = `${formatCount(eligible)}/${formatCount(users)} eligible`;
+      const maturity = `${formatCount(maturing)}/${formatCount(users)} maturing`;
+      if (eligible === 0) return `${days}-day maturing · ${eligibility} · ${maturity}`;
+      return `${days}-day ${formatPercent(cohort[`retention${days}`])} (${formatCount(returned)}/${formatCount(eligible)} returned) · ${eligibility} · ${maturity}`;
+    }
+
     function renderRetention(data) {
-      retentionCohorts.innerHTML = data.cohorts.length
+      const populationCaveat = data.populationCaveat
+        ? `<div class="listItem muted"><strong>Population caveat</strong><div>${escapeHtml(data.populationCaveat)}</div></div>`
+        : "";
+      retentionCohorts.innerHTML = populationCaveat + (data.cohorts.length
         ? data.cohorts.map((cohort) => `
           <div class="listItem">
             <strong>${escapeHtml(cohort.cohort)}</strong>
-            <div class="muted">${formatCount(cohort.users)} users · 7-day ${formatPercent(cohort.retention7)} (${formatCount(cohort.returned7)}) · 30-day ${formatPercent(cohort.retention30)} (${formatCount(cohort.returned30)})</div>
+            <div class="muted">${formatCount(cohort.users)} users · ${formatRetentionWindow(cohort, 7)} · ${formatRetentionWindow(cohort, 30)}</div>
           </div>
         `).join("")
-        : '<div class="listItem muted">No cohorts yet.</div>';
+        : '<div class="listItem muted">No consented cohorts yet.</div>');
+      renderSavedUpdatesExperiment(data.savedUpdatesExperiment || null);
+    }
+
+    function optionalExperimentPercent(value, emptyCopy) {
+      return value === null || value === undefined ? emptyCopy : formatPercent(value);
+    }
+
+    function renderSavedUpdatesExperiment(experiment) {
+      const variants = Array.isArray(experiment?.variants) ? experiment.variants : [];
+      if (!variants.length) {
+        savedUpdatesExperiment.innerHTML = '<div class="listItem muted">No consented Saved Updates assignments yet.</div>';
+        return;
+      }
+      const rows = variants.map((variant) => {
+        const isTreatment = variant.variant === "treatment";
+        const exposure = isTreatment
+          ? `${formatCount(variant.exposedAccounts)} exposed (${optionalExperimentPercent(variant.exposureRate, "not available")})`
+          : "exposure not applicable";
+        return `
+          <div class="listItem">
+            <strong>${escapeHtml(String(variant.variant || "unknown").toUpperCase())}</strong>
+            <div class="muted">
+              ${formatCount(variant.assignedAccounts)} assigned (${optionalExperimentPercent(variant.assignedShare, "no allocation yet")} of assignments) ·
+              ${formatCount(variant.eligibleAtAssignmentAccounts)} save-eligible (${optionalExperimentPercent(variant.eligibilityRateAtAssignment, "not available")}) ·
+              ${escapeHtml(exposure)} ·
+              ${formatCount(variant.maturedAccounts7)} D7 matured (${optionalExperimentPercent(variant.maturityRate7, "not mature")}) ·
+              ${formatCount(variant.returnedAccounts7)} returned (${optionalExperimentPercent(variant.retentionRate7, "not mature")})
+            </div>
+          </div>
+        `;
+      }).join("");
+      const definitions = [
+        experiment.eligibilityDefinition,
+        experiment.exposureDefinition,
+        experiment.outcomeDefinition,
+        experiment.caveat,
+      ].filter(Boolean).join(" ");
+      const difference = experiment.observedD7RetentionDifference;
+      const comparison = difference === null || difference === undefined
+        ? '<div class="listItem muted"><strong>Observed D7 difference</strong><div>Not available until both arms have mature accounts.</div></div>'
+        : `<div class="listItem"><strong>Observed D7 difference</strong><div class="muted">${escapeHtml(`${Math.round(Number(difference) * 1000) / 10} percentage points`)} treatment minus control. Directional only; this is not a significance or causal claim.</div></div>`;
+      savedUpdatesExperiment.innerHTML = rows + comparison + (definitions
+        ? `<div class="listItem muted"><strong>Directional opt-in caveat</strong><div>${escapeHtml(definitions)}</div></div>`
+        : "");
     }
 
     function renderCoverage(data) {

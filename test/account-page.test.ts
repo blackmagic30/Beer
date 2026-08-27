@@ -1313,6 +1313,100 @@ describe("account page shell", () => {
     expect(css).not.toContain(".accountDashboard .accountPrimaryGrid");
   });
 
+  it("shows Saved Updates only on a visible Saved panel and validates privacy-safe analytics server-side", () => {
+    const html = accountHtml();
+    const service = businessServiceTs();
+    const routes = fs.readFileSync(
+      path.resolve(process.cwd(), "src/modules/business/business.routes.ts"),
+      "utf8",
+    );
+    const analytics = fs.readFileSync(
+      path.resolve(process.cwd(), "src/db/admin-analytics.repository.ts"),
+      "utf8",
+    );
+    const renderer = htmlBetween(html, "function renderSavedUpdates", "function recordAccountDashboardView");
+    const dashboardAnchor = htmlBetween(
+      html,
+      "function recordAccountDashboardView",
+      "async function recordSavedUpdatesExposure",
+    );
+    const exposure = htmlBetween(html, "async function recordSavedUpdatesExposure", "function renderAccountPreferences");
+    const settingsSwitcher = htmlBetween(html, "function showAccountSettingsPanel", "function setMfaStatus");
+    const dashboardRenderer = htmlBetween(html, "function renderDashboard", "async function resumeCheckoutIfRequested");
+    const openHandler = htmlBetween(
+      html,
+      '$("savedUpdatesList").addEventListener("click"',
+      '$("rewardVoucherList").addEventListener("click"',
+    );
+    const serverOnlyEvents = htmlBetween(service, "const SERVER_ONLY_EVENT_TYPES", "function serverEventPrivacyScope");
+    const privacyGate = htmlBetween(service, "async trackEvent", "async trackClientEvent");
+    const dashboardViewedAction = htmlBetween(
+      service,
+      "async recordAccountDashboardViewed",
+      "async recordSavedUpdatesViewed",
+    );
+    const viewedAction = htmlBetween(service, "async recordSavedUpdatesViewed", "async recordSavedUpdateOpened");
+    const openedAction = htmlBetween(service, "async recordSavedUpdateOpened", "async exportAccountData");
+    const retentionAllowlist = htmlBetween(
+      analytics,
+      "const RETENTION_LOOP_EVENT_TYPES",
+      "const PARTNER_LEAD_CONFIDENCES",
+    );
+
+    expect(html).toContain('id="savedUpdatesSection" aria-labelledby="savedUpdatesTitle" hidden');
+    expect(renderer).toContain('feed?.variant === "treatment"');
+    expect(renderer).toContain("section.hidden = !visible");
+    expect(renderer).toContain('href="${escapeHtml(update.mapHref || "/")}"');
+    expect(renderer).not.toContain("update.price");
+    expect(renderer).not.toContain("apiFetch");
+
+    expect(exposure).toContain('$("settingsSavedPanel").hidden');
+    expect(exposure).toContain("section.hidden");
+    expect(exposure).toContain("await recordAccountDashboardView(requestedContext.accountId)");
+    expect(exposure).toContain("state.savedUpdatesViewedRevisions.has(feed.revision)");
+    expect(exposure).toContain('apiFetch("/api/business/account/saved-updates/viewed"');
+    expect(exposure).toContain("keepalive: true");
+    expect(settingsSwitcher).toContain('if (activeTarget === "saved")');
+    expect(settingsSwitcher).toContain("void recordSavedUpdatesExposure()");
+    expect(dashboardRenderer).toContain("void recordAccountDashboardView(account.id)");
+    expect(dashboardRenderer).toContain('if (!$("settingsSavedPanel").hidden) void recordSavedUpdatesExposure()');
+    expect(dashboardAnchor).toContain('apiFetch("/api/business/account/dashboard-viewed"');
+    expect(dashboardAnchor).toContain("state.dashboardViewRecording?.accountId === accountId");
+    expect(dashboardAnchor).toContain("return request");
+
+    expect(openHandler).toContain('apiFetch("/api/business/account/saved-updates/opened"');
+    expect(openHandler).toContain("keepalive: true");
+    expect(openHandler).toContain("void MelbBeerBusiness.apiFetch");
+    expect(openHandler).not.toContain("preventDefault");
+    expect(openHandler).not.toMatch(/\bawait\b/);
+
+    expect(routes).toContain('router.post("/account/dashboard-viewed"');
+    expect(routes).toContain('router.post("/account/saved-updates/viewed"');
+    expect(routes).toContain('router.post("/account/saved-updates/opened"');
+    for (const eventType of [
+      "account_dashboard_viewed",
+      "saved_updates_viewed",
+      "saved_update_opened",
+    ]) {
+      expect(serverOnlyEvents).toContain(`"${eventType}"`);
+    }
+    expect(privacyGate).toContain('privacyScope === "optional_analytics"');
+    expect(privacyGate).toContain("settings.optionalAnalyticsEnabled");
+    expect(dashboardViewedAction).toContain("accountRole: account.role");
+    expect(dashboardViewedAction).toContain("accountSubscriptionStatus: account.subscriptionStatus");
+    expect(dashboardViewedAction).toContain("savedUpdatesEligibleAtAssignment");
+    expect(dashboardViewedAction).toContain("savedUpdatesExperimentVersion: SAVED_UPDATES_EXPERIMENT_VERSION");
+    expect(dashboardViewedAction).toContain("savedUpdatesVariant: variant");
+    expect(viewedAction).toContain("listSavedItems(account.id)");
+    expect(viewedAction).toContain("feed.revision !== input.revision");
+    expect(openedAction).toContain("listSavedItems(account.id)");
+    expect(openedAction).toContain("candidate.id === input.updateId");
+
+    expect(retentionAllowlist).toContain('"account_dashboard_viewed"');
+    expect(retentionAllowlist).not.toContain('"saved_updates_viewed"');
+    expect(retentionAllowlist).not.toContain('"saved_update_opened"');
+  });
+
   it("keeps password reauthentication user-initiated and makes MFA provider-aware", () => {
     const html = accountHtml();
     const settingsSwitcher = htmlBetween(html, "function showAccountSettingsPanel", "function setMfaStatus");
@@ -1518,7 +1612,7 @@ describe("account page shell", () => {
     expect(script).not.toContain("email: account.email || null");
     expect(script).not.toContain("email: session?.user?.email");
     const helpers = loadBusinessHelpers();
-    const publicNavLabels = ["Map", "Submit", "Missions", "Pricing", "FAQ", "Account", "Contact us"];
+    const publicNavLabels = ["Map", "For venues", "Submit", "Missions", "FAQ", "Account", "Contact us"];
 
     ["", "account", "bar-faq", "faq", "feedback", "missions", "pricing", "submit", "trust", "venue-support"].forEach((active) => {
       expect(navLinkLabels(helpers.renderNav(active))).toEqual(publicNavLabels);
@@ -1529,13 +1623,14 @@ describe("account page shell", () => {
     expect(script).toContain("const venuePortalNav = canUseVenuePortalContext()");
     expect(script).toContain('const adminNav = active === "admin" || isAdminAccountContext()');
     expect(script).toContain('{ key: "map", href: "/", label: "Map" }');
+    expect(script).toContain('{ key: "venue-portal", href: "/venue-portal.html", label: "For venues" }');
     expect(script).toContain('{ key: "submit", href: "/submit.html", label: "Submit" }');
     expect(script).toContain('{ key: "missions", href: "/missions.html", label: "Missions" }');
     expect(script.indexOf('{ key: "submit", href: "/submit.html", label: "Submit" }')).toBeLessThan(
       script.indexOf('{ key: "missions", href: "/missions.html", label: "Missions" }'),
     );
     expect(script).toContain('{ key: "admin", href: "/admin.html", label: "Admin" }');
-    expect(script).toContain('{ key: "pricing", href: "/pricing.html", label: "Pricing" }');
+    expect(script).not.toContain('{ key: "pricing", href: "/pricing.html", label: "Pricing" }');
     expect(script).toContain('const counterOnlyPortalPath = isVenueManagerContext() || isAdminContext()');
     expect(script).toContain('{ key: "venue-portal", href: counterOnlyPortalPath || "/venue-portal.html", label: counterOnlyPortalPath ? "Counter" : "Dashboard" }');
     expect(script).toContain('{ key: "faq", href: venueManagerNav ? "/trust.html?audience=bars" : "/trust.html", label: "FAQ" }');
@@ -1543,7 +1638,7 @@ describe("account page shell", () => {
     expect(script).toContain('aria-controls="primaryNavLinks" data-mobile-nav-toggle');
     expect(script).toContain('id="primaryNavLinks" class="navLinks" data-mobile-nav-panel');
     expect(script).not.toContain("const authenticatedLinks");
-    expect(html).toContain('id="venueDashboardLink" href="/venue-portal.html" hidden>Dashboard');
+    expect(html).toContain('id="venueDashboardLink" href="/venue-portal.html">For venues');
     expect(html).toContain('href="/submit.html">Submit');
     expect(html).toContain('href="/missions.html">Missions');
     expect(html.indexOf('href="/submit.html">Submit')).toBeLessThan(
@@ -1558,7 +1653,9 @@ describe("account page shell", () => {
     expect(html).toContain("function syncAuthenticatedNavLinks");
     expect(html).toContain("const counterOnlyPortalPath = isVenueManager || isAdmin ? null : counterPortalPath");
     expect(html).toContain('venueDashboardLinkEl.href = counterOnlyPortalPath || "/venue-portal.html"');
-    expect(html).toContain('venueDashboardLinkEl.textContent = counterOnlyPortalPath ? "Counter" : "Dashboard"');
+    expect(html).toContain('venueDashboardLinkEl.textContent = canUseVenuePortal');
+    expect(html).toContain('? counterOnlyPortalPath ? "Counter" : "Dashboard"');
+    expect(html).toContain(': "For venues"');
     expect(html).toContain("const venueAudience = isVenueManager || Boolean(counterPortalPath)");
     expect(script).toContain("async function clearLocalSubmissionDeviceData");
     expect(script).toContain("submission?.ownerAccountId === normalizedAccountId");
@@ -1888,7 +1985,7 @@ describe("account page shell", () => {
     }, { isAdmin: false, accountRole: "venue_manager" });
     const nav = helpers.renderNav("account");
 
-    expect(navLinkLabels(nav)).toEqual(["Map", "Dashboard", "Submit", "Missions", "Pricing", "FAQ", "Account", "Contact us"]);
+    expect(navLinkLabels(nav)).toEqual(["Map", "Dashboard", "Submit", "Missions", "FAQ", "Account", "Contact us"]);
     expect(navLinkLabels(helpers.renderNav("venue-portal"))).toEqual(navLinkLabels(nav));
     expect(navLinkLabels(helpers.renderNav("venue-support"))).toEqual(navLinkLabels(nav));
     expect(nav).toContain('class="pill" aria-current="page" href="/account.html">Account</a>');
@@ -1959,7 +2056,7 @@ describe("account page shell", () => {
     );
     const nav = helpers.renderNav("admin");
 
-    expect(navLinkLabels(nav)).toEqual(["Map", "Dashboard", "Submit", "Missions", "Admin", "Pricing", "FAQ", "Account", "Contact us"]);
+    expect(navLinkLabels(nav)).toEqual(["Map", "Dashboard", "Submit", "Missions", "Admin", "FAQ", "Account", "Contact us"]);
     expect(nav).toContain('class="pill" aria-current="page" href="/admin.html">Admin</a>');
   });
 
@@ -1967,7 +2064,7 @@ describe("account page shell", () => {
     const helpers = loadBusinessHelpers();
     const nav = helpers.renderNav("admin");
 
-    expect(navLinkLabels(nav)).toEqual(["Map", "Submit", "Missions", "Admin", "Pricing", "FAQ", "Account", "Contact us"]);
+    expect(navLinkLabels(nav)).toEqual(["Map", "For venues", "Submit", "Missions", "Admin", "FAQ", "Account", "Contact us"]);
     expect(nav).toContain('class="pill" aria-current="page" href="/admin.html">Admin</a>');
     expect(navLinkLabels(helpers.renderNav("account"))).not.toContain("Admin");
   });
@@ -1982,7 +2079,7 @@ describe("account page shell", () => {
     }, { isAdmin: true, isAdminAccount: true, accountRole: "admin" });
     const nav = helpers.renderNav("account");
 
-    expect(navLinkLabels(nav)).toEqual(["Map", "Dashboard", "Submit", "Missions", "Admin", "Pricing", "FAQ", "Account", "Contact us"]);
+    expect(navLinkLabels(nav)).toEqual(["Map", "Dashboard", "Submit", "Missions", "Admin", "FAQ", "Account", "Contact us"]);
     expect(nav).toContain('href="/venue-portal.html">Dashboard</a>');
     expect(nav).toContain('href="/trust.html">FAQ</a>');
     expect(nav).toContain('href="/feedback.html">Contact us</a>');
@@ -2101,6 +2198,7 @@ describe("account page shell", () => {
       'id="adminLeaderboardVouchers"',
       'id="headlineMetrics"',
       'id="retentionCohorts"',
+      'id="savedUpdatesExperiment"',
       'id="coverageDashboard"',
       'id="demandSignals"',
       'id="partnerLeads"',
@@ -2128,6 +2226,18 @@ describe("account page shell", () => {
     expect(html).toContain("function renderAdminFocusRail");
     expect(html).toContain("function adminJumpAttributes");
     expect(html).toContain("function refreshAdminPage");
+    expect(html).toContain("function formatRetentionWindow");
+    expect(html).toContain("function renderSavedUpdatesExperiment");
+    expect(html).toContain("Directional opt-in caveat");
+    expect(html).toContain("treatment minus control. Directional only; this is not a significance or causal claim.");
+    expect(html).toContain('const eligibility = `${formatCount(eligible)}/${formatCount(users)} eligible`');
+    expect(html).toContain('const maturity = `${formatCount(maturing)}/${formatCount(users)} maturing`');
+    expect(html).toContain("Population caveat");
+    expect(html).toContain("No consented cohorts yet.");
+    expect(html).toContain("Opt-in activity cohorts (proxy)");
+    expect(html).toContain("Search usefulness · client-reported");
+    expect(html).toContain("inconsistent flags");
+    expect(html).toContain("not formal release evidence");
     expect(html).toContain('data-transition-reward-voucher="fulfill"');
     expect(html).toContain('data-transition-reward-voucher="void"');
     expect(html).toContain('data-copy-voucher-reference="${escapeHtml(voucher.claimReference)}"');

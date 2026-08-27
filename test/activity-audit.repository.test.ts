@@ -15,6 +15,7 @@ import {
 
 const NOW = "2026-08-08T16:00:00.000Z";
 const LATER = "2026-08-08T16:01:00.000Z";
+const AFTER = "2026-08-08T16:02:00.000Z";
 const IP_HASH = "a".repeat(32);
 const USER_AGENT_HASH = "b".repeat(32);
 
@@ -212,6 +213,116 @@ describe("ActivityAuditRepository with AsyncSqliteDatabase", () => {
       userId: "missing-account",
     })).rejects.toSatisfy(expectCode("account_not_found"));
     expect(raw.prepare("SELECT count(*) AS count FROM events").get()).toEqual({ count: 1 });
+  });
+
+  it("atomically replays caller-keyed events while preserving the first timestamp", async () => {
+    const { raw, repository } = fixture();
+    insertAccount(raw, "idempotent-event-user");
+    const input = {
+      id: "price-confirmation:stable-key",
+      userId: "idempotent-event-user",
+      anonymousSessionId: null,
+      eventType: "price_confirmation_answered",
+      venueId: "venue-1",
+      beerId: "Guinness",
+      suburb: "Fitzroy",
+      metadata: {
+        outcome: "yes",
+        priceRecordId: "price-1",
+        priceVersion: "a".repeat(64),
+        sourceType: "community_verified",
+      },
+      createdAt: NOW,
+    };
+
+    const writes = await Promise.all([
+      repository.recordIdempotentEvent(input),
+      repository.recordIdempotentEvent({ ...input, createdAt: LATER }),
+    ]);
+    expect(writes.map((write) => write.outcome).sort()).toEqual(["duplicate", "inserted"]);
+    const insertedIndex = writes.findIndex((write) => write.outcome === "inserted");
+    const firstTimestamp = insertedIndex === 0 ? NOW : LATER;
+    expect(writes.every((write) => write.record.createdAt === firstTimestamp)).toBe(true);
+    expect(raw.prepare("SELECT count(*) AS count FROM events WHERE id = ?")
+      .get(input.id)).toEqual({ count: 1 });
+
+    await expect(repository.recordIdempotentEvent({
+      ...input,
+      metadata: { ...input.metadata, outcome: "no" },
+      createdAt: LATER,
+    })).rejects.toSatisfy(expectCode("event_conflict"));
+  });
+
+  it("returns bounded signal-only Yes evidence and suppresses accounts that later answer No", async () => {
+    const { raw, repository } = fixture();
+    insertAccount(raw, "confirmation-evidence-one");
+    insertAccount(raw, "confirmation-evidence-two");
+    const yes = (id: string, userId: string, createdAt: string) => repository.recordIdempotentEvent({
+      id,
+      userId,
+      anonymousSessionId: null,
+      eventType: "price_confirmation_answered",
+      venueId: "venue-1",
+      beerId: "guinness",
+      suburb: "Fitzroy",
+      metadata: {
+        outcome: "yes",
+        priceRecordId: "price-1",
+        priceVersion: "a".repeat(64),
+        sourceType: "community_verified",
+      },
+      createdAt,
+    });
+    await yes("confirmation-evidence-yes-one", "confirmation-evidence-one", NOW);
+    await yes("confirmation-evidence-yes-two", "confirmation-evidence-two", LATER);
+
+    await expect(repository.listLatestPositivePriceConfirmations({
+      priceRecordIds: ["price-1", "price-1", "missing-price"],
+      since: "2026-08-08T15:59:00.000Z",
+      asOf: AFTER,
+      limit: 10,
+    })).resolves.toEqual([{
+      eventId: "confirmation-evidence-yes-two",
+      priceRecordId: "price-1",
+      priceVersion: "a".repeat(64),
+      venueId: "venue-1",
+      beerId: "guinness",
+      suburb: "Fitzroy",
+      sourceType: "community_verified",
+      confirmedAt: LATER,
+      verificationEffect: "signal_only",
+    }]);
+
+    const no = (id: string, userId: string) => repository.recordIdempotentEvent({
+      id,
+      userId,
+      anonymousSessionId: null,
+      eventType: "price_confirmation_answered",
+      venueId: "venue-1",
+      beerId: "guinness",
+      suburb: "Fitzroy",
+      metadata: {
+        outcome: "no",
+        priceRecordId: "price-1",
+        priceVersion: "a".repeat(64),
+        sourceType: "community_verified",
+      },
+      createdAt: AFTER,
+    });
+    await no("confirmation-evidence-no-two", "confirmation-evidence-two");
+    await expect(repository.listLatestPositivePriceConfirmations({
+      priceRecordIds: ["price-1"],
+      since: "2026-08-08T15:59:00.000Z",
+      asOf: AFTER,
+    })).resolves.toEqual([
+      expect.objectContaining({ eventId: "confirmation-evidence-yes-one", confirmedAt: NOW }),
+    ]);
+    await no("confirmation-evidence-no-one", "confirmation-evidence-one");
+    await expect(repository.listLatestPositivePriceConfirmations({
+      priceRecordIds: ["price-1"],
+      since: "2026-08-08T15:59:00.000Z",
+      asOf: AFTER,
+    })).resolves.toEqual([]);
   });
 
   it("inserts, filters, counts, and keyset-pages security audits deterministically", async () => {

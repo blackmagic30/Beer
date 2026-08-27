@@ -10,6 +10,8 @@ const MAX_METADATA_DEPTH = 8;
 const MAX_METADATA_NODES = 2_000;
 const MAX_ACTIVITY_PAGE_SIZE = 200;
 const MAX_AUDIT_PAGE_SIZE = 500;
+const MAX_PRICE_CONFIRMATION_RECORD_IDS = 500;
+const PRICE_VERSION_FINGERPRINT = /^[a-f0-9]{64}$/;
 
 export type ActivityAuditRepositoryErrorCode =
   | "account_not_found"
@@ -76,6 +78,22 @@ export interface GeneralAnalyticsEventRecord {
   suburb: string | null;
   metadata: Record<string, unknown>;
   createdAt: string;
+}
+
+/**
+ * Durable positive confirmation evidence. This is deliberately a signal-only
+ * projection: callers must not treat it as public verification authority.
+ */
+export interface PositivePriceConfirmationEvidenceRecord {
+  eventId: string;
+  priceRecordId: string;
+  priceVersion: string;
+  venueId: string;
+  beerId: string | null;
+  suburb: string | null;
+  sourceType: string;
+  confirmedAt: string;
+  verificationEffect: "signal_only";
 }
 
 export interface SecurityAuditLogRecord {
@@ -364,6 +382,36 @@ function toGeneralEvent(row: GeneralEventRow): GeneralAnalyticsEventRecord {
   };
 }
 
+function toPositivePriceConfirmationEvidence(
+  row: GeneralEventRow,
+): PositivePriceConfirmationEvidenceRecord {
+  const event = toGeneralEvent(row);
+  const priceRecordId = persistedText(event.metadata.priceRecordId, 512);
+  const priceVersion = persistedText(event.metadata.priceVersion, 64);
+  const sourceType = persistedText(event.metadata.sourceType);
+  if (
+    event.eventType !== "price_confirmation_answered"
+    || event.userId === null
+    || event.anonymousSessionId !== null
+    || event.venueId === null
+    || event.metadata.outcome !== "yes"
+    || !PRICE_VERSION_FINGERPRINT.test(priceVersion)
+  ) {
+    return repositoryError("stored_record_invalid");
+  }
+  return {
+    eventId: event.id,
+    priceRecordId,
+    priceVersion,
+    venueId: event.venueId,
+    beerId: event.beerId,
+    suburb: event.suburb,
+    sourceType,
+    confirmedAt: event.createdAt,
+    verificationEffect: "signal_only",
+  };
+}
+
 function toSecurityAudit(row: SecurityAuditRow): SecurityAuditLogRecord {
   return {
     id: persistedText(row.id),
@@ -582,6 +630,159 @@ export class ActivityAuditRepository {
       if (!recordsMatch(record, expected)) return repositoryError("event_conflict");
       return { outcome: inserted.changes === 1 ? "inserted" : "duplicate", record };
     }), expected.userId !== null);
+  }
+
+  /**
+   * Records a caller-keyed event exactly once while preserving the timestamp
+   * from the first successful writer. Retried or concurrent writes may supply
+   * a later createdAt, but every other persisted field must match exactly.
+   */
+  async recordIdempotentEvent(input: {
+    id: string;
+    userId: string | null;
+    anonymousSessionId: string | null;
+    eventType: string;
+    venueId: string | null;
+    beerId: string | null;
+    suburb: string | null;
+    metadata: Record<string, unknown>;
+    createdAt: string;
+  }): Promise<ActivityAuditWriteResult<GeneralAnalyticsEventRecord>> {
+    const metadata = serializeMetadata(input.metadata);
+    const rawBeerId = optionalText(input.beerId);
+    const expected: GeneralAnalyticsEventRecord = {
+      id: requireText(input.id),
+      userId: optionalText(input.userId),
+      anonymousSessionId: optionalText(input.anonymousSessionId),
+      eventType: requireMachineName(input.eventType),
+      venueId: optionalText(input.venueId),
+      beerId: rawBeerId ? findTrackedBeerByName(rawBeerId)?.key ?? rawBeerId : null,
+      suburb: optionalText(input.suburb, 160),
+      metadata: metadata.metadata,
+      createdAt: requireCanonicalUtc(input.createdAt),
+    };
+
+    return this.translateFailure(this.database.transaction(async () => {
+      const inserted = await this.database.prepare(
+        `INSERT INTO events (
+           id, user_id, anonymous_session_id, event_type, venue_id, beer_id,
+           suburb, metadata_json, created_at
+         ) VALUES (
+           @id, @userId, @anonymousSessionId, @eventType, @venueId, @beerId,
+           @suburb, @metadataJson, @createdAt
+         ) ON CONFLICT(id) DO NOTHING`,
+      ).run({ ...expected, metadataJson: metadata.serialized });
+      if (inserted.changes !== 0 && inserted.changes !== 1) return repositoryError("persistence_failure");
+      const record = await this.generalEventById(expected.id);
+      if (!record) return repositoryError("persistence_failure");
+      const { createdAt: _recordedAt, ...recordStableFields } = record;
+      const { createdAt: _requestedAt, ...expectedStableFields } = expected;
+      if (!recordsMatch(recordStableFields, expectedStableFields)) return repositoryError("event_conflict");
+      return { outcome: inserted.changes === 1 ? "inserted" : "duplicate", record };
+    }), expected.userId !== null);
+  }
+
+  /**
+   * Lists the newest still-positive ordinary-account signal for each requested
+   * price-record/version pair. `since` is exclusive and `asOf` is inclusive.
+   * A later No from the same account suppresses that account's earlier Yes;
+   * neither this read nor the underlying event changes public trust/freshness.
+   */
+  async listLatestPositivePriceConfirmations(input: {
+    priceRecordIds: readonly string[];
+    since: string;
+    asOf: string;
+    limit?: number | undefined;
+  }): Promise<PositivePriceConfirmationEvidenceRecord[]> {
+    if (!Array.isArray(input.priceRecordIds)) return repositoryError("invalid_input");
+    const priceRecordIds = Array.from(new Set(
+      input.priceRecordIds.map((priceRecordId) => requireText(priceRecordId, 512)),
+    ));
+    if (priceRecordIds.length > MAX_PRICE_CONFIRMATION_RECORD_IDS) {
+      return repositoryError("invalid_input");
+    }
+    const since = requireCanonicalUtc(input.since);
+    const asOf = requireCanonicalUtc(input.asOf);
+    if (since > asOf) return repositoryError("invalid_input");
+    const limit = requirePageSize(
+      input.limit ?? MAX_PRICE_CONFIRMATION_RECORD_IDS,
+      MAX_PRICE_CONFIRMATION_RECORD_IDS,
+    );
+    if (priceRecordIds.length === 0 || since === asOf) return [];
+
+    const priceRecordBindings = Object.fromEntries(
+      priceRecordIds.map((priceRecordId, index) => [`priceRecordId${index}`, priceRecordId]),
+    );
+    const priceRecordPlaceholders = priceRecordIds
+      .map((_, index) => `@priceRecordId${index}`)
+      .join(", ");
+
+    return this.translateFailure(async () => {
+      const rows = await this.database.prepare(
+        `WITH "positive_candidates" AS (
+           SELECT event.*
+             FROM events event
+            WHERE event.event_type = 'price_confirmation_answered'
+              AND event.user_id IS NOT NULL
+              AND event.anonymous_session_id IS NULL
+              AND event.created_at > @since
+              AND event.created_at <= @asOf
+              AND json_extract(event.metadata_json, '$.outcome') = 'yes'
+              AND json_extract(event.metadata_json, '$.priceRecordId') IN (${priceRecordPlaceholders})
+              AND NOT EXISTS (
+                SELECT 1
+                  FROM events later_answer
+                 WHERE later_answer.event_type = 'price_confirmation_answered'
+                   AND later_answer.user_id = event.user_id
+                   AND later_answer.anonymous_session_id IS NULL
+                   AND later_answer.created_at >= event.created_at
+                   AND later_answer.created_at <= @asOf
+                   AND json_extract(later_answer.metadata_json, '$.outcome') = 'no'
+                   AND json_extract(later_answer.metadata_json, '$.priceRecordId') =
+                       json_extract(event.metadata_json, '$.priceRecordId')
+                   AND json_extract(later_answer.metadata_json, '$.priceVersion') =
+                       json_extract(event.metadata_json, '$.priceVersion')
+              )
+              AND NOT EXISTS (
+                SELECT 1
+                  FROM wrong_price_reports report
+                 WHERE report.user_id = event.user_id
+                   AND (
+                     report.price_record_id = json_extract(event.metadata_json, '$.priceRecordId')
+                     OR (
+                       report.price_record_id IS NULL
+                       AND json_extract(event.metadata_json, '$.priceRecordId') LIKE 'bar_beer:%'
+                       AND report.venue_id = event.venue_id
+                       AND report.beer_name = json_extract(event.metadata_json, '$.beerName')
+                       AND report.reason = 'price_changed'
+                     )
+                   )
+                   AND report.status <> 'rejected'
+                   AND report.created_at >= event.created_at
+                   AND report.created_at <= @asOf
+              )
+         ), "ranked_confirmations" AS (
+           SELECT candidate.*,
+                  row_number() OVER (
+                    PARTITION BY json_extract(candidate.metadata_json, '$.priceRecordId'),
+                                 json_extract(candidate.metadata_json, '$.priceVersion')
+                    ORDER BY candidate.created_at DESC, candidate.id DESC
+                  ) AS confirmation_rank
+             FROM "positive_candidates" candidate
+         )
+         SELECT ${GENERAL_EVENT_PROJECTION}
+           FROM "ranked_confirmations" event
+          WHERE event.confirmation_rank = 1
+          ORDER BY event.created_at DESC, event.id DESC
+          LIMIT @limit`,
+      ).all<GeneralEventRow>({
+        ...priceRecordBindings,
+        since,
+        asOf,
+        limit,
+      });
+      return rows.map(toPositivePriceConfirmationEvidence);
+    });
   }
 
   async insertSecurityAuditLog(input: {

@@ -69,6 +69,7 @@ function snapshot(
   deployedSha = CANDIDATE_SHA,
   deploymentId = DEPLOYMENT_ID,
   snapshotId = SNAPSHOT_ID,
+  targetPort = 8080,
 ): Response {
   return response({
     data: {
@@ -92,7 +93,7 @@ function snapshot(
           serviceDomains: [{
             id: DOMAIN_ID,
             domain,
-            targetPort: 3000,
+            targetPort,
           }],
           customDomains: [],
         },
@@ -296,6 +297,47 @@ describe("protected permanent-staging scale evidence operation", () => {
         runtimePostflightExact: true,
         deploymentUnchanged: true,
       },
+    });
+  });
+
+  it("rejects a staging deployment whose service domain no longer targets the Railway app port", async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(scope())
+      .mockResolvedValueOnce(scope())
+      .mockResolvedValueOnce(discovery())
+      .mockResolvedValueOnce(snapshot(
+        1,
+        ENVIRONMENT_ID,
+        "beer-staging.up.railway.app",
+        CANDIDATE_SHA,
+        DEPLOYMENT_ID,
+        SNAPSHOT_ID,
+        3000,
+      ));
+    const runCommand = vi.fn();
+    const output: string[] = [];
+    const result = await runProtectedPermanentStagingScale({
+      argv: argv("out"),
+      env: environment("out"),
+      cwd: process.cwd(),
+      fetchImpl,
+      now: () => 0,
+      sleep: vi.fn(),
+      boundaryCheck: vi.fn().mockResolvedValue(0),
+      reassertRepositoryState: () => true,
+      validateCli: () => true,
+      runCommand,
+      probeRuntime: vi.fn(),
+      writeDurable: durable,
+      writeOutput: (source) => output.push(source),
+    });
+
+    expect(result).toBe(1);
+    expect(runCommand).not.toHaveBeenCalled();
+    expect(JSON.parse(output[0]!)).toMatchObject({
+      outcome: "failed_before_attempt",
+      attempts: 0,
+      checks: { targetPreflightExact: false },
     });
   });
 

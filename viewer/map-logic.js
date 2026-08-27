@@ -139,9 +139,48 @@
     const confidence = String(beer.confidenceLabel || beer.confidence_label || beer.confidence || "")
       .trim()
       .toLowerCase();
-    const verifiedAt = beer.lastVerifiedAt || beer.last_verified_at || beer.priceVerifiedAt || beer.price_verified_at;
+    const sourceType = String(beer.sourceType || beer.source_type || "").trim().toLowerCase();
+    const verifiedAt = sourceType.startsWith("venue_manager_portal")
+      ? beer.priceVerifiedAt || beer.price_verified_at
+      : beer.lastVerifiedAt || beer.last_verified_at;
     return TRUSTED_CONFIDENCE_LABELS.has(confidence)
       && isFreshVerificationTimestamp(verifiedAt, options);
+  }
+
+  function isActionableCurrentPintPrice(beer, options = {}) {
+    if (!beer || typeof beer !== "object") {
+      return false;
+    }
+    const servingSize = String(beer.servingSize || beer.serving_size || "")
+      .trim()
+      .toLowerCase();
+    const availabilityLabel = String(beer.availabilityLabel || beer.availability_label || "")
+      .trim()
+      .toLowerCase();
+    const onTap = beer.availableOnTap === true
+      || beer.available_on_tap === true
+      || availabilityLabel === "on tap";
+    return servingSize === "pint"
+      && onTap
+      && hasNumericPrice(beer)
+      && isCurrentVerifiedBeer(beer, options);
+  }
+
+  function countActionableCurrentPintPrices(beers, options = {}) {
+    return (Array.isArray(beers) ? beers : [])
+      .filter((beer) => isActionableCurrentPintPrice(beer, options))
+      .length;
+  }
+
+  function isUsefulSearchVenueResult(input, options = {}) {
+    const hasBeerQuery = Boolean(input?.hasBeerQuery);
+    const candidateBeers = hasBeerQuery ? input?.matchedBeerItems : input?.allBeerItems;
+    const minimumPriceCount = hasBeerQuery
+      ? 1
+      : Number.isSafeInteger(options.minimumPricesPerVenue) && options.minimumPricesPerVenue > 0
+        ? options.minimumPricesPerVenue
+        : 3;
+    return countActionableCurrentPintPrices(candidateBeers, options) >= minimumPriceCount;
   }
 
   function getVenueDiscoverySortRank(beers, options = {}) {
@@ -833,6 +872,9 @@
     normalizeBeerPriceNumeric,
     isFreshVerificationTimestamp,
     isCurrentVerifiedBeer,
+    isActionableCurrentPintPrice,
+    countActionableCurrentPintPrices,
+    isUsefulSearchVenueResult,
     getVenueDiscoverySortRank,
     compareVenueSmartSort,
     getAvailabilityLabel,

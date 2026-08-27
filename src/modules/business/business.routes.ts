@@ -14,6 +14,7 @@ import { createRateLimiter } from "../../middleware/rate-limit.js";
 
 import {
   accountPreferencesSchema,
+  accountDashboardViewedSchema,
   adminReasonSchema,
   accountDeletionNotificationResolutionSchema,
   accountDeletionRequestSchema,
@@ -67,12 +68,16 @@ import {
   pintPointDrinkRecordSchema,
   pintPointDrinkVoidSchema,
   posDiscountRedemptionSchema,
+  priceConfirmationParamsSchema,
+  priceConfirmationSchema,
   priceRecordsQuerySchema,
   pubGolfPlanSchema,
   removeSavedItemSchema,
   retentionQuerySchema,
   reviewSubmissionSchema,
   saveItemSchema,
+  savedUpdateOpenedSchema,
+  savedUpdatesViewedSchema,
   submissionsQuerySchema,
   trustWorkflowUpdateSchema,
   venueRequestSchema,
@@ -558,6 +563,24 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     res.json(success(await businessService.getAccountDashboard(account)));
   });
 
+  router.post("/account/dashboard-viewed", writeLimiter, async (req, res) => {
+    parseWithSchema(accountDashboardViewedSchema, req.body, "Invalid dashboard view payload");
+    const account = await requireAccount(req, businessService);
+    res.json(success(await businessService.recordAccountDashboardViewed(account)));
+  });
+
+  router.post("/account/saved-updates/viewed", writeLimiter, async (req, res) => {
+    const account = await requireAccount(req, businessService);
+    const body = parseWithSchema(savedUpdatesViewedSchema, req.body, "Invalid Saved Updates view payload");
+    res.json(success(await businessService.recordSavedUpdatesViewed(account, body)));
+  });
+
+  router.post("/account/saved-updates/opened", writeLimiter, async (req, res) => {
+    const account = await requireAccount(req, businessService);
+    const body = parseWithSchema(savedUpdateOpenedSchema, req.body, "Invalid Saved Update open payload");
+    res.json(success(await businessService.recordSavedUpdateOpened(account, body)));
+  });
+
   router.post("/account/display-name", writeLimiter, async (req, res) => {
     const account = await requireAccount(req, businessService);
     const body = parseWithSchema(displayNameUpdateSchema, req.body, "Invalid display name payload");
@@ -978,6 +1001,26 @@ export function createBusinessRouter(businessService: BusinessService): Router {
       ...query,
       clientIp: getClientIp(req) ?? undefined,
     })));
+  });
+
+  router.post("/price-records/:id/confirmation", writeLimiter, async (req, res, next) => {
+    try {
+      const account = await requireAccount(req, businessService);
+      const params = parseWithSchema(
+        priceConfirmationParamsSchema,
+        req.params,
+        "Invalid price confirmation request",
+      );
+      const body = parseWithSchema(
+        priceConfirmationSchema,
+        req.body,
+        "Invalid price confirmation payload",
+      );
+      const result = await businessService.answerPriceConfirmation(account, params.id, body);
+      res.status(result.analyticsRecorded && !result.idempotentReplay ? 201 : 200).json(success(result));
+    } catch (error) {
+      next(error);
+    }
   });
 
   router.get("/leaderboard", async (req, res) => {

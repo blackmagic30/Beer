@@ -542,6 +542,14 @@ export const priceRecordsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(500).default(200),
 });
 
+export const priceConfirmationParamsSchema = z.object({
+  id: z.string().trim().min(1).max(512),
+});
+
+export const priceConfirmationSchema = z.object({
+  outcome: z.enum(["yes", "no", "didnt_order"]),
+});
+
 export const createMissionSchema = z.object({
   venueId: z.string().min(1),
   venueName: z.string().trim().min(1).max(180),
@@ -570,6 +578,7 @@ export const eventTrackSchema = z.object({
     "checkout_started",
     "subscription_created",
     "subscription_cancelled",
+    "account_dashboard_viewed",
     "map_viewed",
     "search_performed",
     "beer_search_performed",
@@ -588,6 +597,7 @@ export const eventTrackSchema = z.object({
     "saved_beer_removed",
     "saved_suburb_added",
     "saved_suburb_removed",
+    "tonight_plan_created",
     "saved_night_plan_added",
     "saved_night_plan_removed",
     "mission_board_viewed",
@@ -602,6 +612,9 @@ export const eventTrackSchema = z.object({
     "submission_approved",
     "submission_rejected",
     "contributor_access_unlocked",
+    "price_confirmation_answered",
+    "saved_updates_viewed",
+    "saved_update_opened",
     "wrong_price_reported",
     "venue_requested",
     "beer_requested",
@@ -662,6 +675,16 @@ export const removeSavedItemSchema = z.object({
   itemType: savedItemTypeSchema,
   itemId: z.string().trim().min(1).max(180),
 });
+
+export const savedUpdatesViewedSchema = z.object({
+  revision: z.string().regex(/^[a-f0-9]{64}$/),
+}).strict();
+
+export const accountDashboardViewedSchema = z.object({}).strict();
+
+export const savedUpdateOpenedSchema = z.object({
+  updateId: z.string().regex(/^[a-f0-9]{64}$/),
+}).strict();
 
 export const feedbackSchema = z.object({
   anonymousSessionId: nullableTrimmedStringSchema.default(null),
@@ -1198,10 +1221,13 @@ export type VerificationInput = z.infer<typeof verificationSchema>;
 export type CreateSubmissionInput = z.infer<typeof createSubmissionSchema>;
 export type ReviewSubmissionInput = z.infer<typeof reviewSubmissionSchema>;
 export type EventTrackInput = z.infer<typeof eventTrackSchema>;
+export type PriceConfirmationInput = z.infer<typeof priceConfirmationSchema>;
 export type AccountPreferencesInput = z.infer<typeof accountPreferencesSchema>;
 export type AccountPrivacySettingsInput = z.infer<typeof accountPrivacySettingsSchema>;
 export type SaveItemInput = z.infer<typeof saveItemSchema>;
 export type RemoveSavedItemInput = z.infer<typeof removeSavedItemSchema>;
+export type SavedUpdatesViewedInput = z.infer<typeof savedUpdatesViewedSchema>;
+export type SavedUpdateOpenedInput = z.infer<typeof savedUpdateOpenedSchema>;
 export type FeedbackInput = z.infer<typeof feedbackSchema>;
 export type TrustWorkflowUpdateInput = z.infer<typeof trustWorkflowUpdateSchema>;
 export type AccountDeletionRequestInput = z.infer<typeof accountDeletionRequestSchema>;

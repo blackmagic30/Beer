@@ -48,13 +48,24 @@ function venue(
 function price(
   venueIndex: number,
   priceIndex: number,
-  options: { evidenceMetadata?: boolean; verifiedAt?: string } = {},
+  options: {
+    evidenceMetadata?: boolean;
+    verifiedAt?: string;
+    price?: number | null;
+    priceRedacted?: boolean;
+    servingSize?: string;
+    isOnTap?: "yes" | "no" | "unknown";
+  } = {},
 ) {
   return {
     id: `price-${venueIndex}-${priceIndex}`,
     venueId: `venue-${venueIndex}`,
     displayKind: "beer",
     isHappyHourPrice: false,
+    priceRedacted: options.priceRedacted ?? false,
+    servingSize: options.servingSize ?? "pint",
+    price: options.price === undefined ? 12 + priceIndex : options.price,
+    isOnTap: options.isOnTap ?? "yes",
     confidence: "photo_verified",
     sourceType: "community_submission",
     sourceSubmissionId: `submission-${venueIndex}-${priceIndex}`,
@@ -69,6 +80,10 @@ function happyHour(venueIndex: number) {
     venueId: `venue-${venueIndex}`,
     displayKind: "happy_hour",
     isHappyHourPrice: true,
+    priceRedacted: false,
+    servingSize: "other",
+    price: null,
+    isOnTap: "unknown",
     confidence: "venue_confirmed",
     sourceType: "venue_manager_portal",
     sourceSubmissionId: null,
@@ -146,12 +161,76 @@ describe("production data readiness", () => {
       coveredVenueCount: 3,
       coveragePercent: 75,
     });
+    expect(report.metrics.marketedSuburbSearchUsefulness).toEqual({
+      definition: "canonical_marketed_suburb_readiness_proxy",
+      caveat: "Readiness proxy only; not historical user-search telemetry.",
+      historicalUserSearchTelemetry: false,
+      proofComplete: true,
+      evaluatedSearchCount: 1,
+      usefulOptionCount: 3,
+      minimumUsefulOptionCount: 3,
+      maximumUsefulOptionCount: 3,
+      successfulSearchCount: 1,
+      unsuccessfulSearchCount: 0,
+      successfulSearchPercent: 100,
+      minimumUsefulOptionsPerSearch: 3,
+    });
     expect(report.metrics.happyHours.coveragePercent).toBe(25);
     expect(report.metrics.trustedEvidence.evidencePresenceCoveragePercent).toBe(100);
     const serialized = JSON.stringify(report);
     expect(serialized).not.toContain("Venue 1");
     expect(serialized).not.toContain("price-1-1");
     expect(serialized).not.toContain("submission-1-1");
+  });
+
+  it("counts only numeric on-tap pint prices as actionable search and coverage evidence", async () => {
+    const prices = [
+      price(1, 1),
+      price(1, 2),
+      price(1, 3, { price: null }),
+      price(1, 4, { servingSize: "pot" }),
+      price(1, 5, { isOnTap: "no" }),
+      price(1, 6, { price: 0 }),
+      price(1, 7, { priceRedacted: true }),
+      happyHour(1),
+    ];
+    const { fetchImpl } = mockedPublicFetch({
+      venues: [venue(1)],
+      pricePages: [prices],
+    });
+
+    const report = await runProductionDataReadiness({
+      config: config(),
+      fetchImpl,
+      now: NOW,
+    });
+
+    expect(report.metrics.prices.qualifyingCurrentVerifiedPriceRows).toBe(2);
+    expect(report.metrics.prices).toMatchObject({
+      redactedRowCount: 1,
+      numericVisiblePriceRowCount: 5,
+    });
+    expect(report.metrics.marketedVenuePriceCoverage).toEqual({
+      coveredVenueCount: 0,
+      coveragePercent: 0,
+    });
+    expect(report.metrics.marketedSuburbSearchUsefulness).toMatchObject({
+      definition: "canonical_marketed_suburb_readiness_proxy",
+      historicalUserSearchTelemetry: false,
+      proofComplete: true,
+      evaluatedSearchCount: 1,
+      usefulOptionCount: 0,
+      minimumUsefulOptionCount: 0,
+      maximumUsefulOptionCount: 0,
+      successfulSearchCount: 0,
+      unsuccessfulSearchCount: 1,
+      successfulSearchPercent: 0,
+      minimumUsefulOptionsPerSearch: 3,
+    });
+    expect(report.checks).toContainEqual(expect.objectContaining({
+      id: "marketed_venue_price_coverage",
+      status: "fail",
+    }));
   });
 
   it("marks public evidence-presence and closed-venue proof unknown when the APIs omit those fields", async () => {

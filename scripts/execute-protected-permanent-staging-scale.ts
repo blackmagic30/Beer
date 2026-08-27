@@ -35,6 +35,10 @@ const SERVICE_ID = "6816c4a2-e392-4ee5-826f-2584cb599ec0";
 const REGION = "asia-southeast1-eqsg3a";
 const STAGING_DOMAIN = "beer-staging.up.railway.app";
 const PRODUCTION_DOMAIN = "pintpath.au";
+// Railway injects PORT=8080 for the deployed application. Keep the protected
+// scale attestation bound to the same explicit port used by both live Railway
+// domains and the documented production runtime contract.
+const APPLICATION_TARGET_PORT = 8080;
 const POLICY_PATH = "ops/railway/permanent-staging-scale-evidence-policy.json";
 const POLICY_SHA256 =
   "164d53a5bccff4a861c8568abebe5caa06352f64245ac7e734e55c056c2be608";
@@ -632,7 +636,7 @@ function snapshotExact(
     && snapshot.domains.length === 1
     && snapshot.domains[0]?.kind === "service"
     && snapshot.domains[0].domain === target.domain
-    && snapshot.domains[0].targetPort === 3000;
+    && snapshot.domains[0].targetPort === APPLICATION_TARGET_PORT;
 }
 
 function deploymentIdentity(snapshot: RailwayApplicationDeploymentAttestationProviderSnapshot): string {

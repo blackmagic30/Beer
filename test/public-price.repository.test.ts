@@ -297,6 +297,10 @@ describe("public price repository", () => {
       "community-guinness-new",
       "community-carlton-happy",
     ]);
+    await expect(repository.getCurrentCommunityPriceRecordById("community-carlton-old"))
+      .resolves.toBeNull();
+    await expect(repository.getCurrentCommunityPriceRecordById("community-guinness-new"))
+      .resolves.toEqual(records[0]);
   });
 
   it("uses strict timestamp/id cursors with stable venue-filtered pagination", async () => {
@@ -349,6 +353,12 @@ describe("public price repository", () => {
       id: "quarantine-ledger",
       sourceType: "source_ingestion_quarantined",
       sourceIngestionId: "ingestion-quarantined",
+    });
+    insertPrice({
+      id: "community-guinness",
+      beerName: "Guinness",
+      normalizedBeerId: "guinness",
+      verifiedAt: MINUTE_3,
     });
     sqlite!.prepare(
       `INSERT INTO venue_happy_hours (
@@ -451,6 +461,16 @@ describe("public price repository", () => {
       confidence: "venue_confirmed",
       priceVerifiedAt: MINUTE_3,
     }));
+    await expect(repository.getCurrentVenueManagerPriceRecordById("bar_beer:beer-visible"))
+      .resolves.toEqual(records[2]);
+    await expect(repository.getCurrentVenueManagerPriceRecordById("bar_beer:beer-quarantined"))
+      .resolves.toBeNull();
+    await expect(repository.getCurrentVenueManagerPriceRecordById("bar_happy_hour:happy-1"))
+      .resolves.toBeNull();
+    await expect(repository.listCurrentPriceRecordPage({ venueIds: ["venue-a"], limit: 20 }))
+      .resolves.toEqual([expect.objectContaining({ id: "community-guinness" })]);
+    await expect(repository.getCurrentCommunityPriceRecordById("community-guinness"))
+      .resolves.toMatchObject({ id: "community-guinness" });
 
     const beforeHappy = await repository.listVenueManagerPriceRecords(
       20,
@@ -467,6 +487,10 @@ describe("public price repository", () => {
     insertPrice({ id: "community-new", verifiedAt: MINUTE_3 });
 
     await expect(repository.listVenueManagerPriceRecords(20, "venue-a")).resolves.toEqual([]);
+    await expect(repository.getCurrentVenueManagerPriceRecordById("bar_beer:manager-old"))
+      .resolves.toBeNull();
+    await expect(repository.getCurrentCommunityPriceRecordById("community-new"))
+      .resolves.toMatchObject({ id: "community-new" });
   });
 
   it("bounds dynamic venue filters and propagates adapter query failures", async () => {

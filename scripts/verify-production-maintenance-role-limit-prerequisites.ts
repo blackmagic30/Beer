@@ -32,7 +32,7 @@ export const PRODUCTION_ROLE_LIMIT_RECONCILIATION_AUTHORITY_SCHEMA =
 export const PRODUCTION_ROLE_LIMIT_RECONCILIATION_AUTHORITY_FILENAME =
   "reconciliation-authority-verification.json" as const;
 export const PRODUCTION_MAINTENANCE_ROLE_LIMIT_POLICY_SHA256 =
-  "cc0891af9e71699c6786da8ba432b43d559d4ca1f3703d1ad17fee8c36bae108" as const;
+  "5060f451ec73c6978a1514531d1d7b33eeb591b2169812fbddcf898e69db7e4e" as const;
 
 const REPOSITORY = "blackmagic30/Beer" as const;
 const ROLE_LIMIT_WORKFLOW =
@@ -62,7 +62,7 @@ const FENCE_POLICY_SHA256 =
 const FENCE_PRODUCER_PATH =
   "scripts/execute-protected-automatic-maintenance-worker-fence.ts" as const;
 const FENCE_PRODUCER_SHA256 =
-  "3b23428aa9dc6c6d7a466b46f826ffa262d51b49e5b99a410e8e78d82dd79553" as const;
+  "50a1e90da8f5d814c34d184f12c754d89d247ab2a19cd20ee87fe2119feb3693" as const;
 const FENCE_TERMINAL_SCHEMA =
   "pintpath-automatic-maintenance-worker-fence-terminal/v1" as const;
 const DEPLOYMENT_WORKFLOW = ".github/workflows/deploy-production.yml" as const;
@@ -86,7 +86,7 @@ const PRODUCTION_SCALE_POLICY_SHA256 =
 const PRODUCTION_SCALE_PRODUCER_PATH =
   "scripts/execute-protected-permanent-staging-scale.ts" as const;
 const PRODUCTION_SCALE_PRODUCER_SHA256 =
-  "ae6166563b580fe407736522f17e60319bdfe6f897a1ed077d5483fed973ed40" as const;
+  "dc888847dd7cbeedbfc051c2069c17a456217f5834bea1761789216038366aac" as const;
 const DEPLOYMENT_POLICY_PATH =
   "ops/railway/production-app-deployment-policy.json" as const;
 const DEPLOYMENT_POLICY_SHA256 =

@@ -95,6 +95,17 @@ interface ManagerSpecialRow extends ManagerProfileProjection {
   updated_at: string;
 }
 
+const MANAGER_PROFILE_PROJECTION = `
+  "profile".name AS profile_name,
+  "profile".suburb AS profile_suburb,
+  "profile".address AS profile_address,
+  "profile".membership_tier AS profile_membership_tier,
+  "profile".highlighted_name AS profile_highlighted_name,
+  "profile".premium_badge AS profile_premium_badge,
+  "profile".promoted AS profile_promoted,
+  "profile".featured_special_eligible AS profile_featured_special_eligible,
+  "profile".accepts_pint_path_codes AS profile_accepts_pint_path_codes`;
+
 export interface PublicPriceCursor {
   verifiedAt: string;
   id: string;
@@ -279,6 +290,32 @@ function managerMetadata(row: ManagerProfileProjection) {
   };
 }
 
+function toManagerBeerPriceRecord(row: ManagerBeerRow): PublicVenuePriceRecord {
+  return {
+    id: `bar_beer:${row.id}`,
+    venueId: row.venue_id,
+    ...managerMetadata(row),
+    venueName: row.profile_name || row.venue_id,
+    beerName: row.beer_name,
+    normalizedBeerId: row.normalized_beer_id,
+    servingSize: row.serve_size || "other",
+    price: normalizeNullableNumber(row.price, "manager price"),
+    isHappyHourPrice: false,
+    happyHourDetails: null,
+    displayKind: "beer",
+    isOnTap: normalizeBoolean(row.on_tap, "on-tap flag")
+      ? "yes"
+      : normalizeBoolean(row.in_stock, "in-stock flag") ? "unknown" : "no",
+    confidence: row.price_verified_at ? "venue_confirmed" : "stale",
+    sourceType: "venue_manager_portal",
+    sourceSubmissionId: null,
+    lastVerifiedAt: row.price_verified_at ?? row.created_at,
+    priceVerifiedAt: row.price_verified_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 function compareNewest(left: PublicVenuePriceRecord, right: PublicVenuePriceRecord): number {
   const timestampDifference = Date.parse(right.lastVerifiedAt) - Date.parse(left.lastVerifiedAt);
   if (timestampDifference) return timestampDifference;
@@ -352,6 +389,159 @@ export class PublicPriceRepository {
        LIMIT 1`,
     ).get<PriceRecordRow>(normalizeIdentifier(id, "Price record ID"));
     return row ? toPriceRecord(row) : null;
+  }
+
+  /**
+   * Resolves an exact community price ID only when it is still the combined
+   * public authority for its canonical venue/beer/serve identity. The target
+   * CTE keeps this exact-ID check bounded while preserving alias-aware ranking
+   * and venue-manager precedence from listCurrentPriceRecordPage.
+   */
+  async getCurrentCommunityPriceRecordById(id: string): Promise<PublicVenuePriceRecord | null> {
+    const row = await this.database.prepare(
+      `WITH "target_record" AS (
+         SELECT
+           "target".*,
+           COALESCE("target_identity".canonical_venue_id, "target".venue_id) AS canonical_venue_id
+         FROM venue_price_records AS "target"
+         LEFT JOIN venue_identity_aliases AS "target_identity"
+           ON "target_identity".alias_venue_id = "target".venue_id
+         WHERE "target".id = ?
+           AND "target".source_type <> 'source_ingestion_quarantined'
+         LIMIT 1
+       ), "price_candidates" AS (
+         SELECT
+           "candidate".*,
+           COALESCE("candidate_identity".canonical_venue_id, "candidate".venue_id) AS canonical_venue_id
+         FROM venue_price_records AS "candidate"
+         LEFT JOIN venue_identity_aliases AS "candidate_identity"
+           ON "candidate_identity".alias_venue_id = "candidate".venue_id
+         INNER JOIN "target_record" AS "target"
+           ON COALESCE("candidate_identity".canonical_venue_id, "candidate".venue_id) =
+                "target".canonical_venue_id
+          AND COALESCE(NULLIF("candidate".normalized_beer_id, ''), lower(trim("candidate".beer_name))) =
+                COALESCE(NULLIF("target".normalized_beer_id, ''), lower(trim("target".beer_name)))
+          AND "candidate".serving_size = "target".serving_size
+          AND "candidate".is_happy_hour_price = "target".is_happy_hour_price
+          AND COALESCE("candidate".happy_hour_details, '') = COALESCE("target".happy_hour_details, '')
+         WHERE "candidate".source_type <> 'source_ingestion_quarantined'
+       ), "ranked" AS (
+         SELECT
+           "candidate".*,
+           row_number() OVER (
+             ORDER BY "candidate".last_verified_at DESC,
+                      "candidate".updated_at DESC,
+                      "candidate".id DESC
+           ) AS current_rank
+         FROM "price_candidates" AS "candidate"
+       )
+       SELECT "current_record".*
+       FROM "ranked" AS "current_record"
+       WHERE "current_record".current_rank = 1
+         AND "current_record".id = (SELECT id FROM "target_record")
+         AND (
+           "current_record".is_happy_hour_price = TRUE
+           OR NOT EXISTS (
+             SELECT 1
+             FROM venue_beers AS "manager_beer"
+             INNER JOIN venue_profiles AS "manager_profile"
+               ON "manager_profile".venue_id = "manager_beer".venue_id
+             LEFT JOIN venue_identity_aliases AS "manager_identity"
+               ON "manager_identity".alias_venue_id = "manager_beer".venue_id
+             WHERE "manager_beer".on_tap = TRUE
+               AND "manager_beer".in_stock = TRUE
+               AND "manager_profile".active = TRUE
+               AND (
+                 "manager_beer".source_ingestion_id IS NULL
+                 OR NOT EXISTS (
+                   SELECT 1
+                   FROM venue_price_records AS "quarantined_manager_source"
+                   WHERE "quarantined_manager_source".source_ingestion_id =
+                       "manager_beer".source_ingestion_id
+                     AND "quarantined_manager_source".source_type = 'source_ingestion_quarantined'
+                 )
+               )
+               AND COALESCE("manager_identity".canonical_venue_id, "manager_beer".venue_id) =
+                   "current_record".canonical_venue_id
+               AND COALESCE(NULLIF("manager_beer".normalized_beer_id, ''), lower(trim("manager_beer".beer_name))) =
+                   COALESCE(NULLIF("current_record".normalized_beer_id, ''), lower(trim("current_record".beer_name)))
+               AND COALESCE(NULLIF("manager_beer".serve_size, ''), 'other') =
+                   COALESCE(NULLIF("current_record".serving_size, ''), 'other')
+               AND COALESCE("manager_beer".price_verified_at, "manager_beer".created_at) >=
+                   "current_record".last_verified_at
+           )
+         )
+       LIMIT 1`,
+    ).get<PriceRecordRow>(normalizeIdentifier(id, "Price record ID"));
+    return row ? toPriceRecord(row) : null;
+  }
+
+  /**
+   * Resolves an exact venue-manager beer ID only when that row is still the
+   * current public authority for its canonical venue/beer/serve identity.
+   */
+  async getCurrentVenueManagerPriceRecordById(id: string): Promise<PublicVenuePriceRecord | null> {
+    const normalizedId = normalizeIdentifier(id, "Price record ID");
+    if (!normalizedId.startsWith("bar_beer:")) return null;
+    const managerBeerId = normalizedId.slice("bar_beer:".length);
+    if (!managerBeerId) return null;
+    normalizeIdentifier(managerBeerId, "Venue-manager beer ID");
+
+    const row = await this.database.prepare(
+      `WITH "ranked_beers" AS (
+         SELECT
+           "beer".*,
+           ${MANAGER_PROFILE_PROJECTION},
+           COALESCE("identity".canonical_venue_id, "beer".venue_id) AS canonical_venue_id,
+           COALESCE("beer".price_verified_at, "beer".created_at) AS authority_verified_at,
+           row_number() OVER (
+             PARTITION BY COALESCE("identity".canonical_venue_id, "beer".venue_id),
+               COALESCE(NULLIF("beer".normalized_beer_id, ''), lower(trim("beer".beer_name))),
+               COALESCE(NULLIF("beer".serve_size, ''), 'other')
+             ORDER BY COALESCE("beer".price_verified_at, "beer".created_at) DESC,
+                      "beer".updated_at DESC,
+                      "beer".id DESC
+           ) AS authority_rank
+         FROM venue_beers AS "beer"
+         INNER JOIN venue_profiles AS "profile"
+           ON "profile".venue_id = "beer".venue_id
+         LEFT JOIN venue_identity_aliases AS "identity"
+           ON "identity".alias_venue_id = "beer".venue_id
+         WHERE "beer".on_tap = TRUE
+           AND "beer".in_stock = TRUE
+           AND "profile".active = TRUE
+           AND (
+             "beer".source_ingestion_id IS NULL
+             OR NOT EXISTS (
+               SELECT 1
+               FROM venue_price_records AS "quarantined"
+               WHERE "quarantined".source_ingestion_id = "beer".source_ingestion_id
+                 AND "quarantined".source_type = 'source_ingestion_quarantined'
+             )
+           )
+       )
+       SELECT "ranked_beer".*
+       FROM "ranked_beers" AS "ranked_beer"
+       WHERE "ranked_beer".authority_rank = 1
+         AND "ranked_beer".id = ?
+         AND NOT EXISTS (
+           SELECT 1
+           FROM venue_price_records AS "community"
+           LEFT JOIN venue_identity_aliases AS "community_identity"
+             ON "community_identity".alias_venue_id = "community".venue_id
+           WHERE "community".is_happy_hour_price = FALSE
+             AND "community".source_type <> 'source_ingestion_quarantined'
+             AND COALESCE("community_identity".canonical_venue_id, "community".venue_id) =
+                 "ranked_beer".canonical_venue_id
+             AND COALESCE(NULLIF("community".normalized_beer_id, ''), lower(trim("community".beer_name))) =
+                 COALESCE(NULLIF("ranked_beer".normalized_beer_id, ''), lower(trim("ranked_beer".beer_name)))
+             AND COALESCE(NULLIF("community".serving_size, ''), 'other') =
+                 COALESCE(NULLIF("ranked_beer".serve_size, ''), 'other')
+             AND "community".last_verified_at > "ranked_beer".authority_verified_at
+         )
+       LIMIT 1`,
+    ).get<ManagerBeerRow>(managerBeerId);
+    return row ? toManagerBeerPriceRecord(row) : null;
   }
 
   async listCurrentPriceRecords(
@@ -440,6 +630,16 @@ export class PublicPriceRepository {
               WHERE "manager_beer".on_tap = TRUE
                 AND "manager_beer".in_stock = TRUE
                 AND "manager_profile".active = TRUE
+                AND (
+                  "manager_beer".source_ingestion_id IS NULL
+                  OR NOT EXISTS (
+                    SELECT 1
+                    FROM venue_price_records AS "quarantined_manager_source"
+                    WHERE "quarantined_manager_source".source_ingestion_id =
+                        "manager_beer".source_ingestion_id
+                      AND "quarantined_manager_source".source_type = 'source_ingestion_quarantined'
+                  )
+                )
                 AND COALESCE("manager_identity".canonical_venue_id, "manager_beer".venue_id) =
                     "current_record".canonical_venue_id
                 AND COALESCE(NULLIF("manager_beer".normalized_beer_id, ''), lower(trim("manager_beer".beer_name))) =
@@ -476,23 +676,13 @@ export class PublicPriceRepository {
     const venueIds = normalizedVenueId ? [normalizedVenueId] : [];
     const cursor = normalizeCursor(before);
     const boundedLimit = normalizeLimit(limit);
-    const profileProjection = `
-      "profile".name AS profile_name,
-      "profile".suburb AS profile_suburb,
-      "profile".address AS profile_address,
-      "profile".membership_tier AS profile_membership_tier,
-      "profile".highlighted_name AS profile_highlighted_name,
-      "profile".premium_badge AS profile_premium_badge,
-      "profile".promoted AS profile_promoted,
-      "profile".featured_special_eligible AS profile_featured_special_eligible,
-      "profile".accepts_pint_path_codes AS profile_accepts_pint_path_codes`;
     const managerBindings = queryBindings(venueIds, cursor, boundedLimit);
     const [beerRows, happyRows, specialRows] = await Promise.all([
       this.database.prepare(
         `WITH "ranked_beers" AS (
            SELECT
              "beer".*,
-             ${profileProjection},
+             ${MANAGER_PROFILE_PROJECTION},
              COALESCE("identity".canonical_venue_id, "beer".venue_id) AS canonical_venue_id,
              COALESCE("beer".price_verified_at, "beer".created_at) AS authority_verified_at,
              row_number() OVER (
@@ -546,9 +736,9 @@ export class PublicPriceRepository {
          LIMIT ?`,
       ).all<ManagerBeerRow>(...managerBindings),
       this.database.prepare(
-        `SELECT
+         `SELECT
            "happy".*,
-           ${profileProjection}
+           ${MANAGER_PROFILE_PROJECTION}
          FROM venue_happy_hours AS "happy"
          INNER JOIN venue_profiles AS "profile"
            ON "profile".venue_id = "happy".venue_id
@@ -560,9 +750,9 @@ export class PublicPriceRepository {
          LIMIT ?`,
       ).all<ManagerHappyHourRow>(...managerBindings),
       this.database.prepare(
-        `SELECT
+         `SELECT
            "special".*,
-           ${profileProjection}
+           ${MANAGER_PROFILE_PROJECTION}
          FROM venue_specials AS "special"
          INNER JOIN venue_profiles AS "profile"
            ON "profile".venue_id = "special".venue_id
@@ -576,29 +766,7 @@ export class PublicPriceRepository {
       ).all<ManagerSpecialRow>(...managerBindings),
     ]);
 
-    const beerRecords: PublicVenuePriceRecord[] = beerRows.map((row) => ({
-      id: `bar_beer:${row.id}`,
-      venueId: row.venue_id,
-      ...managerMetadata(row),
-      venueName: row.profile_name || row.venue_id,
-      beerName: row.beer_name,
-      normalizedBeerId: row.normalized_beer_id,
-      servingSize: row.serve_size || "other",
-      price: normalizeNullableNumber(row.price, "manager price"),
-      isHappyHourPrice: false,
-      happyHourDetails: null,
-      displayKind: "beer",
-      isOnTap: normalizeBoolean(row.on_tap, "on-tap flag")
-        ? "yes"
-        : normalizeBoolean(row.in_stock, "in-stock flag") ? "unknown" : "no",
-      confidence: row.price_verified_at ? "venue_confirmed" : "stale",
-      sourceType: "venue_manager_portal",
-      sourceSubmissionId: null,
-      lastVerifiedAt: row.price_verified_at ?? row.created_at,
-      priceVerifiedAt: row.price_verified_at,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    }));
+    const beerRecords = beerRows.map(toManagerBeerPriceRecord);
     const happyRecords: PublicVenuePriceRecord[] = happyRows.map((row) => ({
       id: `bar_happy_hour:${row.id}`,
       venueId: row.venue_id,

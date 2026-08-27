@@ -424,7 +424,12 @@ struct PriceRecord: Codable, Identifiable, Hashable {
     let priceCents: Int?
     let priceRedacted: Bool?
     let freePreviewIncluded: Bool?
+    let displayKind: String?
+    let isOnTap: String?
+    let confidence: String?
+    let sourceType: String?
     let lastVerifiedAt: String?
+    let priceVerifiedAt: String?
 
     var formattedPrice: String {
         if priceRedacted == true {
@@ -438,6 +443,129 @@ struct PriceRecord: Codable, Identifiable, Hashable {
         }
         return "Check venue"
     }
+
+    var numericPrice: Double? {
+        if let price, price.isFinite, price > 0 {
+            return price
+        }
+        if let priceCents, priceCents > 0 {
+            return Double(priceCents) / 100.0
+        }
+        return nil
+    }
+
+    var isActionablePriceConfirmationCandidate: Bool {
+        (displayKind == nil || displayKind?.caseInsensitiveCompare("beer") == .orderedSame)
+            && priceRedacted != true
+            && servingSize?.caseInsensitiveCompare("pint") == .orderedSame
+            && isOnTap?.caseInsensitiveCompare("yes") == .orderedSame
+            && numericPrice != nil
+    }
+
+    func isCurrentTrustedPintPrice(asOf: Date = Date()) -> Bool {
+        let trustedConfidenceLabels = Set([
+            "admin_verified",
+            "venue_confirmed",
+            "photo_verified",
+            "community_confirmed",
+        ])
+        guard isActionablePriceConfirmationCandidate,
+              let confidence = confidence?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+              trustedConfidenceLabels.contains(confidence)
+        else { return false }
+
+        let verifiedAt = sourceType?.lowercased().hasPrefix("venue_manager_portal") == true
+            ? priceVerifiedAt
+            : lastVerifiedAt
+        guard let verifiedAt, let verifiedDate = Self.parseISO8601(verifiedAt) else { return false }
+        let age = asOf.timeIntervalSince(verifiedDate)
+        return age >= -(5 * 60) && age <= (30 * 24 * 60 * 60)
+    }
+
+    func matchesBeerKey(_ beerKey: String) -> Bool {
+        let expected = Self.canonicalBeerKey(beerKey)
+        return [normalizedBeerId, beerName]
+            .compactMap { $0 }
+            .contains { Self.canonicalBeerKey($0) == expected }
+    }
+
+    var analyticsIdentity: String {
+        let beerKey = normalizedBeerId.map(Self.canonicalBeerKey)
+            ?? beerName.map(Self.canonicalBeerKey)
+            ?? id
+        return [venueId ?? "", beerKey, servingSize?.lowercased() ?? ""].joined(separator: ":")
+    }
+
+    var confirmationDisplayKey: String {
+        [id, String(numericPrice ?? 0), lastVerifiedAt ?? "", priceVerifiedAt ?? ""].joined(separator: "|")
+    }
+
+    private static func canonicalBeerKey(_ value: String) -> String {
+        let folded = value.folding(
+            options: [.caseInsensitive, .diacriticInsensitive],
+            locale: Locale(identifier: "en_AU")
+        )
+        let normalized = folded
+            .replacingOccurrences(of: "&", with: " and ")
+            .split { !$0.isLetter && !$0.isNumber }
+            .map(String.init)
+            .joined(separator: "_")
+
+        switch normalized {
+        case "carlton_draught":
+            return "carlton_draft"
+        case "stone_wood", "stone_and_wood", "stone_wood_pacific_ale":
+            return "stone_and_wood_pacific_ale"
+        default:
+            return normalized
+        }
+    }
+
+    private static func parseISO8601(_ value: String) -> Date? {
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = fractional.date(from: value) {
+            return date
+        }
+        return ISO8601DateFormatter().date(from: value)
+    }
+}
+
+enum PriceConfirmationOutcome: String, Codable, CaseIterable {
+    case yes
+    case no
+    case didntOrder = "didnt_order"
+
+    var buttonTitle: String {
+        switch self {
+        case .yes: return "Yes"
+        case .no: return "No"
+        case .didntOrder: return "Didn’t order it"
+        }
+    }
+}
+
+struct PriceConfirmationRequest: Codable {
+    let outcome: PriceConfirmationOutcome
+}
+
+struct PriceConfirmationWrongPriceReport: Codable, Hashable {
+    let id: String
+    let status: String
+    let duplicate: Bool
+    let markedDisputed: Bool
+}
+
+struct PriceConfirmationResult: Codable, Hashable {
+    let priceRecordId: String
+    let priceVersion: String
+    let outcome: PriceConfirmationOutcome
+    let recordedAt: String?
+    let idempotentReplay: Bool
+    let analyticsRecorded: Bool
+    let publicTrustMutated: Bool
+    let wrongPriceReport: PriceConfirmationWrongPriceReport?
+    let message: String
 }
 
 struct MissionListResponse: Codable {

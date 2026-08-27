@@ -632,6 +632,7 @@ async function buildLazyRouters(): Promise<LazyRouters> {
     { VenueDataReadRepository },
     { BeerCatalogRepository },
     { PublicPriceRepository },
+    { SavedUpdatesReadRepository },
     { PublicVenueDirectoryRepository },
     { SystemStateRepository },
     { ActivityAuditRepository },
@@ -671,6 +672,7 @@ async function buildLazyRouters(): Promise<LazyRouters> {
     import("./db/venue-data-read.repository.js"),
     import("./db/beer-catalog.repository.js"),
     import("./db/public-price.repository.js"),
+    import("./db/saved-updates-read.repository.js"),
     import("./db/public-venue-directory.repository.js"),
     import("./db/system-state.repository.js"),
     import("./db/activity-audit.repository.js"),
@@ -824,6 +826,7 @@ async function buildLazyRouters(): Promise<LazyRouters> {
     : undefined;
   const beerCatalogRepository = new BeerCatalogRepository(sqlDatabase);
   const publicPriceRepository = new PublicPriceRepository(sqlDatabase);
+  const savedUpdatesReadRepository = new SavedUpdatesReadRepository(sqlDatabase);
   const publicVenueDirectoryRepository = new PublicVenueDirectoryRepository(sqlDatabase);
   const systemStateRepository = new SystemStateRepository(sqlDatabase);
   const activityAuditRepository = new ActivityAuditRepository(sqlDatabase);
@@ -1035,6 +1038,7 @@ async function buildLazyRouters(): Promise<LazyRouters> {
           };
         }
       : async () => businessRepository.checkDatabaseHealth(),
+    savedUpdatesReadRepository,
   );
   const schedulerStops: Array<() => Promise<void>> = [];
   const schedulerOwner = `${process.pid}:${crypto.randomUUID()}`;
@@ -1350,10 +1354,10 @@ function renderPublicVenuePage(
     throw new AppError("Venue not found.", 404);
   }
 
-  const title = `${venue.name} beer prices and happy hours | Pint Path`;
+  const title = `${venue.name} beer prices | Pint Path`;
   const locationParts = [venue.address, venue.suburb, venue.state, venue.postcode].filter(Boolean);
   const location = locationParts.join(", ");
-  const description = `View ${venue.name}${venue.suburb ? ` in ${venue.suburb}` : ""} on Pint Path for mapped beer data, happy-hour details, directions, and venue updates.`;
+  const description = `View ${venue.name}${venue.suburb ? ` in ${venue.suburb}` : ""} on Pint Path for mapped beer data, directions, and venue updates.`;
   const canonicalUrl = absoluteUrl(`/venues/${encodeURIComponent(venue.id)}`);
   const mapUrl = absoluteUrl(`/?venueId=${encodeURIComponent(venue.id)}&venueName=${encodeURIComponent(venue.name)}`);
   const portalUrl = absoluteUrl(`/venue-portal?venueId=${encodeURIComponent(venue.id)}`);
@@ -1443,7 +1447,7 @@ function renderPublicVenuePage(
       <a class="brand" href="/" aria-label="Pint Path home">Pint Path</a>
       <div class="navLinks">
         <a href="/">Map</a>
-        <a href="/pricing.html">Pricing</a>
+        <a href="/venue-portal.html">For venues</a>
         <a href="/trust.html">FAQ</a>
         <a href="/account.html">Account</a>
         <a href="/feedback.html">Contact us</a>
@@ -1456,14 +1460,14 @@ function renderPublicVenuePage(
       <div class="meta">
         <span class="pill">${escapeHtml(tier)} listing</span>
         ${venue.suburb ? `<span class="pill">${escapeHtml(venue.suburb)}</span>` : ""}
-        <span class="pill">Beer data and happy-hour map</span>
+        <span class="pill">Reviewed beer data</span>
       </div>
       <div class="actions">
         <a class="primary" href="${escapeHtml(mapUrl)}">Open on map</a>
         <a class="secondary" href="${escapeHtml(portalUrl)}">Manage this venue</a>
       </div>
     </section>
-    <p class="note">Venue data may change. Check directly with the venue before ordering, travelling, or relying on special availability.</p>
+    <p class="note">Venue data may change. Check directly with the venue before ordering, travelling, or relying on listed information.</p>
     <footer class="siteFooter" role="contentinfo" aria-label="Legal, privacy, and help">
       <div class="footerLinks">
         <a href="/terms.html">Terms</a>
