@@ -9,6 +9,11 @@ import { afterEach, describe, expect, it } from "vitest";
 const root = process.cwd();
 const validator = path.resolve(root, "scripts/validate-release-evidence.ts");
 const currentSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
+const currentCommitTime = Date.parse(execFileSync(
+  "git",
+  ["show", "-s", "--format=%cI", currentSha],
+  { cwd: root, encoding: "utf8" },
+).trim());
 const oldestSha = execFileSync("git", ["rev-list", "--max-parents=0", "HEAD"], { cwd: root, encoding: "utf8" })
   .trim()
   .split("\n")[0]!;
@@ -91,8 +96,10 @@ function otherwiseCompleteWithCostPending(): typeof source {
 }
 
 function completeCostReceipt(overrides: Record<string, unknown> = {}) {
-  const postObservedAt = new Date().toISOString();
-  const preObservedAt = new Date(Date.parse(postObservedAt) - 60_000).toISOString();
+  const postObservedAtMs = Math.max(Date.now(), currentCommitTime + 2);
+  const preObservedAtMs = Math.max(currentCommitTime + 1, postObservedAtMs - 60_000);
+  const postObservedAt = new Date(postObservedAtMs).toISOString();
+  const preObservedAt = new Date(preObservedAtMs).toISOString();
   return {
     schemaVersion: "pintpath-permanent-staging-cost-receipt/v2",
     releaseId,
